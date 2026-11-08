@@ -1,0 +1,25 @@
+name: eSIM host helper
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - '.github/workflows/esim-helper.yml'
+      - 'apps/backend/ceralive-esim-helper'
+      - 'scripts/esim/tests/**'
+      - 'docs/ESIM-HELPER.md'
+
+permissions:
+  contents: read
+
+jobs:
+  helper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test helper protocol and cleanup
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest discover -s scripts/esim/tests -v
