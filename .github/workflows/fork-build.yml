@@ -1,0 +1,80 @@
+name: Fork development artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+      - run: bun install --frozen-lockfile
+      - name: Prepare packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby-dev build-essential jq
+          sudo gem install --no-document fpm -v 1.17.0
+      - run: bun run lint
+      - run: bun run check:tech-debt
+      - run: bun test scripts/ci/fork-build.test.mjs
+      - name: Prepare backend runtime
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo install -d -o "$(id -u)" -g "$(id -g)" /run/ceralive /var/run/bcrpt
+          mkdir -p .ci-runtime
+          curl --fail --location --silent --show-error -o .ci-runtime/srtla.deb \
+            https://github.com/CERALIVE/srtla-send-rs/releases/download/v4.1.0/srtla_4.1.0_amd64.deb
+          echo '496217e93cde36eeac0bde1b742c21fed6347a198f05a8cd898be116946b1eb8  .ci-runtime/srtla.deb' | sha256sum --check
+          test "$(dpkg-deb --field .ci-runtime/srtla.deb Package)" = srtla
+          test "$(dpkg-deb --field .ci-runtime/srtla.deb Version)" = 4.1.0
+          test "$(dpkg-deb --field .ci-runtime/srtla.deb Architecture)" = amd64
+          dpkg-deb --extract .ci-runtime/srtla.deb .ci-runtime/root
+          chmod +x .ci-runtime/root/usr/bin/srtla_send
+          echo "SRTLA_SEND_BIN=$PWD/.ci-runtime/root/usr/bin/srtla_send" >> "$GITHUB_ENV"
+      - run: bun run test
+      - run: bun run test:release-package-contracts
+
+  artifacts:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+      - run: bun install --frozen-lockfile
+      - name: Build and package development payload
+        env:
+          BUILD_ARCH: ${{ matrix.architecture }}
+        run: scripts/fork/package.sh artifacts
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ceraui-${{ matrix.architecture }}
+          path: artifacts/
+          if-no-files-found: error

@@ -1,0 +1,22 @@
+# Fork development builds
+
+The Fork development artifacts workflow builds the application and delivers amd64 and ARM64 archives. It runs on branch pushes and manual dispatch. Artifact jobs wait for lint/typecheck, unit tests, technical-debt checks and release/package contracts. The pinned SRTLA runtime is verified before backend tests run.
+
+Use Bun 1.4.3, Node 26 and the frozen lockfile. The reusable container supplies packaging tools and native test prerequisites.
+
+```sh
+docker build -t ceraui-build-tools -f scripts/fork/Dockerfile .
+bun install --frozen-lockfile
+bun run lint
+bun run test
+bun run check:tech-debt
+bun run test:release-package-contracts
+BUILD_ARCH=amd64 scripts/fork/package.sh dist-artifacts/amd64
+BUILD_ARCH=arm64 scripts/fork/package.sh dist-artifacts/arm64
+```
+
+Each packaging command requires a new output directory. It produces `ceraui-<architecture>.tar.gz` and `SHA256SUMS`. `DEVELOPMENT_BUILD.json` records the source commit, architecture and whether the source tree was modified. The archive includes the committed setup defaults and excludes source maps.
+
+For container tests, use the default unprivileged user, `--init`, a 0022 umask and a checkout bind mount at `/work`. Use `bash -c` to retain the image's system-tool PATH. Namespace integration tests require an isolated container with `SYS_ADMIN`, `NET_ADMIN` and an unconfined seccomp profile. The container's sudo rule permits `unshare` for those tests.
+
+Development archive delivery uses GitHub Actions artifacts. Signed production releases require the release workflow's signing and publication infrastructure. Native hardware qualification has its own acceptance gates.
