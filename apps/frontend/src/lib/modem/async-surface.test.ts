@@ -7,7 +7,9 @@
  * its own declared bound. A surface added to the registry without a working
  * bound reddens here rather than shipping a spinner.
  */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { rpcCallTimeoutMs } from "../rpc/rpc-timeouts";
 
 import {
 	loadWithinBound,
@@ -58,7 +60,7 @@ describe("the registry itself", () => {
 			expect(
 				MODEM_ASYNC_SURFACES[id].boundMs,
 				`${id} does not bound the wait before the transport does`,
-			).toBeLessThan(30_000);
+			).toBeLessThan(rpcCallTimeoutMs(`modems.${id}`));
 		}
 	});
 
