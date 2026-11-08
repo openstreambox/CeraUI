@@ -41,6 +41,7 @@ const SENSITIVE_NAMESPACES: ReadonlySet<string> = new Set(["auth"]);
  * the one field the credential store keys on.
  */
 const SENSITIVE_PROCEDURES: ReadonlySet<string> = new Set([
+	"modems.esimOperation",
 	"modems.setCredentials",
 	"modems.clearCredentials",
 	"modems.verifyCredentials",

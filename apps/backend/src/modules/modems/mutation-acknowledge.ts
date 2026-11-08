@@ -167,6 +167,8 @@ async function acknowledgeHeld(
 	if (current === undefined) return quarantine(entry);
 
 	if (mode === "verified-rollback") {
+		// Descriptor equality cannot verify an irreversible eUICC profile operation.
+		if (entry.kind === "esim") return fail("state_mismatch");
 		return statesMatch(entry.preState, current)
 			? archiveAcknowledged(entry, mode, "rollback verified against the device")
 			: fail("state_mismatch");

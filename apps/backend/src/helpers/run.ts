@@ -107,6 +107,7 @@ export class RunAbortError extends Error {
  * minimal and intentional.
  */
 export const ALLOWED: Set<string> = new Set<string>([
+	"/usr/libexec/ceralive/esim-helper",
 	"nmcli",
 	"mmcli",
 	"systemctl",

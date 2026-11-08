@@ -22,6 +22,8 @@ import type {
 	ClaimCodeOutput,
 	CompletePairingInput,
 	CompletePairingOutput,
+	EsimOperationInput,
+	EsimOperationOutput,
 	FccUnlockOptionsInput,
 	FccUnlockOptionsOutput,
 	GetEngineOutput,
@@ -673,6 +675,7 @@ export interface TypedRPC {
 		) => Promise<ReloadAudioDelayOutput>;
 	};
 	modems: {
+		esimOperation: (input: EsimOperationInput) => Promise<EsimOperationOutput>;
 		getAll: () => Promise<unknown>;
 		configure: (input: ModemConfigInput) => Promise<ModemConfigOutput>;
 		scan: (input: ModemScanInput) => Promise<ModemScanOutput>;

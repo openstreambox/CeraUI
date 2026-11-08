@@ -24,8 +24,8 @@ import { navigateTo } from "./helpers/index.js";
  */
 
 const DIALOG_NAME = "Cellular Features";
-const IMPLEMENTED = ["band-lock", "five-g-pref", "gps", "ussd"] as const;
-const NOT_IMPLEMENTED = ["sms", "esim", "fcc-auto-unlock"] as const;
+const IMPLEMENTED = ["band-lock", "five-g-pref", "gps", "ussd", "esim"] as const;
+const NOT_IMPLEMENTED = ["sms", "fcc-auto-unlock"] as const;
 
 async function openCapabilities(page: import("@playwright/test").Page) {
 	await navigateTo(page, "settings");
