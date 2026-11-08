@@ -2,6 +2,16 @@
 
 The Fork development artifacts workflow builds the application and delivers amd64 and ARM64 archives. It runs on branch pushes and manual dispatch. Artifact jobs wait for lint/typecheck, unit tests, technical-debt checks and release/package contracts. The pinned SRTLA runtime is verified before backend tests run.
 
+## Branch roles
+
+Keep `main` and every other upstream branch name at the corresponding upstream commit. The `fork` branch is the downstream integration branch for development builds and fork-specific changes. Start downstream-only topic branches from `fork` and target their pull requests back to `fork`.
+
+Start upstream-bound topics from upstream `main`, then open their pull requests against upstream `main`. Keep the fork build workflow, container and packaging changes out of those topics. Merge the clean feature branches into `fork` for integration; do not merge `fork` back into an upstream-bound topic. Update published integration history with merges instead of rewriting it.
+
+The eSIM integration adds its helper, source recipe and supporting engineering instructions to development application archives. Host provisioning remains an explicit administrator action.
+
+## Building artifacts
+
 Use Bun 1.4.3, Node 26 and the frozen lockfile. The reusable container supplies packaging tools and native test prerequisites.
 
 ```sh
