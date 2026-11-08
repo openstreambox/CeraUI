@@ -6,3 +6,12 @@
  * importing the transport.
  */
 export const RPC_CALL_TIMEOUT_MS = 30_000;
+
+/** Explicit budgets for operations that can legitimately exceed the default call window. */
+export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
+	"streaming.start": 75_000,
+};
+
+export function rpcCallTimeoutMs(path: string): number {
+	return PROCEDURE_TIMEOUT_MS[path] ?? RPC_CALL_TIMEOUT_MS;
+}

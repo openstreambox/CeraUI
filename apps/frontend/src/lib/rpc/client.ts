@@ -135,7 +135,7 @@ import { nextBackoffDelay } from "./backoff";
 import { parseServerPing, shouldForceCloseHalfOpen } from "./half-open";
 import { createHeartbeatTracker, HEARTBEAT_THRESHOLD_MS } from "./heartbeat";
 import { NotSentError, RpcError, type RpcErrorEnvelope } from "./rpc-error";
-import { RPC_CALL_TIMEOUT_MS } from "./rpc-timeouts";
+import { PROCEDURE_TIMEOUT_MS, RPC_CALL_TIMEOUT_MS } from "./rpc-timeouts";
 
 export class ConnectionResetError extends Error {
 	override readonly name = "ConnectionResetError";
@@ -561,9 +561,6 @@ class RPCClient {
  * 90s optimism start-watchdog, so the awaited reply stays the primary signal and
  * the watchdog is only the lost-signal backstop).
  */
-const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
-	"streaming.start": 75_000,
-};
 
 function createRPCProxy<T extends object>(
 	client: RPCClient,
