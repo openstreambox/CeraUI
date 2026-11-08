@@ -4,6 +4,8 @@
 import { oc } from '@orpc/contract';
 
 import {
+	esimOperationInputSchema,
+	esimOperationOutputSchema,
 	modemBandsInputSchema,
 	modemBandsOutputSchema,
 	modemCapabilitiesOutputSchema,
@@ -55,6 +57,7 @@ export const modemsContract = oc.router({
 	 * Get all modems status
 	 */
 	getAll: oc.output(modemListSchema),
+	esimOperation: oc.input(esimOperationInputSchema).output(esimOperationOutputSchema),
 
 	/**
 	 * Configure a modem

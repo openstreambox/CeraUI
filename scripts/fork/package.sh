@@ -10,6 +10,9 @@ mkdir -p "$output"
 output=$(cd "$output" && pwd)
 BUILD_ARCH="$architecture" bun run build
 git show HEAD:apps/backend/setup.json > dist/setup.json
+cp apps/backend/ceralive-esim-helper dist/esim-helper
+cp -r scripts/esim dist/esim-source
+cp docs/ESIM.md docs/ESIM-HELPER.md docs/LPAC.md docs/FORK-BUILDS.md dist/
 # Development provenance includes the dirty flag because local source may be uncommitted.
 source_commit=$(git rev-parse HEAD)
 source_state=clean

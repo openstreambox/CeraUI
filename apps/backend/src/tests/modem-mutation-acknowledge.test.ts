@@ -386,3 +386,14 @@ describe("decommission and rebaseline", () => {
 		});
 	});
 });
+
+test("eSIM recovery cannot be verified through unchanged USB descriptors", async () => {
+	useDevice("qmi");
+	const entry = await seed("failed");
+	await commitMutationEntry({ ...entry, kind: "esim" });
+	expect(await acknowledgeMutation(KEY, "verified-rollback")).toEqual({
+		success: false,
+		error: "state_mismatch",
+	});
+	expect((await listMutationEntries()).length).toBe(1);
+});

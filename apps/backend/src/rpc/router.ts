@@ -30,6 +30,7 @@ import {
 	getBluetoothStatusProcedure,
 } from "./procedures/bluetooth.procedure.ts";
 import { devEmitProcedure } from "./procedures/dev.procedure.ts";
+import { esimOperationProcedure } from "./procedures/esim.procedure.ts";
 import {
 	acknowledgeMutationProcedure,
 	configureModemProcedure,
@@ -194,6 +195,7 @@ const stableRoutes = {
 
 	modems: base.router({
 		getAll: getAllModemsProcedure,
+		esimOperation: esimOperationProcedure,
 		configure: configureModemProcedure,
 		scan: scanModemProcedure,
 		unlockSim: unlockSimProcedure,
