@@ -1,0 +1,11 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -73,7 +73,7 @@
+         set(DRIVER_INSTALL_PATH ${CMAKE_INSTALL_FULL_BINDIR}/driver)
+     elseif (UNIX)
+         include(GNUInstallDirs)
+-        set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_FULL_LIBDIR}/lpac")
++        set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_FULL_LIBDIR}/lpac;${CMAKE_INSTALL_FULL_LIBDIR}")
+         set(DRIVER_INSTALL_PATH "${CMAKE_INSTALL_FULL_LIBDIR}/lpac/driver")
+     endif()
+ endif()
