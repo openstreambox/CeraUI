@@ -3,9 +3,9 @@
 ## THE CAPABILITY FEATURE-GATE FRAMEWORK [EXISTS]
 
 Seven modules are GATED (band-lock / SMS / 5G-pref / FCC-auto-unlock / GPS / USSD
-/ eSIM); FOUR of them ship a probe and a mutation path today
+/ eSIM); FIVE of them ship a probe and a mutation path today
 (`IMPLEMENTED_MODEM_CAPABILITY_MODULES` — `five-g-pref`, `band-lock`, `gps`,
-`ussd`), and the rest resolve `unavailable` everywhere. What every one of them
+`ussd`, `esim`), and the rest resolve `unavailable` everywhere. What every one of them
 routes through is the framework below, whose two halves live in different places
 for a reason: the LADDER is `@ceraui/rpc` (`capability-modules.schema.ts` +
 `capabilities/capability-matrix.ts`), shared verbatim with the frontend and the
@@ -220,3 +220,7 @@ both directions: dropping the readback comparison reddens 2 tests, and comparing
 only `allowed` on rollback reddens 1. Frontend half:
 `apps/frontend/src/main/dialogs/modem-five-g.ts`.
 
+
+## Experimental eSIM management
+
+The `esim` module has an explicit, journaled card probe and guarded profile operations. The helper is administrator-provisioned and verifies card identity before a write. Read `docs/ESIM.md` from the repository root for the exclusive-access, stdin, snapshot and irreversible-operation recovery contract.

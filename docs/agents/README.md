@@ -44,3 +44,7 @@ Read the contract for the subsystem you touch before making changes. Every origi
 | ANTI-PATTERNS | [anti-patterns.md](anti-patterns.md) | `@ceralive/srtla`, `@ceraui/srtla-send`, `packages/srtla-send`, `@ceralive/cerastream`, `@ceralive/control-protocol`, `@ceralive/modem-control`, `lib/components/ui/`, `lib/components/custom/` |
 | UVC package identity | [uvc-package-identity.md](uvc-package-identity.md) | UVC package identity |
 | THE DEVICE UPDATE SYSTEM [EXISTS; capable-image paths PARTIAL] | [the-device-update-system.md](the-device-update-system.md) | Update-system contract |
+
+## Experimental eSIM management
+
+Read [eSIM management](../ESIM.md) before editing the profile RPC, helper, modem section or pinned lpac recipe.

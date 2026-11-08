@@ -1,0 +1,43 @@
+--- a/src/applet/profile/download.c
++++ b/src/applet/profile/download.c
+@@ -16,6 +16,19 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
++
++static char *read_secret_line(void) {
++    char buffer[2048];
++    if (fgets(buffer, sizeof(buffer), stdin) == NULL)
++        return NULL;
++    size_t length = strlen(buffer);
++    if (length == 0 || buffer[length - 1] != '\n')
++        return NULL;
++    buffer[--length] = '\0';
++    if (length > 0 && buffer[length - 1] == '\r')
++        buffer[--length] = '\0';
++    return length > 0 ? strdup(buffer) : NULL;
++}
+ 
+ static const char *opt_string = "s:m:i:c:a:ph?";
+ 
+@@ -124,10 +137,18 @@
+             imei = strdup(optarg);
+             break;
+         case 'c':
+-            confirmation_code = strdup(optarg);
++            confirmation_code = strcmp(optarg, "-") == 0 ? read_secret_line() : strdup(optarg);
++            if (confirmation_code == NULL) {
++                jprint_error("confirmation_code", "invalid stdin");
++                return -1;
++            }
+             break;
+         case 'a':
+-            activation_code = strdup(optarg);
++            activation_code = strcmp(optarg, "-") == 0 ? read_secret_line() : strdup(optarg);
++            if (activation_code == NULL) {
++                jprint_error("activation_code", "invalid stdin");
++                return -1;
++            }
+             if (strncasecmp(activation_code, "LPA:", 4) == 0)
+                 activation_code += 4; // ignore uri scheme
+             break;

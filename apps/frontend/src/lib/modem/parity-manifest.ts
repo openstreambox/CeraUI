@@ -131,9 +131,9 @@ export const CAPABILITY_MODULE_PARITY: ParityRecord = {
 			"The session machine, refusal taxonomy and all four RPC procedures ship, and NO operator surface dispatches them — the known gap this manifest exists to record honestly.",
 	},
 	esim: {
-		disposition: "absent",
+		disposition: "wired",
 		reason:
-			"No gate implementation, no RPC and no operator surface; the adoption spike closed blocked because no bench modem exposes an eUICC.",
+			"The default-off eSIM module exposes acknowledged card inspection and confirmed profile operations through the administrator-provisioned lpac helper.",
 	},
 };
 
@@ -276,6 +276,11 @@ export const OPERATION_PARITY: ParityRecord = {
  * a procedure the backend no longer dispatches.
  */
 export const BACKEND_RPC_PARITY: ParityRecord = {
+	"modems.esimOperation": {
+		disposition: "wired",
+		reason:
+			"ModemEsimSection provides acknowledged inspection and confirmed profile management through the journaled helper.",
+	},
 	"modems.getAll": {
 		disposition: "wired",
 		reason:

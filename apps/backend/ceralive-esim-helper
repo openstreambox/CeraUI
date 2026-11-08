@@ -1,0 +1,265 @@
+#!/usr/bin/python3
+"""Exclusive, explicitly configured consumer-eUICC access. Secrets use stdin."""
+import fcntl
+import hashlib
+import json
+import os
+import re
+import selectors
+import signal
+import stat
+import subprocess
+import sys
+import termios
+import time
+
+CONFIG = '/etc/ceralive/esim-devices.json'
+LOCK = '/run/lock/ceralive-esim.lock'
+LPAC = '/usr/libexec/ceralive/lpac/bin/lpac'
+
+
+class Refusal(Exception):
+    pass
+
+
+def digest(value):
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def snapshot(eid, profiles):
+    rows = []
+    for profile in profiles:
+        iccid = profile.get('iccid', '')
+        state = profile.get('profileState')
+        if not re.fullmatch(r'[0-9]{18,22}', iccid) or state not in ('enabled', 'disabled'):
+            raise Refusal('card_unavailable')
+        rows.append(dict(id=digest(eid + ':' + iccid),
+                         name=(profile.get('profileNickname') or profile.get('profileName') or '')[:128],
+                         provider=(profile.get('serviceProviderName') or '')[:128], state=state))
+    if len(rows) > 100 or len({p['id'] for p in rows}) != len(rows):
+        raise Refusal('card_unavailable')
+    rows.sort(key=lambda p: p['id'])
+    return dict(token=digest(eid + json.dumps(rows, sort_keys=True)), profiles=rows)
+
+
+def read_config(key):
+    fd = os.open(CONFIG, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd) as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or info.st_size > 65536:
+            raise Refusal('not_configured')
+        config = json.load(stream)[key]
+    if config['backend'] not in ('at_csim', 'at'):
+        raise Refusal('not_configured')
+    if not re.fullmatch(r'/dev/(ttyUSB[0-9]+|ttyACM[0-9]+|cdc-wdm[0-9]+)', config['port']):
+        raise Refusal('not_configured')
+    if not re.fullmatch(r'[0-9]{32}', config['eid']):
+        raise Refusal('not_configured')
+    return config
+
+
+class Session:
+    def __init__(self, config):
+        self.config = config
+        self.deadline = time.monotonic() + 210
+        self.inhibitor = None
+        self.serial = None
+        self.settings = None
+        self.dispatched = False
+        self.cleanup_failed = False
+        # Never inherit APDU/HTTP debug switches, proxy overrides or alternate drivers.
+        self.env = dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin', LPAC_HTTP='curl',
+                        LPAC_APDU=config['backend'], LPAC_APDU_AT_DEVICE=config['port'],
+                        LPAC_APDU_QMI_DEVICE=config['port'], LPAC_APDU_MBIM_DEVICE=config['port'])
+
+    def command(self, argv, data=None, env=None):
+        timeout = min(90, self.deadline - time.monotonic())
+        if timeout <= 0:
+            raise TimeoutError()
+        child = subprocess.Popen(argv, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        try:
+            if data is not None:
+                child.stdin.write(data.encode())
+                child.stdin.close()
+            output = [bytearray(), bytearray()]
+            with selectors.DefaultSelector() as selector:
+                selector.register(child.stdout, selectors.EVENT_READ, 0)
+                selector.register(child.stderr, selectors.EVENT_READ, 1)
+                end = time.monotonic() + timeout
+                while selector.get_map():
+                    if time.monotonic() >= end:
+                        raise TimeoutError()
+                    for key, _ in selector.select(min(0.2, max(0, end - time.monotonic()))):
+                        chunk = os.read(key.fileobj.fileno(), 8192)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        output[key.data].extend(chunk)
+                        if len(output[key.data]) > 65536:
+                            raise ValueError('output bound')
+            if child.wait(timeout=max(0.01, end - time.monotonic())):
+                raise ValueError('command failed')
+            return output[0].decode()
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=2)
+            child.stdout.close()
+            child.stderr.close()
+
+    def lpac(self, *args, data=None):
+        lines = self.command([LPAC, *args], data, self.env).splitlines()
+        results = [json.loads(line) for line in lines if line.startswith('{')]
+        terminal = [item['payload'] for item in results if item.get('type') == 'lpa']
+        if not terminal or terminal[-1]['code'] != 0:
+            raise ValueError('lpac failed')
+        return terminal[-1].get('data')
+
+    def acquire(self, device):
+        facts = json.loads(self.command(['mmcli', '-m', device, '-J']))['modem']['generic']
+        if facts['device'] != self.config['uid'] or facts.get('state') == 'connected':
+            raise Refusal('card_unavailable')
+        props = self.command(['udevadm', 'info', '-q', 'property', '-n', self.config['port']])
+        if 'ID_PATH=' + self.config['portIdPath'] not in props.splitlines():
+            raise Refusal('identity_unresolved')
+        self.inhibitor = subprocess.Popen(['mmcli', '--inhibit-device=' + self.config['uid']],
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                         env=dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL='C'))
+        with selectors.DefaultSelector() as selector:
+            selector.register(self.inhibitor.stdout, selectors.EVENT_READ)
+            if not selector.select(15):
+                raise Refusal('card_unavailable')
+            message = os.read(self.inhibitor.stdout.fileno(), 4096)
+            if b'successfully inhibited' not in message or self.inhibitor.poll() is not None:
+                raise Refusal('card_unavailable')
+        if self.config['backend'] in ('at', 'at_csim'):
+            self.serial = os.open(self.config['port'], os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            self.settings = termios.tcgetattr(self.serial)
+        if self.lpac('chip', 'info')['eidValue'] != self.config['eid']:
+            raise Refusal('card_unavailable')
+
+    def profiles(self):
+        # Refresh may temporarily invalidate APDU application access. Retry reads only.
+        for attempt in range(3):
+            try:
+                profiles = self.lpac('profile', 'list')
+                if not isinstance(profiles, list):
+                    raise ValueError('profile list')
+                snapshot(self.config['eid'], profiles)
+                return profiles
+            except (ValueError, KeyError):
+                if attempt == 2:
+                    raise
+                time.sleep(1)
+
+    def operate(self, request):
+        profiles = self.profiles()
+        current = snapshot(self.config['eid'], profiles)
+        if request['action'] == 'inspect':
+            return current
+        if request['snapshot'] != current['token']:
+            raise Refusal('stale_snapshot')
+        pending = {n['seqNumber'] for n in self.lpac('notification', 'list')}
+        action = request['action']
+        if action == 'download':
+            code = request['activationCode']
+            confirmation = request.get('confirmationCode')
+            if not re.fullmatch(r'LPA:1\$[A-Za-z0-9.-]+\$[A-Za-z0-9-]+(?:\$[0-9.]*)?(?:\$[01]?)?', code):
+                raise Refusal('operation_failed')
+            if code.split('$')[-1] == '1' and len(code.split('$')) == 5 and not confirmation:
+                raise Refusal('confirmation_required')
+            argv = ['profile', 'download', '-a', '-']
+            data = code + '\n'
+            if confirmation:
+                argv += ['-c', '-']
+                data += confirmation + '\n'
+            self.dispatched = True
+            self.lpac(*argv, data=data)
+        elif action in ('enable', 'disable', 'delete'):
+            profile = next((p for p in profiles if digest(self.config['eid'] + ':' + p['iccid']) == request['profileId']), None)
+            if profile is None:
+                raise Refusal('profile_not_found')
+            if action == 'delete' and profile['profileState'] == 'enabled':
+                raise Refusal('active_profile')
+            if (action == 'enable' and profile['profileState'] == 'enabled') or (action == 'disable' and profile['profileState'] == 'disabled'):
+                return current
+            self.dispatched = True
+            argv = ['profile', action, profile['iccid']]
+            if action != 'delete':
+                argv.append('true')
+            self.lpac(*argv)
+        else:
+            raise Refusal('operation_failed')
+        after = snapshot(self.config['eid'], self.profiles())
+        before_ids = {p['id'] for p in current['profiles']}
+        if action == 'download':
+            added = [p for p in after['profiles'] if p['id'] not in before_ids]
+            verified = len(added) == 1 and added[0]['state'] == 'disabled' and before_ids.issubset({p['id'] for p in after['profiles']})
+        elif action == 'delete':
+            verified = request['profileId'] not in {p['id'] for p in after['profiles']}
+        else:
+            desired = 'enabled' if action == 'enable' else 'disabled'
+            verified = any(p['id'] == request['profileId'] and p['state'] == desired for p in after['profiles'])
+        if not verified:
+            raise ValueError('unconfirmed')
+        for notification in self.lpac('notification', 'list'):
+            if notification['seqNumber'] not in pending:
+                self.lpac('notification', 'process', str(notification['seqNumber']))
+        return after
+
+    def close(self):
+        try:
+            if self.serial is not None:
+                try:
+                    if self.settings is not None:
+                        termios.tcsetattr(self.serial, termios.TCSANOW, self.settings)
+                        if termios.tcgetattr(self.serial) != self.settings:
+                            raise ValueError('serial restore')
+                finally:
+                    os.close(self.serial)
+        except Exception:
+            self.cleanup_failed = True
+            raise
+        finally:
+            if self.inhibitor is not None:
+                self.inhibitor.terminate()
+                try:
+                    self.inhibitor.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.inhibitor.kill()
+                    self.inhibitor.wait(timeout=2)
+                self.inhibitor.stdout.close()
+
+
+def main():
+    session = None
+    result = dict(success=False, error='not_configured')
+    try:
+        request = json.loads(sys.stdin.read(8193))
+        if request.get('acknowledged') is not True or not re.fullmatch(r'[0-9]{1,6}', request['device']):
+            raise Refusal('operation_failed')
+        config = read_config(request['stableKey'])
+        lock_fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(lock_fd, 'r+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            session = Session(config)
+            try:
+                session.acquire(request['device'])
+                result = dict(success=True, snapshot=session.operate(request))
+            finally:
+                try:
+                    session.close()
+                except BaseException:
+                    session.cleanup_failed = True
+                    raise
+    except Refusal as error:
+        result = dict(success=False, error='outcome_unknown' if session and (session.dispatched or session.cleanup_failed) else str(error))
+    except Exception:
+        result = dict(success=False, error='outcome_unknown' if session and (session.dispatched or session.cleanup_failed) else 'card_unavailable')
+    print(json.dumps(result))
+
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    main()
