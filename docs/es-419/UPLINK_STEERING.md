@@ -8,6 +8,8 @@
 
 El teléfono puede seguir asociado y el portátil puede conservar su dirección durante una caída. Eso, o un estado Activo, no demuestra acceso a internet. Cuando se aplican reglas sin un enlace seleccionable, se bloquean las conexiones IPv4 nuevas descritas en Límites. Si vuelve un enlace usable y se aplican las reglas actualizadas, intenta una conexión nueva. Abre de nuevo el navegador, la aplicación o la llamada. Una sesión abierta puede necesitar esa reconexión si el enlace falló. No se añade continuidad de sesión, cambio sin corte ni combinación de enlaces.
 
+Un enlace que ya aparece como Caído no vuelve a estar disponible para conexiones nuevas de clientes solo por indicios pasivos de degradación, aunque recupere su dirección. La recuperación mediante observaciones satisfactorias sigue exigiendo cinco rondas exitosas consecutivas y el período de espera existente de al menos 15 segundos desde la transición de su estado de salud. Ese mínimo no garantiza el tiempo de recuperación ni se mide desde que se reconecta un cable. Los indicios pasivos de degradación reinician el conteo de éxitos parciales. No cambian la degradación normal de un enlace Activo ni el tratamiento de los portales cautivos.
+
 **Reconexión de la interfaz web.** Cuando la interfaz reemplaza su conexión de control, ignora las actualizaciones y los eventos de estado retrasados de la conexión anterior. Sigue mostrando las actualizaciones y los errores de la conexión actual. Cuando regrese la conexión de control, confirma el acceso a internet con una nueva solicitud desde un cliente del punto de acceso; es posible que las sesiones existentes tengan que volver a conectarse.
 
 ## Compartir internet
