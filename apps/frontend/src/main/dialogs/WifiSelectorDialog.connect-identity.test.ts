@@ -44,6 +44,8 @@ import WifiSelectorDialog from "./WifiSelectorDialog.svelte";
 const scan = vi.hoisted(() => vi.fn());
 const connect = vi.hoisted(() => vi.fn());
 const connectNew = vi.hoisted(() => vi.fn());
+const disconnect = vi.hoisted(() => vi.fn());
+const forget = vi.hoisted(() => vi.fn());
 
 vi.mock("$lib/rpc", () => ({
 	rpc: {
@@ -51,8 +53,8 @@ vi.mock("$lib/rpc", () => ({
 			scan,
 			connect,
 			connectNew,
-			disconnect: vi.fn(),
-			forget: vi.fn(),
+			disconnect,
+			forget,
 		},
 	},
 }));
@@ -159,6 +161,10 @@ beforeEach(() => {
 	connect.mockResolvedValue({ success: true });
 	connectNew.mockReset();
 	connectNew.mockResolvedValue({ success: true });
+	disconnect.mockReset();
+	disconnect.mockResolvedValue({ success: true });
+	forget.mockReset();
+	forget.mockResolvedValue({ success: true });
 	resetWifiFeed();
 	clearOperation(CONNECT_KEY);
 	clearOperation(SCAN_KEY);
@@ -377,6 +383,185 @@ describe("WifiSelectorDialog — selected-radio connect ownership", () => {
 		expect(getOperationPhase(CONNECT_KEY)).toBe("failed");
 		expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("confirmed");
 	});
+});
+
+describe("WifiSelectorDialog — radio-local disconnect and forget", () => {
+	async function clickOperation(
+		operation: "disconnect" | "forget",
+		ssid: string,
+	) {
+		await fireEvent.click(
+			screen.getByRole("button", {
+				name: `${operation === "disconnect" ? "Disconnect" : "Forget"} ${ssid}`,
+			}),
+		);
+		if (operation === "forget") {
+			await fireEvent.click(
+				screen.getByRole("button", { name: "Forget", exact: true }),
+			);
+		}
+		await settle();
+	}
+
+	for (const operation of ["disconnect", "forget"] as const) {
+		for (const outcome of ["applied", "refusal", "rejection"] as const) {
+			it(`does not confirm unrelated B from deferred A ${operation} then ${outcome}`, async () => {
+				const result = Promise.withResolvers<unknown>();
+				const action = operation === "disconnect" ? disconnect : forget;
+				action.mockReturnValueOnce(result.promise);
+				publishWifi({
+					"0": radio(
+						operation === "disconnect"
+							? { conn: CHOSEN_UUID, activeSsid: SHARED_SSID }
+							: {},
+					),
+					"1": {
+						...radio({
+							saved: { [OTHER_SSID]: OTHER_UUID },
+							ssids: [OTHER_SSID, DRAFT_SSID],
+						}),
+						ifname: "wlan1",
+						hw: "aa:bb:cc:dd:ee:02",
+					},
+				});
+				beginOperation(OTHER_CONNECT_KEY, "external-operation");
+				const view = render(WifiSelectorDialog, {
+					props: { open: true, deviceId: "0" },
+				});
+				await settle();
+				await clickOperation(operation, SHARED_SSID);
+				expect(action).toHaveBeenCalledWith({ uuid: CHOSEN_UUID });
+				expect(getOperationPhase(CONNECT_KEY)).toBe("pending");
+				const completeA = () => {
+					if (outcome === "rejection")
+						result.reject(new Error("station operation refused"));
+					else
+						result.resolve({ success: outcome === "applied", error: "auth" });
+				};
+				try {
+					await view.rerender({ open: true, deviceId: "1" });
+					await settle();
+					expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("pending");
+					expect(getOperationPhase(CONNECT_KEY)).toBe("pending");
+					await fireEvent.click(
+						screen.getByRole("button", { name: `Connect ${DRAFT_SSID}` }),
+					);
+					const input = document.getElementById(
+						"wifi-new-password",
+					) as HTMLInputElement;
+					await fireEvent.input(input, {
+						target: { value: "synthetic-current-draft" },
+					});
+					completeA();
+					await settle();
+					expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("pending");
+					expect(getOperationPhase(CONNECT_KEY)).toBe(
+						outcome === "applied" ? "pending" : "failed",
+					);
+					expect(screen.queryByRole("dialog")).not.toBeNull();
+					expect(screen.queryByTestId("wifi-join-failed")).toBeNull();
+					expect(document.getElementById("wifi-new-password")).toBe(input);
+					expect(input.value).toBe("synthetic-current-draft");
+					expect(action).toHaveBeenCalledTimes(1);
+					expect(connect).not.toHaveBeenCalled();
+					expect(connectNew).not.toHaveBeenCalled();
+				} finally {
+					completeA();
+					await settle();
+				}
+			});
+		}
+
+		it(`confirms current A ${operation} from its own snapshot while its RPC is deferred`, async () => {
+			const result = Promise.withResolvers<unknown>();
+			const action = operation === "disconnect" ? disconnect : forget;
+			action.mockReturnValueOnce(result.promise);
+			publishWifi({
+				"0": radio(
+					operation === "disconnect"
+						? { conn: CHOSEN_UUID, activeSsid: SHARED_SSID }
+						: {},
+				),
+			});
+			render(WifiSelectorDialog, { props: { open: true, deviceId: "0" } });
+			await settle();
+			await clickOperation(operation, SHARED_SSID);
+			try {
+				expect(getOperationPhase(CONNECT_KEY)).toBe("pending");
+				publishWifi({
+					"0": radio(operation === "forget" ? { saved: {} } : {}),
+				});
+				await settle();
+				expect(getOperationPhase(CONNECT_KEY)).toBe("confirmed");
+				expect(action).toHaveBeenCalledTimes(1);
+			} finally {
+				result.resolve({ success: true });
+				await settle();
+			}
+		});
+
+		it(`confirms an explicitly dispatched B ${operation} only from B's current snapshot`, async () => {
+			const a = Promise.withResolvers<unknown>();
+			const b = Promise.withResolvers<unknown>();
+			const action = operation === "disconnect" ? disconnect : forget;
+			action.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+			const ownA =
+				operation === "disconnect"
+					? { conn: CHOSEN_UUID, activeSsid: SHARED_SSID }
+					: {};
+			const ownB =
+				operation === "disconnect"
+					? { conn: OTHER_UUID, activeSsid: OTHER_SSID }
+					: {};
+			publishWifi({
+				"0": radio(ownA),
+				"1": {
+					...radio({
+						...ownB,
+						saved: { [OTHER_SSID]: OTHER_UUID },
+						ssids: [OTHER_SSID],
+					}),
+					ifname: "wlan1",
+				},
+			});
+			const view = render(WifiSelectorDialog, {
+				props: { open: true, deviceId: "0" },
+			});
+			await settle();
+			await clickOperation(operation, SHARED_SSID);
+			await view.rerender({ open: true, deviceId: "1" });
+			await settle();
+			try {
+				await clickOperation(operation, OTHER_SSID);
+				expect(action).toHaveBeenLastCalledWith({ uuid: OTHER_UUID });
+				expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("pending");
+				publishWifi({
+					...getWifiFeed(),
+					"0": radio(operation === "forget" ? { saved: {} } : {}),
+				});
+				await settle();
+				expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("pending");
+				publishWifi({
+					...getWifiFeed(),
+					"1": {
+						...radio({
+							saved: operation === "forget" ? {} : { [OTHER_SSID]: OTHER_UUID },
+							ssids: [OTHER_SSID],
+						}),
+						ifname: "wlan1",
+					},
+				});
+				await settle();
+				expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("confirmed");
+				expect(getOperationPhase(CONNECT_KEY)).toBe("pending");
+				expect(action).toHaveBeenCalledTimes(2);
+			} finally {
+				a.resolve({ success: true });
+				b.resolve({ success: true });
+				await settle();
+			}
+		});
+	}
 });
 
 describe("WifiSelectorDialog — identity-keyed connect confirmation", () => {
