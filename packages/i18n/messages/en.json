@@ -2772,7 +2772,7 @@
 	"hotspotConfirm.generate": "New random password",
 	"hotspotConfirm.acknowledge": "I've saved the name and password, and I understand my current connection may drop.",
 	"hotspotConfirm.activate": "Turn on hotspot",
-	"hotspotConfirm.saveFailed": "Couldn't save the new name and password. Nothing changed and the hotspot stays off.",
+	"hotspotConfirm.saveFailed": "Couldn't confirm the new name and password. They may already be saved. Reopen this confirmation to check the reported details before trying again.",
 	"hotspotConfirm.passwordCharacters": "Use only standard letters, numbers and symbols (no accents or emoji).",
 	"hotspotConfirm.inactiveHint": "You'll see and can change the network name and password when you turn the hotspot on.",
 	"network.wifiMode.confirm.switchTo": "Switch to {mode}",
