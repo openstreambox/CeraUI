@@ -50,7 +50,10 @@ export type NetworkManagerConnection = {
 	ifname: string;
 	autoconnect: "yes" | "no";
 	"connection.autoconnect-retries": number;
+	"ipv4.method": string;
 	"ipv6.method": string;
+	"ipv6.never-default"?: string;
+	"ipv6.ip6-privacy"?: string;
 	"gsm.device-id": string;
 	"gsm.sim-id": string;
 	"gsm.sim-operator-id"?: string;
