@@ -454,8 +454,13 @@ A dev-only DevTools destination is available in development builds.
   awaits the update infrastructure; see `docs/HOST-UPLINK-ELECTION.md`.
 - **Flow-sticky client sharing**: the backend assigns new hotspot/shared-LAN flows
   across healthy uplinks while preserving established-flow affinity and keeping
-  locally-originated SRTLA traffic outside its NAT path. The image carrier is the
-  remaining deployment dependency; see [`docs/UPLINK_STEERING.md`](docs/UPLINK_STEERING.md).
+  locally-originated SRTLA traffic outside its NAT path. When no uplink has a
+  positive selectable share, an applied ruleset drops new forwarded IPv4 client
+  flows; the hotspot or shared LAN can remain up. Source for that behaviour, the
+  image carrier, and the English and es-419 operator notes exists. Package,
+  image, and device gates remain open. See
+  [`docs/UPLINK_STEERING.md`](docs/UPLINK_STEERING.md) and
+  [`docs/es-419/UPLINK_STEERING.md`](docs/es-419/UPLINK_STEERING.md).
 - **Streaming-first client shaping**: while live, locally-originated SRT/SRTLA
   traffic occupies an uncapped priority band and only steering-marked client flows
   receive an adaptive CAKE/HTB ceiling. See
@@ -601,7 +606,7 @@ See [BUILD_PIPELINE.md](docs/BUILD_PIPELINE.md) for full build documentation.
 | [APT_VERSION_CONTROL.md](docs/APT_VERSION_CONTROL.md) | Debian package versioning |
 | [BRANDING.md](docs/BRANDING.md) | Branding guidelines |
 | [TOUCHSCREEN.md](docs/TOUCHSCREEN.md) | Touch/kiosk layout mode |
-| [UPLINK_STEERING.md](docs/UPLINK_STEERING.md) | Shared-client flow steering, route/NAT ownership, and validation status |
+| [UPLINK_STEERING.md](docs/UPLINK_STEERING.md), [es-419](docs/es-419/UPLINK_STEERING.md) | Shared-client flow steering and all-down operator behaviour, in English and es-419, plus route/NAT ownership and validation status |
 | [UPLINK_SHAPING.md](docs/UPLINK_SHAPING.md) | SRT-priority qdisc hierarchy, adaptive client caps, ownership, and validation status |
 | [TECHNICAL_DEBT.md](docs/TECHNICAL_DEBT.md) | Machine-checkable tech-debt register (source-experience overhaul) |
 | [CONVENTIONS.md](docs/CONVENTIONS.md) | CeraUI-local conventions including tech-debt register contract |
