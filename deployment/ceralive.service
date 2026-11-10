@@ -7,6 +7,11 @@ Type=notify
 NotifyAccess=main
 User=root
 Group=root
+# Shared runtime files must exist before the backend publishes a ruleset.
+RuntimeDirectory=ceralive
+RuntimeDirectoryMode=0700
+# Other services use this directory; preserve it until the next boot.
+RuntimeDirectoryPreserve=yes
 Environment=NODE_ENV=production
 WorkingDirectory=/opt/ceralive/
 ExecStart=/usr/local/bin/ceralive
