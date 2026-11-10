@@ -21,7 +21,13 @@
  *      inline rather than as a toast that expires.
  */
 import type { NetifEntry } from "@ceraui/rpc/schemas";
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/svelte";
 import {
 	afterEach,
 	beforeAll,
@@ -45,13 +51,16 @@ vi.mock("svelte-sonner", () => ({
 	toast: { error: vi.fn(), success: vi.fn() },
 }));
 
+import { toast } from "svelte-sonner";
 import { rpc } from "$lib/rpc";
 import {
 	beginOperation,
+	confirmOperation,
 	destroyAsyncOperations,
 	failOperation,
 	getOperationPhase,
 	initAsyncOperations,
+	timeoutOperation,
 } from "$lib/rpc/async-operation.svelte";
 import { ethernetRoleOpKey } from "$main/network/ethernet-role-view";
 
@@ -85,15 +94,63 @@ function cancel() {
 	return fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 }
 
-function stage(role: "uplink" | "shared-lan") {
-	return fireEvent.click(screen.getByTestId(`eth-role-option-eth0-${role}`));
+function stage(role: "uplink" | "shared-lan", name = "eth0") {
+	return fireEvent.click(screen.getByTestId(`eth-role-option-${name}-${role}`));
 }
 
-function checked(role: "uplink" | "shared-lan"): string | null {
+function checked(role: "uplink" | "shared-lan", name = "eth0"): string | null {
 	return screen
-		.getByTestId(`eth-role-option-eth0-${role}`)
+		.getByTestId(`eth-role-option-${name}-${role}`)
 		.getAttribute("aria-checked");
 }
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason: unknown) => void;
+	const promise = new Promise<T>((done, fail) => {
+		resolve = done;
+		reject = fail;
+	});
+	return { promise, resolve, reject };
+}
+
+describe("explicit Shared LAN recovery", () => {
+	it("stages Retry for unchanged addressless Shared LAN and sends it only on Save", async () => {
+		open(iface({ ethRole: "shared-lan", ip: undefined, enabled: false }));
+		await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		expect(setEthernetRole).not.toHaveBeenCalled();
+		expect(configure).not.toHaveBeenCalled();
+		expect(
+			screen.getByTestId("eth-role-recovery-staged-eth0").textContent,
+		).toContain("Applies when you save");
+		await save();
+		await waitFor(() => expect(setEthernetRole).toHaveBeenCalledTimes(1));
+		expect(setEthernetRole).toHaveBeenCalledWith({
+			name: "eth0",
+			role: "shared-lan",
+		});
+	});
+
+	it("a late applied role cannot configure or close a reopened different port", async () => {
+		const pending = deferred<{ success: true; applied: "shared-lan" }>();
+		setEthernetRole.mockReturnValueOnce(pending.promise);
+		const view = open();
+		await stage("shared-lan");
+		await save();
+		await waitFor(() => expect(setEthernetRole).toHaveBeenCalledTimes(1));
+		await view.rerender({ open: false, name: "eth0", iface: iface() });
+		await view.rerender({
+			open: true,
+			name: "eth1",
+			iface: iface({ ip: "192.0.2.10" }),
+		});
+		await act(() => {
+			pending.resolve({ success: true, applied: "shared-lan" });
+		});
+		expect(configure).not.toHaveBeenCalled();
+		expect(screen.getByRole("dialog")).toBeTruthy();
+	});
+});
 
 beforeAll(() => {
 	if (!window.matchMedia) {
@@ -292,7 +349,9 @@ describe("NetifDialog — the role is STAGED until Save", () => {
 		expect(configure).not.toHaveBeenCalled();
 		const band = await screen.findByTestId("eth-role-error-eth0");
 		expect(band.getAttribute("data-error")).toBe("apply_failed");
-		expect(band.textContent).toContain("could not apply the new role");
+		expect(band.textContent).toContain(
+			"Couldn't confirm the role change. The network profile may already have changed.",
+		);
 	});
 });
 
@@ -405,7 +464,9 @@ describe("NetifDialog — the DEVICE moves the control", () => {
 
 		const band = await screen.findByTestId("eth-role-error-eth0");
 		expect(band.getAttribute("data-error")).toBe("apply_failed");
-		expect(band.textContent).toContain("could not apply the new role");
+		expect(band.textContent).toContain(
+			"Couldn't confirm the role change. The network profile may already have changed.",
+		);
 		expect(checked("uplink")).toBe("true");
 	});
 
@@ -416,7 +477,9 @@ describe("NetifDialog — the DEVICE moves the control", () => {
 
 		const band = await screen.findByTestId("eth-role-error-eth0");
 		expect(band.textContent).not.toContain("some_future_token");
-		expect(band.textContent).toContain("refused the change");
+		expect(band.textContent).toContain(
+			"Couldn't confirm the role change. Review this port's reported role and address before trying again.",
+		);
 	});
 
 	it("carries an emulated-host refusal through the RPC reply", async () => {
@@ -437,4 +500,284 @@ describe("NetifDialog — the DEVICE moves the control", () => {
 		);
 		expect(band.textContent).toContain("real hardware");
 	});
+});
+
+type RoleReply = Awaited<ReturnType<typeof rpc.network.setEthernetRole>>;
+type ConfigureReply = Awaited<ReturnType<typeof rpc.network.configure>>;
+const shared = () =>
+	iface({ ethRole: "shared-lan", enabled: false, ip: undefined });
+const retry = () => screen.getByRole("button", { name: "Retry" });
+const savePending = () =>
+	screen.getByRole("button", { name: "Save" }).hasAttribute("disabled");
+const outcomes = ["applied", "refusal", "rejection"] as const;
+
+async function replyRole(
+	pending: ReturnType<typeof deferred<RoleReply>>,
+	outcome: (typeof outcomes)[number],
+) {
+	await act(() => {
+		if (outcome === "rejection") pending.reject(new Error("lost role reply"));
+		else
+			pending.resolve(
+				outcome === "applied"
+					? { success: true, applied: "shared-lan" }
+					: { success: false, error: "apply_failed" },
+			);
+	});
+}
+
+describe("one-shot Shared LAN recovery intent", () => {
+	it("ordinary unchanged Shared LAN Save still sends no role request", async () => {
+		open(shared());
+		await save();
+		await waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+		expect(setEthernetRole).not.toHaveBeenCalled();
+	});
+
+	it("Retry toggles a visible staged warning without a request", async () => {
+		open(shared());
+		expect(retry().getAttribute("aria-pressed")).toBe("false");
+		expect(retry().className).toContain("min-h-[var(--touch-target-min)]");
+		await fireEvent.click(retry());
+		expect(retry().getAttribute("aria-pressed")).toBe("true");
+		expect(
+			screen.getByTestId("eth-role-recovery-staged-eth0").textContent,
+		).toContain("managing it through this port");
+		await fireEvent.click(retry());
+		expect(screen.queryByTestId("eth-role-recovery-staged-eth0")).toBeNull();
+		expect(setEthernetRole).not.toHaveBeenCalled();
+		expect(configure).not.toHaveBeenCalled();
+	});
+
+	it("Cancel/reopen clears the one-shot request and ordinary Save remains ordinary", async () => {
+		const view = open(shared());
+		await fireEvent.click(retry());
+		await cancel();
+		expect(setEthernetRole).not.toHaveBeenCalled();
+		await view.rerender({ open: true, name: "eth0", iface: shared() });
+		expect(retry().getAttribute("aria-pressed")).toBe("false");
+		await save();
+		await waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+		expect(setEthernetRole).not.toHaveBeenCalled();
+	});
+
+	it("changing ports without closing drops the unsent recovery before ordinary Save", async () => {
+		const view = open(shared());
+		await fireEvent.click(retry());
+		await view.rerender({ open: true, name: "eth1", iface: shared() });
+		expect(retry().getAttribute("aria-pressed")).toBe("false");
+		await save();
+		await waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+		expect(configure).toHaveBeenCalledWith({
+			name: "eth1",
+			ip: undefined,
+			enabled: false,
+		});
+		expect(setEthernetRole).not.toHaveBeenCalled();
+	});
+
+	it("selecting Uplink discards recovery even if the operator returns to Shared LAN", async () => {
+		open(shared());
+		await fireEvent.click(retry());
+		await stage("uplink");
+		expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+		await stage("shared-lan");
+		expect(retry().getAttribute("aria-pressed")).toBe("false");
+		await save();
+		await waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+		expect(setEthernetRole).not.toHaveBeenCalled();
+	});
+
+	it.each(["role", "netif"] as const)(
+		"a current same-port %s operation blocks Retry and Save",
+		async (kind) => {
+			open(shared());
+			await act(() => {
+				beginOperation(kind === "role" ? KEY : "netif:eth0");
+			});
+			expect(retry().hasAttribute("disabled")).toBe(true);
+			await fireEvent.click(retry());
+			await save();
+			expect(setEthernetRole).not.toHaveBeenCalled();
+			expect(configure).not.toHaveBeenCalled();
+		},
+	);
+
+	it("another port's pending operations do not block this port", async () => {
+		beginOperation(ethernetRoleOpKey("eth1"));
+		beginOperation("netif:eth1");
+		open(shared());
+		expect(retry().hasAttribute("disabled")).toBe(false);
+		await fireEvent.click(retry());
+		await save();
+		await waitFor(() => expect(setEthernetRole).toHaveBeenCalledTimes(1));
+		expect(setEthernetRole).toHaveBeenCalledWith({
+			name: "eth0",
+			role: "shared-lan",
+		});
+	});
+
+	it("recovery stays on Shared LAN while pending, guards double Save, and does not fabricate confirmation", async () => {
+		const pending = deferred<RoleReply>();
+		setEthernetRole.mockReturnValueOnce(pending.promise);
+		open(shared());
+		await fireEvent.click(retry());
+		await save();
+		await save();
+		expect(setEthernetRole).toHaveBeenCalledTimes(1);
+		expect(checked("shared-lan")).toBe("true");
+		expect(checked("uplink")).toBe("false");
+		expect(getOperationPhase(KEY)).toBe("pending");
+		expect(retry().hasAttribute("disabled")).toBe(true);
+		await replyRole(pending, "applied");
+		expect(getOperationPhase(KEY)).toBe("pending");
+		confirmOperation(KEY);
+		expect(getOperationPhase(KEY)).toBe("confirmed");
+		expect(configure).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(["refusal", "rejection"] as const)(
+		"a current %s consumes recovery, stops configure, and needs a new explicit Retry",
+		async (kind) => {
+			const pending = deferred<RoleReply>();
+			setEthernetRole.mockReturnValueOnce(pending.promise);
+			open(shared());
+			await fireEvent.click(retry());
+			await save();
+			await replyRole(pending, kind);
+			expect(configure).not.toHaveBeenCalled();
+			expect(savePending()).toBe(false);
+			expect(screen.getByTestId("eth-role-error-eth0")).toBeTruthy();
+			expect(retry().getAttribute("aria-pressed")).toBe("false");
+			expect(screen.queryByTestId("eth-role-recovery-staged-eth0")).toBeNull();
+			await save();
+			await waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+			expect(setEthernetRole).toHaveBeenCalledTimes(1);
+		},
+	);
+
+	it("failure, timeout and confirmation observations never arm or dispatch recovery", async () => {
+		open(shared());
+		for (const phase of ["failure", "timeout", "confirmed"]) {
+			await act(() => {
+				beginOperation(KEY);
+				if (phase === "failure") failOperation(KEY, "no_connection");
+				else if (phase === "timeout") timeoutOperation(KEY);
+				else confirmOperation(KEY);
+			});
+			expect(retry().getAttribute("aria-pressed")).toBe("false");
+			expect(screen.queryByTestId("eth-role-recovery-staged-eth0")).toBeNull();
+		}
+		expect(setEthernetRole).not.toHaveBeenCalled();
+		expect(configure).not.toHaveBeenCalled();
+	});
+
+	it("a row without role support has no recovery offering", () => {
+		open(iface({ ethRole: undefined }));
+		expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+	});
+});
+
+for (const replacement of ["eth0", "eth1"]) {
+	describe(`deferred recovery ownership after reopen on ${replacement}`, () => {
+		it.each(outcomes)(
+			"late role A %s cannot alter pending B or configure its port",
+			async (outcome) => {
+				const a = deferred<RoleReply>(),
+					b = deferred<RoleReply>();
+				setEthernetRole
+					.mockReturnValueOnce(a.promise)
+					.mockReturnValueOnce(b.promise);
+				const view = open(shared());
+				await fireEvent.click(retry());
+				await save();
+				await waitFor(() => expect(setEthernetRole).toHaveBeenCalledTimes(1));
+				await cancel();
+				if (replacement === "eth0") timeoutOperation(KEY);
+				await view.rerender({ open: true, name: replacement, iface: shared() });
+				expect(savePending()).toBe(false);
+				await fireEvent.click(retry());
+				await save();
+				await waitFor(() => expect(setEthernetRole).toHaveBeenCalledTimes(2));
+				await replyRole(a, outcome);
+				expect(configure).not.toHaveBeenCalled();
+				expect(savePending()).toBe(true);
+				expect(checked("shared-lan", replacement)).toBe("true");
+				expect(retry().getAttribute("aria-pressed")).toBe("false");
+				expect(getOperationPhase(ethernetRoleOpKey(replacement))).toBe(
+					"pending",
+				);
+				expect(toast.success).not.toHaveBeenCalled();
+				expect(toast.error).not.toHaveBeenCalled();
+				confirmOperation(ethernetRoleOpKey(replacement));
+				await replyRole(b, "applied");
+				expect(configure).toHaveBeenCalledTimes(1);
+				expect(configure).toHaveBeenCalledWith({
+					name: replacement,
+					ip: undefined,
+					enabled: false,
+				});
+				await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+			},
+		);
+
+		it.each(outcomes)(
+			"late configure A %s cannot close, unlock, report refusal or toast into B",
+			async (outcome) => {
+				const a = deferred<ConfigureReply>(),
+					b = deferred<ConfigureReply>();
+				configure.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+				const view = open(shared());
+				await fireEvent.click(retry());
+				await save();
+				await waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
+				confirmOperation(KEY);
+				await cancel();
+				if (replacement === "eth0") timeoutOperation("netif:eth0");
+				await view.rerender({ open: true, name: replacement, iface: shared() });
+				await save();
+				await waitFor(() => expect(configure).toHaveBeenCalledTimes(2));
+				await act(() => {
+					if (outcome === "rejection")
+						a.reject(new Error("lost configure reply"));
+					else
+						a.resolve(
+							outcome === "applied"
+								? { success: true }
+								: { success: false, error: "stale_address" },
+						);
+				});
+				expect(savePending()).toBe(true);
+				expect(screen.queryByTestId("netif-save-error")).toBeNull();
+				expect(toast.success).not.toHaveBeenCalled();
+				expect(toast.error).not.toHaveBeenCalled();
+				expect(retry().getAttribute("aria-pressed")).toBe("false");
+				await act(() => {
+					b.resolve({ success: true });
+				});
+				await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+				expect(configure).toHaveBeenCalledTimes(2);
+				expect(setEthernetRole).toHaveBeenCalledTimes(1);
+			},
+		);
+	});
+}
+
+describe("unmounted save lifetime", () => {
+	it.each(outcomes)(
+		"late role %s after unmount cannot dispatch configure or feedback",
+		async (outcome) => {
+			const a = deferred<RoleReply>();
+			setEthernetRole.mockReturnValueOnce(a.promise);
+			const view = open(shared());
+			await fireEvent.click(retry());
+			await save();
+			await waitFor(() => expect(setEthernetRole).toHaveBeenCalledTimes(1));
+			view.unmount();
+			await replyRole(a, outcome);
+			expect(configure).not.toHaveBeenCalled();
+			expect(toast.success).not.toHaveBeenCalled();
+			expect(toast.error).not.toHaveBeenCalled();
+		},
+	);
 });

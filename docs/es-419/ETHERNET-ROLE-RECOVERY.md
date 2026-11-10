@@ -3,9 +3,22 @@
 Abre **Configurar** en el puerto por cable que quieras cambiar. En **Función del
 puerto**, elige **Enlace de subida** o **Red compartida** y luego **Guardar**
 para solicitar el cambio. Elegir una opción solo prepara la selección. Guardar
-envía un cambio de función únicamente si la selección es distinta de la función
-que se muestra; guardar la misma función no fuerza la reparación del perfil. No
-cambies a la otra función solo para forzar un nuevo intento.
+sin cambiar la función ni preparar un reintento no envía una solicitud de
+función. No cambies a la otra función solo para forzar un nuevo intento.
+
+Para volver a aplicar la función **Red compartida** que se muestra, elige
+**Reintentar** junto a su nombre. Reintentar solo prepara una solicitud de
+recuperación. Revisa **Se aplica al guardar** y la advertencia de interrupción
+de la conexión, y luego elige **Guardar** para enviarla. Elige Reintentar otra
+vez para desmarcarla o **Cancelar** para descartarla. Elegir Enlace de subida,
+cerrar y volver a abrir el diálogo o cambiar de puerto también descarta la
+solicitud que aún no se envió. Cada solicitud de recuperación enviada al elegir
+Guardar consume ese reintento, aunque su resultado quede sin confirmar; un
+error, un tiempo de espera agotado o una observación no lo vuelve a preparar ni
+lo repite automáticamente. Guardar otra vez sin cambios sigue siendo un guardado
+normal, salvo que prepares Reintentar de nuevo. Reintentar permanece
+deshabilitado mientras este puerto tenga un guardado o una operación de función
+o red en curso. Una operación de otro puerto no deshabilita este control.
 
 **Enlace de subida** permite que el puerto participe en el enlace SRTLA. **Red
 compartida** lo retira de ese enlace y solicita a NetworkManager una
@@ -31,8 +44,12 @@ correcto antes de decidir si solicitas otro cambio. La función mostrada puede
 reflejar la intención guardada que se restauró; no es una prueba independiente
 de la configuración activa del perfil, de una conexión a internet útil ni de la
 recuperación del acceso de administración. Cerrar o volver a abrir el diálogo no
-cancela una solicitud anterior. Elegir Enlace de subida y guardar un cambio
-nuevo es otra solicitud, no una reversión física de la anterior.
+cancela una solicitud anterior. Una respuesta tardía de un diálogo cerrado,
+reemplazado o retirado de la vista no puede iniciar su siguiente escritura de
+configuración ni cerrar la vista nueva; esto no deshace una solicitud que ya se
+envió al equipo. Elegir Enlace de subida y guardar un cambio nuevo es otra
+solicitud, no una reversión física de la anterior. Si falla la solicitud de
+función, el resto de ese guardado se detiene.
 
 ## Cómo se recupera una nueva solicitud de Red compartida
 
@@ -50,8 +67,9 @@ no borra el perfil incierto ni repite automáticamente la solicitud de creación
 Al arrancar, la recuperación puede reutilizar un perfil propio válido que ya
 exista para una selección guardada de Red compartida. No crea un perfil que
 falte. Por eso, un perfil ausente o que no se puede leer puede seguir sin
-resolverse; reiniciar o guardar la misma función mostrada no garantiza
-repararlo.
+resolverse. Reiniciar o guardar sin cambios no fuerza una reparación; Reintentar
+seguido de Guardar solicita la recuperación de forma explícita y aun así puede
+dejar el resultado sin confirmar.
 
 Las reglas de orden y recuperación de perfiles están cubiertas por pruebas
 deterministas con dependencias simuladas. DHCP/DNS/NAT nativos, conflictos de
