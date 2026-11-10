@@ -57,6 +57,8 @@ function catalogNamespaces(keys: Set<string>): Set<string> {
  * failing the assertion.
  */
 const NOT_I18N_KEYS = new Set<string>([
+	// NetworkManager profile property used by nmcli connection add.
+	"connection.uuid",
 	// nmcli connection property, `modules/wifi/wifi-hotspot-config.ts` /
 	// `wifi-hotspot-types.ts` — collides with the `connection.*` namespace.
 	"connection.autoconnect",
