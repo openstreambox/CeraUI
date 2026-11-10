@@ -32,6 +32,7 @@ export type OperationRecord = {
 export type Snapshot = {
 	version: 1;
 	session: string;
+	holder?: Holder | undefined;
 	operations: OperationRecord[];
 };
 export interface Journal {
@@ -136,6 +137,10 @@ export class EffectAdapter {
 		}
 	}
 
+	designatedHolder(): Holder | null {
+		return this.snapshot?.holder ? structuredClone(this.snapshot.holder) : null;
+	}
+
 	private save() {
 		return this.bounded(() =>
 			this.journal.save(structuredClone(this.snapshot as Snapshot)),
@@ -163,13 +168,19 @@ export class EffectAdapter {
 						await this.save();
 						if (!(await this.cleanup(record))) return false;
 						record.clean = true;
+						this.snapshot.holder = structuredClone(record.holder);
 						await this.save();
 					}
+					// Older snapshots carry the designation only on the last operation.
+					const lastHolder = this.snapshot.operations.at(-1)?.holder;
+					if (!this.snapshot.holder && lastHolder)
+						this.snapshot.holder = structuredClone(lastHolder);
 					// Operation numbers may restart only with a new session after reconciliation.
 					if (this.snapshot.session !== this.session) {
 						this.snapshot = {
 							version: 1,
 							session: this.session,
+							...(this.snapshot.holder ? { holder: this.snapshot.holder } : {}),
 							operations: [],
 						};
 						this.closed.clear();
@@ -290,6 +301,7 @@ export class EffectAdapter {
 						snapshot.operations.push(record);
 					}
 					record.holder = structuredClone(holder);
+					snapshot.holder = structuredClone(holder);
 					if (cleanup) {
 						record.closed = true;
 						record.clean = false;

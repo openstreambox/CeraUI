@@ -357,6 +357,9 @@ export const runtimeConfigSchema = z.object({
 	// never the sysext `.raw` payload bytes.
 	addons: AddonConfigSchema.optional(),
 
+	// Experimental coordinator admission. Absence preserves serialized config bytes.
+	two_radio_enabled: z.boolean().optional(),
+
 	// Operator enable/disable of the LAN RTMP/SRT network-ingest gateways (T6). A
 	// missing key (old config) defaults both protocols enabled via the inner
 	// defaults; kept `.optional()` so `let config: RuntimeConfig = {}` still parses.
