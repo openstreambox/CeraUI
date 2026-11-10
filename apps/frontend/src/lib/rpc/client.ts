@@ -820,6 +820,7 @@ export interface TypedRPC {
 		hotspotPrepare: (
 			input: HotspotPrepareInput,
 		) => Promise<HotspotPrepareOutput>;
+		hotspotDelete: (input: HotspotToggleInput) => Promise<SuccessResponse>;
 		hotspotConfigure: (input: HotspotConfigInput) => Promise<SuccessResponse>;
 		setCountry: (input: SetWifiCountryInput) => Promise<SetWifiCountryOutput>;
 		getAdapterModes: () => Promise<WifiAdapterModeStatus>;

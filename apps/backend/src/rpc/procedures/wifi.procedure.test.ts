@@ -1,19 +1,27 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
 import { call } from "@orpc/server";
-
 import { withDeviceLock } from "../../modules/network/state/device-lock.ts";
+import {
+	getHotspotCredentials,
+	rememberHotspotCredentials,
+	resetHotspotCredentialsForTest,
+} from "../../modules/wifi/hotspot-credentials.ts";
 import {
 	addWifiInterface,
 	getWifiInterfacesByMacAddress,
 } from "../../modules/wifi/wifi-connections.ts";
+import { hotspotProfileDeps } from "../../modules/wifi/wifi-hotspot-profile.ts";
 import type { WifiInterface } from "../../modules/wifi/wifi-interfaces.ts";
+import { getWifiIdToMacAddress } from "../../modules/wifi/wifi-interfaces.ts";
 import {
 	isolateWifiRegistry,
 	restoreWifiRegistry,
 } from "../../tests/helpers/wifi-registry.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
-import { hotspotConfigureProcedure } from "./wifi.procedure.ts";
+import {
+	hotspotConfigureProcedure,
+	hotspotDeleteProcedure,
+} from "./wifi.procedure.ts";
 
 function makeContext(): RPCContext {
 	const ws = {
@@ -100,4 +108,62 @@ describe("wifi.hotspotConfigure — device lock (S5)", () => {
 		});
 		expect(result.success).toBe(true);
 	});
+});
+
+test("hotspotDelete RPC forgets a prepared identity and refuses while the adapter is locked", async () => {
+	const inherited = isolateWifiRegistry();
+	const original = { ...hotspotProfileDeps };
+	const mac = "02:00:00:00:00:01";
+	const previousMac = getWifiIdToMacAddress()[0];
+	try {
+		seedInterface(mac);
+		getWifiIdToMacAddress()[0] = mac;
+		hotspotProfileDeps.list = async () => [];
+		rememberHotspotCredentials(mac, {
+			ssid: "Example",
+			password: "example-password",
+		});
+		let release = () => {};
+		const held = withDeviceLock(
+			mac,
+			() =>
+				new Promise<void>((resolve) => {
+					release = resolve;
+				}),
+		);
+		try {
+			expect(
+				await call(
+					hotspotDeleteProcedure,
+					{ device: "0" },
+					{ context: makeContext() },
+				),
+			).toEqual({ success: false, error: "DEVICE_BUSY" });
+			expect(getHotspotCredentials(mac)).toBeDefined();
+		} finally {
+			release();
+			await held;
+		}
+		expect(
+			await call(
+				hotspotDeleteProcedure,
+				{ device: "0" },
+				{ context: makeContext() },
+			),
+		).toEqual({ success: true });
+		expect(getHotspotCredentials(mac)).toBeUndefined();
+		expect(
+			await call(
+				hotspotDeleteProcedure,
+				{ device: "0" },
+				{ context: makeContext() },
+			),
+		).toEqual({ success: true });
+	} finally {
+		Object.assign(hotspotProfileDeps, original);
+		if (previousMac === undefined) delete getWifiIdToMacAddress()[0];
+		else getWifiIdToMacAddress()[0] = previousMac;
+		restoreWifiRegistry(inherited);
+		resetHotspotCredentialsForTest();
+	}
 });

@@ -517,3 +517,38 @@ describe("wifiHotspotConfig — security acceptance", () => {
 		});
 	});
 });
+
+test("Configure while off prepares a profile and publishes success without activating", async () => {
+	const iface = hotspotIface();
+	iface.conn = null;
+	delete iface.hotspot.conn;
+	addWifiInterface(MAC, iface);
+	getWifiIdToMacAddress()[0] = MAC;
+	const setups: Record<string, string>[] = [];
+	const rec = makeConfigDeps(caps(), {
+		configureProfile: async (_mac, settings, _deps, commit) => {
+			setups.push(settings);
+			commit?.("owned-uuid");
+			return "owned-uuid";
+		},
+	});
+	const sock = fakeSocket();
+	await wifiHotspotConfig(
+		sock.socket,
+		{
+			device: 0,
+			name: "Example",
+			password: "example-password",
+			channel: "auto_24",
+		},
+		rec.deps,
+	);
+	expect(sock.errors()).toEqual([{ device: 0, success: true }]);
+	expect(setups[0]).toMatchObject({
+		"802-11-wireless.ssid": "Example",
+		"802-11-wireless.band": "bg",
+	});
+	expect(rec.connected).toEqual([]);
+	expect(iface.hotspot.conn).toBe("owned-uuid");
+	expect(iface.conn).toBeNull();
+});

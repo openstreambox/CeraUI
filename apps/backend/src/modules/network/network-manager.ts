@@ -56,7 +56,9 @@ export type NetworkManagerConnection = {
 	"gsm.sim-operator-id"?: string;
 } & NetworkManagerConnectionModemConfig;
 
-export async function nmConnAdd(connection: NetworkManagerConnection) {
+export async function nmConnAdd(
+	connection: NetworkManagerConnection | Record<string, string>,
+) {
 	const fields = connection as Record<string, string | number>;
 	try {
 		// In mock mode, return a fake UUID for new connections

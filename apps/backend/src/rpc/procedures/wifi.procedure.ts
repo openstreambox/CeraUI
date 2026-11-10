@@ -1,3 +1,4 @@
+import { wifiHotspotDelete } from "../../modules/wifi/wifi-hotspot-profile.ts";
 /**
  * WiFi Procedures
  * Wraps existing WiFi logic from modules/wifi/
@@ -301,6 +302,18 @@ export const wifiForgetProcedure = authedProcedure
 	.output(successResponseSchema)
 	.handler(async ({ input, context }): Promise<MutationResult> => {
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
+		for (const iface of Object.values(getWifiInterfacesByMacAddress())) {
+			if (iface && "hotspot" in iface && iface.hotspot.conn === input.uuid) {
+				const result = await wifiHotspotDelete(iface.id);
+				return result.success
+					? { success: true }
+					: {
+							success: false,
+							error: result.error === "DEVICE_BUSY" ? "DEVICE_BUSY" : "generic",
+						};
+			}
+		}
+
 		const ws = context.ws;
 		const lockKey = wifiAdapterLockKeyForConnectionUuid(input.uuid);
 		const busy = await runGuarded(lockKey, () => {
@@ -582,3 +595,8 @@ export const setWifiCountryProcedure = authedProcedure
 
 		return setWifiCountry(input.country);
 	});
+
+export const hotspotDeleteProcedure = authedProcedure
+	.input(hotspotToggleInputSchema)
+	.output(successResponseSchema)
+	.handler(async ({ input }) => wifiHotspotDelete(Number(input.device)));

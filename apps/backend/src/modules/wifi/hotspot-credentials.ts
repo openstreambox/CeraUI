@@ -165,9 +165,9 @@ function persist(): void {
 			JSON.stringify({ version: STORE_VERSION, adapters: entries }),
 		);
 	} catch (err) {
-		// A hotspot must never fail to start because its credential backstop could
-		// not be written — NetworkManager still holds the profile.
+		// Setup must not acknowledge credentials it could not durably save.
 		logger.warn(`Failed to persist hotspot credentials: ${err}`);
+		throw err;
 	}
 }
 
@@ -245,7 +245,27 @@ export function rememberHotspotCredentials(
 	}
 
 	entries[key] = next;
-	persist();
+	try {
+		persist();
+	} catch (error) {
+		if (previous) entries[key] = previous;
+		else delete entries[key];
+		throw error;
+	}
+}
+
+/** Remove durable prepared identity atomically; failed persistence retains retry evidence. */
+export function forgetHotspotCredentials(macAddress: string): void {
+	const key = keyFor(macAddress);
+	if (!key || !entries[key]) return;
+	const next = { ...entries };
+	delete next[key];
+	if (initialized)
+		writeFileAtomicSync(
+			filePath,
+			JSON.stringify({ version: STORE_VERSION, adapters: next }),
+		);
+	entries = next;
 }
 
 /** Injectable view of the store used by the hotspot activation flow. */

@@ -170,6 +170,9 @@ export type HotspotStartResult =
  * `pollHotspotActive` so confirmation comes purely from a fed monitor event).
  */
 export type HotspotActivationDeps = {
+	stationChannel?: typeof import("./wifi-concurrent-interface.ts").concurrentStationChannel;
+	configureProfile?: typeof import("./wifi-hotspot-profile.ts").configureHotspotProfile;
+	ownedProfile?: typeof import("./wifi-hotspot-profile.ts").ownedHotspotProfile;
 	nmConnect: (uuid: string, timeout?: number) => Promise<unknown>;
 	nmConnSetFields: (
 		uuid: string,

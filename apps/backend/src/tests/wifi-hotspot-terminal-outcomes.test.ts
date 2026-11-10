@@ -263,6 +263,8 @@ describe("hotspot start — a failure is typed, and every path is terminal", () 
 describe("hotspot start — the accepted path is settled by a LATER frame", () => {
 	test("an activation NM never confirms publishes `not-confirmed`", async () => {
 		const iface = makeHotspotIface("wlan1");
+		iface.hotspot.conn = "hotspot-uuid";
+		iface.hotspot.name = "Example";
 		seed(iface);
 
 		// Collapse the bounded confirmation backoff so the whole window elapses
@@ -307,6 +309,8 @@ describe("hotspot start — the accepted path is settled by a LATER frame", () =
 
 	test("an NM-confirmed activation publishes success exactly once", async () => {
 		const iface = makeHotspotIface("wlan2");
+		iface.hotspot.conn = "hotspot-uuid";
+		iface.hotspot.name = "Example";
 		seed(iface);
 
 		const result = await wifiHotspotStart(

@@ -127,7 +127,7 @@ async function confirm() {
 	if (!confirmationLive || !canConfirm) return;
 	const requestedDevice = device;
 	const isCurrent = () => confirmationLive && device === requestedDevice;
-	if (name !== loaded.name || password !== loaded.password) {
+	if (firstTime || name !== loaded.name || password !== loaded.password) {
 		phase = 'saving';
 		try {
 			const result = await rpc.wifi.hotspotPrepare({ device, name, password });

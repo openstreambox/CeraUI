@@ -29,6 +29,7 @@ vi.mock("$lib/rpc/client", () => ({
 		wifi: {
 			hotspotStart: vi.fn(async () => ({ success: true, accepted: true })),
 			hotspotStop: vi.fn(),
+			hotspotDelete: vi.fn(async () => ({ success: true })),
 			hotspotPrepare: vi.fn(),
 			hotspotConfigure: vi.fn(async () => ({ success: true })),
 			getAdapterModes: vi.fn(async () => ({})),
@@ -126,18 +127,38 @@ afterEach(() => {
 });
 
 describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
-	it("renders no editable form while off, so nothing typed can be silently ignored", () => {
+	it("configures while off without starting", async () => {
 		render(HotspotDialog, {
 			props: { open: true, deviceId: "0", iface: STATION },
 		});
-		expect(document.querySelector("#hotspot-name")).toBeNull();
-		expect(document.querySelector("#hotspot-password")).toBeNull();
-		expect(q("hotspot-inactive-hint")).not.toBeNull();
-		const save = [
-			...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
-		].find((b) => b.textContent?.includes("Save"));
-		// Save only reconfigures a live AP, so it is not offered while off.
-		expect(save).toBeUndefined();
+		await fireEvent.input(document.querySelector("#hotspot-name")!, {
+			target: { value: "Example" },
+		});
+		await fireEvent.input(document.querySelector("#hotspot-password")!, {
+			target: { value: "example-password" },
+		});
+		const save = [...document.querySelectorAll("button")].find(
+			(b) => b.textContent?.trim() === "Save",
+		)!;
+		await fireEvent.click(save);
+		expect(rpc.wifi.hotspotConfigure).toHaveBeenCalledWith({
+			device: "0",
+			name: "Example",
+			password: "example-password",
+			channel: "auto",
+		});
+		expect(start).not.toHaveBeenCalled();
+	});
+	it("forgets the inactive setup through the delete API", async () => {
+		render(HotspotDialog, {
+			props: { open: true, deviceId: "0", iface: STATION },
+		});
+		const forget = [...document.querySelectorAll("button")].find(
+			(b) => b.textContent?.trim() === "Forget",
+		)!;
+		await fireEvent.click(forget);
+		expect(rpc.wifi.hotspotDelete).toHaveBeenCalledWith({ device: "0" });
+		expect(start).not.toHaveBeenCalled();
 	});
 
 	it("Enable opens the gate with the REAL credentials visible and starts nothing", async () => {

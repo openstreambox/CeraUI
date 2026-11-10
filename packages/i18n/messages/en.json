@@ -2774,7 +2774,7 @@
 	"hotspotConfirm.activate": "Turn on hotspot",
 	"hotspotConfirm.saveFailed": "Couldn't confirm the new name and password. They may already be saved. Reopen this confirmation to check the reported details before trying again.",
 	"hotspotConfirm.passwordCharacters": "Use only standard letters, numbers and symbols (no accents or emoji).",
-	"hotspotConfirm.inactiveHint": "You'll see and can change the network name and password when you turn the hotspot on.",
+	"hotspotConfirm.inactiveHint": "Set the network name, password and channel while the hotspot is off. Save prepares it; Turn on starts it. Stop before choosing Forget to remove the saved hotspot.",
 	"network.wifiMode.confirm.switchTo": "Switch to {mode}",
 	"hotspotConfirm.firstTimeTitle": "Set up your hotspot",
 	"hotspotConfirm.firstTimeBody": "This radio hasn't run a hotspot before. Keep the suggested name and password or choose your own."

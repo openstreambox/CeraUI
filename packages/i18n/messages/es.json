@@ -2777,7 +2777,7 @@
 	"hotspotConfirm.activate": "Activar punto de acceso",
 	"hotspotConfirm.saveFailed": "No se pudieron confirmar el nuevo nombre y la nueva contraseña. Es posible que ya se hayan guardado. Vuelve a abrir esta confirmación y revisa los datos que informa el equipo antes de volver a intentarlo.",
 	"hotspotConfirm.passwordCharacters": "Usa solo letras, números y símbolos estándar (sin acentos ni emojis).",
-	"hotspotConfirm.inactiveHint": "Al activar el punto de acceso verás el nombre de red y la contraseña, y podrás cambiarlos.",
+	"hotspotConfirm.inactiveHint": "Configura el nombre, la contraseña y el canal con el punto de acceso apagado. Guardar lo prepara; Activar lo inicia. Apágalo antes de elegir Olvidar para eliminar la configuración guardada.",
 	"network.wifiMode.confirm.switchTo": "Cambiar a {mode}",
 	"hotspotConfirm.firstTimeTitle": "Configura tu punto de acceso",
 	"hotspotConfirm.firstTimeBody": "Este adaptador nunca creó un punto de acceso. Deja el nombre y la contraseña sugeridos o elige los tuyos."

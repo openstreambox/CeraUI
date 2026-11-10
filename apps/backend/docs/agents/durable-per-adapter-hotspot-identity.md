@@ -106,3 +106,13 @@ prune negatives). Rule E proof captured in both directions: neutering the
 discovery-before-generation step reddens 5 tests; swapping the repair/activate
 order reddens the ordering test alone.
 
+
+## Explicit setup lifecycle
+
+[Hotspot lifecycle](../../../../docs/HOTSPOT-LIFECYCLE.md) supersedes the earlier
+create-on-start behavior above. Configure while off creates an inactive marked
+AP profile. Start activates an existing owned UUID and never generates or saves
+credentials, creates profiles, prunes duplicates, or arms autoconnect. Prepare
+can still supply a suggestion; confirming a first setup explicitly prepares its
+profile before Start. Delete requires an inactive, verified owned profile and
+then removes the durable identity. An adopted legacy profile is preserved.

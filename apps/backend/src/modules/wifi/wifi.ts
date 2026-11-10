@@ -307,7 +307,7 @@ export function wifiBuildMsg() {
 		}
 		ifs[id] = entry;
 
-		if (isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) {
+		if (canHotspot(wifiInterface)) {
 			// One capability read backs both derivations, so the security the
 			// device OFFERS and the width it REPORTS can never describe different
 			// radios.
@@ -315,7 +315,12 @@ export function wifiBuildMsg() {
 			const maxWidthMhz = offeredHotspotMaxWidth(hotspotCaps);
 			// Asked for THIS interface, which is the AP's own: a shared-wiphy board
 			// would otherwise report the station leg's peers as hotspot clients.
-			const clients = getHotspotClientsForInterface(wifiInterface.ifname);
+			const clients =
+				isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)
+					? getHotspotClientsForInterface(
+							wifiInterface.concurrentHotspot?.ifname ?? wifiInterface.ifname,
+						)
+					: undefined;
 
 			const hotspot: NonNullable<WifiInterfaceResponseMessage["hotspot"]> = {
 				...(wifiInterface.hotspot.name !== undefined
@@ -578,6 +583,10 @@ export function wifiSiblingConnections(uuid: ConnectionUUID): ConnectionUUID[] {
 }
 
 async function wifiForget(uuid: ConnectionUUID) {
+	// AP profiles are managed only through the owned hotspot lifecycle, never the station sibling sweep.
+	const mode = await nmConnGetFields(uuid, ["802-11-wireless.mode"] as const);
+	if (mode?.[0] === "ap") return;
+
 	if (wifiSearchConnection(uuid) === undefined) return;
 
 	let deleted = false;

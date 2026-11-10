@@ -20,8 +20,7 @@
   • Start never dispatches directly (#413): it opens `HotspotActivationConfirm`,
     which shows the exact credentials the AP will broadcast (or stores the
     operator's own) and needs an explicit acknowledgement. While the hotspot is
-    off, the edit form is NOT rendered — `hotspotConfigure` only reconfigures a
-    live AP, so fields typed here used to be silently ignored by the start.
+    off, Save prepares an inactive profile; Forget removes its saved setup.
   • When the hotspot is active, ONE QR encoding the live credentials is rendered
     so phones can join by scan. Its `T:` token follows the LIVE security mode
     (`hotspotQrSecurity`): a WPA3-SAE AP advertised as `T:WPA` yields a code that
@@ -139,8 +138,7 @@ const radioTruth = $derived(deriveHotspotRadioTruth(iface?.hotspot, iface?.capab
 let prevOpen = false;
 let prevActive = false;
 $effect.pre(() => {
-	// The form is not rendered while off, so the moment the AP comes up is a
-	// second (and the first useful) sync point; no edit can be clobbered there.
+	// Opening the dialog or receiving the first live AP refreshes the form.
 	const becameActive = isActive && !prevActive;
 	if (open && !prevOpen) confirmingStart = false;
 	if ((open && !prevOpen) || becameActive) {
@@ -234,6 +232,16 @@ $effect(() => {
 // a `wifi` event carrying `hotspot.config`, which the subscriptions handler routes
 // into `hotspot-config:${deviceId}`. The one-time form sync (`initialized` guard)
 // keeps the live QR/iface re-broadcast from clobbering the in-progress edits.
+async function handleDelete() {
+	await osCommand({
+		key: configKey,
+		rpc: () => rpc.wifi.hotspotDelete({ device: deviceId }),
+		confirmOnResolve: true,
+		failMessage: () => m["network.os.operationFailed"](),
+		busyMessage: () => m["network.os.deviceBusy"](),
+	});
+}
+
 async function handleSave() {
 	if (!isFormValid || configuring) return;
 	await osCommand({
@@ -396,7 +404,8 @@ async function copyPassword() {
 					{m["hotspotConfirm.inactiveHint"]()}
 				</p>
 			{/if}
-		{:else}
+		{/if}
+		{#if !confirmingStart}
 		<!-- Name -->
 		<div class="space-y-1.5">
 			<Label class="text-sm font-medium" for="hotspot-name">{m["network.hotspot.name"]()}</Label>
@@ -596,8 +605,7 @@ async function copyPassword() {
 			{m["network.dialog.close"]()}
 		</Button>
 		<!-- One action row at a time: while the credential gate is open, its own
-		     Cancel / Turn on are the only way forward, and Save exists only for a
-		     live AP (`hotspotConfigure` refuses anything else). -->
+		     Cancel / Turn on are the only way forward. Save prepares or updates setup. -->
 		{#if !confirmingStart}
 		<Button
 			class="sm:min-w-28"
@@ -614,7 +622,12 @@ async function copyPassword() {
 			{isActive ? m["network.status.turnOff"]() : m["network.status.enableHotspot"]()}
 		</Button>
 		{/if}
-		{#if isActive}
+		{#if !confirmingStart}
+		{#if !isActive}
+		<Button variant="outline" disabled={configuring || toggling} onclick={handleDelete}>
+			{m["wifiSelector.button.forget"]()}
+		</Button>
+		{/if}
 		<Button class="sm:min-w-24" disabled={!isFormValid || configuring} onclick={handleSave}>
 			{#if configuring}
 				<Loader2 class="size-4 animate-spin motion-reduce:animate-none" />
