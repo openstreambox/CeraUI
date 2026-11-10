@@ -88,6 +88,133 @@ export async function nmConnAdd(connection: NetworkManagerConnection) {
 	return undefined;
 }
 
+export type EthernetActiveConnection =
+	| { kind: "active"; uuid: string }
+	| { kind: "absent" }
+	| { kind: "unavailable" };
+export type EthernetOwnedProfile =
+	| { kind: "present" }
+	| { kind: "absent" }
+	| { kind: "unavailable" };
+export type EthernetSharedProfile = Readonly<{ ifname: string; uuid: string }>;
+
+const ETHERNET_IFNAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,14}$/;
+const CONNECTION_UUID =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Closed Ethernet operations, using the ordinary bounded argv runner. */
+export function createEthernetNm(
+	runner: (bin: string, args: string[]) => Promise<string> = run,
+) {
+	const execute = (args: string[]) => {
+		// This surface has no synthetic ownership database. A mock cannot claim
+		// that a reserved UUID exists, and must never fall through to the host.
+		if (runner === run && shouldMockWifi()) throw new Error("unavailable");
+		return runner("nmcli", args);
+	};
+	return {
+		async active(ifname: string): Promise<EthernetActiveConnection> {
+			try {
+				const value = (
+					await execute([
+						"--terse",
+						"--escape",
+						"no",
+						"--get-values",
+						"GENERAL.CON-UUID",
+						"device",
+						"show",
+						argMatch(ETHERNET_IFNAME, ifname),
+					])
+				).trim();
+				if (value === "") return { kind: "absent" };
+				return CONNECTION_UUID.test(value)
+					? { kind: "active", uuid: value.toLowerCase() }
+					: { kind: "unavailable" };
+			} catch {
+				return { kind: "unavailable" };
+			}
+		},
+		async profile(uuid: string, ifname: string): Promise<EthernetOwnedProfile> {
+			try {
+				const canonicalUuid = argMatch(CONNECTION_UUID, uuid).toLowerCase();
+				argMatch(ETHERNET_IFNAME, ifname);
+				const output = (
+					await execute([
+						"--terse",
+						"--escape",
+						"no",
+						"--get-values",
+						"UUID",
+						"connection",
+						"show",
+					])
+				).trim();
+				const uuids =
+					output === ""
+						? []
+						: output.split(/\r?\n/).map((id) => id.toLowerCase());
+				if (
+					uuids.some((id) => !CONNECTION_UUID.test(id)) ||
+					new Set(uuids).size !== uuids.length
+				)
+					return { kind: "unavailable" };
+				if (!uuids.includes(canonicalUuid)) return { kind: "absent" };
+				const fields = (
+					await execute([
+						"--terse",
+						"--escape",
+						"no",
+						"--get-values",
+						"connection.uuid,connection.type,connection.interface-name",
+						"connection",
+						"show",
+						canonicalUuid,
+					])
+				)
+					.trim()
+					.split(/\r?\n/);
+				return fields.length === 3 &&
+					fields[0]?.toLowerCase() === canonicalUuid &&
+					fields[1] === "802-3-ethernet" &&
+					fields[2] === ifname
+					? { kind: "present" }
+					: { kind: "unavailable" };
+			} catch {
+				return { kind: "unavailable" };
+			}
+		},
+		async addShared(profile: EthernetSharedProfile): Promise<boolean> {
+			try {
+				const ifname = argMatch(ETHERNET_IFNAME, profile.ifname);
+				const uuid = argMatch(CONNECTION_UUID, profile.uuid).toLowerCase();
+				const output = await execute([
+					"connection",
+					"add",
+					"type",
+					"ethernet",
+					"ifname",
+					ifname,
+					"con-name",
+					`Shared LAN ${ifname}`,
+					"connection.uuid",
+					uuid,
+					"connection.autoconnect",
+					"no",
+					"ipv4.method",
+					"shared",
+				]);
+				const result = parseNmConnAddUuid(output);
+				return result.ok && result.value.toLowerCase() === uuid;
+			} catch {
+				// A lost reply may follow a successful add. The durable reservation
+				// remains the only UUID a later explicit retry may inspect or add.
+				return false;
+			}
+		},
+	};
+}
+
 export async function nmConnsGet(fields: string) {
 	try {
 		// Check for mock mode
