@@ -305,7 +305,12 @@ interface AsyncOpStore {
 	isPending: (key: string) => boolean;
 	getReason: (key: string) => string | undefined;
 	getTarget: (key: string) => unknown;
-	begin: (key: string, target?: unknown, now?: number, ttlMs?: number) => void;
+	begin: (
+		key: string,
+		target?: unknown,
+		now?: number,
+		ttlMs?: number,
+	) => () => boolean;
 	confirm: (key: string, now?: number) => void;
 	fail: (key: string, reason: string, now?: number) => void;
 	timeout: (key: string, now?: number) => void;
@@ -326,6 +331,8 @@ const TICK_INTERVAL_MS = 1_000;
  * inside the Svelte app — never in the rune-free unit tests, which exercise
  * {@link asyncOpCore} directly.
  */
+const latestAttempts = new Map<string, object>();
+
 function createAsyncOpStore(): AsyncOpStore {
 	const registry = $state<AsyncOpRegistry>(createRegistry());
 
@@ -356,6 +363,9 @@ function createAsyncOpStore(): AsyncOpStore {
 		getTarget: (key) => getTarget(registry, key),
 		begin: (key, target, now = Date.now(), ttlMs) => {
 			begin(registry, key, target, now, ttlMs);
+			const attempt = {};
+			latestAttempts.set(key, attempt);
+			return () => latestAttempts.get(key) === attempt;
 		},
 		confirm: (key, now = Date.now()) => {
 			confirm(registry, key, now);
@@ -571,12 +581,25 @@ export async function osCommand<T>(opts: {
 	// Re-entry guard: never dispatch a second RPC for an in-flight key.
 	if (isOperationPending(opts.key)) return undefined;
 
-	beginOperation(opts.key, opts.target, opts.pendingTtlMs);
+	const owner = store();
+	const ownsAttempt = owner.begin(
+		opts.key,
+		opts.target,
+		undefined,
+		opts.pendingTtlMs,
+	);
+	// A TTL/reconnect release permits a new dispatch while this RPC can still
+	// resolve. Its completion must not affect the replacement entry or surface.
+	const isCurrent = ownsAttempt;
+	// Feedback survives transient state loss; never recreate a store to settle it.
+	const hasEntry = () => singleton === owner;
 	try {
 		const r = await opts.rpc();
+		if (!isCurrent()) return undefined;
 		const v = opts.classify?.(r) ?? defaultClassify(r);
 		if (!v.ok) {
-			failOperation(opts.key, v.reason ?? (v.busy ? "device_busy" : "failed"));
+			if (hasEntry())
+				owner.fail(opts.key, v.reason ?? (v.busy ? "device_busy" : "failed"));
 			if (!opts.silent) {
 				toast.error(
 					(v.busy ? opts.busyMessage : opts.failMessage)?.() ??
@@ -584,21 +607,23 @@ export async function osCommand<T>(opts: {
 				);
 			}
 		} else if (opts.confirmOnResolve) {
-			confirmOperation(opts.key);
+			if (hasEntry()) owner.confirm(opts.key);
 		}
 		// else: stay pending; the per-surface $effect confirms on the authoritative
 		// broadcast, or the TTL valve flips it to timed_out.
 		opts.onResult?.(r);
 		return r;
 	} catch (e) {
-		failOperation(
-			opts.key,
-			e instanceof ConnectionResetError
-				? "connection_reset"
-				: e instanceof Error
-					? e.message
-					: "error",
-		);
+		if (!isCurrent()) return undefined;
+		if (hasEntry())
+			owner.fail(
+				opts.key,
+				e instanceof ConnectionResetError
+					? "connection_reset"
+					: e instanceof Error
+						? e.message
+						: "error",
+			);
 		if (!opts.silent) {
 			toast.error(opts.failMessage?.() ?? m["network.os.operationFailed"]());
 		}

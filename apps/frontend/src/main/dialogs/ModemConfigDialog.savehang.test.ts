@@ -28,7 +28,12 @@ import {
 	vi,
 } from "vitest";
 
-import { destroyAsyncOperations } from "$lib/rpc/async-operation.svelte";
+import {
+	ASYNC_OP_TTL_MS,
+	destroyAsyncOperations,
+	getOperationPhase,
+	sweepOperations,
+} from "$lib/rpc/async-operation.svelte";
 
 import {
 	publishModems,
@@ -259,5 +264,101 @@ describe("an explicit refusal outranks the unconfirmed band", () => {
 		await new Promise((resolve) => setTimeout(resolve, 1500));
 		expect(refusedBand()).not.toBeNull();
 		expect(unconfirmedBand()).toBeNull();
+	});
+});
+
+describe("a save reply belongs to its dispatched attempt", () => {
+	const key = `modem-config:${DEVICE_ID}`;
+	const original = { ...APPLIED, autoconfig: false, apn: "original.apn" };
+	const firstApplied = { ...original, apn: "first.apn" };
+	const retryApplied = { ...original, apn: "retry.apn" };
+	const apnInput = () =>
+		document.getElementById("modem-apn") as HTMLInputElement;
+
+	it.each(["applied", "refusal", "rejection"] as const)(
+		"keeps retry B current after A's late %s",
+		async (outcome) => {
+			let resolveA!: (value: unknown) => void;
+			let rejectA!: (reason: Error) => void;
+			let resolveB!: (value: unknown) => void;
+			configure.mockImplementationOnce(
+				() =>
+					new Promise((resolve, reject) => {
+						resolveA = resolve;
+						rejectA = reject;
+					}),
+			);
+			configure.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveB = resolve;
+					}),
+			);
+			const before = carrierRejectedModem(original);
+			publishModems({ [DEVICE_ID]: before });
+			const { rerender } = mount(before);
+			await fireEvent.input(apnInput(), { target: { value: "first.apn" } });
+			await fireEvent.click(saveButton());
+			expect(configure).toHaveBeenCalledTimes(1);
+			sweepOperations(Date.now() + ASYNC_OP_TTL_MS + 1);
+			await waitFor(() => expect(unconfirmedBand()).not.toBeNull());
+			await fireEvent.input(apnInput(), { target: { value: "retry.apn" } });
+			await fireEvent.click(saveButton());
+			expect(configure).toHaveBeenCalledTimes(2);
+			expect(getOperationPhase(key)).toBe("pending");
+			if (outcome === "rejection") rejectA(new Error("old dispatch rejected"));
+			else
+				resolveA(
+					outcome === "refusal"
+						? { success: false, error: "write_failed" }
+						: { success: true, applied: firstApplied },
+				);
+			// Let the RPC and component await continuations finish before checking
+			// absence of effects. The clock and transport remain test-local.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(getOperationPhase(key)).toBe("pending");
+			expect(apnInput().value).toBe("retry.apn");
+			expect(refusedBand()).toBeNull();
+			expect(unconfirmedBand()).toBeNull();
+			const oldReading = carrierRejectedModem(firstApplied);
+			publishModems({ [DEVICE_ID]: oldReading });
+			await rerender({ modem: oldReading });
+			expect(getOperationPhase(key)).toBe("pending");
+			expect(screen.queryByRole("dialog")).not.toBeNull();
+			resolveB({ success: true, applied: retryApplied });
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(getOperationPhase(key)).toBe("pending");
+			const currentReading = carrierRejectedModem(retryApplied);
+			publishModems({ [DEVICE_ID]: currentReading });
+			await rerender({ modem: currentReading });
+			await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+			expect(getOperationPhase(key)).toBe("confirmed");
+			expect(configure).toHaveBeenCalledTimes(2);
+		},
+	);
+
+	it("keeps a reopened draft when the previous save returns its late applied reply", async () => {
+		let resolveA!: (value: unknown) => void;
+		configure.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveA = resolve;
+				}),
+		);
+		const before = carrierRejectedModem(original);
+		publishModems({ [DEVICE_ID]: before });
+		const { rerender } = mount(before);
+		await fireEvent.input(apnInput(), { target: { value: "first.apn" } });
+		await fireEvent.click(saveButton());
+		sweepOperations(Date.now() + ASYNC_OP_TTL_MS + 1);
+		await waitFor(() => expect(unconfirmedBand()).not.toBeNull());
+		await rerender({ open: false });
+		await rerender({ open: true });
+		await fireEvent.input(apnInput(), { target: { value: "new.draft" } });
+		resolveA({ success: true, applied: firstApplied });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(apnInput().value).toBe("new.draft");
+		expect(unconfirmedBand()).toBeNull();
+		expect(configure).toHaveBeenCalledTimes(1);
 	});
 });

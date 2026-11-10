@@ -530,6 +530,7 @@ let unconfirmedExpectation = $state<ModemConfigSent | undefined>(undefined);
 // nobody has asked yet — a different fact, and rendering the two the same way
 // would tell an operator their check failed before they made one.
 let reconcileUnresolved = $state(false);
+let saveAttemptGeneration = 0;
 
 // Confirm a configure once a broadcast `modem` echo proves the device stored
 // what we sent (configure-echo predicate). A `connecting → connected` cycle on
@@ -598,6 +599,9 @@ function reconcileSave() {
 
 async function handleSave() {
 	if (primaryDisabled || isOperationPending(configKey)) return;
+	const attempt = ++saveAttemptGeneration;
+	const generation = dialogLoadGeneration;
+	const requestedDevice = String(deviceId);
 	saveRefusal = undefined;
 	saveUnconfirmed = false;
 	unconfirmedExpectation = undefined;
@@ -637,6 +641,14 @@ async function handleSave() {
 		busyMessage: () => m["network.os.deviceBusy"](),
 		failMessage: () => m["network.os.operationFailed"](),
 	});
+	// Keep a late reply attached to its original save/open, including when the
+	// dialog was reopened after the latch timed out without another dispatch.
+	if (
+		!open ||
+		attempt !== saveAttemptGeneration ||
+		generation !== dialogLoadGeneration ||
+		requestedDevice !== String(deviceId)
+	) return;
 	if (result && result.success === false) {
 		saveExpected = undefined;
 		saveRefusal = result.error ?? 'write_failed';
