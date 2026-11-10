@@ -54,6 +54,50 @@ describe("RPCClient reconnect-timer race", () => {
 		globalThis.WebSocket = realWebSocket;
 	});
 
+	it("rejects reopening and delivering frames through a closed, reused socket", async () => {
+		const { rpcClient } = await import("$lib/rpc/client");
+		const messages = vi.fn();
+		rpcClient.onMessage(messages);
+		rpcClient.connect();
+		const stale = FakeWebSocket.instances[0];
+		if (!stale) throw new Error("missing initial socket");
+		stale.open();
+		stale.close();
+		messages.mockClear();
+
+		// Reusing the transport cannot reclaim ownership, even if it claims OPEN.
+		stale.open();
+		stale.onmessage?.({
+			data: JSON.stringify({ netif: { eth0: { enabled: false } } }),
+		});
+		expect(rpcClient.getSocket()).toBeNull();
+		expect(rpcClient.getConnectionState()).toBe("disconnected");
+		expect(messages).not.toHaveBeenCalled();
+
+		rpcClient.connect();
+		const current = FakeWebSocket.instances[1];
+		if (!current) throw new Error("missing replacement socket");
+		current.open();
+		stale.open();
+		stale.onmessage?.({
+			data: JSON.stringify({ netif: { eth0: { enabled: false } } }),
+		});
+		stale.close();
+		expect(rpcClient.getSocket()).toBe(current);
+		expect(rpcClient.getConnectionState()).toBe("connected");
+		expect(messages).not.toHaveBeenCalled();
+		current.onmessage?.({
+			data: JSON.stringify({ netif: { eth0: { enabled: true } } }),
+		});
+		expect(messages).toHaveBeenCalledWith(
+			"netif",
+			{ eth0: { enabled: true } },
+			undefined,
+		);
+		vi.advanceTimersByTime(2000);
+		expect(FakeWebSocket.instances).toHaveLength(2);
+	});
+
 	it("cancels the stale auto-reconnect timer when a manual connect wins the race", async () => {
 		const { rpcClient } = await import("$lib/rpc/client");
 

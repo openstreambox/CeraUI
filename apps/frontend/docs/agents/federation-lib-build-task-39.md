@@ -29,8 +29,9 @@ via `bun run build:federation` from the CeraUI root (delegates to the frontend
   would ignore the host's locale. The final hosted artifacts use full Rolldown
   output minification rather than ES-library whitespace preservation.
 - **Size and parity gates:** after building both outputs, run
-  `bun scripts/ci/bundle-report.mjs` from the root. All existing ceilings remain
-  unchanged; `sources-view-model` is the existing Audio/Encoder shared projection,
+  `bun scripts/ci/bundle-report.mjs` from the root. Measured footprint acceptances
+  and retained ceilings are documented in `scripts/ci/bundle-report.mjs` and
+  `docs/TECHNICAL_DEBT.md`; `sources-view-model` is the existing Audio/Encoder shared projection,
   now explicitly baselined. The federation harness also renders every locale
   module against the frozen catalog fixtures (`federation-catalog.test.ts`).
 - **Isolation**: this build NEVER touches the SPA `dist/public` output, runs no
