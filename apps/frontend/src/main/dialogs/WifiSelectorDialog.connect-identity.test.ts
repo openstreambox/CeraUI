@@ -27,7 +27,10 @@ import {
 } from "vitest";
 
 import {
+	beginOperation,
 	clearOperation,
+	confirmOperation,
+	failOperation,
 	getOperationPhase,
 } from "$lib/rpc/async-operation.svelte";
 
@@ -65,6 +68,11 @@ vi.mock("svelte-sonner", () => ({
 
 const CONNECT_KEY = "wifi:0";
 const SCAN_KEY = "wifi-scan:0";
+const OTHER_CONNECT_KEY = "wifi:1";
+const OTHER_SCAN_KEY = "wifi-scan:1";
+const OTHER_SSID = "LibraryWiFi";
+const OTHER_UUID = "uuid-library";
+const DRAFT_SSID = "DraftWiFi";
 
 /** The SSID two saved profiles share. */
 const SHARED_SSID = "CafeWiFi";
@@ -154,12 +162,221 @@ beforeEach(() => {
 	resetWifiFeed();
 	clearOperation(CONNECT_KEY);
 	clearOperation(SCAN_KEY);
+	clearOperation(OTHER_CONNECT_KEY);
+	clearOperation(OTHER_SCAN_KEY);
 });
 
 afterEach(() => {
 	clearOperation(CONNECT_KEY);
 	clearOperation(SCAN_KEY);
+	clearOperation(OTHER_CONNECT_KEY);
+	clearOperation(OTHER_SCAN_KEY);
 	vi.useRealTimers();
+});
+
+describe("WifiSelectorDialog — selected-radio connect ownership", () => {
+	const outcomes = ["applied", "refusal", "rejection"] as const;
+	const phases = ["confirmed", "failed", "pending"] as const;
+
+	for (const phase of phases) {
+		for (const outcome of outcomes) {
+			it(`does not borrow radio B's ${phase} operation while deferred A later returns ${outcome}`, async () => {
+				const result = Promise.withResolvers<unknown>();
+				connect.mockReturnValueOnce(result.promise);
+				beginOperation(OTHER_CONNECT_KEY, OTHER_SSID);
+				if (phase === "confirmed") confirmOperation(OTHER_CONNECT_KEY);
+				if (phase === "failed") failOperation(OTHER_CONNECT_KEY, "auth");
+				publishWifi({
+					"0": radio(),
+					"1": {
+						...radio({
+							saved: { [OTHER_SSID]: OTHER_UUID },
+							ssids: [OTHER_SSID, DRAFT_SSID],
+						}),
+						ifname: "wlan1",
+						hw: "aa:bb:cc:dd:ee:02",
+					},
+				});
+				const view = render(WifiSelectorDialog, {
+					props: { open: true, deviceId: "0" },
+				});
+				await settle();
+				await fireEvent.click(
+					screen.getByRole("button", { name: `Connect ${SHARED_SSID}` }),
+				);
+				await settle();
+				expect(getOperationPhase(CONNECT_KEY)).toBe("pending");
+				const completeA = () => {
+					if (outcome === "rejection")
+						result.reject(new Error("station refused"));
+					else
+						result.resolve({ success: outcome === "applied", error: "auth" });
+				};
+
+				try {
+					await view.rerender({ open: true, deviceId: "1" });
+					await settle();
+					expect(screen.queryByRole("dialog")).not.toBeNull();
+					expect(screen.queryByTestId("wifi-join-failed")).toBeNull();
+					expect(connectSpinnerShown()).toBe(false);
+					expect(getOperationPhase(CONNECT_KEY)).toBe("pending");
+					expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe(phase);
+					if (phase === "pending") {
+						confirmOperation(OTHER_CONNECT_KEY);
+						await settle();
+						expect(screen.queryByRole("dialog")).not.toBeNull();
+					}
+					await fireEvent.click(
+						screen.getByRole("button", { name: `Connect ${DRAFT_SSID}` }),
+					);
+					const input = document.getElementById(
+						"wifi-new-password",
+					) as HTMLInputElement;
+					expect(input).not.toBeNull();
+					await fireEvent.input(input, {
+						target: { value: "synthetic-draft-pass" },
+					});
+					completeA();
+					await settle();
+
+					expect(screen.queryByRole("dialog")).not.toBeNull();
+					expect(screen.queryByTestId("wifi-join-failed")).toBeNull();
+					expect(document.getElementById("wifi-new-password")).toBe(input);
+					expect(input.value).toBe("synthetic-draft-pass");
+					expect(getOperationPhase(CONNECT_KEY)).toBe(
+						outcome === "applied" ? "pending" : "failed",
+					);
+					expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe(
+						phase === "failed" ? "failed" : "confirmed",
+					);
+					expect(connect).toHaveBeenCalledTimes(1);
+					expect(connectNew).not.toHaveBeenCalled();
+				} finally {
+					completeA();
+					await settle();
+				}
+			});
+		}
+	}
+
+	for (const priorPhase of ["idle", "confirmed"] as const) {
+		it(`confirms an explicit current B attempt after switching from A to B's ${priorPhase} state`, async () => {
+			const result = Promise.withResolvers<unknown>();
+			connect.mockReturnValueOnce(result.promise);
+			if (priorPhase === "confirmed") {
+				beginOperation(OTHER_CONNECT_KEY, OTHER_SSID);
+				confirmOperation(OTHER_CONNECT_KEY);
+			}
+			publishWifi({
+				"0": radio(),
+				"1": {
+					...radio({
+						saved: { [OTHER_SSID]: OTHER_UUID },
+						ssids: [OTHER_SSID],
+					}),
+					ifname: "wlan1",
+					hw: "aa:bb:cc:dd:ee:02",
+				},
+			});
+			const view = render(WifiSelectorDialog, {
+				props: { open: true, deviceId: "0" },
+			});
+			await settle();
+			await fireEvent.click(
+				screen.getByRole("button", { name: `Connect ${SHARED_SSID}` }),
+			);
+			await settle();
+			await view.rerender({ open: true, deviceId: "1" });
+			await settle();
+			try {
+				expect(screen.queryByRole("dialog")).not.toBeNull();
+				await fireEvent.click(
+					screen.getByRole("button", { name: `Connect ${OTHER_SSID}` }),
+				);
+				await settle();
+				expect(connect).toHaveBeenLastCalledWith({ uuid: OTHER_UUID });
+				expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("pending");
+				expect(getOperationPhase(CONNECT_KEY)).toBe("pending");
+				publishWifi({
+					...getWifiFeed(),
+					"1": {
+						...radio({
+							conn: OTHER_UUID,
+							saved: { [OTHER_SSID]: OTHER_UUID },
+							ssids: [OTHER_SSID],
+							activeSsid: OTHER_SSID,
+						}),
+						ifname: "wlan1",
+						hw: "aa:bb:cc:dd:ee:02",
+					},
+				});
+				await settle();
+				expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("confirmed");
+				expect(screen.queryByRole("dialog")).toBeNull();
+			} finally {
+				result.resolve({ success: true });
+				await settle();
+			}
+		});
+	}
+
+	it("retires an unsubmitted password draft when the same SSID is selected on another radio", async () => {
+		const freshRadio = radio({ saved: {}, ssids: [DRAFT_SSID] });
+		publishWifi({
+			"0": freshRadio,
+			"1": { ...freshRadio, ifname: "wlan1", hw: "aa:bb:cc:dd:ee:02" },
+		});
+		const view = render(WifiSelectorDialog, {
+			props: { open: true, deviceId: "0" },
+		});
+		await settle();
+		await fireEvent.click(
+			screen.getByRole("button", { name: `Connect ${DRAFT_SSID}` }),
+		);
+		const input = document.getElementById(
+			"wifi-new-password",
+		) as HTMLInputElement;
+		await fireEvent.input(input, {
+			target: { value: "synthetic-old-radio-pass" },
+		});
+		await view.rerender({ open: true, deviceId: "1" });
+		await settle();
+		expect(document.getElementById("wifi-new-password")).toBeNull();
+		await fireEvent.click(
+			screen.getByRole("button", { name: `Connect ${DRAFT_SSID}` }),
+		);
+		expect(
+			(document.getElementById("wifi-new-password") as HTMLInputElement).value,
+		).toBe("");
+		expect(connect).not.toHaveBeenCalled();
+		expect(connectNew).not.toHaveBeenCalled();
+	});
+
+	it("already retires a deferred A intent on a settled close before B is reopened", async () => {
+		const result = Promise.withResolvers<unknown>();
+		connect.mockReturnValueOnce(result.promise);
+		publishWifi({ "0": radio(), "1": { ...radio(), ifname: "wlan1" } });
+		const view = render(WifiSelectorDialog, {
+			props: { open: true, deviceId: "0" },
+		});
+		await settle();
+		await fireEvent.click(
+			screen.getByRole("button", { name: `Connect ${SHARED_SSID}` }),
+		);
+		await settle();
+		await view.rerender({ open: false, deviceId: "0" });
+		await settle();
+		beginOperation(OTHER_CONNECT_KEY, SHARED_SSID);
+		confirmOperation(OTHER_CONNECT_KEY);
+		await view.rerender({ open: true, deviceId: "1" });
+		await settle();
+		result.resolve({ success: false, error: "auth" });
+		await settle();
+		expect(screen.queryByRole("dialog")).not.toBeNull();
+		expect(screen.queryByTestId("wifi-join-failed")).toBeNull();
+		expect(getOperationPhase(CONNECT_KEY)).toBe("failed");
+		expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("confirmed");
+	});
 });
 
 describe("WifiSelectorDialog — identity-keyed connect confirmation", () => {
@@ -214,6 +431,7 @@ describe("WifiSelectorDialog — identity-keyed connect confirmation", () => {
 		await settle();
 
 		expect(getOperationPhase(CONNECT_KEY)).toBe("confirmed");
+		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 
 	it("a fresh join waits for the profile the DEVICE minted for its SSID", async () => {

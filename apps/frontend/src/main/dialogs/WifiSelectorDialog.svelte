@@ -122,6 +122,8 @@ const scanError = $derived(getOperationPhase(scanKey) === 'failed');
 // render the calm "still connecting / Retry" affordance; cleared on confirm
 // (close), hard fail, or idle decay.
 let connecting = $state<PendingWifiConnect | undefined>(undefined);
+let connectingDeviceId = $state<string | undefined>(undefined);
+let interactionDeviceId = $state<string | undefined>(undefined);
 let pendingNew = $state<AvailableWifiNetwork | undefined>(undefined);
 let password = $state('');
 let showPassword = $state(false);
@@ -173,6 +175,7 @@ function resetInteraction() {
 async function connectVia(pending: PendingWifiConnect, run: () => Promise<unknown>) {
 	if (ifaceBusy || isOperationPending(wifiOpKey)) return;
 	joinFailure = undefined;
+	connectingDeviceId = deviceId;
 	connecting = pending;
 	await osCommand({
 		key: wifiOpKey,
@@ -301,9 +304,17 @@ async function handleForget(uuid: string, network: AvailableWifiNetwork) {
 $effect(() => {
 	const pending = connecting;
 	if (!pending) return;
+	// The same mounted dialog can receive another radio before this RPC settles.
+	// Its new key's phase is not evidence about the retained local intent.
+	if (connectingDeviceId !== deviceId) {
+		connecting = undefined;
+		connectingDeviceId = undefined;
+		return;
+	}
 	const phase = getOperationPhase(wifiOpKey);
 	if (phase === 'confirmed') {
 		connecting = undefined;
+		connectingDeviceId = undefined;
 		resetInteraction();
 		open = false;
 		return;
@@ -311,6 +322,7 @@ $effect(() => {
 	if (phase === 'failed' || phase === 'idle') {
 		if (phase === 'failed') joinFailure = getOperationReason(wifiOpKey) ?? 'generic';
 		connecting = undefined;
+		connectingDeviceId = undefined;
 		return;
 	}
 	if (phase === 'pending' && deriveWifiConnectIdentityOutcome(pending, iface) === 'confirmed') {
@@ -415,11 +427,23 @@ $effect(() => {
 	return () => clearInterval(id);
 });
 
+// Retire the previous radio's local station draft and intent. Shared operations
+// continue independently; changing the selection does not cancel device effects.
+$effect(() => {
+	if (interactionDeviceId === deviceId) return;
+	interactionDeviceId = deviceId;
+	resetInteraction();
+	connecting = undefined;
+	connectingDeviceId = undefined;
+	joinFailure = undefined;
+});
+
 // Clear transient inline state whenever the dialog closes.
 $effect(() => {
 	if (!open) {
 		resetInteraction();
 		connecting = undefined;
+		connectingDeviceId = undefined;
 		disconnecting = undefined;
 		forgetting = undefined;
 		scanBaseline = undefined;
