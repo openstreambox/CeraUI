@@ -2775,7 +2775,7 @@
 	"hotspotConfirm.generate": "Nueva contraseña aleatoria",
 	"hotspotConfirm.acknowledge": "Guardé el nombre y la contraseña, y entiendo que mi conexión actual puede caerse.",
 	"hotspotConfirm.activate": "Activar punto de acceso",
-	"hotspotConfirm.saveFailed": "No se pudieron guardar el nuevo nombre y la nueva contraseña. No cambió nada y el punto de acceso sigue apagado.",
+	"hotspotConfirm.saveFailed": "No se pudieron confirmar el nuevo nombre y la nueva contraseña. Es posible que ya se hayan guardado. Vuelve a abrir esta confirmación y revisa los datos que informa el equipo antes de volver a intentarlo.",
 	"hotspotConfirm.passwordCharacters": "Usa solo letras, números y símbolos estándar (sin acentos ni emojis).",
 	"hotspotConfirm.inactiveHint": "Al activar el punto de acceso verás el nombre de red y la contraseña, y podrás cambiarlos.",
 	"network.wifiMode.confirm.switchTo": "Cambiar a {mode}",
