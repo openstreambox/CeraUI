@@ -21,6 +21,7 @@ import {
 	isOperationPending,
 	osCommand,
 	reconcileOperationsOnReconnect,
+	sweepOperations,
 } from "./async-operation.svelte";
 import { ConnectionResetError } from "./client";
 
@@ -466,4 +467,101 @@ describe("osCommand dispatch helper", () => {
 		expect(getOperationPhase("scan")).toBe("pending");
 		expect(toast.error).not.toHaveBeenCalled();
 	});
+});
+
+describe("osCommand superseded attempt ownership", () => {
+	afterEach(() => {
+		destroyAsyncOperations();
+		vi.clearAllMocks();
+	});
+	it("keeps explicit refusal feedback after transient state is destroyed", async () => {
+		const reply = Promise.withResolvers<{ success: false; error: string }>();
+		const onResult = vi.fn();
+		const pending = osCommand({
+			key: "ssh",
+			rpc: () => reply.promise,
+			onResult,
+		});
+		destroyAsyncOperations();
+		const response = {
+			success: false as const,
+			error: "stream_liveness_unknown",
+		};
+		reply.resolve(response);
+		await expect(pending).resolves.toEqual(response);
+		expect(onResult).toHaveBeenCalledExactlyOnceWith(response);
+		expect(toast.error).toHaveBeenCalledOnce();
+		expect(getOperationPhase("ssh")).toBe("idle");
+	});
+	it("does not revive an old reply after replacement state is also destroyed", async () => {
+		const reply = Promise.withResolvers<{ success: boolean }>();
+		const onResult = vi.fn();
+		const pending = osCommand({
+			key: "ssh",
+			rpc: () => reply.promise,
+			onResult,
+		});
+		destroyAsyncOperations();
+		beginOperation("ssh");
+		destroyAsyncOperations();
+		reply.resolve({ success: false });
+		await expect(pending).resolves.toBeUndefined();
+		expect(onResult).not.toHaveBeenCalled();
+		expect(toast.error).not.toHaveBeenCalled();
+	});
+	it.each(["applied", "refusal", "rejection"] as const)(
+		"ignores late %s from A after TTL and retry B",
+		async (outcome) => {
+			type Result = {
+				success: boolean;
+				error?: string;
+				applied?: { apn: string };
+			};
+			let resolveA!: (value: Result) => void;
+			let rejectA!: (reason: Error) => void;
+			let resolveB!: (value: Result) => void;
+			const a = new Promise<Result>((resolve, reject) => {
+				resolveA = resolve;
+				rejectA = reject;
+			});
+			const b = new Promise<Result>((resolve) => {
+				resolveB = resolve;
+			});
+			const oldResult = vi.fn();
+			const currentResult = vi.fn();
+			const key = "modem-config:synthetic";
+			const first = osCommand({
+				key,
+				rpc: () => a,
+				confirmOnResolve: true,
+				onResult: oldResult,
+			});
+			sweepOperations(Date.now() + ASYNC_OP_TTL_MS + 1);
+			expect(getOperationPhase(key)).toBe("timed_out");
+			const second = osCommand({
+				key,
+				rpc: () => b,
+				confirmOnResolve: true,
+				onResult: currentResult,
+			});
+			if (outcome === "rejection") rejectA(new Error("old dispatch rejected"));
+			else
+				resolveA(
+					outcome === "refusal"
+						? { success: false, error: "write_failed" }
+						: { success: true, applied: { apn: "first.apn" } },
+				);
+			const stale = await first;
+			expect(getOperationPhase(key)).toBe("pending");
+			expect(getOperationReason(key)).toBeUndefined();
+			expect(oldResult).not.toHaveBeenCalled();
+			expect(toast.error).not.toHaveBeenCalled();
+			expect(stale).toBeUndefined();
+			const appliedB = { success: true, applied: { apn: "retry.apn" } };
+			resolveB(appliedB);
+			await expect(second).resolves.toEqual(appliedB);
+			expect(getOperationPhase(key)).toBe("confirmed");
+			expect(currentResult).toHaveBeenCalledExactlyOnceWith(appliedB);
+		},
+	);
 });
