@@ -4,6 +4,8 @@ Si cambia el adaptador Wi-Fi seleccionado mientras está abierto el selector de 
 
 **Desconectar**, **Olvidar** y **Buscar redes** también corresponden al adaptador seleccionado. Al cambiar de adaptador se borran sus indicaciones locales de espera; una operación ya enviada al adaptador anterior puede completarse. El estado de conexión o las redes guardadas de otro adaptador no pueden confirmar la acción que estás esperando.
 
+Mientras se actualiza la información de las redes guardadas, se sigue mostrando la lista completa anterior. Solo la actualización solicitada más recientemente puede reemplazarla, una vez terminada y para los mismos adaptadores que sigan presentes; los resultados parciales o anteriores no restauran entradas guardadas desactualizadas. Si falla la lectura de la lista de redes guardadas, puede seguir mostrándose la vista anterior. Que aparezca una entrada no confirma que su perfil o su red sigan existiendo, que una conexión o reconexión haya tenido éxito ni que haya acceso a internet.
+
 Pulsa **Buscar redes** para solicitar una búsqueda o unirte a una ya pendiente en el adaptador seleccionado. La búsqueda termina cuando ese adaptador informa un resultado posterior, aunque no encuentre redes. Una búsqueda en otro adaptador no la da por terminada.
 
 Una solicitud de conexión ya enviada al adaptador anterior puede completarse. Cambiar la selección o cerrar el selector no cancela esa solicitud ni revierte sus efectos. El selector no envía otra solicitud de conexión automáticamente; pulsa **Conectar** de forma explícita cuando quieras realizar otro intento.
