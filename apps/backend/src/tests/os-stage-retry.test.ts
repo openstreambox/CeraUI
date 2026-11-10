@@ -7,6 +7,8 @@ import {
 	osStageCandidateVersion,
 	osStageFailureSettledSafely,
 	osStagePermission,
+	settleFailedOsStageRound,
+	startOsStageAttempt,
 } from "../modules/system/update-orchestrator/os-stage-retry.ts";
 
 const manifest = osChannelManifestSchema.parse({
@@ -61,6 +63,63 @@ describe("OS stage candidate identity", () => {
 });
 
 describe("OS stage permission", () => {
+	test("three settled rounds escalate after fifteen then thirty minutes without restarting the budget", () => {
+		let now = 1_000;
+		let recovery = startOsStageAttempt(undefined, KEY, "attempt-1");
+		for (const [round, delay] of [900_000, 1_800_000].entries()) {
+			recovery = settleFailedOsStageRound(
+				recovery,
+				"automatic",
+				"transport",
+				now,
+			);
+			expect(recovery.failedRounds).toBe(round + 1);
+			expect(recovery.nextRetryAt).toBe(now + delay);
+			expect(osStagePermission(recovery, KEY, now + delay - 1, false)).toBe(
+				"wait",
+			);
+			expect(osStagePermission(recovery, KEY, now + delay, false)).toBe(
+				"retry",
+			);
+			now += delay;
+			recovery = startOsStageAttempt(recovery, KEY, `attempt-${round + 2}`);
+			expect(recovery.failedRounds).toBe(round + 1);
+		}
+		recovery = settleFailedOsStageRound(
+			recovery,
+			"automatic",
+			"transport",
+			now,
+		);
+		expect(recovery).toMatchObject({
+			failedRounds: 3,
+			mode: "operator",
+			nextRetryAt: null,
+			activeAttemptId: null,
+		});
+		expect(osStagePermission(recovery, KEY, now + 7 * 86_400_000, false)).toBe(
+			"paused",
+		);
+		expect(osStagePermission(recovery, KEY, now, true)).toBe("retry");
+	});
+
+	test("an uncertain settlement retains an unsafe hold despite time and manual retry", () => {
+		const recovery = settleFailedOsStageRound(
+			startOsStageAttempt(undefined, KEY, "uncertain-attempt"),
+			"unsafe",
+			"writer-unknown",
+			1_000,
+		);
+		expect(recovery).toMatchObject({
+			failedRounds: 1,
+			mode: "unsafe",
+			nextRetryAt: null,
+			reason: "writer-unknown",
+		});
+		expect(osStagePermission(recovery, KEY, 9e12, false)).toBe("paused");
+		expect(osStagePermission(recovery, KEY, 9e12, true)).toBe("paused");
+	});
+
 	test("an unknown or superseded candidate stages as a fresh round", () => {
 		expect(osStagePermission(undefined, KEY, 0, false)).toBe("fresh");
 		expect(

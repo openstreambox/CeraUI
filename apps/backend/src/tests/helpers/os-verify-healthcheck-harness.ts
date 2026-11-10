@@ -69,6 +69,7 @@ export function board(staged: string, start: Partial<Board> = {}) {
 	};
 	const healthReads: string[] = [];
 	const phases: OrchestratorPhase[] = [];
+	const effects: string[] = [];
 	const receipt = {
 		schema: 1 as const,
 		version: staged,
@@ -87,7 +88,7 @@ export function board(staged: string, start: Partial<Board> = {}) {
 			features: ["apt-all-packages", "rauc-verity-streaming", "slot-sync"],
 		}),
 		armOs: async () => {
-			// Verification fixtures must not arm a host slot.
+			effects.push("arm-os");
 		},
 		readOsReceipt: async () => receipt,
 		readStagedActivation: async () => "consumed",
@@ -106,14 +107,14 @@ export function board(staged: string, start: Partial<Board> = {}) {
 			throw new Error("slot-sync evidence not under test");
 		},
 		startSlotSync: async () => {
-			// The healthy-state verdict is under test, not the host mirror.
+			effects.push("start-slot-sync");
 		},
 		persist: (next) => {
 			phases.push(next.phase);
 		},
 		quarantine: new MemoryQuarantine(),
 	} satisfies typeof defaultOrchestratorRuntimeDeps;
-	return { now, deps, healthReads, phases };
+	return { now, deps, healthReads, phases, effects };
 }
 
 export function notices(kind: "os-activated" | "os-rollback", version: string) {
