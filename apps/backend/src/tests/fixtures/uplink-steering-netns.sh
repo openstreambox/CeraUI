@@ -10,7 +10,9 @@ log1=$6
 mark0=$7
 mark1=$8
 nm_shared=$9
-shift 9
+all_down=${10}
+return_selectable=${11}
+shift 11
 
 signals="${log0}.signals"
 mkfifo "$signals"
@@ -31,13 +33,15 @@ server0=""
 server1=""
 client_server=""
 shared_server=""
+local_server=""
 cleanup() {
+	[ -z "$local_server" ] || kill "$local_server" 2>/dev/null || true
 	[ -z "$server0" ] || kill "$server0" 2>/dev/null || true
 	[ -z "$server1" ] || kill "$server1" 2>/dev/null || true
 	[ -z "$client_server" ] || kill "$client_server" 2>/dev/null || true
 	[ -z "$shared_server" ] || kill "$shared_server" 2>/dev/null || true
 	kill "$client_pid" "$wan0_pid" "$wan1_pid" "$shared_pid" 2>/dev/null || true
-	wait "$server0" "$server1" "$client_server" "$shared_server" \
+	wait "$local_server" "$server0" "$server1" "$client_server" "$shared_server" \
 		"$client_pid" "$wan0_pid" "$wan1_pid" "$shared_pid" 2>/dev/null || true
 	exec 3>&-
 	rm -f "$signals"
@@ -273,6 +277,7 @@ table inet coexist_observer {
 	chain output {
 		type filter hook output priority mangle; policy accept;
 		ip saddr 192.0.2.1 ip daddr 203.0.113.10 udp sport 42300 meta mark 0 ct mark 0 counter comment "local-unmarked"
+		ip saddr 10.42.0.1 udp sport 39104 meta mark 0 ct mark 0 counter comment "alldown-local-unmarked"
 	}
 }
 NFT
@@ -367,6 +372,152 @@ print(json.dumps({
 PY
 )
 fi
+
+# --- all-down and return ------------------------------------------------------
+# Everything below stays inside this script's own namespaces. The "established"
+# case runs against a transition fixture that RETAINS the wan1 mark route and NAT
+# rule; it does not model physical loss of every uplink. The local-service probes
+# are protocol-shaped but minimal: UDP 53/67 are echo reachability probes (not DNS
+# resolution or a DHCP lease) and HTTP is a stdlib GET.
+client_ifindex_before=$(ip -j link show dev client0 | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["ifindex"])')
+
+read -r -d '' TRY_SEND <<'PY' || true
+import socket, sys
+payload, source_ip, source_port, dest_ip, dest_port = sys.argv[1:]
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.settimeout(1.5)
+sock.bind((source_ip, int(source_port)))
+sock.sendto(payload.encode(), (dest_ip, int(dest_port)))
+try:
+    print("reply" if sock.recvfrom(1024)[0] == b"received" else "unexpected")
+except TimeoutError:
+    print("blocked")
+finally:
+    sock.close()
+PY
+
+read -r -d '' LOCAL_SERVICE_CODE <<'PY' || true
+import http.server, os, selectors, socket, threading
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"local-http"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_):
+        pass
+
+httpd = http.server.HTTPServer(("10.42.0.1", 18080), Handler)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+selector = selectors.DefaultSelector()
+for port in (53, 67):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("10.42.0.1", port))
+    selector.register(sock, selectors.EVENT_READ)
+os.write(3, b"server-ready\n")
+while True:
+    for key, _ in selector.select():
+        _, peer = key.fileobj.recvfrom(2048)
+        key.fileobj.sendto(b"local-echo", peer)
+PY
+
+read -r -d '' LOCAL_PROBE <<'PY' || true
+import json, socket, urllib.request
+
+def udp(port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(1.5)
+    sock.bind(("10.42.0.2", 0))
+    sock.sendto(b"local-probe", ("10.42.0.1", port))
+    try:
+        return "echo" if sock.recvfrom(1024)[0] == b"local-echo" else "unexpected"
+    except TimeoutError:
+        return "timeout"
+    finally:
+        sock.close()
+
+def http_get():
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open("http://10.42.0.1:18080/", timeout=2) as response:
+            return "ok" if response.status == 200 and response.read() == b"local-http" else "unexpected"
+    except OSError:
+        return "error"
+
+print(json.dumps({"udp53Echo": udp(53), "udp67Echo": udp(67), "httpGet": http_get()}))
+PY
+
+# The service runs in the box namespace (this script's), not the client's.
+python3 -u -c "$LOCAL_SERVICE_CODE" & local_server=$!
+wait_signal server-ready
+
+routed_control="not-run"
+if [ "$nm_shared" = "--nm-shared" ]; then
+	# The preceding coexistence phase left the steering table empty and proved
+	# unmarked cross-zone routing after removing only the NM reject statements.
+	# Selectable steering would mark this probe into a WAN table instead.
+	routed_control=$(nsenter -t "$client_pid" -n python3 -c "$TRY_SEND" alldown-routed-control 10.42.0.2 39107 10.43.0.2 9300)
+fi
+nft --check --file "$return_selectable"
+nft --file "$return_selectable"
+nsenter -t "$client_pid" -n python3 -c "$SEND_ONE" alldown-est-pre 10.42.0.2 39101 9001
+
+nft --check --file "$all_down"
+nft --file "$all_down"
+drop_chain_during=false
+if nft list chain inet ceralive_share forward >/dev/null 2>&1; then drop_chain_during=true; fi
+ingest_during=$(nft list table inet ceralive_ingest_fw)
+nm_tables_during=false
+if [ "$nm_shared" = "--nm-shared" ] \
+	&& nft list table ip nm-shared-client0 >/dev/null 2>&1 \
+	&& nft list table ip nm-shared-shared0 >/dev/null 2>&1; then
+	nm_tables_during=true
+fi
+
+nsenter -t "$client_pid" -n python3 -c "$SEND_ONE" alldown-est-during 10.42.0.2 39101 9001
+new_flow_during=$(nsenter -t "$client_pid" -n python3 -c "$TRY_SEND" alldown-new 10.42.0.2 39102 203.0.113.10 9002)
+routed_during="not-run"
+if [ "$nm_shared" = "--nm-shared" ]; then
+	routed_during=$(nsenter -t "$client_pid" -n python3 -c "$TRY_SEND" alldown-routed-during 10.42.0.2 39108 10.43.0.2 9300)
+fi
+local_services=$(nsenter -t "$client_pid" -n python3 -c "$LOCAL_PROBE")
+python3 -c "$SEND_ONE" alldown-local 192.0.2.1 39103 9100
+python3 -c "$SEND_ONE" alldown-overlap-local 10.42.0.1 39104 9101
+
+nft --file "$return_selectable"
+drop_chain_after=false
+if nft list chain inet ceralive_share forward >/dev/null 2>&1; then drop_chain_after=true; fi
+nsenter -t "$client_pid" -n python3 -c "$SEND_ONE" alldown-return-new 10.42.0.2 39105 9002
+client_ifindex_after=$(ip -j link show dev client0 | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["ifindex"])')
+ingest_return=$(nft list table inet ceralive_ingest_fw)
+all_down_result=$(python3 - "$routed_control" "$new_flow_during" "$routed_during" \
+	"$local_services" "$drop_chain_during" "$drop_chain_after" \
+	"$client_ifindex_before" "$client_ifindex_after" \
+	"$([ "$ingest_during" = "$ingest_before" ] && echo true || echo false)" \
+	"$([ "$ingest_return" = "$ingest_before" ] && echo true || echo false)" \
+	"$nm_tables_during" <<'PY'
+import json, sys
+
+(control, new_flow, routed, services, chain_during, chain_after,
+ index_before, index_after, ingest_during, ingest_return, nm_tables) = sys.argv[1:]
+print(json.dumps({
+    "routedPeerControl": control,
+    "newFlowDuring": new_flow,
+    "routedPeerDuring": routed,
+    "localServices": json.loads(services),
+    "dropChainDuring": chain_during == "true",
+    "dropChainAfterReturn": chain_after == "true",
+    "clientIfindexUnchanged": index_before == index_after,
+    "ingestUnchangedDuring": ingest_during == "true",
+    "ingestUnchangedAfterReturn": ingest_return == "true",
+    "nmTablesPresentDuring": nm_tables == "true",
+}))
+PY
+)
+
 ingest_after=$(nft list table inet ceralive_ingest_fw)
 
 python3 - "$log0" "$log1" "$reply_round_trip" "$flush_backend" \
@@ -374,8 +525,8 @@ python3 - "$log0" "$log1" "$reply_round_trip" "$flush_backend" \
 	"$(sysctl -n net.ipv4.conf.default.rp_filter)" \
 	"$(sysctl -n net.ipv4.conf.wan0.rp_filter)" \
 	"$(sysctl -n net.ipv4.conf.wan1.rp_filter)" \
-	"$ingest_before" "$ingest_after" "$nm_result" <<'PY'
-import json, pathlib, sys
+	"$ingest_before" "$ingest_after" "$nm_result" "$all_down_result" "${log0}.shared" <<'PY'
+import json, pathlib, subprocess, sys
 
 def read(path):
     file = pathlib.Path(path)
@@ -403,6 +554,36 @@ weighted_nat = all(
     if row.startswith("weighted-")
 )
 
+shared_rows = read(sys.argv[13])
+
+def shared_seen(prefix):
+    return sum(row.startswith(prefix + "|") for row in shared_rows)
+
+all_down = json.loads(sys.argv[12])
+observer = json.loads(subprocess.check_output([
+    "nft", "-j", "list", "chain", "inet", "coexist_observer", "output",
+]))
+local_unmarked = sum(
+    expr["counter"]["packets"]
+    for entry in observer["nftables"] if "rule" in entry
+    if entry["rule"].get("comment") == "alldown-local-unmarked"
+    for expr in entry["rule"]["expr"] if "counter" in expr
+)
+all_down.update({
+    "hostOverlapUnmarkedPackets": local_unmarked,
+    "establishedPreUplink": uplink("alldown-est-pre"),
+    "establishedDuringUplink": uplink("alldown-est-during"),
+    "establishedDuringSource": source("alldown-est-during"),
+    "newFlowDeliveredUplink": uplink("alldown-new"),
+    "routedControlSeen": shared_seen("alldown-routed-control"),
+    "routedDuringSeen": shared_seen("alldown-routed-during"),
+    "hostOutputUplink": uplink("alldown-local"),
+    "hostOutputSource": source("alldown-local"),
+    "hostOverlapSource": source("alldown-overlap-local"),
+    "returnNewUplink": uplink("alldown-return-new"),
+    "returnNewSource": source("alldown-return-new"),
+})
+
 print(json.dumps({
     "weightedWan0": weighted0,
     "weightedWan1": weighted1,
@@ -429,5 +610,6 @@ print(json.dumps({
     "ingestBefore": sys.argv[9],
     "ingestAfter": sys.argv[10],
     "nmSharing": json.loads(sys.argv[11]),
+    "allDown": all_down,
 }))
 PY
