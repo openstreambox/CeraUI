@@ -20,6 +20,7 @@ export class UplinkSteeringCoordinator {
 	readonly #deps: UplinkSteeringCoordinatorDeps;
 	#applied: PreparedSteeringState | undefined;
 	#dirty = false;
+	#applyUncertain = false;
 	#running: Promise<void> | undefined;
 
 	constructor(deps: UplinkSteeringCoordinatorDeps) {
@@ -45,13 +46,19 @@ export class UplinkSteeringCoordinator {
 			this.#dirty = false;
 			try {
 				const desired = await this.#deps.readDesiredState();
-				if (stateKey(this.#applied) !== stateKey(desired)) {
+				if (
+					this.#applyUncertain ||
+					stateKey(this.#applied) !== stateKey(desired)
+				) {
 					await this.#deps.apply(this.#applied, desired);
 				}
 				this.#applied = desired;
+				this.#applyUncertain = false;
 				this.#deps.publishAvailability({ available: true });
 				retryIndex = 0;
 			} catch (error) {
+				// A partial apply can leave the live ruleset unlike the last completed state.
+				this.#applyUncertain = true;
 				const reason =
 					error instanceof SteeringUnavailableError
 						? error.reason

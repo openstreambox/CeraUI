@@ -82,7 +82,20 @@ export function buildShareRuleset(state: ShareRulesetState): string {
 			lines.push(renderSelectionRule(zone));
 		}
 	}
-	lines.push("\t}", "", "\tchain postrouting {");
+	lines.push("\t}", "");
+	if (zones.length > 0 && selectable.length === 0) {
+		lines.push(
+			"\tchain forward {",
+			"\t\ttype filter hook forward priority filter; policy accept;",
+		);
+		for (const zone of zones) {
+			lines.push(
+				`\t\tiifname "${zone.ifname}" ip saddr ${zone.ipv4Cidr} ct state new drop comment "no selectable client uplink"`,
+			);
+		}
+		lines.push("\t}", "");
+	}
+	lines.push("\tchain postrouting {");
 	lines.push("\t\ttype nat hook postrouting priority srcnat; policy accept;");
 	for (const zone of zones) {
 		for (const uplink of uplinks)
