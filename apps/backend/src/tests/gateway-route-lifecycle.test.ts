@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
 	handleTerminationSignal,
 	resetShutdownForTest,
@@ -325,4 +325,300 @@ describe("gateway election current candidates", () => {
 			);
 		},
 	);
+
+	const boundaries = [
+		"startup",
+		"queue",
+		"inventory",
+		"candidate",
+		"fib",
+	] as const;
+	for (const boundary of boundaries) {
+		for (const outcome of ["success", "failure"] as const) {
+			if (
+				outcome === "failure" &&
+				(boundary === "candidate" || boundary === "fib")
+			)
+				continue;
+			for (const change of [
+				"replacement",
+				"in-place",
+				"removed",
+				"excluded",
+				"hotspot",
+				"added",
+				"throws",
+				"unchanged",
+				"counters",
+				"reordered",
+				"disabled",
+			] as const) {
+				test(`${outcome} at ${boundary} respects ${change} roster`, async () => {
+					const native = spyOn(Bun, "spawn").mockImplementation(() => {
+						throw new Error("native runner forbidden");
+					});
+					const table = new DefaultRouteTable(
+						boundary === "candidate" ? [BASELINE[0]] : BASELINE,
+					);
+					const entered = Promise.withResolvers<void>();
+					const resume = Promise.withResolvers<void>();
+					const dispatched = Promise.withResolvers<void>();
+					let armed = false;
+					const runner: typeof table.runner = async (bin, args, ...rest) => {
+						const candidateLookup =
+							args.includes("table") && args.includes("uplink-b");
+						const answer = candidateLookup
+							? BASELINE[1]
+							: await table.runner(bin, args, ...rest);
+						const matches =
+							boundary === "startup"
+								? args.includes("-6") && args.includes("show")
+								: boundary === "candidate"
+									? candidateLookup
+									: boundary === "fib"
+										? args.includes("get")
+										: !args.includes("-6") &&
+											args.includes("show") &&
+											!args.includes("table");
+						if (armed && matches) {
+							armed = false;
+							entered.resolve();
+							await resume.promise;
+						}
+						return answer;
+					};
+					const owner = new GatewayRoutePreference(runner);
+					let startup: Promise<void> | undefined;
+					let queued: Promise<void> | undefined;
+					let sweep: Promise<boolean> | undefined;
+					try {
+						if (boundary === "startup") {
+							// Prime startup independently: its captured inventory is empty, so it cannot delete these later fixture rows.
+							armed = true;
+							startup = owner.start();
+							await entered.promise;
+							table.routes
+								.get(4)
+								?.add(
+									"default via 198.51.100.1 dev uplink-b proto 242 metric 36",
+								);
+						} else {
+							await owner.start();
+							await setDefaultRoute("uplink-b", { runner });
+							if (boundary === "queue") {
+								// This earlier no-op captures only its retained winner, before the obsolete row is added.
+								armed = true;
+								queued = setDefaultRoute("uplink-b", { runner });
+								await entered.promise;
+							}
+						}
+						table.routes
+							.get(4)
+							?.add(
+								"default via 203.0.113.1 dev old-uplink proto 242 metric 50",
+							);
+						const before = table.orderedRows();
+						table.mutations.length = 0;
+						let current: Record<string, NetworkInterface> = {
+							"uplink-a": netif("192.0.2.2"),
+							"uplink-b": netif("198.51.100.2"),
+						};
+						let eligible = true,
+							throwing = false,
+							validations = 0;
+						const base = election(table);
+						const deps: GatewayElectionDeps = {
+							...base,
+							resolve: async () => ({
+								addrs: ["203.0.113.10"],
+								fromCache: false,
+							}),
+							interfaces: () => current,
+							eligible: (name) => {
+								if (throwing) throw new Error("changed roster unavailable");
+								return name !== "uplink-b" || eligible;
+							},
+							validateDns: () => {
+								validations++;
+							},
+							installRoute: async (name, family, admit?: () => boolean) => {
+								dispatched.resolve();
+								await owner.apply(name, family, admit);
+							},
+							releaseRoutes: async (condition, admit?: () => boolean) => {
+								dispatched.resolve();
+								if (condition) await owner.release(condition, admit);
+								else await owner.apply(undefined, 4, admit);
+							},
+							probes: {
+								...base.probes,
+								probeRepository: (name) =>
+									outcome === "success" && name === "uplink-b"
+										? Promise.resolve(reachable)
+										: base.probes.probeRepository(name),
+							},
+						};
+						if (boundary !== "startup" && boundary !== "queue") armed = true;
+						sweep = updateGw(deps);
+						if (boundary === "startup" || boundary === "queue")
+							await dispatched.promise;
+						else await entered.promise;
+						switch (change) {
+							case "replacement":
+								current["uplink-b"] = netif("198.51.100.3");
+								break;
+							case "in-place":
+								current["uplink-b"].ip = "198.51.100.3";
+								break;
+							case "removed":
+								delete current["uplink-b"];
+								break;
+							case "excluded":
+								eligible = false;
+								break;
+							case "hotspot":
+								current["uplink-b"].error = NETIF_ERR_HOTSPOT;
+								break;
+							case "added":
+								current["uplink-c"] = netif("203.0.113.2");
+								break;
+							case "throws":
+								throwing = true;
+								break;
+							case "counters":
+								current["uplink-b"].txb++;
+								current["uplink-b"].rxb++;
+								break;
+							case "reordered":
+								current = {
+									"uplink-b": current["uplink-b"],
+									"uplink-a": current["uplink-a"],
+								};
+								break;
+							case "disabled":
+								current["uplink-b"].enabled = false;
+								break;
+							case "unchanged":
+								break;
+						}
+						resume.resolve();
+						const result = await sweep;
+						await startup;
+						await queued;
+						const stale = ![
+							"unchanged",
+							"counters",
+							"reordered",
+							"disabled",
+						].includes(change);
+						if (stale) {
+							expect(table.mutations).toEqual([]);
+							expect(table.orderedRows()).toEqual(before);
+							expect(result).toBe(false);
+							expect(validations).toBe(0);
+							if (
+								boundary === "queue" &&
+								change === "replacement" &&
+								outcome === "success"
+							) {
+								// The withheld transaction must not poison the same runner's queue tail.
+								expect(await updateGw(deps)).toBe(true);
+								expect(table.mutations).toHaveLength(1);
+							}
+						} else {
+							expect(result).toBe(outcome === "success");
+							expect(validations).toBe(outcome === "success" ? 1 : 0);
+							expect(table.mutations).toHaveLength(
+								outcome === "success" ? 1 : 2,
+							);
+							for (const row of boundary === "candidate"
+								? [BASELINE[0]]
+								: BASELINE)
+								expect(table.rows()).toContain(row);
+						}
+						expect(native).not.toHaveBeenCalled();
+					} finally {
+						resume.resolve();
+						await Promise.allSettled(
+							[startup, queued, sweep].filter((value) => value !== undefined),
+						);
+						native.mockRestore();
+					}
+				});
+			}
+		}
+	}
+
+	test("roster changes after the first write do not suppress rollback", async () => {
+		const native = spyOn(Bun, "spawn").mockImplementation(() => {
+			throw new Error("native runner forbidden");
+		});
+		const old = "default via 192.0.2.1 dev uplink-a proto 242 metric 35";
+		const table = new DefaultRouteTable(BASELINE);
+		let applying = false,
+			allowed = true,
+			checked = 0;
+		const runner: typeof table.runner = async (bin, args, ...rest) => {
+			if (applying && args.includes("get")) return BASELINE[0];
+			const result = await table.runner(bin, args, ...rest);
+			if (applying && table.mutations.length > 0) allowed = false;
+			return result;
+		};
+		try {
+			const owner = new GatewayRoutePreference(runner);
+			await owner.start();
+			table.routes.get(4)?.add(old);
+			const before = table.orderedRows();
+			applying = true;
+			await expect(
+				owner.apply("uplink-b", 4, () => {
+					checked++;
+					return allowed;
+				}),
+			).rejects.toThrow();
+			expect(checked).toBe(1);
+			expect(allowed).toBe(false);
+			expect(table.mutations).toHaveLength(4);
+			expect(table.orderedRows()).toEqual(before);
+			expect(native).not.toHaveBeenCalled();
+		} finally {
+			native.mockRestore();
+		}
+	});
+
+	test("natural release condition remains independent of ordinary admission", async () => {
+		const native = spyOn(Bun, "spawn").mockImplementation(() => {
+			throw new Error("native runner forbidden");
+		});
+		const table = new DefaultRouteTable(BASELINE);
+		try {
+			const owner = new GatewayRoutePreference(table.runner);
+			await owner.apply("uplink-b");
+			const before = table.orderedRows();
+			table.mutations.length = 0;
+			await expect(
+				owner.release(
+					() => false,
+					() => true,
+				),
+			).rejects.toThrow();
+			await expect(
+				owner.release(
+					() => true,
+					() => false,
+				),
+			).rejects.toThrow();
+			expect(table.mutations).toEqual([]);
+			expect(table.orderedRows()).toEqual(before);
+			await owner.release(
+				() => true,
+				() => true,
+			);
+			expect(table.mutations).toHaveLength(1);
+			expect(table.rows()).toEqual([...BASELINE].sort());
+			expect(native).not.toHaveBeenCalled();
+		} finally {
+			native.mockRestore();
+		}
+	});
 });

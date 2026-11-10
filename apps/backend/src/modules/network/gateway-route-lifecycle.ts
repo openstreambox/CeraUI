@@ -1,6 +1,7 @@
 import { run } from "../../helpers/run.ts";
 import { isRealDevice } from "../system/device-detection.ts";
 import {
+	type DefaultRouteAdmission,
 	type DefaultRouteReleaseCondition,
 	setDefaultRoute,
 } from "./default-route.ts";
@@ -24,11 +25,19 @@ export class GatewayRoutePreference {
 		return this.#startup;
 	}
 
-	async apply(ifname: string | undefined, family: 4 | 6 = 4): Promise<void> {
+	async apply(
+		ifname: string | undefined,
+		family: 4 | 6 = 4,
+		admit?: DefaultRouteAdmission,
+	): Promise<void> {
 		await this.start();
 		if (this.#stopped)
 			throw new GatewayRouteError(ifname ?? "", "apply-failed");
-		await setDefaultRoute(ifname, { runner: this.runner, family });
+		await setDefaultRoute(ifname, {
+			runner: this.runner,
+			family,
+			...(admit ? { admit } : {}),
+		});
 	}
 
 	async stop(): Promise<void> {
@@ -37,12 +46,16 @@ export class GatewayRoutePreference {
 		await setDefaultRoute(undefined, { runner: this.runner });
 	}
 
-	async release(condition: DefaultRouteReleaseCondition): Promise<void> {
+	async release(
+		condition: DefaultRouteReleaseCondition,
+		admit?: DefaultRouteAdmission,
+	): Promise<void> {
 		await this.start();
 		if (this.#stopped) throw new GatewayRouteError("", "apply-failed");
 		await setDefaultRoute(undefined, {
 			runner: this.runner,
 			releaseCondition: condition,
+			...(admit ? { admit } : {}),
 		});
 	}
 }

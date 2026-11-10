@@ -37,7 +37,10 @@ import {
 	logConnectivityElection,
 	raceConnectivityAddresses,
 } from "./connectivity-election.ts";
-import type { DefaultRouteReleaseCondition } from "./default-route.ts";
+import type {
+	DefaultRouteAdmission,
+	DefaultRouteReleaseCondition,
+} from "./default-route.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "./dns.ts";
 import { resolveDefaultRouteInterface } from "./gateway-default-interface.ts";
 import { recoverNaturalGateway } from "./gateway-natural-recovery.ts";
@@ -76,9 +79,14 @@ export type GatewayElectionDeps = {
 	readonly interfaces: typeof getNetworkInterfaces;
 	readonly eligible: (ifname: string) => boolean;
 	readonly defaultInterface: typeof resolveDefaultRouteInterface;
-	readonly installRoute: (ifname: string, family: 4 | 6) => Promise<void>;
+	readonly installRoute: (
+		ifname: string,
+		family: 4 | 6,
+		admit?: DefaultRouteAdmission,
+	) => Promise<void>;
 	readonly releaseRoutes?: (
 		condition?: DefaultRouteReleaseCondition,
+		admit?: DefaultRouteAdmission,
 	) => Promise<void>;
 	readonly probes: ConnectivityProbes;
 	readonly routeRunner?: typeof run;
@@ -96,12 +104,12 @@ function defaultGatewayElectionDeps(): GatewayElectionDeps {
 		interfaces: getNetworkInterfaces,
 		eligible: isUplinkClientSteeringEligible,
 		defaultInterface: resolveDefaultRouteInterface,
-		installRoute: (ifname, family) =>
-			gatewayRoutePreference.apply(ifname, family),
-		releaseRoutes: (condition) =>
+		installRoute: (ifname, family, admit) =>
+			gatewayRoutePreference.apply(ifname, family, admit),
+		releaseRoutes: (condition, admit) =>
 			condition
-				? gatewayRoutePreference.release(condition)
-				: gatewayRoutePreference.apply(undefined),
+				? gatewayRoutePreference.release(condition, admit)
+				: gatewayRoutePreference.apply(undefined, 4, admit),
 		probes: defaultConnectivityProbes,
 		routeRunner: run,
 	};
@@ -162,6 +170,12 @@ export async function updateGw(
 	);
 	// Capture values before the awaits; the underlying netif records may mutate.
 	const capturedRoster = candidateRosterIdentity(candidates);
+	const currentRoster: DefaultRouteAdmission = () =>
+		candidateRosterIdentity(
+			eligibleProbeCandidates(deps.interfaces()).filter((candidate) =>
+				deps.eligible(candidate.name),
+			),
+		) === capturedRoster;
 
 	const defaultIf = await deps.defaultInterface(4);
 	const recovery = await recoverNaturalGateway(deps, candidates);
@@ -210,11 +224,8 @@ export async function updateGw(
 		candidates,
 		deps.probes,
 	);
-	const currentCandidates = eligibleProbeCandidates(deps.interfaces()).filter(
-		(candidate) => deps.eligible(candidate.name),
-	);
-	// This sampled check is not a lease across the route owner's later awaits.
-	if (candidateRosterIdentity(currentCandidates) !== capturedRoster) {
+	// Also carried to the owner's first mutation; neither sampled check is a lease.
+	if (!currentRoster()) {
 		logger.info(
 			"Gateway candidates changed during probing; withholding result",
 		);
@@ -223,10 +234,21 @@ export async function updateGw(
 	logConnectivityElection(election);
 
 	const goodIf = election.elected?.name;
-	if (goodIf && !fromCache && addrs.length > 0) deps.validateDns();
 
 	if (goodIf) {
-		// Connectivity and route application are distinct claims; retract only the former.
+		try {
+			const family = election.family ?? 4;
+			await deps.installRoute(goodIf, family, currentRoster);
+			if (deps.routeRunner)
+				await naturalUplinkRecovery(deps.routeRunner).observeOwnership();
+		} catch (err) {
+			logger.warn("Default-route application failed", {
+				ifname: goodIf,
+				error: err,
+			});
+			return false;
+		}
+		if (!fromCache && addrs.length > 0) deps.validateDns();
 		notificationRemove(NO_INTERNET_NOTIFICATION);
 		if (
 			election.results.find(({ candidate }) => candidate.name === goodIf)
@@ -236,19 +258,6 @@ export async function updateGw(
 				"Using connectivity-only host uplink; repository HTTPS unavailable",
 				{ ifname: goodIf },
 			);
-		}
-
-		try {
-			const family = election.family ?? 4;
-			await deps.installRoute(goodIf, family);
-			if (deps.routeRunner)
-				await naturalUplinkRecovery(deps.routeRunner).observeOwnership();
-		} catch (err) {
-			logger.warn("Default-route application failed", {
-				ifname: goodIf,
-				error: err,
-			});
-			return false;
 		}
 
 		return true;
@@ -274,7 +283,7 @@ export async function updateGw(
 		return false;
 	}
 	try {
-		await deps.releaseRoutes?.();
+		await deps.releaseRoutes?.(undefined, currentRoster);
 	} catch (error) {
 		logger.warn("Default-route release failed", { error });
 		return false;
