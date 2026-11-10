@@ -46,27 +46,40 @@ export class TwoRadioCoordinator {
 			if (this.started)
 				throw new Error("Start requires a fresh coordinator session");
 			this.ready = false;
-			this.ready = await this.adapter.reconcile();
-			if (this.ready) {
-				const holder = this.adapter.designatedHolder();
-				if (holder) {
-					const current = await this.owner.run(() =>
-						this.owner.identity(holder.radio, AbortSignal.timeout(4_160)),
-					);
-					if (
-						!current ||
-						current.physical !== holder.identity.physical ||
-						current.permanentMac !== holder.identity.permanentMac ||
-						!sameEpoch(current.epoch, holder.identity.epoch)
-					) {
-						this.ready = false;
-					} else {
-						this.state.holder = holder.radio;
+			try {
+				this.ready = await this.adapter.reconcile();
+				if (this.ready) {
+					const holder = this.adapter.designatedHolder();
+					if (holder) {
+						const current = await this.owner.run(() =>
+							this.owner.identity(holder.radio, AbortSignal.timeout(4_160)),
+						);
+						if (
+							!current ||
+							current.physical !== holder.identity.physical ||
+							current.permanentMac !== holder.identity.permanentMac ||
+							!sameEpoch(current.epoch, holder.identity.epoch)
+						) {
+							this.ready = false;
+						} else {
+							const readback = this.owner.readback?.bind(this.owner);
+							if (
+								readback &&
+								!(await this.owner.run(() =>
+									readback(holder, AbortSignal.timeout(4_160)),
+								))
+							) {
+								this.ready = false;
+							} else this.state.holder = holder.radio;
+						}
 					}
 				}
+				this.started = this.ready;
+				return this.ready;
+			} catch (error) {
+				this.ready = false;
+				throw error;
 			}
-			this.started = this.ready;
-			return this.ready;
 		});
 	}
 	view(): State {

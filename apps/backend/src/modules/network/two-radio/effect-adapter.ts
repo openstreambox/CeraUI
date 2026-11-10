@@ -48,6 +48,7 @@ export interface Journal {
 export interface NetworkOwner {
 	run<T>(work: () => Promise<T>): Promise<T>;
 	identity(radio: Radio, signal: AbortSignal): Promise<Identity | null>;
+	readback?(holder: Holder, signal: AbortSignal): Promise<boolean>;
 	apply(intent: Intent, scope: string, signal: AbortSignal): Promise<boolean>;
 	cancelAndDrain(
 		record: OperationRecord,

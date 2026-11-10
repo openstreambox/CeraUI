@@ -2,8 +2,9 @@
 
 `two_radio_enabled` is an optional runtime-config boolean. Missing and false
 are disabled; the schema adds no default or serialized key to existing files.
-The setting is reserved for owner composition and is not yet connected to the
-backend startup path. Setting it true alone does not enable handovers.
+The existing network-interface monitor connects the enabled setting to the native
+route-only runtime. See [live enablement](LIVE.md) for required installation,
+witness and carrying-receipt configuration.
 
 `TwoRadioCoordinator` composes normalized ingress, the pure reducer, the effect
 adapter and a supplied journal. `startTwoRadioCoordinator` checks the flag before
@@ -21,26 +22,16 @@ The timing defaults use a 4160 ms effect IO ceiling, 3000 ms associated linger
 and 16640 ms total operation budget. These are configuration inputs rather than
 a reliability claim. The reducer still emits an explicit disconnect after linger;
 a live route-only owner must distinguish logical carrying-path release from
-station disassociation. No such reinterpretation is hidden in this composition.
+station disassociation. The native owner maps demotion/release to logical policy ownership only.
 
-## Remaining live integration
+## Native integration
 
-The caller must supply the existing owner's `NetworkOwner` and `IngressAuthority`,
-plus a `FileJournal` under an existing private persistent state directory and a
-unique session. The generic NM binding can construct the owner, but its plans,
-server-side drain, ownership checks and holder readback still require native
-implementations. Never substitute a successful nmcli exit or a connected-state
-poll for NM quiescence. The existing native captive-portal readers can provide
-bracketed D-Bus/kernel identity observations; they do not cancel mutations or
-fence pending server work. No timer, RPC, socket, route or NM mutation is installed
-by this module. Live policy-route composition remains unfinished.
-
-Future live route swaps must move only an explicitly owned policy route/rule,
-retain both associations, await independent carrying-traffic confirmation, linger
-and release only the logical old path. They must never call the host default-route
-election as a swap effect. Bound nonce challenge/response dispatch and receive
-records must come from a trusted socket source; arrival-only receiver logs cannot
-supply them. The media path supplies independent real-traffic receipts.
+`native-owner.ts` supplies exact owned policy-route plans and live readback.
+`runtime.ts` supplies the boot loop, serialized owner, persistent installation
+claim, FileJournal and trusted ingress. `probe.ts` performs a bounded same-socket
+nonce exchange with binding readback. See [LIVE.md](LIVE.md) for the independent
+carrying-receipt contract and operational limits. Logical demotion/release retain
+both associations; no NM mutation or default-route election runs in this path.
 
 ## Checks and replay
 
@@ -48,8 +39,9 @@ Run `bun test apps/backend/src/modules/network/two-radio/`. Synthetic tests driv
 normal ingress through reducer, NM binding, shared physical lock, journal and
 ACK feedback. They cover fresh proof, traffic-before-demotion, linger, one token,
 common-target suppression, disabled construction, external-ACK rejection and
-restart drainage/restoration with foreign-resource preservation. They qualify the
-library composition, not native NM callbacks or on-device handovers.
+restart drainage/restoration with foreign-resource preservation. Native-owner and epoch tests additionally qualify host readback and settling.
+The real namespace check in LIVE.md exercises the enabled kernel path. No host
+check establishes on-device handover or media performance.
 
 For private recordings, set `TWO_RADIO_REPLAY_FILE` to a caller-owned JSON array
 of `{rows, unknown}` objects. `rows` are normalized ingress records. Sequence-only

@@ -141,6 +141,8 @@ export const ALLOWED: Set<string> = new Set<string>([
 	// Future scoped conntrack flush on hard-down.
 	"conntrack",
 	"curl",
+	// Bound nonce exchange; source is a fixed literal, arguments are data only.
+	"perl",
 	"gpgv",
 	"resolvectl",
 	"openssl",
