@@ -2,9 +2,20 @@
 
 Open **Configure** for the intended wired port. Under **Port role**, choose
 **Uplink** or **Shared LAN**, then **Save** to request a change. Selecting an
-option alone stages it. Save sends a role change only when the selection differs
-from the role currently displayed; saving an unchanged role is not a forced
-profile repair. Do not switch through the other role just to force a retry.
+option alone stages it. An ordinary unchanged Save sends no role request. Do not
+switch through the other role just to force a retry.
+
+To reapply a displayed **Shared LAN** choice, choose **Retry** beside its Shared
+LAN label. Retry only stages one recovery request. Review **Applies when you
+save** and the connection-disruption warning, then choose **Save** to send it.
+Choose Retry again to unstage it, or **Cancel** to discard it. Selecting Uplink,
+closing/reopening the dialog or changing ports also clears the unsent request.
+Each recovery request sent by Save consumes the staged intent even if its result
+is unconfirmed; an error, timeout or observation does not automatically rearm or
+repeat it. Another ordinary unchanged Save remains an ordinary Save unless you
+stage Retry again. Retry is disabled while this port has a save, role operation
+or network operation in progress; another port's pending work does not disable
+this control.
 
 **Uplink** makes the port eligible for the SRTLA bond. **Shared LAN** removes it
 from that bond and requests NetworkManager's shared IPv4 configuration for local
@@ -27,8 +38,11 @@ Review the correct port's reported role and **Address** before deciding whether
 to request another change. The displayed role can reflect restored stored
 intent; it is not independent proof of the profile's active configuration,
 working internet or restored management access. Closing or reopening the dialog
-does not cancel an earlier request. Choosing Uplink and saving a new change is
-another request, not a physical rollback of the earlier one.
+does not cancel an earlier request. A late reply from a closed, replaced or
+unmounted dialog cannot start its following configuration write or close the new
+view; this does not undo a request already sent to the device. Choosing Uplink
+and saving a new change is another request, not a physical rollback of the
+earlier one. A failed role request stops the rest of that Save.
 
 ## How a new Shared LAN request recovers
 
@@ -44,8 +58,9 @@ replay the add.
 
 At boot, recovery can reuse a valid existing owned profile for a stored Shared
 LAN choice. It does not create a missing profile. A missing or unreadable
-profile can therefore remain unresolved; restarting or saving an unchanged
-displayed role is not a guaranteed repair.
+profile can therefore remain unresolved. Restarting or an ordinary unchanged
+Save is not a forced repair; Retry followed by Save requests recovery
+explicitly, and can still return an unconfirmed result.
 
 The profile ordering and recovery rules have deterministic source/mock coverage.
 Native DHCP/DNS/NAT, subnet conflicts, management continuity, two-port behavior
