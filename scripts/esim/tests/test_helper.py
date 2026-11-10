@@ -49,6 +49,91 @@ class HelperTests(unittest.TestCase):
         state = helper.snapshot(EID, session.rows)
         return dict(action=action, snapshot=state['token'], profileId=state['profiles'][0]['id'])
 
+    def run_main(self, session, request):
+        request = dict(request, stableKey='synthetic', device='0', acknowledged=True,
+                       activationCode='LPA:1$rsp.example.com$PRIVATE-TEST',
+                       confirmationCode='PRIVATE-CONFIRMATION')
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper, 'LOCK', directory + '/lock'), \
+                 patch.object(helper, 'read_config', return_value={}), \
+                 patch.object(helper, 'Session', return_value=session), \
+                 patch.object(helper.sys, 'stdin', io.StringIO(json.dumps(request))), \
+                 patch.object(helper.subprocess, 'Popen') as popen, \
+                 contextlib.redirect_stdout(output):
+                helper.main()
+        popen.assert_not_called()
+        reply = output.getvalue()
+        for private in (EID, PROFILES[0]['iccid'], request['activationCode'],
+                        request['confirmationCode'], 'private operation failure'):
+            self.assertNotIn(private, reply)
+        return json.loads(reply)
+
+    def test_acquire_failure_closes_without_attempting_an_operation(self):
+        session = FakeSession()
+        with patch.object(session, 'acquire', side_effect=helper.Refusal('identity_unresolved')) as acquire, \
+             patch.object(session, 'operate') as operate, \
+             patch.object(session, 'close') as close:
+            result = self.run_main(session, dict(action='inspect'))
+        self.assertEqual(dict(success=False, error='identity_unresolved'), result)
+        acquire.assert_called_once_with('0')
+        operate.assert_not_called()
+        close.assert_called_once_with()
+        self.assertFalse(session.dispatched)
+        self.assertEqual([], session.calls)
+
+    def test_cleanup_failure_overrides_an_otherwise_successful_inspection(self):
+        session = FakeSession()
+        with patch.object(session, 'acquire'), \
+             patch.object(session, 'operate', wraps=session.operate) as operate, \
+             patch.object(session, 'close', side_effect=ValueError('private operation failure')) as close:
+            result = self.run_main(session, dict(action='inspect'))
+        self.assertEqual(dict(success=False, error='outcome_unknown'), result)
+        operate.assert_called_once()
+        close.assert_called_once_with()
+        self.assertFalse(session.dispatched)
+        self.assertTrue(session.cleanup_failed)
+        self.assertEqual([], session.calls)
+
+    def test_dispatched_write_failure_is_sanitized_and_never_replayed(self):
+        session = FakeSession()
+        request = self.request('enable', session)
+        session.fail = True
+        with patch.object(session, 'acquire'), patch.object(session, 'close') as close:
+            result = self.run_main(session, request)
+        self.assertEqual(dict(success=False, error='outcome_unknown'), result)
+        close.assert_called_once_with()
+        self.assertTrue(session.dispatched)
+        self.assertEqual(1, sum(args[:2] == ('profile', 'enable') for args, _ in session.calls))
+
+    def test_readback_exhaustion_does_not_replay_the_successful_write(self):
+        session = FakeSession()
+        request = self.request('enable', session)
+        original_lpac = session.lpac
+        profiles = helper.Session.profiles
+        reads = []
+
+        def lpac(*args, data=None):
+            if args == ('profile', 'list'):
+                reads.append(args)
+                if session.dispatched:
+                    raise ValueError('private operation failure')
+                return session.rows
+            return original_lpac(*args, data=data)
+
+        with patch.object(session, 'acquire'), \
+             patch.object(session, 'profiles', lambda: profiles(session)), \
+             patch.object(session, 'lpac', lpac), \
+             patch.object(session, 'close') as close, \
+             patch.object(helper.time, 'sleep') as sleep:
+            result = self.run_main(session, request)
+        self.assertEqual(dict(success=False, error='outcome_unknown'), result)
+        close.assert_called_once_with()
+        self.assertTrue(session.dispatched)
+        self.assertEqual(4, len(reads))
+        self.assertEqual(2, sleep.call_count)
+        self.assertEqual(1, sum(args[:2] == ('profile', 'enable') for args, _ in session.calls))
+
     def test_snapshot_hides_card_and_profile_identifiers(self):
         state = helper.snapshot(EID, PROFILES)
         self.assertNotIn('iccid', str(state))
