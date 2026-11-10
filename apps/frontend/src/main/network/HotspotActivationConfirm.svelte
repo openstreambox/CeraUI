@@ -16,6 +16,7 @@
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
 import { Copy, Dices, Loader2, TriangleAlert } from '@lucide/svelte';
+import { onDestroy } from 'svelte';
 import { toast } from 'svelte-sonner';
 
 import { networkConstraints } from '$lib/components/streaming';
@@ -54,6 +55,15 @@ let loaded = { name: '', password: '' };
 let name = $state('');
 let password = $state('');
 let acknowledged = $state(false);
+let confirmationLive = true;
+onDestroy(() => {
+	confirmationLive = false;
+});
+
+function cancel() {
+	confirmationLive = false;
+	onCancel();
+}
 
 async function load() {
 	phase = 'loading';
@@ -114,23 +124,29 @@ async function copy(value: string, success: string) {
 }
 
 async function confirm() {
-	if (!canConfirm) return;
+	if (!confirmationLive || !canConfirm) return;
+	const requestedDevice = device;
+	const isCurrent = () => confirmationLive && device === requestedDevice;
 	if (name !== loaded.name || password !== loaded.password) {
 		phase = 'saving';
 		try {
 			const result = await rpc.wifi.hotspotPrepare({ device, name, password });
+			// Preparing credentials may already have written them. A dismissed
+			// confirmation must not authorize the separate hotspot start afterward.
+			if (!isCurrent()) return;
 			if (!result.success || result.name !== name || result.password !== password) {
 				throw new Error('not-stored');
 			}
 			loaded = { name, password };
 		} catch {
+			if (!isCurrent()) return;
 			phase = 'ready';
 			saveFailed = true;
 			return;
 		}
 		phase = 'ready';
 	}
-	onConfirm();
+	if (isCurrent()) onConfirm();
 }
 </script>
 
@@ -279,7 +295,7 @@ async function confirm() {
 		<Button
 			class="h-9 min-h-[var(--touch-target-min)]"
 			data-testid="hotspot-confirm-cancel"
-			onclick={onCancel}
+			onclick={cancel}
 			size="sm"
 			variant="outline"
 		>
