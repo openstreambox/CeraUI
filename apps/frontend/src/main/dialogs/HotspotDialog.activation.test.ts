@@ -311,4 +311,58 @@ describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
 		expect(q("hotspot-activation-confirm")).toBeNull();
 		expect(start).not.toHaveBeenCalled();
 	});
+
+	it.each(["cancel", "unmount", "continue"] as const)(
+		"a deferred credential reply respects %s of the activation gate",
+		async (action) => {
+			const view = render(HotspotDialog, {
+				props: { open: true, deviceId: "0", iface: STATION },
+			});
+			await fireEvent.click(enableButton());
+			await vi.waitFor(() =>
+				expect(q("hotspot-activation-confirm")?.dataset.phase).toBe("ready"),
+			);
+			const chosenPassword = "changed test password";
+			await fireEvent.input(q("hotspot-confirm-password") as HTMLInputElement, {
+				target: { value: chosenPassword },
+			});
+			let resolvePrepare!: (result: {
+				success: true;
+				name: string;
+				password: string;
+			}) => void;
+			prepare.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolvePrepare = resolve;
+				}),
+			);
+			await acknowledge();
+			await fireEvent.click(q("hotspot-confirm-activate") as HTMLElement);
+			await tick();
+			expect(q("hotspot-activation-confirm")?.dataset.phase).toBe("saving");
+			expect(prepare).toHaveBeenCalledTimes(2);
+			expect(start).not.toHaveBeenCalled();
+			if (action === "cancel") {
+				expect(q<HTMLButtonElement>("hotspot-confirm-cancel")?.disabled).toBe(
+					false,
+				);
+				await fireEvent.click(q("hotspot-confirm-cancel") as HTMLElement);
+				await tick();
+				expect(q("hotspot-activation-confirm")).toBeNull();
+			} else if (action === "unmount") {
+				await view.unmount();
+			}
+			resolvePrepare({
+				success: true,
+				name: "CERALIVE_791c",
+				password: chosenPassword,
+			});
+			await tick();
+			await tick();
+			expect(start).toHaveBeenCalledTimes(action === "continue" ? 1 : 0);
+			if (action === "continue")
+				expect(start).toHaveBeenCalledWith({ device: "0" });
+			expect(prepare).toHaveBeenCalledTimes(2);
+		},
+	);
 });
