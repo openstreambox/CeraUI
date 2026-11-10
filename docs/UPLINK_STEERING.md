@@ -1,8 +1,10 @@
 # Shared-client uplink steering
 
 **Status:** `[PARTIAL]` — the CeraUI backend and kernel-namespace regression gate
-exist. The image-owned `ceralive-share.service`, teardown script, and runtime
-packages land in image-building todo 12. Real-board validation remains hardware-gated.
+exist. The image repository's source tree carries `ceralive-share.service`, its
+teardown script, the CeraUI unit-ordering drop-in and the nftables/conntrack package
+entries; that is source and static-contract evidence only. A built image, an
+installed unit and real-board validation remain hardware-gated.
 
 ## Scope
 
@@ -14,6 +16,32 @@ and owns no foreign nftables table.
 The implementation lives in
 `apps/backend/src/modules/network/uplink-steering/`. Its carrier effects live in
 `apps/backend/src/modules/network/uplink-sharing.ts`.
+
+## Operator: every uplink down
+
+<a id="all-down-operator"></a>
+
+Spanish: [es-419/UPLINK_STEERING.md](es-419/UPLINK_STEERING.md#all-down-operador).
+
+A hotspot or shared-LAN client can lose internet access while remaining connected to the box. The behaviour below is implemented in source; real-device qualification is still pending. Labels are quoted from the current catalogs, which do not establish complete es-419 interface coverage.
+
+**Outage, reconnect, return.** A phone may stay associated and a laptop may keep its Shared LAN address during an outage. Those facts, and an Up status, do not prove usable internet. Once a ruleset with no selectable uplink is applied, it blocks the new client IPv4 flows described under Limits. When a usable uplink returns and the updated rules are applied, try a new connection. Reopen the browser, app, or call in the ordinary way. An open session can need that reconnect after the uplink actually failed. Session continuity, break-free failover, and uplink combining are not included.
+
+**Web interface reconnect.** When the interface replaces its control connection, it ignores delayed updates and connection-status events from the previous connection. Updates and errors from the current connection still appear. After the control connection returns, confirm internet access with a new request from a hotspot client; existing client sessions may need to reconnect.
+
+**Internet Sharing** is status only: no switch, button, or repair action. If Client zones still shows the zone and every uplink is Down, you may see **No healthy uplink**: "Every uplink is down, so connected devices have no way out. The stream itself is unaffected." This means client steering does not change the device's streaming routes; it does not prove that a stream reaches its receiver. Rows say Down, and may add "The device lost this link, so connected devices no longer use it." Zones remain **Hotspot** or **Shared LAN**. "No devices connected" only means nobody has joined. **Steering share**, if shown, is not a usable uplink. Open **Diagnostics**. Its known limitation says name lookups from connected devices follow this device's default route, so they may not use the uplink their traffic is sent over. That note is not a DNS result, and "Nothing to review" does not run a test.
+
+**Sharing is off** means no client zone. Its sentence — turn on the hotspot, or set a wired port to Shared LAN — is not a control on this card. **Client steering unavailable** means clients use the default route; read Reason. **Sharing is active** counts uplinks that can carry client traffic.
+
+**Limits**
+
+- The guard acts only after its rules are applied. A delay, a refusal, or a failed apply can leave the earlier behaviour. After a failed partial apply, the same return is applied again. Device recovery is not qualified.
+- It drops new forwarded IPv4 flows from a registered zone and prefix when no uplink has a positive selectable share. It does not isolate all traffic, and it does not handle IPv6.
+- The hotspot or shared LAN can stay present while upstream internet is unavailable. Local DHCP, DNS, and UI traffic is outside this forward rule. That is not proof those services work.
+- New routed client flows to peers on other interfaces or zones are also blocked. Ordinary on-link peers are a separate path. Bridge handling is not qualified.
+- Streaming started on the device stays outside client steering. SRTLA and local Moblink stay independent. There is no generic tunnel or route rewrite, and no end-to-end qualification from this source.
+- Stopping the sharing carrier removes this guard. The remaining NetworkManager sharing rules then govern forwarding. Stop or restart is not a verified recovery recipe.
+- Prepared packet coverage is unexecuted. UDP 53 and 67 echoes are reachability, not DNS resolution or a DHCP lease. A retained-uplink established flow does not simulate physical loss of every uplink. Real-client, package, and image qualification remain open.
 
 ## Ownership
 
@@ -30,6 +58,13 @@ Sharing-off uses `stop`, whose image-owned `ExecStop` is the crash/shutdown
 backstop. A temporary file is fsynced, checked with `nft --check`, then atomically
 renamed before systemd sees it. A failed reload restores the prior file and reloads
 that prior state.
+
+The packaged `ceralive.service` declares `/run/ceralive` as a root-owned runtime
+directory with mode `0700`, created before the backend starts. It preserves the
+directory across stops and restarts because the sharing carrier and update
+helpers use it too; `/run` still expires at reboot. This declaration does not
+start the sharing carrier or apply a ruleset. Packaging and device qualification
+must confirm that the installed unit carries these settings.
 
 ## Flow identity and NAT
 
@@ -58,6 +93,35 @@ Masquerade requires all three facts: the client-zone ingress interface, the
 client-zone source prefix, and the namespaced conntrack mark for the selected
 uplink. A host-originated packet therefore cannot enter this NAT path even if it
 uses an address inside a client prefix.
+
+## All-down forwarding
+
+Once an all-down ruleset has been applied, it drops only new forwarded IPv4
+flows from each registered zone and source prefix when no uplink has a positive
+selectable weight. Invalid, untracked, out-of-prefix and IPv6 traffic are outside
+this match. Detection latency, refusal or a failed apply can leave an earlier
+ruleset active; this is not an unconditional packet-level isolation guarantee.
+The guard also ends when the sharing carrier is stopped or its owned table is
+removed, including stop during rollback or shutdown. The surviving NetworkManager
+shared-mode rules then govern forwarding; no all-down isolation is promised
+after teardown.
+
+The drop belongs to a forward hook, never prerouting: requests addressed to the
+box's DHCP, DNS and local UI services retain their input path. There is no output
+hook, so locally originated traffic remains outside this rule. New client flows
+to non-local addresses on other interfaces or client zones are forwarded and
+dropped while all-down; no destination exemption is added. Ordinary on-link peer
+traffic does not traverse this IP forwarding path, but bridge-netfilter behavior
+still needs device qualification.
+
+Sharing and client zones stay active while uplinks are unavailable. Once a
+selectable uplink returns, the next full-state ruleset removes the drop and
+restores weighted new-flow selection. After a failed reconciliation, even a
+byte-identical desired state is reapplied until an apply succeeds, because a
+partial apply may have left the live ruleset different from the last completed
+state. Existing-flow retirement is unchanged.
+This rule covers forwarded IPv4 only; it does not withdraw an upstream resolver,
+change local DNS service, or establish real-client recovery qualification.
 
 ## Route support
 
@@ -110,6 +174,8 @@ The coordinator is single-flight, recomputes the latest desired model before eac
 apply, skips byte-identical models, and retries twice at bounded delays. Failure is
 fail-soft: the WebSocket server is already bound, boot continues through
 `guardNonCritical`, and the typed unavailable state remains visible.
+The byte-identical fast path is disabled after any failed reconciliation until
+the next successful apply restores a known complete state.
 
 ## Verification
 
@@ -121,6 +187,16 @@ fail-soft: the WebSocket server is already bound, boot continues through
   proves weighted first-flow selection, established-flow stickiness, reweighting,
   drain-window exclusion, mark-scoped conntrack deletion, reply routing, local-flow
   NAT isolation, and foreign-table survival.
+- The all-down forward-chain and partial-apply return cases have unit/model
+  coverage. `uplink-steering-netns.test.ts` also contains a source-authored
+  all-down/return case (retained-uplink established flow, blocked new client flow,
+  box-local UDP 53/67 echo and HTTP reachability, host-originated output, a routed
+  peer on another zone, foreign-table survival, selectable return), but it has not
+  been executed in a kernel namespace. UDP 53/67 are port-reachability probes, not
+  DNS resolution or DHCP lease proof, and the case does not model physical loss of
+  every uplink. Bookworm nftables 1.0.6 parsing, bridge-netfilter behavior and
+  real-client recovery remain release gates; the earlier netns coverage does not
+  qualify these cases.
 - This test measures a REAL weighted packet distribution through a real netns +
   nftables setup, so its statistical bound (`ratio < 5.5` against a 4:1 weight
   target) only holds with CPU headroom — bundled inside the ~5400-test backend
