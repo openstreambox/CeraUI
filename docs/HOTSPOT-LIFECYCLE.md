@@ -15,9 +15,13 @@ saving the credential backstop. Failed durable saves roll back the new profile
 or restore the prior settings. Failed removal retains durable identity for retry.
 Prepared identities without an NM profile can also be forgotten.
 
-Concurrent AP setup replaces the reserved managed sibling with an AP interface
-(`iw ... type __ap`) and accepts only NM disconnected/connected readiness,
-never unavailable. An associated station pins the AP to its current frequency
+Concurrent AP setup creates a missing AP interface (`iw ... type __ap`) and
+accepts only NM disconnected/connected readiness, never unavailable. A reserved
+name alone does not authorize replacement: pre-existing managed or unavailable
+siblings are preserved and concurrent activation is refused. Ready AP siblings
+may be borrowed, but cleanup deletes only interfaces successfully created by
+the current backend owner. A restart does not infer deletion ownership from a name.
+An associated station pins the AP to its current frequency
 only when that frequency belongs to the kernel-derived legal AP set. Unknown
 association/channel evidence refuses activation. The station is not disconnected
 or reconfigured. An unassociated station leaves channel choice to the saved AP
@@ -39,8 +43,10 @@ guardada; primero apaga un punto de acceso activo. Si una operación falla,
 puedes volver a intentarla. Los perfiles ajenos se conservan.
 
 Cuando la radio comparte una conexión Wi-Fi y un punto de acceso, ambos deben
-usar el canal de la estación. Si el dispositivo no puede comprobar un canal
-válido o una interfaz lista, rechaza la activación. La conectividad de clientes
+usar el canal de la estación. Las interfaces preexistentes se conservan; un
+nombre reservado no autoriza reemplazarlas. La limpieza solo elimina interfaces
+creadas por el propietario actual del backend. Si el dispositivo no puede
+comprobar un canal válido o una interfaz lista, rechaza la activación. La conectividad de clientes
 aún debe verificarse en el dispositivo.
 
 ## Choosing the hotspot radio

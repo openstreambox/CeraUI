@@ -29,3 +29,16 @@ La tarjeta solo informa: no hay interruptor, botón ni reparación. Si Zonas de 
 - La emisión que origina el dispositivo queda fuera. SRTLA y Moblink local siguen independientes: sin reescritura genérica de túnel o ruta, y sin cualificación de extremo a extremo.
 - Detener el transporte del reparto quita esta protección. Las reglas restantes de NetworkManager gobiernan el reenvío. Detener o reiniciar no es una recuperación verificada.
 - La cobertura de paquetes preparada no se ejecutó. Los ecos UDP 53 y 67 son de alcance, no DNS ni DHCP. Un flujo establecido retenido no simula perder todos los enlaces. Clientes reales, paquete e imagen siguen abiertos.
+
+## Asignación inicial de la tabla de rutas
+
+Linux informa una FIB IPv4 aún no asignada con código de salida 2 y “FIB table
+does not exist”. Solo ese diagnóstico se interpreta como tabla vacía al preparar
+una tabla propia. Se instala la ruta predeterminada de la interfaz antes de las
+reglas por origen y marca. Otros errores conservan el rechazo y la reversión.
+Esto se aplica a Ethernet, Wi-Fi y celular sin esperar una ronda de salud.
+Si aún no aparece la ruta de la interfaz, el coordinador conserva sus reintentos
+limitados de 100/500 ms y las notificaciones posteriores de red y salud.
+El bloqueo cuando todos los enlaces están caídos y el alcance exclusivo al
+tráfico reenviado de clientes no cambian. La prueba de paquetes en un espacio
+de red aislado crea tablas ausentes con el planificador y gestor de producción.

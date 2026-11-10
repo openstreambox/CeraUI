@@ -31,6 +31,8 @@ const defaultWaiter: InterfaceWaiter = async (ifname) => {
 	return false;
 };
 
+const createdInterfaces = new Set<string>();
+
 let interfaceRunner = defaultRunner;
 let interfaceWaiter = defaultWaiter;
 
@@ -70,7 +72,9 @@ export async function ensureConcurrentApInterface(
 		if (/^\s*type\s+AP\s*$/m.test(info) && (await interfaceWaiter(ifname))) {
 			return { ifname, created: false, type: "AP" };
 		}
-		await releaseConcurrentApInterface(ifname);
+		// A deterministic name is not ownership evidence. Leave foreign or
+		// unavailable siblings intact, including those on other radios.
+		return undefined;
 	}
 	try {
 		await interfaceRunner("iw", [
@@ -82,6 +86,7 @@ export async function ensureConcurrentApInterface(
 			"type",
 			"__ap",
 		]);
+		createdInterfaces.add(ifname);
 		await interfaceRunner("nmcli", ["device", "set", ifname, "managed", "yes"]);
 		if (await interfaceWaiter(ifname))
 			return { ifname, created: true, type: "AP" };
@@ -96,8 +101,10 @@ export async function ensureConcurrentApInterface(
 export async function releaseConcurrentApInterface(
 	ifname: string,
 ): Promise<void> {
+	if (!createdInterfaces.has(ifname)) return;
 	try {
 		await interfaceRunner("iw", ["dev", argMatch(ID_RE, ifname), "del"]);
+		createdInterfaces.delete(ifname);
 	} catch {
 		return;
 	}
@@ -112,6 +119,7 @@ export function setConcurrentInterfaceDepsForTest(
 }
 
 export function resetConcurrentInterfaceDepsForTest(): void {
+	createdInterfaces.clear();
 	interfaceRunner = defaultRunner;
 	interfaceWaiter = defaultWaiter;
 }

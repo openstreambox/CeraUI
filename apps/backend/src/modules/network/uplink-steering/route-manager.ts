@@ -86,12 +86,7 @@ async function ensureUplinkRouteInner(
 	let createdFwmarkRule = false;
 	try {
 		if (plan.managed) {
-			const routeOutput = await deps.run("ip", [
-				"route",
-				"show",
-				"table",
-				plan.table,
-			]);
+			const routeOutput = await readManagedTable(plan.table, deps);
 			if (parseDefaultRouteInterface(routeOutput) !== plan.ifname) {
 				if (plan.defaultRouteArgv === undefined) {
 					throw routeUnavailable(
@@ -185,4 +180,27 @@ function buildProvisioning(
 		createdSourceRule,
 		createdFwmarkRule,
 	};
+}
+
+/** An unallocated Linux FIB is empty, not a provisioning failure. */
+async function readManagedTable(
+	table: string,
+	deps: UplinkRouteManagerDeps,
+): Promise<string> {
+	try {
+		return await deps.run("ip", ["route", "show", "table", table]);
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			"code" in error &&
+			error.code === 2 &&
+			"stderr" in error &&
+			typeof error.stderr === "string" &&
+			/^Error: ipv4: FIB table does not exist\.\s*Dump terminated\s*$/.test(
+				error.stderr.trim(),
+			)
+		)
+			return "";
+		throw error;
+	}
 }

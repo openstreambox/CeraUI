@@ -1057,6 +1057,7 @@ describe("pruneDuplicateHotspotConns — ownership evidence", () => {
 			"conn",
 			"activeConn",
 			"hotspot",
+			"concurrentHotspot",
 			"unowned",
 		] as const) {
 			test(`preserves a candidate becoming ${adoptedAs} during the ${pendingRead} read`, async () => {
@@ -1102,7 +1103,15 @@ describe("pruneDuplicateHotspotConns — ownership evidence", () => {
 					} else {
 						const iface = makeHotspotIface();
 						if (adoptedAs === "hotspot") iface.hotspot.conn = "superseded";
-						else iface[adoptedAs] = "superseded";
+						else if (adoptedAs === "concurrentHotspot") {
+							iface.conn = "station";
+							iface.activeConn = "station";
+							iface.supportsApStaConcurrency = true;
+							iface.concurrentHotspot = {
+								ifname: "clap-wlan0",
+								activeConn: "superseded",
+							};
+						} else iface[adoptedAs] = "superseded";
 						addWifiInterface(SECOND_PERM_MAC, iface);
 					}
 				} finally {
@@ -1114,6 +1123,35 @@ describe("pruneDuplicateHotspotConns — ownership evidence", () => {
 			});
 		}
 	}
+
+	test("preserves an already active concurrent AP while the parent uses a station profile", async () => {
+		const iface = makeHotspotIface({ hotspotConn: "keep" });
+		iface.conn = "station";
+		iface.activeConn = "station";
+		iface.supportsApStaConcurrency = true;
+		iface.concurrentHotspot = {
+			ifname: "clap-wlan0",
+			activeConn: "superseded",
+		};
+		addWifiInterface(PERM_MAC, iface);
+		rememberConn(PERM_MAC, "superseded");
+		rememberConn(PERM_MAC, "keep");
+		const { deps, deleted } = makeProfileDeps([
+			{
+				uuid: "superseded",
+				name: "Hotspot-1",
+				mode: "ap",
+				ssid: OWNED_SSID,
+				psk: "y",
+				mac: PERM_MAC,
+			},
+		]);
+
+		expect(await pruneDuplicateHotspotConns(PERM_MAC, "keep", deps)).toEqual(
+			[],
+		);
+		expect(deleted).toEqual([]);
+	});
 
 	test("a genuine superseded duplicate recorded in previousConns IS removed", async () => {
 		addWifiInterface(PERM_MAC, makeHotspotIface({ hotspotConn: "keep" }));

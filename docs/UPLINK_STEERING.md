@@ -215,3 +215,16 @@ the next successful apply restores a known complete state.
 The outstanding board drill needs two real uplinks and a hotspot client. It must
 inspect nftables/conntrack marks while confirming SRTLA link distribution remains
 undisturbed.
+
+## Initial route-table allocation
+
+Linux reports an unallocated IPv4 FIB with exit code 2 and “FIB table does not
+exist”. During managed-table provisioning this exact diagnostic means the table
+is empty: install the planned interface default before adding source/fwmark
+rules. Other read failures retain the existing refusal and rollback behavior.
+This applies to Ethernet, Wi-Fi and cellular alike and does not wait for an
+uplink-health round. A not-yet-published interface default remains unavailable;
+the coordinator retries using its existing bounded 100/500 ms schedule and
+subsequent network/health notifications. All-down and forwarded-client-only
+rules are unchanged. The namespace packet gate provisions real absent tables
+through the production planner/manager before testing forwarding and recovery.

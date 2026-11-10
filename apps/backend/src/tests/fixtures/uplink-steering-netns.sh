@@ -92,10 +92,11 @@ nsenter -t "$wan1_pid" -n ip link set wan1_peer up
 nsenter -t "$wan1_pid" -n ip route add default via 198.51.100.1
 
 ip route add default via 192.0.2.2 dev wan0
-ip route add default via 192.0.2.2 dev wan0 table 100
-ip route add default via 198.51.100.2 dev wan1 table 101
-ip rule add priority 110 fwmark "$mark0/0xffffff00" lookup 100
-ip rule add priority 110 fwmark "$mark1/0xffffff00" lookup 101
+ip route add default via 198.51.100.2 dev wan1 metric 200
+# Exercise production planning/provisioning against genuinely absent FIB tables.
+CERALIVE_STEERING_FIXTURE_MARKS="$mark0,$mark1" bun test "$(dirname "$0")/provision-steering-routes.fixture.test.ts" >&2
+table0=$((30000 + ((mark0 >> 8) & 65535)))
+table1=$((30000 + ((mark1 >> 8) & 65535)))
 sysctl -q -w net.ipv4.ip_forward=1
 sysctl -q -w net.ipv4.conf.all.rp_filter=0
 sysctl -q -w net.ipv4.conf.default.rp_filter=0
@@ -222,7 +223,7 @@ while True:
 PY
 fi
 
-ip rule del priority 110 fwmark "$mark0/0xffffff00" lookup 100
+ip rule del priority 110 fwmark "$mark0/0xffffff00" lookup "$table0"
 nft --file "$final_wan1"
 nsenter -t "$client_pid" -n python3 -c "$SEND_ONE" sticky-post-flush 10.42.0.2 39001 9001
 
@@ -243,8 +244,8 @@ if [ "$nm_shared" = "--nm-shared" ]; then
 	nsenter -t "$shared_pid" -n ip link set shared_peer up
 	nsenter -t "$shared_pid" -n ip route add default via 10.43.0.1
 	# Route cross-zone probes to the actual peer, even when steering marks them.
-	ip route add 10.42.0.0/24 dev client0 table 101
-	ip route add 10.43.0.0/24 dev shared0 table 101
+	ip route add 10.42.0.0/24 dev client0 table "$table1"
+	ip route add 10.43.0.0/24 dev shared0 table "$table1"
 	nsenter -t "$client_pid" -n python3 -u -c "$SERVER_CODE" "${log0}.client" 10.42.0.2 & client_server=$!
 	wait_signal server-ready
 	nsenter -t "$shared_pid" -n python3 -u -c "$SERVER_CODE" "${log0}.shared" 10.43.0.2 & shared_server=$!

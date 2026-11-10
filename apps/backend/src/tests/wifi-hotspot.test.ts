@@ -415,41 +415,51 @@ test("Start refuses a foreign discovery result even if a stale identity names it
 	expect(effects).toEqual([]);
 });
 
-test("fake NM unavailable refusal is avoided by preparing AP before activating the existing UUID", async () => {
-	let ap = false;
-	const order: string[] = [];
-	setConcurrentInterfaceDepsForTest(async (_cmd, args) => {
-		if (args.at(-1) === "info") return "type managed";
-		if (args.includes("__ap")) {
-			ap = true;
-			order.push("ap");
+test.each([false, true])(
+	"fake NM prepares a missing AP but preserves a foreign managed sibling (exists=%s)",
+	async (exists) => {
+		let ap = false;
+		const order: string[] = [];
+		setConcurrentInterfaceDepsForTest(async (_cmd, args) => {
+			if (args.at(-1) === "info") {
+				if (exists) return "type managed";
+				throw new Error("absent");
+			}
+			if (args.includes("__ap")) {
+				ap = true;
+				order.push("ap");
+			}
+			if (args.includes("GENERAL.STATE"))
+				return ap ? "30 (disconnected)" : "20 (unavailable)";
+			return "";
+		}, null);
+		try {
+			const iface = makeHotspotIface({
+				ifname: "wlan0",
+				conn: "station-uuid",
+				hotspotConn: "owned-uuid",
+				supportsApStaConcurrency: true,
+			});
+			const result = await activatePreparedHotspot(
+				"02:00:00:00:00:01",
+				iface,
+				makeDeps({
+					ensureConcurrentInterface: ensureConcurrentApInterface,
+					nmConnect: async (uuid) => {
+						order.push(`up:${uuid}`);
+						return ap;
+					},
+				}),
+			);
+			expect(result).toEqual(
+				exists
+					? { success: false, error: "activation-failed" }
+					: { success: true },
+			);
+			expect(order).toEqual(exists ? [] : ["ap", "up:owned-uuid"]);
+			expect(iface.conn).toBe("station-uuid");
+		} finally {
+			resetConcurrentInterfaceDepsForTest();
 		}
-		if (args.includes("GENERAL.STATE"))
-			return ap ? "30 (disconnected)" : "20 (unavailable)";
-		return "";
-	}, null);
-	try {
-		const iface = makeHotspotIface({
-			ifname: "wlan0",
-			conn: "station-uuid",
-			hotspotConn: "owned-uuid",
-			supportsApStaConcurrency: true,
-		});
-		const result = await activatePreparedHotspot(
-			"02:00:00:00:00:01",
-			iface,
-			makeDeps({
-				ensureConcurrentInterface: ensureConcurrentApInterface,
-				nmConnect: async (uuid) => {
-					order.push(`up:${uuid}`);
-					return ap;
-				},
-			}),
-		);
-		expect(result).toEqual({ success: true });
-		expect(order).toEqual(["ap", "up:owned-uuid"]);
-		expect(iface.conn).toBe("station-uuid");
-	} finally {
-		resetConcurrentInterfaceDepsForTest();
-	}
-});
+	},
+);

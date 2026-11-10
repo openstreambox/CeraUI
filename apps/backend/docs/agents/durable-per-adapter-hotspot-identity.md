@@ -116,3 +116,8 @@ credentials, creates profiles, prunes duplicates, or arms autoconnect. Prepare
 can still supply a suggestion; confirming a first setup explicitly prepares its
 profile before Start. Delete requires an inactive, verified owned profile and
 then removes the durable identity. An adopted legacy profile is preserved.
+
+Live use includes the parent station `conn`/`activeConn`, `hotspot.conn`, and
+the virtual AP `concurrentHotspot.activeConn`. AP+STA keeps the active AP UUID
+on that nested field while the parent continues to report its station UUID.
+Cleanup protects it both at candidate collection and after pending reads.
