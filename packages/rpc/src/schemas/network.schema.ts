@@ -377,3 +377,15 @@ export const setIngestEnabledOutputSchema = z.object({
 	error: z.string().optional(),
 });
 export type SetIngestEnabledOutput = z.infer<typeof setIngestEnabledOutputSchema>;
+
+/** Runtime-only policy for forwarded shared clients, independent of bonding. */
+export const sharingPolicySchema = z.object({
+	mode: z.enum(['automatic', 'wired-only', 'cellular-only']),
+	priorities: z.object({
+		wired: z.number().int().min(0).max(100),
+		cellular: z.number().int().min(0).max(100),
+		wifi: z.number().int().min(0).max(100),
+	}),
+	administrativelyDown: z.array(z.string().regex(/^[a-zA-Z0-9_.:-]{1,15}$/)).max(64),
+});
+export type SharingPolicy = z.infer<typeof sharingPolicySchema>;

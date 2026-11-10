@@ -73,8 +73,10 @@ import {
 import {
 	configureNetworkInterfaceProcedure,
 	getNetworkInterfacesProcedure,
+	getSharingPolicyProcedure,
 	setEthernetRoleProcedure,
 	setNetworkIngestEnabledProcedure,
+	setSharingPolicyProcedure,
 } from "./procedures/network.procedure.ts";
 import {
 	dismissNotificationProcedure,
@@ -265,6 +267,8 @@ const stableRoutes = {
 		getInterfaces: getNetworkInterfacesProcedure,
 		configure: configureNetworkInterfaceProcedure,
 		setIngestEnabled: setNetworkIngestEnabledProcedure,
+		getSharingPolicy: getSharingPolicyProcedure,
+		setSharingPolicy: setSharingPolicyProcedure,
 		setEthernetRole: setEthernetRoleProcedure,
 	}),
 

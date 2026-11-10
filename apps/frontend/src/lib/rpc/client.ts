@@ -833,6 +833,12 @@ export interface TypedRPC {
 		) => Promise<SetWifiAdapterModeOutput>;
 	};
 	network: {
+		getSharingPolicy: () => Promise<
+			import("@ceraui/rpc/schemas").SharingPolicy
+		>;
+		setSharingPolicy: (
+			input: import("@ceraui/rpc/schemas").SharingPolicy,
+		) => Promise<import("@ceraui/rpc/schemas").SharingPolicy>;
 		getInterfaces: () => Promise<unknown>;
 		configure: (input: NetifConfigInput) => Promise<NetifConfigOutput>;
 		/**

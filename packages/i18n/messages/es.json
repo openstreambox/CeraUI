@@ -2781,5 +2781,22 @@
 	"hotspotConfirm.inactiveHint": "Configura el nombre, la contraseña y el canal con el punto de acceso apagado. Guardar lo prepara; Activar lo inicia. Apágalo antes de elegir Olvidar para eliminar la configuración guardada.",
 	"network.wifiMode.confirm.switchTo": "Cambiar a {mode}",
 	"hotspotConfirm.firstTimeTitle": "Configura tu punto de acceso",
-	"hotspotConfirm.firstTimeBody": "Este adaptador nunca creó un punto de acceso. Deja el nombre y la contraseña sugeridos o elige los tuyos."
+	"hotspotConfirm.firstTimeBody": "Este adaptador nunca creó un punto de acceso. Deja el nombre y la contraseña sugeridos o elige los tuyos.",
+	"network.sharing.policy.title": "Enlaces de internet para clientes",
+	"network.sharing.policy.help": "Ajuste temporal: vuelve a automático al reiniciar el backend. Solo afecta a clientes del hotspot y LAN compartida. Las exclusiones forzadas y la baja administrativa cierran los flujos afectados; las apps deben reconectarse. Los cambios de prioridad conservan los flujos existentes. Revisa el estado de direccionamiento abajo para detectar errores al aplicar.",
+	"network.sharing.policy.mode": "Selección",
+	"network.sharing.policy.automatic": "Automático",
+	"network.sharing.policy.wired": "Solo cable",
+	"network.sharing.policy.cellular": "Solo celular",
+	"network.sharing.policy.priorities": "Prioridades automáticas: gana el número menor; las prioridades iguales comparten los flujos nuevos.",
+	"network.sharing.policy.wiredPriority": "Prioridad por cable",
+	"network.sharing.policy.cellularPriority": "Prioridad celular",
+	"network.sharing.policy.wifiPriority": "Prioridad Wi-Fi",
+	"network.sharing.policy.down": "Dar de baja para clientes compartidos (la administración y la agregación siguen conectadas):",
+	"network.sharing.policy.apply": "Aplicar política de clientes",
+	"network.sharing.policy.load": "Recargar política de clientes",
+	"network.sharing.policy.failed": "No se pudo leer o actualizar la política. Recárgala para comprobar el ajuste actual.",
+	"network.sharing.policy.healthWeight": "Peso de salud (antes de la política)",
+	"network.sharing.policy.healthTitle": "Salud de los enlaces",
+	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos."
 }

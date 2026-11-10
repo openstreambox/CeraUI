@@ -454,8 +454,8 @@ export function deriveSharingHeadline(
 		return {
 			kind: "sharing-active",
 			tone: "ok",
-			titleKey: "network.sharing.headline.activeTitle",
-			bodyKey: "network.sharing.headline.activeBody",
+			titleKey: "network.sharing.policy.healthTitle",
+			bodyKey: "network.sharing.policy.healthBody",
 			restatesRowState: false,
 			...counts,
 		};

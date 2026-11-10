@@ -2,12 +2,7 @@
   SharingSection.svelte — the Internet-Sharing status surface (todo 13,
   restructured by todo 34).
 
-  STATUS ONLY. Every input it renders — `uplinks`, `sharing_diag`,
-  `uplink-steering`, `uplink-shaper` — is diagnostic or informational by its own
-  backend contract, so this card carries NO control: it disables no interface,
-  gates no stream and refuses no mutation. The one transient it participates in
-  (`uplink-flows-reset`) is a toast raised by the ingestion layer, never a band
-  that lingers here.
+  Sharing policy controls use the existing steering owner. Diagnostics remain read-only.
 
   Every state resolves to a typed band or a stated value. There is deliberately
   no skeleton and no spinner: a snapshot that has not arrived renders the honest
@@ -44,6 +39,8 @@ import { ChevronRight, CircleCheck, Info, Share2, TriangleAlert } from '@lucide/
 
 import Badge from '$lib/components/custom/Badge.svelte';
 import { cn } from '$lib/utils';
+
+import SharingPolicyControl from './SharingPolicyControl.svelte';
 
 import { deriveSharingSection } from './sharing-section-view';
 
@@ -116,6 +113,8 @@ const SUMMARY =
 		<Share2 aria-hidden="true" class="text-muted-foreground size-4 shrink-0" />
 		<h2 class="text-sm font-semibold tracking-tight">{m['network.sharing.title']()}</h2>
 	</div>
+
+	<SharingPolicyControl interfaces={uplinks?.map(link => link.iface) ?? []} />
 
 	<!-- ── the ONE headline: sharing off / nowhere to send / not steered / active ── -->
 	<div
@@ -223,11 +222,7 @@ const SUMMARY =
 									     alone. -->
 									<Badge variant="stale" data-stale-interface={row.iface} />
 								{/if}
-								<!-- The weight is a STEERING SHARE, not link quality: how much
-								     shared-client traffic this uplink is asked to carry. It therefore
-								     renders only where client traffic is really being steered, and it
-								     is LABELLED, because an unlabelled percentage beside a health
-								     state reads as a quality score for the link. -->
+								<!-- Probe weight precedes operator policy; it is not the applied traffic share. -->
 								{#if view.showSteeringShare}
 									<span
 										class="inline-flex shrink-0 items-center gap-1.5"
@@ -235,24 +230,14 @@ const SUMMARY =
 										data-weight={row.weight}
 									>
 										<span class="text-muted-foreground text-[10px] tracking-wide uppercase">
-											{m['network.sharing.steeringShare']()}
-										</span>
-										<span
-											class="bg-muted relative block h-1.5 w-16 overflow-hidden rounded-full"
-											role="img"
-											aria-label={m['network.sharing.weightLabel']({ weight: row.weight })}
-										>
-											<span
-												class="absolute inset-y-0 start-0 block rounded-full"
-												style="inline-size: {row.weight}%; background-color: {color};"
-											></span>
+											{m['network.sharing.policy.healthWeight']()}
 										</span>
 										<span
 											data-live-value
 											class="font-mono text-xs tabular-nums"
 											style="color: {color};"
 										>
-											{row.weight}%
+											{row.weight}
 										</span>
 									</span>
 								{/if}

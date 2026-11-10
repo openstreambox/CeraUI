@@ -2733,5 +2733,22 @@
 	"hotspotConfirm.inactiveHint": "ホットスポットをオンにするときに、ネットワーク名とパスワードが表示され、変更できます。",
 	"network.wifiMode.confirm.switchTo": "{mode} に切り替える",
 	"hotspotConfirm.firstTimeTitle": "ホットスポットを設定",
-	"hotspotConfirm.firstTimeBody": "この無線ではまだホットスポットを使ったことがありません。提案された名前とパスワードをそのまま使うか、独自に設定してください。"
+	"hotspotConfirm.firstTimeBody": "この無線ではまだホットスポットを使ったことがありません。提案された名前とパスワードをそのまま使うか、独自に設定してください。",
+	"network.sharing.policy.title": "Client internet uplinks",
+	"network.sharing.policy.help": "Runtime setting: resets to automatic on backend restart. Applies to hotspot and shared-LAN clients only. Forced exclusions and administrative down retire affected flows; apps must reconnect. Priority changes preserve existing flows. Check steering status below for apply failures.",
+	"network.sharing.policy.mode": "Selection",
+	"network.sharing.policy.automatic": "Automatic",
+	"network.sharing.policy.wired": "Wired only",
+	"network.sharing.policy.cellular": "Cellular only",
+	"network.sharing.policy.priorities": "Automatic priorities: lower numbers win; equal priorities share new flows.",
+	"network.sharing.policy.wiredPriority": "Wired priority",
+	"network.sharing.policy.cellularPriority": "Cellular priority",
+	"network.sharing.policy.wifiPriority": "Wi-Fi priority",
+	"network.sharing.policy.down": "Administratively down for client sharing (management and bonding stay connected):",
+	"network.sharing.policy.apply": "Apply client policy",
+	"network.sharing.policy.load": "Reload client policy",
+	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
+	"network.sharing.policy.healthWeight": "Health weight (before policy)",
+	"network.sharing.policy.healthTitle": "Uplink health",
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
 }

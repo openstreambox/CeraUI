@@ -60,6 +60,11 @@ export class UplinkSteeringApplier {
 		try {
 			const recoveredRoutes =
 				previous === undefined ? await this.#deps.discoverRoutes() : [];
+			const recoveredPolicyExclusions = recoveredRoutes.filter(
+				(route) =>
+					next.routes.some((candidate) => candidate.mark === route.mark) &&
+					!next.uplinks.some((uplink) => uplink.mark === route.mark),
+			);
 			const staleRecoveredRoutes = recoveredRoutePlans(
 				recoveredRoutes,
 				next.routes,
@@ -72,6 +77,33 @@ export class UplinkSteeringApplier {
 				previous?.routes ?? [],
 				next.routes,
 			);
+			// Policy exclusions retire client conntracks while retaining all
+			// healthy route support, including host source-routing rules.
+			const excluded =
+				previous?.uplinks.filter(
+					(uplink) =>
+						!next.uplinks.some((u) => u.mark === uplink.mark) &&
+						!removedRoutes.some((route) => route.mark === uplink.mark),
+				) ?? [];
+			if (excluded.length > 0 && previous !== undefined) {
+				await this.#deps.applyRuleset(
+					buildShareRuleset({
+						clientZones: next.clientZones,
+						uplinks: [
+							...next.uplinks,
+							...excluded.map((u) => ({ ...u, selectable: false, weight: 0 })),
+						],
+					}),
+					"reload",
+				);
+				for (const uplink of excluded) {
+					await this.#deps.flushConntrack(uplink.mark);
+					this.#deps.publishFlowsReset({
+						iface: uplink.ifname,
+						linkId: uplink.identity,
+					});
+				}
+			}
 			if (removedRoutes.length > 0 && previous !== undefined) {
 				const transition = transitionState(previous, next, removedRoutes);
 				await this.#deps.applyRuleset(buildShareRuleset(transition), "reload");
@@ -98,6 +130,11 @@ export class UplinkSteeringApplier {
 			await this.#deps.applyRuleset(buildShareRuleset(next), mode);
 			activatedService = mode === "activate";
 			stateCommitted = true;
+			// A policy can arrive before the first reconciliation after restart.
+			// Flush excluded recovered marks without removing healthy host support.
+			for (const route of recoveredPolicyExclusions) {
+				await this.#deps.flushConntrack(route.mark);
+			}
 			await this.#retireRecoveredRoutes(staleRecoveredRoutes);
 			if (!wasActive) await this.#deps.setIpForwarding(true);
 		} catch (error) {

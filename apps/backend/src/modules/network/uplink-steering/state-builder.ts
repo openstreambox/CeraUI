@@ -1,3 +1,4 @@
+import type { SharingPolicy } from "@ceraui/rpc/schemas";
 import { resolveModemPhysicalIdentity } from "../../modems/physical-identity-source.ts";
 import { isConcurrentApIfname } from "../../wifi/wifi-concurrent-interface.ts";
 import { getWifiInterfacesByMacAddress } from "../../wifi/wifi-connections.ts";
@@ -18,6 +19,7 @@ import {
 	SteeringUnavailableError,
 	type SteeringUplink,
 } from "./contracts.ts";
+import { applySharingPolicy, sharingPolicyOwner } from "./policy.ts";
 import { planUplinkRoute, type UplinkRouteCandidate } from "./route-manager.ts";
 import { stableUplinkMark } from "./ruleset.ts";
 import { cidrsOverlap, subnetCidr } from "./subnet.ts";
@@ -25,6 +27,7 @@ import { cidrsOverlap, subnetCidr } from "./subnet.ts";
 type NetworkSnapshot = Record<string, NetworkInterface | undefined>;
 
 export interface SteeringStateBuilderDeps {
+	readonly policy?: () => SharingPolicy;
 	readonly interfaces: () => NetworkSnapshot;
 	readonly health: () => readonly UplinkHealthRecord[];
 	readonly wifiIdentity: (ifname: string) => string | undefined;
@@ -41,6 +44,7 @@ export interface SteeringStateBuilderDeps {
 }
 
 const defaultDeps: SteeringStateBuilderDeps = {
+	policy: () => sharingPolicyOwner.get(),
 	interfaces: getNetworkInterfaces,
 	health: getUplinksMessage,
 	wifiIdentity: wifiIdentity,
@@ -63,11 +67,19 @@ export async function readDesiredSteeringState(
 	if (zones.length === 0) return { clientZones: [], uplinks: [], routes: [] };
 	assertClientZonesDisjoint(zones);
 	const health = new Map(deps.health().map((record) => [record.iface, record]));
-	const candidates = collectUplinkCandidates(interfaces, zones, health, deps);
-	assertNoOverlap(zones, candidates);
-	assertDistinctMarks(candidates);
+	const rawCandidates = collectUplinkCandidates(
+		interfaces,
+		zones,
+		health,
+		deps,
+	);
+	const candidates = deps.policy
+		? applySharingPolicy(rawCandidates, deps.policy())
+		: rawCandidates;
+	assertNoOverlap(zones, rawCandidates);
+	assertDistinctMarks(rawCandidates);
 	const routes: UplinkRoutePlan[] = [];
-	for (const candidate of candidates) {
+	for (const candidate of rawCandidates) {
 		routes.push(
 			await deps.planRoute({
 				identity: candidate.uplink.identity,

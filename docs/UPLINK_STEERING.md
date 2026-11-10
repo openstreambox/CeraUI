@@ -33,7 +33,7 @@ An ordinary gateway check samples candidate addresses, eligibility and the candi
 
 **Web interface reconnect.** When the interface replaces its control connection, it ignores delayed updates and connection-status events from the previous connection. Updates and errors from the current connection still appear. After the control connection returns, confirm internet access with a new request from a hotspot client; existing client sessions may need to reconnect.
 
-**Internet Sharing** is status only: no switch, button, or repair action. If Client zones still shows the zone and every uplink is Down, you may see **No healthy uplink**: "Every uplink is down, so connected devices have no way out. The stream itself is unaffected." This means client steering does not change the device's streaming routes; it does not prove that a stream reaches its receiver. Rows say Down, and may add "The device lost this link, so connected devices no longer use it." Zones remain **Hotspot** or **Shared LAN**. "No devices connected" only means nobody has joined. **Steering share**, if shown, is not a usable uplink. Open **Diagnostics**. Its known limitation says name lookups from connected devices follow this device's default route, so they may not use the uplink their traffic is sent over. That note is not a DNS result, and "Nothing to review" does not run a test.
+**Internet Sharing** includes the runtime client-uplink policy below; its diagnostics remain read-only. If Client zones still shows the zone and every uplink is Down, you may see **No healthy uplink**: "Every uplink is down, so connected devices have no way out. The stream itself is unaffected." This means client steering does not change the device's streaming routes; it does not prove that a stream reaches its receiver. Rows say Down, and may add "The device lost this link, so connected devices no longer use it." Zones remain **Hotspot** or **Shared LAN**. "No devices connected" only means nobody has joined. **Health weight (before policy)** is a probe weight, not the applied traffic share. Open **Diagnostics**. Its known limitation says name lookups from connected devices follow this device's default route, so they may not use the uplink their traffic is sent over. That note is not a DNS result, and "Nothing to review" does not run a test.
 
 **Sharing is off** means no client zone. Its sentence — turn on the hotspot, or set a wired port to Shared LAN — is not a control on this card. **Client steering unavailable** means clients use the default route; read Reason. **Sharing is active** counts uplinks that can carry client traffic.
 
@@ -228,3 +228,66 @@ the coordinator retries using its existing bounded 100/500 ms schedule and
 subsequent network/health notifications. All-down and forwarded-client-only
 rules are unchanged. The namespace packet gate provisions real absent tables
 through the production planner/manager before testing forwarding and recovery.
+
+## Runtime client-uplink policy
+
+Open **Client internet uplinks** in Network → Internet sharing. Choose
+**Wired only**, **Cellular only**, or **Automatic**. Automatic priorities use the
+lowest numeric tier with positive health weight; equal priorities share new
+flows using the existing health weights. Defaults are zero for every kind,
+preserving weighted automatic selection. Priorities range from 0 to 100.
+Wi-Fi remains available in automatic mode. Kernel names beginning `wl` are
+Wi-Fi, `ww`/`ppp`/`usb` are cellular, and `eth`/`en` are wired, matching steering's
+existing supported interface classes. USB Ethernet named `en*` is wired.
+
+Check a kernel interface name under **Administratively down for client sharing**
+to withdraw that uplink from client traffic without disconnecting it. This is
+independent of `network.configure` (bonding enablement). Clear the checkbox to
+admit the link again, subject to health and selection policy. Forced modes have
+no fallback outside their kind. If every permitted link is down or excluded,
+the existing all-down forward guard stays active; local DHCP, DNS and UI remain
+reachable. Upstream DNS remains locally originated and follows host routing;
+this setting selects forwarded IPv4 egress, not DNS-resolver transport or IPv6.
+
+The authenticated `network.getSharingPolicy` and `network.setSharingPolicy`
+procedures read and replace the whole desired runtime policy:
+
+```json
+{"mode":"automatic","priorities":{"wired":0,"cellular":10,"wifi":20},"administrativelyDown":[]}
+```
+
+A mutation immediately requests the existing single-flight steering coordinator;
+it does not wait for a NetworkManager poll or health transition. The setter
+awaits its bounded reconciliation/retries (100/500 ms retry delays plus existing
+bounded command budgets). Unit tests require a successful fake-effects apply
+within one second. This is not a device recovery-time guarantee. On apply failure,
+the desired policy remains set for reconciliation, and `uplink-steering` reports
+unavailable; the returned policy alone is not proof of applied egress. Check that
+status and verify a fresh client request. Reload client policy to read changes
+made through another session. Concurrent writes serialize; the last write wins.
+
+The policy is deliberately **runtime-only**: backend restart returns to automatic,
+equal priorities and no administrative exclusions. Kernel interface names in the
+administrative list refer to this runtime, not durable hardware identities;
+recheck names after hotplug. Physical-identity conntrack marks remain unchanged.
+
+**Flow policy:** forced kind exclusion and administrative down first remove the
+mark from new-flow selection, then flush exactly its owned conntrack entries,
+then remove it from the sharing ruleset and emit `uplink-flows-reset`. Apps must
+reconnect. Healthy route support is retained during policy changes, including
+existing host source rules; there is no interface-down operation, NM mutation,
+management-route change or host default-route write. Ordinary physical/health
+loss still uses the existing hard-down route lifecycle. Priority-only changes
+retain conntracks and route support: new flows fail over/back to the best tier,
+while established backup flows remain on the backup until completion or a later
+exclusion/loss. This is reconnect failover, not session migration. The UI labels
+probe weights as **Health weight (before policy)**, not an applied traffic share.
+
+Tests cover the live state builder with injected NM/interface snapshots and the
+existing coordinator/applier with fake kernel effects. The isolated kernel drill
+runs policy-generated states on two uplinks and an AP-side client namespace,
+proving cellular-only, preferred wired, administrative-down fallback, and return
+for new flows, plus existing sticky-flow, all-down, local-path and foreign-rule
+checks. Run it with
+`CERALIVE_NETNS_ISOLATED=1 bun test apps/backend/src/tests/uplink-steering-netns.test.ts`;
+it uses `unshare -rn` where permitted. Hardware qualification remains separate.

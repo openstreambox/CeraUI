@@ -16,7 +16,7 @@ Una comprobación ordinaria de la puerta de enlace vuelve a comprobar las direcc
 
 ## Compartir internet
 
-La tarjeta solo informa: no hay interruptor, botón ni reparación. Si Zonas de clientes sigue visible y todos los enlaces están Caído, puede aparecer **Ningún enlace en buen estado**: "Todos los enlaces están caídos, así que los equipos conectados no tienen salida. La emisión no se ve afectada." Esto describe la separación del enrutado de clientes; no confirma que la emisión llegue al receptor. Las filas dicen Caído y pueden añadir "El dispositivo perdió este enlace, así que los equipos conectados ya no lo usan." El punto de acceso se llama Hotspot y el puerto, Red compartida. "Ningún dispositivo conectado" solo indica que nadie se unió. **Reparto de enrutado**, si aparece, no es un enlace usable. Abre Diagnóstico. La limitación conocida dice que las resoluciones de nombres siguen la ruta predeterminada de este dispositivo y pueden no usar el enlace por el que se envía su tráfico. No es un resultado de DNS, y "Nada que revisar" no ejecuta una prueba.
+La tarjeta incluye la política temporal de enlaces descrita abajo; sus diagnósticos siguen siendo de solo lectura. Si Zonas de clientes sigue visible y todos los enlaces están Caído, puede aparecer **Ningún enlace en buen estado**: "Todos los enlaces están caídos, así que los equipos conectados no tienen salida. La emisión no se ve afectada." Esto describe la separación del enrutado de clientes; no confirma que la emisión llegue al receptor. Las filas dicen Caído y pueden añadir "El dispositivo perdió este enlace, así que los equipos conectados ya no lo usan." El punto de acceso se llama Hotspot y el puerto, Red compartida. "Ningún dispositivo conectado" solo indica que nadie se unió. **Peso de salud (antes de la política)** es un peso de sondeo, no el reparto aplicado. Abre Diagnóstico. La limitación conocida dice que las resoluciones de nombres siguen la ruta predeterminada de este dispositivo y pueden no usar el enlace por el que se envía su tráfico. No es un resultado de DNS, y "Nada que revisar" no ejecuta una prueba.
 
 **Compartir está desactivado** significa que no hay zona. Su frase — activa el punto de acceso o pon un puerto en LAN compartida — no es un control de esta tarjeta. La zona existente se llama Red compartida. **Reparto entre enlaces no disponible** indica que los equipos usan la ruta predeterminada; lee Motivo. **Compartir está activo** cuenta enlaces que pueden llevar tráfico de clientes.
 
@@ -42,3 +42,49 @@ limitados de 100/500 ms y las notificaciones posteriores de red y salud.
 El bloqueo cuando todos los enlaces están caídos y el alcance exclusivo al
 tráfico reenviado de clientes no cambian. La prueba de paquetes en un espacio
 de red aislado crea tablas ausentes con el planificador y gestor de producción.
+
+## Política temporal de enlaces para clientes
+
+En Red → Compartir internet, abre **Enlaces de internet para clientes**. Elige
+**Solo cable**, **Solo celular** o **Automático**. En automático gana el número
+menor (0–100); los enlaces sanos con la misma prioridad comparten los flujos
+nuevos según sus pesos de salud. Por defecto todas las prioridades son cero.
+Wi-Fi participa en automático. `wl*` identifica Wi-Fi, `ww*`/`ppp*`/`usb*`
+celular y `eth*`/`en*` cable, según las clases de interfaces ya admitidas.
+
+Marca una interfaz en **Dar de baja para clientes compartidos** para retirarla
+solo del tráfico de clientes. No desconecta la interfaz, la administración ni la
+agregación. Desmarca para permitir su retorno, sujeto a salud y selección. Los
+modos forzados no usan otros tipos como respaldo. Sin enlaces permitidos, se
+mantiene el bloqueo de reenvío; DHCP, DNS y la interfaz local siguen accesibles.
+El DNS hacia el proveedor sigue las rutas del equipo: esta política selecciona
+el reenvío IPv4, no el transporte del resolutor DNS ni IPv6.
+
+Las API autenticadas `network.getSharingPolicy` y `network.setSharingPolicy`
+leen y reemplazan la política deseada completa. Ejemplo:
+
+```json
+{"mode":"automatic","priorities":{"wired":0,"cellular":10,"wifi":20},"administrativelyDown":[]}
+```
+
+El cambio solicita inmediatamente al coordinador de direccionamiento existente,
+sin esperar una consulta de NetworkManager. Usa los plazos de comandos existentes
+y reintentos de 100/500 ms. Si falla al aplicar, conserva la política deseada y
+publica `steering_unavailable`; recibir la política no confirma la salida real.
+Revisa el estado y prueba una solicitud nueva del cliente. **Recargar política
+de clientes** lee cambios de otra sesión. Las escrituras se serializan; gana la
+última. No se guarda en disco: al reiniciar el backend vuelve a automático, con
+prioridades iguales y sin bajas administrativas. Revisa los nombres de interfaz
+tras reconectar hardware; las marcas de flujo conservan la identidad física.
+
+Las exclusiones forzadas y bajas administrativas retiran la selección de flujos
+nuevos, eliminan las entradas conntrack de esa marca y emiten
+`uplink-flows-reset`. Las apps deben reconectarse. Se conservan las rutas sanas,
+incluidas las reglas de origen del equipo. No se modifica la ruta predeterminada
+ni las rutas de administración. La pérdida física o de salud conserva su ciclo
+existente. Cambiar solo prioridades mantiene las sesiones existentes: los flujos
+nuevos cambian al mejor enlace al caer o volver; los establecidos en el respaldo
+siguen allí hasta terminar o hasta una exclusión/pérdida. **Peso de salud (antes
+de la política)** no indica el reparto aplicado. Las pruebas de namespaces con
+dos enlaces y un cliente cubren selección celular, baja, retorno y bloqueo sin
+enlaces; la validación en hardware queda pendiente.
