@@ -36,6 +36,8 @@ describe("UplinkSteeringApplier", () => {
 			`meta mark set (meta mark & 0x000000ff) | ${hexMark(down.mark)}`,
 		);
 		expect(appliedRulesets[1]).not.toContain(hexMark(down.mark));
+		expect(appliedRulesets[0]).not.toContain("hook forward");
+		expect(appliedRulesets[1]).not.toContain("hook forward");
 	});
 
 	test("ordinary reweight uses one reload and never resets flows", async () => {
@@ -47,6 +49,28 @@ describe("UplinkSteeringApplier", () => {
 		await applier.apply(before, after);
 
 		expect(log).toEqual(["ensure:wwan0", "ruleset:reload"]);
+	});
+
+	test("keeps sharing active through all-down and uplink return", async () => {
+		const available = prepared([uplink("a", "wwan0", 100)]);
+		const unavailable = prepared([], available.clientZones);
+		const log: string[] = [];
+		const rulesets: string[] = [];
+		const applier = new UplinkSteeringApplier(makeApplierDeps(log, rulesets));
+
+		await applier.apply(available, unavailable);
+		expect(rulesets).toHaveLength(2);
+		for (const ruleset of rulesets) {
+			expect(ruleset).toContain("hook forward");
+			expect(ruleset).toContain("ct state new drop");
+		}
+		await applier.apply(unavailable, available);
+
+		expect(rulesets.at(-1)).toContain("numgen random");
+		expect(rulesets.at(-1)).not.toContain("drop");
+		expect(log).not.toContain("deactivate");
+		expect(log).not.toContain("forward:off");
+		expect(log).not.toContain("forward:on");
 	});
 
 	test("ruleset failure rolls back route support created for a new uplink", async () => {

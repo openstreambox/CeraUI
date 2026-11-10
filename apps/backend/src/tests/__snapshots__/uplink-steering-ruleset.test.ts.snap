@@ -9,6 +9,12 @@ table inet ceralive_share {
 		type filter hook prerouting priority mangle; policy accept;
 	}
 
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new drop comment "no selectable client uplink"
+		iifname "eth9" ip saddr 10.43.0.0/24 ct state new drop comment "no selectable client uplink"
+	}
+
 	chain postrouting {
 		type nat hook postrouting priority srcnat; policy accept;
 	}
