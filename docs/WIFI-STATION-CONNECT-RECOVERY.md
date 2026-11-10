@@ -7,3 +7,5 @@ If the selected Wi-Fi adapter changes while the network selector is open, its pa
 Choose **Scan** to request a scan or join one already pending for the selected adapter. It completes when that adapter reports a later scan result, including an empty result. A scan on another adapter does not complete it.
 
 A connection request already sent on the previous adapter may still complete. Changing the selection or closing the selector does not cancel that request or undo its effects. The selector does not send another connection request automatically; choose **Connect** explicitly when you intend to make another attempt.
+
+A failed attempt to join a new network does not automatically delete saved networks when it is unclear which profiles belong to that attempt. New or partly changed profiles may remain; a failure does not undo earlier effects or prove that nothing happened. Choose **Connect** explicitly if you want the selector to send another request. **Forget** remains a separate deliberate action.
