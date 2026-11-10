@@ -37,6 +37,11 @@ import {
 	parseFail,
 	parseOk,
 } from "../system/cli-parse.ts";
+import {
+	capturePortalBinding,
+	type PortalBindingReaders,
+	type PortalCapture,
+} from "./captive-portal-session.ts";
 import { getDerivedApChannels, refreshHotspotChannels } from "./regdomain.ts";
 import {
 	broadcastWifiState,
@@ -75,6 +80,38 @@ import {
 	resolveWifiPermanentMac,
 	retainWifiPermanentMacs,
 } from "./wifi-permanent-mac.ts";
+
+/** No native epoch/kernel reader is installed here; absence is unavailable. */
+export function captureWifiPortalBinding(
+	deviceId: WifiInterfaceId,
+	readers?: PortalBindingReaders,
+): Promise<PortalCapture> {
+	if (!readers)
+		return Promise.resolve({ ok: false, reason: "identity_unavailable" });
+	return capturePortalBinding(() => {
+		const matches = Object.entries(getWifiInterfacesByMacAddress()).filter(
+			([, radio]) => radio.id === deviceId,
+		);
+		const match = matches[0];
+		if (matches.length !== 1 || !match) return undefined;
+		const [permanentMac, radio] = match;
+		if (
+			radio.removed ||
+			radio.degradedReason ||
+			radio.activeMode !== "infrastructure" ||
+			!radio.conn ||
+			radio.conn !== radio.activeConn
+		)
+			return undefined;
+		return {
+			deviceId,
+			permanentMac,
+			ifname: radio.ifname,
+			profileUuid: radio.conn,
+			mode: radio.activeMode,
+		};
+	}, readers);
+}
 
 export type SSID = string;
 export type WifiInterfaceId = number;
