@@ -170,3 +170,106 @@ test("failed durable save rolls back a new profile and restores an existing prof
 	).rejects.toThrow();
 	expect(profiles.get(uuid)).toEqual(before);
 });
+
+test("USB target keeps Configure-off / Start / Stop / Delete on its owned profile across rename", async () => {
+	const { startHotspotForInterface } = await import(
+		"../modules/wifi/wifi-hotspot-activation.ts"
+	);
+	const { stopHotspotForInterface } = await import(
+		"../modules/wifi/wifi-hotspot-config.ts"
+	);
+	const { setWifiState, onWifiChange } = await import(
+		"../modules/wifi/state/wifi-state.ts"
+	);
+	const { resolveWirelessAddress } = await import(
+		"../modules/wifi/wifi-radio-identity.ts"
+	);
+	const {
+		resolveWifiPermanentMac,
+		setPermanentMacReaderForTest,
+		resetWifiPermanentMacCache,
+	} = await import("../modules/wifi/wifi-permanent-mac.ts");
+	const { readApModeSupport, setApStaCapabilityRunnerForTest } = await import(
+		"../modules/wifi/wifi-ap-sta-capability.ts"
+	);
+	const usb = "wlx020000000001";
+	onWifiChange(() => {});
+	setWifiState({});
+	setPermanentMacReaderForTest(async () => mac);
+	setApStaCapabilityRunnerForTest(async (_cmd, args) =>
+		args[0] === "dev"
+			? "wiphy 3"
+			: "Supported interface modes:\n\t * managed\n\t * AP\n",
+	);
+	try {
+		const address = await resolveWirelessAddress(
+			usb,
+			undefined,
+			async () => mac,
+		);
+		expect(await resolveWifiPermanentMac(usb, address ?? "")).toBe(mac);
+		expect(await readApModeSupport(usb)).toBe(true);
+		const uuid = await configureHotspotProfile(mac, settings, deps);
+		expect(calls).toEqual(["add"]);
+		expect(profiles.get(uuid)?.["connection.autoconnect"]).toBe("no");
+		const iface = {
+			id: 2,
+			ifname: usb,
+			conn: null,
+			hw: "USB radio",
+			available: new Map(),
+			saved: {},
+			savedAll: {},
+			hotspot: {
+				conn: uuid,
+				availableChannels: ["auto" as const],
+				warnings: {},
+			},
+		};
+		// The prepared profile is MAC-pinned, so a rename needs no profile rewrite.
+		iface.ifname = "renamed-usb";
+		const activated: string[] = [];
+		expect(
+			await startHotspotForInterface(mac, iface, {
+				nmConnect: async (id) => {
+					activated.push(id);
+					return true;
+				},
+				nmConnSetFields: async () => true,
+				nmHotspot: async () => {
+					throw new Error("Start must not create");
+				},
+				wifiUpdateSavedConns: async () => {},
+				broadcastState: () => {},
+				setDupIpSuppression: (name) => expect(name).toBe("renamed-usb"),
+				credentials: {
+					get: () => getHotspotCredentials(mac),
+					remember: () => {},
+				},
+				findHotspotConn: async () => undefined,
+				pruneHotspotConns: async () => {},
+			}),
+		).toEqual({ success: true });
+		expect(activated).toEqual([uuid]);
+		expect(
+			await stopHotspotForInterface(mac, iface, {
+				nmConnSetFields: async () => true,
+				nmDisconnect: async (id) => {
+					expect(id).toBe(uuid);
+					return true;
+				},
+				releaseConcurrentInterface: async () => {},
+				broadcastState: () => {},
+				setDupIpSuppression: () => {},
+				rescan: async () => {},
+			}),
+		).toEqual({ success: true });
+		await deleteHotspotProfile(mac, deps);
+		expect(profiles.size).toBe(0);
+		expect(getHotspotCredentials(mac)).toBeUndefined();
+	} finally {
+		setApStaCapabilityRunnerForTest(null);
+		setPermanentMacReaderForTest(null);
+		resetWifiPermanentMacCache();
+	}
+});

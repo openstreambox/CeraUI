@@ -16,7 +16,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* Network interface list */
 import { EventEmitter } from "node:events";
 import { isSimlessForBond } from "@ceraui/rpc";
 import type {
@@ -27,7 +26,6 @@ import type {
 } from "@ceraui/rpc/schemas";
 import { NETIF_DUPLICATE_IPV4_ERROR } from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
-
 import { ipToInt, isSameSubnet } from "../../helpers/ip-addresses.ts";
 import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
@@ -56,6 +54,7 @@ import {
 	wifiDeviceListStartUpdate,
 } from "../wifi/wifi-device-list.ts";
 import { scheduleWifiUpdate } from "../wifi/wifi-interfaces.ts";
+import { isWirelessInterface } from "../wifi/wifi-radio-identity.ts";
 import {
 	bondPhysicalId,
 	isBondOptedOut,
@@ -821,7 +820,7 @@ async function resolveIpAddrOverrides(): Promise<
 async function refreshNetifFromOs(): Promise<void> {
 	try {
 		const [ifconfigOut, ipOverrides] = await Promise.all([
-			run("ifconfig", []),
+			run("ifconfig", ["-a"]),
 			resolveIpAddrOverrides(),
 		]);
 		processIfconfigOutput(ifconfigOut, ipOverrides);
@@ -835,6 +834,7 @@ export function processIfconfigOutput(
 	stdout: string,
 	ipOverrides?: Map<string, IpAddrSelection>,
 	now: number = getms(),
+	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 ) {
 	let intsChanged = false;
 	const newInterfaces: Record<string, NetworkInterface> = {};
@@ -865,7 +865,7 @@ export function processIfconfigOutput(
 			const isRunning = flags.includes("RUNNING");
 
 			// update the list of WiFi devices
-			if (name?.match("^wlan")) {
+			if (wirelessInterface(name)) {
 				const hwAddr = int.match(/ether ([0-9a-f:]+)/);
 				if (hwAddr?.[1]) {
 					wifiDeviceListAdd(name, hwAddr[1], isRunning ? inetAddr : null);

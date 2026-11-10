@@ -42,3 +42,37 @@ Cuando la radio comparte una conexión Wi-Fi y un punto de acceso, ambos deben
 usar el canal de la estación. Si el dispositivo no puede comprobar un canal
 válido o una interfaz lista, rechaza la activación. La conectividad de clientes
 aún debe verificarse en el dispositivo.
+
+## Choosing the hotspot radio
+
+The Network card's **Hotspot radio** selector chooses the adapter for setup,
+Start, Stop and Forget. The default prefers an active hotspot, then an idle
+AP-capable adapter, before considering the station's adapter. Choose a separate
+USB adapter to keep the station available.
+
+Discovery uses NetworkManager's Wi-Fi device type and sysfs wireless markers,
+including disconnected interfaces with arbitrary names. MAC resolution falls
+back from the polling cache to sysfs and NM. The permanent MAC remains the
+registry/profile identity across renames and replugs; `radio_identity` reports
+it with the current PHY and physical USB/PCI device path. PHY numbers and
+interface names are observations, not durable identifiers. A missing physical
+path remains unknown.
+
+Hotspot RPC inputs optionally carry `radio_id` (the permanent-MAC identity).
+It takes precedence over the legacy numeric `device`; an absent target refuses
+rather than choosing another radio. Legacy clients can continue using `device`.
+The UI supplies both. Capabilities use the selected PHY's supported interface
+modes and valid interface combinations; NM AP capability remains the fallback
+when the kernel read cannot be interpreted. No interface-name prefix proves
+wireless or AP support. Capability claims do not prove that a driver transmits
+beacons: activation-without-beacons health detection remains a follow-up.
+
+## Elegir la radio del punto de acceso
+
+En Red, **Radio del punto de acceso** permite elegir el adaptador para configurar,
+activar, apagar y olvidar. Se prefiere un punto de acceso activo y después una
+radio disponible que no tenga conexión de estación. Puedes elegir un adaptador
+USB para conservar la conexión de la estación. La identidad permanente mantiene
+el destino aunque cambie el nombre de la interfaz o se vuelva a conectar el
+adaptador. Si falta la radio elegida, la operación se rechaza. Que una radio
+admita el modo AP no confirma que el controlador transmita balizas.

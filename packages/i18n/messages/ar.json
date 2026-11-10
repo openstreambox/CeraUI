@@ -1708,6 +1708,7 @@
 	"network.view.hotspotClientsNone": "لا توجد أجهزة متصلة",
 	"network.view.hotspotClientsOne": "جهاز واحد متصل ({count})",
 	"network.view.hotspotNoBond": "Hotspot can't be bonded",
+	"network.view.hotspotRadio": "Hotspot radio",
 	"network.view.hotspotOff": "نقطة الاتصال متوقفة",
 	"network.view.hotspotOffHint": "شارك اتصال هذا الجهاز عبر WiFi.",
 	"network.view.hotspotSwitchBody": "Switching to hotspot will disconnect this WiFi network and remove it from the bond.",

@@ -175,6 +175,7 @@ export type WifiInterfaceResponseMessage = Pick<
 		clients?: HotspotClients;
 		warnings?: string[];
 	};
+	radio_identity?: BaseWifiInterface["radioIdentity"];
 	supports_hotspot?: true;
 	supports_ap_sta_concurrency?: true;
 	mode?: "station" | "hotspot";
@@ -299,6 +300,8 @@ export function wifiBuildMsg() {
 			hw: wifiInterface.hw,
 			saved: {},
 		};
+		if (wifiInterface.radioIdentity)
+			entry.radio_identity = wifiInterface.radioIdentity;
 		if (wifiInterface.degradedReason !== undefined) {
 			entry.degraded_reason = wifiInterface.degradedReason;
 		}

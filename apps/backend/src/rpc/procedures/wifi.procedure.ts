@@ -1,4 +1,5 @@
 import { wifiHotspotDelete } from "../../modules/wifi/wifi-hotspot-profile.ts";
+import { resolveHotspotRadioDevice } from "../../modules/wifi/wifi-interfaces.ts";
 /**
  * WiFi Procedures
  * Wraps existing WiFi logic from modules/wifi/
@@ -50,6 +51,7 @@ import {
 	hotspotToggleInputSchema,
 	hotspotToggleOutputSchema,
 	type SetWifiAdapterModeOutput,
+	type SuccessResponse,
 	setWifiAdapterModeInputSchema,
 	setWifiAdapterModeOutputSchema,
 	setWifiCountryInputSchema,
@@ -363,6 +365,12 @@ export const hotspotStartProcedure = authedProcedure
 	.output(hotspotToggleOutputSchema)
 	.handler(async ({ input }): Promise<HotspotToggleOutput> => {
 		if (mockWifiBusy()) return refuseHotspot("start", input.device);
+		if (
+			!shouldUseMocks() &&
+			!Number.isFinite(resolveHotspotRadioDevice(input))
+		) {
+			return { success: false, error: "no-device" };
+		}
 		/*
 		  An admission PROBE, released before the transaction runs — see
 		  `hotspotConfigure` below for why the lock is never held across the
@@ -370,7 +378,11 @@ export const hotspotStartProcedure = authedProcedure
 		  transaction's own lock is still what actually serializes the work, and
 		  its DEVICE_BUSY comes back through the awaited result either way.
 		*/
-		if (await adapterBusy(wifiAdapterLockKeyForDeviceId(input.device))) {
+		if (
+			await adapterBusy(
+				wifiAdapterLockKeyForDeviceId(resolveHotspotRadioDevice(input)),
+			)
+		) {
 			return refuseHotspot("start", input.device);
 		}
 		if (shouldUseMocks()) {
@@ -381,11 +393,15 @@ export const hotspotStartProcedure = authedProcedure
 					setMockWifiConnection(device, { activeNetwork: undefined });
 				}
 			}
-			publishHotspotOutcome("start", Number(input.device), { success: true });
+			publishHotspotOutcome("start", resolveHotspotRadioDevice(input), {
+				success: true,
+			});
 			return { success: true, accepted: true };
 		}
 
-		const result = await wifiHotspotStart({ device: Number(input.device) });
+		const result = await wifiHotspotStart({
+			device: resolveHotspotRadioDevice(input),
+		});
 		if (!result.success) return { success: false, error: result.error };
 		return { success: true, accepted: true };
 	});
@@ -410,7 +426,10 @@ export const hotspotPrepareProcedure = authedProcedure
 			const { name, password } = getMockHotspotConfig(device);
 			return { success: true, name, password };
 		}
-		return wifiHotspotPrepare({ device: Number(input.device), ...chosen });
+		return wifiHotspotPrepare({
+			device: resolveHotspotRadioDevice(input),
+			...chosen,
+		});
 	});
 
 /**
@@ -421,8 +440,18 @@ export const hotspotStopProcedure = authedProcedure
 	.output(hotspotToggleOutputSchema)
 	.handler(async ({ input }): Promise<HotspotToggleOutput> => {
 		if (mockWifiBusy()) return refuseHotspot("stop", input.device);
+		if (
+			!shouldUseMocks() &&
+			!Number.isFinite(resolveHotspotRadioDevice(input))
+		) {
+			return { success: false, error: "no-device" };
+		}
 		// Admission probe, on `hotspotStart`'s terms.
-		if (await adapterBusy(wifiAdapterLockKeyForDeviceId(input.device))) {
+		if (
+			await adapterBusy(
+				wifiAdapterLockKeyForDeviceId(resolveHotspotRadioDevice(input)),
+			)
+		) {
 			return refuseHotspot("stop", input.device);
 		}
 		if (shouldUseMocks()) {
@@ -430,11 +459,15 @@ export const hotspotStopProcedure = authedProcedure
 				const device = resolveMockWifiDevice(input.device);
 				if (device) getMockState().wifiModes[device] = "station";
 			}
-			publishHotspotOutcome("stop", Number(input.device), { success: true });
+			publishHotspotOutcome("stop", resolveHotspotRadioDevice(input), {
+				success: true,
+			});
 			return { success: true };
 		}
 
-		const result = await wifiHotspotStop({ device: Number(input.device) });
+		const result = await wifiHotspotStop({
+			device: resolveHotspotRadioDevice(input),
+		});
 		if (!result.success) return { success: false, error: result.error };
 		return { success: true };
 	});
@@ -445,8 +478,14 @@ export const hotspotStopProcedure = authedProcedure
 export const hotspotConfigureProcedure = authedProcedure
 	.input(hotspotConfigInputSchema)
 	.output(successResponseSchema)
-	.handler(async ({ input, context }): Promise<MutationResult> => {
+	.handler(async ({ input, context }): Promise<SuccessResponse> => {
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
+		if (
+			!shouldUseMocks() &&
+			!Number.isFinite(resolveHotspotRadioDevice(input))
+		) {
+			return { success: false, error: "no-device" };
+		}
 		const ws = context.ws;
 		/*
 		  An ADMISSION PROBE, not a guard held across the work: `wifiHotspotConfig`
@@ -456,14 +495,18 @@ export const hotspotConfigureProcedure = authedProcedure
 		  the transaction's own lock remains the guarantee, and its terminal `wifi`
 		  frame remains the outcome the dialog waits on.
 		*/
-		if (await adapterBusy(wifiAdapterLockKeyForDeviceId(input.device))) {
+		if (
+			await adapterBusy(
+				wifiAdapterLockKeyForDeviceId(resolveHotspotRadioDevice(input)),
+			)
+		) {
 			return { success: false, error: "DEVICE_BUSY" };
 		}
 
 		handleWifi(ws, {
 			hotspot: {
 				config: {
-					device: Number(input.device),
+					device: resolveHotspotRadioDevice(input),
 					name: input.name,
 					password: input.password,
 					channel: input.channel,
@@ -599,4 +642,6 @@ export const setWifiCountryProcedure = authedProcedure
 export const hotspotDeleteProcedure = authedProcedure
 	.input(hotspotToggleInputSchema)
 	.output(successResponseSchema)
-	.handler(async ({ input }) => wifiHotspotDelete(Number(input.device)));
+	.handler(async ({ input }) =>
+		wifiHotspotDelete(resolveHotspotRadioDevice(input)),
+	);

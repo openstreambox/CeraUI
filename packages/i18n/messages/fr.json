@@ -1699,6 +1699,7 @@
 	"network.view.hotspotClientsNone": "Aucun appareil connecté",
 	"network.view.hotspotClientsOne": "{count} appareil connecté",
 	"network.view.hotspotNoBond": "Hotspot can't be bonded",
+	"network.view.hotspotRadio": "Hotspot radio",
 	"network.view.hotspotOff": "Le hotspot est désactivé",
 	"network.view.hotspotOffHint": "Partagez la connexion de cet appareil via WiFi.",
 	"network.view.hotspotSwitchBody": "Switching to hotspot will disconnect this WiFi network and remove it from the bond.",

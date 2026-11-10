@@ -235,7 +235,7 @@ $effect(() => {
 async function handleDelete() {
 	await osCommand({
 		key: configKey,
-		rpc: () => rpc.wifi.hotspotDelete({ device: deviceId }),
+		rpc: () => rpc.wifi.hotspotDelete({ device: deviceId, radio_id: iface?.radio_identity?.id }),
 		confirmOnResolve: true,
 		failMessage: () => m["network.os.operationFailed"](),
 		busyMessage: () => m["network.os.deviceBusy"](),
@@ -249,6 +249,7 @@ async function handleSave() {
 		rpc: () =>
 			rpc.wifi.hotspotConfigure({
 				device: deviceId,
+				radio_id: iface?.radio_identity?.id,
 				name,
 				password,
 				channel,
@@ -271,7 +272,7 @@ async function handleToggle() {
 		await osCommand({
 			key: toggleKey,
 			target: 'station',
-			rpc: () => rpc.wifi.hotspotStop({ device: deviceId }),
+			rpc: () => rpc.wifi.hotspotStop({ device: deviceId, radio_id: iface?.radio_identity?.id }),
 			failMessage: () => m["network.os.operationFailed"](),
 			busyMessage: () => m["network.os.deviceBusy"](),
 		});
@@ -286,7 +287,7 @@ async function startConfirmed() {
 	await osCommand({
 		key: toggleKey,
 		target: 'hotspot',
-		rpc: () => rpc.wifi.hotspotStart({ device: deviceId }),
+		rpc: () => rpc.wifi.hotspotStart({ device: deviceId, radio_id: iface?.radio_identity?.id }),
 		failMessage: () => m["network.os.operationFailed"](),
 		busyMessage: () => m["network.os.deviceBusy"](),
 	});
@@ -394,6 +395,7 @@ async function copyPassword() {
 			{#if confirmingStart}
 				<HotspotActivationConfirm
 					device={deviceId}
+					radioId={iface?.radio_identity?.id}
 					keepsStation={iface?.supports_ap_sta_concurrency === true &&
 						modeView?.desiredMode !== 'hotspot'}
 					onCancel={() => (confirmingStart = false)}

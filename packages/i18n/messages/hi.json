@@ -1696,6 +1696,7 @@
 	"network.view.hotspotClientsNone": "कोई डिवाइस कनेक्ट नहीं है",
 	"network.view.hotspotClientsOne": "{count} डिवाइस कनेक्ट है",
 	"network.view.hotspotNoBond": "Hotspot can't be bonded",
+	"network.view.hotspotRadio": "Hotspot radio",
 	"network.view.hotspotOff": "हॉटस्पॉट बंद है",
 	"network.view.hotspotOffHint": "इस डिवाइस का कनेक्शन WiFi पर साझा करें।",
 	"network.view.hotspotSwitchBody": "Switching to hotspot will disconnect this WiFi network and remove it from the bond.",

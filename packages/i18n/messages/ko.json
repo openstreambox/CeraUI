@@ -1651,6 +1651,7 @@
 	"network.view.hotspotClientsNone": "연결된 기기가 없습니다",
 	"network.view.hotspotClientsOne": "{count}대 기기 연결됨",
 	"network.view.hotspotNoBond": "Hotspot can't be bonded",
+	"network.view.hotspotRadio": "Hotspot radio",
 	"network.view.hotspotOff": "핫스팟이 꺼져 있습니다",
 	"network.view.hotspotOffHint": "이 기기의 연결을 WiFi로 공유합니다.",
 	"network.view.hotspotSwitchBody": "Switching to hotspot will disconnect this WiFi network and remove it from the bond.",

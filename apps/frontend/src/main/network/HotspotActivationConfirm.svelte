@@ -32,6 +32,7 @@ import { generateHotspotPassword, hotspotPasswordIsPrintable } from './hotspot-p
 interface Props {
 	/** WiFi interface device key (record key in the wifi status map). */
 	device: string;
+	radioId?: string;
 	/** The radio's station leg survives (hybrid), so no disconnect is threatened. */
 	keepsStation?: boolean;
 	/** Action label; defaults to "Turn on hotspot". */
@@ -42,7 +43,7 @@ interface Props {
 	onCancel: () => void;
 }
 
-const { device, keepsStation = false, confirmLabel, detail, onConfirm, onCancel }: Props =
+const { device, radioId, keepsStation = false, confirmLabel, detail, onConfirm, onCancel }: Props =
 	$props();
 
 const bounds = networkConstraints.hotspot;
@@ -68,7 +69,7 @@ function cancel() {
 async function load() {
 	phase = 'loading';
 	try {
-		const result = await rpc.wifi.hotspotPrepare({ device });
+		const result = await rpc.wifi.hotspotPrepare({ device, radio_id: radioId });
 		if (!result.success || !result.name || !result.password) throw new Error('unavailable');
 		loaded = { name: result.name, password: result.password };
 		firstTime = result.firstTime === true;
@@ -130,7 +131,7 @@ async function confirm() {
 	if (firstTime || name !== loaded.name || password !== loaded.password) {
 		phase = 'saving';
 		try {
-			const result = await rpc.wifi.hotspotPrepare({ device, name, password });
+			const result = await rpc.wifi.hotspotPrepare({ device, radio_id: radioId, name, password });
 			// Preparing credentials may already have written them. A dismissed
 			// confirmation must not authorize the separate hotspot start afterward.
 			if (!isCurrent()) return;

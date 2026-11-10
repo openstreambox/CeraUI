@@ -21,6 +21,8 @@ import type { AppWebSocket, RPCContext } from "../types.ts";
 import {
 	hotspotConfigureProcedure,
 	hotspotDeleteProcedure,
+	hotspotStartProcedure,
+	hotspotStopProcedure,
 } from "./wifi.procedure.ts";
 
 function makeContext(): RPCContext {
@@ -159,6 +161,52 @@ test("hotspotDelete RPC forgets a prepared identity and refuses while the adapte
 				{ context: makeContext() },
 			),
 		).toEqual({ success: true });
+	} finally {
+		Object.assign(hotspotProfileDeps, original);
+		if (previousMac === undefined) delete getWifiIdToMacAddress()[0];
+		else getWifiIdToMacAddress()[0] = previousMac;
+		restoreWifiRegistry(inherited);
+		resetHotspotCredentialsForTest();
+	}
+});
+
+test("hotspot stable target takes precedence over a stale numeric device and missing targets refuse", async () => {
+	const inherited = isolateWifiRegistry();
+	const original = { ...hotspotProfileDeps };
+	const mac = "02:00:00:00:06:01";
+	const previousMac = getWifiIdToMacAddress()[0];
+	try {
+		seedInterface(mac);
+		getWifiIdToMacAddress()[0] = mac;
+		hotspotProfileDeps.list = async () => [];
+		rememberHotspotCredentials(mac, {
+			ssid: "Example",
+			password: "example-password",
+		});
+		expect(
+			await call(
+				hotspotDeleteProcedure,
+				{ device: "88", radio_id: mac },
+				{ context: makeContext() },
+			),
+		).toEqual({ success: true });
+		expect(getHotspotCredentials(mac)).toBeUndefined();
+		for (const procedure of [hotspotStartProcedure, hotspotStopProcedure]) {
+			expect(
+				await call(
+					procedure,
+					{ device: "0", radio_id: "missing" },
+					{ context: makeContext() },
+				),
+			).toEqual({ success: false, error: "no-device" });
+		}
+		expect(
+			await call(
+				hotspotConfigureProcedure,
+				{ ...validConfig, radio_id: "missing" },
+				{ context: makeContext() },
+			),
+		).toEqual({ success: false, error: "no-device" });
 	} finally {
 		Object.assign(hotspotProfileDeps, original);
 		if (previousMac === undefined) delete getWifiIdToMacAddress()[0];

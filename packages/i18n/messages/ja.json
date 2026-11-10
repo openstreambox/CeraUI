@@ -1651,6 +1651,7 @@
 	"network.view.hotspotClientsNone": "接続中のデバイスはありません",
 	"network.view.hotspotClientsOne": "{count} 台のデバイスが接続中",
 	"network.view.hotspotNoBond": "Hotspot can't be bonded",
+	"network.view.hotspotRadio": "Hotspot radio",
 	"network.view.hotspotOff": "ホットスポットはオフです",
 	"network.view.hotspotOffHint": "このデバイスの接続をWiFi経由で共有します。",
 	"network.view.hotspotSwitchBody": "Switching to hotspot will disconnect this WiFi network and remove it from the bond.",

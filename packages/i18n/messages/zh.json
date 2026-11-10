@@ -1651,6 +1651,7 @@
 	"network.view.hotspotClientsNone": "没有已连接的设备",
 	"network.view.hotspotClientsOne": "已连接 {count} 台设备",
 	"network.view.hotspotNoBond": "Hotspot can't be bonded",
+	"network.view.hotspotRadio": "Hotspot radio",
 	"network.view.hotspotOff": "热点已关闭",
 	"network.view.hotspotOffHint": "通过 WiFi 共享此设备的连接。",
 	"network.view.hotspotSwitchBody": "Switching to hotspot will disconnect this WiFi network and remove it from the bond.",

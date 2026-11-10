@@ -36,9 +36,11 @@ interface Props {
 	hotspotInterfaces: [string, WifiInterface][];
 	hotspotTarget: [string, WifiInterface] | undefined;
 	onSetup: () => void;
+	radios?: [string, WifiInterface][];
+	onSelect?: (id: string) => void;
 }
 
-const { hotspotInterfaces, hotspotTarget, onSetup }: Props = $props();
+const { hotspotInterfaces, hotspotTarget, onSetup, radios = [], onSelect }: Props = $props();
 
 /**
  * A representative percent inside each of `getSignalCategory`'s bands.
@@ -68,6 +70,16 @@ const CATEGORY_PROBE_PERCENT = { excellent: 80, good: 60, fair: 40, weak: 10 } a
 			{m["network.view.setup"]()}
 			<ChevronRight class="size-3.5 rtl:rotate-180" />
 		</Button>
+	</div>
+	<div class="px-4 py-3">
+		<label for="hotspot-radio" class="text-sm font-medium">{m["network.view.hotspotRadio"]()}</label>
+		<select id="hotspot-radio" class="bg-background mt-1 block w-full rounded border p-2 text-sm"
+			value={hotspotTarget ? (hotspotTarget[1].radio_identity?.id ?? hotspotTarget[0]) : ''}
+			onchange={(event) => onSelect?.(event.currentTarget.value)}>
+			{#each radios.filter(([, radio]) => (radio.supports_hotspot || radio.hotspot) && !radio.degraded_reason) as [id, radio] (id)}
+				<option value={radio.radio_identity?.id ?? id}>{radio.hw} · {radio.ifname} · {radio.radio_identity?.permanent_mac ?? id}</option>
+			{/each}
+		</select>
 	</div>
 	<div class="divide-y">
 		{#if hotspotInterfaces.length === 0}
