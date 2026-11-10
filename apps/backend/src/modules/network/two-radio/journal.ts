@@ -31,6 +31,7 @@ const effect = z.strictObject({
 const snapshotSchema = z.strictObject({
 	version: z.literal(1),
 	session: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
+	holder: z.strictObject({ radio, identity }).optional(),
 	operations: z
 		.array(
 			z.strictObject({

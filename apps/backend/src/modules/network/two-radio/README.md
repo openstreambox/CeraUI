@@ -1,3 +1,5 @@
+See [LIVE.md](LIVE.md) for flag-true startup, configuration and native host checks.
+
 # Two-radio hold/search/swap policy
 
 `reducer.ts` extends the network owner's policy surface without creating a runtime

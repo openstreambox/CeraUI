@@ -683,6 +683,9 @@ async function refreshDongleState(): Promise<void> {
 }
 
 export function initNetworkInterfaceMonitoring() {
+	void import("./two-radio/runtime.ts")
+		.then((m) => m.initTwoRadioLive())
+		.catch((error) => logger.warn(`Two-radio owner unavailable: ${error}`));
 	onNetifChange(broadcastNetif);
 	updateNetif();
 	setInterval(updateNetif, NETIF_POLL_INTERVAL_MS);
