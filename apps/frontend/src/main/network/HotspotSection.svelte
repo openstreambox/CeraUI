@@ -103,7 +103,7 @@ const CATEGORY_PROBE_PERCENT = { excellent: 80, good: 60, fair: 40, weak: 10 } a
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium">{iface.hotspot?.name || iface.ifname}</p>
 							<p class="text-muted-foreground truncate text-xs">
-								{m["network.view.active"]()} · {iface.ifname}
+								{iface.transition === "activating" ? m["network.hotspot.steeringPending"]() : m["network.view.active"]()} · {iface.ifname}
 							</p>
 						</div>
 						<WifiModeBadge device={id} mode={modeView.displayMode} />

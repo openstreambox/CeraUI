@@ -1671,6 +1671,7 @@
 	"network.summary.networksActive": "{count} networks, {active} active • Total: {total} Kbps",
 	"network.summary.totalBandwidth": "{total} Kbps",
 	"network.view.active": "Active",
+	"network.hotspot.steeringPending": "Steering pending",
 	"network.view.concurrentModeActive": "AP active",
 	"network.view.concurrentModeBadge": "WiFi + AP",
 	"network.view.concurrentModeHelp": "This radio can stay connected to WiFi while the hotspot is active.",

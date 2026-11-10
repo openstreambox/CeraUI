@@ -1626,6 +1626,7 @@
 	"network.summary.networksActive": "{count}个网络，{active}个活跃 • 总计：{total} Kbps",
 	"network.summary.totalBandwidth": "{total} Kbps",
 	"network.view.active": "活跃",
+	"network.hotspot.steeringPending": "路由准备中",
 	"network.view.concurrentModeActive": "接入点已启用",
 	"network.view.concurrentModeBadge": "WiFi + 接入点",
 	"network.view.concurrentModeHelp": "此无线电可在热点启用时保持 WiFi 连接。",

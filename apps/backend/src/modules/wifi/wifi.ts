@@ -15,6 +15,9 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { refreshWifiApClientZones } from "../network/network-interfaces.ts";
+import { hotspotSteeringPending } from "../network/uplink-steering/readiness.ts";
+
 /* NetworkManager / nmcli based Wifi Manager */
 
 import type { WifiAdapterCapabilities } from "@ceraui/rpc/schemas";
@@ -377,6 +380,16 @@ export function wifiBuildMsg() {
 		}
 
 		entry.mode = isApMode(wifiInterface) ? "hotspot" : "station";
+		if (
+			(isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) &&
+			hotspotSteeringPending(
+				wifiInterface.concurrentHotspot?.activeConn
+					? wifiInterface.concurrentHotspot.ifname
+					: wifiInterface.ifname,
+			)
+		) {
+			entry.transition = "activating";
+		}
 		if (canHotspot(wifiInterface) && wifiInterface.hotspot.transition) {
 			entry.transition = wifiInterface.hotspot.transition;
 		}
@@ -398,6 +411,7 @@ export function wifiBuildMsg() {
 }
 
 export function broadcastWifiState() {
+	refreshWifiApClientZones();
 	broadcastMsg("status", { wifi: wifiBuildMsg() });
 }
 

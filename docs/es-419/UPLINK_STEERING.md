@@ -88,3 +88,23 @@ siguen allí hasta terminar o hasta una exclusión/pérdida. **Peso de salud (an
 de la política)** no indica el reparto aplicado. Las pruebas de namespaces con
 dos enlaces y un cliente cubren selección celular, baja, retorno y bloqueo sin
 enlaces; la validación en hardware queda pendiente.
+
+### Publicación inicial del AP y preparación
+
+La confirmación del AP y la publicación de su dirección pueden llegar en
+cualquier orden. La zona de clientes se actualiza antes del estado Wi-Fi y en
+cada instantánea de red, sin depender de un segundo cambio de conexión. Hasta
+verificar las reglas nft, las reglas de política y la interfaz de la ruta
+predeterminada, el hotspot conserva la transición de activación y muestra
+«Enrutamiento pendiente». Start confirma el éxito después de la conciliación.
+Un estado aplicado sin enlaces disponibles sigue protegiendo los clientes;
+la preparación no garantiza acceso a Internet.
+
+Si desaparece la ruta predeterminada de una tabla administrada, el plan conserva
+la propiedad de la regla de origen con prioridad 100. Stop y Delete eliminan
+solo la combinación exacta de origen, prioridad y tabla, sin aceptar selectores
+adicionales ni tablas parecidas. La prueba aislada verifica el primer paquete
+marcado, la retirada de la ruta y la limpieza, conservando una regla ajena.
+
+La verificación también se ejecuta cuando el estado deseado no cambia. Si falta
+soporte en el kernel, se retira la preparación y se reintenta la aplicación.

@@ -182,6 +182,8 @@ async function stopHotspotLocked(
 			await deps.releaseConcurrentInterface(virtualIfname);
 		} else {
 			wifiInterface.conn = null;
+			wifiInterface.activeConn = null;
+			delete wifiInterface.activeMode;
 			wifiInterface.available.clear();
 		}
 	}

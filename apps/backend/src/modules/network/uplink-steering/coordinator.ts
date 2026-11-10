@@ -13,6 +13,7 @@ export interface UplinkSteeringCoordinatorDeps {
 		next: PreparedSteeringState,
 	): Promise<void>;
 	publishAvailability(status: SteeringAvailability): void;
+	verifyApplied?(state: PreparedSteeringState): Promise<void>;
 	waitBeforeRetry?(delayMs: number): Promise<void>;
 }
 
@@ -52,6 +53,7 @@ export class UplinkSteeringCoordinator {
 				) {
 					await this.#deps.apply(this.#applied, desired);
 				}
+				await this.#deps.verifyApplied?.(desired);
 				this.#applied = desired;
 				this.#applyUncertain = false;
 				this.#deps.publishAvailability({ available: true });

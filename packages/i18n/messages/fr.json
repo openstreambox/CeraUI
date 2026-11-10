@@ -1674,6 +1674,7 @@
 	"network.summary.networksActive": "{count} réseaux, {active} actifs • Total: {total} Kbps",
 	"network.summary.totalBandwidth": "{total} Kbps",
 	"network.view.active": "Actif",
+	"network.hotspot.steeringPending": "Routage en attente",
 	"network.view.concurrentModeActive": "Point d’accès actif",
 	"network.view.concurrentModeBadge": "WiFi + point d’accès",
 	"network.view.concurrentModeHelp": "Cette radio peut rester connectée au WiFi pendant que le point d’accès est actif.",

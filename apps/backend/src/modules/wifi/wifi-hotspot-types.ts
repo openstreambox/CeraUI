@@ -170,6 +170,7 @@ export type HotspotStartResult =
  * `pollHotspotActive` so confirmation comes purely from a fed monitor event).
  */
 export type HotspotActivationDeps = {
+	confirmSteering?: (ifname: string) => Promise<boolean>;
 	stationChannel?: typeof import("./wifi-concurrent-interface.ts").concurrentStationChannel;
 	configureProfile?: typeof import("./wifi-hotspot-profile.ts").configureHotspotProfile;
 	ownedProfile?: typeof import("./wifi-hotspot-profile.ts").ownedHotspotProfile;

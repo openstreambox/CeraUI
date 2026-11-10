@@ -82,3 +82,25 @@ USB para conservar la conexión de la estación. La identidad permanente mantien
 el destino aunque cambie el nombre de la interfaz o se vuelva a conectar el
 adaptador. Si falta la radio elegida, la operación se rechaza. Que una radio
 admita el modo AP no confirma que el controlador transmita balizas.
+
+## Steering readiness
+
+NetworkManager activation confirms the radio, not forwarding readiness. AP
+classification is published before the Wi-Fi status broadcast and is reapplied
+on every IP snapshot, even when the connection cache has already consumed the
+activation edge. Retiring an AP also retracts its client-zone marker.
+
+On devices, the Wi-Fi API retains `transition: "activating"` and the hotspot
+row says “Steering pending” until the steering owner has installed and read back
+the client-zone nft rules, policy rules and per-uplink default routes. The Start
+terminal success waits for this reconciliation; a failed confirmation does not
+claim forwarding readiness. Later successful reconciliation republishes status.
+An active all-down guard is a valid applied state; readiness does not promise a
+healthy internet uplink.
+
+Managed route re-planning preserves source-rule ownership when a default route
+is temporarily withdrawn. Stop/Delete remove the exact source address, priority
+and table tuple, rejecting rules with additional selectors or different tables.
+
+Readback also runs when desired state is unchanged. Missing kernel support
+withdraws readiness and triggers the existing bounded apply retry.

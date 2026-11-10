@@ -1683,6 +1683,7 @@
 	"network.summary.networksActive": "{count} شبكة، {active} نشطة • الإجمالي: {total} كيلوبت/ثانية",
 	"network.summary.totalBandwidth": "{total} كيلوبت/ثانية",
 	"network.view.active": "نشط",
+	"network.hotspot.steeringPending": "التوجيه قيد الانتظار",
 	"network.view.concurrentModeActive": "نقطة الوصول نشطة",
 	"network.view.concurrentModeBadge": "WiFi + نقطة وصول",
 	"network.view.concurrentModeHelp": "يمكن لهذا الراديو البقاء متصلاً بشبكة WiFi أثناء تشغيل نقطة الاتصال.",

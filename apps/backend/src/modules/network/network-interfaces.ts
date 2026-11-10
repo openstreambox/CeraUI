@@ -48,11 +48,13 @@ import {
 } from "../ui/notifications.ts";
 import { broadcastMsg, buildMsg } from "../ui/websocket-server.ts";
 import { isConcurrentApIfname } from "../wifi/wifi-concurrent-interface.ts";
+import { getWifiInterfacesByMacAddress } from "../wifi/wifi-connections.ts";
 import {
 	wifiDeviceListAdd,
 	wifiDeviceListEndUpdate,
 	wifiDeviceListStartUpdate,
 } from "../wifi/wifi-device-list.ts";
+import { isApMode } from "../wifi/wifi-hotspot-types.ts";
 import { scheduleWifiUpdate } from "../wifi/wifi-interfaces.ts";
 import { isWirelessInterface } from "../wifi/wifi-radio-identity.ts";
 import {
@@ -211,6 +213,12 @@ export function isDupIpOnly(int: NetworkInterface): boolean {
 	return int.error === NETIF_ERR_DUPIPV4;
 }
 
+export function isWifiApInterface(name: string): boolean {
+	return Object.values(getWifiInterfacesByMacAddress()).some(
+		(entry) => entry?.ifname === name && isApMode(entry),
+	);
+}
+
 /**
  * May this interface be offered to the bond?
  *
@@ -220,6 +228,7 @@ export function isDupIpOnly(int: NetworkInterface): boolean {
  * toggled the link out of the bond is honoured in both cases.
  */
 export function isBondCandidate(name: string, int: NetworkInterface): boolean {
+	if (isWifiApInterface(name)) return false;
 	if (!int.ip) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
@@ -262,8 +271,19 @@ export function applyConcurrentApBondGate(
 	for (const name in interfaces) {
 		const int = interfaces[name];
 		if (!int) continue;
-		if (isConcurrentApIfname(name)) setNetifError(int, NETIF_ERR_HOTSPOT);
+		if (isConcurrentApIfname(name) || isWifiApInterface(name)) {
+			setNetifError(int, NETIF_ERR_HOTSPOT);
+		} else if ((int.error & NETIF_ERR_HOTSPOT) !== 0) {
+			clearNetifError(int, NETIF_ERR_HOTSPOT);
+			if (int.error === 0 && !isBondOptedOut(name)) int.enabled = true;
+		}
 	}
+}
+
+export function refreshWifiApClientZones(): void {
+	const before = JSON.stringify(netif);
+	applyConcurrentApBondGate(netif);
+	if (before !== JSON.stringify(netif)) triggerNetworkInterfacesChange();
 }
 
 /*
@@ -961,6 +981,9 @@ export function processIfconfigOutput(
 		scheduleWifiUpdate(1000);
 	}
 
+	for (const name in newInterfaces) {
+		if (newInterfaces[name]?.error !== netif[name]?.error) intsChanged = true;
+	}
 	netif = newInterfaces;
 
 	if (intsChanged) {

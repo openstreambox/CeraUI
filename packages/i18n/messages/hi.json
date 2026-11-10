@@ -1671,6 +1671,7 @@
 	"network.summary.networksActive": "{count} नेटवर्क, {active} सक्रिय • कुल: {total} Kbps",
 	"network.summary.totalBandwidth": "{total} Kbps",
 	"network.view.active": "सक्रिय",
+	"network.hotspot.steeringPending": "रूटिंग लंबित है",
 	"network.view.concurrentModeActive": "एक्सेस पॉइंट सक्रिय",
 	"network.view.concurrentModeBadge": "WiFi + एक्सेस पॉइंट",
 	"network.view.concurrentModeHelp": "हॉटस्पॉट सक्रिय रहते हुए यह रेडियो WiFi से जुड़ा रह सकता है।",

@@ -258,3 +258,52 @@ ${FWMARK_RULE_PRIORITY}: from all fwmark ${hexMark(mark)}/0xffffff00 lookup 3012
 		]);
 	});
 });
+
+test("replanning a missing managed default retains source ownership through Stop/Delete", async () => {
+	const candidate = {
+		identity: "wired",
+		ifname: "eth0",
+		sourceAddress: "192.0.2.2",
+		sourceAddressUnique: true,
+		mark: 0xca000100,
+	};
+	const h = scripted({
+		"ip rule show":
+			"100: from 192.0.2.2 lookup 30001\n110: from all fwmark 0xca000100/0xffffff00 lookup 30001\n",
+		"ip route show table 30001": "",
+		"ip -4 route show default dev eth0": "default via 192.0.2.1 dev eth0",
+	});
+	const plan = await planUplinkRoute(candidate, h);
+	expect(plan.sourceRulePriority).toBe(100);
+	await removeUplinkRoute(plan, h);
+	expect(h.calls).toContainEqual([
+		"ip",
+		"rule",
+		"del",
+		"priority",
+		"100",
+		"from",
+		"192.0.2.2/32",
+		"lookup",
+		"30001",
+	]);
+});
+
+test.each([
+	"100: from 192.0.2.2 lookup 300010",
+	"100: from 192.0.2.2 to 198.51.100.1 lookup 30001",
+	"100: from 192.0.2.2 lookup 30001 suppress_prefixlength 0",
+])("never deletes foreign source selectors: %s", async (output) => {
+	const plan: UplinkRoutePlan = {
+		identity: "wired",
+		ifname: "eth0",
+		sourceAddress: "192.0.2.2",
+		mark: 0xca000100,
+		table: "30001",
+		managed: true,
+		sourceRulePriority: 100,
+	};
+	const h = scripted({ "ip rule show": output });
+	await removeUplinkRoute(plan, h);
+	expect(h.calls.filter((call) => call.includes("del"))).toEqual([]);
+});

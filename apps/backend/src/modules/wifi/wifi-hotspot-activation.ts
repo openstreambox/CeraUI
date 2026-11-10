@@ -22,6 +22,7 @@ import {
 	nmConnSetFields,
 	nmHotspot,
 } from "../network/network-manager.ts";
+import { hotspotSteeringPending } from "../network/uplink-steering/readiness.ts";
 import { hotspotCredentialsStore } from "./hotspot-credentials.ts";
 import { getWifiState, setWifiState } from "./state/wifi-state.ts";
 import { broadcastWifiState, wifiUpdateSavedConns } from "./wifi.ts";
@@ -69,6 +70,14 @@ import {
 
 /** Production defaults: real NetworkManager + broadcast + dup-IP suppression. */
 export const defaultHotspotDeps: HotspotActivationDeps = {
+	confirmSteering: async (ifname) => {
+		await wifiUpdateDevices();
+		const { requestUplinkSteeringReconcile } = await import(
+			"../network/uplink-steering/runtime.ts"
+		);
+		await requestUplinkSteeringReconcile();
+		return !hotspotSteeringPending(ifname);
+	},
 	configureProfile: configureHotspotProfile,
 	ownedProfile: ownedHotspotProfile,
 	stationChannel: concurrentStationChannel,
@@ -419,6 +428,14 @@ async function startHotspotLocked(
 	) {
 		// Already up: nothing is dispatched, so no confirmation will ever settle
 		// and this branch owes the terminal frame itself.
+		if (
+			deps.confirmSteering &&
+			!(await deps.confirmSteering(
+				wifiInterface.concurrentHotspot?.ifname ?? ifname,
+			))
+		) {
+			return { success: false, error: "activation-failed" };
+		}
 		deps.publishOutcome?.("start", wifiInterface.id, { success: true });
 		return { success: true };
 	}

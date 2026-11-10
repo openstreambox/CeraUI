@@ -18,12 +18,6 @@
 import { logger } from "../../helpers/logger.ts";
 import { getms } from "../../helpers/time.ts";
 import {
-	getNetworkInterfaces,
-	NETIF_ERR_HOTSPOT,
-	setNetifHotspot,
-	triggerNetworkInterfacesChange,
-} from "../network/network-interfaces.ts";
-import {
 	type ConnectionUUID,
 	type MacAddress,
 	nmConnGetFields,
@@ -74,7 +68,6 @@ import {
 import { handleHotspotConn } from "./wifi-hotspot-discovery.ts";
 import {
 	canHotspot,
-	isApMode,
 	type WifiHotspot,
 	type WifiInterfaceWithHotspot,
 } from "./wifi-hotspot-types.ts";
@@ -606,30 +599,7 @@ export async function wifiUpdateDevices() {
 		wifiScheduleScanRefresh();
 	}
 
-	if (newDevices || statusChange) {
-		broadcastWifiState();
-
-		// Mark any WiFi hotspot interfaces as unavailable for bonding
-		let hotspotCount = 0;
-		const wifiInterfacesByMacAddress = getWifiInterfacesByMacAddress();
-		const networkInterfaces = getNetworkInterfaces();
-		for (const i in wifiInterfacesByMacAddress) {
-			const wifiInterface = wifiInterfacesByMacAddress[i];
-			if (wifiInterface && isApMode(wifiInterface)) {
-				const n = networkInterfaces[wifiInterface.ifname];
-				if (!n) continue;
-				if (n.error & NETIF_ERR_HOTSPOT) continue;
-
-				setNetifHotspot(n);
-				hotspotCount++;
-			}
-		}
-
-		if (hotspotCount) {
-			triggerNetworkInterfacesChange();
-			// Remove hotspot IPs from the source IP address list for BCRPT
-		}
-	}
+	if (newDevices || statusChange) broadcastWifiState();
 	logger.debug("Wifi interfaces", wifiInterfacesByMacAddress);
 
 	/* If some wifi adapters were marked unavailable, recheck periodically

@@ -45,3 +45,28 @@ it("lets the operator choose a specific USB radio by permanent identity", async 
 	await fireEvent.click(view.getByTestId("open-hotspot-dialog"));
 	expect(setup).toHaveBeenCalledOnce();
 });
+
+it("shows steering pending instead of active until activation finishes", () => {
+	const view = render(HotspotSection, {
+		hotspotInterfaces: [
+			[
+				"93",
+				{
+					ifname: "wlan93",
+					hw: "Test",
+					conn: "ap",
+					saved: {},
+					mode: "hotspot",
+					transition: "activating",
+					hotspot: { name: "Test AP", available_channels: {} },
+				},
+			],
+		],
+		hotspotTarget: undefined,
+		radios: [],
+		onSelect: vi.fn(),
+		onSetup: vi.fn(),
+	});
+	expect(view.getByText(/Steering pending/)).toBeTruthy();
+	expect(view.queryByText(/^Active/)).toBeNull();
+});

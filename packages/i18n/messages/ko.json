@@ -1626,6 +1626,7 @@
 	"network.summary.networksActive": "{count}개 네트워크, {active}개 활성 • 총: {total} Kbps",
 	"network.summary.totalBandwidth": "{total} Kbps",
 	"network.view.active": "활성",
+	"network.hotspot.steeringPending": "라우팅 준비 중",
 	"network.view.concurrentModeActive": "액세스 포인트 활성",
 	"network.view.concurrentModeBadge": "WiFi + AP",
 	"network.view.concurrentModeHelp": "이 무선 장치는 핫스팟이 활성화된 동안에도 WiFi 연결을 유지할 수 있습니다.",

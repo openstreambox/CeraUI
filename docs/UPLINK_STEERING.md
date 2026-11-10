@@ -291,3 +291,22 @@ for new flows, plus existing sticky-flow, all-down, local-path and foreign-rule
 checks. Run it with
 `CERALIVE_NETNS_ISOLATED=1 bun test apps/backend/src/tests/uplink-steering-netns.test.ts`;
 it uses `unshare -rn` where permitted. Hardware qualification remains separate.
+
+### Initial AP publication and readiness
+
+AP connection confirmation and IP publication can arrive in either order.
+Client-zone classification is refreshed before Wi-Fi broadcasts and on every
+network snapshot, independently of the Wi-Fi connection-change predicate. Until
+installed state is read back, the hotspot remains in its activating transition
+and displays “Steering pending”. Terminal Start success waits for reconciliation.
+Readback checks the owned nft ingress, exact source/fwmark rules and default
+route device. Failed readback invalidates readiness and retains retry semantics.
+
+When a managed table loses its default, re-planning retains priority-100 source
+ownership. Cleanup matches the complete source/priority/table tuple and refuses
+foreign rules with extra selectors. Isolated lifecycle tests exercise a first
+marked packet, route withdrawal, Stop and idempotent Delete with no owned
+support left, while preserving a foreign source rule.
+
+Readback also runs when desired state is unchanged. Missing kernel support
+withdraws readiness and triggers the existing bounded apply retry.

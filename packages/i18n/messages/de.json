@@ -1671,6 +1671,7 @@
 	"network.summary.networksActive": "{count} Netzwerke, {active} aktiv • Gesamt: {total} Kbps",
 	"network.summary.totalBandwidth": "{total} Kbps",
 	"network.view.active": "Aktiv",
+	"network.hotspot.steeringPending": "Routing wird vorbereitet",
 	"network.view.concurrentModeActive": "Access Point aktiv",
 	"network.view.concurrentModeBadge": "WLAN + Access Point",
 	"network.view.concurrentModeHelp": "Dieses Funkmodul kann mit WLAN verbunden bleiben, während der Hotspot aktiv ist.",

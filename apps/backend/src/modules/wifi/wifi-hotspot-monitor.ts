@@ -132,7 +132,29 @@ export function registerPendingConfirmation(
 		}
 		deps.broadcastState();
 		syncWifiStateCache(macAddress, wifiInterface); // now mode: 'hotspot'
-		deps.publishOutcome?.("start", device, { success: true });
+		if (deps.confirmSteering) {
+			const apIfname = wifiInterface.concurrentHotspot?.ifname ?? ifname;
+			void deps
+				.confirmSteering(apIfname)
+				.then((ready) => {
+					deps.broadcastState();
+					deps.publishOutcome?.(
+						"start",
+						device,
+						ready
+							? { success: true }
+							: { success: false, error: "not-confirmed" },
+					);
+				})
+				.catch(() =>
+					deps.publishOutcome?.("start", device, {
+						success: false,
+						error: "not-confirmed",
+					}),
+				);
+		} else {
+			deps.publishOutcome?.("start", device, { success: true });
+		}
 	};
 
 	const giveUp = () => {
