@@ -23,8 +23,31 @@ or automatic DNS. A failed write is restored and verified; an inverse that canno
 be verified leaves the existing mutation block in place. Recovery checks the
 current physical identity and SIM before touching the saved profile.
 
+New profiles are created under the lifecycle lease with a preallocated identity,
+a durable inverse and autoconnect off. Discovery itself does not create profiles
+or copy settings from another SIM's operator code. An interrupted creation may
+remove only its exact, inactive, disarmed profile. Unknown subscriptions on a
+new owned profile can use NetworkManager's automatic provider lookup when that
+capability has been verified; existing unknown/manual policy is preserved.
+
+For admitted RM520 firmware, preparation records and reads back QMAP settings
+per physical unit and USB generation. It records the original initial-EPS
+settings and spends at most one alignment attempt per equipment/SIM pair before
+sending a setter, including a setter that fails. A fresh generation must verify
+the result. Failure retains a blocked state and private baseline. Raw-IP setup
+requires withdrawn global addresses and precedes the host call. An expected USB
+return has a bounded wait; it does not launch repeated resets. Serial endpoints
+are rediscovered by USB interface. The inhibition session is revoked if the
+service owner changes or its bus connection is lost.
+
+Owned automatic profiles stay disarmed in NetworkManager: CeraUI admits their
+explicit activation only after preparation. Manual saves release the original
+autoconnect choice (or enable a newly created manual profile). Interrupted
+firmware preparation is held for explicit recovery rather than claiming an
+unverified restoration. This has host/fixture evidence only.
+
 This is a partial implementation. It does not establish
-initial-activation preparation, QMAP/raw-IP/EPS handling, an RNDIS owner, CLAT,
+an RNDIS owner, CLAT,
 traffic health or carrier/hardware qualification. Existing or synthetic test
 results do not establish those capabilities. Verizon remains unqualified.
 
@@ -53,6 +76,30 @@ ajustes anteriores. Si la restauración no se puede verificar, el dispositivo
 permanece bloqueado para nuevas mutaciones. La recuperación comprueba la identidad
 física y la SIM antes de cambiar el perfil guardado.
 
-La implementación es parcial. Todavía no incluye preparación de la primera activación, QMAP/raw-IP/EPS, control de RNDIS, CLAT ni
+Los perfiles nuevos se crean con exclusión de mutaciones, identidad preasignada,
+registro persistente para restauración y conexión automática desactivada. El
+descubrimiento solo lee datos; no copia ajustes de otra SIM por el código del
+operador. La recuperación solo elimina el perfil exacto, inactivo y desarmado
+que creó. Una suscripción desconocida puede usar la búsqueda automática de
+proveedores de NetworkManager en un perfil nuevo propio si esa capacidad está
+comprobada. Se conservan las políticas existentes desconocidas o manuales.
+
+En el firmware RM520 admitido, se guardan y verifican los ajustes QMAP por unidad
+y generación USB. Se conservan los ajustes iniciales EPS y se permite un solo
+intento de alineación por equipo y SIM, registrado antes de enviar el cambio,
+aunque este falle. Una generación nueva debe verificar el resultado. Un fallo
+conserva el bloqueo y los ajustes originales privados. Raw-IP exige retirar las
+direcciones globales antes de la llamada de datos. La espera de retorno USB es
+limitada y no provoca reinicios repetidos. El puerto serie se resuelve por la
+interfaz USB; perder el servicio o la conexión de control revoca la sesión.
+
+Los perfiles automáticos propios mantienen desactivada la conexión automática
+de NetworkManager. CeraUI solo inicia la conexión después de preparar el módem.
+Guardar un perfil manual restaura la elección anterior de conexión automática,
+o la activa para un perfil manual nuevo. Una preparación de firmware interrumpida
+requiere recuperación explícita; no se supone que se haya restaurado. Estos
+cambios solo tienen pruebas en el host y en entornos de prueba.
+
+La implementación es parcial. Todavía no incluye control de RNDIS, CLAT ni
 comprobaciones del tráfico. Tampoco acredita compatibilidad real con un operador
 o hardware. Verizon sigue sin calificar.

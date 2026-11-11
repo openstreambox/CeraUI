@@ -46,6 +46,12 @@ export type NetworkManagerConnectionModemConfig = {
 };
 
 export type NetworkManagerConnection = {
+	"connection.uuid"?: string;
+	"connection.id"?: string;
+	"ipv4.method"?: string;
+	"ipv6.never-default"?: string;
+	"ipv6.ignore-auto-dns"?: string;
+	"ipv6.ip6-privacy"?: string;
 	type: string;
 	ifname: string;
 	autoconnect: "yes" | "no";

@@ -73,6 +73,8 @@ if (!child && unavailable && process.env.CERALIVE_REQUIRE_REAL_NM === "1")
 		setMutationJournalDeps({ dir: "/run/cellular-profile-fixture/journal" });
 		process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR =
 			"/run/cellular-profile-fixture/intent";
+		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR =
+			"/run/cellular-profile-fixture/preparation";
 		const uuid = process.env.CERALIVE_PROFILE_UUID;
 		if (!uuid) throw new Error("Missing synthetic profile");
 		const identity = {
@@ -159,6 +161,176 @@ if (!child && unavailable && process.env.CERALIVE_REQUIRE_REAL_NM === "1")
 			),
 		).toBe("preserved");
 		expect(await readMutationEntry(key)).toBeUndefined();
+		const {
+			createDisarmedProfile,
+			restoreCreatedProfile,
+			defaultProfileCreationDeps,
+		} = await import("../modules/modems/automatic-profile-creation.ts");
+		const { bearerIpFamilyFields } = await import(
+			"../modules/modems/bearer-ip-family.ts"
+		);
+		const creationDeps = {
+			...defaultProfileCreationDeps,
+			pairPresent: async () => true,
+		};
+		const newPair = {
+			deviceId: "0000000000000000000000000000000000000001",
+			simId: "89000000000000000001",
+		};
+		const created = await createDisarmedProfile(
+			"platform-synthetic-usb-0:2",
+			newPair,
+			{
+				type: "gsm",
+				ifname: "",
+				autoconnect: "yes",
+				"connection.autoconnect-retries": 2,
+				...bearerIpFamilyFields("ipv4v6"),
+				"gsm.device-id": newPair.deviceId,
+				"gsm.sim-id": newPair.simId,
+				"gsm.apn": "synthetic.invalid",
+				"gsm.auto-config": "no",
+				"gsm.username": "",
+				"gsm.password": "",
+				"gsm.password-flags": "4",
+				"gsm.home-only": "no",
+				"gsm.network-id": "",
+			},
+			async () => true,
+			creationDeps,
+		);
+		expect(created.state).toBe("created");
+		if (created.state !== "created")
+			throw new Error("Synthetic profile creation failed");
+		expect(
+			await creationDeps.fields(created.uuid, [
+				"connection.autoconnect",
+			] as const),
+		).toEqual(["no"]);
+		const { prepareCellularActivation, defaultCellularPreparationDeps } =
+			await import("../modules/modems/cellular-preparation.ts");
+		const target = {
+			id: 77,
+			key: "platform-synthetic-usb-0:2",
+			...newPair,
+			equipment: "000000000000001",
+			subscriber: "000000000000001",
+			ifname: "synthetic0",
+			netDevice: "synthetic-net",
+			ifindex: "77",
+			usbDevice: "synthetic-usb",
+			generation: "synthetic-epoch",
+			identity: {
+				model: "DW5821e Snapdragon X20 LTE",
+				firmware: "T77W968.F1.0.0.4.2.GC.010\n026",
+				mode: "mbim" as const,
+			},
+			sim: {
+				modemInfo: {} as never,
+				simInfo: { "sim.properties.iccid": newPair.simId },
+			},
+		};
+		expect(
+			await prepareCellularActivation(
+				created.uuid,
+				target,
+				undefined,
+				async () => true,
+				{ ...defaultCellularPreparationDeps, present: async () => true },
+			),
+		).toBe("ready");
+		expect(
+			await creationDeps.fields(created.uuid, [
+				"gsm.auto-config",
+				"gsm.apn",
+				"connection.autoconnect",
+			] as const),
+		).toEqual(["yes", "", "no"]);
+
+		expect(
+			(await readCarrierIntent({ ...newPair, uuid: created.uuid }))?.mode,
+		).toBe("automatic");
+
+		resetGsmConnections();
+		const savedManual = await withJournaledModemMutation(
+			target.key,
+			"modem-config",
+			{},
+			async (mutation) => {
+				await mutation.markExecuting();
+				const written = await defaultModemApplyDeps.writeConnection(
+					created.uuid,
+					{
+						autoconfig: false,
+						apn: "manual.invalid",
+						username: "",
+						password: "",
+						roaming: true,
+						network: "",
+					},
+				);
+				return { confirmed: written, value: written };
+			},
+		);
+		expect(savedManual).toMatchObject({ ok: true, value: true });
+		expect(
+			await creationDeps.fields(created.uuid, [
+				"connection.autoconnect",
+			] as const),
+		).toEqual(["yes"]);
+		expect(
+			await restoreCreatedProfile(
+				target.key,
+				{
+					format: "automatic-profile-creation-v1",
+					uuid: created.uuid,
+					...newPair,
+				},
+				creationDeps,
+			),
+		).toBe("failed");
+		const savedAutomatic = await withJournaledModemMutation(
+			target.key,
+			"modem-config",
+			{},
+			async (mutation) => {
+				await mutation.markExecuting();
+				const written = await defaultModemApplyDeps.writeConnection(
+					created.uuid,
+					{
+						autoconfig: true,
+						apn: "",
+						username: "",
+						password: "",
+						roaming: true,
+						network: "",
+					},
+				);
+				return { confirmed: written, value: written };
+			},
+		);
+		expect(savedAutomatic).toMatchObject({ ok: true, value: true });
+		expect(
+			await creationDeps.fields(created.uuid, [
+				"connection.autoconnect",
+			] as const),
+		).toEqual(["no"]);
+		expect(
+			await restoreCreatedProfile(
+				"platform-synthetic-usb-0:2",
+				{
+					format: "automatic-profile-creation-v1",
+					uuid: created.uuid,
+					...newPair,
+				},
+				creationDeps,
+			),
+		).toBe("restored");
+		expect(
+			await creationDeps.fields(created.uuid, ["connection.id"] as const),
+		).toBeUndefined();
+		resetGsmConnections();
+		expect((await getGsmConnections())?.byUuid[uuid]?.autoconfig).toBe(false);
 	},
 	30_000,
 );

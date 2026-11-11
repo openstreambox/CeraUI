@@ -45,6 +45,7 @@ export type NetworkType = {
 
 export type ModemInfo = {
 	"modem.generic.sim": string;
+	"modem.generic.device"?: string;
 	/**
 	 * The multi-SIM slot list. Optional because most single-slot firmware omits
 	 * it entirely, and because an EMPTY slot is published as the bare root path
@@ -88,6 +89,7 @@ export type ModemInfo = {
 	"modem.3gpp.operator-code"?: string;
 	/** IP family the network negotiated for the LTE/5G attach bearer. */
 	"modem.3gpp.eps.initial-bearer.settings.ip-type"?: string;
+	"modem.3gpp.eps.initial-bearer.settings.apn"?: string;
 	"modem.3gpp.registration-state"?: string;
 	"modem.3gpp.packet-service-state"?: string;
 	"modem.3gpp.network-rejection-error"?: string;
@@ -111,6 +113,7 @@ const REJECTION_KEYS = [
 
 export type SimInfo = {
 	"sim.properties.iccid": string;
+	"sim.properties.imsi"?: string;
 	"sim.properties.operator-code"?: string;
 	"sim.properties.operator-name"?: string;
 	"sim.properties.gid1"?: string;
@@ -531,6 +534,11 @@ export function parseModemInfo(parsed: MmcliRecord): ParseResult<ModemInfo> {
 		.filter((value) => value.length > 0);
 	const powerState = readOptionalString(parsed, "modem.generic.power-state");
 	const operatorName = readOptionalString(parsed, "modem.3gpp.operator-name");
+	const deviceUid = readOptionalString(parsed, "modem.generic.device");
+	const attachApn = readOptionalString(
+		parsed,
+		"modem.3gpp.eps.initial-bearer.settings.apn",
+	);
 	const operatorCode = readOptionalString(parsed, "modem.3gpp.operator-code");
 	const attachIpType = readOptionalString(
 		parsed,
@@ -590,6 +598,10 @@ export function parseModemInfo(parsed: MmcliRecord): ParseResult<ModemInfo> {
 		...(operatorName !== undefined
 			? { "modem.3gpp.operator-name": operatorName }
 			: {}),
+		...(deviceUid !== undefined ? { "modem.generic.device": deviceUid } : {}),
+		...(attachApn !== undefined
+			? { "modem.3gpp.eps.initial-bearer.settings.apn": attachApn }
+			: {}),
 		...(operatorCode !== undefined
 			? { "modem.3gpp.operator-code": operatorCode }
 			: {}),
@@ -648,10 +660,12 @@ export function parseSimInfo(parsed: MmcliRecord): ParseResult<SimInfo> {
 		"sim.properties.operator-name",
 	);
 	const gid1 = readOptionalString(parsed, "sim.properties.gid1");
+	const imsi = readOptionalString(parsed, "sim.properties.imsi");
 
 	return parseOk({
 		"sim.properties.iccid": readString(parsed, "sim.properties.iccid"),
 		...(gid1 !== undefined ? { "sim.properties.gid1": gid1 } : {}),
+		...(imsi !== undefined ? { "sim.properties.imsi": imsi } : {}),
 		...(operatorCode !== undefined
 			? { "sim.properties.operator-code": operatorCode }
 			: {}),

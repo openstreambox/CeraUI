@@ -437,3 +437,42 @@ The isolated real-NM fixture uses a private system bus, state/config directories
 network and mount namespaces, with host rfkill hidden. It verifies profile writes,
 intent rehydration and manual retirement. It does not model a modem, initial
 activation, transport preparation, grants, CLAT or data-path qualification.
+
+### Disarmed creation and transport preparation
+
+Registration is read-only. The late-SIM owner creates a profile only with an
+identity-resolved lifecycle lease and a journaled preallocated UUID. Creation
+always uses autoconnect=no; it retains private automatic intent and verifies the
+exact pair/name/flag. Its inverse removes only that inactive, disarmed exact
+profile, verifies absence, then retires intent. A lost create reply is recoverable
+without guessing a UUID. Other SIMs' operator-code settings are never copied.
+
+`cellular-preparation.ts` owns automatic NM activation admission. It retains the
+original profile/autoconnect policy in private durable state and leaves owned
+automatic profiles disarmed across USB and process return. Manual saves release
+the original flag; a profile born under this owner becomes autoconnectable when
+saved manually. A new generic owned profile can delegate APN lookup to a positively
+probed NM capability. Existing unknown/manual/unqualified policy is preserved.
+
+The existing modem transport facade verifies driver/composition, current physical
+pair, USB generation and interface index. Its serial session selects an observed
+USB interface (udev's primary AT marker resolves multiple candidates), never a
+tty number. A dedicated non-reconnecting inhibition connection uses a 300 s
+acquisition timeout, validates acknowledgement and whole-field numeric subscriber
+identity, and revokes on service-owner change or bus loss. Serial IO is bounded,
+descriptor-anchored, and handles EAGAIN without treating it as a lost device.
+
+QMAP baseline is per equipment and readback per USB generation; EPS baseline and
+spent-attempt authority are per equipment/SIM. Failed setters consume the EPS
+attempt. Reset return must verify the result, otherwise it blocks. Raw-IP's
+private baseline precedes its write; global addresses must be absent, link down,
+and readback successful before explicit activation. Firmware effects whose
+restoration is unverified retain the existing mutation block and private baseline
+for explicit recovery. No automatic repeated reset is used to escape that state.
+
+The private JSON file primitive is shared with carrier intent: anchored directory,
+no-follow bounded reads, strict JSON/UTF-8, private ownership, atomic replacement
+and file/parent fsync. The required real-NM fixture includes disarmed creation and
+its exact inverse. Unit replay covers QMAP unit/generation behavior, EPS spent
+attempts, raw-IP ordering and control-session revocation. Hardware qualification,
+internal-call ownership, CLAT and per-path traffic health are separate gates.

@@ -14,6 +14,7 @@ import {
 	carrierIntentKey,
 	effectiveCarrierAutomatic,
 	newCarrierIntent,
+	newPendingCarrierIntent,
 	readCarrierIntent,
 	writeCarrierIntent,
 } from "./automatic-carrier-intent.ts";
@@ -122,4 +123,15 @@ test("failure before atomic replacement preserves the previous complete intent",
 		fault.mockRestore();
 	}
 	expect(await readCarrierIntent(identity, { dir })).toEqual(old);
+});
+
+test("pending provider lookup preserves a conflicting out-of-band manual APN", async () => {
+	const intent = newPendingCarrierIntent(identity, "internet");
+	await writeCarrierIntent(identity, intent, { dir });
+	const loaded = await readCarrierIntent(identity, { dir });
+	expect(effectiveCarrierAutomatic(loaded, false, "internet")).toBe(true);
+	expect(effectiveCarrierAutomatic(loaded, true, "")).toBe(true);
+	expect(effectiveCarrierAutomatic(loaded, false, "manual.invalid")).toBe(
+		false,
+	);
 });
