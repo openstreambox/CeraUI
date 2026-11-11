@@ -104,3 +104,20 @@ and table tuple, rejecting rules with additional selectors or different tables.
 
 Readback also runs when desired state is unchanged. Missing kernel support
 withdraws readiness and triggers the existing bounded apply retry.
+
+## Start readiness deadline
+
+NetworkManager activation acceptance is admission, not readiness. After NM confirms
+the AP, Start polls steering reconciliation/readback every 500 ms for at most
+20 seconds. This allows margin above observed multi-second activation and
+steering convergence. An already-active AP uses the same readiness fence.
+The deadline also bounds a stuck individual check. Verified steering completes
+Start successfully; an inconclusive deadline publishes `pending: true` with
+`reason: steering-readiness-timeout`, without an error or success claim on the
+wire. Live snapshots continue to reconcile and show activating until ready.
+A real NM refusal still reports activation-failed; missing NM confirmation
+retains its distinct not-confirmed timeout outcome.
+
+The Start UI gives the combined activation/readiness path 60 seconds and only
+confirms an active hotspot once its activating transition clears. Its timeout
+valve is neutral and never emits an error toast.

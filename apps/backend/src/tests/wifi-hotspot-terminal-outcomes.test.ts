@@ -38,6 +38,7 @@ import type {
 	HotspotOutcomeKind,
 	HotspotToggleOutcome,
 } from "../modules/wifi/wifi-hotspot-outcome.ts";
+import { publishHotspotOutcome } from "../modules/wifi/wifi-hotspot-outcome.ts";
 import type {
 	HotspotActivationDeps,
 	WifiInterfaceWithHotspot,
@@ -476,4 +477,31 @@ describe("a station join that resolves no connection is terminal (F-07)", () => 
 
 		expect(frames).toContainEqual({ new: { error: "generic", device: 9 } });
 	});
+});
+
+test("a readiness deadline publishes pending on the wire without error or success", () => {
+	const received: string[] = [];
+	const client = captureClient(received);
+	addClient(client);
+	try {
+		publishHotspotOutcome("start", 0, {
+			success: true,
+			pending: true,
+			reason: "steering-readiness-timeout",
+		});
+		const frame = JSON.parse(received[0] ?? "{}").wifi;
+		expect(wifiMessageSchema.parse(frame)).toEqual({
+			hotspot: {
+				start: {
+					device: 0,
+					pending: true,
+					reason: "steering-readiness-timeout",
+				},
+			},
+		});
+		expect(frame.hotspot.start.error).toBeUndefined();
+		expect(frame.hotspot.start.success).toBeUndefined();
+	} finally {
+		removeClient(client);
+	}
 });

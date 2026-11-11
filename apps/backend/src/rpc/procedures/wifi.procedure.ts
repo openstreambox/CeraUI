@@ -403,7 +403,7 @@ export const hotspotStartProcedure = authedProcedure
 			device: resolveHotspotRadioDevice(input),
 		});
 		if (!result.success) return { success: false, error: result.error };
-		return { success: true, accepted: true };
+		return { ...result, accepted: true };
 	});
 
 /**

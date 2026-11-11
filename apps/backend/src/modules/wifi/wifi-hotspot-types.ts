@@ -158,7 +158,7 @@ export const HOTSPOT_AUTOCONNECT_FIELDS: Record<string, string> = {
 
 /** Result of a hotspot start request. */
 export type HotspotStartResult =
-	| { success: true }
+	| { success: true; pending?: true; reason?: "steering-readiness-timeout" }
 	| {
 			success: false;
 			error: "DEVICE_BUSY" | "no-device" | "unsupported" | "activation-failed";

@@ -395,6 +395,28 @@ describe("the six transitions", () => {
 		expect(getPersistedWifiAdapterMode(MAC)).toBe("station");
 	});
 
+	test("a steering deadline preserves pending rather than confirming the mode", async () => {
+		const { deps, recorder } = makeDeps(
+			{ [MAC]: makeIface() },
+			{
+				startHotspot: async (device, publish) => {
+					publish("start", device, {
+						success: true,
+						pending: true,
+						reason: "steering-readiness-timeout",
+					});
+					return { success: true };
+				},
+			},
+		);
+		await setWifiAdapterMode(0, "hotspot", deps);
+		expect(terminalFrames(recorder)).toEqual([]);
+		expect(recorder.frames.at(-1)?.outcome).toEqual({
+			pending: true,
+			mode: "hotspot",
+		});
+	});
+
 	test("an accepted transition whose confirmation publisher is lost reaches a typed timeout terminal", async () => {
 		let expire: (() => void) | undefined;
 		const { deps, recorder } = makeDeps(

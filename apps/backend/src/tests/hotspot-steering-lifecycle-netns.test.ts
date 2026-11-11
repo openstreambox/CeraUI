@@ -243,6 +243,11 @@ test.skipIf(!child)(
 			off = onNetworkInterfacesChange(() => {
 				void coordinator.requestReconcile();
 			});
+			let readinessChecks = 0;
+			let complete!: (value: unknown) => void;
+			const completion = new Promise((resolve) => {
+				complete = resolve;
+			});
 			registerPendingConfirmation(mac, iface, {
 				nmConnect: async () => true,
 				nmConnSetFields: async () => true,
@@ -252,7 +257,9 @@ test.skipIf(!child)(
 				setDupIpSuppression: () => {},
 				credentials: { get: () => undefined, remember: () => {} },
 				findHotspotConn: async () => undefined,
+				publishOutcome: (_kind, _device, outcome) => complete(outcome),
 				confirmSteering: async () => {
+					if (++readinessChecks === 1) return false;
 					await coordinator.requestReconcile();
 					return (coordinator.appliedState()?.clientZones.length ?? 0) > 0;
 				},
@@ -260,6 +267,8 @@ test.skipIf(!child)(
 			settlePending("wlan93", true);
 			await coordinator.requestReconcile();
 			await verifySteeringState(active);
+			expect(await completion).toEqual({ success: true });
+			expect(readinessChecks).toBeGreaterThan(1);
 			const first = await run("ip", [
 				"route",
 				"get",
@@ -321,6 +330,8 @@ test.skipIf(!child)(
 			await run("ip", ["route", "flush", "table", "30001"]);
 			await coordinator.requestReconcile();
 			await verifySteeringState(active);
+			expect(await completion).toEqual({ success: true });
+			expect(readinessChecks).toBeGreaterThan(1);
 			iface.activeConn = "ap93";
 			iface.activeMode = "ap";
 			await stopHotspotForInterface(mac, iface, {

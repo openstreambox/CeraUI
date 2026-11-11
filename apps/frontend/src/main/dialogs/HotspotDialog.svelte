@@ -265,7 +265,7 @@ async function handleSave() {
 
 // Start/stop through the shared keyed op. Stay `pending` after dispatch; the
 // confirm $effect below flips to `confirmed` once the snapshot reports the target
-// mode (the 15 s TTL valve is the backstop if the device never reports back).
+// mode (the 60 s Start TTL valve is the backstop if the device never reports back).
 async function handleToggle() {
 	if (isActive) {
 		toggleTarget = 'station';
@@ -287,6 +287,7 @@ async function startConfirmed() {
 	await osCommand({
 		key: toggleKey,
 		target: 'hotspot',
+		pendingTtlMs: 60_000,
 		rpc: () => rpc.wifi.hotspotStart({ device: deviceId, radio_id: iface?.radio_identity?.id }),
 		failMessage: () => m["network.os.operationFailed"](),
 		busyMessage: () => m["network.os.deviceBusy"](),
@@ -298,7 +299,7 @@ async function startConfirmed() {
 // naturally (post-confirm).
 $effect(() => {
 	if (getOperationPhase(toggleKey) !== 'pending') return;
-	if (hotspotToggleConfirmed(toggleTarget, isActive)) {
+	if (hotspotToggleConfirmed(toggleTarget, isActive, iface?.transition)) {
 		confirmOperation(toggleKey);
 	}
 });

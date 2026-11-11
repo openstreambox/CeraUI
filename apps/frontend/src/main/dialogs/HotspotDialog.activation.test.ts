@@ -7,6 +7,7 @@
 import type { WifiInterface } from "@ceraui/rpc/schemas";
 import { fireEvent, render } from "@testing-library/svelte";
 import { tick } from "svelte";
+import { toast } from "svelte-sonner";
 import {
 	afterEach,
 	beforeAll,
@@ -19,6 +20,7 @@ import {
 
 import {
 	destroyAsyncOperations,
+	getOperationPhase,
 	initAsyncOperations,
 } from "$lib/rpc/async-operation.svelte";
 import { rpc } from "$lib/rpc/client";
@@ -123,6 +125,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	destroyAsyncOperations();
+	vi.useRealTimers();
 	vi.clearAllMocks();
 });
 
@@ -199,6 +202,38 @@ describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
 		expect(q<HTMLButtonElement>("hotspot-confirm-activate")?.disabled).toBe(
 			true,
 		);
+	});
+
+	it("delayed steering stays pending beyond the old TTL, then confirms without an error toast", async () => {
+		destroyAsyncOperations();
+		vi.useFakeTimers();
+		initAsyncOperations();
+		const view = render(HotspotDialog, {
+			props: { open: true, deviceId: "0", iface: STATION },
+		});
+		await fireEvent.click(enableButton());
+		await vi.waitFor(() =>
+			expect(q("hotspot-activation-confirm")?.dataset.phase).toBe("ready"),
+		);
+		await acknowledge();
+		await fireEvent.click(q("hotspot-confirm-activate") as HTMLElement);
+		await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+		const active = {
+			...STATION,
+			hotspot: { name: "test", password: "password" },
+		} as WifiInterface;
+		await view.rerender({
+			open: true,
+			deviceId: "0",
+			iface: { ...active, transition: "activating" },
+		});
+		await tick();
+		await vi.advanceTimersByTimeAsync(21_000);
+		expect(getOperationPhase("hotspot:0")).toBe("pending");
+		await view.rerender({ open: true, deviceId: "0", iface: active });
+		await tick();
+		expect(getOperationPhase("hotspot:0")).toBe("confirmed");
+		expect(toast.error).not.toHaveBeenCalled();
 	});
 
 	it("starts exactly once, only after the acknowledgement, without re-saving unchanged credentials", async () => {

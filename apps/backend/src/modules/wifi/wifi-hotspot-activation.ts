@@ -52,6 +52,7 @@ import {
 	configureHotspotProfile,
 	ownedHotspotProfile,
 } from "./wifi-hotspot-profile.ts";
+import { waitForHotspotReadiness } from "./wifi-hotspot-readiness.ts";
 import { hotspotSecurityFields } from "./wifi-hotspot-security.ts";
 import {
 	canHotspot,
@@ -428,16 +429,12 @@ async function startHotspotLocked(
 	) {
 		// Already up: nothing is dispatched, so no confirmation will ever settle
 		// and this branch owes the terminal frame itself.
-		if (
-			deps.confirmSteering &&
-			!(await deps.confirmSteering(
-				wifiInterface.concurrentHotspot?.ifname ?? ifname,
-			))
-		) {
-			return { success: false, error: "activation-failed" };
-		}
-		deps.publishOutcome?.("start", wifiInterface.id, { success: true });
-		return { success: true };
+		const result = await waitForHotspotReadiness(
+			wifiInterface.concurrentHotspot?.ifname ?? ifname,
+			deps.confirmSteering,
+		);
+		deps.publishOutcome?.("start", wifiInterface.id, result);
+		return result;
 	}
 	/*
 	  Capability answers whether this radio CAN keep its station leg; the operator's

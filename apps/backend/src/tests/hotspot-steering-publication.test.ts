@@ -52,6 +52,7 @@ test("fake NM confirmation publishes AP zone without a second connection edge an
 		release = resolve;
 	});
 	const outcomes: unknown[] = [];
+	let checks = 0;
 	try {
 		registerPendingConfirmation(mac, iface, {
 			nmConnect: async () => true,
@@ -62,7 +63,10 @@ test("fake NM confirmation publishes AP zone without a second connection edge an
 			setDupIpSuppression: () => {},
 			credentials: { get: () => undefined, remember: () => {} },
 			findHotspotConn: async () => undefined,
-			confirmSteering: () => ready,
+			confirmSteering: async () => {
+				if (++checks === 1) return false;
+				return ready;
+			},
 			publishOutcome: (...args) => {
 				outcomes.push(args);
 			},
@@ -76,8 +80,8 @@ test("fake NM confirmation publishes AP zone without a second connection edge an
 		applyConcurrentApBondGate(late);
 		expect(late.wlan93.error & NETIF_ERR_HOTSPOT).toBe(NETIF_ERR_HOTSPOT);
 		release(true);
-		await ready;
-		await Promise.resolve();
+		await Bun.sleep(550);
+		expect(checks).toBe(2);
 		expect(outcomes).toEqual([["start", 93, { success: true }]]);
 		iface.activeMode = "ap";
 		iface.activeConn = "ap93";

@@ -108,3 +108,14 @@ marcado, la retirada de la ruta y la limpieza, conservando una regla ajena.
 
 La verificación también se ejecuta cuando el estado deseado no cambia. Si falta
 soporte en el kernel, se retira la preparación y se reintenta la aplicación.
+
+### Resultado de Inicio y espera de disponibilidad
+
+Después de la confirmación de NetworkManager, Inicio espera hasta 20 segundos,
+consultando la reconciliación y lectura de las reglas cada 500 ms. El mismo
+límite se aplica si el AP ya está activo. Una comprobación bloqueada también
+queda limitada. Si vence el plazo sin confirmar las reglas, el resultado indica
+`pending: true` y `reason: steering-readiness-timeout`, sin declarar éxito ni
+error. El estado en vivo sigue reconciliándose hasta estar listo. La interfaz
+reserva 60 segundos para activación y disponibilidad; no muestra una alerta de
+error por este estado pendiente.

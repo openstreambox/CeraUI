@@ -174,11 +174,14 @@ function chainModeTerminal(
 	deps: AdapterModeTransitionDeps,
 ): HotspotOutcomePublisher {
 	let settled = false;
-	const cancelTimeout = deps.armTerminalTimeout?.(() => {
-		if (settled) return;
-		settled = true;
-		deps.publishOutcome(device, { success: false, error: "not-confirmed" });
-	}, HOTSPOT_UP_TO * 1000);
+	const cancelTimeout = deps.armTerminalTimeout?.(
+		() => {
+			if (settled) return;
+			settled = true;
+			deps.publishOutcome(device, { success: false, error: "not-confirmed" });
+		},
+		(HOTSPOT_UP_TO + 25) * 1000,
+	);
 	return (kind, hotspotDevice, outcome) => {
 		deps.publishHotspotOutcome(kind, hotspotDevice, outcome);
 		if (settled) return;
@@ -187,7 +190,9 @@ function chainModeTerminal(
 		deps.publishOutcome(
 			device,
 			outcome.success
-				? { success: true, mode: target }
+				? outcome.pending
+					? { pending: true, mode: target }
+					: { success: true, mode: target }
 				: { success: false, error: outcome.error },
 		);
 	};
