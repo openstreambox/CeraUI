@@ -254,10 +254,12 @@ describe("WifiSection — AP+STA concurrent mode", () => {
 		const { getByRole, getByTestId } = renderSection({
 			mode: "station",
 			supports_ap_sta_concurrency: true,
+			// Live concurrent AP: the device reads clients only from an AP that is up.
 			hotspot: {
 				name: "CERALIVE_TEST",
 				password: "password1",
 				available_channels: {},
+				clients: { count: 0, stations: [] },
 			},
 		});
 
