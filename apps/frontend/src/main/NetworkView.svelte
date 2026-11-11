@@ -5,7 +5,6 @@ import { Network as NetworkIcon } from '@lucide/svelte';
 import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { Skeleton } from '$lib/components/ui/skeleton';
 import { hotspotIsActive } from '$lib/rpc/os-toggle-predicates';
-import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import {
 	getBluetooth,
 	getCapabilities,
@@ -21,6 +20,7 @@ import {
 	getUplinks,
 	getWifi,
 } from '$lib/rpc/subscriptions.svelte';
+import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import { getHudState } from '$lib/stores/hud.svelte';
 import type { LinkSignal } from '$lib/types/hud';
 
