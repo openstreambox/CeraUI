@@ -5,6 +5,7 @@ import { Network as NetworkIcon } from '@lucide/svelte';
 import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { Skeleton } from '$lib/components/ui/skeleton';
 import { hotspotIsActive } from '$lib/rpc/os-toggle-predicates';
+import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import {
 	getBluetooth,
 	getCapabilities,
@@ -74,9 +75,10 @@ const isLoading = $derived(
 );
 
 // WiFi interfaces split so hotspot + station can be shown SIMULTANEOUSLY
-// (never one-or-the-other): a hotspot-mode interface carries a `hotspot` field.
+// (never one-or-the-other). Only a LIVE AP counts here: a radio that is off still
+// carries its saved `hotspot` setup, which is not a hotspot that is on.
 const wifiEntries = $derived(Object.entries(wifi ?? {}) as [string, WifiInterface][]);
-const hotspotInterfaces = $derived(wifiEntries.filter(([, iface]) => hotspotIsActive(iface)));
+const hotspotInterfaces = $derived(wifiEntries.filter(([id, iface]) => hotspotIsActive(iface, getWifiAdapterModeEntry(id))));
 
 // Preserve an explicit radio selection across roster changes; otherwise prefer
 // an active hotspot, then an idle AP-capable radio.

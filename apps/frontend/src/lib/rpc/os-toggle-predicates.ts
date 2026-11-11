@@ -18,14 +18,40 @@
 export type HotspotToggleTarget = "hotspot" | "station" | null;
 
 /**
- * Whether a WiFi interface is currently broadcasting a hotspot. The interface
- * carries a live `hotspot` config object exactly when its AP is up, so its mere
- * presence is the active signal (mirrors HotspotDialog's `isActive`).
+ * Whether a WiFi interface is broadcasting a hotspot RIGHT NOW.
+ *
+ * `hotspot` alone is NOT that signal: a current device sends the saved setup
+ * (name, password, channel map) on every radio that can host one, on or off,
+ * so the dialog can be edited while the AP is down. Reading its presence as
+ * "on" labelled a configured-off radio in Station mode Active, with Turn Off.
+ *
+ * The live answer comes from the radio's own mode plus the AP's own state:
+ *  · `mode: "hotspot"` — an exclusive AP is up on the radio;
+ *  · `mode: "station"` with a concurrent AP (hybrid) — the wire reports the
+ *    station leg, so the AP shows as its client read (`hotspot.clients`, only
+ *    ever sent from a live AP) or as the device's own `hybrid` observation;
+ *  · no `mode` at all — a backend that predates the field; presence is the
+ *    only signal it gives, so it keeps its earlier reading.
+ *
+ * `entry` is the device's own `getAdapterModes` answer for this radio. It is a
+ * pull and can lag, so it only ever ADDS the hybrid case the wire cannot carry;
+ * it never overrides a wire `mode` that says otherwise.
  */
 export function hotspotIsActive(
-	iface: { hotspot?: unknown } | null | undefined,
+	iface:
+		| {
+				hotspot?: { clients?: unknown } | null;
+				mode?: "station" | "hotspot";
+		  }
+		| null
+		| undefined,
+	entry?: { mode?: "station" | "hotspot" | "hybrid" },
 ): boolean {
-	return Boolean(iface?.hotspot);
+	if (!iface?.hotspot) return false;
+	if (iface.mode === undefined) return true;
+	if (iface.mode === "hotspot") return true;
+	if (iface.hotspot.clients !== undefined) return true;
+	return entry?.mode === "hybrid";
 }
 
 /**

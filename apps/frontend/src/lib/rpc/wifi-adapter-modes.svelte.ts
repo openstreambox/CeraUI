@@ -19,12 +19,16 @@
 import type {
 	WifiAdapterModeEntry,
 	WifiAdapterModeStatus,
+	WifiStatus,
 } from "@ceraui/rpc/schemas";
 
 import { rpc } from "./client";
 
 let adapterModes = $state<WifiAdapterModeStatus | undefined>(undefined);
 let inFlight: Promise<void> | undefined;
+// A refresh asked for while one is in flight: that pull may predate the change
+// that asked, so exactly one more follows it.
+let again = false;
 
 export function getWifiAdapterModes(): WifiAdapterModeStatus | undefined {
 	return adapterModes;
@@ -37,11 +41,16 @@ export function getWifiAdapterModeEntry(
 }
 
 /**
- * Self-serialising: a second call while one is in flight awaits the same pull
- * rather than racing a duplicate answer onto the slot.
+ * Self-serialising: calls while a pull is in flight share it and then get ONE
+ * follow-up pull, because the in-flight answer may predate the change that
+ * asked. A burst of calls costs at most two pulls.
  */
 export function refreshWifiAdapterModes(): Promise<void> {
-	if (inFlight) return inFlight;
+	if (inFlight) {
+		again = true;
+		return inFlight;
+	}
+	again = false;
 	// The dispatch itself can throw SYNCHRONOUSLY (a transport that is not up, a
 	// double without the method). Callers run this from an `$effect`, where an
 	// escaping throw tears down the component rather than degrading the offering.
@@ -56,14 +65,36 @@ export function refreshWifiAdapterModes(): Promise<void> {
 		})
 		.finally(() => {
 			inFlight = undefined;
+			if (again) void refreshWifiAdapterModes();
 		});
 	return inFlight;
+}
+
+/**
+ * The per-radio facts a hotspot start or stop changes on the `wifi` snapshot:
+ * the radio's mode, whether a live AP reports its clients, and the transition.
+ *
+ * The adapter-mode answer is a pull, so it would otherwise refresh only on mount
+ * and after a mode change this UI tracked. A Start from the API, another client
+ * or the device itself shows up first here, and a changed signature is the cue
+ * to pull again.
+ */
+export function wifiLiveApSignature(wifi: WifiStatus | undefined): string {
+	if (wifi === undefined) return "";
+	return Object.entries(wifi)
+		.map(
+			([id, iface]) =>
+				`${id}:${iface.mode ?? ""}:${iface.hotspot?.clients !== undefined ? "ap" : ""}:${iface.transition ?? ""}`,
+		)
+		.sort()
+		.join("|");
 }
 
 /** Test/reset seam — also called from `resetState()` on a session teardown. */
 export function resetWifiAdapterModes(): void {
 	adapterModes = undefined;
 	inFlight = undefined;
+	again = false;
 }
 
 /** Test seam: seed the slot without a socket. */

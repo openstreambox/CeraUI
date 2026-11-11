@@ -64,6 +64,29 @@ describe("hotspot radio target", () => {
 			])?.[0],
 		).toBe("1");
 	});
+	it("prefers the radio whose AP is live over radios that only carry a saved setup", () => {
+		// A current device sends the saved setup on every hosting-capable radio.
+		const saved = { name: "Example", available_channels: {} };
+		expect(
+			chooseHotspotRadio([
+				["0", { ...station, mode: "station", hotspot: saved }],
+				["1", { ...usb, mode: "station", hotspot: saved }],
+				[
+					"2",
+					{
+						...usb,
+						ifname: "wlx020000000002",
+						radio_identity: {
+							id: "02:00:00:00:00:02",
+							permanent_mac: "02:00:00:00:00:02",
+						},
+						mode: "hotspot",
+						hotspot: saved,
+					},
+				],
+			])?.[0],
+		).toBe("2");
+	});
 	it("does not silently retarget when a selected USB radio is unplugged", () => {
 		expect(
 			chooseHotspotRadio([["0", station]], usb.radio_identity?.id),

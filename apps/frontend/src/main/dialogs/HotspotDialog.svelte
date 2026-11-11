@@ -93,8 +93,11 @@ let { open = $bindable(false), deviceId, iface }: Props = $props();
 
 const bounds = networkConstraints.hotspot;
 
-// The hotspot is "active" when the interface is currently broadcasting one.
-const isActive = $derived(hotspotIsActive(iface));
+// "Active" means the AP is broadcasting NOW — read from the radio's live mode and
+// the AP's own state, never from the saved setup the device sends while it is off.
+// Every input is live (`iface` from the wifi snapshot, the adapter-mode cache), so
+// a Start or Stop from the API, another client or the device re-renders this too.
+const isActive = $derived(hotspotIsActive(iface, getWifiAdapterModeEntry(deviceId)));
 const radioDevice = $derived(deviceId);
 const radioToken = $derived(iface?.incarnation);
 const radioReason = $derived(iface?.degraded_reason);
@@ -419,7 +422,7 @@ async function copyPassword() {
 				<Wifi class="size-4" />
 			</span>
 			<div class="min-w-0 flex-1">
-				<p class="text-sm font-medium">
+				<p class="text-sm font-medium" data-testid="hotspot-status" data-active={isActive}>
 					{isActive ? m["network.status.active"]() : m["network.status.inactive"]()}
 				</p>
 				{#if iface?.ifname}

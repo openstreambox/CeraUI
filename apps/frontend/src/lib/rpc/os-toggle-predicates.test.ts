@@ -36,6 +36,42 @@ describe("hotspotIsActive", () => {
 		expect(hotspotIsActive({ hotspot: undefined })).toBe(false);
 		expect(hotspotIsActive({ hotspot: null })).toBe(false);
 	});
+
+	// A current device sends the SAVED setup on every radio that can host one,
+	// on or off; only the radio's mode and the AP's own state say it is live.
+	it("a saved setup on a station radio is NOT active (configured off)", () => {
+		expect(hotspotIsActive({ mode: "station", hotspot: {} })).toBe(false);
+		expect(
+			hotspotIsActive({ mode: "station", hotspot: {} }, { mode: "station" }),
+		).toBe(false);
+	});
+
+	it("an exclusive AP is active", () => {
+		expect(hotspotIsActive({ mode: "hotspot", hotspot: {} })).toBe(true);
+	});
+
+	it("a concurrent AP is active from its client read or the device's hybrid answer", () => {
+		expect(
+			hotspotIsActive({
+				mode: "station",
+				hotspot: { clients: { count: 0, stations: [] } },
+			}),
+		).toBe(true);
+		expect(
+			hotspotIsActive({ mode: "station", hotspot: {} }, { mode: "hybrid" }),
+		).toBe(true);
+	});
+
+	it("a stale pulled answer never overrides the wire", () => {
+		// The pull still says hotspot after a Stop elsewhere; the wire says station.
+		expect(
+			hotspotIsActive({ mode: "station", hotspot: {} }, { mode: "hotspot" }),
+		).toBe(false);
+		// Nor can it invent an AP on a radio with no hotspot setup at all.
+		expect(hotspotIsActive({ mode: "station" }, { mode: "hybrid" })).toBe(
+			false,
+		);
+	});
 });
 
 describe("hotspotToggleConfirmed", () => {

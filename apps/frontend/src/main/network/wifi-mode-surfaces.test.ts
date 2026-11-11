@@ -58,10 +58,14 @@ const NETIF = {
 	wlan0: { tp: 1000, enabled: true, ip: "192.168.1.5" },
 } as unknown as NetifMessage;
 
+// LIVE: a current device sends the saved setup on an AP that is off too, and
+// reads `clients` only from an AP that is up — so the client read is what makes
+// this block a live AP rather than a saved one.
 const LIVE_HOTSPOT = {
 	name: "CERALIVE_TEST",
 	password: "password1",
 	available_channels: {},
+	clients: { count: 0, stations: [] },
 };
 
 function iface(overrides: Partial<WifiInterface> = {}): WifiInterface {

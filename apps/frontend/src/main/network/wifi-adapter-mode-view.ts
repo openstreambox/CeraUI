@@ -237,6 +237,32 @@ function fallbackMode(iface: WifiInterface): WifiAdapterMode {
 	return "station";
 }
 
+/**
+ * The mode the radio is in now: the device's own answer, unless the wire already
+ * contradicts it.
+ *
+ * `getAdapterModes` is a PULL, refreshed on mount and after mode transitions; the
+ * `wifi` snapshot arrives on every tick. A hotspot started or stopped from the
+ * API, another client or the device itself moves the wire first, and a cached
+ * `station` would keep reporting Station under a live AP. The
+ * exclusive-AP bit is the one fact both sources carry, so a disagreement on it
+ * means the pull is stale and the wire wins. `station` and `hybrid` look alike
+ * on the wire (`mode: "station"`), so between those two the device's answer
+ * stands.
+ */
+function reconcileObservedMode(
+	iface: WifiInterface,
+	entry: WifiAdapterModeEntry | undefined,
+): WifiAdapterMode {
+	if (entry === undefined) return fallbackMode(iface);
+	if (iface.mode === undefined) return entry.mode;
+	if (iface.mode === "hotspot" && entry.mode === "station") return "hotspot";
+	if (iface.mode === "station" && entry.mode === "hotspot") {
+		return fallbackMode(iface);
+	}
+	return entry.mode;
+}
+
 /** The inputs a surface hands the derivation. */
 export interface WifiAdapterModeInput {
 	device: string;
@@ -255,7 +281,7 @@ export function deriveWifiAdapterModeView(
 	input: WifiAdapterModeInput,
 ): WifiAdapterModeView {
 	const deviceAnswered = input.entry !== undefined;
-	const observedMode = input.entry?.mode ?? fallbackMode(input.iface);
+	const observedMode = reconcileObservedMode(input.iface, input.entry);
 	const wireOptions = input.entry?.options ?? fallbackOptions(input.iface);
 	const pending = input.phase === "pending";
 

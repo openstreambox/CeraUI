@@ -1,5 +1,7 @@
 import type { WifiInterface } from "@ceraui/rpc/schemas";
 
+import { hotspotIsActive } from "$lib/rpc/os-toggle-predicates";
+
 export function chooseHotspotRadio(
 	radios: [string, WifiInterface][],
 	selected?: string,
@@ -13,7 +15,10 @@ export function chooseHotspotRadio(
 			([id, radio]) => (radio.radio_identity?.id ?? id) === selected,
 		);
 	}
+	// A live AP first, then a saved setup: every hosting-capable radio of a
+	// current device carries its saved `hotspot` block, on or off.
 	return (
+		capable.find(([, radio]) => hotspotIsActive(radio)) ??
 		capable.find(([, radio]) => Boolean(radio.hotspot)) ??
 		capable.find(([, radio]) => !radio.conn) ??
 		capable[0]
