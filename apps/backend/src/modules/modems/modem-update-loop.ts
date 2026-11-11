@@ -58,7 +58,7 @@ import type {
 	StateDiff,
 } from "../network/state-types.ts";
 import { applyJitter } from "../streaming/constants.ts";
-import { runAutomaticBearerFamilies } from "./automatic-bearer-family.ts";
+import { runAutomaticCarrierProfiles } from "./automatic-carrier-profile.ts";
 
 import { resetGsmConnections } from "./gsm-connections.ts";
 import type { ModemId } from "./mmcli.ts";
@@ -338,8 +338,10 @@ export async function discoverModems(): Promise<void> {
  */
 export async function runModemStatusPoll(): Promise<void> {
 	await withModemUpdateLock(() => reconcileModemPresenceLocked(false));
-	await runAutomaticBearerFamilies();
-	const configured = await runModemReadyActivations();
+	const automatic = await runAutomaticCarrierProfiles();
+	const configured = [
+		...new Set([...automatic, ...(await runModemReadyActivations())]),
+	];
 	if (configured.length > 0) {
 		for (const id of configured) triggerGsmConnectionsReset(id);
 		broadcastModems(Object.fromEntries(configured.map((id) => [id, true])));

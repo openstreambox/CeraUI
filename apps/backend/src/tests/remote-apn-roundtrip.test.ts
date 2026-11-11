@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { modemConfigInputSchema } from "@ceraui/rpc/schemas";
 import * as mockService from "../mocks/mock-service.ts";
 import { getConfigFilePath } from "../modules/config.ts";
+import * as gsmConnections from "../modules/modems/gsm-connections.ts";
 import { buildModemsWireMessage } from "../modules/modems/modem-status.ts";
 import {
 	applyModemConfig,
@@ -97,6 +98,19 @@ for (const field of ["username", "password"] as const) {
 		const replacement = `updated-${field}-owner-value`;
 		input[field] = replacement;
 		const profile = join(dirname(getConfigFilePath()), "nm-profile.json");
+		const selected = {
+			...saved,
+			uuid: saved.conn,
+			state: "",
+			deviceId: "synthetic-device",
+			simId: "89000000000000000000",
+			operatorId: "",
+		};
+		spyOn(gsmConnections, "getGsmConnections").mockResolvedValue({
+			byUuid: { [saved.conn]: selected },
+			byDevice: { [selected.deviceId]: { [selected.simId]: selected } },
+			byOperator: {},
+		});
 		spyOn(networkManager, "nmConnSetFields").mockImplementation(
 			async (_uuid, fields) => {
 				await writeFile(profile, JSON.stringify(fields));

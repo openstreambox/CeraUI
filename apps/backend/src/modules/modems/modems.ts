@@ -37,6 +37,11 @@ import {
 	nmDisconnect,
 } from "../network/network-manager.ts";
 
+import {
+	newCarrierIntent,
+	readCarrierIntent,
+	writeCarrierIntent,
+} from "./automatic-carrier-intent.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
 import { reconcileDuplicateGsmProfiles } from "./gsm-duplicate-reconcile.ts";
@@ -74,10 +79,34 @@ async function updateModemConnection(
 	connectionUuid: ConnectionUUID,
 	config: ModemConfig,
 ) {
-	// This also modifies config in place to clear apn/username/password if autoconfig is set
+	// The profile write already runs under the caller's lifecycle lease/journal.
+	const connections = await getGsmConnections();
+	if (!connections) return false;
+	const selected = connections.byUuid[connectionUuid];
+	if (!selected) return false;
+	const identity =
+		selected?.deviceId && selected.simId
+			? {
+					uuid: connectionUuid,
+					deviceId: selected.deviceId,
+					simId: selected.simId,
+				}
+			: undefined;
+	const before = identity ? await readCarrierIntent(identity) : undefined;
 	const nmConfig = sanitizeModemConfigForNetworkManager(config);
-
-	return await nmConnSetFields(connectionUuid, nmConfig);
+	if (identity)
+		await writeCarrierIntent(
+			identity,
+			newCarrierIntent(identity, config.autoconfig ? "automatic" : "manual"),
+		);
+	try {
+		const written = await nmConnSetFields(connectionUuid, nmConfig);
+		if (!written && identity) await writeCarrierIntent(identity, before);
+		return written;
+	} catch (error) {
+		if (identity) await writeCarrierIntent(identity, before);
+		throw error;
+	}
 }
 
 /**

@@ -62,6 +62,7 @@ export interface MutationRollbackHandler {
 }
 
 const handlers = new Map<ModemMutationKind, MutationRollbackHandler>();
+const configInverses = new Map<string, MutationRollbackHandler>();
 
 export function registerMutationRollback(
 	kind: ModemMutationKind,
@@ -70,7 +71,24 @@ export function registerMutationRollback(
 	handlers.set(kind, handler);
 }
 
+export function registerModemConfigInverse(
+	format: string,
+	handler: MutationRollbackHandler,
+): void {
+	configInverses.set(format, handler);
+	registerMutationRollback("modem-config", {
+		rollback: async (key, state) => {
+			const inverse =
+				typeof state.format === "string"
+					? configInverses.get(state.format)
+					: undefined;
+			return inverse ? inverse.rollback(key, state) : "failed";
+		},
+	});
+}
+
 export function clearMutationRollbacks(): void {
+	configInverses.clear();
 	handlers.clear();
 }
 

@@ -12,7 +12,7 @@ import {
 import { getModem, getModemIds } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
 import { withJournaledModemMutation } from "./mutation-lease.ts";
-import { registerMutationRollback } from "./mutation-rollback.ts";
+import { registerModemConfigInverse } from "./mutation-rollback.ts";
 import { selectSubscription } from "./subscription-policy.ts";
 import { resolveTransportQuirk } from "./transport-policy.ts";
 
@@ -233,6 +233,6 @@ export async function runAutomaticBearerFamilies(): Promise<void> {
 		}
 	}
 }
-registerMutationRollback("modem-config", {
+registerModemConfigInverse(FORMAT, {
 	rollback: restoreAutomaticBearerFamily,
 });
