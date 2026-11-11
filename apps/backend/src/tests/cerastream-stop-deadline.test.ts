@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 
-import type {
-	CerastreamClient,
-	EventParams,
-	StartResult,
+import {
+	type CerastreamClient,
+	CerastreamRpcError,
+	type EventParams,
+	type StartResult,
 } from "@ceralive/cerastream";
 import type { RuntimeConfig } from "../helpers/config-schemas.ts";
 import {
@@ -215,3 +216,76 @@ test("an unacknowledged stop is closed at the deadline and never calls back late
 	expect(trace).toContain("session:close");
 	expect(trace).toContain("stop:close");
 });
+
+test("failed Start rollback bypasses a stuck session request and permits the next Start", async () => {
+	const trace: string[] = [];
+	const session = fakeClient("failed", trace, new Promise(() => {}));
+	session.start = async () => {
+		throw new CerastreamRpcError(
+			-32602,
+			"capture refused",
+			undefined,
+			undefined,
+			{
+				capture_causes: [{ device: "capture:test", cause: "no_signal" }],
+			},
+		);
+	};
+	const cleanup = fakeClient("rollback", trace);
+	const next = fakeClient("next", trace);
+	const clients = [session, cleanup, next];
+	const backend = backendWithTimers(async () => {
+		const client = clients.shift();
+		if (!client) throw new Error("unexpected connection");
+		return client;
+	}, new Map());
+	await expect(start(backend)).rejects.toMatchObject({
+		liveness: "idle",
+		failure: { class: "capture_source_unavailable", captureCause: "no_signal" },
+	});
+	expect(trace).toContain("rollback:stop");
+	expect(trace).not.toContain("failed:stop");
+	expect(trace).toContain("failed:close");
+	expect(trace).toContain("rollback:close");
+	await start(backend);
+	expect(clients).toHaveLength(0);
+}, 1000);
+
+for (const fault of ["connect", "stop", "close"] as const) {
+	test(`failed Start rollback bounds ${fault} and preserves cleanup uncertainty`, async () => {
+		const trace: string[] = [];
+		const deadlines = new (class extends Map<number, () => void> {
+			override set(delay: number, callback: () => void): this {
+				const previous = this.get(delay);
+				return super.set(delay, () => {
+					previous?.();
+					callback();
+				});
+			}
+		})();
+		const session = fakeClient("failed", trace);
+		session.start = async () => {
+			throw new CerastreamRpcError(-32602, "capture refused");
+		};
+		const cleanup = fakeClient("rollback", trace);
+		if (fault === "stop") cleanup.stop = () => new Promise(() => {});
+		if (fault === "close") session.close = () => new Promise(() => {});
+		let connections = 0;
+		const backend = backendWithTimers(async () => {
+			if (connections++ === 0) return session;
+			if (fault === "connect") return new Promise(() => {});
+			return cleanup;
+		}, deadlines);
+		const result = start(backend).catch((error: unknown) => error);
+		for (let i = 0; i < 40; i++) await Promise.resolve();
+		if (fault !== "close") deadlines.get(ENGINE_STOP_REQUEST_DEADLINE_MS)?.();
+		for (let i = 0; i < 40; i++) await Promise.resolve();
+		if (fault === "close") deadlines.get(ENGINE_CLOSE_DEADLINE_MS)?.();
+		const error = await result;
+		expect(error).toMatchObject({
+			liveness: fault === "close" ? "idle" : "unknown",
+			failure: { phase: "start-rpc" },
+		});
+		expect(trace).not.toContain("failed:stop");
+	});
+}

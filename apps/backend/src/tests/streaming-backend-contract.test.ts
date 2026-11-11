@@ -103,6 +103,8 @@ function makeFakeClient(options: FakeClientOptions = {}): FakeClientHarness {
 			: new Promise<never>((_resolve, reject) => {
 					rejectStopOnClose = reject;
 				});
+	// Closing a client may reject a stop gate even when no Stop was dispatched.
+	void stopClosed?.catch(() => undefined);
 	const subscribed = new Promise<void>((resolve) => {
 		resolveSubscribed = resolve;
 	});
@@ -463,6 +465,7 @@ describe("CerastreamBackend behavioural contract", () => {
 				connections += 1;
 				if (connections === 1) return dead.client;
 				if (connections === 2) throw new Error("engine_restart_window");
+				if (connections === 3) return makeFakeClient().client;
 				return recovered.client;
 			},
 			connectOptions: {},
@@ -530,7 +533,7 @@ describe("CerastreamBackend behavioural contract", () => {
 		});
 		const deadOps = dead.calls.map(({ op }) => op);
 		expect(deadOps.filter((op) => op === "start")).toHaveLength(1);
-		expect(deadOps.filter((op) => op === "stop")).toHaveLength(1);
+		expect(deadOps.filter((op) => op === "stop")).toHaveLength(0);
 		expect(deadOps.filter((op) => op === "close")).toHaveLength(2);
 		expect(deadOps.filter((op) => op === "unsubscribe")).toHaveLength(2);
 
@@ -543,7 +546,7 @@ describe("CerastreamBackend behavioural contract", () => {
 			state: "streaming",
 			generation: 2,
 		});
-		expect(connections).toBe(3);
+		expect(connections).toBe(4);
 
 		await orchestrator.stop("operator");
 		await backend.settle();
@@ -824,7 +827,7 @@ describe("CerastreamBackend behavioural contract", () => {
 			fake.calls
 				.map((call) => call.op)
 				.filter((op) => ["stop", "unsubscribe", "close"].includes(op)),
-		).toEqual(["stop", "unsubscribe", "close"]);
+		).toEqual(["stop", "close", "unsubscribe"]);
 		expect(fake.calls.filter((call) => call.op === "close")).toHaveLength(1);
 		expect(fake.calls.filter((call) => call.op === "unsubscribe")).toHaveLength(
 			1,
