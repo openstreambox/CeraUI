@@ -18,12 +18,6 @@
 import { logger } from "../../helpers/logger.ts";
 import { getms } from "../../helpers/time.ts";
 import {
-	getNetworkInterfaces,
-	NETIF_ERR_HOTSPOT,
-	setNetifHotspot,
-	triggerNetworkInterfacesChange,
-} from "../network/network-interfaces.ts";
-import {
 	type ConnectionUUID,
 	type MacAddress,
 	nmConnGetFields,
@@ -48,7 +42,10 @@ import {
 	type WifiNetwork,
 	wifiUpdateSavedConns,
 } from "./wifi.ts";
-import { supportsApStaConcurrency } from "./wifi-ap-sta-capability.ts";
+import {
+	readApModeSupport,
+	supportsApStaConcurrency,
+} from "./wifi-ap-sta-capability.ts";
 import { refreshWifiCapabilities } from "./wifi-capabilities.ts";
 import type { AutoWifiChannel } from "./wifi-channels.ts";
 import {
@@ -71,7 +68,6 @@ import {
 import { handleHotspotConn } from "./wifi-hotspot-discovery.ts";
 import {
 	canHotspot,
-	isApMode,
 	type WifiHotspot,
 	type WifiInterfaceWithHotspot,
 } from "./wifi-hotspot-types.ts";
@@ -81,7 +77,10 @@ import {
 	retainWifiPermanentMacs,
 } from "./wifi-permanent-mac.ts";
 import {
+	readWifiRadioIdentity,
 	recordWifiRadioShadowFailure,
+	resolveWirelessAddress,
+	type WifiRadioIdentity,
 	wifiRadioIdentity,
 } from "./wifi-radio-identity.ts";
 import { wifiRadioObservation } from "./wifi-radio-observation.ts";
@@ -130,6 +129,7 @@ export type WifiAdapterDegradedReason =
 	| "permanent-mac-unresolved";
 
 export type BaseWifiInterface = {
+	radioIdentity?: WifiRadioIdentity;
 	id: WifiInterfaceId; // numeric id for the adapter - temporary for each CeraLive execution
 	ifname: string;
 	conn: ConnectionUUID | null; // the active connection, gated on the radio holding an IP
@@ -190,6 +190,7 @@ function parseNmcliBoolean(value: string | undefined): boolean | undefined {
 
 export function parseWifiDeviceProperties(
 	prop: readonly string[] | undefined,
+	phyApSupport?: boolean,
 ): ParseResult<WifiDeviceProperties> {
 	if (prop === undefined || prop.length < 5) {
 		return parseFail(
@@ -200,7 +201,7 @@ export function parseWifiDeviceProperties(
 	}
 
 	const [vendorRaw, productRaw, apRaw, fiveGhzRaw, twoGhzRaw] = prop;
-	const supportsAp = parseNmcliBoolean(apRaw);
+	const supportsAp = phyApSupport ?? parseNmcliBoolean(apRaw);
 	const supports5Ghz = parseNmcliBoolean(fiveGhzRaw);
 	const supports2Ghz = parseNmcliBoolean(twoGhzRaw);
 	if (
@@ -420,7 +421,12 @@ export async function wifiUpdateDevices() {
 				activeConn !== null && wifiDeviceListGetInetAddress(ifname)
 					? activeConn
 					: null;
-			const currentMac = wifiDeviceListGetMacAddress(ifname);
+			const currentMac = await resolveWirelessAddress(
+				ifname,
+				wifiDeviceListGetMacAddress(ifname),
+				undefined,
+				async (name) => (await nmDeviceProp(name, "GENERAL.HWADDR"))?.[0],
+			);
 			if (!currentMac) {
 				seenIfnames.push(ifname);
 				const existed = Object.values(getWifiInterfacesByMacAddress()).some(
@@ -480,11 +486,13 @@ export async function wifiUpdateDevices() {
 			} else {
 				const id = recoveredId ?? wifiIfId++;
 
+				const phyApSupport = await readApModeSupport(ifname);
 				const parsedProps = parseWifiDeviceProperties(
 					await nmDeviceProp(
 						ifname,
 						"GENERAL.VENDOR,GENERAL.PRODUCT,WIFI-PROPERTIES.AP,WIFI-PROPERTIES.5GHZ,WIFI-PROPERTIES.2GHZ",
 					),
+					phyApSupport,
 				);
 				if (!parsedProps.ok) {
 					logParseError(parsedProps);
@@ -538,6 +546,16 @@ export async function wifiUpdateDevices() {
 			const updatedInterface = getWifiInterfaceByMacAddress(macAddress);
 			if (updatedInterface) {
 				invalidateWifiRadioRow(updatedInterface, observation);
+				const identity = permanentMacResolved
+					? await readWifiRadioIdentity(ifname, macAddress)
+					: undefined;
+				if (
+					JSON.stringify(updatedInterface.radioIdentity) !==
+					JSON.stringify(identity)
+				)
+					statusChange = true;
+				if (identity) updatedInterface.radioIdentity = identity;
+				else delete updatedInterface.radioIdentity;
 				wifiIdToMacAddress[updatedInterface.id] = macAddress;
 				if (
 					await syncActiveConnection(updatedInterface, macAddress, activeConn)
@@ -604,30 +622,7 @@ export async function wifiUpdateDevices() {
 		wifiScheduleScanRefresh();
 	}
 
-	if (newDevices || statusChange) {
-		broadcastWifiState();
-
-		// Mark any WiFi hotspot interfaces as unavailable for bonding
-		let hotspotCount = 0;
-		const wifiInterfacesByMacAddress = getWifiInterfacesByMacAddress();
-		const networkInterfaces = getNetworkInterfaces();
-		for (const i in wifiInterfacesByMacAddress) {
-			const wifiInterface = wifiInterfacesByMacAddress[i];
-			if (wifiInterface && isApMode(wifiInterface)) {
-				const n = networkInterfaces[wifiInterface.ifname];
-				if (!n) continue;
-				if (n.error & NETIF_ERR_HOTSPOT) continue;
-
-				setNetifHotspot(n);
-				hotspotCount++;
-			}
-		}
-
-		if (hotspotCount) {
-			triggerNetworkInterfacesChange();
-			// Remove hotspot IPs from the source IP address list for BCRPT
-		}
-	}
+	if (newDevices || statusChange) broadcastWifiState();
 	logger.debug("Wifi interfaces", wifiInterfacesByMacAddress);
 
 	/* If some wifi adapters were marked unavailable, recheck periodically
@@ -684,4 +679,20 @@ export async function wifiUpdateDevices() {
 		}
 	}
 	return statusChange;
+}
+
+/** A supplied stable target must resolve exactly; never fall back to another radio. */
+export function resolveHotspotRadioDevice(input: {
+	device: string;
+	radio_id?: string | undefined;
+}): number {
+	if (input.radio_id !== undefined) {
+		for (const [mac, radio] of Object.entries(
+			getWifiInterfacesByMacAddress(),
+		)) {
+			if (mac === input.radio_id && !radio.removed) return radio.id;
+		}
+		return Number.NaN;
+	}
+	return Number(input.device);
 }

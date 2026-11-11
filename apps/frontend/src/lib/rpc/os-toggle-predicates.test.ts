@@ -39,6 +39,11 @@ describe("hotspotIsActive", () => {
 });
 
 describe("hotspotToggleConfirmed", () => {
+	it("keeps Start pending while steering is activating, while allowing Stop", () => {
+		expect(hotspotToggleConfirmed("hotspot", true, "activating")).toBe(false);
+		expect(hotspotToggleConfirmed("hotspot", true)).toBe(true);
+		expect(hotspotIsActive({ hotspot: {} })).toBe(true);
+	});
 	it("confirms a hotspot-start once the interface is active", () => {
 		expect(hotspotToggleConfirmed("hotspot", true)).toBe(true);
 	});

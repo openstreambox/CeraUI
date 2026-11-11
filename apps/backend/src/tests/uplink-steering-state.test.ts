@@ -421,3 +421,49 @@ describe("known-down uplink rejoin", () => {
 		]);
 	});
 });
+
+describe("sharing selector on the live state builder", () => {
+	test("force and administrative-down preserve healthy management route support", async () => {
+		const { DEFAULT_SHARING_POLICY } = await import(
+			"../modules/network/uplink-steering/policy.ts"
+		);
+		let policy = structuredClone(DEFAULT_SHARING_POLICY);
+		const h = harness({
+			policy: () => policy,
+			interfaces: () => ({
+				"clap-wlan0": netif("10.42.0.1", "255.255.255.0", NETIF_ERR_HOTSPOT),
+				eth0: netif("192.0.2.2"),
+				wwan0: netif("198.51.100.2"),
+			}),
+			health: () => [],
+		});
+		const initial = await readDesiredSteeringState(h);
+		policy = { ...policy, mode: "cellular-only" };
+		expect(
+			(await readDesiredSteeringState(h)).uplinks.map((r) => r.ifname),
+		).toEqual(["wwan0"]);
+		policy = { ...policy, mode: "wired-only" };
+		expect(
+			(await readDesiredSteeringState(h)).uplinks.map((r) => r.ifname),
+		).toEqual(["eth0"]);
+		policy = {
+			...policy,
+			mode: "automatic",
+			priorities: { wired: 0, cellular: 10, wifi: 20 },
+		};
+		const preferred = await readDesiredSteeringState(h);
+		expect(preferred.routes).toEqual(initial.routes);
+		expect(preferred.uplinks.map((u) => u.selectable)).toEqual([true, false]);
+		policy = { ...policy, administrativelyDown: ["eth0"] };
+		expect(
+			(await readDesiredSteeringState(h)).uplinks.map((u) => u.ifname),
+		).toEqual(["wwan0"]);
+		policy = { ...policy, administrativelyDown: ["eth0", "wwan0"] };
+		const down = await readDesiredSteeringState(h);
+		expect(down.routes).toEqual(initial.routes);
+		expect(down.uplinks).toEqual([]);
+		expect(down.clientZones).toEqual(initial.clientZones);
+		policy = { ...policy, administrativelyDown: [] };
+		expect(await readDesiredSteeringState(h)).toEqual(preferred);
+	});
+});

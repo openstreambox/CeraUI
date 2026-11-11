@@ -160,7 +160,7 @@ export const HOTSPOT_AUTOCONNECT_FIELDS: Record<string, string> = {
 
 /** Result of a hotspot start request. */
 export type HotspotStartResult =
-	| { success: true }
+	| { success: true; pending?: true; reason?: "steering-readiness-timeout" }
 	| {
 			success: false;
 			error: "DEVICE_BUSY" | "no-device" | "unsupported" | "activation-failed";
@@ -172,6 +172,10 @@ export type HotspotStartResult =
  * `pollHotspotActive` so confirmation comes purely from a fed monitor event).
  */
 export type HotspotActivationDeps = {
+	confirmSteering?: (ifname: string) => Promise<boolean>;
+	stationChannel?: typeof import("./wifi-concurrent-interface.ts").concurrentStationChannel;
+	configureProfile?: typeof import("./wifi-hotspot-profile.ts").configureHotspotProfile;
+	ownedProfile?: typeof import("./wifi-hotspot-profile.ts").ownedHotspotProfile;
 	nmConnect: (uuid: string, timeout?: number) => Promise<unknown>;
 	nmConnSetFields: (
 		uuid: string,

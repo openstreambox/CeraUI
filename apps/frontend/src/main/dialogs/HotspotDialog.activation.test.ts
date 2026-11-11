@@ -7,6 +7,7 @@
 import type { WifiInterface } from "@ceraui/rpc/schemas";
 import { fireEvent, render } from "@testing-library/svelte";
 import { tick } from "svelte";
+import { toast } from "svelte-sonner";
 import {
 	afterEach,
 	beforeAll,
@@ -16,12 +17,13 @@ import {
 	it,
 	vi,
 } from "vitest";
-
 import {
 	destroyAsyncOperations,
+	getOperationPhase,
 	initAsyncOperations,
 } from "$lib/rpc/async-operation.svelte";
 import { rpc } from "$lib/rpc/client";
+import { wifiHotspotOpKey } from "../network/wifi-station-lock";
 import HotspotDialog from "./HotspotDialog.svelte";
 
 vi.mock("$lib/rpc/client", () => ({
@@ -29,6 +31,7 @@ vi.mock("$lib/rpc/client", () => ({
 		wifi: {
 			hotspotStart: vi.fn(async () => ({ success: true, accepted: true })),
 			hotspotStop: vi.fn(),
+			hotspotDelete: vi.fn(async () => ({ success: true })),
 			hotspotPrepare: vi.fn(),
 			hotspotConfigure: vi.fn(async () => ({ success: true })),
 			getAdapterModes: vi.fn(async () => ({})),
@@ -123,22 +126,68 @@ beforeEach(() => {
 
 afterEach(() => {
 	destroyAsyncOperations();
+	vi.useRealTimers();
 	vi.clearAllMocks();
 });
 
 describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
-	it("renders no editable form while off, so nothing typed can be silently ignored", () => {
+	it("pins USB hotspot requests to the stable radio identity", async () => {
+		const mac = "02:00:00:00:00:01";
+		render(HotspotDialog, {
+			props: {
+				open: true,
+				deviceId: "2",
+				iface: {
+					...STATION,
+					ifname: "wlx020000000001",
+					radio_identity: { id: mac, permanent_mac: mac },
+				},
+			},
+		});
+		const forget = [...document.querySelectorAll("button")].find(
+			(button) => button.textContent?.trim() === "Forget",
+		);
+		if (!forget) throw new Error("missing Forget button");
+		await fireEvent.click(forget);
+		expect(rpc.wifi.hotspotDelete).toHaveBeenCalledWith({
+			device: "2",
+			radio_id: mac,
+		});
+	});
+
+	it("configures while off without starting", async () => {
 		render(HotspotDialog, {
 			props: { open: true, deviceId: "0", iface: STATION },
 		});
-		expect(document.querySelector("#hotspot-name")).toBeNull();
-		expect(document.querySelector("#hotspot-password")).toBeNull();
-		expect(q("hotspot-inactive-hint")).not.toBeNull();
-		const save = [
-			...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
-		].find((b) => b.textContent?.includes("Save"));
-		// Save only reconfigures a live AP, so it is not offered while off.
-		expect(save).toBeUndefined();
+		await fireEvent.input(document.querySelector("#hotspot-name")!, {
+			target: { value: "Example" },
+		});
+		await fireEvent.input(document.querySelector("#hotspot-password")!, {
+			target: { value: "example-password" },
+		});
+		const save = [...document.querySelectorAll("button")].find(
+			(b) => b.textContent?.trim() === "Save",
+		)!;
+		await fireEvent.click(save);
+		expect(rpc.wifi.hotspotConfigure).toHaveBeenCalledWith({
+			device: "0",
+			incarnation: "radio-A",
+			name: "Example",
+			password: "example-password",
+			channel: "auto",
+		});
+		expect(start).not.toHaveBeenCalled();
+	});
+	it("forgets the inactive setup through the delete API", async () => {
+		render(HotspotDialog, {
+			props: { open: true, deviceId: "0", iface: STATION },
+		});
+		const forget = [...document.querySelectorAll("button")].find(
+			(b) => b.textContent?.trim() === "Forget",
+		)!;
+		await fireEvent.click(forget);
+		expect(rpc.wifi.hotspotDelete).toHaveBeenCalledWith({ device: "0" });
+		expect(start).not.toHaveBeenCalled();
 	});
 
 	it("Enable opens the gate with the REAL credentials visible and starts nothing", async () => {
@@ -158,6 +207,40 @@ describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
 		expect(q<HTMLButtonElement>("hotspot-confirm-activate")?.disabled).toBe(
 			true,
 		);
+	});
+
+	it("delayed steering stays pending beyond the old TTL, then confirms without an error toast", async () => {
+		destroyAsyncOperations();
+		vi.useFakeTimers();
+		initAsyncOperations();
+		const view = render(HotspotDialog, {
+			props: { open: true, deviceId: "0", iface: STATION },
+		});
+		await fireEvent.click(enableButton());
+		await vi.waitFor(() =>
+			expect(q("hotspot-activation-confirm")?.dataset.phase).toBe("ready"),
+		);
+		await acknowledge();
+		await fireEvent.click(q("hotspot-confirm-activate") as HTMLElement);
+		await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+		const active = {
+			...STATION,
+			hotspot: { name: "test", password: "password" },
+		} as WifiInterface;
+		await view.rerender({
+			open: true,
+			deviceId: "0",
+			iface: { ...active, transition: "activating" },
+		});
+		await tick();
+		await vi.advanceTimersByTimeAsync(21_000);
+		expect(getOperationPhase(wifiHotspotOpKey("0", "radio-A"))).toBe("pending");
+		await view.rerender({ open: true, deviceId: "0", iface: active });
+		await tick();
+		expect(getOperationPhase(wifiHotspotOpKey("0", "radio-A"))).toBe(
+			"confirmed",
+		);
+		expect(toast.error).not.toHaveBeenCalled();
 	});
 
 	it("starts exactly once, only after the acknowledgement, without re-saving unchanged credentials", async () => {
@@ -366,7 +449,10 @@ describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
 			await tick();
 			expect(start).toHaveBeenCalledTimes(action === "continue" ? 1 : 0);
 			if (action === "continue")
-				expect(start).toHaveBeenCalledWith({ device: "0" });
+				expect(start).toHaveBeenCalledWith({
+					device: "0",
+					incarnation: "radio-A",
+				});
 			expect(prepare).toHaveBeenCalledTimes(2);
 		},
 	);

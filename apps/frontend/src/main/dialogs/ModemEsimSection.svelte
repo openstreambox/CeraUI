@@ -1,6 +1,6 @@
 <script lang="ts">
 import { resolveMessageKey as t } from '@ceraui/i18n/svelte';
-import { parseEsimActivationCode, type EsimError, type EsimOperationInput, type EsimSnapshot, type SupportClaimState } from '@ceraui/rpc/schemas';
+import { type EsimError, type EsimOperationInput, type EsimSnapshot, parseEsimActivationCode, type SupportClaimState } from '@ceraui/rpc/schemas';
 import { onDestroy } from 'svelte';
 
 import { Button } from '$lib/components/ui/button';
@@ -17,6 +17,7 @@ let acknowledged = $state(false);
 let snapshot = $state<EsimSnapshot | undefined>();
 let activationCode = $state('');
 let smdp = $state('');
+const inputId = $props.id();
 let matchingId = $state('');
 let confirmationCode = $state('');
 let manual = $state(false);
@@ -138,23 +139,23 @@ function toggle(): void {
 					<label class="block text-sm">{t('network.esim.qr')}<input type="file" accept="image/png,image/jpeg,image/webp" capture="environment" onchange={readQr} disabled={busy || pending !== undefined} class="block w-full" /></label>
 					<label class="flex gap-2 text-sm"><input type="checkbox" bind:checked={manual} disabled={busy || pending !== undefined} />{t('network.esim.manual')}</label>
 					{#if manual}
-						<label class="block text-sm">{t('network.esim.smdp')}<Input bind:value={smdp} autocomplete="off" disabled={busy || pending !== undefined} /></label>
-						<label class="block text-sm">{t('network.esim.matchingId')}<Input type="password" bind:value={matchingId} autocomplete="off" disabled={busy || pending !== undefined} /></label>
+						<label for={`${inputId}-smdp`} class="block text-sm">{t('network.esim.smdp')}<Input id={`${inputId}-smdp`} bind:value={smdp} autocomplete="off" disabled={busy || pending !== undefined} /></label>
+						<label for={`${inputId}-matchingId`} class="block text-sm">{t('network.esim.matchingId')}<Input id={`${inputId}-matchingId`} type="password" bind:value={matchingId} autocomplete="off" disabled={busy || pending !== undefined} /></label>
 					{:else}
-						<label class="block text-sm">{t('network.esim.code')}<Input type="password" bind:value={activationCode} autocomplete="off" disabled={busy || pending !== undefined} /></label>
+						<label for={`${inputId}-code`} class="block text-sm">{t('network.esim.code')}<Input id={`${inputId}-code`} type="password" bind:value={activationCode} autocomplete="off" disabled={busy || pending !== undefined} /></label>
 					{/if}
-					<label class="block text-sm">{t('network.esim.confirmation')}<Input type="password" bind:value={confirmationCode} autocomplete="off" disabled={busy || pending !== undefined} /></label>
+					<label for={`${inputId}-confirmation`} class="block text-sm">{t('network.esim.confirmation')}<Input id={`${inputId}-confirmation`} type="password" bind:value={confirmationCode} autocomplete="off" disabled={busy || pending !== undefined} /></label>
 					<p class="text-sm text-muted-foreground">{t('network.esim.pinHelp')}</p>
 					{#if parsed}<p class="text-sm">{t('network.esim.smdp')} · {parsed.smdpAddress}</p>{/if}
 					<Button disabled={busy || !acknowledged || !parsed || pending !== undefined} onclick={stageDownload}>{t('network.esim.add')}</Button>
 				</div>
 			{/if}
 			{#if pending}
-				<div class="rounded border p-3 space-y-2" role="group" aria-label={t('network.esim.confirm')}>
+				<fieldset class="rounded border p-3 space-y-2" aria-label={t('network.esim.confirm')}>
 					<p>{t(`network.esim.confirm_${pending.action}`)}</p>
 					<Button disabled={busy || !acknowledged} onclick={() => { if (pending) void perform(pending); }}>{t('network.esim.confirm')}</Button>
 					<Button variant="outline" disabled={busy} onclick={clearSecrets}>{t('network.esim.cancel')}</Button>
-				</div>
+				</fieldset>
 			{/if}
 		{/if}
 	{/if}

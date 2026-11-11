@@ -104,13 +104,6 @@
 <script lang="ts">
 import { formatBytes, formatRelativeTime } from '@ceraui/i18n/formatters';
 import { getLocale, m, resolveMessageKey } from '@ceraui/i18n/svelte';
-import { toast } from 'svelte-sonner';
-import MutationOutcomeBand from '$lib/components/custom/MutationOutcomeBand.svelte';
-import ModemFccUnlockSection from './ModemFccUnlockSection.svelte';
-import { fccUnlockErrorKey } from './modem-fcc-unlock';
-import ModemEsimSection from './ModemEsimSection.svelte';
-import ModemGpsSection from './ModemGpsSection.svelte';
-import ModemUssdSection from './ModemUssdSection.svelte';
 import type {
 	FccUnlockState,
 	FiveGPreference,
@@ -151,10 +144,12 @@ import {
 	Wrench,
 	Zap,
 } from '@lucide/svelte';
+import { toast } from 'svelte-sonner';
 import Badge from '$lib/components/custom/Badge.svelte';
 import CollapsibleSection from '$lib/components/custom/CollapsibleSection.svelte';
 import LabeledSwitch from '$lib/components/custom/LabeledSwitch.svelte';
 import LinkIndicator from '$lib/components/custom/LinkIndicator.svelte';
+import MutationOutcomeBand from '$lib/components/custom/MutationOutcomeBand.svelte';
 import NoSimBadge from '$lib/components/custom/NoSimBadge.svelte';
 import SimpleAlertDialog from '$lib/components/custom/simple-alert-dialog.svelte';
 import AppDialog from '$lib/components/dialogs/AppDialog.svelte';
@@ -237,6 +232,10 @@ import {
 	resolveClassBand,
 	resolveRowState,
 } from '../network/cellular-row';
+import ModemEsimSection from './ModemEsimSection.svelte';
+import ModemFccUnlockSection from './ModemFccUnlockSection.svelte';
+import ModemGpsSection from './ModemGpsSection.svelte';
+import ModemUssdSection from './ModemUssdSection.svelte';
 import {
 	bandSelectionChanged,
 	deriveBandOffer,
@@ -257,6 +256,7 @@ import {
 	usageView,
 } from './modem-detail';
 import { modemDiagnosticRows } from './modem-diagnostics';
+import { fccUnlockErrorKey } from './modem-fcc-unlock';
 import { fiveGFailureKey, fiveGViewForModem } from './modem-five-g';
 import {
 	POWER_UNAVAILABLE_OPERATIONS,

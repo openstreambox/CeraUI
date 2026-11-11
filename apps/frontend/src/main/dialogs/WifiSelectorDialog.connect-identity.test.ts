@@ -318,6 +318,8 @@ describe("WifiSelectorDialog — selected-radio connect ownership", () => {
 				});
 				await settle();
 				expect(getOperationPhase(OTHER_CONNECT_KEY)).toBe("confirmed");
+				await vi.advanceTimersByTimeAsync(200);
+				await settle();
 				expect(screen.queryByRole("dialog")).toBeNull();
 			} finally {
 				result.resolve({ success: true });
@@ -616,6 +618,8 @@ describe("WifiSelectorDialog — identity-keyed connect confirmation", () => {
 		await settle();
 
 		expect(getOperationPhase(CONNECT_KEY)).toBe("confirmed");
+		await vi.advanceTimersByTimeAsync(200);
+		await settle();
 		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 

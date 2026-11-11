@@ -121,6 +121,16 @@ If an adapter selected the profile, a live interface began using it, or persiste
 ownership disappeared while list/profile reads were pending, that candidate survives.
 `wifi-hotspot-identity.test.ts` pauses both reads and covers these ownership changes.
 
+## Explicit setup lifecycle
+
+[Hotspot lifecycle](../../../../docs/HOTSPOT-LIFECYCLE.md) supersedes the earlier
+create-on-start behavior above. Configure while off creates an inactive marked
+AP profile. Start activates an existing owned UUID and never generates or saves
+credentials, creates profiles, prunes duplicates, or arms autoconnect. Prepare
+can still supply a suggestion; confirming a first setup explicitly prepares its
+profile before Start. Delete requires an inactive, verified owned profile and
+then removes the durable identity. An adopted legacy profile is preserved.
+
 Live use includes the parent station `conn`/`activeConn`, `hotspot.conn`, and
 the virtual AP `concurrentHotspot.activeConn`. AP+STA keeps the active AP UUID
 on that nested field while the parent continues to report its station UUID.

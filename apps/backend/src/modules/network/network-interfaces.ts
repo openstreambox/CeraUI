@@ -16,7 +16,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* Network interface list */
 import { EventEmitter } from "node:events";
 import { isSimlessForBond } from "@ceraui/rpc";
 import type {
@@ -27,7 +26,6 @@ import type {
 } from "@ceraui/rpc/schemas";
 import { NETIF_DUPLICATE_IPV4_ERROR } from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
-
 import { ipToInt, isSameSubnet } from "../../helpers/ip-addresses.ts";
 import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
@@ -50,12 +48,15 @@ import {
 } from "../ui/notifications.ts";
 import { broadcastMsg, buildMsg } from "../ui/websocket-server.ts";
 import { isConcurrentApIfname } from "../wifi/wifi-concurrent-interface.ts";
+import { getWifiInterfacesByMacAddress } from "../wifi/wifi-connections.ts";
 import {
 	wifiDeviceListAdd,
 	wifiDeviceListEndUpdate,
 	wifiDeviceListStartUpdate,
 } from "../wifi/wifi-device-list.ts";
+import { isApMode } from "../wifi/wifi-hotspot-types.ts";
 import { scheduleWifiUpdate } from "../wifi/wifi-interfaces.ts";
+import { isWirelessInterface } from "../wifi/wifi-radio-identity.ts";
 import {
 	bondPhysicalId,
 	isBondOptedOut,
@@ -212,6 +213,12 @@ export function isDupIpOnly(int: NetworkInterface): boolean {
 	return int.error === NETIF_ERR_DUPIPV4;
 }
 
+export function isWifiApInterface(name: string): boolean {
+	return Object.values(getWifiInterfacesByMacAddress()).some(
+		(entry) => entry?.ifname === name && isApMode(entry),
+	);
+}
+
 /**
  * May this interface be offered to the bond?
  *
@@ -221,6 +228,7 @@ export function isDupIpOnly(int: NetworkInterface): boolean {
  * toggled the link out of the bond is honoured in both cases.
  */
 export function isBondCandidate(name: string, int: NetworkInterface): boolean {
+	if (isWifiApInterface(name)) return false;
 	if (!int.ip) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
@@ -263,8 +271,19 @@ export function applyConcurrentApBondGate(
 	for (const name in interfaces) {
 		const int = interfaces[name];
 		if (!int) continue;
-		if (isConcurrentApIfname(name)) setNetifError(int, NETIF_ERR_HOTSPOT);
+		if (isConcurrentApIfname(name) || isWifiApInterface(name)) {
+			setNetifError(int, NETIF_ERR_HOTSPOT);
+		} else if ((int.error & NETIF_ERR_HOTSPOT) !== 0) {
+			clearNetifError(int, NETIF_ERR_HOTSPOT);
+			if (int.error === 0 && !isBondOptedOut(name)) int.enabled = true;
+		}
 	}
+}
+
+export function refreshWifiApClientZones(): void {
+	const before = JSON.stringify(netif);
+	applyConcurrentApBondGate(netif);
+	if (before !== JSON.stringify(netif)) triggerNetworkInterfacesChange();
 }
 
 /*
@@ -821,7 +840,7 @@ async function resolveIpAddrOverrides(): Promise<
 async function refreshNetifFromOs(): Promise<void> {
 	try {
 		const [ifconfigOut, ipOverrides] = await Promise.all([
-			run("ifconfig", []),
+			run("ifconfig", ["-a"]),
 			resolveIpAddrOverrides(),
 		]);
 		processIfconfigOutput(ifconfigOut, ipOverrides);
@@ -835,6 +854,7 @@ export function processIfconfigOutput(
 	stdout: string,
 	ipOverrides?: Map<string, IpAddrSelection>,
 	now: number = getms(),
+	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 ) {
 	let intsChanged = false;
 	const newInterfaces: Record<string, NetworkInterface> = {};
@@ -865,7 +885,7 @@ export function processIfconfigOutput(
 			const isRunning = flags.includes("RUNNING");
 
 			// update the list of WiFi devices
-			if (name?.match("^wlan")) {
+			if (wirelessInterface(name)) {
 				const hwAddr = int.match(/ether ([0-9a-f:]+)/);
 				if (hwAddr?.[1]) {
 					wifiDeviceListAdd(name, hwAddr[1], isRunning ? inetAddr : null);
@@ -961,6 +981,9 @@ export function processIfconfigOutput(
 		scheduleWifiUpdate(1000);
 	}
 
+	for (const name in newInterfaces) {
+		if (newInterfaces[name]?.error !== netif[name]?.error) intsChanged = true;
+	}
 	netif = newInterfaces;
 
 	if (intsChanged) {

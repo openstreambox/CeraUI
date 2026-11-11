@@ -36,8 +36,9 @@ export function hotspotIsActive(
 export function hotspotToggleConfirmed(
 	target: HotspotToggleTarget,
 	isActive: boolean,
+	transition?: string,
 ): boolean {
-	if (target === "hotspot") return isActive;
+	if (target === "hotspot") return isActive && transition !== "activating";
 	if (target === "station") return !isActive;
 	return false;
 }

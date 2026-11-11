@@ -216,14 +216,17 @@ for (const hybrid of [false, true]) {
 	}
 }
 
-test("an inactive hotspot retains its unchanged local and remote status", async () => {
+test("an inactive configured hotspot retains local credentials and retains authenticated remote status without lifetime tokens", async () => {
 	seedRadio(false, false);
 	const local = wifiBuildMsg();
-	expect(local[0]?.hotspot).toBeUndefined();
+	expect(local[0]?.hotspot?.password).toBe(PASSWORD);
 
 	const remote = await authenticateRemote();
 	const initial = remote.sent.find((frame) => "status" in JSON.parse(frame));
-	expect(JSON.parse(initial ?? "").status.wifi).toEqual(local);
+	expectSafeStatus(
+		JSON.stringify({ status: JSON.parse(initial ?? "").status }),
+		local,
+	);
 	const frames: unknown[] = [];
 	setControlChannel({
 		isConnected: () => true,
@@ -232,9 +235,12 @@ test("an inactive hotspot retains its unchanged local and remote status", async 
 	broadcastMsg("status", { wifi: local });
 
 	expect(frames).toHaveLength(1);
-	expect(StatusSchema.parse(frames[0]).payload).toEqual({ wifi: local });
-	expect(remote.sent.join("\n")).not.toContain(PASSWORD);
-	expect(JSON.stringify(frames)).not.toContain(PASSWORD);
+	expectSafeStatus(
+		JSON.stringify({ status: StatusSchema.parse(frames[0]).payload }),
+		local,
+	);
+	expect(remote.sent.join("\n")).toContain(PASSWORD);
+	expect(JSON.stringify(frames)).toContain(PASSWORD);
 	expect(wifiBuildMsg()).toEqual(local);
 });
 

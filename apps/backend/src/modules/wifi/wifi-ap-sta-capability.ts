@@ -15,7 +15,6 @@ type CapabilityRunner = (command: string, args: string[]) => Promise<string>;
 const defaultRunner: CapabilityRunner = (command, args) => run(command, args);
 let capabilityRunner: CapabilityRunner = defaultRunner;
 
-const cachedPhySupport = new Map<string, boolean>();
 const WIPHY_RE = /^\s*wiphy\s+(\d+)\s*$/im;
 const COMBINATION_START_RE = /^\s*\*\s+#\{/;
 const LIMIT_RE = /#\{\s*([^}]+)\s*\}\s*<=\s*(\d+)/g;
@@ -106,12 +105,8 @@ export async function supportsApStaConcurrency(
 		const phy = parsePhyName(deviceInfo);
 		if (phy === undefined) return false;
 
-		const cached = cachedPhySupport.get(phy);
-		if (cached !== undefined) return cached;
-
 		const phyInfo = await capabilityRunner("iw", ["phy", phy, "info"]);
 		const supported = parseApStaConcurrencySupport(phyInfo);
-		cachedPhySupport.set(phy, supported);
 		return supported;
 	} catch {
 		return false;
@@ -122,10 +117,36 @@ export function setApStaCapabilityRunnerForTest(
 	runner: CapabilityRunner | null,
 ): void {
 	capabilityRunner = runner ?? defaultRunner;
-	cachedPhySupport.clear();
 }
 
 export function resetApStaCapabilityStateForTest(): void {
 	capabilityRunner = defaultRunner;
-	cachedPhySupport.clear();
+}
+
+/** Only the supported-interface-modes section proves AP support. */
+export function parseApModeSupport(output: string): boolean | undefined {
+	const section = output.match(
+		/Supported interface modes:\s*\n((?:[ \t]+\*[^\n]*(?:\n|$))+)/i,
+	)?.[1];
+	if (!section) return undefined;
+	return /^\s*\* AP\s*$/m.test(section);
+}
+
+export async function readApModeSupport(
+	ifname: string,
+): Promise<boolean | undefined> {
+	try {
+		const info = await capabilityRunner("iw", [
+			"dev",
+			argMatch(ID_RE, ifname),
+			"info",
+		]);
+		const phy = parsePhyName(info);
+		if (!phy) return undefined;
+		return parseApModeSupport(
+			await capabilityRunner("iw", ["phy", phy, "info"]),
+		);
+	} catch {
+		return undefined;
+	}
 }

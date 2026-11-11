@@ -331,6 +331,7 @@ const TICK_INTERVAL_MS = 1_000;
  * inside the Svelte app — never in the rune-free unit tests, which exercise
  * {@link asyncOpCore} directly.
  */
+// biome-ignore lint/nursery/useSvelteReactiveClasses: Attempt ownership is imperative bookkeeping; reactive reads would subscribe callers to dispatches.
 const latestAttempts = new Map<string, object>();
 
 function createAsyncOpStore(): AsyncOpStore {
@@ -592,7 +593,8 @@ export async function osCommand<T>(opts: {
 	);
 	// A TTL/reconnect release permits a new dispatch while this RPC can still
 	// resolve. Its completion must not affect the replacement entry or surface.
-	const isCurrent = () => ownsAttempt() && (!opts.isCurrent || opts.isCurrent());
+	const isCurrent = () =>
+		ownsAttempt() && (!opts.isCurrent || opts.isCurrent());
 	// Feedback survives transient state loss; never recreate a store to settle it.
 	const hasEntry = () => singleton === owner;
 	try {

@@ -16,13 +16,13 @@
 */
 
 import { randomBase64 } from "../../helpers/crypto.ts";
-import { logger } from "../../helpers/logger.ts";
 import { setNetifDupIpSuppression } from "../network/network-interfaces.ts";
 import {
 	nmConnect,
 	nmConnSetFields,
 	nmHotspot,
 } from "../network/network-manager.ts";
+import { hotspotSteeringPending } from "../network/uplink-steering/readiness.ts";
 import { hotspotCredentialsStore } from "./hotspot-credentials.ts";
 import { getWifiState, setWifiState } from "./state/wifi-state.ts";
 import { broadcastWifiState, wifiUpdateSavedConns } from "./wifi.ts";
@@ -31,8 +31,10 @@ import {
 	withWifiAdapterLock,
 } from "./wifi-adapter-lock.ts";
 import { getPersistedWifiAdapterMode } from "./wifi-adapter-mode.ts";
+import { nmSettingsForChannel } from "./wifi-channels.ts";
 import {
 	concurrentHotspotBindingFields,
+	concurrentStationChannel,
 	ensureConcurrentApInterface,
 	releaseConcurrentApInterface,
 } from "./wifi-concurrent-interface.ts";
@@ -51,8 +53,13 @@ import {
 } from "./wifi-hotspot-monitor.ts";
 import { publishHotspotOutcome } from "./wifi-hotspot-outcome.ts";
 import {
+	configureHotspotProfile,
+	ownedHotspotProfile,
+} from "./wifi-hotspot-profile.ts";
+import { waitForHotspotReadiness } from "./wifi-hotspot-readiness.ts";
+import { hotspotSecurityFields } from "./wifi-hotspot-security.ts";
+import {
 	canHotspot,
-	HOTSPOT_AUTOCONNECT_FIELDS,
 	HOTSPOT_UP_TO,
 	type HotspotActivationDeps,
 	type HotspotStartResult,
@@ -68,6 +75,17 @@ import {
 
 /** Production defaults: real NetworkManager + broadcast + dup-IP suppression. */
 export const defaultHotspotDeps: HotspotActivationDeps = {
+	confirmSteering: async (ifname) => {
+		await wifiUpdateDevices();
+		const { requestUplinkSteeringReconcile } = await import(
+			"../network/uplink-steering/runtime.ts"
+		);
+		await requestUplinkSteeringReconcile();
+		return !hotspotSteeringPending(ifname);
+	},
+	configureProfile: configureHotspotProfile,
+	ownedProfile: ownedHotspotProfile,
+	stationChannel: concurrentStationChannel,
 	nmConnect,
 	nmConnSetFields,
 	nmHotspot,
@@ -258,10 +276,13 @@ async function prepareHotspotLocked(
 	}
 	// No profile, and the store has never recorded one: this adapter has never
 	// hosted an AP, so the shown pair is a suggestion rather than a saved setup.
-	const firstTime =
-		!identity.conn && !deps.credentials.get(macAddress)?.conn
-			? ({ firstTime: true } as const)
-			: {};
+	const firstTime = (
+		deps.ownedProfile
+			? !(await deps.ownedProfile(macAddress))
+			: !identity.conn && !deps.credentials.get(macAddress)?.conn
+	)
+		? ({ firstTime: true } as const)
+		: {};
 	const chosen =
 		msg.name !== undefined && msg.password !== undefined
 			? { name: msg.name, password: msg.password }
@@ -269,7 +290,10 @@ async function prepareHotspotLocked(
 	if (
 		!chosen ||
 		isHotspotActive(wifiInterface) ||
-		(chosen.name === identity.name && chosen.password === identity.password)
+		(!deps.configureProfile &&
+			identity.conn &&
+			chosen.name === identity.name &&
+			chosen.password === identity.password)
 	) {
 		return {
 			success: true,
@@ -277,6 +301,43 @@ async function prepareHotspotLocked(
 			password: identity.password,
 			...firstTime,
 		};
+	}
+	if (deps.configureProfile) {
+		const channel = wifiInterface.hotspot.channel ?? "auto";
+		const radio = nmSettingsForChannel(
+			channel,
+			wifiInterface.hotspot.derivedChannels ?? [],
+		);
+		if (!radio) return { success: false, error: "activation-failed" };
+		try {
+			const uuid = await deps.configureProfile(
+				macAddress,
+				{
+					"802-11-wireless.ssid": chosen.name,
+					"802-11-wireless-security.psk": chosen.password,
+					"802-11-wireless.band": radio.nmBand,
+					"802-11-wireless.channel": radio.nmChannel,
+					...hotspotSecurityFields(wifiInterface.hotspot.security ?? "wpa2"),
+				},
+				undefined,
+				(uuid) =>
+					deps.credentials.remember(macAddress, {
+						ssid: chosen.name,
+						password: chosen.password,
+						channel,
+						conn: uuid,
+					}),
+			);
+			Object.assign(wifiInterface.hotspot, {
+				conn: uuid,
+				name: chosen.name,
+				password: chosen.password,
+			});
+			rememberIdentity(macAddress, wifiInterface, deps, uuid);
+			return { success: true, ...chosen };
+		} catch {
+			return { success: false, error: "activation-failed" };
+		}
 	}
 	// The profile is written FIRST: a store that ran ahead of a refused write
 	// would show the operator credentials the AP never broadcasts.
@@ -369,11 +430,41 @@ async function startHotspotLocked(
 	wifiInterface: WifiInterfaceWithHotspot,
 	deps: HotspotActivationDeps,
 ): Promise<HotspotStartResult> {
-	const ifname = wifiInterface.ifname;
 	const owned = hotspotOwnershipGuard(macAddress, wifiInterface);
-	if (!owned()) {
+	if (!owned()) return { success: false, error: "activation-failed" };
+	const stored = deps.credentials.get(macAddress);
+	const uuid = deps.ownedProfile
+		? await deps.ownedProfile(macAddress)
+		: wifiInterface.hotspot.conn;
+	if (!owned()) return { success: false, error: "activation-failed" };
+	if (deps.ownedProfile && !uuid)
+		return { success: false, error: "activation-failed" };
+	const existing = await deps.findHotspotConn(macAddress, {
+		ssid: stored?.ssid ?? wifiInterface.hotspot.name ?? "",
+		password: stored?.password ?? wifiInterface.hotspot.password ?? "",
+		...(uuid ? { conn: uuid } : {}),
+	});
+	if (!owned() || (existing && !owned(existing.uuid, existing.macAddress)))
+		return { success: false, error: "activation-failed" };
+	if (existing) {
+		if (uuid && existing.uuid !== uuid)
+			return { success: false, error: "activation-failed" };
+		rememberHotspotProfilePin(
+			wifiInterface.hotspot,
+			existing.uuid,
+			existing.macAddress ?? "",
+		);
+		Object.assign(wifiInterface.hotspot, {
+			conn: existing.uuid,
+			name: existing.ssid,
+			password: existing.password,
+			channel: existing.channel,
+		});
+	} else if (deps.ownedProfile || !wifiInterface.hotspot.conn) {
 		return { success: false, error: "activation-failed" };
 	}
+	const ifname = wifiInterface.ifname;
+
 	if (
 		wifiInterface.hotspot.conn &&
 		(wifiInterface.conn === wifiInterface.hotspot.conn ||
@@ -383,8 +474,12 @@ async function startHotspotLocked(
 	) {
 		// Already up: nothing is dispatched, so no confirmation will ever settle
 		// and this branch owes the terminal frame itself.
-		deps.publishOutcome?.("start", wifiInterface.id, { success: true });
-		return { success: true };
+		const result = await waitForHotspotReadiness(
+			wifiInterface.concurrentHotspot?.ifname ?? ifname,
+			deps.confirmSteering,
+		);
+		deps.publishOutcome?.("start", wifiInterface.id, result);
+		return result;
 	}
 	/*
 	  Capability answers whether this radio CAN keep its station leg; the operator's
@@ -396,6 +491,15 @@ async function startHotspotLocked(
 	const useConcurrentAp =
 		wifiInterface.supportsApStaConcurrency === true &&
 		(deps.preferConcurrentAp?.(macAddress) ?? true);
+	const stationChannel =
+		useConcurrentAp && deps.stationChannel
+			? await deps.stationChannel(
+					ifname,
+					wifiInterface.hotspot.derivedChannels ?? [],
+				)
+			: {};
+	if (stationChannel === undefined)
+		return { success: false, error: "activation-failed" };
 	const concurrentInterface = useConcurrentAp
 		? await deps.ensureConcurrentInterface?.(ifname)
 		: undefined;
@@ -408,9 +512,9 @@ async function startHotspotLocked(
 	if (useConcurrentAp && concurrentInterface === undefined) {
 		return { success: false, error: "activation-failed" };
 	}
-	const activationIfname = concurrentInterface?.ifname ?? ifname;
+
 	const bindingFields = concurrentInterface
-		? concurrentHotspotBindingFields(ifname)
+		? { ...concurrentHotspotBindingFields(ifname), ...stationChannel }
 		: hotspotBindingFields(macAddress, wifiInterface.hotspot.security);
 	if (concurrentInterface) {
 		wifiInterface.concurrentHotspot = {
@@ -431,101 +535,37 @@ async function startHotspotLocked(
 	deps.broadcastState();
 	syncWifiStateCache(macAddress, wifiInterface); // still station (isHotspot false)
 
-	const rollback = (): HotspotStartResult => {
+	const rollback = async (): Promise<HotspotStartResult> => {
 		delete wifiInterface.hotspot.transition;
 		wifiInterface.conn = priorConn;
 		if (!concurrentInterface) deps.setDupIpSuppression(ifname, false);
 		// Restore the cached state so it is NEVER left in hotspot mode on failure.
 		setWifiState(priorCache);
 		if (concurrentInterface?.created) {
-			void deps.releaseConcurrentInterface?.(concurrentInterface.ifname);
+			await deps.releaseConcurrentInterface?.(concurrentInterface.ifname);
 		}
 		delete wifiInterface.concurrentHotspot;
 		deps.broadcastState();
 		return { success: false, error: "activation-failed" };
 	};
 
-	// The SAME resolution `wifiHotspotPrepare` showed the operator, so the AP
-	// broadcasts exactly the credentials they acknowledged.
-	const identity = await resolveHotspotIdentity(
-		macAddress,
-		wifiInterface,
-		deps,
-	);
-	if (!identity || !owned(identity.conn, identity.profileMac))
-		return rollback();
-	let conn = identity.conn;
-
-	// Cleanup is best-effort, runs off the critical path, and never fails a start.
-	const prune = (keepUuid: string) => {
-		void deps
-			.pruneHotspotConns(macAddress, keepUuid)
-			.catch((err) => logger.debug(`hotspot profile cleanup failed: ${err}`));
-	};
+	const conn = wifiInterface.hotspot.conn;
 
 	if (conn) {
-		if (!owned(conn, identity.profileMac)) return rollback();
-		const rebound = await deps.nmConnSetFields(conn, bindingFields);
-		if (!owned(conn, identity.profileMac)) return rollback();
-		prune(conn);
+		if (!owned(conn)) return rollback();
+		if (!(await deps.nmConnSetFields(conn, bindingFields))) return rollback();
+		if (!owned(conn)) return rollback();
 		if (!(await deps.nmConnect(conn, HOTSPOT_UP_TO))) {
 			return rollback();
 		}
-		if (!owned(conn, identity.profileMac)) return rollback();
-		await deps.nmConnSetFields(conn, HOTSPOT_AUTOCONNECT_FIELDS);
-		if (!owned(conn, identity.profileMac)) return rollback();
-		rememberIdentity(
-			macAddress,
-			wifiInterface,
-			deps,
+		if (!owned(conn)) return rollback();
+		rememberHotspotProfilePin(
+			wifiInterface.hotspot,
 			conn,
-			identity.profileMac,
+			bindingFields["802-11-wireless.mac-address"],
 		);
-		if (rebound)
-			rememberHotspotProfilePin(
-				wifiInterface.hotspot,
-				conn,
-				bindingFields["802-11-wireless.mac-address"],
-			);
 	} else {
-		// First hotspot this adapter has ever hosted, or its profile was deleted
-		// outside CeraUI: the identity resolved (and already persisted) above.
-		const { name, password } = identity;
-		deps.broadcastState();
-		syncWifiStateCache(macAddress, wifiInterface);
-
-		const uuid = await deps.nmHotspot(
-			activationIfname,
-			name,
-			password,
-			HOTSPOT_UP_TO,
-		);
-		if (!uuid || !owned(uuid)) {
-			return rollback();
-		}
-
-		const rebound = await deps.nmConnSetFields(uuid, bindingFields);
-		if (!owned(uuid)) return rollback();
-		// The updated settings let the connection be recognised as our hotspot.
-		await deps.wifiUpdateSavedConns();
-		if (!owned(uuid)) return rollback();
-		prune(uuid);
-		// Restart the connection with the updated settings (needed to disable pmf).
-		if (!(await deps.nmConnect(uuid, HOTSPOT_UP_TO))) {
-			return rollback();
-		}
-		if (!owned(uuid)) return rollback();
-		await deps.nmConnSetFields(uuid, HOTSPOT_AUTOCONNECT_FIELDS);
-		if (!owned(uuid)) return rollback();
-		conn = uuid;
-		wifiInterface.hotspot.conn ??= uuid;
-		rememberIdentity(macAddress, wifiInterface, deps, uuid);
-		if (rebound)
-			rememberHotspotProfilePin(
-				wifiInterface.hotspot,
-				uuid,
-				bindingFields["802-11-wireless.mac-address"],
-			);
+		return rollback();
 	}
 
 	// NM activation issued successfully. The mode flip waits for confirmation —

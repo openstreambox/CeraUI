@@ -173,10 +173,11 @@ describe("the canonical per-adapter WiFi lock (F-02)", () => {
 describe("connectNew races a hotspot start on ONE adapter (F-01 + F-10)", () => {
 	test("the second op observes the first op's terminal state, never interleaved", async () => {
 		const gate = deferred<string | undefined>();
+		iface.hotspot.conn = "hotspot-uuid";
 		const first = startHotspotForInterface(
 			MAC,
 			iface,
-			makeDeps({ nmHotspot: () => gate.promise }),
+			makeDeps({ nmConnect: () => gate.promise }),
 		);
 
 		// The hotspot transaction now holds the adapter. A station join dispatched

@@ -187,7 +187,7 @@ async function confirm() {
 	const seq = attempt;
 	if (!canConfirm || !captured?.incarnation || !current(seq, captured)) return;
 	const chosen = { name, password };
-	if (name !== loaded.name || password !== loaded.password) {
+	if (firstTime || name !== loaded.name || password !== loaded.password) {
 		phase = 'saving';
 		try {
 			const result = await rpc.wifi.hotspotPrepare({

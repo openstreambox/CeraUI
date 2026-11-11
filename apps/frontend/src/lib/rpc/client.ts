@@ -820,6 +820,7 @@ export interface TypedRPC {
 		hotspotPrepare: (
 			input: HotspotPrepareInput,
 		) => Promise<HotspotPrepareOutput>;
+		hotspotDelete: (input: HotspotToggleInput) => Promise<SuccessResponse>;
 		hotspotConfigure: (input: HotspotConfigInput) => Promise<SuccessResponse>;
 		setCountry: (input: SetWifiCountryInput) => Promise<SetWifiCountryOutput>;
 		getAdapterModes: () => Promise<WifiAdapterModeStatus>;
@@ -832,6 +833,12 @@ export interface TypedRPC {
 		) => Promise<SetWifiAdapterModeOutput>;
 	};
 	network: {
+		getSharingPolicy: () => Promise<
+			import("@ceraui/rpc/schemas").SharingPolicy
+		>;
+		setSharingPolicy: (
+			input: import("@ceraui/rpc/schemas").SharingPolicy,
+		) => Promise<import("@ceraui/rpc/schemas").SharingPolicy>;
 		getInterfaces: () => Promise<unknown>;
 		configure: (input: NetifConfigInput) => Promise<NetifConfigOutput>;
 		/**

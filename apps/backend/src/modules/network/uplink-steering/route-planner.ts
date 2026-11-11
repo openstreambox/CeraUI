@@ -95,7 +95,13 @@ async function planUplinkRouteInner(
 		return { ...candidate, table: existingTable, managed: false };
 	}
 	if (isModuleProvisionedUplink(candidate.ifname)) {
-		return await planManagedRoute(candidate, deps, undefined);
+		return await planManagedRoute(
+			candidate,
+			deps,
+			existingTable === managedTable(candidate.mark)
+				? SOURCE_ROUTE_RULE_PRIORITY
+				: undefined,
+		);
 	}
 	throw routeUnavailable(
 		candidate.ifname,

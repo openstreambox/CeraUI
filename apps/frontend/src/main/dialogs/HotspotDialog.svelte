@@ -20,8 +20,7 @@
   • Start never dispatches directly (#413): it opens `HotspotActivationConfirm`,
     which shows the exact credentials the AP will broadcast (or stores the
     operator's own) and needs an explicit acknowledgement. While the hotspot is
-    off, the edit form is NOT rendered — `hotspotConfigure` only reconfigures a
-    live AP, so fields typed here used to be silently ignored by the start.
+    off, Save prepares an inactive profile; Forget removes its saved setup.
   • When the hotspot is active, ONE QR encoding the live credentials is rendered
     so phones can join by scan. Its `T:` token follows the LIVE security mode
     (`hotspotQrSecurity`): a WPA3-SAE AP advertised as `T:WPA` yields a code that
@@ -268,11 +267,21 @@ $effect(() => {
 // a `wifi` event carrying `hotspot.config`, which the subscriptions handler routes
 // into `hotspot-config:${deviceId}`. The one-time form sync (`initialized` guard)
 // keeps the live QR/iface re-broadcast from clobbering the in-progress edits.
+async function handleDelete() {
+	await osCommand({
+		key: configKey,
+		rpc: () => rpc.wifi.hotspotDelete({ device: deviceId, radio_id: iface?.radio_identity?.id }),
+		confirmOnResolve: true,
+		failMessage: () => m["network.os.operationFailed"](),
+		busyMessage: () => m["network.os.deviceBusy"](),
+	});
+}
+
 async function handleSave() {
 	const binding = formBinding;
 	if (!isFormValid || configuring || !canEdit || !binding?.incarnation) return;
 	const input = {
-		device: binding.device, incarnation: binding.incarnation, name, password, channel,
+		device: binding.device, ...(iface?.radio_identity?.id ? { radio_id: iface.radio_identity.id } : {}), incarnation: binding.incarnation, name, password, channel,
 		...(security !== undefined ? { security } : {}),
 	};
 	await osCommand({
@@ -287,7 +296,7 @@ async function handleSave() {
 
 // Start/stop through the shared keyed op. Stay `pending` after dispatch; the
 // confirm $effect below flips to `confirmed` once the snapshot reports the target
-// mode (the 15 s TTL valve is the backstop if the device never reports back).
+// mode (the 60 s Start TTL valve is the backstop if the device never reports back).
 async function handleToggle() {
 	if (isActive) {
 		const binding = capture();
@@ -318,6 +327,7 @@ async function startConfirmed(incarnation: string) {
 	await osCommand({
 		key: toggleKey,
 		target: 'hotspot',
+		pendingTtlMs: 60_000,
 		rpc: () => rpc.wifi.hotspotStart({ device: binding.device, incarnation }),
 		isCurrent: () => current(binding),
 		onResult: (result) => {
@@ -337,7 +347,7 @@ async function startConfirmed(incarnation: string) {
 // naturally (post-confirm).
 $effect(() => {
 	if (getOperationPhase(toggleKey) !== 'pending') return;
-	if (hotspotToggleConfirmed(toggleTarget, isActive)) {
+	if (hotspotToggleConfirmed(toggleTarget, isActive, iface?.transition)) {
 		confirmOperation(toggleKey);
 	}
 });
@@ -468,7 +478,8 @@ async function copyPassword() {
 					{m["hotspotConfirm.inactiveHint"]()}
 				</p>
 			{/if}
-		{:else}
+		{/if}
+		{#if !confirmingStart}
 		<!-- Name -->
 		<div class="space-y-1.5">
 			<Label class="text-sm font-medium" for="hotspot-name">{m["network.hotspot.name"]()}</Label>
@@ -671,8 +682,7 @@ async function copyPassword() {
 			{m["network.dialog.close"]()}
 		</Button>
 		<!-- One action row at a time: while the credential gate is open, its own
-		     Cancel / Turn on are the only way forward, and Save exists only for a
-		     live AP (`hotspotConfigure` refuses anything else). -->
+		     Cancel / Turn on are the only way forward. Save prepares or updates setup. -->
 		{#if !confirmingStart}
 		<Button
 			class="sm:min-w-28"
@@ -689,7 +699,12 @@ async function copyPassword() {
 			{isActive ? m["network.status.turnOff"]() : m["network.status.enableHotspot"]()}
 		</Button>
 		{/if}
-		{#if isActive}
+		{#if !confirmingStart}
+		{#if !isActive}
+		<Button variant="outline" disabled={configuring || toggling} onclick={handleDelete}>
+			{m["wifiSelector.button.forget"]()}
+		</Button>
+		{/if}
 		<Button class="sm:min-w-24" disabled={!canEdit || !isFormValid || configuring} onclick={handleSave}>
 			{#if configuring}
 				<Loader2 class="size-4 animate-spin motion-reduce:animate-none" />

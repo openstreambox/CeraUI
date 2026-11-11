@@ -15,7 +15,13 @@
  * `devtools` is the namespace under test: 132 keys, and the destination that
  * owns it is already dev-gated, so it is the realistic first candidate.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -102,7 +108,7 @@ async function buildVariant(
 }
 
 beforeAll(async () => {
-	workdir = mkdtempSync(path.join(tmpdir(), "ceraui-i18n-lazy-"));
+	workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "ceraui-i18n-lazy-")));
 	for (const name of ["eager", "lazy"]) {
 		const { mkdirSync } = await import("node:fs");
 		mkdirSync(path.join(workdir, name, "src"), { recursive: true });

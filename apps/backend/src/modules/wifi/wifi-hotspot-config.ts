@@ -51,6 +51,7 @@ import {
 	type HotspotOutcomePublisher,
 	publishHotspotOutcome,
 } from "./wifi-hotspot-outcome.ts";
+import { configureHotspotProfile } from "./wifi-hotspot-profile.ts";
 import {
 	DEFAULT_HOTSPOT_SECURITY,
 	type HotspotSecurityId,
@@ -175,8 +176,6 @@ async function stopHotspotLocked(
 	deps.broadcastState();
 	syncWifiStateCache(macAddress, wifiInterface);
 
-	await deps.nmConnSetFields(conn, { "connection.autoconnect": "no" });
-
 	const disconnected = await deps.nmDisconnect(conn);
 	if (disconnected) {
 		if (wifiInterface.concurrentHotspot) {
@@ -185,6 +184,8 @@ async function stopHotspotLocked(
 			await deps.releaseConcurrentInterface(virtualIfname);
 		} else {
 			wifiInterface.conn = null;
+			wifiInterface.activeConn = null;
+			delete wifiInterface.activeMode;
 			wifiInterface.available.clear();
 		}
 	}
@@ -227,11 +228,13 @@ export type HotspotConfigDeps = {
 			conn?: string;
 		},
 	) => void;
+	configureProfile?: typeof configureHotspotProfile;
 	/** The adapter's own capability read — the sole evidence for a WPA3 offer. */
 	getCapabilities: (ifname: string) => WifiAdapterCapabilities | undefined;
 };
 
 export const defaultHotspotConfigDeps: HotspotConfigDeps = {
+	configureProfile: configureHotspotProfile,
 	nmConnSetFields,
 	nmConnect,
 	wifiUpdateSavedConns,
@@ -323,8 +326,6 @@ export async function wifiHotspotConfig(
 	const wifiInterface = getWifiInterfaceByMacAddress(macAddress);
 	if (!wifiInterface) return refuse();
 	if (!canHotspot(wifiInterface)) return refuse();
-	// Make sure the interface is already in hotspot mode
-	if (!isHotspotActive(wifiInterface)) return refuse();
 
 	// Make sure all required fields are present and valid
 	if (
@@ -524,6 +525,55 @@ async function reconfigureHotspotLocked(
 	);
 	if (!owned()) {
 		return "saving";
+	}
+	if (!isHotspotActive(wifiInterface)) {
+		const radio = nmSettingsForChannel(
+			channel,
+			wifiInterface.hotspot.derivedChannels ?? [],
+		);
+		const securityFields = nmSettingsForSecurity(
+			security,
+			offeredSecurityFor(wifiInterface, deps),
+		);
+		if (
+			!radio ||
+			!securityFields ||
+			!deps.configureProfile ||
+			!isWifiChannelName(channel)
+		)
+			return "saving";
+		try {
+			const uuid = await deps.configureProfile(
+				macAddress,
+				{
+					"802-11-wireless.ssid": name,
+					"802-11-wireless-security.psk": password,
+					"802-11-wireless.band": radio.nmBand,
+					"802-11-wireless.channel": radio.nmChannel,
+					...securityFields,
+				},
+				undefined,
+				(uuid) =>
+					deps.rememberCredentials(macAddress, {
+						ssid: name,
+						password,
+						channel,
+						conn: uuid,
+					}),
+			);
+			Object.assign(wifiInterface.hotspot, {
+				conn: uuid,
+				name,
+				password,
+				channel,
+				security,
+			});
+			deps.broadcastState();
+			syncWifiStateCache(macAddress, wifiInterface);
+			return "ok";
+		} catch {
+			return "saving";
+		}
 	}
 	const derived = wifiInterface.hotspot.derivedChannels ?? [];
 	const offeredSecurity = offeredSecurityFor(wifiInterface, deps);

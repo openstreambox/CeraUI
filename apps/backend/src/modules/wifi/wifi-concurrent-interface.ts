@@ -9,7 +9,7 @@
 */
 
 import { argMatch, ID_RE, run } from "../../helpers/run.ts";
-import { nmDeviceProp } from "../network/network-manager.ts";
+import type { DerivedApChannel } from "./wifi-channels.ts";
 
 type InterfaceRunner = (command: string, args: string[]) => Promise<string>;
 type InterfaceWaiter = (ifname: string) => Promise<boolean>;
@@ -17,12 +17,21 @@ type InterfaceWaiter = (ifname: string) => Promise<boolean>;
 const defaultRunner: InterfaceRunner = (command, args) => run(command, args);
 const defaultWaiter: InterfaceWaiter = async (ifname) => {
 	for (let attempt = 0; attempt < 20; attempt++) {
-		if ((await nmDeviceProp(ifname, "GENERAL.STATE")) !== undefined)
+		const state = await interfaceRunner("nmcli", [
+			"-g",
+			"GENERAL.STATE",
+			"device",
+			"show",
+			ifname,
+		]).catch(() => "");
+		if (Number.parseInt(state, 10) === 30 || Number.parseInt(state, 10) === 100)
 			return true;
 		await Bun.sleep(100);
 	}
 	return false;
 };
+
+const createdInterfaces = new Set<string>();
 
 let interfaceRunner = defaultRunner;
 let interfaceWaiter = defaultWaiter;
@@ -48,7 +57,7 @@ export function concurrentHotspotBindingFields(
 export type ConcurrentApInterface = {
 	ifname: string;
 	created: boolean;
-	type: "managed";
+	type: "AP";
 };
 
 export async function ensureConcurrentApInterface(
@@ -60,13 +69,12 @@ export async function ensureConcurrentApInterface(
 		() => undefined,
 	);
 	if (info !== undefined) {
-		if (
-			/^\s*type\s+managed\s*$/m.test(info) &&
-			(await interfaceWaiter(ifname))
-		) {
-			return { ifname, created: false, type: "managed" };
+		if (/^\s*type\s+AP\s*$/m.test(info) && (await interfaceWaiter(ifname))) {
+			return { ifname, created: false, type: "AP" };
 		}
-		await releaseConcurrentApInterface(ifname);
+		// A deterministic name is not ownership evidence. Leave foreign or
+		// unavailable siblings intact, including those on other radios.
+		return undefined;
 	}
 	try {
 		await interfaceRunner("iw", [
@@ -76,12 +84,15 @@ export async function ensureConcurrentApInterface(
 			"add",
 			ifname,
 			"type",
-			"managed",
+			"__ap",
 		]);
+		createdInterfaces.add(ifname);
+		await interfaceRunner("nmcli", ["device", "set", ifname, "managed", "yes"]);
 		if (await interfaceWaiter(ifname))
-			return { ifname, created: true, type: "managed" };
+			return { ifname, created: true, type: "AP" };
 		await releaseConcurrentApInterface(ifname);
 	} catch {
+		await releaseConcurrentApInterface(ifname);
 		return undefined;
 	}
 	return undefined;
@@ -90,8 +101,10 @@ export async function ensureConcurrentApInterface(
 export async function releaseConcurrentApInterface(
 	ifname: string,
 ): Promise<void> {
+	if (!createdInterfaces.has(ifname)) return;
 	try {
 		await interfaceRunner("iw", ["dev", argMatch(ID_RE, ifname), "del"]);
+		createdInterfaces.delete(ifname);
 	} catch {
 		return;
 	}
@@ -106,6 +119,28 @@ export function setConcurrentInterfaceDepsForTest(
 }
 
 export function resetConcurrentInterfaceDepsForTest(): void {
+	createdInterfaces.clear();
 	interfaceRunner = defaultRunner;
 	interfaceWaiter = defaultWaiter;
+}
+
+/** Shared-channel admission is based on the current association, never a guessed channel. */
+export async function concurrentStationChannel(
+	ifname: string,
+	derived: readonly DerivedApChannel[],
+): Promise<Record<string, string> | undefined> {
+	const link = await interfaceRunner("iw", [
+		"dev",
+		argMatch(ID_RE, ifname),
+		"link",
+	]).catch(() => undefined);
+	if (link === undefined) return undefined;
+	if (/Not connected\./.test(link)) return {};
+	const freq = /freq:\s*(\d+)/.exec(link)?.[1];
+	const channel = derived.find((c) => c.freqMhz === Number(freq));
+	if (!channel) return undefined;
+	return {
+		"802-11-wireless.band": channel.band,
+		"802-11-wireless.channel": String(channel.channel),
+	};
 }

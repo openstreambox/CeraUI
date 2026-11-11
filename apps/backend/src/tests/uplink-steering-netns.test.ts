@@ -2,11 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
+import type { SharingPolicy } from "@ceraui/rpc/schemas";
 import {
 	MAX_STEERING_UPLINKS,
 	type SteeringUplink,
 } from "../modules/network/uplink-steering/contracts.ts";
+import {
+	applySharingPolicy,
+	DEFAULT_SHARING_POLICY,
+} from "../modules/network/uplink-steering/policy.ts";
 import {
 	buildShareRuleset,
 	stableUplinkMark,
@@ -49,10 +53,32 @@ describe.skipIf(!NETNS_ISOLATED)(
 				clientZones,
 				uplinks: [wan0, wan1],
 			});
-			const selectWan0 = buildShareRuleset({
-				clientZones,
-				uplinks: [wan0, { ...wan1, selectable: false, weight: 0 }],
+			// The existing kernel fixture calls its links wan0/wan1. Classify
+			// them as wired/cellular before mapping to those fixture names.
+			const policyRules = (policy: SharingPolicy) =>
+				buildShareRuleset({
+					clientZones,
+					uplinks: applySharingPolicy(
+						[
+							{ uplink: { ...wan0, ifname: "eth0" } },
+							{ uplink: { ...wan1, ifname: "wwan0", weight: 100 } },
+						],
+						policy,
+					).map(({ uplink }) => ({
+						...uplink,
+						ifname: uplink.ifname === "eth0" ? "wan0" : "wan1",
+					})),
+				});
+			const preferredPolicy: SharingPolicy = {
+				...DEFAULT_SHARING_POLICY,
+				priorities: { wired: 0, cellular: 10, wifi: 20 },
+			};
+			const selectWan0 = policyRules(preferredPolicy);
+			const adminDown = policyRules({
+				...preferredPolicy,
+				administrativelyDown: ["eth0"],
 			});
+
 			const transitionWan1 = buildShareRuleset({
 				clientZones,
 				uplinks: [
@@ -60,10 +86,11 @@ describe.skipIf(!NETNS_ISOLATED)(
 					{ ...wan1, weight: 100 },
 				],
 			});
-			const finalWan1 = buildShareRuleset({
-				clientZones,
-				uplinks: [{ ...wan1, weight: 100 }],
+			const finalWan1 = policyRules({
+				...DEFAULT_SHARING_POLICY,
+				mode: "cellular-only",
 			});
+
 			// All-down keeps both uplinks listed (retained restore/NAT support) with
 			// no positive selectable weight, so only the forward drop is added.
 			const allDown = buildShareRuleset({
@@ -84,6 +111,7 @@ describe.skipIf(!NETNS_ISOLATED)(
 				const transitionWan1Path = join(temp, "transition-wan1.nft");
 				const finalWan1Path = join(temp, "final-wan1.nft");
 				const allDownPath = join(temp, "all-down.nft");
+				const adminDownPath = join(temp, "admin-down.nft");
 				const log0 = join(temp, "wan0.log");
 				const log1 = join(temp, "wan1.log");
 				const goldenPaths = [0, 1, 2, 3, MAX_STEERING_UPLINKS].map((count) =>
@@ -95,6 +123,7 @@ describe.skipIf(!NETNS_ISOLATED)(
 					writeFile(transitionWan1Path, transitionWan1),
 					writeFile(finalWan1Path, finalWan1),
 					writeFile(allDownPath, allDown),
+					writeFile(adminDownPath, adminDown),
 					writeFile(log0, ""),
 					writeFile(log1, ""),
 					...goldenPaths.map((path, index) =>
@@ -142,6 +171,7 @@ describe.skipIf(!NETNS_ISOLATED)(
 						// ruleset; zones and links are not recreated.
 						finalWan1Path,
 						...goldenPaths,
+						adminDownPath,
 					],
 					{ env: process.env, stdout: "pipe", stderr: "pipe" },
 				);
@@ -170,6 +200,12 @@ describe.skipIf(!NETNS_ISOLATED)(
 				expect(result.newAfterReweight).toBe("wan1");
 				expect(result.drainNew).toBe("wan1");
 				expect(result.stickyPostFlush).toBe("wan1");
+				expect(result.selector).toEqual({
+					force: "wan1",
+					preferred: "wan0",
+					down: "wan1",
+					back: "wan0",
+				});
 				expect(result.localUplink).toBe("wan0");
 				expect(result.localSource).toBe("192.0.2.1");
 				expect(result.overlapLocalSource).toBe("10.42.0.1");
@@ -250,6 +286,7 @@ describe.skipIf(!NETNS_ISOLATED)(
 );
 
 interface NetnsResult {
+	selector: { force: string; preferred: string; down: string; back: string };
 	readonly weightedWan0: number;
 	readonly weightedWan1: number;
 	readonly weightedTotal: number;

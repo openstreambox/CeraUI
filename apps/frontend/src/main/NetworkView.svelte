@@ -30,6 +30,7 @@ import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
+import { chooseHotspotRadio } from './network/hotspot-radio-target';
 import SharingSection from './network/SharingSection.svelte';
 import { isWiredSectionEntry, modemClaimedIfnames } from './network/section-assignment';
 import UnclaimedAdaptersBand from './network/UnclaimedAdaptersBand.svelte';
@@ -77,13 +78,10 @@ const isLoading = $derived(
 const wifiEntries = $derived(Object.entries(wifi ?? {}) as [string, WifiInterface][]);
 const hotspotInterfaces = $derived(wifiEntries.filter(([, iface]) => hotspotIsActive(iface)));
 
-// Hotspot target for the configurator dialog: prefer an already-active hotspot
-// interface, else the first hotspot-capable WiFi radio, else any WiFi radio.
-const hotspotTarget = $derived(
-	hotspotInterfaces[0] ??
-		wifiEntries.find(([, iface]) => iface.supports_hotspot) ??
-		wifiEntries[0],
-);
+// Preserve an explicit radio selection across roster changes; otherwise prefer
+// an active hotspot, then an idle AP-capable radio.
+let selectedHotspotRadio = $state<string>();
+const hotspotTarget = $derived(chooseHotspotRadio(wifiEntries, selectedHotspotRadio));
 
 let hotspotDialogOpen = $state(false);
 let wifiCountryOpen = $state(false);
@@ -257,7 +255,13 @@ function openModemConfig(id: string) {
 			{staleInterfaces}
 			onConfigure={configureNetif}
 		/>
-		<HotspotSection {hotspotInterfaces} {hotspotTarget} onSetup={() => (hotspotDialogOpen = true)} />
+		<HotspotSection
+			{hotspotInterfaces}
+			{hotspotTarget}
+			radios={wifiEntries}
+			onSelect={(id) => { selectedHotspotRadio = id; }}
+			onSetup={() => (hotspotDialogOpen = true)}
+		/>
 		<BluetoothSection status={bluetooth} {audioBackend} />
 	{/if}
 </div>

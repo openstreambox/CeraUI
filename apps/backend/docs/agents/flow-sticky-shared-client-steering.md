@@ -86,3 +86,5 @@ and the CeraUI unit ordering; that is source evidence only, not proof of a built
 installed image or of stop/restore behavior on a board. Full contract and
 hardware gate: [`../../docs/UPLINK_STEERING.md`](../../../../docs/UPLINK_STEERING.md).
 
+
+Runtime client selection uses this same owner; see [runtime policy](../../../../docs/UPLINK_STEERING.md#runtime-client-uplink-policy). Policy exclusion retires owned flows while retaining healthy route support. Priority changes retain flows.
