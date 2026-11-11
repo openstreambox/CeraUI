@@ -136,12 +136,12 @@ retry rule are proven against the bindings' typed error and the frontend's
 rendered DOM; the full board drill with released artifacts is a separate,
 hardware-gated step and has not run.
 
-### Confirmed HDMI audio absence
+### HDMI no-signal admission
 
-After resolving an HDMI capture card, start admission reads the receiver's
-`audio_present` and `audio_sampling_rate` controls. Confirmed absence returns the
-existing `audio_source_unavailable` probe failure before engine start. Unsupported
-controls remain unknown and preserve engine admission; no raw error-string
-classification is added. USB and embedded audio keep their existing path.
-The frontend uses the existing localized reconnect-or-select-another-source
-remedy for this class. Image policy owns automatic PipeWire profile selection.
+HDMI start admission reads V4L2 DV timings. Only an explicit no-link verdict
+returns `capture_source_unavailable` with `captureCause: no_signal` before
+capture. Permission errors, unsupported controls and other unknown observations
+retain engine admission. Missing audio cards retain the existing audio-source
+probe failure, whose localized operator copy supplies the reconnect/select
+remedy. Video-only sources can carry silence; no audio-presence or amplitude
+claim is made. The image owns automatic PipeWire profile selection.

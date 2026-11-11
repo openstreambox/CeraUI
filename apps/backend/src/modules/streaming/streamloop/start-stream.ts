@@ -42,10 +42,7 @@ import {
 import { getLastCapabilities } from "../capabilities.ts";
 import { SRTLA_LISTEN_PORT } from "../constants.ts";
 import { embeddedAudioActive } from "../embedded-audio.ts";
-import {
-	isHdmiCaptureAudio,
-	readHdmiAudioSignal,
-} from "../hdmi-audio-signal.ts";
+import { readHdmiVideoSignal } from "../hdmi-audio-signal.ts";
 import { clearStreamProcessExit } from "../health.ts";
 import { createLaunchTransaction } from "../launch-transaction.ts";
 import {
@@ -56,6 +53,7 @@ import {
 import type { Pipeline } from "../pipelines.ts";
 import { replayPreviewEncodeMode } from "../preview-encode-replay.ts";
 import { getLastPublishedBond } from "../srtla.ts";
+import { StreamStartFailure } from "../start-failure-taxonomy.ts";
 import { assertStreamLaunchOwnership } from "../stream-launch-ownership.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
 import { srtlaSendExec } from "./exec-paths.ts";
@@ -96,7 +94,7 @@ export function setStartStreamDepsForTest(
 }
 
 export interface AudioProbeDeps {
-	hdmiAudioSignal?: () => Promise<boolean | undefined>;
+	hdmiVideoSignal?: () => Promise<boolean | undefined>;
 	probe?: (asrc: string) => Promise<string>;
 	networkEmbeddedAudio?: boolean;
 }
@@ -142,11 +140,7 @@ export async function maybeProbeAudioSource(
 	}
 	const probe = deps.probe ?? asrcProbe;
 	try {
-		const device = await probe(config.asrc);
-		if (isHdmiCaptureAudio(device)) {
-			const signal = await (deps.hdmiAudioSignal ?? readHdmiAudioSignal)();
-			if (signal === false) return false;
-		}
+		await probe(config.asrc);
 		return true;
 	} catch (_err) {
 		// asrcProbe rejects when the operator stops the stream before the audio
@@ -173,6 +167,19 @@ export async function startStream(
 	configOverride?: Partial<RuntimeConfig>,
 ): Promise<StartStreamResult> {
 	assertStreamLaunchOwnership();
+	if (
+		pipeline.source === "hdmi" &&
+		(await (audioDeps.hdmiVideoSignal ?? readHdmiVideoSignal)()) === false
+	) {
+		throw new StreamStartFailure({
+			attemptId,
+			phase: "params",
+			class: "capture_source_unavailable",
+			captureCause: "no_signal",
+			retriable: false,
+		});
+	}
+
 	// The preview-encoder fence, and the reason it lives HERE. The engine fixes
 	// the preview encoder when it builds the main graph, so the operator's mode
 	// has to be in the engine's config BEFORE the `start` below — not racing it.

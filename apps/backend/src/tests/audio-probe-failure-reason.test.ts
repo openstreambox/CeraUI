@@ -108,54 +108,30 @@ describe("maybeProbeAudioSource — pseudo-sentinels never probe (C7)", () => {
 	});
 });
 
-describe("HDMI audio signal admission", () => {
-	for (const signal of [true, false, undefined]) {
-		test(`confirmed HDMI signal ${signal} preserves honest admission`, async () => {
-			const result = await maybeProbeAudioSource(
-				audioPipeline,
-				{ ...getConfig(), asrc: "HDMI" },
-				{
-					probe: async () => "hw:CARD=HDMIIN",
-					hdmiAudioSignal: async () => signal,
+describe("HDMI signal admission", () => {
+	test("no DV signal refuses with an actionable typed capture cause", async () => {
+		await expect(
+			startStream(audioPipeline, "192.0.2.10", 5000, "sid", {
+				hdmiVideoSignal: async () => false,
+				probe: async () => {
+					throw new Error("audio probe must not run");
 				},
-			);
-			expect(result).toBe(signal !== false);
+			}),
+		).rejects.toMatchObject({
+			failure: {
+				class: "capture_source_unavailable",
+				captureCause: "no_signal",
+				retriable: false,
+			},
 		});
-	}
-	test("confirmed missing audio returns the typed probe failure before engine start", async () => {
-		const config = getConfig();
-		const previous = config.asrc;
-		config.asrc = "HDMI";
-		try {
-			const result = await startStream(
-				audioPipeline,
-				"192.0.2.10",
-				5000,
-				"sid",
-				{
-					probe: async () => "hw:CARD=HDMIIN",
-					hdmiAudioSignal: async () => false,
-				},
-			);
-			expect(result).toMatchObject({
-				success: false,
-				failureClass: "audio_source_unavailable",
-				error: AUDIO_SOURCE_PROBE_FAILED,
-			});
-		} finally {
-			config.asrc = previous;
-		}
 	});
-	test("USB audio never consults HDMI signal", async () => {
+	test("video signal with silent audio is not classified as missing audio", async () => {
 		expect(
 			await maybeProbeAudioSource(
 				audioPipeline,
-				{ ...getConfig(), asrc: "USB" },
+				{ ...getConfig(), asrc: "HDMI" },
 				{
-					probe: async () => "hw:CARD=USB",
-					hdmiAudioSignal: async () => {
-						throw new Error("must not query HDMI");
-					},
+					probe: async () => "HDMIIN",
 				},
 			),
 		).toBe(true);

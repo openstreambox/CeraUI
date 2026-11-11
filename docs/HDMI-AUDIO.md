@@ -1,18 +1,40 @@
-# HDMI audio startup
+# HDMI startup
 
-When an HDMI receiver reports that audio is absent or has no sample rate,
-starting with that audio input stops before capture and asks you to reconnect
-it or choose another audio source. Check that the source sends HDMI PCM audio;
-a video picture does not guarantee audio. Valid silent PCM is accepted.
-Unsupported receiver controls retain the streaming engine's admission behavior.
-Automatic PipeWire profile selection belongs to the device image.
+If the receiver reports no HDMI signal through its DV timings, start asks you
+to check that the camera is on and the cable is connected, then retry. If the
+audio card is missing, reconnect it or choose another audio input. Unsupported
+or unreadable timing queries preserve the engine's own admission behavior.
 
-# Inicio con audio HDMI
+With a valid video signal, a source without HDMI audio may stream silence.
+Check the source's HDMI PCM audio setting or choose another audio input. Valid
+silent PCM is accepted; audio level is never treated as proof of device loss.
+The device image selects the HDMI receiver's PipeWire profile automatically.
 
-Si el receptor HDMI indica que no hay audio o no hay una frecuencia de muestreo,
-el inicio con esa entrada se detiene antes de la captura y te pide volver a
-conectarla o elegir otra fuente de audio. Comprueba que la fuente envíe audio
-PCM por HDMI; tener imagen no garantiza que haya audio. Se acepta PCM válido
-aunque esté en silencio. Si el receptor no admite esos controles, se mantiene
-la validación del motor de transmisión. La imagen del dispositivo controla la
-selección automática del perfil de PipeWire.
+# Inicio con HDMI
+
+Si el receptor indica que no hay señal HDMI mediante sus tiempos de video, el
+inicio te pide comprobar que la cámara esté encendida y el cable esté conectado,
+y volver a intentarlo. Si falta la tarjeta de audio, vuelve a conectarla o elige
+otra entrada. Si no se pueden consultar los tiempos, se mantiene la validación
+del motor de transmisión.
+
+Con una señal de video válida, una fuente sin audio HDMI puede transmitir
+silencio. Comprueba que la fuente envíe audio PCM por HDMI o elige otra entrada.
+Se acepta PCM válido aunque esté en silencio; el nivel de audio no indica que
+se haya perdido el dispositivo. La imagen selecciona el perfil de PipeWire del
+receptor HDMI automáticamente.
+
+## Engine cleanup after a no-signal start
+
+Reproduction on a receiver with its audio profile enabled:
+
+1. Keep the HDMI capture device enumerated but remove the source signal.
+2. Start HDMI capture with HDMI audio selected.
+3. The engine reports `capture_source_unavailable` with cause `no_signal`.
+4. Reconnect a valid source and Start again.
+
+Observed: the next Start can return `start_cleanup_timeout` in the connect
+phase; an acknowledged Stop does not always clear it. Engine restart can be
+required. This is a separate engine cleanup defect. The application preflight
+recognizes both ENOLINK and ENOLCK timing-query refusals and prevents entering
+that failing start path. It does not claim to repair engine teardown.
