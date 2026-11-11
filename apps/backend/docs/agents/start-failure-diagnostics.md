@@ -135,3 +135,13 @@ None of the above is board evidence. The class, the causes and the per-cause
 retry rule are proven against the bindings' typed error and the frontend's
 rendered DOM; the full board drill with released artifacts is a separate,
 hardware-gated step and has not run.
+
+### Confirmed HDMI audio absence
+
+After resolving an HDMI capture card, start admission reads the receiver's
+`audio_present` and `audio_sampling_rate` controls. Confirmed absence returns the
+existing `audio_source_unavailable` probe failure before engine start. Unsupported
+controls remain unknown and preserve engine admission; no raw error-string
+classification is added. USB and embedded audio keep their existing path.
+The frontend uses the existing localized reconnect-or-select-another-source
+remedy for this class. Image policy owns automatic PipeWire profile selection.

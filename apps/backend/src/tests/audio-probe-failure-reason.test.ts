@@ -107,3 +107,57 @@ describe("maybeProbeAudioSource — pseudo-sentinels never probe (C7)", () => {
 		expect(ok).toBe(false);
 	});
 });
+
+describe("HDMI audio signal admission", () => {
+	for (const signal of [true, false, undefined]) {
+		test(`confirmed HDMI signal ${signal} preserves honest admission`, async () => {
+			const result = await maybeProbeAudioSource(
+				audioPipeline,
+				{ ...getConfig(), asrc: "HDMI" },
+				{
+					probe: async () => "hw:CARD=HDMIIN",
+					hdmiAudioSignal: async () => signal,
+				},
+			);
+			expect(result).toBe(signal !== false);
+		});
+	}
+	test("confirmed missing audio returns the typed probe failure before engine start", async () => {
+		const config = getConfig();
+		const previous = config.asrc;
+		config.asrc = "HDMI";
+		try {
+			const result = await startStream(
+				audioPipeline,
+				"192.0.2.10",
+				5000,
+				"sid",
+				{
+					probe: async () => "hw:CARD=HDMIIN",
+					hdmiAudioSignal: async () => false,
+				},
+			);
+			expect(result).toMatchObject({
+				success: false,
+				failureClass: "audio_source_unavailable",
+				error: AUDIO_SOURCE_PROBE_FAILED,
+			});
+		} finally {
+			config.asrc = previous;
+		}
+	});
+	test("USB audio never consults HDMI signal", async () => {
+		expect(
+			await maybeProbeAudioSource(
+				audioPipeline,
+				{ ...getConfig(), asrc: "USB" },
+				{
+					probe: async () => "hw:CARD=USB",
+					hdmiAudioSignal: async () => {
+						throw new Error("must not query HDMI");
+					},
+				},
+			),
+		).toBe(true);
+	});
+});

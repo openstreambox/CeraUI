@@ -42,6 +42,10 @@ import {
 import { getLastCapabilities } from "../capabilities.ts";
 import { SRTLA_LISTEN_PORT } from "../constants.ts";
 import { embeddedAudioActive } from "../embedded-audio.ts";
+import {
+	isHdmiCaptureAudio,
+	readHdmiAudioSignal,
+} from "../hdmi-audio-signal.ts";
 import { clearStreamProcessExit } from "../health.ts";
 import { createLaunchTransaction } from "../launch-transaction.ts";
 import {
@@ -92,6 +96,7 @@ export function setStartStreamDepsForTest(
 }
 
 export interface AudioProbeDeps {
+	hdmiAudioSignal?: () => Promise<boolean | undefined>;
 	probe?: (asrc: string) => Promise<string>;
 	networkEmbeddedAudio?: boolean;
 }
@@ -137,7 +142,11 @@ export async function maybeProbeAudioSource(
 	}
 	const probe = deps.probe ?? asrcProbe;
 	try {
-		await probe(config.asrc);
+		const device = await probe(config.asrc);
+		if (isHdmiCaptureAudio(device)) {
+			const signal = await (deps.hdmiAudioSignal ?? readHdmiAudioSignal)();
+			if (signal === false) return false;
+		}
 		return true;
 	} catch (_err) {
 		// asrcProbe rejects when the operator stops the stream before the audio
