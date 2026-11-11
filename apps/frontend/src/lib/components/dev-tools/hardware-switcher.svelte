@@ -1,19 +1,19 @@
 <script lang="ts">
-import { Cpu, Loader2, RefreshCw } from '@lucide/svelte';
-import { toast } from 'svelte-sonner';
 import {
-	type HardwareType,
-	HARDWARE_LABELS,
-	HARDWARE_DESCRIPTIONS,
 	HARDWARE_COLORS,
+	HARDWARE_DESCRIPTIONS,
+	HARDWARE_LABELS,
+	type HardwareType,
 	hardwareTypeSchema,
 } from '@ceraui/rpc/schemas';
+import { Cpu, Loader2, RefreshCw } from '@lucide/svelte';
+import { toast } from 'svelte-sonner';
 
 import { Button } from '$lib/components/ui/button';
 import * as Card from '$lib/components/ui/card';
 import { Label } from '$lib/components/ui/label';
 import * as Select from '$lib/components/ui/select';
-import { rpc, getIsConnected } from '$lib/rpc';
+import { getIsConnected, rpc } from '$lib/rpc';
 
 // All available hardware types from schema
 const ALL_HARDWARE_TYPES = hardwareTypeSchema.options as HardwareType[];
@@ -125,14 +125,14 @@ $effect(() => {
 
 		<!-- Hardware Selector -->
 		<div class="space-y-2">
-			<Label class="text-sm font-medium">Select Hardware Profile</Label>
+			<Label class="text-sm font-medium" for="mock-hardware-profile">Select Hardware Profile</Label>
 			<Select.Root
 				disabled={isLoading}
 				onValueChange={(value) => switchHardware(value as HardwareType)}
 				type="single"
 				value={selectedHardware ?? ''}
 			>
-				<Select.Trigger class="w-full">
+				<Select.Trigger class="w-full" id="mock-hardware-profile">
 					{#if isLoading}
 						<Loader2 class="mr-2 h-4 w-4 animate-spin" />
 						Switching...
@@ -147,7 +147,7 @@ $effect(() => {
 				</Select.Trigger>
 				<Select.Content>
 					<Select.Group>
-						{#each availableHardware as hw}
+						{#each availableHardware as hw (hw)}
 							<Select.Item value={hw}>
 								<div class="flex items-center gap-2">
 									<div class={`h-2 w-2 rounded-full ${HARDWARE_COLORS[hw].bg}`}></div>
@@ -167,7 +167,7 @@ $effect(() => {
 		<div class="space-y-2">
 			<Label class="text-sm font-medium">Quick Switch</Label>
 			<div class="grid grid-cols-2 gap-2">
-				{#each availableHardware as hw}
+				{#each availableHardware as hw (hw)}
 					<Button
 						class={selectedHardware === hw ? HARDWARE_COLORS[hw].border : ''}
 						disabled={isLoading}

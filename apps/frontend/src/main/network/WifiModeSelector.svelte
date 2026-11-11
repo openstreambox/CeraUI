@@ -38,10 +38,12 @@
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import type { WifiAdapterMode } from '@ceraui/rpc/schemas';
 import { Ban, Loader2, RadioTower, Waypoints, Wifi } from '@lucide/svelte';
+import { onDestroy, untrack } from 'svelte';
 
 import { Button } from '$lib/components/ui/button';
 import { osCommand } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
+import { getLinkEpoch } from '$lib/rpc/session-epoch.svelte';
 import { cn } from '$lib/utils';
 
 import HotspotActivationConfirm from './HotspotActivationConfirm.svelte';
@@ -54,6 +56,7 @@ import {
 	wifiModeDescriptionKey,
 	wifiModeLabelKey,
 } from './wifi-adapter-mode-view';
+import { sameWifiRadio, type WifiRadioBinding, wifiRadioChanged } from './wifi-radio-binding';
 import { wifiModeOpKey } from './wifi-station-lock';
 
 interface Props {
@@ -101,6 +104,33 @@ const GLYPH: Record<WifiAdapterMode, typeof Wifi> = {
 let armed = $state<WifiAdapterMode | undefined>(undefined);
 /** The AP mode whose credential gate is open. Opening it dispatches nothing. */
 let gated = $state<WifiAdapterMode | undefined>(undefined);
+let session = $state(0);
+const radioDevice = $derived(view.device);
+const radioToken = $derived(view.incarnation);
+const radioReason = $derived(view.degradedReason);
+let previous: WifiRadioBinding | undefined;
+
+function capture(): WifiRadioBinding {
+	return { device: view.device, incarnation: view.incarnation, link: getLinkEpoch(), session };
+}
+
+function current(binding: WifiRadioBinding): boolean {
+	return sameWifiRadio(binding, capture());
+}
+
+$effect.pre(() => {
+	const binding = { device: radioDevice, incarnation: radioToken, link: getLinkEpoch() };
+	radioReason;
+	untrack(() => {
+		if (previous && (previous.device !== binding.device ||
+			previous.incarnation !== binding.incarnation || previous.link !== binding.link)) {
+			session += 1;
+			armed = undefined;
+		}
+		previous = { ...binding, session };
+	});
+});
+onDestroy(() => { session += 1; });
 
 const armedConsequence = $derived(
 	armed === undefined
@@ -110,13 +140,25 @@ const armedConsequence = $derived(
 
 const unavailable = $derived(view.options.filter((option) => !option.available));
 
-async function apply(mode: WifiAdapterMode) {
+async function apply(mode: WifiAdapterMode, incarnation = view.incarnation) {
+	const binding = capture();
+	if (incarnation !== binding.incarnation ||
+		(mode !== 'station' && (!incarnation || view.degradedReason))) return;
 	armed = undefined;
 	gated = undefined;
 	await osCommand({
-		key: wifiModeOpKey(view.device),
+		key: wifiModeOpKey(binding.device, incarnation),
 		target: mode,
-		rpc: () => rpc.wifi.setAdapterMode({ device: view.device, mode }),
+		rpc: () => rpc.wifi.setAdapterMode({
+			device: binding.device, mode, ...(incarnation !== undefined ? { incarnation } : {}),
+		}),
+		isCurrent: () => current(binding),
+		onResult: (result) => {
+			if (mode !== 'station' && wifiRadioChanged(result) && current(binding) && !gated) {
+				session += 1;
+				gated = mode;
+			}
+		},
 		// The reason renders inline beneath the control; a toast would say the
 		// same thing twice and then take it away.
 		silent: true,
@@ -125,7 +167,8 @@ async function apply(mode: WifiAdapterMode) {
 
 function request(mode: WifiAdapterMode) {
 	if (mode === view.displayMode) return;
-	if (view.displayMode === 'station' && mode !== 'station') {
+	session += 1;
+	if ((view.displayMode === 'station' || !view.incarnation || view.degradedReason) && mode !== 'station') {
 		armed = undefined;
 		gated = mode;
 		return;
@@ -152,7 +195,8 @@ function request(mode: WifiAdapterMode) {
 		role="radiogroup"
 	>
 		{#each view.options as option (option.mode)}
-			{@const blocked = !option.available || view.pending || lockedReason !== undefined}
+			{const blocked = $derived(!option.available || view.pending || lockedReason !== undefined)}
+			<!-- biome-ignore lint/a11y/useSemanticElements: Mode choices contain pending and unavailable glyphs with gated button activation; native radios change the content and activation model. -->
 			<button
 				aria-checked={option.selected}
 				aria-disabled={option.available ? undefined : 'true'}
@@ -179,7 +223,7 @@ function request(mode: WifiAdapterMode) {
 				{:else if !option.available}
 					<Ban aria-hidden="true" class="size-3 shrink-0" />
 				{:else if option.selected}
-					{@const Glyph = GLYPH[option.mode]}
+					{const Glyph = $derived(GLYPH[option.mode])}
 					<Glyph aria-hidden="true" class="size-3 shrink-0" />
 				{/if}
 				{resolveMessageKey(wifiModeLabelKey(option.mode))}
@@ -232,7 +276,7 @@ function request(mode: WifiAdapterMode) {
 	{/if}
 
 	{#if gated}
-		{@const gateConsequence = deriveWifiModeConsequence(view.displayMode, gated, context)}
+		{const gateConsequence = $derived(deriveWifiModeConsequence(view.displayMode, gated, context))}
 		<HotspotActivationConfirm
 			detail={gateConsequence
 				? resolveMessageKey(wifiModeConsequenceKeys(gateConsequence).body)
@@ -241,14 +285,17 @@ function request(mode: WifiAdapterMode) {
 				mode: resolveMessageKey(wifiModeLabelKey(gated)),
 			})}
 			device={view.device}
+			incarnation={view.incarnation}
+			degradedReason={view.degradedReason}
+			{session}
 			keepsStation={gated === 'hybrid'}
-			onCancel={() => (gated = undefined)}
-			onConfirm={() => gated && apply(gated)}
+			onCancel={() => { session += 1; gated = undefined; }}
+			onConfirm={(incarnation) => gated && apply(gated, incarnation)}
 		/>
 	{/if}
 
 	{#if armed && armedConsequence}
-		{@const keys = wifiModeConsequenceKeys(armedConsequence)}
+		{const keys = $derived(wifiModeConsequenceKeys(armedConsequence))}
 		<div
 			class="border-status-warning/30 bg-status-warning/10 space-y-2 rounded-lg border px-2.5 py-2"
 			data-consequence={armedConsequence}
@@ -273,7 +320,7 @@ function request(mode: WifiAdapterMode) {
 				<Button
 					class="h-8 min-h-[var(--touch-target-min)] px-2.5"
 					data-testid="wifi-mode-confirm-cancel-{view.device}"
-					onclick={() => (armed = undefined)}
+					onclick={() => { session += 1; armed = undefined; }}
 					size="sm"
 					variant="secondary"
 				>

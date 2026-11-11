@@ -222,7 +222,8 @@ function patch(fields: Partial<CompositionConfig>): void {
 					role="radiogroup"
 				>
 					{#each COMPOSITION_LAYOUTS as option (option)}
-						{@const active = option === layout}
+						{const active = $derived(option === layout)}
+						<!-- biome-ignore lint/a11y/useSemanticElements: Layout choices use button click actions and explicit save/lock gates; native radios change their activation contract. -->
 						<button
 							type="button"
 							aria-checked={active}

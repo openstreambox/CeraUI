@@ -59,7 +59,6 @@ import {
 } from '$lib/components/custom/health-trace-view';
 import { Skeleton } from '$lib/components/ui/skeleton';
 import { HEALTH_COMPACT_QUERY } from '$lib/layout';
-import { deriveEncoderActivity } from '$lib/streaming/encoder-load';
 import {
 	getCapabilities,
 	getDeviceStats,
@@ -81,6 +80,7 @@ import {
 import { getDisplayProfile, prefersEinkTheme } from '$lib/stores/display-profile.svelte';
 import { getSocTelemetry } from '$lib/stores/hud.svelte';
 import { getStreamHealthRollup } from '$lib/stores/stream-health.svelte';
+import { deriveEncoderActivity } from '$lib/streaming/encoder-load';
 import { cn } from '$lib/utils';
 
 
@@ -324,7 +324,7 @@ $effect(() => {
 	secondary: string | null,
 	testId: string,
 )}
-	{@const Icon = icon}
+	{const Icon = $derived(icon)}
 	<div class="min-w-0 space-y-1" data-testid={testId} data-state={status.state}>
 		<span class="text-muted-foreground flex items-center gap-1.5 text-xs">
 			<Icon aria-hidden={true} class="size-3.5 shrink-0" />
@@ -334,6 +334,7 @@ $effect(() => {
 			<Skeleton class="h-5 w-24" data-testid="{testId}-skeleton" />
 		{:else if status.value === null}
 			<span
+				role="img"
 				class="text-muted-foreground/60 block font-mono text-sm"
 				data-testid="{testId}-value"
 				title={m["settings.deviceHealth.unavailable"]()}
@@ -381,7 +382,7 @@ $effect(() => {
 	detail: string | null,
 	testId: string,
 )}
-	{@const Icon = icon}
+	{const Icon = $derived(icon)}
 	<span class="flex min-w-0 items-baseline gap-1.5" data-testid={testId}>
 		<Icon aria-hidden={true} class="size-3.5 shrink-0 self-center" />
 		<span class="shrink-0">{label}</span>

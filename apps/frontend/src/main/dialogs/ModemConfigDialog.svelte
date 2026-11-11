@@ -103,26 +103,6 @@
 -->
 <script lang="ts">
 import { formatBytes, formatRelativeTime } from '@ceraui/i18n/formatters';
-import {
-	bandSelectionChanged,
-	deriveBandOffer,
-	initialBandSelection,
-	toggleBand,
-} from './modem-bands';
-import { fiveGFailureKey, fiveGViewForModem } from './modem-five-g';
-import {
-	bandCapabilityView,
-	fiveGCapabilityView,
-	networkModeCapabilityView,
-	USB_MODE_OPTIONS_UNKNOWN_KEY,
-} from './modem-radio-selectors';
-import {
-	CYCLE_DAY_OPTIONS,
-	diffUsagePolicyWireFields,
-	isThresholdInvalid,
-	readUsagePolicyForm,
-	type UsagePolicyForm,
-} from './modem-usage-policy';
 import { getLocale, m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import { toast } from 'svelte-sonner';
 import MutationOutcomeBand from '$lib/components/custom/MutationOutcomeBand.svelte';
@@ -135,11 +115,11 @@ import type {
 	FccUnlockState,
 	FiveGPreference,
 	Modem,
+	ModemBandsOutput,
 	ModemConfigRefusal,
 	ModemScanFailure,
 	ModemSmsRefusal,
 	SmsMessage,
-	ModemBandsOutput,
 	UsbCompositionMode,
 	UsbModeOptionsOutput,
 } from '@ceraui/rpc/schemas';
@@ -150,6 +130,7 @@ import {
 	SMS_INBOX_CAP,
 } from '@ceraui/rpc/schemas';
 import {
+	Antenna,
 	ChevronDown,
 	Clock,
 	Copy,
@@ -166,18 +147,15 @@ import {
 	RadioTower,
 	RefreshCw,
 	ShieldAlert,
-	Antenna,
 	Usb,
 	Wrench,
 	Zap,
 } from '@lucide/svelte';
-import { einkGatedSlide as slide } from '$lib/transitions';
-
 import Badge from '$lib/components/custom/Badge.svelte';
 import CollapsibleSection from '$lib/components/custom/CollapsibleSection.svelte';
-import NoSimBadge from '$lib/components/custom/NoSimBadge.svelte';
 import LabeledSwitch from '$lib/components/custom/LabeledSwitch.svelte';
 import LinkIndicator from '$lib/components/custom/LinkIndicator.svelte';
+import NoSimBadge from '$lib/components/custom/NoSimBadge.svelte';
 import SimpleAlertDialog from '$lib/components/custom/simple-alert-dialog.svelte';
 import AppDialog from '$lib/components/dialogs/AppDialog.svelte';
 import { Button } from '$lib/components/ui/button';
@@ -186,6 +164,42 @@ import { Label } from '$lib/components/ui/label';
 import * as Select from '$lib/components/ui/select';
 import { copyToClipboard } from '$lib/helpers/clipboard';
 import { modemSignal } from '$lib/helpers/signal';
+import { loadWithinBound, modemBoundMs } from '$lib/modem/async-surface';
+import {
+	type MutationOutcome,
+	type MutationOutcomeDetail,
+	mutationOutcome,
+} from '$lib/modem/mutation-outcome';
+import {
+	accessTechnologyDisplay,
+	bandDiagnosticTokens,
+	bandListOperatorLabel,
+	bandOperatorLabel,
+	isMappedBandToken,
+	MODEM_OPERATION_RECONCILIATION_KEY,
+	modemWriteBand,
+	networkModeOperatorLabel,
+	usbModeOperatorLabel,
+} from '$lib/modem/operator-labels';
+import { modemRefusalCopyKey } from '$lib/modem/refusal-taxonomy';
+import {
+	CapabilitySection,
+	ConnectionStateBlock,
+	DiagnosticsBlock,
+	deriveConnection,
+	deriveSim,
+	readingView,
+	SimBlock,
+} from '$lib/modem/sections';
+import {
+	hasNormalizedReading,
+	type ModemMetricRow,
+	qualityRecency,
+	registrationRows,
+	SUPERSEDED_CELL_METRIC_KEYS,
+	signalDetailRows,
+	simPresenceEvidenceHint,
+} from '$lib/modem/signal-detail';
 import { rpc } from '$lib/rpc';
 import {
 	confirmOperation,
@@ -216,50 +230,19 @@ import {
 	usbOfferSuppressionBodyKey,
 	usbOfferSuppressionKey,
 } from '$lib/rpc/usb-mode-offer';
-import {
-	type MutationOutcome,
-	type MutationOutcomeDetail,
-	mutationOutcome,
-} from '$lib/modem/mutation-outcome';
-import { loadWithinBound, modemBoundMs } from '$lib/modem/async-surface';
-import { modemRefusalCopyKey } from '$lib/modem/refusal-taxonomy';
-import {
-	hasNormalizedReading,
-	type ModemMetricRow,
-	qualityRecency,
-	registrationRows,
-	signalDetailRows,
-	simPresenceEvidenceHint,
-	SUPERSEDED_CELL_METRIC_KEYS,
-} from '$lib/modem/signal-detail';
-import {
-	CapabilitySection,
-	type CapabilityView,
-	ConnectionStateBlock,
-	deriveConnection,
-	deriveSim,
-	DiagnosticsBlock,
-	readingView,
-	SimBlock,
-} from '$lib/modem/sections';
-import { modemDiagnosticRows } from './modem-diagnostics';
-import {
-	accessTechnologyDisplay,
-	bandDiagnosticTokens,
-	bandListOperatorLabel,
-	bandOperatorLabel,
-	isMappedBandToken,
-	MODEM_OPERATION_RECONCILIATION_KEY,
-	modemWriteBand,
-	networkModeOperatorLabel,
-	usbModeOperatorLabel,
-} from '$lib/modem/operator-labels';
+import { einkGatedSlide as slide } from '$lib/transitions';
 import { cn } from '$lib/utils';
 import {
 	isSimlessModem,
 	resolveClassBand,
 	resolveRowState,
 } from '../network/cellular-row';
+import {
+	bandSelectionChanged,
+	deriveBandOffer,
+	initialBandSelection,
+	toggleBand,
+} from './modem-bands';
 import {
 	cellMetricRows,
 	cellObservedAtMs,
@@ -273,15 +256,30 @@ import {
 	simIccid,
 	usageView,
 } from './modem-detail';
+import { modemDiagnosticRows } from './modem-diagnostics';
+import { fiveGFailureKey, fiveGViewForModem } from './modem-five-g';
 import {
 	POWER_UNAVAILABLE_OPERATIONS,
 	radioPowerReading,
 } from './modem-power-recovery';
 import {
+	bandCapabilityView,
+	fiveGCapabilityView,
+	networkModeCapabilityView,
+	USB_MODE_OPTIONS_UNKNOWN_KEY,
+} from './modem-radio-selectors';
+import {
 	isWithdrawingSmsRefusal,
 	smsRefusalKey,
 	smsWallClock,
 } from './modem-sms';
+import {
+	CYCLE_DAY_OPTIONS,
+	diffUsagePolicyWireFields,
+	isThresholdInvalid,
+	readUsagePolicyForm,
+	type UsagePolicyForm,
+} from './modem-usage-policy';
 
 interface Props {
 	open?: boolean;
@@ -1605,7 +1603,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 			{#if formData.roaming}
 				<div class="space-y-2" transition:slide={{ duration: 150 }}>
 					<div class="flex items-center justify-between gap-2">
-						<Label class="text-muted-foreground text-xs">
+						<Label class="text-muted-foreground text-xs" for="modem-roaming-network">
 							{m["network.modem.availableNetworks"]()}
 						</Label>
 						<Button
@@ -1635,7 +1633,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 						type="single"
 						value={formData.network}
 					>
-						<Select.Trigger class="h-10 w-full text-sm" data-testid="modem-network-trigger">
+						<Select.Trigger class="h-10 w-full text-sm" data-testid="modem-network-trigger" id="modem-roaming-network">
 							{selectedNetworkLabel}
 						</Select.Trigger>
 						<Select.Content>
@@ -1796,6 +1794,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 							})}
 				</p>
 
+				<!-- biome-ignore lint/a11y/useSemanticElements: The wrapping band picker uses a flex row; a fieldset introduces an anonymous content box and intrinsic sizing. -->
 				<div
 					class="flex flex-wrap gap-1.5"
 					role="group"
@@ -1806,6 +1805,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 					     locked a band they can no longer register on must be able to get
 					     back without hunting for the right one. -->
 					{#each [BAND_ANY, ...bandOffer.offerable] as band (band)}
+						<!-- biome-ignore lint/a11y/useSemanticElements: This band toggle keeps button content and click-driven selection; a native checkbox changes its activation and content model. -->
 						<button
 							type="button"
 							role="checkbox"
@@ -1922,6 +1922,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 				<div class="space-y-1.5" data-testid="modem-five-g-options" role="radiogroup"
 					aria-label={m["network.modem.fiveG.title"]()}>
 					{#each fiveGOptions as option (option.preference)}
+						<!-- biome-ignore lint/a11y/useSemanticElements: The 5G choice has title/description/active children and no-SIM, applying and selected gates; a native radio cannot contain that content. -->
 						<button
 							aria-checked={option.active}
 							class="focus-visible:ring-ring flex w-full items-start gap-2.5 rounded-md border p-2.5 text-start focus-visible:ring-2 focus-visible:outline-none disabled:opacity-60"
@@ -2603,7 +2604,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 								{:else}
 									<ul class="divide-y" data-testid="modem-sms-list">
 										{#each smsMessages as message (message.id)}
-											{@const when = smsWallClock(message.timestamp)}
+											{const when = $derived(smsWallClock(message.timestamp))}
 											<li
 												class="space-y-1 py-2.5 first:pt-0 last:pb-0"
 												data-sms-id={message.id}
@@ -2741,6 +2742,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 						</p>
 						<div class="flex flex-wrap gap-1.5">
 							{#each usbOffer.targets as target (target)}
+								<!-- biome-ignore lint/a11y/useSemanticElements: The USB-target button stages usbSelected and may show recommendation text; native radio/label markup changes that staged-selection surface. -->
 								<button
 									type="button"
 									role="radio"

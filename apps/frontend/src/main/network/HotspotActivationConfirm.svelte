@@ -14,9 +14,10 @@
     both already layered (see `WifiModeSelector` rule 3).
 -->
 <script lang="ts">
-import { m } from '@ceraui/i18n/svelte';
+import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
+import type { WifiInterface } from '@ceraui/rpc/schemas';
 import { Copy, Dices, Loader2, TriangleAlert } from '@lucide/svelte';
-import { onDestroy } from 'svelte';
+import { onDestroy, untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
 
 import { networkConstraints } from '$lib/components/streaming';
@@ -26,29 +27,43 @@ import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import { copyToClipboard } from '$lib/helpers/clipboard';
 import { rpc } from '$lib/rpc/client';
+import { getLinkEpoch } from '$lib/rpc/session-epoch.svelte';
 
 import { generateHotspotPassword, hotspotPasswordIsPrintable } from './hotspot-password';
+import { sameWifiRadio, type WifiRadioBinding, wifiRadioChanged } from './wifi-radio-binding';
 
 interface Props {
 	/** WiFi interface device key (record key in the wifi status map). */
 	device: string;
+	incarnation?: string;
+	degradedReason?: WifiInterface['degraded_reason'];
+	session?: number;
+	reloaded?: boolean;
 	/** The radio's station leg survives (hybrid), so no disconnect is threatened. */
 	keepsStation?: boolean;
 	/** Action label; defaults to "Turn on hotspot". */
 	confirmLabel?: string;
 	/** An extra consequence the caller already knows (e.g. the link leaves the bond). */
 	detail?: string;
-	onConfirm: () => void;
+	onConfirm: (incarnation: string) => void;
 	onCancel: () => void;
 }
 
-const { device, keepsStation = false, confirmLabel, detail, onConfirm, onCancel }: Props =
+const { device, incarnation, degradedReason, session = 0, reloaded = false, keepsStation = false, confirmLabel, detail, onConfirm, onCancel }: Props =
 	$props();
 
 const bounds = networkConstraints.hotspot;
 
-let phase = $state<'loading' | 'ready' | 'load-failed' | 'saving'>('loading');
+let phase = $state<'loading' | 'ready' | 'load-failed' | 'saving' | 'unsupported' | 'unverified'>('loading');
 let saveFailed = $state(false);
+let invalidated = $state(false);
+let refused = $state(false);
+let binding: WifiRadioBinding | undefined;
+let attempt = 0;
+const radioDevice = $derived(device);
+const radioToken = $derived(incarnation);
+const radioReason = $derived(degradedReason);
+const ownerSession = $derived(session);
 // Never hosted before: the gate doubles as the first-time setup.
 let firstTime = $state(false);
 let loaded = { name: '', password: '' };
@@ -65,10 +80,41 @@ function cancel() {
 	onCancel();
 }
 
+function current(seq: number, captured: WifiRadioBinding): boolean {
+	return confirmationLive && seq === attempt && sameWifiRadio(captured, {
+		device, incarnation, link: getLinkEpoch(), session,
+	}) && degradedReason === undefined;
+}
+
 async function load() {
+	const captured = { device, incarnation, link: getLinkEpoch(), session };
+	const seq = ++attempt;
+	binding = captured;
+	acknowledged = false;
+	saveFailed = false;
+	refused = false;
+	name = '';
+	password = '';
+	firstTime = false;
+	if (degradedReason) {
+		phase = 'unverified';
+		return;
+	}
+	if (!captured.incarnation) {
+		phase = 'unsupported';
+		return;
+	}
 	phase = 'loading';
 	try {
-		const result = await rpc.wifi.hotspotPrepare({ device });
+		const result = await rpc.wifi.hotspotPrepare({
+			device: captured.device, incarnation: captured.incarnation,
+		});
+		if (!current(seq, captured)) return;
+		if (wifiRadioChanged(result)) {
+			refused = true;
+			phase = 'load-failed';
+			return;
+		}
 		if (!result.success || !result.name || !result.password) throw new Error('unavailable');
 		loaded = { name: result.name, password: result.password };
 		firstTime = result.firstTime === true;
@@ -76,12 +122,20 @@ async function load() {
 		password = result.password;
 		phase = 'ready';
 	} catch {
-		phase = 'load-failed';
+		if (current(seq, captured)) phase = 'load-failed';
 	}
 }
 
-$effect(() => {
-	void load();
+$effect.pre(() => {
+	const next = {
+		device: radioDevice, incarnation: radioToken, link: getLinkEpoch(), session: ownerSession,
+	};
+	radioReason;
+	untrack(() => {
+		invalidated = binding !== undefined && !sameWifiRadio(binding, next);
+		void load();
+	});
+	return () => { attempt += 1; };
 });
 
 const nameError = $derived(
@@ -104,8 +158,13 @@ const canConfirm = $derived(phase === 'ready' && acknowledged && !nameError && !
 
 // The acknowledgement is for the pair on screen; a new pair needs a new one.
 function edited() {
+	if (phase === 'saving') {
+		attempt += 1;
+		phase = 'ready';
+	}
 	acknowledged = false;
 	saveFailed = false;
+	refused = false;
 }
 
 function rollPassword() {
@@ -124,32 +183,40 @@ async function copy(value: string, success: string) {
 }
 
 async function confirm() {
-	if (!confirmationLive || !canConfirm) return;
-	const requestedDevice = device;
-	const isCurrent = () => confirmationLive && device === requestedDevice;
+	const captured = binding;
+	const seq = attempt;
+	if (!canConfirm || !captured?.incarnation || !current(seq, captured)) return;
+	const chosen = { name, password };
 	if (name !== loaded.name || password !== loaded.password) {
 		phase = 'saving';
 		try {
-			const result = await rpc.wifi.hotspotPrepare({ device, name, password });
-			// Preparing credentials may already have written them. A dismissed
-			// confirmation must not authorize the separate hotspot start afterward.
-			if (!isCurrent()) return;
-			if (!result.success || result.name !== name || result.password !== password) {
+			const result = await rpc.wifi.hotspotPrepare({
+				device: captured.device, incarnation: captured.incarnation, ...chosen,
+			});
+			if (!current(seq, captured)) return;
+			if (wifiRadioChanged(result)) {
+				refused = true;
+				acknowledged = false;
+				phase = 'ready';
+				return;
+			}
+			if (!result.success || result.name !== chosen.name || result.password !== chosen.password) {
 				throw new Error('not-stored');
 			}
-			loaded = { name, password };
+			loaded = chosen;
 		} catch {
-			if (!isCurrent()) return;
+			if (!current(seq, captured)) return;
 			phase = 'ready';
 			saveFailed = true;
 			return;
 		}
 		phase = 'ready';
 	}
-	if (isCurrent()) onConfirm();
+	if (current(seq, captured)) onConfirm(captured.incarnation);
 }
 </script>
 
+<!-- biome-ignore lint/a11y/useSemanticElements: This warning and confirmation panel is a named action group; a fieldset introduces form-group sizing and an anonymous content box. -->
 <div
 	class="border-status-warning/30 bg-status-warning/10 space-y-3 rounded-lg border p-3"
 	data-device={device}
@@ -178,7 +245,20 @@ async function confirm() {
 		</div>
 	</div>
 
-	{#if phase === 'loading'}
+	{#if invalidated || reloaded}
+		<p class="text-muted-foreground text-xs" role="status" data-testid="hotspot-confirm-radio-changed">
+			{m['hotspotConfirm.radioChanged']()}
+		</p>
+	{/if}
+	{#if refused}
+		<p class="text-muted-foreground text-xs" role="status">{m['hotspotConfirm.radioChangedNotSaved']()}</p>
+	{/if}
+	{#if phase === 'unsupported' || phase === 'unverified'}
+		<p class="text-muted-foreground text-xs" role="status" data-testid="hotspot-confirm-unavailable">
+			{#if radioReason}{resolveMessageKey(`network.wifiDegraded.${radioReason}`)} {/if}
+			{phase === 'unverified' ? m['hotspotConfirm.radioUnverified']() : m['hotspotConfirm.bindingUnsupported']()}
+		</p>
+	{:else if phase === 'loading'}
 		<p class="text-muted-foreground flex items-center gap-2 text-xs" role="status">
 			<Loader2 aria-hidden="true" class="size-3.5 animate-spin motion-reduce:animate-none" />
 			{m['hotspotConfirm.loading']()}

@@ -85,9 +85,9 @@ import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import {
 	CREDENTIAL_VERIFICATION_COPY,
+	type LockView,
 	lockErrorKey,
 	lockoutRemainingMinutes,
-	type LockView,
 } from '$lib/modem/lock-state';
 import { type MutationOutcome, mutationOutcome } from '$lib/modem/mutation-outcome';
 import { CapabilitySection, readingView } from '$lib/modem/sections';
@@ -318,6 +318,7 @@ async function forget(): Promise<void> {
 
 			{#if lock.offersClear}
 				{#if clearConfirming}
+					<!-- biome-ignore lint/a11y/useSemanticElements: The clear-saved-dongle-sign-in confirmation groups its warning and actions; a fieldset introduces different sizing and an anonymous content box. -->
 					<div
 						aria-labelledby="dongle-lock-clear-confirm-title"
 						class="bg-status-warning/10 border-status-warning/30 space-y-3 rounded-lg border p-3"

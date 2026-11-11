@@ -67,13 +67,50 @@ hand-written, independently-drifting per-repo `protocol.ts` derivations.
 
 ### Key invariants
 
+- **Authenticated remote configuration [EXISTS].** The config projection omits
+  only the internal `pairing_secret` from legacy initial config, v2 config
+  wrappers, command results and self-fencing apply/commit/rollback results.
+  Device-side rollback snapshots stay complete. The seed has no UI consumer;
+  its dedicated registration through `POST /api/device/pairing-secret` is
+  unchanged. Previously received copies are NOT erased.
+- **Owner control and trusted delegates [EXISTS].** All other existing config
+  and credentials are sent again, including `ssh_pass`, APN username/password,
+  `srt_streamid`, `relay_streamid_override`, `remote_key` and the live
+  `wifi[*].hotspot.password`. The owner-authenticated cloud needs these values
+  for device control, existing read-modify-write saves, and trusted delegates
+  recovering a forgotten hotspot password. Every remote destination uses the
+  same policy. Local payloads and authentication remain unchanged.
+- **Radio lifetime metadata stays local [EXISTS].** `projectRemoteStatus`
+  strips row `incarnation` tokens while retaining hotspot credentials.
+  `projectRemoteWifiFrame` still strips local config/mode frame incarnation
+  metadata. Arrays, records, row order, undefined values and unrelated fields
+  keep their representation. The v2 broadcast relay remains unwired; this
+  change does not connect it. The existing legacy JSON-text boundary retains
+  original non-projected frame bytes and send options/callbacks.
+- **Boundary limits.** This is a structured pairing-seed omission, not recursive
+  free-text sanitization. The separate secret-bearing command-error finding in
+  local logs is unchanged. No other privacy change is claimed.
+- **Configuración remota autenticada [EXISTS].** Solo se omite el secreto
+  interno `pairing_secret` de estas respuestas de configuración, resultados
+  y wrappers remotos. Su registro mediante
+  `POST /api/device/pairing-secret` no cambia. No se borran las copias que
+  los proveedores ya recibieron.
+- **Control del propietario y delegados de confianza [EXISTS].** Se vuelven
+  a enviar las demás credenciales, incluida la contraseña SSH, el usuario y la
+  contraseña del APN, los stream IDs y la contraseña del hotspot activo. La
+  nube autenticada las necesita para controlar el dispositivo, conservar las
+  credenciales al guardar otros ajustes y permitir que un delegado de confianza
+  lea una contraseña olvidada. Los datos locales y la autenticación no cambian.
+  Los tokens de radio `incarnation` siguen siendo locales. El relay v2 sigue
+  sin conectarse en producción. No se afirma otro cambio de privacidad.
+
 - **Gate = `canDialControlChannel()`** (`paired && deviceId !== undefined`). An unpaired device or one whose `device_id` is missing never dials the hub.
 - **`CERALIVE_CONTROL_HUB_URL`** is the build-time-pinned hub URL. It is NOT operator-configurable and is NOT derived from `custom_provider` or `remote_provider`.
 - **Two token audiences** (`purpose: "device-control"` vs `purpose: "relay-config"`). The purpose check runs BEFORE claim-schema validation — a validly-signed relay-config token is rejected by purpose, not by signature failure.
 - **Real-device fail-closed (Task 20)** — `verifyDeviceControlToken(token, now, { isRealDevice })` REFUSES the token on a real device (`isRealDevice()` true) when `PASETO_PUBLIC_KEY` is absent: a real device can't verify a signature, so it never accepts the unsigned/opaque path. The key-less unsigned dev path stays available only on dev/mock hosts (`isRealDevice` false, the default). `channel.ts` resolves `isRealDevice()` once at `initControlChannel` and threads it into the default `verifyToken`. Wire format + verification order are unchanged — the gate slots into the existing key-presence branch.
 - **Control-token source is the persisted `config.remote_key`** — the default `getControlToken` seam reads the same claim/control credential the pairing claim stored. `resolveAuthToken` still self-verifies it via `verifyToken` (`verifyDeviceControlToken`, purpose + signature) BEFORE presenting it, so a non-device-control or unverifiable token is dropped and the channel falls back to the key-less path; a valid device-control token is presented as `Authorization: Bearer …` on the dial (so the LAN gateway accepts an authenticated socket). Wiring the token source did NOT change the verification contract.
 - **Post-pairing reconnect (no reboot)** — `completePairingProcedure`, after a successful claim, calls an idempotent `initIdentity()` + `initControlChannel()` (`reconnectControlChannelAfterClaim`). A freshly claimed device re-resolves identity from the now-persisted `remote_key`/`device_id` and re-dials the control channel WITHOUT a reboot — the boot-time identity had resolved it as unpaired. Both calls are idempotent (`initControlChannel` tears down any prior channel first), so a repeated claim never double-connects.
-- **`RELAYABLE_TYPES`** = `[status, config, sensors, netif, modems, device-stats, notifications]`. No auth/token/secret-bearing type is ever in this set. The no-secrets contract test enforces this. **`telemetry` is intentionally NOT in `RELAYABLE_TYPES`** — it is a `STATUS_TYPES` member (protocol.ts) emitted directly over the control channel by the telemetry recorder, not a `broadcastMsg` event. (`STATUS_TYPES` = 8: the 7 relayable broadcast types + `telemetry`.)
+- **`RELAYABLE_TYPES` is an event-name allowlist, not a credential filter.** The config projection omits the internal pairing seed, while Wi-Fi projection removes local lifetime metadata and retains credentials. Arbitrary free text is not recursively scrubbed. **`telemetry` is intentionally NOT in `RELAYABLE_TYPES`** — it is emitted directly by the telemetry recorder rather than as a `broadcastMsg` event.
 - **Telemetry recorder is batched + non-blocking** (`telemetry-recorder.ts`, spec §8.1). It folds `buildLinkTelemetry()` per-link rows into `telemetry` status frames on a size (`DEFAULT_TELEMETRY_MAX_BATCH=30`) or age (`DEFAULT_TELEMETRY_MAX_AGE_MS=10s`) boundary; every tick is synchronous and exception-safe so it never stalls the heartbeat/live loop. It carries NO bitrate (platform owns that) and NO secret. Wired onto the heartbeat in `main.ts` (`startTelemetryRecorder` + `onHeartbeatTick(recordTelemetryTick)`).
 - **`self_fencing: true`** is a TOP-LEVEL frame flag, NOT inside payload. Revertible ops emit two result frames (apply + commit/revert). Non-revertible ops do NOT execute until an explicit `self_fencing.confirm` arrives.
 - **`modem.reconfig` is readiness-gated ON THE SELF-FENCING ROUTE, not by `cellularReadyMiddleware`.** `routeCommand` intercepts it at the `SELF_FENCING_TYPES_SET` branch, so it never reaches `modemProcedure` and the RPC middleware never sees it — the gate therefore lives in `handleSelfFencingOp` (`isSubsystemReady`, defaulting to `getCellularStack().ready` for that one type). It is checked BEFORE `snapshot`/`apply`, so an initializing stack leaves nothing half-applied and NO watchdog armed, and the refusal (`ok:false, error:"cellular_stack_initializing"`) rides out AFTER the delivery-ack the router already sent — never a silent drop. Adding a new modem-scoped self_fencing op means adding it to `READINESS_GATED_TYPES`; wiring it to the RPC middleware instead would be a no-op. Pinned in `tests/control-modem-reconfig-self-fencing.test.ts`, which also re-proves the untouched wire semantics (ack/de-dup, snapshot-before-mutation, 30 s auto-revert, cid-matching confirm) under BOTH `modem_backend` selections.

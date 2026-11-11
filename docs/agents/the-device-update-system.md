@@ -24,6 +24,27 @@ ORCHESTRATOR. The feature notes, stated at the level a CeraUI change needs:
   `setUpdateSettings`, `getUpdateCapabilities`, `checkUpdatesNow`,
   `installUpdatesNow`, `allowCellularOnce`, `getUpdateDetails`. Launch limits:
   D8 Known gaps (f) below.
+  The channel selects system images only, defaulting to beta. Packages always
+  use stable APT. `update-image-channel.json` holds the image choice while the
+  original six-key settings file keeps `channel: "stable"` for older CeraUI
+  after rollback. Its private `allowSystemDownloadsOverCellular` field supplies
+  download consent; a missing field means false regardless of the old check-only
+  preference. Legacy files migrate once; explicit consent and Stable image choices
+  survive restarts and v2026.11.1 rollback because its writer leaves the sidecar alone.
+  OS manifest checks always run over cellular. The system cellular switch
+  permits bundle/kernel downloads; otherwise an exact one-time approval is
+  required. Candidate approval is computed at use, never persisted from the switch.
+  Queued OS/kernel downloads re-read consent at dispatch; a successful switch
+  revocation invalidates captured permission across preparation awaits. Read
+  errors refuse download, while exact-candidate one-job approval remains valid.
+  Deferred package checks cannot starve OS checks in the idle scheduler.
+  A first image offer waiting for cellular download approval also permits due
+  package checks. The image candidate and pending approval survive package work;
+  OS staging still requires approval and discovery re-admits the held offer.
+  Optional details fields expose check deferrals, consecutive failures and an
+  unpublished image channel; older backends may omit all three observations.
+  See [Settings](../DEVICE-UPDATES.md#settings) and the
+  [durable placement map](../CONFIG_PERSISTENCE.md#durable-device-config).
 - **[EXISTS] Updates dialog and global surfaces.** Settings → Software Updates
   shows Packages, System image, Kernel, Slots, Automation, Over cellular and Update
   connection, gated by `updateCapabilityView()`; a legacy image states the limit

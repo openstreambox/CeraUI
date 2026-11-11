@@ -18,6 +18,12 @@ it to this exact permanent address, and only as a last resort a profile matching
 the persisted SSID (for profiles written before the MAC binding was
 trustworthy).
 
+Every candidate, including the in-memory UUID, is subject to the
+[profile ownership rule](wifi-adapter-identity-is-the-permanent-mac.md#hotspot-profile-ownership-exists-host-tested-only).
+Another adapter's current or previous UUID, or a known conflicting MAC pin,
+cannot supply this adapter's credentials. Absent adapters retain ownership.
+Legacy unowned profiles still migrate when the existing evidence supports it.
+
 **The identity is resolved BEFORE any start can drop the link (#413).**
 `wifi.hotspotPrepare` runs the SAME resolution (`resolveHotspotIdentity`, shared
 with `startHotspotLocked`) under the adapter lock WITHOUT activating, persists a
@@ -106,3 +112,16 @@ prune negatives). Rule E proof captured in both directions: neutering the
 discovery-before-generation step reddens 5 tests; swapping the repair/activate
 order reddens the ordering test alone.
 
+
+### Cleanup rechecks asynchronous ownership
+
+The candidate set captured before NetworkManager reads only narrows the scan.
+Immediately before deletion, cleanup recomputes superseded ownership and live use.
+If an adapter selected the profile, a live interface began using it, or persisted
+ownership disappeared while list/profile reads were pending, that candidate survives.
+`wifi-hotspot-identity.test.ts` pauses both reads and covers these ownership changes.
+
+Live use includes the parent station `conn`/`activeConn`, `hotspot.conn`, and
+the virtual AP `concurrentHotspot.activeConn`. AP+STA keeps the active AP UUID
+on that nested field while the parent continues to report its station UUID.
+Cleanup protects it both at candidate collection and after pending reads.

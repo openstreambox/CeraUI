@@ -44,6 +44,7 @@ import type {
 	SourcesMessage,
 	StreamSource,
 } from '@ceraui/rpc/schemas';
+import { AUDIO_SOURCE_AUTO } from '@ceraui/rpc/schemas';
 import {
 	Activity,
 	Cable,
@@ -62,7 +63,6 @@ import {
 	Volume2,
 } from '@lucide/svelte';
 import { toast } from 'svelte-sonner';
-
 import Badge from '$lib/components/custom/Badge.svelte';
 import InfoPopover from '$lib/components/custom/InfoPopover.svelte';
 import LiveAudioMeter from '$lib/components/preview/LiveAudioMeter.svelte';
@@ -73,20 +73,11 @@ import { copyToClipboard } from '$lib/helpers/clipboard';
 import { generateDeviceAccessQr } from '$lib/helpers/NetworkHelper';
 import { rpc } from '$lib/rpc';
 import {
-	captureModeOptions,
-	governingInputMode,
-	inputModeLabelKey,
-} from '$lib/streaming/capture-modes';
-import { deriveCoarseUnboundState } from '$lib/streaming/coarse-source-hint';
-import {
 	beginFieldSync,
 	markFieldApplied,
 	markFieldApplying,
 	markFieldFailed,
 } from '$lib/rpc/field-sync-state.svelte';
-import { AUDIO_SOURCE_AUTO } from '@ceraui/rpc/schemas';
-import { hasEffectiveSource } from '$lib/streaming/effective-source';
-import { captureModeCodecs } from '$lib/streaming/passthrough';
 import {
 	audioQualityChip,
 	audioSourceUnavailableHintKey,
@@ -94,20 +85,28 @@ import {
 	isBluetoothAudioSource,
 } from '$lib/streaming/bluetooth-audio-source';
 import {
+	captureModeOptions,
+	governingInputMode,
+	inputModeLabelKey,
+} from '$lib/streaming/capture-modes';
+import { deriveCoarseUnboundState } from '$lib/streaming/coarse-source-hint';
+import { hasEffectiveSource } from '$lib/streaming/effective-source';
+import { planAudioSelectionForSource } from '$lib/streaming/embedded-audio-selection';
+import { captureModeCodecs } from '$lib/streaming/passthrough';
+import {
 	audioSourceLabel,
 	deriveActiveSummary,
 	deriveCapabilitySummary,
 	formatCodec,
 	groupAudioSources,
 	isExternalAudioSource,
+	type ResolvedAudioStatus,
 	resolveAudioSourceList,
 	resolveAudioSourceMode,
 	resolveDisplayedAudioSource,
-	type ResolvedAudioStatus,
 	resolvedAudioLabel,
 	withAutoAudioEntry,
 } from '$lib/streaming/sourceSummary';
-import { planAudioSelectionForSource } from '$lib/streaming/embedded-audio-selection';
 
 // Durable engineering note (public GitHub, gstlibuvcsrc repo) explaining how a
 // UVC device's descriptors are read to decide whether it has hardware H.264 — the
@@ -676,7 +675,7 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 					</p>
 				{/if}
 				{#if hasCapSummary}
-					<div
+					<section
 						class="flex flex-wrap items-center gap-1.5"
 						data-testid="source-capabilities"
 						aria-label={m["live.source.capabilities"]()}
@@ -703,7 +702,7 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 								{m["settings.audioSource"]()}
 							</span>
 						{/if}
-					</div>
+					</section>
 				{/if}
 			</div>
 		{/if}
@@ -781,16 +780,16 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 			<div class="space-y-2" data-testid="source-list" tabindex={-1}>
 				<ul class="space-y-2">
 					{#each visibleSources as source (source.id)}
-						{@const selected = config?.source === source.id}
-						{@const disabled = rowDisabled(source)}
-						{@const RowIcon = rowIcon(source)}
+						{const selected = $derived(config?.source === source.id)}
+						{const disabled = $derived(rowDisabled(source))}
+						{const RowIcon = $derived(rowIcon(source))}
 						<!-- A selected coarse row has no device behind it, so the lime
 						     "Selected" affirmation would read as "this works". -->
-						{@const coarseUnbound = deriveCoarseUnboundState(
+						{const coarseUnbound = $derived(deriveCoarseUnboundState(
 							source,
 							selected,
 							sources?.sources,
-						)}
+						))}
 						<li
 							data-testid={`source-row-${source.id}`}
 							data-origin={source.origin}
@@ -997,7 +996,7 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 							     offer, and a control on every row turns the picker into a form.
 							     Locked while streaming — the format is baked into the graph. -->
 							{#if modeOptionsFor(source).length > 0}
-								{@const activeMode = selectedModeFor(source)}
+								{const activeMode = $derived(selectedModeFor(source))}
 								<div class="mt-2 space-y-1.5" data-testid={`source-modes-${source.id}`}>
 									<div class="flex items-center gap-1">
 										<span
@@ -1017,7 +1016,8 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 										role="radiogroup"
 									>
 										{#each modeOptionsFor(source) as option (option.inputMode)}
-											{@const active = option.inputMode === activeMode}
+											{const active = $derived(option.inputMode === activeMode)}
+											<!-- biome-ignore lint/a11y/useSemanticElements: Input-mode buttons select option.inputMode and lock for streaming or rowDisabled; native radios need separate labels and change their focus model. -->
 											<button
 												aria-checked={active}
 												class="min-h-11 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors {active
@@ -1063,10 +1063,10 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 											{m["live.source.coarseUnboundBody"]()}
 										</p>
 										{#if coarseUnbound.suggestions.length > 0}
-											{@const only =
-												coarseUnbound.suggestions.length === 1
+											{const only =
+												$derived(coarseUnbound.suggestions.length === 1
 													? coarseUnbound.suggestions[0]
-													: undefined}
+													: undefined)}
 											<p
 												class="text-foreground text-xs font-medium"
 												data-testid={`source-coarse-suggestion-lead-${source.id}`}
@@ -1077,7 +1077,7 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 											</p>
 											<div class="flex flex-wrap gap-2 pt-0.5">
 												{#each coarseUnbound.suggestions as suggestion (suggestion.id)}
-													{@const SuggestionIcon = rowIcon(suggestion)}
+													{const SuggestionIcon = $derived(rowIcon(suggestion))}
 													<!-- Overrides the Button base's shrink-0/nowrap: a long
 													     device name must wrap inside the band, not overflow it. -->
 													<Button
@@ -1387,16 +1387,17 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 					value={selectedAudioSource}
 				>
 					<Select.Trigger
+						aria-labelledby="sourceAudioSelectLabel"
 						class="min-h-11 w-full"
 						data-testid="audio-source-select"
 						id="sourceAudioSelect"
 					>
 						{#if notAvailableAudioSource}
-							<span data-testid="audio-source-unavailable">
+							<span id="sourceAudioSelectLabel" data-testid="audio-source-unavailable">
 								{`${notAvailableAudioSource} (${m["settings.notAvailableAudioSource"]()})`}
 							</span>
 						{:else}
-							<span class="flex min-w-0 items-center gap-2">
+							<span id="sourceAudioSelectLabel" class="flex min-w-0 items-center gap-2">
 								<span class="truncate">{displayedAudioLabel ?? m["settings.selectAudioSource"]()}</span>
 								{#if displayedAudioExternal}
 									<Badge
@@ -1427,9 +1428,9 @@ const showEmbedded = $derived(audioEmbeddedActive || resolvedAudio.embedded);
 								value={AUDIO_SOURCE_AUTO}
 							></Select.Item>
 							{#each groupedAudio.devices as entry (entry.id)}
-								{@const quality = audioQualityChip(entry)}
-								{@const blockedKey = audioSourceUnavailableReasonKey(entry)}
-								{@const blockedHintKey = audioSourceUnavailableHintKey(entry)}
+								{const quality = $derived(audioQualityChip(entry))}
+								{const blockedKey = $derived(audioSourceUnavailableReasonKey(entry))}
+								{const blockedHintKey = $derived(audioSourceUnavailableHintKey(entry))}
 								<Select.Item
 									aria-disabled={blockedKey ? 'true' : undefined}
 									disabled={blockedKey !== undefined}

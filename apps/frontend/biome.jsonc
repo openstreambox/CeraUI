@@ -1,0 +1,96 @@
+{
+	"root": false,
+	"extends": ["@ceralive/biome-config"],
+	"$schema": "https://biomejs.dev/schemas/2.6.6/schema.json",
+	"files": {
+		"includes": [
+			"package.json",
+			"src/**/*.ts",
+			"src/**/*.js",
+			"src/**/*.json",
+			"src/**/*.svelte",
+			"vite.config.ts",
+			"tailwind.config.ts",
+			"pwa.config.ts",
+			"svelte.config.js",
+			"!**/.svelte-kit/**"
+		]
+	},
+	"formatter": { "lineWidth": 80 },
+	"javascript": {
+		"globals": ["NodeJS", "__APP_VERSION__"],
+		"formatter": { "quoteStyle": "double" }
+	},
+	"linter": {
+		"rules": {
+			"suspicious": {
+				"noDebugger": "warn",
+				"noConsole": { "level": "error", "options": { "allow": ["warn", "error"] } },
+				"noEmptyBlockStatements": "error"
+			},
+			"nursery": {
+				"noFloatingPromises": "warn"
+			}
+		}
+	},
+	"overrides": [
+		/*
+		 * Upstream shadcn patterns: generator output retains these six findings.
+		 * Keep managed source intact; exceptions cover only its exact files/rules.
+		 */
+		{
+			"includes": ["src/lib/components/ui/breadcrumb/breadcrumb-link.svelte"],
+			"linter": { "rules": { "a11y": { "useValidAnchor": "off" } } }
+		},
+		{
+			"includes": ["src/lib/components/ui/breadcrumb/breadcrumb-page.svelte"],
+			"linter": {
+				"rules": {
+					"a11y": {
+						"useFocusableInteractive": "off",
+						"useSemanticElements": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/lib/components/ui/input-group/input-group-addon.svelte"],
+			"linter": {
+				"rules": {
+					"a11y": {
+						"useKeyWithClickEvents": "off",
+						"useSemanticElements": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/lib/components/ui/input-group/input-group.svelte"],
+			"linter": { "rules": { "a11y": { "useSemanticElements": "off" } } }
+		},
+		{
+			"includes": ["src/tests/brand-assets-integrity.ts"],
+			"formatter": { "lineWidth": 100 },
+			"javascript": { "formatter": { "quoteStyle": "single" } }
+		},
+		{
+			"includes": ["**/*.test.ts", "**/*.spec.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"useAwait": "warn",
+						"noConsole": "off",
+						"noEmptyBlockStatements": "off"
+					},
+					"nursery": {
+						"noFloatingPromises": "error"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["**/*.svelte"],
+			"formatter": { "enabled": false }
+		}
+	]
+}

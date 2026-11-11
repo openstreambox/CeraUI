@@ -116,6 +116,8 @@ export type ExistingHotspotConn = {
 	ssid: string;
 	password: string;
 	channel: WifiChannel;
+	/** MAC pin read from the selected profile; absent in legacy injected deps. */
+	macAddress?: string;
 };
 
 /**
@@ -287,4 +289,13 @@ export function isApMode(
 		isHotspot(wifiInterface) ||
 		(canHotspot(wifiInterface) && wifiInterface.activeMode === "ap")
 	);
+}
+
+export function hotspotApIfname(
+	wifiInterface: WifiInterface,
+): string | undefined {
+	if (isApMode(wifiInterface)) return wifiInterface.ifname;
+	if (isConcurrentHotspot(wifiInterface))
+		return wifiInterface.concurrentHotspot?.ifname;
+	return undefined;
 }

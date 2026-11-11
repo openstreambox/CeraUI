@@ -4,6 +4,13 @@ Svelte 5 PWA for CeraUI — the on-device control plane for CeraLive streaming h
 
 **Status**: [EXISTS] — active development, part of the `ceralive-workspace` Bun monorepo.
 
+**Hotspot draft binding [EXISTS].** The confirmation gate and live editor retain
+typed values across same-device, same-incarnation updates. A different radio,
+connection or dialog session reloads the current details and withdraws consent.
+Config and mode outcomes settle only their echoed lifetime key. Tokenless rows
+keep read-only display and Stop; prepare, save and AP-starting actions require
+a proven token. See [the binding contract](../../docs/HOTSPOT-DRAFT-BINDING.md).
+
 ## Stack
 
 - **Svelte 5** with runes (`$state`, `$derived`, `$effect`) — no `$:` reactive statements
@@ -13,6 +20,12 @@ Svelte 5 PWA for CeraUI — the on-device control plane for CeraLive streaming h
 - **`@ceraui/rpc`** — shared oRPC schemas and validation constants (workspace package)
 - **`@ceraui/i18n`** — Paraglide runtime over hand-editable JSON catalogs, 10 languages (workspace package)
 - **vitest** for unit tests, **Playwright** for E2E
+
+The SPA, federation and Vitest configs share the exact `tailwind-variants` alias
+in `vite.variants.ts`. It routes the managed shadcn recipes through the v4 lite
+factory with the same `tailwind-merge` used by `cn`; `tsconfig.app.json` resolves
+the same module for svelte-check. The primitives stay CLI-managed. The recipe
+class oracle runs with `bun run test:build-check-shape` from the workspace root.
 
 ## Registry Dependencies
 
@@ -72,6 +85,12 @@ fake lease is not installed OS-update qualification. See
 [`E2E backend isolation`](tests/e2e/PLAYBOOK.md#per-test-backend-state-exists)
 for lifecycle and deliberate shared-browser sequence rules. Run from the workspace root.
 
+Direct backend concurrency checks [EXISTS] request OS-assigned RPC ports while
+retaining a fixture-owned backend, and verify independent state and listeners.
+The shared E2E configuration seed is published by sibling-file rename with
+exception cleanup. Its regression imports the real bootstrap into private test
+state, leaving local configuration, auth and report files untouched.
+
 To run the frontend alone:
 
 ```sh
@@ -129,6 +148,10 @@ Unhandled errors fail the run without filtering. Frontend tests enable Biome's
 floating-promise error rule and missing-await warning rule. The bounded suite
 audit, timer regression and mutation receipts are documented in
 [`../../docs/FRONTEND-PHANTOM-GREEN-AUDIT.md`](../../docs/FRONTEND-PHANTOM-GREEN-AUDIT.md).
+
+Vitest is pinned exactly to `5.1.0`, with jsdom `^31.0.0`. The test and shard
+scripts retain `bun --bun vitest`: the executable's Node shebang otherwise
+selects Node even when invoked through `bun run`.
 
 `bun run --filter frontend test` runs both Vitest projects. The import-graph
 classifier in `scripts/ci/vitest-classify.mjs` assigns source tests automatically:

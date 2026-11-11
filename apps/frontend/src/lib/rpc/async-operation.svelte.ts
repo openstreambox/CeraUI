@@ -577,6 +577,8 @@ export async function osCommand<T>(opts: {
 	busyMessage?: () => string;
 	failMessage?: () => string;
 	onResult?: (r: T) => void;
+	/** A caller-owned dialog/radio lifetime may end while the RPC is pending. */
+	isCurrent?: () => boolean;
 }): Promise<T | undefined> {
 	// Re-entry guard: never dispatch a second RPC for an in-flight key.
 	if (isOperationPending(opts.key)) return undefined;
@@ -590,7 +592,7 @@ export async function osCommand<T>(opts: {
 	);
 	// A TTL/reconnect release permits a new dispatch while this RPC can still
 	// resolve. Its completion must not affect the replacement entry or surface.
-	const isCurrent = ownsAttempt;
+	const isCurrent = () => ownsAttempt() && (!opts.isCurrent || opts.isCurrent());
 	// Feedback survives transient state loss; never recreate a store to settle it.
 	const hasEntry = () => singleton === owner;
 	try {

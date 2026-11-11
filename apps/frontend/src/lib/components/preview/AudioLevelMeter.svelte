@@ -9,8 +9,8 @@
   e-ink freeze stills them automatically (never JS-drive these).
 -->
 <script lang="ts">
-import type { AudioLevelUnavailableReason } from '@ceraui/rpc/schemas';
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
+import type { AudioLevelUnavailableReason } from '@ceraui/rpc/schemas';
 
 import { cn } from '$lib/utils';
 
@@ -62,6 +62,7 @@ const channels = $derived(
 const silent = $derived(channels.length === 0 || channels.every((c) => c.peak === 0));
 </script>
 
+<!-- biome-ignore lint/a11y/useSemanticElements: This read-only audio group is not a form fieldset; retain its existing block layout and named grouping. -->
 <div
 	data-testid="audio-level-meter"
 	data-silent={silent ? 'true' : 'false'}
@@ -87,7 +88,8 @@ const silent = $derived(channels.length === 0 || channels.every((c) => c.peak ==
 		</p>
 	{:else}
 		{#each channels as channel, i (channel.id)}
-			{@const clipping = channel.peak >= 0.97}
+			{const clipping = $derived(channel.peak >= 0.97)}
+			<!-- biome-ignore lint/a11y/useSemanticElements: The meter draws separate RMS and peak child tracks; a native meter does not render these custom child tracks. -->
 			<div
 				class="bg-muted/60 relative h-2 overflow-hidden rounded-full"
 				data-testid="audio-channel"

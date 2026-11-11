@@ -15,7 +15,7 @@ via `bun run build:federation` from the CeraUI root (delegates to the frontend
   the typed host adapter. Shared graph code is split into sibling chunks
   co-located at the same versioned path.
 - **`<ceraui-version>`** is read at build time from the workspace-root `package.json` `version`
-(CalVer, `2026.11.1` prepared for release) — the single source of truth, matching the platform's
+(CalVer, `2026.11.2` prepared for release) — the single source of truth, matching the platform's
   `ceraui-version` claim.
 - **The catalog is STATIC here, not lazy.** Each entry still calls
   `registerFederationMessages()` (`@ceraui/i18n/eager`) at module scope and
@@ -29,13 +29,17 @@ via `bun run build:federation` from the CeraUI root (delegates to the frontend
   would ignore the host's locale. The final hosted artifacts use full Rolldown
   output minification rather than ES-library whitespace preservation.
 - **Size and parity gates:** after building both outputs, run
-  `bun scripts/ci/bundle-report.mjs` from the root. Measured footprint acceptances
-  and retained ceilings are documented in `scripts/ci/bundle-report.mjs` and
-  `docs/TECHNICAL_DEBT.md`; `sources-view-model` is the existing Audio/Encoder shared projection,
+  `bun scripts/ci/bundle-report.mjs` from the root. The November 2026
+  [dependency baseline](../../../../docs/agents/dep-baseline-as-of-2026-11.md#federation-budgets-and-size-analysis)
+  records the measured toast-host/audio budgets and displaced ceilings.
+  Publication enforces them with `--federation-only` before signing or upload;
+  `sources-view-model` is the existing Audio/Encoder shared projection,
   now explicitly baselined. The federation harness also renders every locale
   module against the frozen catalog fixtures (`federation-catalog.test.ts`).
 - **Isolation**: this build NEVER touches the SPA `dist/public` output, runs no
-  PWA/service-worker plugin, and emits no `index.html`. The SPA `vite.config.ts` is unmodified.
+  PWA/service-worker plugin, and emits no `index.html`. The SPA and federation
+  Vite configs share the added exact `tailwind-variants` alias; their output
+  directories and PWA behavior remain separate.
 - **CI ordering caveat**: the backend `build` script does `rm -rf ../../dist/`, so
   `build:federation` MUST run AFTER `bun run build` (the full SPA/backend build) — never before,
   or its output is wiped.

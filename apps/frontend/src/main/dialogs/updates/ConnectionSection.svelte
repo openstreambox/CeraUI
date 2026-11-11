@@ -70,10 +70,10 @@ const checked = $derived(formatUpdateTime(transport?.checkedAt, locale));
 
 		<ul class="divide-border divide-y overflow-hidden rounded-lg border">
 			{#each transport.findings as finding (`${finding.ifname}-${finding.family}`)}
-				{@const inUse =
-					transport.selected?.ifname === finding.ifname &&
-					transport.selected?.family === finding.family}
-				{@const verdicts = finding.states.filter((state) => state !== 'clear')}
+				{const inUse =
+					$derived(transport.selected?.ifname === finding.ifname &&
+					transport.selected?.family === finding.family)}
+				{const verdicts = $derived(finding.states.filter((state) => state !== 'clear'))}
 				<li
 					class="space-y-1.5 px-4 py-3"
 					data-family={finding.family}
@@ -114,6 +114,14 @@ const checked = $derived(formatUpdateTime(transport?.checkedAt, locale));
 							/>
 						{/each}
 					</div>
+					{#each finding.hosts ?? [] as probe (`${probe.host}-${probe.state}`)}
+						<p class="text-muted-foreground text-xs break-words" data-testid="update-connection-host">
+							<span class="font-mono" dir="ltr">{m['settings.updates.connection.hostState']({
+								host: probe.host,
+								state: resolveMessageKey(probeStateKey(probe.state)),
+							})}</span>
+						</p>
+					{/each}
 				</li>
 			{/each}
 		</ul>

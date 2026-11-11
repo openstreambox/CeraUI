@@ -63,12 +63,12 @@ import { Label } from '$lib/components/ui/label';
 import * as Select from '$lib/components/ui/select';
 import { generateDeviceAccessQr } from '$lib/helpers/NetworkHelper';
 import { saveRemoteConfig } from '$lib/helpers/SystemHelper';
-import { buildPairingDeepLink } from '$lib/pairing/pairing-link';
 import { PairingController } from '$lib/pairing/pairing.svelte';
+import { buildPairingDeepLink } from '$lib/pairing/pairing-link';
 import {
+	type SubscriptionTone,
 	shouldAutoRegenerate,
 	subscriptionTone,
-	type SubscriptionTone,
 } from '$lib/pairing/pairing-result';
 import { rpc } from '$lib/rpc/client';
 import { getConfig } from '$lib/rpc/subscriptions.svelte';
@@ -619,7 +619,6 @@ async function save() {
 				</p>
 				<div
 					class="bg-muted/40 text-muted-foreground rounded-md border px-3 py-2 font-mono text-sm tracking-widest select-none"
-					aria-readonly="true"
 				>
 					{'•'.repeat(16)}
 				</div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { type LocaleCode } from '@ceraui/i18n';
+import type { LocaleCode } from '@ceraui/i18n';
 import { m } from '@ceraui/i18n/svelte';
 import { Globe } from '@lucide/svelte';
 
@@ -49,7 +49,7 @@ let {
 					})}
 				</div>
 				<div class="flex flex-wrap gap-1">
-					{#each localeInfo.supportedLocales as supportedLocale}
+					{#each localeInfo.supportedLocales as supportedLocale (supportedLocale.code)}
 						<button
 							class="bg-background flex cursor-pointer items-center gap-1 rounded border px-2 py-1 text-xs transition-colors hover:bg-accent {supportedLocale.code ===
 							localeInfo.currentLocale

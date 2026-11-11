@@ -92,6 +92,33 @@ The backend stores only `sha256(token)`, so that file cannot hand a harness a us
 
 Avoid committing `html` reporter config. It generates large artifacts and is not useful in automated runs.
 
+## Source component prerequisites
+
+`pull-to-refresh.component.spec.ts` mounts the real component on a private
+ephemeral component server. The main E2E application still runs from the
+production build through `vite preview`; its `dist/public` artifact does not
+contain the source facade's generated registry.
+
+Each E2E shard runs `bun run --filter @ceraui/i18n generate:i18n` once, after
+dependency installation and before starting its servers or workers. This creates
+both Paraglide output and the custom `generated/registry.js`; the Vite Paraglide
+plugin creates only the former. Keep generation outside individual tests so
+workers cannot race a shared generated directory. Local CI-mode runs use the same
+prerequisite.
+
+The isolated refresh fixture loads only the `pwa` namespace used by its real
+component. Loading the application shell catalog delays this small fixture behind
+thousands of unrelated cold module requests and can exhaust the unchanged test
+timeout under constrained runners. Keep fixture namespace activation aligned with
+the component's actual copy dependencies.
+
+The hotspot toggle fixture commits its AP credentials and active mode through
+the worker's `backendRpc` before injecting the confirming status. A `dev.emit`
+snapshot changes only the calling socket; it does not change mock state, so the
+next real Wi-Fi feedback tick would otherwise restore the inactive radio. Keep
+the page's fake start armed while testing pending behavior; commit backend state
+only when the helper releases that pending window.
+
 ## Real-hardware gates
 
 Mock seams may retain deterministic negative-path coverage, but they never
@@ -226,6 +253,15 @@ Explicit `port` requests are never silently relocated.
 
 Every acquisition uses a fresh `mkdtemp` state directory under
 `test-results/worker-backends/`; it never deletes another acquisition's files.
+The shared CI `config.json` seed is published by sibling-file rename: worker
+configuration modules may initialize it concurrently while fixtures copy it.
+`backend-config-seed.spec.ts` reads the shared seed at the write's truncation
+boundary and requires complete JSON throughout publication. It imports a
+test-owned copy of the bootstrap and cleanup helpers, with private configuration,
+auth seed and report paths, so local developer state is never rewritten.
+Failed writes or renames remove the unpublished sibling in `finally`; the
+regression forces a rename failure and requires the published seed to stay
+unchanged with no pending sibling left behind.
 The mock preview asks the OS for its own port (`PREVIEW_PORT=0`). The private
 `backend-entry.ts` launcher reports both actual listener ports over child IPC
 after boot. Only that message establishes readiness: a TCP connection to the
@@ -244,7 +280,10 @@ browser runs do not qualify kernel flock, OS recovery or installed updater start
 Production admission, startup retries and the SSH RPC remain unchanged.
 
 `backend-startup.spec.ts` holds a foreign listener open and requires startup
-rejection, then boots simultaneous backends and verifies distinct RPC/preview
+rejection, then retains a fixture-owned backend while booting simultaneous direct
+RPC backends on OS-assigned ports (`port: 0`). Those clients do not use the preview
+proxy's fixed CI port range and must not compete with the retained worker slot.
+The test verifies distinct RPC/preview
 listeners and independent configuration. No login assertions, retries, timeouts,
 or worker counts are relaxed. Diagnosis receipts: [`E2E-BACKEND-OWNERSHIP.md`](../../../../docs/E2E-BACKEND-OWNERSHIP.md).
 

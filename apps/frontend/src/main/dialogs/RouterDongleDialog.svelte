@@ -85,30 +85,30 @@ import { toast } from 'svelte-sonner';
 import CollapsibleSection from '$lib/components/custom/CollapsibleSection.svelte';
 import LabeledSwitch from '$lib/components/custom/LabeledSwitch.svelte';
 import MutationOutcomeBand from '$lib/components/custom/MutationOutcomeBand.svelte';
-import { Button } from '$lib/components/ui/button';
 import { AppDialog } from '$lib/components/dialogs';
+import { Button } from '$lib/components/ui/button';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
+import { deriveLockView, lockWithholdsCapabilities } from '$lib/modem/lock-state';
+import { mutationOutcome } from '$lib/modem/mutation-outcome';
 import {
 	CapabilitySection,
 	ConnectionStateBlock,
-	deriveModemSections,
 	DiagnosticsBlock,
+	deriveModemSections,
 	IdentityBlock,
 	readingView,
 	SignalBlock,
 	SimBlock,
 } from '$lib/modem/sections';
-import { deriveLockView, lockWithholdsCapabilities } from '$lib/modem/lock-state';
-import { mutationOutcome } from '$lib/modem/mutation-outcome';
 import { rpc } from '$lib/rpc';
 import {
 	beginRouterWrite,
 	failRouterWrite,
 	isRouterWriteBusy,
 	observeRouterWrite,
-	resolveRouterWrite,
 	type RouterWriteFlow,
+	resolveRouterWrite,
 	tickRouterWrite,
 } from '$lib/rpc/router-write-flow';
 
@@ -844,6 +844,7 @@ async function applySubnet() {
 								</div>
 
 								{#if subnetConfirming}
+									<!-- biome-ignore lint/a11y/useSemanticElements: This confirmation panel groups the subnet warning and actions; a fieldset introduces form-group sizing and an anonymous content box. -->
 									<div
 										aria-labelledby="dongle-subnet-confirm-title"
 										class="bg-status-warning/10 border-status-warning/30 space-y-3 rounded-lg border p-3"

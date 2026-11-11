@@ -2,6 +2,50 @@
 
 ## THE WI-FI OFFERING IS DERIVED FROM THE RADIO [EXISTS]
 
+**Hotspot drafts belong to one radio lifetime [EXISTS].** The gate and live
+editor preserve edits on same-device/token status patches, including renames.
+Rebinding reloads the form and withdraws consent; session, link and attempt
+fences reject obsolete continuations. Save and mode outcomes use the dispatched
+token echoed by the producer. Tokenless rows remain visible with Stop available,
+but guarded actions require identification. Backend enforcement and limited or
+port-scoped identity states remain later work. See
+[the binding contract](../HOTSPOT-DRAFT-BINDING.md).
+
+**Security offerings are partial, nonempty maps [EXISTS].** A radio without
+positive SAE proof emits only `wpa2`; the shared output schema accepts that
+subset without inventing `wpa3-sae`. An omitted map remains valid for older
+devices. An explicit empty map remains invalid, as do unknown mode keys,
+non-object entries and non-string names. Parsing a complete map retains the
+previous enum order (`wpa2`, then `wpa3-sae`), including when input keys arrive
+in reverse order; existing valid output bytes do not change.
+
+The exhaustive enum record introduced in `d505f5ff` (first released in
+`v2026.8.2`, August 24, 2026) rejected real WPA2-only hotspot rows.
+`wifi.getStatus` explicitly parses its result, and `status.getStatus` validates
+its aggregate output through oRPC, so the latter could reject reconnect status
+hydration while an unproven-SAE hotspot was present. Initial status pushes and
+Wi-Fi broadcasts bypass that output validation; the frontend stores those rows
+and checks each offered key before reading its name. This repair changes the
+shared decoder only; radio derivation, producer messages and frontend controls
+keep their existing behavior. It does not establish radio identity or hardware
+qualification.
+
+**Hotspot membership is pushed within one five-second poll [EXISTS].** While
+an AP is up, the backend reads its own station dump (`clap-<parent>` in Hybrid).
+Unread state resolves on the first successful poll; joins, leaves and roster
+removal broadcast once. Count and sorted station MACs determine membership;
+signal and rates refresh with other Wi-Fi broadcasts without triggering them.
+The poll forces each read past the cache TTL and remains single-flight per AP.
+The key includes every parsed MAC before the 32-row display cap. Notification
+history records only the roster `broadcastWifiState` sends to all subscribers,
+clearing it when the block is omitted. `wifiBuildMsg` projects the roster
+without acknowledging it: private RPC and new-client snapshots cannot consume
+a pending broadcast to existing viewers. Polls compare the
+same live-AP projection with that record; structural Wi-Fi broadcasts therefore
+acknowledge roster removal too. That projection prunes inactive AP caches and
+flights synchronously. A flight token protects cache writes, so an obsolete
+dump cannot revive an AP or account for delivery.
+
 The three-value band enum (`auto` / `auto_24` / `auto_50`) is still the **wire
 vocabulary** and did not change. What changed is that nothing hardcodes which rungs are
 *offered*. `wifi-capabilities.ts` derives per-adapter truth from `iw phy` and

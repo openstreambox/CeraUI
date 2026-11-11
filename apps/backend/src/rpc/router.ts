@@ -29,7 +29,10 @@ import {
 	bluetoothTrustProcedure,
 	getBluetoothStatusProcedure,
 } from "./procedures/bluetooth.procedure.ts";
-import { devEmitProcedure } from "./procedures/dev.procedure.ts";
+import {
+	devEmitProcedure,
+	devRebindWifiProcedure,
+} from "./procedures/dev.procedure.ts";
 import { esimOperationProcedure } from "./procedures/esim.procedure.ts";
 import {
 	acknowledgeMutationProcedure,
@@ -327,12 +330,16 @@ const stableRoutes = {
 
 // HARD-GATED: the `dev` namespace is registered ONLY outside production, so in a
 // production build `dev.*` paths resolve to "Unknown procedure path".
-export const appRouter = os
-	.$context<RPCContext>()
-	.router(
-		process.env.NODE_ENV !== "production"
-			? { ...stableRoutes, dev: base.router({ emit: devEmitProcedure }) }
-			: stableRoutes,
-	);
+export const appRouter = os.$context<RPCContext>().router(
+	process.env.NODE_ENV !== "production"
+		? {
+				...stableRoutes,
+				dev: base.router({
+					emit: devEmitProcedure,
+					rebindWifi: devRebindWifiProcedure,
+				}),
+			}
+		: stableRoutes,
+);
 
 export type AppRouter = typeof appRouter;

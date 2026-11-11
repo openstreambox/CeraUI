@@ -56,7 +56,10 @@ import {
 	readUpdateCapabilities,
 	UpdateCapabilityReadError,
 } from "../update-capabilities.ts";
-import { loadUpdateSettings } from "../update-settings.ts";
+import {
+	createSystemCellularConsentRead,
+	loadUpdateSettings,
+} from "../update-settings.ts";
 import { discoverCandidates } from "../update-transport/core.ts";
 import { defaultUpdateTransportDeps } from "../update-transport/executor.ts";
 import { admitStreamStart, onStreamStart } from "./admission.ts";
@@ -284,6 +287,7 @@ export interface OrchestratorRuntimeDeps {
 		readonly failed: boolean;
 		readonly reason: string;
 		readonly suppressNotice?: boolean;
+		readonly channelUnpublished?: boolean;
 		readonly manifest?: OsChannelManifest;
 	}>;
 	readonly stageOs: (
@@ -392,7 +396,8 @@ export async function checkOsManifestResult(
 	try {
 		const manifest = await check(channel, new UpdateQuarantine());
 		return {
-			available: manifest !== undefined,
+			available: manifest != null,
+			channelUnpublished: manifest === null,
 			rateLimited: false,
 			failed: false,
 			reason: "",
@@ -522,6 +527,11 @@ const startupReadiness = new UpdateStartupReadiness(
 	() => !pendingPackageSuccess.pending,
 );
 let osCandidate: OsChannelManifest | undefined;
+let osChannelUnpublished = false;
+let packageCheckDeferral: {
+	readonly reason: "metered_only";
+	readonly at: number;
+} | null = null;
 let osStageInProcess = false;
 let activeOsStage:
 	| { readonly attemptId: string; readonly controller: AbortController }
@@ -688,6 +698,8 @@ export function resetOrchestratorRuntimeForTest(): void {
 	state = initialOrchestratorState(Date.now());
 	deps = defaultOrchestratorRuntimeDeps;
 	osCandidate = undefined;
+	osChannelUnpublished = false;
+	packageCheckDeferral = null;
 	activeOsStage?.controller.abort();
 	activeOsStage = undefined;
 	osStageInProcess = false;
@@ -759,6 +771,7 @@ export function getOrchestratorWireState(): UpdateOrchestratorWireState {
 }
 
 export type OsUpdateSummary = {
+	readonly channelUnpublished?: boolean;
 	readonly candidate: {
 		readonly version: string;
 		readonly sizeBytes: number;
@@ -769,9 +782,12 @@ export type OsUpdateSummary = {
 	} | null;
 };
 export const getKernelUpdateSummary = () => kernelRuntime.summary();
+export const getPackageCheckDeferral = () =>
+	packageCheckDeferral ? { reason: packageCheckDeferral.reason } : null;
 
 export function getOsUpdateSummary(): OsUpdateSummary {
 	return {
+		channelUnpublished: osChannelUnpublished,
 		candidate: osCandidate
 			? { version: osCandidate.version, sizeBytes: osCandidate.bundle.size }
 			: null,
@@ -1163,6 +1179,7 @@ export async function admitAndPrepareStreamStart(): Promise<StreamStartUpdateAdm
 
 async function runPackageCheckCycle(): Promise<void> {
 	if (osSettlementPersistence.pending || !aptUpdatesEnabled()) return;
+	packageCheckDeferral = null;
 	const now = deps.now();
 	dispatch({ type: "PACKAGE_CHECK_STARTED", now });
 	const error =
@@ -1858,6 +1875,7 @@ async function maybeStartOsStage(
 		!capabilities.features.includes("rauc-verity-streaming")
 	)
 		return;
+	const readConsent = createSystemCellularConsentRead(deps.loadSettings);
 	const settings = await deps.loadSettings();
 	if (
 		!bypassIdle &&
@@ -1870,15 +1888,7 @@ async function maybeStartOsStage(
 		await runOsCheckAfterCellularGate(settings);
 		return;
 	}
-	const gate = decideCellularGate({
-		onlyMeteredCandidateExists: await deps.onlyMeteredCandidateExists(),
-		kind: "os",
-		stage: "install",
-		allowPackagesOverCellular: settings.allowPackagesOverCellular,
-		allowSystemOverCellular: settings.allowSystemOverCellular,
-		cellularOverrideId: state.cellularOverrideId,
-		candidateId: candidate.version,
-	});
+	const onlyMetered = await deps.onlyMeteredCandidateExists();
 	if (deps.isOsStageReady && !(await deps.isOsStageReady())) return;
 	await using controlLease = await acquireRuntimeOsStageControl();
 	if (!controlLease.held()) return;
@@ -1888,6 +1898,7 @@ async function maybeStartOsStage(
 		!(persisted === null && !state.osStageRecovery)
 	)
 		return;
+	const consent = await readConsent();
 	// Every await above can let a manual install, a stream abort or a new
 	// check run; the entry fences are only true again if re-read here, and
 	// nothing may await between this re-read and taking the stage.
@@ -1898,6 +1909,15 @@ async function maybeStartOsStage(
 		state.osStageRecovery !== recovery
 	)
 		return;
+	const gate = decideCellularGate({
+		onlyMeteredCandidateExists: onlyMetered,
+		kind: "os",
+		stage: "install",
+		allowPackagesOverCellular: settings.allowPackagesOverCellular,
+		allowSystemOverCellular: consent(),
+		cellularOverrideId: state.cellularOverrideId,
+		candidateId: candidate.version,
+	});
 	if (!gate.allowed) {
 		if (gate.needsOverride) {
 			pendingCellularApproval = {
@@ -1929,11 +1949,16 @@ async function maybeStartOsStage(
 	};
 	const attemptId = token.attemptId;
 	activeOsStage = token;
+	const approvedOnce = state.cellularOverrideId === candidate.version;
 	const control: OsStageControl = {
 		controlLease,
 		attemptId: token.attemptId,
 		signal: token.controller.signal,
-		cellularApproved: state.cellularOverrideId === candidate.version,
+		cellularApproved: approvedOnce || consent(),
+		readCellularApproval: async () => {
+			const current = await readConsent();
+			return () => approvedOnce || current();
+		},
 		canCommit: () =>
 			activeOsStage === token &&
 			getOrchestratorState().phase === "os-staging" &&
@@ -2160,10 +2185,13 @@ function settleOsStageFailure(
 	replaceOsStageRecoveryNotice(state);
 }
 
-// A failed stage waiting for its retry or the operator must not stop the
-// package path, so a due package check leaves the OS offer.
+// An OS offer waiting for recovery or cellular approval must not stop packages.
 async function maybeCheckPackagesWhileOsWaits(): Promise<void> {
-	if (state.phase !== "os-available" || !state.osStageRecovery) return;
+	if (
+		state.phase !== "os-available" ||
+		(!state.osStageRecovery && !pendingCellularApproval)
+	)
+		return;
 	const settings = await deps.loadSettings();
 	if (state.phase !== "os-available") return;
 	if (
@@ -2830,6 +2858,7 @@ export async function runOrchestratorTick(): Promise<void> {
 						),
 					}
 				: state.osCheck;
+		let packageCheckRan = false;
 		if (
 			aptUpdatesEnabled() &&
 			shouldAttemptScheduledCheck({
@@ -2840,8 +2869,11 @@ export async function runOrchestratorTick(): Promise<void> {
 				settings,
 			})
 		) {
-			await runPackageCheckAfterCellularGate(settings);
-		} else if (
+			packageCheckRan =
+				(await runPackageCheckAfterCellularGate(settings)) === "ran";
+		}
+		if (
+			!packageCheckRan &&
 			capabilities.mode === "capable" &&
 			capabilities.features.includes("rauc-verity-streaming") &&
 			shouldAttemptScheduledCheck({
@@ -2916,9 +2948,10 @@ export async function runOrchestratorTick(): Promise<void> {
 
 async function runPackageCheckAfterCellularGate(
 	settings: UpdateSettings,
-): Promise<void> {
+): Promise<"ran" | "deferred"> {
 	const onlyMetered = await deps.onlyMeteredCandidateExists();
-	if (osSettlementPersistence.pending) return;
+	if (osSettlementPersistence.pending || !aptUpdatesEnabled())
+		return "deferred";
 	const gate = decideCellularGate({
 		onlyMeteredCandidateExists: onlyMetered,
 		kind: "packages",
@@ -2928,8 +2961,12 @@ async function runPackageCheckAfterCellularGate(
 		cellularOverrideId: state.cellularOverrideId,
 		candidateId: "",
 	});
-	if (!gate.allowed) return; // retried next tick once due again; not a failure
+	if (!gate.allowed) {
+		packageCheckDeferral = { reason: "metered_only", at: deps.now() };
+		return "deferred";
+	}
 	await runPackageCheckCycle();
+	return "ran";
 }
 
 async function runOsCheckAfterCellularGate(
@@ -2950,6 +2987,7 @@ async function runOsCheckAfterCellularGate(
 	const now = deps.now();
 	dispatch({ type: "OS_CHECK_STARTED", now });
 	const result = await deps.checkOsManifest(settings.channel);
+	osChannelUnpublished = result.channelUnpublished === true;
 	const outcomeNow = deps.now();
 	if (result.failed) {
 		if (!result.suppressNotice)

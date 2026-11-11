@@ -1,5 +1,21 @@
 # CeraUI
 
+**Wi-Fi incarnation binding [EXISTS; backend enforcement pending].** Local status may
+include an optional opaque radio lifetime token. Hotspot requests accept it
+without enforcing it. The frontend binds hotspot drafts and acknowledgement to
+the selected device, token, connection and dialog session. Ordinary status
+patches preserve edits; replacement reloads the details and withdraws consent.
+Tokenless rows retain read-only display and Stop, while guarded actions wait
+for identification or a device software update. NetworkManager behavior is unchanged.
+Only coherent evidence bound to the current row and observation may supply
+the token; pending or failed observations omit it. Asynchronous config and mode
+frames echo the token captured at dispatch; RPC replies and hotspot start/stop
+frames retain their existing shapes. Remote status and settlement frames strip
+the token. G1-G5 qualification is not claimed.
+See [the additive protocol contract](docs/WIFI-INCARNATION-PROTOCOL.md).
+The [frontend binding contract](docs/HOTSPOT-DRAFT-BINDING.md) includes
+compatibility limits and the EN/es-419 release documentation handoff.
+
 Frontend stream recovery carries status request-dispatch and browser-receipt
 provenance separately. Earlier requests cannot confirm later Stop claims or
 overwrite newer stream-fact observations; a superseded pull allows one bounded
@@ -47,7 +63,11 @@ allows operator actions to bypass that idle wait. Stream/update admission:
 [D8 Known gaps](docs/agents/the-device-update-system.md).
 Settings → Software Updates shows packages,
 system image, slots, automation (auto toggles, schedule window, channel),
-cellular allowances with per-candidate approval, and the update connection. A
+cellular allowances with per-candidate approval, and the update connection.
+Download consent is stored separately from older check-only preferences, so an
+old UI save after rollback cannot grant OS/kernel downloads over cellular. A
+successful download-consent revocation also holds queued downloads before they
+start, including across asynchronous preparation. A
 busy update shows an app-wide badge, and the Live cockpit warns before Go Live;
 Start stays enabled because the device decides admission. Implementation
 reference: [device updates](docs/DEVICE-UPDATES.md).
@@ -347,7 +367,7 @@ Web-based control interface for live video streaming with cellular bonding. Buil
 
 ## Quick Start
 
-Use Bun **1.4.3**, matching `.bun-version`, `packageManager`, `mise.toml` and CI.
+Use Bun **1.4.4**, matching `.bun-version`, `packageManager`, `mise.toml` and CI.
 
 ```bash
 bun install
@@ -419,6 +439,18 @@ A dev-only DevTools destination is available in development builds.
   degraded rows rather than disappearing. Physical-radio validation is still
   pending; see
   [`docs/AP-STA-CONCURRENT-MODE.md`](docs/AP-STA-CONCURRENT-MODE.md).
+- **Internal radio lifetime evidence [EXISTS]**: coherent kernel witnesses,
+  pair-scoped caching and duplicate classification run as detached, bounded
+  sysfs observations. Legacy discovery keeps main's independent per-call behavior;
+  its proposed scheduling bound moves to the later enforcement change. No new
+  external process runs. WiFi status and hotspot behavior are unchanged,
+  including prepare/start for unresolved radios. See the
+  [backend identity contract](apps/backend/docs/agents/wifi-adapter-identity-is-the-permanent-mac.md).
+- **Hotspot profile ownership [EXISTS]**: a replacement adapter no longer inherits
+  another adapter's saved hotspot credentials through a reused interface name
+  or UUID hint. Current and historical owners remain protected while absent;
+  evidence-based orphan migration and unresolved-radio prepare/start remain.
+  See the [ownership contract](apps/backend/docs/agents/wifi-adapter-identity-is-the-permanent-mac.md#hotspot-profile-ownership-exists-host-tested-only).
 - **Device Health telemetry**: memory, per-cluster CPU frequency, DDR bus load,
   GPU load, and (on the vendor kernel) per-core decoder load, alongside the
   existing SoC temperature and load-average traces. Every signal is omitted
@@ -547,6 +579,14 @@ inline). See `.env.example` for the full layout.
 
 ## Build & Deploy
 
+Bundle budgets [EXISTS]: run `bun run build && bun run test:federation &&
+bun scripts/ci/bundle-report.mjs` in that order. The release workflow also runs
+`bun scripts/ci/bundle-report.mjs --federation-only` after building federation,
+before signing or uploading. That mode requires a complete federation graph and
+fails on a gzip breach without requiring a separate SPA build. Measurements,
+allowances and displaced budgets are recorded in the
+[November dependency baseline](docs/agents/dep-baseline-as-of-2026-11.md#federation-budgets-and-size-analysis).
+
 ### Debian Package
 
 ```bash
@@ -559,7 +599,7 @@ Release assets are published through `publish-release.yml`; see
 [`docs/BUILD_PIPELINE.md`](docs/BUILD_PIPELINE.md) for the stable APT handoff.
 
 **Release preparation [PARTIAL; not published].** The root `package.json` prepares
-`2026.11.1` for a dispatch in November 2026; re-predict immediately before dispatch.
+`2026.11.2` for a dispatch in November 2026; re-predict immediately before dispatch.
 If dispatch slips into December, re-predict (`2026.12.0`) and update the manifest.
 The release workflow requires exact equality with its calculated version. Debian
 builds append `-<UTC stamp>.<checkout SHA>`; `deb-version-stamp.test.sh` executes

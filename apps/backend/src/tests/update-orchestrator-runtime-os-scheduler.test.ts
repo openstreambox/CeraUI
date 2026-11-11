@@ -30,21 +30,31 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
+import { readUpdateDetails } from "../modules/system/update-orchestrator/details.ts";
 import { OsStageError } from "../modules/system/update-orchestrator/os-stage-error.ts";
 import {
+	allowCellularOnce,
 	checkUpdatesNow,
 	getOrchestratorState,
+	getOsUpdateSummary,
 	installUpdatesNow,
 	resetOrchestratorRuntimeForTest,
 	runOrchestratorTick,
+	setOrchestratorRuntimeDepsForTest,
 	setOrchestratorStateForTest,
 } from "../modules/system/update-orchestrator/runtime.ts";
-import type { OrchestratorState } from "../modules/system/update-orchestrator/types.ts";
+import {
+	initialOrchestratorState,
+	type OrchestratorState,
+} from "../modules/system/update-orchestrator/types.ts";
 import {
 	getPersistentNotifications,
 	notificationRemove,
 } from "../modules/ui/notifications.ts";
-import { quarantineDirs } from "./helpers/orchestrator-runtime-harness.ts";
+import {
+	fakeDeps,
+	quarantineDirs,
+} from "./helpers/orchestrator-runtime-harness.ts";
 import {
 	harness,
 	MIN,
@@ -57,6 +67,141 @@ import {
 afterEach(() => {
 	resetOrchestratorRuntimeForTest();
 	for (const dir of quarantineDirs.splice(0)) rmSync(dir, { recursive: true });
+});
+
+describe("metered scheduled checks", () => {
+	test.each([false, true])(
+		"both due: packages allowed=%s preserves priority or falls through",
+		async (allowed) => {
+			const phases: string[] = [];
+			let packageChecks = 0;
+			setOrchestratorRuntimeDepsForTest(
+				fakeDeps({
+					loadCapabilities: async () => ({
+						mode: "capable",
+						features: ["apt-all-packages", "rauc-verity-streaming"],
+					}),
+					loadSettings: async () => ({
+						packagesAuto: true,
+						systemAuto: true,
+						channel: "beta",
+						schedule: { mode: "any-idle", start: "03:00", end: "05:00" },
+						allowPackagesOverCellular: allowed,
+						allowSystemOverCellular: false,
+					}),
+					onlyMeteredCandidateExists: async () => true,
+					runPackageCheck: async () => {
+						packageChecks++;
+						return null;
+					},
+					publishWireState: (wire) => phases.push(wire.phase),
+				}),
+			);
+			setOrchestratorStateForTest(initialOrchestratorState(0));
+			await runOrchestratorTick();
+			expect(packageChecks).toBe(allowed ? 1 : 0);
+			expect(phases.filter((phase) => phase === "checking")).toHaveLength(1);
+			expect(getOrchestratorState().osCheck.lastSuccessAt).toBe(
+				allowed ? null : 1_000_000,
+			);
+			expect(getOrchestratorState().osCheck.nextAttemptAt).toBe(
+				allowed ? null : 1_000_000 + 12 * 3_600_000,
+			);
+			const details = await readUpdateDetails();
+			expect(details.checks.packages.deferred).toEqual(
+				allowed ? null : { reason: "metered_only" },
+			);
+			expect(details.checks.os.deferred).toBeNull();
+		},
+	);
+
+	test("a package deferral clears when an unmetered check starts", async () => {
+		let metered = true;
+		setOrchestratorRuntimeDepsForTest(
+			fakeDeps({
+				loadSettings: async () => ({
+					packagesAuto: true,
+					systemAuto: false,
+					channel: "beta",
+					schedule: { mode: "any-idle", start: "03:00", end: "05:00" },
+					allowPackagesOverCellular: false,
+					allowSystemOverCellular: false,
+				}),
+				onlyMeteredCandidateExists: async () => metered,
+			}),
+		);
+		setOrchestratorStateForTest(initialOrchestratorState(0));
+		await runOrchestratorTick();
+		expect((await readUpdateDetails()).checks.packages.deferred).toEqual({
+			reason: "metered_only",
+		});
+		metered = false;
+		await runOrchestratorTick();
+		expect((await readUpdateDetails()).checks.packages.deferred).toBeNull();
+		expect(getOrchestratorState().packageCheck.lastSuccessAt).toBe(1_000_000);
+	});
+
+	test.each(["scheduled", "manual"] as const)(
+		"%s package checks proceed while a first image offer awaits cellular approval",
+		async (action) => {
+			let allowPackagesOverCellular = false;
+			let packageChecks = 0;
+			const h = harness([], {
+				loadSettings: async () => ({
+					packagesAuto: true,
+					systemAuto: true,
+					channel: "stable",
+					schedule: { mode: "any-idle", start: "03:00", end: "05:00" },
+					allowPackagesOverCellular,
+					allowSystemOverCellular: false,
+				}),
+				onlyMeteredCandidateExists: async () => true,
+				runPackageCheck: async () => {
+					packageChecks++;
+					return null;
+				},
+			});
+			setOrchestratorStateForTest(initialOrchestratorState(0));
+
+			await runOrchestratorTick();
+			expect(getOrchestratorState().phase).toBe("os-available");
+			expect(getOrchestratorState().osStageRecovery).toBeUndefined();
+			expect(packageChecks).toBe(0);
+
+			allowPackagesOverCellular = true;
+			h.clock.now += 24 * 60 * MIN;
+			if (action === "scheduled") await runOrchestratorTick();
+			else expect(await checkUpdatesNow()).toEqual({ started: true });
+			expect(packageChecks).toBe(1);
+			expect(getOrchestratorState().packageCheck.lastSuccessAt).toBe(
+				h.clock.now,
+			);
+			expect(h.calls.stages).toBe(0);
+			expect(getOrchestratorState().osStageRecovery).toBeUndefined();
+
+			// The retained offer is re-admitted after package work, still unapproved.
+			await runOrchestratorTick();
+			await runOrchestratorTick();
+			expect(getOrchestratorState().phase).toBe("os-available");
+			expect(getOsUpdateSummary()).toMatchObject({
+				candidate: {
+					version: manifest.version,
+					sizeBytes: manifest.bundle.size,
+				},
+				pendingCellular: {
+					id: manifest.version,
+					sizeBytes: manifest.bundle.size,
+				},
+			});
+			expect(h.calls.stages).toBe(0);
+			expect(packageChecks).toBe(1);
+
+			allowCellularOnce(manifest.version);
+			await runOrchestratorTick();
+			expect(h.calls.stages).toBe(1);
+			expect(getOrchestratorState().phase).toBe("os-staged");
+		},
+	);
 });
 
 describe("OS staging recovery in the scheduler", () => {

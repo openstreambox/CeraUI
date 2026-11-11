@@ -4,12 +4,12 @@ import { MediaQuery } from 'svelte/reactivity';
 import { toast } from 'svelte-sonner';
 
 import { Toaster } from '$lib/components/ui/sonner';
-import { DESKTOP_CHROME_QUERY } from '$lib/layout';
-import { requestDialog } from '$lib/stores/dialog-request.svelte';
 import {
 	startStreaming as startStreamingFn,
 	stopStreaming as stopStreamingFn,
 } from '$lib/helpers/SystemHelper';
+import { DESKTOP_CHROME_QUERY } from '$lib/layout';
+import { requestDialog } from '$lib/stores/dialog-request.svelte';
 import {
 	clearNotifications,
 	dismiss,
@@ -27,6 +27,7 @@ const resolveActionLabel = resolveMessageKey;
 // while an entry that drops out of `getActive()` gets its toast dismissed.
 // This is plain bookkeeping, not reactive state — the only reactive dependency
 // is `getActive()`.
+// biome-ignore lint/nursery/useSvelteReactiveClasses: The effect reads and writes this deduplication ledger; making it reactive would subscribe the effect to its own bookkeeping instead of only getActive().
 const renderedAt = new Map<string, number>();
 
 // This host used to ALSO push its own `connection-lost` toast off

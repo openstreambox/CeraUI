@@ -38,6 +38,7 @@ import {
 	NOTIFICATION_BAND_CLASS,
 	NOTIFICATION_BAND_ICON_CLASS,
 	NOTIFICATION_ICONS,
+	persistentNotificationText,
 } from './notification-presentation';
 
 const items = $derived(getPersistent());
@@ -51,7 +52,7 @@ const frozen = $derived(prefersEinkTheme(getDisplayProfile()));
 	<div class="container max-w-7xl pt-3" role="status">
 		<ul class="flex flex-col gap-2" data-testid="persistent-notices">
 			{#each items as item (item.name)}
-				{@const Icon = NOTIFICATION_ICONS[item.type]}
+				{const Icon = $derived(NOTIFICATION_ICONS[item.type])}
 				<li
 					class={cn(
 						'flex items-start gap-3 rounded-xl border p-3',
@@ -68,7 +69,7 @@ const frozen = $derived(prefersEinkTheme(getDisplayProfile()));
 					/>
 					<div class="min-w-0 flex-1">
 						<p class="text-foreground text-sm leading-relaxed break-words">
-							{item.text}
+							{persistentNotificationText(item)}
 						</p>
 						{#if item.action?.kind === 'navigate'}
 							<Button

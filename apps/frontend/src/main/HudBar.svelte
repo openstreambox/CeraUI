@@ -1,7 +1,6 @@
 <script lang="ts">
-import { untrack } from 'svelte';
-import { getLocale, m } from '@ceraui/i18n/svelte';
 import { formatBitrate, formatCurrent, formatRelativeTime, formatTemp, formatVoltage } from '@ceraui/i18n/formatters';
+import { getLocale, m } from '@ceraui/i18n/svelte';
 import ActivityIcon from '@lucide/svelte/icons/activity';
 import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
 import CircleDotIcon from '@lucide/svelte/icons/circle-dot';
@@ -15,15 +14,15 @@ import ThermometerIcon from '@lucide/svelte/icons/thermometer';
 import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 import WifiIcon from '@lucide/svelte/icons/wifi';
 import ZapIcon from '@lucide/svelte/icons/zap';
-
+import { untrack } from 'svelte';
+import Badge from '$lib/components/custom/Badge.svelte';
 import BondConstellation from '$lib/components/custom/BondConstellation.svelte';
 import BufferingIndicator from '$lib/components/custom/BufferingIndicator.svelte';
 import LinkBadge from '$lib/components/custom/LinkBadge.svelte';
 import LinkIndicator from '$lib/components/custom/LinkIndicator.svelte';
-import Badge from '$lib/components/custom/Badge.svelte';
 import * as Sheet from '$lib/components/ui/sheet';
 import * as Tooltip from '$lib/components/ui/tooltip';
-import { type StalenessState, getStalenessState } from '$lib/helpers/staleness';
+import { getStalenessState, type StalenessState } from '$lib/helpers/staleness';
 import { getBufferingState } from '$lib/stores/buffering.svelte';
 import { getDisplayProfile, getDisplayRefreshNonce, prefersEinkTheme } from '$lib/stores/display-profile.svelte';
 import { getHudState, getSocTelemetry } from '$lib/stores/hud.svelte';
@@ -51,6 +50,7 @@ const HEALTH_ICON_COLOR: Record<HealthIndicator, string> = {
 };
 
 let { class: className }: { class?: string } = $props();
+const detailsDescriptionId = $props.id();
 
 let open = $state(false);
 
@@ -297,10 +297,10 @@ $effect(() => {
 		<dt class="text-muted-foreground text-[0.7rem] font-medium">{label}</dt>
 		<dd class={cn('inline-flex items-center gap-1 font-medium', state === 'ok' ? 'text-status-success' : state === 'bad' ? 'text-status-warning' : 'text-muted-foreground')}>
 			{#if state === 'ok'}
-				{#if okIcon}{@const OkIcon = okIcon}<OkIcon class="size-3.5 shrink-0" aria-hidden="true" />{/if}
+				{#if okIcon}{const OkIcon = $derived(okIcon)}<OkIcon class="size-3.5 shrink-0" aria-hidden="true" />{/if}
 				{okText}
 			{:else if state === 'bad'}
-				{@const BadIcon = badIcon}
+				{const BadIcon = $derived(badIcon)}
 				<BadIcon class="size-3.5 shrink-0" aria-hidden="true" />
 				{badText}
 			{:else}
@@ -313,17 +313,16 @@ $effect(() => {
 
 <span role="status" aria-live="polite" class="sr-only" data-testid="hud-telemetry-status">{announcedTelemetry}</span>
 <span role="status" aria-live="polite" class="sr-only" data-testid="hud-transition-status">{announcedTransition}</span>
+<span id={detailsDescriptionId} class="sr-only">{m["hud.expandDetails"]()}</span>
 
 <Sheet.Root bind:open>
-	<Sheet.Trigger>
+	<Sheet.Trigger id={`${detailsDescriptionId}-trigger`}>
 		{#snippet child({ props })}
-			<button
-				{...props}
-				type="button"
+			<label
+				for={`${detailsDescriptionId}-trigger`}
 				data-hud-region
-				aria-label={m["hud.expandDetails"]()}
 				class={cn(
-					'bg-sidebar text-foreground hover:bg-accent/50 focus-visible:ring-ring/50 flex h-12 w-full items-center gap-3 border-t px-4 text-start text-xs font-medium tracking-wide transition-colors focus-visible:ring-2 focus-visible:outline-none',
+					'bg-sidebar text-foreground hover:bg-accent/50 relative flex h-12 w-full cursor-pointer items-center gap-3 border-t px-4 text-start text-xs font-medium tracking-wide transition-colors',
 					className,
 				)}
 			>
@@ -334,10 +333,21 @@ $effect(() => {
 				  box, so `--mobile-dock-height` does not grow.
 				-->
 				<span class="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+					<!-- Keep the visible verdict as the label; telemetry stays independently accessible. -->
+					<button
+						{...props}
+						type="button"
+						aria-labelledby={lifecycle === 'idle' && health === 'idle'
+							? `${detailsDescriptionId}-lifecycle`
+							: `${detailsDescriptionId}-lifecycle ${detailsDescriptionId}-health`}
+						aria-describedby={detailsDescriptionId}
+						class="pointer-events-none absolute inset-0 border-0 bg-transparent p-0 focus-visible:ring-ring/50 focus-visible:ring-2 focus-visible:outline-none"
+					></button>
 					<span class="inline-flex shrink-0 items-center gap-3">
 						<!-- Lead status badge -->
 						{#if isOffline}
 							<span
+								id={`${detailsDescriptionId}-lifecycle`}
 								class="bg-muted text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
 								<ClockIcon class="size-3" aria-hidden="true" />
@@ -345,6 +355,7 @@ $effect(() => {
 							</span>
 						{:else if isLive}
 							<span
+								id={`${detailsDescriptionId}-lifecycle`}
 								class="bg-status-live text-primary-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
 								<span class="size-2 rounded-full bg-current motion-safe:animate-pulse"></span>
@@ -352,6 +363,7 @@ $effect(() => {
 							</span>
 						{:else}
 							<span
+								id={`${detailsDescriptionId}-lifecycle`}
 								class="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
 								<span class="bg-status-idle size-2 rounded-full"></span>
@@ -367,7 +379,7 @@ $effect(() => {
 							title="{m["hud.streamHealth"]()}: {healthLabel}"
 						>
 							<HealthIcon class={cn('size-3.5 shrink-0', healthIconColor)} aria-hidden="true" />
-							<span class="text-[0.7rem] font-semibold">{healthLabel}</span>
+							<span id={`${detailsDescriptionId}-health`} class="text-[0.7rem] font-semibold">{healthLabel}</span>
 							<span class="sr-only">{m["hud.streamHealth"]()}</span>
 						</span>
 					</span>
@@ -463,7 +475,7 @@ $effect(() => {
 					{/if}
 					{@render socValue(tempState, tempText, m["hud.temperature"]())}
 				</span>
-			</button>
+			</label>
 		{/snippet}
 	</Sheet.Trigger>
 
