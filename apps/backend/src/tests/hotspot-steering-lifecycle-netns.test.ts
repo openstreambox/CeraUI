@@ -6,6 +6,7 @@ import {
 	onNetworkInterfacesChange,
 	refreshWifiApClientZones,
 } from "../modules/network/network-interfaces.ts";
+import { flushConntrack } from "../modules/network/uplink-sharing.ts";
 import {
 	type PreparedSteeringState,
 	UplinkSteeringApplier,
@@ -183,7 +184,7 @@ test.skipIf(!child)(
 							throw error;
 					}
 				},
-				flushConntrack: async () => {},
+				flushConntrack,
 				setIpForwarding: async () => {},
 				publishFlowsReset: () => {},
 			});
@@ -332,6 +333,16 @@ test.skipIf(!child)(
 			await verifySteeringState(active);
 			expect(await completion).toEqual({ success: true });
 			expect(readinessChecks).toBeGreaterThan(1);
+			// Retire every marked flow first: Stop must also clean up an empty mark.
+			await flushConntrack(candidate.mark);
+			const emptyMark = await runTestCommand([
+				"conntrack",
+				"--delete",
+				"--mark",
+				"0xca000100/0xffffff00",
+			]);
+			expect(emptyMark.code).toBe(1);
+			expect(emptyMark.stderr).toContain("0 flow entries");
 			iface.activeConn = "ap93";
 			iface.activeMode = "ap";
 			await stopHotspotForInterface(mac, iface, {
