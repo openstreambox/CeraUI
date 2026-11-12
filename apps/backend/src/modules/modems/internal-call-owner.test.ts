@@ -30,6 +30,8 @@ function fixture(policyKey = "att") {
 	let baseline: InternalCallBaseline | undefined;
 	const control: CellularControl = {
 		valid: async () => valid,
+		readSubscriber: async () =>
+			sameSubscriber ? "000000000000001" : "000000000000002",
 		verifySubscriber: async () => sameSubscriber,
 		onRevoked: (callback) => {
 			revoked = callback;

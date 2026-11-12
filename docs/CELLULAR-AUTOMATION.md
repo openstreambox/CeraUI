@@ -488,3 +488,19 @@ con esa máscara; no acredita el módem físico.
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon
 sigue sin calificar.
+
+
+### Internal context storage / almacenamiento del contexto interno
+
+An internal-call context baseline belongs to its physical unit and context slot.
+A new SIM's desired APN/family still comes from that subscription. Only an exact,
+inactive parked definition can transfer; an active or unknown context remains
+blocked. The original baseline is preserved and is never used as carrier policy
+for the new SIM. This storage/validation component does not enable FM350 calls.
+
+La referencia inicial de un contexto interno pertenece al dispositivo físico y
+al número de contexto. El APN y la familia deseados de una SIM nueva se obtienen
+de esa suscripción. Solo puede transferirse una definición propia, exacta e
+inactiva; un contexto activo o desconocido sigue bloqueado. La referencia original
+se conserva y nunca determina el operador de la nueva SIM. Este componente de
+almacenamiento y validación no activa llamadas del FM350.

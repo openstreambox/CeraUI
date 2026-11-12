@@ -10,6 +10,7 @@ import {
 import { parseCarrierIntentSlot } from "./automatic-carrier-intent.ts";
 import { cellularAuthorityMigration } from "./cellular-authority-store.ts";
 import { parsePreparationRecord } from "./cellular-preparation-state.ts";
+import { parseInternalContextAuthority } from "./internal-context-authority.ts";
 
 export async function inventoryCellularMigration<T>(
 	migration: PrivateJsonMigration<T>,
@@ -56,6 +57,11 @@ export async function inventoryCellularAuthority(
 			"cellular-preparation",
 			process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR,
 			parsePreparationRecord,
+		],
+		[
+			"cellular-internal-context",
+			process.env.CERALIVE_CELLULAR_INTERNAL_CONTEXT_STATE_DIR,
+			parseInternalContextAuthority,
 		],
 	] as const) {
 		if (directory !== undefined) {

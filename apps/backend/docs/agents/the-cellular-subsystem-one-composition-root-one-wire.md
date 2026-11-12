@@ -680,3 +680,24 @@ the supervised process epoch and unique per-producer file/socket endpoints
 bound acknowledgement to one process. A confirmed departing process cannot
 release a replacement process's resources. No-op publications retain identity;
 failed or changed publications force a new generation and reload.
+
+
+### Internal context authority (partial)
+
+A retained internal-call definition is keyed by proven unit and context slot,
+with the original subscription/context baseline preserved across later SIMs.
+The desired APN/family is an explicit current subscription-policy input. A
+transfer or same-SIM policy change requires a positively inactive context that
+exactly matches the parked owned definition. Unknown activity, active foreign
+contexts, unrecognized settings, wrong keys and unexplained definition changes
+cannot authorize transfer. Parking does not issue a setter or restore an old
+SIM's APN onto a new SIM.
+
+Context files use the existing cellular authority migration, shared-data store,
+mutation revision and recovery read-fault barrier; the startup census includes
+all stored units/slots. This component has no mutation or recovery loop and must
+be persisted before a caller submits definition/activation effects. A retained
+AT control now exposes the digit-only subscriber observation separately from
+matching the original subscriber: unreadable cannot be treated as a new SIM,
+and positive change does not authorize a setter for the old subscription.
+Actual retained-owner context transactions and runtime composition remain open.

@@ -52,6 +52,7 @@ function fixture(equipment = "000000000000001") {
 			calls.push("acquire");
 			return {
 				valid: async () => true,
+				readSubscriber: async () => target().subscriber,
 				verifySubscriber: async () => true,
 				readAutoConnect: async () => {
 					calls.push("qmap-read");

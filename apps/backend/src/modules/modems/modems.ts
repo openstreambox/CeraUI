@@ -693,6 +693,8 @@ export function parseCellularSubscriber(reply: string): string | undefined {
 }
 export interface CellularControl {
 	readonly valid: () => Promise<boolean>;
+	/** Positive digit-only observation; unreadable is not a different SIM. */
+	readonly readSubscriber: () => Promise<string | undefined>;
 	readonly verifySubscriber: () => Promise<boolean>;
 	readonly readAutoConnect: () => Promise<number | undefined>;
 	readonly disableAutoConnect: () => Promise<boolean>;
@@ -789,8 +791,10 @@ export async function acquireCellularControl(
 		(await deps.present(target));
 	const exchange = async (command: string) =>
 		deps.exchange(serial, command, valid, signal);
+	const readSubscriber = async () =>
+		parseCellularSubscriber(await exchange("AT+CIMI"));
 	const verifySubscriber = async () =>
-		parseCellularSubscriber(await exchange("AT+CIMI")) === target.subscriber;
+		(await readSubscriber()) === target.subscriber;
 	const requireSubscriber = async () => {
 		if (!(await verifySubscriber()))
 			throw new Error("Cellular subscription changed");
@@ -842,6 +846,7 @@ export async function acquireCellularControl(
 		};
 		return {
 			valid,
+			readSubscriber,
 			verifySubscriber,
 			onRevoked: (callback) => {
 				revocationListeners.add(callback);
