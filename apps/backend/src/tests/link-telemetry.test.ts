@@ -152,6 +152,71 @@ const flushCutover = async (): Promise<void> => {
 	await Bun.sleep(0);
 };
 
+test("retired file callbacks cannot populate or stale a replacement telemetry lifetime", () => {
+	const old = captureWatch(),
+		current = captureWatch();
+	setIfaceResolverForTest(() => "usb0");
+	startLinkTelemetry("/synthetic/old", [], { watch: old.watch });
+	startLinkTelemetry("/synthetic/current", [], { watch: current.watch });
+	old.emit(snapshot([{ nak_count: 91 }]));
+	expect(buildLinkTelemetry()).toBeNull();
+	current.emit(snapshot([{ nak_count: 2 }]));
+	old.emit(null);
+	expect(buildLinkTelemetry()?.links[0]).toMatchObject({
+		nak_count: 2,
+		stale: false,
+	});
+	stopLinkTelemetry();
+	old.emit(snapshot([{ nak_count: 92 }]));
+	current.emit(snapshot([{ nak_count: 93 }]));
+	expect(buildLinkTelemetry()).toBeNull();
+});
+
+test("a late control acquisition closes its own client without stopping a replacement watcher", async () => {
+	const old = captureWatch(),
+		current = captureWatch(),
+		pending = Promise.withResolvers<TelemetryControlClient | null>(),
+		fake = fakeControlClient({ methods: ["subscribe", "unsubscribe"] });
+	setControlClientFactoryForTest(() => pending.promise);
+	startLinkTelemetry("/synthetic/old", [], {
+		watch: old.watch,
+		controlSocket: "/synthetic/socket",
+	});
+	startLinkTelemetry("/synthetic/current", [], { watch: current.watch });
+	pending.resolve(fake.client);
+	await flushCutover();
+	expect(fake.closed).toBe(true);
+	expect(current.stopped).toBe(0);
+	expect(isLinkTelemetryActive()).toBe(true);
+});
+
+test("a late capability response cannot subscribe or retire the replacement file poll", async () => {
+	const old = captureWatch(),
+		current = captureWatch(),
+		pending = Promise.withResolvers<void>(),
+		entered = Promise.withResolvers<void>(),
+		fake = fakeControlClient({ methods: ["subscribe", "unsubscribe"] });
+	setControlClientFactoryForTest(async () => ({
+		...fake.client,
+		getCapabilities: async () => {
+			entered.resolve();
+			await pending.promise;
+			return fake.client.getCapabilities();
+		},
+	}));
+	startLinkTelemetry("/synthetic/old", [], {
+		watch: old.watch,
+		controlSocket: "/synthetic/socket",
+	});
+	await entered.promise;
+	startLinkTelemetry("/synthetic/current", [], { watch: current.watch });
+	pending.resolve();
+	await flushCutover();
+	expect(fake.closed).toBe(true);
+	expect(current.stopped).toBe(0);
+	expect(isLinkTelemetryActive()).toBe(true);
+});
+
 function captureClient(sink: string[]): AppWebSocket {
 	return {
 		data: { isAuthenticated: true, lastActive: Date.now() },

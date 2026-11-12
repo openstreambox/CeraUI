@@ -170,6 +170,19 @@ describe("LiveView start-failure output", () => {
 const startFailure = en.live.startFailure;
 
 describe("LiveView typed start-failure rendering (Todo 29)", () => {
+	it("renders the sender mapping refusal with its own operator action", async () => {
+		state.failure = {
+			class: "sender_binding_unavailable",
+			phase: "params",
+			retriable: false,
+			attemptId: "att_binding",
+		};
+		render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenCalledWith(
+			`${startFailure.class.sender_binding_unavailable} ${startFailure.notRetriable}`,
+		);
+	});
 	it("renders the class message + retried-then-failed suffix for a retriable class", async () => {
 		state.failure = {
 			class: "engine_unavailable",

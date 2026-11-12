@@ -4,6 +4,7 @@ import { telemetrySchema } from "@ceraui/srtla-send/telemetry";
 import { bindMapBandMessage } from "../modules/streaming/bind-map-notification.ts";
 import {
 	type BindMapSpawnDeps,
+	resolveCellularBindMapArgs,
 	resolveRequiredBindMapArgs,
 } from "../modules/streaming/bind-map-spawn.ts";
 import type { PublishedBond } from "../modules/streaming/srtla.ts";
@@ -21,10 +22,31 @@ test("required binding is an exact capability, never a version guess or duplicat
 			value === true,
 		);
 	}
+	for (const value of [true, false, "true", 1, null]) {
+		const parsed = classifyCapabilityDocument(
+			0,
+			JSON.stringify({
+				capabilities: {
+					bind_map: true,
+					bind_map_required: true,
+					bind_map_required_empty_reload: value,
+				},
+			}),
+		);
+		expect(parsed.bindMap && parsed.bindMapRequiredEmptyReload === true).toBe(
+			value === true,
+		);
+	}
 	expect(
 		classifyCapabilityDocument(
 			0,
 			'{"capabilities":{"bind_map":true,"bind_map_required":false,"bind_map_required":true}}',
+		).bindMap,
+	).toBe(false);
+	expect(
+		classifyCapabilityDocument(
+			0,
+			'{"capabilities":{"bind_map":true,"bind_map_required":true,"bind_map_required_empty_reload":false,"bind_map_required_empty_reload":true}}',
 		).bindMap,
 	).toBe(false);
 });
@@ -49,7 +71,12 @@ test("required paths get both flags or a typed refusal; a failed recheck never f
 			return {
 				bindMap: true,
 				bindMapSchemaVersion: 1,
-				...(capable ? { bindMapRequired: true as const } : {}),
+				...(capable
+					? {
+							bindMapRequired: true as const,
+							bindMapRequiredEmptyReload: true as const,
+						}
+					: {}),
 			};
 		},
 		announce: (cause) => {
@@ -60,6 +87,22 @@ test("required paths get both flags or a typed refusal; a failed recheck never f
 		ok: true,
 		args: ["--bind-map", "/synthetic/bind-map.json", "--require-bind-map"],
 	});
+	for (const incomplete of [
+		{ bindMapRequired: true as const },
+		{ bindMapRequiredEmptyReload: true as const },
+		{},
+	]) {
+		expect(
+			await resolveRequiredBindMapArgs("/synthetic/sender", {
+				...deps,
+				probe: async () => ({
+					bindMap: true,
+					bindMapSchemaVersion: 1,
+					...incomplete,
+				}),
+			}),
+		).toEqual({ ok: false, reason: "capability-unavailable" });
+	}
 	capable = false;
 	expect(await resolveRequiredBindMapArgs("/synthetic/sender", deps)).toEqual({
 		ok: false,
@@ -82,11 +125,71 @@ test("required paths get both flags or a typed refusal; a failed recheck never f
 					bindMap: true,
 					bindMapSchemaVersion: 1,
 					bindMapRequired: true,
+					bindMapRequiredEmptyReload: true,
 				};
 			},
 		}),
 	).toEqual({ ok: false, reason: "mapping-unavailable" });
 	expect(announcements).toEqual(["bind-map-passed"]);
+});
+
+test("new launches prefer strict capability for future hotplug and refuse a late managed row without it", async () => {
+	let required = false,
+		capable = true,
+		duringProbe = () => {};
+	const deps: BindMapSpawnDeps = {
+		getBond: () => ({
+			entries: [],
+			publication: {
+				ok: true,
+				generation: 1,
+				changed: true,
+				sidecarPath: "/synthetic/map",
+			},
+		}),
+		probe: async () => {
+			duringProbe();
+			return {
+				bindMap: true,
+				bindMapSchemaVersion: 1,
+				...(capable
+					? {
+							bindMapRequired: true as const,
+							bindMapRequiredEmptyReload: true as const,
+						}
+					: {}),
+			};
+		},
+		announce: () => {},
+	};
+	expect(
+		await resolveCellularBindMapArgs("/synthetic/sender", deps, () => required),
+	).toEqual({
+		ok: true,
+		args: ["--bind-map", "/synthetic/map", "--require-bind-map"],
+		required: true,
+	});
+	capable = false;
+	expect(
+		await resolveCellularBindMapArgs("/synthetic/sender", deps, () => required),
+	).toEqual({
+		ok: true,
+		args: ["--bind-map", "/synthetic/map"],
+		required: false,
+	});
+	duringProbe = () => {
+		required = true;
+	};
+	expect(
+		await resolveCellularBindMapArgs("/synthetic/sender", deps, () => required),
+	).toEqual({ ok: false, reason: "capability-unavailable" });
+	expect(
+		await resolveCellularBindMapArgs(
+			"/synthetic/sender",
+			{ ...deps, getBond: () => undefined },
+			() => required,
+		),
+	).toEqual({ ok: false, reason: "mapping-unavailable" });
 });
 test("producer-required refusal survives telemetry, RPC projection and operator copy without claiming a legacy link", async () => {
 	const bytes = await Bun.file(

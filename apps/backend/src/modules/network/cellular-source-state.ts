@@ -137,6 +137,22 @@ export function captureCellularSourcePublication(
 				before.binding.device === device
 			: !sources.has(iface) && !cellularHiddenInterface(device));
 }
+/** Cleanup keeps this exact withdrawn observation. A new claim, binding or
+ * readiness publication invalidates it even when the source tuple is reused.
+ */
+export function captureCellularSourceWithdrawal(
+	owner: string,
+	epoch: string,
+	iface: string,
+): () => boolean {
+	const before = sources.get(iface);
+	return () =>
+		!!before &&
+		sources.get(iface) === before &&
+		before.owner === owner &&
+		before.epoch === epoch &&
+		!before.ready;
+}
 export function cellularSourceReady(
 	iface: string,
 	source: string | undefined,
