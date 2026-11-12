@@ -41,9 +41,11 @@ import type {
 import {
 	CONFIG_CHANGE_EVENT,
 	configChangeStateSchema,
+	ethernetRoleMessageSchema,
 	hardwareTypeSchema,
 	notificationsMessageSchema,
 	pipelineSchema,
+	setEthernetRoleInputSchema,
 	uplinkFlowsResetEventSchema,
 } from "@ceraui/rpc/schemas";
 import { downloadLog } from "$lib/helpers/SystemHelper";
@@ -81,6 +83,7 @@ import {
 	confirmOperation,
 	destroyAsyncOperations,
 	failOperation,
+	getOperationTarget,
 	isOperationPending,
 	reconcileOperationsOnReconnect,
 } from "./async-operation.svelte";
@@ -165,6 +168,12 @@ let updateOrchestratorState = $state.raw<
 
 // Network state
 let netifState = $state.raw<NetifMessage | undefined>(undefined);
+let ethernetRoleOpPorts: readonly string[] = [];
+
+/** Support is connection-scoped, never inherited from the cached netif merge. */
+export function supportsEthernetRoleOp(name: string): boolean {
+	return ethernetRoleOpPorts.includes(name);
+}
 let uplinksState = $state.raw<UplinksMessage | undefined>(undefined);
 // The read-only sharing-coexistence verdict. REPLACED wholesale, never merged:
 // every check is an EXPLICIT tri-state, so a field-preserving merge would
@@ -635,6 +644,9 @@ function handleMessage(
 			// required (an entry legitimately omits optional fields), so the previous
 			// value is read per key rather than seeded wholesale.
 			const incoming = data as NetifMessage;
+			ethernetRoleOpPorts = Object.entries(incoming)
+				.filter(([, entry]) => entry?.ethRoleOp === true)
+				.map(([name]) => name);
 			const merged: NetifMessage = {};
 			let netifChanged = false;
 			for (const [ifname, entry] of Object.entries(incoming)) {
@@ -717,23 +729,26 @@ function handleMessage(
 			// `main/network/` into `lib/rpc/`; the two spellings are pinned together
 			// by a test that drives this handler and asserts through
 			// `ethernetRoleOpKey`.
-			const outcome = (
-				data as {
-					eth_role?: {
-						name?: string;
-						role?: string;
-						pending?: boolean;
-						success?: boolean;
-						error?: string;
-					};
-				}
-			)?.eth_role;
-			if (outcome?.name !== undefined) {
+			const parsed = ethernetRoleMessageSchema.safeParse(data);
+			if (parsed.success) {
+				const outcome = parsed.data.eth_role;
 				const key = `eth-role:${outcome.name}`;
+				const current = getOperationTarget(key);
+				const request = setEthernetRoleInputSchema.safeParse(current);
+				if (outcome.op !== undefined) {
+					if (!request.success || request.data.op !== outcome.op) break;
+					// Matching echoes never replace the dispatch's attempt or deadline.
+					if (outcome.pending === true) break;
+				}
 				if (outcome.pending === true) {
-					// An echo must retain the current dispatch's entry and target;
-					// replacing it would invalidate osCommand's completion ownership.
-					if (!isOperationPending(key)) beginOperation(key, outcome.role);
+					// A same-target (or untargeted) echo must not restart the pending
+					// entry; a different role is a new transition and replaces the target.
+					const currentRole = request.success ? request.data.role : current;
+					if (
+						!isOperationPending(key) ||
+						(currentRole !== undefined && currentRole !== outcome.role)
+					)
+						beginOperation(key, outcome.role);
 				} else if (outcome.error !== undefined) {
 					failOperation(key, outcome.error);
 				} else if (outcome.success === true) {
@@ -1167,6 +1182,9 @@ async function runReconnectReauth(): Promise<void> {
  */
 function handleConnectionChange(state: ConnectionState): void {
 	const previous = connectionState;
+	if (state !== "connected" || previous !== "connected") {
+		ethernetRoleOpPorts = [];
+	}
 	connectionState = state;
 	isConnectedState = state === "connected";
 
@@ -1247,6 +1265,7 @@ export function resetState(): void {
 	updatingState = null;
 	updateOrchestratorState = undefined;
 	netifState = undefined;
+	ethernetRoleOpPorts = [];
 	uplinksState = undefined;
 	sharingDiagState = undefined;
 	uplinkSteeringState = undefined;

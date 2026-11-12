@@ -568,6 +568,11 @@ for the at-rest mechanism and the still-unsupported ZTE/UFI operator-login paths
 
 Procedures live in `src/rpc/procedures/<domain>.procedure.ts` and are wired into `src/rpc/router.ts`. The shared schema types and validation constants are defined in `@ceraui/rpc` (`packages/rpc/`) and consumed by both the backend and frontend.
 
+The `netif.router_cellular` status marker exposes only vendor, model, USB
+vendor:product, classification, and duplicate-model status. USB serials remain
+in the internal scan cache for existing identity logic and are excluded from
+this marker by the wire projection and shared schema.
+
 Key streaming procedures:
 
 | Procedure | Purpose |
@@ -861,7 +866,9 @@ flow marks, per-uplink policy-route support, and the single-flight reconcile loo
 Only packets entering a registered hotspot/shared-LAN zone are eligible; local
 traffic and foreign nftables tables are structurally outside the generated rules.
 Hard-down removes new-flow selection before a mark-scoped conntrack flush and
-route teardown. Full design, failure behavior, deployment dependency, and netns
+route teardown. Post-commit stale-route cleanup failures retain live steering and
+forwarding; the coordinator retries pending cleanup after successful or unchanged
+reconciles. Full design, failure behavior, deployment dependency, and netns
 coverage: [`docs/UPLINK_STEERING.md`](../../docs/UPLINK_STEERING.md).
 
 ### Streaming-first uplink shaping

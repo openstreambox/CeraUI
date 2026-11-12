@@ -7,7 +7,10 @@ import {
 	eligibleProbeCandidates,
 } from "../connectivity-candidates.ts";
 import { probeConnectivityViaDevice } from "../device-bound-probe.ts";
-import { getNetworkInterfaces } from "../network-interfaces.ts";
+import {
+	getNetworkInterfaces,
+	onNetworkInterfacesChange,
+} from "../network-interfaces.ts";
 import { resolveUplinkIdentity } from "../uplink-identity.ts";
 import {
 	type ConnectivityTargetResolver,
@@ -48,6 +51,7 @@ const resolveTargetShared: ConnectivityTargetResolver = () => {
 const defaultDeps: UplinkHealthRuntimeDeps = {
 	now: Date.now,
 	interfaces: getNetworkInterfaces,
+	onInterfacesChange: onNetworkInterfacesChange,
 	streaming: getIsStreaming,
 	telemetry: buildLinkTelemetry,
 	resolveTarget: resolveTargetShared,
@@ -100,5 +104,6 @@ export function initUplinkHealth(): void {
 export function setUplinkHealthRuntimeForTest(
 	next: UplinkHealthRuntime | null,
 ): void {
+	runtime.dispose();
 	runtime = next ?? new UplinkHealthRuntime();
 }

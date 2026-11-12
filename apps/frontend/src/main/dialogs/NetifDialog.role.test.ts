@@ -21,6 +21,7 @@
  *      inline rather than as a toast that expires.
  */
 import type { NetifEntry } from "@ceraui/rpc/schemas";
+import { setEthernetRoleInputSchema } from "@ceraui/rpc/schemas";
 import {
 	act,
 	fireEvent,
@@ -39,6 +40,7 @@ import {
 } from "vitest";
 
 const streaming = { value: false };
+const roleSupport = { value: false };
 
 vi.mock("$lib/rpc", () => ({
 	rpc: { network: { configure: vi.fn(), setEthernetRole: vi.fn() } },
@@ -46,6 +48,7 @@ vi.mock("$lib/rpc", () => ({
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getIsStreaming: () => streaming.value,
 	getConnectionState: () => "connected",
+	supportsEthernetRoleOp: () => roleSupport.value,
 }));
 vi.mock("svelte-sonner", () => ({
 	toast: { error: vi.fn(), success: vi.fn() },
@@ -59,6 +62,7 @@ import {
 	destroyAsyncOperations,
 	failOperation,
 	getOperationPhase,
+	getOperationTarget,
 	initAsyncOperations,
 	timeoutOperation,
 } from "$lib/rpc/async-operation.svelte";
@@ -175,6 +179,7 @@ beforeAll(() => {
 beforeEach(() => {
 	vi.clearAllMocks();
 	streaming.value = false;
+	roleSupport.value = false;
 	setEthernetRole.mockResolvedValue({ success: true, applied: "shared-lan" });
 	configure.mockResolvedValue({ success: true });
 	initAsyncOperations();
@@ -182,6 +187,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	destroyAsyncOperations();
+	vi.restoreAllMocks();
 });
 
 describe("NetifDialog — the role control's offering", () => {
@@ -231,6 +237,55 @@ describe("NetifDialog — the role control's offering", () => {
 });
 
 describe("NetifDialog — the role is STAGED until Save", () => {
+	it("sends a fresh correlation ID on each supported dispatch and owns that target (#489)", async () => {
+		roleSupport.value = true;
+		const firstOp = "00".repeat(16);
+		const secondOp = "ff".repeat(16);
+		let sequence = 0;
+		vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
+			throw new Error("randomUUID requires a secure context");
+		});
+		const random = vi
+			.spyOn(crypto, "getRandomValues")
+			.mockImplementation((array) => {
+				if (array instanceof Uint8Array) array.fill(sequence++ === 0 ? 0 : 255);
+				return array;
+			});
+		setEthernetRole.mockResolvedValueOnce({
+			success: false,
+			error: "apply_failed",
+		});
+		open();
+		await stage("shared-lan");
+		await save();
+		await screen.findByTestId("eth-role-error-eth0");
+		expect(setEthernetRole).toHaveBeenNthCalledWith(1, {
+			name: "eth0",
+			role: "shared-lan",
+			op: firstOp,
+		});
+		expect(getOperationTarget(KEY)).toEqual({
+			name: "eth0",
+			role: "shared-lan",
+			op: firstOp,
+		});
+		await save();
+		expect(setEthernetRole).toHaveBeenNthCalledWith(2, {
+			name: "eth0",
+			role: "shared-lan",
+			op: secondOp,
+		});
+		expect(getOperationTarget(KEY)).toEqual({
+			name: "eth0",
+			role: "shared-lan",
+			op: secondOp,
+		});
+		for (const [request] of setEthernetRole.mock.calls) {
+			expect(setEthernetRoleInputSchema.parse(request)).toEqual(request);
+		}
+		random.mockRestore();
+	});
+
 	it("dispatches NOTHING when a rung is picked", async () => {
 		open();
 

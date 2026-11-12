@@ -685,6 +685,13 @@ describe("receiver destination save and reload transitions", () => {
 				expect(receiverKindManifest(receiver).fields).toContain(
 					kind === "catalog" ? "server" : "addr",
 				);
+				expect(
+					buildServerSummary(persisted, receiver, 2, summaryLabels()),
+				).toBe(
+					kind === "catalog"
+						? "CeraLive Cloud · SRTLA · Bonded · Bonded across 2 links"
+						: "ingest.example:5000 · SRTLA · Custom",
+				);
 			};
 
 			await saveAndReload(managedInput(initial, range.min));
@@ -726,6 +733,9 @@ describe("receiver destination save and reload transitions", () => {
 				count: 2,
 			});
 
+			expect(
+				buildServerSummary(persisted, customKind, 2, summaryLabels()),
+			).toBe("custom.example:6000 · SRTLA · Custom");
 			await saveAndReload(managedInput(final, range.max));
 			assertManaged(final, range.max);
 		},

@@ -61,6 +61,7 @@ const coordinator = new UplinkSteeringCoordinator({
 		publishUplinkSteeringAvailability(availability);
 		broadcastWifiState();
 	},
+	retryCleanup: () => applier.retryPendingCleanup(),
 });
 
 let unsubscribeNetif: (() => void) | undefined;
