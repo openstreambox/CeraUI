@@ -85,7 +85,7 @@ export function planCellularRoutes(
 		input.slot < 1 ||
 		input.slot > 32 ||
 		!Number.isInteger(input.mtu) ||
-		input.mtu < 1280 ||
+		input.mtu < (input.ipv4 === undefined ? 1280 : 576) ||
 		input.mtu > 9000
 	)
 		throw new Error("Invalid cellular route identity");

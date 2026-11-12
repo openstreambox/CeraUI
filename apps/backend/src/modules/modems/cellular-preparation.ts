@@ -26,7 +26,7 @@ import { withJournaledModemMutation } from "./mutation-lease.ts";
 import { registerModemConfigInverse } from "./mutation-rollback.ts";
 import {
 	type CarrierPolicy,
-	selectSubscription,
+	selectAutomaticSubscription,
 } from "./subscription-policy.ts";
 import { decideInitialEps, resolveTransportQuirk } from "./transport-policy.ts";
 
@@ -204,6 +204,89 @@ async function takeProfile(
 		? "ready"
 		: "blocked";
 }
+/** A self-registering transport must never reach NM Simple.Connect while it
+ * waits for registration. Disarm only the exact automatic device+SIM profile;
+ * this is not carrier activation and never changes APN/family or radio state.
+ */
+export async function disarmInternalCallProfile(
+	uuid: string,
+	target: CellularControlTarget,
+	current: () => Promise<boolean>,
+	deps: CellularPreparationDeps = defaultCellularPreparationDeps,
+): Promise<PreparationOutcome> {
+	ready.delete(uuid);
+	if (
+		resolveTransportQuirk(target.identity)?.owner !== "internal-call" ||
+		!(await current()) ||
+		!(await deps.present(target))
+	)
+		return "preserved";
+	const selected = await automatic(uuid, target, deps);
+	if (!selected) return "preserved";
+	const baseline = await deps.read(profileKey(selected.identity));
+	if (baseline && baseline.kind !== "profile")
+		throw new Error("Unexpected internal profile authority");
+	if (
+		baseline &&
+		selected.values[4] === "no" &&
+		(await current()) &&
+		(await deps.present(target))
+	)
+		return "pending";
+	const result = await deps.journal(
+		target.key,
+		"modem-config",
+		{
+			format: FORMAT,
+			uuid,
+			deviceId: target.deviceId,
+			simId: target.simId,
+			equipmentKey: preparationKey("unit", target.equipment),
+			epoch: epoch(target),
+		},
+		async (mutation) => {
+			const before = await automatic(uuid, target, deps);
+			if (!before || !(await current()) || !(await deps.present(target)))
+				return { confirmed: true, value: "pending" as PreparationOutcome };
+			const key = profileKey(before.identity),
+				record = await deps.read(key);
+			if (record && record.kind !== "profile")
+				throw new Error("Unexpected internal profile authority");
+			if (!record)
+				await deps.write({
+					version: 1,
+					kind: "profile",
+					key,
+					original: before.values[4] as "yes" | "no",
+					birth: before.values[5] === `cellular-${uuid}`,
+					originalAuto: before.values[2] === "yes" ? "yes" : "no",
+					originalApn: before.values[3],
+				});
+			if (!(await current()) || !(await deps.present(target)))
+				return { confirmed: true, value: "pending" as PreparationOutcome };
+			if (before.values[4] !== "no") {
+				await mutation.markExecuting();
+				if (!(await current()) || !(await deps.present(target)))
+					return { confirmed: true, value: "pending" as PreparationOutcome };
+				if (!(await deps.setFields(uuid, { "connection.autoconnect": "no" })))
+					return { confirmed: false, value: "blocked" as PreparationOutcome };
+			}
+			const after = await automatic(uuid, target, deps);
+			const confirmed =
+				!!after &&
+				after.values[4] === "no" &&
+				after.values[2] === before.values[2] &&
+				after.values[3] === before.values[3] &&
+				(await current()) &&
+				(await deps.present(target));
+			return {
+				confirmed,
+				value: confirmed ? ("pending" as const) : ("blocked" as const),
+			};
+		},
+	);
+	return result.ok ? result.value : "pending";
+}
 /** A manual save releases the original NM flag; automatic ownership stays disarmed. */
 export async function automaticProfileConnectionFlags(
 	identity: CarrierIntentIdentity,
@@ -365,6 +448,8 @@ export async function prepareCellularActivation(
 	deps: CellularPreparationDeps = defaultCellularPreparationDeps,
 ): Promise<PreparationOutcome> {
 	const quirk = resolveTransportQuirk(target.identity);
+	if (quirk?.owner === "internal-call")
+		return disarmInternalCallProfile(uuid, target, current, deps);
 	if (quirk?.owner !== "network-manager" || policy?.qualified === false) {
 		ready.delete(uuid);
 		return "preserved";
@@ -527,7 +612,7 @@ export async function automaticActivationReady(uuid: string): Promise<boolean> {
 	return !!selected && selected.values[4] === "no";
 }
 function subscriptionForTarget(target: CellularControlTarget) {
-	return selectSubscription({
+	return selectAutomaticSubscription({
 		...(target.sim.simInfo["sim.properties.operator-code"]
 			? { homePlmn: target.sim.simInfo["sim.properties.operator-code"] }
 			: {}),
@@ -552,9 +637,13 @@ export async function runCellularPreparation(): Promise<void> {
 			const target = await readCellularControlTarget(id, key);
 			if (!target) continue;
 			const selection = subscriptionForTarget(target);
-			if (selection.state === "not-qualified") continue;
+			if (
+				selection.state === "not-qualified" &&
+				resolveTransportQuirk(target.identity)?.owner !== "internal-call"
+			)
+				continue;
 			const policy =
-				selection.state === "recognized" ? selection.policy : undefined;
+				selection.state !== "unknown" ? selection.policy : undefined;
 			await prepareCellularActivation(config.conn, target, policy, async () => {
 				if (getModem(id)?.config !== config || modemStableKeyForId(id) !== key)
 					return false;

@@ -4,12 +4,18 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { privateInverseStore } from "../helpers/durable-inverse.ts";
 import { setLinkUpByIndex } from "../helpers/link-up-by-index.ts";
+import { readCellularNmIp } from "../modules/modems/cellular-nm-ip.ts";
 import { createCellularSystemTransport } from "../modules/modems/modems.ts";
 import {
 	type CellularHandoffIO,
 	CellularHostHandoff,
 } from "../modules/network/cellular-host-handoff.ts";
 import { acquireCellularNmControl } from "../modules/network/cellular-nm-control.ts";
+import { inspectCellularNmcliObserver } from "../modules/network/cellular-observer-census.ts";
+import {
+	captureReadOnlyNmcliMonitors,
+	NmcliMonitorManager,
+} from "../modules/network/monitor/monitor-manager.ts";
 import { runTestCommand } from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_NM_PROFILE_CHILD === "1";
@@ -63,6 +69,89 @@ if (unavailable && process.env.CERALIVE_REQUIRE_REAL_NM === "1")
 			if (result.code) throw new Error(result.stderr);
 			return result.stdout;
 		};
+		// Read actual NM AddressData/NameserverData and active-profile authority,
+		// including a kernel device distinct from the modem's control-port name.
+		await command(
+			"nmcli",
+			"connection",
+			"add",
+			"type",
+			"dummy",
+			"ifname",
+			"observer0",
+			"con-name",
+			"nm-ip-fixture",
+			"connection.autoconnect",
+			"no",
+			"ipv4.method",
+			"manual",
+			"ipv4.addresses",
+			"192.0.2.2/24",
+			"ipv4.gateway",
+			"192.0.2.1",
+			"ipv4.dns",
+			"192.0.2.53",
+			"ipv4.never-default",
+			"yes",
+			"ipv6.method",
+			"manual",
+			"ipv6.addresses",
+			"2001:db8:1::2/64",
+			"ipv6.gateway",
+			"2001:db8:1::1",
+			"ipv6.dns",
+			"2001:db8::53",
+			"ipv6.never-default",
+			"yes",
+		);
+		const observedUuid = (
+			await command(
+				"nmcli",
+				"-g",
+				"connection.uuid",
+				"connection",
+				"show",
+				"nm-ip-fixture",
+			)
+		).trim();
+		const monitor = new NmcliMonitorManager(() => {});
+		monitor.start();
+		try {
+			await command("nmcli", "connection", "up", "uuid", observedUuid);
+			const observed = await readCellularNmIp(
+				{ id: 0, ifname: "observer0" },
+				observedUuid,
+				async () => true,
+			);
+			expect(observed?.ipv4).toMatchObject({
+				addresses: [{ address: "192.0.2.2", prefix: 24 }],
+				dns: ["192.0.2.53"],
+			});
+			expect(observed?.ipv6).toMatchObject({
+				addresses: expect.arrayContaining([
+					{ address: "2001:db8:1::2", prefix: 64 },
+				]),
+				dns: ["2001:db8::53"],
+			});
+			// NM omits active gateways for never-default profiles. Saved gateway
+			// settings alone are not evidence of a granted host default.
+			expect(observed?.ipv4?.gateway).toBeUndefined();
+			expect(observed?.ipv6?.gateway).toBeUndefined();
+			const observers = captureReadOnlyNmcliMonitors();
+			expect(observers.pids).toHaveLength(1);
+			const pid = observers.pids[0];
+			if (!pid) throw new Error("Actual NM observer missing");
+			let proof: string | undefined;
+			for (let attempt = 0; attempt < 10 && !proof; attempt++) {
+				proof = await inspectCellularNmcliObserver(pid, process.pid);
+				if (!proof) await Bun.sleep(20);
+			}
+			expect(proof).toMatch(/^[a-f0-9]{64}$/);
+			expect(observers.current()).toBe(true);
+		} finally {
+			monitor.stop();
+			await command("nmcli", "connection", "delete", "uuid", observedUuid);
+		}
 		const row = async () =>
 			JSON.parse(
 				await command("ip", "-j", "link", "show", "dev", "cellular0"),

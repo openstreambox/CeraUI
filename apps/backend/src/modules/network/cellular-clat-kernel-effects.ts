@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import {
 	readPrivateText,
@@ -51,6 +52,11 @@ type Instance = "present" | "absent" | "foreign" | "unknown";
 export interface CellularClatKernelOptions {
 	readonly store: { readonly dir: string };
 	readonly bootId: string;
+	/** Read-only forwarding policy context, including a synchronous dispatch fence. */
+	readonly forwarding?: {
+		readonly read: () => Promise<string>;
+		readonly current: () => string;
+	};
 	/** A namespace fixture supplies index/instance evidence and its own child;
 	 * it must never invoke the host's PID 1 from an isolated network namespace.
 	 */
@@ -74,14 +80,18 @@ export function createCellularClatKernelEffects(
 		routes.device !== plan.tun.name
 	)
 		throw new Error("Translated kernel plan required");
+	const forwarding = options.forwarding ?? {
+		read: async () =>
+			(await readFile("/proc/sys/net/ipv6/conf/all/forwarding", "utf8")).trim(),
+		current: () =>
+			readFileSync("/proc/sys/net/ipv6/conf/all/forwarding", "utf8").trim(),
+	};
 	const sameBoot = plan.bootId === options.bootId,
 		writable = () => sameBoot && guard.writable(),
 		current = async () =>
 			writable() &&
 			(await guard.current()) &&
-			(
-				await readFile("/proc/sys/net/ipv6/conf/all/forwarding", "utf8")
-			).trim() === plan.globalForwarding &&
+			(await forwarding.read()) === plan.globalForwarding &&
 			writable(),
 		tunIO = cellularTunIO(async () => writable());
 	const tunState = async (): Promise<Instance> => {
@@ -193,8 +203,13 @@ export function createCellularClatKernelEffects(
 		),
 		physical = {
 			ifname: plan.physical.ifname,
-			writable,
-			current: async () => writable() && (await physicalState()) === "present",
+			writable: () =>
+				writable() && forwarding.current() === plan.globalForwarding,
+			current: async () =>
+				writable() &&
+				(await forwarding.read()) === plan.globalForwarding &&
+				(await physicalState()) === "present" &&
+				forwarding.current() === plan.globalForwarding,
 		},
 		settings = cellularClatPhysicalSettings(plan),
 		receipt = new CellularClatReceipt(plan, options.store, guard.writable),

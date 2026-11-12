@@ -60,6 +60,10 @@ import type {
 import { applyJitter } from "../streaming/constants.ts";
 import { runAutomaticCarrierProfiles } from "./automatic-carrier-profile.ts";
 import { runCellularPreparation } from "./cellular-preparation.ts";
+import {
+	invalidateCellularRuntime,
+	runCellularRuntime,
+} from "./cellular-runtime-host.ts";
 
 import { resetGsmConnections } from "./gsm-connections.ts";
 import type { ModemId } from "./mmcli.ts";
@@ -174,6 +178,7 @@ async function handleModemAdded(id: ModemId): Promise<void> {
 
 /** A `modem-removed` event: drop the modem and publish the cleaned-up state. */
 async function handleModemRemoved(id: ModemId): Promise<void> {
+	invalidateCellularRuntime(getModem(id)?.ifname);
 	await withModemUpdateLock(async () => {
 		if (!getModem(id)) {
 			return;
@@ -188,6 +193,7 @@ async function handleModemRemoved(id: ModemId): Promise<void> {
 
 /** A `device-state` event for a modem's net interface: refresh that modem only. */
 async function handleDeviceState(device: string): Promise<void> {
+	invalidateCellularRuntime(device);
 	await withModemUpdateLock(async () => {
 		const id = findModemIdByIfname(device);
 		if (id === undefined) {
@@ -272,6 +278,7 @@ async function reconcileModemPresenceLocked(
 	for (const id of getModemIds()) {
 		if (!present.has(id)) {
 			logger.warn(`Modem ${id} removed`);
+			invalidateCellularRuntime(getModem(id)?.ifname);
 			forgetModemReadyActivation(id);
 			removeModem(id);
 			presenceChanged = true;
@@ -344,6 +351,7 @@ export async function runModemStatusPoll(): Promise<void> {
 	const configured = [
 		...new Set([...automatic, ...(await runModemReadyActivations())]),
 	];
+	await runCellularRuntime();
 	if (configured.length > 0) {
 		for (const id of configured) triggerGsmConnectionsReset(id);
 		broadcastModems(Object.fromEntries(configured.map((id) => [id, true])));

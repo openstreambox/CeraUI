@@ -141,12 +141,40 @@ export function parseMonitorLine(line: string): MonitorEvent | null {
 	return { type: "device-state", device, state };
 }
 
+const readOnlyMonitors = new Set<Bun.Subprocess<"ignore", "pipe", "ignore">>();
+/** Evidence from the actual fixed-command subprocess owner, never a PID found
+ * by process-name search. Mock/injected children cannot enter this census.
+ */
+export function captureReadOnlyNmcliMonitors(): {
+	readonly pids: readonly number[];
+	readonly current: () => boolean;
+} {
+	const captured = [...readOnlyMonitors];
+	const live = () =>
+		captured.every(
+			(proc) => proc.exitCode === null && proc.signalCode === null,
+		) &&
+		readOnlyMonitors.size === captured.length &&
+		captured.every((proc) => readOnlyMonitors.has(proc));
+	return { pids: captured.map((proc) => proc.pid), current: live };
+}
 /** Default production spawn: the GLOBAL `nmcli monitor`, stdout piped. */
 function spawnNmcliMonitor(): MonitorProcess {
-	return Bun.spawn([NMCLI, ...NMCLI_MONITOR_ARGS], {
+	const proc = Bun.spawn([NMCLI, ...NMCLI_MONITOR_ARGS], {
+		stdin: "ignore",
 		stdout: "pipe",
 		stderr: "ignore",
-	}) as unknown as MonitorProcess;
+	});
+	readOnlyMonitors.add(proc);
+	void proc.exited.then(
+		() => {
+			readOnlyMonitors.delete(proc);
+		},
+		() => {
+			/* Unknown exit stays in the census. */
+		},
+	);
+	return proc;
 }
 
 /**

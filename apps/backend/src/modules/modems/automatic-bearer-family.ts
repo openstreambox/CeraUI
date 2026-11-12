@@ -13,7 +13,7 @@ import { getModem, getModemIds } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
 import { withJournaledModemMutation } from "./mutation-lease.ts";
 import { registerModemConfigInverse } from "./mutation-rollback.ts";
-import { selectSubscription } from "./subscription-policy.ts";
+import { selectAutomaticSubscription } from "./subscription-policy.ts";
 import { resolveTransportQuirk } from "./transport-policy.ts";
 
 const FAMILY_FIELDS = [
@@ -186,7 +186,7 @@ export function automaticBearerFamilyEligible(sim: ReadyModemSim): boolean {
 		mode,
 	});
 	if (transport?.owner !== "network-manager") return false;
-	const subscription = selectSubscription({
+	const subscription = selectAutomaticSubscription({
 		...(sim.simInfo["sim.properties.operator-code"]
 			? { homePlmn: sim.simInfo["sim.properties.operator-code"] }
 			: {}),

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { newCarrierIntent } from "./automatic-carrier-intent.ts";
 import {
 	type CellularPreparationDeps,
 	type PreparationRecord,
@@ -404,4 +405,83 @@ test("a replacement unit never inherits another unit's QMAP readback or baseline
 	).toEqual([0, 1]);
 	expect(replacement.calls).toContain("qmap-read");
 	expect(replacement.calls).not.toContain("qmap-fix");
+});
+
+test("self-registering transport disarms its exact automatic profile before registration without a modem call", async () => {
+	for (const qualified of [true, false]) {
+		const f = fixture(),
+			target = {
+				...f.target(),
+				identity: {
+					model: "FM350-GL",
+					firmware: "81600.0000.00.29.18.01",
+					mode: "rndis" as const,
+				},
+			};
+		expect(
+			await prepareCellularActivation(
+				UUID,
+				target,
+				{ ...policy, qualified },
+				f.current,
+				f.deps,
+			),
+		).toBe("pending");
+		expect(f.calls).toContain("profile-demote");
+		expect(f.calls.indexOf("persist-profile-baseline")).toBeLessThan(
+			f.calls.indexOf("profile-demote"),
+		);
+		for (const command of [
+			"acquire",
+			"qmap-read",
+			"qmap-fix",
+			"eps-set",
+			"raw",
+			"serial-reset",
+			"host-reset",
+		])
+			expect(f.calls).not.toContain(command);
+		expect(
+			[...f.records.values()].every((record) => record.kind === "profile"),
+		).toBe(true);
+		f.calls.length = 0;
+		expect(
+			await prepareCellularActivation(
+				UUID,
+				target,
+				{ ...policy, qualified },
+				f.current,
+				f.deps,
+			),
+		).toBe("pending");
+		expect(f.calls).not.toContain("profile-demote");
+	}
+});
+test("internal-call disarming preserves manual policy and refuses a stale subscription", async () => {
+	const f = fixture(),
+		target = {
+			...f.target(),
+			identity: {
+				model: "FM350-GL",
+				firmware: "81600.0000.00.29.18.01",
+				mode: "rndis" as const,
+			},
+		};
+	expect(
+		await prepareCellularActivation(
+			UUID,
+			target,
+			policy,
+			async () => false,
+			f.deps,
+		),
+	).toBe("preserved");
+	expect(f.calls).toEqual([]);
+	expect(
+		await prepareCellularActivation(UUID, target, policy, f.current, {
+			...f.deps,
+			intent: async (identity) => newCarrierIntent(identity, "manual"),
+		}),
+	).toBe("preserved");
+	expect(f.calls).toEqual([]);
 });

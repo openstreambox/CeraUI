@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-	readPrivateJson,
+	readParsedPrivateJson,
 	writePrivateJson,
 } from "../../helpers/private-json-state.ts";
 import type { CellularPathSession } from "../modems/cellular-path-owner.ts";
@@ -149,13 +149,13 @@ export class CellularClatSession implements CellularPathSession {
 		return pending;
 	}
 	private async read(): Promise<BirthRecord | undefined> {
-		const raw = await readPrivateJson(this.deps.store, this.key);
-		if (raw === undefined) return undefined;
-		const record = parseCellularClatBirthRecord(raw),
-			plan = parseCellularClatBirthPlan(record.plan);
-		if (JSON.stringify(plan) !== JSON.stringify(this.plan))
-			throw new Error("CLAT birth authority changed");
-		return record;
+		return readParsedPrivateJson(this.deps.store, this.key, (raw) => {
+			const record = parseCellularClatBirthRecord(raw),
+				plan = parseCellularClatBirthPlan(record.plan);
+			if (JSON.stringify(plan) !== JSON.stringify(this.plan))
+				throw new Error("CLAT birth authority changed");
+			return record;
+		});
 	}
 	private async write(record: BirthRecord | undefined): Promise<void> {
 		if (!this.writable()) throw new Error("CLAT birth lease retired");
@@ -207,6 +207,30 @@ export class CellularClatSession implements CellularPathSession {
 			(await this.host(record.tun).valid()) &&
 			(await this.current())
 		);
+	}
+	/** A health socket uses the born TUN identity, never its prospective name alone. */
+	async sourcePath(): Promise<
+		{ source: string; device: string; ifindex: number } | undefined
+	> {
+		if (!(await this.valid())) return undefined;
+		const record = await this.read();
+		if (!record?.tun) return undefined;
+		const state = inspectCellularTun(
+			await this.deps.links(),
+			this.plan.input.slot,
+			this.plan.input.owner,
+			this.plan.tunEpoch,
+		);
+		return typeof state === "object" &&
+			state.index === record.tun.index &&
+			state.persistent &&
+			(await this.valid())
+			? {
+					source: this.binding.source,
+					device: record.tun.name,
+					ifindex: record.tun.index,
+				}
+			: undefined;
 	}
 	prepareProbe(): Promise<boolean> {
 		return this.serial(

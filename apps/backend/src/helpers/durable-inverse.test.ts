@@ -177,3 +177,27 @@ test("an invalid stage limit creates no persistence or kernel effect", async () 
 	expect(f.disk()).toBeUndefined();
 	expect(f.events).toEqual([]);
 });
+
+test("a stored envelope or plan schema failure reports its protected read fault and preserves authority", async () => {
+	const f = fixture();
+	let faults = 0;
+	const protectedOwner = new DurableInverse({
+		...f.deps,
+		readFault: () => {
+			faults++;
+		},
+	});
+	await protectedOwner.create(owner, "one", { slot: 1 });
+	const record = f.disk();
+	if (!record) throw new Error("Missing inverse");
+	for (const disk of [
+		{ ...record, version: 2 },
+		{ ...record, plan: { slot: 2 } },
+		{ ...record, cursor: 99 },
+	]) {
+		f.set({ disk });
+		await expect(protectedOwner.read()).rejects.toThrow();
+		expect(f.disk()).toEqual(disk);
+	}
+	expect(faults).toBe(3);
+});

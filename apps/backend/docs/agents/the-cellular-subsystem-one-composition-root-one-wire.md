@@ -575,7 +575,8 @@ iproute2's null detached-selector marker admits inverse cleanup only, never read
 Scoped virtual-link sysctls use owner/index checks; no USB identity is fabricated
 for a TUN and global forwarding is untouched. These are host component proofs.
 
-Managed paths require literal `capabilities.bind_map_required === true` and
+Managed paths require an integer `capabilities.bind_map_contract >= 1`, literal
+`bind_map_required === true` and `bind_map_required_empty_reload === true`, and
 `--require-bind-map` alongside `--bind-map`. Ordinary bind-map support permits
 source-only startup degradation and is insufficient. The required resolver has
 typed refusals, never a legacy fallback. Its producer fixture is copied exactly
@@ -610,3 +611,42 @@ key or contradictory/current-identity failure refuses admission. Both ingress
 directions, wrong-device fallback and withdrawal are kernel-tested in isolated
 namespaces, not physically qualified. Production CLAT composition, persistent
 startup/process recovery and NM/RA/hotspot coexistence are still incomplete.
+
+### Runtime grant and host composition (partial)
+
+The retained modem poll calls `runCellularRuntime` after preparation/activation,
+outside its update lock. Boot installs automatic source admission before network
+interface discovery: an address alone cannot publish an unresolved automatic
+modem. Manual policy and noncellular links retain their behavior. Carrier policy
+requires subscription home evidence; serving identity is diagnostic only.
+
+Each runtime owner joins the actual connected MM grant, active exact NM profile
+and healthy indexed kernel source. It installs MM/NM revocation subscriptions
+before capture, tied to both unique service owners. IP/SIM/owner changes withdraw
+synchronously; radio-only updates do not. An uncertain installation retains its
+actual wrapper, bootstrap/host inverse and slot. Discovery completely withdraws
+before final host acquisition. Probe cancellation never means socket closure;
+cleanup waits for actual settlement and exact sender withdrawal proof. A fresh
+DNS64 prefix change invalidates the session without charging carrier hysteresis.
+Ten-MiB pair-scoped daily reservations survive USB and process loss.
+
+Qualified service consumer census allows only the main backend and actual owned
+fixed-command NM observers with stable process identity and positively non-INET
+descriptors. Arbitrary PIDs/commands, socket families, subgroups and unreadable
+state remain unknown. Runtime no-sender cleanup holds the existing lifecycle
+interlock through the inverse; startup holds the existing recovery barrier.
+Stored inverse, birth and auxiliary receipt schema failures report the same
+protected read fault as malformed JSON. Changed global forwarding context
+retains scoped inverses; this owner never writes global forwarding.
+
+FM350 activation, journaled native reconnect, installed translator packaging and
+physical service/USB/reboot/NM/RA/hotspot qualification remain open. Verizon is
+unqualified. Host fixtures do not close these gates.
+
+The sender contract revision is independent of the two older booleans. Require
+all three predicates for strict Start arguments and runtime host admission;
+absent/zero/noninteger/string revisions refuse managed publication. Future
+positive integer revisions preserve the revision-one contract. A fresh
+`pending_apply` frame, even with empty connections, cannot acknowledge socket
+closure. The frozen producer fixture preserves this state through telemetry,
+RPC and localized UI; only an applied frame can settle withdrawal.

@@ -236,6 +236,9 @@ async function composedHost(physicalIndex: number) {
 			);
 		// Actual kernel effects, private namespace child supervision. PID-1
 		// ownership itself remains a separate installed-host qualification gate.
+		// Change only the read-only policy observation in this fixture, never the
+		// namespace's global forwarding setting.
+		let observedForwarding: string = authority.globalForwarding;
 		let notified = false;
 		const withdraw = () => {
 			if (!notified) {
@@ -292,6 +295,10 @@ async function composedHost(physicalIndex: number) {
 						createCellularClatKernelEffects(captured, routes, guard, {
 							store,
 							bootId,
+							forwarding: {
+								read: async () => observedForwarding,
+								current: () => observedForwarding,
+							},
 							physicalState: async () => {
 								const rows = JSON.parse(await ip("-j", "link", "show"));
 								const found = rows.filter(
@@ -371,6 +378,19 @@ async function composedHost(physicalIndex: number) {
 		).toHaveLength(1);
 		expect(owned).toBe(true);
 		await ip("-4", "route", "del", "203.0.113.0/24", "dev", tun.name);
+		observedForwarding = authority.globalForwarding === "0" ? "1" : "0";
+		expect(await host.cleanup()).toBe(false);
+		expect(owned).toBe(true);
+		// A replacement sharing policy must not inherit an old baseline restoration.
+		expect(
+			(
+				await readFile(
+					"/proc/sys/net/ipv6/conf/wwan6/force_forwarding",
+					"ascii",
+				)
+			).trim(),
+		).toBe("1");
+		observedForwarding = authority.globalForwarding;
 		expect(await host.cleanup()).toBe(true);
 		expect(owned).toBe(false);
 		expect(

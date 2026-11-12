@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import {
+	captureCellularSourcePublication,
 	cellularDefaultEligible,
 	cellularHiddenInterface,
 	cellularSourceBinding,
@@ -8,6 +9,7 @@ import {
 	claimCellularSource,
 	releaseCellularSource,
 	resetCellularSourcesForTest,
+	setCellularSourceAdmission,
 	setCellularSourceBinding,
 	setCellularSourceReady,
 	withdrawCellularSource,
@@ -62,4 +64,21 @@ test("renumbering or a new native grant cannot inherit translated readiness", ()
 	expect(cellularSourceBinding(iface)).toBeUndefined();
 	expect(cellularSourceReady(iface, binding.source)).toBe(false);
 	expect(cellularSourceReady("eth0", native)).toBe(true);
+});
+
+test("automatic admission excludes a pre-existing native address before its owner is resolved", () => {
+	const permit = captureCellularSourcePublication(
+		"wwan0",
+		"192.0.2.2",
+		"wwan0",
+	);
+	let automatic = true;
+	setCellularSourceAdmission((name) => name === "wwan0" && automatic);
+	expect(permit()).toBe(false);
+	expect(cellularSourceReady("wwan0", "192.0.2.2")).toBe(false);
+	expect(cellularDefaultEligible("wwan0", "192.0.2.2")).toBe(false);
+	expect(cellularSourceReady("eth0", "192.0.2.3")).toBe(true);
+	automatic = false;
+	expect(cellularSourceReady("wwan0", "192.0.2.2")).toBe(true);
+	expect(cellularDefaultEligible("wwan0", "192.0.2.2")).toBe(true);
 });

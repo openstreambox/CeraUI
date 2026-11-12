@@ -125,3 +125,32 @@ test("a service restart or consumer arriving between observations invalidates ab
 		}),
 	).toBe(false);
 });
+
+test("runtime admits only exact positively inspected observer children from their retained owner", async () => {
+	const f = fixture();
+	f.set({ members: "17\n18\n" });
+	let current = true;
+	const io: CellularConsumerCensusIO = {
+		...f.io,
+		observers: () => ({ pids: [18], current: () => current }),
+		observer: async (pid, parent) =>
+			pid === 18 && parent === 17 ? "a".repeat(64) : undefined,
+	};
+	expect(await cellularConsumersAbsent(io)).toBe(true);
+	expect(await cellularConsumersAbsent(f.io)).toBe(false);
+	f.set({ members: "17\n18\n19" });
+	expect(await cellularConsumersAbsent(io)).toBe(false);
+	f.set({ members: "17\n18" });
+	expect(
+		await cellularConsumersAbsent({ ...io, observer: async () => undefined }),
+	).toBe(false);
+	let reads = 0;
+	expect(
+		await cellularConsumersAbsent({
+			...io,
+			observer: async () => (++reads === 1 ? "a" : "b").repeat(64),
+		}),
+	).toBe(false);
+	current = false;
+	expect(await cellularConsumersAbsent(io)).toBe(false);
+});

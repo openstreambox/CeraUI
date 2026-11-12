@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { requiresClat, selectSubscription } from "./subscription-policy.ts";
+import {
+	requiresClat,
+	selectAutomaticSubscription,
+	selectSubscription,
+} from "./subscription-policy.ts";
 import {
 	decideInitialEps,
 	parseInternalIpv4Grant,
@@ -216,4 +220,30 @@ test("admitted MBIM and internal-call compositions remain distinct", () => {
 	expect(
 		parseInternalIpv4Grant('+CGPADDR: 1,"192.0.2.2",broken"', 1),
 	).toBeUndefined();
+});
+
+test("automatic carrier policy requires home subscription evidence even when serving recognition is explicit", () => {
+	for (const homePlmn of [undefined, "", "--", "invalid", "00101"]) {
+		const evidence = {
+			...(homePlmn !== undefined ? { homePlmn } : {}),
+			servingPlmn: "310260",
+			spn: "US Mobile",
+			gid1: "6910",
+		};
+		expect(selectAutomaticSubscription(evidence)).toEqual({ state: "unknown" });
+	}
+	expect(
+		selectAutomaticSubscription({
+			homePlmn: "310410",
+			servingPlmn: "310260",
+			gid1: "20FF",
+		}),
+	).toMatchObject({
+		state: "recognized",
+		evidence: "home",
+		policy: { apn: "ereseller" },
+	});
+	expect(
+		selectAutomaticSubscription({ homePlmn: "311480", servingPlmn: "310260" }),
+	).toMatchObject({ state: "not-qualified", policy: { key: "verizon" } });
 });

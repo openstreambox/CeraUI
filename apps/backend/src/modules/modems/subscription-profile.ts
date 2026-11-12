@@ -1,6 +1,6 @@
 import {
 	type SubscriptionEvidence,
-	selectSubscription,
+	selectAutomaticSubscription,
 } from "./subscription-policy.ts";
 
 export interface ProfileIdentity {
@@ -42,7 +42,7 @@ export function planSubscriptionProfile(
 		return { action: "preserve", reason: "identity-mismatch" };
 	if (profile?.automatic === false)
 		return { action: "preserve", reason: "manual" };
-	const decision = selectSubscription(subscription);
+	const decision = selectAutomaticSubscription(subscription);
 	if (decision.state !== "recognized")
 		return { action: "preserve", reason: decision.state };
 	const family = decision.policy.requestFamily;

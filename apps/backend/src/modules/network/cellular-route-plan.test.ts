@@ -166,3 +166,13 @@ test("native guards scope overlapping IPv4 and IPv6 sources to the modem device"
 			),
 		).toEqual(["oif", "wwan0"]);
 });
+
+test("native IPv4 keeps its legal sub-1280 link MTU while translated grants require IPv6's floor", () => {
+	const native = planCellularRoutes({ ...input, ipv4: "192.0.2.2", mtu: 576 });
+	expect(native?.linkMtu).toBe(576);
+	expect(native?.mtu).toBe(576);
+	expect(() =>
+		planCellularRoutes({ ...input, ipv4: "192.0.2.2", mtu: 575 }),
+	).toThrow();
+	expect(() => planCellularRoutes({ ...input, mtu: 1279 })).toThrow();
+});

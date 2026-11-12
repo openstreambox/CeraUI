@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { readPrivateJson, writePrivateJson } from "./private-json-state.ts";
+import {
+	type PrivateStateStore,
+	readPrivateJson,
+	writePrivateJson,
+} from "./private-json-state.ts";
 
 const envelope = z
 	.object({
@@ -41,6 +45,7 @@ export function parseDurableInverseRecord<T>(
 }
 export interface DurableInverseDeps<T> {
 	readonly read: () => Promise<unknown>;
+	readonly readFault?: () => void;
 	readonly write: (
 		record: DurableInverseRecord<T> | undefined,
 	) => Promise<void>;
@@ -77,7 +82,16 @@ export class DurableInverse<T> {
 	async read(): Promise<DurableInverseRecord<T> | undefined> {
 		const raw = await this.deps.read();
 		if (raw === undefined) return undefined;
-		return parseDurableInverseRecord(raw, this.deps.parsePlan, this.deps.steps);
+		try {
+			return parseDurableInverseRecord(
+				raw,
+				this.deps.parsePlan,
+				this.deps.steps,
+			);
+		} catch (error) {
+			this.deps.readFault?.();
+			throw error;
+		}
 	}
 	async create(
 		owner: string,
@@ -212,12 +226,10 @@ export class DurableInverse<T> {
 		return true;
 	}
 }
-export function privateInverseStore(
-	store: { readonly dir: string },
-	key: string,
-) {
+export function privateInverseStore(store: PrivateStateStore, key: string) {
 	return {
 		read: () => readPrivateJson(store, key),
+		readFault: () => store.readFault?.(),
 		write: (record: unknown) => writePrivateJson(store, key, record),
 	};
 }
