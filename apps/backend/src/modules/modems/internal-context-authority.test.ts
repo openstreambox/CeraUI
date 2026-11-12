@@ -164,6 +164,8 @@ test("authority keys, phases and definitions reject foreign or malformed state",
 		{ ...record, phase: "parked", activationOwned: true },
 		{ ...record, phase: "parked", adoptedActive: true },
 		{ ...record, phase: "activating", activationOwned: false },
+		{ ...record, phase: "deactivating", activationOwned: false },
+		{ ...record, phase: "released", activationOwned: true },
 		{ ...record, phase: "active", activationOwned: false },
 		{ ...record, desired: { ...record.desired, apn: 'bad"\nAT' } },
 		{
