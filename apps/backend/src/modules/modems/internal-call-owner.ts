@@ -38,6 +38,8 @@ export interface InternalCallDeps {
 	) => Promise<boolean>;
 	/** Durable per-unit context operations share the existing mutation journal. */
 	readonly context: InternalCallContext;
+	/** Complete old-index absence, never a failed physical or MM read. */
+	readonly physicalGone: () => Promise<boolean>;
 	readonly now: () => number;
 }
 /** One retained owner per physical USB generation and subscription, not MM index.
@@ -63,6 +65,11 @@ export class InternalCallOwner {
 		readonly roaming: boolean,
 		private readonly deps: InternalCallDeps,
 	) {
+		this.target = Object.freeze({
+			...target,
+			identity: Object.freeze({ ...target.identity }),
+		});
+		this.policy = Object.freeze({ ...policy });
 		// Slot selection is a transport detail selected AFTER subscription policy.
 		// Never touch the IMS/admin contexts of a subscription using context three.
 		this.cid = policy.key === "verizon" ? 3 : 1;
@@ -279,6 +286,64 @@ export class InternalCallOwner {
 			this.busy = false;
 		}
 	}
+	/** Reacquire only for an inverse on this exact USB generation. A fresh MM
+	 * index may change; a different unit/link/generation cannot inherit control.
+	 * This never resumes old-policy grant publication or changes a new SIM.
+	 */
+	async recoverControl(target: CellularControlTarget): Promise<boolean> {
+		if (
+			this.busy ||
+			this._phase === "closed" ||
+			(!this.control && !this.stopping)
+		)
+			return false;
+		const captured = Object.freeze({
+			...target,
+			identity: Object.freeze({ ...target.identity }),
+		});
+		if (
+			[
+				"key",
+				"equipment",
+				"ifname",
+				"usbDevice",
+				"netDevice",
+				"ifindex",
+				"generation",
+			].some(
+				(field) =>
+					captured[field as keyof CellularControlTarget] !==
+					this.target[field as keyof CellularControlTarget],
+			) ||
+			resolveTransportQuirk(captured.identity)?.owner !== "internal-call" ||
+			(!this.revoked && this.control && (await this.control.valid()))
+		)
+			return false;
+		this.busy = true;
+		this.stopping = true;
+		this.withdraw();
+		try {
+			let accepted = false;
+			const admitted = await this.deps.mutate("handoff", async () => {
+				await this.releaseControl();
+				const control = await this.deps.acquire(captured);
+				if (!(await this.deps.context.accept(control))) {
+					await control.close();
+					return;
+				}
+				this.control = control;
+				this.revoked = false;
+				this.removeRevocation = control.onRevoked(() => {
+					this.revoked = true;
+					this.withdraw();
+				});
+				accepted = !this.revoked && (await control.valid());
+			});
+			return admitted && accepted;
+		} finally {
+			this.busy = false;
+		}
+	}
 	private async finish(): Promise<boolean> {
 		this.stopping = true;
 		this.withdraw();
@@ -288,7 +353,12 @@ export class InternalCallOwner {
 			const control = this.control;
 			// Bus loss is not evidence that the owned activation stopped. Retain
 			// the host guard and durable baseline until the exact inverse verifies.
-			if (!control || this.revoked || !(await this.deps.context.close(control)))
+			if (
+				(!control ||
+					this.revoked ||
+					!(await this.deps.context.close(control))) &&
+				!(await this.deps.physicalGone())
+			)
 				return false;
 		}
 		if (!(await this.deps.host.cleanup())) return false;

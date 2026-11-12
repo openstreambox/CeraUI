@@ -6,6 +6,7 @@ import {
 } from "./cellular-host-handoff.ts";
 import type { CellularNmDevice } from "./cellular-nm-control.ts";
 
+const bootId = "11111111-1111-4111-8111-111111111111";
 const owner = "a".repeat(64),
 	link = {
 		ifname: "wwan0",
@@ -24,7 +25,9 @@ function fixture(
 		current = true,
 		ack = true,
 		failWrite = false,
-		present = true;
+		present = true,
+		resource: "present" | "absent" | "foreign" | "unknown" = "present",
+		restored = false;
 	const events: string[] = [];
 	const device: CellularNmDevice = {
 		path: "/org/freedesktop/NetworkManager/Devices/1",
@@ -35,6 +38,8 @@ function fixture(
 	};
 	const io: CellularHandoffIO = {
 		present: async () => present,
+		resourceState: async () => resource,
+		nmRestored: async () => restored,
 		readRaDefault: async () => ra,
 		setRaDefault: async (_expected, value) => {
 			events.push(`ra-${value}`);
@@ -62,6 +67,7 @@ function fixture(
 		},
 	};
 	const hooks: CellularHandoffHooks = {
+		bootId,
 		read: async () => disk,
 		write: async (value) => {
 			if (failWrite) throw new Error("durability failed");
@@ -89,12 +95,16 @@ function fixture(
 			failWrite?: boolean;
 			unknownRa?: boolean;
 			present?: boolean;
+			resource?: typeof resource;
+			restored?: boolean;
 		}) => {
 			if (state.current !== undefined) current = state.current;
 			if (state.ack !== undefined) ack = state.ack;
 			if (state.failWrite !== undefined) failWrite = state.failWrite;
 			if (state.unknownRa) ra = undefined;
 			if (state.present !== undefined) present = state.present;
+			if (state.resource !== undefined) resource = state.resource;
+			if (state.restored !== undefined) restored = state.restored;
 		},
 	};
 }
@@ -169,4 +179,62 @@ test("new physical generations and NM services cannot inherit old handoff setter
 	);
 	expect(await replaced.cleanup()).toBe(false);
 	expect(f.events).not.toContain("managed-true");
+});
+
+test("complete old-index absence and independent NM restoration retire without reused-name setters", async () => {
+	const f = fixture();
+	await f.handoff.prepare();
+	await f.handoff.prepareCall();
+	f.events.length = 0;
+	f.set({ present: false, resource: "absent", restored: true });
+	f.io.nm.read = async () => undefined;
+	expect(await f.handoff.cleanup()).toBe(true);
+	expect(f.events.some((event) => /^(ra|up|managed)-/.test(event))).toBe(false);
+	expect(f.disk()).toBeUndefined();
+});
+
+test("physical disappearance cannot donate absence to an unconfirmed NM flag", async () => {
+	const f = fixture();
+	await f.handoff.prepare();
+	await f.handoff.prepareCall();
+	f.events.length = 0;
+	f.set({ present: false, resource: "absent" });
+	f.io.nm.read = async () => undefined;
+	expect(await f.handoff.cleanup()).toBe(false);
+	expect(f.disk()).toBeDefined();
+	expect(f.events.some((event) => /^(ra|up|managed)-/.test(event))).toBe(false);
+	f.set({ restored: true });
+	expect(await f.handoff.cleanup()).toBe(true);
+});
+
+test("unknown or foreign indexed resources retain the old handoff even with NM restoration", async () => {
+	for (const resource of ["unknown", "foreign"] as const) {
+		const f = fixture();
+		await f.handoff.prepare();
+		await f.handoff.prepareCall();
+		f.events.length = 0;
+		f.set({ present: false, resource, restored: true });
+		expect(await f.handoff.cleanup()).toBe(false);
+		expect(f.disk()).toBeDefined();
+		expect(f.events.some((event) => /^(ra|up|managed)-/.test(event))).toBe(
+			false,
+		);
+	}
+});
+
+test("a different boot cannot advance an old handoff or restore through reused bus names", async () => {
+	const f = fixture();
+	await f.handoff.prepare();
+	await f.handoff.prepareCall();
+	f.events.length = 0;
+	const later = new CellularHostHandoff(owner, "one", link, f.io, {
+		...f.hooks,
+		bootId: "22222222-2222-4222-8222-222222222222",
+	});
+	await expect(later.prepare()).rejects.toThrow("identity changed");
+	expect(f.events).toEqual([]);
+	f.set({ resource: "absent", restored: true });
+	expect(await later.cleanup()).toBe(true);
+	expect(f.events.some((event) => /^(ra|up|managed)-/.test(event))).toBe(false);
+	expect(f.disk()).toBeUndefined();
 });
