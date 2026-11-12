@@ -16,6 +16,7 @@ import { setLinkUpByIndex } from "../helpers/link-up-by-index.ts";
 import { changeLinkByIndex } from "../helpers/netlink-link.ts";
 import { acquirePrivateStateLease } from "../helpers/private-state-lease.ts";
 import { exchangeSourceBoundDatagram } from "../helpers/source-bound-datagram.ts";
+import { CellularHostRecovery } from "../modules/modems/cellular-host-recovery.ts";
 import {
 	CellularFirewall,
 	cellularFirewallIO,
@@ -719,6 +720,7 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			consumers = false,
 			withdrawn = 0;
 		const nativeAuthority = {
+			bootId: "11111111-1111-1111-1111-111111111111",
 			input: {
 				owner: "d".repeat(64),
 				epoch: "native-one",
@@ -731,6 +733,7 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			dns: [],
 		};
 		const nativeDeps = {
+			bootId: nativeAuthority.bootId,
 			store: { dir: join(stateRoot, "state") },
 			owned: () => owned,
 			currentNow: () => owned,
@@ -783,9 +786,44 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			expect(await native.setReady(false)).toBe(false);
 			expect(await successor.valid()).toBe(true);
 			expect(await nativeDeps.current()).toBe(true);
+			// Reconstruct from the actual closed on-disk inventory. The original slot
+			// lease still excludes other owners; recovery reuses that fixture ownership.
+			let recovered = 0;
+			const recovery = new CellularHostRecovery({
+				store: nativeDeps.store,
+				bootId: async () => nativeAuthority.bootId,
+				retain: async (authority) => {
+					if (authority.kind !== "native")
+						throw new Error("Native recovery fixture expected");
+					recovered++;
+					return new CellularNativeHost(authority.inverse.plan, {
+						...nativeDeps,
+						currentNow: () => false,
+						current: async () => false,
+					});
+				},
+			});
+			consumers = false;
+			await expect(recovery.replay()).rejects.toThrow("withdrawal incomplete");
+			const beforeRecoveryDeny = await tx("wwan0");
+			await exchangeSourceBoundDatagram(packet);
+			expect(await tx("wwan0")).toBe(beforeRecoveryDeny);
+			consumers = true;
+			await recovery.replay();
+			expect(recovered).toBe(1);
+			expect(await nativeDeps.current()).toBe(true);
+			// Reinstall a fresh generation to retain the vanished-device cleanup gate.
+			const final = new CellularNativeHost(
+				{
+					...nativeAuthority,
+					input: { ...nativeAuthority.input, epoch: "native-final" },
+				},
+				nativeDeps,
+			);
+			await final.install();
 			await ip("link", "delete", "dev", "wwan0");
 			try {
-				expect(await successor.cleanup()).toBe(true);
+				expect(await final.cleanup()).toBe(true);
 			} catch (cause) {
 				const fence = await runTestCommand([
 					"nft",

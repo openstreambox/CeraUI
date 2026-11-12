@@ -25,6 +25,26 @@ const schema = z
 		(value) => value.invocation === undefined || value.translatorSubmitted,
 	);
 export type CellularClatReceiptValue = z.infer<typeof schema>;
+export function cellularClatReceiptKey(plan: CellularClatHostPlan): string {
+	return createHash("sha256")
+		.update(`cellular-clat-receipt\0${plan.input.slot}\0${plan.birth}`)
+		.digest("hex");
+}
+export function parseCellularClatReceipt(
+	raw: unknown,
+	plan: CellularClatHostPlan,
+): CellularClatReceiptValue {
+	const value = schema.parse(raw),
+		digest = createHash("sha256").update(JSON.stringify(plan)).digest("hex");
+	if (
+		value.owner !== plan.input.owner ||
+		value.epoch !== plan.input.epoch ||
+		value.birth !== plan.birth ||
+		value.digest !== digest
+	)
+		throw new Error("CLAT effect receipt authority changed");
+	return value;
+}
 /** Auxiliary effect results stay bound to the immutable parent plan. A start
  * attempt is durable before submission, and cannot be spent twice for a birth.
  * The parent cursor owns creation/removal; this helper has no recovery loop.
@@ -40,22 +60,12 @@ export class CellularClatReceipt {
 		this.digest = createHash("sha256")
 			.update(JSON.stringify(plan))
 			.digest("hex");
-		this.key = createHash("sha256")
-			.update(`cellular-clat-receipt\0${plan.input.slot}\0${plan.birth}`)
-			.digest("hex");
+		this.key = cellularClatReceiptKey(plan);
 	}
 	async read(): Promise<CellularClatReceiptValue | undefined> {
 		const raw = await readPrivateJson(this.store, this.key);
 		if (raw === undefined) return undefined;
-		const value = schema.parse(raw);
-		if (
-			value.owner !== this.plan.input.owner ||
-			value.epoch !== this.plan.input.epoch ||
-			value.birth !== this.plan.birth ||
-			value.digest !== this.digest
-		)
-			throw new Error("CLAT effect receipt authority changed");
-		return value;
+		return parseCellularClatReceipt(raw, this.plan);
 	}
 	async create(): Promise<void> {
 		if (

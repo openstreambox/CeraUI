@@ -21,6 +21,24 @@ export interface DurableInverseRecord<T> {
 	readonly cursor: number;
 	readonly phase: "applying" | "active" | "withdrawing";
 }
+/** Shared strict recovery boundary; inventory and live owners accept the same bytes. */
+export function parseDurableInverseRecord<T>(
+	raw: unknown,
+	parsePlan: (raw: unknown) => T,
+	planSteps: (plan: T) => readonly string[],
+): DurableInverseRecord<T> {
+	const parsed = envelope.parse(raw),
+		plan = parsePlan(parsed.plan);
+	const steps = planSteps(plan);
+	if (
+		parsed.cursor > steps.length ||
+		(parsed.phase === "active" && parsed.cursor !== steps.length) ||
+		JSON.stringify(parsed.steps) !== JSON.stringify(steps) ||
+		new Set(steps).size !== steps.length
+	)
+		throw new Error("Unrecognized inverse authority");
+	return { ...parsed, plan };
+}
 export interface DurableInverseDeps<T> {
 	readonly read: () => Promise<unknown>;
 	readonly write: (
@@ -59,17 +77,7 @@ export class DurableInverse<T> {
 	async read(): Promise<DurableInverseRecord<T> | undefined> {
 		const raw = await this.deps.read();
 		if (raw === undefined) return undefined;
-		const parsed = envelope.parse(raw),
-			plan = this.deps.parsePlan(parsed.plan);
-		const steps = this.deps.steps(plan);
-		if (
-			parsed.cursor > steps.length ||
-			(parsed.phase === "active" && parsed.cursor !== steps.length) ||
-			JSON.stringify(parsed.steps) !== JSON.stringify(steps) ||
-			new Set(steps).size !== steps.length
-		)
-			throw new Error("Unrecognized inverse authority");
-		return { ...parsed, plan };
+		return parseDurableInverseRecord(raw, this.deps.parsePlan, this.deps.steps);
 	}
 	async create(
 		owner: string,
@@ -178,7 +186,10 @@ export class DurableInverse<T> {
 
 	async cleanup(owner: string, epoch: string): Promise<boolean> {
 		let record = await this.read();
-		if (!record) return true;
+		if (!record) {
+			await this.deps.write(undefined);
+			return true;
+		}
 		if (record.owner !== owner || record.epoch !== epoch) return false;
 		this.deps.withdraw(record);
 		record = { ...record, phase: "withdrawing" };

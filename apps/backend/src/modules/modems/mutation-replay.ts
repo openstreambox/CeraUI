@@ -40,6 +40,10 @@ import {
 	setRecoveryRetryOwner,
 } from "../streaming/recovery-barrier.ts";
 import { inventoryCellularAuthority } from "./cellular-authority-inventory.ts";
+import {
+	replayCellularHosts,
+	verifyCellularHosts,
+} from "./cellular-host-recovery.ts";
 
 import {
 	reconciledMutationJournalRevision,
@@ -185,6 +189,17 @@ async function replayEntry(
 export async function runMutationReplay(): Promise<ReplaySummary> {
 	const tally = { rolledBack: 0, pruned: 0, blocked: 0, quarantined: 0 };
 	let unreadable = 0;
+	let hostsWithdrawn = true;
+	try {
+		await replayCellularHosts();
+	} catch {
+		hostsWithdrawn = false;
+		unreadable++;
+		logger.error(
+			"cellular host withdrawal incomplete; modem rollback deferred",
+			{ module: "modems" },
+		);
+	}
 	try {
 		await inventoryCellularAuthority("migrate");
 	} catch {
@@ -204,7 +219,7 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 		}
 		// Readable entries still replay beside a damaged slot; the strict block
 		// publication below vetoes completion when the inventory changed meanwhile.
-		for (const hint of await listMutationEntries()) {
+		for (const hint of hostsWithdrawn ? await listMutationEntries() : []) {
 			try {
 				const revision = mutationJournalRevision();
 				const entry = await readMutationEntry(hint.stableKey);
@@ -240,6 +255,7 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 
 /** Settle submitted bookkeeping and read current blocks, without hardware rollback. */
 async function journalReadsCompletely(): Promise<boolean> {
+	await verifyCellularHosts();
 	await inventoryCellularAuthority("verify");
 	await settlePendingMutationRemovals();
 	if ((await listUnreadableSlots()).length > 0) return false;

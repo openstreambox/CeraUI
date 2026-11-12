@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,9 +9,12 @@ import {
 	CellularNativeHost,
 	type CellularNativeHostDeps,
 } from "./cellular-native-host.ts";
+import { parseCellularNativeHostPlan } from "./cellular-native-host-plan.ts";
 import type { CellularFenceMode } from "./cellular-packet-fence.ts";
 
+const bootId = "11111111-1111-1111-1111-111111111111";
 const authority = {
+	bootId,
 	input: {
 		owner: "a".repeat(64),
 		epoch: "grant-one",
@@ -37,6 +41,7 @@ async function fixture() {
 	let hold: Promise<boolean> | undefined;
 	const deps: CellularNativeHostDeps = {
 		store: { dir },
+		bootId,
 		owned: () => owned,
 		currentNow: () => current,
 		current: async () => (hold ? await hold : current),
@@ -103,6 +108,12 @@ async function fixture() {
 			if (state.current !== undefined) current = state.current;
 			if (state.lostReply !== undefined) lostReply = state.lostReply;
 			if (state.hold) hold = state.hold;
+		},
+		setFence: (value: CellularFenceMode) => {
+			mode = value;
+		},
+		clearFence: () => {
+			mode = "absent";
 		},
 		close: () => rm(dir, { recursive: true, force: true }),
 	};
@@ -175,6 +186,91 @@ test("closing during a delayed readiness check cancels publication and a retired
 		expect(await f.host.setReady(false)).toBe(false);
 		expect(f.events.slice(before)).toEqual([]);
 		expect(await successor.valid()).toBe(true);
+	} finally {
+		await f.close();
+	}
+});
+
+test("a retained native inverse never adopts matching resources on another boot", async () => {
+	const f = await fixture();
+	try {
+		await f.host.install();
+		f.set({ consumers: true });
+		const recovered = new CellularNativeHost(authority, {
+			...f.deps,
+			bootId: "22222222-2222-2222-2222-222222222222",
+		});
+		expect(await recovered.valid()).toBe(false);
+		expect(await recovered.setReady(false)).toBe(false);
+		await expect(recovered.install()).rejects.toThrow("identity unavailable");
+		const before = f.events.length;
+		await expect(recovered.cleanup()).rejects.toThrow("another boot");
+		expect(f.events.slice(before)).toEqual(["cancel", "withdraw"]);
+		f.clearFence();
+		expect(await recovered.cleanup()).toBe(false);
+		expect(f.events).not.toContain("ip-remove");
+		expect(await f.record()).toBeDefined();
+		// A complete positive absence read can retire only the private cursor.
+		f.installed.clear();
+		expect(await recovered.cleanup()).toBe(true);
+		expect(await f.record()).toBeUndefined();
+		expect(f.events).not.toContain("fence-remove");
+	} finally {
+		await f.close();
+	}
+});
+test("native plans freeze captured authority and reject missing or invalid boot identity", () => {
+	const mutable = structuredClone(authority),
+		captured = parseCellularNativeHostPlan(mutable);
+	mutable.input.ipv4 = "192.0.2.9";
+	mutable.dns.push("192.0.2.54");
+	expect(captured.input.ipv4).toBe(authority.input.ipv4);
+	expect(captured.dns).toEqual(authority.dns);
+	expect(Object.isFrozen(captured)).toBe(true);
+	expect(Object.isFrozen(captured.input)).toBe(true);
+	expect(Object.isFrozen(captured.dns)).toBe(true);
+	const { bootId: _bootId, ...unbound } = mutable;
+	expect(() => parseCellularNativeHostPlan(unbound)).toThrow();
+	expect(() =>
+		parseCellularNativeHostPlan({ ...mutable, bootId: "unknown" }),
+	).toThrow();
+});
+
+test("a failed directory acknowledgement after unlink retains cleanup until kernel absence and fsync are proved", async () => {
+	const f = await fixture();
+	try {
+		await f.host.install();
+		f.set({ consumers: true });
+		const key = createHash("sha256")
+				.update(`cellular-uplink-slot\0${1}`)
+				.digest("hex"),
+			path = join(f.deps.store.dir, `${key}.json`),
+			actual = fs.fsyncSync;
+		let failed = false;
+		const fault = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+			if (
+				!failed &&
+				!fs.existsSync(path) &&
+				fs.readlinkSync(`/proc/self/fd/${fd}`) === f.deps.store.dir
+			) {
+				failed = true;
+				throw new Error("directory ack failed");
+			}
+			actual(fd);
+		});
+		try {
+			await expect(f.host.cleanup()).rejects.toThrow("directory ack failed");
+		} finally {
+			fault.mockRestore();
+		}
+		expect(failed).toBe(true);
+		expect(await f.record()).toBeUndefined();
+		f.setFence("ready");
+		const before = f.events.length;
+		expect(await f.host.cleanup()).toBe(false);
+		expect(f.events.slice(before)).toEqual(["cancel"]);
+		f.clearFence();
+		expect(await f.host.cleanup()).toBe(true);
 	} finally {
 		await f.close();
 	}

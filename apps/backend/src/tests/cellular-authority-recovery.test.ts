@@ -8,13 +8,19 @@ import {
 	newCarrierIntent,
 	readCarrierIntent,
 } from "../modules/modems/automatic-carrier-intent.ts";
+import { readMutationEntry } from "../modules/modems/mutation-journal.ts";
 import { initMutationRecovery } from "../modules/modems/mutation-replay.ts";
+import { setMutationCaptureDeps } from "../modules/modems/mutation-rollback.ts";
 import {
 	awaitRecoveryBarrier,
 	isRecoveryPending,
 } from "../modules/streaming/recovery-barrier.ts";
 import { JournalRetryClock } from "./helpers/journal-reconciliation-harness.ts";
-import { useReplayHarness } from "./helpers/journal-replay-harness.ts";
+import {
+	replayHardware,
+	seedInterruptedMutation,
+	useReplayHarness,
+} from "./helpers/journal-replay-harness.ts";
 
 useReplayHarness();
 test("damaged preparation authority keeps the existing boot barrier up, then its sole retry owner clears after repair", async () => {
@@ -84,4 +90,34 @@ test("a runtime default-store read fault uses the same owner for read-only verif
 	await Promise.race([done, clock.at(3)]);
 	expect(isRecoveryPending()).toBe(false);
 	expect(await readCarrierIntent(identity)).toEqual(repaired);
+});
+
+test("unknown host authority defers modem hardware rollback under the sole boot retry owner", async () => {
+	const dir = process.env.CERALIVE_CELLULAR_HOST_STATE_DIR;
+	if (!dir) throw new Error("Private host fixture required");
+	const store = { dir },
+		key = "f".repeat(64),
+		clock = new JournalRetryClock();
+	await seedInterruptedMutation();
+	let captures = 0;
+	setMutationCaptureDeps({
+		enumerate: async () => {
+			captures++;
+			return [replayHardware("usb:b")];
+		},
+	});
+	await writePrivateJson(store, key, { version: 1, unrecognized: true });
+	expect((await initMutationRecovery({ sleep: clock.sleep })).unreadable).toBe(
+		1,
+	);
+	expect(isRecoveryPending()).toBe(true);
+	expect(captures).toBe(0);
+	expect((await readMutationEntry("usb:b"))?.state).toBe("executing");
+	const done = awaitRecoveryBarrier();
+	await writePrivateJson(store, key, undefined);
+	clock.advance();
+	await Promise.race([done, clock.at(2)]);
+	expect(isRecoveryPending()).toBe(false);
+	expect(captures).toBeGreaterThan(0);
+	expect(await readMutationEntry("usb:b")).toBeUndefined();
 });
