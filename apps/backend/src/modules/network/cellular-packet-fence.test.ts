@@ -29,6 +29,24 @@ test("native fences select a kernel device while translated source slots fence e
 	expect(probe).toContain("ip daddr 192.0.2.53 udp dport 53 return");
 	expect(probe).toContain("counter drop");
 	expect(cellularFenceDefinition(fence, "ready")).not.toContain("counter drop");
+	const translated = { ...fence, translated: true, source: "198.18.255.1" };
+	expect(cellularFenceDefinition(translated, "ready")).toContain(
+		"ip saddr 198.18.255.1 meta oif 17 return",
+	);
+	expect(cellularFenceDefinition(translated, "ready")).toContain(
+		"ip saddr 198.18.255.1 counter drop",
+	);
+	expect(
+		inspectCellularFence(translated, {
+			nftables: cellularFenceInventory(translated, "ready"),
+		}),
+	).toBe("ready");
+	expect(
+		inspectCellularFence(
+			{ ...translated, ifindex: 18 },
+			{ nftables: cellularFenceInventory(translated, "ready") },
+		),
+	).toBe("foreign");
 	expect(
 		cellularFenceReplace(fence, "withdrawn").startsWith(
 			"delete table inet ceracell_1\n",

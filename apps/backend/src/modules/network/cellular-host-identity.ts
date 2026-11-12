@@ -80,6 +80,7 @@ const sysctlKeys = [
 	"accept_ra_defrtr",
 	"forwarding",
 	"proxy_ndp",
+	"force_forwarding",
 ] as const;
 const scopedSysctlKeys = [
 	...sysctlKeys,

@@ -24,6 +24,11 @@ import {
 	compareAndSetScopedCellularSysctl,
 	readScopedCellularSysctl,
 } from "../modules/network/cellular-host-identity.ts";
+import { changeCellularIndexedIp } from "../modules/network/cellular-indexed-ip.ts";
+import {
+	CellularIndexedIpState,
+	cellularIndexedIpIO,
+} from "../modules/network/cellular-indexed-ip-state.ts";
 import {
 	CellularIpState,
 	cellularIpIO,
@@ -248,7 +253,111 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 		await expect(createCellularTun(3, tunOwner, "one", tunIo)).rejects.toThrow(
 			"occupied",
 		);
+		const indexed4 = {
+				kind: "address",
+				family: 4,
+				address: "198.18.255.3",
+				prefix: 32,
+			} as const,
+			indexed6 = {
+				kind: "address",
+				family: 6,
+				address: "fd00:434c::3",
+				prefix: 128,
+			} as const,
+			proxy6 = {
+				kind: "proxy",
+				family: 6,
+				address: "2001:db8:1::1234",
+			} as const,
+			mainBeforeAddresses = await ip(
+				"-j",
+				"-4",
+				"route",
+				"show",
+				"table",
+				"main",
+			);
+		expect(
+			await changeLinkByIndex(born.index, { kind: "mtu", mtu: 1408 }),
+		).toBe(true);
+		expect(await changeCellularIndexedIp(born.index, indexed4, "add")).toBe(
+			true,
+		);
+		expect(await changeCellularIndexedIp(born.index, indexed6, "add")).toBe(
+			true,
+		);
+		expect(await changeCellularIndexedIp(born.index, proxy6, "add")).toBe(true);
+		expect(await changeCellularIndexedIp(born.index, indexed4, "add")).toBe(
+			false,
+		);
+		const indexedState = new CellularIndexedIpState(
+			{ name: born.name, index: born.index },
+			[indexed4, indexed6, proxy6],
+			cellularIndexedIpIO(
+				async () => ((await scopedTun.current()) ? "present" : "foreign"),
+				() => true,
+			),
+		);
+		for (const effect of [indexed4, indexed6, proxy6]) {
+			expect(
+				await indexedState.inspect(effect),
+				JSON.stringify({
+					effect,
+					addresses: JSON.parse(
+						await ip("-j", "addr", "show", "dev", born.name),
+					),
+					proxy: JSON.parse(
+						await ip("-6", "-j", "neigh", "show", "proxy", "dev", born.name),
+					),
+				}),
+			).toBe("owned");
+			await expect(indexedState.apply(effect)).rejects.toThrow("birth changed");
+		}
+		const indexedAddresses = JSON.parse(
+			await ip("-j", "addr", "show", "dev", born.name),
+		);
+		expect(indexedAddresses[0].mtu).toBe(1408);
+		expect(indexedAddresses[0].addr_info).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					family: "inet",
+					local: indexed4.address,
+					prefixlen: 32,
+					noprefixroute: true,
+				}),
+				expect.objectContaining({
+					family: "inet6",
+					local: indexed6.address,
+					prefixlen: 128,
+					nodad: true,
+					noprefixroute: true,
+				}),
+			]),
+		);
+		expect(
+			JSON.parse(
+				await ip("-6", "-j", "neigh", "show", "proxy", "dev", born.name),
+			),
+		).toEqual([expect.objectContaining({ dst: proxy6.address, proxy: null })]);
+		expect(await ip("-j", "-4", "route", "show", "table", "main")).toBe(
+			mainBeforeAddresses,
+		);
+		await ip("link", "set", "dev", born.name, "name", "retiredtun");
+		await ip("link", "add", born.name, "type", "dummy");
+		await ip("addr", "add", "192.0.2.123/32", "dev", born.name);
+		for (const effect of [indexed4, indexed6, proxy6])
+			expect(await changeCellularIndexedIp(born.index, effect, "del")).toBe(
+				true,
+			);
+		expect(
+			JSON.parse(await ip("-j", "addr", "show", "dev", born.name))[0].addr_info,
+		).toEqual([expect.objectContaining({ local: "192.0.2.123" })]);
 		expect(await changeLinkByIndex(born.index, { kind: "delete" })).toBe(true);
+		expect(await changeCellularIndexedIp(born.index, indexed4, "add")).toBe(
+			false,
+		);
+		await ip("link", "delete", "dev", born.name);
 		expect(inspectCellularTun(await tunIo.links(), 3, tunOwner, "one")).toBe(
 			"absent",
 		);

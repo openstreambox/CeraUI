@@ -583,3 +583,30 @@ and preserves byte parity through the private sender helper, with the additive
 `required_binding_refused` disposition carried by RPC and localized operator copy.
 The ordinary legacy resolver retains its behavior for unmanaged paths. Production
 actor/startup cleanup composition and translated host effects remain incomplete.
+
+### Indexed translated effects and packet proof (partial)
+
+Address/proxy effects use acknowledged NETLINK_ROUTE index selectors, never a
+name-based mutation. Dispatch permission is checked after asynchronous FFI load;
+the caller retains its slot lease and durable cursor throughout. Address adds
+use CREATE|EXCL and host prefixes with no prefix route; proxy adds require exact
+absence first because the kernel can acknowledge duplicates. Readback rejects
+unknown identity, extra proxy attributes and changed address prefixes/lifetimes.
+Unrelated addresses remain in place. A renamed link's inverse cannot touch its
+same-named replacement.
+
+The independent-provider packet fixture proves both translations and the
+computed-zero UDP wire correction. A translated IPv4 lookup omits oif so reverse
+path validation can use its private route. The translated ready fence returns
+only for the owned oif, then drops every other egress for that source. It remains
+necessary even when the rule is terminal: explicit-oif IPv4 fallback exists.
+Native duplicate-source behavior stays device-specific. No rp_filter relaxation
+or main-default/DNS mutation is introduced. Keep linkMtu separate from the
+adjusted IPv4 route mtu: the minimum link is 1280, not 1260.
+
+Admission requires both per-link force_forwarding capabilities; global forwarding
+alone is not a fallback. There are no global/default forwarding writes. A missing
+key or contradictory/current-identity failure refuses admission. Both ingress
+directions, wrong-device fallback and withdrawal are kernel-tested in isolated
+namespaces, not physically qualified. Production CLAT composition, persistent
+startup/process recovery and NM/RA/hotspot coexistence are still incomplete.
