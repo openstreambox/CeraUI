@@ -16,7 +16,12 @@ export interface CellularSourceState {
 	readonly ready: boolean;
 }
 const sources = new Map<string, CellularSourceState>();
+const observations = new Map<string, symbol>();
 const events = new EventEmitter();
+function changed(iface: string): void {
+	observations.set(iface, Symbol());
+	events.emit("change");
+}
 const safeName = isSafeIfname;
 export function onCellularSourceChange(callback: () => void): () => void {
 	events.on("change", callback);
@@ -32,7 +37,7 @@ export function claimCellularSource(
 	const before = sources.get(iface);
 	if (before?.owner === owner && before.epoch === epoch) return;
 	sources.set(iface, { owner, epoch, iface, ready: false });
-	events.emit("change");
+	changed(iface);
 }
 export function setCellularSourceBinding(
 	owner: string,
@@ -58,7 +63,7 @@ export function setCellularSourceBinding(
 		binding: { ...binding },
 		ready: false,
 	});
-	events.emit("change");
+	changed(iface);
 	return true;
 }
 export function setCellularSourceReady(
@@ -77,7 +82,7 @@ export function setCellularSourceReady(
 		return false;
 	if (before.ready !== ready) {
 		sources.set(iface, { ...before, ready });
-		events.emit("change");
+		changed(iface);
 	}
 	return true;
 }
@@ -91,7 +96,7 @@ export function withdrawCellularSource(
 	if (before?.owner !== owner || before.epoch !== epoch) return;
 	if (!before.ready && !before.binding) return;
 	sources.set(iface, { owner, epoch, iface, ready: false });
-	events.emit("change");
+	changed(iface);
 }
 export function releaseCellularSource(
 	owner: string,
@@ -101,7 +106,7 @@ export function releaseCellularSource(
 	const before = sources.get(iface);
 	if (before?.owner !== owner || before.epoch !== epoch) return;
 	sources.delete(iface);
-	events.emit("change");
+	changed(iface);
 }
 export function cellularSourceBinding(
 	iface: string,
@@ -111,6 +116,26 @@ export function cellularSourceBinding(
 }
 export function cellularSourceManaged(iface: string): boolean {
 	return sources.has(iface);
+}
+/** Capture an observation, not just a reusable source/device tuple. A later
+ * grant or readiness transition cannot validate a queued publication from it.
+ */
+export function captureCellularSourcePublication(
+	iface: string,
+	source: string,
+	device: string,
+): () => boolean {
+	const before = sources.get(iface),
+		token = observations.get(iface) ?? Symbol();
+	observations.set(iface, token);
+	return () =>
+		observations.get(iface) === token &&
+		(before
+			? sources.get(iface) === before &&
+				before.ready &&
+				before.binding?.source === source &&
+				before.binding.device === device
+			: !sources.has(iface) && !cellularHiddenInterface(device));
 }
 export function cellularSourceReady(
 	iface: string,
@@ -147,5 +172,6 @@ export function cellularHiddenInterface(iface: string): boolean {
 }
 export function resetCellularSourcesForTest(): void {
 	sources.clear();
+	observations.clear();
 	events.emit("change");
 }

@@ -51,7 +51,10 @@ import {
 import { getStreamingBackend } from "../streaming-engine.ts";
 import { getStreamingProcesses, stopProcessAndWait } from "./process-runner.ts";
 import { reportSessionInvariant } from "./resource-invariant.ts";
-import { prepareSrtlaIpAddresses } from "./srtla-ip-preparation.ts";
+import {
+	prepareSrtlaIpAddresses,
+	refreshSrtlaIpAddresses as publishRefreshedBond,
+} from "./srtla-ip-preparation.ts";
 import { type StartStreamResult, startStream } from "./start-stream.ts";
 import { confirmUnownedEngineStop } from "./stop-evidence.ts";
 
@@ -146,7 +149,7 @@ export async function start(
 			// from one interface to another leaves the IP bytes byte-identical, so a
 			// SIGHUP keyed on the list alone would skip the very reload that carries
 			// the new mapping.
-			const publication = await prepareSrtlaIpAddresses(c.srtlaAddr);
+			const publication = await publishRefreshedBond(c.srtlaAddr);
 			if (sessionResources?.generation !== generation || !ownsLaunch()) return;
 			if (publication.changed && getIsStreaming()) restartSrtla();
 		} catch (error) {

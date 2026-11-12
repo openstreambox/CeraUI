@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { mintLinkId } from "../modules/modems/physical-identity.ts";
 import {
 	claimCellularSource,
@@ -12,11 +15,16 @@ import {
 	processIfconfigOutput,
 	resetBondOptOut,
 } from "../modules/network/network-interfaces.ts";
+import { setup } from "../modules/setup.ts";
 import {
+	drainSrtlaBondPublication,
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
+	getLastPublishedBond,
+	publishSrtlaBond,
 	setBondIdentityResolverForTest,
 } from "../modules/streaming/srtla.ts";
+import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 
 const owner = "1".repeat(64),
 	epoch = "usb-one",
@@ -92,4 +100,81 @@ test("a native grant uses the same readiness gate for ordinary and local-receive
 	expect(genSrtlaBondEntriesForLocalIpAddress("198.51.100.5")).toHaveLength(1);
 	withdrawCellularSource(owner, epoch, iface);
 	expect(genSrtlaBondEntriesForLocalIpAddress("198.51.100.5")).toEqual([]);
+});
+
+test("the real publisher rejects old captured translated rows after withdrawal and an identical-address successor", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "cellular-bond-publication-")),
+		oldIps = setup.ips_file,
+		oldMap = setup.bind_map_file;
+	setup.ips_file = join(dir, "ips");
+	setup.bind_map_file = join(dir, "map");
+	try {
+		claimCellularSource(owner, epoch, iface);
+		setCellularSourceBinding(owner, epoch, iface, {
+			source,
+			device: "cclat1",
+			translated: true,
+			generation: "first",
+		});
+		setCellularSourceReady(owner, epoch, iface, "first", true);
+		processIfconfigOutput(
+			[stanza(iface), stanza("cclat1", source)].join("\n\n"),
+		);
+		const captured = genSrtlaBondEntries();
+		expect(captured).toHaveLength(1);
+		expect((await publishSrtlaBond(captured)).ok).toBe(true);
+		expect(await Bun.file(setup.ips_file).text()).toBe(source);
+		withdrawCellularSource(owner, epoch, iface);
+		expect(getLastPublishedBond()).toBeUndefined();
+		await Promise.all([publishSrtlaBond([]), publishSrtlaBond(captured)]);
+		expect(await Bun.file(setup.ips_file).text()).toBe("");
+		setCellularSourceBinding(owner, epoch, iface, {
+			source,
+			device: "cclat1",
+			translated: true,
+			generation: "successor",
+		});
+		setCellularSourceReady(owner, epoch, iface, "successor", true);
+		await publishSrtlaBond(captured);
+		expect(await Bun.file(setup.ips_file).text()).toBe("");
+		expect((await Bun.file(setup.bind_map_file).json()).links).toEqual([]);
+		await publishSrtlaBond(genSrtlaBondEntries());
+		expect(await Bun.file(setup.ips_file).text()).toBe(source);
+	} finally {
+		await drainSrtlaBondPublication();
+		setup.ips_file = oldIps;
+		setup.bind_map_file = oldMap;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("launch refuses when withdrawal empties the actual queued publication after a nonempty collection", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "cellular-bond-launch-")),
+		oldIps = setup.ips_file,
+		oldMap = setup.bind_map_file;
+	setup.ips_file = join(dir, "ips");
+	setup.bind_map_file = join(dir, "map");
+	try {
+		claimCellularSource(owner, epoch, iface);
+		setCellularSourceBinding(owner, epoch, iface, {
+			source,
+			device: "cclat1",
+			translated: true,
+			generation: "first",
+		});
+		setCellularSourceReady(owner, epoch, iface, "first", true);
+		processIfconfigOutput(
+			[stanza(iface), stanza("cclat1", source)].join("\n\n"),
+		);
+		const preparing = prepareSrtlaIpAddresses("relay.example");
+		withdrawCellularSource(owner, epoch, iface);
+		await expect(preparing).rejects.toThrow("no_available_network_connections");
+		expect(await Bun.file(setup.ips_file).text()).toBe("");
+		expect((await Bun.file(setup.bind_map_file).json()).links).toEqual([]);
+	} finally {
+		await drainSrtlaBondPublication();
+		setup.ips_file = oldIps;
+		setup.bind_map_file = oldMap;
+		await rm(dir, { recursive: true, force: true });
+	}
 });

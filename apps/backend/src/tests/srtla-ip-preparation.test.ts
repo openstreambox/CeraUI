@@ -4,6 +4,7 @@ import { mintLinkId } from "../modules/modems/physical-identity.ts";
 import type { BondEntry } from "../modules/streaming/bind-map.ts";
 import type { BindMapPublication } from "../modules/streaming/bind-map-writer.ts";
 import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/session.ts";
+import { refreshSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 
 const PUBLISHED: BindMapPublication = {
 	ok: true,
@@ -30,6 +31,21 @@ function deferred(): {
 }
 
 describe("SRTLA IP-list launch preparation", () => {
+	test("refresh publishes a valid empty bond so final-link withdrawal can reach the sender", async () => {
+		let published: readonly BondEntry[] | undefined;
+		expect(
+			await refreshSrtlaIpAddresses("relay.example", {
+				isLocal: () => false,
+				localList: () => [],
+				bondedList: () => [],
+				writeList: async (entries) => {
+					published = entries;
+					return PUBLISHED;
+				},
+			}),
+		).toBe(PUBLISHED);
+		expect(published).toEqual([]);
+	});
 	test("does not resolve until the IP list has been written", async () => {
 		const writeBarrier = deferred();
 		let settled = false;

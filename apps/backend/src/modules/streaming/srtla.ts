@@ -18,7 +18,10 @@
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 import killall from "../../helpers/killall.ts";
 import {
+	captureCellularSourcePublication,
+	cellularHiddenInterface,
 	cellularSourceBinding,
+	cellularSourceManaged,
 	cellularSourceReady,
 } from "../network/cellular-source-state.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
@@ -35,16 +38,18 @@ import {
 	type BindMapPublication,
 	defaultBindMapWriterDeps,
 	defaultSidecarPath,
-	publishBondMapping,
 } from "./bind-map-writer.ts";
 import {
 	describeBondEntry,
 	isBondLinkMappable,
 	setBondIdentityResolverForTest,
 } from "./bond-entry.ts";
+import { BondPublicationQueue } from "./bond-publication-queue.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
 
 export { isBondLinkMappable, setBondIdentityResolverForTest };
+
+const entryPermits = new WeakMap<BondEntry, () => boolean>();
 
 export async function resolveSrtla(addr: string) {
 	let srtlaAddr = addr;
@@ -108,6 +113,10 @@ function collectBondEntries(
 		const entry = binding?.translated
 			? { ...physicalEntry, iface: binding.device }
 			: physicalEntry;
+		entryPermits.set(
+			entry,
+			captureCellularSourcePublication(name, entry.ip, entry.iface),
+		);
 		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
 			continue;
 		entries.push(entry);
@@ -158,16 +167,28 @@ export function genSrtlaIpListForLocalIpAddress(ipAddress: string): string[] {
 export async function publishSrtlaBond(
 	entries: readonly BondEntry[],
 ): Promise<BindMapPublication> {
-	const publication = await publishBondMapping(
-		entries,
+	return bondPublisher.publish(entries);
+}
+const bondPublisher = new BondPublicationQueue({
+	capture: (entry) => ({
+		entry: Object.freeze({ ...entry }),
+		current:
+			entryPermits.get(entry) ??
+			(!cellularSourceManaged(entry.iface) &&
+			!cellularHiddenInterface(entry.iface)
+				? captureCellularSourcePublication(entry.iface, entry.ip, entry.iface)
+				: () => false),
+	}),
+	writer: () =>
 		defaultBindMapWriterDeps(setup.ips_file ?? "", srtlaBindMapPath()),
-	);
-	// Keys the telemetry registry on the ids just published, so a rendered row
-	// follows its PHYSICAL device across a reload rather than a file position,
-	// and keeps the legacy conn_id -> interface fallback in step with it.
-	registerSrtlaBond(entries);
-	lastBond = { entries: [...entries], publication };
-	return publication;
+	published: (entries, publication, current) => {
+		registerSrtlaBond(entries);
+		lastBond = { entries: [...entries], publication };
+		lastBondCurrent = current;
+	},
+});
+export function drainSrtlaBondPublication(): Promise<void> {
+	return bondPublisher.drain();
 }
 
 /**
@@ -183,13 +204,15 @@ export interface PublishedBond {
 }
 
 let lastBond: PublishedBond | undefined;
+let lastBondCurrent: () => boolean = () => true;
 
 export function getLastPublishedBond(): PublishedBond | undefined {
-	return lastBond;
+	return lastBondCurrent() ? lastBond : undefined;
 }
 
 export function resetPublishedBond(): void {
 	lastBond = undefined;
+	lastBondCurrent = () => true;
 }
 
 export async function setSrtlaIpList(
