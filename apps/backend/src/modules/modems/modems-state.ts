@@ -46,6 +46,7 @@ export type AvailableNetwork = {
 };
 
 export type Modem = {
+	tac?: string; // Model allocation only; never retain the full IMEI here.
 	ifname: string; // e.g. wwan0
 	name: string; // e.g. "QUECTEL Broadband Module - 00000"
 	sim_network: string;

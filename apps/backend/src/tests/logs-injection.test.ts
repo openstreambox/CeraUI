@@ -93,8 +93,15 @@ describe("logs.ts getLog() — journalctl command injection", () => {
 		const [bin, args, opts] = calls[0] as RunCall;
 		expect(bin).toBe("journalctl");
 		// The malicious string is a single argv token — NOT split on ';'.
-		expect(args).toEqual(["-b", "-u", MALICIOUS]);
-		expect(args[2]).toBe(MALICIOUS);
+		expect(args).toEqual([
+			"--since=-7days",
+			"--lines=10000",
+			"--no-pager",
+			"--output=short-iso",
+			"-u",
+			MALICIOUS,
+		]);
+		expect(args[5]).toBe(MALICIOUS);
 		// 10 MiB ceiling preserved from the original exec() call.
 		expect(opts.maxBuffer).toBe(10 * 1024 * 1024);
 		// No shell was reached for the log path, whatever else the process ran.

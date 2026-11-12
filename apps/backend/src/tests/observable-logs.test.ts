@@ -36,6 +36,12 @@ import {
 } from "../rpc/procedures/system.procedure.ts";
 import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
 
+const JOURNAL_ARGS = [
+	"--since=-7days",
+	"--lines=10000",
+	"--no-pager",
+	"--output=short-iso",
+];
 const MAX_BUFFER = 10 * 1024 * 1024;
 
 /** Capturing RPC context: records every frame the handler pushes to the socket. */
@@ -86,13 +92,40 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 			context: makeContext(sent),
 		});
 
-		expect(result.log).toBe(KNOWN);
+		expect(result.log).toContain(KNOWN);
 		expect(result.log).not.toBe("");
 
 		const push = findLogPush(sent);
 		expect(push).toBeDefined();
-		expect(push?.contents).toBe(KNOWN);
+		expect(push?.contents).toContain(KNOWN);
 		expect(push?.name).toBe("ceralive.service_log.txt");
+	});
+
+	it("exports retained previous-boot evidence and redacts both RPC and pushed files", async () => {
+		spyOn(runModule, "run").mockResolvedValue(
+			"previous boot marker\nIMEI=351756051523999\n-- Reboot --\ncurrent boot marker\ncell_id=0xabc123",
+		);
+		const sent: string[] = [];
+		const result = await call(getLogProcedure, undefined, {
+			context: makeContext(sent),
+		});
+		expect(result.log).toContain("previous boot marker");
+		expect(result.log).toContain("current boot marker");
+		expect(findLogPush(sent)?.contents).toBe(result.log);
+		for (const value of ["351756051523999", "0xabc123"])
+			expect(JSON.stringify([result, sent])).not.toContain(value);
+	});
+	it("does not disclose partial raw stdout on overflow or timeout", async () => {
+		spyOn(runModule, "run").mockRejectedValue(
+			new Error("maxBuffer: IMEI=351756051523999"),
+		);
+		const sent: string[] = [];
+		const result = await call(getLogProcedure, undefined, {
+			context: makeContext(sent),
+		});
+		expect(result.log).toBe("");
+		expect(findLogPush(sent)).toBeUndefined();
+		expect(JSON.stringify(sent)).not.toContain("351756051523999");
 	});
 
 	it("getLog defaults to the ceralive.service unit; an explicit service overrides", async () => {
@@ -101,8 +134,8 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		await call(getLogProcedure, undefined, { context: makeContext([]) });
 		expect(runSpy).toHaveBeenLastCalledWith(
 			"journalctl",
-			["-b", "-u", "ceralive.service"],
-			{ maxBuffer: MAX_BUFFER },
+			[...JOURNAL_ARGS, "-u", "ceralive.service"],
+			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
 		);
 
 		await call(
@@ -114,8 +147,8 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		);
 		expect(runSpy).toHaveBeenLastCalledWith(
 			"journalctl",
-			["-b", "-u", "ssh.service"],
-			{ maxBuffer: MAX_BUFFER },
+			[...JOURNAL_ARGS, "-u", "ssh.service"],
+			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
 		);
 	});
 
@@ -128,11 +161,12 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 			context: makeContext(sent),
 		});
 
-		expect(runSpy).toHaveBeenLastCalledWith("journalctl", ["-b"], {
+		expect(runSpy).toHaveBeenLastCalledWith("journalctl", JOURNAL_ARGS, {
 			maxBuffer: MAX_BUFFER,
+			timeout: 15000,
 		});
-		expect(result.log).toBe(KNOWN);
-		expect(findLogPush(sent)?.contents).toBe(KNOWN);
+		expect(result.log).toContain(KNOWN);
+		expect(findLogPush(sent)?.contents).toContain(KNOWN);
 	});
 
 	it("getLog degrades to an empty string (never throws) when journalctl fails", async () => {

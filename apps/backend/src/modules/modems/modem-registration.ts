@@ -35,7 +35,6 @@ import {
 	type ModemRegistrationRejection,
 	modemRadioPowerSchema,
 } from "@ceraui/rpc/schemas";
-
 import { logger } from "../../helpers/logger.ts";
 import { pollWithBackoff } from "../../helpers/retry.ts";
 import {
@@ -45,6 +44,7 @@ import {
 	nmConnGetFields,
 	nmConnSetFields,
 } from "../network/network-manager.ts";
+import { modemTac } from "../system/support-export.ts";
 import {
 	type BearerIpFamilyDecision,
 	bearerIpFamilyFields,
@@ -768,7 +768,9 @@ async function registerModem(id: number) {
 		},
 	});
 
+	const tac = modemTac(modemInfo["modem.generic.equipment-identifier"]);
 	const modem: Modem = {
+		...(tac !== undefined ? { tac } : {}),
 		ifname: ifname,
 		name: hwName,
 		sim_network: simNetwork,

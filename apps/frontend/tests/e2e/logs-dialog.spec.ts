@@ -125,6 +125,17 @@ test('LogsDialog downloads a real, observable backend journal', async ({ page, b
 	expect(systemDownload.suggestedFilename()).toBe('ceralive_system_log.txt');
 	expect(systemLog.length).toBeGreaterThan(0);
 
+	// Both real browser downloads carry the collection bounds and the separate,
+	// allowlisted carrier snapshot. No full numeric subscriber/device identifier
+	// may survive the exported artifact, including historical journal content.
+	for (const log of [deviceLog, systemLog]) {
+		expect(log).toContain('retained last 7 days; newest 10000 entries');
+		expect(log).toContain('15 s collection limit; 10 MiB raw limit');
+		expect(log).toContain('Carrier support summary (current observations; APN and TAC only):');
+		expect(Buffer.byteLength(log, 'utf8')).toBeLessThan(10 * 1024 * 1024);
+		expect(log).not.toMatch(/\b\d{15,20}\b/);
+	}
+
 	fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
 	fs.writeFileSync(
 		path.join(EVIDENCE_DIR, 'task-13-logs-dialog.txt'),

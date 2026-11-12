@@ -19,10 +19,11 @@
 import { getRecentLogLines, logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
+import { getCarrierSupportSummary } from "../modems/modem-wire-producer.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
-
 import { notificationSend } from "../ui/notifications.ts";
 import { buildMsg, getSocketSenderId } from "../ui/websocket-server.ts";
+import { boundSupportJournal } from "./support-export.ts";
 
 export interface LogResult {
 	name: string;
@@ -46,7 +47,12 @@ export async function getLog(
 	const senderId = getSocketSenderId(conn);
 	// Argv-only: each token is a discrete element, so a `service` value can never
 	// be re-parsed as shell syntax (no `sh -c`, so `;`/spaces/`$()` are inert).
-	const args = ["-b"];
+	const args = [
+		"--since=-7days",
+		"--lines=10000",
+		"--no-pager",
+		"--output=short-iso",
+	];
 	let name = "ceralive_system_log.txt";
 
 	if (service) {
@@ -55,15 +61,20 @@ export async function getLog(
 	}
 
 	try {
-		const contents = shouldUseMocks()
+		const journal = shouldUseMocks()
 			? buildMockJournal(service)
-			: await run("journalctl", args, { maxBuffer: 10 * 1024 * 1024 });
+			: await run("journalctl", args, {
+					maxBuffer: 10 * 1024 * 1024,
+					timeout: 15000,
+				});
+		const contents = `Support log: retained last 7 days; newest 10000 entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB.\n${boundSupportJournal(journal)}\n\nCarrier support summary (current observations; APN and TAC only):\n${JSON.stringify(getCarrierSupportSummary())}`;
 		// Pushed as a `log` event the frontend turns into a file download; also
 		// returned so the getLog/getSyslog RPC is itself a real data source.
 		conn.send(buildMsg("log", { name, contents }, senderId));
 		return { name, contents };
-	} catch (err) {
-		const msg = `Failed to fetch the log: ${err}`;
+	} catch {
+		// Spawn errors may contain partial raw journal output. Never disclose it.
+		const msg = "Failed to fetch the log within the size or time limit.";
 		notificationSend(conn, "log_error", "error", msg, 10);
 		logger.error(msg);
 		return undefined;
