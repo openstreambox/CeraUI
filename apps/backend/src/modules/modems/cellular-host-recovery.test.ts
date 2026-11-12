@@ -6,15 +6,24 @@ import {
 	readPrivateJson,
 	writePrivateJson,
 } from "../../helpers/private-json-state.ts";
+import { acquirePrivateStateLease } from "../../helpers/private-state-lease.ts";
 import {
 	cellularNativeHostSteps,
 	cellularUplinkSlotKey,
 	parseCellularNativeHostPlan,
 } from "../network/cellular-native-host-plan.ts";
 import {
+	cellularSourceReady,
+	resetCellularSourcesForTest,
+} from "../network/cellular-source-state.ts";
+import {
 	CellularHostRecovery,
 	cellularHostStore,
+	cellularRecoveryExcludes,
+	cellularRecoveryReservedSlots,
+	isolateCellularHostAuthority,
 } from "./cellular-host-recovery.ts";
+import { initCellularRuntimeAdmission } from "./cellular-runtime-host.ts";
 import {
 	isMutationJournalRevisionCurrent,
 	mutationJournalRevision,
@@ -141,4 +150,105 @@ test("host writes join the existing mutation revision including failed operation
 	).rejects.toThrow("limit");
 	expect(isMutationJournalRevisionCurrent(stable)).toBe(false);
 	await writePrivateJson(store, key, undefined);
+});
+
+test("a lease-owned uncertain inverse stays quarantined without blocking independent source publication", async () => {
+	const f = await fixture();
+	let clean = false;
+	const lease = await acquirePrivateStateLease(f.store, f.key);
+	if (!lease) throw new Error("Synthetic slot lease unavailable");
+	initCellularRuntimeAdmission();
+	const owner = new CellularHostRecovery({
+		store: f.store,
+		bootId: async () => bootId,
+		retain: async () => ({
+			cleanup: async () => {
+				if (!clean) return false;
+				await writePrivateJson(f.store, f.key, undefined);
+				lease.release();
+				return true;
+			},
+		}),
+		isolate: isolateCellularHostAuthority,
+	});
+	try {
+		await owner.replay();
+		expect(cellularRecoveryReservedSlots()).toContain(1);
+		expect(cellularRecoveryExcludes("wwan0", "192.0.2.2")).toBe(true);
+		expect(cellularRecoveryExcludes("wwanOther", "192.0.2.2")).toBe(false);
+		expect(cellularSourceReady("wwanOther", "192.0.2.2")).toBe(true);
+		expect(cellularSourceReady("wwanOther", "192.0.2.10")).toBe(true);
+		expect(cellularSourceReady("wwan0", "192.0.2.2")).toBe(false);
+		expect(await acquirePrivateStateLease(f.store, f.key)).toBeUndefined();
+		expect(await readPrivateJson(f.store, f.key)).toBeDefined();
+		await owner.verify();
+		expect(await readPrivateJson(f.store, f.key)).toBeDefined();
+	} finally {
+		clean = true;
+		await owner.replay();
+		lease.release();
+		resetCellularSourcesForTest();
+		await f.close();
+	}
+	expect(cellularRecoveryReservedSlots()).not.toContain(1);
+});
+
+test("quarantine cannot substitute for a contended lease or unreadable scope", async () => {
+	const f = await fixture();
+	let isolated = 0;
+	const owner = new CellularHostRecovery({
+		store: f.store,
+		bootId: async () => bootId,
+		retain: async () => undefined,
+		isolate: async () => {
+			isolated++;
+			return true;
+		},
+	});
+	try {
+		await expect(owner.replay()).rejects.toThrow("isolation");
+		expect(isolated).toBe(0);
+		await writePrivateJson(f.store, f.key, { invalid: true });
+		await expect(owner.replay()).rejects.toThrow();
+		expect(isolated).toBe(0);
+	} finally {
+		await f.close();
+	}
+});
+
+test("a quarantined inverse's lost removal acknowledgement releases only after its retained tail settles", async () => {
+	const f = await fixture();
+	let phase = 0;
+	initCellularRuntimeAdmission();
+	const owner = new CellularHostRecovery({
+		store: f.store,
+		bootId: async () => bootId,
+		retain: async () => ({
+			cleanup: async () => {
+				if (phase === 0) return false;
+				if (phase === 1) {
+					await writePrivateJson(f.store, f.key, undefined);
+					phase = 2;
+					return false;
+				}
+				return true;
+			},
+		}),
+		isolate: isolateCellularHostAuthority,
+	});
+	try {
+		await owner.replay();
+		expect(cellularRecoveryReservedSlots()).toContain(1);
+		phase = 1;
+		await expect(owner.replay()).rejects.toThrow("incomplete");
+		await expect(owner.verify()).rejects.toThrow("changed");
+		expect(cellularRecoveryReservedSlots()).toContain(1);
+		await owner.replay();
+		expect(cellularRecoveryReservedSlots()).not.toContain(1);
+	} finally {
+		phase = 2;
+		await owner.replay();
+		resetCellularSourcesForTest();
+		await f.close();
+	}
 });

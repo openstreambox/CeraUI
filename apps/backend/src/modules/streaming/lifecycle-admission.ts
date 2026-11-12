@@ -236,6 +236,11 @@ const activeMutations = new Map<
 	{ readonly token: number; readonly journalOnly: boolean }
 >();
 const mutationBlocks = new Map<string, MutationBlock>();
+const mutationBlockListeners = new Set<() => void>();
+export function onMutationBlocksChange(listener: () => void): () => void {
+	mutationBlockListeners.add(listener);
+	return () => mutationBlockListeners.delete(listener);
+}
 let nextMutationToken = 0;
 
 /**
@@ -357,8 +362,19 @@ export function heldModemMutations(): readonly string[] {
  * the same operation that stops recording it, so the two cannot disagree.
  */
 export function setMutationBlocks(blocks: readonly MutationBlock[]): void {
+	const changed =
+		blocks.length !== mutationBlocks.size ||
+		blocks.some((block) => {
+			const old = mutationBlocks.get(block.stableKey);
+			return (
+				!old ||
+				old.refusal !== block.refusal ||
+				old.blocksStreaming !== block.blocksStreaming
+			);
+		});
 	mutationBlocks.clear();
 	for (const block of blocks) mutationBlocks.set(block.stableKey, block);
+	if (changed) for (const listener of mutationBlockListeners) listener();
 }
 
 export function getMutationBlocks(): readonly MutationBlock[] {
@@ -366,9 +382,11 @@ export function getMutationBlocks(): readonly MutationBlock[] {
 }
 
 /** The first block holding global stream autostart, if any. */
-export function streamingBlockingMutation(): MutationBlock | undefined {
+export function streamingBlockingMutation(
+	isolated: () => boolean = () => false,
+): MutationBlock | undefined {
 	for (const block of mutationBlocks.values()) {
-		if (block.blocksStreaming) return block;
+		if (block.blocksStreaming && !isolated()) return block;
 	}
 	return undefined;
 }

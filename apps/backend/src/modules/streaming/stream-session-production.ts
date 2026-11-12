@@ -1,4 +1,5 @@
 import { logger } from "../../helpers/logger.ts";
+import { cellularSourceExclusionInstalled } from "../network/cellular-source-state.ts";
 import { admitAndPrepareStreamStart } from "../system/update-orchestrator/runtime.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
 import { noteStreamStopped } from "./armed-stream-marker.ts";
@@ -80,7 +81,8 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	admitLifecycle: () => tryAcquireLifecycle("streaming"),
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,
-	blockingMutation: streamingBlockingMutation,
+	blockingMutation: () =>
+		streamingBlockingMutation(cellularSourceExclusionInstalled),
 	admitUpdate: admitAndPrepareStreamStart,
 	markStreamingForOta: setOtaStreamingMarker,
 	unmarkStreamingForOta: clearOtaStreamingMarker,

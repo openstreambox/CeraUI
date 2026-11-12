@@ -10,7 +10,12 @@ import {
 import { CellularIpv6Bootstrap } from "../network/cellular-ipv6-bootstrap.ts";
 import { CellularNativeHost } from "../network/cellular-native-host.ts";
 import { cellularUplinkSlotKey } from "../network/cellular-native-host-plan.ts";
-import { withdrawCellularSource } from "../network/cellular-source-state.ts";
+import { planCellularRoutes } from "../network/cellular-route-plan.ts";
+import {
+	cellularSourceExclusionInstalled,
+	refreshCellularSourceExclusion,
+	withdrawCellularSource,
+} from "../network/cellular-source-state.ts";
 import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import {
 	noteMutationJournalReadFault,
@@ -26,10 +31,54 @@ export function cellularHostStore(): PrivateStateStore {
 		readFault: noteMutationJournalReadFault,
 	};
 }
+const isolated = new Map<number, CellularHostAuthority>();
+export function cellularRecoveryReservedSlots(): readonly number[] {
+	return [...isolated.keys()];
+}
+export function hasIsolatedCellularRecovery(): boolean {
+	return isolated.size > 0;
+}
+export function cellularRecoveryExcludes(
+	iface: string,
+	source?: string,
+): boolean {
+	return [...isolated.values()].some((row) => {
+		if (row.kind === "bootstrap")
+			return (
+				iface === row.inverse.plan.physical.ifname ||
+				source === row.inverse.plan.source
+			);
+		if (row.kind === "native") {
+			const input = row.inverse.plan.input;
+			// Native fences and rules are output-device scoped. A different device
+			// may legitimately have the same carrier-private address.
+			return iface === input.iface;
+		}
+		const input = row.birth.plan.input,
+			routes = planCellularRoutes(input);
+		return (
+			!routes ||
+			iface === input.iface ||
+			iface === routes.device ||
+			(!!source && source === routes.source)
+		);
+	});
+}
+export async function isolateCellularHostAuthority(
+	authority: CellularHostAuthority,
+): Promise<boolean> {
+	if (!cellularSourceExclusionInstalled()) return false;
+	isolated.set(authority.slot, structuredClone(authority));
+	refreshCellularSourceExclusion();
+	return true;
+}
 type Retained = { readonly cleanup: () => Promise<boolean> };
 export interface CellularHostRecoveryDeps {
 	readonly store: PrivateStateStore;
 	readonly bootId: () => Promise<string>;
+	/** May retain a parsed, lease-owned path behind source exclusion. Unknown
+	 * inventory, lost metadata or a contended lease cannot become scoped safety. */
+	readonly isolate?: (authority: CellularHostAuthority) => Promise<boolean>;
 	readonly retain: (
 		authority: CellularHostAuthority,
 		bootId: string,
@@ -51,6 +100,7 @@ export class CellularHostRecovery {
 			if (!(await owner.cleanup()))
 				throw new Error("Retained cellular recovery lost its authority");
 			this.retained.delete(slot);
+			if (isolated.delete(slot)) refreshCellularSourceExclusion();
 		}
 		if (!rows.length) return;
 		const bootId = await this.deps.bootId();
@@ -69,22 +119,54 @@ export class CellularHostRecovery {
 					continue;
 				}
 				this.retained.delete(row.slot);
+				if (isolated.delete(row.slot)) refreshCellularSourceExclusion();
 			} catch {
 				incomplete = true;
 			}
 		}
-		if (incomplete || (await inventoryCellularHosts(this.deps.store)).length)
+		const remaining = await inventoryCellularHosts(this.deps.store);
+		if (remaining.length && this.deps.isolate) {
+			for (const row of remaining) {
+				const observed = rows.find((before) => before.slot === row.slot);
+				if (
+					!observed ||
+					observed.kind !== row.kind ||
+					JSON.stringify(
+						observed.kind === "clat"
+							? observed.birth.plan
+							: observed.inverse.plan,
+					) !==
+						JSON.stringify(
+							row.kind === "clat" ? row.birth.plan : row.inverse.plan,
+						) ||
+					!this.retained.has(row.slot) ||
+					!(await this.deps.isolate(row))
+				)
+					throw new Error("Cellular recovery cannot establish path isolation");
+			}
+			return;
+		}
+		if (incomplete || remaining.length)
 			throw new Error("Cellular host withdrawal incomplete");
 	}
 	/** Runtime fault reconciliation is read-only; it never rolls an active path back. */
 	async verify(): Promise<void> {
-		await inventoryCellularHosts(this.deps.store);
+		const rows = await inventoryCellularHosts(this.deps.store);
+		for (const [slot, authority] of isolated) {
+			if (!this.retained.has(slot)) continue;
+			if (
+				JSON.stringify(rows.find((row) => row.slot === slot)) !==
+				JSON.stringify(authority)
+			)
+				throw new Error("Quarantined cellular authority changed");
+		}
 	}
 }
-async function retain(
+export async function retainCellularHostInverse(
 	authority: CellularHostAuthority,
 	bootId: string,
 	store: PrivateStateStore,
+	consumersReleased: () => Promise<boolean> = cellularConsumersAbsent,
 ): Promise<Retained | undefined> {
 	if (!isRecoveryPending())
 		throw new Error("Cellular recovery barrier unavailable");
@@ -112,7 +194,7 @@ async function retain(
 			cancelProbe: () => {
 				/* Startup replay precedes managed probe admission. */
 			},
-			consumersReleased: cellularConsumersAbsent,
+			consumersReleased,
 		};
 	if (authority.kind === "clat")
 		return retainCellularClatSession(authority.birth.plan, deps);
@@ -154,7 +236,9 @@ function recovery() {
 			store,
 			bootId: async () =>
 				(await readFile("/proc/sys/kernel/random/boot_id", "ascii")).trim(),
-			retain: (authority, bootId) => retain(authority, bootId, store),
+			retain: (authority, bootId) =>
+				retainCellularHostInverse(authority, bootId, store),
+			isolate: isolateCellularHostAuthority,
 		});
 		recoveries.set(store.dir, owner);
 	}

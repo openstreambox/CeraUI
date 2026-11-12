@@ -749,3 +749,30 @@ independent NM restoration census before old host authority may retire.
 These are host recovery proofs. Retained internal activation/runtime composition,
 installed translator packaging and physical qualification remain open. Verizon
 remains unqualified.
+
+### Independent cellular recovery admission (candidate)
+
+Readable modem journal blocks remain mutation blocks for their exact keys.
+With source quarantine installed, they no longer veto unrelated stream Start:
+blocked physical keys and unproved identities cannot become bond candidates or
+validate queued publications. Removing a block cannot resurrect an old source
+observation. A quarantined startup host also reserves its slot and excludes its
+device and, for CLAT, its translated source. Native fences are device scoped,
+so a healthy second device may retain the same carrier-private address. Strict sender
+binding remains mandatory while any journal block or isolated host is present.
+Without that source guard, legacy global refusal remains in force.
+
+Startup may isolate only a fully parsed, still-present host record with unchanged identity/plan
+whose inverse owner holds its slot lease. A contended lease, unreadable inventory,
+lost authority, or directory-acknowledgement tail still holds recovery globally.
+The existing recovery owner makes the initial inverse attempt; quarantine does
+not introduce a retry timer or continue hardware effects after the boot barrier
+has been released. Runtime verification remains read-only. Ordinary modem
+rollback is deferred while a host remains isolated. Isolation does not certify
+that modem healthy or restore its readiness; it admits only independent paths.
+Installed two-link traffic and restart/failure acceptance remain open. Adoption
+of a healthy running sender/session across backend restart is a separate open
+requirement; safety restoration is not stream continuity.
+
+Internal-call work is parked pending modem reliability qualification. The
+installed candidate targets the NetworkManager-owned QMI/MBIM route.

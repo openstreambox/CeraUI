@@ -11,7 +11,7 @@ import {
 import { CellularRuntimeSession } from "./cellular-runtime-session.ts";
 
 beforeEach(resetCellularSourcesForTest);
-function fixture() {
+function fixture(reservedSlots: () => readonly number[] = () => []) {
 	let now = 0,
 		clean = true,
 		capable = true,
@@ -22,6 +22,7 @@ function fixture() {
 	const sessions: CellularRuntimeSession[] = [];
 	const root = new CellularRuntime({
 		now: () => now,
+		reservedSlots,
 		capable: async () => capable,
 		reserve: async () => ({ remaining: 1024 * 1024 }),
 		failure: () => {
@@ -245,4 +246,12 @@ test("native reconnect cannot run before the retained host and consumer inverse 
 	expect(reconnect).toBeGreaterThan(-1);
 	expect(f.events.slice(0, reconnect).at(-1)).toBe("finish-true");
 	expect(cellularSourceReady("wwan0", "192.0.2.2")).toBe(false);
+});
+
+test("a quarantined startup slot cannot starve a healthy actor or be reused by it", async () => {
+	const f = fixture(() => [1]);
+	await f.root.reconcile([f.observation("b", "healthy", "wwan1")]);
+	expect(f.events).toContain("retain-b-2");
+	expect(f.events).not.toContain("retain-b-1");
+	expect(cellularSourceReady("wwan1", "192.0.2.2")).toBe(true);
 });

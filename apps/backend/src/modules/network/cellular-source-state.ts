@@ -18,6 +18,30 @@ export interface CellularSourceState {
 const sources = new Map<string, CellularSourceState>();
 const observations = new Map<string, symbol>();
 const events = new EventEmitter();
+let excluded: ((iface: string, source?: string) => boolean) | undefined;
+/** Source quarantine is checked at both candidate selection and queued publication. */
+export function setCellularSourceExclusion(
+	check: (iface: string, source?: string) => boolean,
+): void {
+	excluded = check;
+	refreshCellularSourceExclusion();
+}
+export function cellularSourceExclusionInstalled(): boolean {
+	return excluded !== undefined;
+}
+export function refreshCellularSourceExclusion(): void {
+	for (const [iface, state] of sources) {
+		if (excluded?.(iface, sources.get(iface)?.binding?.source))
+			sources.set(iface, {
+				owner: state.owner,
+				epoch: state.epoch,
+				iface,
+				ready: false,
+			});
+	}
+	for (const iface of observations.keys()) observations.set(iface, Symbol());
+	events.emit("change");
+}
 let admissionRequired: (iface: string) => boolean = () => false;
 /** The cellular composition root installs this before interface discovery.
  * An automatic modem cannot publish a pre-existing native address while its
@@ -124,7 +148,9 @@ export function cellularSourceBinding(
 	iface: string,
 ): CellularSourceBinding | undefined {
 	const state = sources.get(iface);
-	return state?.ready ? state.binding : undefined;
+	return !excluded?.(iface, state?.binding?.source) && state?.ready
+		? state.binding
+		: undefined;
 }
 export function cellularSourceManaged(iface: string): boolean {
 	return sources.has(iface);
@@ -141,6 +167,7 @@ export function captureCellularSourcePublication(
 		token = observations.get(iface) ?? Symbol();
 	observations.set(iface, token);
 	return () =>
+		!excluded?.(iface, source) &&
 		observations.get(iface) === token &&
 		(before
 			? sources.get(iface) === before &&
@@ -172,6 +199,7 @@ export function cellularSourceReady(
 	source: string | undefined,
 ): boolean {
 	const state = sources.get(iface);
+	if (excluded?.(iface, source)) return false;
 	return state
 		? !!state.ready && state.binding?.source === source
 		: !admissionRequired(iface);
@@ -190,6 +218,7 @@ export function cellularDefaultEligible(
 	source: string | undefined,
 ): boolean {
 	const state = sources.get(iface);
+	if (excluded?.(iface, source)) return false;
 	return (
 		(!state && !admissionRequired(iface)) ||
 		(!!state?.ready &&
@@ -203,6 +232,7 @@ export function cellularHiddenInterface(iface: string): boolean {
 	return /^cclat(?:[1-9]|[12]\d|3[0-2])$/.test(iface);
 }
 export function resetCellularSourcesForTest(): void {
+	excluded = undefined;
 	sources.clear();
 	admissionRequired = () => false;
 	observations.clear();

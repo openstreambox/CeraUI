@@ -41,6 +41,7 @@ import {
 } from "../streaming/recovery-barrier.ts";
 import { inventoryCellularAuthority } from "./cellular-authority-inventory.ts";
 import {
+	hasIsolatedCellularRecovery,
 	replayCellularHosts,
 	verifyCellularHosts,
 } from "./cellular-host-recovery.ts";
@@ -187,12 +188,14 @@ async function replayEntry(
 	tally.blocked += 1;
 }
 
-export async function runMutationReplay(): Promise<ReplaySummary> {
+export async function runMutationReplay(
+	replayHosts: () => Promise<void> = replayCellularHosts,
+): Promise<ReplaySummary> {
 	const tally = { rolledBack: 0, pruned: 0, blocked: 0, quarantined: 0 };
 	let unreadable = 0;
 	let hostsWithdrawn = true;
 	try {
-		await replayCellularHosts();
+		await replayHosts();
 	} catch {
 		hostsWithdrawn = false;
 		unreadable++;
@@ -225,7 +228,9 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 		}
 		// Readable entries still replay beside a damaged slot; the strict block
 		// publication below vetoes completion when the inventory changed meanwhile.
-		for (const hint of hostsWithdrawn ? await listMutationEntries() : []) {
+		for (const hint of hostsWithdrawn && !hasIsolatedCellularRecovery()
+			? await listMutationEntries()
+			: []) {
 			try {
 				const revision = mutationJournalRevision();
 				const entry = await readMutationEntry(hint.stableKey);
@@ -270,6 +275,8 @@ async function journalReadsCompletely(): Promise<boolean> {
 }
 
 export interface MutationRecoveryOptions {
+	/** Host inverse I/O seam; scheduling and the boot barrier keep one owner. */
+	readonly replayHosts?: () => Promise<void>;
 	/** Injected clock for the retry owner's backoff. */
 	readonly sleep?: MutationRecoveryDeps["sleep"];
 }
@@ -286,9 +293,10 @@ export async function initMutationRecovery(
 	stopMutationRecovery();
 	beginRecoveryBarrier();
 	consumeRecoveryBarrierRaise();
-	const summary = await runMutationReplay();
+	const summary = await runMutationReplay(options.replayHosts);
 	const deps: MutationRecoveryDeps = {
-		replay: async () => (await runMutationReplay()).unreadable === 0,
+		replay: async () =>
+			(await runMutationReplay(options.replayHosts)).unreadable === 0,
 		verify: journalReadsCompletely,
 		sleep: options.sleep ?? sleepUnlessAborted,
 	};

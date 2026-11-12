@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { deriveModemStableKey } from "@ceraui/rpc/schemas";
 import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
 import { shouldMockModems } from "../../mocks/providers/modems.ts";
 import {
+	refreshCellularSourceExclusion,
 	setCellularSourceAdmission,
+	setCellularSourceExclusion,
 	withdrawCellularSource,
 } from "../network/cellular-source-state.ts";
 import { nmConnGetFields } from "../network/network-manager.ts";
@@ -14,7 +17,10 @@ import {
 	cellularSenderAllowsPublication,
 	cellularSenderRuntime,
 } from "../streaming/cellular-sender-runtime.ts";
-import { getMutationBlocks } from "../streaming/lifecycle-admission.ts";
+import {
+	getMutationBlocks,
+	onMutationBlocksChange,
+} from "../streaming/lifecycle-admission.ts";
 import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import {
 	probeSrtlaSenderCapabilities,
@@ -28,7 +34,11 @@ import {
 } from "./automatic-carrier-intent.ts";
 import { captureCellularDataGrant } from "./cellular-grant.ts";
 import { CellularGrantLifetime } from "./cellular-grant-lifetime.ts";
-import { cellularHostStore } from "./cellular-host-recovery.ts";
+import {
+	cellularHostStore,
+	cellularRecoveryExcludes,
+	cellularRecoveryReservedSlots,
+} from "./cellular-host-recovery.ts";
 import { reconnectCellularNativeHost } from "./cellular-native-reconnect-host.ts";
 import { readCellularNmIp } from "./cellular-nm-ip.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
@@ -74,6 +84,7 @@ function root(): CellularRuntime {
 	const store = cellularHostStore();
 	runtime = new CellularRuntime({
 		now: () => performance.now(),
+		reservedSlots: cellularRecoveryReservedSlots,
 		capable: async () => {
 			if (
 				isRecoveryPending() ||
@@ -195,8 +206,11 @@ async function capture(
 			await lifetime.close();
 			return undefined;
 		}
+		let observedSource: string | undefined;
 		const currentNow = () =>
 				lifetime.current &&
+				!cellularRecoveryExcludes(target.ifname, observedSource) &&
+				!getMutationBlocks().some((block) => block.stableKey === key) &&
 				modemStableKeyForId(id) === key &&
 				getModem(id)?.config === config &&
 				config.conn === uuid &&
@@ -261,6 +275,7 @@ async function capture(
 			];
 		// No grant still keeps this identified automatic interface fenced unready.
 		// It cannot donate an unverified native address to the ordinary collector.
+		observedSource = grant?.source;
 		const watching = paths.length >= 4 && lifetime.select(paths);
 		active = true;
 		const observation: CellularRuntimeObservation = {
@@ -342,7 +357,22 @@ export function invalidateCellularRuntime(iface?: string): void {
 }
 
 /** Synchronous boot admission only; no hardware commands, storage or probes. */
+let removeMutationObserver: (() => void) | undefined;
 export function initCellularRuntimeAdmission(): void {
+	setCellularSourceExclusion((iface, source) => {
+		if (cellularRecoveryExcludes(iface, source)) return true;
+		const blocks = getMutationBlocks();
+		if (!blocks.length) return false;
+		const identity = resolveBondPhysicalIdentity(iface);
+		const key = identity?.idPath
+			? deriveModemStableKey(identity.idPath)
+			: undefined;
+		return !key || blocks.some((block) => block.stableKey === key);
+	});
+	removeMutationObserver?.();
+	removeMutationObserver = onMutationBlocksChange(
+		refreshCellularSourceExclusion,
+	);
 	setCellularSourceAdmission((iface) => {
 		if (shouldMockModems()) return false;
 		const rows = getModemIds()

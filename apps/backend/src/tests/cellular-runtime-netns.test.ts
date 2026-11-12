@@ -17,12 +17,21 @@ import {
 } from "../modules/modems/cellular-runtime.ts";
 import { createCellularRuntimeKernelSession } from "../modules/modems/cellular-runtime-kernel.ts";
 import { inventoryCellularHosts } from "../modules/network/cellular-host-inventory.ts";
-import { cellularUplinkSlotKey } from "../modules/network/cellular-native-host-plan.ts";
+import {
+	cellularNativeHostSteps,
+	cellularUplinkSlotKey,
+	parseCellularNativeHostPlan,
+} from "../modules/network/cellular-native-host-plan.ts";
 import { cellularSourceReady } from "../modules/network/cellular-source-state.ts";
+import {
+	isRecoveryPending,
+	resetRecoveryBarrier,
+} from "../modules/streaming/recovery-barrier.ts";
 import {
 	probeSrtlaSenderCapabilities,
 	supportsRequiredCellularBinding,
 } from "../modules/streaming/srtla-capabilities.ts";
+import { prepareUpdateTransportSetup } from "./fixtures/update-transport-setup.ts";
 import { runTestCommand } from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_CELLULAR_RUNTIME_CHILD === "1";
@@ -42,7 +51,7 @@ const unavailable = missing || (!child && privilege?.code !== 0);
 if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 	throw new Error("Required cellular runtime namespace unavailable");
 (unavailable ? test.skip : test)(
-	"actual runtime root installs, proves and withdraws a native path without borrowing the LAN",
+	"actual runtime root carries native traffic beside a quarantined peer without borrowing the LAN",
 	async () => {
 		if (!child) {
 			const namespaceRoot = await mkdtemp(
@@ -97,6 +106,25 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			cert = join(directory, "certificate.pem"),
 			key = join(directory, "key.pem"),
 			receipt = join(directory, "provider.json");
+		await prepareUpdateTransportSetup(directory);
+		const {
+			CellularHostRecovery,
+			cellularRecoveryReservedSlots,
+			isolateCellularHostAuthority,
+			retainCellularHostInverse,
+		} = await import("../modules/modems/cellular-host-recovery.ts");
+		const { initCellularRuntimeAdmission } = await import(
+			"../modules/modems/cellular-runtime-host.ts"
+		);
+		const {
+			defaultMutationJournalFs,
+			resetMutationJournalDeps,
+			setMutationJournalDeps,
+		} = await import("../modules/modems/mutation-journal.ts");
+		const { initMutationRecovery } = await import(
+			"../modules/modems/mutation-replay.ts"
+		);
+
 		let provider: ReturnType<typeof Bun.spawn> | undefined,
 			root: CellularRuntime | undefined;
 		try {
@@ -247,9 +275,54 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			const capabilities = await probeSrtlaSenderCapabilities(sender);
 			expect(supportsRequiredCellularBinding(capabilities)).toBe(true);
 			const failures: unknown[] = [];
+			// Model a crashed peer whose old consumer cannot yet acknowledge closure.
+			// Use its actual private slot lease and host inverse, with only that consumer
+			// observation injected; all healthy packet/routing/probe operations are real.
+			const blockedPlan = parseCellularNativeHostPlan({
+				input: {
+					owner: "b".repeat(64),
+					epoch: "blocked",
+					slot: 32,
+					iface: "wwanBad",
+					mtu: 1428,
+					ipv4: grant.source,
+				},
+				bootId,
+				ifindex: 9999,
+				dns: [],
+			});
+			await writePrivateJson(store, cellularUplinkSlotKey(32), {
+				version: 1,
+				owner: blockedPlan.input.owner,
+				epoch: blockedPlan.input.epoch,
+				plan: blockedPlan,
+				steps: cellularNativeHostSteps(blockedPlan),
+				cursor: cellularNativeHostSteps(blockedPlan).length,
+				phase: "active",
+			});
+			initCellularRuntimeAdmission();
+			const startup = new CellularHostRecovery({
+				store,
+				bootId: async () => bootId,
+				retain: (authority, boot) =>
+					retainCellularHostInverse(authority, boot, store, async () => false),
+				isolate: isolateCellularHostAuthority,
+			});
+			setMutationJournalDeps({
+				fs: defaultMutationJournalFs,
+				dir: join(directory, "journal"),
+			});
+			const recovery = await initMutationRecovery({
+				replayHosts: () => startup.replay(),
+			});
+			expect(recovery.unreadable).toBe(0);
+			expect(isRecoveryPending()).toBe(false);
+			expect(cellularRecoveryReservedSlots()).toContain(32);
+			expect(cellularSourceReady("wwanBad", grant.source)).toBe(false);
 			root = new CellularRuntime({
 				now: () => performance.now(),
-				capable: async () => true,
+				reservedSlots: cellularRecoveryReservedSlots,
+				capable: async () => !isRecoveryPending(),
 				reserve: async (_owner, bytes) => {
 					reserved += bytes;
 					return { remaining: 1024 * 1024 };
@@ -311,7 +384,7 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			]);
 			expect(
 				(await inventoryCellularHosts(store)).map((row) => row.kind),
-			).toEqual(["native"]);
+			).toEqual(["native", "native"]);
 			root.invalidate("wwan0");
 			expect(cellularSourceReady("wwan0", grant.source)).toBe(false);
 			expect(await root.close()).toBe(false);
@@ -327,7 +400,10 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			await writePrivateJson(store, cellularUplinkSlotKey(1), authority);
 			released = true;
 			expect(await root.close()).toBe(true);
-			expect(await inventoryCellularHosts(store)).toEqual([]);
+			expect(
+				(await inventoryCellularHosts(store)).map((row) => row.slot),
+			).toEqual([32]);
+			expect(cellularSourceReady("wwanBad", grant.source)).toBe(false);
 			expect(await command("ip", "-j", "route", "show", "table", "main")).toBe(
 				mainBefore,
 			);
@@ -339,6 +415,8 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 				),
 			).toBe(true);
 		} finally {
+			resetMutationJournalDeps();
+			resetRecoveryBarrier();
 			if (provider) {
 				provider.kill("SIGTERM");
 				await Promise.race([provider.exited, Bun.sleep(1000)]);
