@@ -252,3 +252,122 @@ test("a quarantined inverse's lost removal acknowledgement releases only after i
 		await f.close();
 	}
 });
+
+test("isolated transient cleanup is visible and retried after the barrier lowers with capped backoff", async () => {
+	const f = await fixture();
+	let now = 0,
+		attempts = 0,
+		clean = false;
+	initCellularRuntimeAdmission();
+	const owner = new CellularHostRecovery({
+		store: f.store,
+		bootId: async () => bootId,
+		now: () => now,
+		retain: async () => ({
+			cleanup: async () => {
+				attempts++;
+				if (!clean) return false;
+				await writePrivateJson(f.store, f.key, undefined);
+				return true;
+			},
+		}),
+		isolate: isolateCellularHostAuthority,
+	});
+	try {
+		await owner.replay();
+		expect(owner.status("wwan0")?.reason).toBe("withdrawal-incomplete");
+		await owner.retry();
+		expect(attempts).toBe(1);
+		for (const delay of [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]) {
+			now += delay;
+			await owner.retry();
+		}
+		expect(attempts).toBe(9);
+		expect(cellularSourceReady("wwanOther", "192.0.2.2")).toBe(true);
+		clean = true;
+		owner.changed("wwan0");
+		await owner.retry();
+		expect(attempts).toBe(10);
+		expect(owner.status("wwan0")).toBeUndefined();
+		expect(cellularRecoveryReservedSlots()).not.toContain(1);
+	} finally {
+		clean = true;
+		await owner.replay();
+		resetCellularSourcesForTest();
+		await f.close();
+	}
+});
+
+test("one stalled retry cannot hold another slot and runtime retry never adopts active hosts", async () => {
+	const f = await fixture();
+	const original = (await readPrivateJson(f.store, f.key)) as Record<
+		string,
+		unknown
+	>;
+	const writeSlot = async (slot: number) => {
+		const plan = parseCellularNativeHostPlan({
+			...f.plan,
+			input: { ...f.plan.input, slot, iface: `wwan${slot}` },
+		});
+		await writePrivateJson(f.store, cellularUplinkSlotKey(slot), {
+			...original,
+			plan,
+		});
+	};
+	await writeSlot(2);
+	let now = 0,
+		retrying = false;
+	let release!: () => void, secondDone!: () => void;
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const done = new Promise<void>((resolve) => {
+		secondDone = resolve;
+	});
+	const retained: number[] = [];
+	initCellularRuntimeAdmission();
+	const owner = new CellularHostRecovery({
+		store: f.store,
+		bootId: async () => bootId,
+		now: () => now,
+		isolate: isolateCellularHostAuthority,
+		retain: async (row) => {
+			retained.push(row.slot);
+			return {
+				cleanup: async () => {
+					if (!retrying) return false;
+					if (row.slot === 1) await held;
+					await writePrivateJson(
+						f.store,
+						cellularUplinkSlotKey(row.slot),
+						undefined,
+					);
+					if (row.slot === 2) secondDone();
+					return true;
+				},
+			};
+		},
+	});
+	try {
+		await owner.replay();
+		await writeSlot(3); // a newly installed runtime host, outside quarantine
+		retrying = true;
+		now = 1000;
+		const pending = owner.retry();
+		await done;
+		expect(
+			await readPrivateJson(f.store, cellularUplinkSlotKey(2)),
+		).toBeUndefined();
+		expect(await readPrivateJson(f.store, f.key)).toBeDefined();
+		expect(retained).toEqual([1, 2]);
+		release();
+		await pending;
+		expect(
+			await readPrivateJson(f.store, cellularUplinkSlotKey(3)),
+		).toBeDefined();
+	} finally {
+		release();
+		resetCellularSourcesForTest();
+		await f.close();
+	}
+});

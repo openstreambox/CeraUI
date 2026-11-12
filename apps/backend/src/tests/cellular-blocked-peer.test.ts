@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { deriveModemStableKey } from "@ceraui/rpc/schemas";
 import { initCellularRuntimeAdmission } from "../modules/modems/cellular-runtime-host.ts";
+import { removeModem, setModem } from "../modules/modems/modems-state.ts";
 import { refreshMutationBlocks } from "../modules/modems/mutation-blocks.ts";
 import { resolvePhysicalDevice } from "../modules/modems/physical-identity.ts";
 import {
@@ -21,6 +22,7 @@ import { createStreamSessionOrchestrator } from "../modules/streaming/stream-ses
 import { streamSessionProductionDeps } from "../modules/streaming/stream-session-production.ts";
 
 afterEach(() => {
+	removeModem(999);
 	resetLifecycleInterlock();
 	resetRecoveryBarrier();
 	resetCellularSourcesForTest();
@@ -90,6 +92,12 @@ test("quarantine revokes a queued unmanaged publication and fails closed on unpr
 	expect(before()).toBe(false);
 	expect(cellularSourceReady("wwanGood", "192.0.2.2")).toBe(true);
 	setBondIdentityResolverForTest((ifname) => resolvePhysicalDevice({ ifname }));
+	setModem(999, {
+		ifname: "wwanUnknown",
+		name: "Synthetic modem",
+		sim_network: "",
+		network_type: { supported: {}, active: null },
+	});
 	expect(cellularSourceReady("wwanUnknown", "192.0.2.4")).toBe(false);
 	setMutationBlocks([]);
 	expect(before()).toBe(false);
@@ -125,4 +133,38 @@ test("published journal blocks describe per-device quarantine while retaining th
 		refusal: "mutation_blocked",
 	});
 	expect(publishedBondNeedsRequiredBinding()).toBe(true);
+});
+
+test("a retired modem leaves non-USB Ethernet and Wi-Fi usable", () => {
+	setBondIdentityResolverForTest((ifname) => resolvePhysicalDevice({ ifname }));
+	initCellularRuntimeAdmission();
+	setMutationBlocks([
+		{
+			stableKey: deriveModemStableKey("retired-modem"),
+			refusal: "mutation_blocked",
+			blocksStreaming: false,
+		},
+	]);
+	expect(cellularSourceReady("eth0", "192.0.2.10")).toBe(true);
+	expect(cellularSourceReady("wlan0", "192.0.2.11")).toBe(true);
+});
+
+test("a failed modem block also leaves ordinary non-USB links usable", () => {
+	setBondIdentityResolverForTest((ifname) =>
+		resolvePhysicalDevice({
+			ifname,
+			...(ifname === "wwanBad" ? { idPath: ifname } : {}),
+		}),
+	);
+	initCellularRuntimeAdmission();
+	setMutationBlocks([
+		{
+			stableKey: deriveModemStableKey("wwanBad"),
+			refusal: "mutation_blocked",
+			blocksStreaming: true,
+		},
+	]);
+	expect(cellularSourceReady("eth0", "192.0.2.10")).toBe(true);
+	expect(cellularSourceReady("wlan0", "192.0.2.11")).toBe(true);
+	expect(cellularSourceReady("wwanBad", "192.0.2.12")).toBe(false);
 });

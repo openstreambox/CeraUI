@@ -59,6 +59,7 @@ import type {
 } from "../network/state-types.ts";
 import { applyJitter } from "../streaming/constants.ts";
 import { runAutomaticCarrierProfiles } from "./automatic-carrier-profile.ts";
+import { retryCellularHosts } from "./cellular-host-recovery.ts";
 import { runCellularPreparation } from "./cellular-preparation.ts";
 import {
 	invalidateCellularRuntime,
@@ -162,6 +163,7 @@ function findModemIdByIfname(ifname: string): ModemId | undefined {
 
 /** A `modem-added` event: register (or refresh if already known) then publish. */
 async function handleModemAdded(id: ModemId): Promise<void> {
+	invalidateCellularRuntime(getModem(id)?.ifname);
 	await withModemUpdateLock(async () => {
 		if (getModem(id)) {
 			// Already present (e.g. discovered at startup) — refresh, don't re-register.
@@ -170,6 +172,8 @@ async function handleModemAdded(id: ModemId): Promise<void> {
 			await registerModemSafe(id);
 		}
 		await refreshModemIdPaths();
+		invalidateCellularRuntime(getModem(id)?.ifname);
+		retryCellularHosts(undefined, true);
 		// Publish: a freshly registered modem reconciles as `added`, which the
 		// onModemsChange handler turns into a gsm reset + full broadcast.
 		publishModemsSnapshot();

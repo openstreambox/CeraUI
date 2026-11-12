@@ -38,6 +38,7 @@ import {
 	cellularHostStore,
 	cellularRecoveryExcludes,
 	cellularRecoveryReservedSlots,
+	retryCellularHosts,
 } from "./cellular-host-recovery.ts";
 import { reconnectCellularNativeHost } from "./cellular-native-reconnect-host.ts";
 import { readCellularNmIp } from "./cellular-nm-ip.ts";
@@ -329,6 +330,7 @@ export async function runCellularRuntime(): Promise<void> {
 			runtime?.invalidate();
 			return;
 		}
+		retryCellularHosts();
 		bootId ??= (
 			await readFile("/proc/sys/kernel/random/boot_id", "ascii")
 		).trim();
@@ -354,6 +356,7 @@ export async function runCellularRuntime(): Promise<void> {
 }
 export function invalidateCellularRuntime(iface?: string): void {
 	runtime?.invalidate(iface);
+	if (iface && !isRecoveryPending()) retryCellularHosts(iface);
 }
 
 /** Synchronous boot admission only; no hardware commands, storage or probes. */
@@ -367,7 +370,14 @@ export function initCellularRuntimeAdmission(): void {
 		const key = identity?.idPath
 			? deriveModemStableKey(identity.idPath)
 			: undefined;
-		return !key || blocks.some((block) => block.stableKey === key);
+		if (key) return blocks.some((block) => block.stableKey === key);
+		// Missing identity on a known cellular device fails closed. Ordinary
+		// Ethernet/Wi-Fi do not belong to cellular journal admission.
+		return (
+			!identity ||
+			getModemIds().some((id) => getModem(id)?.ifname === iface) ||
+			getModemNetMarker(iface) !== undefined
+		);
 	});
 	removeMutationObserver?.();
 	removeMutationObserver = onMutationBlocksChange(

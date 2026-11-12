@@ -766,8 +766,12 @@ Startup may isolate only a fully parsed, still-present host record with unchange
 whose inverse owner holds its slot lease. A contended lease, unreadable inventory,
 lost authority, or directory-acknowledgement tail still holds recovery globally.
 The existing recovery owner makes the initial inverse attempt; quarantine does
-not introduce a retry timer or continue hardware effects after the boot barrier
-has been released. Runtime verification remains read-only. Ordinary modem
+not introduce a retry timer. The existing modem poll retries only retained isolated
+slots with 1–60 second capped backoff; presence and interface changes make them
+due immediately. Cleanup after the boot barrier takes the lifecycle interlock
+and positive consumer census; active streams are never stopped for cleanup.
+Runtime verification remains read-only. Quarantine is logged with a reason and
+reported in each modem availability surface. Ordinary modem
 rollback is deferred while a host remains isolated. Isolation does not certify
 that modem healthy or restore its readiness; it admits only independent paths.
 Installed two-link traffic and restart/failure acceptance remain open. Adoption

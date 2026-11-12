@@ -57,12 +57,12 @@ import { getDongleRecords } from "../network/dongle-metadata.ts";
 import { getNetworkInterfaces } from "../network/network-interfaces.ts";
 import { getRouterCellularAdmin } from "../network/router-cellular-admin.ts";
 import { getRouterCellularMarkers } from "../network/router-cellular-scan.ts";
-
 import { IMPLEMENTED_MODEM_CAPABILITY_MODULES } from "./capability-evidence.ts";
 import {
 	resolveCapabilityModuleState,
 	resolveModemCapabilityClaims,
 } from "./capability-gates.ts";
+import { cellularRecoveryStatus } from "./cellular-host-recovery.ts";
 import { buildFiveGPreferenceView } from "./five-g-preference.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { projectModemCredential } from "./modem-credentials.ts";
@@ -110,6 +110,7 @@ import {
 /** Resolves `ifname → udev ID_PATH` for every enumerable modem-class device. */
 export type ModemIdPathReader = () => Promise<ReadonlyMap<string, string>>;
 
+const recoveryShown = new Set<string>();
 let idPaths: ReadonlyMap<string, string> = new Map();
 let retainedSyntheticIds: ReadonlyMap<string, number> = new Map();
 const routerCellularIfnames = new Map<string, string>();
@@ -523,6 +524,16 @@ export function buildProjectedModemsMessage(
 		lockFor: projectModemLock,
 		...(fullState !== undefined ? { fullState } : {}),
 	});
+	for (const [id, entry] of Object.entries(result.message)) {
+		const iface = entry.ifname ?? getModem(Number(id))?.ifname;
+		const reason = iface ? cellularRecoveryStatus(iface) : undefined;
+		if (reason) {
+			entry.availability_reason = `Cellular host quarantined: ${reason}; retry pending`;
+			recoveryShown.add(id);
+		} else if (recoveryShown.has(id)) {
+			entry.availability_reason ??= "";
+		}
+	}
 	retainedSyntheticIds = result.syntheticIds;
 	return result.message;
 }

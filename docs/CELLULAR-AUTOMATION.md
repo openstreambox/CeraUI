@@ -601,3 +601,24 @@ otro propietario. El cierre del control serial tiene una sola operación en curs
 invalida las lecturas de inmediato y reintenta una desconexión incierta sin repetir
 la liberación de la inhibición. Siguen pendientes el adaptador conjunto de arranque
 y la construcción del propietario antes de activar llamadas.
+
+### Isolated host recovery
+
+An uncertain startup withdrawal keeps its slot reserved and its source excluded.
+It logs `withdrawal-incomplete` with the interface, slot and next retry delay;
+the modem's existing `availability_reason` reports the quarantine on full and
+partial snapshots and clears when withdrawal completes. The existing modem poll
+retries retained quarantined owners with exponential delays from 1 second to a
+60-second cap (actual attempts follow poll cadence). Device presence and interface
+state changes make a retry due immediately, including enumeration with a new name.
+No additional timer or installation owner is created.
+
+Retries are independent per slot, revalidate durable authority and never adopt
+new runtime hosts. Cleanup after startup retains source exclusion and takes the
+existing lifecycle interlock plus a positive service consumer census. An active
+sender or uncertain consumers keep the path quarantined; recovery never stops a
+healthy stream to force cleanup. Unreadable authority remains fail closed.
+Journal blocks continue to exclude matching modem identities and unidentified
+cellular devices; unrelated non-USB Ethernet and Wi-Fi remain eligible.
+
+These are host-tested recovery rules, not hardware qualification.
