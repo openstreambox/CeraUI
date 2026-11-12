@@ -542,3 +542,23 @@ replacement or deletion; foreign edits retain the inverse rather than being flus
 Production host composition, translator supervision and startup recovery remain
 incomplete. The disconnected routing/HTTPS checks are host evidence, not physical
 carrier qualification. These helpers alone do not enable RNDIS, CLAT or recovery.
+
+### Persistent cellular authority
+
+Default carrier-intent and preparation access uses `/data/ceralive`, shared across
+OS slots. `cellular-authority-store.ts` checks the previous `/var/lib/ceralive`
+slot under a short kernel lease before either reading absence or updating state.
+It validates the complete record and hashed slot, durably copies it, then commits
+a per-slot source digest receipt. The legacy file is retained. A lost copy or
+receipt acknowledgement never authorizes an effect; an identical copy can retry.
+The receipt permits later current-state updates/deletion without resurrecting old
+intent or an EPS baseline. Conflicting copies, changed legacy authority, damaged
+records and lock contention defer work. Explicit store overrides are independent.
+The old writer must be stopped during upgrade; this does not grant two controller
+versions concurrent ownership or make an older version understand the new store.
+The existing mutation replay inventories all retained pairs before lowering its
+boot barrier, including absent SIMs. Damaged or changing inventories keep that
+same capped retry owner active. Default-store faults invalidate its existing
+revision and raise the same barrier; runtime verification reads inventories and
+never migrates or repeats hardware. Current-state writes participate in that
+revision. This is storage/recovery host evidence, not modem reboot qualification.

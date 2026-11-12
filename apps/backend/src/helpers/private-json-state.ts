@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, openSync } from "node:fs";
-import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { mkdir, open, opendir, rename, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
 	openStoredStateDirectory,
@@ -73,6 +73,38 @@ export async function readPrivateJson(
 ): Promise<unknown> {
 	const text = await readPrivateStateFile(store, key, "json");
 	return text === undefined ? undefined : parseAuthorityJson(text);
+}
+/** Inventory hints only; each record is subsequently opened and slot-validated.
+ * Enumeration is anchored and finite. Uncommitted temporaries and kernel lease
+ * files are preserved, never promoted to authority or deleted by this reader.
+ */
+export async function listPrivateJsonKeys(store: {
+	readonly dir: string;
+}): Promise<string[]> {
+	let parent: number;
+	try {
+		parent = privateDirectory(store.dir);
+	} catch (error) {
+		if (absent(error)) return [];
+		throw error;
+	}
+	try {
+		const directory = await opendir(`/proc/self/fd/${parent}`),
+			keys: string[] = [];
+		let count = 0;
+		for await (const entry of directory) {
+			if (++count > 4096)
+				throw new Error("Private authority inventory exceeds limit");
+			if (/^[a-f0-9]{64}\.(?:lock|[a-f0-9-]{36}\.tmp)$/.test(entry.name))
+				continue;
+			if (!/^[a-f0-9]{64}\.json$/.test(entry.name))
+				throw new Error("Unknown private authority inventory entry");
+			keys.push(entry.name.slice(0, -5));
+		}
+		return keys.sort();
+	} finally {
+		closeSync(parent);
+	}
 }
 export function readPrivateText(
 	store: { readonly dir: string },

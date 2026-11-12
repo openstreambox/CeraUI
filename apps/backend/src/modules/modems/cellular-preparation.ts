@@ -1,10 +1,4 @@
-import { createHash } from "node:crypto";
-import { z } from "zod";
 import { logger } from "../../helpers/logger.ts";
-import {
-	readPrivateJson,
-	writePrivateJson,
-} from "../../helpers/private-json-state.ts";
 import {
 	nmConnGetFields,
 	nmConnSetFields,
@@ -14,6 +8,7 @@ import {
 	effectiveCarrierAutomatic,
 	readCarrierIntent,
 } from "./automatic-carrier-intent.ts";
+import { accessCellularAuthority } from "./cellular-authority-store.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import {
 	acquireCellularControl,
@@ -36,80 +31,35 @@ import {
 import { decideInitialEps, resolveTransportQuirk } from "./transport-policy.ts";
 
 const FORMAT = "cellular-preparation-v1";
-const family = z.enum(["ipv4", "ipv6", "ipv4v6"]);
-const settings = z.object({ apn: z.string().max(100), family }).strict();
-const recordSchema = z.discriminatedUnion("kind", [
-	z
-		.object({
-			version: z.literal(1),
-			kind: z.literal("raw"),
-			key: z.string(),
-			original: z.enum(["Y", "N"]),
-			epoch: z.string(),
-			phase: z.enum(["baseline", "verified"]),
-		})
-		.strict(),
-	z
-		.object({
-			version: z.literal(1),
-			kind: z.literal("profile"),
-			key: z.string(),
-			original: z.enum(["yes", "no"]),
-			birth: z.boolean(),
-			originalAuto: z.enum(["yes", "no"]),
-			originalApn: z.string().max(256),
-		})
-		.strict(),
-	z
-		.object({
-			version: z.literal(1),
-			kind: z.literal("qmap"),
-			key: z.string(),
-			original: z.number().int().min(0).max(65535),
-			phase: z.enum(["baseline", "awaiting-usb", "verified", "blocked"]),
-			epoch: z.string(),
-			started: z.number().int().nonnegative(),
-		})
-		.strict(),
-	z
-		.object({
-			version: z.literal(1),
-			kind: z.literal("eps"),
-			key: z.string(),
-			original: settings,
-			desired: settings,
-			attempted: z.boolean(),
-			phase: z.enum(["baseline", "awaiting-usb", "verified", "blocked"]),
-			epoch: z.string(),
-			started: z.number().int().nonnegative(),
-		})
-		.strict(),
-]);
-export type PreparationRecord = z.infer<typeof recordSchema>;
-export const preparationKey = (...parts: readonly string[]) => {
-	if (parts.some((part) => !part || part.length > 2048))
-		throw new Error("Unresolved preparation identity");
-	return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
-};
-const store = {
-	get dir() {
-		return (
-			process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR ??
-			"/var/lib/ceralive/cellular-preparation"
-		);
-	},
-};
+
+export {
+	type PreparationRecord,
+	preparationKey,
+} from "./cellular-preparation-state.ts";
+
+import {
+	type PreparationRecord,
+	parsePreparationRecord,
+	preparationKey,
+} from "./cellular-preparation-state.ts";
+
 async function readRecord(key: string): Promise<PreparationRecord | undefined> {
-	const value = await readPrivateJson(store, key);
-	if (value === undefined) return undefined;
-	const record = recordSchema.parse(value);
-	if (record.key !== key)
-		throw new Error("Preparation authority belongs to another identity");
-	return record;
+	return accessCellularAuthority(
+		"cellular-preparation",
+		key,
+		parsePreparationRecord,
+		async (value) => value,
+		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR,
+	);
 }
 async function writeRecord(record: PreparationRecord) {
-	recordSchema.parse(record);
-	await writePrivateJson(store, record.key, record);
+	await accessCellularAuthority(
+		"cellular-preparation",
+		record.key,
+		parsePreparationRecord,
+		async (_value, write) => write(record),
+		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR,
+	);
 }
 export interface CellularPreparationDeps {
 	readonly target: typeof readCellularControlTarget;

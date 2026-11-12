@@ -17,6 +17,14 @@ that conflicts with the last applied automatic APN is preserved. Unreadable
 intent defers reconciliation. Carrier selection always uses fresh subscription
 evidence; the saved APN is only a conflict check.
 
+Automatic intent and modem preparation decisions use the persistent data store.
+Before default access can treat a record as absent, it checks and migrates the
+older OS-slot record. The original remains intact; a durable migration receipt
+prevents later updates or deletion from reviving that old baseline. Conflicting,
+changed or unreadable authority defers work. A spent EPS attempt remains spent.
+Startup inventories all retained pairs, including absent SIMs. Damaged state
+keeps the existing recovery wait active until a complete check succeeds.
+
 This changes stored settings for the next activation. It does not disconnect an
 active bearer or initiate another call. IPv6 contributes no main default route
 or automatic DNS. A failed write is restored and verified; an inverse that cannot
@@ -82,6 +90,16 @@ modo automático incluso si mantiene el mismo APN. Un APN personalizado cambiado
 por otra herramienta se conserva si difiere del último APN automático aplicado.
 Si el registro privado no se puede leer, la actualización se aplaza. El APN
 guardado nunca identifica al operador; se usan datos actuales de la suscripción.
+
+El modo automático y las decisiones de preparación del módem se guardan en el
+almacenamiento persistente de datos. Antes de considerar ausente un registro, el
+acceso predeterminado comprueba y migra el registro de la partición anterior del
+sistema. Conserva el original y registra la migración de forma duradera para que
+un cambio o una eliminación posterior no reactive los ajustes antiguos. Un
+conflicto, cambio o error de lectura aplaza el trabajo. Un intento EPS ya usado
+no se vuelve a habilitar.
+Al iniciar se revisan todos los pares guardados, incluso las SIM ausentes. Un
+registro dañado mantiene la espera de recuperación hasta completar la revisión.
 
 El cambio se aplica en la siguiente activación. No desconecta una conexión activa
 ni inicia otra llamada de datos. IPv6 no agrega una ruta predeterminada ni DNS
