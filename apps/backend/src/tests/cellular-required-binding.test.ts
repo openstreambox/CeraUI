@@ -78,7 +78,7 @@ test("required paths get both flags or a typed refusal; a failed recheck never f
 					? {
 							bindMapRequired: true as const,
 							bindMapRequiredEmptyReload: true as const,
-							bindMapContract: 1,
+							bindMapContract: 2,
 						}
 					: {}),
 			};
@@ -134,7 +134,7 @@ test("required paths get both flags or a typed refusal; a failed recheck never f
 					bindMapSchemaVersion: 1,
 					bindMapRequired: true,
 					bindMapRequiredEmptyReload: true,
-					bindMapContract: 1,
+					bindMapContract: 2,
 				};
 			},
 		}),
@@ -165,7 +165,7 @@ test("new launches prefer strict capability for future hotplug and refuse a late
 					? {
 							bindMapRequired: true as const,
 							bindMapRequiredEmptyReload: true as const,
-							bindMapContract: 1,
+							bindMapContract: 2,
 						}
 					: {}),
 			};
@@ -278,7 +278,7 @@ test("joined binding requires an integer monotonic contract revision and both ex
 				expect(supportsRequiredCellularBinding(parsed)).toBe(
 					typeof revision === "number" &&
 						Number.isInteger(revision) &&
-						revision >= 1 &&
+						revision >= 2 &&
 						required === true &&
 						empty === true,
 				);

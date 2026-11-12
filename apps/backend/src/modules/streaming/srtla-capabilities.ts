@@ -173,9 +173,9 @@ export async function probeSrtlaSenderCapabilities(
 	}
 }
 
-/** Revision one establishes checked assigned-unicast binding and coherent,
- * joined teardown acknowledgement. The two older booleans alone cannot prove
- * either behavior. Later integer revisions preserve this contract.
+/** Revision two adds exact applied identity and fences overlapping reloads
+ * through the final joined acknowledgement. Earlier claims cannot establish
+ * withdrawal safety. Later integer revisions preserve this contract.
  */
 export function supportsRequiredCellularBinding(
 	value: CapabilityProbeResult,
@@ -186,6 +186,6 @@ export function supportsRequiredCellularBinding(
 		value.bindMapRequiredEmptyReload === true &&
 		typeof value.bindMapContract === "number" &&
 		Number.isInteger(value.bindMapContract) &&
-		value.bindMapContract >= 1
+		value.bindMapContract >= 2
 	);
 }

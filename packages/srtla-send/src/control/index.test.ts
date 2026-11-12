@@ -303,6 +303,81 @@ describe("get_capabilities", () => {
 });
 
 describe("get_stats and the stats-topic projection", () => {
+	test("get_stats and pushed stats preserve revision-two applied and pending identities", async () => {
+		const applied = { generation: 1, ips_file_sha256: "a".repeat(64) },
+			pending = { generation: 2, ips_file_sha256: "b".repeat(64) },
+			base = {
+				mode: "classic",
+				links: [],
+				bind_map_status: { state: "active" },
+			},
+			startup = {
+				...base,
+				disposition: { state: "mapped" },
+				bind_map_applied: applied,
+			};
+		const server = await startServer(socketPath("rev2"), (frame) => [
+			JSON.stringify({
+				jsonrpc: "2.0",
+				id: frame.id,
+				result:
+					frame.method === "subscribe"
+						? { subscription_id: "revision-two" }
+						: startup,
+			}),
+		]);
+		const client = await createControlClient({
+			socketPath: server.path,
+			timeoutMs: 2000,
+		});
+		try {
+			const initial = await client?.getStats();
+			expect(initial?.bind_map_applied).toEqual(applied);
+			expect(initial?.bind_map_pending).toBeUndefined();
+			expect(
+				initial && senderStatsToTelemetry(initial, 0)?.bind_map_applied,
+			).toEqual(applied);
+			const seen: Array<ReturnType<typeof senderStatsToTelemetry>> = [];
+			const stop = client?.subscribeStats((value) => seen.push(value));
+			await Bun.sleep(30);
+			for (const data of [
+				{
+					...startup,
+					disposition: { state: "pending_apply" },
+					bind_map_pending: pending,
+				},
+				{ ...startup, disposition: { state: "pending_apply" } },
+				{ ...startup, bind_map_applied: pending },
+			])
+				server.push(
+					JSON.stringify({
+						jsonrpc: "2.0",
+						method: "stats.update",
+						params: { subscription_id: "revision-two", data },
+					}),
+				);
+			await Bun.sleep(30);
+			expect(seen).toHaveLength(3);
+			expect(seen.map((row) => row?.bind_map_applied)).toEqual([
+				applied,
+				applied,
+				pending,
+			]);
+			expect(seen.map((row) => row?.bind_map_pending)).toEqual([
+				pending,
+				undefined,
+				undefined,
+			]);
+			expect(seen.map((row) => row?.disposition?.state)).toEqual([
+				"pending_apply",
+				"pending_apply",
+				"mapped",
+			]);
+			stop?.();
+		} finally {
+			client?.close();
+		}
+	});
 	test("get_stats parses the snapshot and keeps the ADR-003 pair", async () => {
 		const { path } = await startServer(socketPath("stats"), (frame) => [
 			JSON.stringify({ jsonrpc: "2.0", result: statsResult(), id: frame.id }),

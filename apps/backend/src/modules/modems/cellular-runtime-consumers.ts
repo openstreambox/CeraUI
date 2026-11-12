@@ -1,5 +1,6 @@
 import { cellularConsumersAbsentWhile } from "../network/cellular-consumer-census.ts";
 import {
+	type CellularWithdrawalReceipt,
 	type CellularWithdrawalScope,
 	createCellularWithdrawalReceipt,
 } from "../streaming/cellular-withdrawal-receipt.ts";
@@ -14,12 +15,13 @@ import {
  * releases that interlock on every exit; a later retry takes fresh evidence.
  */
 export class CellularRuntimeConsumers {
-	private receipt: { readonly confirmed: () => boolean } | undefined;
+	private receipt: CellularWithdrawalReceipt | undefined;
 	private lease: LifecycleLease | undefined;
 	private absent = false;
 	constructor(private readonly scope: CellularWithdrawalScope) {}
 	async confirmed(): Promise<boolean> {
-		if (this.receipt) return this.receipt.confirmed();
+		if (this.receipt?.current()) return this.receipt.confirmed();
+		this.receipt = undefined;
 		this.receipt = await createCellularWithdrawalReceipt(this.scope, {
 			absent: async () => {
 				this.absent = true;

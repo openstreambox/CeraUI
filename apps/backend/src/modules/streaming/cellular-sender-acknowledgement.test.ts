@@ -6,18 +6,22 @@ import type {
 } from "@ceraui/srtla-send/telemetry";
 import {
 	senderReleasedCellularSource,
+	setControlClientFactoryForTest,
 	setIfaceResolverForTest,
 	setTelemetryClockForTest,
 	startLinkTelemetry,
 	stopLinkTelemetry,
 } from "./link-telemetry.ts";
+import { createSenderTelemetryInstance } from "./sender-telemetry-instance.ts";
 import type { StreamingProcess } from "./streamloop/process-runner.ts";
 
 afterEach(() => {
 	stopLinkTelemetry();
 	setTelemetryClockForTest(null);
 	setIfaceResolverForTest(null);
+	setControlClientFactoryForTest(null);
 });
+const identity = { generation: 2, ips_file_sha256: "a".repeat(64) };
 function producer(required = true): StreamingProcess {
 	return {
 		proc: { exitCode: null, signalCode: null },
@@ -27,16 +31,21 @@ function producer(required = true): StreamingProcess {
 	} as unknown as StreamingProcess;
 }
 function watcher() {
-	let emit: (snapshot: Telemetry) => void = () => {};
+	let emit: (snapshot: Telemetry | null, stale?: boolean) => void = () => {};
 	const watch: typeof watchTelemetry = (_path, callback) => {
-		emit = (data) => callback({ data, stale: false } satisfies TelemetryUpdate);
+		emit = (data, stale = false) =>
+			callback({ data, stale } satisfies TelemetryUpdate);
 		return { stop: () => {} };
 	};
-	return { watch, emit: (data: Telemetry) => emit(data) };
+	return {
+		watch,
+		emit: (data: Telemetry | null, stale = false) => emit(data, stale),
+	};
 }
 test("withdrawal needs the same strict producer and its fresh post-publication snapshot", () => {
 	setTelemetryClockForTest(() => 2100);
 	setIfaceResolverForTest(() => "wwan0");
+	setControlClientFactoryForTest(async () => null);
 	const first = producer(),
 		replacement = producer(),
 		old = watcher(),
@@ -47,37 +56,97 @@ test("withdrawal needs the same strict producer and its fresh post-publication s
 		connections: [],
 		bind_map_status: { state: "active" },
 		disposition: { state: "mapped" },
+		bind_map_applied: identity,
 	};
-	startLinkTelemetry("/synthetic/first", [], {
+	const firstInstance = createSenderTelemetryInstance(
+			"/synthetic/first",
+			"/tmp/first",
+		),
+		replacementInstance = createSenderTelemetryInstance(
+			"/synthetic/replacement",
+			"/tmp/replacement",
+		);
+	startLinkTelemetry("/synthetic/shared", [], {
+		watch: old.watch,
+		producer: first,
+	});
+	old.emit(empty);
+	expect(
+		senderReleasedCellularSource(first, 1900, "link-one", ["wwan0"], identity),
+	).toBe(false);
+	startLinkTelemetry(firstInstance.statsFile, [], {
+		telemetryInstance: firstInstance,
+		controlSocket: firstInstance.controlSocket,
 		watch: old.watch,
 		producer: first,
 	});
 	old.emit({ ...empty, disposition: { state: "pending_apply" } });
-	expect(senderReleasedCellularSource(first, 1900, "link-one", ["wwan0"])).toBe(
-		false,
-	);
-	old.emit(empty);
-	expect(senderReleasedCellularSource(first, 1900, "link-one", ["wwan0"])).toBe(
-		true,
-	);
 	expect(
-		senderReleasedCellularSource(replacement, 1900, "link-one", ["wwan0"]),
+		senderReleasedCellularSource(first, 1900, "link-one", ["wwan0"], identity),
 	).toBe(false);
-	expect(senderReleasedCellularSource(first, 2000, "link-one", ["wwan0"])).toBe(
-		false,
-	);
-	startLinkTelemetry("/synthetic/replacement", [], {
+	old.emit(empty);
+	expect(
+		senderReleasedCellularSource(first, 1900, "link-one", ["wwan0"], identity),
+	).toBe(true);
+	expect(
+		senderReleasedCellularSource(
+			replacement,
+			1900,
+			"link-one",
+			["wwan0"],
+			identity,
+		),
+	).toBe(false);
+	expect(
+		senderReleasedCellularSource(first, 2100, "link-one", ["wwan0"], identity),
+	).toBe(false);
+	startLinkTelemetry(replacementInstance.statsFile, [], {
+		telemetryInstance: replacementInstance,
+		controlSocket: replacementInstance.controlSocket,
 		watch: current.watch,
 		producer: replacement,
 	});
 	old.emit(empty);
 	expect(
-		senderReleasedCellularSource(replacement, 1900, "link-one", ["wwan0"]),
+		senderReleasedCellularSource(
+			replacement,
+			1900,
+			"link-one",
+			["wwan0"],
+			identity,
+		),
 	).toBe(false);
 	current.emit(empty);
 	expect(
-		senderReleasedCellularSource(replacement, 1900, "link-one", ["wwan0"]),
+		senderReleasedCellularSource(
+			replacement,
+			1900,
+			"link-one",
+			["wwan0"],
+			identity,
+		),
 	).toBe(true);
+	// UI age and wall-clock jumps cannot override exact applied identity.
+	current.emit({ ...empty, last_updated_ms: 0 }, true);
+	expect(
+		senderReleasedCellularSource(
+			replacement,
+			1900,
+			"link-one",
+			["wwan0"],
+			identity,
+		),
+	).toBe(true);
+	current.emit(null);
+	expect(
+		senderReleasedCellularSource(
+			replacement,
+			1900,
+			"link-one",
+			["wwan0"],
+			identity,
+		),
+	).toBe(false);
 	const legacy = producer(false);
 	startLinkTelemetry("/synthetic/legacy", [], {
 		watch: current.watch,
@@ -85,6 +154,6 @@ test("withdrawal needs the same strict producer and its fresh post-publication s
 	});
 	current.emit(empty);
 	expect(
-		senderReleasedCellularSource(legacy, 1900, "link-one", ["wwan0"]),
+		senderReleasedCellularSource(legacy, 1900, "link-one", ["wwan0"], identity),
 	).toBe(false);
 });

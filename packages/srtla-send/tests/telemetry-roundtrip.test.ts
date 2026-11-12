@@ -63,7 +63,54 @@ const PRODUCER_ORDERED_FIXTURES: string[] = [
 	"telemetry-degraded-reload",
 	"telemetry-required-binding-refused",
 	"telemetry-pending-apply",
+	"telemetry-rev2-startup-applied",
+	"telemetry-rev2-startup-empty-applied",
+	"telemetry-rev2-pending-known",
+	"telemetry-rev2-pending-unknown",
+	"telemetry-rev2-final-empty-applied",
 ];
+
+const REVISION_TWO_BLOBS: Record<string, string> = {
+	"startup-applied": "26622755e9fb9c12ce905e7f4764fce37775ac0a",
+	"startup-empty-applied": "f114788990bb1458586f0b4b05ec1a7022fa9f53",
+	"pending-known": "b6a4e87052465c00a4f31ed917856bf213bf6763",
+	"pending-unknown": "6711c3c2f4a157cc405c6e5cbb7bbc5498586799",
+	"final-empty-applied": "a277925288bb91a3229fe8ffb937e7580958734d",
+};
+test.each(Object.entries(REVISION_TWO_BLOBS))(
+	"revision-2 %s preserves its producer Git blob",
+	async (name, blob) => {
+		const bytes = await Bun.file(
+			fixturePath(`telemetry-rev2-${name}`),
+		).arrayBuffer();
+		expect(
+			createHash("sha1")
+				.update(`blob ${bytes.byteLength}\0`)
+				.update(Buffer.from(bytes))
+				.digest("hex"),
+		).toBe(blob);
+	},
+);
+
+test("invalid revision-2 applied identities are never parsed as acknowledgements", async () => {
+	const value = JSON.parse(
+		await readBytes("telemetry-rev2-final-empty-applied"),
+	);
+	for (const generation of [0, -1, 1.5, "2", Number.MAX_SAFE_INTEGER + 1, null])
+		expect(
+			telemetrySchema.safeParse({
+				...value,
+				bind_map_applied: { ...value.bind_map_applied, generation },
+			}).success,
+		).toBe(false);
+	for (const ips_file_sha256 of ["", "A".repeat(64), "0".repeat(63), 0, null])
+		expect(
+			telemetrySchema.safeParse({
+				...value,
+				bind_map_applied: { ...value.bind_map_applied, ips_file_sha256 },
+			}).success,
+		).toBe(false);
+});
 
 describe("byte parity: parse(serialize(x)) preserves every sender field", () => {
 	test.each(PRODUCER_ORDERED_FIXTURES)(

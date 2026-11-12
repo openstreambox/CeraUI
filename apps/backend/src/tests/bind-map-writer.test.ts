@@ -235,6 +235,9 @@ describe("ADR-003 publication protocol", () => {
 		expect(sidecar.ips_file_sha256).toBe(
 			new Bun.CryptoHasher("sha256").update(ipsBytes).digest("hex"),
 		);
+		expect(published.ok && published.ipsFileSha256).toBe(
+			sidecar.ips_file_sha256,
+		);
 		expect(sidecar.links).toEqual([
 			{
 				link_id: "lnk_aaaaaaaaaaaaaaaa",
@@ -251,7 +254,7 @@ describe("ADR-003 publication protocol", () => {
 		expect(statSync(deps.sidecarFile).mode & 0o077).toBe(0);
 	});
 
-	test("generation advances on every publication, mapping-only included", async () => {
+	test("mapping-only changes advance identity while successful no-op publication preserves it", async () => {
 		const deps = writerDeps();
 		const first = await publishBondMapping(
 			[entry("10.0.0.1", "eth0", "lnk_a")],
@@ -272,6 +275,87 @@ describe("ADR-003 publication protocol", () => {
 		expect(second.ok && second.generation).toBe(2);
 		expect(second.changed).toBe(true);
 		expect(third.changed).toBe(false);
+		expect(third.ok && third.generation).toBe(2);
+		expect(
+			first.ok && second.ok && first.ipsFileSha256 === second.ipsFileSha256,
+		).toBe(true);
+	});
+
+	test("empty publication exposes the exact zero-byte digest and remains a stable no-op", async () => {
+		const deps = writerDeps(),
+			first = await publishBondMapping([], deps),
+			second = await publishBondMapping([], deps);
+		expect(readFileSync(deps.ipsFile)).toHaveLength(0);
+		expect(first.ok && first.ipsFileSha256).toBe(
+			new Bun.CryptoHasher("sha256").update("").digest("hex"),
+		);
+		expect(second).toMatchObject({ ok: true, generation: 1, changed: false });
+	});
+	test("a failed sidecar cannot reuse an earlier identity or suppress recovery reload", async () => {
+		const deps = writerDeps(),
+			entries = [entry("192.0.2.2", "wwan0", "lnk_a")];
+		await publishBondMapping(entries, deps);
+		const failed = await publishBondMapping(entries, {
+			...deps,
+			writeFile: async (path, contents) => {
+				if (path.startsWith(deps.sidecarFile))
+					throw new Error("sidecar unavailable");
+				await deps.writeFile(path, contents);
+			},
+		});
+		expect(failed.ok).toBe(false);
+		expect(await publishBondMapping(entries, deps)).toMatchObject({
+			ok: true,
+			generation: 2,
+			changed: true,
+		});
+		expect(await publishBondMapping(entries, deps)).toMatchObject({
+			ok: true,
+			generation: 2,
+			changed: false,
+		});
+	});
+	test("a failed changed publication consumes its generation before recovery", async () => {
+		const deps = writerDeps(),
+			first = [entry("192.0.2.2", "wwan0", "lnk_a")],
+			second = [entry("192.0.2.3", "wwan1", "lnk_b")];
+		await publishBondMapping(first, deps);
+		expect(
+			await publishBondMapping(second, {
+				...deps,
+				writeFile: async (path, contents) => {
+					if (path.startsWith(deps.sidecarFile))
+						throw new Error("sidecar unavailable");
+					await deps.writeFile(path, contents);
+				},
+			}),
+		).toMatchObject({ ok: false, reason: "sidecar_write_failed" });
+		expect(await publishBondMapping(first, deps)).toMatchObject({
+			ok: true,
+			generation: 3,
+			changed: true,
+		});
+	});
+	test("publication snapshots mutable caller rows before awaiting either file write", async () => {
+		const deps = writerDeps(),
+			row = { ip: "192.0.2.2", iface: "wwan0", linkId: "lnk_a" };
+		await publishBondMapping([row], {
+			...deps,
+			writeFile: async (path, contents) => {
+				row.ip = "192.0.2.3";
+				row.iface = "other0";
+				await deps.writeFile(path, contents);
+			},
+		});
+		expect(readFileSync(deps.ipsFile, "utf8")).toBe("192.0.2.2");
+		expect(
+			JSON.parse(readFileSync(deps.sidecarFile, "utf8")).links[0],
+		).toMatchObject({ ip: "192.0.2.2", iface: "wwan0" });
+		expect(await publishBondMapping([row], deps)).toMatchObject({
+			ok: true,
+			generation: 2,
+			changed: true,
+		});
 	});
 
 	test("an undescribable link publishes the IP list and retires the sidecar", async () => {

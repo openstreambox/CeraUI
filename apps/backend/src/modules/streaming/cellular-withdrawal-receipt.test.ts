@@ -34,6 +34,13 @@ function fixture() {
 		frame = 0,
 		absent = false,
 		senders = [sender];
+	let latest = {
+		ok: true as const,
+		generation: 1,
+		ipsFileSha256: "a".repeat(64),
+		changed: true,
+		sidecarPath: "/synthetic/map",
+	};
 	const scope = {
 		owner: "a".repeat(64),
 		epoch: "usb-one",
@@ -54,6 +61,7 @@ function fixture() {
 			await drain.promise;
 		},
 		excludes: () => true,
+		latest: () => latest,
 		reload: (producer) => {
 			expect(producer).toBe(sender);
 			events.push("reload");
@@ -79,6 +87,7 @@ function fixture() {
 			publication.resolve({
 				ok: true,
 				generation: 1,
+				ipsFileSha256: "a".repeat(64),
 				changed: true,
 				sidecarPath: "/synthetic/map",
 			}),
@@ -87,11 +96,14 @@ function fixture() {
 			frame?: number;
 			absent?: boolean;
 			senders?: StreamingProcess[];
+			generation?: number;
 		}) => {
 			if (value.owned !== undefined) owned = value.owned;
 			if (value.frame !== undefined) frame = value.frame;
 			if (value.absent !== undefined) absent = value.absent;
 			if (value.senders) senders = value.senders;
+			if (value.generation !== undefined)
+				latest = { ...latest, generation: value.generation };
 		},
 	};
 }
@@ -113,6 +125,8 @@ test("withdrawal evidence starts after committed publication, queued-write drain
 	expect(receipt?.confirmed()).toBe(false);
 	f.exit.resolve(0);
 	await Promise.resolve();
+	expect(receipt?.confirmed()).toBe(false);
+	f.set({ senders: [] });
 	expect(receipt?.confirmed()).toBe(true);
 	f.set({ owned: false });
 	expect(receipt?.confirmed()).toBe(false);
@@ -124,6 +138,28 @@ test("revoked ownership cannot obtain a reload receipt after asynchronous public
 	f.publish();
 	expect(await pending).toBeUndefined();
 	expect(f.events).toEqual(["restrict"]);
+});
+test("a later local publication revokes a receipt even while it still excludes the withdrawn path", async () => {
+	const f = fixture();
+	f.publish();
+	f.drain.resolve();
+	const receipt = await createCellularWithdrawalReceipt(f.scope, f.deps);
+	f.set({ frame: 2600 });
+	expect(receipt?.current()).toBe(true);
+	expect(receipt?.confirmed()).toBe(true);
+	f.set({ generation: 2 });
+	expect(receipt?.current()).toBe(false);
+	expect(receipt?.confirmed()).toBe(false);
+});
+test("a newer publication during queue drainage requires a new targeted reload", async () => {
+	const f = fixture(),
+		pending = createCellularWithdrawalReceipt(f.scope, f.deps);
+	f.publish();
+	await f.enteredDrain.promise;
+	f.set({ generation: 2 });
+	f.drain.resolve();
+	expect(await pending).toBeUndefined();
+	expect(f.events).toEqual(["restrict", "drain"]);
 });
 test("no owned sender is not a positive startup consumer census", async () => {
 	const f = fixture();

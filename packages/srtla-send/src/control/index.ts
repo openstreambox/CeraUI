@@ -40,6 +40,7 @@
 import { z } from "zod";
 import {
 	bindMapDispositionSchema,
+	bindMapIdentitySchema,
 	bindMapStatusSchema,
 	type Telemetry,
 	telemetrySchema,
@@ -189,6 +190,8 @@ export const senderStatsSchema = z.object({
 	links: z.array(senderLinkStatsSchema),
 	bind_map_status: bindMapStatusSchema.optional(),
 	disposition: bindMapDispositionSchema.optional(),
+	bind_map_applied: bindMapIdentitySchema.optional(),
+	bind_map_pending: bindMapIdentitySchema.optional(),
 });
 
 export type SenderLinkStats = z.output<typeof senderLinkStatsSchema>;
@@ -285,6 +288,12 @@ export function senderStatsToTelemetry(
 		...(stats.disposition === undefined
 			? {}
 			: { disposition: stats.disposition }),
+		...(stats.bind_map_applied === undefined
+			? {}
+			: { bind_map_applied: stats.bind_map_applied }),
+		...(stats.bind_map_pending === undefined
+			? {}
+			: { bind_map_pending: stats.bind_map_pending }),
 	});
 	return parsed.success ? parsed.data : null;
 }

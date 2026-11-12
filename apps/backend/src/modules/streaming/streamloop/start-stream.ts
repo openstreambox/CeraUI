@@ -52,6 +52,10 @@ import {
 import type { Pipeline } from "../pipelines.ts";
 import { replayPreviewEncodeMode } from "../preview-encode-replay.ts";
 import {
+	createSenderTelemetryInstance,
+	removeSenderTelemetryInstance,
+} from "../sender-telemetry-instance.ts";
+import {
 	getLastPublishedBond,
 	publishedBondNeedsRequiredBinding,
 } from "../srtla.ts";
@@ -233,10 +237,10 @@ export async function startStream(
 			failureClass: "audio_source_unavailable",
 		};
 	}
-	const statsFile = srtlaStatsFile();
+	let statsFile = srtlaStatsFile();
 	// ADR-001 control socket: telemetry rides the JSON-RPC subscription when the
 	// sender advertises it, with --stats-file as the airtight fallback poll.
-	const controlSocket = controlSocketPath(SRTLA_LISTEN_PORT);
+	let controlSocket = controlSocketPath(SRTLA_LISTEN_PORT);
 	let ipsContent: string;
 	try {
 		ipsContent = await Bun.file(setup.ips_file ?? "").text();
@@ -272,6 +276,13 @@ export async function startStream(
 		};
 	}
 	const bindMapArgs = binding.args;
+	const telemetryInstance = binding.required
+		? createSenderTelemetryInstance(statsFile, controlSocket)
+		: undefined;
+	if (telemetryInstance) {
+		statsFile = telemetryInstance.statsFile;
+		controlSocket = telemetryInstance.controlSocket;
+	}
 	const transaction = createLaunchTransaction(attemptId, {
 		warn: (message, meta) => logger.warn(message, meta),
 	});
@@ -305,6 +316,15 @@ export async function startStream(
 			},
 		);
 		transaction.register(() => startStreamDeps.stopProcessAndWait(sender));
+		if (telemetryInstance)
+			void sender.proc.exited.then(
+				() =>
+					removeSenderTelemetryInstance(telemetryInstance).catch((error) =>
+						logger.warn("streamloop: telemetry cleanup failed", { error }),
+					),
+				(error) =>
+					logger.warn("streamloop: sender exit is unverified", { error }),
+			);
 
 		// Begin ingesting srtla_send's per-uplink telemetry. Seed the conn_id->iface
 		// registry from the exact file srtla_send reads at spawn so tlm_id (file
@@ -312,6 +332,7 @@ export async function startStream(
 		startStreamDeps.startLinkTelemetry(statsFile, ipsContent.split("\n"), {
 			controlSocket,
 			producer: sender,
+			...(telemetryInstance ? { telemetryInstance } : {}),
 		});
 		transaction.register(() => startStreamDeps.stopLinkTelemetry());
 
