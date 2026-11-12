@@ -3,20 +3,11 @@ import type {
 	CellularSysctl,
 	CellularSysctlValue,
 } from "./cellular-host-identity.ts";
+import { cellularPhysicalLinkPlanSchema } from "./cellular-physical-link-plan.ts";
 import { planCellularRoutes } from "./cellular-route-plan.ts";
 import { cellularTunAlias } from "./cellular-tun.ts";
 
-const bit = z.enum(["0", "1"]),
-	text = z
-		.string()
-		.min(1)
-		.max(4096)
-		.refine((value) =>
-			Array.from(value).every(
-				(char) =>
-					(char.codePointAt(0) ?? 0) >= 32 && char.codePointAt(0) !== 127,
-			),
-		);
+const bit = z.enum(["0", "1"]);
 export const cellularClatHostPlanSchema = z
 	.object({
 		input: z
@@ -32,15 +23,7 @@ export const cellularClatHostPlanSchema = z
 				nat64: z.string(),
 			})
 			.strict(),
-		physical: z
-			.object({
-				ifname: z.string(),
-				ifindex: z.string().regex(/^[1-9]\d{0,9}$/),
-				usbDevice: text,
-				netDevice: text,
-				generation: z.string().min(1).max(256),
-			})
-			.strict(),
+		physical: cellularPhysicalLinkPlanSchema,
 		tun: z
 			.object({
 				name: z.string(),

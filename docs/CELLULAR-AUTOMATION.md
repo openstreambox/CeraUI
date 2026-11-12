@@ -78,6 +78,14 @@ inverse. Cleanup denies traffic before waiting for fresh sender withdrawal, and
 retired callbacks cannot change a successor. A disconnected kernel fixture also
 checks complete link removal; it does not establish USB or modem qualification.
 
+The native host can also own an internal-call adapter's exact IPv4 `/32` with
+explicit physical USB/index authority. Its durable fence precedes the address
+and private routes. Cleanup waits for consumer release, removes only that indexed
+address and leaves NM-owned addresses alone. A pre-existing address is not
+adopted; a replacement interface or changed address attributes retain the inverse.
+Positive old-index absence can retire an old address without touching a reused
+name. This host component does not activate an internal modem call.
+
 Managed cellular paths require both sender capabilities, `bind_map_required`
 and `bind_map_required_empty_reload`, plus an integer `bind_map_contract >= 1`,
 and the opt-in `--require-bind-map` contract. The revision establishes assigned
@@ -310,6 +318,15 @@ el registro para restauración. La limpieza bloquea el tráfico antes de esperar
 una confirmación nueva de retirada del emisor. Los procesos antiguos no pueden
 cambiar el enlace que los sustituye. Una prueba aislada del kernel también
 comprueba la eliminación completa de la interfaz; no acredita el USB ni el módem.
+
+El host nativo también puede administrar la dirección IPv4 `/32` exacta de una
+llamada interna con identidad USB e índice físicos explícitos. Registra el filtro
+antes de añadir la dirección y las rutas privadas. La limpieza espera a los
+consumidores, elimina solo esa dirección por índice y conserva las direcciones
+de NM. No adopta direcciones existentes; una interfaz de reemplazo o atributos
+cambiados conservan el registro. La ausencia acreditada del índice antiguo
+permite retirarlo sin tocar un nombre reutilizado. Este componente no activa la
+llamada interna del módem.
 
 Los enlaces celulares administrados requieren las dos capacidades del emisor,
 `bind_map_required` y `bind_map_required_empty_reload`, además de un entero
