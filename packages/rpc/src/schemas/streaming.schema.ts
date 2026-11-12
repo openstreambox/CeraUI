@@ -24,6 +24,7 @@ import {
 } from '@ceralive/cerastream/dist/types.js';
 import { z } from 'zod';
 import { configChangeResultSchema } from './config-change.schema';
+import { srtKeyLengthSchema, srtPassphraseSchema } from './srt-encryption.schema';
 import { startFailureSchema, stopResultSchema } from './streaming-lifecycle.schema';
 import { regulatoryCountrySchema } from './wifi.schema';
 
@@ -337,6 +338,8 @@ export function fromEngineResolution(wxh: string): Resolution | undefined {
 
 // Streaming configuration input schema
 export const streamingConfigInputSchema = z.object({
+	srt_passphrase: srtPassphraseSchema.optional(),
+	srt_pbkeylen: srtKeyLengthSchema.optional(),
 	delay: z.number().int().min(AUDIO_DELAY_MIN).max(AUDIO_DELAY_MAX).optional(),
 	srt_latency: z.number().int().min(SRT_LATENCY_MIN).max(SRT_LATENCY_MAX).optional(),
 	pipeline: z.string().optional(),
@@ -1000,7 +1003,7 @@ export type StreamingStopOutput = z.infer<typeof streamingStopOutputSchema>;
 // carrying an unresolvable `source` is rejected (T3). Absent on success.
 export const streamingSetConfigOutputSchema = z.object({
 	success: z.boolean(),
-	applied: streamingConfigInputSchema.partial().optional(),
+	applied: streamingConfigInputSchema.omit({ srt_passphrase: true }).partial().optional(),
 	error: z.string().optional(),
 	// Present ONLY for an apply-now save: the transaction's terminal outcome.
 	// `success` still reports whether the SAVE was accepted, so a `reverted`
@@ -1015,7 +1018,7 @@ export type StreamingSetConfigOutput = z.infer<typeof streamingSetConfigOutputSc
 const streamingStartLegacyOutputSchema = z.object({
 	success: z.boolean(),
 	is_streaming: z.boolean().optional(),
-	applied: streamingConfigInputSchema.partial().optional(),
+	applied: streamingConfigInputSchema.omit({ srt_passphrase: true }).partial().optional(),
 	error: z.string().optional(),
 });
 

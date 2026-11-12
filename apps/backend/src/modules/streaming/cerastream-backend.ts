@@ -16,6 +16,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { srtEncryptionUnavailable } from "@ceraui/rpc/schemas";
+
 // CerastreamBackend: the StreamingBackend implementation for the Rust `cerastream`
 // engine — the only engine CeraUI drives. Every operation is a structured
 // JSON-RPC call over cerastream's control socket (`@ceralive/cerastream`):
@@ -1769,6 +1771,11 @@ export class CerastreamBackend implements StreamingBackend {
 		config: RuntimeConfig,
 		opts: StreamRunOptions,
 	): StartParamsWithAudioMode {
+		if (srtEncryptionUnavailable(config)) {
+			throw new Error(
+				"SRT output encryption is not supported by this engine binding",
+			);
+		}
 		const srt: {
 			host: string;
 			port: number;

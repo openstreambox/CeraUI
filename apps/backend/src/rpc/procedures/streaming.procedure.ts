@@ -36,6 +36,7 @@ import {
 	setMockHardwareOutputSchema,
 	setSourceVisibilityInputSchema,
 	setSourceVisibilityOutputSchema,
+	srtEncryptionUnavailable,
 	streamHealthOutputSchema,
 	streamingConfigInputSchema,
 	streamingSetConfigInputSchema,
@@ -724,6 +725,13 @@ export const setConfigProcedure = authedProcedure
 	.output(streamingSetConfigOutputSchema)
 	.handler(async ({ input }) => {
 		const config = getConfig();
+		if (srtEncryptionUnavailable(input)) {
+			return {
+				success: false,
+				error: "SRT output encryption is not supported by this engine binding",
+				applied: {},
+			};
+		}
 
 		// Device-first source selection (T3). Resolve at the PROCEDURE, BEFORE any
 		// merge: an unknown source rejects with disk unchanged; a known source folds
@@ -1009,6 +1017,10 @@ export const setConfigProcedure = authedProcedure
 		} else if (input.srt_streamid !== undefined) {
 			config.srt_streamid = input.srt_streamid;
 			config.relay_account = undefined;
+		}
+		if (input.srt_passphrase === "") {
+			config.srt_passphrase = undefined;
+			config.srt_pbkeylen = undefined;
 		}
 
 		if (input.relay_streamid_override !== undefined)

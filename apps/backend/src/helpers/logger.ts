@@ -1,7 +1,7 @@
 import { Writable } from "node:stream";
 import winston from "winston";
-
 import { isDevelopment } from "../mocks/mock-config.ts";
+import { redactSrtPassphrases } from "./srt-secret-redaction.ts";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -28,7 +28,8 @@ export const REDACTED = "[REDACTED]";
  * `passwordHash` all match). Centralised here so every transport and all 296
  * call sites are covered by one rule.
  */
-const SENSITIVE_KEY_RE = /pin|password|token|secret|paseto|bcrp|auth/i;
+const SENSITIVE_KEY_RE =
+	/pin|password|passphrase|token|secret|paseto|bcrp|auth/i;
 
 /**
  * Value-shaped secrets that can appear under an innocent-looking key (or inside
@@ -287,7 +288,7 @@ function isRedactablePlainObject(
  */
 function redactValue(value: unknown): unknown {
 	if (typeof value === "string") {
-		return looksSecret(value) ? REDACTED : value;
+		return looksSecret(value) ? REDACTED : redactSrtPassphrases(value);
 	}
 	if (Array.isArray(value)) {
 		return value.map(redactValue);

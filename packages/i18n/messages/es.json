@@ -2744,5 +2744,10 @@
 	"hotspotConfigurator.saveRefused": "El adaptador Wi-Fi cambió, así que esta configuración no se guardó.",
 	"hotspotConfigurator.saveInterrupted": "No se pudo aplicar la nueva configuración mientras se reiniciaba el punto de acceso. Es posible que esté apagado.",
 	"network.wifiMode.error.radioChanged": "El adaptador Wi-Fi cambió, así que el cambio de modo no se completó. Revisa su modo actual antes de volver a intentarlo.",
-	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso."
+	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso.",
+	"settings.srtEncryptionPassphrase": "Frase de contraseña de cifrado SRT",
+	"settings.srtEncryptionShow": "Mostrar frase de contraseña",
+	"settings.srtEncryptionHelp": "No cambies este campo salvo para reemplazar la frase guardada. El cifrado se aplica al iniciar la siguiente transmisión.",
+	"settings.srtEncryptionInvalid": "Usa entre 10 y 79 bytes UTF-8, o déjalo vacío para borrar.",
+	"settings.srtEncryptionKeyLength": "Longitud de clave de cifrado SRT"
 }

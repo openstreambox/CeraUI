@@ -18,6 +18,7 @@
 
 import { getRecentLogLines, logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
+import { redactSrtPassphrases } from "../../helpers/srt-secret-redaction.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
 
@@ -55,9 +56,10 @@ export async function getLog(
 	}
 
 	try {
-		const contents = shouldUseMocks()
+		const rawContents = shouldUseMocks()
 			? buildMockJournal(service)
 			: await run("journalctl", args, { maxBuffer: 10 * 1024 * 1024 });
+		const contents = redactSrtPassphrases(rawContents);
 		// Pushed as a `log` event the frontend turns into a file download; also
 		// returned so the getLog/getSyslog RPC is itself a real data source.
 		conn.send(buildMsg("log", { name, contents }, senderId));

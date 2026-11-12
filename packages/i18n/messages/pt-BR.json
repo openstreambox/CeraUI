@@ -2744,5 +2744,10 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.srtEncryptionPassphrase": "Frase secreta de criptografia SRT",
+	"settings.srtEncryptionShow": "Mostrar frase secreta",
+	"settings.srtEncryptionHelp": "Altere apenas para substituir a frase salva. A criptografia vale a partir da próxima transmissão.",
+	"settings.srtEncryptionInvalid": "Use de 10 a 79 bytes UTF-8, ou vazio para apagar.",
+	"settings.srtEncryptionKeyLength": "Tamanho da chave SRT"
 }

@@ -83,7 +83,10 @@ interface SaveServerOptions {
 export async function saveServerConfig(
 	options: SaveServerOptions,
 ): Promise<SaveServerResult> {
-	const fields = Object.entries(options.input);
+	// Write-only credentials must not enter the client config/dirty-state cache.
+	const fields = Object.entries(options.input).filter(
+		([field]) => field !== "srt_passphrase",
+	);
 	for (const [field, value] of fields) markPending(field, value);
 	try {
 		const result = await (options.hostAdapter?.setConfig(options.input) ??

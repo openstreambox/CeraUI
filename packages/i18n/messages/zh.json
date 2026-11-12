@@ -2696,5 +2696,10 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.srtEncryptionPassphrase": "SRT 加密口令",
+	"settings.srtEncryptionShow": "显示口令",
+	"settings.srtEncryptionHelp": "仅在替换已保存的口令时更改。加密将在下次推流启动时生效。",
+	"settings.srtEncryptionInvalid": "使用 10–79 个 UTF-8 字节，留空则清除。",
+	"settings.srtEncryptionKeyLength": "SRT 加密密钥长度"
 }
