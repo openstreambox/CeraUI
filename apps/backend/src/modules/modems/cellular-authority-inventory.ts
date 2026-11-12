@@ -10,6 +10,10 @@ import {
 import { parseCarrierIntentSlot } from "./automatic-carrier-intent.ts";
 import { cellularAuthorityMigration } from "./cellular-authority-store.ts";
 import { parsePreparationRecord } from "./cellular-preparation-state.ts";
+import {
+	listInternalCallAuthorities,
+	parseInternalCallAuthority,
+} from "./internal-call-authority.ts";
 import { parseInternalContextAuthority } from "./internal-context-authority.ts";
 
 export async function inventoryCellularMigration<T>(
@@ -63,6 +67,11 @@ export async function inventoryCellularAuthority(
 			process.env.CERALIVE_CELLULAR_INTERNAL_CONTEXT_STATE_DIR,
 			parseInternalContextAuthority,
 		],
+		[
+			"cellular-internal-owner",
+			process.env.CERALIVE_CELLULAR_INTERNAL_OWNER_STATE_DIR,
+			parseInternalCallAuthority,
+		],
 	] as const) {
 		if (directory !== undefined) {
 			const store = { dir: directory };
@@ -83,4 +92,7 @@ export async function inventoryCellularAuthority(
 			);
 		}
 	}
+	// A retained owner that witnessed a context cannot replace its lost baseline.
+	// This census only reads already migrated destination bytes in either mode.
+	await listInternalCallAuthorities();
 }

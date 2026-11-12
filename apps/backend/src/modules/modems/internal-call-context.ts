@@ -27,6 +27,8 @@ export interface InternalCallContext {
 	close(control: CellularControl): Promise<boolean>;
 }
 export interface InternalCallContextDeps {
+	/** Persisted whole-owner evidence that a unit context baseline already exists. */
+	readonly baselineExpected?: () => boolean;
 	readonly owned: () => boolean;
 	readonly withdrawn: () => boolean;
 	readonly identity: (
@@ -62,10 +64,11 @@ export function createInternalCallContext(
 	);
 	if (!/^[a-f0-9]{64}$/.test(request.subscription))
 		throw new Error("Unresolved internal subscription");
-	let known = false,
+	let known = deps.baselineExpected?.() === true,
 		latest: InternalContextAuthority | undefined;
 	const access: InternalContextEffectsDeps["access"] = (operation) =>
 		storage(async (value, write) => {
+			if (deps.baselineExpected?.() === true) known = true;
 			latest = value ? parseInternalContextAuthority(value, key) : undefined;
 			if (latest) known = true;
 			return operation(latest, async (next) => {

@@ -18,7 +18,8 @@ const trackedWrite: typeof writePrivateJson = (store, key, value) =>
 export type CellularAuthorityKind =
 	| "automatic-carrier-intent"
 	| "cellular-preparation"
-	| "cellular-internal-context";
+	| "cellular-internal-context"
+	| "cellular-internal-owner";
 export function cellularAuthorityMigration<T>(
 	kind: CellularAuthorityKind,
 	parse: PrivateJsonMigration<T>["parse"],
