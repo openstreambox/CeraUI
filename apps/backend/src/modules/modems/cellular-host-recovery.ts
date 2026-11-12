@@ -7,6 +7,7 @@ import {
 	type CellularHostAuthority,
 	inventoryCellularHosts,
 } from "../network/cellular-host-inventory.ts";
+import { CellularIpv6Bootstrap } from "../network/cellular-ipv6-bootstrap.ts";
 import { CellularNativeHost } from "../network/cellular-native-host.ts";
 import { cellularUplinkSlotKey } from "../network/cellular-native-host-plan.ts";
 import { withdrawCellularSource } from "../network/cellular-source-state.ts";
@@ -87,11 +88,16 @@ async function retain(
 ): Promise<Retained | undefined> {
 	if (!isRecoveryPending())
 		throw new Error("Cellular recovery barrier unavailable");
-	const plan =
-			authority.kind === "native"
-				? authority.inverse.plan
-				: authority.birth.plan,
-		input = plan.input,
+	const input =
+			authority.kind === "bootstrap"
+				? {
+						owner: authority.inverse.plan.owner,
+						epoch: authority.inverse.plan.epoch,
+						iface: authority.inverse.plan.physical.ifname,
+					}
+				: authority.kind === "native"
+					? authority.inverse.plan.input
+					: authority.birth.plan.input,
 		withdraw = () => {
 			withdrawCellularSource(input.owner, input.epoch, input.iface);
 		},
@@ -117,10 +123,14 @@ async function retain(
 	if (!lease) return undefined;
 	let held = true;
 	try {
-		const host = new CellularNativeHost(authority.inverse.plan, {
-			...deps,
-			owned: () => held && isRecoveryPending(),
-		});
+		const guarded = { ...deps, owned: () => held && isRecoveryPending() };
+		const host =
+			authority.kind === "bootstrap"
+				? new CellularIpv6Bootstrap(authority.inverse.plan, {
+						...guarded,
+						reserve: async () => false,
+					})
+				: new CellularNativeHost(authority.inverse.plan, guarded);
 		return {
 			cleanup: async () => {
 				if (!(await host.cleanup())) return false;

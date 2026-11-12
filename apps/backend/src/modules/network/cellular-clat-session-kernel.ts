@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { readPrivateJson } from "../../helpers/private-json-state.ts";
 import { acquirePrivateStateLease } from "../../helpers/private-state-lease.ts";
 import { readCellularClatAllocation } from "./cellular-clat-allocation.ts";
 import { CellularClatHost } from "./cellular-clat-host.ts";
@@ -17,6 +16,7 @@ import {
 	cellularPhysicalState,
 	readCellularSysctl,
 } from "./cellular-host-identity.ts";
+import { inventoryCellularHosts } from "./cellular-host-inventory.ts";
 import { CellularIpState, cellularIpIO } from "./cellular-ip-state.ts";
 import { planCellularRoutes } from "./cellular-route-plan.ts";
 import { cellularTunIO, createCellularTun } from "./cellular-tun.ts";
@@ -78,7 +78,9 @@ export async function retainCellularClatSession(
 			preflight: async () => {
 				if (
 					!(await current()) ||
-					(await readPrivateJson(deps.store, key)) ||
+					(await inventoryCellularHosts(deps.store)).some(
+						(row) => row.slot === plan.input.slot,
+					) ||
 					(await readCellularClatAllocation(
 						routes,
 						plan.physical.ifname,

@@ -4,6 +4,7 @@ import {
 } from "../../helpers/durable-inverse.ts";
 import type { CellularPathSession } from "../modems/cellular-path-owner.ts";
 import { CellularFirewall, cellularFirewallIO } from "./cellular-firewall.ts";
+import { inventoryCellularHosts } from "./cellular-host-inventory.ts";
 import { CellularIpState, cellularIpIO } from "./cellular-ip-state.ts";
 import {
 	type CellularNativeHostPlan,
@@ -227,6 +228,12 @@ export class CellularNativeHost implements CellularPathSession {
 		await this.serial(async () => {
 			if (!(await this.current()))
 				throw new Error("Native host identity unavailable");
+			if (
+				(await inventoryCellularHosts(this.deps.store)).some(
+					(row) => row.slot === this.authority.input.slot,
+				)
+			)
+				throw new Error("Native host slot remains owned");
 			await this.inverse.create(
 				this.authority.input.owner,
 				this.authority.input.epoch,

@@ -164,6 +164,20 @@ property or failed read retains unknown. This proof requires the existing boot
 barrier to exclude new sender and managed probe admission. The installed service
 lifetime and physical crash/reboot qualification remain gates.
 
+IPv6-only discovery now has its own finite host stage. It records a boot-bound
+inverse before adding a DNS-only private table, source/device rules and an exact
+IPv6 output fence. Only the grant's resolvers are queried, after a durable
+budget reservation. Neighbour discovery remains available; arbitrary output
+and DNS during withdrawal are denied. Aborting a probe is insufficient for
+cleanup: its actual promise must settle before any route is removed.
+
+The stage closes completely before a translator can acquire the same slot, and
+the grant must be revalidated between stages. Their tables and protocols are
+independent; neither adopts matching resources from the other. Startup can only
+withdraw an interrupted discovery. An isolated DNS64 provider proves discovery
+without a usable uplink main default, private-route loss without a LAN fallback,
+and retained cleanup. Runtime modem composition remains incomplete.
+
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
 do not establish those capabilities. Verizon remains unqualified.
@@ -347,6 +361,22 @@ mantienen el estado desconocido. La barrera de inicio existente debe impedir
 nuevos emisores y sondeos administrados durante esta comprobación. La vida del
 servicio instalado y las pruebas físicas de interrupción y reinicio siguen
 pendientes.
+
+La búsqueda de NAT64 en una concesión solo IPv6 ya tiene una etapa finita del
+host. Registra una restauración vinculada al arranque antes de añadir una tabla
+privada exclusiva para DNS, reglas de origen y dispositivo, y un filtro IPv6
+exacto. Consulta solo los resolutores de la concesión, después de reservar un
+presupuesto duradero. Permite el descubrimiento de vecinos y bloquea otras
+salidas, incluido DNS durante la retirada. Cancelar el sondeo no basta: su
+promesa debe finalizar antes de quitar las rutas.
+
+La etapa se cierra por completo antes de que el traductor adquiera el mismo
+espacio, y se debe volver a comprobar la concesión entre etapas. Sus tablas y
+protocolos son independientes; ninguna adopta recursos idénticos de la otra.
+Al iniciar solo se puede retirar una búsqueda interrumpida. Un proveedor DNS64
+sintético aislado comprueba la búsqueda sin una ruta predeterminada útil en el
+enlace, la pérdida de la ruta privada sin recurrir a la LAN y la limpieza
+retenida. La composición del módem durante el funcionamiento sigue incompleta.
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon
