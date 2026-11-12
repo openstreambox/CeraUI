@@ -1698,10 +1698,10 @@
 	"network.wifiMode.stationHint": "Verbindet sich mit einem WLAN. Dieses Funkmodul kann Teil des Bündels sein.",
 	"network.wifiMode.hotspotHint": "Sendet nur einen Zugangspunkt. Dieses Funkmodul liefert keine WLAN-Uplink-Verbindung.",
 	"network.wifiMode.hybridHint": "Bleibt im WLAN und sendet gleichzeitig einen Zugangspunkt.",
-  "network.wifiDegraded.unavailable": "Der WLAN-Adapter ist vorübergehend nicht verfügbar.",
-  "network.wifiDegraded.operational-mac-missing": "Der WLAN-Adapter hat seine aktuelle Hardwareadresse noch nicht gemeldet.",
-  "network.wifiDegraded.permanent-mac-unresolved": "Die stabile Hardwareidentität des WLAN-Adapters konnte nicht bestätigt werden.",
-  "network.wifiMode.unavailable": "{mode} ist nicht verfügbar – {reason}",
+	"network.wifiDegraded.unavailable": "Der WLAN-Adapter ist vorübergehend nicht verfügbar.",
+	"network.wifiDegraded.operational-mac-missing": "Der WLAN-Adapter hat seine aktuelle Hardwareadresse noch nicht gemeldet.",
+	"network.wifiDegraded.permanent-mac-unresolved": "Die stabile Hardwareidentität des WLAN-Adapters konnte nicht bestätigt werden.",
+	"network.wifiMode.unavailable": "{mode} ist nicht verfügbar – {reason}",
 	"network.wifiMode.pending": "Wechsel zu {mode}…",
 	"network.wifiMode.reason.unsupported": "Dieses Funkmodul kann keinen Zugangspunkt bereitstellen.",
 	"network.wifiMode.reason.capabilityAbsent": "Der Treiber dieses Funkmoduls kann WLAN und Zugangspunkt nicht gleichzeitig betreiben.",
@@ -2741,5 +2741,11 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.streamIdSecurity": "Kann ein Sendeschlüssel sein. Wird auch mit SRT-Verschlüsselung unverschlüsselt übertragen.",
+	"settings.streamIdStored": "Eine Stream-ID ist gespeichert. Unverändert lassen zum Beibehalten, neu eingeben zum Ersetzen oder ausdrücklich löschen.",
+	"settings.streamIdShow": "Eingabe anzeigen",
+	"settings.streamIdHide": "Eingabe verbergen",
+	"settings.streamIdClear": "Stream-ID löschen",
+	"settings.streamIdClearing": "Die Stream-ID wird beim Speichern gelöscht."
 }

@@ -1701,10 +1701,10 @@
 	"network.wifiMode.stationHint": "Se conecta a una red Wi-Fi. Esta radio puede formar parte del enlace agregado.",
 	"network.wifiMode.hotspotHint": "Solo emite un punto de acceso. Esta radio no aporta enlace ascendente Wi-Fi.",
 	"network.wifiMode.hybridHint": "Permanece conectado al Wi-Fi mientras emite un punto de acceso.",
-  "network.wifiDegraded.unavailable": "El adaptador Wi-Fi no está disponible temporalmente.",
-  "network.wifiDegraded.operational-mac-missing": "El adaptador Wi-Fi aún no ha informado su dirección de hardware actual.",
-  "network.wifiDegraded.permanent-mac-unresolved": "No se pudo confirmar la identidad de hardware estable del adaptador Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} no está disponible: {reason}",
+	"network.wifiDegraded.unavailable": "El adaptador Wi-Fi no está disponible temporalmente.",
+	"network.wifiDegraded.operational-mac-missing": "El adaptador Wi-Fi aún no ha informado su dirección de hardware actual.",
+	"network.wifiDegraded.permanent-mac-unresolved": "No se pudo confirmar la identidad de hardware estable del adaptador Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} no está disponible: {reason}",
 	"network.wifiMode.pending": "Cambiando a {mode}…",
 	"network.wifiMode.reason.unsupported": "Esta radio no puede alojar un punto de acceso.",
 	"network.wifiMode.reason.capabilityAbsent": "El controlador de esta radio no puede usar Wi-Fi y un punto de acceso a la vez.",
@@ -2744,5 +2744,11 @@
 	"hotspotConfigurator.saveRefused": "El adaptador Wi-Fi cambió, así que esta configuración no se guardó.",
 	"hotspotConfigurator.saveInterrupted": "No se pudo aplicar la nueva configuración mientras se reiniciaba el punto de acceso. Es posible que esté apagado.",
 	"network.wifiMode.error.radioChanged": "El adaptador Wi-Fi cambió, así que el cambio de modo no se completó. Revisa su modo actual antes de volver a intentarlo.",
-	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso."
+	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso.",
+	"settings.streamIdSecurity": "Puede ser una clave de publicación. Se envía sin cifrar, incluso con cifrado SRT.",
+	"settings.streamIdStored": "Hay un ID guardado. Déjalo sin cambios para conservarlo, escribe para reemplazarlo o bórralo explícitamente.",
+	"settings.streamIdShow": "Mostrar valor escrito",
+	"settings.streamIdHide": "Ocultar valor escrito",
+	"settings.streamIdClear": "Borrar ID de transmisión",
+	"settings.streamIdClearing": "El ID de transmisión se borrará cuando guardes."
 }

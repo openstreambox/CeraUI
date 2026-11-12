@@ -24,6 +24,7 @@
  */
 
 import { logger } from "../../helpers/logger.ts";
+import { redactStreamIdText } from "../../helpers/stream-id-secret.ts";
 import type { RPCContext } from "../../rpc/types.ts";
 import { projectRemoteConfig } from "../remote/remote-status.ts";
 import { sendFrame } from "./channel.ts";
@@ -277,7 +278,9 @@ export async function routeCommand(
 		const result = await dispatcher(frame, deps.context);
 		emit(deps, frame, toResultPayload(result));
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = redactStreamIdText(
+			err instanceof Error ? err.message : String(err),
+		);
 		logger.warn(`control-command: ${frame.type} failed: ${message}`);
 		emit(deps, frame, { ok: false, applied: null, error: message });
 	}

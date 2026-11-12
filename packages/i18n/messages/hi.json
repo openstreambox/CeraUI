@@ -1698,10 +1698,10 @@
 	"network.wifiMode.stationHint": "Wi-Fi नेटवर्क से जुड़ता है। यह रेडियो बॉन्ड में शामिल हो सकता है।",
 	"network.wifiMode.hotspotHint": "केवल एक ऐक्सेस पॉइंट प्रसारित करता है। यह रेडियो कोई Wi-Fi अपलिंक नहीं देता।",
 	"network.wifiMode.hybridHint": "Wi-Fi से जुड़ा रहते हुए एक ऐक्सेस पॉइंट भी प्रसारित करता है।",
-  "network.wifiDegraded.unavailable": "Wi-Fi अडैप्टर अस्थायी रूप से उपलब्ध नहीं है।",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi अडैप्टर ने अभी तक अपना वर्तमान हार्डवेयर पता नहीं बताया है।",
-  "network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi अडैप्टर की स्थिर हार्डवेयर पहचान की पुष्टि नहीं हो सकी।",
-  "network.wifiMode.unavailable": "{mode} उपलब्ध नहीं है — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi अडैप्टर अस्थायी रूप से उपलब्ध नहीं है।",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi अडैप्टर ने अभी तक अपना वर्तमान हार्डवेयर पता नहीं बताया है।",
+	"network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi अडैप्टर की स्थिर हार्डवेयर पहचान की पुष्टि नहीं हो सकी।",
+	"network.wifiMode.unavailable": "{mode} उपलब्ध नहीं है — {reason}",
 	"network.wifiMode.pending": "{mode} पर स्विच किया जा रहा है…",
 	"network.wifiMode.reason.unsupported": "यह रेडियो ऐक्सेस पॉइंट होस्ट नहीं कर सकता।",
 	"network.wifiMode.reason.capabilityAbsent": "इस रेडियो का ड्राइवर एक साथ Wi-Fi और ऐक्सेस पॉइंट नहीं चला सकता।",
@@ -2741,5 +2741,11 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.streamIdSecurity": "यह प्रकाशन कुंजी हो सकती है। SRT एन्क्रिप्शन चालू होने पर भी यह नेटवर्क पर खुले रूप में भेजी जाती है।",
+	"settings.streamIdStored": "स्ट्रीम आईडी सहेजी गई है। बनाए रखने के लिए अपरिवर्तित छोड़ें, बदलने के लिए लिखें या स्पष्ट रूप से मिटाएँ।",
+	"settings.streamIdShow": "लिखा मान दिखाएँ",
+	"settings.streamIdHide": "लिखा मान छिपाएँ",
+	"settings.streamIdClear": "स्ट्रीम आईडी मिटाएँ",
+	"settings.streamIdClearing": "सहेजने पर स्ट्रीम आईडी मिटा दी जाएगी।"
 }

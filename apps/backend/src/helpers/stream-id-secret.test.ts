@@ -1,0 +1,72 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { projectRemoteConfig } from "../modules/remote/remote-status.ts";
+import { logRedact } from "./logger.ts";
+import {
+	publicStreamIds,
+	redactStreamIdJournal,
+	redactStreamIdText,
+	setStreamIdRedactionSource,
+} from "./stream-id-secret.ts";
+
+let previous: () => readonly (string | undefined)[];
+beforeEach(() => {
+	previous = setStreamIdRedactionSource(() => []);
+});
+afterEach(() => {
+	setStreamIdRedactionSource(previous);
+});
+describe("Stream ID disclosure boundaries", () => {
+	test("projects configured state without a reversible hint", () => {
+		const input = {
+			srt_streamid: "dummy-publish-key",
+			relay_streamid_override: "dummy-override",
+			srtla_port: 5000,
+		};
+		expect(publicStreamIds(input)).toEqual({
+			srt_streamid_configured: true,
+			relay_streamid_override_configured: true,
+			srtla_port: 5000,
+		});
+		expect(
+			projectRemoteConfig({ ...input, pairing_secret: "dummy-pairing" }),
+		).toEqual(publicStreamIds(input));
+		expect(input.srt_streamid).toBe("dummy-publish-key");
+		expect(publicStreamIds(publicStreamIds(input))).toEqual(
+			publicStreamIds(input),
+		);
+	});
+	test("scrubs nested trace args and Error fields", () => {
+		const value = logRedact({
+			args: [
+				{
+					srt_streamid: "dummy-key",
+					streamId: "dummy-key",
+					relay_streamid_override: "dummy-key",
+					ingest_key: "dummy-key",
+				},
+			],
+			error: new Error('streamid="dummy-key"'),
+		});
+		expect(JSON.stringify(value)).not.toContain("dummy-key");
+	});
+	test("scrubs historical labelled journal records with spaces, escaping and URI encoding", () => {
+		for (const record of [
+			'{"srt_streamid":"dummy key with spaces"}',
+			"srt://example.test:9000?streamid=dummy%20key",
+			"streamId: dummy-key",
+			'relay_streamid_override="dummy-key"',
+		]) {
+			expect(redactStreamIdJournal(`before\n${record}\nafter`)).toBe(
+				"before\n[REDACTED]\nafter",
+			);
+		}
+	});
+	test("scrubs retained values in unlabelled errors and leaves ordinary diagnostics", () => {
+		setStreamIdRedactionSource(() => ["dummy/key with spaces"]);
+		for (const key of ["dummy/key with spaces", "dummy%2Fkey%20with%20spaces"])
+			expect(redactStreamIdText(`connect failed: ${key}`)).not.toContain(key);
+		expect(redactStreamIdText("connection timed out")).toBe(
+			"connection timed out",
+		);
+	});
+});

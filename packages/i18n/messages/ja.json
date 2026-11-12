@@ -1653,10 +1653,10 @@
 	"network.wifiMode.stationHint": "Wi-Fi ネットワークに接続します。この無線はボンディングに参加できます。",
 	"network.wifiMode.hotspotHint": "アクセスポイントの送信のみを行います。この無線は Wi-Fi アップリンクを持ちません。",
 	"network.wifiMode.hybridHint": "Wi-Fi に接続したまま、アクセスポイントも送信します。",
-  "network.wifiDegraded.unavailable": "Wi-Fi アダプターは一時的に利用できません。",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi アダプターは現在のハードウェアアドレスをまだ報告していません。",
-  "network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi アダプターの安定したハードウェア識別情報を確認できませんでした。",
-  "network.wifiMode.unavailable": "{mode} は利用できません — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi アダプターは一時的に利用できません。",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi アダプターは現在のハードウェアアドレスをまだ報告していません。",
+	"network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi アダプターの安定したハードウェア識別情報を確認できませんでした。",
+	"network.wifiMode.unavailable": "{mode} は利用できません — {reason}",
 	"network.wifiMode.pending": "{mode} に切り替えています…",
 	"network.wifiMode.reason.unsupported": "この無線はアクセスポイントを提供できません。",
 	"network.wifiMode.reason.capabilityAbsent": "この無線のドライバーは Wi-Fi とアクセスポイントを同時に動作させられません。",
@@ -2696,5 +2696,11 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.streamIdSecurity": "配信キーとして使われる場合があります。SRT暗号化が有効でも平文で送信されます。",
+	"settings.streamIdStored": "ストリームIDが保存されています。変更しなければ保持され、入力すると置換されます。削除ボタンで明示的に消去できます。",
+	"settings.streamIdShow": "入力値を表示",
+	"settings.streamIdHide": "入力値を隠す",
+	"settings.streamIdClear": "ストリームIDを削除",
+	"settings.streamIdClearing": "保存するとストリームIDが削除されます。"
 }

@@ -1710,10 +1710,10 @@
 	"network.wifiMode.stationHint": "يتصل بشبكة Wi-Fi. يمكن لهذا الراديو أن يشارك في التجميع.",
 	"network.wifiMode.hotspotHint": "يبثّ نقطة اتصال فقط. لا يوفّر هذا الراديو وصلة Wi-Fi صاعدة.",
 	"network.wifiMode.hybridHint": "يظل متصلاً بشبكة Wi-Fi مع بثّ نقطة اتصال في الوقت نفسه.",
-  "network.wifiDegraded.unavailable": "محول Wi-Fi غير متاح مؤقتًا.",
-  "network.wifiDegraded.operational-mac-missing": "لم يبلّغ محول Wi-Fi عن عنوان الجهاز الحالي بعد.",
-  "network.wifiDegraded.permanent-mac-unresolved": "تعذر تأكيد هوية الجهاز الثابتة لمحول Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} غير متاح — {reason}",
+	"network.wifiDegraded.unavailable": "محول Wi-Fi غير متاح مؤقتًا.",
+	"network.wifiDegraded.operational-mac-missing": "لم يبلّغ محول Wi-Fi عن عنوان الجهاز الحالي بعد.",
+	"network.wifiDegraded.permanent-mac-unresolved": "تعذر تأكيد هوية الجهاز الثابتة لمحول Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} غير متاح — {reason}",
 	"network.wifiMode.pending": "جارٍ التبديل إلى {mode}…",
 	"network.wifiMode.reason.unsupported": "لا يستطيع هذا الراديو استضافة نقطة اتصال.",
 	"network.wifiMode.reason.capabilityAbsent": "لا يستطيع برنامج تشغيل هذا الراديو تشغيل Wi-Fi ونقطة اتصال في الوقت نفسه.",
@@ -2753,5 +2753,11 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.streamIdSecurity": "قد يكون مفتاح نشر. يُرسل بنص واضح عبر الشبكة حتى مع تفعيل تشفير SRT.",
+	"settings.streamIdStored": "تم حفظ معرّف بث. اتركه دون تغيير للاحتفاظ به، أو اكتب لاستبداله، أو امسحه صراحةً.",
+	"settings.streamIdShow": "إظهار القيمة المكتوبة",
+	"settings.streamIdHide": "إخفاء القيمة المكتوبة",
+	"settings.streamIdClear": "مسح معرّف البث",
+	"settings.streamIdClearing": "سيُمسح معرّف البث عند الحفظ."
 }

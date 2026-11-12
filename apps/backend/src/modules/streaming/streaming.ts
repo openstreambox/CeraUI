@@ -322,11 +322,14 @@ export async function updateConfig(requestedParams: ConfigParameters) {
 		config.relay_account = params.relay_account;
 		config.srt_streamid = undefined;
 	} else {
-		if (params.srt_streamid) {
+		if (params.srt_streamid !== undefined) {
 			config.srt_streamid = params.srt_streamid;
 		}
 		config.relay_account = undefined;
 	}
+
+	if (params.relay_streamid_override !== undefined)
+		config.relay_streamid_override = params.relay_streamid_override;
 
 	if (!params.relay_server || !params.relay_account) {
 		convertManualToRemoteRelay();

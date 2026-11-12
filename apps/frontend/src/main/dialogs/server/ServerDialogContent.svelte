@@ -37,6 +37,8 @@ interface Props {
 	relayServerName?: string;
 	relayServerRtt?: number;
 	relayStreamId: string;
+ streamIdConfigured?: boolean;
+ relayStreamIdConfigured?: boolean;
 	addr: string;
 	addrError?: string;
 	canValidate: boolean;
@@ -79,7 +81,7 @@ let props: Props = $props();
 	{#if props.destination === 'managed' && props.selectedManagedActive && props.hasManagedSlots}
 		<ServerIngestSlots accounts={props.managedAccounts} activeEndpointId={props.activeSlotId} isStreaming={props.isStreaming} onSelectSlot={props.onSlot} prompting={props.slotPrompting} />
 	{:else if props.destination === 'managed' && props.selectedManagedActive}
-		<RelayServerSelector
+		<RelayServerSelector relayStreamIdConfigured={props.relayStreamIdConfigured}
 			accountEntries={props.filteredAccountEntries} isStreaming={props.isStreaming}
 			onAccount={props.onAccount} onRelayStreamId={props.onRelayStreamId} onServer={props.onServer}
 			relayAccount={props.effectiveRelayAccount} relayAccountName={props.relayAccountName}
@@ -94,7 +96,7 @@ let props: Props = $props();
 			<Button class="w-full" data-testid="destination-add-key" onclick={props.onAddKey} variant="outline">{m["settings.destinationAddKey"]()}</Button>
 		</div>
 	{:else}
-		<CustomEndpointForm
+		<CustomEndpointForm streamIdConfigured={props.streamIdConfigured}
 			addr={props.addr} addrError={props.addrError} canValidate={props.canValidate}
 			isStreaming={props.isStreaming} onAddr={props.onAddr} onPassphrase={props.onPassphrase}
 			onPort={props.onPort} onStreamId={props.onStreamId} onValidate={props.onValidate}
