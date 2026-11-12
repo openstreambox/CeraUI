@@ -251,7 +251,8 @@ export async function setEthernetRole(
 				deps.publishOutcome(name, { success: true, role, ...correlation });
 				return { success: true, applied: role };
 			}
-			deps.publishOutcome(name, { pending: true, role, ...correlation });
+			const pending = { pending: true, role } as const;
+			deps.publishOutcome(name, { ...pending, ...correlation });
 			failure = await applyRoleToNetworkManager(name, role, deps, true);
 		} catch {
 			failure = "apply_failed";

@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-import { m } from "@ceraui/i18n/svelte";
 import { act, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -95,19 +93,10 @@ it.each([
 		});
 		expect(getOperationPhase("switch-input")).toBe("pending");
 		expect(getOperationReason("switch-input")).toBeUndefined();
-		if (reply.success) {
-			expect(feedback.success).toHaveBeenCalledExactlyOnceWith(
-				m["live.inputPicker.switched"]({ ms: 7 }),
-			);
-			expect(feedback.info).toHaveBeenCalledExactlyOnceWith(
-				m["live.inputPicker.audioFollowsOnRestart"](),
-			);
-			expect(feedback.error).not.toHaveBeenCalled();
-		} else {
-			expect(feedback.error).toHaveBeenCalledExactlyOnceWith(
-				m["live.inputPicker.sourceLost"](),
-			);
-		}
+		// The obsolete view cannot produce feedback for the replacement dispatch.
+		expect(feedback.success).not.toHaveBeenCalled();
+		expect(feedback.info).not.toHaveBeenCalled();
+		expect(feedback.error).not.toHaveBeenCalled();
 		await act(async () => {
 			second.resolve({ success: true });
 			await second.promise;

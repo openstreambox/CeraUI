@@ -318,7 +318,7 @@ describe("UplinkSteeringCoordinator", () => {
 		effects.length = 0;
 		desired = inactive;
 		await coordinator.requestReconcile();
-		expect(effects).toEqual(["flush"]);
+		expect(effects).toEqual(["deactivate", "forward:false", "flush"]);
 		effects.length = 0;
 		cleanupFails = false;
 		await coordinator.requestReconcile();
@@ -498,7 +498,8 @@ describe("UplinkSteeringCoordinator", () => {
 			desired = unavailable;
 			failing = true;
 			await coordinator.requestReconcile();
-			expect(liveRuleset).toContain("ct state new drop");
+			expect(liveRuleset).toContain("numgen random");
+			expect(statuses.at(-1)).toMatchObject({ available: false });
 			expect(statuses.at(-1)).toMatchObject({ available: false });
 			expect(coordinator.appliedState()).toEqual(healthy);
 

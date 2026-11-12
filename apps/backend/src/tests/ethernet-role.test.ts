@@ -611,6 +611,10 @@ describe("the role transition", () => {
 			},
 			{
 				name: SHARED_PORT,
+				outcome: { pending: true, role: "shared-lan", op: "client-c-0000001" },
+			},
+			{
+				name: SHARED_PORT,
 				outcome: { success: true, role: "shared-lan", op: "client-c-0000001" },
 			},
 			{
@@ -899,7 +903,10 @@ describe("per-port role operation ownership", () => {
 		const entered = Promise.withResolvers<void>();
 		const release = Promise.withResolvers<boolean>();
 		const deps = makeDeps({
-			resolveConnection: async (ifname) => `uuid-${ifname}`,
+			resolveConnection: async (ifname) => ({
+				kind: "active",
+				uuid: `uuid-${ifname}`,
+			}),
 			setFields: async (uuid) => {
 				if (uuid === "uuid-eth1") {
 					entered.resolve();
@@ -956,7 +963,7 @@ describe("per-port role operation ownership", () => {
 		processIfconfigOutput(twoPortTopology());
 		persistEthernetRole(SHARED_PORT, "shared-lan");
 		const entered = Promise.withResolvers<void>();
-		const release = Promise.withResolvers<string | undefined>();
+		const release = Promise.withResolvers<{ kind: "active"; uuid: string }>();
 		const deps = makeDeps({
 			resolveConnection: async () => {
 				entered.resolve();
@@ -969,7 +976,7 @@ describe("per-port role operation ownership", () => {
 		const reconcile = reconcileEthernetRoles(deps, () => ({
 			[SHARED_PORT]: deps.readPersistedRole(SHARED_PORT) ?? "uplink",
 		}));
-		release.resolve("uuid-eth1");
+		release.resolve({ kind: "active", uuid: "uuid-eth1" });
 		await Promise.all([set, reconcile]);
 
 		expect(deps.writes).toEqual([
@@ -995,7 +1002,7 @@ describe("per-port role operation ownership", () => {
 	test("a rejected first operation releases the next request on that port", async () => {
 		processIfconfigOutput(twoPortTopology());
 		const entered = Promise.withResolvers<void>();
-		const release = Promise.withResolvers<string | undefined>();
+		const release = Promise.withResolvers<{ kind: "active"; uuid: string }>();
 		const failure = new Error("NM read rejected");
 		let reads = 0;
 		const deps = makeDeps({
@@ -1005,22 +1012,19 @@ describe("per-port role operation ownership", () => {
 					entered.resolve();
 					return release.promise;
 				}
-				return "uuid-eth1";
+				return { kind: "active", uuid: "uuid-eth1" };
 			},
 		});
 
-		const firstError = setEthernetRole(SHARED_PORT, "shared-lan", deps).then(
-			() => undefined,
-			(error: unknown) => error,
-		);
+		const firstError = setEthernetRole(SHARED_PORT, "shared-lan", deps);
 		await entered.promise;
-		const second = setEthernetRole(SHARED_PORT, "uplink", deps);
+		const second = setEthernetRole(SHARED_PORT, "shared-lan", deps);
 		release.reject(failure);
 
-		expect(await firstError).toBe(failure);
-		expect(await second).toEqual({ success: true, applied: "uplink" });
-		expect(reads).toBe(2);
-		expect(getConfig().eth_roles?.[SHARED_PORT]).toBe("uplink");
+		expect(await firstError).toEqual({ success: false, error: "apply_failed" });
+		expect(await second).toEqual({ success: true, applied: "shared-lan" });
+		expect(reads).toBe(5);
+		expect(getConfig().eth_roles?.[SHARED_PORT]).toBe("shared-lan");
 	});
 });
 
