@@ -121,6 +121,10 @@ import { checkCamlinkUsb2 } from "./modules/streaming/camlink.ts";
 import { checkEngineCompatibilityOnStartup } from "./modules/streaming/cerastream-backend.ts";
 import { runInflightConfigChangeReconciliation } from "./modules/streaming/config-change-reconcile-wiring.ts";
 import { reconcilePersistedPipeline } from "./modules/streaming/config-migration.ts";
+import {
+	observeSafely,
+	observeStartup,
+} from "./modules/streaming/continuity-observer.ts";
 import { startDeviceDiscovery } from "./modules/streaming/devices.ts";
 import { initEngineConnection } from "./modules/streaming/engine-reconnect.ts";
 import { setGatewayProbe } from "./modules/streaming/gateway-availability.ts";
@@ -134,7 +138,10 @@ import { setMockPreviewEncoderRealizedProvider } from "./modules/streaming/previ
 import { beginRecoveryBarrier } from "./modules/streaming/recovery-barrier.ts";
 import { refreshAndBroadcastSources } from "./modules/streaming/sources.ts";
 import { runStreamRestoration } from "./modules/streaming/stream-restoration.ts";
-import { reconcileStreamSession } from "./modules/streaming/stream-session-orchestrator.ts";
+import {
+	reconcileStreamSession,
+	streamLiveness,
+} from "./modules/streaming/stream-session-orchestrator.ts";
 import {
 	getStreamingProcesses,
 	gracefulShutdown,
@@ -362,6 +369,7 @@ if (!shouldUseMocks()) {
 		await reconcileStreamSession();
 		noteStreamReconciliationCompleted();
 	});
+	await observeSafely(() => observeStartup(streamLiveness()));
 	// The first point at which the persisted config and the engine's own session
 	// are both known — so it is where a `config.inflight.json` left by a process
 	// that died mid transaction can finally be judged. Fire-and-forget: with a
