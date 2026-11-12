@@ -28,13 +28,16 @@ function fixture(policyKey = "att") {
 		allowMutation = true,
 		cleanup = true,
 		physicalGone = false;
+	let closeUnconfirmed = false,
+		closeCalls = 0;
 	let registration: InternalRegistration = "home";
 	let context: InternalContext = { apn: "old.example", family: "ipv4" },
 		active = false;
 	let grant: InternalGrant = { family: "ipv4", ipv4: "192.0.2.10" };
 	let revoked: () => void = () => {};
 	let record: InternalContextAuthority | undefined;
-	let withdrawn = false;
+	let withdrawn = false,
+		contextReleased = false;
 	const control: CellularControl = {
 		valid: async () => valid,
 		readSubscriber: async () =>
@@ -74,6 +77,8 @@ function fixture(policyKey = "att") {
 			throw new Error("No radio resets allowed");
 		},
 		close: async () => {
+			if (++closeCalls === 1 && closeUnconfirmed)
+				throw new Error("Control release unconfirmed");
 			events.push("release-MM");
 		},
 	};
@@ -85,6 +90,16 @@ function fixture(policyKey = "att") {
 		current: async () => current,
 		now: () => now,
 		physicalGone: async () => physicalGone,
+		retirement: {
+			owned: () => true,
+			withdrawn: () => withdrawn,
+			begin: async () => "withdrawing",
+			contextReleased: () => contextReleased,
+			markContextReleased: async () => {
+				contextReleased = true;
+			},
+			finish: async () => true,
+		},
 		context: createInternalCallContext(
 			"synthetic-key",
 			{
@@ -180,6 +195,7 @@ function fixture(policyKey = "att") {
 		owner,
 		events,
 		control,
+		closeCalls: () => closeCalls,
 		deps,
 		baseline: () =>
 			record && {
@@ -197,6 +213,7 @@ function fixture(policyKey = "att") {
 			registration?: InternalRegistration;
 			cleanup?: boolean;
 			physicalGone?: boolean;
+			closeUnconfirmed?: boolean;
 			context?: InternalContext;
 			active?: boolean;
 			grant?: InternalGrant;
@@ -210,6 +227,8 @@ function fixture(policyKey = "att") {
 			if (values.registration !== undefined) registration = values.registration;
 			if (values.cleanup !== undefined) cleanup = values.cleanup;
 			if (values.physicalGone !== undefined) physicalGone = values.physicalGone;
+			if (values.closeUnconfirmed !== undefined)
+				closeUnconfirmed = values.closeUnconfirmed;
 			if (values.context !== undefined) context = values.context;
 			if (values.active !== undefined) active = values.active;
 			if (values.grant !== undefined) grant = values.grant;
@@ -609,4 +628,28 @@ test("confirmed physical generation absence retires its host while preserving un
 		),
 	).toBe(false);
 	expect(f.events.at(-1)).toBe("release-MM");
+});
+
+test("an uncertain control-release tail keeps its handle and never repeats context effects after guard cleanup", async () => {
+	const f = fixture();
+	await f.owner.start();
+	for (let i = 0; i < 4; i++) await f.tick();
+	f.set({ closeUnconfirmed: true });
+	await expect(f.owner.close()).rejects.toThrow("release unconfirmed");
+	expect(f.deps.retirement.contextReleased()).toBe(true);
+	expect(f.events).toContain("cleanup");
+	f.events.length = 0;
+	f.deps.context.close = async () => {
+		throw new Error("Context inverse must not repeat");
+	};
+	expect(await f.owner.recoverControl({ ...f.owner.target, id: 9 })).toBe(
+		false,
+	);
+	expect(await f.owner.close()).toBe(true);
+	expect(f.closeCalls()).toBe(2);
+	expect(
+		f.events.some(
+			(event) => event.startsWith("active-") || event.startsWith("define-"),
+		),
+	).toBe(false);
 });

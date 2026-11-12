@@ -70,6 +70,7 @@ function record() {
 		cid: 1,
 		contextKey: internalContextAuthorityKey(unit, 1),
 		contextExpected: true,
+		contextReleased: false,
 		phase: "holding" as const,
 		handoff: {
 			version: 1 as const,
@@ -119,6 +120,7 @@ test("wrong units, slots, boot, physical links and inverse cursors cannot select
 		{ identity: { ...record().identity, firmware: "unknown" } },
 		{ stableKey: "bad\nkey" },
 		{ extra: true },
+		{ contextReleased: true },
 	])
 		expect(() =>
 			parseInternalCallAuthority({ ...record(), ...change }, key),
@@ -142,6 +144,7 @@ test("withdrawal survives host inverse retirement while retaining the context wi
 		{
 			...value,
 			phase: "withdrawing",
+			contextReleased: true,
 			handoff: { ...value.handoff, phase: "withdrawing" },
 		},
 		key,

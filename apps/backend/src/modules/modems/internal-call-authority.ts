@@ -56,6 +56,7 @@ const schema = z
 		contextKey: digest,
 		/** True only after the context record is durably observed or committed. */
 		contextExpected: z.boolean(),
+		contextReleased: z.boolean(),
 		phase: z.enum(["holding", "withdrawing"]),
 		handoff: z.record(z.string(), z.unknown()).nullable(),
 	})
@@ -105,6 +106,11 @@ export function parseInternalCallAuthority(
 		throw new Error("Internal owner and host handoff identities disagree");
 	if (handoff?.phase === "withdrawing" && value.phase !== "withdrawing")
 		throw new Error("Withdrawing host cannot resume an internal call");
+	if (
+		(value.contextReleased && value.phase !== "withdrawing") ||
+		(handoff?.phase === "withdrawing" && !value.contextReleased)
+	)
+		throw new Error("Host withdrawal has no acknowledged context release");
 	return { ...value, physical, handoff };
 }
 /** The whole retained handoff has one durable unit record and one caller-owned
