@@ -104,11 +104,12 @@ const defaults: CellularNmControlDeps = {
  */
 export async function acquireCellularNmControl(
 	link: CellularPhysicalLink,
-	modemPath: string,
+	modemPath: string | undefined,
 	deps: CellularNmControlDeps = defaults,
 ): Promise<CellularNmControl> {
 	if (
-		!/^\/org\/freedesktop\/ModemManager1\/Modem\/\d+$/.test(modemPath) ||
+		(modemPath !== undefined &&
+			!/^\/org\/freedesktop\/ModemManager1\/Modem\/\d+$/.test(modemPath)) ||
 		!(await deps.present(link))
 	)
 		throw new Error("NM handoff identity unresolved");
@@ -200,8 +201,8 @@ export async function acquireCellularNmControl(
 					device.iface === link.ifname &&
 					!device.udi.startsWith("/org/freedesktop/ModemManager1/")
 				)) ||
-			(device.udi.startsWith("/org/freedesktop/ModemManager1/Modem/") &&
-				device.udi !== modemPath) ||
+			(device.udi.startsWith("/org/freedesktop/ModemManager1/") &&
+				(modemPath === undefined || device.udi !== modemPath)) ||
 			!(await deps.present(link))
 		)
 			throw new Error("NM data link belongs to another device");

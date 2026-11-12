@@ -61,7 +61,11 @@ import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
 import { reconcileDuplicateGsmProfiles } from "./gsm-duplicate-reconcile.ts";
 import { setGsmOperatorName } from "./gsm-operators-cache.ts";
-import { mmcliBinary, mmList, mmSetNetworkTypes } from "./mmcli.ts";
+import {
+	findInternalCallUnit,
+	type InternalCallUnitReference,
+} from "./internal-call-unit.ts";
+import { mmcliBinary, mmGetModem, mmList, mmSetNetworkTypes } from "./mmcli.ts";
 import { modemNetworkScan } from "./modem-network-scan.ts";
 import {
 	isModemPairAtStableKey,
@@ -658,6 +662,24 @@ export async function readCellularControlTarget(
 			? { initialEps: { apn, family } }
 			: {}),
 	};
+}
+/** Fresh unit-scoped inverse lookup, independent of the old SIM/MM index. */
+export function findCellularControlUnit(reference: InternalCallUnitReference) {
+	return findInternalCallUnit(reference, {
+		list: mmList,
+		info: async (id) => {
+			const info = await mmGetModem(id),
+				uid = info?.["modem.generic.device"];
+			return info && uid
+				? {
+						uid,
+						equipment: info["modem.generic.equipment-identifier"],
+					}
+				: undefined;
+		},
+		resolveUid: realpath,
+		target: readCellularControlTarget,
+	});
 }
 export async function cellularTargetPresent(
 	target: CellularNetworkTarget,

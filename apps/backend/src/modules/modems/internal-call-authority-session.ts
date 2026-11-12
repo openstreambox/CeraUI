@@ -55,6 +55,14 @@ export class InternalCallAuthoritySession {
 			(this.current.contextExpected && !value.contextExpected) ||
 			(this.current.contextReleased && !value.contextReleased) ||
 			(this.current.phase === "withdrawing" && value.phase !== "withdrawing") ||
+			(this.current.handoff &&
+				value.handoff &&
+				JSON.stringify(this.current.handoff.plan) !==
+					JSON.stringify(value.handoff.plan)) ||
+			(this.current.handoff &&
+				!value.handoff &&
+				(this.current.handoff.phase !== "withdrawing" ||
+					this.current.handoff.cursor !== 0)) ||
 			JSON.stringify(value.physical) !==
 				JSON.stringify(this.initial.physical) ||
 			JSON.stringify(value.identity) !== JSON.stringify(this.initial.identity)

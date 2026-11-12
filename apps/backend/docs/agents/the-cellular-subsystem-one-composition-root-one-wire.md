@@ -725,3 +725,27 @@ positive inactive read. A positive SIM change and a second coherent identity
 read are required; unreadable identity cannot release inhibition. This driver
 introduces no process, scheduler or recovery owner. Retained runtime composition
 and its config inverse must be registered before enabling the entrypoint.
+
+
+### Internal startup inverse (partial)
+
+The existing startup replay owner withdraws data hosts, inventories all cellular
+state, then recovers retained internal units before ordinary journal rollback.
+Runtime verification only reads these authorities. Recovery holds the same
+private unit lease and existing journal key; there is no additional retry timer.
+Fresh MM lookup uses unit and indexed USB identity, never the old object index
+or subscription allocation. Missing SIM reads cannot authorize a setter.
+
+Consumer absence precedes context recovery. Same-subscription restoration uses
+the recorded unit baseline; a different subscription can only park a positively
+inactive owned context. Host restoration and acknowledged control closure follow
+context release. A matching context attempt is durably completed before the
+whole-owner record is removed and its unit lease released. Lost acknowledgements
+retain that owner and retry bookkeeping without repeating restored hardware.
+Failed journal states stay blocked. A missing whole-owner file cannot prove that
+an unfinished context journal was undone. Physical absence still requires the
+independent NM restoration census before old host authority may retire.
+
+These are host recovery proofs. Retained internal activation/runtime composition,
+installed translator packaging and physical qualification remain open. Verizon
+remains unqualified.

@@ -83,11 +83,11 @@ export interface CellularHandoffIO {
 	) => Promise<boolean>;
 	readonly readUp: () => Promise<boolean | undefined>;
 	readonly setUp: (expected: boolean, desired: boolean) => Promise<boolean>;
-	readonly nm: CellularNmControl;
+	readonly nm: CellularNmControl | undefined;
 }
 export function cellularHandoffIO(
 	link: CellularPhysicalLink,
-	nm: CellularNmControl,
+	nm: CellularNmControl | undefined,
 	bootId: string,
 ): CellularHandoffIO {
 	link = Object.freeze({ ...link });
@@ -200,7 +200,7 @@ export class CellularHostHandoff {
 				record.plan.bootId === this.bootId &&
 				(await hooks.current()) &&
 				(await io.present()) &&
-				io.nm.valid(),
+				io.nm?.valid() === true,
 			inspect: (record, step) => this.inspect(record.plan, step),
 			apply: async (record, step) => {
 				if (!(await this.effect(record.plan, step, false)))
@@ -246,7 +246,7 @@ export class CellularHostHandoff {
 		if (
 			step === "nm-unmanaged" &&
 			plan.bootId === this.bootId &&
-			this.io.nm.owner === plan.nmOwner &&
+			this.io.nm?.owner === plan.nmOwner &&
 			this.io.nm.valid() &&
 			(await this.io.present())
 		) {
@@ -279,7 +279,7 @@ export class CellularHostHandoff {
 			);
 		if (step === "link-up")
 			return this.io.setUp(restore ? true : plan.up, restore ? plan.up : true);
-		if (step === "nm-unmanaged" && this.io.nm.owner === plan.nmOwner)
+		if (step === "nm-unmanaged" && this.io.nm?.owner === plan.nmOwner)
 			return this.io.nm.setManaged(
 				plan.device,
 				restore ? false : plan.device.managed,
@@ -307,7 +307,7 @@ export class CellularHostHandoff {
 		if (
 			!(await this.hooks.current()) ||
 			!(await this.io.present()) ||
-			this.io.nm.devices.length !== 1
+			this.io.nm?.devices.length !== 1
 		)
 			throw new Error("Host handoff unavailable");
 		const selected = this.io.nm.devices[0];

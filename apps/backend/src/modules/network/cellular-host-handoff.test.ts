@@ -36,7 +36,7 @@ function fixture(
 		udi: "synthetic-net",
 		managed,
 	};
-	const io: CellularHandoffIO = {
+	const io = {
 		present: async () => present,
 		resourceState: async () => resource,
 		nmRestored: async () => restored,
@@ -65,7 +65,7 @@ function fixture(
 			},
 			close: async () => {},
 		},
-	};
+	} satisfies CellularHandoffIO;
 	const hooks: CellularHandoffHooks = {
 		bootId,
 		read: async () => disk,
@@ -236,5 +236,25 @@ test("a different boot cannot advance an old handoff or restore through reused b
 	f.set({ resource: "absent", restored: true });
 	expect(await later.cleanup()).toBe(true);
 	expect(f.events.some((event) => /^(ra|up|managed)-/.test(event))).toBe(false);
+	expect(f.disk()).toBeUndefined();
+});
+
+test("an absent original device can retire through independent NM proof without an NM setter connection", async () => {
+	const f = fixture();
+	await f.handoff.prepare();
+	await f.handoff.prepareCall();
+	f.events.length = 0;
+	f.set({ present: false, resource: "absent" });
+	const inverse = new CellularHostHandoff(
+		owner,
+		"one",
+		link,
+		{ ...f.io, nm: undefined },
+		f.hooks,
+	);
+	expect(await inverse.cleanup()).toBe(false);
+	expect(f.events.some((event) => /^(ra|up|managed)-/.test(event))).toBe(false);
+	f.set({ restored: true });
+	expect(await inverse.cleanup()).toBe(true);
 	expect(f.disk()).toBeUndefined();
 });
