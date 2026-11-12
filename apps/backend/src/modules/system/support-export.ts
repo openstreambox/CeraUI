@@ -30,6 +30,31 @@ export function carrierSupportRows(sources: readonly CarrierSource[]) {
 	});
 }
 
+/** RPC's cid is a request correlation id, not a cellular identity. Remove it
+ * before the conservative cell-id filter so the diagnostic event stays useful.
+ * This grants no disclosure exception: the correlation value is always dropped.
+ */
+function withoutRpcCorrelation(line: string): string {
+	try {
+		const start = line.indexOf("{");
+		if (start < 0) return line;
+		const entry = JSON.parse(line.slice(start));
+		if (
+			typeof entry?.msg === "string" &&
+			/^RPC [a-zA-Z0-9_.]+ (?:ok|err)$/.test(entry.msg) &&
+			entry.meta &&
+			typeof entry.meta === "object" &&
+			!Array.isArray(entry.meta)
+		) {
+			delete entry.meta.cid;
+			return line.slice(0, start) + JSON.stringify(entry);
+		}
+	} catch {
+		// Journald text and non-JSON device logs follow the same filter below.
+	}
+	return line;
+}
+
 /** Fail closed for whole diagnostic lines carrying identifiers or credentials.
  * Historical journals predate current logger redaction. Long numeric runs are
  * removed even without a field label; APN/TAC come only from the allowlist above.
@@ -37,6 +62,7 @@ export function carrierSupportRows(sources: readonly CarrierSource[]) {
 export function redactSupportJournal(text: string): string {
 	return text
 		.split("\n")
+		.map(withoutRpcCorrelation)
 		.map((line) =>
 			/imei|iccid|imsi|msisdn|own[_. -]?numbers?|phone|cell[_. -]?(?:id|identity)|(?:^|[^a-z0-9])(?:cid|eci|nci|lac|tac|pci|eid|meid|esn)(?:[^a-z0-9]|$)|tracking[_. -]?area|location[_. -]?area|serial|device[_. -]?(?:id|identifier)|subscriber|equipment[_. -]?(?:id|identifier)|password|passwd|username|\bapn\b|\bpin\b|\bpuk\b|token|secret|authorization|bearer\s+[a-z0-9]|LPA:1\$|\d{9}|\+\d[\d ()-]{6}/i.test(
 				line,

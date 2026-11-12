@@ -7,6 +7,19 @@ import {
 } from "../modules/system/support-export.ts";
 
 describe("support export disclosure", () => {
+	test("strips RPC correlation ids without erasing the diagnostic event", () => {
+		const line = JSON.stringify({
+			msg: "RPC system.getLog err",
+			meta: { cid: "351756051523999", args: { service: "diagnostic-marker" } },
+		});
+		const output = redactSupportJournal(
+			`${line}\n2026-11-13T00:00:00 host service[42]: ${line}`,
+		);
+		expect(output).toContain("RPC system.getLog err");
+		expect(output).toContain("diagnostic-marker");
+		expect(output).not.toContain("351756051523999");
+	});
+
 	test("caps exported text after redaction, leaving room for the carrier summary", () => {
 		const output = boundSupportJournal(
 			`oldest marker${"a".repeat(10 * 1024 * 1024)}latest marker`,
