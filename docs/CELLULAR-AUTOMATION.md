@@ -55,6 +55,12 @@ flag and RA/link restoration. Failed cleanup retains ownership. Production
 activation and startup recovery integration remain incomplete; this adapter does
 not enable RNDIS by itself.
 
+Per-uplink data-plane helpers keep source/device identity, readiness, bounded
+DNS/HTTPS checks and cleanup separate from registration. Namespace checks cover
+routing withdrawal, duplicate native addresses and both HTTPS bindings. Production
+host composition, translator supervision and startup recovery remain incomplete;
+these helpers do not enable CLAT or traffic health by themselves.
+
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
 do not establish those capabilities. Verizon remains unqualified.
@@ -116,6 +122,13 @@ registro estable, activa la interfaz antes de la llamada interna. Una prueba con
 NetworkManager real verifica su control y la restauración de RA y de la interfaz.
 Una limpieza fallida conserva la propiedad. La activación y la recuperación al
 iniciar siguen incompletas; este adaptador no activa RNDIS por sí solo.
+
+Las herramientas de tráfico por enlace separan la identidad de origen y del
+dispositivo, la disponibilidad, las pruebas DNS/HTTPS limitadas y la limpieza del
+registro. Las pruebas aisladas cubren la retirada de rutas, las direcciones nativas
+duplicadas y ambas vinculaciones HTTPS. La composición del host, la supervisión
+del traductor y la recuperación al iniciar siguen incompletas; estas herramientas
+no activan CLAT ni las comprobaciones de tráfico por sí solas.
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon

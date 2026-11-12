@@ -513,3 +513,32 @@ cannot redirect an internal grant to another device.
 These owners are not yet composed with production activation, a data-plane host
 adapter or startup recovery. CLAT, health and physical qualification remain
 separate gates. No hardware/carrier pass follows from this fixture evidence.
+
+### Per-uplink data-plane primitives (partial)
+
+`cellular-source-state.ts` fences publication by physical parent, pair/USB epoch
+and observed grant. A translated source binds its TUN while retaining the physical
+parent's sender identity. A native grant invalidates translated readiness. A fresh
+producer snapshot must prove old sockets absent; republishing a map is insufficient.
+Legacy snapshots without identity cannot acknowledge partial withdrawal.
+
+Probe reservations are pair-scoped across USB/process return and cannot be refilled
+by a backward clock. Bound UDP uses source plus device, fixed questions, finite
+payload/response limits and no resolver fallback. HTTPS uses libcurl's nonblocking
+multi API, a literal source bind and a SO_BINDTOIFINDEX socket callback. Certificate/IP
+verification, an independent deadline and bounded response headers are mandatory;
+unavailable bindings remain unknown. The namespace gate proves both bindings
+against local TLS, including wrong-device/source and untrusted-certificate refusals.
+These allowances are conservative probe accounting, not billing certification.
+
+The route planner uses private tables and local/ingress-specific selectors before
+existing steering rules. Source-only rules do not close Linux's explicit-device
+on-link output fallback after a FIB error. The independent nft output fence closes
+before routing teardown. Native duplicate carrier addresses are fenced by kernel
+device index; translated source slots are unique. Another firewall owner's policy
+is never overridden with an accepting rule. Full inventories are verified before
+replacement or deletion; foreign edits retain the inverse rather than being flushed.
+
+Production host composition, translator supervision and startup recovery remain
+incomplete. The disconnected routing/HTTPS checks are host evidence, not physical
+carrier qualification. These helpers alone do not enable RNDIS, CLAT or recovery.

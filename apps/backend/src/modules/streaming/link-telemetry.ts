@@ -60,6 +60,7 @@ import { broadcastMsg } from "../ui/websocket-server.ts";
 import type { BondEntry } from "./bind-map.ts";
 import { onBindMapReportChange } from "./bind-map-disposition.ts";
 import { announceBindMapReport } from "./bind-map-notification.ts";
+import { cellularSourceWithdrawalConfirmed } from "./cellular-source-withdrawal.ts";
 import {
 	SRTLA_CONTROL_CONNECT_TIMEOUT_MS,
 	SRTLA_LISTEN_PORT,
@@ -440,4 +441,21 @@ export function broadcastLinkTelemetryIfChanged(): LinkTelemetryMessage | null {
 		});
 	}
 	return payload;
+}
+
+/** Kernel cleanup uses producer acknowledgement, never the republished registry. */
+export function senderReleasedCellularSource(
+	withdrawnAt: number,
+	linkId: string,
+	devices: readonly string[],
+): boolean {
+	return cellularSourceWithdrawalConfirmed(
+		lastSnapshot,
+		lastTickFresh,
+		lastReadMs,
+		nowFn(),
+		withdrawnAt,
+		linkId,
+		devices,
+	);
 }

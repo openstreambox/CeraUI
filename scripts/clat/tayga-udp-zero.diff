@@ -1,0 +1,30 @@
+--- a/nat64.c
++++ b/nat64.c
+@@ -16,6 +16,7 @@
+  */
+ 
+ #include <tayga.h>
++#include <sys/uio.h>
+ 
+ extern struct config *gcfg;
+ 
+@@ -202,6 +203,9 @@
+ 		return 0;
+ 	}
+ 	*tck = ones_add(*tck, ~convert_cksum(ip6, p->ip4));
++	/* UDP computed zero is encoded as all ones (RFC 768 / RFC 8200). */
++	if (p->data_proto == 17 && !*tck)
++		*tck = 0xffff;
+ 	return 0;
+ }
+ 
+@@ -690,6 +694,9 @@
+ 		return 0;
+ 	}
+ 	*tck = ones_add(*tck, convert_cksum(p->ip6, ip4));
++	/* UDP computed zero is encoded as all ones (RFC 768 / RFC 8200). */
++	if (p->data_proto == 17 && !*tck)
++		*tck = 0xffff;
+ 	return 0;
+ }
+ 
