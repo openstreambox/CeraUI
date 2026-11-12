@@ -57,6 +57,7 @@ import {
 /** Why a publication could not put a usable mapping on disk. */
 export type BindMapPublishFailure =
 	| "unmappable"
+	| "source_changed"
 	| "ips_write_failed"
 	| "sidecar_write_failed";
 

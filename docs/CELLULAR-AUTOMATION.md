@@ -120,6 +120,15 @@ does not qualify installed system-service supervision or production admission,
 sender acknowledgement, startup inventory or physical modem operation. Those
 integration and qualification gates remain open.
 
+Bond publication now serializes launch, refresh and withdrawal writes. Captured
+rows retain their original source observation; withdrawal or an identical-address
+successor makes old callbacks ineligible. A change during a submitted file
+operation receives one bounded restrictive republication before completion.
+A superseded observation makes the last publication unavailable to the binding resolver.
+Refresh publishes a valid empty bond when the final link withdraws, while launch
+still refuses an empty bond. This does not yet establish sender lifetime-bound
+withdrawal acknowledgement or production admission for managed cellular paths.
+
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
 do not establish those capabilities. Verizon remains unqualified.
@@ -252,6 +261,16 @@ comprueba que una ruta ajena sobreviva a una limpieza rechazada. No acredita la
 supervisión por el gestor de servicios instalado, la admisión de producción,
 la confirmación del emisor, el inventario al iniciar ni el módem físico. Esas
 pruebas e integraciones siguen pendientes.
+
+La publicación del conjunto de enlaces serializa las escrituras de inicio,
+actualización y retirada. Cada fila conserva su observación original; una
+retirada o una concesión nueva con la misma dirección invalida los procesos
+antiguos. Si cambia durante una escritura ya enviada, se realiza como máximo
+una publicación restrictiva adicional antes de finalizar. Una observación sustituida hace que el mapa anterior deje de estar disponible
+para el adaptador de vinculación. La actualización publica un conjunto
+vacío válido cuando se retira el último enlace; el inicio sigue rechazando un
+conjunto vacío. Todavía faltan la confirmación de retirada vinculada al proceso
+emisor y la admisión de producción para los enlaces celulares administrados.
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon

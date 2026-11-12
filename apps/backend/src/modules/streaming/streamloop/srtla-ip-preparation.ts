@@ -24,6 +24,7 @@ import type { BindMapPublication } from "../bind-map-writer.ts";
 import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
+	getLastPublishedBond,
 	publishSrtlaBond,
 } from "../srtla.ts";
 
@@ -34,6 +35,8 @@ export type SrtlaIpPreparationDeps = {
 	readonly writeList: (
 		entries: readonly BondEntry[],
 	) => Promise<BindMapPublication>;
+	/** Actual committed rows, which may shrink while publication is queued. */
+	readonly publishedEntries?: () => readonly BondEntry[] | undefined;
 };
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
@@ -41,6 +44,7 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 	localList: genSrtlaBondEntriesForLocalIpAddress,
 	bondedList: genSrtlaBondEntries,
 	writeList: publishSrtlaBond,
+	publishedEntries: () => getLastPublishedBond()?.entries,
 };
 
 /**
@@ -60,5 +64,20 @@ export async function prepareSrtlaIpAddresses(
 	if (entries.length === 0) {
 		throw new Error("no_available_network_connections");
 	}
-	return deps.writeList(entries);
+	const publication = await deps.writeList(entries);
+	if (deps.publishedEntries && !deps.publishedEntries()?.length)
+		throw new Error("no_available_network_connections");
+	return publication;
+}
+
+/** A running sender must receive a valid empty mapping when the final uplink
+ * withdraws. Only launch preparation rejects an empty bond before publication.
+ */
+export async function refreshSrtlaIpAddresses(
+	srtlaAddr: string,
+	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
+): Promise<BindMapPublication> {
+	return deps.writeList(
+		deps.isLocal(srtlaAddr) ? deps.localList(srtlaAddr) : deps.bondedList(),
+	);
 }
