@@ -47,8 +47,16 @@ export async function retainCellularClatSession(
 	deps: CellularClatSessionKernelDeps,
 ): Promise<CellularClatSession | undefined> {
 	const plan = parseCellularClatBirthPlan(raw),
-		routes = planCellularRoutes(plan.input);
-	if (!routes?.translated || !routes.mapped || !routes.nat64)
+		routes = planCellularRoutes(plan.input),
+		source = plan.input.ipv6,
+		prefixLength = plan.input.ipv6PrefixLength;
+	if (
+		!routes?.translated ||
+		!routes.mapped ||
+		!routes.nat64 ||
+		!source ||
+		prefixLength !== 64
+	)
 		throw new Error("CLAT kernel grant required");
 	const key = createHash("sha256")
 			.update(`cellular-uplink-slot\0${plan.input.slot}`)
@@ -85,6 +93,7 @@ export async function retainCellularClatSession(
 						routes,
 						plan.physical.ifname,
 						current,
+						{ source, prefixLength },
 					)) !== "clear"
 				)
 					return false;
