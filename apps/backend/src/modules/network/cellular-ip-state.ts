@@ -161,6 +161,26 @@ function fingerprint(row: Row): string {
 		Object.entries(row).sort(([a], [b]) => a.localeCompare(b)),
 	);
 }
+/** Exact row matcher for an inverse checkpoint; matching is not birth authority. */
+export function cellularIpEffectMatches(
+	effect: CellularIpEffect,
+	raw: unknown,
+): boolean {
+	try {
+		let row = object(raw);
+		if (effect.kind === "route") {
+			if (numeric(row.table) !== numeric(effect.selector[1])) return false;
+			const { table: _table, ...rest } = row;
+			row = rest;
+		}
+		return (
+			fingerprint(normalize(row, effect.kind, effect.family, true)) ===
+			fingerprint(expected(effect))
+		);
+	} catch {
+		return false;
+	}
+}
 export interface CellularIpIO {
 	readonly read: (argv: string[]) => Promise<string>;
 	readonly write: (argv: string[]) => Promise<void>;

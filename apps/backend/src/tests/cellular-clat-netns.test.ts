@@ -13,11 +13,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { changeLinkByIndex } from "../helpers/netlink-link.ts";
+import { acquirePrivateStateLease } from "../helpers/private-state-lease.ts";
 import { exchangeSourceBoundDatagram } from "../helpers/source-bound-datagram.ts";
+import { readCellularClatAllocation } from "../modules/network/cellular-clat-allocation.ts";
+import { CellularClatHost } from "../modules/network/cellular-clat-host.ts";
+import { createCellularClatKernelEffects } from "../modules/network/cellular-clat-kernel-effects.ts";
+import {
+	CellularClatSession,
+	parseCellularClatBirthPlan,
+} from "../modules/network/cellular-clat-session.ts";
 import {
 	CellularFirewall,
 	cellularFirewallIO,
 } from "../modules/network/cellular-firewall.ts";
+import { CellularForwardFence } from "../modules/network/cellular-forward-fence.ts";
 import { admitCellularForwarding } from "../modules/network/cellular-forwarding-admission.ts";
 import {
 	compareAndSetScopedCellularSysctl,
@@ -29,12 +38,24 @@ import {
 	cellularIpIO,
 } from "../modules/network/cellular-ip-state.ts";
 import { planCellularRoutes } from "../modules/network/cellular-route-plan.ts";
+import type { CellularTranslatorState } from "../modules/network/cellular-translator.ts";
+import { cellularTranslatorConfigKey } from "../modules/network/cellular-translator.ts";
 import { cellularTranslatorConfig } from "../modules/network/cellular-translator-config.ts";
 import {
 	cellularTunIO,
 	createCellularTun,
 	inspectCellularTun,
 } from "../modules/network/cellular-tun.ts";
+import {
+	configureCellularTun,
+	quiesceCellularTun,
+	verifyCellularTunConfiguration,
+} from "../modules/network/cellular-tun-configuration.ts";
+import {
+	cellularTunUnreferenced,
+	readCellularTunReferences,
+	retireCellularTun,
+} from "../modules/network/cellular-tun-retirement.ts";
 import { proveCellularUdpZero } from "./helpers/cellular-udp-zero.ts";
 import { runTestCommand } from "./helpers/run-test-command.ts";
 
@@ -44,7 +65,7 @@ const mode = process.env.CERALIVE_CLAT_PACKET_CHILD,
 	owner = "e".repeat(64),
 	grant = {
 		owner,
-		epoch: "packet-one",
+		epoch: "d".repeat(64),
 		slot: 6,
 		iface: "wwan6",
 		mtu: 1280,
@@ -76,18 +97,25 @@ const ip = async (...argv: string[]) => {
 	if (result.code) throw new Error(result.stderr);
 	return result.stdout;
 };
-async function scoped(name: string, current: () => Promise<boolean>) {
+async function scoped(
+	name: string,
+	current: () => Promise<boolean>,
+	force = true,
+) {
 	const link = { ifname: name, current };
 	for (const [key, desired] of [
 		["accept_ra", "0"],
 		["accept_ra_defrtr", "0"],
 		["autoconf", "0"],
+		["addr_gen_mode", "1"],
 		["accept_dad", "0"],
 		["disable_ipv6", "0"],
 		["forwarding", "1"],
 		["force_forwarding", "1"],
 		["proxy_ndp", "1"],
 	] as const) {
+		if (key === "force_forwarding" && !force) continue;
+		if (key === "addr_gen_mode" && !name.startsWith("cclat")) continue;
 		const before = await readScopedCellularSysctl(link, key);
 		if (
 			before === undefined ||
@@ -96,11 +124,18 @@ async function scoped(name: string, current: () => Promise<boolean>) {
 			throw new Error("Fixture per-link IPv6 configuration unavailable");
 	}
 }
-async function startTranslator(name: string, configuration: string) {
+async function startTranslator(
+	name: string,
+	configuration: string,
+	existingConfig?: string,
+) {
 	if (!binary) throw new Error("Required pinned translator unavailable");
 	const root = await mkdtemp(join(tmpdir(), "cellular-packet-translator-")),
-		path = join(root, "translator.conf");
-	await writeFile(path, configuration, { mode: 0o600 });
+		path = existingConfig ?? join(root, "translator.conf");
+	if (existingConfig) {
+		if ((await Bun.file(path).text()) !== configuration)
+			throw new Error("Generated translator configuration changed");
+	} else await writeFile(path, configuration, { mode: 0o600 });
 	const child = Bun.spawn([binary, "--config", path, "--nodetach"], {
 		stdin: "ignore",
 		stdout: "ignore",
@@ -143,6 +178,223 @@ async function startTranslator(name: string, configuration: string) {
 		},
 	};
 }
+async function composedHost(physicalIndex: number) {
+	const root = await mkdtemp(join(tmpdir(), "cellular-clat-composed-")),
+		store = { dir: join(root, "state") },
+		lease = await acquirePrivateStateLease(
+			{ dir: join(root, "leases") },
+			"e".repeat(64),
+		);
+	if (!lease) throw new Error("Composed fixture lease unavailable");
+	let owned = true,
+		live = true,
+		consumers = false,
+		withdrawals = 0,
+		child: Awaited<ReturnType<typeof startTranslator>> | undefined;
+	const invocation = "f".repeat(32);
+	try {
+		const physicalBefore: Record<string, string> = {};
+		for (const key of [
+			"accept_ra",
+			"accept_ra_defrtr",
+			"forwarding",
+			"proxy_ndp",
+			"force_forwarding",
+		] as const) {
+			const value = await readScopedCellularSysctl(
+				{ ifname: "wwan6", current: async () => true },
+				key,
+			);
+			if (value === undefined)
+				throw new Error("Composed fixture baseline unavailable");
+			physicalBefore[key] = value;
+		}
+		const bootId = (
+				await readFile("/proc/sys/kernel/random/boot_id", "utf8")
+			).trim(),
+			authority = parseCellularClatBirthPlan({
+				input: grant,
+				physical: {
+					ifname: "wwan6",
+					ifindex: String(physicalIndex),
+					usbDevice: "/sys/devices/fixture-veth",
+					netDevice: "/sys/devices/fixture-veth-net",
+					generation: "fixture-instance",
+				},
+				tunEpoch: grant.epoch,
+				birth: "1".repeat(32),
+				bootId,
+				physicalBefore,
+				globalForwarding: (
+					await readFile("/proc/sys/net/ipv6/conf/all/forwarding", "utf8")
+				).trim(),
+				dns: [],
+			}),
+			configPath = join(
+				store.dir,
+				`${cellularTranslatorConfigKey({ owner, epoch: grant.epoch, slot: 6, birth: authority.birth })}.conf`,
+			);
+		// Actual kernel effects, private namespace child supervision. PID-1
+		// ownership itself remains a separate installed-host qualification gate.
+		let notified = false;
+		const withdraw = () => {
+			if (!notified) {
+				notified = true;
+				withdrawals++;
+			}
+		};
+		const host = new CellularClatSession(authority, {
+			store,
+			bootId,
+			owned: () => owned,
+			currentNow: () => live,
+			current: async () => live,
+			preflight: async () =>
+				(await readCellularClatAllocation(
+					translated,
+					"wwan6",
+					async () => live,
+				)) === "clear",
+			links: cellularTunIO(async () => owned).links,
+			createTun: (birth) =>
+				createCellularTun(
+					birth.input.slot,
+					birth.input.owner,
+					birth.tunEpoch,
+					cellularTunIO(async () => live && host.installingAllowed),
+				),
+			unreferenced: async (born) =>
+				cellularTunUnreferenced(born, await readCellularTunReferences(born)),
+			deleteTun: (born) =>
+				retireCellularTun(
+					{ slot: grant.slot, owner, epoch: authority.tunEpoch },
+					born,
+					cellularTunIO(async () => owned),
+					() => owned,
+				),
+			withdraw,
+			cancelProbe: () => {},
+			consumersReleased: async () => consumers,
+			release: () => {
+				owned = false;
+				lease.release();
+			},
+			child: (childAuthority) =>
+				new CellularClatHost(childAuthority, {
+					store,
+					owned: () => owned,
+					currentNow: () => live && host.installingAllowed,
+					current: async () => live && host.installingAllowed,
+					cancelProbe: () => {},
+					withdraw,
+					consumersReleased: async () => consumers,
+					effects: (captured, routes, guard) =>
+						createCellularClatKernelEffects(captured, routes, guard, {
+							store,
+							bootId,
+							physicalState: async () => {
+								const rows = JSON.parse(await ip("-j", "link", "show"));
+								const found = rows.filter(
+									(row: { ifindex: number }) => row.ifindex === physicalIndex,
+								);
+								return found.length === 0
+									? "absent"
+									: found.length === 1 && found[0].ifname === "wwan6"
+										? "present"
+										: "foreign";
+							},
+							translator: {
+								inspect: async (expected): Promise<CellularTranslatorState> =>
+									!child
+										? { kind: "absent" }
+										: expected !== undefined && expected !== invocation
+											? { kind: "foreign" }
+											: {
+													kind: "owned",
+													running: child.child.exitCode === null,
+													invocation,
+													pid: child.child.pid,
+												},
+								start: async () => {
+									child = await startTranslator(
+										"composed",
+										cellularTranslatorConfig(routes),
+										configPath,
+									);
+									return invocation;
+								},
+								stop: async (expected) => {
+									if (expected !== invocation) return false;
+									await child?.close();
+									child = undefined;
+									return true;
+								},
+							},
+						}),
+				}),
+		});
+		await host.install();
+		const tun = inspectCellularTun(
+			await cellularTunIO(async () => owned).links(),
+			grant.slot,
+			owner,
+			authority.tunEpoch,
+		);
+		if (typeof tun === "string") throw new Error("Composed TUN birth missing");
+		expect(await host.valid()).toBe(true);
+		expect(await host.prepareProbe()).toBe(true);
+		expect(await host.setReady(true)).toBe(true);
+		const packet = {
+			device: tun.name,
+			ifindex: tun.index,
+			source: translated.source,
+			remote: "192.0.2.80",
+			port: 19000,
+			payload: new TextEncoder().encode("composed-clat-return"),
+			timeoutMs: 3000,
+			maxReplyBytes: 64,
+		};
+		expect(await exchangeSourceBoundDatagram(packet)).toEqual(packet.payload);
+		live = false;
+		expect(await host.setReady(true)).toBe(false);
+		expect(await host.setReady(false)).toBe(true);
+		expect(await host.cleanup()).toBe(false);
+		expect(withdrawals).toBe(1);
+		expect(
+			await exchangeSourceBoundDatagram({ ...packet, timeoutMs: 100 }),
+		).toBeUndefined();
+		consumers = true;
+		await ip("-4", "route", "add", "203.0.113.0/24", "dev", tun.name);
+		await expect(host.cleanup()).rejects.toThrow("TUN references retained");
+		expect(
+			JSON.parse(await ip("-4", "-j", "route", "show", "203.0.113.0/24")),
+		).toHaveLength(1);
+		expect(owned).toBe(true);
+		await ip("-4", "route", "del", "203.0.113.0/24", "dev", tun.name);
+		expect(await host.cleanup()).toBe(true);
+		expect(owned).toBe(false);
+		expect(
+			inspectCellularTun(
+				await cellularTunIO(async () => true).links(),
+				grant.slot,
+				owner,
+				authority.tunEpoch,
+			),
+		).toBe("absent");
+		expect(withdrawals).toBe(1);
+		expect(await readdir(store.dir)).toEqual([]);
+		for (const [key, value] of Object.entries(physicalBefore)) {
+			expect(
+				await readFile(`/proc/sys/net/ipv6/conf/wwan6/${key}`, "utf8"),
+			).toBe(`${value}\n`);
+		}
+	} finally {
+		await child?.close();
+		owned = false;
+		lease.release();
+		await rm(root, { recursive: true, force: true });
+	}
+}
 async function provider() {
 	if (readlinkSync("/proc/self/ns/net") === process.env.CERALIVE_CLAT_HOST_NS)
 		throw new Error("Provider must own a separate namespace");
@@ -162,6 +414,16 @@ async function provider() {
 		"provider0",
 	);
 	await ip("link", "set", "provider0", "up");
+	await ip(
+		"-6",
+		"route",
+		"add",
+		"2001:db8:77::/64",
+		"via",
+		"2001:db8:42::2",
+		"dev",
+		"provider0",
+	);
 	const tun = await createCellularTun(
 		31,
 		"f".repeat(64),
@@ -179,8 +441,23 @@ async function provider() {
 		),
 		server = createSocket("udp4");
 	let count = 0;
-	server.on("message", (bytes, peer) => {
+	server.on("message", async (bytes, peer) => {
 		count++;
+		if (bytes.toString() === "probe-lan6") {
+			const index = JSON.parse(
+				await ip("-j", "link", "show", "dev", "provider0"),
+			)[0].ifindex;
+			await exchangeSourceBoundDatagram({
+				device: "provider0",
+				ifindex: index,
+				source: "2001:db8:42::1",
+				remote: "2001:db8:77::99",
+				port: 19000,
+				payload: Uint8Array.of(1),
+				timeoutMs: 100,
+				maxReplyBytes: 64,
+			});
+		}
 		server.send(bytes, peer.port, peer.address);
 	});
 	await new Promise<void>((resolve, reject) => {
@@ -338,6 +615,17 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 				throw new Error("Fixture LAN IPv6 isolation unavailable");
 			await ip("addr", "add", "192.0.2.2/24", "dev", "lan0");
 			await ip("link", "set", "lan0", "up");
+			await ip("link", "add", "lan6", "type", "dummy");
+			await ip(
+				"-6",
+				"addr",
+				"add",
+				"2001:db8:77::2/64",
+				"nodad",
+				"dev",
+				"lan6",
+			);
+			await ip("link", "set", "lan6", "up");
 			await ip("route", "add", "default", "via", "192.0.2.1", "dev", "lan0");
 			const mainBefore = await ip("-j", "-4", "route", "show", "table", "main"),
 				forwardBefore = await Bun.file(
@@ -361,7 +649,7 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 				String(providerProcess.pid),
 			);
 			await ip("link", "set", "wwan6", "mtu", String(grant.mtu));
-			await scoped("wwan6", async () => true);
+			await scoped("wwan6", async () => true, false);
 			await ip(
 				"-6",
 				"addr",
@@ -375,6 +663,21 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 			providerProcess.stdin.write("start\n");
 			providerProcess.stdin.end();
 			await waitFor("CLAT_PROVIDER_RUNNING\n");
+			expect(
+				await readCellularClatAllocation(translated, "wwan6", async () => true),
+			).toBe("clear");
+			await ip("route", "add", "198.18.0.0/15", "dev", "lan0");
+			try {
+				expect(
+					await readCellularClatAllocation(
+						translated,
+						"wwan6",
+						async () => true,
+					),
+				).toBe("occupied");
+			} finally {
+				await ip("route", "del", "198.18.0.0/15", "dev", "lan0");
+			}
 			const tunIo = cellularTunIO(async () => true),
 				tun = await createCellularTun(6, owner, grant.epoch, tunIo),
 				current = async () => {
@@ -386,7 +689,6 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 					);
 					return typeof row !== "string" && row.index === tun.index;
 				};
-			await scoped(tun.name, current);
 			const rpfBefore = await Bun.file(
 					"/proc/sys/net/ipv4/conf/all/rp_filter",
 				).text(),
@@ -402,15 +704,6 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 					{ ifname: tun.name, current },
 				),
 			).toMatchObject({ ok: true, mode: "per-link" });
-			expect(
-				await changeLinkByIndex(tun.index, {
-					kind: "mtu",
-					mtu: translated.linkMtu,
-				}),
-			).toBe(true);
-			expect(await changeLinkByIndex(tun.index, { kind: "up", up: true })).toBe(
-				true,
-			);
 			const fence = new CellularFirewall(
 				{
 					owner,
@@ -423,6 +716,58 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 				cellularFirewallIO(current),
 			);
 			await fence.create("withdrawn");
+			const physical = JSON.parse(
+				await ip("-j", "link", "show", "dev", "wwan6"),
+			)[0];
+			const forward = new CellularForwardFence(
+				{
+					owner,
+					slot: 6,
+					tunIndex: tun.index,
+					physicalIndex: physical.ifindex,
+					mapped: translated.mapped ?? "",
+					nat64: translated.nat64 ?? "",
+					isolatePhysical: true,
+				},
+				cellularFirewallIO(current),
+			);
+			try {
+				await forward.create("withdrawn");
+			} catch (cause) {
+				const raw = await runTestCommand([
+					"nft",
+					"--numeric",
+					"--json",
+					"list",
+					"table",
+					"inet",
+					"ceracell_forward_6",
+				]);
+				throw new Error(`Forward fence did not verify: ${raw.stdout}`, {
+					cause,
+				});
+			}
+			const tunConfiguration = {
+				slot: 6,
+				owner,
+				epoch: grant.epoch,
+				index: tun.index,
+				linkMtu: translated.linkMtu,
+			};
+			expect(
+				await configureCellularTun(tunConfiguration, tunIo, () => true),
+			).toBe(true);
+			expect(
+				await verifyCellularTunConfiguration(
+					tunConfiguration,
+					tunIo,
+					() => true,
+				),
+			).toBe(true);
+			expect(
+				JSON.parse(await ip("-j", "addr", "show", "dev", tun.name))[0]
+					.addr_info,
+			).toEqual([]);
 			expect(
 				await changeCellularIndexedIp(
 					tun.index,
@@ -435,9 +780,16 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 					"add",
 				),
 			).toBe(true);
-			const physical = JSON.parse(
-				await ip("-j", "link", "show", "dev", "wwan6"),
-			)[0];
+			for (const name of ["wwan6"])
+				expect(
+					await compareAndSetScopedCellularSysctl(
+						{ ifname: name, current: async () => true },
+						"force_forwarding",
+						"0",
+						"1",
+					),
+				).toBe(true);
+			await forward.transition("active");
 			expect(
 				await changeCellularIndexedIp(
 					physical.ifindex,
@@ -523,6 +875,41 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 				).toBe(true);
 			}
 			expect(await exchangeSourceBoundDatagram(packet)).toEqual(packet.payload);
+			const transit = {
+				...packet,
+				payload: new TextEncoder().encode("probe-lan6"),
+			};
+			expect(await exchangeSourceBoundDatagram(transit)).toEqual(
+				transit.payload,
+			);
+			expect(
+				JSON.parse(
+					await ip(
+						"-6",
+						"-j",
+						"neigh",
+						"show",
+						"dev",
+						"lan6",
+						"to",
+						"2001:db8:77::99",
+					),
+				),
+			).toEqual([]);
+			const forwardRaw = await runTestCommand([
+				"nft",
+				"--json",
+				"list",
+				"table",
+				"inet",
+				"ceracell_forward_6",
+			]);
+			expect(
+				JSON.parse(forwardRaw.stdout)
+					.nftables.at(-1)
+					?.rule?.expr.find((expr: { counter?: unknown }) => expr.counter)
+					?.counter?.packets,
+			).toBeGreaterThan(0);
 			const lanTx = async () => {
 					const rows = JSON.parse(
 						await ip("-s", "-j", "link", "show", "dev", "lan0"),
@@ -584,6 +971,7 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 				);
 			}
 			await fence.transition("withdrawn");
+			await forward.transition("withdrawn");
 			expect(
 				await exchangeSourceBoundDatagram({ ...packet, timeoutMs: 100 }),
 			).toBeUndefined();
@@ -607,7 +995,55 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 			).toBe(tunRpfBefore);
 			await translator.close();
 			translator = undefined;
+			expect(
+				await changeCellularIndexedIp(
+					tun.index,
+					{
+						kind: "address",
+						family: 4,
+						address: translated.source,
+						prefix: 32,
+					},
+					"del",
+				),
+			).toBe(true);
+			expect(
+				await changeCellularIndexedIp(
+					physical.ifindex,
+					{ kind: "proxy", family: 6, address: translated.mapped ?? "" },
+					"del",
+				),
+			).toBe(true);
+			expect(
+				await quiesceCellularTun(tunConfiguration, tunIo, () => true),
+			).toBe(true);
+			expect(
+				await verifyCellularTunConfiguration(
+					tunConfiguration,
+					tunIo,
+					() => true,
+				),
+			).toBe(false);
+			for (const name of ["wwan6"])
+				expect(
+					await compareAndSetScopedCellularSysctl(
+						{ ifname: name, current: async () => true },
+						"force_forwarding",
+						"1",
+						"0",
+					),
+				).toBe(true);
+			expect(await forward.remove()).toBe(true);
 			expect(await fence.remove()).toBe(true);
+			expect(
+				await retireCellularTun(
+					{ slot: grant.slot, owner, epoch: grant.epoch },
+					tun,
+					tunIo,
+					() => true,
+				),
+			).toBe(true);
+			await composedHost(physical.ifindex);
 		} finally {
 			await translator?.close();
 			providerProcess.kill("SIGTERM");

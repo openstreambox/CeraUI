@@ -87,11 +87,12 @@ const scopedSysctlKeys = [
 	"autoconf",
 	"accept_dad",
 	"disable_ipv6",
+	"addr_gen_mode",
 ] as const;
 export type CellularSysctl = (typeof sysctlKeys)[number];
 export type CellularScopedSysctl = (typeof scopedSysctlKeys)[number];
 export type CellularSysctlValue = "0" | "1" | "2";
-export type CellularScopedSysctlValue = CellularSysctlValue | "-1";
+export type CellularScopedSysctlValue = CellularSysctlValue | "-1" | "3";
 function validValue(
 	key: CellularScopedSysctl,
 	value: string,
@@ -100,6 +101,7 @@ function validValue(
 		value === "0" ||
 		value === "1" ||
 		(key === "accept_dad" && value === "-1") ||
+		(key === "addr_gen_mode" && (value === "2" || value === "3")) ||
 		(["accept_ra", "accept_dad"].includes(key) && value === "2")
 	);
 }
@@ -152,6 +154,8 @@ const sysctlIO: CellularSysctlIO = {
 export interface CellularScopedLink {
 	readonly ifname: string;
 	readonly current: () => Promise<boolean>;
+	/** Synchronous retained-owner permit immediately before write dispatch. */
+	readonly writable?: () => boolean;
 }
 function sysctlPath(ifname: string, key: CellularScopedSysctl): string {
 	if (
@@ -197,6 +201,7 @@ export async function compareAndSetScopedCellularSysctl(
 		const before = await handle.readValue();
 		if ((before !== expected && before !== desired) || !(await link.current()))
 			return false;
+		if (link.writable && !link.writable()) return false;
 		if (before !== desired) await handle.writeValue(desired);
 		return (await link.current()) && (await handle.readValue()) === desired;
 	} finally {
@@ -218,7 +223,7 @@ export async function readCellularSysctl(
 		key,
 		io,
 	);
-	return value === "-1" ? undefined : value;
+	return value === "-1" || value === "3" ? undefined : value;
 }
 export function compareAndSetCellularSysctl(
 	link: CellularPhysicalLink,

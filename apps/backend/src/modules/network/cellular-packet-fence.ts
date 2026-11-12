@@ -132,13 +132,13 @@ export function cellularFenceInventory(
 		});
 	return entries;
 }
-function canonical(
+export function canonicalCellularNft(
 	value: unknown,
 	parent = "",
 	indexes: Readonly<Record<string, number>> = {},
 ): unknown {
 	if (Array.isArray(value))
-		return value.map((item) => canonical(item, "", indexes));
+		return value.map((item) => canonicalCellularNft(item, "", indexes));
 	if (!value || typeof value !== "object") return value;
 	let record: object = value;
 	if (
@@ -150,7 +150,7 @@ function canonical(
 		value.left.meta &&
 		typeof value.left.meta === "object" &&
 		"key" in value.left.meta &&
-		value.left.meta.key === "oif" &&
+		["iif", "oif"].includes(String(value.left.meta.key)) &&
 		"right" in value &&
 		typeof value.right === "string" &&
 		indexes[value.right] !== undefined
@@ -171,7 +171,7 @@ function canonical(
 				Number.isSafeInteger(entry) &&
 				entry >= 0
 					? 0
-					: canonical(entry, key, indexes),
+					: canonicalCellularNft(entry, key, indexes),
 			]),
 	);
 }
@@ -200,10 +200,11 @@ export function inspectCellularFence(
 				"metainfo" in entry
 			),
 	);
-	const actual = JSON.stringify(canonical(entries, "", indexes));
+	const actual = JSON.stringify(canonicalCellularNft(entries, "", indexes));
 	for (const mode of ["probe", "ready", "withdrawn"] as const)
 		if (
-			actual === JSON.stringify(canonical(cellularFenceInventory(input, mode)))
+			actual ===
+			JSON.stringify(canonicalCellularNft(cellularFenceInventory(input, mode)))
 		)
 			return mode;
 	return "foreign";

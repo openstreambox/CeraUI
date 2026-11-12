@@ -103,6 +103,23 @@ before add because Linux may acknowledge duplicate proxy adds. These are
 disconnected component proofs; production translated-host composition,
 process/startup recovery and physical NM/RA/hotspot coexistence remain gates.
 
+The translated host adapter now combines exact address/proxy effects, private
+source routes, output and forwarding fences, scoped link settings and translator
+supervision. A retained outer owner records a random TUN birth before creation
+and records child submission before installation. Recovery can withdraw and
+reverse a retained birth; it cannot resume installation. Unknown identities,
+cross-boot replacements and remaining foreign references retain the inverse and
+the slot lease. Removal checks references before stopping the translator,
+removing its address or bringing the link down, since those operations can
+implicitly remove routes. A changed grant immediately revokes setup writes;
+the old owner retains permission to deny and clean up.
+
+The disconnected packet fixture exercises this composition with private child
+supervision, including a foreign route that must survive refused cleanup. It
+does not qualify installed system-service supervision or production admission,
+sender acknowledgement, startup inventory or physical modem operation. Those
+integration and qualification gates remain open.
+
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
 do not establish those capabilities. Verizon remains unqualified.
@@ -217,6 +234,24 @@ admisión. Las operaciones de direcciones y vecinos proxy usan índices del kern
 e inventarios exactos; rechazan entradas proxy existentes antes de añadirlas.
 Estas pruebas aisladas no acreditan la composición de producción, la recuperación
 al iniciar ni la convivencia física con NM, RA y el punto de acceso.
+
+El adaptador traducido combina direcciones y vecinos proxy exactos, rutas
+privadas, filtros de salida y reenvío, ajustes por interfaz y supervisión del
+traductor. Un propietario retenido registra una identidad aleatoria antes de
+crear la TUN y registra el intento de instalar el adaptador antes de iniciarlo.
+La recuperación solo puede retirar y restaurar ese estado; no reanuda la
+instalación. Las identidades desconocidas, las sustituciones tras reiniciar y
+las referencias ajenas conservan el registro y la exclusión del enlace. Antes
+de detener el traductor, quitar su dirección o bajar la interfaz, se comprueban
+las referencias, porque esas operaciones pueden eliminar rutas implícitamente.
+Un cambio de concesión revoca las escrituras de instalación de inmediato y
+conserva el permiso para bloquear y limpiar el estado anterior.
+
+La prueba aislada de paquetes usa esta composición con un proceso privado y
+comprueba que una ruta ajena sobreviva a una limpieza rechazada. No acredita la
+supervisión por el gestor de servicios instalado, la admisión de producción,
+la confirmación del emisor, el inventario al iniciar ni el módem físico. Esas
+pruebas e integraciones siguen pendientes.
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon
