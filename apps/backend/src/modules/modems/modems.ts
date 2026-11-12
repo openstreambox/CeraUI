@@ -25,6 +25,7 @@ import { basename, dirname, join } from "node:path";
 import {
 	createDbusTransport,
 	type DbusTransport,
+	type DbusTransportOptions,
 } from "@ceralive/modem-control/transport";
 import {
 	decideModemReactivation,
@@ -54,6 +55,7 @@ import {
 	readCarrierIntent,
 	writeCarrierIntent,
 } from "./automatic-carrier-intent.ts";
+import { observeCellularNativeBearer } from "./cellular-network-observation.ts";
 import { automaticProfileConnectionFlags } from "./cellular-preparation.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
@@ -69,14 +71,44 @@ import {
 } from "./modem-registration.ts";
 import { broadcastModems } from "./modem-status.ts";
 import { getModem, type ModemConfig } from "./modems-state.ts";
+import { readNativeBearer } from "./native-bearer.ts";
 import type { RequestedFamily } from "./subscription-policy.ts";
 import type { InitialEpsSettings } from "./transport-policy.ts";
 import {
+	type InternalContext,
+	type InternalGrant,
+	type InternalRegistration,
+	internalContextCommand,
 	type ModemTransportIdentity,
+	parseInternalContext,
+	parseInternalContextActive,
+	parseInternalContextDns,
+	parseInternalGrant,
 	parseInternalIpv4Grant,
+	parseInternalRegistration,
 	parseQmapAutoConnect,
 	resolveTransportQuirk,
 } from "./transport-policy.ts";
+
+/** System-bus sessions for the retained cellular owners. Address selection lives
+ * at this facade, rather than depending on the package's session-bus default.
+ */
+export function createCellularSystemTransport(
+	options: Pick<DbusTransportOptions, "reconnect" | "callTimeoutMs"> = {},
+	factory: typeof createDbusTransport = createDbusTransport,
+): DbusTransport {
+	return factory({
+		...(options.reconnect !== undefined
+			? { reconnect: options.reconnect }
+			: {}),
+		...(options.callTimeoutMs !== undefined
+			? { callTimeoutMs: options.callTimeoutMs }
+			: {}),
+		busAddress:
+			process.env.DBUS_SYSTEM_BUS_ADDRESS ??
+			"unix:path=/run/dbus/system_bus_socket",
+	});
+}
 
 type ModemConfigMessage = {
 	config: {
@@ -443,7 +475,7 @@ export function handleModems(conn: WebSocket, msg: ModemsMessage["modems"]) {
 }
 
 /** Private transport projection. Subscriber identifiers never enter the wire roster. */
-export interface CellularControlTarget {
+export interface CellularNetworkTarget {
 	readonly id: number;
 	readonly key: string;
 	readonly deviceId: string;
@@ -455,15 +487,18 @@ export interface CellularControlTarget {
 	readonly ifindex: string;
 	readonly usbDevice: string;
 	readonly generation: string;
-	readonly serial?: UsbSerialIdentity;
 	readonly identity: ModemTransportIdentity;
 	readonly sim: ReadyModemSim;
+}
+export interface CellularControlTarget extends CellularNetworkTarget {
+	readonly serial?: UsbSerialIdentity;
 	readonly initialEps?: InitialEpsSettings;
 }
-export async function readCellularControlTarget(
+/** Read-only physical/subscription observation; no vendor quirk grants writes. */
+export async function readCellularNetworkTarget(
 	id: number,
 	key: string,
-): Promise<CellularControlTarget | undefined> {
+): Promise<CellularNetworkTarget | undefined> {
 	const sim = await readReadyModemSim(id);
 	if (!sim || sim === "unreadable") return undefined;
 	const info = sim.modemInfo;
@@ -511,11 +546,36 @@ export async function readCellularControlTarget(
 		firmware: info["modem.generic.revision"] ?? "",
 		mode,
 	} as const;
-	if (!resolveTransportQuirk(identity)) return undefined;
 	const deviceId = info["modem.generic.device-identifier"],
 		simId = sim.simInfo["sim.properties.iccid"];
 	if (!(await isModemPairAtStableKey(key, { deviceId, simId })))
 		return undefined;
+	return {
+		id,
+		key,
+		deviceId,
+		simId,
+		subscriber: sim.simInfo["sim.properties.imsi"] ?? "",
+		equipment: info["modem.generic.equipment-identifier"],
+		ifname,
+		netDevice,
+		usbDevice,
+		ifindex: (
+			await readFile(`/sys/class/net/${ifname}/ifindex`, "utf8")
+		).trim(),
+		generation: await usbGeneration(usbDevice),
+		identity,
+		sim,
+	};
+}
+export async function readCellularControlTarget(
+	id: number,
+	key: string,
+): Promise<CellularControlTarget | undefined> {
+	const target = await readCellularNetworkTarget(id, key);
+	if (!target || !resolveTransportQuirk(target.identity)) return undefined;
+	const { usbDevice } = target,
+		info = target.sim.modemInfo;
 	const candidates: UsbSerialIdentity[] = [];
 	const primaryCandidates: UsbSerialIdentity[] = [];
 	for (const port of info["modem.generic.ports"].filter((p) =>
@@ -542,22 +602,9 @@ export async function readCellularControlTarget(
 	}
 	const family = info["modem.3gpp.eps.initial-bearer.settings.ip-type"];
 	const apn = info["modem.3gpp.eps.initial-bearer.settings.apn"];
+	if (!(await cellularTargetPresent(target))) return undefined;
 	return {
-		id,
-		key,
-		deviceId,
-		simId,
-		subscriber: sim.simInfo["sim.properties.imsi"] ?? "",
-		equipment: info["modem.generic.equipment-identifier"],
-		ifname,
-		netDevice,
-		usbDevice,
-		ifindex: (
-			await readFile(`/sys/class/net/${ifname}/ifindex`, "utf8")
-		).trim(),
-		generation: await usbGeneration(usbDevice),
-		identity,
-		sim,
+		...target,
 		...(primaryCandidates.length === 1 && primaryCandidates[0]
 			? { serial: primaryCandidates[0] }
 			: primaryCandidates.length === 0 &&
@@ -572,7 +619,7 @@ export async function readCellularControlTarget(
 	};
 }
 export async function cellularTargetPresent(
-	target: CellularControlTarget,
+	target: CellularNetworkTarget,
 ): Promise<boolean> {
 	try {
 		return (
@@ -586,6 +633,13 @@ export async function cellularTargetPresent(
 	} catch {
 		return false;
 	}
+}
+/** Named read-only facade for native data-plane consumers. */
+export function readCellularNativeBearer(target: CellularNetworkTarget) {
+	return observeCellularNativeBearer(target, {
+		target: readCellularNetworkTarget,
+		bearer: readNativeBearer,
+	});
 }
 export function parseCellularSubscriber(reply: string): string | undefined {
 	const lines = reply
@@ -603,10 +657,19 @@ export interface CellularControl {
 	readonly disableAutoConnect: () => Promise<boolean>;
 	readonly reset: () => Promise<void>;
 	readonly registration: () => Promise<boolean>;
+	readonly registrationState: () => Promise<InternalRegistration>;
+	readonly readContext: (cid: number) => Promise<InternalContext | undefined>;
+	readonly contextActive: (cid: number) => Promise<boolean | undefined>;
+	readonly readGrant: (cid: number) => Promise<InternalGrant | undefined>;
+	readonly readContextDns: (
+		cid: number,
+	) => Promise<readonly string[] | undefined>;
+	readonly onRevoked: (callback: () => void) => () => void;
 	readonly defineContext: (
 		cid: number,
 		apn: string,
 		family: RequestedFamily,
+		settings?: readonly string[],
 	) => Promise<void>;
 	readonly activateContext: (cid: number, active: boolean) => Promise<void>;
 	readonly readIpv4Grant: (cid: number) => Promise<string | undefined>;
@@ -641,7 +704,7 @@ const defaultCellularControlAcquireDeps: CellularControlAcquireDeps = {
 	present: cellularTargetPresent,
 	pair: isModemPairAtStableKey,
 	resolveUid: realpath,
-	transport: createDbusTransport,
+	transport: createCellularSystemTransport,
 	exchange: exchangeUsbSerial,
 };
 /** Own a dedicated, non-reconnecting bus connection for the inhibition lifetime. */
@@ -668,9 +731,14 @@ export async function acquireCellularControl(
 	let held = false,
 		closed = false,
 		revoked = false;
-	transport.on("disconnected", () => {
+	const revocationListeners = new Set<() => void>();
+	const revoke = () => {
+		if (revoked) return;
 		revoked = true;
-	});
+		for (const callback of revocationListeners) callback();
+	};
+	transport.on("disconnected", revoke);
+	signal?.addEventListener("abort", revoke, { once: true });
 	const valid = async () =>
 		held &&
 		!closed &&
@@ -699,6 +767,7 @@ export async function acquireCellularControl(
 				await inhibitControl(transport, uid, false);
 		} finally {
 			held = false;
+			signal?.removeEventListener("abort", revoke);
 			await transport.disconnect();
 		}
 	};
@@ -712,7 +781,7 @@ export async function acquireCellularControl(
 				sender: "org.freedesktop.DBus",
 			},
 			(event) => {
-				if (event.body[0] === MM_DEST) revoked = true;
+				if (event.body[0] === MM_DEST) revoke();
 			},
 		);
 		await inhibitControl(transport, uid, true);
@@ -733,6 +802,40 @@ export async function acquireCellularControl(
 		return {
 			valid,
 			verifySubscriber,
+			onRevoked: (callback) => {
+				revocationListeners.add(callback);
+				if (revoked || closed || signal?.aborted) callback();
+				return () => {
+					revocationListeners.delete(callback);
+				};
+			},
+			registrationState: async () =>
+				parseInternalRegistration(await exchange("AT+CEREG?")),
+			readContext: async (cid) => {
+				requireInternal();
+				return parseInternalContext(await exchange("AT+CGDCONT?"), cidArg(cid));
+			},
+			contextActive: async (cid) => {
+				requireInternal();
+				return parseInternalContextActive(
+					await exchange("AT+CGACT?"),
+					cidArg(cid),
+				);
+			},
+			readGrant: async (cid) => {
+				requireInternal();
+				return parseInternalGrant(
+					await exchange(`AT+CGPADDR=${cidArg(cid)}`),
+					cid,
+				);
+			},
+			readContextDns: async (cid) => {
+				requireInternal();
+				return parseInternalContextDns(
+					await exchange(`AT+CGCONTRDP=${cidArg(cid)}`),
+					cid,
+				);
+			},
 			readAutoConnect: async () => {
 				requireQmap();
 				return parseQmapAutoConnect(await exchange('AT+QMAP="auto_connect"'));
@@ -751,16 +854,18 @@ export async function acquireCellularControl(
 			},
 			registration: async () => {
 				const reply = await exchange("AT+CEREG?");
-				return /^\+CEREG:\s*\d+,\s*[15](?:,|\s*$)/m.test(reply);
+				return ["home", "roaming"].includes(parseInternalRegistration(reply));
 			},
-			defineContext: async (cid, apn, family) => {
+			defineContext: async (cid, apn, family, settings) => {
 				requireInternal();
-				if (!/^[a-zA-Z0-9._-]{1,100}$/.test(apn))
-					throw new Error("Invalid APN");
-				await requireSubscriber();
-				await exchange(
-					`AT+CGDCONT=${cidArg(cid)},"${family === "ipv4" ? "IP" : family === "ipv6" ? "IPV6" : "IPV4V6"}","${apn}"`,
+				const command = internalContextCommand(
+					cidArg(cid),
+					apn,
+					family,
+					settings,
 				);
+				await requireSubscriber();
+				await exchange(command);
 			},
 			activateContext: async (cid, active) => {
 				requireInternal();

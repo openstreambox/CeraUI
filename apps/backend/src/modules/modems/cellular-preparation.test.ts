@@ -74,6 +74,12 @@ function fixture(equipment = "000000000000001") {
 					calls.push("release");
 				},
 				registration: async () => true,
+				registrationState: async () => "home",
+				readContext: async () => undefined,
+				contextActive: async () => undefined,
+				readGrant: async () => undefined,
+				readContextDns: async () => undefined,
+				onRevoked: () => () => {},
 				defineContext: async () => {},
 				activateContext: async () => {},
 				readIpv4Grant: async () => undefined,
