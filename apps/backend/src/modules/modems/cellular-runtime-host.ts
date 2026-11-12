@@ -14,6 +14,7 @@ import {
 	cellularSenderAllowsPublication,
 	cellularSenderRuntime,
 } from "../streaming/cellular-sender-runtime.ts";
+import { getMutationBlocks } from "../streaming/lifecycle-admission.ts";
 import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import {
 	probeSrtlaSenderCapabilities,
@@ -28,6 +29,7 @@ import {
 import { captureCellularDataGrant } from "./cellular-grant.ts";
 import { CellularGrantLifetime } from "./cellular-grant-lifetime.ts";
 import { cellularHostStore } from "./cellular-host-recovery.ts";
+import { reconnectCellularNativeHost } from "./cellular-native-reconnect-host.ts";
 import { readCellularNmIp } from "./cellular-nm-ip.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import { privateCellularProbeBudget } from "./cellular-probe-budget.ts";
@@ -164,6 +166,7 @@ async function capture(
 	const config = getModem(id)?.config,
 		key = modemStableKeyForId(id);
 	if (!config?.conn || !config.autoconfig || !key) return undefined;
+	const uuid = config.conn;
 	let active = false,
 		iface: string | undefined;
 	const lifetime = new CellularGrantLifetime(() => {
@@ -173,6 +176,10 @@ async function capture(
 		await lifetime.start();
 		const target = await readCellularNetworkTarget(id, key);
 		if (!target) {
+			await lifetime.close();
+			return undefined;
+		}
+		if (getMutationBlocks().some((block) => block.stableKey === key)) {
 			await lifetime.close();
 			return undefined;
 		}
@@ -192,16 +199,17 @@ async function capture(
 				lifetime.current &&
 				modemStableKeyForId(id) === key &&
 				getModem(id)?.config === config &&
+				config.conn === uuid &&
 				!getModem(id)?.inhibit &&
 				!getModem(id)?.is_scanning,
 			currentPhysical = async () =>
 				currentNow() && (await cellularTargetPresent(target)) && currentNow(),
 			pair = {
-				uuid: config.conn,
+				uuid,
 				deviceId: target.deviceId,
 				simId: target.simId,
 			},
-			fields = await nmConnGetFields(config.conn, [
+			fields = await nmConnGetFields(uuid, [
 				"gsm.device-id",
 				"gsm.sim-id",
 				"gsm.auto-config",
@@ -229,12 +237,12 @@ async function capture(
 			/^\d{5,6}$/.test(home) &&
 			selection.state !== "not-qualified" &&
 			quirk?.owner !== "internal-call" &&
-			(!quirk || (await automaticActivationReady(config.conn)));
+			(!quirk || (await automaticActivationReady(uuid)));
 		const bearer = eligible
 				? await readCellularNativeBearer(target)
 				: undefined,
 			nm = bearer
-				? await readCellularNmIp(target, config.conn, currentPhysical)
+				? await readCellularNmIp(target, uuid, currentPhysical)
 				: undefined,
 			addresses = nm ? await kernelAddresses(iface) : undefined,
 			grant =
@@ -285,9 +293,8 @@ async function capture(
 				active = false;
 				await lifetime.close();
 			},
-			// Native reconnect uses the existing modem mutation owner; never a USB
-			// reset or an unjournaled host call. Until admitted, backoff retains it.
-			reconnect: async () => false,
+			reconnect: (withdrawn) =>
+				reconnectCellularNativeHost(target, uuid, withdrawn),
 		};
 		return observation;
 	} catch (error) {

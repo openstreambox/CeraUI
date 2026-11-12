@@ -19,7 +19,7 @@
 /* NetworkManager / nmcli helpers */
 
 import { logger } from "../../helpers/logger.ts";
-import { argMatch, ID_RE, run } from "../../helpers/run.ts";
+import { argMatch, DEFAULT_TIMEOUT_MS, ID_RE, run } from "../../helpers/run.ts";
 import {
 	handleNmcliCommand,
 	shouldMockWifi,
@@ -238,7 +238,11 @@ export async function nmConnDelete(uuid: ConnectionUUID) {
 	return false;
 }
 
-export async function nmConnect(uuid: ConnectionUUID, timeout?: number) {
+export async function nmConnect(
+	uuid: ConnectionUUID,
+	timeout?: number,
+	execute: typeof run = run,
+) {
 	try {
 		// In mock mode, simulate successful connection
 		if (shouldMockWifi()) {
@@ -247,9 +251,14 @@ export async function nmConnect(uuid: ConnectionUUID, timeout?: number) {
 		}
 
 		const timeoutArgs = timeout ? ["-w", String(timeout)] : [];
-		const stdout = await run(
+		const stdout = await execute(
 			"nmcli",
 			timeoutArgs.concat(["conn", "up", argMatch(ID_RE, uuid)]),
+			// Let NM's requested wait finish before the client deadline. The
+			// default process cap otherwise cuts a 45-second activation at 30.
+			timeout && Number.isFinite(timeout) && timeout > 0
+				? { timeout: Math.max(DEFAULT_TIMEOUT_MS, (timeout + 5) * 1000) }
+				: undefined,
 		);
 		return parseNmConnActivated(stdout);
 	} catch (err) {

@@ -639,7 +639,18 @@ Stored inverse, birth and auxiliary receipt schema failures report the same
 protected read fault as malformed JSON. Changed global forwarding context
 retains scoped inverses; this owner never writes global forwarding.
 
-FM350 activation, journaled native reconnect, installed translator packaging and
+Native reconnect uses the existing journal and per-key lifecycle lease after
+complete host/consumer withdrawal. Fresh pair/home/profile/USB and exact NM
+active-or-idle evidence precede each call; registration and transport preparation
+remain required. The old bearer lifetime is deliberately not reused after its
+own disconnect. Unknown effects retain the ordinary failed mutation block and
+exclude runtime publication. Startup restoration never disconnects and cannot
+invent missing cold-boot preparation. USB availability never triggers a reset.
+NM's requested activation wait has a client deadline at least five seconds
+longer, within the transaction's bounded dispatch window; the generic command
+cap must not silently truncate a 45-second activation at 30 seconds.
+
+FM350 activation, installed translator packaging and
 physical service/USB/reboot/NM/RA/hotspot qualification remain open. Verizon is
 unqualified. Host fixtures do not close these gates.
 

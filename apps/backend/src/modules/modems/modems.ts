@@ -61,7 +61,7 @@ import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
 import { reconcileDuplicateGsmProfiles } from "./gsm-duplicate-reconcile.ts";
 import { setGsmOperatorName } from "./gsm-operators-cache.ts";
-import { mmcliBinary, mmSetNetworkTypes } from "./mmcli.ts";
+import { mmcliBinary, mmList, mmSetNetworkTypes } from "./mmcli.ts";
 import { modemNetworkScan } from "./modem-network-scan.ts";
 import {
 	isModemPairAtStableKey,
@@ -567,6 +567,47 @@ export async function readCellularNetworkTarget(
 		identity,
 		sim,
 	};
+}
+/** Re-find the exact device+SIM through fresh enumeration after MM renumbers.
+ * Raw transport reads stay in this existing facade. Duplicate or incomplete
+ * inventories never select the first remembered index or port.
+ */
+export async function findCellularNetworkTarget(
+	key: string,
+	pair: { readonly deviceId: string; readonly simId: string },
+	deps: {
+		readonly list: () => Promise<readonly number[] | undefined>;
+		readonly sim: typeof readReadyModemSim;
+		readonly target: typeof readCellularNetworkTarget;
+	} = {
+		list: mmList,
+		sim: readReadyModemSim,
+		target: readCellularNetworkTarget,
+	},
+): Promise<CellularNetworkTarget | undefined> {
+	const ids = await deps.list();
+	if (!ids || ids.length > 32 || new Set(ids).size !== ids.length)
+		return undefined;
+	const matches: CellularNetworkTarget[] = [];
+	for (const id of ids) {
+		const sim = await deps.sim(id);
+		if (
+			!sim ||
+			sim === "unreadable" ||
+			sim.modemInfo["modem.generic.device-identifier"] !== pair.deviceId ||
+			sim.simInfo["sim.properties.iccid"] !== pair.simId
+		)
+			continue;
+		const target = await deps.target(id, key);
+		if (
+			target?.key === key &&
+			target.id === id &&
+			target.deviceId === pair.deviceId &&
+			target.simId === pair.simId
+		)
+			matches.push(target);
+	}
+	return matches.length === 1 ? matches[0] : undefined;
 }
 export async function readCellularControlTarget(
 	id: number,

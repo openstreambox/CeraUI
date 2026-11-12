@@ -1,5 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { releaseCellularSource } from "../network/cellular-source-state.ts";
+import {
+	captureCellularSourceWithdrawal,
+	releaseCellularSource,
+} from "../network/cellular-source-state.ts";
 import type { CellularDataGrant } from "./cellular-grant.ts";
 import { CellularPathOwner } from "./cellular-path-owner.ts";
 import type { CellularRuntimeSession } from "./cellular-runtime-session.ts";
@@ -14,7 +17,7 @@ export interface CellularRuntimeObservation {
 	readonly currentNow: () => boolean;
 	readonly current: () => Promise<boolean>;
 	readonly close: () => Promise<void>;
-	readonly reconnect: () => Promise<boolean>;
+	readonly reconnect: (withdrawn: () => boolean) => Promise<boolean>;
 }
 export interface CellularRuntimeDeps {
 	readonly now: () => number;
@@ -151,7 +154,22 @@ export class CellularRuntime {
 					};
 				},
 				probe: async () => actor.session?.probe() ?? "unavailable",
-				reconnect: async () => actor.observation?.reconnect() ?? false,
+				reconnect: async () => {
+					const row = actor.observation;
+					if (!row || actor.session || !actor.retained) return false;
+					const withdrawn = captureCellularSourceWithdrawal(
+						actor.owner,
+						actor.epoch,
+						actor.iface,
+					);
+					return row.reconnect(
+						() =>
+							actor.retained &&
+							actor.observation === row &&
+							!actor.session &&
+							withdrawn(),
+					);
+				},
 				passiveHealthy: () => false,
 			},
 		);

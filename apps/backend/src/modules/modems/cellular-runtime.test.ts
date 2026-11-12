@@ -106,7 +106,8 @@ function fixture() {
 				events.push(`close-${stamp}`);
 				current = false;
 			},
-			reconnect: async () => {
+			reconnect: async (withdrawn) => {
+				expect(withdrawn()).toBe(true);
 				events.push("reconnect");
 				return false;
 			},
@@ -227,4 +228,21 @@ test("a missing grant on the same physical generation cannot erase carrier failu
 	f.set({ now: 120000 });
 	await f.root.reconcile([f.observation()]);
 	expect(f.events.filter((event) => event === "reconnect")).toHaveLength(1);
+});
+
+test("native reconnect cannot run before the retained host and consumer inverse has finished", async () => {
+	const f = fixture();
+	f.set({ verdict: "failed" });
+	await f.root.reconcile([f.observation()]);
+	f.set({ now: 30_000 });
+	await f.root.reconcile([f.observation()]);
+	f.set({ now: 90_000, clean: false });
+	await f.root.reconcile([f.observation()]);
+	expect(f.events).not.toContain("reconnect");
+	f.set({ now: 90_001, clean: true });
+	await f.root.reconcile([f.observation()]);
+	const reconnect = f.events.indexOf("reconnect");
+	expect(reconnect).toBeGreaterThan(-1);
+	expect(f.events.slice(0, reconnect).at(-1)).toBe("finish-true");
+	expect(cellularSourceReady("wwan0", "192.0.2.2")).toBe(false);
 });
