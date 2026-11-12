@@ -153,6 +153,7 @@ export const bindMapDispositionSchema = z.object({
 		"retained_last_valid",
 		"legacy_unique_only",
 		"startup_collision_excluded",
+		"required_binding_refused",
 	]),
 	collisions: z.array(bindMapCollisionSchema).optional(),
 });

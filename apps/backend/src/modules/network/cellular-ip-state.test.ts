@@ -10,6 +10,26 @@ const candidate = planCellularRoutes({
 	mtu: 1428,
 	ipv4: "192.0.2.2",
 });
+test("kernel-detached selectors permit exact inverse inspection but never readiness or malformed markers", async () => {
+	const f = fixture(),
+		rule = {
+			priority: 60,
+			src: "192.0.2.2",
+			iif: "lo",
+			oif: "wwan0",
+			oif_detached: null,
+			action: "7",
+			protocol: "129",
+		};
+	f.rules([rule]);
+	expect(await f.state.inspect(terminal)).toBe("foreign");
+	expect(await f.state.inspect(terminal, true)).toBe("owned");
+	f.rules([{ ...rule, oif_detached: true }]);
+	expect(await f.state.inspect(terminal, true)).toBe("foreign");
+	f.rules([{ ...rule, oif_detached: null, iif_detached: null }]);
+	expect(await f.state.inspect(terminal, true)).toBe("foreign");
+	expect(f.writes).toEqual([]);
+});
 if (!candidate) throw new Error("Missing route plan");
 const plan = candidate;
 const terminal = plan.effects[0];

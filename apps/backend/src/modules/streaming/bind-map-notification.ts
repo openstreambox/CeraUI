@@ -79,6 +79,8 @@ export function bindMapBandMessage(
 			return `Link mapping is unavailable${suffix}, so links sharing an address cannot be told apart: ${describeCollisions(report)}. One of them is carrying the bond and the device cannot tell which physical modem it is.`;
 		case "legacy_unique_only":
 			return `Link mapping is unavailable${suffix}. Every link with its own address is bonded normally; two modems sharing one address could not be bonded together.`;
+		case "required_binding_refused":
+			return `Link mapping is not ready${suffix}. No links are sending. Check the network devices; the sender will retry when their mapping is valid.`;
 	}
 }
 

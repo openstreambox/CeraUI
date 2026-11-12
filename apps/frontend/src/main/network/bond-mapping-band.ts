@@ -37,6 +37,10 @@ const COPY = {
 		titleKey: "network.collision.bindMapLegacyTitle",
 		bodyKey: "network.collision.bindMapLegacyBody",
 	},
+	required_binding_refused: {
+		titleKey: "network.collision.bindMapRequiredTitle",
+		bodyKey: "network.collision.bindMapRequiredBody",
+	},
 } as const;
 
 export function bondMappingBand(

@@ -40,29 +40,24 @@
   about the same bond.
 */
 
+import type { Telemetry } from "@ceraui/srtla-send/telemetry";
 import {
 	type BondEntry,
 	type CollisionGroup,
 	collisionGroups,
 } from "./bind-map.ts";
 
-export type BindMapState = "active" | "absent" | "degraded";
+export type BindMapState = NonNullable<Telemetry["bind_map_status"]>["state"];
 
 /** The seven ADR-003 §6.4 reasons, spelled exactly as the sender spells them. */
-export type BindMapDegradedReason =
-	| "hash_mismatch"
-	| "malformed"
-	| "unknown_iface"
-	| "retry_exhausted"
-	| "missing_file"
-	| "unreadable"
-	| "unsupported";
+export type BindMapDegradedReason = NonNullable<
+	Telemetry["bind_map_status"]
+>["reason"] &
+	string;
 
-export type BindMapDispositionState =
-	| "mapped"
-	| "retained_last_valid"
-	| "legacy_unique_only"
-	| "startup_collision_excluded";
+export type BindMapDispositionState = NonNullable<
+	Telemetry["disposition"]
+>["state"];
 
 export interface BindMapStatus {
 	readonly state: BindMapState;

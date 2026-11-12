@@ -25,12 +25,28 @@ function hostPrefix(value: unknown): string {
 		throw new Error("Unknown cellular IP selector");
 	return value.replace(/\/(?:32|128)$/, "");
 }
-function normalize(raw: unknown, kind: "rule" | "route", family: 4 | 6): Row {
+function normalize(
+	raw: unknown,
+	kind: "rule" | "route",
+	family: 4 | 6,
+	allowDetached: boolean,
+): Row {
 	const row = object(raw),
 		result: Row = {};
 	const allowed =
 		kind === "rule"
-			? ["priority", "src", "dst", "iif", "oif", "table", "protocol", "action"]
+			? [
+					"priority",
+					"src",
+					"dst",
+					"iif",
+					"oif",
+					"table",
+					"protocol",
+					"action",
+					"iif_detached",
+					"oif_detached",
+				]
 			: [
 					"dst",
 					"gateway",
@@ -46,7 +62,19 @@ function normalize(raw: unknown, kind: "rule" | "route", family: 4 | 6): Row {
 	if (Object.keys(row).some((key) => !allowed.includes(key)))
 		throw new Error("Foreign cellular IP attributes");
 	for (const [key, value] of Object.entries(row)) {
-		if (key === "flags") {
+		if (key === "iif_detached" || key === "oif_detached") {
+			const selector = row[key.slice(0, 3)];
+			if (
+				!allowDetached ||
+				value !== null ||
+				typeof selector !== "string" ||
+				!selector ||
+				selector === "lo"
+			)
+				throw new Error("Unknown detached cellular selector");
+			// iproute2's null marker reports a kernel-detached selector. It never
+			// admits readiness; cleanup still requires the complete owned tuple.
+		} else if (key === "flags") {
 			if (
 				!Array.isArray(value) ||
 				value.some((flag) => flag !== "onlink") ||
@@ -158,6 +186,7 @@ export class CellularIpState {
 	) {}
 	async inspect(
 		effect: CellularIpEffect,
+		allowDetached = false,
 	): Promise<"absent" | "owned" | "foreign"> {
 		if (!this.plan.effects.includes(effect))
 			throw new Error("Unowned cellular IP effect");
@@ -188,7 +217,9 @@ export class CellularIpState {
 					}
 					if (kind === "rule" && Number(object(raw).protocol) !== protocol)
 						continue;
-					const value = fingerprint(normalize(raw, kind, family));
+					const value = fingerprint(
+						normalize(raw, kind, family, allowDetached),
+					);
 					if (
 						!known.some(
 							(entry) =>
@@ -220,10 +251,10 @@ export class CellularIpState {
 			throw new Error("Cellular IP effect did not verify");
 	}
 	async remove(effect: CellularIpEffect): Promise<boolean> {
-		const before = await this.inspect(effect);
+		const before = await this.inspect(effect, true);
 		if (before === "absent") return true;
 		if (before !== "owned") return false;
 		await this.io.write(cellularIpArgv(effect, "del"));
-		return (await this.inspect(effect)) === "absent";
+		return (await this.inspect(effect, true)) === "absent";
 	}
 }

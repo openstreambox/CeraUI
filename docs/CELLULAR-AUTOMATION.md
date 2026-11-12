@@ -69,6 +69,20 @@ routing withdrawal, duplicate native addresses and both HTTPS bindings. Producti
 host composition, translator supervision and startup recovery remain incomplete;
 these helpers do not enable CLAT or traffic health by themselves.
 
+The native host adapter now composes its private routes, output fence and durable
+inverse. Cleanup denies traffic before waiting for fresh sender withdrawal, and
+retired callbacks cannot change a successor. A disconnected kernel fixture also
+checks complete link removal; it does not establish USB or modem qualification.
+
+Managed cellular paths require the sender's `bind_map_required` capability and
+the opt-in `--require-bind-map` contract. The required-binding resolver returns
+both binding flags or a typed refusal; it never chooses source-only fallback.
+Production activation remains held until this path is composed and qualified.
+The producer's empty `required_binding_refused` snapshot is understood by the
+telemetry/RPC consumers. The Network view displays “Waiting for link mapping”
+and “No links are sending yet. Check that the network devices are connected.
+Sending can start once the link mapping is valid.”
+
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
 do not establish those capabilities. Verizon remains unqualified.
@@ -147,6 +161,22 @@ registro. Las pruebas aisladas cubren la retirada de rutas, las direcciones nati
 duplicadas y ambas vinculaciones HTTPS. La composición del host, la supervisión
 del traductor y la recuperación al iniciar siguen incompletas; estas herramientas
 no activan CLAT ni las comprobaciones de tráfico por sí solas.
+
+El adaptador nativo del host combina sus rutas privadas, su filtro de salida y
+el registro para restauración. La limpieza bloquea el tráfico antes de esperar
+una confirmación nueva de retirada del emisor. Los procesos antiguos no pueden
+cambiar el enlace que los sustituye. Una prueba aislada del kernel también
+comprueba la eliminación completa de la interfaz; no acredita el USB ni el módem.
+
+Los enlaces celulares administrados requieren la capacidad `bind_map_required`
+del emisor y el modo opcional `--require-bind-map`. El adaptador devuelve ambas
+opciones de vinculación o una negativa tipada, sin usar solo la dirección de
+origen como alternativa. La activación de producción sigue pendiente de
+composición y pruebas. Los lectores de telemetría y RPC reconocen el estado
+vacío `required_binding_refused` del emisor. La vista de red muestra
+“Esperando el mapeo de enlaces” y “Todavía no se están enviando datos por ningún
+enlace. Comprueba que los dispositivos de red estén conectados. El envío podrá
+empezar cuando el mapeo de enlaces sea válido.”
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon

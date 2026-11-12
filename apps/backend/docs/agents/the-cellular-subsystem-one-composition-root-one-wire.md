@@ -562,3 +562,24 @@ same capped retry owner active. Default-store faults invalidate its existing
 revision and raise the same barrier; runtime verification reads inventories and
 never migrates or repeats hardware. Current-state writes participate in that
 revision. This is storage/recovery host evidence, not modem reboot qualification.
+
+### Host composition and required device binding (partial)
+
+`cellular-native-host.ts` composes the actual route/firewall primitives and durable
+inverse for a native grant. The retained actor must own its slot lease until
+cleanup completes. Writes serialize; installation is fenced unready; cleanup
+withdraws once, denies, waits for actual consumers and removes exact owned tuples.
+Uncertain effects retain their cursor. The kernel fixture covers complete link
+loss: nft's vanished decimal-string oif requires two positive inventories, while
+iproute2's null detached-selector marker admits inverse cleanup only, never ready.
+Scoped virtual-link sysctls use owner/index checks; no USB identity is fabricated
+for a TUN and global forwarding is untouched. These are host component proofs.
+
+Managed paths require literal `capabilities.bind_map_required === true` and
+`--require-bind-map` alongside `--bind-map`. Ordinary bind-map support permits
+source-only startup degradation and is insufficient. The required resolver has
+typed refusals, never a legacy fallback. Its producer fixture is copied exactly
+and preserves byte parity through the private sender helper, with the additive
+`required_binding_refused` disposition carried by RPC and localized operator copy.
+The ordinary legacy resolver retains its behavior for unmanaged paths. Production
+actor/startup cleanup composition and translated host effects remain incomplete.

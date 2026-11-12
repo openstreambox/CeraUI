@@ -30,6 +30,20 @@ const COLLISION: BondMapping = {
 };
 
 describe("CollisionBands — bind-map disposition band (todo 12)", () => {
+	it("a required-binding refusal says no link is sending and gives a recovery action", () => {
+		const { queryByTestId } = mount({
+			state: "degraded",
+			reason: "unknown_iface",
+			disposition: "required_binding_refused",
+			source: "sender",
+		});
+		const band = queryByTestId("bond-mapping-warning");
+		expect(band).not.toBeNull();
+		expect(band?.textContent).toContain("No links are sending yet");
+		expect(band?.textContent).toContain("network devices are connected");
+		expect(band?.textContent).not.toContain("required_binding_refused");
+		expect(queryByTestId("bond-mapping-collision")).toBeNull();
+	});
 	it("says NOTHING for a fully mapped bond", () => {
 		const { queryByTestId } = mount({
 			state: "active",

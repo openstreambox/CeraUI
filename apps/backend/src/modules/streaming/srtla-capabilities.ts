@@ -42,6 +42,7 @@ import {
 	SpawnTimeoutError,
 	spawnWithTimeout,
 } from "../../helpers/spawn-policy.ts";
+import { parseAuthorityJson } from "../system/update-orchestrator/strict-authority-json.ts";
 
 /** Bounded budget for the probe. It binds no socket and writes no file. */
 export const CAPABILITY_PROBE_TIMEOUT_MS = 3_000;
@@ -55,7 +56,11 @@ export type CapabilityProbeFailure =
 	| "schema-unsupported";
 
 export type CapabilityProbeResult =
-	| { readonly bindMap: true; readonly bindMapSchemaVersion: number }
+	| {
+			readonly bindMap: true;
+			readonly bindMapSchemaVersion: number;
+			readonly bindMapRequired?: true;
+	  }
 	| { readonly bindMap: false; readonly reason: CapabilityProbeFailure };
 
 /** The sidecar schema version this writer produces. */
@@ -65,6 +70,7 @@ interface CapabilityDocument {
 	readonly capabilities?: {
 		readonly bind_map?: unknown;
 		readonly bind_map_schema_version?: unknown;
+		readonly bind_map_required?: unknown;
 	};
 }
 
@@ -80,7 +86,7 @@ export function classifyCapabilityDocument(
 
 	let parsed: CapabilityDocument;
 	try {
-		parsed = JSON.parse(stdout.trim()) as CapabilityDocument;
+		parsed = parseAuthorityJson(stdout.trim()) as CapabilityDocument;
 	} catch {
 		return { bindMap: false, reason: "invalid-json" };
 	}
@@ -105,7 +111,13 @@ export function classifyCapabilityDocument(
 		return { bindMap: false, reason: "schema-unsupported" };
 	}
 
-	return { bindMap: true, bindMapSchemaVersion: version };
+	return {
+		bindMap: true,
+		bindMapSchemaVersion: version,
+		...(capabilities.bind_map_required === true
+			? { bindMapRequired: true as const }
+			: {}),
+	};
 }
 
 export interface CapabilityProbeDeps {
@@ -118,6 +130,7 @@ const defaultDeps: CapabilityProbeDeps = {
 	runProbe: (execPath) =>
 		spawnWithTimeout([execPath, "--capabilities-json"], {
 			timeoutMs: CAPABILITY_PROBE_TIMEOUT_MS,
+			maxBuffer: 64 * 1024,
 		}),
 };
 
