@@ -61,6 +61,7 @@ export type CapabilityProbeResult =
 			readonly bindMapSchemaVersion: number;
 			readonly bindMapRequired?: true;
 			readonly bindMapRequiredEmptyReload?: true;
+			readonly bindMapContract?: number;
 	  }
 	| { readonly bindMap: false; readonly reason: CapabilityProbeFailure };
 
@@ -73,6 +74,7 @@ interface CapabilityDocument {
 		readonly bind_map_schema_version?: unknown;
 		readonly bind_map_required?: unknown;
 		readonly bind_map_required_empty_reload?: unknown;
+		readonly bind_map_contract?: unknown;
 	};
 }
 
@@ -116,6 +118,10 @@ export function classifyCapabilityDocument(
 	return {
 		bindMap: true,
 		bindMapSchemaVersion: version,
+		...(typeof capabilities.bind_map_contract === "number" &&
+		Number.isInteger(capabilities.bind_map_contract)
+			? { bindMapContract: capabilities.bind_map_contract }
+			: {}),
 		...(capabilities.bind_map_required === true
 			? { bindMapRequired: true as const }
 			: {}),
@@ -165,4 +171,21 @@ export async function probeSrtlaSenderCapabilities(
 		logger.info("srtla_send capability probe failed", { reason });
 		return { bindMap: false, reason };
 	}
+}
+
+/** Revision one establishes checked assigned-unicast binding and coherent,
+ * joined teardown acknowledgement. The two older booleans alone cannot prove
+ * either behavior. Later integer revisions preserve this contract.
+ */
+export function supportsRequiredCellularBinding(
+	value: CapabilityProbeResult,
+): boolean {
+	return (
+		value.bindMap &&
+		value.bindMapRequired === true &&
+		value.bindMapRequiredEmptyReload === true &&
+		typeof value.bindMapContract === "number" &&
+		Number.isInteger(value.bindMapContract) &&
+		value.bindMapContract >= 1
+	);
 }

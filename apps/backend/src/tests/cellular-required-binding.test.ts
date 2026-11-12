@@ -8,7 +8,10 @@ import {
 	resolveRequiredBindMapArgs,
 } from "../modules/streaming/bind-map-spawn.ts";
 import type { PublishedBond } from "../modules/streaming/srtla.ts";
-import { classifyCapabilityDocument } from "../modules/streaming/srtla-capabilities.ts";
+import {
+	classifyCapabilityDocument,
+	supportsRequiredCellularBinding,
+} from "../modules/streaming/srtla-capabilities.ts";
 
 test("required binding is an exact capability, never a version guess or duplicate-key claim", () => {
 	for (const value of [true, false, "true", 1, null]) {
@@ -75,6 +78,7 @@ test("required paths get both flags or a typed refusal; a failed recheck never f
 					? {
 							bindMapRequired: true as const,
 							bindMapRequiredEmptyReload: true as const,
+							bindMapContract: 1,
 						}
 					: {}),
 			};
@@ -88,6 +92,10 @@ test("required paths get both flags or a typed refusal; a failed recheck never f
 		args: ["--bind-map", "/synthetic/bind-map.json", "--require-bind-map"],
 	});
 	for (const incomplete of [
+		{
+			bindMapRequired: true as const,
+			bindMapRequiredEmptyReload: true as const,
+		},
 		{ bindMapRequired: true as const },
 		{ bindMapRequiredEmptyReload: true as const },
 		{},
@@ -126,6 +134,7 @@ test("required paths get both flags or a typed refusal; a failed recheck never f
 					bindMapSchemaVersion: 1,
 					bindMapRequired: true,
 					bindMapRequiredEmptyReload: true,
+					bindMapContract: 1,
 				};
 			},
 		}),
@@ -156,6 +165,7 @@ test("new launches prefer strict capability for future hotplug and refuse a late
 					? {
 							bindMapRequired: true as const,
 							bindMapRequiredEmptyReload: true as const,
+							bindMapContract: 1,
 						}
 					: {}),
 			};
@@ -214,4 +224,70 @@ test("producer-required refusal survives telemetry, RPC projection and operator 
 		}).disposition,
 	).toBe("required_binding_refused");
 	expect(bindMapBandMessage(report)).toContain("No links are sending");
+});
+
+test("pending apply survives telemetry and RPC projection while withdrawal remains unacknowledged", async () => {
+	const bytes = await Bun.file(
+		`${import.meta.dir}/../../../../packages/srtla-send/tests/fixtures/telemetry-pending-apply.json`,
+	).text();
+	const snapshot = telemetrySchema.parse(JSON.parse(bytes));
+	expect(JSON.stringify(snapshot)).toBe(bytes);
+	const report = bondMappingSchema.parse({
+		state: snapshot.bind_map_status?.state,
+		disposition: snapshot.disposition?.state,
+		source: "sender",
+	});
+	expect(report.disposition).toBe("pending_apply");
+	expect(
+		bindMapBandMessage({
+			status: { state: report.state },
+			disposition: { state: report.disposition },
+			source: "sender",
+		}),
+	).toContain("confirm");
+});
+
+test("joined binding requires an integer monotonic contract revision and both exact booleans", () => {
+	for (const revision of [
+		undefined,
+		null,
+		false,
+		true,
+		"1",
+		0,
+		-1,
+		0.5,
+		1.5,
+		1,
+		2,
+		99,
+	]) {
+		for (const required of [true, false, "true", 1])
+			for (const empty of [true, false, "true", 1]) {
+				const parsed = classifyCapabilityDocument(
+					0,
+					JSON.stringify({
+						capabilities: {
+							bind_map: true,
+							bind_map_contract: revision,
+							bind_map_required: required,
+							bind_map_required_empty_reload: empty,
+						},
+					}),
+				);
+				expect(supportsRequiredCellularBinding(parsed)).toBe(
+					typeof revision === "number" &&
+						Number.isInteger(revision) &&
+						revision >= 1 &&
+						required === true &&
+						empty === true,
+				);
+			}
+	}
+	expect(
+		classifyCapabilityDocument(
+			0,
+			'{"capabilities":{"bind_map":true,"bind_map_required":true,"bind_map_required_empty_reload":true,"bind_map_contract":0,"bind_map_contract":1}}',
+		).bindMap,
+	).toBe(false);
 });

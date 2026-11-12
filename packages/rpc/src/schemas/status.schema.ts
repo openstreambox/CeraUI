@@ -232,6 +232,7 @@ export const BOND_MAPPING_DISPOSITIONS = [
 	'legacy_unique_only',
 	'startup_collision_excluded',
 	'required_binding_refused',
+	'pending_apply',
 ] as const;
 
 // Indices are `BIND_IPS_FILE` LINE positions, NOT `conn_id`s: an excluded line

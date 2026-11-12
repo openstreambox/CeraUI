@@ -30,6 +30,18 @@ const COLLISION: BondMapping = {
 };
 
 describe("CollisionBands — bind-map disposition band (todo 12)", () => {
+	it("pending apply waits for confirmation without claiming all links have stopped", () => {
+		const { queryByTestId } = mount({
+			state: "active",
+			disposition: "pending_apply",
+			source: "sender",
+		});
+		const band = queryByTestId("bond-mapping-warning");
+		expect(band?.textContent).toContain("Updating links");
+		expect(band?.textContent).toContain("Waiting for confirmation");
+		expect(band?.textContent).not.toContain("No links are sending");
+		expect(band?.textContent).not.toContain("pending_apply");
+	});
 	it("a required-binding refusal says no link is sending and gives a recovery action", () => {
 		const { queryByTestId } = mount({
 			state: "degraded",
