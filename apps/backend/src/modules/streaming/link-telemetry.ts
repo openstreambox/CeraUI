@@ -102,7 +102,7 @@ export {
 // srtla_send listens for the local SRT encoder on this port; the stats file path
 // is derived from it (mirrors the receiver's /tmp/srtla-group-<PORT> convention).
 
-/** Legacy path helper. Stream launches now supply a private per-lifetime path. */
+/** Canonical stats-file path passed to the sender and read back. */
 export function srtlaStatsFile(listenPort: number = SRTLA_LISTEN_PORT): string {
 	return senderTelemetryPath(listenPort);
 }

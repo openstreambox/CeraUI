@@ -50,14 +50,27 @@ afterEach(async () => {
 	await rm(directory, { recursive: true, force: true });
 });
 
-function bootHarness(realProbe = false) {
+function bootHarness(realProbe = false, recordFailure = false) {
+	let senderArgs: string[] = [];
+	let telemetryPath = "";
+	let telemetrySocket: string | undefined;
+	let recordAttempts = 0;
 	let launches = 0;
 	let stops = 0;
 	const engine = evidenceHarness();
 	engines.push(engine);
 	setStartStreamDepsForTest({
 		getStreamingBackend: () => engine.backend,
-		spawnStreamingLoop: () => {
+		...(recordFailure
+			? {
+					recordSenderIntent: async () => {
+						recordAttempts++;
+						throw new Error("record storage unavailable");
+					},
+				}
+			: {}),
+		spawnStreamingLoop: (_command, args) => {
+			senderArgs = args;
 			launches++;
 			const proc = Bun.spawn(["/usr/bin/true"], {
 				stdin: "inherit",
@@ -67,7 +80,10 @@ function bootHarness(realProbe = false) {
 			children.push(proc);
 			return { proc, spawnfile: "srtla_send", exitListeners: [] };
 		},
-		startLinkTelemetry: () => undefined,
+		startLinkTelemetry: (path, _ips, options) => {
+			telemetryPath = path;
+			telemetrySocket = options?.controlSocket;
+		},
 		stopLinkTelemetry: () => undefined,
 		stopProcessAndWait: async (sender) => {
 			await sender.proc.exited;
@@ -130,6 +146,12 @@ function bootHarness(realProbe = false) {
 				},
 			}),
 		view: () => ({ launches, stops, liveness: session.streamLiveness() }),
+		launchEvidence: () => ({
+			senderArgs,
+			recordAttempts,
+			telemetryPath,
+			telemetrySocket,
+		}),
 	};
 }
 
@@ -248,4 +270,21 @@ test("a sentinel appearing during an empty-boot probe keeps admission closed", a
 	expect(h.view().liveness).toBe("unknown");
 	expect(await h.start()).toMatchObject({ result: "busy" });
 	expect(existsSync(marker)).toBe(true);
+});
+
+test("first record failure leaves sender and telemetry on the original paths", async () => {
+	const h = bootHarness(false, true);
+	expect(await h.start()).toMatchObject({ result: "started" });
+	const { senderArgs, recordAttempts, telemetryPath, telemetrySocket } =
+		h.launchEvidence();
+	expect(recordAttempts).toBe(1);
+	expect(telemetryPath).toBe("/tmp/srtla-send-stats-9000.json");
+	expect(telemetrySocket).toBe("/tmp/srtla-send-control-9000.sock");
+	expect(senderArgs[senderArgs.indexOf("--stats-file") + 1]).toBe(
+		"/tmp/srtla-send-stats-9000.json",
+	);
+	expect(senderArgs[senderArgs.indexOf("--control-socket") + 1]).toBe(
+		"/tmp/srtla-send-control-9000.sock",
+	);
+	expect(senderArgs.join(" ")).not.toContain("/run/ceralive/continuity");
 });

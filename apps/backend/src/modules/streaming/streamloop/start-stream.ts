@@ -66,6 +66,7 @@ interface StartStreamBackend {
 }
 
 export interface StartStreamDeps {
+	readonly recordSenderIntent: typeof recordSenderIntent;
 	readonly getStreamingBackend: () => StartStreamBackend;
 	readonly spawnStreamingLoop: typeof spawnStreamingLoop;
 	readonly startLinkTelemetry: typeof startLinkTelemetry;
@@ -74,6 +75,7 @@ export interface StartStreamDeps {
 }
 
 const defaultStartStreamDeps: StartStreamDeps = {
+	recordSenderIntent,
 	getStreamingBackend,
 	spawnStreamingLoop,
 	startLinkTelemetry,
@@ -269,7 +271,7 @@ export async function startStream(
 	];
 	let lifetime: Lifetime | undefined;
 	await observeSafely(async () => {
-		lifetime = await recordSenderIntent(
+		lifetime = await startStreamDeps.recordSenderIntent(
 			[srtlaSendExec, ...senderArgs],
 			{ statsFile, controlSocket },
 			setup.ips_file ?? "",

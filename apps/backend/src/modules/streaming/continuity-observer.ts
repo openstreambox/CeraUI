@@ -2,9 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import { createControlClient } from "@ceraui/srtla-send/control";
-import type { Telemetry } from "@ceraui/srtla-send/telemetry";
+import { controlSocketPath } from "@ceraui/srtla-send/sender";
+import {
+	senderTelemetryPath,
+	type Telemetry,
+} from "@ceraui/srtla-send/telemetry";
 import { logger } from "../../helpers/logger.ts";
 import type { BondEntry } from "./bind-map.ts";
+import { SRTLA_LISTEN_PORT } from "./constants.ts";
 import {
 	type ContinuityEvidence,
 	continuityVerdict,
@@ -18,6 +23,7 @@ import {
 	witnessSchema,
 	writeRecord,
 } from "./continuity-records.ts";
+import { createLatestReportWriter } from "./latest-report-writer.ts";
 
 export const CONTINUITY_DIR = "/run/ceralive/continuity";
 export function digest(value: string): string {
@@ -49,11 +55,11 @@ async function processIdentity(pid: number) {
 	};
 }
 
+/** Slice zero records the existing paths; record storage never supplies sender paths. */
 export function senderPaths() {
-	const nonce = randomUUID();
 	return {
-		statsFile: `${CONTINUITY_DIR}/sender-${nonce}.json`,
-		controlSocket: `${CONTINUITY_DIR}/sender-${nonce}.sock`,
+		statsFile: senderTelemetryPath(SRTLA_LISTEN_PORT),
+		controlSocket: controlSocketPath(SRTLA_LISTEN_PORT),
 	};
 }
 export async function recordSenderIntent(
@@ -86,6 +92,7 @@ export async function recordSenderIntent(
 let activeLifetime: Lifetime | null = null;
 export function clearContinuityTelemetry(): void {
 	activeLifetime = null;
+	telemetryWriter.discardPending();
 }
 
 export async function recordSenderStarted(
@@ -285,13 +292,21 @@ const liveSchema = z.object({
 	),
 });
 
-let telemetryWrite: Promise<void> = Promise.resolve();
+const telemetryWriter = createLatestReportWriter<z.infer<typeof reportSchema>>(
+	async (report) => {
+		if (activeLifetime?.lifetime !== report.lifetime) return;
+		await writeRecord(`${CONTINUITY_DIR}/report.json`, reportSchema, report);
+	},
+	() => logger.warn("continuity: observation unavailable; recovery unchanged"),
+);
 /** Project telemetry only. This durable report is never evidence of liveness. */
 export function recordSenderTelemetry(telemetry: Telemetry): void {
 	const lifetime = activeLifetime;
 	if (!lifetime) return;
 	const report = {
 		version: 1 as const,
+		bootId: lifetime.bootId,
+		lifetime: lifetime.lifetime,
 		observedAt: Date.now(),
 		links: telemetry.connections.map((l) => ({
 			linkId: l.link_id ?? "",
@@ -299,16 +314,7 @@ export function recordSenderTelemetry(telemetry: Telemetry): void {
 		})),
 		mapped: telemetry.disposition?.state === "mapped",
 	};
-	telemetryWrite = telemetryWrite.then(() =>
-		observeSafely(async () => {
-			if (activeLifetime?.lifetime !== lifetime.lifetime) return;
-			await writeRecord(`${CONTINUITY_DIR}/report.json`, reportSchema, {
-				...report,
-				bootId: await bootId(),
-				lifetime: lifetime.lifetime,
-			});
-		}),
-	);
+	telemetryWriter.submit(report);
 }
 const reportSchema = z.object({
 	version: z.literal(1),

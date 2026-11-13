@@ -23,9 +23,15 @@ malformed, incomplete or unknown-version records. Boot IDs prevent cross-boot
 reuse. Observation errors produce a fixed warning without raw exceptions or
 record values; stream start and orphan cleanup continue normally.
 
-Each stream uses fresh telemetry/socket paths under `/run/ceralive`. It remains
-an ordinary supervised backend child, with the same arguments apart from those
-paths, stderr handling and shutdown. The root service owns the runtime directory.
+Slice zero keeps the existing `/tmp/srtla-send-stats-<port>.json` and
+`/tmp/srtla-send-control-<port>.sock` sender paths and records them as facts.
+Record storage is not a prerequisite for either path. No per-stream runtime
+files are introduced or accumulated. Sender arguments, stderr handling and
+shutdown remain unchanged. Private per-lifetime paths belong to the next slice.
+
+Telemetry persistence keeps at most one active write and the newest pending
+report. Slow storage replaces the pending value instead of growing a promise
+chain. Stop discards the pending report, and failures do not block later writes.
 
 `continuityVerdict` is pure and orders checks for lifetime, publication/disk,
 two fresh live reads, engine, inventory and per-host witness. It returns only
@@ -56,3 +62,16 @@ continuation above the reserved generation, and telemetry/control reattachment.
 Only then may it skip cleanup. Stop an unadopted sender before host replay,
 including an explicit sender-unit consumer census. No record failure may allow
 adoption, and existing shutdown/orphan behavior remains the fallback.
+
+Additional prerequisites before slice 1:
+
+- Budget startup observation: three read-only socket requests can add roughly
+  1.5 seconds before the orphan sweep (plus connection and record I/O).
+- Use a boot-scoped monotonic supervisor-renewal timestamp. The current wall-clock
+  spawn-age guard rejects long streams and is vulnerable to clock adjustments.
+- Bind both live samples to the verified sender lifetime, not only map identity.
+- Compare each host witness generation against the publication being judged.
+  The standalone host diagnostic currently compares host fields only.
+- Refresh the lifetime record on every future sender-host respawn. The current
+  process runner observes exits without respawning; an unrecorded replacement
+  would correctly be refused because its PID/start time differs.
