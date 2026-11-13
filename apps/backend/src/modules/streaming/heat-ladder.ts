@@ -33,7 +33,35 @@ export const HEAT_SETTINGS = {
 	flapWindowMs: 1800000,
 	flapCount: 3,
 	staleMs: 5000,
+	/** Backoff after the engine rejects a heat change. */
+	retryMinMs: 5000,
+	retryMaxMs: 60000,
+	/** Readings outside this range are faults, not temperatures (same as the supervisor parser). */
+	plausibleC: { min: -20, max: 125 },
 };
+/** A reading the ladder may act on: finite and inside the plausible range. */
+export function plausibleTemperature(
+	value: number | null | undefined,
+): boolean {
+	return (
+		typeof value === "number" &&
+		Number.isFinite(value) &&
+		value >= HEAT_SETTINGS.plausibleC.min &&
+		value <= HEAT_SETTINGS.plausibleC.max
+	);
+}
+/**
+ * Parse a Linux thermal-zone `temp` file (millidegrees); anything else is
+ * unknown. An exact 0 is the usual failed-read value of a zone, never a
+ * working SoC's temperature, so it is unknown too.
+ */
+export function parseThermalZone(text: string): number | null {
+	const trimmed = text.trim();
+	if (!/^-?\d+$/.test(trimmed) || Number.parseInt(trimmed, 10) === 0)
+		return null;
+	const celsius = Number.parseInt(trimmed, 10) / 1000;
+	return plausibleTemperature(celsius) ? celsius : null;
+}
 export interface HeatState {
 	stage: number;
 	capStage: number;
@@ -90,7 +118,7 @@ export function advanceHeat(
 		s.hotSince = {};
 	}
 	s.unknown =
-		Object.values(inputs).some((t) => t === null || !Number.isFinite(t)) ||
+		Object.values(inputs).some((t) => !plausibleTemperature(t)) ||
 		!Object.keys(inputs).length;
 	if (s.unknown) {
 		s.candidateAt = now;

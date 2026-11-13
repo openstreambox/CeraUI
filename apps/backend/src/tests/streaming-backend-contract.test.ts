@@ -324,6 +324,8 @@ function makeBackend(
 		fakeOptions?: FakeClientOptions;
 		scheduleTimeout?: CerastreamBackendDeps["scheduleTimeout"];
 		cancelTimeout?: CerastreamBackendDeps["cancelTimeout"];
+		logger?: CerastreamBackendDeps["logger"];
+		onSessionConnectionLost?: CerastreamBackendDeps["onSessionConnectionLost"];
 	} = {},
 ): BackendHarness {
 	const fake = makeFakeClient(opts.fakeOptions);
@@ -340,7 +342,10 @@ function makeBackend(
 		bridge: bridgeH.bridge,
 		execPath: "cerastream",
 		configPath: "/tmp/cerastream-contract.json",
-		logger: silentLogger,
+		logger: opts.logger ?? silentLogger,
+		...(opts.onSessionConnectionLost
+			? { onSessionConnectionLost: opts.onSessionConnectionLost }
+			: {}),
 		...(opts.scheduleTimeout ? { scheduleTimeout: opts.scheduleTimeout } : {}),
 		...(opts.cancelTimeout ? { cancelTimeout: opts.cancelTimeout } : {}),
 	});
@@ -560,6 +565,7 @@ describe("CerastreamBackend behavioural contract", () => {
 
 		// Then the backend adopts the client and can stop the existing runtime.
 		expect(await reconciliation).toBe("streaming");
+		await backend.settle();
 		expect(
 			fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params,
 		).toEqual({ max_bitrate: 8000 });
@@ -1261,7 +1267,8 @@ describe("session heat ceiling", () => {
 		const { backend, fake, config, saveCount } = makeBackend();
 		await backend.start(STREAM_CONFIG, RUN_OPTS);
 		const saves = saveCount();
-		for (let t = 0; t <= 12000; t += 1000) await backend.updateHeat(76, t);
+		for (let t = 0; t <= 12000; t += 1000) backend.updateHeat(76, t);
+		await backend.settle();
 		expect(config.max_br).toBe(8000);
 		expect(saveCount()).toBe(saves);
 		expect(
@@ -1273,7 +1280,8 @@ describe("session heat ceiling", () => {
 				fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params !==
 				undefined,
 		);
-		await backend.updateHeat(76, 13000);
+		backend.updateHeat(76, 13000);
+		await backend.settle();
 		expect(
 			fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params,
 		).toEqual({ max_bitrate: 1000 });
@@ -1290,7 +1298,8 @@ describe("session heat ceiling", () => {
 		await backend.start(STREAM_CONFIG, RUN_OPTS);
 		const calls = fake.calls.length,
 			saves = saveCount();
-		await backend.updateHeat(null, 0);
+		backend.updateHeat(null, 0);
+		await backend.settle();
 		expect(backend.getHeat().unknown).toBe(true);
 		expect(fake.calls.length).toBe(calls);
 		expect(saveCount()).toBe(saves);
@@ -1301,7 +1310,8 @@ test("heat override restores the operator maximum without a save, including afte
 	const { backend, fake, config, saveCount } = makeBackend();
 	await backend.start(STREAM_CONFIG, RUN_OPTS);
 	const saves = saveCount();
-	for (let t = 0; t <= 12000; t += 1000) await backend.updateHeat(81, t);
+	for (let t = 0; t <= 12000; t += 1000) backend.updateHeat(81, t);
+	await backend.settle();
 	expect(
 		fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params,
 	).toEqual({ max_bitrate: 4000 });
@@ -1321,9 +1331,11 @@ test("heat override restores the operator maximum without a save, including afte
 test("fresh live samples use the same monotonic clock as staleness checks", async () => {
 	const { backend } = makeBackend();
 	await backend.start(STREAM_CONFIG, RUN_OPTS);
-	await backend.updateHeat(40, getms());
+	backend.updateHeat(40, getms());
+	await backend.settle();
 	expect(backend.getHeat().unknown).toBe(false);
-	await backend.updateHeat(null, getms());
+	backend.updateHeat(null, getms());
+	await backend.settle();
 	expect(backend.getHeat().unknown).toBe(true);
 	await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
 });
@@ -1331,9 +1343,11 @@ test("fresh live samples use the same monotonic clock as staleness checks", asyn
 test("unknown inputs do not resume a cap when Keep quality is switched off", async () => {
 	const { backend, fake } = makeBackend();
 	await backend.start(STREAM_CONFIG, RUN_OPTS);
-	for (let t = 0; t <= 12000; t += 1000) await backend.updateHeat(76, t);
+	for (let t = 0; t <= 12000; t += 1000) backend.updateHeat(76, t);
+	await backend.settle();
 	await backend.keepHeatQuality(true);
-	await backend.updateHeat(null, 13000);
+	backend.updateHeat(null, 13000);
+	await backend.settle();
 	const before = fake.calls.filter((c) => c.op === "set-bitrate").length;
 	await backend.keepHeatQuality(false);
 	expect(fake.calls.filter((c) => c.op === "set-bitrate").length).toBe(before);
@@ -1341,4 +1355,177 @@ test("unknown inputs do not resume a cap when Keep quality is switched off", asy
 		fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params,
 	).toEqual({ max_bitrate: 8000 });
 	await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+});
+
+describe("heat ceiling review regressions", () => {
+	const lastBitrate = (fake: FakeClientHarness) =>
+		fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params;
+	const bitrateCalls = (fake: FakeClientHarness) =>
+		fake.calls.filter((c) => c.op === "set-bitrate").length;
+	const heatUp = (backend: CerastreamBackend, temp: number, to = 12000) => {
+		for (let t = 0; t <= to; t += 1000) backend.updateHeat(temp, t);
+	};
+
+	test("C1: a surviving stream is adopted even when the bitrate reset is rejected", async () => {
+		const { backend, fake } = makeBackend();
+		fake.client.setBitrate = async (params) => {
+			fake.calls.push({ op: "set-bitrate", params });
+			throw new Error("engine busy");
+		};
+		const reconciliation = backend.reconcileRuntimeState();
+		await fake.subscribed;
+		fake.emit({ type: "status", seq: 1, state: "streaming", streaming: true });
+		expect(await reconciliation).toBe("streaming");
+		await backend.settle();
+		expect(lastBitrate(fake)).toEqual({ max_bitrate: 8000 });
+		expect(backend.stop(() => {})).toBe(true);
+		await backend.settle();
+	});
+
+	test("C1: a surviving stream is adopted while the bitrate reset never answers", async () => {
+		const { backend, fake } = makeBackend();
+		fake.client.setBitrate = (params) => {
+			fake.calls.push({ op: "set-bitrate", params });
+			return new Promise(() => {});
+		};
+		const reconciliation = backend.reconcileRuntimeState();
+		await fake.subscribed;
+		fake.emit({ type: "status", seq: 1, state: "streaming", streaming: true });
+		const settled = await Promise.race([
+			reconciliation,
+			Bun.sleep(200).then(() => "hung"),
+		]);
+		expect(settled).toBe("streaming");
+	});
+
+	test("C2: the sensor tick never waits on the engine and keeps one heat call in flight", async () => {
+		const { backend, fake } = makeBackend();
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		const before = bitrateCalls(fake);
+		fake.client.setBitrate = (params) => {
+			fake.calls.push({ op: "set-bitrate", params });
+			return new Promise(() => {});
+		};
+		const tick = backend.updateHeat(76, 0);
+		expect(tick).toBeUndefined();
+		for (let t = 1000; t <= 40000; t += 1000) backend.updateHeat(81, t);
+		await Bun.sleep(0);
+		await Bun.sleep(0);
+		expect(bitrateCalls(fake) - before).toBe(1);
+	});
+
+	test("C2: the first readings of a stream do not queue a bitrate call", async () => {
+		const gate = deferred<StartResult>();
+		const { backend, fake } = makeBackend({
+			fakeOptions: { startGate: gate.promise },
+		});
+		const starting = backend.start(STREAM_CONFIG, RUN_OPTS);
+		await fake.started;
+		backend.updateHeat(40, 0);
+		backend.updateHeat(40, 1000);
+		gate.resolve({ session_id: "s1", state: "streaming" });
+		await starting;
+		backend.updateHeat(40, 2000);
+		await backend.settle();
+		expect(bitrateCalls(fake)).toBe(0);
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
+
+	test("C3: a control reconnect mid-stream keeps the cap, Keep quality and history", async () => {
+		const second = makeFakeClient();
+		let connections = 0;
+		const first = makeFakeClient();
+		const { backend } = makeBackend({
+			connect: async () => (++connections === 1 ? first.client : second.client),
+			onSessionConnectionLost: () => {},
+		});
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		heatUp(backend, 81);
+		await backend.settle();
+		await backend.keepHeatQuality(true);
+		const history = backend.getHeat().history.length;
+		expect(backend.getHeat().stage).toBe(3);
+		first.client.setBitrate = async () => {
+			throw new CerastreamConnectionError("lost", undefined, "lost");
+		};
+		backend.setBitrate({ max_br: 8000 });
+		await backend.settle();
+		const reconciliation = backend.reconcileRuntimeState();
+		await second.subscribed;
+		second.emit({
+			type: "status",
+			seq: 1,
+			state: "streaming",
+			streaming: true,
+		});
+		expect(await reconciliation).toBe("streaming");
+		await backend.settle();
+		const heat = backend.getHeat();
+		expect(heat.stage).toBe(3);
+		expect(heat.keepQuality).toBe(true);
+		expect(heat.history.length).toBe(history);
+		expect(lastBitrate(second)).toEqual({ max_bitrate: 8000 });
+		await backend.keepHeatQuality(false);
+		expect(lastBitrate(second)).toEqual({ max_bitrate: 4000 });
+	});
+
+	test("C4: an engine that cannot lower the rate is not shown as capped", async () => {
+		const { backend, fake } = makeBackend();
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		fake.client.setBitrate = async (params) => {
+			fake.calls.push({ op: "set-bitrate", params });
+			return {
+				applied: { max_bitrate: 8000 },
+				bitrate_control: "source-fixed",
+			};
+		};
+		heatUp(backend, 76);
+		await backend.settle();
+		expect(lastBitrate(fake)).toEqual({ max_bitrate: 6000 });
+		expect(backend.getHeat().reduced).toBe(false);
+		expect(backend.getHeat().cannotReduce).toBe(true);
+		expect(backend.getHeat().ceiling).toBe(8000);
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
+
+	test("C6: a rejected heat change backs off and logs once", async () => {
+		const warnings: string[] = [];
+		const { backend, fake } = makeBackend({
+			logger: {
+				...silentLogger,
+				warn: (m: string) => warnings.push(m),
+				error: (m: string) => warnings.push(m),
+			},
+		});
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		fake.client.setBitrate = async (params) => {
+			fake.calls.push({ op: "set-bitrate", params });
+			throw new Error("refused");
+		};
+		for (let t = 0; t <= 41000; t += 1000) {
+			backend.updateHeat(76, t);
+			await backend.settle();
+		}
+		expect(bitrateCalls(fake)).toBeLessThanOrEqual(4);
+		expect(bitrateCalls(fake)).toBeGreaterThanOrEqual(2);
+		expect(warnings.length).toBe(1);
+		expect(backend.getHeat().error).toBe(true);
+	});
+
+	test("C7: changing the bitrate while capped keeps the capped state", async () => {
+		const { backend, fake } = makeBackend();
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		heatUp(backend, 76);
+		await backend.settle();
+		expect(backend.getHeat().reduced).toBe(true);
+		backend.setBitrate({ max_br: 6000 });
+		await backend.settle();
+		expect(lastBitrate(fake)).toEqual({ max_bitrate: 4500 });
+		expect(backend.getHeat().reduced).toBe(true);
+		expect(backend.getHeat().ceiling).toBe(4500);
+		backend.updateHeat(null, 13000);
+		await backend.settle();
+		expect(backend.getHeat().reduced).toBe(true);
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
 });

@@ -23,6 +23,7 @@ async function toggle() {
    {#if unavailable || status?.error}{m['live.heat.failed']()}
    {:else if status?.unknown}{m['live.heat.unknown']()}
    {:else if status?.keepQuality && !status.reduced && status.ceiling !== null}{#if status.stage === 3}{m['live.heat.critical']()}. {/if}{m['live.heat.keepWarning']()}
+   {:else if status && status.stage >= 2 && status.cannotReduce && !status.keepQuality}{m['live.heat.cannotReduce']()}
    {:else if status && status.stage >= 2 && status.reduced && status.ceiling !== null}{m['live.heat.capped']({bitrate:(status.ceiling/1000).toFixed(1)})}
    {:else if status && status.stage >= 2}{status.stage === 3 ? m['live.heat.critical']() : m['live.heat.hot']()}
    {:else if status?.stage === 0}{m['live.heat.restored']()}

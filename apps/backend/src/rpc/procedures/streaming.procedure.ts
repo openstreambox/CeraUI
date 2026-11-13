@@ -1,4 +1,3 @@
-import { cerastreamBackend } from "../../modules/streaming/cerastream-backend";
 /**
  * Streaming Procedures
  * Wraps existing streaming logic from modules/streaming/
@@ -82,6 +81,7 @@ import {
 } from "../../modules/streaming/auto-audio.ts";
 import { isBluetoothAudioSourceId } from "../../modules/streaming/bluetooth-audio.ts";
 import { getLastCapabilities } from "../../modules/streaming/capabilities.ts";
+import { cerastreamBackend } from "../../modules/streaming/cerastream-backend.ts";
 import { mapCerastreamError } from "../../modules/streaming/cerastream-error-mapping.ts";
 import {
 	COMPOSITION_UNSUPPORTED_ERROR,

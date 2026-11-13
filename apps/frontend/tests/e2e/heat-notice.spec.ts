@@ -15,7 +15,7 @@ test('heat status names the confirmed ceiling and preserves unknown and override
  await expect(page.getByTestId('live-cockpit')).toBeVisible();
  const heat = {
   stage: 2, unknown: false, keepQuality: false, ceiling: 4500,
-  reduced: true, error: false, phoneAdvice: true, history: [],
+  reduced: true, cannotReduce: false, error: false, phoneAdvice: true, history: [],
  };
  const emit = (payload: typeof heat) => pageRpc.call(['dev', 'emit'], { type: 'heat', payload });
  await emit(heat);

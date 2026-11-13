@@ -1323,6 +1323,7 @@ export const heatStatusSchema = z.object({
 	unknown: z.boolean(),
 	keepQuality: z.boolean(),
 	ceiling: z.number().nullable(),
+	cannotReduce: z.boolean(),
 	error: z.boolean(),
 	history: z.array(
 		z.object({ at: z.number(), stage: z.number(), ceiling: z.number(), keepQuality: z.boolean() }),

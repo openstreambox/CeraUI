@@ -23,6 +23,7 @@ const status = {
 	history: [],
 	phoneAdvice: true,
 	reduced: true,
+	cannotReduce: false,
 };
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -75,4 +76,17 @@ test("a pending override does not claim full quality before restoration", () => 
 	const view = render(HeatNotice);
 	expect(view.queryByText(/Keeping full quality/)).toBeNull();
 	expect(view.getByText(/4.5 Mbit/)).toBeTruthy();
+});
+
+test("a source whose bitrate cannot be lowered is not described as capped", () => {
+	mocks.getHeat.mockReturnValue({
+		...status,
+		ceiling: 8000,
+		reduced: false,
+		cannotReduce: true,
+	});
+	const view = render(HeatNotice);
+	expect(view.queryByText(/bitrate capped/)).toBeNull();
+	expect(view.getByText(/can't be lowered/)).toBeTruthy();
+	expect(view.getByText(/Still live/)).toBeTruthy();
 });

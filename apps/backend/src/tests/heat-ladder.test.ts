@@ -135,3 +135,24 @@ test("CRC reference vector and checksum protection include unknown future fields
 	expect(parseSupervisor(line.replace("3B45", "XXXX"), 0, 0)).toBeNull();
 	expect(parseSupervisor(line, 0, 6000)).toBeNull();
 });
+
+test("C5: implausible SoC readings are unknown, never a step or an undo", async () => {
+	const { parseThermalZone } = await import("../modules/streaming/heat-ladder");
+	expect(parseThermalZone("45000\n")).toBe(45);
+	expect(parseThermalZone("45000abc")).toBeNull();
+	expect(parseThermalZone("")).toBeNull();
+	expect(parseThermalZone("1000000000")).toBeNull();
+	expect(parseThermalZone("-40000")).toBeNull();
+	let s = { ...initialHeat(), stage: 3, capStage: 3, enteredAt: -400000 };
+	expect(parseThermalZone("0")).toBeNull();
+	for (let t = 0; t <= 700000; t += 1000)
+		s = advanceHeat(s, { soc: parseThermalZone("0") }, t);
+	expect(s.stage).toBe(3);
+	expect(s.unknown).toBe(true);
+	let fresh = initialHeat();
+	for (let t = 0; t <= 20000; t += 1000)
+		fresh = advanceHeat(fresh, { soc: 1e6 }, t);
+	expect(advanceHeat(initialHeat(), { soc: -40 }, 0).unknown).toBe(true);
+	expect(fresh.stage).toBe(0);
+	expect(fresh.unknown).toBe(true);
+});

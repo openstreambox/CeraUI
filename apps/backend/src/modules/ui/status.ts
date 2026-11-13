@@ -1,4 +1,3 @@
-import { cerastreamBackend } from "../streaming/cerastream-backend";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -47,6 +46,7 @@ import {
 	getResolvedAsrcCandidates,
 	getResolvedAsrcReason,
 } from "../streaming/auto-audio.ts";
+import { cerastreamBackend } from "../streaming/cerastream-backend.ts";
 import { getEngineBitrateStatus } from "../streaming/engine-bitrate-status.ts";
 import { buildBondMapping } from "../streaming/link-mapping-report.ts";
 import {

@@ -2818,6 +2818,7 @@
 	"live.heat.failed": "The heat bitrate change could not be confirmed. Give the box air.",
 	"live.heat.keepWarning": "Keeping full quality. The box stays hot. Give it air.",
 	"live.heat.capped": "Hot box: bitrate capped at {bitrate} Mbit/s to cool it. Still live.",
+	"live.heat.cannotReduce": "Hot box: this source's bitrate can't be lowered, so nothing was reduced. Still live.",
 	"live.heat.warm": "The box is warm. Give it air.",
 	"live.heat.air": "Open the bag or find shade.",
 	"live.heat.keep": "Keep quality",

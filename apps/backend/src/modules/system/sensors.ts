@@ -1,4 +1,3 @@
-import { cerastreamBackend } from "../streaming/cerastream-backend";
 /*
     CeraUI - web UI for the CERALIVE project
     Copyright (C) 2024-2025 CeraLive project
@@ -34,6 +33,8 @@ import {
 import { getConfig } from "../config.ts";
 import { getRTMPIngestStats } from "../ingest/rtmp.ts";
 import { getSRTIngestStats } from "../ingest/srt.ts";
+import { cerastreamBackend } from "../streaming/cerastream-backend.ts";
+import { parseThermalZone } from "../streaming/heat-ladder.ts";
 import { getSourcesMessage } from "../streaming/sources.ts";
 import {
 	notificationBroadcast,
@@ -52,6 +53,8 @@ import {
 const bootconfigService = "ceralive-firstboot-bootconfig";
 
 const sensors: Record<string, string> = {};
+/** Numeric thermal-zone readings in °C; absent when missing or implausible. */
+const thermalC: Record<string, number> = {};
 const dmesgWatchers: WatcherHandle[] = [];
 
 function dmesgStdout(proc: WatcherHandle["proc"]): ReadableStream<Uint8Array> {
@@ -66,17 +69,22 @@ export function getSensors() {
 }
 
 async function updateSensorThermal(id: number, name: string) {
+	let celsius: number | null = null;
 	try {
-		const socTempStr = await Bun.file(
-			`/sys/class/thermal/thermal_zone${id}/temp`,
-		).text();
-		const socTemp = Number.parseInt(socTempStr, 10) / 1000.0;
-		if (!Number.isFinite(socTemp)) throw new Error("Invalid temperature");
-		sensors[name] = `${socTemp.toFixed(1)} °C`;
+		celsius = parseThermalZone(
+			await Bun.file(`/sys/class/thermal/thermal_zone${id}/temp`).text(),
+		);
 	} catch (_err) {
-		delete sensors[name];
-		// Missing readings invalidate the previous sample.
+		// A missing /sys thermal path reads as no sample.
 	}
+	// Missing or implausible readings invalidate the previous sample.
+	if (celsius === null) {
+		delete sensors[name];
+		delete thermalC[name];
+		return;
+	}
+	sensors[name] = `${celsius.toFixed(1)} °C`;
+	thermalC[name] = celsius;
 }
 
 async function updateSensorsJetson() {
@@ -310,13 +318,12 @@ export function initHardwareMonitoring() {
 	if (sensorsFunc) {
 		const updateSensors = async () => {
 			await sensorsFunc();
-			const raw = sensors["SoC temperature"];
-			const temperature = raw === undefined ? null : Number.parseFloat(raw);
-			try {
-				await cerastreamBackend.updateHeat(temperature, getms());
-			} catch (error) {
-				logger.warn("Heat bitrate change failed", { error });
-			}
+			// Never wait on the engine from the sensor loop: the backend keeps at
+			// most one heat change in flight and logs its own failures.
+			cerastreamBackend.updateHeat(
+				thermalC["SoC temperature"] ?? null,
+				getms(),
+			);
 			broadcastMsg("heat", cerastreamBackend.getHeat());
 
 			const data = { ...sensors };
