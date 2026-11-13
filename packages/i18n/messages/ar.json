@@ -2975,5 +2975,13 @@
 	"live.phone.healthWaitOne": "[EN] 1 other part can wait",
 	"live.phone.healthWaitMany": "[EN] {count} other parts can wait",
 	"live.phone.healthRestartParts": "[EN] {parts} need a restart",
-	"live.phone.carryingChecking": "[EN] The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption."
+	"live.phone.carryingChecking": "[EN] The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption.",
+	"live.phone.moblinSave": "[EN] Save Moblin password",
+	"live.phone.moblinClear": "[EN] Clear Moblin password",
+	"live.phone.moblinConfigured": "[EN] A Moblin password is saved. You can replace or clear it; it cannot be displayed.",
+	"live.phone.moblinBinding": "[EN] One password for this box. Any local Moblin streamer with that password may connect.",
+	"live.phone.moblinSaved": "[EN] Saved on the box. Check Moblin to confirm it connects; saving does not confirm a connection.",
+	"live.phone.moblinCleared": "[EN] Moblin password cleared. The box has stopped lending its links through Moblink.",
+	"live.phone.moblinFailed": "[EN] The Moblin password could not be applied. Check the box and try again. It may already be saved.",
+	"live.phone.moblinBusy": "[EN] Wait until the box confirms no stream is using it before changing the Moblin password."
 }

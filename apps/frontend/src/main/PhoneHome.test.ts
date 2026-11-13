@@ -163,3 +163,57 @@ it("keeps unknown link probes calm while carrying", () => {
 	expect(screen.queryByText("Checking internet")).toBeNull();
 	expect(screen.getByText("Link details aren't available yet")).toBeTruthy();
 });
+
+describe("Moblin credential", () => {
+	it("submits once and removes the secret from the form even after failure", async () => {
+		const oncredential = vi.fn(async () => ({ success: false }));
+		render(PhoneHome, {
+			carrying: "idle",
+			moblink: { available: true, configured: false },
+			oncredential,
+		});
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Connect your phone" }),
+		);
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Moblin", exact: true }),
+		);
+		const field = screen.getByLabelText(
+			"Moblin's password (from Moblin, not the Wi-Fi password)",
+		);
+		expect(field).toHaveProperty("disabled", false);
+		await fireEvent.input(field, { target: { value: "form-secret" } });
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Save Moblin password" }),
+		);
+		await waitFor(() =>
+			expect(oncredential).toHaveBeenCalledWith("form-secret"),
+		);
+		expect(field).toHaveProperty("value", "");
+		expect(document.body.textContent).not.toContain("form-secret");
+	});
+	it.each(["streaming", "unknown"] as const)(
+		"protects %s from credential replacement",
+		async (carrying) => {
+			const { rerender } = render(PhoneHome, {
+				carrying: "idle",
+				moblink: { available: true, configured: true },
+			});
+			await fireEvent.click(
+				screen.getByRole("button", { name: "Connect your phone" }),
+			);
+			await fireEvent.click(
+				screen.getByRole("button", { name: "Moblin", exact: true }),
+			);
+			await rerender({
+				carrying,
+				moblink: { available: true, configured: true },
+			});
+			expect(
+				screen.getByLabelText(
+					"Moblin's password (from Moblin, not the Wi-Fi password)",
+				),
+			).toHaveProperty("disabled", true);
+		},
+	);
+});

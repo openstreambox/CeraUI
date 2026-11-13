@@ -555,6 +555,24 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		mechanism: "synchronous host power-down; terminal by design",
 	},
 	{
+		id: "moblink.relay",
+		file: "modules/moblink/relay-runner.ts",
+		symbol: "createRelayRunner",
+		command: "moblink-relay-service (private argv)",
+		class: "supervised-worker",
+		contract: {
+			timed: false,
+			startupTimeout: true,
+			shutdownCleanup: true,
+			shutdownAbort: false,
+			lifetimeTimeoutExempt: true,
+		},
+		status: "enforced",
+		mechanism:
+			"constant-label supervisor; launch readiness only, owned shutdown; child output discarded",
+	},
+
+	{
 		id: "streamloop.srtlaSend",
 		file: "modules/streaming/streamloop/process-runner.ts",
 		symbol: "spawnStreamingLoop",

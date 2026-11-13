@@ -2,7 +2,7 @@ import { mount } from "svelte";
 import PhoneHome from "../../main/PhoneHome.svelte";
 
 /** Browser-only presentation fixture: no production route, RPC or device effects. */
-export function mountPhoneHomeFixture(kiosk = false) {
+export function mountPhoneHomeFixture(kiosk = false, moblin = false) {
 	document.getElementById("app")?.setAttribute("hidden", "");
 	const target = document.createElement("main");
 	target.dataset.testid = "phone-home-fixture";
@@ -13,8 +13,10 @@ export function mountPhoneHomeFixture(kiosk = false) {
 		props: {
 			kiosk,
 			carrying: "idle",
+			moblink: { available: true, configured: false },
+			oncredential: async () => ({ success: true }),
 			settings: {
-				way: "srt",
+				way: moblin ? "moblin" : "srt",
 				srt: {
 					address: "srt://192.0.2.1:4000",
 					passphrase: "example-passphrase",
