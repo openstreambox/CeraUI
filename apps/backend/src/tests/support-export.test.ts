@@ -73,7 +73,7 @@ describe("support export disclosure", () => {
 	test("raw journal fields, numbers and credential lines are removed before download", () => {
 		const output = exported(
 			...[
-				"boot one",
+				"Trying to register modem",
 				"imei=351756051523999",
 				"iccid=8934071100003862105",
 				"imsi=214075550001234",
@@ -81,11 +81,11 @@ describe("support export disclosure", () => {
 				"cell_id=0xabc123",
 				"password=example-secret",
 				"raw 351756051523999",
-				"boot two",
+				"Registered modem",
 			].map((msg) => event({ msg })),
 		);
-		expect(output).toContain("boot one");
-		expect(output).toContain("boot two");
+		expect(output).toContain("Trying to register modem");
+		expect(output).toContain("Registered modem");
 		for (const v of [
 			"351756051523999",
 			"8934071100003862105",

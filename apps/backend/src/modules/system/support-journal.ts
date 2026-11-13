@@ -84,18 +84,43 @@ export function renderSupportJournal(text: string): string {
 	return renderSupportJournalWithCounts(text).text;
 }
 
+export interface SupportJournalOptions {
+	/** journald's _BOOT_ID of the running system (32 hex digits). */
+	readonly currentBootId?: string | undefined;
+}
+
+/** Boot labels count back from the current boot: 0 is this boot, -1 the one
+ * before. Without a known current boot, the newest boot in the download is 0.
+ * When the current boot has no records here, the newest one shown is -1.
+ */
+function bootLabels(
+	order: readonly string[],
+	currentBootId: string | undefined,
+): Map<string, string> {
+	const current =
+		currentBootId === undefined
+			? order.length - 1
+			: order.indexOf(currentBootId);
+	const newest = current < 0 ? order.length : current;
+	return new Map(order.map((id, index) => [id, `${index - newest}`]));
+}
+
 /** As renderSupportJournal, also counting shown and withheld records. */
-export function renderSupportJournalWithCounts(text: string): {
+export function renderSupportJournalWithCounts(
+	text: string,
+	options: SupportJournalOptions = {},
+): {
 	text: string;
 	shown: number;
 	withheld: number;
 } {
 	const interrupted = new Set<string>();
-	const boots = new Map<string, number>();
+	const boots: string[] = [];
+	const lineBoots: (string | undefined)[] = [];
 	const rendered = text
 		.split("\n")
 		.filter(Boolean)
-		.map((line) => {
+		.map((line, index) => {
 			// A journal envelope can escape an up-to-48 KiB MESSAGE. Parse a bounded
 			// envelope to retain trusted stream/line-break fields, never regex-match it.
 			// If even this envelope bound is exceeded, subsequent framing is uncertain.
@@ -142,19 +167,25 @@ export function renderSupportJournalWithCounts(text: string): {
 			const filtered = renderSourceMessage(source, record.MESSAGE);
 			if (filtered === WITHHELD) return WITHHELD;
 			const time = timestamp(record.__REALTIME_TIMESTAMP);
-			let boot: number | undefined;
-			if (typeof record._BOOT_ID === "string") {
-				boot = boots.get(record._BOOT_ID);
-				if (boot === undefined) {
-					boot = boots.size + 1;
-					boots.set(record._BOOT_ID, boot);
-				}
-			}
-			return `${boot ? `[boot ${boot}] ` : ""}${time ? `${time} ` : ""}${source}: ${filtered}`;
+			// Boot ids are never rendered; a short label is added below.
+			const boot =
+				typeof record._BOOT_ID === "string" && record._BOOT_ID.length <= 128
+					? record._BOOT_ID.toLowerCase()
+					: undefined;
+			if (boot !== undefined && !boots.includes(boot)) boots.push(boot);
+			lineBoots[index] = boot;
+			return `${time ? `${time} ` : ""}${source}: ${filtered}`;
 		});
+	const labels = bootLabels(boots, options.currentBootId?.toLowerCase());
+	const labelled = rendered.map((line, index) => {
+		const boot = lineBoots[index];
+		return line === WITHHELD || boot === undefined
+			? line
+			: `[boot ${labels.get(boot)}] ${line}`;
+	});
 	const withheld = rendered.filter((line) => line === WITHHELD).length;
 	return {
-		text: collapseWithheld(rendered).join("\n"),
+		text: collapseWithheld(labelled).join("\n"),
 		shown: rendered.length - withheld,
 		withheld,
 	};
@@ -184,19 +215,19 @@ function collapseWithheld(lines: readonly string[]): string[] {
 
 const MOCK_FIELDS = { _SYSTEMD_UNIT: "ceralive.service", _COMM: "ceralive" };
 
-/** Dev hosts supply the same trusted-source shape, with an explicit mock label. */
-export function mockSupportJournal(
-	lines: readonly string[],
-	service?: string,
-): string {
-	const header = service
+/** The label a dev/CI download carries in place of a device journal. */
+export function mockJournalLabel(service?: string): string {
+	return service
 		? `-- Logs begin for unit ${service} (CeraUI mock journal) --`
 		: "-- Logs begin, full CeraUI system journal (mock) --";
-	return [
-		JSON.stringify({
-			...MOCK_FIELDS,
-			MESSAGE: JSON.stringify({ msg: header }),
-		}),
-		...lines.map((line) => JSON.stringify({ ...MOCK_FIELDS, MESSAGE: line })),
-	].join("\n");
+}
+
+/** Dev hosts supply the same trusted-source shape. The mock label is added to
+ * the download header, not the journal, because only messages the code logs
+ * are admitted as backend records.
+ */
+export function mockSupportJournal(lines: readonly string[]): string {
+	return lines
+		.map((line) => JSON.stringify({ ...MOCK_FIELDS, MESSAGE: line }))
+		.join("\n");
 }

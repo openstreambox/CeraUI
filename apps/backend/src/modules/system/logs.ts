@@ -16,6 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { readFileSync } from "node:fs";
 import { getRecentLogLines, logger } from "../../helpers/logger.ts";
 import { RunTimeoutError, run } from "../../helpers/run.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
@@ -25,6 +26,7 @@ import { notificationSend } from "../ui/notifications.ts";
 import { buildMsg, getSocketSenderId } from "../ui/websocket-server.ts";
 import { boundRedactedSupportJournal } from "./support-export.ts";
 import {
+	mockJournalLabel,
 	mockSupportJournal,
 	renderSupportJournalWithCounts,
 	SUPPORT_JOURNAL_MATCHES,
@@ -36,6 +38,19 @@ export interface LogResult {
 }
 
 let logDownloadInFlight = false;
+
+/** journald's id for the running boot: the kernel's boot_id without dashes. */
+function currentBootId(): string | undefined {
+	if (shouldUseMocks()) return undefined;
+	try {
+		const id = readFileSync("/proc/sys/kernel/random/boot_id", "utf8")
+			.trim()
+			.replaceAll("-", "");
+		return /^[0-9a-f]{32}$/.test(id) ? id : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /** One collection bounds process and memory use across all authenticated callers. */
 export async function getLog(
@@ -106,7 +121,7 @@ async function collectLog(
 	let entryLimit = 10000;
 	try {
 		journal = shouldUseMocks()
-			? mockSupportJournal(getRecentLogLines(), service)
+			? mockSupportJournal(getRecentLogLines())
 			: await run("journalctl", args, options);
 	} catch (error) {
 		const overflow =
@@ -142,8 +157,11 @@ async function collectLog(
 	const scope = fallbackReason
 		? `current boot only (${fallbackReason})`
 		: "retained last 7 days";
-	const rendered = renderSupportJournalWithCounts(journal);
-	const contents = `Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (unrecognised lines and possible private values).\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`;
+	const rendered = renderSupportJournalWithCounts(journal, {
+		currentBootId: currentBootId(),
+	});
+	const label = shouldUseMocks() ? `${mockJournalLabel(service)}\n` : "";
+	const contents = `${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (unrecognised lines and possible private values). [boot 0] is the running boot, [boot -1] the one before it.\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`;
 	try {
 		conn.send(buildMsg("log", { name, contents }, senderId));
 		return { name, contents };

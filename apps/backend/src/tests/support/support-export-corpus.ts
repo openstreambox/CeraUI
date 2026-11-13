@@ -15,6 +15,13 @@ import {
 } from "./journal-records.ts";
 
 const warn = (msg: string) => event({ level: "warn", msg });
+/** A real backend error event whose error detail carries the text. */
+const failed = (message: string) =>
+	event({
+		level: "error",
+		msg: "Failed to start stream",
+		meta: { err: { name: "Error", message } },
+	});
 
 export const privateRecords: { record: JournalRecord; secret: string }[] = [
 	// Free text in the backend's own vocabulary.
@@ -321,6 +328,82 @@ export const privateRecords: { record: JournalRecord; secret: string }[] = [
 	{ record: kernel("wlx3ca62f112233: authenticated"), secret: "3ca62f112233" },
 ];
 
+// Round five: values the backend's own messages, error details, free modem
+// reasons and hotspot events could carry.
+privateRecords.push(
+	{
+		record: event({
+			level: "error",
+			msg: "nmConnect err: nmcli exited with code 10: Error: No network with SSID 'Bobs Home' found.",
+		}),
+		secret: "Bobs Home",
+	},
+	{
+		record: warn("Command timed out: nmcli -t connection up id Bobs iPhone"),
+		secret: "Bobs iPhone",
+	},
+	{
+		record: failed("Command timed out: nmcli -t connection up id Bobs iPhone"),
+		secret: "Bobs iPhone",
+	},
+	{
+		record: warn("Failed to connect to relay as bob@example.com"),
+		secret: "bob@example.com",
+	},
+	{
+		record: failed("relay login bob@example.com refused"),
+		secret: "bob@example.com",
+	},
+	{
+		record: failed("getaddrinfo ENOTFOUND johns-relay.example.net"),
+		secret: "johns-relay",
+	},
+	{
+		record: warn(
+			"mmcliParseSep: error parsing line modem.3gpp.operator-name : Jane Doe Mobile",
+		),
+		secret: "Jane Doe",
+	},
+	{ record: failed("id 35123456_789012_3"), secret: "789012" },
+	{ record: failed("call 0151, 2345, 6789"), secret: "2345, 6789" },
+	{
+		record: modemManager(
+			"<wrn> [modem0/bearer1] couldn't connect bearer: credentials (bob, Hunter2Secret)",
+		),
+		secret: "Hunter2Secret",
+	},
+	{
+		record: modemManager(
+			"<wrn> [modem0] couldn't load operator name: Jane Doe Mobile",
+		),
+		secret: "Jane Doe",
+	},
+	{
+		record: modemManager(
+			"<wrn> [modem0] Network rejection received: reason 'plmn-not-allowed' (11), operator id '26201', operator name 'Jane Doe Mobile', access technology 'lte'",
+		),
+		secret: "26201",
+	},
+	{
+		record: networkManager(
+			"<info>  [1731528245.1234] device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful.  Connected to 'ExampleHomeNet'.",
+		),
+		secret: "ExampleHomeNet",
+	},
+	{
+		record: networkManager(
+			"<info>  [1731528245.1234] device (Bobs_iPhone): state change: config -> failed (reason 'no-secrets', managed-type: 'full')",
+		),
+		secret: "Bobs_iPhone",
+	},
+	{
+		record: wpaSupplicant(
+			"wlan1: AP-STA-CONNECTED 3c:a6:2f:11:22:33 keyid=Bobs-phone",
+		),
+		secret: "Bobs-phone",
+	},
+);
+
 export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 	[
 		// ModemManager.
@@ -330,11 +413,46 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 			),
 			evidence: "state changed (registered -> connecting)",
 		},
+		// ModemManager 1.24 (trixie): <inf>, <msg>, <wrn>, <err>.
 		{
 			record: modemManager(
-				"<info>  [modem0] modem state changed, 'enabling' --> 'enabled' (reason: user-requested)",
+				"<msg> [modem0] state changed (enabling -> enabled)",
 			),
-			evidence: "'enabling' --> 'enabled' (reason: user-requested)",
+			evidence: "state changed (enabling -> enabled)",
+		},
+		{
+			record: modemManager(
+				"<inf> [modem0] access technology changed (umts -> lte)",
+			),
+			evidence: "access technology changed (umts -> lte)",
+		},
+		{
+			record: modemManager("<msg> [modem0] power state updated: low"),
+			evidence: "power state updated: low",
+		},
+		{
+			record: modemManager(
+				"<wrn> [modem0] Network rejection received: reason 'plmn-not-allowed' (11), operator id '26201', operator name 'Jane Doe Mobile', access technology 'lte'",
+			),
+			evidence: "reason 'plmn-not-allowed' (11)",
+		},
+		{
+			record: modemManager(
+				"<wrn> [modem0/bearer1] connection attempt #2 failed: Missing or unknown APN",
+			),
+			evidence: "connection attempt #2 failed: Missing or unknown APN",
+		},
+		{
+			record: modemManager(
+				"<wrn> [modem0] couldn't connect: QMI protocol error (14): 'CallFailed'",
+			),
+			evidence: "QMI protocol error (14): 'CallFailed'",
+		},
+		{
+			record: modemManager(
+				"<wrn> [modem0/bearer1] couldn't connect bearer: credentials (bob, Hunter2Secret)",
+			),
+			evidence: "couldn't connect bearer: [reason]",
 		},
 		{
 			record: modemManager(
@@ -372,9 +490,9 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 		},
 		{
 			record: modemManager(
-				"<wrn> [modem0/bearer1] connection attempt #1 failed: missing-or-unknown-apn",
+				"<wrn> [modem0/bearer1] connection attempt #1 failed: Missing or unknown APN",
 			),
-			evidence: "missing-or-unknown-apn",
+			evidence: "Missing or unknown APN",
 		},
 		{
 			record: modemManager(
@@ -391,9 +509,29 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 		},
 		{
 			record: networkManager(
-				"<warn>  [1731528245.1234] modem-broadband[cdc-wdm0]: failed to connect modem: missing-or-unknown-apn",
+				"<warn>  [1731528245.1234] modem-broadband[cdc-wdm0]: failed to connect modem: Missing or unknown APN",
 			),
-			evidence: "failed to connect modem: missing-or-unknown-apn",
+			evidence: "failed to connect modem: Missing or unknown APN",
+		},
+		// NetworkManager 1.52 (trixie): managed-type replaces sys-iface-state.
+		{
+			record: networkManager(
+				"<info>  [1731528245.1234] device (cdc-wdm0): state change: prepare -> failed (reason 'gsm-registration-denied', managed-type: 'full')",
+			),
+			evidence:
+				"state change: prepare -> failed (reason 'gsm-registration-denied', managed-type: 'full')",
+		},
+		{
+			record: networkManager(
+				"<warn>  [1731528245.1234] device (wlan0): Activation: (wifi) association took too long, failing activation",
+			),
+			evidence: "association took too long, failing activation",
+		},
+		{
+			record: networkManager(
+				"<info>  [1731528245.1234] device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful.  Connected to 'ExampleHomeNet'.",
+			),
+			evidence: "Connected to '[name]'.",
 		},
 		{
 			record: networkManager(
@@ -453,6 +591,21 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 		{
 			record: hostapd("wlan0: AP-STA-CONNECTED 3c:a6:2f:11:22:33"),
 			evidence: "AP-STA-CONNECTED [address]",
+		},
+		// NetworkManager's hotspot runs in wpa_supplicant.
+		{
+			record: wpaSupplicant("wlan1: AP-ENABLED "),
+			evidence: "wlan1: AP-ENABLED",
+		},
+		{
+			record: wpaSupplicant(
+				"wlan1: AP-STA-CONNECTED 3c:a6:2f:11:22:33 keyid=Bobs-phone",
+			),
+			evidence: "wlan1: AP-STA-CONNECTED [address]",
+		},
+		{
+			record: wpaSupplicant("wlan1: AP-STA-DISCONNECTED 3c:a6:2f:11:22:33"),
+			evidence: "AP-STA-DISCONNECTED [address]",
 		},
 		{
 			record: hostapd("wlan0: interface state UNINITIALIZED->ENABLED"),
@@ -515,26 +668,45 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 			evidence: "exited (code=1, signal=null)",
 		},
 		{
-			record: event({
-				level: "error",
-				msg: "allocation failed: std::bad_alloc",
-			}),
+			record: failed("allocation failed: std::bad_alloc"),
 			evidence: "std::bad_alloc",
 		},
 		{
-			record: warn("probe to 203.0.113.7:5000 failed"),
+			record: failed("probe to 203.0.113.7:5000 failed"),
 			evidence: "probe to [address]:5000 failed",
 		},
 		{
-			record: warn("uplink 3C-A6-2F-11-22-33 ready"),
+			record: failed("uplink 3C-A6-2F-11-22-33 ready"),
 			evidence: "uplink [address] ready",
 		},
 		{
-			record: warn("adapter address aa:bb:cc:dd:ee:ff"),
+			record: failed("adapter address aa:bb:cc:dd:ee:ff"),
 			evidence: "adapter address [address]",
 		},
 		{
-			record: warn("stream key rejected by ingest"),
+			record: failed("stream key rejected by ingest"),
 			evidence: "stream key rejected by ingest",
+		},
+		// The backend's own messages, with values bounded.
+		{
+			record: event({
+				level: "error",
+				msg: "Failed to register modem 3: Jane Doe Mobile",
+			}),
+			evidence: '"msg":"Failed to register modem 3: [value]"',
+		},
+		{
+			record: event({
+				level: "error",
+				msg: "stream start failed no uplink available",
+				meta: {
+					attemptId: "a-1",
+					phase: "connect",
+					class: "engine_unavailable",
+					retry: { state: "exhausted", attempt: 3, maxAttempts: 3 },
+				},
+			}),
+			evidence:
+				'"msg":"stream start failed [value]","level":"error","meta":{"phase":"connect","class":"engine_unavailable","retry":{"state":"exhausted","attempt":3,"maxAttempts":3}}',
 		},
 	];

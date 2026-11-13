@@ -6,11 +6,25 @@
  * shape. A line that matches no shape is withheld and counted: an unknown line
  * costs diagnosis, never privacy. Admitted lines still pass the content filters.
  *
+ * Shapes cover both daemon generations devices run: Debian bookworm
+ * (ModemManager 1.20, NetworkManager 1.42) and trixie (CeraLive's
+ * ModemManager 1.24 carry, NetworkManager 1.52). Each shape is taken from a
+ * format string the daemon logs at info level or above; debug-only lines never
+ * reach the journal and have no shape.
+ *
  * Placeholders expand to named capture groups. A group's name prefix decides
  * what reaches the export: `addr` becomes [address], `name` becomes [name],
- * `serial` becomes [serial], `id` becomes [id], `drop` is removed, `if` keeps an interface name
- * with any embedded MAC masked, and every other group is kept as written.
+ * `serial` becomes [serial], `id` becomes [id], `drop` is removed, `if` keeps an
+ * interface name with any embedded MAC masked, `reason` keeps only ModemManager's
+ * own error phrases (anything else becomes [reason]), `head` must be one of
+ * ModemManager's own "couldn't …" actions or the line is withheld, and every
+ * other group is kept as written.
  */
+
+import {
+	MODEM_COULDNT_HEADS,
+	MODEM_ERROR_PHRASES,
+} from "./support-reason-vocabulary.generated.ts";
 
 export type ShapeSource =
 	| "ModemManager"
@@ -20,20 +34,30 @@ export type ShapeSource =
 	| "kernel";
 
 const PLACEHOLDERS: Record<string, [prefix: string, pattern: string]> = {
-	IF: ["if", "[a-zA-Z][a-zA-Z0-9._-]{0,15}"],
+	// Kernel and NetworkManager interface names only, so a device or modem
+	// named after a person never fits: wlan0, wwan0mbim0, enp1s0, wlx<mac>,
+	// cdc-wdm0, p2p-dev-wlan0, ttyUSB2 (a modem's control port).
+	IF: [
+		"if",
+		"(?:wwan\\d{1,3}(?:mbim|qmi|at|qcdm|firehose|xmmrpc)\\d{1,3}|(?:wlan|wwan|eth|usb|cdc-wdm|rmnet_data|rmnet_ipa|rmnet|mhi_hwip|mhi_swip|qmimux|ppp|wg|tun|tap|veth|br|bond|lo|ap|uap|mlan|ttyUSB|ttyACM|p2p-dev-wlan|p2p-wlan)\\d{0,4}(?:[.-]\\d{1,4})?|(?:en|wl|ww)(?:x[0-9a-fA-F]{12}|[pPsod]\\d[0-9a-z]{0,10}|c\\d{1,3})|docker\\d{1,3}|tailscale\\d{1,3})",
+	],
 	MAC: ["addr", "[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}"],
 	IP: ["addr", "[0-9a-fA-F][0-9a-fA-F.:]{1,44}"],
 	SQNAME: ["name", "[^'\\n]{0,64}"],
 	DQNAME: ["name", '[^"\\n]{0,64}'],
 	UUID: ["id", "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"],
 	SERIAL: ["serial", "[^\\s]{1,64}"],
-	// Error text from the daemon; kept, then checked by the content filters.
-	REASON: ["reason", "[A-Za-z0-9 ,.'():_/+#-]{1,200}"],
+	// Error text from the daemon; reduced to ModemManager's own phrases.
+	REASON: ["reason", "[^\\n]{1,300}"],
+	// The action after ModemManager's "couldn't"; must be one of its own.
+	COULDNT: ["head", "[a-z0-9 '-]{3,60}?"],
+	OPID: ["id", "[0-9A-Za-z]{0,8}"],
 	STATE: ["state", "[a-zA-Z_-]{2,32}"],
 	NUM: ["num", "-?\\d{1,6}"],
 	USBPATH: ["usb", "\\d{1,2}-[\\d.]{1,16}(?::\\d\\.\\d{1,2})?"],
 	DRIVER: ["driver", "[a-z][a-z0-9_-]{1,23}"],
 	TAIL: ["drop", ".{0,4000}"],
+	KEYID: ["drop", "(?: keyid=[^\\n]{0,64})?"],
 };
 
 function compile(source: string): RegExp {
@@ -47,45 +71,60 @@ function compile(source: string): RegExp {
 	return new RegExp(`^${pattern}$`, "d");
 }
 
-// ModemManager writes `<level>  [object] text`; debug output is never admitted.
-const MM = String.raw`<(?:info|warn|wrn|err|error|msg)>\s{1,3}`;
+// ModemManager writes `<level> [object] text` to syslog: 1.20 uses <info>,
+// <warn>, <error>; 1.24 uses <inf>, <msg>, <wrn>, <err>. With --log-journal it
+// writes no level text. Debug (<debug>, <dbg>) is never admitted.
+const MM = String.raw`(?:<(?:info|inf|msg|warn|wrn|err|error)>\s{1,3})?`;
 const MM_OBJ = String.raw`\[modem\d{1,3}(?:/[a-zA-Z0-9-]{1,16}){0,2}\] `;
 // NetworkManager's `[epoch.fraction]` prefix is removed before matching.
 const NM = String.raw`<(?:info|warn|error)>\s{1,3}`;
 const MOVE = String.raw`\({STATE} -> {STATE}\)`;
 
+// wpa_supplicant and hostapd share the AP code: `AP-ENABLED ` keeps its
+// trailing space, AP-STA-CONNECTED may carry ip_addr= and keyid= (dropped).
+const AP_SHAPES = [
+	String.raw`{IF}: interface state [A-Z_]{2,16}->[A-Z_]{2,16}`,
+	String.raw`{IF}: AP-(?:ENABLED|DISABLED) ?`,
+	String.raw`{IF}: AP-STA-(?:CONNECTED|DISCONNECTED|POSSIBLE-PSK-MISMATCH) {MAC}(?: ip_addr={IP})?{KEYID}`,
+];
+
 const SHAPES: Record<ShapeSource, readonly string[]> = {
 	ModemManager: [
 		String.raw`${MM}ModemManager \(version [0-9.]{1,16}\) starting in system bus\.\.\.`,
 		`${MM}${MM_OBJ}(?:modem )?state changed ${MOVE}`,
-		String.raw`${MM}${MM_OBJ}modem state changed, '{STATE}' --> '{STATE}' \(reason: {STATE}\)`,
 		`${MM}${MM_OBJ}(?:3GPP |EPS |5GS |CS |PS )?registration state changed ${MOVE}`,
 		`${MM}${MM_OBJ}3GPP packet service state changed ${MOVE}`,
 		String.raw`${MM}${MM_OBJ}access technology changed \([a-z0-9, -]{1,40} -> [a-z0-9, -]{1,40}\)`,
 		String.raw`${MM}${MM_OBJ}signal quality updated \({NUM}\)`,
 		`${MM}${MM_OBJ}power state updated: (?:on|off|low|unknown)`,
+		`${MM}${MM_OBJ}set power state '(?:on|off|low)'`,
+		String.raw`${MM}${MM_OBJ}failed setting power state '(?:on|off|low)': {REASON}`,
+		String.raw`${MM}${MM_OBJ}consolidated registration state: cs '{STATE}', ps '{STATE}', eps '{STATE}', 5gs '{STATE}' --> '{STATE}'`,
+		String.raw`${MM}${MM_OBJ}Network rejection received: reason '{STATE}' \({NUM}\), operator id '{OPID}', operator name '{SQNAME}', access technology '[a-z0-9, -]{1,40}'`,
 		String.raw`${MM}${MM_OBJ}simple connect started\.\.\.`,
 		String.raw`${MM}${MM_OBJ}simple connect state \({NUM}/{NUM}\): [a-z ]{3,60}`,
-		String.raw`${MM}${MM_OBJ}(?:port '?[a-zA-Z0-9/]{1,24}'? )?(?:port )?timed out {NUM} consecutive times`,
+		String.raw`${MM}${MM_OBJ}(?:port '?[a-zA-Z0-9/]{1,24}'? )?(?:port )?timed out {NUM} consecutive times(?:, marking modem as invalid)?`,
 		String.raw`${MM}${MM_OBJ}connection #{NUM} finished: duration [0-9:s]{1,16}(?:, tx: \d{1,15} bytes, rx: \d{1,15} bytes)?`,
-		String.raw`${MM}${MM_OBJ}(?:couldn't [a-z0-9 -]{3,60}|connection attempt #\d{1,3} failed|modem couldn't be initialized|simple connect failed|couldn't connect bearer|bearer (?:connection|disconnection) failed)(?:: {REASON})?`,
-		String.raw`${MM}\[device {TAIL}\] creating modem with plugin '[a-zA-Z0-9 _-]{1,32}' and '{NUM}' ports`,
+		String.raw`${MM}${MM_OBJ}(?:couldn't {COULDNT}|connection attempt #\d{1,3} failed|modem couldn't be initialized|data connection attempt failed|synchronizing all bearer status failed)(?:: {REASON})?`,
+		String.raw`${MM}\[device {TAIL}\] creating modem with plugin '[a-zA-Z0-9 _-]{1,32}' and '{NUM}' ports(?: \([0-9a-f]{4}(?::[0-9a-f]{4}){1,2}\))? ?`,
 		String.raw`${MM}\[base-manager\] modem for device '{TAIL}' successfully created`,
 	],
 	NetworkManager: [
 		String.raw`${NM}NetworkManager \(version [0-9a-z.-]{1,32}\) is starting\.\.\.(?: \({TAIL}\))?`,
 		String.raw`${NM}manager: NetworkManager state is now [A-Z_]{2,24}`,
-		String.raw`${NM}device \({IF}\): state change: {STATE} -> {STATE} \(reason '{STATE}', sys-iface-state: '{STATE}'\)`,
+		String.raw`${NM}device \({IF}\): state change: {STATE} -> {STATE} \(reason '{STATE}', (?:sys-iface-state|managed-type): '{STATE}'(?:, missing firmware)?\)`,
 		String.raw`${NM}device \({IF}\): Activation: starting connection '{SQNAME}' \({UUID}\)`,
-		String.raw`${NM}device \({IF}\): Activation: Stage \d of 5 \([A-Za-z0-9 ]{1,40}\) [a-z ,.]{1,60}`,
+		String.raw`${NM}device \({IF}\): Activation: (?:\((?:ethernet|wifi)\) )?Stage 2 of 5 \(Device Configure\) successful\.(?:  (?:Connected to|Started) '{SQNAME}'\.)?`,
+		String.raw`${NM}device \({IF}\): Activation: Stage [1-5] of 5 \((?:Device Prepare|Device Configure|IP Configure Start|IP Configure Timeout|IP Check)\) (?:scheduled\.\.\.|started\.\.\.|complete\.|successful\.)`,
 		String.raw`${NM}device \({IF}\): Activation: successful, device activated\.`,
 		String.raw`${NM}device \({IF}\): Activation: failed for connection '{SQNAME}'`,
-		String.raw`${NM}device \({IF}\): Activation: \((?:wifi|wwan|gsm)\) access point '{SQNAME}' has security, but secrets are required\.`,
-		String.raw`${NM}device \({IF}\): Activation: \(wifi\) association took too long[a-z ,.]{0,40}`,
-		String.raw`${NM}device \({IF}\): supplicant interface state: {STATE} -> {STATE}`,
-		String.raw`${NM}device \({IF}\): carrier: link (?:connected|disconnected)[a-z ()0-9]{0,48}`,
+		String.raw`${NM}device \({IF}\): Activation: (?:\((?:wifi|ethernet)\) )?(?:access point|connection) '{SQNAME}' has security, but secrets are required\.`,
+		String.raw`${NM}device \({IF}\): Activation: \(wifi\) (?:asking for new secrets|disconnected during association, asking for new key)`,
+		String.raw`${NM}device \({IF}\): Activation: \((?:wifi|ethernet|macsec)\) association took too long(?:, failing activation|\.)?`,
+		String.raw`${NM}device \({IF}\): supplicant interface state: {STATE} -> {STATE}(?: \(simulated signal\))?`,
+		String.raw`${NM}device \({IF}\): carrier: link connected`,
 		String.raw`${NM}modem-broadband\[{IF}\]: failed to connect modem: {REASON}`,
-		String.raw`${NM}modem-broadband\[{IF}\]: modem state changed, '{STATE}' --> '{STATE}' \(reason: {STATE}\)`,
+		String.raw`${NM}policy: connection '{SQNAME}' auto-activation failed: {REASON}`,
 		String.raw`${NM}policy: set '{SQNAME}' \({IF}\) as default for IPv[46] routing and DNS`,
 		String.raw`${NM}dhcp[46] \({IF}\): state changed [a-z ]{1,24}(?:, address={IP})?`,
 		String.raw`${NM}dhcp[46] \({IF}\): activation: beginning transaction \(timeout in {NUM} seconds\)`,
@@ -106,11 +145,11 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		String.raw`{IF}: Authentication with {MAC} timed out\.`,
 		String.raw`{IF}: WPA: Key negotiation completed with {MAC} \[PTK=[A-Z0-9-]{2,16} GTK=[A-Z0-9-]{2,16}\]`,
 		String.raw`{IF}: WPA: 4-Way Handshake failed - pre-shared key may be incorrect`,
+		// Hotspot: NetworkManager runs the access point through wpa_supplicant.
+		...AP_SHAPES,
 	],
 	hostapd: [
-		String.raw`{IF}: interface state [A-Z_]{2,16}->[A-Z_]{2,16}`,
-		String.raw`{IF}: AP-(?:ENABLED|DISABLED)`,
-		String.raw`{IF}: AP-STA-(?:CONNECTED|DISCONNECTED|POSSIBLE-PSK-MISMATCH) {MAC}`,
+		...AP_SHAPES,
 		String.raw`{IF}: STA {MAC} IEEE 802\.11: (?:associated|disassociated|deauthenticated due to inactivity[a-z ()]{0,40})`,
 		String.raw`{IF}: STA {MAC} WPA: pairwise key handshake completed \((?:RSN|WPA)\)`,
 	],
@@ -150,7 +189,51 @@ const COMPILED: Record<ShapeSource, readonly RegExp[]> = {
 	kernel: SHAPES.kernel.map(compile),
 };
 
-function replacement(group: string, value: string): string | undefined {
+const PHRASES = new Set([
+	...MODEM_ERROR_PHRASES,
+	// NetworkManager's own text for a modem that gave no IP configuration.
+	"invalid bearer IP configuration",
+]);
+const COULDNT = new Set(MODEM_COULDNT_HEADS);
+const QMI_ERROR = /^QMI protocol error \(\d{1,5}\): '[A-Za-z-]{2,48}'/;
+const DBUS_ERROR =
+	/^(?:GDBus\.Error:)?org\.freedesktop\.ModemManager1\.Error\.[A-Za-z]{2,24}\.[A-Za-z]{2,48}$/;
+
+/** Keep leading segments that are ModemManager's own phrases; the first other
+ * segment and everything after it become [reason].
+ */
+export function boundedModemReason(value: string): string {
+	const out: string[] = [];
+	let rest = value.trim();
+	while (rest) {
+		const qmi = QMI_ERROR.exec(rest)?.[0];
+		const cut = rest.indexOf(": ");
+		const segment = qmi ?? (cut < 0 ? rest : rest.slice(0, cut));
+		const known =
+			qmi !== undefined ||
+			PHRASES.has(segment) ||
+			PHRASES.has(segment.replace(/\.$/, "")) ||
+			DBUS_ERROR.test(segment);
+		if (!known) {
+			out.push("[reason]");
+			break;
+		}
+		out.push(segment);
+		rest = rest.slice(segment.length);
+		if (!rest) break;
+		if (!rest.startsWith(": ")) {
+			out.push("[reason]");
+			break;
+		}
+		rest = rest.slice(2);
+	}
+	return out.join(": ");
+}
+
+/** The export text for a group; null withholds the whole line. */
+function replacement(group: string, value: string): string | null | undefined {
+	if (group.startsWith("head")) return COULDNT.has(value) ? undefined : null;
+	if (group.startsWith("reason")) return boundedModemReason(value);
 	if (group.startsWith("addr")) return "[address]";
 	if (group.startsWith("name")) return "[name]";
 	if (group.startsWith("serial")) return "[serial]";
@@ -184,6 +267,7 @@ export function matchLineShape(
 		for (const [group, span] of Object.entries(match.indices?.groups ?? {})) {
 			if (!span) continue;
 			const value = replacement(group, text.slice(span[0], span[1]));
+			if (value === null) return undefined;
 			if (value !== undefined) spans.push([span[0], span[1], value]);
 		}
 		let out = text;

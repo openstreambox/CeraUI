@@ -86,8 +86,18 @@ describe("support export privacy regressions", () => {
 	});
 	test("masks an address span while preserving the diagnostic line", () => {
 		expect(
-			exported(event({ msg: "adapter address aa:bb:cc:dd:ee:ff" })),
-		).toContain('"msg":"adapter address [address]"');
+			exported(
+				event({
+					msg: "Failed to start stream",
+					meta: {
+						err: {
+							name: "Error",
+							message: "adapter address aa:bb:cc:dd:ee:ff",
+						},
+					},
+				}),
+			),
+		).toContain('"message":"adapter address [address]"');
 	});
 
 	test("logger masks passphrases and GNS positions before persistence", () => {
@@ -107,7 +117,7 @@ describe("support export privacy regressions", () => {
 		const entry = {
 			ts: "2026-11-13T00:00:00Z",
 			level: "warn",
-			msg: "connection failed",
+			msg: "Failed to start stream",
 			meta: { reason: "no_route", attempt: 2, retryable: true },
 		};
 		const output = exported(event(entry));

@@ -62,8 +62,9 @@ describe("trusted journal source and record boundaries", () => {
 					_BOOT_ID: "private-boot-b",
 				}),
 		);
-		expect(output).toContain("[boot 1]");
-		expect(output).toContain("[boot 2]");
+		// Counted back from the newest boot: -1 is the boot before it.
+		expect(output).toContain("[boot -1] ");
+		expect(output).toContain("[boot 0] ");
 		expect(output).toContain("USB disconnect");
 		expect(output).toContain("kernel:");
 		expect(output).not.toContain("private-hostname");
@@ -154,10 +155,12 @@ describe("trusted journal source and record boundaries", () => {
 				entry("sender stderr: private-tail-value&latency=2000 ok", {
 					_SYSTEMD_UNIT: "ceralive.service",
 				}),
-				entry('{"msg":"stream failed"}', { _SYSTEMD_UNIT: "ceralive.service" }),
+				entry('{"msg":"Failed to start stream"}', {
+					_SYSTEMD_UNIT: "ceralive.service",
+				}),
 			].join("\n"),
 		);
 		expect(output).not.toContain("private-tail-value");
-		expect(output).toContain("stream failed");
+		expect(output).toContain("Failed to start stream");
 	});
 });

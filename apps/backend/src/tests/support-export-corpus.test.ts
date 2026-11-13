@@ -108,7 +108,7 @@ describe("structured backend events", () => {
 	test("retains bounded string errors and omits oversized error messages", () => {
 		const output = exported(
 			event({
-				msg: "operation failed",
+				msg: "Failed to start stream",
 				meta: {
 					err: "Network timeout",
 					error: { name: "Error", message: "x".repeat(301) },
@@ -142,7 +142,7 @@ describe("structured backend events", () => {
 		const output = exported(
 			event({
 				level: "warn",
-				msg: "connection failed",
+				msg: "Failed to start stream",
 				meta: {
 					reason: "no_route",
 					opaque_future_field: "unlabelled-private-value",
@@ -159,7 +159,7 @@ describe("structured backend events", () => {
 			"private-fragment",
 		])
 			expect(output).not.toContain(value);
-		expect(output).toContain("connection failed");
+		expect(output).toContain("Failed to start stream");
 		expect(output).toContain("no_route");
 	});
 	test("withholds oversized pathological records before content matching", () => {

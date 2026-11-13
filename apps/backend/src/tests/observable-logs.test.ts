@@ -47,6 +47,7 @@ const JOURNAL_ARGS = [
 ];
 const MAX_BUFFER = 10 * 1024 * 1024;
 
+// Lines are messages this backend really logs: the export admits only those.
 function journal(text: string): string {
 	return text
 		.split("\n")
@@ -101,7 +102,7 @@ afterEach(() => {
 
 describe("system.getLog / system.getSyslog — real data + log push", () => {
 	it("getLog returns the journal contents (NOT an empty stub) and pushes a log frame", async () => {
-		const KNOWN = "Jun 25 12:00:00 ceralive[42]: known boot event marker";
+		const KNOWN = "Registered modem";
 		spyOn(runModule, "run").mockResolvedValue(journal(KNOWN));
 
 		const sent: string[] = [];
@@ -121,15 +122,15 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 	it("exports retained previous-boot evidence and redacts both RPC and pushed files", async () => {
 		spyOn(runModule, "run").mockResolvedValue(
 			journal(
-				"previous boot marker\nIMEI=351756051523999\n-- Reboot --\ncurrent boot marker\ncell_id=0xabc123",
+				"Trying to register modem\nIMEI=351756051523999\n-- Reboot --\nRegistered modem\ncell_id=0xabc123",
 			),
 		);
 		const sent: string[] = [];
 		const result = await call(getLogProcedure, undefined, {
 			context: makeContext(sent),
 		});
-		expect(result.log).toContain("previous boot marker");
-		expect(result.log).toContain("current boot marker");
+		expect(result.log).toContain("Trying to register modem");
+		expect(result.log).toContain("Registered modem");
 		expect(findLogPush(sent)?.contents).toBe(result.log);
 		for (const value of ["351756051523999", "0xabc123"])
 			expect(JSON.stringify([result, sent])).not.toContain(value);
@@ -149,7 +150,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 
 	it("a failed carrier summary leaves the redacted journal downloadable", async () => {
 		spyOn(runModule, "run").mockResolvedValue(
-			journal("retained journal evidence"),
+			journal("Failed modem config update"),
 		);
 		spyOn(carrierModule, "getCarrierSupportSummary").mockImplementation(() => {
 			throw new Error("private-summary-fault");
@@ -158,7 +159,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		const result = await call(getLogProcedure, undefined, {
 			context: makeContext(sent),
 		});
-		expect(result.log).toContain("retained journal evidence");
+		expect(result.log).toContain("Failed modem config update");
 		expect(result.log).toContain("Carrier support summary unavailable");
 		expect(findLogPush(sent)?.contents).toBe(result.log);
 		expect(JSON.stringify(sent)).not.toContain("private-summary-fault");
@@ -172,7 +173,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 					"private-stderr",
 				),
 			)
-			.mockResolvedValueOnce(journal("current boot evidence"));
+			.mockResolvedValueOnce(journal("Registered modem"));
 		const sent: string[] = [];
 		const result = await call(getLogProcedure, undefined, {
 			context: makeContext(sent),
@@ -184,7 +185,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
 		);
 		expect(result.log).toContain("current boot only");
-		expect(result.log).toContain("current boot evidence");
+		expect(result.log).toContain("Registered modem");
 		expect(JSON.stringify(sent)).not.toContain("private-partial-imei");
 	});
 	it("ordinary collection failure does not retry and is not called a timeout", async () => {
@@ -256,7 +257,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		try {
 			expect(runSpy).toHaveBeenCalledTimes(1);
 		} finally {
-			release(journal("bounded evidence"));
+			release(journal("Failed to start stream"));
 			await first;
 			await Promise.all(others);
 		}
@@ -268,7 +269,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 	it("retries size overflow once with a labelled 400-entry current-boot scope", async () => {
 		const runSpy = spyOn(runModule, "run")
 			.mockRejectedValueOnce(new Error("stdout maxBuffer length exceeded"))
-			.mockResolvedValueOnce(journal("recent evidence"));
+			.mockResolvedValueOnce(journal("Failed to start stream"));
 		const result = await call(getLogProcedure, undefined, {
 			context: makeContext([]),
 		});
@@ -289,11 +290,13 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		);
 		expect(result.log).toContain("newest 400 entries");
 		expect(result.log).toMatch(/\nRecords: \d+ shown, 0 withheld \(/);
-		expect(result.log).toContain("recent evidence");
+		expect(result.log).toContain("Failed to start stream");
 	});
 
 	it("getLog defaults to the ceralive.service unit; an explicit service overrides", async () => {
-		const runSpy = spyOn(runModule, "run").mockResolvedValue(journal("x"));
+		const runSpy = spyOn(runModule, "run").mockResolvedValue(
+			journal("Registered modem"),
+		);
 
 		await call(getLogProcedure, undefined, { context: makeContext([]) });
 		expect(runSpy).toHaveBeenLastCalledWith(
@@ -317,7 +320,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 	});
 
 	it("getSyslog returns the full boot journal (no unit filter) and pushes it", async () => {
-		const KNOWN = "Jun 25 12:00:01 kernel: full system journal line";
+		const KNOWN = "Failed to start stream";
 		const runSpy = spyOn(runModule, "run").mockResolvedValue(journal(KNOWN));
 
 		const sent: string[] = [];

@@ -1,6 +1,12 @@
 import { isIP } from "node:net";
+import {
+	START_FAILURE_CAPTURE_CAUSES,
+	START_FAILURE_CLASSES,
+	START_FAILURE_PHASES,
+} from "@ceraui/rpc/schemas";
 import { logRedact } from "../../helpers/logger.ts";
 import { isShapeSource, matchLineShape } from "./support-line-shapes.ts";
+import { boundedBackendMessage } from "./support-log-templates.ts";
 
 export const WITHHELD = "[REDACTED support log line]";
 export const MAX_SUPPORT_LINE_BYTES = 8192;
@@ -233,6 +239,17 @@ export function filterDiagnosticText(
 	if (/(?:\b[a-f0-9]{2}[: \t-]){7,63}[a-f0-9]{2}\b/i.test(text))
 		return undefined;
 	if (/\bstderr\s*:/i.test(text) || logRedact(text) !== text) return undefined;
+	// Text that echoes a command line or tool output, an e-mail or account
+	// address, or a host name a lookup failed for.
+	if (
+		/\bCommand timed out:|\bexited with code\b|\bSSID ['"]|\b(?:ENOTFOUND|EAI_AGAIN|EAI_NONAME|EAI_FAIL)[ \t]+\S/i.test(
+			text,
+		) ||
+		/[A-Za-z0-9._%+-]@(?![A-Za-z0-9_.\\-]*\.(?:service|target|socket|scope|slice|timer|mount|path|device)\b)[A-Za-z0-9-]/.test(
+			text,
+		)
+	)
+		return undefined;
 	// Replace address and name spans, preserving the surrounding evidence.
 	text = maskNames(maskAddresses(text));
 	// Named bounded counters are diagnostic quantities. Test the other text for
@@ -243,7 +260,7 @@ export function filterDiagnosticText(
 			"[counter]",
 		)
 		.replace(/\b\d{1,12}[ \t]{1,3}(?:bytes|packets)\b/gi, "[counter]");
-	if (/\d(?:[ \t.()/+-]{0,3}\d){8,21}/.test(numericText)) return undefined;
+	if (/\d(?:[ \t.()/+,_-]{0,3}\d){8,21}/.test(numericText)) return undefined;
 	return text;
 }
 
@@ -287,6 +304,35 @@ function safeError(value: unknown): Record<string, unknown> | undefined {
 	return Object.keys(out).length ? out : undefined;
 }
 
+const START_CLASSES = new Set<string>(START_FAILURE_CLASSES);
+const START_PHASES = new Set<string>(START_FAILURE_PHASES);
+const CAPTURE_CAUSES = new Set<string>(START_FAILURE_CAPTURE_CAUSES);
+const RETRY_STATES = new Set(["scheduled", "exhausted", "not_retriable"]);
+
+function boundedCount(value: unknown, max: number): value is number {
+	return (
+		typeof value === "number" &&
+		Number.isInteger(value) &&
+		value >= 0 &&
+		value <= max
+	);
+}
+
+/** A start attempt's retry state, as stream-start-retry reports it. */
+function safeRetry(value: unknown): Record<string, unknown> | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		return undefined;
+	const retry = value as Record<string, unknown>;
+	const out: Record<string, unknown> = {};
+	if (typeof retry.state === "string" && RETRY_STATES.has(retry.state))
+		out.state = retry.state;
+	for (const key of ["attempt", "nextAttempt", "maxAttempts"])
+		if (boundedCount(retry[key], 100)) out[key] = retry[key];
+	if (boundedCount(retry.delayMs, 3600000)) out.delayMs = retry.delayMs;
+	if (typeof retry.suppressed === "boolean") out.suppressed = retry.suppressed;
+	return Object.keys(out).length ? out : undefined;
+}
+
 function safeMetadata(
 	value: unknown,
 	procedure: string | undefined,
@@ -313,6 +359,27 @@ function safeMetadata(
 		} else if (["reason", "code"].includes(key) && safeCode(inner))
 			out[key] = inner;
 		else if (
+			key === "class" &&
+			typeof inner === "string" &&
+			START_CLASSES.has(inner)
+		)
+			out[key] = inner;
+		else if (
+			key === "captureCause" &&
+			typeof inner === "string" &&
+			CAPTURE_CAUSES.has(inner)
+		)
+			out[key] = inner;
+		else if (key === "retry") {
+			const retry = safeRetry(inner);
+			if (retry) out[key] = retry;
+		} else if (
+			key === "retryState" &&
+			typeof inner === "string" &&
+			RETRY_STATES.has(inner)
+		)
+			out[key] = inner;
+		else if (
 			key === "reason" &&
 			typeof inner === "string" &&
 			inner.length <= 300 &&
@@ -326,7 +393,7 @@ function safeMetadata(
 		} else if (
 			["stage", "phase", "status", "state"].includes(key) &&
 			typeof inner === "string" &&
-			STATES.has(inner)
+			(STATES.has(inner) || (key === "phase" && START_PHASES.has(inner)))
 		)
 			out[key] = inner;
 		else if (
@@ -354,9 +421,14 @@ function safeMetadata(
 		)
 			out[key] = inner;
 		else if (
-			["latency_ms", "elapsed_ms", "wait_ms", "attempt", "count"].includes(
-				key,
-			) &&
+			[
+				"latency_ms",
+				"elapsed_ms",
+				"wait_ms",
+				"attempt",
+				"maxAttempts",
+				"count",
+			].includes(key) &&
 			typeof inner === "number" &&
 			Number.isFinite(inner) &&
 			inner >= 0 &&
@@ -387,6 +459,14 @@ function systemdMessage(message: string): string | undefined {
 	return undefined;
 }
 
+// Fixed words a message gap may keep besides numbers and interface names.
+const MESSAGE_TOKENS: ReadonlySet<string> = new Set([
+	...CODES,
+	...STATES,
+	...MODULES,
+	...SIGNALS,
+]);
+
 function redactSupportRecord(
 	message: string,
 	source: "ceralive" | "systemd",
@@ -400,7 +480,16 @@ function redactSupportRecord(
 			const entry = JSON.parse(trimmed);
 			const raw = entry?.msg ?? entry?.message;
 			if (typeof raw !== "string" || raw.length > 4096) return WITHHELD;
-			const msg = filterDiagnosticText(raw, source);
+			// Only messages this code writes, with interpolated values bounded.
+			// An RPC trace names a procedure the router resolved before logging.
+			const bounded =
+				/^RPC [a-zA-Z][a-zA-Z0-9]{0,40}(?:\.[a-zA-Z][a-zA-Z0-9]{0,40}){0,3} (?:ok|err)$/.test(
+					raw,
+				)
+					? raw
+					: boundedBackendMessage(raw, MESSAGE_TOKENS);
+			if (bounded === undefined) return WITHHELD;
+			const msg = filterDiagnosticText(bounded, source);
 			if (msg === undefined) return WITHHELD;
 			const out: Record<string, unknown> = { msg };
 			if (
@@ -416,7 +505,7 @@ function redactSupportRecord(
 				out.level = entry.level;
 			if (typeof entry.module === "string" && MODULES.has(entry.module))
 				out.module = entry.module;
-			const rpc = /^RPC ([a-zA-Z][a-zA-Z0-9_.]{0,79}) (?:ok|err)$/.exec(msg);
+			const rpc = /^RPC ([a-zA-Z][a-zA-Z0-9_.]{0,79}) (?:ok|err)$/.exec(raw);
 			const meta = safeMetadata(entry.meta, rpc?.[1]);
 			if (Object.keys(meta).length) out.meta = meta;
 			return JSON.stringify(out);
