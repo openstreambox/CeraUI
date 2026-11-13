@@ -528,13 +528,9 @@ function abandonedSettled(attempt: Attempt): void {
 		logger.warn("bind-map: an abandoned publication landed late");
 		markDiskUncertain();
 		invalidateBindMapReuse();
-		noteFailure("late_effect", true);
-		// Queue the repair now, behind any attempt in flight: that attempt
-		// started before the late effect and cannot prove what is on disk.
-		if (stale !== undefined && newest !== undefined) {
-			stale.immediateUsed = true;
-			submit(newest);
-		}
+		// Keep the existing stale period and its retry budget. Repeated late
+		// effects must not turn slow storage into an immediate rewrite loop.
+		noteFailure("late_effect");
 	}
 	drain();
 }
@@ -559,17 +555,15 @@ function noteResult(
 }
 
 /** The newest snapshot is not (or no longer known to be) on disk. */
-function noteFailure(reason: BindMapStaleReason, newPeriod = false): void {
-	if (stale === undefined || newPeriod) {
-		if (stale === undefined) {
-			logger.error(
-				"bind-map: the files on disk are stale; republishing the newest mapping until it lands",
-				{ reason },
-			);
-		}
+function noteFailure(reason: BindMapStaleReason): void {
+	if (stale === undefined) {
+		logger.error(
+			"bind-map: the files on disk are stale; republishing the newest mapping until it lands",
+			{ reason },
+		);
 		stale = {
-			since: stale?.since ?? Date.now(),
-			failures: (stale?.failures ?? 0) + 1,
+			since: Date.now(),
+			failures: 1,
 			reason,
 			backoff: 0,
 			immediateUsed: false,

@@ -197,8 +197,13 @@ export async function publishSrtlaBond(
 				(options.registerBond ?? registerSrtlaBond)(published);
 			}
 			lastBond = { entries: [...published], publication };
-			if (publication.changed) publicationSequence += 1;
-			if (origin.republished && publication.changed) {
+			if (wroteIpList(publication) && publication.changed)
+				publicationSequence += 1;
+			if (
+				origin.republished &&
+				wroteIpList(publication) &&
+				publication.changed
+			) {
 				void reloadIfStreaming(publication, options);
 			}
 		},

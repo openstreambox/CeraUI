@@ -650,3 +650,69 @@ describe("the reload a launch is owed", () => {
 		}
 	});
 });
+
+for (const streaming of [true, false]) {
+	test(`failed IP writes neither reload nor accrue a launch reload (streaming=${streaming})`, async () => {
+		const fs = memoryFs();
+		await publishSrtlaBond(link("eth0"), fs.deps, notStreaming);
+		noteSenderLaunchBond();
+		let attempts = 0;
+		let reloads = 0;
+		const deps = {
+			...fs.deps,
+			retryDelaysMs: [10],
+			writeFile: async () => {
+				attempts += 1;
+				throw new Error("EIO");
+			},
+		};
+		await publishSrtlaBond(link("wwan0"), deps, {
+			isStreaming: async () => streaming,
+			reload: async () => {
+				reloads += 1;
+			},
+		});
+		await eventually(() => attempts >= 3);
+		expect(reloads).toBe(0);
+		let deliveries = 0;
+		expect(
+			await reloadOwedAtLaunchCommit(
+				() => true,
+				async () => {
+					deliveries += 1;
+					return true;
+				},
+				notStreaming,
+			),
+		).toBe(false);
+		expect(deliveries).toBe(0);
+		expect(fs.files.get(IPS)).toBe("192.0.2.1");
+	});
+}
+
+test("repeated late renames retain capped backoff and recover after storage settles", async () => {
+	const fs = memoryFs(20);
+	const attempts: number[] = [];
+	let slow = true;
+	const deps = {
+		...fs.deps,
+		retryDelaysMs: [50, 100, 150],
+		renameFile: async (from: string, to: string) => {
+			if (to === IPS) {
+				attempts.push(performance.now());
+				if (slow) await Bun.sleep(30);
+			}
+			await fs.deps.renameFile(from, to);
+		},
+	};
+	await publishBondMapping(link("eth0"), deps);
+	await eventually(() => attempts.length >= 6);
+	const gaps = attempts.slice(1).map((at, i) => at - (attempts[i] ?? 0));
+	// One immediate retry is allowed; subsequent retries reach and retain the cap.
+	expect(gaps.at(-1)).toBeGreaterThanOrEqual(145);
+	expect(gaps.at(-2)).toBeGreaterThanOrEqual(145);
+	slow = false;
+	await eventually(() => !getBindMapPublicationHealth().stale);
+	expect(fs.files.get(IPS)).toBe("192.0.2.1");
+	expect(fs.sidecar().links[0]?.iface).toBe("eth0");
+});
