@@ -67,30 +67,51 @@ export class HeatWifiRest {
 	}
 	update(stage: number, known: boolean): Promise<void> {
 		return this.serial(async () => {
+			const failures: unknown[] = [];
+			const attempted = new Set<string>();
+			const recover = async (key: string, reason: string) => {
+				if (attempted.has(key)) return;
+				attempted.add(key);
+				try {
+					await this.deps.lock(key, () => this.wake(key, reason));
+				} catch (error) {
+					this.wanted.add(key);
+					failures.push(error);
+				}
+			};
+			const report = () => {
+				if (failures.length)
+					throw new AggregateError(failures, "Wi-Fi recovery remains pending");
+			};
 			for (const key of this.resting.keys()) {
 				if (this.wanted.has(key) || (known && stage === 0))
-					await this.deps.lock(key, () =>
-						this.wake(key, known && stage === 0 ? "cool" : "needed"),
-					);
+					await recover(key, known && stage === 0 ? "cool" : "needed");
 			}
 			if (this.resting.size === 0 && (!known || stage === 0)) {
 				if (known) this.wanted.clear();
+				report();
 				return;
 			}
-			const rows = await this.deps.read();
+			let rows: IdleWifiRadio[];
+			try {
+				rows = await this.deps.read();
+			} catch (error) {
+				failures.push(error);
+				report();
+				return;
+			}
 			for (const key of this.resting.keys()) {
 				const row = rows.find((r) => r.key === key);
 				if (!row) {
-					await this.deps.lock(key, () => this.wake(key, "usage-unknown"));
+					await recover(key, "usage-unknown");
 					continue;
 				}
 				if (!row.eligible || this.wanted.has(key) || (known && stage === 0)) {
-					await this.deps.lock(key, () =>
-						this.wake(key, known && stage === 0 ? "cool" : "needed"),
-					);
+					await recover(key, known && stage === 0 ? "cool" : "needed");
 				}
 			}
-			if (known && stage === 0) this.wanted.clear();
+			if (known && stage === 0 && failures.length === 0) this.wanted.clear();
+			report();
 			if (!known || stage < 1) return;
 			for (const candidate of rows) {
 				if (

@@ -237,3 +237,65 @@ test("demand wake needs identity proof, not working route or NM readers", async 
 	await rest.demand("usb");
 	expect(calls).toEqual([false, true]);
 });
+
+for (const recovery of ["restart", "cool", "observed-use"] as const) {
+	for (const failure of ["absent", "up-command"] as const) {
+		test(`${recovery} recovers later radios after an ${failure} failure`, async () => {
+			const radios = ["a", "b"].map((key) => ({
+				key,
+				identity: `boot/usb/${key}`,
+				ifname: `wlan-${key}`,
+				eligible: true,
+				up: true,
+			}));
+			let recovering = recovery === "restart";
+			let broken = true;
+			let saved: IdleWifiRadio[] = [];
+			const ups: string[] = [];
+			const rest = new HeatWifiRest({
+				load: async () => (recovery === "restart" ? radios : []),
+				read: async () =>
+					radios
+						.filter(
+							(r) =>
+								!(
+									recovering &&
+									failure === "absent" &&
+									r.key === "a" &&
+									broken
+								),
+						)
+						.map((r) => ({ ...r, eligible: !recovering })),
+				wakeRead: async (old) => {
+					if (old.key === "a" && broken && failure === "absent")
+						throw Error("ENOENT");
+					return old;
+				},
+				lock: async (_key, fn) => fn(),
+				set: async (row, up) => {
+					if (!up) return;
+					if (row.key === "a" && broken && failure === "up-command")
+						throw Error("link up failed");
+					ups.push(row.key);
+				},
+				record: () => undefined,
+				save: async (rows) => {
+					saved = [...rows];
+				},
+			});
+			if (!recovering) await rest.update(1, true);
+			recovering = true;
+			for (let tick = 0; tick < 3; tick++) {
+				await expect(
+					rest.update(recovery === "cool" ? 0 : 1, recovery !== "observed-use"),
+				).rejects.toThrow();
+				expect(ups).toEqual(["b"]);
+				expect(saved.map((r) => r.key)).toEqual(["a"]);
+			}
+			broken = false;
+			await rest.update(1, false);
+			expect(ups).toEqual(["b", "a"]);
+			expect(saved).toEqual([]);
+		});
+	}
+}

@@ -1,11 +1,4 @@
-import {
-	mkdir,
-	readdir,
-	readFile,
-	realpath,
-	rename,
-	writeFile,
-} from "node:fs/promises";
+import { mkdir, readdir, realpath, rename } from "node:fs/promises";
 import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
 import { getms } from "../../helpers/time.ts";
@@ -43,7 +36,7 @@ export const heatWifiReaders = {
 	registry: getWifiInterfacesByMacAddress,
 	interfaces: getNetworkInterfaces,
 	realpath: (path: string) => realpath(path),
-	read: (path: string) => readFile(path, "utf8"),
+	read: (path: string) => Bun.file(path).text(),
 	list: (path: string) => readdir(path),
 	command: run,
 };
@@ -137,7 +130,7 @@ export async function readHeatWifiRadios(
 }
 async function nativeIdentity(ifname: string): Promise<string> {
 	const base = `/sys/class/net/${ifname}`;
-	return `${(await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim()}/${await realpath(`${base}/device`)}/${(await readFile(`${base}/ifindex`, "utf8")).trim()}`;
+	return `${(await Bun.file("/proc/sys/kernel/random/boot_id").text()).trim()}/${await realpath(`${base}/device`)}/${(await Bun.file(`${base}/ifindex`).text()).trim()}`;
 }
 let latest = { stage: 0, known: false, at: -Infinity };
 const journal = "/run/ceralive/heat-wifi-rest.json";
@@ -145,7 +138,7 @@ const owner = new HeatWifiRest({
 	load: async () => {
 		let text: string;
 		try {
-			text = await readFile(journal, "utf8");
+			text = await Bun.file(journal).text();
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
 			throw error;
@@ -167,7 +160,7 @@ const owner = new HeatWifiRest({
 	},
 	save: async (rows) => {
 		await mkdir("/run/ceralive", { recursive: true, mode: 0o755 });
-		await writeFile(`${journal}.tmp`, JSON.stringify(rows), { mode: 0o600 });
+		await Bun.write(`${journal}.tmp`, JSON.stringify(rows), { mode: 0o600 });
 		await rename(`${journal}.tmp`, journal);
 	},
 	read: (key) => readHeatWifiRadios(heatWifiReaders, key),

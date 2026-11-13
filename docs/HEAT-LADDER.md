@@ -137,3 +137,6 @@ the link. A backend restart first restores matching recorded links, even if
 warm; boot identity fences stale records after reboot. A failed record write
 prevents a new rest. Temperature and interface evidence are rechecked before
 the command; a pending wake survives failed observations or commands.
+Recovery attempts each owned radio independently: an unplugged radio or failed
+link-up retains its pending ownership without blocking later radios. Failures
+are reported together after the recovery attempts, before admitting new rest.
