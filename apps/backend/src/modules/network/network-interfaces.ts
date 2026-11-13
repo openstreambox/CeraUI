@@ -48,6 +48,10 @@ import {
 	notificationSend,
 } from "../ui/notifications.ts";
 import { broadcastMsg, buildMsg } from "../ui/websocket-server.ts";
+import {
+	wifiAdapterLockKey,
+	withWifiAdapterLock,
+} from "../wifi/wifi-adapter-lock.ts";
 import { isConcurrentApIfname } from "../wifi/wifi-concurrent-interface.ts";
 import { getWifiInterfacesByMacAddress } from "../wifi/wifi-connections.ts";
 import {
@@ -207,6 +211,17 @@ export function resetBondOptOutSession(): void {
 }
 
 export function setBondOptOut(ifname: string, optOut: boolean): void {
+	if (!optOut) {
+		for (const [mac, radio] of Object.entries(
+			getWifiInterfacesByMacAddress(),
+		)) {
+			if (radio.ifname !== ifname) continue;
+			const key = wifiAdapterLockKey(mac);
+			void withWifiAdapterLock(key, async () => undefined).catch((error) =>
+				logger.warn("Wi-Fi bond wake failed", { error }),
+			);
+		}
+	}
 	setPersistentBondOptOut(ifname, optOut);
 }
 

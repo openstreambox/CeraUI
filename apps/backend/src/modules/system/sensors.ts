@@ -29,7 +29,6 @@ import {
 	getMockSensorData,
 	shouldMockSensors,
 } from "../../mocks/providers/sensors.ts";
-
 import { getConfig } from "../config.ts";
 import { getRTMPIngestStats } from "../ingest/rtmp.ts";
 import { getSRTIngestStats } from "../ingest/srt.ts";
@@ -48,6 +47,7 @@ import {
 	notificationRemove,
 } from "../ui/notifications.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
+import { updateHeatWifi } from "../wifi/heat-wifi-runtime.ts";
 import { getHardwareKindCached } from "./hardware-kind.ts";
 import {
 	EMI_ADVISORY_MSG,
@@ -348,7 +348,9 @@ export function initHardwareMonitoring() {
 				now,
 				modemTemperatureReader.sample(targets, now),
 			);
-			broadcastMsg("heat", cerastreamBackend.getHeat());
+			const heat = cerastreamBackend.getHeat();
+			updateHeatWifi(heat.stage, !heat.unknown);
+			broadcastMsg("heat", heat);
 
 			const data = { ...sensors };
 			const srtIngestStats = getSRTIngestStats();

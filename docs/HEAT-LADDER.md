@@ -112,3 +112,28 @@ and malformed fields mean reduced protection. Bit 0001 reports that the board's
 for up to a minute. Both reasons reach heat status and the panel independently
 of stream heat stage; neither says that the stream stopped. Legacy frames
 without `gaps2` remain accepted. The extended CRC fixture verifies 296D.
+
+## Idle USB Wi-Fi at warm
+
+At the warm step, a proven USB Wi-Fi adapter may be lowered with `ip link set dev <interface> down`. This is per-interface rather than rfkill, which can
+silence a sibling AP. Admission requires one interface on the physical radio,
+no active NetworkManager connection, no bond membership, no hotspot or upper
+virtual interface, no IPv4
+or IPv6 address (including link-local), and no route in any table. Failed or
+unknown observations leave it alone. An onboard radio never qualifies.
+
+Only an interface lowered by this owner is raised. Cooling uses the existing
+ladder dwell and hysteresis. A Wi-Fi action wakes it under the adapter lock
+before dispatch, a bond request wakes it, and newly observed use wakes it even
+with unknown temperature. Hotplug identity includes sysfs device path and
+ifindex. A demand prevents another rest until the next known normal stage.
+Keep quality does not disable this invisible step. The existing single warm
+notice remains: “The box is warm. Give it air.” Actions log their method and
+reason; they do not claim the stream stopped. This is link administration,
+not USB power switching; power savings remain unmeasured.
+
+A root-private record under `/run/ceralive` is saved atomically before lowering
+the link. A backend restart first restores matching recorded links, even if
+warm; boot identity fences stale records after reboot. A failed record write
+prevents a new rest. Temperature and interface evidence are rechecked before
+the command; a pending wake survives failed observations or commands.
