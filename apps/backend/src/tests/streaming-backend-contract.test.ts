@@ -320,6 +320,7 @@ interface BackendHarness {
 function makeBackend(
 	opts: {
 		getHeatLinks?: CerastreamBackendDeps["getHeatLinks"];
+		onHeatLinksChange?: CerastreamBackendDeps["onHeatLinksChange"];
 		connect?: CerastreamBackendDeps["connect"];
 		config?: Partial<RuntimeConfig>;
 		fakeOptions?: FakeClientOptions;
@@ -335,6 +336,9 @@ function makeBackend(
 	let saves = 0;
 	const backend = new CerastreamBackend({
 		getHeatLinks: opts.getHeatLinks,
+		...(opts.onHeatLinksChange
+			? { onHeatLinksChange: opts.onHeatLinksChange }
+			: {}),
 		connect: opts.connect ?? (async () => fake.client),
 		connectOptions: {},
 		getConfig: () => config,
@@ -1624,12 +1628,29 @@ describe("heat ceiling review round 2", () => {
 	});
 });
 
+const modemAt = (
+	value: number | null,
+	missing = false,
+	unavailable = false,
+) => ({
+	value,
+	missing,
+	unavailable,
+});
+const restLinks = () =>
+	["a", "b", "c"].map((name) => ({
+		name,
+		modem: true,
+		healthy: true,
+		headroom: 0.3 as number | null,
+	}));
+
 test("modem heat triggers its own thresholds and absence cannot undo it", async () => {
 	const { backend, fake, saveCount } = makeBackend();
 	await backend.start(STREAM_CONFIG, RUN_OPTS);
 	const saves = saveCount();
 	for (let t = 0; t <= 12000; t += 1000) {
-		backend.updateHeat(40, t, 71);
+		backend.updateHeat(40, t, modemAt(71));
 		await backend.settle();
 	}
 	expect(backend.getHeat().stage).toBe(2);
@@ -1637,7 +1658,7 @@ test("modem heat triggers its own thresholds and absence cannot undo it", async 
 		fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params,
 	).toEqual({ max_bitrate: 6000 });
 	for (let t = 13000; t <= 400000; t += 1000) {
-		backend.updateHeat(40, t, null);
+		backend.updateHeat(40, t, modemAt(null, true));
 		await backend.settle();
 	}
 	expect(backend.getHeat().stage).toBe(2);
@@ -1682,20 +1703,20 @@ test("missing modem evidence cannot resume a ceiling after Keep quality", async 
 	const { backend } = makeBackend({ getHeatLinks: () => links });
 	await backend.start(STREAM_CONFIG, RUN_OPTS);
 	for (let t = 0; t <= 12000; t += 1000) {
-		backend.updateHeat(40, t, 71);
+		backend.updateHeat(40, t, modemAt(71));
 		await backend.settle();
 	}
 	await backend.keepHeatQuality(true);
-	backend.updateHeat(40, 13000, null);
+	backend.updateHeat(40, 13000, modemAt(null, true));
 	await backend.settle();
 	await backend.keepHeatQuality(false);
 	expect(backend.getHeat().restingLink).toBeNull();
 	expect(backend.getHeat().reduced).toBe(false);
-	backend.updateHeat(40, 14000, null);
+	backend.updateHeat(40, 14000, modemAt(null, true));
 	await backend.settle();
 	expect(backend.getHeat().reduced).toBe(false);
 	for (let t = 15000; t <= 28000; t += 1000) {
-		backend.updateHeat(76, t, null);
+		backend.updateHeat(76, t, modemAt(null, true));
 		await backend.settle();
 	}
 	expect(backend.getHeat().reduced).toBe(true);
@@ -1736,4 +1757,152 @@ test("a control reconnect mid-stream keeps the resting link", async () => {
 	expect(backend.getHeat().stage).toBe(2);
 	await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
 	expect(backend.getHeat().restingLink).toBeNull();
+});
+
+describe("heat ladder slice 2 review", () => {
+	const lastBitrate = (fake: FakeClientHarness) =>
+		fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params;
+	const restUp = async (backend: CerastreamBackend, temp = 76, to = 12000) => {
+		for (let t = 0; t <= to; t += 1000) {
+			backend.updateHeat(temp, t);
+			await backend.settle();
+		}
+	};
+
+	test("item 4: an implausible modem value never switches off SoC heat protection", async () => {
+		const { backend, fake } = makeBackend();
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		for (let t = 0; t <= 12000; t += 1000) {
+			backend.updateHeat(85, t, modemAt(130));
+			await backend.settle();
+		}
+		expect(backend.getHeat().unknown).toBe(false);
+		expect(backend.getHeat().stage).toBe(3);
+		expect(lastBitrate(fake)).toEqual({ max_bitrate: 4000 });
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
+
+	test("item 5: no link rests while the engine kept more than the cap", async () => {
+		const links = restLinks();
+		const { backend, fake } = makeBackend({ getHeatLinks: () => links });
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		fake.client.setBitrate = async (params) => {
+			fake.calls.push({ op: "set-bitrate", params });
+			return {
+				applied: { max_bitrate: 8000 },
+				bitrate_control: "source-fixed",
+			};
+		};
+		await restUp(backend);
+		expect(backend.getHeat().cannotReduce).toBe(true);
+		expect(backend.getHeat().restingLink).toBeNull();
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
+
+	test("item 6: a modem seen once and then unplugged does not hold the cap", async () => {
+		const { backend } = makeBackend();
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		for (let t = 0; t <= 12000; t += 1000) {
+			backend.updateHeat(40, t, modemAt(71));
+			await backend.settle();
+		}
+		expect(backend.getHeat().stage).toBe(2);
+		for (let t = 13000; t <= 700000; t += 1000) {
+			backend.updateHeat(40, t, modemAt(null));
+			await backend.settle();
+		}
+		expect(backend.getHeat().stage).toBe(0);
+		expect(backend.getHeat().reduced).toBe(false);
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
+
+	test("item 2: a box whose ModemManager refuses AT commands says so", async () => {
+		const { backend } = makeBackend();
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		backend.updateHeat(40, 0, modemAt(null, false, true));
+		expect(backend.getHeat().modemUnavailable).toBe(true);
+		backend.updateHeat(40, 1000, modemAt(45));
+		expect(backend.getHeat().modemUnavailable).toBe(false);
+		expect(backend.wantsHeatInputs()).toBe(true);
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+		expect(backend.wantsHeatInputs()).toBe(false);
+	});
+
+	test("item 3: a rested link returns when its peers fail while a heat change is failing", async () => {
+		const links = restLinks();
+		const { backend, fake } = makeBackend({ getHeatLinks: () => links });
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		await restUp(backend);
+		expect(backend.getHeat().restingLink).toBe("a");
+		fake.client.setBitrate = async (params) => {
+			fake.calls.push({ op: "set-bitrate", params });
+			throw new Error("refused");
+		};
+		for (let t = 13000; t <= 25000; t += 1000) {
+			backend.updateHeat(81, t);
+			await backend.settle();
+		}
+		expect(backend.getHeat().error).toBe(true);
+		for (const l of links) if (l.name !== "a") l.healthy = false;
+		backend.updateHeat(81, 26000);
+		await backend.settle();
+		expect(backend.getHeat().restingLink).toBeNull();
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
+
+	test("item 3: a rested link returns on an interface change, without a sensor tick", async () => {
+		const links = restLinks();
+		let changed: (() => void) | undefined;
+		const { backend } = makeBackend({
+			getHeatLinks: () => links,
+			onHeatLinksChange: (callback) => {
+				changed = callback;
+				return () => {
+					changed = undefined;
+				};
+			},
+		});
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		await restUp(backend);
+		expect(backend.getHeat().restingLink).toBe("a");
+		for (const l of links) if (l.name !== "a") l.headroom = null;
+		changed?.();
+		expect(backend.getHeat().restingLink).toBeNull();
+		// The hook is released once nothing rests.
+		expect(changed).toBeUndefined();
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
+
+	test("item 3: a rested link returns while the control connection is down", async () => {
+		const links = restLinks();
+		const { backend, fake } = makeBackend({
+			getHeatLinks: () => links,
+			onSessionConnectionLost: () => {},
+		});
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		await restUp(backend);
+		expect(backend.getHeat().restingLink).toBe("a");
+		fake.client.setBitrate = async () => {
+			throw new CerastreamConnectionError("lost", undefined, "lost");
+		};
+		backend.setBitrate({ max_br: 8000 });
+		await backend.settle();
+		for (const l of links) if (l.name !== "a") l.healthy = false;
+		backend.updateHeat(76, 13000);
+		expect(backend.getHeat().restingLink).toBeNull();
+	});
+
+	test("capacity is named only when it is the reason a link is not resting", async () => {
+		const links = restLinks().map((l) => ({ ...l, headroom: 0.1 }));
+		const { backend } = makeBackend({ getHeatLinks: () => links });
+		await backend.start(STREAM_CONFIG, RUN_OPTS);
+		await restUp(backend);
+		expect(backend.getHeat().restingLink).toBeNull();
+		expect(backend.getHeat().restUnavailable).toBe(false);
+		for (const l of links) l.headroom = null;
+		backend.updateHeat(76, 13000);
+		await backend.settle();
+		expect(backend.getHeat().restUnavailable).toBe(true);
+		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	});
 });

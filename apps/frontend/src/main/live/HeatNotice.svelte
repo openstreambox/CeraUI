@@ -34,6 +34,7 @@ async function toggle() {
   {#if status?.packUnprotected}<p>{m['live.heat.unprotected']()}</p>{/if}
   {#if status?.restingLink}<p>{m['live.heat.resting']({link:status.restingLink})}</p>
   {:else if status?.restUnavailable}<p>{m['live.heat.restUnknown']()}</p>{/if}
+  {#if status?.modemUnavailable}<p>{m['live.heat.modemUnavailable']()}</p>{/if}
   {#if status && status.stage >= 2}<p class="mt-1 text-muted-foreground">{m['live.heat.air']()}</p>{#if status.phoneAdvice}<p>{m['live.heat.phone']()}</p>{/if}{/if}
   {#if status && status.stage > 0}
    <Button variant="outline" size="sm" class="mt-2" disabled={pending} onclick={toggle} aria-pressed={status.keepQuality}>{m['live.heat.keep']()}</Button>

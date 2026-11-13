@@ -2837,5 +2837,7 @@
 	"live.heat.datasheet": "La temperatura de la reserva usa valores de la ficha técnica.",
 	"live.heat.unprotected": "La protección térmica de la reserva está desactivada.",
 	"live.heat.resting": "{link} está en reposo para reducir el calor.",
-	"live.heat.restUnknown": "Se desconoce la capacidad de los enlaces. Todos siguen en el enlace combinado."
+	"live.heat.restUnknown": "Se desconoce la capacidad de los enlaces. Todos siguen en el enlace combinado.",
+	"live.heat.modemUnavailable": "La temperatura del módem no está disponible en este equipo. Los ajustes por calor usan la temperatura del SoC.",
+	"network.cellular.heatResting": "En reposo para reducir el calor. Vuelve solo al enlace combinado; Mantener calidad lo trae de vuelta ahora."
 }

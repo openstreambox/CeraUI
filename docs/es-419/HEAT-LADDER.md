@@ -41,3 +41,27 @@ desconocidas. Si hay un campo CRC-16/CCITT-FALSE al final, verifica los bytes
 exactos anteriores a ese campo. Las líneas antiguas sin CRC siguen siendo
 compatibles; el futuro transporte deberá exigir un checksum verificado antes
 de confiar en hardware recién conectado. Esta versión no instala ese transporte.
+
+## Temperatura del módem y enlaces de reserva
+
+Durante una transmisión, la temperatura del RM520N-GL se lee cada diez segundos
+con AT+QTEMP (solo lectura) a través de mmcli. Valores fuera de −20…125 °C no
+cuentan.
+
+**Límite: ModemManager estándar no responde a `mmcli --command`.** Solo acepta
+comandos AT si el servicio corre con `--debug`. Si no, el panel dice "La
+temperatura del módem no está disponible en este equipo. Los ajustes por calor
+usan la temperatura del SoC." y la lectura se vuelve a intentar cada diez
+minutos.
+
+Un módem que dio lecturas y deja de darlas impide la reversión; uno
+desconectado no. Un valor imposible de un módem nunca pausa la protección por
+calor del SoC.
+
+Un módem de reserva puede quedar en reposo solo en memoria, después de que el
+motor aplicó el límite de bitrate y si otros dos enlaces sanos tienen al menos
+30% de capacidad libre conocida. Esta versión no tiene fuente de capacidad, así
+que ningún enlace entra en reposo. El enlace vuelve en cuanto sus pares pierden
+ese margen, aunque un cambio de bitrate esté fallando o la conexión de control
+con el motor esté caída. El panel celular lo muestra como en reposo por calor,
+no como apagado por ti.

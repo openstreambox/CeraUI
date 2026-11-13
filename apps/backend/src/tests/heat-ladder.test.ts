@@ -282,9 +282,12 @@ test("calibration, start reasons, all gaps and pack flag survive projection", as
 	expect(parse(line.replace("gaps=0004", "gaps=0000"))?.protectionReduced).toBe(
 		false,
 	);
-	expect(
-		parse(line.replace("gaps=0004", "gaps=wrong"))?.protectionReduced,
-	).toBeNull();
+	// Present but malformed reads as reduced, never like 0000.
+	for (const bad of ["wrong", "004", "0x04", "00040", ""])
+		expect(
+			parse(line.replace("gaps=0004", `gaps=${bad}`))?.protectionReduced,
+		).toBe(true);
+	expect(parse(line.replace(" gaps=0004", ""))?.protectionReduced).toBeNull();
 	expect(parse(line.replace("pack_cal=datasheet ", ""))?.packDatasheet).toBe(
 		true,
 	);

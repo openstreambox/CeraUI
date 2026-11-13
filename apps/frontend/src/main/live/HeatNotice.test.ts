@@ -111,3 +111,17 @@ test("unknown capacity keeps links in the bond", () => {
 	const view = render(HeatNotice);
 	expect(view.getByText(/Link capacity is unknown/)).toBeTruthy();
 });
+
+test("says plainly when modem temperature cannot be read on this box", () => {
+	mocks.getHeat.mockReturnValue({ ...status, modemUnavailable: true });
+	const view = render(HeatNotice);
+	expect(
+		view.getByText(/Modem temperature isn't available on this box/),
+	).toBeTruthy();
+});
+
+test("names link capacity only when the backend says it is the reason", () => {
+	mocks.getHeat.mockReturnValue({ ...status, restUnavailable: false });
+	const view = render(HeatNotice);
+	expect(view.queryByText(/Link capacity is unknown/)).toBeNull();
+});

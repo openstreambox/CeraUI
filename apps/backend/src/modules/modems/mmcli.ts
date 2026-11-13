@@ -35,6 +35,11 @@ import {
 	parseOk,
 } from "../system/cli-parse.ts";
 import { modemOperationOutcomeFromError } from "./operation-outcome.ts";
+import {
+	isAtCommandRefusal,
+	ModemCommandUnavailableError,
+	qtempResponseFromMmcli,
+} from "./temperature.ts";
 
 export type ModemId = number;
 
@@ -1267,14 +1272,31 @@ export async function mmNetworkScan(
 	}
 }
 
-/** Read-only temperature query through the existing bounded modem command runner. */
+/**
+ * Read-only temperature query through the existing bounded modem command
+ * runner. Stock ModemManager refuses `--command` unless the daemon runs with
+ * `--debug`; that refusal is raised as ModemCommandUnavailableError so the
+ * reader can say so once and stop polling.
+ */
 export async function mmReadTemperature(id: number): Promise<string> {
 	if (!Number.isSafeInteger(id) || id < 0 || shouldMockModems()) return "";
-	const raw = await run(
-		mmcliBinary,
-		["--timeout=1", "-m", String(id), "--command=AT+QTEMP", "-J"],
-		{ timeout: 1500, maxBuffer: 16384 },
-	);
-	const response: unknown = JSON.parse(raw)?.modem?.command?.response;
-	return typeof response === "string" ? response : "";
+	let raw: string;
+	try {
+		raw = await run(
+			mmcliBinary,
+			["--timeout=1", "-m", String(id), "--command=AT+QTEMP", "-J"],
+			{ timeout: 1500, maxBuffer: 16384 },
+		);
+	} catch (error) {
+		const text = [
+			(error as { stderr?: unknown })?.stderr,
+			(error as { stdout?: unknown })?.stdout,
+			(error as { message?: unknown })?.message,
+		]
+			.filter((part): part is string => typeof part === "string")
+			.join("\n");
+		if (isAtCommandRefusal(text)) throw new ModemCommandUnavailableError();
+		throw error;
+	}
+	return qtempResponseFromMmcli(raw);
 }

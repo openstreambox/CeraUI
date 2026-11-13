@@ -119,10 +119,12 @@ import { getms } from "../../helpers/time.ts";
 import { ENGINE_STATE_RECONCILE_TIMEOUT } from "../../helpers/timing-constants.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import { getModems } from "../modems/modems-state.ts";
+import type { ModemHeatSample } from "../modems/temperature.ts";
 import { setHeatBondRest } from "../network/bond-preference.ts";
 import {
 	getNetworkInterfaces,
 	isBondCandidate,
+	onNetworkInterfacesChange,
 	triggerNetworkInterfacesChange,
 } from "../network/network-interfaces.ts";
 import { setup } from "../setup.ts";
@@ -153,6 +155,7 @@ import {
 	HEAT_SETTINGS,
 	heatCeiling,
 	initialHeat,
+	plausibleTemperature,
 } from "./heat-ladder.ts";
 import { type HeatLinkEvidence, HeatLinkRest } from "./heat-link-rest.ts";
 import {
@@ -229,6 +232,8 @@ export interface CerastreamLogger {
 /** Injected collaborators; defaults wire the real CeraUI modules. */
 export interface CerastreamBackendDeps {
 	getHeatLinks?: () => readonly HeatLinkEvidence[];
+	/** Called on link changes while a link rests, so its return never waits for a sensor tick. */
+	onHeatLinksChange?: (callback: () => void) => () => void;
 	connect: (options?: ConnectOptions) => Promise<CerastreamClient>;
 	connectOptions: ConnectOptions;
 	getConfig: () => RuntimeConfig;
@@ -731,35 +736,64 @@ export class CerastreamBackend implements StreamingBackend {
 	private subscription: Subscription | undefined;
 	private active = false;
 	private heat = initialHeat();
-	private modemTemperatureExpected = false;
 	private heatCanReduce = true;
+	private modemUnavailable = false;
 	private heatRest = new HeatLinkRest();
+	private heatLinksUnsubscribe: (() => void) | undefined;
 	private supervisor: ReturnType<typeof parseSupervisor> = null;
 	private supervisorAt = -Infinity;
-	private reconcileHeatRest(): void {
-		const before = this.heatRest.resting;
-		const links =
+	private heatLinks(): readonly HeatLinkEvidence[] {
+		const resting = this.heatRest.resting;
+		return (
 			this.deps.getHeatLinks?.() ??
 			Object.entries(getNetworkInterfaces()).map(([name, link]) => ({
 				name,
 				modem: Object.values(getModems()).some(
 					(m) => m.ifname === name && !m.removed,
 				),
-				healthy: isBondCandidate(name, link) || name === before,
+				healthy: isBondCandidate(name, link) || name === resting,
 				headroom: null,
-			}));
-		const after = this.heatRest.update(
+			}))
+		);
+	}
+	private publishHeatRest(before: string | null): void {
+		const after = this.heatRest.resting;
+		if (before === after) return;
+		setHeatBondRest(after);
+		// Watch links only while one rests: its return must not wait for a tick.
+		if (after !== null && !this.heatLinksUnsubscribe)
+			this.heatLinksUnsubscribe = (
+				this.deps.onHeatLinksChange ?? onNetworkInterfacesChange
+			)(() => this.releaseHeatRest());
+		if (after === null) {
+			this.heatLinksUnsubscribe?.();
+			this.heatLinksUnsubscribe = undefined;
+		}
+		triggerNetworkInterfacesChange();
+	}
+	/**
+	 * The return half alone. Runs on every sensor tick and link change, also
+	 * while a heat change is failing or pending and while the engine's control
+	 * connection is down: a rested link comes back as soon as its peers lose
+	 * their headroom.
+	 */
+	private releaseHeatRest(): void {
+		const before = this.heatRest.resting;
+		if (before === null) return;
+		this.heatRest.release(this.heatLinks());
+		this.publishHeatRest(before);
+	}
+	private reconcileHeatRest(): void {
+		const before = this.heatRest.resting;
+		this.heatRest.update(
 			this.active &&
 				!this.heat.keepQuality &&
 				HEAT_SETTINGS.automaticSpareLink &&
 				this.heat.stage >= 2 &&
 				((!this.heat.unknown && this.heatCanReduce) || before !== null),
-			links,
+			this.heatLinks(),
 		);
-		if (before !== after) {
-			setHeatBondRest(after);
-			triggerNetworkInterfacesChange();
-		}
+		this.publishHeatRest(before);
 	}
 	/** Fixture/source seam only. A transport must enforce freshness and epoch before calling. */
 	setHeatSupervisor(status: ReturnType<typeof parseSupervisor>): void {
@@ -792,11 +826,19 @@ export class CerastreamBackend implements StreamingBackend {
 		return (
 			!this.heatError &&
 			!this.heatResend &&
-			this.heatRequested === heatCeiling(this.heat, this.ownBitrate())
+			this.heatRequested === heatCeiling(this.heat, this.ownBitrate()) &&
+			// The engine must have applied it: a source that kept more than the
+			// cap has not taken the first step, so no link rests after it.
+			this.heatApplied !== null &&
+			this.heatApplied <= this.heatRequested
 		);
 	}
 	private ownBitrate(): number {
 		return this.deps.getConfig().max_br ?? DEFAULT_MAX_BITRATE;
+	}
+	/** Heat inputs (and their modem reads) are wanted only while a stream runs. */
+	wantsHeatInputs(): boolean {
+		return this.active && this.runtimeEvidence?.state !== "idle";
 	}
 	getHeat() {
 		const own = this.ownBitrate();
@@ -810,7 +852,9 @@ export class CerastreamBackend implements StreamingBackend {
 			restUnavailable:
 				this.heat.stage >= 2 &&
 				!this.heat.keepQuality &&
-				!this.heatRest.resting,
+				!this.heatRest.resting &&
+				this.heatRest.blocked === "capacity",
+			modemUnavailable: this.active && this.modemUnavailable,
 			protectionReduced: supervisor?.protectionReduced ?? null,
 			packDatasheet: supervisor?.packDatasheet ?? false,
 			packUnprotected: supervisor?.packCalibration === "none",
@@ -842,15 +886,22 @@ export class CerastreamBackend implements StreamingBackend {
 	updateHeat(
 		temperature: number | null,
 		now: number,
-		modem?: number | null,
+		modem?: ModemHeatSample,
 	): void {
+		// The return half first, before any guard: a rested link comes back when
+		// its peers weaken even without an engine connection.
+		if (this.active) this.releaseHeatRest();
 		if (!this.active || !this.client || this.runtimeEvidence?.state === "idle")
 			return;
-		this.modemTemperatureExpected ||=
-			typeof modem === "number" && Number.isFinite(modem);
+		this.modemUnavailable = modem?.unavailable === true;
+		// An implausible modem value is missing evidence for that input only; it
+		// never makes the whole state unknown (which would switch off SoC heat).
+		const modemValue =
+			modem && plausibleTemperature(modem.value) ? modem.value : null;
+		const modemMissing =
+			modem?.missing === true || (modem?.value != null && modemValue === null);
 		this.heatCanReduce =
-			modem !== null ||
-			!this.modemTemperatureExpected ||
+			!modemMissing ||
 			(temperature !== null &&
 				temperature >= (HEAT_SETTINGS.thresholds.soc?.[1] ?? Infinity));
 		const before = this.heat.stage;
@@ -858,9 +909,12 @@ export class CerastreamBackend implements StreamingBackend {
 		const capBefore = this.heat.capStage;
 		this.heat = advanceHeat(
 			this.heat,
-			{ soc: temperature, ...(modem == null ? {} : { modem }) },
+			{
+				soc: temperature,
+				...(modemValue === null ? {} : { modem: modemValue }),
+			},
 			now,
-			modem !== null || !this.modemTemperatureExpected,
+			!modemMissing,
 		);
 		if (before !== this.heat.stage) this.heatRecordPending = true;
 		// Restore the later link action first, then wait for the next reverse step.
@@ -1382,13 +1436,14 @@ export class CerastreamBackend implements StreamingBackend {
 
 	/** End of a session (Stop, confirmed idle engine, new start): heat starts over. */
 	private resetHeat(): void {
-		this.modemTemperatureExpected = false;
 		this.heatCanReduce = true;
+		this.modemUnavailable = false;
 		if (this.heatRest.resting !== null) {
+			const before = this.heatRest.resting;
 			this.heatRest.update(false, []);
-			setHeatBondRest(null);
-			triggerNetworkInterfacesChange();
+			this.publishHeatRest(before);
 		}
+		this.heatRest.blocked = null;
 		const keep =
 			this.heat.keepQuality && HEAT_SETTINGS.keepQualityDuration === "untilOff";
 		this.heat = { ...initialHeat(), keepQuality: keep };

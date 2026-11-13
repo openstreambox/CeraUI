@@ -49,9 +49,13 @@ describe("operator bond opt-out — config.json restart persistence", () => {
 		const before = readFileSync(configPath, "utf8");
 		setHeatBondRest("eth1");
 		expect(netIfBuildMsg().eth1?.enabled).toBe(false);
+		// The panel can tell a heat rest from an operator opt-out.
+		expect(netIfBuildMsg().eth1?.heat_resting).toBe(true);
+		expect(netIfBuildMsg().eth0?.heat_resting).toBeUndefined();
 		expect(readFileSync(configPath, "utf8")).toBe(before);
 		setHeatBondRest(null);
 		expect(netIfBuildMsg().eth1?.enabled).toBe(true);
+		expect(netIfBuildMsg().eth1?.heat_resting).toBeUndefined();
 		expect(readFileSync(configPath, "utf8")).toBe(before);
 	});
 	test("an opt-out survives a simulated backend restart and follows the physical port", async () => {

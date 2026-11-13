@@ -63,19 +63,39 @@ transport is installed by this change.
 ## Modem temperature and spare links
 
 RM520N-GL temperature is sampled with read-only AT+QTEMP through the bounded
-mmcli command runner every ten seconds. Known sensors contribute their hottest
-valid reading. ERROR, missing completion, unknown sensors and malformed readings
-supply no modem trigger. Proposed modem levels are 65/70/75 °C in HEAT_SETTINGS.
+mmcli command runner every ten seconds, only while a stream runs. Known sensors
+contribute their hottest valid reading. ModemManager returns the reply with its
+final OK removed, so OK is accepted but not required; ERROR, unknown sensors,
+malformed readings and values outside −20…125 °C supply no modem trigger.
+Proposed modem levels are 65/70/75 °C in HEAT_SETTINGS.
+
+**Limit: stock ModemManager does not answer `mmcli --command`.** It accepts AT
+commands only when the daemon runs with `--debug` (or was built with AT
+commands over D-Bus), and otherwise answers "operation only allowed in debug
+mode". On such a box the reader logs this once, stops polling (it checks again
+every ten minutes) and the heat panel says "Modem temperature isn't available
+on this box. Heat steps use the SoC temperature." The SoC input works either way.
+
+Expectation is per modem. A modem that has given readings and then goes quiet
+blocks cooling, while SoC heat can still raise the stage; a modem that is
+unplugged, or that never answered, leaves no expectation behind. An implausible
+modem value is missing evidence for that modem only and never pauses the SoC
+input.
 
 A separate memory-only bond exclusion supports one spare modem. Admission needs
-two other healthy links, each with at least 30% known spare capacity. This branch
-has no capacity source, so admission stays closed and the panel says capacity
-is unknown. Keep quality and stream/session cleanup remove the exclusion. Saved
-bond preferences are independent. On cooling, the link returns before the ceiling
-is removed at the next reverse step.
+two other healthy links, each with at least 30% known spare capacity, and the
+engine must have applied the bitrate cap first (a source that kept its rate
+rests no link). This branch has no capacity source, so admission stays closed
+and the panel says capacity is unknown; it names capacity only when that is the
+reason. The return check runs on every sensor tick and on every link change,
+also while a heat change is failing or pending and while the engine's control
+connection is down. Keep quality and stream/session cleanup remove the
+exclusion. Saved bond preferences are independent, and the cellular panel shows
+a resting link as resting for heat, not as switched off. On cooling, the link
+returns before the ceiling is removed at the next reverse step.
 
 The OSB1 fixture parser also exposes pack calibration, start reason and the full
 16-bit protection-gap mask. Every nonzero mask, including future bits, reports
-reduced protection. Datasheet calibration (including pack flag 10) is explicit.
+reduced protection, and so does a gaps field that is present but malformed. Datasheet calibration (including pack flag 10) is explicit.
 The fixture/source seam expires its display after five seconds and supplies no
 supervisor temperatures to the reducer until a transport owns freshness/epoch.

@@ -5,6 +5,10 @@ let heatRest: string | null = null;
 export function setHeatBondRest(name: string | null): void {
 	heatRest = name;
 }
+/** Out of the bond for heat this session, not by the operator's choice. */
+export function isHeatResting(ifname: string): boolean {
+	return heatRest === ifname;
+}
 
 const sessionOptOut = new Set<string>();
 

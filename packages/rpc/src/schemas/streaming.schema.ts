@@ -1319,6 +1319,7 @@ export type SetMockDeviceAttachedOutput = z.infer<typeof setMockDeviceAttachedOu
 export const heatStatusSchema = z.object({
 	restingLink: z.string().nullable().optional(),
 	restUnavailable: z.boolean().optional(),
+	modemUnavailable: z.boolean().optional(),
 	protectionReduced: z.boolean().nullable().optional(),
 	packDatasheet: z.boolean().optional(),
 	packUnprotected: z.boolean().optional(),

@@ -61,6 +61,7 @@ import { isWirelessInterface } from "../wifi/wifi-radio-identity.ts";
 import {
 	bondPhysicalId,
 	isBondOptedOut,
+	isHeatResting,
 	resetPersistentBondOptOutForTest,
 	resetSessionBondOptOutForTest,
 	setPersistentBondOptOut,
@@ -1228,6 +1229,7 @@ type NetworkInterfaceResponseMessage = {
 	[key: string]: Pick<NetworkInterface, "ip" | "tp" | "enabled"> & {
 		error?: string;
 		same_subnet_group?: string;
+		heat_resting?: true;
 		tx_bps?: number;
 		rx_bps?: number;
 		dongle?: DongleMarker | null;
@@ -1263,6 +1265,7 @@ export function netIfBuildMsg() {
 			...(networkInterface.ip !== undefined ? { ip: networkInterface.ip } : {}),
 			tp: networkInterface.tp,
 			enabled: isBondCandidate(i, networkInterface),
+			...(isHeatResting(i) ? { heat_resting: true } : {}),
 			...(networkInterface.tx_bps !== undefined
 				? { tx_bps: networkInterface.tx_bps }
 				: {}),

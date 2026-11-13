@@ -74,6 +74,8 @@ export function parseSupervisor(line: string, receivedAt: number, now: number) {
 	const packCalibration = matching(fields.pack_cal, /^(datasheet|bench|none)$/);
 	const gapsText = matching(fields.gaps, /^[0-9a-fA-F]{4}$/);
 	const gaps = gapsText === null ? null : Number.parseInt(gapsText, 16);
+	// A present but malformed field is never read as full protection.
+	const gapsMalformed = fields.gaps !== undefined && gapsText === null;
 	const packFlags = fields.pack.split("/")[2];
 	const packDatasheet =
 		packCalibration === "datasheet" ||
@@ -88,7 +90,7 @@ export function parseSupervisor(line: string, receivedAt: number, now: number) {
 			/^(on|off|settling|no_bank|too_hot|temp_unknown|latched|unarmed)$/,
 		),
 		gaps,
-		protectionReduced: gaps === null ? null : gaps !== 0,
+		protectionReduced: gapsMalformed ? true : gaps === null ? null : gaps !== 0,
 		temperatures: {
 			pack: temperature(fields.pack.split("/")[1]),
 			bankA: bank(fields.a),
