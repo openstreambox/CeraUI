@@ -217,3 +217,29 @@ describe("Moblin credential", () => {
 		},
 	);
 });
+
+it.each([false, true])(
+	"allows clearing with unavailable relay and configured=%s",
+	async (configured) => {
+		const onclearcredential = vi.fn(async () => ({ success: true }));
+		render(PhoneHome, {
+			carrying: "idle",
+			moblink: { available: false, configured },
+			onclearcredential,
+		});
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Connect your phone" }),
+		);
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Moblin", exact: true }),
+		);
+		const field = screen.getByLabelText(
+			"Moblin's password (from Moblin, not the Wi-Fi password)",
+		);
+		expect(field.getAttribute("autocomplete")).toBe("new-password");
+		const clear = screen.getByRole("button", { name: "Clear Moblin password" });
+		expect(clear).toHaveProperty("disabled", false);
+		await fireEvent.click(clear);
+		await waitFor(() => expect(onclearcredential).toHaveBeenCalledOnce());
+	},
+);

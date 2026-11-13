@@ -50,11 +50,12 @@
 	let connect = $state(false);
 	let password = $state('');
 	let credentialBusy = $state(false);
+	const clearAllowed = $derived(reachable && carrying === 'idle' && !credentialBusy);
 	const credentialAllowed = $derived(
 		reachable && carrying === 'idle' && moblink?.available === true && !credentialBusy,
 	);
 	async function submitCredential(clear = false) {
-		if (!credentialAllowed) return;
+		if (clear ? !clearAllowed : !credentialAllowed) return;
 		credentialBusy = true;
 		const submitted = password;
 		password = '';
@@ -208,13 +209,12 @@
 			</section>
 			{#if selected === 'moblin'}
 				<section>
-					<p>{m['live.phone.moblinUnavailable']()}</p>
 					<h2>2. {m['live.phone.moblinEnable']()}</h2>
 					<p>{m['live.phone.moblinBody']()}</p>
 					<label
 						>{m['live.phone.moblinPassword']()}<input
 							type="password"
-							autocomplete="off"
+							autocomplete="new-password"
 							bind:value={password}
 							disabled={!credentialAllowed}
 						/></label
@@ -231,12 +231,12 @@
 							disabled={!credentialAllowed || !password}
 							onclick={() => submitCredential()}>{m['live.phone.moblinSave']()}</button
 						>
-						<button
-							type="button"
-							disabled={!credentialAllowed || !moblink.configured}
-							onclick={() => submitCredential(true)}>{m['live.phone.moblinClear']()}</button
-						>
 					{:else}<p>{m['live.phone.moblinUnavailable']()}</p>{/if}
+					<button
+						type="button"
+						disabled={!clearAllowed}
+						onclick={() => submitCredential(true)}>{m['live.phone.moblinClear']()}</button
+					>
 
 					<button type="button" onclick={() => choose('internet')}
 						>{m['live.phone.internet']()}</button

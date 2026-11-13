@@ -1,11 +1,16 @@
-import { afterEach, expect, test } from "bun:test";
-import {
+import { afterEach, expect, spyOn, test } from "bun:test";
+import fs, {
 	chmodSync,
+	existsSync,
+	linkSync,
+	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
 	symlinkSync,
+	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,8 +32,8 @@ function fixture() {
 		directory: join(dir, "private"),
 		available: () => available,
 		idle: () => idle,
-		start: (password: string) => {
-			calls.push(password);
+		start: () => {
+			calls.push("start");
 		},
 		stop: async () => {
 			calls.push("stop");
@@ -53,10 +58,10 @@ test("write-only storage survives owner replacement, is private and clears", asy
 	expect(statSync(path).mode & 0o777).toBe(0o600);
 	expect(statSync(join(f.dir, "private")).mode & 0o777).toBe(0o700);
 	expect(readFileSync(path, "utf8")).toBe("phone-secret");
-	expect(f.calls).toEqual(["stop", "phone-secret"]);
+	expect(f.calls).toEqual(["stop", "start"]);
 	expect(JSON.stringify(f.owner.status())).not.toContain("phone-secret");
 	await f.owner.set("replacement");
-	expect(f.calls.at(-1)).toBe("replacement");
+	expect(f.calls.at(-1)).toBe("start");
 	expect(await f.owner.clear()).toEqual({ success: true });
 	expect(f.owner.status().configured).toBe(false);
 });
@@ -69,16 +74,71 @@ test("busy/unknown and unavailable refuse without writes or relay effects", asyn
 		expect(f.owner.status().configured).toBe(false);
 	}
 });
-test("insecure storage and symlinks fail closed without disclosing values", async () => {
+test.each(["mode", "symlink", "hardlink", "directory"])(
+	"replace and clear repair %s without changing other names",
+	async (kind) => {
+		for (const action of ["set", "clear"] as const) {
+			const f = fixture();
+			await f.owner.set("old");
+			const file = join(f.dir, "private/credential"),
+				target = join(f.dir, "target");
+			writeFileSync(target, "untouched", { mode: 0o600 });
+			if (kind === "mode") chmodSync(file, 0o644);
+			if (kind === "directory") chmodSync(join(f.dir, "private"), 0o755);
+			if (kind === "symlink" || kind === "hardlink") {
+				rmSync(file);
+				if (kind === "symlink") symlinkSync(target, file);
+				else linkSync(target, file);
+			}
+			expect(f.owner.status().configured).toBe(false);
+			expect(
+				await (action === "set" ? f.owner.set("new") : f.owner.clear()),
+			).toEqual({ success: true });
+			expect(readFileSync(target, "utf8")).toBe("untouched");
+			expect(existsSync(file)).toBe(action === "set");
+			expect(statSync(join(f.dir, "private")).mode & 0o777).toBe(0o700);
+		}
+	},
+);
+test.each(["restore", "set", "clear"])(
+	"%s removes interrupted-save plaintext temps",
+	async (action) => {
+		const f = fixture();
+		await f.owner.set("old");
+		const dir = join(f.dir, "private");
+		writeFileSync(join(dir, ".credential-crash"), "partial-secret", {
+			mode: 0o600,
+		});
+		writeFileSync(join(dir, "relay-ids.json"), "keep");
+		if (action === "set") await f.owner.set("new");
+		else await f.owner[action]();
+		expect(readdirSync(dir)).not.toContain(".credential-crash");
+		expect(readFileSync(join(dir, "relay-ids.json"), "utf8")).toBe("keep");
+	},
+);
+test("empty file marks health without reading the secret into JavaScript", async () => {
 	const f = fixture();
-	await f.owner.set("private-secret");
-	chmodSync(join(f.dir, "private/credential"), 0o644);
-	expect(f.owner.status().configured).toBe(false);
-	expect((await f.owner.set("next-secret")).success).toBe(false);
-	chmodSync(join(f.dir, "private/credential"), 0o600);
-	rmSync(join(f.dir, "private/credential"));
-	symlinkSync(join(f.dir, "elsewhere"), join(f.dir, "private/credential"));
-	expect((await f.owner.set("next-secret")).success).toBe(false);
+	mkdirSync(join(f.dir, "empty"), { mode: 0o700 });
+	writeFileSync(join(f.dir, "empty/credential"), "", { mode: 0o600 });
+	const health: boolean[] = [];
+	const owner = new MoblinkOwner({
+		directory: join(f.dir, "empty"),
+		available: () => true,
+		idle: () => true,
+		start: () => {
+			throw Error("must not start");
+		},
+		stop: async () => {},
+		health: (bad: boolean) => health.push(bad),
+	});
+	await owner.restore();
+	expect(health.at(-1)).toBe(true);
+	expect(
+		readFileSync(
+			new URL("../modules/moblink/owner.ts", import.meta.url),
+			"utf8",
+		),
+	).not.toContain("readFileSync");
 });
 test("relay errors never escape through replies, status or logs", async () => {
 	const f = fixture();
@@ -122,12 +182,34 @@ test("reboot restoration feeds only the relay, without rewriting the secret", as
 		directory: join(f.dir, "private"),
 		available: () => true,
 		idle: () => false,
-		start: (value) => {
-			received.push(value);
+		start: () => {
+			received.push("start");
 		},
 		stop: async () => {},
 	});
 	await rebooted.restore();
-	expect(received).toEqual(["retained-phone-password"]);
+	expect(received).toEqual(["start"]);
 	expect(rebooted.status()).toEqual({ configured: true, available: true });
+});
+
+test("real temporary and renamed credential files are 0600 before and after writing", async () => {
+	const f = fixture();
+	const modes: number[] = [];
+	const write = fs.writeFileSync;
+	const probe = spyOn(fs, "writeFileSync").mockImplementation(
+		(...args: Parameters<typeof fs.writeFileSync>) => {
+			if (typeof args[0] === "number")
+				modes.push(fs.fstatSync(args[0]).mode & 0o777);
+			return write(...args);
+		},
+	);
+	try {
+		expect(await f.owner.set("mode-probe")).toEqual({ success: true });
+		expect(modes).toEqual([0o600]);
+		expect(statSync(join(f.dir, "private/credential")).mode & 0o777).toBe(
+			0o600,
+		);
+	} finally {
+		probe.mockRestore();
+	}
 });

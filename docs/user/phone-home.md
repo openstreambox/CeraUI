@@ -17,7 +17,10 @@ confirms idle. It is never displayed again. Saving does not confirm a connection
 check Moblin and the stream itself. If Moblin's password changes, replace the
 box's copy too. One password applies to this box; any local Moblin streamer with
 that password may authenticate. Clearing stops this box's owned relay.
-The controls are available only on images provisioned for the managed relay.
+Saving requires an image provisioned for the managed relay. Clear remains
+available while idle even if that relay is unavailable or storage needs repair.
+If a saved credential is empty or the relay stops unexpectedly, Box health
+shows a calm Moblin connection line. Replace or clear the password to recover.
 
 When the box next starts carrying, it remembers only the chosen way (`moblin`, `srt`, `internet`) in
 `/data/phone-way.json`. Development uses a checkout-local file. No phone identity
@@ -48,8 +51,11 @@ cuando la caja confirme que no transporta una transmisión. Nunca se vuelve a
 mostrar. Guardarla no confirma la conexión: comprueba Moblin y la transmisión.
 Si cambia en Moblin, reemplázala también en la caja. La contraseña se aplica a
 esta caja; cualquier emisor Moblin local que la comparta puede autenticarse.
-Borrarla detiene el relé de esta caja. Los controles requieren una imagen
-preparada para el relé administrado.
+Borrarla detiene el relé de esta caja. Guardarla requiere una imagen preparada
+para el relé administrado. Borrar sigue disponible cuando la caja está inactiva,
+aunque el relé no esté disponible o haya que reparar el archivo guardado.
+Si el archivo está vacío o el relé se detiene inesperadamente, Estado de la caja
+muestra un aviso de conexión Moblin. Reemplaza o borra la contraseña para recuperarla.
 
 Solo se recuerda la opción elegida; no se guarda la identidad del teléfono.
 El reinicio permanece desactivado mientras la caja transporta tráfico o lo

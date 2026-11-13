@@ -10,10 +10,14 @@ type Spawn = (
 ) => Pick<ManagedProcess, "exited" | "exitCode" | "signalCode" | "kill">;
 
 /** The supervision label is constant: diagnostics must never contain argv. */
-export function createRelayRunner(spawn: Spawn) {
+export function createRelayRunner(
+	spawn: Spawn,
+	health: (degraded: boolean) => void = () => undefined,
+) {
 	let handle: SupervisedHandle | undefined;
+	let stopping: SupervisedHandle | undefined;
 	return {
-		start(_password: string) {
+		start() {
 			if (handle) throw new Error("Relay already owned");
 			const child = spawn(
 				[
@@ -30,21 +34,33 @@ export function createRelayRunner(spawn: Spawn) {
 				startupTimeoutMs: 2000,
 				killGraceMs: 2000,
 			});
+			health(false);
 			const current = handle;
 			void child.exited.then(
 				() => {
-					if (handle === current) handle = undefined;
+					if (handle === current) {
+						handle = undefined;
+						if (stopping !== current) health(true);
+					}
 				},
 				() => {
-					if (handle === current) handle = undefined;
+					if (handle === current) {
+						handle = undefined;
+						if (stopping !== current) health(true);
+					}
 				},
 			);
 		},
 		async stop() {
 			const current = handle;
 			if (!current) return;
-			await current.shutdown();
-			if (handle === current) handle = undefined;
+			stopping = current;
+			try {
+				await current.shutdown();
+				if (handle === current) handle = undefined;
+			} finally {
+				stopping = undefined;
+			}
 		},
 	};
 }

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { shouldUseMocks } from "../../mocks/mock-service";
 import { getCarryingLiveness } from "../system/carrying";
+import { clearBootDegraded, markBootDegraded } from "../system/readiness";
 import { isStreamConfirmedIdle } from "../system/stream-liveness-source";
 import { MoblinkOwner } from "./owner";
 import { createRelayRunner } from "./relay-runner";
@@ -28,11 +29,17 @@ function available() {
 		return false;
 	}
 }
-const relay = createRelayRunner((args, options) => Bun.spawn(args, options));
+const health = (bad: boolean) =>
+	bad ? markBootDegraded("moblink") : clearBootDegraded("moblink");
+const relay = createRelayRunner(
+	(args, options) => Bun.spawn(args, options),
+	health,
+);
 export const moblinkOwner = new MoblinkOwner({
 	directory: "/data/moblink",
 	available,
 	idle: () => getCarryingLiveness() === "idle" && isStreamConfirmedIdle(),
+	health,
 	start: relay.start,
 	stop: relay.stop,
 });
