@@ -308,6 +308,77 @@ describe("a late rename during a newer publication", () => {
 	});
 });
 
+for (const capped of [false, true]) {
+	test(`overlapped successful publication repairs immediately (capped=${capped})`, async () => {
+		const fs = memoryFs(200);
+		await publishBondMapping(link("eth0", "192.0.2.1"), fs.deps);
+		const releaseLate = Promise.withResolvers<void>(),
+			releaseNewer = Promise.withResolvers<void>(),
+			newerHeld = Promise.withResolvers<void>();
+		let warming = capped;
+		let failures = 0;
+		const repaired: BindMapPublication[] = [];
+		let holdLate = true,
+			holdNewer = true;
+		const deps: BindMapWriterDeps = {
+			...fs.deps,
+			...(capped ? { retryDelaysMs: [100, 200, 1_000] } : {}),
+			onSettled: (_entries, publication, { republished }) => {
+				if (republished && publication.ok) repaired.push(publication);
+			},
+			writeFile: async (path: string, bytes: string) => {
+				if (warming) {
+					failures += 1;
+					throw new Error("EIO");
+				}
+				await fs.deps.writeFile(path, bytes);
+			},
+			renameFile: async (from: string, to: string) => {
+				if (holdLate && to === IPS) {
+					holdLate = false; // the stale write's IP rename lands much later
+					await releaseLate.promise;
+				}
+				const bytes = fs.files.get(from) ?? "";
+				if (holdNewer && to === MAP && bytes.includes(sha256("192.0.2.3"))) {
+					holdNewer = false; // the newer publication is between its renames
+					newerHeld.resolve();
+					await releaseNewer.promise;
+				}
+				await fs.deps.renameFile(from, to);
+			},
+		};
+		if (capped) {
+			await publishBondMapping(link("wwan0", "192.0.2.2"), deps);
+			// Four failures schedule 100/200/1000/1000 ms: the backoff is capped.
+			await eventually(() => failures >= 4, 4_000);
+			expect(getBindMapPublicationHealth().retryScheduled).toBe(true);
+			warming = false;
+		}
+		expect(
+			await publishBondMapping(link("wwan0", "192.0.2.2"), deps),
+		).toMatchObject({ reason: "timed_out" });
+		const newer = publishBondMapping(link("eth1", "192.0.2.3"), deps);
+		await newerHeld.promise;
+		expect(fs.files.get(IPS)).toBe("192.0.2.3");
+		// The abandoned 192.0.2.2 rename lands over the newer IP list ...
+		releaseLate.resolve();
+		await eventually(
+			() => getBindMapPublicationHealth().abandonedUnsettled === 0,
+		);
+		expect(fs.files.get(IPS)).toBe("192.0.2.2");
+		// ... and only then does the newer publication commit its sidecar.
+		releaseNewer.resolve();
+		expect((await newer).ok).toBe(true);
+		// Neither the production 2 s step nor the scaled 1 s cap may delay repair.
+		await eventually(() => !getBindMapPublicationHealth().stale, 250);
+		expect(repaired).toContainEqual(expect.objectContaining({ changed: true }));
+		expect(fs.files.get(IPS)).toBe("192.0.2.3");
+		expect(fs.sidecar().ips_file_sha256).toBe(sha256("192.0.2.3"));
+		expect(fs.sidecar().links[0]?.iface).toBe("eth1");
+		expectOneDocumentPerGeneration(fs.documents);
+	});
+}
+
 describe("random stalls, late wakes and write errors", () => {
 	/** Small seeded generator, so a failing run can be replayed by its seed. */
 	const generator = (seed: number) => () => {

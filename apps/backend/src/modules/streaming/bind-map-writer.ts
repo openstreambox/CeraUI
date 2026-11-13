@@ -262,7 +262,7 @@ interface StaleState {
 	reason: BindMapStaleReason;
 	/** Backoff steps already taken in this stale period. */
 	backoff: number;
-	/** The one immediate republication of this period has been used. */
+	/** Immediate retry used since the last successful overlapped publication. */
 	immediateUsed: boolean;
 }
 
@@ -402,7 +402,8 @@ async function publishAtomically(
  * once at once, then on `BIND_MAP_RETRY_DELAYS_MS`, also after a failed write
  * and after a late effect of an abandoned write. Those republications owe the
  * reload (see `onSettled`); the first one that lands after an uncertain state
- * always reports `changed`.
+ * always reports `changed`. If a successful newest publication overlaps a
+ * late effect, it earns one immediate repair without resetting the backoff.
  */
 export function publishBondMapping(
 	provided: readonly BondEntry[],
@@ -545,7 +546,13 @@ function noteResult(
 		return;
 	}
 	if (stale === undefined || snapshot !== newest) return;
-	if (attempt.uncertainEpoch !== uncertainEpoch) return; // a late effect overlapped it
+	if (attempt.uncertainEpoch !== uncertainEpoch) {
+		// Storage completed a successful publication, but an abandoned effect
+		// overlapped it. Repair at once without resetting the backoff: repeated
+		// timeouts alone must never replenish the immediate retry budget.
+		if (publication.ok) stale.immediateUsed = false;
+		return;
+	}
 	logger.info("bind-map: the published mapping is current again", {
 		failures: stale.failures,
 		staleForMs: Date.now() - stale.since,
