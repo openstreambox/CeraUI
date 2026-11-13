@@ -121,3 +121,19 @@ test("an unmanaged capture cannot revive after a managed claim and release on th
 	releaseCellularSource(owner, "usb-one", "wwan0");
 	expect(permit()).toBe(false);
 });
+
+test("a retired cleanup lease cannot commit a queued restriction or erase a successor sidecar", async () => {
+	let owned = true;
+	const f = fixture(() => true);
+	f.files.set("ips", "successor");
+	f.files.set("map", "successor-map");
+	const pending = f.queue.publish([entry], () => owned);
+	await f.observed;
+	owned = false;
+	f.release();
+	const result = await pending;
+	expect(result.ok).toBe(false);
+	expect(f.commits).toEqual([]);
+	expect(f.files.get("ips")).toBe("successor");
+	expect(f.files.get("map")).toBe("successor-map");
+});

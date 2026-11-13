@@ -16,6 +16,7 @@ export interface BondPublicationQueueDeps {
 		entries: readonly BondEntry[],
 		result: BindMapPublication,
 		current: () => boolean,
+		captured: readonly CapturedBondEntry[],
 	) => void;
 }
 /** One writer and commit order for launch, refresh and withdrawal. Each
@@ -26,15 +27,25 @@ export interface BondPublicationQueueDeps {
 export class BondPublicationQueue {
 	private tail: Promise<void> = Promise.resolve();
 	constructor(private readonly deps: BondPublicationQueueDeps) {}
-	publish(entries: readonly BondEntry[]): Promise<BindMapPublication> {
+	publish(
+		entries: readonly BondEntry[],
+		owned: () => boolean = () => true,
+	): Promise<BindMapPublication> {
 		const captured = entries.map((entry) => this.deps.capture(entry));
 		const operation = this.tail.then(async () => {
+			const refused: BindMapPublication = {
+				ok: false,
+				reason: "source_changed",
+				changed: true,
+			};
 			for (let attempt = 0; attempt < 2; attempt++) {
+				if (!owned()) return refused;
 				const selected = captured.filter((row) => row.current()),
 					current = () => selected.every((row) => row.current()),
 					writer = this.deps.writer();
 				let revoked = false;
 				const permit = () => {
+					if (!owned()) throw new Error("Bond publication lease retired");
 					if (current()) return;
 					revoked = true;
 					throw new Error("Bond publication observation retired");
@@ -50,18 +61,26 @@ export class BondPublicationQueue {
 						permit();
 						await writer.renameFile(from, to);
 					},
+					removeFile: async (path) => {
+						if (!owned()) throw new Error("Bond publication lease retired");
+						await writer.removeFile(path);
+					},
 				});
+				if (!owned()) return refused;
 				if (!revoked && current()) {
-					this.deps.published(snapshot, result, current);
+					this.deps.published(
+						snapshot,
+						result,
+						current,
+						selected.map((row, i) => ({
+							entry: snapshot[i] as BondEntry,
+							current: row.current,
+						})),
+					);
 					return result;
 				}
 			}
-			const refused: BindMapPublication = {
-				ok: false,
-				reason: "source_changed",
-				changed: true,
-			};
-			this.deps.published([], refused, () => false);
+			this.deps.published([], refused, () => false, []);
 			return refused;
 		});
 		this.tail = operation.then(

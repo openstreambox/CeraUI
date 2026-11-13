@@ -37,7 +37,7 @@ import {
 import { asrcProbe, isPseudoAudioSource } from "../audio.ts";
 import {
 	defaultBindMapSpawnDeps,
-	resolveBindMapArgs,
+	resolveCellularBindMapArgs,
 } from "../bind-map-spawn.ts";
 import { getLastCapabilities } from "../capabilities.ts";
 import { SRTLA_LISTEN_PORT } from "../constants.ts";
@@ -51,7 +51,10 @@ import {
 } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
 import { replayPreviewEncodeMode } from "../preview-encode-replay.ts";
-import { getLastPublishedBond } from "../srtla.ts";
+import {
+	getLastPublishedBond,
+	publishedBondNeedsRequiredBinding,
+} from "../srtla.ts";
 import { assertStreamLaunchOwnership } from "../stream-launch-ownership.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
 import { srtlaSendExec } from "./exec-paths.ts";
@@ -249,11 +252,26 @@ export async function startStream(
 	}
 	// ADR-003 §7: the capability probe runs BEFORE the argument vector is built,
 	// so a new CeraUI against an OLD sender emits the byte-identical legacy vector.
-	const bindMapArgs = await resolveBindMapArgs(
+	const binding = await resolveCellularBindMapArgs(
 		srtlaSendExec,
 		defaultBindMapSpawnDeps(getLastPublishedBond),
+		publishedBondNeedsRequiredBinding,
 	);
 	assertStreamLaunchOwnership();
+	if (
+		!binding.ok ||
+		(!binding.required && publishedBondNeedsRequiredBinding()) ||
+		(binding.required && !getLastPublishedBond()?.publication.ok)
+	) {
+		return {
+			success: false,
+			error: "sender_binding_unavailable",
+			reason: binding.ok ? "mapping-unavailable" : binding.reason,
+			phase: "params",
+			failureClass: "sender_binding_unavailable",
+		};
+	}
+	const bindMapArgs = binding.args;
 	const transaction = createLaunchTransaction(attemptId, {
 		warn: (message, meta) => logger.warn(message, meta),
 	});
@@ -293,6 +311,7 @@ export async function startStream(
 		// order) maps back to interface names.
 		startStreamDeps.startLinkTelemetry(statsFile, ipsContent.split("\n"), {
 			controlSocket,
+			producer: sender,
 		});
 		transaction.register(() => startStreamDeps.stopLinkTelemetry());
 

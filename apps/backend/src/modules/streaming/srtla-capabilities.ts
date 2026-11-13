@@ -60,6 +60,7 @@ export type CapabilityProbeResult =
 			readonly bindMap: true;
 			readonly bindMapSchemaVersion: number;
 			readonly bindMapRequired?: true;
+			readonly bindMapRequiredEmptyReload?: true;
 	  }
 	| { readonly bindMap: false; readonly reason: CapabilityProbeFailure };
 
@@ -71,6 +72,7 @@ interface CapabilityDocument {
 		readonly bind_map?: unknown;
 		readonly bind_map_schema_version?: unknown;
 		readonly bind_map_required?: unknown;
+		readonly bind_map_required_empty_reload?: unknown;
 	};
 }
 
@@ -116,6 +118,9 @@ export function classifyCapabilityDocument(
 		bindMapSchemaVersion: version,
 		...(capabilities.bind_map_required === true
 			? { bindMapRequired: true as const }
+			: {}),
+		...(capabilities.bind_map_required_empty_reload === true
+			? { bindMapRequiredEmptyReload: true as const }
 			: {}),
 	};
 }

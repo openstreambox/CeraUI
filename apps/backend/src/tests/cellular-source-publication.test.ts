@@ -22,6 +22,7 @@ import {
 	genSrtlaBondEntriesForLocalIpAddress,
 	getLastPublishedBond,
 	publishSrtlaBond,
+	restrictSrtlaBond,
 	setBondIdentityResolverForTest,
 } from "../modules/streaming/srtla.ts";
 import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
@@ -171,6 +172,52 @@ test("launch refuses when withdrawal empties the actual queued publication after
 		await expect(preparing).rejects.toThrow("no_available_network_connections");
 		expect(await Bun.file(setup.ips_file).text()).toBe("");
 		expect((await Bun.file(setup.bind_map_file).json()).links).toEqual([]);
+	} finally {
+		await drainSrtlaBondPublication();
+		setup.ips_file = oldIps;
+		setup.bind_map_file = oldMap;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("restricting one withdrawn source preserves another managed row's original observation", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "cellular-bond-survivor-")),
+		oldIps = setup.ips_file,
+		oldMap = setup.bind_map_file;
+	setup.ips_file = join(dir, "ips");
+	setup.bind_map_file = join(dir, "map");
+	try {
+		for (const [name, device, ip] of [
+			[iface, "cclat1", source],
+			["wwan1", "cclat2", "198.18.255.2"],
+		]) {
+			if (!name || !device || !ip) throw new Error("Incomplete source fixture");
+			claimCellularSource(owner, epoch, name);
+			setCellularSourceBinding(owner, epoch, name, {
+				source: ip,
+				device,
+				translated: true,
+				generation: "current",
+			});
+			setCellularSourceReady(owner, epoch, name, "current", true);
+		}
+		processIfconfigOutput(
+			[
+				stanza(iface),
+				stanza("wwan1"),
+				stanza("cclat1", source),
+				stanza("cclat2", "198.18.255.2"),
+			].join("\n\n"),
+		);
+		expect((await publishSrtlaBond(genSrtlaBondEntries())).ok).toBe(true);
+		withdrawCellularSource(owner, epoch, iface);
+		expect(
+			(await restrictSrtlaBond(parentId, [iface, "cclat1"], () => true)).ok,
+		).toBe(true);
+		expect(await Bun.file(setup.ips_file).text()).toBe("198.18.255.2");
+		expect((await Bun.file(setup.bind_map_file).json()).links).toMatchObject([
+			{ iface: "cclat2" },
+		]);
 	} finally {
 		await drainSrtlaBondPublication();
 		setup.ips_file = oldIps;

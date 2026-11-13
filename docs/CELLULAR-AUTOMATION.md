@@ -74,8 +74,9 @@ inverse. Cleanup denies traffic before waiting for fresh sender withdrawal, and
 retired callbacks cannot change a successor. A disconnected kernel fixture also
 checks complete link removal; it does not establish USB or modem qualification.
 
-Managed cellular paths require the sender's `bind_map_required` capability and
-the opt-in `--require-bind-map` contract. The required-binding resolver returns
+Managed cellular paths require both sender capabilities, `bind_map_required`
+and `bind_map_required_empty_reload`, and the opt-in `--require-bind-map` contract.
+The required-binding resolver returns
 both binding flags or a typed refusal; it never chooses source-only fallback.
 Production activation remains held until this path is composed and qualified.
 The producer's empty `required_binding_refused` snapshot is understood by the
@@ -126,8 +127,24 @@ successor makes old callbacks ineligible. A change during a submitted file
 operation receives one bounded restrictive republication before completion.
 A superseded observation makes the last publication unavailable to the binding resolver.
 Refresh publishes a valid empty bond when the final link withdraws, while launch
-still refuses an empty bond. This does not yet establish sender lifetime-bound
-withdrawal acknowledgement or production admission for managed cellular paths.
+still refuses an empty bond. Production admission for managed cellular paths
+remains gated.
+
+New sender launches prefer strict binding when both capabilities are present,
+including launches that may gain a cellular link later. A supervised legacy
+sender cannot admit a managed cellular row. An unavailable required mapping or
+capability returns the typed `sender_binding_unavailable` failure with localized
+operator guidance. Existing stream admission and subprocess ownership remain
+the only lifecycle authorities.
+
+Withdrawal receipts belong to the exact withdrawn source observation and actual
+supervised producer. Their evidence boundary follows restrictive publication,
+drainage of earlier queued writes and a targeted reload. Old watchers, late
+control acquisitions and old capability replies cannot populate a replacement
+telemetry lifetime. Fresh absence of the old link from that strict producer, or
+positive exit of the captured process, can acknowledge closed sockets. No owned
+sender and no telemetry is still unknown without a positive startup census.
+Production startup inventory and installed-image qualification remain gated.
 
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
@@ -214,8 +231,9 @@ una confirmación nueva de retirada del emisor. Los procesos antiguos no pueden
 cambiar el enlace que los sustituye. Una prueba aislada del kernel también
 comprueba la eliminación completa de la interfaz; no acredita el USB ni el módem.
 
-Los enlaces celulares administrados requieren la capacidad `bind_map_required`
-del emisor y el modo opcional `--require-bind-map`. El adaptador devuelve ambas
+Los enlaces celulares administrados requieren las dos capacidades del emisor,
+`bind_map_required` y `bind_map_required_empty_reload`, y el modo opcional
+`--require-bind-map`. El adaptador devuelve ambas
 opciones de vinculación o una negativa tipada, sin usar solo la dirección de
 origen como alternativa. La activación de producción sigue pendiente de
 composición y pruebas. Los lectores de telemetría y RPC reconocen el estado
@@ -269,8 +287,25 @@ antiguos. Si cambia durante una escritura ya enviada, se realiza como máximo
 una publicación restrictiva adicional antes de finalizar. Una observación sustituida hace que el mapa anterior deje de estar disponible
 para el adaptador de vinculación. La actualización publica un conjunto
 vacío válido cuando se retira el último enlace; el inicio sigue rechazando un
-conjunto vacío. Todavía faltan la confirmación de retirada vinculada al proceso
-emisor y la admisión de producción para los enlaces celulares administrados.
+conjunto vacío. La admisión de producción para los enlaces celulares
+administrados sigue pendiente.
+
+Los nuevos emisores prefieren la vinculación estricta cuando están presentes
+ambas capacidades, incluso si el enlace celular se añade después. Un emisor
+supervisado en modo anterior no puede admitir una fila celular administrada.
+Un mapa o una capacidad requerida no disponible devuelve el error tipado
+`sender_binding_unavailable`, con indicaciones localizadas. La admisión de
+transmisión y el propietario de los procesos siguen controlando su ciclo de vida.
+
+La confirmación de retirada pertenece a la observación retirada y al proceso
+emisor exactos. Su prueba debe ser posterior a la publicación restrictiva,
+la finalización de escrituras anteriores y la recarga dirigida. Un observador,
+una conexión de control o una respuesta de capacidades antiguos no pueden
+actualizar la telemetría del emisor nuevo. La ausencia del enlace en una lectura
+nueva de ese emisor estricto, o su salida confirmada, puede acreditar el cierre
+de los sockets. La falta de un emisor supervisado o de telemetría sigue siendo
+desconocida sin una comprobación positiva al iniciar. El inventario de inicio
+y las pruebas de la imagen instalada siguen pendientes.
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon

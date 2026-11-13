@@ -65,6 +65,7 @@ export const START_FAILURE_CLASSES = [
 	'engine_internal',
 	'start_timeout',
 	'audio_source_unavailable',
+	'sender_binding_unavailable',
 	'modem_transition_active',
 	// The device is still REPLAYING its durable modem-mutation journal, so it
 	// cannot yet say whether a modem is mid-rollback. Distinct from
@@ -278,6 +279,10 @@ export const START_FAILURE_RETRIABILITY: Record<
 	audio_source_unavailable: {
 		retriablePhases: [],
 		why: 'The selected audio input never appeared. The probe ALREADY spent its own grace window waiting for the device to come back, so a further retry re-runs the same wait against the same absent hardware — tell the operator to reconnect or pick another input instead of looping.',
+	},
+	sender_binding_unavailable: {
+		retriablePhases: [],
+		why: 'Managed cellular sources require a confirmed mapping and an opt-in fail-closed sender. A failed capability or publication check cannot be retried as source-only transport.',
 	},
 	modem_transition_active: {
 		retriablePhases: [],

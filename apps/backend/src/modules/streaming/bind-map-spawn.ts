@@ -108,7 +108,11 @@ export async function resolveRequiredBindMapArgs(
 	} catch {
 		return { ok: false, reason: "capability-unavailable" };
 	}
-	if (!capabilities.bindMap || capabilities.bindMapRequired !== true)
+	if (
+		!capabilities.bindMap ||
+		capabilities.bindMapRequired !== true ||
+		capabilities.bindMapRequiredEmptyReload !== true
+	)
 		return { ok: false, reason: "capability-unavailable" };
 	const current = deps.getBond();
 	if (!current?.publication.ok)
@@ -117,5 +121,67 @@ export async function resolveRequiredBindMapArgs(
 	return {
 		ok: true,
 		args: ["--bind-map", current.publication.sidecarPath, "--require-bind-map"],
+	};
+}
+
+export type CellularBindMapResolution =
+	| { readonly ok: true; readonly args: string[]; readonly required: boolean }
+	| {
+			readonly ok: false;
+			readonly reason: "mapping-unavailable" | "capability-unavailable";
+	  };
+/** Prefer strict binding whenever the installed sender advertises it, including
+ * a wired-only launch that may gain a cellular uplink later. Existing senders
+ * retain legacy behavior only while no managed publication requires binding.
+ */
+export async function resolveCellularBindMapArgs(
+	execPath: string,
+	deps: BindMapSpawnDeps,
+	required: () => boolean,
+): Promise<CellularBindMapResolution> {
+	const before = deps.getBond();
+	if (!before?.publication.ok) {
+		if (required()) return { ok: false, reason: "mapping-unavailable" };
+		deps.announce("mapping-write-failed", before);
+		return { ok: true, args: [], required: false };
+	}
+	let capabilities: CapabilityProbeResult;
+	try {
+		capabilities = await deps.probe(execPath);
+	} catch {
+		capabilities = { bindMap: false, reason: "spawn-failed" };
+	}
+	const current = deps.getBond();
+	if (!current?.publication.ok) {
+		if (required()) return { ok: false, reason: "mapping-unavailable" };
+		deps.announce("mapping-write-failed", current);
+		return { ok: true, args: [], required: false };
+	}
+	if (
+		capabilities.bindMap &&
+		capabilities.bindMapRequired === true &&
+		capabilities.bindMapRequiredEmptyReload === true
+	) {
+		deps.announce("bind-map-passed", current);
+		return {
+			ok: true,
+			args: [
+				"--bind-map",
+				current.publication.sidecarPath,
+				"--require-bind-map",
+			],
+			required: true,
+		};
+	}
+	if (required()) return { ok: false, reason: "capability-unavailable" };
+	if (!capabilities.bindMap) {
+		deps.announce("capability-unsupported", current);
+		return { ok: true, args: [], required: false };
+	}
+	deps.announce("bind-map-passed", current);
+	return {
+		ok: true,
+		args: ["--bind-map", current.publication.sidecarPath],
+		required: false,
 	};
 }

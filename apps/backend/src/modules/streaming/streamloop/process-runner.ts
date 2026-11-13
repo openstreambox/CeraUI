@@ -23,6 +23,7 @@
 
 import { logger } from "../../../helpers/logger.ts";
 import { periodicCheckForSoftwareUpdates } from "../../system/software-updates.ts";
+import type { CellularSenderBinding } from "../cellular-sender-runtime.ts";
 import {
 	SHUTDOWN_SIGKILL_TIMEOUT_MS,
 	SHUTDOWN_SIGTERM_GRACE_MS,
@@ -41,6 +42,7 @@ export type StreamingProcess = {
 	proc: Bun.Subprocess<"inherit", "inherit", "pipe">;
 	spawnfile: string;
 	exitListeners: Array<() => void>;
+	readonly senderBinding?: CellularSenderBinding;
 };
 
 let streamingProcesses: Array<StreamingProcess> = [];
@@ -57,6 +59,7 @@ export function spawnStreamingLoop(
 	args: Array<string>,
 	errCallback: (data: string) => void,
 ): StreamingProcess {
+	const startedAt = Date.now();
 	const proc = Bun.spawn([command, ...args], {
 		stdin: "inherit",
 		stdout: "inherit",
@@ -67,6 +70,12 @@ export function spawnStreamingLoop(
 		proc,
 		spawnfile: command,
 		exitListeners: [],
+		senderBinding: Object.freeze({
+			epoch: Symbol(),
+			startedAt,
+			required:
+				args.includes("--require-bind-map") && args.includes("--bind-map"),
+		}),
 	};
 	streamingProcesses.push(streamingProcess);
 

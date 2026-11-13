@@ -45,7 +45,13 @@ import {
 	setBondIdentityResolverForTest,
 } from "./bond-entry.ts";
 import { BondPublicationQueue } from "./bond-publication-queue.ts";
+import {
+	cellularSenderAllowsPublication,
+	cellularSenderRuntime,
+} from "./cellular-sender-runtime.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
+import { srtlaSendExec } from "./streamloop/exec-paths.ts";
+import { getStreamingProcesses } from "./streamloop/process-runner.ts";
 
 export { isBondLinkMappable, setBondIdentityResolverForTest };
 
@@ -115,7 +121,20 @@ function collectBondEntries(
 			: physicalEntry;
 		entryPermits.set(
 			entry,
-			captureCellularSourcePublication(name, entry.ip, entry.iface),
+			(() => {
+				const observation = captureCellularSourcePublication(
+						name,
+						entry.ip,
+						entry.iface,
+					),
+					managed = cellularSourceManaged(name);
+				return () =>
+					observation() &&
+					(!managed ||
+						cellularSenderAllowsPublication(
+							cellularSenderRuntime(getStreamingProcesses(), srtlaSendExec),
+						));
+			})(),
 		);
 		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
 			continue;
@@ -181,7 +200,8 @@ const bondPublisher = new BondPublicationQueue({
 	}),
 	writer: () =>
 		defaultBindMapWriterDeps(setup.ips_file ?? "", srtlaBindMapPath()),
-	published: (entries, publication, current) => {
+	published: (entries, publication, current, captured) => {
+		for (const row of captured) entryPermits.set(row.entry, row.current);
 		registerSrtlaBond(entries);
 		lastBond = { entries: [...entries], publication };
 		lastBondCurrent = current;
@@ -189,6 +209,21 @@ const bondPublisher = new BondPublicationQueue({
 });
 export function drainSrtlaBondPublication(): Promise<void> {
 	return bondPublisher.drain();
+}
+/** Restriction only: preserve the receiver's existing membership and each
+ * surviving row's captured observation. Never add a new uplink during cleanup.
+ */
+export function restrictSrtlaBond(
+	linkId: string,
+	devices: readonly string[],
+	owned: () => boolean,
+): Promise<BindMapPublication> {
+	return bondPublisher.publish(
+		(lastBond?.entries ?? []).filter(
+			(entry) => entry.linkId !== linkId && !devices.includes(entry.iface),
+		),
+		owned,
+	);
 }
 
 /**
@@ -208,6 +243,16 @@ let lastBondCurrent: () => boolean = () => true;
 
 export function getLastPublishedBond(): PublishedBond | undefined {
 	return lastBondCurrent() ? lastBond : undefined;
+}
+export function publishedBondNeedsRequiredBinding(): boolean {
+	return (
+		!lastBondCurrent() ||
+		!!lastBond?.entries.some(
+			(entry) =>
+				cellularSourceManaged(entry.iface) ||
+				cellularHiddenInterface(entry.iface),
+		)
+	);
 }
 
 export function resetPublishedBond(): void {

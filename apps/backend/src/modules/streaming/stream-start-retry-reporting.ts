@@ -55,6 +55,8 @@ const TERMINAL_NOTIFICATION_KEYS: Readonly<Record<StartFailureClass, string>> =
 		engine_internal: "notifications.streamStartInternalFailed",
 		audio_source_unavailable:
 			"notifications.streamStartAudioSourceUnavailableFailed",
+		sender_binding_unavailable:
+			"notifications.streamStartSenderBindingUnavailableFailed",
 		modem_transition_active:
 			"notifications.streamStartModemTransitionActiveFailed",
 		recovery_pending: "notifications.streamStartRecoveryPendingFailed",
@@ -120,6 +122,8 @@ function terminalFallbackMessage(
 // A class whose terminal cause has nothing to do with the engine needs its own
 // untranslated fallback — the generic one points at the in-app log viewer.
 const TERMINAL_FALLBACK_MESSAGES: Partial<Record<StartFailureClass, string>> = {
+	sender_binding_unavailable:
+		"Cellular link mapping is unavailable. Update the device or wait for the links to settle, then try again.",
 	audio_source_unavailable:
 		"Stream failed to start: the selected audio input is not available. Reconnect it or choose another audio source.",
 	modem_transition_active:

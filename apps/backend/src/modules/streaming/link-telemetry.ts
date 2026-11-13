@@ -83,6 +83,7 @@ import {
 	registerSrtlaIpList,
 	resetConnIdRegistry,
 } from "./link-telemetry-rows.ts";
+import type { StreamingProcess } from "./streamloop/process-runner.ts";
 
 export type {
 	LinkTelemetryEntry,
@@ -144,6 +145,9 @@ let lastSnapshot: Telemetry | null = null;
 let lastTickFresh = false;
 // CeraUI-side wall-clock ms of the last successful (non-null) read; 0 until one.
 let lastReadMs = 0;
+let telemetryGeneration = 0;
+let producingSender: StreamingProcess | undefined;
+let producingEpoch: symbol | undefined;
 
 let nowFn: () => number = Date.now;
 
@@ -153,6 +157,8 @@ export function setTelemetryClockForTest(fn: (() => number) | null): void {
 }
 
 export interface StartLinkTelemetryOptions {
+	/** The actual supervised producer, not a process name or reusable PID. */
+	producer?: StreamingProcess;
 	intervalMs?: number;
 	/** Test seam: inject a fake watch implementation. */
 	watch?: typeof watchTelemetry;
@@ -219,6 +225,9 @@ export function startLinkTelemetry(
 	initialIps: Array<string>,
 	opts: StartLinkTelemetryOptions = {},
 ): void {
+	const generation = ++telemetryGeneration;
+	producingSender = opts.producer;
+	producingEpoch = opts.producer?.senderBinding?.epoch;
 	if (subscriptionCleanup) {
 		subscriptionCleanup();
 		subscriptionCleanup = null;
@@ -257,7 +266,7 @@ export function startLinkTelemetry(
 	// File-poll is the always-on baseline; the subscription cutover (below) only
 	// ever replaces it once the sender confirms the capability, and any failure
 	// leaves this watcher running — the airtight fallback.
-	startFilePollWatcher(watch, statsFile, watchOpts);
+	startFilePollWatcher(watch, statsFile, watchOpts, generation);
 
 	if (opts.controlSocket) {
 		void attemptSubscriptionCutover(
@@ -265,6 +274,7 @@ export function startLinkTelemetry(
 			watch,
 			statsFile,
 			watchOpts,
+			generation,
 		);
 	}
 }
@@ -275,12 +285,16 @@ function startFilePollWatcher(
 	watch: typeof watchTelemetry,
 	statsFile: string,
 	watchOpts: WatchOpts,
+	generation: number,
 ): void {
 	// watchTelemetry's callback gets a TelemetryUpdate ({ data, stale }), not a raw
 	// snapshot — collapse stale ticks to null so ingestTelemetry caches correctly.
 	handle = watch(
 		statsFile,
-		(update) => ingestTelemetry(update.stale ? null : update.data),
+		(update) => {
+			if (generation === telemetryGeneration)
+				ingestTelemetry(update.stale ? null : update.data);
+		},
 		watchOpts,
 	);
 }
@@ -307,6 +321,7 @@ async function attemptSubscriptionCutover(
 	watch: typeof watchTelemetry,
 	statsFile: string,
 	watchOpts: WatchOpts,
+	generation: number,
 ): Promise<void> {
 	try {
 		const factory = controlClientFactoryOverride ?? createControlClient;
@@ -315,8 +330,16 @@ async function attemptSubscriptionCutover(
 			timeoutMs: SRTLA_CONTROL_CONNECT_TIMEOUT_MS,
 		});
 		if (!client) return;
+		if (generation !== telemetryGeneration) {
+			client.close();
+			return;
+		}
 
 		const capabilities = await client.getCapabilities().catch(() => null);
+		if (generation !== telemetryGeneration) {
+			client.close();
+			return;
+		}
 		if (!capabilities) {
 			logger.debug(
 				"link-telemetry: sender reports no capabilities support, staying on file-poll",
@@ -334,11 +357,12 @@ async function attemptSubscriptionCutover(
 		}
 
 		subscriptionCleanup = client.subscribeStats((snapshot) => {
+			if (generation !== telemetryGeneration) return;
 			if (snapshot === null && !handle) {
 				logger.warn(
 					"link-telemetry: subscription disconnected, falling back to file-poll",
 				);
-				startFilePollWatcher(watch, statsFile, watchOpts);
+				startFilePollWatcher(watch, statsFile, watchOpts, generation);
 			}
 			ingestTelemetry(snapshot);
 		});
@@ -359,6 +383,9 @@ async function attemptSubscriptionCutover(
 
 /** Stop consuming telemetry (poll + subscription) and clear both registries. */
 export function stopLinkTelemetry(): void {
+	telemetryGeneration++;
+	producingSender = undefined;
+	producingEpoch = undefined;
 	if (subscriptionCleanup) {
 		subscriptionCleanup();
 		subscriptionCleanup = null;
@@ -445,10 +472,21 @@ export function broadcastLinkTelemetryIfChanged(): LinkTelemetryMessage | null {
 
 /** Kernel cleanup uses producer acknowledgement, never the republished registry. */
 export function senderReleasedCellularSource(
+	producer: StreamingProcess,
 	withdrawnAt: number,
 	linkId: string,
 	devices: readonly string[],
 ): boolean {
+	if (
+		producer !== producingSender ||
+		!producingEpoch ||
+		producer.senderBinding?.epoch !== producingEpoch ||
+		producer.senderBinding?.required !== true ||
+		producer.proc.exitCode !== null ||
+		producer.proc.signalCode !== null ||
+		withdrawnAt < producer.senderBinding.startedAt
+	)
+		return false;
 	return cellularSourceWithdrawalConfirmed(
 		lastSnapshot,
 		lastTickFresh,
