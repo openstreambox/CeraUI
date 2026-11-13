@@ -1266,3 +1266,15 @@ export async function mmNetworkScan(
 		};
 	}
 }
+
+/** Read-only temperature query through the existing bounded modem command runner. */
+export async function mmReadTemperature(id: number): Promise<string> {
+	if (!Number.isSafeInteger(id) || id < 0 || shouldMockModems()) return "";
+	const raw = await run(
+		mmcliBinary,
+		["--timeout=1", "-m", String(id), "--command=AT+QTEMP", "-J"],
+		{ timeout: 1500, maxBuffer: 16384 },
+	);
+	const response: unknown = JSON.parse(raw)?.modem?.command?.response;
+	return typeof response === "string" ? response : "";
+}

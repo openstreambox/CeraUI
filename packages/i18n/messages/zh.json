@@ -2784,5 +2784,10 @@
 	"live.heat.hot": "Hot",
 	"live.heat.warmStage": "Warm",
 	"live.heat.normal": "Cooled",
-	"live.heat.restored": "Cooled. Your bitrate ceiling is restored."
+	"live.heat.restored": "Cooled. Your bitrate ceiling is restored.",
+	"live.heat.protection": "Power board protection is reduced.",
+	"live.heat.datasheet": "Reserve pack temperature uses datasheet values.",
+	"live.heat.unprotected": "Reserve pack heat protection is off.",
+	"live.heat.resting": "{link} is resting to reduce heat.",
+	"live.heat.restUnknown": "Link capacity is unknown. Keeping every link in the bond."
 }

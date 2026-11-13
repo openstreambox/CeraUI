@@ -17,18 +17,23 @@ async function toggle() {
 }
 </script>
 
-{#if unavailable || status?.unknown || (status && (status.stage > 0 || status.history.length > 0))}
+{#if status?.protectionReduced || status?.packDatasheet || status?.packUnprotected || unavailable || status?.unknown || (status && (status.stage > 0 || status.history.length > 0))}
  <aside class="rounded-lg border border-status-warning/40 bg-status-warning/10 p-3 text-sm" aria-label={m['live.heat.title']()}>
   <p role="status">
    {#if unavailable || status?.error}{m['live.heat.failed']()}
    {:else if status?.unknown}{m['live.heat.unknown']()}
    {:else if status?.keepQuality && !status.reduced && status.ceiling !== null}{#if status.stage === 3}{m['live.heat.critical']()}. {/if}{m['live.heat.keepWarning']()}
-   {:else if status && status.stage >= 2 && status.cannotReduce && !status.keepQuality}{m['live.heat.cannotReduce']()}
-   {:else if status && status.stage >= 2 && status.reduced && status.ceiling !== null}{m['live.heat.capped']({bitrate:(status.ceiling/1000).toFixed(1)})}
+   {:else if status?.cannotReduce && !status.keepQuality}{m['live.heat.cannotReduce']()}
+   {:else if status?.reduced && status.ceiling !== null}{m['live.heat.capped']({bitrate:(status.ceiling/1000).toFixed(1)})}
    {:else if status && status.stage >= 2}{status.stage === 3 ? m['live.heat.critical']() : m['live.heat.hot']()}
    {:else if status?.stage === 0}{m['live.heat.restored']()}
    {:else}{m['live.heat.warm']()}{/if}
   </p>
+  {#if status?.protectionReduced}<p>{m['live.heat.protection']()}</p>{/if}
+  {#if status?.packDatasheet}<p>{m['live.heat.datasheet']()}</p>{/if}
+  {#if status?.packUnprotected}<p>{m['live.heat.unprotected']()}</p>{/if}
+  {#if status?.restingLink}<p>{m['live.heat.resting']({link:status.restingLink})}</p>
+  {:else if status?.restUnavailable}<p>{m['live.heat.restUnknown']()}</p>{/if}
   {#if status && status.stage >= 2}<p class="mt-1 text-muted-foreground">{m['live.heat.air']()}</p>{#if status.phoneAdvice}<p>{m['live.heat.phone']()}</p>{/if}{/if}
   {#if status && status.stage > 0}
    <Button variant="outline" size="sm" class="mt-2" disabled={pending} onclick={toggle} aria-pressed={status.keepQuality}>{m['live.heat.keep']()}</Button>

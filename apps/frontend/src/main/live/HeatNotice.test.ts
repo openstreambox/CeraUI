@@ -90,3 +90,24 @@ test("a source whose bitrate cannot be lowered is not described as capped", () =
 	expect(view.getByText(/can't be lowered/)).toBeTruthy();
 	expect(view.getByText(/Still live/)).toBeTruthy();
 });
+
+test("shows reduced protection, datasheet values and the resting link", () => {
+	mocks.getHeat.mockReturnValue({
+		...status,
+		protectionReduced: true,
+		packDatasheet: true,
+		restingLink: "wwan0",
+	});
+	const view = render(HeatNotice);
+	expect(view.getByText("Power board protection is reduced.")).toBeTruthy();
+	expect(
+		view.getByText("Reserve pack temperature uses datasheet values."),
+	).toBeTruthy();
+	expect(view.getByText("wwan0 is resting to reduce heat.")).toBeTruthy();
+});
+
+test("unknown capacity keeps links in the bond", () => {
+	mocks.getHeat.mockReturnValue({ ...status, restUnavailable: true });
+	const view = render(HeatNotice);
+	expect(view.getByText(/Link capacity is unknown/)).toBeTruthy();
+});

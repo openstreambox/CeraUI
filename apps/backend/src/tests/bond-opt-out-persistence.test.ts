@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { call } from "@orpc/server";
-
 import { loadConfig, setConfigFilePath } from "../modules/config.ts";
+import { setHeatBondRest } from "../modules/network/bond-preference";
 import {
 	getNetworkInterfaces,
 	isBondCandidate,
@@ -40,10 +40,20 @@ describe("operator bond opt-out — config.json restart persistence", () => {
 	});
 
 	afterEach(() => {
+		setHeatBondRest(null);
 		resetBondFixture();
 		setConfigFilePath("config.json");
 	});
 
+	test("heat exclusion never writes the saved preference and clears independently", () => {
+		const before = readFileSync(configPath, "utf8");
+		setHeatBondRest("eth1");
+		expect(netIfBuildMsg().eth1?.enabled).toBe(false);
+		expect(readFileSync(configPath, "utf8")).toBe(before);
+		setHeatBondRest(null);
+		expect(netIfBuildMsg().eth1?.enabled).toBe(true);
+		expect(readFileSync(configPath, "utf8")).toBe(before);
+	});
 	test("an opt-out survives a simulated backend restart and follows the physical port", async () => {
 		// Given the operator excludes the first Huawei while it is called eth1.
 		const result = await call(

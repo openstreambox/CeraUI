@@ -33,6 +33,9 @@ import {
 import { getConfig } from "../config.ts";
 import { getRTMPIngestStats } from "../ingest/rtmp.ts";
 import { getSRTIngestStats } from "../ingest/srt.ts";
+import { mmReadTemperature } from "../modems/mmcli.ts";
+import { getModems } from "../modems/modems-state.ts";
+import { ModemTemperatureReader } from "../modems/temperature.ts";
 import { cerastreamBackend } from "../streaming/cerastream-backend.ts";
 import { parseThermalZone } from "../streaming/heat-ladder.ts";
 import { getSourcesMessage } from "../streaming/sources.ts";
@@ -53,6 +56,7 @@ import {
 const bootconfigService = "ceralive-firstboot-bootconfig";
 
 const sensors: Record<string, string> = {};
+const modemTemperatureReader = new ModemTemperatureReader(mmReadTemperature);
 /** Numeric thermal-zone readings in °C; absent when missing or implausible. */
 const thermalC: Record<string, number> = {};
 const dmesgWatchers: WatcherHandle[] = [];
@@ -318,11 +322,22 @@ export function initHardwareMonitoring() {
 	if (sensorsFunc) {
 		const updateSensors = async () => {
 			await sensorsFunc();
-			// Never wait on the engine from the sensor loop: the backend keeps at
-			// most one heat change in flight and logs its own failures.
+			// Never wait on the engine or the modems from the sensor loop: modem
+			// reads run in the background and the backend keeps at most one heat
+			// change in flight, logging its own failures.
+			const now = getms();
+			const targets = Object.entries(getModems())
+				.filter(([, m]) => m.model === "RM520N-GL" && !m.removed)
+				.map(([id, m]) => ({
+					id: Number(id),
+					// The modem object is replaced on every status refresh; key the
+					// reader on what stays the same for one physical modem.
+					identity: `${id}|${m.ifname}|${m.name}`,
+				}));
 			cerastreamBackend.updateHeat(
 				thermalC["SoC temperature"] ?? null,
-				getms(),
+				now,
+				modemTemperatureReader.sample(targets, now),
 			);
 			broadcastMsg("heat", cerastreamBackend.getHeat());
 

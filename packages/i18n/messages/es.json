@@ -2832,5 +2832,10 @@
 	"live.heat.hot": "Caliente",
 	"live.heat.warmStage": "Tibio",
 	"live.heat.normal": "Enfriado",
-	"live.heat.restored": "El equipo se enfrió. Se restauró tu límite de bitrate."
+	"live.heat.restored": "El equipo se enfrió. Se restauró tu límite de bitrate.",
+	"live.heat.protection": "La protección de la placa de alimentación está reducida.",
+	"live.heat.datasheet": "La temperatura de la reserva usa valores de la ficha técnica.",
+	"live.heat.unprotected": "La protección térmica de la reserva está desactivada.",
+	"live.heat.resting": "{link} está en reposo para reducir el calor.",
+	"live.heat.restUnknown": "Se desconoce la capacidad de los enlaces. Todos siguen en el enlace combinado."
 }

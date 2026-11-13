@@ -11,6 +11,8 @@ export const HEAT_SETTINGS = {
 	capPercent: { hot: 75, critical: 50 },
 	floorKbps: 2000,
 	automaticSpareLink: true,
+	spareLinkHeadroom: 0.3,
+	spareLinkHealthyPeers: 2,
 	resolutionPolicy: "offer",
 	keepQualityDuration: "stream" as "stream" | "stage" | "untilOff",
 	phoneChargingAdvice: true,
@@ -103,6 +105,7 @@ export function advanceHeat(
 	previous: HeatState,
 	inputs: Record<string, number | null>,
 	now: number,
+	allowCooling = true,
 ): HeatState {
 	const p = HEAT_SETTINGS;
 	const s: HeatState = {
@@ -130,8 +133,8 @@ export function advanceHeat(
 	if (s.unknown) return s;
 	s.knownAt = now;
 	let level = 0,
-		cool = true,
-		allNormal = true;
+		cool = allowCooling,
+		allNormal = allowCooling;
 	for (const [key, raw] of Object.entries(inputs)) {
 		if (raw === null) continue;
 		const thresholds = p.thresholds[key];
@@ -199,7 +202,11 @@ export function advanceHeat(
 	return s;
 }
 export function heatCeiling(s: HeatState, ownKbps: number): number {
-	if (s.keepQuality || !HEAT_SETTINGS.automaticBitrate || s.stage < 2)
+	if (
+		s.keepQuality ||
+		!HEAT_SETTINGS.automaticBitrate ||
+		Math.max(s.stage, s.capStage) < 2
+	)
 		return ownKbps;
 	const percent =
 		Math.max(s.stage, s.capStage) === 3

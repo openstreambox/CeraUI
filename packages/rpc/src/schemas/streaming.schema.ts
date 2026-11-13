@@ -1317,6 +1317,11 @@ export const setMockDeviceAttachedOutputSchema = z.object({
 export type SetMockDeviceAttachedOutput = z.infer<typeof setMockDeviceAttachedOutputSchema>;
 
 export const heatStatusSchema = z.object({
+	restingLink: z.string().nullable().optional(),
+	restUnavailable: z.boolean().optional(),
+	protectionReduced: z.boolean().nullable().optional(),
+	packDatasheet: z.boolean().optional(),
+	packUnprotected: z.boolean().optional(),
 	phoneAdvice: z.boolean(),
 	reduced: z.boolean(),
 	stage: z.number().int().min(0).max(3),

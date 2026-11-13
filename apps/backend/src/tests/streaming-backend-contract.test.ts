@@ -319,6 +319,7 @@ interface BackendHarness {
 
 function makeBackend(
 	opts: {
+		getHeatLinks?: CerastreamBackendDeps["getHeatLinks"];
 		connect?: CerastreamBackendDeps["connect"];
 		config?: Partial<RuntimeConfig>;
 		fakeOptions?: FakeClientOptions;
@@ -333,6 +334,7 @@ function makeBackend(
 	const config: RuntimeConfig = { ...STREAM_CONFIG, ...opts.config };
 	let saves = 0;
 	const backend = new CerastreamBackend({
+		getHeatLinks: opts.getHeatLinks,
 		connect: opts.connect ?? (async () => fake.client),
 		connectOptions: {},
 		getConfig: () => config,
@@ -1620,4 +1622,118 @@ describe("heat ceiling review round 2", () => {
 		expect(bitrateCalls(fake)).toBe(calls);
 		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
 	});
+});
+
+test("modem heat triggers its own thresholds and absence cannot undo it", async () => {
+	const { backend, fake, saveCount } = makeBackend();
+	await backend.start(STREAM_CONFIG, RUN_OPTS);
+	const saves = saveCount();
+	for (let t = 0; t <= 12000; t += 1000) {
+		backend.updateHeat(40, t, 71);
+		await backend.settle();
+	}
+	expect(backend.getHeat().stage).toBe(2);
+	expect(
+		fake.calls.filter((c) => c.op === "set-bitrate").at(-1)?.params,
+	).toEqual({ max_bitrate: 6000 });
+	for (let t = 13000; t <= 400000; t += 1000) {
+		backend.updateHeat(40, t, null);
+		await backend.settle();
+	}
+	expect(backend.getHeat().stage).toBe(2);
+	expect(saveCount()).toBe(saves);
+});
+
+test("rest is session-only, returns before cap and Keep quality clears it", async () => {
+	const links = ["a", "b", "c"].map((name) => ({
+		name,
+		modem: true,
+		healthy: true,
+		headroom: 0.3,
+	}));
+	const { backend, saveCount } = makeBackend({ getHeatLinks: () => links });
+	await backend.start(STREAM_CONFIG, RUN_OPTS);
+	const saves = saveCount();
+	for (let t = 0; t <= 12000; t += 1000) {
+		backend.updateHeat(76, t);
+		await backend.settle();
+	}
+	expect(backend.getHeat().restingLink).toBe("a");
+	for (let t = 13000; t <= 320000; t += 1000) {
+		backend.updateHeat(30, t);
+		await backend.settle();
+	}
+	expect(backend.getHeat().restingLink).toBeNull();
+	expect(backend.getHeat().reduced).toBe(true);
+	await backend.keepHeatQuality(true);
+	expect(backend.getHeat().reduced).toBe(false);
+	expect(saveCount()).toBe(saves);
+	await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	expect(backend.getHeat().restingLink).toBeNull();
+});
+
+test("missing modem evidence cannot resume a ceiling after Keep quality", async () => {
+	const links = ["a", "b", "c"].map((name) => ({
+		name,
+		modem: true,
+		healthy: true,
+		headroom: 0.3,
+	}));
+	const { backend } = makeBackend({ getHeatLinks: () => links });
+	await backend.start(STREAM_CONFIG, RUN_OPTS);
+	for (let t = 0; t <= 12000; t += 1000) {
+		backend.updateHeat(40, t, 71);
+		await backend.settle();
+	}
+	await backend.keepHeatQuality(true);
+	backend.updateHeat(40, 13000, null);
+	await backend.settle();
+	await backend.keepHeatQuality(false);
+	expect(backend.getHeat().restingLink).toBeNull();
+	expect(backend.getHeat().reduced).toBe(false);
+	backend.updateHeat(40, 14000, null);
+	await backend.settle();
+	expect(backend.getHeat().reduced).toBe(false);
+	for (let t = 15000; t <= 28000; t += 1000) {
+		backend.updateHeat(76, t, null);
+		await backend.settle();
+	}
+	expect(backend.getHeat().reduced).toBe(true);
+});
+
+test("a control reconnect mid-stream keeps the resting link", async () => {
+	const links = ["a", "b", "c"].map((name) => ({
+		name,
+		modem: true,
+		healthy: true,
+		headroom: 0.3,
+	}));
+	const first = makeFakeClient();
+	const second = makeFakeClient();
+	let connections = 0;
+	const { backend } = makeBackend({
+		getHeatLinks: () => links,
+		connect: async () => (++connections === 1 ? first.client : second.client),
+		onSessionConnectionLost: () => {},
+	});
+	await backend.start(STREAM_CONFIG, RUN_OPTS);
+	for (let t = 0; t <= 12000; t += 1000) {
+		backend.updateHeat(76, t);
+		await backend.settle();
+	}
+	expect(backend.getHeat().restingLink).toBe("a");
+	first.client.setBitrate = async () => {
+		throw new CerastreamConnectionError("lost", undefined, "lost");
+	};
+	backend.setBitrate({ max_br: 8000 });
+	await backend.settle();
+	const reconciliation = backend.reconcileRuntimeState();
+	await second.subscribed;
+	second.emit({ type: "status", seq: 1, state: "streaming", streaming: true });
+	expect(await reconciliation).toBe("streaming");
+	await backend.settle();
+	expect(backend.getHeat().restingLink).toBe("a");
+	expect(backend.getHeat().stage).toBe(2);
+	await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
+	expect(backend.getHeat().restingLink).toBeNull();
 });

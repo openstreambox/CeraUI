@@ -71,7 +71,24 @@ export function parseSupervisor(line: string, receivedAt: number, now: number) {
 		const parts = value.split("/");
 		return parts[0] === "healthy" ? temperature(parts[3]) : null;
 	};
+	const packCalibration = matching(fields.pack_cal, /^(datasheet|bench|none)$/);
+	const gapsText = matching(fields.gaps, /^[0-9a-fA-F]{4}$/);
+	const gaps = gapsText === null ? null : Number.parseInt(gapsText, 16);
+	const packFlags = fields.pack.split("/")[2];
+	const packDatasheet =
+		packCalibration === "datasheet" ||
+		(packFlags !== undefined &&
+			/^[0-9a-fA-F]{2}$/.test(packFlags) &&
+			(Number.parseInt(packFlags, 16) & 0x10) !== 0);
 	return {
+		packCalibration,
+		packDatasheet,
+		start: matching(
+			fields.start,
+			/^(on|off|settling|no_bank|too_hot|temp_unknown|latched|unarmed)$/,
+		),
+		gaps,
+		protectionReduced: gaps === null ? null : gaps !== 0,
 		temperatures: {
 			pack: temperature(fields.pack.split("/")[1]),
 			bankA: bank(fields.a),
