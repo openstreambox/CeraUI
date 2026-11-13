@@ -2815,5 +2815,21 @@
 	"network.sharing.policy.failed": "No se pudo leer o actualizar la política. Recárgala para comprobar el ajuste actual.",
 	"network.sharing.policy.healthWeight": "Peso de salud (antes de la política)",
 	"network.sharing.policy.healthTitle": "Salud de los enlaces",
-	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos."
+	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos.",
+	"live.heat.title": "Temperatura",
+	"live.heat.unknown": "Temperatura no disponible. Los ajustes por calor están en pausa.",
+	"live.heat.failed": "No se pudo confirmar el cambio de bitrate por calor. Ventila el equipo.",
+	"live.heat.keepWarning": "Se mantiene la calidad completa. El equipo sigue caliente. Ventílalo.",
+	"live.heat.capped": "Equipo caliente: bitrate limitado a {bitrate} Mbit/s para enfriarlo. Sigues en vivo.",
+	"live.heat.warm": "El equipo está tibio. Ventílalo.",
+	"live.heat.air": "Abre la bolsa o busca sombra.",
+	"live.heat.keep": "Mantener calidad",
+	"live.heat.history": "Ajustes por calor",
+	"live.heat.historyEntry": "{stage}: límite de bitrate de {bitrate} Mbit/s.",
+	"live.heat.phone": "Cargar un teléfono desde el equipo genera más calor. Desconéctalo si puedes.",
+	"live.heat.critical": "Muy caliente",
+	"live.heat.hot": "Caliente",
+	"live.heat.warmStage": "Tibio",
+	"live.heat.normal": "Enfriado",
+	"live.heat.restored": "El equipo se enfrió. Se restauró tu límite de bitrate."
 }

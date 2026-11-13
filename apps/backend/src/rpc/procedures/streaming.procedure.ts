@@ -1,3 +1,4 @@
+import { cerastreamBackend } from "../../modules/streaming/cerastream-backend";
 /**
  * Streaming Procedures
  * Wraps existing streaming logic from modules/streaming/
@@ -16,7 +17,10 @@ import {
 	GATEWAY_INACTIVE_ERROR,
 	getEngineOutputSchema,
 	getMockHardwareOutputSchema,
+	heatMutationSchema,
+	heatStatusSchema,
 	type InputMode,
+	keepHeatQualitySchema,
 	listDevicesOutputSchema,
 	pipelinesMessageSchema,
 	reloadAudioDelayInputSchema,
@@ -1448,4 +1452,16 @@ export const reloadAudioDelayProcedure = authedProcedure
 		} catch (_err) {
 			return { success: false, error: "RELOAD_FAILED" };
 		}
+	});
+
+export const getHeatProcedure = authedProcedure
+	.output(heatStatusSchema)
+	.handler(() => cerastreamBackend.getHeat());
+export const keepHeatQualityProcedure = authedProcedure
+	.input(keepHeatQualitySchema)
+	.output(heatMutationSchema)
+	.handler(async ({ input }) => {
+		await cerastreamBackend.keepHeatQuality(input.enabled);
+		broadcastMsg("heat", cerastreamBackend.getHeat());
+		return { success: true, applied: cerastreamBackend.getHeat() };
 	});

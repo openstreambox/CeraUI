@@ -1,3 +1,7 @@
+import {
+	getHeatProcedure,
+	keepHeatQualityProcedure,
+} from "./procedures/streaming.procedure";
 /**
  * RPC Router - Main router combining all procedures
  */
@@ -181,6 +185,8 @@ const stableRoutes = {
 		start: streamingStartProcedure,
 		stop: streamingStopProcedure,
 		setBitrate: setBitrateProcedure,
+		getHeat: getHeatProcedure,
+		keepHeatQuality: keepHeatQualityProcedure,
 		getPipelines: getPipelinesProcedure,
 		getAudioCodecs: getAudioCodecsProcedure,
 		getConfig: getConfigProcedure,

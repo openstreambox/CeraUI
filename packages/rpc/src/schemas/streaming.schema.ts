@@ -1315,3 +1315,21 @@ export const setMockDeviceAttachedOutputSchema = z.object({
 	error: z.string().optional(),
 });
 export type SetMockDeviceAttachedOutput = z.infer<typeof setMockDeviceAttachedOutputSchema>;
+
+export const heatStatusSchema = z.object({
+	phoneAdvice: z.boolean(),
+	reduced: z.boolean(),
+	stage: z.number().int().min(0).max(3),
+	unknown: z.boolean(),
+	keepQuality: z.boolean(),
+	ceiling: z.number().nullable(),
+	error: z.boolean(),
+	history: z.array(
+		z.object({ at: z.number(), stage: z.number(), ceiling: z.number(), keepQuality: z.boolean() }),
+	),
+});
+export type HeatStatus = z.infer<typeof heatStatusSchema>;
+export const keepHeatQualitySchema = z.object({ enabled: z.boolean() });
+
+export const heatMutationSchema = z.object({ success: z.boolean(), applied: heatStatusSchema });
+export type HeatMutation = z.infer<typeof heatMutationSchema>;

@@ -1,3 +1,4 @@
+import { cerastreamBackend } from "../streaming/cerastream-backend";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -149,6 +150,7 @@ export function sendInitialStatus(conn: WebSocket) {
 	conn.send(buildMsg("sensors", getSensors()));
 	conn.send(buildMsg(ENCODER_LOAD_EVENT, getEncoderLoad()));
 	conn.send(buildMsg(FAN_EVENT, getFan()));
+	conn.send(buildMsg("heat", cerastreamBackend.getHeat()));
 	conn.send(buildMsg(CPU_EVENT, getCpuInfo()));
 	conn.send(buildMsg(BLUETOOTH_EVENT, getBluetoothStatusMessage()));
 	conn.send(buildMsg("revisions", getRevisions()));

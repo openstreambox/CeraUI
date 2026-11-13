@@ -1,3 +1,4 @@
+import { cerastreamBackend } from "../streaming/cerastream-backend";
 /*
     CeraUI - web UI for the CERALIVE project
     Copyright (C) 2024-2025 CeraLive project
@@ -70,9 +71,11 @@ async function updateSensorThermal(id: number, name: string) {
 			`/sys/class/thermal/thermal_zone${id}/temp`,
 		).text();
 		const socTemp = Number.parseInt(socTempStr, 10) / 1000.0;
+		if (!Number.isFinite(socTemp)) throw new Error("Invalid temperature");
 		sensors[name] = `${socTemp.toFixed(1)} °C`;
 	} catch (_err) {
-		// missing /sys thermal path → leave the signal unset rather than crash
+		delete sensors[name];
+		// Missing readings invalidate the previous sample.
 	}
 }
 
@@ -307,6 +310,14 @@ export function initHardwareMonitoring() {
 	if (sensorsFunc) {
 		const updateSensors = async () => {
 			await sensorsFunc();
+			const raw = sensors["SoC temperature"];
+			const temperature = raw === undefined ? null : Number.parseFloat(raw);
+			try {
+				await cerastreamBackend.updateHeat(temperature, getms());
+			} catch (error) {
+				logger.warn("Heat bitrate change failed", { error });
+			}
+			broadcastMsg("heat", cerastreamBackend.getHeat());
 
 			const data = { ...sensors };
 			const srtIngestStats = getSRTIngestStats();

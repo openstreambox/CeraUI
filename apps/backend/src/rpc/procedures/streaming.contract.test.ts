@@ -28,6 +28,7 @@ import { updateStatus } from "../../modules/streaming/streaming.ts";
 import { appRouter } from "../router.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
 import {
+	keepHeatQualityProcedure,
 	reloadAudioDelayProcedure,
 	setBitrateProcedure,
 	setConfigProcedure,
@@ -84,6 +85,11 @@ const MUTATIONS: ReadonlyArray<{
 	readonly procedure: unknown;
 	readonly args: unknown;
 }> = [
+	{
+		name: "keepHeatQuality",
+		procedure: keepHeatQualityProcedure,
+		args: { enabled: true },
+	},
 	{ name: "start", procedure: streamingStartProcedure, args: {} },
 	{ name: "stop", procedure: streamingStopProcedure, args: undefined },
 	{
@@ -126,6 +132,7 @@ const MUTATIONS: ReadonlyArray<{
 
 // Read-only streaming procedures — excluded from the setter contract.
 const STREAMING_QUERIES = new Set([
+	"getHeat",
 	"getPipelines",
 	"getAudioCodecs",
 	"getConfig",

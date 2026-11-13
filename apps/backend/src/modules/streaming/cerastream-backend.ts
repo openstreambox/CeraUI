@@ -1,3 +1,9 @@
+import {
+	advanceHeat,
+	HEAT_SETTINGS,
+	heatCeiling,
+	initialHeat,
+} from "./heat-ladder";
 /*
     CeraUI - web UI for the CERALIVE project
     Copyright (C) 2024-2025 CeraLive project
@@ -115,6 +121,7 @@ import { activeEncodeSchema, toEngineResolution } from "@ceraui/rpc/schemas";
 import { z } from "zod";
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { logger as defaultLogger } from "../../helpers/logger.ts";
+import { getms } from "../../helpers/time.ts";
 import { ENGINE_STATE_RECONCILE_TIMEOUT } from "../../helpers/timing-constants.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import { setup } from "../setup.ts";
@@ -713,6 +720,97 @@ export class CerastreamBackend implements StreamingBackend {
 	private client: CerastreamClient | undefined;
 	private subscription: Subscription | undefined;
 	private active = false;
+	private heat = initialHeat();
+	private heatApplied: number | null = null;
+	private heatError = false;
+	private heatHistory: Array<{
+		at: number;
+		stage: number;
+		ceiling: number;
+		keepQuality: boolean;
+	}> = [];
+	getHeat() {
+		return {
+			stage: this.heat.stage,
+			unknown:
+				this.heat.unknown ||
+				(this.active &&
+					(this.heat.lastAt === null ||
+						getms() - this.heat.lastAt > HEAT_SETTINGS.staleMs)),
+			phoneAdvice: HEAT_SETTINGS.phoneChargingAdvice,
+			keepQuality: this.heat.keepQuality,
+			ceiling: this.heatApplied,
+			reduced:
+				this.heatApplied !== null &&
+				this.heatApplied <
+					(this.deps.getConfig().max_br ?? DEFAULT_MAX_BITRATE),
+			error: this.heatError,
+			history: this.heatHistory,
+		};
+	}
+	async updateHeat(temperature: number | null, now: number): Promise<void> {
+		if (!this.active || !this.client || this.runtimeEvidence?.state === "idle")
+			return;
+		const before = this.heat.stage;
+		this.heat = advanceHeat(this.heat, { soc: temperature }, now);
+		if (!this.heat.unknown) await this.applyHeat(before !== this.heat.stage);
+	}
+	async keepHeatQuality(enabled: boolean): Promise<void> {
+		if (!this.active) return;
+		this.heat = { ...this.heat, keepQuality: enabled };
+		await this.applyHeat(true, enabled);
+	}
+	private async applyHeat(record = false, manual = false): Promise<void> {
+		const client = this.client;
+		const epoch = this.clientEpoch;
+		if (!client || !this.active) return;
+		const own = this.deps.getConfig().max_br ?? DEFAULT_MAX_BITRATE;
+		const ceiling = heatCeiling(this.heat, own);
+		if (ceiling === this.heatApplied && !record) return;
+		await this.enqueue(
+			async () => {
+				if (
+					this.client !== client ||
+					this.clientEpoch !== epoch ||
+					(this.heat.unknown && !manual) ||
+					!this.active
+				)
+					return;
+				const current = heatCeiling(
+					this.heat,
+					this.deps.getConfig().max_br ?? DEFAULT_MAX_BITRATE,
+				);
+				try {
+					await client.setBitrate({ max_bitrate: current });
+					if (
+						this.client !== client ||
+						this.clientEpoch !== epoch ||
+						!this.active
+					)
+						return;
+					this.heatApplied = current;
+					this.heatError = false;
+					if (record)
+						this.heatHistory = [
+							...this.heatHistory,
+							{
+								at: Date.now(),
+								stage: this.heat.stage,
+								ceiling: current,
+								keepQuality: this.heat.keepQuality,
+							},
+						].slice(-50);
+				} catch (error) {
+					if (this.client === client && this.clientEpoch === epoch)
+						this.heatError = true;
+					throw error;
+				}
+			},
+			"heat-ceiling",
+			client,
+		);
+	}
+
 	private clientEpoch = 0;
 	private probeEpoch = 0;
 	private telemetry: EngineTelemetry | null = null;
@@ -785,6 +883,7 @@ export class CerastreamBackend implements StreamingBackend {
 		opts: StreamRunOptions,
 		transaction?: LaunchTransaction,
 	): Promise<void> {
+		this.resetHeat();
 		this.runtimeEvidence = undefined;
 		this.active = true;
 		this.clearRecoveredEngineError();
@@ -1040,7 +1139,17 @@ export class CerastreamBackend implements StreamingBackend {
 			const client = this.client;
 			if (client) {
 				void this.enqueue(
-					() => client.setBitrate({ max_bitrate: maxBr }).then(() => undefined),
+					() =>
+						client
+							.setBitrate({
+								max_bitrate: heatCeiling(
+									this.heat,
+									this.deps.getConfig().max_br ?? maxBr,
+								),
+							})
+							.then(() => {
+								this.heatApplied = null;
+							}),
 					"set-bitrate",
 					client,
 				);
@@ -1057,7 +1166,13 @@ export class CerastreamBackend implements StreamingBackend {
 		const client = this.client;
 		if (!client) return;
 		const params = this.toReloadParams(
-			this.deps.getConfig(),
+			{
+				...this.deps.getConfig(),
+				max_br: heatCeiling(
+					this.heat,
+					this.deps.getConfig().max_br ?? DEFAULT_MAX_BITRATE,
+				),
+			},
 			client.hello.schema_version,
 		);
 		void this.enqueue(
@@ -1082,7 +1197,17 @@ export class CerastreamBackend implements StreamingBackend {
 	// rate exactly as a retained `active_encode` renders it under a "Live" badge,
 	// and a retained realized pair leaves a fallback reason on screen explaining a
 	// stream that is no longer running.
+	private resetHeat(): void {
+		const keep =
+			this.heat.keepQuality && HEAT_SETTINGS.keepQualityDuration === "untilOff";
+		this.heat = { ...initialHeat(), keepQuality: keep };
+		this.heatApplied = null;
+		this.heatHistory = [];
+		this.heatError = false;
+	}
+
 	private clearSessionScopedTelemetry(): void {
+		this.resetHeat();
 		this.runtimeEvidence = undefined;
 		const previous = this.telemetry;
 		if (previous === null) return;
@@ -1187,6 +1312,17 @@ export class CerastreamBackend implements StreamingBackend {
 				this.clientEpoch === clientEpoch &&
 				runtimeState === "streaming"
 			) {
+				// A surviving engine must not retain a ceiling from the previous backend.
+				// This is session reconciliation, independent of temperature availability.
+				await client.setBitrate({
+					max_bitrate: this.deps.getConfig().max_br ?? DEFAULT_MAX_BITRATE,
+				});
+				if (!ownsQuery() || this.clientEpoch !== clientEpoch) {
+					subscription.close();
+					await client.close();
+					return "unknown";
+				}
+				this.resetHeat();
 				this.client = client;
 				adoptedEpoch = ++this.clientEpoch;
 				this.subscription = subscription;
@@ -1375,6 +1511,8 @@ export class CerastreamBackend implements StreamingBackend {
 				this.deps.bridge.broadcastStatus();
 				break;
 			case "status": {
+				if (classifyRuntimeState(event.state, event.streaming) === "idle")
+					this.resetHeat();
 				this.runtimeEvidence = {
 					state: classifyRuntimeState(event.state, event.streaming),
 					current,

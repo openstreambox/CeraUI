@@ -141,7 +141,10 @@ test("queued RPC failure cannot retire a newly adopted client", async () => {
 		await harness.engine.backend.settle();
 		// Then the failure is attributed to its producing client, not the replacement.
 		expect(losses).toEqual([]);
-		expect(harness.engine.clients[1]?.calls).toEqual(["subscribe"]);
+		expect(harness.engine.clients[1]?.calls).toEqual([
+			"subscribe",
+			"set-bitrate",
+		]);
 		expect(existsSync(marker)).toBe(true);
 	} finally {
 		loss.mockRestore();
