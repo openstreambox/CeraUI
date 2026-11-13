@@ -1707,10 +1707,10 @@
 	"network.wifiMode.stationHint": "连接到 Wi-Fi 网络。此无线设备可加入绑定链路。",
 	"network.wifiMode.hotspotHint": "仅广播接入点。此无线设备不提供 Wi-Fi 上行链路。",
 	"network.wifiMode.hybridHint": "保持 Wi-Fi 连接的同时广播接入点。",
-  "network.wifiDegraded.unavailable": "Wi-Fi 适配器暂时不可用。",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi 适配器尚未报告当前硬件地址。",
-  "network.wifiDegraded.permanent-mac-unresolved": "无法确认 Wi-Fi 适配器的稳定硬件身份。",
-  "network.wifiMode.unavailable": "{mode} 不可用 — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi 适配器暂时不可用。",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi 适配器尚未报告当前硬件地址。",
+	"network.wifiDegraded.permanent-mac-unresolved": "无法确认 Wi-Fi 适配器的稳定硬件身份。",
+	"network.wifiMode.unavailable": "{mode} 不可用 — {reason}",
 	"network.wifiMode.pending": "正在切换到 {mode}…",
 	"network.wifiMode.reason.unsupported": "此无线设备无法作为接入点。",
 	"network.wifiMode.reason.capabilityAbsent": "此无线设备的驱动无法同时运行 Wi-Fi 和接入点。",
@@ -2793,5 +2793,10 @@
 	"live.heat.modemUnavailable": "Modem temperature isn't available on this box. Heat steps use the SoC temperature.",
 	"network.cellular.heatResting": "Resting to reduce heat. It rejoins the bond on its own; Keep quality brings it back now.",
 	"live.heat.supplyUnproven": "The power board's heat cut-off is paused because it can't confirm the power supply.",
-	"live.heat.packJump": "The reserve pack temperature jumped suddenly. The heat cut-off waits up to a minute to confirm it."
+	"live.heat.packJump": "The reserve pack temperature jumped suddenly. The heat cut-off waits up to a minute to confirm it.",
+	"hud.healthExplainOwnStreamIdle": "设备自身的推流处于空闲状态。客户端的直播仍可能在继续。",
+	"notifications.clientCarrying": "本机正在转发客户端流量。更新、重启、关机和空闲链路更改将等待。",
+	"notifications.clientCarryingUnknown": "本机正在检查客户端活动。更新、重启、关机和空闲链路更改将等待。",
+	"general.updateReasonClientTraffic": "直播正在进行或正在检查状态。安装更新前，请停止已连接设备和本机的直播。",
+	"notifications.disruptiveActionClientTraffic": "此操作未执行。请在盒子自身的推流和已连接设备的推流流量均处于空闲状态，且没有更新正在进行时重试。"
 }

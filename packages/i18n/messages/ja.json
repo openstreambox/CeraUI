@@ -1707,10 +1707,10 @@
 	"network.wifiMode.stationHint": "Wi-Fi ネットワークに接続します。この無線はボンディングに参加できます。",
 	"network.wifiMode.hotspotHint": "アクセスポイントの送信のみを行います。この無線は Wi-Fi アップリンクを持ちません。",
 	"network.wifiMode.hybridHint": "Wi-Fi に接続したまま、アクセスポイントも送信します。",
-  "network.wifiDegraded.unavailable": "Wi-Fi アダプターは一時的に利用できません。",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi アダプターは現在のハードウェアアドレスをまだ報告していません。",
-  "network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi アダプターの安定したハードウェア識別情報を確認できませんでした。",
-  "network.wifiMode.unavailable": "{mode} は利用できません — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi アダプターは一時的に利用できません。",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi アダプターは現在のハードウェアアドレスをまだ報告していません。",
+	"network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi アダプターの安定したハードウェア識別情報を確認できませんでした。",
+	"network.wifiMode.unavailable": "{mode} は利用できません — {reason}",
 	"network.wifiMode.pending": "{mode} に切り替えています…",
 	"network.wifiMode.reason.unsupported": "この無線はアクセスポイントを提供できません。",
 	"network.wifiMode.reason.capabilityAbsent": "この無線のドライバーは Wi-Fi とアクセスポイントを同時に動作させられません。",
@@ -2793,5 +2793,10 @@
 	"live.heat.modemUnavailable": "Modem temperature isn't available on this box. Heat steps use the SoC temperature.",
 	"network.cellular.heatResting": "Resting to reduce heat. It rejoins the bond on its own; Keep quality brings it back now.",
 	"live.heat.supplyUnproven": "The power board's heat cut-off is paused because it can't confirm the power supply.",
-	"live.heat.packJump": "The reserve pack temperature jumped suddenly. The heat cut-off waits up to a minute to confirm it."
+	"live.heat.packJump": "The reserve pack temperature jumped suddenly. The heat cut-off waits up to a minute to confirm it.",
+	"hud.healthExplainOwnStreamIdle": "ボックス自身の配信は待機中です。クライアントの配信は続いている場合があります。",
+	"notifications.clientCarrying": "本機はクライアント通信を中継中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
+	"notifications.clientCarryingUnknown": "クライアントの利用状況を確認中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
+	"general.updateReasonClientTraffic": "配信中、または状態を確認中です。更新前に接続端末と本機の配信を停止してください。",
+	"notifications.disruptiveActionClientTraffic": "この操作は実行されませんでした。ボックス自身の配信と接続デバイスの配信トラフィックがアイドル状態になり、更新が進行していないときに、もう一度お試しください。"
 }
