@@ -2,6 +2,7 @@ import { beforeEach, expect, spyOn, test } from "bun:test";
 import WebSocket from "ws";
 import { getConfig } from "../modules/config.ts";
 import * as modemStatus from "../modules/modems/modem-status.ts";
+import { NOTIFICATION_EPOCH } from "../modules/remote/notification-relay.ts";
 import { sendInitialStatus } from "../modules/ui/status.ts";
 import {
 	APN_PASSWORD,
@@ -45,7 +46,12 @@ for (const provider of ["ceralive", "belabox", "custom"] as const) {
 		expect(remote.sent).toEqual(
 			before.map((bytes) => {
 				const frame = JSON.parse(bytes);
-				if (frame.notification) frame.notification.remove = [];
+				if (frame.notification) {
+					// The relay's connect-time list: a full replace for this process epoch.
+					frame.notification.remove = [];
+					frame.notification.epoch = NOTIFICATION_EPOCH;
+					frame.notification.full = true;
+				}
 				return expectedBytes(frame, frame.config);
 			}),
 		);

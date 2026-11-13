@@ -58,6 +58,7 @@ import {
 } from "$lib/stores/connection-ux.svelte";
 import {
 	dismiss as dismissNotification,
+	getPersistent as getPersistentNotifications,
 	push as pushNotification,
 } from "$lib/stores/notifications.svelte";
 import {
@@ -992,7 +993,8 @@ function handleMessage(
 			break;
 		}
 
-		// SINGULAR: the backend broadcasts `buildMsg("notification", …)`; the plural never hits the wire.
+		// SINGULAR: the backend broadcasts `buildMsg("notification", …)` to browsers. The
+		// plural `notifications` is only the cloud control-channel status type.
 		case "notification": {
 			// `show` adds/updates; typed `remove` drops by id. A malformed frame is
 			// skipped rather than cast blindly into the store.
@@ -1000,6 +1002,14 @@ function handleMessage(
 			if (!parsed.success) break;
 			const message = parsed.data;
 			notificationsState = message;
+			if (message.full) {
+				// Remote relay frame: `show` is the complete persistent list (and
+				// after a device restart the only way to retract older notices).
+				const listed = new Set((message.show ?? []).map((n) => n.name));
+				for (const notice of getPersistentNotifications()) {
+					if (!listed.has(notice.name)) dismissNotification(notice.name);
+				}
+			}
 			for (const notification of message.show ?? []) {
 				pushNotification(notification);
 			}

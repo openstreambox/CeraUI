@@ -1,6 +1,19 @@
 import { createHmac } from "node:crypto";
 
+import type { STATUS_TYPES } from "@ceralive/control-protocol/schemas";
+
 const identityKey = crypto.getRandomValues(new Uint8Array(32));
+
+/** Per-process session marker. Names, revisions, `seq` and the sent-set are all
+ * process-scoped, so a consumer must reset its state when this changes (a
+ * backend restart) instead of merging the new list into the old one. */
+export const NOTIFICATION_EPOCH: string = crypto.randomUUID();
+
+/** Wire `type` of the cloud status frame. The pinned control protocol closes
+ * status types to a set that spells it in the plural; the local broadcast name
+ * (`buildMsg("notification", …)`) is a separate, local-only event name. */
+export const NOTIFICATIONS_STATUS_TYPE =
+	"notifications" satisfies (typeof STATUS_TYPES)[number];
 
 export const NOTIFICATION_SUMMARIES: Readonly<Record<string, string>> = {
 	hdmi_error:
@@ -87,6 +100,20 @@ export type NotificationPayload = {
 	show: RemoteNotice[];
 	remove: { id: string; revision: number }[];
 };
+/** What crosses the wire: `show` is always the complete current list, so every
+ * frame is a full replace (`full: true`); `remove` additionally names entries
+ * this process sent earlier and has since cleared. */
+export type NotificationWirePayload = NotificationPayload & {
+	epoch: string;
+	full: true;
+};
+
+/** Only the projected content decides whether a notice changed. A producer
+ * re-raising identical text bumps its revision locally (several times a
+ * second for some producers); that alone must not re-send the list. */
+function sameContent(a: RemoteNotice | undefined, b: RemoteNotice): boolean {
+	return a !== undefined && a.type === b.type && a.msg === b.msg;
+}
 
 /** No event queue: each tick reconciles the latest authoritative state. Failed
  * sends retain only the last accepted state; offline updates are coalesced.
@@ -113,9 +140,7 @@ export class NotificationRelay {
 			const changed =
 				remove.length > 0 ||
 				current.size !== this.sent.size ||
-				[...current].some(
-					([id, n]) => this.sent.get(id)?.revision !== n.revision,
-				);
+				[...current].some(([id, n]) => !sameContent(this.sent.get(id), n));
 			if (!this.forcePending && !changed) return;
 			if (this.send({ show: [...current.values()], remove })) {
 				this.sent = current;
@@ -132,31 +157,49 @@ export interface NotificationPeer {
 	send(data: string): void;
 }
 
+export interface NotificationPeerOptions {
+	/** Defaults to this process's {@link NOTIFICATION_EPOCH}. */
+	epoch?: string;
+	/** Cloud path: emit through the control channel's `sendFrame` instead of
+	 * writing to the socket directly. The peer is still read for back-pressure. */
+	sendFrame?: (frame: Record<string, unknown>) => boolean;
+}
+
+const MAX_BYTES = 65536;
+
 /** Shared production adapter for both wire formats. No generic status/config
  * bridge is activated by installing this notification-only peer. */
 export function createNotificationPeerRelay(
 	path: "cloud" | "legacy",
 	snapshot: () => NotificationSnapshot,
 	peer: () => NotificationPeer | undefined,
+	options: NotificationPeerOptions = {},
 ) {
+	const epoch = options.epoch ?? NOTIFICATION_EPOCH;
 	let seq = 0;
 	return new NotificationRelay(snapshot, (payload) => {
 		const socket = peer();
-		if (!socket || (socket.bufferedAmount ?? 0) > 65536) return false;
+		if (!socket || (socket.bufferedAmount ?? 0) > MAX_BYTES) return false;
+		const body: NotificationWirePayload = { ...payload, epoch, full: true };
 		const frame =
 			path === "legacy"
-				? { notification: payload }
+				? { notification: body }
 				: {
 						v: 1,
 						kind: "status",
-						type: "notification",
+						type: NOTIFICATIONS_STATUS_TYPE,
 						cid: crypto.randomUUID(),
-						seq: ++seq,
-						payload,
+						seq: seq + 1,
+						payload: body,
 					};
 		const data = JSON.stringify(frame);
-		if (Buffer.byteLength(data) > 65536) return false;
-		socket.send(data);
+		if (Buffer.byteLength(data) > MAX_BYTES) return false;
+		if (path === "cloud" && options.sendFrame) {
+			if (!options.sendFrame(frame)) return false;
+		} else {
+			socket.send(data);
+		}
+		seq += 1;
 		return true;
 	});
 }

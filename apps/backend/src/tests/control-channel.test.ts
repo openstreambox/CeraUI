@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { strictParseFrame } from "@ceralive/control-protocol/parse";
 
 import { getConfig } from "../modules/config.ts";
 import {
@@ -156,9 +157,14 @@ describe("control channel when paired", () => {
 		expect(socket?.sent.length).toBe(2);
 		expect(JSON.parse(socket?.sent[1] ?? "{}")).toMatchObject({
 			kind: "status",
-			type: "notification",
-			payload: { show: [], remove: [] },
+			type: "notifications",
+			payload: { show: [], remove: [], full: true },
 		});
+		expect(strictParseFrame(JSON.parse(socket?.sent[1] ?? "{}"))).toMatchObject(
+			{
+				type: "notifications",
+			},
+		);
 		const frame = HandshakeSchema.parse(JSON.parse(socket?.sent[0] ?? "{}"));
 		expect(frame.kind).toBe("handshake");
 		expect(frame.type).toBe("device.hello");
@@ -358,7 +364,7 @@ test("notification snapshot follows hello on reconnect without activating config
 		h.sockets[0]?.fireOpen();
 		const frames = () => h.sockets.at(-1)?.sent.map((s) => JSON.parse(s)) ?? [];
 		expect(frames()[1]).toMatchObject({
-			type: "notification",
+			type: "notifications",
 			payload: {
 				show: [
 					{
@@ -374,7 +380,7 @@ test("notification snapshot follows hello on reconnect without activating config
 		h.timers.at(-1)?.fn();
 		h.sockets.at(-1)?.fireOpen();
 		expect(frames()[1]).toMatchObject({
-			type: "notification",
+			type: "notifications",
 			payload: { show: [], remove: [{ revision: expect.any(Number) }] },
 		});
 	} finally {

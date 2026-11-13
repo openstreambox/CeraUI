@@ -318,6 +318,7 @@ const notificationRelay = createNotificationPeerRelay(
 	"cloud",
 	getNotificationRelaySnapshot,
 	() => (state?.connected ? state.socket : undefined),
+	{ sendFrame: (frame) => sendFrame(frame as Frame) },
 );
 function stopNotificationRelay() {
 	clearInterval(notificationTimer);
