@@ -494,6 +494,39 @@ export function getConnectionReady() {
 // (seq back to 0) is accepted. Messages without `seq` bypass the guard.
 const seqTracker = createSeqTracker();
 
+// Remote notification frames carry `epoch`, a per-process id of the device
+// backend. Its `seq` starts again at 1 after a device restart, while the
+// browser may stay connected (so no reconnect resets the fence). A full frame
+// from a new epoch therefore resets the notification seq fence; frames from an
+// epoch already replaced are late and ignored. Epochs are random ids with no
+// order, so a frame of an epoch this client never saw cannot be recognised as
+// old; the hub replaces its cached list on every frame, which keeps that rare.
+const NOTIFICATION_TYPE = "notification";
+const MAX_REPLACED_EPOCHS = 32;
+let notificationEpoch: string | undefined;
+let replacedNotificationEpochs: string[] = [];
+
+/** False when a remote notification frame must not be applied. */
+function admitNotificationEpoch(data: unknown): boolean {
+	const epoch = (data as { epoch?: unknown } | null)?.epoch;
+	if (typeof epoch !== "string") return true; // local frame
+	if (epoch === notificationEpoch) return true;
+	if (replacedNotificationEpochs.includes(epoch)) return false;
+	// Only a complete list can start a new device session; a partial frame
+	// from an unknown process cannot be merged into another process's list.
+	const parsed = notificationsMessageSchema.safeParse(data);
+	if (!parsed.success || parsed.data.full !== true) return false;
+	if (notificationEpoch !== undefined) {
+		replacedNotificationEpochs = [
+			...replacedNotificationEpochs,
+			notificationEpoch,
+		].slice(-MAX_REPLACED_EPOCHS);
+	}
+	notificationEpoch = epoch;
+	seqTracker.reset(NOTIFICATION_TYPE);
+	return true;
+}
+
 /**
  * Handle incoming messages and update state
  */
@@ -506,6 +539,9 @@ function handleMessage(
 	// Drop out-of-order/duplicate broadcasts for this type before applying.
 	// Messages without `seq` (local/legacy, or reconnect safety-hydrate
 	// dispatches) bypass the guard.
+	if (type === NOTIFICATION_TYPE && !admitNotificationEpoch(data)) {
+		return;
+	}
 	if (seq !== undefined && seqTracker.shouldDrop(type, seq)) {
 		return;
 	}
@@ -1298,6 +1334,9 @@ export function resetState(): void {
 	relaysState = undefined;
 	managedIngestState = [];
 	notificationsState = undefined;
+	notificationEpoch = undefined;
+	replacedNotificationEpochs = [];
+	seqTracker.reset(NOTIFICATION_TYPE);
 	kioskState = undefined;
 	addonsState = {};
 	devicesState = [];
