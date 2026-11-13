@@ -13,6 +13,7 @@ test("phone and moderator can read the power warning without changing the live v
 	render(PowerStatus, {
 		sensors: {
 			Power: "Power is weak. The box remains powered.",
+			"Power sample": "1",
 			"Bank A": "30.0 °C",
 		},
 		connected: true,
@@ -48,7 +49,7 @@ test("older images and dev without a power field render no extra notice", () => 
 test("a stalled socket cannot leave a fresh-looking power warning", async () => {
 	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
 	render(PowerStatus, {
-		sensors: { Power: "Running on reserve." },
+		sensors: { Power: "Running on reserve.", "Power sample": "1" },
 		connected: true,
 	});
 	expect(screen.getByRole("status").textContent).toContain(
@@ -103,6 +104,7 @@ test("Spanish readers get localized power and temperature copy", () => {
 	render(PowerStatus, {
 		sensors: {
 			Power: "Bank A is hot and resting. Bank B powers the box.",
+			"Power sample": "1",
 			"Reserve pack": "30.0 °C (estimate)",
 		},
 		connected: true,
@@ -113,7 +115,7 @@ test("Spanish readers get localized power and temperature copy", () => {
 	expect(screen.getByText("Reserva: 30.0 °C (estimación)")).toBeTruthy();
 });
 
-test("remote power-only deliveries keep unchanged conditions fresh without a local sample marker", async () => {
+test("power-only payload identity cannot establish freshness without a sample marker", async () => {
 	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
 	const { rerender } = render(PowerStatus, {
 		sensors: { Power: "The box remains powered." },
@@ -126,6 +128,6 @@ test("remote power-only deliveries keep unchanged conditions fresh without a loc
 	});
 	await vi.advanceTimersByTimeAsync(4000);
 	expect(screen.getByRole("status").textContent).toContain(
-		"box remains powered",
+		"Power data not available",
 	);
 });

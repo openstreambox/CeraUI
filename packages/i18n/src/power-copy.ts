@@ -46,7 +46,7 @@ export const POWER_COPY = {
 	persist:
 		"The power service cannot remember this board across restarts. Readings continue; saving will be retried.",
 	packProbe:
-		"The reserve pack's temperature sensor is not working. It will not switch off if the pack overheats.",
+		"The reserve pack's temperature sensor is not working. The box will not switch off if the pack overheats.",
 	aProbe: "Bank A's temperature sensor is not working. Protection is reduced.",
 	bProbe: "Bank B's temperature sensor is not working. Protection is reduced.",
 	blind:

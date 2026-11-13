@@ -4,6 +4,7 @@
 	"stale": true,
 	"expected": true,
 	"ambiguous": false,
+	"published_mono_ms": 10000,
 	"rx_mono_ms": 10000,
 	"fields": {
 		"boot": "1234abcd",

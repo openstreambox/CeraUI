@@ -16,6 +16,7 @@ const snapshot = z.object({
 		"bootloader",
 		"unknown_version",
 		"error",
+		"stopped",
 	]),
 	open_error: z.number().int().nonnegative().optional(),
 	persist_error: z.boolean().optional(),
@@ -23,6 +24,7 @@ const snapshot = z.object({
 	stale: z.boolean(),
 	expected: z.boolean(),
 	ambiguous: z.boolean(),
+	published_mono_ms: z.number().finite().int().nonnegative(),
 	rx_mono_ms: z.number().int().nonnegative().nullable(),
 	fields: z.record(z.string().max(31), z.string().max(159)),
 	temperatures: z.object({ a: temperature, b: temperature, pack: temperature }),
@@ -61,7 +63,18 @@ export async function readPowerState(
 		if (!parsed.success) return unavailablePower();
 		const s = parsed.data;
 		now ??= monotonicMs();
-		if (s.link === "absent" && !s.expected && !s.ambiguous)
+		if (
+			!Number.isFinite(now) ||
+			now < s.published_mono_ms ||
+			now - s.published_mono_ms >= 3000 ||
+			s.link === "stopped"
+		)
+			return unavailablePower();
+		if (
+			["absent", "silent", "bootloader", "unknown_version"].includes(s.link) &&
+			!s.expected &&
+			!s.ambiguous
+		)
 			return unavailablePower(false);
 		if (s.link === "error")
 			return {
@@ -161,7 +174,7 @@ export async function readPowerState(
 						: cause === "sag"
 							? "restingWeak"
 							: "resting",
-					"warning",
+					f[peer]?.startsWith("healthy/") ? "info" : "warning",
 					{ bank: bank.toUpperCase() },
 					f[peer]?.startsWith("healthy/")
 						? ` ${powerText("peer", { bank: peer.toUpperCase() })}`
@@ -209,9 +222,11 @@ export async function readPowerState(
 			"supply_unproven",
 			"pack_jump",
 		];
-		const valid = [f.gaps, f.gaps2].every(
-			(v) => v === undefined || /^[0-9a-fA-F]{4}$/.test(v),
-		);
+		const valid =
+			f.gaps !== undefined &&
+			[f.gaps, f.gaps2].every(
+				(v) => v === undefined || /^[0-9a-fA-F]{4}$/.test(v),
+			);
 		const mask = valid
 			? Number.parseInt(f.gaps ?? "0", 16) +
 				65536 * Number.parseInt(f.gaps2 ?? "0", 16)
@@ -225,7 +240,8 @@ export async function readPowerState(
 		if (f.pack_cal === "none" && !(mask & 2))
 			add("calibration", "calibration", "warning", {}, feed);
 		if (s.persist_error) add("persistence", "persist", "info");
-		if (f.sbc?.startsWith("shutdown_requested:")) add("shutdown", "shutdown");
+		if (/^shutdown_requested(:|$)/.test(f.sbc ?? ""))
+			add("shutdown", "shutdown");
 		const sensors: Record<string, string> = {};
 		for (const [key, label] of [
 			["a", "Bank A"],
@@ -243,10 +259,18 @@ export async function readPowerState(
 					? `${t.celsius.toFixed(1)} °C${key === "pack" && f.pack_cal === "datasheet" ? powerText("estimate") : ""}`
 					: powerText("temperature");
 		}
+		const summary = notices
+			.map((n) =>
+				feed && n.message.endsWith(feed)
+					? n.message.slice(0, -feed.length)
+					: n.message,
+			)
+			.join(" ");
+		const summaryFeed =
+			feed && notices.some((n) => n.message.endsWith(feed)) ? feed : "";
 		return {
 			available: true,
-			summary:
-				notices.map((n) => n.message).join(" ") || powerText("available"),
+			summary: summary + summaryFeed || powerText("available"),
 			sensors,
 			notices,
 			...(f.boot ? { boot: f.boot } : {}),

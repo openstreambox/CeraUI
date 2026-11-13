@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import * as clock from "../helpers/monotonic-clock.ts";
 import {
 	createPowerReconciler,
 	readPowerState,
@@ -30,7 +31,9 @@ describe("read-only power state", () => {
 		});
 	}
 	test("strict five second boundary, no wall clock", async () => {
-		expect((await read("fresh", 14999)).available).toBe(true);
+		expect(
+			(await changed({ published_mono_ms: 14999 }, {}, 14999)).available,
+		).toBe(true);
 		expect((await read("fresh", 15000)).available).toBe(false);
 	});
 	for (const level of ["warm", "hot", "critical", "shutdown"]) {
@@ -72,6 +75,12 @@ test("authenticated remote moderator receives the same power status as the phone
 		"SRT ingest": "receiving",
 		"RTMP ingest - synthetic-secret": "receiving",
 		"Power sample": "123",
+		published_mono_ms: "10000",
+		rx_mono_ms: "10000",
+		open_error: "13",
+		persist_error: "true",
+		rejected: "1",
+		boot: "synthetic",
 		Power: local.summary,
 		...local.sensors,
 	};
@@ -231,7 +240,8 @@ test("heat notice names the supervisor-selected reserve pack and its consequence
 
 async function changed(
 	patch: Record<string, unknown>,
-	fields: Record<string, string> = {},
+	fields: Record<string, string | undefined> = {},
+	now = 10000,
 ) {
 	const dir = await mkdtemp(`${tmpdir()}/power-reader-`);
 	try {
@@ -239,12 +249,12 @@ async function changed(
 		Object.assign(data.fields, fields);
 		Object.assign(data, patch);
 		await Bun.write(`${dir}/state.json`, JSON.stringify(data));
-		return await readPowerState(`${dir}/state.json`, 10000);
+		return await readPowerState(`${dir}/state.json`, now);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
-test.skipIf(process.platform !== "linux")(
+test.skipIf(process.platform !== "linux" || !Bun.which("python3"))(
 	"a separate writer's real CLOCK_MONOTONIC timestamp is fresh with the default reader clock",
 	async () => {
 		const dir = await mkdtemp(`${tmpdir()}/power-clock-`);
@@ -255,7 +265,7 @@ test.skipIf(process.platform !== "linux")(
 				"-c",
 				`import json,time,sys
 s=json.load(open(sys.argv[1]))
-s['rx_mono_ms']=time.clock_gettime_ns(time.CLOCK_MONOTONIC)//1000000
+s['published_mono_ms']=s['rx_mono_ms']=time.clock_gettime_ns(time.CLOCK_MONOTONIC)//1000000
 json.dump(s,open(sys.argv[2],'w'))`,
 				fixture("fresh"),
 				`${dir}/state.json`,
@@ -289,6 +299,7 @@ test("canonical resting bank example has one coherent notice", async () => {
 		},
 	);
 	expect(state.notices.map((n) => n.id)).toEqual(["bank-a"]);
+	expect(state.notices[0]?.type).toBe("info");
 	expect(state.summary).toBe(
 		"Bank A is hot and resting. Bank B powers the box.",
 	);
@@ -380,3 +391,115 @@ for (const gaps of ["zzzz", "12345"])
 			"protection",
 		]);
 	});
+
+for (const link of [
+	"ok",
+	"absent",
+	"error",
+	"silent",
+	"bootloader",
+	"unknown_version",
+]) {
+	for (const heartbeat of [undefined, null, "10000", -1, 1.5, 10001, 7000]) {
+		test(`${link}: invalid or expired heartbeat ${heartbeat} never establishes state`, async () => {
+			const state = await changed({
+				link,
+				expected: false,
+				published_mono_ms: heartbeat,
+			});
+			expect(state).toEqual({
+				available: false,
+				summary: "Power data not available",
+				sensors: {},
+				notices: [],
+			});
+		});
+	}
+}
+test("heartbeat boundary is independent of status boundary", async () => {
+	expect((await changed({ published_mono_ms: 7001 })).available).toBe(true);
+	expect((await changed({ published_mono_ms: 7000 })).available).toBe(false);
+	expect(
+		(await changed({ published_mono_ms: 14999 }, {}, 14999)).available,
+	).toBe(true);
+	expect(
+		(await changed({ published_mono_ms: 15000 }, {}, 15000)).available,
+	).toBe(false);
+});
+test("a frozen absent snapshot expires, while a live absent heartbeat keeps advancing", async () => {
+	for (const now of [10000, 12000, 15000]) {
+		expect(
+			(
+				await changed(
+					{ link: "absent", expected: false, published_mono_ms: now },
+					{},
+					now,
+				)
+			).summary,
+		).toBe("");
+	}
+	expect(
+		(
+			await changed(
+				{ link: "absent", expected: false, published_mono_ms: 10000 },
+				{},
+				13000,
+			)
+		).summary,
+	).toBe("Power data not available");
+});
+test("stopped cannot reuse retained measurements or claim no board", async () => {
+	for (const expected of [true, false])
+		expect(await changed({ link: "stopped", expected })).toEqual({
+			available: false,
+			summary: "Power data not available",
+			sensors: {},
+			notices: [],
+		});
+});
+for (const link of ["silent", "bootloader", "unknown_version"])
+	test(`${link} never expected omits the row only while live and unambiguous`, async () => {
+		expect((await changed({ link, expected: false })).summary).toBe("");
+		expect(
+			(await changed({ link, expected: false, ambiguous: true })).summary,
+		).toBe("Power data not available");
+	});
+test("shutdown requested without a cause still explains the shutdown", async () => {
+	expect(
+		(await changed({}, { sbc: "shutdown_requested" })).notices.some(
+			(n) => n.id === "shutdown",
+		),
+	).toBe(true);
+});
+test("missing primary gaps stays unknown; legacy missing gaps2 is allowed", async () => {
+	expect(
+		(await changed({}, { gaps: undefined })).notices.some(
+			(n) => n.id === "protection",
+		),
+	).toBe(true);
+	expect((await changed({}, { gaps2: undefined })).notices).toEqual([]);
+});
+test("summary says the box remains powered once across multiple notices", async () => {
+	const state = await changed({}, { gaps: "0038", redundant: "0" });
+	expect(state.notices.length).toBeGreaterThan(1);
+	expect(state.summary.match(/The box remains powered\./g)).toHaveLength(1);
+	expect(state.summary).toContain(
+		"The box will not switch off if the pack overheats.",
+	);
+});
+
+test("a throwing clock quietly makes the retained snapshot unavailable", async () => {
+	const clockSpy = spyOn(clock, "monotonicMs").mockImplementation(() => {
+		throw Error("unavailable");
+	});
+	try {
+		expect(await readPowerState(fixture("fresh"))).toEqual({
+			available: false,
+			summary: "Power data not available",
+			sensors: {},
+			notices: [],
+		});
+	} finally {
+		clockSpy.mockRestore();
+	}
+});

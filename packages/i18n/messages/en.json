@@ -2847,7 +2847,7 @@
 	"notifications.power.busy": "Power data not available: the power board is busy with another reader.",
 	"notifications.power.openError": "Power data not available: the power board could not be opened (error {errno}).",
 	"notifications.power.persist": "The power service cannot remember this board across restarts. Readings continue; saving will be retried.",
-	"notifications.power.packProbe": "The reserve pack's temperature sensor is not working. It will not switch off if the pack overheats.",
+	"notifications.power.packProbe": "The reserve pack's temperature sensor is not working. The box will not switch off if the pack overheats.",
 	"notifications.power.aProbe": "Bank A's temperature sensor is not working. Protection is reduced.",
 	"notifications.power.bProbe": "Bank B's temperature sensor is not working. Protection is reduced.",
 	"notifications.power.blind": "The power board cannot read one of the banks. It will not shut the box down cleanly if power is lost.",
