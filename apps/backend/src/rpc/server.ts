@@ -262,6 +262,9 @@ function startServer(): void {
 									([name, addresses]) =>
 										(addresses ?? []).map((address) => ({ name, ...address })),
 								),
+								req.headers,
+								// Bun exposes the peer address, but no trusted arrival interface.
+								undefined,
 							),
 						},
 					});

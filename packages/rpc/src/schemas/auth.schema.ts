@@ -69,6 +69,7 @@ export const buttonOutputSchema = z.object({
 		'unavailable',
 		'local-only',
 		'stop-first',
+		'persistence-failed',
 	]),
 	id: z.string().optional(),
 	auth_token: z.string().optional(),

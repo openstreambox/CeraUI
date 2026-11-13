@@ -59,3 +59,16 @@ test("disconnect explains consequences without prompting for a gesture before RE
 	expect(screen.queryByText(/double.press/i)).toBeNull();
 	view.unmount();
 });
+
+test("disconnect reports that credentials may survive a persistence failure", async () => {
+	call.mockResolvedValue({ state: "persistence-failed" });
+	const view = render(ButtonConfirm, { purpose: "disconnect" });
+	await fireEvent.click(screen.getByRole("button"));
+	await waitFor(() =>
+		expect(
+			screen.getByText(/saved credentials could not be revoked/),
+		).toBeTruthy(),
+	);
+	expect(screen.queryByText(/double.press/i)).toBeNull();
+	view.unmount();
+});

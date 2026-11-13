@@ -62,6 +62,7 @@ onDestroy(cancel);
   {#if output}
    <p role="status" class="text-muted-foreground text-sm">
     {#if output.state === "stop-first"}{m["auth.buttonStopFirst"]()}
+    {:else if output.state === "persistence-failed"}{m["auth.buttonPersistenceFailed"]()}
     {:else if output.state === "local-only"}{m["auth.buttonLocalOnly"]()}
     {:else if output.state === "timeout"}{m["auth.buttonTimeout"]()}
     {:else if output.state === "confirmed"}{m["auth.buttonDone"]()}

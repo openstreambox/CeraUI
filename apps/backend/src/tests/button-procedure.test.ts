@@ -179,3 +179,99 @@ test("idle way B works without an existing authenticated device and retires open
 	).toBe(false);
 	confirm.mockRestore();
 });
+
+test("storage failure closes and deauthenticates sessions before persistence and retries", async () => {
+	const { PersistentTokenStore } = await import(
+		"../rpc/state/persistent-token-store.ts"
+	);
+	const confirm = spyOn(powerButton, "confirm").mockResolvedValue({
+		result: Promise.resolve("confirmed"),
+		cancel() {},
+	});
+	setStreamLivenessSourceForTest(() => "idle");
+	const { issueButtonCredential } = await import(
+		"../rpc/procedures/auth.procedure.ts"
+	);
+	const token = issueButtonCredential();
+	const connected = context();
+	connected.authenticate(token);
+	addClient(connected.ws);
+	const close = spyOn(connected.ws, "close");
+	const revoke = spyOn(
+		PersistentTokenStore.prototype,
+		"save",
+	).mockImplementation(() => {
+		expect(connected.isAuthenticated()).toBe(false);
+		expect(close).toHaveBeenCalled();
+		throw new Error("synthetic EIO");
+	});
+	try {
+		const ctx = context();
+		const ready = await call(
+			buttonProcedure,
+			{ action: "begin", purpose: "disconnect" },
+			{ context: ctx },
+		);
+		if (!ready.id) throw new Error("No READY");
+		const result = await call(
+			buttonProcedure,
+			{ action: "poll", id: ready.id },
+			{ context: ctx },
+		);
+		expect(result.state).toBe("persistence-failed");
+		expect(revoke).toHaveBeenCalledTimes(3);
+		const login = await call(
+			loginProcedure,
+			{ token, persistent_token: false },
+			{ context: context() },
+		);
+		expect(login.success).toBe(false);
+	} finally {
+		revoke.mockRestore();
+		close.mockRestore();
+		confirm.mockRestore();
+	}
+});
+
+test("a transient revocation write failure is retried to durable success", async () => {
+	const { settleButtonCredentials } = await import(
+		"../rpc/procedures/auth.procedure.ts"
+	);
+	await settleButtonCredentials();
+	const { PersistentTokenStore } = await import(
+		"../rpc/state/persistent-token-store.ts"
+	);
+	const confirm = spyOn(powerButton, "confirm").mockResolvedValue({
+		result: Promise.resolve("confirmed"),
+		cancel() {},
+	});
+	const save = spyOn(
+		PersistentTokenStore.prototype,
+		"save",
+	).mockImplementationOnce(() => {
+		throw new Error("synthetic ENOSPC");
+	});
+	setStreamLivenessSourceForTest(() => "idle");
+	try {
+		const ctx = context();
+		const ready = await call(
+			buttonProcedure,
+			{ action: "begin", purpose: "disconnect" },
+			{ context: ctx },
+		);
+		if (!ready.id) throw new Error("No READY");
+		expect(
+			(
+				await call(
+					buttonProcedure,
+					{ action: "poll", id: ready.id },
+					{ context: ctx },
+				)
+			).state,
+		).toBe("confirmed");
+		expect(save.mock.calls.length).toBeGreaterThanOrEqual(2);
+	} finally {
+		save.mockRestore();
+		confirm.mockRestore();
+	}
+});

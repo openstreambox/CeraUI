@@ -20,9 +20,16 @@ of polling closes the held socket. Results are consumed once. A late admission
 after cancellation is closed. The service's sixty-second timeout remains an
 independent bound.
 
-Admission requires an IPv4 peer on a directly attached Ethernet or Wi-Fi
-interface captured at HTTP upgrade. Forwarded headers, loopback proxies, VPN
-interfaces and relay sender IDs cannot grant presence. IPv6-only clients retain
+Admission requires an IPv4 peer and trusted arrival-interface evidence for a
+directly attached Ethernet or Wi-Fi link captured at HTTP upgrade. All Forwarded,
+X-Forwarded-* and Via headers are refused, including empty values. The interface
+must match the on-link interface; VPN arrival and unknown arrival are refused.
+Bun currently exposes no trusted incoming interface on HTTP upgrades. Therefore
+this server withholds button admission and keeps normal password sign-in. It
+does not infer an arrival interface from subnet membership, a reverse route or
+a client/proxy header. Enabling the button route requires a server integration
+that supplies trusted kernel arrival evidence; synthetic-context host tests do
+not establish production availability. Relay sender IDs cannot grant presence. IPv6-only clients retain
 the existing sign-in path for now. Disconnect-all additionally requires confirmed
 idle engine/lifecycle evidence, including recording-only sessions; unknown,
 starting, stopping or reconciling states refuse it. Admission is checked again
@@ -44,3 +51,14 @@ them or claim their availability.
 
 Host tests use a temporary Unix socket, synthetic transport contexts and fake
 confirmation events. They do not read evdev or issue power commands.
+
+Disconnect deauthenticates and closes transports before attempting durable token
+revocation. The store records in-memory denial before writing; a failed save is
+retried up to three attempts with 100 ms between attempts. Failure retains the
+in-memory intent for subsequent store operations, logs the partial outcome and
+returns `persistence-failed`, never confirmed success. The UI has explicit copy
+that saved credentials may work after restart, but its socket may already have
+closed before the result arrives. Server logs remain the diagnostic in that
+case. Retry after restoring storage; a failed save is not durable revocation.
+The image's additive `FAILED INPUT` reply is treated as unavailable and never
+as physical confirmation.
