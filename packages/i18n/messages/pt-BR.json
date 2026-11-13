@@ -2820,5 +2820,5 @@
 	"notifications.clientCarrying": "A caixa transporta tráfego de clientes. Atualizações, reinícios, desligamento e mudanças de links por inatividade aguardam.",
 	"notifications.clientCarryingUnknown": "A caixa verifica a atividade dos clientes. Atualizações, reinícios, desligamento e mudanças de links por inatividade aguardam.",
 	"general.updateReasonClientTraffic": "Há uma transmissão ativa ou em verificação. Encerre as transmissões dos dispositivos conectados e da caixa antes da atualização.",
-	"notifications.disruptiveActionClientTraffic": "Esta ação aguarda o fim da transmissão da caixa e do tráfego de transmissão dos dispositivos conectados, sem atualização em andamento."
+	"notifications.disruptiveActionClientTraffic": "Esta ação não foi executada. Tente novamente quando a transmissão da caixa e o tráfego de transmissão dos dispositivos conectados estiverem inativos e nenhuma atualização estiver em andamento."
 }

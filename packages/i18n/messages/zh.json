@@ -2772,5 +2772,5 @@
 	"notifications.clientCarrying": "本机正在转发客户端流量。更新、重启、关机和空闲链路更改将等待。",
 	"notifications.clientCarryingUnknown": "本机正在检查客户端活动。更新、重启、关机和空闲链路更改将等待。",
 	"general.updateReasonClientTraffic": "直播正在进行或正在检查状态。安装更新前，请停止已连接设备和本机的直播。",
-	"notifications.disruptiveActionClientTraffic": "此操作将等待本机直播和已连接设备的直播流量停止，且没有正在进行的更新。"
+	"notifications.disruptiveActionClientTraffic": "此操作未执行。请在盒子自身的推流和已连接设备的推流流量均处于空闲状态，且没有更新正在进行时重试。"
 }

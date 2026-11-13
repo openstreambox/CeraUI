@@ -18,9 +18,12 @@ export class CarryingTracker {
 			this.lastEvidence === null
 				? null
 				: Math.min(now, this.lastEvidence + HOLD_MS);
-		return held === null
-			? this.lastAboveAt
-			: Math.max(held, this.lastAboveAt ?? held);
+		const startup =
+			this.startedUntil === null ? null : Math.min(now, this.startedUntil);
+		const activity = [held, startup, this.lastAboveAt].filter(
+			(at): at is number => at !== null,
+		);
+		return activity.length ? Math.max(...activity) : null;
 	}
 	private sessions = new Map<string, { active: boolean | null; at: number }>();
 	private previous: {
@@ -29,13 +32,14 @@ export class CarryingTracker {
 	} | null = null;
 	private aboveSince: number | null = null;
 	private lastEvidence: number | null = null;
+	private startedUntil: number | null = null;
 	private lastAboveAt: number | null = null;
 	private uploadAt: number | null = null;
 	private uploadUnknown = false;
 
 	/** A fresh hold on every process start also covers a lost pre-restart hold. */
 	start(now: number): void {
-		this.lastEvidence = now;
+		this.startedUntil = Math.max(this.startedUntil ?? 0, now + HOLD_MS);
 	}
 
 	session(source: string, active: boolean | null, now: number): void {
@@ -86,6 +90,8 @@ export class CarryingTracker {
 	read(now: number): StreamLiveness {
 		let unknown =
 			this.aboveSince !== null ||
+			(this.startedUntil !== null && now < this.startedUntil) ||
+			(this.lastAboveAt !== null && now - this.lastAboveAt < DWELL_MS) ||
 			this.uploadUnknown ||
 			(this.uploadAt !== null && now - this.uploadAt > MAX_SAMPLE_MS);
 		for (const { active } of this.sessions.values()) {

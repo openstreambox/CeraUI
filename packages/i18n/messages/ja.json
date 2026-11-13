@@ -2772,5 +2772,5 @@
 	"notifications.clientCarrying": "本機はクライアント通信を中継中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
 	"notifications.clientCarryingUnknown": "クライアントの利用状況を確認中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
 	"general.updateReasonClientTraffic": "配信中、または状態を確認中です。更新前に接続端末と本機の配信を停止してください。",
-	"notifications.disruptiveActionClientTraffic": "本機の配信と接続端末の配信通信が停止し、更新が終了するまで、この操作は待機します。"
+	"notifications.disruptiveActionClientTraffic": "この操作は実行されませんでした。ボックス自身の配信と接続デバイスの配信トラフィックがアイドル状態になり、更新が進行していないときに、もう一度お試しください。"
 }

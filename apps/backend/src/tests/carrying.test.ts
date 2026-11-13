@@ -30,7 +30,7 @@ test("short bursts and exactly 1 Mbit/s do not count", () => {
 	tracker.upload(0, { phone: 0 });
 	tracker.upload(5_000, { phone: 2_000_000 });
 	tracker.upload(10_000, { phone: 2_000_000 });
-	expect(tracker.read(10_000)).toBe("idle");
+	expect(tracker.read(10_000)).toBe("unknown");
 	for (let now = 15_000; now <= 60_000; now += 5_000)
 		tracker.upload(now, { phone: 2_000_000 + (now - 10_000) * 125 });
 	expect(tracker.read(60_000)).toBe("idle");
@@ -180,5 +180,8 @@ test("an upload being qualified withholds idle permission before the carrying dw
 	tracker.upload(5_000, { phone: 1_250_000 });
 	expect(tracker.read(5_000)).toBe("unknown");
 	tracker.upload(10_000, { phone: 1_250_000 });
-	expect(tracker.read(10_000)).toBe("idle");
+	expect(tracker.read(10_000)).toBe("unknown");
+	for (let now = 15_000; now <= 25_000; now += 5000)
+		tracker.upload(now, { phone: 1_250_000 });
+	expect(tracker.read(25_000)).toBe("idle");
 });

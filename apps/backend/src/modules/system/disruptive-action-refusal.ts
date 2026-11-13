@@ -14,7 +14,7 @@ export function notifyDisruptiveActionRefused(
 		"warning",
 		pending
 			? "Device is busy, try again in a moment"
-			: "This action will wait until the box’s own stream and connected devices’ stream traffic have stopped and no update is in progress.",
+			: "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress.",
 		10,
 		false,
 		true,

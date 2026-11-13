@@ -527,6 +527,16 @@ export function destroyAsyncOperations(): void {
 // no surface that routes through `osCommand` should toast a failure elsewhere.
 // ============================================
 
+/** These refusal tokens are accompanied by the device's single named notification. */
+function isDisruptiveRefusal(reason: string | undefined): boolean {
+	return (
+		reason !== undefined &&
+		["streaming", "stream_liveness_unknown", "update_in_progress"].includes(
+			reason,
+		)
+	);
+}
+
 /** The classification of an OS-op result: terminal-ok, busy, or a discrete failure. */
 interface OsCommandVerdict {
 	ok: boolean;
@@ -568,7 +578,8 @@ function defaultClassify(r: unknown): OsCommandVerdict {
  *    modem global lock never leaves a stuck spinner.
  *  - `opts.rpc` MUST be a raw `rpc.*` method call; `osCommand` only awaits it.
  *  - On a non-ok verdict it transitions `key → failed` and toasts the busy/fail
- *    message thunk (falling back to `wifiSelector.os.operationFailed`). This is
+ *    message thunk (falling back to `wifiSelector.os.operationFailed`). Power/SSH
+ *    disruptive refusals use the named device notification instead. This is
  *    the SINGLE failure-feedback path for the surface. `silent` suppresses that
  *    toast (still transitions `key → failed`, so a calm inline band driven by the
  *    phase still surfaces) — for background/periodic ops that must not toast.
@@ -624,7 +635,13 @@ export async function osCommand<T>(opts: {
 		if (!v.ok) {
 			if (canSettle())
 				owner.fail(opts.key, v.reason ?? (v.busy ? "device_busy" : "failed"));
-			if (!opts.silent) {
+			if (
+				!opts.silent &&
+				!(
+					["reboot", "poweroff", "ssh", "ssh-persist"].includes(opts.key) &&
+					isDisruptiveRefusal(v.reason)
+				)
+			) {
 				toast.error(
 					(v.busy ? opts.busyMessage : opts.failMessage)?.(r) ??
 						m["network.os.operationFailed"](),
