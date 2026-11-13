@@ -203,7 +203,7 @@ export function advanceHeat(
 }
 export function heatCeiling(s: HeatState, ownKbps: number): number {
 	if (
-		s.keepQuality ||
+		(s.keepQuality && (s.unknown || s.stage < 3)) ||
 		!HEAT_SETTINGS.automaticBitrate ||
 		Math.max(s.stage, s.capStage) < 2
 	)

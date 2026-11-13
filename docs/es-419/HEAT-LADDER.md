@@ -5,7 +5,8 @@ el bitrate en vivo al 75% y luego al 50% de tu máximo. El mínimo es 2 Mbit/s,
 sin aumentar nunca el bitrate que elegiste. El bitrate adaptativo sigue funcionando
 por debajo del límite. Abre la bolsa o busca sombra.
 
-**Mantener calidad** quita este límite hasta que termine la transmisión. Los avisos
+**Mantener calidad** solicita tu máximo elegido hasta que termine la transmisión.
+Una temperatura crítica conocida conserva el límite de seguridad. Los avisos
 de calor permanecen. No anula la protección térmica del kernel ni la protección
 de energía independiente. El bitrate guardado no cambia. Detener la transmisión o
 reiniciar el backend borra esta política de sesión. Una pérdida breve de la
@@ -75,3 +76,11 @@ indica que el corte de 65 °C de la batería de reserva está en pausa porque
 no se puede confirmar el suministro. El bit 0002 o la bandera 40 de la batería
 indican un salto de temperatura: el corte espera hasta un minuto. El panel
 muestra ambos motivos sin afirmar que la transmisión se detuvo.
+
+## Reintentos de Mantener calidad
+
+Si el motor rechaza el cambio, la solicitud explícita se conserva y se reintenta
+con una espera de 5 segundos que se duplica hasta 60 segundos, incluso si la
+temperatura no está disponible. Desactivar Mantener calidad cancela la solicitud.
+Una temperatura crítica conocida conserva el límite de seguridad. Al confirmar
+la restauración se borra el aviso y no se vuelven a enviar cambios iguales.
