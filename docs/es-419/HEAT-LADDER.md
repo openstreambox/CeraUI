@@ -65,3 +65,10 @@ que ningún enlace entra en reposo. El enlace vuelve en cuanto sus pares pierden
 ese margen, aunque un cambio de bitrate esté fallando o la conexión de control
 con el motor esté caída. El panel celular lo muestra como en reposo por calor,
 no como apagado por ti.
+
+La máscara adicional `gaps2` tiene cuatro dígitos hexadecimales. Los bits
+desconocidos y los campos malformados indican protección reducida. El bit 0001
+indica que el corte de 65 °C de la batería de reserva está en pausa porque
+no se puede confirmar el suministro. El bit 0002 o la bandera 40 de la batería
+indican un salto de temperatura: el corte espera hasta un minuto. El panel
+muestra ambos motivos sin afirmar que la transmisión se detuvo.

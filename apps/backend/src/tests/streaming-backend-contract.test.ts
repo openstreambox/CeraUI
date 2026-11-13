@@ -1906,3 +1906,24 @@ describe("heat ladder slice 2 review", () => {
 		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
 	});
 });
+
+test("supervisor cut-off reasons reach heat status and clear with the source", async () => {
+	const { parseSupervisor } = await import(
+		"../modules/streaming/supervisor-status"
+	);
+	const { heatStatusSchema } = await import("@ceraui/rpc/schemas");
+	const { backend } = makeBackend();
+	const parse = (extra: string) =>
+		parseSupervisor(
+			`OSB1 up=1 a=healthy/0/0/30.0C b=healthy/0/0/30.0C pack=ready/30.0C/40 thermal=ok gaps=0000 ${extra}`,
+			0,
+			0,
+		);
+	backend.setHeatSupervisor(parse("gaps2=0001"));
+	expect(backend.getHeat().supplyUnproven).toBe(true);
+	expect(backend.getHeat().packJump).toBe(true);
+	expect(heatStatusSchema.parse(backend.getHeat()).supplyUnproven).toBe(true);
+	backend.setHeatSupervisor(null);
+	expect(backend.getHeat().supplyUnproven).toBe(false);
+	expect(backend.getHeat().packJump).toBe(false);
+});

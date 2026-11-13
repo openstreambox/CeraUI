@@ -2839,5 +2839,7 @@
 	"live.heat.resting": "{link} está en reposo para reducir el calor.",
 	"live.heat.restUnknown": "Se desconoce la capacidad de los enlaces. Todos siguen en el enlace combinado.",
 	"live.heat.modemUnavailable": "La temperatura del módem no está disponible en este equipo. Los ajustes por calor usan la temperatura del SoC.",
-	"network.cellular.heatResting": "En reposo para reducir el calor. Vuelve solo al enlace combinado; Mantener calidad lo trae de vuelta ahora."
+	"network.cellular.heatResting": "En reposo para reducir el calor. Vuelve solo al enlace combinado; Mantener calidad lo trae de vuelta ahora.",
+	"live.heat.supplyUnproven": "El corte por calor de la placa de alimentación está en pausa porque no puede confirmar el suministro eléctrico.",
+	"live.heat.packJump": "La temperatura de la batería de reserva subió de golpe. El corte por calor espera hasta un minuto para confirmarla."
 }

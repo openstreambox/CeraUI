@@ -125,3 +125,35 @@ test("names link capacity only when the backend says it is the reason", () => {
 	const view = render(HeatNotice);
 	expect(view.queryByText(/Link capacity is unknown/)).toBeNull();
 });
+
+test("supply proof warning is visible at stage zero without claiming stream loss", () => {
+	mocks.getHeat.mockReturnValue({
+		...status,
+		stage: 0,
+		reduced: false,
+		supplyUnproven: true,
+	});
+	const view = render(HeatNotice);
+	expect(
+		view.getByText(
+			"The power board's heat cut-off is paused because it can't confirm the power supply.",
+		),
+	).toBeTruthy();
+	expect(view.queryByText(/offline|stream stopped|stream down/i)).toBeNull();
+});
+
+test("a sudden pack reading reports a delayed cut-off", () => {
+	mocks.getHeat.mockReturnValue({
+		...status,
+		stage: 0,
+		reduced: false,
+		packJump: true,
+	});
+	const view = render(HeatNotice);
+	expect(
+		view.getByText(
+			"The reserve pack temperature jumped suddenly. The heat cut-off waits up to a minute to confirm it.",
+		),
+	).toBeTruthy();
+	expect(view.queryByText(/can't confirm the power supply/)).toBeNull();
+});

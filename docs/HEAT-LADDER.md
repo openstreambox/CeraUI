@@ -99,3 +99,11 @@ The OSB1 fixture parser also exposes pack calibration, start reason and the full
 reduced protection, and so does a gaps field that is present but malformed. Datasheet calibration (including pack flag 10) is explicit.
 The fixture/source seam expires its display after five seconds and supplies no
 supervisor temperatures to the reducer until a transport owns freshness/epoch.
+
+The additional four-hex-digit `gaps2` mask follows the same rule: unknown bits
+and malformed fields mean reduced protection. Bit 0001 reports that the board's
+65 °C reserve-pack cut-off is paused because supply cannot be confirmed. Bit
+0002 or pack flag 40 reports a sudden temperature jump delaying the cut-off
+for up to a minute. Both reasons reach heat status and the panel independently
+of stream heat stage; neither says that the stream stopped. Legacy frames
+without `gaps2` remain accepted. The extended CRC fixture verifies 296D.

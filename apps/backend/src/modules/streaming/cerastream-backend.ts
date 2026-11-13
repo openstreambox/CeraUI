@@ -856,6 +856,8 @@ export class CerastreamBackend implements StreamingBackend {
 				this.heatRest.blocked === "capacity",
 			modemUnavailable: this.active && this.modemUnavailable,
 			protectionReduced: supervisor?.protectionReduced ?? null,
+			supplyUnproven: supervisor?.supplyUnproven ?? false,
+			packJump: supervisor?.packJump ?? false,
 			packDatasheet: supervisor?.packDatasheet ?? false,
 			packUnprotected: supervisor?.packCalibration === "none",
 			unknown:

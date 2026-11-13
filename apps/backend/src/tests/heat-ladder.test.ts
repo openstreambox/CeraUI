@@ -292,3 +292,47 @@ test("calibration, start reasons, all gaps and pack flag survive projection", as
 		true,
 	);
 });
+
+test("extended protection masks and pack jump flags preserve their reasons", async () => {
+	const line = (
+		await Bun.file(
+			new URL("./fixtures/supervisor-status-gaps2-crc.txt", import.meta.url),
+		).text()
+	).trim();
+	const payload = line.split(" crc=")[0] ?? "";
+	expect(supervisorCrc16(payload)).toBe("296D");
+	expect(parseSupervisor(line, 0, 0)?.gaps2).toBe(0);
+	expect(
+		parseSupervisor(line.replace("gaps2=0000", "gaps2=0001"), 0, 0),
+	).toBeNull();
+	const parse = (value: string, flags = "10") => {
+		const body = payload
+			.replace("gaps=0004", "gaps=0000")
+			.replace("gaps2=0000", `gaps2=${value}`)
+			.replace("pack=ready/30.0C/10", `pack=ready/30.0C/${flags}`);
+		return parseSupervisor(`${body} crc=${supervisorCrc16(body)}`, 0, 0);
+	};
+	expect(parse("0000")?.protectionReduced).toBe(false);
+	expect(parse("0001")?.supplyUnproven).toBe(true);
+	expect(parse("0001")?.packJump).toBe(false);
+	expect(parse("0002")?.packJump).toBe(true);
+	expect(parse("0002")?.supplyUnproven).toBe(false);
+	expect(parse("0003")?.supplyUnproven).toBe(true);
+	expect(parse("0003")?.packJump).toBe(true);
+	for (let bit = 0; bit < 16; bit++) {
+		const status = parse((1 << bit).toString(16).padStart(4, "0"));
+		expect(status?.gaps2).toBe(1 << bit);
+		expect(status?.protectionReduced).toBe(true);
+	}
+	for (const bad of ["wrong", "001", "0x01", "00001", "", "-001"])
+		expect(parse(bad)?.protectionReduced).toBe(true);
+	expect(parse("a000")?.protectionReduced).toBe(true);
+	for (const flags of ["40", "50", "48", "7f"]) {
+		expect(parse("0000", flags)?.packJump).toBe(true);
+		expect(parse("0000", flags)?.protectionReduced).toBe(true);
+	}
+	const legacy = payload.replace(" gaps2=0000", "");
+	expect(
+		parseSupervisor(`${legacy} crc=${supervisorCrc16(legacy)}`, 0, 0)?.gaps2,
+	).toBeNull();
+});

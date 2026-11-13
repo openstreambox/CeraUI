@@ -1321,6 +1321,8 @@ export const heatStatusSchema = z.object({
 	restUnavailable: z.boolean().optional(),
 	modemUnavailable: z.boolean().optional(),
 	protectionReduced: z.boolean().nullable().optional(),
+	supplyUnproven: z.boolean().optional(),
+	packJump: z.boolean().optional(),
 	packDatasheet: z.boolean().optional(),
 	packUnprotected: z.boolean().optional(),
 	phoneAdvice: z.boolean(),

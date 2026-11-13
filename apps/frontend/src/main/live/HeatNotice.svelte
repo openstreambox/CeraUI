@@ -17,7 +17,7 @@ async function toggle() {
 }
 </script>
 
-{#if status?.protectionReduced || status?.packDatasheet || status?.packUnprotected || unavailable || status?.unknown || (status && (status.stage > 0 || status.history.length > 0))}
+{#if status?.supplyUnproven || status?.packJump || status?.protectionReduced || status?.packDatasheet || status?.packUnprotected || unavailable || status?.unknown || (status && (status.stage > 0 || status.history.length > 0))}
  <aside class="rounded-lg border border-status-warning/40 bg-status-warning/10 p-3 text-sm" aria-label={m['live.heat.title']()}>
   <p role="status">
    {#if unavailable || status?.error}{m['live.heat.failed']()}
@@ -30,6 +30,8 @@ async function toggle() {
    {:else}{m['live.heat.warm']()}{/if}
   </p>
   {#if status?.protectionReduced}<p>{m['live.heat.protection']()}</p>{/if}
+  {#if status?.supplyUnproven}<p>{m['live.heat.supplyUnproven']()}</p>{/if}
+  {#if status?.packJump}<p>{m['live.heat.packJump']()}</p>{/if}
   {#if status?.packDatasheet}<p>{m['live.heat.datasheet']()}</p>{/if}
   {#if status?.packUnprotected}<p>{m['live.heat.unprotected']()}</p>{/if}
   {#if status?.restingLink}<p>{m['live.heat.resting']({link:status.restingLink})}</p>
