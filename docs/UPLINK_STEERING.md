@@ -406,9 +406,9 @@ Health rounds snapshot candidate addresses and interface generations before reso
 ## Recent passive loss for shared clients
 
 Passive NAK health uses deltas of the sender's cumulative counter per interface
-and sender connection, over a trailing 10-second window (two health rounds).
-A window with at least 25 NAKs enters degraded health; it clears at five or fewer.
-The lower exit threshold avoids alternating health near the entry boundary.
+and sender connection (`link_id ?? conn_id`), over a trailing 10-second window (two health rounds).
+A window with at least 25 NAKs enters degraded health; it clears below 25.
+There is no separate exit band that can latch steady low loss after a burst.
 The existing five successful rounds and 15-second minimum dwell still gate full
 weight recovery. With fresh five-second samples, a clean path regains weight 100
 within 35 seconds of its last loss: up to five seconds to observe the final delta,
@@ -427,5 +427,6 @@ failure, missing-address and telemetry-expiry rules still own Down. Stream bond
 membership, stream scheduling and established client flows are unchanged.
 
 Synthetic regressions live in `uplink-health-recent-naks.test.ts`. They cover
-bounded recovery, persistent loss, threshold hysteresis, counter and connection
+bounded recovery, persistent loss, burst-then-steady equivalence over 40 rounds,
+stable identity through file-position changes, counter and connection
 resets, stale snapshots, address replacement and stop/start.

@@ -7,6 +7,7 @@ function harness() {
 	let now = 100_000;
 	let count = 0;
 	let conn = "a";
+	let linkId: string | undefined;
 	let streaming = true;
 	let stale = false;
 	let readAt: number | undefined;
@@ -24,7 +25,14 @@ function harness() {
 		telemetry: () => ({
 			lastReadMs: readAt ?? now,
 			links: [
-				{ iface: "wan0", conn_id: conn, nak_count: count, rtt_ms: 50, stale },
+				{
+					iface: "wan0",
+					link_id: linkId,
+					conn_id: conn,
+					nak_count: count,
+					rtt_ms: 50,
+					stale,
+				},
 				...(sibling
 					? [
 							{
@@ -60,6 +68,9 @@ function harness() {
 			count = n;
 			await core.tick();
 			return core.records()[0]?.weight;
+		},
+		link(id: string) {
+			linkId = id;
 		},
 		connection(id: string) {
 			conn = id;
@@ -115,17 +126,28 @@ test("counter reset clears old deltas but fresh loss has no grace period", async
 	expect(await h.tick(35_000, 25)).toBe(25);
 });
 
-test("hysteresis holds a marginal link until recent loss falls to five", async () => {
-	const h = harness();
-	await h.tick(0, 0);
-	await h.tick(5_000, 25);
-	let count = 25;
-	for (let t = 10_000; t <= 60_000; t += 5_000) {
-		count += 4;
-		expect(await h.tick(t, count)).toBe(25);
+test("burst then steady four NAKs per round recovers like steady loss alone", async () => {
+	const burst = harness();
+	const steady = harness();
+	await burst.tick(0, 0);
+	await steady.tick(0, 0);
+	expect(await burst.tick(5_000, 30)).toBe(25);
+	await steady.tick(5_000, 4);
+	for (let round = 2; round <= 40; round++) {
+		const b = await burst.tick(round * 5_000, 30 + (round - 1) * 4);
+		const s = await steady.tick(round * 5_000, round * 4);
+		expect(s).toBe(100);
+		if (round >= 8) expect(b).toBe(s);
 	}
-	for (let t = 65_000; t <= 100_000; t += 5_000) await h.tick(t, count);
-	expect(h.core.records()[0]?.weight).toBe(100);
+});
+
+test("file position changes retain stable link counter history", async () => {
+	const h = harness();
+	h.link("stable");
+	await h.tick(0, 0);
+	await h.tick(5_000, 20);
+	h.connection("new-position");
+	expect(await h.tick(10_000, 25)).toBe(25);
 });
 
 test("stale snapshots cannot turn lifetime totals into a new burst", async () => {
@@ -151,12 +173,12 @@ test("stop/start and address replacement discard the old connection baseline", a
 	}
 });
 
-test("window boundary and hysteresis use recent deltas, never the lifetime count", () => {
+test("window boundary and entry threshold use recent deltas, never the lifetime count", () => {
 	const naks = new RecentNaks();
 	expect(naks.observe(0, 1_000)).toBe(false);
 	expect(naks.observe(5_000, 1_025)).toBe(true);
 	expect(naks.observe(10_000, 1_031)).toBe(true);
-	expect(naks.observe(15_000, 1_031)).toBe(true); // six remain, above recovery threshold
+	expect(naks.observe(15_000, 1_031)).toBe(false); // six remain, below entry threshold
 	expect(naks.observe(20_000, 1_031)).toBe(false);
 	expect(naks.observe(25_000, 1_056)).toBe(true);
 });

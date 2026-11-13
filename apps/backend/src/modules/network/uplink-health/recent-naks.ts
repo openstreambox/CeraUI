@@ -29,8 +29,9 @@ export class RecentNaks {
 			(delta) => at - delta.at < config.passiveNakWindowMs,
 		);
 		const recent = this.#deltas.reduce((sum, delta) => sum + delta.count, 0);
-		if (recent >= config.passiveNakDegradedCount) this.#degraded = true;
-		else if (recent <= config.passiveNakRecoveredCount) this.#degraded = false;
+		// The health engine supplies recovery hysteresis; a second threshold latches
+		// marginal loss forever after a single burst.
+		this.#degraded = recent >= config.passiveNakDegradedCount;
 		return this.#degraded;
 	}
 }

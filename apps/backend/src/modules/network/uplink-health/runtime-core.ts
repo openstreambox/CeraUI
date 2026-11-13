@@ -254,7 +254,7 @@ export class UplinkHealthRuntimeCore {
 			passive.add(link.iface);
 			const expired =
 				now - telemetry.lastReadMs >= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
-			const key = JSON.stringify([link.iface, link.conn_id]);
+			const key = JSON.stringify([link.iface, link.link_id ?? link.conn_id]);
 			seen.add(key);
 			const ip = this.#deps.interfaces()[link.iface]?.ip;
 			const generation = this.#samples.get(link.iface)?.generation;
