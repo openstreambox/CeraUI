@@ -80,7 +80,11 @@ export class CellularOwnedNftTable<Mode extends string> {
 		private readonly shape: CellularNftShape<Mode>,
 		private readonly io: CellularFirewallIO,
 	) {
-		if (!/^ceracell_(?:forward_)?(?:[1-9]|[12]\d|3[0-2])$/.test(shape.table))
+		if (
+			!/^ceracell_(?:(?:forward|bootstrap)_)?(?:[1-9]|[12]\d|3[0-2])$/.test(
+				shape.table,
+			)
+		)
 			throw new Error("Invalid cellular firewall namespace");
 		shape.definition(shape.withdrawn);
 	}

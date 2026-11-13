@@ -23,6 +23,12 @@ import {
 	parseCellularClatBirthRecord,
 } from "./cellular-clat-session.ts";
 import {
+	type CellularIpv6BootstrapPlan,
+	cellularIpv6BootstrapKey,
+	cellularIpv6BootstrapSteps,
+	parseCellularIpv6BootstrapPlan,
+} from "./cellular-ipv6-bootstrap-plan.ts";
+import {
 	type CellularNativeHostPlan,
 	cellularNativeHostSteps,
 	cellularUplinkSlotKey,
@@ -33,6 +39,11 @@ import { cellularTranslatorConfigKey } from "./cellular-translator.ts";
 import { cellularTranslatorConfig } from "./cellular-translator-config.ts";
 
 export type CellularHostAuthority =
+	| {
+			readonly kind: "bootstrap";
+			readonly slot: number;
+			readonly inverse: DurableInverseRecord<CellularIpv6BootstrapPlan>;
+	  }
 	| {
 			readonly kind: "native";
 			readonly slot: number;
@@ -72,7 +83,27 @@ export async function inventoryCellularHosts(
 			const inverseKey = cellularUplinkSlotKey(slot),
 				birthKey = cellularClatBirthKey(slot),
 				rawInverse = json.get(inverseKey),
-				rawBirth = json.get(birthKey);
+				rawBirth = json.get(birthKey),
+				bootstrapKey = cellularIpv6BootstrapKey(slot),
+				rawBootstrap = json.get(bootstrapKey);
+			if (rawBootstrap !== undefined) {
+				if (rawInverse !== undefined || rawBirth !== undefined)
+					throw new Error("Bootstrap and data-path authority overlap");
+				const inverse = parseDurableInverseRecord(
+					rawBootstrap,
+					parseCellularIpv6BootstrapPlan,
+					cellularIpv6BootstrapSteps,
+				);
+				if (
+					inverse.plan.slot !== slot ||
+					inverse.owner !== inverse.plan.owner ||
+					inverse.epoch !== inverse.plan.epoch
+				)
+					throw new Error("Bootstrap inverse slot identity changed");
+				remainingJson.delete(bootstrapKey);
+				result.push({ kind: "bootstrap", slot, inverse });
+				continue;
+			}
 			let inverse:
 				| DurableInverseRecord<CellularNativeHostPlan | CellularClatHostPlan>
 				| undefined;
