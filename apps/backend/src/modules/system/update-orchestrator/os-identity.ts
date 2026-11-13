@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { assertBoardUpdateAdmission } from "../board-update-admission.ts";
+import { readBoardUpdates } from "../board-updates.ts";
 import {
 	readStoredStateFile,
 	STORED_STATE_LIMITS,
@@ -24,10 +26,16 @@ export async function readBootId(): Promise<string> {
 	return id;
 }
 
-export async function readBoardIdentity(path = RAUC_CONFIG): Promise<{
+export async function readBoardIdentity(
+	path = RAUC_CONFIG,
+	record = readBoardUpdates,
+): Promise<{
 	readonly board: string;
 	readonly compatible: string;
 }> {
+	assertBoardUpdateAdmission();
+	const updates = await record();
+	if (updates === null) throw new OsAgentError("board_updates_not_offered");
 	const conf = await readStoredStateFile(path, STORED_STATE_LIMITS.settings);
 	if (conf === null) throw new OsAgentError("rauc_compatible_unknown");
 	const sections = conf.split(/^\s*\[system\]\s*$/m);
@@ -38,12 +46,17 @@ export async function readBoardIdentity(path = RAUC_CONFIG): Promise<{
 	const matches = section?.match(/^compatible\s*=\s*(\S+)\s*$/gm) ?? [];
 	if (matches.length !== 1) throw new OsAgentError("rauc_compatible_unknown");
 	const compatible = matches[0]?.split("=")[1]?.trim();
+	if (updates) {
+		if (compatible !== updates.compatible)
+			throw new OsAgentError("rauc_compatible_mismatch");
+		return { board: updates.board, compatible };
+	}
 	switch (compatible) {
 		case "ceralive-rock-5b-plus":
 			return { board: "rock-5b-plus", compatible };
 		case "ceralive-orangepi5-plus":
 			return { board: "orange-pi-5-plus", compatible };
 		default:
-			throw new OsAgentError("rauc_compatible_unknown");
+			throw new OsAgentError("board_updates_not_offered");
 	}
 }

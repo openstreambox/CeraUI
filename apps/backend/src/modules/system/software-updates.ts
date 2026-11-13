@@ -1,3 +1,4 @@
+import { boardUpdateAdmissionAllowed } from "./board-update-admission.ts";
 /*
 	CeraUI - web UI for the CERALIVE project
 	Copyright (C) 2024-2025 CeraLive project
@@ -315,7 +316,9 @@ function refuseUpdateStart(reason: UpdateStartRefusal): UpdateStartOutcome {
 
 export function aptUpdatesEnabled(): boolean {
 	return (
-		setup.apt_update_enabled !== false && !isBoardCapabilityDenied("os-updates")
+		setup.apt_update_enabled !== false &&
+		boardUpdateAdmissionAllowed() &&
+		!isBoardCapabilityDenied("os-updates")
 	);
 }
 

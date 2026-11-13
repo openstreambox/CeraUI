@@ -7,6 +7,7 @@ import type {
 	UpdateDetails,
 	UpdateSettings,
 } from "@ceraui/rpc/schemas";
+import { boardUpdateAdmissionAllowed } from "../board-update-admission.ts";
 import {
 	hasKernelAptStage,
 	readUpdateCapabilityFile,
@@ -141,6 +142,7 @@ export function createKernelRuntime(port: KernelRuntimePort) {
 			});
 	};
 	async function check(): Promise<void> {
+		if (!boardUpdateAdmissionAllowed()) return;
 		const before = port.state();
 		const caps = await port.capabilities();
 		const found = hasKernelAptStage(caps)
@@ -149,6 +151,7 @@ export function createKernelRuntime(port: KernelRuntimePort) {
 		if (port.state() === before) candidate = found;
 	}
 	async function install(manual: boolean): Promise<boolean> {
+		if (!boardUpdateAdmissionAllowed()) return false;
 		if (
 			flight ||
 			port.busy() ||

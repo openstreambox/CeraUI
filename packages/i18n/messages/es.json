@@ -2815,5 +2815,8 @@
 	"network.sharing.policy.failed": "No se pudo leer o actualizar la política. Recárgala para comprobar el ajuste actual.",
 	"network.sharing.policy.healthWeight": "Peso de salud (antes de la política)",
 	"network.sharing.policy.healthTitle": "Salud de los enlaces",
-	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos."
+	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos.",
+	"settings.updates.system.boardNotOffered": "Las actualizaciones aún no se ofrecen para esta placa.",
+	"settings.updates.channel.address": "Direcci\u00f3n del canal de im\u00e1genes",
+	"settings.updates.channel.saveAddress": "Guardar direcci\u00f3n"
 }
