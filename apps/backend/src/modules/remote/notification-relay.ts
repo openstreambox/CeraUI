@@ -64,6 +64,15 @@ export const NOTIFICATION_SUMMARIES: Readonly<Record<string, string>> = {
 	"capture-rate-adapted": "Streaming quality is limited by the backup camera.",
 };
 
+export const NOTIFICATION_FALLBACKS = {
+	roaming: "A cellular connection is roaming.",
+	cameraLost: "A camera was lost. Streaming continues on another camera.",
+	generic: "Device notification. Open the local interface for details.",
+} as const;
+
+export const overflowMessage = (omitted: number): string =>
+	`${omitted} more device notifications are not shown here. Open the local interface for details.`;
+
 /** Only structure crosses this boundary. Producer text, names, interpolation
  * params and actions can contain credentials, addresses or device identifiers.
  * Unknown/future producers receive the same conservative projection. */
@@ -86,10 +95,10 @@ export function projectNotification(value: unknown) {
 				? NOTIFICATION_SUMMARIES[n.name]
 				: undefined) ??
 			(n.name.startsWith("modem_roaming:")
-				? "A cellular connection is roaming."
+				? NOTIFICATION_FALLBACKS.roaming
 				: n.name.startsWith("capture-input-lost:")
-					? "A camera was lost. Streaming continues on another camera."
-					: "Device notification. Open the local interface for details."),
+					? NOTIFICATION_FALLBACKS.cameraLost
+					: NOTIFICATION_FALLBACKS.generic),
 		revision: Number(n.revision),
 		is_persistent: true,
 		is_dismissable: false,
@@ -149,7 +158,7 @@ function overflowNotice(
 	return {
 		name: OVERFLOW_NOTICE_NAME,
 		type,
-		msg: `${omitted} more device notifications are not shown here. Open the local interface for details.`,
+		msg: overflowMessage(omitted),
 		revision,
 		is_persistent: true,
 		is_dismissable: false,
@@ -202,7 +211,9 @@ function fitPayload(
 		];
 	}
 	const remove: { id: string; revision: number }[] = [];
+	const shownNames = new Set(show.map((n) => n.name));
 	for (const entry of removed) {
+		if (shownNames.has(entry.id)) continue;
 		const c = cost(entry);
 		if (used + c > budget) break;
 		remove.push(entry);

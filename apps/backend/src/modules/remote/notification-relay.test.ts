@@ -398,6 +398,17 @@ test("an oversized list keeps the most severe notices, adds a summary and logs o
 	relay.flush();
 	expect(frames).toHaveLength(2);
 	expect(logs).toHaveLength(1);
+	// Apply frames in the client's show-then-remove order, including merges by id.
+	const visible = new Map<string, unknown>();
+	for (const raw of frames) {
+		const payload = raw.payload as {
+			show: { name: string }[];
+			remove: { id: string }[];
+		};
+		for (const n of payload.show) visible.set(n.name, n);
+		for (const n of payload.remove) visible.delete(n.id);
+		expect(visible.has("remote-overflow")).toBe(true);
+	}
 });
 
 test("a flapping notice is coalesced to at most one frame per second carrying the latest state", () => {
