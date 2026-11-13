@@ -504,3 +504,20 @@ de esa suscripción. Solo puede transferirse una definición propia, exacta e
 inactiva; un contexto activo o desconocido sigue bloqueado. La referencia original
 se conserva y nunca determina el operador de la nueva SIM. Este componente de
 almacenamiento y validación no activa llamadas del FM350.
+
+
+The internal context effect component persists baseline and command intent before
+AT writes and verifies the result on the same unit and SIM. It requires consumer
+withdrawal and uses the existing mutation journal. Unknown replies retain owned
+state; a missing remembered baseline cannot be silently replaced. The inverse
+parks a later SIM without restoring the previous SIM's APN. Borrowed active calls
+are preserved. This component remains outside runtime composition.
+
+El componente de efectos del contexto interno guarda la referencia y la intención
+antes de escribir comandos AT y comprueba el resultado en el mismo dispositivo y
+SIM. Exige la retirada de consumidores y usa el registro de mutaciones existente.
+Una respuesta desconocida conserva el estado propio; una referencia recordada que
+ha desaparecido no se reemplaza de forma silenciosa. La operación inversa conserva
+un registro inactivo para una SIM posterior sin restaurar el APN de la SIM previa.
+Las llamadas activas ajenas se preservan. Este componente aún no está conectado al
+funcionamiento automático.

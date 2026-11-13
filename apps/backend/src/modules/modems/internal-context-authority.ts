@@ -51,7 +51,10 @@ const recordSchema = z
 			"defined",
 			"activating",
 			"active",
+			"deactivating",
+			"restoring",
 			"parked",
+			"released",
 		]),
 		activationOwned: z.boolean(),
 		adoptedActive: z.boolean(),
@@ -87,8 +90,11 @@ export function parseInternalContextAuthority(
 		(record.activationOwned || record.adoptedActive)
 	)
 		throw new Error("Parked context still claims an active call");
+	if (record.phase === "released" && record.activationOwned)
+		throw new Error("Released context still owns an activation");
 	if (
-		(record.phase === "activating" && !record.activationOwned) ||
+		(["activating", "deactivating"].includes(record.phase) &&
+			!record.activationOwned) ||
 		(record.phase === "active" &&
 			!record.activationOwned &&
 			!record.adoptedActive)

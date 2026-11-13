@@ -701,3 +701,27 @@ AT control now exposes the digit-only subscriber observation separately from
 matching the original subscriber: unreadable cannot be treated as a new SIM,
 and positive change does not authorize a setter for the old subscription.
 Actual retained-owner context transactions and runtime composition remain open.
+
+
+### Internal context effects (partial)
+
+The internal context effect driver runs inside the existing modem identity lease
+and journal. It captures request values before awaits, checks the physical key,
+unit, current subscription/automatic policy and dedicated control lifetime, and
+requires a current consumer-withdrawal permit through every effect. A durable
+unit baseline precedes the executing journal and host link-up. Definition and
+activation/deactivation intent are committed before their AT commands; uncertain
+replies settle only through exact read-back on the same unit and subscription.
+Unconfirmed effects retain both context cursor and ordinary failed journal.
+Missing remembered context authority cannot become a new baseline or completed
+inverse. Source withdrawal never follows a guessed file timestamp.
+
+Restoration never defines the original subscription's APN on a later SIM. A
+later SIM receives an inactive parked record after its predecessor's call is
+withdrawn. The original baseline remains stored. A borrowed active baseline call
+is not deactivated or re-created; it is recorded as released. Interrupted
+commands may park only their recorded before/desired/inverse target, after a
+positive inactive read. A positive SIM change and a second coherent identity
+read are required; unreadable identity cannot release inhibition. This driver
+introduces no process, scheduler or recovery owner. Retained runtime composition
+and its config inverse must be registered before enabling the entrypoint.
