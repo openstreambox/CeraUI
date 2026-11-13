@@ -163,7 +163,7 @@ describe("broadcastMsgLocal is local-only", () => {
 });
 
 describe("no-secrets contract", () => {
-	it("RELAYABLE_TYPES is exactly the closed v2.0 status set (spec §8)", () => {
+	it("generic relay excludes the separately projected notification path", () => {
 		expect([...RELAYABLE_TYPES]).toEqual([
 			"status",
 			"config",
@@ -171,13 +171,14 @@ describe("no-secrets contract", () => {
 			"netif",
 			"modems",
 			"device-stats",
-			"notifications",
 			"device.activeProfile",
 		]);
 	});
 
 	it("carries no secret-bearing or local-only types", () => {
 		const forbidden = [
+			"notification",
+			"notifications",
 			"auth",
 			"auth.login",
 			"auth.setPassword",

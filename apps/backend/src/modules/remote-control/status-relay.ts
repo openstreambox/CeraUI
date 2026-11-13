@@ -48,6 +48,8 @@ export interface ControlChannel {
  * token — unlike `telemetry`, which is emitted directly (not via `broadcastMsg`)
  * and so is deliberately absent here.
  */
+// Notifications use the dedicated notification-only snapshot relay, never this
+// generic bridge: producer text/params require a stricter projection.
 export const RELAYABLE_TYPES = [
 	"status",
 	"config",
@@ -55,7 +57,6 @@ export const RELAYABLE_TYPES = [
 	"netif",
 	"modems",
 	"device-stats",
-	"notifications",
 	"device.activeProfile",
 ] as const;
 export type RelayableType = (typeof RELAYABLE_TYPES)[number];

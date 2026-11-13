@@ -153,7 +153,12 @@ describe("control channel when paired", () => {
 
 		socket?.fireOpen();
 
-		expect(socket?.sent.length).toBe(1);
+		expect(socket?.sent.length).toBe(2);
+		expect(JSON.parse(socket?.sent[1] ?? "{}")).toMatchObject({
+			kind: "status",
+			type: "notification",
+			payload: { show: [], remove: [] },
+		});
 		const frame = HandshakeSchema.parse(JSON.parse(socket?.sent[0] ?? "{}"));
 		expect(frame.kind).toBe("handshake");
 		expect(frame.type).toBe("device.hello");
@@ -333,4 +338,47 @@ describe("backoff", () => {
 		expect(backoffDelay(100, upper)).toBe(RECONNECT_MAX_MS);
 		expect(backoffDelay(0, () => 0)).toBe(RECONNECT_BASE_MS / 2);
 	});
+});
+
+test("notification snapshot follows hello on reconnect without activating config relay", async () => {
+	const { notificationBroadcast, notificationRemove } = await import(
+		"../modules/ui/notifications.ts"
+	);
+	const { broadcastMsg } = await import("../rpc/compat.ts");
+	notificationBroadcast(
+		"hdmi_error",
+		"warning",
+		"private address and streamid",
+		0,
+		true,
+	);
+	const h = harness();
+	try {
+		await initControlChannel(h.deps);
+		h.sockets[0]?.fireOpen();
+		const frames = () => h.sockets.at(-1)?.sent.map((s) => JSON.parse(s)) ?? [];
+		expect(frames()[1]).toMatchObject({
+			type: "notification",
+			payload: {
+				show: [
+					{
+						msg: "The HDMI input has a signal problem. Check the source and cable.",
+					},
+				],
+			},
+		});
+		broadcastMsg("config", { password: "SECRET" });
+		expect(JSON.stringify(frames())).not.toContain("SECRET");
+		h.sockets[0]?.fireClose();
+		notificationRemove("hdmi_error");
+		h.timers.at(-1)?.fn();
+		h.sockets.at(-1)?.fireOpen();
+		expect(frames()[1]).toMatchObject({
+			type: "notification",
+			payload: { show: [], remove: [{ revision: expect.any(Number) }] },
+		});
+	} finally {
+		notificationRemove("hdmi_error");
+		await initControlChannel({ canDial: () => false });
+	}
 });
