@@ -64,7 +64,7 @@ if (process.env.CI || !fs.existsSync(configPath)) {
 
 const DEV_PORT = Number(process.env.E2E_PORT ?? 6173);
 const DEV_URL = `http://localhost:${DEV_PORT}`;
-const REFERENCE_BACKEND_PORT = 3003;
+const REFERENCE_BACKEND_PORT = Number(process.env.E2E_BACKEND_PORT ?? 3003);
 
 // Repo-local test-artifact dir. Playwright traces/screenshots AND human-readable
 // evidence files land here; gitignored. Never write outside the repo — tests must
@@ -107,7 +107,7 @@ export default defineConfig({
           port: DEV_PORT,
           reuseExistingServer: false,
           timeout: 120_000,
-          env: { VITE_SOCKET_PORT: String(REFERENCE_BACKEND_PORT) },
+          env: { E2E_PORT: String(DEV_PORT), VITE_SOCKET_PORT: String(REFERENCE_BACKEND_PORT) },
         },
         {
           // Reference backend for local global setup, not functional test pages;

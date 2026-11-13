@@ -374,3 +374,30 @@ persisted — it NEVER regenerates an existing credential (that stays
 `applyPassword` / `persist` / `refreshStatus`) is injected via
 `SshPasswordProvisionDeps` so `tests/ssh-password-provision.test.ts` drives it
 without a real `passwd`/`/etc/shadow` (and without persisting to disk).
+
+### Process signals and outbound connections in development
+
+All process-name signals use `@ceraui/srtla-send/process-signals`. Production
+executes the supplied command unchanged. Source development suppresses name
+signals before mock initialization. Unit preload installs a fake runner.
+Streaming teardown continues to signal its tracked child handles.
+
+Unit preload wraps Bun and Node process-spawn APIs and rejects name-signalling
+commands and systemd mutations. The allowlist is empty. A rejected command is
+also retained for the after-test hook, so catching a spawn error cannot hide
+it. Tests should inject an effect dependency before reaching this boundary.
+
+Backend development commands and the browser worker entrypoint preload
+`scripts/dev-safety.ts`. It rejects host-global process actions and non-loopback
+TCP, WebSocket and fetch destinations. Caught violations terminate the harness.
+The legacy development remote client defaults to loopback before DNS resolution.
+Local fixture endpoints use localhost, 127.0.0.0/8 or ::1. Keep real credentials
+out of mock configurations.
+
+Concurrent browser runs configure `E2E_PORT`, `E2E_BACKEND_PORT` and
+`E2E_WORKER_BASE_PORT` with disjoint ranges. The last variable sets the first
+worker port. Keep process-spawning gates inside a PID namespace to contain any
+regression in outward signalling. A PID namespace does not shield a child from
+same-account signals sent by an uncontained host process. File-ownership tests
+need the normal UID mapping, so a privileged namespace launcher may drop back
+to the invoking UID/GID after creating the PID namespace.

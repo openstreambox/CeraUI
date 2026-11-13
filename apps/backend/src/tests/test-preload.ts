@@ -1,4 +1,19 @@
-import { afterAll, beforeEach, mock, spyOn } from "bun:test";
+import { afterAll, afterEach, beforeEach, mock, spyOn } from "bun:test";
+import { setProcessSignalRunnerForTest } from "@ceraui/srtla-send/process-signals";
+import {
+	installProcessSafetyGuard,
+	takeSafetyViolations,
+} from "../../../../scripts/test-safety.ts";
+
+installProcessSafetyGuard();
+setProcessSignalRunnerForTest(async () => {
+	// Tests own no production name-signalled processes.
+});
+afterEach(() => {
+	const violations = takeSafetyViolations();
+	if (violations.length) throw new Error(violations.join("\n"));
+});
+
 import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

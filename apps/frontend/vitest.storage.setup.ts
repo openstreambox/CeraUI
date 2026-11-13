@@ -1,4 +1,14 @@
-import { beforeEach } from "vitest";
+import { afterEach, beforeEach } from "vitest";
+import {
+	installProcessSafetyGuard,
+	takeSafetyViolations,
+} from "../../scripts/test-safety.ts";
+
+installProcessSafetyGuard();
+afterEach(() => {
+	const violations = takeSafetyViolations();
+	if (violations.length) throw new Error(violations.join("\n"));
+});
 
 /**
  * Deterministic in-memory Web Storage, installed over `globalThis` before any

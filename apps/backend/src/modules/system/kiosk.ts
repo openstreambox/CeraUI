@@ -1,3 +1,4 @@
+import { signalProcessName } from "@ceraui/srtla-send/process-signals";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -203,7 +204,10 @@ const defaultKioskDeps: KioskDeps = {
 		await rm(KIOSK_NO_DISPLAY_MARKER, { force: true });
 	},
 	oskSignal: async (signal) => {
-		await execFileP("pkill", ["--signal", signal, "-x", KIOSK_OSK_PROCESS]);
+		const args = ["--signal", signal, "-x", KIOSK_OSK_PROCESS];
+		await signalProcessName("pkill", args, async () => {
+			await execFileP("pkill", args);
+		});
 	},
 	broadcast: (status) => broadcastMsg("kiosk", status),
 	loadCogDescriptor: loadCogDescriptorFromDisk,

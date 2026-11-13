@@ -389,7 +389,10 @@ async function remoteConnect() {
 			: provider.secure
 				? "wss"
 				: "ws";
-	const endpointHost = setup.remote_endpoint_host ?? provider.host;
+	const endpointHost =
+		process.env.NODE_ENV === "development"
+			? "127.0.0.1"
+			: (setup.remote_endpoint_host ?? provider.host);
 	const endpointPath = setup.remote_endpoint_path ?? provider.path;
 	const protocolVersion = provider.protocolVersion ?? remoteProtocolVersion;
 
