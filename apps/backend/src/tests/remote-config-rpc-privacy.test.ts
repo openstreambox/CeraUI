@@ -73,9 +73,6 @@ test("actual remote streaming.getConfig withholds media keys and preserves local
 
 for (const destination of ["custom", "managed"] as const) {
 	test(`remote latency-only ${destination} save preserves its persisted media credential`, async () => {
-		const { buildServerSetConfig } = await import(
-			"../../../frontend/src/lib/streaming/receiver-experience.ts"
-		);
 		const config = getConfig();
 		config.srtla_addr = "relay.example.test";
 		config.srtla_port = 5000;

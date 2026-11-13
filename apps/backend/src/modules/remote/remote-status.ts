@@ -5,6 +5,7 @@ import {
 	streamProfileIdSchema,
 } from "@ceraui/rpc/schemas";
 
+import { AUDIO_CODECS } from "../streaming/pipeline-sources.ts";
 import { projectLegacyNotification } from "./legacy-notification-dto.ts";
 
 /** Outbound status is a separate public DTO. No producer objects are spread. */
@@ -185,7 +186,6 @@ export function projectRemoteStatus(v: unknown, transport = "legacy"): unknown {
 	]);
 	if (lifecycle !== undefined) out.stream_lifecycle = lifecycle;
 	out.remote_diagnostics = {
-		...booleans(src, ["policy_route_missing"]),
 		...(src.asrcs !== undefined
 			? { audio_present: Array.isArray(src.asrcs) && src.asrcs.length > 0 }
 			: {}),
@@ -289,7 +289,7 @@ export function projectRemoteStatus(v: unknown, transport = "legacy"): unknown {
 									const row = object(raw);
 									return {
 										conn_id: opaqueRow(
-											"connection",
+											row.conn_id == null ? "connection-index" : "connection",
 											row.conn_id ?? i,
 											transport,
 										),
@@ -311,6 +311,9 @@ export function projectRemoteStatus(v: unknown, transport = "legacy"): unknown {
 											"bytes_sent_total",
 										]),
 										...booleans(row, ["stale"]),
+										...(row.identity_state === "unmappable"
+											? { identity_state: "unmappable" }
+											: {}),
 									};
 								})
 							: [],
@@ -354,7 +357,7 @@ export function projectRemotePayload(
 		case "relays":
 			return { servers: {}, accounts: {} };
 		case "acodecs":
-			return { aac: { name: "AAC" }, opus: { name: "Opus" } };
+			return AUDIO_CODECS;
 		case "status":
 			return projectRemoteStatus(v, transport);
 		case "config":
@@ -417,7 +420,7 @@ export function projectRemotePayload(
 	}
 }
 let projectionDrops = 0;
-/** Number of payloads suppressed at the legacy wire boundary. No payload is retained. */
+/** Number of invalid payloads rejected by a type-specific DTO. Designed withholds are excluded. No payload is retained. */
 export function getRemoteProjectionDrops(): number {
 	return projectionDrops;
 }
@@ -430,7 +433,14 @@ export function projectRemoteLegacyFrame(
 	for (const [type, payload] of Object.entries(src)) {
 		const projected = projectRemotePayload(type, payload, transport);
 		if (projected !== undefined) out[type] = projected;
-		else if (type !== "seq" && payload !== undefined) projectionDrops++;
+		else if (type === "notification" && payload !== undefined) {
+			const legacy = object(payload);
+			// The base notification producer has no revisioned relay envelope. It is
+			// deliberately withheld until the relay producer is installed.
+			const baseNotification =
+				Object.keys(legacy).length === 1 && Array.isArray(legacy.show);
+			if (!baseNotification) projectionDrops++;
+		}
 	}
 	if (
 		typeof src.seq === "number" &&

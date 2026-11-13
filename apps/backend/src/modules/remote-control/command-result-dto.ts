@@ -70,8 +70,8 @@ export function projectCommandResult(
 	type: string,
 	payload: ResultPayload,
 ): ResultPayload {
-	if (!payload.ok || payload.applied === null || payload.applied === undefined)
-		return payload;
+	if (!payload.ok) return { ...payload, applied: null };
+	if (payload.applied === null || payload.applied === undefined) return payload;
 	const src = obj(payload.applied);
 	switch (type) {
 		case "streaming.getPipelines": {

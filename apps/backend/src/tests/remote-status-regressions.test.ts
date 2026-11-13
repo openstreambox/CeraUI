@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { strictParseFrame } from "@ceralive/control-protocol/parse";
 import { ActiveProfilePayloadSchema } from "@ceralive/control-protocol/schemas";
 import {
@@ -17,6 +18,11 @@ import {
 	setControlChannel,
 } from "../modules/remote-control/status-relay.ts";
 
+function required<T>(value: T | undefined): T {
+	if (value === undefined)
+		throw new Error("required test fixture value is absent");
+	return value;
+}
 const link = (iface: string, conn_id = "0") => ({
 	iface,
 	conn_id,
@@ -63,7 +69,7 @@ test("interfaces at the same position never collide and adapter counters exclude
 		},
 	}) as { wifi: Record<string, unknown> };
 	const ids = Object.keys(out.wifi).map((k) => Number(k.split(" ").at(-1)));
-	expect(ids[1]).toBe(ids[0]! + 1);
+	expect(ids[1]).toBe(required(ids[0]) + 1);
 });
 test("telemetry traverses the relay with numeric metrics and neutral link IDs", () => {
 	const frames: unknown[] = [];
@@ -183,7 +189,7 @@ test("exact legacy notification wire format passes and mutations fail closed", (
 			projectRemoteLegacyFrame({ notification: { ...payload, ...change } }),
 		).toEqual({});
 });
-test("helper diagnostics are plain flags with explicit warning retractions", () => {
+test("helper diagnostics retain producer flags and omit unused fields", () => {
 	const a = projectRemoteStatus({
 		asrcs: ["private-audio"],
 		ssh: { user: "private-user", active: true, enabled: false },
@@ -199,22 +205,16 @@ test("helper diagnostics are plain flags with explicit warning retractions", () 
 		remote_diagnostics: {
 			audio_present: boolean;
 			ssh: unknown;
-			policy_route_missing: boolean;
 		};
 	};
 	statusResponseSchema.parse(a);
 	expect(a.remote_diagnostics.audio_present).toBe(true);
 	expect(a.remote_diagnostics.ssh).toEqual({ active: true, enabled: false });
-	expect(a.remote_diagnostics.policy_route_missing).toBe(true);
+	expect(a.remote_diagnostics).not.toHaveProperty("policy_route_missing");
 	expect(JSON.stringify(a)).not.toContain("private-");
 	expect(
-		(
-			projectRemoteStatus({
-				policy_route_missing: false,
-				bond_mapping: null,
-			}) as { remote_diagnostics: { policy_route_missing: boolean } }
-		).remote_diagnostics.policy_route_missing,
-	).toBe(false);
+		projectRemoteStatus({ policy_route_missing: false, bond_mapping: null }),
+	).not.toHaveProperty("remote_diagnostics");
 });
 
 test("cloud command router sends pipeline and config result DTOs rather than status projections", async () => {
@@ -267,25 +267,31 @@ test("connections sharing interfaces or physical links keep distinct stable keys
 		[link("same", "a"), link("same", "b")],
 	]) {
 		const read = (links: unknown[]) =>
-			statusResponseSchema.parse(
-				projectRemoteStatus({ linkTelemetry: { links } }),
-			).linkTelemetry!.links;
+			required(
+				statusResponseSchema.parse(
+					projectRemoteStatus({ linkTelemetry: { links } }),
+				).linkTelemetry,
+			).links;
 		const a = read(rows),
 			b = read([...rows].reverse());
 		expect(new Set(a.map((r) => r.conn_id)).size).toBe(2);
-		expect(a[0]!.conn_id).toBe(b[1]!.conn_id);
+		expect(required(a[0]).conn_id).toBe(required(b[1]).conn_id);
 	}
 });
 
 test("transport and legacy provider keys are independent and reconnect stable", () => {
 	const read = (transport: string) =>
-		statusResponseSchema.parse(
-			projectRemotePayload(
-				"status",
-				{ linkTelemetry: { links: [link("secret")] } },
-				transport,
-			),
-		).linkTelemetry!.links[0]!;
+		required(
+			required(
+				statusResponseSchema.parse(
+					projectRemotePayload(
+						"status",
+						{ linkTelemetry: { links: [link("secret")] } },
+						transport,
+					),
+				).linkTelemetry,
+			).links[0],
+		);
 	const a = read("legacy:a"),
 		b = read("cloud"),
 		c = read("legacy:b");
@@ -321,8 +327,22 @@ test("rejected nonempty legacy frames are counted without recording payload text
 		"../modules/remote/remote-status.ts"
 	);
 	const before = getRemoteProjectionDrops();
-	projectRemoteLegacyFrame({ notification: { show: [{ msg: "secret" }] } });
-	projectRemoteLegacyFrame({ notification: { show: [{ msg: "secret" }] } });
+	projectRemoteLegacyFrame({
+		notification: {
+			show: [{ msg: "secret" }],
+			remove: [],
+			epoch: crypto.randomUUID(),
+			full: true,
+		},
+	});
+	projectRemoteLegacyFrame({
+		notification: {
+			show: [{ msg: "secret" }],
+			remove: [],
+			epoch: crypto.randomUUID(),
+			full: true,
+		},
+	});
 	expect(getRemoteProjectionDrops()).toBe(before + 2);
 });
 
@@ -397,33 +417,35 @@ test("every emitted message type validates against its published payload schema"
 	).toBe(true);
 });
 
-test("notification relay summaries and the legacy validator stay synchronized on integration", async () => {
-	const path = `${import.meta.dir}/../modules/remote/notification-relay.ts`;
-	// The notification relay is an independently mergeable change. Once present,
-	// compare its entire catalog and validate every producer summary at this boundary.
-	if (!(await Bun.file(path).exists())) return;
-	const relay = await import(path);
-	const { NOTIFICATION_SUMMARIES } = await import(
-		"../modules/remote/legacy-notification-dto.ts"
-	);
-	expect(relay.NOTIFICATION_SUMMARIES).toEqual(NOTIFICATION_SUMMARIES);
-	for (const msg of Object.values(relay.NOTIFICATION_SUMMARIES)) {
-		const payload = {
-			show: [
-				{
-					name: "a".repeat(64),
-					type: "warning",
-					msg,
-					revision: 1,
-					is_persistent: true,
-					is_dismissable: false,
-					duration: 0,
-				},
-			],
-			remove: [],
-			epoch: crypto.randomUUID(),
-			full: true,
-		};
-		expect(projectRemotePayload("notification", payload)).toEqual(payload);
-	}
-});
+const relayPath = `${import.meta.dir}/../modules/remote/notification-relay.ts`;
+test.skipIf(!existsSync(relayPath))(
+	"notification relay summaries and the legacy validator stay synchronized on integration",
+	async () => {
+		// The notification relay is an independently mergeable change. Once present,
+		// compare its entire catalog and validate every producer summary at this boundary.
+		const relay = await import(relayPath);
+		const { NOTIFICATION_SUMMARIES } = await import(
+			"../modules/remote/legacy-notification-dto.ts"
+		);
+		expect(relay.NOTIFICATION_SUMMARIES).toEqual(NOTIFICATION_SUMMARIES);
+		for (const msg of Object.values(relay.NOTIFICATION_SUMMARIES)) {
+			const payload = {
+				show: [
+					{
+						name: "a".repeat(64),
+						type: "warning",
+						msg,
+						revision: 1,
+						is_persistent: true,
+						is_dismissable: false,
+						duration: 0,
+					},
+				],
+				remove: [],
+				epoch: crypto.randomUUID(),
+				full: true,
+			};
+			expect(projectRemotePayload("notification", payload)).toEqual(payload);
+		}
+	},
+);

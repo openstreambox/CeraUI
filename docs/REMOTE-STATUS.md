@@ -29,7 +29,7 @@ changes. A freshness test pins producer and type declaration sources and the loc
 | link telemetry | measured rate, bytes, freshness, RTT/NAK/weight and per-link numeric metrics | device IDs, interface names, serials, physical port names replaced/withheld |
 | buffering/engine bitrate | counters, active/disk-warning flags, applied and ceiling bitrate; null retractions | unknown fields withheld |
 | active profile | published preset enum, latency, FEC, recovery enum | unknown fields withheld; invalid presets are absent rather than invented |
-| pipelines, sources, relays, acodecs | schema-valid empty lists/maps and the fixed codec catalog | detailed identities withheld; cloud pipeline command has a separate DTO |
+| pipelines, sources, relays, acodecs | schema-valid empty lists/maps, closed hardware platform (`jetson`/`rk3588`/`n100`/`generic`) and the shared codec catalog | detailed identities withheld; cloud pipeline command has a separate DTO |
 | revisions, encoder-load, fan, cpu, bluetooth and other legacy/direct reply types | none | withheld |
 | notification(s) | separate bounded, fixed-text projection | unstructured notifications are withheld; see integration below |
 
@@ -121,8 +121,10 @@ from the published RPC schemas, including Decklink and auto/force/off passthroug
 
 Every emitted type has payload or protocol schema coverage. The frontend test
 ingests the projected initial lists through real subscriptions and mounts Live.
-The notification integration test compares both complete summary catalogs when
+The notification integration test is explicitly skipped without the independent relay; it compares both complete summary catalogs when
 the independently delivered relay is present, then validates every summary.
-Rejected legacy payloads increment a process-local counter, and the socket warns
+DTO-rejected legacy payloads increment a process-local counter; intentionally withheld types and the base unrevisioned notification format do not. The socket warns
 once without recording content. Callback completion still means local processing,
 not remote delivery. The counter is diagnostic and is not a delivery receipt.
+
+Malformed connection rows use a separate index-fallback HMAC namespace. Telemetry retains the closed `identity_state: unmappable` flag. The unused top-level policy-route diagnostic is omitted; the producer-owned netif warning remains. Failed command acknowledgements retain their existing error envelope but always clear `applied`.

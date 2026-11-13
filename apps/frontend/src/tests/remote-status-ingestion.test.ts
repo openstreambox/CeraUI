@@ -5,7 +5,7 @@ vi.mock("$lib/config", () => ({
 	navElements: { network: { label: "Network" } },
 }));
 
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const handlers = vi.hoisted(() => ({
 	message: undefined as
@@ -35,10 +35,21 @@ import {
 } from "$lib/rpc/subscriptions.svelte";
 import { projectRemoteLegacyFrame } from "../../../backend/src/modules/remote/remote-status.ts";
 
+let sequence = 0;
 beforeEach(() => {
+	sequence++;
+	vi.stubGlobal(
+		"ResizeObserver",
+		class {
+			observe() {}
+			unobserve() {}
+			disconnect() {}
+		},
+	);
 	resetState();
 	initSubscriptions();
 });
+afterEach(() => vi.unstubAllGlobals());
 it("remote consumers receive neutral network labels and useful streaming/link metrics", () => {
 	const frame = projectRemoteLegacyFrame({
 		status: {
@@ -63,7 +74,7 @@ it("remote consumers receive neutral network labels and useful streaming/link me
 		},
 	});
 	for (const [type, payload] of Object.entries(frame))
-		handlers.message?.(type, payload, 1);
+		handlers.message?.(type, payload, sequence);
 	expect(getIsStreaming()).toBe(true);
 	expect(JSON.stringify(getWifi())).toMatch(/Wi-Fi \d+/);
 	expect(JSON.stringify(getModems())).toMatch(/Modem \d+/);
@@ -74,7 +85,7 @@ it("remote consumers receive neutral network labels and useful streaming/link me
 
 it("mounts Live view after ingesting a projected initial snapshot", () => {
 	const frame = projectRemoteLegacyFrame({
-		status: { is_streaming: false },
+		status: { is_streaming: true },
 		config: {},
 		pipelines: { hardware: "generic", pipelines: {} },
 		sources: { hardware: "generic", sources: [] },
@@ -82,7 +93,8 @@ it("mounts Live view after ingesting a projected initial snapshot", () => {
 		acodecs: { aac: { name: "AAC" } },
 	});
 	for (const [type, payload] of Object.entries(frame))
-		handlers.message?.(type, payload, 1);
+		handlers.message?.(type, payload, sequence);
+	expect(getIsStreaming()).toBe(true);
 	const view = render(LiveView);
 	expect(view.container.textContent).toBeTruthy();
 	view.unmount();
