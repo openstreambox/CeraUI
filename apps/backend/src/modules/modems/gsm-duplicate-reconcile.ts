@@ -25,6 +25,7 @@ import {
 	nmConnsGet,
 	nmcliParseSep,
 } from "../network/network-manager.ts";
+import type { BearerIpFamilyFields } from "./bearer-ip-family.ts";
 
 /**
  * One gsm profile as NetworkManager describes it RIGHT NOW.
@@ -169,7 +170,7 @@ export async function reconcileDuplicateGsmProfiles(
 	deviceId: string,
 	simId: string,
 	keepUuid: string,
-	fields: NetworkManagerConnectionModemConfig,
+	fields: NetworkManagerConnectionModemConfig & Partial<BearerIpFamilyFields>,
 	deps: GsmReconcileDeps = defaultGsmReconcileDeps,
 ): Promise<GsmReconcileResult> {
 	const empty: GsmReconcileResult = {

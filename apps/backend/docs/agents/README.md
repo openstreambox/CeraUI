@@ -112,4 +112,5 @@ Every original section is retained below, including appended `…AND` runs. Read
 
 Read [subscription and transport policy](subscription-and-transport-policy.md)
 before using the subscription matcher, profile planner, transport quirks or
-per-path health decisions. These are not yet connected to runtime effects.
+per-path health decisions. The stored automatic bearer-family owner is the first
+runtime consumer; other effects remain separate.

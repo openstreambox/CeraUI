@@ -1,7 +1,7 @@
 # Subscription and transport policy
 
-These modules are a policy foundation. They are not wired into the cellular
-composition root and do not change device behavior. In particular, an
+The pure modules are a policy foundation. The stored bearer-family owner below
+is their first runtime consumer; other planned runtime effects remain separate. In particular, an
 `internal-call` quirk describes an adapter requirement; it does not start an
 RNDIS owner. No Python service is a production dependency.
 
@@ -43,5 +43,27 @@ The colocated replay tests are synthetic policy scenarios. They cover SIM
 movement, old-result rejection, foreign attach settings, family decisions,
 independent path health, RNDIS grant parsing and USB return. They do not exercise
 real NM, D-Bus, AT serial I/O, translation, kernel routing or the production
-cellular owner. Runtime wiring and a disconnected network-namespace gate remain
+cellular owner. Complete runtime ownership and the disconnected real-NM acceptance gate remain
 required before claiming automatic connectivity.
+
+## Stored automatic bearer-family owner
+
+`automatic-bearer-family.ts` is the first runtime consumer. The modem poll calls
+it outside the reconcile lock, before retained ready activation. It only admits
+existing automatic profiles, recognized subscriptions and exact NM-owned
+transport tuples. It changes IP-family fields, with source-only IPv6 and no
+reconnect; APN application and first-activation preparation remain separate.
+
+The owner reads NM's device+SIM binding, journals the complete previous IP fields
+with the existing modem-config lifecycle lease, rechecks intent and physical
+pair before dispatch, then verifies readback. Failed writes try their inverse;
+failed inverse verification retains the durable mutation block. The rollback
+handler is imported with the poll owner before boot recovery. Its versioned
+pre-state deliberately contains no USB-descriptor baseline that could falsely
+compare equal while the NM fields still differ. Recovery resolves the live
+physical key, device and SIM independently of the not-yet-hydrated modem roster.
+Legacy journal shapes are refused by this handler. No active bearer is reset.
+
+Operator guidance is in [automatic cellular families](../../../../docs/CELLULAR-AUTOMATION.md).
+The disconnected IPv6/NAT64 kernel test covers the restored utility layer; it is
+not the complete real-NM, CLAT or lifecycle acceptance gate.
