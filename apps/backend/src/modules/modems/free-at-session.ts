@@ -114,7 +114,9 @@ export class ReadOnlyAtSession {
 				if (chunk && chunk.length === 0)
 					throw new FreeAtReadError("port-failed");
 				if (chunk) quietSince = this.clock.now();
-				else await this.clock.sleep(POLL_MS);
+				// Always yield between reads: a port that never stops talking must
+				// not hold the backend's event loop for the whole drain limit.
+				await this.clock.sleep(POLL_MS);
 			}
 		} catch (error) {
 			throw asReadError(error);
@@ -156,7 +158,6 @@ export class ReadOnlyAtSession {
 						this.dirty = false;
 						throw new FreeAtReadError("modem-error");
 					}
-					continue;
 				}
 				if (this.clock.now() >= end) throw new FreeAtReadError("timeout");
 				await this.clock.sleep(POLL_MS);

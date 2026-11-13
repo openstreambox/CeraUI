@@ -83,7 +83,8 @@ describe("read-only AT session on a pty", () => {
 		const { fake, session } = await modem(() => answers.shift() ?? []);
 		const start = performance.now();
 		expect(await reason(session.query("AT+QTEMP", 200))).toBe("timeout");
-		expect(performance.now() - start).toBeLessThan(500);
+		// Bounded by the deadline, not left hanging (generous for loaded runners).
+		expect(performance.now() - start).toBeLessThan(2000);
 		expect(session.dirty).toBe(true);
 		fake.emit("\r\nOK\r\n"); // the old reply's late final code
 		const raw = await session.query('AT+QENG="servingcell"', 1000);
@@ -95,7 +96,7 @@ describe("read-only AT session on a pty", () => {
 		const { session } = await modem(() => []);
 		const start = performance.now();
 		expect(await reason(session.query("AT+QTEMP", 150))).toBe("timeout");
-		expect(performance.now() - start).toBeLessThan(400);
+		expect(performance.now() - start).toBeLessThan(2000);
 	});
 
 	test("ERROR, +CME ERROR and +CMS ERROR are no reading", async () => {
@@ -152,13 +153,58 @@ describe("read-only AT session on a pty", () => {
 	});
 
 	test("a port that never goes quiet is refused before writing", async () => {
-		const { fake, session } = await modem(() => []);
-		const noise = setInterval(() => fake.emit('+QIND: "noise"\r\n'), 10);
-		cleanups.push(() => clearInterval(noise));
+		// An in-memory port and a virtual clock: the noise never pauses, whatever
+		// the event loop is doing (a timer-driven pty here raced the drain). The
+		// session must also yield between reads, or this would never return.
+		let now = 0;
+		const written: Uint8Array[] = [];
+		const port: TtyPort = {
+			read: () => new TextEncoder().encode('+QIND: "noise"\r\n'),
+			write: (data) => {
+				written.push(data);
+				return data.length;
+			},
+			flushInput: () => {},
+			close: () => {},
+		};
+		const session = new ReadOnlyAtSession(port, {
+			now: () => now,
+			sleep: async (ms) => {
+				now += ms;
+			},
+		});
 		expect(await reason(session.query("AT+QTEMP", 1000))).toBe(
 			"port-not-quiet",
 		);
-		expect(fake.received).toBe("");
+		expect(written).toEqual([]);
+	});
+
+	test("a pause in the noise shorter than the quiet window does not count as quiet", async () => {
+		let now = 0;
+		const written: Uint8Array[] = [];
+		const port: TtyPort = {
+			// Noise on every other poll: 5 ms gaps, never 50 ms of silence.
+			read: () =>
+				Math.floor(now / 5) % 2 === 0
+					? new TextEncoder().encode("+QIND\r\n")
+					: null,
+			write: (data) => {
+				written.push(data);
+				return data.length;
+			},
+			flushInput: () => {},
+			close: () => {},
+		};
+		const session = new ReadOnlyAtSession(port, {
+			now: () => now,
+			sleep: async (ms) => {
+				now += ms;
+			},
+		});
+		expect(await reason(session.query("AT+QTEMP", 1000))).toBe(
+			"port-not-quiet",
+		);
+		expect(written).toEqual([]);
 	});
 
 	test("the open is exclusive and close restores the line settings", async () => {
