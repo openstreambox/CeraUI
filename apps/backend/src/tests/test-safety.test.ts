@@ -15,8 +15,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as workerThreads from "node:worker_threads";
+import * as safety from "../../../../scripts/test-safety.ts";
 import {
 	assertLoopbackHost,
+	assertOwnedSignalTarget,
 	assertSafeCommand,
 	takeSafetyViolations,
 	writePathStubs,
@@ -352,7 +354,10 @@ test("PATH stubs without a real systemctl answer read-only queries like a missin
 		expect(mutation.exitCode).toBe(97);
 		expect(readFileSync(recordFile, "utf8")).toContain("systemctl --user stop");
 		writeFileSync(recordFile, "");
-		writePathStubs(dir, recordFile, "/bin/true");
+		const realQuery = join(dir, "query-fixture");
+		writeFileSync(realQuery, "#!/bin/sh\nexit 0\n");
+		chmodSync(realQuery, 0o755);
+		writePathStubs(dir, recordFile, realQuery);
 		const passThrough = Bun.spawnSync([
 			"sh",
 			join(dir, "systemctl"),
@@ -460,4 +465,105 @@ test("fetch through a proxy is judged by the proxy, not only the target", () => 
 		else process.env.HTTP_PROXY = saved;
 	}
 	expect(takeSafetyViolations()).toHaveLength(2);
+});
+
+test("script builtin kill refuses targets with no process identity", () => {
+	const dir = mkdtempSync(join(tmpdir(), "ceraui-safety-unknown-pid-"));
+	try {
+		const script = join(dir, "signal.sh");
+		writeFileSync(script, '#!/bin/sh\nkill -CONT "$1"\n');
+		chmodSync(script, 0o755);
+		const unknown = "2147483647";
+		for (const command of [
+			["sh", script, unknown],
+			[script, unknown],
+		])
+			expect(() => assertSafeCommand(command)).toThrow(
+				"Unsafe test process command",
+			);
+		writeFileSync(script, `#!/bin/sh\nkill -CONT ${unknown}\n`);
+		expect(() => assertSafeCommand(["sh", script])).toThrow(
+			"Unsafe test process command",
+		);
+		expect(takeSafetyViolations()).toHaveLength(3);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("ownership rejects reused identities and retires exited portable children", () => {
+	let identity: string | undefined = "start-one";
+	const ownership = new safety.ProcessOwnership(() => identity);
+	ownership.add(42);
+	expect(ownership.has(42)).toBe(true);
+	identity = "start-two";
+	expect(ownership.has(42)).toBe(false);
+	identity = undefined;
+	ownership.add(43);
+	expect(ownership.has(43)).toBe(false);
+	let live = true;
+	ownership.add(44, () => live);
+	expect(ownership.has(44)).toBe(true);
+	live = false;
+	expect(ownership.has(44)).toBe(false);
+	identity = "start-three";
+	ownership.add(45);
+	ownership.delete(45);
+	expect(ownership.has(45)).toBe(false);
+});
+
+test("exited spawned children lose signal ownership", async () => {
+	const child = Bun.spawn([process.execPath, "--eval", "0"]);
+	await child.exited;
+	expect(() => assertOwnedSignalTarget(child.pid, "SIGCONT")).toThrow(
+		"Unsafe test signal",
+	);
+	expect(takeSafetyViolations()).toHaveLength(1);
+});
+
+test("fetch refuses automatic redirects before the next request", async () => {
+	let hits = 0;
+	const destination = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch() {
+			hits++;
+			return new Response("unexpected");
+		},
+	});
+	const redirect = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch() {
+			return Response.redirect(`http://127.0.0.1:${destination.port}/`, 302);
+		},
+	});
+	try {
+		const url = `http://127.0.0.1:${redirect.port}/`;
+		for (const request of [
+			() => fetch(url),
+			() => fetch(url, { redirect: "follow" }),
+			() => fetch(new Request(url, { redirect: "follow" })),
+		]) {
+			await expect(request()).rejects.toThrow();
+		}
+		expect(hits).toBe(0);
+		const manual = await fetch(url, { redirect: "manual" });
+		expect(manual.status).toBe(302);
+	} finally {
+		redirect.stop(true);
+		destination.stop(true);
+	}
+});
+
+test("exited Node children lose signal ownership", async () => {
+	const { spawn } = await import("node:child_process");
+	const child = spawn(process.execPath, ["--eval", "0"]);
+	await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+	if (child.pid === undefined) throw new Error("Child did not start");
+	const pid = child.pid;
+	expect(() => assertOwnedSignalTarget(pid, "SIGCONT")).toThrow(
+		"Unsafe test signal",
+	);
+	expect(takeSafetyViolations()).toHaveLength(1);
 });

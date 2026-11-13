@@ -6,7 +6,6 @@ import {
 	chmodSync,
 	closeSync,
 	constants,
-	existsSync,
 	mkdtempSync,
 	openSync,
 	readFileSync,
@@ -190,8 +189,7 @@ function scriptIsDangerous(source: string, args: readonly string[], depth: numbe
 		);
 		for (const candidate of [...args, ...literals]) {
 			const pid = Math.abs(Number(candidate.replace(/^-/, '')));
-			if (/^-?\d+$/.test(candidate) && pid >= 1 && existsSync(`/proc/${pid}`) && !isOwnedPid(pid))
-				return true;
+			if (/^-?\d+$/.test(candidate) && pid >= 1 && !isOwnedPid(pid)) return true;
 		}
 	}
 	if (POSITIONAL_PARAMETER.test(script)) assertWrappedCommand(args, depth);
@@ -273,20 +271,65 @@ export function takeSafetyViolations(): string[] {
 	return [...violations.splice(0), ...takeStubCalls()];
 }
 
-const ownedPids = new Set<number>();
+/** Numeric PIDs are never authority after exit or a change of start identity. */
+export class ProcessOwnership {
+	private readonly entries = new Map<number, { identity?: string; live?: () => boolean }>();
+	constructor(private readonly identity: (pid: number) => string | undefined) {}
+	add(pid: number, live?: () => boolean): void {
+		const identity = this.identity(pid);
+		if (identity !== undefined || live?.()) this.entries.set(pid, { identity, live });
+	}
+	delete(pid: number): void {
+		this.entries.delete(pid);
+	}
+	has(pid: number): boolean {
+		const entry = this.entries.get(pid);
+		if (!entry) return false;
+		const valid =
+			entry.live?.() !== false &&
+			(entry.identity !== undefined
+				? this.identity(pid) === entry.identity
+				: entry.live?.() === true);
+		if (!valid) this.entries.delete(pid);
+		return valid;
+	}
+}
+
+const ownedPids = new ProcessOwnership((pid) => procStat(pid)?.start);
 
 function trackChild<T>(result: T): T {
-	const pid = (result as { pid?: unknown } | undefined)?.pid;
-	if (typeof pid === 'number' && pid > 0) ownedPids.add(pid);
+	const child = result as
+		| {
+				pid?: number;
+				exitCode?: number | null;
+				signalCode?: string | null;
+				exited?: Promise<number>;
+				once?: (event: string, callback: () => void) => void;
+		  }
+		| undefined;
+	const pid = child?.pid;
+	if (child && typeof pid === 'number' && pid > 0) {
+		let exited = false;
+		const retire = () => {
+			exited = true;
+			ownedPids.delete(pid);
+		};
+		const live = () => !exited && child.exitCode === null && !child.signalCode;
+		ownedPids.add(pid, live);
+		if (child.exited) void child.exited.then(retire, retire);
+		else child.once?.('exit', retire);
+	}
 	return result;
 }
 
-function procStat(pid: number): { ppid: number; pgrp: number } | undefined {
+function procStat(pid: number): { ppid: number; pgrp: number; start: string } | undefined {
 	try {
 		const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
 		// Fields after the command name: state, ppid, pgrp, …
-		const [, ppid, pgrp] = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-		return { ppid: Number(ppid), pgrp: Number(pgrp) };
+		const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+		const start = fields[19];
+		if (!start || fields[0] === 'Z' || fields[0] === 'X') return undefined;
+		return { ppid: Number(fields[1]), pgrp: Number(fields[2]), start };
 	} catch {
 		return undefined;
 	}
@@ -310,7 +353,8 @@ function carriesOwnerToken(pid: number): boolean {
 }
 
 function isOwnedPid(pid: number): boolean {
-	if (pid === process.pid || ownedPids.has(pid) || carriesOwnerToken(pid)) return true;
+	if (pid === process.pid || ownedPids.has(pid)) return true;
+	if (procStat(pid) && carriesOwnerToken(pid)) return true;
 	const first = procStat(pid);
 	if (first && ownedPids.has(first.pgrp)) return true;
 	let current = first?.ppid;
@@ -824,7 +868,10 @@ export function installNetworkSafetyGuard(): void {
 				);
 			else assertProxyEnvironment(new URL(String(target)).hostname);
 		}
-		return realFetch(...args);
+		// Native redirect following would bypass validation on the next hop.
+		const redirect =
+			args[1]?.redirect ?? (args[0] instanceof Request ? args[0].redirect : undefined);
+		return realFetch(args[0], { ...args[1], redirect: redirect === 'manual' ? 'manual' : 'error' });
 	}, realFetch);
 	// Bun.fetch and `import { fetch } from "bun"` are read-only; a source scan
 	// keeps the backend on the global fetch instead.

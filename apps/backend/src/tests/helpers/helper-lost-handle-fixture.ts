@@ -181,8 +181,10 @@ export async function helperLostHandleFixture(error: unknown, actor = "jq") {
 						cause instanceof Error &&
 						"code" in cause &&
 						cause.code === "ESRCH"
-					)
+					) {
+						survivor = 0;
 						break;
+					}
 					throw cause;
 				}
 				if (Date.now() >= deadline) throw new Error("tool not reaped");
