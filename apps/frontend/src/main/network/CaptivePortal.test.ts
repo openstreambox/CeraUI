@@ -3,12 +3,17 @@ import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { beforeEach, expect, it, vi } from "vitest";
 import CaptivePortal from "./CaptivePortal.svelte";
 
-const { portal } = vi.hoisted(() => ({ portal: vi.fn() }));
+const { portal, gate } = vi.hoisted(() => ({
+	portal: vi.fn(),
+	gate: { enabled: true as boolean | undefined },
+}));
 vi.mock("$lib/rpc/client", () => ({ rpc: { wifi: { portal } } }));
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
+	getConfig: () => ({ captive_portal_enabled: gate.enabled }),
 	getWifi: () => ({ "2": { conn: "saved", hw: "Wi-Fi 2" } }),
 }));
 beforeEach(() => {
+	gate.enabled = true;
 	portal.mockReset();
 	portal.mockResolvedValue({ phase: "idle" });
 });
@@ -52,7 +57,7 @@ it.each([
 	],
 	[
 		"cleanup_required",
-		"The previous sign-in is still closing. Wait a moment, then retry.",
+		"The previous sign-in could not be cleared. Try again later.",
 	],
 	["not_on_box_wifi", "Join the box's own Wi-Fi, then try again."],
 	[
@@ -61,7 +66,7 @@ it.each([
 	],
 	[
 		"busy_other_phone",
-		"A sign-in window is already open. Close it before starting another.",
+		"Sign-in is open on another phone. It closes within ten minutes.",
 	],
 	[
 		"wifi_unavailable",
@@ -98,3 +103,26 @@ it("keeps an uncertain window closable and shows its expiry", async () => {
 	);
 	expect(view.getByText(/Web forwarding ends by/)).toBeTruthy();
 });
+
+it("hides a forwarding deadline that has already passed", async () => {
+	portal.mockResolvedValue({
+		phase: "cleanup_unknown",
+		expiresAt: Date.now() - 1000,
+	});
+	const view = render(CaptivePortal);
+	await waitFor(() =>
+		expect(view.getByRole("button", { name: "Close again" })).toBeTruthy(),
+	);
+	expect(view.queryByText(/Web forwarding ends by/)).toBeNull();
+});
+
+it.each([undefined, false])(
+	"hides the experimental card when the gate is %s",
+	async (enabled) => {
+		gate.enabled = enabled;
+		const view = render(CaptivePortal);
+		expect(view.queryByRole("region")).toBeNull();
+		expect(view.queryByRole("button")).toBeNull();
+		expect(portal).not.toHaveBeenCalled();
+	},
+);

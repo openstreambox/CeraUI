@@ -2,6 +2,8 @@ import { expect, mock, test } from "bun:test";
 
 const commands: string[] = [];
 let failOpen = false;
+let unavailable = false;
+let webAvailable = false;
 let failSweep = false;
 let failCleanupAfterOpen = false;
 const binding = {
@@ -14,6 +16,7 @@ const binding = {
 };
 mock.module("../helpers/run.ts", () => ({
 	run: async (bin: string, args: string[]) => {
+		if (bin === "curl") return "204";
 		if (bin === "iw") return "Station 02:00:00:00:00:02 (on ap0)";
 		if (args.includes("neigh"))
 			return JSON.stringify([
@@ -37,16 +40,20 @@ mock.module("../mocks/mock-service.ts", () => ({
 	shouldUseMocks: () => false,
 }));
 mock.module("../modules/network/device-bound-probe.ts", () => ({
-	checkConnectivityViaDevice: async () => false,
+	checkConnectivityViaDevice: async () => webAvailable,
 }));
 mock.module("../modules/network/uplink-health/connectivity-target.ts", () => ({
-	createConnectivityTargetResolver: () => async () => undefined,
+	createConnectivityTargetResolver: () => async () =>
+		webAvailable ? "192.0.2.1" : undefined,
 }));
 mock.module("../modules/network/uplink-health/state.ts", () => ({
 	getUplinkHealthEngine: () => ({ get: () => ({ reason: "captive_portal" }) }),
 }));
 mock.module("../modules/wifi/captive-portal-readers.ts", () => ({
-	captureWifiPortalBindingFromSystem: async () => ({ ok: true, binding }),
+	captureWifiPortalBindingFromSystem: async () => ({
+		ok: !unavailable,
+		binding,
+	}),
 	createSystemPortalReaderDeps: () => ({}),
 }));
 mock.module("../modules/wifi/wifi-connections.ts", () => ({
@@ -100,4 +107,33 @@ test("a failed open with uncertain retirement retains ownership and converges on
 	expect(await portalHealthProbe("venue0", async () => "success")).toBe(
 		"success",
 	);
+});
+
+test("a later pre-config failure never closes the previous phone's config", async () => {
+	failOpen = false;
+	failCleanupAfterOpen = false;
+	await signInWindow.start("10.42.0.2", "2");
+	await signInWindow.finish("10.42.0.2");
+	commands.length = 0;
+	unavailable = true;
+	await expect(signInWindow.start("10.42.0.3", "2")).rejects.toThrow(
+		"identity_unavailable",
+	);
+	expect(commands).toEqual(["sweep"]);
+	unavailable = false;
+});
+
+test("the post-close check uses the retired binding once without retaining active config", async () => {
+	failOpen = false;
+	webAvailable = true;
+	await signInWindow.start("10.42.0.4", "2");
+	expect((await signInWindow.finish("10.42.0.4")).phase).toBe("web_available");
+	commands.length = 0;
+	unavailable = true;
+	await expect(signInWindow.start("10.42.0.5", "2")).rejects.toThrow(
+		"identity_unavailable",
+	);
+	expect(commands).toEqual(["sweep"]);
+	unavailable = false;
+	webAvailable = false;
 });

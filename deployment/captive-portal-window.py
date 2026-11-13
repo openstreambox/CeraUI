@@ -143,7 +143,7 @@ def sweep(_config):
                 not rule.get('iif') or rule.get('src') == 'all'):
             raise ValueError('foreign route owner')
         if (ipaddress.IPv4Network(rule['src'], strict=False).prefixlen != 32 or
-                set(rule) - {'priority', 'src', 'fwmark', 'fwmask', 'iif', 'table', 'protocol'}):
+                set(rule) - {'priority', 'src', 'fwmark', 'fwmask', 'iif', 'iif_detached', 'table', 'protocol'}):
             raise ValueError('foreign rule selectors')
         if not re.fullmatch(r'[a-zA-Z0-9_.][a-zA-Z0-9_.-]{0,14}', rule['iif']):
             raise ValueError('invalid ingress')

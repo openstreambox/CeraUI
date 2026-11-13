@@ -285,6 +285,18 @@ assert b'healthy' in udp.recv(32)
     time.sleep(1.1)
     subprocess.run(['python3', '-I', helper, 'sweep'], input='{}', text=True, check=True)
     subprocess.run(['python3', '-I', helper, 'sweep'], input='{}', text=True, check=True)
+    # A removed ingress is reported as iif_detached, not a foreign selector.
+    # Use a disposable AP so the continuous phone/control proof stays intact.
+    run('ip', 'link', 'add', 'retiredap', 'type', 'dummy')
+    run('ip', 'link', 'set', 'retiredap', 'up')
+    p.open_window({**c, 'ap': 'retiredap'})
+    run('ip', 'link', 'del', 'retiredap')
+    detached = json.loads(run('ip', '-j', '-4', 'rule', 'show'))
+    assert any('iif_detached' in rule for rule in detached if str(rule.get('table')) == p.ROUTE_TABLE)
+    subprocess.run(['python3', '-I', helper, 'sweep'], input='{}', text=True, check=True)
+    subprocess.run(['python3', '-I', helper, 'sweep'], input='{}', text=True, check=True)
+    assert not run('ip', '-4', 'route', 'show', 'table', p.ROUTE_TABLE)
+    assert '90:' not in run('ip', '-4', 'rule', 'show')
     # Device removal also retires its routes; cleanup must not require the old name.
     p.open_window(c)
     run('ip', 'link', 'del', 'wan1')
@@ -297,7 +309,7 @@ assert b'healthy' in udp.recv(32)
         assert proc.stdout.read() == b'relay packets 160/160\n'
     assert local_client.wait(timeout=25) == 0
     assert local_client.stdout.read() == b'control 160/160\n'
-    print('PASS: local control 160/160; 640/640 continuous relay packets on two source-bound uplinks; phone web/DNS only; SRTLA/Moblink and main routes unchanged; expiry and close')
+    print('PASS: local control 160/160; 640/640 continuous relay packets on two source-bound uplinks; phone web/DNS only; SRTLA/Moblink and main routes unchanged; expiry, close and detached-ingress recovery')
 except subprocess.CalledProcessError as error:
     print(error.stderr, error.stdout, file=sys.stderr)
     print(run('nft','list','ruleset'), file=sys.stderr)

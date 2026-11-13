@@ -27,6 +27,7 @@ interface RouteConfig {
 }
 let config: RouteConfig | undefined;
 let binding: PortalBinding | undefined;
+let closedBinding: PortalBinding | undefined;
 let needsSweep = false;
 let radioId = 0;
 let releaseHealth: () => void = () => undefined;
@@ -60,6 +61,7 @@ export async function reconcilePortalWindow() {
 
 export const signInWindow = createSignInWindow({
 	async open(peer, radio) {
+		closedBinding = undefined;
 		if (shouldUseMocks()) throw Error("not_on_box_wifi");
 		if (!isIPv4(peer)) throw Error("ipv4_required");
 		const candidate = Object.values(getWifiInterfacesByMacAddress()).find(
@@ -138,6 +140,9 @@ export const signInWindow = createSignInWindow({
 	async close() {
 		await effect(needsSweep ? "sweep" : "close");
 		needsSweep = false;
+		closedBinding = config ? binding : undefined;
+		config = undefined;
+		binding = undefined;
 		releaseHealth();
 	},
 	async unchanged() {
@@ -145,12 +150,17 @@ export const signInWindow = createSignInWindow({
 		return now.ok && JSON.stringify(now.binding) === JSON.stringify(binding);
 	},
 	async check() {
-		if (!config || !(await this.unchanged())) return false;
+		const binding = closedBinding;
+		closedBinding = undefined;
+		if (!binding) return false;
+		const now = await capture();
+		if (!now.ok || JSON.stringify(now.binding) !== JSON.stringify(binding))
+			return false;
 		const address = await target();
 		if (
 			!address ||
 			!isIPv4(address) ||
-			!(await checkConnectivityViaDevice(address, config.wan))
+			!(await checkConnectivityViaDevice(address, binding.link.ifname))
 		)
 			return false;
 		// TLS must validate normally; never follow redirects or accept a portal certificate.
@@ -162,7 +172,7 @@ export const signInWindow = createSignInWindow({
 				"*",
 				"--silent",
 				"--interface",
-				`if!${config.wan}`,
+				`if!${binding.link.ifname}`,
 				"--max-time",
 				"5",
 				"--resolve",
@@ -175,10 +185,10 @@ export const signInWindow = createSignInWindow({
 		);
 		return result === "204";
 	},
-	arm(expire) {
+	arm(expire, peer) {
 		const timeout = setTimeout(expire, 600000);
 		const interval = setInterval(() => {
-			if (config) void signInWindow.refresh(config.phone);
+			void signInWindow.refresh(peer);
 		}, 10000);
 		return () => {
 			clearTimeout(timeout);

@@ -236,7 +236,7 @@ function openModemConfig(id: string) {
 			{netif}
 			{hotspotInterfaces}
 		/>
-		<CaptivePortal />
+		{#if getConfig()?.captive_portal_enabled === true}<CaptivePortal />{/if}
 		<WifiSection
 			wifiRadios={wifiEntries}
 			{netif}

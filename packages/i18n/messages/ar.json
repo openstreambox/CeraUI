@@ -2889,10 +2889,14 @@
 	"network.portal.not_captive": "This Wi-Fi does not need sign-in.",
 	"network.portal.wifi_changed": "The Wi-Fi changed. Choose it again, then retry.",
 	"network.portal.identity_unavailable": "The box cannot confirm this Wi-Fi yet. Wait a moment, then retry.",
-	"network.portal.cleanup_required": "The previous sign-in is still closing. Wait a moment, then retry.",
+	"network.portal.cleanup_required": "The previous sign-in could not be cleared. Try again later.",
 	"network.portal.not_on_box_wifi": "Join the box's own Wi-Fi, then try again.",
-	"network.portal.busy_other_phone": "A sign-in window is already open. Close it before starting another.",
+	"network.portal.busy_other_phone": "Sign-in is open on another phone. It closes within ten minutes.",
 	"network.portal.wifi_unavailable": "This Wi-Fi is no longer connected. Connect it, then retry.",
 	"network.portal.expires": "Web forwarding ends by {time}.",
-	"network.portal.ipv4_required": "This sign-in needs IPv4. Reconnect to the box’s Wi-Fi, then try again."
+	"network.portal.ipv4_required": "This sign-in needs IPv4. Reconnect to the box’s Wi-Fi, then try again.",
+	"settings.portal.experimentalTitle": "Wi-Fi sign-in (experimental)",
+	"settings.portal.experimentalDescription": "Off by default. Sign in to hotel Wi-Fi from your phone. Still needs real-network testing. Turning this off prevents new windows; existing windows close within ten minutes.",
+	"network.portal.experimentalDisabled": "Enable experimental Wi-Fi sign-in in Settings to use this feature.",
+	"settings.portal.experimentalSaveError": "The setting could not be saved. Try again."
 }

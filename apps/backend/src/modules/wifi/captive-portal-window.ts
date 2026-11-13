@@ -3,7 +3,7 @@ export interface WindowDeps {
 	close(): Promise<void>;
 	check(): Promise<boolean>;
 	unchanged(): Promise<boolean>;
-	arm(expire: () => void): () => void;
+	arm(expire: () => void, peer: string): () => void;
 }
 type Phase =
 	| "idle"
@@ -66,7 +66,7 @@ export function createSignInWindow(deps: WindowDeps) {
 				phase = "signing_in";
 				disarm = deps.arm(() => {
 					if (generation === ticket) void finish(peer).catch(() => undefined);
-				});
+				}, peer);
 			} catch (error) {
 				try {
 					await deps.close();
@@ -75,7 +75,7 @@ export function createSignInWindow(deps: WindowDeps) {
 					expiresAt = Date.now() + 600000;
 					disarm = deps.arm(() => {
 						void finish(peer).catch(() => undefined);
-					});
+					}, peer);
 					return status(peer);
 				}
 				expiresAt = undefined;

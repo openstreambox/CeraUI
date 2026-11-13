@@ -60,6 +60,7 @@ import type {
 	NetifConfigOutput,
 	OpenRouterAdminInput,
 	OpenRouterAdminOutput,
+	PortalWindowInput,
 	PortalWindowStatus,
 	PreviewTokenOutput,
 	RelayValidateInput,
@@ -811,10 +812,7 @@ export interface TypedRPC {
 		ussdCancel: (input: UssdCancelInput) => Promise<ModemUssdOutput>;
 	};
 	wifi: {
-		portal: (input: {
-			action: "start" | "finish" | "status";
-			radio?: number;
-		}) => Promise<PortalWindowStatus>;
+		portal: (input: PortalWindowInput) => Promise<PortalWindowStatus>;
 		getStatus: () => Promise<unknown>;
 		connect: (input: WifiConnectInput) => Promise<WifiOperationOutput>;
 		disconnect: (input: WifiDisconnectInput) => Promise<WifiOperationOutput>;

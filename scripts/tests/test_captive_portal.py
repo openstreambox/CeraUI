@@ -60,6 +60,17 @@ class RecoveryTests(unittest.TestCase):
             portal.close_window(WindowTests().config())
         self.assertTrue(any(a[:3] == ('nft', 'delete', 'table') for a in calls))
 
+    def test_sweep_accepts_detached_ingress_flag(self):
+        import json
+        rule = dict(priority=90, table=16413, fwmark=portal.MARK, iif='ap0', src='10.42.0.2', iif_detached=None)
+        calls = []
+        def run(*a, **kw):
+            calls.append(a)
+            return json.dumps([rule]) if a == ('ip', '-j', '-4', 'rule', 'show') else ''
+        with patch.object(portal, 'run', side_effect=run), patch.object(portal.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')):
+            portal.sweep({})
+        self.assertIn(('ip', '-4', 'route', 'flush', 'table', '16413'), calls)
+
     def test_sweep_refuses_foreign_rules_before_mutation(self):
         import json
         rule = dict(priority=90, table=16413, fwmark='0xca000100', iif='ap0', src='10.42.0.2')

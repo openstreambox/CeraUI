@@ -1,5 +1,11 @@
 # Bounded Wi-Fi sign-in (experimental)
 
+Off by default. In Settings, enable **Wi-Fi sign-in (experimental)** to show the
+card in Links. Absent or false `captive_portal_enabled` rejects new starts at
+the backend too. The setting is persisted and broadcast only after a successful
+save. Disabling prevents new windows; existing cleanup, expiry and startup
+recovery remain active. This is experimental and still needs real-network tests.
+
 The Links view offers a ten-minute IPv4 web and DNS window to an authenticated
 phone associated with the box's AP. Select the connected venue Wi-Fi, open the
 hotel's page, and accept its terms yourself in your browser. Use **Check sign-in**
@@ -69,13 +75,18 @@ kernel expiry and cleanup. It is not a real-radio qualification.
 
 ## Español (Latinoamérica)
 
+Desactivada de forma predeterminada. Activa **Inicio de sesión Wi-Fi (experimental)**
+en Ajustes para mostrar la tarjeta en Enlaces. Desactivarla impide nuevas ventanas;
+el cierre y la caducidad de las ventanas abiertas siguen activos. Aún requiere
+pruebas con redes reales.
+
 En Enlaces, elige el Wi-Fi del hotel y abre su página desde un teléfono conectado
-al Wi-Fi de la caja. La caja necesita su propio inicio de sesión. Acepta las
+al Wi-Fi del equipo. El equipo necesita su propio inicio de sesión. Acepta las
 condiciones tú mismo en la página del hotel. La ventana dura como máximo diez
 minutos; puedes cerrarla antes. El chat del teléfono puede pausarse mientras
 inicias sesión. Los enlaces que llevan la transmisión no cambian.
 
-Después de cerrar la ventana, la caja comprueba el acceso web por ese Wi-Fi.
+Después de cerrar la ventana, el equipo comprueba el acceso web por ese Wi-Fi.
 Las comprobaciones normales deciden cuándo puede ayudar con la transmisión.
 Si la página no abre, desactiva temporalmente la VPN, Private Relay o DNS privado
 y vuelve a activarlos al terminar. Esta función experimental requiere pruebas
@@ -108,3 +119,9 @@ reverse-path filtering on target images, coordinated mark-layout changes, and
 event-driven closure faster than the periodic identity check. REACHABLE/STALE
 neighbor state and current station association are required, but are not a DHCP
 identity proof. No radio or venue qualification is implied by the namespace tests.
+
+The client RPC deadline covers startup reconciliation, pre-open sweep, opening
+with rollback and retirement (four 120-second helper budgets plus identity reads).
+Detached ingress flags are recovery metadata, not additional rule selectors;
+foreign selectors still cause refusal. Closing clears active route configuration;
+only a one-use binding snapshot remains for the post-close web check.

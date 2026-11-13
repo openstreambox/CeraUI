@@ -326,6 +326,7 @@ export const runtimeConfigSchema = z.object({
 	// an in-session lost row is served by the uncapped in-memory session map, not
 	// this list. Additive-optional; defaults `[]` so old configs parse.
 	last_seen_devices: z.array(lastSeenDeviceSchema).optional(),
+	captive_portal_enabled: z.boolean().optional(),
 	autostart: z.boolean().optional(),
 
 	// Remote/cloud settings

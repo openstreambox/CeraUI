@@ -140,3 +140,23 @@ test("an uncertain open is closed before failure and remains closable if cleanup
 	close.mockImplementation(async () => {});
 	expect((await owner.finish("phone")).phase).toBe("needs_sign_in");
 });
+
+test("retry timers receive the current owner even if open failed before config", async () => {
+	let armedPeer = "";
+	const window = createSignInWindow({
+		open: async () => {
+			throw Error("unavailable");
+		},
+		close: async () => {
+			throw Error("cleanup");
+		},
+		check: async () => false,
+		unchanged: async () => true,
+		arm: (_expire, peer) => {
+			armedPeer = peer;
+			return () => {};
+		},
+	});
+	await window.start("10.42.0.3", "2");
+	expect(armedPeer).toBe("10.42.0.3");
+});

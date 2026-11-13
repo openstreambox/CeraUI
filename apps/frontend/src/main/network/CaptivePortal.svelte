@@ -2,9 +2,10 @@
 import { m } from '@ceraui/i18n/svelte';
 import { onMount } from 'svelte';
 import { rpc } from '$lib/rpc/client';
-import { getWifi } from '$lib/rpc/subscriptions.svelte';
+import { getConfig, getWifi } from '$lib/rpc/subscriptions.svelte';
 
 let phase = $state('idle');
+let now = $state(Date.now());
 let expiresAt = $state<number | undefined>();
 let error = $state('');
 let radio = $state('');
@@ -26,6 +27,7 @@ async function act(action: 'start' | 'finish' | 'status') {
  if (action !== 'status') {
  const reason = cause instanceof Error ? cause.message : '';
  switch (reason) {
+ case 'experimental_disabled': error = m['network.portal.experimentalDisabled'](); break;
  case 'ipv4_required': error = m['network.portal.ipv4_required'](); break;
  case 'not_captive': error = m['network.portal.not_captive'](); break;
  case 'wifi_changed': error = m['network.portal.wifi_changed'](); break;
@@ -41,10 +43,10 @@ async function act(action: 'start' | 'finish' | 'status') {
  }
  finally { busy = false; }
 }
-onMount(() => { void act('status'); const timer = setInterval(() => void act('status'), 3000); return () => clearInterval(timer); });
+onMount(() => { if (getConfig()?.captive_portal_enabled !== true) return; void act('status'); const timer = setInterval(() => { now = Date.now(); void act('status'); }, 3000); return () => clearInterval(timer); });
 </script>
 
-{#if radios.length > 0}
+{#if getConfig()?.captive_portal_enabled === true && radios.length > 0}
 <section aria-label={m['network.portal.title']()} class="rounded-lg border p-4 space-y-2">
  <h3>{m['network.portal.title']()}</h3>
  <p>{m['network.portal.intro']()}</p>
@@ -65,7 +67,7 @@ onMount(() => { void act('status'); const timer = setInterval(() => void act('st
   <p>{m['network.portal.duration']()}</p>
   <button type="button" disabled={busy || radio === ''} onclick={() => act('start')}>{m['network.portal.open']()}</button>
  {/if}
- {#if expiresAt && (phase === 'signing_in' || phase === 'cleanup_unknown')}
+ {#if expiresAt && expiresAt > now && (phase === 'signing_in' || phase === 'cleanup_unknown')}
  <p>{m['network.portal.expires']({time: new Date(expiresAt).toLocaleTimeString()})}</p>
  {/if}
  {#if error}<p role="status">{error}</p>{/if}

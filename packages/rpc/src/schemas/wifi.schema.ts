@@ -691,3 +691,10 @@ export const portalWindowStatusSchema = z.object({
 	expiresAt: z.number().int().nonnegative().optional(),
 });
 export type PortalWindowStatus = z.infer<typeof portalWindowStatusSchema>;
+
+export const portalWindowInputSchema = z.object({
+	action: z.enum(['start', 'finish', 'status', 'configure']),
+	radio: z.number().int().nonnegative().optional(),
+	enabled: z.boolean().optional(),
+});
+export type PortalWindowInput = z.infer<typeof portalWindowInputSchema>;

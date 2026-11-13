@@ -4,6 +4,15 @@ import { navigateTo } from './helpers/index.js';
 for (const width of [390, 1280]) {
  test(`sign-in window explains local admission at ${width}px`, async ({ authedPage: page }) => {
   await page.setViewportSize({width, height: 900});
+  await navigateTo(page, 'settings');
+  const gate = page.getByRole('switch', {name: 'Wi-Fi sign-in (experimental)'});
+  if (await gate.getAttribute('aria-checked') !== 'false') await gate.click();
+  await expect(gate).toHaveAttribute('aria-checked', 'false');
+  await navigateTo(page, 'network');
+  await expect(page.getByRole('region', {name: 'Sign the box in'})).toHaveCount(0);
+  await navigateTo(page, 'settings');
+  await page.getByRole('switch', {name: 'Wi-Fi sign-in (experimental)'}).click();
+  await expect(page.getByRole('switch', {name: 'Wi-Fi sign-in (experimental)'})).toHaveAttribute('aria-checked', 'true');
   await navigateTo(page, 'network');
   const card = page.getByRole('region', {name: 'Sign the box in'});
   await expect(card.getByRole('heading', {name: 'Sign the box in'})).toBeVisible();
