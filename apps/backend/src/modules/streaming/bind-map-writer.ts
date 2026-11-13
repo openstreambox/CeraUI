@@ -64,6 +64,7 @@ export type BindMapPublication =
 	| {
 			readonly ok: true;
 			readonly generation: number;
+			readonly ipsFileSha256?: string;
 			readonly changed: boolean;
 			readonly sidecarPath: string;
 	  }
@@ -118,21 +119,42 @@ export function defaultSidecarPath(ipsFile: string): string {
 
 /**
  * Writer-session state. `generation` is monotonic per WRITER PROCESS lifetime
- * and restarts at 1, which the reader tolerates by comparing with `!=` rather
- * than `>` — a decrease is indistinguishable from a legitimate restart, so it is
- * never a rejection. It is incremented on EVERY publication, including one whose
- * IP bytes did not change, because that is the only signal a mapping-only change
- * can produce.
+ * and restarts at 1 only with a new supervised sender lifetime. Changed mappings
+ * advance it even when IP bytes are identical. A consecutive successful no-op
+ * retains its identity: a fresh generation cannot be silently published without
+ * reloading the sender. Failed/uncertain publications invalidate that no-op cache.
  */
+let publicationTail: Promise<void> = Promise.resolve();
 let generation = 0;
 let tempCounter = 0;
 let lastPublished: readonly BondEntry[] | undefined;
+let lastSuccessful:
+	| {
+			readonly entries: readonly BondEntry[];
+			readonly generation: number;
+			readonly digest: string;
+			readonly ipsFile: string;
+			readonly sidecarFile: string;
+	  }
+	| undefined;
+const snapshotMapping = (entries: readonly BondEntry[]) =>
+	Object.freeze(entries.map((entry) => Object.freeze({ ...entry })));
 
 /** Drop the writer session (test isolation). Never call from production code. */
 export function resetBindMapWriter(): void {
+	publicationTail = Promise.resolve();
 	generation = 0;
 	tempCounter = 0;
 	lastPublished = undefined;
+	lastSuccessful = undefined;
+}
+
+/** A failed delivery makes the last published identity uncertain. Queue the
+ * invalidation behind in-flight writes so their completion cannot undo it. */
+export function invalidateBindMapReuse(): void {
+	publicationTail = publicationTail.then(() => {
+		lastSuccessful = undefined;
+	});
 }
 
 /** The generation the last successful publication carried, or 0 if none. */
@@ -163,17 +185,45 @@ async function publishAtomically(
  * interface to another leaves the IP bytes byte-identical, so a digest-only
  * comparison would silently skip the reload that is the entire point.
  */
-export async function publishBondMapping(
+export function publishBondMapping(
+	provided: readonly BondEntry[],
+	deps: BindMapWriterDeps,
+): Promise<BindMapPublication> {
+	// Capture caller-owned rows at submission; compare writer state only at execution.
+	const entries = snapshotMapping(provided);
+	const publication = publicationTail.then(() =>
+		publishBondMappingSerial(entries, deps),
+	);
+	publicationTail = publication.then(
+		() => undefined,
+		() => undefined,
+	);
+	return publication;
+}
+
+async function publishBondMappingSerial(
 	entries: readonly BondEntry[],
 	deps: BindMapWriterDeps,
 ): Promise<BindMapPublication> {
-	const changed =
-		lastPublished === undefined || !sameMapping(lastPublished, entries);
-	const ipsContent = renderIpsFile(entries);
+	const ipsContent = renderIpsFile(entries),
+		digest = createHash("sha256").update(ipsContent, "utf8").digest("hex"),
+		mappable = entries.every(isMappableEntry),
+		identical =
+			!!lastSuccessful &&
+			lastSuccessful.generation === generation &&
+			lastSuccessful.digest === digest &&
+			lastSuccessful.ipsFile === deps.ipsFile &&
+			lastSuccessful.sidecarFile === deps.sidecarFile &&
+			sameMapping(lastSuccessful.entries, entries),
+		changed =
+			lastPublished === undefined ||
+			!sameMapping(lastPublished, entries) ||
+			(mappable && !identical);
 
 	try {
 		await publishAtomically(deps, deps.ipsFile, ipsContent);
 	} catch (error) {
+		lastSuccessful = undefined;
 		logger.error("bind-map: failed to publish the IP list", { error });
 		return { ok: false, reason: "ips_write_failed", changed };
 	}
@@ -182,20 +232,22 @@ export async function publishBondMapping(
 	// the mapping cannot be: an undescribable link still carries traffic, it just
 	// cannot be told apart from a same-IP twin.
 	if (!entries.every(isMappableEntry)) {
-		lastPublished = [...entries];
+		lastPublished = entries;
+		lastSuccessful = undefined;
 		await retireSidecar(deps);
 		return { ok: false, reason: "unmappable", changed };
 	}
 
-	generation += 1;
-	const digest = createHash("sha256").update(ipsContent, "utf8").digest("hex");
-	const document = buildBindMapDocument(entries, generation, digest);
+	if (!identical) generation += 1;
+	const publishedGeneration = generation;
+	const document = buildBindMapDocument(entries, publishedGeneration, digest);
 
 	try {
 		await publishAtomically(deps, deps.sidecarFile, JSON.stringify(document));
 	} catch (error) {
 		logger.error("bind-map: failed to publish the sidecar", { error });
-		lastPublished = [...entries];
+		lastPublished = entries;
+		lastSuccessful = undefined;
 		// A sidecar that survives its own failed republication describes bytes that
 		// are no longer on disk, which the reader can only report as a hash
 		// mismatch. Retiring it makes the state honest: `missing_file`.
@@ -203,10 +255,18 @@ export async function publishBondMapping(
 		return { ok: false, reason: "sidecar_write_failed", changed };
 	}
 
-	lastPublished = [...entries];
+	lastPublished = entries;
+	lastSuccessful = {
+		entries: lastPublished,
+		generation: publishedGeneration,
+		digest,
+		ipsFile: deps.ipsFile,
+		sidecarFile: deps.sidecarFile,
+	};
 	return {
 		ok: true,
-		generation,
+		generation: publishedGeneration,
+		ipsFileSha256: digest,
 		changed,
 		sidecarPath: deps.sidecarFile,
 	};
