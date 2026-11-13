@@ -45,10 +45,16 @@ Structural refusals are remembered for ten minutes. In-use, cannot-open and
 device-changed retry after 30 seconds. Three consecutive timeouts also cause a
 30-second refusal, reset by a successful read or another query failure.
 Close runs asynchronously on the fs pool and is awaited for at most 500 ms
-inside the serial queue. An overrun returns `port-stuck`; no reopen occurs
-while close remains pending or its 30-second refusal is active. This bounds
-event-loop and queue latency, not the kernel close itself. Reads are serialised
-across all modems.
+inside the serial queue. An overrun returns `port-stuck`. Both ordinary close
+and failed-native-setup cleanup remain registered by physical sysfs device, tty and USB busnum/devnum
+until settlement, independently of the 30-second backoff. Replacing the
+ModemManager ID cannot reopen that same port generation. A freshly verified
+new USB generation may open, even for the same manager ID, after all pre-open
+and post-open ownership checks pass; a different modem is also independent.
+This relies on USB re-enumeration isolating the old descriptor from the new
+device generation. A same-generation reopen still observes the backoff after
+cleanup settles. This bounds the wait for close, not other filesystem/ownership
+work or the kernel close itself. Reads are serialised across all modems.
 
 ## The exchange (`free-at-session.ts`)
 

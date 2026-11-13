@@ -268,16 +268,22 @@ export const defaultFreeAtPortDeps: FreeAtPortDeps = {
  * checks, queries and closes, restoring the line settings. An ownership refusal
  * is remembered per modem for FREE_AT_RECHECK_MS, during which nothing is read
  * or opened for it. Transient refusals and three consecutive timeouts back off
- * for 30 seconds. Close is bounded, with no reopening while it is pending.
+ * for 30 seconds. Close waiting is bounded; a pending cleanup blocks its
+ * device/tty generation, independently of the manager ID.
  */
 export class FreeAtPorts {
 	private readonly deps: FreeAtPortDeps;
 	private readonly refused = new Map<
 		number,
-		{ reason: FreeAtUnavailableReason; until: number }
+		{
+			reason: FreeAtUnavailableReason;
+			until: number;
+			identity: string | undefined;
+		}
 	>();
 	private readonly timeouts = new Map<number, number>();
-	private readonly closing = new Set<number>();
+	private readonly closing = new Set<string>();
+	private readonly identities = new Map<number, string>();
 	private queue: Promise<unknown> = Promise.resolve();
 
 	constructor(deps: Partial<FreeAtPortDeps> = {}) {
@@ -286,7 +292,8 @@ export class FreeAtPorts {
 
 	/** The remembered refusal for a modem, if one is still in force. */
 	refusal(modemId: number): FreeAtUnavailableReason | undefined {
-		if (this.closing.has(modemId)) return "port-stuck";
+		const identity = this.identities.get(modemId);
+		if (identity && this.closing.has(identity)) return "port-stuck";
 		const entry = this.refused.get(modemId);
 		return entry && this.deps.now() < entry.until ? entry.reason : undefined;
 	}
@@ -315,10 +322,19 @@ export class FreeAtPorts {
 		].includes(reason);
 		this.refused.set(modemId, {
 			reason,
+			identity: this.identities.get(modemId),
 			until:
 				this.deps.now() +
 				(structural ? FREE_AT_RECHECK_MS : FREE_AT_TRANSIENT_RECHECK_MS),
 		});
+	}
+
+	/** Both successful opens and failed setup retain cleanup until settlement. */
+	private trackClose(identity: string, closing: Promise<void>): void {
+		this.closing.add(identity);
+		void closing
+			.finally(() => this.closing.delete(identity))
+			.catch(() => undefined);
 	}
 
 	private async readNow(
@@ -326,20 +342,45 @@ export class FreeAtPorts {
 		query: ReadOnlyAtQuery,
 		timeoutMs: number,
 	): Promise<FreeAtResult> {
-		const remembered = this.refusal(modemId);
-		if (remembered) return { ok: false, unavailable: true, reason: remembered };
+		const remembered = this.refused.get(modemId);
+		if (
+			remembered &&
+			remembered.reason !== "port-stuck" &&
+			this.deps.now() < remembered.until
+		)
+			return { ok: false, unavailable: true, reason: remembered.reason };
 		const facts = await this.deps.facts(modemId);
 		if (!facts) {
 			this.timeouts.delete(modemId);
 			return { ok: false, unavailable: false, reason: "modem-unreadable" };
 		}
 		let port: TtyPort | undefined;
+		let identity: string | undefined;
 		const perform = async (): Promise<FreeAtResult> => {
 			try {
 				const before = await findFreeAtPort(facts, this.deps.root);
+				// Manager IDs are replaceable. Only a freshly verified device/tty and
+				// USB generation may bypass another generation's pending cleanup.
+				identity = JSON.stringify([
+					facts.device,
+					before.tty,
+					before.generation,
+				]);
+				this.identities.set(modemId, identity);
+				if (
+					this.closing.has(identity) ||
+					(remembered?.reason === "port-stuck" &&
+						remembered.identity === identity &&
+						this.deps.now() < remembered.until)
+				) {
+					this.timeouts.delete(modemId);
+					return { ok: false, unavailable: true, reason: "port-stuck" };
+				}
 				try {
 					port = await this.deps.open(join(this.deps.root, "dev", before.tty));
 				} catch (error) {
+					if (error instanceof TtyOpenError && error.cleanup)
+						this.trackClose(identity, error.cleanup);
 					const failure =
 						error instanceof TtyOpenError ? error.failure : "failed";
 					throw new FreeAtUnavailableError(
@@ -391,13 +432,10 @@ export class FreeAtPorts {
 			}
 		};
 		const result = await perform();
-		if (port) {
-			this.closing.add(modemId);
+		if (port && identity) {
 			const opened = port;
 			const closing = Promise.resolve().then(() => opened.close());
-			void closing
-				.finally(() => this.closing.delete(modemId))
-				.catch(() => undefined);
+			this.trackClose(identity, closing);
 			if (!(await closeWithin(closing))) {
 				this.remember(modemId, "port-stuck");
 				return { ok: false, unavailable: true, reason: "port-stuck" };

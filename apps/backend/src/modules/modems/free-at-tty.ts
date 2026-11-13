@@ -50,7 +50,10 @@ export interface TtyPort {
 export type TtyOpenFailure = "busy" | "failed" | "native-unavailable" | "stuck";
 
 export class TtyOpenError extends Error {
-	constructor(readonly failure: TtyOpenFailure) {
+	constructor(
+		readonly failure: TtyOpenFailure,
+		readonly cleanup?: Promise<void>,
+	) {
 		super(`tty open failed: ${failure}`);
 		this.name = "TtyOpenError";
 	}
@@ -137,7 +140,7 @@ function errorCode(error: unknown): string | undefined {
  * Open `path` for one read-only lease: `O_NOCTTY` (a service must never acquire
  * the modem's tty as its controlling terminal), `O_NONBLOCK`, `TIOCEXCL`, then
  * raw 8N1 at 115200 without hardware flow control, VMIN 1, VTIME 0. On any failure after the open the
- * descriptor is closed again before the error is raised.
+ * descriptor cleanup is started; an overrun error carries its pending promise.
  */
 export async function openExclusiveRawTty(path: string): Promise<TtyPort> {
 	const c = await loadLibc();
@@ -189,7 +192,8 @@ export async function openExclusiveRawTty(path: string): Promise<TtyPort> {
 		)
 			throw new TtyOpenError("failed");
 	} catch (error) {
-		if (!(await closeWithin(close()))) throw new TtyOpenError("stuck");
+		const cleanup = close();
+		if (!(await closeWithin(cleanup))) throw new TtyOpenError("stuck", cleanup);
 		throw error instanceof TtyOpenError ? error : new TtyOpenError("failed");
 	}
 	const buffer = new Uint8Array(4096);

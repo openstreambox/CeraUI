@@ -150,6 +150,7 @@ describe("the read-only lease", () => {
 		const ports: TtyPort[] = [];
 		let now = 1_000_000;
 		let factsCalls = 0;
+		let currentFacts = (_id: number) => facts;
 		const realOpen = async (path: string): Promise<TtyPort> => {
 			opened.push(path);
 			const port = await openExclusiveRawTty(fake.path);
@@ -158,9 +159,9 @@ describe("the read-only lease", () => {
 		};
 		let openHook: (path: string) => Promise<TtyPort> = realOpen;
 		const lease = new FreeAtPorts({
-			facts: async () => {
+			facts: async (id) => {
 				factsCalls++;
-				return facts;
+				return currentFacts(id);
 			},
 			open: (path) => openHook(path),
 			root,
@@ -173,6 +174,9 @@ describe("the read-only lease", () => {
 			opened,
 			ports,
 			factsCalls: () => factsCalls,
+			setFacts: (read: (id: number) => FreeAtFacts) => {
+				currentFacts = read;
+			},
 			/** Replace the open; `real` is the pty open the default uses. */
 			hookOpen: (
 				hook: (
@@ -207,15 +211,52 @@ describe("the read-only lease", () => {
 		advance(30_000);
 		expect(lease.refusal(3)).toBeUndefined();
 	});
-	test("a stuck close yields, refuses and does not block the other modem", async () => {
-		const { lease, hookOpen } = await setup();
-		hookOpen(async (path, real) => {
+	function pending() {
+		let release!: () => void;
+		const promise = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		cleanups.push(release);
+		return { promise, release };
+	}
+
+	test("failed-open cleanup survives backoff expiry until it settles", async () => {
+		const { lease, hookOpen, advance } = await setup();
+		const cleanup = pending();
+		let opens = 0;
+		hookOpen((path, real) => {
+			opens++;
+			return opens === 1
+				? Promise.reject(new TtyOpenError("stuck", cleanup.promise))
+				: real(path);
+		});
+		expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+			reason: "port-stuck",
+		});
+		advance(30_000);
+		expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+			reason: "port-stuck",
+		});
+		expect(opens).toBe(1);
+		cleanup.release();
+		await cleanup.promise;
+		expect((await lease.read(3, "AT+QTEMP")).ok).toBe(true);
+		expect(opens).toBe(2);
+	});
+
+	async function stuckFirst(expireBackoff = true) {
+		const fixture = await setup();
+		const cleanup = pending();
+		let opens = 0;
+		fixture.hookOpen(async (path, real) => {
+			const first = ++opens === 1;
 			const port = await real(path);
+			if (!first) return port;
 			return {
 				...port,
 				close: async () => {
+					await cleanup.promise;
 					await port.close();
-					await new Promise<void>(() => {});
 				},
 			};
 		});
@@ -223,14 +264,73 @@ describe("the read-only lease", () => {
 		setTimeout(() => {
 			ticked = true;
 		}, 10);
-		expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+		expect(await fixture.lease.read(3, "AT+QTEMP")).toMatchObject({
 			reason: "port-stuck",
 		});
 		expect(ticked).toBe(true);
-		expect(lease.refusal(3)).toBe("port-stuck");
+		expect(fixture.lease.refusal(3)).toBe("port-stuck");
+		if (expireBackoff) fixture.advance(30_000);
+		return { ...fixture, cleanup, opens: () => opens };
+	}
+
+	test("same USB generation with a new manager ID cannot bypass pending close", async () => {
+		const { lease, opens } = await stuckFirst();
 		expect(await lease.read(4, "AT+QTEMP")).toMatchObject({
 			reason: "port-stuck",
 		});
+		expect(opens()).toBe(1);
+	});
+
+	test("a verified new USB generation may open while the old generation closes", async () => {
+		const { lease, opens, hookOpen, advance } = await stuckFirst(false);
+		await put(`${DEVICE}/devnum`, "6\n");
+		// Replacement generation has its own descriptor, like a re-enumerated tty.
+		const next = await FakeAtModem.start((c) => reply(QTEMP_REPLY, c));
+		cleanups.push(() => next.close());
+		let replacements = 0;
+		hookOpen(async () => {
+			replacements++;
+			return openExclusiveRawTty(next.path);
+		});
+		expect((await lease.read(3, "AT+QTEMP")).ok).toBe(true);
+		expect(opens()).toBe(1);
+		expect(replacements).toBe(1);
+		// Closing the replacement must not retire the original cleanup entry.
+		await put(`${DEVICE}/devnum`, "5\n");
+		advance(30_000);
+		expect(await lease.read(4, "AT+QTEMP")).toMatchObject({
+			reason: "port-stuck",
+		});
+		expect(replacements).toBe(1);
+	});
+
+	test("a stuck close yields and a genuinely different healthy modem succeeds", async () => {
+		const { lease, opens, setFacts, hookOpen } = await stuckFirst();
+		const otherDevice = DEVICE.replace("2-1", "2-2");
+		for (const [file, value] of Object.entries({
+			idVendor: "2c7c",
+			idProduct: "0801",
+			busnum: "2",
+			devnum: "7",
+		}))
+			await put(`${otherDevice}/${file}`, value);
+		await mkdir(join(root, otherDevice, "2-2:1.3", "ttyUSB7"), {
+			recursive: true,
+		});
+		await put("sys/class/tty/ttyUSB7/dev", "188:7");
+		await put("run/udev/data/c188:7", "E:ID_MM_PORT_IGNORE=1");
+		const next = await FakeAtModem.start((c) => reply(QTEMP_REPLY, c));
+		cleanups.push(() => next.close());
+		let healthyOpens = 0;
+		// Both identities share the same lease owner and closing registry.
+		setFacts((id) => ({ device: id === 3 ? DEVICE : otherDevice, ports: [] }));
+		hookOpen(async () => {
+			healthyOpens++;
+			return openExclusiveRawTty(next.path);
+		});
+		expect((await lease.read(4, "AT+QTEMP")).ok).toBe(true);
+		expect(opens()).toBe(1);
+		expect(healthyOpens).toBe(1);
 	});
 
 	test("a released port answers with the complete reply and is closed again", async () => {
