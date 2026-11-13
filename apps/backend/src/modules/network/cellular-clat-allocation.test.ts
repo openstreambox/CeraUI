@@ -100,3 +100,48 @@ test("malformed or incomplete inventory is unknown, never an absent allocation",
 			}),
 		).toBe("unknown");
 });
+
+test("an exact kernel host /128 needs matching observed /64 delegation; foreign allocations still win", () => {
+	const host: CellularAllocationInventory = {
+			...inventory(),
+			addresses: [
+				{
+					ifname: "wwan0",
+					ifindex: 7,
+					addr_info: [
+						{ family: "inet6", local: "2001:db8:1::2", prefixlen: 128 },
+					],
+				},
+			],
+			routes6: [{ dst: "2001:db8:1::2/128", dev: "wwan0", protocol: 2 }],
+		},
+		delegation = { source: "2001:db8:1::2", prefixLength: 64 };
+	expect(inspectCellularClatAllocation(plan, "wwan0", host)).toBe("unknown");
+	expect(inspectCellularClatAllocation(plan, "wwan0", host, delegation)).toBe(
+		"clear",
+	);
+	for (const invalid of [
+		{ source: "2001:db8:1::2", prefixLength: 128 },
+		{ source: "2001:db8:2::2", prefixLength: 64 },
+		{ source: "2001:db8:1::99", prefixLength: 64 },
+		{ source: "fe80::2", prefixLength: 64 },
+		{ source: "2001:db8:1::2%wwan0", prefixLength: 64 },
+		{ source: "invalid", prefixLength: 64 },
+	])
+		expect(inspectCellularClatAllocation(plan, "wwan0", host, invalid)).toBe(
+			"unknown",
+		);
+	for (const patch of [
+		{ routes4: [{ dst: "198.18.0.0/15", dev: "lan0" }] },
+		{ routes6: [{ dst: `${plan.mapped}/128`, dev: "wwan0", protocol: 2 }] },
+		{ proxies6: [{ dst: plan.mapped, dev: "other0" }] },
+	])
+		expect(
+			inspectCellularClatAllocation(
+				plan,
+				"wwan0",
+				{ ...host, ...patch },
+				delegation,
+			),
+		).toBe("occupied");
+});

@@ -257,6 +257,7 @@ async function composedHost(physicalIndex: number) {
 					translated,
 					"wwan6",
 					async () => live,
+					{ source: grant.ipv6, prefixLength: grant.ipv6PrefixLength },
 				)) === "clear",
 			links: cellularTunIO(async () => owned).links,
 			createTun: (birth) =>
@@ -686,6 +687,30 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 			expect(
 				await readCellularClatAllocation(translated, "wwan6", async () => true),
 			).toBe("clear");
+			// Some modem grants delegate /64 while NM installs its selected host
+			// as /128. Keep the observed delegation distinct from that host mask.
+			await ip("-6", "addr", "del", `${grant.ipv6}/64`, "dev", "wwan6");
+			await ip(
+				"-6",
+				"addr",
+				"add",
+				`${grant.ipv6}/128`,
+				"nodad",
+				"dev",
+				"wwan6",
+			);
+			const delegation = { source: grant.ipv6, prefixLength: 64 };
+			expect(
+				await readCellularClatAllocation(translated, "wwan6", async () => true),
+			).toBe("unknown");
+			expect(
+				await readCellularClatAllocation(
+					translated,
+					"wwan6",
+					async () => true,
+					delegation,
+				),
+			).toBe("clear");
 			await ip("route", "add", "198.18.0.0/15", "dev", "lan0");
 			try {
 				expect(
@@ -693,6 +718,7 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1")
 						translated,
 						"wwan6",
 						async () => true,
+						delegation,
 					),
 				).toBe("occupied");
 			} finally {

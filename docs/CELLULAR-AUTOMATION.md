@@ -206,6 +206,13 @@ The existing poll owns retries; no second production controller is installed.
 FM350 activation, journaled native reconnect and installed image qualification
 remain incomplete.
 
+CLAT allocation also accepts an exact kernel host `/128` when the current modem
+grant positively delegates the matching `/64`. The retained birth plan records
+that delegation and installation revalidates it. A host mask alone, a different
+source/prefix or a foreign address, route or proxy cannot authorize allocation.
+The isolated packet proof covers translation in both directions with that host
+mask; it does not establish physical modem qualification.
+
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
 do not establish those capabilities. Verizon remains unqualified.
@@ -424,6 +431,13 @@ disponibilidad sin reiniciar el módem ni contar un fallo del operador. El sonde
 existente controla los reintentos; no se instala otro controlador de producción.
 La activación FM350, la reconexión nativa con registro y la calificación de la
 imagen instalada siguen incompletas.
+
+La asignación CLAT también admite una dirección exacta `/128` del kernel cuando
+la concesión actual del módem acredita el `/64` correspondiente. El registro de
+creación conserva esa delegación y se vuelve a comprobar antes de instalar. La
+máscara del host por sí sola, otro origen o prefijo, o recursos ajenos no dan
+permiso para asignar. La prueba aislada comprueba ambas direcciones de traducción
+con esa máscara; no acredita el módem físico.
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon

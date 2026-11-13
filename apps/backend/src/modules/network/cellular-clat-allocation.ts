@@ -10,6 +10,13 @@ export interface CellularAllocationInventory {
 	readonly proxies6: unknown;
 }
 export type CellularAllocationState = "clear" | "occupied" | "unknown";
+/** Observed modem delegation, retained in the birth plan and revalidated by
+ * current(). A kernel host /128 alone never establishes a usable /64.
+ */
+export interface CellularDelegationEvidence {
+	readonly source: string;
+	readonly prefixLength: number;
+}
 type Row = Record<string, unknown>;
 function rows(raw: unknown): Row[] {
 	if (
@@ -59,7 +66,8 @@ function equal6(value: unknown, address: string): boolean {
 	return !!bytes && formatIpv6(bytes) === address;
 }
 /** Baseline only, before creating a TUN, global-source guard or source fence.
- * A connected carrier IPv6 /64 is expected; another link/subnet, explicit host
+ * A connected carrier IPv6 /64 or exact host /128 backed by observed modem
+ * delegation is expected; another link/subnet, explicit host
  * route, existing source address or proxy is not ours to override. Defaults
  * remain outside this allocation check. Unknown inventory grants no permission.
  */
@@ -67,6 +75,7 @@ export function inspectCellularClatAllocation(
 	plan: CellularRoutePlan,
 	physical: string,
 	inventory: CellularAllocationInventory,
+	delegation?: CellularDelegationEvidence,
 ): CellularAllocationState {
 	if (!plan.translated || !plan.tun || !plan.mapped || !isSafeIfname(physical))
 		throw new Error("Translated allocation required");
@@ -74,6 +83,16 @@ export function inspectCellularClatAllocation(
 		mapped = parseIpv6(plan.mapped);
 	if (!source || !mapped) throw new Error("Invalid translated allocation");
 	try {
+		const delegated = delegation
+			? network(`${delegation.source}/${delegation.prefixLength}`, 6)
+			: undefined;
+		if (
+			delegated &&
+			(delegated.prefix !== 64 ||
+				((delegated.bytes[0] ?? 0) & 0xe0) !== 0x20 ||
+				!contains(delegated, mapped))
+		)
+			return "unknown";
 		let carrierPrefix = false;
 		const links = rows(inventory.addresses),
 			indices = new Set<number>(),
@@ -106,8 +125,10 @@ export function inspectCellularClatAllocation(
 				if (
 					family === 6 &&
 					link.ifname === physical &&
-					net.prefix === 64 &&
-					contains(net, mapped)
+					((net.prefix === 64 && contains(net, mapped)) ||
+						(net.prefix === 128 &&
+							delegated &&
+							equal6(address.local, formatIpv6(delegated.bytes))))
 				)
 					carrierPrefix = true;
 				if (
@@ -162,6 +183,7 @@ export async function readCellularClatAllocation(
 	plan: CellularRoutePlan,
 	physical: string,
 	current: () => Promise<boolean>,
+	delegation?: CellularDelegationEvidence,
 ): Promise<CellularAllocationState> {
 	if (!(await current())) return "unknown";
 	try {
@@ -176,12 +198,12 @@ export async function readCellularClatAllocation(
 			read(["-6", "-j", "neigh", "show", "proxy"]),
 		]);
 		return (await current())
-			? inspectCellularClatAllocation(plan, physical, {
-					addresses,
-					routes4,
-					routes6,
-					proxies6,
-				})
+			? inspectCellularClatAllocation(
+					plan,
+					physical,
+					{ addresses, routes4, routes6, proxies6 },
+					delegation,
+				)
 			: "unknown";
 	} catch {
 		return "unknown";
