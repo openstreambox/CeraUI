@@ -10,6 +10,7 @@ import { Checkbox } from '$lib/components/ui/checkbox';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import { deviceName, siteName } from '$lib/config';
+import ButtonConfirm from "$lib/pairing/ButtonConfirm.svelte";
 import { getNotifications, getStatus } from '$lib/rpc/subscriptions.svelte';
 import {
 	authenticate,
@@ -21,6 +22,7 @@ import { cn } from '$lib/utils.js';
 
 const MIN_PASSWORD_LENGTH = 8;
 
+let advancedDevicesOpen = $state(false);
 let password: string = $state('');
 let confirmPassword: string = $state('');
 let remember: boolean = $state(false);
@@ -315,6 +317,13 @@ async function onSubmit(event: SubmitEvent) {
 			</Button>
 		</form>
 
+		<ButtonConfirm />
+  <details class="mt-4" bind:open={advancedDevicesOpen}>
+   <summary>{m["auth.buttonDevices"]()}</summary>
+   {#if advancedDevicesOpen}
+    <ButtonConfirm purpose="disconnect" />
+   {/if}
+  </details>
 		<!-- Footer -->
 		<p class="text-muted-foreground mt-6 text-center text-xs">
 			{m["auth.secureAccess"]()} · {siteName}

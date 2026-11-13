@@ -311,3 +311,13 @@ export const revokeTokenProcedure = baseProcedure
 		logger.info(`Auth: revoked ${revoked} credential record(s)`);
 		return { success: true, revoked };
 	});
+
+export async function settleButtonCredentials(): Promise<void> {
+	await tokenStore.settle();
+}
+export function issueButtonCredential(): string {
+	return genAuthToken(true);
+}
+export function revokeButtonCredentials(): void {
+	invalidateAllTokens();
+}

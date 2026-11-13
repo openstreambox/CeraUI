@@ -1,3 +1,5 @@
+import { networkInterfaces } from "node:os";
+import { isButtonLocalPeer } from "../modules/system/button-admission.ts";
 /**
  * Bun Native Server
  * HTTP and WebSocket server using Bun.serve()
@@ -252,7 +254,16 @@ function startServer(): void {
 					}
 
 					const success = server.upgrade(req, {
-						data: initSocketData(),
+						data: {
+							...initSocketData(),
+							buttonLocal: isButtonLocalPeer(
+								server.requestIP(req)?.address,
+								Object.entries(networkInterfaces()).flatMap(
+									([name, addresses]) =>
+										(addresses ?? []).map((address) => ({ name, ...address })),
+								),
+							),
+						},
 					});
 					if (success) {
 						// Bun automatically returns a 101 Switching Protocols response

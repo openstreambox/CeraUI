@@ -1,3 +1,4 @@
+import { powerButton } from "../system/power-button-client.ts";
 /*
     CeraUI - web UI for the CERALIVE project
     Copyright (C) 2024-2025 CeraLive project
@@ -84,6 +85,19 @@ export type ConfigParameters = {
 };
 
 let isStreaming = false;
+let livePublish = Promise.resolve();
+function publishButtonLive() {
+	livePublish = livePublish
+		.then(async () => {
+			await powerButton.setLive(isStreaming);
+		})
+		.catch(() => {
+			/* Optional service/transport may be absent. */
+		});
+}
+// A restarted image service forgets its advisory state.
+if (process.env.NODE_ENV !== "test")
+	setInterval(publishButtonLive, 10_000).unref();
 
 export function getIsStreaming() {
 	return isStreaming;
@@ -99,6 +113,7 @@ export function updateStatus(status: boolean) {
 			}
 		}
 		isStreaming = status;
+		publishButtonLive();
 		broadcastMsg("status", { is_streaming: isStreaming });
 
 		return true;

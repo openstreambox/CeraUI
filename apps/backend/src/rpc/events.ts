@@ -4,6 +4,7 @@
  */
 import { logger } from "../helpers/logger.ts";
 import { isDevelopment } from "../mocks/mock-config.ts";
+import { buttonFlow } from "../modules/system/button-flow-instance.ts";
 import {
 	type CoalesceState,
 	getCoalesceWindowMs,
@@ -104,6 +105,7 @@ export function addClient(ws: AppWebSocket): void {
  * Remove a client
  */
 export function removeClient(ws: AppWebSocket): void {
+	buttonFlow.cancel(ws);
 	clients.delete(ws);
 }
 

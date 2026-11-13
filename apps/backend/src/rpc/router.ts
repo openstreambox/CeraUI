@@ -1,3 +1,4 @@
+import { buttonProcedure } from "./procedures/button.procedure.ts";
 /**
  * RPC Router - Main router combining all procedures
  */
@@ -171,6 +172,7 @@ const base = os.$context<RPCContext>();
 const stableRoutes = {
 	ui: base.router({ heartbeat: heartbeatProcedure }),
 	auth: base.router({
+		button: buttonProcedure,
 		login: loginProcedure,
 		setPassword: setPasswordProcedure,
 		logout: logoutProcedure,

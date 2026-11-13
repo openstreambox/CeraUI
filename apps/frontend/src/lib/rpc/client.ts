@@ -19,6 +19,8 @@ import type {
 	BluetoothToggleInput,
 	BluetoothToggleOutput,
 	BluetoothTrustInput,
+	ButtonInput,
+	ButtonOutput,
 	ClaimCodeOutput,
 	CompletePairingInput,
 	CompletePairingOutput,
@@ -637,6 +639,7 @@ export type AddonOpResult =
  */
 export interface TypedRPC {
 	auth: {
+		button: (input: ButtonInput) => Promise<ButtonOutput>;
 		login: (input: LoginInput) => Promise<LoginOutput>;
 		setPassword: (input: SetPasswordInput) => Promise<SuccessResponse>;
 		logout: () => Promise<LogoutOutput>;

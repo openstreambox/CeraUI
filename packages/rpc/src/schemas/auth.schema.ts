@@ -53,3 +53,25 @@ export const revokeTokenOutputSchema = z.object({
 	revoked: z.number().int().min(0),
 });
 export type RevokeTokenOutput = z.infer<typeof revokeTokenOutputSchema>;
+
+/** Connection-scoped power-button prompt. No browser-supplied confirmation. */
+export const buttonInputSchema = z.discriminatedUnion('action', [
+	z.object({ action: z.literal('begin'), purpose: z.enum(['connect', 'disconnect']) }).strict(),
+	z.object({ action: z.literal('poll'), id: z.string().uuid() }).strict(),
+	z.object({ action: z.literal('cancel') }).strict(),
+]);
+export const buttonOutputSchema = z.object({
+	state: z.enum([
+		'waiting',
+		'confirmed',
+		'timeout',
+		'cancelled',
+		'unavailable',
+		'local-only',
+		'stop-first',
+	]),
+	id: z.string().optional(),
+	auth_token: z.string().optional(),
+});
+export type ButtonInput = z.infer<typeof buttonInputSchema>;
+export type ButtonOutput = z.infer<typeof buttonOutputSchema>;

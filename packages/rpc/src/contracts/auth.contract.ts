@@ -4,6 +4,8 @@
 import { oc } from '@orpc/contract';
 
 import {
+	buttonInputSchema,
+	buttonOutputSchema,
 	loginInputSchema,
 	loginOutputSchema,
 	logoutOutputSchema,
@@ -14,6 +16,7 @@ import {
 } from '../schemas';
 
 export const authContract = oc.router({
+	button: oc.input(buttonInputSchema).output(buttonOutputSchema),
 	/**
 	 * Login with password or token
 	 */
