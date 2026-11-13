@@ -442,7 +442,7 @@
 	"hud.healthExplainDead": "O processo do codificador não está em execução. A transmissão está fora do ar.",
 	"hud.healthExplainDegraded": "Transmitindo, mas os quadros estão travados ou alguns links agregados estão fora do ar.",
 	"hud.healthExplainHealthy": "Processo em execução, quadros avançando, todos os links agregados ativos.",
-	"hud.healthExplainIdle": "Sem transmissão. O dispositivo está ocioso e pronto.",
+	"hud.healthExplainIdle": "A transmissão própria da caixa está em repouso. O tráfego dos clientes ainda pode estar ao vivo.",
 	"hud.healthFrames": "Quadros",
 	"hud.healthHealthy": "Saudável",
 	"hud.healthIdle": "Ocioso",
@@ -2815,5 +2815,7 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"notifications.clientCarrying": "A caixa está transportando tráfego de clientes. As atualizações e as mudanças de links por inatividade vão aguardar.",
+	"notifications.clientCarryingUnknown": "A caixa está verificando a atividade dos clientes. As atualizações e as mudanças de links por inatividade vão aguardar."
 }

@@ -1,3 +1,7 @@
+import {
+	initCarrying,
+	tickCarrying,
+} from "./modules/system/carrying-runtime.ts";
 /*
 	CeraUI - web UI for the CeraLive project
 	Copyright (C) 2024-2025 CeraLive project
@@ -188,6 +192,8 @@ import { stopLegacyTokenMigration } from "./rpc/procedures/auth.procedure.ts";
 /* Disable localization for any CLI commands we run */
 process.env.LANG = "C.UTF-8";
 process.env.LANGUAGE = "C";
+
+if (!isDevelopment()) initCarrying();
 
 /* Make sure apt-get doesn't expect any interactive user input */
 process.env.DEBIAN_FRONTEND = "noninteractive";
@@ -504,6 +510,7 @@ initNetworkInterfaceMonitoring();
 initUplinkHealth();
 await guardNonCritical("uplink-steering", initUplinkSteering);
 await guardNonCritical("uplink-shaper", initUplinkShaper);
+await tickCarrying();
 await guardNonCritical("sharing-diag", initSharingDiag);
 
 // Event-driven netif: monitor stream drives up/down; onResync re-polls on restart
@@ -617,6 +624,7 @@ onHeartbeatTick(broadcastHealthIfChanged);
 // srtla link telemetry: fold into the status flow on the same tick, on-change
 onHeartbeatTick(broadcastLinkTelemetryIfChanged);
 onHeartbeatTick(() => {
+	void tickCarrying();
 	void tickUplinkShaper();
 });
 

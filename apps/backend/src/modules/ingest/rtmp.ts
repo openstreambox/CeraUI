@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { parseStringPromise as parseXmlStringPromise } from "xml2js";
 import { logger } from "../../helpers/logger.ts";
 import { httpGet } from "../network/internet";
+import { carryingTracker } from "../system/carrying.ts";
 
 // Define specific types for the RTMP statistics
 type StreamBandwidth = `${number} Kbps`;
@@ -21,7 +22,10 @@ async function updateRtmpStats(): Promise<void> {
 	});
 
 	// Exit if request failed
-	if (serverResponse.code !== 200) return;
+	if (serverResponse.code !== 200) {
+		carryingTracker.session("rtmp-ingest", null, performance.now());
+		return;
+	}
 
 	const newStreamBandwidths: RtmpStats = {};
 	const currentBytesCounted: BytesCounter = {};
@@ -51,6 +55,11 @@ async function updateRtmpStats(): Promise<void> {
 	}
 
 	// Update global state with new values
+	carryingTracker.session(
+		"rtmp-ingest",
+		Object.keys(newStreamBandwidths).length > 0,
+		performance.now(),
+	);
 	currentStreamBandwidths = newStreamBandwidths;
 	previousBytesCounted = currentBytesCounted;
 }
@@ -78,6 +87,7 @@ export async function initRTMPIngestStats(): Promise<void> {
 		try {
 			await updateRtmpStats();
 		} catch (error) {
+			carryingTracker.session("rtmp-ingest", null, performance.now());
 			logger.debug("RTMP stats update error", { err: error });
 		}
 	}, 1000);
