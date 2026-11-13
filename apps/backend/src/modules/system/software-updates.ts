@@ -82,7 +82,10 @@ import {
 	installFamily,
 	normalizeAptCommandFailure,
 } from "./apt-transport-result.ts";
-import { hasCapability } from "./board-capabilities.ts";
+import {
+	hasCapability,
+	isBoardCapabilityDenied,
+} from "./board-capabilities.ts";
 import {
 	logParseError,
 	type ParseResult,
@@ -206,6 +209,7 @@ export function resetAptReachabilityProbeForTest(): void {
 async function prepareAptNetwork(options?: {
 	readonly maxAgeMs?: number;
 }): Promise<AptReachability> {
+	if (!aptUpdatesEnabled()) throw new Error("updates_disabled");
 	if (!(await hasCapability("os-updates")))
 		return aptReachabilityProbe(options);
 	if (!(await updateGwWrapper(true))) {
@@ -222,6 +226,7 @@ async function openAptNetwork(
 	options?: { readonly maxAgeMs?: number },
 	admission?: AptTransferAdmission,
 ): Promise<AptTransaction> {
+	if (!aptUpdatesEnabled()) throw new Error("updates_disabled");
 	return (await hasCapability("os-updates")) &&
 		capabilities.mode === "capable" &&
 		capabilities.features.includes("transport-uidrange")
@@ -309,7 +314,9 @@ function refuseUpdateStart(reason: UpdateStartRefusal): UpdateStartOutcome {
 }
 
 export function aptUpdatesEnabled(): boolean {
-	return setup.apt_update_enabled !== false;
+	return (
+		setup.apt_update_enabled !== false && !isBoardCapabilityDenied("os-updates")
+	);
 }
 
 export function getAvailableUpdates() {
@@ -1168,6 +1175,7 @@ export function resetSoftwareUpdateSizeRunner(): void {
 
 // Orchestrator checks own a full cycle, not discovery against previously fetched lists.
 export function runSoftwareUpdateCheck(): Promise<SoftwareUpdateError> {
+	if (!aptUpdatesEnabled()) return Promise.resolve("discovery_failed");
 	return new Promise((resolve, reject) => {
 		const started = softwareUpdateCheckRunner((refresh) => {
 			// Exit-zero warnings are benign; discovery must retain a real refresh failure.
@@ -1188,6 +1196,7 @@ export function runSoftwareUpdateCheck(): Promise<SoftwareUpdateError> {
 
 // Publish after discovery's early returns so an empty result is observable.
 export async function runUpdateDiscoveryAndReport(): Promise<SoftwareUpdateError> {
+	if (!aptUpdatesEnabled()) return "discovery_failed";
 	if (pendingPackageSuccess.pending) return "discovery_failed";
 	if (aptDiscoveryRunning) return "busy";
 	aptDiscoveryRunning = true;
@@ -1287,6 +1296,7 @@ export function periodicCheckForSoftwareUpdates() {
 }
 
 export function triggerManualUpdateCheck(): boolean {
+	if (!aptUpdatesEnabled()) return false;
 	if (pendingPackageSuccess.pending) return false;
 	if (isSoftwareUpdateRecoveryInconclusive()) return false;
 	if (shouldUseMocks()) {

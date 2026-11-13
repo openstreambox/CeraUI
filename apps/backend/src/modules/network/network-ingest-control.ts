@@ -41,6 +41,7 @@
  */
 
 import type { RequiresGateway } from "@ceraui/rpc/schemas";
+import { NETWORK_INGEST_UNAVAILABLE_ERROR } from "@ceraui/rpc/schemas";
 
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { type ExecResult, execFileP } from "../../helpers/exec.ts";
@@ -229,10 +230,15 @@ export async function setIngestEnabled(
 	protocol: RequiresGateway,
 	enabled: boolean,
 	deps: NetworkIngestControlDeps = defaultNetworkIngestControlDeps,
-): Promise<{
-	success: true;
-	applied: { protocol: RequiresGateway; enabled: boolean };
-}> {
+): Promise<
+	| { success: false; error: typeof NETWORK_INGEST_UNAVAILABLE_ERROR }
+	| {
+			success: true;
+			applied: { protocol: RequiresGateway; enabled: boolean };
+	  }
+> {
+	if (!(await deps.canManageIngest()))
+		return { success: false, error: NETWORK_INGEST_UNAVAILABLE_ERROR };
 	persistIngestDesired(protocol, enabled, deps);
 	try {
 		await applyIngestDesiredState(deps);

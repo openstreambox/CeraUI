@@ -37,3 +37,13 @@ adapter, engine driver, sensor mapping or recovery support for that family.
 An attempted but malformed/incomplete board record denies capabilities rather than
 silently enabling legacy permissions. Older branding-only release files still use
 the legacy detector.
+
+Admission and authentication are separate decisions. A production control channel
+with no `device-control` grant never dials, and unsigned control tokens are
+accepted only in explicit development/mock mode. `os-updates` denial refuses
+manual submission, discovery, scheduled work and staging admission before effects;
+it never selects the legacy APT transport. The synchronous submission fence reads
+the same record/parser as asynchronous capability checks. Branding-only and
+unreadable older-image records retain compatibility; whitespace-malformed board
+assignments are present records and deny grants. Ingest RPC and service control
+both require `network-ingest`, independently of `client-internet`.

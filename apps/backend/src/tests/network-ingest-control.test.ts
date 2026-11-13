@@ -520,3 +520,39 @@ describe("network.setIngestEnabled handler — mocks (zero spawns)", () => {
 		expect(ok).not.toHaveProperty("error");
 	});
 });
+
+test("denied direct ingest toggle has no persistence or service effects", async () => {
+	const effects: string[] = [];
+	const deps: NetworkIngestControlDeps = {
+		canManageIngest: async () => false,
+		getConfig: () => {
+			effects.push("read");
+			return runtimeConfigSchema.parse({});
+		},
+		saveConfig: () => {
+			effects.push("save");
+		},
+		systemctl: async () => {
+			effects.push("systemctl");
+			return { stdout: "", stderr: "" };
+		},
+		isActive: async () => {
+			effects.push("probe");
+			return false;
+		},
+		readMediamtxSrt: async () => false,
+		srtUnitPresent: async () => false,
+		refreshAndBroadcast: async () => {
+			effects.push("refresh");
+		},
+		broadcastSources: () => {
+			effects.push("broadcast");
+		},
+		log: () => {},
+	};
+	expect(await setIngestEnabled("srt", true, deps)).toEqual({
+		success: false,
+		error: NETWORK_INGEST_UNAVAILABLE_ERROR,
+	});
+	expect(effects).toEqual([]);
+});

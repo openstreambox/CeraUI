@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
 	type DeviceDetectionDeps,
 	defaultDeviceDetectionDeps,
@@ -29,8 +30,7 @@ export interface BoardIdentity {
 	capabilities: ReadonlySet<string>;
 }
 
-/** Parse data only: never source release files as shell code. */
-export function parseBoardIdentity(text: string): BoardIdentity | null {
+function parseReleaseValues(text: string): Map<string, string> | null {
 	const values = new Map<string, string>();
 	for (const line of text.split("\n")) {
 		if (!line.trim() || line.startsWith("#")) continue;
@@ -40,6 +40,13 @@ export function parseBoardIdentity(text: string): BoardIdentity | null {
 		if (!key || values.has(key)) return null;
 		values.set(key, match[2] ?? match[3] ?? "");
 	}
+	return values;
+}
+
+/** Parse data only: never source release files as shell code. */
+export function parseBoardIdentity(text: string): BoardIdentity | null {
+	const values = parseReleaseValues(text);
+	if (!values) return null;
 	const board = values.get("BOARD");
 	const family = values.get("FAMILY");
 	const capabilities = values.get("CAPABILITIES");
@@ -58,6 +65,21 @@ export function parseBoardIdentity(text: string): BoardIdentity | null {
 	return { board, family, capabilities: new Set(names) };
 }
 
+function recordCapability(
+	release: string,
+	capability: BoardCapability,
+): boolean | undefined {
+	const identity = parseBoardIdentity(release);
+	if (identity) return identity.capabilities.has(capability);
+	const values = parseReleaseValues(release);
+	if (
+		!values ||
+		["BOARD", "FAMILY", "CAPABILITIES"].some((key) => values.has(key))
+	)
+		return false;
+	return undefined;
+}
+
 export async function hasCapability(
 	capability: BoardCapability,
 	deps: DeviceDetectionDeps = defaultDeviceDetectionDeps,
@@ -66,16 +88,32 @@ export async function hasCapability(
 	if (override === "emulated") return false;
 	if (override === "real") return true;
 	if (deps.isDevelopment()) return false;
-	let identity: BoardIdentity | null = null;
 	let release = "";
 	try {
 		release = await deps.readCeraliveRelease();
-		identity = parseBoardIdentity(release);
 	} catch {
 		/* Older images have no record. */
 	}
-	if (identity) return identity.capabilities.has(capability);
-	// An attempted but invalid record must not silently grant legacy permissions.
-	if (/^(?:BOARD|FAMILY|CAPABILITIES)=/m.test(release)) return false;
+	const grant = recordCapability(release, capability);
+	if (grant !== undefined) return grant;
 	return isRealDevice(deps);
+}
+
+export const boardAdmissionDeps = {
+	readRelease: () => readFileSync("/etc/ceralive/release", "utf8"),
+};
+
+/** Synchronous submission fence; legacy branding-only images retain their regime. */
+export function isBoardCapabilityDenied(capability: BoardCapability): boolean {
+	const override = defaultDeviceDetectionDeps.getDeviceTypeOverride();
+	if (override === "emulated") return true;
+	if (override === "real") return false;
+	if (defaultDeviceDetectionDeps.isDevelopment()) return false;
+	let release: string;
+	try {
+		release = boardAdmissionDeps.readRelease();
+	} catch {
+		return false;
+	}
+	return recordCapability(release, capability) === false;
 }

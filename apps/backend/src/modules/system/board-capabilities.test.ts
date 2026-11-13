@@ -112,3 +112,74 @@ test("invalid records deny even on legacy recognised hardware", async () => {
 		}),
 	).toBe(false);
 });
+
+for (const whitespace of [" ", "\t", "before-equals"]) {
+	test(`malformed ${whitespace} identity denies all legacy grants`, async () => {
+		const malformed = record.replace(
+			/^(BOARD|FAMILY|CAPABILITIES)=/gm,
+			(_, key) =>
+				whitespace === "before-equals" ? `${key} =` : `${whitespace}${key}=`,
+		);
+		for (const capability of [
+			"client-internet",
+			"device-control",
+			"os-updates",
+		] as const)
+			expect(
+				await hasCapability(capability, {
+					...unknown,
+					readDeviceTreeCompatible: async () => "rockchip,rk3588",
+					readCeraliveRelease: async () => malformed,
+				}),
+			).toBe(false);
+	});
+}
+test("parser matrix retains inert metadata and normalizes duplicate grants", () => {
+	expect(parseBoardIdentity(`# comment\n${record}EXTRA="$(id)"\n`)?.board).toBe(
+		"example-board",
+	);
+	expect(
+		parseBoardIdentity(record.replace("wifi-country", "client-internet"))
+			?.capabilities.size,
+	).toBe(2);
+	for (const value of [
+		record.replaceAll("\n", "\r\n"),
+		record.replace(" wifi-country", "\twifi-country"),
+		`${record}EXTRA=x\nEXTRA=y\n`,
+	])
+		expect(parseBoardIdentity(value)).toBeNull();
+});
+test("unreadable identity on recognized old hardware preserves compatibility", async () => {
+	expect(
+		await hasCapability("os-updates", {
+			...unknown,
+			readDeviceTreeCompatible: async () => "rockchip,rk3588",
+			readCeraliveRelease: async () => {
+				throw new Error("unreadable");
+			},
+		}),
+	).toBe(true);
+});
+
+test("only syntactically valid branding-only records select legacy fallback", async () => {
+	for (const malformed of [
+		record.toLowerCase(),
+		"ID=ceralive\ninvalid record\n",
+		"ID=ceralive\nBOARD:example\n",
+	]) {
+		expect(
+			await hasCapability("os-updates", {
+				...unknown,
+				readDeviceTreeCompatible: async () => "rockchip,rk3588",
+				readCeraliveRelease: async () => malformed,
+			}),
+		).toBe(false);
+	}
+	expect(
+		await hasCapability("os-updates", {
+			...unknown,
+			readDeviceTreeCompatible: async () => "rockchip,rk3588",
+			readCeraliveRelease: async () => "ID=ceralive\nVERSION_ID=1.2.3\n",
+		}),
+	).toBe(true);
+});

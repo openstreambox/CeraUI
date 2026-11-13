@@ -44,9 +44,9 @@
  */
 
 import WebSocket, { type RawData } from "ws";
-
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { logger } from "../../helpers/logger.ts";
+import { isDevelopment } from "../../mocks/mock-config.ts";
 import { getConfig } from "../config.ts";
 import { canDialControlChannel } from "../identity/index.ts";
 import { verifyDeviceControlToken } from "../pairing/device-token.ts";
@@ -472,7 +472,8 @@ export function isConnected(): boolean {
 export async function initControlChannel(
 	overrides: Partial<ControlChannelDeps> = {},
 ): Promise<void> {
-	const requireVerifiedControl = await hasCapability("device-control");
+	const canControl = await hasCapability("device-control");
+	const requireVerifiedControl = !isDevelopment();
 	const deps: ControlChannelDeps = {
 		...defaultDeps(requireVerifiedControl),
 		...overrides,
@@ -489,7 +490,7 @@ export async function initControlChannel(
 	};
 
 	// Gate (spec §9): an unpaired / unresolved device MUST NOT dial.
-	if (!deps.canDial()) {
+	if ((!canControl && !isDevelopment()) || !deps.canDial()) {
 		deps.logger.info(
 			"control-channel: unpaired, control channel gated (no dial)",
 		);

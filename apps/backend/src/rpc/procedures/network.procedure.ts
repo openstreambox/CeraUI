@@ -149,7 +149,7 @@ export const setNetworkIngestEnabledProcedure = authedProcedure
 			return { success: true, applied: { protocol, enabled } };
 		}
 
-		if (!(await hasCapability("client-internet"))) {
+		if (!(await hasCapability("network-ingest"))) {
 			return { success: false, error: NETWORK_INGEST_UNAVAILABLE_ERROR };
 		}
 
