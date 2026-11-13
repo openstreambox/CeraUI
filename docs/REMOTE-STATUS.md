@@ -29,7 +29,7 @@ changes. A freshness test pins producer and type declaration sources and the loc
 | link telemetry | measured rate, bytes, freshness, RTT/NAK/weight and per-link numeric metrics | device IDs, interface names, serials, physical port names replaced/withheld |
 | buffering/engine bitrate | counters, active/disk-warning flags, applied and ceiling bitrate; null retractions | unknown fields withheld |
 | active profile | published preset enum, latency, FEC, recovery enum | unknown fields withheld; invalid presets are absent rather than invented |
-| pipelines, sources, relays, acodecs | presence flags | detailed identities withheld; cloud pipeline command has a separate DTO |
+| pipelines, sources, relays, acodecs | schema-valid empty lists/maps and the fixed codec catalog | detailed identities withheld; cloud pipeline command has a separate DTO |
 | revisions, encoder-load, fan, cpu, bluetooth and other legacy/direct reply types | none | withheld |
 | notification(s) | separate bounded, fixed-text projection | unstructured notifications are withheld; see integration below |
 
@@ -40,8 +40,8 @@ Adapter and saved-network counters are separate. Interface labels are allocated
 by interface name, never link position, and persist across reconnects. Display
 numbers deliberately restart at 1 on reboot, so deterministic enumeration can
 repeat them; they are not claimed to prevent cross-session correlation. Bond row
-keys use a random per-process HMAC and therefore change on restart, remain stable
-across reorder and never disclose connection or physical identity.
+keys use a separate random per-process HMAC key for each transport/legacy endpoint.
+They change on restart, remain stable across reorder and never disclose connection or physical identity.
 Labels are display identifiers, not permission or device identity for mutations.
 
 ## Transport coverage and UI
@@ -97,12 +97,32 @@ substrings in arbitrary producer text.
 `status.remote_diagnostics` publishes audio presence, SSH active/enabled/password-set
 flags, update availability/activity and a closed update-state enum. Bond mapping
 keeps its state/disposition/source/reason and drops collision addresses. Netif
-retains only the fixed `policy_route_missing` warning. Pipeline/source/audio/relay
-legacy snapshots expose presence flags. Sensor text accepts only fixed SoC keys
-and numeric temperature/voltage/current formats. Unknown fields remain withheld.
+retains only the fixed `policy_route_missing` warning. Pipeline/source/relay
+legacy snapshots carry schema-valid empty collections; the
+audio-codec snapshot carries only the fixed published codec catalog. Sensor text
+accepts fixed SoC keys and numeric formats, with an unavailable temperature
+sentinel when absent. Device statistics use null for withheld required fields.
+Unknown fields remain withheld.
 Empty legacy projections are not transmitted. Labels are display-only.
 
 Regression coverage includes two-link schema validation, reorder stability,
 interface replacement collisions, telemetry strict frames, command DTOs and
 exact notification rejection. Hardware, a hosted hub and browser E2E remain
 unqualified.
+
+## Projection regressions
+
+Bond row keys derive from the producer connection ID, preserving distinct rows
+when connections share an interface or physical link. Keys are random per process
+and transport; each legacy endpoint has its own key, stable across reconnects.
+Display labels remain process-wide and are not unique device identities.
+Command pipeline IDs share the registry's runtime catalog; control enums come
+from the published RPC schemas, including Decklink and auto/force/off passthrough.
+
+Every emitted type has payload or protocol schema coverage. The frontend test
+ingests the projected initial lists through real subscriptions and mounts Live.
+The notification integration test compares both complete summary catalogs when
+the independently delivered relay is present, then validates every summary.
+Rejected legacy payloads increment a process-local counter, and the socket warns
+once without recording content. Callback completion still means local processing,
+not remote delivery. The counter is diagnostic and is not a delivery receipt.

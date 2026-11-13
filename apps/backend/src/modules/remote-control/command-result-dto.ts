@@ -1,7 +1,13 @@
 import {
+	audioBackendSchema,
+	audioCodecSchema,
 	framerateSchema,
 	hardwareTypeSchema,
+	previewEncodeModeSchema,
 	resolutionSchema,
+	streamRecoveryPreferenceSchema,
+	videoCodecSchema,
+	videoPassthroughSchema,
 } from "@ceraui/rpc/schemas";
 
 // Command acknowledgements have their own contract; status reduction is unrelated.
@@ -30,27 +36,21 @@ import type { ResultPayload } from "./protocol.ts";
 
 const obj = (v: unknown): Record<string, unknown> =>
 	v !== null && typeof v === "object" ? (v as Record<string, unknown>) : {};
-const PIPELINES = new Set([
-	"hdmi",
-	"camlink",
-	"usb_mjpeg",
-	"v4l_mjpeg",
-	"libuvch264",
-	"rtmp",
-	"srt",
-	"test",
-]);
+
+import { VIDEO_SOURCE_IDS } from "../streaming/pipeline-sources.ts";
+
+const PIPELINES = new Set<string>(VIDEO_SOURCE_IDS);
 function configDTO(v: unknown) {
 	const src = obj(v),
 		out = obj(scalarAcknowledgement(v));
 	for (const [key, allowed] of Object.entries({
 		pipeline: [...PIPELINES],
-		acodec: ["aac", "opus"],
-		audio_backend: ["alsa", "pipewire"],
-		recovery_mode: ["standard", "bandwidth-saver"],
-		video_codec: ["h264", "h265", "auto"],
-		video_passthrough: [true, false],
-		previewEncode: ["auto", "hardware", "software"],
+		acodec: audioCodecSchema.options,
+		audio_backend: audioBackendSchema.options,
+		recovery_mode: streamRecoveryPreferenceSchema.options,
+		video_codec: videoCodecSchema.options,
+		video_passthrough: videoPassthroughSchema.options,
+		previewEncode: previewEncodeModeSchema.options,
 	}))
 		if (allowed.includes(src[key] as never)) out[key] = src[key];
 	for (const [key, schema] of [

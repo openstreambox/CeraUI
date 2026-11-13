@@ -77,7 +77,13 @@ import {
 	updateCachedRelays,
 	type ValidateRemoteRelaysMessage,
 } from "./remote-relays.ts";
-import { projectRemoteLegacyFrame } from "./remote-status.ts";
+
+let warnedProjectionDrop = false;
+
+import {
+	getRemoteProjectionDrops,
+	projectRemoteLegacyFrame,
+} from "./remote-status.ts";
 import { buildRemoteWsUrl } from "./remote-url.ts";
 
 type RemoteAuthEncoderMessage = {
@@ -431,6 +437,7 @@ async function remoteConnect() {
 			authPayload && typeof authPayload === "object"
 				? (authPayload as Record<string, unknown>)
 				: undefined;
+		const dropsBefore = getRemoteProjectionDrops();
 		const message =
 			authObject &&
 			typeof authObject.key === "string" &&
@@ -447,7 +454,18 @@ async function remoteConnect() {
 							},
 						},
 					})
-				: JSON.stringify(projectRemoteLegacyFrame(frame));
+				: JSON.stringify(
+						projectRemoteLegacyFrame(
+							frame,
+							`legacy:${protocol}://${endpointHost}${endpointPath}`,
+						),
+					);
+		if (getRemoteProjectionDrops() > dropsBefore && !warnedProjectionDrop) {
+			warnedProjectionDrop = true;
+			logger.warn(
+				"remote status payload rejected by projection; dropped payloads are counted",
+			);
+		}
 		if (message === "{}") {
 			if (typeof options === "function") options();
 			else cb?.();

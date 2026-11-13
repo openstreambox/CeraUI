@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import {
 	connectionStatusSchema,
+	hardwareTypeSchema,
 	streamProfileIdSchema,
 } from "@ceraui/rpc/schemas";
 
@@ -49,9 +50,14 @@ function label(kind: string, key: string): string {
 function interfaceLabel(original: unknown, _fallback?: string): string {
 	return label("Link", typeof original === "string" ? original : "unknown");
 }
-const rowKey = randomBytes(32);
-function opaqueRow(kind: string, value: unknown): string {
-	return createHmac("sha256", rowKey)
+const rowKeys = new Map<string, Buffer>();
+function opaqueRow(kind: string, value: unknown, transport: string): string {
+	let key = rowKeys.get(transport);
+	if (!key) {
+		key = randomBytes(32);
+		rowKeys.set(transport, key);
+	}
+	return createHmac("sha256", key)
 		.update(`${kind}:${String(value)}`)
 		.digest("hex");
 }
@@ -157,7 +163,7 @@ export function projectRemoteConfig(v: unknown): unknown {
 export function projectRemoteWifiFrame(_v: unknown): unknown {
 	return {};
 }
-export function projectRemoteStatus(v: unknown): unknown {
+export function projectRemoteStatus(v: unknown, transport = "legacy"): unknown {
 	if (v === undefined) return undefined;
 	const src = object(v),
 		out: Row = {
@@ -284,10 +290,17 @@ export function projectRemoteStatus(v: unknown): unknown {
 									return {
 										conn_id: opaqueRow(
 											"connection",
-											row.link_id ?? row.iface ?? row.conn_id ?? i,
+											row.conn_id ?? i,
+											transport,
 										),
 										...(typeof row.link_id === "string"
-											? { link_id: opaqueRow("physical", row.link_id) }
+											? {
+													link_id: opaqueRow(
+														"physical",
+														row.link_id,
+														transport,
+													),
+												}
 											: {}),
 										iface: interfaceLabel(row.iface),
 										...numbers(row, [
@@ -306,7 +319,11 @@ export function projectRemoteStatus(v: unknown): unknown {
 	return out;
 }
 /** Unknown message types and fields fail closed, including direct command replies. */
-export function projectRemotePayload(type: string, v: unknown): unknown {
+export function projectRemotePayload(
+	type: string,
+	v: unknown,
+	transport = "legacy",
+): unknown {
 	switch (type) {
 		case "notification":
 			return projectLegacyNotification(v);
@@ -327,13 +344,19 @@ export function projectRemotePayload(type: string, v: unknown): unknown {
 					: [],
 			};
 		case "pipelines":
-			return { present: Object.keys(object(object(v).pipelines)).length > 0 };
-		case "sources":
-		case "acodecs":
+		case "sources": {
+			const parsed = hardwareTypeSchema.safeParse(object(v).hardware);
+			return {
+				hardware: parsed.success ? parsed.data : "generic",
+				[type]: type === "sources" ? [] : {},
+			};
+		}
 		case "relays":
-			return { present: Object.keys(object(v)).length > 0 };
+			return { servers: {}, accounts: {} };
+		case "acodecs":
+			return { aac: { name: "AAC" }, opus: { name: "Opus" } };
 		case "status":
-			return projectRemoteStatus(v);
+			return projectRemoteStatus(v, transport);
 		case "config":
 			return v === null ? {} : projectRemoteConfig(v);
 		case "netif":
@@ -348,20 +371,31 @@ export function projectRemotePayload(type: string, v: unknown): unknown {
 			return modems(v);
 		case "sensors":
 			return Object.fromEntries(
-				Object.entries(object(v)).filter(
+				Object.entries({
+					"SoC temperature": "unavailable",
+					...object(v),
+				}).filter(
 					([key, value]) =>
 						["SoC temperature", "SoC voltage", "SoC current"].includes(key) &&
 						typeof value === "string" &&
-						/^-?\d+(?:\.\d+)? (?:°C|V|A)$/.test(value),
+						(value === "unavailable" ||
+							/^-?\d+(?:\.\d+)? (?:°C|V|A)$/.test(value)),
 				),
 			);
 		case "device-stats":
-			return numbers(v, [
-				"cpuLoad1",
-				"socTemp",
-				"memTotalBytes",
-				"memAvailableBytes",
-			]);
+			return {
+				disk: null,
+				ifaceRxTx: null,
+				raucSlot: "",
+				cpuLoad1: null,
+				socTemp: null,
+				...numbers(v, [
+					"cpuLoad1",
+					"socTemp",
+					"memTotalBytes",
+					"memAvailableBytes",
+				]),
+			};
 		case "device.activeProfile": {
 			const c = object(object(v).config);
 			return {
@@ -382,12 +416,21 @@ export function projectRemotePayload(type: string, v: unknown): unknown {
 			return undefined;
 	}
 }
-export function projectRemoteLegacyFrame(v: unknown): Row {
+let projectionDrops = 0;
+/** Number of payloads suppressed at the legacy wire boundary. No payload is retained. */
+export function getRemoteProjectionDrops(): number {
+	return projectionDrops;
+}
+export function projectRemoteLegacyFrame(
+	v: unknown,
+	transport = "legacy",
+): Row {
 	const src = object(v),
 		out: Row = {};
 	for (const [type, payload] of Object.entries(src)) {
-		const projected = projectRemotePayload(type, payload);
+		const projected = projectRemotePayload(type, payload, transport);
 		if (projected !== undefined) out[type] = projected;
+		else if (type !== "seq" && payload !== undefined) projectionDrops++;
 	}
 	if (
 		typeof src.seq === "number" &&

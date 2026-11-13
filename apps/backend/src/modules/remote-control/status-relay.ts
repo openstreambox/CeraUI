@@ -119,7 +119,7 @@ export function relayStatusToGateway(
 	}
 
 	if (!isRelayable(type)) return;
-	const remotePayload = projectRemotePayload(type, payload);
+	const remotePayload = projectRemotePayload(type, payload, "cloud");
 	if (remotePayload === undefined && payload !== undefined) return;
 	const frame: Status = {
 		v: PROTOCOL_VERSION,

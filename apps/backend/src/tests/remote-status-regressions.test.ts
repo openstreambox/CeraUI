@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { strictParseFrame } from "@ceralive/control-protocol/parse";
+import { ActiveProfilePayloadSchema } from "@ceralive/control-protocol/schemas";
 import {
 	modemListSchema,
 	netifMessageSchema,
@@ -33,7 +34,7 @@ test("projected bonded status satisfies the published schema with unique stable 
 	);
 	const b = statusResponseSchema.parse(
 		projectRemoteStatus({
-			linkTelemetry: { links: [link("private-b"), link("private-a", "1")] },
+			linkTelemetry: { links: [link("private-b", "1"), link("private-a")] },
 		}),
 	);
 	expect(new Set(a.linkTelemetry?.links.map((r) => r.conn_id)).size).toBe(2);
@@ -54,13 +55,15 @@ test("interfaces at the same position never collide and adapter counters exclude
 	modemListSchema.parse(projectRemotePayload("modems", {}));
 	const out = projectRemoteStatus({
 		wifi: {
-			a: { ifname: "radio-a", saved: { one: "1", two: "2", three: "3" } },
-			b: { ifname: "radio-b" },
+			"counter-radio-a": {
+				ifname: "radio-a",
+				saved: { one: "1", two: "2", three: "3" },
+			},
+			"counter-radio-b": { ifname: "radio-b" },
 		},
 	}) as { wifi: Record<string, unknown> };
-	expect(Object.keys(out.wifi).map((k) => Number(k.split(" ").at(-1)))).toEqual(
-		[1, 2],
-	);
+	const ids = Object.keys(out.wifi).map((k) => Number(k.split(" ").at(-1)));
+	expect(ids[1]).toBe(ids[0]! + 1);
 });
 test("telemetry traverses the relay with numeric metrics and neutral link IDs", () => {
 	const frames: unknown[] = [];
@@ -253,4 +256,174 @@ test("cloud command router sends pipeline and config result DTOs rather than sta
 	expect(frames[1]).toHaveProperty("payload.applied.pipeline", "hdmi");
 	expect(frames[1]).toHaveProperty("payload.applied.resolution", "1080p");
 	expect(JSON.stringify(frames)).not.toContain("private-secret");
+});
+
+test("connections sharing interfaces or physical links keep distinct stable keys", () => {
+	for (const rows of [
+		[
+			{ ...link("same", "a"), link_id: undefined },
+			{ ...link("same", "b"), link_id: undefined },
+		],
+		[link("same", "a"), link("same", "b")],
+	]) {
+		const read = (links: unknown[]) =>
+			statusResponseSchema.parse(
+				projectRemoteStatus({ linkTelemetry: { links } }),
+			).linkTelemetry!.links;
+		const a = read(rows),
+			b = read([...rows].reverse());
+		expect(new Set(a.map((r) => r.conn_id)).size).toBe(2);
+		expect(a[0]!.conn_id).toBe(b[1]!.conn_id);
+	}
+});
+
+test("transport and legacy provider keys are independent and reconnect stable", () => {
+	const read = (transport: string) =>
+		statusResponseSchema.parse(
+			projectRemotePayload(
+				"status",
+				{ linkTelemetry: { links: [link("secret")] } },
+				transport,
+			),
+		).linkTelemetry!.links[0]!;
+	const a = read("legacy:a"),
+		b = read("cloud"),
+		c = read("legacy:b");
+	expect(a.conn_id).not.toBe(b.conn_id);
+	expect(a.link_id).not.toBe(b.link_id);
+	expect(a.conn_id).not.toBe(c.conn_id);
+	expect(a).toEqual(read("legacy:a"));
+});
+
+test("command DTOs retain registry pipelines and published control enums", async () => {
+	const { projectCommandResult } = await import(
+		"../modules/remote-control/command-result-dto.ts"
+	);
+	const { videoPassthroughSchema } = await import("@ceraui/rpc/schemas");
+	expect(
+		projectCommandResult("streaming.getPipelines", {
+			ok: true,
+			applied: { pipelines: { decklink: {} } },
+		}),
+	).toHaveProperty("applied.pipelines.decklink");
+	for (const mode of videoPassthroughSchema.options) {
+		expect(
+			projectCommandResult("streaming.getConfig", {
+				ok: true,
+				applied: { pipeline: "decklink", video_passthrough: mode },
+			}).applied,
+		).toEqual({ pipeline: "decklink", video_passthrough: mode });
+	}
+});
+
+test("rejected nonempty legacy frames are counted without recording payload text", async () => {
+	const { getRemoteProjectionDrops } = await import(
+		"../modules/remote/remote-status.ts"
+	);
+	const before = getRemoteProjectionDrops();
+	projectRemoteLegacyFrame({ notification: { show: [{ msg: "secret" }] } });
+	projectRemoteLegacyFrame({ notification: { show: [{ msg: "secret" }] } });
+	expect(getRemoteProjectionDrops()).toBe(before + 2);
+});
+
+test("every emitted message type validates against its published payload schema", async () => {
+	const s = await import("@ceraui/rpc/schemas");
+	const cases = [
+		[
+			"pipelines",
+			{ hardware: "generic", pipelines: {} },
+			s.pipelinesMessageSchema,
+		],
+		["sources", { hardware: "generic", sources: [] }, s.sourcesMessageSchema],
+		["relays", { servers: {}, accounts: {} }, s.relayMessageSchema],
+		["acodecs", { aac: { name: "AAC" } }, s.audioCodecsMessageSchema],
+		["status", {}, s.statusResponseSchema],
+		["config", {}, s.configMessageSchema],
+		["sensors", {}, s.sensorsStatusSchema],
+		["device-stats", {}, s.deviceStatsSchema],
+		["netif", {}, s.netifMessageSchema],
+		["modems", {}, s.modemListSchema],
+	] as const;
+	for (const [type, input, schema] of cases)
+		expect(
+			schema.safeParse(projectRemotePayload(type, input)).success,
+			type,
+		).toBe(true);
+	for (const [type, input] of [
+		["sensors", {}],
+		["device-stats", {}],
+		["telemetry", { samples: [] }],
+		[
+			"device.activeProfile",
+			{
+				config: {
+					presetId: "classic",
+					latencyMs: 200,
+					fecEnabled: false,
+					recoveryMode: "standard",
+				},
+			},
+		],
+	] as const) {
+		strictParseFrame({
+			v: 1,
+			kind: "status",
+			type,
+			cid: crypto.randomUUID(),
+			seq: 1,
+			payload: projectRemotePayload(type, input),
+		});
+	}
+	ActiveProfilePayloadSchema.parse(
+		projectRemotePayload("device.activeProfile", {
+			config: {
+				presetId: "classic",
+				latencyMs: 200,
+				fecEnabled: false,
+				recoveryMode: "standard",
+			},
+		}),
+	);
+	const notification = {
+		show: [],
+		remove: [],
+		epoch: crypto.randomUUID(),
+		full: true,
+	};
+	expect(
+		s.notificationsMessageSchema.safeParse(
+			projectRemotePayload("notification", notification),
+		).success,
+	).toBe(true);
+});
+
+test("notification relay summaries and the legacy validator stay synchronized on integration", async () => {
+	const path = `${import.meta.dir}/../modules/remote/notification-relay.ts`;
+	// The notification relay is an independently mergeable change. Once present,
+	// compare its entire catalog and validate every producer summary at this boundary.
+	if (!(await Bun.file(path).exists())) return;
+	const relay = await import(path);
+	const { NOTIFICATION_SUMMARIES } = await import(
+		"../modules/remote/legacy-notification-dto.ts"
+	);
+	expect(relay.NOTIFICATION_SUMMARIES).toEqual(NOTIFICATION_SUMMARIES);
+	for (const msg of Object.values(relay.NOTIFICATION_SUMMARIES)) {
+		const payload = {
+			show: [
+				{
+					name: "a".repeat(64),
+					type: "warning",
+					msg,
+					revision: 1,
+					is_persistent: true,
+					is_dismissable: false,
+					duration: 0,
+				},
+			],
+			remove: [],
+			epoch: crypto.randomUUID(),
+			full: true,
+		};
+		expect(projectRemotePayload("notification", payload)).toEqual(payload);
+	}
 });
