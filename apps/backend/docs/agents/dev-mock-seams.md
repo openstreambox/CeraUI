@@ -437,3 +437,16 @@ regression in outward signalling. A PID namespace does not shield a child from
 same-account signals sent by an uncontained host process. File-ownership tests
 need the normal UID mapping, so a privileged namespace launcher may drop back
 to the invoking UID/GID after creating the PID namespace.
+
+### Mock DNS answers public names as refused
+
+A mock backend has no real network. Its well-known DNS check, the gateway
+connectivity target and relay names would otherwise reach the host's resolver,
+and the development harness's network guard (above) ends the process on the
+first such query, so a development backend died at boot. Under
+`shouldUseMocks()`, `modules/network/dns.ts` hands out a refusing resolver:
+public names fail with `EREFUSED`, the answer the browser test gate's DNS
+recorder gives, and `localhost` names still go to the real resolver. Address
+literals never query. Production keeps `new Resolver()`. Coverage:
+`tests/mock-dns-refusal.test.ts`, which the unit preload's network guard would
+fail on any real query.
