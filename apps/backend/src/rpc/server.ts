@@ -22,12 +22,19 @@ import { initPreviewSocketData } from "../modules/ui/preview-proxy.ts";
 import { createServerWebSocketHandler, initSocketData } from "./adapter.ts";
 import { permitsE2eWorkerUpgrade } from "./e2e-worker-admission.ts";
 import { issueKioskSessionToken } from "./procedures/auth.procedure.ts";
+import { permitsScenarioDriver } from "./scenario-driver-admission.ts";
 import type { ServerSocketData } from "./types.ts";
 
 const isDevelopment =
 	process.env.NODE_ENV === "development" && !fs.existsSync("public");
 const RPC_WS_PATH = "/ws";
 const e2eWorkerProxySecret = process.env.E2E_WORKER_PROXY_SECRET;
+// Literal NODE_ENV reads: a production build inlines them and drops the
+// scenario driver admission entirely (dev-scenario-production-build.test.ts).
+const scenarioDriverSecret =
+	process.env.NODE_ENV !== "production"
+		? process.env.CERAUI_SCENARIO_SECRET
+		: undefined;
 
 // MIME type mapping
 const mimeTypes: Record<string, string> = {
@@ -251,9 +258,14 @@ function startServer(): void {
 						return new Response("WebSocket upgrade failed", { status: 500 });
 					}
 
-					const success = server.upgrade(req, {
-						data: initSocketData(),
-					});
+					const data = initSocketData();
+					if (
+						process.env.NODE_ENV !== "production" &&
+						permitsScenarioDriver(req, scenarioDriverSecret)
+					) {
+						data.scenarioDriver = true;
+					}
+					const success = server.upgrade(req, { data });
 					if (success) {
 						// Bun automatically returns a 101 Switching Protocols response
 						return undefined;

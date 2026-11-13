@@ -32,6 +32,9 @@ import {
 import {
 	devEmitProcedure,
 	devRebindWifiProcedure,
+	devScenarioApplyProcedure,
+	devScenarioResetProcedure,
+	devScenarioStatusProcedure,
 } from "./procedures/dev.procedure.ts";
 import { esimOperationProcedure } from "./procedures/esim.procedure.ts";
 import {
@@ -343,6 +346,11 @@ export const appRouter = os.$context<RPCContext>().router(
 				dev: base.router({
 					emit: devEmitProcedure,
 					rebindWifi: devRebindWifiProcedure,
+					scenario: base.router({
+						apply: devScenarioApplyProcedure,
+						reset: devScenarioResetProcedure,
+						status: devScenarioStatusProcedure,
+					}),
 				}),
 			}
 		: stableRoutes,

@@ -30,6 +30,7 @@ import {
 import { resetAudioNamingDiagnostics } from "../modules/streaming/audio-naming.ts";
 import { broadcastMsg } from "../modules/ui/websocket-server.ts";
 import { buildMockSimState } from "./fixture-factory.ts";
+import { isMockClockPinned, mockRandom } from "./mock-clock.ts";
 import {
 	getActiveScenario,
 	getScenarioConfig,
@@ -152,6 +153,23 @@ export interface MockState {
 	// input_id present with `true` is DETACHED and filtered out of
 	// getMockEngineDevices(), so it surfaces as a `lost` row. Resets with the scenario.
 	detachedSources: Record<string, boolean>;
+	// Scripted-scenario overrides for one link's telemetry row, keyed by iface
+	// (eth0, usbN, wlanN). Only the dev scenario control writes them; empty =
+	// every link follows the default drift. Resets with the scenario.
+	linkOverrides: Record<string, MockLinkOverride>;
+	// Scripted bond bitrate target in kbps, or null for the default drift.
+	bitrateTargetKbps: number | null;
+}
+
+/** One link's scripted telemetry, layered over the default drift. */
+export interface MockLinkOverride {
+	rtt_ms?: number;
+	nak_count?: number;
+	/** Multiplies the link's selection weight (its share of the bond), 0..1+. */
+	weight_scale?: number;
+	stale?: boolean;
+	/** The link has no telemetry row at all, as when its modem lost service. */
+	gone?: boolean;
 }
 
 const mockState: MockState = {
@@ -189,6 +207,8 @@ const mockState: MockState = {
 	networkIngestActive: { rtmp: true, srt: true },
 	networkIngestMediamtxSrt: false,
 	detachedSources: {},
+	linkOverrides: {},
+	bitrateTargetKbps: null,
 };
 
 // Deep snapshot of `mockState` captured at the end of initMockService — the
@@ -260,13 +280,15 @@ export function initMockService(scenarioName?: string): void {
 	mockState.networkIngestActive = { rtmp: true, srt: true };
 	mockState.networkIngestMediamtxSrt = false;
 	mockState.detachedSources = {};
+	mockState.linkOverrides = {};
+	mockState.bitrateTargetKbps = null;
 	mockState.interfaceThroughput = {};
 	mockState.wifiModes = {};
 	lastEmittedModemFingerprint = null;
 	lastEmittedWifiFingerprint = null;
 
 	for (let i = 0; i < config.modems; i++) {
-		mockState.modemSignals.set(i, 80 + Math.random() * 15);
+		mockState.modemSignals.set(i, 80 + mockRandom() * 15);
 		mockState.modemStates.set(i, "connected");
 	}
 
@@ -434,6 +456,10 @@ function startPeriodicUpdates(): void {
 	}
 
 	updateInterval = setInterval(() => {
+		// A pinned scenario clock advances in the scenario driver's steps, which
+		// apply one fluctuation each (stepMockFluctuations); the host timer would
+		// add draws at host-timing-dependent moments.
+		if (isMockClockPinned()) return;
 		applyPeriodicFluctuations();
 	}, 1000);
 }
@@ -447,21 +473,21 @@ function applyPeriodicFluctuations(): void {
 	// Update modem signals (fluctuate ±MODEM_SIGNAL_FLUCTUATION_PERCENT%)
 	for (const [id, signal] of mockState.modemSignals) {
 		const fluctuation =
-			(Math.random() - 0.5) * (MODEM_SIGNAL_FLUCTUATION_PERCENT * 2);
+			(mockRandom() - 0.5) * (MODEM_SIGNAL_FLUCTUATION_PERCENT * 2);
 		const newSignal = Math.max(50, Math.min(100, signal + fluctuation));
 		mockState.modemSignals.set(id, newSignal);
 	}
 
 	// Update network traffic (simulate data transfer)
 	for (const [iface, bytes] of mockState.networkTraffic) {
-		const increment = Math.floor(Math.random() * 100000) + 50000;
+		const increment = Math.floor(mockRandom() * 100000) + 50000;
 		mockState.networkTraffic.set(iface, bytes + increment);
 	}
 
 	// Update WiFi signals
 	for (const [ssid, signal] of mockState.wifiSignals) {
 		const fluctuation =
-			(Math.random() - 0.5) * (WIFI_SIGNAL_FLUCTUATION_PERCENT * 2);
+			(mockRandom() - 0.5) * (WIFI_SIGNAL_FLUCTUATION_PERCENT * 2);
 		const newSignal = Math.max(20, Math.min(100, signal + fluctuation));
 		mockState.wifiSignals.set(ssid, newSignal);
 	}
@@ -471,21 +497,58 @@ function applyPeriodicFluctuations(): void {
 		? SENSOR_TEMP_BASE_STREAMING_C
 		: SENSOR_TEMP_BASE_IDLE_C;
 	mockState.sensors.socTemp =
-		baseTemp + (Math.random() - 0.5) * SENSOR_TEMP_FLUCTUATION_C;
+		baseTemp + (mockRandom() - 0.5) * SENSOR_TEMP_FLUCTUATION_C;
 	mockState.sensors.socVoltage =
-		SENSOR_VOLTAGE_BASE_V + Math.random() * SENSOR_VOLTAGE_RANGE_V;
+		SENSOR_VOLTAGE_BASE_V + mockRandom() * SENSOR_VOLTAGE_RANGE_V;
 	mockState.sensors.socCurrent = config.streaming
 		? SENSOR_CURRENT_STREAMING_A +
-			Math.random() * SENSOR_CURRENT_STREAMING_RANGE_A
-		: SENSOR_CURRENT_IDLE_A + Math.random() * SENSOR_CURRENT_IDLE_RANGE_A;
+			mockRandom() * SENSOR_CURRENT_STREAMING_RANGE_A
+		: SENSOR_CURRENT_IDLE_A + mockRandom() * SENSOR_CURRENT_IDLE_RANGE_A;
 
 	// Update streaming stats
-	if (config.streaming && mockState.streaming.isActive) {
+	if (mockState.streaming.isActive && mockState.bitrateTargetKbps !== null) {
+		// A scripted target holds within ±2 %, like an encoder settling on it.
 		mockState.streaming.bitrate =
-			BITRATE_MIN_KBPS + Math.random() * (BITRATE_MAX_KBPS - BITRATE_MIN_KBPS);
-		mockState.streaming.srtLatency = 180 + Math.random() * 80;
-		mockState.streaming.packetLoss = Math.random() * 0.5;
+			mockState.bitrateTargetKbps * (0.98 + mockRandom() * 0.04);
+	} else if (config.streaming && mockState.streaming.isActive) {
+		mockState.streaming.bitrate =
+			BITRATE_MIN_KBPS + mockRandom() * (BITRATE_MAX_KBPS - BITRATE_MIN_KBPS);
+		mockState.streaming.srtLatency = 180 + mockRandom() * 80;
+		mockState.streaming.packetLoss = mockRandom() * 0.5;
 	}
+}
+
+/**
+ * Re-seed the random-walk state (modem and Wi-Fi signals, traffic counters)
+ * from the mock clock, as initMockService did at boot. A scripted scenario
+ * calls this at its first step so the walk starts from the scenario's seed
+ * rather than from the unseeded boot draws.
+ */
+export function reseedMockWalk(): void {
+	const config = getScenarioConfig();
+	for (let i = 0; i < config.modems; i++) {
+		mockState.modemSignals.set(i, 80 + mockRandom() * 15);
+	}
+	for (const network of mockWifiNetworks) {
+		if (mockState.wifiSignals.has(network.ssid)) {
+			mockState.wifiSignals.set(network.ssid, network.signal);
+		}
+	}
+	mockState.networkTraffic.set("eth0", 1000000);
+	for (let i = 0; i < config.modems; i++) {
+		mockState.networkTraffic.set(`usb${i}`, 500000 + i * 100000);
+	}
+	if (config.wifi) mockState.networkTraffic.set("wlan0", 750000);
+	lastEmittedModemFingerprint = null;
+	lastEmittedWifiFingerprint = null;
+}
+
+/**
+ * One fluctuation step, for a scripted scenario whose driver owns the clock
+ * (the host 1 s timer stands still while the mock clock is pinned).
+ */
+export function stepMockFluctuations(): void {
+	applyPeriodicFluctuations();
 }
 
 // Fingerprint the values that actually reach the wire (rounded, like the mmcli /
@@ -677,6 +740,29 @@ export function setMockStreamError(event: MockStreamErrorState): void {
 
 export function setMockRelayValidateFault(fault: MockRelayValidateFault): void {
 	updateMockState({ relayValidateFault: fault });
+}
+
+/** Script one link's telemetry (null clears it). shouldUseMocks()-gated. */
+export function setMockLinkOverride(
+	iface: string,
+	override: MockLinkOverride | null,
+): void {
+	if (!shouldUseMocks()) return;
+	const linkOverrides = { ...mockState.linkOverrides };
+	if (override === null) delete linkOverrides[iface];
+	else linkOverrides[iface] = { ...override };
+	updateMockState({ linkOverrides });
+}
+
+/** Script the bond's bitrate target in kbps (null = default drift). */
+export function setMockBitrateTarget(kbps: number | null): void {
+	if (!shouldUseMocks()) return;
+	updateMockState({ bitrateTargetKbps: kbps });
+	if (kbps !== null && mockState.streaming.isActive) {
+		updateMockState({
+			streaming: { ...mockState.streaming, bitrate: kbps },
+		});
+	}
 }
 
 function clearMockTimers(): void {

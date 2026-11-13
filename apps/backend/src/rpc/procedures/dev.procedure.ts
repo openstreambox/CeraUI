@@ -15,8 +15,12 @@
  */
 
 import {
+	type DevScenarioOutput,
 	devEmitInputSchema,
 	devEmitOutputSchema,
+	devScenarioApplyInputSchema,
+	devScenarioEmptyInputSchema,
+	devScenarioOutputSchema,
 	wifiScanInputSchema,
 } from "@ceraui/rpc/schemas";
 import { os } from "@orpc/server";
@@ -67,4 +71,62 @@ export const devRebindWifiProcedure = authedProcedure
 		if (!radio || !rebindMockWifi(radio.device)) return { success: false };
 		broadcastWifiState();
 		return { success: true };
+	});
+
+/**
+ * `dev.scenario.*`: scripted mock scenarios (mocks/scenario-control.ts). Three
+ * gates on every call, beyond registration outside production: not a
+ * production process, the backend runs on mocks, and the calling socket is the
+ * scenario driver (its upgrade carried the driver secret, which a browser page
+ * cannot send). The production check stays a literal first statement in each
+ * handler: a production build inlines it, the rest of the handler becomes
+ * unreachable, and the scenario control, imported inside the handler after
+ * that check, drops out of the bundle
+ * (dev-scenario-production-build.test.ts).
+ */
+const PRODUCTION_REFUSAL = { success: false, refused: "production" } as const;
+
+function scenarioRefusal(
+	context: RPCContext,
+): DevScenarioOutput["refused"] | undefined {
+	if (!shouldUseMocks()) return "not_mock";
+	if (context.ws.data.scenarioDriver !== true) return "not_driver";
+	return undefined;
+}
+
+export const devScenarioApplyProcedure = authedProcedure
+	.input(devScenarioApplyInputSchema)
+	.output(devScenarioOutputSchema)
+	.handler(async ({ input, context }) => {
+		if (process.env.NODE_ENV === "production") return PRODUCTION_REFUSAL;
+		const refused = scenarioRefusal(context);
+		if (refused) return { success: false, refused };
+		const { applyScenarioStep } = await import(
+			"../../mocks/scenario-control.ts"
+		);
+		return { success: true, status: await applyScenarioStep(input) };
+	});
+
+export const devScenarioResetProcedure = authedProcedure
+	.input(devScenarioEmptyInputSchema)
+	.output(devScenarioOutputSchema)
+	.handler(async ({ context }) => {
+		if (process.env.NODE_ENV === "production") return PRODUCTION_REFUSAL;
+		const refused = scenarioRefusal(context);
+		if (refused) return { success: false, refused };
+		const { resetScenario } = await import("../../mocks/scenario-control.ts");
+		return { success: true, status: resetScenario() };
+	});
+
+export const devScenarioStatusProcedure = authedProcedure
+	.input(devScenarioEmptyInputSchema)
+	.output(devScenarioOutputSchema)
+	.handler(async ({ context }) => {
+		if (process.env.NODE_ENV === "production") return PRODUCTION_REFUSAL;
+		const refused = scenarioRefusal(context);
+		if (refused) return { success: false, refused };
+		const { getScenarioStatus } = await import(
+			"../../mocks/scenario-control.ts"
+		);
+		return { success: true, status: getScenarioStatus() };
 	});

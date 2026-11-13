@@ -5,6 +5,7 @@
 
 import type { UsbModemNetMarker } from "@ceraui/rpc/schemas";
 
+import { mockRandomFor } from "../mock-clock.ts";
 import {
 	getMockState,
 	getScenarioConfig,
@@ -41,7 +42,8 @@ function advanceInterfaceTraffic(
 	const enabled = state.netifConfigs.get(name)?.enabled ?? true;
 	const baseRate = state.interfaceThroughput[name] ?? 0;
 	const increment = enabled
-		? baseRate * (1 + (Math.random() - 0.5) * 2 * THROUGHPUT_FLUCTUATION)
+		? baseRate *
+			(1 + (mockRandomFor(`netif.${name}`) - 0.5) * 2 * THROUGHPUT_FLUCTUATION)
 		: 0;
 
 	const previous = txByteCounters.get(name) ?? 0;
