@@ -3,6 +3,9 @@ import type { StreamLiveness } from "./disruptive-action-gate.ts";
 const HOLD_MS = 120_000;
 const DWELL_MS = 20_000;
 const MAX_SAMPLE_MS = 10_000;
+// TODO: calibrate entry/keep rates against field client traffic.
+const ENTRY_BPS = 1_000_000;
+const KEEP_BPS = 250_000;
 
 /** Evidence of client use, independent of the encoder's lifecycle. */
 export class CarryingTracker {
@@ -11,9 +14,13 @@ export class CarryingTracker {
 		this.onChange = onChange;
 	}
 	activityAt(now: number): number | null {
-		return this.lastEvidence === null
-			? null
-			: Math.min(now, this.lastEvidence + HOLD_MS);
+		const held =
+			this.lastEvidence === null
+				? null
+				: Math.min(now, this.lastEvidence + HOLD_MS);
+		return held === null
+			? this.lastAboveAt
+			: Math.max(held, this.lastAboveAt ?? held);
 	}
 	private sessions = new Map<string, { active: boolean | null; at: number }>();
 	private previous: {
@@ -22,8 +29,14 @@ export class CarryingTracker {
 	} | null = null;
 	private aboveSince: number | null = null;
 	private lastEvidence: number | null = null;
+	private lastAboveAt: number | null = null;
 	private uploadAt: number | null = null;
 	private uploadUnknown = false;
+
+	/** A fresh hold on every process start also covers a lost pre-restart hold. */
+	start(now: number): void {
+		this.lastEvidence = now;
+	}
 
 	session(source: string, active: boolean | null, now: number): void {
 		if (this.sessions.get(source)?.active === true) this.lastEvidence = now;
@@ -56,7 +69,15 @@ export class CarryingTracker {
 			}
 			if (old !== undefined && count >= old) delta += count - old;
 		}
-		if ((delta * 8 * 1000) / (now - previous.at) > 1_000_000) {
+		const bps = (delta * 8 * 1000) / (now - previous.at);
+		const held =
+			this.lastEvidence !== null && now - this.lastEvidence < HOLD_MS;
+		if (bps > ENTRY_BPS) this.lastAboveAt = now;
+		if (
+			bps > ENTRY_BPS ||
+			(bps > KEEP_BPS && (held || this.aboveSince !== null))
+		) {
+			if (held) this.lastEvidence = now;
 			this.aboveSince ??= previous.at;
 			if (now - this.aboveSince >= DWELL_MS) this.lastEvidence = now;
 		} else this.aboveSince = null;

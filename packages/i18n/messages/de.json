@@ -2814,6 +2814,8 @@
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
 	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
-	"notifications.clientCarrying": "Die Box überträgt Daten für verbundene Geräte. Updates und Änderungen an ungenutzten Verbindungen warten.",
-	"notifications.clientCarryingUnknown": "Die Box prüft die Aktivität verbundener Geräte. Updates und Änderungen an ungenutzten Verbindungen warten."
+	"notifications.clientCarrying": "Die Box überträgt Clientverkehr. Updates, Neustarts, Ausschalten und Verbindungswechsel bei Inaktivität warten.",
+	"notifications.clientCarryingUnknown": "Die Box prüft die Clientaktivität. Updates, Neustarts, Ausschalten und Verbindungswechsel bei Inaktivität warten.",
+	"general.updateReasonClientTraffic": "Ein Stream ist aktiv oder wird geprüft. Beende vor dem Update die Streams verbundener Geräte und den eigenen Stream der Box.",
+	"notifications.disruptiveActionClientTraffic": "Diese Aktion wartet, bis der eigene Stream und der Streamverkehr verbundener Geräte beendet sind und kein Update läuft."
 }

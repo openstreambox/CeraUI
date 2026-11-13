@@ -2769,6 +2769,8 @@
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
 	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
-	"notifications.clientCarrying": "박스가 클라이언트 트래픽을 전달하고 있습니다. 업데이트와 유휴 상태의 링크 변경은 대기합니다.",
-	"notifications.clientCarryingUnknown": "박스가 클라이언트 활동을 확인하고 있습니다. 업데이트와 유휴 상태의 링크 변경은 대기합니다."
+	"notifications.clientCarrying": "박스가 클라이언트 트래픽을 전달 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
+	"notifications.clientCarryingUnknown": "클라이언트 활동을 확인 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
+	"general.updateReasonClientTraffic": "방송 중이거나 상태를 확인 중입니다. 업데이트 전에 연결된 기기와 박스의 방송을 중지하세요.",
+	"notifications.disruptiveActionClientTraffic": "박스 방송과 연결 기기의 방송 트래픽이 멈추고 업데이트가 끝날 때까지 이 작업은 대기합니다."
 }

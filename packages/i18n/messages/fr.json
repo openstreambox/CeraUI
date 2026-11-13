@@ -2817,6 +2817,8 @@
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
 	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
-	"notifications.clientCarrying": "Le boîtier transporte le trafic des appareils connectés. Les mises à jour et les changements de liens au repos attendront.",
-	"notifications.clientCarryingUnknown": "Le boîtier vérifie l’activité des appareils connectés. Les mises à jour et les changements de liens au repos attendront."
+	"notifications.clientCarrying": "Le boîtier transporte du trafic client. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
+	"notifications.clientCarryingUnknown": "Le boîtier vérifie les clients. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
+	"general.updateReasonClientTraffic": "Un flux est actif ou en cours de vérification. Arrêtez les flux des appareils connectés et celui du boîtier avant la mise à jour.",
+	"notifications.disruptiveActionClientTraffic": "Cette action attend la fin du flux du boîtier et du trafic de diffusion des appareils connectés, sans mise à jour en cours."
 }

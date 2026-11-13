@@ -1,8 +1,7 @@
 import { access } from "node:fs/promises";
-import { parseStringPromise as parseXmlStringPromise } from "xml2js";
 import { logger } from "../../helpers/logger.ts";
-import { httpGet } from "../network/internet";
 import { carryingTracker } from "../system/carrying.ts";
+import { createRtmpStatsPoller } from "./rtmp-probe.ts";
 
 // Define specific types for the RTMP statistics
 type StreamBandwidth = `${number} Kbps`;
@@ -16,52 +15,21 @@ type BytesCounter = Record<StreamName, number>;
 let currentStreamBandwidths: RtmpStats = {};
 let previousBytesCounted: BytesCounter = {};
 
+const poll = createRtmpStatsPoller((active) =>
+	carryingTracker.session("rtmp-ingest", active, performance.now()),
+);
+
 async function updateRtmpStats(): Promise<void> {
-	const serverResponse = await httpGet({
-		host: "localhost:1936",
-	});
-
-	// Exit if request failed
-	if (serverResponse.code !== 200) {
-		carryingTracker.session("rtmp-ingest", null, performance.now());
-		return;
+	const counters = await poll();
+	if (counters === null) return;
+	const bandwidths: RtmpStats = {};
+	for (const [name, count] of Object.entries(counters)) {
+		const stream = name as StreamName;
+		const delta = Math.max(0, count - (previousBytesCounted[stream] ?? count));
+		bandwidths[stream] = `${Math.round((delta * 8) / 1024)} Kbps`;
 	}
-
-	const newStreamBandwidths: RtmpStats = {};
-	const currentBytesCounted: BytesCounter = {};
-
-	// Parse XML response and navigate to live streams data
-	const xmlData = await parseXmlStringPromise(serverResponse.body);
-	const liveStreamData = xmlData.rtmp.server[0].application[0].live[0];
-
-	// Process each active stream if any exist
-	if (liveStreamData.stream) {
-		for (const stream of liveStreamData.stream) {
-			// Create standardized stream name
-			const streamName = `RTMP ingest - ${stream.name[0]}` as StreamName;
-
-			// Count total bytes received for this stream
-			currentBytesCounted[streamName] = Number.parseInt(stream.bytes_in[0], 10);
-
-			// Calculate bandwidth based on difference since last check
-			const previousBytes = previousBytesCounted[streamName] || 0;
-			const bytesDifference = currentBytesCounted[streamName] - previousBytes;
-			const bandwidthKbps = Math.round((bytesDifference * 8) / 1024);
-
-			// Store formatted bandwidth value
-			newStreamBandwidths[streamName] =
-				`${bandwidthKbps} Kbps` as StreamBandwidth;
-		}
-	}
-
-	// Update global state with new values
-	carryingTracker.session(
-		"rtmp-ingest",
-		Object.keys(newStreamBandwidths).length > 0,
-		performance.now(),
-	);
-	currentStreamBandwidths = newStreamBandwidths;
-	previousBytesCounted = currentBytesCounted;
+	currentStreamBandwidths = bandwidths;
+	previousBytesCounted = counters as BytesCounter;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -87,7 +55,6 @@ export async function initRTMPIngestStats(): Promise<void> {
 		try {
 			await updateRtmpStats();
 		} catch (error) {
-			carryingTracker.session("rtmp-ingest", null, performance.now());
 			logger.debug("RTMP stats update error", { err: error });
 		}
 	}, 1000);

@@ -2826,6 +2826,8 @@
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
 	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
-	"notifications.clientCarrying": "ينقل الجهاز حركة بيانات الأجهزة المتصلة. ستنتظر التحديثات وتغييرات الروابط عند الخمول.",
-	"notifications.clientCarryingUnknown": "يتحقق الجهاز من نشاط الأجهزة المتصلة. ستنتظر التحديثات وتغييرات الروابط عند الخمول."
+	"notifications.clientCarrying": "الجهاز ينقل حركة العملاء. ستنتظر التحديثات وإعادة التشغيل وإيقاف التشغيل وتغييرات الروابط عند الخمول.",
+	"notifications.clientCarryingUnknown": "الجهاز يتحقق من نشاط العملاء. ستنتظر التحديثات وإعادة التشغيل وإيقاف التشغيل وتغييرات الروابط عند الخمول.",
+	"general.updateReasonClientTraffic": "البث نشط أو جارٍ التحقق من حالته. أوقف بث الأجهزة المتصلة وبث الجهاز نفسه قبل تثبيت التحديث.",
+	"notifications.disruptiveActionClientTraffic": "سينتظر هذا الإجراء حتى يتوقف بث الجهاز وحركة بث الأجهزة المتصلة ولا يكون هناك تحديث قيد التنفيذ."
 }

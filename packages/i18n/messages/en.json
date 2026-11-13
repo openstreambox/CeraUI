@@ -2814,6 +2814,8 @@
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
 	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
-	"notifications.clientCarrying": "The box is carrying client traffic. Updates and idle link changes will wait.",
-	"notifications.clientCarryingUnknown": "The box is checking client activity. Updates and idle link changes will wait."
+	"notifications.clientCarrying": "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait.",
+	"notifications.clientCarryingUnknown": "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.",
+	"general.updateReasonClientTraffic": "A stream is active or its state is being checked. Stop streaming on connected devices and stop the box’s own stream before installing an update.",
+	"notifications.disruptiveActionClientTraffic": "This action will wait until the box’s own stream and connected devices’ stream traffic have stopped and no update is in progress."
 }

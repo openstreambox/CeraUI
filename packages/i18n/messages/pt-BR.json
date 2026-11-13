@@ -2817,6 +2817,8 @@
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
 	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
-	"notifications.clientCarrying": "A caixa está transportando tráfego de clientes. As atualizações e as mudanças de links por inatividade vão aguardar.",
-	"notifications.clientCarryingUnknown": "A caixa está verificando a atividade dos clientes. As atualizações e as mudanças de links por inatividade vão aguardar."
+	"notifications.clientCarrying": "A caixa transporta tráfego de clientes. Atualizações, reinícios, desligamento e mudanças de links por inatividade aguardam.",
+	"notifications.clientCarryingUnknown": "A caixa verifica a atividade dos clientes. Atualizações, reinícios, desligamento e mudanças de links por inatividade aguardam.",
+	"general.updateReasonClientTraffic": "Há uma transmissão ativa ou em verificação. Encerre as transmissões dos dispositivos conectados e da caixa antes da atualização.",
+	"notifications.disruptiveActionClientTraffic": "Esta ação aguarda o fim da transmissão da caixa e do tráfego de transmissão dos dispositivos conectados, sem atualização em andamento."
 }

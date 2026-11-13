@@ -36,9 +36,12 @@ export async function readClientUploadCounters(
 }
 
 let published: string | undefined;
+let markerProtected: boolean | undefined;
 function publishCarrying(): void {
 	const state = getCarryingLiveness();
-	setCarryingOtaProtection(state !== "idle");
+	const protect = state !== "idle";
+	if (markerProtected !== protect && setCarryingOtaProtection(protect))
+		markerProtected = protect;
 	if (state === published) return;
 	published = state;
 	if (state === "idle") {
@@ -51,8 +54,8 @@ function publishCarrying(): void {
 			: "notifications.clientCarryingUnknown";
 	const message =
 		state === "streaming"
-			? "The box is carrying client traffic. Updates and idle link changes will wait."
-			: "The box is checking client activity. Updates and idle link changes will wait.";
+			? "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait."
+			: "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.";
 	notificationBroadcast(
 		"client-carrying",
 		"info",
@@ -94,6 +97,7 @@ export async function tickCarrying(): Promise<void> {
 export function initCarrying(): void {
 	enabled = true;
 	carryingTracker.bind(publishCarrying);
+	carryingTracker.start(performance.now());
 	carryingTracker.upload(performance.now(), null);
-	setCarryingOtaProtection(true);
+	publishCarrying();
 }
