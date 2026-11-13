@@ -58,9 +58,10 @@ const updating = $derived(getUpdating());
 // (success or failure) is retained by the store and must release the gate.
 const isUpdating = $derived(legacyInstallRunning(updating));
 const phoneProtected = $derived(getStatus()?.phone_box && getStatus()?.carrying?.state !== 'idle');
+const powerBlocked = $derived(streaming || isUpdating || (phoneProtected && getStatus()?.carrying?.state === 'streaming'));
 const blocked = $derived(streaming || isUpdating || phoneProtected);
 const blockedReason = $derived(
-	phoneProtected ? m['live.phone.restartHold']() : streaming
+	phoneProtected ? (getStatus()?.carrying?.state === 'streaming' ? m['live.phone.restartHold']() : m['live.phone.restartChecking']()) : streaming
 		? m["settings.dialogs.blockedStreaming"]()
 		: isUpdating
 			? m["settings.dialogs.blockedUpdating"]()
@@ -85,12 +86,12 @@ const confirmLabel = $derived(
 );
 const confirmBody = $derived(
 	pending === 'poweroff'
-		? m["settings.dialogs.powerOffConfirm"]()
+		? (getStatus()?.phone_box ? m["live.phone.powerOffCost"]() : m["settings.dialogs.powerOffConfirm"]())
 		: getStatus()?.phone_box ? m['live.phone.restartCost']() : m["settings.dialogs.rebootConfirm"](),
 );
 
 function request(action: PendingAction) {
-	if (blocked) return;
+	if (action === 'poweroff' ? powerBlocked : blocked) return;
 	pending = action;
 	confirmOpen = true;
 }
@@ -311,7 +312,7 @@ function dismissRecovery() {
 				</div>
 				<Button
 					class="w-full gap-2"
-					disabled={blocked}
+					disabled={powerBlocked}
 					onclick={() => request('poweroff')}
 					variant="destructive"
 				>

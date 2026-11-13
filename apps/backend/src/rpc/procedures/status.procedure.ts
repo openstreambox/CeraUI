@@ -16,7 +16,10 @@ import { getNetworkIngestInfo } from "../../modules/network/network-ingest.ts";
 import { netIfBuildMsg } from "../../modules/network/network-interfaces.ts";
 import { getSharingDiag } from "../../modules/network/sharing-diag/status.ts";
 import { getUnclaimedAdapters } from "../../modules/network/unclaimed-adapters.ts";
-import { getUplinksMessage } from "../../modules/network/uplink-health/state.ts";
+import {
+	getPhoneLinkCounts,
+	getUplinksMessage,
+} from "../../modules/network/uplink-health/state.ts";
 import { getUplinkShaperStatus } from "../../modules/network/uplink-shaper/status.ts";
 import { getUplinkSteeringStatus } from "../../modules/network/uplink-steering/status.ts";
 import {
@@ -88,12 +91,7 @@ export const getStatusProcedure = authedProcedure
 			carrying: { state: getCarryingLiveness() },
 			phone_box: setup.engine === "none",
 			box_health: getPhoneBoxHealth(),
-			phone_links: {
-				ready: getUplinksMessage().filter(
-					(link) => link.state === "up" && link.staleAt > Date.now(),
-				).length,
-				sending: null,
-			},
+			phone_links: getPhoneLinkCounts(),
 			stream_lifecycle: getStreamLifecycleState(),
 			available_updates: getAvailableUpdates(),
 			updating: getSoftUpdateStatus(),
@@ -146,12 +144,7 @@ export function buildInitialStatus() {
 			carrying: { state: getCarryingLiveness() },
 			phone_box: setup.engine === "none",
 			box_health: getPhoneBoxHealth(),
-			phone_links: {
-				ready: getUplinksMessage().filter(
-					(link) => link.state === "up" && link.staleAt > Date.now(),
-				).length,
-				sending: null,
-			},
+			phone_links: getPhoneLinkCounts(),
 			stream_lifecycle: getStreamLifecycleState(),
 			available_updates: getAvailableUpdates(),
 			updating: getSoftUpdateStatus(),

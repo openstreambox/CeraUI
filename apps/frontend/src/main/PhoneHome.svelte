@@ -130,7 +130,7 @@
 	{#if connect}
 		<button type="button" onclick={() => (connect = false)}>{m['live.phone.back']()}</button>
 		<h1>{m['live.phone.connect']()}</h1>
-		<p>{m['live.phone.intro']()}</p>
+		{#if choosing}<p>{m['live.phone.intro']()}</p>{/if}
 		{#if choosing}
 			<div class="choices">
 				{#each ['moblin', 'srt', 'internet'] as const as app (app)}<button
@@ -142,14 +142,14 @@
 				<button type="button" onclick={() => choose('srt')}>{m['live.phone.another']()}</button>
 			</div>
 			<p>{m['live.phone.unsure']()}</p>
-		{:else}<button type="button" onclick={() => (choosing = true)}
+		{:else}<p>{selected ? m[`live.phone.${selected}`]() : ''}</p><button type="button" onclick={() => (choosing = true)}
 				>{m['live.phone.change']()}</button
 			>{/if}
 		{#if !choosing}
 			<section>
 				<h2>1. {m['live.phone.join']()}</h2>
-				<p>{m['live.phone.joinBody']()}</p>
-				{#if wifi?.name}<code>{wifi.name}</code>{/if}
+				<p>{wifi?.name ? m['live.phone.joinNamed']({name:wifi.name}) : m['live.phone.joinBody']()}</p>
+				{#if wifi?.name}<p>{m['live.phone.wifiName']()}</p><code>{wifi.name}</code>{/if}
 				{#if wifi?.password}<p>{m['live.phone.wifiPassword']()}</p>
 					<input
 						type="password"
@@ -165,20 +165,20 @@
 						width="160"
 						height="160"
 					/>{/if}
-				<button type="button" onclick={onnetwork}>{m['live.phone.wifi']()}</button>
+				<button type="button" onclick={onnetwork}>{m['live.phone.wifiSettings']()}</button>
 			</section>
 			{#if selected === 'moblin'}
 				<section>
+					<p>{m['live.phone.moblinUnavailable']()}</p>
 					<h2>2. {m['live.phone.moblinEnable']()}</h2>
 					<p>{m['live.phone.moblinBody']()}</p>
 					<label
-						>{m['live.phone.moblinPassword']}<input
+						>{m['live.phone.moblinPassword']()}<input
 							type="password"
 							autocomplete="off"
 							disabled
 						/></label
 					>
-					<p>{m['live.phone.moblinUnavailable']()}</p>
 					<button type="button" onclick={() => choose('internet')}
 						>{m['live.phone.internet']()}</button
 					>
@@ -186,10 +186,10 @@
 			{:else if selected === 'srt'}
 				<section>
 					<h2>2. {m['live.phone.receiver']()}</h2>
-					{#if receiver}<code>{receiver}</code>{/if}
-					<p>{m['live.phone.receiverBody']()}</p>
+					{#if receiver}<code>{receiver}</code>{:else}<p>{m['live.phone.noServer']()}</p>{/if}
+					<p>{m['live.phone.receiverBody']()}</p><button type="button" onclick={() => choose('internet')}>{m['live.phone.internet']()}</button>
 					<button type="button" disabled={carrying !== 'idle'} onclick={onserver}
-						>{m['live.phone.receiver']()}</button
+						>{receiver ? m['live.phone.serverChange']() : m['live.phone.setServer']()}</button
 					>
 				</section>
 				<section>
@@ -215,13 +215,13 @@
 						/><button type="button" onclick={() => copy(settings?.srt?.passphrase ?? '')}
 							>{m['live.phone.copy']()}</button
 						>
-					{:else}<p>{m['live.phone.srtUnavailable']()}</p>{/if}
+					{:else}<p>{m['live.phone.srtUnavailable']()}</p><button type="button" onclick={() => choose('internet')}>{m['live.phone.internet']()}</button>{/if}
 					<p>{m['live.phone.srtBody']()}</p>
 				</section>
 			{/if}
 			<section>
 				<h2>{m['live.phone.try']()}</h2>
-				<p>{selected === 'internet' ? m['live.phone.internetTry']() : m['live.phone.tryBody']()}</p>
+				<p>{selected === 'internet' ? m['live.phone.internetTry']() : selected === 'srt' ? m['live.phone.srtTry']() : m['live.phone.tryBody']()}</p>
 			</section>
 		{/if}
 	{:else}
@@ -240,7 +240,7 @@
 				</p>
 				{#if viewState === 'ready'}<p>{m[`live.phone.${last}`]()}</p>{/if}
 				<h2>{m['live.phone.links']()}</h2>
-				{#if links.length === 0}<p>{m['live.phone.linkChecking']()}</p>{/if}
+				{#if links.length === 0}<p>{viewState === 'active' ? m['live.phone.linkUnavailable']() : m['live.phone.linkChecking']()}</p>{/if}
 				<ul>
 					{#each links as link (link.id)}<li>
 							<strong>{link.label}</strong><span
@@ -248,7 +248,7 @@
 									? m['live.phone.internetOk']()
 									: reachable && link.internet === 'no'
 										? m['live.phone.noInternet']()
-										: m['live.phone.linkChecking']()}</span
+										: viewState === 'active' ? m['live.phone.linkUnavailable']() : m['live.phone.linkChecking']()}</span
 							>
 						</li>{/each}
 				</ul>
@@ -271,16 +271,16 @@
 			<aside>
 				<section>
 					<h2>{m['live.phone.temperature']()}</h2>
-					<p>{!reachable || temperature === null ? '—' : `${temperature} °C`}</p>
+					<p>{!reachable || temperature === null ? '—' : `${Math.round(temperature)} °C${temperature < 70 ? ` · ${m['live.phone.fine']()}` : ''}`}</p>
 				</section>
 				<section>
 					<h2>{m['live.phone.wifi']()}</h2>
-					<p>{wifi?.name ?? '—'}</p>
+					<p>{wifi?.name ?? m['live.phone.notSetUp']()}</p>
 					{#if reachable && wifi?.clients !== undefined}<p>
-							{m['live.phone.wifiClients']({ count: wifi.clients })}
-						</p>{/if}<button type="button" onclick={onnetwork}>{m['live.phone.wifi']()}</button>
+							{wifi.clients === 1 ? m['live.phone.wifiClient']() : m['live.phone.wifiClients']({ count: wifi.clients })}
+						</p>{/if}<button type="button" onclick={onnetwork}>{m['live.phone.wifiSettings']()}</button>
 				</section>
-				<PhoneBoxHealth {reachable} {health} {links} {carrying} {onrestart} />
+				<PhoneBoxHealth way={lastWay} {reachable} {health} {links} {carrying} {onrestart} />
 			</aside>
 		</div>
 	{/if}

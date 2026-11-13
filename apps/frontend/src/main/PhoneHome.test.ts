@@ -74,3 +74,92 @@ describe("phone Home", () => {
 		await waitFor(() => expect(onsave).toHaveBeenCalledWith("srt"));
 	});
 });
+
+it("renders Moblin's password label as text", async () => {
+	render(PhoneHome, { carrying: "idle" });
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Connect your phone" }),
+	);
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Moblin", exact: true }),
+	);
+	expect(
+		screen.getByLabelText(
+			"Moblin's password (from Moblin, not the Wi-Fi password)",
+		),
+	).toBeTruthy();
+});
+it("offers Just internet at both SRT dead ends with the SRT hint", async () => {
+	render(PhoneHome, { carrying: "idle" });
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Connect your phone" }),
+	);
+	await fireEvent.click(
+		screen.getByRole("button", { name: "IRL Pro", exact: true }),
+	);
+	expect(
+		screen.getAllByRole("button", { name: "Just internet", exact: true }),
+	).toHaveLength(2);
+	expect(
+		screen.getByText(
+			"This box isn't set up to take SRT from a phone yet. Use Just internet for now.",
+		),
+	).toBeTruthy();
+	expect(
+		screen.getByText(/Nothing after 30 seconds.*address and passphrase match/),
+	).toBeTruthy();
+	expect(screen.getByRole("button", { name: "Set your server" })).toBeTruthy();
+});
+it("does not claim to be checking internet while carrying", () => {
+	render(PhoneHome, {
+		carrying: "streaming",
+		temperature: 50.8,
+		wifi: { clients: 1 },
+	});
+	expect(screen.queryByText("Checking internet")).toBeNull();
+	expect(screen.getByText("51 °C · Fine")).toBeTruthy();
+	expect(screen.getByText("1 phone on the box's Wi-Fi")).toBeTruthy();
+	expect(screen.getByText("Not set up")).toBeTruthy();
+});
+it("explains the startup restart hold", () => {
+	render(PhoneHome, { carrying: "unknown" });
+	expect(
+		screen.getByText(
+			"You can restart once the box knows whether your phone uses it.",
+		),
+	).toBeTruthy();
+});
+
+it.each(["streaming", "idle", "unknown"] as const)(
+	"shows state-specific degraded health while %s",
+	(carrying) => {
+		render(PhoneHome, {
+			carrying,
+			health: [{ part: "cellular", since: 1 }],
+			links: [{ id: "L1", label: "Wi-Fi (Example)", internet: "yes" }],
+		});
+		expect(
+			screen.getByText(
+				carrying === "streaming"
+					? /didn't start. Your phone's stream is going over Wi-Fi/
+					: /didn't start. Links that work: Wi-Fi/,
+			),
+		).toBeTruthy();
+	},
+);
+it("keeps maintenance-only failure out of the amber line", () => {
+	const { container } = render(PhoneHome, {
+		carrying: "idle",
+		health: [{ part: "update-orchestrator-maintenance", since: 1 }],
+	});
+	expect(container.querySelector(".health-line")).toBeNull();
+});
+
+it("keeps unknown link probes calm while carrying", () => {
+	render(PhoneHome, {
+		carrying: "streaming",
+		links: [{ id: "L1", label: "Wi-Fi", internet: "unknown" }],
+	});
+	expect(screen.queryByText("Checking internet")).toBeNull();
+	expect(screen.getByText("Link details aren't available yet")).toBeTruthy();
+});

@@ -58,3 +58,42 @@ describe("phone Home consumes carrying broadcasts", () => {
 		}
 	});
 });
+
+it("ingests health partials and hides encoder-only notices on phone boxes", async () => {
+	resetState();
+	initSubscriptions();
+	messageHandler?.(
+		"status",
+		{ phone_box: true, carrying: { state: "idle" }, box_health: [] },
+		20,
+	);
+	render(Harness);
+	messageHandler?.(
+		"status",
+		{ box_health: [{ part: "cellular", since: 1 }] },
+		21,
+	);
+	await waitFor(() =>
+		expect(getStatus()?.box_health?.[0]?.part).toBe("cellular"),
+	);
+	const { getActive } = await import("$lib/stores/notifications.svelte");
+	messageHandler?.(
+		"notification",
+		{
+			show: [
+				{
+					name: "encoder-mode-clamped",
+					type: "warning",
+					msg: "planted camera warning",
+					is_persistent: true,
+					is_dismissable: true,
+					duration: 0,
+				},
+			],
+		},
+		22,
+	);
+	expect(getActive().some((n) => n.name === "encoder-mode-clamped")).toBe(
+		false,
+	);
+});

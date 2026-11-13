@@ -47,12 +47,16 @@ export function projectRemoteConfig(payload: unknown): unknown {
 }
 
 /** Phone-only remote status is allowlisted; encoder status keeps its existing contract. */
-export function projectRemoteStatus(payload: unknown): unknown {
+export function projectRemoteStatus(
+	payload: unknown,
+	phoneBox = false,
+): unknown {
+	if (phoneBox && (typeof payload !== "object" || payload === null))
+		return { phone_box: true };
 	if (
 		typeof payload === "object" &&
 		payload !== null &&
-		"phone_box" in payload &&
-		payload.phone_box === true
+		(phoneBox || ("phone_box" in payload && payload.phone_box === true))
 	) {
 		const source = payload as Record<string, unknown>;
 		return {
@@ -84,4 +88,17 @@ export function projectRemoteStatus(payload: unknown): unknown {
 					]),
 				),
 	};
+}
+
+/** Every phone-box remote frame uses backend identity, including partial frames. */
+export function projectPhoneFrame(
+	type: string,
+	payload: unknown,
+	phoneBox: boolean,
+): unknown {
+	if (!phoneBox)
+		return type === "config"
+			? projectRemoteConfig(payload)
+			: projectRemoteStatus(payload);
+	return type === "status" ? projectRemoteStatus(payload, true) : undefined;
 }

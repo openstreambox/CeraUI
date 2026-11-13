@@ -7,23 +7,29 @@
 		health = [],
 		links = [],
 		carrying,
+		way,
+		settingsSummary = false,
 		onrestart,
 	}: {
 		reachable?: boolean;
 		health?: NonNullable<StatusResponse['box_health']>;
 		links?: { label: string; internet: string }[];
+		way?: 'moblin' | 'srt' | 'internet' | null;
+		settingsSummary?: boolean;
 		carrying?: 'streaming' | 'idle' | 'unknown';
 		onrestart?: () => void;
 	} = $props();
+	const urgent = $derived(health.filter(p => p.part !== 'update-orchestrator-maintenance'));
 	const state = $derived(carrying === 'idle' ? 'ready' : 'protected');
 </script>
 
 <section>
 	<h2>{m['live.phone.health']()}</h2>
 	{#if !reachable}<p>{m['live.phone.remoteUnreachable']()}</p>{:else}
-		{#if health.length}<p class="health-line">
-				{m['live.phone.healthSummary']({
-					parts: health.map((part) => m[`live.phone.part.${part.part}`]()).join(', '),
+		{#if settingsSummary && health.length}<p>{urgent.length ? m['live.phone.healthRestartParts']({parts:urgent.map(part=>m[`live.phone.part.${part.part}`]()).join(', ')}) : ''}{#if health.length > urgent.length}{urgent.length ? ' · ' : ''}{health.length - urgent.length === 1 ? m['live.phone.healthWaitOne']() : m['live.phone.healthWaitMany']({count:health.length-urgent.length})}{/if}</p>{/if}
+		{#if urgent.length}<p class="health-line">
+				{m[carrying === 'streaming' ? (way === 'moblin' ? 'live.phone.healthMoblin' : 'live.phone.healthActive') : 'live.phone.healthReady']({
+					parts: urgent.map((part) => m[`live.phone.part.${part.part}`]()).join(', '),
 					links:
 						links
 							.filter((l) => l.internet === 'yes')
@@ -32,17 +38,17 @@
 				})}
 			</p>
 		{/if}
-		<details>
+		{#if health.length}<details>
 			<summary>{m['live.phone.details']()}</summary>{#each health as part (part.part)}<p>
 					{m[`live.phone.${part.part}`]()} <time>{new Date(part.since).toLocaleTimeString()}</time>
 				</p>{/each}
-			<p>{m['live.phone.restartCost']()}</p>
-		</details>
+		</details>{/if}
 		{#if !health.length}<p>{m['live.phone.healthOk']()}</p>{/if}
 	{/if}
+	<p>{m['live.phone.restartCost']()}</p>
 	<button type="button" disabled={!reachable || state !== 'ready'} onclick={onrestart}
 		>{m['live.phone.restart']()}</button
-	>{#if state !== 'ready'}<p>{m['live.phone.restartHold']()}</p>{/if}
+	>{#if state !== 'ready'}<p>{carrying === 'streaming' ? m['live.phone.restartHold']() : m['live.phone.restartChecking']()}</p>{/if}
 </section>
 
 <style>

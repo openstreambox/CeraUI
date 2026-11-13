@@ -215,7 +215,9 @@ describe("phone-only power admission", () => {
 			).toHaveProperty("disabled", true);
 			expect(
 				screen.getByText(
-					"You can restart once your phone's stream has stopped.",
+					stateValue === "unknown"
+						? "You can restart once the box knows whether your phone uses it."
+						: "You can restart once your phone's stream has stopped.",
 				),
 			).toBeTruthy();
 			expect(rebootRpc).not.toHaveBeenCalled();

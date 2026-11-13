@@ -37,7 +37,7 @@ import { buildModemsWireMessage } from "../modems/modem-status.ts";
 import { getNetworkIngestInfo } from "../network/network-ingest.ts";
 import { netIfBuildMsg } from "../network/network-interfaces.ts";
 import { getUnclaimedAdapters } from "../network/unclaimed-adapters.ts";
-import { getUplinksMessage } from "../network/uplink-health/state";
+import { getPhoneLinkCounts } from "../network/uplink-health/state";
 import { buildRelaysMsg, getRelays } from "../remote/remote-relays.ts";
 import { setup } from "../setup";
 import { getActiveEncodeStatus } from "../streaming/active-encode-status.ts";
@@ -139,12 +139,7 @@ export function sendStatus(conn: WebSocket) {
 			network_ingest: getNetworkIngestInfo(),
 			carrying: { state: getCarryingLiveness() },
 			phone_box: setup.engine === "none",
-			phone_links: {
-				ready: getUplinksMessage().filter(
-					(link) => link.state === "up" && link.staleAt > Date.now(),
-				).length,
-				sending: null,
-			},
+			phone_links: getPhoneLinkCounts(),
 			box_health: getPhoneBoxHealth(),
 			active_encode: getActiveEncodeStatus(),
 			engine_bitrate: getEngineBitrateStatus(),

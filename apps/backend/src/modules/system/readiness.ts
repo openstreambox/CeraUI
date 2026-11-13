@@ -30,6 +30,8 @@
  * remote egress.
  */
 
+import { broadcastMsg } from "../../rpc/compat.ts";
+
 export interface BootReadiness {
 	/** True when at least one non-critical boot init failed. */
 	degraded: boolean;
@@ -61,6 +63,7 @@ export function markBootDegraded(subsystem: string): void {
 	if (!degradedSubsystems.includes(subsystem)) {
 		degradedSubsystems.push(subsystem);
 		since.set(subsystem, Date.now());
+		broadcastMsg("status", { box_health: getPhoneBoxHealth() });
 	}
 }
 

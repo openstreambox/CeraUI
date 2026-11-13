@@ -5,6 +5,7 @@ import {
 	NETIF_ERR_HOTSPOT,
 	NETIF_ERR_SHAREDLAN,
 } from "../network/network-interfaces.ts";
+import { setup } from "../setup.ts";
 import { setCarryingOtaProtection } from "../streaming/ota-streaming-marker.ts";
 import {
 	notificationBroadcast,
@@ -53,11 +54,15 @@ function publishCarrying(): void {
 	const key =
 		state === "streaming"
 			? "notifications.clientCarrying"
-			: "notifications.clientCarryingUnknown";
+			: setup.engine === "none"
+				? "live.phone.carryingChecking"
+				: "notifications.clientCarryingUnknown";
 	const message =
 		state === "streaming"
 			? "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait."
-			: "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.";
+			: setup.engine === "none"
+				? "The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption."
+				: "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.";
 	notificationBroadcast(
 		"client-carrying",
 		"info",

@@ -30,6 +30,7 @@ import {
 	SquareTerminal,
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
+import { onMount } from 'svelte';
 import { MediaQuery } from 'svelte/reactivity';
 
 import AsyncSwitch from '$lib/components/custom/async-switch.svelte';
@@ -282,10 +283,15 @@ $effect(() => {
 		clearRequestedDialog();
 	}
 });
+let now = $state(Date.now());
+ onMount(() => {
+  const clock = setInterval(() => { now = Date.now(); }, 1000);
+  return () => clearInterval(clock);
+ });
 </script>
 
 <div class="flex-col md:flex">
-{#if getStatus()?.phone_box}<PhoneBoxHealth reachable={getIsConnected()} health={getStatus()?.box_health} carrying={getStatus()?.carrying?.state} links={(getUplinks()??[]).filter(l=>l.staleAt>Date.now()).map(l=>({label:l.displayName??l.iface,internet:l.state==='up'?'yes':'unknown'}))} onrestart={()=>powerOpen=true}/>{/if}
+{#if getStatus()?.phone_box}<PhoneBoxHealth settingsSummary reachable={getIsConnected()} health={getStatus()?.box_health} carrying={getStatus()?.carrying?.state} links={(getUplinks()??[]).filter(l=>l.staleAt>now).map(l=>({label:l.displayName??l.iface,internet:l.state==='up'?'yes':'unknown'}))} onrestart={()=>powerOpen=true}/>{/if}
 	<div class="container mx-auto max-w-3xl flex-1 space-y-8 p-4 pt-6 sm:p-8">
 		<!-- Header -->
 		<header class="space-y-2">

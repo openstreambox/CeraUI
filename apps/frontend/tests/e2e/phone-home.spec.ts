@@ -16,7 +16,12 @@ for (const width of [390,1280,1024]) {
    await pageRpc.call(['dev','emit'],{type:'status',payload:{phone_box:true,carrying:{state},box_health:[]}});
    await expect(page.getByRole('heading',{name:heading})).toBeVisible();
    await expect(page.getByTestId('phone-hud')).toHaveText(badge);
+   if(state==='streaming') await expect(home).not.toContainText('Checking internet');
    await page.screenshot({path:evidencePath(`phone-home-${state}-${width}.png`),fullPage:true});
+   const health=home.locator('section').filter({has:page.getByRole('heading',{name:'Box health',exact:true})});
+   await health.evaluate(el=>el.scrollIntoView({block:'center'}));
+   await health.screenshot({path:evidencePath(`phone-health-${state}-${width}.png`)});
+   await home.getByRole('heading',{name:heading}).evaluate(el=>el.scrollIntoView({block:'start'}));
   }
   await expect(home.getByRole('button',{name:'Connect your phone'})).toBeVisible();
   await home.getByRole('button',{name:'Connect your phone'}).click();
@@ -26,6 +31,15 @@ for (const width of [390,1280,1024]) {
   if(width!==1280) await expect(home.locator('img')).toHaveCount(0);
   expect(await home.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
   await page.screenshot({path:evidencePath(`phone-connect-srt-${width}.png`),fullPage:true});
+  await expect(home).toContainText("Nothing after 30 seconds? Check that your phone is on the box's Wi-Fi and that the address and passphrase match.");
+  await home.getByRole('button',{name:'Change app',exact:true}).click();
+  await home.getByRole('button',{name:'Moblin',exact:true}).click();
+  await expect(home.getByLabel("Moblin's password (from Moblin, not the Wi-Fi password)")).toBeVisible();
+  await expect(home).not.toContainText('inputs =');
+  await page.screenshot({path:evidencePath(`phone-connect-moblin-${width}.png`),fullPage:true});
+  const label=home.locator('label');
+  await label.evaluate(el=>el.scrollIntoView({block:'center'}));
+  await label.screenshot({path:evidencePath(`phone-moblin-label-${width}.png`)});
  });
 }
 for(const width of [390,1280,1024]) {

@@ -8,7 +8,7 @@
  * admission for every power request.
  */
 import { m } from "@ceraui/i18n/svelte";
-import { render, screen, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import {
 	afterEach,
 	beforeAll,
@@ -25,14 +25,17 @@ import {
 } from "../../lib/rpc/async-operation.svelte";
 import PowerDialog from "./PowerDialog.svelte";
 
-const state = vi.hoisted(() => ({ updating: false as unknown }));
+const state = vi.hoisted(() => ({ updating: false as unknown, phone: false }));
 
 vi.mock("$lib/rpc/client", () => ({
 	rpc: { system: { reboot: vi.fn(), poweroff: vi.fn() } },
 }));
 
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
-	getStatus: () => undefined,
+	getStatus: () =>
+		state.phone
+			? { phone_box: true, carrying: { state: "unknown" } }
+			: undefined,
 	getUplinks: () => undefined,
 	getIsStreaming: () => false,
 	getUpdating: () => state.updating,
@@ -119,4 +122,23 @@ describe("PowerDialog — the update gate follows the device's install state", (
 
 		expect(rebootButton().disabled).toBe(false);
 	});
+});
+
+it("allows confirmed poweroff during phone startup while holding restart", async () => {
+	state.updating = false;
+	state.phone = true;
+	try {
+		render(PowerDialog, { props: { open: true } });
+		expect(rebootButton().disabled).toBe(true);
+		const power = screen.getByRole("button", {
+			name: m["advanced.powerOff"](),
+		});
+		expect(power).toHaveProperty("disabled", false);
+		await fireEvent.click(power);
+		expect(document.body.textContent).toContain(
+			"If your phone is streaming through the box, that stream drops",
+		);
+	} finally {
+		state.phone = false;
+	}
 });

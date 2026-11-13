@@ -41,6 +41,11 @@
 		const nav = navElements[key];
 		if (nav) navigateTo({ [key]: nav });
 	}
+let now = $state(Date.now());
+ onMount(() => {
+  const clock = setInterval(() => { now = Date.now(); }, 1000);
+  return () => clearInterval(clock);
+ });
 </script>
 
 <PhoneHome
@@ -60,7 +65,7 @@
 		id: link.iface,
 		label: link.displayName ?? link.iface,
 		internet:
-			link.staleAt < Date.now()
+			link.staleAt < now
 				? 'unknown'
 				: link.state === 'up'
 					? 'yes'

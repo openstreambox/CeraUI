@@ -87,6 +87,13 @@ export class CarryingTracker {
 		} else this.aboveSince = null;
 	}
 
+	startupChecking(now: number): boolean {
+		return (
+			this.startedUntil !== null &&
+			now < this.startedUntil &&
+			this.read(now) === "unknown"
+		);
+	}
 	read(now: number): StreamLiveness {
 		let unknown =
 			this.aboveSince !== null ||

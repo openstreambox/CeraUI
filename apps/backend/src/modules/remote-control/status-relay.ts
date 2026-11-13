@@ -18,10 +18,8 @@
  */
 
 import { advanceSeq } from "../../rpc/events.ts";
-import {
-	projectRemoteConfig,
-	projectRemoteStatus,
-} from "../remote/remote-status.ts";
+import { projectPhoneFrame } from "../remote/remote-status.ts";
+import { setup } from "../setup.ts";
 import { PROTOCOL_VERSION, type Status } from "./protocol.ts";
 
 /**
@@ -117,10 +115,12 @@ export function relayStatusToGateway(
 		return;
 	}
 
-	const remotePayload =
-		type === "config"
-			? projectRemoteConfig(payload)
-			: projectRemoteStatus(payload);
+	const remotePayload = projectPhoneFrame(
+		type,
+		payload,
+		setup.engine === "none",
+	);
+	if (setup.engine === "none" && remotePayload === undefined) return;
 	const frame: Status = {
 		v: PROTOCOL_VERSION,
 		kind: "status",
