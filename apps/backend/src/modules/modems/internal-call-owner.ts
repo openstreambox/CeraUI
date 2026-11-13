@@ -1,4 +1,8 @@
 import type { InternalCallContext } from "./internal-call-context.ts";
+import {
+	type InternalCallRetirement,
+	withdrawInternalCall,
+} from "./internal-call-withdrawal.ts";
 import type { CellularControl, CellularControlTarget } from "./modems.ts";
 import type { CarrierPolicy } from "./subscription-policy.ts";
 import {
@@ -40,6 +44,7 @@ export interface InternalCallDeps {
 	readonly context: InternalCallContext;
 	/** Complete old-index absence, never a failed physical or MM read. */
 	readonly physicalGone: () => Promise<boolean>;
+	readonly retirement: InternalCallRetirement;
 	readonly now: () => number;
 }
 /** One retained owner per physical USB generation and subscription, not MM index.
@@ -76,6 +81,9 @@ export class InternalCallOwner {
 	}
 	get phase(): InternalCallPhase {
 		return this._phase;
+	}
+	get closing(): boolean {
+		return this.stopping;
 	}
 	private withdraw(phase: InternalCallPhase = "withdrawn") {
 		this.deps.host.withdraw();
@@ -294,6 +302,7 @@ export class InternalCallOwner {
 		if (
 			this.busy ||
 			this._phase === "closed" ||
+			this.deps.retirement.contextReleased() ||
 			(!this.control && !this.stopping)
 		)
 			return false;
@@ -346,31 +355,32 @@ export class InternalCallOwner {
 	}
 	private async finish(): Promise<boolean> {
 		this.stopping = true;
-		this.withdraw();
-		if (!(await this.deps.host.clearGrant())) return false;
-		await this.deps.context.load();
-		if (this.deps.context.known()) {
-			const control = this.control;
-			// Bus loss is not evidence that the owned activation stopped. Retain
-			// the host guard and durable baseline until the exact inverse verifies.
-			if (
-				(!control ||
-					this.revoked ||
-					!(await this.deps.context.close(control))) &&
-				!(await this.deps.physicalGone())
-			)
-				return false;
-		}
-		if (!(await this.deps.host.cleanup())) return false;
-		await this.releaseControl();
-		this._phase = "closed";
-		return true;
+		const complete = await withdrawInternalCall({
+			retirement: this.deps.retirement,
+			withdraw: () => this.withdraw(),
+			clearGrant: () => this.deps.host.clearGrant(),
+			context: async () => {
+				await this.deps.context.load();
+				if (!this.deps.context.known()) return true;
+				const control = this.control;
+				return (
+					(!!control &&
+						!this.revoked &&
+						(await this.deps.context.close(control))) ||
+					(await this.deps.physicalGone())
+				);
+			},
+			host: () => this.deps.host.cleanup(),
+			control: () => this.releaseControl(),
+		});
+		if (complete) this._phase = "closed";
+		return complete;
 	}
 	private async releaseControl(): Promise<void> {
+		const control = this.control;
+		await control?.close();
 		this.removeRevocation?.();
 		this.removeRevocation = undefined;
-		const control = this.control;
 		this.control = undefined;
-		await control?.close();
 	}
 }

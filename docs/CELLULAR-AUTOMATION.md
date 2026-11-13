@@ -582,3 +582,22 @@ verificación de solo lectura rechazan una referencia ausente o una operación
 inversa del host que no corresponde. Estos contratos de almacenamiento no crean
 un propietario ni activan llamadas; siguen pendientes la recuperación conjunta al
 arrancar y la conexión al funcionamiento automático.
+
+Normal close and startup adapters share an ordered withdrawal contract. The
+unit record acknowledges context release before host-guard restoration; an
+uncertain control-close tail cannot repeat context effects afterward. A lost
+authority-removal acknowledgement retains the physical lease and retries only
+retirement, without recreating the record or deleting replacement authority.
+Serial control close is single-flight, invalidates reads immediately, and retries
+an uncertain disconnect without repeating uninhibition. The combined startup
+adapter and runtime factory are still required before enabling calls.
+
+El cierre normal y los adaptadores de arranque comparten un contrato de retirada
+ordenada. El registro confirma la liberación del contexto antes de restaurar la
+protección del host; un cierre de control incierto no repite después los efectos
+del contexto. Si no se confirma la retirada del registro, se conserva la reserva
+física y solo se reintenta esa retirada, sin recrear el registro ni borrar el de
+otro propietario. El cierre del control serial tiene una sola operación en curso,
+invalida las lecturas de inmediato y reintenta una desconexión incierta sin repetir
+la liberación de la inhibición. Siguen pendientes el adaptador conjunto de arranque
+y la construcción del propietario antes de activar llamadas.

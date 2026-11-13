@@ -774,6 +774,8 @@ export async function acquireCellularControl(
 	let held = false,
 		closed = false,
 		revoked = false;
+	let closing: Promise<void> | undefined;
+	let closingRequested = false;
 	const revocationListeners = new Set<() => void>();
 	const revoke = () => {
 		if (revoked) return;
@@ -785,6 +787,8 @@ export async function acquireCellularControl(
 	const valid = async () =>
 		held &&
 		!closed &&
+		!closingRequested &&
+		!closing &&
 		!revoked &&
 		!signal?.aborted &&
 		transport.isConnected() &&
@@ -806,14 +810,23 @@ export async function acquireCellularControl(
 	};
 	const close = async () => {
 		if (closed) return;
-		closed = true;
+		if (closing) return closing;
+		closingRequested = true;
+		closing = (async () => {
+			try {
+				if (held && !revoked && transport.isConnected())
+					await inhibitControl(transport, uid, false);
+			} finally {
+				held = false;
+				signal?.removeEventListener("abort", revoke);
+				await transport.disconnect();
+			}
+		})();
 		try {
-			if (held && !revoked && transport.isConnected())
-				await inhibitControl(transport, uid, false);
+			await closing;
+			closed = true;
 		} finally {
-			held = false;
-			signal?.removeEventListener("abort", revoke);
-			await transport.disconnect();
+			closing = undefined;
 		}
 	};
 	try {
@@ -850,7 +863,8 @@ export async function acquireCellularControl(
 			verifySubscriber,
 			onRevoked: (callback) => {
 				revocationListeners.add(callback);
-				if (revoked || closed || signal?.aborted) callback();
+				if (revoked || closed || closingRequested || signal?.aborted)
+					callback();
 				return () => {
 					revocationListeners.delete(callback);
 				};

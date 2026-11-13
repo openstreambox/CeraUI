@@ -80,6 +80,7 @@ function fixture() {
 	};
 	return {
 		deps,
+		transport,
 		calls,
 		serial,
 		connected: () => connected,
@@ -170,4 +171,61 @@ test("retained control distinguishes a positively changed subscriber from an unr
 	} finally {
 		await control.close();
 	}
+});
+
+test("a pending close invalidates serial reads immediately and concurrent callers join its release", async () => {
+	const f = fixture(),
+		control = await acquireCellularControl(target, undefined, f.deps),
+		disconnect = f.transport.disconnect;
+	let unblock: () => void = () => {},
+		disconnects = 0;
+	let entered: () => void = () => {};
+	const started = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	f.transport.disconnect = async () => {
+		disconnects++;
+		entered();
+		await new Promise<void>((resolve) => {
+			unblock = resolve;
+		});
+		await disconnect();
+	};
+	const first = control.close(),
+		second = control.close();
+	expect(await control.valid()).toBe(false);
+	await started;
+	expect(disconnects).toBe(1);
+	expect(f.calls.filter((call) => call.args?.[1] === false)).toHaveLength(1);
+	unblock();
+	await Promise.all([first, second]);
+	expect(f.connected()).toBe(false);
+});
+
+test("an uncertain disconnect is retained for retry without repeating uninhibition", async () => {
+	const f = fixture(),
+		control = await acquireCellularControl(target, undefined, f.deps),
+		disconnect = f.transport.disconnect;
+	let attempts = 0;
+	f.transport.disconnect = async () => {
+		if (++attempts === 1) throw new Error("Disconnect not acknowledged");
+		await disconnect();
+	};
+	await expect(control.close()).rejects.toThrow("not acknowledged");
+	expect(await control.valid()).toBe(false);
+	expect(f.connected()).toBe(true);
+	await control.close();
+	expect(attempts).toBe(2);
+	expect(f.calls.filter((call) => call.args?.[1] === false)).toHaveLength(1);
+	expect(f.connected()).toBe(false);
+});
+
+test("a lost uninhibition reply still closes its connection and retries only closure", async () => {
+	const f = fixture(),
+		control = await acquireCellularControl(target, undefined, f.deps);
+	f.badAck();
+	await expect(control.close()).rejects.toThrow("acknowledgement");
+	expect(f.connected()).toBe(false);
+	await control.close();
+	expect(f.calls.filter((call) => call.args?.[1] === false)).toHaveLength(1);
 });
