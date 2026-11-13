@@ -49,12 +49,16 @@ inside the serial queue. An overrun returns `port-stuck`. Both ordinary close
 and failed-native-setup cleanup remain registered by physical sysfs device, tty and USB busnum/devnum
 until settlement, independently of the 30-second backoff. Replacing the
 ModemManager ID cannot reopen that same port generation. A freshly verified
-new USB generation may open, even for the same manager ID, after all pre-open
+new USB generation may open when the earlier descriptor passed its post-open
+identity check, even for the same manager ID, after all pre-open
 and post-open ownership checks pass; a different modem is also independent.
 This relies on USB re-enumeration isolating the old descriptor from the new
-device generation. A same-generation reopen still observes the backoff after
-cleanup settles. This bounds the wait for close, not other filesystem/ownership
-work or the kernel close itself. Reads are serialised across all modems.
+device generation. If open crosses generations, or failed setup cannot verify
+which generation it opened, cleanup also guards the physical device/tty across
+all generations until it settles.
+Polling pending cleanup does not renew backoff. A same-generation reopen still
+observes the backoff after cleanup settles. This bounds the wait for close, not
+other filesystem/ownership work or the kernel close itself. Reads are serialised across all modems.
 
 ## The exchange (`free-at-session.ts`)
 

@@ -466,3 +466,60 @@ describe("the read-only lease", () => {
 		expect(most).toBe(1);
 	});
 });
+
+for (const failedSetup of [false, true]) {
+	test(`re-enumeration inside ${failedSetup ? "failed setup" : "open"} blocks the possibly opened generation until cleanup settles`, async () => {
+		let finish!: () => void;
+		const cleanup = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		let opens = 0;
+		const fake = await FakeAtModem.start((c) => reply(QTEMP_REPLY, c));
+		cleanups.push(() => fake.close());
+		let now = 0;
+		const lease = new FreeAtPorts({
+			root,
+			pid: process.pid,
+			now: () => now,
+			facts: async () => ({ device: DEVICE, ports: PORTS }),
+			open: async () => {
+				opens++;
+				if (opens > 1) return openExclusiveRawTty(fake.path);
+				await put(`${DEVICE}/devnum`, "6\n");
+				if (failedSetup) throw new TtyOpenError("stuck", cleanup);
+				return {
+					close: () => cleanup,
+					write: async () => {
+						throw Error("must not query a changed generation");
+					},
+					read: async () => new Uint8Array(),
+				} as unknown as TtyPort;
+			},
+		});
+		try {
+			expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+				reason: "port-stuck",
+			});
+			for (const id of [3, 4]) {
+				expect(await lease.read(id, "AT+QTEMP")).toMatchObject({
+					reason: "port-stuck",
+				});
+				expect(opens).toBe(1);
+			}
+			now = 30_000;
+			expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+				reason: "port-stuck",
+			});
+			expect(opens).toBe(1);
+			expect(fake.received).toBe("");
+			expect(lease.refusal(3)).toBe("port-stuck");
+		} finally {
+			finish();
+			await cleanup;
+		}
+		// Polling at the boundary must not extend backoff. Once cleanup settles,
+		// a replacement read reaches open again at the same clock value.
+		expect((await lease.read(3, "AT+QTEMP")).ok).toBe(true);
+		expect(opens).toBe(2);
+	});
+}

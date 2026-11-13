@@ -283,7 +283,9 @@ export class FreeAtPorts {
 	>();
 	private readonly timeouts = new Map<number, number>();
 	private readonly closing = new Set<string>();
+	private readonly uncertainClosing = new Set<string>();
 	private readonly identities = new Map<number, string>();
+	private readonly portKeys = new Map<number, string>();
 	private queue: Promise<unknown> = Promise.resolve();
 
 	constructor(deps: Partial<FreeAtPortDeps> = {}) {
@@ -293,7 +295,12 @@ export class FreeAtPorts {
 	/** The remembered refusal for a modem, if one is still in force. */
 	refusal(modemId: number): FreeAtUnavailableReason | undefined {
 		const identity = this.identities.get(modemId);
-		if (identity && this.closing.has(identity)) return "port-stuck";
+		const portKey = this.portKeys.get(modemId);
+		if (
+			(identity && this.closing.has(identity)) ||
+			(portKey && this.uncertainClosing.has(portKey))
+		)
+			return "port-stuck";
 		const entry = this.refused.get(modemId);
 		return entry && this.deps.now() < entry.until ? entry.reason : undefined;
 	}
@@ -330,10 +337,18 @@ export class FreeAtPorts {
 	}
 
 	/** Both successful opens and failed setup retain cleanup until settlement. */
-	private trackClose(identity: string, closing: Promise<void>): void {
+	private trackClose(
+		identity: string,
+		closing: Promise<void>,
+		uncertainPort?: string,
+	): void {
 		this.closing.add(identity);
+		if (uncertainPort) this.uncertainClosing.add(uncertainPort);
 		void closing
-			.finally(() => this.closing.delete(identity))
+			.finally(() => {
+				this.closing.delete(identity);
+				if (uncertainPort) this.uncertainClosing.delete(uncertainPort);
+			})
 			.catch(() => undefined);
 	}
 
@@ -356,6 +371,8 @@ export class FreeAtPorts {
 		}
 		let port: TtyPort | undefined;
 		let identity: string | undefined;
+		let portKey: string | undefined;
+		let verifiedOpen = false;
 		const perform = async (): Promise<FreeAtResult> => {
 			try {
 				const before = await findFreeAtPort(facts, this.deps.root);
@@ -367,8 +384,11 @@ export class FreeAtPorts {
 					before.generation,
 				]);
 				this.identities.set(modemId, identity);
+				portKey = JSON.stringify([facts.device, before.tty]);
+				this.portKeys.set(modemId, portKey);
 				if (
 					this.closing.has(identity) ||
+					this.uncertainClosing.has(portKey) ||
 					(remembered?.reason === "port-stuck" &&
 						remembered.identity === identity &&
 						this.deps.now() < remembered.until)
@@ -380,7 +400,7 @@ export class FreeAtPorts {
 					port = await this.deps.open(join(this.deps.root, "dev", before.tty));
 				} catch (error) {
 					if (error instanceof TtyOpenError && error.cleanup)
-						this.trackClose(identity, error.cleanup);
+						this.trackClose(identity, error.cleanup, portKey);
 					const failure =
 						error instanceof TtyOpenError ? error.failure : "failed";
 					throw new FreeAtUnavailableError(
@@ -400,6 +420,7 @@ export class FreeAtPorts {
 				);
 				if (after.tty !== before.tty || after.generation !== before.generation)
 					throw new FreeAtUnavailableError("device-changed");
+				verifiedOpen = true;
 				const raw = await new ReadOnlyAtSession(port).query(query, timeoutMs);
 				this.refused.delete(modemId);
 				this.timeouts.delete(modemId);
@@ -435,7 +456,9 @@ export class FreeAtPorts {
 		if (port && identity) {
 			const opened = port;
 			const closing = Promise.resolve().then(() => opened.close());
-			this.trackClose(identity, closing);
+			// Until post-open identity checks pass, the descriptor may belong to
+			// any generation encountered during open. Fence the whole port.
+			this.trackClose(identity, closing, verifiedOpen ? undefined : portKey);
 			if (!(await closeWithin(closing))) {
 				this.remember(modemId, "port-stuck");
 				return { ok: false, unavailable: true, reason: "port-stuck" };
