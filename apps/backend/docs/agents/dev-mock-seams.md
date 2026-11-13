@@ -386,13 +386,35 @@ Unit preload wraps Bun and Node process-spawn APIs and rejects name-signalling
 commands and systemd mutations. The allowlist is empty. A rejected command is
 also retained for the after-test hook, so catching a spawn error cannot hide
 it. Tests should inject an effect dependency before reaching this boundary.
+The check covers `Bun.$`, follows wrappers (`env -S`, `xargs`, `busybox`,
+`find -exec`, `sh -c 'exec "$@"'`) and judges a symlink by its target.
+`process.kill` reaches only the test process, the processes it spawned and
+their process groups (signal 0 probes are allowed). A directory of recording
+stubs at the front of `PATH` shadows `killall`, `pkill`, `kill`, `systemctl`
+and similar commands for every child, so by-name calls from scripts and other
+interpreters fail the test too; read-only `systemctl` verbs pass through.
+
+The same preload installs the network guard. TCP/TLS, `Bun.connect`, UDP
+(`node:dgram`, `Bun.udpSocket`), fetch and WebSocket reach only loopback, and
+DNS (`node:dns`, its resolvers, `Bun.dns`) answers only localhost and address
+literals. Bun's `ws` builtin cannot be wrapped from outside, so backend client
+sockets open through `helpers/outbound-websocket.ts`, which calls the guard's
+check; a unit test fails if another source file imports `ws` as a value.
+
+These guards catch mistakes; they are not containment. A determined command
+(a renamed copy of `killall`, a native call) gets past them, which is why gates
+on shared machines also run inside a PID namespace (below).
 
 Backend development commands and the browser worker entrypoint preload
-`scripts/dev-safety.ts`. It rejects host-global process actions and non-loopback
-TCP, WebSocket and fetch destinations. Caught violations terminate the harness.
-The legacy development remote client defaults to loopback before DNS resolution.
-Local fixture endpoints use localhost, 127.0.0.0/8 or ::1. Keep real credentials
-out of mock configurations.
+`scripts/dev-safety.ts`. It marks the process as a development harness, so name
+signals stay suppressed even without `NODE_ENV=development`, and installs the
+same process and network guards. Caught violations terminate the harness.
+Name-signal suppression uses the mock gate (`NODE_ENV=development` or
+`MOCK_MODE=true`) plus that marker. Under mocks the legacy remote client
+connects only when `remote_endpoint_host` is a loopback address; otherwise it
+stays idle, so the mock pairing key never leaves the machine. Local fixture
+endpoints use localhost, 127.0.0.0/8 or ::1. Keep real credentials out of mock
+configurations.
 
 Concurrent browser runs configure `E2E_PORT`, `E2E_BACKEND_PORT` and
 `E2E_WORKER_BASE_PORT` with disjoint ranges. The last variable sets the first

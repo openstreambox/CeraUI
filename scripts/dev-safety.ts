@@ -5,6 +5,8 @@ import {
 	takeSafetyViolations,
 } from './test-safety.ts';
 
+// Positive development signal: a compiled production binary never loads this file.
+(globalThis as Record<symbol, unknown>)[Symbol.for('ceraui.devHarness')] = true;
 installProcessSafetyGuard();
 installNetworkSafetyGuard();
 // Fail even when application retry/error handling catches a rejected effect.

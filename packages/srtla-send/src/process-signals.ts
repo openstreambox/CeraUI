@@ -4,8 +4,25 @@ export type ProcessSignalRunner = (
 	args: readonly string[],
 ) => Promise<void>;
 
+/** Set by the development/E2E safety preload; a compiled binary never loads it. */
+export const DEV_HARNESS_MARKER = Symbol.for("ceraui.devHarness");
+
+/**
+ * True when this process runs against mocks and therefore owns no host
+ * processes: the development harness is loaded, or the backend's mock gate
+ * (`isDevelopment()` in mocks/mock-config.ts) is on. The env reads stay literal
+ * so a production build inlines NODE_ENV exactly as it does for the mocks.
+ */
+export function ownsNoHostProcesses(): boolean {
+	return (
+		(globalThis as Record<symbol, unknown>)[DEV_HARNESS_MARKER] === true ||
+		process.env.NODE_ENV === "development" ||
+		process.env.MOCK_MODE === "true"
+	);
+}
+
 export function createProcessSignaller(
-	nodeEnv = () => process.env.NODE_ENV,
+	hostless: () => boolean = ownsNoHostProcesses,
 	runner?: ProcessSignalRunner,
 ) {
 	return (
@@ -14,7 +31,7 @@ export function createProcessSignaller(
 		execute: () => void | Promise<void>,
 	): void | Promise<void> => {
 		if (runner) return runner(binary, args);
-		if (nodeEnv() === "development") return;
+		if (hostless()) return;
 		return execute();
 	};
 }

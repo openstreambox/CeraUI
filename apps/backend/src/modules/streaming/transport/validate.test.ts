@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { permitDocumentationTargetForTest } from "../../../../../../scripts/test-safety.ts";
 
 import { probeReachability } from "./validate.ts";
 
@@ -58,6 +59,8 @@ describe("probeReachability", () => {
 		// TEST-NET-1 (RFC 5737) is non-routable; packets are dropped → timeout,
 		// and the promise must still settle inside the bound (no event-loop wedge).
 		const start = Date.now();
+		// TEST-NET-1 leaves the host by design here; the guard permits only this address.
+		permitDocumentationTargetForTest("192.0.2.1");
 		const result = await probeReachability("192.0.2.1", 9999, 200);
 		expect(result.reachable).toBe(false);
 		expect(Date.now() - start).toBeLessThan(2000);

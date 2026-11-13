@@ -1,15 +1,19 @@
 import { afterAll, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { setProcessSignalRunnerForTest } from "@ceraui/srtla-send/process-signals";
 import {
+	installNetworkSafetyGuard,
 	installProcessSafetyGuard,
+	resetPermittedTargets,
 	takeSafetyViolations,
 } from "../../../../scripts/test-safety.ts";
 
 installProcessSafetyGuard();
+installNetworkSafetyGuard();
 setProcessSignalRunnerForTest(async () => {
 	// Tests own no production name-signalled processes.
 });
 afterEach(() => {
+	resetPermittedTargets();
 	const violations = takeSafetyViolations();
 	if (violations.length) throw new Error(violations.join("\n"));
 });
