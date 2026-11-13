@@ -1,7 +1,10 @@
+import { createHmac, randomBytes } from "node:crypto";
 import {
 	connectionStatusSchema,
 	streamProfileIdSchema,
 } from "@ceraui/rpc/schemas";
+
+import { projectLegacyNotification } from "./legacy-notification-dto.ts";
 
 /** Outbound status is a separate public DTO. No producer objects are spread. */
 type Row = Record<string, unknown>;
@@ -42,15 +45,15 @@ function label(kind: string, key: string): string {
 	}
 	return value;
 }
-const interfaceLabels = new Map<string, string>();
-function interfaceLabel(original: unknown, fallback?: string): string {
-	if (typeof original !== "string") return fallback ?? "Link";
-	let name = interfaceLabels.get(original);
-	if (!name) {
-		name = fallback ?? label("Link", original);
-		interfaceLabels.set(original, name);
-	}
-	return name;
+// Interface labels never depend on the position in a bond or adapter roster.
+function interfaceLabel(original: unknown, _fallback?: string): string {
+	return label("Link", typeof original === "string" ? original : "unknown");
+}
+const rowKey = randomBytes(32);
+function opaqueRow(kind: string, value: unknown): string {
+	return createHmac("sha256", rowKey)
+		.update(`${kind}:${String(value)}`)
+		.digest("hex");
 }
 function rows(
 	v: unknown,
@@ -77,7 +80,7 @@ function wifi(v: unknown): Row {
 			Object.entries(object(row.saved))
 				.filter(([, value]) => typeof value === "string")
 				.map(([key, value]) => [
-					label("Wi-Fi", key),
+					label("Network", key),
 					label("Profile", String(value)),
 				]),
 		),
@@ -175,6 +178,84 @@ export function projectRemoteStatus(v: unknown): unknown {
 		"reconciling",
 	]);
 	if (lifecycle !== undefined) out.stream_lifecycle = lifecycle;
+	out.remote_diagnostics = {
+		...booleans(src, ["policy_route_missing"]),
+		...(src.asrcs !== undefined
+			? { audio_present: Array.isArray(src.asrcs) && src.asrcs.length > 0 }
+			: {}),
+		...(src.audio_sources !== undefined
+			? {
+					audio_sources_present:
+						Array.isArray(src.audio_sources) && src.audio_sources.length > 0,
+				}
+			: {}),
+		...(src.ssh !== undefined
+			? { ssh: booleans(src.ssh, ["active", "enabled", "user_pass"]) }
+			: {}),
+		...(src.relay !== undefined
+			? { relay: booleans(src.relay, ["active", "connected", "enabled"]) }
+			: {}),
+		...(src.available_updates !== undefined
+			? {
+					updates_available:
+						typeof src.available_updates === "object" &&
+						src.available_updates !== null &&
+						Number(object(src.available_updates).package_count) > 0,
+				}
+			: {}),
+		...(src.updating !== undefined
+			? { updating: src.updating !== false && src.updating !== null }
+			: {}),
+		...(src.update_state !== undefined
+			? {
+					update_state: choice(object(src.update_state).kind, [
+						"idle",
+						"checking",
+						"available",
+						"downloading",
+						"installing",
+						"check_failed",
+						"update_preflight_failed",
+						"success",
+						"failed",
+					]),
+				}
+			: {}),
+	};
+	if (Object.keys(object(out.remote_diagnostics)).length === 0)
+		delete out.remote_diagnostics;
+	if (src.bond_mapping !== undefined)
+		out.bond_mapping =
+			src.bond_mapping === null
+				? null
+				: {
+						state: choice(object(src.bond_mapping).state, [
+							"active",
+							"absent",
+							"degraded",
+						]),
+						disposition: choice(object(src.bond_mapping).disposition, [
+							"mapped",
+							"retained_last_valid",
+							"legacy_unique_only",
+							"startup_collision_excluded",
+						]),
+						source: choice(object(src.bond_mapping).source, [
+							"sender",
+							"writer",
+						]),
+						...(choice(object(src.bond_mapping).reason, [
+							"hash_mismatch",
+							"malformed",
+							"unknown_iface",
+							"retry_exhausted",
+							"missing_file",
+							"unreadable",
+							"unsupported",
+						])
+							? { reason: object(src.bond_mapping).reason }
+							: {}),
+					};
 	if (src.wifi !== undefined) out.wifi = wifi(src.wifi);
 	if (src.modems !== undefined) out.modems = modems(src.modems);
 	for (const [key, numeric, flags] of [
@@ -201,8 +282,14 @@ export function projectRemoteStatus(v: unknown): unknown {
 							? t.links.map((raw, i) => {
 									const row = object(raw);
 									return {
-										id: label("Link", String(row.id ?? i)),
-										iface: interfaceLabel(row.iface, label("Link", String(i))),
+										conn_id: opaqueRow(
+											"connection",
+											row.link_id ?? row.iface ?? row.conn_id ?? i,
+										),
+										...(typeof row.link_id === "string"
+											? { link_id: opaqueRow("physical", row.link_id) }
+											: {}),
+										iface: interfaceLabel(row.iface),
 										...numbers(row, [
 											"rtt_ms",
 											"nak_count",
@@ -221,6 +308,30 @@ export function projectRemoteStatus(v: unknown): unknown {
 /** Unknown message types and fields fail closed, including direct command replies. */
 export function projectRemotePayload(type: string, v: unknown): unknown {
 	switch (type) {
+		case "notification":
+			return projectLegacyNotification(v);
+		case "telemetry":
+			return {
+				samples: Array.isArray(object(v).samples)
+					? (object(v).samples as unknown[]).map((raw) => ({
+							linkId: interfaceLabel(object(raw).linkId),
+							...numbers(raw, [
+								"rttMs",
+								"nakCount",
+								"weightPercent",
+								"packetLoss",
+								"jitterMs",
+								"tsMs",
+							]),
+						}))
+					: [],
+			};
+		case "pipelines":
+			return { present: Object.keys(object(object(v).pipelines)).length > 0 };
+		case "sources":
+		case "acodecs":
+		case "relays":
+			return { present: Object.keys(object(v)).length > 0 };
 		case "status":
 			return projectRemoteStatus(v);
 		case "config":
@@ -229,11 +340,21 @@ export function projectRemotePayload(type: string, v: unknown): unknown {
 			return rows(v, "Link", (row) => ({
 				...numbers(row, ["tp", "tx_bps", "rx_bps"]),
 				...booleans(row, ["enabled"]),
+				...(row.error === "policy_route_missing"
+					? { error: "policy_route_missing" }
+					: {}),
 			}));
 		case "modems":
 			return modems(v);
 		case "sensors":
-			return {}; // formatted free text, including ingest names
+			return Object.fromEntries(
+				Object.entries(object(v)).filter(
+					([key, value]) =>
+						["SoC temperature", "SoC voltage", "SoC current"].includes(key) &&
+						typeof value === "string" &&
+						/^-?\d+(?:\.\d+)? (?:°C|V|A)$/.test(value),
+				),
+			);
 		case "device-stats":
 			return numbers(v, [
 				"cpuLoad1",

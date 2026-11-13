@@ -20,22 +20,28 @@ changes. A freshness test pins producer and type declaration sources and the loc
 | Surface | Needed remotely | Withheld or substituted |
 | --- | --- | --- |
 | status | streaming boolean and closed lifecycle state, cellular initialization, password-required boolean | all other top-level fields default-denied |
-| Wi-Fi | distinguish adapters and saved profiles, connection present/absent | process-scoped Wi-Fi/Profile labels; no interface/MAC/radio identity, SSID, profile UUID, BSSID, passwords, nearby scan results, hotspot clients or future identity fields |
+| Wi-Fi | distinguish adapters and saved profiles, connection present/absent | separate process-scoped Wi-Fi/Network/Profile labels; no interface/MAC/radio identity, SSID, profile UUID, BSSID, passwords, nearby scan results, hotspot clients or future identity fields |
 | modem | connection, radio technology, signal, roaming | neutral modem label; no SIM/operator/account/APN/config, serial, interface, device or USB path |
 | netif | enabled and throughput metrics | neutral Link labels; no IP, subnet, hardware markers, operator information or error text |
-| config and config results | bitrate, latency, delay, overlay, FEC, autostart; typed DHCP/roaming/slot/band acknowledgements | every other field, including stream ID, passphrase, relay account/host, custom provider, pairing/device identity, SSH credentials, source paths |
-| sensors | no free-form formatted sensor strings | withheld; numeric system metrics remain on device-stats |
+| status config | bitrate, latency, delay, overlay, FEC, autostart; typed DHCP/roaming/slot/band acknowledgements | every other field, including stream ID, passphrase, relay account/host, custom provider, pairing/device identity, SSH credentials, source paths |
+| sensors | fixed SoC numeric text | all other keys/text withheld; numeric system metrics remain on device-stats |
 | device-stats | CPU load, temperature, total/available memory | paths, interface keys and free-text slot information withheld |
 | link telemetry | measured rate, bytes, freshness, RTT/NAK/weight and per-link numeric metrics | device IDs, interface names, serials, physical port names replaced/withheld |
 | buffering/engine bitrate | counters, active/disk-warning flags, applied and ceiling bitrate; null retractions | unknown fields withheld |
 | active profile | published preset enum, latency, FEC, recovery enum | unknown fields withheld; invalid presets are absent rather than invented |
-| pipelines, sources, relays, revisions, acodecs, encoder-load, fan, cpu, bluetooth and all other legacy/direct reply types | not needed for core remote start/stop and bitrate control | withheld at this boundary; detailed source/network/settings management stays local |
+| pipelines, sources, relays, acodecs | presence flags | detailed identities withheld; cloud pipeline command has a separate DTO |
+| revisions, encoder-load, fan, cpu, bluetooth and other legacy/direct reply types | none | withheld |
 | notification(s) | separate bounded, fixed-text projection | unstructured notifications are withheld; see integration below |
 
 All numbers must be finite numbers, flags must be booleans and forwarded strings
 must belong to a closed enum. Keys containing identities are never copied.
 Identifiers cannot become safe by moving into an unrelated or future field.
-Labels persist across reconnects in a backend process, and reset on restart.
+Adapter and saved-network counters are separate. Interface labels are allocated
+by interface name, never link position, and persist across reconnects. Display
+numbers deliberately restart at 1 on reboot, so deterministic enumeration can
+repeat them; they are not claimed to prevent cross-session correlation. Bond row
+keys use a random per-process HMAC and therefore change on restart, remain stable
+across reorder and never disclose connection or physical identity.
 Labels are display identifiers, not permission or device identity for mutations.
 
 ## Transport coverage and UI
@@ -53,8 +59,13 @@ device-stats/notifications/device.activeProfile. At this base no production code
 calls `setControlChannel`: this is a latent cloud status path, not evidence that a
 running cloud service has received these frames. Active-profile reporting requests
 a reconnect snapshot, but the generic cloud path has no full initial hydration.
-The separate hello, command results, telemetry and authentication paths are not
-status frames. Config-result consumers already call the shared config projection.
+Batched telemetry is a status frame on this same relay, with numeric samples
+and neutral link IDs. Hello and authentication remain separate. Command results
+use command-specific DTOs: enum pipeline IDs and capabilities, safe config enums,
+numeric controls and source/relay presence flags; unknown-only pipeline lists
+return `ok:false, error:withheld` rather than an empty success. The strict parser
+checks the envelope, not every status payload; published RPC schemas are checked
+separately in regression tests. Protocol rejection logs once per process.
 
 A literal `remote_status: true` selects a dedicated read-only network view with local-management guidance in all ten locales; its render test verifies labels, connection state and the absence of mutation controls. The frontend ingestion regression uses the actual subscription handlers: streaming
 state, neutral Wi-Fi and modem labels and numeric link throughput survive. Wi-Fi
@@ -69,14 +80,29 @@ No external hosted remote UI or browser E2E was exercised.
 The notification relay change (#53 in the fork) owns bounded fixed-text summaries,
 opaque names, epochs, revision/coalescing and full replacement. This change does
 not replace that projection or copy free-form producer messages into generic status.
-At integration, its cloud sender can continue using the dedicated validated channel.
-Its legacy peer must use the captured original socket sender after its own projection,
-rather than feed its already projected notification frame through this default-deny
-status wrapper. Otherwise this change correctly withholds `notification` as an
-unreviewed generic legacy type. That integration requires its fake-peer regression;
-do not simply allow arbitrary notification frames at the generic boundary.
+Its cloud sender continues using the dedicated validated channel. The legacy
+wrapper accepts only its exact full-replacement wire format: UUID epoch,
+`full: true`, 64-hex opaque names, bounded revisions, fixed summaries and fixed
+notice flags. Unknown keys, text, actions and names are rejected. The overflow
+summary accepts only the producer's numeric-count sentence. No raw sender bypass
+is exposed. A trial merge must retain the legacy fake-peer regression.
 
 The log-export privacy change is independent: journal format allowlists protect
 exported text; this DTO allowlist protects status, including fields that never
 appeared in a journal. Neither boundary should rely on searching for secret-shaped
 substrings in arbitrary producer text.
+
+## Reduced helper diagnostics
+
+`status.remote_diagnostics` publishes audio presence, SSH active/enabled/password-set
+flags, update availability/activity and a closed update-state enum. Bond mapping
+keeps its state/disposition/source/reason and drops collision addresses. Netif
+retains only the fixed `policy_route_missing` warning. Pipeline/source/audio/relay
+legacy snapshots expose presence flags. Sensor text accepts only fixed SoC keys
+and numeric temperature/voltage/current formats. Unknown fields remain withheld.
+Empty legacy projections are not transmitted. Labels are display-only.
+
+Regression coverage includes two-link schema validation, reorder stability,
+interface replacement collisions, telemetry strict frames, command DTOs and
+exact notification rejection. Hardware, a hosted hub and browser E2E remain
+unqualified.

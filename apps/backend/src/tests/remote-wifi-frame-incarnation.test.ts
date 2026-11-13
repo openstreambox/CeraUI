@@ -86,7 +86,7 @@ for (const legacy of cases) {
 			{ compress: false },
 			callback,
 		);
-		expect(remote.sent.at(-1)).toBe(JSON.stringify({}));
+		expect(remote.sent).toHaveLength(0);
 		expect(callback).toHaveBeenCalledTimes(1);
 		expect(bound).toStrictEqual(original);
 		const cloudFrames: unknown[] = [];
@@ -111,6 +111,6 @@ test("tokenless Wi-Fi and RPC replies remain local", async () => {
 		' { "id": "request", "result": { "success": true } } ',
 	]) {
 		remote.send(raw);
-		expect(remote.sent.at(-1)).toBe("{}");
+		expect(remote.sent).toHaveLength(0);
 	}
 });

@@ -169,6 +169,7 @@ describe("broadcastMsgLocal is local-only", () => {
 describe("no-secrets contract", () => {
 	it("RELAYABLE_TYPES is exactly the closed v2.0 status set (spec §8)", () => {
 		expect([...RELAYABLE_TYPES]).toEqual([
+			"telemetry",
 			"status",
 			"config",
 			"sensors",

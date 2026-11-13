@@ -9,6 +9,7 @@ import {
 // Settlement reads is_streaming and stream_lifecycle as ONE unit. New fields
 // must acquire an explicit unrelated classification, never silently escape it.
 const unrelatedFields: ReadonlySet<string> = new Set([
+	"remote_diagnostics",
 	"available_updates",
 	"updating",
 	"update_state",

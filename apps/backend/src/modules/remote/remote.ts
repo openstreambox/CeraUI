@@ -448,6 +448,11 @@ async function remoteConnect() {
 						},
 					})
 				: JSON.stringify(projectRemoteLegacyFrame(frame));
+		if (message === "{}") {
+			if (typeof options === "function") options();
+			else cb?.();
+			return;
+		}
 		if (typeof options === "function") {
 			send(message, options);
 		} else {

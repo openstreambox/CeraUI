@@ -306,7 +306,7 @@ test("observed radio tokens stay local through initial legacy status and both re
 		expect(JSON.stringify(frames)).not.toContain(PASSWORD);
 		const iface = local[0];
 		if (!iface) throw new Error("Missing observed radio");
-		const { incarnation: _incarnation, ...legacy } = iface;
+
 		expect(JSON.stringify(StatusSchema.parse(frames[0]).payload?.wifi)).toMatch(
 			/Wi-Fi \d+/,
 		);

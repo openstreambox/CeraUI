@@ -92,7 +92,7 @@ test("identifiers planted at every inventoried source leaf never reach either st
 					JSON.stringify(projectRemoteLegacyFrame({ [type]: payload })),
 				).not.toContain(secret);
 				legacy.send(JSON.stringify({ [type]: payload }));
-				expect(legacy.sent.at(-1)).not.toContain(secret);
+				expect(legacy.sent.join("\n")).not.toContain(secret);
 				if (isRelayable(type)) relayStatusToGateway(type, payload, 1);
 				expect(JSON.stringify(payload)).toBe(local);
 			}
@@ -105,4 +105,18 @@ test("identifiers planted at every inventoried source leaf never reach either st
 	} finally {
 		resetStatusRelay();
 	}
+});
+
+test("every projected legacy hydration status satisfies the published status schema", async () => {
+	const { statusResponseSchema } = await import("@ceraui/rpc/schemas");
+	const socket = await authenticateRemote();
+	let count = 0;
+	for (const text of socket.sent) {
+		const frame = JSON.parse(text);
+		if (frame.status !== undefined) {
+			statusResponseSchema.parse(frame.status);
+			count++;
+		}
+	}
+	expect(count).toBeGreaterThan(0);
 });
