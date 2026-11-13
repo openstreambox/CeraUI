@@ -26,6 +26,19 @@ export function getMockModemNetMarker(
 		.find((modem) => modem.interfaceName === name)?.usb_modem_net;
 }
 
+/** Only an unlocked, connected modem can own an address or carry traffic. */
+export function mockModemHasData(name: string): boolean {
+	const index = mockModems
+		.slice(0, getScenarioConfig().modems)
+		.findIndex((modem) => modem.interfaceName === name);
+	if (index < 0) return true;
+	const state = getMockState();
+	return (
+		state.modemStates.get(index) === "connected" &&
+		(state.simStates.get(String(index))?.lock ?? "unlocked") === "unlocked"
+	);
+}
+
 // network-interfaces.ts derives `tp = txBytes - prevTxBytes` each ~1s ifconfig
 // poll, so these cumulative counters must advance by interfaceThroughput[name]
 // bytes per tick for `tp` to track the seeded per-link rate. A disabled link
@@ -41,10 +54,12 @@ function advanceInterfaceTraffic(
 	const state = getMockState();
 	const enabled = state.netifConfigs.get(name)?.enabled ?? true;
 	const baseRate = state.interfaceThroughput[name] ?? 0;
-	const increment = enabled
-		? baseRate *
-			(1 + (mockRandomFor(`netif.${name}`) - 0.5) * 2 * THROUGHPUT_FLUCTUATION)
-		: 0;
+	const increment =
+		enabled && mockModemHasData(name)
+			? baseRate *
+				(1 +
+					(mockRandomFor(`netif.${name}`) - 0.5) * 2 * THROUGHPUT_FLUCTUATION)
+			: 0;
 
 	const previous = txByteCounters.get(name) ?? 0;
 	const txBytes = Math.floor(previous + increment);
@@ -86,7 +101,9 @@ export function getMockIfconfigOutput(): string {
 		const modemTraffic = advanceInterfaceTraffic(modem.interfaceName, 1.5);
 		interfaces.push(
 			generateInterfaceBlock(modem.interfaceName, {
-				ip: resolveNetifIp(modem.interfaceName, modem.ip),
+				ip: mockModemHasData(modem.interfaceName)
+					? resolveNetifIp(modem.interfaceName, modem.ip)
+					: "",
 				netmask: "255.255.255.0",
 				broadcast: `10.0.${i}.255`,
 				mac: `00:1e:10:1f:${String(i).padStart(2, "0")}:01`,
@@ -154,12 +171,14 @@ function generateInterfaceBlock(name: string, config: InterfaceConfig): string {
 	const rxPackets = Math.floor(config.rxBytes / 1000);
 
 	let block = `${name}: flags=${flagsNum}<${flags}>  mtu ${config.mtu}\n`;
-	block += `        inet ${config.ip}  netmask ${config.netmask}`;
+	if (config.ip) {
+		block += `        inet ${config.ip}  netmask ${config.netmask}`;
 
-	if (config.broadcast) {
-		block += `  broadcast ${config.broadcast}`;
+		if (config.broadcast) {
+			block += `  broadcast ${config.broadcast}`;
+		}
+		block += "\n";
 	}
-	block += "\n";
 
 	if (config.mac) {
 		block += `        ether ${config.mac}  txqueuelen 1000  (Ethernet)\n`;

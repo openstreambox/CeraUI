@@ -58,6 +58,7 @@ import {
 	shouldUseMocks,
 	updateMockState,
 } from "../mock-service.ts";
+import { mockModemHasData } from "./network.ts";
 
 // The caps-full hardware profile: H265 + hardware acceleration and an
 // audio-capable HDMI source alongside the always-present TestPattern.
@@ -543,7 +544,7 @@ export function buildMockLinkTelemetry(): LinkTelemetryMessage | null {
 	// NAKs or staleness, scales its weight, or removes its row.
 	const rawLinks = ifaces.flatMap((iface, index) => {
 		const override = linkOverrides[iface];
-		if (override?.gone) return [];
+		if (override?.gone || !mockModemHasData(iface)) return [];
 		// Deterministic per-link base plus a gentle bounded drift so the HUD shows
 		// live movement across ticks, kept inside the 20-60 ms plausible window.
 		const rttBase = 25 + index * 6;

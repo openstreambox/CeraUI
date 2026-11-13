@@ -129,3 +129,8 @@ stream is idle; the override is cleared by `resetMockState()`.
 | `engine-starting` | Engine still booting — minimal safe floor + `engineStarting` flag |
 | `engine-unavailable` | Engine unreachable — cached/minimal snapshot + `engineUnavailable` flag |
 
+
+Mock modem data interfaces publish no IPv4 address, accumulate no traffic and
+emit no sender telemetry unless their SIM is unlocked and their state is connected.
+Unlocking restores normal data on the next sample. A searching bond card names
+its state even when the radio continues reporting signal.
