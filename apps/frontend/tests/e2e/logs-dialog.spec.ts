@@ -115,7 +115,8 @@ test('LogsDialog downloads a real, observable backend journal', async ({ page, b
 
 	// The known backend failure we triggered is observable in the downloaded log.
 	expect(deviceLog).toContain('system.getLog');
-	expect(deviceLog).toContain('task13-observable-logs');
+	expect(deviceLog).toContain('RPC system.getLog err');
+	expect(deviceLog).not.toContain('task13-observable-logs');
 
 	// 4. Download the full system log and confirm it too carries real content.
 	const systemDownloadPromise = page.waitForEvent('download');

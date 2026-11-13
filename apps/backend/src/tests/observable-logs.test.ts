@@ -25,6 +25,7 @@ import {
 	logger,
 } from "../helpers/logger.ts";
 import * as runModule from "../helpers/run.ts";
+import * as carrierModule from "../modules/modems/modem-wire-producer.ts";
 import {
 	notificationBroadcast,
 	notificationRemove,
@@ -80,6 +81,7 @@ function findLogPush(
 
 afterEach(() => {
 	spyOn(runModule, "run").mockRestore?.();
+	spyOn(carrierModule, "getCarrierSupportSummary").mockRestore?.();
 });
 
 describe("system.getLog / system.getSyslog — real data + log push", () => {
@@ -126,6 +128,88 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		expect(result.log).toBe("");
 		expect(findLogPush(sent)).toBeUndefined();
 		expect(JSON.stringify(sent)).not.toContain("351756051523999");
+	});
+
+	it("a failed carrier summary leaves the redacted journal downloadable", async () => {
+		spyOn(runModule, "run").mockResolvedValue("retained journal evidence");
+		spyOn(carrierModule, "getCarrierSupportSummary").mockImplementation(() => {
+			throw new Error("private-summary-fault");
+		});
+		const sent: string[] = [];
+		const result = await call(getLogProcedure, undefined, {
+			context: makeContext(sent),
+		});
+		expect(result.log).toContain("retained journal evidence");
+		expect(result.log).toContain("Carrier support summary unavailable");
+		expect(findLogPush(sent)?.contents).toBe(result.log);
+		expect(JSON.stringify(sent)).not.toContain("private-summary-fault");
+	});
+	it("history timeout retries only the current boot with identical byte and process limits", async () => {
+		const runSpy = spyOn(runModule, "run")
+			.mockRejectedValueOnce(
+				new runModule.RunTimeoutError(
+					"journalctl",
+					"private-partial-imei",
+					"private-stderr",
+				),
+			)
+			.mockResolvedValueOnce("current boot evidence");
+		const sent: string[] = [];
+		const result = await call(getLogProcedure, undefined, {
+			context: makeContext(sent),
+		});
+		expect(runSpy).toHaveBeenNthCalledWith(
+			2,
+			"journalctl",
+			["-b", ...JOURNAL_ARGS, "-u", "ceralive.service"],
+			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
+		);
+		expect(result.log).toContain("current boot only");
+		expect(result.log).toContain("current boot evidence");
+		expect(JSON.stringify(sent)).not.toContain("private-partial-imei");
+	});
+	it("ordinary collection failure does not retry and is not called a timeout", async () => {
+		const runSpy = spyOn(runModule, "run").mockRejectedValue(
+			new Error("private-command-failure"),
+		);
+		const sent: string[] = [];
+		await call(getLogProcedure, undefined, { context: makeContext(sent) });
+		expect(runSpy).toHaveBeenCalledTimes(1);
+		expect(JSON.stringify(sent)).toContain("Failed to read the system journal");
+		expect(JSON.stringify(sent)).not.toContain("private-command-failure");
+	});
+
+	it("does not retry again or disclose partial output when the current boot also times out", async () => {
+		const runSpy = spyOn(runModule, "run").mockRejectedValue(
+			new runModule.RunTimeoutError(
+				"journalctl",
+				"private-partial",
+				"private-error",
+			),
+		);
+		const sent: string[] = [];
+		const result = await call(getLogProcedure, undefined, {
+			context: makeContext(sent),
+		});
+		expect(runSpy).toHaveBeenCalledTimes(2);
+		expect(result.log).toBe("");
+		expect(JSON.stringify(sent)).toContain(
+			"timed out for both history and current boot",
+		);
+		expect(JSON.stringify(sent)).not.toContain("private-partial");
+		expect(findLogPush(sent)).toBeUndefined();
+	});
+	it("distinguishes size overflow from timeout without exporting the error payload", async () => {
+		const runSpy = spyOn(runModule, "run").mockRejectedValue(
+			new Error("stdout maxBuffer length exceeded: private-error-payload"),
+		);
+		const sent: string[] = [];
+		await call(getLogProcedure, undefined, { context: makeContext(sent) });
+		expect(runSpy).toHaveBeenCalledTimes(1);
+		expect(JSON.stringify(sent)).toContain(
+			"exceeded the 10 MiB raw output limit",
+		);
+		expect(JSON.stringify(sent)).not.toContain("private-error-payload");
 	});
 
 	it("getLog defaults to the ceralive.service unit; an explicit service overrides", async () => {

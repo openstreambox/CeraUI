@@ -17,7 +17,7 @@
 */
 
 import { getRecentLogLines, logger } from "../../helpers/logger.ts";
-import { run } from "../../helpers/run.ts";
+import { RunTimeoutError, run } from "../../helpers/run.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getCarrierSupportSummary } from "../modems/modem-wire-producer.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
@@ -60,23 +60,61 @@ export async function getLog(
 		name = `${service.replace("CeraLive", "ceralive")}_log.txt`;
 	}
 
+	const options = { maxBuffer: 10 * 1024 * 1024, timeout: 15000 };
+	const fail = (error: unknown, fallback: boolean) => {
+		// Classify locally; errors can contain raw stdout/stderr and must never leave.
+		const message =
+			error instanceof RunTimeoutError
+				? fallback
+					? "Log collection timed out for both history and current boot."
+					: "Log collection timed out."
+				: error instanceof Error &&
+						/maxBuffer length exceeded/.test(error.message)
+					? "Log collection exceeded the 10 MiB raw output limit."
+					: fallback
+						? "Failed to read the current-boot journal after history timed out."
+						: "Failed to read the system journal.";
+		notificationSend(conn, "log_error", "error", message, 10);
+		logger.error(message);
+	};
+	let journal: string;
+	let currentBootOnly = false;
 	try {
-		const journal = shouldUseMocks()
+		journal = shouldUseMocks()
 			? buildMockJournal(service)
-			: await run("journalctl", args, {
-					maxBuffer: 10 * 1024 * 1024,
-					timeout: 15000,
-				});
-		const contents = `Support log: retained last 7 days; newest 10000 entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB.\n${boundSupportJournal(journal)}\n\nCarrier support summary (current observations; APN and TAC only):\n${JSON.stringify(getCarrierSupportSummary())}`;
-		// Pushed as a `log` event the frontend turns into a file download; also
-		// returned so the getLog/getSyslog RPC is itself a real data source.
+			: await run("journalctl", args, options);
+	} catch (error) {
+		if (!(error instanceof RunTimeoutError)) {
+			fail(error, false);
+			return undefined;
+		}
+		currentBootOnly = true;
+		try {
+			journal = await run("journalctl", ["-b", ...args], options);
+		} catch (fallbackError) {
+			fail(fallbackError, true);
+			return undefined;
+		}
+	}
+	let summary: string;
+	try {
+		summary = `Carrier support summary (current observations; APN and TAC only):\n${JSON.stringify(getCarrierSupportSummary())}`;
+	} catch {
+		summary =
+			"Carrier support summary unavailable; journal evidence is included.";
+		logger.warn("Carrier support summary unavailable during log export.");
+	}
+	const scope = currentBootOnly
+		? "current boot only (history read timed out)"
+		: "retained last 7 days";
+	const contents = `Support log: ${scope}; newest 10000 entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\n${boundSupportJournal(journal)}\n\n${summary}`;
+	try {
 		conn.send(buildMsg("log", { name, contents }, senderId));
 		return { name, contents };
 	} catch {
-		// Spawn errors may contain partial raw journal output. Never disclose it.
-		const msg = "Failed to fetch the log within the size or time limit.";
-		notificationSend(conn, "log_error", "error", msg, 10);
-		logger.error(msg);
+		const message = "Failed to deliver the log download.";
+		notificationSend(conn, "log_error", "error", message, 10);
+		logger.error(message);
 		return undefined;
 	}
 }

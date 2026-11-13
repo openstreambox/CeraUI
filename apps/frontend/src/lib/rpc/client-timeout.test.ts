@@ -5,8 +5,8 @@
  * `streaming.start` awaits the backend bounded connect-retry (up to a 60s budget),
  * so the 30s default `RPCClient.call` timeout would reject a still-valid in-flight
  * start and drop the terminal typed `failure` payload. The proxy must call
- * `streaming.start` with a timeout ABOVE the retry budget; other procedures keep
- * the default (no explicit timeout arg).
+ * `streaming.start` with a timeout ABOVE the retry budget. Log downloads also
+ * need headroom for two bounded journal attempts; ordinary calls keep the default.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -75,6 +75,18 @@ describe("RPC per-procedure timeout", () => {
 		expect(typeof timeout).toBe("number");
 		expect(timeout).toBeGreaterThan(60_000);
 	});
+
+	it.each(["getLog", "getSyslog"] as const)(
+		"keeps system.%s pending beyond both bounded journal attempts",
+		(method) => {
+			const spy = vi
+				.spyOn(rpcClient, "call")
+				.mockResolvedValue({ log: "" } as never);
+			void rpc.system[method]();
+			expect(spy).toHaveBeenCalledTimes(1);
+			expect(spy.mock.calls[0]?.[2]).toBeGreaterThan(30_000);
+		},
+	);
 
 	it("leaves other procedures on the default timeout (no explicit arg)", () => {
 		const spy = vi

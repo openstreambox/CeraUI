@@ -30,46 +30,115 @@ export function carrierSupportRows(sources: readonly CarrierSource[]) {
 	});
 }
 
-/** RPC's cid is a request correlation id, not a cellular identity. Remove it
- * before the conservative cell-id filter so the diagnostic event stays useful.
- * This grants no disclosure exception: the correlation value is always dropped.
- */
-function withoutRpcCorrelation(line: string): string {
-	try {
-		const start = line.indexOf("{");
-		if (start < 0) return line;
-		const entry = JSON.parse(line.slice(start));
+const WITHHELD = "[REDACTED support log line]";
+const CODE_FIELDS = new Set([
+	"procedure",
+	"reason",
+	"code",
+	"stage",
+	"phase",
+	"status",
+	"state",
+	"module",
+]);
+const NUMBER_FIELDS = new Set([
+	"latency_ms",
+	"elapsed_ms",
+	"wait_ms",
+	"attempt",
+	"count",
+	"exit_code",
+]);
+const BOOLEAN_FIELDS = new Set(["ok", "retryable", "available"]);
+
+function safeMetadata(value: unknown, rpc: boolean): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+	for (const [key, inner] of Object.entries(value)) {
+		// RPC payloads and client identity never cross this boundary, even if the
+		// producer adds new fields later. Other events retain bounded scalar codes.
+		if (rpc && !["procedure", "latency_ms", "ok"].includes(key)) continue;
 		if (
-			typeof entry?.msg === "string" &&
-			/^RPC [a-zA-Z0-9_.]+ (?:ok|err)$/.test(entry.msg) &&
-			entry.meta &&
-			typeof entry.meta === "object" &&
-			!Array.isArray(entry.meta)
-		) {
-			delete entry.meta.cid;
-			return line.slice(0, start) + JSON.stringify(entry);
-		}
-	} catch {
-		// Journald text and non-JSON device logs follow the same filter below.
+			CODE_FIELDS.has(key) &&
+			typeof inner === "string" &&
+			/^[a-zA-Z][a-zA-Z0-9_.:-]{0,79}$/.test(inner)
+		)
+			out[key] = inner;
+		else if (
+			NUMBER_FIELDS.has(key) &&
+			typeof inner === "number" &&
+			Number.isFinite(inner) &&
+			Math.abs(inner) < 100_000_000
+		)
+			out[key] = inner;
+		else if (BOOLEAN_FIELDS.has(key) && typeof inner === "boolean")
+			out[key] = inner;
 	}
-	return line;
+	return out;
 }
 
-/** Fail closed for whole diagnostic lines carrying identifiers or credentials.
- * Historical journals predate current logger redaction. Long numeric runs are
- * removed even without a field label; APN/TAC come only from the allowlist above.
+/** Final structured-record backstop: unknown metadata, request arguments,
+ * client addresses, nested payloads and detached JSON fragments are withheld.
+ * Preserve the event, severity, timestamp and bounded diagnostic codes instead.
+ */
+function projectStructuredLine(line: string): string {
+	const start = line.indexOf("{");
+	if (start < 0)
+		return /^\s*["{}[\],]|:\s+["{}[\],]/.test(line) ? WITHHELD : line;
+	try {
+		const entry = JSON.parse(line.slice(start));
+		const msg = entry?.msg ?? entry?.message;
+		if (typeof msg !== "string" || msg.length > 4096) return WITHHELD;
+		const out: Record<string, unknown> = { msg };
+		if (
+			typeof entry.ts === "string" &&
+			/^\d{4}-\d\d-\d\dT[0-9:.]+Z$/.test(entry.ts)
+		)
+			out.ts = entry.ts;
+		if (
+			["error", "warn", "info", "debug", "verbose", "silly"].includes(
+				entry.level,
+			)
+		)
+			out.level = entry.level;
+		if (
+			typeof entry.module === "string" &&
+			/^[a-zA-Z][a-zA-Z0-9_.:-]{0,79}$/.test(entry.module)
+		)
+			out.module = entry.module;
+		const meta = safeMetadata(entry.meta, /^RPC /.test(msg));
+		if (Object.keys(meta).length) out.meta = meta;
+		return line.slice(0, start) + JSON.stringify(out);
+	} catch {
+		return WITHHELD;
+	}
+}
+
+/** Historical journals can contain raw AT/QMI/MBIM payloads and old credentials.
+ * Opaque modem traffic is not safe to decode piecemeal at an export boundary.
  */
 export function redactSupportJournal(text: string): string {
 	return text
 		.split("\n")
-		.map(withoutRpcCorrelation)
-		.map((line) =>
-			/imei|iccid|imsi|msisdn|own[_. -]?numbers?|phone|cell[_. -]?(?:id|identity)|(?:^|[^a-z0-9])(?:cid|eci|nci|lac|tac|pci|eid|meid|esn)(?:[^a-z0-9]|$)|tracking[_. -]?area|location[_. -]?area|serial|device[_. -]?(?:id|identifier)|subscriber|equipment[_. -]?(?:id|identifier)|password|passwd|username|\bapn\b|\bpin\b|\bpuk\b|token|secret|authorization|bearer\s+[a-z0-9]|LPA:1\$|\d{9}|\+\d[\d ()-]{6}/i.test(
-				line,
-			) || logRedact(line) !== line
-				? "[REDACTED support log line]"
-				: line,
-		)
+		.map(projectStructuredLine)
+		.map((line) => {
+			const sensitive =
+				/imei|iccid|imsi|msisdn|own[_. -]?numbers?|phone|cell[_. -]?(?:id|identity)|(?:^|[^a-z0-9])(?:cid|eci|nci|lac|tac|pci|eid|meid|esn)(?:[^a-z0-9]|$)|tracking[_. -]?area|location[_. -]?area|serial|device[_. -]?(?:id|identifier)|subscriber|equipment[_. -]?(?:id|identifier)|password|passwd|passphrase|stream[_. -]?id|psk|username|\bapn\b|\bpin\b|\bpuk\b|token|secret|authorization|bearer\s+[a-z0-9]|LPA:1\$|\b(?:lat(?:itude)?|lon(?:gitude)?|lng)\b|\$[A-Z]{2,8},/i;
+			const modemTrace =
+				/\[[^\]]*\/at\]|<{3,}|>{3,}|\+C(?:G|E|5G)?REG\s*:|\+QENG\s*:|ModemManager.*<debug>/i;
+			const hexDump = /(?:\b[0-9a-f]{2}[:\s-]){7,}[0-9a-f]{2}\b/i;
+			const numericIdentity = /\d(?:[\s.-]*\d){8,}/;
+			const networkAddress =
+				/\b(?:[a-f0-9]{2}:){5}[a-f0-9]{2}\b|\b(?:\d{1,3}\.){3}\d{1,3}\b|::[a-f0-9:.]+|(?:[a-f0-9]{1,4}:){7}[a-f0-9]{1,4}/i;
+			return sensitive.test(line) ||
+				modemTrace.test(line) ||
+				hexDump.test(line) ||
+				numericIdentity.test(line) ||
+				networkAddress.test(line) ||
+				logRedact(line) !== line
+				? WITHHELD
+				: line;
+		})
 		.join("\n");
 }
 

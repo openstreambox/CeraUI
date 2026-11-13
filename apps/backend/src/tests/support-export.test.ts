@@ -16,7 +16,7 @@ describe("support export disclosure", () => {
 			`${line}\n2026-11-13T00:00:00 host service[42]: ${line}`,
 		);
 		expect(output).toContain("RPC system.getLog err");
-		expect(output).toContain("diagnostic-marker");
+		expect(output).not.toContain("diagnostic-marker");
 		expect(output).not.toContain("351756051523999");
 	});
 
