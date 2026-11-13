@@ -3,6 +3,7 @@ import { strictParseFrame } from "@ceralive/control-protocol/parse";
 import { notificationsMessageSchema } from "@ceraui/rpc/schemas";
 import {
 	createNotificationPeerRelay,
+	isProtocolValidCloudFrame,
 	NOTIFICATION_SUMMARIES,
 	NotificationRelay,
 	projectNotification,
@@ -140,7 +141,7 @@ test("every reviewed category rejects hostile payload values, including updates 
 function recordingRelay(
 	path: "cloud" | "legacy",
 	snapshot: () => { show: unknown[]; revision: number },
-	options?: { epoch?: string },
+	options?: { epoch?: string; now?: () => number },
 ) {
 	const frames: Record<string, unknown>[] = [];
 	const relay = createNotificationPeerRelay(
@@ -154,7 +155,10 @@ function recordingRelay(
 
 test("every emitted cloud frame passes the pinned hub contract's strictParseFrame", () => {
 	let snapshot = { show: [notice(1)], revision: 1 };
-	const { relay, frames } = recordingRelay("cloud", () => snapshot);
+	let t = 0;
+	const { relay, frames } = recordingRelay("cloud", () => snapshot, {
+		now: () => t,
+	});
 	relay.flush(true); // connect-time list
 	snapshot = {
 		show: [notice(2), { ...notice(3), name: "hdmi_error", type: "error" }],
@@ -162,6 +166,7 @@ test("every emitted cloud frame passes the pinned hub contract's strictParseFram
 	};
 	relay.flush(); // update
 	snapshot = { show: [], revision: 4 };
+	t += 1000; // past the coalescing window
 	relay.flush(); // clear
 	relay.flush(true); // reconnect, empty list
 	expect(frames).toHaveLength(4);
@@ -176,9 +181,13 @@ test("every emitted cloud frame passes the pinned hub contract's strictParseFram
 
 test("every emitted legacy frame is a valid notifications message for the existing client", () => {
 	let snapshot = { show: [notice(1)], revision: 1 };
-	const { relay, frames } = recordingRelay("legacy", () => snapshot);
+	let t = 0;
+	const { relay, frames } = recordingRelay("legacy", () => snapshot, {
+		now: () => t,
+	});
 	relay.flush(true);
 	snapshot = { show: [], revision: 2 };
+	t += 1000; // past the coalescing window
 	relay.flush();
 	expect(frames).toHaveLength(2);
 	for (const frame of frames) {
@@ -222,11 +231,16 @@ test("a backend restart is distinguishable: new epoch, full replace, consumer dr
 	const consumer = referenceConsumer();
 	// Process A raises two notices and advances its seq.
 	let a = { show: [notice(1)], revision: 1 };
-	const procA = recordingRelay("cloud", () => a, { epoch: "epoch-a" });
+	let t = 0;
+	const procA = recordingRelay("cloud", () => a, {
+		epoch: "epoch-a",
+		now: () => t,
+	});
 	procA.relay.flush(true);
 	a = { show: [notice(2), { ...notice(3), name: "hdmi_error" }], revision: 3 };
 	procA.relay.flush();
 	a = { show: [{ ...notice(4), name: "hdmi_error" }], revision: 4 };
+	t += 1000; // past the coalescing window
 	procA.relay.flush();
 	for (const f of procA.frames) consumer.apply(f);
 	expect(consumer.names).toHaveLength(1);
@@ -309,4 +323,201 @@ test("the cloud path can write through an injected frame sender", () => {
 	relay.flush(true);
 	expect(sent).toHaveLength(1);
 	expect(strictParseFrame(sent[0])).toMatchObject({ type: "notifications" });
+});
+
+// ── Oversized lists, flapping, production frame validation ─────────────────
+
+/** A manual monotonic clock for rate-limit tests. */
+function fakeClock(start = 0) {
+	let t = start;
+	return {
+		now: () => t,
+		tick(ms: number) {
+			t += ms;
+		},
+	};
+}
+
+/** Many distinct persistent notices; names are unique so none collapse. */
+function manyNotices(count: number, type: string) {
+	return Array.from({ length: count }, (_, i) => ({
+		...notice(i + 1),
+		name: `${type}-producer-${i}`,
+		type,
+	}));
+}
+
+test("an oversized list keeps the most severe notices, adds a summary and logs once", () => {
+	const logs: string[] = [];
+	// all-links-down is raised last, behind hundreds of lower-severity notices.
+	let snapshot = {
+		show: [
+			...manyNotices(200, "info"),
+			...manyNotices(200, "warning"),
+			{ ...notice(500), name: "all-links-down", type: "error" },
+		] as unknown[],
+		revision: 500,
+	};
+	const clock = fakeClock();
+	const frames: Record<string, unknown>[] = [];
+	const relay = createNotificationPeerRelay(
+		"cloud",
+		() => snapshot,
+		() => ({ send: (data: string) => frames.push(JSON.parse(data)) }),
+		{ now: clock.now, log: (m) => logs.push(m) },
+	);
+	relay.flush(true);
+	expect(frames).toHaveLength(1);
+	const frame = frames[0] as {
+		payload: { show: { name: string; type: string; msg: string }[] };
+	};
+	expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThanOrEqual(65536);
+	const show = frame.payload.show;
+	expect(show.some((n) => n.msg.startsWith("All bonded links are down"))).toBe(
+		true,
+	);
+	// Severity order: every warning that fits goes before any info notice.
+	const warnings = show.filter((n) => n.type === "warning").length;
+	const infos = show.filter((n) => n.type === "info").length;
+	expect(warnings).toBeGreaterThan(0);
+	if (infos > 0) expect(warnings).toBe(200);
+	// The last entry tells the remote side how many more are on the device.
+	const summary = show.at(-1);
+	expect(summary?.name).toBe("remote-overflow");
+	const omitted = 401 - (show.length - 1);
+	expect(summary?.msg).toContain(`${omitted} more`);
+	expect(strictParseFrame(frame).type).toBe("notifications");
+	expect(logs).toHaveLength(1);
+
+	// Unchanged oversized content does not re-send, and logging stays at once.
+	relay.flush();
+	clock.tick(5000);
+	relay.flush();
+	expect(frames).toHaveLength(1);
+	snapshot = { show: snapshot.show.slice(1), revision: 501 };
+	relay.flush();
+	expect(frames).toHaveLength(2);
+	expect(logs).toHaveLength(1);
+});
+
+test("a flapping notice is coalesced to at most one frame per second carrying the latest state", () => {
+	const clock = fakeClock();
+	const steady = { ...notice(1), name: "hdmi_error", type: "warning" };
+	const flapping = { ...notice(1), name: "no_internet", type: "warning" };
+	let revision = 1;
+	let up = false;
+	const snapshot = () => ({
+		show: up ? [steady, { ...flapping, revision }] : [steady],
+		revision,
+	});
+	const frames: Record<string, unknown>[] = [];
+	const relay = createNotificationPeerRelay(
+		"cloud",
+		snapshot,
+		() => ({ send: (data: string) => frames.push(JSON.parse(data)) }),
+		{ now: clock.now },
+	);
+	relay.flush(true);
+	expect(frames).toHaveLength(1);
+
+	// The first appearance of a new problem goes out on the same tick.
+	clock.tick(250);
+	up = true;
+	revision++;
+	relay.flush();
+	expect(frames).toHaveLength(2);
+
+	// Ten seconds of the same notice toggling on every 250 ms tick.
+	for (let i = 0; i < 40; i++) {
+		clock.tick(250);
+		up = !up;
+		revision++;
+		relay.flush();
+	}
+	expect(frames.length).toBeLessThanOrEqual(2 + 10);
+	expect(frames.length).toBeGreaterThanOrEqual(2 + 4);
+
+	// The flapping stops in the cleared state: within one second the latest
+	// state is on the wire.
+	up = false;
+	revision++;
+	for (let i = 0; i < 4; i++) {
+		clock.tick(250);
+		relay.flush();
+	}
+	const last = frames.at(-1) as { payload: { show: unknown[] } };
+	expect(last.payload.show).toHaveLength(1);
+	const settled = frames.length;
+	for (let i = 0; i < 8; i++) {
+		clock.tick(250);
+		relay.flush();
+	}
+	expect(frames).toHaveLength(settled);
+});
+
+test("a different new problem is sent at once even inside the coalescing window", () => {
+	const clock = fakeClock();
+	let show: unknown[] = [{ ...notice(1), name: "hdmi_error" }];
+	const frames: Record<string, unknown>[] = [];
+	const relay = createNotificationPeerRelay(
+		"legacy",
+		() => ({ show, revision: 3 }),
+		() => ({ send: (data: string) => frames.push(JSON.parse(data)) }),
+		{ now: clock.now },
+	);
+	relay.flush(true);
+	clock.tick(100);
+	show = [];
+	relay.flush(); // a clear may wait for the window
+	expect(frames).toHaveLength(1);
+	clock.tick(100);
+	show = [{ ...notice(2), name: "all-links-down", type: "error" }];
+	relay.flush();
+	expect(frames).toHaveLength(2);
+	const body = (frames[1] as { notification: { show: { msg: string }[] } })
+		.notification;
+	expect(body.show[0]?.msg).toStartWith("All bonded links are down");
+	// The notice cleared a moment ago comes back: that is flapping, so it waits.
+	const linksDown = { ...notice(3), name: "all-links-down", type: "error" };
+	clock.tick(100);
+	show = [linksDown, { ...notice(3), name: "hdmi_error", type: "warning" }];
+	relay.flush();
+	expect(frames).toHaveLength(2);
+	// A severity rise above what the remote side saw recently goes at once.
+	clock.tick(100);
+	show = [linksDown, { ...notice(4), name: "hdmi_error", type: "error" }];
+	relay.flush();
+	expect(frames).toHaveLength(3);
+});
+
+test("production checks each cloud frame against the pinned contract before sending", () => {
+	expect(
+		isProtocolValidCloudFrame({
+			v: 1,
+			kind: "status",
+			type: "notification",
+			cid: crypto.randomUUID(),
+			seq: 1,
+			payload: {},
+		}),
+	).toBe(false);
+	const logs: string[] = [];
+	let valid = false;
+	const frames: unknown[] = [];
+	const relay = createNotificationPeerRelay(
+		"cloud",
+		() => ({ show: [notice(1)], revision: 1 }),
+		() => ({ send: (data: string) => frames.push(JSON.parse(data)) }),
+		{ validate: () => valid, log: (m) => logs.push(m) },
+	);
+	relay.flush(true);
+	relay.flush();
+	relay.flush();
+	expect(frames).toHaveLength(0);
+	expect(logs).toHaveLength(1);
+	valid = true;
+	relay.flush();
+	expect(frames).toHaveLength(1);
+	expect(isProtocolValidCloudFrame(frames[0])).toBe(true);
+	expect((frames[0] as { seq: number }).seq).toBe(1);
 });

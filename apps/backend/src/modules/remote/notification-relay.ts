@@ -1,6 +1,9 @@
 import { createHmac } from "node:crypto";
 
+import { strictParseFrame } from "@ceralive/control-protocol/parse";
 import type { STATUS_TYPES } from "@ceralive/control-protocol/schemas";
+
+import { logger } from "../../helpers/logger.ts";
 
 const identityKey = crypto.getRandomValues(new Uint8Array(32));
 
@@ -115,16 +118,164 @@ function sameContent(a: RemoteNotice | undefined, b: RemoteNotice): boolean {
 	return a !== undefined && a.type === b.type && a.msg === b.msg;
 }
 
+/** Lower is more severe. Truncation keeps the most severe notices. */
+const SEVERITY_RANK: Readonly<Record<RemoteNotice["type"], number>> = {
+	error: 0,
+	warning: 1,
+	info: 2,
+	success: 3,
+};
+
+/** Fixed id of the summary that stands in for notices that did not fit. It is
+ * not 64 hex characters, so it cannot collide with a projected (HMAC) name. */
+export const OVERFLOW_NOTICE_NAME = "remote-overflow";
+
+const MAX_BYTES = 65536;
+/** Room left for the envelope around the payload (type, cid, seq, epoch …). */
+const ENVELOPE_RESERVE_BYTES = 1024;
+/** At most one frame per this interval, unless a frame carries a new problem. */
+const MIN_FRAME_INTERVAL_MS = 1000;
+/** A notice the remote side saw within this window is not "new" again: its
+ * return is flapping and waits for the interval. */
+const RECENT_MS = 10_000;
+
+const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+
+function overflowNotice(
+	omitted: number,
+	type: RemoteNotice["type"],
+	revision: number,
+): RemoteNotice {
+	return {
+		name: OVERFLOW_NOTICE_NAME,
+		type,
+		msg: `${omitted} more device notifications are not shown here. Open the local interface for details.`,
+		revision,
+		is_persistent: true,
+		is_dismissable: false,
+		duration: 0,
+	};
+}
+
+/** Fit the list into one frame. When everything fits, the list is unchanged.
+ * Otherwise the most severe notices are kept (in their original order) until
+ * the budget is used, and one summary notice names how many are left out.
+ * `remove` entries fill what room remains; every frame is a full replace, so a
+ * removal that does not fit is still retracted by the list itself. */
+function fitPayload(
+	current: RemoteNotice[],
+	removed: { id: string; revision: number }[],
+	revision: number,
+	budget: number,
+): { payload: NotificationPayload; omitted: number } {
+	const cost = (value: unknown) => jsonBytes(value) + 1;
+	let used = jsonBytes({ show: [], remove: [] });
+	let show = current;
+	let omitted = 0;
+	const total = current.reduce((sum, n) => sum + cost(n), used);
+	if (total > budget) {
+		const ordered = current
+			.map((n, index) => ({ n, index }))
+			.sort(
+				(a, b) =>
+					SEVERITY_RANK[a.n.type] - SEVERITY_RANK[b.n.type] ||
+					a.index - b.index,
+			);
+		// Reserve the summary at its largest possible size before filling.
+		used += cost(overflowNotice(current.length, "error", revision));
+		const kept = new Set<number>();
+		for (const { n, index } of ordered) {
+			const c = cost(n);
+			if (used + c > budget) break;
+			kept.add(index);
+			used += c;
+		}
+		const left = ordered.filter(({ index }) => !kept.has(index));
+		omitted = left.length;
+		const worst = left.reduce<RemoteNotice["type"]>(
+			(w, { n }) => (SEVERITY_RANK[n.type] < SEVERITY_RANK[w] ? n.type : w),
+			"success",
+		);
+		show = [
+			...current.filter((_, index) => kept.has(index)),
+			overflowNotice(omitted, worst, revision),
+		];
+	}
+	const remove: { id: string; revision: number }[] = [];
+	for (const entry of removed) {
+		const c = cost(entry);
+		if (used + c > budget) break;
+		remove.push(entry);
+		used += c;
+	}
+	return { payload: { show, remove }, omitted };
+}
+
+export interface NotificationRelayOptions {
+	/** Monotonic milliseconds; injectable for tests. */
+	now?: () => number;
+	/** Largest serialized payload (`show` + `remove`) the relay will build. */
+	maxPayloadBytes?: number;
+	/** One-time diagnostics (truncation). Defaults to the backend logger. */
+	log?: (message: string) => void;
+}
+
 /** No event queue: each tick reconciles the latest authoritative state. Failed
  * sends retain only the last accepted state; offline updates are coalesced.
+ * At most one frame per second goes out, except that a notice the remote side
+ * has not seen recently (or a severity rise) is sent on the tick it appears.
  * The transport must refuse sends above its bounded socket high-water mark. */
 export class NotificationRelay {
 	private forcePending = false;
 	private sent = new Map<string, RemoteNotice>();
+	/** Per id: when the remote side last had it, and its worst severity then. */
+	private recent = new Map<string, { at: number; rank: number }>();
+	private lastSentAt = Number.NEGATIVE_INFINITY;
+	private loggedTruncation = false;
+	private readonly now: () => number;
+	private readonly budget: number;
+	private readonly log: (message: string) => void;
 	constructor(
 		private readonly snapshot: () => NotificationSnapshot,
 		private readonly send: (payload: NotificationPayload) => boolean,
-	) {}
+		options: NotificationRelayOptions = {},
+	) {
+		this.now = options.now ?? (() => performance.now());
+		this.budget = options.maxPayloadBytes ?? MAX_BYTES - ENVELOPE_RESERVE_BYTES;
+		this.log = options.log ?? ((m) => logger.warn(m));
+	}
+
+	/** Whether this list carries something the remote side should see now. */
+	private isUrgent(show: RemoteNotice[], now: number): boolean {
+		return show.some((n) => {
+			const seen = this.recent.get(n.name);
+			return (
+				seen === undefined ||
+				now - seen.at > RECENT_MS ||
+				SEVERITY_RANK[n.type] < seen.rank
+			);
+		});
+	}
+
+	private remember(shown: Map<string, RemoteNotice>, now: number): void {
+		for (const [id, seen] of this.recent) {
+			if (now - seen.at > RECENT_MS) this.recent.delete(id);
+		}
+		// Notices removed by this frame were visible until now.
+		for (const id of this.sent.keys()) {
+			const seen = this.recent.get(id);
+			if (seen) seen.at = now;
+		}
+		for (const [id, n] of shown) {
+			const seen = this.recent.get(id);
+			const rank = SEVERITY_RANK[n.type];
+			this.recent.set(id, {
+				at: now,
+				rank: seen ? Math.min(seen.rank, rank) : rank,
+			});
+		}
+	}
+
 	flush(force = false): void {
 		this.forcePending ||= force;
 		try {
@@ -134,16 +285,38 @@ export class NotificationRelay {
 				const n = projectNotification(value);
 				if (n) current.set(n.name, n);
 			}
-			const remove = [...this.sent.keys()]
+			const removed = [...this.sent.keys()]
 				.filter((id) => !current.has(id))
 				.map((id) => ({ id, revision: snapshot.revision }));
+			const { payload, omitted } = fitPayload(
+				[...current.values()],
+				removed,
+				snapshot.revision,
+				this.budget,
+			);
+			const shown = new Map(payload.show.map((n) => [n.name, n]));
 			const changed =
-				remove.length > 0 ||
-				current.size !== this.sent.size ||
-				[...current].some(([id, n]) => !sameContent(this.sent.get(id), n));
+				[...this.sent.keys()].some((id) => !shown.has(id)) ||
+				shown.size !== this.sent.size ||
+				[...shown].some(([id, n]) => !sameContent(this.sent.get(id), n));
 			if (!this.forcePending && !changed) return;
-			if (this.send({ show: [...current.values()], remove })) {
-				this.sent = current;
+			const now = this.now();
+			if (
+				!this.forcePending &&
+				now - this.lastSentAt < MIN_FRAME_INTERVAL_MS &&
+				!this.isUrgent(payload.show, now)
+			)
+				return; // held: a later tick sends the then-latest state
+			if (omitted > 0 && !this.loggedTruncation) {
+				this.loggedTruncation = true;
+				this.log(
+					`remote notifications: ${omitted} of ${current.size} notices do not fit in one frame; sending the most severe with a summary (logged once)`,
+				);
+			}
+			if (this.send(payload)) {
+				this.remember(shown, now);
+				this.sent = shown;
+				this.lastSentAt = now;
 				this.forcePending = false;
 			}
 		} catch {
@@ -157,15 +330,29 @@ export interface NotificationPeer {
 	send(data: string): void;
 }
 
-export interface NotificationPeerOptions {
+export interface NotificationPeerOptions extends NotificationRelayOptions {
 	/** Defaults to this process's {@link NOTIFICATION_EPOCH}. */
 	epoch?: string;
 	/** Cloud path: emit through the control channel's `sendFrame` instead of
 	 * writing to the socket directly. The peer is still read for back-pressure. */
 	sendFrame?: (frame: Record<string, unknown>) => boolean;
+	/** Cloud path: contract check before each send. Defaults to
+	 * {@link isProtocolValidCloudFrame}. */
+	validate?: (frame: Record<string, unknown>) => boolean;
 }
 
-const MAX_BYTES = 65536;
+/** The pinned protocol's own strict parser. It checks the envelope (version,
+ * kind, the closed status-type set, cid, seq); the status payload is an open
+ * record, so the projection above is what bounds the payload. About 10 µs per
+ * frame on the workstation, and frames go out at most about once a second. */
+export function isProtocolValidCloudFrame(frame: unknown): boolean {
+	try {
+		strictParseFrame(frame);
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 /** Shared production adapter for both wire formats. No generic status/config
  * bridge is activated by installing this notification-only peer. */
@@ -176,30 +363,48 @@ export function createNotificationPeerRelay(
 	options: NotificationPeerOptions = {},
 ) {
 	const epoch = options.epoch ?? NOTIFICATION_EPOCH;
+	const validate = options.validate ?? isProtocolValidCloudFrame;
+	const log = options.log ?? ((m: string) => logger.warn(m));
+	let loggedInvalid = false;
 	let seq = 0;
-	return new NotificationRelay(snapshot, (payload) => {
-		const socket = peer();
-		if (!socket || (socket.bufferedAmount ?? 0) > MAX_BYTES) return false;
-		const body: NotificationWirePayload = { ...payload, epoch, full: true };
-		const frame =
-			path === "legacy"
-				? { notification: body }
-				: {
-						v: 1,
-						kind: "status",
-						type: NOTIFICATIONS_STATUS_TYPE,
-						cid: crypto.randomUUID(),
-						seq: seq + 1,
-						payload: body,
-					};
-		const data = JSON.stringify(frame);
-		if (Buffer.byteLength(data) > MAX_BYTES) return false;
-		if (path === "cloud" && options.sendFrame) {
-			if (!options.sendFrame(frame)) return false;
-		} else {
-			socket.send(data);
-		}
-		seq += 1;
-		return true;
-	});
+	return new NotificationRelay(
+		snapshot,
+		(payload) => {
+			const socket = peer();
+			if (!socket || (socket.bufferedAmount ?? 0) > MAX_BYTES) return false;
+			const body: NotificationWirePayload = { ...payload, epoch, full: true };
+			const frame =
+				path === "legacy"
+					? { notification: body }
+					: {
+							v: 1,
+							kind: "status",
+							type: NOTIFICATIONS_STATUS_TYPE,
+							cid: crypto.randomUUID(),
+							seq: seq + 1,
+							payload: body,
+						};
+			if (path === "cloud" && !validate(frame)) {
+				// A hub drops a frame its strict parser rejects; refuse it here
+				// instead, where it can be seen, and keep retrying the latest state.
+				if (!loggedInvalid) {
+					loggedInvalid = true;
+					log(
+						"remote notifications: frame rejected by the control protocol's strict parser; not sent (logged once)",
+					);
+				}
+				return false;
+			}
+			const data = JSON.stringify(frame);
+			if (Buffer.byteLength(data) > MAX_BYTES) return false;
+			if (path === "cloud" && options.sendFrame) {
+				if (!options.sendFrame(frame)) return false;
+			} else {
+				socket.send(data);
+			}
+			seq += 1;
+			return true;
+		},
+		options,
+	);
 }
