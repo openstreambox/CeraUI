@@ -729,3 +729,13 @@ it("keeps the verdict uncompressed and bounds bitrate content in the narrow HUD"
 	expect(classesOf(bitrate)).toContain("overflow-hidden");
 	expect(classesOf(region)).toContain("gap-2");
 });
+
+describe("HudBar lifecycle colors", () => {
+	it("paints the live badge from the shipped live token", () => {
+		state.hud = makeHud({ isStreaming: true });
+		render(HudBar);
+		const lifecycle =
+			compactStrip().querySelector<HTMLElement>('[id$="-lifecycle"]');
+		expect(lifecycle?.style.backgroundColor).toBe("var(--status-live)");
+	});
+});

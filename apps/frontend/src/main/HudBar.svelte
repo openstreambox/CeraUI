@@ -356,7 +356,8 @@ $effect(() => {
 						{:else if isLive}
 							<span
 								id={`${detailsDescriptionId}-lifecycle`}
-								class="bg-status-live text-primary-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
+								style="background-color: var(--status-live);"
+								class="text-primary-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
 								<span class="size-2 rounded-full bg-current motion-safe:animate-pulse"></span>
 								{m["hud.live"]()}
@@ -366,7 +367,7 @@ $effect(() => {
 								id={`${detailsDescriptionId}-lifecycle`}
 								class="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
-								<span class="bg-status-idle size-2 rounded-full"></span>
+								<span class="size-2 rounded-full" style="background-color: var(--status-idle);"></span>
 								{m["hud.idle"]()}
 							</span>
 						{/if}

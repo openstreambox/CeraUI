@@ -371,3 +371,6 @@ widths its gaps and side padding are smaller, and the bitrate group clips to its
 allocated width instead of painting over the health label. Its accessible name
 and the details sheet retain the complete measured/target values. The fixed
 strip height and mobile dock clearance remain unchanged.
+
+The lifecycle badge and idle dot use the existing `--status-live` and
+`--status-idle` tokens directly; these are not configured Tailwind color names.
