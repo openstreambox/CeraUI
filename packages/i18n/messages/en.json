@@ -2817,5 +2817,8 @@
 	"notifications.clientCarrying": "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait.",
 	"notifications.clientCarryingUnknown": "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.",
 	"general.updateReasonClientTraffic": "A stream is active or its state is being checked. Stop streaming on connected devices and stop the box’s own stream before installing an update.",
-	"notifications.disruptiveActionClientTraffic": "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress."
+	"notifications.disruptiveActionClientTraffic": "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress.",
+	"carrying.active": "Carrying · phone traffic through this box",
+	"carrying.unknown": "Client traffic through this box is unknown",
+	"carrying.idle": "No phone sending through this box"
 }

@@ -18,11 +18,13 @@ import { untrack } from 'svelte';
 import Badge from '$lib/components/custom/Badge.svelte';
 import BondConstellation from '$lib/components/custom/BondConstellation.svelte';
 import BufferingIndicator from '$lib/components/custom/BufferingIndicator.svelte';
+import CarryingStatus from '$lib/components/custom/CarryingStatus.svelte';
 import LinkBadge from '$lib/components/custom/LinkBadge.svelte';
 import LinkIndicator from '$lib/components/custom/LinkIndicator.svelte';
 import * as Sheet from '$lib/components/ui/sheet';
 import * as Tooltip from '$lib/components/ui/tooltip';
 import { getStalenessState, type StalenessState } from '$lib/helpers/staleness';
+import { getStatus } from '$lib/rpc/subscriptions.svelte';
 import { getBufferingState } from '$lib/stores/buffering.svelte';
 import { getDisplayProfile, getDisplayRefreshNonce, prefersEinkTheme } from '$lib/stores/display-profile.svelte';
 import { getHudState, getSocTelemetry } from '$lib/stores/hud.svelte';
@@ -383,6 +385,10 @@ $effect(() => {
 							<span class="sr-only">{m["hud.streamHealth"]()}</span>
 						</span>
 					</span>
+
+					{#if !isOffline}
+						<CarryingStatus carrying={getStatus()?.carrying} />
+					{/if}
 
 					{#if healthReason}
 						<!-- Capped below `sm` so the second line cannot widen the cluster

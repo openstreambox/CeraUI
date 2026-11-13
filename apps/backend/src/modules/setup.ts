@@ -71,4 +71,9 @@ export const setup: SetupConfig = {
 	...SETUP_CONFIG_DEFAULTS,
 	...setupConfigSchema.parse(await readSetupJson()),
 };
-logger.debug("Setup", setup);
+logger.debug("Setup", {
+	...setup,
+	srt_forward: setup.srt_forward
+		? { host: setup.srt_forward.host, port: setup.srt_forward.port }
+		: undefined,
+});

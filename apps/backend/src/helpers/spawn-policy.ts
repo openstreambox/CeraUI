@@ -589,6 +589,23 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			"superviseWorker startup-readiness gate + stopSRTIngest() shutdown cleanup; no process-lifetime timeout",
 	},
 	{
+		id: "ingest.srtForward",
+		file: "modules/ingest/srt-forward.ts",
+		symbol: "initSrtForward",
+		command: "[srt-live-transmit, ...]",
+		class: "supervised-worker",
+		contract: {
+			timed: false,
+			startupTimeout: true,
+			shutdownCleanup: true,
+			shutdownAbort: false,
+			lifetimeTimeoutExempt: true,
+		},
+		status: "enforced",
+		mechanism:
+			"superviseWorker startup-readiness gate + stopSrtForward() shutdown cleanup; no process-lifetime timeout",
+	},
+	{
 		id: "selfFencing.spawnOp",
 		file: "modules/remote-control/self-fencing.ts",
 		symbol: "spawnOp",
