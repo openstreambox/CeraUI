@@ -33,7 +33,7 @@ test("old images use fallback copy without a power-button instruction", async ()
 	const view = render(ButtonConfirm);
 	await fireEvent.click(screen.getByRole("button"));
 	await waitFor(() =>
-		expect(screen.getByText(/existing sign-in method/)).toBeTruthy(),
+		expect(screen.getByText(/Use your password to sign in/)).toBeTruthy(),
 	);
 	expect(screen.queryByText(/double-press/i)).toBeNull();
 	view.unmount();
@@ -46,4 +46,16 @@ test("leaving an active prompt cancels its held request", async () => {
 	await waitFor(() => expect(screen.getByText(/double-press/i)).toBeTruthy());
 	view.unmount();
 	expect(call).toHaveBeenLastCalledWith({ action: "cancel" });
+});
+
+test("disconnect explains consequences without prompting for a gesture before READY", async () => {
+	call.mockResolvedValue({ state: "unavailable" });
+	const view = render(ButtonConfirm, { purpose: "disconnect" });
+	expect(screen.queryByText(/double.press/i)).toBeNull();
+	await fireEvent.click(screen.getByRole("button"));
+	await waitFor(() =>
+		expect(screen.getByText("Use your password to sign in.")).toBeTruthy(),
+	);
+	expect(screen.queryByText(/double.press/i)).toBeNull();
+	view.unmount();
 });
