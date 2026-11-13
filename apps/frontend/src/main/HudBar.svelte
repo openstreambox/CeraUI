@@ -551,7 +551,7 @@ $effect(() => {
 							{#if lifecycle === 'offline'}
 								<ClockIcon class="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
 								{m["hud.noSignal"]()}
-							{:else if clientLabel}
+							{:else if !isLive && clientLabel}
 								{clientLabel}
 							{:else if rollup}
 								<RollupIcon class={cn('size-4 shrink-0', rollupIconColor)} aria-hidden="true" />

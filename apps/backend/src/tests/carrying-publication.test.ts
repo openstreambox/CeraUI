@@ -46,6 +46,7 @@ test("production startup stays protected and repeated reports do not rewrite the
 			{ carrying: { state: "streaming" } },
 		]);
 	} finally {
+		carryingTracker.session("synthetic-client", false, performance.now());
 		status.mockRestore();
 		write.mockRestore();
 		broadcast.mockRestore();

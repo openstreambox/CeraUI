@@ -21,7 +21,7 @@ import {
 	setupConfigSchema,
 } from "../helpers/config-schemas.ts";
 import { logger } from "../helpers/logger.ts";
-import { loadForwardSecret } from "./ingest/forward-secret.ts";
+import { loadForwardConfig } from "./ingest/forward-config.ts";
 import {
 	readStoredStateJson,
 	STORED_STATE_LIMITS,
@@ -73,23 +73,20 @@ export const setup: SetupConfig = {
 	...SETUP_CONFIG_DEFAULTS,
 	...setupConfigSchema.parse(rawSetup),
 };
-if (setup.srt_forward && typeof rawSetup === "object" && rawSetup !== null) {
-	const raw = Reflect.get(rawSetup, "srt_forward");
-	if (
-		typeof raw === "object" &&
-		raw !== null &&
-		Reflect.get(raw, "passphrase") === undefined
-	) {
-		try {
-			setup.srt_forward.passphrase = await loadForwardSecret(
-				"srt-forward.secret",
-				setup.srt_forward.passphrase,
-			);
-		} catch {
-			setup.srt_forward = undefined;
-			logger.warn("SRT forwarding disabled: credential unavailable");
-		}
-	}
+try {
+	const forward = await loadForwardConfig(
+		"/data/ceralive",
+		typeof rawSetup === "object" && rawSetup !== null
+			? Reflect.get(rawSetup, "srt_forward")
+			: undefined,
+		"srt-forward.secret",
+	);
+	if (forward !== null) setup.srt_forward = forward;
+} catch {
+	setup.srt_forward = undefined;
+	logger.warn(
+		"SRT forwarding disabled: configuration or credential unavailable",
+	);
 }
 logger.debug("Setup", {
 	...setup,

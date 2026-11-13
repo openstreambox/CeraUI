@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { setupConfigSchema } from "../helpers/config-schemas.ts";
 import { superviseForwardListener } from "../modules/ingest/srt-forward.ts";
@@ -64,6 +64,7 @@ import {
 	stopAll,
 } from "../modules/streaming/streamloop/process-runner.ts";
 import {
+	CarryingTracker,
 	carryingTracker,
 	getCarryingLiveness,
 } from "../modules/system/carrying.ts";
@@ -76,7 +77,15 @@ test.each([
 	"overflow",
 	"spawn failure",
 	"selection change",
+	"shutdown failure",
 ])("production wiring recovers: %s", async (scenario) => {
+	const tracker = new CarryingTracker();
+	const session = spyOn(carryingTracker, "session").mockImplementation(
+		tracker.session.bind(tracker),
+	);
+	const read = spyOn(carryingTracker, "read").mockImplementation(
+		tracker.read.bind(tracker),
+	);
 	const previous = setup.srt_forward;
 	setup.srt_forward = {
 		host: "127.0.0.1",
@@ -135,6 +144,7 @@ test.each([
 						: Promise.resolve(),
 				shutdown: async () => {
 					stopped++;
+					if (scenario === "shutdown failure") throw Error("shutdown");
 					exit(0);
 				},
 			}) as never,
@@ -164,7 +174,7 @@ test.each([
 				});
 			emit("Accepted SRT source connection");
 		}
-		if (scenario !== "accepted") {
+		if (scenario !== "accepted" && scenario !== "shutdown failure") {
 			if (scenario === "spawn failure")
 				await expect(running).rejects.toThrow("startup");
 			else await running;
@@ -189,7 +199,12 @@ test.each([
 		// Mark dead before sender cleanup observes it.
 		Object.assign(fakeProc, { exitCode: 1 });
 		exit(1);
-		await running;
+		if (scenario === "shutdown failure")
+			await expect(running).rejects.toThrow("shutdown");
+		else await running;
+		const mutation = tryAcquireModemMutation("after-cleanup");
+		expect(mutation.admitted).toBe(true);
+		if (mutation.admitted) mutation.lease.release();
 		expect(stopped).toBe(1);
 		expect(tryAcquireLifecycle("streaming").admitted).toBe(true);
 	} finally {
@@ -199,7 +214,8 @@ test.each([
 		await running.catch(() => {});
 		setup.srt_forward = previous;
 		resetLifecycleInterlock();
-		carryingTracker.session("srt-forward", false, performance.now());
+		session.mockRestore();
+		read.mockRestore();
 	}
 });
 
@@ -305,4 +321,22 @@ test("encoder telemetry cleanup cannot retire forward telemetry", async () => {
 		setForwardActive(false);
 		await rm(dir, { recursive: true, force: true });
 	}
+});
+
+test("a good forwarding session resets listener retry backoff", async () => {
+	const delays: number[] = [];
+	let attempts = 0;
+	const supervisor = superviseForwardListener({
+		report: () => {},
+		attempt: async (_signal, accepted) => {
+			if (++attempts === 3) accepted();
+		},
+		schedule: (fn, delay) => {
+			delays.push(delay);
+			return setTimeout(fn, 0);
+		},
+	});
+	while (attempts < 4) await Bun.sleep(1);
+	await supervisor.stop();
+	expect(delays.slice(0, 4)).toEqual([250, 500, 250, 500]);
 });

@@ -1,4 +1,3 @@
-import { isForwardActive } from "./forward-activity.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -65,6 +64,7 @@ import {
 	SRTLA_CONTROL_CONNECT_TIMEOUT_MS,
 	SRTLA_LISTEN_PORT,
 } from "./constants.ts";
+import { isForwardActive } from "./forward-activity.ts";
 import {
 	buildBondMapping,
 	ingestSenderBindMapReport,

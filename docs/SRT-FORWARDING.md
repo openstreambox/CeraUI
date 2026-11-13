@@ -1,27 +1,38 @@
 # Engine-less SRT forwarding
 
-An opt-in image configuration terminates a phone's SRT connection at the box,
+An opt-in operator configuration terminates a phone's SRT connection at the box,
 then sends the unchanged payload through the normal SRTLA sender to the selected
 relay. No decoding, encoding, engine start or engine capability query is involved.
 
-Set `srt_forward` in the private device `setup.json`:
+Create `/data/ceralive/srt-forward.json` (mode 0600) with the forwarding settings:
 
 ```json
 {
-  "srt_forward": {
-    "host": "192.168.4.1",
-    "port": 4000,
-    "maxbw": 2500000
-  }
+  "host": "192.168.4.1",
+  "port": 4000,
+  "maxbw": 2500000
 }
 ```
+
+These files are operator-owned state, outside the package payload, and survive OTA.
+Before package unpack, the installer privately saves the old setup metadata.
+On first boot after upgrading, its legacy `setup.json.srt_forward` block is copied
+here if no persistent config exists, preserving its generated credential from
+`srt-forward.secret` beside setup.json. Persistent settings then take precedence;
+the temporary setup backup is removed after successful migration.
+Edit persistent settings and restart the backend to change forwarding. Remove the legacy block
+before removing persistent settings to disable forwarding. Invalid persistent
+settings are refused rather than replaced with image defaults.
+Generated credentials are written to a private sibling temp file, fsynced,
+renamed atomically and followed by directory fsync. Empty or corrupt private
+credential files regenerate automatically; unsafe paths and permissions are refused.
 
 `host` must be the box's LAN/hotspot IPv4 address (loopback is also accepted for
 host tests); wildcard and public binds are refused. Keep the image's LAN-only
 firewall policy. The phone is the SRT **caller**, the box the **listener**. Set the
 phone's address, port and passphrase accordingly. When omitted, a random
 32-character passphrase is generated and retained in
-`srt-forward.secret` (mode 0600) beside setup.json. Read it locally for phone
+`/data/ceralive/srt-forward.secret` (mode 0600). Read it locally for phone
 setup; it is never broadcast. User-chosen passphrases retain the 10–79 character
 limit. The passphrase protects the phone hop; it is independent of the relay
 credentials.
@@ -46,7 +57,8 @@ and engine-loss sweeps cannot stop its process or telemetry. Its stats and contr
 paths both use the independent forwarding port.
 
 The listener supervisor retries faults with 250 ms exponential backoff capped at
-8 seconds. Refusal, sender exit, unreadable status and a 10-second outgoing
+8 seconds, reset to 250 ms after relay acceptance. Refusal, sender exit, unreadable
+status and a 10-second outgoing
 connection timeout shut down the listener, disconnecting the caller so its app
 can retry. Cleanup completes before another listener starts. Known stopped
 processes report false; unknown is reserved for unconfirmed live activity. The
@@ -88,7 +100,14 @@ exponencial de 250 ms a 8 s. Tras limpiar los procesos, el estado deja de ser
 desconocido. El permiso de admisión se libera al confirmar el receptor; una
 protección separada evita cambios de módem o inicios del codificador durante el
 reenvío. Sin contraseña explícita, se genera una aleatoria de 32 caracteres y se
-guarda en srt-forward.secret con permisos 0600. El límite maxbw predeterminado es
+guarda en /data/ceralive/srt-forward.secret con permisos 0600. La configuración
+se guarda en /data/ceralive/srt-forward.json, fuera del paquete, y sobrevive a
+las actualizaciones. Se migra la opción antigua de setup.json y su contraseña
+cuando no existe configuración persistente. Antes de reemplazar setup.json, el
+instalador guarda una copia privada para migrar sus opciones tras la actualización. Los archivos de contraseña vacíos
+o dañados se regeneran; la escritura usa un archivo temporal, fsync, cambio de
+nombre atómico y fsync del directorio. La espera se restablece tras aceptar el
+receptor. El límite maxbw predeterminado es
 2.500.000 bytes/s. Una configuración inválida desactiva el reenvío sin impedir el
 arranque. La selección del receptor se vuelve a comprobar en cada admisión y su
 IP se resuelve antes de iniciar el emisor. Las pruebas son locales y no califican

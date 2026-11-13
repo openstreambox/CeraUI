@@ -54,7 +54,7 @@ let stop: (() => Promise<void>) | undefined;
  * listener; restarting it never restarts the encoder or backend service. */
 export function superviseForwardListener(deps: {
 	report(state: boolean | null): void;
-	attempt(signal: AbortSignal): Promise<void>;
+	attempt(signal: AbortSignal, accepted: () => void): Promise<void>;
 	schedule?: typeof setTimeout;
 }) {
 	const abort = new AbortController();
@@ -63,7 +63,9 @@ export function superviseForwardListener(deps: {
 	let failures = 0;
 	const run = async () => {
 		try {
-			await deps.attempt(abort.signal);
+			await deps.attempt(abort.signal, () => {
+				failures = 0;
+			});
 		} catch {
 			logger.warn("SRT forwarding listener retrying");
 		}
@@ -94,7 +96,7 @@ export async function initSrtForward(): Promise<void> {
 	report(false);
 	const supervisor = superviseForwardListener({
 		report,
-		attempt: runForwardAttempt,
+		attempt: (signal, accepted) => runForwardAttempt(signal, runtime, accepted),
 	});
 	stop = async () => {
 		await supervisor.stop();
@@ -126,6 +128,9 @@ const runtime = {
 export async function runForwardAttempt(
 	signal: AbortSignal,
 	deps = runtime,
+	accepted: () => void = () => {
+		/* Optional session observer. */
+	},
 ): Promise<void> {
 	const input = setup.srt_forward;
 	if (!input || signal.aborted) return;
@@ -359,6 +364,7 @@ export async function runForwardAttempt(
 						});
 					} else if (line.includes("SRT target connected")) {
 						relayAccepted = true;
+						accepted();
 						clearTimeout(connectTimer);
 						// The target is end-to-end SRT through the bonded sender.
 						releaseForwardAdmission();
@@ -394,8 +400,11 @@ export async function runForwardAttempt(
 		stopping = true;
 		clearTimeout(connectTimer);
 		signal.removeEventListener("abort", onAbort);
-		await transmitter?.shutdown();
-		await controller.stop();
+		try {
+			await transmitter?.shutdown();
+		} finally {
+			await controller.stop();
+		}
 	}
 }
 

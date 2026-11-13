@@ -739,3 +739,18 @@ describe("client traffic lead badge", () => {
 		},
 	);
 });
+
+it.each(["streaming", "unknown"] as const)(
+	"retains live encoder health with %s client carrying",
+	async (carrying) => {
+		state.carrying = carrying;
+		state.hud = makeHud({ isStreaming: true, bitrateKbps: 4100 });
+		state.health = "healthy";
+		state.rollup = healthyRollup();
+		render(HudBar);
+		await openSheet();
+		expect(
+			(await screen.findByTestId("stream-health-state")).textContent,
+		).toContain("Healthy");
+	},
+);
