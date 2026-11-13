@@ -26,7 +26,34 @@ const authority = {
 	ifindex: 17,
 	dns: ["192.0.2.53"],
 };
-async function fixture() {
+
+test("an internal address is immutable physical authority and cannot name another link or index", () => {
+	const ownedAddress = {
+		ifname: "wwan0",
+		ifindex: "17",
+		usbDevice: "synthetic-usb",
+		netDevice: "synthetic-net",
+		generation: "one",
+	};
+	const plan = parseCellularNativeHostPlan({ ...authority, ownedAddress });
+	expect(Object.isFrozen(plan.ownedAddress)).toBe(true);
+	expect(parseCellularNativeHostPlan(authority)).toEqual(authority);
+	for (const patch of [
+		{ ifname: "other0" },
+		{ ifindex: "18" },
+		{ ifindex: "017" },
+		{ usbDevice: "" },
+		{ generation: "" },
+		{ extra: true },
+	])
+		expect(() =>
+			parseCellularNativeHostPlan({
+				...authority,
+				ownedAddress: { ...ownedAddress, ...patch },
+			}),
+		).toThrow();
+});
+async function fixture(internal = false) {
 	const dir = await mkdtemp(join(tmpdir(), "cellular-native-host-")),
 		key = createHash("sha256")
 			.update(`cellular-uplink-slot\0${1}`)
@@ -39,6 +66,8 @@ async function fixture() {
 		current = true,
 		lostReply = false;
 	let hold: Promise<boolean> | undefined;
+	let address: "absent" | "owned" | "foreign" = "absent",
+		lostAddressReply = false;
 	const deps: CellularNativeHostDeps = {
 		store: { dir },
 		bootId,
@@ -52,7 +81,35 @@ async function fixture() {
 			events.push("cancel");
 		},
 		consumersReleased: async () => consumers,
-		effects: () => ({
+		effects: (_plan, _fence, _current, _writable, context) => ({
+			...(context
+				? {
+						address: {
+							inspect: async () => address,
+							apply: async () => {
+								expect(await readPrivateJson({ dir }, key)).toMatchObject({
+									cursor: 2,
+									phase: "applying",
+								});
+								expect(context.effect).toEqual({
+									kind: "address",
+									family: 4,
+									address: authority.input.ipv4,
+									prefix: 32,
+								});
+								events.push("address-add");
+								address = "owned";
+								if (lostAddressReply) throw new Error("lost address reply");
+							},
+							remove: async () => {
+								if (address === "foreign") return false;
+								events.push("address-remove");
+								address = "absent";
+								return true;
+							},
+						},
+					}
+				: {}),
 			firewall: {
 				inspect: async () => mode,
 				create: async (value) => {
@@ -89,25 +146,47 @@ async function fixture() {
 			},
 		}),
 	};
-	const host = new CellularNativeHost(authority, deps);
+	const host = new CellularNativeHost(
+		{
+			...authority,
+			...(internal
+				? {
+						ownedAddress: {
+							ifname: "wwan0",
+							ifindex: "17",
+							usbDevice: "synthetic-usb",
+							netDevice: "synthetic-net",
+							generation: "one",
+						},
+					}
+				: {}),
+		},
+		deps,
+	);
 	return {
 		host,
 		deps,
 		events,
 		installed,
 		record: () => readPrivateJson({ dir }, key),
+		address: () => address,
 		set: (state: {
 			consumers?: boolean;
 			owned?: boolean;
 			current?: boolean;
 			lostReply?: boolean;
 			hold?: Promise<boolean>;
+			address?: "absent" | "owned" | "foreign";
+			lostAddressReply?: boolean;
 		}) => {
 			if (state.consumers !== undefined) consumers = state.consumers;
 			if (state.owned !== undefined) owned = state.owned;
 			if (state.current !== undefined) current = state.current;
 			if (state.lostReply !== undefined) lostReply = state.lostReply;
 			if (state.hold) hold = state.hold;
+			if (state.address !== undefined) address = state.address;
+			if (state.lostAddressReply !== undefined)
+				lostAddressReply = state.lostAddressReply;
 		},
 		setFence: (value: CellularFenceMode) => {
 			mode = value;
@@ -118,6 +197,76 @@ async function fixture() {
 		close: () => rm(dir, { recursive: true, force: true }),
 	};
 }
+
+test("an internal /32 is added behind the durable fence and removed only after consumers release", async () => {
+	const f = await fixture(true);
+	try {
+		await f.host.install();
+		expect(f.events.indexOf("fence-create")).toBeLessThan(
+			f.events.indexOf("address-add"),
+		);
+		expect(f.events.indexOf("address-add")).toBeLessThan(
+			f.events.indexOf("ip-add"),
+		);
+		expect(await f.host.valid()).toBe(true);
+		expect(await f.host.cleanup()).toBe(false);
+		expect(f.address()).toBe("owned");
+		expect(f.events).not.toContain("address-remove");
+		f.set({ consumers: true, current: false });
+		expect(await f.host.cleanup()).toBe(true);
+		expect(f.events.indexOf("address-remove")).toBeLessThan(
+			f.events.indexOf("fence-remove"),
+		);
+		expect(f.address()).toBe("absent");
+	} finally {
+		await f.close();
+	}
+});
+test("a lost internal address acknowledgement retains its exact inverse without adding routes", async () => {
+	const f = await fixture(true);
+	try {
+		f.set({ lostAddressReply: true });
+		await expect(f.host.install()).rejects.toThrow("lost address reply");
+		expect(f.address()).toBe("owned");
+		expect(f.events).not.toContain("ip-add");
+		expect(await f.record()).toMatchObject({ cursor: 2, phase: "applying" });
+		expect(await f.host.cleanup()).toBe(false);
+		f.set({ consumers: true });
+		expect(await f.host.cleanup()).toBe(true);
+		expect(f.address()).toBe("absent");
+	} finally {
+		await f.close();
+	}
+});
+test("a pre-existing address cannot be adopted; a later foreign address edit retains the fence and inverse", async () => {
+	for (const address of ["owned", "foreign"] as const) {
+		const f = await fixture(true);
+		try {
+			f.set({ address });
+			await expect(f.host.install()).rejects.toThrow(
+				"Native address already exists",
+			);
+			expect(await f.record()).toBeUndefined();
+			expect(f.events).toEqual([]);
+		} finally {
+			await f.close();
+		}
+	}
+	const f = await fixture(true);
+	try {
+		await f.host.install();
+		f.set({ consumers: true, address: "foreign" });
+		expect(await f.host.valid()).toBe(false);
+		expect(await f.host.cleanup()).toBe(false);
+		expect(f.events).not.toContain("address-remove");
+		expect(f.events).not.toContain("fence-remove");
+		expect(await f.record()).toBeDefined();
+		f.set({ address: "owned" });
+		expect(await f.host.cleanup()).toBe(true);
+	} finally {
+		await f.close();
+	}
+});
 test("native installation is denied until complete, and cleanup waits for actual consumers behind a deny fence", async () => {
 	const f = await fixture();
 	try {

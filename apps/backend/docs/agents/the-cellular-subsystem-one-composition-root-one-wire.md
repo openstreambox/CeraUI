@@ -575,6 +575,14 @@ iproute2's null detached-selector marker admits inverse cleanup only, never read
 Scoped virtual-link sysctls use owner/index checks; no USB identity is fabricated
 for a TUN and global forwarding is untouched. These are host component proofs.
 
+An explicit native `ownedAddress` plan retains the internal-call adapter's
+physical USB/index generation and adds its exact `/32` after the durable output
+fence. It shares the host inverse and slot; it does not create another owner.
+Pre-existing addresses cannot be adopted. Cleanup waits for actual consumers,
+deletes by index and preserves foreign/reused-name or changed-attribute state.
+Two complete index-absence reads can retire vanished physical resources. The
+ordinary NM plan owns no address. This component does not activate FM350.
+
 Managed paths require an integer `capabilities.bind_map_contract >= 1`, literal
 `bind_map_required === true` and `bind_map_required_empty_reload === true`, and
 `--require-bind-map` alongside `--bind-map`. Ordinary bind-map support permits

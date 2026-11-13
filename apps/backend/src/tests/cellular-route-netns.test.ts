@@ -34,7 +34,10 @@ import {
 	CellularIpState,
 	cellularIpIO,
 } from "../modules/network/cellular-ip-state.ts";
-import { CellularNativeHost } from "../modules/network/cellular-native-host.ts";
+import {
+	CellularNativeHost,
+	createCellularNativeKernelEffects,
+} from "../modules/network/cellular-native-host.ts";
 import {
 	cellularFenceDefinition,
 	inspectCellularFence,
@@ -812,6 +815,104 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			await recovery.replay();
 			expect(recovered).toBe(1);
 			expect(await nativeDeps.current()).toBe(true);
+			// An internal-call adapter owns its /32 under the same inverse. The
+			// fixture substitutes only USB identity with actual virtual-link evidence.
+			await ip("link", "add", "rndis0", "type", "dummy");
+			await ip("link", "set", "rndis0", "up");
+			const internalIndex = JSON.parse(
+				await ip("-j", "link", "show", "dev", "rndis0"),
+			)[0].ifindex;
+			const internalAuthority = {
+					...nativeAuthority,
+					ifindex: internalIndex,
+					input: {
+						...nativeAuthority.input,
+						iface: "rndis0",
+						slot: 6,
+						epoch: "internal-one",
+						ipv4: "192.0.2.6",
+					},
+					ownedAddress: {
+						ifname: "rndis0",
+						ifindex: String(internalIndex),
+						usbDevice: "synthetic-usb",
+						netDevice: "synthetic-rndis",
+						generation: "one",
+					},
+				},
+				internal = new CellularNativeHost(internalAuthority, {
+					...nativeDeps,
+					current: async () =>
+						JSON.parse(await ip("-j", "link", "show", "dev", "rndis0"))[0]
+							?.ifindex === internalIndex,
+					effects: (plan, fence, current, writable, address) => {
+						if (!address) throw new Error("Internal address context missing");
+						return createCellularNativeKernelEffects(
+							plan,
+							fence,
+							current,
+							writable,
+							{
+								...address,
+								physicalState: async () => {
+									const rows = JSON.parse(await ip("-j", "link", "show"));
+									const found = rows.find(
+										(row: { ifindex: number }) => row.ifindex === internalIndex,
+									);
+									return !found
+										? "absent"
+										: found.ifname === "rndis0"
+											? "present"
+											: "foreign";
+								},
+							},
+						);
+					},
+				});
+			const hasInternal = async (name: string) =>
+				JSON.parse(await ip("-4", "-j", "addr", "show", "dev", name)).some(
+					(link: { addr_info: { local: string }[] }) =>
+						link.addr_info.some((row) => row.local === "192.0.2.6"),
+				);
+			expect(await hasInternal("rndis0")).toBe(false);
+			await internal.install();
+			expect(await hasInternal("rndis0")).toBe(true);
+			expect(await internal.valid()).toBe(true);
+			expect(await internal.setReady(true)).toBe(true);
+			const internalPacket = {
+					...packet,
+					device: "rndis0",
+					ifindex: internalIndex,
+					source: "192.0.2.6",
+				},
+				beforeInternal = await tx("rndis0");
+			await exchangeSourceBoundDatagram(internalPacket);
+			expect(await tx("rndis0")).toBeGreaterThan(beforeInternal);
+			consumers = false;
+			expect(await internal.cleanup()).toBe(false);
+			expect(await hasInternal("rndis0")).toBe(true);
+			const beforeInternalDeny = await tx("rndis0");
+			await exchangeSourceBoundDatagram(internalPacket);
+			expect(await tx("rndis0")).toBe(beforeInternalDeny);
+			// A reused name cannot inherit indexed address deletion authority.
+			await ip("link", "set", "rndis0", "down");
+			await ip("link", "set", "rndis0", "name", "oldcell0");
+			await ip("link", "add", "rndis0", "type", "dummy");
+			await ip("addr", "add", "192.0.2.6/32", "dev", "rndis0");
+			consumers = true;
+			expect(await internal.cleanup()).toBe(false);
+			expect(await hasInternal("rndis0")).toBe(true);
+			expect(await hasInternal("oldcell0")).toBe(true);
+			await ip("link", "delete", "rndis0");
+			await ip("link", "set", "oldcell0", "name", "rndis0");
+			await ip("link", "set", "rndis0", "up");
+			expect(await internal.cleanup()).toBe(true);
+			expect(await hasInternal("rndis0")).toBe(false);
+			await ip("link", "delete", "rndis0");
+			expect(await nativeDeps.current()).toBe(true);
+			expect(await ip("-j", "-4", "route", "show", "table", "main")).toBe(
+				mainBefore,
+			);
 			// Reinstall a fresh generation to retain the vanished-device cleanup gate.
 			const final = new CellularNativeHost(
 				{

@@ -4,7 +4,13 @@ import {
 } from "../../helpers/durable-inverse.ts";
 import type { CellularPathSession } from "../modems/cellular-path-owner.ts";
 import { CellularFirewall, cellularFirewallIO } from "./cellular-firewall.ts";
+import { cellularPhysicalResourceState } from "./cellular-host-identity.ts";
 import { inventoryCellularHosts } from "./cellular-host-inventory.ts";
+import type { CellularIndexedIpEffect } from "./cellular-indexed-ip.ts";
+import {
+	CellularIndexedIpState,
+	cellularIndexedIpIO,
+} from "./cellular-indexed-ip-state.ts";
 import { CellularIpState, cellularIpIO } from "./cellular-ip-state.ts";
 import {
 	type CellularNativeHostPlan,
@@ -26,6 +32,21 @@ type Firewall = Pick<
 	"inspect" | "create" | "transition" | "remove"
 >;
 type IpState = Pick<CellularIpState, "inspect" | "apply" | "remove">;
+type AddressState = Pick<
+	CellularIndexedIpState,
+	"inspect" | "apply" | "remove"
+>;
+interface NativeAddressContext {
+	readonly physical: NonNullable<CellularNativeHostPlan["ownedAddress"]>;
+	readonly effect: CellularIndexedIpEffect;
+	readonly sameBoot: boolean;
+	/** A disconnected namespace supplies indexed virtual-link evidence here;
+	 * production uses the captured USB instance and positive absence census.
+	 */
+	readonly physicalState?: () => Promise<
+		"present" | "absent" | "foreign" | "unknown"
+	>;
+}
 export interface CellularNativeHostDeps {
 	/** Lifetime slot lease and retained actor ownership; checked synchronously at dispatch. */
 	readonly owned: () => boolean;
@@ -43,7 +64,8 @@ export interface CellularNativeHostDeps {
 		fence: CellularPacketFence,
 		current: () => Promise<boolean>,
 		writable: () => boolean,
-	) => { firewall: Firewall; ip: IpState };
+		address?: NativeAddressContext,
+	) => { firewall: Firewall; ip: IpState; address?: AddressState };
 }
 function routes(value: CellularNativeHostPlan): CellularRoutePlan {
 	const { ipv4Gateway, ...input } = value.input;
@@ -54,11 +76,12 @@ function routes(value: CellularNativeHostPlan): CellularRoutePlan {
 	if (!plan || plan.translated) throw new Error("Native grant required");
 	return plan;
 }
-function kernelEffects(
+export function createCellularNativeKernelEffects(
 	plan: CellularRoutePlan,
 	fence: CellularPacketFence,
 	current: () => Promise<boolean>,
 	writable: () => boolean,
+	address?: NativeAddressContext,
 ) {
 	const firewall = cellularFirewallIO(current),
 		ip = cellularIpIO(current);
@@ -77,11 +100,29 @@ function kernelEffects(
 				await ip.write(argv);
 			},
 		}),
+		...(address
+			? {
+					address: new CellularIndexedIpState(
+						{ name: plan.device, index: fence.ifindex },
+						[address.effect],
+						cellularIndexedIpIO(
+							address.physicalState ??
+								(() =>
+									cellularPhysicalResourceState(
+										address.physical,
+										address.sameBoot,
+									)),
+							writable,
+						),
+					),
+				}
+			: {}),
 	};
 }
 /** Native host composition. Caller retains the slot lease/actor even after an
  * uncertain install and releases it only after cleanup returns true. NM owns
- * native addresses; this inverse owns only its exact private routes and fence.
+ * native addresses by default. An explicit internal-call address also owns its
+ * indexed /32, behind the fence and under this same durable inverse.
  * All writes serialize, including failure cleanup and late readiness replies.
  */
 export class CellularNativeHost implements CellularPathSession {
@@ -90,6 +131,8 @@ export class CellularNativeHost implements CellularPathSession {
 	readonly cancelProbe;
 	private readonly firewall: Firewall;
 	private readonly ip: IpState;
+	private readonly address: AddressState | undefined;
+	private readonly addressEffect: CellularIndexedIpEffect | undefined;
 	private readonly plan: CellularRoutePlan;
 	private readonly inverse: DurableInverse<CellularNativeHostPlan>;
 	private tail: Promise<void> = Promise.resolve();
@@ -113,7 +156,15 @@ export class CellularNativeHost implements CellularPathSession {
 		};
 		this.dns = { source: this.plan.source, device: input.iface, ifindex, dns };
 		this.cancelProbe = deps.cancelProbe;
-		const effects = (deps.effects ?? kernelEffects)(
+		this.addressEffect = this.authority.ownedAddress
+			? Object.freeze({
+					kind: "address",
+					family: 4,
+					address: this.plan.source,
+					prefix: 32,
+				})
+			: undefined;
+		const effects = (deps.effects ?? createCellularNativeKernelEffects)(
 			this.plan,
 			{
 				owner: input.owner,
@@ -131,9 +182,19 @@ export class CellularNativeHost implements CellularPathSession {
 				(this.removing ||
 					this.withdrawing ||
 					(!this.closing && deps.currentNow())),
+			this.authority.ownedAddress && this.addressEffect
+				? {
+						physical: this.authority.ownedAddress,
+						effect: this.addressEffect,
+						sameBoot: this.sameBoot(),
+					}
+				: undefined,
 		);
 		this.firewall = effects.firewall;
 		this.ip = effects.ip;
+		this.address = effects.address;
+		if (this.addressEffect && !this.address)
+			throw new Error("Native address owner unavailable");
 		const key = cellularUplinkSlotKey(input.slot),
 			store = privateInverseStore(deps.store, key);
 		this.inverse = new DurableInverse({
@@ -152,9 +213,13 @@ export class CellularNativeHost implements CellularPathSession {
 				(await this.current()),
 			inspect: async (_record, step) => {
 				const state =
-					step !== "fence"
-						? await this.ip.inspect(this.effect(step), this.removing)
-						: await this.firewall.inspect();
+					step === "address"
+						? await this.addressOwner().state.inspect(
+								this.addressOwner().effect,
+							)
+						: step !== "fence"
+							? await this.ip.inspect(this.effect(step), this.removing)
+							: await this.firewall.inspect();
 				return state === "absent"
 					? "absent"
 					: !this.sameBoot() || state === "foreign"
@@ -163,15 +228,19 @@ export class CellularNativeHost implements CellularPathSession {
 			},
 			apply: async (_record, step) => {
 				if (step === "fence") await this.firewall.create("withdrawn");
+				else if (step === "address")
+					await this.addressOwner().state.apply(this.addressOwner().effect);
 				else await this.ip.apply(this.effect(step));
 			},
 			remove: async (_record, step) => {
 				if (!this.sameBoot() || !deps.owned() || this.retired)
 					throw new Error("Native inverse lease retired");
 				const removed =
-					step === "fence"
-						? await this.firewall.remove()
-						: await this.ip.remove(this.effect(step));
+					step === "address"
+						? await this.addressOwner().state.remove(this.addressOwner().effect)
+						: step === "fence"
+							? await this.firewall.remove()
+							: await this.ip.remove(this.effect(step));
 				if (!removed) throw new Error("Native inverse remains owned");
 			},
 			withdraw: () => this.withdraw(),
@@ -186,6 +255,11 @@ export class CellularNativeHost implements CellularPathSession {
 			},
 			consumersReleased: deps.consumersReleased,
 		});
+	}
+	private addressOwner() {
+		if (!this.address || !this.addressEffect)
+			throw new Error("Unknown native address inverse");
+		return { state: this.address, effect: this.addressEffect };
 	}
 	private effect(step: string) {
 		if (!/^ip-\d+$/.test(step)) throw new Error("Unknown native inverse step");
@@ -234,6 +308,12 @@ export class CellularNativeHost implements CellularPathSession {
 				)
 			)
 				throw new Error("Native host slot remains owned");
+			if (
+				this.address &&
+				this.addressEffect &&
+				(await this.address.inspect(this.addressEffect)) !== "absent"
+			)
+				throw new Error("Native address already exists");
 			await this.inverse.create(
 				this.authority.input.owner,
 				this.authority.input.epoch,
@@ -248,6 +328,12 @@ export class CellularNativeHost implements CellularPathSession {
 			record?.phase !== "active" ||
 			record.owner !== this.authority.input.owner ||
 			record.epoch !== this.authority.input.epoch
+		)
+			return false;
+		if (
+			this.address &&
+			this.addressEffect &&
+			(await this.address.inspect(this.addressEffect)) !== "owned"
 		)
 			return false;
 		for (const effect of this.plan.effects)
@@ -296,6 +382,12 @@ export class CellularNativeHost implements CellularPathSession {
 			// envelope, retire only after a complete positive kernel absence check.
 			if (!(await this.inverse.read())) {
 				if ((await this.firewall.inspect()) !== "absent") return false;
+				if (
+					this.address &&
+					this.addressEffect &&
+					(await this.address.inspect(this.addressEffect)) !== "absent"
+				)
+					return false;
 				for (const effect of this.plan.effects)
 					if ((await this.ip.inspect(effect, true)) !== "absent") return false;
 			}

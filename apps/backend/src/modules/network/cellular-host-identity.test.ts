@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
 	type CellularPhysicalIO,
 	type CellularSysctlIO,
+	cellularPhysicalResourceState,
 	cellularPhysicalState,
 	compareAndSetCellularSysctl,
 	compareAndSetScopedCellularSysctl,
@@ -21,6 +22,70 @@ const present: CellularPhysicalIO = {
 	device: async () => link.netDevice,
 	index: async () => "17",
 };
+
+test("old physical resources require two complete index-absence inventories and never adopt a replacement", async () => {
+	let reads = 0;
+	const absent = {
+		state: async () => "usb-absent" as const,
+		links: async () => {
+			reads++;
+			return [{ ifname: "other0", ifindex: 18 }];
+		},
+	};
+	expect(await cellularPhysicalResourceState(link, true, absent)).toBe(
+		"absent",
+	);
+	expect(reads).toBe(2);
+	reads = 0;
+	expect(
+		await cellularPhysicalResourceState(link, true, {
+			...absent,
+			links: async () =>
+				++reads === 1 ? [] : [{ ifname: "replacement0", ifindex: 17 }],
+		}),
+	).toBe("foreign");
+	expect(reads).toBe(2);
+	for (const rows of [
+		null,
+		[{ ifname: "replacement0", ifindex: "17" }],
+		[
+			{ ifname: "one", ifindex: 18 },
+			{ ifname: "two", ifindex: 18 },
+		],
+	])
+		expect(
+			await cellularPhysicalResourceState(link, true, {
+				...absent,
+				links: async () => rows,
+			}),
+		).toBe("unknown");
+	expect(
+		await cellularPhysicalResourceState(link, true, {
+			...absent,
+			state: async () => {
+				throw new Error("unreadable");
+			},
+		}),
+	).toBe("unknown");
+	expect(
+		await cellularPhysicalResourceState(link, false, {
+			state: async () => {
+				throw new Error("must not read new boot");
+			},
+			links: async () => {
+				throw new Error("must not inspect new boot");
+			},
+		}),
+	).toBe("absent");
+	expect(
+		await cellularPhysicalResourceState(link, true, {
+			state: async () => "present",
+			links: async () => {
+				throw new Error("not needed");
+			},
+		}),
+	).toBe("present");
+});
 test("USB loss, missing data link, replacement and unreadable identity stay distinct", async () => {
 	const absent = Object.assign(new Error("absent"), { code: "ENOENT" });
 	expect(await cellularPhysicalState(link, present)).toBe("present");

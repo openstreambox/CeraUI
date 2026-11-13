@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
 import { open, readFile, realpath } from "node:fs/promises";
+import { run } from "../../helpers/run.ts";
 import { usbGeneration } from "../../helpers/usb-serial.ts";
 import { isSafeIfname } from "./safe-ifname.ts";
 
@@ -72,6 +73,60 @@ export async function cellularPhysicalState(
 			: "replaced";
 	} catch (error) {
 		return missing(error) ? "link-absent" : "unknown";
+	}
+}
+
+/** Old indexed resources can be absent even after USB/name authority is lost.
+ * Two complete kernel inventories must agree on index absence. An index that
+ * still exists with unproved physical identity is foreign, never a delete permit.
+ */
+export async function cellularPhysicalResourceState(
+	link: CellularPhysicalLink,
+	sameBoot: boolean,
+	io: {
+		readonly state: (
+			link: CellularPhysicalLink,
+		) => Promise<CellularPhysicalState>;
+		readonly links: () => Promise<unknown>;
+	} = {
+		state: cellularPhysicalState,
+		links: async () =>
+			JSON.parse(
+				await run("ip", ["-j", "link", "show"], {
+					timeout: 4000,
+					maxBuffer: 256 * 1024,
+				}),
+			),
+	},
+): Promise<"present" | "absent" | "foreign" | "unknown"> {
+	if (!validLink(link)) return "unknown";
+	if (!sameBoot) return "absent";
+	try {
+		if ((await io.state(link)) === "present") return "present";
+		for (let read = 0; read < 2; read++) {
+			const rows = await io.links();
+			if (
+				!Array.isArray(rows) ||
+				rows.length > 4096 ||
+				rows.some(
+					(row) =>
+						!row ||
+						!Number.isInteger(row.ifindex) ||
+						row.ifindex < 1 ||
+						row.ifindex > 0x7fffffff ||
+						typeof row.ifname !== "string" ||
+						!isSafeIfname(row.ifname),
+				) ||
+				new Set(rows.map((row) => row.ifindex)).size !== rows.length ||
+				new Set(rows.map((row) => row.ifname)).size !== rows.length
+			)
+				return "unknown";
+			if (rows.some((row) => row.ifindex === Number(link.ifindex)))
+				return "foreign";
+		}
+		return "absent";
+	} catch {
+		return "unknown";
 	}
 }
 
