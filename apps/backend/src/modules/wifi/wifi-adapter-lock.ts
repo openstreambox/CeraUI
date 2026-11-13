@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { demandHeatWifi } from "./heat-wifi-demand.ts";
+
 /*
   THE canonical per-adapter WiFi lock key, and the ONLY module allowed to derive
   one. Every mutating WiFi path — the oRPC procedures in `rpc/procedures/
@@ -116,5 +118,8 @@ export function withWifiAdapterLock<T>(
 	key: WifiAdapterLockKey,
 	fn: () => Promise<T>,
 ): Promise<DeviceLockResult<T>> {
-	return withDeviceLock(key, fn);
+	return withDeviceLock(key, async () => {
+		await demandHeatWifi(key);
+		return fn();
+	});
 }
