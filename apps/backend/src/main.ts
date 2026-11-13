@@ -68,6 +68,7 @@ import {
 import { initIdentity } from "./modules/identity/index.ts";
 import { initRTMPIngestStats } from "./modules/ingest/rtmp.ts";
 import { initSRTIngest, stopSRTIngest } from "./modules/ingest/srt.ts";
+import { initCellularRuntimeAdmission } from "./modules/modems/cellular-runtime-host.ts";
 import { initFccUnlockModule } from "./modules/modems/fcc-unlock.ts";
 import { initModemCredentials } from "./modules/modems/modem-credentials.ts";
 import { initModemUpdateLoop } from "./modules/modems/modem-update-loop.ts";
@@ -500,6 +501,7 @@ void guardNonCritical("update-bootstrap", () =>
 	}),
 );
 
+initCellularRuntimeAdmission();
 initNetworkInterfaceMonitoring();
 initUplinkHealth();
 await guardNonCritical("uplink-steering", initUplinkSteering);

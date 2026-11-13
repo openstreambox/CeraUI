@@ -3,6 +3,8 @@ import { open, opendir } from "node:fs/promises";
 import { run } from "../../helpers/run.ts";
 import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import { parseOsStageSystemdProperties } from "../system/update-orchestrator/os-stage-systemd.ts";
+import { inspectCellularNmcliObserver } from "./cellular-observer-census.ts";
+import { captureReadOnlyNmcliMonitors } from "./monitor/monitor-manager.ts";
 
 const group = "/system.slice/ceralive.service";
 const properties = [
@@ -46,10 +48,21 @@ export interface CellularConsumerCensusIO {
 	readonly service: () => Promise<string>;
 	readonly read: (path: string) => Promise<string>;
 	readonly noChildGroups: () => Promise<boolean>;
+	/** Runtime only: exact fixed-command observer children from their real owner. */
+	readonly observers?: () => {
+		readonly pids: readonly number[];
+		readonly current: () => boolean;
+	};
+	readonly observer?: (
+		pid: number,
+		parent: number,
+	) => Promise<string | undefined>;
 }
 const host: CellularConsumerCensusIO = {
 	pid: process.pid,
 	quiet: isRecoveryPending,
+	observers: captureReadOnlyNmcliMonitors,
+	observer: inspectCellularNmcliObserver,
 	service: () =>
 		run(
 			"systemctl",
@@ -109,6 +122,16 @@ export async function cellularConsumersAbsent(
 ): Promise<boolean> {
 	try {
 		if (!io.quiet() || !Number.isInteger(io.pid) || io.pid < 1) return false;
+		const observers = io.observers?.(),
+			expected = [io.pid, ...(observers?.pids ?? [])].sort((a, b) => a - b);
+		if (
+			expected.length > 9 ||
+			new Set(expected).size !== expected.length ||
+			expected.some((pid) => !Number.isSafeInteger(pid) || pid < 1) ||
+			(observers && (!observers.current() || !io.observer))
+		)
+			return false;
+		const identities = new Map<number, string>();
 		const before = parseService(await io.service(), io.pid);
 		if (!before) return false;
 		for (let pass = 0; pass < 2; pass++) {
@@ -121,10 +144,42 @@ export async function cellularConsumersAbsent(
 			const text = (
 				await io.read(`/sys/fs/cgroup${group}/cgroup.procs`)
 			).trim();
-			if (text !== String(io.pid)) return false;
+			const members = text.split(/\s+/);
+			if (
+				members.some((pid) => !/^[1-9]\d*$/.test(pid)) ||
+				JSON.stringify(members.map(Number).sort((a, b) => a - b)) !==
+					JSON.stringify(expected) ||
+				(observers && !observers.current())
+			)
+				return false;
+			for (const pid of observers?.pids ?? []) {
+				const identity = await io.observer?.(pid, io.pid);
+				if (!identity || (pass > 0 && identities.get(pid) !== identity))
+					return false;
+				identities.set(pid, identity);
+			}
 		}
-		return parseService(await io.service(), io.pid) === before && io.quiet();
+		return (
+			parseService(await io.service(), io.pid) === before &&
+			io.quiet() &&
+			(!observers || observers.current())
+		);
 	} catch {
 		return false;
 	}
+}
+
+/** The caller holds the existing lifecycle interlock for the entire inverse,
+ * prevents managed probes, and withdraws the source before entering this read.
+ * Merely observing an idle stream flag does not satisfy this predicate.
+ */
+export function cellularConsumersAbsentWhile(
+	quiet: () => boolean,
+): Promise<boolean> {
+	return cellularConsumersAbsent({
+		...host,
+		quiet,
+		observers: captureReadOnlyNmcliMonitors,
+		observer: inspectCellularNmcliObserver,
+	});
 }

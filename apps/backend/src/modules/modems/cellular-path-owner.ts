@@ -171,12 +171,17 @@ export class CellularPathOwner<Grant> {
 			this._availability = observed.availability;
 			if (
 				this.session &&
-				(!hasGrant || this.sessionGeneration !== observation.generation)
+				(!hasGrant ||
+					this.sessionGeneration !== observation.generation ||
+					!(await this.session.valid()))
 			) {
+				this.withdraw();
 				if (!(await this.session.cleanup())) return;
 				this.session = undefined;
 				this.sessionGeneration = undefined;
 				this.lastSuccess = Number.NEGATIVE_INFINITY;
+				if (this.state.failures === 0 && !this.reconnectPending)
+					this.state = { ...this.state, nextProbe: now };
 			}
 			if (
 				observed.availability !== "present" ||
@@ -195,11 +200,21 @@ export class CellularPathOwner<Grant> {
 					this.reconnectPending = false;
 					this.session = undefined;
 					this.sessionGeneration = undefined;
-				} else this.state = { ...this.state, nextProbe: now + 60_000 };
+				} else {
+					// Refused recovery is not permission to reset the device, and it
+					// cannot suppress fresh bounded traffic proof forever either.
+					this.reconnectPending = false;
+					this.state = { ...this.state, nextProbe: now + 60_000 };
+				}
 				return;
 			}
 			if (!this.session) {
-				if (now < this.installAfter || !(await this.deps.capable())) return;
+				if (
+					now < this.installAfter ||
+					now < this.state.nextProbe ||
+					!(await this.deps.capable())
+				)
+					return;
 				this.installAfter = now + 60_000;
 				const session = await this.deps.install(observation.grant);
 				if (!session) return;

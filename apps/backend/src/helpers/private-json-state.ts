@@ -100,6 +100,23 @@ export async function readPrivateJson(
 		return text === undefined ? undefined : parseAuthorityJson(text);
 	});
 }
+/** A stored schema/identity failure is the same read fault as malformed JSON.
+ * Live owners and recovery inventories must raise the same existing barrier.
+ */
+export async function readParsedPrivateJson<T>(
+	store: PrivateStateStore,
+	key: string,
+	parse: (raw: unknown) => T,
+): Promise<T | undefined> {
+	const raw = await readPrivateJson(store, key);
+	if (raw === undefined) return undefined;
+	try {
+		return parse(raw);
+	} catch (error) {
+		store.readFault?.();
+		throw error;
+	}
+}
 /** Inventory hints only; each record is subsequently opened and slot-validated.
  * Enumeration is anchored and finite. Uncommitted temporaries and kernel lease
  * files are preserved, never promoted to authority or deleted by this reader.

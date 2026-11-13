@@ -67,9 +67,10 @@ const defaults: CellularWithdrawalDeps = {
  */
 export async function createCellularWithdrawalReceipt(
 	raw: CellularWithdrawalScope,
-	deps: CellularWithdrawalDeps = defaults,
+	overrides: Partial<CellularWithdrawalDeps> = {},
 ): Promise<{ readonly confirmed: () => boolean } | undefined> {
-	const retainedOwned = raw.owned,
+	const deps: CellularWithdrawalDeps = { ...defaults, ...overrides },
+		retainedOwned = raw.owned,
 		withdrawn = captureCellularSourceWithdrawal(
 			raw.owner,
 			raw.epoch,

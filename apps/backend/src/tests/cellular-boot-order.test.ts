@@ -37,6 +37,12 @@ const CELLULAR_SHADOW_CALL =
 const MODEM_LOOP_CALL = "initModemUpdateLoop({ monitor: networkMonitor })";
 
 describe("cellular boot order — the shipped main.ts", () => {
+	test("automatic source admission is installed before interface discovery can publish a native address", () => {
+		const admission = offsetOf("initCellularRuntimeAdmission();"),
+			discovery = offsetOf("initNetworkInterfaceMonitoring();");
+		expect(admission).toBeGreaterThan(-1);
+		expect(discovery).toBeGreaterThan(admission);
+	});
 	test("both cellular guards are wired at all", () => {
 		expect(offsetOf(CELLULAR_STACK_CALL)).toBeGreaterThan(-1);
 		expect(offsetOf(CELLULAR_SHADOW_CALL)).toBeGreaterThan(-1);

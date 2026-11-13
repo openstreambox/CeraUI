@@ -267,3 +267,56 @@ test("a throwing identity reader withdraws old readiness and cancels the active 
 	expect(f.events).toContain("cancel-probe");
 	expect(f.events.at(-1)).toBe("ready-fence-false");
 });
+
+test("an invalid retained session is cleaned before same-grant reinstall without counting a carrier failure", async () => {
+	const f = fixture();
+	await f.observe();
+	f.set({ now: 60000, valid: false, clean: false });
+	await f.observe();
+	expect(cellularSourceReady("wwan0", "192.0.2.2")).toBe(false);
+	expect(f.events.filter((event) => event === "install")).toHaveLength(1);
+	expect(f.events.at(-1)).toBe("cleanup");
+	f.set({ clean: true });
+	await f.observe();
+	expect(f.events.filter((event) => event === "install")).toHaveLength(2);
+	expect(f.events.lastIndexOf("cleanup")).toBeLessThan(
+		f.events.lastIndexOf("install"),
+	);
+	expect(f.path.health.failures).toBe(0);
+	expect(f.events).not.toContain("reconnect");
+});
+
+test("invalid session cleanup cannot shorten an already pending reconnect backoff", async () => {
+	const f = fixture();
+	f.set({ verdict: "failed" });
+	await f.observe();
+	f.set({ now: 30000 });
+	await f.observe();
+	expect(f.path.health.nextProbe).toBe(90000);
+	f.set({ now: 40000, valid: false });
+	await f.observe();
+	expect(f.events).not.toContain("reconnect");
+	expect(f.path.health.nextProbe).toBe(90000);
+	f.set({ now: 90000 });
+	await f.observe();
+	expect(f.events.filter((event) => event === "reconnect")).toHaveLength(1);
+});
+
+test("a refused reconnect can recover through a new bounded proof without forcing a modem call", async () => {
+	const f = fixture();
+	f.set({ verdict: "failed" });
+	await f.observe();
+	f.set({ now: 30000 });
+	await f.observe();
+	f.set({ now: 90000, reconnect: false });
+	await f.observe();
+	expect(f.events.filter((event) => event === "reconnect")).toHaveLength(1);
+	f.set({ now: 149999, verdict: "ok" });
+	await f.observe();
+	expect(cellularSourceReady("wwan0", "192.0.2.2")).toBe(false);
+	f.set({ now: 150000 });
+	await f.observe();
+	expect(cellularSourceReady("wwan0", "192.0.2.2")).toBe(true);
+	expect(f.events.filter((event) => event === "reconnect")).toHaveLength(1);
+	expect(f.path.health.failures).toBe(0);
+});

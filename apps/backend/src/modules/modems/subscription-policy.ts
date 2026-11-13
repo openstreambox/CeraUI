@@ -108,6 +108,19 @@ export function selectSubscription(
 			};
 }
 
+/** Serving-network recognition is diagnostic only. Automatic APN, attach and
+ * call policy requires subscription home identity, including reseller evidence.
+ * An unreadable home code must not turn roaming into a different carrier.
+ */
+export function selectAutomaticSubscription(
+	evidence: SubscriptionEvidence,
+): SubscriptionDecision {
+	const decision = selectSubscription(evidence);
+	return decision.state !== "unknown" && decision.evidence !== "home"
+		? { state: "unknown" }
+		: decision;
+}
+
 /** Translation follows the observed grant, never the requested PDP family. */
 export function requiresClat(grant: ObservedGrant): boolean {
 	return grant === "ipv6";

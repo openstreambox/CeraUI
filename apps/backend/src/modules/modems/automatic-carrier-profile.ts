@@ -28,7 +28,7 @@ import { withJournaledModemMutation } from "./mutation-lease.ts";
 import { registerModemConfigInverse } from "./mutation-rollback.ts";
 import {
 	type CarrierPolicy,
-	selectSubscription,
+	selectAutomaticSubscription,
 } from "./subscription-policy.ts";
 
 const FORMAT = "automatic-carrier-profile-v1";
@@ -268,7 +268,7 @@ export async function reconcileAutomaticCarrierProfile(
 
 function policyFor(sim: ReadyModemSim): CarrierPolicy | undefined {
 	if (!automaticBearerFamilyEligible(sim)) return undefined;
-	const choice = selectSubscription({
+	const choice = selectAutomaticSubscription({
 		...(sim.simInfo["sim.properties.operator-code"]
 			? { homePlmn: sim.simInfo["sim.properties.operator-code"] }
 			: {}),

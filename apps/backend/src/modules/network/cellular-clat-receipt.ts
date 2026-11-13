@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-	readPrivateJson,
+	readParsedPrivateJson,
 	writePrivateJson,
 } from "../../helpers/private-json-state.ts";
 import type { CellularClatHostPlan } from "./cellular-clat-host-plan.ts";
@@ -63,9 +63,9 @@ export class CellularClatReceipt {
 		this.key = cellularClatReceiptKey(plan);
 	}
 	async read(): Promise<CellularClatReceiptValue | undefined> {
-		const raw = await readPrivateJson(this.store, this.key);
-		if (raw === undefined) return undefined;
-		return parseCellularClatReceipt(raw, this.plan);
+		return readParsedPrivateJson(this.store, this.key, (raw) =>
+			parseCellularClatReceipt(raw, this.plan),
+		);
 	}
 	async create(): Promise<void> {
 		if (

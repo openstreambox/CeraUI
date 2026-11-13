@@ -18,6 +18,18 @@ export interface CellularSourceState {
 const sources = new Map<string, CellularSourceState>();
 const observations = new Map<string, symbol>();
 const events = new EventEmitter();
+let admissionRequired: (iface: string) => boolean = () => false;
+/** The cellular composition root installs this before interface discovery.
+ * An automatic modem cannot publish a pre-existing native address while its
+ * device+SIM/grant owner is still being resolved. Manual policy stays separate.
+ */
+export function setCellularSourceAdmission(
+	required: (iface: string) => boolean,
+): void {
+	admissionRequired = required;
+	for (const iface of observations.keys()) observations.set(iface, Symbol());
+	events.emit("change");
+}
 function changed(iface: string): void {
 	observations.set(iface, Symbol());
 	events.emit("change");
@@ -135,7 +147,9 @@ export function captureCellularSourcePublication(
 				before.ready &&
 				before.binding?.source === source &&
 				before.binding.device === device
-			: !sources.has(iface) && !cellularHiddenInterface(device));
+			: !sources.has(iface) &&
+				!admissionRequired(iface) &&
+				!cellularHiddenInterface(device));
 }
 /** Cleanup keeps this exact withdrawn observation. A new claim, binding or
  * readiness publication invalidates it even when the source tuple is reused.
@@ -158,7 +172,9 @@ export function cellularSourceReady(
 	source: string | undefined,
 ): boolean {
 	const state = sources.get(iface);
-	return !state || (!!state.ready && state.binding?.source === source);
+	return state
+		? !!state.ready && state.binding?.source === source
+		: !admissionRequired(iface);
 }
 export function cellularSourceIpv4(
 	iface: string,
@@ -175,8 +191,8 @@ export function cellularDefaultEligible(
 ): boolean {
 	const state = sources.get(iface);
 	return (
-		!state ||
-		(!!state.ready &&
+		(!state && !admissionRequired(iface)) ||
+		(!!state?.ready &&
 			state.binding?.source === source &&
 			state.binding?.translated === false)
 	);
@@ -188,6 +204,7 @@ export function cellularHiddenInterface(iface: string): boolean {
 }
 export function resetCellularSourcesForTest(): void {
 	sources.clear();
+	admissionRequired = () => false;
 	observations.clear();
 	events.emit("change");
 }
