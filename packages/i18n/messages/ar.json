@@ -1,4 +1,5 @@
 {
+	"network.view.remotePrivacy": "تستخدم حالة الشبكة عن بُعد أسماء محايدة. يمكنك إدارة إعدادات الشبكة على الجهاز.",
 	"network.esim.reportHelp": "Modem-reported SIM status. Open eSIM profiles below to manage a configured eUICC.",
 	"network.esim.errors.device_decommissioned": "This modem has been decommissioned. Review its recovery state.",
 	"network.esim.errors.rebaseline_required": "This device needs a verified recovery baseline before eSIM management.",

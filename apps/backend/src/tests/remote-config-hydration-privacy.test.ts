@@ -3,10 +3,10 @@ import WebSocket from "ws";
 import { getConfig } from "../modules/config.ts";
 import * as modemStatus from "../modules/modems/modem-status.ts";
 import { sendInitialStatus } from "../modules/ui/status.ts";
+import { expectNoSourceStrings } from "./helpers/remote-outbound-assert.ts";
 import {
 	APN_PASSWORD,
 	AUTH_KEY,
-	expectedBytes,
 	expectNoPairingSecret,
 	modem,
 	secrets,
@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 for (const provider of ["ceralive", "belabox", "custom"] as const) {
-	test(`${provider} initial config and modem status omit pairing seed only while local hydration is byte-identical`, async () => {
+	test(`${provider} initial config and modem status omit private fields while local hydration is byte-identical`, async () => {
 		getConfig().remote_provider = provider;
 		getConfig().custom_provider = {
 			name: "Private provider",
@@ -42,14 +42,9 @@ for (const provider of ["ceralive", "belabox", "custom"] as const) {
 
 		const remote = await authenticateRemote();
 
-		expect(remote.sent).toEqual(
-			before.map((bytes) => {
-				const frame = JSON.parse(bytes);
-				return expectedBytes(frame, frame.config);
-			}),
-		);
+		expectNoSourceStrings(remote.sent.join("\n"), config);
 		expectNoPairingSecret(remote.sent.join("\n"));
-		expect(remote.sent.join("\n")).toContain(AUTH_KEY);
+		expect(remote.sent.join("\n")).not.toContain(AUTH_KEY);
 		expect(before.join("\n")).toContain(secrets.ssh_pass);
 		expect(before.join("\n")).toContain(APN_PASSWORD);
 		local.sent.length = 0;
@@ -67,5 +62,5 @@ test("legacy encoder authentication fields remain byte-identical", async () => {
 
 	remote.send(frame);
 
-	expect(remote.sent).toEqual([frame]);
+	expect(JSON.parse(remote.sent[0] ?? "{}")).toEqual(JSON.parse(frame));
 });

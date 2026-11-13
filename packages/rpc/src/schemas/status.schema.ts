@@ -441,6 +441,7 @@ export type UnclaimedAdapter = z.infer<typeof unclaimedAdapterSchema>;
 
 // Status response message schema (what server sends)
 export const statusResponseSchema = z.object({
+	remote_status: z.literal(true).optional(),
 	is_streaming: z.boolean().optional(),
 	stream_lifecycle: lifecycleStateSchema.optional(),
 	available_updates: availableUpdatesFieldSchema.optional(),

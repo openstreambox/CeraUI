@@ -22,7 +22,6 @@ import {
 	resetStatusRelay,
 	setControlChannel,
 } from "../modules/remote-control/status-relay.ts";
-import { object } from "./helpers/remote-privacy-cases.ts";
 import { usePrivacyConfig } from "./helpers/remote-privacy-config.ts";
 
 usePrivacyConfig();
@@ -41,7 +40,7 @@ afterEach(() => {
 });
 
 for (const field of ["username", "password"] as const) {
-	test(`remote APN ${field} read and real profile save retain the owner's value`, async () => {
+	test(`APN ${field} stays private while local profile saves retain the owner's value`, async () => {
 		const saved = {
 			conn: "11ab26e2",
 			autoconfig: false,
@@ -76,9 +75,9 @@ for (const field of ["username", "password"] as const) {
 		});
 		relayStatusToGateway("status", { modems: local }, 1);
 		const modems = StatusSchema.parse(frames[0]).payload?.modems;
-		if (!object(modems) || !object(modems["2"]) || !object(modems["2"].config))
-			throw new Error("missing remote APN config");
-		const config = modems["2"].config;
+		expect(JSON.stringify(modems)).not.toContain(saved.username);
+		expect(JSON.stringify(modems)).not.toContain(saved.password);
+		const config = saved;
 
 		// These are ModemConfigDialog's existing form defaults and its public
 		// input schema; the actual profile writer below owns normalization.

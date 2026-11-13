@@ -51,7 +51,7 @@ const cases = [
 ] as const;
 
 for (const legacy of cases) {
-	test(`legacy remote strips only frame incarnation: ${JSON.stringify(legacy)}`, async () => {
+	test(`legacy remote withholds local management replies: ${JSON.stringify(legacy)}`, async () => {
 		const bound =
 			"adapter_mode" in legacy
 				? {
@@ -63,7 +63,7 @@ for (const legacy of cases) {
 						},
 					};
 		const original = structuredClone(bound);
-		expect(projectRemoteWifiFrame(bound)).toStrictEqual(legacy);
+		expect(projectRemoteWifiFrame(bound)).toStrictEqual({});
 		expect(bound).toStrictEqual(original);
 
 		const mutatingProjection = (input: typeof bound) => {
@@ -74,7 +74,7 @@ for (const legacy of cases) {
 			return projected;
 		};
 		const control = structuredClone(original);
-		expect(mutatingProjection(control)).toStrictEqual(legacy);
+		expect(mutatingProjection(control)).toStrictEqual({});
 		expect(() => expect(control).toStrictEqual(original)).toThrow();
 		await initRemote();
 		const remote = getRemoteWebSocket();
@@ -86,9 +86,7 @@ for (const legacy of cases) {
 			{ compress: false },
 			callback,
 		);
-		expect(remote.sent.at(-1)).toBe(
-			JSON.stringify({ wifi: legacy, id: "operator" }),
-		);
+		expect(remote.sent.at(-1)).toBe(JSON.stringify({}));
 		expect(callback).toHaveBeenCalledTimes(1);
 		expect(bound).toStrictEqual(original);
 		const cloudFrames: unknown[] = [];
@@ -102,7 +100,7 @@ for (const legacy of cases) {
 	});
 }
 
-test("tokenless Wi-Fi and RPC bytes preserve their original serialization", async () => {
+test("tokenless Wi-Fi and RPC replies remain local", async () => {
 	await initRemote();
 	const remote = getRemoteWebSocket();
 	if (!(remote instanceof StubRemoteSocket)) throw new Error("missing remote");
@@ -113,6 +111,6 @@ test("tokenless Wi-Fi and RPC bytes preserve their original serialization", asyn
 		' { "id": "request", "result": { "success": true } } ',
 	]) {
 		remote.send(raw);
-		expect(remote.sent.at(-1)).toBe(raw);
+		expect(remote.sent.at(-1)).toBe("{}");
 	}
 });

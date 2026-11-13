@@ -17,11 +17,9 @@
  * never throws or blocks the local path.
  */
 
+import { strictParseFrame } from "@ceralive/control-protocol/parse";
 import { advanceSeq } from "../../rpc/events.ts";
-import {
-	projectRemoteConfig,
-	projectRemoteStatus,
-} from "../remote/remote-status.ts";
+import { projectRemotePayload } from "../remote/remote-status.ts";
 import { PROTOCOL_VERSION, type Status } from "./protocol.ts";
 
 /**
@@ -117,10 +115,9 @@ export function relayStatusToGateway(
 		return;
 	}
 
-	const remotePayload =
-		type === "config"
-			? projectRemoteConfig(payload)
-			: projectRemoteStatus(payload);
+	if (!isRelayable(type)) return;
+	const remotePayload = projectRemotePayload(type, payload);
+	if (remotePayload === undefined && payload !== undefined) return;
 	const frame: Status = {
 		v: PROTOCOL_VERSION,
 		kind: "status",
@@ -132,6 +129,11 @@ export function relayStatusToGateway(
 			: { payload: remotePayload as Record<string, unknown> }),
 	};
 
+	try {
+		strictParseFrame(frame);
+	} catch {
+		return;
+	}
 	channel.sendFrame(frame);
 }
 
