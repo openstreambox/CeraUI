@@ -18,9 +18,18 @@ fija). Entonces el panel lo dice en vez de anunciar un límite.
 El panel muestra un historial limitado de cambios confirmados. Si la temperatura
 no está disponible, los ajustes automáticos y su reversión quedan en pausa.
 Esto no indica que el equipo esté frío. Una lectura fuera de −20…125 °C, o una
-zona térmica que marca exactamente 0, cuenta como no disponible. Un cambio que
-el motor no confirma se reporta sin afirmar que se aplicó; se reintenta tras
-5 s, duplicando hasta 60 s, y se registra una sola vez.
+zona térmica que marca exactamente 0, cuenta como no disponible; el parser del
+supervisor usa el mismo rango. Una sola lectura fallida pausa el tiempo de
+enfriamiento sin reiniciarlo; más de 5 s sin una lectura válida lo reinicia. Un
+cambio que el motor no confirma se reporta sin afirmar que se aplicó; se
+reintenta tras 5 s, duplicando hasta 60 s, y se registra una sola vez. Cualquier
+envío confirmado del límite de la sesión, también el que sigue a tu propio
+cambio de bitrate, quita ese aviso y la espera.
+
+Si la transmisión sobrevivió a un reinicio del backend, el reinicio a tu máximo
+se reintenta con la misma espera aunque la temperatura no esté disponible,
+porque solo repite tu propio máximo. Mantener calidad, si lo activas mientras
+otro cambio está en curso, se aplica en cuanto ese cambio responde.
 
 Esta versión usa la lectura real del SoC y solo cambia el límite de bitrate.
 El parser del supervisor OSB1 tiene pruebas con datos de ejemplo; todavía no hay
