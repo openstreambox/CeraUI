@@ -1095,8 +1095,10 @@ neither fsyncs nor sets a mode — is deliberately not used here).
   resolves an identity by the derived interface name: `legacyIface` picks the
   first interface holding a shared address, which is exactly the ambiguity rung 3
   is gated on.
-- **`generation` is monotonic per WRITER PROCESS** and increments on EVERY
-  publication, including one whose IP bytes did not change. That is the only
+- **`generation` is monotonic per WRITER PROCESS** and increments on mapping
+  changes, including changes whose IP bytes did not change. A successful no-op
+  publication keeps the same generation and exact IP-byte SHA; a failed
+  publication invalidates reuse, so a retry requests a reload. That is the only
   signal a MAPPING-ONLY change can produce — moving a link between interfaces
   leaves the digest identical — so the session's SIGHUP is keyed on
   `publication.changed`, never on an IP-list diff.
@@ -1291,3 +1293,17 @@ each twin keeps its own stats, the sender-echo precedence, both legacy rungs, an
 the disposition's trip to the wire). Rule-E proof: keying the registry so a
 reload is a no-op reddens the order-swap test; letting the file position outrank
 the sender's echo reddens the precedence test.
+
+### Contract-2 discovery and publication identity
+
+The probe preserves positive safe-integer `bind_map_contract` and exact-boolean
+`bind_map_required` / `bind_map_required_empty_reload` claims. Discovery alone
+does not enable required mode. Existing senders keep the same spawn arguments.
+Successful publications expose `ipsFileSha256` (optional in the compatibility
+type), and unchanged mappings at the same paths reuse their generation.
+Mapping-only changes and recovery after write failures advance it.
+
+Applied/pending telemetry identities, pending dispositions, process-bound
+startup/live admission, empty withdrawal and joined cleanup remain a separate
+integration slice. Until that exists, a published map is intent, not proof of
+sender application; no strict safety claim follows from capability discovery.
