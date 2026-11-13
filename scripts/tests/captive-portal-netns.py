@@ -18,7 +18,7 @@ assert os.geteuid() == 0
 assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net'), 'private network namespace required'
 children = []
 def run(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=5)
+    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=10)
 def ns(pid, *args):
     return run('nsenter', '-t', str(pid), '-n', *args)
 def peer(name, subnet):
@@ -48,12 +48,24 @@ print(s.recv(4096).decode())'''
 
 try:
     run('ip', 'link', 'set', 'lo', 'up')
+    # Avoid late automatic link-local routes changing the route snapshot.
+    run('sysctl', '-qw', 'net.ipv6.conf.default.accept_dad=0')
     phone = peer('ap0', '10.42.0')
     healthy = peer('wan0', '192.0.2')
     hotel = peer('wan1', '198.51.100')
     healthy2 = peer('wan2', '192.0.3')
     for pid in [healthy, hotel, healthy2]:
         ns(pid, 'ip', 'addr', 'add', '203.0.113.10/32', 'dev', 'lo')
+        ns(pid, 'ip', 'addr', 'add', '1.1.1.1/32', 'dev', 'lo')
+    # A routed IPv6 path is working before the window, including another MAC.
+    for pid, dev, address in [(os.getpid(), 'ap0', '2001:db8:1::1/64'),
+                              (phone, 'ap0p', '2001:db8:1::2/64'),
+                              (os.getpid(), 'wan0', '2001:db8:2::1/64'),
+                              (healthy, 'wan0p', '2001:db8:2::2/64')]:
+        ns(pid, 'ip', '-6', 'addr', 'add', address, 'dev', dev, 'nodad')
+    run('sysctl', '-qw', 'net.ipv6.conf.all.forwarding=1')
+    ns(phone, 'ip', '-6', 'route', 'add', 'default', 'via', '2001:db8:1::1')
+    ns(healthy, 'ip', '-6', 'route', 'add', '2001:db8:1::/64', 'via', '2001:db8:2::1')
     run('ip', 'route', 'add', 'default', 'via', '192.0.2.2')
     run('sysctl', '-qw', 'net.ipv4.ip_forward=1')
     for dev in ['all', 'default', 'ap0', 'wan0', 'wan1', 'wan2']:
@@ -68,7 +80,7 @@ def tcp():
  while True:
   c,a=s.accept();c.recv(4096);c.send(('HTTP/1.0 200 OK\\r\\n\\r\\n'+label).encode());c.close()
 def tls_echo():
- s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('203.0.113.10',443));s.listen()
+ s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('0.0.0.0',443));s.listen()
  while True:
   c,a=s.accept()
   def echo(c):
@@ -82,9 +94,19 @@ def udp(port):
  while True:
   data,a=s.recvfrom(4096)
   if data != b'hold':s.sendto(label.encode(),a)
+def dot():
+ s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('203.0.113.10',853));s.listen()
+ while True:
+  c,a=s.accept();c.recv(4096);c.sendall(label.encode());c.close()
+def v6():
+ s=socket.socket(socket.AF_INET6,socket.SOCK_STREAM);s.bind(('2001:db8:2::2',80));s.listen()
+ while True:
+  c,a=s.accept();c.recv(4096);c.sendall(b'healthy-v6');c.close()
+if label=='healthy':threading.Thread(target=v6,daemon=True).start()
+threading.Thread(target=dot,daemon=True).start()
 threading.Thread(target=tcp,daemon=True).start()
 threading.Thread(target=tls_echo,daemon=True).start()
-for port in [53,5000,5001]:threading.Thread(target=udp,args=(port,),daemon=True).start()
+for port in [53,443,853,5000,5001]:threading.Thread(target=udp,args=(port,),daemon=True).start()
 print('ready',flush=True)
 time.sleep(300)'''
     for pid, label in [(healthy, 'healthy'), (hotel, 'hotel'), (healthy2, 'healthy2')]:
@@ -107,7 +129,12 @@ print('relay packets 160/160',flush=True)'''
             proc = subprocess.Popen(['python3','-c',relay_code,source,str(port),label], stdout=subprocess.PIPE)
             children.append(proc)
             relays.append(proc)
-    local_server_code = """import socket
+    local_server_code = """import socket,threading
+def dns6():
+ d=socket.socket(socket.AF_INET6,socket.SOCK_DGRAM);d.bind(('2001:db8:1::1',53))
+ while True:
+  data,a=d.recvfrom(32);d.sendto(b'local-dns',a)
+threading.Thread(target=dns6,daemon=True).start()
 s=socket.socket();s.bind(('10.42.0.1',80));s.listen();print('ready',flush=True)
 c,a=s.accept()
 while True:
@@ -132,12 +159,79 @@ print('control 160/160',flush=True)'''
     for mark in marks:
         dev = __import__('re').search(r'ct mark & 0xffffff00 == '+mark+r' oifname "([^"]+)"',share).group(1)
         run('ip','rule','add','priority','110','fwmark',mark+'/0xffffff00','table','100' if dev=='wan0' else '102')
+    v6_rules = run('ip','-6','rule','show')
+    v6_routes = run('ip','-6','route','show','table','all')
     physical_before = run('ip','rule','show')
     mac = json.loads(ns(phone, 'ip', '-j', 'link', 'show', 'ap0p'))[0]['address']
     c = dict(ap='ap0',phone='10.42.0.2',mac=mac,wan='wan1',address='198.51.100.1',gateway='198.51.100.2',dns='203.0.113.10',seconds=10)
+    v6_code = """import socket,sys,time
+start=time.monotonic()
+try:
+ s=socket.create_connection(('2001:db8:2::2',80),timeout=5 if sys.argv[1]=='open' else 2);s.sendall(b'web');data=s.recv(32)
+ assert sys.argv[1]=='open' and data==b'healthy-v6'
+except OSError:
+ assert sys.argv[1]=='reject' and time.monotonic()-start<1, 'IPv6 silently dropped'
+print('v6 '+sys.argv[1])
+"""
+    def v6(expected):
+        return ns(phone,'python3','-c',v6_code,expected)
+    def rejected(proto, port, destination='203.0.113.10'):
+        code = """import socket,sys,time
+s=socket.socket(socket.AF_INET,socket.SOCK_STREAM if sys.argv[1]=='tcp' else socket.SOCK_DGRAM);s.settimeout(2)
+start=time.monotonic()
+try:
+ s.connect((sys.argv[3],int(sys.argv[2])));s.send(b'attempt');s.recv(32)
+ raise AssertionError('attempt escaped window')
+except OSError:
+ assert time.monotonic()-start<1, 'silently dropped instead of rejected'
+print('rejected',flush=True)
+"""
+        assert 'rejected' in ns(phone,'python3','-c',code,proto,str(port),destination)
+    def local_dns6(expected):
+        code = """import socket,sys,time
+s=socket.socket(socket.AF_INET6,socket.SOCK_DGRAM);s.settimeout(2)
+start=time.monotonic()
+try:
+ s.connect(('2001:db8:1::1',53));s.send(b'query');answer=s.recv(32)
+ assert sys.argv[1]=='open' and answer==b'local-dns'
+except OSError:
+ assert sys.argv[1]=='reject' and time.monotonic()-start<1
+"""
+        ns(phone,'python3','-c',code,expected)
+    local_dns6('open')
+    assert 'open' in v6('open')
+    assert 'healthy' in request(phone,'udp',443)
+    assert 'healthy' in request(phone,'tcp',853)
+    assert 'healthy' in request(phone,'tcp',443,'1.1.1.1')
     assert 'healthy' in request(phone)
     baseline = run('ip','route','show','table','main')
     p.open_window(c)
+    # A v6-preferring phone receives a prompt failure and retries over v4.
+    failures = []
+    for label, probe in [('local IPv6 DNS', lambda: local_dns6('reject')),
+                         ('IPv6', lambda: v6('reject')),
+                         ('QUIC', lambda: rejected('udp',443)),
+                         ('DoT', lambda: rejected('tcp',853)),
+                         ('DoQ', lambda: rejected('udp',853)),
+                         ('DoH', lambda: rejected('tcp',443,'1.1.1.1'))]:
+        try:
+            probe()
+            print(label + ': promptly rejected', flush=True)
+        except (subprocess.CalledProcessError, AssertionError) as error:
+            failures.append(label)
+            print(label + ': FAILED ' + str(error), flush=True)
+    assert not failures, failures
+    # A different station on the same AP retains its working IPv6 path.
+    ns(phone,'ip','link','set','ap0p','address','02:00:00:00:00:99')
+    ns(phone,'ip','-6','neigh','flush','all')
+    run('ip','-6','neigh','flush','all')
+    assert 'open' in v6('open')
+    assert 'healthy' in request(phone,'udp',443)
+    assert 'healthy' in request(phone,'tcp',853)
+    assert 'healthy' in request(phone,'tcp',443,'1.1.1.1')
+    ns(phone,'ip','link','set','ap0p','address',mac)
+    ns(phone,'ip','-6','neigh','flush','all')
+    run('ip','-6','neigh','flush','all')
     assert 'hotel' in request(phone)
     assert 'hotel' in request(phone, 'udp', 53)
     assert 'hotel' in request(phone, 'udp', 53, '10.42.0.1')
@@ -174,6 +268,9 @@ print('expired',flush=True)
     ns(phone,'ip','addr','add','10.42.0.3/24','dev','ap0p')
     assert 'healthy' in ns(phone,'curl','-s','--interface','10.42.0.3','--max-time','2','http://203.0.113.10')
     assert 'healthy' in request(phone, 'udp', 53, source='10.42.0.3')
+    assert 'healthy' in request(phone,'udp',443,source='10.42.0.3')
+    assert 'healthy' in request(phone,'tcp',853,source='10.42.0.3')
+    assert 'healthy' in request(phone,'tcp',443,'1.1.1.1',source='10.42.0.3')
     # Even the selected IP cannot borrow the window under another Ethernet MAC.
     root_mac = json.loads(run('ip','-j','link','show','ap0'))[0]['address']
     foreign_mac_code = """import socket,struct,sys
@@ -201,15 +298,26 @@ assert b'healthy' in udp.recv(32)
     # reselect it onto a healthy path before the NAT layer can drop it.
     tracked = p.run('conntrack','-L','-p','udp','-s','10.42.0.2','--sport','60666')
     assert 'mark=3405775104' in tracked, tracked
+    assert 'open' in v6('open')
+    assert 'healthy' in request(phone,'udp',443)
+    assert 'healthy' in request(phone,'tcp',853)
+    local_dns6('open')
     # New flows after kernel expiry use the baseline; old portal flows are dead.
     assert 'healthy' in request(phone)
     p.close_window(c)
+    assert 'open' in v6('open')
+    assert 'healthy' in request(phone,'udp',443)
+    assert 'healthy' in request(phone,'tcp',853)
     assert baseline == run('ip','route','show','table','main')
     assert 'healthy' in request(phone)
     p.run('nft', '-f', '-', data='table inet all_down { chain forward { type filter hook forward priority 0; ip saddr 10.42.0.0/24 ct state new meta mark != 0xcb000100 drop; }; }\n')
     p.open_window(c)
     assert 'hotel' in request(phone)
+    rejected('udp',443)
+    rejected('tcp',853)
+    assert 'reject' in v6('reject')
     p.close_window(c)
+    assert 'open' in v6('open')
     p.run('nft', 'delete', 'table', 'inet', 'all_down')
     assert 'healthy' in request(phone)
     # A reconnect removes the private route before the owner closes.
@@ -303,13 +411,17 @@ assert b'healthy' in udp.recv(32)
     p.close_window(c)
     p.close_window(c)
     assert 'healthy' in request(phone)
+    assert v6_rules == run('ip','-6','rule','show')
+    # wan1 is removed by the lifecycle test, so compare surviving IPv6 routes.
+    after6 = run('ip','-6','route','show','table','all')
+    assert sorted(x for x in v6_routes.splitlines() if 'wan1' not in x) == sorted(x for x in after6.splitlines() if 'wan1' not in x), (v6_routes, after6)
     assert physical_before == run('ip','rule','show')
     for proc in relays:
         assert proc.wait(timeout=25) == 0
         assert proc.stdout.read() == b'relay packets 160/160\n'
     assert local_client.wait(timeout=25) == 0
     assert local_client.stdout.read() == b'control 160/160\n'
-    print('PASS: local control 160/160; 640/640 continuous relay packets on two source-bound uplinks; phone web/DNS only; SRTLA/Moblink and main routes unchanged; expiry, close and detached-ingress recovery')
+    print('PASS: local control 160/160; 640/640 continuous relay packets on two source-bound uplinks; phone web/DNS only; IPv6/QUIC/DoT/DoQ/known DoH rejected; other stations unchanged; SRTLA/Moblink and main routes unchanged; expiry, close and detached-ingress recovery')
 except subprocess.CalledProcessError as error:
     print(error.stderr, error.stdout, file=sys.stderr)
     print(run('nft','list','ruleset'), file=sys.stderr)

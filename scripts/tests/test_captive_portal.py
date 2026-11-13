@@ -25,8 +25,21 @@ class WindowTests(unittest.TestCase):
         self.assertIn('tcp dport { 80, 443 }', rules)
         self.assertIn('udp dport 53', rules)
         self.assertIn('fib daddr type local', rules)
-        self.assertNotIn('udp dport 443', rules)
+        self.assertIn('udp dport 443 reject with icmpx port-unreachable', rules)
         self.assertIn('priority -140', rules)
+
+    def test_phone_only_protocol_fallback(self):
+        rules = portal.rules(self.config())
+        self.assertIn('chain input { type filter hook input priority -10;', rules)
+        self.assertIn('set station { type ether_addr; flags timeout;', rules)
+        self.assertIn('02:00:00:00:00:02 timeout 600s', rules)
+        self.assertIn('iifname "ap0" meta nfproto ipv6 ether saddr @station', rules)
+        self.assertIn('tcp dport { 53, 80, 443, 853 } reject with tcp reset', rules)
+        self.assertIn('udp dport { 53, 443, 853 } reject with icmpx port-unreachable', rules)
+        self.assertIn('ip saddr . ether saddr @phone tcp dport 853 reject with tcp reset', rules)
+        self.assertIn('ip daddr @doh4 tcp dport 443 reject with tcp reset', rules)
+        for address in ['1.1.1.1', '1.0.0.1', '8.8.8.8', '8.8.4.4', '9.9.9.9', '149.112.112.112']:
+            self.assertIn(address, rules)
 
     def test_rejects_unbounded_and_injection(self):
         for field, value in [('seconds', 601), ('seconds', 0), ('wan', 'wan0; reboot'), ('phone', '::1'), ('mac', 'bad')]:
@@ -43,7 +56,7 @@ class CleanupTests(unittest.TestCase):
         with patch.object(portal, 'run', side_effect=lambda *a, **k: calls.append(a) or ''), patch.object(portal, 'clear_flows', side_effect=ValueError('failure')):
             with self.assertRaises(ValueError):
                 portal.close_window(config)
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][:2], ('nft', '-f'))
 
 

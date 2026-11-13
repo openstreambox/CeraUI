@@ -154,3 +154,12 @@ it.each(["signing_in", "checking", "cleanup_unknown"])(
 		}
 	},
 );
+it("offers a privacy-settings hint while signing in", async () => {
+	portal.mockResolvedValue({ phase: "signing_in" });
+	const view = render(CaptivePortal);
+	await waitFor(() =>
+		expect(
+			view.getByText(/temporarily pause VPN, Private Relay or secure DNS/),
+		).toBeTruthy(),
+	);
+});
