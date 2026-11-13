@@ -1,3 +1,4 @@
+import type { BindMapIdentity } from "@ceraui/srtla-send/telemetry";
 import { captureCellularSourceWithdrawal } from "../network/cellular-source-state.ts";
 import { isSafeIfname } from "../network/safe-ifname.ts";
 import type { BindMapPublication } from "./bind-map-writer.ts";
@@ -29,12 +30,14 @@ export interface CellularWithdrawalDeps {
 	) => Promise<BindMapPublication>;
 	readonly drain: () => Promise<void>;
 	readonly excludes: (scope: CellularWithdrawalScope) => boolean;
+	readonly latest: () => BindMapPublication | undefined;
 	readonly reload: (sender: StreamingProcess) => void;
 	readonly now: () => number;
 	readonly acknowledged: (
 		sender: StreamingProcess,
 		after: number,
 		scope: CellularWithdrawalScope,
+		identity: BindMapIdentity,
 	) => boolean;
 	/** Positive startup consumer census, not an inactive telemetry/stream flag. */
 	readonly absent: () => Promise<boolean>;
@@ -55,20 +58,32 @@ const defaults: CellularWithdrawalDeps = {
 			)
 		);
 	},
+	latest: () => getLastPublishedBond()?.publication,
 	reload: (sender) => sender.proc.kill("SIGHUP"),
-	now: Date.now,
-	acknowledged: (sender, after, scope) =>
-		senderReleasedCellularSource(sender, after, scope.linkId, scope.devices),
+	now: () => performance.now(),
+	acknowledged: (sender, after, scope, identity) =>
+		senderReleasedCellularSource(
+			sender,
+			after,
+			scope.linkId,
+			scope.devices,
+			identity,
+		),
 	absent: async () => false,
 };
 /** A receipt is deliberately process-local. Recovery obtains fresh evidence;
  * it cannot replay a saved timestamp or treat missing telemetry as closed FDs.
  * This helper never Stops a stream or owns a second process/recovery loop.
  */
+export interface CellularWithdrawalReceipt {
+	/** False means new publication or producer evidence must be captured. */
+	readonly current: () => boolean;
+	readonly confirmed: () => boolean;
+}
 export async function createCellularWithdrawalReceipt(
 	raw: CellularWithdrawalScope,
 	overrides: Partial<CellularWithdrawalDeps> = {},
-): Promise<{ readonly confirmed: () => boolean } | undefined> {
+): Promise<CellularWithdrawalReceipt | undefined> {
 	const deps: CellularWithdrawalDeps = { ...defaults, ...overrides },
 		retainedOwned = raw.owned,
 		withdrawn = captureCellularSourceWithdrawal(
@@ -112,23 +127,44 @@ export async function createCellularWithdrawalReceipt(
 		);
 	const publication = await deps.restrict(scope);
 	if (!scope.owned() || !publication.ok) return undefined;
+	const identity: BindMapIdentity = Object.freeze({
+		generation: publication.generation,
+		ips_file_sha256: publication.ipsFileSha256,
+	});
+	const currentPublication = () => {
+		const latest = deps.latest();
+		return (
+			scope.owned() &&
+			!!latest?.ok &&
+			latest.generation === identity.generation &&
+			latest.ipsFileSha256 === identity.ips_file_sha256 &&
+			deps.excludes(scope)
+		);
+	};
 	await deps.drain();
-	if (!scope.owned() || !deps.excludes(scope)) return undefined;
+	if (!currentPublication()) return undefined;
 	if (!producer) {
 		if (
 			deps.senders().length ||
 			!(await deps.absent()) ||
 			!scope.owned() ||
 			deps.senders().length ||
-			!deps.excludes(scope)
+			!currentPublication()
 		)
 			return undefined;
-		return {
-			confirmed: () =>
-				scope.owned() && !deps.senders().length && deps.excludes(scope),
-		};
+		const current = () => currentPublication() && !deps.senders().length;
+		return { current, confirmed: current };
 	}
-	if (exited) return { confirmed: () => scope.owned() && exited };
+	const currentProducer = () => {
+		const senders = deps.senders();
+		return (
+			currentPublication() &&
+			(exited
+				? senders.every((row) => row === producer)
+				: senders.length === 1 && senders[0] === producer)
+		);
+	};
+	if (exited) return { current: currentProducer, confirmed: currentProducer };
 	const current = deps.senders();
 	if (
 		current.length !== 1 ||
@@ -146,14 +182,15 @@ export async function createCellularWithdrawalReceipt(
 	const after = deps.now(),
 		epoch = producer.senderBinding?.epoch;
 	return {
+		current: currentProducer,
 		confirmed: () =>
-			scope.owned() &&
+			currentProducer() &&
 			(exited ||
 				(!!epoch &&
 					producer.senderBinding?.required === true &&
 					producer.senderBinding.epoch === epoch &&
 					deps.senders().length === 1 &&
 					deps.senders()[0] === producer &&
-					deps.acknowledged(producer, after, scope))),
+					deps.acknowledged(producer, after, scope, identity))),
 	};
 }

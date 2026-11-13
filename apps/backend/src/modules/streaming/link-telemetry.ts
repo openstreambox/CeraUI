@@ -50,6 +50,7 @@ import {
 	type TelemetryControlClient,
 } from "@ceraui/srtla-send/control";
 import {
+	type BindMapIdentity,
 	senderTelemetryPath,
 	type Telemetry,
 	type WatchTelemetryHandle,
@@ -83,6 +84,10 @@ import {
 	registerSrtlaIpList,
 	resetConnIdRegistry,
 } from "./link-telemetry-rows.ts";
+import {
+	ownsSenderTelemetryInstance,
+	type SenderTelemetryInstance,
+} from "./sender-telemetry-instance.ts";
 import type { StreamingProcess } from "./streamloop/process-runner.ts";
 
 export type {
@@ -148,17 +153,23 @@ let lastReadMs = 0;
 let telemetryGeneration = 0;
 let producingSender: StreamingProcess | undefined;
 let producingEpoch: symbol | undefined;
+let isolatedProducer = false;
+let receiptSnapshot: Telemetry | null = null;
+let receiptReadMs = 0;
+let receiptNow: () => number = () => performance.now();
 
 let nowFn: () => number = Date.now;
 
 /** Test seam: pin the staleness clock (null restores Date.now). */
 export function setTelemetryClockForTest(fn: (() => number) | null): void {
 	nowFn = fn ?? Date.now;
+	receiptNow = fn ?? (() => performance.now());
 }
 
 export interface StartLinkTelemetryOptions {
 	/** The actual supervised producer, not a process name or reusable PID. */
 	producer?: StreamingProcess;
+	telemetryInstance?: SenderTelemetryInstance;
 	intervalMs?: number;
 	/** Test seam: inject a fake watch implementation. */
 	watch?: typeof watchTelemetry;
@@ -197,7 +208,14 @@ export function setControlClientFactoryForTest(
  * / stale (> 5000 ms) reads to `null`, so a `null` here while watching means the
  * snapshot went stale or vanished.
  */
-function ingestTelemetry(telemetry: Telemetry | null): void {
+function ingestTelemetry(
+	telemetry: Telemetry | null,
+	raw: Telemetry | null = telemetry,
+): void {
+	// UI staleness still follows the producer's display timestamp. Withdrawal
+	// causality follows the exact applied identity and this monotonic read clock.
+	receiptSnapshot = raw;
+	receiptReadMs = raw ? receiptNow() : 0;
 	if (telemetry) {
 		lastSnapshot = telemetry;
 		lastTickFresh = true;
@@ -228,6 +246,11 @@ export function startLinkTelemetry(
 	const generation = ++telemetryGeneration;
 	producingSender = opts.producer;
 	producingEpoch = opts.producer?.senderBinding?.epoch;
+	isolatedProducer = ownsSenderTelemetryInstance(
+		opts.telemetryInstance,
+		statsFile,
+		opts.controlSocket,
+	);
 	if (subscriptionCleanup) {
 		subscriptionCleanup();
 		subscriptionCleanup = null;
@@ -247,6 +270,8 @@ export function startLinkTelemetry(
 	lastSnapshot = null;
 	lastTickFresh = false;
 	lastReadMs = 0;
+	receiptSnapshot = null;
+	receiptReadMs = 0;
 
 	if (bindMapReportCleanup) bindMapReportCleanup();
 	bindMapReportCleanup = onBindMapReportChange(() => {
@@ -293,7 +318,7 @@ function startFilePollWatcher(
 		statsFile,
 		(update) => {
 			if (generation === telemetryGeneration)
-				ingestTelemetry(update.stale ? null : update.data);
+				ingestTelemetry(update.stale ? null : update.data, update.data);
 		},
 		watchOpts,
 	);
@@ -386,6 +411,7 @@ export function stopLinkTelemetry(): void {
 	telemetryGeneration++;
 	producingSender = undefined;
 	producingEpoch = undefined;
+	isolatedProducer = false;
 	if (subscriptionCleanup) {
 		subscriptionCleanup();
 		subscriptionCleanup = null;
@@ -401,6 +427,8 @@ export function stopLinkTelemetry(): void {
 	lastSnapshot = null;
 	lastTickFresh = false;
 	lastReadMs = 0;
+	receiptSnapshot = null;
+	receiptReadMs = 0;
 	resetConnIdRegistry();
 	resetBondIdentities();
 	resetSenderBindMapReport();
@@ -476,24 +504,26 @@ export function senderReleasedCellularSource(
 	withdrawnAt: number,
 	linkId: string,
 	devices: readonly string[],
+	expected: BindMapIdentity,
 ): boolean {
 	if (
 		producer !== producingSender ||
+		!isolatedProducer ||
 		!producingEpoch ||
 		producer.senderBinding?.epoch !== producingEpoch ||
 		producer.senderBinding?.required !== true ||
 		producer.proc.exitCode !== null ||
-		producer.proc.signalCode !== null ||
-		withdrawnAt < producer.senderBinding.startedAt
+		producer.proc.signalCode !== null
 	)
 		return false;
 	return cellularSourceWithdrawalConfirmed(
-		lastSnapshot,
-		lastTickFresh,
-		lastReadMs,
-		nowFn(),
+		receiptSnapshot,
+		receiptSnapshot !== null,
+		receiptReadMs,
+		receiptNow(),
 		withdrawnAt,
 		linkId,
 		devices,
+		expected,
 	);
 }

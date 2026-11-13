@@ -41,3 +41,21 @@ is not teardown acknowledgement: `pending_apply` remains until socket and
 reader teardown has joined. Applied telemetry and connection state are published
 together. The consumer preserves these frozen bytes and refuses a pending
 withdrawal receipt even when its timestamp and empty connections are fresh.
+
+
+Revision-two fixture bytes come from producer commit
+`80b45913843f2d3ff84fc6b18054965ecf882973`. The round-trip suite pins each
+Git blob as well as serializer byte order:
+
+| Fixture suffix (`telemetry-rev2-`) | Git blob |
+| --- | --- |
+| `startup-applied.json` | `26622755e9fb9c12ce905e7f4764fce37775ac0a` |
+| `startup-empty-applied.json` | `f114788990bb1458586f0b4b05ec1a7022fa9f53` |
+| `pending-known.json` | `b6a4e87052465c00a4f31ed917856bf213bf6763` |
+| `pending-unknown.json` | `6711c3c2f4a157cc405c6e5cbb7bbc5498586799` |
+| `final-empty-applied.json` | `a277925288bb91a3229fe8ffb937e7580958734d` |
+
+Applied and pending identities preserve producer key order (`generation`,
+`ips_file_sha256`). Pending is never acknowledgement. Invalid or absent applied
+identity cannot prove withdrawal; an exact applied generation and digest are
+required. These are additive fields; all older frozen bytes remain unchanged.

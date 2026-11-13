@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { telemetrySchema } from "@ceraui/srtla-send/telemetry";
 import { cellularSourceWithdrawalConfirmed } from "./cellular-source-withdrawal.ts";
 
+const identity = { generation: 2, ips_file_sha256: "a".repeat(64) };
 const snapshot = (connections: unknown[] = [], updated = 1100) =>
 	telemetrySchema.parse({
 		schema_version: 1,
@@ -9,6 +10,7 @@ const snapshot = (connections: unknown[] = [], updated = 1100) =>
 		connections,
 		bind_map_status: { state: "active" },
 		disposition: { state: "mapped" },
+		bind_map_applied: identity,
 	});
 const row = {
 	conn_id: "0",
@@ -29,8 +31,10 @@ test("new publication and stale/legacy telemetry cannot acknowledge closed sourc
 			1000,
 			"modem-a",
 			["wwan0", "cclat1"],
+			identity,
 		);
-	expect(confirm(snapshot([], 1000))).toBe(false);
+	// Producer wall-clock age is not causal acknowledgement.
+	expect(confirm(snapshot([], 1000))).toBe(true);
 	expect(confirm(snapshot([], 1100), 1000)).toBe(false);
 	expect(confirm(snapshot([{ ...row }]))).toBe(false);
 	expect(
@@ -52,6 +56,7 @@ test("new publication and stale/legacy telemetry cannot acknowledge closed sourc
 			1000,
 			"modem-a",
 			["cclat1"],
+			identity,
 		),
 	).toBe(false);
 	expect(
@@ -63,6 +68,7 @@ test("new publication and stale/legacy telemetry cannot acknowledge closed sourc
 			1000,
 			"modem-a",
 			["cclat1"],
+			identity,
 		),
 	).toBe(false);
 });
@@ -84,17 +90,23 @@ test("producer pending_apply is never a withdrawal acknowledgement, even with fr
 			1000,
 			"modem-a",
 			["wwan0"],
+			identity,
 		),
 	).toBe(false);
 	expect(
 		cellularSourceWithdrawalConfirmed(
-			{ ...fresh, disposition: { state: "mapped" } },
+			{
+				...fresh,
+				disposition: { state: "mapped" },
+				bind_map_applied: identity,
+			},
 			true,
 			1200,
 			1200,
 			1000,
 			"modem-a",
 			["wwan0"],
+			identity,
 		),
 	).toBe(true);
 });
@@ -111,6 +123,7 @@ test("required withdrawal needs a positively applied report, not a legacy empty 
 			1000,
 			"modem-a",
 			["wwan0"],
+			identity,
 		);
 	expect(confirm(legacy)).toBe(false);
 	expect(confirm({ ...legacy, bind_map_status: { state: "active" } })).toBe(
@@ -132,4 +145,82 @@ test("required withdrawal needs a positively applied report, not a legacy empty 
 		"required_binding_refused",
 	])
 		expect(confirm({ ...modern, disposition: { state } })).toBe(true);
+});
+
+test("only the exact applied generation and digest acknowledge the current publication", () => {
+	const confirm = (value: ReturnType<typeof snapshot>) =>
+		cellularSourceWithdrawalConfirmed(
+			value,
+			true,
+			1200,
+			1200,
+			1000,
+			"modem-a",
+			["wwan0"],
+			identity,
+		);
+	const { bind_map_applied: _applied, ...withoutIdentity } = snapshot();
+	expect(confirm(withoutIdentity)).toBe(false);
+	expect(
+		confirm({
+			...snapshot(),
+			bind_map_applied: { ...identity, generation: 1 },
+		}),
+	).toBe(false);
+	expect(
+		confirm({
+			...snapshot(),
+			bind_map_applied: { ...identity, generation: 3 },
+		}),
+	).toBe(false);
+	expect(
+		confirm({
+			...snapshot(),
+			bind_map_applied: { ...identity, ips_file_sha256: "b".repeat(64) },
+		}),
+	).toBe(false);
+	expect(confirm({ ...withoutIdentity, bind_map_pending: identity })).toBe(
+		false,
+	);
+	expect(
+		confirm({
+			...snapshot(),
+			disposition: { state: "pending_apply" },
+			bind_map_pending: identity,
+		}),
+	).toBe(false);
+	expect(confirm(snapshot([], 0))).toBe(true);
+	expect(confirm(snapshot([], Number.MAX_SAFE_INTEGER))).toBe(true);
+});
+
+test("revision-2 producer fixtures distinguish unknown pending, known pending and joined empty apply", async () => {
+	const fixtures = `${import.meta.dir}/../../../../../packages/srtla-send/tests/fixtures`;
+	for (const name of [
+		"pending-known",
+		"pending-unknown",
+		"final-empty-applied",
+	]) {
+		const bytes = await Bun.file(
+				`${fixtures}/telemetry-rev2-${name}.json`,
+			).text(),
+			value = telemetrySchema.parse(JSON.parse(bytes)),
+			expected = {
+				generation: 2,
+				ips_file_sha256:
+					"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			};
+		expect(JSON.stringify(value)).toBe(bytes);
+		expect(
+			cellularSourceWithdrawalConfirmed(
+				value,
+				true,
+				1200,
+				1200,
+				1000,
+				"path-a",
+				["lo"],
+				expected,
+			),
+		).toBe(name === "final-empty-applied");
+	}
 });

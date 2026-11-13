@@ -87,9 +87,10 @@ Positive old-index absence can retire an old address without touching a reused
 name. This host component does not activate an internal modem call.
 
 Managed cellular paths require both sender capabilities, `bind_map_required`
-and `bind_map_required_empty_reload`, plus an integer `bind_map_contract >= 1`,
+and `bind_map_required_empty_reload`, plus an integer `bind_map_contract >= 2`,
 and the opt-in `--require-bind-map` contract. The revision establishes assigned
-canonical-unicast binding and joined, coherent withdrawal acknowledgement. A
+canonical-unicast binding, fenced reload ordering and joined withdrawal
+acknowledgement with the exact current generation and IP-file digest. A
 missing, zero, noninteger or string revision cannot authorize managed links.
 The required-binding resolver returns
 both binding flags or a typed refusal; it never chooses source-only fallback.
@@ -330,8 +331,10 @@ llamada interna del módem.
 
 Los enlaces celulares administrados requieren las dos capacidades del emisor,
 `bind_map_required` y `bind_map_required_empty_reload`, además de un entero
-`bind_map_contract >= 1`, y el modo opcional
-`--require-bind-map`. El adaptador devuelve ambas
+`bind_map_contract >= 2`, y el modo opcional
+`--require-bind-map`. La segunda revisión exige una confirmación aplicada de la
+generación y el hash actuales y protege frente a recargas antiguas que terminan
+después de una retirada. El adaptador devuelve ambas
 opciones de vinculación o una negativa tipada, sin usar solo la dirección de
 origen como alternativa. La activación de producción sigue pendiente de
 composición y pruebas. Los lectores de telemetría y RPC reconocen el estado

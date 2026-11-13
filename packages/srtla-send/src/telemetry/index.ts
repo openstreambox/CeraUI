@@ -159,12 +159,15 @@ export const bindMapDispositionSchema = z.object({
 	collisions: z.array(bindMapCollisionSchema).optional(),
 });
 
+/** Revision-2 map identity, over the exact raw IP-file bytes. */
+export const bindMapIdentitySchema = z.object({
+	generation: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+	ips_file_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
 /**
  * One snapshot object (never NDJSON — the file holds exactly one object).
- *
- * `schema_version` is validated as the literal `1`: a future producer bump fails
- * the parse loudly (`readTelemetry` → `null`) rather than being silently stripped,
- * so a consumer can never misread a re-versioned document as valid.
+ * A future schema version fails parsing rather than silently losing fields.
  */
 export const telemetrySchema = z.object({
 	schema_version: z.literal(1),
@@ -200,10 +203,15 @@ export const telemetrySchema = z.object({
 	 * OPTIONAL: a producer predating ADR-003 omits it. Absent means UNKNOWN.
 	 */
 	disposition: bindMapDispositionSchema.optional(),
+	/** Revision 2: identity committed atomically with the applied connections. */
+	bind_map_applied: bindMapIdentitySchema.optional(),
+	/** Validated intent only; unknown pending reads omit this identity. */
+	bind_map_pending: bindMapIdentitySchema.optional(),
 });
 
 export type ConnectionTelemetry = z.output<typeof connectionTelemetrySchema>;
 export type Telemetry = z.output<typeof telemetrySchema>;
+export type BindMapIdentity = z.output<typeof bindMapIdentitySchema>;
 export type BindMapDegradedReason = z.output<
 	typeof bindMapDegradedReasonSchema
 >;

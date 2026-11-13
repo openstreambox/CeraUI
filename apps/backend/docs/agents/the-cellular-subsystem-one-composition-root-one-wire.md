@@ -583,7 +583,7 @@ deletes by index and preserves foreign/reused-name or changed-attribute state.
 Two complete index-absence reads can retire vanished physical resources. The
 ordinary NM plan owns no address. This component does not activate FM350.
 
-Managed paths require an integer `capabilities.bind_map_contract >= 1`, literal
+Managed paths require an integer `capabilities.bind_map_contract >= 2`, literal
 `bind_map_required === true` and `bind_map_required_empty_reload === true`, and
 `--require-bind-map` alongside `--bind-map`. Ordinary bind-map support permits
 source-only startup degradation and is insufficient. The required resolver has
@@ -665,7 +665,18 @@ unqualified. Host fixtures do not close these gates.
 The sender contract revision is independent of the two older booleans. Require
 all three predicates for strict Start arguments and runtime host admission;
 absent/zero/noninteger/string revisions refuse managed publication. Future
-positive integer revisions preserve the revision-one contract. A fresh
+integer revisions at least two preserve the revision-two contract. A fresh
 `pending_apply` frame, even with empty connections, cannot acknowledge socket
 closure. The frozen producer fixture preserves this state through telemetry,
 RPC and localized UI; only an applied frame can settle withdrawal.
+
+
+Revision two requires the exact `bind_map_applied` generation and raw IP-file
+SHA from the latest successful local publication. A newer local publication
+invalidates an older receipt even if both exclude the same path. An obsolete
+receipt is refreshed; a merely pending receipt keeps waiting. Producer wall
+clock timestamps are not causal evidence. Monotonic consumer read freshness,
+the supervised process epoch and unique per-producer file/socket endpoints
+bound acknowledgement to one process. A confirmed departing process cannot
+release a replacement process's resources. No-op publications retain identity;
+failed or changed publications force a new generation and reload.

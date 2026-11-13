@@ -152,7 +152,13 @@ async function sourceSockets(pid: number): Promise<string[]> {
 		const owner = "a".repeat(64),
 			epoch = "usb-one",
 			linkId = mintLinkId("synthetic:cellular"),
-			stats = join(root, "stats");
+			telemetryInstance = (
+				await import("../modules/streaming/sender-telemetry-instance.ts")
+			).createSenderTelemetryInstance(
+				join(root, "stats"),
+				join(root, "control"),
+			),
+			stats = telemetryInstance.statsFile;
 		let owned = true,
 			sender: ReturnType<typeof processes.spawnStreamingLoop> | undefined;
 		bond.setBondIdentityResolverForTest((name) => ({
@@ -216,6 +222,8 @@ async function sourceSockets(pid: number): Promise<string[]> {
 					ipsFile,
 					"--stats-file",
 					stats,
+					"--control-socket",
+					telemetryInstance.controlSocket,
 					"--stats-file-interval",
 					"100",
 					...resolved.args,
@@ -224,6 +232,8 @@ async function sourceSockets(pid: number): Promise<string[]> {
 			);
 			telemetry.startLinkTelemetry(stats, ["192.0.2.2"], {
 				producer: sender,
+				telemetryInstance,
+				controlSocket: telemetryInstance.controlSocket,
 				intervalMs: 25,
 			});
 			expect(sender.senderBinding?.required).toBe(true);
@@ -233,9 +243,12 @@ async function sourceSockets(pid: number): Promise<string[]> {
 			);
 			const firstSockets = await sourceSockets(sender.proc.pid);
 			expect(firstSockets).toHaveLength(1);
+			const firstMap = bond.getLastPublishedBond()?.publication;
+			if (!firstMap?.ok) throw new Error("Initial native map unavailable");
 			state.withdrawCellularSource(owner, epoch, "wwan0");
 			await writeFile(mapFile, "{", { mode: 0o600 });
-			const failedAt = Date.now();
+			const failedAt = Date.now(),
+				failedReadBoundary = performance.now();
 			sender.proc.kill("SIGHUP");
 			await waitFor(async () => {
 				const value = await snapshot();
@@ -246,9 +259,16 @@ async function sourceSockets(pid: number): Promise<string[]> {
 				);
 			}, "refused malformed reload");
 			expect(
-				telemetry.senderReleasedCellularSource(sender, failedAt, linkId, [
-					"wwan0",
-				]),
+				telemetry.senderReleasedCellularSource(
+					sender,
+					failedReadBoundary,
+					linkId,
+					["wwan0"],
+					{
+						generation: firstMap.generation,
+						ips_file_sha256: firstMap.ipsFileSha256,
+					},
+				),
 			).toBe(false);
 			expect(await sourceSockets(sender.proc.pid)).toHaveLength(1);
 			const receipt = await withdrawal.createCellularWithdrawalReceipt({
@@ -264,6 +284,20 @@ async function sourceSockets(pid: number): Promise<string[]> {
 				async () => receipt.confirmed(),
 				"fresh empty native acknowledgement",
 			);
+			// The acknowledged control frame must already follow joined socket
+			// teardown. The independent periodic file publisher may catch up later.
+			expect(await sourceSockets(sender.proc.pid)).toHaveLength(0);
+			const committed = bond.getLastPublishedBond()?.publication;
+			if (!committed?.ok)
+				throw new Error("Native withdrawal lost its publication");
+			await waitFor(async () => {
+				const value = await snapshot();
+				return (
+					value?.connections.length === 0 &&
+					value.bind_map_applied?.generation === committed.generation &&
+					value.bind_map_applied.ips_file_sha256 === committed.ipsFileSha256
+				);
+			}, "stats file publishes the same applied empty identity");
 			expect((await snapshot())?.connections).toEqual([]);
 			expect(await sourceSockets(sender.proc.pid)).toHaveLength(0);
 			expect(sender.proc.exitCode).toBeNull();
