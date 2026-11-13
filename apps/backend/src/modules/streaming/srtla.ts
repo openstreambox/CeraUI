@@ -31,6 +31,7 @@ import { setup } from "../setup.ts";
 import type { BondEntry } from "./bind-map.ts";
 import {
 	type BindMapPublication,
+	type BindMapWriterDeps,
 	defaultBindMapWriterDeps,
 	defaultSidecarPath,
 	invalidateBindMapReuse,
@@ -140,25 +141,71 @@ export function genSrtlaIpListForLocalIpAddress(ipAddress: string): string[] {
 	);
 }
 
+export interface SrtlaReloadOptions {
+	/** Whether a stream is live right now; a failed reload is re-sent only then. */
+	readonly isStreaming?: () => Promise<boolean>;
+	/** Pause before the one re-signal of a failed reload. */
+	readonly retryDelayMs?: number;
+}
+
+export interface SrtlaPublishOptions extends SrtlaReloadOptions {
+	/** Requests the reload that a writer-started republication owes. */
+	readonly reload?: (publication: BindMapPublication) => Promise<unknown>;
+}
+
+// Loaded lazily: streaming.ts imports this module.
+const isStreamingNow = async () =>
+	(await import("./streaming.ts")).getIsStreaming();
+
 /**
  * Publish the IP list and its sidecar, then keep the telemetry registry in step.
  *
  * ADR-003 §5.1 publication order lives in `publishBondMapping`; the SIGHUP is
  * the caller's, because only the caller knows whether a sender is running.
+ * The one exception is a republication the writer starts itself after a stuck
+ * write: no caller waits on it, so it requests its own reload while streaming.
+ *
+ * The bond record and the telemetry registry are updated inside the writer's
+ * queue, from the snapshot that was actually written, so they follow
+ * publication order for every caller, including callers whose submission was
+ * superseded before it ran.
  */
 export async function publishSrtlaBond(
 	entries: readonly BondEntry[],
+	writerDeps: BindMapWriterDeps = defaultBindMapWriterDeps(
+		setup.ips_file ?? "",
+		srtlaBindMapPath(),
+	),
+	options: SrtlaPublishOptions = {},
 ): Promise<BindMapPublication> {
-	const publication = await publishBondMapping(
-		entries,
-		defaultBindMapWriterDeps(setup.ips_file ?? "", srtlaBindMapPath()),
-	);
-	// Keys the telemetry registry on the ids just published, so a rendered row
-	// follows its PHYSICAL device across a reload rather than a file position,
-	// and keeps the legacy conn_id -> interface fallback in step with it.
-	registerSrtlaBond(entries);
-	lastBond = { entries: [...entries], publication };
-	return publication;
+	return publishBondMapping(entries, {
+		...writerDeps,
+		onSettled: (published, publication, origin) => {
+			writerDeps.onSettled?.(published, publication, origin);
+			// Keys the telemetry registry on the ids just published, so a rendered row
+			// follows its PHYSICAL device across a reload rather than a file position,
+			// and keeps the legacy conn_id -> interface fallback in step with it.
+			registerSrtlaBond(published);
+			lastBond = { entries: [...published], publication };
+			if (origin.republished && publication.changed) {
+				void reloadIfStreaming(publication, options);
+			}
+		},
+	});
+}
+
+async function reloadIfStreaming(
+	publication: BindMapPublication,
+	options: SrtlaPublishOptions,
+): Promise<void> {
+	try {
+		if (!(await (options.isStreaming ?? isStreamingNow)())) return;
+		await (options.reload ?? (() => restartSrtla(undefined, options)))(
+			publication,
+		);
+	} catch (error) {
+		logger.warn("SRTLA reload after republication failed", { error });
+	}
 }
 
 /**
@@ -189,18 +236,125 @@ export async function setSrtlaIpList(
 	return publishSrtlaBond(entries);
 }
 
-export async function restartSrtla(
-	deliver: () => Promise<boolean> = () =>
-		killallSucceeded(["-HUP", "srtla_send"]),
-): Promise<void> {
-	let delivered = false;
+/** Pause before the one re-signal of a failed reload. */
+export const SRTLA_RELOAD_RETRY_DELAY_MS = 1_000;
+
+/** Today's delivery: SIGHUP by process name, true when killall matched any. */
+const signalSendersByName = () => killallSucceeded(["-HUP", "srtla_send"]);
+
+/**
+ * Delivery from a count of supervised senders that received the signal.
+ *
+ * This is the seam a reload by tracked process handle plugs into
+ * (`supervisedSenderDelivery(() => signalSenders("SIGHUP"))`): delivered means
+ * at least one supervised sender received SIGHUP. A count of zero, or a throw,
+ * is a failed delivery and invalidates reuse like any other.
+ */
+export function supervisedSenderDelivery(
+	signalSupervised: () => number,
+): () => Promise<boolean> {
+	return async () => signalSupervised() > 0;
+}
+
+interface ReloadRequest {
+	deliver: () => Promise<boolean>;
+	options: SrtlaReloadOptions;
+	readonly result: ReturnType<typeof Promise.withResolvers<boolean>>;
+}
+
+let reloadSession = 0;
+let reloadInFlight = false;
+let reloadFollowUp: ReloadRequest | undefined;
+
+/** Drop reload coordination state (test isolation). */
+export function resetSrtlaReloadForTest(): void {
+	reloadSession += 1;
+	reloadInFlight = false;
+	reloadFollowUp = undefined;
+}
+
+/**
+ * Ask the sender to reload its IP list and bind map (SIGHUP), and say whether
+ * the signal was delivered. Delivered is not applied: only the sender's
+ * applied receipt proves that.
+ *
+ * One delivery runs at a time. Requests made while one is in flight share a
+ * single follow-up delivery, because the in-flight signal may predate the
+ * publication that requested the next one. A failed delivery invalidates
+ * no-op reuse, so the next publication reloads, and is re-sent once while the
+ * stream is still live: a publication made during the failed delivery may
+ * have been a no-op that requested nothing.
+ */
+export function restartSrtla(
+	deliver: () => Promise<boolean> = signalSendersByName,
+	options: SrtlaReloadOptions = {},
+): Promise<boolean> {
+	if (!reloadInFlight) return runReload(deliver, options);
+	if (reloadFollowUp === undefined) {
+		reloadFollowUp = {
+			deliver,
+			options,
+			result: Promise.withResolvers<boolean>(),
+		};
+	} else {
+		reloadFollowUp.deliver = deliver;
+		reloadFollowUp.options = options;
+	}
+	return reloadFollowUp.result.promise;
+}
+
+function runReload(
+	deliver: () => Promise<boolean>,
+	options: SrtlaReloadOptions,
+): Promise<boolean> {
+	reloadInFlight = true;
+	const session = reloadSession;
+	const run = reloadWithOneRetry(deliver, options);
+	void run.then(() => {
+		if (session !== reloadSession) return;
+		reloadInFlight = false;
+		const next = reloadFollowUp;
+		reloadFollowUp = undefined;
+		if (next !== undefined) {
+			void runReload(next.deliver, next.options).then(next.result.resolve);
+		}
+	});
+	return run;
+}
+
+async function deliverOnce(deliver: () => Promise<boolean>): Promise<boolean> {
 	try {
-		delivered = await deliver();
+		return (await deliver()) === true;
 	} catch {
 		/* Unknown delivery is not success. */
+		return false;
 	}
-	if (!delivered) {
-		invalidateBindMapReuse();
-		logger.warn("SRTLA reload delivery failed; next publication must reload");
+}
+
+async function mayResignal(options: SrtlaReloadOptions): Promise<boolean> {
+	// A follow-up already queued delivers after this one; it is the retry.
+	if (reloadFollowUp !== undefined) return false;
+	try {
+		return await (options.isStreaming ?? isStreamingNow)();
+	} catch {
+		return false;
 	}
+}
+
+async function reloadWithOneRetry(
+	deliver: () => Promise<boolean>,
+	options: SrtlaReloadOptions,
+): Promise<boolean> {
+	if (await deliverOnce(deliver)) return true;
+	invalidateBindMapReuse();
+	if (await mayResignal(options)) {
+		const delay = options.retryDelayMs ?? SRTLA_RELOAD_RETRY_DELAY_MS;
+		if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+		if (await mayResignal(options)) {
+			logger.warn("SRTLA reload delivery failed; signalling once more");
+			if (await deliverOnce(deliver)) return true;
+		}
+	}
+	logger.warn("SRTLA reload delivery failed; next publication must reload");
+	return false;
 }

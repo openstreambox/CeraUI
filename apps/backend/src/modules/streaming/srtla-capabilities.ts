@@ -114,12 +114,16 @@ export function classifyCapabilityDocument(
 		return { bindMap: false, reason: "schema-unsupported" };
 	}
 
+	// The strict flags mean what contract 2 says they mean, and nothing under any
+	// other (or missing, or mistyped) contract version: a consumer that trusted
+	// them there could require a guarantee the sender never promised.
+	if (capabilities.bind_map_contract !== 2) {
+		return { bindMap: true, bindMapSchemaVersion: version };
+	}
 	return {
 		bindMap: true,
 		bindMapSchemaVersion: version,
-		...(capabilities.bind_map_contract === 2
-			? { bindMapContract: capabilities.bind_map_contract }
-			: {}),
+		bindMapContract: 2,
 		...(capabilities.bind_map_required === true
 			? { bindMapRequired: true as const }
 			: {}),

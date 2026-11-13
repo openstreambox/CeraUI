@@ -1297,7 +1297,9 @@ the sender's echo reddens the precedence test.
 ### Contract-2 discovery and publication identity
 
 The probe recognizes exactly `bind_map_contract: 2` and preserves exact-boolean
-`bind_map_required` / `bind_map_required_empty_reload` claims. Discovery alone
+`bind_map_required` / `bind_map_required_empty_reload` claims only alongside it:
+under any other, missing or mistyped contract version the strict flags are
+dropped, because their meaning is defined by contract 2. Discovery alone
 does not enable required mode. Existing senders keep the same spawn arguments.
 Successful publications expose `ipsFileSha256` (optional in the compatibility
 type), and unchanged mappings at the same paths reuse their generation.
@@ -1307,6 +1309,31 @@ and both atomic writes execute inside that chain. Each receipt returns the gener
 actually serialized. A failed reload signal invalidates reuse behind pending writes,
 so the next publication advances and requests another reload. Signal delivery is
 not an applied acknowledgement.
+
+Publication hardening:
+
+- **One in flight, one waiting.** A newer submission replaces the waiting
+  snapshot (latest wins); the replaced callers resolve with the receipt of the
+  publication that replaced them. A flapping link costs two publications, not
+  one fsynced write pair per event. The bond record and the telemetry registry
+  are updated inside the queue (`onSettled`) from the snapshot actually written,
+  so they follow publication order for every caller.
+- **Deadline.** A publication that has not settled after
+  `BIND_MAP_PUBLICATION_DEADLINE_MS` resolves `timed_out` (with `changed: false`)
+  and is abandoned: it renames nothing further and touches no writer state, and
+  reuse is cleared. Unless a newer submission is already waiting, the newest
+  snapshot is republished at once; nobody waits on that republication, so it
+  requests its own reload while streaming. If an abandoned rename or unlink still
+  lands later, the newest snapshot is republished again at a fresh generation,
+  so the late effect is never the last one on disk. A rename that is still in
+  the kernel when its deadline passes cannot be cancelled; the repair after it
+  is what makes the result converge.
+- **Reload.** One delivery runs at a time; requests made during it share one
+  follow-up. A failed delivery invalidates reuse and is re-sent once while the
+  stream is live, because a publication made during the failed delivery may have
+  been a no-op that requested nothing. `supervisedSenderDelivery(count)` turns a
+  count of supervised senders signalled into a delivery result (at least one),
+  for a reload by tracked process handle.
 
 Applied/pending telemetry identities, pending dispositions, process-bound
 startup/live admission, empty withdrawal and joined cleanup remain a separate
