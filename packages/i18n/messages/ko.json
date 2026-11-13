@@ -2798,5 +2798,6 @@
 	"notifications.clientCarrying": "박스가 클라이언트 트래픽을 전달 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
 	"notifications.clientCarryingUnknown": "클라이언트 활동을 확인 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
 	"general.updateReasonClientTraffic": "방송 중이거나 상태를 확인 중입니다. 업데이트 전에 연결된 기기와 박스의 방송을 중지하세요.",
-	"notifications.disruptiveActionClientTraffic": "이 작업은 실행되지 않았습니다. 박스 자체 스트림과 연결된 기기의 스트리밍 트래픽이 유휴 상태이고 업데이트가 진행 중이 아닐 때 다시 시도하세요."
+	"notifications.disruptiveActionClientTraffic": "이 작업은 실행되지 않았습니다. 박스 자체 스트림과 연결된 기기의 스트리밍 트래픽이 유휴 상태이고 업데이트가 진행 중이 아닐 때 다시 시도하세요.",
+	"notifications.linkBoxHeatWaiting": "박스가 뜨겁습니다. 용량을 확인하는 동안 휴대전화 연결은 유지됩니다. 통풍을 확보하세요."
 }

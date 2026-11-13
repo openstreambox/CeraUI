@@ -140,3 +140,38 @@ the command; a pending wake survives failed observations or commands.
 Recovery attempts each owned radio independently: an unplugged radio or failed
 link-up retains its pending ownership without blocking later radios. Failures
 are reported together after the recovery attempts, before admitting new rest.
+
+## Carrying without an encoder
+
+The carrying-only sensor path has its own SoC heat reducer with the same dwell,
+minimum hold and cooling hysteresis. It does not call the encoder or cap the
+phone's bitrate. Warm can rest a positively unused USB radio through the existing
+journal/adapter-lock owner; unknown carrying is a final veto before link-down.
+The hot notice keeps the phone's links available while capacity is checked.
+
+`planLinkBoxHeat` specifies the remaining order: lend one link fewer at hot,
+then pause other hotspot clients at critical. It excludes the known phone main
+link, requires two healthy non-recovering peers with measured headroom, and
+protects the phone and management clients. Stale, duplicate or absent identity
+and capacity evidence withholds those steps. Keep quality withdraws both visible
+restrictions while permitting an unused USB radio to rest.
+
+**Runtime boundary:** this base has no phone main-link identity/capacity source
+or reversible per-client pause owner. Lending and client pause are policy only;
+they are not applied to live traffic. The runtime keeps every used link and
+client available. Do not connect this planner to saved bond opt-outs, stop the
+hotspot, or infer the main path from interface names or carrying alone. A future
+owner must re-read evidence under its mutation lock and restore owned exclusions
+on lost evidence, demand or Keep quality before enabling those effects. No
+thermal savings or driver behavior has been measured.
+
+### Español (Latinoamérica)
+
+Cuando la caja transporta tráfico del teléfono sin codificar, usa los mismos
+umbrales y tiempos de enfriamiento. Puede dejar descansar una radio USB que se
+haya confirmado sin uso. Nunca cambia la tasa de bits del teléfono. El orden
+previsto después es prestar un enlace menos y luego pausar a otros clientes del
+punto de acceso, conservando el teléfono y la administración. Sin identidad del
+enlace principal, capacidad medida y un controlador reversible por cliente,
+esos dos pasos no se aplican al tráfico. El aviso pide ventilación y mantiene
+los enlaces disponibles; no afirma que terminó la transmisión.

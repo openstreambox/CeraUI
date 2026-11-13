@@ -2846,5 +2846,6 @@
 	"notifications.clientCarrying": "La caja transporta tráfico de clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
 	"notifications.clientCarryingUnknown": "La caja está comprobando la actividad de los clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
 	"general.updateReasonClientTraffic": "Hay una transmisión activa o se está comprobando su estado. Detén las transmisiones de los dispositivos conectados y de la caja antes de instalar una actualización.",
-	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso."
+	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso.",
+	"notifications.linkBoxHeatWaiting": "La caja está caliente. Los enlaces del teléfono siguen disponibles mientras se comprueba la capacidad. Dale ventilación."
 }

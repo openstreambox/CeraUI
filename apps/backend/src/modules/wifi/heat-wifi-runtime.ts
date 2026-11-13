@@ -5,6 +5,7 @@ import { getms } from "../../helpers/time.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getNetworkInterfaces } from "../network/network-interfaces.ts";
 import { withDeviceLock } from "../network/state/device-lock.ts";
+import { getCarryingLiveness } from "../system/carrying.ts";
 import { installHeatWifiWake } from "./heat-wifi-demand.ts";
 import { HeatWifiRest, type IdleWifiRadio } from "./heat-wifi-rest.ts";
 import { wifiAdapterLockKey } from "./wifi-adapter-lock.ts";
@@ -172,7 +173,10 @@ const owner = new HeatWifiRest({
 		return { ...old, ifname, identity: await nativeIdentity(ifname) };
 	},
 	canRest: () =>
-		latest.known && latest.stage >= 1 && getms() - latest.at <= 5000,
+		getCarryingLiveness() !== "unknown" &&
+		latest.known &&
+		latest.stage >= 1 &&
+		getms() - latest.at <= 5000,
 	lock: withDeviceLock,
 	set: async (row, up) => {
 		const identity = await nativeIdentity(row.ifname);
@@ -180,7 +184,10 @@ const owner = new HeatWifiRest({
 			throw Error("Wi-Fi identity changed before heat action");
 		if (
 			!up &&
-			(!latest.known || latest.stage < 1 || getms() - latest.at > 5000)
+			(getCarryingLiveness() === "unknown" ||
+				!latest.known ||
+				latest.stage < 1 ||
+				getms() - latest.at > 5000)
 		)
 			throw Error("Heat trigger no longer current");
 		await run("ip", ["link", "set", "dev", row.ifname, up ? "up" : "down"], {
