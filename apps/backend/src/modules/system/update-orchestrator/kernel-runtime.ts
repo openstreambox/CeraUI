@@ -8,6 +8,7 @@ import type {
 	UpdateSettings,
 } from "@ceraui/rpc/schemas";
 import { boardUpdateAdmissionAllowed } from "../board-update-admission.ts";
+import { readBoardUpdates } from "../board-updates.ts";
 import {
 	hasKernelAptStage,
 	readUpdateCapabilityFile,
@@ -46,7 +47,8 @@ export const defaultKernelEffects = {
 	readOverlay: readSlotOverlay,
 	readBooted: readBootedKernel,
 	discover: async (caps: UpdateCapabilities) => {
-		if (!hasKernelAptStage(caps)) return null;
+		if (!hasKernelAptStage(caps) || (await readBoardUpdates()) === null)
+			return null;
 		return selectKernelPackage(
 			caps,
 			await readAuthenticatedKernelPackages(),
