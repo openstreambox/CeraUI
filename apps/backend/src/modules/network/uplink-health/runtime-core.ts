@@ -14,6 +14,7 @@ import {
 	type UplinkHealthRecord,
 	type UplinkObservation,
 } from "./model.ts";
+import { RecentNaks } from "./recent-naks.ts";
 
 export interface UplinkHealthRuntimeCoreDeps {
 	readonly onInterfacesChange?: (callback: () => void) => () => void;
@@ -51,6 +52,14 @@ export class UplinkHealthRuntimeCore {
 	readonly #engine: UplinkHealthEngine;
 	readonly #deps: UplinkHealthRuntimeCoreDeps;
 	#lastJson = "";
+	readonly #recentNaks = new Map<
+		string,
+		{
+			ip: string | undefined;
+			generation: number | undefined;
+			counter: RecentNaks;
+		}
+	>();
 	#round = 0;
 	#completedRound = 0;
 	#generation = 0;
@@ -226,9 +235,17 @@ export class UplinkHealthRuntimeCore {
 
 	#passiveIfaces(now: number, round: number): ReadonlySet<string> {
 		const passive = new Set<string>();
-		if (!this.#deps.streaming()) return passive;
+		if (!this.#deps.streaming()) {
+			this.#recentNaks.clear();
+			return passive;
+		}
 		const telemetry = this.#deps.telemetry();
-		if (!telemetry) return passive;
+		if (!telemetry) {
+			this.#recentNaks.clear();
+			return passive;
+		}
+		const seen = new Set<string>();
+		const observations = new Map<string, UplinkHealthOutcome>();
 		for (const link of telemetry.links) {
 			// Stale sender rows must not recreate pruned missing history.
 			if (!this.#deps.interfaces()[link.iface]) continue;
@@ -237,21 +254,46 @@ export class UplinkHealthRuntimeCore {
 			passive.add(link.iface);
 			const expired =
 				now - telemetry.lastReadMs >= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
+			const key = JSON.stringify([link.iface, link.conn_id]);
+			seen.add(key);
+			const ip = this.#deps.interfaces()[link.iface]?.ip;
+			const generation = this.#samples.get(link.iface)?.generation;
+			let sample = this.#recentNaks.get(key);
+			if (!sample || sample.ip !== ip || sample.generation !== generation) {
+				sample = { ip, generation, counter: new RecentNaks() };
+				this.#recentNaks.set(key, sample);
+			}
+			// Stale rows never contribute counter deltas. Resume from a baseline.
+			const nakDegraded =
+				!expired && !link.stale
+					? sample.counter.observe(telemetry.lastReadMs, link.nak_count)
+					: false;
+			if (expired || link.stale) this.#recentNaks.delete(key);
 			const degraded =
 				link.stale ||
 				link.rtt_ms >= UPLINK_HEALTH_CONFIG.passiveRttDegradedMs ||
-				link.nak_count >= UPLINK_HEALTH_CONFIG.passiveNakDegradedCount;
+				nakDegraded;
+			const outcome = expired
+				? "definitive_loss"
+				: degraded
+					? "passive_degraded"
+					: "success";
+			const previous = observations.get(link.iface);
+			// Multiple sender connections may share an interface. Its worst evidence
+			// wins once per round; a clean sibling cannot overwrite a losing path.
+			if (
+				previous !== "definitive_loss" &&
+				(outcome !== "success" || !previous)
+			) {
+				observations.set(link.iface, outcome);
+			}
+		}
+		for (const key of this.#recentNaks.keys()) {
+			if (!seen.has(key)) this.#recentNaks.delete(key);
+		}
+		for (const [iface, outcome] of observations) {
 			this.#observe(
-				{
-					iface: link.iface,
-					...this.#deps.identity(link.iface),
-					outcome: expired
-						? "definitive_loss"
-						: degraded
-							? "passive_degraded"
-							: "success",
-					now,
-				},
+				{ iface, ...this.#deps.identity(iface), outcome, now },
 				round,
 			);
 		}

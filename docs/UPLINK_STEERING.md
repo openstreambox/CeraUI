@@ -402,3 +402,30 @@ are covered in `apps/backend/src/tests/uplink-health-recovery.test.ts`.
 ## Asynchronous health observations
 
 Health rounds snapshot candidate addresses and interface generations before resolving the probe target. The runtime synchronously advances an interface's generation on network-interface events that remove it, change its address or change its device-bound eligibility. This rejects old evidence even when removal/re-addition or an address/eligibility change returns to the original state entirely between health ticks. Before each batch and before recording its results, the runtime checks the generation, current address and device-bound eligibility. A newer observation for that interface or a completed newer round supersedes older evidence. Starting another pending round alone does not discard valid slow evidence; counters, bond selection and equivalent entry replacement do not advance generations. Removed-interface sample bookkeeping is retired after completed rounds without reusing generations. Deferred-resolution, probe and batch regressions live in `apps/backend/src/tests/uplink-health.test.ts`; between-tick event regressions live in `apps/backend/src/tests/uplink-health-interface-generation.test.ts`.
+
+## Recent passive loss for shared clients
+
+Passive NAK health uses deltas of the sender's cumulative counter per interface
+and sender connection, over a trailing 10-second window (two health rounds).
+A window with at least 25 NAKs enters degraded health; it clears at five or fewer.
+The lower exit threshold avoids alternating health near the entry boundary.
+The existing five successful rounds and 15-second minimum dwell still gate full
+weight recovery. With fresh five-second samples, a clean path regains weight 100
+within 35 seconds of its last loss: up to five seconds to observe the final delta,
+10 seconds to expire it, then four more successful rounds (20 seconds).
+Loss intervals are conservatively dated at the sample's end.
+
+The first counter is a baseline, not evidence of recent loss. New deltas are
+assessed immediately: there is no startup grace period. A counter decrease,
+connection replacement, interface generation/address change, missing connection,
+stream stop or stale/expired telemetry discards the old baseline. Since the
+telemetry has no connection epoch, an unseen restart reusing the same identity
+and a higher counter cannot be distinguished from new loss; any resulting
+penalty is bounded by the same window. Persistent recent loss keeps the path
+at weight 25. It does not by itself mean Down (weight zero); existing active
+failure, missing-address and telemetry-expiry rules still own Down. Stream bond
+membership, stream scheduling and established client flows are unchanged.
+
+Synthetic regressions live in `uplink-health-recent-naks.test.ts`. They cover
+bounded recovery, persistent loss, threshold hysteresis, counter and connection
+resets, stale snapshots, address replacement and stop/start.
