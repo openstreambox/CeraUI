@@ -16,7 +16,7 @@
 */
 
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
-import killall from "../../helpers/killall.ts";
+import { logger } from "../../helpers/logger.ts";
 
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
 import { queueUpdateGw } from "../network/gateways.ts";
@@ -40,6 +40,7 @@ import {
 	setBondIdentityResolverForTest,
 } from "./bond-entry.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
+import { signalSenders } from "./streamloop/process-runner.ts";
 
 export { isBondLinkMappable, setBondIdentityResolverForTest };
 
@@ -187,6 +188,18 @@ export async function setSrtlaIpList(
 	return publishSrtlaBond(entries);
 }
 
-export function restartSrtla() {
-	void killall(["-HUP", "srtla_send"]);
+/**
+ * Ask the supervised sender to reload its IP list and bind map (SIGHUP).
+ *
+ * The signal goes to the sender process this backend spawned, by its own handle,
+ * never by process name, so any other process called `srtla_send` is left alone.
+ * Returns whether at least one supervised sender received it; `false` (no live
+ * sender, or the signal could not be sent) is logged and left to the caller.
+ */
+export function restartSrtla(): boolean {
+	const delivered = signalSenders("SIGHUP") > 0;
+	if (!delivered) {
+		logger.warn("SRTLA reload: no supervised sender received SIGHUP");
+	}
+	return delivered;
 }
