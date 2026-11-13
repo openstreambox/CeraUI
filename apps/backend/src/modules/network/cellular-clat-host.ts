@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
 	DurableInverse,
 	privateInverseStore,
@@ -6,10 +5,11 @@ import {
 import type { CellularPathSession } from "../modems/cellular-path-owner.ts";
 import {
 	type CellularClatHostPlan,
-	cellularClatPhysicalSettings,
+	cellularClatHostSteps,
 	parseCellularClatHostPlan,
 } from "./cellular-clat-host-plan.ts";
 import type { CellularFirewall } from "./cellular-firewall.ts";
+import { cellularUplinkSlotKey } from "./cellular-native-host-plan.ts";
 import {
 	type CellularRoutePlan,
 	planCellularRoutes,
@@ -86,22 +86,7 @@ export class CellularClatHost implements CellularPathSession {
 			dns,
 		};
 		this.cancelProbe = deps.cancelProbe;
-		this.steps = [
-			"receipt",
-			"output",
-			"forward",
-			...cellularClatPhysicalSettings(this.authority).map(
-				(row) => `physical-${row.key.replaceAll("_", "-")}`,
-			),
-			"tun-configuration",
-			"address",
-			"proxy",
-			"configuration-file",
-			...routes.effects.flatMap((row, i) => (row.terminal ? [`ip-${i}`] : [])),
-			"translator",
-			...routes.effects.flatMap((row, i) => (!row.terminal ? [`ip-${i}`] : [])),
-			"forward-active",
-		];
+		this.steps = cellularClatHostSteps(this.authority);
 		this.effects = deps.effects(this.authority, routes, {
 			current: () => this.current(),
 			writable: () =>
@@ -111,9 +96,7 @@ export class CellularClatHost implements CellularPathSession {
 					this.withdrawing ||
 					(!this.closing && deps.currentNow())),
 		});
-		const key = createHash("sha256")
-			.update(`cellular-uplink-slot\0${input.slot}`)
-			.digest("hex");
+		const key = cellularUplinkSlotKey(input.slot);
 		this.inverse = new DurableInverse({
 			...privateInverseStore(deps.store, key),
 			parsePlan: (value) => {

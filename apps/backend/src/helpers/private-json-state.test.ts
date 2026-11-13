@@ -4,6 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+	listPrivateJsonKeys,
+	listPrivateStateKeys,
 	readPrivateJson,
 	readPrivateText,
 	writePrivateJson,
@@ -63,5 +65,54 @@ test("generated text has independent private authority and preserves previous co
 		});
 	} finally {
 		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("store observers cover durable JSON/text changes and failed reads without inventing absence", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "private-store-observer-")),
+		key = "c".repeat(64);
+	let writers = 0,
+		changes = 0,
+		faults = 0;
+	const store = {
+		dir,
+		change: async <T>(operation: () => Promise<T>): Promise<T> => {
+			writers++;
+			changes++;
+			try {
+				return await operation();
+			} finally {
+				writers--;
+			}
+		},
+		readFault: () => {
+			faults++;
+		},
+	};
+	try {
+		await writePrivateJson(store, key, { version: 1 });
+		await writePrivateText(store, key, "configuration");
+		expect(changes).toBe(2);
+		expect(writers).toBe(0);
+		expect(await listPrivateStateKeys(store)).toEqual({
+			json: [key],
+			text: [key],
+		});
+		await expect(listPrivateJsonKeys(store)).rejects.toThrow("Unknown private");
+		expect(faults).toBe(1);
+		await writePrivateText(store, key, undefined);
+		expect(await listPrivateJsonKeys(store)).toEqual([key]);
+		await fs.promises.writeFile(
+			join(dir, `${key}.json`),
+			'{"duplicate":1,"duplicate":2}',
+		);
+		await expect(readPrivateJson(store, key)).rejects.toThrow();
+		expect(faults).toBe(2);
+		await writePrivateJson(store, key, undefined);
+		expect(await readPrivateJson(store, key)).toBeUndefined();
+		expect(faults).toBe(2);
+		expect(changes).toBe(4);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
 	}
 });

@@ -118,7 +118,7 @@ the old owner retains permission to deny and clean up.
 The disconnected packet fixture exercises this composition with private child
 supervision, including a foreign route that must survive refused cleanup. It
 does not qualify installed system-service supervision or production admission,
-sender acknowledgement, startup inventory or physical modem operation. Those
+sender acknowledgement, the installed startup lifetime or physical modem operation. Those
 integration and qualification gates remain open.
 
 Bond publication now serializes launch, refresh and withdrawal writes. Captured
@@ -144,7 +144,25 @@ control acquisitions and old capability replies cannot populate a replacement
 telemetry lifetime. Fresh absence of the old link from that strict producer, or
 positive exit of the captured process, can acknowledge closed sockets. No owned
 sender and no telemetry is still unknown without a positive startup census.
-Production startup inventory and installed-image qualification remain gated.
+Startup replay now inventories native and translated host authority before modem
+rollback. Unknown, misplaced and orphan auxiliary records keep the existing
+recovery barrier raised. Every host JSON/configuration write participates in the
+same journal revision; runtime verification remains read-only. Interrupted host
+installation never resumes during replay.
+
+Native plans are immutable and boot-bound. A matching resource on another boot
+cannot be adopted for cleanup; only complete positive kernel absence can retire
+its private cursor. A failed directory acknowledgement after unlink is retried
+before releasing ownership. The routing namespace fixture reconstructs a native
+host from its actual retained inventory, denies traffic while consumer release
+is unknown, and retries cleanup with the same owner.
+
+Startup consumer absence requires the exact backend main process to be the sole
+member of a stable, nondelegated service cgroup, with group cleanup and forced
+termination enabled. An extra process or subgroup, changed invocation, missing
+property or failed read retains unknown. This proof requires the existing boot
+barrier to exclude new sender and managed probe admission. The installed service
+lifetime and physical crash/reboot qualification remain gates.
 
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
@@ -277,7 +295,7 @@ conserva el permiso para bloquear y limpiar el estado anterior.
 La prueba aislada de paquetes usa esta composición con un proceso privado y
 comprueba que una ruta ajena sobreviva a una limpieza rechazada. No acredita la
 supervisión por el gestor de servicios instalado, la admisión de producción,
-la confirmación del emisor, el inventario al iniciar ni el módem físico. Esas
+la confirmación del emisor, la vida del servicio instalado ni el módem físico. Esas
 pruebas e integraciones siguen pendientes.
 
 La publicación del conjunto de enlaces serializa las escrituras de inicio,
@@ -304,8 +322,31 @@ una conexión de control o una respuesta de capacidades antiguos no pueden
 actualizar la telemetría del emisor nuevo. La ausencia del enlace en una lectura
 nueva de ese emisor estricto, o su salida confirmada, puede acreditar el cierre
 de los sockets. La falta de un emisor supervisado o de telemetría sigue siendo
-desconocida sin una comprobación positiva al iniciar. El inventario de inicio
-y las pruebas de la imagen instalada siguen pendientes.
+desconocida sin una comprobación positiva al iniciar.
+
+La recuperación al iniciar ya comprueba el inventario de autoridad nativa y
+traducida antes de restaurar el módem. Los registros desconocidos, mal ubicados
+o auxiliares huérfanos mantienen la barrera existente. Todas las escrituras de
+JSON y configuración del host comparten la misma revisión del registro; la
+verificación durante el funcionamiento sigue siendo de solo lectura. La
+recuperación nunca reanuda una instalación interrumpida.
+
+Los planes nativos son inmutables y pertenecen a un arranque concreto. Un
+recurso idéntico en otro arranque no permite adoptarlo ni eliminarlo; solo una
+comprobación completa de ausencia permite retirar el registro privado. Si falla
+la confirmación del directorio después de borrar el archivo, se reintenta antes
+de liberar la exclusión. La prueba de rutas aislada reconstruye el host nativo
+a partir de su inventario real, bloquea el tráfico mientras no se confirme la
+retirada de consumidores y reintenta con el mismo propietario.
+
+La ausencia de consumidores al iniciar requiere que el proceso principal del
+backend sea el único miembro de un cgroup de servicio estable, sin delegación,
+con limpieza del grupo y terminación forzada habilitadas. Otro proceso o
+subgrupo, un cambio de invocación, una propiedad ausente o una lectura fallida
+mantienen el estado desconocido. La barrera de inicio existente debe impedir
+nuevos emisores y sondeos administrados durante esta comprobación. La vida del
+servicio instalado y las pruebas físicas de interrupción y reinicio siguen
+pendientes.
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon

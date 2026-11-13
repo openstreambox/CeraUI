@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import { z } from "zod";
 import {
 	DurableInverse,
 	privateInverseStore,
@@ -7,30 +5,21 @@ import {
 import type { CellularPathSession } from "../modems/cellular-path-owner.ts";
 import { CellularFirewall, cellularFirewallIO } from "./cellular-firewall.ts";
 import { CellularIpState, cellularIpIO } from "./cellular-ip-state.ts";
+import {
+	type CellularNativeHostPlan,
+	cellularNativeHostSteps,
+	cellularUplinkSlotKey,
+	parseCellularNativeHostPlan,
+} from "./cellular-native-host-plan.ts";
+
+export type { CellularNativeHostPlan } from "./cellular-native-host-plan.ts";
+
 import type { CellularPacketFence } from "./cellular-packet-fence.ts";
 import {
 	type CellularRoutePlan,
 	planCellularRoutes,
 } from "./cellular-route-plan.ts";
 
-const schema = z
-	.object({
-		input: z
-			.object({
-				owner: z.string().regex(/^[a-f0-9]{64}$/),
-				epoch: z.string().min(1).max(256),
-				slot: z.number().int().min(1).max(32),
-				iface: z.string(),
-				mtu: z.number().int(),
-				ipv4: z.string(),
-				ipv4Gateway: z.string().optional(),
-			})
-			.strict(),
-		ifindex: z.number().int().min(1).max(0x7fffffff),
-		dns: z.array(z.string().ipv4()).max(4),
-	})
-	.strict();
-export type CellularNativeHostPlan = z.infer<typeof schema>;
 type Firewall = Pick<
 	CellularFirewall,
 	"inspect" | "create" | "transition" | "remove"
@@ -39,6 +28,7 @@ type IpState = Pick<CellularIpState, "inspect" | "apply" | "remove">;
 export interface CellularNativeHostDeps {
 	/** Lifetime slot lease and retained actor ownership; checked synchronously at dispatch. */
 	readonly owned: () => boolean;
+	readonly bootId: string;
 	/** Captured observation revision; cleanup retains its separate lease. */
 	readonly currentNow: () => boolean;
 	/** Fresh physical device, SIM, subscription and actual grant identity. */
@@ -111,7 +101,7 @@ export class CellularNativeHost implements CellularPathSession {
 		readonly authority: CellularNativeHostPlan,
 		private readonly deps: CellularNativeHostDeps,
 	) {
-		this.authority = schema.parse(authority);
+		this.authority = parseCellularNativeHostPlan(authority);
 		this.plan = routes(this.authority);
 		const { input, ifindex, dns } = this.authority;
 		this.binding = {
@@ -134,6 +124,7 @@ export class CellularNativeHost implements CellularPathSession {
 			},
 			() => this.current(),
 			() =>
+				this.sameBoot() &&
 				deps.owned() &&
 				!this.retired &&
 				(this.removing ||
@@ -142,39 +133,39 @@ export class CellularNativeHost implements CellularPathSession {
 		);
 		this.firewall = effects.firewall;
 		this.ip = effects.ip;
-		const key = createHash("sha256")
-				.update(`cellular-uplink-slot\0${input.slot}`)
-				.digest("hex"),
+		const key = cellularUplinkSlotKey(input.slot),
 			store = privateInverseStore(deps.store, key);
 		this.inverse = new DurableInverse({
 			...store,
 			parsePlan: (raw) => {
-				const parsed = schema.parse(raw);
+				const parsed = parseCellularNativeHostPlan(raw);
 				routes(parsed);
 				if (JSON.stringify(parsed) !== JSON.stringify(this.authority))
 					throw new Error("Native host authority changed");
 				return parsed;
 			},
-			steps: () => [
-				"fence",
-				...this.plan.effects.map((_effect, index) => `ip-${index}`),
-			],
+			steps: cellularNativeHostSteps,
 			current: async (record) =>
 				record.owner === input.owner &&
 				record.epoch === input.epoch &&
 				(await this.current()),
 			inspect: async (_record, step) => {
-				if (step !== "fence")
-					return this.ip.inspect(this.effect(step), this.removing);
-				const state = await this.firewall.inspect();
-				return state === "absent" || state === "foreign" ? state : "owned";
+				const state =
+					step !== "fence"
+						? await this.ip.inspect(this.effect(step), this.removing)
+						: await this.firewall.inspect();
+				return state === "absent"
+					? "absent"
+					: !this.sameBoot() || state === "foreign"
+						? "foreign"
+						: "owned";
 			},
 			apply: async (_record, step) => {
 				if (step === "fence") await this.firewall.create("withdrawn");
 				else await this.ip.apply(this.effect(step));
 			},
 			remove: async (_record, step) => {
-				if (!deps.owned() || this.retired)
+				if (!this.sameBoot() || !deps.owned() || this.retired)
 					throw new Error("Native inverse lease retired");
 				const removed =
 					step === "fence"
@@ -186,8 +177,11 @@ export class CellularNativeHost implements CellularPathSession {
 			fence: async () => {
 				if (!deps.owned() || this.retired)
 					throw new Error("Native fence lease retired");
-				if ((await this.firewall.inspect()) !== "absent")
+				if ((await this.firewall.inspect()) !== "absent") {
+					if (!this.sameBoot())
+						throw new Error("Native fence belongs to another boot");
 					await this.firewall.transition("withdrawn");
+				}
 			},
 			consumersReleased: deps.consumersReleased,
 		});
@@ -203,13 +197,18 @@ export class CellularNativeHost implements CellularPathSession {
 		this.withdrawn = true;
 		this.deps.withdraw();
 	}
+	private sameBoot(): boolean {
+		return this.authority.bootId === this.deps.bootId;
+	}
 	private async current(): Promise<boolean> {
 		return (
+			this.sameBoot() &&
 			!this.closing &&
 			!this.retired &&
 			this.deps.owned() &&
 			this.deps.currentNow() &&
 			(await this.deps.current()) &&
+			this.sameBoot() &&
 			!this.closing &&
 			!this.retired &&
 			this.deps.owned() &&
@@ -259,7 +258,13 @@ export class CellularNativeHost implements CellularPathSession {
 	}
 	setReady(ready: boolean): Promise<boolean> {
 		return this.serial(async () => {
-			if (!this.deps.owned() || this.retired || this.closing) return false;
+			if (
+				!this.sameBoot() ||
+				!this.deps.owned() ||
+				this.retired ||
+				this.closing
+			)
+				return false;
 			if (ready && !(await this.valid())) return false;
 			this.withdrawing = !ready;
 			try {
@@ -280,6 +285,13 @@ export class CellularNativeHost implements CellularPathSession {
 		return this.serial(async () => {
 			if (this.retired) return true;
 			if (!this.deps.owned()) return false;
+			// A visible unlink may have failed its directory acknowledgement. With no
+			// envelope, retire only after a complete positive kernel absence check.
+			if (!(await this.inverse.read())) {
+				if ((await this.firewall.inspect()) !== "absent") return false;
+				for (const effect of this.plan.effects)
+					if ((await this.ip.inspect(effect, true)) !== "absent") return false;
+			}
 			this.removing = true;
 			try {
 				const complete = await this.inverse.cleanup(

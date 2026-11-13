@@ -28,7 +28,18 @@ const recordSchema = z
 		withdrawing: z.boolean(),
 	})
 	.strict();
-type BirthRecord = z.infer<typeof recordSchema>;
+export type CellularClatBirthRecord = z.infer<typeof recordSchema>;
+type BirthRecord = CellularClatBirthRecord;
+export function parseCellularClatBirthRecord(
+	raw: unknown,
+): CellularClatBirthRecord {
+	const record = recordSchema.parse(raw),
+		plan = parseCellularClatBirthPlan(record.plan);
+	if (record.childSubmitted && !record.tun)
+		throw new Error("CLAT birth child identity missing");
+	if (record.tun) parseCellularClatHostPlan({ ...plan, tun: record.tun });
+	return { ...record, plan: birthSchema.parse(plan) };
+}
 export function cellularClatBirthKey(slot: number): string {
 	if (!Number.isInteger(slot) || slot < 1 || slot > 32)
 		throw new Error("Invalid CLAT birth slot");
@@ -140,14 +151,10 @@ export class CellularClatSession implements CellularPathSession {
 	private async read(): Promise<BirthRecord | undefined> {
 		const raw = await readPrivateJson(this.deps.store, this.key);
 		if (raw === undefined) return undefined;
-		const record = recordSchema.parse(raw),
+		const record = parseCellularClatBirthRecord(raw),
 			plan = parseCellularClatBirthPlan(record.plan);
-		if (
-			JSON.stringify(plan) !== JSON.stringify(this.plan) ||
-			(record.childSubmitted && !record.tun)
-		)
+		if (JSON.stringify(plan) !== JSON.stringify(this.plan))
 			throw new Error("CLAT birth authority changed");
-		if (record.tun) parseCellularClatHostPlan({ ...plan, tun: record.tun });
 		return record;
 	}
 	private async write(record: BirthRecord | undefined): Promise<void> {
@@ -237,6 +244,17 @@ export class CellularClatSession implements CellularPathSession {
 			if (!this.writable()) return false;
 			let record = await this.read();
 			if (!record) {
+				if (
+					inspectCellularTun(
+						await this.deps.links(),
+						this.plan.input.slot,
+						this.plan.input.owner,
+						this.plan.tunEpoch,
+					) !== "absent" ||
+					!(await this.deps.consumersReleased())
+				)
+					return false;
+				await this.write(undefined);
 				this.retire();
 				return true;
 			}

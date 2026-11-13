@@ -140,3 +140,26 @@ export function cellularClatIsolatesPhysical(
 		plan.physicalBefore.force_forwarding === "0"
 	);
 }
+
+export function cellularClatHostSteps(
+	plan: CellularClatHostPlan,
+): readonly string[] {
+	const routes = planCellularRoutes(plan.input);
+	if (!routes?.translated) throw new Error("Translated host required");
+	return [
+		"receipt",
+		"output",
+		"forward",
+		...cellularClatPhysicalSettings(plan).map(
+			(row) => `physical-${row.key.replaceAll("_", "-")}`,
+		),
+		"tun-configuration",
+		"address",
+		"proxy",
+		"configuration-file",
+		...routes.effects.flatMap((row, i) => (row.terminal ? [`ip-${i}`] : [])),
+		"translator",
+		...routes.effects.flatMap((row, i) => (!row.terminal ? [`ip-${i}`] : [])),
+		"forward-active",
+	];
+}
