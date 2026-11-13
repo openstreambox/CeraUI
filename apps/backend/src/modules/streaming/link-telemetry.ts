@@ -1,3 +1,4 @@
+import { isForwardActive } from "./forward-activity.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -357,7 +358,8 @@ async function attemptSubscriptionCutover(
 }
 
 /** Stop consuming telemetry (poll + subscription) and clear both registries. */
-export function stopLinkTelemetry(): void {
+export function stopLinkTelemetry(forwardOwner = false): void {
+	if (isForwardActive() && !forwardOwner) return;
 	if (subscriptionCleanup) {
 		subscriptionCleanup();
 		subscriptionCleanup = null;

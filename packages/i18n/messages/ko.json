@@ -2773,6 +2773,8 @@
 	"notifications.clientCarryingUnknown": "클라이언트 활동을 확인 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
 	"general.updateReasonClientTraffic": "방송 중이거나 상태를 확인 중입니다. 업데이트 전에 연결된 기기와 박스의 방송을 중지하세요.",
 	"notifications.disruptiveActionClientTraffic": "이 작업은 실행되지 않았습니다. 박스 자체 스트림과 연결된 기기의 스트리밍 트래픽이 유휴 상태이고 업데이트가 진행 중이 아닐 때 다시 시도하세요.",
+	"hud.forwarding": "전달 중",
+	"hud.checking": "확인 중",
 	"carrying.active": "전달 중 · 이 박스를 통한 휴대폰 트래픽",
 	"carrying.unknown": "이 박스를 통한 클라이언트 트래픽을 알 수 없습니다",
 	"carrying.idle": "이 박스를 통해 전송 중인 휴대폰이 없습니다"

@@ -33,6 +33,7 @@ type SocTelemetry = {
 };
 
 const state = vi.hoisted(() => ({
+	carrying: undefined as "streaming" | "unknown" | "idle" | undefined,
 	hud: undefined as HudState | undefined,
 	health: "unknown" as HealthIndicator,
 	rollup: null as HealthRollup | null,
@@ -42,6 +43,12 @@ const state = vi.hoisted(() => ({
 		current: null,
 		isStale: false,
 	} as SocTelemetry,
+}));
+
+vi.mock("$lib/rpc/subscriptions.svelte", () => ({
+	getStatus: () => ({
+		carrying: state.carrying ? { state: state.carrying } : undefined,
+	}),
 }));
 
 vi.mock("$lib/stores/hud.svelte", () => ({
@@ -178,6 +185,7 @@ function classesOf(el: HTMLElement): string[] {
 }
 
 beforeEach(() => {
+	state.carrying = undefined;
 	state.hud = makeHud();
 	state.health = "unknown";
 	state.rollup = null;
@@ -711,4 +719,23 @@ describe("HudBar strip — the FOUR-fact budget is locked", () => {
 			expect(strip.contains(region)).toBe(false);
 		}
 	});
+});
+
+describe("client traffic lead badge", () => {
+	it.each(["streaming", "unknown"] as const)(
+		"does not announce idle for %s client traffic",
+		async (carrying) => {
+			state.carrying = carrying;
+			render(HudBar);
+			const badge = document.querySelector('[id$="-lifecycle"]');
+			expect(badge?.textContent).not.toContain("Idle");
+			expect(badge?.textContent?.trim()).not.toBe("");
+			const trigger = compactStrip().querySelector("button");
+			if (!trigger) throw Error("missing HUD trigger");
+			await fireEvent.click(trigger);
+			expect(screen.getByTestId("hud-sheet-subtitle").dataset.state).toBe(
+				carrying === "streaming" ? "forwarding" : "checking",
+			);
+		},
+	);
 });

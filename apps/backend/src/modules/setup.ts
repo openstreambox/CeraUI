@@ -21,6 +21,7 @@ import {
 	setupConfigSchema,
 } from "../helpers/config-schemas.ts";
 import { logger } from "../helpers/logger.ts";
+import { loadForwardSecret } from "./ingest/forward-secret.ts";
 import {
 	readStoredStateJson,
 	STORED_STATE_LIMITS,
@@ -67,10 +68,29 @@ async function readSetupJson(): Promise<unknown> {
 }
 
 /* Read the config and setup files */
+const rawSetup = await readSetupJson();
 export const setup: SetupConfig = {
 	...SETUP_CONFIG_DEFAULTS,
-	...setupConfigSchema.parse(await readSetupJson()),
+	...setupConfigSchema.parse(rawSetup),
 };
+if (setup.srt_forward && typeof rawSetup === "object" && rawSetup !== null) {
+	const raw = Reflect.get(rawSetup, "srt_forward");
+	if (
+		typeof raw === "object" &&
+		raw !== null &&
+		Reflect.get(raw, "passphrase") === undefined
+	) {
+		try {
+			setup.srt_forward.passphrase = await loadForwardSecret(
+				"srt-forward.secret",
+				setup.srt_forward.passphrase,
+			);
+		} catch {
+			setup.srt_forward = undefined;
+			logger.warn("SRT forwarding disabled: credential unavailable");
+		}
+	}
+}
 logger.debug("Setup", {
 	...setup,
 	srt_forward: setup.srt_forward

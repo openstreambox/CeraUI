@@ -68,8 +68,10 @@ const isLive = $derived(hud.isStreaming && !isOffline);
 // sheet renders exactly ONE status-wording node keyed off this, and every
 // live-only metric renders as absence ("—") outside `live` — never a dimmed
 // stale number.
-type HudLifecycle = 'live' | 'idle' | 'offline';
-const lifecycle = $derived<HudLifecycle>(isOffline ? 'offline' : isLive ? 'live' : 'idle');
+const carrying = $derived(getStatus()?.carrying?.state);
+const clientLabel = $derived(carrying === 'streaming' ? m['hud.forwarding']() : carrying === 'unknown' ? m['hud.checking']() : null);
+type HudLifecycle = 'live' | 'idle' | 'offline' | 'forwarding' | 'checking';
+const lifecycle = $derived<HudLifecycle>(isOffline ? 'offline' : isLive ? 'live' : carrying === 'streaming' ? 'forwarding' : carrying === 'unknown' ? 'checking' : 'idle');
 
 // Bitrate honesty: it is a LIVE streaming value, so it is shown ONLY while
 // genuinely live. Idle/offline render "—" (absence rendered as absence).
@@ -203,7 +205,7 @@ const streamingLastSeen = $derived(lastSeen(hud.lastUpdatedAt.streaming));
 const TELEMETRY_ANNOUNCE_DEBOUNCE_MS = 1500;
 const telemetrySummary = $derived(
 	[
-		isOffline ? m["hud.offline"]() : isLive ? m["hud.live"]() : m["hud.idle"](),
+		isOffline ? m["hud.offline"]() : isLive ? m["hud.live"]() : (clientLabel ?? m["hud.idle"]()),
 		`${m["hud.bitrate"]()}: ${bitrateText}${targetQualifierSuffix}`,
 		`${m["hud.network"]()}: ${hud.links.length}`,
 	].join(' · '),
@@ -369,7 +371,7 @@ $effect(() => {
 								class="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
 								<span class="bg-status-idle size-2 rounded-full"></span>
-								{m["hud.idle"]()}
+								{(clientLabel ?? m["hud.idle"]())}
 							</span>
 						{/if}
 
@@ -549,12 +551,14 @@ $effect(() => {
 							{#if lifecycle === 'offline'}
 								<ClockIcon class="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
 								{m["hud.noSignal"]()}
+							{:else if clientLabel}
+								{clientLabel}
 							{:else if rollup}
 								<RollupIcon class={cn('size-4 shrink-0', rollupIconColor)} aria-hidden="true" />
 								{rollupLabel}
 							{:else}
 								<CircleDotIcon class="text-status-neutral size-4 shrink-0" aria-hidden="true" />
-								{m["hud.idle"]()}
+								{(clientLabel ?? m["hud.idle"]())}
 							{/if}
 						</span>
 					</div>

@@ -10,6 +10,7 @@ import {
 	notificationBroadcast,
 	notificationRemove,
 } from "../ui/notifications.ts";
+import { broadcastMsg } from "../ui/websocket-server.ts";
 import { isConcurrentApIfname } from "../wifi/wifi-concurrent-interface.ts";
 import { carryingTracker, getCarryingLiveness } from "./carrying.ts";
 
@@ -44,6 +45,7 @@ function publishCarrying(): void {
 		markerProtected = protect;
 	if (state === published) return;
 	published = state;
+	broadcastMsg("status", { carrying: { state } });
 	if (state === "idle") {
 		notificationRemove("client-carrying");
 		return;

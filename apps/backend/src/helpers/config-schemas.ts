@@ -602,10 +602,16 @@ export const setupConfigSchema = z.preprocess(
 							value.startsWith("127."),
 					),
 				port: z.number().int().min(1).max(65535).default(4000),
-				passphrase: z.string().min(10).max(79),
+				passphrase: z
+					.string()
+					.min(10)
+					.max(79)
+					.default(() => crypto.randomUUID().replaceAll("-", "")),
+				maxbw: z.number().int().min(125000).max(12500000).default(2500000),
 				relay_passphrase: z.string().min(10).max(79).optional(),
 			})
-			.optional(),
+			.optional()
+			.catch(undefined),
 		srtla_path: z.string().optional(),
 		sound_device_dir: z.string().optional(),
 		usb_device_dir: z.string().optional(),

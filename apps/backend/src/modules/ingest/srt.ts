@@ -164,6 +164,10 @@ export async function initSRTIngest(): Promise<void> {
 		logger.info("🎭 SRT ingest: Using mock streaming stats");
 		return;
 	}
+	if (Object.hasOwn(setup, "srt_forward") && !setup.srt_forward) {
+		logger.warn("SRT forwarding disabled: invalid configuration");
+		return;
+	}
 	if (setup.srt_forward) {
 		const forward = await import("./srt-forward.ts");
 		stopForward = forward.stopSrtForward;

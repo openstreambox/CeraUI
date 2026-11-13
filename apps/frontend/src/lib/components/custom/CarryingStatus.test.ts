@@ -11,8 +11,8 @@ describe("client carrying status", () => {
 	});
 	it("keeps unknown distinct from confirmed no client", () => {
 		render(CarryingStatus, { carrying: { state: "unknown" } });
-		expect(screen.getByTestId("carrying-status").textContent).toContain(
-			"unknown",
+		expect(screen.getByTestId("carrying-status").textContent?.trim()).toBe(
+			"Client traffic through this box is unknown",
 		);
 	});
 	it("does not claim idle about the phone itself", () => {
@@ -25,4 +25,16 @@ describe("client carrying status", () => {
 		render(CarryingStatus, {});
 		expect(screen.queryByTestId("carrying-status")).toBeNull();
 	});
+});
+
+it("follows status changes while mounted", async () => {
+	const view = render(CarryingStatus, { carrying: { state: "idle" } });
+	await view.rerender({ carrying: { state: "streaming" } });
+	expect(screen.getByTestId("carrying-status").textContent).toContain(
+		"Carrying",
+	);
+	await view.rerender({ carrying: { state: "unknown" } });
+	expect(screen.getByTestId("carrying-status").textContent?.trim()).toBe(
+		"Client traffic through this box is unknown",
+	);
 });

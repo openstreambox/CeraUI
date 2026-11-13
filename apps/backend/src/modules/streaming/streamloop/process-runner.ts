@@ -43,6 +43,16 @@ export type StreamingProcess = {
 	exitListeners: Array<() => void>;
 };
 
+const forwardProcesses: Array<StreamingProcess> = [];
+
+export function spawnForwardLoop(
+	command: string,
+	args: string[],
+	errCallback: (data: string) => void,
+): StreamingProcess {
+	return spawnStreamingLoop(command, args, errCallback, forwardProcesses);
+}
+
 let streamingProcesses: Array<StreamingProcess> = [];
 
 // Live view of the supervised processes. Returned by reference so callers see
@@ -56,6 +66,7 @@ export function spawnStreamingLoop(
 	command: string,
 	args: Array<string>,
 	errCallback: (data: string) => void,
+	registry = streamingProcesses,
 ): StreamingProcess {
 	const proc = Bun.spawn([command, ...args], {
 		stdin: "inherit",
@@ -68,7 +79,7 @@ export function spawnStreamingLoop(
 		spawnfile: command,
 		exitListeners: [],
 	};
-	streamingProcesses.push(streamingProcess);
+	registry.push(streamingProcess);
 
 	if (errCallback) {
 		// Drain stderr by async iteration: chunks arrive in order, matching the
@@ -78,7 +89,8 @@ export function spawnStreamingLoop(
 			const decoder = new TextDecoder();
 			for await (const chunk of proc.stderr) {
 				const dataStr = decoder.decode(chunk);
-				logger.debug(`${streamingProcess.spawnfile} stderr: ${dataStr}`);
+				if (registry !== forwardProcesses)
+					logger.debug(`${streamingProcess.spawnfile} stderr: ${dataStr}`);
 				errCallback(dataStr);
 			}
 		})().catch((err) => {
@@ -101,6 +113,10 @@ export function spawnStreamingLoop(
 	// but never respawns the process (that would create a dual restart authority
 	// racing systemd's Restart=on-failure).
 	streamingProcess.exitListeners.push(() => {
+		if (registry === forwardProcesses) {
+			removeProc(streamingProcess);
+			return;
+		}
 		const { exitCode, signalCode } = streamingProcess.proc;
 		logger.warn(
 			`streamloop: ${streamingProcess.spawnfile} exited (code=${
@@ -123,6 +139,8 @@ export function spawnStreamingLoop(
 }
 
 function removeProc(streamingProcess: StreamingProcess) {
+	const index = forwardProcesses.indexOf(streamingProcess);
+	if (index >= 0) forwardProcesses.splice(index, 1);
 	streamingProcesses = streamingProcesses.filter((p) => p !== streamingProcess);
 }
 

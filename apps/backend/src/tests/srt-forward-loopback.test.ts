@@ -26,7 +26,9 @@ test.skipIf(!process.env.SRT_FORWARD_LOOPBACK)(
 			return p;
 		};
 		const states: unknown[] = [];
+		let relayAccepted = false;
 		let got = 0;
+		let invalidPayload = false;
 		const marker = Buffer.alloc(1316, 0x47);
 		const urls = forwardUrls(
 			{ host: "127.0.0.1", port: 19401, passphrase: "phone-secret" },
@@ -66,7 +68,7 @@ test.skipIf(!process.env.SRT_FORWARD_LOOPBACK)(
 			void new Response(sink.stderr).text();
 			void (async () => {
 				for await (const chunk of sink.stdout) {
-					expect([...chunk].every((b) => b === 0x47)).toBe(true);
+					if (![...chunk].every((b) => b === 0x47)) invalidPayload = true;
 					got += chunk.length;
 				}
 			})();
@@ -76,6 +78,7 @@ test.skipIf(!process.env.SRT_FORWARD_LOOPBACK)(
 				const decoder = new TextDecoder();
 				for await (const chunk of bridge.stderr) {
 					logs += decoder.decode(chunk);
+					if (logs.includes("SRT target connected")) relayAccepted = true;
 					if (logs.includes("Accepted SRT source connection")) {
 						logs = "";
 						await controller.publisher(true);
@@ -116,6 +119,8 @@ test.skipIf(!process.env.SRT_FORWARD_LOOPBACK)(
 				await Bun.sleep(30);
 			}
 			expect(got).toBeGreaterThanOrEqual(13160);
+			expect(invalidPayload).toBe(false);
+			expect(relayAccepted).toBe(true);
 			expect(states).toContain(true);
 			// Wait for a telemetry flush, then prove both local links carried data.
 			await Bun.sleep(1100);

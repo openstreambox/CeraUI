@@ -8,6 +8,7 @@ export function forwardUrls(
 	input: { host: string; port: number; passphrase: string },
 	output: {
 		port: number;
+		maxbw?: number;
 		streamid: string;
 		latency: number;
 		passphrase?: string;
@@ -18,8 +19,8 @@ export function forwardUrls(
 			.map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
 			.join("&");
 	return {
-		input: `srt://${input.host}:${input.port}?${query({ mode: "listener", transtype: "live", latency: 120, passphrase: input.passphrase, enforcedencryption: 1 })}`,
-		output: `srt://127.0.0.1:${output.port}?${query({ mode: "caller", transtype: "live", latency: output.latency, streamid: output.streamid, ...(output.passphrase ? { passphrase: output.passphrase } : {}) })}`,
+		input: `srt://${input.host}:${input.port}?${query({ mode: "listener", transtype: "live", latency: 120, passphrase: input.passphrase, enforcedencryption: 1, pbkeylen: 32, maxbw: output.maxbw ?? 2500000 })}`,
+		output: `srt://127.0.0.1:${output.port}?${query({ mode: "caller", transtype: "live", latency: output.latency, maxbw: output.maxbw ?? 2500000, streamid: output.streamid, ...(output.passphrase ? { passphrase: output.passphrase } : {}) })}`,
 	};
 }
 
