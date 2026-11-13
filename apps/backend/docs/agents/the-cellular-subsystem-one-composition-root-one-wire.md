@@ -774,10 +774,16 @@ Cleanup after the boot barrier takes the lifecycle interlock
 and positive consumer census; active streams are never stopped for cleanup.
 Runtime verification remains read-only. Quarantine is logged with a reason and
 reported with a translated availability token without replacing an existing
-reason. Stream admission waits up to ten seconds for a recovery-held lease;
-ordinary mutation refusal semantics stay unchanged. Retry I/O failures log and
-back off within the existing scoped exclusion; observed authority replacement
-still raises the global barrier. Ordinary modem
+reason. A stream start refused by a recovery-held lease waits for it holding
+nothing (five seconds for an external start, as long as the barrier for an
+internal origin), then runs every admission gate again before it acquires; Stop
+ends the wait. Ordinary mutation refusal semantics stay unchanged. Retry I/O
+failures log and back off within the existing scoped exclusion. A quarantined
+slot is judged by authority identity (kind, owner, epoch, plan), never by its
+own cleanup progress; a replaced authority keeps that slot fenced under both
+identities, holds its cleanup and refuses new streams without raising the
+global barrier. Every change here must keep
+`src/tests/cellular-realistic-box.test.ts` passing. Ordinary modem
 rollback is deferred while a host remains isolated. Isolation does not certify
 that modem healthy or restore its readiness; it admits only independent paths.
 Installed two-link traffic and restart/failure acceptance remain open. Adoption

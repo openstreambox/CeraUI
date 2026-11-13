@@ -113,25 +113,55 @@ export function tryAcquireCellularRecovery(): LifecycleAdmission {
 	if (admission.admitted) recoveryToken = held?.token;
 	return admission;
 }
-export function acquireStreamingLifecycle():
-	| LifecycleAdmission
-	| Promise<LifecycleAdmission> {
-	if (!held || held.token !== recoveryToken)
-		return tryAcquireLifecycle("streaming");
+/** Why a wait on recovery's cleanup hold ended. `refused`: the interlock is not
+ * held by recovery, so there is nothing a stream start may wait for. */
+export type RecoveryHoldOutcome =
+	| "released"
+	| "timeout"
+	| "cancelled"
+	| "refused";
+/** A stream start's place in line behind recovery's cleanup hold. It holds
+ * nothing: after any outcome the caller re-runs every admission gate and
+ * acquires again. Until `done()`, recovery does not take the interlock again. */
+export interface RecoveryHoldWait {
+	wait(timeoutMs?: number): Promise<RecoveryHoldOutcome>;
+	cancel(): void;
+	done(): void;
+}
+export function awaitCellularRecoveryHold(): RecoveryHoldWait {
+	let open = true;
+	let finish: ((outcome: RecoveryHoldOutcome) => void) | undefined;
 	waitingStreams++;
-	return new Promise<void>((resolve) => {
-		const done = () => {
-			clearTimeout(timer);
-			recoveryWaiters.delete(done);
-			resolve();
-		};
-		const timer = setTimeout(done, 10_000);
-		recoveryWaiters.add(done);
-	})
-		.then(() => tryAcquireLifecycle("streaming"))
-		.finally(() => {
+	return {
+		wait: (timeoutMs) => {
+			if (!open) return Promise.resolve("cancelled");
+			// Asked in the same instant as the refused acquisition it answers.
+			if (!held || held.token !== recoveryToken)
+				return Promise.resolve("refused");
+			return new Promise((resolve) => {
+				const released = () => settle("released");
+				const settle = (outcome: RecoveryHoldOutcome) => {
+					clearTimeout(timer);
+					recoveryWaiters.delete(released);
+					finish = undefined;
+					resolve(outcome);
+				};
+				const timer =
+					timeoutMs === undefined
+						? undefined
+						: setTimeout(() => settle("timeout"), timeoutMs);
+				finish = settle;
+				recoveryWaiters.add(released);
+			});
+		},
+		cancel: () => finish?.("cancelled"),
+		done: () => {
+			if (!open) return;
+			open = false;
 			waitingStreams--;
-		});
+			finish?.("cancelled");
+		},
+	};
 }
 
 /**

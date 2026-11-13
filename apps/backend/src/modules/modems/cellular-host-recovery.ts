@@ -46,17 +46,45 @@ function scopedRecoveryStore(store: PrivateStateStore): PrivateStateStore {
 	return scoped;
 }
 const isolated = new Map<number, CellularHostAuthority>();
+/** Durable authority found in place of a quarantined slot's own. The slot stays
+ * fenced under both, its cleanup stops (the retained owner has no authority
+ * over the new record) and new streams are refused. Paths on other slots are
+ * not withdrawn: their records were read in the same inventory and are intact. */
+const displaced = new Map<number, CellularHostAuthority>();
+/** What a quarantine was established for. A record's cursor and phase, and a
+ * translated path's child record, are the slot's own cleanup progress. */
+function authorityIdentity(row: CellularHostAuthority): string {
+	const plan = row.kind === "clat" ? row.birth.plan : row.inverse.plan;
+	return JSON.stringify([
+		row.kind,
+		row.slot,
+		...(row.kind === "clat"
+			? [row.birth.plan.input.owner, row.birth.plan.input.epoch]
+			: [row.inverse.owner, row.inverse.epoch]),
+		plan,
+	]);
+}
 export function cellularRecoveryReservedSlots(): readonly number[] {
 	return [...isolated.keys()];
 }
 export function hasIsolatedCellularRecovery(): boolean {
 	return isolated.size > 0;
 }
+/** A quarantined slot whose durable authority was replaced holds new stream
+ * starts, in the shape the start gate already refuses on. */
+export function cellularRecoveryStartBlock():
+	| { readonly stableKey: string }
+	| undefined {
+	const slot = displaced.keys().next().value;
+	return slot === undefined
+		? undefined
+		: { stableKey: `cellular-slot-${slot}-authority-changed` };
+}
 export function cellularRecoveryExcludes(
 	iface: string,
 	source?: string,
 ): boolean {
-	return [...isolated.values()].some((row) => {
+	return [...isolated.values(), ...displaced.values()].some((row) => {
 		if (row.kind === "bootstrap")
 			return (
 				iface === row.inverse.plan.physical.ifname ||
@@ -128,7 +156,7 @@ export class CellularHostRecovery {
 	private readonly retained = new Map<number, Retained>();
 	private readonly retries = new Map<
 		number,
-		{ reason: string; delay: number; due: number; last: number; wake: number }
+		{ delay: number; due: number; last: number; wake: number }
 	>();
 	private readonly busy = new Set<number>();
 	constructor(private readonly deps: CellularHostRecoveryDeps) {}
@@ -136,10 +164,19 @@ export class CellularHostRecovery {
 		return this.deps.now?.() ?? performance.now();
 	}
 	status(iface: string): { reason: string } | undefined {
-		const row = [...isolated.values()].find(
-			(row) => authorityIface(row) === iface && this.retained.has(row.slot),
-		);
-		return row ? this.retries.get(row.slot) : undefined;
+		for (const slot of this.retries.keys()) {
+			if (!this.retained.has(slot)) continue;
+			const fenced = isolated.get(slot),
+				replaced = displaced.get(slot);
+			if (
+				(fenced && authorityIface(fenced) === iface) ||
+				(replaced && authorityIface(replaced) === iface)
+			)
+				return {
+					reason: replaced ? "authority-changed" : "withdrawal-incomplete",
+				};
+		}
+		return undefined;
 	}
 	changed(iface?: string): void {
 		for (const row of isolated.values()) {
@@ -153,53 +190,61 @@ export class CellularHostRecovery {
 			}
 		}
 	}
+	/** Judge a fenced slot against a fresh read of its record. Only another
+	 * identity is a change: the slot's own cleanup moves cursor and phase and
+	 * finally removes the record. The verdict is slot-scoped and never raises
+	 * the global barrier, so nothing here can strand it. */
+	private confirm(
+		slot: number,
+		row: CellularHostAuthority | undefined,
+	): boolean {
+		const fenced = isolated.get(slot);
+		if (!fenced) return true;
+		if (!row || authorityIdentity(row) === authorityIdentity(fenced)) {
+			if (displaced.delete(slot)) {
+				refreshCellularSourceExclusion();
+				logger.warn(
+					"Quarantined cellular authority is its own again; cleanup resumes",
+					{ module: "modems", slot, iface: authorityIface(fenced) },
+				);
+			}
+			return true;
+		}
+		const known = displaced.get(slot);
+		if (!known || authorityIdentity(known) !== authorityIdentity(row)) {
+			displaced.set(slot, structuredClone(row));
+			refreshCellularSourceExclusion();
+			logger.error(
+				"Quarantined cellular authority was replaced; the slot stays fenced, cleanup is held and new streams are refused",
+				{
+					module: "modems",
+					slot,
+					iface: authorityIface(fenced),
+					replacedBy: authorityIface(row),
+				},
+			);
+		}
+		return false;
+	}
+	private release(slot: number): void {
+		this.retained.delete(slot);
+		this.retries.delete(slot);
+		const fenced = isolated.delete(slot),
+			replaced = displaced.delete(slot);
+		if (fenced || replaced) refreshCellularSourceExclusion();
+	}
 	async retry(): Promise<void> {
 		await Promise.all(
 			[...this.retries].map(async ([slot, retry]) => {
 				if (this.busy.has(slot) || retry.due > this.now()) return;
 				this.busy.add(slot);
 				const wake = retry.wake;
-				let attempted = false;
 				retry.last = this.now();
 				try {
 					// Runtime I/O faults retain the existing scoped fence. Startup and
 					// verify still report unreadable global authority through their owner.
-					const rows = await inventoryCellularHosts(
-						scopedRecoveryStore(this.deps.store),
-					);
-					const row = rows.find((row) => row.slot === slot);
-					if (
-						row &&
-						JSON.stringify(row) !== JSON.stringify(isolated.get(slot))
-					) {
-						noteMutationJournalReadFault();
-						throw new Error("Quarantined cellular authority changed");
-					}
-					attempted = true;
 					await this.replay(slot);
 				} catch (error) {
-					if (attempted) {
-						try {
-							const latest = (
-								await inventoryCellularHosts(
-									scopedRecoveryStore(this.deps.store),
-								)
-							).find((row) => row.slot === slot);
-							const before = isolated.get(slot);
-							const plan = (row: CellularHostAuthority) =>
-								row.kind === "clat" ? row.birth.plan : row.inverse.plan;
-							if (latest && before) {
-								if (
-									latest.kind !== before.kind ||
-									JSON.stringify(plan(latest)) !== JSON.stringify(plan(before))
-								)
-									noteMutationJournalReadFault();
-								else isolated.set(slot, latest);
-							}
-						} catch {
-							/* Unreadable I/O retains this slot's existing fence. */
-						}
-					}
 					logger.warn(
 						"Cellular recovery retry failed; path remains quarantined",
 						{ module: "modems", slot, error },
@@ -218,7 +263,6 @@ export class CellularHostRecovery {
 		const before = this.retries.get(slot);
 		const delay = Math.min((before?.delay ?? 500) * 2, 60_000);
 		this.retries.set(slot, {
-			reason: "withdrawal-incomplete",
 			delay,
 			due: this.now() + delay,
 			last,
@@ -237,13 +281,12 @@ export class CellularHostRecovery {
 		for (const [slot, owner] of this.retained) {
 			if (onlySlot !== undefined && slot !== onlySlot) continue;
 			if (rows.some((row) => row.slot === slot)) continue;
+			this.confirm(slot, undefined);
 			// Resume only the retained object's absence/directory-ack tail. Actual host
 			// owners refuse this path if any kernel resource remains without authority.
 			if (!(await owner.cleanup()))
 				throw new Error("Retained cellular recovery lost its authority");
-			this.retained.delete(slot);
-			this.retries.delete(slot);
-			if (isolated.delete(slot)) refreshCellularSourceExclusion();
+			this.release(slot);
 		}
 		if (!rows.length) return;
 		const bootId = await this.deps.bootId();
@@ -252,6 +295,11 @@ export class CellularHostRecovery {
 		let incomplete = false;
 		for (const row of rows) {
 			try {
+				// A retained owner cleans up only the authority it was retained for.
+				if (!this.confirm(row.slot, row)) {
+					incomplete = true;
+					continue;
+				}
 				let owner = this.retained.get(row.slot);
 				if (!owner) {
 					owner = await this.deps.retain(row, bootId);
@@ -261,9 +309,7 @@ export class CellularHostRecovery {
 					incomplete = true;
 					continue;
 				}
-				this.retained.delete(row.slot);
-				this.retries.delete(row.slot);
-				if (isolated.delete(row.slot)) refreshCellularSourceExclusion();
+				this.release(row.slot);
 				if (onlySlot !== undefined) return;
 			} catch (error) {
 				if (onlySlot !== undefined) throw error;
@@ -279,18 +325,16 @@ export class CellularHostRecovery {
 		).filter((row) => onlySlot === undefined || row.slot === onlySlot);
 		if (remaining.length && this.deps.isolate) {
 			for (const row of remaining) {
+				if (displaced.has(row.slot)) {
+					// Still fenced under the identity it was quarantined for; the
+					// replacement is never adopted as that identity.
+					this.defer(row.slot, this.retries.get(row.slot)?.last);
+					continue;
+				}
 				const observed = rows.find((before) => before.slot === row.slot);
 				if (
 					!observed ||
-					observed.kind !== row.kind ||
-					JSON.stringify(
-						observed.kind === "clat"
-							? observed.birth.plan
-							: observed.inverse.plan,
-					) !==
-						JSON.stringify(
-							row.kind === "clat" ? row.birth.plan : row.inverse.plan,
-						) ||
+					authorityIdentity(observed) !== authorityIdentity(row) ||
 					!this.retained.has(row.slot) ||
 					!(await this.deps.isolate(row))
 				)
@@ -310,17 +354,19 @@ export class CellularHostRecovery {
 		if (incomplete || remaining.length)
 			throw new Error("Cellular host withdrawal incomplete");
 	}
-	/** Runtime fault reconciliation is read-only; it never rolls an active path back. */
+	/** Runtime fault reconciliation is read-only; it never rolls an active path
+	 * back. It fails on unreadable authority only. A fenced slot is judged by the
+	 * rule its retry uses, on this fresh read, and stays slot-scoped: the barrier
+	 * this check lowers also holds the retries, so a verdict only a retry could
+	 * revise would keep it raised until restart. */
 	async verify(): Promise<void> {
 		const rows = await inventoryCellularHosts(this.deps.store);
-		for (const [slot, authority] of isolated) {
-			if (!this.retained.has(slot)) continue;
-			if (
-				JSON.stringify(rows.find((row) => row.slot === slot)) !==
-				JSON.stringify(authority)
-			)
-				throw new Error("Quarantined cellular authority changed");
-		}
+		for (const slot of isolated.keys())
+			if (this.retained.has(slot))
+				this.confirm(
+					slot,
+					rows.find((row) => row.slot === slot),
+				);
 	}
 }
 export async function retainCellularHostInverse(

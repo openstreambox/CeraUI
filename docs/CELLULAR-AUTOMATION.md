@@ -624,29 +624,86 @@ cellular devices; unrelated non-USB Ethernet and Wi-Fi remain eligible.
 
 These are host-tested recovery rules, not hardware qualification.
 
-Recovery admission follow-up: while a journal block exists, a missing USB cache
-entry is unknown. Ordinary non-USB admission requires a fresh, successful walk
-of the interface device's sysfs ancestry with no USB ancestor. Event wakes cannot
-start cleanup more than once per second and survive an in-flight failure. Retry
-exceptions are logged and backed off behind the existing per-slot fence; an
-observed authority replacement still raises recovery. Production presence polls
-mark new devices for retry and dispatch attempts only after their helper work.
-An incoming stream waits up to ten seconds for a recovery-held lifecycle lease;
-ordinary modem mutations retain their immediate refusal semantics. A timeout
-stays closed and does not release a lease still protecting cleanup.
+#### Invariants
+
+These hold the module to account; each has a host test, and the link-set and
+barrier rules also run on a described box with three USB modems on default
+automatic profiles and one Ethernet port
+(`apps/backend/src/tests/cellular-realistic-box.test.ts`).
+
+What may enter the link set:
+
+- A healthy automatic USB modem is captured and offered to the bond under either
+  identity anchor (USB serial or port). Capture asks for an identity that
+  survives renaming and nothing else.
+- A journal block excludes the modem it names. Other identified modems and
+  non-USB Ethernet and Wi-Fi stay eligible.
+- While a journal block exists, an interface without a cached identity is
+  admitted only after a fresh sysfs walk of its device ancestry finds no USB
+  ancestor and the device is still the same one at the end of the walk. A
+  missing or unreadable link is unknown, not ordinary. Without a block no proof
+  is needed.
+- A quarantined slot excludes its own interface (and, for translated paths, its
+  source) and keeps its slot reserved. Nothing else is excluded by it.
+
+When the global barrier rises and what lowers it:
+
+- It rises at boot until the first replay completes, and at runtime when the
+  mutation journal or host authority cannot be read, or changes during a
+  reconciliation. While it is up every managed cellular path is withdrawn,
+  external starts are refused and internal origins wait.
+- It is lowered only by the recovery owner after a complete read at an unchanged
+  journal revision. Nothing that check waits for is held back by the barrier.
+- A quarantined slot never raises it. The slot's own cleanup progress (cursor,
+  phase, a record its cleanup removed) is not a change of authority, whatever
+  reads failed in between. A different identity in the slot's record (kind,
+  owner, epoch or plan) is a verdict about that slot: it stays fenced under both
+  identities, its cleanup is held because the retained owner has no authority
+  over the new record, new streams are refused (`mutation_blocked`), and an
+  error is logged. Paths on other slots are not withdrawn. The hold ends when
+  the record is the slot's own again or is gone; otherwise a restart replays
+  whatever is recorded.
+
+What a stream start may assume after waiting:
+
+- Nothing. A start refused by recovery's cleanup hold waits holding nothing, and
+  every admission gate (barrier, journal block, replaced authority, operator
+  intent, duplicate start) is judged again in the same instant the lease is
+  taken.
+- An external start waits five seconds, which keeps the client's 75-second
+  timeout clear of the 60-second connect budget. Autostart and restoration wait
+  as long as they wait for the barrier, because their refusal is terminal.
+- Stop ends the wait at once and the interrupted start answers `cancelled`; a
+  following start takes its place. A timeout is never reported for a stopped
+  start and never releases a lease that still protects cleanup.
+- While a start waits, recovery does not take the interlock again. Ordinary
+  modem mutations keep their immediate refusal.
+
+Event wakes cannot start cleanup more than once per second and survive an
+in-flight failure. Production presence polls mark new devices for retry and
+dispatch attempts only after their helper work.
 
 The wire uses `host_recovery_pending`, translated by the frontend, and preserves
 an existing availability reason. Old roster identities are pruned. Remaining
-limits: journal revision contention may still defer acknowledgement or raise
+limits: the quarantine is shown on the modem row only while the interface keeps
+its name and has no other availability reason; after re-enumeration under a new
+name it is visible in the log only. A USB network adapter without a cached
+identity (a Wi-Fi or Ethernet dongle) is excluded while any journal block
+exists, because nothing yet tells it apart from the blocked modem returning.
+Journal revision contention may still defer acknowledgement or raise
 reconciliation during writes; strict sender binding remains required under a
-journal block or host quarantine. Runtime cgroup census success and kernel
-cleanup after physical re-enumeration still require bench measurements. Moving
-retry dispatch after helper work removes the direct poll ordering conflict, but
-does not prove that unrelated service children leave a sufficient quiet window.
+journal block or host quarantine. Runtime cgroup census success, the time
+cleanup holds the lifecycle lease and kernel cleanup after physical
+re-enumeration still require bench measurements.
 
-Admisión durante la recuperación: una interfaz sin examinar sigue excluida. Los
-eventos respetan un mínimo de un segundo entre intentos. Un inicio de transmisión
-puede esperar hasta diez segundos a que termine la limpieza; si vence el plazo,
-no se libera un bloqueo que todavía protege la recuperación. El motivo
-`host_recovery_pending` se muestra traducido. La verificación del censo de
-procesos y la limpieza tras una nueva enumeración siguen pendientes en hardware.
+Admisión durante la recuperación: una interfaz sin examinar sigue excluida y un
+módem USB sano con perfil automático entra en el enlace. Los eventos respetan un
+mínimo de un segundo entre intentos. Un inicio de transmisión externo espera
+hasta cinco segundos a que termine la limpieza y vuelve a comprobar todas las
+condiciones antes de arrancar; el arranque automático espera sin límite y Detener
+cancela la espera. El progreso de la propia limpieza nunca se trata como un
+cambio de autoridad; si la autoridad de una ranura en cuarentena es reemplazada,
+esa ranura sigue aislada, se rechazan nuevos inicios y las demás rutas no se
+retiran. El motivo `host_recovery_pending` se muestra traducido. La verificación
+del censo de procesos y la limpieza tras una nueva enumeración siguen pendientes
+en hardware.

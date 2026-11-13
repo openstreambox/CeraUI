@@ -22,6 +22,14 @@ export const START_PHASE_DEADLINES_MS: Readonly<
 export const STOP_DEADLINE_MS = 12_000;
 
 /**
+ * How long an external start waits for recovery's cleanup hold on the
+ * lifecycle interlock before it is refused. It adds to the 60 s connect-retry
+ * budget and must leave the client's 75 s `streaming.start` timeout a real
+ * margin, or the panel reports a failure for a start that then goes live.
+ */
+export const LIFECYCLE_WAIT_MS = 5_000;
+
+/**
  * Bound on the engine control-socket `close()` the stop path awaits. An engine
  * still handing `/dev/videoN` back to `uvcvideo` can leave that close pending
  * forever, and the callback that clears the session runs in its `finally` — so

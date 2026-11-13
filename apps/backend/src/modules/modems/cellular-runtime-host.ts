@@ -72,9 +72,65 @@ const kernelAddresses = async (iface: string): Promise<unknown> =>
 			maxBuffer: 256 * 1024,
 		}),
 	);
+/** The I/O boundary of this composition root: D-Bus, ModemManager and
+ * NetworkManager reads, kernel reads and the kernel session owner. Everything
+ * else in this file is admission and identity logic, which host tests run
+ * unchanged against a described box (tests/fixtures/realistic-box.ts). */
+const hostIo = {
+	now: () => performance.now(),
+	mocked: shouldMockModems,
+	bootId: async () =>
+		(await readFile("/proc/sys/kernel/random/boot_id", "ascii")).trim(),
+	lifetime: (
+		withdraw: () => void,
+	): Pick<
+		CellularGrantLifetime,
+		"start" | "close" | "select" | "owner" | "current"
+	> => new CellularGrantLifetime(withdraw),
+	readTarget: readCellularNetworkTarget,
+	targetPresent: cellularTargetPresent,
+	connFields: nmConnGetFields,
+	carrierIntent: readCarrierIntent,
+	activationReady: automaticActivationReady,
+	readBearer: readCellularNativeBearer,
+	readNmIp: readCellularNmIp,
+	kernelAddresses,
+	reconnect: reconnectCellularNativeHost,
+	senderCapable: async () =>
+		cellularSenderAllowsPublication(
+			cellularSenderRuntime(getStreamingProcesses(), srtlaSendExec),
+		) &&
+		supportsRequiredCellularBinding(
+			await probeSrtlaSenderCapabilities(srtlaSendExec),
+		),
+	reserve: (owner: string, bytes: number) =>
+		// Ten MiB covers a full day at the healthy five-minute cadence, with
+		// finite discovery/failure allowance. Reservations survive USB/process loss.
+		privateCellularProbeBudget(
+			owner,
+			{
+				dir:
+					process.env.CERALIVE_CELLULAR_BUDGET_STATE_DIR ??
+					"/data/ceralive/cellular-probe-budget",
+			},
+			10 * 1024 * 1024,
+		).reserve(bytes),
+	session: createCellularRuntimeKernelSession,
+};
+export type CellularRuntimeHostIo = typeof hostIo;
+let io: CellularRuntimeHostIo = hostIo;
 let runtime: CellularRuntime | undefined;
 let bootId: string | undefined;
 let capturing = false;
+/** Test seam: replace I/O boundaries and start from a fresh runtime root. */
+export function setCellularRuntimeHostIoForTest(
+	overrides: Partial<CellularRuntimeHostIo> | null,
+): void {
+	io = overrides ? { ...hostIo, ...overrides } : hostIo;
+	runtime = undefined;
+	bootId = undefined;
+	capturing = false;
+}
 function failure(error: unknown): void {
 	logger.warn("cellular runtime reconciliation deferred", {
 		module: "modems",
@@ -85,33 +141,13 @@ function root(): CellularRuntime {
 	if (runtime) return runtime;
 	const store = cellularHostStore();
 	runtime = new CellularRuntime({
-		now: () => performance.now(),
+		now: () => io.now(),
 		reservedSlots: cellularRecoveryReservedSlots,
-		capable: async () => {
-			if (
-				isRecoveryPending() ||
-				!cellularSenderAllowsPublication(
-					cellularSenderRuntime(getStreamingProcesses(), srtlaSendExec),
-				)
-			)
-				return false;
-			const capabilities = await probeSrtlaSenderCapabilities(srtlaSendExec);
-			return (
-				supportsRequiredCellularBinding(capabilities) && !isRecoveryPending()
-			);
-		},
-		// Ten MiB covers a full day at the healthy five-minute cadence, with
-		// finite discovery/failure allowance. Reservations survive USB/process loss.
-		reserve: (owner, bytes) =>
-			privateCellularProbeBudget(
-				owner,
-				{
-					dir:
-						process.env.CERALIVE_CELLULAR_BUDGET_STATE_DIR ??
-						"/data/ceralive/cellular-probe-budget",
-				},
-				10 * 1024 * 1024,
-			).reserve(bytes),
+		capable: async () =>
+			!isRecoveryPending() &&
+			(await io.senderCapable()) &&
+			!isRecoveryPending(),
+		reserve: (owner, bytes) => io.reserve(owner, bytes),
 		failure,
 		retain: (
 			observation,
@@ -142,38 +178,26 @@ function root(): CellularRuntime {
 					owned,
 				});
 			return {
-				session: createCellularRuntimeKernelSession(
-					grant,
-					slot,
-					observation.owner,
-					hostEpoch,
-					{
-						store,
-						bootId,
-						owned,
-						currentNow: () => currentNow() && !isRecoveryPending(),
-						current: observation.current,
-						withdraw,
-						consumersReleased: () => consumers.confirmed(),
-						reserve: async (bytes) =>
-							!!(await privateCellularProbeBudget(
-								observation.owner,
-								{
-									dir:
-										process.env.CERALIVE_CELLULAR_BUDGET_STATE_DIR ??
-										"/data/ceralive/cellular-probe-budget",
-								},
-								10 * 1024 * 1024,
-							).reserve(bytes)),
-					},
-				),
+				session: io.session(grant, slot, observation.owner, hostEpoch, {
+					store,
+					bootId,
+					owned,
+					currentNow: () => currentNow() && !isRecoveryPending(),
+					current: observation.current,
+					withdraw,
+					consumersReleased: () => consumers.confirmed(),
+					reserve: async (bytes) =>
+						!!(await io.reserve(observation.owner, bytes)),
+				}),
 				finish: (complete) => consumers.finish(complete),
 			};
 		},
 	});
 	return runtime;
 }
-async function capture(
+/** One modem's read-only observation for the runtime root. Exported for the
+ * host tests that hold this admission path to its invariants. */
+export async function captureCellularObservation(
 	id: number,
 ): Promise<CellularRuntimeObservation | undefined> {
 	const config = getModem(id)?.config,
@@ -182,12 +206,12 @@ async function capture(
 	const uuid = config.conn;
 	let active = false,
 		iface: string | undefined;
-	const lifetime = new CellularGrantLifetime(() => {
+	const lifetime = io.lifetime(() => {
 		if (active && iface) runtime?.invalidate(iface);
 	});
 	try {
 		await lifetime.start();
-		const target = await readCellularNetworkTarget(id, key);
+		const target = await io.readTarget(id, key);
 		if (!target) {
 			await lifetime.close();
 			return undefined;
@@ -204,11 +228,10 @@ async function capture(
 				target.equipment,
 			]),
 			identity = resolveBondPhysicalIdentity(iface);
-		if (
-			!identity ||
-			!examinedNonUsbNetDevice(iface) ||
-			identity.anchor === "ifname"
-		) {
+		// A modem needs an identity that survives renaming, nothing more. The
+		// non-USB proof belongs to the exclusion's unidentified fallback below:
+		// every USB modem fails it by construction.
+		if (!identity || identity.anchor === "ifname") {
 			await lifetime.close();
 			return undefined;
 		}
@@ -223,19 +246,19 @@ async function capture(
 				!getModem(id)?.inhibit &&
 				!getModem(id)?.is_scanning,
 			currentPhysical = async () =>
-				currentNow() && (await cellularTargetPresent(target)) && currentNow(),
+				currentNow() && (await io.targetPresent(target)) && currentNow(),
 			pair = {
 				uuid,
 				deviceId: target.deviceId,
 				simId: target.simId,
 			},
-			fields = await nmConnGetFields(uuid, [
+			fields = await io.connFields(uuid, [
 				"gsm.device-id",
 				"gsm.sim-id",
 				"gsm.auto-config",
 				"gsm.apn",
 			]),
-			intent = await readCarrierIntent(pair),
+			intent = await io.carrierIntent(pair),
 			home = target.sim.simInfo["sim.properties.operator-code"]?.trim(),
 			selection = selectAutomaticSubscription({
 				...(home ? { homePlmn: home } : {}),
@@ -257,14 +280,12 @@ async function capture(
 			/^\d{5,6}$/.test(home) &&
 			selection.state !== "not-qualified" &&
 			quirk?.owner !== "internal-call" &&
-			(!quirk || (await automaticActivationReady(uuid)));
-		const bearer = eligible
-				? await readCellularNativeBearer(target)
-				: undefined,
+			(!quirk || (await io.activationReady(uuid)));
+		const bearer = eligible ? await io.readBearer(target) : undefined,
 			nm = bearer
-				? await readCellularNmIp(target, uuid, currentPhysical)
+				? await io.readNmIp(target, uuid, currentPhysical)
 				: undefined,
-			addresses = nm ? await kernelAddresses(iface) : undefined,
+			addresses = nm ? await io.kernelAddresses(iface) : undefined,
 			grant =
 				bearer && nm && nm.service === lifetime.owner(NM) && currentNow()
 					? captureCellularDataGrant(target, bearer, nm, addresses)
@@ -304,7 +325,7 @@ async function capture(
 					target,
 					bearer,
 					nm,
-					await kernelAddresses(target.ifname),
+					await io.kernelAddresses(target.ifname),
 				);
 				return (
 					latest?.generation === grant.generation && (await currentPhysical())
@@ -314,8 +335,7 @@ async function capture(
 				active = false;
 				await lifetime.close();
 			},
-			reconnect: (withdrawn) =>
-				reconnectCellularNativeHost(target, uuid, withdrawn),
+			reconnect: (withdrawn) => io.reconnect(target, uuid, withdrawn),
 		};
 		return observation;
 	} catch (error) {
@@ -328,22 +348,20 @@ async function capture(
  * ready activation, outside its update lock. No separate timer or process owner.
  */
 export async function runCellularRuntime(): Promise<void> {
-	if (shouldMockModems() || capturing) return;
+	if (io.mocked() || capturing) return;
 	capturing = true;
 	try {
 		if (isRecoveryPending()) {
 			runtime?.invalidate();
 			return;
 		}
-		bootId ??= (
-			await readFile("/proc/sys/kernel/random/boot_id", "ascii")
-		).trim();
+		bootId ??= await io.bootId();
 		if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(bootId))
 			throw new Error("Cellular runtime boot identity unavailable");
 		const observations: CellularRuntimeObservation[] = [];
 		for (const id of getModemIds()) {
 			try {
-				const observation = await capture(id);
+				const observation = await captureCellularObservation(id);
 				if (observation) observations.push(observation);
 			} catch (error) {
 				runtime?.invalidate(getModem(id)?.ifname);
@@ -389,7 +407,7 @@ export function initCellularRuntimeAdmission(): void {
 		refreshCellularSourceExclusion,
 	);
 	setCellularSourceAdmission((iface) => {
-		if (shouldMockModems()) return false;
+		if (io.mocked()) return false;
 		const rows = getModemIds()
 			.map(getModem)
 			.filter((row) => row?.ifname === iface);
