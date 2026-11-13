@@ -728,6 +728,8 @@ export class CerastreamBackend implements StreamingBackend {
 	/** The engine's value is unknown (adopted or reconnected session): send even if unchanged. */
 	private heatResend = false;
 	private heatInFlight = false;
+	/** Keep quality was switched on while a change was in flight; the running pass applies it. */
+	private heatManualPending = false;
 	private heatRecordPending = false;
 	private heatRetryAt = -Infinity;
 	private heatBackoffMs = 0;
@@ -777,12 +779,16 @@ export class CerastreamBackend implements StreamingBackend {
 		const before = this.heat.stage;
 		this.heat = advanceHeat(this.heat, { soc: temperature }, now);
 		if (before !== this.heat.stage) this.heatRecordPending = true;
-		if (!this.heat.unknown) this.requestHeatApply(now);
+		// While unknown, only a pending resend may go out: it repeats the
+		// session's own ceiling (after a backend restart, the user's maximum) and
+		// takes no step.
+		if (!this.heat.unknown || this.heatResend) this.requestHeatApply(now);
 	}
 	async keepHeatQuality(enabled: boolean): Promise<void> {
 		if (!this.active) return;
 		this.heat = { ...this.heat, keepQuality: enabled };
 		this.heatRecordPending = true;
+		if (!enabled) this.heatManualPending = false;
 		// Switching Keep quality on restores the user's maximum even while the
 		// temperature is unknown; switching it off never resumes a cap blind.
 		this.requestHeatApply(getms(), enabled);
@@ -792,9 +798,13 @@ export class CerastreamBackend implements StreamingBackend {
 		const client = this.client;
 		if (!client || !this.active) return;
 		if (this.heatRequested === null && !this.heatResend) return;
-		if (this.heat.unknown && !manual) return;
+		if (this.heat.unknown && !manual && !this.heatResend) return;
 		if (!manual && now < this.heatRetryAt) return;
-		if (this.heatInFlight) return;
+		if (this.heatInFlight) {
+			// The running pass reads this before its next decision.
+			if (manual) this.heatManualPending = true;
+			return;
+		}
 		this.heatInFlight = true;
 		const epoch = this.clientEpoch;
 		this.heatDrain = this.enqueue(
@@ -813,7 +823,12 @@ export class CerastreamBackend implements StreamingBackend {
 		try {
 			let manualPass = manual;
 			for (;;) {
-				if (!owns() || (this.heat.unknown && !manualPass)) return;
+				if (this.heatManualPending) {
+					this.heatManualPending = false;
+					manualPass = true;
+				}
+				if (!owns() || (this.heat.unknown && !manualPass && !this.heatResend))
+					return;
 				const target = heatCeiling(this.heat, this.ownBitrate());
 				if (!this.heatResend && target === this.heatRequested) {
 					if (this.heatRecordPending) this.recordHeat(target);
@@ -842,14 +857,6 @@ export class CerastreamBackend implements StreamingBackend {
 					return;
 				}
 				if (!owns()) return;
-				if (this.heatError)
-					this.deps.logger.info(
-						"cerastream: heat bitrate change applied again",
-					);
-				this.heatError = false;
-				this.heatBackoffMs = 0;
-				this.heatRetryAt = -Infinity;
-				this.heatResend = false;
 				this.noteHeatSent(target, reply);
 				if (this.heatRecordPending) this.recordHeat(target);
 				manualPass = false;
@@ -863,6 +870,14 @@ export class CerastreamBackend implements StreamingBackend {
 		sent: number,
 		reply: Awaited<ReturnType<CerastreamClient["setBitrate"]>> | undefined,
 	): void {
+		// Any confirmed send of the session's ceiling (heat or operator change)
+		// ends a failure streak and its backoff.
+		if (this.heatError)
+			this.deps.logger.info("cerastream: heat bitrate change applied again");
+		this.heatError = false;
+		this.heatBackoffMs = 0;
+		this.heatRetryAt = -Infinity;
+		this.heatResend = false;
 		this.heatRequested = sent;
 		const applied = reply?.applied?.max_bitrate;
 		this.heatApplied =
@@ -1275,6 +1290,7 @@ export class CerastreamBackend implements StreamingBackend {
 		this.heatRequested = null;
 		this.heatApplied = null;
 		this.heatResend = false;
+		this.heatManualPending = false;
 		this.heatRecordPending = false;
 		this.heatRetryAt = -Infinity;
 		this.heatBackoffMs = 0;

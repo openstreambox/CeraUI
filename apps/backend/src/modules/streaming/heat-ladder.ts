@@ -71,6 +71,8 @@ export interface HeatState {
 	coolAt: number | null;
 	lastUndo: number;
 	lastAt: number | null;
+	/** Time of the last sample with every input readable. */
+	knownAt: number | null;
 	hotSince: Record<number, number>;
 	filtered: Record<string, number>;
 	entries: Record<number, number[]>;
@@ -88,6 +90,7 @@ export function initialHeat(): HeatState {
 		coolAt: null,
 		lastUndo: -Infinity,
 		lastAt: null,
+		knownAt: null,
 		hotSince: {},
 		filtered: {},
 		entries: {},
@@ -108,10 +111,13 @@ export function advanceHeat(
 		entries: { ...previous.entries },
 		hotSince: { ...previous.hotSince },
 	};
-	const elapsed = s.lastAt === null ? 0 : now - s.lastAt;
+	const elapsed = s.knownAt === null ? 0 : now - s.knownAt;
 	s.lastAt = now;
-	// A gap is missing evidence, never time spent hot or cool.
-	if (elapsed < 0 || elapsed > p.staleMs) {
+	// A gap of more than staleMs since the last readable sample is missing
+	// evidence, never time spent hot or cool: the timers start over. A shorter
+	// gap (one unreadable sample) only pauses them, as a late sample would.
+	const gap = elapsed < 0 || elapsed > p.staleMs;
+	if (gap) {
 		s.candidateAt = now;
 		s.coolAt = null;
 		s.filtered = {};
@@ -120,13 +126,9 @@ export function advanceHeat(
 	s.unknown =
 		Object.values(inputs).some((t) => !plausibleTemperature(t)) ||
 		!Object.keys(inputs).length;
-	if (s.unknown) {
-		s.candidateAt = now;
-		s.coolAt = null;
-		s.filtered = {};
-		s.hotSince = {};
-		return s;
-	}
+	// Unknown never takes a step and never undoes one.
+	if (s.unknown) return s;
+	s.knownAt = now;
 	let level = 0,
 		cool = true,
 		allNormal = true;

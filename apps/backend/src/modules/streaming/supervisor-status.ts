@@ -1,9 +1,10 @@
-import { HEAT_SETTINGS } from "./heat-ladder";
+import { HEAT_SETTINGS, plausibleTemperature } from "./heat-ladder";
 
+/** Same plausible range as the ladder, so a value is never kept here and rejected there. */
 function temperature(value: string | undefined): number | null {
 	if (!value || !/^-?\d+(\.\d+)?C$/.test(value)) return null;
 	const n = Number(value.slice(0, -1));
-	return n >= -20 && n <= 110 ? n : null;
+	return plausibleTemperature(n) ? n : null;
 }
 
 /** CRC-16/CCITT-FALSE, UTF-8 bytes, initial FFFF, polynomial 1021, no reflection or final XOR. */

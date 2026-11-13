@@ -19,14 +19,21 @@ engine reports it applied.
 The live panel includes a bounded session history of confirmed ceiling changes.
 An unavailable temperature pauses automatic changes and recovery; it does not
 mean the device is cool. A reading outside −20…125 °C, or a thermal zone that
-reads exactly 0, counts as unavailable. A failed engine change is reported
-without claiming it was applied; it is retried after 5 s, doubling up to 60 s,
-and logged once rather than every second.
+reads exactly 0, counts as unavailable; the supervisor parser uses the same
+range. One unreadable sample pauses the cool-down timer without restarting it;
+more than 5 s without a readable sample restarts it. A failed engine change is
+reported without claiming it was applied; it is retried after 5 s, doubling up
+to 60 s, and logged once rather than every second. Any confirmed send of the
+session ceiling, including one that follows your own bitrate change, clears
+that warning and the backoff.
 
 The 1 s sensor loop never waits on the engine. At most one heat change is in
 flight and it always sends the latest ceiling. A stream that survived a backend
 restart is adopted first; the reset to your maximum follows as a best-effort
-call.
+call. If the engine rejects it, it is retried with the same backoff even while
+the temperature is unavailable, because it only repeats your own maximum.
+Keep quality switched on while another change is in flight is applied as soon
+as that change answers, also while the temperature is unavailable.
 
 ## Implementation boundary
 

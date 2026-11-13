@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
 	advanceHeat,
+	type HeatState,
 	heatCeiling,
 	initialHeat,
 } from "../modules/streaming/heat-ladder";
@@ -155,4 +156,55 @@ test("C5: implausible SoC readings are unknown, never a step or an undo", async 
 	expect(advanceHeat(initialHeat(), { soc: -40 }, 0).unknown).toBe(true);
 	expect(fresh.stage).toBe(0);
 	expect(fresh.unknown).toBe(true);
+});
+
+test("a single unknown sample pauses but does not restart the cool-down; a long gap does", () => {
+	const hot = {
+		...initialHeat(),
+		stage: 2,
+		capStage: 2,
+		enteredAt: -600000,
+	};
+	const cool = (from: HeatState, start: number, glitchEvery: number) => {
+		let s = from;
+		for (let t = start; t <= start + 70000; t += 1000)
+			s = advanceHeat(
+				s,
+				{ soc: glitchEvery && t % glitchEvery === 0 ? null : 60 },
+				t,
+			);
+		return s;
+	};
+	// One unreadable sample every 30 s: the cool-down still completes.
+	expect(cool(hot, 1000, 30000).stage).toBe(1);
+	// Ten unknown seconds are missing evidence: the cool-down starts over.
+	let s: HeatState = hot;
+	for (let t = 1000; t <= 50000; t += 1000) s = advanceHeat(s, { soc: 60 }, t);
+	for (let t = 51000; t <= 60000; t += 1000)
+		s = advanceHeat(s, { soc: null }, t);
+	expect(s.unknown).toBe(true);
+	for (let t = 61000; t <= 80000; t += 1000) s = advanceHeat(s, { soc: 60 }, t);
+	expect(s.stage).toBe(2);
+	for (let t = 81000; t <= 125000; t += 1000)
+		s = advanceHeat(s, { soc: 60 }, t);
+	expect(s.stage).toBe(1);
+	// An unknown sample never takes or undoes a step by itself.
+	const frozen = advanceHeat(
+		{ ...hot, coolAt: -100000, lastAt: 0 },
+		{ soc: null },
+		1000,
+	);
+	expect(frozen.stage).toBe(2);
+});
+
+test("the supervisor parser and the ladder share one plausible range", () => {
+	const line =
+		"OSB1 up=1 a=healthy/0/0/30.0C b=healthy/0/0/30.0C pack=ready/115.0C thermal=ok";
+	expect(parseSupervisor(line, 0, 0)?.temperatures.pack).toBe(115);
+	expect(
+		parseSupervisor(line.replace("115.0C", "126.0C"), 0, 0)?.temperatures.pack,
+	).toBeNull();
+	expect(
+		parseSupervisor(line.replace("115.0C", "-21.0C"), 0, 0)?.temperatures.pack,
+	).toBeNull();
 });
