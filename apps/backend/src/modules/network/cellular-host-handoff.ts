@@ -7,6 +7,7 @@ import { setLinkUpByIndex } from "../../helpers/link-up-by-index.ts";
 import { run } from "../../helpers/run.ts";
 import {
 	type CellularPhysicalLink,
+	cellularPhysicalResourceState,
 	cellularPhysicalState,
 	compareAndSetCellularSysctl,
 	readCellularSysctl,
@@ -15,8 +16,12 @@ import type {
 	CellularNmControl,
 	CellularNmDevice,
 } from "./cellular-nm-control.ts";
+import { cellularNmHandoffRestored } from "./cellular-nm-handoff-observation.ts";
 import { isSafeIfname } from "./safe-ifname.ts";
 
+const bootSchema = z
+	.string()
+	.regex(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
 const linkSchema = z
 	.object({
 		ifname: z.string().refine(isSafeIfname),
@@ -40,6 +45,7 @@ const deviceSchema = z
 const planSchema = z
 	.object({
 		version: z.literal(1),
+		bootId: bootSchema,
 		link: linkSchema,
 		nmOwner: z.string().regex(/^:\d+\.\d+$/),
 		device: deviceSchema,
@@ -51,6 +57,10 @@ export type CellularHandoffPlan = z.infer<typeof planSchema>;
 type Record = DurableInverseRecord<CellularHandoffPlan>;
 export interface CellularHandoffIO {
 	readonly present: () => Promise<boolean>;
+	readonly resourceState: (
+		bootId: string,
+	) => ReturnType<typeof cellularPhysicalResourceState>;
+	readonly nmRestored: (device: CellularNmDevice) => Promise<boolean>;
 	readonly readRaDefault: () => Promise<"0" | "1" | undefined>;
 	readonly setRaDefault: (
 		expected: "0" | "1",
@@ -63,7 +73,10 @@ export interface CellularHandoffIO {
 export function cellularHandoffIO(
 	link: CellularPhysicalLink,
 	nm: CellularNmControl,
+	bootId: string,
 ): CellularHandoffIO {
+	link = Object.freeze({ ...link });
+	bootSchema.parse(bootId);
 	const present = async () => (await cellularPhysicalState(link)) === "present";
 	const readUp = async () => {
 		if (!(await present())) return undefined;
@@ -87,6 +100,9 @@ export function cellularHandoffIO(
 	};
 	return {
 		present,
+		resourceState: (originalBoot) =>
+			cellularPhysicalResourceState(link, originalBoot === bootId),
+		nmRestored: cellularNmHandoffRestored,
 		nm,
 		readUp,
 		readRaDefault: async () => {
@@ -108,6 +124,7 @@ export function cellularHandoffIO(
 	};
 }
 export interface CellularHandoffHooks {
+	readonly bootId: string;
 	readonly read: () => Promise<unknown>;
 	readonly write: (record: Record | undefined) => Promise<void>;
 	readonly current: () => Promise<boolean>;
@@ -135,6 +152,7 @@ function steps(plan: CellularHandoffPlan): string[] {
  */
 export class CellularHostHandoff {
 	private readonly inverse: DurableInverse<CellularHandoffPlan>;
+	private readonly bootId: string;
 	constructor(
 		readonly owner: string,
 		readonly epoch: string,
@@ -142,6 +160,9 @@ export class CellularHostHandoff {
 		private readonly io: CellularHandoffIO,
 		private readonly hooks: CellularHandoffHooks,
 	) {
+		link = Object.freeze({ ...link });
+		this.link = link;
+		this.bootId = bootSchema.parse(hooks.bootId);
 		this.inverse = new DurableInverse({
 			read: hooks.read,
 			write: hooks.write,
@@ -164,6 +185,7 @@ export class CellularHostHandoff {
 			current: async (record) =>
 				record.owner === owner &&
 				record.epoch === epoch &&
+				record.plan.bootId === this.bootId &&
 				(await hooks.current()) &&
 				(await io.present()) &&
 				io.nm.valid(),
@@ -185,9 +207,14 @@ export class CellularHostHandoff {
 		plan: CellularHandoffPlan,
 		step: string,
 	): Promise<"absent" | "owned" | "foreign"> {
-		// A missing/replaced physical interface is not authority to restore its
-		// name. Keep the durable inverse until recovery confirms what disappeared.
-		if (!(await this.io.present())) return "foreign";
+		// A complete old-index absence retires kernel effects without touching a
+		// reused name. NM has a separate observation and never inherits this proof.
+		if (step !== "nm-unmanaged") {
+			const resource = await this.io.resourceState(plan.bootId);
+			if (resource === "absent") return "absent";
+			if (resource !== "present" || !(await this.io.present()))
+				return "foreign";
+		}
 		if (step === "ra-default") {
 			const value = await this.io.readRaDefault();
 			return value === "0"
@@ -206,17 +233,25 @@ export class CellularHostHandoff {
 		}
 		if (
 			step === "nm-unmanaged" &&
+			plan.bootId === this.bootId &&
 			this.io.nm.owner === plan.nmOwner &&
-			this.io.nm.valid()
+			this.io.nm.valid() &&
+			(await this.io.present())
 		) {
-			const value = await this.io.nm.read(plan.device);
-			if (!value || !sameDevice(value, plan.device)) return "foreign";
-			return !value.managed
-				? "owned"
-				: value.managed === plan.device.managed
-					? "absent"
-					: "foreign";
+			try {
+				const value = await this.io.nm.read(plan.device);
+				if (value && sameDevice(value, plan.device))
+					return !value.managed
+						? "owned"
+						: value.managed === plan.device.managed
+							? "absent"
+							: "foreign";
+			} catch {
+				/* Independent read-only census below must prove restoration. */
+			}
 		}
+		if (step === "nm-unmanaged" && (await this.io.nmRestored(plan.device)))
+			return "absent";
 		return "foreign";
 	}
 	private async effect(
@@ -224,7 +259,7 @@ export class CellularHostHandoff {
 		step: string,
 		restore: boolean,
 	): Promise<boolean> {
-		if (!(await this.io.present())) return false;
+		if (plan.bootId !== this.bootId || !(await this.io.present())) return false;
 		if (step === "ra-default")
 			return this.io.setRaDefault(
 				restore ? "0" : plan.raDefault,
@@ -271,6 +306,7 @@ export class CellularHostHandoff {
 			throw new Error("Host baseline unreadable");
 		const plan: CellularHandoffPlan = {
 			version: 1,
+			bootId: this.bootId,
 			link: this.link,
 			nmOwner: this.io.nm.owner,
 			device,

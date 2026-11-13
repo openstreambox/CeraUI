@@ -26,7 +26,8 @@ function fixture(policyKey = "att") {
 		sameSubscriber = true,
 		valid = true,
 		allowMutation = true,
-		cleanup = true;
+		cleanup = true,
+		physicalGone = false;
 	let registration: InternalRegistration = "home";
 	let context: InternalContext = { apn: "old.example", family: "ipv4" },
 		active = false;
@@ -83,6 +84,7 @@ function fixture(policyKey = "att") {
 		},
 		current: async () => current,
 		now: () => now,
+		physicalGone: async () => physicalGone,
 		context: createInternalCallContext(
 			"synthetic-key",
 			{
@@ -157,6 +159,13 @@ function fixture(policyKey = "att") {
 	};
 	const owner = new InternalCallOwner(
 		{
+			id: 1,
+			key: "synthetic-key",
+			equipment: "synthetic-unit",
+			usbDevice: "synthetic-usb",
+			netDevice: "synthetic-net",
+			ifindex: "17",
+			generation: "one",
 			identity: {
 				model: "FM350-GL",
 				firmware: "81600.0000.00.29.18.01",
@@ -187,6 +196,7 @@ function fixture(policyKey = "att") {
 			allowMutation?: boolean;
 			registration?: InternalRegistration;
 			cleanup?: boolean;
+			physicalGone?: boolean;
 			context?: InternalContext;
 			active?: boolean;
 			grant?: InternalGrant;
@@ -199,6 +209,7 @@ function fixture(policyKey = "att") {
 				allowMutation = values.allowMutation;
 			if (values.registration !== undefined) registration = values.registration;
 			if (values.cleanup !== undefined) cleanup = values.cleanup;
+			if (values.physicalGone !== undefined) physicalGone = values.physicalGone;
 			if (values.context !== undefined) context = values.context;
 			if (values.active !== undefined) active = values.active;
 			if (values.grant !== undefined) grant = values.grant;
@@ -479,4 +490,123 @@ test("a foreign context change invalidates an otherwise active grant", async () 
 	expect(await f.owner.close()).toBe(false);
 	expect(f.events).not.toContain("cleanup");
 	expect(f.events).not.toContain("active-1-false");
+});
+
+test("control recovery accepts a fresh MM index only for inverse of the same unit generation", async () => {
+	const f = fixture();
+	await f.owner.start();
+	for (let i = 0; i < 4; i++) await f.tick();
+	f.revoke();
+	await f.tick();
+	expect(await f.owner.close()).toBe(false);
+	f.events.length = 0;
+	for (const changed of [
+		{ equipment: "other-unit" },
+		{ key: "other-key" },
+		{ ifindex: "18" },
+		{ generation: "two" },
+		{ identity: { ...f.owner.target.identity, firmware: "unknown" } },
+	]) {
+		expect(
+			await f.owner.recoverControl({ ...f.owner.target, id: 9, ...changed }),
+		).toBe(false);
+	}
+	expect(f.events).toEqual([]);
+	const acquire = f.deps.acquire;
+	let recoveredId: number | undefined;
+	const candidate = {
+			...f.owner.target,
+			id: 9,
+			identity: { ...f.owner.target.identity },
+		},
+		mutate = f.deps.mutate;
+	f.deps.mutate = async (operation, effect) => {
+		candidate.identity.firmware = "unknown";
+		return mutate(operation, effect);
+	};
+	f.deps.acquire = async (target) => {
+		expect(target.identity.firmware).toBe(f.owner.target.identity.firmware);
+		recoveredId = target.id;
+		f.set({ valid: true });
+		return acquire(target);
+	};
+	expect(await f.owner.recoverControl(candidate)).toBe(true);
+	expect(recoveredId).toBe(9);
+	await f.tick();
+	expect(f.events).not.toContain("install-grant-not-ready");
+	expect(f.events).not.toContain("active-1-false");
+	expect(await f.owner.close()).toBe(true);
+	expect(f.events.indexOf("active-1-false")).toBeLessThan(
+		f.events.indexOf("cleanup"),
+	);
+});
+
+test("failed control acquisition can retry without relinquishing the context or guard", async () => {
+	const f = fixture();
+	await f.owner.start();
+	for (let i = 0; i < 4; i++) await f.tick();
+	f.revoke();
+	const acquire = f.deps.acquire;
+	f.deps.acquire = async () => {
+		throw new Error("Control temporarily unavailable");
+	};
+	await expect(
+		f.owner.recoverControl({ ...f.owner.target, id: 9 }),
+	).rejects.toThrow("temporarily unavailable");
+	expect(f.events).not.toContain("cleanup");
+	expect(f.record()?.activationOwned).toBe(true);
+	f.deps.acquire = async (target) => {
+		f.set({ valid: true });
+		return acquire(target);
+	};
+	expect(await f.owner.recoverControl({ ...f.owner.target, id: 10 })).toBe(
+		true,
+	);
+	expect(await f.owner.close()).toBe(true);
+});
+
+test("a changed SIM on recovered control parks only after a positive inactive observation", async () => {
+	const f = fixture();
+	await f.owner.start();
+	for (let i = 0; i < 4; i++) await f.tick();
+	f.revoke();
+	f.set({ sameSubscriber: false });
+	const acquire = f.deps.acquire;
+	f.deps.acquire = async (target) => {
+		f.set({ valid: true });
+		return acquire(target);
+	};
+	expect(await f.owner.recoverControl({ ...f.owner.target, id: 9 })).toBe(true);
+	f.events.length = 0;
+	expect(await f.owner.close()).toBe(false);
+	expect(f.events).not.toContain("cleanup");
+	f.set({ active: false });
+	expect(await f.owner.close()).toBe(true);
+	expect(
+		f.events.some(
+			(event) => event.startsWith("active-") || event.startsWith("define-"),
+		),
+	).toBe(false);
+	expect(f.record()?.phase).toBe("parked");
+});
+
+test("confirmed physical generation absence retires its host while preserving unit authority", async () => {
+	const f = fixture();
+	await f.owner.start();
+	for (let i = 0; i < 4; i++) await f.tick();
+	f.revoke();
+	f.events.length = 0;
+	expect(await f.owner.close()).toBe(false);
+	f.set({ physicalGone: true, cleanup: false });
+	expect(await f.owner.close()).toBe(false);
+	f.set({ cleanup: true });
+	expect(await f.owner.close()).toBe(true);
+	expect(f.record()?.activationOwned).toBe(true);
+	expect(f.record()?.original.context.apn).toBe("old.example");
+	expect(
+		f.events.some(
+			(event) => event.startsWith("active-") || event.startsWith("define-"),
+		),
+	).toBe(false);
+	expect(f.events.at(-1)).toBe("release-MM");
 });

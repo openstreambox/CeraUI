@@ -11,6 +11,7 @@ import {
 	CellularHostHandoff,
 } from "../modules/network/cellular-host-handoff.ts";
 import { acquireCellularNmControl } from "../modules/network/cellular-nm-control.ts";
+import { cellularNmHandoffRestored } from "../modules/network/cellular-nm-handoff-observation.ts";
 import { inspectCellularNmcliObserver } from "../modules/network/cellular-observer-census.ts";
 import {
 	captureReadOnlyNmcliMonitors,
@@ -173,7 +174,41 @@ if (unavailable && process.env.CERALIVE_REQUIRE_REAL_NM === "1")
 		try {
 			const device = control.devices[0];
 			if (!device) throw new Error("Missing actual NM physical device");
+			const observeRestoration = async (expected: boolean) => {
+				const trace: unknown[] = [];
+				const restored = await cellularNmHandoffRestored(device, {
+					now: () => performance.now(),
+					transport: (options) => {
+						const transport = createCellularSystemTransport(options),
+							dispatch = transport.callMethod.bind(transport);
+						transport.callMethod = async (call) => {
+							const reply = await dispatch(call);
+							trace.push({
+								member: call.member,
+								signature: reply.signature,
+								body:
+									call.member === "GetAll" && Array.isArray(reply.body[0])
+										? reply.body[0].filter(
+												(item) =>
+													Array.isArray(item) &&
+													[
+														"Udi",
+														"Interface",
+														"IpInterface",
+														"Managed",
+													].includes(String(item[0])),
+											)
+										: reply.body,
+							});
+							return reply;
+						};
+						return transport;
+					},
+				});
+				expect(restored, JSON.stringify(trace)).toBe(expected);
+			};
 			expect(device.managed).toBe(true);
+			await observeRestoration(true);
 			const raPath = "/proc/sys/net/ipv6/conf/cellular0/accept_ra_defrtr";
 			const readRaDefault = async () => {
 				const value = (await readFile(raPath, "ascii")).trim();
@@ -182,6 +217,8 @@ if (unavailable && process.env.CERALIVE_REQUIRE_REAL_NM === "1")
 			const originalRa = await readRaDefault();
 			const originalUp = (await row()).flags.includes("UP") as boolean;
 			const io: CellularHandoffIO = {
+				resourceState: async () => ((await present()) ? "present" : "unknown"),
+				nmRestored: async () => false,
 				present,
 				nm: control,
 				readRaDefault,
@@ -208,6 +245,9 @@ if (unavailable && process.env.CERALIVE_REQUIRE_REAL_NM === "1")
 				);
 			const handoff = new CellularHostHandoff(owner, "one", link, io, {
 				...store,
+				bootId: (
+					await readFile("/proc/sys/kernel/random/boot_id", "ascii")
+				).trim(),
 				current: present,
 				withdraw: () => {},
 				fence: async () => {},
@@ -215,11 +255,13 @@ if (unavailable && process.env.CERALIVE_REQUIRE_REAL_NM === "1")
 			});
 			await handoff.prepare();
 			expect((await control.read(device))?.managed).toBe(false);
+			await observeRestoration(false);
 			expect(await readRaDefault()).toBe("0");
 			await handoff.prepareCall();
 			expect((await row()).flags).toContain("UP");
 			expect(await handoff.cleanup()).toBe(true);
 			expect((await control.read(device))?.managed).toBe(true);
+			await observeRestoration(true);
 			expect(await readRaDefault()).toBe(originalRa);
 			expect((await row()).flags.includes("UP")).toBe(originalUp);
 			expect(await store.read()).toBeUndefined();

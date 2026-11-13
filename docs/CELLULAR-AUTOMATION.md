@@ -543,3 +543,24 @@ del dispositivo sin sustituir la referencia original por el APN solicitado. Ante
 de activar este propietario faltan su construcción en funcionamiento automático y
 el registro de la operación inversa conjunta al arrancar; Verizon sigue sin
 calificar.
+
+Internal-call recovery distinguishes a changed MM object from a changed physical
+generation. An inverse may reacquire a fresh MM index only for the same unit,
+physical link and admitted firmware, without resuming old-policy publication.
+Confirmed old-index absence can retire that generation's host state while keeping
+the unit context baseline. Handoff inverses carry boot identity; another boot
+cannot inherit their setters. Independent read-only NM censuses must prove the
+old device absent or its managed baseline restored. An unknown inventory or an
+unrestored flag retains the inverse. These components do not enable runtime calls.
+
+La recuperación distingue un objeto nuevo de MM de una generación física nueva.
+La operación inversa solo puede retomar el control mediante un índice nuevo de MM
+para el mismo dispositivo, enlace físico y firmware admitido, sin volver a publicar
+con la política anterior. La ausencia confirmada del índice previo permite retirar
+el estado del host de esa generación y conservar la referencia del contexto del
+dispositivo. Las operaciones inversas guardan la identidad del arranque; otro
+arranque no puede heredar sus comandos de escritura. Inventarios independientes y
+de solo lectura de NM deben confirmar que el dispositivo anterior desapareció o
+que se restauró su estado de gestión inicial. Un inventario desconocido o un estado
+sin restaurar conserva la operación inversa. Estos componentes no activan llamadas
+en funcionamiento automático.
