@@ -1,4 +1,5 @@
 import { logger } from "../../../helpers/logger.ts";
+import { isDevelopment } from "../../../mocks/mock-config.ts";
 import { buildLinkTelemetry } from "../../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../../streaming/streaming.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
@@ -48,13 +49,25 @@ const resolveTargetShared: ConnectivityTargetResolver = () => {
 	return sharedTarget();
 };
 
+/**
+ * The default check target. Under mocks the interfaces are fictional, so
+ * resolving the public check domain on the host and probing through mock
+ * interface names would only reach the developer's own network; no target
+ * skips the active round, exactly as an unresolvable address does.
+ */
+export const resolveUplinkHealthTarget = (
+	resolve: ConnectivityTargetResolver = resolveTargetShared,
+	mocked: () => boolean = isDevelopment,
+): Promise<string | undefined> =>
+	mocked() ? Promise.resolve(undefined) : resolve();
+
 const defaultDeps: UplinkHealthRuntimeDeps = {
 	now: Date.now,
 	interfaces: getNetworkInterfaces,
 	onInterfacesChange: onNetworkInterfacesChange,
 	streaming: getIsStreaming,
 	telemetry: buildLinkTelemetry,
-	resolveTarget: resolveTargetShared,
+	resolveTarget: () => resolveUplinkHealthTarget(),
 	probe: async (iface, remoteAddr) => {
 		const result = await probeConnectivityViaDevice(remoteAddr, iface);
 		switch (result) {
