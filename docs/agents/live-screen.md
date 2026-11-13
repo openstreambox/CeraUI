@@ -365,3 +365,9 @@ readings fill gaps in it and can be corrected in a later change:
    because `DESKTOP_CHROME_QUERY` (see "Screen sizes") matches that size.
 8. Source tiles and the full-width detail below the selected tile are this
    brief's reading of "rows shown as tiles".
+
+The persistent HUD keeps its lifecycle/health cluster from shrinking. At narrow
+widths its gaps and side padding are smaller, and the bitrate group clips to its
+allocated width instead of painting over the health label. Its accessible name
+and the details sheet retain the complete measured/target values. The fixed
+strip height and mobile dock clearance remain unchanged.

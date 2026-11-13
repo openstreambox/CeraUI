@@ -712,3 +712,20 @@ describe("HudBar strip — the FOUR-fact budget is locked", () => {
 		}
 	});
 });
+
+it("keeps the verdict uncompressed and bounds bitrate content in the narrow HUD", () => {
+	state.hud = makeHud({ isStreaming: true, bitrateKbps: 12500 });
+	state.health = "healthy";
+	render(HudBar);
+	// jsdom cannot measure geometry; lock the flex constraints that prevent
+	// the verdict's children painting into the adjacent bitrate allocation.
+	const region = compactStrip();
+	const verdict =
+		screen.getByTestId("stream-health").parentElement?.parentElement;
+	if (!verdict) throw new Error("missing verdict cluster");
+	const bitrate = screen.getByTestId("hud-bitrate");
+	expect(classesOf(verdict)).toContain("shrink-0");
+	expect(classesOf(bitrate)).toContain("min-w-0");
+	expect(classesOf(bitrate)).toContain("overflow-hidden");
+	expect(classesOf(region)).toContain("gap-2");
+});

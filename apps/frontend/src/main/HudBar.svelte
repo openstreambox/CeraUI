@@ -322,7 +322,7 @@ $effect(() => {
 				for={`${detailsDescriptionId}-trigger`}
 				data-hud-region
 				class={cn(
-					'bg-sidebar text-foreground hover:bg-accent/50 relative flex h-12 w-full cursor-pointer items-center gap-3 border-t px-4 text-start text-xs font-medium tracking-wide transition-colors',
+					'bg-sidebar text-foreground hover:bg-accent/50 relative flex h-12 w-full cursor-pointer items-center gap-2 border-t px-3 sm:gap-3 sm:px-4 text-start text-xs font-medium tracking-wide transition-colors',
 					className,
 				)}
 			>
@@ -332,7 +332,7 @@ $effect(() => {
 				  operator cannot recover. The column stays inside the strip's `h-12`
 				  box, so `--mobile-dock-height` does not grow.
 				-->
-				<span class="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+				<span class="flex min-w-0 shrink-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-3">
 					<!-- Keep the visible verdict as the label; telemetry stays independently accessible. -->
 					<button
 						{...props}
@@ -407,7 +407,7 @@ $effect(() => {
 				     along as a labelled qualifier (and, while throttled, the configured limit
 				     after it) so the operator can see the aim beside the actual. -->
 				<span
-					class={cn('inline-flex shrink-0 items-center gap-1 font-mono tabular-nums', bitrateDimmed && 'opacity-50')}
+					class={cn('inline-flex min-w-0 items-center gap-1 overflow-hidden font-mono tabular-nums', bitrateDimmed && 'opacity-50')}
 					role="img"
 					aria-label={bitrateLabel}
 					title={bitrateBelowLimit ? m["hud.bitrateBelowLimitHint"]() : bitrateHint}
