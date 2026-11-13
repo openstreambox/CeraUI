@@ -11,6 +11,8 @@ export interface SocketData {
 	isAuthenticated: boolean;
 	/** Direct on-link peer, captured at upgrade without forwarded headers. */
 	buttonLocal?: boolean;
+	/** Revalidate trusted ingress evidence before every button action. */
+	buttonPathValid?: () => boolean;
 	/** Auth token if using persistent authentication */
 	authToken?: string;
 	/** Last activity timestamp for keepalive */

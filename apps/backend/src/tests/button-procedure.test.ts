@@ -33,7 +33,11 @@ afterEach(() => {
 });
 function context(local = true) {
 	const ws = {
-		data: { ...initSocketData(), buttonLocal: local },
+		data: {
+			...initSocketData(),
+			buttonLocal: local,
+			buttonPathValid: () => local,
+		},
 		send() {},
 		close() {},
 	} as unknown as AppWebSocket;
@@ -274,4 +278,46 @@ test("a transient revocation write failure is retried to durable success", async
 		save.mockRestore();
 		confirm.mockRestore();
 	}
+});
+
+test("path lost after confirmation cannot issue a browser credential", async () => {
+	const confirm = spyOn(powerButton, "confirm").mockResolvedValue({
+		result: Promise.resolve("confirmed"),
+		cancel() {},
+	});
+	const ctx = context();
+	let valid = true;
+	ctx.ws.data.buttonPathValid = () => valid;
+	try {
+		const start = await call(
+			buttonProcedure,
+			{ action: "begin", purpose: "connect" },
+			{ context: ctx },
+		);
+		expect(start.state).toBe("waiting");
+		if (start.state !== "waiting") throw new Error("Expected admission");
+		await Promise.resolve();
+		valid = false;
+		const result = await call(
+			buttonProcedure,
+			{ action: "poll", id: start.id },
+			{ context: ctx },
+		);
+		expect(result.state).toBe("local-only");
+		expect(ctx.isAuthenticated()).toBe(false);
+	} finally {
+		confirm.mockRestore();
+	}
+});
+
+test("a local flag without a trusted path validator never admits a request", async () => {
+	const ctx = context();
+	delete ctx.ws.data.buttonPathValid;
+	expect(
+		await call(
+			buttonProcedure,
+			{ action: "begin", purpose: "connect" },
+			{ context: ctx },
+		),
+	).toEqual({ state: "local-only" });
 });

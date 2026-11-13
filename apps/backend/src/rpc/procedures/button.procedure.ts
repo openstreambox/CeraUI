@@ -24,7 +24,8 @@ export const buttonProcedure = baseProcedure
 		}
 		if (input.action === "begin") {
 			const refusal = buttonAdmission(
-				owner.data.buttonLocal === true,
+				owner.data.buttonLocal === true &&
+					owner.data.buttonPathValid?.() === true,
 				!!context.getSenderId(),
 				input.purpose,
 				isStreamConfirmedIdle(),
@@ -38,7 +39,8 @@ export const buttonProcedure = baseProcedure
 		const result = buttonFlow.poll(owner, input.id);
 		if (!result) return { state: "cancelled" as const };
 		const refusal = buttonAdmission(
-			owner.data.buttonLocal === true,
+			owner.data.buttonLocal === true &&
+				owner.data.buttonPathValid?.() === true,
 			!!context.getSenderId(),
 			result.purpose,
 			isStreamConfirmedIdle(),
@@ -51,7 +53,8 @@ export const buttonProcedure = baseProcedure
 		await settleButtonCredentials();
 		// Recheck after the asynchronous store boundary, immediately before effects.
 		const finalRefusal = buttonAdmission(
-			owner.data.buttonLocal === true,
+			owner.data.buttonLocal === true &&
+				owner.data.buttonPathValid?.() === true,
 			!!context.getSenderId(),
 			result.purpose,
 			isStreamConfirmedIdle(),

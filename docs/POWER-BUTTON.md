@@ -24,13 +24,14 @@ Admission requires an IPv4 peer and trusted arrival-interface evidence for a
 directly attached Ethernet or Wi-Fi link captured at HTTP upgrade. All Forwarded,
 X-Forwarded-* and Via headers are refused, including empty values. The interface
 must match the on-link interface; VPN arrival and unknown arrival are refused.
-Bun currently exposes no trusted incoming interface on HTTP upgrades. Therefore
-this server withholds button admission and keeps normal password sign-in. It
-does not infer an arrival interface from subnet membership, a reverse route or
-a client/proxy header. Enabling the button route requires a server integration
-that supplies trusted kernel arrival evidence; synthetic-context host tests do
-not establish production availability. Relay sender IDs cannot grant presence. IPv6-only clients retain
-the existing sign-in path for now. Disconnect-all additionally requires confirmed
+Bun's ordinary TCP listener exposes no trusted incoming interface and always
+uses password sign-in for button requests. A protected Unix RPC endpoint now
+accepts trusted image-helper evidence and revalidates the local interface address
+before every button action. The matching helper remains a separate image
+follow-up; older images still use password sign-in. See [ingress design and image
+contract](BUTTON-INGRESS.md) for the options, privilege boundary, address-change
+rules and proxy limitations. Relay sender IDs cannot grant presence. IPv6-only
+clients retain the existing sign-in path. Disconnect-all additionally requires confirmed
 idle engine/lifecycle evidence, including recording-only sessions; unknown,
 starting, stopping or reconciling states refuse it. Admission is checked again
 after confirmation and after token-store settlement, immediately before effects.
