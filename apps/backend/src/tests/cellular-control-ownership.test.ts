@@ -152,3 +152,22 @@ test("subscriber matching is whole-field digits only", () => {
 	])
 		expect(parseCellularSubscriber(reply)).toBeUndefined();
 });
+
+test("retained control distinguishes a positively changed subscriber from an unreadable response", async () => {
+	const f = fixture(),
+		control = await acquireCellularControl(target, undefined, f.deps);
+	try {
+		expect(await control.readSubscriber()).toBe(target.subscriber);
+		f.subscriber("unreadable");
+		expect(await control.readSubscriber()).toBeUndefined();
+		expect(await control.verifySubscriber()).toBe(false);
+		f.subscriber("000000000000002");
+		expect(await control.valid()).toBe(true);
+		expect(await control.readSubscriber()).toBe("000000000000002");
+		expect(await control.verifySubscriber()).toBe(false);
+		await expect(control.disableAutoConnect()).rejects.toThrow();
+		expect(f.serial.every((command) => command === "AT+CIMI")).toBe(true);
+	} finally {
+		await control.close();
+	}
+});
