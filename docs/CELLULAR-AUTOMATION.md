@@ -521,3 +521,25 @@ ha desaparecido no se reemplaza de forma silenciosa. La operación inversa conse
 un registro inactivo para una SIM posterior sin restaurar el APN de la SIM previa.
 Las llamadas activas ajenas se preservan. Este componente aún no está conectado al
 funcionamiento automático.
+
+The retained internal-call owner uses this durable context component for call
+activation, health reconnect and inverse cleanup. A requested close latches
+withdrawal: later observations cannot republish a grant. Consumer release and
+verified context restoration or inactive SIM-transfer parking precede host-guard
+cleanup and release of MM inhibition. Bus loss cannot certify that a call stopped.
+The adapter can resume an existing unit baseline after replacement without
+capturing the requested APN as a new original baseline. Runtime construction and
+combined startup inverse registration remain required before enabling this owner;
+Verizon remains unqualified.
+
+El propietario persistente de llamadas internas usa este componente durable para
+activar llamadas, reconectar por salud y realizar la limpieza inversa. Una solicitud
+de cierre mantiene la retirada: las observaciones posteriores no pueden volver a
+publicar una concesión. La liberación de consumidores y la restauración verificada
+del contexto, o su registro inactivo tras cambiar de SIM, preceden a la limpieza de
+la protección del host y a la liberación de la inhibición de MM. Perder el bus no
+demuestra que la llamada terminó. Un adaptador nuevo puede retomar la referencia
+del dispositivo sin sustituir la referencia original por el APN solicitado. Antes
+de activar este propietario faltan su construcción en funcionamiento automático y
+el registro de la operación inversa conjunta al arrancar; Verizon sigue sin
+calificar.

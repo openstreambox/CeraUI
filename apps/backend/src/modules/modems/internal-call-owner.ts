@@ -1,7 +1,7 @@
+import type { InternalCallContext } from "./internal-call-context.ts";
 import type { CellularControl, CellularControlTarget } from "./modems.ts";
 import type { CarrierPolicy } from "./subscription-policy.ts";
 import {
-	type InternalContext,
 	type InternalGrant,
 	resolveTransportQuirk,
 } from "./transport-policy.ts";
@@ -13,12 +13,6 @@ export type InternalCallPhase =
 	| "withdrawn"
 	| "blocked"
 	| "closed";
-export interface InternalCallBaseline {
-	readonly context: InternalContext;
-	readonly active: boolean;
-	readonly cid: number;
-	readonly desired: InternalContext;
-}
 export interface InternalCallHost {
 	/** Stop publication synchronously, including when a control connection dies. */
 	withdraw(): void;
@@ -39,19 +33,13 @@ export interface InternalCallDeps {
 	readonly host: InternalCallHost;
 	/** Existing identity/lifecycle lease and durable journal, never a parallel lock. */
 	readonly mutate: (
-		operation: "handoff" | "activate" | "restore",
+		operation: "handoff",
 		effect: () => Promise<void>,
 	) => Promise<boolean>;
-	/** Must commit before the first definition or activation effect. */
-	readonly baseline: (baseline: InternalCallBaseline) => Promise<void>;
+	/** Durable per-unit context operations share the existing mutation journal. */
+	readonly context: InternalCallContext;
 	readonly now: () => number;
 }
-const sameFullContext = (a: InternalContext, b: InternalContext) =>
-	sameContext(a, b) &&
-	JSON.stringify(a.settings ?? []) === JSON.stringify(b.settings ?? []);
-const sameContext = (a: InternalContext, b: InternalContext) =>
-	a.apn === b.apn && a.family === b.family;
-
 /** One retained owner per physical USB generation and subscription, not MM index.
  * MM is deliberately absent while its dedicated inhibition connection is held.
  * The global mutation lease is held only for handoff/call/inverse transactions;
@@ -60,14 +48,12 @@ const sameContext = (a: InternalContext, b: InternalContext) =>
 export class InternalCallOwner {
 	private control: CellularControl | undefined;
 	private removeRevocation: (() => void) | undefined;
-	private saved: InternalCallBaseline | undefined;
 	private consecutive = 0;
 	private lastRegistration = Number.NEGATIVE_INFINITY;
 	private lastGrant = "";
 	private busy = false;
 	private revoked = false;
-	private contextChanged = false;
-	private callStarted = false;
+	private stopping = false;
 	private needsActivation = true;
 	private _phase: InternalCallPhase = "idle";
 	readonly cid: number;
@@ -107,14 +93,15 @@ export class InternalCallOwner {
 			return false;
 		this.busy = true;
 		try {
-			if (!(await this.deps.current())) return false;
+			if (this.stopping || !(await this.deps.current())) return false;
+			await this.deps.context.load();
 			const admitted = await this.deps.mutate("handoff", async () => {
-				if (!(await this.deps.current())) return;
+				if (this.stopping || !(await this.deps.current())) return;
 				this.deps.host.withdraw();
 				// Persist RA/default suppression and the NM handoff before MM can disappear
 				// or the self-registering module can expose a data-plane advertisement.
 				await this.deps.host.prepare();
-				if (!(await this.deps.current()))
+				if (this.stopping || !(await this.deps.current()))
 					throw new Error("Internal-call handoff changed its subscription");
 				const control = await this.deps.acquire(this.target);
 				this.control = control;
@@ -122,7 +109,7 @@ export class InternalCallOwner {
 					this.revoked = true;
 					this.withdraw();
 				});
-				if (!(await this.subscriber()))
+				if (this.stopping || !(await this.subscriber()))
 					throw new Error("Internal-call subscription changed during handoff");
 				this._phase = "waiting-registration";
 			});
@@ -131,7 +118,7 @@ export class InternalCallOwner {
 			this.withdraw("blocked");
 			// Keep inhibition if a partial host handoff cannot yet be reversed.
 			// Releasing MM first would permit a second owner over retained state.
-			if (await this.deps.host.cleanup()) await this.releaseControl();
+			if (!(await this.finish())) this.withdraw("blocked");
 			throw error;
 		} finally {
 			this.busy = false;
@@ -141,6 +128,7 @@ export class InternalCallOwner {
 	async observe(): Promise<void> {
 		if (
 			this.busy ||
+			this.stopping ||
 			!this.control ||
 			["blocked", "closed"].includes(this._phase)
 		)
@@ -149,14 +137,14 @@ export class InternalCallOwner {
 		try {
 			if (!(await this.subscriber()) || !(await this.deps.current())) {
 				this.withdraw();
-				// Host cleanup cannot run until consumers have stopped using the source.
-				if (await this.deps.host.cleanup()) await this.releaseControl();
+				await this.finish();
 				return;
 			}
 			const now = this.deps.now();
 			if (now - this.lastRegistration < 1_000) return;
 			this.lastRegistration = now;
 			const registration = await this.control.registrationState();
+			if (this.stopping) return;
 			if (
 				registration !== "home" &&
 				!(registration === "roaming" && this.roaming)
@@ -167,20 +155,22 @@ export class InternalCallOwner {
 			}
 			this.consecutive = Math.min(this.consecutive + 1, 4);
 			if (this.consecutive < 4) return;
-			if (!this.saved || this.needsActivation) await this.activate();
-			if (!this.saved || this.needsActivation || this._phase === "blocked")
+			if (this.needsActivation) await this.activate();
+			if (this.stopping || this.needsActivation || this._phase === "blocked")
 				return;
-			const active = await this.control.contextActive(this.cid);
-			const grant =
-				active === true ? await this.control.readGrant(this.cid) : undefined;
+			const grant = (await this.deps.context.valid(this.control))
+				? await this.control.readGrant(this.cid)
+				: undefined;
 			const dns = grant
 				? await this.control.readContextDns(this.cid)
 				: undefined;
 			if (
+				this.stopping ||
 				!grant ||
 				grant.family === "none" ||
 				dns === undefined ||
-				!(await this.subscriber())
+				!(await this.subscriber()) ||
+				!(await this.deps.context.valid(this.control))
 			) {
 				this.withdraw("waiting-registration");
 				return;
@@ -189,10 +179,22 @@ export class InternalCallOwner {
 			if (fingerprint !== this.lastGrant) {
 				this.withdraw();
 				if (!(await this.deps.host.clearGrant())) return;
+				if (
+					this.stopping ||
+					!(await this.subscriber()) ||
+					!(await this.deps.current()) ||
+					!(await this.deps.context.valid(this.control))
+				)
+					return;
 				await this.deps.host.grant(grant, dns);
-				if (!(await this.subscriber()) || !(await this.deps.current())) {
+				if (
+					this.stopping ||
+					!(await this.subscriber()) ||
+					!(await this.deps.current()) ||
+					!(await this.deps.context.valid(this.control))
+				) {
 					this.withdraw();
-					await this.deps.host.cleanup();
+					await this.finish();
 					return;
 				}
 				this.lastGrant = fingerprint;
@@ -202,145 +204,97 @@ export class InternalCallOwner {
 			this.withdraw("blocked");
 			throw error;
 		} finally {
+			if (this.stopping && this._phase !== "closed") this.withdraw();
 			this.busy = false;
 		}
 	}
 	private async activate(): Promise<void> {
 		const control = this.control;
-		if (!control) return;
-		await this.deps.mutate("activate", async () => {
-			if (!(await this.subscriber()) || !(await this.deps.current())) return;
+		if (
+			this.stopping ||
+			!control ||
+			!(await this.subscriber()) ||
+			!(await this.deps.current())
+		)
+			return;
+		if (!this.deps.context.known()) {
 			const context = await control.readContext(this.cid),
 				active = await control.contextActive(this.cid);
-			// Missing/malformed baseline or a foreign active context is never overwritten.
-			const desired: InternalContext = {
-				apn: this.policy.apn,
-				family: this.policy.requestFamily,
-				...(context?.settings ? { settings: context.settings } : {}),
-			};
+			// A foreign active call is not adopted as a baseline for a new policy.
 			if (
 				!context ||
 				active === undefined ||
-				(active && !sameContext(context, desired))
+				(active &&
+					(context.apn !== this.policy.apn ||
+						context.family !== this.policy.requestFamily))
 			) {
 				this.withdraw("blocked");
 				return;
 			}
-			if (this.saved && !sameFullContext(context, this.saved.desired))
-				throw new Error("Internal context changed before recovery");
-			if (!this.saved) {
-				const baseline = { context, active, desired, cid: this.cid };
-				await this.deps.baseline(baseline);
-				this.saved = baseline;
-			}
-			await this.deps.host.prepareCall();
-			if (!(await this.subscriber()) || !(await this.deps.current()))
-				throw new Error("Internal-call activation lost its subscription");
-			if (!sameContext(context, desired)) {
-				this.contextChanged = true; // Lost replies remain owned by the durable baseline.
-				await control.defineContext(
-					this.cid,
-					desired.apn,
-					desired.family,
-					context.settings,
-				);
-				const verified = await control.readContext(this.cid);
-				if (!verified || !sameFullContext(verified, desired))
-					throw new Error("Internal context definition did not verify");
-			}
-			if (!active) {
-				this.callStarted = true;
-				await control.activateContext(this.cid, true);
-			}
-			if ((await control.contextActive(this.cid)) !== true)
-				throw new Error("Internal context activation did not verify");
-			this.needsActivation = false;
-		});
+		}
+		this.withdraw("waiting-registration");
+		if (!(await this.deps.host.clearGrant()) || this.stopping) return;
+		if (await this.deps.context.activate(control)) this.needsActivation = false;
 	}
 	/** Health recovery is a new admitted transaction. Never reset USB or radio here. */
 	async reconnect(): Promise<boolean> {
 		const control = this.control;
-		if (this.busy || !this.saved || !control) return false;
+		if (
+			this.busy ||
+			this.stopping ||
+			this.needsActivation ||
+			!control ||
+			["blocked", "closed"].includes(this._phase)
+		)
+			return false;
 		this.busy = true;
 		try {
 			this.withdraw();
-			if (!(await this.deps.host.clearGrant())) return false;
-			const admitted = await this.deps.mutate("activate", async () => {
-				if (!(await this.subscriber()) || !(await this.deps.current())) return;
-				// An adopted active call belongs to the baseline; leave it to its owner.
-				if (!this.callStarted) return;
-				await control.activateContext(this.cid, false);
-				if ((await control.contextActive(this.cid)) !== false)
-					throw new Error("Internal context withdrawal did not verify");
-				this.needsActivation = true;
-				this.consecutive = 0;
-				this._phase = "waiting-registration";
-			});
-			return admitted && this._phase === "waiting-registration";
+			if (
+				!(await this.deps.host.clearGrant()) ||
+				this.stopping ||
+				!(await this.subscriber()) ||
+				!(await this.deps.current()) ||
+				!(await this.deps.context.deactivate(control))
+			)
+				return false;
+			this.needsActivation = true;
+			this.consecutive = 0;
+			this._phase = "waiting-registration";
+			return true;
 		} finally {
 			this.busy = false;
 		}
 	}
 	async close(): Promise<boolean> {
+		if (this._phase === "closed") return true;
+		// A requested teardown cannot be reversed by a later poll or health tick.
+		this.stopping = true;
+		this.withdraw();
 		if (this.busy) return false;
 		this.busy = true;
 		try {
-			this.withdraw();
-			if (!(await this.deps.host.clearGrant())) return false;
-			const control = this.control;
-			if (this.saved && control && !this.revoked) {
-				const saved = this.saved;
-				const admitted = await this.deps.mutate("restore", async () => {
-					if (!(await this.subscriber()))
-						throw new Error("Cannot restore a different subscription");
-					const current = await control.readContext(this.cid),
-						active = await control.contextActive(this.cid);
-					if (
-						current &&
-						sameFullContext(current, saved.context) &&
-						active === saved.active
-					) {
-						this.saved = undefined;
-						return;
-					}
-					if (
-						!current ||
-						active === undefined ||
-						!sameFullContext(current, saved.desired)
-					)
-						throw new Error("Internal context changed outside its owner");
-					if (this.callStarted && active) {
-						await control.activateContext(this.cid, false);
-						if ((await control.contextActive(this.cid)) !== false)
-							throw new Error("Internal context still active");
-					}
-					if (this.contextChanged) {
-						await control.defineContext(
-							this.cid,
-							saved.context.apn,
-							saved.context.family,
-							saved.context.settings,
-						);
-						const restored = await control.readContext(this.cid);
-						if (!restored || !sameFullContext(restored, saved.context))
-							throw new Error("Internal context restore did not verify");
-					}
-					this.saved = undefined;
-				});
-				if (!admitted || this.saved) return false;
-			} else if (this.saved) {
-				// Bus/USB loss drops inhibition but cannot certify the modem inverse.
-				// Recovery retains the durable baseline for the returning exact pair.
-				await this.releaseControl();
-				return false;
-			}
-			if (!(await this.deps.host.cleanup())) return false;
-			await this.releaseControl();
-			this._phase = "closed";
-			return true;
+			return await this.finish();
 		} finally {
 			this.busy = false;
 		}
+	}
+	private async finish(): Promise<boolean> {
+		this.stopping = true;
+		this.withdraw();
+		if (!(await this.deps.host.clearGrant())) return false;
+		await this.deps.context.load();
+		if (this.deps.context.known()) {
+			const control = this.control;
+			// Bus loss is not evidence that the owned activation stopped. Retain
+			// the host guard and durable baseline until the exact inverse verifies.
+			if (!control || this.revoked || !(await this.deps.context.close(control)))
+				return false;
+		}
+		if (!(await this.deps.host.cleanup())) return false;
+		await this.releaseControl();
+		this._phase = "closed";
+		return true;
 	}
 	private async releaseControl(): Promise<void> {
 		this.removeRevocation?.();
