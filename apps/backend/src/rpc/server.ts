@@ -1,3 +1,4 @@
+import { startButtonIngress } from "./button-ingress-server.ts";
 /**
  * Bun Native Server
  * HTTP and WebSocket server using Bun.serve()
@@ -252,7 +253,10 @@ function startServer(): void {
 					}
 
 					const success = server.upgrade(req, {
-						data: initSocketData(),
+						data: {
+							...initSocketData(),
+							buttonLocal: false,
+						},
 					});
 					if (success) {
 						// Bun automatically returns a 101 Switching Protocols response
@@ -298,7 +302,14 @@ function startServer(): void {
 /**
  * Initialize and start the HTTP/WebSocket server
  */
+let buttonIngress: ReturnType<typeof startButtonIngress> = null;
+
 export function initServer(): void {
+	try {
+		buttonIngress ??= startButtonIngress();
+	} catch (error) {
+		logger.warn("Button ingress unavailable", { error });
+	}
 	const systemdSocket = getSystemdSocket();
 	if (systemdSocket) {
 		logger.warn(
@@ -330,6 +341,8 @@ export function getServer(): typeof server {
  * Stop the server
  */
 export function stopServer(): void {
+	buttonIngress?.stop(true);
+	buttonIngress = null;
 	if (server) {
 		server.stop();
 		server = null;

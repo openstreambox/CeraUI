@@ -2767,5 +2767,19 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"auth.buttonConnect": "Connect a new device using the box’s button",
+	"auth.buttonDisconnect": "Disconnect all devices",
+	"auth.buttonDevices": "Advanced · Connected devices",
+	"auth.buttonPrompt": "To show you’re next to the box, double-press the box’s power button.",
+	"auth.buttonMinute": "You have 1 minute.",
+	"auth.buttonCountdown": "{seconds} seconds left.",
+	"auth.buttonCancel": "Cancel",
+	"auth.buttonPersistenceFailed": "Open sessions were disconnected, but saved credentials could not be revoked. They may work again after a restart. Retry when storage is available.",
+	"auth.buttonStopFirst": "Stop the stream first. Disconnecting everyone includes this device.",
+	"auth.buttonLocalOnly": "Button confirmation needs a verified direct local connection. Use your password to sign in.",
+	"auth.buttonTimeout": "Time’s up. Try again when you’re next to the box.",
+	"auth.buttonFallback": "Use your password to sign in.",
+	"auth.buttonDone": "Done. This device is disconnected. To connect again, use your saved sign-in method.",
+	"auth.buttonDisconnectDetails": "Disconnect every device, including this one. Your settings, recordings and saved passwords stay."
 }

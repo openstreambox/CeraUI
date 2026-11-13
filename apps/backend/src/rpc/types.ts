@@ -9,6 +9,10 @@ import type { ServerWebSocket } from "bun";
 export interface SocketData {
 	/** Whether the socket has been authenticated */
 	isAuthenticated: boolean;
+	/** Direct on-link peer, captured at upgrade without forwarded headers. */
+	buttonLocal?: boolean;
+	/** Revalidate trusted ingress evidence before every button action. */
+	buttonPathValid?: () => boolean;
 	/** Auth token if using persistent authentication */
 	authToken?: string;
 	/** Last activity timestamp for keepalive */

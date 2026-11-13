@@ -31,12 +31,12 @@ import {
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
 import { MediaQuery } from 'svelte/reactivity';
-
 import AsyncSwitch from '$lib/components/custom/async-switch.svelte';
 import LowDiskBanner from '$lib/components/custom/LowDiskBanner.svelte';
 import LocaleSelector from '$lib/components/custom/locale-selector.svelte';
 import ModeToggle from '$lib/components/custom/mode-toggle.svelte';
 import { AppDialog, LazyDialog, lazyDialog } from '$lib/components/dialogs';
+import ButtonConfirm from "$lib/pairing/ButtonConfirm.svelte";
 import { osCommand } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
 import { getConfig, getKiosk } from '$lib/rpc/subscriptions.svelte';
@@ -408,6 +408,11 @@ $effect(() => {
 		</div>
 	</div>
 </div>
+
+<section class="mx-auto max-w-3xl px-4 py-6">
+ <h2 class="text-lg font-semibold">{m["auth.buttonDevices"]()}</h2>
+ <ButtonConfirm purpose="disconnect" />
+</section>
 
 <!-- Shared, reused dialog: title/description/icon driven by the active entry. -->
 <AppDialog

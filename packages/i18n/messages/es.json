@@ -2815,5 +2815,19 @@
 	"network.sharing.policy.failed": "No se pudo leer o actualizar la política. Recárgala para comprobar el ajuste actual.",
 	"network.sharing.policy.healthWeight": "Peso de salud (antes de la política)",
 	"network.sharing.policy.healthTitle": "Salud de los enlaces",
-	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos."
+	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos.",
+	"auth.buttonConnect": "Connect a new device using the box’s button",
+	"auth.buttonDisconnect": "Disconnect all devices",
+	"auth.buttonDevices": "Advanced · Connected devices",
+	"auth.buttonPrompt": "To show you’re next to the box, double-press the box’s power button.",
+	"auth.buttonMinute": "You have 1 minute.",
+	"auth.buttonCountdown": "{seconds} seconds left.",
+	"auth.buttonCancel": "Cancel",
+	"auth.buttonPersistenceFailed": "Open sessions were disconnected, but saved credentials could not be revoked. They may work again after a restart. Retry when storage is available.",
+	"auth.buttonStopFirst": "Stop the stream first. Disconnecting everyone includes this device.",
+	"auth.buttonLocalOnly": "Button confirmation needs a verified direct local connection. Use your password to sign in.",
+	"auth.buttonTimeout": "Time’s up. Try again when you’re next to the box.",
+	"auth.buttonFallback": "Use your password to sign in.",
+	"auth.buttonDone": "Done. This device is disconnected. To connect again, use your saved sign-in method.",
+	"auth.buttonDisconnectDetails": "Disconnect every device, including this one. Your settings, recordings and saved passwords stay."
 }
