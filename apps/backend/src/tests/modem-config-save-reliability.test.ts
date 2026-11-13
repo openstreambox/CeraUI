@@ -220,8 +220,10 @@ describe("registration never creates a SECOND profile for a found one", () => {
 		expect(callSites.length).toBe(1);
 
 		const guarded =
-			/if \(config && !config\.conn\) \{\s*await addConnectionForModem\(/;
+			/if \(!before\.conn\) \{[\s\S]*?await addConnectionForModem\(/;
 		expect(guarded.test(source)).toBe(true);
+		expect(source).not.toContain("nmConnAdd");
+		expect(source).not.toContain("byOperator[");
 	});
 });
 

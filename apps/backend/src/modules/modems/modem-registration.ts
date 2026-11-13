@@ -39,11 +39,12 @@ import {
 
 import { logger } from "../../helpers/logger.ts";
 import { pollWithBackoff } from "../../helpers/retry.ts";
-import {
-	type NetworkManagerConnection,
-	type NetworkManagerConnectionModemConfig,
-	nmConnAdd,
+import type {
+	NetworkManagerConnection,
+	NetworkManagerConnectionModemConfig,
 } from "../network/network-manager.ts";
+import { createDisarmedProfile } from "./automatic-profile-creation.ts";
+import { bearerIpFamilyFields } from "./bearer-ip-family.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
 import {
@@ -119,8 +120,6 @@ async function getModemConfig(
 ): Promise<ModemConfig | undefined> {
 	const modemId = modemInfo["modem.generic.device-identifier"];
 	const simId = simInfo["sim.properties.iccid"];
-	const operatorId = simInfo["sim.properties.operator-code"];
-
 	const gsmConnections = await getGsmConnections();
 	if (gsmConnections === undefined) return undefined;
 
@@ -129,19 +128,6 @@ async function getModemConfig(
 		logger.debug(`Found NM connection ${ci.uuid} for modem ${modemId}`);
 		return {
 			conn: ci.uuid,
-			autoconfig: ci.autoconfig === true,
-			apn: ci.apn,
-			username: ci.username,
-			password: ci.password,
-			roaming: ci.roaming,
-			network: ci.network,
-		};
-	}
-
-	if (operatorId && gsmConnections.byOperator[operatorId]) {
-		// Copy the settings from an existing config for the same operator
-		const ci = gsmConnections.byOperator[operatorId];
-		return {
 			autoconfig: ci.autoconfig === true,
 			apn: ci.apn,
 			username: ci.username,
@@ -306,32 +292,39 @@ async function addConnectionForModem(
 	modemInfo: ModemInfo,
 	simInfo: SimInfo,
 	config: ModemConfig,
+	stableKey: string,
+	current: () => Promise<boolean>,
 ) {
 	const modemId = modemInfo["modem.generic.device-identifier"];
 	const simId = simInfo["sim.properties.iccid"];
 	const operatorId = simInfo["sim.properties.operator-code"];
 
-	// The NM connection doesn't exist yet, create it
-	//const autoconnect = (modemInfo['modem.3gpp.registration-state'] != 'idle') ? 'yes' : 'no';
+	// Creation is disarmed and journaled; preparation owns the later activation.
 	const nmConfig: NetworkManagerConnection = {
 		type: "gsm",
 		ifname: "", // Can be empty for GSM connections - matches by device-id and sim-id
-		autoconnect: "yes",
+		autoconnect: "no",
 		"connection.autoconnect-retries": 2,
-		"ipv6.method": "ignore",
+		...bearerIpFamilyFields("ipv4v6"),
 		"gsm.device-id": modemId,
 		"gsm.sim-id": simId,
-		...sanitizeModemConfigForNetworkManager(config),
+		...sanitizeModemConfigForNetworkManager({ ...config }),
 	};
 	if (operatorId) {
 		nmConfig["gsm.sim-operator-id"] = operatorId;
 	}
 
-	const uuid = await nmConnAdd(nmConfig);
-	if (uuid) {
-		config.conn = uuid;
-		logger.debug(`Created NM connection ${uuid} for ${modemId}`, config);
+	const result = await createDisarmedProfile(
+		stableKey,
+		{ deviceId: modemId, simId },
+		nmConfig,
+		current,
+	);
+	if (result.state === "created") {
+		config.conn = result.uuid;
+		logger.debug("Created disarmed cellular profile", { module: "modems" });
 	}
+	return result.state;
 }
 
 /** Registration and late SIM resolution share profile selection and enforcement. */
@@ -343,9 +336,7 @@ async function resolveModemProfile(
 	const config = await getModemConfig(modemInfo, simInfo);
 	if (!isCurrent()) return undefined;
 	// A matching profile must never be replaced by a newly created clone.
-	if (config && !config.conn) {
-		await addConnectionForModem(modemInfo, simInfo, config);
-	} else if (config?.conn) {
+	if (config?.conn) {
 		const enforced = sanitizeModemConfigForNetworkManager({ ...config });
 		const result = await reconcileDuplicateGsmProfiles(
 			modemInfo["modem.generic.device-identifier"],
@@ -404,6 +395,40 @@ export async function resolveLateModemConfig(
 	resetGsmConnections();
 	const before = await getModemConfig(sim.modemInfo, sim.simInfo);
 	if (before === undefined || !isCurrent()) return "pending";
+	if (!before.conn) {
+		const current = async () => {
+			if (!isCurrent() || modemStableKeyForId(id) !== stableKey) return false;
+			const fresh = await readReadyModemSim(id);
+			return (
+				!!fresh &&
+				fresh !== "unreadable" &&
+				fresh.modemInfo["modem.generic.state"] === "registered" &&
+				fresh.modemInfo["modem.generic.device-identifier"] ===
+					sim.modemInfo["modem.generic.device-identifier"] &&
+				fresh.simInfo["sim.properties.iccid"] ===
+					sim.simInfo["sim.properties.iccid"]
+			);
+		};
+		const creation = await addConnectionForModem(
+			sim.modemInfo,
+			sim.simInfo,
+			before,
+			stableKey,
+			current,
+		);
+		if (creation === "attempted") return "attempted";
+		if (!before.conn || !(await current())) return "pending";
+		const modem = getModem(id);
+		if (!modem) return "pending";
+		setModem(id, {
+			...modem,
+			config: before,
+			iccid: sim.simInfo["sim.properties.iccid"],
+			sim_network: sim.simInfo["sim.properties.operator-name"] || "Unknown",
+		});
+		resetGsmConnections();
+		return "resolved";
+	}
 	const guarded = await withJournaledModemMutation(
 		stableKey,
 		"modem-config",
@@ -669,7 +694,10 @@ async function registerModem(id: number) {
 
 			// If a SIM is present, try to find a matching NM connection or create one
 			if (simInfo?.["sim.properties.iccid"]?.trim()) {
-				config = await resolveModemProfile(modemInfo, simInfo);
+				const selected = await getModemConfig(modemInfo, simInfo);
+				// Roster discovery is read-only. The late-config owner creates a
+				// missing profile after physical identity and lifecycle admission.
+				config = selected?.conn ? selected : undefined;
 			}
 		}
 	}

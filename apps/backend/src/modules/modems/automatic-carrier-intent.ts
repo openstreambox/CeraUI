@@ -1,12 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, openSync } from "node:fs";
-import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import {
-	openStoredStateDirectory,
-	readStoredStateDescriptor,
-} from "../system/update-orchestrator/stored-state-file.ts";
-import { parseAuthorityJson } from "../system/update-orchestrator/strict-authority-json.ts";
-
+	readPrivateJson,
+	writePrivateJson,
+} from "../../helpers/private-json-state.ts";
 export interface CarrierIntentIdentity {
 	readonly uuid: string;
 	readonly deviceId: string;
@@ -18,6 +14,7 @@ export interface CarrierIntent {
 	readonly mode: "automatic" | "manual";
 	readonly phase: "pending" | "applied";
 	readonly appliedApn?: string;
+	readonly pendingApn?: string;
 }
 export interface CarrierIntentStore {
 	readonly dir: string;
@@ -37,18 +34,6 @@ export function carrierIntentKey(identity: CarrierIntentIdentity): string {
 		throw new Error("Unresolved carrier intent identity");
 	return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
-function privateDirectory(dir: string): number {
-	const fd = openStoredStateDirectory(dir, true);
-	const info = fstatSync(fd);
-	if (info.uid !== (process.getuid?.() ?? 0) || (info.mode & 0o077) !== 0) {
-		closeSync(fd);
-		throw new Error("Unsafe carrier intent directory");
-	}
-	return fd;
-}
-function absent(error: unknown): boolean {
-	return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
 function parseIntent(value: unknown, key: string): CarrierIntent {
 	if (!value || typeof value !== "object" || Array.isArray(value))
 		throw new Error("Invalid carrier intent");
@@ -56,12 +41,22 @@ function parseIntent(value: unknown, key: string): CarrierIntent {
 	if (
 		Object.keys(record).some(
 			(name) =>
-				!["version", "key", "mode", "phase", "appliedApn"].includes(name),
+				![
+					"version",
+					"key",
+					"mode",
+					"phase",
+					"appliedApn",
+					"pendingApn",
+				].includes(name),
 		) ||
 		record.version !== 1 ||
 		record.key !== key ||
 		(record.mode !== "automatic" && record.mode !== "manual") ||
 		(record.phase !== "pending" && record.phase !== "applied") ||
+		(record.pendingApn !== undefined &&
+			(typeof record.pendingApn !== "string" ||
+				!/^[a-zA-Z0-9._-]{0,100}$/.test(record.pendingApn))) ||
 		(record.appliedApn !== undefined &&
 			(typeof record.appliedApn !== "string" ||
 				!/^[a-zA-Z0-9._-]{1,100}$/.test(record.appliedApn)))
@@ -72,6 +67,9 @@ function parseIntent(value: unknown, key: string): CarrierIntent {
 		key,
 		mode: record.mode,
 		phase: record.phase as CarrierIntent["phase"],
+		...(typeof record.pendingApn === "string"
+			? { pendingApn: record.pendingApn }
+			: {}),
 		...(typeof record.appliedApn === "string"
 			? { appliedApn: record.appliedApn }
 			: {}),
@@ -83,47 +81,10 @@ export async function readCarrierIntent(
 	store: CarrierIntentStore = defaultStore,
 ): Promise<CarrierIntent | undefined> {
 	const key = carrierIntentKey(identity);
-	let parent: number;
-	try {
-		parent = privateDirectory(store.dir);
-	} catch (error) {
-		if (absent(error)) return undefined;
-		throw error;
-	}
-	try {
-		let fd: number;
-		try {
-			fd = openSync(
-				`/proc/self/fd/${parent}/${key}.json`,
-				constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-			);
-		} catch (error) {
-			if (absent(error)) return undefined;
-			throw error;
-		}
-		try {
-			const info = fstatSync(fd);
-			if (
-				info.uid !== (process.getuid?.() ?? 0) ||
-				(info.mode & 0o077) !== 0 ||
-				info.nlink !== 1
-			)
-				throw new Error("Unsafe carrier intent file");
-			return parseIntent(
-				parseAuthorityJson(
-					readStoredStateDescriptor(fd, 4096).toString("utf8"),
-				),
-				key,
-			);
-		} finally {
-			closeSync(fd);
-		}
-	} finally {
-		closeSync(parent);
-	}
+	const value = await readPrivateJson(store, key);
+	return value === undefined ? undefined : parseIntent(value, key);
 }
-
-/** Call under the modem lifecycle lease; this record stores intent, never carrier selection. */
+/** Call under the modem lifecycle lease; never use this record as carrier identity. */
 export async function writeCarrierIntent(
 	identity: CarrierIntentIdentity,
 	intent: CarrierIntent | undefined,
@@ -131,42 +92,7 @@ export async function writeCarrierIntent(
 ): Promise<void> {
 	const key = carrierIntentKey(identity);
 	if (intent) parseIntent(intent, key);
-	await mkdir(store.dir, { recursive: true, mode: 0o700 });
-	const parent = privateDirectory(store.dir);
-	const path = `/proc/self/fd/${parent}/${key}.json`;
-	const temporary = `/proc/self/fd/${parent}/${key}.${randomUUID()}.tmp`;
-	try {
-		if (!intent) {
-			try {
-				await unlink(path);
-			} catch (error) {
-				if (!absent(error)) throw error;
-			}
-			fsyncSync(parent);
-			return;
-		}
-		const handle = await open(
-			temporary,
-			constants.O_WRONLY |
-				constants.O_CREAT |
-				constants.O_EXCL |
-				constants.O_NOFOLLOW,
-			0o600,
-		);
-		try {
-			await handle.writeFile(`${JSON.stringify(intent)}\n`, "utf8");
-			await handle.sync();
-		} finally {
-			await handle.close();
-		}
-		await rename(temporary, path);
-		fsyncSync(parent);
-	} finally {
-		// A failed transaction may leave a private, uncommitted temporary. Preserve
-		// the original persistence error; this path never names authoritative state.
-		await unlink(temporary).catch(() => undefined);
-		closeSync(parent);
-	}
+	await writePrivateJson(store, key, intent);
 }
 
 export function newCarrierIntent(
@@ -183,6 +109,18 @@ export function newCarrierIntent(
 	};
 }
 
+/** Expected NM APN is a conflict witness while automatic provider lookup is pending. */
+export function newPendingCarrierIntent(
+	identity: CarrierIntentIdentity,
+	apn: string,
+): CarrierIntent {
+	const intent = {
+		...newCarrierIntent(identity, "automatic"),
+		pendingApn: apn,
+	};
+	parseIntent(intent, intent.key);
+	return intent;
+}
 /** A remembered APN is only a conflict witness; subscription evidence selects policy. */
 export function effectiveCarrierAutomatic(
 	intent: CarrierIntent | undefined,
@@ -191,7 +129,12 @@ export function effectiveCarrierAutomatic(
 ): boolean {
 	if (!intent) return nmAutomatic;
 	if (intent.mode === "manual") return false;
-	if (intent.phase === "pending") return true;
+	if (intent.phase === "pending")
+		return (
+			intent.pendingApn === undefined ||
+			nmAutomatic ||
+			intent.pendingApn === apn
+		);
 	return (
 		nmAutomatic ||
 		(intent.appliedApn !== undefined && intent.appliedApn === apn)
@@ -214,6 +157,7 @@ export function sameCarrierIntent(
 		a?.key === b?.key &&
 		a?.mode === b?.mode &&
 		a?.phase === b?.phase &&
-		a?.appliedApn === b?.appliedApn
+		a?.appliedApn === b?.appliedApn &&
+		a?.pendingApn === b?.pendingApn
 	);
 }

@@ -11,6 +11,7 @@ import {
 	getMockState,
 	getScenarioConfig,
 	getWifiSignal,
+	mockModems,
 	mockWifiNetworks,
 	mockWifiRadios,
 	shouldUseMocks,
@@ -178,6 +179,14 @@ export function handleNmcliCommand(args: string[]): string | null {
 	}
 
 	const argsStr = args.join(" ");
+	if (args.includes("--get-values")) {
+		const fields = mockGsmFields(args.at(-1) ?? "");
+		if (fields) {
+			const requested =
+				args[args.indexOf("--get-values") + 1]?.split(",") ?? [];
+			return requested.map((name) => fields[name] ?? "").join("\n");
+		}
+	}
 
 	// `nmcli connection show` — deliberately ABOVE the wifi guard: modem GSM
 	// registration (nmConnsGet) needs the connection list even in a wifi-off
@@ -230,6 +239,36 @@ export function handleNmcliCommand(args: string[]): string | null {
 /**
  * Generate mock connection list
  */
+const mockGsmUuid = (index: number) =>
+	`c3110000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`;
+function mockGsmFields(uuid: string): Record<string, string> | undefined {
+	const index = mockModems
+		.slice(0, getScenarioConfig().modems)
+		.findIndex((_modem, index) => mockGsmUuid(index) === uuid);
+	const modem = mockModems[index];
+	const config = getMockState().modemConfigs.get(String(index));
+	if (!modem || !config || index < 0) return undefined;
+	return {
+		"gsm.device-id": modem.imei.slice(0, 8),
+		"gsm.sim-id": modem.iccid,
+		"gsm.sim-operator-id": modem.operatorCode,
+		"gsm.apn": config.apn ?? "",
+		"gsm.username": "",
+		"gsm.password": "",
+		"gsm.auto-config": "no",
+		"gsm.home-only": config.roaming ? "no" : "yes",
+		"gsm.network-id": "",
+		"connection.autoconnect": "yes",
+		"connection.timestamp": "1700000000",
+		"connection.id": `gsm-${index}`,
+		"connection.uuid": uuid,
+		"ipv4.method": "auto",
+		"ipv6.method": "ignore",
+		"ipv6.never-default": "no",
+		"ipv6.ip6-privacy": "-1",
+		"ipv6.ignore-auto-dns": "no",
+	};
+}
 function getMockConnections(args: string[]): string {
 	const config = getScenarioConfig();
 	const fieldsIndex = args.indexOf("--fields");
@@ -280,6 +319,29 @@ function getMockConnections(args: string[]): string {
 		}
 	}
 
+	for (let index = 0; index < config.modems; index++) {
+		const uuid = mockGsmUuid(index);
+		if (!mockGsmFields(uuid)) continue;
+		connections.push(
+			fieldList
+				.map((field) =>
+					field === "uuid"
+						? uuid
+						: field === "type"
+							? "gsm"
+							: field === "state"
+								? getMockState().modemStates.get(index) === "connected"
+									? "activated"
+									: ""
+								: field === "name"
+									? `gsm-${index}`
+									: field === "timestamp"
+										? "1700000000"
+										: "",
+				)
+				.join(":"),
+		);
+	}
 	// Add empty line at the end (nmcli output typically ends with newline)
 	connections.push("");
 

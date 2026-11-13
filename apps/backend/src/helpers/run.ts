@@ -109,6 +109,8 @@ export class RunAbortError extends Error {
 export const ALLOWED: Set<string> = new Set<string>([
 	"nmcli",
 	"mmcli",
+	// Termios setup on an already-open, generation-checked cellular serial descriptor.
+	"stty",
 	"systemctl",
 	"/usr/bin/systemd-notify",
 	"journalctl",

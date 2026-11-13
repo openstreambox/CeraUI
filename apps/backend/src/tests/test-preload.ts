@@ -14,6 +14,12 @@ import { setStreamReconciliationCompletedForTest } from "../modules/system/strea
 // Isolated globals still share /run; seed ownership only from this file's sentinel.
 const runtimeRoot = mkdtempSync(join(tmpdir(), "ceraui-backend-test-"));
 const previousStreamingMarker = process.env.CERALIVE_STREAMING_MARKER;
+const previousPreparationDir =
+	process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = join(
+	runtimeRoot,
+	"cellular-preparation",
+);
 const previousCarrierIntentDir =
 	process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
 process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = join(
@@ -56,5 +62,10 @@ afterAll(async () => {
 		delete process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
 	else
 		process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = previousCarrierIntentDir;
+	if (previousPreparationDir === undefined)
+		delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	else
+		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR =
+			previousPreparationDir;
 	await rm(runtimeRoot, { recursive: true, force: true });
 });

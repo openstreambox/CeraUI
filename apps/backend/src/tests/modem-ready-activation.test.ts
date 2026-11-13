@@ -4,8 +4,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as runner from "../helpers/run.ts";
+import { defaultProfileCreationDeps } from "../modules/modems/automatic-profile-creation.ts";
 import { resetGsmAutoconfigProbe } from "../modules/modems/gsm-autoconfig.ts";
 import { resetGsmConnections } from "../modules/modems/gsm-connections.ts";
+import * as idPathSource from "../modules/modems/modem-id-path-source.ts";
 import { setModemReadyActivationDepsForTest } from "../modules/modems/modem-ready-activation.ts";
 import {
 	refreshModemStatus,
@@ -100,6 +102,7 @@ function activations(): string[][] {
 		([binary, ...args]) => binary === "nmcli" && args.includes("up"),
 	);
 }
+let createdFields: Record<string, string> | undefined;
 
 function profileWrites(): string[][] {
 	return commands.filter(
@@ -130,6 +133,11 @@ beforeEach(async () => {
 	profileReadFails = false;
 	profileFieldsFailure = "none";
 	commands = [];
+	createdFields = undefined;
+	spyOn(idPathSource, "readModemIdPaths").mockResolvedValue(
+		new Map([["wwan0", KEY]]),
+	);
+	spyOn(defaultProfileCreationDeps, "uuid").mockReturnValue(UUID);
 	unexpected = [];
 	onStateRead = undefined;
 	onConnect = undefined;
@@ -140,6 +148,7 @@ beforeEach(async () => {
 	resetGsmAutoconfigProbe();
 	setModemReadyActivationDepsForTest({ now: () => now });
 	dir = await mkdtemp(join(tmpdir(), "modem-ready-"));
+	process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = join(dir, "intent");
 	setMutationJournalDeps({ dir });
 	for (const id of getModemIds()) removeModem(id);
 	setModemsState({});
@@ -156,6 +165,8 @@ beforeEach(async () => {
 	spyOn(runner, "run").mockImplementation(async (binary, args) => {
 		commands.push([binary, ...args]);
 		if (binary === "mmcli") {
+			if (args.includes("-L"))
+				return `modem-list.length : 1\nmodem-list.value[1] : /org/freedesktop/ModemManager1/Modem/2`;
 			if (args.includes("-i") && simReadFails)
 				throw new Error("SIM read failed");
 			if (args.includes("-i"))
@@ -193,7 +204,27 @@ modem.generic.ports.value[1] : wwan0 (net)`;
 			}
 			if (args.includes("add")) {
 				if (profileAddFails) throw new Error("Profile creation failed");
+				createdFields = {};
+				for (
+					let index = args.indexOf("add") + 1;
+					index < args.length;
+					index += 2
+				) {
+					const name = args[index],
+						value = args[index + 1];
+					if (name && value !== undefined) createdFields[name] = value;
+				}
+				existingProfile = true;
+				autoconnect = createdFields.autoconnect ?? "";
 				return `Connection 'gsm' (${UUID}) successfully added.`;
+			}
+			if (
+				args.includes(
+					"connection.id,gsm.device-id,gsm.sim-id,connection.autoconnect",
+				)
+			) {
+				if (!createdFields) throw new Error("Profile not present");
+				return `${createdFields["connection.id"]}\n${DEVICE_ID}\n${SIM_ID}\n${autoconnect}`;
 			}
 			if (args.includes("gsm.auto-config")) return "no";
 			if (
@@ -491,7 +522,8 @@ test("late config writes stay pending under lease refusal and journal failure", 
 	await runModemStatusPoll();
 	expect(profileWrites()).toHaveLength(1);
 	expect(getModem(2)?.config?.conn).toBe(UUID);
-	expect(activations()).toHaveLength(1);
+	expect(createdFields?.autoconnect).toBe("no");
+	expect(activations()).toHaveLength(0);
 });
 
 for (const state of [
@@ -544,7 +576,8 @@ test("late config attempts once per readable SIM edge and read failure cannot re
 	profileAddFails = false;
 	await runModemStatusPoll();
 	expect(profileWrites()).toHaveLength(2);
-	expect(activations()).toHaveLength(1);
+	expect(createdFields?.autoconnect).toBe("no");
+	expect(activations()).toHaveLength(0);
 });
 
 test("a failed late profile lookup preserves pending work until a readable poll", async () => {

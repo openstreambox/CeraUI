@@ -19,6 +19,13 @@
   ModemManager / NetworkManager based modem management
 */
 
+import { constants } from "node:fs";
+import { open, readFile, realpath } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import {
+	createDbusTransport,
+	type DbusTransport,
+} from "@ceralive/modem-control/transport";
 import {
 	decideModemReactivation,
 	diffModemConnectionFields,
@@ -26,31 +33,50 @@ import {
 	normalizeModemConnectionFields,
 } from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
-
 import { logger } from "../../helpers/logger.ts";
+import { run } from "../../helpers/run.ts";
 import { extractMessage } from "../../helpers/types.ts";
-
+import {
+	exchangeUsbSerial,
+	identifyUsbSerial,
+	type UsbSerialIdentity,
+	usbGeneration,
+} from "../../helpers/usb-serial.ts";
 import {
 	type ConnectionUUID,
 	nmConnGetFields,
 	nmConnSetFields,
 	nmDisconnect,
 } from "../network/network-manager.ts";
-
 import {
 	newCarrierIntent,
+	newPendingCarrierIntent,
 	readCarrierIntent,
 	writeCarrierIntent,
 } from "./automatic-carrier-intent.ts";
+import { automaticProfileConnectionFlags } from "./cellular-preparation.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
 import { reconcileDuplicateGsmProfiles } from "./gsm-duplicate-reconcile.ts";
 import { setGsmOperatorName } from "./gsm-operators-cache.ts";
-import { mmSetNetworkTypes } from "./mmcli.ts";
+import { mmcliBinary, mmSetNetworkTypes } from "./mmcli.ts";
 import { modemNetworkScan } from "./modem-network-scan.ts";
-import { sanitizeModemConfigForNetworkManager } from "./modem-registration.ts";
+import {
+	isModemPairAtStableKey,
+	type ReadyModemSim,
+	readReadyModemSim,
+	sanitizeModemConfigForNetworkManager,
+} from "./modem-registration.ts";
 import { broadcastModems } from "./modem-status.ts";
 import { getModem, type ModemConfig } from "./modems-state.ts";
+import type { RequestedFamily } from "./subscription-policy.ts";
+import type { InitialEpsSettings } from "./transport-policy.ts";
+import {
+	type ModemTransportIdentity,
+	parseInternalIpv4Grant,
+	parseQmapAutoConnect,
+	resolveTransportQuirk,
+} from "./transport-policy.ts";
 
 type ModemConfigMessage = {
 	config: {
@@ -93,11 +119,18 @@ async function updateModemConnection(
 				}
 			: undefined;
 	const before = identity ? await readCarrierIntent(identity) : undefined;
-	const nmConfig = sanitizeModemConfigForNetworkManager(config);
+	const nmConfig = {
+		...sanitizeModemConfigForNetworkManager(config),
+		...(identity
+			? await automaticProfileConnectionFlags(identity, config.autoconfig)
+			: {}),
+	};
 	if (identity)
 		await writeCarrierIntent(
 			identity,
-			newCarrierIntent(identity, config.autoconfig ? "automatic" : "manual"),
+			config.autoconfig
+				? newPendingCarrierIntent(identity, "")
+				: newCarrierIntent(identity, "manual"),
 		);
 	try {
 		const written = await nmConnSetFields(connectionUuid, nmConfig);
@@ -407,4 +440,446 @@ export function handleModems(conn: WebSocket, msg: ModemsMessage["modems"]) {
 				break;
 		}
 	}
+}
+
+/** Private transport projection. Subscriber identifiers never enter the wire roster. */
+export interface CellularControlTarget {
+	readonly id: number;
+	readonly key: string;
+	readonly deviceId: string;
+	readonly simId: string;
+	readonly subscriber: string;
+	readonly equipment: string;
+	readonly ifname: string;
+	readonly netDevice: string;
+	readonly ifindex: string;
+	readonly usbDevice: string;
+	readonly generation: string;
+	readonly serial?: UsbSerialIdentity;
+	readonly identity: ModemTransportIdentity;
+	readonly sim: ReadyModemSim;
+	readonly initialEps?: InitialEpsSettings;
+}
+export async function readCellularControlTarget(
+	id: number,
+	key: string,
+): Promise<CellularControlTarget | undefined> {
+	const sim = await readReadyModemSim(id);
+	if (!sim || sim === "unreadable") return undefined;
+	const info = sim.modemInfo;
+	const net = info["modem.generic.ports"].filter((p) => p.endsWith(" (net)"));
+	if (net.length !== 1) return undefined;
+	const ifname = net[0]?.slice(0, -6);
+	if (!ifname || !/^[a-zA-Z0-9_-]{1,15}$/.test(ifname)) return undefined;
+	const netDevice = await realpath(`/sys/class/net/${ifname}/device`);
+	let usbDevice = netDevice;
+	while (usbDevice !== dirname(usbDevice)) {
+		try {
+			await readFile(join(usbDevice, "devnum"));
+			break;
+		} catch {
+			usbDevice = dirname(usbDevice);
+		}
+	}
+	if (usbDevice === dirname(usbDevice)) return undefined;
+	const mode = info["modem.generic.ports"].some((p) => p.endsWith(" (qmi)"))
+		? "qmi"
+		: info["modem.generic.ports"].some((p) => p.endsWith(" (mbim)"))
+			? "mbim"
+			: "rndis";
+	const driver = basename(await realpath(join(netDevice, "driver")));
+	if (
+		(mode === "qmi" && driver !== "qmi_wwan") ||
+		(mode === "mbim" && driver !== "cdc_mbim") ||
+		(mode === "rndis" && driver !== "rndis_host")
+	)
+		return undefined;
+	if (mode === "rndis") {
+		const descriptor = await Promise.all(
+			["bInterfaceClass", "bInterfaceSubClass", "bInterfaceProtocol"].map(
+				(name) => readFile(join(netDevice, name), "utf8"),
+			),
+		);
+		if (
+			descriptor.map((value) => value.trim().toLowerCase()).join("/") !==
+			"e0/01/03"
+		)
+			return undefined;
+	}
+	const identity = {
+		model: info["modem.generic.model"],
+		firmware: info["modem.generic.revision"] ?? "",
+		mode,
+	} as const;
+	if (!resolveTransportQuirk(identity)) return undefined;
+	const deviceId = info["modem.generic.device-identifier"],
+		simId = sim.simInfo["sim.properties.iccid"];
+	if (!(await isModemPairAtStableKey(key, { deviceId, simId })))
+		return undefined;
+	const candidates: UsbSerialIdentity[] = [];
+	const primaryCandidates: UsbSerialIdentity[] = [];
+	for (const port of info["modem.generic.ports"].filter((p) =>
+		p.endsWith(" (at)"),
+	)) {
+		const candidate = await identifyUsbSerial(port.slice(0, -5), usbDevice);
+		if (
+			candidate &&
+			!candidates.some((c) => c.usbInterface === candidate.usbInterface)
+		) {
+			candidates.push(candidate);
+			const name = port.slice(0, -5);
+			const dev = (await readFile(`/sys/class/tty/${name}/dev`, "utf8")).trim();
+			if (/^\d+:\d+$/.test(dev)) {
+				try {
+					const data = await readFile(`/run/udev/data/c${dev}`, "utf8");
+					if (/^E:ID_MM_PORT_TYPE_AT_PRIMARY=1$/m.test(data))
+						primaryCandidates.push(candidate);
+				} catch {
+					/* Missing udev authority cannot select between AT interfaces. */
+				}
+			}
+		}
+	}
+	const family = info["modem.3gpp.eps.initial-bearer.settings.ip-type"];
+	const apn = info["modem.3gpp.eps.initial-bearer.settings.apn"];
+	return {
+		id,
+		key,
+		deviceId,
+		simId,
+		subscriber: sim.simInfo["sim.properties.imsi"] ?? "",
+		equipment: info["modem.generic.equipment-identifier"],
+		ifname,
+		netDevice,
+		usbDevice,
+		ifindex: (
+			await readFile(`/sys/class/net/${ifname}/ifindex`, "utf8")
+		).trim(),
+		generation: await usbGeneration(usbDevice),
+		identity,
+		sim,
+		...(primaryCandidates.length === 1 && primaryCandidates[0]
+			? { serial: primaryCandidates[0] }
+			: primaryCandidates.length === 0 &&
+					candidates.length === 1 &&
+					candidates[0]
+				? { serial: candidates[0] }
+				: {}),
+		...(apn !== undefined &&
+		(family === "ipv4" || family === "ipv6" || family === "ipv4v6")
+			? { initialEps: { apn, family } }
+			: {}),
+	};
+}
+export async function cellularTargetPresent(
+	target: CellularControlTarget,
+): Promise<boolean> {
+	try {
+		return (
+			(await usbGeneration(target.usbDevice)) === target.generation &&
+			(await realpath(`/sys/class/net/${target.ifname}/device`)) ===
+				target.netDevice &&
+			(
+				await readFile(`/sys/class/net/${target.ifname}/ifindex`, "utf8")
+			).trim() === target.ifindex
+		);
+	} catch {
+		return false;
+	}
+}
+export function parseCellularSubscriber(reply: string): string | undefined {
+	const lines = reply
+		.split(/[\r\n]+/)
+		.map((line) => line.trim())
+		.filter((line) => line && line !== "AT+CIMI" && line !== "OK");
+	return lines.length === 1 && /^\d{14,16}$/.test(lines[0] ?? "")
+		? lines[0]
+		: undefined;
+}
+export interface CellularControl {
+	readonly valid: () => Promise<boolean>;
+	readonly verifySubscriber: () => Promise<boolean>;
+	readonly readAutoConnect: () => Promise<number | undefined>;
+	readonly disableAutoConnect: () => Promise<boolean>;
+	readonly reset: () => Promise<void>;
+	readonly registration: () => Promise<boolean>;
+	readonly defineContext: (
+		cid: number,
+		apn: string,
+		family: RequestedFamily,
+	) => Promise<void>;
+	readonly activateContext: (cid: number, active: boolean) => Promise<void>;
+	readonly readIpv4Grant: (cid: number) => Promise<string | undefined>;
+	readonly close: () => Promise<void>;
+}
+const MM_DEST = "org.freedesktop.ModemManager1";
+async function inhibitControl(
+	transport: DbusTransport,
+	uid: string,
+	inhibit: boolean,
+) {
+	const reply = await transport.callMethod({
+		destination: MM_DEST,
+		path: "/org/freedesktop/ModemManager1",
+		interface: MM_DEST,
+		member: "InhibitDevice",
+		signature: "sb",
+		args: [uid, inhibit],
+		timeoutMs: inhibit ? 300_000 : 10_000,
+	});
+	if (reply.signature !== "" || reply.body.length)
+		throw new Error("Invalid inhibition acknowledgement");
+}
+export interface CellularControlAcquireDeps {
+	readonly present: typeof cellularTargetPresent;
+	readonly pair: typeof isModemPairAtStableKey;
+	readonly resolveUid: (path: string) => Promise<string>;
+	readonly transport: typeof createDbusTransport;
+	readonly exchange: typeof exchangeUsbSerial;
+}
+const defaultCellularControlAcquireDeps: CellularControlAcquireDeps = {
+	present: cellularTargetPresent,
+	pair: isModemPairAtStableKey,
+	resolveUid: realpath,
+	transport: createDbusTransport,
+	exchange: exchangeUsbSerial,
+};
+/** Own a dedicated, non-reconnecting bus connection for the inhibition lifetime. */
+export async function acquireCellularControl(
+	target: CellularControlTarget,
+	signal?: AbortSignal,
+	deps: CellularControlAcquireDeps = defaultCellularControlAcquireDeps,
+): Promise<CellularControl> {
+	if (
+		!target.serial ||
+		!/^\d{14,16}$/.test(target.subscriber) ||
+		!(await deps.present(target)) ||
+		!(await deps.pair(target.key, target))
+	)
+		throw new Error("Cellular control identity unresolved");
+	const uid = target.sim.modemInfo["modem.generic.device"];
+	if (!uid || (await deps.resolveUid(uid)) !== target.usbDevice)
+		throw new Error("Inhibition identity unresolved");
+	const serial = target.serial;
+	const transport = deps.transport({
+		reconnect: { enabled: false },
+		callTimeoutMs: 300_000,
+	});
+	let held = false,
+		closed = false,
+		revoked = false;
+	transport.on("disconnected", () => {
+		revoked = true;
+	});
+	const valid = async () =>
+		held &&
+		!closed &&
+		!revoked &&
+		!signal?.aborted &&
+		transport.isConnected() &&
+		(await deps.present(target));
+	const exchange = async (command: string) =>
+		deps.exchange(serial, command, valid, signal);
+	const verifySubscriber = async () =>
+		parseCellularSubscriber(await exchange("AT+CIMI")) === target.subscriber;
+	const requireSubscriber = async () => {
+		if (!(await verifySubscriber()))
+			throw new Error("Cellular subscription changed");
+	};
+	const cidArg = (cid: number) => {
+		if (!Number.isInteger(cid) || cid < 1 || cid > 16)
+			throw new Error("Invalid context");
+		return cid;
+	};
+	const close = async () => {
+		if (closed) return;
+		closed = true;
+		try {
+			if (held && !revoked && transport.isConnected())
+				await inhibitControl(transport, uid, false);
+		} finally {
+			held = false;
+			await transport.disconnect();
+		}
+	};
+	try {
+		await transport.connect();
+		await transport.subscribeSignal(
+			{
+				interface: "org.freedesktop.DBus",
+				member: "NameOwnerChanged",
+				path: "/org/freedesktop/DBus",
+				sender: "org.freedesktop.DBus",
+			},
+			(event) => {
+				if (event.body[0] === MM_DEST) revoked = true;
+			},
+		);
+		await inhibitControl(transport, uid, true);
+		held = true;
+		// A successful call is the ownership acknowledgement; the dedicated connection
+		// must remain alive. A disconnected/replaced bus never regains ownership.
+		if (!(await valid()) || !(await verifySubscriber()))
+			throw new Error("Cellular control not verified");
+		const quirk = resolveTransportQuirk(target.identity);
+		const requireQmap = () => {
+			if (!quirk?.qmapReadback)
+				throw new Error("Transport operation not admitted");
+		};
+		const requireInternal = () => {
+			if (quirk?.owner !== "internal-call")
+				throw new Error("Transport operation not admitted");
+		};
+		return {
+			valid,
+			verifySubscriber,
+			readAutoConnect: async () => {
+				requireQmap();
+				return parseQmapAutoConnect(await exchange('AT+QMAP="auto_connect"'));
+			},
+			disableAutoConnect: async () => {
+				requireQmap();
+				await requireSubscriber();
+				await exchange('AT+QMAP="auto_connect",0,0');
+				return (
+					parseQmapAutoConnect(await exchange('AT+QMAP="auto_connect"')) === 0
+				);
+			},
+			reset: async () => {
+				await requireSubscriber();
+				await exchange("AT+CFUN=1,1");
+			},
+			registration: async () => {
+				const reply = await exchange("AT+CEREG?");
+				return /^\+CEREG:\s*\d+,\s*[15](?:,|\s*$)/m.test(reply);
+			},
+			defineContext: async (cid, apn, family) => {
+				requireInternal();
+				if (!/^[a-zA-Z0-9._-]{1,100}$/.test(apn))
+					throw new Error("Invalid APN");
+				await requireSubscriber();
+				await exchange(
+					`AT+CGDCONT=${cidArg(cid)},"${family === "ipv4" ? "IP" : family === "ipv6" ? "IPV6" : "IPV4V6"}","${apn}"`,
+				);
+			},
+			activateContext: async (cid, active) => {
+				requireInternal();
+				await requireSubscriber();
+				await exchange(`AT+CGACT=${active ? 1 : 0},${cidArg(cid)}`);
+			},
+			readIpv4Grant: async (cid) => {
+				requireInternal();
+				return parseInternalIpv4Grant(
+					await exchange(`AT+CGPADDR=${cidArg(cid)}`),
+					cid,
+				);
+			},
+			close,
+		};
+	} catch (error) {
+		await close().catch(() => undefined);
+		throw error;
+	}
+}
+export async function setCellularInitialEps(
+	target: CellularControlTarget,
+	settings: InitialEpsSettings,
+): Promise<boolean> {
+	if (
+		!/^[a-zA-Z0-9._-]{1,100}$/.test(settings.apn) ||
+		!(await cellularTargetPresent(target)) ||
+		!(await isModemPairAtStableKey(target.key, target))
+	)
+		return false;
+	try {
+		await run(
+			mmcliBinary,
+			[
+				"-m",
+				String(target.id),
+				`--3gpp-set-initial-eps-bearer-settings=apn=${settings.apn},ip-type=${settings.family}`,
+			],
+			{ timeout: 60_000, maxBuffer: 16384 },
+		);
+		return true;
+	} catch {
+		return false;
+	}
+}
+export async function resetCellularTarget(
+	target: CellularControlTarget,
+): Promise<boolean> {
+	if (
+		!(await cellularTargetPresent(target)) ||
+		!(await isModemPairAtStableKey(target.key, target))
+	)
+		return false;
+	try {
+		await run(mmcliBinary, ["-m", String(target.id), "--reset"], {
+			timeout: 60_000,
+			maxBuffer: 16384,
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+export async function readCellularRawIp(
+	target: CellularControlTarget,
+): Promise<"Y" | "N" | undefined> {
+	if (!(await cellularTargetPresent(target))) return undefined;
+	const value = (
+		await readFile(`/sys/class/net/${target.ifname}/qmi/raw_ip`, "utf8")
+	).trim();
+	return value === "Y" || value === "N" ? value : undefined;
+}
+
+export async function writeCellularRawIp(
+	target: CellularControlTarget,
+	wanted: "Y" | "N",
+): Promise<boolean> {
+	if (
+		!resolveTransportQuirk(target.identity)?.rawIpBeforeCall ||
+		!(await cellularTargetPresent(target))
+	)
+		return false;
+	const state: unknown = JSON.parse(
+		await run("ip", ["-j", "address", "show", "dev", target.ifname], {
+			timeout: 5000,
+			maxBuffer: 65536,
+		}),
+	);
+	if (!Array.isArray(state) || state.length !== 1) return false;
+	const row = state[0] as { ifindex?: unknown; addr_info?: unknown };
+	if (
+		String(row.ifindex) !== target.ifindex ||
+		!Array.isArray(row.addr_info) ||
+		row.addr_info.some(
+			(address: unknown) =>
+				!address ||
+				typeof address !== "object" ||
+				!("scope" in address) ||
+				address.scope === "global",
+		)
+	)
+		return false;
+	const handle = await open(
+		`/sys/class/net/${target.ifname}/qmi/raw_ip`,
+		constants.O_WRONLY | constants.O_NOFOLLOW,
+	);
+	try {
+		if (!(await cellularTargetPresent(target))) return false;
+		await run("ip", ["link", "set", "dev", target.ifname, "down"], {
+			timeout: 5000,
+			maxBuffer: 4096,
+		});
+		if (!(await cellularTargetPresent(target))) return false;
+		await handle.writeFile(wanted);
+	} finally {
+		await handle.close();
+	}
+	return (
+		(await cellularTargetPresent(target)) &&
+		(await readCellularRawIp(target)) === wanted
+	);
 }
