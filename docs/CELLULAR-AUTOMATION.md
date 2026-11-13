@@ -203,8 +203,20 @@ prefix changes invalidate translation without counting a carrier failure.
 Per-pair probe reservations are capped at ten MiB daily. Short whole-USB absences
 withdraw availability without resetting the modem or charging a carrier failure.
 The existing poll owns retries; no second production controller is installed.
-FM350 activation, journaled native reconnect and installed image qualification
-remain incomplete.
+Native traffic recovery now reconnects only after the retained host inverse and
+consumer withdrawal complete. The existing modem lease journals the exact
+device/SIM/subscriber, admitted transport and home/profile digests before calls.
+Fresh MM identity, NM active UUID or positive idle state, registration and
+transport preparation are rechecked before each dispatch. USB loss or changed
+SIM/profile/permission cannot authorize another call. Lost command replies need
+positive readback; uncertain effects retain the existing mutation block and
+cannot republish. Recovery never resets USB or rewrites carrier settings.
+
+Startup may verify an already-active exact profile, or restore an interrupted
+call only with fresh positive preparation. A cold-boot RM520 without that proof
+remains blocked; automatic reboot restoration is still a physical qualification
+gate. Failed transactions retain the existing operator-resolution semantics.
+FM350 activation and installed image qualification remain incomplete.
 
 CLAT allocation also accepts an exact kernel host `/128` when the current modem
 grant positively delegates the matching `/64`. The retained birth plan records
@@ -429,8 +441,22 @@ DNS64 nuevo invalida CLAT sin contarlo como fallo del operador. Las reservas por
 pareja se limitan a diez MiB diarios. Una ausencia breve del USB retira la
 disponibilidad sin reiniciar el módem ni contar un fallo del operador. El sondeo
 existente controla los reintentos; no se instala otro controlador de producción.
-La activación FM350, la reconexión nativa con registro y la calificación de la
-imagen instalada siguen incompletas.
+La recuperación nativa reconecta solo después de terminar la retirada de
+consumidores y la restauración del host. La exclusión existente registra la
+identidad exacta del dispositivo, SIM y suscriptor, el transporte admitido y los
+resúmenes del operador de origen y del perfil antes de actuar. Vuelve a comprobar
+MM, el UUID activo de NM o su estado desconectado, el registro y la preparación
+del transporte antes de cada llamada. Una pérdida USB o un cambio de SIM, perfil
+o permiso no autorizan otra llamada. Una respuesta perdida necesita una lectura
+positiva; un efecto incierto conserva el bloqueo existente e impide publicar.
+La recuperación no reinicia USB ni reescribe ajustes del operador.
+
+Al iniciar se puede verificar el perfil exacto ya activo, o restaurar una llamada
+interrumpida solo con preparación nueva acreditada. Un RM520 recién arrancado
+sin esa prueba sigue bloqueado; su restauración automática tras reiniciar sigue
+pendiente de calificación física. Las transacciones fallidas conservan la
+resolución por el operador existente. La activación FM350 y la calificación de
+la imagen instalada siguen incompletas.
 
 La asignación CLAT también admite una dirección exacta `/128` del kernel cuando
 la concesión actual del módem acredita el `/64` correspondiente. El registro de

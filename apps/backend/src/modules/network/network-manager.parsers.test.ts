@@ -11,6 +11,7 @@ import { describe, expect, it } from "bun:test";
 
 import { isParseError } from "../system/cli-parse.ts";
 import {
+	nmConnect,
 	parseNmConnActivated,
 	parseNmConnAddUuid,
 	parseNmConnDeactivated,
@@ -52,6 +53,41 @@ describe("parseNmHotspotUuid", () => {
 });
 
 describe("nmcli boolean result parsers", () => {
+	it("activation's client deadline allows the requested NM wait to finish", async () => {
+		for (const seconds of [5, 45, 90]) {
+			let dispatched = false;
+			expect(
+				await nmConnect(
+					"synthetic-profile",
+					seconds,
+					async (binary, args, options) => {
+						dispatched = true;
+						expect(binary).toBe("nmcli");
+						expect(args.slice(0, 2)).toEqual(["-w", String(seconds)]);
+						expect(options?.timeout).toBeGreaterThan(seconds * 1000);
+						return "Connection successfully activated (synthetic)";
+					},
+				),
+			).toBe(true);
+			expect(dispatched).toBe(true);
+		}
+	});
+	it("activation without a requested wait preserves the generic command deadline", async () => {
+		let dispatched = false;
+		expect(
+			await nmConnect(
+				"synthetic-profile",
+				undefined,
+				async (_binary, args, options) => {
+					dispatched = true;
+					expect(args).not.toContain("-w");
+					expect(options?.timeout).toBeUndefined();
+					return "Connection successfully activated (synthetic)";
+				},
+			),
+		).toBe(true);
+		expect(dispatched).toBe(true);
+	});
 	it("parseNmConnDeleted matches the deletion confirmation", () => {
 		expect(
 			parseNmConnDeleted("Connection 'x' (uuid) successfully deleted."),
