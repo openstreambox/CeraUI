@@ -60,6 +60,7 @@ import type {
 	NetifConfigOutput,
 	OpenRouterAdminInput,
 	OpenRouterAdminOutput,
+	PortalWindowStatus,
 	PreviewTokenOutput,
 	RelayValidateInput,
 	RelayValidateOutput,
@@ -813,7 +814,7 @@ export interface TypedRPC {
 		portal: (input: {
 			action: "start" | "finish" | "status";
 			radio?: number;
-		}) => Promise<{ phase: string }>;
+		}) => Promise<PortalWindowStatus>;
 		getStatus: () => Promise<unknown>;
 		connect: (input: WifiConnectInput) => Promise<WifiOperationOutput>;
 		disconnect: (input: WifiDisconnectInput) => Promise<WifiOperationOutput>;

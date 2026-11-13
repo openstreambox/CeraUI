@@ -677,3 +677,17 @@ export const wifiMessageSchema = z.object({
 		.optional(),
 });
 export type WifiMessage = z.infer<typeof wifiMessageSchema>;
+
+/** Optional expiry keeps older clients and idle responses compatible. */
+export const portalWindowStatusSchema = z.object({
+	phase: z.enum([
+		'idle',
+		'signing_in',
+		'checking',
+		'web_available',
+		'needs_sign_in',
+		'cleanup_unknown',
+	]),
+	expiresAt: z.number().int().nonnegative().optional(),
+});
+export type PortalWindowStatus = z.infer<typeof portalWindowStatusSchema>;

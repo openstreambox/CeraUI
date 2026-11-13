@@ -28,8 +28,24 @@ automates acceptance, or copies another device's MAC.
 Expiry is enforced in nftables even if the backend dies. Portal-marked stale
 connections are dropped after expiry; exact phone/port conntracks are retired on
 open and close. The cleanup deliberately never flushes streaming UDP connections
-or another phone's connections. After an abrupt backend death the expired guard
-may remain until reboot; a new window refuses rather than taking it over.
+or another phone's connections. Startup and each new opening reconcile leftover
+live or expired state: flush the timed sets, retire only portal-marked conntracks,
+then remove the exact owned policy rules, private routes and nft table. Foreign
+policy rules cause refusal. Missing rules/routes/tables are already closed;
+permission and I/O errors remain retryable failures. A reconnect that removes
+the venue route therefore cannot wedge later sign-ins.
+
+An inert ownership table is installed before route writes, so a hard stop
+between route and rule installation is also recoverable. Enabling the timed
+window atomically replaces that inert table.
+
+The helper handles SIGTERM by rolling back; its backend deadline exceeds the
+bounded command sequence. An open failure triggers another close. If that close
+also fails, the owner and conservative expiry remain visible as closing, and
+cleanup retries automatically. Venue health is released after successful cleanup
+or at the forwarding deadline, even if kernel cleanup remains unavailable.
+The interpreter capability accepts only isolated execution of this helper and
+its three named actions; arbitrary Python commands are refused.
 
 After closure the backend checks exact empty HTTP 204 and validated HTTPS 204
 through the selected device. A positive result says only that Wi-Fi reaches the
@@ -64,3 +80,31 @@ Las comprobaciones normales deciden cuándo puede ayudar con la transmisión.
 Si la página no abre, desactiva temporalmente la VPN, Private Relay o DNS privado
 y vuelve a activarlos al terminar. Esta función experimental requiere pruebas
 en el dispositivo antes de publicarse para uso normal.
+
+
+## Recovery and messages
+
+A changed Wi-Fi session closes the window at the next identity check. Checks
+start every ten seconds. Sign-in errors distinguish a disconnected Wi-Fi, a changed session,
+unconfirmed identity, an already-open window, cleanup in progress, a Wi-Fi that
+does not need sign-in and a phone outside the AP. Unknown failures use a calm
+retry message. Closing reports the latest forwarding expiry and reassures the
+user that the stream is unaffected. Check and Cancel both close before checking
+web access.
+
+### Recuperación y mensajes
+
+Al iniciar el servicio y antes de abrir otra ventana, el equipo retira las reglas
+anteriores, incluso si aún no vencieron. Si el Wi-Fi cambia, la ventana se cierra
+en la siguiente comprobación de identidad. Las comprobaciones se inician cada diez segundos.
+Los mensajes distinguen una red desconectada, una red que cambió, una identidad
+sin confirmar, otra ventana abierta, un cierre en curso, una red que no necesita
+inicio de sesión y un teléfono fuera del Wi-Fi del equipo. El cierre muestra
+la hora límite del acceso web. Tu transmisión no se ve afectada.
+Comprobar y cancelar cierran la ventana antes de comprobar el acceso web.
+
+Remaining qualification: DHCP lease cross-checking of the neighbor MAC, strict
+reverse-path filtering on target images, coordinated mark-layout changes, and
+event-driven closure faster than the periodic identity check. REACHABLE/STALE
+neighbor state and current station association are required, but are not a DHCP
+identity proof. No radio or venue qualification is implied by the namespace tests.

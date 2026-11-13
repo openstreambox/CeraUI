@@ -7,6 +7,9 @@ import pathlib
 import subprocess
 import sys
 import time
+import tempfile
+import signal
+import shutil
 
 spec = importlib.util.spec_from_file_location('portal', pathlib.Path(__file__).parents[2] / 'deployment/captive-portal-window.py')
 p = importlib.util.module_from_spec(spec)
@@ -208,6 +211,85 @@ assert b'healthy' in udp.recv(32)
     assert 'hotel' in request(phone)
     p.close_window(c)
     p.run('nft', 'delete', 'table', 'inet', 'all_down')
+    assert 'healthy' in request(phone)
+    # A reconnect removes the private route before the owner closes.
+    p.open_window(c)
+    run('ip', 'addr', 'del', '198.51.100.1/24', 'dev', 'wan1')
+    assert not run('ip', '-4', 'route', 'show', 'table', p.ROUTE_TABLE)
+    p.close_window(c)
+    p.close_window(c)
+    run('ip', 'addr', 'add', '198.51.100.1/24', 'dev', 'wan1')
+    p.open_window(c)
+    assert 'hotel' in request(phone)
+    # New helper process: no in-memory config, live sets/rule/route survive.
+    helper = str(pathlib.Path(__file__).parents[2] / 'deployment/captive-portal-window.py')
+    subprocess.run(['python3', '-I', helper, 'sweep'], input='{}', text=True, check=True)
+    assert not p.run('nft', 'list', 'table', 'inet', p.TABLE, check=False)
+    assert not run('ip', '-4', 'route', 'show', 'table', p.ROUTE_TABLE)
+    assert 'healthy' in request(phone)
+    p.open_window(c)
+    p.close_window(c)
+    # TERM after nft has installed live sets must execute rollback.
+    with tempfile.TemporaryDirectory() as tmp:
+        real_nft = shutil.which('nft')
+        ready = pathlib.Path(tmp) / 'ready'
+        shim = pathlib.Path(tmp) / 'nft'
+        payload = pathlib.Path(tmp) / 'payload'
+        shim.write_text('#!/bin/sh\n'
+                        'if [ "$1" = "-f" ]; then\ncat > "' + str(payload) + '"\n'
+                        + real_nft + ' "$@" < "' + str(payload) + '"\nrc=$?\n'
+                        'if grep -q "timeout 10s" "' + str(payload) + '" && [ ! -e "' + str(ready) + '" ]; then\n'
+                        'touch "' + str(ready) + '"\nsleep 2\nfi\nexit "$rc"\n'
+                        'else\nexec ' + real_nft + ' "$@"\nfi\n')
+        shim.chmod(0o755)
+        proc = subprocess.Popen(['python3', '-I', helper, 'open'], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env={**os.environ, 'PATH': tmp + ':' + os.environ['PATH']})
+        children.append(proc)
+        proc.stdin.write(json.dumps(c).encode()); proc.stdin.close()
+        limit = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < limit:
+            time.sleep(.01)
+        assert ready.exists()
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=15) != 0
+        assert not p.run('nft', 'list', 'table', 'inet', p.TABLE, check=False)
+        assert not run('ip', '-4', 'route', 'show', 'table', p.ROUTE_TABLE)
+    # Hard stop between route and rule installation: the inert ownership table
+    # must make this partial installation recoverable too.
+    with tempfile.TemporaryDirectory() as tmp:
+        ready = pathlib.Path(tmp) / 'ready'
+        shim = pathlib.Path(tmp) / 'ip'
+        shim.write_text('#!/bin/sh\n' + shutil.which('ip') + ' "$@"\nrc=$?\n'
+                        'if [ "$3" = "add" ] && [ "$2" = "route" ]; then\n'
+                        'touch "' + str(ready) + '"\nsleep 5\nfi\nexit "$rc"\n')
+        shim.chmod(0o755)
+        proc = subprocess.Popen(['python3', '-I', helper, 'open'], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+                                env={**os.environ, 'PATH': tmp + ':' + os.environ['PATH']})
+        children.append(proc)
+        proc.stdin.write(json.dumps(c).encode()); proc.stdin.close()
+        limit = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < limit:
+            time.sleep(.01)
+        assert ready.exists()
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait(timeout=5)
+        assert run('ip', '-4', 'route', 'show', 'table', p.ROUTE_TABLE)
+        assert '90:' not in run('ip', '-4', 'rule', 'show')
+        subprocess.run(['python3', '-I', helper, 'sweep'], input='{}', text=True, check=True)
+        assert not run('ip', '-4', 'route', 'show', 'table', p.ROUTE_TABLE)
+    # Expired leftovers are recoverable too; sweep is repeatable.
+    short = {**c, 'seconds': 1}
+    p.open_window(short)
+    time.sleep(1.1)
+    subprocess.run(['python3', '-I', helper, 'sweep'], input='{}', text=True, check=True)
+    subprocess.run(['python3', '-I', helper, 'sweep'], input='{}', text=True, check=True)
+    # Device removal also retires its routes; cleanup must not require the old name.
+    p.open_window(c)
+    run('ip', 'link', 'del', 'wan1')
+    p.close_window(c)
+    p.close_window(c)
     assert 'healthy' in request(phone)
     assert physical_before == run('ip','rule','show')
     for proc in relays:

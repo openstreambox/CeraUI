@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { createSignInWindow } from "../modules/wifi/captive-portal-window.ts";
 
 test("only the owning phone can cancel; timeout closes before checking", async () => {
@@ -117,4 +117,26 @@ test("a late identity read from an older window cannot cancel its successor", as
 	await oldRead;
 	expect(closes).toBe(1);
 	expect(window.status("phone").phase).toBe("signing_in");
+});
+
+test("an uncertain open is closed before failure and remains closable if cleanup fails", async () => {
+	const close = mock(async (): Promise<void> => {
+		throw Error("cleanup");
+	});
+	const owner = createSignInWindow({
+		open: async () => {
+			throw Error("timeout");
+		},
+		close,
+		check: async () => false,
+		unchanged: async () => true,
+		arm: () => () => {},
+	});
+	expect((await owner.start("phone", "2")).expiresAt).toBeGreaterThan(
+		Date.now(),
+	);
+	expect(close).toHaveBeenCalledTimes(1);
+	expect(owner.status("phone").phase).toBe("cleanup_unknown");
+	close.mockImplementation(async () => {});
+	expect((await owner.finish("phone")).phase).toBe("needs_sign_in");
 });

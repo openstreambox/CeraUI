@@ -529,6 +529,12 @@ void guardNonCritical("update-bootstrap", () =>
 );
 
 initNetworkInterfaceMonitoring();
+await guardNonCritical("portal-reconcile", async () => {
+	const { reconcilePortalWindow } = await import(
+		"./modules/wifi/captive-portal-runtime.ts"
+	);
+	await reconcilePortalWindow();
+});
 initUplinkHealth();
 await guardNonCritical("uplink-steering", initUplinkSteering);
 await guardNonCritical("uplink-shaper", initUplinkShaper);

@@ -237,3 +237,12 @@ describe("run() — argv redaction covers BOTH secret shapes", () => {
 		expect(logged).toContain("/dev/cdc-wdm0");
 	});
 });
+
+it("does not grant arbitrary Python interpretation", async () => {
+	await expect(run("python3", ["-c", "print(1)"])).rejects.toThrow(
+		"not allowlisted",
+	);
+	await expect(runWithStdin("python3", ["other.py"], "")).rejects.toThrow(
+		"not allowlisted",
+	);
+});

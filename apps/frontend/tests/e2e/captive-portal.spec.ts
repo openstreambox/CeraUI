@@ -5,7 +5,7 @@ for (const width of [390, 1280]) {
  test(`sign-in window explains local admission at ${width}px`, async ({ authedPage: page }) => {
   await page.setViewportSize({width, height: 900});
   await navigateTo(page, 'network');
-  const card = page.getByRole('region', {name: 'Wi-Fi sign-in'});
+  const card = page.getByRole('region', {name: 'Sign the box in'});
   await expect(card.getByRole('heading', {name: 'Sign the box in'})).toBeVisible();
   const choice = card.getByRole('combobox');
   const values = await choice.locator('option').evaluateAll(options => options.map(o => (o as HTMLOptionElement).value).filter(Boolean));

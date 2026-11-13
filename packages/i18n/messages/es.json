@@ -2869,12 +2869,21 @@
 	"network.portal.finish": "Comprobar el inicio de sesión",
 	"network.portal.cancel": "Cancelar inicio de sesión",
 	"network.portal.checking": "Comprobando · Probando el acceso a internet.",
-	"network.portal.closing": "Cerrando el inicio de sesión. La ventana se cierra sola en un máximo de diez minutos.",
+	"network.portal.closing": "El inicio de sesión se está cerrando. El acceso web termina en diez minutos como máximo. Tu transmisión no se ve afectada.",
 	"network.portal.retryClose": "Cerrar de nuevo",
 	"network.portal.closed": "La ventana se cerró. Nada cambió para tu transmisión. Inténtalo de nuevo cuando quieras.",
 	"network.portal.available": "Este Wi-Fi tiene acceso web. Las comprobaciones normales deciden cuándo puede ayudar con tu transmisión.",
 	"network.portal.choose": "Elige un Wi-Fi",
 	"network.portal.duration": "Alrededor de un minuto. El chat de este teléfono puede pausarse. La ventana se cierra después de diez minutos.",
 	"network.portal.open": "Abrir la página del hotel",
-	"network.portal.unavailable": "Conéctate al Wi-Fi de la caja e inténtalo de nuevo. Puede haber otro teléfono iniciando sesión."
+	"network.portal.unavailable": "No se pudo abrir la ventana de inicio de sesión. Vuelve a intentarlo en un momento.",
+	"network.portal.not_captive": "Esta red Wi-Fi no necesita que inicies sesión.",
+	"network.portal.wifi_changed": "La red Wi-Fi cambió. Elígela de nuevo y vuelve a intentarlo.",
+	"network.portal.identity_unavailable": "El equipo aún no puede confirmar esta red Wi-Fi. Espera un momento y vuelve a intentarlo.",
+	"network.portal.cleanup_required": "El inicio de sesión anterior aún se está cerrando. Espera un momento y vuelve a intentarlo.",
+	"network.portal.not_on_box_wifi": "Conéctate al Wi-Fi del equipo y vuelve a intentarlo.",
+	"network.portal.busy_other_phone": "Ya hay una ventana de inicio de sesión abierta. Ciérrala antes de abrir otra.",
+	"network.portal.wifi_unavailable": "Esta red Wi-Fi ya no está conectada. Conéctala y vuelve a intentarlo.",
+	"network.portal.expires": "El acceso web termina a más tardar a las {time}.",
+	"network.portal.ipv4_required": "Este inicio de sesión necesita IPv4. Vuelve a conectarte al Wi-Fi del equipo e inténtalo de nuevo."
 }

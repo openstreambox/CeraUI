@@ -14,11 +14,12 @@ export const captivePortalProcedure = os
 		}),
 	)
 	.handler(async ({ input, context }) => {
+		const sender = context.getSenderId();
+		const peer = context.ws.remoteAddress.replace(/^::ffff:/, "");
+		if (sender) throw Error("Sign in from the box's Wi-Fi.");
 		const { signInWindow } = await import(
 			"../../modules/wifi/captive-portal-runtime.ts"
 		);
-		if (context.getSenderId()) throw Error("Sign in from the box's Wi-Fi.");
-		const peer = context.ws.remoteAddress.replace(/^::ffff:/, "");
 		if (input.action === "start") {
 			if (input.radio === undefined) throw Error("Choose Wi-Fi");
 			return signInWindow.start(peer, String(input.radio));

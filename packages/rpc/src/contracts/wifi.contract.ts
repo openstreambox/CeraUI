@@ -9,6 +9,7 @@ import {
 	hotspotPrepareInputSchema,
 	hotspotPrepareOutputSchema,
 	hotspotToggleInputSchema,
+	portalWindowStatusSchema,
 	setWifiAdapterModeInputSchema,
 	setWifiAdapterModeOutputSchema,
 	setWifiCountryInputSchema,
@@ -32,18 +33,7 @@ export const wifiContract = oc.router({
 				radio: z.number().int().nonnegative().optional(),
 			}),
 		)
-		.output(
-			z.object({
-				phase: z.enum([
-					'idle',
-					'signing_in',
-					'checking',
-					'web_available',
-					'needs_sign_in',
-					'cleanup_unknown',
-				]),
-			}),
-		),
+		.output(portalWindowStatusSchema),
 	/**
 	 * Get WiFi status for all interfaces
 	 */
