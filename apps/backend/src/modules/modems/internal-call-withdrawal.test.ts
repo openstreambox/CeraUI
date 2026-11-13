@@ -330,3 +330,23 @@ test("host inverse state cannot be replaced, erased early or withdrawn before it
 		expect(f.state()).toMatchObject({ held: true, ra: "0", managed: false });
 		expect(await withdrawInternalCall(f.deps)).toBe(true);
 	}));
+
+test("a known handoff cannot disappear or change its baseline through a foreign file rewrite", async () =>
+	fixture(async (f) => {
+		const original = parseInternalCallAuthority(await f.read(), f.key);
+		if (!original.handoff) throw new Error("Synthetic handoff unavailable");
+		await f.write({ ...original, handoff: null });
+		await expect(f.session.load()).rejects.toThrow("replaced");
+		await f.write({
+			...original,
+			handoff: {
+				...original.handoff,
+				plan: { ...original.handoff.plan, raDefault: "0" },
+				steps: ["nm-unmanaged", "link-up"],
+				cursor: 2,
+			},
+		});
+		await expect(f.session.load()).rejects.toThrow("replaced");
+		await f.write(original);
+		expect(await withdrawInternalCall(f.deps)).toBe(true);
+	}));

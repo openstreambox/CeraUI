@@ -44,6 +44,7 @@ import {
 	replayCellularHosts,
 	verifyCellularHosts,
 } from "./cellular-host-recovery.ts";
+import { replayInternalCalls } from "./internal-call-recovery.ts";
 
 import {
 	reconciledMutationJournalRevision,
@@ -202,11 +203,16 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 	}
 	try {
 		await inventoryCellularAuthority("migrate");
+		if (hostsWithdrawn) await replayInternalCalls();
 	} catch {
+		hostsWithdrawn = false;
 		unreadable++;
-		logger.error("cellular authority migration incomplete; records preserved", {
-			module: "modems",
-		});
+		logger.error(
+			"cellular authority migration or internal withdrawal incomplete; records preserved",
+			{
+				module: "modems",
+			},
+		);
 	}
 	try {
 		await settlePendingMutationRemovals();

@@ -175,3 +175,16 @@ test("disconnected physical Ethernet retains identity across an empty transient 
 	expect(await control.setManaged(device, true, false)).toBe(false);
 	await control.close();
 });
+
+test("inverse lookup without a modem path accepts only a physical NM object", async () => {
+	const f = fixture();
+	await expect(
+		acquireCellularNmControl(link, undefined, f.deps),
+	).rejects.toThrow("another device");
+	expect(f.calls.filter((call) => call.member === "Set")).toHaveLength(0);
+	const g = fixture();
+	g.set({ iface: link.ifname, ipIface: "", udi: "synthetic-physical-net" });
+	const control = await acquireCellularNmControl(link, undefined, g.deps);
+	expect(control.devices[0]?.udi).toBe("synthetic-physical-net");
+	await control.close();
+});
