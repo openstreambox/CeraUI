@@ -140,6 +140,7 @@ export const ALLOWED: Set<string> = new Set<string>([
 	"sysctl",
 	// Future scoped conntrack flush on hard-down.
 	"conntrack",
+	"python3",
 	"curl",
 	// Bound nonce exchange; source is a fixed literal, arguments are data only.
 	"perl",

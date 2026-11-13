@@ -2,6 +2,7 @@
  * WiFi ORPC Contract
  */
 import { oc } from '@orpc/contract';
+import { z } from 'zod';
 
 import {
 	hotspotConfigInputSchema,
@@ -24,6 +25,25 @@ import {
 } from '../schemas';
 
 export const wifiContract = oc.router({
+	portal: oc
+		.input(
+			z.object({
+				action: z.enum(['start', 'finish', 'status']),
+				radio: z.number().int().nonnegative().optional(),
+			}),
+		)
+		.output(
+			z.object({
+				phase: z.enum([
+					'idle',
+					'signing_in',
+					'checking',
+					'web_available',
+					'needs_sign_in',
+					'cleanup_unknown',
+				]),
+			}),
+		),
 	/**
 	 * Get WiFi status for all interfaces
 	 */

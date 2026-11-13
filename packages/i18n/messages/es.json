@@ -2861,5 +2861,20 @@
 	"carrying.idle": "Ningún teléfono envía a través de este equipo",
 	"settings.updates.system.boardNotOffered": "Las actualizaciones aún no se ofrecen para esta placa.",
 	"settings.updates.channel.address": "Dirección del canal de imágenes",
-	"settings.updates.channel.saveAddress": "Guardar dirección"
+	"settings.updates.channel.saveAddress": "Guardar dirección",
+	"network.portal.title": "Iniciar sesión para la caja",
+	"network.portal.intro": "El hotel admite cada dispositivo por separado. La caja necesita su propio inicio de sesión. Su página se abre en este teléfono.",
+	"network.portal.waiting": "Esperando a que termines en la página del hotel. El chat de este teléfono puede pausarse. Nada cambia para tu transmisión.",
+	"network.portal.again": "Abrir la página de nuevo",
+	"network.portal.finish": "Comprobar el inicio de sesión",
+	"network.portal.cancel": "Cancelar inicio de sesión",
+	"network.portal.checking": "Comprobando · Probando el acceso a internet.",
+	"network.portal.closing": "Cerrando el inicio de sesión. La ventana se cierra sola en un máximo de diez minutos.",
+	"network.portal.retryClose": "Cerrar de nuevo",
+	"network.portal.closed": "La ventana se cerró. Nada cambió para tu transmisión. Inténtalo de nuevo cuando quieras.",
+	"network.portal.available": "Este Wi-Fi tiene acceso web. Las comprobaciones normales deciden cuándo puede ayudar con tu transmisión.",
+	"network.portal.choose": "Elige un Wi-Fi",
+	"network.portal.duration": "Alrededor de un minuto. El chat de este teléfono puede pausarse. La ventana se cierra después de diez minutos.",
+	"network.portal.open": "Abrir la página del hotel",
+	"network.portal.unavailable": "Conéctate al Wi-Fi de la caja e inténtalo de nuevo. Puede haber otro teléfono iniciando sesión."
 }

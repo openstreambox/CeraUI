@@ -90,7 +90,7 @@ export function buildShareRuleset(state: ShareRulesetState): string {
 		);
 		for (const zone of zones) {
 			lines.push(
-				`\t\tiifname "${zone.ifname}" ip saddr ${zone.ipv4Cidr} ct state new drop comment "no selectable client uplink"`,
+				`\t\tiifname "${zone.ifname}" ip saddr ${zone.ipv4Cidr} ct state new meta mark != 0xcb000100 drop comment "no selectable client uplink"`,
 			);
 		}
 		lines.push("\t}", "");
@@ -148,7 +148,7 @@ function renderRestoreRule(zone: ClientZone, uplink: SteeringUplink): string {
 }
 
 function renderSelectionRule(zone: ClientZone): string {
-	return `\t\tiifname "${zone.ifname}" ip saddr ${zone.ipv4Cidr} ct state new ct mark & ${hexMark(CLIENT_FLOW_NAMESPACE_MASK)} != ${hexMark(CLIENT_FLOW_NAMESPACE)} numgen random mod ${WEIGHT_BUCKET_MODULUS} vmap @uplink_verdicts comment "select client uplink"`;
+	return `\t\tiifname "${zone.ifname}" ip saddr ${zone.ipv4Cidr} ct state new ct mark != 0xcb000100 ct mark & ${hexMark(CLIENT_FLOW_NAMESPACE_MASK)} != ${hexMark(CLIENT_FLOW_NAMESPACE)} numgen random mod ${WEIGHT_BUCKET_MODULUS} vmap @uplink_verdicts comment "select client uplink"`;
 }
 
 function renderMasqueradeRule(

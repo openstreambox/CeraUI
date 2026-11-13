@@ -26,6 +26,7 @@ import type { LinkSignal } from '$lib/types/hud';
 
 import BluetoothSection from './network/BluetoothSection.svelte';
 import BondedLinksSection from './network/BondedLinksSection.svelte';
+import CaptivePortal from './network/CaptivePortal.svelte';
 import CellularSection from './network/CellularSection.svelte';
 import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
@@ -235,6 +236,7 @@ function openModemConfig(id: string) {
 			{netif}
 			{hotspotInterfaces}
 		/>
+		<CaptivePortal />
 		<WifiSection
 			wifiRadios={wifiEntries}
 			{netif}
