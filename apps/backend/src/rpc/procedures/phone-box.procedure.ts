@@ -13,6 +13,7 @@ export const getPhoneBoxProcedure = authed
 	.output(phoneBoxSettingsSchema)
 	.handler(async () => ({
 		way: await readPhoneWay(),
+		// setup owns the persisted generated secret and disables unavailable listeners.
 		srt: setup.srt_forward
 			? {
 					address: `srt://${setup.srt_forward.host}:${setup.srt_forward.port}`,

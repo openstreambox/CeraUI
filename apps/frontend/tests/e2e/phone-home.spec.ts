@@ -4,24 +4,8 @@ import { ensureAuthenticated, evidencePath } from './helpers/index.js';
 for (const width of [390,1280,1024]) {
  test(`phone-only Home @visual covers every state at ${width}px`, async ({page,pageRpc})=>{
   await page.setViewportSize({width,height:width===1024?600:900});
-  await page.addInitScript(()=>{
-   const target=window as typeof window & {phoneTestState:string}; target.phoneTestState='unknown';
-   const Native=window.WebSocket;
-   class PhoneSocket extends Native {
-    set onmessage(handler:((this:WebSocket,event:MessageEvent)=>unknown)|null) {
-     if(!handler){super.onmessage=null;return;}
-     super.onmessage=(event:MessageEvent)=>{
-      let next=event;
-      try {const data=JSON.parse(event.data);if(data.status){Object.assign(data.status,{phone_box:true,carrying:{state:target.phoneTestState},box_health:[]});next=new MessageEvent('message',{data:JSON.stringify(data)});}}
-      catch { /* Preserve non-status frames. */ }
-      handler.call(this,next);
-     };
-    }
-    get onmessage(){return super.onmessage;}
-   }
-   window.WebSocket=PhoneSocket;
-  });
   await page.goto('/');await ensureAuthenticated(page);
+  await pageRpc.call(['dev','emit'],{type:'status',payload:{phone_box:true,carrying:{state:'unknown'},box_health:[]}});
   await expect(page.getByRole('heading',{name:'Checking whether your phone uses the box'})).toBeVisible();
   await expect(page.getByTestId('phone-hud')).toHaveText('CHECKING');
   const home=page.getByTestId('phone-home');
@@ -29,7 +13,6 @@ for (const width of [390,1280,1024]) {
   await page.screenshot({path:evidencePath(`phone-home-checking-${width}.png`),fullPage:true});
   await expect(home).not.toContainText(/engine offline|not live|idle/i);
   for (const [state,heading,badge] of [['streaming',"Carrying your phone's stream",'PHONE STREAM'],['idle','Ready for your phone','READY']] as const) {
-   await page.evaluate(value=>{(window as typeof window & {phoneTestState:string}).phoneTestState=value;},state);
    await pageRpc.call(['dev','emit'],{type:'status',payload:{phone_box:true,carrying:{state},box_health:[]}});
    await expect(page.getByRole('heading',{name:heading})).toBeVisible();
    await expect(page.getByTestId('phone-hud')).toHaveText(badge);

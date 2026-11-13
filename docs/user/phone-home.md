@@ -58,8 +58,17 @@ The presentation state mapping and QR policy live in `phone-home.ts`. User-facin
 copy lives under `live.phone` in all ten catalogs. The ready-state reminder uses
 the remembered choice, never an inferred phone identity or a parallel timer.
 
-Merge also requires the parent forwarding implementation to publish carrying
-changes after connection. These screens consume the shared subscription store;
-they do not poll or replace unknown with a client-side timer. The backend owns
-the startup checking window. Browser and ingestion tests simulate status changes
-without claiming that the parent already publishes them.
+The forwarding implementation publishes carrying changes after connection.
+These screens consume the shared subscription store; they do not poll or replace
+unknown with a client-side timer. The backend owns the startup checking window.
+Browser and ingestion tests exercise partial status changes without rewriting
+WebSocket frames.
+
+Home follows carrying changes from the shared status subscription, including
+forwarding and unknown states. The SRT app instructions use the listener's
+persisted generated passphrase (or the explicitly configured passphrase).
+No separate phone credential is created.
+
+Home sigue los cambios de tráfico de la suscripción de estado compartida,
+incluidos el reenvío y el estado desconocido. Las instrucciones SRT usan la
+contraseña generada y persistida del receptor, o la configurada explícitamente.
