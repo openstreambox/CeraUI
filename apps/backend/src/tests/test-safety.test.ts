@@ -4,7 +4,9 @@ import { createSocket } from "node:dgram";
 import dns from "node:dns";
 import dnsPromises from "node:dns/promises";
 import {
+	chmodSync,
 	mkdtempSync,
+	readFileSync,
 	realpathSync,
 	rmSync,
 	symlinkSync,
@@ -12,11 +14,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as workerThreads from "node:worker_threads";
 import {
 	assertLoopbackHost,
 	assertSafeCommand,
 	takeSafetyViolations,
+	writePathStubs,
 } from "../../../../scripts/test-safety.ts";
+
+const signalBinary = Bun.which("killall") ?? Bun.which("kill");
+const python = Bun.which("python3");
 
 test("empty safety allowlist rejects name signals, absolute paths, shell wrappers and unit mutations", () => {
 	for (const command of [
@@ -125,25 +132,27 @@ test("shell positional exec, env -S, xargs and wrapped shells reach the guard", 
 		);
 	expect(takeSafetyViolations()).toHaveLength(8);
 	// Data after the wrapped executable is not a command.
-	assertSafeCommand(["setsid", "--wait", "python3", "-c", "pass", "kill", "0"]);
+	assertSafeCommand(["setsid", "--wait", "cat", "-", "kill", "0"]);
 	assertSafeCommand(["timeout", "5", "printf", "%s", "killall"]);
 });
 
-test("a symlink to a signal command is judged by its target", () => {
-	const real = Bun.which("killall") ?? Bun.which("kill");
-	if (!real) return;
-	const dir = mkdtempSync(join(tmpdir(), "ceraui-safety-link-"));
-	try {
-		const link = join(dir, "harmless-name");
-		symlinkSync(realpathSync(real), link);
-		expect(() => assertSafeCommand([link, NO_SUCH])).toThrow(
-			"Unsafe test process command",
-		);
-		expect(takeSafetyViolations()).toHaveLength(1);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-});
+test.skipIf(!signalBinary)(
+	"a symlink to a signal command is judged by its target (needs killall or kill)",
+	() => {
+		const real = signalBinary ?? "";
+		const dir = mkdtempSync(join(tmpdir(), "ceraui-safety-link-"));
+		try {
+			const link = join(dir, "harmless-name");
+			symlinkSync(realpathSync(real), link);
+			expect(() => assertSafeCommand([link, NO_SUCH])).toThrow(
+				"Unsafe test process command",
+			);
+			expect(takeSafetyViolations()).toHaveLength(1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	},
+);
 
 test("a shell script file that signals by absolute path is rejected before it runs", () => {
 	const dir = mkdtempSync(join(tmpdir(), "ceraui-safety-script-"));
@@ -173,18 +182,18 @@ test("by-name calls the spawn layer cannot see hit the recording PATH stubs", as
 	const dir = mkdtempSync(join(tmpdir(), "ceraui-safety-stub-"));
 	try {
 		const script = join(dir, "k.sh");
-		writeFileSync(script, `#!/bin/sh\nkillall ${NO_SUCH}\n`);
-		const viaScript = Bun.spawnSync(["sh", script], { stderr: "pipe" });
-		const viaPython = spawnSync("python3", [
-			"-c",
-			`import subprocess; raise SystemExit(subprocess.call(["pkill", "-x", "${NO_SUCH}"]))`,
-		]);
-		expect(viaScript.exitCode).toBe(97);
-		if (!viaPython.error) expect(viaPython.status).toBe(97);
-		const recorded = takeSafetyViolations();
-		expect(recorded.some((line) => line.includes(`killall ${NO_SUCH}`))).toBe(
-			true,
+		writeFileSync(
+			script,
+			`#!/bin/sh\nsystemctl --user stop ${NO_SUCH}.service\n`,
 		);
+		const viaScript = Bun.spawnSync(["sh", script], { stderr: "pipe" });
+		expect(viaScript.exitCode).toBe(97);
+		const recorded = takeSafetyViolations();
+		expect(
+			recorded.some((line) =>
+				line.includes(`systemctl --user stop ${NO_SUCH}.service`),
+			),
+		).toBe(true);
 		expect(recorded.every((line) => line.includes("reached a PATH stub"))).toBe(
 			true,
 		);
@@ -192,6 +201,20 @@ test("by-name calls the spawn layer cannot see hit the recording PATH stubs", as
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test.skipIf(!python)(
+	"an interpreter's by-name call hits the PATH stubs (needs python3)",
+	() => {
+		const viaPython = spawnSync(python ?? "python3", [
+			"-c",
+			`import subprocess; raise SystemExit(subprocess.call(["pkill", "-x", "${NO_SUCH}"]))`,
+		]);
+		expect(viaPython.status).toBe(97);
+		const recorded = takeSafetyViolations();
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0]).toContain(`reached a PATH stub: pkill -x ${NO_SUCH}`);
+	},
+);
 
 test("process.kill reaches only this process and the processes it spawned", async () => {
 	// SIGCONT is a no-op on a running process, so a baseline without the guard is harmless.
@@ -275,8 +298,166 @@ test("backend source opens client ws sockets only through the guarded helper", a
 		if (file.startsWith("tests/") || file.endsWith(".test.ts")) continue;
 		if (file === "helpers/outbound-websocket.ts") continue;
 		const text = await Bun.file(join(root, file)).text();
-		if (/^import\s+(?!type\b)[^;]*\bfrom\s+["']ws["']/m.test(text))
+		if (
+			/^import\s+(?!type\b)[^;]*\bfrom\s+["']ws["']/m.test(text) ||
+			/^export\s+[^;]*\bfrom\s+["']ws["']/m.test(text) ||
+			/\b(?:require|await\s+import)\(\s*["']ws["']\s*\)|\bimport\(\s*["']ws["']\s*\)\s*\.then\b/.test(
+				text,
+			)
+		)
 			offenders.push(file);
 	}
 	expect(offenders).toEqual([]);
+});
+
+test("backend source uses the guarded global fetch, never Bun's read-only one", async () => {
+	// Bun.fetch and `import { fetch } from "bun"` cannot be wrapped from outside.
+	const root = new URL("../", import.meta.url).pathname;
+	const offenders: string[] = [];
+	for await (const file of new Bun.Glob("**/*.ts").scan(root)) {
+		if (file.startsWith("tests/") || file.endsWith(".test.ts")) continue;
+		const text = await Bun.file(join(root, file)).text();
+		if (
+			/\bBun\.fetch\b/.test(text) ||
+			/import\s*\{[^}]*\bfetch\b[^}]*\}\s*from\s*["']bun["']/.test(text)
+		)
+			offenders.push(file);
+	}
+	expect(offenders).toEqual([]);
+});
+
+// Second review round. A "stranger" is this test's parent (the runner or the
+// namespace init); SIGCONT to a running process is a no-op, so a baseline
+// without the guard harms nothing.
+const stranger = () => process.ppid;
+// In a container the runner can be PID 1 with no foreign process to aim at.
+const noStranger = process.ppid <= 0;
+
+test("PATH stubs without a real systemctl answer read-only queries like a missing binary", () => {
+	const dir = mkdtempSync(join(tmpdir(), "ceraui-safety-nosystemctl-"));
+	try {
+		const recordFile = join(dir, "calls.log");
+		writeFileSync(recordFile, "");
+		writePathStubs(dir, recordFile, undefined);
+		const query = Bun.spawnSync(
+			["sh", join(dir, "systemctl"), "is-enabled", "ssh"],
+			{ stderr: "pipe" },
+		);
+		expect(query.exitCode).toBe(127);
+		expect(readFileSync(recordFile, "utf8")).toBe("");
+		const mutation = Bun.spawnSync(
+			["sh", join(dir, "systemctl"), "--user", "stop", `${NO_SUCH}.service`],
+			{ stderr: "pipe" },
+		);
+		expect(mutation.exitCode).toBe(97);
+		expect(readFileSync(recordFile, "utf8")).toContain("systemctl --user stop");
+		writeFileSync(recordFile, "");
+		writePathStubs(dir, recordFile, "/bin/true");
+		const passThrough = Bun.spawnSync([
+			"sh",
+			join(dir, "systemctl"),
+			"is-active",
+			"ssh",
+		]);
+		expect(passThrough.exitCode).toBe(0);
+		expect(readFileSync(recordFile, "utf8")).toBe("");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test.skipIf(noStranger)(
+	"process._kill is guarded like process.kill (needs a parent process)",
+	() => {
+		const internal = process as unknown as {
+			_kill?: (pid: number, signal: number) => unknown;
+		};
+		if (typeof internal._kill !== "function") return;
+		expect(() => internal._kill?.(stranger(), 18)).toThrow(
+			"Unsafe test signal",
+		);
+		expect(takeSafetyViolations()).toHaveLength(1);
+	},
+);
+
+test("tests may not start Worker threads, where the guards do not run", () => {
+	expect(() => new Worker("data:text/javascript,0")).toThrow(
+		"Unsafe test worker",
+	);
+	expect(() => new workerThreads.Worker("0", { eval: true })).toThrow(
+		"Unsafe test worker",
+	);
+	expect(takeSafetyViolations()).toHaveLength(2);
+});
+
+test.skipIf(noStranger)(
+	"a script's builtin kill may target only processes this test owns (needs a parent process)",
+	async () => {
+		const dir = mkdtempSync(join(tmpdir(), "ceraui-safety-builtin-kill-"));
+		try {
+			const viaShell = join(dir, "s1.sh");
+			writeFileSync(viaShell, '#!/bin/sh\nkill -CONT "$1"\n');
+			const direct = join(dir, "s2.sh");
+			writeFileSync(direct, '#!/bin/sh\nkill -CONT "$1"\n');
+			chmodSync(direct, 0o755);
+			const literal = join(dir, "s3.sh");
+			writeFileSync(literal, `#!/bin/sh\nkill -CONT ${stranger()}\n`);
+			const named = join(dir, "s4.sh");
+			writeFileSync(
+				named,
+				`#!/usr/bin/env bash\n# halt is only a comment\npkill -x ${NO_SUCH}\n`,
+			);
+			chmodSync(named, 0o755);
+			for (const command of [
+				["sh", viaShell, String(stranger())],
+				[direct, String(stranger())],
+				["sh", literal],
+				[named],
+			])
+				expect(() => assertSafeCommand(command)).toThrow(
+					"Unsafe test process command",
+				);
+			expect(takeSafetyViolations()).toHaveLength(4);
+			// Its own child is fair game, and comments are not commands.
+			const own = Bun.spawn(["sleep", "30"]);
+			const ownKill = Bun.spawnSync(["sh", viaShell, String(own.pid)]);
+			expect(ownKill.exitCode).toBe(0);
+			own.kill();
+			await own.exited;
+			expect(takeSafetyViolations()).toHaveLength(0);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	},
+);
+
+test("su, runuser, script, sg and chroot launchers are followed", () => {
+	for (const command of [
+		["su", "-c", `kill -CONT ${stranger()}`],
+		["runuser", "-u", "nobody", "--", "killall", NO_SUCH],
+		["script", "-qc", `killall ${NO_SUCH}`, "/dev/null"],
+		["sg", "users", `pkill -x ${NO_SUCH}`],
+		["chroot", "/", "/bin/kill", "-CONT", String(stranger())],
+	])
+		expect(() => assertSafeCommand(command)).toThrow(
+			"Unsafe test process command",
+		);
+	expect(takeSafetyViolations()).toHaveLength(5);
+});
+
+test("fetch through a proxy is judged by the proxy, not only the target", () => {
+	expect(() =>
+		fetch("http://127.0.0.1:9/", { proxy: "http://192.0.2.1:9" }),
+	).toThrow("Unsafe test outbound connection: 192.0.2.1");
+	const saved = process.env.HTTP_PROXY;
+	process.env.HTTP_PROXY = "http://192.0.2.1:9";
+	try {
+		expect(() => fetch("http://127.0.0.1:9/")).toThrow(
+			"Unsafe test outbound connection: 192.0.2.1",
+		);
+	} finally {
+		if (saved === undefined) delete process.env.HTTP_PROXY;
+		else process.env.HTTP_PROXY = saved;
+	}
+	expect(takeSafetyViolations()).toHaveLength(2);
 });

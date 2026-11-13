@@ -388,21 +388,35 @@ also retained for the after-test hook, so catching a spawn error cannot hide
 it. Tests should inject an effect dependency before reaching this boundary.
 The check covers `Bun.$`, follows wrappers (`env -S`, `xargs`, `busybox`,
 `find -exec`, `sh -c 'exec "$@"'`) and judges a symlink by its target.
-`process.kill` reaches only the test process, the processes it spawned and
-their process groups (signal 0 probes are allowed). A directory of recording
-stubs at the front of `PATH` shadows `killall`, `pkill`, `kill`, `systemctl`
-and similar commands for every child, so by-name calls from scripts and other
-interpreters fail the test too; read-only `systemctl` verbs pass through.
+`process.kill` (and the internal `process._kill`) reaches only the test
+process, the processes it spawned and their process groups (signal 0 probes are
+allowed); a fixture declares an escaped descendant with `adoptTestProcess`.
+Shell scripts run by path or shebang are read: name-based signals and
+absolute-path signal commands are refused, and a builtin `kill` may only target
+PIDs the test owns. Tests may not start Worker threads, where none of this runs.
+A directory of recording stubs at the front of `PATH` shadows `killall`,
+`pkill`, `kill`, `systemctl` and similar commands for every child, so by-name
+calls from scripts and other interpreters fail the test too. Read-only
+`systemctl` verbs pass through to the real binary, or exit 127 like a missing
+binary on a host without one. The unit preload also replaces the default SSH
+status probes (`setSshSystemctlProbesForTest`), so status builders never query the
+host's ssh unit.
 
 The same preload installs the network guard. TCP/TLS, `Bun.connect`, UDP
 (`node:dgram`, `Bun.udpSocket`), fetch and WebSocket reach only loopback, and
 DNS (`node:dns`, its resolvers, `Bun.dns`) answers only localhost and address
-literals. Bun's `ws` builtin cannot be wrapped from outside, so backend client
-sockets open through `helpers/outbound-websocket.ts`, which calls the guard's
-check; a unit test fails if another source file imports `ws` as a value.
+literals. A fetch through a proxy (the `proxy` option or `HTTP(S)_PROXY`) is
+judged by the proxy. Bun's `ws` builtin cannot be wrapped from outside, so
+backend client sockets open through `helpers/outbound-websocket.ts`, which
+calls the guard's check; a unit test fails if another source file imports `ws`
+as a value. `Bun.fetch` is read-only too, so backend source uses the global
+`fetch`, and a scan enforces it. A test that re-runs itself under `unshare -n`
+sets `CERAUI_TEST_PRIVATE_NETNS=1` for the child, which then skips the network
+guard while it still holds only `lo`; any other network-isolated run keeps it.
 
 These guards catch mistakes; they are not containment. A determined command
-(a renamed copy of `killall`, a native call) gets past them, which is why gates
+(a copied `killall` binary, quoting tricks, an interpreter's own `kill`, a
+script read from stdin, a native call) gets past them, which is why gates
 on shared machines also run inside a PID namespace (below).
 
 Backend development commands and the browser worker entrypoint preload

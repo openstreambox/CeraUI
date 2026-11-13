@@ -46,6 +46,19 @@ mock.module("../modules/setup.ts", () => ({ setup }));
 // suites that exercise the pre-reconciliation window close the latch themselves.
 setStreamReconciliationCompletedForTest(true);
 
+// Status builders call getSshStatus() without deps; no test may ask the host's
+// systemd about its ssh unit. A probe that fails reads as inactive/disabled.
+const { setSshSystemctlProbesForTest } = await import(
+	"../modules/system/ssh-status-probes.ts"
+);
+const noHostSystemd = async (): Promise<never> => {
+	throw new Error("tests do not query the host's systemd");
+};
+setSshSystemctlProbesForTest({
+	systemctlIsActive: noHostSystemd,
+	systemctlIsEnabled: noHostSystemd,
+});
+
 const createUsbEnumerator = modemControl.createUsbEnumerator;
 function isolateModemEnumeration(): void {
 	spyOn(modemControl, "createUsbEnumerator").mockImplementation((deps) =>

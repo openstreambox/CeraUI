@@ -4,9 +4,13 @@ import dns from 'node:dns';
 import {
 	accessSync,
 	chmodSync,
+	closeSync,
 	constants,
+	existsSync,
 	mkdtempSync,
+	openSync,
 	readFileSync,
+	readSync,
 	realpathSync,
 	rmSync,
 	statSync,
@@ -27,7 +31,9 @@ let networkGuardInstalled = false;
 const SIGNAL_COMMANDS =
 	/^(killall|pkill|kill|skill|fuser|systemd-run|service|rc-service|invoke-rc\.d|reboot|shutdown|poweroff|halt)$/;
 const COMMAND_WRAPPERS =
-	/^(timeout|env|sudo|doas|nice|nohup|setsid|stdbuf|command|exec|xargs|find|busybox|chrt|ionice|taskset|flock|nsenter|unshare|setpriv|runuser|time|watch|strace)$/;
+	/^(timeout|env|sudo|doas|nice|nohup|setsid|stdbuf|command|exec|xargs|find|busybox|chrt|ionice|taskset|flock|nsenter|unshare|setpriv|chroot|time|watch|strace)$/;
+// Run a command string given with -c (or as one argument, for sg).
+const COMMAND_STRING_LAUNCHERS = /^(su|runuser|script|sg)$/;
 const SHELLS = /^(sh|bash|dash|zsh|ksh|ash)$/;
 const READ_ONLY_SYSTEMCTL =
 	/^(show|status|is-active|is-enabled|is-failed|is-system-running|list-units|list-unit-files|cat|list-jobs|list-timers|list-sockets|list-dependencies|get-default|help|--version|--help)$/;
@@ -36,6 +42,10 @@ const SHELL_SIGNAL_WORDS =
 const ABSOLUTE_SIGNAL_PATH =
 	/(?:^|[\s;&|(`'"])\/(?:usr\/)?s?bin\/(killall|pkill|kill|skill|fuser|systemctl|systemd-run|reboot|poweroff|shutdown|halt)\b/m;
 const POSITIONAL_PARAMETER = /\$(?:@|\*|\{?[0-9])/;
+// Name-based signals and power actions a script must never run; by-PID `kill`
+// (a shell builtin, invisible to the spawn layer) is judged by its targets.
+const SCRIPT_SIGNAL_WORDS =
+	/\b(killall|pkill|skill|fuser|systemd-run|reboot|poweroff|shutdown|halt)\b/;
 const STUBBED_COMMANDS = [
 	'killall',
 	'pkill',
@@ -101,7 +111,7 @@ function splitStrings(command: readonly string[]): string[] {
 }
 
 const GUARDED_NAMES =
-	/^(killall|pkill|kill|skill|fuser|systemctl|systemd-run|service|rc-service|invoke-rc\.d|reboot|shutdown|poweroff|halt|timeout|env|sudo|doas|nice|nohup|setsid|stdbuf|command|exec|xargs|find|busybox|chrt|ionice|taskset|flock|nsenter|unshare|setpriv|runuser|time|watch|strace|sh|bash|dash|zsh|ksh|ash)$/;
+	/^(killall|pkill|kill|skill|fuser|systemctl|systemd-run|service|rc-service|invoke-rc\.d|reboot|shutdown|poweroff|halt|timeout|env|sudo|doas|nice|nohup|setsid|stdbuf|command|exec|xargs|find|busybox|chrt|ionice|taskset|flock|nsenter|unshare|setpriv|chroot|su|runuser|script|sg|time|watch|strace|sh|bash|dash|zsh|ksh|ash)$/;
 
 function isExecutable(arg: string): boolean {
 	try {
@@ -145,6 +155,61 @@ function readScript(path: string): string {
 	}
 }
 
+/** The shell a `#!` text file names, if any (`#!/usr/bin/env bash` included). */
+function shebangShell(path: string): boolean {
+	let head = '';
+	try {
+		const fd = openSync(path, 'r');
+		try {
+			const buffer = Buffer.alloc(256);
+			head = buffer.toString('latin1', 0, readSync(fd, buffer, 0, 256, 0));
+		} finally {
+			closeSync(fd);
+		}
+	} catch {
+		return false;
+	}
+	const line = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(head);
+	if (!line?.[1]) return false;
+	const interpreter = basename(line[1]) === 'env' ? (line[2] ?? '') : line[1];
+	return SHELLS.test(basename(interpreter));
+}
+
+/**
+ * A script file: name-based signals and absolute-path signal commands are
+ * refused outright; a builtin `kill` may only target PIDs this test owns
+ * (passed as arguments or written as literals).
+ */
+function scriptIsDangerous(source: string, args: readonly string[], depth: number): boolean {
+	// Comments (`# …` at a line start or after whitespace) are prose, not commands.
+	const script = source.replace(/(^|\s)#.*$/gm, '$1');
+	if (SCRIPT_SIGNAL_WORDS.test(script) || ABSOLUTE_SIGNAL_PATH.test(script)) return true;
+	if (/\bkill\b/.test(script)) {
+		const literals = [...script.matchAll(/\bkill\b[^\n;&|]*/g)].flatMap((match) =>
+			match[0].split(/\s+/).filter((token) => /^\d+$/.test(token)),
+		);
+		for (const candidate of [...args, ...literals]) {
+			const pid = Math.abs(Number(candidate.replace(/^-/, '')));
+			if (/^-?\d+$/.test(candidate) && pid >= 1 && existsSync(`/proc/${pid}`) && !isOwnedPid(pid))
+				return true;
+		}
+	}
+	if (POSITIONAL_PARAMETER.test(script)) assertWrappedCommand(args, depth);
+	return false;
+}
+
+/** The command strings a su/runuser/script/sg invocation runs. */
+function commandStrings(command: readonly string[]): string[] {
+	const strings: string[] = [];
+	for (let index = 1; index < command.length; index++) {
+		const arg = command[index] ?? '';
+		if (/^-[a-z]*c$/.test(arg) || arg === '--command') strings.push(command[++index] ?? '');
+		else if (arg.startsWith('--command=')) strings.push(arg.slice('--command='.length));
+		else if (!arg.startsWith('-') && /\s/.test(arg)) strings.push(arg);
+	}
+	return strings;
+}
+
 export function assertSafeCommand(command: readonly string[], depth = 0): void {
 	if (!command.length || depth > 8) return;
 	const text = command.join(' ');
@@ -155,6 +220,10 @@ export function assertSafeCommand(command: readonly string[], depth = 0): void {
 	else if (isName(bin, /^systemctl$/)) {
 		const verb = command.slice(1).find((arg) => !arg.startsWith('-')) ?? command[1] ?? '';
 		dangerous = !READ_ONLY_SYSTEMCTL.test(verb);
+	} else if (isName(bin, COMMAND_STRING_LAUNCHERS)) {
+		const strings = commandStrings(command);
+		if (strings.some((script) => SHELL_SIGNAL_WORDS.test(script))) dangerous = true;
+		else assertWrappedCommand(command.slice(1), depth);
 	} else if (isName(bin, COMMAND_WRAPPERS)) {
 		assertWrappedCommand(splitStrings(command).slice(1), depth);
 	} else if (isName(bin, SHELLS)) {
@@ -166,13 +235,16 @@ export function assertSafeCommand(command: readonly string[], depth = 0): void {
 			else if (POSITIONAL_PARAMETER.test(script))
 				assertWrappedCommand(command.slice(flag + 2), depth);
 		} else {
-			// `sh script.sh …`: by-name calls inside hit the PATH stubs; absolute paths do not.
+			// `sh script.sh …`: by-name systemctl inside still meets the PATH stub.
 			const fileIndex = command.findIndex((arg, index) => index > 0 && !arg.startsWith('-'));
 			const script = fileIndex > 0 ? readScript(command[fileIndex] ?? '') : '';
-			if (ABSOLUTE_SIGNAL_PATH.test(script)) dangerous = true;
-			else if (POSITIONAL_PARAMETER.test(script))
-				assertWrappedCommand(command.slice(fileIndex + 1), depth);
+			dangerous = scriptIsDangerous(script, command.slice(fileIndex + 1), depth);
 		}
+	} else {
+		// A shell script run directly through its shebang.
+		const target = bin.includes('/') ? bin : findOnPath(bin);
+		if (target && shebangShell(target))
+			dangerous = scriptIsDangerous(readScript(target), command.slice(1), depth);
 	}
 
 	if (dangerous && !allowedCommands.includes(text)) record(`Unsafe test process command: ${text}`);
@@ -330,20 +402,26 @@ function guardBunShell(bun: typeof Bun): void {
 	(bun as { $: typeof Bun.$ }).$ = guarded;
 }
 
-/** Shadow name-based signal and unit commands with recording stubs for every child. */
-function installPathStubs(): void {
-	if (stubRecord || process.platform === 'win32') return;
-	const dir = mkdtempSync(join(tmpdir(), 'ceraui-test-stubs-'));
-	stubRecord = join(dir, 'calls.log');
-	writeFileSync(stubRecord, '');
-	const realSystemctl = findOnPath('systemctl');
+/**
+ * Write the recording stubs into `dir`. Read-only `systemctl` queries pass
+ * through to the real binary; on a host without one they behave like a
+ * missing binary (exit 127, nothing recorded), as production code expects.
+ */
+export function writePathStubs(
+	dir: string,
+	recordFile: string,
+	realSystemctl: string | undefined,
+): void {
 	const readOnly = READ_ONLY_SYSTEMCTL.source.slice(2, -2);
 	for (const name of STUBBED_COMMANDS) {
+		const readOnlyAction = realSystemctl
+			? `exec '${realSystemctl}' "$@"`
+			: 'echo "systemctl: command not found" >&2; exit 127';
 		const passThrough =
-			name === 'systemctl' && realSystemctl
+			name === 'systemctl'
 				? `verb=
 for arg in "$@"; do case "$arg" in -*) ;; *) verb=$arg; break ;; esac; done
-case "\${verb:-$1}" in ${readOnly}) exec '${realSystemctl}' "$@" ;; esac
+case "\${verb:-$1}" in ${readOnly}) ${readOnlyAction} ;; esac
 `
 				: '';
 		const path = join(dir, name);
@@ -351,13 +429,22 @@ case "\${verb:-$1}" in ${readOnly}) exec '${realSystemctl}' "$@" ;; esac
 			path,
 			`#!/bin/sh
 # Test backstop: a test process reached a host-global signal or unit command.
-${passThrough}printf '%s\\n' "${name} $*" >> '${stubRecord}'
+${passThrough}printf '%s\\n' "${name} $*" >> '${recordFile}'
 echo "Unsafe test process command reached a PATH stub: ${name} $*" >&2
 exit 97
 `,
 		);
 		chmodSync(path, 0o755);
 	}
+}
+
+/** Shadow name-based signal and unit commands with recording stubs for every child. */
+function installPathStubs(): void {
+	if (stubRecord || process.platform === 'win32') return;
+	const dir = mkdtempSync(join(tmpdir(), 'ceraui-test-stubs-'));
+	stubRecord = join(dir, 'calls.log');
+	writeFileSync(stubRecord, '');
+	writePathStubs(dir, stubRecord, findOnPath('systemctl'));
 	process.env.PATH = `${dir}${delimiter}${process.env.PATH ?? ''}`;
 	process.once('exit', () => rmSync(dir, { recursive: true, force: true }));
 }
@@ -406,6 +493,49 @@ export function installProcessSafetyGuard(): void {
 		assertOwnedSignalTarget(pid, signal);
 		return realKill.call(process, pid, signal);
 	}) as typeof process.kill;
+	// process.kill delegates to the internal _kill(pid, signalNumber); guard it too.
+	const internal = process as unknown as { _kill?: (pid: number, signal: number) => unknown };
+	const realInternalKill = internal._kill;
+	if (typeof realInternalKill === 'function')
+		internal._kill = (pid: number, signal: number) => {
+			assertOwnedSignalTarget(pid, signal);
+			return realInternalKill.call(process, pid, signal);
+		};
+	guardWorkers();
+}
+
+/** The guards do not run inside Worker threads, so tests may not start them. */
+function guardWorkers(): void {
+	const refuse = (kind: string): never =>
+		record(
+			`Unsafe test worker: ${kind} runs without the test safety guards; inject the work instead`,
+		);
+	if (typeof globalThis.Worker === 'function')
+		globalThis.Worker = class extends globalThis.Worker {
+			constructor(...args: ConstructorParameters<typeof Worker>) {
+				refuse('Worker');
+				super(...args);
+			}
+		} as typeof Worker;
+	try {
+		const threads = createRequire(import.meta.url)(
+			'node:worker_threads',
+		) as typeof import('node:worker_threads');
+		const RealThread = threads.Worker;
+		Object.defineProperty(threads, 'Worker', {
+			configurable: true,
+			writable: true,
+			value: class extends RealThread {
+				constructor(...args: ConstructorParameters<typeof RealThread>) {
+					refuse('worker_threads.Worker');
+					super(...args);
+				}
+			},
+		});
+		syncBuiltinESMExports();
+	} catch {
+		/* no worker_threads in this runtime */
+	}
 }
 
 function isLoopback(host: string): boolean {
@@ -590,6 +720,8 @@ function guardUdp(): void {
 }
 
 export const OUTBOUND_CHECK = Symbol.for('ceraui.outboundCheck');
+/** Set by a test that re-runs itself inside a private network namespace. */
+export const PRIVATE_NETNS_MARKER = 'CERAUI_TEST_PRIVATE_NETNS';
 
 function onlyLoopbackInterfaces(): boolean {
 	try {
@@ -617,10 +749,10 @@ function builtinWebSocketClass(): (abstract new (...args: never[]) => unknown) |
 export function installNetworkSafetyGuard(): void {
 	if (networkGuardInstalled) return;
 	networkGuardInstalled = true;
-	// A network namespace that starts with only `lo` (a kernel fixture re-run
-	// under `unshare -n`) has no route off the machine; its fixtures address
-	// veth peers the test creates itself.
-	if (onlyLoopbackInterfaces()) return;
+	// A fixture re-run inside its own `unshare -n` namespace (marked by the
+	// parent, and still holding only `lo` at start) addresses veth peers it
+	// creates itself. A network-isolated container keeps the guard.
+	if (process.env[PRIVATE_NETNS_MARKER] === '1' && onlyLoopbackInterfaces()) return;
 	for (const owner of [net, tls]) {
 		for (const key of ['connect', 'createConnection'] as const) {
 			if (!(key in owner)) continue;
@@ -681,8 +813,54 @@ export function installNetworkSafetyGuard(): void {
 	const realFetch = globalThis.fetch;
 	globalThis.fetch = Object.assign((...args: Parameters<typeof fetch>) => {
 		const target = args[0] instanceof Request ? args[0].url : args[0];
-		const options = args[1] as { unix?: string } | undefined;
-		if (!options?.unix) assertLoopbackUrl(target);
+		const options = args[1] as { unix?: string; proxy?: unknown } | undefined;
+		if (!options?.unix) {
+			assertLoopbackUrl(target);
+			if (options?.proxy)
+				assertLoopbackUrl(
+					typeof options.proxy === 'string'
+						? options.proxy
+						: (options.proxy as { url?: unknown }).url,
+				);
+			else assertProxyEnvironment(new URL(String(target)).hostname);
+		}
 		return realFetch(...args);
 	}, realFetch);
+	// Bun.fetch and `import { fetch } from "bun"` are read-only; a source scan
+	// keeps the backend on the global fetch instead.
+	const RealEventSource = (
+		globalThis as { EventSource?: new (url: string | URL, init?: unknown) => unknown }
+	).EventSource;
+	if (typeof RealEventSource === 'function')
+		(globalThis as { EventSource?: unknown }).EventSource = class extends RealEventSource {
+			constructor(url: string | URL, init?: unknown) {
+				assertLoopbackUrl(url);
+				super(url, init);
+			}
+		};
+}
+
+/** A proxy from the environment would carry even a loopback request off the machine. */
+function assertProxyEnvironment(host: string): void {
+	const env = process.env;
+	const proxy = env.HTTPS_PROXY ?? env.https_proxy ?? env.HTTP_PROXY ?? env.http_proxy;
+	if (!proxy) return;
+	const bypass = (env.NO_PROXY ?? env.no_proxy ?? '')
+		.split(',')
+		.map((entry) => entry.trim().toLowerCase());
+	if (
+		bypass.includes('*') ||
+		bypass.some(
+			(entry) =>
+				entry && (host === entry || host.endsWith(entry.startsWith('.') ? entry : `.${entry}`)),
+		)
+	)
+		return;
+	let proxyHost = '';
+	try {
+		proxyHost = new URL(proxy).hostname;
+	} catch {
+		return;
+	}
+	assertLoopbackHost(proxyHost);
 }
