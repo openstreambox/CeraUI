@@ -25,6 +25,10 @@ export interface BondMappingBand {
 }
 
 const COPY = {
+	pending_apply: {
+		titleKey: "network.collision.bindMapPendingTitle",
+		bodyKey: "network.collision.bindMapPendingBody",
+	},
 	retained_last_valid: {
 		titleKey: "network.collision.bindMapDegradedTitle",
 		bodyKey: "network.collision.bindMapRetainedBody",

@@ -7,6 +7,8 @@ const snapshot = (connections: unknown[] = [], updated = 1100) =>
 		schema_version: 1,
 		last_updated_ms: updated,
 		connections,
+		bind_map_status: { state: "active" },
+		disposition: { state: "mapped" },
 	});
 const row = {
 	conn_id: "0",
@@ -63,4 +65,71 @@ test("new publication and stale/legacy telemetry cannot acknowledge closed sourc
 			["cclat1"],
 		),
 	).toBe(false);
+});
+
+test("producer pending_apply is never a withdrawal acknowledgement, even with fresh empty connections", async () => {
+	const bytes = await Bun.file(
+		`${import.meta.dir}/../../../../../packages/srtla-send/tests/fixtures/telemetry-pending-apply.json`,
+	).text();
+	const pending = telemetrySchema.parse(JSON.parse(bytes));
+	expect(JSON.stringify(pending)).toBe(bytes);
+	expect(pending.connections).toEqual([]);
+	const fresh = { ...pending, last_updated_ms: 1100 };
+	expect(
+		cellularSourceWithdrawalConfirmed(
+			fresh,
+			true,
+			1200,
+			1200,
+			1000,
+			"modem-a",
+			["wwan0"],
+		),
+	).toBe(false);
+	expect(
+		cellularSourceWithdrawalConfirmed(
+			{ ...fresh, disposition: { state: "mapped" } },
+			true,
+			1200,
+			1200,
+			1000,
+			"modem-a",
+			["wwan0"],
+		),
+	).toBe(true);
+});
+
+test("required withdrawal needs a positively applied report, not a legacy empty projection", () => {
+	const modern = snapshot(),
+		{ bind_map_status: _status, disposition: _disposition, ...legacy } = modern;
+	const confirm = (value: unknown) =>
+		cellularSourceWithdrawalConfirmed(
+			telemetrySchema.parse(value),
+			true,
+			1200,
+			1200,
+			1000,
+			"modem-a",
+			["wwan0"],
+		);
+	expect(confirm(legacy)).toBe(false);
+	expect(confirm({ ...legacy, bind_map_status: { state: "active" } })).toBe(
+		false,
+	);
+	expect(confirm({ ...legacy, disposition: { state: "mapped" } })).toBe(false);
+	expect(confirm({ ...modern, bind_map_status: { state: "absent" } })).toBe(
+		false,
+	);
+	for (const state of [
+		"legacy_unique_only",
+		"startup_collision_excluded",
+		"pending_apply",
+	])
+		expect(confirm({ ...modern, disposition: { state } })).toBe(false);
+	for (const state of [
+		"mapped",
+		"retained_last_valid",
+		"required_binding_refused",
+	])
+		expect(confirm({ ...modern, disposition: { state } })).toBe(true);
 });

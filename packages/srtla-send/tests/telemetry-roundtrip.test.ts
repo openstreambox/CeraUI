@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 
 import {
 	readTelemetry,
@@ -61,6 +62,7 @@ const PRODUCER_ORDERED_FIXTURES: string[] = [
 	"telemetry-degraded-startup",
 	"telemetry-degraded-reload",
 	"telemetry-required-binding-refused",
+	"telemetry-pending-apply",
 ];
 
 describe("byte parity: parse(serialize(x)) preserves every sender field", () => {
@@ -227,4 +229,14 @@ describe("a 2026.6.2-era payload without the additive fields", () => {
 			true,
 		);
 	});
+});
+
+test("pending apply fixture preserves the frozen producer blob", async () => {
+	const bytes = Buffer.from(await readBytes("telemetry-pending-apply"));
+	expect(
+		createHash("sha1")
+			.update(`blob ${bytes.length}\0`)
+			.update(bytes)
+			.digest("hex"),
+	).toBe("c846e0ab1d936938816aa804a73272089434c0d9");
 });

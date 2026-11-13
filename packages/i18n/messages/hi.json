@@ -996,6 +996,8 @@
 	"network.collision.bindMapReason.unsupported": "स्थापित भेजने वाला प्रति-इंटरफ़ेस मैपिंग का समर्थन नहीं करता।",
 	"network.collision.bindMapReasonLabel": "कारण",
 	"network.collision.bindMapRequiredBody": "अभी किसी भी लिंक से डेटा नहीं भेजा जा रहा है। जाँचें कि नेटवर्क डिवाइस जुड़े हैं। लिंक मैपिंग मान्य होने पर डेटा भेजना शुरू किया जा सकता है।",
+	"network.collision.bindMapPendingTitle": "लिंक अपडेट हो रहे हैं",
+	"network.collision.bindMapPendingBody": "लिंक में बदलाव अभी लागू किए जा रहे हैं। पुष्टि की प्रतीक्षा है।",
 	"network.collision.bindMapRequiredTitle": "लिंक मैपिंग की प्रतीक्षा है",
 	"network.collision.bindMapRetainedBody": "सभी बॉन्डेड लिंक अब भी अंतिम मान्य मैपिंग पर चल रहे हैं। इसे ताज़ा करने के लिए फिर से कनेक्ट करें या स्ट्रीम पुनः शुरू करें।",
 	"network.collision.policyRouteBody": "कोई बॉन्डेड लिंक गलत मॉडेम से रूट हो सकता है। डिवाइस को रीबूट करें या लिंक को फिर से प्लग करें — लिंक वापस आने पर रूटिंग नियम स्वतः पुनः स्थापित हो जाते हैं।",

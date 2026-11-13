@@ -14,7 +14,12 @@ export function cellularSourceWithdrawalConfirmed(
 	devices: readonly string[],
 ): boolean {
 	if (
-		!snapshot ||
+		!snapshot?.bind_map_status ||
+		snapshot.bind_map_status.state === "absent" ||
+		!snapshot.disposition ||
+		!["mapped", "retained_last_valid", "required_binding_refused"].includes(
+			snapshot.disposition.state,
+		) ||
 		!fresh ||
 		!linkId ||
 		readAt <= withdrawnAt ||

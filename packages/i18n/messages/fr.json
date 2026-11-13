@@ -999,6 +999,8 @@
 	"network.collision.bindMapReason.unsupported": "L'émetteur installé ne prend pas en charge l'association par interface.",
 	"network.collision.bindMapReasonLabel": "Motif",
 	"network.collision.bindMapRequiredBody": "Aucun lien ne transmet encore. Vérifie que les périphériques réseau sont connectés. La transmission pourra démarrer une fois le mappage des liens valide.",
+	"network.collision.bindMapPendingTitle": "Mise à jour des liaisons",
+	"network.collision.bindMapPendingBody": "Les modifications des liaisons sont en cours. En attente de confirmation.",
 	"network.collision.bindMapRequiredTitle": "En attente du mappage des liens",
 	"network.collision.bindMapRetainedBody": "Tous les liens agrégés fonctionnent encore avec la dernière association valide. Reconnectez-vous ou redémarrez le flux pour l'actualiser.",
 	"network.collision.policyRouteBody": "Un lien agrégé pourrait être routé via le mauvais modem. Redémarrez l'appareil ou rebranchez le lien — les règles de routage sont réinstallées automatiquement lorsque le lien revient.",

@@ -40,6 +40,7 @@ import type { PublishedBond } from "./srtla.ts";
 import {
 	type CapabilityProbeResult,
 	probeSrtlaSenderCapabilities,
+	supportsRequiredCellularBinding,
 } from "./srtla-capabilities.ts";
 
 export interface BindMapSpawnDeps {
@@ -108,11 +109,7 @@ export async function resolveRequiredBindMapArgs(
 	} catch {
 		return { ok: false, reason: "capability-unavailable" };
 	}
-	if (
-		!capabilities.bindMap ||
-		capabilities.bindMapRequired !== true ||
-		capabilities.bindMapRequiredEmptyReload !== true
-	)
+	if (!supportsRequiredCellularBinding(capabilities))
 		return { ok: false, reason: "capability-unavailable" };
 	const current = deps.getBond();
 	if (!current?.publication.ok)
@@ -157,11 +154,7 @@ export async function resolveCellularBindMapArgs(
 		deps.announce("mapping-write-failed", current);
 		return { ok: true, args: [], required: false };
 	}
-	if (
-		capabilities.bindMap &&
-		capabilities.bindMapRequired === true &&
-		capabilities.bindMapRequiredEmptyReload === true
-	) {
+	if (supportsRequiredCellularBinding(capabilities)) {
 		deps.announce("bind-map-passed", current);
 		return {
 			ok: true,

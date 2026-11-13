@@ -33,3 +33,11 @@ sender's required-binding serializer fixture. Its additive disposition is
 It participates in the same byte-parity loop; existing fixture bytes and field
 order remain frozen. This state never means a legacy source-only link is running.
 
+
+`telemetry-pending-apply.json` is copied byte-for-byte from producer commit
+`043c0caad7d5509f0d828d6a4f0726d21ef89451`, blob
+`c846e0ab1d936938816aa804a73272089434c0d9`. Its empty connection projection
+is not teardown acknowledgement: `pending_apply` remains until socket and
+reader teardown has joined. Applied telemetry and connection state are published
+together. The consumer preserves these frozen bytes and refuses a pending
+withdrawal receipt even when its timestamp and empty connections are fresh.

@@ -45,11 +45,17 @@ test("withdrawal needs the same strict producer and its fresh post-publication s
 		schema_version: 1,
 		last_updated_ms: 2000,
 		connections: [],
+		bind_map_status: { state: "active" },
+		disposition: { state: "mapped" },
 	};
 	startLinkTelemetry("/synthetic/first", [], {
 		watch: old.watch,
 		producer: first,
 	});
+	old.emit({ ...empty, disposition: { state: "pending_apply" } });
+	expect(senderReleasedCellularSource(first, 1900, "link-one", ["wwan0"])).toBe(
+		false,
+	);
 	old.emit(empty);
 	expect(senderReleasedCellularSource(first, 1900, "link-one", ["wwan0"])).toBe(
 		true,

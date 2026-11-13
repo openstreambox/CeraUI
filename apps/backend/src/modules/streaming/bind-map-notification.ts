@@ -71,6 +71,8 @@ export function bindMapBandMessage(
 	const suffix = reason === undefined ? "" : ` (${reason})`;
 
 	switch (report.disposition.state) {
+		case "pending_apply":
+			return "Link mapping is updating. Waiting for the sender to confirm the applied changes.";
 		case "mapped":
 			return undefined;
 		case "retained_last_valid":
