@@ -36,7 +36,7 @@ import {
 import { sharingPolicyOwner } from "../../modules/network/uplink-steering/policy.ts";
 import { requestUplinkSteeringReconcile } from "../../modules/network/uplink-steering/runtime.ts";
 import { broadcastSources } from "../../modules/streaming/sources.ts";
-import { isRealDevice } from "../../modules/system/device-detection.ts";
+import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import { broadcastMsg } from "../compat.ts";
 import { authMiddleware } from "../middleware/auth.middleware.ts";
 import type { RPCContext } from "../types.ts";
@@ -118,7 +118,7 @@ export const setEthernetRoleProcedure = authedProcedure
 	.input(setEthernetRoleInputSchema)
 	.output(setEthernetRoleOutputSchema)
 	.handler(async ({ input }) => {
-		if (!shouldUseMocks() && !(await isRealDevice())) {
+		if (!shouldUseMocks() && !(await hasCapability("client-internet"))) {
 			return { success: false, error: "unavailable_in_emulated_mode" as const };
 		}
 
@@ -149,7 +149,7 @@ export const setNetworkIngestEnabledProcedure = authedProcedure
 			return { success: true, applied: { protocol, enabled } };
 		}
 
-		if (!(await isRealDevice())) {
+		if (!(await hasCapability("client-internet"))) {
 			return { success: false, error: NETWORK_INGEST_UNAVAILABLE_ERROR };
 		}
 
@@ -163,7 +163,7 @@ export const setSharingPolicyProcedure = authedProcedure
 	.input(sharingPolicySchema)
 	.output(sharingPolicySchema)
 	.handler(async ({ input }) => {
-		if (!shouldUseMocks() && !(await isRealDevice()))
+		if (!shouldUseMocks() && !(await hasCapability("client-internet")))
 			throw new Error("Sharing unavailable on emulated hosts");
 		return sharingPolicyOwner.set(
 			input,

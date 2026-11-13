@@ -1,6 +1,6 @@
 import { uplinkFlowsResetEventSchema } from "@ceraui/rpc/schemas";
 import { logger } from "../../../helpers/logger.ts";
-import { isRealDevice } from "../../system/device-detection.ts";
+import { hasCapability } from "../../system/board-capabilities.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
 import { broadcastWifiState } from "../../wifi/wifi.ts";
 import { onNetworkInterfacesChange } from "../network-interfaces.ts";
@@ -68,7 +68,11 @@ let unsubscribeNetif: (() => void) | undefined;
 let unsubscribeHealth: (() => void) | undefined;
 
 export async function initUplinkSteering(): Promise<void> {
-	if (unsubscribeNetif !== undefined || !(await isRealDevice())) return;
+	if (
+		unsubscribeNetif !== undefined ||
+		!(await hasCapability("client-internet"))
+	)
+		return;
 	enableSteeringReadiness();
 	const reconcile = () => {
 		void coordinator.requestReconcile().catch((error: unknown) => {

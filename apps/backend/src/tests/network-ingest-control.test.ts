@@ -83,7 +83,7 @@ function makeControlHarness(
 		active?: string[];
 		mediamtxSrt?: boolean;
 		srtUnitPresent?: boolean;
-		isRealDevice?: boolean;
+		canManageIngest?: boolean;
 		systemctlThrows?: boolean;
 	} = {},
 ): ControlHarness {
@@ -96,7 +96,7 @@ function makeControlHarness(
 		saveConfig: () => {
 			counts.save++;
 		},
-		isRealDevice: async () => opts.isRealDevice ?? true,
+		canManageIngest: async () => opts.canManageIngest ?? true,
 		systemctl: async (args) => {
 			calls.push(["systemctl", ...args]);
 			if (opts.systemctlThrows) throw new Error("systemctl failed");
@@ -283,7 +283,7 @@ describe("reconcileIngestDesiredState — boot safety", () => {
 	});
 
 	test("emulated host → no-op, zero spawns", async () => {
-		const h = makeControlHarness({ isRealDevice: false, mediamtxSrt: true });
+		const h = makeControlHarness({ canManageIngest: false, mediamtxSrt: true });
 		await reconcileIngestDesiredState(h.deps);
 		expect(h.calls).toEqual([]);
 		expect(h.counts.refresh).toBe(0);

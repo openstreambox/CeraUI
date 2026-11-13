@@ -481,7 +481,7 @@ function collectSources(): ProjectedModemSource[] {
  *
  * Mocks answer with NOTHING rather than with a fixture: this row exists to close
  * a real hardware latency gap that a dev host does not have, and the udev
- * monitor that fills it is `isRealDevice()`-gated for the same reason. A mock
+ * monitor that fills it is `modem-control`-gated for the same reason. A mock
  * scenario inventing one would be a parallel mechanism to the scenario roster,
  * not the established one.
  */

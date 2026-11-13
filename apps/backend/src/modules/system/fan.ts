@@ -123,7 +123,7 @@ import { logger } from "../../helpers/logger.ts";
 import { ACTIVE_TO } from "../../helpers/shared.ts";
 import { getms } from "../../helpers/time.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
-import { isRealDevice } from "./device-detection.ts";
+import { hasCapability } from "./board-capabilities.ts";
 
 /**
  * Broadcast channel name. Declared here (and re-exported from `rpc/events.ts`)
@@ -454,7 +454,7 @@ export function getFan(): FanReading {
 /**
  * Start the `fan` broadcast loop.
  *
- * Gated on `isRealDevice()` like every other privileged hardware path: a
+ * Gated on `hasCapability("fan")` like every other privileged hardware path: a
  * dev/emulated host has no `pwm-fan` cooling device, so it publishes NOTHING
  * rather than a synthetic reading — and it must not publish `absent` either,
  * which would be a claim about hardware the host does not have. That silence IS
@@ -463,7 +463,7 @@ export function getFan(): FanReading {
  * build-flag branch choosing between them.
  */
 export async function initFan(deps: FanDeps = defaultFanDeps): Promise<void> {
-	if (!(await isRealDevice())) {
+	if (!(await hasCapability("fan"))) {
 		logger.debug("fan: emulated host — collector not started");
 		return;
 	}

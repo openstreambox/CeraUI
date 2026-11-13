@@ -13,7 +13,7 @@ afterEach(() => mock.restore());
 function fixture() {
 	const installed: Array<[string, number]> = [];
 	const deps: GatewayElectionDeps = {
-		isRealDevice: async () => true,
+		canRouteClients: async () => true,
 		resolve: async () => ({ addrs: ["203.0.113.10"], fromCache: true }),
 		validateDns: () => {},
 		checkConnectivity: async () => true,
@@ -173,7 +173,7 @@ describe("host repository policy reaches route application", () => {
 		// When: the device gate refuses real execution.
 		const result = await updateGw({
 			...h.deps,
-			isRealDevice: async () => false,
+			canRouteClients: async () => false,
 			resolve,
 		});
 		// Then: no probe or host mutation was dispatched.

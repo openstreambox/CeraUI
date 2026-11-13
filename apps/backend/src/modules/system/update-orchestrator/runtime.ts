@@ -28,7 +28,7 @@ import { shouldUseMocks } from "../../../mocks/mock-service.ts";
 import { currentLifecycleHolder } from "../../streaming/lifecycle-admission.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
 import { cleanAptCache } from "../apt-cache-clean.ts";
-import { isRealDevice } from "../device-detection.ts";
+import { hasCapability } from "../board-capabilities.ts";
 import {
 	type UpdateBusyReason,
 	updatePhaseBusyReasons,
@@ -442,9 +442,9 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	},
 	readActivationArmed,
 	isOsStageReady: async () =>
-		!(await isRealDevice()) || (await isOsStageReady()),
+		!(await hasCapability("os-updates")) || (await isOsStageReady()),
 	isUpdateAdmissionReady: async () => {
-		if (!(await isRealDevice())) return true;
+		if (!(await hasCapability("os-updates"))) return true;
 		try {
 			const job = await (deps.readOsStageJob ?? readOsStageJob)();
 			if (osStageInProcess || activeOsStage)
@@ -506,7 +506,7 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	persist: saveOrchestratorState,
 	quarantine: new UpdateQuarantine(),
 	restartStale: async (isIdle, transactionRunning) => {
-		if (!(await isRealDevice())) return true;
+		if (!(await hasCapability("os-updates"))) return true;
 		return reconcileStaleUnits({
 			...defaultStaleServiceDeps,
 			isIdle,

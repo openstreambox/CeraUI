@@ -631,7 +631,7 @@ class InertTransport implements DbusTransport {
 
 function servicesHarness(): BluetoothServicesDeps {
 	return {
-		isRealDevice: async () => true,
+		canManageBluetooth: async () => true,
 		systemctl: async (args): Promise<CommandResult> => {
 			if (args[0] === "is-enabled") {
 				return { exitCode: 0, stdout: "enabled\n", stderr: "" };
@@ -654,7 +654,7 @@ function servicesHarness(): BluetoothServicesDeps {
 /** A client that seeds ONE trusted, paired, disconnected headset on connect. */
 function bootStack(connectAttempts: string[]): BluetoothStack {
 	const deps: BluetoothStackDeps = {
-		isRealDevice: async () => true,
+		canManageBluetooth: async () => true,
 		services: servicesHarness(),
 		createTransport: () => new InertTransport(),
 		createClient: (_transport, registry, onChange): BluezClient => ({

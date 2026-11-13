@@ -55,7 +55,7 @@ import {
 	resolveControlChannelEndpoint,
 } from "../remote/control-endpoint.ts";
 import { getLastCapabilities } from "../streaming/capabilities.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { reportActiveProfile } from "./active-profile-reporter.ts";
 import {
 	COMMAND_REGISTRY,
@@ -162,14 +162,14 @@ function defaultCreateSocket(url: string, authToken?: string): ControlSocket {
 	};
 }
 
-function defaultDeps(isReal: boolean): ControlChannelDeps {
+function defaultDeps(requireVerifiedControl: boolean): ControlChannelDeps {
 	return {
 		canDial: canDialControlChannel,
 		resolveEndpoint: () => resolveControlChannelEndpoint(),
 		createSocket: defaultCreateSocket,
 		getControlToken: () => getConfig().remote_key,
 		verifyToken: (token) =>
-			verifyDeviceControlToken(token, undefined, { isRealDevice: isReal }),
+			verifyDeviceControlToken(token, undefined, { requireVerifiedControl }),
 		getConfig,
 		getProfileCatalogVersion: () =>
 			getLastCapabilities()?.profile_catalog_version,
@@ -472,8 +472,11 @@ export function isConnected(): boolean {
 export async function initControlChannel(
 	overrides: Partial<ControlChannelDeps> = {},
 ): Promise<void> {
-	const isReal = await isRealDevice();
-	const deps: ControlChannelDeps = { ...defaultDeps(isReal), ...overrides };
+	const requireVerifiedControl = await hasCapability("device-control");
+	const deps: ControlChannelDeps = {
+		...defaultDeps(requireVerifiedControl),
+		...overrides,
+	};
 
 	teardown();
 	state = {

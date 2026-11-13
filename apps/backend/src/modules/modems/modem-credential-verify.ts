@@ -65,7 +65,7 @@ import {
 import { getRouterCellularMarker } from "../network/router-cellular-scan.ts";
 import { resolveRouterCredential } from "../network/router-credentials.ts";
 import { xmlValue } from "../network/vendor-xml.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import type { ModemCredential } from "./modem-credentials.ts";
 import {
 	modemCredentialKey,
@@ -259,7 +259,7 @@ export const defaultCredentialTransport: CredentialTransport = {
 };
 
 export interface CredentialVerifyDeps {
-	isRealDevice: () => Promise<boolean>;
+	canManageModems: () => Promise<boolean>;
 	resolveTarget: (device: string) => CredentialTarget | undefined;
 	readCredential: (device: PhysicalDeviceRecord) => ModemCredential | undefined;
 	loginPort: RouterLoginPort;
@@ -268,7 +268,7 @@ export interface CredentialVerifyDeps {
 }
 
 export const defaultCredentialVerifyDeps: CredentialVerifyDeps = {
-	isRealDevice: () => isRealDevice(),
+	canManageModems: () => hasCapability("modem-control"),
 	resolveTarget: resolveCredentialTarget,
 	readCredential: readModemCredential,
 	loginPort: defaultRouterLoginPort,
@@ -330,7 +330,7 @@ export async function verifyModemCredential(
 			return { success: false, error: "locked_out", target };
 		}
 
-		if (!(await deps.isRealDevice())) {
+		if (!(await deps.canManageModems())) {
 			return { success: false, error: "unavailable_in_emulated_mode", target };
 		}
 

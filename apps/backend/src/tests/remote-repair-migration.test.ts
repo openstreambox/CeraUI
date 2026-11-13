@@ -189,7 +189,7 @@ describe("D3 forced re-pair — resolveRemoteAuthDecision (ADR-0006)", () => {
 		);
 
 		const decision = resolveRemoteAuthDecision(token, 16, NOW, {
-			isRealDevice: isRk3588,
+			requireVerifiedControl: isRk3588,
 		});
 
 		expect(decision.action).toBe("force-repair");
@@ -209,7 +209,7 @@ describe("D3 forced re-pair — resolveRemoteAuthDecision (ADR-0006)", () => {
 		);
 
 		const decision = resolveRemoteAuthDecision(token, 16, NOW, {
-			isRealDevice: isX86Device,
+			requireVerifiedControl: isX86Device,
 		});
 
 		expect(decision.action).toBe("force-repair");
@@ -223,7 +223,7 @@ describe("D3 forced re-pair — resolveRemoteAuthDecision (ADR-0006)", () => {
 		});
 
 		const decision = resolveRemoteAuthDecision(token, 16, NOW, {
-			isRealDevice: false,
+			requireVerifiedControl: false,
 		});
 
 		expect(decision.action).toBe("present");

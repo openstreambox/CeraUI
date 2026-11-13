@@ -82,6 +82,7 @@ import {
 	installFamily,
 	normalizeAptCommandFailure,
 } from "./apt-transport-result.ts";
+import { hasCapability } from "./board-capabilities.ts";
 import {
 	logParseError,
 	type ParseResult,
@@ -92,7 +93,6 @@ import {
 	requestCompletionReboot,
 	resetCompletionRebootForTest,
 } from "./deferred-completion-reboot.ts";
-import { isRealDevice } from "./device-detection.ts";
 import {
 	assertDisruptiveActionFree,
 	DisruptiveActionRefusal,
@@ -206,7 +206,8 @@ export function resetAptReachabilityProbeForTest(): void {
 async function prepareAptNetwork(options?: {
 	readonly maxAgeMs?: number;
 }): Promise<AptReachability> {
-	if (!(await isRealDevice())) return aptReachabilityProbe(options);
+	if (!(await hasCapability("os-updates")))
+		return aptReachabilityProbe(options);
 	if (!(await updateGwWrapper(true))) {
 		logger.warn("Apt preflight refused: host default-route repair failed");
 		return deriveVerdict([]);
@@ -221,7 +222,7 @@ async function openAptNetwork(
 	options?: { readonly maxAgeMs?: number },
 	admission?: AptTransferAdmission,
 ): Promise<AptTransaction> {
-	return (await isRealDevice()) &&
+	return (await hasCapability("os-updates")) &&
 		capabilities.mode === "capable" &&
 		capabilities.features.includes("transport-uidrange")
 		? openPinnedAptTransaction(admission)

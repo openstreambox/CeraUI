@@ -143,10 +143,10 @@ import {
 	checkAutoStartStream,
 	srtlaSendExec,
 } from "./modules/streaming/streamloop.ts";
+import { hasCapability } from "./modules/system/board-capabilities.ts";
 import { initCpu } from "./modules/system/cpu.ts";
 import {
 	detectHardwareKindFromDeviceTree,
-	isRealDevice,
 	warnOnHardwareIdentityDrift,
 } from "./modules/system/device-detection.ts";
 import { initDeviceStats } from "./modules/system/device-stats.ts";
@@ -303,7 +303,7 @@ if (!configAvailableAtBind) {
 //     crashes and the WS server (bound above) stays reachable. ---
 
 // Recovery must finish before an update may install any new UID routing rule.
-if (await isRealDevice())
+if (await hasCapability("os-updates"))
 	void guardNonCritical("update-route-sweep", async () => {
 		await reconcileOsStageStartup();
 	});
@@ -316,7 +316,7 @@ await guardNonCritical("hotspot-credentials", initHotspotCredentials);
 // first hotspot channel derivation already reflects the operator's domain
 // rather than the world default the kernel boots with.
 await guardNonCritical("wifi-regdomain", async () => {
-	if (!(await isRealDevice())) return;
+	if (!(await hasCapability("wifi-country"))) return;
 	await applyPersistedCountry(getConfig().country);
 });
 
@@ -454,7 +454,7 @@ await guardNonCritical("hardware-identity-drift", async () => {
 	await warnOnHardwareIdentityDrift({
 		detectKind: () => detectHardwareKindFromDeviceTree(),
 		configuredHw: () => setup.hw,
-		isRealDevice: () => isRealDevice(),
+		canInspectSystem: () => hasCapability("system-control"),
 		warn: (message) => logger.warn(message),
 	});
 });

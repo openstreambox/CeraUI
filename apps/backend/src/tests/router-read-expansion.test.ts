@@ -149,7 +149,7 @@ describe("the ZTE reads stay ONE multi_data request", () => {
 	it("asks for every detail key on the single existing GET", async () => {
 		const urls: string[][] = [];
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () =>
 				"default via 192.168.0.1 dev enx344b50000000 proto dhcp src 192.168.0.169 metric 103",
 			fetchViaInterface: async (_ifname, requested) => {
@@ -299,7 +299,7 @@ describe("the UFI reads cover the catalog commands", () => {
 describe("a UFI session expiry re-authenticates ONCE, then answers honestly", () => {
 	function ufiDeps(logins: string[], commands: string[]): RouterAdminProbeDeps {
 		return {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () =>
 				"default via 192.168.100.1 dev enx020754023235 proto dhcp src 192.168.100.100 metric 100",
 			fetchViaInterface: async () => [UFI_SHELL],
@@ -335,7 +335,7 @@ describe("a UFI session expiry re-authenticates ONCE, then answers honestly", ()
 
 	it("reports an unreachable dongle when the re-auth itself fails", async () => {
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () =>
 				"default via 192.168.100.1 dev enx020754023235 proto dhcp src 192.168.100.100 metric 100",
 			fetchViaInterface: async () => [UFI_SHELL],
@@ -405,7 +405,7 @@ describe("the ZTE and UFI dialects stay read-only", () => {
 		const posted: string[] = [];
 		const fetched: string[] = [];
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () =>
 				[
 					"default via 192.168.0.1 dev enx344b50000000 proto dhcp src 192.168.0.169 metric 103",

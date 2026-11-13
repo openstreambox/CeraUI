@@ -91,7 +91,7 @@ for (const scenario of [
 			let expectedRoutes = "";
 			let releases = 0;
 			const deps = {
-				isRealDevice: async () => true,
+				canRouteClients: async () => true,
 				resolve: async () => ({ addrs: [], fromCache: true }),
 				validateDns: () => {},
 				checkConnectivity: async () => false,

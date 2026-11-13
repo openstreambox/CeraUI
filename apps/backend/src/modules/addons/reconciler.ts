@@ -53,7 +53,7 @@ import {
 	createMockReconcilerDeps,
 	type MockReconcilerHarness,
 } from "../../mocks/providers/addons.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { DisruptiveActionRefusedError } from "../system/disruptive-action-error.ts";
 import { getHardwareKindCached } from "../system/hardware-kind.ts";
 import { aptClientTlsFor } from "./apt-client-tls.ts";
@@ -100,7 +100,7 @@ export type MaterialiseArgs = {
  */
 export type ReconcilerDeps = {
 	/** RK3588-board gate (G6); reconciliation is a no-op in dev/emulated mode. */
-	isRealDevice: () => Promise<boolean>;
+	canManageAddons: () => Promise<boolean>;
 	/** Live-stream guard — a disruptive refresh is deferred while true. */
 	getIsStreaming: () => boolean;
 	/** The live OS VERSION_ID (from /etc/os-release). */
@@ -339,7 +339,7 @@ export async function runAddonReconciler(deps?: ReconcilerDeps): Promise<void> {
 	try {
 		const d = deps ?? (await resolveReconcilerDeps());
 
-		if (!(await d.isRealDevice())) {
+		if (!(await d.canManageAddons())) {
 			d.log("addon reconciler: skipped (emulated / not a real device)");
 			return;
 		}
@@ -392,7 +392,7 @@ async function buildDefaultDeps(): Promise<ReconcilerDeps> {
 	const prepared = new Map<string, string>();
 
 	return {
-		isRealDevice: () => isRealDevice(),
+		canManageAddons: () => hasCapability("addons"),
 		// A refresh re-merges /usr: unknown liveness defers it like a live stream.
 		getIsStreaming: () => !admission.getDisruptiveActionDecision().allowed,
 		getOsVersionId: readOsVersionId,

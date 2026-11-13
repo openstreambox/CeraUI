@@ -24,7 +24,7 @@ import { AUDIO_SOURCE_POLL_DELAY } from "../../helpers/timing-constants.ts";
 
 import { getConfig, saveConfig } from "../config.ts";
 import { setup } from "../setup.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { getHardwareKindCached } from "../system/hardware-kind.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
@@ -660,14 +660,14 @@ function addAudioCardById(list: Record<string, string>, id: string) {
 	list[name] = id;
 }
 
-// The `/proc/asound/cards` read is isRealDevice()-gated and degrades to an empty
+// The `/proc/asound/cards` read is hasCapability("audio")-gated and degrades to an empty
 // longname map — `readTextFile` swallows read errors and `parseAsoundCards` never
 // throws, so a garbled/absent/unreadable file never breaks the audio broadcast.
 async function resolveAudioDisplaysForTick(
 	devices: Record<string, string>,
 ): Promise<Map<string, AudioDeviceDisplay>> {
 	let longnames = new Map<string, string>();
-	if (await isRealDevice()) {
+	if (await hasCapability("audio")) {
 		const text = await readTextFile(PROC_ASOUND_CARDS);
 		if (text !== undefined) longnames = parseAsoundCards(text);
 	}

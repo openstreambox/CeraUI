@@ -58,8 +58,8 @@ import {
 import { parseAuthorityJson } from "./update-orchestrator/strict-authority-json.ts";
 
 // Real-device detection (T4). Re-exported here so kiosk callers (and T13's RPC
-// gate) get the detector from the kiosk module surface. Detection only — the
-// handlers are NOT gated on it yet.
+// gate) retain the legacy detector export for compatibility. Production RPC
+// handlers use the kiosk capability from board-capabilities.ts.
 export {
 	type DeviceDetectionDeps,
 	defaultDeviceDetectionDeps,
@@ -79,7 +79,7 @@ const COG_DISPLAY_ADDON_ID = "cog-display";
 
 // Image-baked descriptor (T37) defining the display engine's units + signed
 // sysext artifact. Read + schema-validated at toggle time; only reached on a
-// real device, since the kiosk RPC handlers gate on isRealDevice() first (G6).
+// real device, since the kiosk RPC handlers gate on the kiosk capability first (G6).
 const COG_DISPLAY_DESCRIPTOR_PATH =
 	"/usr/share/ceralive/addons/cog-display.json";
 

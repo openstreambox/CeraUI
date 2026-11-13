@@ -25,7 +25,7 @@ import { logger } from "../../helpers/logger.ts";
 import { DEFAULT_SPAWN_TIMEOUT_MS } from "../../helpers/spawn-policy.ts";
 
 import { srtlaSendExec } from "../streaming/streamloop.ts";
-import { isRealDevice } from "./device-detection.ts";
+import { hasCapability } from "./board-capabilities.ts";
 
 /**
  * Published for the cerastream row when the engine cannot be reached.
@@ -168,7 +168,7 @@ export const defaultCeraUiRevisionSources: CeraUiRevisionSources = {
 		// Gated on a REAL device on purpose: a developer who once installed the
 		// `.deb` on their workstation would otherwise have their git checkout
 		// report that unrelated package's version as the running build.
-		if (!(await isRealDevice())) return undefined;
+		if (!(await hasCapability("system-control"))) return undefined;
 		// biome-ignore lint/suspicious/noTemplateCurlyInString: dpkg-query's own field syntax, not a JS placeholder
 		const versionField = "-f=${Version}";
 		return probe(["dpkg-query", "-W", versionField, CERAUI_PACKAGE_NAME]);
