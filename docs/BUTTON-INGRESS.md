@@ -76,7 +76,12 @@ integrated, production button admission remains unavailable on older images.
    resync after overflow. On any link deletion, rename, identity/type change,
    address removal or mask change, close affected accepted connections before
    replacing listeners. Service restart closes all connections. Never reuse
-   evidence from an old connection or queue across generations.
+   evidence from an old connection or queue across generations. ENOBUFS,
+   overflow, interrupted/inconsistent dumps or any loss of event continuity
+   must immediately retire **all** trusted connections. Rebuild from a fresh
+   subscription established before a complete synchronized dump, withholding
+   privileged forwarding until synchronization succeeds. An unchanged final
+   address/mask cannot prove continuity or revive any pre-loss evidence.
 5. Inspect each upgrade, not just its TCP connection. Refuse privileged ingress
    for incoming Forwarded, X-Forwarded-*, Via or X-Ceralive-Button-Path headers.
    Preserve that denial by using the ordinary password-only path or rejecting
