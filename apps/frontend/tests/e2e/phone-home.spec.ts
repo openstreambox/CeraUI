@@ -73,7 +73,7 @@ for(const width of [390,1280,1024]) {
 }
 
 for (const width of [390, 1280, 1024]) {
- test(`Moblin credential label and cleared field at ${width}px`, async ({ page }) => {
+ test(`Moblin credential label and cleared field @visual at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: width === 1024 ? 600 : 900 });
   await page.goto('/'); await ensureAuthenticated(page);
   await page.evaluate(async () => {
