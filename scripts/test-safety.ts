@@ -30,13 +30,9 @@ export function assertSafeCommand(command: readonly string[]): void {
 			bin,
 		) ||
 		(bin === 'systemctl' &&
-			command
-				.slice(1)
-				.some((arg) =>
-					/^(start|stop|restart|try-restart|reload|reload-or-restart|kill|enable|disable|mask|unmask|reset-failed|reboot|poweroff)$/.test(
-						arg,
-					),
-				)) ||
+			!/^(show|status|is-active|is-enabled|is-failed|list-units|list-unit-files|cat|list-jobs|list-timers|list-sockets|list-dependencies|get-default|help|--version|--help)$/.test(
+				command.slice(1).find((arg) => !arg.startsWith('-')) ?? command[1] ?? '',
+			)) ||
 		(/^(sh|bash|dash)$/.test(bin) &&
 			/\b(killall|pkill|kill|systemctl|systemd-run|reboot|poweroff)\b/.test(shellScript));
 	if (dangerous && !allowedCommands.includes(text)) {

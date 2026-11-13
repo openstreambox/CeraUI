@@ -15,11 +15,13 @@ test("empty safety allowlist rejects name signals, absolute paths, shell wrapper
 		["bash", "-c", "killall ceracoder"],
 		["sudo", "systemctl", "restart", "ssh"],
 		["systemctl", "--user", "stop", "example.service"],
+		["systemctl", "daemon-reload"],
+		["systemctl", "try-reload-or-restart", "example.service"],
 	])
 		expect(() => assertSafeCommand(command)).toThrow(
 			"Unsafe test process command",
 		);
-	expect(takeSafetyViolations()).toHaveLength(7);
+	expect(takeSafetyViolations()).toHaveLength(9);
 	assertSafeCommand(["systemctl", "show", "example.service"]);
 	assertSafeCommand(["printf", "killall"]);
 	assertSafeCommand([
