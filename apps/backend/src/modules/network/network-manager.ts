@@ -118,6 +118,12 @@ export async function nmConnsGet(fields: string) {
 	return undefined;
 }
 
+function connectionFieldValues(stdout: string, count: number): string[] {
+	const values = stdout.split(/\r?\n/);
+	if (values.length === count + 1 && values.at(-1) === "") values.pop();
+	return values;
+}
+
 export async function nmConnGetFields<Tupel extends Readonly<Array<string>>>(
 	uuid: ConnectionUUID,
 	fields: Tupel,
@@ -137,7 +143,7 @@ export async function nmConnGetFields<Tupel extends Readonly<Array<string>>>(
 				uuid,
 			]);
 			if (mockOutput !== null) {
-				return mockOutput.split("\n") as {
+				return connectionFieldValues(mockOutput, fields.length) as {
 					[K in keyof Tupel]: string;
 				};
 			}
@@ -154,7 +160,7 @@ export async function nmConnGetFields<Tupel extends Readonly<Array<string>>>(
 			"show",
 			argMatch(ID_RE, uuid),
 		]);
-		return stdout.split("\n") as {
+		return connectionFieldValues(stdout, fields.length) as {
 			[K in keyof Tupel]: string;
 		};
 	} catch (err) {

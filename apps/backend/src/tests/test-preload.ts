@@ -14,6 +14,12 @@ import { setStreamReconciliationCompletedForTest } from "../modules/system/strea
 // Isolated globals still share /run; seed ownership only from this file's sentinel.
 const runtimeRoot = mkdtempSync(join(tmpdir(), "ceraui-backend-test-"));
 const previousStreamingMarker = process.env.CERALIVE_STREAMING_MARKER;
+const previousCarrierIntentDir =
+	process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
+process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = join(
+	runtimeRoot,
+	"carrier-intent",
+);
 process.env.CERALIVE_STREAMING_MARKER = join(runtimeRoot, "streaming");
 
 const setup = await loadJsonConfigSync(
@@ -46,5 +52,9 @@ afterAll(async () => {
 	if (previousStreamingMarker === undefined)
 		delete process.env.CERALIVE_STREAMING_MARKER;
 	else process.env.CERALIVE_STREAMING_MARKER = previousStreamingMarker;
+	if (previousCarrierIntentDir === undefined)
+		delete process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
+	else
+		process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = previousCarrierIntentDir;
 	await rm(runtimeRoot, { recursive: true, force: true });
 });

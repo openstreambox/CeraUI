@@ -417,3 +417,23 @@ alone requires the NEXT STEP two sections above (setting `modem_backend: "dbus"`
 on a real board) to have even started, and it hasn't. This todo documents the
 condition; it does not — and must not — trigger any part of it.
 
+
+### Existing automatic profile APNs
+
+`automatic-carrier-profile.ts` converges the stored APN and bearer-family fields
+for an existing, exact device+SIM profile on an admitted NM transport. It uses
+subscription evidence and preserves manual, unknown and unqualified policy.
+It retains versioned inverses alongside the earlier family-only inverse.
+
+The private `automatic-carrier-intent.ts` store keeps logical operator intent
+separate from NM's auto-config bit, which must be off for an explicit APN. Its
+profile/equipment/SIM key is hashed; files are private, atomically replaced and
+fsynced. Pending intent precedes the NM write; applied intent follows verified
+readback. A manual save persists manual intent before its NM write, including
+when the APN is unchanged. Corrupt authority defers rather than assuming absence.
+An applied APN is a conflict witness, never carrier identity.
+
+The isolated real-NM fixture uses a private system bus, state/config directories,
+network and mount namespaces, with host rfkill hidden. It verifies profile writes,
+intent rehydration and manual retirement. It does not model a modem, initial
+activation, transport preparation, grants, CLAT or data-path qualification.
