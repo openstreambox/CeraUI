@@ -146,11 +146,15 @@ export interface SrtlaReloadOptions {
 	readonly isStreaming?: () => Promise<boolean>;
 	/** Pause before the one re-signal of a failed reload. */
 	readonly retryDelayMs?: number;
+	/** How long one delivery may take before it counts as failed. */
+	readonly deliveryDeadlineMs?: number;
 }
 
 export interface SrtlaPublishOptions extends SrtlaReloadOptions {
 	/** Requests the reload that a writer-started republication owes. */
 	readonly reload?: (publication: BindMapPublication) => Promise<unknown>;
+	/** Keys the telemetry registry on published rows (tests inject it). */
+	readonly registerBond?: (entries: readonly BondEntry[]) => void;
 }
 
 // Loaded lazily: streaming.ts imports this module.
@@ -162,8 +166,10 @@ const isStreamingNow = async () =>
  *
  * ADR-003 §5.1 publication order lives in `publishBondMapping`; the SIGHUP is
  * the caller's, because only the caller knows whether a sender is running.
- * The one exception is a republication the writer starts itself after a stuck
- * write: no caller waits on it, so it requests its own reload while streaming.
+ * The one exception is a republication the writer starts itself while the
+ * files on disk are stale (after a stuck or failed write): no caller waits on
+ * it, so it requests its own reload while streaming. A launch that is not yet
+ * marked streaming gets that reload when it commits (`reloadOwedAtLaunchCommit`).
  *
  * The bond record and the telemetry registry are updated inside the writer's
  * queue, from the snapshot that was actually written, so they follow
@@ -185,13 +191,60 @@ export async function publishSrtlaBond(
 			// Keys the telemetry registry on the ids just published, so a rendered row
 			// follows its PHYSICAL device across a reload rather than a file position,
 			// and keeps the legacy conn_id -> interface fallback in step with it.
-			registerSrtlaBond(published);
+			// Only rows whose IP list reached disk: after a timeout or a failed IP
+			// write the sender still reads the previous list.
+			if (wroteIpList(publication)) {
+				(options.registerBond ?? registerSrtlaBond)(published);
+			}
 			lastBond = { entries: [...published], publication };
+			if (publication.changed) publicationSequence += 1;
 			if (origin.republished && publication.changed) {
 				void reloadIfStreaming(publication, options);
 			}
 		},
 	});
+}
+
+const wroteIpList = (publication: BindMapPublication) =>
+	publication.ok ||
+	publication.reason === "unmappable" ||
+	publication.reason === "sidecar_write_failed";
+
+/**
+ * Counts publications that owe the sender a reload. A launch notes the count
+ * when its spawn reads the bond; if it moved by the time the launch commits as
+ * streaming, the reload that every publication in between skipped (nothing was
+ * streaming yet) is delivered then.
+ */
+let publicationSequence = 0;
+let launchSequence: number | undefined;
+
+/** The spawn is reading the published bond now. */
+export function noteSenderLaunchBond(): void {
+	launchSequence = publicationSequence;
+}
+
+/**
+ * Called once a launch commits as streaming: deliver the reload owed to
+ * publications that settled after its spawn read the bond. Their callers, and
+ * the writer's own republications, skipped the reload because the stream was
+ * not marked streaming yet. Answers whether a reload was delivered.
+ */
+export async function reloadOwedAtLaunchCommit(
+	current: () => boolean,
+	/** Defaults to `restartSrtla`'s own delivery. */
+	deliver?: () => Promise<boolean>,
+	options: SrtlaReloadOptions = {},
+): Promise<boolean> {
+	if (launchSequence === undefined || launchSequence === publicationSequence)
+		return false;
+	if (!current()) return false;
+	logger.info(
+		"SRTLA bond changed while the stream was starting; reloading the sender",
+		{ publications: publicationSequence - launchSequence },
+	);
+	launchSequence = publicationSequence;
+	return restartSrtla(deliver, options);
 }
 
 async function reloadIfStreaming(
@@ -239,6 +292,10 @@ export async function setSrtlaIpList(
 /** Pause before the one re-signal of a failed reload. */
 export const SRTLA_RELOAD_RETRY_DELAY_MS = 1_000;
 
+/** A delivery that has not answered after this long counts as failed, so one
+ * stuck signaller cannot hold every later reload behind it. */
+export const SRTLA_RELOAD_DELIVERY_DEADLINE_MS = 5_000;
+
 /** Today's delivery: SIGHUP by process name, true when killall matched any. */
 const signalSendersByName = () => killallSucceeded(["-HUP", "srtla_send"]);
 
@@ -271,6 +328,8 @@ export function resetSrtlaReloadForTest(): void {
 	reloadSession += 1;
 	reloadInFlight = false;
 	reloadFollowUp = undefined;
+	publicationSequence = 0;
+	launchSequence = undefined;
 }
 
 /**
@@ -322,12 +381,24 @@ function runReload(
 	return run;
 }
 
-async function deliverOnce(deliver: () => Promise<boolean>): Promise<boolean> {
+async function deliverOnce(
+	deliver: () => Promise<boolean>,
+	options: SrtlaReloadOptions,
+): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<false>((resolve) => {
+		timer = setTimeout(
+			() => resolve(false),
+			options.deliveryDeadlineMs ?? SRTLA_RELOAD_DELIVERY_DEADLINE_MS,
+		);
+	});
 	try {
-		return (await deliver()) === true;
+		/* Unknown or late delivery is not success. */
+		return (await Promise.race([deliver(), deadline])) === true;
 	} catch {
-		/* Unknown delivery is not success. */
 		return false;
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
@@ -345,14 +416,14 @@ async function reloadWithOneRetry(
 	deliver: () => Promise<boolean>,
 	options: SrtlaReloadOptions,
 ): Promise<boolean> {
-	if (await deliverOnce(deliver)) return true;
+	if (await deliverOnce(deliver, options)) return true;
 	invalidateBindMapReuse();
 	if (await mayResignal(options)) {
 		const delay = options.retryDelayMs ?? SRTLA_RELOAD_RETRY_DELAY_MS;
 		if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
 		if (await mayResignal(options)) {
 			logger.warn("SRTLA reload delivery failed; signalling once more");
-			if (await deliverOnce(deliver)) return true;
+			if (await deliverOnce(deliver, options)) return true;
 		}
 	}
 	logger.warn("SRTLA reload delivery failed; next publication must reload");

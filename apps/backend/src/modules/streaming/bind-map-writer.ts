@@ -92,10 +92,14 @@ export interface BindMapWriterDeps {
 	readonly removeFile: (path: string) => Promise<void>;
 	/** How long one publication may take before it is abandoned. */
 	readonly deadlineMs?: number;
+	/** Pauses between the writer's own retries while the newest snapshot is not
+	 * on disk; the last one repeats. Defaults to `BIND_MAP_RETRY_DELAYS_MS`. */
+	readonly retryDelaysMs?: readonly number[];
 	/**
-	 * Runs inside the serialized writer, once per publication that actually ran,
-	 * in execution order and before any caller sees its receipt. The entries are
-	 * the snapshot that was written, never a superseded caller's rows.
+	 * Runs inside the serialized writer, once per publication that ran or timed
+	 * out, in execution order and before any caller sees its receipt. The
+	 * entries are the snapshot that was submitted, never a superseded caller's
+	 * rows; on a failure receipt they may not be on disk.
 	 */
 	readonly onSettled?: (
 		entries: readonly BondEntry[],
@@ -110,6 +114,46 @@ export interface BindMapWriterDeps {
  * publication wait behind it otherwise.
  */
 export const BIND_MAP_PUBLICATION_DEADLINE_MS = 10_000;
+
+/**
+ * While the newest snapshot is not on disk (a timeout, a failed write, or a
+ * late effect of an abandoned write), the writer republishes it on this
+ * schedule until one publication lands or a newer submission supersedes it.
+ * The last pause repeats. The first republication after a timeout or a late
+ * effect runs at once instead: a single stuck operation is the common case.
+ */
+export const BIND_MAP_RETRY_DELAYS_MS: readonly number[] = [
+	2_000, 5_000, 15_000, 60_000,
+];
+
+/**
+ * Abandoned attempts whose file operations have not settled yet. Up to this
+ * many may still be outstanding while a new attempt starts, so one stuck
+ * operation does not stall stream start; beyond it, new file I/O waits until
+ * one settles instead of piling more blocked operations onto hung storage.
+ */
+const MAX_UNSETTLED_ABANDONED = 1;
+
+/** Why the files on disk may not hold the newest snapshot. */
+export type BindMapStaleReason =
+	| BindMapPublishFailure
+	| "late_effect"
+	| "error";
+
+/** Whether the files on disk hold the newest submitted snapshot. */
+export interface BindMapPublicationHealth {
+	/** True while the newest snapshot is not known to be on disk. */
+	readonly stale: boolean;
+	/** `Date.now()` when the current stale period began. */
+	readonly staleSinceMs?: number;
+	/** Failed or timed-out attempts in the current stale period. */
+	readonly failures: number;
+	readonly lastFailure?: BindMapStaleReason;
+	/** A retry is waiting on its backoff timer. */
+	readonly retryScheduled: boolean;
+	/** Abandoned attempts whose file operations have not settled. */
+	readonly abandonedUnsettled: number;
+}
 
 const SIDECAR_MODE = 0o600;
 
@@ -157,6 +201,7 @@ export function defaultSidecarPath(ipsFile: string): string {
  * flight; a newer submission replaces the waiting snapshot (latest wins) and the
  * replaced callers resolve with the receipt of the publication that replaced
  * them. A flapping link therefore costs two publications, not one per event.
+ * The writer's own retries use the same queue; they are never a second one.
  */
 let generation = 0;
 let tempCounter = 0;
@@ -165,6 +210,18 @@ let session = 0;
 /** Bumped whenever reuse is invalidated; an attempt that started under an older
  * epoch may not re-establish reuse when it completes. */
 let reuseEpoch = 0;
+/** A timeout or late effect left the files in an unknown state: the next
+ * publication that lands must report `changed`, whatever it replaces. */
+let diskUncertain = false;
+/** Bumped whenever the disk becomes uncertain. Only an attempt that started
+ * after the latest bump can prove the disk holds what it wrote: a late rename
+ * may have landed in the middle of an earlier one. */
+let uncertainEpoch = 0;
+
+function markDiskUncertain(): void {
+	diskUncertain = true;
+	uncertainEpoch += 1;
+}
 let lastPublished: readonly BondEntry[] | undefined;
 let lastSuccessful:
 	| {
@@ -181,39 +238,73 @@ interface Snapshot {
 	readonly deps: BindMapWriterDeps;
 }
 
+type Waiter = ReturnType<typeof Promise.withResolvers<BindMapPublication>>;
+
 interface Submission {
 	snapshot: Snapshot;
-	readonly waiters: ReturnType<
-		typeof Promise.withResolvers<BindMapPublication>
-	>[];
+	waiters: Waiter[];
+	/** Answers the waiters while new file I/O is held back (see `blocked`). */
+	waitTimer?: ReturnType<typeof setTimeout> | undefined;
 }
 
 interface Attempt {
 	readonly session: number;
 	readonly reuseEpoch: number;
+	readonly uncertainEpoch: number;
 	abandoned: boolean;
 	/** An effect (rename/unlink) settled after abandonment: it may have landed. */
 	lateEffect: boolean;
 }
 
+interface StaleState {
+	readonly since: number;
+	failures: number;
+	reason: BindMapStaleReason;
+	/** Backoff steps already taken in this stale period. */
+	backoff: number;
+	/** The one immediate republication of this period has been used. */
+	immediateUsed: boolean;
+}
+
+/** A live attempt is in flight. */
 let running = false;
+let abandonedUnsettled = 0;
 let pending: Submission | undefined;
 let newest: Snapshot | undefined;
+let stale: StaleState | undefined;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let idleWaiters: (() => void)[] = [];
 
 const snapshotMapping = (entries: readonly BondEntry[]) =>
 	Object.freeze(entries.map((entry) => Object.freeze({ ...entry })));
+
+const deadlineOf = (deps: BindMapWriterDeps) =>
+	deps.deadlineMs ?? BIND_MAP_PUBLICATION_DEADLINE_MS;
+
+/** New file I/O waits while too many abandoned attempts are still outstanding. */
+const blocked = () => abandonedUnsettled > MAX_UNSETTLED_ABANDONED;
+
+function cancelRetry(): void {
+	if (retryTimer !== undefined) clearTimeout(retryTimer);
+	retryTimer = undefined;
+}
 
 /** Drop the writer session (test isolation). Never call from production code. */
 export function resetBindMapWriter(): void {
 	session += 1;
 	generation = 0;
 	tempCounter = 0;
+	diskUncertain = false;
+	uncertainEpoch = 0;
 	lastPublished = undefined;
 	lastSuccessful = undefined;
 	running = false;
+	abandonedUnsettled = 0;
+	if (pending?.waitTimer !== undefined) clearTimeout(pending.waitTimer);
 	pending = undefined;
 	newest = undefined;
+	stale = undefined;
+	cancelRetry();
 	const waiters = idleWaiters;
 	idleWaiters = [];
 	for (const resolve of waiters) resolve();
@@ -231,7 +322,29 @@ export function currentBindMapGeneration(): number {
 	return generation;
 }
 
-/** Resolves once no publication is in flight or waiting. */
+/** Whether the files on disk hold the newest snapshot, and since when not. */
+export function getBindMapPublicationHealth(): BindMapPublicationHealth {
+	return stale === undefined
+		? {
+				stale: false,
+				failures: 0,
+				retryScheduled: false,
+				abandonedUnsettled,
+			}
+		: {
+				stale: true,
+				staleSinceMs: stale.since,
+				failures: stale.failures,
+				lastFailure: stale.reason,
+				retryScheduled: retryTimer !== undefined,
+				abandonedUnsettled,
+			};
+}
+
+/**
+ * Resolves once no publication is in flight or waiting. A retry waiting on its
+ * backoff timer, or an abandoned attempt's file operations, do not count.
+ */
 export function whenBindMapWriterIdle(): Promise<void> {
 	if (!running && pending === undefined) return Promise.resolve();
 	return new Promise((resolve) => idleWaiters.push(resolve));
@@ -285,9 +398,11 @@ async function publishAtomically(
  *
  * A publication that has not settled by its deadline resolves as `timed_out`
  * with `changed: false` and is abandoned: it renames nothing more, and reuse is
- * cleared. Unless a newer submission is already waiting, the newest snapshot is
- * republished at once; that republication owes the reload (see `onSettled`).
- * An abandoned rename that still lands later triggers one more republication.
+ * cleared. Until the newest snapshot lands, the writer republishes it itself:
+ * once at once, then on `BIND_MAP_RETRY_DELAYS_MS`, also after a failed write
+ * and after a late effect of an abandoned write. Those republications owe the
+ * reload (see `onSettled`); the first one that lands after an uncertain state
+ * always reports `changed`.
  */
 export function publishBondMapping(
 	provided: readonly BondEntry[],
@@ -297,26 +412,46 @@ export function publishBondMapping(
 	const snapshot: Snapshot = { entries: snapshotMapping(provided), deps };
 	const waiter = Promise.withResolvers<BindMapPublication>();
 	newest = snapshot;
+	// This submission is the retry now; a later failure schedules a fresh one.
+	cancelRetry();
 	submit(snapshot, waiter);
 	return waiter.promise;
 }
 
-function submit(
-	snapshot: Snapshot,
-	waiter?: ReturnType<typeof Promise.withResolvers<BindMapPublication>>,
-): void {
+function submit(snapshot: Snapshot, waiter?: Waiter): void {
 	if (pending !== undefined) {
 		pending.snapshot = snapshot;
 		if (waiter) pending.waiters.push(waiter);
+		if (blocked()) armWait(pending);
 		return;
 	}
 	const submission: Submission = { snapshot, waiters: waiter ? [waiter] : [] };
-	if (running) pending = submission;
-	else start(submission);
+	if (running || blocked()) {
+		pending = submission;
+		if (blocked()) armWait(submission);
+	} else start(submission);
 }
 
-function republishNewest(): void {
-	if (newest !== undefined) submit(newest);
+/**
+ * While new file I/O is held back, answer a waiting submission's callers with
+ * `timed_out` after one deadline. The submission itself keeps its slot and is
+ * written once storage settles, as a writer-started republication.
+ */
+function armWait(submission: Submission): void {
+	if (submission.waitTimer !== undefined || submission.waiters.length === 0)
+		return;
+	const { deps } = submission.snapshot;
+	submission.waitTimer = setTimeout(() => {
+		submission.waitTimer = undefined;
+		if (pending !== submission || submission.waiters.length === 0) return;
+		const publication = timedOut();
+		notifySettled(submission, publication);
+		const waiters = submission.waiters;
+		submission.waiters = [];
+		for (const waiter of waiters) waiter.resolve(publication);
+		invalidateBindMapReuse();
+		noteFailure("timed_out");
+	}, deadlineOf(deps));
 }
 
 type Outcome =
@@ -331,19 +466,20 @@ const timedOut = (): BindMapPublication => ({
 
 function start(submission: Submission): void {
 	running = true;
+	cancelRetry();
+	if (submission.waitTimer !== undefined) clearTimeout(submission.waitTimer);
+	submission.waitTimer = undefined;
 	const { entries, deps } = submission.snapshot;
 	const attempt: Attempt = {
 		session,
 		reuseEpoch,
+		uncertainEpoch,
 		abandoned: false,
 		lateEffect: false,
 	};
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<"timed_out">((resolve) => {
-		timer = setTimeout(
-			() => resolve("timed_out"),
-			deps.deadlineMs ?? BIND_MAP_PUBLICATION_DEADLINE_MS,
-		);
+		timer = setTimeout(() => resolve("timed_out"), deadlineOf(deps));
 	});
 	const work = publishBondMappingSerial(entries, deps, attempt);
 	const outcome: Promise<Outcome> = work.then(
@@ -358,33 +494,94 @@ function start(submission: Submission): void {
 		}
 		if (result === "timed_out") {
 			attempt.abandoned = true;
+			abandonedUnsettled += 1;
+			markDiskUncertain();
 			invalidateBindMapReuse();
 			logger.error("bind-map: publication did not settle before its deadline", {
-				deadlineMs: deps.deadlineMs ?? BIND_MAP_PUBLICATION_DEADLINE_MS,
+				deadlineMs: deadlineOf(deps),
 			});
 			const publication = timedOut();
 			notifySettled(submission, publication);
 			finish(submission, { publication });
-			// One republication per caller-visible timeout; a republication that
-			// itself times out leaves the next real publication to try again.
-			if (pending === undefined && submission.waiters.length > 0) {
-				republishNewest();
-			}
-			// If the abandoned write still lands something, publish the newest
-			// snapshot again so the late effect is never the last one on disk.
-			void outcome.then(() => {
-				if (attempt.lateEffect && attempt.session === session) {
-					logger.warn("bind-map: an abandoned publication landed late");
-					invalidateBindMapReuse();
-					republishNewest();
-				}
-			});
-		} else {
-			if ("publication" in result)
-				notifySettled(submission, result.publication);
+			noteFailure("timed_out");
+			void outcome.then(() => abandonedSettled(attempt));
+		} else if ("publication" in result) {
+			notifySettled(submission, result.publication);
 			finish(submission, result);
+			noteResult(submission.snapshot, result.publication, attempt);
+		} else {
+			finish(submission, result);
+			noteFailure("error");
 		}
+		running = false;
 		drain();
+	});
+}
+
+/** An abandoned attempt's file operations settled: its I/O slot is free again. */
+function abandonedSettled(attempt: Attempt): void {
+	if (attempt.session !== session) return;
+	abandonedUnsettled -= 1;
+	if (attempt.lateEffect) {
+		// The abandoned write landed something after all: whatever it renamed may
+		// now sit on top of a newer publication. Publish the newest snapshot again.
+		logger.warn("bind-map: an abandoned publication landed late");
+		markDiskUncertain();
+		invalidateBindMapReuse();
+		noteFailure("late_effect", true);
+		// Queue the repair now, behind any attempt in flight: that attempt
+		// started before the late effect and cannot prove what is on disk.
+		if (stale !== undefined && newest !== undefined) {
+			stale.immediateUsed = true;
+			submit(newest);
+		}
+	}
+	drain();
+}
+
+function noteResult(
+	snapshot: Snapshot,
+	publication: BindMapPublication,
+	attempt: Attempt,
+): void {
+	if (!publication.ok && publication.reason !== "unmappable") {
+		noteFailure(publication.reason);
+		return;
+	}
+	if (stale === undefined || snapshot !== newest) return;
+	if (attempt.uncertainEpoch !== uncertainEpoch) return; // a late effect overlapped it
+	logger.info("bind-map: the published mapping is current again", {
+		failures: stale.failures,
+		staleForMs: Date.now() - stale.since,
+	});
+	stale = undefined;
+	cancelRetry();
+}
+
+/** The newest snapshot is not (or no longer known to be) on disk. */
+function noteFailure(reason: BindMapStaleReason, newPeriod = false): void {
+	if (stale === undefined || newPeriod) {
+		if (stale === undefined) {
+			logger.error(
+				"bind-map: the files on disk are stale; republishing the newest mapping until it lands",
+				{ reason },
+			);
+		}
+		stale = {
+			since: stale?.since ?? Date.now(),
+			failures: (stale?.failures ?? 0) + 1,
+			reason,
+			backoff: 0,
+			immediateUsed: false,
+		};
+		return;
+	}
+	stale.failures += 1;
+	stale.reason = reason;
+	logger.warn("bind-map: the published mapping is still stale", {
+		reason,
+		failures: stale.failures,
+		staleForMs: Date.now() - stale.since,
 	});
 }
 
@@ -416,16 +613,55 @@ function finish(submission: Submission, result: Outcome | undefined): void {
 }
 
 function drain(): void {
-	running = false;
-	const next = pending;
-	pending = undefined;
-	if (next !== undefined) {
+	if (running) return;
+	if (pending !== undefined) {
+		if (blocked()) {
+			// Written once an abandoned attempt settles; its callers hear back sooner.
+			armWait(pending);
+			return;
+		}
+		const next = pending;
+		pending = undefined;
 		start(next);
 		return;
 	}
+	if (stale !== undefined && newest !== undefined) scheduleRetry();
+	if (running || pending !== undefined) return;
 	const waiters = idleWaiters;
 	idleWaiters = [];
 	for (const resolve of waiters) resolve();
+}
+
+/** Republish the newest snapshot: once at once after a timeout or late effect,
+ * otherwise after the next backoff pause. One timer at most, never a loop. */
+function scheduleRetry(): void {
+	if (retryTimer !== undefined || stale === undefined || newest === undefined)
+		return;
+	const snapshot = newest;
+	const immediate =
+		!stale.immediateUsed &&
+		(stale.reason === "timed_out" || stale.reason === "late_effect");
+	if (immediate) {
+		stale.immediateUsed = true;
+		submit(snapshot);
+		return;
+	}
+	const delays = snapshot.deps.retryDelaysMs ?? BIND_MAP_RETRY_DELAYS_MS;
+	const delay = delays[Math.min(stale.backoff, delays.length - 1)] ?? 0;
+	stale.backoff += 1;
+	const owner = session;
+	retryTimer = setTimeout(() => {
+		retryTimer = undefined;
+		if (owner !== session || stale === undefined || newest === undefined)
+			return;
+		if (running || pending !== undefined) return; // a newer run covers it
+		logger.warn("bind-map: republishing the newest mapping", {
+			failures: stale.failures,
+			staleForMs: Date.now() - stale.since,
+		});
+		submit(newest);
+	}, delay);
+	retryTimer.unref?.();
 }
 
 async function publishBondMappingSerial(
@@ -444,6 +680,7 @@ async function publishBondMappingSerial(
 			lastSuccessful.sidecarFile === deps.sidecarFile &&
 			sameMapping(lastSuccessful.entries, entries),
 		changed =
+			diskUncertain ||
 			lastPublished === undefined ||
 			!sameMapping(lastPublished, entries) ||
 			(mappable && !identical);
@@ -464,6 +701,7 @@ async function publishBondMappingSerial(
 		lastPublished = entries;
 		lastSuccessful = undefined;
 		await retireSidecar(deps, attempt);
+		if (attempt.uncertainEpoch === uncertainEpoch) diskUncertain = false;
 		return { ok: false, reason: "unmappable", changed };
 	}
 
@@ -491,6 +729,7 @@ async function publishBondMappingSerial(
 	}
 
 	lastPublished = entries;
+	if (attempt.uncertainEpoch === uncertainEpoch) diskUncertain = false;
 	lastSuccessful =
 		attempt.reuseEpoch === reuseEpoch
 			? {
