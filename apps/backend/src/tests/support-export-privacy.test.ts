@@ -84,20 +84,20 @@ describe("support export privacy regressions", () => {
 	])("withholds opaque modem, identifier, position evidence (%#)", (record) => {
 		expect(exported(record)).toBe("[REDACTED support log line]");
 	});
-	test("masks an address span while preserving the diagnostic line", () => {
-		expect(
-			exported(
-				event({
-					msg: "Failed to start stream",
-					meta: {
-						err: {
-							name: "Error",
-							message: "adapter address aa:bb:cc:dd:ee:ff",
-						},
+	test("reduces a system-call error to its call and code", () => {
+		const output = exported(
+			event({
+				msg: "Failed to start stream",
+				meta: {
+					err: {
+						name: "Error",
+						message: "connect ECONNREFUSED 203.0.113.7:5000",
 					},
-				}),
-			),
-		).toContain('"message":"adapter address [address]"');
+				},
+			}),
+		);
+		expect(output).toContain('"message":"connect ECONNREFUSED [value]"');
+		expect(output).not.toContain("203.0.113.7");
 	});
 
 	test("logger masks passphrases and GNS positions before persistence", () => {

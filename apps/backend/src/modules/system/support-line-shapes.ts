@@ -57,6 +57,8 @@ const PLACEHOLDERS: Record<string, [prefix: string, pattern: string]> = {
 	USBPATH: ["usb", "\\d{1,2}-[\\d.]{1,16}(?::\\d\\.\\d{1,2})?"],
 	DRIVER: ["driver", "[a-z][a-z0-9_-]{1,23}"],
 	TAIL: ["drop", ".{0,4000}"],
+	// A libqmi enum nickname, such as generic-unspecified or option-unsubscribed.
+	NICK: ["nick", "[a-z0-9]+(?:-[a-z0-9]+){0,7}"],
 	KEYID: ["drop", "(?: keyid=[^\\n]{0,64})?"],
 };
 
@@ -105,7 +107,12 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		String.raw`${MM}${MM_OBJ}simple connect state \({NUM}/{NUM}\): [a-z ]{3,60}`,
 		String.raw`${MM}${MM_OBJ}(?:port '?[a-zA-Z0-9/]{1,24}'? )?(?:port )?timed out {NUM} consecutive times(?:, marking modem as invalid)?`,
 		String.raw`${MM}${MM_OBJ}connection #{NUM} finished: duration [0-9:s]{1,16}(?:, tx: \d{1,15} bytes, rx: \d{1,15} bytes)?`,
-		String.raw`${MM}${MM_OBJ}(?:couldn't {COULDNT}|connection attempt #\d{1,3} failed|modem couldn't be initialized|data connection attempt failed|synchronizing all bearer status failed)(?:: {REASON})?`,
+		String.raw`${MM}${MM_OBJ}(?:couldn't {COULDNT}|couldn't start IPv[46] network|connection attempt #\d{1,3} failed|modem couldn't be initialized|data connection attempt failed|synchronizing all bearer status failed|failed sending SIM PIN|failed enabling modem|registration in network failed|packet service attach in 3GPP network failed|failed waiting for enabled state)(?:: {REASON})?`,
+		// 1.24 warnings and QMI call-end reasons that name a carrier's refusal.
+		String.raw`${MM}${MM_OBJ}modem is locked with '[a-z0-9-]{2,24}'`,
+		String.raw`${MM}${MM_OBJ}\s{0,2}call end reason \({NUM}\): (?:{NICK}|\(null\))`,
+		String.raw`${MM}${MM_OBJ}verbose call end reason \({NUM},{NUM}\): \[[a-z0-9-]{2,24}\] (?:{NICK}|\(null\))`,
+		String.raw`${MM}${MM_OBJ}(?:received critical sim error: SIM might be permanently blocked, reprobing\.\.\.|Received critical sim error\. SIM might be permanently blocked\. Reprobing\.\.\.)`,
 		String.raw`${MM}\[device {TAIL}\] creating modem with plugin '[a-zA-Z0-9 _-]{1,32}' and '{NUM}' ports(?: \([0-9a-f]{4}(?::[0-9a-f]{4}){1,2}\))? ?`,
 		String.raw`${MM}\[base-manager\] modem for device '{TAIL}' successfully created`,
 	],
@@ -114,7 +121,9 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		String.raw`${NM}manager: NetworkManager state is now [A-Z_]{2,24}`,
 		String.raw`${NM}device \({IF}\): state change: {STATE} -> {STATE} \(reason '{STATE}', (?:sys-iface-state|managed-type): '{STATE}'(?:, missing firmware)?\)`,
 		String.raw`${NM}device \({IF}\): Activation: starting connection '{SQNAME}' \({UUID}\)`,
-		String.raw`${NM}device \({IF}\): Activation: (?:\((?:ethernet|wifi)\) )?Stage 2 of 5 \(Device Configure\) successful\.(?:  (?:Connected to|Started) '{SQNAME}'\.)?`,
+		String.raw`${NM}device \({IF}\): Activation: (?:\((?:ethernet|wifi)\) )?Stage 2 of 5 \(Device Configure\) successful\.`,
+		String.raw`${NM}device \({IF}\): Activation: \(wifi\) Stage 2 of 5 \(Device Configure\) successful\. (?:Connected to wireless network|Started Wi-Fi Hotspot) "{DQNAME}"(?: \(hidden\))?`,
+		String.raw`${NM}device \({IF}\): link timed out\.`,
 		String.raw`${NM}device \({IF}\): Activation: Stage [1-5] of 5 \((?:Device Prepare|Device Configure|IP Configure Start|IP Configure Timeout|IP Check)\) (?:scheduled\.\.\.|started\.\.\.|complete\.|successful\.)`,
 		String.raw`${NM}device \({IF}\): Activation: successful, device activated\.`,
 		String.raw`${NM}device \({IF}\): Activation: failed for connection '{SQNAME}'`,
@@ -124,9 +133,11 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		String.raw`${NM}device \({IF}\): supplicant interface state: {STATE} -> {STATE}(?: \(simulated signal\))?`,
 		String.raw`${NM}device \({IF}\): carrier: link connected`,
 		String.raw`${NM}modem-broadband\[{IF}\]: failed to connect modem: {REASON}`,
+		String.raw`${NM}modem-broadband\[{IF}\]: failed to connect '{SQNAME}': (?:APN not found: {REASON}|not a mobile broadband modem|unable to determine the network id)`,
+		String.raw`${NM}modem\["{IF}"\]: cannot enable/disable modem: locked`,
 		String.raw`${NM}policy: connection '{SQNAME}' auto-activation failed: {REASON}`,
 		String.raw`${NM}policy: set '{SQNAME}' \({IF}\) as default for IPv[46] routing and DNS`,
-		String.raw`${NM}dhcp[46] \({IF}\): state changed [a-z ]{1,24}(?:, address={IP})?`,
+		String.raw`${NM}dhcp[46] \({IF}\): state changed (?:new|no) lease(?:, address={IP})?(?:, acd pending|, acd conflict)?`,
 		String.raw`${NM}dhcp[46] \({IF}\): activation: beginning transaction \(timeout in {NUM} seconds\)`,
 		String.raw`${NM}connectivity: \({IF}(?:,IPv[46])?(?:,\d{1,6})?\) (?:timed out|is now [A-Z]{2,12}|check failed to {IP}:\d{1,5})`,
 		String.raw`${NM}manager: \({IF}\): new [A-Za-z0-9 .-]{1,40} device \(/org/freedesktop/NetworkManager/Devices/\d{1,6}\)`,
@@ -193,7 +204,24 @@ const PHRASES = new Set([
 	...MODEM_ERROR_PHRASES,
 	// NetworkManager's own text for a modem that gave no IP configuration.
 	"invalid bearer IP configuration",
+	// ModemManager's modem state names, which some waits report as the error.
+	...[
+		"unknown",
+		"failed",
+		"initializing",
+		"locked",
+		"disabled",
+		"disabling",
+		"enabling",
+		"enabled",
+		"searching",
+		"registered",
+		"disconnecting",
+		"connecting",
+		"connected",
+	],
 ]);
+const NICKNAME = /^[a-z0-9]+(?:-[a-z0-9]+){0,7}$/;
 const COULDNT = new Set(MODEM_COULDNT_HEADS);
 const QMI_ERROR = /^QMI protocol error \(\d{1,5}\): '[A-Za-z-]{2,48}'/;
 const DBUS_ERROR =
@@ -211,6 +239,8 @@ export function boundedModemReason(value: string): string {
 		const segment = qmi ?? (cut < 0 ? rest : rest.slice(0, cut));
 		const known =
 			qmi !== undefined ||
+			// "Call failed: <libqmi call-end nickname>".
+			(out.at(-1) === "Call failed" && NICKNAME.test(segment)) ||
 			PHRASES.has(segment) ||
 			PHRASES.has(segment.replace(/\.$/, "")) ||
 			DBUS_ERROR.test(segment);
@@ -242,6 +272,13 @@ function replacement(group: string, value: string): string | null | undefined {
 	if (group.startsWith("if"))
 		return value.replace(/^(wlx|enx|wwx)[0-9a-f]{12}$/i, "$1[address]");
 	return undefined;
+}
+
+const INTERFACE_NAME = new RegExp(`^${PLACEHOLDERS.IF?.[1] ?? "(?!)"}$`);
+
+/** A kernel or modem port interface name, by the rule the shapes use. */
+export function isInterfaceName(value: string): boolean {
+	return value.length <= 32 && INTERFACE_NAME.test(value);
 }
 
 export function isShapeSource(source: string): source is ShapeSource {

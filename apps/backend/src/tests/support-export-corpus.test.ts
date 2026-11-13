@@ -82,7 +82,7 @@ describe("structured backend events", () => {
 				meta: {
 					err: {
 						name: "Error",
-						message: "engine start rejected: capture device busy",
+						message: "spawn /usr/bin/cerastream EBUSY",
 						code: "EBUSY",
 						stack: "private-stack",
 					},
@@ -90,17 +90,17 @@ describe("structured backend events", () => {
 					signal: "SIGTERM",
 					code: 32,
 					ifname: "wwan0",
-					reason: "capture device is busy",
+					reason: "a stream is live",
 				},
 			}),
 		);
 		for (const kept of [
-			"engine start rejected: capture device busy",
+			"spawn /usr/bin/cerastream EBUSY",
 			'"exitCode":1',
 			'"signal":"SIGTERM"',
 			'"code":32',
 			'"ifname":"wwan0"',
-			'"reason":"capture device is busy"',
+			'"reason":"a stream is live"',
 		])
 			expect(output).toContain(kept);
 		expect(output).not.toContain("private-stack");

@@ -38,7 +38,7 @@
  */
 
 import { SpawnAbortError, SpawnTimeoutError } from "./bounded-spawn.ts";
-import { execFileP } from "./exec.ts";
+import { execFileP, redactArgv } from "./exec.ts";
 import { logger } from "./logger.ts";
 
 /** Default stdout/stderr ceiling for buffered (execFile) commands: 10 MiB. */
@@ -177,37 +177,6 @@ export function argMatch(re: RegExp, v: string): string {
 }
 
 /** Argv tokens whose *following* token is a secret and must not be logged. */
-const SECRET_FLAG_RE = /pass(word)?|secret|psk|token|key|pin|puk/i;
-
-/**
- * Produce a log-safe rendering of argv. Two shapes are redacted, because the
- * binaries this backend drives disagree about where a secret goes:
- *
- *  - `--pin <secret>` (mmcli/nmcli) — the token AFTER a secret-looking flag.
- *  - `--uim-verify-pin=PIN2,<secret>` (qmicli) — the secret rides INSIDE the
- *    token, so the separate-token rule alone would log a live PIN verbatim.
- *
- * Best-effort only — callers handling secrets should also prefer runWithStdin().
- */
-function redactArgs(args: string[]): string {
-	const out: string[] = [];
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i] ?? "";
-		const prev = i > 0 ? args[i - 1] : undefined;
-		if (prev !== undefined && SECRET_FLAG_RE.test(prev)) {
-			out.push("***");
-			continue;
-		}
-		const eq = arg.indexOf("=");
-		if (eq > 0 && SECRET_FLAG_RE.test(arg.slice(0, eq))) {
-			out.push(`${arg.slice(0, eq)}=***`);
-			continue;
-		}
-		out.push(arg);
-	}
-	return out.join(" ");
-}
-
 type CollectResult = { stdout: string; stderr: string; code: number };
 
 /**
@@ -339,7 +308,7 @@ export async function run(
 		throw new Error(`binary not allowlisted: ${bin}`);
 	}
 
-	const redacted = `${bin} ${redactArgs(args)}`.trim();
+	const redacted = `${bin} ${redactArgv(args)}`.trim();
 	logger.debug(`run: ${redacted}`);
 
 	if (opts?.signal?.aborted) {
@@ -383,7 +352,7 @@ export async function runWithStdin(
 		throw new Error(`binary not allowlisted: ${bin}`);
 	}
 
-	const redacted = `${bin} ${redactArgs(args)}`.trim();
+	const redacted = `${bin} ${redactArgv(args)}`.trim();
 	logger.debug(`runWithStdin: ${redacted} <stdin redacted>`);
 
 	const { stdout, stderr, code } = await spawnCollect(

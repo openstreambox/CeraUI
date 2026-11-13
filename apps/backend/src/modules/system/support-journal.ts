@@ -138,11 +138,13 @@ export function renderSupportJournalWithCounts(
 				return WITHHELD;
 			}
 			const source = recordSource(record);
-			if (!source || typeof record.MESSAGE !== "string") return WITHHELD;
+			// Track a split before looking at the message: without --all,
+			// journalctl prints a field over 4096 bytes as null, which includes the
+			// first piece of every line journald split at its line limit.
 			const stream =
 				typeof record._STREAM_ID === "string" && record._STREAM_ID.length <= 128
 					? record._STREAM_ID
-					: `${source}:${typeof record._PID === "string" && record._PID.length <= 10 ? record._PID : "unknown"}`;
+					: `${source ?? field(record, "_COMM")}:${typeof record._PID === "string" && record._PID.length <= 10 ? record._PID : "unknown"}`;
 			const cut = ["line-max", "pid-change"].includes(
 				field(record, "_LINE_BREAK"),
 			);
@@ -152,6 +154,7 @@ export function renderSupportJournalWithCounts(
 			if (continuation && !cut) {
 				interrupted.delete(stream);
 			}
+			if (!source || typeof record.MESSAGE !== "string") return WITHHELD;
 			if (
 				cut ||
 				continuation ||

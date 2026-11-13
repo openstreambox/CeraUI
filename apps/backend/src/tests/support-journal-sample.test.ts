@@ -13,8 +13,8 @@ import {
 // that silently withholds diagnosis shows up here. It does not measure how
 // much of a real device journal is shown: lines without a shape are withheld.
 const expected: Record<Generation, { records: number; shown: number }> = {
-	bookworm: { records: 106, shown: 101 },
-	trixie: { records: 109, shown: 104 },
+	bookworm: { records: 110, shown: 105 },
+	trixie: { records: 114, shown: 110 },
 };
 
 describe.each(["bookworm", "trixie"] as const)(
@@ -46,6 +46,17 @@ describe.each(["bookworm", "trixie"] as const)(
 				'"class":"engine_unavailable"',
 				'"retry":{"state":"exhausted","attempt":3,"maxAttempts":3,"suppressed":false}',
 				"Main process exited, code=killed, status=9/KILL",
+				"call end reason (3): generic-unspecified",
+				"cannot enable/disable modem: locked",
+				'Connected to wireless network "[name]"',
+				...(generation === "trixie"
+					? [
+							"modem is locked with 'sim-pin'",
+							"failed sending SIM PIN: Incorrect password",
+							"verbose call end reason (6,33): [3gpp] option-unsubscribed",
+							"couldn't start IPv4 network: QMI protocol error (14): 'CallFailed'",
+						]
+					: []),
 			])
 				expect(output).toContain(evidence);
 		});

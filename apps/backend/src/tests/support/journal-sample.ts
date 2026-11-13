@@ -50,8 +50,12 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 		warn: trixie ? "<wrn> " : "<warn>  ",
 		err: trixie ? "<err> " : "<error> ",
 	};
+	// ModemManager 1.24 logs msg, warn and error by default, not info; the
+	// image does not pass --log-level, so trixie journals hold no <inf> lines.
 	const mm = (kind: keyof typeof level, text: string) =>
-		modemManager(`${level[kind]}${text}`);
+		trixie && kind === "info"
+			? undefined
+			: modemManager(`${level[kind]}${text}`);
 	const nm = (kind: "info" | "warn", text: string) =>
 		networkManager(
 			`${kind === "info" ? "<info> " : "<warn> "} [1731528245.1234] ${text}`,
@@ -79,7 +83,7 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 			...(meta ? { meta } : {}),
 		});
 
-	return [
+	const records: (JournalRecord | undefined)[] = [
 		// Boot.
 		kernel("Booting Linux on physical CPU 0x0000000000 [0x412fd050]"),
 		kernel(
@@ -122,6 +126,15 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 			"[modem0] modem couldn't be initialized: Couldn't check unlock status: SIM PIN required",
 		),
 		mm("msg", "[modem0] state changed (unknown -> locked)"),
+		...(trixie
+			? [
+					mm("warn", "[modem0] modem is locked with 'sim-pin'"),
+					mm("warn", "[modem0] failed sending SIM PIN: Incorrect password"),
+				]
+			: []),
+		networkManager(
+			'<warn>  [1731528245.1234] modem["cdc-wdm0"]: cannot enable/disable modem: locked',
+		),
 		mm("info", "[modem0/sim0] loaded SIM identifier: 8901260000000000000"),
 		warn(
 			"SIM PIN auto-unlock: modem 0 not unlocked (incorrect PIN); clearing stored PIN — manual entry required",
@@ -140,16 +153,13 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 						"[modem0] Network rejection received: reason 'plmn-not-allowed' (11), operator id '26201', operator name 'Jane Doe Mobile', access technology 'lte'",
 					),
 					mm(
-						"info",
-						"[modem0] consolidated registration state: cs 'idle', ps 'denied', eps 'denied', 5gs 'unknown' --> 'denied'",
+						"warn",
+						"[modem0] registration in network failed: Network timeout",
 					),
 				]
 			: []),
 		mm("msg", "[modem0] 3GPP registration state changed (denied -> home)"),
 		mm("msg", "[modem0] state changed (searching -> registered)"),
-		...(trixie
-			? [mm("info", "[modem0] access technology changed (unknown -> lte)")]
-			: []),
 		mm("msg", "[modem0] simple connect started..."),
 		mm("msg", "[modem0] simple connect state (3/10): enable"),
 		mm("msg", "[modem0] simple connect state (5/10): register"),
@@ -159,6 +169,22 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 		mm(
 			"warn",
 			"[modem0/bearer1] connection attempt #1 failed: Missing or unknown APN",
+		),
+		...(trixie
+			? [
+					mm(
+						"msg",
+						"[modem0/bearer1] couldn't start IPv4 network: QMI protocol error (14): 'CallFailed'",
+					),
+				]
+			: []),
+		mm(
+			"msg",
+			`[modem0/bearer1] ${trixie ? "  " : ""}call end reason (3): generic-unspecified`,
+		),
+		mm(
+			"msg",
+			"[modem0/bearer1] verbose call end reason (6,33): [3gpp] option-unsubscribed",
 		),
 		mm(
 			"warn",
@@ -251,7 +277,7 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 		),
 		nm(
 			"info",
-			"device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful.  Connected to 'ExampleHomeNet'.",
+			'device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful. Connected to wireless network "ExampleHomeNet"',
 		),
 		nm(
 			"info",
@@ -278,6 +304,10 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 		// Hotspot through NetworkManager's AP mode (wpa_supplicant).
 		wpa("wlan1: interface state UNINITIALIZED->ENABLED"),
 		wpa("wlan1: AP-ENABLED "),
+		nm(
+			"info",
+			'device (wlan1): Activation: (wifi) Stage 2 of 5 (Device Configure) successful. Started Wi-Fi Hotspot "ExampleHomeNet"',
+		),
 		wpa("wlan1: AP-STA-CONNECTED 3c:a6:2f:11:22:33 keyid=Bobs-phone"),
 		wpa("wlan1: AP-STA-DISCONNECTED 3c:a6:2f:11:22:33"),
 		// Power and USB trouble.
@@ -341,6 +371,7 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 			"Out of memory: Killed process 4321 (ceralive) total-vm:2345678kB, anon-rss:1234567kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:4567kB oom_score_adj:0",
 		),
 	];
+	return records.filter((record): record is JournalRecord => !!record);
 }
 
 /** The current device image (trixie). */

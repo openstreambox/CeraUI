@@ -77,8 +77,8 @@ describe("ModemManager 1.24 and NetworkManager 1.52 formats", () => {
 			"missing firmware",
 		],
 		[
-			"<info>  device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful.  Connected to 'ExampleHomeNet'.",
-			"Stage 2 of 5 (Device Configure) successful.  Connected to '[name]'.",
+			'<info>  device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful. Connected to wireless network "ExampleHomeNet"',
+			'Stage 2 of 5 (Device Configure) successful. Connected to wireless network "[name]"',
 		],
 		[
 			"<warn>  device (wlan0): Activation: (wifi) association took too long, failing activation",

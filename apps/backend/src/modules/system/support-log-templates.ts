@@ -1,50 +1,27 @@
-/** Bound backend `msg` text to the messages this code writes.
+/** Bound backend text to the texts this code writes.
  *
- * A backend message reaches the support download only when it matches one of
- * the generated templates: the literal text of a logger call, with a gap
- * wherever the code interpolates a value. A gap keeps a short token from a
- * fixed set (a number, a state or error code, an interface name) and is
- * otherwise replaced with [value]. Winston appends an error's message after a
- * space; that tail is [value] too.
+ * A backend message, error message or reason reaches the support download only
+ * when it matches one of the generated templates: the literal text of a logger
+ * call, a thrown error or a `reason` value, with a gap wherever the code
+ * interpolates a value. A gap keeps a short token from a fixed set (a number, a
+ * state or error code, an interface name, a supervised process) and is
+ * otherwise replaced with [value]. Winston appends an error's message to a log
+ * message after a space; that tail is [value] too.
  */
 import {
 	START_FAILURE_CAPTURE_CAUSES,
 	START_FAILURE_CLASSES,
 	START_FAILURE_PHASES,
 } from "@ceraui/rpc/schemas";
-import { SUPPORT_LOG_TEMPLATES } from "./support-log-messages.generated.ts";
+import { isInterfaceName } from "./support-line-shapes.ts";
+import {
+	SUPPORT_ERROR_TEMPLATES,
+	SUPPORT_LOG_TEMPLATES,
+	SUPPORT_REASON_TEMPLATES,
+} from "./support-log-messages.generated.ts";
 
 export const VALUE = "[value]";
 const MAX_GAP = 300;
-
-const exact = new Set<string>();
-const buckets = new Map<string, (readonly string[])[]>();
-for (const template of SUPPORT_LOG_TEMPLATES) {
-	if (template.length === 1) {
-		exact.add(template[0] ?? "");
-		continue;
-	}
-	const key = (template[0] ?? "").slice(0, 2);
-	const list = buckets.get(key) ?? [];
-	list.push(template);
-	buckets.set(key, list);
-}
-const compiled = new Map<readonly string[], RegExp>();
-
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function pattern(template: readonly string[]): RegExp {
-	let regex = compiled.get(template);
-	if (!regex) {
-		regex = new RegExp(
-			`^${template.map(escapeRegExp).join(`([\\s\\S]{1,${MAX_GAP}}?)`)}$`,
-		);
-		compiled.set(template, regex);
-	}
-	return regex;
-}
 
 const TOKENS = new Set<string>([
 	...START_FAILURE_CLASSES,
@@ -60,12 +37,7 @@ const TOKENS = new Set<string>([
 function boundedGap(value: string, extraTokens: ReadonlySet<string>): string {
 	if (/^-?\d{1,10}(?:\.\d{1,6})?$/.test(value)) return value;
 	if (TOKENS.has(value) || extraTokens.has(value)) return value;
-	if (
-		/^(?:wlan|wwan|eth|usb|cdc-wdm|rmnet|ppp)\d{1,3}$|^(?:en|wl|ww)(?:x[0-9a-f]{12}|[psod]\d[0-9a-z]{0,10})$/.test(
-			value,
-		)
-	)
-		return value;
+	if (isInterfaceName(value)) return value;
 	// The processes the backend supervises, by name or installed path.
 	if (
 		/^(?:\/usr\/(?:local\/)?s?bin\/)?(?:srtla_send|srtla_rec|cerastream|ceracoder|belacoder)$/.test(
@@ -76,44 +48,74 @@ function boundedGap(value: string, extraTokens: ReadonlySet<string>): string {
 	return VALUE;
 }
 
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Cheap pre-check: the fixed parts occur in order and the last one ends it. */
-function inOrder(msg: string, template: readonly string[]): boolean {
+function inOrder(text: string, template: readonly string[]): boolean {
 	let at = 0;
 	for (const part of template) {
-		const found = msg.indexOf(part, at);
+		const found = text.indexOf(part, at);
 		if (found < 0) return false;
 		at = found + part.length;
 	}
-	return msg.endsWith(template.at(-1) ?? "");
+	return text.endsWith(template.at(-1) ?? "");
 }
 
-function fill(
-	template: readonly string[],
-	gaps: readonly string[],
-	extraTokens: ReadonlySet<string>,
-): string {
-	let out = template[0] ?? "";
-	for (let i = 1; i < template.length; i++)
-		out += boundedGap(gaps[i - 1] ?? "", extraTokens) + (template[i] ?? "");
-	return out;
+interface Matcher {
+	whole(text: string, extraTokens: ReadonlySet<string>): string | undefined;
 }
 
-function matchWhole(
-	msg: string,
-	extraTokens: ReadonlySet<string>,
-): string | undefined {
-	if (exact.has(msg)) return msg;
-	for (const key of [msg.slice(0, 2), ""])
-		for (const template of buckets.get(key) ?? []) {
-			if (!msg.startsWith(template[0] ?? "") || !inOrder(msg, template))
-				continue;
-			const match = pattern(template).exec(msg);
-			if (match) return fill(template, match.slice(1), extraTokens);
+function matcher(templates: readonly (readonly string[])[]): Matcher {
+	const exact = new Set<string>();
+	const buckets = new Map<string, (readonly string[])[]>();
+	for (const template of templates) {
+		if (template.length === 1) {
+			exact.add(template[0] ?? "");
+			continue;
 		}
-	return undefined;
+		const key = (template[0] ?? "").slice(0, 2);
+		const list = buckets.get(key) ?? [];
+		list.push(template);
+		buckets.set(key, list);
+	}
+	const compiled = new Map<readonly string[], RegExp>();
+	const pattern = (template: readonly string[]): RegExp => {
+		let regex = compiled.get(template);
+		if (!regex) {
+			regex = new RegExp(
+				`^${template.map(escapeRegExp).join(`([\\s\\S]{1,${MAX_GAP}}?)`)}$`,
+			);
+			compiled.set(template, regex);
+		}
+		return regex;
+	};
+	return {
+		whole(text, extraTokens) {
+			if (exact.has(text)) return text;
+			for (const key of [text.slice(0, 2), ""])
+				for (const template of buckets.get(key) ?? []) {
+					if (!text.startsWith(template[0] ?? "") || !inOrder(text, template))
+						continue;
+					const match = pattern(template).exec(text);
+					if (!match) continue;
+					let out = template[0] ?? "";
+					for (let i = 1; i < template.length; i++)
+						out +=
+							boundedGap(match[i] ?? "", extraTokens) + (template[i] ?? "");
+					return out;
+				}
+			return undefined;
+		},
+	};
 }
 
-/** The message as the export shows it, or undefined when the code never
+const LOGS = matcher(SUPPORT_LOG_TEMPLATES);
+const ERRORS = matcher(SUPPORT_ERROR_TEMPLATES);
+const REASONS = matcher(SUPPORT_REASON_TEMPLATES);
+
+/** A log message as the export shows it, or undefined when the code never
  * writes it.
  */
 export function boundedBackendMessage(
@@ -121,7 +123,7 @@ export function boundedBackendMessage(
 	extraTokens: ReadonlySet<string> = new Set(),
 ): string | undefined {
 	if (msg.length > 4096) return undefined;
-	const whole = matchWhole(msg, extraTokens);
+	const whole = LOGS.whole(msg, extraTokens);
 	if (whole !== undefined) return whole;
 	// "<code's message> <appended error text>", split at a space.
 	for (
@@ -129,8 +131,53 @@ export function boundedBackendMessage(
 		cut > 0;
 		cut = msg.lastIndexOf(" ", cut - 1)
 	) {
-		const head = matchWhole(msg.slice(0, cut), extraTokens);
+		const head = LOGS.whole(msg.slice(0, cut), extraTokens);
 		if (head !== undefined) return `${head} ${VALUE}`;
 	}
 	return undefined;
+}
+
+// Messages Node, Bun and fetch produce themselves, with no runtime value.
+const RUNTIME_ERRORS = new Set([
+	"fetch failed",
+	"socket hang up",
+	"The operation was aborted.",
+	"The operation timed out.",
+	"This operation was aborted",
+	"Request timed out",
+	"Unable to connect. Is the computer able to access the url?",
+	"read ECONNRESET",
+	"write EPIPE",
+]);
+
+/** An error message as the export shows it: the code's own error text with
+ * gaps bounded, a runtime's fixed text, or a system-call error reduced to its
+ * call and code. Anything else is [value].
+ */
+export function boundedErrorMessage(
+	message: string,
+	extraTokens: ReadonlySet<string> = new Set(),
+): string {
+	if (message.length > 4096) return VALUE;
+	if (extraTokens.has(message) || RUNTIME_ERRORS.has(message)) return message;
+	// Node/Bun system errors: "spawn <file> ENOENT", "connect ECONNREFUSED <addr>".
+	const spawn = /^spawn (\S{1,200}) (E[A-Z0-9_]{2,24})$/.exec(message);
+	if (spawn?.[1] && spawn[2])
+		return `spawn ${boundedGap(spawn[1], extraTokens)} ${spawn[2]}`;
+	const syscall = /^([a-z]{2,24}) (E[A-Z0-9_]{2,24})(?: ([^\n]{1,300}))?$/.exec(
+		message,
+	);
+	if (syscall?.[1] && syscall[2])
+		return `${syscall[1]} ${syscall[2]}${syscall[3] ? ` ${VALUE}` : ""}`;
+	return ERRORS.whole(message, extraTokens) ?? VALUE;
+}
+
+/** A reason as the export shows it: a fixed token or one the code assigns. */
+export function boundedReason(
+	reason: string,
+	extraTokens: ReadonlySet<string> = new Set(),
+): string | undefined {
+	if (reason.length > 300) return undefined;
+	if (extraTokens.has(reason)) return reason;
+	return REASONS.whole(reason, extraTokens);
 }

@@ -10,6 +10,37 @@ import { DEFAULT_SPAWN_TIMEOUT_MS } from "./spawn-policy.ts";
 
 export type ExecResult = { stdout: string; stderr: string };
 
+const SECRET_FLAG_RE = /pass(word)?|secret|psk|token|key|pin|puk/i;
+
+/**
+ * Produce a log-safe rendering of argv. Two shapes are redacted, because the
+ * binaries this backend drives disagree about where a secret goes:
+ *
+ *  - `--pin <secret>` (mmcli/nmcli) — the token AFTER a secret-looking flag.
+ *  - `--uim-verify-pin=PIN2,<secret>` (qmicli) — the secret rides INSIDE the
+ *    token, so the separate-token rule alone would log a live PIN verbatim.
+ *
+ * Best-effort only — callers handling secrets should also prefer runWithStdin().
+ */
+export function redactArgv(args: readonly string[]): string {
+	const out: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i] ?? "";
+		const prev = i > 0 ? args[i - 1] : undefined;
+		if (prev !== undefined && SECRET_FLAG_RE.test(prev)) {
+			out.push("***");
+			continue;
+		}
+		const eq = arg.indexOf("=");
+		if (eq > 0 && SECRET_FLAG_RE.test(arg.slice(0, eq))) {
+			out.push(`${arg.slice(0, eq)}=***`);
+			continue;
+		}
+		out.push(arg);
+	}
+	return out.join(" ");
+}
+
 // util.promisify(exec) replacement: runs cmd through Bun's shell (string parsed
 // as written) and REJECTS on non-zero exit (Bun.$ throws ShellError).
 export const execP = async (cmd: string): Promise<ExecResult> => {
@@ -30,7 +61,9 @@ export const execFileP = async (
 	const timeout = opts?.timeout ?? DEFAULT_SPAWN_TIMEOUT_MS;
 	const signal = opts?.signal;
 
-	const command = `${file} ${args.join(" ")}`;
+	// Error messages carry the command with secret-looking values masked, the
+	// same rendering run() logs.
+	const command = `${file} ${redactArgv(args)}`.trim();
 	if (signal?.aborted) {
 		throw Object.assign(new SpawnAbortError(command), {
 			stdout: "",

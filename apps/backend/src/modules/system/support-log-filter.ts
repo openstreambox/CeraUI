@@ -5,8 +5,16 @@ import {
 	START_FAILURE_PHASES,
 } from "@ceraui/rpc/schemas";
 import { logRedact } from "../../helpers/logger.ts";
-import { isShapeSource, matchLineShape } from "./support-line-shapes.ts";
-import { boundedBackendMessage } from "./support-log-templates.ts";
+import {
+	isInterfaceName,
+	isShapeSource,
+	matchLineShape,
+} from "./support-line-shapes.ts";
+import {
+	boundedBackendMessage,
+	boundedErrorMessage,
+	boundedReason,
+} from "./support-log-templates.ts";
 
 export const WITHHELD = "[REDACTED support log line]";
 export const MAX_SUPPORT_LINE_BYTES = 8192;
@@ -242,7 +250,7 @@ export function filterDiagnosticText(
 	// Text that echoes a command line or tool output, an e-mail or account
 	// address, or a host name a lookup failed for.
 	if (
-		/\bCommand timed out:|\bexited with code\b|\bSSID ['"]|\b(?:ENOTFOUND|EAI_AGAIN|EAI_NONAME|EAI_FAIL)[ \t]+\S/i.test(
+		/\bCommand (?:timed out|failed|aborted):|\bSpawn timed out:|\bexited with code\b|\bSSID ['"]|\b(?:ENOTFOUND|EAI_AGAIN|EAI_NONAME|EAI_FAIL)[ \t]+(?!\[value\])\S/i.test(
 			text,
 		) ||
 		/[A-Za-z0-9._%+-]@(?![A-Za-z0-9_.\\-]*\.(?:service|target|socket|scope|slice|timer|mount|path|device)\b)[A-Za-z0-9-]/.test(
@@ -260,7 +268,9 @@ export function filterDiagnosticText(
 			"[counter]",
 		)
 		.replace(/\b\d{1,12}[ \t]{1,3}(?:bytes|packets)\b/gi, "[counter]");
-	if (/\d(?:[ \t.()/+,_-]{0,3}\d){8,21}/.test(numericText)) return undefined;
+	// Any space character, including no-break spaces, and colons separate too.
+	if (/\d(?:[\s\p{Zs}.()/+,_:-]{0,3}\d){8,21}/u.test(numericText))
+		return undefined;
 	return text;
 }
 
@@ -272,10 +282,17 @@ function safeCode(value: unknown): boolean {
 				Math.abs(value) <= 65535;
 }
 
+/** An error message is the code's own error text (gaps bounded), a fixed
+ * runtime text or a system-call code; anything else is [value].
+ */
+function safeErrorMessage(value: string): string | undefined {
+	if (value.length > 300) return undefined;
+	return filterDiagnosticText(boundedErrorMessage(value, MESSAGE_TOKENS));
+}
+
 function safeError(value: unknown): Record<string, unknown> | undefined {
 	if (typeof value === "string") {
-		if (value.length > 300) return undefined;
-		const message = filterDiagnosticText(value);
+		const message = safeErrorMessage(value);
 		return message === undefined ? undefined : { message };
 	}
 
@@ -291,14 +308,18 @@ function safeError(value: unknown): Record<string, unknown> | undefined {
 			"RangeError",
 			"RpcError",
 			"RunTimeoutError",
+			"RunAbortError",
 			"SpawnTimeoutError",
+			"SpawnAbortError",
+			"AbortError",
+			"TimeoutError",
 			"OsStageError",
 		].includes(error.name)
 	)
 		out.name = error.name;
 	if (safeCode(error.code)) out.code = error.code;
-	if (typeof error.message === "string" && error.message.length <= 300) {
-		const message = filterDiagnosticText(error.message);
+	if (typeof error.message === "string") {
+		const message = safeErrorMessage(error.message);
 		if (message !== undefined) out.message = message;
 	}
 	return Object.keys(out).length ? out : undefined;
@@ -379,16 +400,11 @@ function safeMetadata(
 			RETRY_STATES.has(inner)
 		)
 			out[key] = inner;
-		else if (
-			key === "reason" &&
-			typeof inner === "string" &&
-			inner.length <= 300 &&
-			inner.includes(" ") &&
-			/\b(?:failed|failure|error|denied|busy|timeout|timed out|missing|unavailable|invalid|required|rejected|unreachable|not found|closed|unsupported|refused)\b/i.test(
-				inner,
-			)
-		) {
-			const reason = filterDiagnosticText(inner);
+		else if (key === "reason" && typeof inner === "string") {
+			// Only a value the code itself assigns to a reason, gaps bounded.
+			const bounded = boundedReason(inner, MESSAGE_TOKENS);
+			const reason =
+				bounded === undefined ? undefined : filterDiagnosticText(bounded);
 			if (reason !== undefined) out.reason = reason;
 		} else if (
 			["stage", "phase", "status", "state"].includes(key) &&
@@ -417,9 +433,9 @@ function safeMetadata(
 		else if (
 			key === "ifname" &&
 			typeof inner === "string" &&
-			/^(?:wwan|wlan|eth|enp|cdc-wdm)[a-z0-9.-]{0,20}$/.test(inner)
+			isInterfaceName(inner)
 		)
-			out[key] = inner;
+			out[key] = inner.replace(/^(wlx|enx|wwx)[0-9a-f]{12}$/i, "$1[address]");
 		else if (
 			[
 				"latency_ms",

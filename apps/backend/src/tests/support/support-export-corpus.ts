@@ -328,6 +328,17 @@ export const privateRecords: { record: JournalRecord; secret: string }[] = [
 	{ record: kernel("wlx3ca62f112233: authenticated"), secret: "3ca62f112233" },
 ];
 
+// Round six: free error text in metadata.
+privateRecords.push(
+	{ record: failed("probe to 203.0.113.7:5000 failed"), secret: "203.0.113.7" },
+	{ record: failed("uplink 3C-A6-2F-11-22-33 ready"), secret: "3C-A6-2F" },
+	{ record: failed("adapter address aa:bb:cc:dd:ee:ff"), secret: "aa:bb:cc" },
+	{
+		record: failed("binary not allowlisted: janes-tool"),
+		secret: "janes-tool",
+	},
+);
+
 // Round five: values the backend's own messages, error details, free modem
 // reasons and hotspot events could carry.
 privateRecords.push(
@@ -386,7 +397,7 @@ privateRecords.push(
 	},
 	{
 		record: networkManager(
-			"<info>  [1731528245.1234] device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful.  Connected to 'ExampleHomeNet'.",
+			'<info>  [1731528245.1234] device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful. Connected to wireless network "ExampleHomeNet"',
 		),
 		secret: "ExampleHomeNet",
 	},
@@ -529,9 +540,9 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 		},
 		{
 			record: networkManager(
-				"<info>  [1731528245.1234] device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful.  Connected to 'ExampleHomeNet'.",
+				'<info>  [1731528245.1234] device (wlan0): Activation: (wifi) Stage 2 of 5 (Device Configure) successful. Connected to wireless network "ExampleHomeNet"',
 			),
-			evidence: "Connected to '[name]'.",
+			evidence: 'Connected to wireless network "[name]"',
 		},
 		{
 			record: networkManager(
@@ -667,25 +678,22 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 			record: ceralive("streamloop: sender exited (code=1, signal=null)"),
 			evidence: "exited (code=1, signal=null)",
 		},
+		// Error details: the code's own error texts, runtime codes, else [value].
+		{
+			record: failed("spawn /usr/bin/srtla_send ENOENT"),
+			evidence: '"message":"spawn /usr/bin/srtla_send ENOENT"',
+		},
+		{
+			record: failed("connect ECONNREFUSED 203.0.113.7:5000"),
+			evidence: '"message":"connect ECONNREFUSED [value]"',
+		},
+		{
+			record: failed("binary not allowlisted: janes-tool"),
+			evidence: '"message":"binary not allowlisted: [value]"',
+		},
 		{
 			record: failed("allocation failed: std::bad_alloc"),
-			evidence: "std::bad_alloc",
-		},
-		{
-			record: failed("probe to 203.0.113.7:5000 failed"),
-			evidence: "probe to [address]:5000 failed",
-		},
-		{
-			record: failed("uplink 3C-A6-2F-11-22-33 ready"),
-			evidence: "uplink [address] ready",
-		},
-		{
-			record: failed("adapter address aa:bb:cc:dd:ee:ff"),
-			evidence: "adapter address [address]",
-		},
-		{
-			record: failed("stream key rejected by ingest"),
-			evidence: "stream key rejected by ingest",
+			evidence: '"message":"[value]"',
 		},
 		// The backend's own messages, with values bounded.
 		{
