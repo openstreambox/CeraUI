@@ -9,6 +9,8 @@ import {
 	test,
 } from "bun:test";
 import * as runner from "../helpers/run.ts";
+import * as recovery from "../modules/modems/cellular-host-recovery.ts";
+import * as runtimeHost from "../modules/modems/cellular-runtime-host.ts";
 import type { Modem, ModemId } from "../modules/modems/mmcli.ts";
 import { setModemReadyActivationDepsForTest } from "../modules/modems/modem-ready-activation.ts";
 import {
@@ -114,6 +116,30 @@ describe("modem presence reconcile (board: FM350 never registered)", () => {
 	afterAll(() => {
 		for (const id of getModemIds()) removeModem(id);
 		setModemsState({});
+	});
+
+	test("production presence wakes recovery and attempts follow the runtime helpers", async () => {
+		seedRegistry([]);
+		install([FM350], (id) => setModem(id, fm350()));
+		const order: string[] = [];
+		const wake = spyOn(recovery, "retryCellularHosts").mockImplementation(
+			(_iface, presence) => {
+				order.push(presence ? "presence" : "attempt");
+				return Promise.resolve();
+			},
+		);
+		const run = spyOn(runtimeHost, "runCellularRuntime").mockImplementation(
+			async () => {
+				order.push("runtime");
+			},
+		);
+		try {
+			await runModemStatusPoll();
+			expect(order).toEqual(["presence", "runtime", "attempt"]);
+		} finally {
+			wake.mockRestore();
+			run.mockRestore();
+		}
 	});
 
 	test("the retained poll registers a modem that appeared AFTER boot", async () => {

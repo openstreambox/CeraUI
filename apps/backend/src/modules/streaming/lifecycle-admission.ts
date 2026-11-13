@@ -100,6 +100,69 @@ type HeldLease = { readonly holder: LifecycleHolder; readonly token: number };
 
 let held: HeldLease | undefined;
 let nextToken = 0;
+let recoveryToken: number | undefined;
+const recoveryWaiters = new Set<() => void>();
+let waitingStreams = 0;
+
+/** Recovery is reversible background work; new streams may await its short
+ * census/withdrawal window without changing ordinary mutation refusals. */
+export function tryAcquireCellularRecovery(): LifecycleAdmission {
+	if (waitingStreams)
+		return { admitted: false, heldBy: "streaming", refusal: STREAMING_ACTIVE };
+	const admission = tryAcquireLifecycle("modem-transition");
+	if (admission.admitted) recoveryToken = held?.token;
+	return admission;
+}
+/** Why a wait on recovery's cleanup hold ended. `refused`: the interlock is not
+ * held by recovery, so there is nothing a stream start may wait for. */
+export type RecoveryHoldOutcome =
+	| "released"
+	| "timeout"
+	| "cancelled"
+	| "refused";
+/** A stream start's place in line behind recovery's cleanup hold. It holds
+ * nothing: after any outcome the caller re-runs every admission gate and
+ * acquires again. Until `done()`, recovery does not take the interlock again. */
+export interface RecoveryHoldWait {
+	wait(timeoutMs?: number): Promise<RecoveryHoldOutcome>;
+	cancel(): void;
+	done(): void;
+}
+export function awaitCellularRecoveryHold(): RecoveryHoldWait {
+	let open = true;
+	let finish: ((outcome: RecoveryHoldOutcome) => void) | undefined;
+	waitingStreams++;
+	return {
+		wait: (timeoutMs) => {
+			if (!open) return Promise.resolve("cancelled");
+			// Asked in the same instant as the refused acquisition it answers.
+			if (!held || held.token !== recoveryToken)
+				return Promise.resolve("refused");
+			return new Promise((resolve) => {
+				const released = () => settle("released");
+				const settle = (outcome: RecoveryHoldOutcome) => {
+					clearTimeout(timer);
+					recoveryWaiters.delete(released);
+					finish = undefined;
+					resolve(outcome);
+				};
+				const timer =
+					timeoutMs === undefined
+						? undefined
+						: setTimeout(() => settle("timeout"), timeoutMs);
+				finish = settle;
+				recoveryWaiters.add(released);
+			});
+		},
+		cancel: () => finish?.("cancelled"),
+		done: () => {
+			if (!open) return;
+			open = false;
+			waitingStreams--;
+			finish?.("cancelled");
+		},
+	};
+}
 
 /**
  * Try to acquire the interlock for `who`. NEVER blocks: a held interlock is
@@ -167,6 +230,10 @@ function releaseToken(token: number): void {
 	if (held?.token !== token) return;
 	if (held.holder === "streaming") noteStartLeaseEnded();
 	held = undefined;
+	if (recoveryToken === token) {
+		recoveryToken = undefined;
+		for (const wake of [...recoveryWaiters]) wake();
+	}
 }
 
 /**
@@ -206,6 +273,7 @@ export function currentLifecycleHolder(): LifecycleHolder | undefined {
  * still relying on.
  */
 export function resetLifecycleInterlock(): void {
+	if (held) releaseToken(held.token);
 	held = undefined;
 	activeMutations.clear();
 	mutationBlocks.clear();
@@ -236,6 +304,11 @@ const activeMutations = new Map<
 	{ readonly token: number; readonly journalOnly: boolean }
 >();
 const mutationBlocks = new Map<string, MutationBlock>();
+const mutationBlockListeners = new Set<() => void>();
+export function onMutationBlocksChange(listener: () => void): () => void {
+	mutationBlockListeners.add(listener);
+	return () => mutationBlockListeners.delete(listener);
+}
 let nextMutationToken = 0;
 
 /**
@@ -357,8 +430,19 @@ export function heldModemMutations(): readonly string[] {
  * the same operation that stops recording it, so the two cannot disagree.
  */
 export function setMutationBlocks(blocks: readonly MutationBlock[]): void {
+	const changed =
+		blocks.length !== mutationBlocks.size ||
+		blocks.some((block) => {
+			const old = mutationBlocks.get(block.stableKey);
+			return (
+				!old ||
+				old.refusal !== block.refusal ||
+				old.blocksStreaming !== block.blocksStreaming
+			);
+		});
 	mutationBlocks.clear();
 	for (const block of blocks) mutationBlocks.set(block.stableKey, block);
+	if (changed) for (const listener of mutationBlockListeners) listener();
 }
 
 export function getMutationBlocks(): readonly MutationBlock[] {
@@ -366,9 +450,11 @@ export function getMutationBlocks(): readonly MutationBlock[] {
 }
 
 /** The first block holding global stream autostart, if any. */
-export function streamingBlockingMutation(): MutationBlock | undefined {
+export function streamingBlockingMutation(
+	isolated: () => boolean = () => false,
+): MutationBlock | undefined {
 	for (const block of mutationBlocks.values()) {
-		if (block.blocksStreaming) return block;
+		if (block.blocksStreaming && !isolated()) return block;
 	}
 	return undefined;
 }

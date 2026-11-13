@@ -1,4 +1,6 @@
 import { logger } from "../../helpers/logger.ts";
+import { cellularRecoveryStartBlock } from "../modems/cellular-host-recovery.ts";
+import { cellularSourceExclusionInstalled } from "../network/cellular-source-state.ts";
 import { admitAndPrepareStreamStart } from "../system/update-orchestrator/runtime.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
 import { noteStreamStopped } from "./armed-stream-marker.ts";
@@ -9,6 +11,7 @@ import {
 } from "./config-change-bridge.ts";
 import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
 import {
+	awaitCellularRecoveryHold,
 	streamingBlockingMutation,
 	tryAcquireLifecycle,
 } from "./lifecycle-admission.ts";
@@ -78,9 +81,12 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 			);
 	},
 	admitLifecycle: () => tryAcquireLifecycle("streaming"),
+	lifecycleWait: awaitCellularRecoveryHold,
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,
-	blockingMutation: streamingBlockingMutation,
+	blockingMutation: () =>
+		streamingBlockingMutation(cellularSourceExclusionInstalled) ??
+		cellularRecoveryStartBlock(),
 	admitUpdate: admitAndPrepareStreamStart,
 	markStreamingForOta: setOtaStreamingMarker,
 	unmarkStreamingForOta: clearOtaStreamingMarker,

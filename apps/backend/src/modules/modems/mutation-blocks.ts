@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { cellularSourceExclusionInstalled } from "../network/cellular-source-state.ts";
+
 /**
  * Projects the durable journal onto the interlock's fail-closed block set, and
  * onto the operator-facing list.
@@ -148,7 +150,8 @@ export async function refreshMutationBlocks(
 		// device we cannot rule out is a device whose fail-closed handling must
 		// keep running rather than being downgraded to quarantine.
 		devicePresent: presenceKnown ? present.has(entry.stableKey) : true,
-		blocksStreaming: blocksStreaming(entry.state),
+		blocksStreaming:
+			blocksStreaming(entry.state) && !cellularSourceExclusionInstalled(),
 		...(entry.detail === undefined ? {} : { detail: entry.detail }),
 	}));
 

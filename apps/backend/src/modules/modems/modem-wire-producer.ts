@@ -57,12 +57,12 @@ import { getDongleRecords } from "../network/dongle-metadata.ts";
 import { getNetworkInterfaces } from "../network/network-interfaces.ts";
 import { getRouterCellularAdmin } from "../network/router-cellular-admin.ts";
 import { getRouterCellularMarkers } from "../network/router-cellular-scan.ts";
-
 import { IMPLEMENTED_MODEM_CAPABILITY_MODULES } from "./capability-evidence.ts";
 import {
 	resolveCapabilityModuleState,
 	resolveModemCapabilityClaims,
 } from "./capability-gates.ts";
+import { cellularRecoveryStatus } from "./cellular-host-recovery.ts";
 import { buildFiveGPreferenceView } from "./five-g-preference.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { projectModemCredential } from "./modem-credentials.ts";
@@ -110,6 +110,7 @@ import {
 /** Resolves `ifname → udev ID_PATH` for every enumerable modem-class device. */
 export type ModemIdPathReader = () => Promise<ReadonlyMap<string, string>>;
 
+const recoveryShown = new Set<string>();
 let idPaths: ReadonlyMap<string, string> = new Map();
 let retainedSyntheticIds: ReadonlyMap<string, number> = new Map();
 const routerCellularIfnames = new Map<string, string>();
@@ -503,7 +504,8 @@ function readProvisionalSources(
 export function buildProjectedModemsMessage(
 	fullState: Record<number, true> | undefined = undefined,
 ): WireModemsMessage {
-	const result = projectModemWire(collectSources(), {
+	const sources = collectSources();
+	const result = projectModemWire(sources, {
 		hasGsmAutoconfig: resolveGsmAutoconfigSupport(),
 		networkScanFor: (runtimeId) => getModem(runtimeId)?.network_scan,
 		previousSyntheticIds: retainedSyntheticIds,
@@ -523,6 +525,22 @@ export function buildProjectedModemsMessage(
 		lockFor: projectModemLock,
 		...(fullState !== undefined ? { fullState } : {}),
 	});
+	for (const id of recoveryShown)
+		if (!(id in result.message)) recoveryShown.delete(id);
+	for (const [id, entry] of Object.entries(result.message)) {
+		const iface = entry.ifname ?? getModem(Number(id))?.ifname;
+		const reason = iface ? cellularRecoveryStatus(iface) : undefined;
+		const original =
+			entry.availability_reason ??
+			sources.find((source) => source.runtimeId === Number(id))?.additive
+				?.availability_reason;
+		if (reason) {
+			entry.availability_reason = original || "host_recovery_pending";
+			recoveryShown.add(id);
+		} else if (recoveryShown.has(id)) {
+			entry.availability_reason = original ?? "";
+		}
+	}
 	retainedSyntheticIds = result.syntheticIds;
 	return result.message;
 }
@@ -613,6 +631,7 @@ function projectUsagePolicy(
 
 /** Drop the caches, the retained allocation, and both injected readers. */
 export function resetModemWireProducer(): void {
+	recoveryShown.clear();
 	idPaths = new Map();
 	retainedSyntheticIds = new Map();
 	routerCellularIfnames.clear();

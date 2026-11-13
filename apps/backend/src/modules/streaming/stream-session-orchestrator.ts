@@ -23,6 +23,7 @@ import {
 	type LifecycleAdmission,
 	type LifecycleLease,
 	MODEM_TRANSITION_ACTIVE,
+	type RecoveryHoldWait,
 } from "./lifecycle-admission.ts";
 import {
 	captureOperatorStopIntent,
@@ -37,6 +38,7 @@ import {
 } from "./start-failure-taxonomy.ts";
 import {
 	ENGINE_TRANSITION_STOP_DEADLINE_MS,
+	LIFECYCLE_WAIT_MS,
 	RECONFIGURE_DEADLINE_MS,
 	STOP_DEADLINE_MS,
 } from "./start-lifecycle-timing.ts";
@@ -188,6 +190,16 @@ export type StreamSessionOrchestratorDeps = {
 	 */
 	readonly admitLifecycle?: () => LifecycleAdmission;
 	/**
+	 * A refused admission may be held by recovery's bounded cleanup rather than
+	 * by a modem change. The start then waits for that hold, holding nothing
+	 * itself, and runs every admission gate again before it acquires: a wait
+	 * proves nothing about the state it returns to. An external start waits
+	 * `lifecycleWaitMs`; an internal origin waits as long as it waits for the
+	 * barrier, because its refusal is terminal. Stop ends the wait.
+	 */
+	readonly lifecycleWait?: () => RecoveryHoldWait;
+	readonly lifecycleWaitMs?: number;
+	/**
 	 * The modem-mutation replay barrier, wired at the production singleton for
 	 * the same process-wide-state reason as `admitLifecycle`.
 	 *
@@ -286,6 +298,8 @@ export function createStreamSessionOrchestrator(
 		| undefined;
 	let engineQueuedStop: QueuedStop | undefined;
 	let stopFlight: Promise<StopResult> | undefined;
+	let admissionWait: RecoveryHoldWait | undefined;
+	const lifecycleWaitMs = deps.lifecycleWaitMs ?? LIFECYCLE_WAIT_MS;
 	const stopDeadlineMs = deps.stopDeadlineMs ?? STOP_DEADLINE_MS;
 	const reconfigureDeadlineMs =
 		deps.reconfigureDeadlineMs ?? RECONFIGURE_DEADLINE_MS;
@@ -364,81 +378,132 @@ export function createStreamSessionOrchestrator(
 	const start = async (request: StreamStartRequest): Promise<StartResult> => {
 		const currentIntent = captureOperatorStopIntent();
 		const attemptId = deps.createAttemptId();
+		const internal = INTERNAL_LAUNCH_ORIGINS.has(request.origin);
+		// The gates that need no await. They run on arrival and again at the
+		// admission point, so nothing a wait let change is assumed to still hold.
+		const refusedNow = (): StartResult | undefined => {
+			if (!internal && deps.recoveryPending?.() === true)
+				return refuseStart(attemptId, "recovery_pending", "recovery_pending");
+			if (!currentIntent()) return { result: "cancelled", attemptId };
+			const blocked = deps.blockingMutation?.();
+			if (blocked !== undefined)
+				return refuseStart(attemptId, "mutation_blocked", blocked.stableKey);
+			return undefined;
+		};
+		let wait: RecoveryHoldWait | undefined;
+		let waitedMs = 0;
+		try {
+			for (;;) {
+				// The barrier is consulted BEFORE the duplicate-start check, because
+				// it is the only gate whose internal answer is to WAIT: awaiting first
+				// means an internal origin is judged against the state replay left
+				// behind rather than the one it raced.
+				if (internal) await deps.awaitRecovery?.();
+				const early = refusedNow();
+				if (early !== undefined) return early;
+				if (
+					ownership.generation === 0 &&
+					ownership.state === "reconciling" &&
+					runtimeObservations === 0 &&
+					!cleanup.pending &&
+					stopFlight === undefined
+				)
+					await reconcile();
+				if (
+					!cleanup.pending &&
+					stopFlight === undefined &&
+					!ownership.launchPending &&
+					ownership.state === "streaming" &&
+					deps.getStreamingStatus?.() === false
+				)
+					await reconcile();
 
-		// The barrier is consulted BEFORE the duplicate-start check, because it is
-		// the only gate whose internal answer is to WAIT: awaiting first means an
-		// internal origin is judged against the state replay left behind rather
-		// than the one it raced.
-		if (INTERNAL_LAUNCH_ORIGINS.has(request.origin)) {
-			await deps.awaitRecovery?.();
-		} else if (deps.recoveryPending?.() === true) {
-			return refuseStart(attemptId, "recovery_pending", "recovery_pending");
-		}
+				// THE ADMISSION POINT. Nothing from here until the attempt is in
+				// flight awaits, so the gates below and the lease describe one instant.
+				if (
+					internal &&
+					deps.awaitRecovery !== undefined &&
+					deps.recoveryPending?.() === true
+				)
+					continue;
+				const refused = refusedNow();
+				if (refused !== undefined) return refused;
+				if (
+					admissionWait !== undefined ||
+					ownership.state !== "idle" ||
+					ownership.streamLiveness() !== "idle" ||
+					cleanup.pending ||
+					stopFlight !== undefined ||
+					ownership.launchPending
+				)
+					return { result: "busy", attemptId };
 
-		if (!currentIntent()) return { result: "cancelled", attemptId };
-		const blocked = deps.blockingMutation?.();
-		if (blocked !== undefined) {
-			return refuseStart(attemptId, "mutation_blocked", blocked.stableKey);
-		}
-		if (
-			ownership.generation === 0 &&
-			ownership.state === "reconciling" &&
-			runtimeObservations === 0 &&
-			!cleanup.pending &&
-			stopFlight === undefined
-		)
-			await reconcile();
-		if (
-			!cleanup.pending &&
-			stopFlight === undefined &&
-			!ownership.launchPending &&
-			ownership.state === "streaming" &&
-			deps.getStreamingStatus?.() === false
-		)
-			await reconcile();
+				// The interlock is consulted HERE and nowhere else: after the
+				// duplicate-start rejection above (so a genuine duplicate keeps its
+				// own `busy` → START_IN_PROGRESS rather than decaying into a generic
+				// lease-busy answer) and before the attempt goes in-flight below,
+				// because a modem re-enumeration admitted alongside it would tear a
+				// bond link out from under a launch that has already spawned the
+				// sender.
+				const admitLifecycle = deps.admitLifecycle;
+				if (admitLifecycle === undefined)
+					return await admittedStart(attemptId, request, currentIntent);
+				const admission = admitLifecycle();
+				if (admission.admitted) {
+					wait?.done();
+					return await releasingLease(admission.lease, () =>
+						admittedStart(attemptId, request, currentIntent),
+					);
+				}
 
-		if (!currentIntent()) return { result: "cancelled", attemptId };
-		if (
-			ownership.state !== "idle" ||
-			ownership.streamLiveness() !== "idle" ||
-			cleanup.pending ||
-			stopFlight !== undefined ||
-			ownership.launchPending
-		)
-			return { result: "busy", attemptId };
-
-		// The interlock is consulted HERE and nowhere else: after the
-		// duplicate-start rejection above (so a genuine duplicate keeps its own
-		// `busy` → START_IN_PROGRESS rather than decaying into a generic
-		// lease-busy answer) and before the attempt goes in-flight below, because
-		// a modem re-enumeration admitted alongside it would tear a bond link out
-		// from under a launch that has already spawned the sender.
-		const admitLifecycle = deps.admitLifecycle;
-		if (admitLifecycle === undefined)
-			return await admittedStart(attemptId, request, currentIntent);
-
-		const admission = admitLifecycle();
-		if (!admission.admitted) {
-			// `start_invalid` renders as "check your settings", which is wrong
-			// advice for a modem that is re-enumerating — nothing is misconfigured.
-			const failureClass =
-				admission.refusal === MODEM_TRANSITION_ACTIVE
-					? "modem_transition_active"
-					: "start_invalid";
-			return {
-				result: "failed",
-				attemptId,
-				failure: typedStartFailure(
+				wait ??= deps.lifecycleWait?.();
+				let outcome: Awaited<ReturnType<RecoveryHoldWait["wait"]>> = "refused";
+				if (wait !== undefined) {
+					const own = wait;
+					const began = performance.now();
+					admissionWait = own;
+					try {
+						outcome = await own.wait(
+							waitedMs < lifecycleWaitMs
+								? lifecycleWaitMs - waitedMs
+								: undefined,
+						);
+					} finally {
+						if (admissionWait === own) admissionWait = undefined;
+						waitedMs += performance.now() - began;
+					}
+				}
+				// Stop is the answer to a start it interrupted, whatever the wait says.
+				if (!currentIntent()) return { result: "cancelled", attemptId };
+				if (outcome === "released") continue;
+				if (outcome === "timeout" && internal) {
+					logger.warn("stream start is still waiting for cellular cleanup", {
+						attemptId,
+						origin: request.origin,
+						waitedMs: Math.round(waitedMs),
+					});
+					continue;
+				}
+				// `start_invalid` renders as "check your settings", which is wrong
+				// advice for a modem that is re-enumerating — nothing is misconfigured.
+				const failureClass =
+					admission.refusal === MODEM_TRANSITION_ACTIVE
+						? "modem_transition_active"
+						: "start_invalid";
+				return {
+					result: "failed",
 					attemptId,
-					"params",
-					failureClass,
-					admission.refusal,
-				),
-			};
+					failure: typedStartFailure(
+						attemptId,
+						"params",
+						failureClass,
+						admission.refusal,
+					),
+				};
+			}
+		} finally {
+			wait?.done();
 		}
-		return await releasingLease(admission.lease, () =>
-			admittedStart(attemptId, request, currentIntent),
-		);
 	};
 
 	/**
@@ -736,6 +801,13 @@ export function createStreamSessionOrchestrator(
 
 	const stop = (cause: StreamStopCause): Promise<StopResult> => {
 		if (cause === "operator") noteOperatorStopIntent();
+		// A start still waiting for admission holds nothing to stop. Its intent
+		// is void now, so it stops counting as in progress before it wakes.
+		if (cause === "operator" && admissionWait !== undefined) {
+			const waiting = admissionWait;
+			admissionWait = undefined;
+			waiting.cancel();
+		}
 		deps.onStreamStopped?.(cause);
 		if (cause === "operator") {
 			if (active?.cancelled) active.cancelCause = cause;

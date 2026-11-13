@@ -21,6 +21,7 @@ export interface CellularRuntimeObservation {
 }
 export interface CellularRuntimeDeps {
 	readonly now: () => number;
+	readonly reservedSlots?: () => readonly number[];
 	readonly capable: () => Promise<boolean>;
 	readonly reserve: (
 		owner: string,
@@ -83,7 +84,9 @@ export class CellularRuntime {
 	}
 	private make(observation: CellularRuntimeObservation): Actor | undefined {
 		const slot = Array.from({ length: 32 }, (_, i) => i + 1).find(
-			(slot) => ![...this.actors.values()].some((actor) => actor.slot === slot),
+			(slot) =>
+				!this.deps.reservedSlots?.().includes(slot) &&
+				![...this.actors.values()].some((actor) => actor.slot === slot),
 		);
 		if (!slot) return undefined;
 		const epoch = randomBytes(32).toString("hex");

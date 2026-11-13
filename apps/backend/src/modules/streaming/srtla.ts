@@ -17,6 +17,7 @@
 
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 import killall from "../../helpers/killall.ts";
+import { hasIsolatedCellularRecovery } from "../modems/cellular-host-recovery.ts";
 import {
 	captureCellularSourcePublication,
 	cellularHiddenInterface,
@@ -49,6 +50,7 @@ import {
 	cellularSenderAllowsPublication,
 	cellularSenderRuntime,
 } from "./cellular-sender-runtime.ts";
+import { getMutationBlocks } from "./lifecycle-admission.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
 import { srtlaSendExec } from "./streamloop/exec-paths.ts";
 import { getStreamingProcesses } from "./streamloop/process-runner.ts";
@@ -246,6 +248,8 @@ export function getLastPublishedBond(): PublishedBond | undefined {
 }
 export function publishedBondNeedsRequiredBinding(): boolean {
 	return (
+		hasIsolatedCellularRecovery() ||
+		getMutationBlocks().length > 0 ||
 		!lastBondCurrent() ||
 		!!lastBond?.entries.some(
 			(entry) =>

@@ -946,6 +946,7 @@
 	"network.cellular.initializingBody": "El servicio de módem aún se está iniciando. Los módems y sus ajustes aparecerán aquí en cuanto esté listo.",
 	"network.cellular.initializingTitle": "El módulo celular se está iniciando",
 	"network.cellular.reason.initializing": "Módem detectado — esperando a que el servicio de módems lo describa.",
+	"network.cellular.reason.hostRecoveryPending": "La ruta de datos del módem está aislada porque la limpieza no se completó. La recuperación volverá a intentarlo.",
 	"network.cellular.reason.undriveable": "Este dispositivo sigue conectado, pero ningún servicio de módem puede controlarlo.",
 	"network.cellular.reason.routerControlsUnverified": "Este módem USB nunca confirmó que un cambio de ajustes surta efecto de verdad, así que aquí no se ofrece nada. Usa su propia interfaz web.",
 	"network.cellular.reason.routerManaged": "El módem USB gestiona esta conexión por su cuenta. Su configuración de red está en su propia interfaz web, no aquí.",

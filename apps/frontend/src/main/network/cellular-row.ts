@@ -182,6 +182,7 @@ const AVAILABILITY_REASON_KEYS: Readonly<Record<string, string>> = {
 	// "wait", so its sentence must promise nothing about the device beyond its
 	// presence — every other fact is genuinely unknown at this point.
 	modem_initializing: "network.cellular.reason.initializing",
+	host_recovery_pending: "network.cellular.reason.hostRecoveryPending",
 	undriveable: "network.cellular.reason.undriveable",
 };
 
