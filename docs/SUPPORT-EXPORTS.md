@@ -5,8 +5,9 @@ previous boots, for the last **7 days**, limited to the **newest 10,000 entries*
 per download. The application download filters its service; the system download
 does not. Each line shows a boot label, an ISO timestamp and its source. Boot
 labels count back from the running boot: `[boot 0]` is this boot, `[boot -1]`
-the one before it, and so on. If the running boot has no records in the
-download, its newest boot is `[boot -1]`. Host names, raw boot ids and process
+the one before it, and so on, using journald's own boot list, so a boot with no
+shown record still counts; the header names such boots. If the running boot
+has no records in the download, its newest boot is `[boot -1]`. Host names, raw boot ids and process
 ids are not included.
 
 ## Limits
@@ -22,7 +23,7 @@ ids are not included.
 - One download runs at a time. A second request while one is collecting gets a
   "already in progress" notice instead of a second journal read.
 - Records over **8 KiB**, records the journal split at its line limit and the
-  continuation that follows them are withheld before any content filter runs.
+  continuation that follows them are withheld before any shape is tried.
   `journalctl` prints a field over 4096 bytes as empty, which includes the
   first piece of such a split; the split is still recognised from its
   line-break marker, so the continuation is withheld too. Backend events over
@@ -62,88 +63,99 @@ counted marker, for example `[REDACTED 12 support log lines]`, and the file
 header states how many records were shown and withheld. Downloading the log of
 a unit outside this set yields only such markers.
 
-ModemManager, NetworkManager, wpa_supplicant, hostapd and kernel lines pass an
-**allowlist of line shapes**: state and registration changes, network
-rejections, bearer and connection failure reasons, supplicant and hotspot
-events, USB connect, disconnect, reset and over-current, undervoltage, OOM kills
-and similar. The shapes are taken from the format strings the daemons log at
-info level or above, for both generations devices run: Debian bookworm
-(ModemManager 1.20, NetworkManager 1.42) and trixie (the CeraLive ModemManager
-1.24 build, NetworkManager 1.52). The two differ, for example `<info>` against
-`<inf>`/`<msg>` and `sys-iface-state:` against `managed-type:`. Debug-only lines
-never reach the journal and have no shape. ModemManager 1.24 logs only its
-msg, warning and error levels by default, so trixie journals hold no `<inf>`
-lines. On trixie the export also reads the 1.24 lines that explain a failed
-connection: the SIM lock, failed PIN, enable, registration and packet-service
-attach, QMI call-end and verbose call-end reasons, `couldn't start IPv4/IPv6
-network`, and critical SIM errors. NetworkManager runs the hotspot
-through wpa_supplicant, so access-point events (`AP-ENABLED`,
-`AP-STA-CONNECTED`) are read from wpa_supplicant as well as hostapd.
+**Every value in the file is typed.** The download carries no free text from a
+record: only this code's own fixed text, members of closed vocabularies,
+bounded numbers, interface names by the kernel naming grammar, and fixed
+placeholders such as `[name]` or `[address]`. A value outside its vocabulary is
+shown as its placeholder (`[state]`, `[reason]`, `[interface]`, `[process]`,
+`[unit]`, `[value]`); the rest of the line stays.
 
-Within an admitted shape, addresses become `[address]`, network, connection
-and operator names become `[name]`, connection UUIDs and operator codes `[id]`
-and USB serial numbers `[serial]`; reason codes, kernel interface names and
-numeric values are kept. Interface names must look like kernel or modem port
-names (`wlan0`, `wwan0`, `enp1s0`, `cdc-wdm0`, `ttyUSB2`), so a device named
-after a person is withheld. A modem error message after "couldn't …:" or
-"failed to connect modem:" keeps only ModemManager's own fixed error phrases,
-segment by segment (`Couldn't check unlock status: SIM PIN required`,
-`Missing or unknown APN`, QMI protocol errors, ModemManager state names, and
-libqmi call-end nicknames after `Call failed`); the first other segment and
-everything after it become `[reason]`. The phrase list is generated from the
-Debian ModemManager 1.20.4 and 1.24.2 source tarballs, whose SHA-256 sums are
-recorded in the generated file
-(`apps/backend/scripts/support-reason-vocabulary.ts`). A line that matches no
-shape is withheld, so an unfamiliar line costs diagnosis, never privacy. Kernel
-text must also match a kernel shape, because any root process can write to the
+ModemManager, NetworkManager, wpa_supplicant, hostapd and kernel lines must
+match a **line shape**: state and registration changes, network rejections,
+bearer and connection failure reasons, supplicant and hotspot events, USB
+connect, disconnect, reset and over-current, undervoltage, OOM kills and
+similar. The shapes are taken from the format strings the daemons log at info
+level or above, for both generations devices run: Debian bookworm
+(ModemManager 1.20, NetworkManager 1.42) and trixie (the CeraLive ModemManager
+1.24 build, NetworkManager 1.52). Debug-only lines never reach the journal and
+have no shape. ModemManager 1.24 logs only msg, warning and error by default;
+on trixie the export also reads its lines that explain a failed connection (SIM
+lock, failed PIN, enable, registration and attach failures, QMI call-end
+reasons, `couldn't start IPv4/IPv6 network`, critical SIM errors).
+NetworkManager runs the hotspot through wpa_supplicant, so access-point events
+are read from wpa_supplicant as well as hostapd. A line that matches no shape
+is withheld, so an unfamiliar line costs diagnosis, never privacy. Kernel text
+must also match a kernel shape, because any root process can write to the
 kernel log.
 
-All admitted text then passes the content filters as a second layer:
+A recognised line is rebuilt from the shape's own text and typed fields:
 
-- Withheld lines: credentials and keys written as `name=value` or as prose
-  ("with password …", "stream id …", "login for …"), SRT access-control stream
-  ids, command lines and environment assignments, subscriber/device/cell
-  identities and serial numbers, PIN/PUK values, coordinates (named or as a
-  decimal pair), NMEA sentences, separated hex dumps, long numeric identifiers
-  and phone numbers in any common punctuation, and raw modem AT/QMI/MBIM traces
-  and debug output.
-- Kept with masking: IPv4 and IPv6 addresses (also with a port, trailing
-  punctuation or an `addr:` prefix) and MACs (colon, dash, dotted or bare, DHCP
-  client ids, MAC-derived interface names) become `[address]`; quoted SSIDs and
-  connection names become `[name]`. Byte and packet counters are kept.
-- Withheld as well: text echoing a command line or tool output (`Command
-  failed:`, `Command timed out:`, `Command aborted:`, `Spawn timed out:`,
-  `exited with code`, `SSID '…'`), e-mail and account addresses, and the host
-  name after a failed lookup (`ENOTFOUND host`). Digits joined by any space
-  character (including no-break spaces), commas, underscores or colons count
-  as one long number. Command errors from the backend's process runner mask
-  secret-looking argument values in their own message.
-- Structured CeraUI events keep a message only if it is one this code writes.
-  The list of message texts is generated from the backend's logger calls
-  (`apps/backend/scripts/support-log-messages.ts`; a test fails until it is
-  regenerated). Where the code interpolates a value, the export keeps a number,
-  an interface name, a supervised process name or a known state or error code,
-  and shows `[value]` otherwise. Text the logger appends after the message (an
-  error's own message) is `[value]` too. Events also keep the timestamp,
-  severity, a known module and a fixed set of metadata: error name and code;
-  an error message only if it is an error text the code throws itself (also
-  generated, with gaps bounded the same way), a fixed runtime text such as
-  `fetch failed`, or a system-call error reduced to its call and code (`spawn
-  /usr/bin/srtla_send ENOENT`, `connect ECONNREFUSED [value]`), otherwise
-  `[value]`; a reason only if it is a known code or a value the code assigns
-  to a `reason` field; exit code, signal, interface name (by the same rule as
-  the line shapes), known states, bounded counts and timings, and for a stream
-  start failure its class, phase,
-  capture cause and retry state (state, attempt, next attempt, maximum
-  attempts, delay, suppressed). RPC traces keep only procedure, latency and
-  outcome. Unknown or nested fields, correlation ids and detached JSON fragments
-  are withheld. Other plain text on the service's output (helper and encoder
-  output shares it) is withheld. The generated file also lists the logger
-  calls whose message is not literal text; their messages are always withheld.
+- **Closed vocabularies from the producers' sources:** ModemManager modem,
+  registration and packet-service states, access technologies, connect steps,
+  lock types, network-rejection reasons, plugin names and D-Bus error names;
+  NetworkManager device states, reasons, managed types, supplicant,
+  connectivity and global states and device types; wpa_supplicant and hostapd
+  states, ciphers and temporary-disable reasons; 802.11 reason names. They are
+  generated from the Debian source packages (ModemManager 1.20.4/1.24.2, libqmi
+  1.32.2/1.36.0/1.38.0, NetworkManager 1.42.4/1.52.1, wpa 2.10), whose SHA-256
+  sums are recorded in the generated file
+  (`apps/backend/scripts/support-daemon-vocabulary.ts`).
+- **libqmi nicknames keyed by code:** a call-end reason, verbose call-end
+  reason or QMI protocol error keeps its number, and its nickname only if it is
+  libqmi's name for that number; otherwise `[reason]`.
+- **Modem error text** after "couldn't …:" or "failed to connect modem:"
+  keeps ModemManager's own fixed error phrases segment by segment (generated
+  from its sources, `apps/backend/scripts/support-reason-vocabulary.ts`), valid
+  D-Bus error names, QMI protocol errors valid for their code and libqmi
+  call-end nicknames; the first other segment and everything after it become
+  `[reason]`.
+- **Numbers** in positions the shape names (signal, codes, counts, USB paths).
+- **Interface names** only if they follow the kernel's naming grammar (`wlan0`,
+  `wwan0mbim0`, `cdc-wdm0`, `ttyUSB2`, predictable names such as `enp1s0u1u2`,
+  which are letter+digit pairs); any other name is `[interface]`.
+- **Never copied:** addresses (`[address]`), network, connection, operator and
+  USB product names (`[name]`), connection UUIDs and operator codes (`[id]`),
+  USB serial numbers (`[serial]`). A kernel release keeps its version numbers
+  (`6.1.0-28-[release]`); process names are kept only for the box's own
+  processes, unit names only for its own and the admitted services.
+
+systemd (PID 1) lines are rebuilt from systemd's grammar: unit transitions,
+`Main process exited` with code and status (status names from systemd's
+exit-status table), `Failed with result` (systemd's result names), killed
+processes, consumed CPU time and restart counters. Units outside the box's own
+and the admitted services are `[unit]`; a template instance is
+`name@[instance]`.
+
+Structured CeraUI events keep a message only if it is one this code writes. The
+list of message texts is generated from the backend's logger calls, including
+`logger["warn"](…)` element calls (`apps/backend/scripts/support-log-messages.ts`;
+a test fails until it is regenerated, for messages, error texts and reasons
+alike). **Every gap where the code interpolates a value is `[value]`**, unless
+the text is a fixed token (a start-failure class or phase, a known state or
+code); numbers and names inside a message never pass. The output therefore
+depends only on the template, not on the runtime string, so a call that logs
+runtime text matching a template cannot add anything. Values a helper needs
+travel as typed metadata instead: error name and code, a **failure class**
+(`timeout`, `missing-executable`, `permission`, `rejected-configuration`,
+`network-unreachable`) set where a tool is run or derived from the error's name
+and code, exit code, signal, a supervised process, interface name, known
+states, bounded counts and timings, and for a stream start failure its class,
+phase, capture cause and retry state. An error message is kept only if it is an
+error text the code throws (gaps `[value]`), a fixed runtime text, or a
+system-call error whose call and error code are real ones (`spawn
+/usr/bin/srtla_send ENOENT`, `connect ECONNREFUSED [value]`); a tool's own
+error text is `[value]`. A reason is kept only if it is a known code or a value
+the code assigns. RPC traces keep a procedure only if it is in the RPC
+contract. Unknown or nested fields, correlation ids and detached JSON fragments
+are withheld, as is other plain text on the service's output. Command errors
+from the backend's process runner mask secret-looking argument values (PINs,
+passwords, keys, stream ids, accounts, `-u user:password`, URL credentials) in
+their own message.
 
 The fixture corpora in `apps/backend/src/tests/support/` are journal records
 with the trusted fields set, run through the same renderer as the download:
-lines that must never appear, diagnostics that must survive, and a sample of
+lines that must never appear (including every value the reviews planted),
+diagnostics that must survive, and a sample of
 three incidents (a modem that does not connect, Wi-Fi that drops, a stream that
 stops) for each daemon generation. The sample is assembled from the daemons'
 format strings and the backend's own warn/error messages; it is not a device
@@ -151,9 +163,9 @@ capture. It checks that the evidence for those incidents survives (105 of 110
 records on bookworm formats, 110 of 114 on trixie). It is not a measure of how
 much of a real device journal is shown: a real journal holds many lines without
 a shape, and those are withheld. Production writes backend events at warn level
-and above, so info events do not appear in a download. Values encoded in ways a filter cannot
-recognise (base64, for example) cannot be detected. No unredacted export mode is
-offered. A private/custom APN name can itself reveal account context: review
+and above, so info events do not appear in a download. A crafted record can
+still choose among vocabulary members and numbers; it cannot put words into the
+file. No unredacted export mode is offered. A private/custom APN name can itself reveal account context: review
 exports before sharing. Existing authentication requirements still apply.
 
 # Descargas de registros de soporte
@@ -163,8 +175,10 @@ de los **últimos 7 días**, incluidos los arranques anteriores, con un máximo 
 **10 000 entradas recientes** por descarga. El registro de la aplicación filtra
 su servicio; el del sistema no. Cada línea muestra una etiqueta de arranque, la
 fecha ISO y su origen. Las etiquetas cuentan hacia atrás desde el arranque en
-curso: `[boot 0]` es este arranque y `[boot -1]` el anterior. Si el arranque en
-curso no tiene entradas en la descarga, el más reciente es `[boot -1]`. No se
+curso: `[boot 0]` es este arranque y `[boot -1]` el anterior, según la lista de
+arranques de journald, así que un arranque sin entradas mostradas también cuenta
+y la cabecera lo indica. Si el arranque en curso no tiene entradas en la
+descarga, el más reciente es `[boot -1]`. No se
 incluyen el nombre del equipo, los identificadores de arranque ni los de
 proceso.
 
@@ -182,7 +196,7 @@ proceso.
 - Solo se ejecuta una descarga a la vez; una segunda solicitud recibe un aviso
   de que ya hay una en curso.
 - Las entradas de más de **8 KiB**, las que el registro partió por su límite de
-  línea y su continuación se retiran antes de cualquier filtro.
+  línea y su continuación se retiran antes de probar ningún formato.
 - El texto redactado se recorta a 9 MiB con una marca explícita; el archivo
   completo queda por debajo de 10 MiB. Nunca se envía una salida parcial sin
   redactar. Los errores tienen mensajes distintos, sin el texto de la excepción.
@@ -212,48 +226,50 @@ demás procesos de una unidad admitida, como el servidor DHCP del punto de acces
 retiran. Las series retiradas aparecen como una sola marca con su número, y la
 cabecera indica cuántas entradas se muestran y cuántas se retiran.
 
+**Cada valor del archivo tiene un tipo.** La descarga no copia texto libre de
+ninguna entrada: solo el texto fijo de este código, miembros de vocabularios
+cerrados, números acotados, nombres de interfaz según la gramática del kernel y
+marcadores fijos como `[name]` o `[address]`. Un valor fuera de su vocabulario
+aparece como su marcador (`[state]`, `[reason]`, `[interface]`, `[process]`,
+`[unit]`, `[value]`) y el resto de la línea se conserva.
+
 Las líneas de ModemManager, NetworkManager, wpa_supplicant, hostapd y el kernel
-pasan por una **lista de formatos permitidos**: cambios de estado y de registro,
+deben coincidir con un **formato de línea**: cambios de estado y de registro,
 motivos de fallo, eventos del cliente Wi-Fi y del punto de acceso, eventos USB,
 subtensión y OOM. Los formatos se toman de los mensajes que los servicios
 registran a nivel info o superior en las dos generaciones que usan los equipos:
 Debian bookworm (ModemManager 1.20, NetworkManager 1.42) y trixie (ModemManager
-1.24 de CeraLive, NetworkManager 1.52). NetworkManager gestiona el punto de
-acceso con wpa_supplicant, así que sus eventos se leen también de ahí.
-ModemManager 1.24 solo registra por defecto los niveles msg, aviso y error, y en
-trixie se leen también sus líneas sobre por qué falló una conexión (bloqueo de
-la SIM, PIN, activación, registro, motivos de fin de llamada QMI). Dentro de
-un formato, las direcciones pasan a `[address]`, los nombres de red, de conexión
-y de operador a `[name]`, los UUID y códigos de operador a `[id]` y los números
-de serie USB a `[serial]`; se conservan códigos de motivo, nombres de interfaz
-del kernel y valores numéricos. El mensaje de error de un módem solo conserva
-las frases fijas de ModemManager, generadas a partir de su código fuente; el
-resto pasa a `[reason]`. Una línea sin formato conocido se retira: cuesta
+1.24 de CeraLive, NetworkManager 1.52). Una línea sin formato se retira: cuesta
 diagnóstico, nunca privacidad. El texto del kernel también debe coincidir con un
 formato.
 
-Después, todo pasa por los filtros de contenido. Se retiran credenciales (como
-`nombre=valor` o en prosa), identificadores de flujo SRT, líneas de órdenes,
-identidades de suscriptor, dispositivo o celda, números de serie, PIN/PUK,
-coordenadas, NMEA, volcados hexadecimales, números largos, teléfonos y trazas
-AT/QMI/MBIM. Las direcciones IP y MAC (también con puerto, puntuación o en otras
-notaciones) pasan a `[address]` y los SSID entre comillas a `[name]`. También se
-retiran el texto que repite órdenes o su salida, las direcciones de correo y el
-nombre de equipo de una búsqueda fallida. Un evento estructurado solo conserva un
-mensaje que este código escribe (lista generada de las llamadas al registro);
-donde el código inserta un valor queda un número, una interfaz, un proceso
-supervisado o un código conocido, y si no `[value]`. Se conservan también fecha,
-nivel, módulo y metadatos fijos: nombre, código y mensaje del error (hasta 300
-caracteres, filtrado; nunca pilas), código de salida, señal, interfaz, estados,
-contadores, tiempos y, en un fallo de inicio de emisión, su clase, fase, causa
-de captura y estado de reintento. El mensaje de un error solo se conserva si es
-un texto de error del propio código, un texto fijo del entorno de ejecución o un
-error de sistema reducido a su llamada y código; si no, `[value]`. Un motivo
-solo se conserva si es un código conocido o un valor que el código asigna. También
-se retiran los textos que repiten órdenes (`Command failed:`, `Spawn timed
-out:` y similares). Las trazas RPC conservan solo
-procedimiento, latencia y resultado. El resto del texto sin estructura del
-servicio se retira.
+Una línea reconocida se reconstruye con el texto del formato y campos con tipo:
+estados, motivos, tecnologías de acceso, pasos de conexión, tipos de bloqueo,
+nombres de error D-Bus, estados de NetworkManager, wpa_supplicant y hostapd y
+nombres de motivo 802.11, todos de listas cerradas generadas a partir del código
+fuente de Debian de cada servicio (con sus SHA-256 en el archivo generado). Los
+motivos de fin de llamada y los errores de protocolo QMI conservan su número, y
+su apodo solo si es el que libqmi da a ese número. El texto de error de un módem
+solo conserva las frases fijas de ModemManager; el resto pasa a `[reason]`. Las
+interfaces se muestran solo si siguen la gramática de nombres del kernel; si no,
+`[interface]`. Nunca se copian direcciones, nombres de red, de conexión, de
+operador ni de producto USB, UUID, códigos de operador ni números de serie. Las
+líneas de systemd se reconstruyen con su gramática; las unidades ajenas pasan a
+`[unit]` y los procesos desconocidos a `[process]`.
+
+Un evento estructurado de CeraUI solo conserva un mensaje que este código
+escribe (lista generada de las llamadas al registro). **Cada hueco donde el
+código inserta un valor es `[value]`**, salvo un elemento fijo (clase o fase de
+un fallo de inicio, un estado o código conocido); los números y nombres dentro de
+un mensaje nunca pasan. Los valores útiles viajan como metadatos con tipo:
+nombre y código del error, una **clase de fallo** (`timeout`,
+`missing-executable`, `permission`, `rejected-configuration`,
+`network-unreachable`), código de salida, señal, proceso supervisado, interfaz,
+estados, contadores, tiempos y, en un fallo de inicio de emisión, su clase,
+fase, causa de captura y estado de reintento. El texto de error de una
+herramienta es `[value]`. Un error de sistema solo se conserva si su llamada y su
+código son reales. Las trazas RPC conservan el procedimiento solo si está en el
+contrato RPC. El resto del texto sin estructura del servicio se retira.
 
 Los corpus de `apps/backend/src/tests/support/` son entradas del registro que
 pasan por el mismo código que la descarga: lo que nunca debe aparecer, lo que
@@ -263,8 +279,8 @@ partir de los formatos de los servicios y de los avisos y errores del propio
 backend (no es una captura de un equipo). Comprueba que esas pruebas se
 conservan (105 de 110 entradas con bookworm, 110 de 114 con trixie); no mide
 cuánto de un registro real se muestra, porque las líneas sin formato se
-retiran. En producción el backend solo escribe avisos y errores. Los valores
-codificados (por ejemplo en
-base64) no se pueden detectar. No hay modo sin redactar. Un APN privado puede
+retiran. En producción el backend solo escribe avisos y errores. Una entrada
+manipulada aún puede elegir entre valores de las listas y números, pero no
+puede introducir palabras en el archivo. No hay modo sin redactar. Un APN privado puede
 revelar información de la cuenta: revisa el archivo antes de compartirlo. Se
 mantiene la autenticación existente.
