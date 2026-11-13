@@ -1769,18 +1769,46 @@ describe("heat ladder slice 2 review", () => {
 		}
 	};
 
-	test("item 4: an implausible modem value never switches off SoC heat protection", async () => {
-		const { backend, fake } = makeBackend();
-		await backend.start(STREAM_CONFIG, RUN_OPTS);
-		for (let t = 0; t <= 12000; t += 1000) {
-			backend.updateHeat(85, t, modemAt(130));
-			await backend.settle();
-		}
-		expect(backend.getHeat().unknown).toBe(false);
-		expect(backend.getHeat().stage).toBe(3);
-		expect(lastBitrate(fake)).toEqual({ max_bitrate: 4000 });
-		await new Promise<void>((resolve, reject) => backend.stop(resolve, reject));
-	});
+	test.each([126, 130, 150])(
+		"item 4: an implausible modem value of %i C never switches off SoC heat protection",
+		async (modemTemperature) => {
+			const { backend, fake } = makeBackend();
+			await backend.start(STREAM_CONFIG, RUN_OPTS);
+			// getHeat checks freshness against getms(), not the policy's relative
+			// test timeline. End the simulated samples at the current clock time
+			// so a long-running suite cannot mistake them for stale evidence.
+			const base = getms() - 12000;
+			for (let t = 0; t <= 12000; t += 1000) {
+				backend.updateHeat(85, base + t, modemAt(modemTemperature));
+				await backend.settle();
+			}
+			expect(backend.getHeat().unknown).toBe(false);
+			expect(backend.getHeat().stage).toBe(3);
+			expect(lastBitrate(fake)).toEqual({ max_bitrate: 4000 });
+			await new Promise<void>((resolve, reject) =>
+				backend.stop(resolve, reject),
+			);
+		},
+	);
+
+	test.each([126, 130, 150])(
+		"item 4: an implausible modem value of %i C cannot trigger heat steps on its own",
+		async (modemTemperature) => {
+			const { backend, fake } = makeBackend();
+			await backend.start(STREAM_CONFIG, RUN_OPTS);
+			const base = getms() - 12000;
+			for (let t = 0; t <= 12000; t += 1000) {
+				backend.updateHeat(40, base + t, modemAt(modemTemperature));
+				await backend.settle();
+			}
+			expect(backend.getHeat().unknown).toBe(false);
+			expect(backend.getHeat().stage).toBe(0);
+			expect(lastBitrate(fake)).toBeUndefined();
+			await new Promise<void>((resolve, reject) =>
+				backend.stop(resolve, reject),
+			);
+		},
+	);
 
 	test("item 5: no link rests while the engine kept more than the cap", async () => {
 		const links = restLinks();
