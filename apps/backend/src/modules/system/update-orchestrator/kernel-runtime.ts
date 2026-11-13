@@ -302,6 +302,13 @@ export function createKernelRuntime(port: KernelRuntimePort) {
 			publish("kernel-staging");
 			return true;
 		}
+		if ((await readBoardUpdates()) === null) {
+			// A policy change removes update offers, not persisted recovery authority.
+			// Inspect a possible writer first; retain its attempt, record and overlay.
+			candidate = null;
+			if (phase.startsWith("kernel-")) publish("idle");
+			return false;
+		}
 		if (!matching || !record) {
 			if (openPhases.includes(phase))
 				publish(

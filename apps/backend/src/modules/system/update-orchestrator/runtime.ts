@@ -1,4 +1,5 @@
 import { boardUpdateAdmissionAllowed } from "../board-update-admission.ts";
+import { readBoardUpdates } from "../board-updates.ts";
 /*
 	CeraUI - web UI for the CERALIVE project
 	Copyright (C) 2024-2025 CeraLive project
@@ -1472,6 +1473,10 @@ async function pollPackageInstallProgress(): Promise<void> {
 // ─── slot-sync (sync-eligible -> syncing -> synced) ────────────────────────
 
 async function checkSlotSyncGate() {
+	// Unsupported policy must not turn an idle check into an inactive-slot write.
+	if ((await readBoardUpdates()) === null)
+		return { allowed: false, reason: "capability-absent" } as const;
+
 	const generation = stateGeneration;
 	const capabilities = await deps.loadCapabilities();
 	// On a legacy image the capability refusal is already decisive; do not

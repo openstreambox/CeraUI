@@ -54,3 +54,12 @@ candidate discovery returns before inspecting the booted kernel or APT indexes.
 Manual and scheduled checks can therefore publish the calm unsupported-board
 state without a kernel identity error; staging and installation remain refused.
 Branding-only legacy records retain the existing fallback.
+
+Kernel reconciliation applies the same unsupported-policy verdict after inspecting
+any pending stage writer. A running or unidentifiable writer still blocks other
+work. Otherwise checks can publish the unsupported-board state without reading
+kernel identity or arming activation. The kernel receipt, attempt and overlay
+remain intact and unacknowledged, so rollback and confirmation reconciliation
+resume when supported policy is restored. New kernel and OS installs stay
+unavailable, and automatic slot mirroring is disabled even if its capability is
+present. Unsupported metadata never authorizes cleanup or activation.
