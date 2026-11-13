@@ -54,6 +54,21 @@ const planSchema = z
 	})
 	.strict();
 export type CellularHandoffPlan = z.infer<typeof planSchema>;
+export function parseCellularHandoffPlan(raw: unknown): CellularHandoffPlan {
+	const plan = planSchema.parse(raw);
+	if (
+		plan.device.iface !== plan.link.ifname ||
+		!["", plan.link.ifname].includes(plan.device.ipIface) ||
+		plan.device.udi.startsWith("/org/freedesktop/ModemManager1/")
+	)
+		throw new Error("Host handoff authority belongs to another device");
+	return plan;
+}
+export function parseCellularHandoffPhysicalLink(
+	raw: unknown,
+): CellularPhysicalLink {
+	return linkSchema.parse(raw);
+}
 type Record = DurableInverseRecord<CellularHandoffPlan>;
 export interface CellularHandoffIO {
 	readonly present: () => Promise<boolean>;
@@ -138,7 +153,7 @@ const sameDevice = (a: CellularNmDevice, b: CellularNmDevice) =>
 	a.iface === b.iface &&
 	["", a.iface].includes(a.ipIface) &&
 	["", a.iface].includes(b.ipIface);
-function steps(plan: CellularHandoffPlan): string[] {
+export function cellularHandoffSteps(plan: CellularHandoffPlan): string[] {
 	return [
 		...(plan.raDefault === "1" ? ["ra-default"] : []),
 		...(plan.device.managed ? ["nm-unmanaged"] : []),
@@ -167,21 +182,18 @@ export class CellularHostHandoff {
 			read: hooks.read,
 			write: hooks.write,
 			parsePlan: (raw) => {
-				const plan = planSchema.parse(raw);
+				const plan = parseCellularHandoffPlan(raw);
 				if (
 					["ifname", "ifindex", "usbDevice", "netDevice", "generation"].some(
 						(key) =>
 							plan.link[key as keyof CellularPhysicalLink] !==
 							link[key as keyof CellularPhysicalLink],
-					) ||
-					plan.device.iface !== link.ifname ||
-					!["", link.ifname].includes(plan.device.ipIface) ||
-					plan.device.udi.startsWith("/org/freedesktop/ModemManager1/")
+					)
 				)
 					throw new Error("Host handoff authority belongs to another device");
 				return plan;
 			},
-			steps,
+			steps: cellularHandoffSteps,
 			current: async (record) =>
 				record.owner === owner &&
 				record.epoch === epoch &&
@@ -287,7 +299,8 @@ export class CellularHostHandoff {
 			await this.inverse.advance(
 				this.owner,
 				this.epoch,
-				steps(existing.plan).filter((step) => step !== "link-up").length,
+				cellularHandoffSteps(existing.plan).filter((step) => step !== "link-up")
+					.length,
 			);
 			return;
 		}
@@ -317,7 +330,7 @@ export class CellularHostHandoff {
 			this.owner,
 			this.epoch,
 			plan,
-			steps(plan).filter((step) => step !== "link-up").length,
+			cellularHandoffSteps(plan).filter((step) => step !== "link-up").length,
 		);
 	}
 	async prepareCall(): Promise<void> {

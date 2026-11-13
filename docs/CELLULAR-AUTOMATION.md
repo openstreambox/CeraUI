@@ -564,3 +564,21 @@ de solo lectura de NM deben confirmar que el dispositivo anterior desapareció o
 que se restauró su estado de gestión inicial. Un inventario desconocido o un estado
 sin restaurar conserva la operación inversa. Estos componentes no activan llamadas
 en funcionamiento automático.
+
+Whole internal-call ownership has a separate strict unit record that binds its
+physical generation, boot, context slot and host handoff inverse. It contains no
+carrier allocation or APN selection. A durable context witness requires that
+baseline to remain present, including after adapter replacement. Startup and
+read-only verification reject a missing referenced baseline or mismatched host
+inverse. These storage contracts do not construct an owner or enable calls;
+combined startup replay and runtime composition remain required.
+
+La propiedad completa de la llamada interna tiene un registro estricto por
+dispositivo que vincula su generación física, arranque, contexto y operación
+inversa del host. No contiene una asignación de operador ni selecciona un APN.
+Cuando registra que existe una referencia del contexto, esa referencia debe
+seguir presente, incluso después de reemplazar el adaptador. El arranque y la
+verificación de solo lectura rechazan una referencia ausente o una operación
+inversa del host que no corresponde. Estos contratos de almacenamiento no crean
+un propietario ni activan llamadas; siguen pendientes la recuperación conjunta al
+arrancar y la conexión al funcionamiento automático.

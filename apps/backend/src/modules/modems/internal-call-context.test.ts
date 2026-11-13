@@ -103,7 +103,12 @@ function fixture() {
 			cid: 1,
 			desired: { apn: "first.invalid", family: "ipv4v6" },
 		},
-	) => createInternalCallContext("synthetic-key", request, deps);
+		overrides: Partial<InternalCallContextDeps> = {},
+	) =>
+		createInternalCallContext("synthetic-key", request, {
+			...deps,
+			...overrides,
+		});
 	return {
 		make,
 		control,
@@ -282,4 +287,14 @@ test("the request and definition settings are captured before caller mutation", 
 	expect(f.state().record?.cid).toBe(1);
 	expect(f.state().context.apn).toBe("first.invalid");
 	expect(f.state().context.settings).toEqual(["0.0.0.0", "1"]);
+});
+
+test("a fresh adapter cannot recapture a baseline required by durable whole-owner authority", async () => {
+	const f = fixture(),
+		owner = f.make(undefined, { baselineExpected: () => true });
+	await owner.load();
+	expect(owner.known()).toBe(true);
+	expect(await owner.activate(f.control)).toBe(false);
+	expect(await owner.close(f.control)).toBe(false);
+	expect(f.events).toEqual([]);
 });
