@@ -140,3 +140,8 @@ Scenario driver access requires both a non-production build and a non-production
 A modem reported as `searching` maps to the bond/HUD `scanning` state, even
 when it retains a signal reading. The bond card therefore states Scanning
 while the Cellular row retains its Searching wording.
+
+The orchestrator's package check returns no update error under mocks without
+calling the APT refresh/discovery runner, just as the legacy background loop skips
+mocks. A live simulated stream therefore produces no unrelated busy refusal at
+the first scheduled check. Real-device runner refusals remain active.

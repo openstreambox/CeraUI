@@ -1167,6 +1167,9 @@ export function resetSoftwareUpdateSizeRunner(): void {
 
 // Orchestrator checks own a full cycle, not discovery against previously fetched lists.
 export function runSoftwareUpdateCheck(): Promise<SoftwareUpdateError> {
+	// The orchestrator has its own background cadence. Match the legacy loop's
+	// mock gate before reaching the real refresh runner (including its busy guard).
+	if (shouldUseMocks()) return Promise.resolve(null);
 	return new Promise((resolve, reject) => {
 		const started = softwareUpdateCheckRunner((refresh) => {
 			// Exit-zero warnings are benign; discovery must retain a real refresh failure.
