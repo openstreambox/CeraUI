@@ -1296,12 +1296,17 @@ the sender's echo reddens the precedence test.
 
 ### Contract-2 discovery and publication identity
 
-The probe preserves positive safe-integer `bind_map_contract` and exact-boolean
+The probe recognizes exactly `bind_map_contract: 2` and preserves exact-boolean
 `bind_map_required` / `bind_map_required_empty_reload` claims. Discovery alone
 does not enable required mode. Existing senders keep the same spawn arguments.
 Successful publications expose `ipsFileSha256` (optional in the compatibility
 type), and unchanged mappings at the same paths reuse their generation.
-Mapping-only changes and recovery after write failures advance it.
+Mapping-only changes and recovery after write failures advance it. Publications
+capture caller rows at submission and run on one promise chain; identity comparison
+and both atomic writes execute inside that chain. Each receipt returns the generation
+actually serialized. A failed reload signal invalidates reuse behind pending writes,
+so the next publication advances and requests another reload. Signal delivery is
+not an applied acknowledgement.
 
 Applied/pending telemetry identities, pending dispositions, process-bound
 startup/live admission, empty withdrawal and joined cleanup remain a separate

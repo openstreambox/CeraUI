@@ -117,9 +117,7 @@ export function classifyCapabilityDocument(
 	return {
 		bindMap: true,
 		bindMapSchemaVersion: version,
-		...(typeof capabilities.bind_map_contract === "number" &&
-		Number.isSafeInteger(capabilities.bind_map_contract) &&
-		capabilities.bind_map_contract > 0
+		...(capabilities.bind_map_contract === 2
 			? { bindMapContract: capabilities.bind_map_contract }
 			: {}),
 		...(capabilities.bind_map_required === true

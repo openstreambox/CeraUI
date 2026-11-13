@@ -16,7 +16,8 @@
 */
 
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
-import killall from "../../helpers/killall.ts";
+import { killallSucceeded } from "../../helpers/killall.ts";
+import { logger } from "../../helpers/logger.ts";
 
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
 import { queueUpdateGw } from "../network/gateways.ts";
@@ -32,6 +33,7 @@ import {
 	type BindMapPublication,
 	defaultBindMapWriterDeps,
 	defaultSidecarPath,
+	invalidateBindMapReuse,
 	publishBondMapping,
 } from "./bind-map-writer.ts";
 import {
@@ -187,6 +189,18 @@ export async function setSrtlaIpList(
 	return publishSrtlaBond(entries);
 }
 
-export function restartSrtla() {
-	void killall(["-HUP", "srtla_send"]);
+export async function restartSrtla(
+	deliver: () => Promise<boolean> = () =>
+		killallSucceeded(["-HUP", "srtla_send"]),
+): Promise<void> {
+	let delivered = false;
+	try {
+		delivered = await deliver();
+	} catch {
+		/* Unknown delivery is not success. */
+	}
+	if (!delivered) {
+		invalidateBindMapReuse();
+		logger.warn("SRTLA reload delivery failed; next publication must reload");
+	}
 }

@@ -124,6 +124,7 @@ export function defaultSidecarPath(ipsFile: string): string {
  * retains its identity: a fresh generation cannot be silently published without
  * reloading the sender. Failed/uncertain publications invalidate that no-op cache.
  */
+let publicationTail: Promise<void> = Promise.resolve();
 let generation = 0;
 let tempCounter = 0;
 let lastPublished: readonly BondEntry[] | undefined;
@@ -141,10 +142,19 @@ const snapshotMapping = (entries: readonly BondEntry[]) =>
 
 /** Drop the writer session (test isolation). Never call from production code. */
 export function resetBindMapWriter(): void {
+	publicationTail = Promise.resolve();
 	generation = 0;
 	tempCounter = 0;
 	lastPublished = undefined;
 	lastSuccessful = undefined;
+}
+
+/** A failed delivery makes the last published identity uncertain. Queue the
+ * invalidation behind in-flight writes so their completion cannot undo it. */
+export function invalidateBindMapReuse(): void {
+	publicationTail = publicationTail.then(() => {
+		lastSuccessful = undefined;
+	});
 }
 
 /** The generation the last successful publication carried, or 0 if none. */
@@ -175,12 +185,27 @@ async function publishAtomically(
  * interface to another leaves the IP bytes byte-identical, so a digest-only
  * comparison would silently skip the reload that is the entire point.
  */
-export async function publishBondMapping(
+export function publishBondMapping(
 	provided: readonly BondEntry[],
 	deps: BindMapWriterDeps,
 ): Promise<BindMapPublication> {
-	const entries = snapshotMapping(provided),
-		ipsContent = renderIpsFile(entries),
+	// Capture caller-owned rows at submission; compare writer state only at execution.
+	const entries = snapshotMapping(provided);
+	const publication = publicationTail.then(() =>
+		publishBondMappingSerial(entries, deps),
+	);
+	publicationTail = publication.then(
+		() => undefined,
+		() => undefined,
+	);
+	return publication;
+}
+
+async function publishBondMappingSerial(
+	entries: readonly BondEntry[],
+	deps: BindMapWriterDeps,
+): Promise<BindMapPublication> {
+	const ipsContent = renderIpsFile(entries),
 		digest = createHash("sha256").update(ipsContent, "utf8").digest("hex"),
 		mappable = entries.every(isMappableEntry),
 		identical =
@@ -214,7 +239,8 @@ export async function publishBondMapping(
 	}
 
 	if (!identical) generation += 1;
-	const document = buildBindMapDocument(entries, generation, digest);
+	const publishedGeneration = generation;
+	const document = buildBindMapDocument(entries, publishedGeneration, digest);
 
 	try {
 		await publishAtomically(deps, deps.sidecarFile, JSON.stringify(document));
@@ -232,14 +258,14 @@ export async function publishBondMapping(
 	lastPublished = entries;
 	lastSuccessful = {
 		entries: lastPublished,
-		generation,
+		generation: publishedGeneration,
 		digest,
 		ipsFile: deps.ipsFile,
 		sidecarFile: deps.sidecarFile,
 	};
 	return {
 		ok: true,
-		generation,
+		generation: publishedGeneration,
 		ipsFileSha256: digest,
 		changed,
 		sidecarPath: deps.sidecarFile,
