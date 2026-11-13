@@ -100,6 +100,39 @@ type HeldLease = { readonly holder: LifecycleHolder; readonly token: number };
 
 let held: HeldLease | undefined;
 let nextToken = 0;
+let recoveryToken: number | undefined;
+const recoveryWaiters = new Set<() => void>();
+let waitingStreams = 0;
+
+/** Recovery is reversible background work; new streams may await its short
+ * census/withdrawal window without changing ordinary mutation refusals. */
+export function tryAcquireCellularRecovery(): LifecycleAdmission {
+	if (waitingStreams)
+		return { admitted: false, heldBy: "streaming", refusal: STREAMING_ACTIVE };
+	const admission = tryAcquireLifecycle("modem-transition");
+	if (admission.admitted) recoveryToken = held?.token;
+	return admission;
+}
+export function acquireStreamingLifecycle():
+	| LifecycleAdmission
+	| Promise<LifecycleAdmission> {
+	if (!held || held.token !== recoveryToken)
+		return tryAcquireLifecycle("streaming");
+	waitingStreams++;
+	return new Promise<void>((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			recoveryWaiters.delete(done);
+			resolve();
+		};
+		const timer = setTimeout(done, 10_000);
+		recoveryWaiters.add(done);
+	})
+		.then(() => tryAcquireLifecycle("streaming"))
+		.finally(() => {
+			waitingStreams--;
+		});
+}
 
 /**
  * Try to acquire the interlock for `who`. NEVER blocks: a held interlock is
@@ -167,6 +200,10 @@ function releaseToken(token: number): void {
 	if (held?.token !== token) return;
 	if (held.holder === "streaming") noteStartLeaseEnded();
 	held = undefined;
+	if (recoveryToken === token) {
+		recoveryToken = undefined;
+		for (const wake of [...recoveryWaiters]) wake();
+	}
 }
 
 /**
@@ -206,6 +243,7 @@ export function currentLifecycleHolder(): LifecycleHolder | undefined {
  * still relying on.
  */
 export function resetLifecycleInterlock(): void {
+	if (held) releaseToken(held.token);
 	held = undefined;
 	activeMutations.clear();
 	mutationBlocks.clear();

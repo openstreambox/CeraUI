@@ -955,6 +955,7 @@
 	"network.cellular.initializingBody": "لا تزال خدمة المودم قيد التشغيل. ستظهر المودمات وإعداداتها هنا بمجرد جاهزيتها.",
 	"network.cellular.initializingTitle": "جارٍ تشغيل الشبكة الخلوية",
 	"network.cellular.reason.initializing": "تم اكتشاف مودم — في انتظار أن تصفه خدمة المودم.",
+	"network.cellular.reason.hostRecoveryPending": "مسار بيانات المودم معزول لأن التنظيف لم يكتمل. ستتم إعادة محاولة الاسترداد.",
 	"network.cellular.reason.undriveable": "لا يزال هذا الجهاز متصلاً، ولكن لا تستطيع أي خدمة مودم التحكم به.",
 	"network.cellular.reason.routerControlsUnverified": "لم يؤكد هذا المودم قط أن تغيير أي إعداد يُطبَّق فعليًا، لذلك لا يُعرض هنا شيء. استخدم واجهته الإلكترونية الخاصة بدلًا من ذلك.",
 	"network.cellular.reason.routerManaged": "يدير المودم هذا الاتصال بنفسه. توجد إعدادات شبكته في واجهته الإلكترونية الخاصة، لا هنا.",

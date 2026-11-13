@@ -606,12 +606,13 @@ y la construcción del propietario antes de activar llamadas.
 
 An uncertain startup withdrawal keeps its slot reserved and its source excluded.
 It logs `withdrawal-incomplete` with the interface, slot and next retry delay;
-the modem's existing `availability_reason` reports the quarantine on full and
+the modem's existing `availability_reason` reports `host_recovery_pending` on full and
 partial snapshots and clears when withdrawal completes. The existing modem poll
 retries retained quarantined owners with exponential delays from 1 second to a
 60-second cap (actual attempts follow poll cadence). Device presence and interface
-state changes make a retry due immediately, including enumeration with a new name.
-No additional timer or installation owner is created.
+state changes bring a retry forward to the one-second floor, including enumeration
+with a new name; actual dispatch follows the existing poll cadence.
+No additional retry timer or installation owner is created.
 
 Retries are independent per slot, revalidate durable authority and never adopt
 new runtime hosts. Cleanup after startup retains source exclusion and takes the
@@ -622,3 +623,30 @@ Journal blocks continue to exclude matching modem identities and unidentified
 cellular devices; unrelated non-USB Ethernet and Wi-Fi remain eligible.
 
 These are host-tested recovery rules, not hardware qualification.
+
+Recovery admission follow-up: while a journal block exists, a missing USB cache
+entry is unknown. Ordinary non-USB admission requires a fresh, successful walk
+of the interface device's sysfs ancestry with no USB ancestor. Event wakes cannot
+start cleanup more than once per second and survive an in-flight failure. Retry
+exceptions are logged and backed off behind the existing per-slot fence; an
+observed authority replacement still raises recovery. Production presence polls
+mark new devices for retry and dispatch attempts only after their helper work.
+An incoming stream waits up to ten seconds for a recovery-held lifecycle lease;
+ordinary modem mutations retain their immediate refusal semantics. A timeout
+stays closed and does not release a lease still protecting cleanup.
+
+The wire uses `host_recovery_pending`, translated by the frontend, and preserves
+an existing availability reason. Old roster identities are pruned. Remaining
+limits: journal revision contention may still defer acknowledgement or raise
+reconciliation during writes; strict sender binding remains required under a
+journal block or host quarantine. Runtime cgroup census success and kernel
+cleanup after physical re-enumeration still require bench measurements. Moving
+retry dispatch after helper work removes the direct poll ordering conflict, but
+does not prove that unrelated service children leave a sufficient quiet window.
+
+Admisión durante la recuperación: una interfaz sin examinar sigue excluida. Los
+eventos respetan un mínimo de un segundo entre intentos. Un inicio de transmisión
+puede esperar hasta diez segundos a que termine la limpieza; si vence el plazo,
+no se libera un bloqueo que todavía protege la recuperación. El motivo
+`host_recovery_pending` se muestra traducido. La verificación del censo de
+procesos y la limpieza tras una nueva enumeración siguen pendientes en hardware.

@@ -1363,3 +1363,9 @@ describe("sortModemEntries — the order is the hardware's, not the wire id's", 
 		expect(ids(sortModemEntries(roster))).toEqual(["1", "2"]);
 	});
 });
+
+it("renders the quarantined host recovery token as operator copy", () => {
+	expect(availabilityReasonKey("host_recovery_pending")).toBe(
+		"network.cellular.reason.hostRecoveryPending",
+	);
+});

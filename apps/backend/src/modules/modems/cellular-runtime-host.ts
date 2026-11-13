@@ -11,6 +11,7 @@ import {
 	withdrawCellularSource,
 } from "../network/cellular-source-state.ts";
 import { nmConnGetFields } from "../network/network-manager.ts";
+import { examinedNonUsbNetDevice } from "../network/non-usb-net-evidence.ts";
 import { getModemNetMarker } from "../network/router-cellular-scan.ts";
 import { resolveBondPhysicalIdentity } from "../streaming/bond-entry.ts";
 import {
@@ -203,7 +204,11 @@ async function capture(
 				target.equipment,
 			]),
 			identity = resolveBondPhysicalIdentity(iface);
-		if (!identity || identity.anchor === "ifname") {
+		if (
+			!identity ||
+			!examinedNonUsbNetDevice(iface) ||
+			identity.anchor === "ifname"
+		) {
 			await lifetime.close();
 			return undefined;
 		}
@@ -330,7 +335,6 @@ export async function runCellularRuntime(): Promise<void> {
 			runtime?.invalidate();
 			return;
 		}
-		retryCellularHosts();
 		bootId ??= (
 			await readFile("/proc/sys/kernel/random/boot_id", "ascii")
 		).trim();
@@ -356,7 +360,7 @@ export async function runCellularRuntime(): Promise<void> {
 }
 export function invalidateCellularRuntime(iface?: string): void {
 	runtime?.invalidate(iface);
-	if (iface && !isRecoveryPending()) retryCellularHosts(iface);
+	if (iface && !isRecoveryPending()) void retryCellularHosts(iface);
 }
 
 /** Synchronous boot admission only; no hardware commands, storage or probes. */
@@ -375,6 +379,7 @@ export function initCellularRuntimeAdmission(): void {
 		// Ethernet/Wi-Fi do not belong to cellular journal admission.
 		return (
 			!identity ||
+			!examinedNonUsbNetDevice(iface) ||
 			getModemIds().some((id) => getModem(id)?.ifname === iface) ||
 			getModemNetMarker(iface) !== undefined
 		);

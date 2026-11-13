@@ -186,7 +186,9 @@ export type StreamSessionOrchestratorDeps = {
 	 * pending strand every later test's admission. It is wired at the production
 	 * singleton and proven through the real `streaming.start` procedure instead.
 	 */
-	readonly admitLifecycle?: () => LifecycleAdmission;
+	readonly admitLifecycle?: () =>
+		| LifecycleAdmission
+		| Promise<LifecycleAdmission>;
 	/**
 	 * The modem-mutation replay barrier, wired at the production singleton for
 	 * the same process-wide-state reason as `admitLifecycle`.
@@ -286,6 +288,7 @@ export function createStreamSessionOrchestrator(
 		| undefined;
 	let engineQueuedStop: QueuedStop | undefined;
 	let stopFlight: Promise<StopResult> | undefined;
+	let lifecycleAdmissionPending = false;
 	const stopDeadlineMs = deps.stopDeadlineMs ?? STOP_DEADLINE_MS;
 	const reconfigureDeadlineMs =
 		deps.reconfigureDeadlineMs ?? RECONFIGURE_DEADLINE_MS;
@@ -399,6 +402,7 @@ export function createStreamSessionOrchestrator(
 
 		if (!currentIntent()) return { result: "cancelled", attemptId };
 		if (
+			lifecycleAdmissionPending ||
 			ownership.state !== "idle" ||
 			ownership.streamLiveness() !== "idle" ||
 			cleanup.pending ||
@@ -417,7 +421,16 @@ export function createStreamSessionOrchestrator(
 		if (admitLifecycle === undefined)
 			return await admittedStart(attemptId, request, currentIntent);
 
-		const admission = admitLifecycle();
+		const pendingAdmission = admitLifecycle();
+		let admission: LifecycleAdmission;
+		if (pendingAdmission instanceof Promise) {
+			lifecycleAdmissionPending = true;
+			try {
+				admission = await pendingAdmission;
+			} finally {
+				lifecycleAdmissionPending = false;
+			}
+		} else admission = pendingAdmission;
 		if (!admission.admitted) {
 			// `start_invalid` renders as "check your settings", which is wrong
 			// advice for a modem that is re-enumerating — nothing is misconfigured.
@@ -435,6 +448,10 @@ export function createStreamSessionOrchestrator(
 					admission.refusal,
 				),
 			};
+		}
+		if (!currentIntent()) {
+			admission.lease.release();
+			return { result: "cancelled", attemptId };
 		}
 		return await releasingLease(admission.lease, () =>
 			admittedStart(attemptId, request, currentIntent),

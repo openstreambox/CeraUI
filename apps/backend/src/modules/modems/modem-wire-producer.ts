@@ -504,7 +504,8 @@ function readProvisionalSources(
 export function buildProjectedModemsMessage(
 	fullState: Record<number, true> | undefined = undefined,
 ): WireModemsMessage {
-	const result = projectModemWire(collectSources(), {
+	const sources = collectSources();
+	const result = projectModemWire(sources, {
 		hasGsmAutoconfig: resolveGsmAutoconfigSupport(),
 		networkScanFor: (runtimeId) => getModem(runtimeId)?.network_scan,
 		previousSyntheticIds: retainedSyntheticIds,
@@ -524,14 +525,20 @@ export function buildProjectedModemsMessage(
 		lockFor: projectModemLock,
 		...(fullState !== undefined ? { fullState } : {}),
 	});
+	for (const id of recoveryShown)
+		if (!(id in result.message)) recoveryShown.delete(id);
 	for (const [id, entry] of Object.entries(result.message)) {
 		const iface = entry.ifname ?? getModem(Number(id))?.ifname;
 		const reason = iface ? cellularRecoveryStatus(iface) : undefined;
+		const original =
+			entry.availability_reason ??
+			sources.find((source) => source.runtimeId === Number(id))?.additive
+				?.availability_reason;
 		if (reason) {
-			entry.availability_reason = `Cellular host quarantined: ${reason}; retry pending`;
+			entry.availability_reason = original || "host_recovery_pending";
 			recoveryShown.add(id);
 		} else if (recoveryShown.has(id)) {
-			entry.availability_reason ??= "";
+			entry.availability_reason = original ?? "";
 		}
 	}
 	retainedSyntheticIds = result.syntheticIds;
@@ -624,6 +631,7 @@ function projectUsagePolicy(
 
 /** Drop the caches, the retained allocation, and both injected readers. */
 export function resetModemWireProducer(): void {
+	recoveryShown.clear();
 	idPaths = new Map();
 	retainedSyntheticIds = new Map();
 	routerCellularIfnames.clear();

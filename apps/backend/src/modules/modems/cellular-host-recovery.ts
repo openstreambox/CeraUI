@@ -22,7 +22,7 @@ import {
 } from "../network/cellular-source-state.ts";
 import {
 	type LifecycleLease,
-	tryAcquireLifecycle,
+	tryAcquireCellularRecovery,
 } from "../streaming/lifecycle-admission.ts";
 import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import {
@@ -38,6 +38,12 @@ export function cellularHostStore(): PrivateStateStore {
 		change: withMutationJournalChange,
 		readFault: noteMutationJournalReadFault,
 	};
+}
+function scopedRecoveryStore(store: PrivateStateStore): PrivateStateStore {
+	// Runtime read failures keep the established per-slot fence; startup and
+	// verification wrappers own global authority-fault publication.
+	const { readFault: _readFault, ...scoped } = store;
+	return scoped;
 }
 const isolated = new Map<number, CellularHostAuthority>();
 export function cellularRecoveryReservedSlots(): readonly number[] {
@@ -92,15 +98,16 @@ export function cellularRecoveryStatus(iface: string): string | undefined {
 		.map((owner) => owner.status(iface))
 		.find(Boolean)?.reason;
 }
-export function retryCellularHosts(
+export async function retryCellularHosts(
 	iface?: string,
 	presenceChanged = false,
-): void {
+): Promise<void> {
 	if (isRecoveryPending()) return;
-	for (const owner of recoveries.values()) {
-		if (iface || presenceChanged) owner.changed(iface);
-		void owner.retry().catch(() => noteMutationJournalReadFault());
+	if (iface || presenceChanged) {
+		for (const owner of recoveries.values()) owner.changed(iface);
+		return;
 	}
+	await Promise.all([...recoveries.values()].map((owner) => owner.retry()));
 }
 type Retained = { readonly cleanup: () => Promise<boolean> };
 export interface CellularHostRecoveryDeps {
@@ -121,7 +128,7 @@ export class CellularHostRecovery {
 	private readonly retained = new Map<number, Retained>();
 	private readonly retries = new Map<
 		number,
-		{ reason: string; delay: number; due: number }
+		{ reason: string; delay: number; due: number; last: number; wake: number }
 	>();
 	private readonly busy = new Set<number>();
 	constructor(private readonly deps: CellularHostRecoveryDeps) {}
@@ -137,7 +144,13 @@ export class CellularHostRecovery {
 	changed(iface?: string): void {
 		for (const row of isolated.values()) {
 			const retry = this.retries.get(row.slot);
-			if (retry && (!iface || authorityIface(row) === iface)) retry.due = 0;
+			if (retry && (!iface || authorityIface(row) === iface)) {
+				retry.wake++;
+				retry.due = Math.min(
+					retry.due,
+					Math.max(this.now(), retry.last + 1000),
+				);
+			}
 		}
 	}
 	async retry(): Promise<void> {
@@ -145,22 +158,82 @@ export class CellularHostRecovery {
 			[...this.retries].map(async ([slot, retry]) => {
 				if (this.busy.has(slot) || retry.due > this.now()) return;
 				this.busy.add(slot);
+				const wake = retry.wake;
+				let attempted = false;
+				retry.last = this.now();
 				try {
-					const rows = await inventoryCellularHosts(this.deps.store);
+					// Runtime I/O faults retain the existing scoped fence. Startup and
+					// verify still report unreadable global authority through their owner.
+					const rows = await inventoryCellularHosts(
+						scopedRecoveryStore(this.deps.store),
+					);
 					const row = rows.find((row) => row.slot === slot);
-					if (row && JSON.stringify(row) !== JSON.stringify(isolated.get(slot)))
+					if (
+						row &&
+						JSON.stringify(row) !== JSON.stringify(isolated.get(slot))
+					) {
+						noteMutationJournalReadFault();
 						throw new Error("Quarantined cellular authority changed");
+					}
+					attempted = true;
 					await this.replay(slot);
+				} catch (error) {
+					if (attempted) {
+						try {
+							const latest = (
+								await inventoryCellularHosts(
+									scopedRecoveryStore(this.deps.store),
+								)
+							).find((row) => row.slot === slot);
+							const before = isolated.get(slot);
+							const plan = (row: CellularHostAuthority) =>
+								row.kind === "clat" ? row.birth.plan : row.inverse.plan;
+							if (latest && before) {
+								if (
+									latest.kind !== before.kind ||
+									JSON.stringify(plan(latest)) !== JSON.stringify(plan(before))
+								)
+									noteMutationJournalReadFault();
+								else isolated.set(slot, latest);
+							}
+						} catch {
+							/* Unreadable I/O retains this slot's existing fence. */
+						}
+					}
+					logger.warn(
+						"Cellular recovery retry failed; path remains quarantined",
+						{ module: "modems", slot, error },
+					);
+					this.defer(slot, retry.last);
 				} finally {
+					const next = this.retries.get(slot);
+					if (next && retry.wake !== wake)
+						next.due = Math.min(next.due, retry.last + 1000);
 					this.busy.delete(slot);
 				}
 			}),
 		);
 	}
+	private defer(slot: number, last = this.now()): void {
+		const before = this.retries.get(slot);
+		const delay = Math.min((before?.delay ?? 500) * 2, 60_000);
+		this.retries.set(slot, {
+			reason: "withdrawal-incomplete",
+			delay,
+			due: this.now() + delay,
+			last,
+			wake: before?.wake ?? 0,
+		});
+	}
+
 	async replay(onlySlot?: number): Promise<void> {
-		const rows = (await inventoryCellularHosts(this.deps.store)).filter(
-			(row) => onlySlot === undefined || row.slot === onlySlot,
-		);
+		const rows = (
+			await inventoryCellularHosts(
+				onlySlot === undefined
+					? this.deps.store
+					: scopedRecoveryStore(this.deps.store),
+			)
+		).filter((row) => onlySlot === undefined || row.slot === onlySlot);
 		for (const [slot, owner] of this.retained) {
 			if (onlySlot !== undefined && slot !== onlySlot) continue;
 			if (rows.some((row) => row.slot === slot)) continue;
@@ -192,13 +265,18 @@ export class CellularHostRecovery {
 				this.retries.delete(row.slot);
 				if (isolated.delete(row.slot)) refreshCellularSourceExclusion();
 				if (onlySlot !== undefined) return;
-			} catch {
+			} catch (error) {
+				if (onlySlot !== undefined) throw error;
 				incomplete = true;
 			}
 		}
-		const remaining = (await inventoryCellularHosts(this.deps.store)).filter(
-			(row) => onlySlot === undefined || row.slot === onlySlot,
-		);
+		const remaining = (
+			await inventoryCellularHosts(
+				onlySlot === undefined
+					? this.deps.store
+					: scopedRecoveryStore(this.deps.store),
+			)
+		).filter((row) => onlySlot === undefined || row.slot === onlySlot);
 		if (remaining.length && this.deps.isolate) {
 			for (const row of remaining) {
 				const observed = rows.find((before) => before.slot === row.slot);
@@ -217,15 +295,8 @@ export class CellularHostRecovery {
 					!(await this.deps.isolate(row))
 				)
 					throw new Error("Cellular recovery cannot establish path isolation");
-				const delay = Math.min(
-					(this.retries.get(row.slot)?.delay ?? 500) * 2,
-					60_000,
-				);
-				this.retries.set(row.slot, {
-					reason: "withdrawal-incomplete",
-					delay,
-					due: this.now() + delay,
-				});
+				this.defer(row.slot, this.retries.get(row.slot)?.last);
+				const delay = this.retries.get(row.slot)?.delay;
 				logger.warn("Cellular host quarantined; withdrawal will retry", {
 					module: "modems",
 					iface: authorityIface(row),
@@ -261,6 +332,7 @@ export async function retainCellularHostInverse(
 	if (!isRecoveryPending())
 		throw new Error("Cellular recovery barrier unavailable");
 	let cleanupLease: LifecycleLease | undefined;
+	let startupAttempt = true;
 	const input =
 			authority.kind === "bootstrap"
 				? {
@@ -287,21 +359,23 @@ export async function retainCellularHostInverse(
 			cancelProbe: () => {
 				/* Startup replay precedes managed probe admission. */
 			},
-			consumersReleased:
-				consumersReleased ??
-				(async (): Promise<boolean> => {
-					if (isRecoveryPending()) return cellularConsumersAbsent();
-					if (!cleanupLease) {
-						const admission = tryAcquireLifecycle("modem-transition");
-						if (!admission.admitted) return false;
-						cleanupLease = admission.lease;
-					}
-					return cellularConsumersAbsentWhile(
-						() => !!cleanupLease && deps.owned(),
-					);
-				}),
+			consumersReleased: async (): Promise<boolean> => {
+				if (startupAttempt)
+					return consumersReleased
+						? consumersReleased()
+						: cellularConsumersAbsent();
+				if (!cleanupLease) {
+					const admission = tryAcquireCellularRecovery();
+					if (!admission.admitted) return false;
+					cleanupLease = admission.lease;
+				}
+				return consumersReleased
+					? consumersReleased()
+					: cellularConsumersAbsentWhile(() => !!cleanupLease && deps.owned());
+			},
 		};
 	const attempt = async (cleanup: () => Promise<boolean>) => {
+		startupAttempt = isRecoveryPending();
 		try {
 			return await cleanup();
 		} finally {
@@ -345,7 +419,7 @@ export async function retainCellularHostInverse(
 }
 const recoveries = new Map<string, CellularHostRecovery>();
 function recovery() {
-	const store = cellularHostStore();
+	const store = scopedRecoveryStore(cellularHostStore());
 	let owner = recoveries.get(store.dir);
 	if (!owner) {
 		owner = new CellularHostRecovery({

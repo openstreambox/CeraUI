@@ -163,7 +163,7 @@ function findModemIdByIfname(ifname: string): ModemId | undefined {
 
 /** A `modem-added` event: register (or refresh if already known) then publish. */
 async function handleModemAdded(id: ModemId): Promise<void> {
-	invalidateCellularRuntime(getModem(id)?.ifname);
+	if (getModem(id)?.ifname) invalidateCellularRuntime(getModem(id)?.ifname);
 	await withModemUpdateLock(async () => {
 		if (getModem(id)) {
 			// Already present (e.g. discovered at startup) — refresh, don't re-register.
@@ -172,8 +172,8 @@ async function handleModemAdded(id: ModemId): Promise<void> {
 			await registerModemSafe(id);
 		}
 		await refreshModemIdPaths();
-		invalidateCellularRuntime(getModem(id)?.ifname);
-		retryCellularHosts(undefined, true);
+		if (getModem(id)?.ifname) invalidateCellularRuntime(getModem(id)?.ifname);
+		await retryCellularHosts(undefined, true);
 		// Publish: a freshly registered modem reconciles as `added`, which the
 		// onModemsChange handler turns into a gsm reset + full broadcast.
 		publishModemsSnapshot();
@@ -182,7 +182,7 @@ async function handleModemAdded(id: ModemId): Promise<void> {
 
 /** A `modem-removed` event: drop the modem and publish the cleaned-up state. */
 async function handleModemRemoved(id: ModemId): Promise<void> {
-	invalidateCellularRuntime(getModem(id)?.ifname);
+	if (getModem(id)?.ifname) invalidateCellularRuntime(getModem(id)?.ifname);
 	await withModemUpdateLock(async () => {
 		if (!getModem(id)) {
 			return;
@@ -282,7 +282,7 @@ async function reconcileModemPresenceLocked(
 	for (const id of getModemIds()) {
 		if (!present.has(id)) {
 			logger.warn(`Modem ${id} removed`);
-			invalidateCellularRuntime(getModem(id)?.ifname);
+			if (getModem(id)?.ifname) invalidateCellularRuntime(getModem(id)?.ifname);
 			forgetModemReadyActivation(id);
 			removeModem(id);
 			presenceChanged = true;
@@ -307,6 +307,7 @@ async function reconcileModemPresenceLocked(
 		await presenceDeps.refreshIdPaths();
 	}
 
+	if (presenceChanged) await retryCellularHosts(undefined, true);
 	noteAuthoritativeModemCycle();
 	publishModemsSnapshot();
 }
@@ -360,6 +361,9 @@ export async function runModemStatusPoll(): Promise<void> {
 		for (const id of configured) triggerGsmConnectionsReset(id);
 		broadcastModems(Object.fromEntries(configured.map((id) => [id, true])));
 	}
+	// All helpers from this poll have settled. Recovery remains detached so a
+	// stuck slot cannot prevent the next poll from discovering healthy modems.
+	void retryCellularHosts();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

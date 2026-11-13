@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, spyOn, test } from "bun:test";
 import { deriveModemStableKey } from "@ceraui/rpc/schemas";
 import { initCellularRuntimeAdmission } from "../modules/modems/cellular-runtime-host.ts";
 import { removeModem, setModem } from "../modules/modems/modems-state.ts";
@@ -9,6 +9,7 @@ import {
 	cellularSourceReady,
 	resetCellularSourcesForTest,
 } from "../modules/network/cellular-source-state.ts";
+import * as nonUsb from "../modules/network/non-usb-net-evidence.ts";
 import { setBondIdentityResolverForTest } from "../modules/streaming/bond-entry.ts";
 import {
 	resetLifecycleInterlock,
@@ -20,6 +21,11 @@ import { resetRecoveryBarrier } from "../modules/streaming/recovery-barrier.ts";
 import { publishedBondNeedsRequiredBinding } from "../modules/streaming/srtla.ts";
 import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
 import { streamSessionProductionDeps } from "../modules/streaming/stream-session-production.ts";
+
+const ordinary = spyOn(nonUsb, "examinedNonUsbNetDevice").mockImplementation(
+	(iface) => ["eth0", "wlan0"].includes(iface),
+);
+afterAll(() => ordinary.mockRestore());
 
 afterEach(() => {
 	removeModem(999);
@@ -167,4 +173,17 @@ test("a failed modem block also leaves ordinary non-USB links usable", () => {
 	expect(cellularSourceReady("eth0", "192.0.2.10")).toBe(true);
 	expect(cellularSourceReady("wlan0", "192.0.2.11")).toBe(true);
 	expect(cellularSourceReady("wwanBad", "192.0.2.12")).toBe(false);
+});
+
+test("an unexamined re-enumerating USB interface is excluded despite missing cached identity", () => {
+	setBondIdentityResolverForTest((ifname) => resolvePhysicalDevice({ ifname }));
+	initCellularRuntimeAdmission();
+	setMutationBlocks([
+		{
+			stableKey: deriveModemStableKey("blocked"),
+			refusal: "mutation_blocked",
+			blocksStreaming: false,
+		},
+	]);
+	expect(cellularSourceReady("unexamined0", "192.0.2.20")).toBe(false);
 });

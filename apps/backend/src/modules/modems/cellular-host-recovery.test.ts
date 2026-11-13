@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,11 @@ import {
 	writePrivateJson,
 } from "../../helpers/private-json-state.ts";
 import { acquirePrivateStateLease } from "../../helpers/private-state-lease.ts";
+import * as hostInventory from "../network/cellular-host-inventory.ts";
+import {
+	CellularNativeHost,
+	type CellularNativeHostDeps,
+} from "../network/cellular-native-host.ts";
 import {
 	cellularNativeHostSteps,
 	cellularUplinkSlotKey,
@@ -17,11 +22,21 @@ import {
 	resetCellularSourcesForTest,
 } from "../network/cellular-source-state.ts";
 import {
+	isLifecycleHeld,
+	resetLifecycleInterlock,
+} from "../streaming/lifecycle-admission.ts";
+import {
+	beginRecoveryBarrier,
+	isRecoveryPending,
+	resetRecoveryBarrier,
+} from "../streaming/recovery-barrier.ts";
+import {
 	CellularHostRecovery,
 	cellularHostStore,
 	cellularRecoveryExcludes,
 	cellularRecoveryReservedSlots,
 	isolateCellularHostAuthority,
+	retainCellularHostInverse,
 } from "./cellular-host-recovery.ts";
 import { initCellularRuntimeAdmission } from "./cellular-runtime-host.ts";
 import {
@@ -286,6 +301,7 @@ test("isolated transient cleanup is visible and retried after the barrier lowers
 		expect(cellularSourceReady("wwanOther", "192.0.2.2")).toBe(true);
 		clean = true;
 		owner.changed("wwan0");
+		now += 1000;
 		await owner.retry();
 		expect(attempts).toBe(10);
 		expect(owner.status("wwan0")).toBeUndefined();
@@ -367,6 +383,184 @@ test("one stalled retry cannot hold another slot and runtime retry never adopts 
 		).toBeDefined();
 	} finally {
 		release();
+		resetCellularSourcesForTest();
+		await f.close();
+	}
+});
+
+test("event storms respect the retry floor and a wake during cleanup survives", async () => {
+	const f = await fixture();
+	let now = 0,
+		calls = 0,
+		clean = false;
+	let wake: (() => void) | undefined;
+	initCellularRuntimeAdmission();
+	const owner = new CellularHostRecovery({
+		store: f.store,
+		bootId: async () => bootId,
+		now: () => now,
+		isolate: isolateCellularHostAuthority,
+		retain: async () => ({
+			cleanup: async () => {
+				calls++;
+				wake?.();
+				if (clean) {
+					await writePrivateJson(f.store, f.key, undefined);
+					return true;
+				}
+				return false;
+			},
+		}),
+	});
+	try {
+		await owner.replay();
+		for (let i = 0; i < 10; i++) {
+			owner.changed("wwan0");
+			await owner.retry();
+		}
+		expect(calls).toBe(1);
+		now = 1000;
+		await owner.retry();
+		expect(calls).toBe(2);
+		wake = () => owner.changed("wwan0");
+		now = 2000;
+		owner.changed("wwan0");
+		await owner.retry();
+		wake = undefined;
+		now = 3000;
+		await owner.retry();
+		expect(calls).toBe(4);
+	} finally {
+		clean = true;
+		await owner.replay();
+		resetCellularSourcesForTest();
+		await f.close();
+	}
+});
+
+test("real retained recovery owns cleanup across the barrier and releases runtime interlocks on false and throw", async () => {
+	const f = await fixture();
+	let now = 0;
+	let outcome: "false" | "throw" | "true" = "false";
+	let runtimeChecks = 0;
+	// Kernel I/O is replaced here; the actual retain function, slot lease,
+	// owned predicate, census callback, attempt wrapper and recovery class run.
+	const kernel = spyOn(
+		CellularNativeHost.prototype,
+		"cleanup",
+	).mockImplementation(async function (this: CellularNativeHost) {
+		const deps = Reflect.get(this, "deps") as CellularNativeHostDeps;
+		if (!deps.owned() || !(await deps.consumersReleased())) return false;
+		await writePrivateJson(f.store, f.key, undefined);
+		return true;
+	});
+	resetRecoveryBarrier();
+	resetLifecycleInterlock();
+	beginRecoveryBarrier();
+	initCellularRuntimeAdmission();
+	const owner = new CellularHostRecovery({
+		store: f.store,
+		now: () => now,
+		bootId: async () => bootId,
+		isolate: isolateCellularHostAuthority,
+		retain: (row, boot) =>
+			retainCellularHostInverse(row, boot, f.store, async () => {
+				if (!isRecoveryPending()) {
+					runtimeChecks++;
+					expect(isLifecycleHeld()).toBe(true);
+				}
+				if (outcome === "throw") throw new Error("transient census failure");
+				return outcome === "true";
+			}),
+	});
+	try {
+		await owner.replay();
+		resetRecoveryBarrier();
+		now = 1000;
+		await owner.retry();
+		expect(isLifecycleHeld()).toBe(false);
+		outcome = "throw";
+		now = 3000;
+		await owner.retry();
+		expect(isLifecycleHeld()).toBe(false);
+		expect(isRecoveryPending()).toBe(false);
+		outcome = "true";
+		now = 7000;
+		await owner.retry();
+		expect(runtimeChecks).toBe(3);
+		expect(await readPrivateJson(f.store, f.key)).toBeUndefined();
+		expect(cellularRecoveryReservedSlots()).not.toContain(1);
+		expect(isLifecycleHeld()).toBe(false);
+	} finally {
+		outcome = "true";
+		resetRecoveryBarrier();
+		await owner.replay();
+		kernel.mockRestore();
+		resetLifecycleInterlock();
+		resetCellularSourcesForTest();
+		await f.close();
+	}
+});
+
+test("retry read faults stay scoped and back off, while changed authority raises recovery", async () => {
+	const f = await fixture();
+	let now = 0,
+		clean = false,
+		calls = 0;
+	resetRecoveryBarrier();
+	initCellularRuntimeAdmission();
+	const owner = new CellularHostRecovery({
+		store: f.store,
+		now: () => now,
+		bootId: async () => bootId,
+		isolate: isolateCellularHostAuthority,
+		retain: async () => ({
+			cleanup: async () => {
+				calls++;
+				if (!clean) throw new Error("transient cleanup I/O");
+				await writePrivateJson(f.store, f.key, undefined);
+				return true;
+			},
+		}),
+	});
+	try {
+		await owner.replay();
+		const io = spyOn(
+			hostInventory,
+			"inventoryCellularHosts",
+		).mockRejectedValueOnce(new Error("transient inventory read"));
+		try {
+			now = 1000;
+			await owner.retry();
+		} finally {
+			io.mockRestore();
+		}
+		expect(isRecoveryPending()).toBe(false);
+		expect(calls).toBe(1);
+		now = 3000;
+		await owner.retry();
+		expect(isRecoveryPending()).toBe(false);
+		expect(calls).toBe(2);
+		await owner.retry();
+		expect(calls).toBe(2);
+		const raw = (await readPrivateJson(f.store, f.key)) as Record<
+			string,
+			unknown
+		>;
+		await writePrivateJson(f.store, f.key, {
+			...raw,
+			plan: { ...f.plan, input: { ...f.plan.input, epoch: "changed" } },
+			epoch: "changed",
+		});
+		now = 7000;
+		await owner.retry();
+		expect(isRecoveryPending()).toBe(true);
+		expect(calls).toBe(2);
+		await writePrivateJson(f.store, f.key, raw);
+	} finally {
+		clean = true;
+		resetRecoveryBarrier();
+		await owner.replay();
 		resetCellularSourcesForTest();
 		await f.close();
 	}

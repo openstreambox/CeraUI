@@ -768,10 +768,16 @@ lost authority, or directory-acknowledgement tail still holds recovery globally.
 The existing recovery owner makes the initial inverse attempt; quarantine does
 not introduce a retry timer. The existing modem poll retries only retained isolated
 slots with 1–60 second capped backoff; presence and interface changes make them
-due immediately. Cleanup after the boot barrier takes the lifecycle interlock
+due no earlier than one second after the preceding attempt; a wake during an
+attempt is preserved. Dispatch follows production presence/runtime helper work.
+Cleanup after the boot barrier takes the lifecycle interlock
 and positive consumer census; active streams are never stopped for cleanup.
 Runtime verification remains read-only. Quarantine is logged with a reason and
-reported in each modem availability surface. Ordinary modem
+reported with a translated availability token without replacing an existing
+reason. Stream admission waits up to ten seconds for a recovery-held lease;
+ordinary mutation refusal semantics stay unchanged. Retry I/O failures log and
+back off within the existing scoped exclusion; observed authority replacement
+still raises the global barrier. Ordinary modem
 rollback is deferred while a host remains isolated. Isolation does not certify
 that modem healthy or restore its readiness; it admits only independent paths.
 Installed two-link traffic and restart/failure acceptance remain open. Adoption

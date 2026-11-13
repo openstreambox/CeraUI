@@ -943,6 +943,7 @@
 	"network.cellular.initializingBody": "Der Modemdienst startet noch. Modems und ihre Einstellungen erscheinen hier, sobald er bereit ist.",
 	"network.cellular.initializingTitle": "Mobilfunk startet gerade",
 	"network.cellular.reason.initializing": "Modem erkannt – warte darauf, dass der Modemdienst es beschreibt.",
+	"network.cellular.reason.hostRecoveryPending": "Der Modem-Datenpfad ist isoliert, weil die Bereinigung unvollständig ist. Die Wiederherstellung wird erneut versucht.",
 	"network.cellular.reason.undriveable": "Dieses Gerät ist weiterhin angeschlossen, kann aber von keinem Modemdienst gesteuert werden.",
 	"network.cellular.reason.routerControlsUnverified": "Dieser Stick hat nie bestätigt, dass eine Einstellungsänderung tatsächlich greift, deshalb wird hier nichts angeboten. Nutzen Sie stattdessen dessen eigene Weboberfläche.",
 	"network.cellular.reason.routerManaged": "Der Stick verwaltet diese Verbindung selbst. Seine Netzwerkeinstellungen liegen in dessen eigener Weboberfläche, nicht hier.",

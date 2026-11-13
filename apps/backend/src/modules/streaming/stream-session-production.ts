@@ -10,8 +10,8 @@ import {
 } from "./config-change-bridge.ts";
 import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
 import {
+	acquireStreamingLifecycle,
 	streamingBlockingMutation,
-	tryAcquireLifecycle,
 } from "./lifecycle-admission.ts";
 import {
 	clearOtaStreamingMarker,
@@ -78,7 +78,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 				logger.warn("stream restoration arming failed", { error }),
 			);
 	},
-	admitLifecycle: () => tryAcquireLifecycle("streaming"),
+	admitLifecycle: acquireStreamingLifecycle,
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,
 	blockingMutation: () =>
