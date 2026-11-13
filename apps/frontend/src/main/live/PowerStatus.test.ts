@@ -1,3 +1,4 @@
+import { setLocale } from "@ceraui/i18n/svelte";
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/svelte";
 import { afterEach, expect, test, vi } from "vitest";
@@ -5,6 +6,7 @@ import PowerStatus from "./PowerStatus.svelte";
 
 afterEach(() => {
 	cleanup();
+	setLocale("en");
 	vi.useRealTimers();
 });
 test("phone and moderator can read the power warning without changing the live verdict", () => {
@@ -67,6 +69,59 @@ test("fresh deliveries of an unchanged condition keep the status current", async
 	await vi.advanceTimersByTimeAsync(4000);
 	await rerender({
 		sensors: { Power: "The box remains powered.", "Power sample": "2" },
+		connected: true,
+	});
+	await vi.advanceTimersByTimeAsync(4000);
+	expect(screen.getByRole("status").textContent).toContain(
+		"box remains powered",
+	);
+});
+
+test("unrelated sensor deliveries cannot refresh an unchanged power sample", async () => {
+	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+	const { rerender } = render(PowerStatus, {
+		sensors: { Power: "The box remains powered.", "Power sample": "1" },
+		connected: true,
+	});
+	await vi.advanceTimersByTimeAsync(4000);
+	await rerender({
+		sensors: {
+			Power: "The box remains powered.",
+			"Power sample": "1",
+			"SoC temperature": "46 °C",
+		},
+		connected: true,
+	});
+	await vi.advanceTimersByTimeAsync(1000);
+	expect(screen.getByRole("status").textContent).toContain(
+		"Power data not available",
+	);
+});
+
+test("Spanish readers get localized power and temperature copy", () => {
+	setLocale("es");
+	render(PowerStatus, {
+		sensors: {
+			Power: "Bank A is hot and resting. Bank B powers the box.",
+			"Reserve pack": "30.0 °C (estimate)",
+		},
+		connected: true,
+	});
+	expect(screen.getByRole("status").textContent).toBe(
+		"El banco A está caliente y en reposo. El banco B alimenta el equipo.",
+	);
+	expect(screen.getByText("Reserva: 30.0 °C (estimación)")).toBeTruthy();
+});
+
+test("remote power-only deliveries keep unchanged conditions fresh without a local sample marker", async () => {
+	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+	const { rerender } = render(PowerStatus, {
+		sensors: { Power: "The box remains powered." },
+		connected: true,
+	});
+	await vi.advanceTimersByTimeAsync(4000);
+	await rerender({
+		sensors: { Power: "The box remains powered." },
 		connected: true,
 	});
 	await vi.advanceTimersByTimeAsync(4000);

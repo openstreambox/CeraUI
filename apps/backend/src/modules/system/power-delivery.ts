@@ -14,10 +14,15 @@ export function deliverPowerSensors(
 	sensors: Record<string, string>,
 	deps: PowerDeliveryDeps,
 ) {
+	const power = Object.fromEntries(
+		["Power", "Bank A", "Bank B", "Reserve pack"]
+			.filter((key) => Object.hasOwn(sensors, key))
+			.map((key) => [key, sensors[key]]),
+	);
 	const legacy = deps.legacy();
 	if (legacy?.authenticated) {
 		try {
-			legacy.send(JSON.stringify({ sensors }));
+			legacy.send(JSON.stringify({ sensors: power }));
 		} catch {
 			/* Reconnect gets a fresh snapshot. */
 		}
@@ -30,7 +35,7 @@ export function deliverPowerSensors(
 				type: "sensors",
 				cid: crypto.randomUUID(),
 				seq: nextRelaySeq("sensors"),
-				payload: sensors,
+				payload: power,
 			});
 		} catch {
 			/* A remote failure must not interrupt local monitoring. */

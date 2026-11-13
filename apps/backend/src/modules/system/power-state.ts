@@ -1,5 +1,6 @@
+import { type PowerCopyKey, powerText } from "@ceraui/i18n/formatters";
 import { z } from "zod";
-import { getms } from "../../helpers/time.ts";
+import { monotonicMs } from "../../helpers/monotonic-clock.ts";
 
 export const POWER_STATE_PATH = "/run/ceralive/power/supervisor.json";
 const temperature = z.object({
@@ -8,7 +9,17 @@ const temperature = z.object({
 });
 const snapshot = z.object({
 	schema_version: z.literal(1),
-	link: z.enum(["ok", "absent", "silent", "bootloader", "unknown_version"]),
+	link: z.enum([
+		"ok",
+		"absent",
+		"silent",
+		"bootloader",
+		"unknown_version",
+		"error",
+	]),
+	open_error: z.number().int().nonnegative().optional(),
+	persist_error: z.boolean().optional(),
+	restarts: z.number().int().nonnegative().optional(),
 	stale: z.boolean(),
 	expected: z.boolean(),
 	ambiguous: z.boolean(),
@@ -28,10 +39,10 @@ export interface PowerState {
 	notices: PowerNotice[];
 	boot?: string;
 }
-export function unavailablePower(): PowerState {
+export function unavailablePower(visible = true): PowerState {
 	return {
 		available: false,
-		summary: "Power data not available",
+		summary: visible ? powerText("unavailable") : "",
 		sensors: {},
 		notices: [],
 	};
@@ -40,14 +51,30 @@ export function unavailablePower(): PowerState {
 /** Read a published snapshot only. Events never establish current power state. */
 export async function readPowerState(
 	path = POWER_STATE_PATH,
-	now = getms(),
+	now?: number,
 ): Promise<PowerState> {
 	try {
 		const file = Bun.file(path);
+		if (!(await file.exists())) return unavailablePower(false);
 		if (file.size > 65536) return unavailablePower();
 		const parsed = snapshot.safeParse(JSON.parse(await file.text()));
 		if (!parsed.success) return unavailablePower();
 		const s = parsed.data;
+		now ??= monotonicMs();
+		if (s.link === "absent" && !s.expected && !s.ambiguous)
+			return unavailablePower(false);
+		if (s.link === "error")
+			return {
+				...unavailablePower(),
+				summary: powerText(
+					s.open_error === 13
+						? "permission"
+						: s.open_error === 16
+							? "busy"
+							: "openError",
+					{ errno: String(s.open_error ?? 0) },
+				),
+			};
 		if (
 			s.link !== "ok" ||
 			s.stale ||
@@ -61,99 +88,144 @@ export async function readPowerState(
 		const notices: PowerNotice[] = [];
 		const add = (
 			id: string,
-			message: string,
+			key: PowerCopyKey,
 			type: PowerNotice["type"] = "warning",
-		) => notices.push({ id, message, type });
-		// These are power-feed claims, never claims about delivery to viewers.
-		const feed = f.sbc === "run" ? " The box remains powered." : "";
-		if (f.power === "low")
-			add("supply", `Power is weak. Check the banks.${feed}`);
-		if (f.power === "holdup")
-			add("supply", "Power lost. Running on reserve for a few seconds.");
-		if (f.redundant === "0" && f.power !== "holdup")
-			add(
-				"redundancy",
-				`Power has no confirmed backup bank. Check both banks.${feed}`,
-				"info",
-			);
-		const heat = {
-			warm: "The power board reports warmth. Give the box more airflow.",
-			hot: "The power board reports heat. Improve airflow; let the reserve cool before charging.",
-			critical:
-				"The power board reports high heat. Check the banks and reserve pack now.",
-			shutdown:
-				"The reserve pack is over its heat limit. The box is shutting down.",
-		};
-		const level = f.thermal;
-		const targets = f.hot?.split(",") ?? [];
+			params: Record<string, string> = {},
+			suffix = "",
+		) => notices.push({ id, message: powerText(key, params) + suffix, type });
+		const feed = f.sbc === "run" ? ` ${powerText("feed")}` : "";
+		const resting = (bank: string) =>
+			/^(stood_down|standing_down)(:|\/|$)/.test(f[bank] ?? "");
+		if (f.power === "low") add("supply", "low", "warning", {}, feed);
+		if (f.power === "holdup") add("supply", "reserve");
 		if (
-			targets.length &&
-			targets.every((target) => ["a", "b", "pack"].includes(target))
-		) {
-			const describe = (stage: "warm" | "hot" | "critical") =>
-				targets
-					.map((target) => {
-						if (target === "pack") {
-							if (stage === "critical")
-								return "Pack very hot. The box will switch off above 65 °C.";
-							return stage === "warm"
-								? "The reserve pack is warm. Give it more airflow."
-								: "The reserve pack is hot. Improve airflow. Let it cool before charging.";
-						}
-						return stage === "warm"
-							? `Bank ${target.toUpperCase()} is warm. Give it more airflow.`
-							: `Bank ${target.toUpperCase()} is ${stage === "critical" ? "very hot" : "hot"}. Improve airflow or swap it for a cool bank. Connect the replacement before removing the only bank.`;
-					})
-					.join(" ");
-			for (const stage of ["warm", "hot", "critical"] as const)
-				heat[stage] = describe(stage);
+			f.redundant === "0" &&
+			f.power !== "holdup" &&
+			!resting("a") &&
+			!resting("b")
+		)
+			add("redundancy", "redundancy", "info", {}, feed);
+		const level = f.thermal;
+		if (level === "shutdown") add("heat", "shutdownHeat");
+		else if (level === "warm" || level === "hot" || level === "critical") {
+			const targets = (f.hot ?? "").split(",");
+			const texts: string[] = [];
+			for (const target of targets) {
+				if (target === "pack")
+					texts.push(
+						powerText(
+							level === "warm"
+								? "packWarm"
+								: level === "hot"
+									? "packHot"
+									: "packCritical",
+						),
+					);
+				else if (
+					(target === "a" || target === "b") &&
+					!resting(target) &&
+					!f[target]?.startsWith("absent/")
+				) {
+					texts.push(
+						powerText(
+							level === "warm"
+								? "bankWarm"
+								: level === "hot"
+									? "bankHot"
+									: "bankCritical",
+							{ bank: target.toUpperCase() },
+						),
+					);
+					const peer = target === "a" ? "b" : "a";
+					if (level !== "warm" && !f[peer]?.startsWith("healthy/"))
+						texts.push(powerText("replacement"));
+				}
+			}
+			if (texts.length)
+				notices.push({
+					id: "heat",
+					message: texts.join(" ") + feed,
+					type: level === "warm" ? "info" : "warning",
+				});
+			else if (!targets.every((t) => t === "a" || t === "b" || t === "pack"))
+				add("heat", level, level === "warm" ? "info" : "warning", {}, feed);
 		}
-		if (level && Object.hasOwn(heat, level))
-			add(
-				"heat",
-				`${heat[level as keyof typeof heat]}${level === "shutdown" ? "" : feed}`,
-				level === "warm" ? "info" : "warning",
-			);
-		for (const bank of ["a", "b"] as const) {
-			const peer = bank === "a" ? "b" : "a";
-			const reason = f[bank]?.split("/")[0];
-			if (reason?.startsWith("stood_down:")) {
-				const supplying = f[peer]?.startsWith("healthy/")
-					? ` Bank ${peer.toUpperCase()} supplies power.`
-					: feed;
+		for (const bank of ["a", "b"] as const)
+			if (resting(bank)) {
+				const peer = bank === "a" ? "b" : "a";
+				const cause = f[bank]?.split("/")[0]?.split(":")[1];
 				add(
 					`bank-${bank}`,
-					`Bank ${bank.toUpperCase()} is ${reason === "stood_down:thermal" ? "hot" : "weak"} and resting.${supplying}`,
+					cause === "thermal"
+						? "restingHot"
+						: cause === "sag"
+							? "restingWeak"
+							: "resting",
+					"warning",
+					{ bank: bank.toUpperCase() },
+					f[peer]?.startsWith("healthy/")
+						? ` ${powerText("peer", { bank: peer.toUpperCase() })}`
+						: feed,
 				);
 			}
-		}
-		if (f.armed === "0")
-			add(
-				"bench",
-				"Power protection is in bench mode: it only reports.",
-				"info",
-			);
-		if (
-			[f.gaps, f.gaps2].some(
-				(v) =>
-					v !== undefined &&
-					(!/^[0-9a-fA-F]{4}$/.test(v) || Number.parseInt(v, 16) !== 0),
-			)
-		)
-			add(
-				"protection",
-				`The power board reports reduced protection. Check the power sensors.${feed}`,
-			);
-		if (f.pack_cal === "none")
-			add(
-				"calibration",
-				`The reserve pack has no heat protection: its sensor is not set up.${feed}`,
-			);
-		if (f.sbc?.startsWith("shutdown_requested:"))
-			add(
-				"shutdown",
-				"The power board has requested a box shutdown. Power remains on until the shutdown completes.",
-			);
+		if (f.armed === "0") add("bench", "bench", "info");
+		const keys: (PowerCopyKey | null)[] = [
+			null,
+			"calibration",
+			null,
+			"packProbe",
+			"aProbe",
+			"bProbe",
+			"blind",
+			"noAlive",
+			"shdn",
+			"nvs",
+			"wdt",
+			"skip",
+			"loop",
+			"blindStart",
+			"flaky",
+			"sink",
+			"unproven",
+			"jump",
+		];
+		const names = [
+			"unarmed",
+			"pack_uncal",
+			"pack_est",
+			"pack_probe",
+			"a_probe",
+			"b_probe",
+			"blind",
+			"no_alive",
+			"shdn",
+			"nvs",
+			"wdt",
+			"skip",
+			"loop",
+			"blind_start",
+			"pack_flaky",
+			"sink",
+			"supply_unproven",
+			"pack_jump",
+		];
+		const valid = [f.gaps, f.gaps2].every(
+			(v) => v === undefined || /^[0-9a-fA-F]{4}$/.test(v),
+		);
+		const mask = valid
+			? Number.parseInt(f.gaps ?? "0", 16) +
+				65536 * Number.parseInt(f.gaps2 ?? "0", 16)
+			: 0;
+		if (!valid || mask >= 2 ** 18)
+			add("protection", "protection", "warning", {}, feed);
+		keys.forEach((key, bit) => {
+			if (key && mask & (2 ** bit))
+				add(`gap-${names[bit]}`, key, "warning", {}, feed);
+		});
+		if (f.pack_cal === "none" && !(mask & 2))
+			add("calibration", "calibration", "warning", {}, feed);
+		if (s.persist_error) add("persistence", "persist", "info");
+		if (f.sbc?.startsWith("shutdown_requested:")) add("shutdown", "shutdown");
 		const sensors: Record<string, string> = {};
 		for (const [key, label] of [
 			["a", "Bank A"],
@@ -161,15 +233,20 @@ export async function readPowerState(
 			["pack", "Reserve pack"],
 		] as const) {
 			const t = s.temperatures[key];
+			const present =
+				key === "pack" ||
+				/^(present|healthy|sagging|standing_down|stood_down|recovering|fault)(:|\/)/.test(
+					f[key] ?? "",
+				);
 			sensors[label] =
-				t.quality === "reported" && t.celsius !== null
-					? `${t.celsius.toFixed(1)} °C${key === "pack" && f.pack_cal === "datasheet" ? " (estimate)" : ""}`
-					: "Temperature unavailable";
+				present && t.quality === "reported" && t.celsius !== null
+					? `${t.celsius.toFixed(1)} °C${key === "pack" && f.pack_cal === "datasheet" ? powerText("estimate") : ""}`
+					: powerText("temperature");
 		}
 		return {
 			available: true,
 			summary:
-				notices.map((n) => n.message).join(" ") || "Power data available",
+				notices.map((n) => n.message).join(" ") || powerText("available"),
 			sensors,
 			notices,
 			...(f.boot ? { boot: f.boot } : {}),

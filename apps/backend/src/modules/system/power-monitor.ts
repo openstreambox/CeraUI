@@ -10,9 +10,10 @@ import {
 	unavailablePower,
 } from "./power-state.ts";
 
-let current = unavailablePower();
+let current = unavailablePower(false);
 let sampledAt = 0;
 export function getPowerSensors(): Record<string, string> {
+	if (!current.summary) return {};
 	return {
 		Power: current.summary,
 		"Power sample": String(sampledAt),
@@ -29,6 +30,8 @@ const reconcile = createPowerReconciler(
 			true,
 			true,
 			true,
+			"notifications.power.status",
+			{ text: n.message },
 		),
 	(id) => notificationRemove(`power-${id}`),
 );
