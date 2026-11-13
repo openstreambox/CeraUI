@@ -26,7 +26,7 @@
  */
 
 import {
-	closeSync,
+	close as fsClose,
 	constants as fsConstants,
 	openSync,
 	readSync,
@@ -44,10 +44,10 @@ export interface TtyPort {
 	/** Discard input the kernel has buffered but nobody has read. */
 	flushInput(): void;
 	/** Restore the saved line settings, drop exclusivity, close. Idempotent. */
-	close(): void;
+	close(): Promise<void>;
 }
 
-export type TtyOpenFailure = "busy" | "failed" | "native-unavailable";
+export type TtyOpenFailure = "busy" | "failed" | "native-unavailable" | "stuck";
 
 export class TtyOpenError extends Error {
 	constructor(readonly failure: TtyOpenFailure) {
@@ -155,16 +155,14 @@ export async function openExclusiveRawTty(path: string): Promise<TtyPort> {
 	let exclusive = false;
 	let restore = false;
 	let open = true;
-	const close = () => {
-		if (!open) return;
+	let closing: Promise<void> | undefined;
+	const close = (): Promise<void> => {
+		if (closing) return closing;
 		open = false;
 		if (restore) c.tcsetattr(fd, TCSANOW, saved);
 		if (exclusive) c.ioctl(fd, TIOCNXCL);
-		try {
-			closeSync(fd);
-		} catch {
-			/* already gone with the device */
-		}
+		closing = new Promise<void>((resolve) => fsClose(fd, () => resolve()));
+		return closing;
 	};
 	try {
 		if (c.ioctl(fd, TIOCEXCL) !== 0) throw new TtyOpenError("failed");
@@ -191,7 +189,7 @@ export async function openExclusiveRawTty(path: string): Promise<TtyPort> {
 		)
 			throw new TtyOpenError("failed");
 	} catch (error) {
-		close();
+		if (!(await closeWithin(close()))) throw new TtyOpenError("stuck");
 		throw error instanceof TtyOpenError ? error : new TtyOpenError("failed");
 	}
 	const buffer = new Uint8Array(4096);
@@ -220,4 +218,25 @@ export async function openExclusiveRawTty(path: string): Promise<TtyPort> {
 		},
 		close,
 	};
+}
+
+/** Last-close drain runs on the fs pool; the event loop and queue stay bounded. */
+export async function closeWithin(
+	closing: Promise<void>,
+	ms = 500,
+): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			closing.then(
+				() => true,
+				() => false,
+			),
+			new Promise<boolean>((resolve) => {
+				timer = setTimeout(() => resolve(false), ms);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
 }

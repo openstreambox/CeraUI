@@ -59,6 +59,7 @@ import {
 	ReadOnlyAtSession,
 } from "./free-at-session.ts";
 import {
+	closeWithin,
 	openExclusiveRawTty,
 	TtyOpenError,
 	type TtyPort,
@@ -71,6 +72,8 @@ export const RM520_PRODUCT = "0801";
 export const RM520_FREE_AT_INTERFACE = "1.3";
 /** After an ownership refusal, look again this rarely (sysfs/udev/proc only). */
 export const FREE_AT_RECHECK_MS = 600_000;
+export const FREE_AT_TRANSIENT_RECHECK_MS = 30_000;
+export const FREE_AT_TIMEOUT_LIMIT = 3;
 export const FREE_AT_DEFAULT_TIMEOUT_MS = 2000;
 
 export const FREE_AT_UNAVAILABLE_REASONS = [
@@ -82,6 +85,8 @@ export const FREE_AT_UNAVAILABLE_REASONS = [
 	"device-changed",
 	"cannot-open",
 	"native-unavailable",
+	"port-stuck",
+	"repeated-timeouts",
 ] as const;
 export type FreeAtUnavailableReason =
 	(typeof FREE_AT_UNAVAILABLE_REASONS)[number];
@@ -262,7 +267,8 @@ export const defaultFreeAtPortDeps: FreeAtPortDeps = {
  * The read-only lease. One read at a time across all modems; each read opens,
  * checks, queries and closes, restoring the line settings. An ownership refusal
  * is remembered per modem for FREE_AT_RECHECK_MS, during which nothing is read
- * or opened for it; a failed query (timeout, ERROR) is not remembered.
+ * or opened for it. Transient refusals and three consecutive timeouts back off
+ * for 30 seconds. Close is bounded, with no reopening while it is pending.
  */
 export class FreeAtPorts {
 	private readonly deps: FreeAtPortDeps;
@@ -270,6 +276,8 @@ export class FreeAtPorts {
 		number,
 		{ reason: FreeAtUnavailableReason; until: number }
 	>();
+	private readonly timeouts = new Map<number, number>();
+	private readonly closing = new Set<number>();
 	private queue: Promise<unknown> = Promise.resolve();
 
 	constructor(deps: Partial<FreeAtPortDeps> = {}) {
@@ -278,6 +286,7 @@ export class FreeAtPorts {
 
 	/** The remembered refusal for a modem, if one is still in force. */
 	refusal(modemId: number): FreeAtUnavailableReason | undefined {
+		if (this.closing.has(modemId)) return "port-stuck";
 		const entry = this.refused.get(modemId);
 		return entry && this.deps.now() < entry.until ? entry.reason : undefined;
 	}
@@ -296,6 +305,22 @@ export class FreeAtPorts {
 		return result;
 	}
 
+	private remember(modemId: number, reason: FreeAtUnavailableReason): void {
+		const structural = [
+			"not-rm520",
+			"second-at-interface-absent",
+			"owned-by-modemmanager",
+			"not-released",
+			"native-unavailable",
+		].includes(reason);
+		this.refused.set(modemId, {
+			reason,
+			until:
+				this.deps.now() +
+				(structural ? FREE_AT_RECHECK_MS : FREE_AT_TRANSIENT_RECHECK_MS),
+		});
+	}
+
 	private async readNow(
 		modemId: number,
 		query: ReadOnlyAtQuery,
@@ -304,44 +329,81 @@ export class FreeAtPorts {
 		const remembered = this.refusal(modemId);
 		if (remembered) return { ok: false, unavailable: true, reason: remembered };
 		const facts = await this.deps.facts(modemId);
-		if (!facts)
+		if (!facts) {
+			this.timeouts.delete(modemId);
 			return { ok: false, unavailable: false, reason: "modem-unreadable" };
-		let port: TtyPort | undefined;
-		try {
-			const before = await findFreeAtPort(facts, this.deps.root);
-			try {
-				port = await this.deps.open(join(this.deps.root, "dev", before.tty));
-			} catch (error) {
-				const failure =
-					error instanceof TtyOpenError ? error.failure : "failed";
-				throw new FreeAtUnavailableError(
-					failure === "busy"
-						? "in-use"
-						: failure === "native-unavailable"
-							? "native-unavailable"
-							: "cannot-open",
-				);
-			}
-			const after = await findFreeAtPort(facts, this.deps.root, this.deps.pid);
-			if (after.tty !== before.tty || after.generation !== before.generation)
-				throw new FreeAtUnavailableError("device-changed");
-			const raw = await new ReadOnlyAtSession(port).query(query, timeoutMs);
-			this.refused.delete(modemId);
-			return { ok: true, raw };
-		} catch (error) {
-			if (error instanceof FreeAtUnavailableError) {
-				this.refused.set(modemId, {
-					reason: error.reason,
-					until: this.deps.now() + FREE_AT_RECHECK_MS,
-				});
-				return { ok: false, unavailable: true, reason: error.reason };
-			}
-			if (error instanceof FreeAtReadError)
-				return { ok: false, unavailable: false, reason: error.reason };
-			return { ok: false, unavailable: false, reason: "port-failed" };
-		} finally {
-			port?.close();
 		}
+		let port: TtyPort | undefined;
+		const perform = async (): Promise<FreeAtResult> => {
+			try {
+				const before = await findFreeAtPort(facts, this.deps.root);
+				try {
+					port = await this.deps.open(join(this.deps.root, "dev", before.tty));
+				} catch (error) {
+					const failure =
+						error instanceof TtyOpenError ? error.failure : "failed";
+					throw new FreeAtUnavailableError(
+						failure === "stuck"
+							? "port-stuck"
+							: failure === "busy"
+								? "in-use"
+								: failure === "native-unavailable"
+									? "native-unavailable"
+									: "cannot-open",
+					);
+				}
+				const after = await findFreeAtPort(
+					facts,
+					this.deps.root,
+					this.deps.pid,
+				);
+				if (after.tty !== before.tty || after.generation !== before.generation)
+					throw new FreeAtUnavailableError("device-changed");
+				const raw = await new ReadOnlyAtSession(port).query(query, timeoutMs);
+				this.refused.delete(modemId);
+				this.timeouts.delete(modemId);
+				return { ok: true, raw };
+			} catch (error) {
+				if (!(error instanceof FreeAtReadError) || error.reason !== "timeout")
+					this.timeouts.delete(modemId);
+				if (error instanceof FreeAtUnavailableError) {
+					this.remember(modemId, error.reason);
+					return { ok: false, unavailable: true, reason: error.reason };
+				}
+				if (error instanceof FreeAtReadError) {
+					const count =
+						error.reason === "timeout"
+							? (this.timeouts.get(modemId) ?? 0) + 1
+							: 0;
+					this.timeouts.set(modemId, count);
+					if (count >= FREE_AT_TIMEOUT_LIMIT) {
+						this.timeouts.delete(modemId);
+						this.remember(modemId, "repeated-timeouts");
+						return {
+							ok: false,
+							unavailable: true,
+							reason: "repeated-timeouts",
+						};
+					}
+					return { ok: false, unavailable: false, reason: error.reason };
+				}
+				return { ok: false, unavailable: false, reason: "port-failed" };
+			}
+		};
+		const result = await perform();
+		if (port) {
+			this.closing.add(modemId);
+			const opened = port;
+			const closing = Promise.resolve().then(() => opened.close());
+			void closing
+				.finally(() => this.closing.delete(modemId))
+				.catch(() => undefined);
+			if (!(await closeWithin(closing))) {
+				this.remember(modemId, "port-stuck");
+				return { ok: false, unavailable: true, reason: "port-stuck" };
+			}
+		}
+		return result;
 	}
 }
 

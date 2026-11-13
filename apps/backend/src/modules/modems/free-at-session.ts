@@ -149,7 +149,7 @@ export class ReadOnlyAtSession {
 					if (bytes > MAX_REPLY_BYTES)
 						throw new FreeAtReadError("reply-too-long");
 					text += new TextDecoder("latin1").decode(chunk);
-					const final = finalCode(text);
+					const final = finalCode(text, command);
 					if (final === "ok") {
 						this.dirty = false;
 						return text.replace(/\r\n?/g, "\n");
@@ -169,11 +169,18 @@ export class ReadOnlyAtSession {
 }
 
 /** Only complete lines count: a final code split across reads waits for its end. */
-function finalCode(text: string): "ok" | "error" | undefined {
+function finalCode(
+	text: string,
+	command: ReadOnlyAtQuery,
+): "ok" | "error" | undefined {
 	const lines = text.replace(/\r\n?/g, "\n").split("\n");
 	lines.pop(); // the unterminated tail, possibly a final code still arriving
+	let correlated = false;
+	const prefix = command === "AT+QTEMP" ? "+QTEMP:" : "+QENG:";
 	for (const raw of lines) {
 		const line = raw.trim();
+		if (line === command || line.startsWith(prefix)) correlated = true;
+		if (!correlated) continue;
 		if (line === "OK") return "ok";
 		if (FINAL_ERROR.test(line)) return "error";
 	}

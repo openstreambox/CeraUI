@@ -188,6 +188,51 @@ describe("the read-only lease", () => {
 		};
 	}
 
+	test("transient open refusals retry after 30 seconds", async () => {
+		const { lease, hookOpen, advance } = await setup();
+		let busy = true;
+		hookOpen((path, real) =>
+			busy ? Promise.reject(new TtyOpenError("busy")) : real(path),
+		);
+		await lease.read(3, "AT+QTEMP");
+		busy = false;
+		expect(lease.refusal(3)).toBe("in-use");
+		advance(30_000);
+		expect((await lease.read(3, "AT+QTEMP")).ok).toBe(true);
+	});
+	test("three consecutive timeouts cause a short refusal", async () => {
+		const { lease, advance } = await setup(() => []);
+		for (let i = 0; i < 3; i++) await lease.read(3, "AT+QTEMP", 10);
+		expect(lease.refusal(3)).toBe("repeated-timeouts");
+		advance(30_000);
+		expect(lease.refusal(3)).toBeUndefined();
+	});
+	test("a stuck close yields, refuses and does not block the other modem", async () => {
+		const { lease, hookOpen } = await setup();
+		hookOpen(async (path, real) => {
+			const port = await real(path);
+			return {
+				...port,
+				close: async () => {
+					await port.close();
+					await new Promise<void>(() => {});
+				},
+			};
+		});
+		let ticked = false;
+		setTimeout(() => {
+			ticked = true;
+		}, 10);
+		expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+			reason: "port-stuck",
+		});
+		expect(ticked).toBe(true);
+		expect(lease.refusal(3)).toBe("port-stuck");
+		expect(await lease.read(4, "AT+QTEMP")).toMatchObject({
+			reason: "port-stuck",
+		});
+	});
+
 	test("a released port answers with the complete reply and is closed again", async () => {
 		const { fake, lease, opened } = await setup();
 		const result = await lease.read(3, "AT+QTEMP");
@@ -196,7 +241,7 @@ describe("the read-only lease", () => {
 		expect(opened).toEqual([join(root, "dev/ttyUSB3")]);
 		expect(fake.received).toBe("AT+QTEMP\r");
 		// closed: a fresh exclusive open succeeds
-		(await openExclusiveRawTty(fake.path)).close();
+		await (await openExclusiveRawTty(fake.path)).close();
 	});
 
 	test("a ModemManager-owned port is refused without opening, then rechecked rarely", async () => {
@@ -248,7 +293,7 @@ describe("the read-only lease", () => {
 		});
 		expect(fake.received).toBe("");
 		expect(ports).toHaveLength(1);
-		(await openExclusiveRawTty(fake.path)).close();
+		await (await openExclusiveRawTty(fake.path)).close();
 	});
 
 	test("an open refused as busy or failed is unavailable, not a reading", async () => {
@@ -306,9 +351,9 @@ describe("the read-only lease", () => {
 			const port = await real(path);
 			return {
 				...port,
-				close: () => {
+				close: async () => {
 					open--;
-					port.close();
+					await port.close();
 				},
 			};
 		});

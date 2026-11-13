@@ -18,9 +18,9 @@ import {
 	type Script,
 } from "./helpers/fake-at-modem.ts";
 
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-	for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+const cleanups: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
+	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
 async function modem(
@@ -44,6 +44,21 @@ async function reason(promise: Promise<unknown>): Promise<string> {
 }
 
 describe("read-only AT session on a pty", () => {
+	test("a late unrelated final code cannot finish this command", async () => {
+		const { session } = await modem((c) => [
+			[0, "\r\nOK\r\n"],
+			[30, `${c}\r\n${QTEMP_REPLY}`],
+		]);
+		expect(await session.query("AT+QTEMP", 1000)).toContain("+QTEMP:");
+	});
+	test("an uncorrelated error is ignored too", async () => {
+		const { session } = await modem(() => [
+			[0, "\r\nERROR\r\n"],
+			[30, QTEMP_REPLY],
+		]);
+		expect(await session.query("AT+QTEMP", 1000)).toContain("+QTEMP:");
+	});
+
 	test("a complete reply with echo and final OK is returned whole", async () => {
 		const { fake, session } = await modem((c) => reply(QTEMP_REPLY, c));
 		const raw = await session.query("AT+QTEMP", 1000);
@@ -105,7 +120,7 @@ describe("read-only AT session on a pty", () => {
 			"\r\n+CME ERROR: 3\r\n",
 			"\r\n+CMS ERROR: 500\r\n",
 		]) {
-			const { session } = await modem(() => [[0, final]]);
+			const { session } = await modem((c) => [[0, `${c}\r\n${final}`]]);
 			expect(await reason(session.query("AT+QTEMP", 1000))).toBe("modem-error");
 			expect(session.dirty).toBe(false);
 		}
@@ -165,7 +180,7 @@ describe("read-only AT session on a pty", () => {
 				return data.length;
 			},
 			flushInput: () => {},
-			close: () => {},
+			close: async () => {},
 		};
 		const session = new ReadOnlyAtSession(port, {
 			now: () => now,
@@ -193,7 +208,7 @@ describe("read-only AT session on a pty", () => {
 				return data.length;
 			},
 			flushInput: () => {},
-			close: () => {},
+			close: async () => {},
 		};
 		const session = new ReadOnlyAtSession(port, {
 			now: () => now,
@@ -226,13 +241,13 @@ describe("read-only AT session on a pty", () => {
 			expect(second).toBeInstanceOf(TtyOpenError);
 			expect((second as TtyOpenError).failure).toBe("busy");
 		}
-		port.close();
-		port.close(); // idempotent
+		await port.close();
+		await port.close(); // idempotent
 		const after = new Uint8Array(64);
 		symbols.tcgetattr(fake.slave, ptr(after));
 		expect(after).toEqual(before);
 		const again = await openExclusiveRawTty(fake.path);
-		again.close();
+		await again.close();
 	});
 
 	test("a path that cannot be opened is a typed failure", async () => {

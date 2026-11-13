@@ -14,7 +14,9 @@ So the backend reads these two queries on a port ModemManager has released.
 
 `ceralive-modem-support` sets `ID_MM_PORT_IGNORE=1` (an ENV property, nothing
 else) on the tty of USB interface 3 of `2c7c:0801`, ModemManager's secondary AT
-port. ModemManager then lists the port as `(ignored)`, or omits it, and never
+port. This PID is shared by RM520N-GL and RM530N-GL; `not-rm520`
+is a compatibility reason code for a failed PID check, not a model probe.
+ModemManager then lists the port as `(ignored)`, or omits it, and never
 opens it. It keeps the primary AT port on interface 2, the control port and the
 data port. The property takes effect when the modem is next probed.
 
@@ -39,8 +41,14 @@ not loadable). Line settings are restored and exclusivity dropped on close.
 why the holder scan runs both before and after the open. ModemManager's
 device path must be a plain `/sys/devices/…` path without `.` or `..`.
 
-A refusal is remembered per modem for ten minutes; in that window nothing is
-looked at or opened for that modem. Reads are serialised across all modems.
+Structural refusals are remembered for ten minutes. In-use, cannot-open and
+device-changed retry after 30 seconds. Three consecutive timeouts also cause a
+30-second refusal, reset by a successful read or another query failure.
+Close runs asynchronously on the fs pool and is awaited for at most 500 ms
+inside the serial queue. An overrun returns `port-stuck`; no reopen occurs
+while close remains pending or its 30-second refusal is active. This bounds
+event-loop and queue latency, not the kernel close itself. Reads are serialised
+across all modems.
 
 ## The exchange (`free-at-session.ts`)
 
@@ -51,10 +59,11 @@ looked at or opened for that modem. Reads are serialised across all modems.
   50 ms within 300 ms (`port-not-quiet` otherwise). A query that ended without
   a final result code leaves the session dirty, drained again before the next
   write.
-- A reply counts only once a complete `OK` line has arrived. `ERROR`,
+- A final code counts only after this command’s echo or its expected `+QTEMP:` /
+  `+QENG:` prefix line. A complete `OK` then finishes the reply. `ERROR`,
   `+CME ERROR` and `+CMS ERROR` are `modem-error`; no final code before the
   deadline is `timeout`; more than 16 KiB is `reply-too-long`; a vanished port
-  is `port-failed`. None of these are remembered.
+  is `port-failed`. Only consecutive timeouts are remembered as described above.
 
 Callers say "not available" with the fixed reason when the lease refuses, and
 "no reading" when a query fails. Neither path falls back to a ModemManager-owned
@@ -74,4 +83,5 @@ check and open, busy and failed opens, timeouts and serialisation.
 
 Interface 3 shows as `(ignored)` and stays closed by ModemManager; ModemManager
 and data behave as before with only interface 2; both queries answer on
-interface 3 within the deadline; the interface numbers in the MBIM composition.
+interface 3 within the deadline; the interface numbers in every offered USB composition. RM530N-GL layout,
+stalled-driver close duration and HUPCL effects also remain hardware-unverified.
