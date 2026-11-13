@@ -30,8 +30,6 @@ export function carrierSupportRows(sources: readonly CarrierSource[]) {
 	});
 }
 
-export { redactSupportJournal } from "./support-log-filter.ts";
-
 /** Reserve room under the 10 MiB file ceiling for the bounded carrier summary. */
 export function boundRedactedSupportJournal(redactedText: string): string {
 	const bytes = new TextEncoder().encode(redactedText);

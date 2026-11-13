@@ -3,8 +3,8 @@ import {
 	boundRedactedSupportJournal,
 	carrierSupportRows,
 	modemTac,
-	redactSupportJournal,
 } from "../modules/system/support-export.ts";
+import { ceralive, event, exported } from "./support/journal-records.ts";
 
 describe("support export disclosure", () => {
 	test("strips RPC correlation ids without erasing the diagnostic event", () => {
@@ -12,9 +12,7 @@ describe("support export disclosure", () => {
 			msg: "RPC system.getLog err",
 			meta: { cid: "351756051523999", args: { service: "diagnostic-marker" } },
 		});
-		const output = redactSupportJournal(
-			`${line}\n2026-11-13T00:00:00 host service[42]: ${line}`,
-		);
+		const output = exported(ceralive(line), ceralive(`service[42]: ${line}`));
 		expect(output).toContain("RPC system.getLog err");
 		expect(output).not.toContain("diagnostic-marker");
 		expect(output).not.toContain("351756051523999");
@@ -73,9 +71,19 @@ describe("support export disclosure", () => {
 		).not.toContain("214075550001234");
 	});
 	test("raw journal fields, numbers and credential lines are removed before download", () => {
-		const raw =
-			"boot one\nimei=351756051523999\niccid=8934071100003862105\nimsi=214075550001234\nphone=+34600111222\ncell_id=0xabc123\npassword=example-secret\nraw 351756051523999\nboot two";
-		const output = redactSupportJournal(raw);
+		const output = exported(
+			...[
+				"boot one",
+				"imei=351756051523999",
+				"iccid=8934071100003862105",
+				"imsi=214075550001234",
+				"phone=+34600111222",
+				"cell_id=0xabc123",
+				"password=example-secret",
+				"raw 351756051523999",
+				"boot two",
+			].map((msg) => event({ msg })),
+		);
 		expect(output).toContain("boot one");
 		expect(output).toContain("boot two");
 		for (const v of [

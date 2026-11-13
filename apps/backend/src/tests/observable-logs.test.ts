@@ -26,6 +26,7 @@ import {
 } from "../helpers/logger.ts";
 import * as runModule from "../helpers/run.ts";
 import * as carrierModule from "../modules/modems/modem-wire-producer.ts";
+import { SUPPORT_JOURNAL_MATCHES } from "../modules/system/support-journal.ts";
 import {
 	notificationBroadcast,
 	notificationRemove,
@@ -52,6 +53,7 @@ function journal(text: string): string {
 		.map((line) =>
 			JSON.stringify({
 				_SYSTEMD_UNIT: "ceralive.service",
+				_COMM: "ceralive",
 				MESSAGE: JSON.stringify({ msg: line }),
 			}),
 		)
@@ -286,6 +288,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 			"current boot only (history exceeded size limit)",
 		);
 		expect(result.log).toContain("newest 400 entries");
+		expect(result.log).toMatch(/\nRecords: \d+ shown, 0 withheld \(/);
 		expect(result.log).toContain("recent evidence");
 	});
 
@@ -322,10 +325,13 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 			context: makeContext(sent),
 		});
 
-		expect(runSpy).toHaveBeenLastCalledWith("journalctl", JOURNAL_ARGS, {
-			maxBuffer: MAX_BUFFER,
-			timeout: 15000,
-		});
+		// The system download fetches only admitted sources, so unrelated units
+		// cannot spend the entry budget before filtering.
+		expect(runSpy).toHaveBeenLastCalledWith(
+			"journalctl",
+			[...JOURNAL_ARGS, ...SUPPORT_JOURNAL_MATCHES],
+			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
+		);
 		expect(result.log).toContain(KNOWN);
 		expect(findLogPush(sent)?.contents).toContain(KNOWN);
 	});

@@ -1,41 +1,113 @@
 import { describe, expect, test } from "bun:test";
-import { redactSupportJournal } from "../modules/system/support-export.ts";
+import { renderSupportJournal } from "../modules/system/support-journal.ts";
 import {
-	diagnosticLines,
-	privateLines,
+	ceralive,
+	event,
+	exported,
+	journal,
+} from "./support/journal-records.ts";
+import {
+	diagnosticRecords,
+	privateRecords,
 } from "./support/support-export-corpus.ts";
 
-describe("support export paired privacy and diagnostics corpora", () => {
-	test.each(privateLines)("withholds $secret in $line", ({ line, secret }) => {
-		expect(redactSupportJournal(line)).not.toContain(secret);
+const describeRecord = (entry: Record<string, unknown>) =>
+	`${String(entry._COMM ?? entry._TRANSPORT)}: ${String(entry.MESSAGE).slice(0, 90)}`;
+
+describe("support export paired corpora through the production renderer", () => {
+	test.each(
+		privateRecords.map((entry) => ({
+			...entry,
+			label: describeRecord(entry.record),
+		})),
+	)("withholds $secret ($label)", ({ record, secret }) => {
+		expect(exported(record)).not.toContain(secret);
 	});
-	test.each(diagnosticLines)("preserves $evidence", ({ line, evidence }) => {
-		expect(redactSupportJournal(line)).toContain(evidence);
+	test.each(
+		diagnosticRecords.map((entry) => ({
+			...entry,
+			label: describeRecord(entry.record),
+		})),
+	)("preserves $evidence ($label)", ({ record, evidence }) => {
+		expect(exported(record)).toContain(evidence);
+	});
+	test("both corpora together keep every diagnostic and no secret", () => {
+		const output = exported(
+			...privateRecords.map((entry) => entry.record),
+			...diagnosticRecords.map((entry) => entry.record),
+		);
+		for (const { secret } of privateRecords)
+			expect(output).not.toContain(secret);
+		for (const { evidence } of diagnosticRecords)
+			expect(output).toContain(evidence);
+	});
+});
+
+describe("structured backend events", () => {
+	test("historical RPC args, correlation ids and client are never exported", () => {
+		const output = exported(
+			event({
+				msg: "RPC relay.validate ok",
+				meta: {
+					cid: "a1b2c3d4",
+					procedure: "relay.validate",
+					latency_ms: 1.25,
+					ok: true,
+					client: "192.0.2.23",
+					args: {
+						addr: "ingest.example.net",
+						streamid: "publish:KEYVALUE",
+						passphrase: "hunter2hunter2",
+					},
+				},
+			}),
+		);
+		for (const value of [
+			"a1b2c3d4",
+			"192.0.2.23",
+			"ingest.example.net",
+			"publish:KEYVALUE",
+			"hunter2hunter2",
+		])
+			expect(output).not.toContain(value);
+		expect(output).toContain(
+			'ceralive: {"msg":"RPC relay.validate ok","meta":{"procedure":"relay.validate","latency_ms":1.25,"ok":true}}',
+		);
 	});
 	test("keeps the error reason, exit status and signal without stacks or unknown fields", () => {
-		const out = redactSupportJournal(
-			'ceralive[1234]: {"level":"error","msg":"Failed to start stream","meta":{"err":{"name":"Error","message":"engine start rejected: capture device busy","code":"EBUSY","stack":"private-stack"},"exitCode":1,"signal":"SIGTERM","code":32,"ifname":"wwan0","reason":"capture device is busy"}}',
+		const output = exported(
+			event({
+				level: "error",
+				msg: "Failed to start stream",
+				meta: {
+					err: {
+						name: "Error",
+						message: "engine start rejected: capture device busy",
+						code: "EBUSY",
+						stack: "private-stack",
+					},
+					exitCode: 1,
+					signal: "SIGTERM",
+					code: 32,
+					ifname: "wwan0",
+					reason: "capture device is busy",
+				},
+			}),
 		);
-		expect(out).toContain("engine start rejected: capture device busy");
-		expect(out).toContain('"exitCode":1');
-		expect(out).toContain('"signal":"SIGTERM"');
-		expect(out).toContain('"code":32');
-		expect(out).toContain('"ifname":"wwan0"');
-		expect(out).toContain('"reason":"capture device is busy"');
-		expect(out).not.toContain("private-stack");
+		for (const kept of [
+			"engine start rejected: capture device busy",
+			'"exitCode":1',
+			'"signal":"SIGTERM"',
+			'"code":32',
+			'"ifname":"wwan0"',
+			'"reason":"capture device is busy"',
+		])
+			expect(output).toContain(kept);
+		expect(output).not.toContain("private-stack");
 	});
-	test("filters bounded error messages while keeping safe failure codes", () => {
-		const out = redactSupportJournal(
-			'ceralive[1234]: {"msg":"operation failed","meta":{"error":{"name":"Error","code":"EACCES","message":"relay account: private-error-value","stack":"private-stack"}}}',
-		);
-		expect(out).toContain("EACCES");
-		expect(out).not.toContain("private-error-value");
-		expect(out).not.toContain("private-stack");
-	});
-
 	test("retains bounded string errors and omits oversized error messages", () => {
-		const out = redactSupportJournal(
-			JSON.stringify({
+		const output = exported(
+			event({
 				msg: "operation failed",
 				meta: {
 					err: "Network timeout",
@@ -43,13 +115,20 @@ describe("support export paired privacy and diagnostics corpora", () => {
 				},
 			}),
 		);
-		expect(out).toContain("Network timeout");
-		expect(out).not.toContain("x".repeat(301));
+		expect(output).toContain("Network timeout");
+		expect(output).not.toContain("x".repeat(301));
 	});
-
 	test("rejects unconstrained code fields and requires RPC procedure agreement", () => {
-		const out = redactSupportJournal(
-			'{"msg":"RPC system.getLog err","meta":{"procedure":"private-key-value","reason":"osbkey7f3a9c2e","state":"Tr0ub4dorXyz","count":27447299}}',
+		const output = exported(
+			event({
+				msg: "RPC system.getLog err",
+				meta: {
+					procedure: "private-key-value",
+					reason: "osbkey7f3a9c2e",
+					state: "Tr0ub4dorXyz",
+					count: 27447299,
+				},
+			}),
 		);
 		for (const value of [
 			"private-key-value",
@@ -57,13 +136,38 @@ describe("support export paired privacy and diagnostics corpora", () => {
 			"Tr0ub4dorXyz",
 			"27447299",
 		])
-			expect(out).not.toContain(value);
+			expect(output).not.toContain(value);
 	});
-	test("rejects oversized pathological records before content matching", () => {
-		const start = performance.now();
-		expect(redactSupportJournal(`kernel: trace ${"[x ".repeat(131072)}`)).toBe(
-			"[REDACTED support log line]",
+	test("unknown metadata and pretty-printed fragments fail closed", () => {
+		const output = exported(
+			event({
+				level: "warn",
+				msg: "connection failed",
+				meta: {
+					reason: "no_route",
+					opaque_future_field: "unlabelled-private-value",
+					nested: { value: "another-private-value" },
+				},
+			}),
+			ceralive('  "unlabelled-private-array-value",'),
+			ceralive('  "future": "private-fragment"'),
 		);
+		for (const value of [
+			"unlabelled-private-value",
+			"another-private-value",
+			"unlabelled-private-array-value",
+			"private-fragment",
+		])
+			expect(output).not.toContain(value);
+		expect(output).toContain("connection failed");
+		expect(output).toContain("no_route");
+	});
+	test("withholds oversized pathological records before content matching", () => {
+		const start = performance.now();
+		const output = renderSupportJournal(
+			journal(ceralive(`trace ${"[x ".repeat(131072)}`)),
+		);
+		expect(output).toBe("[REDACTED support log line]");
 		expect(performance.now() - start).toBeLessThan(1000);
 	});
 });

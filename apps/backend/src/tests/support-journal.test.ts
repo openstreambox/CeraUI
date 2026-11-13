@@ -1,15 +1,28 @@
 import { describe, expect, test } from "bun:test";
-import { renderSupportJournal } from "../modules/system/support-journal.ts";
+import {
+	renderSupportJournal,
+	SUPPORT_JOURNAL_MATCHES,
+} from "../modules/system/support-journal.ts";
+
+const COMM: Record<string, string> = {
+	"NetworkManager.service": "NetworkManager",
+	"ceralive.service": "ceralive",
+};
 
 function entry(message: string, fields: Record<string, unknown> = {}) {
+	const unit = String(fields._SYSTEMD_UNIT ?? "NetworkManager.service");
 	return JSON.stringify({
 		_SYSTEMD_UNIT: "NetworkManager.service",
+		_COMM: COMM[unit] ?? "unfamiliar",
 		_PID: "612",
 		_STREAM_ID: "a",
 		MESSAGE: message,
 		...fields,
 	});
 }
+
+const NM_FAILED =
+	"<warn>  [1731528245.1234] device (wwan0): state change: connecting -> failed (reason 'gsm-registration-denied', sys-iface-state: 'managed')";
 
 describe("trusted journal source and record boundaries", () => {
 	test("unknown units and sudo/audit children cannot impersonate an allowed message prefix", () => {
@@ -37,14 +50,14 @@ describe("trusted journal source and record boundaries", () => {
 	});
 	test("renders source/time and boot ordinals while omitting hostname and raw boot identities", () => {
 		const output = renderSupportJournal(
-			entry("USB disconnect", {
+			entry("usb 1-2: USB disconnect, device number 8", {
 				_TRANSPORT: "kernel",
 				_HOSTNAME: "private-hostname",
 				_BOOT_ID: "private-boot-a",
 				__REALTIME_TIMESTAMP: "1731528245123400",
 			}) +
 				"\n" +
-				entry("USB reset", {
+				entry("usb 1-2: reset high-speed USB device number 3 using xhci-hcd", {
 					_TRANSPORT: "kernel",
 					_BOOT_ID: "private-boot-b",
 				}),
@@ -62,13 +75,15 @@ describe("trusted journal source and record boundaries", () => {
 				entry("private-a", { _SYSTEMD_UNIT: "unknown.service" }),
 				entry("private-b", { _SYSTEMD_UNIT: "unknown.service" }),
 				entry("private-c", { _SYSTEMD_UNIT: "unknown.service" }),
-				entry("USB disconnect", { _TRANSPORT: "kernel" }),
+				entry("usb 1-2: USB disconnect, device number 8", {
+					_TRANSPORT: "kernel",
+				}),
 				entry("private-d", { _SYSTEMD_UNIT: "unknown.service" }),
 			].join("\n"),
 		).split("\n");
 		expect(output).toEqual([
 			"[REDACTED 3 support log lines]",
-			"kernel: USB disconnect",
+			"kernel: usb 1-2: USB disconnect, device number 8",
 			"[REDACTED support log line]",
 		]);
 	});
@@ -76,14 +91,59 @@ describe("trusted journal source and record boundaries", () => {
 		const output = renderSupportJournal(
 			[
 				entry("x".repeat(49152), { _LINE_BREAK: "line-max" }),
-				entry("USB disconnect", { _TRANSPORT: "kernel", _STREAM_ID: "b" }),
+				entry("usb 1-2: USB disconnect, device number 8", {
+					_TRANSPORT: "kernel",
+					_STREAM_ID: "b",
+				}),
 				entry("private-continuation-value"),
-				entry("device (wwan0): state change: connecting -> failed"),
+				entry(NM_FAILED),
 			].join("\n"),
 		);
 		expect(output).not.toContain("private-continuation-value");
 		expect(output).toContain("USB disconnect");
 		expect(output).toContain("connecting -> failed");
+	});
+	test("admits a unit's records only from its own command, not its children", () => {
+		const output = renderSupportJournal(
+			[
+				entry("DHCPACK(wlan0) 10.42.0.23 3c:a6:2f:11:22:33 example-phone", {
+					_COMM: "dnsmasq",
+					SYSLOG_IDENTIFIER: "dnsmasq-dhcp",
+				}),
+				entry(NM_FAILED),
+			].join("\n"),
+		);
+		expect(output).not.toContain("example-phone");
+		expect(output).toContain("gsm-registration-denied");
+	});
+	test("kernel transport text must match a kernel line shape", () => {
+		const output = renderSupportJournal(
+			[
+				entry("srtla: relay passcode private-kmsg-value accepted", {
+					_TRANSPORT: "kernel",
+					_SYSTEMD_UNIT: undefined,
+					_COMM: undefined,
+				}),
+				entry("usb 1-2: USB disconnect, device number 8", {
+					_TRANSPORT: "kernel",
+				}),
+			].join("\n"),
+		);
+		expect(output).not.toContain("private-kmsg-value");
+		expect(output).toContain("kernel: usb 1-2: USB disconnect");
+	});
+	test("journalctl matches pair each unit with its command, plus kernel and PID 1", () => {
+		expect(SUPPORT_JOURNAL_MATCHES.join(" ")).toBe(
+			[
+				"_SYSTEMD_UNIT=ceralive.service _COMM=ceralive",
+				"_SYSTEMD_UNIT=ModemManager.service _COMM=ModemManager",
+				"_SYSTEMD_UNIT=NetworkManager.service _COMM=NetworkManager",
+				"_SYSTEMD_UNIT=wpa_supplicant.service _COMM=wpa_supplicant",
+				"_SYSTEMD_UNIT=hostapd.service _COMM=hostapd",
+				"_TRANSPORT=kernel",
+				"_PID=1 _COMM=systemd",
+			].join(" + "),
+		);
 	});
 	test("withholds raw application stderr tails and incomplete JSON fragments", () => {
 		const output = renderSupportJournal(

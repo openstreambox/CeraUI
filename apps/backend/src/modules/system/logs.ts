@@ -24,7 +24,11 @@ import type { MessageSocket } from "../ui/message-socket.ts";
 import { notificationSend } from "../ui/notifications.ts";
 import { buildMsg, getSocketSenderId } from "../ui/websocket-server.ts";
 import { boundRedactedSupportJournal } from "./support-export.ts";
-import { mockSupportJournal, renderSupportJournal } from "./support-journal.ts";
+import {
+	mockSupportJournal,
+	renderSupportJournalWithCounts,
+	SUPPORT_JOURNAL_MATCHES,
+} from "./support-journal.ts";
 
 export interface LogResult {
 	name: string;
@@ -75,6 +79,9 @@ async function collectLog(
 	if (service) {
 		args.push("-u", service);
 		name = `${service.replace("CeraLive", "ceralive")}_log.txt`;
+	} else {
+		// Fetch only admitted sources, so every entry in the budget is evidence.
+		args.push(...SUPPORT_JOURNAL_MATCHES);
 	}
 
 	const options = { maxBuffer: 10 * 1024 * 1024, timeout: 15000 };
@@ -135,7 +142,8 @@ async function collectLog(
 	const scope = fallbackReason
 		? `current boot only (${fallbackReason})`
 		: "retained last 7 days";
-	const contents = `Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\n${boundRedactedSupportJournal(renderSupportJournal(journal))}\n\n${summary}`;
+	const rendered = renderSupportJournalWithCounts(journal);
+	const contents = `Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (unrecognised lines and possible private values).\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`;
 	try {
 		conn.send(buildMsg("log", { name, contents }, senderId));
 		return { name, contents };

@@ -1,18 +1,10 @@
 import { isIP } from "node:net";
 import { logRedact } from "../../helpers/logger.ts";
+import { isShapeSource, matchLineShape } from "./support-line-shapes.ts";
 
 export const WITHHELD = "[REDACTED support log line]";
 export const MAX_SUPPORT_LINE_BYTES = 8192;
 
-const SOURCES = new Set([
-	"ceralive",
-	"ModemManager",
-	"NetworkManager",
-	"kernel",
-	"systemd",
-	"wpa_supplicant",
-	"hostapd",
-]);
 const CODES = new Set([
 	"no_route",
 	"network_timeout",
@@ -107,14 +99,16 @@ const SIGNALS = new Set([
 	"SIGBUS",
 	"SIGILL",
 ]);
-const EMPTY_VALUES = new Set([
-	"missing",
-	"required",
-	"unknown",
-	"unavailable",
-	"none",
-	"invalid",
-]);
+// Words that follow a credential keyword in status text rather than a value.
+const EMPTY_VALUES = new Set(
+	(
+		"missing required unknown unavailable none invalid empty rejected refused " +
+		"expired mismatch incorrect wrong changed updated set unset not is was may " +
+		"must cannot negotiation exchange management handshake length format error " +
+		"failed accepted ok cancelled requested denied locked disabled enabled " +
+		"too has and or the a an"
+	).split(" "),
+);
 
 export function oversizedSupportLine(line: string): boolean {
 	// Check length before encoding or running any pattern. Encoding work is bounded.
@@ -124,8 +118,50 @@ export function oversizedSupportLine(line: string): boolean {
 	);
 }
 
-export function knownSupportSource(source: string): boolean {
-	return SOURCES.has(source);
+/** Replace network and hardware address spans while keeping the line. */
+function maskAddresses(text: string): string {
+	// IPv4 first, so IPv4-mapped IPv6 forms never leave a dotted tail. A port,
+	// trailing punctuation or an `addr:` prefix does not hide the address.
+	let out = text.replace(/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?!\d)/g, (value) =>
+		isIP(value) ? "[address]" : value,
+	);
+	out = out.replace(
+		/(?<![0-9a-z:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%[0-9a-z]{1,16})?/gi,
+		(value) => {
+			let core = value;
+			let tail = "";
+			while (core.endsWith(":") && !core.endsWith("::")) {
+				core = core.slice(0, -1);
+				tail = `:${tail}`;
+			}
+			return isIP(core.split("%")[0] ?? "") ? `[address]${tail}` : value;
+		},
+	);
+	// MACs with colons or dashes, DHCP client ids, dotted and bare MACs, and
+	// interface names derived from a MAC.
+	out = out.replace(
+		/(?<![0-9a-f:-])[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5,7}(?![0-9a-f:-])/gi,
+		"[address]",
+	);
+	out = out.replace(
+		/(?<![0-9a-f.])[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}(?![0-9a-f.])/gi,
+		"[address]",
+	);
+	out = out.replace(/\b(wlx|enx|wwx)[0-9a-f]{12}\b/gi, "$1[address]");
+	return out.replace(/(?<![0-9a-z])[0-9a-f]{12}(?![0-9a-z])/gi, "[address]");
+}
+
+/** Network and connection names often carry a person's or account's name,
+ * and a home SSID can be located through public Wi-Fi maps.
+ */
+function maskNames(text: string): string {
+	return text
+		.replace(/\b(ssid=)(["'])[^"'\n]{0,64}\2/gi, "$1$2[name]$2")
+		.replace(
+			/\b(connection|access point|policy: set) '[^'\n]{0,64}'/gi,
+			"$1 '[name]'",
+		)
+		.replace(/\b(ssid)[ \t]+(?!\[name\])[^\s'"]{1,64}/gi, "$1 [name]");
 }
 
 /** Value-bearing fields are withheld while status phrases remain readable. */
@@ -158,12 +194,12 @@ export function filterDiagnosticText(
 		)
 	)
 		return undefined;
-	const phrase =
-		/\b(?:stream[ _-]?key|relay[ _-]?account|using[ \t]+key)[ \t:='"]{1,8}([a-z0-9_~./+-]{1,128})/i.exec(
-			text,
-		);
-	if (phrase?.[1] && !EMPTY_VALUES.has(phrase[1].toLowerCase()))
-		return undefined;
+	// Credentials in prose: "with password …", "stream id live/…", "login for …".
+	for (const phrase of text.matchAll(
+		/\b(?:pass(?:phrase|word|wd|code)|psk|stream[ _-]?(?:id|key)|key|login|user(?:name)?|account|token|secret)(?:[ \t]{1,4}(?:for|of|is|was|to|as))?[ \t:='"]{1,8}([^\s'",;)\]]{1,128})/gi,
+	))
+		if (phrase[1] && !EMPTY_VALUES.has(phrase[1].toLowerCase()))
+			return undefined;
 	if (
 		/\b(?:imei|iccid|imsi|msisdn|eid|meid|esn|subscriber(?:id)?|equipment[_. -]?(?:id|identifier)|device[_. -]?(?:id|identifier)|own[_. -]?numbers?|phone(?:number)?)["' \t:=]{1,8}["']?[+a-z0-9][a-z0-9+_.() /-]{3,128}/i.test(
 			text,
@@ -171,7 +207,7 @@ export function filterDiagnosticText(
 	)
 		return undefined;
 	if (
-		/\bserial(?:[ _-]+(?:number|no))?[ \t"']{0,8}[:=][ \t"']{0,8}[a-z0-9]{4,80}/i.test(
+		/\bserial[ _-]*(?:number|no)?[ \t"']{0,8}[:=][ \t"']{0,8}[a-z0-9]{4,80}/i.test(
 			text,
 		)
 	)
@@ -197,11 +233,8 @@ export function filterDiagnosticText(
 	if (/(?:\b[a-f0-9]{2}[: \t-]){7,63}[a-f0-9]{2}\b/i.test(text))
 		return undefined;
 	if (/\bstderr\s*:/i.test(text) || logRedact(text) !== text) return undefined;
-	// Replace address spans, preserving surrounding connection/failure evidence.
-	text = text.replace(/(?<![\w:])[a-f0-9:.]{2,45}(?![\w:])/gi, (value) =>
-		isIP(value) ? "[address]" : value,
-	);
-	text = text.replace(/\b[a-f0-9]{2}(?::[a-f0-9]{2}){5}\b/gi, "[address]");
+	// Replace address and name spans, preserving the surrounding evidence.
+	text = maskNames(maskAddresses(text));
 	// Named bounded counters are diagnostic quantities. Test the other text for
 	// numeric identities without treating byte/packet totals as subscriber ids.
 	const numericText = text
@@ -354,7 +387,10 @@ function systemdMessage(message: string): string | undefined {
 	return undefined;
 }
 
-export function redactSupportRecord(message: string, source?: string): string {
+function redactSupportRecord(
+	message: string,
+	source: "ceralive" | "systemd",
+): string {
 	if (oversizedSupportLine(message)) return WITHHELD;
 	if (source === "systemd")
 		return filterDiagnosticText(systemdMessage(message) ?? "") || WITHHELD;
@@ -399,24 +435,15 @@ export function redactSupportRecord(message: string, source?: string): string {
 	return filterDiagnosticText(message, source) ?? WITHHELD;
 }
 
-/** Human-formatted records remain useful in fixtures and legacy log readers.
- * Device downloads select sources using trusted journald fields separately.
- */
-export function redactSupportJournal(text: string): string {
-	return text
-		.split("\n")
-		.map((line) => {
-			if (oversizedSupportLine(line)) return WITHHELD;
-			const record =
-				/^(?:(\d{4}-\d\d-\d\dT[0-9:+.-]{8,24}) [^ \t]{1,128} )?([a-zA-Z_][a-zA-Z0-9_.@-]{0,127})(?:\[\d{1,10}\])?:[ \t]{0,8}(.*)$/.exec(
-					line,
-				);
-			if (!record) return redactSupportRecord(line);
-			const source = record[2] as string;
-			if (!knownSupportSource(source)) return WITHHELD;
-			const filtered = redactSupportRecord(record[3] as string, source);
-			if (filtered === WITHHELD) return WITHHELD;
-			return `${record[1] ? `${record[1]} ` : ""}${source}: ${filtered}`;
-		})
-		.join("\n");
+/** Render one admitted record's message for its trusted source. */
+export function renderSourceMessage(source: string, message: string): string {
+	if (oversizedSupportLine(message)) return WITHHELD;
+	if (isShapeSource(source)) {
+		const shaped = matchLineShape(source, message);
+		if (shaped === undefined) return WITHHELD;
+		return filterDiagnosticText(shaped, source) ?? WITHHELD;
+	}
+	if (source === "ceralive" || source === "systemd")
+		return redactSupportRecord(message, source);
+	return WITHHELD;
 }

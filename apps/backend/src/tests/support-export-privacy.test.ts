@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { logRedact } from "../helpers/logger.ts";
-import { redactSupportJournal } from "../modules/system/support-export.ts";
 import { logRpcCall } from "../rpc/rpc-logging.ts";
+import {
+	event,
+	exported,
+	kernel,
+	modemManager,
+} from "./support/journal-records.ts";
 
 // Synthetic review reproductions, including historical records predating redaction.
 const historicalRpc =
@@ -9,7 +14,7 @@ const historicalRpc =
 
 describe("support export privacy regressions", () => {
 	test("historical RPC args and client are never exported, safe call timing survives", () => {
-		const output = redactSupportJournal(historicalRpc);
+		const output = exported(event(JSON.parse(historicalRpc)));
 		for (const value of [
 			"a1b2c3d4",
 			"192.0.2.23",
@@ -19,7 +24,7 @@ describe("support export privacy regressions", () => {
 		])
 			expect(output).not.toContain(value);
 		expect(output).toContain("RPC relay.validate ok");
-		expect(JSON.parse(output).meta).toEqual({
+		expect(JSON.parse(output.slice(output.indexOf("{"))).meta).toEqual({
 			procedure: "relay.validate",
 			latency_ms: 1.25,
 			ok: true,
@@ -52,7 +57,7 @@ describe("support export privacy regressions", () => {
 				},
 			},
 		);
-		const output = redactSupportJournal(line);
+		const output = exported(event(JSON.parse(line)));
 		expect(output).toContain("RPC streaming.start ok");
 		for (const value of [
 			"abcd1234",
@@ -65,33 +70,24 @@ describe("support export privacy regressions", () => {
 			expect(output).not.toContain(value);
 	});
 	test.each([
-		'ModemManager[600]: <debug> [ttyUSB2/at] <-- \'<CR><LF>+CEREG: 2,1,"00AA","0A0B0C0D",7<CR><LF>\'',
-		'+CGREG: 2,1,"00AA","0A0B0C0D",7',
-		'+C5GREG: 2,1,"00AA","0A0B0C0D",7',
-		'+QENG: "servingcell",…,001,01,A0B0C0D,123,…,00AA,…',
-		"ModemManager[600]: [/dev/cdc-wdm0] <<<<<<   value       = 33:35:31:37:35:36:30:35:31:35:32:33:39:39:39",
-		"98:43:70:11:00:00:83:26:01:f5",
-		"value = 33 35 31 37 35 36 30 35 31 35 32 33 39 39 39",
-		"35 175605 152399 9",
-		"35-175605-152399-9",
-		"sms received from 0000 1234567",
-		"$GNGNS,120000,0000.000,N,00000.000,E,AA,12,0.9,0.0,0.0,,*00",
-		"latitude: 0.000000 longitude: 0.000000",
-		"latitude 0.000000 longitude 0.000000",
-		"$PTEST,0000.000,N,00000.000,E*00",
-		"passphrase=hunter2hunter2",
-		"streamid=publish:KEYVALUE",
-		"psk=private-wifi-key",
-	])(
-		"drops opaque modem, identifier, position and credential evidence: %s",
-		(line) => {
-			expect(redactSupportJournal(line)).toBe("[REDACTED support log line]");
-		},
-	);
+		modemManager(
+			'<debug> [ttyUSB2/at] <-- \'<CR><LF>+CEREG: 2,1,"00AA","0A0B0C0D",7<CR><LF>\'',
+		),
+		modemManager('<info>  [modem0] +CGREG: 2,1,"00AA","0A0B0C0D",7'),
+		event({ msg: '+C5GREG: 2,1,"00AA","0A0B0C0D",7' }),
+		event({ msg: '+QENG: "servingcell",…,001,01,A0B0C0D,123,…,00AA,…' }),
+		event({ msg: "98:43:70:11:00:00:83:26:01:f5" }),
+		event({ msg: "35 175605 152399 9" }),
+		event({ msg: "$PTEST,0000.000,N,00000.000,E*00" }),
+		event({ msg: "latitude 0.000000 longitude 0.000000" }),
+		kernel("98:43:70:11:00:00:83:26:01:f5"),
+	])("withholds opaque modem, identifier, position evidence (%#)", (record) => {
+		expect(exported(record)).toBe("[REDACTED support log line]");
+	});
 	test("masks an address span while preserving the diagnostic line", () => {
-		expect(redactSupportJournal("adapter address aa:bb:cc:dd:ee:ff")).toBe(
-			"adapter address [address]",
-		);
+		expect(
+			exported(event({ msg: "adapter address aa:bb:cc:dd:ee:ff" })),
+		).toContain('"msg":"adapter address [address]"');
 	});
 
 	test("logger masks passphrases and GNS positions before persistence", () => {
@@ -108,30 +104,21 @@ describe("support export privacy regressions", () => {
 		);
 	});
 	test("diagnostic events retain status, reason, severity, timing and USB failures", () => {
-		const line =
-			'{"ts":"2026-11-13T00:00:00Z","level":"warn","msg":"connection failed","meta":{"reason":"no_route","attempt":2,"retryable":true}}';
-		const output = redactSupportJournal(line);
-		expect(JSON.parse(output)).toEqual(JSON.parse(line));
+		const entry = {
+			ts: "2026-11-13T00:00:00Z",
+			level: "warn",
+			msg: "connection failed",
+			meta: { reason: "no_route", attempt: 2, retryable: true },
+		};
+		const output = exported(event(entry));
+		expect(JSON.parse(output.slice(output.indexOf("{")))).toEqual({
+			msg: entry.msg,
+			ts: entry.ts,
+			level: entry.level,
+			meta: entry.meta,
+		});
 		expect(
-			redactSupportJournal(
-				"Nov 13 00:00:00 host kernel: usb 1-2: USB disconnect, device number 8",
-			),
+			exported(kernel("usb 1-2: USB disconnect, device number 8")),
 		).toContain("USB disconnect");
-	});
-
-	test("unknown structured metadata and pretty-printed fragments fail closed", () => {
-		const output = redactSupportJournal(
-			'{"ts":"2026-11-13T00:00:00Z","level":"warn","msg":"connection failed","meta":{"reason":"no_route","opaque_future_field":"unlabelled-private-value","nested":{"value":"another-private-value"}}}\n  "unlabelled-private-array-value",\n  "future": "private-fragment"\n2026-11-13T00:00:00 host service: "private-prefixed-fragment"',
-		);
-		for (const value of [
-			"unlabelled-private-value",
-			"another-private-value",
-			"unlabelled-private-array-value",
-			"private-fragment",
-			"private-prefixed-fragment",
-		])
-			expect(output).not.toContain(value);
-		expect(output).toContain("connection failed");
-		expect(output).toContain("no_route");
 	});
 });

@@ -1,16 +1,42 @@
 import {
 	oversizedSupportLine,
-	redactSupportRecord,
+	renderSourceMessage,
 	WITHHELD,
 } from "./support-log-filter.ts";
 
-const UNITS: Readonly<Record<string, string>> = {
-	"ceralive.service": "ceralive",
-	"ModemManager.service": "ModemManager",
-	"NetworkManager.service": "NetworkManager",
-	"wpa_supplicant.service": "wpa_supplicant",
-	"hostapd.service": "hostapd",
+// A record is admitted only when both its unit and its command name match:
+// journald sets both from the sending process, not from the message. Children
+// in an admitted unit (dnsmasq and pppd under NetworkManager, sudo, helpers)
+// keep their own command name and are withheld.
+const UNITS: Readonly<Record<string, { source: string; comm: string }>> = {
+	"ceralive.service": { source: "ceralive", comm: "ceralive" },
+	"ModemManager.service": { source: "ModemManager", comm: "ModemManager" },
+	"NetworkManager.service": {
+		source: "NetworkManager",
+		comm: "NetworkManager",
+	},
+	"wpa_supplicant.service": {
+		source: "wpa_supplicant",
+		comm: "wpa_supplicant",
+	},
+	"hostapd.service": { source: "hostapd", comm: "hostapd" },
 };
+
+/** journalctl matches for the admitted sources, so the entry budget is spent
+ * only on records that can reach the export. Fields within a group are ANDed;
+ * `+` ORs the groups.
+ */
+export const SUPPORT_JOURNAL_MATCHES: readonly string[] = [
+	...Object.entries(UNITS).flatMap(([unit, { comm }]) => [
+		`_SYSTEMD_UNIT=${unit}`,
+		`_COMM=${comm}`,
+		"+",
+	]),
+	"_TRANSPORT=kernel",
+	"+",
+	"_PID=1",
+	"_COMM=systemd",
+];
 
 function field(record: Record<string, unknown>, name: string): string {
 	// journalctl renders binary or oversized fields as arrays or null. Treat any
@@ -20,8 +46,6 @@ function field(record: Record<string, unknown>, name: string): string {
 }
 
 function recordSource(record: Record<string, unknown>): string | undefined {
-	// These trusted journal fields cannot be set by a message body. Child sudo
-	// and audit records are excluded even when they inherit an allowed unit.
 	if (
 		"SYSLOG_IDENTIFIER" in record &&
 		typeof record.SYSLOG_IDENTIFIER !== "string"
@@ -32,16 +56,17 @@ function recordSource(record: Record<string, unknown>): string | undefined {
 		["sudo", "auditd"].includes(field(record, "_COMM"))
 	)
 		return undefined;
-	if (record._TRANSPORT === "kernel") return "kernel";
+	// Kernel text has no unit; its content must also match a kernel line shape,
+	// because any root process can write to /dev/kmsg.
+	if (field(record, "_TRANSPORT") === "kernel") return "kernel";
 	if (
-		record._PID === "1" &&
-		record.SYSLOG_IDENTIFIER === "systemd" &&
-		record._SYSTEMD_UNIT === "init.scope"
+		field(record, "_PID") === "1" &&
+		field(record, "_COMM") === "systemd" &&
+		field(record, "_SYSTEMD_UNIT") === "init.scope"
 	)
 		return "systemd";
-	if (typeof record._SYSTEMD_UNIT !== "string") return undefined;
-	const source = UNITS[record._SYSTEMD_UNIT];
-	return typeof source === "string" ? source : undefined;
+	const unit = UNITS[field(record, "_SYSTEMD_UNIT")];
+	return unit && field(record, "_COMM") === unit.comm ? unit.source : undefined;
 }
 
 function timestamp(value: unknown): string | undefined {
@@ -56,6 +81,15 @@ function timestamp(value: unknown): string | undefined {
  * Hostnames, raw boot ids, pids and stream ids are never rendered.
  */
 export function renderSupportJournal(text: string): string {
+	return renderSupportJournalWithCounts(text).text;
+}
+
+/** As renderSupportJournal, also counting shown and withheld records. */
+export function renderSupportJournalWithCounts(text: string): {
+	text: string;
+	shown: number;
+	withheld: number;
+} {
 	const interrupted = new Set<string>();
 	const boots = new Map<string, number>();
 	const rendered = text
@@ -105,7 +139,7 @@ export function renderSupportJournal(text: string): string {
 			// structured event is the supported application-log representation.
 			if (record.MESSAGE.includes("\n") || record.MESSAGE.includes("\r"))
 				return WITHHELD;
-			const filtered = redactSupportRecord(record.MESSAGE, source);
+			const filtered = renderSourceMessage(source, record.MESSAGE);
 			if (filtered === WITHHELD) return WITHHELD;
 			const time = timestamp(record.__REALTIME_TIMESTAMP);
 			let boot: number | undefined;
@@ -118,7 +152,12 @@ export function renderSupportJournal(text: string): string {
 			}
 			return `${boot ? `[boot ${boot}] ` : ""}${time ? `${time} ` : ""}${source}: ${filtered}`;
 		});
-	return collapseWithheld(rendered).join("\n");
+	const withheld = rendered.filter((line) => line === WITHHELD).length;
+	return {
+		text: collapseWithheld(rendered).join("\n"),
+		shown: rendered.length - withheld,
+		withheld,
+	};
 }
 
 /** Unnamed sources are withheld wholesale; one counted marker per run keeps
@@ -143,6 +182,8 @@ function collapseWithheld(lines: readonly string[]): string[] {
 	return out;
 }
 
+const MOCK_FIELDS = { _SYSTEMD_UNIT: "ceralive.service", _COMM: "ceralive" };
+
 /** Dev hosts supply the same trusted-source shape, with an explicit mock label. */
 export function mockSupportJournal(
 	lines: readonly string[],
@@ -153,11 +194,9 @@ export function mockSupportJournal(
 		: "-- Logs begin, full CeraUI system journal (mock) --";
 	return [
 		JSON.stringify({
-			_SYSTEMD_UNIT: "ceralive.service",
+			...MOCK_FIELDS,
 			MESSAGE: JSON.stringify({ msg: header }),
 		}),
-		...lines.map((line) =>
-			JSON.stringify({ _SYSTEMD_UNIT: "ceralive.service", MESSAGE: line }),
-		),
+		...lines.map((line) => JSON.stringify({ ...MOCK_FIELDS, MESSAGE: line })),
 	].join("\n");
 }
