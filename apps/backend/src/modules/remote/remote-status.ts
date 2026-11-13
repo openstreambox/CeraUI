@@ -46,8 +46,23 @@ export function projectRemoteConfig(payload: unknown): unknown {
 	return config;
 }
 
-/** Remote status retains credentials and omits only local radio lifetime tokens. */
+/** Phone-only remote status is allowlisted; encoder status keeps its existing contract. */
 export function projectRemoteStatus(payload: unknown): unknown {
+	if (
+		typeof payload === "object" &&
+		payload !== null &&
+		"phone_box" in payload &&
+		payload.phone_box === true
+	) {
+		const source = payload as Record<string, unknown>;
+		return {
+			phone_box: true,
+			carrying: source.carrying,
+			box_health: source.box_health,
+			phone_links: source.phone_links,
+		};
+	}
+
 	if (
 		typeof payload !== "object" ||
 		payload === null ||

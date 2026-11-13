@@ -25,7 +25,7 @@ import { AppDialog } from '$lib/components/dialogs';
 import { Button } from '$lib/components/ui/button';
 import { getOperationPhase, osCommand } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
-import { getIsConnected, getIsStreaming, getUpdating } from '$lib/rpc/subscriptions.svelte';
+import { getIsConnected, getIsStreaming, getStatus, getUpdating } from '$lib/rpc/subscriptions.svelte';
 import { clearRebooting, getIsRebooting, markRebooting } from '$lib/stores/connection-ux.svelte';
 import { legacyInstallRunning } from '$lib/updates/legacy-install';
 import { cn } from '$lib/utils';
@@ -57,9 +57,10 @@ const updating = $derived(getUpdating());
 // In progress = an install the device has not finished; its terminal object
 // (success or failure) is retained by the store and must release the gate.
 const isUpdating = $derived(legacyInstallRunning(updating));
-const blocked = $derived(streaming || isUpdating);
+const phoneProtected = $derived(getStatus()?.phone_box && getStatus()?.carrying?.state !== 'idle');
+const blocked = $derived(streaming || isUpdating || phoneProtected);
 const blockedReason = $derived(
-	streaming
+	phoneProtected ? m['live.phone.restartHold']() : streaming
 		? m["settings.dialogs.blockedStreaming"]()
 		: isUpdating
 			? m["settings.dialogs.blockedUpdating"]()
@@ -85,7 +86,7 @@ const confirmLabel = $derived(
 const confirmBody = $derived(
 	pending === 'poweroff'
 		? m["settings.dialogs.powerOffConfirm"]()
-		: m["settings.dialogs.rebootConfirm"](),
+		: getStatus()?.phone_box ? m['live.phone.restartCost']() : m["settings.dialogs.rebootConfirm"](),
 );
 
 function request(action: PendingAction) {

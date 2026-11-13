@@ -6,6 +6,7 @@ import {
 	areDestinationNamespacesLoaded,
 	ensureDestinationNamespaces,
 } from '$lib/i18n/namespace-activation';
+import { getStatus } from '$lib/rpc/subscriptions.svelte';
 import {
 	enhancedNavigationStore,
 	getCurrentNavigation,
@@ -15,6 +16,7 @@ import {
 	transitionDirection,
 } from '$lib/stores/navigation.svelte';
 import { einkGatedFade as fade, einkGatedFly as fly } from '$lib/transitions';
+import PhoneHomeView from '../PhoneHomeView.svelte';
 
 // Navigation transition configuration
 const TRANSITION_DURATION = 300;
@@ -156,7 +158,7 @@ const transitionParams = $derived.by(() => {
 						easing: cubicInOut,
 					}}
 				>
-					<CurrentComponent />
+					{#if destinationKey === 'live' && getStatus()?.phone_box}<PhoneHomeView />{:else}<CurrentComponent />{/if}
 				</div>
 			{/if}
 		</div>

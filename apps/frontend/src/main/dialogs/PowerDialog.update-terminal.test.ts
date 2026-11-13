@@ -32,6 +32,8 @@ vi.mock("$lib/rpc/client", () => ({
 }));
 
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
+	getStatus: () => undefined,
+	getUplinks: () => undefined,
 	getIsStreaming: () => false,
 	getUpdating: () => state.updating,
 	getIsConnected: () => true,

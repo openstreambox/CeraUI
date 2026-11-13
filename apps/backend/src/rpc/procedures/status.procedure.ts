@@ -23,6 +23,7 @@ import {
 	buildRelaysMsg,
 	getRelays,
 } from "../../modules/remote/remote-relays.ts";
+import { setup } from "../../modules/setup";
 import { getActiveEncodeStatus } from "../../modules/streaming/active-encode-status.ts";
 import {
 	deriveAudioSources,
@@ -44,8 +45,10 @@ import { getPreviewEncoderRealizedStatus } from "../../modules/streaming/preview
 import { getSourcesMessage } from "../../modules/streaming/sources.ts";
 import { getStreamLifecycleState } from "../../modules/streaming/stream-lifecycle-status.ts";
 import { getIsStreaming } from "../../modules/streaming/streaming.ts";
+import { getCarryingLiveness } from "../../modules/system/carrying";
 import { getCpuInfo } from "../../modules/system/cpu.ts";
 import { getEncoderLoad } from "../../modules/system/encoder-load.ts";
+import { getPhoneBoxHealth } from "../../modules/system/readiness";
 import { getRevisions } from "../../modules/system/revisions.ts";
 import { getSensors } from "../../modules/system/sensors.ts";
 import {
@@ -82,6 +85,15 @@ export const getStatusProcedure = authedProcedure
 		void getSshStatus();
 		return {
 			is_streaming: getIsStreaming(),
+			carrying: { state: getCarryingLiveness() },
+			phone_box: setup.engine === "none",
+			box_health: getPhoneBoxHealth(),
+			phone_links: {
+				ready: getUplinksMessage().filter(
+					(link) => link.state === "up" && link.staleAt > Date.now(),
+				).length,
+				sending: null,
+			},
 			stream_lifecycle: getStreamLifecycleState(),
 			available_updates: getAvailableUpdates(),
 			updating: getSoftUpdateStatus(),
@@ -131,6 +143,15 @@ export function buildInitialStatus() {
 		relays: getRelays() ? buildRelaysMsg() : null,
 		status: {
 			is_streaming: getIsStreaming(),
+			carrying: { state: getCarryingLiveness() },
+			phone_box: setup.engine === "none",
+			box_health: getPhoneBoxHealth(),
+			phone_links: {
+				ready: getUplinksMessage().filter(
+					(link) => link.state === "up" && link.staleAt > Date.now(),
+				).length,
+				sending: null,
+			},
 			stream_lifecycle: getStreamLifecycleState(),
 			available_updates: getAvailableUpdates(),
 			updating: getSoftUpdateStatus(),

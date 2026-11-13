@@ -37,7 +37,9 @@ import { buildModemsWireMessage } from "../modems/modem-status.ts";
 import { getNetworkIngestInfo } from "../network/network-ingest.ts";
 import { netIfBuildMsg } from "../network/network-interfaces.ts";
 import { getUnclaimedAdapters } from "../network/unclaimed-adapters.ts";
+import { getUplinksMessage } from "../network/uplink-health/state";
 import { buildRelaysMsg, getRelays } from "../remote/remote-relays.ts";
+import { setup } from "../setup";
 import { getActiveEncodeStatus } from "../streaming/active-encode-status.ts";
 import { deriveAudioSources, getAudioDevices } from "../streaming/audio.ts";
 import {
@@ -62,6 +64,7 @@ import { getCarryingLiveness } from "../system/carrying.ts";
 import { CPU_EVENT, getCpuInfo } from "../system/cpu.ts";
 import { ENCODER_LOAD_EVENT, getEncoderLoad } from "../system/encoder-load.ts";
 import { FAN_EVENT, getFan } from "../system/fan.ts";
+import { getPhoneBoxHealth } from "../system/readiness";
 import { getRevisions } from "../system/revisions.ts";
 import { getSensors } from "../system/sensors.ts";
 import {
@@ -76,6 +79,9 @@ import { notificationSendPersistent } from "./notifications.ts";
 import { buildMsg } from "./websocket-server.ts";
 
 export type StatusResponseMessage = {
+	phone_box?: boolean;
+	phone_links?: { ready: number; sending: number | null };
+	box_health?: ReturnType<typeof getPhoneBoxHealth>;
 	is_streaming?: ReturnType<typeof getIsStreaming>;
 	stream_lifecycle?: ReturnType<typeof getStreamLifecycleState>;
 	available_updates?: ReturnType<typeof getAvailableUpdates>;
@@ -132,6 +138,14 @@ export function sendStatus(conn: WebSocket) {
 			bond_mapping: buildBondMapping(),
 			network_ingest: getNetworkIngestInfo(),
 			carrying: { state: getCarryingLiveness() },
+			phone_box: setup.engine === "none",
+			phone_links: {
+				ready: getUplinksMessage().filter(
+					(link) => link.state === "up" && link.staleAt > Date.now(),
+				).length,
+				sending: null,
+			},
+			box_health: getPhoneBoxHealth(),
 			active_encode: getActiveEncodeStatus(),
 			engine_bitrate: getEngineBitrateStatus(),
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),

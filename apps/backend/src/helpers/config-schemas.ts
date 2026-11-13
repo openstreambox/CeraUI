@@ -589,7 +589,9 @@ export const setupConfigSchema = z.preprocess(
 	},
 	z.object({
 		hw: hardwareTypeSchema,
-		engine: legacyTolerantStreamingEngineSchema.optional(),
+		engine: z
+			.union([z.literal("none"), legacyTolerantStreamingEngineSchema])
+			.optional(),
 		// Cerastream control-socket / exec overrides.
 		cerastream_path: z.string().optional(),
 		cerastream_socket: z.string().optional(),

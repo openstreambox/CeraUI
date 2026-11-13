@@ -1,7 +1,7 @@
 <script lang="ts">
-import { resolveMessageKey } from '@ceraui/i18n/svelte';
-
+import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import { type NavElements, navElements } from '$lib/config';
+import { getStatus } from '$lib/rpc/subscriptions.svelte';
 import {
 	getCurrentNavigation,
 	isNavigationTransitioning,
@@ -19,7 +19,7 @@ const handleClick = (identifier: string, navigation: NavElements[string]) => {
 };
 
 const label = (nav: NavElements[string]) =>
-	nav.title ?? resolveMessageKey(`navigation.${nav.label}`);
+	nav.label === 'live' && getStatus()?.phone_box ? m['live.phone.home']() : nav.title ?? resolveMessageKey(`navigation.${nav.label}`);
 </script>
 
 <nav

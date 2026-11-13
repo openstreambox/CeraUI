@@ -39,9 +39,10 @@ import ModeToggle from '$lib/components/custom/mode-toggle.svelte';
 import { AppDialog, LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { osCommand } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
-import { getConfig, getKiosk } from '$lib/rpc/subscriptions.svelte';
+import { getConfig, getIsConnected, getKiosk, getStatus, getUplinks } from '$lib/rpc/subscriptions.svelte';
 import { clearRequestedDialog, getRequestedDialog } from '$lib/stores/dialog-request.svelte';
 import { cn } from '$lib/utils';
+import PhoneBoxHealth from './PhoneBoxHealth.svelte';
 
 import DeviceStatsSection from './settings/DeviceStatsSection.svelte';
 import RemoteControlStatus from './settings/RemoteControlStatus.svelte';
@@ -284,6 +285,7 @@ $effect(() => {
 </script>
 
 <div class="flex-col md:flex">
+{#if getStatus()?.phone_box}<PhoneBoxHealth reachable={getIsConnected()} health={getStatus()?.box_health} carrying={getStatus()?.carrying?.state} links={(getUplinks()??[]).filter(l=>l.staleAt>Date.now()).map(l=>({label:l.displayName??l.iface,internet:l.state==='up'?'yes':'unknown'}))} onrestart={()=>powerOpen=true}/>{/if}
 	<div class="container mx-auto max-w-3xl flex-1 space-y-8 p-4 pt-6 sm:p-8">
 		<!-- Header -->
 		<header class="space-y-2">

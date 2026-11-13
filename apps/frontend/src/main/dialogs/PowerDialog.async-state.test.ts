@@ -36,6 +36,12 @@ import {
 import PowerDialog from "./PowerDialog.svelte";
 
 const state = vi.hoisted(() => ({
+	status: undefined as
+		| {
+				phone_box: boolean;
+				carrying?: { state: "streaming" | "idle" | "unknown" };
+		  }
+		| undefined,
 	streaming: false,
 	updating: false as boolean,
 	connected: true,
@@ -53,6 +59,8 @@ vi.mock("$lib/rpc/client", () => ({
 }));
 
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
+	getStatus: () => state.status,
+	getUplinks: () => undefined,
 	getIsStreaming: () => state.streaming,
 	getUpdating: () => state.updating,
 	getIsConnected: () => state.connected,
@@ -111,6 +119,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+	state.status = undefined;
 	state.streaming = false;
 	state.updating = false;
 	state.connected = true;
@@ -192,5 +201,31 @@ describe("PowerDialog — poweroff async state", () => {
 
 		await confirm(POWEROFF_LABEL);
 		await waitFor(() => expect(poweroffRpc).toHaveBeenCalledTimes(2));
+	});
+});
+
+describe("phone-only power admission", () => {
+	it.each(["streaming", "unknown"] as const)(
+		"blocks restart while client state is %s",
+		(stateValue) => {
+			state.status = { phone_box: true, carrying: { state: stateValue } };
+			render(PowerDialog, { props: { open: true } });
+			expect(
+				screen.getByRole("button", { name: REBOOT_LABEL, exact: true }),
+			).toHaveProperty("disabled", true);
+			expect(
+				screen.getByText(
+					"You can restart once your phone's stream has stopped.",
+				),
+			).toBeTruthy();
+			expect(rebootRpc).not.toHaveBeenCalled();
+		},
+	);
+	it("keeps restart available for a ready phone-only box", () => {
+		state.status = { phone_box: true, carrying: { state: "idle" } };
+		render(PowerDialog, { props: { open: true } });
+		expect(
+			screen.getByRole("button", { name: REBOOT_LABEL, exact: true }),
+		).toHaveProperty("disabled", false);
 	});
 });
