@@ -13,7 +13,7 @@ export type ExecResult = { stdout: string; stderr: string };
 const SECRET_FLAG_RE =
 	/pass(word)?|secret|psk|token|key|pin|puk|stream[-_]?id|account|user(name)?|login|credential|auth/i;
 // Short options whose value is a credential (curl `-u user:password`).
-const SECRET_SHORT_FLAGS = new Set(["-u", "-U"]);
+const SECRET_SHORT_FLAGS = new Set(["-u", "-U", "-p"]);
 
 /**
  * Produce a log-safe rendering of argv. Three shapes are redacted, because the

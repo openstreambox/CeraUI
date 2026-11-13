@@ -725,14 +725,14 @@ function buildDbusViewFixture() {
 }
 
 describe("carrier support export adapters", () => {
-	test("mmcli and D-Bus retain APN and TAC without copying full identities", () => {
+	test("mmcli and D-Bus retain masked APN presence and TAC without copying full identities", () => {
 		const mm = fromMmcliModem(7, buildModemFixture({ tac: "35175605" }));
 		const dbus = fromDbusView({
 			...buildDbusViewFixture(),
 			equipmentId: "351756051523999",
 		});
 		const rows = carrierSupportRows([mm, dbus]);
-		expect(rows[0]).toEqual({ modem: 1, apn: "internet", tac: "35175605" });
+		expect(rows[0]).toEqual({ modem: 1, apn: "[custom APN]", tac: "35175605" });
 		expect(rows[1]?.tac).toBe("35175605");
 		expect(JSON.stringify(rows)).not.toContain("351756051523999");
 		expect(JSON.stringify(rows)).not.toContain('"password"');

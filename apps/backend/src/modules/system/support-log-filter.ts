@@ -229,7 +229,7 @@ function safeMetadata(
 				inner >= 0 &&
 				inner <= 300000
 			)
-				out[key] = inner;
+				out[key] = Math.round(inner);
 			if (key === "ok" && typeof inner === "boolean") out[key] = inner;
 			continue;
 		}
@@ -311,7 +311,7 @@ function safeMetadata(
 			inner >= 0 &&
 			inner <= 1000000
 		)
-			out[key] = inner;
+			out[key] = Math.round(inner);
 		else if (
 			["ok", "retryable", "available"].includes(key) &&
 			typeof inner === "boolean"
@@ -421,7 +421,7 @@ function systemdMessage(message: string): string | undefined {
 	if (result?.[1])
 		return `${name}: Failed with result '${SERVICE_RESULTS.has(result[1]) ? result[1] : "[result]"}'.`;
 	const killing =
-		/^Killing process (\d{1,10}) \(([^()\n]{1,16})\) with signal (SIG[A-Z0-9]{2,8})\.$/.exec(
+		/^Killing process (\d{1,7}) \(([^()\n]{1,16})\) with signal (SIG[A-Z0-9]{2,8})\.$/.exec(
 			rest,
 		);
 	if (killing)
@@ -429,7 +429,7 @@ function systemdMessage(message: string): string | undefined {
 	const consumed = new RegExp(`^Consumed (${DURATION}) CPU time\\b`).exec(rest);
 	if (consumed?.[1]) return `${name}: Consumed ${consumed[1].trim()} CPU time.`;
 	const restart =
-		/^Scheduled restart job, restart counter is at (\d{1,6})\.$/.exec(rest);
+		/^Scheduled restart job, restart counter is at (\d{1,4})\.$/.exec(rest);
 	if (restart)
 		return `${name}: Scheduled restart job, restart counter is at ${restart[1]}.`;
 	for (const fixed of [
@@ -490,11 +490,7 @@ function redactSupportRecord(
 				: boundedBackendMessage(raw, MESSAGE_TOKENS);
 			if (msg === undefined) return WITHHELD;
 			const out: Record<string, unknown> = { msg };
-			if (
-				typeof entry.ts === "string" &&
-				/^\d{4}-\d\d-\d\dT[0-9:.]{8,20}Z$/.test(entry.ts)
-			)
-				out.ts = entry.ts;
+
 			if (
 				["error", "warn", "info", "debug", "verbose", "silly"].includes(
 					entry.level,

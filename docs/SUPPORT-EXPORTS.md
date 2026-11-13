@@ -7,8 +7,7 @@ does not. Each line shows a boot label, an ISO timestamp and its source. Boot
 labels count back from the running boot: `[boot 0]` is this boot, `[boot -1]`
 the one before it, and so on, using journald's own boot list, so a boot with no
 shown record still counts; the header names such boots. If the running boot
-has no records in the download, its newest boot is `[boot -1]`. Host names, raw boot ids and process
-ids are not included.
+has no records in the download, its newest boot is `[boot -1]`. Host names, raw boot ids are not included. Bounded process ids remain in OOM and systemd kill diagnostics.
 
 ## Limits
 
@@ -40,9 +39,8 @@ A host with a volatile journal cannot supply previous boots.
 ## Carrier summary
 
 The carrier summary uses existing observations, without running modem commands.
-It discloses only the APN name and the IMEI's first eight digits (the type
-allocation code, **TAC**, not a tracking area code), for at most 64 modems and
-at most 100 characters per APN. Invalid or missing values are omitted; they
+It discloses APN presence as `[custom APN]` and the IMEI's first eight digits
+(the type allocation code, **TAC**, not a tracking area code), for at most 64 modems. Invalid or missing values are omitted; they
 never imply a successful observation. Rows use export-local ordinals, not
 subscriber, device or cell identities. The APN is a configured profile value,
 not proof of the bearer actually used. The summary describes the current
@@ -165,8 +163,9 @@ much of a real device journal is shown: a real journal holds many lines without
 a shape, and those are withheld. Production writes backend events at warn level
 and above, so info events do not appear in a download. A crafted record can
 still choose among vocabulary members and numbers; it cannot put words into the
-file. No unredacted export mode is offered. A private/custom APN name can itself reveal account context: review
-exports before sharing. Existing authentication requirements still apply.
+file. No unredacted export mode is offered. Configured APN text is always masked. Review exports before sharing. Existing authentication requirements still apply.
+
+Normalized QMI/MBIM prefixes and libmbim status/protocol errors retain source-generated nicknames keyed by code. AP deauthentication/disassociation reasons, AP loss, beacon loss and network-not-found events are typed. Metadata timings are rounded to integer milliseconds; journal timestamps replace caller-supplied `ts`.
 
 # Descargas de registros de soporte
 
@@ -179,8 +178,8 @@ curso: `[boot 0]` es este arranque y `[boot -1]` el anterior, según la lista de
 arranques de journald, así que un arranque sin entradas mostradas también cuenta
 y la cabecera lo indica. Si el arranque en curso no tiene entradas en la
 descarga, el más reciente es `[boot -1]`. No se
-incluyen el nombre del equipo, los identificadores de arranque ni los de
-proceso.
+incluyen el nombre del equipo ni los identificadores de arranque. Los PID
+acotados se conservan en los diagnósticos OOM y de terminación por systemd.
 
 ## Límites
 
@@ -208,7 +207,7 @@ los arranques anteriores.
 ## Resumen del operador
 
 Se agrega un resumen de las observaciones actuales de hasta 64 módems: únicamente
-el nombre del APN configurado (hasta 100 caracteres) y los primeros ocho dígitos
+la presencia del APN como `[custom APN]` y los primeros ocho dígitos
 del IMEI, el código de asignación de tipo (**TAC**). No es el código de área de
 seguimiento. Los datos ausentes o inválidos se omiten. El APN configurado no
 confirma cuál usó la conexión. El resumen no describe conexiones históricas. Si
@@ -281,6 +280,7 @@ conservan (105 de 110 entradas con bookworm, 110 de 114 con trixie); no mide
 cuánto de un registro real se muestra, porque las líneas sin formato se
 retiran. En producción el backend solo escribe avisos y errores. Una entrada
 manipulada aún puede elegir entre valores de las listas y números, pero no
-puede introducir palabras en el archivo. No hay modo sin redactar. Un APN privado puede
-revelar información de la cuenta: revisa el archivo antes de compartirlo. Se
+puede introducir palabras en el archivo. No hay modo sin redactar. El texto del APN siempre se oculta. Revisa el archivo antes de compartirlo. Se
 mantiene la autenticación existente.
+
+Los prefijos QMI/MBIM normalizados y los errores de estado/protocolo de libmbim conservan solo nombres generados del código fuente. Se conservan las causas de desautenticación/desasociación, pérdida del AP o de balizas y red no encontrada. Los tiempos se redondean a milisegundos enteros; se usa la fecha del registro en vez de `ts`.

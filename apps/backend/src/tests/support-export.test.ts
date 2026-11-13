@@ -30,7 +30,7 @@ describe("support export disclosure", () => {
 		expect(output).not.toContain("oldest marker");
 	});
 
-	test("keeps APN and TAC only; never serializes subscriber or cell identities", () => {
+	test("keeps masked APN presence and TAC only; never serializes subscriber or cell identities", () => {
 		const imei = "351756051523999";
 		const secrets = [
 			imei,
@@ -49,7 +49,8 @@ describe("support export disclosure", () => {
 			cell_id: secrets[4],
 		};
 		const output = JSON.stringify(carrierSupportRows([row]));
-		expect(output).toContain("internet.example");
+		expect(output).toContain("[custom APN]");
+		expect(output).not.toContain("internet.example");
 		expect(output).toContain("35175605");
 		for (const value of [...secrets, "secret-password"])
 			expect(output).not.toContain(value);

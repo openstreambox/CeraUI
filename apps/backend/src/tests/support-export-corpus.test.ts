@@ -71,7 +71,7 @@ describe("structured backend events", () => {
 		])
 			expect(output).not.toContain(value);
 		expect(output).toContain(
-			'ceralive: {"msg":"RPC relay.validate ok","meta":{"procedure":"relay.validate","latency_ms":1.25,"ok":true}}',
+			'ceralive: {"msg":"RPC relay.validate ok","meta":{"procedure":"relay.validate","latency_ms":1,"ok":true}}',
 		);
 	});
 	test("keeps the error reason, exit status and signal without stacks or unknown fields", () => {

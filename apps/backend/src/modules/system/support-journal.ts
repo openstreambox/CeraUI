@@ -130,6 +130,7 @@ export function renderSupportJournalWithCounts(
 	const boots: string[] = (options.bootList ?? []).map((id) =>
 		id.toLowerCase(),
 	);
+	let unlistedBoots = 0;
 	const lineBoots: (string | undefined)[] = [];
 	const rendered = text
 		.split("\n")
@@ -153,7 +154,10 @@ export function renderSupportJournalWithCounts(
 			}
 			// Boot order from trusted metadata, before any content decision.
 			const boot = bootId(record);
-			if (boot !== undefined && !boots.includes(boot)) boots.push(boot);
+			if (boot !== undefined && !boots.includes(boot)) {
+				if (options.bootList?.length) boots.splice(unlistedBoots++, 0, boot);
+				else boots.push(boot);
+			}
 			const source = recordSource(record);
 			// Track a split before looking at the message: without --all,
 			// journalctl prints a field over 4096 bytes as null, which includes the

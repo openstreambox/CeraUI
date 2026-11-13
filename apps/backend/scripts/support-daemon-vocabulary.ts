@@ -14,9 +14,10 @@
  *     libqmi_1.32.2.orig.tar.xz libqmi_1.36.0.orig.tar.xz \
  *     libqmi_1.38.0.orig.tar.gz \
  *     network-manager_1.42.4.orig.tar.xz network-manager_1.52.1.orig.tar.bz2 \
- *     wpa_2.10.orig.tar.xz
+ *     wpa_2.10.orig.tar.xz \
+ *     libmbim_1.28.2.orig.tar.xz libmbim_1.32.0.orig.tar.xz
  *
- * (from https://deb.debian.org/debian/pool/main/). Enum nicknames follow
+ * (from https://deb.debian.org/debian/pool/main/; libqmi under libq/libqmi/ and libmbim under libm/libmbim/). Enum nicknames follow
  * glib-mkenums: an explicit `nick=` annotation, else the value name without
  * the enum's common prefix, lower case, `_` as `-`.
  */
@@ -148,7 +149,8 @@ function files(dir: string, suffix: string): string[] {
 function enumsIn(paths: readonly string[]): Map<string, EnumValue[]> {
 	const out = new Map<string, EnumValue[]>();
 	for (const path of paths)
-		if (existsSync(path))
+		if (!existsSync(path)) throw new Error("missing enum header");
+		else
 			for (const [name, values] of parseEnums(readFileSync(path, "utf8")))
 				out.set(name, values);
 	return out;
@@ -157,8 +159,9 @@ function enumsIn(paths: readonly string[]): Map<string, EnumValue[]> {
 type CodeTable = Record<string, string[]>;
 
 function addCodes(into: CodeTable, values: readonly EnumValue[] | undefined) {
-	for (const { value, nick } of values ?? []) {
-		if (value === undefined) continue;
+	if (!values?.length) throw new Error("missing or empty code enum");
+	for (const { value, nick } of values) {
+		if (value === undefined) throw new Error("unresolved enum code");
 		const list = into[String(value)] ?? [];
 		if (!list.includes(nick)) list.push(nick);
 		into[String(value)] = list;
@@ -214,15 +217,25 @@ export interface Vocabulary {
 	qmiVerboseType: CodeTable;
 	qmiVerboseReason: Record<string, CodeTable>;
 	qmiProtocolError: CodeTable;
+	mbimStatusError: CodeTable;
+	mbimProtocolError: CodeTable;
 	lists: Record<string, string[]>;
 }
 
 export function collectDaemonVocabulary(roots: {
 	modemManager: readonly string[];
 	libqmi: readonly string[];
+	libmbim?: readonly string[];
 	networkManager: readonly string[];
 	wpa: readonly string[];
 }): Vocabulary {
+	const mbimStatusError: CodeTable = {};
+	const mbimProtocolError: CodeTable = {};
+	for (const root of roots.libmbim ?? []) {
+		const enums = enumsIn([join(root, "src/libmbim-glib/mbim-errors.h")]);
+		addCodes(mbimStatusError, enums.get("MbimStatusError"));
+		addCodes(mbimProtocolError, enums.get("MbimProtocolError"));
+	}
 	const qmiCallEnd: CodeTable = {};
 	const qmiVerboseType: CodeTable = {};
 	const qmiVerboseReason: Record<string, CodeTable> = {};
@@ -396,7 +409,21 @@ export function collectDaemonVocabulary(roots: {
 				.sort(([a], [b]) => Number(a) - Number(b))
 				.map(([code, nicks]) => [code, [...nicks].sort()]),
 		);
+	if (
+		!roots.modemManager.length ||
+		!roots.libqmi.length ||
+		!roots.libmbim?.length ||
+		!roots.networkManager.length ||
+		!roots.wpa.length
+	)
+		throw new Error("missing source family");
+	for (const [key, values] of Object.entries(lists))
+		if (!values.length) throw new Error(`empty vocabulary ${key}`);
+	if (Object.keys(lists).length < 21 || !Object.keys(wlanReasons).length)
+		throw new Error("incomplete vocabulary");
 	return {
+		mbimStatusError: sortTable(mbimStatusError),
+		mbimProtocolError: sortTable(mbimProtocolError),
 		wlanReasons: sortTable(wlanReasons),
 		qmiCallEnd: sortTable(qmiCallEnd),
 		qmiVerboseType: sortTable(qmiVerboseType),
@@ -433,6 +460,10 @@ export const QMI_VERBOSE_CALL_END_TYPES: Readonly<Record<string, readonly string
 /** libqmi verbose call-end reason nicknames by type code, then reason code. */
 export const QMI_VERBOSE_CALL_END_REASONS: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = ${table(vocabulary.qmiVerboseReason)};
 
+/** libmbim error nicknames by numeric code. */
+export const MBIM_STATUS_ERRORS: Readonly<Record<string, readonly string[]>> = ${table(vocabulary.mbimStatusError)};
+export const MBIM_PROTOCOL_ERRORS: Readonly<Record<string, readonly string[]>> = ${table(vocabulary.mbimProtocolError)};
+
 /** libqmi QmiProtocolError nicknames by numeric code. */
 export const QMI_PROTOCOL_ERRORS: Readonly<Record<string, readonly string[]>> = ${table(vocabulary.qmiProtocolError)};
 
@@ -445,10 +476,11 @@ export const DAEMON_VOCABULARY = ${table(vocabulary.lists)} as const satisfies R
 
 function classify(
 	tarball: string,
-): "modemManager" | "libqmi" | "networkManager" | "wpa" {
+): "modemManager" | "libqmi" | "libmbim" | "networkManager" | "wpa" {
 	const name = basename(tarball);
 	if (name.startsWith("wpa_")) return "wpa";
 	if (name.startsWith("modemmanager_")) return "modemManager";
+	if (name.startsWith("libmbim_")) return "libmbim";
 	if (name.startsWith("libqmi_")) return "libqmi";
 	if (name.startsWith("network-manager_")) return "networkManager";
 	throw new Error(`unrecognised source tarball ${name}`);
@@ -466,6 +498,7 @@ if (import.meta.main) {
 	const roots = {
 		modemManager: [] as string[],
 		libqmi: [] as string[],
+		libmbim: [] as string[],
 		networkManager: [] as string[],
 		wpa: [] as string[],
 	};
@@ -474,7 +507,13 @@ if (import.meta.main) {
 		const sha256 = createHash("sha256")
 			.update(readFileSync(tarball))
 			.digest("hex");
-		sources.push(`${basename(tarball)} sha256 ${sha256}`);
+		const source = `${basename(tarball)} sha256 ${sha256}`;
+		if (
+			process.argv.includes("--check") &&
+			!readFileSync(GENERATED_PATH, "utf8").includes(`//   ${source}`)
+		)
+			throw new Error("source hash differs from recorded header");
+		sources.push(source);
 		const into = join(work, String(index));
 		mkdirSync(into, { recursive: true });
 		const untar = spawnSync("tar", ["-xf", tarball, "-C", into]);
@@ -484,11 +523,23 @@ if (import.meta.main) {
 	}
 	const text = renderGenerated(collectDaemonVocabulary(roots), sources);
 	rmSync(work, { recursive: true, force: true });
-	if (process.argv.includes("--write")) {
+	if (process.argv.includes("--check")) {
+		const formatted = spawnSync(
+			process.execPath,
+			["x", "biome", "format", "--stdin-file-path", GENERATED_PATH],
+			{ input: text, encoding: "utf8", cwd: join(import.meta.dir, "../../..") },
+		);
+		if (
+			formatted.status !== 0 ||
+			formatted.stdout !== readFileSync(GENERATED_PATH, "utf8")
+		)
+			throw new Error("generated vocabulary drift");
+	} else if (process.argv.includes("--write")) {
 		writeFileSync(GENERATED_PATH, text);
 		// Match the repository formatting so `biome check` stays clean.
 		spawnSync("bunx", ["biome", "format", "--write", GENERATED_PATH], {
 			stdio: "inherit",
+			cwd: join(import.meta.dir, "../../.."),
 		});
 	} else process.stdout.write(text);
 }

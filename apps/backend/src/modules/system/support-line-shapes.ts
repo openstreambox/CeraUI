@@ -23,6 +23,8 @@
 
 import {
 	DAEMON_VOCABULARY,
+	MBIM_PROTOCOL_ERRORS,
+	MBIM_STATUS_ERRORS,
 	QMI_CALL_END_REASONS,
 	QMI_PROTOCOL_ERRORS,
 	QMI_VERBOSE_CALL_END_REASONS,
@@ -56,7 +58,12 @@ export const STRICT_INTERFACE_PATTERN = STRICT_IF;
 
 /** A kernel or modem port interface name, by the kernel naming grammar. */
 export function isInterfaceName(value: string): boolean {
-	return value.length <= 15 && INTERFACE_NAME.test(value);
+	return (
+		value.length <= 15 &&
+		(/^(?:wl|en|ww)x[0-9a-f]{12}$/i.test(value) ||
+			(value.match(/\d/g)?.length ?? 0) <= 6) &&
+		INTERFACE_NAME.test(value)
+	);
 }
 
 const interfaceField = (value: string) =>
@@ -160,7 +167,7 @@ const USBNET_DESCRIPTIONS = new Set([
 	"Sierra Wireless USB-to-WWAN Modem",
 ]);
 const USB_BUS =
-	/^usb-(?:(?:xhci-hcd|ehci-platform|ohci-platform|dwc2|musb-hdrc)(?:\.\d{1,3})?(?:\.auto)?|[0-9a-f]{4,8}\.usb|[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.\d)-[\d.]{1,16}$/;
+	/^usb-(?:(?:xhci-hcd|ehci-platform|ohci-platform|dwc2|musb-hdrc)(?:\.\d{1,3})?(?:\.auto)?|[0-9a-f]{4,8}\.usb|[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.\d)-\d{1,2}(?:\.\d{1,2}){0,5}$/;
 
 const CALL_END_NICKS = set(...Object.values(QMI_CALL_END_REASONS));
 const VERBOSE_REASON_NICKS = set(
@@ -195,7 +202,8 @@ const enumField = (
 const FIELDS: Record<string, FieldType> = {
 	// Typed values.
 	NUM: kept("-?\\d{1,6}"),
-	USBPATH: kept("\\d{1,2}-[\\d.]{1,16}(?::\\d\\.\\d{1,2})?"),
+	SIGNAL: kept("-?\\d{1,3}"),
+	USBPATH: kept("\\d{1,2}-\\d{1,2}(?:\\.\\d{1,2}){0,5}(?::\\d\\.\\d{1,2})?"),
 	IF: { pattern: "[A-Za-z0-9_.@-]{1,24}", render: interfaceField },
 	// Fixed placeholders: the value is never copied.
 	MAC: constant("[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}", "[address]"),
@@ -363,7 +371,7 @@ const AP_SHAPES = [
 
 const SHAPES: Record<ShapeSource, readonly string[]> = {
 	ModemManager: [
-		String.raw`${MM}ModemManager \(version [0-9.]{1,16}\) starting in system bus\.\.\.`,
+		String.raw`${MM}ModemManager \(version \d{1,3}(?:\.\d{1,3}){1,3}\) starting in system bus\.\.\.`,
 		String.raw`${MM}${MM_OBJ}(?:modem )?state changed \({MMSTATE} -> {MMSTATE}\)`,
 		String.raw`${MM}${MM_OBJ}(?:3GPP |EPS |5GS |CS |PS )?registration state changed \({MMREG} -> {MMREG}\)`,
 		String.raw`${MM}${MM_OBJ}3GPP packet service state changed \({MMPKT} -> {MMPKT}\)`,
@@ -377,7 +385,7 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		String.raw`${MM}${MM_OBJ}simple connect started\.\.\.`,
 		String.raw`${MM}${MM_OBJ}simple connect state \({NUM}/{NUM}\): {MMSTEP}`,
 		`${MM}${MM_OBJ}(?:port '?{IF}'? )?(?:port )?timed out {NUM} consecutive times(?:, marking modem as invalid)?`,
-		String.raw`${MM}${MM_OBJ}connection #{NUM} finished: duration [0-9:s]{1,16}(?:, tx: \d{1,15} bytes, rx: \d{1,15} bytes)?`,
+		String.raw`${MM}${MM_OBJ}connection #{NUM} finished: duration [0-9:s]{1,16}(?:, tx: \d{1,12} bytes, rx: \d{1,12} bytes)?`,
 		String.raw`${MM}${MM_OBJ}(?:couldn't {COULDNT}|couldn't start IPv[46] network|connection attempt #\d{1,3} failed|modem couldn't be initialized|data connection attempt failed|synchronizing all bearer status failed|failed sending SIM PIN|failed enabling modem|registration in network failed|packet service attach in 3GPP network failed|failed waiting for enabled state)(?:: {REASON})?`,
 		// 1.24 warnings and QMI call-end reasons that name a carrier's refusal.
 		`${MM}${MM_OBJ}modem is locked with '{MMLOCK}'`,
@@ -414,6 +422,7 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		String.raw`${NM}manager: \({IF}\): new {NMTYPE} device \(/org/freedesktop/NetworkManager/Devices/\d{1,6}\)`,
 	],
 	wpa_supplicant: [
+		`{IF}: CTRL-EVENT-(?:BEACON-LOSS|NETWORK-NOT-FOUND)`,
 		String.raw`{IF}: CTRL-EVENT-CONNECTED - Connection to {MAC} completed(?: \[id=\d{1,4} id_str={TAIL}\])?`,
 		`{IF}: CTRL-EVENT-DISCONNECTED bssid={MAC} reason={NUM}(?: locally_generated=1)?`,
 		String.raw`{IF}: CTRL-EVENT-SSID-TEMP-DISABLED id=\d{1,4} ssid="{DQNAME}" auth_failures=\d{1,4} duration=\d{1,6} reason={WPATEMP}`,
@@ -421,7 +430,7 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		`{IF}: CTRL-EVENT-ASSOC-REJECT bssid={MAC} status_code={NUM}`,
 		String.raw`{IF}: CTRL-EVENT-SCAN-FAILED ret={NUM}(?: retry=\d)?`,
 		`{IF}: CTRL-EVENT-REGDOM-CHANGE init={REGINIT} type={REGTYPE}(?: alpha2={ALPHA2})?`,
-		`{IF}: CTRL-EVENT-SIGNAL-CHANGE above=[01] signal={NUM} noise={NUM} txrate={NUM}`,
+		`{IF}: CTRL-EVENT-SIGNAL-CHANGE above=[01] signal={SIGNAL} noise={SIGNAL} txrate={NUM}`,
 		String.raw`{IF}: (?:SME: )?Trying to (?:associate|authenticate) with {MAC} \(SSID='{SQNAME}' freq=\d{4} MHz\)`,
 		`{IF}: Associated with {MAC}`,
 		String.raw`{IF}: Authentication with {MAC} timed out\.`,
@@ -436,6 +445,8 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		String.raw`{IF}: STA {MAC} WPA: pairwise key handshake completed \((?:RSN|WPA)\)`,
 	],
 	kernel: [
+		String.raw`{IF}: (?:deauthenticated|disassociated) from {MAC} \(Reason: {WLANREASON}\)`,
+		`{IF}: Connection to AP {MAC} lost`,
 		`Linux version {KVER}{TAIL}`,
 		String.raw`usb {USBPATH}: USB disconnect, device number \d{1,4}`,
 		String.raw`usb {USBPATH}: (?:new|reset) {USBSPEED} USB device number \d{1,4} using {HCD}`,
@@ -453,10 +464,10 @@ const SHAPES: Record<ShapeSource, readonly string[]> = {
 		String.raw`(?:xhci_hcd|xhci-hcd) (?:[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.\d|xhci-hcd\.\d{1,2}\.auto): (?:xHCI host controller not responding, assume dead|HC died; cleaning up|Host halt failed, -?\d{1,4}|USB bus \d{1,3} deregistered)`,
 		String.raw`(?:hwmon hwmon\d{1,2}: )?Under-?voltage detected!?(?: \(0x[0-9a-f]{8}\))?`,
 		String.raw`(?:hwmon hwmon\d{1,2}: )?Voltage normali[sz]ed(?: \(0x[0-9a-f]{8}\))?`,
-		String.raw`Out of memory: Killed process \d{1,10} \({PROCESS}\){TAIL}`,
+		String.raw`Out of memory: Killed process \d{1,7} \({PROCESS}\){TAIL}`,
 		`{PROCESS} invoked oom-killer: {TAIL}`,
 		String.raw`thermal thermal_zone\d{1,2}: critical temperature reached \(\d{1,3} C\), shutting down`,
-		String.raw`CPU\d{1,3}: (?:Core|Package) temperature (?:above threshold, cpu clock throttled|\/speed normal)(?: \(total events = \d{1,10}\))?`,
+		String.raw`CPU\d{1,3}: (?:Core|Package) temperature (?:above threshold, cpu clock throttled|\/speed normal)(?: \(total events = \d{1,7}\))?`,
 		String.raw`IPv6: ADDRCONF\(NETDEV_(?:UP|CHANGE)\): {IF}: link (?:is not ready|becomes ready)`,
 		String.raw`{IF}: (?:authenticated|associated|deauthenticating from {MAC} by local choice \(Reason: {WLANREASON}\)|authenticate with {MAC}|send auth to {MAC} \(try \d/\d\)|associate with {MAC} \(try \d/\d\)|disconnect from AP {MAC} for new auth to {MAC}|Link is (?:Up|Down){LINK})`,
 	],
@@ -477,6 +488,11 @@ const COMPILED: Record<ShapeSource, readonly ReturnType<typeof compile>[]> = {
 
 const PHRASES = new Set([
 	...MODEM_ERROR_PHRASES,
+	"QMI protocol error",
+	"QMI core error",
+	"MBIM status error",
+	"MBIM protocol error",
+	"MBIM core error",
 	// NetworkManager's own text for a modem that gave no IP configuration.
 	"invalid bearer IP configuration",
 	// ModemManager's modem state names, which some waits report as the error.
@@ -495,6 +511,42 @@ export function boundedModemReason(value: string): string {
 	const out: string[] = [];
 	let rest = value.trim();
 	while (rest) {
+		const unhandled =
+			/^Unhandled (?:QMI (?:protocol|core)|MBIM (?:status|protocol|core)) error \(\d{1,5}\)/.exec(
+				rest,
+			);
+		const mbim =
+			/^MBIM (status|protocol) error \((\d{1,5})\): '([^'\n]{0,64})'/.exec(
+				rest,
+			);
+		if (unhandled) {
+			out.push(unhandled[0]);
+			rest = rest.slice(unhandled[0].length);
+			if (!rest) break;
+			if (!rest.startsWith(": ")) {
+				out.push("[reason]");
+				break;
+			}
+			rest = rest.slice(2);
+			continue;
+		}
+		if (mbim) {
+			const nick = qmiNick(
+				mbim[1] === "status" ? MBIM_STATUS_ERRORS : MBIM_PROTOCOL_ERRORS,
+				mbim[2],
+				mbim[3] ?? "",
+			);
+			out.push(nick ? mbim[0] : `MBIM ${mbim[1]} error (${mbim[2]}): [reason]`);
+			if (!nick) break;
+			rest = rest.slice(mbim[0].length);
+			if (!rest) break;
+			if (!rest.startsWith(": ")) {
+				out.push("[reason]");
+				break;
+			}
+			rest = rest.slice(2);
+			continue;
+		}
 		const qmi = QMI_ERROR.exec(rest);
 		if (qmi) {
 			const nick = qmiNick(QMI_PROTOCOL_ERRORS, qmi[1], qmi[2] ?? "");
@@ -513,6 +565,14 @@ export function boundedModemReason(value: string): string {
 				(out.at(-1) === "Call failed" && CALL_END_NICKS.has(segment)) ||
 				// A verbose 3GPP call-end nickname prefixed to the error.
 				VERBOSE_REASON_NICKS.has(segment) ||
+				(out.at(-1) === "MBIM status error" &&
+					Object.values(MBIM_STATUS_ERRORS).some((nicks) =>
+						nicks.includes(segment),
+					)) ||
+				(out.at(-1) === "MBIM protocol error" &&
+					Object.values(MBIM_PROTOCOL_ERRORS).some((nicks) =>
+						nicks.includes(segment),
+					)) ||
 				PHRASES.has(segment) ||
 				PHRASES.has(segment.replace(/\.$/, "")) ||
 				(dbus !== undefined && MM_DBUS_ERRORS.has(dbus));

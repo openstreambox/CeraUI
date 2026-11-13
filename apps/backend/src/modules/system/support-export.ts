@@ -1,5 +1,3 @@
-import { logRedact } from "../../helpers/logger.ts";
-
 /** The only identifier disclosure in a support export is a validated modem TAC. */
 export function modemTac(imei: unknown): string | undefined {
 	return typeof imei === "string" && /^\d{15}$/.test(imei)
@@ -18,13 +16,7 @@ export function carrierSupportRows(sources: readonly CarrierSource[]) {
 		const apn = source.config?.apn;
 		return {
 			modem: index + 1,
-			...(apn &&
-			apn.length <= 100 &&
-			/^[a-zA-Z0-9.-]+$/.test(apn) &&
-			!/\d{9}/.test(apn) &&
-			logRedact(apn) === apn
-				? { apn }
-				: {}),
+			...(apn ? { apn: "[custom APN]" } : {}),
 			...(source.tac && /^\d{8}$/.test(source.tac) ? { tac: source.tac } : {}),
 		};
 	});

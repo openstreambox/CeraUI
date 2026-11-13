@@ -26,7 +26,7 @@ describe("support export privacy regressions", () => {
 		expect(output).toContain("RPC relay.validate ok");
 		expect(JSON.parse(output.slice(output.indexOf("{"))).meta).toEqual({
 			procedure: "relay.validate",
-			latency_ms: 1.25,
+			latency_ms: 1,
 			ok: true,
 		});
 	});
@@ -123,7 +123,6 @@ describe("support export privacy regressions", () => {
 		const output = exported(event(entry));
 		expect(JSON.parse(output.slice(output.indexOf("{")))).toEqual({
 			msg: entry.msg,
-			ts: entry.ts,
 			level: entry.level,
 			meta: entry.meta,
 		});
