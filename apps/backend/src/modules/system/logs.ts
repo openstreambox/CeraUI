@@ -23,24 +23,40 @@ import { getCarrierSupportSummary } from "../modems/modem-wire-producer.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
 import { notificationSend } from "../ui/notifications.ts";
 import { buildMsg, getSocketSenderId } from "../ui/websocket-server.ts";
-import { boundSupportJournal } from "./support-export.ts";
+import { boundRedactedSupportJournal } from "./support-export.ts";
+import { mockSupportJournal, renderSupportJournal } from "./support-journal.ts";
 
 export interface LogResult {
 	name: string;
 	contents: string;
 }
 
-// Dev/CI hosts have no systemd journal: serve the in-memory ring buffer (the
-// same backend records `journalctl -u ceralive.service` surfaces on a real
-// device) so the observable-logs path works without hardware.
-function buildMockJournal(service?: string): string {
-	const header = service
-		? `-- Logs begin for unit ${service} (CeraUI mock journal) --`
-		: "-- Logs begin, full CeraUI system journal (mock) --";
-	return [header, ...getRecentLogLines()].join("\n");
+let logDownloadInFlight = false;
+
+/** One collection bounds process and memory use across all authenticated callers. */
+export async function getLog(
+	conn: MessageSocket,
+	service?: string,
+): Promise<LogResult | undefined> {
+	if (logDownloadInFlight) {
+		notificationSend(
+			conn,
+			"log_busy",
+			"warning",
+			"A log download is already in progress. Try again shortly.",
+			10,
+		);
+		return undefined;
+	}
+	logDownloadInFlight = true;
+	try {
+		return await collectLog(conn, service);
+	} finally {
+		logDownloadInFlight = false;
+	}
 }
 
-export async function getLog(
+async function collectLog(
 	conn: MessageSocket,
 	service?: string,
 ): Promise<LogResult | undefined> {
@@ -51,7 +67,8 @@ export async function getLog(
 		"--since=-7days",
 		"--lines=10000",
 		"--no-pager",
-		"--output=short-iso",
+		"--output=json",
+		"--output-fields=MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_COMM,_TRANSPORT,_PID,_STREAM_ID,_LINE_BREAK,_BOOT_ID,__REALTIME_TIMESTAMP",
 	];
 	let name = "ceralive_system_log.txt";
 
@@ -78,19 +95,30 @@ export async function getLog(
 		logger.error(message);
 	};
 	let journal: string;
-	let currentBootOnly = false;
+	let fallbackReason: string | undefined;
+	let entryLimit = 10000;
 	try {
 		journal = shouldUseMocks()
-			? buildMockJournal(service)
+			? mockSupportJournal(getRecentLogLines(), service)
 			: await run("journalctl", args, options);
 	} catch (error) {
-		if (!(error instanceof RunTimeoutError)) {
+		const overflow =
+			error instanceof Error && /maxBuffer length exceeded/.test(error.message);
+		if (!(error instanceof RunTimeoutError) && !overflow) {
 			fail(error, false);
 			return undefined;
 		}
-		currentBootOnly = true;
+		fallbackReason = overflow
+			? "history exceeded size limit"
+			: "history read timed out";
+		// Without --all, journalctl's JSON output nulls any field over 4096 bytes,
+		// so one record stays near 25 KB even with escapes: 400 always fit 10 MiB.
+		entryLimit = overflow ? 400 : 10000;
+		const fallbackArgs = args.map((arg) =>
+			arg === "--lines=10000" ? `--lines=${entryLimit}` : arg,
+		);
 		try {
-			journal = await run("journalctl", ["-b", ...args], options);
+			journal = await run("journalctl", ["-b", ...fallbackArgs], options);
 		} catch (fallbackError) {
 			fail(fallbackError, true);
 			return undefined;
@@ -104,10 +132,10 @@ export async function getLog(
 			"Carrier support summary unavailable; journal evidence is included.";
 		logger.warn("Carrier support summary unavailable during log export.");
 	}
-	const scope = currentBootOnly
-		? "current boot only (history read timed out)"
+	const scope = fallbackReason
+		? `current boot only (${fallbackReason})`
 		: "retained last 7 days";
-	const contents = `Support log: ${scope}; newest 10000 entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\n${boundSupportJournal(journal)}\n\n${summary}`;
+	const contents = `Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\n${boundRedactedSupportJournal(renderSupportJournal(journal))}\n\n${summary}`;
 	try {
 		conn.send(buildMsg("log", { name, contents }, senderId));
 		return { name, contents };

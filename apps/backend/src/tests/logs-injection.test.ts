@@ -97,11 +97,12 @@ describe("logs.ts getLog() — journalctl command injection", () => {
 			"--since=-7days",
 			"--lines=10000",
 			"--no-pager",
-			"--output=short-iso",
+			"--output=json",
+			"--output-fields=MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_COMM,_TRANSPORT,_PID,_STREAM_ID,_LINE_BREAK,_BOOT_ID,__REALTIME_TIMESTAMP",
 			"-u",
 			MALICIOUS,
 		]);
-		expect(args[5]).toBe(MALICIOUS);
+		expect(args[6]).toBe(MALICIOUS);
 		// 10 MiB ceiling preserved from the original exec() call.
 		expect(opts.maxBuffer).toBe(10 * 1024 * 1024);
 		// No shell was reached for the log path, whatever else the process ran.

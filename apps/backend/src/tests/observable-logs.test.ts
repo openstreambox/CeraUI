@@ -41,9 +41,22 @@ const JOURNAL_ARGS = [
 	"--since=-7days",
 	"--lines=10000",
 	"--no-pager",
-	"--output=short-iso",
+	"--output=json",
+	"--output-fields=MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_COMM,_TRANSPORT,_PID,_STREAM_ID,_LINE_BREAK,_BOOT_ID,__REALTIME_TIMESTAMP",
 ];
 const MAX_BUFFER = 10 * 1024 * 1024;
+
+function journal(text: string): string {
+	return text
+		.split("\n")
+		.map((line) =>
+			JSON.stringify({
+				_SYSTEMD_UNIT: "ceralive.service",
+				MESSAGE: JSON.stringify({ msg: line }),
+			}),
+		)
+		.join("\n");
+}
 
 /** Capturing RPC context: records every frame the handler pushes to the socket. */
 function makeContext(sent: string[]): RPCContext {
@@ -87,7 +100,7 @@ afterEach(() => {
 describe("system.getLog / system.getSyslog — real data + log push", () => {
 	it("getLog returns the journal contents (NOT an empty stub) and pushes a log frame", async () => {
 		const KNOWN = "Jun 25 12:00:00 ceralive[42]: known boot event marker";
-		spyOn(runModule, "run").mockResolvedValue(KNOWN);
+		spyOn(runModule, "run").mockResolvedValue(journal(KNOWN));
 
 		const sent: string[] = [];
 		const result = await call(getLogProcedure, undefined, {
@@ -105,7 +118,9 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 
 	it("exports retained previous-boot evidence and redacts both RPC and pushed files", async () => {
 		spyOn(runModule, "run").mockResolvedValue(
-			"previous boot marker\nIMEI=351756051523999\n-- Reboot --\ncurrent boot marker\ncell_id=0xabc123",
+			journal(
+				"previous boot marker\nIMEI=351756051523999\n-- Reboot --\ncurrent boot marker\ncell_id=0xabc123",
+			),
 		);
 		const sent: string[] = [];
 		const result = await call(getLogProcedure, undefined, {
@@ -131,7 +146,9 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 	});
 
 	it("a failed carrier summary leaves the redacted journal downloadable", async () => {
-		spyOn(runModule, "run").mockResolvedValue("retained journal evidence");
+		spyOn(runModule, "run").mockResolvedValue(
+			journal("retained journal evidence"),
+		);
 		spyOn(carrierModule, "getCarrierSupportSummary").mockImplementation(() => {
 			throw new Error("private-summary-fault");
 		});
@@ -153,7 +170,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 					"private-stderr",
 				),
 			)
-			.mockResolvedValueOnce("current boot evidence");
+			.mockResolvedValueOnce(journal("current boot evidence"));
 		const sent: string[] = [];
 		const result = await call(getLogProcedure, undefined, {
 			context: makeContext(sent),
@@ -199,21 +216,81 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		expect(JSON.stringify(sent)).not.toContain("private-partial");
 		expect(findLogPush(sent)).toBeUndefined();
 	});
-	it("distinguishes size overflow from timeout without exporting the error payload", async () => {
+	it("distinguishes repeated size overflow from timeout without exporting the error payload", async () => {
 		const runSpy = spyOn(runModule, "run").mockRejectedValue(
 			new Error("stdout maxBuffer length exceeded: private-error-payload"),
 		);
 		const sent: string[] = [];
 		await call(getLogProcedure, undefined, { context: makeContext(sent) });
-		expect(runSpy).toHaveBeenCalledTimes(1);
+		expect(runSpy).toHaveBeenCalledTimes(2);
 		expect(JSON.stringify(sent)).toContain(
 			"exceeded the 10 MiB raw output limit",
 		);
 		expect(JSON.stringify(sent)).not.toContain("private-error-payload");
 	});
 
+	it("limits concurrent downloads to one collection and releases admission on completion", async () => {
+		let release: (value: string) => void = () => {};
+		let began: () => void = () => {};
+		const pending = new Promise<string>((resolve) => {
+			release = resolve;
+		});
+		const started = new Promise<void>((resolve) => {
+			began = resolve;
+		});
+		const runSpy = spyOn(runModule, "run").mockImplementation(() => {
+			began();
+			return pending;
+		});
+		const first = call(getLogProcedure, undefined, {
+			context: makeContext([]),
+		});
+		await started;
+		const sent: string[] = [];
+		const others = Array.from({ length: 7 }, () =>
+			call(getLogProcedure, undefined, { context: makeContext(sent) }),
+		);
+		await new Promise((resolve) => setTimeout(resolve, 1));
+		try {
+			expect(runSpy).toHaveBeenCalledTimes(1);
+		} finally {
+			release(journal("bounded evidence"));
+			await first;
+			await Promise.all(others);
+		}
+		expect(JSON.stringify(sent)).toContain("already in progress");
+		expect(findLogPush(sent)).toBeUndefined();
+		await call(getLogProcedure, undefined, { context: makeContext([]) });
+		expect(runSpy).toHaveBeenCalledTimes(2);
+	});
+	it("retries size overflow once with a labelled 400-entry current-boot scope", async () => {
+		const runSpy = spyOn(runModule, "run")
+			.mockRejectedValueOnce(new Error("stdout maxBuffer length exceeded"))
+			.mockResolvedValueOnce(journal("recent evidence"));
+		const result = await call(getLogProcedure, undefined, {
+			context: makeContext([]),
+		});
+		expect(runSpy).toHaveBeenLastCalledWith(
+			"journalctl",
+			[
+				"-b",
+				...JOURNAL_ARGS.map((arg) =>
+					arg === "--lines=10000" ? "--lines=400" : arg,
+				),
+				"-u",
+				"ceralive.service",
+			],
+			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
+		);
+		expect(result.log).toContain(
+			"current boot only (history exceeded size limit)",
+		);
+		expect(result.log).toContain("newest 400 entries");
+		expect(result.log).toContain("recent evidence");
+	});
+
 	it("getLog defaults to the ceralive.service unit; an explicit service overrides", async () => {
-		const runSpy = spyOn(runModule, "run").mockResolvedValue("x");
+		const runSpy = spyOn(runModule, "run").mockResolvedValue(journal("x"));
 
 		await call(getLogProcedure, undefined, { context: makeContext([]) });
 		expect(runSpy).toHaveBeenLastCalledWith(
@@ -238,7 +315,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 
 	it("getSyslog returns the full boot journal (no unit filter) and pushes it", async () => {
 		const KNOWN = "Jun 25 12:00:01 kernel: full system journal line";
-		const runSpy = spyOn(runModule, "run").mockResolvedValue(KNOWN);
+		const runSpy = spyOn(runModule, "run").mockResolvedValue(journal(KNOWN));
 
 		const sent: string[] = [];
 		const result = await call(getSyslogProcedure, undefined, {

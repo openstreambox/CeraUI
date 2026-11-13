@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-	boundSupportJournal,
+	boundRedactedSupportJournal,
 	carrierSupportRows,
 	modemTac,
 	redactSupportJournal,
@@ -21,8 +21,8 @@ describe("support export disclosure", () => {
 	});
 
 	test("caps exported text after redaction, leaving room for the carrier summary", () => {
-		const output = boundSupportJournal(
-			`oldest marker${"a".repeat(10 * 1024 * 1024)}latest marker`,
+		const output = boundRedactedSupportJournal(
+			`oldest marker\n${(`${"a".repeat(1024)}\n`).repeat(10240)}latest marker`,
 		);
 		expect(new TextEncoder().encode(output).byteLength).toBeLessThan(
 			10 * 1024 * 1024,

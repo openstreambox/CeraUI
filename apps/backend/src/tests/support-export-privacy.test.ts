@@ -79,7 +79,6 @@ describe("support export privacy regressions", () => {
 		"latitude: 0.000000 longitude: 0.000000",
 		"latitude 0.000000 longitude 0.000000",
 		"$PTEST,0000.000,N,00000.000,E*00",
-		"adapter address aa:bb:cc:dd:ee:ff",
 		"passphrase=hunter2hunter2",
 		"streamid=publish:KEYVALUE",
 		"psk=private-wifi-key",
@@ -89,6 +88,12 @@ describe("support export privacy regressions", () => {
 			expect(redactSupportJournal(line)).toBe("[REDACTED support log line]");
 		},
 	);
+	test("masks an address span while preserving the diagnostic line", () => {
+		expect(redactSupportJournal("adapter address aa:bb:cc:dd:ee:ff")).toBe(
+			"adapter address [address]",
+		);
+	});
+
 	test("logger masks passphrases and GNS positions before persistence", () => {
 		const output = JSON.stringify(
 			logRedact({
