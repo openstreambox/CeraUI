@@ -3,17 +3,19 @@
  * A backend message, error message or reason reaches the support download only
  * when it matches one of the generated templates: the literal text of a logger
  * call, a thrown error or a `reason` value, with a gap wherever the code
- * interpolates a value. A gap keeps a short token from a fixed set (a number, a
- * state or error code, an interface name, a supervised process) and is
- * otherwise replaced with [value]. Winston appends an error's message to a log
- * message after a space; that tail is [value] too.
+ * interpolates a value. Every gap is [value] unless its text is a member of a
+ * fixed token set (start-failure classes and phases, known states and codes).
+ * Numbers and names inside a message never pass: values reach the download only
+ * as typed metadata fields. The output therefore depends on the template, not
+ * on the runtime string, whichever call produced it. Winston appends an
+ * error's message to a log message after a space; that tail is [value] too.
  */
 import {
 	START_FAILURE_CAPTURE_CAUSES,
 	START_FAILURE_CLASSES,
 	START_FAILURE_PHASES,
 } from "@ceraui/rpc/schemas";
-import { isInterfaceName } from "./support-line-shapes.ts";
+import { errno } from "./support-errno.ts";
 import {
 	SUPPORT_ERROR_TEMPLATES,
 	SUPPORT_LOG_TEMPLATES,
@@ -33,20 +35,14 @@ const TOKENS = new Set<string>([
 	"undefined",
 ]);
 
-/** A gap value kept as written: numbers, interface names, fixed tokens. */
+/** A gap keeps only a member of a fixed token set; anything else is [value]. */
 function boundedGap(value: string, extraTokens: ReadonlySet<string>): string {
-	if (/^-?\d{1,10}(?:\.\d{1,6})?$/.test(value)) return value;
-	if (TOKENS.has(value) || extraTokens.has(value)) return value;
-	if (isInterfaceName(value)) return value;
-	// The processes the backend supervises, by name or installed path.
-	if (
-		/^(?:\/usr\/(?:local\/)?s?bin\/)?(?:srtla_send|srtla_rec|cerastream|ceracoder|belacoder)$/.test(
-			value,
-		)
-	)
-		return value;
-	return VALUE;
+	return TOKENS.has(value) || extraTokens.has(value) ? value : VALUE;
 }
+
+// The processes the backend supervises, by name or installed path.
+const SUPERVISED =
+	/^(?:\/usr\/(?:local\/)?s?bin\/)?(?:srtla_send|srtla_rec|cerastream|ceracoder|belacoder)$/;
 
 function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -137,6 +133,61 @@ export function boundedBackendMessage(
 	return undefined;
 }
 
+// System calls Node and Bun name in their error messages.
+const SYSCALLS = new Set([
+	"accept",
+	"access",
+	"bind",
+	"chmod",
+	"chown",
+	"close",
+	"connect",
+	"copyfile",
+	"fsync",
+	"ftruncate",
+	"getaddrinfo",
+	"getnameinfo",
+	"ioctl",
+	"kill",
+	"link",
+	"listen",
+	"lstat",
+	"mkdir",
+	"mkdtemp",
+	"open",
+	"opendir",
+	"posix_spawn",
+	"queryA",
+	"queryAaaa",
+	"read",
+	"readdir",
+	"readlink",
+	"realpath",
+	"recv",
+	"recvmsg",
+	"rename",
+	"rm",
+	"rmdir",
+	"scandir",
+	"send",
+	"sendmsg",
+	"shutdown",
+	"socket",
+	"stat",
+	"statfs",
+	"symlink",
+	"unlink",
+	"utime",
+	"watch",
+	"write",
+	"writev",
+]);
+
+/** A POSIX errno name or a resolver failure code. */
+export function isErrorCode(code: string): boolean {
+	return errno.has(code);
+}
+
 // Messages Node, Bun and fetch produce themselves, with no runtime value.
 const RUNTIME_ERRORS = new Set([
 	"fetch failed",
@@ -161,14 +212,18 @@ export function boundedErrorMessage(
 	if (message.length > 4096) return VALUE;
 	if (extraTokens.has(message) || RUNTIME_ERRORS.has(message)) return message;
 	// Node/Bun system errors: "spawn <file> ENOENT", "connect ECONNREFUSED <addr>".
+	// The call and the code must be real ones; the file is a supervised process.
 	const spawn = /^spawn (\S{1,200}) (E[A-Z0-9_]{2,24})$/.exec(message);
 	if (spawn?.[1] && spawn[2])
-		return `spawn ${boundedGap(spawn[1], extraTokens)} ${spawn[2]}`;
-	const syscall = /^([a-z]{2,24}) (E[A-Z0-9_]{2,24})(?: ([^\n]{1,300}))?$/.exec(
-		message,
-	);
+		return isErrorCode(spawn[2])
+			? `spawn ${SUPERVISED.test(spawn[1]) ? spawn[1] : VALUE} ${spawn[2]}`
+			: VALUE;
+	const syscall =
+		/^([a-z_]{2,24}) (E[A-Z0-9_]{2,24})(?: ([^\n]{1,300}))?$/.exec(message);
 	if (syscall?.[1] && syscall[2])
-		return `${syscall[1]} ${syscall[2]}${syscall[3] ? ` ${VALUE}` : ""}`;
+		return SYSCALLS.has(syscall[1]) && isErrorCode(syscall[2])
+			? `${syscall[1]} ${syscall[2]}${syscall[3] ? ` ${VALUE}` : ""}`
+			: VALUE;
 	return ERRORS.whole(message, extraTokens) ?? VALUE;
 }
 

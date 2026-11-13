@@ -514,7 +514,7 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 		// NetworkManager.
 		{
 			record: networkManager(
-				"<info>  [1731528245.1234] device (cdc-wdm0): state change: connecting -> failed (reason 'gsm-registration-denied', sys-iface-state: 'managed')",
+				"<info>  [1731528245.1234] device (cdc-wdm0): state change: prepare -> failed (reason 'gsm-registration-denied', sys-iface-state: 'managed')",
 			),
 			evidence: "gsm-registration-denied",
 		},
@@ -701,7 +701,7 @@ export const diagnosticRecords: { record: JournalRecord; evidence: string }[] =
 				level: "error",
 				msg: "Failed to register modem 3: Jane Doe Mobile",
 			}),
-			evidence: '"msg":"Failed to register modem 3: [value]"',
+			evidence: '"msg":"Failed to register modem [value]: [value]"',
 		},
 		{
 			record: event({

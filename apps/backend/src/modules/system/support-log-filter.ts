@@ -1,13 +1,21 @@
-import { isIP } from "node:net";
+/** Render admitted journal records for the support download.
+ *
+ * Every rendered value is typed: the backend's own template text, members of
+ * closed vocabularies, bounded numbers, interface names by the kernel naming
+ * grammar, or fixed placeholders. No free text from a record is copied, so
+ * there is no content filter guessing what might be private.
+ */
+import { appContract } from "@ceraui/rpc/contracts";
 import {
 	START_FAILURE_CAPTURE_CAUSES,
 	START_FAILURE_CLASSES,
 	START_FAILURE_PHASES,
 } from "@ceraui/rpc/schemas";
-import { logRedact } from "../../helpers/logger.ts";
+import { classifyToolFailure } from "../../helpers/exec.ts";
 import {
 	isInterfaceName,
 	isShapeSource,
+	KNOWN_PROCESSES,
 	matchLineShape,
 } from "./support-line-shapes.ts";
 import {
@@ -113,165 +121,12 @@ const SIGNALS = new Set([
 	"SIGBUS",
 	"SIGILL",
 ]);
-// Words that follow a credential keyword in status text rather than a value.
-const EMPTY_VALUES = new Set(
-	(
-		"missing required unknown unavailable none invalid empty rejected refused " +
-		"expired mismatch incorrect wrong changed updated set unset not is was may " +
-		"must cannot negotiation exchange management handshake length format error " +
-		"failed accepted ok cancelled requested denied locked disabled enabled " +
-		"too has and or the a an"
-	).split(" "),
-);
-
 export function oversizedSupportLine(line: string): boolean {
 	// Check length before encoding or running any pattern. Encoding work is bounded.
 	return (
 		line.length > MAX_SUPPORT_LINE_BYTES ||
 		new TextEncoder().encode(line).byteLength > MAX_SUPPORT_LINE_BYTES
 	);
-}
-
-/** Replace network and hardware address spans while keeping the line. */
-function maskAddresses(text: string): string {
-	// IPv4 first, so IPv4-mapped IPv6 forms never leave a dotted tail. A port,
-	// trailing punctuation or an `addr:` prefix does not hide the address.
-	let out = text.replace(/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?!\d)/g, (value) =>
-		isIP(value) ? "[address]" : value,
-	);
-	out = out.replace(
-		/(?<![0-9a-z:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%[0-9a-z]{1,16})?/gi,
-		(value) => {
-			let core = value;
-			let tail = "";
-			while (core.endsWith(":") && !core.endsWith("::")) {
-				core = core.slice(0, -1);
-				tail = `:${tail}`;
-			}
-			return isIP(core.split("%")[0] ?? "") ? `[address]${tail}` : value;
-		},
-	);
-	// MACs with colons or dashes, DHCP client ids, dotted and bare MACs, and
-	// interface names derived from a MAC.
-	out = out.replace(
-		/(?<![0-9a-f:-])[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5,7}(?![0-9a-f:-])/gi,
-		"[address]",
-	);
-	out = out.replace(
-		/(?<![0-9a-f.])[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}(?![0-9a-f.])/gi,
-		"[address]",
-	);
-	out = out.replace(/\b(wlx|enx|wwx)[0-9a-f]{12}\b/gi, "$1[address]");
-	return out.replace(/(?<![0-9a-z])[0-9a-f]{12}(?![0-9a-z])/gi, "[address]");
-}
-
-/** Network and connection names often carry a person's or account's name,
- * and a home SSID can be located through public Wi-Fi maps.
- */
-function maskNames(text: string): string {
-	return text
-		.replace(/\b(ssid=)(["'])[^"'\n]{0,64}\2/gi, "$1$2[name]$2")
-		.replace(
-			/\b(connection|access point|policy: set) '[^'\n]{0,64}'/gi,
-			"$1 '[name]'",
-		)
-		.replace(/\b(ssid)[ \t]+(?!\[name\])[^\s'"]{1,64}/gi, "$1 [name]");
-}
-
-/** Value-bearing fields are withheld while status phrases remain readable. */
-export function filterDiagnosticText(
-	text: string,
-	source?: string,
-): string | undefined {
-	if (oversizedSupportLine(text)) return undefined;
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: reject control characters at the disclosure boundary.
-	if (/[\u0000-\u0008\u000a-\u001f\u007f]/.test(text)) return undefined;
-	if (source === "NetworkManager")
-		text = text.replace(/\[\d{10}\.\d{3,6}\][ \t]{0,8}/, "");
-	if (
-		/(?:COMMAND|Environment|ExecStart|ExecStop|argv)\s*[:=]|#!::|\$[A-Z]{2,8},/i.test(
-			text,
-		)
-	)
-		return undefined;
-	if (
-		/\+C(?:G|E|5G)?REG\s*:|\+QENG\s*:|<{3,12}|>{3,12}|\[[^\]\s]{0,80}\/at\][ \t]{0,8}(?:-->|<--)/i.test(
-			text,
-		)
-	)
-		return undefined;
-	if (source === "ModemManager" && /^<(?:debug|dbg)>/.test(text))
-		return undefined;
-	if (
-		/\b(?:[a-z0-9_.-]{0,32}(?:key|token|secret|password|passwd|passphrase|psk|stream[_.-]?id|username|account)[a-z0-9_.-]{0,24})["']?[ \t]{0,8}[:=][ \t]{0,8}["']?\S/i.test(
-			text,
-		)
-	)
-		return undefined;
-	// Credentials in prose: "with password …", "stream id live/…", "login for …".
-	for (const phrase of text.matchAll(
-		/\b(?:pass(?:phrase|word|wd|code)|psk|stream[ _-]?(?:id|key)|key|login|user(?:name)?|account|token|secret)(?:[ \t]{1,4}(?:for|of|is|was|to|as))?[ \t:='"]{1,8}([^\s'",;)\]]{1,128})/gi,
-	))
-		if (phrase[1] && !EMPTY_VALUES.has(phrase[1].toLowerCase()))
-			return undefined;
-	if (
-		/\b(?:imei|iccid|imsi|msisdn|eid|meid|esn|subscriber(?:id)?|equipment[_. -]?(?:id|identifier)|device[_. -]?(?:id|identifier)|own[_. -]?numbers?|phone(?:number)?)["' \t:=]{1,8}["']?[+a-z0-9][a-z0-9+_.() /-]{3,128}/i.test(
-			text,
-		)
-	)
-		return undefined;
-	if (
-		/\bserial[ _-]*(?:number|no)?[ \t"']{0,8}[:=][ \t"']{0,8}[a-z0-9]{4,80}/i.test(
-			text,
-		)
-	)
-		return undefined;
-	if (
-		/\b(?:pin|puk)[ \t:=]{0,8}\d{4,8}\b|\bapn[ \t"']{0,8}[:=][ \t"']{0,8}\S/i.test(
-			text,
-		)
-	)
-		return undefined;
-	if (
-		/(?:^|[^a-z0-9])(?:cell(?:[_. -]?id|[_. -]?identity)?|ci|cid|eci|nci|lac|tac|tracking[_. -]?area|location[_. -]?area)["' \t:=]{1,8}["']?(?:0x)?[a-f0-9]{4,32}\b/i.test(
-			text,
-		)
-	)
-		return undefined;
-	if (
-		/(?:^|[^a-z])(?:gps[_-]?)?(?:lat(?:itude)?|lon(?:gitude)?|lng)[ \t:=]{1,8}-?\d|(?:^|[^\d])-?\d{1,3}\.\d{4,10}[ \t]{0,3}[,;/ ][ \t]{0,3}-?\d{1,3}\.\d{4,10}/i.test(
-			text,
-		)
-	)
-		return undefined;
-	if (/(?:\b[a-f0-9]{2}[: \t-]){7,63}[a-f0-9]{2}\b/i.test(text))
-		return undefined;
-	if (/\bstderr\s*:/i.test(text) || logRedact(text) !== text) return undefined;
-	// Text that echoes a command line or tool output, an e-mail or account
-	// address, or a host name a lookup failed for.
-	if (
-		/\bCommand (?:timed out|failed|aborted):|\bSpawn timed out:|\bexited with code\b|\bSSID ['"]|\b(?:ENOTFOUND|EAI_AGAIN|EAI_NONAME|EAI_FAIL)[ \t]+(?!\[value\])\S/i.test(
-			text,
-		) ||
-		/[A-Za-z0-9._%+-]@(?![A-Za-z0-9_.\\-]*\.(?:service|target|socket|scope|slice|timer|mount|path|device)\b)[A-Za-z0-9-]/.test(
-			text,
-		)
-	)
-		return undefined;
-	// Replace address and name spans, preserving the surrounding evidence.
-	text = maskNames(maskAddresses(text));
-	// Named bounded counters are diagnostic quantities. Test the other text for
-	// numeric identities without treating byte/packet totals as subscriber ids.
-	const numericText = text
-		.replace(
-			/\b(?:[rt]x[_ -]?)?(?:bytes|packets|counter|uptime)[ \t:=]{1,4}\d{1,12}\b/gi,
-			"[counter]",
-		)
-		.replace(/\b\d{1,12}[ \t]{1,3}(?:bytes|packets)\b/gi, "[counter]");
-	// Any space character, including no-break spaces, and colons separate too.
-	if (/\d(?:[\s\p{Zs}.()/+,_:-]{0,3}\d){8,21}/u.test(numericText))
-		return undefined;
-	return text;
 }
 
 function safeCode(value: unknown): boolean {
@@ -287,7 +142,7 @@ function safeCode(value: unknown): boolean {
  */
 function safeErrorMessage(value: string): string | undefined {
 	if (value.length > 300) return undefined;
-	return filterDiagnosticText(boundedErrorMessage(value, MESSAGE_TOKENS));
+	return boundedErrorMessage(value, MESSAGE_TOKENS);
 }
 
 function safeError(value: unknown): Record<string, unknown> | undefined {
@@ -318,6 +173,10 @@ function safeError(value: unknown): Record<string, unknown> | undefined {
 	)
 		out.name = error.name;
 	if (safeCode(error.code)) out.code = error.code;
+	// A typed class from the caller or from the error's name and code; the
+	// tool's own text stays [value].
+	const failureClass = classifyToolFailure(undefined, error);
+	if (failureClass) out.class = failureClass;
 	if (typeof error.message === "string") {
 		const message = safeErrorMessage(error.message);
 		if (message !== undefined) out.message = message;
@@ -402,9 +261,7 @@ function safeMetadata(
 			out[key] = inner;
 		else if (key === "reason" && typeof inner === "string") {
 			// Only a value the code itself assigns to a reason, gaps bounded.
-			const bounded = boundedReason(inner, MESSAGE_TOKENS);
-			const reason =
-				bounded === undefined ? undefined : filterDiagnosticText(bounded);
+			const reason = boundedReason(inner, MESSAGE_TOKENS);
 			if (reason !== undefined) out.reason = reason;
 		} else if (
 			["stage", "phase", "status", "state"].includes(key) &&
@@ -430,7 +287,11 @@ function safeMetadata(
 					inner < 128))
 		)
 			out[key] = inner;
-		else if (
+		else if (key === "process" && typeof inner === "string") {
+			// A supervised process by name; its install path is not kept.
+			const name = inner.replace(/^\/usr\/(?:local\/)?s?bin\//, "");
+			if (KNOWN_PROCESSES.has(name)) out[key] = name;
+		} else if (
 			key === "ifname" &&
 			typeof inner === "string" &&
 			isInterfaceName(inner)
@@ -460,20 +321,142 @@ function safeMetadata(
 	return out;
 }
 
+// Units a helper needs by name; any other unit is [unit], and a template
+// instance of one of these is shown as name@[instance].
+const KNOWN_UNITS = new Set([
+	"ceralive",
+	"ceralive-addon-reconciler",
+	"ceralive-healthcheck",
+	"ceralive-os-stage-guard",
+	"ceralive-rtmp-gateway",
+	"ceralive-slot-sync",
+	"ceralive-software-update",
+	"ceralive-srt-gateway",
+	"ModemManager",
+	"NetworkManager",
+	"NetworkManager-wait-online",
+	"wpa_supplicant",
+	"hostapd",
+	"systemd-journald",
+	"systemd-networkd",
+	"systemd-resolved",
+	"systemd-timesyncd",
+	"systemd-udevd",
+	"bluetooth",
+	"bluealsa",
+	"rauc",
+	"kiosk",
+	"cage",
+	"cog",
+	"ssh",
+	"getty",
+]);
+const UNIT_TYPES = "service|target|scope|socket|slice|timer|mount|path|device";
+const UNIT = String.raw`[a-zA-Z0-9@_.\\:-]{1,128}\.(?:${UNIT_TYPES})`;
+
+function unitName(unit: string): string {
+	const parts = new RegExp(`^([^@]+?)(@[^.]*)?\\.(${UNIT_TYPES})$`).exec(unit);
+	if (!parts?.[1] || !KNOWN_UNITS.has(parts[1])) return "[unit]";
+	return `${parts[1]}${parts[2] === undefined ? "" : "@[instance]"}.${parts[3]}`;
+}
+
+// systemd's exit-status names (exit-status.c) and signal names.
+const EXIT_STATUS_NAMES = new Set(
+	(
+		"SUCCESS FAILURE INVALIDARGUMENT NOTIMPLEMENTED NOPERMISSION NOTINSTALLED " +
+		"NOTCONFIGURED NOTRUNNING USAGE DATAERR NOINPUT NOUSER NOHOST UNAVAILABLE " +
+		"SOFTWARE OSERR OSFILE CANTCREAT IOERR TEMPFAIL PROTOCOL NOPERM CONFIG " +
+		"CHDIR NICE FDS EXEC MEMORY LIMITS OOM_ADJUST SIGNAL_MASK STDIN STDOUT " +
+		"CHROOT IOPRIO TIMERSLACK SECUREBITS SETSCHEDULER CPUAFFINITY GROUP USER " +
+		"CAPABILITIES CGROUP SETSID CONFIRM STDERR PAM NETWORK NAMESPACE " +
+		"NO_NEW_PRIVILEGES SECCOMP SELINUX_CONTEXT PERSONALITY APPARMOR " +
+		"ADDRESS_FAMILIES RUNTIME_DIRECTORY CHOWN SMACK_PROCESS_LABEL KEYRING " +
+		"STATE_DIRECTORY CACHE_DIRECTORY LOGS_DIRECTORY CONFIGURATION_DIRECTORY " +
+		"NUMA_POLICY CREDENTIALS BPF EXCEPTION " +
+		"HUP INT QUIT ILL TRAP ABRT BUS FPE KILL USR1 SEGV USR2 PIPE ALRM TERM " +
+		"STKFLT CHLD CONT STOP TSTP TTIN TTOU URG XCPU XFSZ VTALRM PROF WINCH IO " +
+		"PWR SYS"
+	).split(" "),
+);
+// systemd's service results (service_result_to_string).
+const SERVICE_RESULTS = new Set([
+	"success",
+	"resources",
+	"protocol",
+	"timeout",
+	"exit-code",
+	"signal",
+	"core-dump",
+	"watchdog",
+	"start-limit-hit",
+	"oom-kill",
+	"skip-condition",
+	"exec-condition",
+	"condition",
+	"trigger-limit-hit",
+]);
+const DURATION = String.raw`(?:\d{1,6}(?:\.\d{1,6})?(?:y|month|w|d|h|min|s|ms|us) ?){1,6}`;
+
+/** A PID 1 message rebuilt from its grammar, or undefined. */
 function systemdMessage(message: string): string | undefined {
-	const transition =
-		/^(Started|Stopped|Starting|Stopping|Reloaded|Reloading) ([a-zA-Z0-9@_.-]{1,128}\.(?:service|target|scope|socket))\b/.exec(
-			message,
+	const transition = new RegExp(
+		`^(Started|Stopped|Starting|Stopping|Reloaded|Reloading|Failed to start|Deactivated) (${UNIT})(?:$| |\\.)`,
+	).exec(message);
+	if (transition?.[1] && transition[2])
+		return `${transition[1]} ${unitName(transition[2])}`;
+	const unit = new RegExp(`^(${UNIT}): (.{1,400})$`).exec(message);
+	if (!unit?.[1] || unit[2] === undefined) return undefined;
+	const name = unitName(unit[1]);
+	const rest = unit[2];
+	const exited =
+		/^Main process exited, code=(exited|killed|dumped), status=(\d{1,3})(?:\/([A-Z0-9_]{2,32}))?$/.exec(
+			rest,
 		);
-	if (transition) return `${transition[1]} ${transition[2]}`;
-	if (
-		/^[a-zA-Z0-9@_.-]{1,128}\.(?:service|scope|slice): (?:Main process exited,|Failed with result |Killing process |A process of this unit has been killed by the OOM killer|Consumed |Start request repeated too quickly|Scheduled restart job)/.test(
-			message,
-		)
-	)
-		return message;
+	if (exited) {
+		const status =
+			exited[3] && EXIT_STATUS_NAMES.has(exited[3]) ? `/${exited[3]}` : "";
+		return `${name}: Main process exited, code=${exited[1]}, status=${exited[2]}${status}`;
+	}
+	const result = /^Failed with result '([^'\n]{1,64})'\.$/.exec(rest);
+	if (result?.[1])
+		return `${name}: Failed with result '${SERVICE_RESULTS.has(result[1]) ? result[1] : "[result]"}'.`;
+	const killing =
+		/^Killing process (\d{1,10}) \(([^()\n]{1,16})\) with signal (SIG[A-Z0-9]{2,8})\.$/.exec(
+			rest,
+		);
+	if (killing)
+		return `${name}: Killing process ${killing[1]} (${KNOWN_PROCESSES.has(killing[2] ?? "") ? killing[2] : "[process]"}) with signal ${SIGNALS.has(killing[3] ?? "") ? killing[3] : "[signal]"}.`;
+	const consumed = new RegExp(`^Consumed (${DURATION}) CPU time\\b`).exec(rest);
+	if (consumed?.[1]) return `${name}: Consumed ${consumed[1].trim()} CPU time.`;
+	const restart =
+		/^Scheduled restart job, restart counter is at (\d{1,6})\.$/.exec(rest);
+	if (restart)
+		return `${name}: Scheduled restart job, restart counter is at ${restart[1]}.`;
+	for (const fixed of [
+		"A process of this unit has been killed by the OOM killer.",
+		"Start request repeated too quickly.",
+		"Deactivated successfully.",
+		"Failed with result 'exit-code'.",
+	])
+		if (rest === fixed) return `${name}: ${fixed}`;
 	return undefined;
 }
+
+/** Procedure paths of the RPC contract ("streaming.start", …). */
+function contractPaths(node: unknown, prefix: string, out: Set<string>) {
+	if (!node || typeof node !== "object") return;
+	if ("~orpc" in node) {
+		out.add(prefix);
+		return;
+	}
+	for (const [key, child] of Object.entries(node))
+		contractPaths(child, prefix ? `${prefix}.${key}` : key, out);
+}
+const PROCEDURES: ReadonlySet<string> = (() => {
+	const out = new Set<string>();
+	contractPaths(appContract, "", out);
+	return out;
+})();
 
 // Fixed words a message gap may keep besides numbers and interface names.
 const MESSAGE_TOKENS: ReadonlySet<string> = new Set([
@@ -488,24 +471,23 @@ function redactSupportRecord(
 	source: "ceralive" | "systemd",
 ): string {
 	if (oversizedSupportLine(message)) return WITHHELD;
-	if (source === "systemd")
-		return filterDiagnosticText(systemdMessage(message) ?? "") || WITHHELD;
+	if (source === "systemd") return systemdMessage(message) ?? WITHHELD;
 	const trimmed = message.trimStart();
 	if (trimmed.startsWith("{")) {
 		try {
 			const entry = JSON.parse(trimmed);
 			const raw = entry?.msg ?? entry?.message;
 			if (typeof raw !== "string" || raw.length > 4096) return WITHHELD;
-			// Only messages this code writes, with interpolated values bounded.
-			// An RPC trace names a procedure the router resolved before logging.
-			const bounded =
-				/^RPC [a-zA-Z][a-zA-Z0-9]{0,40}(?:\.[a-zA-Z][a-zA-Z0-9]{0,40}){0,3} (?:ok|err)$/.test(
+			// Only messages this code writes, every gap [value] unless a token.
+			// An RPC trace names a procedure of the RPC contract.
+			const rpc =
+				/^RPC ([a-zA-Z][a-zA-Z0-9]{0,40}(?:\.[a-zA-Z][a-zA-Z0-9]{0,40}){0,3}) (ok|err)$/.exec(
 					raw,
-				)
-					? raw
-					: boundedBackendMessage(raw, MESSAGE_TOKENS);
-			if (bounded === undefined) return WITHHELD;
-			const msg = filterDiagnosticText(bounded, source);
+				);
+			const procedure = rpc?.[1] && PROCEDURES.has(rpc[1]) ? rpc[1] : undefined;
+			const msg = rpc
+				? `RPC ${procedure ?? "[procedure]"} ${rpc[2]}`
+				: boundedBackendMessage(raw, MESSAGE_TOKENS);
 			if (msg === undefined) return WITHHELD;
 			const out: Record<string, unknown> = { msg };
 			if (
@@ -521,33 +503,35 @@ function redactSupportRecord(
 				out.level = entry.level;
 			if (typeof entry.module === "string" && MODULES.has(entry.module))
 				out.module = entry.module;
-			const rpc = /^RPC ([a-zA-Z][a-zA-Z0-9_.]{0,79}) (?:ok|err)$/.exec(raw);
-			const meta = safeMetadata(entry.meta, rpc?.[1]);
+			const meta = safeMetadata(
+				entry.meta,
+				rpc ? (procedure ?? "") : undefined,
+			);
 			if (Object.keys(meta).length) out.meta = meta;
 			return JSON.stringify(out);
 		} catch {
 			return WITHHELD;
 		}
 	}
-	if (/^["{}[\],]/.test(trimmed)) return WITHHELD;
-	if (
-		source === "ceralive" &&
-		!/^streamloop: [a-z_.-]{1,32} exited \(code=(?:-?\d{1,3}|null), signal=(?:SIG[A-Z]{1,10}|null)\)$/.test(
+	const exited =
+		/^streamloop: ([^\s()]{1,64}) exited \(code=(-?\d{1,3}|null), signal=(SIG[A-Z]{1,10}|null)\)$/.exec(
 			message,
-		)
-	)
-		return WITHHELD;
-	return filterDiagnosticText(message, source) ?? WITHHELD;
+		);
+	if (!exited?.[1]) return WITHHELD;
+	const name = exited[1].replace(/^\/usr\/(?:local\/)?s?bin\//, "");
+	const signal =
+		exited[3] === "null" || SIGNALS.has(exited[3] ?? "")
+			? exited[3]
+			: "[signal]";
+	return `streamloop: ${KNOWN_PROCESSES.has(name) ? exited[1] : "[process]"} exited (code=${exited[2]}, signal=${signal})`;
 }
 
 /** Render one admitted record's message for its trusted source. */
 export function renderSourceMessage(source: string, message: string): string {
 	if (oversizedSupportLine(message)) return WITHHELD;
-	if (isShapeSource(source)) {
-		const shaped = matchLineShape(source, message);
-		if (shaped === undefined) return WITHHELD;
-		return filterDiagnosticText(shaped, source) ?? WITHHELD;
-	}
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are never rendered.
+	if (/[\u0000-\u0008\u000a-\u001f\u007f]/.test(message)) return WITHHELD;
+	if (isShapeSource(source)) return matchLineShape(source, message) ?? WITHHELD;
 	if (source === "ceralive" || source === "systemd")
 		return redactSupportRecord(message, source);
 	return WITHHELD;

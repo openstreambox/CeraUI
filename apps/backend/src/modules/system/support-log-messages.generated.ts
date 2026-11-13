@@ -1487,7 +1487,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["unit state ", "/", ""],
 	["unit state was not readable"],
 	["unit_unreadable"],
-	["unknown line-shape placeholder ", ""],
+	["unknown line-shape field ", ""],
 	["unlock is not a map"],
 	["unproven"],
 	["unreadable mutation journal inventory"],

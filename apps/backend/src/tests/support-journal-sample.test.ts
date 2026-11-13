@@ -42,11 +42,11 @@ describe.each(["bookworm", "trixie"] as const)(
 				"CTRL-EVENT-DISCONNECTED bssid=[address] reason=4",
 				"(reason 'supplicant-timeout', ",
 				"AP-STA-CONNECTED [address]",
-				"srtla_send exited (code=1, signal=null)",
+				'"meta":{"process":"srtla_send","exitCode":1,"signal":null}',
 				'"class":"engine_unavailable"',
 				'"retry":{"state":"exhausted","attempt":3,"maxAttempts":3,"suppressed":false}',
 				"Main process exited, code=killed, status=9/KILL",
-				"call end reason (3): generic-unspecified",
+				"call end reason (1): generic-unspecified",
 				"cannot enable/disable modem: locked",
 				'Connected to wireless network "[name]"',
 				...(generation === "trixie"

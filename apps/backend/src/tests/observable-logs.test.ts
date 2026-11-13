@@ -100,6 +100,12 @@ afterEach(() => {
 	spyOn(carrierModule, "getCarrierSupportSummary").mockRestore?.();
 });
 
+/** The journal reads, without the fixed-argv boot-list call. */
+const journalReads = (spy: { mock: { calls: unknown[][] } }) =>
+	spy.mock.calls.filter(
+		(call) => !(Array.isArray(call[1]) && call[1].includes("--list-boots")),
+	);
+
 describe("system.getLog / system.getSyslog — real data + log push", () => {
 	it("getLog returns the journal contents (NOT an empty stub) and pushes a log frame", async () => {
 		const KNOWN = "Registered modem";
@@ -255,7 +261,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		);
 		await new Promise((resolve) => setTimeout(resolve, 1));
 		try {
-			expect(runSpy).toHaveBeenCalledTimes(1);
+			expect(journalReads(runSpy)).toHaveLength(1);
 		} finally {
 			release(journal("Failed to start stream"));
 			await first;
@@ -264,7 +270,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		expect(JSON.stringify(sent)).toContain("already in progress");
 		expect(findLogPush(sent)).toBeUndefined();
 		await call(getLogProcedure, undefined, { context: makeContext([]) });
-		expect(runSpy).toHaveBeenCalledTimes(2);
+		expect(journalReads(runSpy)).toHaveLength(2);
 	});
 	it("retries size overflow once with a labelled 400-entry current-boot scope", async () => {
 		const runSpy = spyOn(runModule, "run")
@@ -273,7 +279,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		const result = await call(getLogProcedure, undefined, {
 			context: makeContext([]),
 		});
-		expect(runSpy).toHaveBeenLastCalledWith(
+		expect(journalReads(runSpy).at(-1)).toEqual([
 			"journalctl",
 			[
 				"-b",
@@ -284,7 +290,7 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 				"ceralive.service",
 			],
 			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
-		);
+		]);
 		expect(result.log).toContain(
 			"current boot only (history exceeded size limit)",
 		);
@@ -299,11 +305,11 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 		);
 
 		await call(getLogProcedure, undefined, { context: makeContext([]) });
-		expect(runSpy).toHaveBeenLastCalledWith(
+		expect(journalReads(runSpy).at(-1)).toEqual([
 			"journalctl",
 			[...JOURNAL_ARGS, "-u", "ceralive.service"],
 			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
-		);
+		]);
 
 		await call(
 			getLogProcedure,
@@ -312,11 +318,11 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 				context: makeContext([]),
 			},
 		);
-		expect(runSpy).toHaveBeenLastCalledWith(
+		expect(journalReads(runSpy).at(-1)).toEqual([
 			"journalctl",
 			[...JOURNAL_ARGS, "-u", "ssh.service"],
 			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
-		);
+		]);
 	});
 
 	it("getSyslog returns the full boot journal (no unit filter) and pushes it", async () => {
@@ -330,11 +336,11 @@ describe("system.getLog / system.getSyslog — real data + log push", () => {
 
 		// The system download fetches only admitted sources, so unrelated units
 		// cannot spend the entry budget before filtering.
-		expect(runSpy).toHaveBeenLastCalledWith(
+		expect(journalReads(runSpy).at(-1)).toEqual([
 			"journalctl",
 			[...JOURNAL_ARGS, ...SUPPORT_JOURNAL_MATCHES],
 			{ maxBuffer: MAX_BUFFER, timeout: 15000 },
-		);
+		]);
 		expect(result.log).toContain(KNOWN);
 		expect(findLogPush(sent)?.contents).toContain(KNOWN);
 	});

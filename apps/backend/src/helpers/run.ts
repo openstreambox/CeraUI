@@ -38,7 +38,7 @@
  */
 
 import { SpawnAbortError, SpawnTimeoutError } from "./bounded-spawn.ts";
-import { execFileP, redactArgv } from "./exec.ts";
+import { execFileP, redactArgv, withFailureClass } from "./exec.ts";
 import { logger } from "./logger.ts";
 
 /** Default stdout/stderr ceiling for buffered (execFile) commands: 10 MiB. */
@@ -305,7 +305,9 @@ export async function run(
 	opts?: RunOpts,
 ): Promise<string> {
 	if (!ALLOWED.has(bin)) {
-		throw new Error(`binary not allowlisted: ${bin}`);
+		throw Object.assign(new Error(`binary not allowlisted: ${bin}`), {
+			failureClass: "rejected-configuration",
+		});
 	}
 
 	const redacted = `${bin} ${redactArgv(args)}`.trim();
@@ -326,7 +328,10 @@ export async function run(
 		if (err instanceof SpawnTimeoutError) {
 			throw err instanceof SpawnAbortError
 				? new RunAbortError(redacted, err.partialStdout, err.partialStderr)
-				: new RunTimeoutError(redacted, err.partialStdout, err.partialStderr);
+				: withFailureClass(
+						bin,
+						new RunTimeoutError(redacted, err.partialStdout, err.partialStderr),
+					);
 		}
 		throw err;
 	}
@@ -349,7 +354,9 @@ export async function runWithStdin(
 	opts?: RunOpts,
 ): Promise<string> {
 	if (!ALLOWED.has(bin)) {
-		throw new Error(`binary not allowlisted: ${bin}`);
+		throw Object.assign(new Error(`binary not allowlisted: ${bin}`), {
+			failureClass: "rejected-configuration",
+		});
 	}
 
 	const redacted = `${bin} ${redactArgv(args)}`.trim();
@@ -369,7 +376,13 @@ export async function runWithStdin(
 	if (code === 0) {
 		return stdout;
 	}
-	throw new Error(
-		`${bin} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
+	throw withFailureClass(
+		bin,
+		Object.assign(
+			new Error(
+				`${bin} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
+			),
+			{ code },
+		),
 	);
 }

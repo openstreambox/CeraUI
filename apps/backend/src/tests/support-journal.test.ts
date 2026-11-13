@@ -22,7 +22,7 @@ function entry(message: string, fields: Record<string, unknown> = {}) {
 }
 
 const NM_FAILED =
-	"<warn>  [1731528245.1234] device (wwan0): state change: connecting -> failed (reason 'gsm-registration-denied', sys-iface-state: 'managed')";
+	"<warn>  [1731528245.1234] device (wwan0): state change: ip-config -> failed (reason 'gsm-registration-denied', sys-iface-state: 'managed')";
 
 describe("trusted journal source and record boundaries", () => {
 	test("unknown units and sudo/audit children cannot impersonate an allowed message prefix", () => {
@@ -102,7 +102,7 @@ describe("trusted journal source and record boundaries", () => {
 		);
 		expect(output).not.toContain("private-continuation-value");
 		expect(output).toContain("USB disconnect");
-		expect(output).toContain("connecting -> failed");
+		expect(output).toContain("ip-config -> failed");
 	});
 	test("admits a unit's records only from its own command, not its children", () => {
 		const output = renderSupportJournal(

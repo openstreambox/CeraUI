@@ -3,8 +3,10 @@
  * The support export admits a backend `msg` only when it matches a message this
  * code writes. Each template is the literal text of a logger call's first
  * argument, split where the code interpolates a runtime value; the export puts
- * a bounded token or `[value]` in each gap. Run with `--write` after adding or
- * changing log messages:
+ * `[value]` (or a fixed token) in each gap, so the output depends only on the
+ * template. Matching cannot prove which call wrote a runtime string; it does
+ * not need to, because no runtime text is copied. Run with `--write` after
+ * adding or changing log messages:
  *
  *   bun scripts/support-log-messages.ts --write
  */
@@ -134,7 +136,7 @@ const LOG_FUNCTIONS = new Set(["warn", "error", "logWarn", "logError"]);
 const LOGGER_OBJECT =
 	/(?:^|\.)(?:logger|log|defaultLogger|[a-zA-Z]*Logger|sink)$|logger\.child\(/;
 
-interface Collected {
+export interface Collected {
 	logs: string[][];
 	errors: string[][];
 	reasons: string[][];
@@ -176,17 +178,31 @@ function collect(root = BACKEND_ROOT): Collected {
 			if (ts.isCallExpression(node) && node.arguments.length > 0) {
 				const callee = node.expression;
 				const first = node.arguments[0];
+				// logger.warn(…) and logger["warn"](…) are the same call.
+				const access =
+					ts.isPropertyAccessExpression(callee) ||
+					(ts.isElementAccessExpression(callee) &&
+						ts.isStringLiteralLike(callee.argumentExpression))
+						? callee
+						: undefined;
+				const methodName =
+					access && ts.isPropertyAccessExpression(access)
+						? access.name.text
+						: access && ts.isElementAccessExpression(access)
+							? (access.argumentExpression as ts.StringLiteralLike).text
+							: undefined;
 				const method =
-					ts.isPropertyAccessExpression(callee) &&
-					LOG_METHODS.has(callee.name.text) &&
-					callee.expression.getText(source) !== "console";
+					access !== undefined &&
+					methodName !== undefined &&
+					LOG_METHODS.has(methodName) &&
+					access.expression.getText(source) !== "console";
 				const bare = ts.isIdentifier(callee) && LOG_FUNCTIONS.has(callee.text);
 				if (first && (method || bare)) {
 					const literal = add(logs, pieces(first, scope));
 					const loggerLike =
 						bare ||
-						(ts.isPropertyAccessExpression(callee) &&
-							LOGGER_OBJECT.test(callee.expression.getText(source)));
+						(access !== undefined &&
+							LOGGER_OBJECT.test(access.expression.getText(source)));
 					if (!literal && loggerLike)
 						dynamic.add(
 							`${rel}: ${callee.getText(source)}(${first.getText(source).replace(/\s+/g, " ").slice(0, 80)})`,
@@ -236,6 +252,8 @@ const collected = () => {
 	return cached;
 };
 
+/** Collect from another tree (a test fixture); the default is this backend. */
+export const collectFrom = (root: string): Collected => collect(root);
 export const collectLogTemplates = (): string[][] => collected().logs;
 export const collectErrorTemplates = (): string[][] => collected().errors;
 export const collectReasonTemplates = (): string[][] => collected().reasons;

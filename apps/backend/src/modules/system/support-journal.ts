@@ -87,22 +87,32 @@ export function renderSupportJournal(text: string): string {
 export interface SupportJournalOptions {
 	/** journald's _BOOT_ID of the running system (32 hex digits). */
 	readonly currentBootId?: string | undefined;
+	/** journald's own boot list, oldest first (`journalctl --list-boots`). */
+	readonly bootList?: readonly string[] | undefined;
 }
 
 /** Boot labels count back from the current boot: 0 is this boot, -1 the one
- * before. Without a known current boot, the newest boot in the download is 0.
- * When the current boot has no records here, the newest one shown is -1.
+ * before. The order comes from journald's boot list when known, else from
+ * every record read (withheld ones included), so a boot whose records were all
+ * withheld still counts. Without a known current boot, the newest boot is 0;
+ * when the current boot has no records here, the newest one is -1.
  */
 function bootLabels(
 	order: readonly string[],
 	currentBootId: string | undefined,
-): Map<string, string> {
+): Map<string, number> {
 	const current =
 		currentBootId === undefined
 			? order.length - 1
 			: order.indexOf(currentBootId);
 	const newest = current < 0 ? order.length : current;
-	return new Map(order.map((id, index) => [id, `${index - newest}`]));
+	return new Map(order.map((id, index) => [id, index - newest]));
+}
+
+function bootId(record: Record<string, unknown>): string | undefined {
+	return typeof record._BOOT_ID === "string" && record._BOOT_ID.length <= 128
+		? record._BOOT_ID.toLowerCase()
+		: undefined;
 }
 
 /** As renderSupportJournal, also counting shown and withheld records. */
@@ -113,9 +123,13 @@ export function renderSupportJournalWithCounts(
 	text: string;
 	shown: number;
 	withheld: number;
+	/** Labels of boots between the oldest shown and now with no shown record. */
+	bootsWithoutShown: number[];
 } {
 	const interrupted = new Set<string>();
-	const boots: string[] = [];
+	const boots: string[] = (options.bootList ?? []).map((id) =>
+		id.toLowerCase(),
+	);
 	const lineBoots: (string | undefined)[] = [];
 	const rendered = text
 		.split("\n")
@@ -137,6 +151,9 @@ export function renderSupportJournalWithCounts(
 			} catch {
 				return WITHHELD;
 			}
+			// Boot order from trusted metadata, before any content decision.
+			const boot = bootId(record);
+			if (boot !== undefined && !boots.includes(boot)) boots.push(boot);
 			const source = recordSource(record);
 			// Track a split before looking at the message: without --all,
 			// journalctl prints a field over 4096 bytes as null, which includes the
@@ -171,11 +188,6 @@ export function renderSupportJournalWithCounts(
 			if (filtered === WITHHELD) return WITHHELD;
 			const time = timestamp(record.__REALTIME_TIMESTAMP);
 			// Boot ids are never rendered; a short label is added below.
-			const boot =
-				typeof record._BOOT_ID === "string" && record._BOOT_ID.length <= 128
-					? record._BOOT_ID.toLowerCase()
-					: undefined;
-			if (boot !== undefined && !boots.includes(boot)) boots.push(boot);
 			lineBoots[index] = boot;
 			return `${time ? `${time} ` : ""}${source}: ${filtered}`;
 		});
@@ -187,10 +199,20 @@ export function renderSupportJournalWithCounts(
 			: `[boot ${labels.get(boot)}] ${line}`;
 	});
 	const withheld = rendered.filter((line) => line === WITHHELD).length;
+	const shownLabels = new Set(
+		lineBoots.flatMap((boot) =>
+			boot === undefined ? [] : [labels.get(boot) ?? 0],
+		),
+	);
+	const oldest = Math.min(...shownLabels);
+	const bootsWithoutShown = [...labels.values()]
+		.filter((label) => label >= oldest && label <= 0 && !shownLabels.has(label))
+		.sort((a, b) => a - b);
 	return {
 		text: collapseWithheld(labelled).join("\n"),
 		shown: rendered.length - withheld,
 		withheld,
+		bootsWithoutShown,
 	};
 }
 

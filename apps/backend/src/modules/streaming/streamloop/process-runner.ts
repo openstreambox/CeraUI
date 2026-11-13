@@ -108,6 +108,12 @@ export function spawnStreamingLoop(
 			}, signal=${
 				signalCode ?? "null"
 			}); not respawning — systemd owns process restart (ADR-0005)`,
+			// The same facts as typed fields, which support downloads keep.
+			{
+				process: streamingProcess.spawnfile,
+				exitCode: exitCode ?? null,
+				signal: signalCode ?? null,
+			},
 		);
 		// remove the dead process from the supervised list
 		removeProc(streamingProcess);

@@ -52,6 +52,25 @@ function currentBootId(): string | undefined {
 	}
 }
 
+/** journald's boot ids, oldest first, so boot labels count every boot even
+ * when one has no record in the download. Undefined when unavailable.
+ */
+async function journalBootList(): Promise<string[] | undefined> {
+	if (shouldUseMocks()) return undefined;
+	try {
+		const text = await run("journalctl", ["--list-boots", "--no-pager"], {
+			maxBuffer: 1024 * 1024,
+			timeout: 5000,
+		});
+		const boots = [...text.matchAll(/^\s*(-?\d{1,6})\s+([0-9a-f]{32})\s/gm)]
+			.map((m) => ({ index: Number(m[1]), id: m[2] ?? "" }))
+			.sort((a, b) => a.index - b.index);
+		return boots.length ? boots.map((boot) => boot.id) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** One collection bounds process and memory use across all authenticated callers. */
 export async function getLog(
 	conn: MessageSocket,
@@ -159,9 +178,13 @@ async function collectLog(
 		: "retained last 7 days";
 	const rendered = renderSupportJournalWithCounts(journal, {
 		currentBootId: currentBootId(),
+		bootList: await journalBootList(),
 	});
+	const quietBoots = rendered.bootsWithoutShown.length
+		? ` Boots with no shown records: ${rendered.bootsWithoutShown.join(", ")}.`
+		: "";
 	const label = shouldUseMocks() ? `${mockJournalLabel(service)}\n` : "";
-	const contents = `${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (unrecognised lines and possible private values). [boot 0] is the running boot, [boot -1] the one before it.\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`;
+	const contents = `${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (lines without a typed shape, messages the code does not write, split or oversized records). [boot 0] is the running boot, [boot -1] the one before it.${quietBoots}\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`;
 	try {
 		conn.send(buildMsg("log", { name, contents }, senderId));
 		return { name, contents };

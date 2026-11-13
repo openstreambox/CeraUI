@@ -86,7 +86,15 @@ describe("logs.ts getLog() — journalctl command injection", () => {
 		// Allow any (pre-fix) real exec() callback to fire before asserting.
 		await new Promise((resolve) => setTimeout(resolve, 300));
 
-		const calls = journalctlCalls(runSpy);
+		// The boot list is a second, fixed-argv journalctl call.
+		const bootLists = journalctlCalls(runSpy).filter((call) =>
+			call[1].includes("--list-boots"),
+		);
+		for (const [, args] of bootLists)
+			expect(args).toEqual(["--list-boots", "--no-pager"]);
+		const calls = journalctlCalls(runSpy).filter(
+			(call) => !call[1].includes("--list-boots"),
+		);
 		// Exactly one journalctl invocation — pre-fix there are ZERO (getLog used
 		// exec()), and a second would mean the argv was split.
 		expect(calls.length).toBe(1);

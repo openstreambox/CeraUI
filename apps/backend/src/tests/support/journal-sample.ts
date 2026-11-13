@@ -180,7 +180,7 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 			: []),
 		mm(
 			"msg",
-			`[modem0/bearer1] ${trixie ? "  " : ""}call end reason (3): generic-unspecified`,
+			`[modem0/bearer1] ${trixie ? "  " : ""}call end reason (1): generic-unspecified`,
 		),
 		mm(
 			"msg",
@@ -325,6 +325,7 @@ export function journalSampleFor(generation: Generation): JournalRecord[] {
 		// Stream: the sender exits, a restart fails after its retries.
 		warn(
 			"streamloop: /usr/bin/srtla_send exited (code=1, signal=null); not respawning — systemd owns process restart (ADR-0005)",
+			{ process: "/usr/bin/srtla_send", exitCode: 1, signal: null },
 		),
 		// Winston appends the diagnostic's message to the text.
 		warn("stream start retry scheduled engine socket not reachable", {

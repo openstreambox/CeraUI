@@ -399,7 +399,19 @@ function formatClockTimestamp(raw: unknown): string {
 // Errors serialize to `{}` under JSON.stringify by default — surface the fields.
 function jsonReplacer(_key: string, value: unknown): unknown {
 	if (value instanceof Error) {
-		return { name: value.name, message: value.message, stack: value.stack };
+		// A system or exit code and a tool failure class are typed facts the
+		// support download keeps; the message text is bounded there.
+		const { code, failureClass } = value as {
+			code?: unknown;
+			failureClass?: unknown;
+		};
+		return {
+			name: value.name,
+			message: value.message,
+			stack: value.stack,
+			...(typeof code === "string" || typeof code === "number" ? { code } : {}),
+			...(typeof failureClass === "string" ? { failureClass } : {}),
+		};
 	}
 	return value;
 }

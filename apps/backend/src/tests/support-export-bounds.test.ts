@@ -110,7 +110,7 @@ describe("metadata error and reason text is bounded like msg", () => {
 			withMeta("Failed to start stream", { reason: "no_route" }),
 		);
 		expect(output).toContain(
-			'"error":{"name":"RunTimeoutError","code":"ETIMEDOUT","message":"[value]"}',
+			'"error":{"name":"RunTimeoutError","code":"ETIMEDOUT","class":"timeout","message":"[value]"}',
 		);
 		expect(output).toContain('"message":"spawn /usr/bin/srtla_send ENOENT"');
 		expect(output).toContain('"message":"connect ECONNREFUSED [value]"');
@@ -166,12 +166,12 @@ describe("ModemManager 1.24 lines that explain a failed connection", () => {
 			"failed waiting for enabled state: locked",
 		],
 		[
-			"<msg> [modem0/bearer1] call end reason (14): generic-unspecified",
-			"call end reason (14): generic-unspecified",
+			"<msg> [modem0/bearer1] call end reason (1): generic-unspecified",
+			"call end reason (1): generic-unspecified",
 		],
 		[
-			"<msg> [modem0/bearer1]   call end reason (14): generic-unspecified",
-			"call end reason (14): generic-unspecified",
+			"<msg> [modem0/bearer1]   call end reason (1): generic-unspecified",
+			"call end reason (1): generic-unspecified",
 		],
 		[
 			"<msg> [modem0/bearer1] verbose call end reason (6,33): [3gpp] option-unsubscribed",

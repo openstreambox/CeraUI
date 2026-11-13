@@ -116,13 +116,13 @@ describe("backend messages are bounded to the code's own texts", () => {
 		expect(exported(error(msg))).not.toContain(secret);
 	});
 
-	test("a message from the code keeps its fixed text and bounded values", () => {
+	test("a message from the code keeps its fixed text; every gap is [value]", () => {
 		expect(
 			exported(error("nmConnect err: nmcli exited with code 10: Error: x")),
 		).toContain('"msg":"nmConnect err: [value]"');
 		expect(
 			exported(error("Failed to register modem 3: Jane Doe Mobile")),
-		).toContain('"msg":"Failed to register modem 3: [value]"');
+		).toContain('"msg":"Failed to register modem [value]: [value]"');
 		expect(exported(error("Failed to start stream"))).toContain(
 			'"msg":"Failed to start stream"',
 		);
@@ -291,9 +291,19 @@ describe("free tails and interface names", () => {
 		"<info>  device (wlan0): Activation: Stage 1 of 5 (Device Prepare) started for john doe home",
 		"<info>  device (wlan0): carrier: link connected for bob",
 		"<warn>  device (wlan0): Activation: (wifi) association took too long for bobs home",
-		"<info>  device (Bobs_iPhone): state change: config -> failed (reason 'no-secrets', managed-type: 'full')",
 	])("withholds %s", (line) => {
 		expect(exported(nm(line))).toBe("[REDACTED support log line]");
+	});
+	test("an interface outside the kernel naming grammar is [interface]", () => {
+		const output = exported(
+			nm(
+				"<info>  device (Bobs_iPhone): state change: config -> failed (reason 'no-secrets', managed-type: 'full')",
+			),
+		);
+		expect(output).not.toContain("Bobs");
+		expect(output).toContain(
+			"device ([interface]): state change: config -> failed (reason 'no-secrets', managed-type: 'full')",
+		);
 	});
 
 	test.each([
