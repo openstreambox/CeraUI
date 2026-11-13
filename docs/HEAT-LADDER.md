@@ -62,19 +62,24 @@ transport is installed by this change.
 
 ## Modem temperature and spare links
 
-RM520N-GL temperature is sampled with read-only AT+QTEMP through the bounded
-mmcli command runner every ten seconds, only while a stream runs. Known sensors
-contribute their hottest valid reading. ModemManager returns the reply with its
-final OK removed, so OK is accepted but not required; ERROR, unknown sensors,
-malformed readings and values outside −20…125 °C supply no modem trigger.
-Proposed modem levels are 65/70/75 °C in HEAT_SETTINGS.
+RM520N-GL temperature is sampled with read-only AT+QTEMP every ten seconds, only
+while a stream runs, on the modem's second AT port, the one
+`ceralive-modem-support` releases from ModemManager (see
+[FREE-AT-PORT.md](FREE-AT-PORT.md)). Stock ModemManager answers
+`mmcli --command` only in debug mode, which restarts it and opens every AT
+command to every authorised caller, so the reader does not use it, and it never
+inhibits the modem. A reply counts only after its complete final OK. Known
+sensors contribute their hottest valid reading; ERROR, a timeout, unknown
+sensors, malformed readings and values outside −20…125 °C supply no modem
+trigger. Proposed modem levels are 65/70/75 °C in HEAT_SETTINGS.
 
-**Limit: stock ModemManager does not answer `mmcli --command`.** It accepts AT
-commands only when the daemon runs with `--debug` (or was built with AT
-commands over D-Bus), and otherwise answers "operation only allowed in debug
-mode". On such a box the reader logs this once, stops polling (it checks again
-every ten minutes) and the heat panel says "Modem temperature isn't available
-on this box. Heat steps use the SoC temperature." The SoC input works either way.
+**When the port is not available.** The port is used only when it is released in
+udev, ModemManager does not list it as its own, and no other process holds it.
+Otherwise that modem is not read: the reason (for example `not-released` or
+`owned-by-modemmanager`) is logged once, the port is looked at again every ten
+minutes without anything being sent, and if no modem can be read the heat panel
+says "Modem temperature isn't available on this box. Heat steps use the SoC
+temperature." The SoC input works either way.
 
 Expectation is per modem. A modem that has given readings and then goes quiet
 blocks cooling, while SoC heat can still raise the stage; a modem that is

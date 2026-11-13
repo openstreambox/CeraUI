@@ -1,7 +1,0 @@
-{
-	"modem": {
-		"command": {
-			"response": "+QTEMP:\"modem-lte-sub6-pa1\",\"27\"\r\n+QTEMP:\"modem-sdr0-pa0\",\"0\"\r\n+QTEMP:\"modem-sdr0-pa1\",\"0\"\r\n+QTEMP:\"modem-sdr0-pa2\",\"0\"\r\n+QTEMP:\"modem-sdr1-pa0\",\"0\"\r\n+QTEMP:\"modem-sdr1-pa1\",\"0\"\r\n+QTEMP:\"modem-sdr1-pa2\",\"0\"\r\n+QTEMP:\"modem-mmw0\",\"0\"\r\n+QTEMP:\"aoss-0-usr\",\"30\"\r\n+QTEMP:\"cpuss-0-usr\",\"30\"\r\n+QTEMP:\"mdmq6-0-usr\",\"30\"\r\n+QTEMP:\"mdmss-0-usr\",\"30\"\r\n+QTEMP:\"mdmss-1-usr\",\"29\"\r\n+QTEMP:\"mdmss-2-usr\",\"29\"\r\n+QTEMP:\"mdmss-3-usr\",\"29\"\r\n+QTEMP:\"modem-lte-sub6-pa2\",\"27\"\r\n+QTEMP:\"modem-ambient-usr\",\"28\""
-		}
-	}
-}

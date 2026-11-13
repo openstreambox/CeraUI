@@ -45,14 +45,17 @@ de confiar en hardware recién conectado. Esta versión no instala ese transport
 ## Temperatura del módem y enlaces de reserva
 
 Durante una transmisión, la temperatura del RM520N-GL se lee cada diez segundos
-con AT+QTEMP (solo lectura) a través de mmcli. Valores fuera de −20…125 °C no
-cuentan.
+con AT+QTEMP (solo lectura) en el segundo puerto AT del módem, el que
+`ceralive-modem-support` libera de ModemManager. No se usa `mmcli --command`
+(ModemManager estándar solo lo acepta en modo de depuración) ni se inhibe el
+módem. Una respuesta cuenta solo con su OK final completo. Valores fuera de
+−20…125 °C no cuentan.
 
-**Límite: ModemManager estándar no responde a `mmcli --command`.** Solo acepta
-comandos AT si el servicio corre con `--debug`. Si no, el panel dice "La
-temperatura del módem no está disponible en este equipo. Los ajustes por calor
-usan la temperatura del SoC." y la lectura se vuelve a intentar cada diez
-minutos.
+**Si el puerto no está disponible** (no liberado en udev, usado por ModemManager
+o por otro proceso), ese módem no se lee: el motivo se registra una vez y el
+puerto se revisa cada diez minutos sin enviar nada. Si ningún módem se puede
+leer, el panel dice "La temperatura del módem no está disponible en este
+equipo. Los ajustes por calor usan la temperatura del SoC."
 
 Un módem que dio lecturas y deja de darlas impide la reversión; uno
 desconectado no. Un valor imposible de un módem nunca pausa la protección por

@@ -1,4 +1,9 @@
 import { plausibleTemperature } from "../streaming/heat-ladder.ts";
+import {
+	FREE_AT_RECHECK_MS,
+	type FreeAtResult,
+	type FreeAtUnavailableReason,
+} from "./free-at-port.ts";
 
 const SENSORS = new Set([
 	"modem-lte-sub6-pa1",
@@ -15,15 +20,17 @@ const SENSORS = new Set([
 	...[0, 1].flatMap((s) => [0, 1, 2].map((p) => `modem-sdr${s}-pa${p}`)),
 ]);
 export const MODEM_TEMPERATURE_INTERVAL_MS = 10000;
-/** After ModemManager refuses AT commands, look again this rarely. */
-export const MODEM_COMMAND_RECHECK_MS = 600000;
+/** After the released AT port is refused, look again this rarely (nothing is sent). */
+export const MODEM_PORT_RECHECK_MS = FREE_AT_RECHECK_MS;
+/** One `AT+QTEMP` exchange on the released port, including its final OK. */
+export const MODEM_TEMPERATURE_TIMEOUT_MS = 2000;
 
 /**
- * Hottest known sensor in an `AT+QTEMP` reply. ModemManager returns a
- * `--command` reply with the final result code removed (it reports failure as
- * an error instead), so a final `OK` is accepted but not required. A value
- * outside the ladder's plausible range is dropped here, so it can never make
- * the ladder's whole state unknown.
+ * Hottest known sensor in an `AT+QTEMP` reply read on the released AT port
+ * (`free-at-port.ts`). The lease returns a reply only after its complete final
+ * `OK`, echo included; the echoed command line matches no sensor. An error
+ * line anywhere means no reading. A value outside the ladder's plausible range
+ * is dropped here, so it can never make the ladder's whole state unknown.
  */
 export function parseModemTemperature(raw: string): number | null {
 	const lines = raw.split(/\r?\n/).map((l) => l.trim());
@@ -41,39 +48,19 @@ export function parseModemTemperature(raw: string): number | null {
 	return values.length ? Math.max(...values) : null;
 }
 
-/** The reply text from `mmcli --command=… -J`; empty when absent or not JSON. */
-export function qtempResponseFromMmcli(json: string): string {
-	try {
-		const response: unknown = JSON.parse(json)?.modem?.command?.response;
-		return typeof response === "string" ? response : "";
-	} catch {
-		return "";
-	}
-}
-
-/**
- * Stock ModemManager answers `--command` only when the daemon runs with
- * `--debug` (or was built with AT commands over D-Bus).
- */
-export function isAtCommandRefusal(text: string): boolean {
-	return /only allowed in debug mode/i.test(text);
-}
-
-/** ModemManager on this box does not accept AT commands. */
-export class ModemCommandUnavailableError extends Error {
-	constructor() {
-		super("ModemManager does not accept AT commands (not in debug mode)");
-		this.name = "ModemCommandUnavailableError";
-	}
-}
-
 export interface ModemHeatSample {
 	/** Hottest fresh plausible reading across present modems; null when none. */
 	value: number | null;
 	/** A present modem that has given readings has none now: cooling must wait. */
 	missing: boolean;
-	/** ModemManager refuses AT commands, so no modem temperature can be read. */
+	/**
+	 * No present modem can be read: every one's released AT port is refused
+	 * (not released, owned by ModemManager, in use, …) and none has given a
+	 * reading. Heat steps then use the SoC temperature.
+	 */
 	unavailable: boolean;
+	/** The fixed refusal reason when `unavailable`, for logs and diagnostics. */
+	reason?: FreeAtUnavailableReason;
 }
 
 interface Target {
@@ -84,6 +71,9 @@ interface ReaderLogger {
 	warn: (message: string, meta?: Record<string, unknown>) => void;
 	info?: (message: string, meta?: Record<string, unknown>) => void;
 }
+
+/** The lease's read for one modem, e.g. `freeAtPorts.read(id, "AT+QTEMP")`. */
+export type ModemTemperatureRead = (id: number) => Promise<FreeAtResult>;
 
 export class ModemTemperatureReader {
 	private states = new Map<
@@ -96,12 +86,13 @@ export class ModemTemperatureReader {
 			pending: boolean;
 			/** This modem has given at least one reading. */
 			seen: boolean;
+			/** Its released port was refused; nothing is read before this time. */
+			refusedUntil: number;
+			reason?: FreeAtUnavailableReason | undefined;
 		}
 	>();
-	private unavailableUntil = -Infinity;
-	private refused = false;
 	constructor(
-		private read: (id: number) => Promise<string>,
+		private read: ModemTemperatureRead,
 		private logger?: ReaderLogger,
 	) {}
 	sample(targets: readonly Target[], now: number): ModemHeatSample {
@@ -109,10 +100,10 @@ export class ModemTemperatureReader {
 			if (!targets.some((t) => t.id === id)) this.states.delete(id);
 		if (!targets.length)
 			return { value: null, missing: false, unavailable: false };
-		if (now < this.unavailableUntil)
-			return { value: null, missing: false, unavailable: true };
 		const values: number[] = [];
 		let missing = false;
+		let refused = 0;
+		let reason: FreeAtUnavailableReason | undefined;
 		for (const target of targets) {
 			let state = this.states.get(target.id);
 			if (state?.pending && state.identity !== target.identity) continue;
@@ -124,25 +115,42 @@ export class ModemTemperatureReader {
 					value: null,
 					pending: false,
 					seen: false,
+					refusedUntil: -Infinity,
 				};
 				this.states.set(target.id, state);
 			}
 			const current = state;
+			if (now < current.refusedUntil) {
+				// A modem that has given readings and then loses its port blocks
+				// cooling like any other lost reading.
+				if (current.seen) missing = true;
+				else {
+					refused++;
+					reason ??= current.reason;
+				}
+				continue;
+			}
 			if (now >= current.next && !current.pending) {
 				current.pending = true;
 				current.next = now + MODEM_TEMPERATURE_INTERVAL_MS;
 				void this.read(target.id)
 					.then(
-						(raw) => {
-							this.noteAvailable();
-							current.value = parseModemTemperature(raw);
-							current.at = now;
-							if (current.value !== null) current.seen = true;
+						(result) => {
+							if (result.ok) {
+								current.value = parseModemTemperature(result.raw);
+								current.at = now;
+								if (current.value !== null) current.seen = true;
+								this.noteAvailable(target.id, current);
+							} else {
+								current.value = null;
+								if (result.unavailable) {
+									current.refusedUntil = now + MODEM_PORT_RECHECK_MS;
+									this.noteRefused(target.id, current, result.reason);
+								}
+							}
 						},
-						(error: unknown) => {
+						() => {
 							current.value = null;
-							if (error instanceof ModemCommandUnavailableError)
-								this.noteRefused(now);
 						},
 					)
 					.finally(() => {
@@ -156,26 +164,35 @@ export class ModemTemperatureReader {
 			if (fresh && current.value !== null) values.push(current.value);
 			else if (current.seen) missing = true;
 		}
+		const unavailable = refused > 0 && refused === targets.length;
 		return {
 			value: values.length ? Math.max(...values) : null,
 			missing,
-			unavailable: false,
+			unavailable,
+			...(unavailable && reason ? { reason } : {}),
 		};
 	}
-	private noteRefused(at: number): void {
-		this.unavailableUntil = at + MODEM_COMMAND_RECHECK_MS;
-		if (this.refused) return;
-		this.refused = true;
+	private noteRefused(
+		id: number,
+		state: { reason?: FreeAtUnavailableReason | undefined },
+		reason: FreeAtUnavailableReason,
+	): void {
+		if (state.reason === reason) return;
+		state.reason = reason;
 		this.logger?.warn(
-			"modem temperature: ModemManager does not accept AT commands (it needs --debug); modem temperature is not available",
+			"modem temperature: the RM520's second AT port is not available; heat steps use the SoC temperature",
+			{ modem: id, reason },
 		);
 	}
-	private noteAvailable(): void {
-		if (!this.refused) return;
-		this.refused = false;
-		this.unavailableUntil = -Infinity;
+	private noteAvailable(
+		id: number,
+		state: { reason?: FreeAtUnavailableReason | undefined },
+	): void {
+		if (state.reason === undefined) return;
+		state.reason = undefined;
 		this.logger?.info?.(
-			"modem temperature: ModemManager accepts AT commands again",
+			"modem temperature: the RM520's second AT port is available again",
+			{ modem: id },
 		);
 	}
 }

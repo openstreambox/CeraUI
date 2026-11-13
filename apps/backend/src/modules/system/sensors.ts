@@ -33,9 +33,12 @@ import {
 import { getConfig } from "../config.ts";
 import { getRTMPIngestStats } from "../ingest/rtmp.ts";
 import { getSRTIngestStats } from "../ingest/srt.ts";
-import { mmReadTemperature } from "../modems/mmcli.ts";
+import { freeAtPorts } from "../modems/free-at-port.ts";
 import { getModems } from "../modems/modems-state.ts";
-import { ModemTemperatureReader } from "../modems/temperature.ts";
+import {
+	MODEM_TEMPERATURE_TIMEOUT_MS,
+	ModemTemperatureReader,
+} from "../modems/temperature.ts";
 import { cerastreamBackend } from "../streaming/cerastream-backend.ts";
 import { parseThermalZone } from "../streaming/heat-ladder.ts";
 import { getSourcesMessage } from "../streaming/sources.ts";
@@ -57,7 +60,7 @@ const bootconfigService = "ceralive-firstboot-bootconfig";
 
 const sensors: Record<string, string> = {};
 const modemTemperatureReader = new ModemTemperatureReader(
-	mmReadTemperature,
+	(id) => freeAtPorts.read(id, "AT+QTEMP", MODEM_TEMPERATURE_TIMEOUT_MS),
 	logger,
 );
 /** Numeric thermal-zone readings in °C; absent when missing or implausible. */
