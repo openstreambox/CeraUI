@@ -1,3 +1,4 @@
+import { runtimeAllowsDevelopment } from "./runtime-mode.ts";
 /**
  * Scenario driver admission (dev only). A WebSocket whose upgrade carries the
  * driver secret may call `dev.scenario.*`; see mocks/scenario-control.ts.
@@ -21,6 +22,7 @@ export function permitsScenarioDriver(
 	expectedSecret: string | undefined,
 ): boolean {
 	return (
+		runtimeAllowsDevelopment() &&
 		expectedSecret !== undefined &&
 		SCENARIO_DRIVER_SECRET.test(expectedSecret) &&
 		request.headers.get(SCENARIO_DRIVER_HEADER) === expectedSecret

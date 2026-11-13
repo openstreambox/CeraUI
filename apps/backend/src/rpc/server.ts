@@ -1,3 +1,4 @@
+import { runtimeAllowsDevelopment } from "./runtime-mode.ts";
 /**
  * Bun Native Server
  * HTTP and WebSocket server using Bun.serve()
@@ -32,7 +33,7 @@ const e2eWorkerProxySecret = process.env.E2E_WORKER_PROXY_SECRET;
 // Literal NODE_ENV reads: a production build inlines them and drops the
 // scenario driver admission entirely (dev-scenario-production-build.test.ts).
 const scenarioDriverSecret =
-	process.env.NODE_ENV !== "production"
+	process.env.NODE_ENV !== "production" && runtimeAllowsDevelopment()
 		? process.env.CERAUI_SCENARIO_SECRET
 		: undefined;
 
@@ -261,6 +262,7 @@ function startServer(): void {
 					const data = initSocketData();
 					if (
 						process.env.NODE_ENV !== "production" &&
+						runtimeAllowsDevelopment() &&
 						permitsScenarioDriver(req, scenarioDriverSecret)
 					) {
 						data.scenarioDriver = true;

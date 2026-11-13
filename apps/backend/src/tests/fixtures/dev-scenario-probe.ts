@@ -1,11 +1,12 @@
-// Bundled by dev-scenario-production-build.test.ts with NODE_ENV inlined as
-// production or development, then run with a development runtime
-// environment. It reports what the bundle does, not what the runtime env says.
-// (The router is left out: importing it starts the update gates, which need a
-// device's setup. Its dev routes are checked in the shipped bundle instead.)
+// Bundled in both build modes and run in both launch modes.
+// Exercise handlers, upgrade admission and actual route registration.
 import { call } from "@orpc/server";
 import { initMockService, stopMockService } from "../../mocks/mock-service.ts";
-import { devScenarioApplyProcedure } from "../../rpc/procedures/dev.procedure.ts";
+import {
+	devScenarioApplyProcedure,
+	devScenarioResetProcedure,
+	devScenarioStatusProcedure,
+} from "../../rpc/procedures/dev.procedure.ts";
 import type { RPCContext } from "../../rpc/types.ts";
 
 initMockService("streaming-active");
@@ -29,6 +30,25 @@ const apply = await call(
 	{ seed: 1, t_ms: 0, events: [] },
 	{ context },
 );
+const reset = await call(devScenarioResetProcedure, undefined, { context });
+const status = await call(devScenarioStatusProcedure, undefined, { context });
+const handlers = [apply, reset, status].map((result) => result.success);
+const { appRouter } = await import("../../rpc/router.ts");
+const { permitsScenarioDriver, SCENARIO_DRIVER_HEADER } = await import(
+	"../../rpc/scenario-driver-admission.ts"
+);
+const secret = "a".repeat(64);
+const admission =
+	process.env.NODE_ENV !== "production" &&
+	permitsScenarioDriver(
+		new Request("http://localhost/ws", {
+			headers: { [SCENARIO_DRIVER_HEADER]: secret },
+		}),
+		secret,
+	);
+const routes = Object.hasOwn(appRouter, "dev");
 stopMockService();
-process.stdout.write(`${JSON.stringify({ apply })}\n`);
+process.stdout.write(
+	`${JSON.stringify({ apply, admission, routes, handlers })}\n`,
+);
 process.exit(0);

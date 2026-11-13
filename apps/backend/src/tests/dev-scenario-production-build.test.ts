@@ -106,7 +106,7 @@ test(
 		// The probe's report is its last stdout line; the backend logger writes
 		// to stdout too.
 		const lastLine = (out: string) => out.trimEnd().split("\n").at(-1) ?? "";
-		const probe = async (nodeEnv: string) =>
+		const probe = async (nodeEnv: string, runtime = "development") =>
 			JSON.parse(
 				lastLine(
 					await run(
@@ -116,15 +116,33 @@ test(
 							resolve(repoDir, "scripts/dev-safety.ts"),
 							await bundle("src/tests/fixtures/dev-scenario-probe.ts", nodeEnv),
 						],
-						{ NODE_ENV: "development", MOCK_MODE: "true" },
+						{ NODE_ENV: runtime, MOCK_MODE: "true" },
 					),
 				),
 			);
+		expect(await probe("development", "production")).toEqual({
+			apply: { success: false, refused: "production" },
+			admission: false,
+			routes: false,
+			handlers: [false, false, false],
+		});
+		expect(await probe("production", "production")).toEqual({
+			apply: { success: false, refused: "production" },
+			admission: false,
+			routes: false,
+			handlers: [false, false, false],
+		});
 		expect(await probe("production")).toEqual({
 			apply: { success: false, refused: "production" },
+			admission: false,
+			routes: false,
+			handlers: [false, false, false],
 		});
 		expect(await probe("development")).toMatchObject({
 			apply: { success: true, status: { pinned: true, seed: 1, t_ms: 0 } },
+			admission: true,
+			routes: true,
+			handlers: [true, true, true],
 		});
 	},
 	{ timeout: 120_000 },

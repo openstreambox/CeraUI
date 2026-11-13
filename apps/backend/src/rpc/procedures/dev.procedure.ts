@@ -1,3 +1,4 @@
+import { runtimeAllowsDevelopment } from "../runtime-mode.ts";
 /**
  * Dev-only Procedures
  *
@@ -48,7 +49,7 @@ export const devEmitProcedure = authedProcedure
 	.output(devEmitOutputSchema)
 	.handler(({ input, context }) => {
 		// Defense-in-depth: never emit in production even if somehow registered.
-		if (process.env.NODE_ENV === "production") {
+		if (process.env.NODE_ENV === "production" || !runtimeAllowsDevelopment()) {
 			return { success: false };
 		}
 
@@ -61,7 +62,11 @@ export const devRebindWifiProcedure = authedProcedure
 	.input(wifiScanInputSchema)
 	.output(devEmitOutputSchema)
 	.handler(({ input }) => {
-		if (process.env.NODE_ENV === "production" || !shouldUseMocks()) {
+		if (
+			process.env.NODE_ENV === "production" ||
+			!runtimeAllowsDevelopment() ||
+			!shouldUseMocks()
+		) {
 			return { success: false };
 		}
 		const radio = mockWifiRadios.find(
@@ -98,7 +103,8 @@ export const devScenarioApplyProcedure = authedProcedure
 	.input(devScenarioApplyInputSchema)
 	.output(devScenarioOutputSchema)
 	.handler(async ({ input, context }) => {
-		if (process.env.NODE_ENV === "production") return PRODUCTION_REFUSAL;
+		if (process.env.NODE_ENV === "production" || !runtimeAllowsDevelopment())
+			return PRODUCTION_REFUSAL;
 		const refused = scenarioRefusal(context);
 		if (refused) return { success: false, refused };
 		const { applyScenarioStep } = await import(
@@ -111,7 +117,8 @@ export const devScenarioResetProcedure = authedProcedure
 	.input(devScenarioEmptyInputSchema)
 	.output(devScenarioOutputSchema)
 	.handler(async ({ context }) => {
-		if (process.env.NODE_ENV === "production") return PRODUCTION_REFUSAL;
+		if (process.env.NODE_ENV === "production" || !runtimeAllowsDevelopment())
+			return PRODUCTION_REFUSAL;
 		const refused = scenarioRefusal(context);
 		if (refused) return { success: false, refused };
 		const { resetScenario } = await import("../../mocks/scenario-control.ts");
@@ -122,7 +129,8 @@ export const devScenarioStatusProcedure = authedProcedure
 	.input(devScenarioEmptyInputSchema)
 	.output(devScenarioOutputSchema)
 	.handler(async ({ context }) => {
-		if (process.env.NODE_ENV === "production") return PRODUCTION_REFUSAL;
+		if (process.env.NODE_ENV === "production" || !runtimeAllowsDevelopment())
+			return PRODUCTION_REFUSAL;
 		const refused = scenarioRefusal(context);
 		if (refused) return { success: false, refused };
 		const { getScenarioStatus } = await import(

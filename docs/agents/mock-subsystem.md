@@ -134,3 +134,5 @@ Mock modem data interfaces publish no IPv4 address, accumulate no traffic and
 emit no sender telemetry unless their SIM is unlocked and their state is connected.
 Unlocking restores normal data on the next sample. A searching bond card names
 its state even when the radio continues reporting signal.
+
+Scenario driver access requires both a non-production build and a non-production launch environment. Keep literal NODE_ENV build gates so production bundles omit admission and development routes. The independent runtime check uses Reflect.get on the environment; do not replace it with a literal property read that the bundler can inline. The build matrix probes handlers, driver admission and actual router registration in all four combinations.
