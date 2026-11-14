@@ -30,6 +30,7 @@ import { clearAsrcProbeReject, isAsrcProbeRejectResolved } from "../audio.ts";
 import { setPendingAudioFollowAsrc } from "../auto-audio.ts";
 import { clearBindMapReport } from "../bind-map-disposition.ts";
 import { announceBindMapReport } from "../bind-map-notification.ts";
+import { FAMILY_REFRESH_MS } from "../link-family.ts";
 import { stopLinkTelemetry } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
 import { restartSrtla } from "../srtla.ts";
@@ -146,18 +147,37 @@ export async function start(
 			// from one interface to another leaves the IP bytes byte-identical, so a
 			// SIGHUP keyed on the list alone would skip the very reload that carries
 			// the new mapping.
-			const publication = await prepareSrtlaIpAddresses(c.srtlaAddr);
+			const publication = await prepareSrtlaIpAddresses(
+				c.srtlaAddr,
+				undefined,
+				true,
+			);
 			if (sessionResources?.generation !== generation || !ownsLaunch()) return;
 			if (publication.changed && getIsStreaming()) restartSrtla();
 		} catch (error) {
 			logger.warn("Failed to refresh SRTLA IP addresses", { error });
 		}
 	};
+	let refreshing = false;
+	const refresh = async () => {
+		if (refreshing) return;
+		refreshing = true;
+		try {
+			await refreshSrtlaIpAddresses();
+		} finally {
+			refreshing = false;
+		}
+	};
+	const timer = setInterval(() => {
+		void refresh();
+	}, FAMILY_REFRESH_MS);
+	const removeListener = onNetworkInterfaceSourcesChange(refresh);
 	sessionResources = {
 		generation,
-		removeNetworkInterfacesChangeListener: onNetworkInterfaceSourcesChange(
-			refreshSrtlaIpAddresses,
-		),
+		removeNetworkInterfacesChangeListener: () => {
+			clearInterval(timer);
+			removeListener();
+		},
 	};
 
 	let result: StartStreamResult;

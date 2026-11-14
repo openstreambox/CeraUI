@@ -53,11 +53,12 @@ const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 export async function prepareSrtlaIpAddresses(
 	srtlaAddr: string,
 	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
+	allowEmpty = false,
 ): Promise<BindMapPublication> {
 	const entries = deps.isLocal(srtlaAddr)
 		? deps.localList(srtlaAddr)
 		: deps.bondedList();
-	if (entries.length === 0) {
+	if (entries.length === 0 && !allowEmpty) {
 		throw new Error("no_available_network_connections");
 	}
 	return deps.writeList(entries);

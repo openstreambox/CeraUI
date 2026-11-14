@@ -44,7 +44,7 @@ test("IPv6 inventory selects a stable usable source and publishes a v6-only bond
 	expect(genSrtlaIpList()).toContain("fd51::1");
 });
 test("withdraws IPv6 sources when all addresses become unusable", async () => {
-	await resolveSrtla("192.0.2.2");
+	await resolveSrtla("fd51::2");
 	processIfconfigOutput(
 		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
 		parseIpAddrShow(inventory),
@@ -255,7 +255,7 @@ test("IPv4 stream start does not wait for an unanswered AAAA query", async () =>
 			new Promise((resolve) => setTimeout(() => resolve("timed out"), 100)),
 		]),
 	).toBe("fast-receiver.test.invalid");
-	expect(aaaa).toBe(0);
+	expect(aaaa).toBe(1);
 });
 
 test("IPv6 churn on a dual-stack link publishes addresses without a topology event", async () => {
@@ -376,7 +376,7 @@ test("IPv6 receiver source renumbering on a dual-stack link notifies the running
 		expect(sources).toEqual(["fd51::5"]);
 		show("fd51::5", "tentative");
 		expect(changes).toBe(2);
-		expect(sources).toEqual(["192.0.2.1"]);
+		expect(sources).toEqual([]);
 		show("fd51::5");
 		expect(changes).toBe(3);
 		expect(sources).toEqual(["fd51::5"]);
@@ -385,6 +385,33 @@ test("IPv6 receiver source renumbering on a dual-stack link notifies the running
 	} finally {
 		unsubscribe();
 	}
+});
+
+test("an IPv4 literal withdraws an incompatible IPv6-only source", async () => {
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow(inventory),
+	);
+	await resolveSrtla("192.0.2.2");
+	expect(genSrtlaIpList()).toEqual([]);
+});
+
+test("live refresh can publish an empty bond while initial start still refuses it", async () => {
+	const publications: unknown[] = [];
+	const deps = {
+		isLocal: () => false,
+		localList: () => [],
+		bondedList: () => [],
+		writeList: async (entries: unknown) => {
+			publications.push(entries);
+			return { changed: true, sidecarPublished: false } as never;
+		},
+	};
+	await expect(prepareSrtlaIpAddresses("192.0.2.2", deps)).rejects.toThrow(
+		"no_available_network_connections",
+	);
+	await prepareSrtlaIpAddresses("192.0.2.2", deps, true);
+	expect(publications).toEqual([[]]);
 });
 
 for (const dualStack of [false, true]) {
@@ -485,7 +512,7 @@ test("the session refreshes bond sources through the source-change subscription"
 		"utf8",
 	);
 	expect(session).toMatch(
-		/removeNetworkInterfacesChangeListener:\s*onNetworkInterfaceSourcesChange\(\s*refreshSrtlaIpAddresses\s*,?\s*\)/,
+		/const removeListener = onNetworkInterfaceSourcesChange\(refresh\);/,
 	);
 });
 

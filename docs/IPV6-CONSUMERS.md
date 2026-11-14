@@ -76,3 +76,40 @@ qualification remain separate work. Local LAN ingest deliberately keeps IPv4
 address discovery and URL construction together; it has not been extended to
 IPv6. Resolver validation keeps its existing security check. No modem profile,
 IP-family default, reconnect policy or NetworkManager setting changes here.
+
+## Draft: stable per-link family selection
+
+The draft selector keeps native IPv4 on dual-stack links. With no native IPv4,
+AAAA plus IPv6 uses the native IPv6 source before considering CLAT. An A-only
+receiver can use the image's read-only schema-v1 CLAT grant: active service,
+fresh `up` snapshot, matching parent index/allocation, and existing translator
+TUN are all required. The IPv4 socket binds the TUN while its link identity stays
+with the physical parent. Translator interfaces are not independent bond links.
+
+A path remains selected through short flaps: withdraw unavailable sources,
+allow ten seconds of sustained loss before choosing another family, and retain
+the new family on recovery. A two-second session refresh observes both address
+and translation lifecycle. Only path transitions log `Native IPv4`, `Native IPv6`
+or `IPv4 via translation`. This is a diagnostic line, not a new UI field.
+
+**Merge blocker:** sender source-family matching is required for mixed A/AAAA
+hostnames and family changes. The installed sender may choose an IPv6 destination
+for an IPv4 socket. Independent native IPv6 success is not mixed-family proof.
+The checked-in netns fixture intentionally retains this failing acceptance case.
+A cached numeric destination supports only its matching source family. Empty IP
+reloads also retain the sender's previous pool; publication alone is not socket
+retirement. Do not advertise mixed-family support until these contracts pass.
+
+### Español (Latinoamérica)
+
+El selector conserva IPv4 nativo en enlaces de doble pila. Sin IPv4 nativo,
+usa IPv6 directo si el receptor publica AAAA; CLAT queda como alternativa para
+receptores IPv4. Solo admite una traducción con servicio activo, estado reciente
+`up`, identidad y dirección correctas, y una interfaz TUN existente. Espera diez
+segundos de pérdida continua antes de cambiar de familia y no vuelve a la
+anterior solo porque reaparezca. El diagnóstico cambia únicamente al cambiar
+la ruta. No se añade un campo nuevo a la interfaz de usuario.
+
+La combinación de familias sigue bloqueada: el emisor debe elegir un destino
+compatible con cada dirección de origen, también después de una reconexión.
+Una prueba IPv6 individual no demuestra el funcionamiento de enlaces mixtos.
