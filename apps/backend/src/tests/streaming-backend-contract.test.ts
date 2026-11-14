@@ -103,8 +103,6 @@ function makeFakeClient(options: FakeClientOptions = {}): FakeClientHarness {
 			: new Promise<never>((_resolve, reject) => {
 					rejectStopOnClose = reject;
 				});
-	// Closing a client may reject a stop gate even when no Stop was dispatched.
-	void stopClosed?.catch(() => undefined);
 	const subscribed = new Promise<void>((resolve) => {
 		resolveSubscribed = resolve;
 	});
@@ -214,6 +212,10 @@ function makeFakeClient(options: FakeClientOptions = {}): FakeClientHarness {
 			calls.push({ op: "close" });
 			const closed = new Error("client_closed");
 			rejectStartOnClose?.(closed);
+			if (!calls.some((call) => call.op === "stop")) {
+				// This gate has no consumer when the client never dispatched Stop.
+				void stopClosed?.catch(() => undefined);
+			}
 			rejectStopOnClose?.(closed);
 		},
 	};

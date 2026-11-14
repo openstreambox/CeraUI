@@ -1092,3 +1092,9 @@ Stop, then verifies independent idle acknowledgement, socket retirement and a
 successful next Start on a fresh client. Separate connect, Stop and socket-close
 faults verify bounded settlement and honest liveness. These tests qualify the
 control owner; they do not prove driver or engine pipeline teardown on hardware.
+
+Explicit Stop and `confirmStop` use that same idle acknowledgement rule. A
+`starting`, `streaming` or `stopping` reply fails confirmation: explicit Stop
+calls its failure callback instead of its success callback, and `confirmStop`
+rejects. Deadline tests await the fake's fault signal before expiring a timer;
+the rollback trace also checks Stop dispatch precedes session socket close.

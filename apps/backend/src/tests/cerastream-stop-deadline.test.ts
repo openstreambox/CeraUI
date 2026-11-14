@@ -98,6 +98,18 @@ function fakeClient(
 			_params,
 			_listener: (event: EventParams) => void,
 		) => ({ result: { subscribed: ["status"] }, close: () => undefined }),
+		setAudioMix: async () => {
+			throw new Error("fixture setAudioMix is not exercised");
+		},
+		requestKeyframe: async () => {
+			throw new Error("fixture requestKeyframe is not exercised");
+		},
+		setEdidProfile: async () => {
+			throw new Error("fixture setEdidProfile is not exercised");
+		},
+		listSwitchTargets: async () => {
+			throw new Error("fixture listSwitchTargets is not exercised");
+		},
 		close: async () => {
 			trace.push(`${name}:close`);
 		},
@@ -246,6 +258,9 @@ test("failed Start rollback bypasses a stuck session request and permits the nex
 	expect(trace).toContain("rollback:stop");
 	expect(trace).not.toContain("failed:stop");
 	expect(trace).toContain("failed:close");
+	expect(trace.indexOf("rollback:stop")).toBeLessThan(
+		trace.indexOf("failed:close"),
+	);
 	expect(trace).toContain("rollback:close");
 	await start(backend);
 	expect(clients).toHaveLength(0);
@@ -254,6 +269,7 @@ test("failed Start rollback bypasses a stuck session request and permits the nex
 for (const fault of ["connect", "stop", "close"] as const) {
 	test(`failed Start rollback bounds ${fault} and preserves cleanup uncertainty`, async () => {
 		const trace: string[] = [];
+		const faultReached = deferred<void>();
 		const deadlines = new (class extends Map<number, () => void> {
 			override set(delay: number, callback: () => void): this {
 				const previous = this.get(delay);
@@ -268,24 +284,80 @@ for (const fault of ["connect", "stop", "close"] as const) {
 			throw new CerastreamRpcError(-32602, "capture refused");
 		};
 		const cleanup = fakeClient("rollback", trace);
-		if (fault === "stop") cleanup.stop = () => new Promise(() => {});
-		if (fault === "close") session.close = () => new Promise(() => {});
+		if (fault === "stop")
+			cleanup.stop = () => {
+				faultReached.resolve();
+				return new Promise(() => {});
+			};
+		if (fault === "close")
+			session.close = () => {
+				faultReached.resolve();
+				return new Promise(() => {});
+			};
 		let connections = 0;
 		const backend = backendWithTimers(async () => {
 			if (connections++ === 0) return session;
-			if (fault === "connect") return new Promise(() => {});
+			if (fault === "connect") {
+				faultReached.resolve();
+				return new Promise(() => {});
+			}
 			return cleanup;
 		}, deadlines);
 		const result = start(backend).catch((error: unknown) => error);
-		for (let i = 0; i < 40; i++) await Promise.resolve();
-		if (fault !== "close") deadlines.get(ENGINE_STOP_REQUEST_DEADLINE_MS)?.();
-		for (let i = 0; i < 40; i++) await Promise.resolve();
-		if (fault === "close") deadlines.get(ENGINE_CLOSE_DEADLINE_MS)?.();
+		await faultReached.promise;
+		const expire = deadlines.get(
+			fault === "close"
+				? ENGINE_CLOSE_DEADLINE_MS
+				: ENGINE_STOP_REQUEST_DEADLINE_MS,
+		);
+		expect(expire).toBeDefined();
+		expire?.();
 		const error = await result;
 		expect(error).toMatchObject({
 			liveness: fault === "close" ? "idle" : "unknown",
 			failure: { phase: "start-rpc" },
 		});
 		expect(trace).not.toContain("failed:stop");
+	});
+}
+
+for (const state of ["starting", "streaming", "stopping"] as const) {
+	test(`explicit Stop refuses a ${state} acknowledgement`, async () => {
+		const trace: string[] = [];
+		const session = fakeClient("session", trace);
+		const stop = fakeClient("stop", trace);
+		stop.stop = async () => ({ state });
+		const clients = [session, stop];
+		const backend = backendWithTimers(async () => {
+			const client = clients.shift();
+			if (!client) throw new Error("unexpected connection");
+			return client;
+		}, new Map());
+		await start(backend);
+		let stopped = false;
+		let failure: unknown;
+		expect(
+			backend.stop(
+				() => {
+					stopped = true;
+				},
+				(error) => {
+					failure = error;
+				},
+			),
+		).toBe(true);
+		await backend.settle();
+		expect(stopped).toBe(false);
+		expect(failure).toMatchObject({ message: "stop_not_idle" });
+		expect(trace).toContain("session:close");
+		expect(trace).toContain("stop:close");
+	});
+	test(`confirmStop refuses a ${state} acknowledgement`, async () => {
+		const trace: string[] = [];
+		const stop = fakeClient("stop", trace);
+		stop.stop = async () => ({ state });
+		const backend = backendWithTimers(async () => stop, new Map());
+		await expect(backend.confirmStop()).rejects.toThrow("stop_not_idle");
+		expect(trace).toContain("stop:close");
 	});
 }
