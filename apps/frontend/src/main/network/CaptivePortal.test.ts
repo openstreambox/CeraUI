@@ -159,7 +159,25 @@ it("offers a privacy-settings hint while signing in", async () => {
 	const view = render(CaptivePortal);
 	await waitFor(() =>
 		expect(
-			view.getByText(/temporarily pause VPN, Private Relay or secure DNS/),
+			view.getByText(
+				/temporarily pause VPN, Private Relay or Private DNS \/ secure DNS/,
+			),
 		).toBeTruthy(),
 	);
+});
+
+it.each([
+	"idle",
+	"checking",
+	"web_available",
+	"needs_sign_in",
+	"cleanup_unknown",
+])("hides the privacy hint in phase %s", async (phase) => {
+	portal.mockResolvedValue({ phase });
+	const view = render(CaptivePortal);
+	await waitFor(() =>
+		expect(portal).toHaveBeenCalledWith({ action: "status" }),
+	);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(view.queryByText(/temporarily pause VPN/)).toBeNull();
 });

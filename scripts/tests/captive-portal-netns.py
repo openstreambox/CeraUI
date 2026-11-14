@@ -98,11 +98,17 @@ def dot():
  s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('203.0.113.10',853));s.listen()
  while True:
   c,a=s.accept();c.recv(4096);c.sendall(label.encode());c.close()
-def v6():
- s=socket.socket(socket.AF_INET6,socket.SOCK_STREAM);s.bind(('2001:db8:2::2',80));s.listen()
+def v6(proto,port):
+ s=socket.socket(socket.AF_INET6,socket.SOCK_STREAM if proto=='tcp' else socket.SOCK_DGRAM);s.bind(('2001:db8:2::2',port))
+ if proto=='tcp':s.listen()
  while True:
-  c,a=s.accept();c.recv(4096);c.sendall(b'healthy-v6');c.close()
-if label=='healthy':threading.Thread(target=v6,daemon=True).start()
+  if proto=='tcp':
+   c,a=s.accept();c.recv(4096);c.sendall(b'healthy-v6');c.close()
+  else:
+   data,a=s.recvfrom(32);s.sendto(b'healthy-v6',a)
+if label=='healthy':
+ for proto,ports in [('tcp',[53,80,443,853]),('udp',[53,443,853])]:
+  for port in ports:threading.Thread(target=v6,args=(proto,port),daemon=True).start()
 threading.Thread(target=dot,daemon=True).start()
 threading.Thread(target=tcp,daemon=True).start()
 threading.Thread(target=tls_echo,daemon=True).start()
@@ -121,7 +127,7 @@ s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.bind((sys.argv[1],0));s.sett
 for i in range(160):
  s.sendto(str(i).encode(),('203.0.113.10',int(sys.argv[2])))
  assert s.recv(4096).decode()==sys.argv[3]
- time.sleep(.1)
+ time.sleep(.4)
 print('relay packets 160/160',flush=True)'''
     relays = []
     for source,label in [('192.0.2.1','healthy'),('192.0.3.1','healthy2')]:
@@ -130,11 +136,16 @@ print('relay packets 160/160',flush=True)'''
             children.append(proc)
             relays.append(proc)
     local_server_code = """import socket,threading
-def dns6():
- d=socket.socket(socket.AF_INET6,socket.SOCK_DGRAM);d.bind(('2001:db8:1::1',53))
+def dns6(proto,port):
+ d=socket.socket(socket.AF_INET6,socket.SOCK_STREAM if proto=='tcp' else socket.SOCK_DGRAM);d.bind(('2001:db8:1::1',port))
+ if proto=='tcp':d.listen()
  while True:
-  data,a=d.recvfrom(32);d.sendto(b'local-dns',a)
-threading.Thread(target=dns6,daemon=True).start()
+  if proto=='tcp':
+   c,a=d.accept();c.recv(32);c.sendall(b'local-dns');c.close()
+  else:
+   data,a=d.recvfrom(32);d.sendto(b'local-dns',a)
+for proto in ['tcp','udp']:
+ for port in [53,853]:threading.Thread(target=dns6,args=(proto,port),daemon=True).start()
 s=socket.socket();s.bind(('10.42.0.1',80));s.listen();print('ready',flush=True)
 c,a=s.accept()
 while True:
@@ -148,7 +159,7 @@ while True:
     control_code = '''import socket,time
 s=socket.create_connection(('10.42.0.1',80));s.settimeout(1)
 for i in range(160):
- s.sendall(b'control'); assert s.recv(32)==b'control'; time.sleep(.1)
+ s.sendall(b'control'); assert s.recv(32)==b'control'; time.sleep(.4)
 print('control 160/160',flush=True)'''
     local_client = subprocess.Popen(['nsenter','-t',str(phone),'-n','python3','-c',control_code], stdout=subprocess.PIPE)
     children.append(local_client)
@@ -198,6 +209,52 @@ except OSError:
  assert sys.argv[1]=='reject' and time.monotonic()-start<1
 """
         ns(phone,'python3','-c',code,expected)
+    def ipv6_matrix(expected):
+        # Real listeners prove that an accidental drop/removal cannot pass as a reject.
+        code = """import socket,sys,time,errno
+proto,port,dest,expected=sys.argv[1:]
+s=socket.socket(socket.AF_INET6,socket.SOCK_STREAM if proto=='tcp' else socket.SOCK_DGRAM);s.settimeout(2)
+start=time.monotonic()
+try:
+ s.connect((dest,int(port)));s.send(b'probe');answer=s.recv(32)
+ assert expected=='open' and answer in [b'healthy-v6',b'local-dns']
+except OSError as e:
+ assert expected=='reject' and e.errno in [errno.ECONNREFUSED,errno.ECONNRESET] and time.monotonic()-start<1, str(e)
+"""
+        for dest,protocols in [('2001:db8:2::2',[('tcp',[53,80,443,853]),('udp',[53,443,853])]),
+                               ('2001:db8:1::1',[('tcp',[53,853]),('udp',[53,853])])]:
+            for proto,ports in protocols:
+                for port in ports:
+                    if proto=='udp' and expected=='reject':time.sleep(1.1)
+                    ns(phone,'python3','-c',code,proto,str(port),dest,expected)
+        print('IPv6 full port/protocol matrix: '+expected, flush=True)
+
+    def udp_burst(destination, port):
+        # Fresh connected sockets, one packet each; report both ICMP and silence.
+        # Do not promise all errors: kernel/route token buckets vary by release.
+        code = """import socket,select,time,errno,sys,json
+family=socket.AF_INET6 if ':' in sys.argv[1] else socket.AF_INET
+sockets=[]
+start=time.monotonic()
+for i in range(50):
+ s=socket.socket(family,socket.SOCK_DGRAM);s.setblocking(False);s.connect((sys.argv[1],int(sys.argv[2])));s.send(b'burst');sockets.append(s)
+send_seconds=time.monotonic()-start
+fast=0;pending=sockets[:];deadline=start+.8
+while pending and time.monotonic()<deadline:
+ ready,_,_=select.select(pending,[],[],max(0,deadline-time.monotonic()))
+ for s in ready:
+  try:s.recv(32);raise AssertionError('UDP escaped window')
+  except OSError as e:
+   assert e.errno==errno.ECONNREFUSED, str(e)
+   fast+=1;pending.remove(s)
+assert send_seconds<1 and fast>0, (send_seconds,fast)
+print(json.dumps(dict(sent=50,icmp=fast,silent=len(pending),send_seconds=round(send_seconds,3))))
+for s in sockets:s.close()
+"""
+        time.sleep(1.1)
+        print('UDP burst '+destination+':'+str(port)+' '+ns(phone,'python3','-c',code,destination,str(port)).strip(),flush=True)
+
+    ipv6_matrix('open')
     local_dns6('open')
     assert 'open' in v6('open')
     assert 'healthy' in request(phone,'udp',443)
@@ -205,7 +262,7 @@ except OSError:
     assert 'healthy' in request(phone,'tcp',443,'1.1.1.1')
     assert 'healthy' in request(phone)
     baseline = run('ip','route','show','table','main')
-    p.open_window(c)
+    p.open_window({**c, 'seconds': 60})
     # A v6-preferring phone receives a prompt failure and retries over v4.
     failures = []
     for label, probe in [('local IPv6 DNS', lambda: local_dns6('reject')),
@@ -221,17 +278,22 @@ except OSError:
             failures.append(label)
             print(label + ': FAILED ' + str(error), flush=True)
     assert not failures, failures
+    ipv6_matrix('reject')
+    for destination,port in [('203.0.113.10',443),('203.0.113.10',853),('2001:db8:2::2',53),('2001:db8:2::2',443),('2001:db8:2::2',853),('2001:db8:1::1',53),('2001:db8:1::1',853)]:
+        udp_burst(destination,port)
     # A different station on the same AP retains its working IPv6 path.
     ns(phone,'ip','link','set','ap0p','address','02:00:00:00:00:99')
     ns(phone,'ip','-6','neigh','flush','all')
     run('ip','-6','neigh','flush','all')
-    assert 'open' in v6('open')
+    ipv6_matrix('open')
     assert 'healthy' in request(phone,'udp',443)
     assert 'healthy' in request(phone,'tcp',853)
     assert 'healthy' in request(phone,'tcp',443,'1.1.1.1')
     ns(phone,'ip','link','set','ap0p','address',mac)
     ns(phone,'ip','-6','neigh','flush','all')
     run('ip','-6','neigh','flush','all')
+    p.close_window(c)
+    p.open_window(c)
     assert 'hotel' in request(phone)
     assert 'hotel' in request(phone, 'udp', 53)
     assert 'hotel' in request(phone, 'udp', 53, '10.42.0.1')
@@ -335,8 +397,13 @@ assert b'healthy' in udp.recv(32)
     assert not p.run('nft', 'list', 'table', 'inet', p.TABLE, check=False)
     assert not run('ip', '-4', 'route', 'show', 'table', p.ROUTE_TABLE)
     assert 'healthy' in request(phone)
+    ipv6_matrix('open')
+    assert 'healthy' in request(phone,'udp',443)
+    assert 'healthy' in request(phone,'tcp',853)
+    assert 'healthy' in request(phone,'tcp',443,'1.1.1.1')
     p.open_window(c)
     p.close_window(c)
+    ipv6_matrix('open')
     # TERM after nft has installed live sets must execute rollback.
     with tempfile.TemporaryDirectory() as tmp:
         real_nft = shutil.which('nft')

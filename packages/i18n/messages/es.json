@@ -2891,5 +2891,5 @@
 	"settings.portal.experimentalDescription": "Desactivado de forma predeterminada. Permite iniciar sesión en el Wi-Fi de un hotel desde tu teléfono. Aún requiere pruebas con redes reales. Desactivarlo impide nuevas ventanas; las abiertas se cierran en un máximo de diez minutos.",
 	"network.portal.experimentalDisabled": "Activa el inicio de sesión Wi-Fi experimental en Ajustes para usar esta función.",
 	"settings.portal.experimentalSaveError": "No se pudo guardar el ajuste.",
-	"network.portal.privacyHint": "Si la página no aparece, pausa temporalmente la VPN, Private Relay o DNS seguro de este teléfono y vuelve a abrirla. Restáuralos al terminar. Tu transmisión no cambia."
+	"network.portal.privacyHint": "Si la página no aparece, pausa temporalmente la VPN, Private Relay o DNS seguro de este teléfono y vuelve a abrirla. Reactívalos al terminar. Tu transmisión no cambia."
 }
