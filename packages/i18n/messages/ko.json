@@ -443,6 +443,7 @@
 	"hud.healthExplainDegraded": "스트리밍 중이지만 프레임이 정체되었거나 일부 본딩 링크가 다운되었습니다.",
 	"hud.healthExplainHealthy": "프로세스가 실행 중이고, 프레임이 진행되며, 모든 본딩 링크가 활성 상태입니다.",
 	"hud.healthExplainIdle": "스트리밍 중이 아닙니다. 장치가 대기 상태이며 준비되었습니다.",
+	"hud.healthExplainOwnStreamIdle": "박스 자체의 스트림은 유휴 상태입니다. 클라이언트의 라이브 방송은 계속될 수 있습니다.",
 	"hud.healthFrames": "프레임",
 	"hud.healthHealthy": "정상",
 	"hud.healthIdle": "대기",
@@ -2800,5 +2801,9 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"notifications.clientCarrying": "박스가 클라이언트 트래픽을 전달 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
+	"notifications.clientCarryingUnknown": "클라이언트 활동을 확인 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
+	"general.updateReasonClientTraffic": "방송 중이거나 상태를 확인 중입니다. 업데이트 전에 연결된 기기와 박스의 방송을 중지하세요.",
+	"notifications.disruptiveActionClientTraffic": "이 작업은 실행되지 않았습니다. 박스 자체 스트림과 연결된 기기의 스트리밍 트래픽이 유휴 상태이고 업데이트가 진행 중이 아닐 때 다시 시도하세요."
 }

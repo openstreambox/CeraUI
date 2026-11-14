@@ -443,6 +443,7 @@
 	"hud.healthExplainDegraded": "Streaming, but frames stalled or some bonded links are down.",
 	"hud.healthExplainHealthy": "Process running, frames advancing, all bonded links active.",
 	"hud.healthExplainIdle": "Not streaming. The device is idle and ready.",
+	"hud.healthExplainOwnStreamIdle": "The box’s own stream is idle. Client traffic can still be live.",
 	"hud.healthFrames": "Frames",
 	"hud.healthHealthy": "Healthy",
 	"hud.healthIdle": "Idle",
@@ -2845,5 +2846,9 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"notifications.clientCarrying": "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait.",
+	"notifications.clientCarryingUnknown": "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.",
+	"general.updateReasonClientTraffic": "A stream is active or its state is being checked. Stop streaming on connected devices and stop the box’s own stream before installing an update.",
+	"notifications.disruptiveActionClientTraffic": "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress."
 }

@@ -443,6 +443,7 @@
 	"hud.healthExplainDegraded": "Streaming läuft, aber Frames stocken oder einige gebündelte Verbindungen sind ausgefallen.",
 	"hud.healthExplainHealthy": "Prozess läuft, Frames laufen, alle gebündelten Verbindungen aktiv.",
 	"hud.healthExplainIdle": "Kein Streaming. Das Gerät ist inaktiv und bereit.",
+	"hud.healthExplainOwnStreamIdle": "Der eigene Stream der Box ruht. Daten verbundener Geräte können weiterhin live übertragen werden.",
 	"hud.healthFrames": "Frames",
 	"hud.healthHealthy": "Gesund",
 	"hud.healthIdle": "Inaktiv",
@@ -2845,5 +2846,9 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"notifications.clientCarrying": "Die Box überträgt Clientverkehr. Updates, Neustarts, Ausschalten und Verbindungswechsel bei Inaktivität warten.",
+	"notifications.clientCarryingUnknown": "Die Box prüft die Clientaktivität. Updates, Neustarts, Ausschalten und Verbindungswechsel bei Inaktivität warten.",
+	"general.updateReasonClientTraffic": "Ein Stream ist aktiv oder wird geprüft. Beende vor dem Update die Streams verbundener Geräte und den eigenen Stream der Box.",
+	"notifications.disruptiveActionClientTraffic": "Diese Aktion wurde nicht ausgeführt. Versuche es erneut, wenn der eigene Stream der Box und der Streaming-Datenverkehr verbundener Geräte inaktiv sind und kein Update läuft."
 }

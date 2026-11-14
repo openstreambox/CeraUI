@@ -443,6 +443,7 @@
 	"hud.healthExplainDegraded": "ストリーミング中ですが、フレームが停滞しているか、一部のボンドリンクがダウンしています。",
 	"hud.healthExplainHealthy": "プロセスが実行中で、フレームが進行し、すべてのボンドリンクがアクティブです。",
 	"hud.healthExplainIdle": "配信していません。デバイスはアイドル状態で準備完了です。",
+	"hud.healthExplainOwnStreamIdle": "ボックス自身の配信は待機中です。クライアントの配信は続いている場合があります。",
 	"hud.healthFrames": "フレーム",
 	"hud.healthHealthy": "正常",
 	"hud.healthIdle": "アイドル",
@@ -2800,5 +2801,9 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"notifications.clientCarrying": "本機はクライアント通信を中継中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
+	"notifications.clientCarryingUnknown": "クライアントの利用状況を確認中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
+	"general.updateReasonClientTraffic": "配信中、または状態を確認中です。更新前に接続端末と本機の配信を停止してください。",
+	"notifications.disruptiveActionClientTraffic": "この操作は実行されませんでした。ボックス自身の配信と接続デバイスの配信トラフィックがアイドル状態になり、更新が進行していないときに、もう一度お試しください。"
 }

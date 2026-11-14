@@ -443,6 +443,7 @@
 	"hud.healthExplainDegraded": "Diffusion en cours, mais images bloquées ou certaines liaisons agrégées hors service.",
 	"hud.healthExplainHealthy": "Processus en cours, images en progression, toutes les liaisons agrégées actives.",
 	"hud.healthExplainIdle": "Pas de diffusion. L'appareil est inactif et prêt.",
+	"hud.healthExplainOwnStreamIdle": "Le flux propre au boîtier est au repos. Le trafic des appareils connectés peut toujours être en direct.",
 	"hud.healthFrames": "Images",
 	"hud.healthHealthy": "Sain",
 	"hud.healthIdle": "Inactif",
@@ -2848,5 +2849,9 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"notifications.clientCarrying": "Le boîtier transporte du trafic client. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
+	"notifications.clientCarryingUnknown": "Le boîtier vérifie les clients. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
+	"general.updateReasonClientTraffic": "Un flux est actif ou en cours de vérification. Arrêtez les flux des appareils connectés et celui du boîtier avant la mise à jour.",
+	"notifications.disruptiveActionClientTraffic": "Cette action n’a pas été exécutée. Réessayez lorsque le flux de la box et le trafic de diffusion des appareils connectés sont inactifs et qu’aucune mise à jour n’est en cours."
 }

@@ -443,6 +443,7 @@
 	"hud.healthExplainDegraded": "स्ट्रीमिंग जारी है, लेकिन फ़्रेम रुके हुए हैं या कुछ बॉन्डेड लिंक बंद हैं।",
 	"hud.healthExplainHealthy": "प्रक्रिया चल रही है, फ़्रेम आगे बढ़ रहे हैं, सभी बॉन्डेड लिंक सक्रिय हैं।",
 	"hud.healthExplainIdle": "स्ट्रीमिंग नहीं हो रही है। डिवाइस निष्क्रिय और तैयार है।",
+	"hud.healthExplainOwnStreamIdle": "बॉक्स की अपनी स्ट्रीम निष्क्रिय है। क्लाइंट की स्ट्रीम अब भी लाइव हो सकती है।",
 	"hud.healthFrames": "फ़्रेम",
 	"hud.healthHealthy": "स्वस्थ",
 	"hud.healthIdle": "निष्क्रिय",
@@ -2845,5 +2846,9 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"notifications.clientCarrying": "बॉक्स क्लाइंट ट्रैफ़िक पहुँचा रहा है। अपडेट, रीस्टार्ट, पावर ऑफ और निष्क्रिय लिंक बदलाव प्रतीक्षा करेंगे।",
+	"notifications.clientCarryingUnknown": "बॉक्स क्लाइंट गतिविधि जाँच रहा है। अपडेट, रीस्टार्ट, पावर ऑफ और निष्क्रिय लिंक बदलाव प्रतीक्षा करेंगे।",
+	"general.updateReasonClientTraffic": "स्ट्रीम चालू है या उसकी स्थिति जाँची जा रही है। अपडेट से पहले जुड़े उपकरणों और बॉक्स की स्ट्रीम बंद करें।",
+	"notifications.disruptiveActionClientTraffic": "यह कार्रवाई नहीं की गई। जब बॉक्स की अपनी स्ट्रीम और जुड़े उपकरणों का स्ट्रीम ट्रैफ़िक निष्क्रिय हो और कोई अपडेट न चल रहा हो, तब फिर कोशिश करें।"
 }

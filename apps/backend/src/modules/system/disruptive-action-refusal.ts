@@ -14,11 +14,13 @@ export function notifyDisruptiveActionRefused(
 		"warning",
 		pending
 			? "Device is busy, try again in a moment"
-			: "This action was not run. The device must confirm that no stream is live and that no update is in progress first.",
+			: "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress.",
 		10,
 		false,
 		true,
 		false,
-		pending ? "network.os.deviceBusy" : "notifications.disruptiveActionRefused",
+		pending
+			? "network.os.deviceBusy"
+			: "notifications.disruptiveActionClientTraffic",
 	);
 }

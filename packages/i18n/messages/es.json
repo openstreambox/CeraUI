@@ -443,6 +443,7 @@
 	"hud.healthExplainDegraded": "Transmitiendo, pero los fotogramas están estancados o algunos enlaces agregados están caídos.",
 	"hud.healthExplainHealthy": "Proceso en ejecución, fotogramas avanzando, todos los enlaces agregados activos.",
 	"hud.healthExplainIdle": "Sin transmisión. El dispositivo está inactivo y listo.",
+	"hud.healthExplainOwnStreamIdle": "La transmisión propia de la caja está en reposo. El tráfico de los clientes puede seguir en vivo.",
 	"hud.healthFrames": "Fotogramas",
 	"hud.healthHealthy": "Saludable",
 	"hud.healthIdle": "Inactivo",
@@ -2848,5 +2849,9 @@
 	"network.sharing.policy.failed": "No se pudo leer o actualizar la política. Recárgala para comprobar el ajuste actual.",
 	"network.sharing.policy.healthWeight": "Peso de salud (antes de la política)",
 	"network.sharing.policy.healthTitle": "Salud de los enlaces",
-	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos."
+	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos.",
+	"notifications.clientCarrying": "La caja transporta tráfico de clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
+	"notifications.clientCarryingUnknown": "La caja está comprobando la actividad de los clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
+	"general.updateReasonClientTraffic": "Hay una transmisión activa o se está comprobando su estado. Detén las transmisiones de los dispositivos conectados y de la caja antes de instalar una actualización.",
+	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso."
 }

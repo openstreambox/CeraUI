@@ -7,6 +7,7 @@ import {
 	getMockSrtStats,
 	shouldMockStreaming,
 } from "../../mocks/providers/streaming.ts";
+import { carryingTracker } from "../system/carrying.ts";
 
 // Define types for better clarity
 type ConnectionStats = `${number} Kbps, ${number} ms RTT` | "" | null;
@@ -121,9 +122,11 @@ export function startSrtTransmitter(): SupervisedHandle {
 				// Handle disconnection
 				currentConnectionStats = "";
 				hasActiveConnection = false;
+				carryingTracker.session("srt-ingest", false, performance.now());
 			} else if (logMessage.match("Accepted SRT source connection")) {
 				// Handle the new connection
 				hasActiveConnection = true;
+				carryingTracker.session("srt-ingest", true, performance.now());
 			}
 		}
 	};
@@ -131,7 +134,10 @@ export function startSrtTransmitter(): SupervisedHandle {
 	void consumeStdout();
 	void consumeStderr();
 	void transmitProcess.exited.finally(() => {
-		if (currentTransmitter === handle) currentTransmitter = null;
+		if (currentTransmitter === handle) {
+			currentTransmitter = null;
+			carryingTracker.session("srt-ingest", false, performance.now());
+		}
 	});
 
 	return handle;
@@ -141,6 +147,7 @@ export async function stopSRTIngest(): Promise<void> {
 	const handle = currentTransmitter;
 	currentTransmitter = null;
 	currentConnectionStats = null;
+	carryingTracker.session("srt-ingest", false, performance.now());
 	await handle?.shutdown();
 }
 

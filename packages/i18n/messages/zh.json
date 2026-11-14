@@ -443,6 +443,7 @@
 	"hud.healthExplainDegraded": "正在推流，但帧已停滞或部分绑定链路已断开。",
 	"hud.healthExplainHealthy": "进程运行中，帧持续推进，所有绑定链路均处于活动状态。",
 	"hud.healthExplainIdle": "未在推流。设备空闲且就绪。",
+	"hud.healthExplainOwnStreamIdle": "设备自身的推流处于空闲状态。客户端的直播仍可能在继续。",
 	"hud.healthFrames": "帧",
 	"hud.healthHealthy": "正常",
 	"hud.healthIdle": "空闲",
@@ -2800,5 +2801,9 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"notifications.clientCarrying": "本机正在转发客户端流量。更新、重启、关机和空闲链路更改将等待。",
+	"notifications.clientCarryingUnknown": "本机正在检查客户端活动。更新、重启、关机和空闲链路更改将等待。",
+	"general.updateReasonClientTraffic": "直播正在进行或正在检查状态。安装更新前，请停止已连接设备和本机的直播。",
+	"notifications.disruptiveActionClientTraffic": "此操作未执行。请在盒子自身的推流和已连接设备的推流流量均处于空闲状态，且没有更新正在进行时重试。"
 }
