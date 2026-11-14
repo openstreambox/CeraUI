@@ -51,22 +51,22 @@ export function setStreamIdRedactionSource(
 
 /** Scrub labelled ID records and retained whole tokens in engine errors. */
 export function redactStreamIdText(text: string): string {
-	if (
-		/\b(?:(?:srt[_-]?)?stream[_-]?id|relay_streamid_override|ingest[_-]?key)\b["']?\s*[=:]/i.test(
-			text,
-		)
-	)
-		return text
-			.split("\n")
-			.map((line) =>
-				/\b(?:(?:srt[_-]?)?stream[_-]?id|relay_streamid_override|ingest[_-]?key)\b["']?\s*[=:]/i.test(
-					line,
-				)
-					? "[REDACTED]"
-					: redactRetainedStreamIds(line),
-			)
-			.join("\n");
-	return redactRetainedStreamIds(text);
+	const label =
+		/(?<![\w/\\.])\b(?:(?:srt[_-]?)?stream[_-]?id|relay_streamid_override|ingest[_-]?key)\b(?![-./\\])/i;
+	let continuation = false;
+	return redactRetainedStreamIds(text)
+		.split("\n")
+		.map((line) => {
+			// A pretty-printed labelled value can span the rest of the record.
+			// Stack frames are separate diagnostics, never value continuations.
+			if (/^\s*at\s/.test(line)) continuation = false;
+			if (label.test(line)) {
+				continuation = /[:[({]\s*$/.test(line);
+				return "[REDACTED]";
+			}
+			return continuation ? "[REDACTED]" : line;
+		})
+		.join("\n");
 }
 
 function redactRetainedStreamIds(text: string): string {
@@ -87,10 +87,7 @@ function redactRetainedStreamIds(text: string): string {
 	return result;
 }
 export function redactStreamIdJournal(text: string): string {
-	return redactRetainedStreamIds(text)
-		.split("\n")
-		.map(redactStreamIdText)
-		.join("\n");
+	return redactStreamIdText(text);
 }
 export function isStreamIdKey(key: string): boolean {
 	return /^(?:srtstreamid|streamid|relaystreamidoverride|ingestkey)$/i.test(

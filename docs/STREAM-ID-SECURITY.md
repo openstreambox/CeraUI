@@ -64,3 +64,11 @@ path containing `stream-id` is not a secret label.
 Los registros filtran los valores guardados en objetos, resultados de `toJSON`
 y contenido UTF-8 de Buffer, incluidas las codificaciones habituales. Se
 conservan los marcos de diagnóstico que no contienen valores secretos.
+
+Unretained labelled IDs are also blanked in prose and command-line diagnostics.
+For multiline labelled values, the remaining record is blanked up to the next
+stack frame. Stack paths and unrelated frames remain available for diagnosis.
+
+Los ID etiquetados se ocultan aunque ya no estén guardados, incluso en mensajes
+y argumentos. Si el valor ocupa varias líneas, se oculta el resto del registro
+hasta el siguiente marco de la pila; los marcos de diagnóstico se conservan.
