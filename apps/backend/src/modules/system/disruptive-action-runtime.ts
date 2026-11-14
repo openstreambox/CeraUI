@@ -13,7 +13,10 @@ import {
 import { getBootReadiness } from "./readiness.ts";
 import { isSoftwareUpdateRecoveryInconclusive } from "./software-update-recovery.ts";
 import { isUpdating } from "./software-updates.ts";
-import { getStreamLiveness } from "./stream-liveness-source.ts";
+import {
+	getStreamLiveness,
+	isOwnStreamLive,
+} from "./stream-liveness-source.ts";
 import {
 	getOrchestratorDisruptionBusyReasons,
 	isDisruptiveUpdateAuthoritySettled,
@@ -23,6 +26,13 @@ export function getDisruptiveActionDecision(options?: {
 	readonly heldBy?: symbol;
 	readonly scope?: "stale-services";
 	readonly powerAction?: PowerAction;
+	/**
+	 * The local operator confirmed a restart that names its cost to a carried
+	 * phone stream. Only a phone-only box's restart honours it, never during the
+	 * startup check, never while the box's own encoder streams, and never over
+	 * an update.
+	 */
+	readonly acceptCarryingCost?: boolean;
 }): DisruptiveActionDecision {
 	if (options?.heldBy !== undefined && !isActiveDisruptiveOwner(options.heldBy))
 		return { allowed: false, reason: "update_in_progress" };
@@ -34,13 +44,7 @@ export function getDisruptiveActionDecision(options?: {
 	)
 		return { allowed: false, reason: "update_in_progress" };
 	return decideDisruptiveAction({
-		streamLiveness:
-			options?.powerAction === "poweroff" &&
-			setup.engine === "none" &&
-			getStreamLiveness() === "unknown" &&
-			carryingTracker.startupChecking(performance.now())
-				? "idle"
-				: getStreamLiveness(),
+		streamLiveness: admittedLiveness(options),
 		updateBusy: [
 			...getOrchestratorDisruptionBusyReasons().filter(
 				(reason) =>
@@ -59,6 +63,25 @@ export function getDisruptiveActionDecision(options?: {
 				: []),
 		],
 	});
+}
+
+function admittedLiveness(options?: {
+	readonly powerAction?: PowerAction;
+	readonly acceptCarryingCost?: boolean;
+}) {
+	const liveness = getStreamLiveness();
+	if (setup.engine !== "none" || liveness === "idle") return liveness;
+	const startup = carryingTracker.startupChecking(performance.now());
+	if (options?.powerAction === "poweroff" && liveness === "unknown" && startup)
+		return "idle";
+	if (
+		options?.powerAction === "reboot" &&
+		options.acceptCarryingCost === true &&
+		!startup &&
+		!isOwnStreamLive()
+	)
+		return "idle";
+	return liveness;
 }
 
 const REMOTE_DISRUPTIVE_TYPES: ReadonlySet<string> = new Set([

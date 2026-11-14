@@ -7,6 +7,7 @@
 
 	let {
 		carrying,
+		startup = false,
 		reachable = true,
 		settings,
 		receiver,
@@ -24,6 +25,7 @@
 		kiosk?: boolean;
 		reachable?: boolean;
 		carrying?: 'streaming' | 'idle' | 'unknown';
+		startup?: boolean;
 		settings?: PhoneBoxSettings;
 		receiver?: string;
 		links?: { id: string; label: string; internet: 'yes' | 'no' | 'unknown' }[];
@@ -280,7 +282,7 @@
 							{wifi.clients === 1 ? m['live.phone.wifiClient']() : m['live.phone.wifiClients']({ count: wifi.clients })}
 						</p>{/if}<button type="button" onclick={onnetwork}>{m['live.phone.wifiSettings']()}</button>
 				</section>
-				<PhoneBoxHealth way={lastWay} {reachable} {health} {links} {carrying} {onrestart} />
+				<PhoneBoxHealth way={lastWay} {reachable} {health} {links} {carrying} {startup} {onrestart} />
 			</aside>
 		</div>
 	{/if}

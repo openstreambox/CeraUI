@@ -306,6 +306,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["System: manual update install refused (", ")"],
 	["System: manual update install started (orchestrator)"],
 	["System: one-time cellular override granted (", ")"],
+	["System: restart confirmed with its cost to a carried stream"],
 	["System: software update check refused (updates_disabled)"],
 	["System: software update refused (", ")"],
 	["System: software update started"],

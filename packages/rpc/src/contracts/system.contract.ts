@@ -19,6 +19,7 @@ import {
 	logOutputSchema,
 	phoneBoxSettingsSchema,
 	phoneWaySchema,
+	rebootInputSchema,
 	remoteConfigInputSchema,
 	revisionsSchema,
 	sensorsStatusSchema,
@@ -59,7 +60,7 @@ export const systemContract = oc.router({
 	/**
 	 * Reboot the device
 	 */
-	reboot: oc.output(successResponseSchema),
+	reboot: oc.input(rebootInputSchema).output(successResponseSchema),
 
 	/**
 	 * Start software update

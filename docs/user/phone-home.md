@@ -23,8 +23,16 @@ is kept. The way is recorded only if chosen in this open page before carrying be
 choice for the next carrying session; it does not reroute an active stream.
 
 Box health names the links whose internet probes are current. Details describe
-failed parts. Restart is unavailable while carrying or checking; confirmation
-names the interruption cost. During the 120-second startup check, power-off is allowed after a confirmation that any phone stream through the box drops. Restart remains held. An encoder image keeps its existing Live screen.
+failed parts. Restart is never a dead end. While the box carries a phone's
+stream, or still can't tell after its startup check, Restart the box opens the
+power dialog with a Hold to restart button and a plain Restart without holding
+button for keyboard, screen-reader and switch users. Either one opens a
+confirmation that names the cost for the remembered way (Moblin keeps streaming
+on the phone's own SIM; IRL Pro, other SRT apps and Just internet stop until the
+box is back) and offers Restart anyway. Only that confirmation, from the box's
+own UI, sends `acceptCarryingCost`; relayed and remote-control sessions cannot.
+The box's own encoder stream, updates and the startup check still hold restart.
+During the 120-second startup check, power-off is allowed after a confirmation that any phone stream through the box drops. Restart remains held. An encoder image keeps its existing Live screen.
 Per-link sending figures are deliberately withheld without phone-session
 telemetry; current internet probes remain visible instead.
 
@@ -41,8 +49,16 @@ Mantén las contraseñas fuera de cámara. Este borrador no incluye el servicio
 Moblink: muestra esa limitación y ofrece solo internet.
 
 Solo se recuerda la opción elegida; no se guarda la identidad del teléfono.
-El reinicio permanece desactivado mientras la caja transporta tráfico o lo
-comprueba. Durante la comprobación inicial de 120 segundos, se permite apagar tras confirmar que se corta cualquier emisión que pase por la caja; reiniciar sigue bloqueado. Las cajas con codificador conservan su vista Live.
+Reiniciar nunca es un callejón sin salida. Mientras la caja transporta la
+emisión del teléfono, o sigue sin saberlo tras la comprobación inicial, Reiniciar
+la caja abre el diálogo de energía con un botón Mantén pulsado para reiniciar y
+un botón Reiniciar sin mantener pulsado para teclado, lector de pantalla y
+conmutadores. Ambos abren una confirmación que indica el coste según la opción
+recordada (Moblin sigue emitiendo con la SIM del teléfono; IRL Pro, otras
+aplicaciones SRT y Just internet se detienen hasta que la caja vuelva) y ofrece
+Reiniciar de todos modos. Solo esa confirmación, desde la interfaz local, envía
+`acceptCarryingCost`; las sesiones remotas no pueden. La emisión propia de la
+caja, las actualizaciones y la comprobación inicial siguen bloqueando el reinicio. Durante la comprobación inicial de 120 segundos, se permite apagar tras confirmar que se corta cualquier emisión que pase por la caja; reiniciar sigue bloqueado. Las cajas con codificador conservan su vista Live.
 
 ## Integration contract
 
@@ -73,10 +89,10 @@ Home sigue los cambios de tráfico de la suscripción de estado compartida,
 incluidos el reenvío y el estado desconocido. Las instrucciones SRT usan la
 contraseña generada y persistida del receptor, o la configurada explícitamente.
 
-Power off is available during Checking only while the box reports its initial 120-second startup check. Later unknown traffic holds both restart and power off, including an already-open confirmation. Missing startup evidence also holds power off.
+Power off is available during Checking only while the box reports its initial 120-second startup check. Later unknown traffic holds power off, including an already-open confirmation, and moves restart to the hold-and-confirm path above. Missing startup evidence also holds power off.
 
-Apagar solo está disponible durante la comprobación inicial de 120 segundos que confirma el equipo. Si después se desconoce el tráfico, se bloquean tanto reiniciar como apagar, incluso en una confirmación abierta. Si falta esa confirmación inicial, apagar también queda bloqueado.
+Apagar solo está disponible durante la comprobación inicial de 120 segundos que confirma el equipo. Si después se desconoce el tráfico, se bloquea apagar, incluso en una confirmación abierta, y reiniciar pasa al camino de mantener pulsado y confirmar descrito arriba. Si falta esa confirmación inicial, apagar también queda bloqueado.
 
-Initial connections and reconnect status pulls include the backend startup permission, so opening Home midway through the window preserves confirmed power-off. After expiry, the blocked reason names both restart and power off.
+Initial connections and reconnect status pulls include the backend startup permission, so opening Home midway through the window preserves confirmed power-off. After expiry, the blocked reason names power off, and restart asks for a hold and a confirmation.
 
-La conexión inicial y las consultas de estado al reconectar incluyen el permiso inicial del equipo. Abrir Inicio durante ese periodo conserva el apagado con confirmación. Al terminar, el motivo del bloqueo menciona reiniciar y apagar.
+La conexión inicial y las consultas de estado al reconectar incluyen el permiso inicial del equipo. Abrir Inicio durante ese periodo conserva el apagado con confirmación. Al terminar, el motivo del bloqueo menciona apagar, y reiniciar pide mantener pulsado y confirmar.

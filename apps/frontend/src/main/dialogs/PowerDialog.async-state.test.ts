@@ -206,18 +206,27 @@ describe("PowerDialog — poweroff async state", () => {
 
 describe("phone-only power admission", () => {
 	it.each(["streaming", "unknown"] as const)(
-		"blocks restart while client state is %s",
+		"moves restart to hold-and-confirm while client state is %s",
 		(stateValue) => {
 			state.status = { phone_box: true, carrying: { state: stateValue } };
 			render(PowerDialog, { props: { open: true } });
 			expect(
-				screen.getByRole("button", { name: REBOOT_LABEL, exact: true }),
+				screen.queryByRole("button", { name: REBOOT_LABEL, exact: true }),
+			).toBeNull();
+			expect(
+				screen.getByRole("button", { name: "Hold to restart" }),
+			).toHaveProperty("disabled", false);
+			expect(
+				screen.getByRole("button", { name: "Restart without holding" }),
+			).toBeTruthy();
+			expect(
+				screen.getByRole("button", { name: POWEROFF_LABEL, exact: true }),
 			).toHaveProperty("disabled", true);
 			expect(
 				screen.getByText(
 					stateValue === "unknown"
-						? "You can restart or power off once the box knows whether your phone uses it."
-						: "You can restart once your phone's stream has stopped.",
+						? "You can power off once the box knows whether your phone uses it."
+						: "You can power off once your phone's stream has stopped.",
 				),
 			).toBeTruthy();
 			expect(rebootRpc).not.toHaveBeenCalled();

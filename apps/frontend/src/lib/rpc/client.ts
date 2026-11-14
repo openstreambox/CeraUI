@@ -63,6 +63,7 @@ import type {
 	PhoneBoxSettings,
 	PhoneWay,
 	PreviewTokenOutput,
+	RebootInput,
 	RelayValidateInput,
 	RelayValidateOutput,
 	ReloadAudioDelayInput,
@@ -889,7 +890,7 @@ export interface TypedRPC {
 		getLog: () => Promise<unknown>;
 		getSyslog: () => Promise<unknown>;
 		poweroff: () => Promise<SuccessResponse>;
-		reboot: () => Promise<SuccessResponse>;
+		reboot: (input?: RebootInput) => Promise<SuccessResponse>;
 		startUpdate: () => Promise<SuccessResponse>;
 		checkForUpdates: () => Promise<SuccessResponse>;
 		sshStart: () => Promise<SuccessResponse>;

@@ -26,6 +26,13 @@ export function deriveStreamLiveness(
 }
 
 let testSource: (() => StreamLiveness) | undefined;
+let ownLiveTestSource: (() => boolean) | undefined;
+
+/** The box's own encoder stream only, without carried phone streams. */
+export function isOwnStreamLive(): boolean {
+	if (ownLiveTestSource) return ownLiveTestSource();
+	return getIsStreaming() || streamLiveness() === "streaming";
+}
 
 export function getStreamLiveness(): StreamLiveness {
 	if (testSource) return testSource();
@@ -47,4 +54,8 @@ export function setStreamLivenessSourceForTest(
 	source: (() => StreamLiveness) | null,
 ): void {
 	testSource = source ?? undefined;
+}
+
+export function setOwnStreamLiveForTest(source: (() => boolean) | null): void {
+	ownLiveTestSource = source ?? undefined;
 }

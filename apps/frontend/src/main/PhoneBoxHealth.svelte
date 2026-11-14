@@ -7,6 +7,7 @@
 		health = [],
 		links = [],
 		carrying,
+		startup = false,
 		way,
 		settingsSummary = false,
 		onrestart,
@@ -17,10 +18,20 @@
 		way?: 'moblin' | 'srt' | 'internet' | null;
 		settingsSummary?: boolean;
 		carrying?: 'streaming' | 'idle' | 'unknown';
+		startup?: boolean;
 		onrestart?: () => void;
 	} = $props();
 	const urgent = $derived(health.filter(p => p.part !== 'update-orchestrator-maintenance'));
-	const state = $derived(carrying === 'idle' ? 'ready' : 'protected');
+	// Restart is never a dead end. While carrying, or still unsure after the
+	// startup check, it opens the power dialog, which asks for a hold and names
+	// the cost. Only the startup check itself and an unknown status hold it.
+	const state = $derived(
+		carrying === 'idle'
+			? 'ready'
+			: carrying === undefined || (carrying === 'unknown' && startup)
+				? 'checking'
+				: 'ask',
+	);
 </script>
 
 <section>
@@ -46,9 +57,9 @@
 		{#if !health.length}<p>{m['live.phone.healthOk']()}</p>{/if}
 	{/if}
 	<p>{m['live.phone.restartCost']()}</p>
-	<button type="button" disabled={!reachable || state !== 'ready'} onclick={onrestart}
+	<button type="button" disabled={!reachable || state === 'checking'} onclick={onrestart}
 		>{m['live.phone.restart']()}</button
-	>{#if state !== 'ready'}<p>{carrying === 'streaming' ? m['live.phone.restartHold']() : m['live.phone.restartChecking']()}</p>{/if}
+	>{#if state === 'checking'}<p>{m['live.phone.restartChecking']()}</p>{:else if state === 'ask'}<p>{m['live.phone.restartAsk']()}</p>{/if}
 </section>
 
 <style>
