@@ -1698,10 +1698,10 @@
 	"network.wifiMode.stationHint": "Wi-Fi नेटवर्क से जुड़ता है। यह रेडियो बॉन्ड में शामिल हो सकता है।",
 	"network.wifiMode.hotspotHint": "केवल एक ऐक्सेस पॉइंट प्रसारित करता है। यह रेडियो कोई Wi-Fi अपलिंक नहीं देता।",
 	"network.wifiMode.hybridHint": "Wi-Fi से जुड़ा रहते हुए एक ऐक्सेस पॉइंट भी प्रसारित करता है।",
-  "network.wifiDegraded.unavailable": "Wi-Fi अडैप्टर अस्थायी रूप से उपलब्ध नहीं है।",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi अडैप्टर ने अभी तक अपना वर्तमान हार्डवेयर पता नहीं बताया है।",
-  "network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi अडैप्टर की स्थिर हार्डवेयर पहचान की पुष्टि नहीं हो सकी।",
-  "network.wifiMode.unavailable": "{mode} उपलब्ध नहीं है — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi अडैप्टर अस्थायी रूप से उपलब्ध नहीं है।",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi अडैप्टर ने अभी तक अपना वर्तमान हार्डवेयर पता नहीं बताया है।",
+	"network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi अडैप्टर की स्थिर हार्डवेयर पहचान की पुष्टि नहीं हो सकी।",
+	"network.wifiMode.unavailable": "{mode} उपलब्ध नहीं है — {reason}",
 	"network.wifiMode.pending": "{mode} पर स्विच किया जा रहा है…",
 	"network.wifiMode.reason.unsupported": "यह रेडियो ऐक्सेस पॉइंट होस्ट नहीं कर सकता।",
 	"network.wifiMode.reason.capabilityAbsent": "इस रेडियो का ड्राइवर एक साथ Wi-Fi और ऐक्सेस पॉइंट नहीं चला सकता।",
@@ -2746,5 +2746,11 @@
 	"settings.srtEncryptionShow": "पासफ़्रेज़ दिखाएँ",
 	"settings.srtEncryptionHelp": "सहेजे गए पासफ़्रेज़ को बदलने के लिए ही संपादित करें। एन्क्रिप्शन अगली स्ट्रीम शुरू होने पर लागू होगा।",
 	"settings.srtEncryptionInvalid": "10–79 UTF-8 बाइट का उपयोग करें, या मिटाने के लिए खाली रखें।",
-	"settings.srtEncryptionKeyLength": "SRT एन्क्रिप्शन कुंजी की लंबाई"
+	"settings.srtEncryptionKeyLength": "SRT एन्क्रिप्शन कुंजी की लंबाई",
+	"settings.streamIdSecurity": "यह प्रकाशन कुंजी हो सकती है। SRT एन्क्रिप्शन चालू होने पर भी यह नेटवर्क पर खुले रूप में भेजी जाती है।",
+	"settings.streamIdStored": "स्ट्रीम आईडी सहेजी गई है। बनाए रखने के लिए अपरिवर्तित छोड़ें, बदलने के लिए लिखें या स्पष्ट रूप से मिटाएँ।",
+	"settings.streamIdShow": "लिखा मान दिखाएँ",
+	"settings.streamIdHide": "लिखा मान छिपाएँ",
+	"settings.streamIdClear": "स्ट्रीम आईडी मिटाएँ",
+	"settings.streamIdClearing": "सहेजने पर स्ट्रीम आईडी मिटा दी जाएगी।"
 }

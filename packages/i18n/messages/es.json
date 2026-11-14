@@ -1701,10 +1701,10 @@
 	"network.wifiMode.stationHint": "Se conecta a una red Wi-Fi. Esta radio puede formar parte del enlace agregado.",
 	"network.wifiMode.hotspotHint": "Solo emite un punto de acceso. Esta radio no aporta enlace ascendente Wi-Fi.",
 	"network.wifiMode.hybridHint": "Permanece conectado al Wi-Fi mientras emite un punto de acceso.",
-  "network.wifiDegraded.unavailable": "El adaptador Wi-Fi no está disponible temporalmente.",
-  "network.wifiDegraded.operational-mac-missing": "El adaptador Wi-Fi aún no ha informado su dirección de hardware actual.",
-  "network.wifiDegraded.permanent-mac-unresolved": "No se pudo confirmar la identidad de hardware estable del adaptador Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} no está disponible: {reason}",
+	"network.wifiDegraded.unavailable": "El adaptador Wi-Fi no está disponible temporalmente.",
+	"network.wifiDegraded.operational-mac-missing": "El adaptador Wi-Fi aún no ha informado su dirección de hardware actual.",
+	"network.wifiDegraded.permanent-mac-unresolved": "No se pudo confirmar la identidad de hardware estable del adaptador Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} no está disponible: {reason}",
 	"network.wifiMode.pending": "Cambiando a {mode}…",
 	"network.wifiMode.reason.unsupported": "Esta radio no puede alojar un punto de acceso.",
 	"network.wifiMode.reason.capabilityAbsent": "El controlador de esta radio no puede usar Wi-Fi y un punto de acceso a la vez.",
@@ -2749,5 +2749,11 @@
 	"settings.srtEncryptionShow": "Mostrar frase de contraseña",
 	"settings.srtEncryptionHelp": "No cambies este campo salvo para reemplazar la frase guardada. El cifrado se aplica al iniciar la siguiente transmisión.",
 	"settings.srtEncryptionInvalid": "Usa entre 10 y 79 bytes UTF-8, o déjalo vacío para borrar.",
-	"settings.srtEncryptionKeyLength": "Longitud de clave de cifrado SRT"
+	"settings.srtEncryptionKeyLength": "Longitud de clave de cifrado SRT",
+	"settings.streamIdSecurity": "Puede ser una clave de publicación. Se envía sin cifrar, incluso con cifrado SRT.",
+	"settings.streamIdStored": "Hay un ID guardado. Déjalo sin cambios para conservarlo, escribe para reemplazarlo o bórralo explícitamente.",
+	"settings.streamIdShow": "Mostrar valor escrito",
+	"settings.streamIdHide": "Ocultar valor escrito",
+	"settings.streamIdClear": "Borrar ID de transmisión",
+	"settings.streamIdClearing": "El ID de transmisión se borrará cuando guardes."
 }

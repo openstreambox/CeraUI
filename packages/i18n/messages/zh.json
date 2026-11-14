@@ -1653,10 +1653,10 @@
 	"network.wifiMode.stationHint": "连接到 Wi-Fi 网络。此无线设备可加入绑定链路。",
 	"network.wifiMode.hotspotHint": "仅广播接入点。此无线设备不提供 Wi-Fi 上行链路。",
 	"network.wifiMode.hybridHint": "保持 Wi-Fi 连接的同时广播接入点。",
-  "network.wifiDegraded.unavailable": "Wi-Fi 适配器暂时不可用。",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi 适配器尚未报告当前硬件地址。",
-  "network.wifiDegraded.permanent-mac-unresolved": "无法确认 Wi-Fi 适配器的稳定硬件身份。",
-  "network.wifiMode.unavailable": "{mode} 不可用 — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi 适配器暂时不可用。",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi 适配器尚未报告当前硬件地址。",
+	"network.wifiDegraded.permanent-mac-unresolved": "无法确认 Wi-Fi 适配器的稳定硬件身份。",
+	"network.wifiMode.unavailable": "{mode} 不可用 — {reason}",
 	"network.wifiMode.pending": "正在切换到 {mode}…",
 	"network.wifiMode.reason.unsupported": "此无线设备无法作为接入点。",
 	"network.wifiMode.reason.capabilityAbsent": "此无线设备的驱动无法同时运行 Wi-Fi 和接入点。",
@@ -2701,5 +2701,11 @@
 	"settings.srtEncryptionShow": "显示口令",
 	"settings.srtEncryptionHelp": "仅在替换已保存的口令时更改。加密将在下次推流启动时生效。",
 	"settings.srtEncryptionInvalid": "使用 10–79 个 UTF-8 字节，留空则清除。",
-	"settings.srtEncryptionKeyLength": "SRT 加密密钥长度"
+	"settings.srtEncryptionKeyLength": "SRT 加密密钥长度",
+	"settings.streamIdSecurity": "可能是发布密钥。即使启用 SRT 加密，也会以明文传输。",
+	"settings.streamIdStored": "已保存流 ID。保持不变以保留，输入新值以替换，或明确清除。",
+	"settings.streamIdShow": "显示输入值",
+	"settings.streamIdHide": "隐藏输入值",
+	"settings.streamIdClear": "清除流 ID",
+	"settings.streamIdClearing": "保存时将清除流 ID。"
 }

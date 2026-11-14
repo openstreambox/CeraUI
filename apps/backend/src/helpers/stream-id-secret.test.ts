@@ -1,0 +1,128 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { projectRemoteConfig } from "../modules/remote/remote-status.ts";
+import { logRedact } from "./logger.ts";
+import {
+	publicStreamIds,
+	redactStreamIdJournal,
+	redactStreamIdText,
+	setStreamIdRedactionSource,
+} from "./stream-id-secret.ts";
+
+let previous: () => readonly (string | undefined)[];
+beforeEach(() => {
+	previous = setStreamIdRedactionSource(() => []);
+});
+afterEach(() => {
+	setStreamIdRedactionSource(previous);
+});
+describe("Stream ID disclosure boundaries", () => {
+	test("projects configured state without a reversible hint", () => {
+		const input = {
+			srt_streamid: "dummy-publish-key",
+			relay_streamid_override: "dummy-override",
+			srtla_port: 5000,
+		};
+		expect(publicStreamIds(input)).toEqual({
+			srt_streamid_configured: true,
+			relay_streamid_override_configured: true,
+			srtla_port: 5000,
+		});
+		expect(
+			projectRemoteConfig({ ...input, pairing_secret: "dummy-pairing" }),
+		).toEqual(publicStreamIds(input));
+		expect(input.srt_streamid).toBe("dummy-publish-key");
+		expect(publicStreamIds(publicStreamIds(input))).toEqual(
+			publicStreamIds(input),
+		);
+	});
+	test("scrubs nested trace args and Error fields", () => {
+		const value = logRedact({
+			args: [
+				{
+					srt_streamid: "dummy-key",
+					streamId: "dummy-key",
+					relay_streamid_override: "dummy-key",
+					ingest_key: "dummy-key",
+				},
+			],
+			error: new Error('streamid="dummy-key"'),
+		});
+		expect(JSON.stringify(value)).not.toContain("dummy-key");
+	});
+	test("scrubs historical labelled journal records with spaces, escaping and URI encoding", () => {
+		for (const record of [
+			'{"srt_streamid":"dummy key with spaces"}',
+			"srt://example.test:9000?streamid=dummy%20key",
+			"streamId: dummy-key",
+			'relay_streamid_override="dummy-key"',
+		]) {
+			expect(redactStreamIdJournal(`before\n${record}\nafter`)).toBe(
+				"before\n[REDACTED]\nafter",
+			);
+		}
+	});
+	test("scrubs retained values in unlabelled errors and leaves ordinary diagnostics", () => {
+		setStreamIdRedactionSource(() => ["dummy/key with spaces"]);
+		for (const key of ["dummy/key with spaces", "dummy%2Fkey%20with%20spaces"])
+			expect(redactStreamIdText(`connect failed: ${key}`)).not.toContain(key);
+		expect(redactStreamIdText("connection timed out")).toBe(
+			"connection timed out",
+		);
+	});
+	test.each([
+		[
+			"live",
+			"audio delivered to the live preview",
+			"audio delivered to the [REDACTED] preview",
+		],
+		["a", "a camera has data", "[REDACTED] camera has data"],
+		["test", "latest contest: test", "latest contest: [REDACTED]"],
+		["1", "port 1001: 1", "port 1001: [REDACTED]"],
+		[
+			"key.part",
+			"keyXpart key.part key.partial",
+			"keyXpart [REDACTED] key.partial",
+		],
+	] as const)(
+		"retained %s redacts whole tokens without corrupting words",
+		(id, text, expected) => {
+			setStreamIdRedactionSource(() => [id]);
+			expect(redactStreamIdText(text)).toBe(expected);
+			expect(redactStreamIdJournal(text)).toBe(expected);
+			expect(logRedact({ message: text })).toEqual({ message: expected });
+		},
+	);
+	test("unrelated field names do not erase diagnostics", () => {
+		for (const text of [
+			"engine upstream_idle: true",
+			"12:30: stream identity established",
+			"streamid_configured: true",
+		]) {
+			expect(redactStreamIdText(text)).toBe(text);
+			expect(redactStreamIdJournal(text)).toBe(text);
+		}
+	});
+	test("retained IDs still scrub quoted, URI-encoded and escaped tokens", () => {
+		setStreamIdRedactionSource(() => ['dummy/key with "quotes"']);
+		for (const token of [
+			'dummy/key with "quotes"',
+			encodeURIComponent('dummy/key with "quotes"'),
+			JSON.stringify('dummy/key with "quotes"').slice(1, -1),
+		]) {
+			expect(redactStreamIdText(`failure: '${token}'`)).toBe(
+				"failure: '[REDACTED]'",
+			);
+		}
+	});
+});
+
+test("overlapping retained IDs redact the longest token first", () => {
+	const previous = setStreamIdRedactionSource(() => ["live", "live/secretkey"]);
+	try {
+		expect(redactStreamIdText("delivered live/secretkey")).toBe(
+			"delivered [REDACTED]",
+		);
+	} finally {
+		setStreamIdRedactionSource(previous);
+	}
+});

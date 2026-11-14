@@ -579,10 +579,10 @@ export interface ServerSetDraft {
 	addr: string;
 	/** Manual endpoint port, RAW string (custom destination). */
 	portStr: string;
-	/** Manual SRT stream id (custom destination). */
-	streamId: string;
-	/** Managed relay stream-id override (always persisted, even ''). */
-	relayStreamId: string;
+	/** Manual SRT Stream ID: omitted retains, empty clears (custom destination). */
+	streamId?: string | undefined;
+	/** Managed relay Stream ID: omitted retains, empty clears. */
+	relayStreamId?: string | undefined;
 	/** Selected managed relay server id. */
 	relayServer: string;
 	/** Selected managed relay account id (persisted only when non-empty). */
@@ -642,8 +642,7 @@ function pruneUndefined(input: StreamingConfigInput): StreamingConfigInput {
  * ingest-slot identity (the slot path uses `buildManagedSlotConfig`), so the
  * destination always re-derives correctly after a non-slot save (round-3 mutual
  * exclusion). Invariants: `relay_protocol` is always present (legacy drafts
- * coerce to `srtla`); `relay_streamid_override` is always set in the managed
- * branch even when empty; `relay_account` persists only when non-empty; no
+ * coerce to `srtla`); `relay_streamid_override` is set only when provided (including empty); `relay_account` persists only when non-empty; no
  * returned key ever has an `undefined` value (an unparsable port is pruned).
  */
 export function buildServerSetConfig(
@@ -661,7 +660,7 @@ export function buildServerSetConfig(
 			...base,
 			srtla_addr: draft.addr.trim(),
 			srtla_port: parsePort(draft.portStr),
-			srt_streamid: draft.streamId.trim(),
+			srt_streamid: draft.streamId?.trim(),
 		});
 	}
 
@@ -669,7 +668,7 @@ export function buildServerSetConfig(
 		...base,
 		relay_server: draft.relayServer,
 		relay_account: draft.relayAccount ? draft.relayAccount : undefined,
-		relay_streamid_override: draft.relayStreamId.trim(),
+		relay_streamid_override: draft.relayStreamId?.trim(),
 	});
 }
 

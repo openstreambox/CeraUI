@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 
 export const secrets = {
+	srt_passphrase: "SYNTHETIC_ENCRYPTION_KEY_9274",
 	ssh_pass: "P2S_SSH_68a2",
 	pairing_secret: "P2S_PAIRING_9471",
 	srt_streamid: "P2S_MEDIA_ID_f176",
@@ -61,13 +62,35 @@ export function object(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-/** Serialize independently, omitting keys only on known DTO holders. */
-export function expectedBytes(frame: unknown, config: unknown): string {
-	return JSON.stringify(frame, function (this: unknown, key, value) {
-		return this === config && key === "pairing_secret" ? undefined : value;
+/** Independent expected config projection; preserve all unrelated frame bytes. */
+export function expectedBytes(
+	frame: unknown,
+	config: unknown,
+	omitPairing = true,
+): string {
+	return JSON.stringify(frame, (_key, value) => {
+		if (value !== config || !object(value) || Array.isArray(value))
+			return value;
+		const { srt_streamid, relay_streamid_override, ...ordinary } = value;
+		Reflect.deleteProperty(ordinary, "srt_passphrase");
+		if (omitPairing) Reflect.deleteProperty(ordinary, "pairing_secret");
+		return {
+			...ordinary,
+			srt_streamid_configured:
+				srt_streamid === undefined
+					? (ordinary.srt_streamid_configured ?? false)
+					: Boolean(srt_streamid),
+			relay_streamid_override_configured:
+				relay_streamid_override === undefined
+					? (ordinary.relay_streamid_override_configured ?? false)
+					: Boolean(relay_streamid_override),
+		};
 	});
 }
 
 export function expectNoPairingSecret(bytes: string): void {
 	expect(bytes).not.toContain(secrets.pairing_secret);
+	expect(bytes).not.toContain(secrets.srt_passphrase);
+	expect(bytes).not.toContain(secrets.srt_streamid);
+	expect(bytes).not.toContain(secrets.relay_streamid_override);
 }

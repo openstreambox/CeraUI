@@ -1710,10 +1710,10 @@
 	"network.wifiMode.stationHint": "يتصل بشبكة Wi-Fi. يمكن لهذا الراديو أن يشارك في التجميع.",
 	"network.wifiMode.hotspotHint": "يبثّ نقطة اتصال فقط. لا يوفّر هذا الراديو وصلة Wi-Fi صاعدة.",
 	"network.wifiMode.hybridHint": "يظل متصلاً بشبكة Wi-Fi مع بثّ نقطة اتصال في الوقت نفسه.",
-  "network.wifiDegraded.unavailable": "محول Wi-Fi غير متاح مؤقتًا.",
-  "network.wifiDegraded.operational-mac-missing": "لم يبلّغ محول Wi-Fi عن عنوان الجهاز الحالي بعد.",
-  "network.wifiDegraded.permanent-mac-unresolved": "تعذر تأكيد هوية الجهاز الثابتة لمحول Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} غير متاح — {reason}",
+	"network.wifiDegraded.unavailable": "محول Wi-Fi غير متاح مؤقتًا.",
+	"network.wifiDegraded.operational-mac-missing": "لم يبلّغ محول Wi-Fi عن عنوان الجهاز الحالي بعد.",
+	"network.wifiDegraded.permanent-mac-unresolved": "تعذر تأكيد هوية الجهاز الثابتة لمحول Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} غير متاح — {reason}",
 	"network.wifiMode.pending": "جارٍ التبديل إلى {mode}…",
 	"network.wifiMode.reason.unsupported": "لا يستطيع هذا الراديو استضافة نقطة اتصال.",
 	"network.wifiMode.reason.capabilityAbsent": "لا يستطيع برنامج تشغيل هذا الراديو تشغيل Wi-Fi ونقطة اتصال في الوقت نفسه.",
@@ -2758,5 +2758,11 @@
 	"settings.srtEncryptionShow": "إظهار عبارة المرور",
 	"settings.srtEncryptionHelp": "غيّر الحقل فقط لاستبدال عبارة المرور المحفوظة. يبدأ التشفير عند بدء البث التالي.",
 	"settings.srtEncryptionInvalid": "استخدم 10–79 بايت UTF-8، أو اتركه فارغًا للمسح.",
-	"settings.srtEncryptionKeyLength": "طول مفتاح تشفير SRT"
+	"settings.srtEncryptionKeyLength": "طول مفتاح تشفير SRT",
+	"settings.streamIdSecurity": "قد يكون مفتاح نشر. يُرسل بنص واضح عبر الشبكة حتى مع تفعيل تشفير SRT.",
+	"settings.streamIdStored": "تم حفظ معرّف بث. اتركه دون تغيير للاحتفاظ به، أو اكتب لاستبداله، أو امسحه صراحةً.",
+	"settings.streamIdShow": "إظهار القيمة المكتوبة",
+	"settings.streamIdHide": "إخفاء القيمة المكتوبة",
+	"settings.streamIdClear": "مسح معرّف البث",
+	"settings.streamIdClearing": "سيُمسح معرّف البث عند الحفظ."
 }

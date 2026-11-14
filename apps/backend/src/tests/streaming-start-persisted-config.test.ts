@@ -287,3 +287,28 @@ test("an invalid effective persisted config still fails validation", async () =>
 		throw new Error("expected updateConfig to fail");
 	expect(failure.message).toContain("Invalid audio delay");
 });
+
+test("Start preserves manual keys on omission and persists explicit replacement and clear", async () => {
+	getConfig().relay_streamid_override = undefined;
+	expect((await updateConfig({})).streamid).toBe("persisted-stream");
+	expect(
+		(await updateConfig({ srt_streamid: "dummy-replacement" })).streamid,
+	).toBe("dummy-replacement");
+	expect(getConfig().srt_streamid).toBe("dummy-replacement");
+	expect((await updateConfig({ srt_streamid: "" })).streamid).toBe("");
+	expect(getConfig().srt_streamid).toBe("");
+});
+
+test("Start retains, replaces and clears the relay override independently", async () => {
+	getConfig().relay_streamid_override = "dummy-override";
+	expect((await updateConfig({})).streamid).toBe("dummy-override");
+	expect(
+		(await updateConfig({ relay_streamid_override: "dummy-next-override" }))
+			.streamid,
+	).toBe("dummy-next-override");
+	expect(getConfig().relay_streamid_override).toBe("dummy-next-override");
+	expect((await updateConfig({ relay_streamid_override: "" })).streamid).toBe(
+		"persisted-stream",
+	);
+	expect(getConfig().relay_streamid_override).toBe("");
+});

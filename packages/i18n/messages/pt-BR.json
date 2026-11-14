@@ -1701,10 +1701,10 @@
 	"network.wifiMode.stationHint": "Conecta-se a uma rede Wi-Fi. Este rádio pode fazer parte do agrupamento.",
 	"network.wifiMode.hotspotHint": "Apenas transmite um ponto de acesso. Este rádio não fornece enlace Wi-Fi de subida.",
 	"network.wifiMode.hybridHint": "Permanece no Wi-Fi enquanto também transmite um ponto de acesso.",
-  "network.wifiDegraded.unavailable": "O adaptador Wi-Fi está temporariamente indisponível.",
-  "network.wifiDegraded.operational-mac-missing": "O adaptador Wi-Fi ainda não informou seu endereço de hardware atual.",
-  "network.wifiDegraded.permanent-mac-unresolved": "Não foi possível confirmar a identidade de hardware estável do adaptador Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} não está disponível — {reason}",
+	"network.wifiDegraded.unavailable": "O adaptador Wi-Fi está temporariamente indisponível.",
+	"network.wifiDegraded.operational-mac-missing": "O adaptador Wi-Fi ainda não informou seu endereço de hardware atual.",
+	"network.wifiDegraded.permanent-mac-unresolved": "Não foi possível confirmar a identidade de hardware estável do adaptador Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} não está disponível — {reason}",
 	"network.wifiMode.pending": "Mudando para {mode}…",
 	"network.wifiMode.reason.unsupported": "Este rádio não consegue hospedar um ponto de acesso.",
 	"network.wifiMode.reason.capabilityAbsent": "O driver deste rádio não consegue usar Wi-Fi e um ponto de acesso ao mesmo tempo.",
@@ -2749,5 +2749,11 @@
 	"settings.srtEncryptionShow": "Mostrar frase secreta",
 	"settings.srtEncryptionHelp": "Altere apenas para substituir a frase salva. A criptografia vale a partir da próxima transmissão.",
 	"settings.srtEncryptionInvalid": "Use de 10 a 79 bytes UTF-8, ou vazio para apagar.",
-	"settings.srtEncryptionKeyLength": "Tamanho da chave SRT"
+	"settings.srtEncryptionKeyLength": "Tamanho da chave SRT",
+	"settings.streamIdSecurity": "Pode ser uma chave de publicação. Enviado sem criptografia, mesmo com criptografia SRT.",
+	"settings.streamIdStored": "Há um ID salvo. Deixe sem alterações para manter, digite para substituir ou limpe explicitamente.",
+	"settings.streamIdShow": "Mostrar valor digitado",
+	"settings.streamIdHide": "Ocultar valor digitado",
+	"settings.streamIdClear": "Limpar ID de transmissão",
+	"settings.streamIdClearing": "O ID de transmissão será limpo ao salvar."
 }

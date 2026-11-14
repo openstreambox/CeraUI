@@ -904,13 +904,13 @@ export const configMessageSchema = z.object({
 	autostart: z.boolean().optional(),
 	srtla_addr: z.string().optional(),
 	srtla_port: z.number().optional(),
-	srt_streamid: z.string().optional(),
+	srt_streamid_configured: z.boolean().optional(),
 	remote_key: z.string().optional(),
 	remote_provider: providerSelectionSchema.optional(),
 	custom_provider: customProviderInputSchema.optional(),
 	relay_account: z.string().optional(),
 	relay_server: z.string().optional(),
-	relay_streamid_override: z.string().optional(),
+	relay_streamid_override_configured: z.boolean().optional(),
 	relay_protocol: relayProtocolSchema.optional(),
 	// endpointId of the selected platform-pushed ingest slot (T18/T19), echoed
 	// back so the UI can resolve the active slot's label and last-used selection.
@@ -1003,7 +1003,14 @@ export type StreamingStopOutput = z.infer<typeof streamingStopOutputSchema>;
 // carrying an unresolvable `source` is rejected (T3). Absent on success.
 export const streamingSetConfigOutputSchema = z.object({
 	success: z.boolean(),
-	applied: streamingConfigInputSchema.omit({ srt_passphrase: true }).partial().optional(),
+	applied: streamingConfigInputSchema
+		.omit({ srt_passphrase: true, srt_streamid: true, relay_streamid_override: true })
+		.extend({
+			srt_streamid_configured: z.boolean().optional(),
+			relay_streamid_override_configured: z.boolean().optional(),
+		})
+		.partial()
+		.optional(),
 	error: z.string().optional(),
 	// Present ONLY for an apply-now save: the transaction's terminal outcome.
 	// `success` still reports whether the SAVE was accepted, so a `reverted`
@@ -1018,7 +1025,14 @@ export type StreamingSetConfigOutput = z.infer<typeof streamingSetConfigOutputSc
 const streamingStartLegacyOutputSchema = z.object({
 	success: z.boolean(),
 	is_streaming: z.boolean().optional(),
-	applied: streamingConfigInputSchema.omit({ srt_passphrase: true }).partial().optional(),
+	applied: streamingConfigInputSchema
+		.omit({ srt_passphrase: true, srt_streamid: true, relay_streamid_override: true })
+		.extend({
+			srt_streamid_configured: z.boolean().optional(),
+			relay_streamid_override_configured: z.boolean().optional(),
+		})
+		.partial()
+		.optional(),
 	error: z.string().optional(),
 });
 

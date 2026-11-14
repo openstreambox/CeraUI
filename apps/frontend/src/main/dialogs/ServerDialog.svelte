@@ -122,7 +122,9 @@ $effect(() => {
 		openFingerprint = untrack(() =>
 			fingerprintForValidation(config, relays, managedAccounts),
 		);
-	}
+	} else {
+ draft = {};
+ }
 });
 
 const destinationChoice = $derived<ReceiverDestinationChoice>(
@@ -151,11 +153,13 @@ const slotPrompting = $derived(hasManagedSlots && activeSlot === undefined);
 
 const addr = $derived(draft.srtla_addr ?? config?.srtla_addr ?? '');
 const portStr = $derived(draft.srtla_port ?? (config?.srtla_port?.toString() ?? ''));
-const streamId = $derived(draft.srt_streamid ?? config?.srt_streamid ?? '');
+const streamIdConfigured = $derived(Boolean(config?.srt_streamid_configured));
+const relayStreamIdConfigured = $derived(Boolean(config?.relay_streamid_override_configured));
+const streamId = $derived(draft.srt_streamid ?? '');
 const passphrase = $derived(draft.passphrase ?? '');
 const relayServer = $derived(draft.relay_server ?? config?.relay_server ?? '');
 const relayAccount = $derived(draft.relay_account ?? config?.relay_account ?? '');
-const relayStreamId = $derived(draft.relay_streamid ?? config?.relay_streamid_override ?? '');
+const relayStreamId = $derived(draft.relay_streamid ?? '');
 
 const allServerEntries = $derived(Object.entries(relays?.servers ?? {}));
 const allAccountEntries = $derived(Object.entries(relays?.accounts ?? {}));
@@ -256,8 +260,8 @@ async function handleSave() {
 	const input = buildServerDialogInput({
 		managedSlot: destination === 'managed' && selectedManagedActive && hasManagedSlots
 			? activeSlot : undefined,
-		latency: clampedLatency, protocol: PROTOCOL, addr, portStr, streamId,
-		relayStreamId, relayServer, relayAccount: effectiveRelayAccount, destination,
+		latency: clampedLatency, protocol: PROTOCOL, addr, portStr, streamId: draft.srt_streamid,
+		relayStreamId: draft.relay_streamid, relayServer, relayAccount: effectiveRelayAccount, destination,
 	});
  if (SRT_OUTPUT_ENCRYPTION_AVAILABLE && srtEncryption) Object.assign(input, srtEncryption);
 	const result = await saveServerConfig({
@@ -295,6 +299,7 @@ $effect(() => { if (!open) srtEncryption = undefined; });
 		{selectedManagedActive} {hasManagedSlots} {managedAccounts} {activeSlotId} {slotPrompting}
 		{filteredAccountEntries} {filteredServerEntries} {effectiveRelayAccount} {relayAccountName}
 		{relayServer} {relayServerEndpoint} {relayServerName} {relayServerRtt} {relayStreamId}
+		{streamIdConfigured} {relayStreamIdConfigured}
 		{addr} {addrError} {canValidate} {passphrase} port={PORT} {portError} {portStr} {streamId}
 		{validation} {appliedLatencyMs} {effectiveLatencyMs} {clampedLatency} {latencyRange}
 		onDestination={(value) => (draft.destination_choice = value)}

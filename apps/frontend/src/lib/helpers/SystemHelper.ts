@@ -1,6 +1,5 @@
 import type {
 	AudioCodecs,
-	ConfigMessage,
 	CustomProviderInput,
 	ProviderSelection,
 	StreamingConfigInput,
@@ -131,7 +130,7 @@ export const stopStreaming = async () => {
 	}
 };
 
-export const startStreaming = async (config: ConfigMessage) => {
+export const startStreaming = async (config: StreamingConfigInput) => {
 	try {
 		// Forward EVERY field present in both ConfigMessage and
 		// StreamingConfigInput: an incomplete allowlist silently drops persisted
@@ -147,10 +146,10 @@ export const startStreaming = async (config: ConfigMessage) => {
 			srtla_addr: config.srtla_addr,
 			srtla_port: config.srtla_port,
 			srt_streamid: config.srt_streamid,
+			relay_streamid_override: config.relay_streamid_override,
 			asrc: config.asrc,
 			relay_server: config.relay_server,
 			relay_account: config.relay_account,
-			relay_streamid_override: config.relay_streamid_override,
 			relay_protocol: config.relay_protocol,
 			source: config.source,
 			selected_video_input: config.selected_video_input,

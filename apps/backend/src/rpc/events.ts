@@ -5,6 +5,7 @@
 
 import { logger } from "../helpers/logger.ts";
 import { publicSrtConfig } from "../helpers/srt-secret-redaction.ts";
+import { publicStreamIds } from "../helpers/stream-id-secret.ts";
 import { isDevelopment } from "../mocks/mock-config.ts";
 import {
 	type CoalesceState,
@@ -266,10 +267,7 @@ export function broadcast(
 	updateCoalesceState(coalesceState, type, data, now);
 
 	const seq = advanceSeq(seqCounters, type);
-	const message = JSON.stringify({
-		[type]: type === "config" ? publicSrtConfig(data) : data,
-		seq,
-	});
+	const message = JSON.stringify({ [type]: publicEventData(type, data), seq });
 
 	// Per-client failure isolation. `send` is fired synchronously per client in
 	// iteration order (so a given socket keeps receiving in seq order — the
@@ -331,11 +329,7 @@ export function sendToClient(
 	data: unknown,
 ): void {
 	try {
-		ws.send(
-			JSON.stringify({
-				[type]: type === "config" ? publicSrtConfig(data) : data,
-			}),
-		);
+		ws.send(JSON.stringify({ [type]: publicEventData(type, data) }));
 	} catch (error) {
 		logger.error("Send error", { err: error });
 	}
@@ -349,11 +343,21 @@ export function buildMessage(
 	data: unknown,
 	id?: string | null,
 ): string {
-	const obj: Record<string, unknown> = {
-		[type]: type === "config" ? publicSrtConfig(data) : data,
-	};
+	const obj: Record<string, unknown> = { [type]: publicEventData(type, data) };
 	if (id !== undefined) {
 		obj.id = id;
 	}
 	return JSON.stringify(obj);
+}
+
+export function publicEventData(type: string, data: unknown): unknown {
+	if (type === "config") data = publicSrtConfig(data);
+	if (
+		type !== "config" ||
+		typeof data !== "object" ||
+		data === null ||
+		Array.isArray(data)
+	)
+		return data;
+	return publicStreamIds(data);
 }

@@ -1,4 +1,5 @@
 import { publicSrtConfig } from "../../helpers/srt-secret-redaction.ts";
+import { publicStreamIds } from "../../helpers/stream-id-secret.ts";
 
 function omitIncarnation(value: unknown): unknown {
 	if (
@@ -39,12 +40,16 @@ export function projectRemoteWifiFrame(payload: unknown): unknown {
 	return projected;
 }
 
-/** Withhold internal pairing and encryption credentials from remote config. */
+/** Withhold pairing, Stream ID and encryption credentials from remote config. */
 export function projectRemoteConfig(payload: unknown): unknown {
 	payload = publicSrtConfig(payload);
 	if (typeof payload !== "object" || payload === null) return payload;
-	if (!("pairing_secret" in payload)) return payload;
-	const config = { ...payload };
+	const projected =
+		"srt_streamid" in payload || "relay_streamid_override" in payload
+			? publicStreamIds(payload)
+			: payload;
+	if (!("pairing_secret" in projected)) return projected;
+	const config = { ...projected };
 	Reflect.deleteProperty(config, "pairing_secret");
 	return config;
 }

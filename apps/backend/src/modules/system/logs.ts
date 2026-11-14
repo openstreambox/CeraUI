@@ -19,6 +19,7 @@
 import { getRecentLogLines, logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
 import { redactSrtPassphrases } from "../../helpers/srt-secret-redaction.ts";
+import { redactStreamIdJournal } from "../../helpers/stream-id-secret.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
 
@@ -56,18 +57,18 @@ export async function getLog(
 	}
 
 	try {
-		const rawContents = shouldUseMocks()
+		const raw = shouldUseMocks()
 			? buildMockJournal(service)
 			: await run("journalctl", args, { maxBuffer: 10 * 1024 * 1024 });
-		const contents = redactSrtPassphrases(rawContents);
+		const contents = redactStreamIdJournal(redactSrtPassphrases(raw));
 		// Pushed as a `log` event the frontend turns into a file download; also
 		// returned so the getLog/getSyslog RPC is itself a real data source.
 		conn.send(buildMsg("log", { name, contents }, senderId));
 		return { name, contents };
 	} catch (err) {
-		const msg = `Failed to fetch the log: ${err}`;
+		const msg = "Failed to fetch the log";
 		notificationSend(conn, "log_error", "error", msg, 10);
-		logger.error(msg);
+		logger.error(msg, { err });
 		return undefined;
 	}
 }

@@ -4,7 +4,8 @@ The published `@ceralive/cerastream` 2026.9.11 binding has no passphrase or
 key-length fields in `start.srt`. The inspected engine package 2026.9.8 also
 has an eight-field SRT config, with no discoverable passphrase/environment
 option. No supported URI, stream-ID or pipeline workaround was established.
-This consumer change does not enable encrypted output and must remain a draft until the producer lands.
+This consumer change does not enable encrypted output and must remain a draft
+until the producer lands.
 
 The config input and persistence schema reserve `srt_passphrase` (10–79 UTF-8
 bytes, preserving spaces) and `srt_pbkeylen` (16/24/32 bytes; default 16).
@@ -53,8 +54,7 @@ setting streamid on a listener does not create an access-control policy.
 Encryption support remains useful for receivers requiring a passphrase and
 for private capture workflows.
 
-Stream IDs are currently returned in config and applied replies, displayed as
-ordinary text and not covered by secret-key log redaction. A separate focused
-change should redact them in logs/exports and coordinate write-only RPC and
-replace/retain/clear UI behavior. This encryption draft does not change that
-existing API contract.
+Stream IDs are write-only secrets as described in [Stream ID handling](STREAM-ID-SECURITY.md).
+Both protections apply together at config events, remote relays and diagnostic
+boundaries. Retained passphrases are scrubbed by value, including encoded forms,
+and Error messages and stacks pass through the same scrub before log storage.

@@ -33,10 +33,10 @@ const state = vi.hoisted(() => ({
 		| {
 				relay_server?: string;
 				relay_account?: string;
-				relay_streamid_override?: string;
+				relay_streamid_override_configured?: boolean;
 				srtla_addr?: string;
 				srtla_port?: number;
-				srt_streamid?: string;
+				srt_streamid_configured?: boolean;
 				srt_latency?: number;
 				remote_provider?: string;
 		  }
@@ -230,7 +230,9 @@ describe("ServerDialog — latency-only save + field-lock coverage", () => {
 			draftOf({ addr: "custom.example", portStr: "5000" }),
 			derived,
 		);
-		const expectedKeys = Object.keys(expected).sort();
+		const expectedKeys = Object.keys(expected)
+			.filter((key) => key !== "srt_streamid")
+			.sort();
 		const sent = setConfig.mock.calls[0]?.[0] as Record<string, unknown>;
 
 		expect(expected).not.toHaveProperty("fec_enabled");
@@ -258,7 +260,7 @@ describe("ServerDialog — latency-only save + field-lock coverage", () => {
 		expect(sent.relay_protocol).toBe("srtla");
 		expect(sent.selected_ingest_endpoint).toBe("");
 		expect(sent).not.toHaveProperty("srtla_addr");
-		expect(sent).toHaveProperty("relay_streamid_override", "");
+		expect(sent).not.toHaveProperty("relay_streamid_override");
 	});
 });
 
@@ -271,4 +273,77 @@ describe("ServerDialog — streaming lock", () => {
 		const slider = screen.getByTestId("latency-slider") as HTMLInputElement;
 		expect(slider.disabled).toBe(true);
 	});
+});
+
+describe("ServerDialog — write-only saved ID", () => {
+	it("retains an untouched stored ID without returning it to the field", async () => {
+		state.config = {
+			srtla_addr: "custom.example",
+			srtla_port: 5000,
+			srt_streamid_configured: true,
+		};
+		render(ServerDialog, { props: { open: true } });
+		await waitFor(() => expect(saveButton().disabled).toBe(false));
+		const input = document.getElementById("srt-streamid") as HTMLInputElement;
+		expect(input.value).toBe("");
+		expect(input.type).toBe("password");
+		await fireEvent.click(saveButton());
+		await waitFor(() => expect(setConfig).toHaveBeenCalledTimes(1));
+		expect(setConfig.mock.calls[0]?.[0]).not.toHaveProperty("srt_streamid");
+	});
+	it("sends a typed replacement and never stores a secret in the echo-lock registry", async () => {
+		state.config = {
+			srtla_addr: "custom.example",
+			srtla_port: 5000,
+			srt_streamid_configured: true,
+		};
+		render(ServerDialog, { props: { open: true } });
+		await typeInto("srt-streamid", "dummy-replacement");
+		await fireEvent.click(saveButton());
+		await waitFor(() => expect(setConfig).toHaveBeenCalledTimes(1));
+		expect(setConfig.mock.calls[0]?.[0]).toHaveProperty(
+			"srt_streamid",
+			"dummy-replacement",
+		);
+		expect(lockedFields(markPending)).not.toContain("srt_streamid");
+	});
+	it("sends an explicit clear only after Clear and Save", async () => {
+		state.config = {
+			srtla_addr: "custom.example",
+			srtla_port: 5000,
+			srt_streamid_configured: true,
+		};
+		render(ServerDialog, { props: { open: true } });
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Clear Stream ID" }),
+		);
+		expect(setConfig).not.toHaveBeenCalled();
+		await fireEvent.click(saveButton());
+		await waitFor(() => expect(setConfig).toHaveBeenCalledTimes(1));
+		expect(setConfig.mock.calls[0]?.[0]).toHaveProperty("srt_streamid", "");
+	});
+});
+
+it("keeps all write-only credentials out of pending and resolved caches", async () => {
+	const { saveServerConfig } = await import("./server/server-dialog-commands");
+	await saveServerConfig({
+		input: {
+			srt_passphrase: "dummy-passphrase",
+			srt_streamid: "dummy-id",
+			relay_streamid_override: "dummy-relay",
+			srt_latency: 2000,
+		},
+		savedMessage: "Saved",
+		failedMessage: "Failed",
+		onSaved() {},
+	});
+	for (const field of [
+		"srt_passphrase",
+		"srt_streamid",
+		"relay_streamid_override",
+	]) {
+		expect(lockedFields(markPending)).not.toContain(field);
+		expect(onRpcResolved.mock.calls.flat()).not.toContain(field);
+	}
+	expect(lockedFields(markPending)).toContain("srt_latency");
 });
