@@ -258,7 +258,9 @@ A real pause adapter must renew the existing five-second kernel lease only
 while its supplied predicate still holds. Neither adapter exists in production
 on this topic; tests inject memory-only owners and synthetic thermal sequences.
 The plain status copy is a contract for later UI integration, not a rendered
-screen. Reasons are retained in a bounded local timeline, not repeated notices.
+screen. When only temperature is unknown and restrictions have been restored,
+status names the missing temperature reading rather than blaming stream data.
+Reasons are retained in a bounded local timeline, not repeated notices.
 
 Thermal timestamps must come from the sensor observation, never from polling a
 cached number. USB owners receive eligibility and known-temperature separately,
@@ -293,6 +295,8 @@ intentos de protección de la transmisión. Durante esa espera conserva los paso
 actuales, no agrega otros y sigue comprobando la transmisión y los clientes
 protegidos. Una lectura válida termina la espera; así una lectura aislada perdida
 no corta y restablece repetidamente un enlace ni el internet de un invitado.
+Si solo falta la temperatura, el estado indica esa lectura ausente y no atribuye
+el problema a los datos de transmisión.
 Después de liberar un cliente, espera dos minutos antes de pausar otro.
 El diseño permite pausar sin retirar un enlace, incluso sin estadísticas de
 transmisión (C6); este borrador exige ambas cosas juntas hasta revisar un

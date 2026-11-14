@@ -995,3 +995,33 @@ test("session rechecks cannot spend rollback budget", async () => {
 		pause: ["guest"],
 	});
 });
+
+test("temperature-only unknown status does not blame stream measurements", () => {
+	for (const stale of [false, true]) {
+		const p = new LinkBoxHeatPolicy();
+		warm(p);
+		for (let t = 76000; t <= 79000; t += 1000) {
+			const s = sample(t);
+			if (stale) s.socAt = t - 2001;
+			else s.soc = null;
+			p.tick(s);
+		}
+		const status = p.status({ lend: null, pause: [] });
+		expect(status).toContain("can't read its temperature");
+		expect(status).not.toContain("can't see how your stream");
+	}
+});
+test("a peer entering recovery during a four-link loan restores immediately", () => {
+	const p = new LinkBoxHeatPolicy();
+	const four = (t: number) => {
+		const s = sample(t);
+		s.links.push({ ...item(s.links, 1), id: "extra" });
+		return s;
+	};
+	for (let t = 0; t <= 75000; t += 1000) p.tick(four(t));
+	expect(p.tick(four(76000))).toMatchObject({ lend: "leg2", pause: ["guest"] });
+	const s = four(77000);
+	item(s.links, 3).recovering = true;
+	expect(p.tick(s)).toMatchObject({ lend: null, pause: [] });
+	expect(p.timeline.at(-1)?.reason).toBe("link recovering");
+});

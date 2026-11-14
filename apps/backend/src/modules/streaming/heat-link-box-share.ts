@@ -163,7 +163,7 @@ export class LinkBoxHeatPolicy {
 					positive(l.rtt) &&
 					positive(l.rttMedian),
 			);
-		this.unknown = !valid || this.heat.unknown;
+		this.unknown = !valid;
 		if (this.heat.unknown) {
 			this.thermalUnknownAt ??= now;
 			this.candidate.clear();
@@ -376,6 +376,8 @@ export class LinkBoxHeatPolicy {
 			return "Very hot box: paused internet for one other device on its Wi-Fi. Your phone's stream keeps its links. Open the bag or find shade.";
 		if (confirmed.lend)
 			return "The box is hot, so it stopped using one link for now. Your phone's stream carries on over the other links. Give the box air.";
+		if (this.heat.stage >= 2 && !this.unknown && this.heat.unknown)
+			return "The box is hot. It can't read its temperature right now, so it keeps all its links. Give it air.";
 		if (this.heat.stage >= 2)
 			return this.unknown
 				? "The box is hot. It can't see how your stream uses its links, so it keeps them all. Give it air."
