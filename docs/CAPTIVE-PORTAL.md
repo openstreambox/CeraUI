@@ -129,3 +129,7 @@ only a one-use binding snapshot remains for the post-close web check.
 Authenticated relayed sessions may save the experimental setting; opening or controlling a sign-in window still requires the local phone connection. A failed setting save offers a retry of the same requested value.
 
 Las sesiones remotas autenticadas pueden guardar el ajuste experimental; abrir o controlar una ventana sigue requiriendo la conexión local del teléfono. Si falla el guardado, se puede reintentar el mismo valor.
+
+If the setting is disabled while the local card is open, an active window keeps its Check, Cancel or retry-close controls until closure. New starts remain hidden. Reloading with the setting already disabled hides the card; automatic expiry and cleanup still apply. The selector label is **Venue Wi-Fi**; its placeholder remains **Choose Wi-Fi**. Failed saves say “The setting could not be saved.” above **Try again**.
+
+Si se desactiva el ajuste con la tarjeta local abierta, la ventana activa conserva los controles para comprobar, cancelar o reintentar el cierre. No se pueden abrir ventanas nuevas. Al recargar con el ajuste desactivado, se oculta la tarjeta; la caducidad y la limpieza automáticas siguen activas. La etiqueta es **Wi-Fi del lugar**; el selector muestra **Elige un Wi-Fi**. Un guardado fallido indica “No se pudo guardar el ajuste.” sobre el botón para reintentar.

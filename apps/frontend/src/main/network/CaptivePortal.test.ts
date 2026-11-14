@@ -129,5 +129,28 @@ it.each([undefined, false])(
 
 it("labels the venue selector with localized copy", () => {
 	const view = render(CaptivePortal);
-	expect(view.getByRole("combobox", { name: "Choose Wi-Fi" })).toBeTruthy();
+	expect(view.getByRole("combobox", { name: "Venue Wi-Fi" })).toBeTruthy();
 });
+
+it.each(["signing_in", "checking", "cleanup_unknown"])(
+	"retains %s controls after the gate is disabled",
+	async (phase) => {
+		portal.mockResolvedValue({ phase });
+		const view = render(CaptivePortal);
+		await waitFor(() => expect(view.getByRole("region")).toBeTruthy());
+		gate.enabled = false;
+		portal.mockResolvedValue({ phase });
+		await new Promise((resolve) => setTimeout(resolve, 3100));
+		await waitFor(() => expect(view.getByRole("region")).toBeTruthy());
+		expect(view.queryByRole("combobox")).toBeNull();
+		if (phase !== "checking") {
+			portal.mockResolvedValue({ phase: "needs_sign_in" });
+			await fireEvent.click(
+				view.getByRole("button", {
+					name: phase === "signing_in" ? "Cancel sign-in" : "Close again",
+				}),
+			);
+			await waitFor(() => expect(view.queryByRole("region")).toBeNull());
+		}
+	},
+);

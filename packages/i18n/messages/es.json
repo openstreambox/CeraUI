@@ -2873,6 +2873,7 @@
 	"network.portal.retryClose": "Cerrar de nuevo",
 	"network.portal.closed": "La ventana se cerró. Nada cambió para tu transmisión. Inténtalo de nuevo cuando quieras.",
 	"network.portal.available": "Este Wi-Fi tiene acceso web. Las comprobaciones normales deciden cuándo puede ayudar con tu transmisión.",
+	"network.portal.venue": "Wi-Fi del lugar",
 	"network.portal.choose": "Elige un Wi-Fi",
 	"network.portal.duration": "Alrededor de un minuto. El chat de este teléfono puede pausarse. La ventana se cierra después de diez minutos.",
 	"network.portal.open": "Abrir la página del hotel",
@@ -2889,5 +2890,5 @@
 	"settings.portal.experimentalTitle": "Inicio de sesión Wi-Fi (experimental)",
 	"settings.portal.experimentalDescription": "Desactivado de forma predeterminada. Permite iniciar sesión en el Wi-Fi de un hotel desde tu teléfono. Aún requiere pruebas con redes reales. Desactivarlo impide nuevas ventanas; las abiertas se cierran en un máximo de diez minutos.",
 	"network.portal.experimentalDisabled": "Activa el inicio de sesión Wi-Fi experimental en Ajustes para usar esta función.",
-	"settings.portal.experimentalSaveError": "No se pudo guardar el ajuste. Vuelve a intentarlo."
+	"settings.portal.experimentalSaveError": "No se pudo guardar el ajuste."
 }

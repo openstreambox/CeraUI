@@ -168,3 +168,14 @@ test("authenticated relayed sessions can configure but cannot open a window", as
 		),
 	).rejects.toThrow("Sign in from the box's Wi-Fi");
 });
+
+test.each(["finish", "status"] as const)(
+	"relayed %s cannot reach the owner",
+	async (action) => {
+		const remote = context();
+		remote.setSenderId("remote-helper");
+		await expect(
+			call(captivePortalProcedure, { action }, { context: remote }),
+		).rejects.toThrow("Sign in from the box's Wi-Fi");
+	},
+);

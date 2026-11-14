@@ -10,6 +10,7 @@ let expiresAt = $state<number | undefined>();
 let error = $state('');
 let radio = $state('');
 let busy = $state(false);
+const active = $derived(phase === 'signing_in' || phase === 'checking' || phase === 'cleanup_unknown');
 const radios = $derived(Object.entries(getWifi() ?? {}).filter(([, r]) => r.conn && !r.hotspot));
 async function act(action: 'start' | 'finish' | 'status') {
  if (busy) return;
@@ -46,7 +47,7 @@ async function act(action: 'start' | 'finish' | 'status') {
 onMount(() => { if (getConfig()?.captive_portal_enabled !== true) return; void act('status'); const timer = setInterval(() => { now = Date.now(); void act('status'); }, 3000); return () => clearInterval(timer); });
 </script>
 
-{#if getConfig()?.captive_portal_enabled === true && radios.length > 0}
+{#if active || (getConfig()?.captive_portal_enabled === true && radios.length > 0)}
 <section aria-label={m['network.portal.title']()} class="rounded-lg border p-4 space-y-2">
  <h3>{m['network.portal.title']()}</h3>
  <p>{m['network.portal.intro']()}</p>
@@ -63,7 +64,7 @@ onMount(() => { if (getConfig()?.captive_portal_enabled !== true) return; void a
  {:else}
   {#if phase === 'needs_sign_in'}<p>{m['network.portal.closed']()}</p>{/if}
   {#if phase === 'web_available'}<p>{m['network.portal.available']()}</p>{/if}
-  <label>{m['network.portal.choose']()} <select bind:value={radio}><option value="">{m['network.portal.choose']()}</option>{#each radios as [id, r] (id)}<option value={id}>{r.hw || `${m['network.sharing.kind.wifi']()} ${id}`}</option>{/each}</select></label>
+  <label>{m['network.portal.venue']()} <select bind:value={radio}><option value="">{m['network.portal.choose']()}</option>{#each radios as [id, r] (id)}<option value={id}>{r.hw || `${m['network.sharing.kind.wifi']()} ${id}`}</option>{/each}</select></label>
   <p>{m['network.portal.duration']()}</p>
   <button type="button" disabled={busy || radio === ''} onclick={() => act('start')}>{m['network.portal.open']()}</button>
  {/if}

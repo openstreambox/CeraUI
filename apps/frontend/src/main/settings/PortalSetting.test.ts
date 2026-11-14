@@ -52,6 +52,7 @@ it("leaves a failed opt-in disabled and explains the failure", async () => {
 		),
 	);
 	expect(control.getAttribute("aria-checked")).toBe("false");
+	expect(view.getByRole("status").textContent).not.toContain("Try again.");
 });
 
 it("retries the same requested value after a failed save", async () => {
