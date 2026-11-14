@@ -1,5 +1,5 @@
-import { idleActionPolicy } from "./idle-action-policy.ts";
 import { boardUpdateAdmissionAllowed } from "./board-update-admission.ts";
+import { idleActionPolicy } from "./idle-action-policy.ts";
 /*
 	CeraUI - web UI for the CERALIVE project
 	Copyright (C) 2024-2025 CeraLive project

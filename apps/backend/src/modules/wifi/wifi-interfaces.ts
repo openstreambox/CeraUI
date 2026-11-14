@@ -1,3 +1,7 @@
+import {
+	getNetworkInterfaces,
+	triggerNetworkInterfacesChange,
+} from "../network/network-interfaces.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -42,11 +46,11 @@ import {
 	type WifiNetwork,
 	wifiUpdateSavedConns,
 } from "./wifi.ts";
+import { notifyWifiAdapterModeDiscovery } from "./wifi-adapter-mode-events.ts";
 import {
 	readApModeSupport,
 	supportsApStaConcurrency,
 } from "./wifi-ap-sta-capability.ts";
-import { notifyWifiAdapterModeDiscovery } from "./wifi-adapter-mode-events.ts";
 import { refreshWifiCapabilities } from "./wifi-capabilities.ts";
 import type { AutoWifiChannel } from "./wifi-channels.ts";
 import {

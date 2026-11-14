@@ -1,9 +1,11 @@
 import { realpath } from "node:fs/promises";
+import { ID_RE } from "../../helpers/run.ts";
 import type { MacAddress } from "../network/network-manager.ts";
 import type {
 	BaseWifiInterface,
 	WifiAdapterDegradedReason,
 } from "./wifi-interfaces.ts";
+import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
 import { invalidateWifiRadioRow } from "./wifi-radio-publication.ts";
 import { type RadioSample, sampleRadio } from "./wifi-radio-read-budget.ts";
 

@@ -32,6 +32,7 @@ import {
 	handleWifi,
 	type NmcliRun,
 	setWifiJoinNmcliRunner,
+	wifiDeleteFailedConns,
 	wifiSiblingConnections,
 	wifiUpdateSavedConns,
 } from "../modules/wifi/wifi.ts";

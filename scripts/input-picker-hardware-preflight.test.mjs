@@ -27,6 +27,8 @@ let previousPassArtifact;
 
 function runDedicatedHardwareConfig(reportPath, hardwareEnv = {}) {
 	const env = { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath };
+	// The child is a Playwright CLI, not a worker of the parent test runner.
+	env.JEST_WORKER_ID = undefined;
 	for (const name of HARDWARE_ENV_NAMES) delete env[name];
 	Object.assign(env, hardwareEnv);
 
@@ -54,6 +56,8 @@ function runDedicatedHardwareConfig(reportPath, hardwareEnv = {}) {
 
 function runOrdinaryHardwareInventory(reportPath) {
 	const env = { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath };
+	// The child is a Playwright CLI, not a worker of the parent test runner.
+	env.JEST_WORKER_ID = undefined;
 	for (const name of HARDWARE_ENV_NAMES) delete env[name];
 	env.CI = undefined;
 
