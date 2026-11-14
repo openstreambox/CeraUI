@@ -8,9 +8,11 @@ import {
 import {
 	getNetworkInterfaces,
 	netIfBuildMsg,
+	onNetworkInterfaceSourcesChange,
 	onNetworkInterfacesChange,
 	parseIpAddrShow,
 	processIfconfigOutput,
+	setQueueUpdateGwHook,
 } from "../modules/network/network-interfaces.ts";
 import { reconcileNetif } from "../modules/network/state/netif-state.ts";
 import { createConnectivityTargetResolver } from "../modules/network/uplink-health/connectivity-target.ts";
@@ -265,16 +267,22 @@ test("IPv6 churn on a dual-stack link publishes addresses without a topology eve
 		);
 	show("fd51::1");
 	let changes = 0;
+	let topologyChanges = 0;
+	setQueueUpdateGwHook(() => {
+		topologyChanges++;
+	});
 	const unsubscribe = onNetworkInterfacesChange(() => {
 		changes++;
 	});
 	try {
 		show("fd51::2");
 		expect(changes).toBe(0);
+		expect(topologyChanges).toBe(0);
 		expect(netIfBuildMsg().wwan0?.ipv6).toBe("fd51::2");
 		expect(genSrtlaIpList()).toEqual(["192.0.2.1"]);
 	} finally {
 		unsubscribe();
+		setQueueUpdateGwHook(null);
 	}
 });
 
@@ -309,3 +317,70 @@ for (const emptyA of [true, false]) {
 		setDnsCacheEntryForTest(name, null);
 	});
 }
+
+test("warm IPv6 receiver cache still queries live AAAA and refreshes the cache", async () => {
+	const name = "warm-aaaa.test.invalid";
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+	);
+	setDnsCacheEntryForTest(name, ["fd51::2"]);
+	const queries: string[] = [];
+	setDnsResolverFactoryForTest(() => ({
+		cancel() {},
+		resolve4(host, cb) {
+			queries.push(`A ${host}`);
+			queueMicrotask(() =>
+				host === "wellknown.belabox.net"
+					? cb(null, ["127.1.33.7"])
+					: cb(new Error("ENODATA"), []),
+			);
+		},
+		resolve6(host, cb) {
+			queries.push(`AAAA ${host}`);
+			queueMicrotask(() => cb(null, ["fd51::3"]));
+		},
+	}));
+	try {
+		expect(await resolveSrtla(name)).toBe(name);
+		expect(queries).toContain(`A ${name}`);
+		expect(queries).toContain(`AAAA ${name}`);
+		offlineDns();
+		expect((await dnsCacheResolve(name)).addrs).toEqual(["fd51::3"]);
+	} finally {
+		setDnsCacheEntryForTest(name, null);
+	}
+});
+
+test("IPv6 receiver source renumbering on a dual-stack link notifies the running bond", async () => {
+	const show = (ip: string, flags = "") =>
+		processIfconfigOutput(
+			"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+			parseIpAddrShow(
+				`2: wwan0: <UP>\n    inet 192.0.2.1/24 scope global\n    inet6 ${ip}/64 scope global ${flags}\n`,
+			),
+		);
+	show("fd51::1");
+	await resolveSrtla("fd51::2");
+	let changes = 0;
+	let sources: string[] = [];
+	const unsubscribe = onNetworkInterfaceSourcesChange(() => {
+		changes++;
+		sources = genSrtlaIpList();
+	});
+	try {
+		show("fd51::5");
+		expect(changes).toBe(1);
+		expect(sources).toEqual(["fd51::5"]);
+		show("fd51::5", "tentative");
+		expect(changes).toBe(2);
+		expect(sources).toEqual(["192.0.2.1"]);
+		show("fd51::5");
+		expect(changes).toBe(3);
+		expect(sources).toEqual(["fd51::5"]);
+		show("fd51::5");
+		expect(changes).toBe(3);
+	} finally {
+		unsubscribe();
+	}
+});

@@ -10,12 +10,14 @@ The pinned Rust sender supports IPv6 sources. A dual-stack link keeps its IPv4
 source for compatibility; an IPv6-only link uses IPv6. An AAAA-only receiver also
 selects IPv6 on dual-stack links. Receiver lookup asks the source's preferred
 family first, trying AAAA after an empty or failed A answer. A working A answer
-never waits for AAAA. Fresh hostnames are preserved so the sender can resolve a
+never waits for AAAA. A cached fallback after A failure still tries live AAAA
+and refreshes the cache before using a stale literal. Fresh hostnames are preserved so the sender can resolve a
 destination for each source family (including DNS64). Cached fallback prefers a usable IPv4 family, then
 IPv6, and selects randomly within that family. With no usable link, start reports
 that no network connection is available; a cache with no matching local family
 is refused. IPv6 churn on a link retaining IPv4 updates its address snapshot
-without triggering an interface topology change. An IPv4 literal is not
+without triggering an interface topology change, while notifying the running
+bond to refresh any IPv6 sources. An IPv4 literal is not
 converted to NAT64: use a DNS64 hostname or an IPv6 receiver on IPv6-only links.
 Older IPv4-only senders and receivers do not gain native IPv6 support.
 
@@ -38,7 +40,9 @@ conserva el nombre para que el emisor elija una dirección compatible, incluso c
 La caché selecciona al azar dentro de la familia compatible. Si no hay enlaces
 utilizables, el inicio indica que no hay conexiones de red disponibles. Los
 cambios de dirección IPv6 en un enlace que conserva IPv4 actualizan el inventario
-sin generar un cambio de topología.
+sin generar un cambio de topología y notifican al bond activo para actualizar
+sus fuentes IPv6. Una respuesta A de caché no impide consultar AAAA en vivo
+y actualizar la caché.
 
 El panel de conexiones compartidas indica: «Los dispositivos conectados al Wi-Fi
 del equipo todavía no pueden acceder a sitios IPv4 a través de este enlace».
