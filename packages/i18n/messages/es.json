@@ -2815,5 +2815,6 @@
 	"network.sharing.policy.failed": "No se pudo leer o actualizar la política. Recárgala para comprobar el ajuste actual.",
 	"network.sharing.policy.healthWeight": "Peso de salud (antes de la política)",
 	"network.sharing.policy.healthTitle": "Salud de los enlaces",
-	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos."
+	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos.",
+	"network.sharing.ipv6Only": "Los dispositivos conectados al Wi-Fi del equipo todavía no pueden acceder a sitios IPv4 a través de este enlace."
 }

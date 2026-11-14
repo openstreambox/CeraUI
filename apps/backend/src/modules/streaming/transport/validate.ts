@@ -39,6 +39,8 @@
  * the procedure does that resolution and hands the IP down here.
  */
 
+import { isIP } from "node:net";
+
 import { logger } from "../../../helpers/logger.ts";
 
 /** Hard upper bound on how long a single probe may run. */
@@ -64,6 +66,8 @@ export async function probeReachability(
 	port: number,
 	timeoutMs: number = PROBE_TIMEOUT_MS,
 ): Promise<ProbeResult> {
+	if (isIP(ip) === 0)
+		throw new TypeError("UDP reachability requires an IP literal");
 	return await new Promise<ProbeResult>((resolve) => {
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -81,19 +85,22 @@ export async function probeReachability(
 			resolve(result);
 		};
 
-		Bun.udpSocket({
-			connect: { hostname: ip, port },
-			socket: {
-				// Any inbound datagram from the connected peer proves reachability.
-				data(): void {
-					finish({ reachable: true });
-				},
-				// On a connected UDP socket an ICMP port-unreachable surfaces here.
-				error(): void {
-					finish({ reachable: false, reason: "refused" });
-				},
-			},
-		})
+		Promise.resolve()
+			.then(() =>
+				Bun.udpSocket({
+					connect: { hostname: ip, port },
+					socket: {
+						// Any inbound datagram from the connected peer proves reachability.
+						data(): void {
+							finish({ reachable: true });
+						},
+						// On a connected UDP socket an ICMP port-unreachable surfaces here.
+						error(): void {
+							finish({ reachable: false, reason: "refused" });
+						},
+					},
+				}),
+			)
 			.then((s) => {
 				if (settled) {
 					try {

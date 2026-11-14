@@ -20,6 +20,7 @@
 */
 
 import { Resolver } from "node:dns";
+import { isIP } from "node:net";
 
 import { loadCacheFile } from "../../helpers/config-loader.ts";
 import { type DnsCache, dnsCacheSchema } from "../../helpers/config-schemas.ts";
@@ -225,7 +226,10 @@ function normalizeResolveType(
 
 export async function dnsCacheResolve(name: string, rrtype_?: string) {
 	const rrtype = normalizeResolveType(rrtype_);
-	if (isIpv4Addr(name) && rrtype !== "aaaa") {
+	if (
+		(isIpv4Addr(name) && rrtype !== "aaaa") ||
+		(isIP(name) === 6 && rrtype !== "a")
+	) {
 		return { addrs: [name], fromCache: false };
 	}
 

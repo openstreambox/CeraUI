@@ -43,13 +43,15 @@ import { registerSrtlaBond } from "./link-telemetry.ts";
 
 export { isBondLinkMappable, setBondIdentityResolverForTest };
 
+let receiverIpv6Only = false;
+
 export async function resolveSrtla(addr: string) {
 	let srtlaAddr = addr;
 
 	let addrs: string[] | undefined;
 	let fromCache: boolean | undefined;
 	try {
-		const res = await dnsCacheResolve(addr, "a");
+		const res = await dnsCacheResolve(addr);
 		addrs = res.addrs;
 		fromCache = res.fromCache;
 	} catch (_err) {
@@ -57,9 +59,20 @@ export async function resolveSrtla(addr: string) {
 		throw `Failed to resolve SRTLA addr ${addr}`;
 	}
 
+	receiverIpv6Only = addrs.length > 0 && addrs.every((ip) => ip.includes(":"));
+
 	if (fromCache) {
-		const cachedAddr = addrs[Math.floor(Math.random() * addrs.length)];
-		if (cachedAddr) srtlaAddr = cachedAddr;
+		// Prefer IPv4 for compatibility when available; on a v6-only host keep
+		// DNS64/native AAAA answers rather than pinning an unusable A record.
+		const interfaces = Object.entries(getNetworkInterfaces())
+			.filter(([name, entry]) => isBondCandidate(name, entry))
+			.map(([, entry]) => entry);
+		const hasV4 = interfaces.some((entry) => entry.ip);
+		const hasV6 = interfaces.some((entry) => entry.ipv6);
+		const cachedAddr = addrs.find((ip) => (ip.includes(":") ? hasV6 : hasV4));
+		if (!cachedAddr) throw `No compatible cached SRTLA address for ${addr}`;
+		srtlaAddr = cachedAddr;
+		receiverIpv6Only = cachedAddr.includes(":");
 		queueUpdateGw();
 	} else {
 		/* At the moment we don't check that the SRTLA connection was established before
@@ -94,9 +107,12 @@ function collectBondEntries(
 	const networkInterfaces = getNetworkInterfaces();
 	for (const name in networkInterfaces) {
 		const networkInterface = networkInterfaces[name];
-		if (!networkInterface?.ip) continue;
+		const ip = receiverIpv6Only
+			? (networkInterface?.ipv6 ?? networkInterface?.ip)
+			: (networkInterface?.ip ?? networkInterface?.ipv6);
+		if (!networkInterface || !ip) continue;
 		if (!accept(name, networkInterface)) continue;
-		const entry = describeBondEntry(name, networkInterface.ip);
+		const entry = describeBondEntry(name, ip);
 		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
 			continue;
 		entries.push(entry);

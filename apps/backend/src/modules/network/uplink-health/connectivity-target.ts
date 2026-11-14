@@ -77,11 +77,29 @@ export const defaultConnectivityTargetDeps: ConnectivityTargetDeps = {
 };
 
 /** Resolves the connectivity-check address, or `undefined` when it cannot. */
-export type ConnectivityTargetResolver = () => Promise<string | undefined>;
+export type ConnectivityTargetResolver = (
+	family?: 4 | 6,
+) => Promise<string | undefined>;
 
 export function createConnectivityTargetResolver(
 	deps: ConnectivityTargetDeps = defaultConnectivityTargetDeps,
 	domain: string = CONNECTIVITY_CHECK_DOMAIN,
+): ConnectivityTargetResolver {
+	const resolvers = new Map<number | undefined, ConnectivityTargetResolver>();
+	return (family) => {
+		let resolver = resolvers.get(family);
+		if (!resolver) {
+			resolver = createFamilyTargetResolver(deps, domain, family);
+			resolvers.set(family, resolver);
+		}
+		return resolver();
+	};
+}
+
+function createFamilyTargetResolver(
+	deps: ConnectivityTargetDeps,
+	domain: string,
+	family?: 4 | 6,
 ): ConnectivityTargetResolver {
 	let cachedAddr: string | undefined;
 	let cachedAt = 0;
@@ -92,7 +110,10 @@ export function createConnectivityTargetResolver(
 			const { addrs } = await deps.resolve(domain);
 			// Default DNS answers are A-first, so dual-stack hosts prefer the IPv4
 			// target while an IPv6-only host still reaches this fallback slot.
-			const addr = addrs[0];
+			const addr =
+				family === undefined
+					? addrs[0]
+					: addrs.find((ip) => ip.includes(":") === (family === 6));
 			if (addr === undefined) throw new Error(`no address for ${domain}`);
 			cachedAddr = addr;
 			cachedAt = deps.now();
