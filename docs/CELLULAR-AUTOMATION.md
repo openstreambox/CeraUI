@@ -46,10 +46,18 @@ autoconnect choice (or enable a newly created manual profile). Interrupted
 firmware preparation is held for explicit recovery rather than claiming an
 unverified restoration. This has host/fixture evidence only.
 
-This is a partial implementation. It does not establish
-an RNDIS owner, CLAT,
-traffic health or carrier/hardware qualification. Existing or synthetic test
-results do not establish those capabilities. Verizon remains unqualified.
+The retained internal-call adapter distinguishes registration from address grants
+and preserves the full understood PDP-context baseline. Its reversible host
+handoff suppresses RA defaults and transfers the physical network device from
+NetworkManager before modem inhibition. Link-up follows stable registration and
+precedes the internal call. The real NetworkManager fixture verifies its managed
+flag and RA/link restoration. Failed cleanup retains ownership. Production
+activation and startup recovery integration remain incomplete; this adapter does
+not enable RNDIS by itself.
+
+This is a partial implementation with host/fixture evidence. It does not
+establish carrier/hardware qualification. Existing or synthetic test results
+do not establish those capabilities. Verizon remains unqualified.
 
 ## Español (Latinoamérica)
 
@@ -100,6 +108,15 @@ o la activa para un perfil manual nuevo. Una preparación de firmware interrumpi
 requiere recuperación explícita; no se supone que se haya restaurado. Estos
 cambios solo tienen pruebas en el host y en entornos de prueba.
 
-La implementación es parcial. Todavía no incluye control de RNDIS, CLAT ni
-comprobaciones del tráfico. Tampoco acredita compatibilidad real con un operador
-o hardware. Verizon sigue sin calificar.
+El adaptador de llamada interna distingue el registro de las direcciones
+asignadas y conserva el contexto PDP entendido completo. La transferencia
+reversible del host suprime las rutas predeterminadas de RA y retira el control
+del dispositivo físico de NetworkManager antes de inhibir el módem. Después del
+registro estable, activa la interfaz antes de la llamada interna. Una prueba con
+NetworkManager real verifica su control y la restauración de RA y de la interfaz.
+Una limpieza fallida conserva la propiedad. La activación y la recuperación al
+iniciar siguen incompletas; este adaptador no activa RNDIS por sí solo.
+
+La implementación es parcial y solo tiene pruebas en el host y en entornos de
+prueba. No acredita compatibilidad real con un operador o hardware. Verizon
+sigue sin calificar.

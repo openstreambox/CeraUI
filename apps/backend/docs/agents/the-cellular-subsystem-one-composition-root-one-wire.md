@@ -476,3 +476,40 @@ and file/parent fsync. The required real-NM fixture includes disarmed creation a
 its exact inverse. Unit replay covers QMAP unit/generation behavior, EPS spent
 attempts, raw-IP ordering and control-session revocation. Hardware qualification,
 internal-call ownership, CLAT and per-path traffic health are separate gates.
+
+
+### Retained internal-call handoff (partial)
+
+`internal-call-owner.ts` retains acknowledged inhibition independently of MM's
+absent object roster. Four consecutive registration reads precede a call; there
+is no host registration setter. It honors roaming, preserves foreign active
+contexts and records the complete understood context baseline before definition
+or activation. Unqualified subscriptions never enter this adapter.
+
+`cellular-host-handoff.ts` captures per-link RA, physical NM device and link-up
+baselines durably. RA/default suppression and NM handoff precede inhibition;
+kernel-index link-up follows stable registration and precedes activation. The
+system-bus session originates at the existing modem facade, addresses the unique
+NM owner, and refuses another device or a replaced service. A disconnected
+physical Ethernet object can have an empty IP interface; its physical Interface,
+UDI and object identity remain required. The actual NM namespace fixture proves
+managed on/off/on and RA/link restoration without creating a default route.
+
+`durable-inverse.ts` records the inverse cursor before each effect and retains
+lost replies or foreign conflicts. Cleanup withdraws publication, commits its
+intent, fences packets and waits for actual consumer release before reversing
+exact effects. The caller holds the private kernel state lease and existing
+modem lifecycle admission. Host guard cleanup follows modem restoration; MM is
+released last. A partial handoff failure retains inhibition until host cleanup
+can finish. Missing/replaced physical devices remain unresolved until recovery
+can prove the old resources gone; a reused name is never restoration authority.
+
+Read-only native bearer observation is separate from firmware write admission.
+It uses the actual bearer's DNS/family/gateway and rechecks device, SIM, subscriber,
+USB generation and ifindex across observation. An unlisted firmware does not gain
+AT commands from this read. Scope/zone suffixes and partial dotted addresses
+cannot redirect an internal grant to another device.
+
+These owners are not yet composed with production activation, a data-plane host
+adapter or startup recovery. CLAT, health and physical qualification remain
+separate gates. No hardware/carrier pass follows from this fixture evidence.
