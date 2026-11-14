@@ -4,6 +4,7 @@ import path from "node:path";
 interface Dependencies {
 	directory: string;
 	available: () => boolean;
+	running: () => boolean;
 	idle: () => boolean;
 	start: () => void;
 	health?: (degraded: boolean) => void;
@@ -126,16 +127,17 @@ export class MoblinkOwner {
 					return { success: true };
 				}
 				this.sweep();
+				const wasRunning = this.deps.running();
 				await this.deps.stop();
 				if (!this.deps.idle()) {
-					if (this.deps.available() && this.status().configured) {
+					if (wasRunning) {
 						try {
-							this.deps.start();
+							if (this.deps.available() && this.status().configured)
+								this.deps.start();
+							else this.deps.health?.(true);
 						} catch {
 							this.deps.health?.(true);
 						}
-					} else {
-						this.deps.health?.(true);
 					}
 					return { success: false, error: "busy" as const };
 				}

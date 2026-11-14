@@ -38,6 +38,7 @@ const relay = createRelayRunner(
 export const moblinkOwner = new MoblinkOwner({
 	directory: "/data/moblink",
 	available,
+	running: relay.running,
 	idle: () => getCarryingLiveness() === "idle" && isStreamConfirmedIdle(),
 	health,
 	start: relay.start,

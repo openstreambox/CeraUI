@@ -1,6 +1,6 @@
-import { runtimeAllowsDevelopment } from "./runtime-mode.ts";
 import { moblinkOwner } from "../modules/moblink/runtime";
 import { createMoblinkProcedures } from "./procedures/moblink.procedure";
+import { runtimeAllowsDevelopment } from "./runtime-mode.ts";
 /**
  * RPC Router - Main router combining all procedures
  */

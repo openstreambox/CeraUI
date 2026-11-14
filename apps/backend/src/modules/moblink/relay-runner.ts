@@ -17,6 +17,7 @@ export function createRelayRunner(
 	let handle: SupervisedHandle | undefined;
 	let stopping: SupervisedHandle | undefined;
 	return {
+		running: () => handle !== undefined,
 		start() {
 			if (handle) throw new Error("Relay already owned");
 			const child = spawn(

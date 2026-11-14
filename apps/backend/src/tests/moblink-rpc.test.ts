@@ -18,6 +18,7 @@ function fixture(authenticated = true, senderId?: string) {
 	const dir = mkdtempSync(join(tmpdir(), "credential-rpc-"));
 	dirs.push(dir);
 	const owner = new MoblinkOwner({
+		running: () => true,
 		directory: join(dir, "private"),
 		available: () => true,
 		idle: () => true,

@@ -14,7 +14,9 @@ test("relay consumes private password file with discarded output and owns its ch
 		calls.push({ args, options });
 		return child;
 	});
+	expect(runner.running()).toBe(false);
 	runner.start();
+	expect(runner.running()).toBe(true);
 	expect(calls).toEqual([
 		{
 			args: [
@@ -29,6 +31,7 @@ test("relay consumes private password file with discarded output and owns its ch
 	]);
 	expect(JSON.stringify(calls)).not.toContain("not-a-shell-$(command)");
 	await runner.stop();
+	expect(runner.running()).toBe(false);
 	expect(signals).toEqual(["SIGTERM"]);
 });
 
@@ -50,12 +53,15 @@ test("unexpected exit marks health, intentional stop does not", async () => {
 			() => child,
 			(bad: boolean) => health.push(bad),
 		);
+		expect(runner.running()).toBe(false);
 		runner.start();
+		expect(runner.running()).toBe(true);
 		if (intentional) await runner.stop();
 		else {
 			exit(1);
 			await new Promise((r) => setTimeout(r, 0));
 		}
+		expect(runner.running()).toBe(false);
 		expect(health.at(-1)).toBe(!intentional);
 	}
 });

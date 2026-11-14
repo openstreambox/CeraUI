@@ -29,6 +29,7 @@ function fixture() {
 	let available = true;
 	const calls: string[] = [];
 	const owner = new MoblinkOwner({
+		running: () => true,
 		directory: join(dir, "private"),
 		available: () => available,
 		idle: () => idle,
@@ -122,6 +123,7 @@ test("empty file marks health without reading the secret into JavaScript", async
 	writeFileSync(join(f.dir, "empty/credential"), "", { mode: 0o600 });
 	const health: boolean[] = [];
 	const owner = new MoblinkOwner({
+		running: () => true,
 		directory: join(f.dir, "empty"),
 		available: () => true,
 		idle: () => true,
@@ -144,6 +146,7 @@ test("relay errors never escape through replies, status or logs", async () => {
 	const f = fixture();
 	const secret = "sensitive-sentinel";
 	const owner = new MoblinkOwner({
+		running: () => true,
 		directory: join(f.dir, "failure"),
 		available: () => true,
 		idle: () => true,
@@ -179,6 +182,7 @@ test("reboot restoration feeds only the relay, without rewriting the secret", as
 	await f.owner.set("retained-phone-password");
 	const received: string[] = [];
 	const rebooted = new MoblinkOwner({
+		running: () => true,
 		directory: join(f.dir, "private"),
 		available: () => true,
 		idle: () => false,
@@ -223,6 +227,7 @@ test.each(["set", "clear"] as const)(
 			calls: string[] = [];
 		let idle = true;
 		const owner = new MoblinkOwner({
+			running: () => true,
 			directory: join(f.dir, "private"),
 			available: () => true,
 			idle: () => idle,
@@ -251,6 +256,7 @@ test("failed restart after a stream race marks health", async () => {
 	const health: boolean[] = [];
 	let idle = true;
 	const owner = new MoblinkOwner({
+		running: () => true,
 		directory: join(f.dir, "private"),
 		available: () => true,
 		idle: () => idle,
@@ -271,6 +277,7 @@ test.each([false, true])(
 		const f = fixture();
 		const health: boolean[] = [];
 		const owner = new MoblinkOwner({
+			running: () => true,
 			directory: join(f.dir, "private"),
 			available: () => available,
 			idle: () => true,
@@ -291,6 +298,7 @@ test("startup flags a dangling credential symlink but not an absent credential",
 	mkdirSync(directory, { mode: 0o700 });
 	const health: boolean[] = [];
 	const owner = new MoblinkOwner({
+		running: () => true,
 		directory,
 		available: () => true,
 		idle: () => true,
@@ -307,3 +315,47 @@ test("startup flags a dangling credential symlink but not an absent credential",
 	expect(health).toEqual([true]);
 	expect(existsSync(join(f.dir, "missing-target"))).toBe(false);
 });
+
+test.each([
+	["set", false, true],
+	["clear", false, true],
+	["clear", false, false],
+	["set", true, true],
+	["clear", true, true],
+	["clear", true, false],
+] as const)(
+	"busy %s with configured=%s and available=%s does not invent a relay fault",
+	async (action, configured, available) => {
+		const f = fixture();
+		const directory = join(f.dir, "private");
+		if (configured) await f.owner.set("retained");
+		else mkdirSync(directory, { mode: 0o700 });
+		const health: boolean[] = [];
+		const calls: string[] = [];
+		let idle = true;
+		const owner = new MoblinkOwner({
+			directory,
+			available: () => available,
+			running: () => false,
+			idle: () => idle,
+			start: () => {
+				calls.push("start");
+			},
+			stop: async () => {
+				calls.push("stop");
+				idle = false;
+			},
+			health: (bad) => health.push(bad),
+		});
+		expect(
+			await (action === "set" ? owner.set("replacement") : owner.clear()),
+		).toEqual({ success: false, error: "busy" });
+		expect(calls).toEqual(["stop"]);
+		expect(health).toEqual([]);
+		expect(owner.status().configured).toBe(configured);
+		if (configured)
+			expect(readFileSync(join(directory, "credential"), "utf8")).toBe(
+				"retained",
+			);
+	},
+);

@@ -65,3 +65,7 @@ a successful save is still not authentication evidence.
 One credential serves all local discovered Moblin streamers that share it.
 There is no phone identity binding; use a unique password for isolation. The
 box takes Moblin's existing password, preserving the phone's other relays.
+
+A stream starting during save or clear leaves the credential unchanged. Only a relay that was running before the stop is restarted; a stopped or unavailable relay does not gain a Box health warning from that refusal. A failed attempt to resume a previously running relay still reports the fault.
+
+Si una transmisión empieza durante el guardado o borrado, la contraseña no cambia. Solo se reinicia el retransmisor si estaba funcionando antes de detenerlo. Un retransmisor detenido o no disponible no genera un aviso de estado por ese rechazo; si falla la reanudación de uno que sí estaba funcionando, el aviso permanece.
