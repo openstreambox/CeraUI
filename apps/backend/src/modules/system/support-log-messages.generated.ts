@@ -259,6 +259,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["SIM PIN2 verification rejected for modem ", " (re-checking card state)"],
 	["SIM PUK unlock rejected for modem ", " (re-checking lock state)"],
 	["SIM: stored PIN to secrets file for boot auto-unlock"],
+	["SRT forwarding credential regenerated"],
 	["SRT forwarding disabled: configuration or credential unavailable"],
 	["SRT forwarding disabled: invalid configuration"],
 	["SRT forwarding listener retrying"],

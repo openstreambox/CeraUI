@@ -20,4 +20,26 @@ printf '{}' > "$work/root/data/ceralive/srt-forward.json"
 CERALIVE_FORWARD_MIGRATION_TEST_ROOT="$work/root" bash "$work/preinst" upgrade
 test ! -e "$snapshot"
 grep -q -- '--before-install preinst' "$repo/scripts/build/build-debian-package.sh"
+# No forwarding configuration: do not even create a migration directory.
+rm -rf "$work/root/data"
+CERALIVE_FORWARD_MIGRATION_TEST_ROOT="$work/root" bash "$work/preinst" upgrade
+test ! -e "$work/root/data"
+# A stale snapshot is removed even on a box without forwarding.
+mkdir -p "$work/root/data/ceralive"
+printf 'stale credential' > "$snapshot"
+printf '{}' > "$work/root/data/ceralive/srt-forward.json"
+CERALIVE_FORWARD_MIGRATION_TEST_ROOT="$work/root" bash "$work/preinst" upgrade
+test ! -e "$snapshot"
+rm "$work/root/data/ceralive/srt-forward.json"
+printf '%s' '{"srt_forward":{"host":"127.0.0.1"}}' > "$work/root/opt/ceralive/setup.json"
+# Every snapshot I/O failure must be non-fatal, and temporary bytes cleaned.
+mkdir -p "$work/bin"
+for operation in mkdir mktemp cat sync mv; do
+    printf '#!/bin/bash\nexit 1\n' > "$work/bin/$operation"
+    chmod +x "$work/bin/$operation"
+    PATH="$work/bin:$PATH" CERALIVE_FORWARD_MIGRATION_TEST_ROOT="$work/root" bash "$work/preinst" upgrade
+    test -z "$(find "$work/root/data/ceralive" -name '.srt-forward-legacy-setup.*' -print)"
+    rm "$work/bin/$operation"
+    rm -f "$snapshot"
+done
 printf '%s\n' 'forward migration package contract passed'
