@@ -87,6 +87,8 @@ marcador local «Power sample».
 
 All power vocabulary has parameterized keys in all ten catalogs. The status row
 and persistent notices resolve those keys through the existing facade; wire
-strings retain English fallback compatibility. English and neutral LATAM Spanish
-copy are supplied; the other eight catalogs initially use English fallback text
-pending locale review. No new namespace is loaded eagerly.
+strings retain English fallback compatibility. All ten catalogs translate the
+power copy. Each catalog keeps one term per part (bank, reserve pack, power
+board, device), keeps warm, hot and very hot as distinct levels, and words a
+resting bank as taken out of use for a while, not as disabled. No new namespace
+is loaded eagerly.
