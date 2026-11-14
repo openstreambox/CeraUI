@@ -1,3 +1,8 @@
+import {
+	broadcastRadioHealth,
+	buildModemsWireMessage,
+} from "./modem-status.ts";
+import { refreshRadioHealth } from "./radio-health-runtime.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -346,6 +351,13 @@ export async function runModemStatusPoll(): Promise<void> {
 		for (const id of configured) triggerGsmConnectionsReset(id);
 		broadcastModems(Object.fromEntries(configured.map((id) => [id, true])));
 	}
+	// Diagnostic I/O must not hold the lock needed by hotplug and configuration.
+	try {
+		await refreshRadioHealth(buildModemsWireMessage());
+	} catch {
+		logger.warn("Radio diagnostics unavailable for this poll");
+	}
+	broadcastRadioHealth();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

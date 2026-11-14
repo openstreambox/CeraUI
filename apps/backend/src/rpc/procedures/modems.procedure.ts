@@ -1,3 +1,5 @@
+import { radioHealthListSchema } from "@ceraui/rpc/schemas";
+import { getRadioHealth } from "../../modules/modems/radio-health-runtime.ts";
 /**
  * Modems Procedures
  * Wraps existing modem logic from modules/modems/
@@ -159,6 +161,10 @@ export const modemProcedure = authedProcedure.use(cellularReadyMiddleware);
 /**
  * Get all modems procedure
  */
+export const getRadioHealthProcedure = modemProcedure
+	.output(radioHealthListSchema)
+	.handler(() => radioHealthListSchema.parse(getRadioHealth()));
+
 export const getAllModemsProcedure = modemProcedure
 	.output(modemListSchema)
 	.handler(() => {
