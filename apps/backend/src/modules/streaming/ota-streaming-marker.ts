@@ -25,8 +25,8 @@
  */
 
 import fs from "node:fs";
-
 import { logger } from "../../helpers/logger.ts";
+import { setShutdownProtection } from "../system/shutdown-protection.ts";
 
 export function otaStreamingMarkerPath(): string {
 	return process.env.CERALIVE_STREAMING_MARKER ?? "/run/ceralive/streaming";
@@ -46,17 +46,26 @@ export function initialOtaStreamLiveness(): "idle" | "unknown" {
 
 let encoderProtected = initialOtaStreamLiveness() !== "idle";
 let carryingProtected = false;
+setShutdownProtection("encoder", encoderProtected);
 
 export function setCarryingOtaProtection(protectedNow: boolean): boolean {
 	carryingProtected = protectedNow;
-	if (protectedNow) return writeMarker();
-	return encoderProtected || removeMarker();
+	if (protectedNow) {
+		const shutdownProtected = setShutdownProtection("carrying", true);
+		const written = writeMarker();
+		return shutdownProtected && written;
+	}
+	const cleared = encoderProtected || removeMarker();
+	setShutdownProtection("carrying", !cleared);
+	return cleared;
 }
 
 /** A failed write keeps protection unconfirmed and must be retried by the owner. */
 export function setOtaStreamingMarker(): boolean {
 	encoderProtected = true;
-	return writeMarker();
+	const shutdownProtected = setShutdownProtection("encoder", true);
+	const written = writeMarker();
+	return shutdownProtected && written;
 }
 
 function writeMarker(): boolean {
@@ -74,7 +83,9 @@ function writeMarker(): boolean {
  * retain this OTA guard. Removing an already-absent file is a no-op. */
 export function clearOtaStreamingMarker(): boolean {
 	encoderProtected = false;
-	return carryingProtected || removeMarker();
+	const cleared = carryingProtected || removeMarker();
+	setShutdownProtection("encoder", !cleared);
+	return cleared;
 }
 
 function removeMarker(): boolean {

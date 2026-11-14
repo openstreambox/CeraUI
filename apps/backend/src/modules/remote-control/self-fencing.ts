@@ -42,6 +42,7 @@ import {
 	type DisruptiveReservationOutcome,
 	isPositiveDisruptiveFailure,
 	PowerSubmissionError,
+	plannedPowerFailureMessage,
 	resetDisruptiveActionReservationForTest,
 } from "../system/disruptive-action-reservation.ts";
 import { sendFrame } from "./channel.ts";
@@ -194,7 +195,10 @@ function defaultSelfFencingOps(): SelfFencingOps {
 		"network.reconfig": configSnapshotOp(),
 		"modem.reconfig": configSnapshotOp(),
 		"device.remoteKeyChange": configSnapshotOp(),
-		"system.reboot": spawnOp(["reboot"]),
+		"system.reboot": spawnOp(
+			["systemctl", "--check-inhibitors=yes", "reboot"],
+			true,
+		),
 		"device.factoryReset": spawnOp(["ceralive-factory-reset"]),
 	};
 }
@@ -236,13 +240,17 @@ function configSnapshotOp(): RevertibleOp {
  * A non-revertible op whose execution is a single privileged spawn (e.g. reboot).
  * A nonzero exit means nothing was done, so it throws into the negative result.
  */
-function spawnOp(argv: string[]): NonRevertibleOp {
+function spawnOp(argv: string[], plannedPower = false): NonRevertibleOp {
 	return {
 		revertible: false,
 		execute: async () => {
 			const { exitCode } = Bun.spawnSync(argv);
 			if (exitCode !== 0)
-				throw new PowerSubmissionError(argv[0] ?? "power", exitCode);
+				throw new PowerSubmissionError(
+					argv[0] ?? "power",
+					exitCode,
+					plannedPower ? plannedPowerFailureMessage(exitCode) : undefined,
+				);
 		},
 	};
 }

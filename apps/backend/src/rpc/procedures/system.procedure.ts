@@ -42,6 +42,7 @@ import { setAutostart } from "../../modules/streaming/streamloop.ts";
 import { DisruptiveActionRefusedError } from "../../modules/system/disruptive-action-error.ts";
 import {
 	PowerSubmissionError,
+	plannedPowerFailureMessage,
 	resetDisruptiveActionReservationForTest,
 } from "../../modules/system/disruptive-action-reservation.ts";
 import {
@@ -163,15 +164,23 @@ export const getSyslogProcedure = authedProcedure
 	});
 
 // Host-power runner DI seam (mirrors setKioskDeps): the default issues the real
-// Bun.spawnSync([command]) so the production path is unchanged; tests inject a
+// Explicit inhibitor checks also apply to root and non-interactive callers; tests inject a
 // spy to assert the spawn without powering off the host.
 type PowerCommand = "poweroff" | "reboot";
 type PowerCommandRunner = (command: PowerCommand) => void;
 
 const defaultPowerCommandRunner: PowerCommandRunner = (command) => {
-	const result = Bun.spawnSync([command]);
+	const result = Bun.spawnSync([
+		"systemctl",
+		"--check-inhibitors=yes",
+		command,
+	]);
 	if (result.exitCode !== 0)
-		throw new PowerSubmissionError(command, result.exitCode);
+		throw new PowerSubmissionError(
+			command,
+			result.exitCode,
+			plannedPowerFailureMessage(result.exitCode),
+		);
 };
 
 let powerCommandRunner: PowerCommandRunner = defaultPowerCommandRunner;

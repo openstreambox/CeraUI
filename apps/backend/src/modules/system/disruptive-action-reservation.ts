@@ -17,13 +17,23 @@ export class DisruptiveActionRefusal extends Error {
 	}
 }
 
+export const PLANNED_POWER_REFUSAL =
+	"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle.";
+
+export function plannedPowerFailureMessage(exitCode: number | null): string {
+	return exitCode !== null && exitCode > 0 && exitCode < 128
+		? PLANNED_POWER_REFUSAL
+		: "The power request could not be confirmed. Please check the box before trying again.";
+}
+
 export class PowerSubmissionError extends Error {
 	override readonly name = "PowerSubmissionError";
 	constructor(
 		readonly command: string,
 		readonly exitCode: number | null,
+		message?: string,
 	) {
-		super(`${command} exited with status ${String(exitCode)}`);
+		super(message ?? `${command} exited with status ${String(exitCode)}`);
 	}
 }
 

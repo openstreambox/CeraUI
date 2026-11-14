@@ -2,6 +2,7 @@ import {
 	initCarrying,
 	tickCarrying,
 } from "./modules/system/carrying-runtime.ts";
+import { initShutdownProtection } from "./modules/system/shutdown-protection.ts";
 /*
 	CeraUI - web UI for the CeraLive project
 	Copyright (C) 2024-2025 CeraLive project
@@ -193,7 +194,10 @@ import { stopLegacyTokenMigration } from "./rpc/procedures/auth.procedure.ts";
 process.env.LANG = "C.UTF-8";
 process.env.LANGUAGE = "C";
 
-if (!isDevelopment()) initCarrying();
+if (!isDevelopment()) {
+	initCarrying();
+	initShutdownProtection();
+}
 
 /* Make sure apt-get doesn't expect any interactive user input */
 process.env.DEBIAN_FRONTEND = "noninteractive";

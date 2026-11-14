@@ -187,6 +187,8 @@ export type StreamSessionOrchestratorDeps = {
 	 * singleton and proven through the real `streaming.start` procedure instead.
 	 */
 	readonly admitLifecycle?: () => LifecycleAdmission;
+	/** Confirm the shutdown block before any media launch effect. */
+	readonly ensureShutdownProtection?: () => boolean;
 	/**
 	 * The modem-mutation replay barrier, wired at the production singleton for
 	 * the same process-wide-state reason as `admitLifecycle`.
@@ -483,6 +485,18 @@ export function createStreamSessionOrchestrator(
 					result: "failed",
 					attemptId,
 					failure: typedUpdateInProgressFailure(attemptId, updateAdmission),
+				};
+			}
+			if (deps.ensureShutdownProtection?.() === false) {
+				return {
+					result: "failed",
+					attemptId,
+					failure: typedStartFailure(
+						attemptId,
+						"params",
+						"start_invalid",
+						"Shutdown protection is unavailable. Please try again.",
+					),
 				};
 			}
 			attempt.launchAdmitted = true;

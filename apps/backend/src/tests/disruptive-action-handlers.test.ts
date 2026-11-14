@@ -246,7 +246,8 @@ test("remote confirmed reboot reports a nonzero host exit honestly", async () =>
 		ran: true,
 		early: 0,
 		ok: false,
-		error: "reboot exited with status 1",
+		error:
+			"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle.",
 	});
 });
 test("remote confirmed reboot proceeds on confirmed idle", async () => {

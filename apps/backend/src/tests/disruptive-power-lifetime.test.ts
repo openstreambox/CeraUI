@@ -165,8 +165,14 @@ for (const [command, procedure] of [
 			// Then failed submission is not success or a permanent exclusion.
 			expect(result).toEqual({
 				success: false,
-				error: `${command} exited with status 1`,
+				error:
+					"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle.",
 			});
+			expect(spawn).toHaveBeenCalledWith([
+				"systemctl",
+				"--check-inhibitors=yes",
+				command,
+			]);
 			expect(getDisruptiveActionDecision()).toEqual({ allowed: true });
 		} finally {
 			spawn.mockRestore();
