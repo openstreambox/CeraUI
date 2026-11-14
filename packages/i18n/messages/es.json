@@ -1755,10 +1755,10 @@
 	"network.wifiMode.stationHint": "Se conecta a una red Wi-Fi. Esta radio puede formar parte del enlace agregado.",
 	"network.wifiMode.hotspotHint": "Solo emite un punto de acceso. Esta radio no aporta enlace ascendente Wi-Fi.",
 	"network.wifiMode.hybridHint": "Permanece conectado al Wi-Fi mientras emite un punto de acceso.",
-  "network.wifiDegraded.unavailable": "El adaptador Wi-Fi no está disponible temporalmente.",
-  "network.wifiDegraded.operational-mac-missing": "El adaptador Wi-Fi aún no ha informado su dirección de hardware actual.",
-  "network.wifiDegraded.permanent-mac-unresolved": "No se pudo confirmar la identidad de hardware estable del adaptador Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} no está disponible: {reason}",
+	"network.wifiDegraded.unavailable": "El adaptador Wi-Fi no está disponible temporalmente.",
+	"network.wifiDegraded.operational-mac-missing": "El adaptador Wi-Fi aún no ha informado su dirección de hardware actual.",
+	"network.wifiDegraded.permanent-mac-unresolved": "No se pudo confirmar la identidad de hardware estable del adaptador Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} no está disponible: {reason}",
 	"network.wifiMode.pending": "Cambiando a {mode}…",
 	"network.wifiMode.reason.unsupported": "Esta radio no puede alojar un punto de acceso.",
 	"network.wifiMode.reason.capabilityAbsent": "El controlador de esta radio no puede usar Wi-Fi y un punto de acceso a la vez.",
@@ -2841,5 +2841,11 @@
 	"live.heat.modemUnavailable": "La temperatura del módem no está disponible en este equipo. Los ajustes por calor usan la temperatura del SoC.",
 	"network.cellular.heatResting": "En reposo para reducir el calor. Vuelve solo al enlace combinado; Mantener calidad lo trae de vuelta ahora.",
 	"live.heat.supplyUnproven": "El corte por calor de la placa de alimentación está en pausa porque no puede confirmar el suministro eléctrico.",
-	"live.heat.packJump": "La temperatura de la batería de reserva subió de golpe. El corte por calor espera hasta un minuto para confirmarla."
+	"live.heat.packJump": "La temperatura de la batería de reserva subió de golpe. El corte por calor espera hasta un minuto para confirmarla.",
+	"hud.healthExplainOwnStreamIdle": "La transmisión propia de la caja está en reposo. El tráfico de los clientes puede seguir en vivo.",
+	"notifications.clientCarrying": "La caja transporta tráfico de clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
+	"notifications.clientCarryingUnknown": "La caja está comprobando la actividad de los clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
+	"general.updateReasonClientTraffic": "Hay una transmisión activa o se está comprobando su estado. Detén las transmisiones de los dispositivos conectados y de la caja antes de instalar una actualización.",
+	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso.",
+	"notifications.linkBoxHeatWaiting": "La caja está caliente. Los enlaces del teléfono siguen disponibles mientras se comprueba la capacidad. Dale ventilación."
 }

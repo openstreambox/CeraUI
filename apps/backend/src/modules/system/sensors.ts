@@ -16,7 +16,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* Hardware monitoring */
 import { logger } from "../../helpers/logger.ts";
 import { argMatch, run, SERVICE_RE } from "../../helpers/run.ts";
 import { ACTIVE_TO } from "../../helpers/shared.ts";
@@ -40,6 +39,8 @@ import {
 } from "../modems/temperature.ts";
 import { cerastreamBackend } from "../streaming/cerastream-backend.ts";
 import { parseThermalZone } from "../streaming/heat-ladder.ts";
+/* Hardware monitoring */
+import { updateLinkBoxHeat } from "../streaming/heat-link-box-runtime.ts";
 import { getSourcesMessage } from "../streaming/sources.ts";
 import {
 	notificationBroadcast,
@@ -349,7 +350,14 @@ export function initHardwareMonitoring() {
 				modemTemperatureReader.sample(targets, now),
 			);
 			const heat = cerastreamBackend.getHeat();
-			updateHeatWifi(heat.stage, !heat.unknown);
+			if (
+				!updateLinkBoxHeat(
+					thermalC["SoC temperature"] ?? null,
+					now,
+					cerastreamBackend.wantsHeatInputs(),
+				)
+			)
+				updateHeatWifi(heat.stage, !heat.unknown);
 			broadcastMsg("heat", heat);
 
 			const data = { ...sensors };

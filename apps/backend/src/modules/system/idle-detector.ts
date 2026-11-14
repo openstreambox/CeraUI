@@ -1,6 +1,7 @@
 import type { UpdateSettings } from "@ceraui/rpc/schemas";
 
 export type IdleBlocker =
+	| "carrying"
 	| "stream"
 	| "preview"
 	| "remote"
@@ -29,18 +30,19 @@ const ACTIVITY_KEYS = [
 
 export function evaluateIdle(input: {
 	readonly now: number;
-	readonly lastActivity: IdleActivity;
+	readonly lastActivity: IdleActivity & { readonly carrying?: number | null };
 	readonly schedule: UpdateSettings["schedule"];
 	readonly idleMinutes: number;
 }): IdleEvaluation {
 	const { now, lastActivity, schedule, idleMinutes } = input;
-	const unprovenActivity = ACTIVITY_KEYS.some((key) => {
+	const keys = [...ACTIVITY_KEYS, "carrying"] as const;
+	const unprovenActivity = keys.some((key) => {
 		const at = lastActivity[key];
-		return at !== null && (!Number.isFinite(at) || at > now);
+		return at != null && (!Number.isFinite(at) || at > now);
 	});
-	const observations = ACTIVITY_KEYS.flatMap((key) => {
+	const observations = keys.flatMap((key) => {
 		const at = lastActivity[key];
-		return at !== null && Number.isFinite(at) && at <= now ? [{ key, at }] : [];
+		return at != null && Number.isFinite(at) && at <= now ? [{ key, at }] : [];
 	});
 	const since =
 		observations.length > 0

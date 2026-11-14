@@ -1752,10 +1752,10 @@
 	"network.wifiMode.stationHint": "Verbindet sich mit einem WLAN. Dieses Funkmodul kann Teil des Bündels sein.",
 	"network.wifiMode.hotspotHint": "Sendet nur einen Zugangspunkt. Dieses Funkmodul liefert keine WLAN-Uplink-Verbindung.",
 	"network.wifiMode.hybridHint": "Bleibt im WLAN und sendet gleichzeitig einen Zugangspunkt.",
-  "network.wifiDegraded.unavailable": "Der WLAN-Adapter ist vorübergehend nicht verfügbar.",
-  "network.wifiDegraded.operational-mac-missing": "Der WLAN-Adapter hat seine aktuelle Hardwareadresse noch nicht gemeldet.",
-  "network.wifiDegraded.permanent-mac-unresolved": "Die stabile Hardwareidentität des WLAN-Adapters konnte nicht bestätigt werden.",
-  "network.wifiMode.unavailable": "{mode} ist nicht verfügbar – {reason}",
+	"network.wifiDegraded.unavailable": "Der WLAN-Adapter ist vorübergehend nicht verfügbar.",
+	"network.wifiDegraded.operational-mac-missing": "Der WLAN-Adapter hat seine aktuelle Hardwareadresse noch nicht gemeldet.",
+	"network.wifiDegraded.permanent-mac-unresolved": "Die stabile Hardwareidentität des WLAN-Adapters konnte nicht bestätigt werden.",
+	"network.wifiMode.unavailable": "{mode} ist nicht verfügbar – {reason}",
 	"network.wifiMode.pending": "Wechsel zu {mode}…",
 	"network.wifiMode.reason.unsupported": "Dieses Funkmodul kann keinen Zugangspunkt bereitstellen.",
 	"network.wifiMode.reason.capabilityAbsent": "Der Treiber dieses Funkmoduls kann WLAN und Zugangspunkt nicht gleichzeitig betreiben.",
@@ -2838,5 +2838,11 @@
 	"live.heat.modemUnavailable": "Modem temperature isn't available on this box. Heat steps use the SoC temperature.",
 	"network.cellular.heatResting": "Resting to reduce heat. It rejoins the bond on its own; Keep quality brings it back now.",
 	"live.heat.supplyUnproven": "The power board's heat cut-off is paused because it can't confirm the power supply.",
-	"live.heat.packJump": "The reserve pack temperature jumped suddenly. The heat cut-off waits up to a minute to confirm it."
+	"live.heat.packJump": "The reserve pack temperature jumped suddenly. The heat cut-off waits up to a minute to confirm it.",
+	"hud.healthExplainOwnStreamIdle": "Der eigene Stream der Box ruht. Daten verbundener Geräte können weiterhin live übertragen werden.",
+	"notifications.clientCarrying": "Die Box überträgt Clientverkehr. Updates, Neustarts, Ausschalten und Verbindungswechsel bei Inaktivität warten.",
+	"notifications.clientCarryingUnknown": "Die Box prüft die Clientaktivität. Updates, Neustarts, Ausschalten und Verbindungswechsel bei Inaktivität warten.",
+	"general.updateReasonClientTraffic": "Ein Stream ist aktiv oder wird geprüft. Beende vor dem Update die Streams verbundener Geräte und den eigenen Stream der Box.",
+	"notifications.disruptiveActionClientTraffic": "Diese Aktion wurde nicht ausgeführt. Versuche es erneut, wenn der eigene Stream der Box und der Streaming-Datenverkehr verbundener Geräte inaktiv sind und kein Update läuft.",
+	"notifications.linkBoxHeatWaiting": "Die Box ist heiß. Die Verbindungen des Telefons bleiben verfügbar, während die Kapazität geprüft wird. Sorge für Luft."
 }

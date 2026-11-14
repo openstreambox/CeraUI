@@ -532,7 +532,7 @@ $effect(() => {
 											</li>
 											<li class="flex items-start gap-1.5">
 												<CircleDotIcon class="text-status-neutral mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-												<span><span class="font-semibold">{m["hud.healthIdle"]()}:</span> {m["hud.healthExplainIdle"]()}</span>
+												<span><span class="font-semibold">{m["hud.healthIdle"]()}:</span> {m["hud.healthExplainOwnStreamIdle"]()}</span>
 											</li>
 										</ul>
 									</Tooltip.Content>
