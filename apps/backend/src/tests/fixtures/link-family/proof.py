@@ -39,7 +39,7 @@ try:
     run(*P('ip','addr','add','192.0.2.2/32','dev','lo'))
     # DNS fixture supplies an A/AAAA pair for mixed.test, A alone for aonly.test.
     dns = '''import socket,struct
-s=socket.socket(socket.AF_INET6,socket.SOCK_DGRAM);s.bind(('::',53))
+s=socket.socket(socket.AF_INET6,socket.SOCK_DGRAM);s.bind(('fd51::2',53))
 while True:
  b,a=s.recvfrom(4096);q=b[12:];t=struct.unpack('!H',q[-4:-2])[0];answer=b''
  if t==1: answer=socket.inet_aton('192.0.2.2')
