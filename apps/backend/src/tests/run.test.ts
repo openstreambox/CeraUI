@@ -169,6 +169,10 @@ describe("runWithStdin() — secret stays in stdin, never on argv", () => {
 });
 
 describe("ALLOWED — Wave 2 binary coverage", () => {
+	it("includes busctl for NetworkManager checkpoint calls", () => {
+		expect(ALLOWED.has("busctl")).toBe(true);
+	});
+
 	it("includes every binary the Wave 2 hardening tasks depend on", () => {
 		for (const bin of [
 			"nmcli",

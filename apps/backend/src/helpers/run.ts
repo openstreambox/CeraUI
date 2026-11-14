@@ -109,6 +109,8 @@ export class RunAbortError extends Error {
 export const ALLOWED: Set<string> = new Set<string>([
 	"/usr/libexec/ceralive/esim-helper",
 	"nmcli",
+	// NetworkManager checkpoint lifecycle and confirmed profile persistence.
+	"busctl",
 	"mmcli",
 	"systemctl",
 	"/usr/bin/systemd-notify",
