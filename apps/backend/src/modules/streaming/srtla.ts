@@ -16,10 +16,9 @@
 */
 
 import { isIP } from "node:net";
-
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 import killall from "../../helpers/killall.ts";
-
+import { logger } from "../../helpers/logger.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
 import { queueUpdateGw } from "../network/gateways.ts";
 import {
@@ -41,49 +40,104 @@ import {
 	isBondLinkMappable,
 	setBondIdentityResolverForTest,
 } from "./bond-entry.ts";
+import { readClatPath, refreshClatStatus } from "./clat-status.ts";
+import { LinkFamilySelector, type ReceiverFamilies } from "./link-family.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
 
 export { isBondLinkMappable, setBondIdentityResolverForTest };
 
-let receiverIpv6Only = false;
+let receiverFamilies: ReceiverFamilies | undefined;
+const familySelector = new LinkFamilySelector();
+const familyStatus = new Map<string, string>();
+const entryPaths = new WeakMap<
+	BondEntry,
+	{ interface: string; status: string }
+>();
+let resolutionGeneration = 0;
 
 export async function resolveSrtla(addr: string) {
 	let srtlaAddr = addr;
+	const generation = ++resolutionGeneration;
 	const interfaces = Object.entries(getNetworkInterfaces())
-		.filter(([name, entry]) => isBondCandidate(name, entry))
+		.filter(
+			([name, entry]) =>
+				!/^clat\d+$/.test(name) && isBondCandidate(name, entry),
+		)
 		.map(([, entry]) => entry);
 	const hasV4 = interfaces.some((entry) => entry.ip);
+	await refreshClatStatus(Object.keys(getNetworkInterfaces()));
+	const hasClat = Object.keys(getNetworkInterfaces()).some((name) =>
+		readClatPath(name),
+	);
 	const hasV6 = interfaces.some((entry) => entry.ipv6);
 
 	let addrs: string[] | undefined;
 	let fromCache: boolean | undefined;
 	let emptyA = false;
 	try {
-		// Resolve the preferred family first; a dropped AAAA query must not hold
-		// an IPv4 start open. Fall back to AAAA for an AAAA-only receiver.
-		const literal = isIP(addr) !== 0;
-		const aaaaFallback = !literal && hasV4 && hasV6;
-		let res: Awaited<ReturnType<typeof dnsCacheResolve>>;
-		try {
-			res = await dnsCacheResolve(
-				addr,
-				literal ? undefined : hasV4 ? "a" : hasV6 ? "aaaa" : undefined,
-				aaaaFallback,
-			);
-		} catch (error) {
-			if (!aaaaFallback) throw error;
-			res = await dnsCacheResolve(addr, "aaaa");
-		}
-		if (
-			aaaaFallback &&
-			!res.addrs.some((ip) => isIP(ip) === 4) &&
-			(res.fromCache || res.addrs.length === 0)
-		) {
-			// A lost A keeps cached IPv4. Only a validated empty A can retire
-			// it, together with the fresh AAAA answer in one cache update.
-			emptyA = !res.fromCache && res.addrs.length === 0;
-			res = await dnsCacheResolve(addr, "aaaa");
-		}
+		const a = dnsCacheResolve(
+			addr,
+			isIP(addr) ? undefined : "a",
+			!isIP(addr) && hasV6,
+		);
+		const first = await a.catch(() => undefined);
+		emptyA = Boolean(first && !first.fromCache && first.addrs.length === 0);
+		if (!isIP(addr) && first?.addrs.length && !first.fromCache)
+			await dnsCacheValidate(addr);
+		const aaaa =
+			!isIP(addr) &&
+			hasV6 &&
+			(!first?.fromCache || !first.addrs.some((ip) => isIP(ip) === 4))
+				? dnsCacheResolve(addr, "aaaa")
+				: undefined;
+
+		void aaaa
+			?.then((answer) => {
+				if (generation === resolutionGeneration && !answer.fromCache)
+					void dnsCacheValidate(
+						addr,
+						emptyA && answer.addrs.some((ip) => isIP(ip) === 6)
+							? "a"
+							: undefined,
+					);
+			})
+			.catch(() => {
+				/* An unavailable optional AAAA answer keeps IPv4 usable. */
+			});
+		const resultsPromise = Promise.allSettled(aaaa ? [a, aaaa] : [a]);
+		let results: PromiseSettledResult<
+			Awaited<ReturnType<typeof dnsCacheResolve>>
+		>[];
+		if (aaaa && hasV4) {
+			if (first?.addrs.length && !first.fromCache) {
+				results = [{ status: "fulfilled", value: first }];
+				void aaaa
+					.then((answer) => {
+						if (
+							generation === resolutionGeneration &&
+							!answer.fromCache &&
+							receiverFamilies
+						)
+							receiverFamilies.ipv6 = answer.addrs.some((ip) => isIP(ip) === 6);
+					})
+					.catch(() => {
+						/* An unavailable optional AAAA answer keeps IPv4 usable. */
+					});
+			} else results = await resultsPromise;
+		} else results = await resultsPromise;
+		const answers = results.flatMap((result) =>
+			result.status === "fulfilled" ? [result.value] : [],
+		);
+		// A live family answer takes precedence over another lookup's stale cache.
+		const liveAnswers = answers.filter(
+			(answer) => !answer.fromCache && answer.addrs.length > 0,
+		);
+		const selectedAnswers = liveAnswers.length ? liveAnswers : answers;
+		const res = {
+			addrs: selectedAnswers.flatMap((answer) => answer.addrs),
+			fromCache: liveAnswers.length === 0,
+		};
+		if (!res.addrs.length) throw new Error("No receiver addresses");
 		addrs = res.addrs;
 		fromCache = res.fromCache;
 	} catch (_err) {
@@ -91,7 +145,12 @@ export async function resolveSrtla(addr: string) {
 		throw `Failed to resolve SRTLA addr ${addr}`;
 	}
 
-	receiverIpv6Only = addrs.length > 0 && addrs.every((ip) => ip.includes(":"));
+	receiverFamilies = {
+		ipv4: addrs.some((ip) => isIP(ip) === 4),
+		ipv6: addrs.some((ip) => isIP(ip) === 6),
+	};
+	familySelector.reset();
+	familyStatus.clear();
 
 	if (fromCache) {
 		// Prefer IPv4 for compatibility when available; on a v6-only host keep
@@ -105,7 +164,7 @@ export async function resolveSrtla(addr: string) {
 				? ipv4.length > 0
 					? ipv4
 					: ipv6
-				: hasV4 && ipv4.length > 0
+				: (hasV4 || hasClat) && ipv4.length > 0
 					? ipv4
 					: hasV6
 						? ipv6
@@ -114,7 +173,10 @@ export async function resolveSrtla(addr: string) {
 			compatible[Math.floor(Math.random() * compatible.length)];
 		if (!cachedAddr) throw `No compatible cached SRTLA address for ${addr}`;
 		srtlaAddr = cachedAddr;
-		receiverIpv6Only = cachedAddr.includes(":");
+		receiverFamilies = {
+			ipv4: isIP(cachedAddr) === 4,
+			ipv6: isIP(cachedAddr) === 6,
+		};
 		queueUpdateGw();
 	} else {
 		/* At the moment we don't check that the SRTLA connection was established before
@@ -150,16 +212,43 @@ function collectBondEntries(
 ): BondEntry[] {
 	const entries: BondEntry[] = [];
 	const networkInterfaces = getNetworkInterfaces();
+	familySelector.retainInterfaces(Object.keys(networkInterfaces));
 	for (const name in networkInterfaces) {
 		const networkInterface = networkInterfaces[name];
-		const ip = receiverIpv6Only
-			? (networkInterface?.ipv6 ?? networkInterface?.ip)
-			: (networkInterface?.ip ?? networkInterface?.ipv6);
-		if (!networkInterface || !ip) continue;
-		if (!accept(name, networkInterface)) continue;
-		const entry = describeBondEntry(name, ip);
+		if (
+			!networkInterface ||
+			/^clat\d+$/.test(name) ||
+			!accept(name, networkInterface)
+		)
+			continue;
+		const path = receiverFamilies
+			? familySelector.choose(
+					name,
+					networkInterface,
+					receiverFamilies,
+					readClatPath(name),
+					Date.now(),
+				)
+			: undefined;
+		const ip = receiverFamilies
+			? path?.ip
+			: (networkInterface.ip ?? networkInterface.ipv6);
+		if (!ip) continue;
+		const entry = {
+			...describeBondEntry(name, ip),
+			...(path ? { iface: path.iface } : {}),
+		};
 		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
 			continue;
+		entryPaths.set(entry, {
+			interface: name,
+			status:
+				path?.mode === "clat"
+					? "IPv4 via translation"
+					: isIP(ip) === 6
+						? "Native IPv6"
+						: "Native IPv4",
+		});
 		entries.push(entry);
 	}
 	return entries;
@@ -216,6 +305,26 @@ export async function publishSrtlaBond(
 	// follows its PHYSICAL device across a reload rather than a file position,
 	// and keeps the legacy conn_id -> interface fallback in step with it.
 	registerSrtlaBond(entries);
+	const next = new Map(
+		entries.map((entry) => {
+			const path = entryPaths.get(entry);
+			return [
+				path?.interface ?? entry.iface,
+				path?.status ?? (isIP(entry.ip) === 6 ? "Native IPv6" : "Native IPv4"),
+			];
+		}),
+	);
+	for (const [name, status] of next)
+		if (familyStatus.get(name) !== status)
+			logger.info("Stream link path", { interface: name, status });
+	for (const name of familyStatus.keys())
+		if (!next.has(name))
+			logger.info("Stream link path", {
+				interface: name,
+				status: "Unavailable",
+			});
+	familyStatus.clear();
+	for (const [name, status] of next) familyStatus.set(name, status);
 	lastBond = { entries: [...entries], publication };
 	return publication;
 }

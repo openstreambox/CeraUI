@@ -1,5 +1,8 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { logger } from "../helpers/logger.ts";
 import * as textFiles from "../helpers/text-files.ts";
 import { eligibleProbeCandidates } from "../modules/network/connectivity-candidates.ts";
 import {
@@ -18,7 +21,15 @@ import {
 } from "../modules/network/network-interfaces.ts";
 import { reconcileNetif } from "../modules/network/state/netif-state.ts";
 import { createConnectivityTargetResolver } from "../modules/network/uplink-health/connectivity-target.ts";
-import { genSrtlaIpList, resolveSrtla } from "../modules/streaming/srtla.ts";
+import { setup } from "../modules/setup.ts";
+import * as bondEntry from "../modules/streaming/bond-entry.ts";
+import * as clatStatus from "../modules/streaming/clat-status.ts";
+import {
+	genSrtlaBondEntries,
+	genSrtlaIpList,
+	publishSrtlaBond,
+	resolveSrtla,
+} from "../modules/streaming/srtla.ts";
 import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 
 const originalRandom = Math.random;
@@ -44,7 +55,7 @@ test("IPv6 inventory selects a stable usable source and publishes a v6-only bond
 	expect(genSrtlaIpList()).toContain("fd51::1");
 });
 test("withdraws IPv6 sources when all addresses become unusable", async () => {
-	await resolveSrtla("192.0.2.2");
+	await resolveSrtla("fd51::2");
 	processIfconfigOutput(
 		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
 		parseIpAddrShow(inventory),
@@ -255,7 +266,7 @@ test("IPv4 stream start does not wait for an unanswered AAAA query", async () =>
 			new Promise((resolve) => setTimeout(() => resolve("timed out"), 100)),
 		]),
 	).toBe("fast-receiver.test.invalid");
-	expect(aaaa).toBe(0);
+	expect(aaaa).toBe(1);
 });
 
 test("IPv6 churn on a dual-stack link publishes addresses without a topology event", async () => {
@@ -376,7 +387,7 @@ test("IPv6 receiver source renumbering on a dual-stack link notifies the running
 		expect(sources).toEqual(["fd51::5"]);
 		show("fd51::5", "tentative");
 		expect(changes).toBe(2);
-		expect(sources).toEqual(["192.0.2.1"]);
+		expect(sources).toEqual([]);
 		show("fd51::5");
 		expect(changes).toBe(3);
 		expect(sources).toEqual(["fd51::5"]);
@@ -385,6 +396,33 @@ test("IPv6 receiver source renumbering on a dual-stack link notifies the running
 	} finally {
 		unsubscribe();
 	}
+});
+
+test("an IPv4 literal withdraws an incompatible IPv6-only source", async () => {
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow(inventory),
+	);
+	await resolveSrtla("192.0.2.2");
+	expect(genSrtlaIpList()).toEqual([]);
+});
+
+test("live refresh can publish an empty bond while initial start still refuses it", async () => {
+	const publications: unknown[] = [];
+	const deps = {
+		isLocal: () => false,
+		localList: () => [],
+		bondedList: () => [],
+		writeList: async (entries: unknown) => {
+			publications.push(entries);
+			return { changed: true, sidecarPublished: false } as never;
+		},
+	};
+	await expect(prepareSrtlaIpAddresses("192.0.2.2", deps)).rejects.toThrow(
+		"no_available_network_connections",
+	);
+	await prepareSrtlaIpAddresses("192.0.2.2", deps, true);
+	expect(publications).toEqual([[]]);
 });
 
 for (const dualStack of [false, true]) {
@@ -485,8 +523,107 @@ test("the session refreshes bond sources through the source-change subscription"
 		"utf8",
 	);
 	expect(session).toMatch(
-		/removeNetworkInterfacesChangeListener:\s*onNetworkInterfaceSourcesChange\(\s*refreshSrtlaIpAddresses\s*,?\s*\)/,
+		/const removeListener = onNetworkInterfaceSourcesChange\(refresh\);/,
 	);
+});
+
+test("mixed bond start does not wait for an unanswered AAAA query", async () => {
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+	);
+	getNetworkInterfaces().cell1 = {
+		...getNetworkInterfaces().wwan0!,
+		ip: undefined,
+		ipv6: "fd51::5",
+	};
+	let aaaa = 0;
+	setDnsResolverFactoryForTest(() => ({
+		cancel() {},
+		resolve4(name, cb) {
+			queueMicrotask(() =>
+				cb(null, [
+					name === "wellknown.belabox.net" ? "127.1.33.7" : "192.0.2.2",
+				]),
+			);
+		},
+		resolve6() {
+			aaaa++;
+		},
+	}));
+	expect(
+		await Promise.race([
+			resolveSrtla("mixed-fast-receiver.test.invalid"),
+			new Promise((resolve) => setTimeout(() => resolve("timed out"), 100)),
+		]),
+	).toBe("mixed-fast-receiver.test.invalid");
+	expect(aaaa).toBe(1);
+});
+
+test("consumer binds translation to the TUN while preserving parent identity", async () => {
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow(inventory),
+	);
+	const read = spyOn(clatStatus, "readClatPath").mockReturnValue({
+		ip: "10.254.0.3",
+		iface: "clat3",
+		mode: "clat",
+	});
+	const describe = spyOn(bondEntry, "describeBondEntry").mockImplementation(
+		(iface, ip) => ({ iface, ip, linkId: "uplink-a" }),
+	);
+	try {
+		await resolveSrtla("192.0.2.2");
+		const entries = genSrtlaBondEntries();
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			ip: "10.254.0.3",
+			iface: "clat3",
+			linkId: "uplink-a",
+		});
+		expect(describe).toHaveBeenCalledWith("wwan0", "10.254.0.3");
+	} finally {
+		read.mockRestore();
+		describe.mockRestore();
+	}
+});
+
+test("only bond publication logs transitions and withdrawal with the correct family", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "bond-log-"));
+	const original = { ips: setup.ips_file, map: setup.bind_map_file };
+	const log = spyOn(logger, "info").mockImplementation(() => logger);
+	setup.ips_file = join(directory, "ips");
+	setup.bind_map_file = join(directory, "map.json");
+	try {
+		processIfconfigOutput(
+			"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+			parseIpAddrShow(inventory),
+		);
+		await resolveSrtla("fd51::2");
+		const entries = genSrtlaBondEntries();
+		const transitions = () =>
+			log.mock.calls.filter((call) => call[0] === "Stream link path");
+		expect(transitions()).toHaveLength(0);
+		await publishSrtlaBond(entries);
+		await publishSrtlaBond(entries);
+		expect(transitions()).toHaveLength(1);
+		expect(transitions()[0]?.[1]).toMatchObject({
+			interface: "wwan0",
+			status: "Native IPv6",
+		});
+		await publishSrtlaBond([]);
+		expect(transitions()).toHaveLength(2);
+		expect(transitions()[1]?.[1]).toMatchObject({
+			interface: "wwan0",
+			status: "Unavailable",
+		});
+	} finally {
+		log.mockRestore();
+		setup.ips_file = original.ips;
+		setup.bind_map_file = original.map;
+		rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 for (const code of ["ENODATA", "ENOTFOUND", "empty"]) {
@@ -595,7 +732,7 @@ for (const code of ["empty"]) {
 			}));
 			try {
 				for (let attempt = 0; attempt < 3; attempt++) {
-					expect(await resolveSrtla(name)).toBe(name);
+					await expect(resolveSrtla(name)).rejects.toContain("Failed to resolve SRTLA addr");
 				}
 				expect(aaaa).toBe(3);
 				expect(writes).toHaveLength(0);
@@ -679,6 +816,82 @@ for (const failure of ["ESERVFAIL", "ETIMEOUT", "ENODATA-unvalidated"]) {
 			offlineDns();
 			expect((await dnsCacheResolve(name)).addrs).toEqual(["192.0.2.10"]);
 		} finally {
+			setDnsCacheEntryForTest(name, null);
+		}
+	});
+}
+
+for (const [index, aResult, aaaaResult, mixed] of [
+	[0, "ENODATA", "SERVFAIL", false],
+	[1, "ENODATA", "SERVFAIL", true],
+	[2, "ENODATA", "ENODATA", false],
+	[3, "ENODATA", "hang", false],
+	[4, "empty", "SERVFAIL", false],
+	[5, "empty", "SERVFAIL", true],
+	[6, "empty", "hang", false],
+	[7, "ENOTFOUND", "SERVFAIL", false],
+	[8, "empty", "empty", false],
+	[9, "empty", "empty", true],
+] as const) {
+	test(`empty A ${aResult} preserves cache after AAAA ${aaaaResult} (${index})`, async () => {
+		const name = `empty-repair-${index}.test.invalid`;
+		const cached = mixed ? ["192.0.2.10", "fd51::2"] : ["192.0.2.10"];
+		processIfconfigOutput(
+			"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+			parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+		);
+		setDnsCacheEntryForTest(name, cached);
+		const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 60_001);
+		const writer = spyOn(textFiles, "writeTextFileAtomic").mockReturnValue(
+			true,
+		);
+		let aaaa = 0;
+		setDnsResolverFactoryForTest(() => ({
+			cancel() {},
+			resolve4(host, cb) {
+				queueMicrotask(() =>
+					host === "wellknown.belabox.net"
+						? cb(null, ["127.1.33.7"])
+						: cb(
+								aResult === "empty"
+									? null
+									: Object.assign(new Error(aResult), { code: aResult }),
+								[],
+							),
+				);
+			},
+			resolve6(_host, cb) {
+				aaaa++;
+				if (aaaaResult !== "hang")
+					queueMicrotask(() =>
+						cb(
+							aaaaResult === "empty"
+								? null
+								: Object.assign(new Error(aaaaResult), { code: aaaaResult }),
+							[],
+						),
+					);
+			},
+		}));
+		try {
+			if (aaaaResult === "empty") {
+				await expect(resolveSrtla(name)).rejects.toContain(
+					"Failed to resolve SRTLA addr",
+				);
+			} else {
+				const started = performance.now();
+				expect(await resolveSrtla(name)).toBe("192.0.2.10");
+				expect(performance.now() - started).toBeLessThan(3000);
+				expect(genSrtlaIpList()).toEqual(["192.0.2.1"]);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(aaaa).toBe(1);
+			expect(writer).not.toHaveBeenCalled();
+			offlineDns();
+			expect((await dnsCacheResolve(name)).addrs).toEqual(cached);
+		} finally {
+			writer.mockRestore();
+			clock.mockRestore();
 			setDnsCacheEntryForTest(name, null);
 		}
 	});

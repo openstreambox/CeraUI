@@ -13,8 +13,10 @@ family first. IPv4-only boxes ask for A only. With an IPv6 source, an empty or
 failed A answer can fall back to AAAA; a cache hit tries live AAAA only when it
 holds no IPv4 address. A validated ENODATA or ENOTFOUND A response is a
 fresh empty answer: a bounded AAAA lookup repairs the cache and retires stale
-IPv4 in one update only when the AAAA answer contains IPv6 addresses.
-Empty answers never create or clear the cache.
+IPv4 in one update only when AAAA supplies an IPv6 replacement. An empty A
+answer does not outrank cached fallback if AAAA fails or times out. If both
+families answer empty, start fails but the existing cache is retained.
+Empty answers never create a cache.
 Timeouts, SERVFAIL and failed validation retain cached IPv4 without switching
 families. A working A answer never waits for AAAA. Cache updates replace records
 within the answered family, including an explicitly empty A family, and retain
@@ -48,8 +50,11 @@ Con una fuente IPv6, si A falla o está vacía se puede intentar AAAA; si se usa
 la caché, solo se consulta AAAA en vivo cuando no contiene una dirección IPv4.
 Una respuesta A validada ENODATA o ENOTFOUND consulta AAAA con un tiempo
 límite y actualiza la caché sin las direcciones IPv4 anteriores en una sola
-escritura solo si AAAA contiene direcciones IPv6. Las respuestas vacías no
-crean ni borran la caché. Los tiempos de espera,
+escritura solo si AAAA devuelve una dirección IPv6 de reemplazo. Una respuesta
+A vacía no desplaza la caché si AAAA falla o agota el tiempo límite. Si ambas
+familias responden sin direcciones, el inicio falla pero conserva la caché.
+Las respuestas vacías nunca crean una caché.
+Los tiempos de espera,
 SERVFAIL y una validación fallida conservan la caché IPv4 sin cambiar de familia.
 Cada respuesta actualiza su familia en la caché y conserva la otra. Se conserva
 el nombre para que el emisor elija una dirección compatible, incluso con DNS64.
@@ -76,3 +81,75 @@ qualification remain separate work. Local LAN ingest deliberately keeps IPv4
 address discovery and URL construction together; it has not been extended to
 IPv6. Resolver validation keeps its existing security check. No modem profile,
 IP-family default, reconnect policy or NetworkManager setting changes here.
+
+## Draft: stable per-link family selection
+
+The draft selector keeps native IPv4 on dual-stack links. With no native IPv4,
+AAAA plus IPv6 uses the native IPv6 source before considering CLAT. An A-only
+receiver can use the image's read-only schema-v1 CLAT grant: active service,
+fresh `up` snapshot (including one with a diagnostic `last_error`), matching
+parent index/allocation, and existing translator TUN are all required. The IPv4
+socket binds the TUN while its link identity stays with the physical parent. Translator interfaces are not independent bond links.
+
+A path remains selected through short flaps: withdraw unavailable sources,
+allow ten seconds of sustained loss before choosing another family, and retain
+the new family on recovery. A two-second session refresh observes both address
+and translation lifecycle. Only path transitions log `Native IPv4`, `Native IPv6`
+or `IPv4 via translation`. This is a diagnostic line, not a new UI field.
+
+Mixed A/AAAA hostnames and family changes require
+[openstreambox/srtla-send-rs #3](https://github.com/openstreambox/srtla-send-rs/pull/3)
+plus [#4](https://github.com/openstreambox/srtla-send-rs/pull/4) at `7b56a4d7`,
+or a release containing both. The checked-in netns fixture passes all nine cases
+with that stack, each 30/30; 4.1.0 fails the IPv6-to-IPv4 transition, 0/30.
+A cached numeric destination supports only its matching source family. Empty IP
+reloads also retain the sender's previous pool; publication alone is not socket
+retirement. The draft still requires sender review and deployment-specific
+listener qualification before mixed-family support is advertised.
+
+Restored streams resolve the receiver before publishing their sources and own the
+same two-second timer and source-change subscription as new streams. Status-file
+reads are asynchronous and cached; synchronous consumers never run OS commands.
+A live A answer can start the IPv4 portion of a mixed bond while AAAA completes;
+compatible IPv6 links join on refresh. Publication logs path changes and withdrawals,
+while health/preflight reads do not log session transitions.
+
+### Translation refresh failure handling
+
+Status reads open nonblocking, accept regular files only, and time out after
+500 ms. Refreshes may reuse a result for two seconds; memory-only reads expire
+after 4.5 seconds, allowing the next timer tick and scheduling margin. Snapshot
+freshness and service/TUN admission remain required. Failed restored launches
+remove their own timer and source subscription, including thrown failures.
+
+### Español (Latinoamérica)
+
+El selector conserva IPv4 nativo en enlaces de doble pila. Sin IPv4 nativo,
+usa IPv6 directo si el receptor publica AAAA; CLAT queda como alternativa para
+receptores IPv4. Solo admite una traducción con servicio activo, estado reciente
+`up`, identidad y dirección correctas, y una interfaz TUN existente. Espera diez
+segundos de pérdida continua antes de cambiar de familia y no vuelve a la
+anterior solo porque reaparezca. El diagnóstico cambia únicamente al cambiar
+la ruta. No se añade un campo nuevo a la interfaz de usuario.
+
+La combinación de familias requiere openstreambox/srtla-send-rs #3 más #4
+(`7b56a4d7`), o una versión que incluya ambos cambios. Con esa pila, los nueve
+casos de la prueba aislada pasan con 30/30 paquetes cada uno; 4.1.0 falla después
+del cambio de IPv6 a IPv4 con 0/30. Un estado `up` con un diagnóstico sigue
+siendo utilizable; se comprueban también el servicio, la antigüedad y la TUN.
+
+Los streams restaurados resuelven el receptor antes de publicar las fuentes y
+usan el mismo temporizador y suscripción que los nuevos. Las lecturas del estado
+son asíncronas y usan caché. Una respuesta A en vivo permite iniciar los enlaces
+IPv4 sin esperar AAAA; los enlaces IPv6 compatibles se incorporan al actualizar.
+El registro de publicación incluye cambios y retiros, sin mensajes de sesión
+en las consultas de salud.
+
+### Manejo de fallas al actualizar la traducción
+
+Las lecturas de estado abren sin bloqueo, aceptan solo archivos regulares y
+vencen después de 500 ms. Las actualizaciones pueden reutilizar un resultado por
+dos segundos; las lecturas en memoria vencen a los 4,5 segundos para permitir el
+siguiente ciclo y un margen de programación. Siguen siendo obligatorias las
+validaciones de vigencia, servicio y TUN. Un inicio restaurado fallido elimina
+su temporizador y suscripción de fuentes, incluso si se lanza una excepción.
