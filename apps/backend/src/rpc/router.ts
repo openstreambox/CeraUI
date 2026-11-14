@@ -1,3 +1,4 @@
+import { runtimeAllowsDevelopment } from "./runtime-mode.ts";
 /**
  * RPC Router - Main router combining all procedures
  */
@@ -32,6 +33,9 @@ import {
 import {
 	devEmitProcedure,
 	devRebindWifiProcedure,
+	devScenarioApplyProcedure,
+	devScenarioResetProcedure,
+	devScenarioStatusProcedure,
 } from "./procedures/dev.procedure.ts";
 import { esimOperationProcedure } from "./procedures/esim.procedure.ts";
 import {
@@ -337,12 +341,17 @@ const stableRoutes = {
 // HARD-GATED: the `dev` namespace is registered ONLY outside production, so in a
 // production build `dev.*` paths resolve to "Unknown procedure path".
 export const appRouter = os.$context<RPCContext>().router(
-	process.env.NODE_ENV !== "production"
+	process.env.NODE_ENV !== "production" && runtimeAllowsDevelopment()
 		? {
 				...stableRoutes,
 				dev: base.router({
 					emit: devEmitProcedure,
 					rebindWifi: devRebindWifiProcedure,
+					scenario: base.router({
+						apply: devScenarioApplyProcedure,
+						reset: devScenarioResetProcedure,
+						status: devScenarioStatusProcedure,
+					}),
 				}),
 			}
 		: stableRoutes,

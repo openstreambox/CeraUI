@@ -441,3 +441,63 @@ regression in outward signalling. A PID namespace does not shield a child from
 same-account signals sent by an uncontained host process. File-ownership tests
 need the normal UID mapping, so a privileged namespace launcher may drop back
 to the invoking UID/GID after creating the PID namespace.
+
+### Mock DNS answers public names as refused
+
+A mock backend has no real network. Its well-known DNS check, the gateway
+connectivity target and relay names would otherwise reach the host's resolver,
+and the development harness's network guard (above) ends the process on the
+first such query, so a development backend died at boot. Under
+`shouldUseMocks()`, `modules/network/dns.ts` hands out a refusing resolver:
+public names fail with `EREFUSED`, the answer the browser test gate's DNS
+recorder gives, and `localhost` names still go to the real resolver. Address
+literals never query. Production keeps `new Resolver()`. Coverage:
+`tests/mock-dns-refusal.test.ts`, which the unit preload's network guard would
+fail on any real query.
+
+### Scripted scenarios: mock clock and `dev.scenario` (demos, screenshot tests)
+
+`mocks/mock-clock.ts` is the mock providers' only source of randomness and
+drift: `mockRandom()`, `mockRandomFor(key)` and `mockNow()`. Unpinned they are
+`Math.random()` and `Date.now()`, so ordinary development and the existing
+tests are unchanged. `pinMockClock(seed, stepMs)` fixes them: draws come from
+mulberry32 seeded with (seed, step), `mockRandomFor(key)` is stable within a
+step however often a provider re-reads it (relay round trips, interface
+throughput), and `mockNow()` stands still between steps. While pinned, the
+host's 1 s fluctuation timer does nothing; each step applies one fluctuation.
+Only mock values follow this clock. `linkTelemetry.lastReadMs`, health,
+staleness and every real timer keep the host's clock, because the real
+uplink-health expiry compares `lastReadMs` with its own now: a scenario must
+never drive the real logic into states a box would not reach in the same time.
+
+Two overrides sit in `mockState`, written only by the scenario control:
+`linkOverrides[iface]` (`rtt_ms`, `nak_count`, `weight_scale` on the link's
+selection weight, `stale`, and `gone`, which drops the row so the remaining
+links share 100 %) and `bitrateTargetKbps` (the bond's measured total and the
+mock encoder bitrate hold the target within ±2 %). `buildMockLinkTelemetry`
+applies them; the real health and bond derivations read the result as they do
+real telemetry.
+
+`dev.scenario.apply({seed, t_ms, events})`, `.reset()` and `.status()` play a
+script step by step (`mocks/scenario-control.ts`). A step pins the clock,
+re-seeds the random walk on its first step (t 0 or a new seed), fluctuates
+once, applies `box.link`, `box.bitrate` and `box.modem` events (the latter
+through `setMockModemState`), then broadcasts modems, Wi-Fi, link telemetry,
+health and relays before it answers, instead of on the coalesced 5 s ticks. So
+a step's frames depend only on the seed, the step time and the events so far.
+
+Gates, all required: the `dev` namespace is registered only outside
+production; each handler starts with a literal production check; the backend
+runs on mocks; and the socket is the scenario driver. A socket becomes the
+driver when its upgrade carries `x-ceraui-scenario-secret` equal to the 64-hex
+`CERAUI_SCENARIO_SECRET` the driver gave the backend
+(`rpc/scenario-driver-admission.ts`). Browser pages cannot set upgrade
+headers, so they never become the driver; a proxy in front of the backend must
+still strip that header from browser upgrades. No configured secret means no
+driver. `tests/dev-scenario-production-build.test.ts` runs the build script's
+bundle step (`NODE_ENV=production bun build --minify`) and checks that the
+shipped bundle keeps neither the header, the variable nor the dev routes, and
+that a probe bundled the same way refuses a driver's call as production even
+with a development runtime environment and mocks on. Bun keeps unreachable
+module bodies, so that proof is about reachability. Coverage of each event and
+gate: `tests/dev-scenario-control.test.ts`, `tests/mock-clock.test.ts`.

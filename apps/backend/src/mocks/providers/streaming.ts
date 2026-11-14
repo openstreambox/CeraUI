@@ -65,6 +65,7 @@ import {
 	CAPS_FULL_DEVICE_DISPLAY_NAMES,
 	DEFAULT_DEVICE_DISPLAY_NAMES,
 } from "../fixture-factory.ts";
+import { mockNow, mockRandomFor } from "../mock-clock.ts";
 import { mockWifiRadios, type ScenarioCapabilities } from "../mock-config.ts";
 import type { MockAudioDevices, MockDeviceModes } from "../mock-schemas.ts";
 import {
@@ -77,6 +78,7 @@ import {
 	shouldUseMocks,
 	updateMockState,
 } from "../mock-service.ts";
+import { mockModemHasData } from "./network.ts";
 
 // The caps-full hardware profile: H265 + hardware acceleration and an
 // audio-capable HDMI source alongside the always-present TestPattern.
@@ -562,7 +564,11 @@ export function buildMockLinkTelemetry(): LinkTelemetryMessage | null {
 		}
 	}
 
-	const now = Date.now();
+	// Drift follows the mock clock (frozen between a pinned scenario's steps);
+	// `lastReadMs` stays on the host clock, because the real uplink-health
+	// expiry compares it with the host's own now.
+	const now = mockNow();
+	const { linkOverrides, bitrateTargetKbps, streaming } = getMockState();
 
 	// `weight_percent` is each active link's NORMALIZED share of the total
 	// selection weight (base_score × quality), summing to ~100 across links — NOT
@@ -570,40 +576,61 @@ export function buildMockLinkTelemetry(): LinkTelemetryMessage | null {
 	// `src/telemetry_file.rs` `conns_from_stats` + `weight_share_percent`
 	// (a lone link → 100, two equal → 50/50). Varied per-index bases + a gentle
 	// drift simulate a rebalancing bond; strictly positive so the total is never 0.
-	const rawLinks = ifaces.map((iface, index) => {
+	// A scripted override (dev scenario control) replaces one link's round trip,
+	// NAKs or staleness, scales its weight, or removes its row.
+	const rawLinks = ifaces.flatMap((iface, index) => {
+		const override = linkOverrides[iface];
+		if (override?.gone || !mockModemHasData(iface)) return [];
 		// Deterministic per-link base plus a gentle bounded drift so the HUD shows
 		// live movement across ticks, kept inside the 20-60 ms plausible window.
 		const rttBase = 25 + index * 6;
 		const rttDrift = Math.round(8 * Math.sin(now / 4000 + index));
-		const rawWeight = Math.max(
+		const driftWeight = Math.max(
 			1,
 			40 + index * 18 + 8 * Math.sin(now / 5000 + index),
 		);
-		return {
-			conn_id: String(index),
-			iface,
-			rtt_ms: Math.min(60, Math.max(20, rttBase + rttDrift)),
-			nak_count: index % 3,
-			rawWeight,
-			stale: false,
-		};
+		const rawWeight =
+			override?.weight_scale === undefined
+				? driftWeight
+				: Math.max(0.01, driftWeight * override.weight_scale);
+		return [
+			{
+				conn_id: String(index),
+				iface,
+				rtt_ms:
+					override?.rtt_ms === undefined
+						? Math.min(60, Math.max(20, rttBase + rttDrift))
+						: Math.round(override.rtt_ms),
+				nak_count:
+					override?.nak_count === undefined
+						? index % 3
+						: Math.round(override.nak_count),
+				rawWeight,
+				stale: override?.stale ?? false,
+			},
+		];
 	});
 	const totalWeight = rawLinks.reduce((sum, link) => sum + link.rawWeight, 0);
 
 	// Split by weight share, so per-link rows sum to the aggregate as they do on
-	// real srtla_send telemetry.
-	const bondBps = Math.round(4_000_000 + 400_000 * Math.sin(now / 7000));
+	// real srtla_send telemetry. A scripted target replaces the default drift.
+	const bondBps =
+		bitrateTargetKbps === null
+			? Math.round(4_000_000 + 400_000 * Math.sin(now / 7000))
+			: Math.round(streaming.bitrate * 1000);
 
 	const links = rawLinks.map(({ rawWeight, ...entry }) => ({
 		...entry,
-		weight_percent: Math.round((rawWeight / totalWeight) * 100),
-		bitrate_bps: Math.round((rawWeight / totalWeight) * bondBps),
+		weight_percent:
+			totalWeight > 0 ? Math.round((rawWeight / totalWeight) * 100) : 0,
+		bitrate_bps:
+			totalWeight > 0 ? Math.round((rawWeight / totalWeight) * bondBps) : 0,
 	}));
 
 	return {
 		links,
 		measured_bps: links.reduce((sum, link) => sum + link.bitrate_bps, 0),
-		lastReadMs: now,
+		lastReadMs: Date.now(),
 	};
 }
 
@@ -652,7 +679,7 @@ export function getMockSrtStats() {
 		bitrate: stats.bitrate,
 		latency: stats.srtLatency,
 		packetLoss: stats.packetLoss,
-		rtt: 50 + Math.random() * 30, // Round-trip time in ms
+		rtt: 50 + mockRandomFor("srt.rtt") * 30, // Round-trip time in ms
 		bandwidth: stats.bitrate * 1.2, // Available bandwidth
 	};
 }
@@ -686,10 +713,10 @@ export function getMockSrtlaStats() {
 	for (let i = 0; i < config.modems; i++) {
 		const ifname = `usb${i}`;
 		interfaceStats[ifname] = {
-			sent: Math.floor(Math.random() * 10000) + 5000,
-			lost: Math.floor(Math.random() * 10),
-			retransmitted: Math.floor(Math.random() * 50),
-			rtt: 40 + Math.random() * 60,
+			sent: Math.floor(mockRandomFor(`${ifname}.sent`) * 10000) + 5000,
+			lost: Math.floor(mockRandomFor(`${ifname}.lost`) * 10),
+			retransmitted: Math.floor(mockRandomFor(`${ifname}.rexmit`) * 50),
+			rtt: 40 + mockRandomFor(`${ifname}.rtt`) * 60,
 		};
 	}
 
