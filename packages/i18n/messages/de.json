@@ -2892,7 +2892,7 @@
 	"network.radio.registration": "Registrierung",
 	"network.radio.layer": "Aktive Funktechnik",
 	"network.radio.band": "Aktives Band",
-	"network.radio.neighbour": "Modem {id}",
+	"network.radio.neighbour": "Mobilfunkmodem {id}",
 	"network.radio.transmitting": "Sendet Nutzdaten",
 	"network.radio.usb": "USB-Ereignisse",
 	"network.radio.timeline": "Letzter Verlauf"
