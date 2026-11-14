@@ -552,6 +552,67 @@ for (const code of ["ENODATA", "ENOTFOUND", "empty"]) {
 	}
 }
 
+for (const code of ["empty"]) {
+	for (const mixed of [false, true]) {
+		test(`a validated ${code} A answer retains cached addresses when AAAA is also empty (mixed cache: ${mixed})`, async () => {
+			const name = `both-empty-${code}-${mixed}.test.invalid`;
+			processIfconfigOutput(
+				"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+				parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+			);
+			setDnsCacheEntryForTest(
+				name,
+				mixed ? ["192.0.2.10", "fd51::2"] : ["192.0.2.10"],
+			);
+			const now = Date.now();
+			const clock = spyOn(Date, "now").mockReturnValue(now + 60_001);
+			const writes: string[] = [];
+			const writer = spyOn(textFiles, "writeTextFileAtomic").mockImplementation(
+				(_file, contents) => {
+					writes.push(contents);
+					return true;
+				},
+			);
+			let aaaa = 0;
+			setDnsResolverFactoryForTest(() => ({
+				cancel() {},
+				resolve4(host, cb) {
+					queueMicrotask(() =>
+						host === "wellknown.belabox.net"
+							? cb(null, ["127.1.33.7"])
+							: cb(
+									code === "empty"
+										? null
+										: Object.assign(new Error(code), { code }),
+									[],
+								),
+					);
+				},
+				resolve6(_host, cb) {
+					aaaa++;
+					queueMicrotask(() => cb(null, []));
+				},
+			}));
+			try {
+				for (let attempt = 0; attempt < 3; attempt++) {
+					expect(await resolveSrtla(name)).toBe(name);
+				}
+				expect(aaaa).toBe(3);
+				expect(writes).toHaveLength(0);
+				offlineDns();
+				expect((await dnsCacheResolve(name)).addrs).toEqual(
+					mixed ? ["192.0.2.10", "fd51::2"] : ["192.0.2.10"],
+				);
+				expect(await resolveSrtla(name)).toBe("192.0.2.10");
+			} finally {
+				writer.mockRestore();
+				clock.mockRestore();
+				setDnsCacheEntryForTest(name, null);
+			}
+		});
+	}
+}
+
 test("an IPv4-only source with only cached IPv6 never queries AAAA", async () => {
 	const name = "incompatible-warm.test.invalid";
 	processIfconfigOutput(

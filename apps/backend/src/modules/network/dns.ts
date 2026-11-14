@@ -321,7 +321,7 @@ export async function dnsCacheValidate(
 	name: string,
 	emptyFamily?: "a" | "aaaa",
 ) {
-	if (!dnsResults[name]) {
+	if (!dnsResults[name]?.length) {
 		logger.warn(`DNS: error validating results for ${name}: not found`);
 		return;
 	}
