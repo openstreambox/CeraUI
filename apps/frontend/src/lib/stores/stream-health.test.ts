@@ -20,11 +20,9 @@ import {
 	getStreamHealthSnapshot,
 	getStreamHealthState,
 	type HealthIndicator,
-	type HealthRollup,
 	type HealthSnapshot,
 	ingestStreamHealth,
 	initialHealthSnapshot,
-	isVideoSignalLost,
 	notificationForTransition,
 	parseHealthRollup,
 	parseHealthState,
@@ -211,67 +209,6 @@ describe("notificationForTransition — names the cause behind `degraded`", () =
 		expect(
 			notificationForTransition("degraded", "healthy", undefined)?.key,
 		).toBe("notifications.streamHealthRecovered");
-	});
-});
-
-// ============================================
-// isVideoSignalLost — the mid-stream dead-air predicate
-// ============================================
-
-function rollup(overrides: Partial<HealthRollup> = {}): HealthRollup {
-	return {
-		state: "degraded",
-		process: { alive: true },
-		frames: { advancing: false, count: 30415 },
-		srt: { reconnecting: false, reconnectCount: 0 },
-		bond: { linkCount: 2, activeLinks: 2 },
-		...overrides,
-	};
-}
-
-describe("isVideoSignalLost", () => {
-	it("reports the real board case: degraded with a frozen frame counter", () => {
-		expect(isVideoSignalLost(rollup())).toBe(true);
-	});
-
-	it("reports it on a dead rollup too", () => {
-		expect(isVideoSignalLost(rollup({ state: "dead" }))).toBe(true);
-	});
-
-	it("never contradicts a healthy or idle dot beside it", () => {
-		expect(
-			isVideoSignalLost(
-				rollup({ state: "healthy", frames: { advancing: false, count: 1 } }),
-			),
-		).toBe(false);
-		expect(
-			isVideoSignalLost(
-				rollup({ state: "idle", frames: { advancing: false, count: null } }),
-			),
-		).toBe(false);
-	});
-
-	it("stays silent on an UNKNOWN frame reading — null is not an outage", () => {
-		// The cold-start branch: no frame telemetry yet this window. Alarming here
-		// would fire a dead-air banner on every stream start.
-		expect(
-			isVideoSignalLost(rollup({ frames: { advancing: null, count: null } })),
-		).toBe(false);
-	});
-
-	it("stays silent while frames are genuinely advancing (a link-only degradation)", () => {
-		expect(
-			isVideoSignalLost(
-				rollup({
-					frames: { advancing: true, count: 900 },
-					bond: { linkCount: 3, activeLinks: 2 },
-				}),
-			),
-		).toBe(false);
-	});
-
-	it("stays silent before the first broadcast", () => {
-		expect(isVideoSignalLost(null)).toBe(false);
 	});
 });
 

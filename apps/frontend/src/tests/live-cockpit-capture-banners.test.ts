@@ -130,7 +130,7 @@ describe("LiveCockpit — capture standby band", () => {
 		const band = getByTestId("capture-standby-banner");
 		expect(band.getAttribute("role")).toBe("status");
 		expect(band.textContent).toContain(en.live.capture.standbyTitle);
-		expect(band.textContent).toContain(en.live.capture.standbyBody);
+		expect(band.textContent).not.toContain(en.notifications.stillLiveStandby);
 	});
 
 	it("HIDES the source-lost and video-signal-lost bands while on standby — one outage, one sentence", async () => {
@@ -138,7 +138,6 @@ describe("LiveCockpit — capture standby band", () => {
 			LiveCockpit,
 			baseProps({
 				...twoCameras,
-				videoSignalLost: true,
 				sources: {
 					hardware: [],
 					sources: [capture("cam0", true), capture("cam1", true)],

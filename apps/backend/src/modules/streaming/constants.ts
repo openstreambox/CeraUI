@@ -61,6 +61,9 @@ export const VIDEO_SIGNAL_RECHECK_INTERVAL_MS = 5_000;
 // hitting a relay/hub on the same wall-clock boundary (thundering herd). Shared
 // here by heartbeat, device-stats, and the modem poll.
 
+/** Health and connection heartbeat cadence, shared by observation holds. */
+export const HEARTBEAT_INTERVAL_MS = 5000;
+
 /** Fractional jitter applied to periodic intervals: ±10% of the base period. */
 export const PERIODIC_JITTER_FRACTION = 0.1;
 

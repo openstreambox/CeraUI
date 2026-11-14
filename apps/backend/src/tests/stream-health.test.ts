@@ -338,6 +338,30 @@ describe("broadcastHealthIfChanged — transition-only broadcast", () => {
 		}
 	});
 
+	test("frame recovery broadcasts even while a link keeps health degraded", () => {
+		const sink: string[] = [];
+		const client = captureClient(sink);
+		addClient(client);
+		try {
+			let source: LivenessSources = {
+				...FRAME_STALL,
+				activeLinks: 1,
+				linkCount: 2,
+			};
+			setLivenessSourcesForTest(() => source);
+			broadcastHealthIfChanged();
+			source = { ...source, framesAdvancing: true };
+			broadcastHealthIfChanged();
+			broadcastHealthIfChanged();
+			expect(healthPayloads(sink).map((row) => row.state)).toEqual([
+				"degraded",
+				"degraded",
+			]);
+		} finally {
+			removeClient(client);
+		}
+	});
+
 	test("returns the current health even when no broadcast fires", () => {
 		setLivenessSourcesForTest(() => HEALTHY);
 		const first = broadcastHealthIfChanged();

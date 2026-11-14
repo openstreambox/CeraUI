@@ -65,6 +65,10 @@ import {
 } from "./audio-card-vocabulary.ts";
 import { supportsMeterDevicePreference } from "./cerastream-backend.ts";
 import { asRawRequestClient } from "./raw-request.ts";
+import {
+	noteLiveAudioLevel,
+	resetStillLiveNotices,
+} from "./still-live-notices.ts";
 import { getStreamLifecycleState } from "./stream-lifecycle-status.ts";
 
 /** Backoff bounds for the initial-connect retry. Mirrors `engine-reconnect.ts`. */
@@ -239,7 +243,10 @@ function defaultDeps(): AudioMeterBridgeDeps {
 			autoReconnect: true,
 			client: "ceraui-audio-meter",
 		},
-		broadcast: (payload) => broadcastMsg("audio-level", payload),
+		broadcast: (payload) => {
+			noteLiveAudioLevel(payload);
+			broadcastMsg("audio-level", payload);
+		},
 		meterPreference: () => resolveMeterPreference(getConfig().asrc),
 		meterPreferencePresent: () => isMeterPreferenceDevicePresent(),
 		meterSilenced: () => isMeterSilencedByPick(getConfig().asrc),
@@ -724,6 +731,7 @@ export function settleAudioMeterBridge(): Promise<void> {
 
 /** Tear down the bridge (close the subscription + connection, clear the timer). */
 export function stopAudioMeterBridge(): void {
+	resetStillLiveNotices();
 	if (!state) return;
 	const s = state;
 	s.stopped = true;

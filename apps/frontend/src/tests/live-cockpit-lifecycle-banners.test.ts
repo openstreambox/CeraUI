@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render } from "@testing-library/svelte";
 import { tick } from "svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { en } from "./helpers/catalog";
 
@@ -223,69 +223,77 @@ describe("LiveCockpit — all-links-down banner", () => {
 	});
 });
 
-describe("LiveCockpit — video-signal-lost banner", () => {
-	// Wave H: unplugging HDMI mid-stream left the ENTIRE cockpit blank. The
-	// onboard RK3588 HDMI-RX stays enumerated when its cable is pulled, so the
-	// source is neither missing nor `lost` — every existing banner stayed silent
-	// while the operator broadcast dead air.
-	const stillPresent = {
-		config: { source: "cam0" },
-		sources: { hardware: [], sources: [capture("cam0")] },
-	};
-
-	it("shows when frames stopped on a source that is still connected", async () => {
-		const { getByTestId } = render(
-			LiveCockpit,
-			baseProps({ ...stillPresent, videoSignalLost: true }),
-		);
-		await tick();
-		expect(getByTestId("video-signal-lost-banner").textContent).toContain(
-			en.live.source.signalLostStreamingTitle,
-		);
-	});
-
-	it("is the ONLY banner that fires for that state — the regression itself", async () => {
-		const { queryByTestId } = render(
-			LiveCockpit,
-			baseProps({ ...stillPresent, videoSignalLost: true }),
-		);
-		await tick();
-		expect(queryByTestId("video-signal-lost-banner")).toBeTruthy();
-		expect(queryByTestId("active-source-lost-banner")).toBeNull();
-		expect(queryByTestId("active-audio-lost-banner")).toBeNull();
-		expect(queryByTestId("all-links-down-banner")).toBeNull();
-	});
-
-	it("does NOT show when frames are flowing", async () => {
-		const { queryByTestId } = render(
-			LiveCockpit,
-			baseProps({ ...stillPresent, videoSignalLost: false }),
-		);
-		await tick();
-		expect(queryByTestId("video-signal-lost-banner")).toBeNull();
-	});
-
-	it("yields to the more specific source-lost banner instead of stacking two alerts", async () => {
-		const { queryByTestId } = render(
+describe("LiveCockpit — backend owns frame-loss notices", () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+	for (const origin of ["capture", "network", "unknown"]) {
+		it(`does not duplicate the persistent ${origin} camera notice`, async () => {
+			const source =
+				origin === "capture"
+					? capture("cam0")
+					: origin === "network"
+						? {
+								id: "cam0",
+								origin: "network",
+								displayName: "Network",
+								available: true,
+								audioKind: "none",
+								protocol: "rtmp",
+							}
+						: undefined;
+			const props = baseProps({
+				config: { source: "cam0" },
+				sources: { hardware: [], sources: source ? [source] : [] },
+				videoSignalLost: true,
+			});
+			const view = render(LiveCockpit, props);
+			await tick();
+			// A late 5.5 s tick and a prolonged outage must never start a second timer.
+			await vi.advanceTimersByTimeAsync(5500);
+			await tick();
+			expect(view.queryByTestId("video-signal-lost-banner")).toBeNull();
+			await vi.advanceTimersByTimeAsync(600000);
+			await tick();
+			expect(view.queryByTestId("video-signal-lost-banner")).toBeNull();
+			await view.rerender({ ...props, videoSignalLost: false });
+			await tick();
+			expect(view.queryByTestId("video-signal-lost-banner")).toBeNull();
+		});
+	}
+	for (const [name, isStreaming, videoSignalLost] of [
+		["frames are flowing", true, false],
+		["the stream is idle", false, true],
+	] as const) {
+		it(`does not show a frame-loss banner when ${name}`, async () => {
+			const view = render(
+				LiveCockpit,
+				baseProps({
+					isStreaming,
+					videoSignalLost,
+					config: { source: "cam0" },
+					sources: { hardware: [], sources: [capture("cam0")] },
+				}),
+			);
+			await tick();
+			await vi.advanceTimersByTimeAsync(5500);
+			await tick();
+			expect(view.queryByTestId("video-signal-lost-banner")).toBeNull();
+		});
+	}
+	it("retains the source-reconnect action when the device itself vanishes", async () => {
+		const view = render(
 			LiveCockpit,
 			baseProps({
-				videoSignalLost: true,
 				config: { source: "cam0" },
 				sources: { hardware: [], sources: [capture("cam1")] },
+				videoSignalLost: true,
 			}),
 		);
 		await tick();
-		expect(queryByTestId("active-source-lost-banner")).toBeTruthy();
-		expect(queryByTestId("video-signal-lost-banner")).toBeNull();
-	});
-
-	it("does NOT show while idle", async () => {
-		const { queryByTestId } = render(
-			LiveCockpit,
-			baseProps({ ...stillPresent, isStreaming: false, videoSignalLost: true }),
-		);
+		await vi.advanceTimersByTimeAsync(5500);
 		await tick();
-		expect(queryByTestId("video-signal-lost-banner")).toBeNull();
+		expect(view.queryByTestId("active-source-lost-banner")).toBeTruthy();
+		expect(view.queryByTestId("video-signal-lost-banner")).toBeNull();
 	});
 });
 

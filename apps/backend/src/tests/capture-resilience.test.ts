@@ -102,6 +102,12 @@ test("standby raises and retracts from structured status, without a new engine a
 		fixture({ state: "standby", live_inputs: [], standby_since_ms: 10_000 }),
 		true,
 	);
+	expect(h.shown).toEqual([]);
+	h.advance(4999);
+	h.fire();
+	expect(h.shown).toEqual([]);
+	h.advance(1);
+	h.fire();
 	expect(h.shown.map((n) => n.name)).toEqual(["capture-standby"]);
 	expect(h.shown[0]?.persistent).toBe(true);
 	noteCaptureStatus(fixture(), true);
@@ -189,6 +195,7 @@ test("long standby uses a fake clock and continuous-run deadline; recovery cance
 		true,
 	);
 	h.advance(CAPTURE_STANDBY_LONG_NOTICE_MS - 1);
+	h.fire();
 	noteCaptureStatus(
 		fixture({ state: "standby", live_inputs: [], standby_since_ms: 10_000 }),
 		true,
@@ -226,4 +233,15 @@ test("suspensions and rate adaptation each retract when their kind ends", () => 
 		noteCaptureStatus(fixture(), true);
 		expect(h.removed[h.removed.length - 1]).toBe(name);
 	}
+});
+
+test("standby recovery inside the hold never raises a camera notice", () => {
+	const h = harness();
+	noteCaptureStatus(fixture({ state: "standby", live_inputs: [] }), true);
+	h.advance(4999);
+	noteCaptureStatus(fixture(), true);
+	h.advance(1);
+	h.fire();
+	expect(h.shown).toEqual([]);
+	expect(h.pending()).toBe(0);
 });
