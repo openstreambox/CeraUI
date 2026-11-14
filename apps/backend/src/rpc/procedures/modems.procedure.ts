@@ -770,8 +770,8 @@ export const setUsbModeProcedure = modemProcedure
  *     lease is taken or anything is journaled;
  *   - the streaming refusal and the per-device lease are the shared
  *     mutation-safety contract's, reached through that same helper;
- *   - the catalog check is the module's own, and it runs FIRST, so a posture this
- *     radio never advertised never contends for a device lease.
+ *   - the catalog check is the module's own, after acquiring the shared mode
+ *     write slot and reading the current pair.
  *
  * The emulated-mode case needs no branch either: a dev host has no modem for
  * `resolveModemIndex` to find, so it answers the honest `unknown_modem` rather

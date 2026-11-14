@@ -65,6 +65,7 @@ import {
 } from "./capability-gates.ts";
 import { buildFiveGPreferenceView } from "./five-g-preference.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
+import { savedChoiceWireFields } from "./mode-choice-saved.ts";
 import { projectModemCredential } from "./modem-credentials.ts";
 import { readModemIdPaths } from "./modem-id-path-source.ts";
 import type { ResolvedModemLock } from "./modem-lock-state.ts";
@@ -546,18 +547,25 @@ function projectFiveGPreference(
 	);
 	if (!mayRenderModule(state)) return undefined;
 
-	const modem = modemForStableKey(stableKey);
-	return modem === undefined
-		? undefined
-		: buildFiveGPreferenceView(modem.radio_modes);
+	const found = modemEntryForStableKey(stableKey);
+	if (found === undefined) return undefined;
+	const [id, modem] = found;
+	return {
+		...buildFiveGPreferenceView(modem.radio_modes),
+		// The saved choice is keyed by the modem's own identity, not the port,
+		// and is reconciled against the live read on every projection.
+		...savedChoiceWireFields(id, modem.radio_modes),
+	};
 }
 
-function modemForStableKey(stableKey: string | undefined): Modem | undefined {
+function modemEntryForStableKey(
+	stableKey: string | undefined,
+): [number, Modem] | undefined {
 	if (stableKey === undefined || stableKey === "") return undefined;
-	for (const modem of Object.values(getModems())) {
+	for (const [id, modem] of Object.entries(getModems())) {
 		const idPath = getModemIdPath(modem.ifname);
 		if (idPath !== undefined && deriveModemStableKey(idPath) === stableKey) {
-			return modem;
+			return [Number(id), modem];
 		}
 	}
 	return undefined;

@@ -41,6 +41,14 @@ import {
 	readFiveGPreference,
 } from "../modules/modems/five-g-preference.ts";
 import type { NetworkType } from "../modules/modems/mmcli.ts";
+import {
+	modemIdentityTagForId,
+	rememberModemIdentity,
+	resetModemIdentities,
+} from "../modules/modems/mode-choice-identity.ts";
+import { resetModeChoiceKeyCache } from "../modules/modems/mode-choice-key.ts";
+import { resetModeEvaluations } from "../modules/modems/mode-choice-runtime.ts";
+import { resetModeChoiceStore } from "../modules/modems/mode-choice-store.ts";
 import { buildModemsWireMessage } from "../modules/modems/modem-status.ts";
 import {
 	refreshModemIdPaths,
@@ -58,6 +66,7 @@ import {
 	setMutationJournalDeps,
 } from "../modules/modems/mutation-journal.ts";
 import { beginModemMutation } from "../modules/modems/mutation-lease.ts";
+import { resetNetworkModeSlot } from "../modules/modems/network-mode-slot.ts";
 import {
 	resetLifecycleInterlock,
 	tryAcquireLifecycle,
@@ -83,6 +92,7 @@ const QUECTEL_CATALOG: Modem["radio_modes"] = {
 		{ allowed: "5g|4g", preferred: "5g" },
 		{ allowed: "5g|4g", preferred: "4g" },
 		{ allowed: "5g|4g|3g|2g", preferred: "5g" },
+		{ allowed: "5g|4g|3g|2g", preferred: "none" },
 	],
 	current: { allowed: "5g|4g|3g|2g", preferred: "5g" },
 };
@@ -99,6 +109,8 @@ const SIMCOM_CATALOG: Modem["radio_modes"] = {
 };
 
 let journalDir = "";
+const priorChoiceDir = process.env.CERALIVE_MODE_CHOICE_DIR;
+let choiceRoot = "";
 
 function seedModem(radioModes: Modem["radio_modes"]): Modem {
 	const modem: Modem = {
@@ -136,6 +148,7 @@ function scriptedDevice(options: {
 	readonly readbackFails?: boolean;
 }) {
 	const writes: NetworkType[] = [];
+	let reads = 0;
 	const deps: FiveGApplyDeps = {
 		setNetworkTypes: (_id, allowed, preferred) => {
 			writes.push({ allowed, preferred });
@@ -143,14 +156,16 @@ function scriptedDevice(options: {
 		},
 		readRadioModes: () =>
 			Promise.resolve(
-				options.readbackFails === true
-					? undefined
-					: {
-							supported: QUECTEL_CATALOG?.supported ?? [],
-							...(options.landsOn === undefined
-								? {}
-								: { current: options.landsOn }),
-						},
+				++reads === 1
+					? QUECTEL_CATALOG
+					: options.readbackFails === true
+						? undefined
+						: {
+								supported: QUECTEL_CATALOG?.supported ?? [],
+								...(options.landsOn === undefined
+									? {}
+									: { current: options.landsOn }),
+							},
 			),
 		broadcast: () => undefined,
 	};
@@ -160,6 +175,15 @@ function scriptedDevice(options: {
 beforeEach(async () => {
 	journalDir = await mkdtemp(join(tmpdir(), "ceraui-five-g-journal-"));
 	setMutationJournalDeps({ dir: journalDir });
+	// A sibling of the journal directory, so "nothing journaled" stays checkable.
+	choiceRoot = await mkdtemp(join(tmpdir(), "ceraui-five-g-choice-"));
+	process.env.CERALIVE_MODE_CHOICE_DIR = join(choiceRoot, "choice");
+	resetModeChoiceKeyCache();
+	resetModeChoiceStore();
+	resetModemIdentities();
+	resetModeEvaluations();
+	resetNetworkModeSlot();
+	rememberModemIdentity(0, "SYNTHETIC-EQUIPMENT-0");
 	resetLifecycleInterlock();
 	resetRecoveryBarrier();
 	setModemIdPathReader(() => Promise.resolve(new Map([[IFNAME, ID_PATH]])));
@@ -175,12 +199,22 @@ afterEach(async () => {
 	resetModemWireProducer();
 	for (const id of Object.keys(getModems())) delete getModems()[Number(id)];
 	delete getConfig().modem_capabilities;
+	if (priorChoiceDir === undefined) delete process.env.CERALIVE_MODE_CHOICE_DIR;
+	else process.env.CERALIVE_MODE_CHOICE_DIR = priorChoiceDir;
+	resetModeChoiceKeyCache();
+	resetModeChoiceStore();
+	resetModemIdentities();
+	resetModeEvaluations();
+	resetNetworkModeSlot();
 	await rm(journalDir, { recursive: true, force: true });
+	await rm(choiceRoot, { recursive: true, force: true });
 });
 
 describe("the model", () => {
-	test("a 5G radio with fallback advertises all four postures", () => {
+	test("a 5G radio with fallback advertises automatic, LTE-only and the finer postures", () => {
 		expect(offeredFiveGPreferences(QUECTEL_CATALOG)).toEqual([
+			"auto",
+			"lte-only",
 			"5g-only",
 			"prefer-5g",
 			"prefer-4g",
@@ -267,6 +301,8 @@ describe("the gate decides what reaches the wire", () => {
 		enableGate();
 		const block = rowFor(QUECTEL_CATALOG)?.five_g_preference;
 		expect(block?.offered).toEqual([
+			"auto",
+			"lte-only",
 			"5g-only",
 			"prefer-5g",
 			"prefer-4g",
@@ -348,7 +384,11 @@ describe("a refused write is NEVER reported as a success", () => {
 			landsOn: { allowed: "5g|4g|3g|2g", preferred: "4g" },
 		});
 		const result = await applyFiveGPreference("0", "prefer-4g", deps);
-		expect(result).toEqual({ success: true, applied: "prefer-4g" });
+		expect(result).toEqual({
+			success: true,
+			applied: "prefer-4g",
+			saved: true,
+		});
 		expect(writes).toEqual([{ allowed: "5g|4g|3g|2g", preferred: "4g" }]);
 	});
 
@@ -379,6 +419,9 @@ describe("it routes through the shared mutation contract", () => {
 
 	test("GATE OFF refuses module_disabled, and the effect never ran", async () => {
 		delete getConfig().modem_capabilities;
+		if (priorChoiceDir === undefined)
+			delete process.env.CERALIVE_MODE_CHOICE_DIR;
+		else process.env.CERALIVE_MODE_CHOICE_DIR = priorChoiceDir;
 		const { writes, deps } = scriptedDevice({});
 		const result = await applyFiveGPreference("0", "prefer-4g", deps);
 		expect(result).toEqual({ success: false, refusal: "module_disabled" });
@@ -432,6 +475,7 @@ describe("it routes through the shared mutation contract", () => {
 		expect(await applyFiveGPreference("0", "prefer-4g", watching)).toEqual({
 			success: true,
 			applied: "prefer-4g",
+			saved: true,
 		});
 		expect(admittedDuring).toBe(false);
 		expect(tryAcquireLifecycle("streaming").admitted).toBe(true);
@@ -575,4 +619,91 @@ describe("restoration", () => {
 		).toBe("failed");
 		expect(writes).toEqual([]);
 	});
+});
+
+describe("manual mode lock", () => {
+	beforeEach(() => {
+		capable();
+		enableGate();
+	});
+	test("automatic and LTE-only round trip exactly; persisted intent is separate from live read", async () => {
+		for (const preference of ["auto", "lte-only"] as const) {
+			seedModem(QUECTEL_CATALOG);
+			const modes = fiveGPreferenceToModes(preference, QUECTEL_CATALOG);
+			expect(modes).toBeDefined();
+			const { deps } = scriptedDevice({ landsOn: modes });
+			expect(await applyFiveGPreference("0", preference, deps)).toMatchObject({
+				success: true,
+				applied: preference,
+			});
+			expect(buildModemsWireMessage()["0"]?.five_g_preference?.lock).toBe(
+				preference,
+			);
+		}
+	});
+	test("two modems cannot change modes at once", async () => {
+		seedModem(QUECTEL_CATALOG);
+		let release = () => {};
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const { deps } = scriptedDevice({
+			landsOn: { allowed: "4g", preferred: "none" },
+		});
+		let entered = () => {};
+		const started = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const first = applyFiveGPreference("0", "lte-only", {
+			...deps,
+			readRadioModes: async (id) => {
+				entered();
+				await pending;
+				return deps.readRadioModes(id);
+			},
+		});
+		await started;
+		expect(await applyFiveGPreference("1", "auto", deps)).toEqual({
+			success: false,
+			refusal: "mutation_in_progress",
+		});
+		release();
+		await first;
+	});
+	test("an unreadable baseline never writes", async () => {
+		seedModem(QUECTEL_CATALOG);
+		let writes = 0;
+		const { deps } = scriptedDevice({});
+		expect(
+			await applyFiveGPreference("0", "auto", {
+				...deps,
+				readRadioModes: async () => undefined,
+				setNetworkTypes: async () => {
+					writes++;
+					return true;
+				},
+			}),
+		).toEqual({ success: false, error: "readback_failed" });
+		expect(writes).toBe(0);
+	});
+});
+
+test("a runtime evaluator tick records unavailable evidence and never writes a mode", async () => {
+	const { recordModeEvaluations } = await import(
+		"../modules/modems/mode-choice-runtime"
+	);
+	const { readModeChoice } = await import(
+		"../modules/modems/mode-choice-store"
+	);
+	seedModem(QUECTEL_CATALOG);
+	recordModeEvaluations();
+	const record = readModeChoice(modemIdentityTagForId(0) as string).history.at(
+		-1,
+	);
+	expect(record?.source).toBe("evaluator");
+	expect(record?.outcome).toBe("would-not-try");
+	expect(record?.reasons).toContain("unavailable:headroom");
+	expect(record?.beforeDeliveredUpload).toBeNull();
+	expect(getModems()[0]?.radio_modes).toEqual(QUECTEL_CATALOG);
+	expect(await listMutationEntries()).toEqual([]);
 });

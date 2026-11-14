@@ -257,7 +257,12 @@ import {
 } from './modem-detail';
 import { modemDiagnosticRows } from './modem-diagnostics';
 import { fccUnlockErrorKey } from './modem-fcc-unlock';
-import { fiveGFailureKey, fiveGViewForModem } from './modem-five-g';
+import {
+	fiveGFailureKey,
+	fiveGHistoryLines,
+	fiveGPreferenceLabelKey,
+	fiveGViewForModem,
+} from './modem-five-g';
 import {
 	POWER_UNAVAILABLE_OPERATIONS,
 	radioPowerReading,
@@ -950,11 +955,28 @@ const fiveGView = $derived(
 	fiveGCapabilityView(fiveG, modem.capability_modules?.["five-g-pref"], noSim),
 );
 let fiveGApplying = $state(false);
+let pendingFiveG = $state<FiveGPreference | undefined>(undefined);
+let fiveGConfirmOpen = $state(false);
+let pendingFiveGDevice = $state("");
 let fiveGFailure = $state<string | undefined>(undefined);
+// The modem changed but the choice could not be saved: said as exactly that.
+let fiveGNotSaved = $state<FiveGPreference | undefined>(undefined);
+const fiveGModeLabel = (preference: FiveGPreference) =>
+	resolveMessageKey(fiveGPreferenceLabelKey(preference));
+const fiveGSaved = $derived(modem.five_g_preference?.lock);
+const fiveGHistory = $derived(fiveGHistoryLines(modem.five_g_preference?.history));
+
+/** Every mode change goes through the confirmation, including "use it again". */
+function askFiveG(preference: FiveGPreference): void {
+	pendingFiveG = preference;
+	pendingFiveGDevice = String(deviceId);
+	fiveGConfirmOpen = true;
+}
 
 async function applyFiveG(preference: FiveGPreference): Promise<void> {
 	fiveGApplying = true;
 	fiveGFailure = undefined;
+	fiveGNotSaved = undefined;
 	try {
 		const result = await rpc.modems.setFiveGPreference({
 			device: String(deviceId),
@@ -968,6 +990,8 @@ async function applyFiveG(preference: FiveGPreference): Promise<void> {
 		// where the radio actually still is.
 		if (!result.success) {
 			fiveGFailure = fiveGFailureKey(result.refusal ?? result.error);
+		} else if (result.saved === false) {
+			fiveGNotSaved = preference;
 		}
 	} catch {
 		fiveGFailure = fiveGFailureKey(undefined);
@@ -1919,6 +1943,56 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 			name="modem-five-g-card" class={CARD_FRAME} view={fiveGView}
 			title={m["network.modem.fiveG.title"]()}
 			description={m["network.modem.fiveG.intro"]()}>
+			<!-- The saved choice is an intent; "In use" below is the live read. When
+			     the two disagree it is said plainly, with an offer to apply the
+			     choice again. Nothing re-applies it by itself. -->
+			{#if fiveGSaved}
+				{#if modem.five_g_preference?.lock_matches === false}
+					<div class="space-y-1.5 text-sm" data-testid="modem-five-g-saved-mismatch" role="status">
+						<p class="text-status-warning">
+							{m["network.modem.fiveG.savedMismatch"]({ mode: fiveGModeLabel(fiveGSaved) })}
+						</p>
+						<Button
+							class="h-8"
+							data-testid="modem-five-g-reapply"
+							disabled={noSim || fiveGApplying}
+							onclick={() => fiveGSaved && askFiveG(fiveGSaved)}
+							size="sm"
+							variant="outline"
+						>
+							{m["network.modem.fiveG.reapply"]({ mode: fiveGModeLabel(fiveGSaved) })}
+						</Button>
+					</div>
+				{:else}
+					<p class="text-sm" data-testid="modem-five-g-saved">
+						{m["network.modem.fiveG.saved"]({ mode: fiveGModeLabel(fiveGSaved) })}
+					</p>
+				{/if}
+			{/if}
+			{#if fiveGHistory.length}
+				<details class="text-sm" data-testid="modem-five-g-history">
+					<summary>{m["network.modem.fiveG.history"]()}</summary>
+					{#each fiveGHistory as line, index (`${line.at}-${index}`)}
+						<p>
+							{new Date(line.at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}:
+							{line.modeKey
+								? resolveMessageKey(line.key, { mode: resolveMessageKey(line.modeKey) })
+								: resolveMessageKey(line.key)}
+						</p>
+					{/each}
+				</details>
+			{/if}
+			<SimpleAlertDialog bind:open={fiveGConfirmOpen}
+				buttonClasses="hidden"
+				title={m["network.modem.fiveG.title"]()}
+				confirmButtonText={m["network.modem.fiveG.apply"]()}
+				disabledConfirmButton={fiveGApplying || !pendingFiveG}
+				onconfirm={() => pendingFiveG && pendingFiveGDevice === String(deviceId) ? applyFiveG(pendingFiveG) : undefined}>
+				{#snippet dialogTitle()}{pendingFiveG
+					? m["network.modem.fiveG.confirmTitle"]({ modem: modem.name, mode: fiveGModeLabel(pendingFiveG) })
+					: m["network.modem.fiveG.title"]()}{/snippet}
+				{#snippet description()}{m["network.modem.fiveG.confirmBody"]({ modem: modem.name })}{/snippet}
+			</SimpleAlertDialog>
 				<div class="space-y-1.5" data-testid="modem-five-g-options" role="radiogroup"
 					aria-label={m["network.modem.fiveG.title"]()}>
 					{#each fiveGOptions as option (option.preference)}
@@ -1928,8 +2002,8 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 							class="focus-visible:ring-ring flex w-full items-start gap-2.5 rounded-md border p-2.5 text-start focus-visible:ring-2 focus-visible:outline-none disabled:opacity-60"
 							data-active={option.active}
 							data-testid="modem-five-g-option-{option.preference}"
-							disabled={noSim || fiveGApplying || option.active}
-							onclick={() => applyFiveG(option.preference)}
+							disabled={noSim || fiveGApplying || (option.active && modem.five_g_preference?.lock === option.preference)}
+							onclick={() => askFiveG(option.preference)}
 							role="radio"
 							type="button"
 						>
@@ -1966,6 +2040,11 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 				{#if fiveGFailure}
 					<p class="text-status-warning text-xs" data-testid="modem-five-g-error" role="status">
 						{resolveMessageKey(fiveGFailure)}
+					</p>
+				{/if}
+				{#if fiveGNotSaved}
+					<p class="text-status-warning text-xs" data-testid="modem-five-g-not-saved" role="status">
+						{m["network.modem.fiveG.notSaved"]({ mode: fiveGModeLabel(fiveGNotSaved) })}
 					</p>
 				{/if}
 		</CapabilitySection>

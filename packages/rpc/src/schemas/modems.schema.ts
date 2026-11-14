@@ -1509,7 +1509,14 @@ export function deriveModemStableKey(idPath: string | undefined | null): string 
 // re-derived rather than imported — the vocabulary differs too (mmcli speaks
 // `2g/3g/4g/5g`, the D-Bus library speaks `gsm/umts/lte/5gnr`), so this is a
 // translation boundary and not a duplication.
-export const FIVE_G_PREFERENCES = ['5g-only', 'prefer-5g', 'prefer-4g', '5g-off'] as const;
+export const FIVE_G_PREFERENCES = [
+	'auto',
+	'lte-only',
+	'5g-only',
+	'prefer-5g',
+	'prefer-4g',
+	'5g-off',
+] as const;
 export const fiveGPreferenceSchema = z.enum(FIVE_G_PREFERENCES);
 export type FiveGPreference = z.infer<typeof fiveGPreferenceSchema>;
 
@@ -1535,6 +1542,48 @@ export const nrModeSelectionSchema = z.object({
 });
 export type NrModeSelection = z.infer<typeof nrModeSelectionSchema>;
 
+export const modeTrialRecordSchema = z.object({
+	at: z.number(),
+	source: z.enum(['manual', 'evaluator']),
+	current: fiveGPreferenceSchema.nullable(),
+	target: fiveGPreferenceSchema.nullable(),
+	window: z.enum(['covered', 'preflight', 'idle', 'unavailable']).optional(),
+	hint: z.string().nullable().optional(),
+	coverage: z
+		.object({
+			share: z.number().nullable(),
+			requiredRoom: z.number().nullable(),
+			measuredRoom: z.number().nullable(),
+			others: z
+				.array(
+					z.object({
+						ready: z.boolean(),
+						load: z.number().optional(),
+						cleanPeak: z.number().optional(),
+						peakAge: z.number().optional(),
+						rttP95: z.number().optional(),
+						nakRising: z.boolean().optional(),
+					}),
+				)
+				.nullable(),
+		})
+		.optional(),
+	beforeBucket: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.nullable(),
+	afterBucket: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.nullable(),
+	beforeDeliveredUpload: z.number().nullable(),
+	afterDeliveredUpload: z.number().nullable(),
+	outcome: z.enum(['would-try', 'would-not-try', 'applied', 'not-confirmed']),
+	reasons: z.array(z.string()),
+	estimatedLinkOutSeconds: z.number().nullable(),
+});
+export type ModeTrialRecord = z.infer<typeof modeTrialRecordSchema>;
+export const MODE_HISTORY_WIRE_LIMIT = 10;
 /**
  * The module's READ half, stamped on a modem row only when its claim is
  * surfaceable (`capable` / `certified`).
@@ -1546,6 +1595,15 @@ export type NrModeSelection = z.infer<typeof nrModeSelectionSchema>;
  * never made and cannot get back to.
  */
 export const modemFiveGPreferenceSchema = z.object({
+	/** The streamer's saved choice: an intent, never the live read (`active`). */
+	lock: fiveGPreferenceSchema.optional(),
+	/**
+	 * Whether the radio's live pair is the saved choice's pair. `false` is shown
+	 * plainly with an offer to apply it again; nothing re-applies it by itself.
+	 */
+	lock_matches: z.boolean().optional(),
+	/** The newest records only; the full bounded history stays on the device. */
+	history: z.array(modeTrialRecordSchema).max(MODE_HISTORY_WIRE_LIMIT).optional(),
 	offered: z.array(fiveGPreferenceSchema),
 	active: fiveGPreferenceSchema.nullable(),
 	nr_mode: nrModeSelectionSchema,
@@ -1602,6 +1660,11 @@ export type SetFiveGPreferenceFailure = z.infer<typeof setFiveGPreferenceFailure
 export const setFiveGPreferenceOutputSchema = z.object({
 	success: z.boolean(),
 	applied: fiveGPreferenceSchema.optional(),
+	/**
+	 * Success only: whether the choice was also saved on this device. `false`
+	 * means the modem DID change but the choice is not kept as the saved one.
+	 */
+	saved: z.boolean().optional(),
 	refusal: capabilityMutationRefusalSchema.optional(),
 	error: setFiveGPreferenceFailureSchema.optional(),
 });

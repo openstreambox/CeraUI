@@ -34,6 +34,9 @@ import { setStreamReconciliationCompletedForTest } from "../modules/system/strea
 const runtimeRoot = mkdtempSync(join(tmpdir(), "ceraui-backend-test-"));
 const previousStreamingMarker = process.env.CERALIVE_STREAMING_MARKER;
 process.env.CERALIVE_STREAMING_MARKER = join(runtimeRoot, "streaming");
+// Modem registration creates the mode-choice key on first use; never under /data.
+const previousModeChoiceDir = process.env.CERALIVE_MODE_CHOICE_DIR;
+process.env.CERALIVE_MODE_CHOICE_DIR = join(runtimeRoot, "mode-choice");
 
 const setup = await loadJsonConfigSync(
 	"setup.json",
@@ -78,5 +81,8 @@ afterAll(async () => {
 	if (previousStreamingMarker === undefined)
 		delete process.env.CERALIVE_STREAMING_MARKER;
 	else process.env.CERALIVE_STREAMING_MARKER = previousStreamingMarker;
+	if (previousModeChoiceDir === undefined)
+		delete process.env.CERALIVE_MODE_CHOICE_DIR;
+	else process.env.CERALIVE_MODE_CHOICE_DIR = previousModeChoiceDir;
 	await rm(runtimeRoot, { recursive: true, force: true });
 });

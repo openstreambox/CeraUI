@@ -41,9 +41,7 @@ import type {
 	FiveGPreference,
 	SetFiveGPreferenceOutput,
 } from "@ceraui/rpc/schemas";
-
 import { logger } from "../../helpers/logger.ts";
-
 import { IMPLEMENTED_MODEM_CAPABILITY_MODULES } from "./capability-evidence.ts";
 import { withCapabilityModuleMutation } from "./capability-mutation.ts";
 import {
@@ -51,13 +49,19 @@ import {
 	fiveGPreferenceToModes,
 	offeredFiveGPreferences,
 	readFiveGPreference,
+	sameModePair,
 } from "./five-g-preference.ts";
 import { mmGetModem, mmSetNetworkTypes, type NetworkType } from "./mmcli.ts";
+import { saveManualModeChoice } from "./mode-choice-saved.ts";
 import { deriveRadioModeCatalog } from "./modem-registration.ts";
 import { broadcastModems } from "./modem-status.ts";
 import { getModem, getModems, type Modem } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
 import { registerMutationRollback } from "./mutation-rollback.ts";
+import {
+	tryClaimNetworkModeWrite,
+	withNetworkModeWrite,
+} from "./network-mode-slot.ts";
 
 /**
  * `device` is the same selector every other modem procedure takes: a bare
@@ -127,10 +131,38 @@ async function writeModes(
 	return { wrote: true, readback: await deps.readRadioModes(id) };
 }
 
+/**
+ * The one writer of a streamer's mode choice.
+ *
+ * Order matters, and each step is a lesson from review:
+ * 1. The global mode-write slot is taken FIRST, before anything is journaled, so
+ *    a change already running on another modem (or a modem-settings save) is an
+ *    honest `mutation_in_progress` — never a refused write that leaves this
+ *    modem's journal `failed` and the modem blocked.
+ * 2. The readback is judged by its `(allowed, preferred)` PAIR against the pair
+ *    that was written, never by the posture name it reads as.
+ * 3. The saved choice is written only after the journal confirmed, and a failure
+ *    to save is reported as exactly that (`saved: false`). The radio changed; the
+ *    answer must never say it did not.
+ */
 export async function applyFiveGPreference(
 	device: string,
 	preference: FiveGPreference,
 	deps: FiveGApplyDeps = activeDeps,
+): Promise<SetFiveGPreferenceOutput> {
+	const release = tryClaimNetworkModeWrite();
+	if (release === undefined)
+		return { success: false, refusal: "mutation_in_progress" };
+	try {
+		return await applyFiveGPreferenceLocked(device, preference, deps);
+	} finally {
+		release();
+	}
+}
+async function applyFiveGPreferenceLocked(
+	device: string,
+	preference: FiveGPreference,
+	deps: FiveGApplyDeps,
 ): Promise<SetFiveGPreferenceOutput> {
 	const id = resolveModemIndex(device);
 	const modem = id === undefined ? undefined : getModem(id);
@@ -147,13 +179,17 @@ export async function applyFiveGPreference(
 		return { success: false, error: "not_offered" };
 	}
 
-	// The pre-state is the radio's OWN current pair, so a rollback restores what
-	// the operator had rather than a posture this model happens to name. It is
-	// captured before the write and rides the durable journal entry.
-	const preState = {
-		allowed: modem.radio_modes?.current?.allowed ?? "",
-		preferred: modem.radio_modes?.current?.preferred ?? "",
-	};
+	const stableKey = modemStableKeyForId(id);
+	if (!stableKey) return { success: false, refusal: "identity_unresolved" };
+
+	// The pre-state is the radio's OWN current pair, read live, so a rollback
+	// restores what the operator had rather than a posture this model happens to
+	// name. It is captured before the write and rides the durable journal entry.
+	const liveBefore = await deps.readRadioModes(id);
+	if (!liveBefore?.current?.allowed || !liveBefore.current.preferred)
+		return { success: false, error: "readback_failed" };
+	const preState = { ...liveBefore.current };
+	const before = readFiveGPreference(liveBefore);
 
 	// The generic is named rather than inferred: every branch below returns a
 	// DIFFERENT literal-narrowed shape, so inference would pin `T` to whichever
@@ -161,7 +197,7 @@ export async function applyFiveGPreference(
 	const outcome = await withCapabilityModuleMutation<SetFiveGPreferenceOutput>(
 		{
 			module: "five-g-pref",
-			stableKey: modemStableKeyForId(id),
+			stableKey,
 			preState,
 			// Passed EXPLICITLY, exactly as the wire producer does: the framework's
 			// own registry default is empty, so leaving it out would refuse a
@@ -187,34 +223,47 @@ export async function applyFiveGPreference(
 				};
 			}
 
-			const landed = readFiveGPreference(readback);
 			// Whatever the verdict, the live read is committed to state — the wire
 			// must report where the radio IS, not where it was asked to go.
 			modem.radio_modes = readback;
 
-			if (landed !== preference) {
+			if (!sameModePair(readback.current, target)) {
+				const landed = readFiveGPreference(readback);
 				return {
 					confirmed: false,
 					value: { success: false, error: "readback_mismatch" },
 					detail: `modem ${id} landed on ${landed ?? "an unnamed posture"}, not ${preference}`,
 				};
 			}
-			return { confirmed: true, value: { success: true, applied: landed } };
+			return {
+				confirmed: true,
+				value: { success: true, applied: preference },
+			};
 		},
 	);
 
-	deps.broadcast(id);
-
 	if (!outcome.ok) {
+		deps.broadcast(id);
 		return { success: false, refusal: outcome.refusal };
 	}
 	if (!outcome.value.success) {
+		deps.broadcast(id);
 		logger.error(`five-g-pref: ${preference} did not land on modem ${id}`, {
 			module: "modems",
 			error: outcome.value.error,
 		});
+		return outcome.value;
 	}
-	return outcome.value;
+
+	// The radio change is confirmed and its journal entry retired. Saving the
+	// choice is bookkeeping on top: if it fails, say so, and say nothing else.
+	const saved = saveManualModeChoice(id, {
+		current: before,
+		target: preference,
+		estimatedLinkOutSeconds: modem.model?.startsWith("RM520") ? 55 : null,
+	});
+	deps.broadcast(id);
+	return { ...outcome.value, saved };
 }
 
 /**
@@ -250,7 +299,11 @@ export function createFiveGRollbackHandler(deps: FiveGApplyDeps = activeDeps) {
 						? preferred
 						: "none",
 			};
-			const { wrote, readback } = await writeModes(id, modes, deps);
+			// A restore WAITS for a running mode write rather than being refused:
+			// refusing it would leave the device blocked for a change it can undo.
+			const { wrote, readback } = await withNetworkModeWrite(() =>
+				writeModes(id, modes, deps),
+			);
 			if (!wrote || readback === undefined) return "failed";
 
 			// The restore is proven exactly as the change was: by comparing the
@@ -258,11 +311,7 @@ export function createFiveGRollbackHandler(deps: FiveGApplyDeps = activeDeps) {
 			// compared, because `prefer-5g` and `prefer-4g` share an allowed set and
 			// an allowed-only check would call either one a successful restore of
 			// the other.
-			const current = readback.current;
-			const restored =
-				current?.allowed === modes.allowed &&
-				current?.preferred === modes.preferred;
-			return restored ? "restored" : "failed";
+			return sameModePair(readback.current, modes) ? "restored" : "failed";
 		},
 	};
 }
