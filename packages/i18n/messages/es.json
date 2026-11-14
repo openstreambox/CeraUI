@@ -2777,5 +2777,7 @@
 	"hotspotConfigurator.saveRefused": "El adaptador Wi-Fi cambió, así que esta configuración no se guardó.",
 	"hotspotConfigurator.saveInterrupted": "No se pudo aplicar la nueva configuración mientras se reiniciaba el punto de acceso. Es posible que esté apagado.",
 	"network.wifiMode.error.radioChanged": "El adaptador Wi-Fi cambió, así que el cambio de modo no se completó. Revisa su modo actual antes de volver a intentarlo.",
-	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso."
+	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso.",
+	"network.view.connectedIdle": "{link} está conectado, pero no transmite nada. Comprueba: ¿esta red puede llegar al receptor?",
+	"network.view.connectedIdleDetails": "El stream sigue en vivo por otras conexiones. Esta conexión casi no ha enviado datos del stream durante 20 segundos. Tener internet no confirma que llegue al receptor. Revisa la VPN y la dirección del receptor en esta red."
 }
