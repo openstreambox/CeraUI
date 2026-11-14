@@ -70,6 +70,7 @@ const blockedReason = $derived(
 type PendingAction = 'reboot' | 'poweroff';
 
 let confirmOpen = $state(false);
+let shutdownInhibited = $state(false);
 let pending = $state<PendingAction | null>(null);
 // Re-entry protection + in-flight state: reboot/poweroff each run through the
 // keyed async-operation machine (osCommand), so `busy` is derived from whichever
@@ -121,6 +122,7 @@ async function confirmAction() {
 			}
 		},
 	});
+	shutdownInhibited = result?.failureReason === 'shutdown_inhibited';
 	pending = null;
 	// undefined → re-entry no-op or a thrown RPC (osCommand already toasted);
 	// success:false → refused op (device notification). Either way, do NOT
@@ -199,7 +201,10 @@ $effect(() => {
 
 // Closing the dialog (esc / overlay / X) mid-countdown must stop the timer.
 $effect(() => {
-	if (!open && rebootPhase !== 'idle') resetReboot();
+	if (!open) {
+		shutdownInhibited = false;
+		if (rebootPhase !== 'idle') resetReboot();
+	}
 });
 
 onDestroy(stopCountdown);
@@ -268,7 +273,9 @@ function dismissRecovery() {
 				</div>
 			</div>
 		{:else}
-			<p class="text-xs text-muted-foreground">{m["settings.dialogs.powerOverride"]()}</p>
+			{#if shutdownInhibited}
+				<p class="text-xs text-muted-foreground">{m["settings.dialogs.powerOverride"]()}</p>
+			{/if}
 
 		{#if blocked}
 			<!-- Why the actions are unavailable right now. -->

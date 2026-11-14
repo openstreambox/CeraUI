@@ -6,17 +6,28 @@ lasts until the stream and carrying owners both release it; a delay inhibitor
 would expire and allow a long session to be cut off.
 
 The shared OTA marker owners also own the shutdown descriptor. Unknown startup,
-reconciliation and failed cleanup retain protection. Boot attempts the native
-lock before accepting control requests. A slow logind does not abort boot: both
-owners remain set, and carrying publication or the next stream start retries. Own-media launch confirms acquisition
-synchronously before launching media, and refuses if protection is unavailable.
+reconciliation and failed cleanup retain protection. Boot starts native
+lock acquisition without delaying control readiness. A slow logind does not abort boot: both
+owners remain set, and carrying publication or the next stream start retries. Own-media launch awaits acquisition
+asynchronously before launching media, and refuses if protection is unavailable.
 Carrying follows the evidence and hold rules in the carrying-liveness feature;
 traffic that has not yet met those rules is subject to their detection window.
 An acquisition fault does not suppress the separate OTA activation marker, and
 carrying publication retries an unconfirmed acquisition.
 
 Bun's FFI calls the installed `libsystemd.so.0` with fixed-signature sd-bus calls.
-The Inhibit request, bounded to 200 ms, returns an actual file descriptor, retained by its
+The nonblocking sd-bus exchange has a 200 ms deadline covering connection,
+authentication, Hello and Inhibit. It yields to the main loop between bounded
+processing batches, so a silent bus cannot stall readiness or watchdog pulses.
+Only one acquisition is in flight; a failed asynchronous attempt backs off for
+one second before a later owner publication or admission retries. A pending
+acquisition is not confirmed protection. Stream admission awaits its result and
+checks cancellation again before launching media. Boot seeds owners without
+waiting; acquisition completes in the background. If all owners disappear or
+the controller is disposed while acquisition is pending, its eventual descriptor
+is closed immediately.
+
+The reply returns an actual file descriptor, retained by its
 reply object. Normal idle cleanup unreferences that reply. Process exit or crash
 closes it in the kernel; there is no helper process that can outlive the backend
 and keep an orphan lock. Development and unit-test imports never open the host
@@ -28,6 +39,7 @@ honours strong block inhibitors for root without requiring polkit. Explicit
 `--check-inhibitors=yes` is deliberately omitted: it also refuses an idle
 box when a non-root support user is logged in over SSH.
 They retain the existing stream/update admission gates and failure bookkeeping.
+The dialog shows the emergency override only after a shutdown-lock refusal.
 A local refused submission uses a typed, translated reason for shutdown
 protection, other logged-in users, command unavailability or an uncertain result. No forced retry is introduced. The companion image provides
 `ceralive-power` as an opt-in entrypoint for maintenance and recovery scripts;

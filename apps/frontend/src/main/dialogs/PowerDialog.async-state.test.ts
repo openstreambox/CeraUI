@@ -201,7 +201,7 @@ for (const reason of [
 	"shutdown_unavailable",
 	"shutdown_uncertain",
 ] as const) {
-	it(`renders translated power refusal ${reason} and the emergency override`, async () => {
+	it(`renders translated power refusal ${reason} with relevant override`, async () => {
 		rebootRpc.mockResolvedValue({ success: false, failureReason: reason });
 		render(PowerDialog, { props: { open: true } });
 		await confirm(REBOOT_LABEL);
@@ -211,8 +211,13 @@ for (const reason of [
 			),
 		);
 		expect(
-			screen.getByText(m["settings.dialogs.powerOverride"]()),
-		).toBeTruthy();
+			Boolean(screen.queryByText(m["settings.dialogs.powerOverride"]())),
+		).toBe(reason === "shutdown_inhibited");
 		expect(markRebooting).not.toHaveBeenCalled();
 	});
 }
+
+it("keeps the emergency override hidden on an idle box", () => {
+	render(PowerDialog, { props: { open: true } });
+	expect(screen.queryByText(m["settings.dialogs.powerOverride"]())).toBeNull();
+});

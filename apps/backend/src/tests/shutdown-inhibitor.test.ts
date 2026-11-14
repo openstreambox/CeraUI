@@ -97,3 +97,90 @@ test("power failures preserve policy, session, command and uncertainty distincti
 	);
 	expect(classifyPowerFailure(null, "")).toBe("shutdown_uncertain");
 });
+
+for (const ending of ["idle", "dispose"] as const) {
+	test(`late asynchronous acquisition closes after ${ending}`, async () => {
+		let finish!: (close: () => void) => void;
+		let calls = 0,
+			closed = 0;
+		const lock = createShutdownInhibitor(() => {
+			calls++;
+			return new Promise<() => void>((resolve) => {
+				finish = resolve;
+			});
+		});
+		expect(lock.set("encoder", true)).toBe(false);
+		expect(lock.set("carrying", true)).toBe(false);
+		expect(calls).toBe(1);
+		if (ending === "dispose") lock.dispose();
+		else {
+			lock.set("encoder", false);
+			lock.set("carrying", false);
+		}
+		finish(() => {
+			closed++;
+		});
+		await lock.pending();
+		expect(closed).toBe(1);
+		expect(lock.confirmed()).toBe(false);
+	});
+}
+test("asynchronous acquisition confirms both owners and backs off failed attempts", async () => {
+	let calls = 0,
+		closed = 0;
+	const lock = createShutdownInhibitor(async () => {
+		if (++calls === 1) throw Error("silent bus");
+		return () => {
+			closed++;
+		};
+	});
+	expect(lock.set("encoder", true)).toBe(false);
+	await lock.pending();
+	expect(lock.set("encoder", true)).toBe(false);
+	expect(calls).toBe(1);
+	await Bun.sleep(1050);
+	expect(lock.set("carrying", true)).toBe(false);
+	await lock.pending();
+	expect(lock.set("encoder", true)).toBe(true);
+	lock.set("encoder", false);
+	expect(closed).toBe(0);
+	lock.set("carrying", false);
+	expect(closed).toBe(1);
+});
+test("Stop during asynchronous shutdown admission prevents media launch", async () => {
+	let finish!: (allowed: boolean) => void;
+	let entered!: () => void;
+	const waiting = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	let launched = false;
+	let cancelled = false;
+	const session = createStreamSessionOrchestrator({
+		createAttemptId: () => "attempt",
+		setStreamingStatus: () => {},
+		stopRuntime: async () => {},
+		queryRuntime: async () => "idle",
+		ensureShutdownProtection: (_current, signal) => {
+			signal?.addEventListener("abort", () => {
+				cancelled = true;
+			});
+			entered();
+			return new Promise<boolean>((resolve) => {
+				finish = resolve;
+			});
+		},
+	});
+	const start = session.start({
+		origin: "ui",
+		launch: async () => {
+			launched = true;
+		},
+	});
+	await waiting;
+	const stop = session.stop("operator");
+	finish(true);
+	expect((await start).result).toBe("cancelled");
+	await stop;
+	expect(launched).toBe(false);
+	expect(cancelled).toBe(true);
+});

@@ -6,15 +6,28 @@ import { startServiceWatchdog } from './systemd-watchdog.ts';
 if (process.argv[2] === 'probe') {
 	const start = performance.now();
 	let failed = false;
+	let ticks = 0;
+	let pulses = 0;
+	const timer = setInterval(() => ticks++, 10);
+	const stop = startServiceWatchdog({
+		env: { NODE_ENV: 'production', NOTIFY_SOCKET: '/unused', WATCHDOG_USEC: '40000' },
+		notify: () => {
+			pulses++;
+		},
+	});
 	try {
-		acquireLogindInhibitor()();
+		(await acquireLogindInhibitor())();
 	} catch {
 		failed = true;
 	}
-	if (!failed || performance.now() - start >= 1000) process.exit(1);
-	process.stdout.write(`bounded failure: ${Math.round(performance.now() - start)} ms\n`);
+	stop();
+	clearInterval(timer);
+	if (!failed || ticks < 5 || pulses < 3 || performance.now() - start >= 1000) process.exit(1);
+	process.stdout.write(
+		`bounded failure: ${Math.round(performance.now() - start)} ms, ${ticks} ticks, ${pulses} watchdog pulses\n`,
+	);
 } else {
-	acquireLogindInhibitor();
+	await acquireLogindInhibitor();
 	const lib = dlopen('libsystemd.so.0', {
 		sd_notify: { args: ['i32', 'cstring'], returns: 'i32' },
 	});

@@ -355,7 +355,7 @@ for (const [reason, message] of [
 	],
 ] as const) {
 	test(
-		`power refusal ${reason} stays on screen with emergency guidance`,
+		`power refusal ${reason} stays on screen with relevant emergency guidance`,
 		{ tag: reason === "shutdown_inhibited" ? "@visual" : "@functional" },
 		async ({ page }, testInfo) => {
 			await page.addInitScript(installWsHarness, TOKEN);
@@ -364,7 +364,7 @@ for (const [reason, message] of [
 			await openSettingsDialog(page, /Reboot \/ Power/);
 			const power = page.getByRole("dialog", { name: POWER_DIALOG });
 			await expect(power).toBeVisible();
-			await expect(power.getByText(/Emergency override \(root\)/)).toBeVisible();
+			await expect(power.getByText(/Emergency override \(root\)/)).toHaveCount(0);
 			if (reason === "shutdown_inhibited")
 				await page.screenshot({
 					path: evidencePath(`power-ready-${testInfo.project.name}.png`),
@@ -381,6 +381,9 @@ for (const [reason, message] of [
 				return bounds !== null && bounds.y >= 0 &&
 					bounds.y + bounds.height <= (page.viewportSize()?.height ?? 0);
 			}).toBe(true);
+			await expect(power.getByText(/Emergency override \(root\)/)).toHaveCount(
+				reason === "shutdown_inhibited" ? 1 : 0,
+			);
 			await expect(power).toBeVisible();
 			await expect(page.locator('[data-disconnect-banner="rebooting"]')).toHaveCount(0);
 			if (reason === "shutdown_inhibited")

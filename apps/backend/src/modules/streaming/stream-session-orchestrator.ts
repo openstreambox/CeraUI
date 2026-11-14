@@ -188,7 +188,10 @@ export type StreamSessionOrchestratorDeps = {
 	 */
 	readonly admitLifecycle?: () => LifecycleAdmission;
 	/** Confirm the shutdown block before any media launch effect. */
-	readonly ensureShutdownProtection?: () => boolean;
+	readonly ensureShutdownProtection?: (
+		current: () => boolean,
+		signal?: AbortSignal,
+	) => boolean | Promise<boolean>;
 	/**
 	 * The modem-mutation replay barrier, wired at the production singleton for
 	 * the same process-wide-state reason as `admitLifecycle`.
@@ -232,6 +235,7 @@ type ActiveAttempt = {
 	readonly generation: number;
 	cancelled: boolean;
 	launchAdmitted: boolean;
+	shutdownAdmission?: AbortController | undefined;
 	cancelCause?: StreamStopCause;
 	cancelStop?: Promise<boolean>;
 	cancelRetryWait?: () => void;
@@ -487,7 +491,18 @@ export function createStreamSessionOrchestrator(
 					failure: typedUpdateInProgressFailure(attemptId, updateAdmission),
 				};
 			}
-			if (deps.ensureShutdownProtection?.() === false) {
+			attempt.shutdownAdmission = new AbortController();
+			const protectionResult = deps.ensureShutdownProtection?.(
+				() => !attempt.cancelled && active === attempt && ownership.owns(owner),
+				attempt.shutdownAdmission.signal,
+			);
+			const shutdownProtected =
+				typeof protectionResult === "object"
+					? await protectionResult
+					: protectionResult;
+			if (attempt.cancelled || active !== attempt || !ownership.owns(owner))
+				return { result: "cancelled", attemptId };
+			if (shutdownProtected === false) {
 				return {
 					result: "failed",
 					attemptId,
@@ -500,6 +515,7 @@ export function createStreamSessionOrchestrator(
 				};
 			}
 			attempt.launchAdmitted = true;
+			attempt.shutdownAdmission = undefined;
 		} finally {
 			if (
 				!attempt.launchAdmitted &&
@@ -826,6 +842,7 @@ export function createStreamSessionOrchestrator(
 			active.cancelCause = cause;
 			active.cancelRetryWait?.();
 			if (!active.launchAdmitted) {
+				active.shutdownAdmission?.abort();
 				ownership.invalidate();
 				if (transition("idle")) active = undefined;
 				return { result: "stopped" };

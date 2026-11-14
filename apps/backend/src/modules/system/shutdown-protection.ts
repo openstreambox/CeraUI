@@ -20,14 +20,34 @@ export function setShutdownProtection(
 	return ok;
 }
 /** Admission owns only the lease it introduces; retained startup/cleanup owners survive. */
-export function ensureEncoderShutdownProtection(): boolean {
+export function ensureEncoderShutdownProtection(
+	current: () => boolean = () => true,
+	signal?: AbortSignal,
+): boolean | Promise<boolean> {
 	const retainedEncoder = encoder;
+	let released = false;
+	const releaseFreshOwner = () => {
+		if (released) return;
+		released = true;
+		if (!retainedEncoder) setShutdownProtection("encoder", false);
+	};
+	signal?.addEventListener("abort", releaseFreshOwner, { once: true });
+	if (signal?.aborted) return false;
 	if (setShutdownProtection("encoder", true)) return true;
-	if (!retainedEncoder) setShutdownProtection("encoder", false);
-	return false;
+	const finish = () => {
+		if (protection?.confirmed() && current() && !signal?.aborted) return true;
+		releaseFreshOwner();
+		return false;
+	};
+	const pending = protection?.pending();
+	return pending ? pending.then(finish) : finish();
 }
 
-export function initShutdownProtection(acquire = acquireLogindInhibitor): void {
+export function initShutdownProtection(
+	acquire: Parameters<
+		typeof createShutdownInhibitor
+	>[0] = acquireLogindInhibitor,
+): void {
 	if (protection) return;
 	protection = createShutdownInhibitor(acquire);
 	process.once("exit", () => protection?.dispose());
