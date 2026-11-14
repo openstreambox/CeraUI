@@ -2774,5 +2774,7 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"network.view.connectedIdle": "{link} कनेक्ट है, लेकिन स्ट्रीम का लगभग कोई ट्रैफ़िक नहीं ले जा रहा है।",
+	"network.view.connectedIdleDetails": "स्ट्रीम अन्य कनेक्शन पर अभी भी लाइव है। इस कनेक्शन पर कम से कम 20 सेकंड से स्ट्रीम का लगभग कोई ट्रैफ़िक नहीं है। प्रेषक अन्य कनेक्शन का उपयोग कर रहा हो सकता है। यदि यह जारी रहे, तो इस नेटवर्क के VPN, फ़ायरवॉल या DNS और प्रेषक के कनेक्शन आँकड़े जाँचें। यह सूचना कारण की पहचान नहीं करती है।"
 }

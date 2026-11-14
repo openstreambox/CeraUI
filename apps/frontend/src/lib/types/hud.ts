@@ -91,6 +91,8 @@ export interface LinkSignal {
  * than clearing it to `null`.
  */
 export interface HudState {
+	/** Shared sender observations, independent of the currently mounted view. */
+	connectedIdleLinks?: LinkSignal[];
 	// Streaming ---------------------------------------------------------------
 	isStreaming: boolean;
 	isStreamingStale: boolean;

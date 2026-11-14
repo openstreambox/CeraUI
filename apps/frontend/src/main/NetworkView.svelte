@@ -220,9 +220,11 @@ function openModemConfig(id: string) {
 		</section>
 	{:else}
 		<BondedLinksSection
+			observedIdleLinks={(hud.connectedIdleLinks ?? []).map(link => link.id)}
 			{links}
 			{modemEntries}
 			{linkTelemetry}
+			isStreaming={hud.isStreaming && !hud.isStreamingStale}
 			unbondedCount={hud.unbondedLinkCount}
 		/>
 		<CollisionBands {netif} bondMapping={getStatus()?.bond_mapping ?? null} />

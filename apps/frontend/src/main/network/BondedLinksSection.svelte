@@ -11,6 +11,7 @@ import { getStalenessState } from '$lib/helpers/staleness';
 import type { LinkSignal } from '$lib/types/hud';
 import { cn } from '$lib/utils';
 import { signalLabelKey } from './cellular-row';
+import { ConnectedIdleDetector } from './connected-idle';
 import {
 	ambiguousLinkLabels,
 	linkDisambiguation,
@@ -23,6 +24,9 @@ interface Props {
 	linkTelemetry?: LinkTelemetryMessage | null;
 	/** Known interfaces that carry no bonded traffic; stated, never listed here. */
 	unbondedCount?: number;
+	isStreaming?: boolean;
+	/** App-owned observations; standalone fixtures may use the local detector. */
+	observedIdleLinks?: string[];
 }
 
 const {
@@ -30,7 +34,20 @@ const {
 	modemEntries,
 	linkTelemetry = undefined,
 	unbondedCount = 0,
+	isStreaming = false,
+	observedIdleLinks,
 }: Props = $props();
+
+const detector = new ConnectedIdleDetector();
+let idleLinks = $state<string[]>([]);
+$effect(() => {
+	idleLinks = observedIdleLinks ?? detector.update(
+		linkTelemetry?.lastReadMs ?? 0,
+		isStreaming && linkTelemetry?.lastReadMs !== undefined,
+		links,
+		linkTelemetry,
+	);
+});
 
 // The feed is `undefined` only before the first status push lands. Distinguish
 // that "not arrived yet" state from a delivered-but-empty feed (null / no entry
@@ -158,6 +175,14 @@ const totalStale = $derived(
 						>
 							<LinkTelemetry class="gap-x-2.5" {entry} loading={telemetryLoading} />
 						</div>
+					</div>
+					<div class="basis-full" aria-live="polite">
+					{#if idleLinks.includes(link.id)}
+						<details class="basis-full rounded border border-current/20 p-2 text-sm" data-testid="connected-idle-notice">
+							<summary>{m["network.view.connectedIdle"]({ link: link.label })}</summary>
+							<p class="text-muted-foreground mt-1 text-xs">{m["network.view.connectedIdleDetails"]()}</p>
+						</details>
+					{/if}
 					</div>
 				</div>
 			{/each}

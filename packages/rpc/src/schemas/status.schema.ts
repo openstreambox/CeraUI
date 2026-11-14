@@ -184,6 +184,8 @@ export const linkTelemetryEntrySchema = z.object({
 export type LinkTelemetryEntry = z.infer<typeof linkTelemetryEntrySchema>;
 
 export const linkTelemetryMessageSchema = z.object({
+	/** Backend observation time; unchanged cached frames are not new evidence. */
+	lastReadMs: z.number().nonnegative().optional(),
 	links: z.array(linkTelemetryEntrySchema),
 	/**
 	 * Sum of every link's `bitrate_bps` — the bond's total measured wire
