@@ -1753,10 +1753,10 @@
 	"network.wifiMode.stationHint": "Joins a Wi-Fi network. This radio can carry the bond.",
 	"network.wifiMode.hotspotHint": "Broadcasts an access point only. This radio carries no Wi-Fi uplink.",
 	"network.wifiMode.hybridHint": "Stays on Wi-Fi while also broadcasting an access point.",
-  "network.wifiDegraded.unavailable": "The Wi-Fi adapter is temporarily unavailable.",
-  "network.wifiDegraded.operational-mac-missing": "The Wi-Fi adapter has not reported its current hardware address yet.",
-  "network.wifiDegraded.permanent-mac-unresolved": "The Wi-Fi adapter's stable hardware identity could not be confirmed.",
-  "network.wifiMode.unavailable": "{mode} is unavailable — {reason}",
+	"network.wifiDegraded.unavailable": "The Wi-Fi adapter is temporarily unavailable.",
+	"network.wifiDegraded.operational-mac-missing": "The Wi-Fi adapter has not reported its current hardware address yet.",
+	"network.wifiDegraded.permanent-mac-unresolved": "The Wi-Fi adapter's stable hardware identity could not be confirmed.",
+	"network.wifiMode.unavailable": "{mode} is unavailable — {reason}",
 	"network.wifiMode.pending": "Switching to {mode}…",
 	"network.wifiMode.reason.unsupported": "This radio cannot host an access point.",
 	"network.wifiMode.reason.capabilityAbsent": "This radio's driver cannot run Wi-Fi and an access point at the same time.",
@@ -2817,5 +2817,10 @@
 	"notifications.clientCarrying": "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait.",
 	"notifications.clientCarryingUnknown": "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.",
 	"general.updateReasonClientTraffic": "A stream is active or its state is being checked. Stop streaming on connected devices and stop the box’s own stream before installing an update.",
-	"notifications.disruptiveActionClientTraffic": "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress."
+	"notifications.disruptiveActionClientTraffic": "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress.",
+	"settings.dialogs.shutdown_inhibited": "Shutdown was refused while streaming, carrying client traffic, or protected by another shutdown lock. Stop the activity and try again.",
+	"settings.dialogs.other_users": "Other users are logged in. Ask them to finish before trying again.",
+	"settings.dialogs.shutdown_unavailable": "Shutdown is unavailable. Check the system service before trying again.",
+	"settings.dialogs.shutdown_uncertain": "The power request could not be confirmed. Check the box before trying again.",
+	"settings.dialogs.powerOverride": "Emergency override (root): run systemctl stop ceralive, then systemctl reboot. This stops streams, disconnects clients and closes this interface."
 }

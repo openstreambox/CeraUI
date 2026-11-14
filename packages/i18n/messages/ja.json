@@ -1708,10 +1708,10 @@
 	"network.wifiMode.stationHint": "Wi-Fi ネットワークに接続します。この無線はボンディングに参加できます。",
 	"network.wifiMode.hotspotHint": "アクセスポイントの送信のみを行います。この無線は Wi-Fi アップリンクを持ちません。",
 	"network.wifiMode.hybridHint": "Wi-Fi に接続したまま、アクセスポイントも送信します。",
-  "network.wifiDegraded.unavailable": "Wi-Fi アダプターは一時的に利用できません。",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi アダプターは現在のハードウェアアドレスをまだ報告していません。",
-  "network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi アダプターの安定したハードウェア識別情報を確認できませんでした。",
-  "network.wifiMode.unavailable": "{mode} は利用できません — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi アダプターは一時的に利用できません。",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi アダプターは現在のハードウェアアドレスをまだ報告していません。",
+	"network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi アダプターの安定したハードウェア識別情報を確認できませんでした。",
+	"network.wifiMode.unavailable": "{mode} は利用できません — {reason}",
 	"network.wifiMode.pending": "{mode} に切り替えています…",
 	"network.wifiMode.reason.unsupported": "この無線はアクセスポイントを提供できません。",
 	"network.wifiMode.reason.capabilityAbsent": "この無線のドライバーは Wi-Fi とアクセスポイントを同時に動作させられません。",
@@ -2772,5 +2772,10 @@
 	"notifications.clientCarrying": "本機はクライアント通信を中継中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
 	"notifications.clientCarryingUnknown": "クライアントの利用状況を確認中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
 	"general.updateReasonClientTraffic": "配信中、または状態を確認中です。更新前に接続端末と本機の配信を停止してください。",
-	"notifications.disruptiveActionClientTraffic": "この操作は実行されませんでした。ボックス自身の配信と接続デバイスの配信トラフィックがアイドル状態になり、更新が進行していないときに、もう一度お試しください。"
+	"notifications.disruptiveActionClientTraffic": "この操作は実行されませんでした。ボックス自身の配信と接続デバイスの配信トラフィックがアイドル状態になり、更新が進行していないときに、もう一度お試しください。",
+	"settings.dialogs.shutdown_inhibited": "配信、クライアント通信の中継、または別の終了ロックにより拒否されました。処理を停止して再試行してください。",
+	"settings.dialogs.other_users": "他のユーザーがログインしています。作業の終了を依頼してから再試行してください。",
+	"settings.dialogs.shutdown_unavailable": "終了処理を利用できません。システムサービスを確認してから再試行してください。",
+	"settings.dialogs.shutdown_uncertain": "電源操作を確認できませんでした。機器を確認してから再試行してください。",
+	"settings.dialogs.powerOverride": "緊急時の解除（root）：systemctl stop ceralive、次に systemctl reboot を実行します。配信が停止し、クライアントが切断され、この画面が閉じます。"
 }

@@ -2,7 +2,9 @@
  * CeraLive operators are non-developers with no console or SSH access. A shell
  * command, a systemd unit name, or a raw ALSA device string in a user-facing
  * string is unactionable — it must be replaced by a pointer at the in-app log
- * viewer (Settings → System Logs). Found live during Wave H device QA, where a
+ * viewer (Settings → System Logs). The explicit emergency root power procedure
+ * is the one scoped exception; its two supported commands are pinned below.
+ * Found live during Wave H device QA, where a
  * stacked start-failure toast told an operator to run
  * `journalctl -u cerastream.service` and then quoted
  * `ALSA capture device 'hw:CARD=rockchiphdmiin' is busy or unavailable` verbatim.
@@ -53,17 +55,35 @@ function collectStrings(
 	}
 }
 
+function ordinaryOperatorCopy(path: string, text: string): string {
+	if (path !== "settings.dialogs.powerOverride") return text;
+	// Permit only the documented emergency sequence at this exact key. Other
+	// commands, unit names and leaked internals in the same value still fail.
+	expect(text).toContain("root");
+	expect(text).not.toMatch(/--force|--check-inhibitors|(?:^|\s)-i\b/);
+	expect(text).toMatch(/systemctl stop ceralive(?![\w-]|\.service\b)/);
+	expect(text).toMatch(/systemctl reboot(?![\w-]|\.service\b)/);
+	expect(text.indexOf("systemctl stop ceralive")).toBeGreaterThanOrEqual(0);
+	expect(text.indexOf("systemctl reboot")).toBeGreaterThan(
+		text.indexOf("systemctl stop ceralive"),
+	);
+	return text
+		.replace("systemctl stop ceralive", "")
+		.replace("systemctl reboot", "");
+}
+
 describe("operator-facing copy carries no ops internals", () => {
 	it.each(Object.keys(LOCALES))("%s", (locale) => {
 		const entries: { path: string; text: string }[] = [];
 		collectStrings(LOCALES[locale as keyof typeof LOCALES], "", entries);
 		expect(entries.length).toBeGreaterThan(0);
 
-		const offenders = entries.flatMap(({ path, text }) =>
-			BANNED.filter(({ pattern }) => pattern.test(text)).map(
+		const offenders = entries.flatMap(({ path, text }) => {
+			const ordinary = ordinaryOperatorCopy(path, text);
+			return BANNED.filter(({ pattern }) => pattern.test(ordinary)).map(
 				({ label }) => `${path}: ${label} — "${text}"`,
-			),
-		);
+			);
+		});
 
 		expect(offenders).toEqual([]);
 	});
@@ -92,4 +112,30 @@ describe("the sweep is falsifiable — every pattern trips on a planted string",
 		);
 		expect(caught).toContain(label);
 	});
+});
+
+it("the emergency exception cannot admit extra commands or apply to another key", () => {
+	const approved =
+		"Emergency (root): systemctl stop ceralive, then systemctl reboot";
+	const extra = ordinaryOperatorCopy(
+		"settings.dialogs.powerOverride",
+		`${approved}; systemctl start unrelated`,
+	);
+	expect(BANNED.some(({ pattern }) => pattern.test(extra))).toBe(true);
+	const elsewhere = ordinaryOperatorCopy(
+		"settings.dialogs.other_users",
+		approved,
+	);
+	expect(BANNED.some(({ pattern }) => pattern.test(elsewhere))).toBe(true);
+});
+
+it("the emergency procedure cannot suggest polkit-dependent or forced flags", () => {
+	for (const suffix of [" -i", " --force", " --check-inhibitors=no"]) {
+		expect(() =>
+			ordinaryOperatorCopy(
+				"settings.dialogs.powerOverride",
+				`Emergency (root): systemctl stop ceralive, then systemctl reboot${suffix}`,
+			),
+		).toThrow();
+	}
 });

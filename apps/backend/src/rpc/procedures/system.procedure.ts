@@ -17,6 +17,7 @@ import {
 	kioskToggleOutputSchema,
 	logInputSchema,
 	logOutputSchema,
+	powerResponseSchema,
 	previewTokenOutputSchema,
 	remoteConfigInputSchema,
 	revisionsSchema,
@@ -42,6 +43,7 @@ import { setAutostart } from "../../modules/streaming/streamloop.ts";
 import { DisruptiveActionRefusedError } from "../../modules/system/disruptive-action-error.ts";
 import {
 	PowerSubmissionError,
+	plannedPowerFailureMessage,
 	resetDisruptiveActionReservationForTest,
 } from "../../modules/system/disruptive-action-reservation.ts";
 import {
@@ -162,16 +164,21 @@ export const getSyslogProcedure = authedProcedure
 		return { log: result?.contents ?? "" };
 	});
 
-// Host-power runner DI seam (mirrors setKioskDeps): the default issues the real
-// Bun.spawnSync([command]) so the production path is unchanged; tests inject a
-// spy to assert the spawn without powering off the host.
+// Host-power runner DI seam (mirrors setKioskDeps). On systemd 257 logind
+// honours the strong block for root without adding the SSH session check.
+// Tests inject a spy without powering off the host.
 type PowerCommand = "poweroff" | "reboot";
 type PowerCommandRunner = (command: PowerCommand) => void;
 
 const defaultPowerCommandRunner: PowerCommandRunner = (command) => {
-	const result = Bun.spawnSync([command]);
+	const result = Bun.spawnSync(["systemctl", command]);
 	if (result.exitCode !== 0)
-		throw new PowerSubmissionError(command, result.exitCode);
+		throw new PowerSubmissionError(
+			command,
+			result.exitCode,
+			plannedPowerFailureMessage(result.exitCode),
+			new TextDecoder().decode(result.stderr),
+		);
 };
 
 let powerCommandRunner: PowerCommandRunner = defaultPowerCommandRunner;
@@ -188,7 +195,7 @@ export function resetPowerCommandRunner(): void {
 // Gate on isDevelopment() — NOT isRealDevice(), which is false for an
 // unrecognised board and would make a real device silently skip poweroff.
 export const poweroffProcedure = authedProcedure
-	.output(successResponseSchema)
+	.output(powerResponseSchema)
 	.handler(() => {
 		if (isDevelopment()) {
 			logger.info("dev: skipping spawn", {
@@ -203,7 +210,7 @@ export const poweroffProcedure = authedProcedure
 	});
 
 export const rebootProcedure = authedProcedure
-	.output(successResponseSchema)
+	.output(powerResponseSchema)
 	.handler(() => {
 		if (isDevelopment()) {
 			logger.info("dev: skipping spawn", {

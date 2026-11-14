@@ -201,7 +201,7 @@ describe("(d) software-update auto-reboot gate", () => {
 		expect(calls).toHaveLength(0);
 	});
 
-	test("NODE_ENV=production: auto-reboot invokes run('reboot', []) once", () => {
+	test("NODE_ENV=production: auto-reboot explicitly checks shutdown inhibitors once", () => {
 		process.env.NODE_ENV = "production";
 		delete process.env.MOCK_MODE;
 		const calls: Array<[string, string[]]> = [];
@@ -209,6 +209,6 @@ describe("(d) software-update auto-reboot gate", () => {
 
 		rebootAfterUpdate();
 
-		expect(calls).toEqual([["reboot", []]]);
+		expect(calls).toEqual([["systemctl", ["reboot"]]]);
 	});
 });

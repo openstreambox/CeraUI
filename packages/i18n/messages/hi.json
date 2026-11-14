@@ -1753,10 +1753,10 @@
 	"network.wifiMode.stationHint": "Wi-Fi नेटवर्क से जुड़ता है। यह रेडियो बॉन्ड में शामिल हो सकता है।",
 	"network.wifiMode.hotspotHint": "केवल एक ऐक्सेस पॉइंट प्रसारित करता है। यह रेडियो कोई Wi-Fi अपलिंक नहीं देता।",
 	"network.wifiMode.hybridHint": "Wi-Fi से जुड़ा रहते हुए एक ऐक्सेस पॉइंट भी प्रसारित करता है।",
-  "network.wifiDegraded.unavailable": "Wi-Fi अडैप्टर अस्थायी रूप से उपलब्ध नहीं है।",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi अडैप्टर ने अभी तक अपना वर्तमान हार्डवेयर पता नहीं बताया है।",
-  "network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi अडैप्टर की स्थिर हार्डवेयर पहचान की पुष्टि नहीं हो सकी।",
-  "network.wifiMode.unavailable": "{mode} उपलब्ध नहीं है — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi अडैप्टर अस्थायी रूप से उपलब्ध नहीं है।",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi अडैप्टर ने अभी तक अपना वर्तमान हार्डवेयर पता नहीं बताया है।",
+	"network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi अडैप्टर की स्थिर हार्डवेयर पहचान की पुष्टि नहीं हो सकी।",
+	"network.wifiMode.unavailable": "{mode} उपलब्ध नहीं है — {reason}",
 	"network.wifiMode.pending": "{mode} पर स्विच किया जा रहा है…",
 	"network.wifiMode.reason.unsupported": "यह रेडियो ऐक्सेस पॉइंट होस्ट नहीं कर सकता।",
 	"network.wifiMode.reason.capabilityAbsent": "इस रेडियो का ड्राइवर एक साथ Wi-Fi और ऐक्सेस पॉइंट नहीं चला सकता।",
@@ -2817,5 +2817,10 @@
 	"notifications.clientCarrying": "बॉक्स क्लाइंट ट्रैफ़िक पहुँचा रहा है। अपडेट, रीस्टार्ट, पावर ऑफ और निष्क्रिय लिंक बदलाव प्रतीक्षा करेंगे।",
 	"notifications.clientCarryingUnknown": "बॉक्स क्लाइंट गतिविधि जाँच रहा है। अपडेट, रीस्टार्ट, पावर ऑफ और निष्क्रिय लिंक बदलाव प्रतीक्षा करेंगे।",
 	"general.updateReasonClientTraffic": "स्ट्रीम चालू है या उसकी स्थिति जाँची जा रही है। अपडेट से पहले जुड़े उपकरणों और बॉक्स की स्ट्रीम बंद करें।",
-	"notifications.disruptiveActionClientTraffic": "यह कार्रवाई नहीं की गई। जब बॉक्स की अपनी स्ट्रीम और जुड़े उपकरणों का स्ट्रीम ट्रैफ़िक निष्क्रिय हो और कोई अपडेट न चल रहा हो, तब फिर कोशिश करें।"
+	"notifications.disruptiveActionClientTraffic": "यह कार्रवाई नहीं की गई। जब बॉक्स की अपनी स्ट्रीम और जुड़े उपकरणों का स्ट्रीम ट्रैफ़िक निष्क्रिय हो और कोई अपडेट न चल रहा हो, तब फिर कोशिश करें।",
+	"settings.dialogs.shutdown_inhibited": "स्ट्रीमिंग, क्लाइंट ट्रैफ़िक या किसी अन्य शटडाउन लॉक के कारण बंद करना अस्वीकार हुआ। गतिविधि रोककर फिर प्रयास करें।",
+	"settings.dialogs.other_users": "अन्य उपयोगकर्ता लॉग इन हैं। फिर प्रयास करने से पहले उनसे काम पूरा करने को कहें।",
+	"settings.dialogs.shutdown_unavailable": "शटडाउन उपलब्ध नहीं है। फिर प्रयास करने से पहले सिस्टम सेवा जाँचें।",
+	"settings.dialogs.shutdown_uncertain": "पावर अनुरोध की पुष्टि नहीं हो सकी। फिर प्रयास करने से पहले डिवाइस जाँचें।",
+	"settings.dialogs.powerOverride": "आपातकालीन ओवरराइड (root): पहले systemctl stop ceralive, फिर systemctl reboot चलाएँ। इससे स्ट्रीम रुकती हैं, क्लाइंट डिस्कनेक्ट होते हैं और यह इंटरफ़ेस बंद होता है।"
 }

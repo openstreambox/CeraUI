@@ -1708,10 +1708,10 @@
 	"network.wifiMode.stationHint": "Wi-Fi 네트워크에 연결합니다. 이 무선 장치는 본딩에 참여할 수 있습니다.",
 	"network.wifiMode.hotspotHint": "액세스 포인트만 송출합니다. 이 무선 장치는 Wi-Fi 업링크를 제공하지 않습니다.",
 	"network.wifiMode.hybridHint": "Wi-Fi 연결을 유지하면서 액세스 포인트도 함께 송출합니다.",
-  "network.wifiDegraded.unavailable": "Wi-Fi 어댑터를 일시적으로 사용할 수 없습니다.",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi 어댑터가 현재 하드웨어 주소를 아직 보고하지 않았습니다.",
-  "network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi 어댑터의 안정적인 하드웨어 ID를 확인할 수 없습니다.",
-  "network.wifiMode.unavailable": "{mode}을(를) 사용할 수 없습니다 — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi 어댑터를 일시적으로 사용할 수 없습니다.",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi 어댑터가 현재 하드웨어 주소를 아직 보고하지 않았습니다.",
+	"network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi 어댑터의 안정적인 하드웨어 ID를 확인할 수 없습니다.",
+	"network.wifiMode.unavailable": "{mode}을(를) 사용할 수 없습니다 — {reason}",
 	"network.wifiMode.pending": "{mode}(으)로 전환하는 중…",
 	"network.wifiMode.reason.unsupported": "이 무선 장치는 액세스 포인트를 제공할 수 없습니다.",
 	"network.wifiMode.reason.capabilityAbsent": "이 무선 장치의 드라이버는 Wi-Fi와 액세스 포인트를 동시에 실행할 수 없습니다.",
@@ -2772,5 +2772,10 @@
 	"notifications.clientCarrying": "박스가 클라이언트 트래픽을 전달 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
 	"notifications.clientCarryingUnknown": "클라이언트 활동을 확인 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
 	"general.updateReasonClientTraffic": "방송 중이거나 상태를 확인 중입니다. 업데이트 전에 연결된 기기와 박스의 방송을 중지하세요.",
-	"notifications.disruptiveActionClientTraffic": "이 작업은 실행되지 않았습니다. 박스 자체 스트림과 연결된 기기의 스트리밍 트래픽이 유휴 상태이고 업데이트가 진행 중이 아닐 때 다시 시도하세요."
+	"notifications.disruptiveActionClientTraffic": "이 작업은 실행되지 않았습니다. 박스 자체 스트림과 연결된 기기의 스트리밍 트래픽이 유휴 상태이고 업데이트가 진행 중이 아닐 때 다시 시도하세요.",
+	"settings.dialogs.shutdown_inhibited": "방송, 클라이언트 트래픽 전달 또는 다른 종료 잠금으로 종료가 거부되었습니다. 활동을 중지한 후 다시 시도하세요.",
+	"settings.dialogs.other_users": "다른 사용자가 로그인되어 있습니다. 작업을 마치도록 요청한 후 다시 시도하세요.",
+	"settings.dialogs.shutdown_unavailable": "종료할 수 없습니다. 시스템 서비스를 확인한 후 다시 시도하세요.",
+	"settings.dialogs.shutdown_uncertain": "전원 요청을 확인할 수 없습니다. 장치를 확인한 후 다시 시도하세요.",
+	"settings.dialogs.powerOverride": "긴급 해제(root): systemctl stop ceralive 실행 후 systemctl reboot를 실행하세요. 방송이 중지되고 클라이언트 연결과 이 화면이 닫힙니다."
 }

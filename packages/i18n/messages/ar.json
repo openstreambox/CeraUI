@@ -1765,10 +1765,10 @@
 	"network.wifiMode.stationHint": "يتصل بشبكة Wi-Fi. يمكن لهذا الراديو أن يشارك في التجميع.",
 	"network.wifiMode.hotspotHint": "يبثّ نقطة اتصال فقط. لا يوفّر هذا الراديو وصلة Wi-Fi صاعدة.",
 	"network.wifiMode.hybridHint": "يظل متصلاً بشبكة Wi-Fi مع بثّ نقطة اتصال في الوقت نفسه.",
-  "network.wifiDegraded.unavailable": "محول Wi-Fi غير متاح مؤقتًا.",
-  "network.wifiDegraded.operational-mac-missing": "لم يبلّغ محول Wi-Fi عن عنوان الجهاز الحالي بعد.",
-  "network.wifiDegraded.permanent-mac-unresolved": "تعذر تأكيد هوية الجهاز الثابتة لمحول Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} غير متاح — {reason}",
+	"network.wifiDegraded.unavailable": "محول Wi-Fi غير متاح مؤقتًا.",
+	"network.wifiDegraded.operational-mac-missing": "لم يبلّغ محول Wi-Fi عن عنوان الجهاز الحالي بعد.",
+	"network.wifiDegraded.permanent-mac-unresolved": "تعذر تأكيد هوية الجهاز الثابتة لمحول Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} غير متاح — {reason}",
 	"network.wifiMode.pending": "جارٍ التبديل إلى {mode}…",
 	"network.wifiMode.reason.unsupported": "لا يستطيع هذا الراديو استضافة نقطة اتصال.",
 	"network.wifiMode.reason.capabilityAbsent": "لا يستطيع برنامج تشغيل هذا الراديو تشغيل Wi-Fi ونقطة اتصال في الوقت نفسه.",
@@ -2829,5 +2829,10 @@
 	"notifications.clientCarrying": "الجهاز ينقل حركة العملاء. ستنتظر التحديثات وإعادة التشغيل وإيقاف التشغيل وتغييرات الروابط عند الخمول.",
 	"notifications.clientCarryingUnknown": "الجهاز يتحقق من نشاط العملاء. ستنتظر التحديثات وإعادة التشغيل وإيقاف التشغيل وتغييرات الروابط عند الخمول.",
 	"general.updateReasonClientTraffic": "البث نشط أو جارٍ التحقق من حالته. أوقف بث الأجهزة المتصلة وبث الجهاز نفسه قبل تثبيت التحديث.",
-	"notifications.disruptiveActionClientTraffic": "لم يُنفَّذ هذا الإجراء. حاول مجددًا عندما يكون بث الجهاز وحركة بث الأجهزة المتصلة في حالة خمول ولا يكون هناك تحديث قيد التنفيذ."
+	"notifications.disruptiveActionClientTraffic": "لم يُنفَّذ هذا الإجراء. حاول مجددًا عندما يكون بث الجهاز وحركة بث الأجهزة المتصلة في حالة خمول ولا يكون هناك تحديث قيد التنفيذ.",
+	"settings.dialogs.shutdown_inhibited": "رُفض الإيقاف أثناء البث أو تمرير بيانات العملاء أو بسبب قفل إيقاف آخر. أوقف النشاط ثم حاول مجددًا.",
+	"settings.dialogs.other_users": "هناك مستخدمون آخرون مسجلون للدخول. اطلب منهم إنهاء عملهم قبل المحاولة مجددًا.",
+	"settings.dialogs.shutdown_unavailable": "الإيقاف غير متاح. تحقق من خدمة النظام قبل المحاولة مجددًا.",
+	"settings.dialogs.shutdown_uncertain": "تعذر تأكيد طلب الطاقة. تحقق من الجهاز قبل المحاولة مجددًا.",
+	"settings.dialogs.powerOverride": "تجاوز الطوارئ (root): شغّل systemctl stop ceralive ثم systemctl reboot. سيوقف هذا البث ويفصل العملاء ويغلق هذه الواجهة."
 }

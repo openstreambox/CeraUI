@@ -97,6 +97,7 @@ async function remoteReboot(exitCode = 0, beforeConfirm?: () => void) {
 		const early = submitted.length;
 		beforeConfirm?.();
 		await routeCommand({ ...frame, type: "self_fencing.confirm" }, deps);
+		if (submitted.length) expect(submitted).toEqual([["systemctl", "reboot"]]);
 		const last = frames.at(-1)?.payload;
 		return {
 			ran: submitted.length > 0,
@@ -246,7 +247,8 @@ test("remote confirmed reboot reports a nonzero host exit honestly", async () =>
 		ran: true,
 		early: 0,
 		ok: false,
-		error: "reboot exited with status 1",
+		error:
+			"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle. For an emergency, as root run systemctl stop ceralive, then systemctl reboot; this disconnects streams and clients.",
 	});
 });
 test("remote confirmed reboot proceeds on confirmed idle", async () => {
