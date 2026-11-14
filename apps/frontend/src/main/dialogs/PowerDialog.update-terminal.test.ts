@@ -25,7 +25,11 @@ import {
 } from "../../lib/rpc/async-operation.svelte";
 import PowerDialog from "./PowerDialog.svelte";
 
-const state = vi.hoisted(() => ({ updating: false as unknown, phone: false }));
+const state = vi.hoisted(() => ({
+	updating: false as unknown,
+	phone: false,
+	startup: true as boolean | undefined,
+}));
 
 vi.mock("$lib/rpc/client", () => ({
 	rpc: { system: { reboot: vi.fn(), poweroff: vi.fn() } },
@@ -34,7 +38,10 @@ vi.mock("$lib/rpc/client", () => ({
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getStatus: () =>
 		state.phone
-			? { phone_box: true, carrying: { state: "unknown" } }
+			? {
+					phone_box: true,
+					carrying: { state: "unknown", startup: state.startup },
+				}
 			: undefined,
 	getUplinks: () => undefined,
 	getIsStreaming: () => false,
@@ -142,3 +149,22 @@ it("allows confirmed poweroff during phone startup while holding restart", async
 		state.phone = false;
 	}
 });
+
+it.each([false, undefined])(
+	"holds power off when checking is no longer startup (%s)",
+	(startup) => {
+		state.updating = false;
+		state.phone = true;
+		state.startup = startup;
+		try {
+			render(PowerDialog, { props: { open: true } });
+			expect(
+				screen.getByRole("button", { name: m["advanced.powerOff"]() }),
+			).toHaveProperty("disabled", true);
+			expect(rebootButton().disabled).toBe(true);
+		} finally {
+			state.phone = false;
+			state.startup = true;
+		}
+	},
+);

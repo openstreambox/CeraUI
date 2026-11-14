@@ -58,7 +58,7 @@ const updating = $derived(getUpdating());
 // (success or failure) is retained by the store and must release the gate.
 const isUpdating = $derived(legacyInstallRunning(updating));
 const phoneProtected = $derived(getStatus()?.phone_box && getStatus()?.carrying?.state !== 'idle');
-const powerBlocked = $derived(streaming || isUpdating || (phoneProtected && getStatus()?.carrying?.state === 'streaming'));
+const powerBlocked = $derived(streaming || isUpdating || (phoneProtected && getStatus()?.carrying?.startup !== true));
 const blocked = $derived(streaming || isUpdating || phoneProtected);
 const blockedReason = $derived(
 	phoneProtected ? (getStatus()?.carrying?.state === 'streaming' ? m['live.phone.restartHold']() : m['live.phone.restartChecking']()) : streaming
@@ -107,7 +107,7 @@ function request(action: PendingAction) {
 // refusal; osCommand reports other failures. Neither advances to "rebooting"/close.
 async function confirmAction() {
 	const action = pending;
-	if (!action) return;
+	if (!action || (action === 'poweroff' ? powerBlocked : blocked)) return;
 	const result = await osCommand({
 		key: action,
 		target: action,
@@ -330,7 +330,7 @@ function dismissRecovery() {
 	bind:open={confirmOpen}
 	destructive
 	onPrimary={confirmAction}
-	primaryDisabled={busy}
+	primaryDisabled={busy || (pending === 'poweroff' ? powerBlocked : blocked)}
 	primaryLabel={confirmLabel}
 	title={m["dialogs.areYouSure"]()}
 >

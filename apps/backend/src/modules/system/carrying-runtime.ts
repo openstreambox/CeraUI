@@ -13,7 +13,7 @@ import {
 } from "../ui/notifications.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
 import { isConcurrentApIfname } from "../wifi/wifi-concurrent-interface.ts";
-import { carryingTracker, getCarryingLiveness } from "./carrying.ts";
+import { carryingTracker, getCarryingStatus } from "./carrying.ts";
 
 /** RX on client-facing ports excludes the box's own uplink traffic. It also
  * works before a streaming shaper root exists and with NM's sharing floor. */
@@ -40,13 +40,15 @@ export async function readClientUploadCounters(
 let published: string | undefined;
 let markerProtected: boolean | undefined;
 function publishCarrying(): void {
-	const state = getCarryingLiveness();
+	const carrying = getCarryingStatus();
+	const { state, startup } = carrying;
 	const protect = state !== "idle";
 	if (markerProtected !== protect && setCarryingOtaProtection(protect))
 		markerProtected = protect;
-	if (state === published) return;
-	published = state;
-	broadcastMsg("status", { carrying: { state } });
+	const signature = `${state}:${startup}`;
+	if (signature === published) return;
+	published = signature;
+	broadcastMsg("status", { carrying });
 	if (state === "idle") {
 		notificationRemove("client-carrying");
 		return;
@@ -54,13 +56,13 @@ function publishCarrying(): void {
 	const key =
 		state === "streaming"
 			? "notifications.clientCarrying"
-			: setup.engine === "none"
+			: setup.engine === "none" && startup
 				? "live.phone.carryingChecking"
 				: "notifications.clientCarryingUnknown";
 	const message =
 		state === "streaming"
 			? "The box is carrying client traffic. Updates, restarts, power-off and idle link changes will wait."
-			: setup.engine === "none"
+			: setup.engine === "none" && startup
 				? "The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption."
 				: "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.";
 	notificationBroadcast(

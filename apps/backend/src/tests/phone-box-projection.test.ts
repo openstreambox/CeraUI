@@ -52,3 +52,19 @@ test("boot checking remains unknown through 119999 ms and releases at 120000 ms"
 	tracker.upload(120000, {});
 	expect(tracker.read(120000)).toBe("idle");
 });
+
+test("checking snapshot retires startup permission at 120 s even with unreadable counters", () => {
+	const tracker = new CarryingTracker();
+	tracker.start(0);
+	tracker.upload(119999, null);
+	expect(tracker.snapshot(119999)).toEqual({ state: "unknown", startup: true });
+	expect(tracker.snapshot(120000)).toEqual({
+		state: "unknown",
+		startup: false,
+	});
+	tracker.session("srt", true, 120001);
+	expect(tracker.snapshot(120001)).toEqual({
+		state: "streaming",
+		startup: false,
+	});
+});

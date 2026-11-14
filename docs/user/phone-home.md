@@ -72,3 +72,7 @@ No separate phone credential is created.
 Home sigue los cambios de tráfico de la suscripción de estado compartida,
 incluidos el reenvío y el estado desconocido. Las instrucciones SRT usan la
 contraseña generada y persistida del receptor, o la configurada explícitamente.
+
+Power off is available during Checking only while the box reports its initial 120-second startup check. Later unknown traffic holds both restart and power off, including an already-open confirmation. Missing startup evidence also holds power off.
+
+Apagar solo está disponible durante la comprobación inicial de 120 segundos que confirma el equipo. Si después se desconoce el tráfico, se bloquean tanto reiniciar como apagar, incluso en una confirmación abierta. Si falta esa confirmación inicial, apagar también queda bloqueado.

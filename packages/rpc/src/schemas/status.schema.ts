@@ -453,7 +453,9 @@ export const statusResponseSchema = z.object({
 		})
 		.optional(),
 	box_health: z.array(z.object({ part: phonePartSchema, since: z.number() })).optional(),
-	carrying: z.object({ state: z.enum(['streaming', 'idle', 'unknown']) }).optional(),
+	carrying: z
+		.object({ state: z.enum(['streaming', 'idle', 'unknown']), startup: z.boolean().optional() })
+		.optional(),
 	is_streaming: z.boolean().optional(),
 	stream_lifecycle: lifecycleStateSchema.optional(),
 	available_updates: availableUpdatesFieldSchema.optional(),

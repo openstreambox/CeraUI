@@ -2968,11 +2968,11 @@
 	"live.phone.wifiClient": "[EN] 1 phone on the box's Wi-Fi",
 	"live.phone.fine": "[EN] Fine",
 	"live.phone.joinNamed": "[EN] Join {name} in your phone's Wi-Fi settings. Keep the password off camera and out of screenshots.",
-	"live.phone.healthReady": "The box's {parts} didn't start. Links that work: {links}.",
-	"live.phone.healthActive": "The box's {parts} didn't start. Your phone's stream is going over {links}.",
-	"live.phone.healthMoblin": "The box's {parts} didn't start. Your phone's stream is going over {links} and your phone's own SIM.",
+	"live.phone.healthReady": "[EN] The box's {parts} didn't start. Links that work: {links}.",
+	"live.phone.healthActive": "[EN] The box's {parts} didn't start. Your phone's stream is going over {links}.",
+	"live.phone.healthMoblin": "[EN] The box's {parts} didn't start. Your phone's stream is going over {links} and your phone's own SIM.",
 	"live.phone.healthWaitOne": "[EN] 1 other part can wait",
 	"live.phone.healthWaitMany": "[EN] {count} other parts can wait",
-	"live.phone.healthRestartParts": "{parts} need a restart",
-	"live.phone.carryingChecking": "The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption."
+	"live.phone.healthRestartParts": "[EN] {parts} need a restart",
+	"live.phone.carryingChecking": "[EN] The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption."
 }

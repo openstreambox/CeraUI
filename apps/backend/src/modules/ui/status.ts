@@ -60,7 +60,7 @@ import { getPreviewEncoderRealizedStatus } from "../streaming/preview-encoder-st
 import { getSourcesMessage } from "../streaming/sources.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
-import { getCarryingLiveness } from "../system/carrying.ts";
+import { getCarryingStatus } from "../system/carrying.ts";
 import { CPU_EVENT, getCpuInfo } from "../system/cpu.ts";
 import { ENCODER_LOAD_EVENT, getEncoderLoad } from "../system/encoder-load.ts";
 import { FAN_EVENT, getFan } from "../system/fan.ts";
@@ -103,7 +103,7 @@ export type StatusResponseMessage = {
 	bond_mapping?: BondMapping | null;
 	buffering?: BufferingStatus | null;
 	network_ingest?: NetworkIngest | null;
-	carrying?: { state: ReturnType<typeof getCarryingLiveness> };
+	carrying?: ReturnType<typeof getCarryingStatus>;
 	active_encode?: ActiveEncode | null;
 	engine_bitrate?: EngineBitrate | null;
 	preview_encoder_realized?: PreviewEncoderRealized | null;
@@ -137,7 +137,7 @@ export function sendStatus(conn: WebSocket) {
 			linkTelemetry: buildLinkTelemetry(),
 			bond_mapping: buildBondMapping(),
 			network_ingest: getNetworkIngestInfo(),
-			carrying: { state: getCarryingLiveness() },
+			carrying: getCarryingStatus(),
 			phone_box: setup.engine === "none",
 			phone_links: getPhoneLinkCounts(),
 			box_health: getPhoneBoxHealth(),
