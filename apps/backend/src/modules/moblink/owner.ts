@@ -35,7 +35,7 @@ export class MoblinkOwner {
 	private file() {
 		return path.join(this.deps.directory, "credential");
 	}
-	private prepareDirectory() {
+	private prepareDirectory(create = true) {
 		try {
 			const st = fs.lstatSync(this.deps.directory);
 			if (
@@ -48,9 +48,11 @@ export class MoblinkOwner {
 				fs.chmodSync(this.deps.directory, 0o700);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			if (!create) return false;
 			fs.mkdirSync(this.deps.directory, { mode: 0o700 });
 		}
 		this.checked(this.deps.directory, true);
+		return true;
 	}
 	private sweep() {
 		for (const name of fs.readdirSync(this.deps.directory)) {
@@ -90,7 +92,8 @@ export class MoblinkOwner {
 			this.sweep();
 			if (this.deps.available()) {
 				if (this.status().configured) this.deps.start();
-				else if (fs.existsSync(this.file())) this.deps.health?.(true);
+				else if (fs.lstatSync(this.file(), { throwIfNoEntry: false }))
+					this.deps.health?.(true);
 			}
 		} catch {
 			this.deps.health?.(true);
@@ -117,11 +120,25 @@ export class MoblinkOwner {
 				return { success: false, error: "invalid" as const };
 			let temporary: string | undefined;
 			try {
-				this.prepareDirectory();
+				if (!this.prepareDirectory(password !== undefined)) {
+					await this.deps.stop();
+					this.deps.health?.(false);
+					return { success: true };
+				}
 				this.sweep();
 				await this.deps.stop();
-				if (!this.deps.idle())
+				if (!this.deps.idle()) {
+					if (this.deps.available() && this.status().configured) {
+						try {
+							this.deps.start();
+						} catch {
+							this.deps.health?.(true);
+						}
+					} else {
+						this.deps.health?.(true);
+					}
 					return { success: false, error: "busy" as const };
+				}
 				if (password === undefined) {
 					fs.rmSync(this.file(), { force: true });
 					const dir = fs.openSync(this.deps.directory, "r");

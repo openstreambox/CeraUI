@@ -2,7 +2,8 @@
 
 The backend owns `/data/moblink` (0700) and `credential` (0600), using its service
 UID. Set/replace uses an exclusive temporary file, fsync and rename; clear
-unlinks and fsyncs. Symlinks, hard links, foreign ownership, oversized files and
+unlinks and fsyncs; an absent directory is already clear and is never created.
+Symlinks, hard links, foreign ownership, oversized files and
 incorrect modes fail closed on inspection. Replace atomically renames over an
 unsafe credential name; clear unlinks it without following links. An own-UID
 directory is repaired to 0700. Startup, save and clear remove own-UID regular
@@ -51,8 +52,10 @@ cross-UID access before installing the managed marker. Until then this topic
 remains draft and must not be enabled in a release image.
 
 No password value is returned to RPC, status, logs or remote
-fan-out, or application browser storage. The field uses `autocomplete="new-password"`;
+fan-out, or application browser storage. The field uses `autocomplete="off"` with password-manager ignore hints;
 browser extensions and password-manager policies remain outside app control.
+If a stream starts while the relay is stopping for a mutation, the unchanged
+credential is restarted when available; a failed restart marks Box health.
 Mutations require confirmed idle, including
 carrying evidence. This does not add per-link admission, media telemetry or
 real-phone validation. Empty/unsafe stored files and unexpected child exits mark

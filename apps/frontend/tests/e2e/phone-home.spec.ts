@@ -84,6 +84,11 @@ for (const width of [390, 1280, 1024]) {
   await home.getByRole('button', { name: 'Connect your phone', exact: true }).click();
   const input = home.getByLabel("Moblin's password (from Moblin, not the Wi-Fi password)");
   await expect(input).toBeEnabled();
+  await expect(input).toHaveAttribute('autocomplete', 'off');
+  await expect(input).toHaveAttribute('data-1p-ignore', '');
+  await expect(input).toHaveAttribute('data-lpignore', 'true');
+  await expect(input).toHaveAttribute('data-bwignore', '');
+  await expect(input).toHaveAttribute('data-form-type', 'other');
   await expect(home).not.toContainText(/inputs =|experimentalStaticLocale/);
   await input.fill('synthetic-phone-password');
   await home.getByRole('button', { name: 'Save Moblin password' }).click();

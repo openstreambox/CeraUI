@@ -213,3 +213,97 @@ test("real temporary and renamed credential files are 0600 before and after writ
 		probe.mockRestore();
 	}
 });
+
+test.each(["set", "clear"] as const)(
+	"stream starting during %s stop restarts the unchanged credential",
+	async (action) => {
+		const f = fixture();
+		await f.owner.set("retained");
+		const health: boolean[] = [],
+			calls: string[] = [];
+		let idle = true;
+		const owner = new MoblinkOwner({
+			directory: join(f.dir, "private"),
+			available: () => true,
+			idle: () => idle,
+			start: () => {
+				calls.push("start");
+			},
+			stop: async () => {
+				calls.push("stop");
+				idle = false;
+			},
+			health: (bad) => health.push(bad),
+		});
+		expect(
+			await (action === "set" ? owner.set("replacement") : owner.clear()),
+		).toEqual({ success: false, error: "busy" });
+		expect(calls).toEqual(["stop", "start"]);
+		expect(health).not.toContain(true);
+		expect(readFileSync(join(f.dir, "private/credential"), "utf8")).toBe(
+			"retained",
+		);
+	},
+);
+test("failed restart after a stream race marks health", async () => {
+	const f = fixture();
+	await f.owner.set("retained");
+	const health: boolean[] = [];
+	let idle = true;
+	const owner = new MoblinkOwner({
+		directory: join(f.dir, "private"),
+		available: () => true,
+		idle: () => idle,
+		stop: async () => {
+			idle = false;
+		},
+		start: () => {
+			throw Error("cannot restart");
+		},
+		health: (bad) => health.push(bad),
+	});
+	expect((await owner.clear()).success).toBe(false);
+	expect(health).toEqual([true]);
+});
+test.each([false, true])(
+	"clear with missing directory and available=%s never creates storage",
+	async (available) => {
+		const f = fixture();
+		const health: boolean[] = [];
+		const owner = new MoblinkOwner({
+			directory: join(f.dir, "private"),
+			available: () => available,
+			idle: () => true,
+			start: () => {
+				throw Error("must not start");
+			},
+			stop: async () => {},
+			health: (bad) => health.push(bad),
+		});
+		expect(await owner.clear()).toEqual({ success: true });
+		expect(existsSync(join(f.dir, "private"))).toBe(false);
+		expect(health).not.toContain(true);
+	},
+);
+test("startup flags a dangling credential symlink but not an absent credential", async () => {
+	const f = fixture();
+	const directory = join(f.dir, "private");
+	mkdirSync(directory, { mode: 0o700 });
+	const health: boolean[] = [];
+	const owner = new MoblinkOwner({
+		directory,
+		available: () => true,
+		idle: () => true,
+		start: () => {
+			throw Error("must not start");
+		},
+		stop: async () => {},
+		health: (bad) => health.push(bad),
+	});
+	await owner.restore();
+	expect(health).toEqual([]);
+	symlinkSync(join(f.dir, "missing-target"), join(directory, "credential"));
+	await owner.restore();
+	expect(health).toEqual([true]);
+	expect(existsSync(join(f.dir, "missing-target"))).toBe(false);
+});

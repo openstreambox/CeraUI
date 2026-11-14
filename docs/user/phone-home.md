@@ -19,6 +19,8 @@ box's copy too. One password applies to this box; any local Moblin streamer with
 that password may authenticate. Clearing stops this box's owned relay.
 Saving requires an image provisioned for the managed relay. Clear remains
 available while idle even if that relay is unavailable or storage needs repair.
+Clearing an unsaved password does not create storage. The field asks browsers
+and password managers not to fill or save it; their own policies still apply.
 If a saved credential is empty or the relay stops unexpectedly, Box health
 shows a calm Moblin connection line. Replace or clear the password to recover.
 
@@ -56,6 +58,9 @@ para el relé administrado. Borrar sigue disponible cuando la caja está inactiv
 aunque el relé no esté disponible o haya que reparar el archivo guardado.
 Si el archivo está vacío o el relé se detiene inesperadamente, Estado de la caja
 muestra un aviso de conexión Moblin. Reemplaza o borra la contraseña para recuperarla.
+Borrar una contraseña no guardada no crea almacenamiento. El campo pide al
+navegador y al gestor de contraseñas que no lo rellenen ni guarden; sus propias
+políticas siguen aplicándose.
 
 Solo se recuerda la opción elegida; no se guarda la identidad del teléfono.
 El reinicio permanece desactivado mientras la caja transporta tráfico o lo

@@ -214,7 +214,11 @@
 					<label
 						>{m['live.phone.moblinPassword']()}<input
 							type="password"
-							autocomplete="new-password"
+							autocomplete="off"
+							data-1p-ignore=""
+							data-lpignore="true"
+							data-bwignore=""
+							data-form-type="other"
 							bind:value={password}
 							disabled={!credentialAllowed}
 						/></label

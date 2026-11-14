@@ -236,7 +236,11 @@ it.each([false, true])(
 		const field = screen.getByLabelText(
 			"Moblin's password (from Moblin, not the Wi-Fi password)",
 		);
-		expect(field.getAttribute("autocomplete")).toBe("new-password");
+		expect(field.getAttribute("autocomplete")).toBe("off");
+		expect(field.hasAttribute("data-1p-ignore")).toBe(true);
+		expect(field.getAttribute("data-lpignore")).toBe("true");
+		expect(field.hasAttribute("data-bwignore")).toBe(true);
+		expect(field.getAttribute("data-form-type")).toBe("other");
 		const clear = screen.getByRole("button", { name: "Clear Moblin password" });
 		expect(clear).toHaveProperty("disabled", false);
 		await fireEvent.click(clear);
