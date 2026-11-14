@@ -17,7 +17,10 @@
 
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 import killall from "../../helpers/killall.ts";
-
+import {
+	cellularSourceBinding,
+	cellularSourceReady,
+} from "../network/cellular-source-state.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
 import { queueUpdateGw } from "../network/gateways.ts";
 import {
@@ -94,9 +97,17 @@ function collectBondEntries(
 	const networkInterfaces = getNetworkInterfaces();
 	for (const name in networkInterfaces) {
 		const networkInterface = networkInterfaces[name];
-		if (!networkInterface?.ip) continue;
+		if (
+			!networkInterface?.ip ||
+			!cellularSourceReady(name, networkInterface.ip)
+		)
+			continue;
 		if (!accept(name, networkInterface)) continue;
-		const entry = describeBondEntry(name, networkInterface.ip);
+		const physicalEntry = describeBondEntry(name, networkInterface.ip);
+		const binding = cellularSourceBinding(name);
+		const entry = binding?.translated
+			? { ...physicalEntry, iface: binding.device }
+			: physicalEntry;
 		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
 			continue;
 		entries.push(entry);

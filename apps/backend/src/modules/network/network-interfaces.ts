@@ -65,6 +65,12 @@ import {
 	setPersistentBondOptOut,
 } from "./bond-preference.ts";
 import {
+	cellularHiddenInterface,
+	cellularSourceIpv4,
+	cellularSourceReady,
+	onCellularSourceChange,
+} from "./cellular-source-state.ts";
+import {
 	type DongleMarker,
 	getDongleMarker,
 	getDongleRecords,
@@ -89,7 +95,6 @@ import {
 	getUnclaimedAdapters,
 	refreshUnclaimedAdapters,
 } from "./unclaimed-adapters.ts";
-
 export type NetworkInterface = {
 	ip?: string;
 	netmask?: string;
@@ -221,7 +226,7 @@ export function isDupIpOnly(int: NetworkInterface): boolean {
  * toggled the link out of the bond is honoured in both cases.
  */
 export function isBondCandidate(name: string, int: NetworkInterface): boolean {
-	if (!int.ip) return false;
+	if (!int.ip || !cellularSourceReady(name, int.ip)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
 	if ((int.error & ~NETIF_ERR_DUPIPV4) !== 0) return false;
@@ -625,7 +630,13 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 	if (event.type !== "device-state") return;
 
 	const name = event.device;
-	if (name === "lo" || name.match("^docker") || name.match("^l4tbr")) return;
+	if (
+		name === "lo" ||
+		cellularHiddenInterface(name) ||
+		name.match("^docker") ||
+		name.match("^l4tbr")
+	)
+		return;
 
 	let mutated = false;
 	if (isNetifUpState(event.state)) {
@@ -682,7 +693,15 @@ async function refreshDongleState(): Promise<void> {
 	}
 }
 
+let cellularSourceListenerInstalled = false;
 export function initNetworkInterfaceMonitoring() {
+	if (!cellularSourceListenerInstalled) {
+		cellularSourceListenerInstalled = true;
+		onCellularSourceChange(() => {
+			triggerNetworkInterfacesChange();
+			updateNetif();
+		});
+	}
 	onNetifChange(broadcastNetif);
 	updateNetif();
 	setInterval(updateNetif, NETIF_POLL_INTERVAL_MS);
@@ -844,7 +863,12 @@ export function processIfconfigOutput(
 		try {
 			const name = int.split(":")[0] ?? "";
 
-			if (name === "lo" || name.match("^docker") || name.match("^l4tbr"))
+			if (
+				name === "lo" ||
+				cellularHiddenInterface(name) ||
+				name.match("^docker") ||
+				name.match("^l4tbr")
+			)
 				continue;
 
 			// Prefer the scope-annotated `ip -4 addr` address (a routable global
@@ -853,7 +877,10 @@ export function processIfconfigOutput(
 			const ipOverride = ipOverrides?.get(name);
 
 			const inetAddrMatch = int.match(/inet (\d+\.\d+\.\d+\.\d+)/);
-			const inetAddr = ipOverride?.ip ?? inetAddrMatch?.[1];
+			const inetAddr = cellularSourceIpv4(
+				name,
+				ipOverride?.ip ?? inetAddrMatch?.[1],
+			);
 
 			const netmaskMatch = int.match(/netmask (\d+\.\d+\.\d+\.\d+)/);
 			const netmask = ipOverride?.netmask ?? netmaskMatch?.[1];

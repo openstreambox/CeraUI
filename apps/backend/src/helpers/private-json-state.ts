@@ -26,10 +26,11 @@ function privateDirectory(dir: string): number {
 function absent(error: unknown): boolean {
 	return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
-export async function readPrivateJson(
+async function readPrivateStateFile(
 	store: { readonly dir: string },
 	key: string,
-): Promise<unknown> {
+	extension: "json" | "conf",
+): Promise<string | undefined> {
 	validateKey(key);
 	let parent: number;
 	try {
@@ -42,7 +43,7 @@ export async function readPrivateJson(
 		let fd: number;
 		try {
 			fd = openSync(
-				`/proc/self/fd/${parent}/${key}.json`,
+				`/proc/self/fd/${parent}/${key}.${extension}`,
 				constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
 			);
 		} catch (error) {
@@ -57,15 +58,27 @@ export async function readPrivateJson(
 				info.nlink !== 1
 			)
 				throw new Error("Unsafe private state file");
-			return parseAuthorityJson(
-				decodeAuthorityUtf8(readStoredStateDescriptor(fd, 4096)),
-			);
+			return decodeAuthorityUtf8(readStoredStateDescriptor(fd, 4096));
 		} finally {
 			closeSync(fd);
 		}
 	} finally {
 		closeSync(parent);
 	}
+}
+
+export async function readPrivateJson(
+	store: { readonly dir: string },
+	key: string,
+): Promise<unknown> {
+	const text = await readPrivateStateFile(store, key, "json");
+	return text === undefined ? undefined : parseAuthorityJson(text);
+}
+export function readPrivateText(
+	store: { readonly dir: string },
+	key: string,
+): Promise<string | undefined> {
+	return readPrivateStateFile(store, key, "conf");
 }
 
 const durableDirectories = new Set<string>();
@@ -89,13 +102,13 @@ function syncDirectoryAncestry(directory: string, parent: number): void {
 	}
 	durableDirectories.add(identity);
 }
-export async function writePrivateJson(
+async function writePrivateStateFile(
 	store: { readonly dir: string },
 	key: string,
-	value: unknown,
+	extension: "json" | "conf",
+	bytes: string | undefined,
 ): Promise<void> {
 	validateKey(key);
-	const bytes = value === undefined ? undefined : `${JSON.stringify(value)}\n`;
 	if (bytes !== undefined && Buffer.byteLength(bytes) > 4096)
 		throw new Error("Private state exceeds limit");
 	await mkdir(store.dir, { recursive: true, mode: 0o700 });
@@ -106,10 +119,10 @@ export async function writePrivateJson(
 		closeSync(parent);
 		throw error;
 	}
-	const path = `/proc/self/fd/${parent}/${key}.json`;
+	const path = `/proc/self/fd/${parent}/${key}.${extension}`;
 	const temporary = `/proc/self/fd/${parent}/${key}.${randomUUID()}.tmp`;
 	try {
-		if (value === undefined) {
+		if (bytes === undefined) {
 			try {
 				await unlink(path);
 			} catch (error) {
@@ -140,4 +153,32 @@ export async function writePrivateJson(
 		await unlink(temporary).catch(() => undefined);
 		closeSync(parent);
 	}
+}
+
+export function writePrivateJson(
+	store: { readonly dir: string },
+	key: string,
+	value: unknown,
+): Promise<void> {
+	return writePrivateStateFile(
+		store,
+		key,
+		"json",
+		value === undefined ? undefined : `${JSON.stringify(value)}\n`,
+	);
+}
+/** Same anchored private ownership and durability as JSON authority. Intended
+ * only for generated translator configuration, never arbitrary profile text.
+ */
+export function writePrivateText(
+	store: { readonly dir: string },
+	key: string,
+	value: string | undefined,
+): Promise<void> {
+	if (
+		value !== undefined &&
+		(typeof value !== "string" || value.includes("\0"))
+	)
+		return Promise.reject(new Error("Invalid private configuration text"));
+	return writePrivateStateFile(store, key, "conf", value);
 }

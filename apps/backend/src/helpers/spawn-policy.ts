@@ -1156,6 +1156,24 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			"argv-only spawnWithTimeout at 4.5s, curl transfer bounded at 3s; individual device/family/host verdicts remain typed",
 	},
 	{
+		id: "connectivity.cellularTranslatorUnit",
+		file: "modules/network/cellular-translator.ts",
+		symbol: "cellularTranslatorIO",
+		command:
+			"[systemctl|systemd-run, exact durable translator birth unit, validated argv]",
+		class: "bounded-command",
+		contract: {
+			timed: true,
+			startupTimeout: false,
+			shutdownCleanup: false,
+			shutdownAbort: false,
+			lifetimeTimeoutExempt: false,
+		},
+		status: "enforced",
+		mechanism:
+			"Bounded unit submission/inspection/stop; unique persisted birth names, complete strict metadata and invocation checks. PID 1 owns the translator lifetime, with automatic restart disabled.",
+	},
+	{
 		id: "connectivity.deviceBoundProbe",
 		file: "modules/network/device-bound-probe.ts",
 		symbol: "checkConnectivityViaDevice",
