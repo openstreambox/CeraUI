@@ -112,7 +112,7 @@ export function spawnStreamingLoop(
 		// remove the dead process from the supervised list
 		removeProc(streamingProcess);
 		// srtla_send is the telemetry producer; its exit ends the stats stream.
-		if (streamingProcess.spawnfile.endsWith("srtla_send")) {
+		if (isSenderProcess(streamingProcess)) {
 			stopLinkTelemetry();
 		}
 		// notify health state: the stream is now dead until systemd respawns it
@@ -120,6 +120,41 @@ export function spawnStreamingLoop(
 		broadcastHealthIfChanged();
 	});
 	return streamingProcess;
+}
+
+function isSenderProcess(streamingProcess: StreamingProcess): boolean {
+	return streamingProcess.spawnfile.endsWith("srtla_send");
+}
+
+/**
+ * Signal every live sender this backend supervises, by its own process handle.
+ *
+ * This replaces signalling by process name for the bond reload: another process
+ * that happens to be called `srtla_send` (a second sender, a diagnostic run, a
+ * sender another backend should adopt) is never touched. A handle whose process
+ * has exited is skipped rather than signalled; until Bun has reaped the child its
+ * PID cannot be reused, and reaping and this check run on the same thread.
+ *
+ * Returns how many senders the signal was delivered to; zero means the reload
+ * did not reach any supervised sender and the caller must treat it as failed.
+ */
+export function signalSenders(
+	signal: NodeJS.Signals,
+	procs: ReadonlyArray<StreamingProcess> = streamingProcesses,
+): number {
+	let delivered = 0;
+	for (const sp of procs) {
+		if (!isSenderProcess(sp) || !isProcAlive(sp)) continue;
+		try {
+			sp.proc.kill(signal);
+			delivered++;
+		} catch (err) {
+			logger.warn(`signalSenders: ${signal} to ${sp.spawnfile} failed`, {
+				err,
+			});
+		}
+	}
+	return delivered;
 }
 
 function removeProc(streamingProcess: StreamingProcess) {

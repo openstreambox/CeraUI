@@ -380,7 +380,11 @@ without a real `passwd`/`/etc/shadow` (and without persisting to disk).
 All process-name signals use `@ceraui/srtla-send/process-signals`. Production
 executes the supplied command unchanged. Source development suppresses name
 signals before mock initialization. Unit preload installs a fake runner.
-Streaming teardown continues to signal its tracked child handles.
+Streaming teardown continues to signal its tracked child handles. The bond
+reload (`restartSrtla`) also sends SIGHUP to the supervised sender handle via
+`signalSenders`, never by name, and reports `false` when no live supervised
+sender received it. The startup orphan sweep is the remaining production
+name signal for the sender.
 
 Unit preload wraps Bun and Node process-spawn APIs and rejects name-signalling
 commands and systemd mutations. The allowlist is empty. A rejected command is
