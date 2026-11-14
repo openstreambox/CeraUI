@@ -41,7 +41,9 @@ export function cellularFenceDefinition(
 		for (const dns of input.dns)
 			rules.push(`${bound} ip daddr ${dns} udp dport 53 return`);
 	}
-	if (mode !== "ready") rules.push(`${selector} counter drop`);
+	if (mode === "ready" && input.translated) rules.push(`${bound} return`);
+	if (mode !== "ready" || input.translated)
+		rules.push(`${selector} counter drop`);
 	return `table inet ${table} {\n comment "cellular-${input.owner}"\n chain output {\n type filter hook output priority -150; policy accept;\n ${rules.map((rule) => `${rule};`).join("\n ")}\n }\n}\n`;
 }
 
@@ -113,7 +115,11 @@ export function cellularFenceInventory(
 				},
 			});
 	}
-	if (mode !== "ready")
+	if (mode === "ready" && input.translated)
+		entries.push({
+			rule: { ...base, expr: [...fenceMatches(input, true), { return: null }] },
+		});
+	if (mode !== "ready" || input.translated)
 		entries.push({
 			rule: {
 				...base,

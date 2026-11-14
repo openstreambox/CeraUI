@@ -39,6 +39,9 @@ export interface CellularRoutePlan {
 	readonly tun?: string;
 	readonly mapped?: string;
 	readonly nat64?: string;
+	/** TUN/link IPv6 MTU, before the IPv4 header adjustment. */
+	readonly linkMtu: number;
+	/** Effective IPv4 route MTU. */
 	readonly mtu: number;
 	readonly effects: readonly CellularIpEffect[];
 }
@@ -53,8 +56,17 @@ function native4(value: string): boolean {
 	);
 }
 function global6(value: string): boolean {
+	if (value.includes("%")) return false;
 	const bytes = parseIpv6(value);
 	return !!bytes && ((bytes[0] ?? 0) & 0xe0) === 0x20;
+}
+function gateway6(value: string): boolean {
+	if (value.includes("%") || !isIPv6(value)) return false;
+	const bytes = parseIpv6(value);
+	return (
+		!!bytes &&
+		(global6(value) || (bytes[0] === 0xfe && ((bytes[1] ?? 0) & 0xc0) === 0x80))
+	);
 }
 /** Only source/device-specific local traffic enters these tables. LAN and main
  * defaults are outside the plan. Every lookup precedes every terminal guard,
@@ -107,8 +119,9 @@ export function planCellularRoutes(
 			!global6(input.ipv6) ||
 			input.ipv6PrefixLength !== 64 ||
 			!input.ipv6Gateway ||
-			!isIPv6(input.ipv6Gateway) ||
-			!input.nat64
+			!gateway6(input.ipv6Gateway) ||
+			!input.nat64 ||
+			input.nat64.includes("%")
 		)
 			return undefined;
 		const nat64 = parseNat64Prefix(input.nat64),
@@ -145,7 +158,7 @@ export function planCellularRoutes(
 		input.ipv6 &&
 		global6(input.ipv6) &&
 		input.ipv6Gateway &&
-		isIPv6(input.ipv6Gateway)
+		gateway6(input.ipv6Gateway)
 	) {
 		const v6 = formatIpv6(parseIpv6(input.ipv6) ?? new Uint8Array());
 		rule(
@@ -166,7 +179,7 @@ export function planCellularRoutes(
 		route(6, [
 			"default",
 			"via",
-			input.ipv6Gateway,
+			formatIpv6(parseIpv6(input.ipv6Gateway) ?? new Uint8Array()),
 			"dev",
 			input.iface,
 			"onlink",
@@ -257,8 +270,10 @@ export function planCellularRoutes(
 		`${source}/32`,
 		"iif",
 		"lo",
-		"oif",
-		device,
+		// Reverse-path validation has no output-device selector. A translated
+		// source has one private path, so its lookup also covers that check.
+		// The output fence still denies every other egress, including fallback.
+		...(translated ? [] : ["oif", device]),
 		"lookup",
 		String(table),
 	]);
@@ -269,6 +284,7 @@ export function planCellularRoutes(
 		source,
 		device,
 		translated,
+		linkMtu: input.mtu,
 		mtu,
 		effects,
 		...(translated && mapped && prefix ? { tun, mapped, nat64: prefix } : {}),

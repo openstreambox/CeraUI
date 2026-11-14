@@ -83,6 +83,26 @@ telemetry/RPC consumers. The Network view displays “Waiting for link mapping�
 and “No links are sending yet. Check that the network devices are connected.
 Sending can start once the link mapping is valid.”
 
+The translated route fixture now crosses an independent NAT64 provider in a
+second network namespace and receives the UDP reply. Packet captures verify the
+pinned translator's computed-zero UDP correction in both IPv6 and IPv4 output.
+Reverse-path filtering remains enabled. A translated source lookup covers that
+validation without an output-device selector; its ready output fence still
+permits only the owned kernel device and denies every other egress. A deliberate
+duplicate source on the simulated LAN cannot bypass that fence. Withdrawal and
+route removal preserve the LAN default and packet counters. The minimum-MTU
+case keeps the IPv6 TUN at 1280 and its IPv4 route at 1260.
+
+CLAT admission requires readable per-link `force_forwarding` on both ingress
+interfaces. Global forwarding alone grants no admission, and this component
+never writes global/default forwarding. The fixture checks both ingress
+directions with global forwarding unchanged. Missing capability, stale identity
+and contradictory reads stay refused. Address/proxy effects use kernel indices,
+exact inventories and dispatch permits; existing proxy entries are refused
+before add because Linux may acknowledge duplicate proxy adds. These are
+disconnected component proofs; production translated-host composition,
+process/startup recovery and physical NM/RA/hotspot coexistence remain gates.
+
 This is a partial implementation with host/fixture evidence. It does not
 establish carrier/hardware qualification. Existing or synthetic test results
 do not establish those capabilities. Verizon remains unqualified.
@@ -177,6 +197,26 @@ vacío `required_binding_refused` del emisor. La vista de red muestra
 “Esperando el mapeo de enlaces” y “Todavía no se están enviando datos por ningún
 enlace. Comprueba que los dispositivos de red estén conectados. El envío podrá
 empezar cuando el mapeo de enlaces sea válido.”
+
+La prueba de rutas traducidas ya cruza un proveedor NAT64 en otro espacio de
+nombres de red y recibe la respuesta UDP. Las capturas comprueban la corrección
+de sumas UDP calculadas como cero en ambas salidas, IPv6 e IPv4, con el traductor
+fijado. La validación de ruta inversa sigue activa. La regla del origen traducido
+cubre esa validación sin seleccionar una interfaz de salida; el filtro de salida
+solo permite la interfaz propia. Ni un origen duplicado en la LAN simulada puede
+evitarlo. La retirada y la eliminación de rutas conservan la ruta predeterminada
+y los contadores de la LAN. Con la MTU mínima, la interfaz IPv6 conserva 1280
+y su ruta IPv4 usa 1260.
+
+La admisión de CLAT requiere `force_forwarding` legible en las dos interfaces
+de entrada. El reenvío global por sí solo no permite la admisión, y este
+componente nunca modifica el reenvío global ni sus valores predeterminados.
+La prueba comprueba ambas direcciones sin cambiar ese valor global. La ausencia
+de la capacidad, una identidad antigua o lecturas contradictorias bloquean la
+admisión. Las operaciones de direcciones y vecinos proxy usan índices del kernel
+e inventarios exactos; rechazan entradas proxy existentes antes de añadirlas.
+Estas pruebas aisladas no acreditan la composición de producción, la recuperación
+al iniciar ni la convivencia física con NM, RA y el punto de acceso.
 
 La implementación es parcial y solo tiene pruebas en el host y en entornos de
 prueba. No acredita compatibilidad real con un operador o hardware. Verizon
