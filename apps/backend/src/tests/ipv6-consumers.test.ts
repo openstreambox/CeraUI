@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { eligibleProbeCandidates } from "../modules/network/connectivity-candidates.ts";
 import {
 	dnsCacheResolve,
@@ -383,4 +384,106 @@ test("IPv6 receiver source renumbering on a dual-stack link notifies the running
 	} finally {
 		unsubscribe();
 	}
+});
+
+for (const dualStack of [false, true]) {
+	test(`a lost A answer preserves cached IPv4 and its source (dual stack: ${dualStack})`, async () => {
+		const name = `lost-a-${dualStack}.test.invalid`;
+		processIfconfigOutput(
+			"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+			parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+		);
+		if (!dualStack) delete getNetworkInterfaces().wwan0?.ipv6;
+		const cached = ["192.0.2.10", "fd51::2"];
+		setDnsCacheEntryForTest(name, cached);
+		let aaaa = 0;
+		setDnsResolverFactoryForTest(() => ({
+			cancel() {},
+			resolve4(host, cb) {
+				queueMicrotask(() =>
+					host === "wellknown.belabox.net"
+						? cb(null, ["127.1.33.7"])
+						: cb(new Error("lost A answer"), []),
+				);
+			},
+			resolve6(_host, cb) {
+				aaaa++;
+				queueMicrotask(() => cb(null, ["fd51::9"]));
+			},
+		}));
+		try {
+			expect(await resolveSrtla(name)).toBe("192.0.2.10");
+			expect(aaaa).toBe(0);
+			expect(genSrtlaIpList()).toEqual(["192.0.2.1"]);
+			offlineDns();
+			expect((await dnsCacheResolve(name)).addrs).toEqual(cached);
+			expect(await resolveSrtla(name)).toBe("192.0.2.10");
+		} finally {
+			setDnsCacheEntryForTest(name, null);
+		}
+	});
+
+	test(`a hanging DNS uses warm IPv4 cache within one timeout (dual stack: ${dualStack})`, async () => {
+		const name = `hanging-a-${dualStack}.test.invalid`;
+		processIfconfigOutput(
+			"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+			parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+		);
+		if (!dualStack) delete getNetworkInterfaces().wwan0?.ipv6;
+		setDnsCacheEntryForTest(name, ["192.0.2.10"]);
+		let aaaa = 0;
+		setDnsResolverFactoryForTest(() => ({
+			cancel() {},
+			resolve4() {},
+			resolve6() {
+				aaaa++;
+			},
+		}));
+		try {
+			const started = performance.now();
+			expect(await resolveSrtla(name)).toBe("192.0.2.10");
+			expect(performance.now() - started).toBeLessThan(3000);
+			expect(aaaa).toBe(0);
+		} finally {
+			setDnsCacheEntryForTest(name, null);
+		}
+	});
+}
+
+test("an IPv4-only source never tries AAAA after a cold A failure", async () => {
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow("2: wwan0: <UP>\n    inet 192.0.2.1/24 scope global\n"),
+	);
+	const name = "cold-ipv4.test.invalid";
+	setDnsCacheEntryForTest(name, null);
+	let aaaa = 0;
+	setDnsResolverFactoryForTest(() => ({
+		cancel() {},
+		resolve4(_host, cb) {
+			queueMicrotask(() => cb(new Error("offline"), []));
+		},
+		resolve6(_host, cb) {
+			aaaa++;
+			queueMicrotask(() => cb(null, ["fd51::2"]));
+		},
+	}));
+	try {
+		await expect(resolveSrtla(name)).rejects.toContain(
+			"Failed to resolve SRTLA addr",
+		);
+		expect(aaaa).toBe(0);
+	} finally {
+		setDnsCacheEntryForTest(name, null);
+	}
+});
+
+test("the session refreshes bond sources through the source-change subscription", () => {
+	const session = readFileSync(
+		new URL("../modules/streaming/streamloop/session.ts", import.meta.url),
+		"utf8",
+	);
+	expect(session).toMatch(
+		/removeNetworkInterfacesChangeListener:\s*onNetworkInterfaceSourcesChange\(\s*refreshSrtlaIpAddresses\s*,?\s*\)/,
+	);
 });
