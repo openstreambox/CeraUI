@@ -18,6 +18,7 @@ import {
 	logInputSchema,
 	logOutputSchema,
 	previewTokenOutputSchema,
+	rebootInputSchema,
 	remoteConfigInputSchema,
 	revisionsSchema,
 	sensorsStatusSchema,
@@ -202,8 +203,14 @@ export const poweroffProcedure = authedProcedure
 	});
 
 export const rebootProcedure = authedProcedure
+	.input(rebootInputSchema)
 	.output(successResponseSchema)
-	.handler(() => {
+	.handler(({ input, context }) => {
+		// Only an operator at the box's own UI can accept the cost to a carried
+		// stream; relayed and remote-control sessions keep the plain hold.
+		const localOperator =
+			context.getSenderId() === undefined &&
+			context.ws.remoteAddress !== "control-channel";
 		if (isDevelopment()) {
 			logger.info("dev: skipping spawn", {
 				module: "system.power",
@@ -213,7 +220,9 @@ export const rebootProcedure = authedProcedure
 			simulateDevReboot(); // close authed sockets → frontend reconnect banner
 			return { success: true };
 		}
-		return submitPowerCommand("reboot", powerCommandRunner);
+		return submitPowerCommand("reboot", powerCommandRunner, {
+			acceptCarryingCost: localOperator && input?.acceptCarryingCost === true,
+		});
 	});
 
 /**

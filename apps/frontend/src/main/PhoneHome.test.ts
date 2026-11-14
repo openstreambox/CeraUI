@@ -29,11 +29,35 @@ describe("phone Home", () => {
 		expect(screen.getByRole("button", { name: "Change app" })).toBeTruthy();
 		expect(screen.getByText(/choose SRT, not SRTLA/)).toBeTruthy();
 	});
-	it("disables restart while carrying", () => {
-		render(PhoneHome, { carrying: "streaming" });
+	it("offers restart while carrying and says it asks first", async () => {
+		const onrestart = vi.fn();
+		render(PhoneHome, { carrying: "streaming", onrestart });
+		const restart = screen.getByRole("button", { name: "Restart the box" });
+		expect(restart).toHaveProperty("disabled", false);
+		expect(
+			screen.getByText(
+				"You can still restart. The box asks first and says what stops.",
+			),
+		).toBeTruthy();
+		await fireEvent.click(restart);
+		expect(onrestart).toHaveBeenCalledOnce();
+	});
+	it("offers restart when still unsure after the startup check", () => {
+		render(PhoneHome, { carrying: "unknown", startup: false });
+		expect(
+			screen.getByRole("button", { name: "Restart the box" }),
+		).toHaveProperty("disabled", false);
+	});
+	it("holds restart during the startup check", () => {
+		render(PhoneHome, { carrying: "unknown", startup: true });
 		expect(
 			screen.getByRole("button", { name: "Restart the box" }),
 		).toHaveProperty("disabled", true);
+		expect(
+			screen.getByText(
+				"You can restart once the box knows whether your phone uses it.",
+			),
+		).toBeTruthy();
 	});
 	it("uses Copy at 390px and excludes kiosk QR", () => {
 		expect(showPhoneQr(390, false)).toBe(false);
@@ -122,7 +146,7 @@ it("does not claim to be checking internet while carrying", () => {
 	expect(screen.getByText("Not set up")).toBeTruthy();
 });
 it("explains the startup restart hold", () => {
-	render(PhoneHome, { carrying: "unknown" });
+	render(PhoneHome, { carrying: "unknown", startup: true });
 	expect(
 		screen.getByText(
 			"You can restart once the box knows whether your phone uses it.",

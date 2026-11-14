@@ -12,15 +12,21 @@
   update is running — this mirrors the backend guard and surfaces the reason
   inline so the operator knows why the buttons are disabled.
 
+  A phone-only box never leaves restart as a dead end. While it carries a
+  phone's stream, or still can't tell after its startup check, Reboot becomes
+  a hold-to-restart button plus a plain "Restart without holding" button. Both
+  open a confirmation that names the cost for the way the phone connects, with
+  an explicit "Restart anyway" that sends the acceptance to the device.
+
   This composes the shared AppDialog chrome; the confirmation is a second,
   nested AppDialog with `destructive` set so its primary button is red.
 -->
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
+import type { PhoneWay } from '@ceraui/rpc/schemas';
 import { AlertTriangle, Power, PowerOff, RotateCcw } from '@lucide/svelte';
-
 import { onDestroy } from 'svelte';
-
+import HoldButton from '$lib/components/custom/HoldButton.svelte';
 import { AppDialog } from '$lib/components/dialogs';
 import { Button } from '$lib/components/ui/button';
 import { getOperationPhase, osCommand } from '$lib/rpc/async-operation.svelte';
@@ -34,9 +40,12 @@ interface Props {
 	open?: boolean;
 	/** Seconds the reboot reconnect window runs before offering recovery. */
 	countdownSeconds?: number;
+	/** The phone's saved way, to name a restart's cost on a phone-only box. */
+	way?: PhoneWay | null;
 }
 
-let { open = $bindable(false), countdownSeconds }: Props = $props();
+let { open = $bindable(false), countdownSeconds, way = null }: Props = $props();
+const costId = $props.id();
 
 // Explicit prop wins (unit tests); else an optional window override lets e2e
 // shrink the reconnect window without waiting a real hardware reboot; else the
@@ -59,9 +68,19 @@ const updating = $derived(getUpdating());
 const isUpdating = $derived(legacyInstallRunning(updating));
 const phoneProtected = $derived(getStatus()?.phone_box && getStatus()?.carrying?.state !== 'idle');
 const powerBlocked = $derived(streaming || isUpdating || (phoneProtected && getStatus()?.carrying?.startup !== true));
-const blocked = $derived(streaming || isUpdating || phoneProtected);
+// Restart stays possible while carrying, after a hold and a confirmation
+// that names the cost. The startup check, the box's own stream and
+// updates still hold it; the device checks all of these again.
+const carryingRestart = $derived(
+	!!phoneProtected && getStatus()?.carrying?.startup !== true && !streaming && !isUpdating,
+);
+const blocked = $derived(streaming || isUpdating || (phoneProtected && !carryingRestart));
 const blockedReason = $derived(
-	phoneProtected ? (getStatus()?.carrying?.state === 'streaming' ? m['live.phone.restartHold']() : (getStatus()?.carrying?.startup === true ? m['live.phone.restartChecking']() : m['live.phone.powerChecking']())) : streaming
+	carryingRestart
+		? getStatus()?.carrying?.state === 'streaming'
+			? m['live.phone.powerOffHold']()
+			: m['live.phone.powerOffChecking']()
+		: phoneProtected ? (getStatus()?.carrying?.state === 'streaming' ? m['live.phone.restartHold']() : (getStatus()?.carrying?.startup === true ? m['live.phone.restartChecking']() : m['live.phone.powerChecking']())) : streaming
 		? m["settings.dialogs.blockedStreaming"]()
 		: isUpdating
 			? m["settings.dialogs.blockedUpdating"]()
@@ -81,11 +100,28 @@ const busy = $derived(
 	getOperationPhase('reboot') === 'pending' || getOperationPhase('poweroff') === 'pending',
 );
 
-const confirmLabel = $derived(
-	pending === 'poweroff' ? m["advanced.powerOff"]() : m["advanced.reboot"](),
+const restartCost = $derived(
+	way === 'moblin'
+		? m['live.phone.restartCostMoblin']()
+		: way === 'srt'
+			? m['live.phone.restartCostSrt']()
+			: way === 'internet'
+				? m['live.phone.restartCostInternet']()
+				: m['live.phone.restartCost'](),
 );
-const confirmBody = $derived(
+const anyway = $derived(pending === 'reboot' && carryingRestart);
+const confirmLabel = $derived(
 	pending === 'poweroff'
+		? m["advanced.powerOff"]()
+		: anyway
+			? m['live.phone.restartAnyway']()
+			: m["advanced.reboot"](),
+);
+const confirmTitle = $derived(anyway ? m['live.phone.restartAnywayTitle']() : m["dialogs.areYouSure"]());
+const confirmBody = $derived(
+	anyway
+		? restartCost
+		: pending === 'poweroff'
 		? (getStatus()?.phone_box ? m["live.phone.powerOffCost"]() : m["settings.dialogs.powerOffConfirm"]())
 		: getStatus()?.phone_box ? m['live.phone.restartCost']() : m["settings.dialogs.rebootConfirm"](),
 );
@@ -108,10 +144,16 @@ function request(action: PendingAction) {
 async function confirmAction() {
 	const action = pending;
 	if (!action || (action === 'poweroff' ? powerBlocked : blocked)) return;
+	const accept = action === 'reboot' && carryingRestart;
 	const result = await osCommand({
 		key: action,
 		target: action,
-		rpc: () => (action === 'reboot' ? rpc.system.reboot() : rpc.system.poweroff()),
+		rpc: () =>
+			action === 'reboot'
+				? accept
+					? rpc.system.reboot({ acceptCarryingCost: true })
+					: rpc.system.reboot()
+				: rpc.system.poweroff(),
 		confirmOnResolve: true,
 		failMessage: () => m["network.os.operationFailed"](),
 	});
@@ -262,7 +304,7 @@ function dismissRecovery() {
 				</div>
 			</div>
 		{:else}
-		{#if blocked}
+		{#if blocked || carryingRestart}
 			<!-- Why the actions are unavailable right now. -->
 			<div
 				class="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-3 rounded-lg border px-4 py-3"
@@ -283,6 +325,30 @@ function dismissRecovery() {
 					<h3 class="text-sm font-semibold">{m["advanced.reboot"]()}</h3>
 					<p class="text-muted-foreground text-xs">{m["advanced.rebootDescription"]()}</p>
 				</div>
+				{#if carryingRestart}
+					<p class="text-sm" id={`${costId}-cost`}>
+						{getStatus()?.carrying?.state === 'streaming'
+							? m['live.phone.restartAnywayCarrying']()
+							: m['live.phone.restartAnywayUnknown']()}
+						{restartCost}
+					</p>
+					<div data-restart-hold>
+						<HoldButton
+							describedby={`${costId}-cost`}
+							hint={m['live.phone.restartHoldHint']()}
+							holdingLabel={m['live.phone.restartHolding']()}
+							label={m['live.phone.restartHoldLabel']()}
+							onhold={() => request('reboot')}
+						/>
+					</div>
+					<Button
+						class="min-h-11 w-full"
+						onclick={() => request('reboot')}
+						variant="ghost"
+					>
+						{m['live.phone.restartNoHold']()}
+					</Button>
+				{:else}
 				<Button
 					class="w-full gap-2"
 					disabled={blocked}
@@ -292,6 +358,7 @@ function dismissRecovery() {
 					<RotateCcw class="size-4" />
 					{m["advanced.reboot"]()}
 				</Button>
+				{/if}
 			</div>
 		</div>
 
@@ -332,7 +399,7 @@ function dismissRecovery() {
 	onPrimary={confirmAction}
 	primaryDisabled={busy || (pending === 'poweroff' ? powerBlocked : blocked)}
 	primaryLabel={confirmLabel}
-	title={m["dialogs.areYouSure"]()}
+	title={confirmTitle}
 >
 	<p class="text-muted-foreground text-sm leading-relaxed">{confirmBody}</p>
 </AppDialog>

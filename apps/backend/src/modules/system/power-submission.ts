@@ -10,15 +10,22 @@ import { getDisruptiveActionDecision } from "./disruptive-action-runtime.ts";
 export function submitPowerCommand(
 	command: "reboot" | "poweroff",
 	runner: (command: "reboot" | "poweroff") => void,
+	options?: { readonly acceptCarryingCost?: boolean },
 ): { success: boolean; error?: string } {
 	const admission = reservePowerAction(
-		getDisruptiveActionDecision({ powerAction: command }),
+		getDisruptiveActionDecision({
+			powerAction: command,
+			acceptCarryingCost:
+				command === "reboot" && options?.acceptCarryingCost === true,
+		}),
 		command,
 	);
 	if (!admission.allowed) {
 		notifyDisruptiveActionRefused(admission.reason);
 		return { success: false, error: admission.reason };
 	}
+	if (command === "reboot" && options?.acceptCarryingCost === true)
+		logger.info("System: restart confirmed with its cost to a carried stream");
 	let effectInvoked = false;
 	try {
 		notePlannedShutdown(command);

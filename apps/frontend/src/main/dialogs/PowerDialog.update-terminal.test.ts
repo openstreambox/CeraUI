@@ -161,7 +161,12 @@ it.each([false, undefined])(
 			expect(
 				screen.getByRole("button", { name: m["advanced.powerOff"]() }),
 			).toHaveProperty("disabled", true);
-			expect(rebootButton().disabled).toBe(true);
+			// Restart is no dead end once the startup check is over.
+			expect(
+				screen.getByRole("button", {
+					name: m["live.phone.restartHoldLabel"](),
+				}),
+			).toHaveProperty("disabled", false);
 		} finally {
 			state.phone = false;
 			state.startup = true;

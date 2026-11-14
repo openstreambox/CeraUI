@@ -57,6 +57,7 @@ let now = $state(Date.now());
 		? { name: hotspot.name, password: hotspot.password, clients: hotspot.clients?.count }
 		: undefined}
 	carrying={getIsConnected() ? getStatus()?.carrying?.state : undefined}
+	startup={getStatus()?.carrying?.startup === true}
 	{settings}
 	health={getStatus()?.box_health}
 	temperature={hud.temperature}
@@ -80,6 +81,6 @@ let now = $state(Date.now());
 />
 {#if error}<p role="alert">{error}</p>{/if}
 
-<LazyDialog dialog={PowerDialog} bind:open={powerOpen} />
+<LazyDialog dialog={PowerDialog} bind:open={powerOpen} way={settings?.way ?? null} />
 
 <LazyDialog dialog={ServerDialog} bind:open={serverOpen} />

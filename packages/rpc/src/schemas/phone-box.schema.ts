@@ -13,3 +13,13 @@ export const phoneBoxSettingsSchema = z.object({
 });
 export type PhoneWay = z.infer<typeof phoneWaySchema>;
 export type PhoneBoxSettings = z.infer<typeof phoneBoxSettingsSchema>;
+/**
+ * Restart input. `acceptCarryingCost` records that the local operator read the
+ * cost to a carried phone stream and chose to restart anyway. It never admits a
+ * restart over the box's own encoder stream, an update or the startup check.
+ */
+export const rebootInputSchema = z
+	.object({ acceptCarryingCost: z.literal(true).optional() })
+	.strict()
+	.optional();
+export type RebootInput = z.infer<typeof rebootInputSchema>;
