@@ -1,6 +1,7 @@
 import { lstat, mkdir, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { srtForwardConfigSchema } from "../../helpers/forward-config-schema.ts";
+import { logger } from "../../helpers/logger.ts";
 import {
 	readStoredStateJson,
 	STORED_STATE_LIMITS,
@@ -30,7 +31,10 @@ export async function loadForwardConfig(
 			throw error;
 		},
 	);
-	if (persistentExists) await removeSnapshot(directory, snapshot);
+	if (persistentExists)
+		await removeSnapshot(directory, snapshot).catch(() => {
+			logger.warn("SRT forwarding stale snapshot cleanup failed");
+		});
 	raw = await readStoredStateJson(path, STORED_STATE_LIMITS.settings);
 	if (raw === undefined) {
 		raw = legacy;
@@ -65,11 +69,12 @@ export async function loadForwardConfig(
 		parsed.passphrase = await loadForwardSecret(
 			join(directory, "srt-forward.secret"),
 			previous ?? parsed.passphrase,
+			migrate && previous === undefined ? legacySecret : undefined,
 		);
 	}
 	// Publish configuration last, so a completed migration always has its secret.
 	if (migrate) await writeForwardFile(path, JSON.stringify(raw));
-	await removeSnapshot(directory, snapshot);
+	if (!persistentExists) await removeSnapshot(directory, snapshot);
 	return parsed;
 }
 

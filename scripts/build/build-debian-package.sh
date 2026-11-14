@@ -337,14 +337,20 @@ cat > dist/debian/preinst << 'EOF'
 set -euo pipefail
 # Snapshot migration is best effort and must never block dpkg, even on I/O failure.
 tmp=""
+published=false
 finish_snapshot() {
     status=$?
     [ -z "$tmp" ] || rm -f -- "$tmp" || true
     if [ "$status" -ne 0 ]; then
-        echo "SRT forwarding snapshot unavailable; continuing package installation" >&2
+        if [ "$published" = true ]; then
+            echo "SRT forwarding snapshot saved but directory sync failed; continuing package installation" >&2 || true
+        else
+            echo "SRT forwarding snapshot unavailable; continuing package installation" >&2 || true
+        fi
     fi
     exit 0
 }
+trap '' PIPE
 trap finish_snapshot EXIT
 case "${1:-}" in
     install|upgrade) ;;
@@ -370,6 +376,8 @@ tmp=$(mktemp "$dir/.srt-forward-legacy-setup.XXXXXX")
 cat -- "$source" > "$tmp"
 sync -f "$tmp"
 mv -T -- "$tmp" "$snapshot"
+tmp=""
+published=true
 sync -f "$dir"
 EOF
 

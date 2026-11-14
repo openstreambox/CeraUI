@@ -42,4 +42,41 @@ for operation in mkdir mktemp cat sync mv; do
     rm "$work/bin/$operation"
     rm -f "$snapshot"
 done
+
+# The failure handler must survive failure of its own diagnostic output.
+printf '#!/bin/bash\nexit 1\n' > "$work/bin/mkdir"
+chmod +x "$work/bin/mkdir"
+export PATH="$work/bin:$PATH" CERALIVE_FORWARD_MIGRATION_TEST_ROOT="$work/root"
+python3 - "$work/preinst" <<'PYTEST'
+import os
+import subprocess
+import sys
+
+failures = []
+for name in ("full", "closed", "broken-pipe"):
+    if name == "full":
+        fd = os.open("/dev/full", os.O_WRONLY)
+        result = subprocess.run(["bash", sys.argv[1], "upgrade"], stderr=fd)
+    elif name == "closed":
+        result = subprocess.run(["bash", "-c", 'exec 2>&-; exec bash "$1" upgrade', "test", sys.argv[1]])
+        fd = None
+    else:
+        read_fd, fd = os.pipe()
+        os.close(read_fd)
+        result = subprocess.run(["bash", sys.argv[1], "upgrade"], stderr=fd)
+    if fd is not None:
+        os.close(fd)
+    print(f"snapshot failure with stderr {name}: rc {result.returncode}", flush=True)
+    if result.returncode != 0:
+        failures.append(name)
+assert not failures, failures
+PYTEST
+rm "$work/bin/mkdir"
+# A directory sync failure occurs after publication, so report that precisely.
+printf '#!/bin/bash\n[[ "$2" != */ceralive ]]\n' > "$work/bin/sync"
+chmod +x "$work/bin/sync"
+bash "$work/preinst" upgrade 2> "$work/diagnostic"
+test -f "$snapshot"
+grep -q 'snapshot saved but directory sync failed' "$work/diagnostic"
+! grep -q 'snapshot unavailable' "$work/diagnostic"
 printf '%s\n' 'forward migration package contract passed'

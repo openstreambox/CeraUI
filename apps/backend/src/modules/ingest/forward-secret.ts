@@ -46,16 +46,21 @@ export async function readForwardSecret(
 export async function loadForwardSecret(
 	path: string,
 	generated: string,
+	replacedLegacyPath?: string,
 ): Promise<string> {
 	const existing = await readForwardSecret(path);
 	if (existing !== undefined) return existing;
-	const damaged = await lstat(path).then(
-		() => true,
-		(error: NodeJS.ErrnoException) => {
-			if (error.code === "ENOENT") return false;
-			throw error;
-		},
-	);
+	const exists = (candidate: string) =>
+		lstat(candidate).then(
+			() => true,
+			(error: NodeJS.ErrnoException) => {
+				if (error.code === "ENOENT") return false;
+				throw error;
+			},
+		);
+	const damaged =
+		(await exists(path)) ||
+		(replacedLegacyPath !== undefined && (await exists(replacedLegacyPath)));
 	await writeForwardFile(path, generated);
 	if (damaged) logger.warn("SRT forwarding credential regenerated");
 	return generated;

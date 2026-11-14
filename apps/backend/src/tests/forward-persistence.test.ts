@@ -231,3 +231,44 @@ test("persistent settings discard stale backup even when their JSON is damaged",
 		await rm(dir, { recursive: true, force: true });
 	}
 });
+
+test("valid persistent settings survive an unremovable stale snapshot", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "forward-cleanup-"));
+	const warning = spyOn(logger, "warn").mockImplementation(() => logger);
+	try {
+		await files.mkdir(join(dir, "srt-forward-legacy-setup.json"));
+		await writeFile(
+			join(dir, "srt-forward.json"),
+			JSON.stringify({ host: "127.0.0.1", passphrase: "operator-test-secret" }),
+			{ mode: 0o600 },
+		);
+		expect(
+			(await loadForwardConfig(dir, undefined, join(dir, "absent")))?.host,
+		).toBe("127.0.0.1");
+		expect(warning).toHaveBeenCalledWith(
+			"SRT forwarding stale snapshot cleanup failed",
+		);
+	} finally {
+		warning.mockRestore();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("warns once when migration replaces a damaged legacy credential", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "forward-legacy-warning-"));
+	const warning = spyOn(logger, "warn").mockImplementation(() => logger);
+	try {
+		const secret = join(dir, "legacy.secret");
+		await writeFile(secret, "bad", { mode: 0o600 });
+		const first = await loadForwardConfig(dir, { host: "127.0.0.1" }, secret);
+		expect(first?.passphrase).toMatch(/^[a-f0-9]{32}$/);
+		expect(await loadForwardConfig(dir, undefined, secret)).toEqual(first);
+		expect(warning).toHaveBeenCalledTimes(1);
+		expect(warning).toHaveBeenCalledWith(
+			"SRT forwarding credential regenerated",
+		);
+	} finally {
+		warning.mockRestore();
+		await rm(dir, { recursive: true, force: true });
+	}
+});

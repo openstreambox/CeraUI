@@ -263,6 +263,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["SRT forwarding disabled: configuration or credential unavailable"],
 	["SRT forwarding disabled: invalid configuration"],
 	["SRT forwarding listener retrying"],
+	["SRT forwarding stale snapshot cleanup failed"],
 	["SRT ingest failed startup readiness: ", ""],
 	["SRTLA bond changed while the stream was starting; reloading the sender"],
 	["SRTLA reload after republication failed"],
