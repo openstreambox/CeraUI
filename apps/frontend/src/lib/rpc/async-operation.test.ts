@@ -357,6 +357,24 @@ describe("async-operation reconnect wiring contract", () => {
  * are exact.
  */
 describe("osCommand dispatch helper", () => {
+	for (const key of ["reboot", "poweroff", "ssh", "ssh-persist"]) {
+		for (const error of [
+			"streaming",
+			"stream_liveness_unknown",
+			"update_in_progress",
+		]) {
+			it(`leaves ${key} ${error} refusal feedback to the device notification`, async () => {
+				const result = await osCommand({
+					key,
+					rpc: async () => ({ success: false, error }),
+				});
+				expect(result?.success).toBe(false);
+				expect(getOperationPhase(key)).toBe("failed");
+				expect(toast.error).not.toHaveBeenCalled();
+			});
+		}
+	}
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -548,7 +566,7 @@ describe("osCommand superseded attempt ownership", () => {
 		destroyAsyncOperations();
 		vi.clearAllMocks();
 	});
-	it("keeps explicit refusal feedback after transient state is destroyed", async () => {
+	it("leaves delayed refusal feedback to the device after transient state is destroyed", async () => {
 		const reply = Promise.withResolvers<{ success: false; error: string }>();
 		const onResult = vi.fn();
 		const pending = osCommand({
@@ -564,7 +582,7 @@ describe("osCommand superseded attempt ownership", () => {
 		reply.resolve(response);
 		await expect(pending).resolves.toEqual(response);
 		expect(onResult).toHaveBeenCalledExactlyOnceWith(response);
-		expect(toast.error).toHaveBeenCalledOnce();
+		expect(toast.error).not.toHaveBeenCalled();
 		expect(getOperationPhase("ssh")).toBe("idle");
 	});
 	it("does not revive an old reply after replacement state is also destroyed", async () => {

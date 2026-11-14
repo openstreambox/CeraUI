@@ -48,8 +48,20 @@
 
 import { readdir, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import {
+	canonicalModemIdPath,
+	deriveModemStableKey,
+} from "@ceraui/rpc/schemas";
 
 import { logger } from "../../helpers/logger.ts";
+import { getms } from "../../helpers/time.ts";
+import { getConfig, saveConfig } from "../config.ts";
+import {
+	mintLinkId,
+	resolvePhysicalDevice,
+	setPresentPhysicalDevices,
+	usableUsbSerial,
+} from "../modems/physical-identity.ts";
 import {
 	classifyUsbNetDevice,
 	modelLabel,
@@ -90,6 +102,11 @@ export type RouterCellularMarker = {
 };
 
 export type RouterCellularScanDeps = {
+	/** Absent for isolated reader fixtures; production uses device config. */
+	sharedSerials?: {
+		load(): readonly string[];
+		save(hashes: string[]): void;
+	};
 	/** Root the sysfs paths are resolved under. `/` in production. */
 	sysfsRoot: string;
 	/** Directory udev persists its device database in. */
@@ -131,6 +148,13 @@ async function defaultReadLinkName(path: string): Promise<string | undefined> {
 }
 
 export const defaultRouterCellularScanDeps: RouterCellularScanDeps = {
+	sharedSerials: {
+		load: () => getConfig().usb_serial_shared ?? [],
+		save: (hashes) => {
+			getConfig().usb_serial_shared = hashes;
+			saveConfig();
+		},
+	},
 	sysfsRoot: "/",
 	udevDataRoot: "/run/udev/data",
 	listDir: defaultListDir,
@@ -284,7 +308,7 @@ async function readUdevDeviceProperties(
 export async function readUsbNetDevice(
 	ifname: string,
 	deps: RouterCellularScanDeps = defaultRouterCellularScanDeps,
-): Promise<UsbNetDevice | undefined> {
+): Promise<(UsbNetDevice & { usbParent: string }) | undefined> {
 	const netIfaceLink = join(deps.sysfsRoot, "sys/class/net", ifname, "device");
 	const ifaceDir = await deps.resolveLink(netIfaceLink);
 	if (ifaceDir === undefined) return undefined;
@@ -334,6 +358,7 @@ export async function readUsbNetDevice(
 		...(product ? { product } : {}),
 		...(serialNumber ? { serialNumber } : {}),
 		...udevProperties,
+		usbParent: deviceDir,
 		interfaces,
 	};
 }
@@ -373,6 +398,9 @@ export type UsbPhysicalDescriptor = {
 	model: string;
 	deviceClass: UsbNetClass;
 	serial?: string;
+	legacyLinkId?: string;
+	/** Resolved sysfs USB parent; grouping only, never a stable_key override. */
+	usbParent: string;
 	idPath?: string;
 	hwdbVendor?: string;
 	hwdbModel?: string;
@@ -383,6 +411,7 @@ export type UsbNetMarkerSets = {
 	routerCellular: Map<string, RouterCellularMarker>;
 	modemNet: Map<string, UsbModemNetMarker>;
 	physical: Map<string, UsbPhysicalDescriptor>;
+	duplicateSerialKeys: Set<string>;
 };
 
 /**
@@ -451,7 +480,47 @@ export async function scanUsbNetMarkers(
 			...(serial !== undefined ? { serial } : {}),
 		});
 	}
-	return { routerCellular, modemNet, physical };
+	const parentsBySerial = new Map<string, Set<string>>();
+	for (const descriptor of physical.values()) {
+		const serial = usableUsbSerial(descriptor.serial);
+		const parent = deriveModemStableKey(
+			canonicalModemIdPath(descriptor.idPath ?? descriptor.usbParent),
+		);
+		if (serial === undefined || parent === undefined) continue;
+		const key = `${descriptor.vid.toLowerCase()}:${serial}`;
+		const parents = parentsBySerial.get(key) ?? new Set<string>();
+		parents.add(parent);
+		parentsBySerial.set(key, parents);
+	}
+	const duplicateSerialKeys = new Set(
+		[...parentsBySerial]
+			.filter(([, parents]) => parents.size > 1)
+			.map(([key]) => serialDigest(key)),
+	);
+	for (const descriptor of physical.values()) {
+		rejectSharedSerial(descriptor, duplicateSerialKeys);
+	}
+	return { routerCellular, modemNet, physical, duplicateSerialKeys };
+}
+
+function serialDigest(key: string): string {
+	return new Bun.CryptoHasher("sha256").update(key).digest("hex");
+}
+
+function rejectSharedSerial(
+	descriptor: UsbPhysicalDescriptor,
+	hashes: ReadonlySet<string>,
+): void {
+	const serial = descriptor.serial?.trim();
+	if (
+		serial === undefined ||
+		!hashes.has(serialDigest(`${descriptor.vid.toLowerCase()}:${serial}`))
+	)
+		return;
+	descriptor.legacyLinkId = mintLinkId(
+		`usb-serial:${descriptor.vid.toLowerCase()}:${serial}`,
+	);
+	delete descriptor.serial;
 }
 
 /**
@@ -463,7 +532,7 @@ export async function scanUsbNetMarkers(
  */
 function physicalDescriptor(
 	ifname: string,
-	device: UsbNetDevice,
+	device: UsbNetDevice & { usbParent: string },
 	verdict: UsbNetClassification,
 ): UsbPhysicalDescriptor {
 	return {
@@ -473,6 +542,7 @@ function physicalDescriptor(
 		vendor: vendorLabel(device),
 		model: modelLabel(device),
 		deviceClass: verdict.deviceClass,
+		usbParent: device.usbParent,
 		...(device.serialNumber !== undefined
 			? { serial: device.serialNumber }
 			: {}),
@@ -499,16 +569,76 @@ export async function scanRouterCellular(
 let markers: Map<string, RouterCellularMarker> = new Map();
 let modemNetMarkers: Map<string, UsbModemNetMarker> = new Map();
 let physicalDescriptors: Map<string, UsbPhysicalDescriptor> = new Map();
+let sharedSerialHashes = new Set<string>();
+let coveredIfnames = new Set<string>();
+const scanCommittedListeners = new Set<() => void>();
+const identityFirstPublishedAt = new Map<string, number>();
+const identityDeadlineWarnings = new Set<string>();
+
+export const IDENTITY_READINESS_DEADLINE_MS = 15_000;
+
+/** A completed read counts even when the interface has no USB descriptor. */
+export function usbNetScanCovers(ifname: string): boolean {
+	return coveredIfnames.has(ifname);
+}
+
+/** The publication clock is shared by every identity-minting consumer. */
+export function notePublishedNetifSnapshot(
+	ifnames: readonly string[],
+	now: number = getms(),
+): void {
+	const present = new Set(ifnames);
+	for (const ifname of identityFirstPublishedAt.keys()) {
+		if (!present.has(ifname)) {
+			identityFirstPublishedAt.delete(ifname);
+			identityDeadlineWarnings.delete(ifname);
+		}
+	}
+	for (const ifname of present) {
+		if (!identityFirstPublishedAt.has(ifname))
+			identityFirstPublishedAt.set(ifname, now);
+	}
+}
+
+export function identityDeadlineExpired(
+	ifname: string,
+	now: number = getms(),
+): boolean {
+	const firstSeen = identityFirstPublishedAt.get(ifname);
+	if (
+		firstSeen === undefined ||
+		now - firstSeen < IDENTITY_READINESS_DEADLINE_MS
+	)
+		return false;
+	if (!usbNetScanCovers(ifname) && !identityDeadlineWarnings.has(ifname)) {
+		identityDeadlineWarnings.add(ifname);
+		logger.warn("USB identity deadline expired; using fallback identity", {
+			ifname,
+		});
+	}
+	return true;
+}
+
+export function onUsbNetScanCommitted(listener: () => void): () => void {
+	scanCommittedListeners.add(listener);
+	return () => {
+		scanCommittedListeners.delete(listener);
+	};
+}
 
 function snapshotKey(current: UsbNetMarkerSets): string {
-	const router = [...current.routerCellular.entries()].map(
-		([ifname, m]) =>
-			`${ifname}:${m.vid_pid}:${m.duplicate_model}:${m.serial ?? ""}`,
-	);
-	const modem = [...current.modemNet.entries()].map(
-		([ifname, m]) => `${ifname}:${m.vid_pid}:modem-net`,
-	);
-	return [...router, ...modem].sort().join("|");
+	return JSON.stringify({
+		covered: [...coveredIfnames].sort(),
+		router: [...current.routerCellular.entries()].sort(([a], [b]) =>
+			a.localeCompare(b),
+		),
+		modem: [...current.modemNet.entries()].sort(([a], [b]) =>
+			a.localeCompare(b),
+		),
+		physical: [...current.physical.entries()].sort(([a], [b]) =>
+			a.localeCompare(b),
+		),
+	});
 }
 
 function cachedSets(): UsbNetMarkerSets {
@@ -516,6 +646,7 @@ function cachedSets(): UsbNetMarkerSets {
 		routerCellular: markers,
 		modemNet: modemNetMarkers,
 		physical: physicalDescriptors,
+		duplicateSerialKeys: sharedSerialHashes,
 	};
 }
 
@@ -576,10 +707,37 @@ async function runUsbNetScan(
 		// reach this line, so nothing else can have committed in between — and a
 		// `resetUsbNetMarkers()` mid-flight would have fenced us out above.
 		const before = snapshotKey(cachedSets());
+		const persisted = deps.sharedSerials?.load() ?? [];
+		const next = new Set([
+			...persisted,
+			...sharedSerialHashes,
+			...scanned.duplicateSerialKeys,
+		]);
+		const newest = [...next].slice(-64);
+		if (
+			scanned.duplicateSerialKeys.size > 0 &&
+			newest.join(",") !== persisted.join(",")
+		) {
+			deps.sharedSerials?.save(newest);
+		}
+		sharedSerialHashes = new Set(newest);
+		for (const descriptor of scanned.physical.values()) {
+			rejectSharedSerial(descriptor, sharedSerialHashes);
+		}
 		markers = scanned.routerCellular;
 		modemNetMarkers = scanned.modemNet;
 		physicalDescriptors = scanned.physical;
-		return snapshotKey(cachedSets()) !== before;
+		coveredIfnames = new Set(ifnames);
+		setPresentPhysicalDevices(
+			[...physicalDescriptors.values()].map((descriptor) =>
+				resolvePhysicalDevice(descriptor),
+			),
+		);
+		const changed = snapshotKey(cachedSets()) !== before;
+		if (changed) {
+			for (const listener of scanCommittedListeners) listener();
+		}
+		return changed;
 	} catch (err) {
 		logger.debug("usb-net scan degraded", { err });
 		return false;
@@ -605,10 +763,15 @@ async function runUsbNetScan(
 export function refreshUsbNetMarkers(
 	ifnames: readonly string[],
 	deps: RouterCellularScanDeps = defaultRouterCellularScanDeps,
+	options: { readonly joinInFlight?: boolean } = {},
 ): Promise<boolean> {
 	const key = scanRequestKey(ifnames);
 	const pending = inFlightUsbNetScan;
-	if (pending && pending.key === key && pending.deps === deps) {
+	if (
+		pending &&
+		pending.deps === deps &&
+		(options.joinInFlight || pending.key === key)
+	) {
 		// The identical question is already being asked of the identical tree; a
 		// second sweep could only answer it twice and race its own twin.
 		return pending.result;
@@ -657,4 +820,9 @@ export function resetUsbNetMarkers(): void {
 	markers = new Map();
 	modemNetMarkers = new Map();
 	physicalDescriptors = new Map();
+	sharedSerialHashes = new Set();
+	coveredIfnames = new Set();
+	identityFirstPublishedAt.clear();
+	identityDeadlineWarnings.clear();
+	setPresentPhysicalDevices([]);
 }

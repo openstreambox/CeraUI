@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { defineConfig, devices } from '@playwright/test';
+import { writeFileAtomicSync } from '../backend/src/helpers/config-loader.ts';
 import { clearInputPickerHardwareArtifacts } from './tests/e2e/helpers/input-picker-hardware-preflight.js';
 
 clearInputPickerHardwareArtifacts();
@@ -30,7 +31,7 @@ if (
 	process.env.CI !== 'true' &&
 	(!fs.existsSync(e2eTokenPath) || fs.readFileSync(e2eTokenPath, 'utf8').trim() === 'PLACEHOLDER_NO_TOKEN_YET')
 ) {
-	fs.writeFileSync(e2eTokenPath, randomBytes(32).toString('base64'), { mode: 0o600 });
+	writeFileAtomicSync(e2eTokenPath, randomBytes(32).toString('base64'), { mode: 0o600 });
 }
 
 // Seed a server before the backend boots so the Live view leaves its empty state
@@ -64,7 +65,7 @@ if (process.env.CI || !fs.existsSync(configPath)) {
 
 const DEV_PORT = Number(process.env.E2E_PORT ?? 6173);
 const DEV_URL = `http://localhost:${DEV_PORT}`;
-const REFERENCE_BACKEND_PORT = 3003;
+const REFERENCE_BACKEND_PORT = Number(process.env.E2E_BACKEND_PORT ?? 3003);
 
 // Repo-local test-artifact dir. Playwright traces/screenshots AND human-readable
 // evidence files land here; gitignored. Never write outside the repo — tests must
@@ -107,7 +108,7 @@ export default defineConfig({
           port: DEV_PORT,
           reuseExistingServer: false,
           timeout: 120_000,
-          env: { VITE_SOCKET_PORT: String(REFERENCE_BACKEND_PORT) },
+          env: { E2E_PORT: String(DEV_PORT), VITE_SOCKET_PORT: String(REFERENCE_BACKEND_PORT) },
         },
         {
           // Reference backend for local global setup, not functional test pages;

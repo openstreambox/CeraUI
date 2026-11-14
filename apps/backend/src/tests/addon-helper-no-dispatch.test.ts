@@ -86,7 +86,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			);
 			// When admission reaches the actual helper wrapper and fails before dispatch.
 			const result = await invokeHelperAction(action, {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec,
 				readDescriptor: async () => sysextDescriptor,
 				createStep: () => step,
@@ -117,7 +117,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			});
 			expect(
 				await addonRefresh({
-					isRealDevice: async () => true,
+					canManageAddons: async () => true,
 					exec,
 					createStep: () => repaired,
 				}),

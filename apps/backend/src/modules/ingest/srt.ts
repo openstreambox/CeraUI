@@ -7,6 +7,8 @@ import {
 	getMockSrtStats,
 	shouldMockStreaming,
 } from "../../mocks/providers/streaming.ts";
+import { setup } from "../setup.ts";
+import { carryingTracker } from "../system/carrying.ts";
 
 // Define types for better clarity
 type ConnectionStats = `${number} Kbps, ${number} ms RTT` | "" | null;
@@ -23,6 +25,7 @@ interface SrtStatsData {
  * Manages SRT to UDP conversion using srt-live-transmit
  * Collects and formats connection statistics
  */
+let stopForward: (() => Promise<void>) | undefined;
 let currentConnectionStats: ConnectionStats = null;
 let currentTransmitter: SupervisedHandle | null = null;
 
@@ -121,9 +124,11 @@ export function startSrtTransmitter(): SupervisedHandle {
 				// Handle disconnection
 				currentConnectionStats = "";
 				hasActiveConnection = false;
+				carryingTracker.session("srt-ingest", false, performance.now());
 			} else if (logMessage.match("Accepted SRT source connection")) {
 				// Handle the new connection
 				hasActiveConnection = true;
+				carryingTracker.session("srt-ingest", true, performance.now());
 			}
 		}
 	};
@@ -131,29 +136,43 @@ export function startSrtTransmitter(): SupervisedHandle {
 	void consumeStdout();
 	void consumeStderr();
 	void transmitProcess.exited.finally(() => {
-		if (currentTransmitter === handle) currentTransmitter = null;
+		if (currentTransmitter === handle) {
+			currentTransmitter = null;
+			carryingTracker.session("srt-ingest", false, performance.now());
+		}
 	});
 
 	return handle;
 }
 
 export async function stopSRTIngest(): Promise<void> {
+	await stopForward?.();
+	stopForward = undefined;
 	const handle = currentTransmitter;
 	currentTransmitter = null;
 	currentConnectionStats = null;
+	carryingTracker.session("srt-ingest", false, performance.now());
 	await handle?.shutdown();
 }
 
 /**
  * Initialize the SRT ingest system
  */
-export function initSRTIngest(): void {
+export async function initSRTIngest(): Promise<void> {
 	// Skip starting real transmitter in development mode
 	if (shouldMockStreaming()) {
 		logger.info("🎭 SRT ingest: Using mock streaming stats");
 		return;
 	}
-	startSrtTransmitter();
+	if (Object.hasOwn(setup, "srt_forward") && !setup.srt_forward) {
+		logger.warn("SRT forwarding disabled: invalid configuration");
+		return;
+	}
+	if (setup.srt_forward) {
+		const forward = await import("./srt-forward.ts");
+		stopForward = forward.stopSrtForward;
+		await forward.initSrtForward();
+	} else startSrtTransmitter();
 }
 
 /**

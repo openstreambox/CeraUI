@@ -7,7 +7,9 @@
  *  - `"streaming"` — a stream is being ADMITTED. The lease is held only across
  *    the admission window (`stream-session-orchestrator.ts` `start()`, from the
  *    moment the attempt is admitted until the launch settles), because once the
- *    stream is live the LIVE guard (`getIsStreaming()`) takes over. It is
+ *    stream is live the LIVE guard (`getIsStreaming()`) takes over. For
+ *    engine-less forwarding, `isForwardActive()` supplies that live exclusion
+ *    after the admission lease ends at relay acceptance. It is
  *    released in that admission's `finally`, so a throw mid-launch can never
  *    strand it.
  *  - `"modem-transition"` — a USB-composition-mode switch (`modems.setUsbMode`)
@@ -43,6 +45,7 @@ import type { ModemMutationRefusal } from "@ceraui/rpc/schemas";
 
 import { logger } from "../../helpers/logger.ts";
 import { noteStartLeaseEnded } from "../system/idle-state.ts";
+import { isForwardActive } from "./forward-activity.ts";
 
 import { isRecoveryPending } from "./recovery-barrier.ts";
 
@@ -112,6 +115,8 @@ let nextToken = 0;
  * specific error instead of decaying into a generic lease-busy one.
  */
 export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
+	if (isForwardActive())
+		return { admitted: false, heldBy: "streaming", refusal: STREAMING_ACTIVE };
 	// A per-device mutation lease is the SAME exclusion as the legacy
 	// `"modem-transition"` holder, so it has to refuse a requester here too —
 	// otherwise a stream admission could slip past a mutation that took the
@@ -260,6 +265,8 @@ export function tryAcquireModemMutation(
 	if (activeMutations.has(stableKey)) {
 		return { admitted: false, refusal: "mutation_in_progress" };
 	}
+	if (isForwardActive())
+		return { admitted: false, refusal: "streaming_active" };
 	if (held !== undefined) {
 		return {
 			admitted: false,

@@ -205,7 +205,7 @@ function servicesHarness(
 	enabled = true,
 ): BluetoothServicesDeps {
 	return {
-		isRealDevice: async () => real,
+		canManageBluetooth: async () => real,
 		systemctl: async (args): Promise<CommandResult> => {
 			systemctlCalls.push([...args]);
 			if (args[0] === "is-enabled") {
@@ -235,7 +235,7 @@ function makeHarness(
 	const agentOrder: string[] = [];
 
 	const deps: BluetoothStackDeps = {
-		isRealDevice: async () => options.real ?? true,
+		canManageBluetooth: async () => options.real ?? true,
 		services: servicesHarness(options.real ?? true, systemctlCalls),
 		createTransport: () => transport,
 		createClient: (t, registry, onChange) =>
@@ -366,7 +366,7 @@ describe("start-up order and unavailability causes", () => {
 		const transport = new FakeTransport();
 		const systemctlCalls: string[][] = [];
 		const stack = new BluetoothStack({
-			isRealDevice: async () => true,
+			canManageBluetooth: async () => true,
 			services: servicesHarness(true, systemctlCalls, false),
 			createTransport: () => transport,
 			createClient: (t, registry, onChange) =>
@@ -701,7 +701,7 @@ describe("the NoInputNoOutput pairing agent", () => {
 			throw new BluezError("org.bluez.Error.AlreadyExists", "taken");
 		});
 		const stack = new BluetoothStack({
-			isRealDevice: async () => true,
+			canManageBluetooth: async () => true,
 			services: servicesHarness(true, []),
 			createTransport: () => transport,
 			createClient: (t, registry, onChange) =>

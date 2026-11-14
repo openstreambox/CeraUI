@@ -43,6 +43,16 @@ export type StreamingProcess = {
 	exitListeners: Array<() => void>;
 };
 
+const forwardProcesses: Array<StreamingProcess> = [];
+
+export function spawnForwardLoop(
+	command: string,
+	args: string[],
+	errCallback: (data: string) => void,
+): StreamingProcess {
+	return spawnStreamingLoop(command, args, errCallback, forwardProcesses);
+}
+
 let streamingProcesses: Array<StreamingProcess> = [];
 
 // Live view of the supervised processes. Returned by reference so callers see
@@ -56,6 +66,7 @@ export function spawnStreamingLoop(
 	command: string,
 	args: Array<string>,
 	errCallback: (data: string) => void,
+	registry = streamingProcesses,
 ): StreamingProcess {
 	const proc = Bun.spawn([command, ...args], {
 		stdin: "inherit",
@@ -68,7 +79,7 @@ export function spawnStreamingLoop(
 		spawnfile: command,
 		exitListeners: [],
 	};
-	streamingProcesses.push(streamingProcess);
+	registry.push(streamingProcess);
 
 	if (errCallback) {
 		// Drain stderr by async iteration: chunks arrive in order, matching the
@@ -78,7 +89,8 @@ export function spawnStreamingLoop(
 			const decoder = new TextDecoder();
 			for await (const chunk of proc.stderr) {
 				const dataStr = decoder.decode(chunk);
-				logger.debug(`${streamingProcess.spawnfile} stderr: ${dataStr}`);
+				if (registry !== forwardProcesses)
+					logger.debug(`${streamingProcess.spawnfile} stderr: ${dataStr}`);
 				errCallback(dataStr);
 			}
 		})().catch((err) => {
@@ -101,6 +113,10 @@ export function spawnStreamingLoop(
 	// but never respawns the process (that would create a dual restart authority
 	// racing systemd's Restart=on-failure).
 	streamingProcess.exitListeners.push(() => {
+		if (registry === forwardProcesses) {
+			removeProc(streamingProcess);
+			return;
+		}
 		const { exitCode, signalCode } = streamingProcess.proc;
 		logger.warn(
 			`streamloop: ${streamingProcess.spawnfile} exited (code=${
@@ -108,11 +124,17 @@ export function spawnStreamingLoop(
 			}, signal=${
 				signalCode ?? "null"
 			}); not respawning — systemd owns process restart (ADR-0005)`,
+			// The same facts as typed fields, which support downloads keep.
+			{
+				process: streamingProcess.spawnfile,
+				exitCode: exitCode ?? null,
+				signal: signalCode ?? null,
+			},
 		);
 		// remove the dead process from the supervised list
 		removeProc(streamingProcess);
 		// srtla_send is the telemetry producer; its exit ends the stats stream.
-		if (streamingProcess.spawnfile.endsWith("srtla_send")) {
+		if (isSenderProcess(streamingProcess)) {
 			stopLinkTelemetry();
 		}
 		// notify health state: the stream is now dead until systemd respawns it
@@ -122,7 +144,44 @@ export function spawnStreamingLoop(
 	return streamingProcess;
 }
 
+function isSenderProcess(streamingProcess: StreamingProcess): boolean {
+	return streamingProcess.spawnfile.endsWith("srtla_send");
+}
+
+/**
+ * Signal every live sender this backend supervises, by its own process handle.
+ *
+ * This replaces signalling by process name for the bond reload: another process
+ * that happens to be called `srtla_send` (a second sender, a diagnostic run, a
+ * sender another backend should adopt) is never touched. A handle whose process
+ * has exited is skipped rather than signalled; until Bun has reaped the child its
+ * PID cannot be reused, and reaping and this check run on the same thread.
+ *
+ * Returns how many senders the signal was delivered to; zero means the reload
+ * did not reach any supervised sender and the caller must treat it as failed.
+ */
+export function signalSenders(
+	signal: NodeJS.Signals,
+	procs: ReadonlyArray<StreamingProcess> = streamingProcesses,
+): number {
+	let delivered = 0;
+	for (const sp of procs) {
+		if (!isSenderProcess(sp) || !isProcAlive(sp)) continue;
+		try {
+			sp.proc.kill(signal);
+			delivered++;
+		} catch (err) {
+			logger.warn(`signalSenders: ${signal} to ${sp.spawnfile} failed`, {
+				err,
+			});
+		}
+	}
+	return delivered;
+}
+
 function removeProc(streamingProcess: StreamingProcess) {
+	const index = forwardProcesses.indexOf(streamingProcess);
+	if (index >= 0) forwardProcesses.splice(index, 1);
 	streamingProcesses = streamingProcesses.filter((p) => p !== streamingProcess);
 }
 

@@ -41,12 +41,17 @@ import {
 	type CloudProviderEndpoint,
 	type ProviderSelection,
 	type SubscriptionStatus,
+	subscriptionStatusSchema,
 } from "@ceraui/rpc/schemas";
-import WebSocket, { type RawData } from "ws";
+import type WebSocket from "ws";
+import type { RawData } from "ws";
+
 import { logger } from "../../helpers/logger.ts";
+import { openOutboundWebSocket } from "../../helpers/outbound-websocket.ts";
 import { ACTIVE_TO } from "../../helpers/shared.ts";
 import { getms } from "../../helpers/time.ts";
 import { extractMessage } from "../../helpers/types.ts";
+import { isDevelopment } from "../../mocks/mock-config.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
@@ -56,7 +61,7 @@ import {
 	verifyStubDeviceToken,
 } from "../pairing/device-token.ts";
 import { setup } from "../setup.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { addAuthedSocket } from "../ui/auth.ts";
 import { getNotificationRelaySnapshot } from "../ui/notifications.ts";
 import { type StatusResponseMessage, sendInitialStatus } from "../ui/status.ts";
@@ -77,10 +82,12 @@ import {
 	updateCachedRelays,
 	type ValidateRemoteRelaysMessage,
 } from "./remote-relays.ts";
+
+let warnedProjectionDrop = false;
+
 import {
-	projectRemoteConfig,
-	projectRemoteStatus,
-	projectRemoteWifiFrame,
+	getRemoteProjectionDrops,
+	projectRemoteLegacyFrame,
 } from "./remote-status.ts";
 import { buildRemoteWsUrl } from "./remote-url.ts";
 
@@ -158,7 +165,7 @@ export type RemoteAuthDecision =
 	| { action: "force-repair"; reason: RemoteRepairReason };
 
 export type RemoteAuthDecisionOptions = {
-	readonly isRealDevice?: boolean;
+	readonly requireVerifiedControl?: boolean;
 };
 
 function shouldFailClosedRemoteAuth(
@@ -167,7 +174,7 @@ function shouldFailClosedRemoteAuth(
 	return (
 		isPasetoVerificationActive() ||
 		isProductionRuntime() ||
-		options.isRealDevice === true
+		options.requireVerifiedControl === true
 	);
 }
 
@@ -328,7 +335,7 @@ let notificationTimer: ReturnType<typeof setInterval> | undefined;
 const notificationRelay = createNotificationPeerRelay(
 	"legacy",
 	getNotificationRelaySnapshot,
-	() => (remoteWs?.readyState === WebSocket.OPEN ? remoteWs : undefined),
+	() => (remoteWs?.readyState === 1 ? remoteWs : undefined),
 );
 function startRemoteNotifications() {
 	clearInterval(notificationTimer);
@@ -393,6 +400,15 @@ export function forceRepairMigration(reason: RemoteRepairReason): void {
 	broadcastMsg("config", config);
 }
 
+function isLoopbackHost(host: string | undefined): boolean {
+	return (
+		host === "localhost" ||
+		host === "::1" ||
+		host === "[::1]" ||
+		/^127(?:\.\d{1,3}){3}$/.test(host ?? "")
+	);
+}
+
 async function remoteConnect() {
 	stopRemoteNotifications();
 	if (remoteConnectTimer !== undefined) {
@@ -412,6 +428,9 @@ async function remoteConnect() {
 				? "wss"
 				: "ws";
 	const endpointHost = setup.remote_endpoint_host ?? provider.host;
+	// Mocks hold a fake pairing key: never offer it to a real cloud endpoint, and
+	// dial at all only when the developer points remote at a loopback server.
+	if (isDevelopment() && !isLoopbackHost(setup.remote_endpoint_host)) return;
 	const endpointPath = setup.remote_endpoint_path ?? provider.path;
 	const protocolVersion = provider.protocolVersion ?? remoteProtocolVersion;
 
@@ -441,23 +460,55 @@ async function remoteConnect() {
 	const remoteWsUrl = buildRemoteWsUrl(protocol, host, endpointPath);
 
 	remoteStatusHandled = false;
-	remoteWs = new WebSocket(remoteWsUrl);
+	remoteWs = openOutboundWebSocket(remoteWsUrl);
 	// Local fan-out is already serialized. Keep this JSON-text boundary remote-only.
 	const send = remoteWs.send.bind(remoteWs);
 	remoteWs.send = (data, options?, cb?: (err?: Error) => void) => {
 		const frame: Record<string, unknown> = JSON.parse(String(data));
-		let projected =
-			frame.status === undefined
-				? frame
-				: {
-						...frame,
-						status: projectRemoteStatus(frame.status),
-					};
-		const config = projectRemoteConfig(frame.config);
-		if (config !== frame.config) projected = { ...projected, config };
-		const wifi = projectRemoteWifiFrame(frame.wifi);
-		if (wifi !== frame.wifi) projected = { ...projected, wifi };
-		const message = projected === frame ? data : JSON.stringify(projected);
+		// Encoder authentication is transport authentication, never a status DTO.
+		const auth = frame.remote;
+		const authPayload =
+			auth && typeof auth === "object" && "auth/encoder" in auth
+				? (auth as Record<string, unknown>)["auth/encoder"]
+				: undefined;
+		const authObject =
+			authPayload && typeof authPayload === "object"
+				? (authPayload as Record<string, unknown>)
+				: undefined;
+		const dropsBefore = getRemoteProjectionDrops();
+		const message =
+			authObject &&
+			typeof authObject.key === "string" &&
+			typeof authObject.version === "number"
+				? JSON.stringify({
+						remote: {
+							"auth/encoder": {
+								key: authObject.key,
+								version: authObject.version,
+								...(subscriptionStatusSchema.safeParse(authObject.sub_status)
+									.success
+									? { sub_status: authObject.sub_status }
+									: {}),
+							},
+						},
+					})
+				: JSON.stringify(
+						projectRemoteLegacyFrame(
+							frame,
+							`legacy:${protocol}://${endpointHost}${endpointPath}`,
+						),
+					);
+		if (getRemoteProjectionDrops() > dropsBefore && !warnedProjectionDrop) {
+			warnedProjectionDrop = true;
+			logger.warn(
+				"remote status payload rejected by projection; dropped payloads are counted",
+			);
+		}
+		if (message === "{}") {
+			if (typeof options === "function") options();
+			else cb?.();
+			return;
+		}
 		if (typeof options === "function") {
 			send(message, options);
 		} else {
@@ -479,12 +530,12 @@ async function remoteConnect() {
 		const config = getConfig();
 		if (!config.remote_key) return;
 
-		const realDevice = await isRealDevice();
+		const requireVerifiedControl = await hasCapability("device-control");
 		const decision = resolveRemoteAuthDecision(
 			config.remote_key,
 			protocolVersion,
 			Date.now(),
-			{ isRealDevice: realDevice },
+			{ requireVerifiedControl },
 		);
 		if (decision.action === "force-repair") {
 			forceRepairMigration(decision.reason);

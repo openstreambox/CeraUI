@@ -319,7 +319,7 @@ function verifyDeps(
 	},
 ) {
 	return {
-		isRealDevice: async () => true,
+		canManageModems: async () => true,
 		resolveTarget: () => target,
 		readCredential: () => credential ?? undefined,
 		loginPort: rec.port,

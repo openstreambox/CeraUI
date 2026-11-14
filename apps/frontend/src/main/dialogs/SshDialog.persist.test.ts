@@ -20,7 +20,6 @@
  *      advisory band, and no other combination does.
  */
 
-import { m } from "@ceraui/i18n/svelte";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import {
 	afterEach,
@@ -152,19 +151,16 @@ describe("two controls, two axes", () => {
 			error: "stream_liveness_unknown",
 		} as const;
 		const reply = Promise.withResolvers<typeof response>();
-		const shown = Promise.withResolvers<void>();
-		toastError.mockImplementation(() => shown.resolve());
+
 		sshStart.mockReturnValue(reply.promise);
 		await open({ active: false });
 		await fireEvent.click(serviceButton());
 		destroyAsyncOperations();
 		// When the device's explicit refusal arrives without a retained UI entry.
 		reply.resolve(response);
-		await shown.promise;
-		// Then response evidence, not transient UI history, selects the explanation.
-		expect(toastError).toHaveBeenCalledWith(
-			m["notifications.disruptiveActionRefused"](),
-		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		// Then the device notification remains the sole refusal explanation.
+		expect(toastError).not.toHaveBeenCalled();
 	});
 	for (const reason of [
 		"streaming",
@@ -183,10 +179,8 @@ describe("two controls, two axes", () => {
 				await fireEvent.click(
 					action === "persist" ? persistToggle() : serviceButton(),
 				);
-				// Then the translated exclusion explanation replaces generic failure copy.
-				expect(toastError).toHaveBeenCalledWith(
-					m["notifications.disruptiveActionRefused"](),
-				);
+				// Then the device notification supplies the explanation without another toast.
+				expect(toastError).not.toHaveBeenCalled();
 			});
 		}
 	}

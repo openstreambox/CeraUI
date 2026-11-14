@@ -58,7 +58,7 @@ import { logger } from "../../helpers/logger.ts";
 import { retryWithBackoff } from "../../helpers/retry.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { readUdevExportDb } from "../modems/modem-id-path-source.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 
 import {
 	cellularAttachesFromUdevDatabase,
@@ -268,7 +268,7 @@ let supervisor: UdevMonitorSupervisor | null = null;
 /**
  * Boot hook: start the monitor on a real device.
  *
- * `isRealDevice()`-gated, and skipped under mocks, for the reason
+ * `hasCapability("modem-control")`-gated, and skipped under mocks, for the reason
  * `initEncoderLoad`/`initFan` are: a dev host has no cellular hardware to
  * announce, so publishing nothing is the honest answer AND is what keeps the
  * mock scenarios the single seam for this signal in development. Never throws —
@@ -276,7 +276,7 @@ let supervisor: UdevMonitorSupervisor | null = null;
  * and nothing else.
  */
 export async function initUdevProvisionalMonitor(): Promise<void> {
-	if (shouldUseMocks() || !(await isRealDevice())) {
+	if (shouldUseMocks() || !(await hasCapability("modem-control"))) {
 		return;
 	}
 	supervisor ??= new UdevMonitorSupervisor();

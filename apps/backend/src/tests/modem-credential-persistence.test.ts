@@ -90,7 +90,7 @@ beforeEach(async () => {
 	).mockReturnValue(target);
 	const real = spyOn(
 		verify.defaultCredentialVerifyDeps,
-		"isRealDevice",
+		"canManageModems",
 	).mockResolvedValue(true);
 	const detect = spyOn(
 		verify.defaultRouterLoginPort,

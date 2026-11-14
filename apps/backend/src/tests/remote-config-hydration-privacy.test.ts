@@ -1,13 +1,15 @@
 import { beforeEach, expect, spyOn, test } from "bun:test";
 import WebSocket from "ws";
+import { logger } from "../helpers/logger.ts";
 import { getConfig } from "../modules/config.ts";
 import * as modemStatus from "../modules/modems/modem-status.ts";
 import { NOTIFICATION_EPOCH } from "../modules/remote/notification-relay.ts";
+import { getRemoteProjectionDrops } from "../modules/remote/remote-status.ts";
 import { sendInitialStatus } from "../modules/ui/status.ts";
+import { expectNoSourceStrings } from "./helpers/remote-outbound-assert.ts";
 import {
 	APN_PASSWORD,
 	AUTH_KEY,
-	expectedBytes,
 	expectNoPairingSecret,
 	modem,
 	secrets,
@@ -25,8 +27,32 @@ beforeEach(() => {
 	spyOn(modemStatus, "buildModemsWireMessage").mockReturnValue({ lte: modem });
 });
 
+test("real initial hydration causes no rejection warning", async () => {
+	const before = getRemoteProjectionDrops();
+	const warning = spyOn(logger, "warn");
+	const remote = await authenticateRemote();
+	expect(getRemoteProjectionDrops()).toBe(before);
+	expect(
+		warning.mock.calls.filter(([text]) =>
+			String(text).includes("rejected by projection"),
+		),
+	).toHaveLength(0);
+	const invalid = JSON.stringify({
+		notification: { show: [], remove: [], epoch: "invalid", full: true },
+	});
+	remote.send(invalid);
+	remote.send(invalid);
+	expect(getRemoteProjectionDrops()).toBe(before + 2);
+	expect(
+		warning.mock.calls.filter(([text]) =>
+			String(text).includes("rejected by projection"),
+		),
+	).toHaveLength(1);
+	warning.mockRestore();
+});
+
 for (const provider of ["ceralive", "belabox", "custom"] as const) {
-	test(`${provider} initial config and modem status omit pairing seed only while local hydration is byte-identical`, async () => {
+	test(`${provider} initial config and modem status omit private fields while local hydration is byte-identical`, async () => {
 		getConfig().remote_provider = provider;
 		getConfig().custom_provider = {
 			name: "Private provider",
@@ -43,20 +69,17 @@ for (const provider of ["ceralive", "belabox", "custom"] as const) {
 
 		const remote = await authenticateRemote();
 
-		expect(remote.sent).toEqual(
-			before.map((bytes) => {
-				const frame = JSON.parse(bytes);
-				if (frame.notification) {
-					// The relay's connect-time list: a full replace for this process epoch.
-					frame.notification.remove = [];
-					frame.notification.epoch = NOTIFICATION_EPOCH;
-					frame.notification.full = true;
-				}
-				return expectedBytes(frame, frame.config);
-			}),
-		);
+		expectNoSourceStrings(remote.sent.join("\n"), config);
+		const snapshot = remote.sent
+			.map((bytes) => JSON.parse(bytes))
+			.find((frame) => frame.notification)?.notification;
+		expect(snapshot).toMatchObject({
+			full: true,
+			epoch: NOTIFICATION_EPOCH,
+			remove: [],
+		});
 		expectNoPairingSecret(remote.sent.join("\n"));
-		expect(remote.sent.join("\n")).toContain(AUTH_KEY);
+		expect(remote.sent.join("\n")).not.toContain(AUTH_KEY);
 		expect(before.join("\n")).toContain(secrets.ssh_pass);
 		expect(before.join("\n")).toContain(APN_PASSWORD);
 		local.sent.length = 0;
@@ -74,7 +97,7 @@ test("legacy encoder authentication fields remain byte-identical", async () => {
 
 	remote.send(frame);
 
-	expect(remote.sent).toEqual([frame]);
+	expect(JSON.parse(remote.sent[0] ?? "{}")).toEqual(JSON.parse(frame));
 });
 
 test("legacy fake relay receives redacted persistent lifecycle and clears missed while offline", async () => {

@@ -1,3 +1,4 @@
+import { signalProcessName } from "@ceraui/srtla-send/process-signals";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -58,8 +59,8 @@ import {
 import { parseAuthorityJson } from "./update-orchestrator/strict-authority-json.ts";
 
 // Real-device detection (T4). Re-exported here so kiosk callers (and T13's RPC
-// gate) get the detector from the kiosk module surface. Detection only — the
-// handlers are NOT gated on it yet.
+// gate) retain the legacy detector export for compatibility. Production RPC
+// handlers use the kiosk capability from board-capabilities.ts.
 export {
 	type DeviceDetectionDeps,
 	defaultDeviceDetectionDeps,
@@ -79,7 +80,7 @@ const COG_DISPLAY_ADDON_ID = "cog-display";
 
 // Image-baked descriptor (T37) defining the display engine's units + signed
 // sysext artifact. Read + schema-validated at toggle time; only reached on a
-// real device, since the kiosk RPC handlers gate on isRealDevice() first (G6).
+// real device, since the kiosk RPC handlers gate on the kiosk capability first (G6).
 const COG_DISPLAY_DESCRIPTOR_PATH =
 	"/usr/share/ceralive/addons/cog-display.json";
 
@@ -203,7 +204,10 @@ const defaultKioskDeps: KioskDeps = {
 		await rm(KIOSK_NO_DISPLAY_MARKER, { force: true });
 	},
 	oskSignal: async (signal) => {
-		await execFileP("pkill", ["--signal", signal, "-x", KIOSK_OSK_PROCESS]);
+		const args = ["--signal", signal, "-x", KIOSK_OSK_PROCESS];
+		await signalProcessName("pkill", args, async () => {
+			await execFileP("pkill", args);
+		});
 	},
 	broadcast: (status) => broadcastMsg("kiosk", status),
 	loadCogDescriptor: loadCogDescriptorFromDisk,

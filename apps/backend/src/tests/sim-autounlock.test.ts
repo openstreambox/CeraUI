@@ -137,7 +137,7 @@ type Calls = {
 
 function makeAutoUnlockDeps(
 	opts: {
-		isRealDevice?: boolean;
+		canUnlockSim?: boolean;
 		storedPin?: string | null;
 		locked?: Array<LockedModem>;
 		unlockResults?: Array<SimUnlockResult>;
@@ -146,7 +146,7 @@ function makeAutoUnlockDeps(
 	const calls: Calls = { unlock: [], clear: 0, onUnlocked: 0, loadPin: 0 };
 	const results = [...(opts.unlockResults ?? [{ state: "success" }])];
 	const deps: SimAutoUnlockDeps = {
-		isRealDevice: async () => opts.isRealDevice ?? true,
+		canUnlockSim: async () => opts.canUnlockSim ?? true,
 		loadSimPin: async () => {
 			calls.loadPin += 1;
 			return opts.storedPin === undefined ? "1234" : opts.storedPin;
@@ -251,7 +251,7 @@ describe("maybeAutoUnlockSimPins — bounded on wrong PIN", () => {
 
 describe("maybeAutoUnlockSimPins — no-op gates", () => {
 	it("never touches mmcli on a dev/emulated host", async () => {
-		const { deps, calls } = makeAutoUnlockDeps({ isRealDevice: false });
+		const { deps, calls } = makeAutoUnlockDeps({ canUnlockSim: false });
 
 		await maybeAutoUnlockSimPins(deps);
 

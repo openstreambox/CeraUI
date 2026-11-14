@@ -75,7 +75,7 @@ for (const action of ["start", "stop", "persist"] as const) {
 			false,
 			true,
 			false,
-			"notifications.disruptiveActionRefused",
+			"notifications.disruptiveActionClientTraffic",
 		);
 		broadcast.mockRestore();
 	});

@@ -33,7 +33,9 @@ Install post-acceptance limits: D8 Known gaps (c). Check wire reference:
   the refresh latch so Check answers and scheduled ticks can continue. Existing
   offers retain the documented wire precedence above; the failure survives in
   the port result and `lastCheckFailure`. A stream/concurrent-refresh refusal still
-  returns `busy` without clearing evidence.
+  returns `busy` without clearing evidence. Under mocks the shared
+  `runSoftwareUpdateCheck()` entry returns no error before calling refresh or
+  discovery, matching the legacy background loop and avoiding host APT effects.
 - **A refused check restores what it did not replace.** `triggerManualUpdateCheck`
   save/restores `lastUpdateFailure`/`lastUpdateSucceeded` around dispatch, so a
   skipped check no longer wipes the failed-install state the operator was reading

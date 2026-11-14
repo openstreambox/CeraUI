@@ -30,7 +30,7 @@ import { join } from "node:path";
 
 import { logger } from "../../../helpers/logger.ts";
 import { run } from "../../../helpers/run.ts";
-import { isRealDevice } from "../../system/device-detection.ts";
+import { hasCapability } from "../../system/board-capabilities.ts";
 import { getNetworkInterfaces } from "../network-interfaces.ts";
 import {
 	nmConnGetFields,
@@ -53,7 +53,7 @@ const SECTION_RE = /^\[([^\]]+)\]\s*$/;
 const FIREWALL_BACKEND_RE = /^\s*firewall-backend\s*=\s*(\S+)\s*$/;
 
 export interface SharingDiagDeps {
-	readonly isRealDevice: () => Promise<boolean>;
+	readonly canRouteClients: () => Promise<boolean>;
 	readonly readFirewallBackend: () => Promise<string | null | undefined>;
 	readonly readIpRuleShow: () => Promise<string | undefined>;
 	readonly readNftRuleset: () => Promise<string | undefined>;
@@ -62,7 +62,7 @@ export interface SharingDiagDeps {
 }
 
 export const defaultSharingDiagDeps: SharingDiagDeps = {
-	isRealDevice: () => isRealDevice(),
+	canRouteClients: () => hasCapability("client-internet"),
 	readFirewallBackend,
 	readIpRuleShow: () => readCommand("ip", ["rule", "show"]),
 	readNftRuleset: () => readCommand("nft", ["list", "ruleset"]),
@@ -73,7 +73,7 @@ export const defaultSharingDiagDeps: SharingDiagDeps = {
 /**
  * Collect the four readings and publish the verdict.
  *
- * Gated on `isRealDevice()`: a dev/emulated host spawns NOTHING and leaves the
+ * Gated on `hasCapability("client-internet")`: a dev/emulated host spawns NOTHING and leaves the
  * pre-check all-`unknown` status standing, which is the honest answer for a box
  * that has no nftables ruleset to have an opinion about.
  */
@@ -81,7 +81,7 @@ export async function refreshSharingDiag(
 	deps: SharingDiagDeps = defaultSharingDiagDeps,
 ): Promise<void> {
 	try {
-		if (!(await deps.isRealDevice())) return;
+		if (!(await deps.canRouteClients())) return;
 		const [firewallBackend, ipRuleShow, nftRuleset, sharedZones] =
 			await Promise.all([
 				deps.readFirewallBackend(),

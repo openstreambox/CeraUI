@@ -102,7 +102,13 @@ async function exchange(
 					"test",
 					fileURLToPath(import.meta.url),
 				],
-				{ env: { CERALIVE_IPV6_UPLINK_CHILD: "1" } },
+				{
+					env: {
+						CERALIVE_IPV6_UPLINK_CHILD: "1",
+						// The child starts in its own network namespace with only `lo`.
+						CERAUI_TEST_PRIVATE_NETNS: "1",
+					},
+				},
 			);
 			expect(result.code, result.stdout + result.stderr).toBe(0);
 			return;

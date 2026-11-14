@@ -32,7 +32,7 @@
  *
  * It carries NO secret and NO bitrate (bitrate is the platform's ingest metric).
  * It is emitted directly over the control channel (relayStatusToGateway), NOT via
- * `broadcastMsg` — `telemetry` is deliberately absent from `RELAYABLE_TYPES`.
+ * `broadcastMsg` — `telemetry` is explicitly admitted and projected by `RELAYABLE_TYPES`.
  */
 
 import {

@@ -17,11 +17,10 @@
  * never throws or blocks the local path.
  */
 
+import { strictParseFrame } from "@ceralive/control-protocol/parse";
+import { logger } from "../../helpers/logger.ts";
 import { advanceSeq } from "../../rpc/events.ts";
-import {
-	projectRemoteConfig,
-	projectRemoteStatus,
-} from "../remote/remote-status.ts";
+import { projectRemotePayload } from "../remote/remote-status.ts";
 import { PROTOCOL_VERSION, type Status } from "./protocol.ts";
 
 /**
@@ -46,11 +45,12 @@ export interface ControlChannel {
  * detect per-device profile drift. It carries only the four non-secret
  * StreamConfig fields (presetId/latencyMs/fecEnabled/recoveryMode), never a key or
  * token — unlike `telemetry`, which is emitted directly (not via `broadcastMsg`)
- * and so is deliberately absent here.
+ * and is explicitly projected here.
  */
 // Notifications use the dedicated notification-only snapshot relay, never this
 // generic bridge: producer text/params require a stricter projection.
 export const RELAYABLE_TYPES = [
+	"telemetry",
 	"status",
 	"config",
 	"sensors",
@@ -73,6 +73,7 @@ export function isRelayable(type: string): boolean {
  * null the relay is a no-op so the local broadcast path is unaffected.
  */
 let channel: ControlChannel | null = null;
+let warnedInvalidFrame = false;
 
 /** Wire (or clear) the control channel. Task 13 calls this once the WS is up. */
 export function setControlChannel(next: ControlChannel | null): void {
@@ -118,10 +119,9 @@ export function relayStatusToGateway(
 		return;
 	}
 
-	const remotePayload =
-		type === "config"
-			? projectRemoteConfig(payload)
-			: projectRemoteStatus(payload);
+	if (!isRelayable(type)) return;
+	const remotePayload = projectRemotePayload(type, payload, "cloud");
+	if (remotePayload === undefined && payload !== undefined) return;
 	const frame: Status = {
 		v: PROTOCOL_VERSION,
 		kind: "status",
@@ -133,6 +133,15 @@ export function relayStatusToGateway(
 			: { payload: remotePayload as Record<string, unknown> }),
 	};
 
+	try {
+		strictParseFrame(frame);
+	} catch {
+		if (!warnedInvalidFrame) {
+			warnedInvalidFrame = true;
+			logger.warn("remote status frame rejected by protocol schema");
+		}
+		return;
+	}
 	channel.sendFrame(frame);
 }
 

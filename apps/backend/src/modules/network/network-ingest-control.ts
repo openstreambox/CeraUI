@@ -41,13 +41,14 @@
  */
 
 import type { RequiresGateway } from "@ceraui/rpc/schemas";
+import { NETWORK_INGEST_UNAVAILABLE_ERROR } from "@ceraui/rpc/schemas";
 
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { type ExecResult, execFileP } from "../../helpers/exec.ts";
 import { logger } from "../../helpers/logger.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import { broadcastSources } from "../streaming/sources.ts";
-import { isRealDevice as defaultIsRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import {
 	RTMP_GATEWAY_UNIT,
 	readMediamtxSrtEnabled,
@@ -122,7 +123,7 @@ export function planIngestUnitActions(
 export interface NetworkIngestControlDeps {
 	getConfig: () => RuntimeConfig;
 	saveConfig: () => void;
-	isRealDevice: () => Promise<boolean>;
+	canManageIngest: () => Promise<boolean>;
 	/** argv-only `systemctl <args>` runner (start/stop), like kiosk.ts. */
 	systemctl: (args: string[]) => Promise<ExecResult>;
 	/** `systemctl is-active <unit>` → true when active (idempotency gate). */
@@ -165,7 +166,7 @@ async function probeSrtUnitPresent(): Promise<boolean> {
 export const defaultNetworkIngestControlDeps: NetworkIngestControlDeps = {
 	getConfig,
 	saveConfig,
-	isRealDevice: () => defaultIsRealDevice(),
+	canManageIngest: () => hasCapability("network-ingest"),
 	systemctl: (args) => execFileP("systemctl", args),
 	isActive: probeIsActive,
 	readMediamtxSrt: () => readMediamtxSrtEnabled(),
@@ -229,10 +230,15 @@ export async function setIngestEnabled(
 	protocol: RequiresGateway,
 	enabled: boolean,
 	deps: NetworkIngestControlDeps = defaultNetworkIngestControlDeps,
-): Promise<{
-	success: true;
-	applied: { protocol: RequiresGateway; enabled: boolean };
-}> {
+): Promise<
+	| { success: false; error: typeof NETWORK_INGEST_UNAVAILABLE_ERROR }
+	| {
+			success: true;
+			applied: { protocol: RequiresGateway; enabled: boolean };
+	  }
+> {
+	if (!(await deps.canManageIngest()))
+		return { success: false, error: NETWORK_INGEST_UNAVAILABLE_ERROR };
 	persistIngestDesired(protocol, enabled, deps);
 	try {
 		await applyIngestDesiredState(deps);
@@ -259,7 +265,7 @@ export async function reconcileIngestDesiredState(
 	if (reconcileInFlight) return;
 	reconcileInFlight = true;
 	try {
-		if (!(await deps.isRealDevice())) {
+		if (!(await deps.canManageIngest())) {
 			deps.log(
 				"network-ingest-control: reconcile skipped (emulated / not a real device)",
 			);

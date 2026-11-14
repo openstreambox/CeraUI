@@ -63,7 +63,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 				});
 				// When the production action fails before helper exec.
 				const result = await invokeHelperAction(action, {
-					isRealDevice: async () => true,
+					canManageAddons: async () => true,
 					exec: async () => ({ stdout: "", stderr: "" }),
 					readDescriptor: async () => sysextDescriptor,
 					createStep: () => step,
@@ -132,7 +132,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			});
 			// When the real reservation handles the unknown launch outcome.
 			const result = await invokeHelperAction(action, {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				readDescriptor: async () => sysextDescriptor,
 				createStep: () => step,

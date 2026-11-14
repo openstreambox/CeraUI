@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { strictParseFrame } from "@ceralive/control-protocol/parse";
 
 import { getConfig } from "../modules/config.ts";
@@ -387,4 +387,17 @@ test("notification snapshot follows hello on reconnect without activating config
 		notificationRemove("hdmi_error");
 		await initControlChannel({ canDial: () => false });
 	}
+});
+
+const suiteNodeEnv = process.env.NODE_ENV;
+const suiteMockMode = process.env.MOCK_MODE;
+beforeEach(() => {
+	process.env.NODE_ENV = "development";
+	delete process.env.MOCK_MODE;
+});
+afterEach(() => {
+	if (suiteNodeEnv === undefined) delete process.env.NODE_ENV;
+	else process.env.NODE_ENV = suiteNodeEnv;
+	if (suiteMockMode === undefined) delete process.env.MOCK_MODE;
+	else process.env.MOCK_MODE = suiteMockMode;
 });

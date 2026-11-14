@@ -589,6 +589,23 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			"superviseWorker startup-readiness gate + stopSRTIngest() shutdown cleanup; no process-lifetime timeout",
 	},
 	{
+		id: "ingest.srtForward",
+		file: "modules/ingest/srt-forward.ts",
+		symbol: "initSrtForward",
+		command: "[srt-live-transmit, ...]",
+		class: "supervised-worker",
+		contract: {
+			timed: false,
+			startupTimeout: true,
+			shutdownCleanup: true,
+			shutdownAbort: false,
+			lifetimeTimeoutExempt: true,
+		},
+		status: "enforced",
+		mechanism:
+			"superviseWorker startup-readiness gate + stopSrtForward() shutdown cleanup; no process-lifetime timeout",
+	},
+	{
 		id: "selfFencing.spawnOp",
 		file: "modules/remote-control/self-fencing.ts",
 		symbol: "spawnOp",
@@ -1102,7 +1119,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"isRealDevice()-gated one-shot at boot; Bun.spawnSync timeout caps a hung dpkg lock, and a non-zero exit or empty stdout resolves `undefined` so the ladder falls through to the git rung rather than throwing",
+			"one-shot at boot gated by the system-control capability; Bun.spawnSync timeout caps a hung dpkg lock, and a non-zero exit or empty stdout resolves `undefined` so the ladder falls through to the git rung rather than throwing",
 	},
 	{
 		id: "srtlaSend.capabilityProbe",
