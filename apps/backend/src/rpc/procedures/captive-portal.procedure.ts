@@ -27,7 +27,6 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 		.handler(async ({ input, context }) => {
 			const sender = context.getSenderId();
 			const peer = context.ws.remoteAddress.replace(/^::ffff:/, "");
-			if (sender) throw Error("Sign in from the box's Wi-Fi.");
 
 			if (input.action === "start" || input.action === "configure") {
 				const settings = await deps.settings();
@@ -45,9 +44,11 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 					settings.broadcastMsg("config", config);
 					return (await deps.owner()).status(peer);
 				}
+				if (sender) throw Error("Sign in from the box's Wi-Fi.");
 				if (input.action === "start" && config.captive_portal_enabled !== true)
 					throw Error("experimental_disabled");
 			}
+			if (sender) throw Error("Sign in from the box's Wi-Fi.");
 			const signInWindow = await deps.owner();
 			if (input.action === "start") {
 				if (input.radio === undefined) throw Error("Choose Wi-Fi");

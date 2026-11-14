@@ -125,3 +125,7 @@ with rollback and retirement (four 120-second helper budgets plus identity reads
 Detached ingress flags are recovery metadata, not additional rule selectors;
 foreign selectors still cause refusal. Closing clears active route configuration;
 only a one-use binding snapshot remains for the post-close web check.
+
+Authenticated relayed sessions may save the experimental setting; opening or controlling a sign-in window still requires the local phone connection. A failed setting save offers a retry of the same requested value.
+
+Las sesiones remotas autenticadas pueden guardar el ajuste experimental; abrir o controlar una ventana sigue requiriendo la conexión local del teléfono. Si falla el guardado, se puede reintentar el mismo valor.

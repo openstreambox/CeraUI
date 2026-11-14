@@ -53,3 +53,26 @@ it("leaves a failed opt-in disabled and explains the failure", async () => {
 	);
 	expect(control.getAttribute("aria-checked")).toBe("false");
 });
+
+it("retries the same requested value after a failed save", async () => {
+	state.portal
+		.mockRejectedValueOnce(new Error("disk full"))
+		.mockResolvedValue({ phase: "idle" });
+	vi.spyOn(console, "error").mockImplementation(() => {});
+	const view = render(PortalSetting);
+	await fireEvent.click(view.getByRole("switch"));
+	await waitFor(() =>
+		expect(view.getByRole("status").textContent).toContain(
+			"could not be saved",
+		),
+	);
+	await fireEvent.click(view.getByRole("button", { name: "Try again" }));
+	await waitFor(() =>
+		expect(view.getByRole("switch").getAttribute("aria-checked")).toBe("true"),
+	);
+	expect(state.portal.mock.calls).toEqual([
+		[{ action: "configure", enabled: true }],
+		[{ action: "configure", enabled: true }],
+	]);
+	expect(view.queryByRole("status")).toBeNull();
+});

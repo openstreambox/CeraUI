@@ -126,3 +126,8 @@ it.each([undefined, false])(
 		expect(portal).not.toHaveBeenCalled();
 	},
 );
+
+it("labels the venue selector with localized copy", () => {
+	const view = render(CaptivePortal);
+	expect(view.getByRole("combobox", { name: "Choose Wi-Fi" })).toBeTruthy();
+});

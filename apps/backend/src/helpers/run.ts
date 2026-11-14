@@ -367,7 +367,9 @@ export async function runWithStdin(
 			["open", "close", "sweep"].includes(args[2] ?? "")
 		)
 	) {
-		throw Object.assign(new Error(`binary not allowlisted: ${bin}`), {failureClass: "rejected-configuration"});
+		throw Object.assign(new Error(`binary not allowlisted: ${bin}`), {
+			failureClass: "rejected-configuration",
+		});
 	}
 
 	const redacted = `${bin} ${redactArgv(args)}`.trim();

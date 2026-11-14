@@ -149,3 +149,22 @@ test("changing the gate does not report an active window as idle", async () => {
 		).phase,
 	).toBe("signing_in");
 });
+
+test("authenticated relayed sessions can configure but cannot open a window", async () => {
+	const remote = context();
+	remote.setSenderId("remote-helper");
+	await call(
+		captivePortalProcedure,
+		{ action: "configure", enabled: false },
+		{ context: remote },
+	);
+	expect(config.captive_portal_enabled).toBe(false);
+	expect(start).not.toHaveBeenCalled();
+	await expect(
+		call(
+			captivePortalProcedure,
+			{ action: "start", radio: 2 },
+			{ context: remote },
+		),
+	).rejects.toThrow("Sign in from the box's Wi-Fi");
+});

@@ -63,7 +63,7 @@ onMount(() => { if (getConfig()?.captive_portal_enabled !== true) return; void a
  {:else}
   {#if phase === 'needs_sign_in'}<p>{m['network.portal.closed']()}</p>{/if}
   {#if phase === 'web_available'}<p>{m['network.portal.available']()}</p>{/if}
-  <label>Wi-Fi <select bind:value={radio}><option value="">{m['network.portal.choose']()}</option>{#each radios as [id, r] (id)}<option value={id}>{r.hw || `Wi-Fi ${id}`}</option>{/each}</select></label>
+  <label>{m['network.portal.choose']()} <select bind:value={radio}><option value="">{m['network.portal.choose']()}</option>{#each radios as [id, r] (id)}<option value={id}>{r.hw || `${m['network.sharing.kind.wifi']()} ${id}`}</option>{/each}</select></label>
   <p>{m['network.portal.duration']()}</p>
   <button type="button" disabled={busy || radio === ''} onclick={() => act('start')}>{m['network.portal.open']()}</button>
  {/if}
