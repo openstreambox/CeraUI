@@ -13,8 +13,8 @@
  *
  * The endpoint stage reuses the Task 7 transport adapter so validation stays in
  * lock-step with the live resolver. The two-phase design is: stages 1-4 vet the
- * config/DNS statically, then the `probe` stage does a single timeout-bounded,
- * post-connection UDP reachability check against the resolved `addr:port` (see
+ * config/DNS statically, then the `probe` stage tries each resolved address
+ * with a timeout-bounded UDP reachability check against `addr:port` (see
  * `transport/validate.ts`) — never a full SRT/SRTLA session.
  */
 
@@ -87,16 +87,20 @@ export const relayValidateProcedure = authedProcedure
 		// (shouldUseMocks() === false) takes the real network path, untouched.
 		if (shouldUseMocks()) return resolveMockRelayValidate();
 
-		let resolvedIp: string;
+		let addresses: { address: string; family: number }[];
 		try {
-			resolvedIp = (await lookup(addr)).address;
+			addresses = await lookup(addr, { all: true });
 		} catch {
 			return fail("dns", `Cannot resolve host '${addr}'`);
 		}
 
-		// Post-connection reachability probe (rationale in transport/validate.ts).
-		const probe = await probeReachability(resolvedIp, input.port);
-		if (!probe.reachable) return fail("probe", probe.reason);
-
-		return { valid: true, stage: "probe" };
+		// Try every DNS answer in resolver order, including the other family
+		// when the preferred address is unavailable, refused or silent.
+		let reason = "refused";
+		for (const { address } of addresses) {
+			const probe = await probeReachability(address, input.port);
+			if (probe.reachable) return { valid: true, stage: "probe" };
+			reason = probe.reason;
+		}
+		return fail("probe", reason);
 	});
