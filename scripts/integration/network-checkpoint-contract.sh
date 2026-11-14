@@ -140,10 +140,11 @@ list_before=$(nmcli -g UUID con show | sort)
 
 result=$(drv apply active checkpoint0)
 [[ $(jq -r .kind <<<"$result") == ask-before && $(jq -r .via <<<"$result") == checkpoint0 ]]
+[[ $(jq -r '[.primary.answer, .deliberate.answer, has("preselected")] | @tsv' <<<"$result") == $'undo-automatically\tkeep-change\tfalse' ]]
 [[ $(nmcli -g UUID con show | sort) == "$list_before" && $(busctl --system get-property org.freedesktop.NetworkManager /org/freedesktop/NetworkManager org.freedesktop.NetworkManager Checkpoints) == 'ao 0' ]]
 result=$(drv apply active -)
 [[ $(jq -r .kind <<<"$result") == ask-before && $(jq -r .via <<<"$result") == null ]]
-pass 'ask before: own or unknown path returns the prompt and changes nothing'
+pass 'ask before: own or unknown path returns the prompt, with nothing preselected, and changes nothing'
 
 result=$(drv apply dormant checkpoint0)
 [[ $(jq -r .kind <<<"$result") == pending ]]
@@ -257,13 +258,13 @@ sleep 1
 [[ $(active_on checkpoint0) == checkpoint-active ]]
 [[ $(drv effects) == '{"interfaces":[],"radio":{"modem0":"4g"}}' ]]
 [[ $(drv status | jq -r .kept.id) == "$(jq -r .id <<<"$result")" ]]
-pass 'keep the change: no auto-undo across the deadline and a restart'
+pass 'deliberate "don'\''t undo it": no auto-undo across the deadline and a restart'
 drv undo-kept "$(jq -r .id <<<"$result")" spare0 >/dev/null
 [[ $(addr checkpoint-active) == 192.0.2.9/24 && $(active_on checkpoint0) == checkpoint-active ]]
 # Same UUID and settings; renaming back rewrites the keyfile, so bytes may differ.
 [[ $(nmcli -g NAME con show | grep -c '^ceralive-') == 0 && $(settings) == "$before" ]]
 [[ $(drv effects) == '{"interfaces":["ap0"],"radio":{"modem0":"4g|5g"}}' ]]
-pass 'keep the change: the recorded undo restores profiles and effects from another connection'
+pass 'deliberate "don'\''t undo it": the recorded undo restores profiles and effects from another connection'
 
 # --- Trusted arrival interface ---------------------------------------------
 drv_nft() { (cd /var/tmp && bun -e "import { ingressRuleset } from '$here/../../apps/backend/src/modules/network/network-ingress.ts'; process.stdout.write(ingressRuleset([8080]));"); }

@@ -13,14 +13,19 @@ as a mistake:
 
 - **Ask before** when the change touches the interface this session came in on,
   or when that interface is unknown: "This change disconnects you from the box
-  via {via}." The buttons are "Undo it if I don't confirm in {seconds} s"
-  (selected by default) and "Keep the change".
+  via {via}." Nothing is preselected and nothing is applied before an answer.
+  The normal, primary action is "Make the change (undone if I don't confirm in
+  {seconds} s)". Keeping a disconnecting change is a deliberate, secondary
+  action whose label states the consequence: "I know what I'm doing: disconnect
+  me and don't undo it. I may need to switch connection or reset the box to get
+  back in." The backend accepts only these two answers; anything else is
+  refused, and no answer means the prompt again.
 - **No prompt** when the change touches another path. The change still has an
   automatic undo. The creator's own connection confirms it once it still works
   15 seconds after the apply finished.
 - **Ask after** when an automatic undo ran because nobody confirmed. The notice
-  says "This change disconnected you, so the box undid it. Do you still want to
-  make it?", with the buttons "Make the change" and "Leave it undone". The notice
+  says "Nobody confirmed this change in time, so the box undid it. Do you still
+  want to make it?", with the buttons "Make the change" and "Leave it undone". The notice
   is stored on the box and stays until someone answers it, on any device. Once
   answered, it is gone for everyone. "Make the change" asks before again, so a
   deliberate re-apply is never undone without the person choosing that.
@@ -39,7 +44,7 @@ that evidence anyway.
 | Effects | Each effect driver reads the current state and returns its undo record. The record is journaled, and only then is the effect applied |
 | Activation | Candidates for live profiles are activated on their interface |
 | Confirm | Over the changed interface: a signed-in session opened after the apply, never the old one. On another path: the creator's connection after the settle time. Then `CheckpointDestroy`, and each candidate is saved to disk under the original's name and autoconnect. The original is deleted. The live connection stays up, with no second activation |
-| Keep the change | No checkpoint. Candidates are promoted at once. Each original stays on disk as an inactive `ceralive-backup-…` profile, and the undo records stay in the journal. Any signed-in connection can run that undo until the next change retires it |
+| Deliberate "don't undo it" | No checkpoint. Candidates are promoted at once. Each original stays on disk as an inactive `ceralive-backup-…` profile, and the undo records stay in the journal. Any signed-in connection can run that undo until the next change retires it |
 
 On timeout, NetworkManager rolls the checkpoint back by itself (removing the
 candidates, reactivating the originals). The owner then removes any leftover
@@ -78,7 +83,8 @@ file-backed stand-ins behind the undo interface. No radio, modem or hotspot
 command is issued. It prints `BOUNDARY` lines for the stock behavior the design
 works around, and `PASS` lines for:
 
-- ask before: an own or unknown path returns the prompt and changes nothing;
+- ask before: an own or unknown path returns the prompt, with the protected
+  change as the primary action and nothing preselected, and changes nothing;
 - dormant duplicates are edited only as candidates; expiry leaves the originals'
   files byte-identical; confirmation promotes both under their name and
   autoconnect;
@@ -89,7 +95,7 @@ works around, and `PASS` lines for:
 - a confirmation from a new session over the changed interface promotes the
   candidate to disk, without reactivation, and survives a restart. The creator,
   another path and an unknown interface cannot confirm;
-- "Keep the change" survives the deadline and a restart, and its recorded undo
+- the deliberate "don't undo it" answer survives the deadline and a restart, and its recorded undo
   restores the profile (same UUID and settings) and the effects from another
   connection;
 - a request to wan0's address routed in over lan0 is attributed to lan0.
@@ -128,7 +134,11 @@ The TypeScript unit tests use the ordinary runner with
    opens, and pass the session to the owner.
 3. RPC and UI: the ask-before prompt, the confirm banner, the ask-after notice
    broadcast to every connection, and the kept-change undo. All copy keys exist
-   under `network.changeSafety.*` in every catalog.
+   under `network.changeSafety.*` in every catalog. The ask-before dialog shows
+   `primary` as the main button and `deliberate` as a visibly secondary one. It
+   opens with focus on the message, not on a button, so Enter alone chooses
+   nothing. The deliberate button's full label is its accessible name, so the
+   consequence is heard before it can be activated.
 4. Run `reconcile` at backend start, on NetworkManager's bus `NameOwnerChanged`,
    and from a boot unit after NetworkManager. Run `tick` from a timer.
 5. Make asynchronous station and hotspot completion part of the apply, and

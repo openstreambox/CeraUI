@@ -471,9 +471,39 @@ describe("ask before: the arrival interface decides", () => {
 			messageKey: "network.changeSafety.askBefore.own",
 			via: "eth0",
 			seconds: 90,
-			preselected: "undo-automatically",
+			primary: { answer: "undo-automatically" },
+			deliberate: { answer: "keep-change" },
 		});
+		expect(result).not.toHaveProperty("preselected");
 		expect(w.fake.calls).toEqual([]);
+	});
+	it("never keeps a disconnecting change by default: it needs its explicit action", async () => {
+		const w = world();
+		// Own path, no answer: only the prompt, nothing applied.
+		expect((await w.owner.apply(creator, w.ethPlan)).kind).toBe("ask-before");
+		expect((await w.owner.apply(creator, w.ethPlan, {})).kind).toBe(
+			"ask-before",
+		);
+		// Anything but the two explicit answers is refused, nothing applied.
+		for (const answer of ["keep", "yes", "", true, null])
+			await expect(
+				w.owner.apply(creator, w.ethPlan, { answer: answer as never }),
+			).rejects.toThrow("Unknown answer");
+		expect(w.fake.calls).toEqual([]);
+		expect((await w.owner.status()).kept).toBeNull();
+		// Another path without a prompt still gets the automatic undo.
+		const other = await w.owner.apply(session("s", "eth0"), w.modemPlan);
+		expect(other.kind).toBe("pending");
+		expect(w.fake.calls.some((c) => c.startsWith("create"))).toBe(true);
+		expect((await w.owner.status()).kept).toBeNull();
+		await w.fake.expireAll();
+		w.at(91_000);
+		await w.owner.tick();
+		for (const [, p] of w.fake.byId("Modem"))
+			expect(p.settings["gsm.apn"]).toBe("old");
+		// Only the explicit deliberate answer keeps it.
+		const kept = await w.owner.apply(creator, w.ethPlan, KEEP);
+		expect(kept.kind).toBe("kept");
 	});
 	it("needs no prompt for a change that does not touch the session's path", async () => {
 		const w = world();
@@ -504,7 +534,7 @@ describe("ask before: the arrival interface decides", () => {
 		).rejects.toThrow();
 		await w.owner.confirm(pending.id, session("n", "wwan0", 4000));
 	});
-	it("'undo automatically' is the normal confirm-or-rollback", async () => {
+	it("'Make the change' (undone without confirmation) is the normal confirm-or-rollback", async () => {
 		const w = world();
 		await w.owner.apply(creator, w.ethPlan, UNDO);
 		expect(w.fake.active.get("eth0")).not.toBe(w.eth);
@@ -513,7 +543,7 @@ describe("ask before: the arrival interface decides", () => {
 		await w.owner.tick();
 		expect(w.fake.active.get("eth0")).toBe(w.eth);
 	});
-	it("'keep the change' applies with no auto-undo and keeps the recorded undo", async () => {
+	it("the deliberate 'disconnect me and don't undo it' applies with no auto-undo and keeps the recorded undo", async () => {
 		const w = world();
 		const p = plan({
 			...w.ethPlan,

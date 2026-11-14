@@ -19,7 +19,10 @@ export type AskBeforeAnswer = "undo-automatically" | "keep-change";
 export type NoticeReason = "disconnected" | "restart";
 export type NoticeAnswer = "make-change" | "leave-undone";
 
-/** Default confirmation window, in seconds (NetworkManager owns the timer). */
+/**
+ * Default confirmation window, in seconds (NetworkManager owns the timer).
+ * Without a confirmation in this time the change is undone.
+ */
 export const DEFAULT_WINDOW_SECONDS = 90;
 /**
  * A change on another path is confirmed by the creator's own connection still
@@ -56,18 +59,41 @@ export const CHANGE_SAFETY_COPY = {
 	keptUndo: "network.changeSafety.kept.undo",
 } as const;
 
+export interface AskBeforeAction<A extends AskBeforeAnswer> {
+	readonly answer: A;
+	readonly labelKey: string;
+}
+
+/**
+ * The ask-before step. There is no preselected answer and no toggle:
+ *
+ * - `primary` is the normal action, the protected change: it is made and undone
+ *   unless someone confirms within `seconds`;
+ * - `deliberate` keeps a disconnecting change. It is a secondary action, never
+ *   focused first and never bound to Enter. Its label states the consequence,
+ *   so a keyboard or screen-reader user hears it as the button's name before
+ *   they can activate it.
+ *
+ * Nothing is applied until one of the two is chosen explicitly.
+ */
 export interface AskBeforePrompt {
 	readonly kind: "ask-before";
 	readonly messageKey: string;
 	/** Interface name shown in the message; absent when unknown. */
 	readonly via: string | undefined;
 	readonly seconds: number;
-	readonly answers: readonly [
-		{ readonly answer: "undo-automatically"; readonly labelKey: string },
-		{ readonly answer: "keep-change"; readonly labelKey: string },
-	];
-	/** The safe answer, focused first. */
-	readonly preselected: "undo-automatically";
+	readonly primary: AskBeforeAction<"undo-automatically">;
+	readonly deliberate: AskBeforeAction<"keep-change">;
+}
+
+const ASK_BEFORE_ANSWERS: readonly AskBeforeAnswer[] = [
+	"undo-automatically",
+	"keep-change",
+];
+
+/** Answers arrive from the UI as data; anything else is not an answer. */
+export function isAskBeforeAnswer(value: unknown): value is AskBeforeAnswer {
+	return ASK_BEFORE_ANSWERS.includes(value as AskBeforeAnswer);
 }
 
 export function askBeforePrompt(
@@ -83,14 +109,14 @@ export function askBeforePrompt(
 			: CHANGE_SAFETY_COPY.askBeforeUnknown,
 		via: own ? ingress : undefined,
 		seconds,
-		answers: [
-			{
-				answer: "undo-automatically",
-				labelKey: CHANGE_SAFETY_COPY.askBeforeUndo,
-			},
-			{ answer: "keep-change", labelKey: CHANGE_SAFETY_COPY.askBeforeKeep },
-		],
-		preselected: "undo-automatically",
+		primary: {
+			answer: "undo-automatically",
+			labelKey: CHANGE_SAFETY_COPY.askBeforeUndo,
+		},
+		deliberate: {
+			answer: "keep-change",
+			labelKey: CHANGE_SAFETY_COPY.askBeforeKeep,
+		},
 	};
 }
 

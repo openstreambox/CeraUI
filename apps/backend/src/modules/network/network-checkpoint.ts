@@ -15,6 +15,7 @@ import {
 	classifyPath,
 	DEFAULT_SETTLE_MS,
 	DEFAULT_WINDOW_SECONDS,
+	isAskBeforeAnswer,
 	type NoticeReason,
 	needsAskBefore,
 	noticeMessageKey,
@@ -288,6 +289,9 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		plan: NetworkChangePlan,
 		options: ApplyOptions,
 	): Promise<ApplyResult> {
+		// Answers arrive as data from the UI; refuse anything else before acting.
+		if (options.answer !== undefined && !isAskBeforeAnswer(options.answer))
+			throw new Error("Unknown answer");
 		const devices = allDevices(plan);
 		if (!session.authenticated || devices.length === 0)
 			throw new Error("Network change unavailable");
@@ -296,8 +300,9 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		await settleStale(journal);
 		const path = classifyPath(devices, session.ingress);
 		const deliberate = options.deliberate === true;
-		if (needsAskBefore(path, deliberate) && !options.answer)
+		if (needsAskBefore(path, deliberate) && options.answer === undefined)
 			return askBeforePrompt(path, session.ingress, window);
+		// Only an explicit "keep-change" keeps a change without the undo.
 		const mode: AskBeforeAnswer = options.answer ?? "undo-automatically";
 		await finishKept(journal);
 
@@ -521,7 +526,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				return done ? ("undone" as const) : ("incomplete" as const);
 			});
 		},
-		/** "Keep the change" left a recorded undo; any signed-in connection may run it. */
+		/** The deliberate "don't undo it" answer left a recorded undo; any signed-in connection may run it. */
 		undoKept(id: string, session: NetworkChangeSession) {
 			return exclusive(async () => {
 				const journal = await deps.journal.read();
