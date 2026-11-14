@@ -77,3 +77,36 @@ it("socket setup can fail synchronously when a destination family has no route",
 		socket.mockRestore();
 	}
 });
+
+for (const asynchronous of [false, true]) {
+	it(`preserves unexpected socket setup failures (async: ${asynchronous})`, async () => {
+		const error = new Error("unexpected socket setup failure");
+		const socket = spyOn(Bun, "udpSocket").mockImplementationOnce(() => {
+			if (asynchronous) return Promise.reject(error);
+			throw error;
+		});
+		try {
+			await expect(probeReachability("127.0.0.1", 9000, 100)).rejects.toBe(
+				error,
+			);
+		} finally {
+			socket.mockRestore();
+		}
+	});
+	for (const code of ["ENETUNREACH", "EHOSTUNREACH"]) {
+		it(`classifies known setup failure ${code} (async: ${asynchronous})`, async () => {
+			const error = Object.assign(new Error("no route"), { code });
+			const socket = spyOn(Bun, "udpSocket").mockImplementationOnce(() => {
+				if (asynchronous) return Promise.reject(error);
+				throw error;
+			});
+			try {
+				await expect(
+					probeReachability("2001:db8::1", 9000, 100),
+				).resolves.toEqual({ reachable: false, reason: "refused" });
+			} finally {
+				socket.mockRestore();
+			}
+		});
+	}
+}

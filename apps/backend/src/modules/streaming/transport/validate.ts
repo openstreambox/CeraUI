@@ -68,7 +68,7 @@ export async function probeReachability(
 ): Promise<ProbeResult> {
 	if (isIP(ip) === 0)
 		throw new TypeError("UDP reachability requires an IP literal");
-	return await new Promise<ProbeResult>((resolve) => {
+	return await new Promise<ProbeResult>((resolve, reject) => {
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let socket: Awaited<ReturnType<typeof Bun.udpSocket>> | undefined;
@@ -124,11 +124,19 @@ export async function probeReachability(
 				}
 			})
 			.catch((err) => {
-				// Socket creation/connect failed — treat as a hard refusal, but
-				// surface the discarded cause at debug so a systemic bind/socket
-				// failure is not invisible behind every "refused" verdict.
-				logger.debug("probeReachability: socket setup failed", { err });
-				finish({ reachable: false, reason: "refused" });
+				// Known no-route failures are a refusal. Bun can expose them
+				// as a code or a message-only error; preserve every unexpected
+				// setup failure so callers can diagnose a broken socket setup.
+				if (
+					err instanceof Error &&
+					(("code" in err &&
+						(err.code === "ENETUNREACH" || err.code === "EHOSTUNREACH")) ||
+						err.message === "network is unreachable" ||
+						err.message === "host is unreachable")
+				) {
+					logger.debug("probeReachability: socket setup failed", { err });
+					finish({ reachable: false, reason: "refused" });
+				} else reject(err);
 			});
 	});
 }
