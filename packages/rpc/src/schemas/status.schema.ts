@@ -1,3 +1,4 @@
+import { phonePartSchema } from './phone-box.schema';
 /**
  * Status Zod schemas (full application status)
  */
@@ -444,7 +445,17 @@ export type UnclaimedAdapter = z.infer<typeof unclaimedAdapterSchema>;
 
 // Status response message schema (what server sends)
 export const statusResponseSchema = z.object({
-	carrying: z.object({ state: z.enum(['streaming', 'idle', 'unknown']) }).optional(),
+	phone_box: z.boolean().optional(),
+	phone_links: z
+		.object({
+			ready: z.number().int().nonnegative(),
+			sending: z.number().int().nonnegative().nullable(),
+		})
+		.optional(),
+	box_health: z.array(z.object({ part: phonePartSchema, since: z.number() })).optional(),
+	carrying: z
+		.object({ state: z.enum(['streaming', 'idle', 'unknown']), startup: z.boolean().optional() })
+		.optional(),
 	is_streaming: z.boolean().optional(),
 	stream_lifecycle: lifecycleStateSchema.optional(),
 	available_updates: availableUpdatesFieldSchema.optional(),

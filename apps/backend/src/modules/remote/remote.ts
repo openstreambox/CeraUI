@@ -439,6 +439,15 @@ async function remoteConnect() {
 	const send = remoteWs.send.bind(remoteWs);
 	remoteWs.send = (data, options?, cb?: (err?: Error) => void) => {
 		const frame: Record<string, unknown> = JSON.parse(String(data));
+		if (setup.engine === "none") {
+			if (frame.status === undefined) return;
+			const message = JSON.stringify({
+				status: projectRemoteStatus(frame.status, true),
+			});
+			if (typeof options === "function") send(message, options);
+			else send(message, options ?? {}, cb);
+			return;
+		}
 		let projected =
 			frame.status === undefined
 				? frame
@@ -492,7 +501,8 @@ async function remoteConnect() {
 			);
 		}
 		const auth_msg = { remote: { "auth/encoder": payload } };
-		this.send(JSON.stringify(auth_msg));
+		// Authentication is protocol traffic, not a relayed status frame.
+		send(JSON.stringify(auth_msg));
 	});
 	remoteWs.on("close", () => {
 		if (remoteWs) remoteClose(remoteWs);

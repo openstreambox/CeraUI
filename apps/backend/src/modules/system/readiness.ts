@@ -30,6 +30,8 @@
  * remote egress.
  */
 
+import { broadcastMsg } from "../../rpc/compat.ts";
+
 export interface BootReadiness {
 	/** True when at least one non-critical boot init failed. */
 	degraded: boolean;
@@ -39,6 +41,19 @@ export interface BootReadiness {
 
 // First-failure-ordered, de-duplicated list of degraded subsystems.
 const degradedSubsystems: string[] = [];
+const since = new Map<string, number>();
+export function getPhoneBoxHealth() {
+	const parts = [
+		"cellular",
+		"moblink",
+		"srt-forward",
+		"hotspot",
+		"update-orchestrator-maintenance",
+	] as const;
+	return parts
+		.filter((part) => degradedSubsystems.includes(part))
+		.map((part) => ({ part, since: since.get(part) ?? Date.now() }));
+}
 
 /**
  * Record that a non-critical subsystem failed to initialise. Idempotent — a
@@ -47,6 +62,8 @@ const degradedSubsystems: string[] = [];
 export function markBootDegraded(subsystem: string): void {
 	if (!degradedSubsystems.includes(subsystem)) {
 		degradedSubsystems.push(subsystem);
+		since.set(subsystem, Date.now());
+		broadcastMsg("status", { box_health: getPhoneBoxHealth() });
 	}
 }
 
@@ -66,4 +83,5 @@ export function isBootDegraded(): boolean {
 /** Test-only: clear the recorded degradation so each case starts clean. */
 export function resetBootReadiness(): void {
 	degradedSubsystems.length = 0;
+	since.clear();
 }
