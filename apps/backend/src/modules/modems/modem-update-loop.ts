@@ -58,9 +58,10 @@ import type {
 	StateDiff,
 } from "../network/state-types.ts";
 import { applyJitter } from "../streaming/constants.ts";
-
 import { resetGsmConnections } from "./gsm-connections.ts";
 import type { ModemId } from "./mmcli.ts";
+import { forgetModemIdentity } from "./mode-choice-identity.ts";
+import { recordModeEvaluations } from "./mode-choice-runtime.ts";
 import {
 	armModemReadyActivation,
 	forgetModemReadyActivation,
@@ -179,6 +180,7 @@ async function handleModemRemoved(id: ModemId): Promise<void> {
 		logger.warn(`Modem ${id} removed`);
 		forgetModemReadyActivation(id);
 		removeModem(id);
+		forgetModemIdentity(id);
 		// Publish: reconciles as `removed` → gsm reset + broadcast (no hot-plug recovery).
 		publishModemsSnapshot();
 	});
@@ -272,6 +274,7 @@ async function reconcileModemPresenceLocked(
 			logger.warn(`Modem ${id} removed`);
 			forgetModemReadyActivation(id);
 			removeModem(id);
+			forgetModemIdentity(id);
 			presenceChanged = true;
 		}
 	}
@@ -336,6 +339,7 @@ export async function discoverModems(): Promise<void> {
  * the supported rollback value — has no such source at all.
  */
 export async function runModemStatusPoll(): Promise<void> {
+	recordModeEvaluations();
 	await withModemUpdateLock(() => reconcileModemPresenceLocked(false));
 	const configured = await runModemReadyActivations();
 	if (configured.length > 0) {

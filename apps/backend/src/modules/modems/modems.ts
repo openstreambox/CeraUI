@@ -36,16 +36,18 @@ import {
 	nmConnSetFields,
 	nmDisconnect,
 } from "../network/network-manager.ts";
-
+import { readFiveGPreference } from "./five-g-preference.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
 import { reconcileDuplicateGsmProfiles } from "./gsm-duplicate-reconcile.ts";
 import { setGsmOperatorName } from "./gsm-operators-cache.ts";
-import { mmSetNetworkTypes } from "./mmcli.ts";
+import { mmSetNetworkTypes, type NetworkType } from "./mmcli.ts";
+import { noteModeSetInModemSettings } from "./mode-choice-saved.ts";
 import { modemNetworkScan } from "./modem-network-scan.ts";
 import { sanitizeModemConfigForNetworkManager } from "./modem-registration.ts";
 import { broadcastModems } from "./modem-status.ts";
-import { getModem, type ModemConfig } from "./modems-state.ts";
+import { getModem, type Modem, type ModemConfig } from "./modems-state.ts";
+import { tryClaimNetworkModeWrite } from "./network-mode-slot.ts";
 
 type ModemConfigMessage = {
 	config: {
@@ -252,6 +254,56 @@ export async function applyModemConfig(
 		return { ok: false, reason: "unavailable_network" };
 	}
 
+	// A radio-mode write shares ONE slot with the 5G/LTE choice, taken before
+	// anything is written, so two mode writes never race and a busy slot is an
+	// honest "busy" with nothing changed — not a half-applied save.
+	const writesMode = msg.network_type !== modem.network_type.active;
+	const releaseModeSlot = writesMode ? tryClaimNetworkModeWrite() : undefined;
+	if (writesMode && releaseModeSlot === undefined) {
+		return { ok: false, reason: "device_busy" };
+	}
+	try {
+		return await applyModemConfigClaimed(
+			{
+				device: msg.device,
+				roaming: msg.roaming,
+				autoconfig: msg.autoconfig,
+				apn: msg.apn,
+				username: msg.username,
+				password: msg.password,
+				network: msg.network,
+				network_type: msg.network_type,
+			},
+			modem,
+			modem.config,
+			connUuid,
+			networkType,
+			deps,
+		);
+	} finally {
+		releaseModeSlot?.();
+	}
+}
+
+type ValidatedModemConfig = {
+	readonly device: number;
+	readonly roaming: boolean;
+	readonly autoconfig: boolean;
+	readonly apn: string;
+	readonly username: string;
+	readonly password: string;
+	readonly network: string;
+	readonly network_type: string;
+};
+
+async function applyModemConfigClaimed(
+	msg: ValidatedModemConfig,
+	modem: Modem,
+	modemConfig: ModemConfig,
+	connUuid: ConnectionUUID,
+	networkType: NetworkType,
+	deps: ModemApplyDeps,
+): Promise<ModemConfigOutcome> {
 	// If a new network is selected, write it to the GSM operators cache
 	const newNetwork =
 		msg.network &&
@@ -265,7 +317,7 @@ export async function applyModemConfig(
 	// normalizes `modem.config` in place on its way through.
 	const autoconfigSupported = deps.autoconfigSupported();
 	const previousFields = normalizeModemConnectionFields(
-		modem.config,
+		modemConfig,
 		autoconfigSupported,
 	);
 
@@ -285,7 +337,7 @@ export async function applyModemConfig(
 	const written = await deps.writeConnection(connUuid, updatedConfig);
 	if (written) {
 		// This preserves the 'conn' UUID value
-		Object.assign(modem.config, updatedConfig);
+		Object.assign(modemConfig, updatedConfig);
 		// Ahead of any reconnect below, so the profile NetworkManager brings back
 		// up already agrees with the operator whichever one it picks.
 		await deps.enforceAcrossProfiles(connUuid, updatedConfig);
@@ -333,7 +385,15 @@ export async function applyModemConfig(
 			networkType.preferred,
 		);
 		if (result) {
+			const before = readFiveGPreference(modem.radio_modes);
 			modem.network_type.active = msg.network_type;
+			// The saved 5G/LTE choice follows this write, so the two controls
+			// cannot disagree. Saving is bookkeeping: its failure is logged, and
+			// the save itself still reports what the radio did.
+			noteModeSetInModemSettings(msg.device, before, {
+				supported: modem.radio_modes?.supported ?? [],
+				current: networkType,
+			});
 		} else {
 			networkTypeWritten = false;
 			logger.error(

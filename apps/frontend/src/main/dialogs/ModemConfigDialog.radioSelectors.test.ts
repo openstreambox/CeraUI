@@ -22,6 +22,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/svelte";
 import {
 	afterEach,
@@ -39,6 +40,9 @@ import {
 } from "../../tests/helpers/modem-feed.svelte";
 import ModemConfigDialog from "./ModemConfigDialog.svelte";
 
+const setFiveGPreference = vi.hoisted(() =>
+	vi.fn(async () => ({ success: true })),
+);
 const getBands = vi.hoisted(() => vi.fn());
 const getUsbModeOptions = vi.hoisted(() => vi.fn());
 
@@ -52,7 +56,7 @@ vi.mock("$lib/rpc", () => ({
 			getSms: vi.fn(async () => ({ success: true, messages: [] })),
 			setBands: vi.fn(),
 			setUsbMode: vi.fn(),
-			setFiveGPreference: vi.fn(),
+			setFiveGPreference,
 			configure: vi.fn(),
 			scan: vi.fn(),
 		},
@@ -411,6 +415,194 @@ describe("the 5G preference", () => {
 				.getByTestId("modem-five-g-option-prefer-4g")
 				.hasAttribute("disabled"),
 		).toBe(false);
+	});
+
+	it("a mode choice warns before dispatch, and Cancel makes no write", async () => {
+		setFiveGPreference.mockClear();
+		mount(
+			modem({
+				capability_modules: claims({ "five-g-pref": "capable" }),
+				five_g_preference: block,
+			} as Partial<Modem>),
+		);
+		await screen.findByTestId("modem-advanced-toggle");
+		await fireEvent.click(screen.getByTestId("modem-five-g-option-prefer-4g"));
+		expect(setFiveGPreference).not.toHaveBeenCalled();
+		// The confirmation names the modem and the mode, and says the link drops.
+		expect(
+			await screen.findByText("Change Quectel RM530N-GL to Prefer 4G?"),
+		).toBeTruthy();
+		expect(
+			screen.getByText(
+				/Quectel RM530N-GL drops its connection for some seconds while it re-registers/,
+			),
+		).toBeTruthy();
+		await fireEvent.click(
+			within(screen.getByRole("alertdialog")).getByRole("button", {
+				name: "Cancel",
+				exact: true,
+			}),
+		);
+		expect(setFiveGPreference).not.toHaveBeenCalled();
+		await fireEvent.click(screen.getByTestId("modem-five-g-option-prefer-4g"));
+		await fireEvent.click(
+			within(screen.getByRole("alertdialog")).getByRole("button", {
+				name: "Apply",
+				exact: true,
+			}),
+		);
+		await waitFor(() =>
+			expect(setFiveGPreference).toHaveBeenCalledWith({
+				device: "0",
+				preference: "prefer-4g",
+				confirm: true,
+			}),
+		);
+	});
+
+	it("a saved choice the modem no longer reports is said plainly, and re-applying asks first", async () => {
+		setFiveGPreference.mockClear();
+		mount(
+			modem({
+				capability_modules: claims({ "five-g-pref": "capable" }),
+				five_g_preference: {
+					...block,
+					offered: ["auto", "lte-only", "prefer-5g", "prefer-4g"],
+					lock: "lte-only",
+					lock_matches: false,
+				},
+			} as Partial<Modem>),
+		);
+		const mismatch = await screen.findByTestId("modem-five-g-saved-mismatch");
+		expect(mismatch.textContent).toContain(
+			"Saved choice: LTE only. The modem now reports a different setting, so your choice is not in use.",
+		);
+		expect(screen.getByTestId("modem-five-g-active-prefer-5g")).toBeTruthy();
+		expect(setFiveGPreference).not.toHaveBeenCalled();
+		await fireEvent.click(screen.getByTestId("modem-five-g-reapply"));
+		expect(
+			await screen.findByText("Change Quectel RM530N-GL to LTE only?"),
+		).toBeTruthy();
+		expect(setFiveGPreference).not.toHaveBeenCalled();
+		await fireEvent.click(
+			within(screen.getByRole("alertdialog")).getByRole("button", {
+				name: "Apply",
+				exact: true,
+			}),
+		);
+		await waitFor(() =>
+			expect(setFiveGPreference).toHaveBeenCalledWith({
+				device: "0",
+				preference: "lte-only",
+				confirm: true,
+			}),
+		);
+	});
+
+	it("a matching saved choice is one calm line", async () => {
+		mount(
+			modem({
+				capability_modules: claims({ "five-g-pref": "capable" }),
+				five_g_preference: {
+					...block,
+					offered: ["auto", "lte-only"],
+					active: "lte-only",
+					lock: "lte-only",
+					lock_matches: true,
+				},
+			} as Partial<Modem>),
+		);
+		expect(
+			(await screen.findByTestId("modem-five-g-saved")).textContent?.trim(),
+		).toBe("Saved choice: LTE only");
+		expect(screen.queryByTestId("modem-five-g-saved-mismatch")).toBeNull();
+	});
+
+	it("a change that landed but was not saved says exactly that", async () => {
+		setFiveGPreference.mockResolvedValueOnce({
+			success: true,
+			applied: "lte-only",
+			saved: false,
+		} as never);
+		mount(
+			modem({
+				capability_modules: claims({ "five-g-pref": "capable" }),
+				five_g_preference: { ...block, offered: ["auto", "lte-only"] },
+			} as Partial<Modem>),
+		);
+		await screen.findByTestId("modem-advanced-toggle");
+		await fireEvent.click(screen.getByTestId("modem-five-g-option-lte-only"));
+		await fireEvent.click(
+			within(screen.getByRole("alertdialog")).getByRole("button", {
+				name: "Apply",
+				exact: true,
+			}),
+		);
+		expect(
+			(await screen.findByTestId("modem-five-g-not-saved")).textContent?.trim(),
+		).toBe(
+			"The modem switched to LTE only, but this device could not save the choice.",
+		);
+		expect(screen.queryByTestId("modem-five-g-error")).toBeNull();
+	});
+
+	it("history lines name the mode and why nothing was tested", async () => {
+		const base = {
+			beforeBucket: null,
+			afterBucket: null,
+			beforeDeliveredUpload: null,
+			afterDeliveredUpload: null,
+			estimatedLinkOutSeconds: null,
+		};
+		mount(
+			modem({
+				capability_modules: claims({ "five-g-pref": "capable" }),
+				five_g_preference: {
+					...block,
+					history: [
+						{
+							...base,
+							at: 1,
+							source: "manual",
+							current: "auto",
+							target: "lte-only",
+							outcome: "applied",
+							reasons: [],
+						},
+						{
+							...base,
+							at: 2,
+							source: "evaluator",
+							current: "lte-only",
+							target: "auto",
+							outcome: "would-not-try",
+							reasons: ["locked", "unavailable:headroom"],
+						},
+						{
+							...base,
+							at: 3,
+							source: "manual",
+							current: "lte-only",
+							target: null,
+							outcome: "applied",
+							reasons: ["via:modem-settings"],
+						},
+					],
+				},
+			} as Partial<Modem>),
+		);
+		const history = await screen.findByTestId("modem-five-g-history");
+		const text = history.textContent ?? "";
+		expect(text).toContain(
+			"You switched to LTE only. Upload before and after was not measured.",
+		);
+		expect(text).toContain("Not tested: you chose this modem's mode.");
+		expect(text).toContain(
+			"Changed in the network type setting to a mode not listed here.",
+		);
+		expect(text.indexOf("Changed in the network")).toBeLessThan(
+			text.indexOf("You switched"),
+		);
 	});
 
 	it("a SIM-less modem renders the refusal, not the postures", async () => {
