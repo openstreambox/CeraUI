@@ -45,3 +45,15 @@ protección limita el acceso local y la exposición en la interfaz y los registr
 no cifra el disco ni protege el ID durante el transporte. Los archivos de
 configuración se guardan con permisos 0600 en la próxima escritura. Si una clave
 se expuso antes en registros o copias, cámbiala; no se pueden retirar las copias.
+
+## Diagnostic serialization
+
+Retained IDs are scrubbed from string leaves of class instances and `toJSON`
+results, and from UTF-8 Buffer contents when logs are serialized. Common form,
+URL, inspection and JSON escape encodings are matched longest first. Labelled
+secret lines are scrubbed without removing unrelated stack frames; a source
+path containing `stream-id` is not a secret label.
+
+Los registros filtran los valores guardados en objetos, resultados de `toJSON`
+y contenido UTF-8 de Buffer, incluidas las codificaciones habituales. Se
+conservan los marcos de diagnóstico que no contienen valores secretos.

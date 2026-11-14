@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { inspect } from "node:util";
 import { projectRemoteConfig } from "../modules/remote/remote-status.ts";
-import { logRedact } from "./logger.ts";
+import { formatProdEntry, logRedact } from "./logger.ts";
 import {
 	publicStreamIds,
 	redactStreamIdJournal,
@@ -113,5 +114,72 @@ describe("Stream ID disclosure boundaries", () => {
 				"failure: '[REDACTED]'",
 			);
 		}
+	});
+});
+
+describe("retained secret serialization", () => {
+	test.each(["syntheticPublishKey42", "synthetic key\"'\\~!"])(
+		"scrubs non-plain containers for %s",
+		(secret) => {
+			setStreamIdRedactionSource(() => [secret]);
+			class Detail {
+				constructor(public detail: string) {}
+			}
+			for (const detail of [
+				new Detail(secret),
+				Buffer.from(secret),
+				{ toJSON: () => secret },
+				{ toJSON: () => ({ nested: new Detail(secret) }) },
+			]) {
+				const output = formatProdEntry(
+					logRedact({
+						level: "error",
+						message: "failure",
+						detail,
+					}) as Parameters<typeof formatProdEntry>[0],
+				);
+				expect(output).not.toContain("synthetic");
+				expect(output).not.toContain(
+					Buffer.from(secret).toJSON().data.join(","),
+				);
+				expect(output).toContain("[REDACTED]");
+			}
+		},
+	);
+	test("scrubs additional retained encodings", () => {
+		const secret = "synthetic key\"'\\~!";
+		setStreamIdRedactionSource(() => [secret]);
+		let escaped = secret;
+		for (let i = 0; i < 4; i++) escaped = JSON.stringify(escaped).slice(1, -1);
+		for (const token of [
+			new URLSearchParams({ value: secret }).toString().slice(6),
+			encodeURIComponent(secret).replace(/%[A-F0-9]{2}/g, (s) =>
+				s.toLowerCase(),
+			),
+			encodeURIComponent(secret).replace(
+				/[!'~]/g,
+				(s) => `%${s.charCodeAt(0).toString(16).toUpperCase()}`,
+			),
+			encodeURIComponent(encodeURIComponent(secret)),
+			inspect(secret).slice(1, -1),
+			escaped,
+		]) {
+			expect(redactStreamIdText(`failure: ${token}`)).toBe(
+				"failure: [REDACTED]",
+			);
+		}
+	});
+	test("preserves stack frames with stream-id paths while scrubbing values", () => {
+		setStreamIdRedactionSource(() => ["syntheticPublishKey42"]);
+		const error = new Error("connection refused: syntheticPublishKey42");
+		error.stack = `${error.message}\n    at connect (/app/helpers/stream-id-secret.ts:63:4)\n    at start (/app/start.ts:10:2)`;
+		const output = formatProdEntry(
+			logRedact({ level: "error", message: "failed", error }) as Parameters<
+				typeof formatProdEntry
+			>[0],
+		);
+		expect(output).not.toContain("syntheticPublishKey42");
+		expect(output).toContain("stream-id-secret.ts:63:4");
+		expect(output).toContain("start.ts:10:2");
 	});
 });
