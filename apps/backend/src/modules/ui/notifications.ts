@@ -298,3 +298,8 @@ export function notificationSendPersistent(
 ) {
 	conn.send(buildMsg("notification", getPersistentNotifications(isAuthed)));
 }
+
+/** Internal relay snapshot; revision orders clears against preceding shows. */
+export function getNotificationRelaySnapshot() {
+	return { ...getPersistentNotifications(true), revision: revisionCounter };
+}

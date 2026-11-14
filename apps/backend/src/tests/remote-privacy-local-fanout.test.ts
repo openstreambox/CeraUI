@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
-import {
-	PROTOCOL_VERSION,
-	StatusSchema,
-} from "../modules/remote-control/protocol.ts";
+import { StatusSchema } from "../modules/remote-control/protocol.ts";
 import {
 	resetStatusRelay,
 	setControlChannel,
@@ -10,11 +7,11 @@ import {
 import { broadcastMsg, broadcastMsgExcept } from "../rpc/compat.ts";
 import { addClient, removeClient } from "../rpc/events.ts";
 import type { AppWebSocket } from "../rpc/types.ts";
+import { expectNoSourceStrings } from "./helpers/remote-outbound-assert.ts";
 import {
 	AUTH_KEY,
 	CID,
 	collections,
-	expectedBytes,
 	expectNoPairingSecret,
 	object,
 	secrets,
@@ -66,19 +63,7 @@ for (const row of collections) {
 				expect(localFrames).toHaveLength(1);
 				const seq = JSON.parse(localFrames[0] ?? "").seq;
 				expect(localFrames[0]).toBe(JSON.stringify({ [type]: payload, seq }));
-				expect(JSON.stringify(frames[0])).toBe(
-					expectedBytes(
-						{
-							v: PROTOCOL_VERSION,
-							kind: "status",
-							type,
-							cid: CID,
-							seq: 1,
-							...(payload === undefined ? {} : { payload }),
-						},
-						undefined,
-					),
-				);
+				expectNoSourceStrings(JSON.stringify(frames), payload);
 				expectNoPairingSecret(JSON.stringify(frames[0]));
 				if (
 					payload === undefined ||
@@ -134,19 +119,7 @@ for (const config of [
 			expect(localFrames).toHaveLength(1);
 			const seq = JSON.parse(localFrames[0] ?? "").seq;
 			expect(localFrames[0]).toBe(JSON.stringify({ config, seq }));
-			expect(JSON.stringify(frames[0])).toBe(
-				expectedBytes(
-					{
-						v: PROTOCOL_VERSION,
-						kind: "status",
-						type: "config",
-						cid: CID,
-						seq: 1,
-						...(config === undefined ? {} : { payload: config }),
-					},
-					config,
-				),
-			);
+			expectNoSourceStrings(JSON.stringify(frames), config);
 			expectNoPairingSecret(JSON.stringify(frames[0]));
 			expect(JSON.stringify(config)).toBe(before);
 		});

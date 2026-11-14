@@ -25,12 +25,12 @@
 
 import { logger } from "../../helpers/logger.ts";
 import type { RPCContext } from "../../rpc/types.ts";
-import { projectRemoteConfig } from "../remote/remote-status.ts";
 import { sendFrame } from "./channel.ts";
 import {
 	getSharedSeenCidStore,
 	type SeenCidStore,
 } from "./command-idempotency.ts";
+import { projectCommandResult } from "./command-result-dto.ts";
 import { buildControlContext } from "./control-context.ts";
 import { routeInternalCommand } from "./internal-command-router.ts";
 import {
@@ -177,7 +177,7 @@ function buildResult(frame: Command, payload: ResultPayload): Result {
 		type: frame.type,
 		cid: frame.cid,
 		...(frame.role !== undefined ? { role: frame.role } : {}),
-		payload: { ...payload, applied: projectRemoteConfig(payload.applied) },
+		payload: projectCommandResult(frame.type, payload),
 	};
 }
 

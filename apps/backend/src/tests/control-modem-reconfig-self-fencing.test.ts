@@ -351,7 +351,7 @@ for (const backend of BACKENDS) {
 			expect(h.results[0]?.self_fencing).toBe(true);
 			expect(h.results[0]?.payload).toEqual({
 				ok: true,
-				applied: { ...INITIAL_STATE, apn: "iot.example", roaming: true },
+				applied: { slot: 1, bands: [3, 7, 20], roaming: true },
 			});
 
 			expect(h.clock.armed()).toHaveLength(1);
@@ -376,7 +376,7 @@ for (const backend of BACKENDS) {
 			expect(h.results).toHaveLength(2);
 			expect(h.results[1]?.payload).toEqual({
 				ok: true,
-				applied: INITIAL_STATE,
+				applied: { slot: 1, bands: [3, 7, 20], roaming: false },
 				reverted: true,
 			});
 		});
@@ -402,7 +402,7 @@ for (const backend of BACKENDS) {
 			expect(h.results).toHaveLength(2);
 			expect(h.results[1]?.payload).toEqual({
 				ok: true,
-				applied,
+				applied: { slot: 1, bands: [3, 7, 20], roaming: true },
 				reverted: false,
 			});
 

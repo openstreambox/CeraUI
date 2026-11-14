@@ -858,6 +858,10 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["regulatory domain set to ", ""],
 	["releasing a modem inhibition failed"],
 	["remote error: ", ""],
+	["remote status frame rejected by protocol schema"],
+	[
+		"remote status payload rejected by projection; dropped payloads are counted",
+	],
 	["remote: DNS lookup failed, using cached address ", ""],
 	["remote: authenticated"],
 	["remote: invalid key"],
@@ -1778,6 +1782,7 @@ export const SUPPORT_LOG_DYNAMIC_CALLS: readonly string[] = [
 	"src/modules/cellular/shadow-divergence.ts: logger.debug(msg)",
 	"src/modules/cellular/shadow-divergence.ts: logger.warn(msg)",
 	"src/modules/network/network-ingest-control.ts: logger.info(msg)",
+	"src/modules/remote/notification-relay.ts: logger.warn(m)",
 	"src/modules/streaming/active-passthrough.ts: defaultLogger.warn(message)",
 	"src/modules/streaming/bluetooth-audio-resilience.ts: logger.info(message)",
 	"src/modules/streaming/stream-session-orchestrator.ts: logger.warn(message)",

@@ -35,7 +35,7 @@ import type {
 	NetworkIngest,
 	Pipelines,
 	RelayMessage,
-	SourcesMessage,StartFailureCaptureCause 
+	SourcesMessage,StartFailureCaptureCause
 } from '@ceraui/rpc/schemas';
 import { Shuffle, TriangleAlert, Volume2 } from '@lucide/svelte';
 import ComingSoon from '$lib/components/custom/ComingSoon.svelte';

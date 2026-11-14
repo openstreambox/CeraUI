@@ -47,6 +47,8 @@ export interface SeqTracker {
 	advance(type: string, seq: number): void;
 	/** Clear all lastSeen values (called on reconnect). */
 	resetOnReconnect(): void;
+	/** Clear lastSeen for one type (its producer restarted its sequence). */
+	reset(type: string): void;
 }
 
 /**
@@ -69,6 +71,10 @@ export function createSeqTracker(): SeqTracker {
 
 		resetOnReconnect(): void {
 			lastSeen.clear();
+		},
+
+		reset(type: string): void {
+			lastSeen.delete(type);
 		},
 	};
 }

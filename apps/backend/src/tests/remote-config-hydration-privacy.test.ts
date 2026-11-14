@@ -1,12 +1,15 @@
 import { beforeEach, expect, spyOn, test } from "bun:test";
 import WebSocket from "ws";
+import { logger } from "../helpers/logger.ts";
 import { getConfig } from "../modules/config.ts";
 import * as modemStatus from "../modules/modems/modem-status.ts";
+import { NOTIFICATION_EPOCH } from "../modules/remote/notification-relay.ts";
+import { getRemoteProjectionDrops } from "../modules/remote/remote-status.ts";
 import { sendInitialStatus } from "../modules/ui/status.ts";
+import { expectNoSourceStrings } from "./helpers/remote-outbound-assert.ts";
 import {
 	APN_PASSWORD,
 	AUTH_KEY,
-	expectedBytes,
 	expectNoPairingSecret,
 	modem,
 	secrets,
@@ -24,8 +27,32 @@ beforeEach(() => {
 	spyOn(modemStatus, "buildModemsWireMessage").mockReturnValue({ lte: modem });
 });
 
+test("real initial hydration causes no rejection warning", async () => {
+	const before = getRemoteProjectionDrops();
+	const warning = spyOn(logger, "warn");
+	const remote = await authenticateRemote();
+	expect(getRemoteProjectionDrops()).toBe(before);
+	expect(
+		warning.mock.calls.filter(([text]) =>
+			String(text).includes("rejected by projection"),
+		),
+	).toHaveLength(0);
+	const invalid = JSON.stringify({
+		notification: { show: [], remove: [], epoch: "invalid", full: true },
+	});
+	remote.send(invalid);
+	remote.send(invalid);
+	expect(getRemoteProjectionDrops()).toBe(before + 2);
+	expect(
+		warning.mock.calls.filter(([text]) =>
+			String(text).includes("rejected by projection"),
+		),
+	).toHaveLength(1);
+	warning.mockRestore();
+});
+
 for (const provider of ["ceralive", "belabox", "custom"] as const) {
-	test(`${provider} initial config and modem status omit pairing seed only while local hydration is byte-identical`, async () => {
+	test(`${provider} initial config and modem status omit private fields while local hydration is byte-identical`, async () => {
 		getConfig().remote_provider = provider;
 		getConfig().custom_provider = {
 			name: "Private provider",
@@ -42,14 +69,17 @@ for (const provider of ["ceralive", "belabox", "custom"] as const) {
 
 		const remote = await authenticateRemote();
 
-		expect(remote.sent).toEqual(
-			before.map((bytes) => {
-				const frame = JSON.parse(bytes);
-				return expectedBytes(frame, frame.config);
-			}),
-		);
+		expectNoSourceStrings(remote.sent.join("\n"), config);
+		const snapshot = remote.sent
+			.map((bytes) => JSON.parse(bytes))
+			.find((frame) => frame.notification)?.notification;
+		expect(snapshot).toMatchObject({
+			full: true,
+			epoch: NOTIFICATION_EPOCH,
+			remove: [],
+		});
 		expectNoPairingSecret(remote.sent.join("\n"));
-		expect(remote.sent.join("\n")).toContain(AUTH_KEY);
+		expect(remote.sent.join("\n")).not.toContain(AUTH_KEY);
 		expect(before.join("\n")).toContain(secrets.ssh_pass);
 		expect(before.join("\n")).toContain(APN_PASSWORD);
 		local.sent.length = 0;
@@ -67,5 +97,62 @@ test("legacy encoder authentication fields remain byte-identical", async () => {
 
 	remote.send(frame);
 
-	expect(remote.sent).toEqual([frame]);
+	expect(JSON.parse(remote.sent[0] ?? "{}")).toEqual(JSON.parse(frame));
+});
+
+test("legacy fake relay receives redacted persistent lifecycle and clears missed while offline", async () => {
+	const { notificationBroadcast, notificationRemove } = await import(
+		"../modules/ui/notifications.ts"
+	);
+	notificationBroadcast(
+		"modem_roaming:PRIVATE-IMEI",
+		"warning",
+		"PRIVATE streamid passphrase address",
+		0,
+		true,
+		true,
+		true,
+		"PRIVATE",
+		{ passphrase: "PRIVATE" },
+	);
+	try {
+		const first = await authenticateRemote();
+		const notification = () =>
+			first.sent
+				.map((s) => JSON.parse(s))
+				.filter((f) => f.notification)
+				.at(-1)?.notification;
+		const shown = notification().show[0];
+		expect(shown.msg).toBe("A cellular connection is roaming.");
+		expect(JSON.stringify(notification())).not.toContain("PRIVATE");
+		first.sent.length = 0;
+		notificationBroadcast(
+			"modem_roaming:PRIVATE-IMEI",
+			"error",
+			"PRIVATE updated",
+			0,
+			true,
+		);
+		await Bun.sleep(300);
+		expect(notification().show[0]).toMatchObject({
+			name: shown.name,
+			type: "error",
+		});
+		first.readyState = 3;
+		notificationRemove("modem_roaming:PRIVATE-IMEI");
+		await Bun.sleep(300);
+		expect(notification().show[0].type).toBe("error");
+		const second = await authenticateRemote();
+		const cleared = second.sent
+			.map((s) => JSON.parse(s))
+			.filter((f) => f.notification)
+			.at(-1)?.notification;
+		expect(cleared.show).toEqual([]);
+		expect(cleared.remove[0]).toMatchObject({
+			id: shown.name,
+			revision: expect.any(Number),
+		});
+	} finally {
+		notificationRemove("modem_roaming:PRIVATE-IMEI");
+	}
 });

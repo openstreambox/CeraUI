@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
+import { expectNoSourceStrings } from "./helpers/remote-outbound-assert.ts";
 import {
 	AUTH_KEY,
 	collections,
-	expectedBytes,
 	expectNoPairingSecret,
 	secrets,
 	UNRELATED,
@@ -17,7 +17,7 @@ usePrivacyConfig();
 useRemotePrivacySocket();
 
 for (const row of collections) {
-	test(`legacy config and modem frame preserve exact owner-visible bytes: ${row.name}`, async () => {
+	test(`legacy config and modem frame withhold private owner values: ${row.name}`, async () => {
 		const remote = await authenticateRemote();
 		const config = {
 			first: 1,
@@ -36,10 +36,10 @@ for (const row of collections) {
 
 		remote.send(before);
 
-		expect(remote.sent).toEqual([expectedBytes(frame, config)]);
+		expectNoSourceStrings(remote.sent.join("\n"), frame);
 		expectNoPairingSecret(remote.sent.join("\n"));
-		expect(remote.sent.join("\n")).toContain(AUTH_KEY);
-		expect(remote.sent.join("\n")).toContain(UNRELATED);
+		expect(remote.sent.join("\n")).not.toContain(AUTH_KEY);
+		expect(remote.sent.join("\n")).not.toContain(UNRELATED);
 		expect(JSON.stringify(frame)).toBe(before);
 	});
 }

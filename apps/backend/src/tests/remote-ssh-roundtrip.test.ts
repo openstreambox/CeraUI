@@ -23,17 +23,17 @@ usePrivacyConfig();
 useRemotePrivacySocket();
 afterEach(resetSelfFencingState);
 
-test("remote SSH config read and registered config save preserve owner credentials", async () => {
+test("SSH credentials stay private while explicit registered config saves work", async () => {
 	const remote = await authenticateRemote();
 	const initial = remote.sent.find((frame) => "config" in JSON.parse(frame));
 	const config: unknown = JSON.parse(initial ?? "{}").config;
 	if (!object(config)) throw new Error("missing remote config");
-	expect(config.ssh_pass).toBe(secrets.ssh_pass);
+	expect(config).not.toHaveProperty("ssh_pass");
 	expect(config).not.toHaveProperty("pairing_secret");
 
 	// The SSH dialog displays/resets passwords; the existing generic config
 	// transaction is the remote protocol's stored-parameter write path.
-	const password = `${config.ssh_pass}-owner-edit`;
+	const password = "new-owner-password";
 	const command = CommandSchema.parse({
 		v: PROTOCOL_VERSION,
 		kind: "command",
@@ -56,7 +56,7 @@ test("remote SSH config read and registered config save preserve owner credentia
 	expect(results).toHaveLength(2);
 	for (const frame of results) {
 		expect(frame.payload.ok).toBe(true);
-		expect(frame.payload.applied).toHaveProperty("ssh_pass", password);
+		expect(frame.payload.applied).not.toHaveProperty("ssh_pass");
 		expect(frame.payload.applied).not.toHaveProperty("pairing_secret");
 	}
 	const persisted = JSON.parse(await readFile(getConfigFilePath(), "utf8"));
@@ -64,6 +64,8 @@ test("remote SSH config read and registered config save preserve owner credentia
 	expect(persisted.pairing_secret).toBe(secrets.pairing_secret);
 	remote.sent.length = 0;
 	remote.send(buildMsg("config", getConfig()));
-	expect(JSON.parse(remote.sent[0] ?? "{}").config.ssh_pass).toBe(password);
+	expect(JSON.parse(remote.sent[0] ?? "{}").config).not.toHaveProperty(
+		"ssh_pass",
+	);
 	expect(remote.sent.join("\n")).not.toContain(secrets.pairing_secret);
 });
