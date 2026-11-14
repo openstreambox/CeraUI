@@ -155,14 +155,18 @@ journal/adapter-lock owner; unknown carrying is a final veto before link-down.
 The hot notice keeps the phone's links available while capacity is checked.
 
 `planLinkBoxHeat` specifies the remaining order: lend one link fewer at hot,
-then pause other hotspot clients at critical. It excludes the known phone main
-link, requires two healthy non-recovering peers with measured headroom, and
-protects the phone and management clients. Stale, duplicate or absent identity
-and capacity evidence withholds those steps. Keep quality withdraws both visible
+then pause other hotspot clients at critical. Its measured-share session policy
+protects the largest leg, large legs and
+the phone uplink, requires two healthy peers with proven spare rate, and
+protects the phone and management clients. A legacy main-link label or
+headroom snapshot alone cannot authorize either step. Stale, duplicate or
+absent identity and capacity evidence withholds those steps. Keep quality
+withdraws both visible
 restrictions while permitting an unused USB radio to rest.
 
-**Runtime boundary:** this base has no phone main-link identity/capacity source
-or reversible per-client pause owner. Lending and client pause are policy only;
+**Runtime boundary:** this topic has no complete measured-share producer or
+native lending adapter. The per-client pause primitive remains dormant. Lending
+and client pause are policy only;
 they are not applied to live traffic. The runtime keeps every used link and
 client available. Do not connect this planner to saved bond opt-outs, stop the
 hotspot, or infer the main path from interface names or carrying alone. A future
@@ -176,7 +180,90 @@ Cuando la caja transporta tráfico del teléfono sin codificar, usa los mismos
 umbrales y tiempos de enfriamiento. Puede dejar descansar una radio USB que se
 haya confirmado sin uso. Nunca cambia la tasa de bits del teléfono. El orden
 previsto después es prestar un enlace menos y luego pausar a otros clientes del
-punto de acceso, conservando el teléfono y la administración. Sin identidad del
-enlace principal, capacidad medida y un controlador reversible por cliente,
+punto de acceso, conservando el teléfono y la administración. Sin datos completos
+de uso por enlace,
+capacidad medida y adaptadores que confirmen cada efecto,
 esos dos pasos no se aplican al tráfico. El aviso pide ventilación y mantiene
 los enlaces disponibles; no afirma que terminó la transmisión.
+
+## Measured-share link-box policy (mock source only)
+
+All numerical thresholds in this policy are proposals, not hardware measurements.
+
+`heat-link-box-share.ts` adds the session policy and an injected effect-owner
+boundary. It sits above the carrying-only warm step and the bounded client
+lease. It does not register a production producer, a native effect adapter or
+new UI. The current notification and hardware behavior remain unchanged.
+
+The policy uses the existing SoC thresholds, ten-second entry dwell,
+five-minute hold, sixty-second cooling dwell and two-minute reverse steps.
+It admits a loan only after sixty continuous seconds of fresh observations:
+leg counters no older than two seconds, stream observations no older than
+three, a candidate share at most 15%, two healthy peers, and proven spare rate
+of at least 130% of the candidate's traffic. Loss must be at most 2%, and RTT
+at most 150% of its own five-minute median. The stream must remain within 5%
+of its sixty-second rate and 130% of its median RTT. Never count the phone's
+own cellular as capacity. The producer must include the phone's routed flow in
+leg rate and identify its current hotspot uplink; a relay-only counter is not
+a complete snapshot and must not be supplied here.
+
+The largest leg and every leg carrying at least 40% are protected. A previously
+large leg must stay below 30% for sixty seconds before starting the candidate
+dwell. The phone uplink and recovering legs are always protected. Candidate
+ranking prefers the hottest known modem, then the smallest rate, then stable
+identity. Unknown temperatures sort last; they do not manufacture a reading.
+
+A 15% stream-rate fall restores the loan immediately. Stream RTT at 150% of
+its pre-loan value, peer loss above 5%, or peer RTT at twice its median trigger
+rollback after five continuous seconds. These checks continue throughout the
+loan, including its first thirty seconds. Peer dropout, new phone-uplink use,
+large-leg protection, session change, stream end, encoder takeover, Keep
+quality and unknown observations release restrictions immediately. Failed
+loans lock that link for fifteen minutes; two rollbacks disable lending for
+the session. Stale observations reset admission dwell.
+
+Client identity must be cross-checked by the producer against the authenticated
+streamer and the data plane. Only a bound, IPv4-only client that joined at
+least two minutes ago qualifies. The phone, management sessions, possible
+streamers, receiver-directed traffic, recent carrying and ambiguous clients
+remain online. A candidate must exceed 100 kbit/s over the last sixty seconds.
+The busiest eligible client is selected. Let back on exempts that client for
+the session; any other release locks it for ten minutes.
+
+Conservative choices pending review: at most one client may be paused (the
+existing lease owns one target); a pause follows a loan, rather than preceding
+it when lending is withheld; unknown measurements undo immediately instead of
+waiting three seconds. This is stricter than the proposed policy. There is no
+phone protocol extension, saved opt-out, radio power-down or AP shutdown.
+
+`LinkBoxHeatSession` serializes effects and rechecks current admission at the
+owner's mutation boundary. Only acknowledged actions enter its status. Client
+release precedes link return; pending return blocks new restrictions and is
+retried. A real return adapter must bound each attempt to ten seconds and
+confirm relay identity, open tunnel and flowing ACKs before returning true.
+A real pause adapter must renew the existing five-second kernel lease only
+while its supplied predicate still holds. Neither adapter exists in production
+on this topic; tests inject memory-only owners and synthetic thermal sequences.
+The plain status copy is a contract for later UI integration, not a rendered
+screen. Reasons are retained in a bounded local timeline, not repeated notices.
+
+### Español (Latinoamérica): política con datos simulados
+
+La política agrega pasos reversibles sin activar efectos nuevos en producción.
+Primero permite descansar una radio USB sin uso; después presta un enlace menos
+y, con calor crítico, permite pausar un solo cliente adicional. Nunca reduce
+la tasa del teléfono ni cambia sus preferencias guardadas.
+
+Protege el enlace más usado, los enlaces grandes, la salida Wi-Fi del teléfono,
+los enlaces en recuperación, el teléfono, los posibles emisores y los clientes
+de administración o de identidad incierta. Exige datos recientes, capacidad
+comprobada y sesenta segundos continuos de condiciones seguras. Si faltan los
+datos o empeora la transmisión, retira las restricciones. Al enfriarse, libera
+primero al cliente y después devuelve el enlace, con los tiempos de espera de
+la escala térmica. «Dejar entrar» protege al cliente durante esa sesión.
+
+Solo se prueban fuentes térmicas y controladores simulados. No hay nuevos
+contadores reales, integración visual ni activación del controlador de pausa.
+Antes de activarlo se necesitan mediciones completas del tráfico y adaptadores
+que confirmen cada acción y restauración. Las cifras son propuestas sin
+mediciones de ahorro térmico.

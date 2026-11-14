@@ -29,10 +29,10 @@ const plan = (stage: number, e = evidence(), keep = false) =>
 	planLinkBoxHeat(stage, true, keep, e, 1000);
 test("warm uses only spare USB rest", () =>
 	expect(plan(1)).toMatchObject({ usb: true, lend: null, pause: [] }));
-test("hot lends one fewer without selecting the main path", () =>
-	expect(plan(2)).toMatchObject({ usb: true, lend: "wan-b", pause: [] }));
-test("critical pauses only other clients, after lending", () =>
-	expect(plan(3)).toMatchObject({ lend: "wan-b", pause: ["guest"] }));
+test("legacy main-link identity alone cannot authorize lending", () =>
+	expect(plan(2)).toMatchObject({ usb: true, lend: null, pause: [] }));
+test("legacy client roster alone cannot authorize pausing", () =>
+	expect(plan(3)).toMatchObject({ lend: null, pause: [] }));
 test("unknown main link withholds both visible steps", () =>
 	expect(plan(3, { ...evidence(), mainLink: null })).toMatchObject({
 		lend: null,
