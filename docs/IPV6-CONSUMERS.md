@@ -9,10 +9,12 @@ and family changes refresh the bond and connectivity candidates.
 The pinned Rust sender supports IPv6 sources. A dual-stack link keeps its IPv4
 source for compatibility; an IPv6-only link uses IPv6. An AAAA-only receiver also
 selects IPv6 on dual-stack links. Receiver lookup asks the source's preferred
-family first, trying AAAA after an empty or failed A answer. A working A answer
-never waits for AAAA. A cached fallback after A failure still tries live AAAA
-and refreshes the cache before using a stale literal. Fresh hostnames are preserved so the sender can resolve a
-destination for each source family (including DNS64). Cached fallback prefers a usable IPv4 family, then
+family first. IPv4-only boxes ask for A only. With an IPv6 source, an empty or
+failed A answer can fall back to AAAA; a cache hit tries live AAAA only when it
+holds no IPv4 address. A working A answer never waits for AAAA. Cache updates
+replace records within the answered family and retain the other family.
+Fresh hostnames are preserved so the sender can resolve a destination for each
+source family (including DNS64). Cached fallback prefers a usable IPv4 family, then
 IPv6, and selects randomly within that family. With no usable link, start reports
 that no network connection is available; a cache with no matching local family
 is refused. IPv6 churn on a link retaining IPv4 updates its address snapshot
@@ -35,14 +37,16 @@ teléfonos todavía necesite traducción. El inventario conserva por separado la
 direcciones IPv4 e IPv6 globales utilizables. Los enlaces de doble pila prefieren
 IPv4 por compatibilidad; los enlaces solo IPv6 y los receptores solo AAAA usan
 IPv6. La consulta usa primero la familia preferida del enlace; una respuesta A
-válida no espera la consulta AAAA. Si A falla o está vacía, se intenta AAAA. Se
-conserva el nombre para que el emisor elija una dirección compatible, incluso con DNS64.
+válida no espera la consulta AAAA. Los equipos solo IPv4 consultan únicamente A.
+Con una fuente IPv6, si A falla o está vacía se puede intentar AAAA; si se usa
+la caché, solo se consulta AAAA en vivo cuando no contiene una dirección IPv4.
+Cada respuesta actualiza su familia en la caché y conserva la otra. Se conserva
+el nombre para que el emisor elija una dirección compatible, incluso con DNS64.
 La caché selecciona al azar dentro de la familia compatible. Si no hay enlaces
 utilizables, el inicio indica que no hay conexiones de red disponibles. Los
 cambios de dirección IPv6 en un enlace que conserva IPv4 actualizan el inventario
 sin generar un cambio de topología y notifican al bond activo para actualizar
-sus fuentes IPv6. Una respuesta A de caché no impide consultar AAAA en vivo
-y actualizar la caché.
+sus fuentes IPv6.
 
 El panel de conexiones compartidas indica: «Los dispositivos conectados al Wi-Fi
 del equipo todavía no pueden acceder a sitios IPv4 a través de este enlace».

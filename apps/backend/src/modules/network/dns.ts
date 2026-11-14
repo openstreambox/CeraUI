@@ -291,11 +291,16 @@ export async function dnsCacheValidate(name: string) {
 	}
 
 	const cachedEntry = dnsCache[name];
+	const live = dnsResults[name];
+	// Refresh each answered family without discarding the other family's
+	// outage fallback. Replace old records within that family, never append them.
+	const families = new Set(live.map((ip) => isIP(ip)));
+	const results = [
+		...live,
+		...(cachedEntry?.results.filter((ip) => !families.has(isIP(ip))) ?? []),
+	].sort((left, right) => isIP(left) - isIP(right));
 
-	if (
-		!cachedEntry ||
-		!haveSameElements(dnsResults[name], cachedEntry.results)
-	) {
+	if (!cachedEntry || !haveSameElements(results, cachedEntry.results)) {
 		const writeFile = !(
 			cachedEntry?.ts && Date.now() - cachedEntry.ts < DNS_MIN_AGE
 		);
@@ -305,7 +310,7 @@ export async function dnsCacheValidate(name: string) {
 			results: [],
 		};
 
-		dnsCache[name].results = dnsResults[name];
+		dnsCache[name].results = results;
 
 		if (writeFile) {
 			dnsCache[name].ts = Date.now();
