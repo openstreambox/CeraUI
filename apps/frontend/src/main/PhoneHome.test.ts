@@ -247,3 +247,43 @@ it.each([false, true])(
 		await waitFor(() => expect(onclearcredential).toHaveBeenCalledOnce());
 	},
 );
+
+it.each([false, true])(
+	"Moblin choice reflects relay availability=%s",
+	async (available) => {
+		render(PhoneHome, {
+			carrying: "idle",
+			moblink: { available, configured: false },
+		});
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Connect your phone" }),
+		);
+		const choice = screen.getByRole("button", { name: "Moblin", exact: true });
+		expect(choice.textContent).toContain(
+			available ? "Use your Moblin relay password." : "Not on this box yet",
+		);
+	},
+);
+
+it("clearing absent credentials reports the resulting state without claiming a stream stopped", async () => {
+	const onclearcredential = vi.fn(async () => ({ success: true }));
+	render(PhoneHome, {
+		carrying: "idle",
+		moblink: { available: false, configured: false },
+		onclearcredential,
+	});
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Connect your phone" }),
+	);
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Moblin", exact: true }),
+	);
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Clear Moblin password" }),
+	);
+	await waitFor(() => expect(onclearcredential).toHaveBeenCalledOnce());
+	expect(
+		screen.getByText("No Moblin password is saved on this box."),
+	).toBeTruthy();
+	expect(screen.queryByText(/has stopped lending/)).toBeNull();
+});

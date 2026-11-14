@@ -2884,6 +2884,7 @@
 	"live.phone.change": "Change app",
 	"live.phone.unsure": "Not sure? Just internet works with everything. You can switch later.",
 	"live.phone.moblinChoice": "Not on this box yet. Use Just internet for now.",
+	"live.phone.moblinAvailableChoice": "Use your Moblin relay password.",
 	"live.phone.srtChoice": "Your phone sends its stream to the box, and the box sends it on over all its links. Needs a server address that starts with srtla://.",
 	"live.phone.internetChoice": "Your phone joins the box's Wi-Fi and uses the box's best link, switching if that one fails. Works with any app and any platform, including a plain Twitch, Kick or YouTube stream key. The links aren't combined.",
 	"live.phone.join": "Join the box's Wi-Fi.",
@@ -2969,7 +2970,7 @@
 	"live.phone.moblinConfigured": "A Moblin password is saved. You can replace or clear it; it cannot be displayed.",
 	"live.phone.moblinBinding": "One password for this box. Any local Moblin streamer with that password may connect.",
 	"live.phone.moblinSaved": "Saved on the box. Check Moblin to confirm it connects; saving does not confirm a connection.",
-	"live.phone.moblinCleared": "Moblin password cleared. The box has stopped lending its links through Moblink.",
+	"live.phone.moblinCleared": "No Moblin password is saved on this box.",
 	"live.phone.moblinFailed": "The Moblin password could not be applied. Check the box and try again. It may already be saved.",
 	"live.phone.moblinBusy": "Wait until the box confirms no stream is using it before changing the Moblin password."
 }

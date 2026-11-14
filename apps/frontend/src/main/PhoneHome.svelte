@@ -177,7 +177,7 @@
 						type="button"
 						aria-label={m[`live.phone.${app}`]()}
 						onclick={() => choose(app as PhoneWay)}
-						>{m[`live.phone.${app}`]()}<small>{m[`live.phone.${app}Choice`]()}</small></button
+						>{m[`live.phone.${app}`]()}<small>{app === 'moblin' && moblink?.available ? m['live.phone.moblinAvailableChoice']() : m[`live.phone.${app}Choice`]()}</small></button
 					>{/each}
 				<button type="button" onclick={() => choose('srt')}>{m['live.phone.another']()}</button>
 			</div>

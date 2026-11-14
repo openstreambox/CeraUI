@@ -103,3 +103,7 @@ Apagar solo está disponible durante la comprobación inicial de 120 segundos qu
 Initial connections and reconnect status pulls include the backend startup permission, so opening Home midway through the window preserves confirmed power-off. After expiry, the blocked reason names both restart and power off.
 
 La conexión inicial y las consultas de estado al reconectar incluyen el permiso inicial del equipo. Abrir Inicio durante ese periodo conserva el apagado con confirmación. Al terminar, el motivo del bloqueo menciona reiniciar y apagar.
+
+The Moblin choice reflects relay availability. Clear remains available for storage recovery even when no relay or valid password exists; success states that no password is saved, without claiming a stream stopped.
+
+La opción Moblin refleja la disponibilidad del retransmisor. Borrar sigue disponible para recuperar el almacenamiento aunque no haya retransmisor ni contraseña válida; el resultado indica que no queda una contraseña guardada, sin afirmar que se detuvo una emisión.

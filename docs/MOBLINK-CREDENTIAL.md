@@ -55,7 +55,7 @@ No password value is returned to RPC, status, logs or remote
 fan-out, or application browser storage. The field uses `autocomplete="off"` with password-manager ignore hints;
 browser extensions and password-manager policies remain outside app control.
 If a stream starts while the relay is stopping for a mutation, the unchanged
-credential is restarted when available; a failed restart marks Box health.
+credential is restarted when available; a failed or impossible restart marks Box health.
 Mutations require confirmed idle, including
 carrying evidence. This does not add per-link admission, media telemetry or
 real-phone validation. Empty/unsafe stored files and unexpected child exits mark
@@ -66,6 +66,6 @@ One credential serves all local discovered Moblin streamers that share it.
 There is no phone identity binding; use a unique password for isolation. The
 box takes Moblin's existing password, preserving the phone's other relays.
 
-A stream starting during save or clear leaves the credential unchanged. Only a relay that was running before the stop is restarted; a stopped or unavailable relay does not gain a Box health warning from that refusal. A failed attempt to resume a previously running relay still reports the fault.
+A stream starting during save or clear leaves the credential unchanged. Only a relay that was running before the stop is restarted; a relay that was already stopped does not gain a Box health warning from that refusal. A failed or impossible attempt to resume a previously running relay still reports the fault.
 
-Si una transmisión empieza durante el guardado o borrado, la contraseña no cambia. Solo se reinicia el retransmisor si estaba funcionando antes de detenerlo. Un retransmisor detenido o no disponible no genera un aviso de estado por ese rechazo; si falla la reanudación de uno que sí estaba funcionando, el aviso permanece.
+Si una transmisión empieza durante el guardado o borrado, la contraseña no cambia. Solo se reinicia el retransmisor si estaba funcionando antes de detenerlo. Un retransmisor que ya estaba detenido no genera un aviso de estado por ese rechazo; si la reanudación de uno que sí estaba funcionando falla o ya no es posible, el aviso permanece.
