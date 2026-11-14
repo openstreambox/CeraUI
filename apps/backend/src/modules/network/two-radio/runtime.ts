@@ -241,13 +241,7 @@ export async function initTwoRadioLive() {
 				);
 				if (rows.length) throw new Error("Occupied policy table");
 			}
-			const file = await open(claimPath, "wx", 0o600);
-			try {
-				await file.writeFile(JSON.stringify(config));
-				await file.sync();
-			} finally {
-				await file.close();
-			}
+			await writeTwoRadioClaim(claimPath, JSON.stringify(config));
 			const parent = await open(directory, "r");
 			try {
 				await parent.sync();
@@ -324,4 +318,18 @@ export async function initTwoRadioLive() {
 		void next();
 	}, 1000);
 	timer.unref();
+}
+
+export async function writeTwoRadioClaim(
+	path: string,
+	contents: string,
+): Promise<void> {
+	const file = await open(path, "wx", 0o600);
+	try {
+		await file.chmod(0o600);
+		await file.writeFile(contents);
+		await file.sync();
+	} finally {
+		await file.close();
+	}
 }

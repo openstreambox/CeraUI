@@ -96,6 +96,7 @@ export class FileJournal implements Journal {
 		const temp = `${this.path}.${crypto.randomUUID()}.tmp`;
 		const file = await open(temp, "wx", 0o600);
 		try {
+			await file.chmod(0o600);
 			await file.writeFile(data);
 			await file.sync();
 		} finally {

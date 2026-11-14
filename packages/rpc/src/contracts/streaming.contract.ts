@@ -10,6 +10,9 @@ import {
 	configMessageSchema,
 	getEngineOutputSchema,
 	getMockHardwareOutputSchema,
+	heatMutationSchema,
+	heatStatusSchema,
+	keepHeatQualitySchema,
 	listDevicesOutputSchema,
 	pipelinesSchema,
 	reloadAudioDelayInputSchema,
@@ -33,6 +36,8 @@ import {
 } from '../schemas';
 
 export const streamingContract = oc.router({
+	getHeat: oc.output(heatStatusSchema),
+	keepHeatQuality: oc.input(keepHeatQualitySchema).output(heatMutationSchema),
 	/**
 	 * Start streaming with configuration
 	 */

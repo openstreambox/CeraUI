@@ -69,6 +69,7 @@ import {
 	parseSignedManifestAssets,
 	type SignedFederationAsset,
 } from './federation-assets';
+import { writeFederationSigningKey } from './federation-signing-key.ts';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const CERAUI_ROOT = resolve(SCRIPT_DIR, '..');
@@ -143,7 +144,7 @@ function setupGpg(): GpgContext {
 		tempDirs.push(home);
 		env.GNUPGHOME = home;
 		const keyPath = join(home, 'signing-key.asc');
-		writeFileSync(keyPath, Buffer.from(armored, 'base64'));
+		writeFederationSigningKey(keyPath, armored);
 		const imported = gpg(['--batch', '--import', keyPath], env);
 		if (imported.code !== 0) {
 			fail(`GPG key import failed: ${imported.stderr.trim()}`);

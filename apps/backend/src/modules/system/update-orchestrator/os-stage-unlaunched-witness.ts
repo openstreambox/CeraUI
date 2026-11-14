@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
 	closeSync,
 	constants,
+	fchmodSync,
 	fstatSync,
 	fsyncSync,
 	openSync,
@@ -179,6 +180,7 @@ function writeWitness(
 			0o600,
 		);
 		try {
+			fchmodSync(fd, 0o600);
 			const info = fstatSync(fd);
 			if (
 				info.uid !== deps.uid ||

@@ -24,9 +24,13 @@ async function readOptional(path: string): Promise<string | undefined> {
 	return await file.text();
 }
 
-async function writeSynced(path: string, contents: string): Promise<void> {
+export async function writeSynced(
+	path: string,
+	contents: string,
+): Promise<void> {
 	const handle = await open(path, "w", 0o600);
 	try {
+		await handle.chmod(0o600);
 		await handle.writeFile(contents);
 		await handle.sync();
 	} finally {

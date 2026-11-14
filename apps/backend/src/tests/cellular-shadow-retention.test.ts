@@ -16,9 +16,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
 	chmodSync,
+	closeSync,
+	constants,
 	existsSync,
 	mkdtempSync,
+	openSync,
 	readFileSync,
+	readSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -400,4 +404,46 @@ describe("the production path resolves under /data, and tests never touch it", (
 			false,
 		);
 	});
+});
+
+test("FIFO evidence returns promptly without changing its mode", async () => {
+	const baseDir = dir();
+	const file = shadowEvidencePath(baseDir);
+	expect(Bun.spawnSync(["mkfifo", "-m", "644", file]).exitCode).toBe(0);
+	const modulePath = new URL(
+		"../modules/cellular/shadow-evidence.ts",
+		import.meta.url,
+	).href;
+	const child = Bun.spawn(
+		[
+			process.execPath,
+			"-e",
+			`import { appendShadowEvidence } from ${JSON.stringify(modulePath)}; appendShadowEvidence({kind: "heartbeat"}, {baseDir: ${JSON.stringify(baseDir)}});`,
+		],
+		{ stdout: "pipe", stderr: "pipe" },
+	);
+	const timer = setTimeout(() => child.kill("SIGKILL"), 3000);
+	try {
+		expect(await child.exited).toBe(0);
+		expect(statSync(file).isFIFO()).toBe(true);
+		expect(statSync(file).mode & 0o777).toBe(0o644);
+	} finally {
+		clearTimeout(timer);
+		child.kill();
+	}
+});
+
+test("FIFO with a reader is rejected before chmod", () => {
+	const baseDir = dir();
+	const file = shadowEvidencePath(baseDir);
+	expect(Bun.spawnSync(["mkfifo", "-m", "644", file]).exitCode).toBe(0);
+	const reader = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+	try {
+		appendShadowEvidence(heartbeat(Date.now()), { baseDir });
+		expect(statSync(file).mode & 0o777).toBe(0o644);
+		const buffer = Buffer.alloc(1024);
+		expect(readSync(reader, buffer, 0, buffer.length, null)).toBe(0);
+	} finally {
+		closeSync(reader);
+	}
 });

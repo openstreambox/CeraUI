@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
 	closeSync,
 	constants,
+	fchmodSync,
 	fsyncSync,
 	openSync,
 	renameSync,
@@ -76,6 +77,7 @@ export function aptRoutingFileStore(
 					0o600,
 				);
 				try {
+					fchmodSync(fd, 0o600);
 					writeFileSync(fd, value);
 					fsyncSync(fd);
 				} finally {
