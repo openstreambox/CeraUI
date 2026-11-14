@@ -322,7 +322,7 @@ $effect(() => {
 				for={`${detailsDescriptionId}-trigger`}
 				data-hud-region
 				class={cn(
-					'bg-sidebar text-foreground hover:bg-accent/50 relative flex h-12 w-full cursor-pointer items-center gap-3 border-t px-4 text-start text-xs font-medium tracking-wide transition-colors',
+					'bg-sidebar text-foreground hover:bg-accent/50 relative flex h-12 w-full cursor-pointer items-center gap-1 min-[360px]:gap-2 border-t px-3 sm:gap-3 sm:px-4 text-start text-xs font-medium tracking-wide transition-colors',
 					className,
 				)}
 			>
@@ -332,7 +332,7 @@ $effect(() => {
 				  operator cannot recover. The column stays inside the strip's `h-12`
 				  box, so `--mobile-dock-height` does not grow.
 				-->
-				<span class="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+				<span data-testid="stream-verdict" class="flex min-w-0 shrink-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-3">
 					<!-- Keep the visible verdict as the label; telemetry stays independently accessible. -->
 					<button
 						{...props}
@@ -366,7 +366,7 @@ $effect(() => {
 								id={`${detailsDescriptionId}-lifecycle`}
 								class="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
-								<span class="bg-status-idle size-2 rounded-full"></span>
+								<span class="size-2 rounded-full bg-status-idle"></span>
 								{m["hud.idle"]()}
 							</span>
 						{/if}
@@ -385,11 +385,11 @@ $effect(() => {
 					</span>
 
 					{#if healthReason}
-						<!-- Capped below `sm` so the second line cannot widen the cluster
+						<!-- Capped at every width so the reason cannot widen the cluster
 						     past the badge row above it and steal strip width. -->
 						<span
 							data-testid="stream-health-reason"
-							class="text-muted-foreground max-w-[9rem] min-w-0 truncate text-[0.7rem] leading-tight font-medium sm:max-w-none"
+							class="text-muted-foreground max-w-[9rem] min-w-0 truncate text-[0.7rem] leading-tight font-medium sm:max-w-[9rem]"
 							title={healthReason.detail}
 						>
 							{healthReason.detail}
@@ -471,7 +471,7 @@ $effect(() => {
 					{#if soc.isStale}
 						<ClockIcon class="size-3 shrink-0 opacity-50" aria-hidden="true" />
 					{:else}
-						<ThermometerIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+						<ThermometerIcon class="hidden size-3.5 shrink-0 text-muted-foreground min-[360px]:block" aria-hidden="true" />
 					{/if}
 					{@render socValue(tempState, tempText, m["hud.temperature"]())}
 				</span>
