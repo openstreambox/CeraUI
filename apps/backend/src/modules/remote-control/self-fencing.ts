@@ -37,7 +37,6 @@
  */
 
 import { logger } from "../../helpers/logger.ts";
-import { projectRemoteConfig } from "../remote/remote-status.ts";
 import {
 	type DisruptiveReservationOutcome,
 	isPositiveDisruptiveFailure,
@@ -45,6 +44,7 @@ import {
 	resetDisruptiveActionReservationForTest,
 } from "../system/disruptive-action-reservation.ts";
 import { sendFrame } from "./channel.ts";
+import { projectCommandResult } from "./command-result-dto.ts";
 import {
 	type Command,
 	PROTOCOL_VERSION,
@@ -346,7 +346,7 @@ function resultFrame(
 		cid: frame.cid,
 		...(frame.role !== undefined ? { role: frame.role } : {}),
 		...(options.selfFencing === true ? { self_fencing: true } : {}),
-		payload: { ...payload, applied: projectRemoteConfig(payload.applied) },
+		payload: projectCommandResult(frame.type, payload),
 	};
 }
 

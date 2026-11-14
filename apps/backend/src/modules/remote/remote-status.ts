@@ -1,72 +1,451 @@
-function omitIncarnation(value: unknown): unknown {
-	if (
-		typeof value !== "object" ||
-		value === null ||
-		!("incarnation" in value)
-	) {
-		return value;
-	}
-	const { incarnation: _incarnation, ...legacy } = value;
-	return legacy;
-}
+import { createHmac, randomBytes } from "node:crypto";
+import {
+	connectionStatusSchema,
+	hardwareTypeSchema,
+	hotspotClientsSchema,
+	streamProfileIdSchema,
+} from "@ceraui/rpc/schemas";
+import { AUDIO_CODECS } from "../streaming/pipeline-sources.ts";
+import { projectLegacyNotification } from "./legacy-notification-dto.ts";
+import { projectRemoteSensors } from "./remote-sensor-dto.ts";
 
-/** Keep unmodified frames by reference so their serialized bytes stay intact. */
-export function projectRemoteWifiFrame(payload: unknown): unknown {
-	if (typeof payload !== "object" || payload === null) return payload;
-	let projected = payload;
-	if ("adapter_mode" in payload) {
-		const mode = omitIncarnation(payload.adapter_mode);
-		if (mode !== payload.adapter_mode) {
-			projected = { ...projected, adapter_mode: mode };
-		}
+/** Outbound status is a separate public DTO. No producer objects are spread. */
+type Row = Record<string, unknown>;
+const object = (v: unknown): Row =>
+	v !== null && typeof v === "object" ? (v as Row) : {};
+const numbers = (v: unknown, keys: readonly string[]): Row => {
+	const src = object(v),
+		out: Row = {};
+	for (const key of keys)
+		if (typeof src[key] === "number" && Number.isFinite(src[key]))
+			out[key] = src[key];
+	return out;
+};
+const booleans = (v: unknown, keys: readonly string[]): Row => {
+	const src = object(v),
+		out: Row = {};
+	for (const key of keys)
+		if (typeof src[key] === "boolean") out[key] = src[key];
+	return out;
+};
+const choice = (v: unknown, values: readonly string[]) =>
+	typeof v === "string" && values.includes(v) ? v : undefined;
+
+/** One namespace shared by legacy and cloud status for the lifetime of this process.
+ * Original identifiers remain local. Labels are not authority for mutations.
+ */
+const labels = new Map<string, Map<string, string>>();
+function label(kind: string, key: string): string {
+	let group = labels.get(kind);
+	if (!group) {
+		group = new Map();
+		labels.set(kind, group);
 	}
-	if (
-		"hotspot" in payload &&
-		typeof payload.hotspot === "object" &&
-		payload.hotspot !== null &&
-		"config" in payload.hotspot
-	) {
-		const config = omitIncarnation(payload.hotspot.config);
-		if (config !== payload.hotspot.config) {
-			projected = {
-				...projected,
-				hotspot: { ...payload.hotspot, config },
+	let value = group.get(key);
+	if (!value) {
+		value = `${kind} ${group.size + 1}`;
+		group.set(key, value);
+	}
+	return value;
+}
+// Interface labels never depend on the position in a bond or adapter roster.
+function interfaceLabel(original: unknown, _fallback?: string): string {
+	return label("Link", typeof original === "string" ? original : "unknown");
+}
+const rowKeys = new Map<string, Buffer>();
+function opaqueRow(kind: string, value: unknown, transport: string): string {
+	let key = rowKeys.get(transport);
+	if (!key) {
+		key = randomBytes(32);
+		rowKeys.set(transport, key);
+	}
+	return createHmac("sha256", key)
+		.update(`${kind}:${String(value)}`)
+		.digest("hex");
+}
+function rows(
+	v: unknown,
+	kind: string,
+	project: (v: Row, key: string) => Row,
+): Row {
+	const out: Row = {};
+	for (const [key, value] of Object.entries(object(v))) {
+		if (value === null || typeof value !== "object") continue;
+		const name = kind === "Link" ? interfaceLabel(key) : label(kind, key);
+		out[name] = project(object(value), name);
+	}
+	return out;
+}
+function wifi(v: unknown): Row {
+	return rows(v, "Wi-Fi", (row, name) => ({
+		ifname: interfaceLabel(row.ifname, name),
+		hw: name,
+		conn:
+			typeof row.conn === "string" && row.conn
+				? label("Profile", row.conn)
+				: "",
+		saved: Object.fromEntries(
+			Object.entries(object(row.saved))
+				.filter(([, value]) => typeof value === "string")
+				.map(([key, value]) => [
+					label("Network", key),
+					label("Profile", String(value)),
+				]),
+		),
+		...booleans(row, ["supports_hotspot", "supports_ap_sta_concurrency"]),
+		...(choice(row.mode, ["station", "hotspot"]) ? { mode: row.mode } : {}),
+		...(row.hotspot
+			? {
+					hotspot: {
+						name: "Hotspot",
+						...numbers(row.hotspot, ["max_width_mhz"]),
+						...(hotspotClientsSchema.safeParse(object(row.hotspot).clients)
+							.success
+							? {
+									clients: {
+										count: object(object(row.hotspot).clients).count,
+										stations: [],
+									},
+								}
+							: {}),
+						available_channels: {},
+					},
+				}
+			: {}),
+		// Saved/nearby profiles are local management data, not remote diagnostics.
+		available: [],
+	}));
+}
+function modems(v: unknown): Row {
+	return rows(v, "Modem", (row, name) => ({
+		name,
+		ifname: interfaceLabel(row.ifname, name),
+		status: {
+			...numbers(row.status, ["signal"]),
+			...booleans(row.status, ["roaming"]),
+			connection: connectionStatusSchema.safeParse(
+				object(row.status).connection,
+			).success
+				? object(row.status).connection
+				: "unknown",
+			network_type:
+				choice(object(row.status).network_type, [
+					"2g",
+					"3g",
+					"4g",
+					"5g",
+					"lte",
+					"2G",
+					"3G",
+					"4G",
+					"5G",
+					"LTE",
+					"LTE-A",
+					"5G NSA",
+					"5G SA",
+				]) ?? "unknown",
+		},
+	}));
+}
+export function projectRemoteConfig(v: unknown): unknown {
+	if (v === undefined || v === null) return v;
+	return {
+		...numbers(v, [
+			"max_br",
+			"srt_latency",
+			"delay",
+			"bitrate_overlay",
+			"slot",
+		]),
+		...booleans(v, ["fec_enabled", "autostart", "dhcp", "roaming"]),
+		...(Array.isArray(object(v).bands)
+			? {
+					bands: (object(v).bands as unknown[]).filter(
+						(n) =>
+							typeof n === "number" &&
+							Number.isSafeInteger(n) &&
+							n >= 0 &&
+							n <= 1024,
+					),
+				}
+			: {}),
+	};
+}
+export function projectRemoteWifiFrame(_v: unknown): unknown {
+	return {};
+}
+export function projectRemoteStatus(v: unknown, transport = "legacy"): unknown {
+	if (v === undefined) return undefined;
+	const src = object(v),
+		out: Row = {
+			remote_status: true,
+			...booleans(src, [
+				"is_streaming",
+				"cellular_initializing",
+				"set_password",
+			]),
+		};
+	const lifecycle = choice(src.stream_lifecycle, [
+		"idle",
+		"starting",
+		"streaming",
+		"reconfiguring",
+		"stopping",
+		"stop_failed",
+		"reconciling",
+	]);
+	if (lifecycle !== undefined) out.stream_lifecycle = lifecycle;
+	out.remote_diagnostics = {
+		...(src.asrcs !== undefined
+			? { audio_present: Array.isArray(src.asrcs) && src.asrcs.length > 0 }
+			: {}),
+		...(src.audio_sources !== undefined
+			? {
+					audio_sources_present:
+						Array.isArray(src.audio_sources) && src.audio_sources.length > 0,
+				}
+			: {}),
+		...(src.ssh !== undefined
+			? { ssh: booleans(src.ssh, ["active", "enabled", "user_pass"]) }
+			: {}),
+		...(src.relay !== undefined
+			? { relay: booleans(src.relay, ["active", "connected", "enabled"]) }
+			: {}),
+		...(src.available_updates !== undefined
+			? {
+					updates_available:
+						typeof src.available_updates === "object" &&
+						src.available_updates !== null &&
+						Number(object(src.available_updates).package_count) > 0,
+				}
+			: {}),
+		...(src.updating !== undefined
+			? { updating: src.updating !== false && src.updating !== null }
+			: {}),
+		...(src.update_state !== undefined
+			? {
+					update_state: choice(object(src.update_state).kind, [
+						"idle",
+						"checking",
+						"available",
+						"downloading",
+						"installing",
+						"check_failed",
+						"update_preflight_failed",
+						"success",
+						"failed",
+					]),
+				}
+			: {}),
+	};
+	if (Object.keys(object(out.remote_diagnostics)).length === 0)
+		delete out.remote_diagnostics;
+	if (src.bond_mapping !== undefined)
+		out.bond_mapping =
+			src.bond_mapping === null
+				? null
+				: {
+						state: choice(object(src.bond_mapping).state, [
+							"active",
+							"absent",
+							"degraded",
+						]),
+						disposition: choice(object(src.bond_mapping).disposition, [
+							"mapped",
+							"retained_last_valid",
+							"legacy_unique_only",
+							"startup_collision_excluded",
+						]),
+						source: choice(object(src.bond_mapping).source, [
+							"sender",
+							"writer",
+						]),
+						...(choice(object(src.bond_mapping).reason, [
+							"hash_mismatch",
+							"malformed",
+							"unknown_iface",
+							"retry_exhausted",
+							"missing_file",
+							"unreadable",
+							"unsupported",
+						])
+							? { reason: object(src.bond_mapping).reason }
+							: {}),
+					};
+	if (src.wifi !== undefined) out.wifi = wifi(src.wifi);
+	if (src.modems !== undefined) out.modems = modems(src.modems);
+	for (const [key, numeric, flags] of [
+		["engine_bitrate", ["applied_kbps", "ceiling_kbps"], []],
+		[
+			"buffering",
+			["spooled_bytes", "data_headroom_bytes"],
+			["active", "disk_warning"],
+		],
+	] as const)
+		if (src[key] !== undefined)
+			out[key] =
+				src[key] === null
+					? null
+					: { ...numbers(src[key], numeric), ...booleans(src[key], flags) };
+	if (src.linkTelemetry !== undefined) {
+		const t = object(src.linkTelemetry);
+		out.linkTelemetry =
+			src.linkTelemetry === null
+				? null
+				: {
+						...numbers(t, ["measured_bps", "bytes_sent_total", "lastReadMs"]),
+						links: Array.isArray(t.links)
+							? t.links.map((raw, i) => {
+									const row = object(raw);
+									return {
+										conn_id: opaqueRow(
+											row.conn_id == null ? "connection-index" : "connection",
+											row.conn_id ?? i,
+											transport,
+										),
+										...(typeof row.link_id === "string"
+											? {
+													link_id: opaqueRow(
+														"physical",
+														row.link_id,
+														transport,
+													),
+												}
+											: {}),
+										iface: interfaceLabel(row.iface),
+										...numbers(row, [
+											"rtt_ms",
+											"nak_count",
+											"weight_percent",
+											"bitrate_bps",
+											"bytes_sent_total",
+										]),
+										...booleans(row, ["stale"]),
+										...(row.identity_state === "unmappable"
+											? { identity_state: "unmappable" }
+											: {}),
+									};
+								})
+							: [],
+					};
+	}
+	return out;
+}
+/** Unknown message types and fields fail closed, including direct command replies. */
+export function projectRemotePayload(
+	type: string,
+	v: unknown,
+	transport = "legacy",
+): unknown {
+	switch (type) {
+		case "notification":
+			return projectLegacyNotification(v);
+		case "telemetry":
+			return {
+				samples: Array.isArray(object(v).samples)
+					? (object(v).samples as unknown[]).map((raw) => ({
+							linkId: interfaceLabel(object(raw).linkId),
+							...numbers(raw, [
+								"rttMs",
+								"nakCount",
+								"weightPercent",
+								"packetLoss",
+								"jitterMs",
+								"tsMs",
+							]),
+						}))
+					: [],
+			};
+		case "pipelines":
+		case "sources": {
+			const parsed = hardwareTypeSchema.safeParse(object(v).hardware);
+			return {
+				hardware: parsed.success ? parsed.data : "generic",
+				[type]: type === "sources" ? [] : {},
 			};
 		}
+		case "relays":
+			return { servers: {}, accounts: {} };
+		case "acodecs":
+			return AUDIO_CODECS;
+		case "status":
+			return projectRemoteStatus(v, transport);
+		case "config":
+			return v === null ? {} : projectRemoteConfig(v);
+		case "netif":
+			return rows(v, "Link", (row) => ({
+				...numbers(row, ["tp", "tx_bps", "rx_bps"]),
+				...booleans(row, ["enabled"]),
+				...(row.error === "policy_route_missing"
+					? { error: "policy_route_missing" }
+					: {}),
+			}));
+		case "modems":
+			return modems(v);
+		case "sensors":
+			return projectRemoteSensors(object(v));
+		case "device-stats":
+			return {
+				disk: null,
+				ifaceRxTx: null,
+				raucSlot: "",
+				cpuLoad1: null,
+				socTemp: null,
+				...numbers(v, [
+					"cpuLoad1",
+					"socTemp",
+					"memTotalBytes",
+					"memAvailableBytes",
+				]),
+			};
+		case "device.activeProfile": {
+			const c = object(object(v).config);
+			return {
+				config: {
+					...(streamProfileIdSchema.safeParse(c.presetId).success
+						? { presetId: c.presetId }
+						: {}),
+					...numbers(c, ["latencyMs"]),
+					...booleans(c, ["fecEnabled"]),
+					recoveryMode:
+						choice(c.recoveryMode, ["standard", "bandwidth-saver"]) ??
+						"standard",
+				},
+			};
+		}
+		// Notification free text must use the dedicated notification projection.
+		default:
+			return undefined;
 	}
-	return projected;
 }
-
-/** Only the internal pairing seed is withheld from authenticated remote config. */
-export function projectRemoteConfig(payload: unknown): unknown {
-	if (typeof payload !== "object" || payload === null) return payload;
-	if (!("pairing_secret" in payload)) return payload;
-	const config = { ...payload };
-	Reflect.deleteProperty(config, "pairing_secret");
-	return config;
+let projectionDrops = 0;
+/** Number of invalid payloads rejected by a type-specific DTO. Designed withholds are excluded. No payload is retained. */
+export function getRemoteProjectionDrops(): number {
+	return projectionDrops;
 }
-
-/** Remote status retains credentials and omits only local radio lifetime tokens. */
-export function projectRemoteStatus(payload: unknown): unknown {
+export function projectRemoteLegacyFrame(
+	v: unknown,
+	transport = "legacy",
+): Row {
+	const src = object(v),
+		out: Row = {};
+	for (const [type, payload] of Object.entries(src)) {
+		const projected = projectRemotePayload(type, payload, transport);
+		if (projected !== undefined) out[type] = projected;
+		else if (type === "notification" && payload !== undefined) {
+			const legacy = object(payload);
+			// The base notification producer has no revisioned relay envelope. It is
+			// deliberately withheld until the relay producer is installed.
+			const baseNotification =
+				Object.keys(legacy).length === 1 && Array.isArray(legacy.show);
+			if (!baseNotification) projectionDrops++;
+		}
+	}
 	if (
-		typeof payload !== "object" ||
-		payload === null ||
-		!("wifi" in payload) ||
-		typeof payload.wifi !== "object" ||
-		payload.wifi === null
-	) {
-		return payload;
-	}
-
-	return {
-		...payload,
-		wifi: Array.isArray(payload.wifi)
-			? payload.wifi.map(omitIncarnation)
-			: Object.fromEntries(
-					Object.entries(payload.wifi).map(([id, iface]) => [
-						id,
-						omitIncarnation(iface),
-					]),
-				),
-	};
+		typeof src.seq === "number" &&
+		Number.isSafeInteger(src.seq) &&
+		src.seq >= 0
+	)
+		out.seq = src.seq;
+	return out;
 }

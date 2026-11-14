@@ -10,10 +10,10 @@ import {
 	handleSelfFencingOp,
 	resetSelfFencingState,
 } from "../modules/remote-control/self-fencing.ts";
+import { expectNoSourceStrings } from "./helpers/remote-outbound-assert.ts";
 import {
 	AUTH_KEY,
 	CID,
-	expectedBytes,
 	expectNoPairingSecret,
 } from "./helpers/remote-privacy-cases.ts";
 import { usePrivacyConfig } from "./helpers/remote-privacy-config.ts";
@@ -32,7 +32,7 @@ for (const type of [
 	"device.remoteKeyChange",
 ]) {
 	for (const confirm of [false, true]) {
-		test(`${type} ${confirm ? "commit" : "rollback"} results omit pairing seed but retain complete device snapshots`, async () => {
+		test(`${type} ${confirm ? "commit" : "rollback"} results omit pairing seed but withhold private device snapshots`, async () => {
 			const config = getConfig();
 			const snapshot = structuredClone(config);
 			const frames: Result[] = [];
@@ -71,28 +71,25 @@ for (const type of [
 			expect(frames).toHaveLength(2);
 			for (const [index, result] of frames.entries()) {
 				const state = index === 0 || confirm ? applied : snapshot;
-				expect(JSON.stringify(result)).toBe(
-					expectedBytes(
-						{
-							v: PROTOCOL_VERSION,
-							kind: "result",
-							type,
-							cid: CID,
-							role: "owner",
-							...(index === 0 ? { self_fencing: true } : {}),
-							payload: {
-								ok: true,
-								applied: state,
-								...(index === 0 ? {} : { reverted: !confirm }),
-							},
-						},
-						state,
-					),
-				);
+				expectNoSourceStrings(JSON.stringify(frames), state);
+				expect(result).toMatchObject({
+					v: PROTOCOL_VERSION,
+					kind: "result",
+					type,
+					cid: CID,
+					role: "owner",
+					payload: {
+						ok: true,
+						applied:
+							typeof state.max_br === "number" ? { max_br: state.max_br } : {},
+						...(index === 0 ? {} : { reverted: !confirm }),
+					},
+				});
+				if (index === 0) expect(result.self_fencing).toBe(true);
 				expect(ResultSchema.safeParse(result).success).toBe(true);
 			}
 			expectNoPairingSecret(JSON.stringify(frames));
-			expect(JSON.stringify(frames)).toContain(AUTH_KEY);
+			expect(JSON.stringify(frames)).not.toContain(AUTH_KEY);
 			expect(config).toStrictEqual(confirm ? applied : snapshot);
 		});
 	}

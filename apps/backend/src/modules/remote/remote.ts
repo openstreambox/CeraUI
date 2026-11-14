@@ -41,6 +41,7 @@ import {
 	type CloudProviderEndpoint,
 	type ProviderSelection,
 	type SubscriptionStatus,
+	subscriptionStatusSchema,
 } from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
 import type { RawData } from "ws";
@@ -79,10 +80,12 @@ import {
 	updateCachedRelays,
 	type ValidateRemoteRelaysMessage,
 } from "./remote-relays.ts";
+
+let warnedProjectionDrop = false;
+
 import {
-	projectRemoteConfig,
-	projectRemoteStatus,
-	projectRemoteWifiFrame,
+	getRemoteProjectionDrops,
+	projectRemoteLegacyFrame,
 } from "./remote-status.ts";
 import { buildRemoteWsUrl } from "./remote-url.ts";
 
@@ -439,18 +442,50 @@ async function remoteConnect() {
 	const send = remoteWs.send.bind(remoteWs);
 	remoteWs.send = (data, options?, cb?: (err?: Error) => void) => {
 		const frame: Record<string, unknown> = JSON.parse(String(data));
-		let projected =
-			frame.status === undefined
-				? frame
-				: {
-						...frame,
-						status: projectRemoteStatus(frame.status),
-					};
-		const config = projectRemoteConfig(frame.config);
-		if (config !== frame.config) projected = { ...projected, config };
-		const wifi = projectRemoteWifiFrame(frame.wifi);
-		if (wifi !== frame.wifi) projected = { ...projected, wifi };
-		const message = projected === frame ? data : JSON.stringify(projected);
+		// Encoder authentication is transport authentication, never a status DTO.
+		const auth = frame.remote;
+		const authPayload =
+			auth && typeof auth === "object" && "auth/encoder" in auth
+				? (auth as Record<string, unknown>)["auth/encoder"]
+				: undefined;
+		const authObject =
+			authPayload && typeof authPayload === "object"
+				? (authPayload as Record<string, unknown>)
+				: undefined;
+		const dropsBefore = getRemoteProjectionDrops();
+		const message =
+			authObject &&
+			typeof authObject.key === "string" &&
+			typeof authObject.version === "number"
+				? JSON.stringify({
+						remote: {
+							"auth/encoder": {
+								key: authObject.key,
+								version: authObject.version,
+								...(subscriptionStatusSchema.safeParse(authObject.sub_status)
+									.success
+									? { sub_status: authObject.sub_status }
+									: {}),
+							},
+						},
+					})
+				: JSON.stringify(
+						projectRemoteLegacyFrame(
+							frame,
+							`legacy:${protocol}://${endpointHost}${endpointPath}`,
+						),
+					);
+		if (getRemoteProjectionDrops() > dropsBefore && !warnedProjectionDrop) {
+			warnedProjectionDrop = true;
+			logger.warn(
+				"remote status payload rejected by projection; dropped payloads are counted",
+			);
+		}
+		if (message === "{}") {
+			if (typeof options === "function") options();
+			else cb?.();
+			return;
+		}
 		if (typeof options === "function") {
 			send(message, options);
 		} else {
