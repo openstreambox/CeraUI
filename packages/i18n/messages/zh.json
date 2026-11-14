@@ -1864,7 +1864,7 @@
 	"notifications.stillLiveHdmi": "HDMI 摄像头画面已停止。你仍在直播。请检查 HDMI 连接。",
 	"notifications.stillLiveNetwork": "网络摄像头画面已停止。你仍在直播。请检查摄像头的网络连接。",
 	"notifications.stillLiveSilence": "直播已连续 10 秒没有声音。你仍在直播。请检查麦克风。",
-	"notifications.stillLiveStandby": "摄像头画面已停止。你仍在直播。观众看到的是待机画面。请检查摄像头连接。 摄像头画面恢复后，直播会自动继续。",
+	"notifications.stillLiveStandby": "摄像头画面已停止。你仍在直播。观众看到的是待机画面。请检查摄像头连接。摄像头画面恢复后，直播会自动继续。",
 	"notifications.captureStandbyLong": "直播已待机超过10分钟。摄像头恢复后会继续。",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "有可用的 CeraLive 更新。打开 设置 → 软件更新 进行安装。",

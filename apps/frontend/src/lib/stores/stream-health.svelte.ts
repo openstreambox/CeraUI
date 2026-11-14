@@ -187,36 +187,6 @@ export function reduceHealth(
 }
 
 /**
- * Is the running stream receiving no video at all?
- *
- * The backend rolls this up already — `deriveReason` answers
- * `{component:"frames", detail:"No frames advancing"}` the moment the frame
- * counter stops moving — but the HUD only renders it as an amber triangle plus
- * a reason string that is `hidden` below the `sm` breakpoint, and the transition
- * toast expires after five seconds. An operator who looks at the Live cockpit
- * thirty seconds into a dead-air outage sees nothing at all, which is exactly
- * how a mid-stream HDMI unplug was reported as "not showing signal loss".
- *
- * This is a DISPLAY predicate over the backend's own verdict — it never
- * re-derives liveness. Three deliberate strictnesses:
- *   - a `healthy`/`idle` rollup can never report signal loss, so the banner can
- *     never contradict the dot beside it;
- *   - the process must be confirmed alive, and health cannot be `dead`, before
- *     copy may say that the operator is still live;
- *   - `advancing` must be EXACTLY `false`. `null` means "no frame telemetry this
- *     window" (the cold-start branch), and an unknown is not an outage.
- */
-export function isVideoSignalLost(rollup: HealthRollup | null): boolean {
-	if (rollup === null) return false;
-	if (rollup.state === "healthy" || rollup.state === "idle") return false;
-	return (
-		rollup.state !== "dead" &&
-		rollup.process.alive === true &&
-		rollup.frames.advancing === false
-	);
-}
-
-/**
  * Cause-specific copy for a `degraded` rollup, keyed on the backend's OWN
  * `reason.component` so the toast and the HUD reason can never disagree.
  *

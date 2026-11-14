@@ -1864,7 +1864,7 @@
 	"notifications.stillLiveHdmi": "HDMIカメラ映像が停止しました。配信は続いています。HDMI接続を確認してください。",
 	"notifications.stillLiveNetwork": "ネットワークカメラ映像が停止しました。配信は続いています。カメラのネットワーク接続を確認してください。",
 	"notifications.stillLiveSilence": "配信の音声が10秒間無音です。配信は続いています。マイクを確認してください。",
-	"notifications.stillLiveStandby": "カメラ映像が停止しました。配信は続いています。視聴者には待機画面が表示されています。カメラの接続を確認してください。 カメラ映像が戻ると自動的に再開します。",
+	"notifications.stillLiveStandby": "カメラ映像が停止しました。配信は続いています。視聴者には待機画面が表示されています。カメラの接続を確認してください。カメラ映像が戻ると自動的に再開します。",
 	"notifications.captureStandbyLong": "配信は10分以上待機状態です。カメラが戻ると再開します。",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "CeraLive のアップデートがあります。設定 → ソフトウェア更新 を開いてインストールしてください。",

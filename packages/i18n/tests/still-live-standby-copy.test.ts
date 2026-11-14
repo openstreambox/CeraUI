@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 const recoveryCopy = {
-	en: "It resumes automatically when a camera feed returns.",
+	en: "The stream resumes automatically when a camera feed returns.",
 	es: "Se reanuda automáticamente cuando vuelve la señal de una cámara.",
 	ar: "يُستأنف البث تلقائيًا عند عودة إشارة إحدى الكاميرات.",
 	de: "Die Übertragung wird automatisch fortgesetzt, sobald ein Kamerasignal zurückkehrt.",
@@ -20,5 +20,8 @@ for (const [locale, recovery] of Object.entries(recoveryCopy)) {
 			new URL(`../messages/${locale}.json`, import.meta.url),
 		).json();
 		expect(catalog["notifications.stillLiveStandby"]).toContain(recovery);
+		if (locale === "ja" || locale === "zh") {
+			expect(catalog["notifications.stillLiveStandby"]).not.toMatch(/。\s/);
+		}
 	});
 }
