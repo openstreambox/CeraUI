@@ -263,7 +263,7 @@ test("a previously large leg needs sixty seconds under thirty percent, then cand
 test("duplicate legs, future timestamps, invalid values and gaps cannot establish dwell", () => {
 	for (const alter of [
 		(s: BoxSample) => {
-			item(s.links, 2).id = "leg0";
+			item(s.links, 1).id = "leg0";
 		},
 		(s: BoxSample) => {
 			s.at = s.now + 1;
@@ -761,7 +761,7 @@ test("smallest tied-temperature leg and busiest eligible client win", () => {
 	for (let t = 0; t <= 80000; t += 1000) {
 		const s = sample(t);
 		s.links.push({ ...item(s.links, 2), id: "smaller", rate: 90 });
-		item(s.clients, 1).trafficKbps = 100;
+		item(s.clients, 1).trafficKbps = 200;
 		s.clients.push({ ...item(s.clients, 1), id: "other", trafficKbps: 300 });
 		result = p.tick(s);
 	}
