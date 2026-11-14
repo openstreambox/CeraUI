@@ -208,14 +208,14 @@ export interface StreamRestorationDeps {
  * of this graph documents: the launch path reaches `sources.ts`, which is
  * upstream of the orchestrator that imports this module.
  */
-async function defaultLaunch(
+export async function launchRestoredStream(
 	config: ArmedStreamConfig,
 	current: () => boolean,
 ): Promise<RestorationLaunchOutcome> {
 	const [
 		{ validateConfig },
 		{ resolveSrtla },
-		{ prepareSrtlaIpAddresses },
+		{ prepareSrtlaIpAddresses, attachFamilyRefresh, detachFamilyRefresh },
 		{ startStream },
 		{ startStreamSession },
 		{ StreamStartFailure, classifyStartFailure, typedStartFailure },
@@ -233,7 +233,9 @@ async function defaultLaunch(
 	try {
 		resolved = await validateConfig({ ...config });
 		if (!current()) return { ok: false, reason: "start_cancelled" };
-		await prepareSrtlaIpAddresses(resolved.srtlaAddr);
+		const address = await resolveSrtla(resolved.srtlaAddr);
+		if (!current()) return { ok: false, reason: "start_cancelled" };
+		await prepareSrtlaIpAddresses(address);
 	} catch (error) {
 		defaultLogger.warn("stream restoration: the saved config is not usable", {
 			error,
@@ -244,28 +246,40 @@ async function defaultLaunch(
 	if (!current()) return { ok: false, reason: "start_cancelled" };
 	const result = await startStreamSession({
 		origin: "restoration",
-		launch: async ({ attemptId }) => {
+		launch: async ({ attemptId, generation, cancelled }) => {
 			const srtlaAddr = await resolveSrtla(resolved.srtlaAddr);
-			const launched = await startStream(
-				resolved.pipeline,
+			await prepareSrtlaIpAddresses(srtlaAddr);
+			if (cancelled() || !current()) throw new Error("start_cancelled");
+			attachFamilyRefresh(
 				srtlaAddr,
-				resolved.srtlaPort,
-				resolved.streamid,
-				{},
-				attemptId,
-				config,
+				generation,
+				() => !cancelled() && current(),
 			);
-			if (!launched.success) {
-				throw new StreamStartFailure(
-					launched.failureClass !== undefined
-						? typedStartFailure(
-								attemptId,
-								launched.phase,
-								launched.failureClass,
-								launched.error,
-							)
-						: classifyStartFailure(launched.phase, launched.error, attemptId),
+			try {
+				const launched = await startStream(
+					resolved.pipeline,
+					srtlaAddr,
+					resolved.srtlaPort,
+					resolved.streamid,
+					{},
+					attemptId,
+					config,
 				);
+				if (!launched.success) {
+					throw new StreamStartFailure(
+						launched.failureClass !== undefined
+							? typedStartFailure(
+									attemptId,
+									launched.phase,
+									launched.failureClass,
+									launched.error,
+								)
+							: classifyStartFailure(launched.phase, launched.error, attemptId),
+					);
+				}
+			} catch (error) {
+				detachFamilyRefresh(generation);
+				throw error;
 			}
 		},
 	});
@@ -315,7 +329,7 @@ function defaultDeps(): StreamRestorationDeps {
 			return state === "idle" || state === "streaming" ? state : "unknown";
 		},
 		lifecycleState: () => getStreamSessionSnapshot().state,
-		launch: defaultLaunch,
+		launch: launchRestoredStream,
 		publish: defaultPublish,
 		wait: (ms) =>
 			new Promise((resolve) => {

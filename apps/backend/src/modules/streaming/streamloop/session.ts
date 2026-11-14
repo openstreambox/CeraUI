@@ -49,6 +49,7 @@ import {
 	updateStatus,
 } from "../streaming.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
+import { createFamilyRefresh } from "./family-refresh.ts";
 import { getStreamingProcesses, stopProcessAndWait } from "./process-runner.ts";
 import { reportSessionInvariant } from "./resource-invariant.ts";
 import { prepareSrtlaIpAddresses } from "./srtla-ip-preparation.ts";
@@ -66,6 +67,54 @@ type SessionResources = {
 };
 
 let sessionResources: SessionResources | undefined;
+
+export function attachFamilyRefresh(
+	srtlaAddr: string,
+	generation: number,
+	ownsLaunch: () => boolean,
+): void {
+	if (sessionResources)
+		sessionResources.removeNetworkInterfacesChangeListener();
+	const refreshSrtlaIpAddresses = async () => {
+		if (sessionResources?.generation !== generation || !ownsLaunch()) return;
+		try {
+			// `changed` is true for a MAPPING-ONLY republication too — moving a link
+			// from one interface to another leaves the IP bytes byte-identical, so a
+			// SIGHUP keyed on the list alone would skip the very reload that carries
+			// the new mapping.
+			const publication = await prepareSrtlaIpAddresses(
+				srtlaAddr,
+				undefined,
+				true,
+			);
+			if (sessionResources?.generation !== generation || !ownsLaunch()) return;
+			if (publication.changed && getIsStreaming()) restartSrtla();
+		} catch (error) {
+			logger.warn("Failed to refresh SRTLA IP addresses", { error });
+		}
+	};
+	const dispose = createFamilyRefresh(refreshSrtlaIpAddresses, {
+		interval: (tick, ms) => {
+			const timer = setInterval(tick, ms);
+			return () => clearInterval(timer);
+		},
+		subscribe: (refresh) => {
+			const removeListener = onNetworkInterfaceSourcesChange(refresh);
+			return removeListener;
+		},
+	});
+	sessionResources = {
+		generation,
+		removeNetworkInterfacesChangeListener: dispose,
+	};
+}
+
+/** Dispose only resources still owned by this launch generation. */
+export function detachFamilyRefresh(generation: number): void {
+	if (sessionResources?.generation !== generation) return;
+	sessionResources.removeNetworkInterfacesChangeListener();
+	sessionResources = undefined;
+}
 
 export async function start(
 	conn: WebSocket,
@@ -139,26 +188,7 @@ export async function start(
 			}),
 		);
 	}
-	const refreshSrtlaIpAddresses = async () => {
-		if (sessionResources?.generation !== generation || !ownsLaunch()) return;
-		try {
-			// `changed` is true for a MAPPING-ONLY republication too — moving a link
-			// from one interface to another leaves the IP bytes byte-identical, so a
-			// SIGHUP keyed on the list alone would skip the very reload that carries
-			// the new mapping.
-			const publication = await prepareSrtlaIpAddresses(c.srtlaAddr);
-			if (sessionResources?.generation !== generation || !ownsLaunch()) return;
-			if (publication.changed && getIsStreaming()) restartSrtla();
-		} catch (error) {
-			logger.warn("Failed to refresh SRTLA IP addresses", { error });
-		}
-	};
-	sessionResources = {
-		generation,
-		removeNetworkInterfacesChangeListener: onNetworkInterfaceSourcesChange(
-			refreshSrtlaIpAddresses,
-		),
-	};
+	attachFamilyRefresh(c.srtlaAddr, generation, ownsLaunch);
 
 	let result: StartStreamResult;
 	try {
@@ -171,10 +201,7 @@ export async function start(
 			attemptId,
 		);
 	} catch (err) {
-		if (sessionResources?.generation === generation) {
-			sessionResources.removeNetworkInterfacesChangeListener();
-			sessionResources = undefined;
-		}
+		detachFamilyRefresh(generation);
 		if (err instanceof StreamStartFailure) throw err;
 		if (typeof err === "string") {
 			startError(conn, err, senderId);
@@ -190,10 +217,7 @@ export async function start(
 		};
 	}
 
-	if (!result.success && sessionResources?.generation === generation) {
-		sessionResources.removeNetworkInterfacesChangeListener();
-		sessionResources = undefined;
-	}
+	if (!result.success) detachFamilyRefresh(generation);
 	return result;
 }
 
