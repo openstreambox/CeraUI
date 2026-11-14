@@ -2778,6 +2778,6 @@
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
 	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} está conectado, mas não transmite nada. Confira: esta rede alcança o receptor?",
-	"network.view.connectedIdleDetails": "A transmissão continua ao vivo pelas outras conexões. Esta conexão quase não enviou dados da transmissão por 20 segundos. Ter internet não garante acesso ao receptor. Confira a VPN e o endereço do receptor nesta rede."
+	"network.view.connectedIdle": "{link} está conectado, mas quase não transporta dados da transmissão.",
+	"network.view.connectedIdleDetails": "A transmissão continua ao vivo pelas outras conexões. Esta conexão quase não transporta dados da transmissão há pelo menos 20 segundos. O transmissor pode estar usando outras conexões. Se persistir, verifique a VPN, o firewall ou o DNS desta rede e as estatísticas de conexão do transmissor. Este aviso não identifica a causa."
 }

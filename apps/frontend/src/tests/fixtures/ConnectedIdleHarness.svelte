@@ -5,7 +5,7 @@ import { links, telemetry } from '$main/network/connected-idle-fixture';
 let sample = $state({ ...telemetry(), lastReadMs: 0 });
 let at = 0;
 function advance(bitrate = 0) {
-	at += 1000;
+	at += 5500;
 	sample = { ...telemetry(bitrate), lastReadMs: at };
 }
 </script>

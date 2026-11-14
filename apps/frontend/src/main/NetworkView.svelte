@@ -220,6 +220,7 @@ function openModemConfig(id: string) {
 		</section>
 	{:else}
 		<BondedLinksSection
+			observedIdleLinks={(hud.connectedIdleLinks ?? []).map(link => link.id)}
 			{links}
 			{modemEntries}
 			{linkTelemetry}

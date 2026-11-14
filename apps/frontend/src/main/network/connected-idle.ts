@@ -2,7 +2,14 @@ import type { LinkTelemetryMessage } from "@ceraui/rpc/schemas";
 import type { LinkSignal } from "$lib/types/hud";
 
 export const IDLE_HOLD_MS = 20_000;
-export const SAMPLE_GAP_MS = 5_000;
+// Backend heartbeat: 5 s ±10%, plus one second of file-poll quantization.
+const HEARTBEAT_MS = 5_000;
+const HEARTBEAT_JITTER = 0.1;
+const READ_PERIOD_MS = 1_000;
+export const SAMPLE_GAP_MS =
+	HEARTBEAT_MS * (1 + HEARTBEAT_JITTER) + READ_PERIOD_MS;
+const SHOWN_GAP_MS = 2 * HEARTBEAT_MS * (1 + HEARTBEAT_JITTER) + READ_PERIOD_MS;
+const RECOVERY_BPS = 2048;
 // Allow transport keepalives, but never call a useful media rate idle.
 const QUIET_BPS = 1024;
 
@@ -11,6 +18,7 @@ type Sample = {
 	at: number;
 	bytes: number | undefined;
 	identity: string;
+	shown: boolean;
 };
 
 /** Observation-only; elapsed time without fresh sender samples is not evidence. */
@@ -33,6 +41,9 @@ export class ConnectedIdleDetector {
 		);
 		if (live)
 			for (const link of eligible) {
+				const previous = this.samples.get(link.id);
+				const activeRate = (bps: number) =>
+					previous?.shown ? bps >= RECOVERY_BPS : bps > QUIET_BPS;
 				const row = telemetry?.links.find((row) => row.iface === link.id);
 				const peerCarries = telemetry?.links.some(
 					(peer) =>
@@ -46,17 +57,16 @@ export class ConnectedIdleDetector {
 					row.stale ||
 					row.bitrate_bps === undefined ||
 					!Number.isFinite(row.bitrate_bps) ||
-					row.bitrate_bps > QUIET_BPS ||
+					activeRate(row.bitrate_bps) ||
 					!peerCarries
 				)
 					continue;
 				const identity = row.link_id ?? row.conn_id;
-				const previous = this.samples.get(link.id);
 				const continuous =
 					previous &&
 					previous.identity === identity &&
 					now >= previous.at &&
-					now - previous.at <= SAMPLE_GAP_MS;
+					now - previous.at <= (previous.shown ? SHOWN_GAP_MS : SAMPLE_GAP_MS);
 				const bytes = row.bytes_sent_total;
 				const delta =
 					continuous && bytes !== undefined && previous.bytes !== undefined
@@ -65,10 +75,11 @@ export class ConnectedIdleDetector {
 				const resumed =
 					previous !== undefined &&
 					delta !== undefined &&
-					(delta < 0 || (delta * 8) / ((now - previous.at) / 1000) > QUIET_BPS);
+					(delta < 0 || activeRate((delta * 8) / ((now - previous.at) / 1000)));
 				const since = continuous && !resumed ? previous.since : now;
-				next.set(link.id, { since, at: now, bytes, identity });
-				if (now - since >= IDLE_HOLD_MS) idle.push(link.id);
+				const shown = now - since >= IDLE_HOLD_MS;
+				next.set(link.id, { since, at: now, bytes, identity, shown });
+				if (shown) idle.push(link.id);
 			}
 		this.samples = next;
 		return idle;

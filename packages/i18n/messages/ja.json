@@ -2730,6 +2730,6 @@
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
 	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} は接続されていますが、データを送信していません。このネットワークから受信側に接続できるか確認してください。",
-	"network.view.connectedIdleDetails": "配信は他の回線で継続中です。この回線は20秒間ほとんど配信データを送信していません。インターネット接続だけでは受信側への到達を確認できません。この回線のVPNと受信側のアドレスを確認してください。"
+	"network.view.connectedIdle": "{link} は接続されていますが、ストリームの通信はほとんどありません。",
+	"network.view.connectedIdleDetails": "ストリームは他の接続で引き続きライブ配信中です。この接続では少なくとも20秒間、ストリームの通信がほとんどありません。送信側が他の接続を使用している可能性があります。状態が続く場合は、このネットワークのVPN、ファイアウォール、DNSと送信側の接続統計を確認してください。この通知は原因を特定するものではありません。"
 }

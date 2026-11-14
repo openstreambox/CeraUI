@@ -2787,6 +2787,6 @@
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
 	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} متصل لكنه لا ينقل شيئًا. تحقّق: هل تستطيع هذه الشبكة الوصول إلى المستقبِل؟",
-	"network.view.connectedIdleDetails": "لا يزال البث مباشرًا عبر الاتصالات الأخرى. لم ينقل هذا الاتصال بيانات بث تُذكر خلال 20 ثانية. الاتصال بالإنترنت وحده لا يثبت إمكانية الوصول إلى المستقبِل. تحقّق من VPN وعنوان المستقبِل على هذه الشبكة."
+	"network.view.connectedIdle": "{link} متصل لكنه لا ينقل تقريبًا أي بيانات للبث.",
+	"network.view.connectedIdleDetails": "لا يزال البث مباشرًا عبر الاتصالات الأخرى. لم ينقل هذا الاتصال تقريبًا أي بيانات للبث منذ 20 ثانية على الأقل. قد يستخدم المرسل اتصالات أخرى. إذا استمر ذلك، فتحقق من VPN أو جدار الحماية أو DNS لهذه الشبكة وإحصاءات اتصال المرسل. لا يحدد هذا الإشعار السبب."
 }

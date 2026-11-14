@@ -2775,6 +2775,6 @@
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
 	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} is connected but carries nothing. Check: can this network reach the receiver?",
-	"network.view.connectedIdleDetails": "The stream is still live on other links. This link has carried almost no stream traffic for 20 seconds. Internet access alone does not prove it can reach the receiver. Check this network’s VPN and receiver address."
+	"network.view.connectedIdle": "{link} is connected but carries almost no stream traffic.",
+	"network.view.connectedIdleDetails": "The stream is still live on other links. This link has carried almost no stream traffic for at least 20 seconds. The sender may be using other links. If this persists, check this network’s VPN, firewall or DNS and the sender’s link statistics. This notice does not identify the cause."
 }

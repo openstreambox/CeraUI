@@ -25,6 +25,8 @@ interface Props {
 	/** Known interfaces that carry no bonded traffic; stated, never listed here. */
 	unbondedCount?: number;
 	isStreaming?: boolean;
+	/** App-owned observations; standalone fixtures may use the local detector. */
+	observedIdleLinks?: string[];
 }
 
 const {
@@ -33,12 +35,13 @@ const {
 	linkTelemetry = undefined,
 	unbondedCount = 0,
 	isStreaming = false,
+	observedIdleLinks,
 }: Props = $props();
 
 const detector = new ConnectedIdleDetector();
 let idleLinks = $state<string[]>([]);
 $effect(() => {
-	idleLinks = detector.update(
+	idleLinks = observedIdleLinks ?? detector.update(
 		linkTelemetry?.lastReadMs ?? 0,
 		isStreaming && linkTelemetry?.lastReadMs !== undefined,
 		links,
@@ -173,12 +176,14 @@ const totalStale = $derived(
 							<LinkTelemetry class="gap-x-2.5" {entry} loading={telemetryLoading} />
 						</div>
 					</div>
+					<div class={idleLinks.includes(link.id) ? "basis-full" : "contents"} aria-live="polite">
 					{#if idleLinks.includes(link.id)}
-						<details class="basis-full text-sm" data-testid="connected-idle-notice">
-							<summary>{m["network.view.connectedIdle"]({ link: `L${link.linkIndex + 1} · ${link.label} · ${linkTypeLabel(link)}` })}</summary>
+						<details class="basis-full rounded border border-current/20 p-2 text-sm" data-testid="connected-idle-notice">
+							<summary>{m["network.view.connectedIdle"]({ link: link.label })}</summary>
 							<p class="text-muted-foreground mt-1 text-xs">{m["network.view.connectedIdleDetails"]()}</p>
 						</details>
 					{/if}
+					</div>
 				</div>
 			{/each}
 		</div>

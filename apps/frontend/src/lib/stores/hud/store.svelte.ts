@@ -10,6 +10,7 @@
  * non-deprecated surface).
  */
 
+import { untrack } from "svelte";
 import {
 	getConfig,
 	getConnectionState,
@@ -31,6 +32,7 @@ import type {
 	HudTimestamps,
 	LinkSignal,
 } from "$lib/types/hud";
+import { ConnectedIdleDetector } from "$main/network/connected-idle";
 import { STALE_THRESHOLD_MS } from "./constants";
 import { deriveHudState } from "./derive";
 import {
@@ -44,6 +46,7 @@ import {
 
 interface HudStore {
 	getHudState(): HudState;
+	getConnectedIdleLinks(): LinkSignal[];
 	getStreamingLiveState(): {
 		isLive: boolean;
 		bitrateKbps: number | null;
@@ -162,7 +165,28 @@ function createHudStore(): HudStore {
 		}, delay);
 	};
 
+	const detector = new ConnectedIdleDetector();
+	let idleLinks = $state<LinkSignal[]>([]);
 	const stopRoot = $effect.root(() => {
+		$effect(() => {
+			const sources = readSources();
+			const frame = sources.linkTelemetry;
+			// Delivery drives the observation window. The display's 1 Hz age clock
+			// must not manufacture samples or reset it between jittered heartbeats.
+			const state = untrack(() =>
+				deriveHudState(sources, timestamps, frame?.lastReadMs ?? nowTick),
+			);
+			const ids = detector.update(
+				frame?.lastReadMs ?? 0,
+				state.isStreaming &&
+					!state.isStreamingStale &&
+					sources.isConnected &&
+					frame?.lastReadMs !== undefined,
+				state.links,
+				frame,
+			);
+			idleLinks = state.links.filter((link) => ids.includes(link.id));
+		});
 		$effect(() => {
 			const t = Date.now();
 
@@ -217,16 +241,19 @@ function createHudStore(): HudStore {
 		});
 	});
 
-	const snapshot = (): HudState =>
-		deriveHudState(
+	const snapshot = (): HudState => ({
+		...deriveHudState(
 			readSources(),
 			timestamps,
 			nowTick,
 			staleInterfaceIds(freshness, nowTick),
-		);
+		),
+		connectedIdleLinks: idleLinks,
+	});
 
 	return {
 		getHudState: () => snapshot(),
+		getConnectedIdleLinks: () => idleLinks,
 		getStreamingLiveState: () => {
 			const state = snapshot();
 			return {
@@ -297,4 +324,9 @@ export function getSocTelemetry(): {
 export function destroyHudStore(): void {
 	singleton?.destroy();
 	singleton = null;
+}
+
+/** Shared observation state survives navigation between Live and Network. */
+export function getConnectedIdleLinks(): LinkSignal[] {
+	return store().getConnectedIdleLinks();
 }

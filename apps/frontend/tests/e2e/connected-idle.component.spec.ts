@@ -26,13 +26,14 @@ test.beforeAll(async () => {
 						next();
 						return;
 					}
-					const html = `<!doctype html><html><head></head><body>
+					const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head><body>
 						<div id="fixture"></div><script type="module">
 						import { mount } from 'svelte';
 						import { ensureNamespace, initLocale } from '@ceraui/i18n/svelte';
 						import Harness from '/src/tests/fixtures/ConnectedIdleHarness.svelte';
 						initLocale({ saved: 'en' });
 						await ensureNamespace('network');
+						await ensureNamespace('units');
 						mount(Harness, { target: document.getElementById('fixture') });
 						</script></body></html>`;
 					void vite.transformIndexHtml(request.url, html).then((rendered) => {
@@ -61,9 +62,13 @@ test('quiet bonded link notice opens details and clears on recovery', async ({ p
 	await page.goto(`${origin}/__connected-idle-component.html`);
 	const notice = page.getByTestId('connected-idle-notice');
 	await expect(notice).toHaveCount(0);
-	for (let i = 0; i < 22; i++) await page.getByRole('button', { name: 'Next quiet sample' }).click();
+	for (let i = 0; i < 4; i++) await page.getByRole('button', { name: 'Next quiet sample' }).click();
 	await expect(notice).toBeVisible();
 	await expect(notice).toContainText('SIM 2');
+	await expect(notice).toContainText('carries almost no stream traffic');
+	await expect(notice).not.toContainText('can this network reach');
+	for (let i = 0; i < 110; i++) await page.getByRole('button', { name: 'Next quiet sample' }).click();
+	await expect(notice).toBeVisible();
 	await notice.locator('summary').click();
 	await expect(notice.locator('p')).toBeVisible();
 	await expect(notice).toContainText('still live on other links');

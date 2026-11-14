@@ -1,41 +1,58 @@
-# Connected links carrying no stream traffic
+# Connected links carrying almost no stream traffic
 
-During a live stream, the Network page can show a notice inside an enabled,
-connected bonded link's card when that link is contributing almost no traffic
-while another connected, enabled link carries traffic. It names the same link
-and type as the card. Open the notice for the receiver-reachability check.
-The stream continues over the other links.
+During a live stream, Live and Network show a notice for an enabled, connected
+bonded link contributing almost no traffic while another eligible link carries
+traffic. The shared page content shows the named notice above Live and other destinations;
+on Network it appears inside the link's card instead, avoiding duplicate
+announcements. Open either notice for details. The stream continues over the
+other links. The HUD store owns observations across navigation, so opening
+Network does not restart the window. Notices are announced politely and remain
+in the page flow.
 
-The detector observes existing sender telemetry only. It requires 20 seconds
-of samples at no more than 1,024 wire bits/s, allowing small transport keepalives.
-A peer must exceed that threshold throughout the window. Where cumulative sent
-bytes exist, a counter increase above the same rate also resets the hold.
-Counter resets, link identity changes, gaps over five seconds, stale or missing
-bitrate, disconnect, bond exclusion and stream stop reset the window. Repeated
-observation timestamps cannot advance it. There is no new probe or timer-driven
-network operation. Older backends without the observation timestamp show no
-notice. Opening Network begins a new observation window.
+The detector observes existing sender telemetry only. It requires at least
+20 seconds of samples at no more than 1,024 wire bits/s, allowing transport
+keepalives. A peer must exceed that threshold throughout the window. At the
+backend's 5-second heartbeat with ±10% jitter, onset is normally 20–25 seconds
+from the first quiet observation. The sample clock is the backend's fresh-read
+time, which may be quantized by its one-second file poll.
 
-RTT, NAK and weight remain visible beside the notice. Existing stream-health
-link-down counts describe the bond as a whole; existing uplink probe results
-indicate Internet health, not reachability of the configured receiver. None of
-these readings alone proves why a connected link is quiet. The notice therefore
-asks about receiver reachability rather than diagnosing a firewall or VPN.
+An initial hold allows 6.5 seconds between observations: the maximum jittered
+heartbeat plus one read period. A shown notice tolerates one missed heartbeat
+(up to 12 seconds). This grace does not permit a new notice to start from missing
+evidence. Once shown, the notice clears at 2,048 bits/s; the separate recovery
+threshold prevents keepalive-sized rate noise from repeatedly hiding it.
+Cumulative sent-byte deltas, when available, use the same entry/recovery rates.
+Counter rollback, link identity changes, larger gaps, stale or missing bitrate,
+disconnect, bond exclusion and stream stop reset the window. Repeated timestamps
+cannot advance it. There is no new probe or timer-driven network operation.
+Older backends without the observation timestamp show no notice.
 
-Deliberate rest must remove a link from bond eligibility, as operator exclusion
-already does. A policy that rests an enabled, connected sender row without
-changing eligibility needs to supply an explicit suppression before integration.
-The detector never interprets zero sender weight alone as deliberate rest: a
-receiver-unreachable path may also have zero weight.
+RTT, NAK and weight remain visible beside the Network notice. Positive sender
+weight means the sender reports the link connected and not timed out; this also
+matches the native sender's telemetry projection. A quiet link may reflect the
+sender's scheduling rather than a receiver-reachability problem. Zero weight
+proves neither deliberate rest nor an unreachable receiver. Both cases therefore
+use neutral wording. VPN, firewall or DNS checks are optional troubleshooting
+suggestions if the condition persists, rather than a diagnosis.
+
+Session opt-out and heat-ladder spare rest use `isBondOptedOut`, which makes the
+backend publish `netif.enabled: false`. `buildBond` removes that interface from
+the eligible links; production does not publish a disabled `LinkSignal` for it.
+The tests exercise this projection with the carrying peer still present and the
+sender row still in telemetry. Compatibility with the heat ladder was checked
+against its exclusion path; the notice does not activate or change that policy.
+
+The radio-health “Data path” finding is separate: it reports host Internet-path
+probe/registration evidence in modem details. It can coexist with this notice,
+which reports sender traffic contribution and does not classify path health.
 
 ## Operator copy
 
-English: “{link} is connected but carries nothing. Check: can this network reach
-the receiver?” Details explain that the stream remains live on other links.
+English: “{link} is connected but carries almost no stream traffic.” Details
+begin: “The stream is still live on other links.”
 
-Español: «{link} está conectado, pero no transmite nada. Comprueba: ¿esta red
-puede llegar al receptor?» Los detalles aclaran que el stream sigue en vivo por
-otras conexiones. Comprueba la VPN y la dirección del receptor en esta red.
+Español: «{link} está conectado, pero casi no transmite datos del stream».
+Los detalles comienzan: «El stream sigue en vivo por otras conexiones».
 
 All ten catalogs carry the notice and details. Publishing the corresponding
 English and Spanish user-guide update remains a release coordination step.
