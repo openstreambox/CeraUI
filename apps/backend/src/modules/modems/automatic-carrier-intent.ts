@@ -1,8 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-	readPrivateJson,
-	writePrivateJson,
-} from "../../helpers/private-json-state.ts";
+import { accessCellularAuthority } from "./cellular-authority-store.ts";
 export interface CarrierIntentIdentity {
 	readonly uuid: string;
 	readonly deviceId: string;
@@ -23,7 +20,7 @@ const defaultStore: CarrierIntentStore = {
 	get dir() {
 		return (
 			process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR ??
-			"/var/lib/ceralive/automatic-carrier-intent"
+			"/data/ceralive/automatic-carrier-intent"
 		);
 	},
 };
@@ -34,7 +31,10 @@ export function carrierIntentKey(identity: CarrierIntentIdentity): string {
 		throw new Error("Unresolved carrier intent identity");
 	return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
-function parseIntent(value: unknown, key: string): CarrierIntent {
+export function parseCarrierIntentSlot(
+	value: unknown,
+	key: string,
+): CarrierIntent {
 	if (!value || typeof value !== "object" || Array.isArray(value))
 		throw new Error("Invalid carrier intent");
 	const record = value as Record<string, unknown>;
@@ -81,8 +81,16 @@ export async function readCarrierIntent(
 	store: CarrierIntentStore = defaultStore,
 ): Promise<CarrierIntent | undefined> {
 	const key = carrierIntentKey(identity);
-	const value = await readPrivateJson(store, key);
-	return value === undefined ? undefined : parseIntent(value, key);
+	return accessCellularAuthority(
+		"automatic-carrier-intent",
+		key,
+		parseCarrierIntentSlot,
+		async (value) => value,
+		store === defaultStore
+			? process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR
+			: store.dir,
+		store === defaultStore,
+	);
 }
 /** Call under the modem lifecycle lease; never use this record as carrier identity. */
 export async function writeCarrierIntent(
@@ -91,8 +99,17 @@ export async function writeCarrierIntent(
 	store: CarrierIntentStore = defaultStore,
 ): Promise<void> {
 	const key = carrierIntentKey(identity);
-	if (intent) parseIntent(intent, key);
-	await writePrivateJson(store, key, intent);
+	if (intent) parseCarrierIntentSlot(intent, key);
+	await accessCellularAuthority(
+		"automatic-carrier-intent",
+		key,
+		parseCarrierIntentSlot,
+		async (_value, write) => write(intent),
+		store === defaultStore
+			? process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR
+			: store.dir,
+		store === defaultStore,
+	);
 }
 
 export function newCarrierIntent(
@@ -118,7 +135,7 @@ export function newPendingCarrierIntent(
 		...newCarrierIntent(identity, "automatic"),
 		pendingApn: apn,
 	};
-	parseIntent(intent, intent.key);
+	parseCarrierIntentSlot(intent, intent.key);
 	return intent;
 }
 /** A remembered APN is only a conflict witness; subscription evidence selects policy. */
@@ -145,7 +162,7 @@ export function parseCarrierIntent(
 	identity: CarrierIntentIdentity,
 	value: unknown,
 ): CarrierIntent {
-	return parseIntent(value, carrierIntentKey(identity));
+	return parseCarrierIntentSlot(value, carrierIntentKey(identity));
 }
 
 export function sameCarrierIntent(
