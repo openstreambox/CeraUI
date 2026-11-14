@@ -133,3 +133,8 @@ Hotspot roster changes retain their measured client count in remote status.
 Station rows are empty on remote transports; MAC addresses and radio lifetime
 tokens stay local. A client block is omitted until a valid roster was observed,
 so an unknown count is distinct from a measured zero.
+
+Power sensors use a closed display vocabulary: complete known status phrases,
+bank A/B parameters, bounded error codes, and numeric bank/reserve temperatures
+(including explicitly estimated readings). Unknown keys, sample timestamps and
+arbitrary text are withheld. New producer wording needs a matching DTO update.

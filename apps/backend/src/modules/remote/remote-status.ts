@@ -5,9 +5,9 @@ import {
 	hotspotClientsSchema,
 	streamProfileIdSchema,
 } from "@ceraui/rpc/schemas";
-
 import { AUDIO_CODECS } from "../streaming/pipeline-sources.ts";
 import { projectLegacyNotification } from "./legacy-notification-dto.ts";
+import { projectRemoteSensors } from "./remote-sensor-dto.ts";
 
 /** Outbound status is a separate public DTO. No producer objects are spread. */
 type Row = Record<string, unknown>;
@@ -383,18 +383,7 @@ export function projectRemotePayload(
 		case "modems":
 			return modems(v);
 		case "sensors":
-			return Object.fromEntries(
-				Object.entries({
-					"SoC temperature": "unavailable",
-					...object(v),
-				}).filter(
-					([key, value]) =>
-						["SoC temperature", "SoC voltage", "SoC current"].includes(key) &&
-						typeof value === "string" &&
-						(value === "unavailable" ||
-							/^-?\d+(?:\.\d+)? (?:°C|V|A)$/.test(value)),
-				),
-			);
+			return projectRemoteSensors(object(v));
 		case "device-stats":
 			return {
 				disk: null,
