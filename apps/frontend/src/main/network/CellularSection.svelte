@@ -129,6 +129,7 @@ import {
 	stateLabelKey,
 	stateTone,
 } from './cellular-row';
+import RadioHealthPanel from "./RadioHealthPanel.svelte";
 import { openRouterAdminUi, routerAdminOpenReasonKey } from './router-admin-open';
 import type { RouterSignalReadout } from './router-signal';
 import {
@@ -883,6 +884,7 @@ async function openAdminUi(rowId: string): Promise<void> {
 									{modem.ifname}{#if entry.ip}{' · '}{entry.ip}{/if}
 								</p>
 							{/if}
+							{#if modem.radio_health}<RadioHealthPanel radio={modem.radio_health} id={String(id)} network={modem.status?.network ?? modem.sim_network ?? "?"} />{/if}
 							<!-- ── ORDERED BY §2, NOT BY THE ORDER THE TODOS LANDED ─────────
 							     Signal (tier 2) → the row's one ACTION (tier 3) → identity and
 							     hardware tags (tiers 4-5). The admin button used to come LAST,

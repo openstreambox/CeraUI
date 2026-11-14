@@ -50,6 +50,7 @@ export type Modem = {
 	ifname: string; // e.g. wwan0
 	name: string; // e.g. "QUECTEL Broadband Module - 00000"
 	sim_network: string;
+	home_network?: string | undefined;
 	model?: string; // raw mmcli model, e.g. "RM520N-GL" — undefined if mmcli has no data
 	manufacturer?: string; // raw mmcli manufacturer, e.g. "Quectel" — undefined if absent
 	network_type: {
