@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="268"
+        mnc="07"
+        carrier="Vectone Mobile"
+        apn="webpt.mundio.com"
+        mmsc=""
+        mvno_match_data="Vectone Mobile"
+        mvno_type="spn"
+        password=""
+        port=""
+        proxy=""
+        type="default,supl"
+        user=""
+    />
+</apns>

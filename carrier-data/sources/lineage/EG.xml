@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="602"
+        mnc="04"
+        carrier="WE ims"
+        apn="ims"
+        type="ims"
+    />
+    <apn
+        mcc="602"
+        mnc="04"
+        carrier="WE internet"
+        apn="internet.te.eg"
+        type="default"
+    />
+    <apn
+        mcc="602"
+        mnc="04"
+        carrier="WE mms"
+        apn="mms.te.eg"
+        mmsc="http://wemmsc.te.eg:8080"
+        mmsport="8080"
+        mmsproxy="wemmsc.te.eg"
+        type="mms"
+    />
+</apns>

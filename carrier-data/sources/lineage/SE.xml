@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="240"
+        mnc="017"
+        carrier="Halebop MMS"
+        apn="mms.telia.se"
+        mmsc="http://mmss"
+        mmsport="80"
+        mmsproxy="193.209.134.132"
+        password=""
+        port=""
+        proxy=""
+        type="mms"
+        user=""
+    />
+</apns>

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="530"
+        mnc="02"
+        carrier="Telecom NZ"
+        apn="internet.telecom.co.nz"
+        type="default,supl"
+    />
+    <apn
+        mcc="530"
+        mnc="02"
+        carrier="Telecom NZ MMS"
+        apn="wap.telecom.co.nz"
+        mmsc="http://lsmmsc.xtra.co.nz"
+        mmsport="80"
+        mmsproxy="210.55.11.73"
+        type="mms"
+    />
+    <apn
+        mcc="530"
+        mnc="02"
+        carrier="VFNZ Internet"
+        apn="www.vodafone.net.nz"
+        type="default,supl"
+    />
+    <apn
+        mcc="530"
+        mnc="02"
+        carrier="VFNZ PXT"
+        apn="live.vodafone.com"
+        mmsc="http://pxt.vodafone.net.nz/pxtsend"
+        mmsport="8080"
+        mmsproxy="172.30.38.3"
+        type="mms"
+    />
+    <apn
+        mcc="530"
+        mnc="03"
+        carrier="Telecom NZ"
+        apn="internet.telecom.co.nz"
+        type="default,supl"
+    />
+    <apn
+        mcc="530"
+        mnc="03"
+        carrier="Telecom NZ MMS"
+        apn="wap.telecom.co.nz"
+        mmsc="http://lsmmsc.xtra.co.nz"
+        mmsport="80"
+        mmsproxy="210.55.11.73"
+        type="mms"
+    />
+</apns>

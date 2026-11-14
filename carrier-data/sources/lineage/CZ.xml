@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="230"
+        mnc="99"
+        carrier="GPRS Web"
+        apn="Internet"
+        authtype="3"
+        password=""
+        type="default,supl"
+        user=""
+    />
+    <apn
+        mcc="230"
+        mnc="99"
+        carrier="MMS"
+        apn="MMS"
+        authtype="1"
+        mmsc="http://mms"
+        mmsport="80"
+        mmsproxy="10.011.010.111"
+        password="mms"
+        port=""
+        proxy=""
+        type="mms"
+        user="mms"
+    />
+</apns>

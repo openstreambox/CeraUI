@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="454"
+        mnc="01"
+        carrier="New World"
+        apn="wap"
+        authtype="1"
+        password="wwm"
+        port="8080"
+        proxy="192.168.111.1"
+        type="default"
+        user="wwm"
+    />
+    <apn
+        mcc="454"
+        mnc="01"
+        carrier="New World MMS"
+        apn="MMS"
+        authtype="1"
+        mmsc="http://mmsc.nwmobility.com:8002"
+        mmsport="8080"
+        mmsproxy="192.168.111.1"
+        type="mms"
+    />
+    <apn
+        mcc="454"
+        mnc="01"
+        carrier="New World internet"
+        apn="internet"
+        authtype="1"
+        type="default"
+    />
+    <apn
+        mcc="454"
+        mnc="07"
+        carrier="3gnet"
+        apn="3gnet"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default,supl"
+    />
+    <apn
+        mcc="454"
+        mnc="07"
+        carrier="3gwap"
+        apn="3gwap"
+        port="80"
+        proxy="10.0.0.172"
+        type="default,supl"
+    />
+    <apn
+        mcc="454"
+        mnc="09"
+        carrier="SCT"
+        apn="cmnet"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default"
+    />
+    <apn
+        mcc="454"
+        mnc="14"
+        carrier="3-DB-GPRS"
+        apn="web-g.three.com.hk"
+        port="8080"
+        proxy="10.30.15.53"
+        type="default,supl"
+    />
+    <apn
+        mcc="454"
+        mnc="14"
+        carrier="3-DB-MMS"
+        apn="mms-g.three.com.hk"
+        mmsc="http://10.30.15.51:10021/mmsc"
+        mmsport="8080"
+        mmsproxy="10.30.15.53"
+        type="mms"
+    />
+</apns>

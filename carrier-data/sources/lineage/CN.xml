@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="460"
+        mnc="01"
+        carrier="中国联通 (China Unicom) NET IMS"
+        apn="ims"
+        carrier_id="1436"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="03"
+        carrier="中国电信 (China Telecom) NET IMS"
+        apn="ims"
+        carrier_id="2237"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="09"
+        carrier="中国联通 (China Unicom) NET IMS"
+        apn="ims"
+        carrier_id="1436"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="11"
+        carrier="中国电信 (China Telecom) NET"
+        apn="ctnet"
+        authtype="3"
+        carrier_id="2237"
+        mtu="1400"
+        password="vnet.mobi"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default,ia,supl,xcap"
+        user="ctnet@mycdma.cn"
+    />
+    <apn
+        mcc="460"
+        mnc="11"
+        carrier="中国电信 (China Telecom) NET IMS"
+        apn="ims"
+        carrier_id="2237"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="11"
+        carrier="中国电信 (China Telecom) WAP&amp;MMS"
+        apn="ctwap"
+        authtype="3"
+        mmsc="http://mmsc.vnet.mobi"
+        mmsport="80"
+        mmsproxy="10.0.0.200"
+        password="vnet.mobi"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="mms"
+        user="ctwap@mycdma.cn"
+    />
+    <apn
+        mcc="460"
+        mnc="12"
+        carrier="IMS"
+        apn="IMS"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="12"
+        carrier="中国电信 (China Telecom) GPRS"
+        apn="ctnet"
+        authtype="3"
+        password="vnet.mobi"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default,supl,xcap"
+        user="ctnet@mycdma.cn"
+    />
+    <apn
+        mcc="460"
+        mnc="12"
+        carrier="中国电信彩信 (China Telecom)"
+        apn="ctwap"
+        authtype="3"
+        mmsc="http://mmsc.vnet.mobi"
+        mmsport="80"
+        mmsproxy="10.0.0.200"
+        password="vnet.mobi"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="mms"
+        user="ctwap@mycdma.cn"
+    />
+    <apn
+        mcc="460"
+        mnc="13"
+        carrier="中国移动 (China Mobile) NET"
+        apn="cmnet"
+        carrier_id="1435"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default,ia,supl,xcap"
+    />
+    <apn
+        mcc="460"
+        mnc="13"
+        carrier="中国移动 (China Mobile) NET IMS"
+        apn="ims"
+        carrier_id="1435"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="13"
+        carrier="中国移动 (China Mobile) WAP&amp;MMS"
+        apn="cmwap"
+        carrier_id="1435"
+        mmsc="http://mmsc.monternet.com"
+        mmsport="80"
+        mmsproxy="10.0.0.172"
+        port="80"
+        protocol="IPV4V6"
+        proxy="10.0.0.172"
+        roaming_protocol="IPV4V6"
+        type="mms"
+    />
+    <apn
+        mcc="460"
+        mnc="15"
+        carrier="中国广电 (CBN) NET"
+        apn="cbnet"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default,ia,supl,xcap"
+    />
+    <apn
+        mcc="460"
+        mnc="15"
+        carrier="中国广电 (CBN) NET IMS"
+        apn="ims"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="15"
+        carrier="中国广电 (CBN) NET MMS"
+        apn="cmwap"
+        mmsc="http://mmsc.monternet.com"
+        mmsport="80"
+        mmsproxy="10.0.0.172"
+        port="80"
+        protocol="IPV4V6"
+        proxy="10.0.0.172"
+        roaming_protocol="IPV4V6"
+        type="mms"
+    />
+    <apn
+        mcc="460"
+        mnc="20"
+        carrier="CMCC HTTP"
+        apn="cmwap"
+        password="wap"
+        port="80"
+        protocol="IPV4V6"
+        proxy="10.0.0.172"
+        roaming_protocol="IPV4V6"
+        type="default"
+        user="wap"
+    />
+    <apn
+        mcc="460"
+        mnc="20"
+        carrier="CMCC Internet"
+        apn="cmnet"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default,supl"
+    />
+    <apn
+        mcc="460"
+        mnc="20"
+        carrier="CMCC MMS"
+        apn="cmwap"
+        mmsc="http://mmsc.monternet.com"
+        port="80"
+        protocol="IPV4V6"
+        proxy="10.0.0.172"
+        roaming_protocol="IPV4V6"
+        type="mms"
+    />
+    <apn
+        mcc="460"
+        mnc="20"
+        carrier="ims"
+        apn="ims"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="60"
+        carrier="中国广电 (CBN) NET"
+        apn="cmnet"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default,ia,supl,xcap"
+    />
+    <apn
+        mcc="460"
+        mnc="60"
+        carrier="中国广电 (CBN) NET IMS"
+        apn="ims"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="460"
+        mnc="60"
+        carrier="中国广电 (CBN) NET MMS"
+        apn="cmwap"
+        mmsc="http://mmsc.monternet.com"
+        mmsport="80"
+        mmsproxy="10.0.0.172"
+        port="80"
+        protocol="IPV4V6"
+        proxy="10.0.0.172"
+        roaming_protocol="IPV4V6"
+        type="mms"
+    />
+</apns>

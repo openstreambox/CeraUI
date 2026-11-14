@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="621"
+        mnc="25"
+        carrier="APTWAP"
+        apn="#777"
+        authtype="3"
+        password=""
+        type="default,supl"
+        user=""
+    />
+    <apn
+        mcc="621"
+        mnc="25"
+        carrier="Visafone"
+        apn="#777"
+        authtype="3"
+        mmsc=""
+        password="wap"
+        port="8080"
+        proxy="192.168.165.201"
+        type="default,supl"
+        user="wap@wap.com"
+    />
+</apns>

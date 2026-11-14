@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="470"
+        mnc="03"
+        carrier="Banglalink"
+        apn="blweb"
+        type="default,supl"
+    />
+    <apn
+        mcc="470"
+        mnc="03"
+        carrier="Banglalink IMS"
+        apn="ims"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="470"
+        mnc="03"
+        carrier="Banglalink MMS"
+        apn="blmms"
+        mmsc="http://"
+        mmsport="8799"
+        mmsproxy="10.10.55.34"
+        type="mms"
+    />
+    <apn
+        mcc="470"
+        mnc="04"
+        carrier="TeleTalk"
+        apn="internet"
+        type="default,supl"
+    />
+    <apn
+        mcc="470"
+        mnc="04"
+        carrier="TeleTalk IMS"
+        apn="ims"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="470"
+        mnc="04"
+        carrier="TeleTalk MMS"
+        apn="mms"
+        mmsc="http://10.5.4.22:38090/was"
+        mmsport="8080"
+        mmsproxy="10.5.4.40"
+        type="mms"
+    />
+    <apn
+        mcc="470"
+        mnc="07"
+        carrier="Airtel BD"
+        apn="internet"
+        carrier_id="2004"
+        type="default,supl"
+    />
+    <apn
+        mcc="470"
+        mnc="07"
+        carrier="Airtel BD IMS"
+        apn="ims"
+        carrier_id="2004"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="ims"
+    />
+    <apn
+        mcc="470"
+        mnc="07"
+        carrier="Airtel BD MMS"
+        apn="mms"
+        carrier_id="2004"
+        mmsc="http://10.6.0.21/servlets/mms"
+        mmsport="8080"
+        mmsproxy="10.6.0.2"
+        type="mms"
+    />
+</apns>

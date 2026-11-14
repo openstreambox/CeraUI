@@ -1,0 +1,6 @@
+{
+	"root": false,
+	"files": {
+		"includes": ["index.ts", "index.test.ts", "package.json", "biome.json"]
+	}
+}
