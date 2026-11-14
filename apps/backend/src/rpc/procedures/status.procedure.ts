@@ -48,7 +48,7 @@ import { getPreviewEncoderRealizedStatus } from "../../modules/streaming/preview
 import { getSourcesMessage } from "../../modules/streaming/sources.ts";
 import { getStreamLifecycleState } from "../../modules/streaming/stream-lifecycle-status.ts";
 import { getIsStreaming } from "../../modules/streaming/streaming.ts";
-import { getCarryingLiveness } from "../../modules/system/carrying";
+import { getCarryingStatus } from "../../modules/system/carrying";
 import { getCpuInfo } from "../../modules/system/cpu.ts";
 import { getEncoderLoad } from "../../modules/system/encoder-load.ts";
 import { getPhoneBoxHealth } from "../../modules/system/readiness";
@@ -88,7 +88,7 @@ export const getStatusProcedure = authedProcedure
 		void getSshStatus();
 		return {
 			is_streaming: getIsStreaming(),
-			carrying: { state: getCarryingLiveness() },
+			carrying: getCarryingStatus(),
 			phone_box: setup.engine === "none",
 			box_health: getPhoneBoxHealth(),
 			phone_links: getPhoneLinkCounts(),
@@ -141,7 +141,7 @@ export function buildInitialStatus() {
 		relays: getRelays() ? buildRelaysMsg() : null,
 		status: {
 			is_streaming: getIsStreaming(),
-			carrying: { state: getCarryingLiveness() },
+			carrying: getCarryingStatus(),
 			phone_box: setup.engine === "none",
 			box_health: getPhoneBoxHealth(),
 			phone_links: getPhoneLinkCounts(),

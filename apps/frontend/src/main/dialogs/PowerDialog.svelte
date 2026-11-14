@@ -61,7 +61,7 @@ const phoneProtected = $derived(getStatus()?.phone_box && getStatus()?.carrying?
 const powerBlocked = $derived(streaming || isUpdating || (phoneProtected && getStatus()?.carrying?.startup !== true));
 const blocked = $derived(streaming || isUpdating || phoneProtected);
 const blockedReason = $derived(
-	phoneProtected ? (getStatus()?.carrying?.state === 'streaming' ? m['live.phone.restartHold']() : m['live.phone.restartChecking']()) : streaming
+	phoneProtected ? (getStatus()?.carrying?.state === 'streaming' ? m['live.phone.restartHold']() : (getStatus()?.carrying?.startup === true ? m['live.phone.restartChecking']() : m['live.phone.powerChecking']())) : streaming
 		? m["settings.dialogs.blockedStreaming"]()
 		: isUpdating
 			? m["settings.dialogs.blockedUpdating"]()

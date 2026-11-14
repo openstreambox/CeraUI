@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { statusResponseSchema } from "@ceraui/rpc/schemas";
 import { call } from "@orpc/server";
 
@@ -8,8 +8,9 @@ import {
 	mockWifiRadios,
 } from "../../mocks/mock-service.ts";
 import { setup } from "../../modules/setup.ts";
+import { carryingTracker } from "../../modules/system/carrying.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
-import { getStatusProcedure } from "./status.procedure.ts";
+import { buildInitialStatus, getStatusProcedure } from "./status.procedure.ts";
 
 function makeContext(): RPCContext {
 	const ws = {
@@ -84,3 +85,29 @@ describe("status.getStatus — output validation (reconnect re-auth path)", () =
 		}
 	});
 });
+
+test.each(["initial", "pull"] as const)(
+	"%s preserves startup permission mid-window",
+	async (path) => {
+		const now = performance.now();
+		carryingTracker.start(now);
+		const clock = spyOn(performance, "now").mockReturnValue(now + 60_000);
+		const engine = setup.engine;
+		const user = setup.ssh_user;
+		try {
+			setup.engine = "none";
+			setup.ssh_user = undefined;
+			const status =
+				path === "initial"
+					? buildInitialStatus().status
+					: await call(getStatusProcedure, undefined, {
+							context: makeContext(),
+						});
+			expect(status.carrying).toEqual({ state: "unknown", startup: true });
+		} finally {
+			setup.engine = engine;
+			setup.ssh_user = user;
+			clock.mockRestore();
+		}
+	},
+);

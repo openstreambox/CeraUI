@@ -216,7 +216,7 @@ describe("phone-only power admission", () => {
 			expect(
 				screen.getByText(
 					stateValue === "unknown"
-						? "You can restart once the box knows whether your phone uses it."
+						? "You can restart or power off once the box knows whether your phone uses it."
 						: "You can restart once your phone's stream has stopped.",
 				),
 			).toBeTruthy();

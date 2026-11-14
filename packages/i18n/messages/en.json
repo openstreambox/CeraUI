@@ -2946,6 +2946,7 @@
 	"live.phone.linkUnavailable": "Link details aren't available yet",
 	"live.phone.srtTry": "Go live in your SRT app. Within a few seconds Home says Carrying your phone's stream. Nothing after 30 seconds? Check that your phone is on the box's Wi-Fi and that the address and passphrase match.",
 	"live.phone.restartChecking": "You can restart once the box knows whether your phone uses it.",
+	"live.phone.powerChecking": "You can restart or power off once the box knows whether your phone uses it.",
 	"live.phone.powerOffCost": "If your phone is streaming through the box, that stream drops",
 	"live.phone.wifiSettings": "Wi-Fi settings",
 	"live.phone.notSetUp": "Not set up",
