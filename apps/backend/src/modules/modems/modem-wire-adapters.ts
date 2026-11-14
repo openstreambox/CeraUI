@@ -78,11 +78,11 @@ import type {
 	UsbCompositionMode,
 } from "@ceraui/rpc/schemas";
 import { deriveModemStableKey } from "@ceraui/rpc/schemas";
-
 import type {
 	DongleMetadata,
 	DongleState,
 } from "../network/dongle-metadata.ts";
+import { modemTac } from "../system/support-export.ts";
 import { modemHardwareName } from "./modem-identity.ts";
 import type {
 	ProjectedModemAdditive,
@@ -159,6 +159,7 @@ export function fromMmcliModem(
 	const source: Mutable<ProjectedModemSource> = {
 		kind: "mm-managed",
 		runtimeId: id,
+		...(modem.tac !== undefined ? { tac: modem.tac } : {}),
 		// An mm-managed row keys the wire by its MM id and never reaches the
 		// synthetic allocator, so this fallback is only ever a grouping label.
 		allocationKey: stableKey ?? `mm:${id}`,
@@ -382,6 +383,7 @@ export interface DbusModemView {
  * one.
  */
 export function fromDbusView(view: DbusModemView): ProjectedModemSource {
+	const tac = modemTac(view.equipmentId);
 	const status: WireModemStatus = {
 		connection: view.scanning ? "scanning" : view.mmState,
 		...(view.operatorName !== undefined ? { network: view.operatorName } : {}),
@@ -398,6 +400,7 @@ export function fromDbusView(view: DbusModemView): ProjectedModemSource {
 	const source: Mutable<ProjectedModemSource> = {
 		kind: "mm-managed",
 		runtimeId: view.runtimeId,
+		...(tac !== undefined ? { tac } : {}),
 		allocationKey: stableKey ?? `mm:${view.runtimeId}`,
 		ifname: view.ifname,
 		name: buildDbusName(view),
