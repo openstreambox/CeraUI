@@ -120,7 +120,10 @@ export async function resolveSrtla(addr: string) {
 		/* At the moment we don't check that the SRTLA connection was established before
        validating the DNS result. The caching DNS resolver checks for invalid
        results from captive portals, etc, so all results *should* be good already */
-		void dnsCacheValidate(addr, emptyA ? "a" : undefined);
+		void dnsCacheValidate(
+			addr,
+			emptyA && addrs.some((ip) => isIP(ip) === 6) ? "a" : undefined,
+		);
 	}
 
 	return srtlaAddr;
