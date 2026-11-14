@@ -29,3 +29,9 @@ test('cached receiver copy describes the address in use', () => {
 	expect(en['network.path.unknownWhy']).not.toMatch(/backend|source list/);
 	expect(en['network.path.staleWhy']).toContain('device');
 });
+
+test('Hindi CLAT copy uses address conversion terminology', () => {
+	const hi = JSON.parse(readFileSync(join(import.meta.dir, '../messages/hi.json'), 'utf8'));
+	expect(hi['network.path.clatWhy']).toContain('पता परिवर्तक');
+	expect(hi['network.path.clatWhy']).not.toContain('रूपांतरणक');
+});
