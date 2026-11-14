@@ -60,7 +60,10 @@ test.afterAll(async () => {
 
 test('quiet bonded link notice opens details and clears on recovery', async ({ page }) => {
 	await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
-	await page.clock.pauseAt(new Date('2026-01-01T00:00:01Z'));
+	// Exercise setup latency beyond one second without a real-time wait.
+	await page.clock.runFor(2_000);
+	// Keep the pause target beyond the entire 30 s test budget, including CI setup.
+	await page.clock.pauseAt(new Date('2026-01-01T01:00:00Z'));
 	await page.goto(`${origin}/__connected-idle-component.html`);
 	const notice = page.getByTestId('connected-idle-notice');
 	await expect(notice).toHaveCount(0);
