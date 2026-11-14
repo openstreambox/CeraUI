@@ -2697,10 +2697,17 @@
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
 	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.srtEncryptionPassphrase": "SRT 암호화 암호문",
+	"settings.srtEncryptionShow": "암호문 표시",
+	"settings.srtEncryptionHelp": "저장된 암호문을 교체할 때만 변경하세요. 암호화는 다음 스트림 시작 시 적용됩니다.",
+	"settings.srtEncryptionInvalid": "UTF-8 기준 10~79바이트를 입력하거나 비워서 삭제하세요.",
+	"settings.srtEncryptionKeyLength": "SRT 암호화 키 길이",
 	"settings.streamIdSecurity": "게시 키일 수 있습니다. SRT 암호화가 켜져 있어도 평문으로 전송됩니다.",
 	"settings.streamIdStored": "스트림 ID가 저장되어 있습니다. 변경하지 않으면 유지되고, 입력하면 교체됩니다. 지우기로 명시적으로 삭제하세요.",
 	"settings.streamIdShow": "입력값 표시",
 	"settings.streamIdHide": "입력값 숨기기",
 	"settings.streamIdClear": "스트림 ID 지우기",
-	"settings.streamIdClearing": "저장하면 스트림 ID가 삭제됩니다."
+	"settings.streamIdClearing": "저장하면 스트림 ID가 삭제됩니다.",
+	"live.startFailure.srtEncryptionUnavailable": "저장된 SRT 암호화 설정은 지원되지 않습니다. 시작하기 전에 삭제하세요.",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "저장된 SRT 암호화 설정은 지원되지 않습니다. 시작하기 전에 삭제하세요."
 }

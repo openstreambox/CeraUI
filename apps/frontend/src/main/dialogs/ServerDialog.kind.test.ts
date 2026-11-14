@@ -323,3 +323,27 @@ describe("ServerDialog — write-only saved ID", () => {
 		expect(setConfig.mock.calls[0]?.[0]).toHaveProperty("srt_streamid", "");
 	});
 });
+
+it("keeps all write-only credentials out of pending and resolved caches", async () => {
+	const { saveServerConfig } = await import("./server/server-dialog-commands");
+	await saveServerConfig({
+		input: {
+			srt_passphrase: "dummy-passphrase",
+			srt_streamid: "dummy-id",
+			relay_streamid_override: "dummy-relay",
+			srt_latency: 2000,
+		},
+		savedMessage: "Saved",
+		failedMessage: "Failed",
+		onSaved() {},
+	});
+	for (const field of [
+		"srt_passphrase",
+		"srt_streamid",
+		"relay_streamid_override",
+	]) {
+		expect(lockedFields(markPending)).not.toContain(field);
+		expect(onRpcResolved.mock.calls.flat()).not.toContain(field);
+	}
+	expect(lockedFields(markPending)).toContain("srt_latency");
+});

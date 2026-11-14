@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 
 export const secrets = {
+	srt_passphrase: "SYNTHETIC_ENCRYPTION_KEY_9274",
 	ssh_pass: "P2S_SSH_68a2",
 	pairing_secret: "P2S_PAIRING_9471",
 	srt_streamid: "P2S_MEDIA_ID_f176",
@@ -71,6 +72,7 @@ export function expectedBytes(
 		if (value !== config || !object(value) || Array.isArray(value))
 			return value;
 		const { srt_streamid, relay_streamid_override, ...ordinary } = value;
+		Reflect.deleteProperty(ordinary, "srt_passphrase");
 		if (omitPairing) Reflect.deleteProperty(ordinary, "pairing_secret");
 		return {
 			...ordinary,
@@ -88,6 +90,7 @@ export function expectedBytes(
 
 export function expectNoPairingSecret(bytes: string): void {
 	expect(bytes).not.toContain(secrets.pairing_secret);
+	expect(bytes).not.toContain(secrets.srt_passphrase);
 	expect(bytes).not.toContain(secrets.srt_streamid);
 	expect(bytes).not.toContain(secrets.relay_streamid_override);
 }

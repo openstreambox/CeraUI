@@ -140,7 +140,7 @@ describe("oRPC boundary — Zod SERVICE_RE on the log `service` input", () => {
 
 it("redacts historical Stream IDs in both returned journal and download events", async () => {
 	const runSpy = spyOn(runModule, "run").mockResolvedValue(
-		'ordinary line\n{"srt_streamid":"dummy-old-publish-key"}\nstreamid=dummy-uri-key\nlast line',
+		'ordinary line\n{"srt_streamid":"dummy-old-publish-key"}\nstreamid=dummy-uri-key\n{"srt_passphrase":"dummy-passphrase"}\nlast line',
 	);
 	const sent: string[] = [];
 	const conn = {
@@ -150,7 +150,7 @@ it("redacts historical Stream IDs in both returned journal and download events",
 	const result = await getLog(conn, "ceralive.service");
 	expect(journalctlCalls(runSpy)).toHaveLength(1);
 	expect(result?.contents).toBe(
-		"ordinary line\n[REDACTED]\n[REDACTED]\nlast line",
+		'ordinary line\n[REDACTED]\n[REDACTED]\n{"srt_passphrase":"[REDACTED]"}\nlast line',
 	);
 	expect(JSON.stringify(sent)).not.toContain("dummy-");
 });

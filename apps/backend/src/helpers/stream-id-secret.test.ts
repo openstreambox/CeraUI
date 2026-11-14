@@ -230,3 +230,14 @@ describe("retained secret serialization", () => {
 		expect(output).toContain("start.ts:10:2");
 	});
 });
+
+test("overlapping retained IDs redact the longest token first", () => {
+	const previous = setStreamIdRedactionSource(() => ["live", "live/secretkey"]);
+	try {
+		expect(redactStreamIdText("delivered live/secretkey")).toBe(
+			"delivered [REDACTED]",
+		);
+	} finally {
+		setStreamIdRedactionSource(previous);
+	}
+});

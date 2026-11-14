@@ -67,6 +67,8 @@ import {
 	resolverDecidedBySchema,
 	SRTLA_MIN_LATENCY_MS,
 	sourcesVisibilitySchema,
+	srtKeyLengthSchema,
+	srtPassphraseSchema,
 	streamProfileIdSchema,
 	streamRecoveryPreferenceSchema,
 	wifiAdapterModeSchema,
@@ -196,6 +198,9 @@ export const lastSeenDeviceSchema = z.object({
 export type LastSeenDevice = z.infer<typeof lastSeenDeviceSchema>;
 
 export const runtimeConfigSchema = z.object({
+	// Write-only; never add to configMessageSchema or applied replies.
+	srt_passphrase: srtPassphraseSchema.optional(),
+	srt_pbkeylen: srtKeyLengthSchema.optional(),
 	// Authentication
 	password: z.string().optional(),
 	password_hash: z.string().optional(),

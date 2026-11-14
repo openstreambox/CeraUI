@@ -26,6 +26,13 @@ retained whole tokens in text/errors (including URL-encoded and JSON-escaped for
 containing labelled IDs, including older records. Already copied logs or backups
 cannot be recalled. Rotate any publish key that was previously disclosed.
 
+Token boundaries include letters, numbers and underscores: an ID embedded in
+an identifier such as `stream_abc123.ts` is intentionally left intact. Short
+numeric IDs can also match components of dotted numbers. Unicode normalization
+is not performed. Longer overlapping retained values are scrubbed first.
+After replacement, unlabelled historical entries containing the old value can
+no longer be identified by value; labelled records remain scrubbed.
+
 **The Stream ID travels in clear on the wire, even with SRT encryption on.**
 This change protects local access, the UI and logs; it does not protect the ID
 in transit or enable SRT payload encryption. Use a trusted network or a separate
