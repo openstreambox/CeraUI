@@ -115,8 +115,9 @@ while True:
     assert path['mode']=='clat'
     sender=start(path,'aonly.test','9003');packets('ipv6-only-clat-nat64',path,sender)
     sender.terminate();sender.wait()
-    # Current sender chooses the first DNS destination without source-family matching.
-    # Retain the failing transition as a merge-blocking receipt, never call it a proof.
+    # Tear down the CLAT destination route before restoring native IPv4.
+    run('ip','route','del','192.0.2.2/32','dev',tun)
+    # Reload must retain forwarding when the selected source family changes.
     path=choose(v6,reset=True)
     sender=start(path)
     packets('family-change-before',path,sender)
@@ -138,6 +139,29 @@ while True:
     (R/'results.json').write_text(json.dumps(results,indent=2))
     packets('family-change-after',path,sender)
     (R/'results.json').write_text(json.dumps(results,indent=2))
+    # Exercise mixed reload/startup and reverse/repeated transitions.
+    run('ip','addr','add','fd51::1/64','dev','wan0','nodad')
+    run('ip','-6','route','del','fd51::2/128','via','fd52::2','dev','backup0')
+    (R/'ips').write_text('192.0.2.1\nfd51::1\n')
+    sender.send_signal(signal.SIGHUP);time.sleep(3)
+    packets('mixed-reload', {'families':['ipv4','ipv6']}, sender)
+    # Retain only IPv6, then return to IPv4 in this very same process.
+    publish({'ip':'fd51::1'});sender.send_signal(signal.SIGHUP);time.sleep(3)
+    packets('reverse-family-change', {'ip':'fd51::1'}, sender)
+    publish({'ip':'192.0.2.1'});sender.send_signal(signal.SIGHUP);time.sleep(3)
+    packets('repeat-family-change', {'ip':'192.0.2.1'}, sender)
+    sender.terminate();sender.wait()
+    # Both sources at startup against dual DNS, with IPv6 first in the answer.
+    (R/'ips').write_text('192.0.2.1\nfd51::1\n')
+    sender=spawn(['/usr/bin/srtla_send','--verbose','9001','mixed.test','9000',str(R/'ips')], 'sender-mixed-start')
+    time.sleep(4)
+    packets('mixed-start', {'families':['ipv4','ipv6']}, sender)
+    sender.terminate();sender.wait()
+    log=(R/'sender-mixed-start.log').read_text()
+    assert 'REG3 from uplink #0' in log and 'REG3 from uplink #1' in log
+    assert 'Address family not supported' not in log
+    (R/'results.json').write_text(json.dumps(results,indent=2))
+
 finally:
     for p in reversed(processes):
         if p.poll() is None:p.terminate()
