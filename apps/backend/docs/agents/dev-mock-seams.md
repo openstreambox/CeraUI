@@ -374,3 +374,66 @@ persisted — it NEVER regenerates an existing credential (that stays
 `applyPassword` / `persist` / `refreshStatus`) is injected via
 `SshPasswordProvisionDeps` so `tests/ssh-password-provision.test.ts` drives it
 without a real `passwd`/`/etc/shadow` (and without persisting to disk).
+
+### Process signals and outbound connections in development
+
+All process-name signals use `@ceraui/srtla-send/process-signals`. Production
+executes the supplied command unchanged. Source development suppresses name
+signals before mock initialization. Unit preload installs a fake runner.
+Streaming teardown continues to signal its tracked child handles.
+
+Unit preload wraps Bun and Node process-spawn APIs and rejects name-signalling
+commands and systemd mutations. The allowlist is empty. A rejected command is
+also retained for the after-test hook, so catching a spawn error cannot hide
+it. Tests should inject an effect dependency before reaching this boundary.
+The check covers `Bun.$`, follows wrappers (`env -S`, `xargs`, `busybox`,
+`find -exec`, `sh -c 'exec "$@"'`) and judges a symlink by its target.
+`process.kill` (and the internal `process._kill`) reaches only the test
+process, the processes it spawned and their process groups (signal 0 probes are
+allowed); a fixture declares an escaped descendant with `adoptTestProcess`.
+Shell scripts run by path or shebang are read: name-based signals and
+absolute-path signal commands are refused, and a builtin `kill` may only target
+PIDs the test owns. Tests may not start Worker threads, where none of this runs.
+A directory of recording stubs at the front of `PATH` shadows `killall`,
+`pkill`, `kill`, `systemctl` and similar commands for every child, so by-name
+calls from scripts and other interpreters fail the test too. Read-only
+`systemctl` verbs pass through to the real binary, or exit 127 like a missing
+binary on a host without one. The unit preload also replaces the default SSH
+status probes (`setSshSystemctlProbesForTest`), so status builders never query the
+host's ssh unit.
+
+The same preload installs the network guard. TCP/TLS, `Bun.connect`, UDP
+(`node:dgram`, `Bun.udpSocket`), fetch and WebSocket reach only loopback, and
+DNS (`node:dns`, its resolvers, `Bun.dns`) answers only localhost and address
+literals. A fetch through a proxy (the `proxy` option or `HTTP(S)_PROXY`) is
+judged by the proxy. Bun's `ws` builtin cannot be wrapped from outside, so
+backend client sockets open through `helpers/outbound-websocket.ts`, which
+calls the guard's check; a unit test fails if another source file imports `ws`
+as a value. `Bun.fetch` is read-only too, so backend source uses the global
+`fetch`, and a scan enforces it. A test that re-runs itself under `unshare -n`
+sets `CERAUI_TEST_PRIVATE_NETNS=1` for the child, which then skips the network
+guard while it still holds only `lo`; any other network-isolated run keeps it.
+
+These guards catch mistakes; they are not containment. A determined command
+(a copied `killall` binary, quoting tricks, an interpreter's own `kill`, a
+script read from stdin, a native call) gets past them, which is why gates
+on shared machines also run inside a PID namespace (below).
+
+Backend development commands and the browser worker entrypoint preload
+`scripts/dev-safety.ts`. It marks the process as a development harness, so name
+signals stay suppressed even without `NODE_ENV=development`, and installs the
+same process and network guards. Caught violations terminate the harness.
+Name-signal suppression uses the mock gate (`NODE_ENV=development` or
+`MOCK_MODE=true`) plus that marker. Under mocks the legacy remote client
+connects only when `remote_endpoint_host` is a loopback address; otherwise it
+stays idle, so the mock pairing key never leaves the machine. Local fixture
+endpoints use localhost, 127.0.0.0/8 or ::1. Keep real credentials out of mock
+configurations.
+
+Concurrent browser runs configure `E2E_PORT`, `E2E_BACKEND_PORT` and
+`E2E_WORKER_BASE_PORT` with disjoint ranges. The last variable sets the first
+worker port. Keep process-spawning gates inside a PID namespace to contain any
+regression in outward signalling. A PID namespace does not shield a child from
+same-account signals sent by an uncontained host process. File-ownership tests
+need the normal UID mapping, so a privileged namespace launcher may drop back
+to the invoking UID/GID after creating the PID namespace.

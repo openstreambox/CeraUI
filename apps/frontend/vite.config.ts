@@ -296,7 +296,7 @@ export default defineConfig(({ mode }) => {
 		},
 		// Enhanced development server configuration
 		server: {
-			port: 6173,
+			port: Number(process.env.E2E_PORT ?? 6173),
 			// host / hmr / proxy injected ONLY when VITE_DEVICE_HOST is set; empty
 			// otherwise, so the default dev server is byte-for-byte unchanged.
 			...deviceServer,
