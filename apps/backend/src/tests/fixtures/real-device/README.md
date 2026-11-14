@@ -105,7 +105,7 @@ the checkout; fixture tests resolve only repo-local paths.
 | `b2-status`, `b2-operation`, `b2-rauc-service`, `b2-rauc-stat`, `b2-rauc-cgroup-procs`, `b2-blocks`, `b2-mountinfo` | `observeRaucStage`: idle instance `656:879`, target inactive, boot primary `rootfs.0`, no stage resources | Live install/NBD/dm/mount ownership, writer retirement and healthy boot verdict (healthy read intentionally unavailable in replay) |
 | `b2-rauc-cgroup`, `b2-dm`, `b2-nbd` | `observeRaucStage` NBD attribution accepts the real `0::/<path>` row (test-constructed `nbd0` pid only); no aggregated-output parser for dm/nbd listings; real block list contains no NBD/dm nodes | NBD attribution, dm UUID/slaves and RAUC mount positive branches require live install |
 | `b2-clients` | `osInstallClientsGone`: actual NUL-separated RAUC service argv is not an installer; captured comm-filtered inventory contains only RAUC | A present installer client and whole-proc race/failure handling |
-| `b2-nmcli` | `selectUpdateTransport` / `discoverCandidates`: real Ethernet connected/unmetered candidate classification | Other device-kind qualification |
+| `b2-nmcli` | `selectUpdateTransport` / `discoverCandidates`: real Ethernet connected/unmetered candidate classification | Connected modem capture still owed; the constructed twin replay below covers control-port/data-interface matching |
 | `b2-version`, guardian `version` / `os`, guard fdinfo/locks/job | Historical capture-base supporting evidence; H4/H6 now replay it through exported strict lock ownership and typed zero-Job observation | New positive kernel-resource and nonzero-Job captures remain owed; parser implementation is not a hardware pass |
 
 Rock had no active NBD/dm mapping or private update route. Its real empty private
@@ -195,3 +195,39 @@ later capture, not the refusal-time observation, whose cause remains unknown.
 The captured boot ID (in `bootId` and `healthy.boot_id`) is normalized to the
 111 placeholder `11111111-1111-4111-8111-111111111111`, and the tests that name it
 use the same value; nothing else in the capture was substituted.
+
+## NetworkManager field and profile fixtures
+
+`rock-nm-1.52.1-twin-modem-general.txt` is a CONSTRUCTED replay, not a
+connected-bearer capture. Its fields and device-show rendering follow the
+captured NM 1.52.1 field lists and shapes; its control-port/data-interface
+mismatch follows issue #431. Neither bench modem had a connected bearer, so
+the connected states and IP interfaces are constructed. Tests strip only the
+header envelope and replay the payload through candidate discovery and update
+selection/consent. A real connected-bearer capture will be added later as an
+additional fixture. This replay does not qualify hardware connectivity.
+
+`nm-1.52.1-device-show-fields.txt` contains exactly the union of the GENERAL,
+CONNECTIONS and IP4 allowed fields returned by NM 1.52.1 on the Rock on
+November 11, 2026, in capture order. The complete invalid-field replies are
+preserved as `nmcli-general-fields.txt`, `nmcli-connections-fields.txt` and
+`nmcli-ip4-fields.txt`; each was requested with `<section>.BOGUS` on `eth0`
+and returned exit 2. No device or connection values were requested or changed.
+The parity test compares the union against those three replies, including
+field order and absence of additions.
+
+`nm-1.52.1-twin-profile-replay.json` is a redacted, constructed twin-modem replay.
+Its available profile lines follow the measured NM 1.52.1 multiline format
+`CONNECTIONS.AVAILABLE-CONNECTIONS[n]:<uuid> | <name>` and the #434 report.
+It is not a capture from attached modems. Keep this fixture and its ambiguity
+assertions: the real capture below does not demonstrate overlapping profiles.
+
+`nm-1.52.1-twin-profile-capture.json` was captured from a board with two identical
+QMI modems, identifiers tokenized, on November 13, 2026. It preserves the two gsm
+records from the general device read, the gsm profile rows, and each device's
+active UUID, combined tabular read and multiline available-profile read.
+`cdc-wdm0` has no active UUID and one unbound available profile; `cdc-wdm1` has
+an active UUID and one available profile bound to it. The lists do not overlap.
+Neither modem was registered; the active UUID is an NM association, not proof of
+working cellular connectivity. The production resolver tests replay both devices,
+then clear active UUIDs to exercise both captured available-profile lists.

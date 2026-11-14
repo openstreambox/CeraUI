@@ -424,7 +424,13 @@ export async function nmDevices(fields: string) {
 	return undefined;
 }
 
-export async function nmDeviceProp(device: string, fields: string) {
+const warnedInvalidDeviceFields = new Set<string>();
+
+export async function nmDeviceProp(
+	device: string,
+	fields: string,
+	mode?: "multiline",
+) {
 	try {
 		// In mock mode, return mock device properties
 		if (shouldMockWifi()) {
@@ -444,6 +450,7 @@ export async function nmDeviceProp(device: string, fields: string) {
 		}
 
 		const stdout = await run("nmcli", [
+			...(mode === undefined ? [] : ["--mode", mode]),
 			"--terse",
 			"--escape",
 			"no",
@@ -455,7 +462,20 @@ export async function nmDeviceProp(device: string, fields: string) {
 		]);
 		return stdout.split("\n");
 	} catch (err) {
-		logger.error(`nmDeviceProp err: ${describeCliError(err)}`);
+		if (
+			typeof err === "object" &&
+			err !== null &&
+			"stderr" in err &&
+			typeof err.stderr === "string" &&
+			err.stderr.includes("invalid field")
+		) {
+			if (!warnedInvalidDeviceFields.has(fields)) {
+				warnedInvalidDeviceFields.add(fields);
+				logger.warn(`nmDeviceProp err: ${describeCliError(err)}`);
+			}
+		} else {
+			logger.error(`nmDeviceProp err: ${describeCliError(err)}`);
+		}
 	}
 	return undefined;
 }

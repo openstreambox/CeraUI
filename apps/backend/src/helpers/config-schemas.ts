@@ -45,6 +45,7 @@ import {
 	AUDIO_SOURCE_AUTO,
 	audioBackendSchema,
 	audioCodecSchema,
+	balancerAlgorithmSchema,
 	compositionConfigSchema,
 	type DetectionMethod,
 	detectionMethodSchema,
@@ -157,9 +158,7 @@ export type Framerate = z.infer<typeof framerateSchema>;
 export type VideoCodec = z.infer<typeof videoCodecSchema>;
 export type VideoPassthrough = z.infer<typeof videoPassthroughSchema>;
 
-// Bitrate balancer algorithm, defined locally — like resolution/framerate above
-// — to keep this schema free of an engine-binding dependency.
-export const balancerSchema = z.enum(["adaptive", "fixed", "aimd"]);
+export const balancerSchema = balancerAlgorithmSchema;
 
 export type Balancer = z.infer<typeof balancerSchema>;
 
@@ -413,6 +412,11 @@ export const runtimeConfigSchema = z.object({
 	// link id. Values can only be true: absence means included. A bare ifname is
 	// never accepted as a durable identity because the Huawei twins swap names.
 	bond_opt_out: z.record(z.string().min(1), z.literal(true)).optional(),
+	// SHA-256 of vendor:serial pairs observed on distinct USB parents.
+	usb_serial_shared: z
+		.array(z.string().regex(/^[0-9a-f]{64}$/))
+		.max(64)
+		.optional(),
 
 	// Opt-in gate for the guarded USB-composition-mode switch (`modems.setUsbMode`).
 	// DEFAULT-ABSENT ON PURPOSE and given NO entry in RUNTIME_CONFIG_DEFAULTS: a

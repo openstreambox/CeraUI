@@ -60,6 +60,7 @@ import { logParseError } from "../system/cli-parse.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
 import {
 	broadcastMsg,
+	broadcastMsgLocal,
 	buildMsg,
 	getSocketSenderId,
 } from "../ui/websocket-server.ts";
@@ -114,7 +115,10 @@ import {
 	type WifiInterfaceId,
 } from "./wifi-interfaces.ts";
 import { wifiRadioIdentity } from "./wifi-radio-identity.ts";
-import { projectWifiRadioIncarnation } from "./wifi-radio-publication.ts";
+import {
+	projectWifiRadioIncarnation,
+	setWifiRadioPublicationListener,
+} from "./wifi-radio-publication.ts";
 import {
 	planWifiStationJoin,
 	saeActivateArgs,
@@ -431,6 +435,10 @@ export function broadcastWifiState() {
 	recordHotspotClientsBroadcast();
 }
 
+setWifiRadioPublicationListener(() => {
+	broadcastMsgLocal("status", { wifi: wifiBuildMsg() });
+});
+
 /*
   Record one saved infrastructure connection on the interface(s) it can be used
   from. A profile bound to a MAC that a present adapter reports is attributed to
@@ -477,7 +485,11 @@ function rememberSavedUuid(
 
 let savedConnectionsRefresh: symbol | undefined;
 
-export async function wifiUpdateSavedConns() {
+export async function wifiUpdateSavedConns(
+	signal?: AbortSignal,
+	onCommitted?: () => void,
+): Promise<void> {
+	if (signal?.aborted) return;
 	const refresh = Symbol();
 	savedConnectionsRefresh = refresh;
 	const snapshots = Object.entries(getWifiInterfacesByMacAddress()).map(
@@ -493,6 +505,7 @@ export async function wifiUpdateSavedConns() {
 	const isCurrent = () => {
 		const current = getWifiInterfacesByMacAddress();
 		return (
+			!signal?.aborted &&
 			savedConnectionsRefresh === refresh &&
 			Object.keys(current).length === snapshots.length &&
 			snapshots.every(
@@ -503,6 +516,7 @@ export async function wifiUpdateSavedConns() {
 
 	// Retry transient nmcli connection-list failures with exponential backoff (T7).
 	const connections = await pollWithBackoff(() => nmConnsGet("uuid,type"), {
+		...(signal ? { signal } : {}),
 		maxAttempts: 3,
 		baseDelayMs: 200,
 		maxDelayMs: 1000,
@@ -511,7 +525,13 @@ export async function wifiUpdateSavedConns() {
 		onExhausted: (err) =>
 			logger.debug(`wifiUpdateSavedConns: list failed after retries: ${err}`),
 	});
-	if (connections === undefined || savedConnectionsRefresh !== refresh) return;
+	if (
+		signal?.aborted ||
+		connections === undefined ||
+		savedConnectionsRefresh !== refresh
+	)
+		return;
+	let incomplete = false;
 
 	for (const connection of connections) {
 		try {
@@ -528,7 +548,7 @@ export async function wifiUpdateSavedConns() {
 				"802-11-wireless.ssid",
 				"802-11-wireless.mac-address",
 			] as const);
-			if (savedConnectionsRefresh !== refresh) return;
+			if (signal?.aborted || savedConnectionsRefresh !== refresh) return;
 
 			if (fields === undefined) {
 				throw new Error("Failed to get connection fields");
@@ -537,6 +557,7 @@ export async function wifiUpdateSavedConns() {
 			const [mode, ssid, macTmp] = fields;
 			if (!ssid) {
 				logger.warn("Wifi connection does not have an SSID!", { mode, uuid });
+				incomplete = true;
 				continue;
 			}
 
@@ -552,15 +573,17 @@ export async function wifiUpdateSavedConns() {
 					`Error getting the nmcli connection information: ${err.message}`,
 				);
 			}
+			incomplete = true;
 		}
 	}
 
-	if (!isCurrent()) return;
+	if (incomplete || !isCurrent()) return;
 	// Keep the previous snapshot visible until every profile read has settled.
 	for (const { original, shadow } of snapshots) {
 		original.saved = shadow.saved;
 		original.savedAll = shadow.savedAll;
 	}
+	onCommitted?.();
 }
 
 /* Searches saved connections in wifiIfs by UUID */
@@ -720,13 +743,51 @@ const wantedSecrets = (output: string) =>
 async function joinViaNmAuto(args: string[]): Promise<WifiJoinOutcome> {
 	const { stdout, stderr, exitCode } = await joinNmcliRunner(args);
 	if (exitCode !== 0 || /^Error:/.test(stdout)) {
-		return { ok: false, authFailed: wantedSecrets(stdout), stdout, stderr };
+		return {
+			ok: false,
+			authFailed: wantedSecrets(`${stdout}\n${stderr}`),
+			stdout,
+			stderr,
+		};
 	}
 	const success = stdout.match(/successfully activated with '(.+)'/);
 	const uuid = success?.[1];
 	return uuid === undefined
 		? { ok: true, authFailed: false, stdout, stderr }
 		: { ok: true, uuid, authFailed: false, stdout, stderr };
+}
+
+async function retrySavedJoin(
+	uuid: ConnectionUUID,
+	password: string,
+	connectArgs: string[],
+): Promise<WifiJoinOutcome> {
+	const changed = await joinNmcliRunner([
+		"connection",
+		"modify",
+		"uuid",
+		uuid,
+		"802-11-wireless-security.psk",
+		password,
+	]);
+	if (changed.exitCode !== 0)
+		return {
+			ok: false,
+			authFailed: wantedSecrets(`${changed.stdout}\n${changed.stderr}`),
+			stdout: changed.stdout,
+			stderr: changed.stderr,
+		};
+	const ifname = connectArgs[connectArgs.indexOf("ifname") + 1];
+	const activated = await joinViaNmAuto([
+		"-w",
+		"15",
+		"connection",
+		"up",
+		"uuid",
+		uuid,
+		...(ifname ? ["ifname", ifname] : []),
+	]);
+	return activated.ok ? { ...activated, uuid } : activated;
 }
 
 /**
@@ -809,7 +870,22 @@ function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 		security: msg.security,
 	});
 
-	void runWifiNew(conn, msg, macAddress, plan, senderId);
+	void runWifiNew(
+		conn,
+		msg,
+		macAddress,
+		plan,
+		senderId,
+		wifiInterface.saved[msg.ssid],
+	);
+}
+
+// Reconcile retained profiles for explicit Forget without delaying a join's
+// terminal reply on profile-list transport availability.
+function refreshRetainedJoinProfiles(): void {
+	void wifiUpdateSavedConns(undefined, broadcastWifiState).catch((err) =>
+		logger.warn(`Retained Wi-Fi profile refresh failed: ${errorText(err)}`),
+	);
 }
 
 async function runWifiNew(
@@ -818,15 +894,31 @@ async function runWifiNew(
 	macAddress: string,
 	plan: WifiStationJoinPlan,
 	senderId: ReturnType<typeof getSocketSenderId>,
+	savedUuid?: ConnectionUUID,
 ) {
+	const security = (msg.security ?? "").trim().split(/\s+/);
+	// Both the requested network and the stored profile must support PSK
+	// before a same-SSID UUID grants authority to replace its secret.
+	const keyMgmt =
+		plan.mode === "nm-auto" &&
+		savedUuid &&
+		msg.password &&
+		security.some((token) => /^WPA[12]?(?:-PERSONAL)?$/i.test(token)) &&
+		security.every((token) => /^(?:WPA[123]?(?:-PERSONAL)?|SAE)$/i.test(token))
+			? (
+					await nmConnGetFields(savedUuid, [
+						"802-11-wireless-security.key-mgmt",
+					] as const)
+				)?.[0]
+			: undefined;
 	const outcome =
 		plan.mode === "sae"
 			? await joinViaSaeProfile(plan.addArgs)
-			: await joinViaNmAuto(plan.connectArgs);
+			: savedUuid && msg.password && keyMgmt === "wpa-psk"
+				? await retrySavedJoin(savedUuid, msg.password, plan.connectArgs)
+				: await joinViaNmAuto(plan.connectArgs);
 
 	if (!outcome.ok) {
-		await wifiDeleteFailedConns();
-
 		conn.send(
 			buildMsg(
 				"wifi",
@@ -839,6 +931,7 @@ async function runWifiNew(
 				senderId,
 			),
 		);
+		refreshRetainedJoinProfiles();
 		return;
 	}
 
@@ -861,6 +954,7 @@ async function runWifiNew(
 				senderId,
 			),
 		);
+		refreshRetainedJoinProfiles();
 		return;
 	}
 
