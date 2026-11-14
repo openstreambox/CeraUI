@@ -2842,5 +2842,6 @@
 	"settings.portal.experimentalTitle": "Wi-Fi sign-in (experimental)",
 	"settings.portal.experimentalDescription": "Off by default. Sign in to hotel Wi-Fi from your phone. Still needs real-network testing. Turning this off prevents new windows; existing windows close within ten minutes.",
 	"network.portal.experimentalDisabled": "Enable experimental Wi-Fi sign-in in Settings to use this feature.",
-	"settings.portal.experimentalSaveError": "The setting could not be saved."
+	"settings.portal.experimentalSaveError": "The setting could not be saved.",
+	"network.portal.privacyHint": "If the page doesn't appear, temporarily pause VPN, Private Relay or Private DNS / secure DNS on this phone, then open it again. Restore them when finished. Your stream is unchanged."
 }
