@@ -2,7 +2,10 @@ import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileAtomicSync } from "../helpers/config-loader.ts";
+import {
+	writeFileAtomicSync,
+	writePrivateStatusSync,
+} from "../helpers/config-loader.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -184,4 +187,51 @@ test("public symlink refusal uses a mode-neutral message", () => {
 	);
 	expect(fs.readFileSync(target, "utf8")).toBe("unchanged");
 	expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
+});
+
+test("status writes skip all fsync calls and unchanged publications while retaining private mode", () => {
+	const { file } = fixture();
+	const sync = spyOn(fs, "fsyncSync");
+	const rename = spyOn(fs, "renameSync");
+	writePrivateStatusSync(file, "first");
+	writePrivateStatusSync(file, "first");
+	expect(rename).toHaveBeenCalledTimes(1);
+	writePrivateStatusSync(file, "second");
+	expect(rename).toHaveBeenCalledTimes(2);
+	expect(sync).toHaveBeenCalledTimes(0);
+	expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+	writeFileAtomicSync(file, "durable", { mode: 0o600 });
+	expect(sync).toHaveBeenCalledTimes(2);
+});
+
+test("unchanged legacy status is still upgraded to private permissions", () => {
+	const { file } = fixture();
+	fs.writeFileSync(file, "same");
+	fs.chmodSync(file, 0o644);
+	const sync = spyOn(fs, "fsyncSync");
+	writePrivateStatusSync(file, "same");
+	expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+	expect(sync).toHaveBeenCalledTimes(0);
+});
+test("ephemeral SIM and kiosk secrets stay private without fsync", async () => {
+	const { dir } = fixture();
+	const previous = process.env.CERALIVE_RUN_DIR;
+	process.env.CERALIVE_RUN_DIR = dir;
+	try {
+		const { storeSimPin, simPinSecretPath } = await import(
+			"../modules/modems/sim-secrets.ts"
+		);
+		const { mintKioskToken, kioskTokenPath } = await import(
+			"../modules/ui/kiosk-token.ts"
+		);
+		const sync = spyOn(fs, "fsyncSync");
+		await storeSimPin("1234");
+		await mintKioskToken();
+		expect(sync).toHaveBeenCalledTimes(0);
+		expect(fs.statSync(simPinSecretPath()).mode & 0o777).toBe(0o600);
+		expect(fs.statSync(kioskTokenPath()).mode & 0o777).toBe(0o600);
+	} finally {
+		if (previous === undefined) delete process.env.CERALIVE_RUN_DIR;
+		else process.env.CERALIVE_RUN_DIR = previous;
+	}
 });

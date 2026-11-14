@@ -15,8 +15,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
-
 /*
   Durable per-adapter hotspot identity.
 
@@ -39,7 +37,10 @@ import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
 
 import { z } from "zod";
 
-import { loadCacheFile } from "../../helpers/config-loader.ts";
+import {
+	loadCacheFile,
+	writeFileAtomicSync,
+} from "../../helpers/config-loader.ts";
 import { logger } from "../../helpers/logger.ts";
 import { isWifiChannelName, type WifiChannel } from "./wifi-channels.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";

@@ -84,7 +84,7 @@ export async function mintKioskToken(): Promise<string> {
 	await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
 	const file = kioskTokenPath();
-	writeFileAtomicSync(file, token, { mode: 0o600 });
+	writeFileAtomicSync(file, token, { mode: 0o600, durable: false });
 
 	logger.info("Kiosk: minted single-use loopback token");
 	return token;

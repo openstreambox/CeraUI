@@ -75,7 +75,7 @@ export async function storeSimPin(pin: string): Promise<void> {
 	await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
 	const file = simPinSecretPath();
-	writeFileAtomicSync(file, pin, { mode: 0o600 });
+	writeFileAtomicSync(file, pin, { mode: 0o600, durable: false });
 
 	logger.info("SIM: stored PIN to secrets file for boot auto-unlock");
 }

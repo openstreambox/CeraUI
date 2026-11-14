@@ -35,6 +35,7 @@ import {
 import { checkExecPath } from "./helpers/exec.ts";
 import killall from "./helpers/killall.ts";
 import { logger } from "./helpers/logger.ts";
+import { tightenPrivateFiles } from "./helpers/private-startup.ts";
 // allow: SIZE_OK — Sequential boot composition root; ordering and signal wiring are pinned by boot contract tests.
 import { handleTerminationSignal } from "./helpers/shutdown.ts";
 import { notifyServiceReady } from "./helpers/systemd-ready.ts";
@@ -69,7 +70,10 @@ import { initIdentity } from "./modules/identity/index.ts";
 import { initRTMPIngestStats } from "./modules/ingest/rtmp.ts";
 import { initSRTIngest, stopSRTIngest } from "./modules/ingest/srt.ts";
 import { initFccUnlockModule } from "./modules/modems/fcc-unlock.ts";
-import { initModemCredentials } from "./modules/modems/modem-credentials.ts";
+import {
+	initModemCredentials,
+	modemCredentialsPath,
+} from "./modules/modems/modem-credentials.ts";
 import { initModemUpdateLoop } from "./modules/modems/modem-update-loop.ts";
 import { setMockDbusModemViews } from "./modules/modems/modem-wire-producer.ts";
 import { stopMutationRecovery } from "./modules/modems/mutation-recovery-owner.ts";
@@ -238,6 +242,19 @@ if (backendSingletonApplies()) {
 		"Backend singleton is not enforced for a source-development process; production services never take this path",
 	);
 }
+
+tightenPrivateFiles(process.cwd(), [
+	modemCredentialsPath(),
+	"/data/ceralive/fcc-unlock-policy.json",
+	...[
+		"idle.json",
+		"agent.json",
+		"quarantine.json",
+		"pending-packages.json",
+		"kernel-state.json",
+		"kernel-quarantine.json",
+	].map((name) => `/data/ceralive/update-state/${name}`),
+]);
 
 checkExecPath(srtlaSendExec);
 

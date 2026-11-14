@@ -19,7 +19,7 @@
  * Generic JSON config loader with Zod validation
  * Provides warning-based validation with defaults for missing fields
  *
- * Uses Bun's native file APIs (Bun.file().text() / Bun.write()) for all I/O.
+ * Reads use Bun.file().text(); writes use the atomic descriptor-based writer.
  * Loaders are async; module-level callers await them (top-level await), which
  * preserves the original boot-time load order without introducing races.
  */
@@ -260,24 +260,6 @@ export async function loadJsonConfigSync<T extends z.ZodTypeAny>(
 }
 
 /**
- * Save a config to a JSON file through the durable atomic writer
- *
- * @param filePath - Path to the JSON file
- * @param data - Data to save
- * @param pretty - Whether to format with indentation (default: false for smaller files)
- */
-export async function saveJsonConfigAsync<T>(
-	filePath: string,
-	data: T,
-	pretty = false,
-): Promise<void> {
-	const contents = pretty
-		? JSON.stringify(data, null, "\t")
-		: JSON.stringify(data);
-	writeFileAtomicSync(filePath, contents);
-}
-
-/**
  * Publish a complete file durably; explicit modes apply before any bytes.
  * Staged publishers may supply the final target as permissionSource to retain
  * its stricter mode before their own final rename.
@@ -285,7 +267,11 @@ export async function saveJsonConfigAsync<T>(
 export function writeFileAtomicSync(
 	file: string,
 	contents: string,
-	options: { mode?: number; permissionSource?: string | undefined } = {},
+	options: {
+		mode?: number;
+		permissionSource?: string | undefined;
+		durable?: boolean;
+	} = {},
 ): void {
 	const directory = dirname(file);
 	const parent = fs.openSync(
@@ -324,13 +310,13 @@ export function writeFileAtomicSync(
 			// Bun.write's mode option does not enforce creation permissions.
 			fs.fchmodSync(fd, mode);
 			fs.writeFileSync(fd, contents);
-			fs.fsyncSync(fd);
+			if (options.durable !== false) fs.fsyncSync(fd);
 		} finally {
 			fs.closeSync(fd);
 		}
 		fs.renameSync(candidate, file);
 		temporary = undefined;
-		fs.fsyncSync(parent);
+		if (options.durable !== false) fs.fsyncSync(parent);
 	} finally {
 		try {
 			if (temporary !== undefined) fs.unlinkSync(temporary);
@@ -382,3 +368,19 @@ export async function loadCacheFile<T extends z.ZodTypeAny>(
  */
 export const fileExists = (filePath: string): Promise<boolean> =>
 	Bun.file(filePath).exists();
+
+/** Publish disposable status only when changed; never force flash synchronization. */
+export function writePrivateStatusSync(file: string, contents: string): void {
+	try {
+		const previous = fs.lstatSync(file);
+		if (!previous.isFile()) throw new Error("Target must be a regular file");
+		if (
+			(previous.mode & 0o177) === 0 &&
+			fs.readFileSync(file, "utf8") === contents
+		)
+			return;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	writeFileAtomicSync(file, contents, { mode: 0o600, durable: false });
+}

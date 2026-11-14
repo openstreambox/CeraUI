@@ -15,8 +15,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
-
 /*
   THE SERVER-SIDE ROUTER-WEBUI CREDENTIAL STORE.
 
@@ -78,7 +76,10 @@ import path from "node:path";
 
 import { z } from "zod";
 
-import { loadCacheFile } from "../../helpers/config-loader.ts";
+import {
+	loadCacheFile,
+	writeFileAtomicSync,
+} from "../../helpers/config-loader.ts";
 import { logger } from "../../helpers/logger.ts";
 import type { PhysicalDeviceRecord } from "./physical-identity.ts";
 

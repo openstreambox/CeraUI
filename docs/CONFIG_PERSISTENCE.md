@@ -34,7 +34,18 @@ before publication remove only that invocation's temp. A directory-sync failure
 after rename is reported even though the private replacement is already visible.
 This contract assumes the containing path is controlled by the service owner;
 it does not provide descriptor-relative protection against parent substitution.
-Existing files become private on their next successful save.
+At startup, known config, credential, token and marker files are tightened to
+owner-only permissions, preserving stricter owner modes. The sweep opens regular
+files without following symlinks and checks the descriptor identity before chmod;
+missing and non-regular files are ignored. It reports one summary of changes (and
+one warning summary if any files could not be tightened), without logging contents.
+
+Disposable two-radio `status.json` is published only when its serialized view
+changes, with private permissions and atomic replacement but no file or directory
+fsync. SIM PIN and kiosk token files are ephemeral tmpfs secrets and also skip
+fsync. Durable configuration, credentials, tokens and recovery state retain both
+file and directory fsync. Status loss after a crash is acceptable; its existing
+path and consumer contract are unchanged.
 
 ## 1. Per-file placement map
 
