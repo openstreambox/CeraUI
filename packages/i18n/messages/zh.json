@@ -3043,5 +3043,6 @@
 	"live.phone.moblinSaved": "已保存在盒子上。请在 Moblin 中确认能否连接；保存并不代表已连接。",
 	"live.phone.moblinCleared": "此盒子上没有保存 Moblin 密码。",
 	"live.phone.moblinFailed": "无法应用 Moblin 密码。请检查盒子后重试。它可能已经保存。",
-	"live.phone.moblinBusy": "请等盒子确认没有直播在使用它，再更改 Moblin 密码。"
+	"live.phone.moblinBusy": "请等盒子确认没有直播在使用它，再更改 Moblin 密码。",
+	"network.sharing.ipv6Only": "连接到本机 Wi-Fi 的设备暂时无法通过此链路访问 IPv4 网站。"
 }

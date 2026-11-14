@@ -181,6 +181,7 @@ export function steeringUnavailable(): SharingWireState {
 }
 
 export interface SharingWire {
+	emit(type: string, payload: unknown): Promise<void>;
 	/** Push the current payload for every owned topic. */
 	publish(): Promise<void>;
 	/** Replace the payload and push it. */
@@ -200,6 +201,7 @@ export async function installSharingWire(
 ): Promise<SharingWire> {
 	let state: SharingWireState = structuredClone(initial);
 	let route: WebSocketRoute | null = null;
+	const overrides = new Map<string, unknown>();
 
 	const send = (): void => {
 		route?.send(JSON.stringify({ uplinks: state.uplinks }));
@@ -216,6 +218,11 @@ export async function installSharingWire(
 			try {
 				const parsed = JSON.parse(text) as Record<string, unknown>;
 				if (OWNED_TOPICS.some((topic) => topic in parsed)) return;
+				for (const [type, payload] of overrides) {
+					if (!(type in parsed)) continue;
+					ws.send(JSON.stringify({ ...parsed, [type]: type === "status" ? { ...(parsed.status as Record<string, unknown>), ...(payload as Record<string, unknown>) } : payload }));
+					return;
+				}
 				const patched = withSharedLan(parsed, state.sharedLan);
 				if (patched !== null) {
 					ws.send(JSON.stringify(patched));
@@ -229,6 +236,11 @@ export async function installSharingWire(
 	});
 
 	return {
+		emit(type, payload) {
+			overrides.set(type, payload);
+			route?.send(JSON.stringify({ [type]: payload }));
+			return Promise.resolve();
+		},
 		publish() {
 			send();
 			return Promise.resolve();

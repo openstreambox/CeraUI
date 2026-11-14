@@ -3091,5 +3091,6 @@
 	"live.phone.moblinSaved": "Salva na caixa. Confira no Moblin se ele conecta; salvar não confirma uma conexão.",
 	"live.phone.moblinCleared": "Nenhuma senha do Moblin está salva nesta caixa.",
 	"live.phone.moblinFailed": "Não foi possível aplicar a senha do Moblin. Verifique a caixa e tente de novo. Talvez ela já esteja salva.",
-	"live.phone.moblinBusy": "Espere a caixa confirmar que nenhuma transmissão a está usando antes de trocar a senha do Moblin."
+	"live.phone.moblinBusy": "Espere a caixa confirmar que nenhuma transmissão a está usando antes de trocar a senha do Moblin.",
+	"network.sharing.ipv6Only": "Os dispositivos no Wi-Fi do aparelho ainda não conseguem acessar sites IPv4 por este link."
 }
