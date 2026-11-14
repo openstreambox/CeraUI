@@ -16,7 +16,8 @@ it.each([
 	["waiting", "Waiting for a compatible path"],
 	["no-source", "Waiting for a link address"],
 	["incompatible", "Unused: no compatible address"],
-	[undefined, "Receiver path not reported"],
+	["unknown", "Receiver path unknown"],
+	[undefined, "Receiver path unknown"],
 ] as const)("quiet status %s has opt-in explanation", async (status, line) => {
 	const { container, getByText } = render(LinkPathStatus, { status });
 	expect(getByText(line)).toBeTruthy();
@@ -49,5 +50,5 @@ it("replaces a path on withdrawal and labels stale data", async () => {
 
 it("keeps an unreported path unknown when the device disconnects", () => {
 	const { getByText } = render(LinkPathStatus, { stale: true });
-	expect(getByText("Receiver path not reported")).toBeTruthy();
+	expect(getByText("Receiver path unknown")).toBeTruthy();
 });

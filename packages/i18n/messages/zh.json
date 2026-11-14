@@ -2776,7 +2776,7 @@
 	"network.path.waiting": "正在等待兼容路径",
 	"network.path.no-source": "正在等待链路地址",
 	"network.path.incompatible": "未使用：无兼容地址",
-	"network.path.unknown": "未报告接收端路径",
+	"network.path.unknown": "接收端路径未知",
 	"network.path.stale": "接收端路径已过期",
 	"network.path.why": "详情",
 	"network.path.ipv6Why": "此链路和接收端均有 IPv6 地址，已选择原生 IPv6 路径。地址选择本身并不代表数据已送达。",

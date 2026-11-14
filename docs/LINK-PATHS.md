@@ -3,6 +3,7 @@
 When the device reports paths, each reported eligible link has one quiet line and a “Details” disclosure. The line describes the selected source path, independently of receiver delivery or overall broadcast health. It never changes the stream controls or raises an alert.
 
 - **Native IPv6:** a native IPv6 source and receiver IPv6 address were selected.
+- **Receiver path unknown:** the device explicitly reports an unknown selection for this link.
 - **IPv4:** a native IPv4 source and receiver IPv4 address were selected.
 - **IPv4 through translation (CLAT):** an IPv6 link uses a validated IPv4 translator for the IPv4 receiver.
 - **Unused: receiver address in use is IPv4; translation unavailable:** the IPv6-only link has no usable translator for the receiver's IPv4 address.
@@ -22,5 +23,7 @@ Cached DNS can select a single IPv4 receiver address even when the cache also co
 ## Español (Latinoamérica)
 
 Cuando el dispositivo informa de rutas, cada enlace indicado muestra una línea discreta y la opción «Detalles». Puede indicar «IPv6 nativo», «IPv4», «IPv4 mediante traducción (CLAT)» o «Sin usar: la dirección del receptor en uso es IPv4 y no hay traducción disponible». Los estados de espera, incompatibilidad e información desconocida o desactualizada tienen textos propios. La línea describe la selección de direcciones de este enlace; no confirma la entrega ni determina el estado de toda la transmisión. No genera alertas ni cambia los controles.
+
+«Ruta al receptor desconocida» indica una selección explícitamente desconocida para ese enlace.
 
 Los mapas de rutas ausentes o vacíos no añaden texto en reposo ni con versiones anteriores del dispositivo. El motivo de enlace sin usar describe la dirección del receptor en uso, incluso si la caché DNS también contiene una dirección IPv6.

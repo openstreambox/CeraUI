@@ -2824,7 +2824,7 @@
 	"network.path.waiting": "Esperando una ruta compatible",
 	"network.path.no-source": "Esperando una dirección del enlace",
 	"network.path.incompatible": "Sin usar: no hay una dirección compatible",
-	"network.path.unknown": "Ruta al receptor no informada",
+	"network.path.unknown": "Ruta al receptor desconocida",
 	"network.path.stale": "La ruta al receptor está desactualizada",
 	"network.path.why": "Detalles",
 	"network.path.ipv6Why": "Este enlace tiene una dirección IPv6 de origen y el receptor tiene una dirección IPv6. Se seleccionó la ruta IPv6 nativa. La selección de direcciones por sí sola no confirma la entrega.",

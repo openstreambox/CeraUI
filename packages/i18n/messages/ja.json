@@ -2776,7 +2776,7 @@
 	"network.path.waiting": "互換性のある経路を待機中",
 	"network.path.no-source": "リンクのアドレスを待機中",
 	"network.path.incompatible": "未使用：互換性のあるアドレスなし",
-	"network.path.unknown": "受信側への経路は未報告",
+	"network.path.unknown": "受信側への経路は不明",
 	"network.path.stale": "受信側への経路情報が古くなっています",
 	"network.path.why": "詳細",
 	"network.path.ipv6Why": "リンクと受信側に IPv6 アドレスがあるため、ネイティブ IPv6 経路が選択されています。アドレスの選択だけでは到達を確認できません。",

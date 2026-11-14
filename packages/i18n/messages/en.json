@@ -2821,7 +2821,7 @@
 	"network.path.waiting": "Waiting for a compatible path",
 	"network.path.no-source": "Waiting for a link address",
 	"network.path.incompatible": "Unused: no compatible address",
-	"network.path.unknown": "Receiver path not reported",
+	"network.path.unknown": "Receiver path unknown",
 	"network.path.stale": "Receiver path is out of date",
 	"network.path.why": "Details",
 	"network.path.ipv6Why": "This link has an IPv6 source and the receiver has an IPv6 address. The selected source path uses native IPv6. Address selection alone does not confirm delivery.",

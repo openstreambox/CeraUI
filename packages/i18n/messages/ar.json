@@ -2833,7 +2833,7 @@
 	"network.path.waiting": "بانتظار مسار متوافق",
 	"network.path.no-source": "بانتظار عنوان للوصلة",
 	"network.path.incompatible": "غير مستخدم: لا يوجد عنوان متوافق",
-	"network.path.unknown": "لم يُبلّغ عن مسار المستقبل",
+	"network.path.unknown": "مسار المستقبل غير معروف",
 	"network.path.stale": "معلومات مسار المستقبل قديمة",
 	"network.path.why": "التفاصيل",
 	"network.path.ipv6Why": "للوصلة والمستقبل عنوانا IPv6. تم اختيار مسار IPv6 الأصلي. اختيار العنوان وحده لا يؤكد وصول البيانات.",

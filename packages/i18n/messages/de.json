@@ -2821,7 +2821,7 @@
 	"network.path.waiting": "Warten auf einen kompatiblen Pfad",
 	"network.path.no-source": "Warten auf eine Link-Adresse",
 	"network.path.incompatible": "Ungenutzt: keine kompatible Adresse",
-	"network.path.unknown": "Empfängerpfad nicht gemeldet",
+	"network.path.unknown": "Empfängerpfad unbekannt",
 	"network.path.stale": "Empfängerpfad ist veraltet",
 	"network.path.why": "Einzelheiten",
 	"network.path.ipv6Why": "Link und Empfänger haben IPv6-Adressen. Der native IPv6-Pfad wurde ausgewählt. Die Adressauswahl bestätigt keine Zustellung.",

@@ -35,3 +35,13 @@ test('Hindi CLAT copy uses address conversion terminology', () => {
 	expect(hi['network.path.clatWhy']).toContain('पता परिवर्तक');
 	expect(hi['network.path.clatWhy']).not.toContain('रूपांतरणक');
 });
+
+test('unknown selection and French delivery explanations use accurate copy', () => {
+	const en = JSON.parse(readFileSync(join(import.meta.dir, '../messages/en.json'), 'utf8'));
+	const fr = JSON.parse(readFileSync(join(import.meta.dir, '../messages/fr.json'), 'utf8'));
+	expect(en['network.path.unknown']).toBe('Receiver path unknown');
+	for (const state of ['ipv6', 'clat']) {
+		expect(fr[`network.path.${state}Why`]).toContain("l'acheminement");
+		expect(fr[`network.path.${state}Why`]).not.toContain('la acheminement');
+	}
+});

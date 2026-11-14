@@ -2821,7 +2821,7 @@
 	"network.path.waiting": "संगत पथ की प्रतीक्षा है",
 	"network.path.no-source": "लिंक के पते की प्रतीक्षा है",
 	"network.path.incompatible": "इस्तेमाल नहीं: संगत पता नहीं",
-	"network.path.unknown": "रिसीवर पथ की जानकारी नहीं मिली",
+	"network.path.unknown": "रिसीवर पथ अज्ञात है",
 	"network.path.stale": "रिसीवर पथ की जानकारी पुरानी है",
 	"network.path.why": "विवरण",
 	"network.path.ipv6Why": "लिंक और रिसीवर के पास IPv6 पते हैं। नेटिव IPv6 पथ चुना गया है। पता चुनने से डेटा पहुँचने की पुष्टि नहीं होती।",

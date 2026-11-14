@@ -30,4 +30,7 @@ test('@visual receiver path evidence', async ({ page }, testInfo) => {
 	await section.screenshot({ path: evidencePath(`paths-after-${testInfo.project.name}.png`) });
 	await page.locator('[data-link-id="usb0"] summary').click();
 	await section.screenshot({ path: evidencePath(`paths-why-${testInfo.project.name}.png`) });
+	await wire.emit('status', { link_paths: { ...link_paths, usb0: 'unknown' } });
+	await expect(page.locator('[data-link-id="usb0"] summary')).toContainText('Receiver path unknown');
+	await section.screenshot({ path: evidencePath(`paths-unknown-${testInfo.project.name}.png`) });
 });

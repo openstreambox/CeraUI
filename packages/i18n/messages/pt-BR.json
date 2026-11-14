@@ -2824,7 +2824,7 @@
 	"network.path.waiting": "Aguardando um caminho compatível",
 	"network.path.no-source": "Aguardando um endereço do link",
 	"network.path.incompatible": "Sem uso: nenhum endereço compatível",
-	"network.path.unknown": "Caminho do receptor não informado",
+	"network.path.unknown": "Caminho do receptor desconhecido",
 	"network.path.stale": "Caminho do receptor desatualizado",
 	"network.path.why": "Detalhes",
 	"network.path.ipv6Why": "O link e o receptor têm endereços IPv6. O caminho IPv6 nativo foi selecionado. A seleção não confirma a entrega.",

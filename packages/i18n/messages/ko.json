@@ -2776,7 +2776,7 @@
 	"network.path.waiting": "호환되는 경로 대기 중",
 	"network.path.no-source": "링크 주소 대기 중",
 	"network.path.incompatible": "미사용: 호환되는 주소 없음",
-	"network.path.unknown": "수신기 경로가 보고되지 않음",
+	"network.path.unknown": "수신기 경로 알 수 없음",
 	"network.path.stale": "수신기 경로 정보가 오래됨",
 	"network.path.why": "자세히",
 	"network.path.ipv6Why": "링크와 수신기에 IPv6 주소가 있어 네이티브 IPv6 경로가 선택되었습니다. 주소 선택만으로 전송 성공을 확인할 수는 없습니다.",
