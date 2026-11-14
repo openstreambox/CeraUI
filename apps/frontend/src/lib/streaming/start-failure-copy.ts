@@ -27,11 +27,9 @@ function retryState(failure: StartFailureCopyInput): string {
 
 export function startFailureMessage(failure: StartFailureCopyInput): string {
 	const key =
-		failure.class === "audio_source_unavailable"
-			? "live.startFailed.audio_source_probe_failed"
-			: failure.captureCause !== undefined
-				? `live.startFailure.class.${failure.class}.${failure.captureCause}`
-				: `live.startFailure.class.${failure.class}`;
+		failure.captureCause !== undefined
+			? `live.startFailure.class.${failure.class}.${failure.captureCause}`
+			: `live.startFailure.class.${failure.class}`;
 	const cls = m[key];
 	const reason =
 		typeof cls === "function" ? cls() : m["live.startFailed.generic"]();

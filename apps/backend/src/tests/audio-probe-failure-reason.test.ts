@@ -53,6 +53,7 @@ describe("startStream — audio-source probe failure surfaces a structured reaso
 		expect(getIsStreaming()).toBe(true);
 
 		const result = await startStream(audioPipeline, "192.0.2.10", 5000, "sid", {
+			hdmiVideoSignal: async () => undefined,
 			probe: failingProbe,
 		});
 
@@ -70,6 +71,7 @@ describe("startStream — audio-source probe failure surfaces a structured reaso
 		updateStatus(false);
 
 		const result = await startStream(audioPipeline, "192.0.2.10", 5000, "sid", {
+			hdmiVideoSignal: async () => undefined,
 			probe: failingProbe,
 		});
 
@@ -96,6 +98,16 @@ describe("maybeProbeAudioSource — pseudo-sentinels never probe (C7)", () => {
 			expect(ok).toBe(true);
 		}
 		expect(probeCalls).toBe(0);
+	});
+
+	test("a real device with a resolved audio source is accepted", async () => {
+		expect(
+			await maybeProbeAudioSource(
+				audioPipeline,
+				{ ...getConfig(), asrc: "HDMI" },
+				{ probe: async () => "HDMIIN" },
+			),
+		).toBe(true);
 	});
 
 	test("a real device that fails the probe blocks the start (returns false)", async () => {
@@ -125,15 +137,60 @@ describe("HDMI signal admission", () => {
 			},
 		});
 	});
-	test("video signal with silent audio is not classified as missing audio", async () => {
-		expect(
-			await maybeProbeAudioSource(
-				audioPipeline,
-				{ ...getConfig(), asrc: "HDMI" },
-				{
-					probe: async () => "HDMIIN",
-				},
-			),
-		).toBe(true);
-	});
+	for (const [name, pipeline, selected, verdict, expectedCalls] of [
+		[
+			"unknown signal admits audio probing",
+			audioPipeline,
+			undefined,
+			undefined,
+			1,
+		],
+		["valid video admits audio probing", audioPipeline, undefined, true, 1],
+		[
+			"non-HDMI never probes receiver",
+			{ ...audioPipeline, source: "usb" },
+			undefined,
+			false,
+			0,
+		],
+		[
+			"other HDMI input never probes onboard receiver",
+			audioPipeline,
+			"capture:secondary-hdmi",
+			false,
+			0,
+		],
+	] as const) {
+		test(name, async () => {
+			let signalCalls = 0;
+			let audioCalls = 0;
+			const saved = getConfig().asrc;
+			getConfig().asrc = "HDMI";
+			try {
+				const result = await startStream(
+					pipeline as Pipeline,
+					"192.0.2.10",
+					5000,
+					"sid",
+					{
+						hdmiVideoSignal: async () => {
+							signalCalls++;
+							return verdict;
+						},
+						probe: async () => {
+							audioCalls++;
+							throw new AudioProbeTimeoutError("HDMI");
+						},
+					},
+					"test",
+					{ selected_video_input: selected },
+				);
+				expect(result.reason).toBe(AUDIO_SOURCE_PROBE_FAILED);
+				expect(signalCalls).toBe(expectedCalls);
+				expect(audioCalls).toBe(1);
+			} finally {
+				getConfig().asrc = saved;
+			}
+		});
+	}
 });

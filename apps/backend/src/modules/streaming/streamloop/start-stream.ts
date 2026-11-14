@@ -41,8 +41,12 @@ import {
 } from "../bind-map-spawn.ts";
 import { getLastCapabilities } from "../capabilities.ts";
 import { SRTLA_LISTEN_PORT } from "../constants.ts";
+import { deviceRegistry } from "../devices.ts";
 import { embeddedAudioActive } from "../embedded-audio.ts";
-import { readHdmiVideoSignal } from "../hdmi-audio-signal.ts";
+import {
+	isOnboardHdmiInput,
+	readHdmiVideoSignal,
+} from "../hdmi-audio-signal.ts";
 import { clearStreamProcessExit } from "../health.ts";
 import { createLaunchTransaction } from "../launch-transaction.ts";
 import {
@@ -167,8 +171,20 @@ export async function startStream(
 	configOverride?: Partial<RuntimeConfig>,
 ): Promise<StartStreamResult> {
 	assertStreamLaunchOwnership();
+	const config =
+		configOverride === undefined
+			? getConfig()
+			: ({
+					...getConfig(),
+					...configOverride,
+					composition: configOverride.composition,
+				} as RuntimeConfig);
+	const selectedInput =
+		config.selected_video_input ?? deviceRegistry.getActiveInput();
+	// The fixed receiver node cannot establish signal on a different input.
 	if (
 		pipeline.source === "hdmi" &&
+		(await isOnboardHdmiInput(selectedInput)) &&
 		(await (audioDeps.hdmiVideoSignal ?? readHdmiVideoSignal)()) === false
 	) {
 		throw new StreamStartFailure({
@@ -207,14 +223,6 @@ export async function startStream(
 		};
 	}
 
-	const config =
-		configOverride === undefined
-			? getConfig()
-			: ({
-					...getConfig(),
-					...configOverride,
-					composition: configOverride.composition,
-				} as RuntimeConfig);
 	const launchConfig = resolveLaunchConfig(config);
 	startStreamDeps.getStreamingBackend().setBitrate(launchConfig);
 

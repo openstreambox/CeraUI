@@ -223,6 +223,7 @@ The persistent updating overlay previously derived ONE `isComplete` boolean from
 - Long-running dialog feedback [EXISTS]: `dialogs/LogsDialog.svelte` tracks a per-log `downloading`/`failed` state — the row button shows an in-flight spinner (`advanced.downloading`) and a failed download renders a calm inline amber retry band (`data-testid="log-download-error"`, `advanced.downloadFailed` + `advanced.retryDownload`) that re-invokes the same download, instead of a bare toast. `dialogs/WifiSelectorDialog.svelte`/`WifiNetworkList.svelte` already disable the Scan button + show `wifi-scan-status` while a scan op is `pending` (async-operation phase). Both use EXISTING async-op state — no new backend events. Covered by `LogsDialog.test.ts` + `WifiNetworkList.test.ts`.
 - Production-readiness signals [EXISTS]: `helpers/disk-warning.ts` (`isDiskLow`) DERIVES a low-disk warning from the EXISTING device-stats `disk` signal (NOT a sixth signal) at a FIXED `< 512 MiB` free floor (strict `<`: 512 MiB does not warn, 511 does); `custom/LowDiskBanner.svelte` renders a calm `role="status"` band in `SettingsView.svelte` that opens the Logs dialog. `dialogs/SimUnlockDialog.svelte` surfaces the remaining PUK retries (`sim-puk-attempts`, from the existing SIM status `pukRetries`), warns at ≤ 2, and disables submit at 0 (`pukExhausted`). Copy: `settings.deviceStats.lowDiskTitle/lowDiskBody/lowDiskAction`. Boundary + gating covered by `disk-warning.test.ts` + `SimUnlockDialog.test.ts`.
 
-Audio-source start refusals reuse `live.startFailed.audio_source_probe_failed`
-for the reconnect-or-select-another-source remedy. The engine diagnostic remains
-in System Logs and is never appended to operator copy.
+Typed audio-source start refusals use
+`live.startFailure.class.audio_source_unavailable` without assuming a probe
+timeout. Legacy probe timeouts retain their own copy. The engine diagnostic
+remains in System Logs and is never appended to operator copy.
