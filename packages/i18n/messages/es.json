@@ -2744,5 +2744,11 @@
 	"hotspotConfigurator.saveRefused": "El adaptador Wi-Fi cambió, así que esta configuración no se guardó.",
 	"hotspotConfigurator.saveInterrupted": "No se pudo aplicar la nueva configuración mientras se reiniciaba el punto de acceso. Es posible que esté apagado.",
 	"network.wifiMode.error.radioChanged": "El adaptador Wi-Fi cambió, así que el cambio de modo no se completó. Revisa su modo actual antes de volver a intentarlo.",
-	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso."
+	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso.",
+	"settings.streamIdSecurity": "Puede ser una clave de publicación. Se envía sin cifrar, incluso con cifrado SRT.",
+	"settings.streamIdStored": "Hay un ID guardado. Déjalo sin cambios para conservarlo, escribe para reemplazarlo o bórralo explícitamente.",
+	"settings.streamIdShow": "Mostrar valor escrito",
+	"settings.streamIdHide": "Ocultar valor escrito",
+	"settings.streamIdClear": "Borrar ID de transmisión",
+	"settings.streamIdClearing": "El ID de transmisión se borrará cuando guardes."
 }

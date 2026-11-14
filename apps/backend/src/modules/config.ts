@@ -32,6 +32,7 @@ import {
 	RuntimeConfigAuthorityError,
 	readRuntimeConfigAuthority,
 } from "../helpers/runtime-config-authority.ts";
+import { setStreamIdRedactionSource } from "../helpers/stream-id-secret.ts";
 import { MOCK_CONFIG_PAIRING_DEFAULTS } from "../mocks/mock-config.ts";
 import { shouldUseMocks } from "../mocks/mock-service.ts";
 import { getPasswordHash, setPasswordHash } from "../rpc/state/password.ts";
@@ -59,6 +60,10 @@ export function setConfigFilePath(filePath: string): void {
 }
 
 let config: RuntimeConfig = {};
+setStreamIdRedactionSource(() => [
+	config.srt_streamid,
+	config.relay_streamid_override,
+]);
 let authorityFailure: RuntimeConfigAuthorityError | undefined;
 
 export async function loadConfig() {

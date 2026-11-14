@@ -25,11 +25,11 @@ function baseConfig(overrides: Partial<ConfigMessage> = {}): ConfigMessage {
 	return {
 		relay_server: "fra",
 		relay_account: "acct-1",
-		relay_streamid_override: "override-1",
+		relay_streamid_override_configured: true,
 		relay_protocol: "srtla",
 		srtla_addr: "1.2.3.4",
 		srtla_port: 6000,
-		srt_streamid: "sid-1",
+		srt_streamid_configured: true,
 		selected_ingest_endpoint: "slot-1",
 		srt_latency: 2000,
 		...overrides,
@@ -123,11 +123,11 @@ describe("fingerprintForValidation — invalidation per key", () => {
 	> = {
 		relay_server: { relay_server: "ams" },
 		relay_account: { relay_account: "acct-2" },
-		relay_streamid_override: { relay_streamid_override: "override-2" },
+		relay_streamid_override: { relay_streamid_override_configured: false },
 		relay_protocol: { relay_protocol: "rist" },
 		srtla_addr: { srtla_addr: "9.9.9.9" },
 		srtla_port: { srtla_port: 6001 },
-		srt_streamid: { srt_streamid: "sid-2" },
+		srt_streamid: { srt_streamid_configured: false },
 		selected_ingest_endpoint: { selected_ingest_endpoint: "slot-2" },
 	};
 
@@ -187,7 +187,6 @@ describe("fingerprintForValidation — catalog drift", () => {
 		expect(endpoint).toEqual({
 			addr: "catalog.example",
 			port: 7000,
-			streamid: "override-1",
 			protocol: "srtla",
 		});
 	});
@@ -243,7 +242,6 @@ describe("resolveValidationEndpoint — priority", () => {
 		expect(endpoint).toEqual({
 			addr: "1.2.3.4",
 			port: 6000,
-			streamid: "sid-1",
 			protocol: "srtla",
 		});
 	});

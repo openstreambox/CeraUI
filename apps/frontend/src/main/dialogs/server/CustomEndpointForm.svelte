@@ -18,12 +18,14 @@ import { deriveStageViews, type Validation } from '$lib/components/streaming/rel
 import { Button } from '$lib/components/ui/button';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
+import StreamIdField from "./StreamIdField.svelte";
 
 interface Props {
 	isStreaming: boolean;
 	addr: string;
 	portStr: string;
 	streamId: string;
+ streamIdConfigured?: boolean;
 	passphrase: string;
 	addrError?: string;
 	portError?: string;
@@ -42,6 +44,7 @@ let {
 	addr,
 	portStr,
 	streamId,
+ streamIdConfigured = false,
 	passphrase,
 	addrError,
 	portError,
@@ -102,20 +105,7 @@ function stageLabel(stage: RelayValidateStage): string {
 	{/if}
 </div>
 
-<div class="space-y-2">
-	<Label class="text-sm font-medium" for="srt-streamid">
-		{m["settings.srtStreamId"]()}
-		<span class="text-muted-foreground ms-1 text-xs">({m["settings.optional"]()})</span>
-	</Label>
-	<Input
-		id="srt-streamid"
-		class="font-mono"
-		disabled={isStreaming}
-		oninput={(e) => onStreamId(e.currentTarget.value)}
-		placeholder={m["settings.placeholders.srtStreamId"]()}
-		value={streamId}
-	/>
-</div>
+<StreamIdField id="srt-streamid" value={streamId} configured={streamIdConfigured} disabled={isStreaming} onChange={onStreamId} />
 
 <div class="space-y-2">
 	<Label class="text-sm font-medium" for="srtla-passphrase">

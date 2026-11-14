@@ -2744,5 +2744,11 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.streamIdSecurity": "Pode ser uma chave de publicação. Enviado sem criptografia, mesmo com criptografia SRT.",
+	"settings.streamIdStored": "Há um ID salvo. Deixe sem alterações para manter, digite para substituir ou limpe explicitamente.",
+	"settings.streamIdShow": "Mostrar valor digitado",
+	"settings.streamIdHide": "Ocultar valor digitado",
+	"settings.streamIdClear": "Limpar ID de transmissão",
+	"settings.streamIdClearing": "O ID de transmissão será limpo ao salvar."
 }

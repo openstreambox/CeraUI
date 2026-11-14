@@ -133,7 +133,9 @@ for (const config of [
 			expect(frames).toHaveLength(1);
 			expect(localFrames).toHaveLength(1);
 			const seq = JSON.parse(localFrames[0] ?? "").seq;
-			expect(localFrames[0]).toBe(JSON.stringify({ config, seq }));
+			expect(localFrames[0]).toBe(
+				expectedBytes({ config, seq }, config, false),
+			);
 			expect(JSON.stringify(frames[0])).toBe(
 				expectedBytes(
 					{
