@@ -589,6 +589,7 @@ export function triggerNetworkInterfacesChange() {
 	// marking) — broadcast fires only when the diff is non-empty.
 	syncNetifState();
 	networkInterfacesEventEmitter.emit("change");
+	networkInterfacesEventEmitter.emit("sourcesChange");
 }
 
 // `updateGwQueue` (gateways.ts) is ONE-SHOT: it is cleared after a successful
@@ -664,6 +665,14 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 		triggerNetworkInterfacesChange();
 		notifyTopologyChange();
 	}
+}
+
+/** Source changes refresh a running bond without declaring a topology edge. */
+export function onNetworkInterfaceSourcesChange(callback: () => void) {
+	networkInterfacesEventEmitter.on("sourcesChange", callback);
+	return () => {
+		networkInterfacesEventEmitter.off("sourcesChange", callback);
+	};
 }
 
 export function onNetworkInterfacesChange(callback: () => void) {
@@ -857,6 +866,7 @@ export function processIfconfigOutput(
 	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 ) {
 	let intsChanged = false;
+	let sourcesChanged = false;
 	const newInterfaces: Record<string, NetworkInterface> = {};
 
 	wifiDeviceListStartUpdate();
@@ -933,6 +943,8 @@ export function processIfconfigOutput(
 				error,
 			};
 
+			if (netif[name]?.ipv6 !== ipv6) sourcesChanged = true;
+
 			// Detect interfaces that are new or with a different address
 			if (
 				!netif[name] ||
@@ -995,6 +1007,8 @@ export function processIfconfigOutput(
 	if (intsChanged) {
 		triggerNetworkInterfacesChange();
 		notifyTopologyChange();
+	} else if (sourcesChanged) {
+		networkInterfacesEventEmitter.emit("sourcesChange");
 	}
 
 	// Reconcile + broadcast (covers throughput-only deltas too); no-op when the

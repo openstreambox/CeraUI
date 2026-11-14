@@ -22,7 +22,7 @@
 
 import type WebSocket from "ws";
 import { logger } from "../../../helpers/logger.ts";
-import { onNetworkInterfacesChange } from "../../network/network-interfaces.ts";
+import { onNetworkInterfaceSourcesChange } from "../../network/network-interfaces.ts";
 import { isUpdating } from "../../system/software-updates.ts";
 import { sendStatus } from "../../ui/status.ts";
 import { getSocketSenderId } from "../../ui/websocket-server.ts";
@@ -155,7 +155,7 @@ export async function start(
 	};
 	sessionResources = {
 		generation,
-		removeNetworkInterfacesChangeListener: onNetworkInterfacesChange(
+		removeNetworkInterfacesChangeListener: onNetworkInterfaceSourcesChange(
 			refreshSrtlaIpAddresses,
 		),
 	};

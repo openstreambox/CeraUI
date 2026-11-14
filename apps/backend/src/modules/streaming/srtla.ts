@@ -71,7 +71,7 @@ export async function resolveSrtla(addr: string) {
 			if (!hasV4 || literal) throw error;
 			res = await dnsCacheResolve(addr, "aaaa");
 		}
-		if (!literal && hasV4 && res.addrs.length === 0)
+		if (!literal && hasV4 && (res.fromCache || res.addrs.length === 0))
 			res = await dnsCacheResolve(addr, "aaaa");
 		addrs = res.addrs;
 		fromCache = res.fromCache;
