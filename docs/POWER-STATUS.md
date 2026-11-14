@@ -17,9 +17,10 @@ notice and recovery retracts it. The sensor summary includes these same warnings
 for remote moderators. Both remote transports receive a fresh power-only
 snapshot (Power, Bank A, Bank B and Reserve pack) each second while connected
 and authenticated; a remote send failure cannot interrupt local monitoring. This
-dedicated fan-out does not wire the generic status relay. Remote delivery is
-covered by fake peer and protocol tests; deployed relay and phone qualification
-remains separate.
+dedicated fan-out does not wire the generic status relay. The initial legacy
+relay snapshot retains existing hardware sensors but excludes the local Power
+sample marker. Remote delivery is covered by fake peer and protocol tests;
+deployed relay and phone qualification remains separate.
 
 Freshness reads Linux CLOCK_MONOTONIC through Bun FFI clock_gettime from glibc,
 never a process-relative clock or wall time. Clock failure gives unknown. Every
@@ -31,10 +32,11 @@ device, and an age from zero up to but excluding 5000 ms. A killed or frozen
 writer therefore expires at three seconds, independently of the five-second
 status window. Missing, unreadable, corrupt, unsupported or stale snapshots
 quietly show **Power data not available**, remove old readings and retract power
-warnings. Missing services omit the power row. Live absent, silent, bootloader
-and unknown-version snapshots omit it when no board has been expected and the
-device is unambiguous. A frozen absent snapshot shows unavailable, never no
-board. Expected but unavailable boards retain a quiet unavailable row.
+warnings. Missing services omit the power row. Only live absent snapshots omit
+it when no board has been expected and the device is unambiguous. Silent,
+bootloader and unknown-version snapshots retain the quiet unavailable row. A
+frozen absent snapshot shows unavailable, never no board. Expected but
+unavailable boards retain a quiet unavailable row.
 Device-open errors distinguish permission denial, a busy device and other errno
 values; marker persistence errors explain that readings continue while saving is
 retried. Mock/development mode does not read the optional service or start the
@@ -71,12 +73,15 @@ disponibles. Esto también se aplica cuando la última instantánea indica que n
 hay placa. Si se espera una placa y faltan datos o tienen cinco segundos de
 antigüedad, se muestra «Datos de alimentación no disponibles», sin alarma. Se
 retiran las mediciones y los avisos anteriores. Si no hay servicio, o una
-instantánea vigente y sin ambigüedad indica ausencia, silencio, cargador de
-arranque o versión desconocida sin una placa esperada, no se muestra la fila de
-alimentación. El modo de desarrollo sigue funcionando. CeraUI solo lee los
-archivos del servicio: no envía órdenes al dispositivo ni cambia su
+instantánea vigente y sin ambigüedad indica ausencia sin una placa esperada,
+no se muestra la fila de alimentación. Los estados de silencio, cargador de
+arranque y versión desconocida mantienen la fila de datos no disponibles. El
+modo de desarrollo sigue funcionando. CeraUI solo lee los archivos del servicio:
+no envía órdenes al dispositivo ni cambia su
 alimentación. Las temperaturas estimadas se identifican como tales. Una falla
-del canal remoto no interrumpe la supervisión local.
+del canal remoto no interrumpe la supervisión local. La instantánea inicial del
+canal remoto conserva los sensores de hardware existentes, pero excluye el
+marcador local «Power sample».
 
 ## Localization
 

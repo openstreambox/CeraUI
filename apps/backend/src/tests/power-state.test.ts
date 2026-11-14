@@ -400,13 +400,19 @@ for (const link of [
 	"bootloader",
 	"unknown_version",
 ]) {
-	for (const heartbeat of [undefined, null, "10000", -1, 1.5, 10001, 7000]) {
+	for (const heartbeat of [undefined, null, "10000", -1, 9999.5, 10001, 7000]) {
 		test(`${link}: invalid or expired heartbeat ${heartbeat} never establishes state`, async () => {
-			const state = await changed({
-				link,
-				expected: false,
-				published_mono_ms: heartbeat,
-			});
+			const now = heartbeat === -1 ? 1000 : 10000;
+			const state = await changed(
+				{
+					link,
+					expected: false,
+					published_mono_ms: heartbeat,
+					rx_mono_ms: now,
+				},
+				{},
+				now,
+			);
 			expect(state).toEqual({
 				available: false,
 				summary: "Power data not available",
@@ -458,8 +464,13 @@ test("stopped cannot reuse retained measurements or claim no board", async () =>
 		});
 });
 for (const link of ["silent", "bootloader", "unknown_version"])
-	test(`${link} never expected omits the row only while live and unambiguous`, async () => {
-		expect((await changed({ link, expected: false })).summary).toBe("");
+	test(`${link} never expected keeps the quiet unavailable row`, async () => {
+		expect(await changed({ link, expected: false })).toEqual({
+			available: false,
+			summary: "Power data not available",
+			sensors: {},
+			notices: [],
+		});
 		expect(
 			(await changed({ link, expected: false, ambiguous: true })).summary,
 		).toBe("Power data not available");
@@ -503,3 +514,20 @@ test("a throwing clock quietly makes the retained snapshot unavailable", async (
 		clockSpy.mockRestore();
 	}
 });
+
+for (const [heartbeat, now, rx] of [
+	[-1, 1000, 999],
+	[9999.5, 10000, 10000],
+])
+	test(`otherwise fresh heartbeat ${heartbeat} is rejected by its numeric guard`, async () => {
+		const overrides = { rx_mono_ms: rx, published_mono_ms: now };
+		expect((await changed(overrides, {}, now)).available).toBe(true);
+		expect(
+			await changed({ ...overrides, published_mono_ms: heartbeat }, {}, now),
+		).toEqual({
+			available: false,
+			summary: "Power data not available",
+			sensors: {},
+			notices: [],
+		});
+	});

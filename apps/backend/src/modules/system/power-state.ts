@@ -70,11 +70,7 @@ export async function readPowerState(
 			s.link === "stopped"
 		)
 			return unavailablePower();
-		if (
-			["absent", "silent", "bootloader", "unknown_version"].includes(s.link) &&
-			!s.expected &&
-			!s.ambiguous
-		)
+		if (s.link === "absent" && !s.expected && !s.ambiguous)
 			return unavailablePower(false);
 		if (s.link === "error")
 			return {

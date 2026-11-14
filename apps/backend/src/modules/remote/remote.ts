@@ -442,6 +442,12 @@ async function remoteConnect() {
 		if (config !== frame.config) projected = { ...projected, config };
 		const wifi = projectRemoteWifiFrame(frame.wifi);
 		if (wifi !== frame.wifi) projected = { ...projected, wifi };
+		if (frame.sensors && typeof frame.sensors === "object") {
+			const sensors = Object.fromEntries(
+				Object.entries(frame.sensors).filter(([key]) => key !== "Power sample"),
+			);
+			projected = { ...projected, sensors };
+		}
 		const message = projected === frame ? data : JSON.stringify(projected);
 		if (typeof options === "function") {
 			send(message, options);
