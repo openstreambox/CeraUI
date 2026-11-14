@@ -63,8 +63,24 @@ export const resolvedAsrcReasonSchema = z.enum([
 ]);
 export type ResolvedAsrcReason = z.infer<typeof resolvedAsrcReasonSchema>;
 
+/** Selected source paths, not receiver-delivery or overall broadcast health. */
+export const linkPathStatusSchema = z.enum([
+	'ipv4',
+	'ipv6',
+	'clat',
+	'receiver-ipv4-only',
+	'no-source',
+	'incompatible',
+	'waiting',
+	'unknown',
+]);
+export type LinkPathStatus = z.infer<typeof linkPathStatusSchema>;
+export const linkPathsSchema = z.record(z.string(), linkPathStatusSchema);
+export type LinkPaths = z.infer<typeof linkPathsSchema>;
+
 // Full status message schema
 export const statusMessageSchema = z.object({
+	link_paths: linkPathsSchema.optional(),
 	set_password: z.boolean().optional(),
 	is_streaming: z.boolean(),
 	stream_lifecycle: lifecycleStateSchema.optional(),
@@ -463,6 +479,7 @@ export const statusResponseSchema = z.object({
 	set_password: z.boolean().optional(),
 	remote: remoteStatusSchema.optional(),
 	linkTelemetry: linkTelemetryMessageSchema.nullable().optional(),
+	link_paths: linkPathsSchema.optional(),
 	// Published as an EXPLICIT value (null when there is no bond to describe) on
 	// every frame, never present-only-when-degraded: the frontend status merge
 	// preserves an omitted field, so a raise-only band could never be retracted —

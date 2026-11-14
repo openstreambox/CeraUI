@@ -48,6 +48,7 @@ import {
 } from "../streaming/auto-audio.ts";
 import { getEngineBitrateStatus } from "../streaming/engine-bitrate-status.ts";
 import { buildBondMapping } from "../streaming/link-mapping-report.ts";
+import { getLinkPaths } from "../streaming/link-path-status.ts";
 import {
 	buildLinkTelemetry,
 	type LinkTelemetryMessage,
@@ -94,6 +95,7 @@ export type StatusResponseMessage = {
 	remote?: true | { error: string };
 	linkTelemetry?: LinkTelemetryMessage | null;
 	bond_mapping?: BondMapping | null;
+	link_paths?: ReturnType<typeof getLinkPaths>;
 	buffering?: BufferingStatus | null;
 	network_ingest?: NetworkIngest | null;
 	active_encode?: ActiveEncode | null;
@@ -128,6 +130,7 @@ export function sendStatus(conn: WebSocket) {
 			pending_audio_follow_asrc: getPendingAudioFollowAsrc(),
 			linkTelemetry: buildLinkTelemetry(),
 			bond_mapping: buildBondMapping(),
+			link_paths: getLinkPaths(),
 			network_ingest: getNetworkIngestInfo(),
 			active_encode: getActiveEncodeStatus(),
 			engine_bitrate: getEngineBitrateStatus(),

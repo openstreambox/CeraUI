@@ -51,6 +51,7 @@ import { getAudioDevices } from "./audio.ts";
 import { getLastCapabilities, getSupportedTransports } from "./capabilities.ts";
 import { isCompositionSupported } from "./composition.ts";
 import { validateBitrate } from "./encoder.ts";
+import { setLinkPaths } from "./link-path-status.ts";
 import { AUDIO_CODECS } from "./pipeline-sources.ts";
 import { searchPipelines } from "./pipelines.ts";
 import { noteSourceSelectionWrite } from "./sources.ts";
@@ -99,6 +100,7 @@ export function updateStatus(status: boolean) {
 			}
 		}
 		isStreaming = status;
+		if (!status) setLinkPaths({});
 		broadcastMsg("status", { is_streaming: isStreaming });
 
 		return true;

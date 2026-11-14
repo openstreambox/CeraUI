@@ -34,6 +34,7 @@ vi.mock("$lib/rpc/client", () => ({
 
 import {
 	getIsStreaming,
+	getStatus,
 	initSubscriptions,
 	resetState,
 } from "./subscriptions.svelte";
@@ -78,4 +79,16 @@ describe("backend is_streaming=false broadcast reaches + is consumed (Todo 29 d)
 		pushStatus(false);
 		expect(getIsStreaming()).toBe(false);
 	});
+});
+
+it("receiver path snapshots replace wholesale without changing stream state", () => {
+	pushStatus(true);
+	if (!captured) throw new Error("message handler was never registered");
+	captured("status", { link_paths: { cell0: "clat", cell1: "ipv6" } });
+	expect(getIsStreaming()).toBe(true);
+	expect(getStatus()?.link_paths).toEqual({ cell0: "clat", cell1: "ipv6" });
+	captured("status", { link_paths: { cell1: "waiting" } });
+	expect(getStatus()?.link_paths).toEqual({ cell1: "waiting" });
+	pushStatus(false);
+	expect(getStatus()?.link_paths).toEqual({});
 });

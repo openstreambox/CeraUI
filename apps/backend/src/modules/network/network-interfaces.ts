@@ -1292,7 +1292,8 @@ export function netIfBuildMsg() {
 		: undefined;
 	for (const i in netif) {
 		const networkInterface = netif[i];
-		if (!networkInterface) continue;
+		// The physical link owns CLAT; its TUN is not a second operator link.
+		if (!networkInterface || /^clat\d+$/.test(i)) continue;
 
 		const entry: NetworkInterfaceResponseMessage[string] = {
 			...(networkInterface.ip !== undefined ? { ip: networkInterface.ip } : {}),

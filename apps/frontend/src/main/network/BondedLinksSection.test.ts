@@ -283,3 +283,35 @@ describe("BondedLinksSection — binary presence (todo 48)", () => {
 		expect(cardFor(container, "eth0").className).toContain("opacity-50");
 	});
 });
+
+it("uses device-connection freshness for paths, rather than unchanged telemetry", async () => {
+	const { container, rerender } = render(BondedLinksSection, {
+		props: {
+			links: [{ ...linkFor("eth0", 0), isStale: true }],
+			modemEntries: [],
+			linkPaths: { eth0: "ipv4" },
+			pathsStale: false,
+		},
+	});
+	expect(
+		container.querySelector('[data-testid="link-path-status"] summary')
+			?.textContent,
+	).toContain("IPv4");
+	await rerender({ pathsStale: true });
+	expect(
+		container.querySelector('[data-testid="link-path-status"] summary')
+			?.textContent,
+	).toContain("Receiver path is out of date");
+});
+
+it("keeps absent and retracted path maps quiet", async () => {
+	const { queryByTestId, rerender } = render(BondedLinksSection, {
+		links: [linkFor("eth0", 0)],
+		modemEntries: [],
+	});
+	expect(queryByTestId("link-path-status")).toBeNull();
+	await rerender({ linkPaths: { eth0: "ipv4" } });
+	expect(queryByTestId("link-path-status")).not.toBeNull();
+	await rerender({ linkPaths: {} });
+	expect(queryByTestId("link-path-status")).toBeNull();
+});

@@ -1,6 +1,6 @@
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
-import type { LinkTelemetryEntry, LinkTelemetryMessage, Modem } from '@ceraui/rpc/schemas';
+import type { LinkPaths, LinkTelemetryEntry, LinkTelemetryMessage, Modem } from '@ceraui/rpc/schemas';
 import { Radio } from '@lucide/svelte';
 import Badge from '$lib/components/custom/Badge.svelte';
 import LinkBadge from '$lib/components/custom/LinkBadge.svelte';
@@ -11,6 +11,7 @@ import { getStalenessState } from '$lib/helpers/staleness';
 import type { LinkSignal } from '$lib/types/hud';
 import { cn } from '$lib/utils';
 import { signalLabelKey } from './cellular-row';
+import LinkPathStatus from './LinkPathStatus.svelte';
 import {
 	ambiguousLinkLabels,
 	linkDisambiguation,
@@ -21,6 +22,8 @@ interface Props {
 	links: LinkSignal[];
 	modemEntries: [string, Modem][];
 	linkTelemetry?: LinkTelemetryMessage | null;
+	linkPaths?: LinkPaths | undefined;
+	pathsStale?: boolean;
 	/** Known interfaces that carry no bonded traffic; stated, never listed here. */
 	unbondedCount?: number;
 }
@@ -29,6 +32,8 @@ const {
 	links,
 	modemEntries,
 	linkTelemetry = undefined,
+	linkPaths = undefined,
+	pathsStale = false,
 	unbondedCount = 0,
 }: Props = $props();
 
@@ -159,6 +164,9 @@ const totalStale = $derived(
 							<LinkTelemetry class="gap-x-2.5" {entry} loading={telemetryLoading} />
 						</div>
 					</div>
+					{#if linkPaths?.[link.id]}
+						<LinkPathStatus status={linkPaths[link.id]} stale={pathsStale} />
+					{/if}
 				</div>
 			{/each}
 		</div>

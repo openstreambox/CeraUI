@@ -104,3 +104,9 @@ describe("buildBond keeps two same-address, same-model devices independent", () 
 		expect(snapshot.links[1]?.rateTxKbps).toBe(1);
 	});
 });
+
+it("keeps an IPv6-only eligible link visible even without a receiver-compatible path", () => {
+	const entry: NetifEntry = { tp: 0, enabled: true, ipv6: "2001:db8::3" };
+	expect(isBondExcluded(entry)).toBe(false);
+	expect(isBondMember(entry)).toBe(true);
+});
