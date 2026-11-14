@@ -1785,10 +1785,10 @@
 	"network.wifiMode.stationHint": "Verbindet sich mit einem WLAN. Dieses Funkmodul kann Teil des Bündels sein.",
 	"network.wifiMode.hotspotHint": "Sendet nur einen Zugangspunkt. Dieses Funkmodul liefert keine WLAN-Uplink-Verbindung.",
 	"network.wifiMode.hybridHint": "Bleibt im WLAN und sendet gleichzeitig einen Zugangspunkt.",
-  "network.wifiDegraded.unavailable": "Der WLAN-Adapter ist vorübergehend nicht verfügbar.",
-  "network.wifiDegraded.operational-mac-missing": "Der WLAN-Adapter hat seine aktuelle Hardwareadresse noch nicht gemeldet.",
-  "network.wifiDegraded.permanent-mac-unresolved": "Die stabile Hardwareidentität des WLAN-Adapters konnte nicht bestätigt werden.",
-  "network.wifiMode.unavailable": "{mode} ist nicht verfügbar – {reason}",
+	"network.wifiDegraded.unavailable": "Der WLAN-Adapter ist vorübergehend nicht verfügbar.",
+	"network.wifiDegraded.operational-mac-missing": "Der WLAN-Adapter hat seine aktuelle Hardwareadresse noch nicht gemeldet.",
+	"network.wifiDegraded.permanent-mac-unresolved": "Die stabile Hardwareidentität des WLAN-Adapters konnte nicht bestätigt werden.",
+	"network.wifiMode.unavailable": "{mode} ist nicht verfügbar – {reason}",
 	"network.wifiMode.pending": "Wechsel zu {mode}…",
 	"network.wifiMode.reason.unsupported": "Dieses Funkmodul kann keinen Zugangspunkt bereitstellen.",
 	"network.wifiMode.reason.capabilityAbsent": "Der Treiber dieses Funkmoduls kann WLAN und Zugangspunkt nicht gleichzeitig betreiben.",
@@ -2855,5 +2855,8 @@
 	"hud.checking": "Prüfung",
 	"carrying.active": "Trägt · Telefonverkehr über diese Box",
 	"carrying.unknown": "Client-Verkehr über diese Box ist unbekannt",
-	"carrying.idle": "Kein Telefon sendet über diese Box"
+	"carrying.idle": "Kein Telefon sendet über diese Box",
+	"settings.updates.system.boardNotOffered": "Updates aren't offered on this board yet.",
+	"settings.updates.channel.address": "Image channel address",
+	"settings.updates.channel.saveAddress": "Save address"
 }

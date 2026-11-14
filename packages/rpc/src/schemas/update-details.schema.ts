@@ -112,6 +112,7 @@ export const updateDetailsSchema = z.object({
 		staged: z.object({ version: z.string(), stagedAt: z.number() }).nullable(),
 		/** The verified manifest the last channel check found, not yet staged. */
 		candidate: z.object({ version: z.string(), sizeBytes: z.number() }).nullable(),
+		boardNotOffered: z.boolean().optional(),
 		channelUnpublished: z.boolean().optional(),
 	}),
 	checks: z.object({

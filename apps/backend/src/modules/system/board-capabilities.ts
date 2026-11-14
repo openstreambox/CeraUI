@@ -65,7 +65,7 @@ export function parseBoardIdentity(text: string): BoardIdentity | null {
 	return { board, family, capabilities: new Set(names) };
 }
 
-function recordCapability(
+export function recordCapability(
 	release: string,
 	capability: BoardCapability,
 ): boolean | undefined {

@@ -1797,10 +1797,10 @@
 	"network.wifiMode.stationHint": "يتصل بشبكة Wi-Fi. يمكن لهذا الراديو أن يشارك في التجميع.",
 	"network.wifiMode.hotspotHint": "يبثّ نقطة اتصال فقط. لا يوفّر هذا الراديو وصلة Wi-Fi صاعدة.",
 	"network.wifiMode.hybridHint": "يظل متصلاً بشبكة Wi-Fi مع بثّ نقطة اتصال في الوقت نفسه.",
-  "network.wifiDegraded.unavailable": "محول Wi-Fi غير متاح مؤقتًا.",
-  "network.wifiDegraded.operational-mac-missing": "لم يبلّغ محول Wi-Fi عن عنوان الجهاز الحالي بعد.",
-  "network.wifiDegraded.permanent-mac-unresolved": "تعذر تأكيد هوية الجهاز الثابتة لمحول Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} غير متاح — {reason}",
+	"network.wifiDegraded.unavailable": "محول Wi-Fi غير متاح مؤقتًا.",
+	"network.wifiDegraded.operational-mac-missing": "لم يبلّغ محول Wi-Fi عن عنوان الجهاز الحالي بعد.",
+	"network.wifiDegraded.permanent-mac-unresolved": "تعذر تأكيد هوية الجهاز الثابتة لمحول Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} غير متاح — {reason}",
 	"network.wifiMode.pending": "جارٍ التبديل إلى {mode}…",
 	"network.wifiMode.reason.unsupported": "لا يستطيع هذا الراديو استضافة نقطة اتصال.",
 	"network.wifiMode.reason.capabilityAbsent": "لا يستطيع برنامج تشغيل هذا الراديو تشغيل Wi-Fi ونقطة اتصال في الوقت نفسه.",
@@ -2867,5 +2867,8 @@
 	"hud.checking": "جارٍ التحقق",
 	"carrying.active": "نقل نشط · حركة الهاتف عبر هذا الجهاز",
 	"carrying.unknown": "حركة العملاء عبر هذا الجهاز غير معروفة",
-	"carrying.idle": "لا يرسل أي هاتف عبر هذا الجهاز"
+	"carrying.idle": "لا يرسل أي هاتف عبر هذا الجهاز",
+	"settings.updates.system.boardNotOffered": "Updates aren't offered on this board yet.",
+	"settings.updates.channel.address": "Image channel address",
+	"settings.updates.channel.saveAddress": "Save address"
 }

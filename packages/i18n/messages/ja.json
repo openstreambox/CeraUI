@@ -1740,10 +1740,10 @@
 	"network.wifiMode.stationHint": "Wi-Fi ネットワークに接続します。この無線はボンディングに参加できます。",
 	"network.wifiMode.hotspotHint": "アクセスポイントの送信のみを行います。この無線は Wi-Fi アップリンクを持ちません。",
 	"network.wifiMode.hybridHint": "Wi-Fi に接続したまま、アクセスポイントも送信します。",
-  "network.wifiDegraded.unavailable": "Wi-Fi アダプターは一時的に利用できません。",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi アダプターは現在のハードウェアアドレスをまだ報告していません。",
-  "network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi アダプターの安定したハードウェア識別情報を確認できませんでした。",
-  "network.wifiMode.unavailable": "{mode} は利用できません — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi アダプターは一時的に利用できません。",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi アダプターは現在のハードウェアアドレスをまだ報告していません。",
+	"network.wifiDegraded.permanent-mac-unresolved": "Wi-Fi アダプターの安定したハードウェア識別情報を確認できませんでした。",
+	"network.wifiMode.unavailable": "{mode} は利用できません — {reason}",
 	"network.wifiMode.pending": "{mode} に切り替えています…",
 	"network.wifiMode.reason.unsupported": "この無線はアクセスポイントを提供できません。",
 	"network.wifiMode.reason.capabilityAbsent": "この無線のドライバーは Wi-Fi とアクセスポイントを同時に動作させられません。",
@@ -2810,5 +2810,8 @@
 	"hud.checking": "確認中",
 	"carrying.active": "転送中 · このボックス経由の電話通信",
 	"carrying.unknown": "このボックス経由のクライアント通信は不明です",
-	"carrying.idle": "このボックス経由で送信中の電話はありません"
+	"carrying.idle": "このボックス経由で送信中の電話はありません",
+	"settings.updates.system.boardNotOffered": "Updates aren't offered on this board yet.",
+	"settings.updates.channel.address": "Image channel address",
+	"settings.updates.channel.saveAddress": "Save address"
 }

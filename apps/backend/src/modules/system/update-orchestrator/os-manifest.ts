@@ -1,5 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { z } from "zod";
+import { updateChannelUrl } from "../update-channel-url.ts";
 import { OsAgentError } from "./os-identity.ts";
 import {
 	readStoredStateFile,
@@ -20,7 +21,7 @@ const calVer = z.string().regex(/^[0-9]{4}\.[0-9]+\.[0-9]+$/);
 const digest = z.string().regex(/^[0-9a-f]{64}$/);
 const artifact = z
 	.object({
-		url: z.url().startsWith("https://images.ceralive.tv/releases/"),
+		url: z.url().startsWith("https://"),
 		size: z.number().int().positive(),
 		sha256: digest,
 	})
@@ -40,7 +41,7 @@ export const osChannelManifestSchema = z
 		min_ceraui_version: calVer,
 		bundle: artifact,
 		flash: artifact.extend({ raw_sha256: digest }),
-		lock_url: z.url().startsWith("https://images.ceralive.tv/releases/"),
+		lock_url: z.url().startsWith("https://"),
 	})
 	.strict();
 export type OsChannelManifest = z.infer<typeof osChannelManifestSchema>;
@@ -135,6 +136,22 @@ export async function verifySignedOsManifestTrust(
 	const parsed = osChannelManifestSchema.safeParse(raw);
 	if (!parsed.success) return { ok: false, reason: "schema_invalid" };
 	const manifest = parsed.data;
+	const base = `${await updateChannelUrl()}/releases/`;
+	if (
+		![manifest.bundle.url, manifest.flash.url, manifest.lock_url].every(
+			(value) => {
+				const url = new URL(value);
+				return (
+					!url.username &&
+					!url.password &&
+					!url.search &&
+					!url.hash &&
+					url.href.startsWith(base)
+				);
+			},
+		)
+	)
+		return { ok: false, reason: "schema_invalid" };
 	if (manifest.board !== context.board)
 		return { ok: false, reason: "wrong_board" };
 	if (manifest.compatible !== context.compatible)

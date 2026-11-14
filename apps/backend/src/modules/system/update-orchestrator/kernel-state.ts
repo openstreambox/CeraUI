@@ -12,7 +12,7 @@ import { parseAuthorityJson } from "./strict-authority-json.ts";
 export const KERNEL_STATE_DIR = "/data/ceralive/update-state";
 export const kernelPackage = z
 	.string()
-	.regex(/^linux-image-[0-9]+\.[0-9]+\.[0-9]+-ceralive-rk3588$/);
+	.regex(/^linux-image-[0-9]+\.[0-9]+\.[0-9]+-ceralive-[a-z0-9][a-z0-9_-]*$/);
 export const kernelVersion = z
 	.string()
 	.regex(/^[0-9]+\.[0-9]+\.[0-9]+-ceralive[1-9][0-9]*$/);

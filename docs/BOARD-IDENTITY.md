@@ -47,3 +47,19 @@ the same record/parser as asynchronous capability checks. Branding-only and
 unreadable older-image records retain compatibility; whitespace-malformed board
 assignments are present records and deny grants. Ingest RPC and service control
 both require `network-ingest`, independently of `client-internet`.
+
+Records granting `os-updates` but missing or empty `UPDATE_BOARD`,
+`UPDATE_COMPATIBLE` or `KERNEL_ARCH` are unsupported update policies. Kernel
+candidate discovery returns before inspecting the booted kernel or APT indexes.
+Manual and scheduled checks can therefore publish the calm unsupported-board
+state without a kernel identity error; staging and installation remain refused.
+Branding-only legacy records retain the existing fallback.
+
+Kernel reconciliation applies the same unsupported-policy verdict after inspecting
+any pending stage writer. A running or unidentifiable writer still blocks other
+work. Otherwise checks can publish the unsupported-board state without reading
+kernel identity or arming activation. The kernel receipt, attempt and overlay
+remain intact and unacknowledged, so rollback and confirmation reconciliation
+resume when supported policy is restored. New kernel and OS installs stay
+unavailable, and automatic slot mirroring is disabled even if its capability is
+present. Unsupported metadata never authorizes cleanup or activation.
