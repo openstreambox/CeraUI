@@ -13,8 +13,10 @@ family first. IPv4-only boxes ask for A only. With an IPv6 source, an empty or
 failed A answer can fall back to AAAA; a cache hit tries live AAAA only when it
 holds no IPv4 address. A validated ENODATA or ENOTFOUND A response is a
 fresh empty answer: a bounded AAAA lookup repairs the cache and retires stale
-IPv4 in one update only when the AAAA answer contains IPv6 addresses.
-Empty answers never create or clear the cache.
+IPv4 in one update only when AAAA supplies an IPv6 replacement. An empty A
+answer does not outrank cached fallback if AAAA fails or times out. If both
+families answer empty, start fails but the existing cache is retained.
+Empty answers never create a cache.
 Timeouts, SERVFAIL and failed validation retain cached IPv4 without switching
 families. A working A answer never waits for AAAA. Cache updates replace records
 within the answered family, including an explicitly empty A family, and retain
@@ -48,8 +50,11 @@ Con una fuente IPv6, si A falla o está vacía se puede intentar AAAA; si se usa
 la caché, solo se consulta AAAA en vivo cuando no contiene una dirección IPv4.
 Una respuesta A validada ENODATA o ENOTFOUND consulta AAAA con un tiempo
 límite y actualiza la caché sin las direcciones IPv4 anteriores en una sola
-escritura solo si AAAA contiene direcciones IPv6. Las respuestas vacías no
-crean ni borran la caché. Los tiempos de espera,
+escritura solo si AAAA devuelve una dirección IPv6 de reemplazo. Una respuesta
+A vacía no desplaza la caché si AAAA falla o agota el tiempo límite. Si ambas
+familias responden sin direcciones, el inicio falla pero conserva la caché.
+Las respuestas vacías nunca crean una caché.
+Los tiempos de espera,
 SERVFAIL y una validación fallida conservan la caché IPv4 sin cambiar de familia.
 Cada respuesta actualiza su familia en la caché y conserva la otra. Se conserva
 el nombre para que el emisor elija una dirección compatible, incluso con DNS64.

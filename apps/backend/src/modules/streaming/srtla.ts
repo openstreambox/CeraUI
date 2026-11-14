@@ -94,7 +94,12 @@ export async function resolveSrtla(addr: string) {
 		void aaaa
 			?.then((answer) => {
 				if (generation === resolutionGeneration && !answer.fromCache)
-					void dnsCacheValidate(addr, emptyA ? "a" : undefined);
+					void dnsCacheValidate(
+						addr,
+						emptyA && answer.addrs.some((ip) => isIP(ip) === 6)
+							? "a"
+							: undefined,
+					);
 			})
 			.catch(() => {
 				/* An unavailable optional AAAA answer keeps IPv4 usable. */
@@ -124,7 +129,9 @@ export async function resolveSrtla(addr: string) {
 			result.status === "fulfilled" ? [result.value] : [],
 		);
 		// A live family answer takes precedence over another lookup's stale cache.
-		const liveAnswers = answers.filter((answer) => !answer.fromCache);
+		const liveAnswers = answers.filter(
+			(answer) => !answer.fromCache && answer.addrs.length > 0,
+		);
 		const selectedAnswers = liveAnswers.length ? liveAnswers : answers;
 		const res = {
 			addrs: selectedAnswers.flatMap((answer) => answer.addrs),

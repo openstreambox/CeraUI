@@ -732,7 +732,7 @@ for (const code of ["empty"]) {
 			}));
 			try {
 				for (let attempt = 0; attempt < 3; attempt++) {
-					expect(await resolveSrtla(name)).toBe(name);
+					await expect(resolveSrtla(name)).rejects.toContain("Failed to resolve SRTLA addr");
 				}
 				expect(aaaa).toBe(3);
 				expect(writes).toHaveLength(0);
@@ -816,6 +816,82 @@ for (const failure of ["ESERVFAIL", "ETIMEOUT", "ENODATA-unvalidated"]) {
 			offlineDns();
 			expect((await dnsCacheResolve(name)).addrs).toEqual(["192.0.2.10"]);
 		} finally {
+			setDnsCacheEntryForTest(name, null);
+		}
+	});
+}
+
+for (const [index, aResult, aaaaResult, mixed] of [
+	[0, "ENODATA", "SERVFAIL", false],
+	[1, "ENODATA", "SERVFAIL", true],
+	[2, "ENODATA", "ENODATA", false],
+	[3, "ENODATA", "hang", false],
+	[4, "empty", "SERVFAIL", false],
+	[5, "empty", "SERVFAIL", true],
+	[6, "empty", "hang", false],
+	[7, "ENOTFOUND", "SERVFAIL", false],
+	[8, "empty", "empty", false],
+	[9, "empty", "empty", true],
+] as const) {
+	test(`empty A ${aResult} preserves cache after AAAA ${aaaaResult} (${index})`, async () => {
+		const name = `empty-repair-${index}.test.invalid`;
+		const cached = mixed ? ["192.0.2.10", "fd51::2"] : ["192.0.2.10"];
+		processIfconfigOutput(
+			"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+			parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+		);
+		setDnsCacheEntryForTest(name, cached);
+		const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 60_001);
+		const writer = spyOn(textFiles, "writeTextFileAtomic").mockReturnValue(
+			true,
+		);
+		let aaaa = 0;
+		setDnsResolverFactoryForTest(() => ({
+			cancel() {},
+			resolve4(host, cb) {
+				queueMicrotask(() =>
+					host === "wellknown.belabox.net"
+						? cb(null, ["127.1.33.7"])
+						: cb(
+								aResult === "empty"
+									? null
+									: Object.assign(new Error(aResult), { code: aResult }),
+								[],
+							),
+				);
+			},
+			resolve6(_host, cb) {
+				aaaa++;
+				if (aaaaResult !== "hang")
+					queueMicrotask(() =>
+						cb(
+							aaaaResult === "empty"
+								? null
+								: Object.assign(new Error(aaaaResult), { code: aaaaResult }),
+							[],
+						),
+					);
+			},
+		}));
+		try {
+			if (aaaaResult === "empty") {
+				await expect(resolveSrtla(name)).rejects.toContain(
+					"Failed to resolve SRTLA addr",
+				);
+			} else {
+				const started = performance.now();
+				expect(await resolveSrtla(name)).toBe("192.0.2.10");
+				expect(performance.now() - started).toBeLessThan(3000);
+				expect(genSrtlaIpList()).toEqual(["192.0.2.1"]);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(aaaa).toBe(1);
+			expect(writer).not.toHaveBeenCalled();
+			offlineDns();
+			expect((await dnsCacheResolve(name)).addrs).toEqual(cached);
+		} finally {
+			writer.mockRestore();
+			clock.mockRestore();
 			setDnsCacheEntryForTest(name, null);
 		}
 	});
