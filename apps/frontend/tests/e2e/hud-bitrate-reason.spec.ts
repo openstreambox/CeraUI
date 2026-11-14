@@ -4,7 +4,7 @@ import type { WebSocketRoute } from "@playwright/test";
 import { expect, test } from "./fixtures/index.js";
 import { ensureAuthenticated } from "./helpers/index.js";
 
-for (const width of [390, 768, 1280]) {
+for (const width of [320, 360, 390, 768, 1280]) {
 	test(`bitrate stays readable beside a long health reason at ${width}px`, async ({
 		page,
 	}, info) => {
@@ -82,7 +82,22 @@ for (const width of [390, 768, 1280]) {
 			JSON.stringify(geometry, null, 2),
 		);
 		await strip.screenshot({ path: path.join(dir, `${width}.png`) });
-		expect(geometry.width).toBeGreaterThan(40);
+		expect(geometry.width).toBeCloseTo(65.7, 0);
+		const stripGeometry = await strip.evaluate((el) => ({
+			clientWidth: el.clientWidth,
+			scrollWidth: el.scrollWidth,
+			right: el.getBoundingClientRect().right,
+		}));
+		expect(stripGeometry.scrollWidth).toBeLessThanOrEqual(stripGeometry.clientWidth);
+		const temperature = strip.locator('[role="img"]').last();
+		await expect(temperature).toContainText("45");
+		const temperatureGeometry = await temperature.evaluate((el) => ({
+			right: el.getBoundingClientRect().right,
+			clientWidth: el.clientWidth,
+			scrollWidth: el.scrollWidth,
+		}));
+		expect(temperatureGeometry.right).toBeLessThanOrEqual(stripGeometry.right - 12);
+		expect(temperatureGeometry.scrollWidth).toBeLessThanOrEqual(temperatureGeometry.clientWidth);
 		expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
 		expect(geometry.textRight).toBeLessThanOrEqual(geometry.boxRight + 1);
 	});

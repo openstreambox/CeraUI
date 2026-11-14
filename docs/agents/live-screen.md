@@ -372,7 +372,4 @@ allocated width instead of painting over the health label. Its accessible name
 and the details sheet retain the complete measured/target values. The fixed
 strip height and mobile dock clearance remain unchanged.
 
-The lifecycle badge and idle dot use the existing `--status-live` and
-`--status-idle` tokens directly; these are not configured Tailwind color names.
-
-The HUD reason remains width-bounded at phone, tablet and desktop sizes. The bitrate reserves its intrinsic width rather than clipping numeric values. Lifecycle colours are registered in the shared Tailwind status palette, including live, standby and idle. A rendered regression exercises long health reasons at 390, 768 and 1280 px.
+The HUD reason remains width-bounded at phone, tablet and desktop sizes. The bitrate reserves its intrinsic width rather than clipping numeric values. Lifecycle colours are registered in the shared Tailwind status palette, including live, standby and idle. A rendered regression exercises long health reasons at 320, 360, 390, 768 and 1280 px. Below 360 px the strip reduces its gaps and omits the decorative thermometer icon so the temperature value remains readable.

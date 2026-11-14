@@ -322,7 +322,7 @@ $effect(() => {
 				for={`${detailsDescriptionId}-trigger`}
 				data-hud-region
 				class={cn(
-					'bg-sidebar text-foreground hover:bg-accent/50 relative flex h-12 w-full cursor-pointer items-center gap-2 border-t px-3 sm:gap-3 sm:px-4 text-start text-xs font-medium tracking-wide transition-colors',
+					'bg-sidebar text-foreground hover:bg-accent/50 relative flex h-12 w-full cursor-pointer items-center gap-1 min-[360px]:gap-2 border-t px-3 sm:gap-3 sm:px-4 text-start text-xs font-medium tracking-wide transition-colors',
 					className,
 				)}
 			>
@@ -471,7 +471,7 @@ $effect(() => {
 					{#if soc.isStale}
 						<ClockIcon class="size-3 shrink-0 opacity-50" aria-hidden="true" />
 					{:else}
-						<ThermometerIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+						<ThermometerIcon class="hidden size-3.5 shrink-0 text-muted-foreground min-[360px]:block" aria-hidden="true" />
 					{/if}
 					{@render socValue(tempState, tempText, m["hud.temperature"]())}
 				</span>
