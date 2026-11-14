@@ -20,7 +20,79 @@ def load():
     spec.loader.exec_module(module)
     return module
 
+def seal(source):
+    (source / 'SHA256SUMS').write_text(''.join(
+        f'{hashlib.sha256(p.read_bytes()).hexdigest()}  sources/{p.relative_to(source)}\n'
+        for p in sorted(source.rglob('*')) if p.is_file() and p.name != 'SHA256SUMS' and '__pycache__' not in p.parts))
+
 class CarrierImportTest(unittest.TestCase):
+    def test_real_empty_types_and_wap_data(self):
+        module = load()
+        with tempfile.TemporaryDirectory() as tmp:
+            module.OUTPUT = Path(tmp) / 'out.json'
+            module.convert()
+            rows = json.loads(module.OUTPUT.read_text())
+        for plmn, kind, match, apn in [
+            ('23415', 'gid', 'B3', 'btmobile.bt.com'),
+            ('23415', 'spn', "SAINSBURY'S", 'payg.mobilebysainsburys.co.uk'),
+            ('26201', 'spn', 'DEBITEL', 'internet.telekom'),
+            ('26207', 'spn', 'ALICE', 'internet.partner1'),
+            ('23410', 'spn', 'JUMP', 'mobiledata'),
+            ('20404', 'spn', 'JUMP', 'mobiledata'),
+            ('310260', 'gid', 'DEFF', 'wap.tracfone')]:
+            with self.subTest(plmn=plmn, match=match):
+                found = [r for r in rows if r['plmn'] == plmn and r['mvno'] == kind
+                         and r['match'].upper() == match.upper() and r['apn'] == apn]
+                self.assertTrue(found)
+                self.assertTrue({'default', '*'} & set(found[0]['types']))
+        self.assertFalse(any('wap' in (r['name'] + r['apn']).lower() and r.get('proxy') for r in rows))
+        # Check every real WAP-named default profile, including the 21 without
+        # an HTTP proxy that the old name-only filter silently discarded.
+        wap = [a for a, _ in module.merged_rows()
+               if a.get('mvno_type') in {'gid', 'spn'} and a.get('mvno_match_data')
+               and a.get('apn') and a.get('carrier_enabled') != 'false'
+               and 'default' in a.get('type', '').split(',')
+               and 'wap' in (a.get('carrier', '') + a['apn']).lower()]
+        self.assertEqual(len(wap), 27)
+        self.assertEqual(sum(not a.get('proxy') for a in wap), 21)
+        for a in wap:
+            found = any(r['plmn'] == a['mcc'] + a['mnc'] and r['apn'] == a['apn']
+                        and r['match'] == a['mvno_match_data'] for r in rows)
+            self.assertEqual(found, not bool(a.get('proxy')), a)
+
+
+    def test_manifest_checked_before_import(self):
+        for name in ['make-apns.py', 'merge-apns-conf.yaml', 'upstream/apns-conf.xml']:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                module = load()
+                module.DATA = Path(tmp) / 'sources'
+                shutil.copytree(ROOT / 'sources', module.DATA)
+                target = module.DATA / 'lineage' / name
+                target.write_bytes(target.read_bytes() + b'\n# changed')
+                with patch.object(module.importlib.util, 'spec_from_file_location', side_effect=AssertionError('executed unverified code')):
+                    with self.assertRaisesRegex(ValueError, 'Hash mismatch'):
+                        module.merged_rows()
+
+    def test_strict_rules(self):
+        for rules, error in [
+            ('excludes: []\nexcludes: []\noverrides: []\n', 'Duplicate rule key'),
+            ('excludes: &rules []\noverrides: *rules\n', 'anchors'),
+            ('excludes: []\noverrides: [{match: {apn: ctnet}, set: {type: [default, supl]}}]\n', None)]:
+            with self.subTest(rules=rules), tempfile.TemporaryDirectory() as tmp:
+                module = load()
+                module.DATA = Path(tmp) / 'sources'
+                shutil.copytree(ROOT / 'sources', module.DATA)
+                (module.DATA / 'lineage/merge-apns-conf.yaml').write_text(rules)
+                # A single real row makes the list-valued override unambiguous.
+                (module.DATA / 'lineage/upstream/apns-conf.xml').write_text(
+                    '<apns><apn apn="ctnet" type="default"/></apns>')
+                seal(module.DATA)
+                if error:
+                    with self.assertRaisesRegex(Exception, error):
+                        module.merged_rows()
+                else:
+                    self.assertEqual(module.merged_rows()[0][0]['type'], 'default,supl')
+
     def test_snapshot_integrity(self):
         rows = json.loads((ROOT / 'carriers.json').read_text())
         self.assertEqual(len(rows), len({json.dumps(r, sort_keys=True) for r in rows}))
@@ -105,7 +177,7 @@ class CarrierImportTest(unittest.TestCase):
                    f'<apn {attrs} apn="off" carrier_enabled="false"/>',
                    f'<apn {attrs} apn="cdma" network_type_bitmask="4|5|6|7|12"/>',
                    f'<apn {attrs} apn="mms" type="mms"/>',
-                   f'<apn {attrs} apn="wap.net" type="default"/>',
+                   f'<apn {attrs} apn="wap.net" type="default" proxy="192.0.2.1"/>',
                    '<apn mcc="999" mnc="9" apn="invalid" mvno_type="spn" mvno_match_data="Example"/>',
                    '<apn mcc="999" mnc="99" apn="imsi" mvno_type="imsi" mvno_match_data="99999"/>',
                    '<apn mcc="999" mnc="99" apn="generic"/>']
@@ -115,6 +187,7 @@ class CarrierImportTest(unittest.TestCase):
                      'overrides': [{'match': {'apn': 'base'}, 'set': {'protocol': 'IPV4V6'}}]}
             # JSON is a YAML subset, accepted by the pinned upstream loader.
             (base.parent / 'merge-apns-conf.yaml').write_text(json.dumps(rules))
+            seal(module.DATA)
             module.convert()
             rows = json.loads(module.OUTPUT.read_text())
             self.assertEqual([r['apn'] for r in rows], ['base', 'local'])
@@ -133,6 +206,7 @@ class CarrierImportTest(unittest.TestCase):
             shutil.copyfile(ROOT / 'sources/lineage/make-apns.py', base.parent / 'make-apns.py')
             (base / 'apns-conf.xml').write_text('<apns>'+row+row+'</apns>')
             (module.DATA / 'lineage/merge-apns-conf.yaml').write_text('excludes: []\noverrides: []\n')
+            seal(module.DATA)
             module.convert()
             rows = json.loads(module.OUTPUT.read_text())
             self.assertEqual(len(rows), 1)

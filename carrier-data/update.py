@@ -23,29 +23,54 @@ def validate_match(kind, value):
         raise ValueError(f'Invalid GID hex: {value!r}')
 
 
+def verify_sources():
+    expected = {}
+    for line in (DATA / 'SHA256SUMS').read_text().splitlines():
+        digest, name = line.split('  ', 1)
+        if name.startswith('sources/'):
+            rel = name.removeprefix('sources/')
+            if rel in expected or Path(rel).is_absolute() or '..' in Path(rel).parts:
+                raise ValueError(f'Invalid manifest path: {name}')
+            expected[rel] = digest
+    actual = {str(p.relative_to(DATA)) for p in DATA.rglob('*')
+              if p.is_file() and p.name != 'SHA256SUMS' and '__pycache__' not in p.parts}
+    if actual != set(expected):
+        raise ValueError('Hash mismatch: source manifest file set')
+    verified = {}
+    for rel, digest in expected.items():
+        content = (DATA / rel).read_bytes()
+        if hashlib.sha256(content).hexdigest() != digest:
+            raise ValueError(f'Hash mismatch: {rel}')
+        verified[rel] = content
+    return verified
+
+
 def merged_rows():
-    # Reuse the pinned upstream merger's exact deduplication and rule semantics.
+    # Verify every input before executing the merger; compile verified bytes so
+    # an unverified bytecode cache cannot replace the checked source.
+    verified = verify_sources()
     spec = importlib.util.spec_from_file_location('lineage_merge', DATA / 'lineage/make-apns.py')
     merger = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(merger)
-    base = [a.attrib for a in ET.parse(DATA / 'lineage/upstream/apns-conf.xml').getroot().iter('apn')]
-    import yaml  # Build-time dependency only; no runtime dependency.
-    config = yaml.safe_load((DATA / 'lineage/merge-apns-conf.yaml').read_text())
-    base = merger.apply_rules(merger.deduplicate(base), config)
+    exec(compile(verified['lineage/make-apns.py'], str(spec.origin), 'exec'), merger.__dict__)
+    base = [a.attrib for a in ET.fromstring(verified['lineage/upstream/apns-conf.xml']).iter('apn')]
     local = [a.attrib for path in sorted((DATA / 'lineage').glob('*.xml'))
-             for a in ET.parse(path).getroot().iter('apn')]
+             for a in ET.fromstring(verified[str(path.relative_to(DATA))]).iter('apn')]
+    # The snapshot has no schema input. Use the source attributes as the known
+    # vocabulary, retaining upstream's strict rule validation and type lists.
+    known_attributes = {key for row in base + local for key in row}
+    config = merger.load_config(DATA / 'lineage/merge-apns-conf.yaml', known_attributes)
+    base = merger.apply_rules(merger.deduplicate(base), config)
     return [(a, 'lineage-upstream') for a in base] + [(a, 'lineage-local') for a in local]
 
 
 def convert():
     rows, seen = [], set()
     for a, origin in merged_rows():
-        types = [t.strip() for t in a.get('type', 'default').split(',')]
+        types = [t.strip() for t in (a.get('type') or '*').split(',') if t.strip()]
         if not a.get('apn') or not ({'default', '*'} & set(types)):
             continue
-        # Android's default type also covers legacy WAP profiles. They are not
-        # ordinary internet candidates; retain proxies on other data profiles.
-        if re.search(r'wap', a.get('carrier', '') + ' ' + a['apn'], re.I):
+        # A WAP name alone is not evidence of a legacy gateway.
+        if a.get('proxy') and re.search(r'wap', a.get('carrier', '') + ' ' + a['apn'], re.I):
             continue
         if a.get('carrier_enabled') == 'false':
             continue

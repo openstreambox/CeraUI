@@ -10,7 +10,8 @@
       "default",
       "ia",
       "supl"
-    ]
+    ],
+    "carrierId": "2135"
   },
   {
     "plmn": "20810",
@@ -21,7 +22,8 @@
     "source": "android",
     "types": [
       "mms"
-    ]
+    ],
+    "carrierId": "2135"
   },
   {
     "plmn": "20810",
@@ -37,7 +39,8 @@
       "fota",
       "dun"
     ],
-    "authtype": "0"
+    "authtype": "0",
+    "carrierId": "2135"
   },
   {
     "plmn": "20827",
@@ -51,7 +54,8 @@
       "ia",
       "supl"
     ],
-    "authtype": "1"
+    "authtype": "1",
+    "carrierId": "2135"
   },
   {
     "plmn": "20827",
@@ -62,7 +66,8 @@
     "source": "android",
     "types": [
       "mms"
-    ]
+    ],
+    "carrierId": "2135"
   },
   {
     "plmn": "310260",
@@ -78,7 +83,10 @@
       "supl",
       "hipri",
       "fota"
-    ]
+    ],
+    "carrierId": "2022",
+    "protocol": "IP",
+    "roamingProtocol": "IP"
   },
   {
     "plmn": "310280",
@@ -96,7 +104,10 @@
     "user": "",
     "password": "",
     "proxy": "",
-    "port": ""
+    "port": "",
+    "carrierId": "10000",
+    "protocol": "IPV4V6",
+    "roamingProtocol": "IPV4V6"
   },
   {
     "plmn": "310280",
@@ -107,7 +118,10 @@
     "source": "android",
     "types": [
       "dun"
-    ]
+    ],
+    "carrierId": "10000",
+    "protocol": "IPV4V6",
+    "roamingProtocol": "IPV4V6"
   },
   {
     "plmn": "310410",
@@ -123,7 +137,10 @@
       "supl",
       "hipri",
       "fota"
-    ]
+    ],
+    "carrierId": "2022",
+    "protocol": "IP",
+    "roamingProtocol": "IP"
   },
   {
     "plmn": "310410",
@@ -141,7 +158,10 @@
     "user": "",
     "password": "",
     "proxy": "",
-    "port": ""
+    "port": "",
+    "carrierId": "10000",
+    "protocol": "IPV4V6",
+    "roamingProtocol": "IPV4V6"
   },
   {
     "plmn": "310410",
@@ -152,7 +172,10 @@
     "source": "android",
     "types": [
       "dun"
-    ]
+    ],
+    "carrierId": "10000",
+    "protocol": "IPV4V6",
+    "roamingProtocol": "IPV4V6"
   },
   {
     "plmn": "64710",
@@ -165,7 +188,8 @@
       "default",
       "ia",
       "supl"
-    ]
+    ],
+    "carrierId": "2135"
   },
   {
     "plmn": "64710",
@@ -176,6 +200,7 @@
     "source": "android",
     "types": [
       "mms"
-    ]
+    ],
+    "carrierId": "2135"
   }
 ]

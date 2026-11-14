@@ -58,11 +58,13 @@ The snapshot uses LineageOS's own `upstream/apns-conf.xml`, build-time excludes
 and overrides, then sorted country supplements, at the commit in
 `sources/sources.json`. The pinned upstream merger supplies rule semantics.
 The old AOSP 14 sample is no longer the runtime base. The derived snapshot has
-929 distinct data candidates. Generic, unsupported identity, disabled,
-invalid-PLMN, CDMA/EVDO-only and MMS-only rows are excluded. Legacy WAP profiles
-are excluded conservatively when the carrier label or APN contains "wap";
-Android's default type alone cannot distinguish these. This heuristic may
-exclude a usable mixed profile. Other data proxies are preserved.
+961 distinct data candidates. Generic, unsupported identity, disabled,
+invalid-PLMN, CDMA/EVDO-only and MMS-only rows are excluded. Missing or empty
+Android APN types mean all types and are projected as `*`.
+A WAP-named carrier/APN is excluded only when it also has a nonempty HTTP
+`proxy`. A name alone does not identify a legacy gateway: `wap.tracfone` is
+ordinary Tracfone data on T-Mobile. Mixed default/MMS profiles remain eligible;
+MMS-only rows do not. Other data proxies are preserved for host policy.
 
 Data quality remains imperfect: the pinned C Spire SPN contains a trailing
 numeric CR, corrected by one exact, documented exception; other whitespace,
@@ -74,7 +76,8 @@ different identities, authentication, types or protocols remain separate.
 There is **no US Mobile entry** in these pinned sources. The previous invented
 fixture is replaced by real rows. `fixtures/android14-regressions.json` retains
 projected AOSP 14 rows to test the historical DEFF tfdata/ereseller collision
-and Coriolis WAP/WEB filtering; it is not runtime data. The current Lineage base
+and Coriolis WAP/WEB ambiguity (neither has an HTTP proxy); it is not runtime
+data. The current Lineage base
 has only ereseller for 310410/DEFF and does not supply the former Coriolis WEB row.
 
 From this directory, install the converter-only dependency in your preferred
@@ -89,7 +92,11 @@ python3 -I -m unittest discover -p test_update.py
 ```
 
 Conversion is offline except explicit `--fetch`, which verifies the pinned
-archive hash. A changed GitHub archive encoding will fail closed and needs
+archive hash. Before importing the merger, conversion verifies every source
+file against the manifest and compiles the verified script bytes without using
+a bytecode cache. Rules use upstream's strict loader and validation, rejecting
+duplicate keys and anchors and normalizing type lists. A changed GitHub archive
+encoding will fail closed and needs
 review even if XML content is unchanged. Fetch replaces only managed source
 files and removes stale files. Alternate `--output` or `--source-dir` runs
 never rewrite the checked-in manifest. Source bumps need reviewed pins,

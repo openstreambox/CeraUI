@@ -57,7 +57,7 @@ export function matchMvnoApn(
 							return false;
 						if (
 							!row.types?.some((t) => t === "default" || t === "*") ||
-							/wap/i.test(`${row.name ?? ""} ${row.apn}`)
+							(!!row.proxy && /wap/i.test(`${row.name ?? ""} ${row.apn}`))
 						)
 							return false;
 						if (row.mvno === "gid")
