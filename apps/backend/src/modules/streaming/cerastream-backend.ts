@@ -794,6 +794,7 @@ export class CerastreamBackend implements StreamingBackend {
 		const ownsLaunch = currentStreamLaunchOwner();
 		let dispatched = false;
 		let confirmedIdle = false;
+		let clientReleased = false;
 		let acquiredClient: CerastreamClient | undefined;
 		let acquiredSubscription: Subscription | undefined;
 		const launchTransaction =
@@ -809,7 +810,8 @@ export class CerastreamBackend implements StreamingBackend {
 				const client = await launchTransaction.acquirePhase(
 					"connect",
 					() => this.deps.connect(this.deps.connectOptions),
-					(client) => client.close(),
+					(client) =>
+						clientReleased ? undefined : this.closeWithinDeadline(client),
 					classifyConnectHandshakePhase,
 				);
 				acquiredClient = client;
@@ -852,8 +854,9 @@ export class CerastreamBackend implements StreamingBackend {
 				launchTransaction.register(async () => {
 					if (!dispatched) return;
 					try {
-						const reply = await client.stop();
-						confirmedIdle = reply.state === "idle";
+						// A session request can still occupy the engine connection.
+						await this.stopOnFreshConnection(client);
+						confirmedIdle = true;
 					} catch (error) {
 						this.deps.logger.debug(
 							"cerastream: rollback stop best-effort failed",
@@ -861,6 +864,8 @@ export class CerastreamBackend implements StreamingBackend {
 								error,
 							},
 						);
+					} finally {
+						clientReleased = true;
 					}
 				});
 				const result = await launchTransaction.runPhase("start-rpc", () => {
@@ -964,7 +969,8 @@ export class CerastreamBackend implements StreamingBackend {
 			stopClient = candidate;
 			const confirmation = candidate.stop();
 			sessionClose = this.closeWithinDeadline(sessionClient);
-			await confirmation;
+			const reply = await confirmation;
+			if (reply.state !== "idle") throw new Error("stop_not_idle");
 		})();
 		const deadline = new Promise<never>((_resolve, reject) => {
 			timer = this.deps.scheduleTimeout(() => {
