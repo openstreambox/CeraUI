@@ -56,3 +56,35 @@ Los detalles comienzan: «El stream sigue en vivo por otras conexiones».
 
 All ten catalogs carry the notice and details. Publishing the corresponding
 English and Spanish user-guide update remains a release coordination step.
+
+## Frozen feeds and intermittent recovery
+
+A one-shot receipt-age latch withdraws the shared claim after 12 seconds without
+an advancing backend observation timestamp, even if sensor frames and the socket
+remain live. A stale feed cannot establish that a link is still quiet. Clearing
+is preferable to adding a second “status unknown” notice: the existing connection
+and telemetry surfaces own unknown status. This timer only removes evidence;
+it never advances the hold. The next fresh observation starts a new hold.
+Per-interface display-age ticks do not create sender observations.
+
+Recovery remains immediate at 2,048 bits/s. A link with a real burst every
+30–40 seconds can therefore show and clear once per cycle. This is intentional:
+a minimum display time would claim quiet traffic after recovery, while requiring
+10 seconds of recovery would hide brief, useful recoveries. The separate rate
+thresholds suppress keepalive noise; they do not suppress genuine traffic changes.
+Unit tests pin both flap periods and the independent byte-delta thresholds.
+
+The browser smoke check uses a mocked telemetry clock advanced by Playwright,
+not real-time waits or a ten-minute click loop. Ten-minute cadence and hysteresis
+proof stays in the 200 seeded unit runs. Playwright keeps its default 30-second
+per-test budget and CI's two retries; no timeout increase is needed.
+
+## Live page examples (mock data only)
+
+These show the shared notice above the real Live view at 1280 and 390 pixels,
+with synthetic sender data and loopback-only test fixtures. The gallery spec
+`connected-idle.gallery.visual.spec.ts` recreates both views without starting a sender.
+
+![Live notice at 1280 pixels](images/connected-idle-live-desktop.png)
+
+![Live notice at 390 pixels](images/connected-idle-live-mobile.png)

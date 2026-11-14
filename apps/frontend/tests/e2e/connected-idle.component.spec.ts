@@ -59,16 +59,17 @@ test.afterAll(async () => {
 });
 
 test('quiet bonded link notice opens details and clears on recovery', async ({ page }) => {
+	await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+	await page.clock.pauseAt(new Date('2026-01-01T00:00:01Z'));
 	await page.goto(`${origin}/__connected-idle-component.html`);
 	const notice = page.getByTestId('connected-idle-notice');
 	await expect(notice).toHaveCount(0);
-	for (let i = 0; i < 4; i++) await page.getByRole('button', { name: 'Next quiet sample' }).click();
+	await expect(page.getByRole('button', { name: 'Next quiet sample' })).toBeVisible();
+	await page.clock.runFor(22_000);
 	await expect(notice).toBeVisible();
 	await expect(notice).toContainText('SIM 2');
 	await expect(notice).toContainText('carries almost no stream traffic');
 	await expect(notice).not.toContainText('can this network reach');
-	for (let i = 0; i < 110; i++) await page.getByRole('button', { name: 'Next quiet sample' }).click();
-	await expect(notice).toBeVisible();
 	await notice.locator('summary').click();
 	await expect(notice.locator('p')).toBeVisible();
 	await expect(notice).toContainText('still live on other links');

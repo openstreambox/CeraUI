@@ -176,7 +176,7 @@ const totalStale = $derived(
 							<LinkTelemetry class="gap-x-2.5" {entry} loading={telemetryLoading} />
 						</div>
 					</div>
-					<div class={idleLinks.includes(link.id) ? "basis-full" : "contents"} aria-live="polite">
+					<div class="basis-full" aria-live="polite">
 					{#if idleLinks.includes(link.id)}
 						<details class="basis-full rounded border border-current/20 p-2 text-sm" data-testid="connected-idle-notice">
 							<summary>{m["network.view.connectedIdle"]({ link: link.label })}</summary>

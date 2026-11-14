@@ -50,3 +50,47 @@ it("observes before Network mounts, survives selector remounts, and clears on st
 	flushSync();
 	expect(getConnectedIdleLinks()).toEqual([]);
 });
+
+function showNotice() {
+	vi.useFakeTimers();
+	idleFeed.live = true;
+	idleFeed.connected = true;
+	getConnectedIdleLinks();
+	for (let t = 0; t <= 22000; t += 5500) {
+		vi.setSystemTime(100000 + t);
+		idleFeed.frame = { ...telemetry(), lastReadMs: t };
+		flushSync();
+	}
+	expect(getConnectedIdleLinks().map((l) => l.id)).toEqual(["eth0"]);
+}
+it("clears on socket disconnect even when telemetry and streaming remain cached", () => {
+	showNotice();
+	idleFeed.connected = false;
+	flushSync();
+	expect(getConnectedIdleLinks()).toEqual([]);
+});
+it("does not turn browser time into backend observations", () => {
+	vi.useFakeTimers();
+	idleFeed.live = true;
+	idleFeed.connected = true;
+	getConnectedIdleLinks();
+	for (let t = 0; t <= 30000; t += 5000) {
+		vi.setSystemTime(100000 + t);
+		idleFeed.frame = { ...telemetry(), lastReadMs: 1000 };
+		flushSync();
+	}
+	expect(getConnectedIdleLinks()).toEqual([]);
+});
+it("withdraws a shown claim when telemetry freezes and starts a fresh hold on return", () => {
+	showNotice();
+	vi.advanceTimersByTime(12001);
+	flushSync();
+	expect(getConnectedIdleLinks()).toEqual([]);
+	// Cached retransmissions cannot revive the expired claim.
+	idleFeed.frame = { ...telemetry(), lastReadMs: 22000 };
+	flushSync();
+	expect(getConnectedIdleLinks()).toEqual([]);
+	idleFeed.frame = { ...telemetry(), lastReadMs: 38000 };
+	flushSync();
+	expect(getConnectedIdleLinks()).toEqual([]);
+});

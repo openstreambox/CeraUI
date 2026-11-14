@@ -8,7 +8,8 @@ const HEARTBEAT_JITTER = 0.1;
 const READ_PERIOD_MS = 1_000;
 export const SAMPLE_GAP_MS =
 	HEARTBEAT_MS * (1 + HEARTBEAT_JITTER) + READ_PERIOD_MS;
-const SHOWN_GAP_MS = 2 * HEARTBEAT_MS * (1 + HEARTBEAT_JITTER) + READ_PERIOD_MS;
+export const SHOWN_GAP_MS =
+	2 * HEARTBEAT_MS * (1 + HEARTBEAT_JITTER) + READ_PERIOD_MS;
 const RECOVERY_BPS = 2048;
 // Allow transport keepalives, but never call a useful media rate idle.
 const QUIET_BPS = 1024;

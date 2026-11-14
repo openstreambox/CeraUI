@@ -225,3 +225,45 @@ it("does not round fractional traffic into the quiet band", () => {
 		run(new ConnectedIdleDetector(), true, links, telemetry(1024.5)),
 	).toEqual([]);
 });
+
+it.each([
+	[6250, true],
+	[8000, false],
+])("pins the initial gap boundary at %i ms", (gap, keeps) => {
+	const d = new ConnectedIdleDetector();
+	d.update(0, true, links, telemetry());
+	d.update(5000, true, links, telemetry());
+	d.update(5000 + gap, true, links, telemetry());
+	d.update(10000 + gap, true, links, telemetry());
+	expect(d.update(15000 + gap, true, links, telemetry())).toEqual(
+		keeps ? ["eth0"] : [],
+	);
+});
+it("uses byte-delta recovery hysteresis independently of the reported rate", () => {
+	const d = new ConnectedIdleDetector();
+	const frame = telemetry();
+	frame.links[0]!.bytes_sent_total = 0;
+	run(d, true, links, frame);
+	frame.links[0]!.bytes_sent_total = 1000; // 1600 bps, below recovery
+	expect(d.update(25000, true, links, frame)).toEqual(["eth0"]);
+	frame.links[0]!.bytes_sent_total = 2280; // exactly 2048 bps
+	expect(d.update(30000, true, links, frame)).toEqual([]);
+});
+
+it.each([30000, 40000])(
+	"reports actual recoveries in %i ms flap cycles",
+	(period) => {
+		const d = new ConnectedIdleDetector();
+		for (let cycle = 0; cycle < 3; cycle++) {
+			const start = cycle * period;
+			for (let t = 0; t <= 20000; t += 5000) {
+				expect(d.update(start + t, true, links, telemetry())).toEqual(
+					t === 20000 ? ["eth0"] : [],
+				);
+			}
+			expect(d.update(start + 25000, true, links, telemetry(100000))).toEqual(
+				[],
+			);
+		}
+	},
+);

@@ -32,7 +32,10 @@ import type {
 	HudTimestamps,
 	LinkSignal,
 } from "$lib/types/hud";
-import { ConnectedIdleDetector } from "$main/network/connected-idle";
+import {
+	ConnectedIdleDetector,
+	SHOWN_GAP_MS,
+} from "$main/network/connected-idle";
 import { STALE_THRESHOLD_MS } from "./constants";
 import { deriveHudState } from "./derive";
 import {
@@ -167,7 +170,24 @@ function createHudStore(): HudStore {
 
 	const detector = new ConnectedIdleDetector();
 	let idleLinks = $state<LinkSignal[]>([]);
+	let idleStaleLatch: ReturnType<typeof setTimeout> | undefined;
+	let observedIdleAt: number | undefined;
+	let expiredIdleAt: number | undefined;
 	const stopRoot = $effect.root(() => {
+		$effect(() => {
+			const at = getLinkTelemetry()?.lastReadMs;
+			if (at === observedIdleAt) return;
+			observedIdleAt = at;
+			expiredIdleAt = undefined;
+			clearTimeout(idleStaleLatch);
+			if (at !== undefined)
+				idleStaleLatch = setTimeout(() => {
+					// Receipt age only withdraws evidence; it never advances a quiet hold.
+					expiredIdleAt = at;
+					detector.update(at, false, [], null);
+					idleLinks = [];
+				}, SHOWN_GAP_MS);
+		});
 		$effect(() => {
 			const sources = readSources();
 			const frame = sources.linkTelemetry;
@@ -181,7 +201,8 @@ function createHudStore(): HudStore {
 				state.isStreaming &&
 					!state.isStreamingStale &&
 					sources.isConnected &&
-					frame?.lastReadMs !== undefined,
+					frame?.lastReadMs !== undefined &&
+					frame.lastReadMs !== expiredIdleAt,
 				state.links,
 				frame,
 			);
@@ -275,6 +296,7 @@ function createHudStore(): HudStore {
 		destroy: () => {
 			clock.stop();
 			clearSensorStaleLatch();
+			clearTimeout(idleStaleLatch);
 			stopRoot();
 			releaseRefresh();
 			if (typeof document !== "undefined") {
