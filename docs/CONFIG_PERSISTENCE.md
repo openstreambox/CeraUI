@@ -14,6 +14,39 @@ database instead of JSON files" is a fair question to ask explicitly, once,
 and write down — rather than re-litigate it the next time someone notices
 `config.json` is a flat file.
 
+## Private file permissions
+
+Credential-bearing config, relay cache, hotspot credentials, stream markers and
+remembered-browser membership use the canonical `helpers/config-loader.ts` writer
+`writeFileAtomicSync` with `{ mode: 0o600 }`. Private modem, Bluetooth, two-radio,
+idle and update-state writers and the development browser-test token seed use
+the same writer. Public DNS/operator caches, APT pin files and signed OS artifacts
+keep their default creation mode.
+
+The canonical writer opens a random sibling temp with exclusive creation and
+the requested mode (0600 for private state), explicitly sets descriptor
+permissions before writing, syncs the file, renames it and syncs the parent
+directory. Existing permissions stricter than the requested mode are preserved.
+Non-regular targets and a symlink immediate parent are refused;
+parent directories are not chmod-ed. Temp names are
+`.<basename>.<UUID>.<pid>.tmp`, compatible with the boot orphan sweep. Failures
+before publication remove only that invocation's temp. A directory-sync failure
+after rename is reported even though the private replacement is already visible.
+This contract assumes the containing path is controlled by the service owner;
+it does not provide descriptor-relative protection against parent substitution.
+At startup, known config, credential, token and marker files are tightened to
+owner-only permissions, preserving stricter owner modes. The sweep opens regular
+files without following symlinks and checks the descriptor identity before chmod;
+missing and non-regular files are ignored. It reports one summary of changes (and
+one warning summary if any files could not be tightened), without logging contents.
+
+Disposable two-radio `status.json` is published only when its serialized view
+changes, with private permissions and atomic replacement but no file or directory
+fsync. SIM PIN and kiosk token files are ephemeral tmpfs secrets and also skip
+fsync. Durable configuration, credentials, tokens and recovery state retain both
+file and directory fsync. Status loss after a crash is acceptable; its existing
+path and consumer contract are unchanged.
+
 ## 1. Per-file placement map
 
 ### Read authority versus preferences
@@ -50,10 +83,10 @@ leave a truncated or half-written file on disk, because POSIX `rename` is
 atomic. The exact temp-file name is:
 
 ```
-.<basename>.<pid>.tmp
+.<basename>.<UUID>.<pid>.tmp
 ```
 
-e.g. `.config.json.12345.tmp`, `.auth_tokens.json.999.tmp`. `writeTextFileAtomic`
+e.g. `.config.json.<UUID>.12345.tmp`, `.auth_tokens.json.<UUID>.999.tmp`. `writeTextFileAtomic`
 (`apps/backend/src/helpers/text-files.ts:43`) is a thin wrapper that delegates
 to the same function, so every atomic writer in the table below leaves an
 orphan matching that one pattern and nothing else. T7's boot sweep
@@ -196,7 +229,7 @@ transient behavior.
   `notification_dismissals.json.corrupt-<timestamp>`, the event is logged, and the
   store starts fresh with an empty set. A corrupt file never throws or crashes boot.
   The quarantine sidecar uses a `.corrupt-<ts>` suffix — distinct from the atomic
-  writer's `.<basename>.<pid>.tmp` temp convention, so the T7 orphan sweep does not
+  writer's `.<basename>.<UUID>.<pid>.tmp` temp convention, so the T7 orphan sweep does not
   touch it.
 
 ### Setup / hardware identity

@@ -43,19 +43,9 @@
   (`image-building-pipeline/docs/partition-contract.md`), which is the same
   reason `mutation-journal.ts` pins its journal there.
 
-  ── THE WRITE IS temp → chmod(0600) → rename, IN THAT ORDER ───────────────
-
-  The mode is asserted on the TEMP file, BEFORE the rename publishes it. Doing
-  it the other way round — rename first, chmod after — leaves a real window in
-  which the secret is readable at whatever the umask allowed, and a crash inside
-  that window leaves it readable forever. Because `rename` replaces the inode,
-  this also CORRECTS a pre-existing world-readable file on the next write rather
-  than inheriting its mode.
-
-  It is a local write rather than `config-loader.ts`'s `writeFileAtomicSync`
-  precisely because of that mode contract: the generic helper deliberately does
-  not touch permissions (it writes ordinary config), and widening it would make
-  every caller pay for a guarantee only a secret needs.
+  Private replacement uses the shared writeFileAtomicSync helper: exclusive
+  sibling temp, descriptor chmod before bytes, fsync, rename and parent fsync.
+  The store directory is created owner-only when absent.
 
   ── KEYED BY THE PHYSICAL UNIT, NEVER BY A NAME OR AN ADDRESS ─────────────
 
@@ -86,7 +76,10 @@ import path from "node:path";
 
 import { z } from "zod";
 
-import { loadCacheFile } from "../../helpers/config-loader.ts";
+import {
+	loadCacheFile,
+	writeFileAtomicSync,
+} from "../../helpers/config-loader.ts";
 import { logger } from "../../helpers/logger.ts";
 import {
 	listPresentPhysicalDevices,
@@ -102,7 +95,6 @@ export const MODEM_CREDENTIALS_FILE = "modem-credentials.json";
 /** Written on every save; a future shape change bumps this and migrates on read. */
 const STORE_VERSION = 1;
 
-const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
 
 /**
@@ -230,39 +222,10 @@ function credentialEntry(
 	return entries[key];
 }
 
-/** temp(0600) → fsync → chmod(0600) → atomic rename. Throws on any step. */
+/** Private atomic replacement, retaining the credential directory contract. */
 function writeSecretFileAtomicSync(target: string, contents: string): void {
-	const dir = path.dirname(target);
-	fs.mkdirSync(dir, { recursive: true, mode: DIR_MODE });
-
-	const tmpPath = path.join(
-		dir,
-		`.${path.basename(target)}.${process.pid}.tmp`,
-	);
-
-	const fd = fs.openSync(tmpPath, "w", FILE_MODE);
-	try {
-		fs.writeFileSync(fd, contents);
-		fs.fsyncSync(fd);
-	} finally {
-		fs.closeSync(fd);
-	}
-
-	// `open` honours the umask, and a temp left by an earlier run under a
-	// different umask keeps its old mode — so the mode is RE-ASSERTED here
-	// rather than assumed, and it happens before the rename publishes the file.
-	fs.chmodSync(tmpPath, FILE_MODE);
-
-	try {
-		fs.renameSync(tmpPath, target);
-	} catch (err) {
-		try {
-			fs.unlinkSync(tmpPath);
-		} catch {
-			// Temp already gone; nothing to clean up.
-		}
-		throw err;
-	}
+	fs.mkdirSync(path.dirname(target), { recursive: true, mode: DIR_MODE });
+	writeFileAtomicSync(target, contents, { mode: 0o600 });
 }
 
 function persist(): void {

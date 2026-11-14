@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
+
 /*
   THE WRITER SIDE OF ADR-003 — effectful half.
 
@@ -43,6 +45,7 @@
 
 import { createHash } from "node:crypto";
 import { open, rename, unlink } from "node:fs/promises";
+import { dirname } from "node:path";
 
 import { logger } from "../../helpers/logger.ts";
 
@@ -87,7 +90,11 @@ export interface BindMapPublicationOrigin {
 export interface BindMapWriterDeps {
 	readonly ipsFile: string;
 	readonly sidecarFile: string;
-	readonly writeFile: (path: string, contents: string) => Promise<void>;
+	readonly writeFile: (
+		path: string,
+		contents: string,
+		target?: string,
+	) => Promise<void>;
 	readonly renameFile: (from: string, to: string) => Promise<void>;
 	readonly removeFile: (path: string) => Promise<void>;
 	/** How long one publication may take before it is abandoned. */
@@ -155,21 +162,20 @@ export interface BindMapPublicationHealth {
 	readonly abandonedUnsettled: number;
 }
 
-const SIDECAR_MODE = 0o600;
-
 /**
  * Write + fsync + close. `Bun.write` is deliberately NOT used here: it does not
  * fsync, and an unsynced rename can leave an empty file behind a power cut on
  * the very device this exists for.
  */
-async function writeFileSynced(path: string, contents: string): Promise<void> {
-	const handle = await open(path, "w", SIDECAR_MODE);
-	try {
-		await handle.writeFile(contents);
-		await handle.sync();
-	} finally {
-		await handle.close();
-	}
+async function writeFileSynced(
+	path: string,
+	contents: string,
+	target?: string,
+): Promise<void> {
+	writeFileAtomicSync(path, contents, {
+		mode: 0o600,
+		permissionSource: target,
+	});
 }
 
 export function defaultBindMapWriterDeps(
@@ -180,7 +186,15 @@ export function defaultBindMapWriterDeps(
 		ipsFile,
 		sidecarFile,
 		writeFile: writeFileSynced,
-		renameFile: rename,
+		renameFile: async (from, to) => {
+			await rename(from, to);
+			const directory = await open(dirname(to), "r");
+			try {
+				await directory.sync();
+			} finally {
+				await directory.close();
+			}
+		},
 		removeFile: (path) => unlink(path),
 	};
 }
@@ -377,7 +391,7 @@ async function publishAtomically(
 	contents: string,
 ): Promise<void> {
 	const temp = tempPath(target);
-	await deps.writeFile(temp, contents);
+	await deps.writeFile(temp, contents, target);
 	if (!isLive(attempt)) {
 		// Woke after its deadline: the temp never reaches the target.
 		await deps.removeFile(temp).catch(() => {

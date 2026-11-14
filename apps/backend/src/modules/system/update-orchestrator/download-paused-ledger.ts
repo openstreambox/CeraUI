@@ -62,7 +62,7 @@ export class DownloadPausedLedger implements DownloadPausedStore {
 	write(entries: readonly DownloadPausedRecord[]): void {
 		const ledger = ledgerSchema.parse({ schema: 1, entries });
 		mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-		writeFileAtomicSync(this.path, JSON.stringify(ledger));
+		writeFileAtomicSync(this.path, JSON.stringify(ledger), { mode: 0o600 });
 		this.syncParent(this.path);
 	}
 
