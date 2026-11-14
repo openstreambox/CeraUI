@@ -2774,5 +2774,10 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"notifications.stillLiveCamera": "Camera feed stopped. You're still live. Check the camera's connection.",
+	"notifications.stillLiveHdmi": "HDMI camera feed stopped. You're still live. Check the HDMI connection.",
+	"notifications.stillLiveNetwork": "Network camera feed stopped. You're still live. Check the camera's network connection.",
+	"notifications.stillLiveSilence": "No sound in your stream for 10 s. You're still live. Check the mic.",
+	"notifications.stillLiveStandby": "Camera feed stopped. You're still live. Viewers see the standby screen. Check the camera's connection."
 }

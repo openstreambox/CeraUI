@@ -5,6 +5,7 @@ import {
 	notificationRemove,
 } from "../ui/notifications.ts";
 import { getSourcesMessage } from "./sources.ts";
+import { LIVE_CAMERA_HOLD_MS } from "./still-live-detector.ts";
 
 export const CAPTURE_STANDBY_LONG_NOTICE_MS = 600_000;
 
@@ -38,6 +39,8 @@ function defaultDeps(): CaptureResilienceDeps {
 let deps: CaptureResilienceDeps = defaultDeps();
 const standing = new Set<string>();
 let standbySince: number | undefined;
+let standbyNoticeAt: number | undefined;
+let standbyNoticeTimer: ReturnType<typeof setTimeout> | number | undefined;
 let standbyTimer: ReturnType<typeof setTimeout> | number | undefined;
 
 function retract(name: string): void {
@@ -59,6 +62,9 @@ function raise(
 function clearStandbyTimer(): void {
 	if (standbyTimer !== undefined) deps.clearTimer(standbyTimer);
 	standbyTimer = undefined;
+	if (standbyNoticeTimer !== undefined) deps.clearTimer(standbyNoticeTimer);
+	standbyNoticeTimer = undefined;
+	standbyNoticeAt = undefined;
 }
 
 function retractAll(): void {
@@ -87,6 +93,21 @@ function nameFor(
 	return matches.length === 1 && match?.origin === "capture"
 		? match.displayName
 		: undefined;
+}
+
+function standbyNotice(): void {
+	standbyNoticeTimer = undefined;
+	if (standbySince === undefined || standbyNoticeAt === undefined) return;
+	const remaining = standbyNoticeAt - deps.now();
+	if (remaining > 0) {
+		standbyNoticeTimer = deps.setTimer(standbyNotice, remaining);
+		return;
+	}
+	raise(
+		"capture-standby",
+		"Camera feed stopped. You're still live. Viewers see the standby screen. Check the camera's connection.",
+		"notifications.stillLiveStandby",
+	);
 }
 
 function longStandby(): void {
@@ -139,13 +160,10 @@ export function noteCaptureStatus(
 	}
 
 	if (capture.state === "standby") {
-		raise(
-			"capture-standby",
-			"All cameras lost — the stream is on standby and resumes automatically when a camera returns",
-			"notifications.captureStandby",
-		);
 		if (standbySince === undefined) {
 			standbySince = capture.standby_since_ms ?? deps.now();
+			standbyNoticeAt = deps.now() + LIVE_CAMERA_HOLD_MS;
+			standbyNotice();
 			longStandby();
 		}
 	} else {

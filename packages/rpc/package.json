@@ -17,6 +17,10 @@
 		"./schemas": {
 			"types": "./src/schemas/index.ts",
 			"import": "./src/schemas/index.ts"
+		},
+		"./audio-meter-liveness": {
+			"types": "./src/audio-meter-liveness.ts",
+			"import": "./src/audio-meter-liveness.ts"
 		}
 	},
 	"scripts": {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render } from "@testing-library/svelte";
 import { tick } from "svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { en } from "./helpers/catalog";
 
@@ -224,6 +224,8 @@ describe("LiveCockpit — all-links-down banner", () => {
 });
 
 describe("LiveCockpit — video-signal-lost banner", () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
 	// Wave H: unplugging HDMI mid-stream left the ENTIRE cockpit blank. The
 	// onboard RK3588 HDMI-RX stays enumerated when its cable is pulled, so the
 	// source is neither missing nor `lost` — every existing banner stayed silent
@@ -239,8 +241,10 @@ describe("LiveCockpit — video-signal-lost banner", () => {
 			baseProps({ ...stillPresent, videoSignalLost: true }),
 		);
 		await tick();
+		await vi.advanceTimersByTimeAsync(5000);
+		await tick();
 		expect(getByTestId("video-signal-lost-banner").textContent).toContain(
-			en.live.source.signalLostStreamingTitle,
+			en.notifications.stillLiveHdmi,
 		);
 	});
 
@@ -250,10 +254,36 @@ describe("LiveCockpit — video-signal-lost banner", () => {
 			baseProps({ ...stillPresent, videoSignalLost: true }),
 		);
 		await tick();
+		await vi.advanceTimersByTimeAsync(5000);
+		await tick();
 		expect(queryByTestId("video-signal-lost-banner")).toBeTruthy();
 		expect(queryByTestId("active-source-lost-banner")).toBeNull();
 		expect(queryByTestId("active-audio-lost-banner")).toBeNull();
 		expect(queryByTestId("all-links-down-banner")).toBeNull();
+	});
+
+	it("holds a short scene-switch gap and clears immediately on recovery", async () => {
+		const view = render(
+			LiveCockpit,
+			baseProps({ ...stillPresent, videoSignalLost: true }),
+		);
+		await tick();
+		await vi.advanceTimersByTimeAsync(4999);
+		await tick();
+		expect(view.queryByTestId("video-signal-lost-banner")).toBeNull();
+		await view.rerender(baseProps({ ...stillPresent, videoSignalLost: false }));
+		await tick();
+		await vi.advanceTimersByTimeAsync(1);
+		await tick();
+		expect(view.queryByTestId("video-signal-lost-banner")).toBeNull();
+		await view.rerender(baseProps({ ...stillPresent, videoSignalLost: true }));
+		await tick();
+		await vi.advanceTimersByTimeAsync(5000);
+		await tick();
+		expect(view.queryByTestId("video-signal-lost-banner")).toBeTruthy();
+		await view.rerender(baseProps({ ...stillPresent, videoSignalLost: false }));
+		await tick();
+		expect(view.queryByTestId("video-signal-lost-banner")).toBeNull();
 	});
 
 	it("does NOT show when frames are flowing", async () => {
@@ -261,6 +291,8 @@ describe("LiveCockpit — video-signal-lost banner", () => {
 			LiveCockpit,
 			baseProps({ ...stillPresent, videoSignalLost: false }),
 		);
+		await tick();
+		await vi.advanceTimersByTimeAsync(5000);
 		await tick();
 		expect(queryByTestId("video-signal-lost-banner")).toBeNull();
 	});
@@ -275,6 +307,8 @@ describe("LiveCockpit — video-signal-lost banner", () => {
 			}),
 		);
 		await tick();
+		await vi.advanceTimersByTimeAsync(5000);
+		await tick();
 		expect(queryByTestId("active-source-lost-banner")).toBeTruthy();
 		expect(queryByTestId("video-signal-lost-banner")).toBeNull();
 	});
@@ -284,6 +318,8 @@ describe("LiveCockpit — video-signal-lost banner", () => {
 			LiveCockpit,
 			baseProps({ ...stillPresent, isStreaming: false, videoSignalLost: true }),
 		);
+		await tick();
+		await vi.advanceTimersByTimeAsync(5000);
 		await tick();
 		expect(queryByTestId("video-signal-lost-banner")).toBeNull();
 	});

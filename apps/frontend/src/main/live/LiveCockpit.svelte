@@ -220,8 +220,29 @@ const showAudioLost = $derived(isStreaming && !summaryMode && audioSourceLost);
 // `activeSourceLost` is up: that banner names the same dead picture with a more
 // specific cause and a different action (reconnect / switch source), so showing
 // both would stack two alerts for one outage and split the operator's attention.
+const cameraSelection = $derived(
+	activeEncode?.capture?.active_source?.input_id ?? activeEncode?.active_input ?? config?.source,
+);
+let heldVideoLoss = $state(false);
+$effect(() => {
+	heldVideoLoss = false;
+	const selection = cameraSelection;
+	if (!isStreaming || summaryMode || !videoSignalLost || activeSourceLost || onStandby) return;
+	const timer = setTimeout(() => {
+		if (selection === cameraSelection) heldVideoLoss = true;
+	}, 5_000);
+	return () => clearTimeout(timer);
+});
+const cameraNoticeKey = $derived.by(() => {
+	const source = sources?.sources.find(row => row.id === cameraSelection);
+	return source?.origin === 'network'
+		? 'notifications.stillLiveNetwork'
+		: source?.origin === 'capture' && source.kind === 'hdmi'
+			? 'notifications.stillLiveHdmi'
+			: 'notifications.stillLiveCamera';
+});
 const showVideoSignalLost = $derived(
-	isStreaming && !summaryMode && videoSignalLost && !activeSourceLost && !onStandby,
+	isStreaming && !summaryMode && heldVideoLoss && !activeSourceLost && !onStandby,
 );
 
 const canCompose = $derived(compositionSupported(capabilities));
@@ -257,7 +278,7 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 						<MonitorOff aria-hidden={true} class={BAND_ICON_CLASS} />
 						<div class="min-w-0 space-y-0.5">
 							<p class="text-status-warning text-sm font-medium">{m["live.capture.standbyTitle"]()}</p>
-							<p class="text-muted-foreground text-xs">{m["live.capture.standbyBody"]()}</p>
+							<p class="text-muted-foreground text-xs">{m["notifications.stillLiveStandby"]()}</p>
 						</div>
 					</div>
 				{:else if band.kind === 'composition-suspended'}
@@ -318,9 +339,8 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 					<TriangleAlert aria-hidden={true} class="text-destructive mt-0.5 size-4 shrink-0" />
 					<div class="min-w-0 space-y-0.5">
 						<p class="text-destructive text-sm font-medium">
-							{m["live.source.signalLostStreamingTitle"]()}
+							{m[cameraNoticeKey]()}
 						</p>
-						<p class="text-muted-foreground text-xs">{m["live.source.signalLostStreamingBody"]()}</p>
 					</div>
 				</div>
 			{/if}
