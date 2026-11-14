@@ -79,6 +79,10 @@ not real-time waits or a ten-minute click loop. Ten-minute cadence and hysteresi
 proof stays in the 200 seeded unit runs. Playwright keeps its default 30-second
 per-test budget and CI's two retries; no timeout increase is needed.
 
+The Network card mounts its full-width notice row only while a notice exists,
+so ordinary link rows keep their original height. The component browser test
+measures this at 390 and 1280 pixels using the application stylesheet.
+
 ## Live page examples (mock data only)
 
 These show the shared notice above the real Live view at 1280 and 390 pixels,

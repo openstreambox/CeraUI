@@ -83,7 +83,14 @@ it("does not turn browser time into backend observations", () => {
 });
 it("withdraws a shown claim when telemetry freezes and starts a fresh hold on return", () => {
 	showNotice();
-	vi.advanceTimersByTime(12001);
+	// Cached frames at +6 s and +11 s must not renew the original deadline.
+	for (const elapsed of [6000, 5000]) {
+		vi.advanceTimersByTime(elapsed);
+		idleFeed.frame = { ...telemetry(), lastReadMs: 22000 };
+		flushSync();
+		expect(getConnectedIdleLinks().map((l) => l.id)).toEqual(["eth0"]);
+	}
+	vi.advanceTimersByTime(1001);
 	flushSync();
 	expect(getConnectedIdleLinks()).toEqual([]);
 	// Cached retransmissions cannot revive the expired claim.

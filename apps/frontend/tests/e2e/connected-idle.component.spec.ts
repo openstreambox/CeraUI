@@ -30,6 +30,7 @@ test.beforeAll(async () => {
 						<div id="fixture"></div><script type="module">
 						import { mount } from 'svelte';
 						import { ensureNamespace, initLocale } from '@ceraui/i18n/svelte';
+						import '/src/app.css';
 						import Harness from '/src/tests/fixtures/ConnectedIdleHarness.svelte';
 						initLocale({ saved: 'en' });
 						await ensureNamespace('network');
@@ -78,4 +79,16 @@ test('quiet bonded link notice opens details and clears on recovery', async ({ p
 	await expect(notice).toContainText('still live on other links');
 	await page.getByRole('button', { name: 'Resume traffic' }).click();
 	await expect(notice).toHaveCount(0);
+});
+
+// Baseline measured on main with the same fixture and application stylesheet.
+test('links without a notice retain the main row height', async ({ page }) => {
+	await page.goto(`${origin}/__connected-idle-component.html`);
+	await expect(page.getByTestId('bonded-link-card')).toHaveCount(2);
+	await expect(page.getByTestId('connected-idle-notice')).toHaveCount(0);
+	await page.evaluate(() => document.fonts.ready);
+	const expectedHeight = page.viewportSize()?.width === 390 ? 80 : 41;
+	for (const row of await page.getByTestId('bonded-link-card').all()) {
+		await expect.poll(async () => Math.round((await row.boundingBox())?.height ?? 0)).toBe(expectedHeight);
+	}
 });
