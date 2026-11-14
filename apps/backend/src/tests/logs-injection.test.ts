@@ -154,3 +154,25 @@ it("redacts historical Stream IDs in both returned journal and download events",
 	);
 	expect(JSON.stringify(sent)).not.toContain("dummy-");
 });
+
+it("retains the log-fetch error cause for structured redaction", async () => {
+	const { logger, logRedact } = await import("../helpers/logger.ts");
+	const { setStreamIdRedactionSource } = await import(
+		"../helpers/stream-id-secret.ts"
+	);
+	const cause = new Error("journal failed: dummy-publish-key");
+	const previous = setStreamIdRedactionSource(() => ["dummy-publish-key"]);
+	spyOn(runModule, "run").mockRejectedValue(cause);
+	const error = spyOn(logger, "error").mockImplementation(() => logger);
+	try {
+		expect(await getLog(fakeConn())).toBeUndefined();
+		expect(error).toHaveBeenCalledWith("Failed to fetch the log", {
+			err: cause,
+		});
+		expect(JSON.stringify(logRedact({ err: cause }))).not.toContain(
+			"dummy-publish-key",
+		);
+	} finally {
+		setStreamIdRedactionSource(previous);
+	}
+});

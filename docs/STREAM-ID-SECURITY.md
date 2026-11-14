@@ -22,7 +22,7 @@ The field starts empty and masked. Show/hide reveals only newly typed text.
 Leaving an untouched field retains the saved value; Clear schedules an explicit
 clear on Save. Cancelling leaves the saved value intact. The same behavior applies
 to secret keys and non-secret IDs. Logs and debug traces scrub ID fields and
-retained values embedded in text/errors; downloaded journals scrub whole lines
+retained whole tokens in text/errors (including URL-encoded and JSON-escaped forms); downloaded journals scrub whole lines
 containing labelled IDs, including older records. Already copied logs or backups
 cannot be recalled. Rotate any publish key that was previously disclosed.
 

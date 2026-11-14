@@ -64,10 +64,10 @@ export async function getLog(
 		// returned so the getLog/getSyslog RPC is itself a real data source.
 		conn.send(buildMsg("log", { name, contents }, senderId));
 		return { name, contents };
-	} catch {
+	} catch (err) {
 		const msg = "Failed to fetch the log";
 		notificationSend(conn, "log_error", "error", msg, 10);
-		logger.error(msg);
+		logger.error(msg, { err });
 		return undefined;
 	}
 }

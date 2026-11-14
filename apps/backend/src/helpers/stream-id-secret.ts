@@ -47,10 +47,10 @@ export function setStreamIdRedactionSource(
 	return previous;
 }
 
-/** Scrub whole records containing labelled IDs; also cover unlabelled engine errors. */
+/** Scrub labelled ID records and retained whole tokens in engine errors. */
 export function redactStreamIdText(text: string): string {
 	if (
-		/(?:srt[_-]?)?stream[_-]?id|relay_streamid_override|ingest[_-]?key/i.test(
+		/\b(?:(?:srt[_-]?)?stream[_-]?id|relay_streamid_override|ingest[_-]?key)\b/i.test(
 			text,
 		) &&
 		/[=:]/.test(text)
@@ -68,7 +68,13 @@ function redactRetainedStreamIds(text: string): string {
 			encodeURIComponent(value),
 			JSON.stringify(value).slice(1, -1),
 		]))
-			result = result.split(encoded).join("[REDACTED]");
+			result = result.replace(
+				new RegExp(
+					`(?<![\\p{L}\\p{N}_])${encoded.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`,
+					"gu",
+				),
+				"[REDACTED]",
+			);
 	}
 	return result;
 }

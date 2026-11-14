@@ -69,4 +69,49 @@ describe("Stream ID disclosure boundaries", () => {
 			"connection timed out",
 		);
 	});
+	test.each([
+		[
+			"live",
+			"audio delivered to the live preview",
+			"audio delivered to the [REDACTED] preview",
+		],
+		["a", "a camera has data", "[REDACTED] camera has data"],
+		["test", "latest contest: test", "latest contest: [REDACTED]"],
+		["1", "port 1001: 1", "port 1001: [REDACTED]"],
+		[
+			"key.part",
+			"keyXpart key.part key.partial",
+			"keyXpart [REDACTED] key.partial",
+		],
+	] as const)(
+		"retained %s redacts whole tokens without corrupting words",
+		(id, text, expected) => {
+			setStreamIdRedactionSource(() => [id]);
+			expect(redactStreamIdText(text)).toBe(expected);
+			expect(redactStreamIdJournal(text)).toBe(expected);
+			expect(logRedact({ message: text })).toEqual({ message: expected });
+		},
+	);
+	test("unrelated field names do not erase diagnostics", () => {
+		for (const text of [
+			"engine upstream_idle: true",
+			"12:30: stream identity established",
+			"streamid_configured: true",
+		]) {
+			expect(redactStreamIdText(text)).toBe(text);
+			expect(redactStreamIdJournal(text)).toBe(text);
+		}
+	});
+	test("retained IDs still scrub quoted, URI-encoded and escaped tokens", () => {
+		setStreamIdRedactionSource(() => ['dummy/key with "quotes"']);
+		for (const token of [
+			'dummy/key with "quotes"',
+			encodeURIComponent('dummy/key with "quotes"'),
+			JSON.stringify('dummy/key with "quotes"').slice(1, -1),
+		]) {
+			expect(redactStreamIdText(`failure: '${token}'`)).toBe(
+				"failure: '[REDACTED]'",
+			);
+		}
+	});
 });
