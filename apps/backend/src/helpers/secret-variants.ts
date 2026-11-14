@@ -12,6 +12,11 @@ export function secretVariants(value: string): string[] {
 	for (const encoded of [uri, strict, form]) {
 		variants.add(encoded);
 		variants.add(encoded.replace(/%[A-F0-9]{2}/g, (hex) => hex.toLowerCase()));
+		variants.add(
+			encodeURIComponent(
+				encoded.replace(/%[A-F0-9]{2}/g, (hex) => hex.toLowerCase()),
+			),
+		);
 		variants.add(encodeURIComponent(encoded));
 		variants.add(
 			encodeURIComponent(encoded).replace(/%[A-F0-9]{2}/g, (hex) =>

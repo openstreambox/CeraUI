@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { inspect } from "node:util";
 import { projectRemoteConfig } from "../modules/remote/remote-status.ts";
-import { formatProdEntry, logRedact } from "./logger.ts";
+import { formatConsoleEntry, formatProdEntry, logRedact } from "./logger.ts";
 import {
 	publicStreamIds,
 	redactStreamIdJournal,
@@ -60,6 +60,23 @@ describe("Stream ID disclosure boundaries", () => {
 			expect(redactStreamIdJournal(`before\n${record}\nafter`)).toBe(
 				"before\n[REDACTED]\nafter",
 			);
+		}
+	});
+	test.each([
+		"Error: invalid streamid syntheticUnsavedKey",
+		"start failed (stream_id syntheticUnsavedKey): refused",
+		"--streamid syntheticUnsavedKey --port: 1",
+		'stream_id: Some(\n    "syntheticUnsavedKey",\n),',
+		'{\n  "streamid":\n    "syntheticUnsavedKey"\n}',
+	])("scrubs unretained labelled record %s while keeping frames", (record) => {
+		const frame = "    at connect (/app/helpers/stream-id-secret.ts:63:4)";
+		for (const redact of [redactStreamIdText, redactStreamIdJournal]) {
+			const output = redact(
+				`${record}\n${frame}\n    at start (/app/start.ts:10:2)`,
+			);
+			expect(output).not.toContain("syntheticUnsavedKey");
+			expect(output).toContain(frame);
+			expect(output).toContain("start.ts:10:2");
 		}
 	});
 	test("scrubs retained values in unlabelled errors and leaves ordinary diagnostics", () => {
@@ -127,48 +144,78 @@ describe("retained secret serialization", () => {
 			}
 			for (const detail of [
 				new Detail(secret),
+				{ nested: new Detail(secret) },
+				[Buffer.from(secret)],
 				Buffer.from(secret),
 				{ toJSON: () => secret },
 				{ toJSON: () => ({ nested: new Detail(secret) }) },
 			]) {
-				const output = formatProdEntry(
-					logRedact({
-						level: "error",
-						message: "failure",
-						detail,
-					}) as Parameters<typeof formatProdEntry>[0],
-				);
-				expect(output).not.toContain("synthetic");
-				expect(output).not.toContain(
-					Buffer.from(secret).toJSON().data.join(","),
-				);
-				expect(output).toContain("[REDACTED]");
+				for (const format of [
+					formatProdEntry,
+					(info: Parameters<typeof formatProdEntry>[0]) =>
+						formatConsoleEntry(info, false),
+				]) {
+					const output = format(
+						logRedact({
+							level: "error",
+							message: "failure",
+							detail,
+						}) as Parameters<typeof formatProdEntry>[0],
+					);
+					expect(output).not.toContain("synthetic");
+					expect(output).not.toContain(
+						Buffer.from(secret).toJSON().data.join(","),
+					);
+					expect(output).toContain("[REDACTED]");
+				}
 			}
 		},
 	);
-	test("scrubs additional retained encodings", () => {
-		const secret = "synthetic key\"'\\~!";
-		setStreamIdRedactionSource(() => [secret]);
-		let escaped = secret;
-		for (let i = 0; i < 4; i++) escaped = JSON.stringify(escaped).slice(1, -1);
-		for (const token of [
-			new URLSearchParams({ value: secret }).toString().slice(6),
-			encodeURIComponent(secret).replace(/%[A-F0-9]{2}/g, (s) =>
-				s.toLowerCase(),
-			),
-			encodeURIComponent(secret).replace(
-				/[!'~]/g,
-				(s) => `%${s.charCodeAt(0).toString(16).toUpperCase()}`,
-			),
-			encodeURIComponent(encodeURIComponent(secret)),
-			inspect(secret).slice(1, -1),
-			escaped,
-		]) {
-			expect(redactStreamIdText(`failure: ${token}`)).toBe(
-				"failure: [REDACTED]",
-			);
-		}
-	});
+	test.each(["syntheticPublishKey42", "synthetic key\"'\\~!"])(
+		"scrubs additional retained encodings for %s",
+		(secret) => {
+			setStreamIdRedactionSource(() => [secret]);
+			const tokens = [secret, inspect(secret).slice(1, -1)];
+			let escaped = secret;
+			for (let i = 0; i < 4; i++) {
+				escaped = JSON.stringify(escaped).slice(1, -1);
+				tokens.push(escaped);
+			}
+			for (const encoded of [
+				encodeURIComponent(secret),
+				new URLSearchParams({ value: secret }).toString().slice(6),
+				encodeURIComponent(secret).replace(
+					/[!'~]/g,
+					(s) => `%${s.charCodeAt(0).toString(16).toUpperCase()}`,
+				),
+			]) {
+				const lower = encoded.replace(/%[A-F0-9]{2}/g, (s) => s.toLowerCase());
+				tokens.push(
+					encoded,
+					lower,
+					encodeURIComponent(encoded),
+					encodeURIComponent(lower),
+				);
+			}
+			for (const token of tokens) {
+				expect(redactStreamIdText(`failure: ${token}`)).toBe(
+					"failure: [REDACTED]",
+				);
+				const info = logRedact({
+					level: "error",
+					message: `failure: ${token}`,
+					detail: token,
+				}) as Parameters<typeof formatProdEntry>[0];
+				for (const output of [
+					formatProdEntry(info),
+					formatConsoleEntry(info, false),
+				]) {
+					expect(output).not.toContain("synthetic");
+					expect(output).toContain("[REDACTED]");
+				}
+			}
+		},
+	);
 	test("preserves stack frames with stream-id paths while scrubbing values", () => {
 		setStreamIdRedactionSource(() => ["syntheticPublishKey42"]);
 		const error = new Error("connection refused: syntheticPublishKey42");
