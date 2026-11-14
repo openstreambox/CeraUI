@@ -97,14 +97,19 @@ test("the production reader uses async files and the registered bounded runner",
 	const runner = await import("../../helpers/run.ts");
 	const { spyOn } = await import("bun:test");
 	const { refreshClatStatus, readClatPath } = await import("./clat-status.ts");
-	const read = spyOn(fs, "readFile").mockImplementation(
+	const read = spyOn(fs, "open").mockImplementation(
 		async (path) =>
-			(String(path).endsWith("ifindex")
-				? "3"
-				: JSON.stringify({
-						...snapshot,
-						updated_at: Math.floor(Date.now() / 1000),
-					})) as never,
+			({
+				stat: async () => ({ isFile: () => true }),
+				readFile: async () =>
+					String(path).endsWith("ifindex")
+						? "3"
+						: JSON.stringify({
+								...snapshot,
+								updated_at: Math.floor(Date.now() / 1000),
+							}),
+				close: async () => {},
+			}) as never,
 	);
 	const tun = spyOn(fs, "access").mockResolvedValue(undefined);
 	const active = spyOn(runner, "run").mockResolvedValue("active\n");
@@ -125,4 +130,25 @@ test("the production reader uses async files and the registered bounded runner",
 		tun.mockRestore();
 		active.mockRestore();
 	}
+});
+
+test("a skipped refresh remains readable across the next timer boundary", async () => {
+	let now = 100_000;
+	const reader = createClatStatusReader({
+		now: () => now,
+		active: async () => {
+			now += 10;
+			return true;
+		},
+		read: async (path) =>
+			path.endsWith("ifindex") ? "3" : JSON.stringify(snapshot),
+		tunExists: async () => true,
+	});
+	await reader.refresh(["cell0"]);
+	now = 102_005;
+	await reader.refresh(["cell0"]);
+	now += 6;
+	expect(reader.read("cell0")?.iface).toBe("clat3");
+	now = 105_011;
+	expect(reader.read("cell0")).toBeUndefined();
 });

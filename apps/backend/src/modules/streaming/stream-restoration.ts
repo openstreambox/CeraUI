@@ -215,7 +215,7 @@ export async function launchRestoredStream(
 	const [
 		{ validateConfig },
 		{ resolveSrtla },
-		{ prepareSrtlaIpAddresses, attachFamilyRefresh },
+		{ prepareSrtlaIpAddresses, attachFamilyRefresh, detachFamilyRefresh },
 		{ startStream },
 		{ startStreamSession },
 		{ StreamStartFailure, classifyStartFailure, typedStartFailure },
@@ -255,26 +255,31 @@ export async function launchRestoredStream(
 				generation,
 				() => !cancelled() && current(),
 			);
-			const launched = await startStream(
-				resolved.pipeline,
-				srtlaAddr,
-				resolved.srtlaPort,
-				resolved.streamid,
-				{},
-				attemptId,
-				config,
-			);
-			if (!launched.success) {
-				throw new StreamStartFailure(
-					launched.failureClass !== undefined
-						? typedStartFailure(
-								attemptId,
-								launched.phase,
-								launched.failureClass,
-								launched.error,
-							)
-						: classifyStartFailure(launched.phase, launched.error, attemptId),
+			try {
+				const launched = await startStream(
+					resolved.pipeline,
+					srtlaAddr,
+					resolved.srtlaPort,
+					resolved.streamid,
+					{},
+					attemptId,
+					config,
 				);
+				if (!launched.success) {
+					throw new StreamStartFailure(
+						launched.failureClass !== undefined
+							? typedStartFailure(
+									attemptId,
+									launched.phase,
+									launched.failureClass,
+									launched.error,
+								)
+							: classifyStartFailure(launched.phase, launched.error, attemptId),
+					);
+				}
+			} catch (error) {
+				detachFamilyRefresh(generation);
+				throw error;
 			}
 		},
 	});

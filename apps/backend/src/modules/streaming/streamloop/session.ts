@@ -109,6 +109,13 @@ export function attachFamilyRefresh(
 	};
 }
 
+/** Dispose only resources still owned by this launch generation. */
+export function detachFamilyRefresh(generation: number): void {
+	if (sessionResources?.generation !== generation) return;
+	sessionResources.removeNetworkInterfacesChangeListener();
+	sessionResources = undefined;
+}
+
 export async function start(
 	conn: WebSocket,
 	params: ConfigParameters,
@@ -194,10 +201,7 @@ export async function start(
 			attemptId,
 		);
 	} catch (err) {
-		if (sessionResources?.generation === generation) {
-			sessionResources.removeNetworkInterfacesChangeListener();
-			sessionResources = undefined;
-		}
+		detachFamilyRefresh(generation);
 		if (err instanceof StreamStartFailure) throw err;
 		if (typeof err === "string") {
 			startError(conn, err, senderId);
@@ -213,10 +217,7 @@ export async function start(
 		};
 	}
 
-	if (!result.success && sessionResources?.generation === generation) {
-		sessionResources.removeNetworkInterfacesChangeListener();
-		sessionResources = undefined;
-	}
+	if (!result.success) detachFamilyRefresh(generation);
 	return result;
 }
 

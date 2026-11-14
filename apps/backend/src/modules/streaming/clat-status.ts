@@ -1,6 +1,11 @@
-import { access, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, type FileHandle, open } from "node:fs/promises";
 import { run } from "../../helpers/run.ts";
-import { type LinkPath, validateClatSnapshot } from "./link-family.ts";
+import {
+	FAMILY_REFRESH_MS,
+	type LinkPath,
+	validateClatSnapshot,
+} from "./link-family.ts";
 
 export type ClatStatusDeps = {
 	now: () => number;
@@ -8,7 +13,49 @@ export type ClatStatusDeps = {
 	active: () => Promise<boolean>;
 	tunExists: (path: string) => Promise<boolean>;
 };
-const CACHE_MS = 2_000;
+const REFRESH_SKIP_MS = FAMILY_REFRESH_MS;
+// Allow the next two-second tick and a scheduling margin before withdrawing.
+const READ_EXPIRY_MS = 2 * REFRESH_SKIP_MS + 500;
+const FILE_READ_TIMEOUT_MS = 500;
+
+/** Reject special files and bound open, metadata and read as one operation. */
+export async function readClatStatusFile(
+	path: string,
+	timeoutMs = FILE_READ_TIMEOUT_MS,
+): Promise<string> {
+	let handle: FileHandle | undefined;
+	let expired = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const operation = (async () => {
+		const opened = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+		if (expired) {
+			await opened.close();
+			throw new Error("CLAT status read timeout");
+		}
+		handle = opened;
+		if (!(await opened.stat()).isFile())
+			throw new Error("CLAT status must be a regular file");
+		if (expired) throw new Error("CLAT status read timeout");
+		return opened.readFile("utf8");
+	})();
+	try {
+		return await Promise.race([
+			operation,
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => {
+					expired = true;
+					reject(new Error("CLAT status read timeout"));
+				}, timeoutMs);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+		// Do not let a stalled close hold the refresh slot either.
+		void handle?.close().catch(() => {
+			/* A failed close cannot make an unavailable snapshot usable. */
+		});
+	}
+}
 /** One asynchronous, coalesced liveness probe per refresh, never per interface. */
 export function createClatStatusReader(deps: ClatStatusDeps) {
 	let checkedAt = -Infinity;
@@ -22,7 +69,7 @@ export function createClatStatusReader(deps: ClatStatusDeps) {
 		refresh(ifaces: readonly string[]): Promise<void> {
 			if (pending) return pending.then(() => this.refresh(ifaces));
 			if (
-				deps.now() - checkedAt < CACHE_MS &&
+				deps.now() - checkedAt < REFRESH_SKIP_MS &&
 				ifaces.every((name) => names.has(name))
 			)
 				return Promise.resolve();
@@ -69,7 +116,7 @@ export function createClatStatusReader(deps: ClatStatusDeps) {
 		read(iface: string): LinkPath | undefined {
 			const entry = cache.get(iface);
 			// Never prolong liveness when a caller stops refreshing the cache.
-			if (!entry || deps.now() - checkedAt > CACHE_MS) return undefined;
+			if (!entry || deps.now() - checkedAt > READ_EXPIRY_MS) return undefined;
 			return validateClatSnapshot(
 				entry.value,
 				iface,
@@ -83,7 +130,7 @@ export function createClatStatusReader(deps: ClatStatusDeps) {
 }
 const reader = createClatStatusReader({
 	now: Date.now,
-	read: (path) => readFile(path, "utf8"),
+	read: readClatStatusFile,
 	active: async () =>
 		(
 			await run("systemctl", ["is-active", "ceralive-clat.service"], {

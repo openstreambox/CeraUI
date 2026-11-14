@@ -83,8 +83,8 @@ The draft selector keeps native IPv4 on dual-stack links. With no native IPv4,
 AAAA plus IPv6 uses the native IPv6 source before considering CLAT. An A-only
 receiver can use the image's read-only schema-v1 CLAT grant: active service,
 fresh `up` snapshot (including one with a diagnostic `last_error`), matching
-parent index/allocation, and existing translator TUN are all required. The IPv4 socket binds the TUN while its link identity stays
-with the physical parent. Translator interfaces are not independent bond links.
+parent index/allocation, and existing translator TUN are all required. The IPv4
+socket binds the TUN while its link identity stays with the physical parent. Translator interfaces are not independent bond links.
 
 A path remains selected through short flaps: withdraw unavailable sources,
 allow ten seconds of sustained loss before choosing another family, and retain
@@ -109,6 +109,13 @@ A live A answer can start the IPv4 portion of a mixed bond while AAAA completes;
 compatible IPv6 links join on refresh. Publication logs path changes and withdrawals,
 while health/preflight reads do not log session transitions.
 
+### Translation refresh failure handling
+
+Status reads open nonblocking, accept regular files only, and time out after
+500 ms. Refreshes may reuse a result for two seconds; memory-only reads expire
+after 4.5 seconds, allowing the next timer tick and scheduling margin. Snapshot
+freshness and service/TUN admission remain required. Failed restored launches
+remove their own timer and source subscription, including thrown failures.
 
 ### Español (Latinoamérica)
 
@@ -132,3 +139,12 @@ son asíncronas y usan caché. Una respuesta A en vivo permite iniciar los enlac
 IPv4 sin esperar AAAA; los enlaces IPv6 compatibles se incorporan al actualizar.
 El registro de publicación incluye cambios y retiros, sin mensajes de sesión
 en las consultas de salud.
+
+### Manejo de fallas al actualizar la traducción
+
+Las lecturas de estado abren sin bloqueo, aceptan solo archivos regulares y
+vencen después de 500 ms. Las actualizaciones pueden reutilizar un resultado por
+dos segundos; las lecturas en memoria vencen a los 4,5 segundos para permitir el
+siguiente ciclo y un margen de programación. Siguen siendo obligatorias las
+validaciones de vigencia, servicio y TUN. Un inicio restaurado fallido elimina
+su temporizador y suscripción de fuentes, incluso si se lanza una excepción.

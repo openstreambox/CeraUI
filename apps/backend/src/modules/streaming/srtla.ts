@@ -75,10 +75,15 @@ export async function resolveSrtla(addr: string) {
 	let fromCache: boolean | undefined;
 	let emptyA = false;
 	try {
-		const a = dnsCacheResolve(addr, isIP(addr) ? undefined : "a", !isIP(addr) && hasV6);
+		const a = dnsCacheResolve(
+			addr,
+			isIP(addr) ? undefined : "a",
+			!isIP(addr) && hasV6,
+		);
 		const first = await a.catch(() => undefined);
 		emptyA = Boolean(first && !first.fromCache && first.addrs.length === 0);
-		if (!isIP(addr) && first?.addrs.length && !first.fromCache) await dnsCacheValidate(addr);
+		if (!isIP(addr) && first?.addrs.length && !first.fromCache)
+			await dnsCacheValidate(addr);
 		const aaaa =
 			!isIP(addr) &&
 			hasV6 &&
