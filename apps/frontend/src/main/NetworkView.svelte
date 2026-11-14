@@ -223,6 +223,8 @@ function openModemConfig(id: string) {
 			{links}
 			{modemEntries}
 			{linkTelemetry}
+			linkPaths={getStatus()?.link_paths}
+			pathsStale={!isConnected}
 			unbondedCount={hud.unbondedLinkCount}
 		/>
 		<CollisionBands {netif} bondMapping={getStatus()?.bond_mapping ?? null} />

@@ -40,8 +40,8 @@ export type SrtlaIpPreparationDeps = {
 
 const defaultSrtlaIpPreparationDeps: SrtlaIpPreparationDeps = {
 	isLocal: isLocalIp,
-	localList: genSrtlaBondEntriesForLocalIpAddress,
-	bondedList: genSrtlaBondEntries,
+	localList: (address) => genSrtlaBondEntriesForLocalIpAddress(address, true),
+	bondedList: () => genSrtlaBondEntries(true),
 	writeList: publishSrtlaBond,
 };
 

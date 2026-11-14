@@ -1,0 +1,10 @@
+{
+	"schema_version": 1,
+	"interface": "cell0",
+	"tun": "clat3",
+	"prefix": "64:ff9b::/96",
+	"ipv4": "10.254.0.3",
+	"state": "up",
+	"last_error": null,
+	"updated_at": 100
+}

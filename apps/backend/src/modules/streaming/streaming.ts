@@ -16,7 +16,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* Stream starting, stopping, management and monitoring */
 import { unsupportedPipelineOverrides } from "@ceraui/rpc";
 import {
 	AUDIO_SOURCE_AUTO,
@@ -51,6 +50,8 @@ import { getAudioDevices } from "./audio.ts";
 import { getLastCapabilities, getSupportedTransports } from "./capabilities.ts";
 import { isCompositionSupported } from "./composition.ts";
 import { validateBitrate } from "./encoder.ts";
+/* Stream starting, stopping, management and monitoring */
+import { setLinkPaths } from "./link-path-status.ts";
 import { AUDIO_CODECS } from "./pipeline-sources.ts";
 import { searchPipelines } from "./pipelines.ts";
 import { noteSourceSelectionWrite } from "./sources.ts";
@@ -99,6 +100,7 @@ export function updateStatus(status: boolean) {
 			}
 		}
 		isStreaming = status;
+		if (!status) setLinkPaths({});
 		broadcastMsg("status", { is_streaming: isStreaming });
 
 		return true;

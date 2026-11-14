@@ -102,7 +102,7 @@ export function isBondExcluded(entry: NetifEntry | undefined): boolean {
 	if (entry.error === NETIF_DUPLICATE_IPV4_ERROR)
 		return entry.enabled !== true || !entry.ip;
 	if (entry.error !== undefined && entry.error !== "") return true;
-	if (!entry.ip) return true;
+	if (!entry.ip && !entry.ipv6) return true;
 	return false;
 }
 

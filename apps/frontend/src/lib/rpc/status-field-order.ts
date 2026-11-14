@@ -25,6 +25,7 @@ const unrelatedFields: ReadonlySet<string> = new Set([
 	"set_password",
 	"remote",
 	"linkTelemetry",
+	"link_paths",
 	"bond_mapping",
 	"buffering",
 	"active_encode",
@@ -67,6 +68,7 @@ export function selectStatusFields(
 			? {
 					...status,
 					linkTelemetry: null,
+					link_paths: {},
 					active_encode: null,
 					engine_bitrate: null,
 					preview_encoder_realized: null,

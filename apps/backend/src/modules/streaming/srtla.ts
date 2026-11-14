@@ -16,6 +16,7 @@
 */
 
 import { isIP } from "node:net";
+import type { LinkPaths } from "@ceraui/rpc/schemas";
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 import killall from "../../helpers/killall.ts";
 import { logger } from "../../helpers/logger.ts";
@@ -42,6 +43,7 @@ import {
 } from "./bond-entry.ts";
 import { readClatPath, refreshClatStatus } from "./clat-status.ts";
 import { LinkFamilySelector, type ReceiverFamilies } from "./link-family.ts";
+import { describeLinkPath, setLinkPaths } from "./link-path-status.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
 
 export { isBondLinkMappable, setBondIdentityResolverForTest };
@@ -151,6 +153,7 @@ export async function resolveSrtla(addr: string) {
 	};
 	familySelector.reset();
 	familyStatus.clear();
+	setLinkPaths({});
 
 	if (fromCache) {
 		// Prefer IPv4 for compatibility when available; on a v6-only host keep
@@ -209,8 +212,10 @@ function admitEntry(int: NetworkInterface, entry: BondEntry): boolean {
 function collectBondEntries(
 	accept: (name: string, int: NetworkInterface) => boolean,
 	requireMappableDuplicate: boolean,
+	publishPaths: boolean,
 ): BondEntry[] {
 	const entries: BondEntry[] = [];
+	const paths: LinkPaths = {};
 	const networkInterfaces = getNetworkInterfaces();
 	familySelector.retainInterfaces(Object.keys(networkInterfaces));
 	for (const name in networkInterfaces) {
@@ -221,25 +226,34 @@ function collectBondEntries(
 			!accept(name, networkInterface)
 		)
 			continue;
+		const clat = receiverFamilies ? readClatPath(name) : undefined;
 		const path = receiverFamilies
 			? familySelector.choose(
 					name,
 					networkInterface,
 					receiverFamilies,
-					readClatPath(name),
+					clat,
 					Date.now(),
 				)
 			: undefined;
 		const ip = receiverFamilies
 			? path?.ip
 			: (networkInterface.ip ?? networkInterface.ipv6);
+		paths[name] = describeLinkPath(
+			networkInterface,
+			receiverFamilies,
+			path,
+			clat,
+		);
 		if (!ip) continue;
 		const entry = {
 			...describeBondEntry(name, ip),
 			...(path ? { iface: path.iface } : {}),
 		};
-		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
+		if (requireMappableDuplicate && !admitEntry(networkInterface, entry)) {
+			paths[name] = "unknown";
 			continue;
+		}
 		entryPaths.set(entry, {
 			interface: name,
 			status:
@@ -251,11 +265,12 @@ function collectBondEntries(
 		});
 		entries.push(entry);
 	}
+	if (publishPaths) setLinkPaths(paths);
 	return entries;
 }
 
-export function genSrtlaBondEntries(): BondEntry[] {
-	return collectBondEntries(isBondCandidate, false);
+export function genSrtlaBondEntries(publishPaths = false): BondEntry[] {
+	return collectBondEntries(isBondCandidate, false, publishPaths);
 }
 
 /**
@@ -268,6 +283,7 @@ export function genSrtlaBondEntries(): BondEntry[] {
  */
 export function genSrtlaBondEntriesForLocalIpAddress(
 	ipAddress: string,
+	publishPaths = false,
 ): BondEntry[] {
 	return collectBondEntries(
 		(_name, int) =>
@@ -275,6 +291,7 @@ export function genSrtlaBondEntriesForLocalIpAddress(
 			int.ip !== undefined &&
 			isSameSubnet(ipAddress, int.ip, int.netmask),
 		true,
+		publishPaths,
 	);
 }
 
