@@ -29,6 +29,7 @@ test("power summaries accept only complete known phrases and bounded parameters"
 		`${summary} secret`,
 		"Bank secret is hot and resting.",
 		"30 °C",
+		"Power data not available: the power board could not be opened (error SECRET_KEY).",
 		"Bank A is hot and restingX",
 		"Bank A is hot and resting. secret",
 	])

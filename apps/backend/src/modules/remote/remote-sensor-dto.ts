@@ -57,7 +57,7 @@ const phrases = POWER_PHRASES.map(
 						part === "{bank}"
 							? "[AB]"
 							: part === "{errno}"
-								? "[A-Z0-9_-]{1,32}"
+								? "(?:-?[0-9]{1,5}|EACCES|EBUSY|EIO|ENOENT|EPERM|ENODEV|UNKNOWN)"
 								: escapePhrase(part),
 					)
 					.join("") +
