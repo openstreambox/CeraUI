@@ -204,6 +204,32 @@ describe("the read-only lease", () => {
 		advance(30_000);
 		expect((await lease.read(3, "AT+QTEMP")).ok).toBe(true);
 	});
+	test("a stuck close timestamps its new refusal after an older refusal expires", async () => {
+		const { lease, hookOpen, advance } = await setup();
+		const cleanup = pending();
+		let busy = true;
+		hookOpen(async (path, real) => {
+			if (busy) throw new TtyOpenError("busy");
+			const port = await real(path);
+			return {
+				...port,
+				close: async () => {
+					await cleanup.promise;
+					await port.close();
+				},
+			};
+		});
+		expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+			reason: "in-use",
+			capturedAt: 1_000_000,
+		});
+		advance(31_000);
+		busy = false;
+		expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+			reason: "port-stuck",
+			capturedAt: 1_031_000,
+		});
+	});
 	test("three consecutive timeouts cause a short refusal", async () => {
 		const { lease, advance } = await setup(() => []);
 		for (let i = 0; i < 3; i++) await lease.read(3, "AT+QTEMP", 10);
@@ -273,6 +299,35 @@ describe("the read-only lease", () => {
 		return { ...fixture, cleanup, opens: () => opens };
 	}
 
+	test("pending cleanup does not reuse another manager ID's expired refusal timestamp", async () => {
+		const { lease, hookOpen, advance } = await setup();
+		const cleanup = pending();
+		let busy = true;
+		hookOpen(async (path, real) => {
+			if (busy) throw new TtyOpenError("busy");
+			const port = await real(path);
+			return {
+				...port,
+				close: async () => {
+					await cleanup.promise;
+					await port.close();
+				},
+			};
+		});
+		expect(await lease.read(4, "AT+QTEMP")).toMatchObject({
+			reason: "in-use",
+			capturedAt: 1_000_000,
+		});
+		advance(31_000);
+		busy = false;
+		expect(await lease.read(3, "AT+QTEMP")).toMatchObject({
+			reason: "port-stuck",
+		});
+		expect(await lease.read(4, "AT+QTEMP")).toMatchObject({
+			reason: "port-stuck",
+			capturedAt: 1_031_000,
+		});
+	});
 	test("same USB generation with a new manager ID cannot bypass pending close", async () => {
 		const { lease, opens } = await stuckFirst();
 		expect(await lease.read(4, "AT+QTEMP")).toMatchObject({

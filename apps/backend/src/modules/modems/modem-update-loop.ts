@@ -1,8 +1,3 @@
-import {
-	broadcastRadioHealth,
-	buildModemsWireMessage,
-} from "./modem-status.ts";
-import { refreshRadioHealth } from "./radio-health-runtime.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -19,6 +14,12 @@ import { refreshRadioHealth } from "./radio-health-runtime.ts";
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
+
+import {
+	broadcastRadioHealth,
+	buildModemsWireMessage,
+} from "./modem-status.ts";
+import { refreshRadioHealth } from "./radio-health-runtime.ts";
 
 /*
   Modem update loop — event-driven presence + retained status poll (T17).
