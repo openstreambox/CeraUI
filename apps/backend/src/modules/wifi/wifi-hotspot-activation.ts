@@ -16,8 +16,8 @@
 */
 
 import type { WifiAdapterMode } from "@ceraui/rpc/schemas";
-import { logger } from "../../helpers/logger.ts";
 import { randomBase64 } from "../../helpers/crypto.ts";
+import { logger } from "../../helpers/logger.ts";
 import { setNetifDupIpSuppression } from "../network/network-interfaces.ts";
 import {
 	nmConnect,

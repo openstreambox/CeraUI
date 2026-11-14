@@ -99,12 +99,8 @@ export async function readDesiredSteeringState(
 	if (zones.length === 0) return { clientZones: [], uplinks: [], routes: [] };
 	assertClientZonesDisjoint(zones);
 	const health = new Map(deps.health().map((record) => [record.iface, record]));
-	const { candidates: rawCandidates, identityPending } = collectUplinkCandidates(
-		interfaces,
-		zones,
-		health,
-		deps,
-	);
+	const { candidates: rawCandidates, identityPending } =
+		collectUplinkCandidates(interfaces, zones, health, deps);
 	if (!context.hasAppliedState && identityPending)
 		return { pending: true, netifReady: true, reason: "identity" };
 	const candidates = deps.policy

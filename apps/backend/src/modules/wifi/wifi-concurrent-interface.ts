@@ -9,13 +9,14 @@
 */
 
 import { argMatch, ID_RE, run } from "../../helpers/run.ts";
-import type { DerivedApChannel } from "./wifi-channels.ts";
 import { runIw } from "./regdomain.ts";
+import type { DerivedApChannel } from "./wifi-channels.ts";
 
 type InterfaceRunner = (command: string, args: string[]) => Promise<string>;
 type InterfaceWaiter = (ifname: string) => Promise<boolean>;
 
-const defaultRunner: InterfaceRunner = (command, args) => command === "iw" ? runIw(args) : run(command, args);
+const defaultRunner: InterfaceRunner = (command, args) =>
+	command === "iw" ? runIw(args) : run(command, args);
 const defaultWaiter: InterfaceWaiter = async (ifname) => {
 	for (let attempt = 0; attempt < 20; attempt++) {
 		const state = await interfaceRunner("nmcli", [
