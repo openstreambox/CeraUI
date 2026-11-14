@@ -8,12 +8,13 @@ import { PullToRefresh } from '$lib/components/custom/pwa';
 import Logo from '$lib/components/icons/Logo.svelte';
 import { liveNavElement, siteName } from '$lib/config';
 import { DESKTOP_CHROME_QUERY, WIDE_DESKTOP_QUERY } from '$lib/layout';
-import { navigateTo } from '$lib/stores/navigation.svelte';
-
+import { getHudState } from '$lib/stores/hud.svelte';
+import { getCurrentNavigation, navigateTo } from '$lib/stores/navigation.svelte';
 import HudRegion from './HudRegion.svelte';
 import MainNav from './navigation/MainNav.svelte';
 import MobileNav from './navigation/MobileNav.svelte';
 import NavigationRenderer from './navigation/NavigationRenderer.svelte';
+import ConnectedIdleNotices from './network/ConnectedIdleNotices.svelte';
 import NotificationsPanel from './notifications/NotificationsPanel.svelte';
 import PersistentNotices from './notifications/PersistentNotices.svelte';
 
@@ -99,6 +100,9 @@ const isWideDesktop = new MediaQuery(WIDE_DESKTOP_QUERY);
 				? ''
 				: 'pb-(--mobile-dock-height)'}"
 		>
+			{#if !("network" in getCurrentNavigation())}
+				<ConnectedIdleNotices links={getHudState().connectedIdleLinks ?? []} />
+			{/if}
 			<NavigationRenderer></NavigationRenderer>
 		</main>
 

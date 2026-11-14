@@ -74,6 +74,7 @@ export {
 // Reactive store + public selectors (runes — lazily created).
 export {
 	destroyHudStore,
+	getConnectedIdleLinks,
 	getHudState,
 	getLinks,
 	getSocTelemetry,

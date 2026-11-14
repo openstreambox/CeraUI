@@ -2777,5 +2777,7 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"network.view.connectedIdle": "{link} est connecté mais ne transporte presque aucune donnée du stream.",
+	"network.view.connectedIdleDetails": "Le stream reste en direct via les autres connexions. Cette connexion ne transporte presque aucune donnée du stream depuis au moins 20 secondes. L’émetteur utilise peut-être d’autres connexions. Si cela persiste, vérifiez le VPN, le pare-feu ou le DNS de ce réseau et les statistiques de connexion de l’émetteur. Cet avis n’identifie pas la cause."
 }
