@@ -1909,7 +1909,7 @@
 	"notifications.stillLiveHdmi": "HDMI camera feed stopped. You're still live. Check the HDMI connection.",
 	"notifications.stillLiveNetwork": "Network camera feed stopped. You're still live. Check the camera's network connection.",
 	"notifications.stillLiveSilence": "No sound in your stream for 10 s. You're still live. Check the mic.",
-	"notifications.stillLiveStandby": "Camera feed stopped. You're still live. Viewers see the standby screen. Check the camera's connection.",
+	"notifications.stillLiveStandby": "Camera feed stopped. You're still live. Viewers see the standby screen. Check the camera's connection. It resumes automatically when a camera feed returns.",
 	"notifications.captureStandbyLong": "The stream has been on standby for over 10 minutes. It will resume when a camera returns.",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "A CeraLive update is available. Open Settings → Software Updates to install it.",
@@ -2775,7 +2775,5 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} is connected but carries almost no stream traffic.",
-	"network.view.connectedIdleDetails": "The stream is still live on other links. This link has carried almost no stream traffic for at least 20 seconds. The sender may be using other links. If this persists, check this network’s VPN, firewall or DNS and the sender’s link statistics. This notice does not identify the cause."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
 }

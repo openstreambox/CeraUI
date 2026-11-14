@@ -16,7 +16,7 @@ late sample cannot raise a warning, even with continuous program audio.
 
 The backend persistent notice is the single frame-loss explanation on every tab;
 the cockpit no longer starts its own frame-loss timer or repeats that sentence.
-The standby band retains its title and actions, with the persistent notice owning
+The standby band retains its title, with the persistent notice owning
 the explanation. Network sources are not assumed to use Wi-Fi.
 A stalled encoded frame counter is a delivery signal, not image-content analysis:
 a camera sending new frames of the same frozen picture cannot be diagnosed here.
@@ -45,7 +45,8 @@ is tested once. No copy claims that standby takes the stream off air.
 ## Operator help (English)
 
 Camera feed stopped while still live: check the HDMI cable or the camera's network
-connection. If the box reports standby, viewers see the standby screen. Sound
+connection. If the box reports standby, viewers see the standby screen. The stream resumes
+automatically when a camera feed returns. Sound
 missing for ten seconds: check the selected microphone and its connection. An
 intentional No audio selection does not raise this warning.
 
@@ -53,18 +54,8 @@ intentional No audio selection does not raise this warning.
 
 Si la señal de la cámara se detuvo y sigues en vivo, revisa el cable HDMI o la
 conexión de red de la cámara. Si el equipo indica espera, el público ve la pantalla
-de espera. Si no hay sonido durante diez segundos, revisa el micrófono seleccionado
+de espera. La transmisión se reanuda automáticamente cuando vuelve la señal de
+una cámara. Si no hay sonido durante diez segundos, revisa el micrófono seleccionado
 y su conexión. Elegir Sin audio de forma intencional no genera esta advertencia.
 
 External English/es-419 user-documentation coordination remains a release gate.
-
-## Independent landing and catalog union
-
-This change can land independently of #96; it does not stack on that branch.
-The catalogs include the union of `network.view.connectedIdle*` and
-`notifications.stillLive*` in every locale, with the still-live keys in the
-notification section rather than competing for the final catalog line. A merge
-probe against #96 at `ace4ef21` is conflict-free. If its translations change before
-landing, retain both families and its latest connected-idle translations, then
-regenerate and run catalog parity. There is no runtime dependency between the
-features.

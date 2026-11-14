@@ -114,11 +114,6 @@ interface Props {
 	// available audio sources vs config.asrc). Video-source-lost and all-links-down
 	// are derived inside this component from sources/activeEncode and telemetry.
 	audioSourceLost?: boolean;
-	// The source is still enumerated but has stopped delivering frames — an HDMI
-	// cable pulled from the onboard capture node does NOT remove /dev/video0, so
-	// `activeSourceLost` stays false and this is the only thing that reads it.
-	// LiveView derives it from the backend health rollup (isVideoSignalLost).
-	videoSignalLost?: boolean;
 	// ── StreamControlButton (Stop mode) ────────────────────────────────────────
 	isStreaming: boolean;
 	optimismState: StreamingOptimismState;

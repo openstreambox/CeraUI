@@ -1864,7 +1864,7 @@
 	"notifications.stillLiveHdmi": "HDMIカメラ映像が停止しました。配信は続いています。HDMI接続を確認してください。",
 	"notifications.stillLiveNetwork": "ネットワークカメラ映像が停止しました。配信は続いています。カメラのネットワーク接続を確認してください。",
 	"notifications.stillLiveSilence": "配信の音声が10秒間無音です。配信は続いています。マイクを確認してください。",
-	"notifications.stillLiveStandby": "カメラ映像が停止しました。配信は続いています。視聴者には待機画面が表示されています。カメラの接続を確認してください。",
+	"notifications.stillLiveStandby": "カメラ映像が停止しました。配信は続いています。視聴者には待機画面が表示されています。カメラの接続を確認してください。 カメラ映像が戻ると自動的に再開します。",
 	"notifications.captureStandbyLong": "配信は10分以上待機状態です。カメラが戻ると再開します。",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "CeraLive のアップデートがあります。設定 → ソフトウェア更新 を開いてインストールしてください。",
@@ -2730,7 +2730,5 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} は接続されていますが、ストリームの通信はほとんどありません。",
-	"network.view.connectedIdleDetails": "ストリームは他の接続で引き続きライブ配信中です。この接続では少なくとも20秒間、ストリームの通信がほとんどありません。送信側が他の接続を使用している可能性があります。状態が続く場合は、このネットワークのVPN、ファイアウォール、DNSと送信側の接続統計を確認してください。この通知は原因を特定するものではありません。"
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
 }

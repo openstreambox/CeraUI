@@ -138,7 +138,6 @@ describe("LiveCockpit — capture standby band", () => {
 			LiveCockpit,
 			baseProps({
 				...twoCameras,
-				videoSignalLost: true,
 				sources: {
 					hardware: [],
 					sources: [capture("cam0", true), capture("cam1", true)],

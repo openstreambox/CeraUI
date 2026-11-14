@@ -1912,7 +1912,7 @@
 	"notifications.stillLiveHdmi": "La señal de la cámara HDMI se detuvo. Sigues en vivo. Revisa la conexión HDMI.",
 	"notifications.stillLiveNetwork": "La señal de la cámara de red se detuvo. Sigues en vivo. Revisa la conexión de red de la cámara.",
 	"notifications.stillLiveSilence": "Tu transmisión lleva 10 s sin sonido. Sigues en vivo. Revisa el micrófono.",
-	"notifications.stillLiveStandby": "La señal de la cámara se detuvo. Sigues en vivo. El público ve la pantalla de espera. Revisa la conexión de la cámara.",
+	"notifications.stillLiveStandby": "La señal de la cámara se detuvo. Sigues en vivo. El público ve la pantalla de espera. Revisa la conexión de la cámara. Se reanuda automáticamente cuando vuelve la señal de una cámara.",
 	"notifications.captureStandbyLong": "La transmisión lleva más de 10 minutos en espera. Se reanudará cuando vuelva una cámara.",
 	"notifications.bootconfigUpdating": "No reinicies ni desconectes el sistema. El gestor de arranque se está actualizando en segundo plano y una interrupción podría dejar tu placa inutilizable...",
 	"notifications.ceraliveUpdateAvailable": "Hay una actualización de CeraLive disponible. Abre Configuración → Actualizaciones de software para instalarla.",
@@ -2778,7 +2778,5 @@
 	"hotspotConfigurator.saveRefused": "El adaptador Wi-Fi cambió, así que esta configuración no se guardó.",
 	"hotspotConfigurator.saveInterrupted": "No se pudo aplicar la nueva configuración mientras se reiniciaba el punto de acceso. Es posible que esté apagado.",
 	"network.wifiMode.error.radioChanged": "El adaptador Wi-Fi cambió, así que el cambio de modo no se completó. Revisa su modo actual antes de volver a intentarlo.",
-	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso.",
-	"network.view.connectedIdle": "{link} está conectado, pero casi no transmite datos del stream.",
-	"network.view.connectedIdleDetails": "El stream sigue en vivo por otras conexiones. Esta conexión lleva al menos 20 segundos casi sin transmitir datos del stream. El emisor puede estar usando otras conexiones. Si persiste, revisa la VPN, el firewall o el DNS de esta red y las estadísticas de conexión del emisor. Este aviso no identifica la causa."
+	"hotspotConfigurator.radioUnverified": "Esta configuración no se puede guardar hasta que se identifique este adaptador Wi-Fi. Aún puedes apagar el punto de acceso."
 }

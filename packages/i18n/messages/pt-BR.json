@@ -1912,7 +1912,7 @@
 	"notifications.stillLiveHdmi": "O sinal da câmera HDMI parou. Você continua ao vivo. Confira a conexão HDMI.",
 	"notifications.stillLiveNetwork": "O sinal da câmera de rede parou. Você continua ao vivo. Confira a conexão de rede da câmera.",
 	"notifications.stillLiveSilence": "Sua transmissão está sem som há 10 s. Você continua ao vivo. Confira o microfone.",
-	"notifications.stillLiveStandby": "O sinal da câmera parou. Você continua ao vivo. O público vê a tela de espera. Confira a conexão da câmera.",
+	"notifications.stillLiveStandby": "O sinal da câmera parou. Você continua ao vivo. O público vê a tela de espera. Confira a conexão da câmera. A transmissão é retomada automaticamente quando o sinal de uma câmera volta.",
 	"notifications.captureStandbyLong": "A transmissão está em espera há mais de 10 minutos. Ela recomeçará quando uma câmera voltar.",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "Há uma atualização do CeraLive disponível. Abra Configurações → Atualizações de software para instalá-la.",
@@ -2778,7 +2778,5 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} está conectado, mas quase não transporta dados da transmissão.",
-	"network.view.connectedIdleDetails": "A transmissão continua ao vivo pelas outras conexões. Esta conexão quase não transporta dados da transmissão há pelo menos 20 segundos. O transmissor pode estar usando outras conexões. Se persistir, verifique a VPN, o firewall ou o DNS desta rede e as estatísticas de conexão do transmissor. Este aviso não identifica a causa."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
 }

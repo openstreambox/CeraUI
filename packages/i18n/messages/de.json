@@ -1909,7 +1909,7 @@
 	"notifications.stillLiveHdmi": "HDMI-Kamerabild gestoppt. Du bist weiterhin live. Prüfe die HDMI-Verbindung.",
 	"notifications.stillLiveNetwork": "Netzwerkkamerabild gestoppt. Du bist weiterhin live. Prüfe die Netzwerkverbindung der Kamera.",
 	"notifications.stillLiveSilence": "Seit 10 s kein Ton im Stream. Du bist weiterhin live. Prüfe das Mikrofon.",
-	"notifications.stillLiveStandby": "Kamerabild gestoppt. Du bist weiterhin live. Zuschauer sehen den Standby-Bildschirm. Prüfe die Kameraverbindung.",
+	"notifications.stillLiveStandby": "Kamerabild gestoppt. Du bist weiterhin live. Zuschauer sehen den Standby-Bildschirm. Prüfe die Kameraverbindung. Die Übertragung wird automatisch fortgesetzt, sobald ein Kamerasignal zurückkehrt.",
 	"notifications.captureStandbyLong": "Der Stream ist seit über 10 Minuten im Bereitschaftsmodus. Er wird fortgesetzt, sobald eine Kamera zurückkehrt.",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "Ein CeraLive-Update ist verfügbar. Öffnen Sie Einstellungen → Softwareupdates, um es zu installieren.",
@@ -2775,7 +2775,5 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} ist verbunden, überträgt aber fast keine Stream-Daten.",
-	"network.view.connectedIdleDetails": "Der Stream ist über andere Verbindungen weiterhin live. Diese Verbindung überträgt seit mindestens 20 Sekunden fast keine Stream-Daten. Der Sender verwendet möglicherweise andere Verbindungen. Prüfe bei anhaltendem Zustand VPN, Firewall oder DNS dieses Netzwerks und die Verbindungsstatistik des Senders. Dieser Hinweis benennt keine Ursache."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
 }

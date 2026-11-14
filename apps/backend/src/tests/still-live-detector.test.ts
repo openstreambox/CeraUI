@@ -78,6 +78,33 @@ for (const cadence of [4500, 5000, 5500]) {
 	});
 }
 
+test("a scene switch restarts camera confirmation between stalled samples", () => {
+	const h = harness();
+	h.context.cameraStopped = true;
+	h.detector.update(undefined, true);
+	h.advance(2500);
+	h.context.selection = "another-camera:mic";
+	h.detector.update();
+	h.advance(2500);
+	h.detector.update(undefined, true);
+	expect(h.events).toEqual([]);
+	h.advance(5000);
+	h.detector.update(undefined, true);
+	expect(h.events).toEqual([["camera", true]]);
+});
+
+test("repeated frame reads cannot manufacture a heartbeat", () => {
+	const h = harness();
+	h.context.cameraStopped = true;
+	h.detector.update(undefined, true);
+	h.advance(100);
+	h.detector.update(undefined, true);
+	expect(h.events).toEqual([]);
+	h.advance(4900);
+	h.detector.update(undefined, true);
+	expect(h.events).toEqual([["camera", true]]);
+});
+
 test("ten minutes of jittered stalls and recovery have no single-sample flicker", () => {
 	for (let seed = 1; seed <= 100; seed++) {
 		const h = harness();

@@ -1921,7 +1921,7 @@
 	"notifications.stillLiveHdmi": "انقطعت إشارة كاميرا HDMI. ما زلت على الهواء. تحقق من اتصال HDMI.",
 	"notifications.stillLiveNetwork": "انقطعت إشارة كاميرا الشبكة. ما زلت على الهواء. تحقق من اتصال الكاميرا بالشبكة.",
 	"notifications.stillLiveSilence": "لا يوجد صوت في بثك منذ 10 ثوانٍ. ما زلت على الهواء. تحقق من الميكروفون.",
-	"notifications.stillLiveStandby": "انقطعت إشارة الكاميرا. ما زلت على الهواء. يرى المشاهدون شاشة الانتظار. تحقق من اتصال الكاميرا.",
+	"notifications.stillLiveStandby": "انقطعت إشارة الكاميرا. ما زلت على الهواء. يرى المشاهدون شاشة الانتظار. تحقق من اتصال الكاميرا. يُستأنف البث تلقائيًا عند عودة إشارة إحدى الكاميرات.",
 	"notifications.captureStandbyLong": "البث في وضع الاستعداد منذ أكثر من 10 دقائق. سيُستأنف عند عودة كاميرا.",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "يتوفر تحديث CeraLive. افتح الإعدادات ← تحديثات البرامج لتثبيته.",
@@ -2787,7 +2787,5 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} متصل لكنه لا ينقل تقريبًا أي بيانات للبث.",
-	"network.view.connectedIdleDetails": "لا يزال البث مباشرًا عبر الاتصالات الأخرى. لم ينقل هذا الاتصال تقريبًا أي بيانات للبث منذ 20 ثانية على الأقل. قد يستخدم المرسل اتصالات أخرى. إذا استمر ذلك، فتحقق من VPN أو جدار الحماية أو DNS لهذه الشبكة وإحصاءات اتصال المرسل. لا يحدد هذا الإشعار السبب."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
 }

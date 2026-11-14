@@ -7,6 +7,7 @@
 			"tests/catalog-duplicate-key-gate.test.ts",
 			"tests/eager-registration.test.ts",
 			"tests/streaming-refusal-copy.test.ts",
+			"tests/still-live-standby-copy.test.ts",
 			"package.json",
 			"tsconfig.json",
 			"src/**/*.ts",

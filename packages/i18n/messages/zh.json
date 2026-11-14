@@ -1864,7 +1864,7 @@
 	"notifications.stillLiveHdmi": "HDMI 摄像头画面已停止。你仍在直播。请检查 HDMI 连接。",
 	"notifications.stillLiveNetwork": "网络摄像头画面已停止。你仍在直播。请检查摄像头的网络连接。",
 	"notifications.stillLiveSilence": "直播已连续 10 秒没有声音。你仍在直播。请检查麦克风。",
-	"notifications.stillLiveStandby": "摄像头画面已停止。你仍在直播。观众看到的是待机画面。请检查摄像头连接。",
+	"notifications.stillLiveStandby": "摄像头画面已停止。你仍在直播。观众看到的是待机画面。请检查摄像头连接。 摄像头画面恢复后，直播会自动继续。",
 	"notifications.captureStandbyLong": "直播已待机超过10分钟。摄像头恢复后会继续。",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "有可用的 CeraLive 更新。打开 设置 → 软件更新 进行安装。",
@@ -2730,7 +2730,5 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} 已连接，但几乎没有传输直播数据。",
-	"network.view.connectedIdleDetails": "直播仍通过其他连接继续。此连接至少已有20秒几乎未传输直播数据。发送端可能正在使用其他连接。如果持续如此，请检查此网络的VPN、防火墙或DNS以及发送端的连接统计。此提示并不确定原因。"
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
 }

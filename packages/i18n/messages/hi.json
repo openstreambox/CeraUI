@@ -1909,7 +1909,7 @@
 	"notifications.stillLiveHdmi": "HDMI कैमरे का फ़ीड रुक गया है। आप अभी भी लाइव हैं। HDMI कनेक्शन जाँचें।",
 	"notifications.stillLiveNetwork": "नेटवर्क कैमरे का फ़ीड रुक गया है। आप अभी भी लाइव हैं। कैमरे का नेटवर्क कनेक्शन जाँचें।",
 	"notifications.stillLiveSilence": "आपकी स्ट्रीम में 10 सेकंड से आवाज़ नहीं है। आप अभी भी लाइव हैं। माइक जाँचें।",
-	"notifications.stillLiveStandby": "कैमरे का फ़ीड रुक गया है। आप अभी भी लाइव हैं। दर्शकों को स्टैंडबाय स्क्रीन दिख रही है। कैमरे का कनेक्शन जाँचें।",
+	"notifications.stillLiveStandby": "कैमरे का फ़ीड रुक गया है। आप अभी भी लाइव हैं। दर्शकों को स्टैंडबाय स्क्रीन दिख रही है। कैमरे का कनेक्शन जाँचें। किसी कैमरे का फ़ीड वापस आने पर प्रसारण अपने आप फिर शुरू हो जाता है।",
 	"notifications.captureStandbyLong": "स्ट्रीम 10 मिनट से अधिक समय से स्टैंडबाय पर है। कैमरा लौटते ही यह फिर चलने लगेगी।",
 	"notifications.bootconfigUpdating": "Don't reset or unplug the system. The bootloader is being updated in the background and doing so may brick your board...",
 	"notifications.ceraliveUpdateAvailable": "एक CeraLive अपडेट उपलब्ध है। इसे इंस्टॉल करने के लिए सेटिंग्स → सॉफ़्टवेयर अपडेट खोलें।",
@@ -2775,7 +2775,5 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
-	"network.view.connectedIdle": "{link} कनेक्ट है, लेकिन स्ट्रीम का लगभग कोई ट्रैफ़िक नहीं ले जा रहा है।",
-	"network.view.connectedIdleDetails": "स्ट्रीम अन्य कनेक्शन पर अभी भी लाइव है। इस कनेक्शन पर कम से कम 20 सेकंड से स्ट्रीम का लगभग कोई ट्रैफ़िक नहीं है। प्रेषक अन्य कनेक्शन का उपयोग कर रहा हो सकता है। यदि यह जारी रहे, तो इस नेटवर्क के VPN, फ़ायरवॉल या DNS और प्रेषक के कनेक्शन आँकड़े जाँचें। यह सूचना कारण की पहचान नहीं करती है।"
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
 }
