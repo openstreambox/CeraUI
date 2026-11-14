@@ -99,7 +99,10 @@ export function evidenceHarness(protectedAtBoot = false) {
 				calls.push("close");
 			},
 			reloadConfig: unused,
-			setBitrate: unused,
+			setBitrate: async (params) => {
+				calls.push("set-bitrate");
+				return { applied: { max_bitrate: params.max_bitrate } };
+			},
 			requestKeyframe: unused,
 			setEdidProfile: unused,
 			listSwitchTargets: unused,

@@ -2767,5 +2767,22 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"live.heat.title": "Heat",
+	"live.heat.unknown": "Temperature unavailable. Heat adjustments are paused.",
+	"live.heat.failed": "The heat bitrate change could not be confirmed. Give the box air.",
+	"live.heat.keepWarning": "Keeping full quality. The box stays hot. Give it air.",
+	"live.heat.capped": "Hot box: bitrate capped at {bitrate} Mbit/s to cool it. Still live.",
+	"live.heat.cannotReduce": "Hot box: this source's bitrate can't be lowered, so nothing was reduced. Still live.",
+	"live.heat.warm": "The box is warm. Give it air.",
+	"live.heat.air": "Open the bag or find shade.",
+	"live.heat.keep": "Keep quality",
+	"live.heat.history": "Heat adjustments",
+	"live.heat.historyEntry": "{stage}: bitrate ceiling {bitrate} Mbit/s.",
+	"live.heat.phone": "A phone charging from the box adds heat. Unplug it if you can.",
+	"live.heat.critical": "Very hot",
+	"live.heat.hot": "Hot",
+	"live.heat.warmStage": "Warm",
+	"live.heat.normal": "Cooled",
+	"live.heat.restored": "Cooled. Your bitrate ceiling is restored."
 }

@@ -27,6 +27,8 @@ import type {
 	FccUnlockOptionsInput,
 	FccUnlockOptionsOutput,
 	GetEngineOutput,
+	HeatMutation,
+	HeatStatus,
 	HotspotConfigInput,
 	HotspotPrepareInput,
 	HotspotPrepareOutput,
@@ -647,6 +649,8 @@ export interface TypedRPC {
 			input: StreamingConfigInput,
 		) => Promise<StreamingStartOutputExtended>;
 		stop: () => Promise<StreamingStopOutput>;
+		getHeat: () => Promise<HeatStatus>;
+		keepHeatQuality: (input: { enabled: boolean }) => Promise<HeatMutation>;
 		setBitrate: (input: BitrateInput) => Promise<BitrateOutput>;
 		getPipelines: () => Promise<unknown>;
 		getAudioCodecs: () => Promise<unknown>;

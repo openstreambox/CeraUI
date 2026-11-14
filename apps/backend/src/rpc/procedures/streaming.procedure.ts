@@ -16,7 +16,10 @@ import {
 	GATEWAY_INACTIVE_ERROR,
 	getEngineOutputSchema,
 	getMockHardwareOutputSchema,
+	heatMutationSchema,
+	heatStatusSchema,
 	type InputMode,
+	keepHeatQualitySchema,
 	listDevicesOutputSchema,
 	pipelinesMessageSchema,
 	reloadAudioDelayInputSchema,
@@ -78,6 +81,7 @@ import {
 } from "../../modules/streaming/auto-audio.ts";
 import { isBluetoothAudioSourceId } from "../../modules/streaming/bluetooth-audio.ts";
 import { getLastCapabilities } from "../../modules/streaming/capabilities.ts";
+import { cerastreamBackend } from "../../modules/streaming/cerastream-backend.ts";
 import { mapCerastreamError } from "../../modules/streaming/cerastream-error-mapping.ts";
 import {
 	COMPOSITION_UNSUPPORTED_ERROR,
@@ -1448,4 +1452,16 @@ export const reloadAudioDelayProcedure = authedProcedure
 		} catch (_err) {
 			return { success: false, error: "RELOAD_FAILED" };
 		}
+	});
+
+export const getHeatProcedure = authedProcedure
+	.output(heatStatusSchema)
+	.handler(() => cerastreamBackend.getHeat());
+export const keepHeatQualityProcedure = authedProcedure
+	.input(keepHeatQualitySchema)
+	.output(heatMutationSchema)
+	.handler(async ({ input }) => {
+		await cerastreamBackend.keepHeatQuality(input.enabled);
+		broadcastMsg("heat", cerastreamBackend.getHeat());
+		return { success: true, applied: cerastreamBackend.getHeat() };
 	});
