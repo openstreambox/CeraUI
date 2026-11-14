@@ -423,6 +423,7 @@ export const restartConnectionProcedure = authedProcedure
 			input.token,
 			await connectionRestartDeps(
 				context.ws as unknown as import("ws").default,
+				"ui",
 			),
 		);
 		void request.done;

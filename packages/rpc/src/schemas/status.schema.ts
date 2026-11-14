@@ -484,6 +484,11 @@ export const statusResponseSchema = z.object({
 	// omitted field, so a true-only flag could be raised and never lowered — the
 	// `policy_route_missing` latch, exactly. Absent = an older backend.
 	cellular_initializing: z.boolean().optional(),
+	// A supervised connection restart (the stale-link tap, or the device's own
+	// restart when nothing else carried the stream) is between its Stop and its
+	// Start. Explicit boolean on every snapshot and on each change, for the same
+	// latch reason as `cellular_initializing`. Absent = an older backend.
+	connection_restarting: z.boolean().optional(),
 	// Every enumerated wireless/BT adapter this host bound NO driver to. Emitted
 	// as an EXPLICIT array — `[]` included — from the moment the probe has run,
 	// so a consumer can tell "every adapter is driven" (a positive answer) from

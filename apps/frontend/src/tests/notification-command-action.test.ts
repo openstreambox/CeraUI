@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const toastCalls: { level: string; text: string }[] = [];
 const restartCalls: unknown[] = [];
-let restartResult: "restarting" | "refused" = "restarting";
+let restartResult: "restarting" | "refused" | "transport-error" = "restarting";
 
 vi.mock("svelte-sonner", () => {
 	const record =
@@ -36,6 +36,8 @@ vi.mock("$lib/rpc", () => ({
 		streaming: {
 			restartConnection: (input: unknown) => {
 				restartCalls.push(input);
+				if (restartResult === "transport-error")
+					return Promise.reject(new Error("socket closed"));
 				return Promise.resolve({
 					success: restartResult === "restarting",
 					result: restartResult,
@@ -110,5 +112,23 @@ describe("a command action on a persistent notice", () => {
 		expect(restartCalls).toEqual([{ token: "offer-1" }]);
 		expect(toastCalls).toHaveLength(1);
 		expect(toastCalls[0]?.level).toBe("info");
+		expect(toastCalls[0]?.text).toBe(
+			"This restart option is out of date, so nothing was restarted.",
+		);
+	});
+
+	it("never claims nothing was restarted when the device could not be reached", async () => {
+		// The request may have reached the device before the reply was lost, so
+		// only the device's own refusal may say nothing was restarted.
+		restartResult = "transport-error";
+		await tap();
+		expect(restartCalls).toEqual([{ token: "offer-1" }]);
+		expect(toastCalls).toEqual([
+			{
+				level: "warning",
+				text: "Couldn't reach the device. Check the stream status before trying again.",
+			},
+		]);
+		expect(toastCalls[0]?.text).not.toContain("nothing was restarted");
 	});
 });

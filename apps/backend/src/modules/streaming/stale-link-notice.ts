@@ -126,9 +126,20 @@ export function createStaleLinkNotice(deps: StaleLinkNoticeDeps) {
 		deps.remove(STALE_LINK_NOTICE);
 	};
 	return {
-		/** Show the offer unless one was shown within the cooldown. */
-		offer(generation: number, links: StaleLinks): boolean {
-			if (deps.now() - lastShownAt < cooldownMs) {
+		/**
+		 * Show the offer unless one was shown within the cooldown. `pastCooldown`
+		 * is for the one case where silence would be wrong: nothing else carries
+		 * the stream and the automatic restart is held.
+		 */
+		offer(
+			generation: number,
+			links: StaleLinks,
+			options?: { readonly pastCooldown?: boolean },
+		): boolean {
+			if (
+				options?.pastCooldown !== true &&
+				deps.now() - lastShownAt < cooldownMs
+			) {
 				deps.log("stale link notice held by cooldown", { generation });
 				return false;
 			}
@@ -155,7 +166,7 @@ export function createStaleLinkNotice(deps: StaleLinkNoticeDeps) {
 		retract(generation: number): void {
 			if (offer?.generation === generation) clear();
 		},
-		/** One tap, one restart: the token is spent whether or not it matches. */
+		/** One tap, one restart: a matching token is spent on first use. */
 		take(token: string, generation: number | undefined) {
 			const current = offer;
 			if (

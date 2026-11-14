@@ -1011,9 +1011,12 @@ export const restartConnectionInputSchema = z.object({
 	token: z.string().min(1).max(128),
 });
 export type RestartConnectionInput = z.infer<typeof restartConnectionInputSchema>;
+// `restarting` means the token was accepted and the restart has begun, not
+// that it has finished. A refusal carries the stable code `offer_not_current`.
 export const restartConnectionOutputSchema = z.object({
 	success: z.boolean(),
 	result: z.enum(['restarting', 'refused']),
+	error: z.literal('offer_not_current').optional(),
 });
 export type RestartConnectionOutput = z.infer<typeof restartConnectionOutputSchema>;
 

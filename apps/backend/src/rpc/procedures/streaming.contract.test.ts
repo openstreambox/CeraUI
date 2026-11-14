@@ -202,6 +202,18 @@ describe("streaming setter-contract — contains-envelope (S3)", () => {
 		expect(result.error).toBeDefined();
 	});
 
+	test("a refused restart tap carries an error and never a reason key", async () => {
+		const result = await callMutation(restartConnectionProcedure, {
+			token: "no-current-offer",
+		});
+		expect(result).toEqual({
+			success: false,
+			result: "refused",
+			error: "offer_not_current",
+		});
+		expect(result).not.toHaveProperty("reason");
+	});
+
 	test("domain-rich mutations carry success WITHOUT a forced applied field", async () => {
 		resetStreamingIdle();
 		const audio = await callMutation(switchAudioProcedure, {

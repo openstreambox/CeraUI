@@ -90,9 +90,11 @@ export async function dismissPersistentNotification(
  * Run a notification's allowlisted action, for every surface that offers it.
  *
  * `navigate` opens the in-app target. `command` asks the device to run the
- * command for the one offer named by its token; the device refuses an outdated
- * offer, and the operator is told nothing was restarted rather than left
- * guessing. The device withdraws the notice itself when it accepts.
+ * command for the one offer named by its token. Only the device's own refusal
+ * of an outdated offer says nothing was restarted. When the request fails in
+ * transit, the device may or may not have acted on it, so the operator is told
+ * the device couldn't be reached and to check the stream status first. The
+ * device withdraws the notice itself when it accepts.
  */
 export async function runNotificationAction(
 	action: NotificationAction,
@@ -104,16 +106,18 @@ export async function runNotificationAction(
 			return;
 		case "command": {
 			dismiss(name);
-			let accepted = false;
+			let result: "restarting" | "refused" | "unreachable";
 			try {
-				const result = await rpc.streaming.restartConnection({
-					token: action.token,
-				});
-				accepted = result.result === "restarting";
+				result = (
+					await rpc.streaming.restartConnection({ token: action.token })
+				).result;
 			} catch {
-				accepted = false;
+				result = "unreachable";
 			}
-			if (!accepted) toast.info(m["notifications.restartConnectionRefused"]());
+			if (result === "refused")
+				toast.info(m["notifications.restartConnectionRefused"]());
+			else if (result === "unreachable")
+				toast.warning(m["notifications.restartConnectionUnreachable"]());
 			return;
 		}
 	}

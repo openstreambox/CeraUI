@@ -107,6 +107,17 @@ describe("stale link offer", () => {
 		expect(f.notice.take("token-1", 6)).toBeUndefined();
 	});
 
+	test("a held automatic restart's offer is shown inside the cooldown, and restarts the cooldown", () => {
+		const f = fixture();
+		f.notice.offer(5, { count: 1 });
+		f.advance(60_000);
+		expect(f.notice.offer(5, { count: 1 }, { pastCooldown: true })).toBe(true);
+		expect(f.shown).toHaveLength(2);
+		// It counts as shown: an ordinary offer right after is still held.
+		f.advance(STALE_LINK_NOTICE_COOLDOWN_MS - 1);
+		expect(f.notice.offer(5, { count: 1 })).toBe(false);
+	});
+
 	test("one tap, one restart, and only for the session that raised it", () => {
 		const f = fixture();
 		f.notice.offer(5, { count: 1 });

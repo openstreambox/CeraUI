@@ -1,8 +1,8 @@
 /*
   Sender address adoption against a real SRT session, in a private namespace.
 
-  Topology (synthetic addresses only): two veth uplinks, wan0 (10.0.0.1, the
-  "wired" link) and wan1 (10.1.0.x, the "mobile" link), into a peer namespace
+  Topology (synthetic addresses only): two veth uplinks, wan0 (198.51.100.1, the
+  "wired" link) and wan1 (192.0.2.x, the "mobile" link), into a peer namespace
   that runs the BELABOX receiver and an SRT listener. An ffmpeg SRT caller
   stands in for the engine and sends into the real standalone sender. The
   listener appends what it receives to sink.ts and restarts after each session,
@@ -64,7 +64,8 @@ const sh = (...args: string[]) => execFileSync(args[0] ?? "", args.slice(1));
 const sleep = (ms: number) => Bun.sleep(ms);
 const results: Record<string, unknown> = {};
 
-type Link = { id: string; iface: string; ip: string };
+/** `gateway`: the peer end of the link's veth, in the same documentation range. */
+type Link = { id: string; iface: string; ip: string; gateway: string };
 
 class Rig {
 	readonly dir: string;
@@ -109,8 +110,8 @@ class Rig {
 			sh("ip", "link", "set", link.iface, "up");
 			peer("ip", "link", "set", `srv${n}`, "up");
 			sh("ip", "addr", "add", `${link.ip}/24`, "dev", link.iface);
-			peer("ip", "addr", "add", `10.${n}.0.2/24`, "dev", `srv${n}`);
-			sh("ip", "route", "add", "default", "via", `10.${n}.0.2`, "dev", link.iface, "metric", String(100 + i));
+			peer("ip", "addr", "add", `${link.gateway}/24`, "dev", `srv${n}`);
+			sh("ip", "route", "add", "default", "via", link.gateway, "dev", link.iface, "metric", String(100 + i));
 		}
 		this.links = links;
 		this.spawn(this.inPeer(RECEIVER, "9000", "203.0.113.1", "9002"), "receiver");
@@ -294,8 +295,8 @@ class Rig {
 	}
 
 	private oldAddresses = new Map<string, string>([
-		["10.1.0.1", "wan1"],
-		["10.0.0.1", "wan0"],
+		["192.0.2.1", "wan1"],
+		["198.51.100.1", "wan0"],
 	]);
 	ifaceOfOld(ip: string) {
 		return this.oldAddresses.get(ip);
@@ -307,6 +308,10 @@ class Rig {
 			take,
 			isStreaming: () => this.active,
 			captureStopIntent: () => () => true,
+			beginRestart: () => {
+				calls.push("restarting");
+				return () => calls.push("restarted");
+			},
 			stop: async () => {
 				calls.push("stop");
 				await this.stopSession();
@@ -333,8 +338,8 @@ class Rig {
 	}
 }
 
-const WIRED: Link = { id: "wired", iface: "wan0", ip: "10.0.0.1" };
-const MOBILE: Link = { id: "mobile", iface: "wan1", ip: "10.1.0.1" };
+const WIRED: Link = { id: "wired", iface: "wan0", ip: "198.51.100.1", gateway: "198.51.100.2" };
+const MOBILE: Link = { id: "mobile", iface: "wan1", ip: "192.0.2.1", gateway: "192.0.2.2" };
 
 async function growth(rig: Rig, ms: number) {
 	const before = rig.sinkBytes();
@@ -357,7 +362,7 @@ await scenario("withheld-hup", async (rig) => {
 	await rig.up([{ ...WIRED }, { ...MOBILE }]);
 	const pid = rig.sender?.pid;
 	const caller = rig.caller?.pid;
-	await rig.renumber("wan1", "10.1.0.3");
+	await rig.renumber("wan1", "192.0.2.3");
 	const check = await rig.check(true);
 	assert.deepEqual(check.result, { outcome: "adopted" });
 	assert.equal(check.signals, 2);
@@ -379,9 +384,9 @@ await scenario("offer", async (rig) => {
 	await rig.up([{ ...WIRED }, { ...MOBILE }]);
 	const pid = rig.sender?.pid;
 	const caller = rig.caller?.pid;
-	await rig.renumber("wan1", "10.1.0.3");
+	await rig.renumber("wan1", "192.0.2.3");
 	const check = await rig.check(false);
-	assert.deepEqual(check.result, { outcome: "stale", stale: ["10.1.0.1"] });
+	assert.deepEqual(check.result, { outcome: "stale", stale: ["192.0.2.1"] });
 	assert.equal(check.verdict, "others_carrying");
 	assert.equal(staleSourceResponse(check.verdict), "offer");
 	const shown: unknown[] = [];
@@ -408,25 +413,29 @@ await scenario("offer", async (rig) => {
 	const request = requestConnectionRestart(tapToken, rig.restartDeps(calls, notice.take));
 	assert.deepEqual(request.output, { success: true, result: "restarting" });
 	assert.equal(await request.done, "started");
-	assert.deepEqual(calls, ["stop", "start"]);
+	assert.deepEqual(calls, ["restarting", "stop", "start", "restarted"]);
 	const first = rig.linkBytes();
 	const resumed = await growth(rig, 8000);
 	const later = rig.linkBytes();
 	assert.ok(resumed > 100_000, "the new session delivers");
 	// The first SRT session ended and the listener took the new one.
 	assert.equal(rig.sessions(), 2);
-	assert.deepEqual((await rig.bound()).sort(), ["10.0.0.1", "10.1.0.3"]);
+	assert.deepEqual((await rig.bound()).sort(), ["192.0.2.3", "198.51.100.1"]);
 	for (const iface of ["wan0", "wan1"])
 		assert.ok((later[iface] ?? 0) > (first[iface] ?? 0), `${iface} carries after the restart`);
-	assert.deepEqual(requestConnectionRestart(tapToken, rig.restartDeps(calls, notice.take)).output, { success: false, result: "refused" });
+	assert.deepEqual(requestConnectionRestart(tapToken, rig.restartDeps(calls, notice.take)).output, {
+		success: false,
+		result: "refused",
+		error: "offer_not_current",
+	});
 	results.tap = { calls, sinkGrowth8s: resumed, sessions: rig.sessions(), before, first, later, bound: await rig.bound() };
 });
 
 await scenario("single-link", async (rig) => {
 	await rig.up([{ ...MOBILE }]);
-	await rig.renumber("wan1", "10.1.0.3");
+	await rig.renumber("wan1", "192.0.2.3");
 	const check = await rig.check(false);
-	assert.deepEqual(check.result, { outcome: "stale", stale: ["10.1.0.1"] });
+	assert.deepEqual(check.result, { outcome: "stale", stale: ["192.0.2.1"] });
 	assert.equal(check.verdict, "none_carrying");
 	assert.equal(staleSourceResponse(check.verdict), "restart");
 	const stalled = await growth(rig, 3000);
@@ -436,12 +445,12 @@ await scenario("single-link", async (rig) => {
 	const request = restarts.request(1, deps);
 	assert.equal(request.result, "restarting");
 	assert.equal(await request.done, "started");
-	assert.deepEqual(calls, ["stop", "start", "announce"]);
+	assert.deepEqual(calls, ["restarting", "stop", "start", "restarted", "announce"]);
 	const resumed = await growth(rig, 8000);
 	assert.ok(resumed > 100_000, "the restarted session delivers");
 	assert.equal(rig.sessions(), 2);
 	assert.equal(restarts.request(1, deps).result, "held", "cooldown");
-	assert.deepEqual(calls, ["stop", "start", "announce"]);
+	assert.deepEqual(calls, ["restarting", "stop", "start", "restarted", "announce"]);
 	results["single-link"] = { ...check, stalledGrowth3s: stalled, calls, sinkGrowth8s: resumed, bound: await rig.bound() };
 });
 

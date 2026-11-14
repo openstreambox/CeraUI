@@ -69,9 +69,12 @@ const isLive = $derived(hud.isStreaming && !isOffline);
 // live-only metric renders as absence ("—") outside `live` — never a dimmed
 // stale number.
 const carrying = $derived(getStatus()?.carrying?.state);
-const clientLabel = $derived(carrying === 'streaming' ? m['hud.forwarding']() : carrying === 'unknown' ? m['hud.checking']() : null);
-type HudLifecycle = 'live' | 'idle' | 'offline' | 'forwarding' | 'checking';
-const lifecycle = $derived<HudLifecycle>(isOffline ? 'offline' : isLive ? 'live' : carrying === 'streaming' ? 'forwarding' : carrying === 'unknown' ? 'checking' : 'idle');
+// A supervised connection restart is between its Stop and its Start: say that,
+// never "Idle" or "Streaming stopped". Nobody stopped the stream.
+const restarting = $derived(!isLive && !isOffline && getStatus()?.connection_restarting === true);
+const clientLabel = $derived(restarting ? m['hud.restartingConnection']() : carrying === 'streaming' ? m['hud.forwarding']() : carrying === 'unknown' ? m['hud.checking']() : null);
+type HudLifecycle = 'live' | 'idle' | 'offline' | 'forwarding' | 'checking' | 'restarting';
+const lifecycle = $derived<HudLifecycle>(isOffline ? 'offline' : isLive ? 'live' : restarting ? 'restarting' : carrying === 'streaming' ? 'forwarding' : carrying === 'unknown' ? 'checking' : 'idle');
 
 // Bitrate honesty: it is a LIVE streaming value, so it is shown ONLY while
 // genuinely live. Idle/offline render "—" (absence rendered as absence).
@@ -263,7 +266,10 @@ $effect(() => {
 	} else if (live && !prevLive) {
 		message = m["hud.announceStreamStarted"]();
 	} else if (!live && prevLive) {
-		message = m["hud.announceStreamStopped"]();
+		// Read without tracking: the flag dropping later must not cancel this.
+		message = untrack(() => getStatus()?.connection_restarting === true)
+			? m["hud.announceConnectionRestarting"]()
+			: m["hud.announceStreamStopped"]();
 	} else if (links < prevActiveLinks) {
 		message = m["hud.announceLinkDropped"]();
 	}
@@ -341,7 +347,7 @@ $effect(() => {
 					<button
 						{...props}
 						type="button"
-						aria-labelledby={lifecycle === 'idle' && health === 'idle'
+						aria-labelledby={lifecycle === 'restarting' || (lifecycle === 'idle' && health === 'idle')
 							? `${detailsDescriptionId}-lifecycle`
 							: `${detailsDescriptionId}-lifecycle ${detailsDescriptionId}-health`}
 						aria-describedby={detailsDescriptionId}
@@ -370,12 +376,15 @@ $effect(() => {
 								id={`${detailsDescriptionId}-lifecycle`}
 								class="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
-								<span class="bg-status-idle size-2 rounded-full"></span>
+								<span class={cn('size-2 rounded-full', restarting ? 'bg-status-warning motion-safe:animate-pulse' : 'bg-status-idle')}></span>
 								{(clientLabel ?? m["hud.idle"]())}
 							</span>
 						{/if}
 
-						<!-- Stream-health indicator: icon SHAPE + visible label (never color alone) -->
+						<!-- Stream-health indicator: icon SHAPE + visible label (never color alone).
+						     Withheld during a connection restart, whose own stream is briefly
+						     idle: "Idle" beside "Restarting connection" would read as stopped. -->
+						{#if !restarting}
 						<span
 							data-testid="stream-health"
 							data-state={health}
@@ -386,6 +395,7 @@ $effect(() => {
 							<span id={`${detailsDescriptionId}-health`} class="text-[0.7rem] font-semibold">{healthLabel}</span>
 							<span class="sr-only">{m["hud.streamHealth"]()}</span>
 						</span>
+						{/if}
 					</span>
 
 					{#if !isOffline}

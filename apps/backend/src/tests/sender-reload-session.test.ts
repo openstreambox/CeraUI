@@ -10,14 +10,27 @@
   - Stop closes the check at once, before the engine-stop callback runs;
   - the offer belongs to its session: Stop withdraws it and spends its token;
   - after the engine confirms Stop the sender stays up for the 250 ms hold,
-    and only while a sender exists.
+    and only while a sender exists;
+  - Stop, or a newer publication, landing during the label lookup or the
+    restart wiring cancels what the older check would have done;
+  - the device's own restart starts with its own origin, and the status says
+    the connection is restarting while it runs;
+  - with both cooldowns running, a stuck link nothing else covers still gets
+    the notice, and no second restart.
 */
 
 import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test";
 import WebSocket from "ws";
 
+import * as netif from "../modules/network/network-interfaces.ts";
+import * as usbScan from "../modules/network/router-cellular-scan.ts";
 import type { BindMapPublication } from "../modules/streaming/bind-map-writer.ts";
+import * as restart from "../modules/streaming/connection-restart.ts";
 import { autoRestart } from "../modules/streaming/connection-restart.ts";
+import {
+	isConnectionRestarting,
+	resetConnectionRestartingForTest,
+} from "../modules/streaming/connection-restarting.ts";
 import * as labels from "../modules/streaming/link-label.ts";
 import * as telemetry from "../modules/streaming/link-telemetry.ts";
 import type { LinkTelemetryMessage } from "../modules/streaming/link-telemetry-rows.ts";
@@ -83,6 +96,8 @@ let bond: srtla.PublishedBond | undefined;
 /** Which link the sender's telemetry shows carrying; undefined = no telemetry. */
 let carriedBy: string | null | undefined;
 let restarts: string[] = [];
+/** Whether the status said "restarting" when each Start began. */
+let restartingAtStart: boolean[] = [];
 
 function frame(carrier: string | null): LinkTelemetryMessage {
 	const links = ["wwan0", "eth0"].map((iface) => ({
@@ -116,6 +131,8 @@ beforeEach(() => {
 	autoRestart.resetForTest();
 	carriedBy = undefined;
 	restarts = [];
+	restartingAtStart = [];
+	resetConnectionRestartingForTest();
 	spyOn(telemetry, "buildLinkTelemetry").mockImplementation(() =>
 		carriedBy === undefined ? null : frame(carriedBy),
 	);
@@ -125,6 +142,7 @@ beforeEach(() => {
 	});
 	spyOn(owner, "startStreamSession").mockImplementation(async (request) => {
 		restarts.push(`start:${request.origin}`);
+		restartingAtStart.push(isConnectionRestarting());
 		return { result: "started", attemptId: "auto" };
 	});
 	bond = publish(
@@ -300,6 +318,37 @@ test("Stop closes the check before the engine has stopped", async () => {
 	expect(observer).toBeUndefined();
 });
 
+test("Stop keeps the interface and USB listeners until the engine has stopped", async () => {
+	const listening = { netif: 0, usb: 0 };
+	spyOn(netif, "onNetworkInterfacesChange").mockImplementation(() => {
+		listening.netif++;
+		return () => {
+			listening.netif--;
+		};
+	});
+	spyOn(usbScan, "onUsbNetScanCommitted").mockImplementation(() => {
+		listening.usb++;
+		return () => {
+			listening.usb--;
+		};
+	});
+	await startLive();
+	expect(listening).toEqual({ netif: 1, usb: 1 });
+	const engineStop = Promise.withResolvers<() => void>();
+	spyOn(getStreamingBackend(), "stop").mockImplementation((complete) => {
+		engineStop.resolve(complete);
+		return true;
+	});
+	const stopping = session.stopGeneration(GENERATION);
+	// The adoption check is closed at once; a Stop that never completes still
+	// leaves address changes published to the stream that is still up.
+	expect(observer).toBeUndefined();
+	expect(listening).toEqual({ netif: 1, usb: 1 });
+	(await engineStop.promise)();
+	await stopping;
+	expect(listening).toEqual({ netif: 0, usb: 0 });
+});
+
 test("Stop withdraws the offer and spends its token", async () => {
 	await startLive();
 	renumber();
@@ -411,7 +460,7 @@ test("several links, none carried for the window: restart on its own", async () 
 	carriedBy = null;
 	renumber();
 	await settle(400);
-	expect(restarts).toEqual(["stop:reconfigure", "start:ui"]);
+	expect(restarts).toEqual(["stop:reconfigure", "start:link-recovery"]);
 	expect(shown.map((n) => n.name)).toEqual(["connection_restarted"]);
 });
 
@@ -421,7 +470,7 @@ test("the only link stuck: restart on its own, exactly once, then announce it", 
 	bound = [OLD];
 	renumberOnlyLink();
 	await settle(400);
-	expect(restarts).toEqual(["stop:reconfigure", "start:ui"]);
+	expect(restarts).toEqual(["stop:reconfigure", "start:link-recovery"]);
 	// Announced after the new session started, and never as "still live".
 	expect(shown).toHaveLength(1);
 	expect(shown[0]?.name).toBe("connection_restarted");
@@ -430,6 +479,9 @@ test("the only link stuck: restart on its own, exactly once, then announce it", 
 	expect(staleLinkNotice.current()).toBeUndefined();
 	// No sender replacement: the restart went through the session supervisor.
 	expect(stops).toEqual([]);
+	// The status said "restarting" through Start, and stops saying it after.
+	expect(restartingAtStart).toEqual([true]);
+	expect(isConnectionRestarting()).toBe(false);
 });
 
 test("the only link stuck again within the cooldown: the offer, not a second restart", async () => {
@@ -446,4 +498,90 @@ test("the only link stuck again within the cooldown: the offer, not a second res
 		"notifications.connectionRestartedNewAddress",
 		"notifications.staleLinkAddress",
 	]);
+});
+
+test("Stop during the link-name lookup: no offer for the stopped session", async () => {
+	await startLive();
+	const lookup = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	spyOn(labels, "resolveLinkLabel").mockImplementation(async () => {
+		lookup.resolve();
+		await release.promise;
+		return "Modem 2";
+	});
+	renumber();
+	await lookup.promise;
+	spyOn(getStreamingBackend(), "stop").mockImplementation((complete) => {
+		complete();
+		return true;
+	});
+	await session.stopGeneration(GENERATION);
+	release.resolve();
+	await settle(50);
+	expect(shown).toEqual([]);
+	expect(staleLinkNotice.current()).toBeUndefined();
+});
+
+test("a newer publication during the restart wiring: the older check restarts nothing", async () => {
+	await startLive();
+	bound = [OLD];
+	carriedBy = null;
+	const wiring = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	const real = restart.connectionRestartDeps;
+	spyOn(restart, "connectionRestartDeps").mockImplementation(
+		async (conn, origin) => {
+			wiring.resolve();
+			await release.promise;
+			return real(conn, origin);
+		},
+	);
+	renumberOnlyLink();
+	await wiring.promise;
+	// The link adopts a newer address while the older check is still waiting.
+	bound = ["192.0.2.9"];
+	bond = publish([{ ip: "192.0.2.9", iface: "wwan0" }], 3);
+	observer?.(Promise.resolve(true));
+	release.resolve();
+	await settle(300);
+	expect(restarts).toEqual([]);
+	expect(shown).toEqual([]);
+});
+
+test("both cooldowns running: a stuck link nothing else covers still gets the notice, and no second restart", async () => {
+	await startLive();
+	// 1. Another link carries: the offer, which starts the notice cooldown.
+	carriedBy = "eth0";
+	renumber();
+	await settle(300);
+	// 2. Nothing carries: the automatic restart, which starts its own cooldown.
+	carriedBy = null;
+	bond = publish(
+		[
+			{ ip: "192.0.2.9", iface: "wwan0" },
+			{ ip: WIRED, iface: "eth0" },
+		],
+		3,
+	);
+	observer?.(Promise.resolve(true));
+	await settle(400);
+	expect(restarts).toEqual(["stop:reconfigure", "start:link-recovery"]);
+	// 3. Stuck again, nothing carries, both cooldowns running: the calm notice,
+	// not silence, and not a second restart.
+	bond = publish(
+		[
+			{ ip: "192.0.2.20", iface: "wwan0" },
+			{ ip: WIRED, iface: "eth0" },
+		],
+		4,
+	);
+	observer?.(Promise.resolve(true));
+	await settle(400);
+	expect(restarts).toHaveLength(2);
+	expect(shown.map((n) => n.key)).toEqual([
+		"notifications.staleLinkAddressCarrying",
+		"notifications.connectionRestartedNewAddress",
+		"notifications.staleLinkAddress",
+	]);
+	expect(staleLinkNotice.current()?.generation).toBe(GENERATION);
 });

@@ -9,16 +9,21 @@
   the old session (reason 1000).
 
   The tap must carry the token of the offer on screen for the session running
-  now, and the token is spent on first use. The automatic restart runs only
-  when no other link carried the stream, at most once per cooldown, and is
-  announced only after the new session has started.
+  now, and the token is spent on first use; its Start is the operator's, origin
+  "ui". The automatic restart runs only when no other link carried the stream,
+  at most once per cooldown, starts with its own origin "link-recovery", and is
+  announced only after the new session has started. While either runs, the
+  status says the connection is restarting (connection-restarting.ts), so no
+  surface reads the gap between Stop and Start as "Not streaming".
 */
 
 import type { RestartConnectionOutput } from "@ceraui/rpc/schemas";
 
 import { logger } from "../../helpers/logger.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
+import { beginConnectionRestart } from "./connection-restarting.ts";
 import type { StaleLinkOffer } from "./stale-link-notice.ts";
+import type { StreamLaunchOrigin } from "./stream-session-contract.ts";
 
 type StopOutcome = { readonly result: string };
 type StartOutcome = { readonly result: string };
@@ -32,6 +37,8 @@ export type ConnectionRestartDeps = {
 	) => StaleLinkOffer | undefined;
 	readonly isStreaming: () => boolean;
 	readonly captureStopIntent: () => () => boolean;
+	/** Marks the restart as running for the status; the result ends it. */
+	readonly beginRestart: () => () => void;
 	readonly stop: () => Promise<StopOutcome>;
 	readonly start: () => Promise<StartOutcome>;
 	/** After an automatic restart has started the new session. */
@@ -51,6 +58,7 @@ function runRestart(
 	generation: number,
 	origin: "tap" | "automatic",
 ): Promise<string> {
+	const end = deps.beginRestart();
 	return (async () => {
 		// `reconfigure`, not `operator`: this Stop is the first half of a restart,
 		// so restoration stays armed. An operator Stop during it still wins.
@@ -67,10 +75,12 @@ function runRestart(
 		const started = await deps.start();
 		deps.log("finished", { origin, generation, started: started.result });
 		return started.result;
-	})().catch((error: unknown) => {
-		deps.log("failed", { origin, error: String(error) });
-		return "failed";
-	});
+	})()
+		.catch((error: unknown) => {
+			deps.log("failed", { origin, error: String(error) });
+			return "failed";
+		})
+		.finally(end);
 }
 
 export function requestConnectionRestart(
@@ -83,7 +93,7 @@ export function requestConnectionRestart(
 	if (offer === undefined) {
 		deps.log("refused: the offer is no longer current", {});
 		return {
-			output: { success: false, result: "refused" },
+			output: { success: false, result: "refused", error: "offer_not_current" },
 			done: Promise.resolve("refused"),
 		};
 	}
@@ -138,9 +148,16 @@ export function createAutoRestart(
 
 export const autoRestart = createAutoRestart();
 
+/** The Start origin of each restart: the operator's tap, or the device's own. */
+export type ConnectionRestartOrigin = Extract<
+	StreamLaunchOrigin,
+	"ui" | "link-recovery"
+>;
+
 /** Production wiring, resolved lazily for the streaming graph's load order. */
 export async function connectionRestartDeps(
 	conn: import("ws").default,
+	origin: ConnectionRestartOrigin,
 ): Promise<ConnectionRestartDeps> {
 	const [
 		{ captureOperatorStopIntent },
@@ -162,10 +179,11 @@ export async function connectionRestartDeps(
 		take: staleLinkNotice.take,
 		isStreaming: getIsStreaming,
 		captureStopIntent: captureOperatorStopIntent,
+		beginRestart: () => beginConnectionRestart(),
 		stop: () => stopStreamSession("reconfigure"),
 		start: () =>
 			startStreamSession({
-				origin: "ui",
+				origin,
 				launch: async ({ attemptId, generation }) => {
 					// Empty params: the start reads the persisted config of the session
 					// that just stopped.

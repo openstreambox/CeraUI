@@ -183,6 +183,9 @@ $effect(() => {
 // the pre-reset snapshot when its hydrate failed (FIX-16-FRONT3 R1). The record
 // lives outside this component, which navigation replaces.
 const streamLifecycle = $derived(getStatus()?.stream_lifecycle);
+// A supervised connection restart (the stale-link tap, or the device's own
+// restart when nothing else carried the stream) is between Stop and Start.
+const connectionRestarting = $derived(getStatus()?.connection_restarting === true);
 $effect(() => {
 	if (streamingOptimismState !== 'starting') return;
 	const generation = getStreamingAttemptGeneration();
@@ -1035,7 +1038,7 @@ const configRows = $derived<ConfigRow[]>([
 </script>
 
 <div class="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6 lg:max-w-6xl">
-	<LiveHeader {isStreaming} unconfirmed={streamOutcomeUnknown} />
+	<LiveHeader {isStreaming} unconfirmed={streamOutcomeUnknown} restarting={connectionRestarting} />
 
 	<!-- Capability-tier state: calm banner when the engine is offline/starting or
 	     reports a schema mismatch. Renders nothing in the normal tier. -->

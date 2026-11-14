@@ -75,9 +75,9 @@ If a link keeps an old address after its network changes, the device first
 retries quietly. If the link still uses the old address and your other links
 are carrying the stream, a notice says the link isn't contributing and offers
 **Restart connection**. Restarting shows your BRB screen to viewers for a few
-seconds; nothing restarts unless you tap it. If no other link is carrying the
-stream, the stream is already down, so the device restarts the connection
-itself and tells you afterwards.
+seconds; nothing restarts unless you tap it. If no other link is carrying
+anything, the device restarts the connection itself and tells you afterwards.
+While a restart runs, the status bar says the connection is restarting.
 
 ## Guía del operador (es-419)
 
@@ -86,5 +86,6 @@ equipo primero lo reintenta sin avisar. Si el enlace sigue usando la dirección
 antigua y tus otros enlaces están transmitiendo el stream, un aviso indica que
 ese enlace no está aportando y ofrece **Reiniciar conexión**. Al reiniciar, tus
 espectadores ven tu pantalla BRB unos segundos; nada se reinicia si no lo
-tocas. Si ningún otro enlace está transmitiendo, el stream ya está caído, así
-que el equipo reinicia la conexión por su cuenta y te avisa después.
+tocas. Si ningún otro enlace está transmitiendo nada, el equipo reinicia la
+conexión por su cuenta y te avisa después. Mientras se reinicia, la barra de
+estado indica que la conexión se está reiniciando.

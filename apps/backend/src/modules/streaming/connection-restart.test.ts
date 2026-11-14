@@ -22,6 +22,10 @@ function fixture(overrides: Partial<ConnectionRestartDeps> = {}) {
 		take: notice.take,
 		isStreaming: () => true,
 		captureStopIntent: () => () => intent,
+		beginRestart: () => {
+			calls.push("restarting");
+			return () => calls.push("restarted");
+		},
 		stop: async () => {
 			calls.push("stop");
 			return { result: "stopped" };
@@ -55,13 +59,23 @@ describe("restart connection tap", () => {
 		expect(request.output).toEqual({ success: true, result: "restarting" });
 		expect(await request.done).toBe("started");
 		// The operator asked for it: no announcement afterwards.
-		expect(f.calls).toEqual(["remove", "stop", "start"]);
+		expect(f.calls).toEqual([
+			"remove",
+			"restarting",
+			"stop",
+			"start",
+			"restarted",
+		]);
 	});
 
 	test("nothing restarts without the offer that is on screen", async () => {
 		const f = fixture();
 		const request = requestConnectionRestart("tok", f.deps);
-		expect(request.output).toEqual({ success: false, result: "refused" });
+		expect(request.output).toEqual({
+			success: false,
+			result: "refused",
+			error: "offer_not_current",
+		});
 		await request.done;
 		expect(f.calls).toEqual([]);
 	});
@@ -73,11 +87,13 @@ describe("restart connection tap", () => {
 		expect(requestConnectionRestart("tok", f.deps).output).toEqual({
 			success: false,
 			result: "refused",
+			error: "offer_not_current",
 		});
 		f.setGeneration(undefined);
 		expect(requestConnectionRestart("tok", f.deps).output).toEqual({
 			success: false,
 			result: "refused",
+			error: "offer_not_current",
 		});
 		expect(f.calls).toEqual([]);
 	});
@@ -88,6 +104,7 @@ describe("restart connection tap", () => {
 		expect(requestConnectionRestart("tok", f.deps).output).toEqual({
 			success: false,
 			result: "refused",
+			error: "offer_not_current",
 		});
 		expect(f.calls).toEqual([]);
 	});
@@ -97,7 +114,11 @@ describe("restart connection tap", () => {
 		f.notice.offer(9, { count: 1 });
 		await requestConnectionRestart("tok", f.deps).done;
 		const again = requestConnectionRestart("tok", f.deps);
-		expect(again.output).toEqual({ success: false, result: "refused" });
+		expect(again.output).toEqual({
+			success: false,
+			result: "refused",
+			error: "offer_not_current",
+		});
 		await again.done;
 		expect(f.calls.filter((call) => call === "stop")).toHaveLength(1);
 	});
@@ -116,7 +137,7 @@ describe("restart connection tap", () => {
 		expect(await requestConnectionRestart("tok", f.deps).done).toBe(
 			"cancelled",
 		);
-		expect(f.calls).toEqual(["remove", "stop"]);
+		expect(f.calls).toEqual(["remove", "restarting", "stop", "restarted"]);
 	});
 
 	test("a failed Stop does not start", async () => {
@@ -127,10 +148,10 @@ describe("restart connection tap", () => {
 		expect(await requestConnectionRestart("tok", f.deps).done).toBe(
 			"stop_failed",
 		);
-		expect(f.calls).toEqual(["remove"]);
+		expect(f.calls).toEqual(["remove", "restarting", "restarted"]);
 	});
 
-	test("production wiring stops for reconfigure and starts from the UI origin", async () => {
+	test("production wiring: Stop for reconfigure, then Start from the given origin", async () => {
 		const owner = await import("./stream-session-orchestrator.ts");
 		const { spyOn } = await import("bun:test");
 		const { connectionRestartDeps } = await import("./connection-restart.ts");
@@ -142,13 +163,22 @@ describe("restart connection tap", () => {
 			attemptId: "a",
 		});
 		try {
-			const deps = await connectionRestartDeps(
-				{} as unknown as import("ws").default,
-			);
-			await deps.stop();
-			await deps.start();
+			const conn = {} as unknown as import("ws").default;
+			const tap = await connectionRestartDeps(conn, "ui");
+			await tap.stop();
+			await tap.start();
 			expect(stop).toHaveBeenCalledWith("reconfigure");
 			expect(start.mock.calls[0]?.[0].origin).toBe("ui");
+			// The device's own restart is not the operator's: its own origin, which
+			// waits for the modem replay barrier instead of being refused.
+			const auto = await connectionRestartDeps(conn, "link-recovery");
+			await auto.start();
+			expect(start.mock.calls[1]?.[0].origin).toBe("link-recovery");
+			const { INTERNAL_LAUNCH_ORIGINS } = await import(
+				"./stream-session-contract.ts"
+			);
+			expect(INTERNAL_LAUNCH_ORIGINS.has("link-recovery")).toBe(true);
+			expect(INTERNAL_LAUNCH_ORIGINS.has("ui")).toBe(false);
 		} finally {
 			stop.mockRestore();
 			start.mockRestore();
@@ -173,7 +203,15 @@ describe("automatic restart when nothing else carries the stream", () => {
 		const request = a.restarts.request(9, f.deps);
 		expect(request.result).toBe("restarting");
 		expect(await request.done).toBe("started");
-		expect(f.calls).toEqual(["stop", "start", "announce"]);
+		// Marked as restarting from before Stop until after Start, and announced
+		// only once the new session runs.
+		expect(f.calls).toEqual([
+			"restarting",
+			"stop",
+			"start",
+			"restarted",
+			"announce",
+		]);
 	});
 
 	test("cannot repeat within the cooldown, and can after it", async () => {
@@ -223,6 +261,47 @@ describe("automatic restart when nothing else carries the stream", () => {
 			},
 		};
 		expect(await auto().restarts.request(9, f.deps).done).toBe("cancelled");
-		expect(f.calls).toEqual(["stop"]);
+		expect(f.calls).toEqual(["restarting", "stop", "restarted"]);
+	});
+});
+
+describe("the restarting status", () => {
+	test("is up from before Stop until Start has returned, once for overlapping restarts", async () => {
+		const {
+			beginConnectionRestart,
+			isConnectionRestarting,
+			resetConnectionRestartingForTest,
+		} = await import("./connection-restarting.ts");
+		resetConnectionRestartingForTest();
+		const published: boolean[] = [];
+		const publish = (on: boolean) => published.push(on);
+		const tap = beginConnectionRestart(publish);
+		const auto = beginConnectionRestart(publish);
+		expect(isConnectionRestarting()).toBe(true);
+		tap();
+		tap();
+		expect(isConnectionRestarting()).toBe(true);
+		auto();
+		expect(isConnectionRestarting()).toBe(false);
+		expect(published).toEqual([true, false]);
+	});
+
+	test("drops even when the restart throws", async () => {
+		let up = false;
+		const f = fixture({
+			beginRestart: () => {
+				up = true;
+				return () => {
+					up = false;
+				};
+			},
+			stop: async () => {
+				expect(up).toBe(true);
+				throw new Error("engine gone");
+			},
+		});
+		f.notice.offer(9, { count: 1 });
+		expect(await requestConnectionRestart("tok", f.deps).done).toBe("failed");
+		expect(up).toBe(false);
 	});
 });

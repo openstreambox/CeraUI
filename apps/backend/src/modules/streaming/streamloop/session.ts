@@ -87,6 +87,8 @@ export {
 
 type SessionResources = {
 	readonly generation: number;
+	/** Closes the address-adoption check and withdraws its offer. Idempotent. */
+	readonly closeReloadCheck: () => void;
 	readonly removeNetworkInterfacesChangeListener: () => void;
 };
 
@@ -131,26 +133,32 @@ async function respondToStaleSource(
 		known && links === 1 && only !== undefined
 			? await resolveLinkLabel(only)
 			: undefined;
+	// Stop, or a newer publication, can land during any await here.
 	if (!current()) return;
-	const offer = () =>
-		staleLinkNotice.offer(generation, {
-			count: Math.max(links, 1),
-			...(name === undefined ? {} : { name }),
-			othersCarrying: verdict === "others_carrying",
-		});
+	const offer = (options?: { readonly pastCooldown?: boolean }) =>
+		staleLinkNotice.offer(
+			generation,
+			{
+				count: Math.max(links, 1),
+				...(name === undefined ? {} : { name }),
+				othersCarrying: verdict === "others_carrying",
+			},
+			options,
+		);
 	const response = staleSourceResponse(verdict);
 	switch (response) {
 		case "offer":
 			offer();
 			return;
 		case "restart": {
+			const deps = await connectionRestartDeps(conn, "link-recovery");
+			if (!current()) return;
 			// The stream is already down: a restart costs nothing extra. Held by the
-			// cooldown (or one already running), the operator gets the offer instead.
-			const request = autoRestart.request(
-				generation,
-				await connectionRestartDeps(conn),
-			);
-			if (request.result === "held" && current()) offer();
+			// cooldown (or one already running), the operator gets the offer
+			// instead, even inside the notice's own cooldown: nothing else is
+			// carrying, so silence would leave the operator with no word at all.
+			const request = autoRestart.request(generation, deps);
+			if (request.result === "held") offer({ pastCooldown: true });
 			void request.done;
 			return;
 		}
@@ -311,6 +319,13 @@ export async function start(
 		});
 	});
 
+	const closeReloadCheck = () => {
+		sessionOpen = false;
+		reloads.close();
+		removeReloadObserver();
+		staleLinkNotice.retract(generation);
+	};
+
 	let refreshing = Promise.resolve();
 	const refreshSrtlaIpAddresses = () => {
 		refreshing = refreshing.then(refreshBond);
@@ -336,11 +351,9 @@ export async function start(
 	const removeScanListener = onUsbNetScanCommitted(refreshSrtlaIpAddresses);
 	sessionResources = {
 		generation,
+		closeReloadCheck,
 		removeNetworkInterfacesChangeListener: () => {
-			sessionOpen = false;
-			reloads.close();
-			removeReloadObserver();
-			staleLinkNotice.retract(generation);
+			closeReloadCheck();
 			removeNetifListener();
 			removeScanListener();
 		},
@@ -387,8 +400,11 @@ export function stopGeneration(
 	generation: number,
 	confirmUnknown = false,
 ): Promise<void> {
+	// Only the adoption check closes before the engine stops. The interface and
+	// USB listeners stay until the stop has finished, so a Stop that does not
+	// complete keeps publishing address changes to a stream that is still up.
 	if (sessionResources?.generation === generation) {
-		sessionResources.removeNetworkInterfacesChangeListener();
+		sessionResources.closeReloadCheck();
 	}
 	// A deferred auto-audio follow (T7) only applies at the NEXT start; a stop
 	// cancels it so the picker never keeps a stale "follows on restart" hint.
