@@ -2853,5 +2853,10 @@
 	"notifications.clientCarrying": "Le boîtier transporte du trafic client. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
 	"notifications.clientCarryingUnknown": "Le boîtier vérifie les clients. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
 	"general.updateReasonClientTraffic": "Un flux est actif ou en cours de vérification. Arrêtez les flux des appareils connectés et celui du boîtier avant la mise à jour.",
-	"notifications.disruptiveActionClientTraffic": "Cette action n’a pas été exécutée. Réessayez lorsque le flux de la box et le trafic de diffusion des appareils connectés sont inactifs et qu’aucune mise à jour n’est en cours."
+	"notifications.disruptiveActionClientTraffic": "Cette action n’a pas été exécutée. Réessayez lorsque le flux de la box et le trafic de diffusion des appareils connectés sont inactifs et qu’aucune mise à jour n’est en cours.",
+	"hud.forwarding": "Transmission",
+	"hud.checking": "Vérification",
+	"carrying.active": "Transport actif · trafic du téléphone via ce boîtier",
+	"carrying.unknown": "Trafic client via ce boîtier inconnu",
+	"carrying.idle": "Aucun téléphone ne transmet via ce boîtier"
 }

@@ -73,6 +73,7 @@ import {
 	wifiAdapterModeSchema,
 } from "@ceraui/rpc/schemas";
 import { z } from "zod";
+import { srtForwardConfigSchema } from "./forward-config-schema.ts";
 import { logger } from "./logger.ts";
 
 export type { DetectionMethod, RelayProtocol };
@@ -593,6 +594,8 @@ export const setupConfigSchema = z.preprocess(
 		cerastream_path: z.string().optional(),
 		cerastream_socket: z.string().optional(),
 
+		// Opt-in LAN SRT termination, independent of the encoding engine.
+		srt_forward: srtForwardConfigSchema.optional().catch(undefined),
 		srtla_path: z.string().optional(),
 		sound_device_dir: z.string().optional(),
 		usb_device_dir: z.string().optional(),

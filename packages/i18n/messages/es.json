@@ -2853,5 +2853,10 @@
 	"notifications.clientCarrying": "La caja transporta tráfico de clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
 	"notifications.clientCarryingUnknown": "La caja está comprobando la actividad de los clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
 	"general.updateReasonClientTraffic": "Hay una transmisión activa o se está comprobando su estado. Detén las transmisiones de los dispositivos conectados y de la caja antes de instalar una actualización.",
-	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso."
+	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso.",
+	"hud.forwarding": "Reenviando",
+	"hud.checking": "Comprobando",
+	"carrying.active": "Transportando · tráfico del teléfono a través de este equipo",
+	"carrying.unknown": "Se desconoce el tráfico de clientes a través de este equipo",
+	"carrying.idle": "Ningún teléfono envía a través de este equipo"
 }

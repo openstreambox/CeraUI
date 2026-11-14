@@ -73,3 +73,6 @@ modem-mutations/
 
 # local pre-push hook, written by an external tool if you use one — never committed
 /.githooks/pre-push
+
+# Generated on-device forwarding credential
+srt-forward.secret

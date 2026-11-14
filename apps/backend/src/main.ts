@@ -437,6 +437,9 @@ initCpu();
 await guardNonCritical("encoder-load", initEncoderLoad);
 await guardNonCritical("fan", initFan);
 await guardNonCritical("rtmp-ingest", initRTMPIngestStats);
+// make sure we didn't inherit orphan processes (cerastream is systemd-owned and
+// never spawned by CeraUI, so only srtla_send needs the orphan sweep)
+await killall(["srtla_send"]);
 await guardNonCritical("srt-ingest", initSRTIngest);
 // Raw passthrough event bridge: the typed cerastream binding strips
 // active_encode.passthrough, so a persistent raw subscription reads it for the
@@ -609,10 +612,6 @@ armBootSignalHandler("SIGUSR2", function udevDeviceUpdate() {
 	void checkCamlinkUsb2();
 	void updateAudioDevices();
 });
-
-// make sure we didn't inherit orphan processes (cerastream is systemd-owned and
-// never spawned by CeraUI, so only srtla_send needs the orphan sweep)
-void killall(["srtla_send"]);
 
 // Server→client heartbeat: periodic app-level ping for half-open detection
 startHeartbeat();
