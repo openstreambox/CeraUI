@@ -33,7 +33,7 @@
  * recorded on `srt.gateway` (additive).
  *
  * Safety contract (mirrors policy-route-check.ts):
- *   - The systemctl spawn + config read are gated on `isRealDevice()`. On a
+ *   - The systemctl spawn + config read are gated on `canManageIngest()`. On a
  *     dev/emulated host they NEVER run; the mock provider drives the signals.
  *   - A protocol the board's capability source kinds exclude is reported `null`
  *     (an N100 profile without the `srt` source → `srt: null`).
@@ -57,7 +57,7 @@ import { resolveMockNetworkIngestSignals } from "../../mocks/providers/network-i
 import { getConfig } from "../config.ts";
 import { getLastCapabilities } from "../streaming/capabilities.ts";
 import type { GatewayProbe } from "../streaming/gateway-availability.ts";
-import { isRealDevice as defaultIsRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
 import {
 	getNetworkInterfaces,
@@ -284,7 +284,7 @@ export function deriveNetworkIngestInfo(params: {
  * without hardware. Defaults talk to the real OS / live caches.
  */
 export type NetworkIngestDeps = {
-	isRealDevice: () => Promise<boolean>;
+	canManageIngest: () => Promise<boolean>;
 	shouldUseMocks: () => boolean;
 	resolveMockSignals: () => NetworkIngestGatewaySignals;
 	probeServiceActive: (unit: string) => Promise<boolean>;
@@ -322,7 +322,7 @@ function defaultOperatorDisabled(): OperatorDisabled {
 }
 
 export const defaultNetworkIngestDeps: NetworkIngestDeps = {
-	isRealDevice: () => defaultIsRealDevice(),
+	canManageIngest: () => hasCapability("network-ingest"),
 	shouldUseMocks: defaultShouldUseMocks,
 	resolveMockSignals: resolveMockNetworkIngestSignals,
 	probeServiceActive: systemctlIsActive,
@@ -362,7 +362,7 @@ async function computeNetworkIngestInfo(
 		});
 	}
 
-	if (!(await deps.isRealDevice())) {
+	if (!(await deps.canManageIngest())) {
 		return { rtmp: null, srt: null };
 	}
 

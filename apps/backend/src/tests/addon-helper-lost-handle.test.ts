@@ -28,7 +28,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 				try {
 					// When Bun reaps the leader, then throws without a child handle.
 					const result = await invokeHelperAction(action, {
-						isRealDevice: async () => true,
+						canManageAddons: async () => true,
 						exec: async () => ({ stdout: "", stderr: "" }),
 						readDescriptor: async () => sysextDescriptor,
 						createStep: () => step,
@@ -90,7 +90,7 @@ test("recovered identity survives an early file removal and capped cancellation 
 	try {
 		// When repeated controlled observations see only the still-live group.
 		await invokeHelperAction("refresh", {
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			exec: async () => ({ stdout: "", stderr: "" }),
 			createStep: () => step,
 		}).catch((error: unknown) => error);

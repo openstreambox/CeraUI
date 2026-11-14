@@ -74,7 +74,7 @@ export function addonDescriptorIdentityFixture() {
 	const logs: string[] = [];
 	const restores: (() => void)[] = [];
 	setAddonManagerDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getEffectiveHardware: () => "rk3588",
 		getDataFreeBytes: async () => 2 ** 32,
 		getOsVersion: async () => "13",
@@ -103,11 +103,11 @@ export function addonDescriptorIdentityFixture() {
 		broadcast: () => undefined,
 	});
 	setAddonProcedureDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getEffectiveHardware: () => "rk3588",
 	});
 	const deps: ReconcilerDeps = {
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getIsStreaming: () => false,
 		getOsVersionId: async () => "13",
 		getBoard: () => "rk3588",

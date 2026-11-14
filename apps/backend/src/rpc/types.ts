@@ -15,6 +15,11 @@ export interface SocketData {
 	lastActive: number;
 	/** Sender ID for remote relay identification */
 	senderId?: string;
+	/**
+	 * Dev only: this socket's upgrade carried the scenario driver secret, so it
+	 * may call `dev.scenario.*` (rpc/scenario-driver-admission.ts).
+	 */
+	scenarioDriver?: boolean;
 }
 
 /**

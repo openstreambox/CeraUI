@@ -42,12 +42,15 @@ import {
 	type ProviderSelection,
 	type SubscriptionStatus,
 } from "@ceraui/rpc/schemas";
-import WebSocket, { type RawData } from "ws";
+import type WebSocket from "ws";
+import type { RawData } from "ws";
 
 import { logger } from "../../helpers/logger.ts";
+import { openOutboundWebSocket } from "../../helpers/outbound-websocket.ts";
 import { ACTIVE_TO } from "../../helpers/shared.ts";
 import { getms } from "../../helpers/time.ts";
 import { extractMessage } from "../../helpers/types.ts";
+import { isDevelopment } from "../../mocks/mock-config.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
@@ -57,7 +60,7 @@ import {
 	verifyStubDeviceToken,
 } from "../pairing/device-token.ts";
 import { setup } from "../setup.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { addAuthedSocket } from "../ui/auth.ts";
 import { type StatusResponseMessage, sendInitialStatus } from "../ui/status.ts";
 import {
@@ -157,7 +160,7 @@ export type RemoteAuthDecision =
 	| { action: "force-repair"; reason: RemoteRepairReason };
 
 export type RemoteAuthDecisionOptions = {
-	readonly isRealDevice?: boolean;
+	readonly requireVerifiedControl?: boolean;
 };
 
 function shouldFailClosedRemoteAuth(
@@ -166,7 +169,7 @@ function shouldFailClosedRemoteAuth(
 	return (
 		isPasetoVerificationActive() ||
 		isProductionRuntime() ||
-		options.isRealDevice === true
+		options.requireVerifiedControl === true
 	);
 }
 
@@ -372,6 +375,15 @@ export function forceRepairMigration(reason: RemoteRepairReason): void {
 	broadcastMsg("config", config);
 }
 
+function isLoopbackHost(host: string | undefined): boolean {
+	return (
+		host === "localhost" ||
+		host === "::1" ||
+		host === "[::1]" ||
+		/^127(?:\.\d{1,3}){3}$/.test(host ?? "")
+	);
+}
+
 async function remoteConnect() {
 	if (remoteConnectTimer !== undefined) {
 		clearTimeout(remoteConnectTimer);
@@ -390,6 +402,9 @@ async function remoteConnect() {
 				? "wss"
 				: "ws";
 	const endpointHost = setup.remote_endpoint_host ?? provider.host;
+	// Mocks hold a fake pairing key: never offer it to a real cloud endpoint, and
+	// dial at all only when the developer points remote at a loopback server.
+	if (isDevelopment() && !isLoopbackHost(setup.remote_endpoint_host)) return;
 	const endpointPath = setup.remote_endpoint_path ?? provider.path;
 	const protocolVersion = provider.protocolVersion ?? remoteProtocolVersion;
 
@@ -419,7 +434,7 @@ async function remoteConnect() {
 	const remoteWsUrl = buildRemoteWsUrl(protocol, host, endpointPath);
 
 	remoteStatusHandled = false;
-	remoteWs = new WebSocket(remoteWsUrl);
+	remoteWs = openOutboundWebSocket(remoteWsUrl);
 	// Local fan-out is already serialized. Keep this JSON-text boundary remote-only.
 	const send = remoteWs.send.bind(remoteWs);
 	remoteWs.send = (data, options?, cb?: (err?: Error) => void) => {
@@ -457,12 +472,12 @@ async function remoteConnect() {
 		const config = getConfig();
 		if (!config.remote_key) return;
 
-		const realDevice = await isRealDevice();
+		const requireVerifiedControl = await hasCapability("device-control");
 		const decision = resolveRemoteAuthDecision(
 			config.remote_key,
 			protocolVersion,
 			Date.now(),
-			{ isRealDevice: realDevice },
+			{ requireVerifiedControl },
 		);
 		if (decision.action === "force-repair") {
 			forceRepairMigration(decision.reason);

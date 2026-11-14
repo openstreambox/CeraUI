@@ -8,8 +8,9 @@
 // browser-safe package cannot pull into the frontend graph. `types.js` imports
 // nothing but zod, and the package ships no `exports` map to forbid the path.
 import { failoverRatePolicyInputSchema } from '@ceralive/cerastream/dist/capture-status.js';
-import { COMPOSITION_FEATURE } from '@ceralive/cerastream/dist/constants.js';
+import { COMPOSITION_FEATURE, COMPOSITION_RECT_MIN } from '@ceralive/cerastream/dist/constants.js';
 import {
+	audioMixCapsSchema,
 	type EncoderCapability,
 	encoderCapabilitySchema,
 	encoderCapsSchema,
@@ -17,10 +18,12 @@ import {
 	videoSourceCapSchema,
 } from '@ceralive/cerastream/dist/messages.js';
 import {
+	balancerAlgorithmSchema,
 	type CompositionConfig,
 	type CompositionLayout,
 	compositionConfigSchema,
 	compositionLayoutSchema,
+	compositionRectSchema,
 } from '@ceralive/cerastream/dist/types.js';
 import { z } from 'zod';
 import { configChangeResultSchema } from './config-change.schema';
@@ -28,11 +31,14 @@ import { startFailureSchema, stopResultSchema } from './streaming-lifecycle.sche
 import { regulatoryCountrySchema } from './wifi.schema';
 
 export {
+	balancerAlgorithmSchema,
 	COMPOSITION_FEATURE,
+	COMPOSITION_RECT_MIN,
 	type CompositionConfig,
 	type CompositionLayout,
 	compositionConfigSchema,
 	compositionLayoutSchema,
+	compositionRectSchema,
 	type EncoderCapability,
 	encoderCapabilitySchema,
 	encoderCapsSchema,
@@ -41,11 +47,10 @@ export {
 	videoSourceCapSchema,
 };
 
-// Derived from the imported enum, never re-typed. The element's seventh nick
-// `custom` is deliberately absent from the wire — it needs four geometry
-// properties per pad that no schema carries — so a seventh option here would be
-// one the engine always refuses.
-export const COMPOSITION_LAYOUTS: readonly CompositionLayout[] = compositionLayoutSchema.options;
+// Free geometry is placed on the preview; it is never a one-tap preset.
+export const COMPOSITION_LAYOUTS = compositionLayoutSchema.options.filter(
+	(layout) => layout !== 'custom',
+);
 
 const [firstCompositionLayout] = COMPOSITION_LAYOUTS;
 if (firstCompositionLayout === undefined)
@@ -355,6 +360,7 @@ export const streamingConfigInputSchema = z.object({
 	asrc: z.string().optional(),
 	bitrate_overlay: z.boolean().optional(),
 	max_br: z.number().int().min(BITRATE_MIN).max(BITRATE_MAX).optional(),
+	balancer: balancerAlgorithmSchema.optional(),
 	autostart: z.boolean().optional(),
 	resolution: resolutionSchema.optional(),
 	framerate: framerateSchema.optional(),
@@ -365,7 +371,8 @@ export const streamingConfigInputSchema = z.object({
 	// Egress video codec + operator-selected video input_id (Todo 19). Both
 	// additive/optional: absent codec → engine platform default; absent input →
 	// engine default source. `selected_video_input` is a capture-device input_id.
-	video_codec: videoCodecSchema.optional(),
+	// On settings saves, null clears the saved codec; omission leaves it alone.
+	video_codec: videoCodecSchema.nullable().optional(),
 	selected_video_input: z.string().optional(),
 	// Same-codec passthrough policy (auto/force/off), sent to the engine at start
 	// (cerastream Todo 16). Additive-optional; absent = auto.
@@ -605,6 +612,7 @@ export type DeviceModeGroup = z.infer<typeof deviceModeGroupSchema>;
 
 export const capabilitiesMessageSchema = z.object({
 	platform: platformCapsSchema,
+	// The published encoder schema retains optional default_codec (schema 0.22.0).
 	encoder: encoderCapsSchema,
 	encoders: z.array(encoderCapabilitySchema).optional(),
 	sources: z.array(videoSourceCapSchema),
@@ -676,6 +684,7 @@ export const capabilitiesMessageSchema = z.object({
 	// silently ignoring the field) never applies a semantic the caller assumed.
 	// Absent on every fallback rung, which is what keeps the gate fail-closed.
 	features: z.array(z.string()).optional(),
+	audio_mix: audioMixCapsSchema.optional(),
 	// Per-device capture modes (Task 4), keyed by the device's list-devices
 	// input_id; each entry carries the device `kind` (the bridge to a pipeline id)
 	// and its concrete {width,height,framerates} modes. Additive + optional — an
@@ -890,6 +899,7 @@ import {
 
 // Config message schema (what the server sends to clients)
 export const configMessageSchema = z.object({
+	balancer: balancerAlgorithmSchema.optional(),
 	asrc: z.string().optional(),
 	ssh_pass: z.string().optional(),
 	max_br: z.number().optional(),

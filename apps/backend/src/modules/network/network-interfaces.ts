@@ -81,8 +81,10 @@ import {
 	getModemNetMarker,
 	getRouterCellularMarker,
 	getRouterCellularMarkers,
+	notePublishedNetifSnapshot,
 	refreshUsbNetMarkers,
 	type UsbModemNetMarker,
+	usbNetScanCovers,
 } from "./router-cellular-scan.ts";
 import { onNetifChange, setNetifState } from "./state/netif-state.ts";
 import type { MonitorEvent, NetifState } from "./state-types.ts";
@@ -157,6 +159,20 @@ export const NETIF_ERR_NOSIM = 0x04;
 export const NETIF_ERR_SHAREDLAN = 0x08;
 
 let netif: Record<string, NetworkInterface> = {};
+let netifSnapshotReady = false;
+let netifRefreshGeneration = 0;
+const scanPublicationWarnings = new Set<string>();
+
+export function hasNetifSnapshot(): boolean {
+	return netifSnapshotReady;
+}
+
+export function resetNetifSnapshotForTest(): void {
+	netif = {};
+	netifSnapshotReady = false;
+	netifRefreshGeneration++;
+	scanPublicationWarnings.clear();
+}
 
 // Interfaces excluded from dup-IPv4 detection during a station<->hotspot
 // transition: a lingering station lease can transiently share an IP as the
@@ -706,7 +722,7 @@ export function initNetworkInterfaceMonitoring() {
 		.then((m) => m.initTwoRadioLive())
 		.catch((error) => logger.warn(`Two-radio owner unavailable: ${error}`));
 	onNetifChange(broadcastNetif);
-	updateNetif();
+	void updateNetif();
 	setInterval(updateNetif, NETIF_POLL_INTERVAL_MS);
 	void import("./gateways.ts")
 		.then((m) => setQueueUpdateGwHook(() => m.queueUpdateGw()))
@@ -798,9 +814,14 @@ export async function refreshRouterAdminState(): Promise<void> {
  * different composition — so a real edge broadcasts directly, exactly as the
  * dongle metadata refresh does.
  */
-async function refreshRouterCellularState(): Promise<void> {
+export async function refreshRouterCellularState(): Promise<void> {
 	try {
-		if (!(await refreshUsbNetMarkers(Object.keys(netif)))) return;
+		if (
+			!(await refreshUsbNetMarkers(Object.keys(netif), undefined, {
+				joinInFlight: true,
+			}))
+		)
+			return;
 		broadcastNetif();
 		await broadcastModemRoster();
 	} catch (err) {
@@ -816,7 +837,7 @@ export function updateNetif() {
 		return;
 	}
 
-	void refreshNetifFromOs();
+	return refreshNetifFromOs();
 }
 
 // ifconfig (net-tools) reports only ONE IPv4 per interface, so on a link that
@@ -838,11 +859,50 @@ async function resolveIpAddrOverrides(): Promise<
 }
 
 async function refreshNetifFromOs(): Promise<void> {
+	const generation = ++netifRefreshGeneration;
 	try {
 		const [ifconfigOut, ipOverrides] = await Promise.all([
 			run("ifconfig", ["-a"]),
 			resolveIpAddrOverrides(),
 		]);
+		if (generation !== netifRefreshGeneration) return;
+		const ifnames = ifconfigOut
+			.split("\n\n")
+			.map((entry) => entry.split(":")[0]?.trim() ?? "")
+			.filter(
+				(name) =>
+					name !== "" && name !== "lo" && !/^(?:docker|l4tbr)/.test(name),
+			);
+		if (ifnames.some((name) => !usbNetScanCovers(name))) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			let expired = false;
+			const deadline = new Promise<void>((resolve) => {
+				timer = setTimeout(() => {
+					expired = true;
+					resolve();
+				}, 2_000);
+			});
+			try {
+				while (
+					!expired &&
+					generation === netifRefreshGeneration &&
+					ifnames.some((name) => !usbNetScanCovers(name))
+				) {
+					await Promise.race([refreshUsbNetMarkers(ifnames), deadline]);
+				}
+			} finally {
+				clearTimeout(timer);
+			}
+			if (generation !== netifRefreshGeneration) return;
+			for (const name of ifnames) {
+				if (!usbNetScanCovers(name) && !scanPublicationWarnings.has(name)) {
+					scanPublicationWarnings.add(name);
+					logger.debug("netif publication USB scan bound reached", {
+						ifname: name,
+					});
+				}
+			}
+		}
 		processIfconfigOutput(ifconfigOut, ipOverrides);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -856,6 +916,7 @@ export function processIfconfigOutput(
 	now: number = getms(),
 	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 ) {
+	const firstSnapshot = !netifSnapshotReady;
 	let intsChanged = false;
 	const newInterfaces: Record<string, NetworkInterface> = {};
 
@@ -985,8 +1046,10 @@ export function processIfconfigOutput(
 		if (newInterfaces[name]?.error !== netif[name]?.error) intsChanged = true;
 	}
 	netif = newInterfaces;
+	netifSnapshotReady = true;
+	notePublishedNetifSnapshot(Object.keys(netif));
 
-	if (intsChanged) {
+	if (intsChanged || firstSnapshot) {
 		triggerNetworkInterfacesChange();
 		notifyTopologyChange();
 	}

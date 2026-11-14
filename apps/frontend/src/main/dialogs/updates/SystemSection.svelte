@@ -84,7 +84,7 @@ const scheduleClock = createDeadlineClock(() =>
 const scheduleLines = $derived(checkScheduleLines(details?.checks.os, { autoEnabled, checking, now: scheduleClock.now }));
 // Only a candidate the channel offered and the orchestrator is holding can be
 // installed by hand; anywhere else the device would refuse the request.
-const installable = $derived(activation === 'os-available' && os?.candidate != null);
+const installable = $derived(activation === 'os-available' && !os?.boardNotOffered && os?.candidate != null);
 </script>
 
 <section aria-labelledby="updates-system-heading" class="space-y-2.5" data-testid="updates-system">
@@ -153,7 +153,11 @@ const installable = $derived(activation === 'os-available' && os?.candidate != n
 				{m['settings.updates.system.staged']({ version: os.staged.version })}
 			</p>
 		{/if}
-		{#if os?.candidate}
+		{#if os?.boardNotOffered}
+			<p class="text-muted-foreground" data-testid="update-system-board-not-offered">
+				{m['settings.updates.system.boardNotOffered']()}
+			</p>
+		{:else if os?.candidate}
 			<p data-testid="update-system-candidate">
 				{m['settings.updates.system.available']({
 					version: os.candidate.version,

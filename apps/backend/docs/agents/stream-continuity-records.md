@@ -23,11 +23,11 @@ malformed, incomplete or unknown-version records. Boot IDs prevent cross-boot
 reuse. Observation errors produce a fixed warning without raw exceptions or
 record values; stream start and orphan cleanup continue normally.
 
-Slice zero keeps the existing `/tmp/srtla-send-stats-<port>.json` and
+Diagnostics keep the existing `/tmp/srtla-send-stats-<port>.json` and
 `/tmp/srtla-send-control-<port>.sock` sender paths and records them as facts.
 Record storage is not a prerequisite for either path. No per-stream runtime
 files are introduced or accumulated. Sender arguments, stderr handling and
-shutdown remain unchanged. Private per-lifetime paths belong to the next slice.
+shutdown remain unchanged. Private per-lifetime paths are required before adoption is enabled.
 
 Telemetry persistence keeps at most one active write and the newest pending
 report. Slow storage replaces the pending value instead of growing a promise
@@ -38,7 +38,7 @@ two fresh live reads, engine, inventory and per-host witness. It returns only
 `adopt` or `tear_down`, the disagreeing record category and a fixed reason.
 It does not stop, signal, adopt, acquire leases or write anything.
 
-## Limits and next slice
+## Limits before adoption
 
 The current composition has no durable native-host ownership/witness API and
 the installed sender binding does not expose contract-2 applied identity. The
@@ -55,7 +55,7 @@ progress and no pending map. Record capabilities at spawn and compare them.
 The 120-second guard currently measures age since spawn; replace it with a
 persisted supervisor renewal time before it can measure unsupervised age.
 
-The next slice must add independent sender units with invocation and cgroup
+Enabling adoption requires independent sender units with invocation and cgroup
 proof, bounded engine reconciliation, secure path validation, host leases,
 engine-session/destination equality, all-or-nothing source coverage, generation
 continuation above the reserved generation, and telemetry/control reattachment.
@@ -63,7 +63,7 @@ Only then may it skip cleanup. Stop an unadopted sender before host replay,
 including an explicit sender-unit consumer census. No record failure may allow
 adoption, and existing shutdown/orphan behavior remains the fallback.
 
-Additional prerequisites before slice 1:
+Additional prerequisites before adoption:
 
 - Budget startup observation: three read-only socket requests can add roughly
   1.5 seconds before the orphan sweep (plus connection and record I/O).
@@ -75,3 +75,15 @@ Additional prerequisites before slice 1:
 - Refresh the lifetime record on every future sender-host respawn. The current
   process runner observes exits without respawning; an unrecorded replacement
   would correctly be refused because its PID/start time differs.
+
+Tests redirect all record I/O to a temporary directory through the leaf observer
+I/O boundary, including privileged runs. Missing boot identity, unmappable links
+and absent interface witnesses are unavailable evidence, rather than warnings.
+A new publication removes the preceding publication and witness before observing
+its replacement, so an unavailable observation cannot retain an old proof.
+Storage failures still produce the fixed warning.
+
+Stop and each new sender intent revoke the previous telemetry lifetime before
+awaiting I/O. Deferred start/report writes check that fence before rename, and
+completed old starts cannot reactivate telemetry. Startup socket observation
+requires matching boot, PID, proc start time and argument digest.

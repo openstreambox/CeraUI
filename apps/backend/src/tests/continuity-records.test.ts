@@ -477,3 +477,22 @@ test("publication reserves before file writes and observation failure never gate
 		expect(events).toEqual(["reserve", "write", "rename", "write", "rename"]);
 	}
 });
+
+test("a revoked record write never replaces the previous record", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "continuity-revoked-"));
+	try {
+		const path = join(dir, "publication.json");
+		const publication = fixture().publication;
+		if (!publication) throw new Error("Missing publication");
+		await writeRecord(path, publicationSchema, publication);
+		await writeRecord(
+			path,
+			publicationSchema,
+			{ ...publication, generation: 4 },
+			() => false,
+		);
+		expect((await readRecord(path, publicationSchema))?.generation).toBe(3);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});

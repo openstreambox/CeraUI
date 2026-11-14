@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import { createControlClient } from "@ceraui/srtla-send/control";
 import { controlSocketPath } from "@ceraui/srtla-send/sender";
@@ -7,6 +7,7 @@ import {
 	senderTelemetryPath,
 	type Telemetry,
 } from "@ceraui/srtla-send/telemetry";
+import { z } from "zod";
 import { logger } from "../../helpers/logger.ts";
 import type { BondEntry } from "./bind-map.ts";
 import { SRTLA_LISTEN_PORT } from "./constants.ts";
@@ -25,12 +26,48 @@ import {
 } from "./continuity-records.ts";
 import { createLatestReportWriter } from "./latest-report-writer.ts";
 
+const liveSchema = z.object({
+	version: z.literal(1),
+	bootId: z.string(),
+	lifetime: z.string(),
+	capabilitiesDigest: z.string().nullable(),
+	reads: z.array(
+		z.object({
+			available: z.boolean(),
+			links: z.array(z.object({ linkId: z.string(), iface: z.string() })),
+		}),
+	),
+});
+
+const reportSchema = z.object({
+	version: z.literal(1),
+	bootId: z.string(),
+	lifetime: z.string(),
+	observedAt: z.number(),
+	mapped: z.boolean(),
+	links: z.array(z.object({ linkId: z.string(), iface: z.string() })),
+});
+
 export const CONTINUITY_DIR = "/run/ceralive/continuity";
+// Leaf I/O boundary: tests isolate diagnostics even when running as root.
+export const continuityObserverIo = {
+	directory: CONTINUITY_DIR,
+	bootId,
+	processIdentity,
+	writeRecord,
+	captureWitness,
+	createControlClient,
+};
 export function digest(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 export async function bootId(): Promise<string> {
-	return (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+	try {
+		return (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+		throw error;
+	}
 }
 export async function observeSafely(
 	effect: () => Promise<void>,
@@ -55,7 +92,7 @@ async function processIdentity(pid: number) {
 	};
 }
 
-/** Slice zero records the existing paths; record storage never supplies sender paths. */
+/** Diagnostic observation records the existing paths; record storage never supplies sender paths. */
 export function senderPaths() {
 	return {
 		statsFile: senderTelemetryPath(SRTLA_LISTEN_PORT),
@@ -66,11 +103,18 @@ export async function recordSenderIntent(
 	args: string[],
 	paths: { statsFile: string; controlSocket: string },
 	ipsFile: string,
-): Promise<Lifetime> {
+): Promise<Lifetime | null> {
+	const lifetime = randomUUID();
+	intendedLifetime = lifetime;
+	const epoch = ++telemetryEpoch;
+	activeLifetime = null;
+	telemetryWriter.discardPending();
+	const currentBoot = await continuityObserverIo.bootId();
+	if (!currentBoot || epoch !== telemetryEpoch) return null;
 	const record: Lifetime = {
 		version: 1,
-		bootId: await bootId(),
-		lifetime: randomUUID(),
+		bootId: currentBoot,
+		lifetime,
 		pid: null,
 		startTime: null,
 		host: "backend-child",
@@ -81,16 +125,26 @@ export async function recordSenderIntent(
 		sidecarFile: args.includes("--bind-map")
 			? (args[args.indexOf("--bind-map") + 1] ?? null)
 			: null,
-		required: args.includes("required"),
+		// This sender argument builder exposes no required-mapping contract.
+		required: false,
 		contract: 0,
 		capabilitiesDigest: null,
 		createdAt: Date.now(),
 	};
-	await writeRecord(`${CONTINUITY_DIR}/lifetime.json`, lifetimeSchema, record);
+	await continuityObserverIo.writeRecord(
+		`${continuityObserverIo.directory}/lifetime.json`,
+		lifetimeSchema,
+		record,
+		() => epoch === telemetryEpoch,
+	);
 	return record;
 }
 let activeLifetime: Lifetime | null = null;
+let intendedLifetime: string | null = null;
+let telemetryEpoch = 0;
 export function clearContinuityTelemetry(): void {
+	telemetryEpoch++;
+	intendedLifetime = null;
 	activeLifetime = null;
 	telemetryWriter.discardPending();
 }
@@ -99,19 +153,38 @@ export async function recordSenderStarted(
 	record: Lifetime,
 	pid: number,
 ): Promise<void> {
-	const current = await processIdentity(pid);
-	await writeRecord(`${CONTINUITY_DIR}/lifetime.json`, lifetimeSchema, {
-		...record,
-		pid,
-		startTime: current.startTime,
-	});
+	const epoch = telemetryEpoch;
+	const currentIntent = () =>
+		epoch === telemetryEpoch && intendedLifetime === record.lifetime;
+	if (!currentIntent()) return;
+	const current = await continuityObserverIo.processIdentity(pid);
+	if (!currentIntent()) return;
+	await continuityObserverIo.writeRecord(
+		`${continuityObserverIo.directory}/lifetime.json`,
+		lifetimeSchema,
+		{
+			...record,
+			pid,
+			startTime: current.startTime,
+		},
+		currentIntent,
+	);
+	if (!currentIntent()) return;
 	activeLifetime = { ...record, pid, startTime: current.startTime };
 }
-export async function captureWitness(p: Publication): Promise<Witness> {
+export async function captureWitness(p: Publication): Promise<Witness | null> {
+	try {
+		return await capturePresentWitness(p);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw error;
+	}
+}
+async function capturePresentWitness(p: Publication): Promise<Witness> {
 	const interfaces = networkInterfaces();
 	return {
 		version: 1,
-		bootId: await bootId(),
+		bootId: await continuityObserverIo.bootId(),
 		generation: p.generation,
 		links: await Promise.all(
 			p.links.map(async (entry) => ({
@@ -140,9 +213,19 @@ export async function reservePublication(
 	sha256: string,
 	entries: readonly BondEntry[],
 ): Promise<void> {
+	// Invalidate old proofs before attempting a new observation, including a
+	// mapping whose host identity cannot be represented by this record schema.
+	for (const name of ["publication", "witness"])
+		await unlink(`${continuityObserverIo.directory}/${name}.json`).catch(
+			(error: NodeJS.ErrnoException) => {
+				if (error.code !== "ENOENT") throw error;
+			},
+		);
+	const currentBoot = await continuityObserverIo.bootId();
+	if (!currentBoot || entries.some((entry) => !entry.linkId)) return;
 	const publication: Publication = {
 		version: 1,
-		bootId: await bootId(),
+		bootId: currentBoot,
 		generation,
 		sha256,
 		links: entries.map((entry) => ({
@@ -151,32 +234,36 @@ export async function reservePublication(
 			ip: entry.ip,
 		})),
 	};
-	await writeRecord(
-		`${CONTINUITY_DIR}/publication.json`,
+	await continuityObserverIo.writeRecord(
+		`${continuityObserverIo.directory}/publication.json`,
 		publicationSchema,
 		publication,
 	);
-	await writeRecord(
-		`${CONTINUITY_DIR}/witness.json`,
-		witnessSchema,
-		await captureWitness(publication),
-	);
+	const witness = await continuityObserverIo.captureWitness(publication);
+	if (witness)
+		await continuityObserverIo.writeRecord(
+			`${continuityObserverIo.directory}/witness.json`,
+			witnessSchema,
+			witness,
+		);
 }
 
 /** Read-only snapshot before the existing orphan sweep. No stale stats-file proof. */
 export async function observeStartup(
 	engine: ContinuityEvidence["engine"],
 ): Promise<void> {
+	const currentBoot = await continuityObserverIo.bootId();
+	if (!currentBoot) return;
 	const lifetime = await readRecord(
-		`${CONTINUITY_DIR}/lifetime.json`,
+		`${continuityObserverIo.directory}/lifetime.json`,
 		lifetimeSchema,
 	);
 	const publication = await readRecord(
-		`${CONTINUITY_DIR}/publication.json`,
+		`${continuityObserverIo.directory}/publication.json`,
 		publicationSchema,
 	);
 	const witness = await readRecord(
-		`${CONTINUITY_DIR}/witness.json`,
+		`${continuityObserverIo.directory}/witness.json`,
 		witnessSchema,
 	);
 	let disk: Publication | null = null;
@@ -192,7 +279,7 @@ export async function observeStartup(
 			);
 			disk = publicationSchema.parse({
 				version: sidecar.schema_version,
-				bootId: await bootId(),
+				bootId: await continuityObserverIo.bootId(),
 				generation: sidecar.generation,
 				sha256: digest(await readFile(lifetime.ipsFile, "utf8")),
 				links: sidecar.links.map(
@@ -208,22 +295,30 @@ export async function observeStartup(
 			/* Missing or torn sidecar is not proof. */
 		}
 		try {
-			if (lifetime.pid) process = await processIdentity(lifetime.pid);
+			if (lifetime.pid)
+				process = await continuityObserverIo.processIdentity(lifetime.pid);
 		} catch {
 			/* Dead child. */
 		}
 	}
 	if (publication) {
 		try {
-			system = await captureWitness(publication);
+			system = await continuityObserverIo.captureWitness(publication);
 		} catch {
 			/* Unknown host. */
 		}
 	}
 	// The installed binding does not expose contract-2 applied identity. Save only
 	// projected live fields; never turn an old contract into an adoption proof.
-	if (lifetime && process) {
-		const client = await createControlClient({
+	if (
+		lifetime &&
+		process &&
+		lifetime.bootId === currentBoot &&
+		process.pid === lifetime.pid &&
+		process.startTime === lifetime.startTime &&
+		process.argsDigest === lifetime.argsDigest
+	) {
+		const client = await continuityObserverIo.createControlClient({
 			socketPath: lifetime.controlSocket,
 			timeoutMs: 500,
 		});
@@ -232,22 +327,26 @@ export async function observeStartup(
 				const capabilities = await client.getCapabilities();
 				const first = await client.getStats();
 				const second = await client.getStats();
-				await writeRecord(`${CONTINUITY_DIR}/live.json`, liveSchema, {
-					version: 1,
-					bootId: await bootId(),
-					lifetime: lifetime.lifetime,
-					capabilitiesDigest: capabilities
-						? digest(JSON.stringify(capabilities))
-						: null,
-					reads: [first, second].map((s) => ({
-						available: s !== null,
-						links:
-							s?.links.map((l) => ({
-								linkId: l.link_id ?? "",
-								iface: l.iface ?? "",
-							})) ?? [],
-					})),
-				});
+				await continuityObserverIo.writeRecord(
+					`${continuityObserverIo.directory}/live.json`,
+					liveSchema,
+					{
+						version: 1,
+						bootId: await continuityObserverIo.bootId(),
+						lifetime: lifetime.lifetime,
+						capabilitiesDigest: capabilities
+							? digest(JSON.stringify(capabilities))
+							: null,
+						reads: [first, second].map((s) => ({
+							available: s !== null,
+							links:
+								s?.links.map((l) => ({
+									linkId: l.link_id ?? "",
+									iface: l.iface ?? "",
+								})) ?? [],
+						})),
+					},
+				);
 			} catch {
 				// A failed live read remains unavailable; always log the verdict.
 			} finally {
@@ -255,7 +354,7 @@ export async function observeStartup(
 			}
 	}
 	const verdict = continuityVerdict({
-		bootId: await bootId(),
+		bootId: await continuityObserverIo.bootId(),
 		lifetime,
 		publication,
 		witness,
@@ -273,29 +372,24 @@ export async function observeStartup(
 	for (const index of witness?.links.keys() ?? [])
 		logger.info("continuity: host dry-run verdict (recovery unchanged)", {
 			index,
-			...hostContinuityVerdict(await bootId(), witness, system, index),
+			...hostContinuityVerdict(
+				await continuityObserverIo.bootId(),
+				witness,
+				system,
+				index,
+			),
 		});
 }
-
-import { z } from "zod";
-
-const liveSchema = z.object({
-	version: z.literal(1),
-	bootId: z.string(),
-	lifetime: z.string(),
-	capabilitiesDigest: z.string().nullable(),
-	reads: z.array(
-		z.object({
-			available: z.boolean(),
-			links: z.array(z.object({ linkId: z.string(), iface: z.string() })),
-		}),
-	),
-});
 
 const telemetryWriter = createLatestReportWriter<z.infer<typeof reportSchema>>(
 	async (report) => {
 		if (activeLifetime?.lifetime !== report.lifetime) return;
-		await writeRecord(`${CONTINUITY_DIR}/report.json`, reportSchema, report);
+		await continuityObserverIo.writeRecord(
+			`${continuityObserverIo.directory}/report.json`,
+			reportSchema,
+			report,
+			() => activeLifetime?.lifetime === report.lifetime,
+		);
 	},
 	() => logger.warn("continuity: observation unavailable; recovery unchanged"),
 );
@@ -316,11 +410,3 @@ export function recordSenderTelemetry(telemetry: Telemetry): void {
 	};
 	telemetryWriter.submit(report);
 }
-const reportSchema = z.object({
-	version: z.literal(1),
-	bootId: z.string(),
-	lifetime: z.string(),
-	observedAt: z.number(),
-	mapped: z.boolean(),
-	links: z.array(z.object({ linkId: z.string(), iface: z.string() })),
-});

@@ -7,6 +7,8 @@ import type {
 	UpdateDetails,
 	UpdateSettings,
 } from "@ceraui/rpc/schemas";
+import { boardUpdateAdmissionAllowed } from "../board-update-admission.ts";
+import { readBoardUpdates } from "../board-updates.ts";
 import {
 	hasKernelAptStage,
 	readUpdateCapabilityFile,
@@ -45,7 +47,8 @@ export const defaultKernelEffects = {
 	readOverlay: readSlotOverlay,
 	readBooted: readBootedKernel,
 	discover: async (caps: UpdateCapabilities) => {
-		if (!hasKernelAptStage(caps)) return null;
+		if (!hasKernelAptStage(caps) || (await readBoardUpdates()) === null)
+			return null;
 		return selectKernelPackage(
 			caps,
 			await readAuthenticatedKernelPackages(),
@@ -141,6 +144,7 @@ export function createKernelRuntime(port: KernelRuntimePort) {
 			});
 	};
 	async function check(): Promise<void> {
+		if (!boardUpdateAdmissionAllowed()) return;
 		const before = port.state();
 		const caps = await port.capabilities();
 		const found = hasKernelAptStage(caps)
@@ -149,6 +153,7 @@ export function createKernelRuntime(port: KernelRuntimePort) {
 		if (port.state() === before) candidate = found;
 	}
 	async function install(manual: boolean): Promise<boolean> {
+		if (!boardUpdateAdmissionAllowed()) return false;
 		if (
 			flight ||
 			port.busy() ||
@@ -296,6 +301,13 @@ export function createKernelRuntime(port: KernelRuntimePort) {
 		if (observation.kind === "running") {
 			publish("kernel-staging");
 			return true;
+		}
+		if ((await readBoardUpdates()) === null) {
+			// A policy change removes update offers, not persisted recovery authority.
+			// Inspect a possible writer first; retain its attempt, record and overlay.
+			candidate = null;
+			if (phase.startsWith("kernel-")) publish("idle");
+			return false;
 		}
 		if (!matching || !record) {
 			if (openPhases.includes(phase))

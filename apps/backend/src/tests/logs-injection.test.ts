@@ -34,14 +34,17 @@ import {
 	mock,
 	spyOn,
 } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { logInputSchema } from "@ceraui/rpc/schemas";
 
 import * as runModule from "../helpers/run.ts";
 import { getLog } from "../modules/system/logs.ts";
 
-const PWNED = "/tmp/pwned";
-const MALICIOUS = "ssh; touch /tmp/pwned";
+const PWNED = join(tmpdir(), `ceraui-log-injection-${randomUUID()}`);
+const MALICIOUS = `ssh; touch ${PWNED}`;
 
 /** Minimal WebSocket stand-in: getSocketSenderId reads `data.senderId`. */
 function fakeConn() {
@@ -86,15 +89,31 @@ describe("logs.ts getLog() — journalctl command injection", () => {
 		// Allow any (pre-fix) real exec() callback to fire before asserting.
 		await new Promise((resolve) => setTimeout(resolve, 300));
 
-		const calls = journalctlCalls(runSpy);
+		// The boot list is a second, fixed-argv journalctl call.
+		const bootLists = journalctlCalls(runSpy).filter((call) =>
+			call[1].includes("--list-boots"),
+		);
+		for (const [, args] of bootLists)
+			expect(args).toEqual(["--list-boots", "--no-pager"]);
+		const calls = journalctlCalls(runSpy).filter(
+			(call) => !call[1].includes("--list-boots"),
+		);
 		// Exactly one journalctl invocation — pre-fix there are ZERO (getLog used
 		// exec()), and a second would mean the argv was split.
 		expect(calls.length).toBe(1);
 		const [bin, args, opts] = calls[0] as RunCall;
 		expect(bin).toBe("journalctl");
 		// The malicious string is a single argv token — NOT split on ';'.
-		expect(args).toEqual(["-b", "-u", MALICIOUS]);
-		expect(args[2]).toBe(MALICIOUS);
+		expect(args).toEqual([
+			"--since=-7days",
+			"--lines=10000",
+			"--no-pager",
+			"--output=json",
+			"--output-fields=MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_COMM,_TRANSPORT,_PID,_STREAM_ID,_LINE_BREAK,_BOOT_ID,__REALTIME_TIMESTAMP",
+			"-u",
+			MALICIOUS,
+		]);
+		expect(args[6]).toBe(MALICIOUS);
 		// 10 MiB ceiling preserved from the original exec() call.
 		expect(opts.maxBuffer).toBe(10 * 1024 * 1024);
 		// No shell was reached for the log path, whatever else the process ran.

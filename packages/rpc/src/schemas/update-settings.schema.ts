@@ -10,8 +10,26 @@ export const updateScheduleSchema = z
 	})
 	.strict();
 
+export const updateChannelUrlSchema = z.url().refine((value) => {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		return false;
+	}
+	return (
+		url.protocol === 'https:' &&
+		!url.username &&
+		!url.password &&
+		!url.search &&
+		!url.hash &&
+		(url.pathname === '/' || !url.pathname.endsWith('/'))
+	);
+}, 'Use an HTTPS base address without credentials, query, fragment or trailing slash');
+
 export const updateSettingsSchema = z
 	.object({
+		channelUrl: updateChannelUrlSchema.optional(),
 		packagesAuto: z.boolean().default(true),
 		systemAuto: z.boolean().default(true),
 		schedule: updateScheduleSchema.default({ mode: 'any-idle', start: '03:00', end: '05:00' }),
@@ -21,5 +39,7 @@ export const updateSettingsSchema = z
 	})
 	.strict();
 
-export const updateSettingsInputSchema = updateSettingsSchema.required();
+export const updateSettingsInputSchema = updateSettingsSchema
+	.required()
+	.extend({ channelUrl: updateChannelUrlSchema.optional() });
 export type UpdateSettings = z.infer<typeof updateSettingsSchema>;

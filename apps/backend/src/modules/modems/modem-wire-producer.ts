@@ -47,7 +47,6 @@ import type {
 	RouterAdmin,
 } from "@ceraui/rpc/schemas";
 import { deriveModemStableKey, mayRenderModule } from "@ceraui/rpc/schemas";
-
 import { logger } from "../../helpers/logger.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getCellularStack } from "../cellular/cellular-stack.ts";
@@ -57,6 +56,7 @@ import { getDongleRecords } from "../network/dongle-metadata.ts";
 import { getNetworkInterfaces } from "../network/network-interfaces.ts";
 import { getRouterCellularAdmin } from "../network/router-cellular-admin.ts";
 import { getRouterCellularMarkers } from "../network/router-cellular-scan.ts";
+import { carrierSupportRows } from "../system/support-export.ts";
 
 import { IMPLEMENTED_MODEM_CAPABILITY_MODULES } from "./capability-evidence.ts";
 import {
@@ -481,7 +481,7 @@ function collectSources(): ProjectedModemSource[] {
  *
  * Mocks answer with NOTHING rather than with a fixture: this row exists to close
  * a real hardware latency gap that a dev host does not have, and the udev
- * monitor that fills it is `isRealDevice()`-gated for the same reason. A mock
+ * monitor that fills it is `modem-control`-gated for the same reason. A mock
  * scenario inventing one would be a parallel mechanism to the scenario roster,
  * not the established one.
  */
@@ -621,4 +621,9 @@ export function resetModemWireProducer(): void {
 	readIdPaths = readModemIdPaths;
 	resetModemUsbModes();
 	mockDbusViews = undefined;
+}
+
+/** Read existing observations only; no modem commands or network mutations. */
+export function getCarrierSupportSummary() {
+	return carrierSupportRows(collectSources());
 }

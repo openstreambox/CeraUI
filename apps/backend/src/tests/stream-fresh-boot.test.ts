@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfig } from "../modules/config.ts";
 import { setup } from "../modules/setup.ts";
+import { continuityObserverIo } from "../modules/streaming/continuity-observer.ts";
 import type { Pipeline } from "../modules/streaming/pipelines.ts";
 import { setPreviewEncodeReplayTransport } from "../modules/streaming/preview-encode-replay.ts";
 import { StreamStartFailure } from "../modules/streaming/start-failure-taxonomy.ts";
@@ -287,4 +288,26 @@ test("first record failure leaves sender and telemetry on the original paths", a
 		"/tmp/srtla-send-control-9000.sock",
 	);
 	expect(senderArgs.join(" ")).not.toContain("/run/ceralive/continuity");
+});
+
+test("a successful launch records the spawned sender identity", async () => {
+	const original = continuityObserverIo.processIdentity;
+	continuityObserverIo.processIdentity = async (pid) => ({
+		pid,
+		startTime: "spawned-child",
+		argsDigest: "digest",
+		invocation: null,
+		processCount: 1,
+	});
+	try {
+		const h = bootHarness();
+		expect(await h.start()).toMatchObject({ result: "started" });
+		const record = await Bun.file(
+			join(continuityObserverIo.directory, "lifetime.json"),
+		).json();
+		expect(record.pid).toEqual(expect.any(Number));
+		expect(record.startTime).toBe("spawned-child");
+	} finally {
+		continuityObserverIo.processIdentity = original;
+	}
 });

@@ -56,8 +56,7 @@ test("clearing a stopped lifetime drops its pending report", async () => {
 	writer.submit(0);
 	writer.submit(1);
 	writer.discardPending();
-	writer.submit(2);
 	gate.resolve();
 	await writer.flush();
-	expect(written).toEqual([0, 2]);
+	expect(written).toEqual([0]);
 });

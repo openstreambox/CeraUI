@@ -1,3 +1,7 @@
+import {
+	initCarrying,
+	tickCarrying,
+} from "./modules/system/carrying-runtime.ts";
 /*
 	CeraUI - web UI for the CeraLive project
 	Copyright (C) 2024-2025 CeraLive project
@@ -35,6 +39,7 @@ import {
 import { checkExecPath } from "./helpers/exec.ts";
 import killall from "./helpers/killall.ts";
 import { logger } from "./helpers/logger.ts";
+import { tightenPrivateFiles } from "./helpers/private-startup.ts";
 // allow: SIZE_OK — Sequential boot composition root; ordering and signal wiring are pinned by boot contract tests.
 import { handleTerminationSignal } from "./helpers/shutdown.ts";
 import { notifyServiceReady } from "./helpers/systemd-ready.ts";
@@ -69,7 +74,10 @@ import { initIdentity } from "./modules/identity/index.ts";
 import { initRTMPIngestStats } from "./modules/ingest/rtmp.ts";
 import { initSRTIngest, stopSRTIngest } from "./modules/ingest/srt.ts";
 import { initFccUnlockModule } from "./modules/modems/fcc-unlock.ts";
-import { initModemCredentials } from "./modules/modems/modem-credentials.ts";
+import {
+	initModemCredentials,
+	modemCredentialsPath,
+} from "./modules/modems/modem-credentials.ts";
 import { initModemUpdateLoop } from "./modules/modems/modem-update-loop.ts";
 import { setMockDbusModemViews } from "./modules/modems/modem-wire-producer.ts";
 import { stopMutationRecovery } from "./modules/modems/mutation-recovery-owner.ts";
@@ -150,10 +158,10 @@ import {
 	checkAutoStartStream,
 	srtlaSendExec,
 } from "./modules/streaming/streamloop.ts";
+import { hasCapability } from "./modules/system/board-capabilities.ts";
 import { initCpu } from "./modules/system/cpu.ts";
 import {
 	detectHardwareKindFromDeviceTree,
-	isRealDevice,
 	warnOnHardwareIdentityDrift,
 } from "./modules/system/device-detection.ts";
 import { initDeviceStats } from "./modules/system/device-stats.ts";
@@ -185,9 +193,11 @@ import {
 } from "./modules/system/update-orchestrator/runtime.ts";
 import { initHotspotCredentials } from "./modules/wifi/hotspot-credentials.ts";
 import { applyPersistedCountry } from "./modules/wifi/regdomain.ts";
-import { reconcileWifiAdapterModes } from "./modules/wifi/wifi-adapter-mode-transition.ts";
+import { startWifiAdapterModeRestore } from "./modules/wifi/wifi-adapter-mode-transition.ts";
 import { wifiStateInit } from "./modules/wifi/wifi-connections.ts";
 import { handleWifiMonitorEvent as handleHotspotMonitorEvent } from "./modules/wifi/wifi-hotspot-monitor.ts";
+import { terminateWifiDiscovery } from "./modules/wifi/wifi-interfaces.ts";
+import { wifiRadioObservation } from "./modules/wifi/wifi-radio-observation.ts";
 import { onHeartbeatTick, startHeartbeat } from "./rpc/heartbeat.ts";
 import { getServer, initServer } from "./rpc/index.ts";
 import { stopLegacyTokenMigration } from "./rpc/procedures/auth.procedure.ts";
@@ -195,6 +205,8 @@ import { stopLegacyTokenMigration } from "./rpc/procedures/auth.procedure.ts";
 /* Disable localization for any CLI commands we run */
 process.env.LANG = "C.UTF-8";
 process.env.LANGUAGE = "C";
+
+if (!isDevelopment()) initCarrying();
 
 /* Make sure apt-get doesn't expect any interactive user input */
 process.env.DEBIAN_FRONTEND = "noninteractive";
@@ -245,6 +257,19 @@ if (backendSingletonApplies()) {
 		"Backend singleton is not enforced for a source-development process; production services never take this path",
 	);
 }
+
+tightenPrivateFiles(process.cwd(), [
+	modemCredentialsPath(),
+	"/data/ceralive/fcc-unlock-policy.json",
+	...[
+		"idle.json",
+		"agent.json",
+		"quarantine.json",
+		"pending-packages.json",
+		"kernel-state.json",
+		"kernel-quarantine.json",
+	].map((name) => `/data/ceralive/update-state/${name}`),
+]);
 
 checkExecPath(srtlaSendExec);
 
@@ -310,7 +335,7 @@ if (!configAvailableAtBind) {
 //     crashes and the WS server (bound above) stays reachable. ---
 
 // Recovery must finish before an update may install any new UID routing rule.
-if (await isRealDevice())
+if (await hasCapability("os-updates"))
 	void guardNonCritical("update-route-sweep", async () => {
 		await reconcileOsStageStartup();
 	});
@@ -323,7 +348,7 @@ await guardNonCritical("hotspot-credentials", initHotspotCredentials);
 // first hotspot channel derivation already reflects the operator's domain
 // rather than the world default the kernel boots with.
 await guardNonCritical("wifi-regdomain", async () => {
-	if (!(await isRealDevice())) return;
+	if (!(await hasCapability("wifi-country"))) return;
 	await applyPersistedCountry(getConfig().country);
 });
 
@@ -437,6 +462,9 @@ initCpu();
 await guardNonCritical("encoder-load", initEncoderLoad);
 await guardNonCritical("fan", initFan);
 await guardNonCritical("rtmp-ingest", initRTMPIngestStats);
+// make sure we didn't inherit orphan processes (cerastream is systemd-owned and
+// never spawned by CeraUI, so only srtla_send needs the orphan sweep)
+await killall(["srtla_send"]);
 await guardNonCritical("srt-ingest", initSRTIngest);
 // Raw passthrough event bridge: the typed cerastream binding strips
 // active_encode.passthrough, so a persistent raw subscription reads it for the
@@ -462,7 +490,7 @@ await guardNonCritical("hardware-identity-drift", async () => {
 	await warnOnHardwareIdentityDrift({
 		detectKind: () => detectHardwareKindFromDeviceTree(),
 		configuredHw: () => setup.hw,
-		isRealDevice: () => isRealDevice(),
+		canInspectSystem: () => hasCapability("system-control"),
 		warn: (message) => logger.warn(message),
 	});
 });
@@ -512,6 +540,7 @@ initNetworkInterfaceMonitoring();
 initUplinkHealth();
 await guardNonCritical("uplink-steering", initUplinkSteering);
 await guardNonCritical("uplink-shaper", initUplinkShaper);
+await tickCarrying();
 await guardNonCritical("sharing-diag", initSharingDiag);
 
 // Event-driven netif: monitor stream drives up/down; onResync re-polls on restart
@@ -525,12 +554,9 @@ wifiStateInit(networkMonitor);
 // Hotspot NM-confirmation: flips station↔hotspot once NM reports the switch
 networkMonitor.on("monitor-event", handleHotspotMonitorEvent);
 
-// Re-apply the operator's persisted per-adapter WiFi mode. Deliberately NOT
-// awaited: the adapter registry is filled by the netif poll seconds after this
-// point, so the reconciler does its own bounded wait — awaiting it here would
-// put a radio on the boot critical path for no gain. It is idempotent and never
-// throws, so a device with no stated preference pays one map lookup.
-void guardNonCritical("wifi-adapter-modes", reconcileWifiAdapterModes);
+// Apply-only restore starts after discovery publication and follows late radio,
+// capability and stream-clearance edges without a boot-time polling deadline.
+const stopWifiAdapterModeRestore = startWifiAdapterModeRestore();
 
 // Re-apply the operator's persisted shared-LAN Ethernet roles. Deliberately NOT
 // awaited, for the reason above: it rewrites NetworkManager profiles, and a
@@ -612,10 +638,6 @@ armBootSignalHandler("SIGUSR2", function udevDeviceUpdate() {
 	void updateAudioDevices();
 });
 
-// make sure we didn't inherit orphan processes (cerastream is systemd-owned and
-// never spawned by CeraUI, so only srtla_send needs the orphan sweep)
-void killall(["srtla_send"]);
-
 // Server→client heartbeat: periodic app-level ping for half-open detection
 startHeartbeat();
 
@@ -625,6 +647,7 @@ onHeartbeatTick(broadcastHealthIfChanged);
 // srtla link telemetry: fold into the status flow on the same tick, on-change
 onHeartbeatTick(broadcastLinkTelemetryIfChanged);
 onHeartbeatTick(() => {
+	void tickCarrying();
 	void tickUplinkShaper();
 });
 
@@ -689,6 +712,11 @@ function stopRecoveryRetries(): void {
 process.on("SIGTERM", () =>
 	handleTerminationSignal("SIGTERM", {
 		stopRecoveryRetries,
+		terminateWifiObservation: () => {
+			stopWifiAdapterModeRestore();
+			wifiRadioObservation.terminate();
+		},
+		terminateWifiDiscovery,
 		gracefulShutdown,
 		stopSrtIngest: stopSRTIngest,
 		stopDmesgWatchers,
@@ -700,6 +728,11 @@ process.on("SIGTERM", () =>
 process.on("SIGINT", () =>
 	handleTerminationSignal("SIGINT", {
 		stopRecoveryRetries,
+		terminateWifiObservation: () => {
+			stopWifiAdapterModeRestore();
+			wifiRadioObservation.terminate();
+		},
+		terminateWifiDiscovery,
 		gracefulShutdown,
 		stopSrtIngest: stopSRTIngest,
 		stopDmesgWatchers,

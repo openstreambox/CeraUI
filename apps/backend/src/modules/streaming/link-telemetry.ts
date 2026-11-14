@@ -68,6 +68,7 @@ import {
 	clearContinuityTelemetry,
 	recordSenderTelemetry,
 } from "./continuity-observer.ts";
+import { isForwardActive } from "./forward-activity.ts";
 import {
 	buildBondMapping,
 	ingestSenderBindMapReport,
@@ -362,7 +363,8 @@ async function attemptSubscriptionCutover(
 }
 
 /** Stop consuming telemetry (poll + subscription) and clear both registries. */
-export function stopLinkTelemetry(): void {
+export function stopLinkTelemetry(forwardOwner = false): void {
+	if (isForwardActive() && !forwardOwner) return;
 	clearContinuityTelemetry();
 	if (subscriptionCleanup) {
 		subscriptionCleanup();

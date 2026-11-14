@@ -114,7 +114,7 @@ describe("termination is never command success", () => {
 		};
 		const deps = {
 			...resolveActiveAddonManagerDeps(),
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			getEffectiveHardware: () => "rk3588" as const,
 			getDataFreeBytes: async () => 100 * 1024 ** 3,
 			getOsVersion: async () => "13",

@@ -28,3 +28,12 @@ for (const [name, delta, expected] of [
 		expect(result).toBe(expected);
 	});
 }
+
+test("a phone carried through an engine-less box overrides reconciled boot idle", () => {
+	expect(deriveStreamLiveness({ ...idle, carrying: "streaming" })).toBe(
+		"streaming",
+	);
+	expect(deriveStreamLiveness({ ...idle, carrying: "unknown" })).toBe(
+		"unknown",
+	);
+});

@@ -1,9 +1,18 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	mock,
+	spyOn,
+	test,
+} from "bun:test";
 
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { call } from "@orpc/server";
 import { getConfig } from "../modules/config.ts";
 import { canDialControlChannel } from "../modules/identity/index.ts";
+import * as dns from "../modules/network/dns.ts";
 import {
 	completePlatformPairing,
 	getPlatformUrl,
@@ -14,6 +23,13 @@ import { getRemoteWebSocket } from "../modules/remote/remote.ts";
 import { createContext } from "../rpc/context.ts";
 import { completePairingProcedure } from "../rpc/procedures/pairing.procedure.ts";
 import type { RPCContext, SocketData } from "../rpc/types.ts";
+import { StubRemoteSocket } from "./helpers/status-client.ts";
+
+// A successful claim re-dials the remote endpoint; keep that dial off the network.
+class ClaimRemoteSocket extends StubRemoteSocket {
+	terminate(): void {}
+}
+mock.module("ws", () => ({ default: ClaimRemoteSocket }));
 
 const SERIAL = "CERATESTSERIAL22";
 const PLATFORM_URL = "https://platform.test.example";
@@ -45,11 +61,19 @@ beforeEach(() => {
 		: undefined;
 	getConfig().remote_key = undefined;
 	getConfig().device_id = undefined;
+	spyOn(dns, "dnsCacheResolve").mockResolvedValue({
+		addrs: ["127.0.0.1"],
+		fromCache: false,
+	});
 });
 
 afterEach(() => {
 	fetchSpy?.mockRestore();
-	getRemoteWebSocket()?.terminate();
+	// Another suite's ws double may own the socket; close whichever is there.
+	(
+		getRemoteWebSocket() as { terminate?: () => void } | undefined
+	)?.terminate?.();
+	mock.restore();
 	if (savedPlatformUrl === undefined) delete process.env.PLATFORM_URL;
 	else process.env.PLATFORM_URL = savedPlatformUrl;
 	if (savedNodeEnv === undefined) delete process.env.NODE_ENV;

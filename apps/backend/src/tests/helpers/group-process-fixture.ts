@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
+import { adoptTestProcess } from "../../../../../scripts/test-safety.ts";
 import {
 	type AddonHelperRunnerPorts,
 	createAddonHelperStep,
@@ -194,6 +195,7 @@ export async function groupProcessFixture(mode: string, code = 0) {
 			)
 				throw new Error("invalid worker");
 			workerPid = row.pid;
+			adoptTestProcess(row.pid);
 			return row;
 		},
 		fire: (ms: number) => {

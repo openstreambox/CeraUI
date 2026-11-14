@@ -259,6 +259,7 @@ describe("SSH toggle — production proof", () => {
 		// never spawns systemctl / reads the real /etc/shadow.
 		const statusDeps: Partial<SshStatusDeps> = {
 			systemctlIsActive: async () => ({ stdout: "active", stderr: "" }),
+			systemctlIsEnabled: async () => ({ stdout: "enabled", stderr: "" }),
 			readShadow: () => "produser:$6$abc$hashvalue:19000:0:99999:7:::\n",
 			broadcast: () => {},
 		};
@@ -281,6 +282,7 @@ describe("SSH toggle — production proof", () => {
 
 		const success = await startStopSsh(stubWs(), "start_ssh", {
 			systemctlIsActive: async () => ({ stdout: "inactive", stderr: "" }),
+			systemctlIsEnabled: async () => ({ stdout: "disabled", stderr: "" }),
 			readShadow: () => "produser:$6$abc$hashvalue:19000:0:99999:7:::\n",
 			broadcast: () => {},
 		});

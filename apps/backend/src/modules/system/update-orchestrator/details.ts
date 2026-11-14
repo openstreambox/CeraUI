@@ -21,8 +21,8 @@
  * - `transport` is `null` until the selector has run at least once.
  */
 import type { UpdateCapabilities, UpdateDetails } from "@ceraui/rpc/schemas";
-
 import { logger } from "../../../helpers/logger.ts";
+import { readBoardUpdates } from "../board-updates.ts";
 import { readUpdateCapabilities } from "../update-capabilities.ts";
 import {
 	getLastTransportSelection,
@@ -141,6 +141,9 @@ export async function readUpdateDetails(
 				? { version: receipt.version, stagedAt: receipt.stagedAt }
 				: null,
 			candidate: os.candidate,
+			...(os.boardNotOffered || (await readBoardUpdates()) === null
+				? { boardNotOffered: true }
+				: {}),
 			channelUnpublished: os.channelUnpublished ?? false,
 		},
 		checks: {

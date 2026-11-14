@@ -303,7 +303,11 @@ test.describe("Modem network scan (Task 19)", () => {
 
 		// Dialog stays usable: the operator selector still opens and responds.
 		await dialog.getByTestId("modem-network-trigger").click();
-		await expect(page.getByRole("option", { name: /Automatic/i })).toBeVisible();
+		// Scoped to the opened listbox: the Network page keeps other "Automatic"
+		// options mounted (the sharing policy's native <select>).
+		await expect(
+			page.getByRole("listbox").getByRole("option", { name: /Automatic/i }),
+		).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(dialog).toBeVisible();
 

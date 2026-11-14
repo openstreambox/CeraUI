@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { permitDocumentationTargetForTest } from "../../../../../scripts/test-safety.ts";
 
 // Edge-case hardening for the post-DNS reachability probe
 // (modules/streaming/transport/validate.ts). This probe is the relay-validate
@@ -51,6 +52,8 @@ describe("probeReachability: unreachable host (no route / black hole)", () => {
 		// within the timeout instead of blocking the validate RPC indefinitely.
 		const timeoutMs = 250;
 		const start = Date.now();
+		// TEST-NET-1 leaves the host by design here; the guard permits only this address.
+		permitDocumentationTargetForTest("192.0.2.1");
 		const result = await probeReachability("192.0.2.1", 9000, timeoutMs);
 		const elapsed = Date.now() - start;
 

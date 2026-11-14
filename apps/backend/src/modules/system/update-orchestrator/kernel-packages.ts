@@ -4,6 +4,7 @@ import { chown, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { UpdateCapabilities } from "@ceraui/rpc/schemas";
 import { spawnWithTimeout } from "../../../helpers/spawn-policy.ts";
+import { readBoardUpdates } from "../board-updates.ts";
 import { CERALIVE_SOURCES_FILE } from "../update-apt-channel.ts";
 import { hasKernelAptStage } from "../update-capabilities.ts";
 import {
@@ -54,10 +55,19 @@ export function parseKernelDeb822(text: string): ReadonlyMap<string, string>[] {
 		});
 }
 
-export function parseKernelPackages(text: string): KernelPackageRecord[] {
+export function parseKernelPackages(
+	text: string,
+	family = "rk3588",
+	architecture = "arm64",
+): KernelPackageRecord[] {
 	return parseKernelDeb822(text).flatMap((row) => {
 		const name = row.get("package");
-		if (!name || !kernelPackage.safeParse(name).success) return [];
+		if (
+			!name ||
+			!kernelPackage.safeParse(name).success ||
+			!name.endsWith(`-ceralive-${family}`)
+		)
+			return [];
 		const identity = kernelIdentitySchema.safeParse({
 			package: name,
 			version: row.get("version"),
@@ -67,7 +77,7 @@ export function parseKernelPackages(text: string): KernelPackageRecord[] {
 		const size = row.get("size") ?? "";
 		if (
 			!identity.success ||
-			row.get("architecture") !== "arm64" ||
+			row.get("architecture") !== architecture ||
 			!/^(?:\.\/)?[A-Za-z0-9+_.-]+(?:\/[A-Za-z0-9+_.-]+)*\.deb$/.test(
 				filename,
 			) ||
@@ -130,6 +140,8 @@ export async function readAuthenticatedKernelPackages(
 	run: Run = spawnWithTimeout,
 	source = CERALIVE_SOURCES_FILE,
 ): Promise<readonly KernelPackageRecord[]> {
+	const policy = await readBoardUpdates();
+	if (policy === null) return [];
 	const indexes = await run(
 		[
 			"/usr/bin/apt-get",
@@ -149,7 +161,7 @@ export async function readAuthenticatedKernelPackages(
 			target.get("trusted") !== "yes" ||
 			target.get("origin") !== "CeraLive" ||
 			target.get("label") !== "CeraLive" ||
-			!/^https:\/\/apt\.ceralive\.tv\/dists\/(?:stable|beta)\/binary-arm64\/(?:\.\/)?Packages$/.test(
+			!/^https:\/\/apt\.ceralive\.tv\/dists\/(?:stable|beta)\/binary-(?:arm64|amd64)\/(?:\.\/)?Packages$/.test(
 				uri,
 			) ||
 			!file.startsWith("/var/lib/apt/lists/") ||
@@ -162,7 +174,9 @@ export async function readAuthenticatedKernelPackages(
 		});
 		if (data.exitCode !== 0)
 			throw new KernelUpdateError("kernel_discovery_failed");
-		records.push(...parseKernelPackages(data.stdout));
+		records.push(
+			...parseKernelPackages(data.stdout, policy?.family, policy?.architecture),
+		);
 	}
 	return records;
 }
@@ -170,9 +184,15 @@ export async function readAuthenticatedKernelPackages(
 export async function readBootedKernel(
 	run: Run = spawnWithTimeout,
 ): Promise<Pick<KernelIdentity, "package" | "version">> {
+	const policy = await readBoardUpdates();
+	if (policy === null) throw new KernelUpdateError("kernel_identity_mismatch");
 	const release = await run(["uname", "-r"], { timeoutMs: 2_000 });
 	const name = `linux-image-${release.stdout.trim()}`;
-	if (release.exitCode !== 0 || !kernelPackage.safeParse(name).success)
+	if (
+		release.exitCode !== 0 ||
+		!kernelPackage.safeParse(name).success ||
+		!name.endsWith(`-ceralive-${policy?.family ?? "rk3588"}`)
+	)
 		throw new KernelUpdateError("kernel_identity_mismatch");
 	const installed = await run(
 		["dpkg-query", "-W", "-f=$" + "{db:Status-Status}\\t$" + "{Version}", name],
@@ -193,6 +213,12 @@ export async function verifyKernelDownload(
 	record: KernelPackageRecord,
 	run: Run = spawnWithTimeout,
 ): Promise<void> {
+	const policy = await readBoardUpdates();
+	if (
+		policy === null ||
+		!record.package.endsWith(`-ceralive-${policy?.family ?? "rk3588"}`)
+	)
+		throw new KernelUpdateError("kernel_identity_mismatch");
 	const handle = await open(
 		file,
 		constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -220,7 +246,7 @@ export async function verifyKernelDownload(
 		rows.length !== 1 ||
 		row?.get("package") !== record.package ||
 		row.get("version") !== record.version ||
-		row.get("architecture") !== "arm64"
+		row.get("architecture") !== (policy?.architecture ?? "arm64")
 	)
 		throw new KernelUpdateError("kernel_origin_mismatch");
 }

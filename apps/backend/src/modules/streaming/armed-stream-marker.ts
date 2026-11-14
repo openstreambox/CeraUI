@@ -64,7 +64,6 @@ import {
 	type LifecycleState,
 } from "@ceraui/rpc/schemas";
 import { z } from "zod";
-
 import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
 import {
 	framerateSchema,
@@ -209,7 +208,8 @@ export const defaultArmedStreamMarkerDeps: ArmedStreamMarkerDeps = {
 			return undefined;
 		}
 	},
-	writeMarker: writeFileAtomicSync,
+	writeMarker: (file, contents) =>
+		writeFileAtomicSync(file, contents, { mode: 0o600 }),
 	removeMarker: (path) => {
 		try {
 			fs.unlinkSync(path);

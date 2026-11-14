@@ -208,6 +208,7 @@ export async function writeRecord<T>(
 	path: string,
 	schema: z.ZodType<T>,
 	value: T,
+	current: () => boolean = () => true,
 ): Promise<void> {
 	const clean = schema.parse(value); // Strip unrecognised fields, including credentials.
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -220,6 +221,7 @@ export async function writeRecord<T>(
 		} finally {
 			await file.close();
 		}
+		if (!current()) return;
 		await rename(temp, path);
 		const dir = await open(dirname(path), "r");
 		try {

@@ -251,7 +251,7 @@ describe("ADR-003 publication protocol", () => {
 		expect(statSync(deps.sidecarFile).mode & 0o077).toBe(0);
 	});
 
-	test("generation advances on every publication, mapping-only included", async () => {
+	test("generation advances on mapping changes and stays stable on no-op publication", async () => {
 		const deps = writerDeps();
 		const first = await publishBondMapping(
 			[entry("10.0.0.1", "eth0", "lnk_a")],
@@ -272,6 +272,10 @@ describe("ADR-003 publication protocol", () => {
 		expect(second.ok && second.generation).toBe(2);
 		expect(second.changed).toBe(true);
 		expect(third.changed).toBe(false);
+		expect(third.ok && third.generation).toBe(2);
+		expect(third.ok && third.ipsFileSha256).toBe(
+			second.ok && second.ipsFileSha256,
+		);
 	});
 
 	test("an undescribable link publishes the IP list and retires the sidecar", async () => {
@@ -313,6 +317,33 @@ describe("ADR-003 publication protocol", () => {
 		expect(!result.ok && result.reason).toBe("sidecar_write_failed");
 		expect(removed).toBe(true);
 		expect(readFileSync(deps.ipsFile, "utf8")).toBe("10.0.0.1");
+	});
+
+	test("A4 a failed IP write owes no reload and preserves the applied comparison", async () => {
+		const deps = writerDeps();
+		const entries = [entry("192.0.2.2", "eth9", "lnk_7b0bd35950ec673f")];
+		const failing = {
+			...deps,
+			writeFile: async (path: string, contents: string) => {
+				if (path.startsWith(deps.ipsFile)) throw new Error("IP write failure");
+				await deps.writeFile(path, contents);
+			},
+		};
+
+		const first = await publishBondMapping(entries, failing);
+		const second = await publishBondMapping(entries, deps);
+		const third = await publishBondMapping(entries, deps);
+		console.log(
+			"A4",
+			JSON.stringify([first.changed, second.changed, third.changed]),
+		);
+		expect(first).toEqual({
+			ok: false,
+			reason: "ips_write_failed",
+			changed: false,
+		});
+		expect(second.changed).toBe(true);
+		expect(third.changed).toBe(false);
 	});
 
 	test("the session fires SIGHUP off `changed`, not off the IP list", () => {

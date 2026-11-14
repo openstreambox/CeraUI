@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
 import { modemSchema } from "@ceraui/rpc/schemas";
 import { resolveGsmAutoconfigSupport } from "../modules/modems/gsm-autoconfig.ts";
 import { buildModemsMessage } from "../modules/modems/modem-status.ts";
@@ -27,6 +26,7 @@ import {
 } from "../modules/modems/modems-state.ts";
 import type { DongleMetadata } from "../modules/network/dongle-metadata.ts";
 import { setup } from "../modules/setup.ts";
+import { carrierSupportRows } from "../modules/system/support-export.ts";
 
 /**
  * The ten additive fields that must NOT appear on an mmcli-derived row.
@@ -723,3 +723,23 @@ function buildDbusViewFixture() {
 		cellInfo: { tech: "nr" as const, sinr: 12.5 },
 	};
 }
+
+describe("carrier support export adapters", () => {
+	test("mmcli and D-Bus retain masked APN presence and TAC without copying full identities", () => {
+		const mm = fromMmcliModem(7, buildModemFixture({ tac: "35175605" }));
+		const dbus = fromDbusView({
+			...buildDbusViewFixture(),
+			equipmentId: "351756051523999",
+		});
+		const rows = carrierSupportRows([mm, dbus]);
+		expect(rows[0]).toEqual({ modem: 1, apn: "[custom APN]", tac: "35175605" });
+		expect(rows[1]?.tac).toBe("35175605");
+		expect(JSON.stringify(rows)).not.toContain("351756051523999");
+		expect(JSON.stringify(rows)).not.toContain('"password"');
+		expect(
+			JSON.stringify(
+				projectModemWire([mm, dbus], { hasGsmAutoconfig: false }).message,
+			),
+		).not.toContain('"tac"');
+	});
+});

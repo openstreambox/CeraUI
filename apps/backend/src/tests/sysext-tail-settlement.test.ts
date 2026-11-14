@@ -24,7 +24,7 @@ for (const action of ["enable", "disable"] as const) {
 		// Given active prior intent and streaming beginning in an awaited boundary.
 		const bytes = await Bun.file(f.path).bytes();
 		setAddonManagerDeps({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			getDataFreeBytes: async () => 2 ** 32,
 			getOsVersion: async () => "13",
 			download: async () => {},
@@ -67,7 +67,7 @@ for (const replacement of [false, true]) {
 			else removeAddonState("cog-display");
 			const before = await Bun.file(f.path).bytes();
 			setAddonManagerDeps({
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				getDataFreeBytes: async () => 2 ** 32,
 				getOsVersion: async () => "13",
 				download: async () => {
@@ -124,7 +124,7 @@ test("a refused helper after device detection restores the scan payload", async 
 	await mkdir(f.scan, { recursive: true });
 	await Bun.write(f.raw, "prior-payload");
 	setAddonManagerDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getDataFreeBytes: async () => 2 ** 32,
 		getOsVersion: async () => "13",
 		download: async () => {
@@ -144,7 +144,7 @@ test("a refused helper after device detection restores the scan payload", async 
 		helperEnable: async (id) => {
 			await addonEnable(id, {
 				readDescriptor: async () => sysextDescriptor,
-				isRealDevice: async () => {
+				canManageAddons: async () => {
 					updateStatus(true);
 					return true;
 				},
@@ -175,7 +175,7 @@ test("prepared bytes are not scan-visible during final helper admission", async 
 	removeAddonState("cog-display");
 	let scanVisible: boolean | undefined;
 	setAddonManagerDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getDataFreeBytes: async () => 2 ** 32,
 		getOsVersion: async () => "13",
 		download: async () => {
@@ -190,7 +190,7 @@ test("prepared bytes are not scan-visible during final helper admission", async 
 		helperEnable: async (id) => {
 			await addonEnable(id, {
 				readDescriptor: async () => sysextDescriptor,
-				isRealDevice: async () => {
+				canManageAddons: async () => {
 					scanVisible = await Bun.file(f.raw).exists();
 					updateStatus(true);
 					return true;

@@ -259,7 +259,7 @@ describe("UpdatesDialog — a start attempt always ends somewhere visible", () =
  */
 describe("UpdatesDialog — a stream refusal says the stream may be unconfirmed", () => {
 	const UNCONFIRMED =
-		"A stream is running or its state is unconfirmed. Press Stop to confirm the stream is stopped before installing an update.";
+		"A stream is active or its state is being checked. Stop streaming on connected devices and stop the box’s own stream before installing an update.";
 	const FROZEN = "Stop the stream before installing an update.";
 
 	it("a start the device refused for a stream", async () => {

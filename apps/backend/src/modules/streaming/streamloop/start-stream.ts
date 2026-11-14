@@ -16,14 +16,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import {
-	observeSafely,
-	recordSenderIntent,
-	recordSenderStarted,
-	senderPaths,
-} from "../continuity-observer.ts";
-import type { Lifetime } from "../continuity-records.ts";
-
 // Core stream launch: spawns srtla_send under the process-runner supervisor,
 // wires srtla per-uplink telemetry, then starts the engine session over the
 // StreamingBackend seam.
@@ -46,6 +38,14 @@ import {
 } from "../bind-map-spawn.ts";
 import { getLastCapabilities } from "../capabilities.ts";
 import { SRTLA_LISTEN_PORT } from "../constants.ts";
+import {
+	observeSafely,
+	recordSenderIntent,
+	recordSenderStarted,
+	senderPaths,
+} from "../continuity-observer.ts";
+import type { Lifetime } from "../continuity-records.ts";
+
 import { embeddedAudioActive } from "../embedded-audio.ts";
 import { clearStreamProcessExit } from "../health.ts";
 import { createLaunchTransaction } from "../launch-transaction.ts";
@@ -236,7 +236,6 @@ export async function startStream(
 	const { statsFile, controlSocket } = senderPaths();
 	// ADR-001 control socket: telemetry rides the JSON-RPC subscription when the
 	// sender advertises it, with --stats-file as the airtight fallback poll.
-
 	let ipsContent: string;
 	try {
 		ipsContent = await Bun.file(setup.ips_file ?? "").text();
@@ -269,7 +268,7 @@ export async function startStream(
 		}),
 		...bindMapArgs,
 	];
-	let lifetime: Lifetime | undefined;
+	let lifetime: Lifetime | null | undefined;
 	await observeSafely(async () => {
 		lifetime = await startStreamDeps.recordSenderIntent(
 			[srtlaSendExec, ...senderArgs],
@@ -311,6 +310,7 @@ export async function startStream(
 		await observeSafely(async () => {
 			if (lifetime) await recordSenderStarted(lifetime, sender.proc.pid);
 		});
+		assertStreamLaunchOwnership();
 
 		await startStreamDeps.getStreamingBackend().start(
 			launchConfig,
