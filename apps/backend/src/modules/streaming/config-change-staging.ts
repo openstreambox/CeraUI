@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import { compositionConfigSchema } from "@ceralive/cerastream";
-
 import {
 	inputModeSchema,
 	normalizeFramerateToRung,
@@ -8,7 +7,6 @@ import {
 	videoCodecSchema,
 } from "@ceraui/rpc/schemas";
 import { z } from "zod";
-
 import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
 import { logger } from "../../helpers/logger.ts";
 
@@ -52,7 +50,8 @@ export const defaultStagingDeps: StagingDeps = {
 			return undefined;
 		}
 	},
-	writeMarker: writeFileAtomicSync,
+	writeMarker: (file, contents) =>
+		writeFileAtomicSync(file, contents, { mode: 0o600 }),
 	removeMarker: (path) => {
 		try {
 			fs.unlinkSync(path);

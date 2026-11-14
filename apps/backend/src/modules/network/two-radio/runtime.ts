@@ -1,5 +1,6 @@
 import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { writeFileAtomicSync } from "../../../helpers/config-loader.ts";
 import { logger } from "../../../helpers/logger.ts";
 import { run } from "../../../helpers/run.ts";
 import { getConfig, getConfigFilePath } from "../../config.ts";
@@ -288,7 +289,7 @@ export async function initTwoRadioLive() {
 	const cycle = async () => {
 		await live.cycle();
 		const view = live.coordinator.view();
-		await Bun.write(
+		writeFileAtomicSync(
 			join(directory, "status.json"),
 			JSON.stringify({
 				session: live.session,
@@ -297,6 +298,7 @@ export async function initTwoRadioLive() {
 				),
 				...view,
 			}),
+			{ mode: 0o600 },
 		);
 	};
 	await cycle();
@@ -309,13 +311,14 @@ export async function initTwoRadioLive() {
 			timer.unref();
 		} catch (error) {
 			logger.warn(`Two-radio reconciliation required: ${error}`);
-			await Bun.write(
+			writeFileAtomicSync(
 				join(directory, "status.json"),
 				JSON.stringify({
 					session: live.session,
 					error: String(error),
 					state: live.coordinator.view(),
 				}),
+				{ mode: 0o600 },
 			);
 		}
 	};

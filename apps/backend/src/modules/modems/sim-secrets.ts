@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
+
 /**
  * Opt-in SIM PIN secrets store (boot auto-unlock).
  *
@@ -31,10 +33,8 @@
  *   - Storing a PIN in `config.json` would back it up, sync it, and expose it to
  *     every config reader; a separate 0600 file scopes the blast radius.
  *
- * Bun-native I/O: content is written with `Bun.write` and read with `Bun.file`.
- * `Bun.write` does not honour a file mode on an existing file, so 0600 is
- * enforced explicitly afterwards via `node:fs/promises` chmod — the same
- * directory/metadata exception kiosk-token.ts already uses (mkdir/chmod/unlink).
+ * Secrets use the shared private atomic writer, which enforces permissions
+ * before writing any bytes. Reads continue to use Bun.file.
  */
 
 import fs from "node:fs/promises";
@@ -66,7 +66,7 @@ export function simPinSecretPath(): string {
  * Persist a SIM PIN to the 0600 tmpfs secrets file (opt-in "remember PIN").
  *
  * The directory is created 0700 if absent; the secret is written with no
- * trailing newline and then chmod-ed to 0600. Callers MUST only store a PIN that
+ * trailing newline through the shared private writer. Callers MUST only store a PIN that
  * has been confirmed correct (a successful unlock) — never a candidate the SIM
  * has rejected — so boot auto-unlock never resubmits a known-wrong PIN.
  */
@@ -75,10 +75,7 @@ export async function storeSimPin(pin: string): Promise<void> {
 	await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
 	const file = simPinSecretPath();
-	// tmpfs only — never durable disk. Bun.write ignores a mode on an existing
-	// file, so enforce 0600 explicitly afterwards (mirrors mintKioskToken).
-	await Bun.write(file, pin);
-	await fs.chmod(file, 0o600);
+	writeFileAtomicSync(file, pin, { mode: 0o600 });
 
 	logger.info("SIM: stored PIN to secrets file for boot auto-unlock");
 }

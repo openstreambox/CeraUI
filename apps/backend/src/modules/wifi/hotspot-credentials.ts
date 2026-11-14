@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
+
 /*
   Durable per-adapter hotspot identity.
 
@@ -37,10 +39,7 @@
 
 import { z } from "zod";
 
-import {
-	loadCacheFile,
-	writeFileAtomicSync,
-} from "../../helpers/config-loader.ts";
+import { loadCacheFile } from "../../helpers/config-loader.ts";
 import { logger } from "../../helpers/logger.ts";
 import { isWifiChannelName, type WifiChannel } from "./wifi-channels.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
@@ -163,6 +162,7 @@ function persist(): void {
 		writeFileAtomicSync(
 			filePath,
 			JSON.stringify({ version: STORE_VERSION, adapters: entries }),
+			{ mode: 0o600 },
 		);
 	} catch (err) {
 		// Setup must not acknowledge credentials it could not durably save.
@@ -286,6 +286,7 @@ export function forgetHotspotCredentials(macAddress: string): void {
 		writeFileAtomicSync(
 			filePath,
 			JSON.stringify({ version: STORE_VERSION, adapters: next }),
+			{ mode: 0o600 },
 		);
 	entries = next;
 }
