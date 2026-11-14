@@ -128,3 +128,8 @@ once without recording content. Callback completion still means local processing
 not remote delivery. The counter is diagnostic and is not a delivery receipt.
 
 Malformed connection rows use a separate index-fallback HMAC namespace. Telemetry retains the closed `identity_state: unmappable` flag. The unused top-level policy-route diagnostic is omitted; the producer-owned netif warning remains. Failed command acknowledgements retain their existing error envelope but always clear `applied`.
+
+Hotspot roster changes retain their measured client count in remote status.
+Station rows are empty on remote transports; MAC addresses and radio lifetime
+tokens stay local. A client block is omitted until a valid roster was observed,
+so an unknown count is distinct from a measured zero.

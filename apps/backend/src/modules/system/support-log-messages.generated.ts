@@ -858,6 +858,10 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["regulatory domain set to ", ""],
 	["releasing a modem inhibition failed"],
 	["remote error: ", ""],
+	["remote status frame rejected by protocol schema"],
+	[
+		"remote status payload rejected by projection; dropped payloads are counted",
+	],
 	["remote: DNS lookup failed, using cached address ", ""],
 	["remote: authenticated"],
 	["remote: invalid key"],

@@ -147,7 +147,7 @@ function decision(message, path) {
 		return 'needed: typed modem diagnostic';
 	if (
 		surface === 'wifi' &&
-		['mode', 'supports_hotspot', 'supports_ap_sta_concurrency', 'hotspot.max_width_mhz'].includes(
+		['mode', 'supports_hotspot', 'supports_ap_sta_concurrency', 'hotspot.max_width_mhz', 'hotspot.clients.count'].includes(
 			leaf,
 		)
 	)
