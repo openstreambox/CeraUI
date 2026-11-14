@@ -260,7 +260,7 @@ export async function loadJsonConfigSync<T extends z.ZodTypeAny>(
 }
 
 /**
- * Save a config to a JSON file asynchronously using Bun's native API
+ * Save a config to a JSON file through the durable atomic writer
  *
  * @param filePath - Path to the JSON file
  * @param data - Data to save
@@ -274,7 +274,7 @@ export async function saveJsonConfigAsync<T>(
 	const contents = pretty
 		? JSON.stringify(data, null, "\t")
 		: JSON.stringify(data);
-	await Bun.write(filePath, contents);
+	writeFileAtomicSync(filePath, contents);
 }
 
 /**
@@ -300,7 +300,7 @@ export function writeFileAtomicSync(
 			try {
 				const previous = fs.lstatSync(target);
 				if (!previous.isFile())
-					throw new Error("Private state must be a regular file");
+					throw new Error("Target must be a regular file");
 				// Atomic replacement must not add owner permissions removed deliberately.
 				mode &= previous.mode;
 			} catch (error) {

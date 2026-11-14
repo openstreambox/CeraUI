@@ -164,3 +164,24 @@ test("refuses a symlink parent without writing into it", () => {
 	).toThrow();
 	expect(fs.readdirSync(destination)).toEqual([]);
 });
+
+test("public replacement keeps a narrower existing mode", () => {
+	const { file } = fixture();
+	fs.writeFileSync(file, "old");
+	fs.chmodSync(file, 0o600);
+	writeFileAtomicSync(file, "new");
+	expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+	expect(fs.readFileSync(file, "utf8")).toBe("new");
+});
+
+test("public symlink refusal uses a mode-neutral message", () => {
+	const { dir, file } = fixture();
+	const target = join(dir, "target.json");
+	fs.writeFileSync(target, "unchanged");
+	fs.symlinkSync(target, file);
+	expect(() => writeFileAtomicSync(file, "new")).toThrow(
+		"Target must be a regular file",
+	);
+	expect(fs.readFileSync(target, "utf8")).toBe("unchanged");
+	expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
+});
