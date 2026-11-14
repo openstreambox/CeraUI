@@ -66,6 +66,18 @@ export function renderCatalogMessage(pattern: string): {
 	return { inputs, expected };
 }
 
+/** Vite's default eight-character hash follows the complete manual chunk name. */
+export function namespaceChunk(files: readonly string[], namespace: string): string {
+	const prefix = `${namespace}-`;
+	const chunks = files.filter(
+		(file) => file.startsWith(prefix) && /^[\w-]{8}\.js$/.test(file.slice(prefix.length)),
+	);
+	const chunk = chunks[0];
+	if (chunks.length !== 1 || chunk === undefined)
+		throw new Error(`Expected one built ${namespace} namespace, got ${chunks.length}`);
+	return chunk;
+}
+
 /** Import only emitted JS, never source registries, sourcemaps or test setup. */
 export async function checkNotificationBundle(assets: string): Promise<number> {
 	const keys = await sourceKeys(join(ROOT, 'apps/backend/src'));
@@ -78,15 +90,11 @@ export async function checkNotificationBundle(assets: string): Promise<number> {
 	const files = await readdir(assets);
 	const registries = new Map<string, Readonly<Record<string, unknown>>>();
 	for (const namespace of new Set(keys.map((key) => key.slice(0, key.indexOf('.'))))) {
-		const chunks = files.filter((file) => file.startsWith(`${namespace}-`) && file.endsWith('.js'));
-		if (chunks.length !== 1)
-			throw new Error(`Expected one built ${namespace} namespace, got ${chunks.length}`);
-		for (const chunk of chunks) {
-			const module: unknown = await import(pathToFileURL(join(assets, chunk)).href);
-			if (!isRecord(module) || !isRecord(module.messages))
-				throw new Error(`Missing message registry in ${chunk}`);
-			registries.set(namespace, module.messages);
-		}
+		const chunk = namespaceChunk(files, namespace);
+		const module: unknown = await import(pathToFileURL(join(assets, chunk)).href);
+		if (!isRecord(module) || !isRecord(module.messages))
+			throw new Error(`Missing message registry in ${chunk}`);
+		registries.set(namespace, module.messages);
 	}
 	let failures = 0;
 	for (const locale of settings.locales) {

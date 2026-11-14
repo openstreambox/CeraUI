@@ -263,9 +263,10 @@ export default defineConfig(({ mode }) => {
 							return "streaming";
 						}
 
-						if (id.includes("/components/dev-tools/")) {
-							return "devtools";
-						}
+						// Dev-only components are already pruned by import.meta.env.DEV.
+						// Naming a manual chunk for them also captures their shared
+						// dependencies, fusing production views into one large chunk.
+						// Keep natural boundaries for the remaining application code.
 
 						// TEMPORARILY DISABLED: Testing if this causes the "Cannot access 'ye' before initialization" error
 						// if (id.includes('/components/ui/')) {
