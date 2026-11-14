@@ -1,3 +1,5 @@
+import { secretVariants } from "./secret-variants.ts";
+
 /** Stream IDs can be bearer publish keys, even when SRT encryption is enabled. */
 export function publicStreamIds<
 	T extends {
@@ -50,28 +52,31 @@ export function setStreamIdRedactionSource(
 /** Scrub labelled ID records and retained whole tokens in engine errors. */
 export function redactStreamIdText(text: string): string {
 	if (
-		/\b(?:(?:srt[_-]?)?stream[_-]?id|relay_streamid_override|ingest[_-]?key)\b/i.test(
+		/\b(?:(?:srt[_-]?)?stream[_-]?id|relay_streamid_override|ingest[_-]?key)\b["']?\s*[=:]/i.test(
 			text,
-		) &&
-		/[=:]/.test(text)
+		)
 	)
-		return "[REDACTED]";
+		return text
+			.split("\n")
+			.map((line) =>
+				/\b(?:(?:srt[_-]?)?stream[_-]?id|relay_streamid_override|ingest[_-]?key)\b["']?\s*[=:]/i.test(
+					line,
+				)
+					? "[REDACTED]"
+					: redactRetainedStreamIds(line),
+			)
+			.join("\n");
 	return redactRetainedStreamIds(text);
 }
 
 function redactRetainedStreamIds(text: string): string {
 	let result = text;
-	const variants = new Set<string>();
-	for (const value of retainedValues()) {
-		if (!value) continue;
-		for (const encoded of [
-			value,
-			encodeURIComponent(value),
-			JSON.stringify(value).slice(1, -1),
-		])
-			variants.add(encoded);
-	}
-	for (const encoded of [...variants].sort((a, b) => b.length - a.length)) {
+	const variants = new Set(
+		retainedValues()
+			.filter((value): value is string => Boolean(value))
+			.flatMap(secretVariants),
+	);
+	for (const encoded of [...variants].sort((a, b) => b.length - a.length))
 		result = result.replace(
 			new RegExp(
 				`(?<![\\p{L}\\p{N}_])${encoded.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`,
@@ -79,7 +84,6 @@ function redactRetainedStreamIds(text: string): string {
 			),
 			"[REDACTED]",
 		);
-	}
 	return result;
 }
 export function redactStreamIdJournal(text: string): string {

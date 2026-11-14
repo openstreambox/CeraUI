@@ -1,3 +1,5 @@
+import { secretVariants } from "./secret-variants.ts";
+
 let retainedValues: () => readonly (string | undefined)[] = () => [];
 export function setSrtPassphraseRedactionSource(
 	source: typeof retainedValues,
@@ -13,13 +15,7 @@ export function redactSrtPassphrases(text: string): string {
 	const variants = new Set<string>();
 	for (const value of retainedValues()) {
 		if (!value) continue;
-		variants.add(value);
-		variants.add(encodeURIComponent(value));
-		let escaped = value;
-		for (let depth = 0; depth < 3; depth++) {
-			escaped = JSON.stringify(escaped).slice(1, -1);
-			variants.add(escaped);
-		}
+		for (const variant of secretVariants(value)) variants.add(variant);
 	}
 	for (const value of [...variants].sort((a, b) => b.length - a.length)) {
 		result = result.replaceAll(value, "[REDACTED]");

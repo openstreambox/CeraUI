@@ -263,7 +263,7 @@ async function handleSave() {
 		latency: clampedLatency, protocol: PROTOCOL, addr, portStr, streamId: draft.srt_streamid,
 		relayStreamId: draft.relay_streamid, relayServer, relayAccount: effectiveRelayAccount, destination,
 	});
- if (SRT_OUTPUT_ENCRYPTION_AVAILABLE && srtEncryption) Object.assign(input, srtEncryption);
+	if (SRT_OUTPUT_ENCRYPTION_AVAILABLE && srtEncryption) Object.assign(input, srtEncryption);
 	const result = await saveServerConfig({
 		hostAdapter,
 		input,
@@ -290,10 +290,13 @@ $effect(() => { if (!open) srtEncryption = undefined; });
 	primaryLabel={m["dialogs.save"]()}
 	title={m["settings.receiverServer"]()}
 >
- {#if open}
- <SrtEncryptionFields supported={SRT_OUTPUT_ENCRYPTION_AVAILABLE} disabled={isStreaming}
-  onChange={(srt_passphrase, srt_pbkeylen) => { srtEncryption = { srt_passphrase, srt_pbkeylen }; }} />
- {/if}
+	{#if open}
+		<SrtEncryptionFields
+			supported={SRT_OUTPUT_ENCRYPTION_AVAILABLE}
+			disabled={isStreaming}
+			onChange={(srt_passphrase, srt_pbkeylen) => { srtEncryption = { srt_passphrase, srt_pbkeylen }; }}
+		/>
+	{/if}
 	<ServerDialogContent
 		{isStreaming} {catalogDrift} {activeProvider} {relays} {destinationChoice} {destination}
 		{selectedManagedActive} {hasManagedSlots} {managedAccounts} {activeSlotId} {slotPrompting}

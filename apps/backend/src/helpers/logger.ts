@@ -428,14 +428,25 @@ function formatClockTimestamp(raw: unknown): string {
 }
 
 // Errors serialize to `{}` under JSON.stringify by default — surface the fields.
-function jsonReplacer(_key: string, value: unknown): unknown {
+function jsonReplacer(
+	this: Record<string, unknown>,
+	key: string,
+	value: unknown,
+): unknown {
+	// Buffer.toJSON runs before the replacer; inspect the original holder value.
+	const original = this[key];
+	if (Buffer.isBuffer(original)) {
+		const text = original.toString("utf8");
+		const scrubbed = redactValue(text);
+		return scrubbed === text ? value : scrubbed;
+	}
 	if (value instanceof Error)
 		return {
 			name: redactValue(value.name),
 			message: redactValue(value.message),
 			stack: value.stack ? redactValue(value.stack) : undefined,
 		};
-	return value;
+	return typeof value === "string" ? redactValue(value) : value;
 }
 
 function extractMetadata(info: ConsoleLogInfo): Record<string, unknown> {

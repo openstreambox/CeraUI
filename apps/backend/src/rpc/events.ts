@@ -2,7 +2,6 @@
  * RPC Event System
  * Manages subscriptions and broadcasts for real-time data
  */
-
 import { logger } from "../helpers/logger.ts";
 import { publicSrtConfig } from "../helpers/srt-secret-redaction.ts";
 import { publicStreamIds } from "../helpers/stream-id-secret.ts";

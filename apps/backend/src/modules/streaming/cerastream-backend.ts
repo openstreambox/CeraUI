@@ -150,6 +150,7 @@ import { asRawRequestClient } from "./raw-request.ts";
 import {
 	classifyStartFailure,
 	StreamStartFailure,
+	typedStartFailure,
 } from "./start-failure-taxonomy.ts";
 import {
 	ENGINE_CLOSE_DEADLINE_MS,
@@ -1772,8 +1773,13 @@ export class CerastreamBackend implements StreamingBackend {
 		opts: StreamRunOptions,
 	): StartParamsWithAudioMode {
 		if (srtEncryptionUnavailable(config)) {
-			throw new Error(
-				"SRT output encryption is not supported by this engine binding",
+			throw new StreamStartFailure(
+				typedStartFailure(
+					"backend-start",
+					"params",
+					"start_invalid",
+					"srt_encryption_unavailable",
+				),
 			);
 		}
 		const srt: {

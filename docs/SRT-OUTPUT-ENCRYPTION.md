@@ -58,3 +58,22 @@ Stream IDs are write-only secrets as described in [Stream ID handling](STREAM-ID
 Both protections apply together at config events, remote relays and diagnostic
 boundaries. Retained passphrases are scrubbed by value, including encoded forms,
 and Error messages and stacks pass through the same scrub before log storage.
+
+Value matching covers only currently retained secrets, including common form,
+URL, inspection and JSON encodings. Old values after replacement or clear, and
+unsaved values, fall back to the existing JSON and `passphrase=` label patterns;
+other unretained spellings are not guaranteed to be scrubbed. String leaves in
+class instances and `toJSON` results, and UTF-8 Buffer contents, are scrubbed at
+log serialization. Stack frame paths are kept; labelled secret lines and
+retained values are scrubbed.
+
+A retained encryption setting refuses Start with the stable
+`srt_encryption_unavailable` code and a localized explanation. Clear both
+`srt_passphrase` and `srt_pbkeylen` through the explicit-empty API operation
+before starting with this engine; the hidden controls cannot clear them yet.
+
+Los valores anteriores o no guardados solo se filtran mediante los patrones de
+etiquetas existentes; no se garantiza ocultar otras formas. Si hay ajustes de
+cifrado guardados, el inicio explica que no son compatibles. Borra la contraseña
+y la longitud de clave mediante la operación explícita de borrado de la API
+antes de iniciar con este motor.

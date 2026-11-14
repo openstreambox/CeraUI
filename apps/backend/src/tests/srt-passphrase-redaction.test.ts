@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { inspect } from "node:util";
 import { formatProdEntry, logRedact } from "../helpers/logger";
 import { redactSrtPassphrases } from "../helpers/srt-secret-redaction";
 import type { AppWebSocket } from "../rpc/types";
@@ -250,5 +251,135 @@ test("explicit clear accepts a selected key length and clears both stored fields
 		Object.assign(config, before);
 		setConfigFilePath(oldPath);
 		await rm(scratch, { recursive: true, force: true });
+	}
+});
+
+test.each(["syntheticPassphrase42", "synthetic phrase\"'\\~!"])(
+	"scrubs retained passphrase serialization and encodings: %s",
+	async (secret) => {
+		const { getConfig } = await import("../modules/config");
+		const config = getConfig();
+		const previous = config.srt_passphrase;
+		config.srt_passphrase = secret;
+		try {
+			class Detail {
+				constructor(public detail: string) {}
+			}
+			for (const detail of [
+				new Detail(secret),
+				Buffer.from(secret),
+				{ toJSON: () => secret },
+				{ toJSON: () => ({ nested: new Detail(secret) }) },
+			]) {
+				const output = formatProdEntry(
+					logRedact({
+						level: "error",
+						message: "failed",
+						detail,
+					}) as Parameters<typeof formatProdEntry>[0],
+				);
+				expect(output).not.toContain("synthetic");
+				expect(output).not.toContain(
+					Buffer.from(secret).toJSON().data.join(","),
+				);
+				expect(output).toContain("[REDACTED]");
+			}
+			let escaped = secret;
+			for (let i = 0; i < 4; i++)
+				escaped = JSON.stringify(escaped).slice(1, -1);
+			for (const token of [
+				new URLSearchParams({ value: secret }).toString().slice(6),
+				encodeURIComponent(secret).replace(/%[A-F0-9]{2}/g, (s) =>
+					s.toLowerCase(),
+				),
+				encodeURIComponent(secret).replace(
+					/[!'~]/g,
+					(s) => `%${s.charCodeAt(0).toString(16).toUpperCase()}`,
+				),
+				encodeURIComponent(encodeURIComponent(secret)),
+				inspect(secret).slice(1, -1),
+				escaped,
+			]) {
+				expect(redactSrtPassphrases(`failure: ${token}`)).toBe(
+					"failure: [REDACTED]",
+				);
+			}
+		} finally {
+			config.srt_passphrase = previous;
+		}
+	},
+);
+
+test.each([
+	{ srt_passphrase: "syntheticPassphrase42" },
+	{ srt_pbkeylen: 32 as const },
+])(
+	"reports a specific secret-free encryption Start refusal: %j",
+	async (config) => {
+		const { CerastreamBackend } = await import(
+			"../modules/streaming/cerastream-backend"
+		);
+		const { StreamStartFailure } = await import(
+			"../modules/streaming/start-failure-taxonomy"
+		);
+		const backend = new CerastreamBackend({
+			connect: async () => {
+				throw new Error("unexpected connection");
+			},
+		});
+		try {
+			await backend.start(config, {
+				pipeline: "test",
+				host: "127.0.0.1",
+				port: 9000,
+			});
+			throw new Error("unexpected success");
+		} catch (error) {
+			expect(error).toBeInstanceOf(StreamStartFailure);
+			const failure = (error as InstanceType<typeof StreamStartFailure>)
+				.failure;
+			expect(failure.class).toBe("start_invalid");
+			expect(failure.code).toBe("srt_encryption_unavailable");
+			expect(failure.retriable).toBe(false);
+			expect(JSON.stringify(failure)).not.toContain("synthetic");
+		}
+	},
+);
+
+test("publishes a specific encryption refusal notification", async () => {
+	const { addClient, removeClient } = await import("../rpc/events");
+	const { reportStartTerminalFailure } = await import(
+		"../modules/streaming/stream-start-retry-reporting"
+	);
+	const messages: string[] = [];
+	const ws = {
+		send: (message: string) => messages.push(message),
+		data: { isAuthenticated: true, lastActive: Date.now() },
+	} as unknown as AppWebSocket;
+	addClient(ws);
+	try {
+		reportStartTerminalFailure({
+			attemptId: "att_encryption",
+			phase: "params",
+			class: "start_invalid",
+			code: "srt_encryption_unavailable",
+			retry: {
+				state: "not_retriable",
+				attempt: 1,
+				maxAttempts: 3,
+				suppressed: false,
+			},
+		});
+		const notification = messages
+			.flatMap((message) => JSON.parse(message).notification?.show ?? [])
+			.find((value) => value?.name === "stream_start_failed");
+		expect(notification.key).toBe(
+			"notifications.streamStartSrtEncryptionUnavailableFailed",
+		);
+		expect(notification.msg).toBe(
+			"Saved SRT encryption settings are not supported. Clear them before starting.",
+		);
+	} finally {
+		removeClient(ws);
 	}
 });
