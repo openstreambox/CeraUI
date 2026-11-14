@@ -2767,5 +2767,16 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"network.changeSafety.askBefore.own": "此更改会断开你通过 {via} 与盒子的连接。",
+	"network.changeSafety.askBefore.unknown": "此更改可能会断开你与盒子的连接。",
+	"network.changeSafety.askBefore.undo": "如果我在 {seconds} 秒内未确认就撤销",
+	"network.changeSafety.askBefore.keep": "保留更改",
+	"network.changeSafety.confirm.prompt": "仍然连接着？请在 {seconds} 秒内确认，否则盒子会撤销更改。",
+	"network.changeSafety.confirm.action": "确认",
+	"network.changeSafety.notice.disconnected": "此更改断开了你的连接，所以盒子已撤销它。仍要进行更改吗？",
+	"network.changeSafety.notice.restart": "在你确认前网络已重启，所以盒子已撤销它。仍要更改吗？",
+	"network.changeSafety.notice.make": "进行更改",
+	"network.changeSafety.notice.leave": "保持撤销",
+	"network.changeSafety.kept.undo": "撤销上一次网络更改"
 }

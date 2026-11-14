@@ -2767,5 +2767,16 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"network.changeSafety.askBefore.own": "이 변경으로 {via}를 통한 박스 연결이 끊깁니다.",
+	"network.changeSafety.askBefore.unknown": "이 변경으로 박스와의 연결이 끊길 수 있습니다.",
+	"network.changeSafety.askBefore.undo": "{seconds}초 안에 확인하지 않으면 되돌리기",
+	"network.changeSafety.askBefore.keep": "변경 유지",
+	"network.changeSafety.confirm.prompt": "아직 연결되어 있나요? {seconds}초 안에 확인하지 않으면 박스가 변경을 되돌립니다.",
+	"network.changeSafety.confirm.action": "확인",
+	"network.changeSafety.notice.disconnected": "이 변경으로 연결이 끊겨 박스가 되돌렸습니다. 그래도 변경할까요?",
+	"network.changeSafety.notice.restart": "확인 전에 네트워크가 다시 시작되어 박스가 되돌렸습니다. 그래도 변경할까요?",
+	"network.changeSafety.notice.make": "변경하기",
+	"network.changeSafety.notice.leave": "되돌린 상태로 두기",
+	"network.changeSafety.kept.undo": "마지막 네트워크 변경 되돌리기"
 }

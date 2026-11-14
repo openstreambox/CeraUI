@@ -2812,5 +2812,16 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"network.changeSafety.askBefore.own": "यह बदलाव आपको {via} से बॉक्स से डिस्कनेक्ट कर देगा।",
+	"network.changeSafety.askBefore.unknown": "यह बदलाव आपको बॉक्स से डिस्कनेक्ट कर सकता है।",
+	"network.changeSafety.askBefore.undo": "{seconds} से. में पुष्टि न करूँ तो वापस लें",
+	"network.changeSafety.askBefore.keep": "बदलाव रखें",
+	"network.changeSafety.confirm.prompt": "अभी भी जुड़े हैं? {seconds} से. में पुष्टि करें, वरना बॉक्स बदलाव वापस ले लेगा।",
+	"network.changeSafety.confirm.action": "पुष्टि करें",
+	"network.changeSafety.notice.disconnected": "इस बदलाव से आप डिस्कनेक्ट हुए, इसलिए बॉक्स ने इसे वापस लिया। फिर भी करना है?",
+	"network.changeSafety.notice.restart": "पुष्टि से पहले नेटवर्क फिर से शुरू हुआ, इसलिए बॉक्स ने इसे वापस लिया। फिर भी?",
+	"network.changeSafety.notice.make": "बदलाव करें",
+	"network.changeSafety.notice.leave": "वापस ही रहने दें",
+	"network.changeSafety.kept.undo": "आखिरी नेटवर्क बदलाव वापस लें"
 }

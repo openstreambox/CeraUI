@@ -2815,5 +2815,16 @@
 	"network.sharing.policy.failed": "No se pudo leer o actualizar la política. Recárgala para comprobar el ajuste actual.",
 	"network.sharing.policy.healthWeight": "Peso de salud (antes de la política)",
 	"network.sharing.policy.healthTitle": "Salud de los enlaces",
-	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos."
+	"network.sharing.policy.healthBody": "{usable} de {total} enlaces tienen salud suficiente para considerarse. La política de clientes puede excluirlos.",
+	"network.changeSafety.askBefore.own": "Este cambio te desconecta de la caja por {via}.",
+	"network.changeSafety.askBefore.unknown": "Este cambio podría desconectarte de la caja.",
+	"network.changeSafety.askBefore.undo": "Deshacer si no confirmo en {seconds} s",
+	"network.changeSafety.askBefore.keep": "Mantener el cambio",
+	"network.changeSafety.confirm.prompt": "¿Sigues conectado? Confirma en {seconds} s o la caja deshace el cambio.",
+	"network.changeSafety.confirm.action": "Confirmar",
+	"network.changeSafety.notice.disconnected": "Este cambio te desconectó, así que la caja lo deshizo. ¿Todavía quieres hacerlo?",
+	"network.changeSafety.notice.restart": "La red se reinició antes de que confirmaras, así que la caja lo deshizo. ¿Lo quieres?",
+	"network.changeSafety.notice.make": "Hacer el cambio",
+	"network.changeSafety.notice.leave": "Dejarlo deshecho",
+	"network.changeSafety.kept.undo": "Deshacer el último cambio de red"
 }

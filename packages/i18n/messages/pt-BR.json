@@ -2815,5 +2815,16 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"network.changeSafety.askBefore.own": "Esta mudança desconecta você da caixa por {via}.",
+	"network.changeSafety.askBefore.unknown": "Esta mudança pode desconectar você da caixa.",
+	"network.changeSafety.askBefore.undo": "Desfazer se eu não confirmar em {seconds} s",
+	"network.changeSafety.askBefore.keep": "Manter a mudança",
+	"network.changeSafety.confirm.prompt": "Ainda conectado? Confirme em {seconds} s ou a caixa desfaz a mudança.",
+	"network.changeSafety.confirm.action": "Confirmar",
+	"network.changeSafety.notice.disconnected": "Esta mudança desconectou você, então a caixa a desfez. Ainda quer fazê-la?",
+	"network.changeSafety.notice.restart": "A rede reiniciou antes da sua confirmação, então a caixa desfez. Ainda quer?",
+	"network.changeSafety.notice.make": "Fazer a mudança",
+	"network.changeSafety.notice.leave": "Deixar desfeita",
+	"network.changeSafety.kept.undo": "Desfazer a última mudança de rede"
 }

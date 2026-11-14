@@ -2767,5 +2767,16 @@
 	"network.sharing.policy.failed": "Could not read or update client policy. Reload to check the current setting.",
 	"network.sharing.policy.healthWeight": "Health weight (before policy)",
 	"network.sharing.policy.healthTitle": "Uplink health",
-	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them."
+	"network.sharing.policy.healthBody": "{usable} of {total} uplinks are healthy enough to consider. Client policy may exclude them.",
+	"network.changeSafety.askBefore.own": "この変更で {via} 経由のボックス接続が切れます。",
+	"network.changeSafety.askBefore.unknown": "この変更でボックスとの接続が切れる可能性があります。",
+	"network.changeSafety.askBefore.undo": "{seconds} 秒以内に確認しなければ元に戻す",
+	"network.changeSafety.askBefore.keep": "変更を保持",
+	"network.changeSafety.confirm.prompt": "接続できていますか？{seconds} 秒以内に確認しないと、ボックスが変更を元に戻します。",
+	"network.changeSafety.confirm.action": "確認",
+	"network.changeSafety.notice.disconnected": "この変更で接続が切れたため、ボックスが元に戻しました。それでも変更しますか？",
+	"network.changeSafety.notice.restart": "確認前にネットワークが再起動したため、ボックスが元に戻しました。それでも変更しますか？",
+	"network.changeSafety.notice.make": "変更する",
+	"network.changeSafety.notice.leave": "元に戻したままにする",
+	"network.changeSafety.kept.undo": "直前のネットワーク変更を元に戻す"
 }
