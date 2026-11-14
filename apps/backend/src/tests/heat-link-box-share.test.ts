@@ -41,6 +41,7 @@ function sample(now: number, soc = 81): BoxSample {
 		})),
 		clients: ["phone", "guest", "admin"].map((id) => ({
 			id,
+			name: id,
 			bound: true,
 			ipv4Only: true,
 			joinedAt: -200000,
@@ -469,7 +470,15 @@ test("carrying admission veto releases policy state before a later fresh report"
 		measured: { sample: s, policy },
 	});
 	const s = sample(76000);
-	expect(planLinkBoxHeat(3, false, false, evidence(s), 76000)).toMatchObject({
+	expect(
+		planLinkBoxHeat(
+			3,
+			true,
+			false,
+			{ ...evidence(s), carrying: "idle" },
+			76000,
+		),
+	).toMatchObject({
 		lend: null,
 		pause: [],
 	});
@@ -1024,4 +1033,163 @@ test("a peer entering recovery during a four-link loan restores immediately", ()
 	item(s.links, 3).recovering = true;
 	expect(p.tick(s)).toMatchObject({ lend: null, pause: [] });
 	expect(p.timeline.at(-1)?.reason).toBe("link recovering");
+});
+
+test("outer planner holds one loan and pause through hourly missed temperature reads", async () => {
+	const { planLinkBoxHeat } = await import(
+		"../modules/streaming/heat-link-box.ts"
+	);
+	const policy = new LinkBoxHeatPolicy();
+	let loans = 0,
+		pauses = 0;
+	let previous = { lend: null as string | null, pause: [] as string[] };
+	for (let t = 0; t <= 3600000; t += 1000) {
+		const s = sample(t);
+		if (t > 0 && t % 125000 === 0) s.soc = null;
+		const plan = planLinkBoxHeat(
+			3,
+			s.soc !== null,
+			false,
+			{
+				at: t,
+				carrying: "streaming",
+				encoder: false,
+				mainLink: null,
+				phone: null,
+				links: [],
+				clients: null,
+				measured: { sample: s, policy },
+			},
+			t,
+		);
+		if (plan.lend && !previous.lend) loans++;
+		if (plan.pause.length && !previous.pause.length) pauses++;
+		if (s.soc === null) expect(plan.usb).toBe(false);
+		previous = plan;
+	}
+	expect({ loans, pauses }).toEqual({ loans: 1, pauses: 1 });
+});
+
+test("suggest only needs one explicit request and retains every client protection", () => {
+	const p = new LinkBoxHeatPolicy();
+	const read = (t: number): BoxSample => ({
+		...sample(t),
+		pauseMode: "suggest",
+	});
+	let plan = p.tick(read(0));
+	for (let t = 1000; t <= 75000; t += 1000) plan = p.tick(read(t));
+	expect(plan).toMatchObject({ lend: "leg2", pause: [], suggestion: "guest" });
+	p.requestPause("phone");
+	expect(p.tick(read(76000)).pause).toEqual([]);
+	p.requestPause("guest");
+	expect(p.tick(read(77000)).pause).toEqual(["guest"]);
+	p.letBackOn("guest");
+	expect(p.tick(read(78000)).pause).toEqual([]);
+	for (let t = 79000; t <= 220000; t += 1000)
+		expect(p.tick(read(t)).pause).toEqual([]);
+});
+
+test("a suggestion is rechecked and an unused request never survives an unknown reading", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p, 70000);
+	p.requestPause("guest");
+	const s: BoxSample = { ...sample(71000), pauseMode: "suggest", soc: null };
+	expect(p.tick(s).pause).toEqual([]);
+	expect(p.tick({ ...sample(72000), pauseMode: "suggest" }).pause).toEqual([]);
+	p.requestPause("guest");
+	const protectedSample: BoxSample = { ...sample(73000), pauseMode: "suggest" };
+	item(protectedSample.clients, 1).streaming = true;
+	expect(p.tick(protectedSample).pause).toEqual([]);
+	expect(p.tick({ ...sample(74000), pauseMode: "suggest" }).pause).toEqual([]);
+});
+
+test("switching to suggest lifts an automatic pause and does not pause again without a tap", () => {
+	const p = new LinkBoxHeatPolicy();
+	expect(warm(p).pause).toEqual(["guest"]);
+	expect(p.tick({ ...sample(76000), pauseMode: "suggest" }).pause).toEqual([]);
+	for (let t = 77000; t <= 200000; t += 1000)
+		expect(p.tick({ ...sample(t), pauseMode: "suggest" }).pause).toEqual([]);
+});
+
+test("unnamed devices are never paused in either mode", () => {
+	for (const mode of ["auto", "suggest"] as const) {
+		const p = new LinkBoxHeatPolicy();
+		for (let t = 0; t <= 80000; t += 1000) {
+			const s: BoxSample = { ...sample(t), pauseMode: mode };
+			item(s.clients, 1).name = " ";
+			p.requestPause("guest");
+			expect(p.tick(s)).toMatchObject({ pause: [] });
+		}
+	}
+});
+
+test("saved mode reaches a dormant session's one-tap pause and Let back on controls", async () => {
+	const { LinkBoxHeatSession } = await import(
+		"../modules/streaming/heat-link-box-share.ts"
+	);
+	const { createHeatSettings } = await import(
+		"../modules/streaming/heat-link-box-settings.ts"
+	);
+	let now = 0;
+	const writes: (string | null)[] = [];
+	const session = new LinkBoxHeatSession({
+		spareUsb: async () => {},
+		lend: async (_, safe) => safe(),
+		returnLink: async () => true,
+		pause: async (id, safe) => {
+			if (!safe()) return false;
+			writes.push(id);
+			return true;
+		},
+	});
+	const config: { heat_pause_mode?: "auto" | "suggest" } = {
+		heat_pause_mode: "suggest",
+	};
+	const settings = createHeatSettings(
+		() => config,
+		() => {},
+		{ session, read: () => sample(now) },
+	);
+	for (now = 0; now <= 75000; now += 1000) await settings.update();
+	now = 75000;
+	expect(settings.get()).toMatchObject({
+		mode: "suggest",
+		active: true,
+		suggestion: "guest",
+		paused: null,
+	});
+	expect(writes).toEqual([]);
+	expect(await settings.action("pause", "phone")).toBe(false);
+	expect(await settings.action("pause", "guest")).toBe(true);
+	expect(settings.get()).toMatchObject({ paused: "guest", suggestion: null });
+	expect(await settings.action("restore", "guest")).toBe(true);
+	for (now = 76000; now <= 220000; now += 1000) await settings.update();
+	expect(settings.get().paused).toBeNull();
+});
+
+test("the outer planner carries a suggest-only offer without pausing", async () => {
+	const { planLinkBoxHeat } = await import(
+		"../modules/streaming/heat-link-box.ts"
+	);
+	const policy = new LinkBoxHeatPolicy();
+	warm(policy, 70000);
+	const s: BoxSample = { ...sample(71000), pauseMode: "suggest" };
+	expect(
+		planLinkBoxHeat(
+			3,
+			true,
+			false,
+			{
+				at: s.now,
+				carrying: "streaming",
+				encoder: false,
+				mainLink: null,
+				phone: null,
+				links: [],
+				clients: null,
+				measured: { sample: s, policy },
+			},
+			s.now,
+		),
+	).toMatchObject({ lend: "leg2", pause: [], suggestion: "guest" });
 });

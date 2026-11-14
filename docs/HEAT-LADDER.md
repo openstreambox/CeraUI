@@ -192,8 +192,8 @@ All numerical thresholds in this policy are proposals, not hardware measurements
 
 `heat-link-box-share.ts` adds the session policy and an injected effect-owner
 boundary. It sits above the carrying-only warm step and the bounded client
-lease. It does not register a production producer, a native effect adapter or
-new UI. The current notification and hardware behavior remain unchanged.
+lease. It does not register a production producer, a native effect adapter. Settings → Device → Heat saves the pause preference;
+the current production notification and hardware behavior remain unchanged.
 
 The policy uses the existing SoC thresholds, ten-second entry dwell,
 five-minute hold, sixty-second cooling dwell and two-minute reverse steps.
@@ -283,7 +283,9 @@ primero al cliente y después devuelve el enlace, con los tiempos de espera de
 la escala térmica. «Dejar entrar» protege al cliente durante esa sesión.
 
 Solo se prueban fuentes térmicas y controladores simulados. No hay nuevos
-contadores reales, integración visual ni activación del controlador de pausa.
+contadores reales ni activación del controlador de pausa. La preferencia se
+guarda en Ajustes → Dispositivo → Calor; los controles de pausa solo se muestran
+cuando existe un estado medido de sesión.
 Antes de activarlo se necesitan mediciones completas del tráfico y adaptadores
 que confirmen cada acción y restauración. Las cifras son propuestas sin
 mediciones de ahorro térmico.
@@ -301,3 +303,58 @@ Después de liberar un cliente, espera dos minutos antes de pausar otro.
 El diseño permite pausar sin retirar un enlace, incluso sin estadísticas de
 transmisión (C6); este borrador exige ambas cosas juntas hasta revisar un
 contrato independiente de admisión y restauración para la pausa.
+
+
+## Client pause preference and controls
+
+Settings → Device → Heat defaults to automatic pauses at critical heat. “Suggest
+only” saves `heat_pause_mode: "suggest"`; the streamer then taps “Pause one
+device” once. “Let back on” releases a confirmed pause and exempts that device
+for the session. Both modes protect the phone, management and possible streaming
+clients, and clients without a bound, nonblank name. Only one client is paused
+at a time. Switching to suggest only lifts an automatic pause on the next
+measured update and preserves lift spacing and client cooldown.
+
+The controller reads the saved mode into every sample, including effect-lock
+rechecks. A suggestion is not a confirmed pause. Its target is revalidated on
+the tap and under the effect owner's lock; stale requests never grant later
+permission. Failed persistence preserves the previous mode; corrupt saved modes
+close configuration authority instead of falling back to automatic control.
+
+The settings RPC is available, but the production instance has no measured
+session binding. It reports `active: false` and rejects pause/restore actions.
+The settings dialog says automatic pauses are not active on this box yet. The
+optional `heat.linkBox` projection renders count-only live controls, without
+names or addresses. A future qualified owner must bind the session, call
+`update()` for each measured observation and publish its confirmed control state.
+Tests inject an in-memory session; no production producer or adapter is added.
+
+The outer planner lets the policy apply its three-second thermal grace while
+USB remains gated on a known temperature. A missed read every 125 seconds holds
+one loan and one pause over an hour. Repeated outages longer than three seconds
+still release and may repeatedly lend and pause again; thermal-only expiries do
+not spend a rollback strike. This remains a qualification limit.
+
+### Español (Latinoamérica)
+
+Ajustes → Dispositivo → Calor guarda la preferencia. Por defecto, la caja pausa
+internet automáticamente para un solo dispositivo adicional con calor crítico.
+“Solo sugerir” pide que toques “Pausar un dispositivo” una vez. “Permitir de nuevo”
+restaura el acceso y excluye al dispositivo durante esa sesión. El teléfono,
+la administración, quienes puedan estar transmitiendo y los dispositivos sin un
+nombre verificado quedan protegidos en ambos modos. Cambiar a Solo sugerir
+levanta la pausa automática en la siguiente lectura y conserva los tiempos de
+espera. Un error al guardar conserva la elección anterior; un valor guardado
+inválido bloquea la autoridad de configuración.
+
+Los controles muestran solo cantidades, sin nombres ni direcciones. La instancia
+de producción no tiene una sesión medida: informa que no está activa y rechaza
+las acciones. La pantalla lo indica; guardar la preferencia no activa efectos.
+Las pruebas usan una sesión en memoria. Aún faltan el productor y los adaptadores
+reales antes de habilitarlo.
+
+El planificador externo respeta la gracia térmica de tres segundos; USB sigue
+requiriendo una temperatura conocida. Una lectura perdida cada 125 segundos
+mantiene un préstamo y una pausa en una hora. Fallos repetidos de más de tres
+segundos aún restauran y pueden volver a prestar y pausar repetidamente, sin
+sumar un fallo de transmisión. Sigue siendo un límite por comprobar.

@@ -2847,5 +2847,16 @@
 	"notifications.clientCarryingUnknown": "Le boîtier vérifie les clients. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
 	"general.updateReasonClientTraffic": "Un flux est actif ou en cours de vérification. Arrêtez les flux des appareils connectés et celui du boîtier avant la mise à jour.",
 	"notifications.disruptiveActionClientTraffic": "Cette action n’a pas été exécutée. Réessayez lorsque le flux de la box et le trafic de diffusion des appareils connectés sont inactifs et qu’aucune mise à jour n’est en cours.",
-	"notifications.linkBoxHeatWaiting": "Le boîtier est chaud. Les liaisons du téléphone restent disponibles pendant la vérification de la capacité. Aérez-le."
+	"notifications.linkBoxHeatWaiting": "Le boîtier est chaud. Les liaisons du téléphone restent disponibles pendant la vérification de la capacité. Aérez-le.",
+	"settings.heat.title": "Chaleur",
+	"settings.heat.description": "Refroidir pendant le relais du stream du téléphone",
+	"settings.heat.automatic": "Si le boîtier est très chaud, il peut suspendre Internet pour un autre appareil Wi-Fi à la fois. Ton téléphone, les personnes susceptibles de streamer et les appareils sans nom restent protégés. Touche Rétablir l’accès pour annuler.",
+	"settings.heat.suggest": "Suggérer seulement",
+	"settings.heat.suggestHelp": "Me demander d’abord. Un appui suspend l’appareil suggéré.",
+	"settings.heat.dormant": "Les pauses automatiques ne sont pas encore actives sur ce boîtier. Ton choix est enregistré pour plus tard.",
+	"settings.heat.failed": "Impossible d’enregistrer ton choix. Réessaie.",
+	"live.heat.pauseDevice": "Suspendre un appareil",
+	"live.heat.letBackOn": "Rétablir l’accès",
+	"live.heat.clientPaused": "Internet suspendu pour un autre appareil Wi-Fi. Le stream de ton téléphone conserve ses liens.",
+	"live.heat.clientFailed": "La modification de la pause de l’appareil n’a pas pu être confirmée. Réessaie."
 }

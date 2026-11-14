@@ -24,6 +24,8 @@ afterEach(async () => {
 });
 
 test.each([
+	'{"heat_pause_mode":"invalid"}',
+	'{"heat_pause_mode":"suggest","heat_pause_mode":"auto"}',
 	'{"modem_provisioning":false,"modem_provisioning":true}',
 	'{"modem_capabilities":{"fcc_auto_unlock":false,"fcc_auto_unlock":true}}',
 	'{"bond_opt_out":{"usb:a":true},"bond_opt_out":{}}',
@@ -63,4 +65,17 @@ test("cosmetic preference salvage retains valid safety fields", async () => {
 	expect(getConfig().max_br).toBe(5000);
 	expect(getConfig().modem_provisioning).toBe(false);
 	expect(getConfig().bond_opt_out).toEqual({ "usb:a": true });
+});
+
+test("the saved suggest-only preference survives an atomic save and reload", async () => {
+	writeFileSync(path, "{}");
+	await loadConfig();
+	expect(getConfig().heat_pause_mode).toBeUndefined();
+	getConfig().heat_pause_mode = "suggest";
+	saveConfig();
+	await loadConfig();
+	expect(getConfig().heat_pause_mode).toBe("suggest");
+	expect(JSON.parse(readFileSync(path, "utf8")).heat_pause_mode).toBe(
+		"suggest",
+	);
 });

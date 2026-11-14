@@ -7,6 +7,14 @@ import { getStatus } from '$lib/rpc/subscriptions.svelte';
 let status = $derived(getStatus()?.heat);
 let unavailable = $state(false);
 let pending = $state(false);
+let clientFailed = $state(false);
+async function clientAction(action: 'pause' | 'restore', id: string | null | undefined) {
+ if (!id || pending) return;
+ pending = true;
+ try { clientFailed = !(await rpc.streaming.linkBoxHeatAction({ action, id })).success; }
+ catch { clientFailed = true; }
+ finally { pending = false; }
+}
 async function toggle() {
  pending = true;
  try {
@@ -40,6 +48,13 @@ async function toggle() {
   {#if status && status.stage >= 2}<p class="mt-1 text-muted-foreground">{m['live.heat.air']()}</p>{#if status.phoneAdvice}<p>{m['live.heat.phone']()}</p>{/if}{/if}
   {#if status && status.stage > 0}
    <Button variant="outline" size="sm" class="mt-2" disabled={pending} onclick={toggle} aria-pressed={status.keepQuality}>{m['live.heat.keep']()}</Button>
+  {/if}
+  {#if clientFailed}<p role="alert">{m['live.heat.clientFailed']()}</p>{/if}
+  {#if status?.linkBox?.paused}
+   <p>{m['live.heat.clientPaused']()}</p>
+   <Button variant="outline" size="sm" disabled={pending} onclick={() => clientAction('restore', status?.linkBox?.paused)}>{m['live.heat.letBackOn']()}</Button>
+  {:else if status?.linkBox?.suggestion}
+   <Button variant="outline" size="sm" disabled={pending} onclick={() => clientAction('pause', status?.linkBox?.suggestion)}>{m['live.heat.pauseDevice']()}</Button>
   {/if}
   {#if status?.history.length}
    <details class="mt-2 text-muted-foreground">

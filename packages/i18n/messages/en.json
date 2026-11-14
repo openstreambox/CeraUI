@@ -2844,5 +2844,16 @@
 	"notifications.clientCarryingUnknown": "The box is checking client activity. Updates, restarts, power-off and idle link changes will wait.",
 	"general.updateReasonClientTraffic": "A stream is active or its state is being checked. Stop streaming on connected devices and stop the box’s own stream before installing an update.",
 	"notifications.disruptiveActionClientTraffic": "This action was not run. Try again when the box’s own stream and connected devices’ stream traffic are idle and no update is in progress.",
-	"notifications.linkBoxHeatWaiting": "The box is hot. Keeping the phone's links available while capacity is checked. Give it air."
+	"notifications.linkBoxHeatWaiting": "The box is hot. Keeping the phone's links available while capacity is checked. Give it air.",
+	"settings.heat.title": "Heat",
+	"settings.heat.description": "Cooling while carrying a phone’s stream",
+	"settings.heat.automatic": "When the box is very hot, it can pause internet for one other Wi-Fi device at a time. Your phone, anyone who might be streaming and unnamed devices stay protected. You can tap Let back on.",
+	"settings.heat.suggest": "Suggest only",
+	"settings.heat.suggestHelp": "Ask me first. I tap once to pause a suggested device.",
+	"settings.heat.dormant": "Automatic pauses are not active on this box yet. This saves your choice for later.",
+	"settings.heat.failed": "Could not save your choice. Try again.",
+	"live.heat.pauseDevice": "Pause one device",
+	"live.heat.letBackOn": "Let back on",
+	"live.heat.clientPaused": "Paused internet for one other Wi-Fi device. Your phone’s stream keeps its links.",
+	"live.heat.clientFailed": "The device pause change could not be confirmed. Try again."
 }

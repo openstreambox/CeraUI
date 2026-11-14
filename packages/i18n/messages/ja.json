@@ -2799,5 +2799,16 @@
 	"notifications.clientCarryingUnknown": "クライアントの利用状況を確認中です。更新、再起動、電源オフ、アイドル時の回線変更は待機します。",
 	"general.updateReasonClientTraffic": "配信中、または状態を確認中です。更新前に接続端末と本機の配信を停止してください。",
 	"notifications.disruptiveActionClientTraffic": "この操作は実行されませんでした。ボックス自身の配信と接続デバイスの配信トラフィックがアイドル状態になり、更新が進行していないときに、もう一度お試しください。",
-	"notifications.linkBoxHeatWaiting": "ボックスが熱くなっています。容量の確認中もスマートフォンの回線は利用できます。風通しをよくしてください。"
+	"notifications.linkBoxHeatWaiting": "ボックスが熱くなっています。容量の確認中もスマートフォンの回線は利用できます。風通しをよくしてください。",
+	"settings.heat.title": "熱対策",
+	"settings.heat.description": "スマートフォンの配信を中継しながら冷却",
+	"settings.heat.automatic": "ボックスが非常に熱い場合、ほかのWi-Fi端末のインターネット接続を1台ずつ一時停止できます。配信中の可能性がある端末、スマートフォン、名前のない端末は保護されます。「接続を戻す」で解除できます。",
+	"settings.heat.suggest": "提案のみ",
+	"settings.heat.suggestHelp": "先に確認します。提案された端末を1回タップして一時停止します。",
+	"settings.heat.dormant": "このボックスでは自動一時停止はまだ有効ではありません。設定は今後のために保存されます。",
+	"settings.heat.failed": "設定を保存できませんでした。もう一度お試しください。",
+	"live.heat.pauseDevice": "端末1台を一時停止",
+	"live.heat.letBackOn": "接続を戻す",
+	"live.heat.clientPaused": "ほかのWi-Fi端末1台のインターネット接続を一時停止しました。スマートフォンの配信回線は維持されます。",
+	"live.heat.clientFailed": "端末の一時停止の変更を確認できませんでした。もう一度お試しください。"
 }

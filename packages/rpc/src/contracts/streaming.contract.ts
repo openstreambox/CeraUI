@@ -13,6 +13,10 @@ import {
 	heatMutationSchema,
 	heatStatusSchema,
 	keepHeatQualitySchema,
+	linkBoxHeatActionSchema,
+	linkBoxHeatModeResultSchema,
+	linkBoxHeatModeSchema,
+	linkBoxHeatSettingsSchema,
 	listDevicesOutputSchema,
 	pipelinesSchema,
 	reloadAudioDelayInputSchema,
@@ -29,6 +33,7 @@ import {
 	streamingSetConfigOutputSchema,
 	streamingStartOutputSchemaExtended,
 	streamingStopOutputSchema,
+	successResponseSchema,
 	switchAudioInputSchema,
 	switchAudioOutputSchema,
 	switchInputInputSchema,
@@ -37,6 +42,9 @@ import {
 
 export const streamingContract = oc.router({
 	getHeat: oc.output(heatStatusSchema),
+	linkBoxHeatAction: oc.input(linkBoxHeatActionSchema).output(successResponseSchema),
+	getLinkBoxHeat: oc.output(linkBoxHeatSettingsSchema),
+	setLinkBoxHeatMode: oc.input(linkBoxHeatModeSchema).output(linkBoxHeatModeResultSchema),
 	keepHeatQuality: oc.input(keepHeatQualitySchema).output(heatMutationSchema),
 	/**
 	 * Start streaming with configuration

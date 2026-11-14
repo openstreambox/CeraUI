@@ -5,7 +5,11 @@ import {
 	type HeatState,
 	initialHeat,
 } from "./heat-ladder.ts";
-import type { BoxSample, LinkBoxHeatPolicy } from "./heat-link-box-share.ts";
+import type {
+	BoxPlan,
+	BoxSample,
+	LinkBoxHeatPolicy,
+} from "./heat-link-box-share.ts";
 
 /** Client owners must supply identities and measured capacity, never infer them
  * from carrying alone. An absent snapshot withholds the visible steps. */
@@ -32,12 +36,12 @@ export function planLinkBoxHeat(
 	keep: boolean,
 	e: LinkBoxEvidence,
 	now: number,
-): { usb: boolean; lend: string | null; pause: string[] } {
+): BoxPlan {
 	const fresh =
 		Number.isFinite(e.at) && now >= e.at && now - e.at <= HEAT_SETTINGS.staleMs;
-	const eligible = fresh && e.carrying === "streaming" && !e.encoder && known;
-	const result: { usb: boolean; lend: string | null; pause: string[] } = {
-		usb: eligible && stage >= 1,
+	const eligible = fresh && e.carrying === "streaming" && !e.encoder;
+	const result: BoxPlan = {
+		usb: eligible && known && stage >= 1,
 		lend: null,
 		pause: [],
 	};
@@ -64,6 +68,9 @@ export function planLinkBoxHeat(
 		usb: result.usb,
 		lend: stage >= 2 ? measured.lend : null,
 		pause: stage >= 3 ? measured.pause : [],
+		...(stage >= 3 && measured.suggestion
+			? { suggestion: measured.suggestion }
+			: {}),
 	};
 }
 

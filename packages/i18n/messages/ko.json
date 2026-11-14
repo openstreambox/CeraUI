@@ -2799,5 +2799,16 @@
 	"notifications.clientCarryingUnknown": "클라이언트 활동을 확인 중입니다. 업데이트, 재시작, 전원 끄기 및 유휴 링크 변경은 대기합니다.",
 	"general.updateReasonClientTraffic": "방송 중이거나 상태를 확인 중입니다. 업데이트 전에 연결된 기기와 박스의 방송을 중지하세요.",
 	"notifications.disruptiveActionClientTraffic": "이 작업은 실행되지 않았습니다. 박스 자체 스트림과 연결된 기기의 스트리밍 트래픽이 유휴 상태이고 업데이트가 진행 중이 아닐 때 다시 시도하세요.",
-	"notifications.linkBoxHeatWaiting": "박스가 뜨겁습니다. 용량을 확인하는 동안 휴대전화 연결은 유지됩니다. 통풍을 확보하세요."
+	"notifications.linkBoxHeatWaiting": "박스가 뜨겁습니다. 용량을 확인하는 동안 휴대전화 연결은 유지됩니다. 통풍을 확보하세요.",
+	"settings.heat.title": "발열",
+	"settings.heat.description": "휴대전화 방송을 중계하며 냉각",
+	"settings.heat.automatic": "박스가 매우 뜨거우면 다른 Wi-Fi 기기의 인터넷을 한 번에 한 대씩 일시 중지할 수 있습니다. 휴대전화, 방송 중일 수 있는 기기와 이름 없는 기기는 보호됩니다. 다시 허용을 눌러 해제할 수 있습니다.",
+	"settings.heat.suggest": "제안만",
+	"settings.heat.suggestHelp": "먼저 물어봅니다. 제안된 기기를 한 번 눌러 일시 중지합니다.",
+	"settings.heat.dormant": "이 박스에서는 자동 일시 중지가 아직 활성화되지 않았습니다. 선택은 나중을 위해 저장됩니다.",
+	"settings.heat.failed": "선택을 저장할 수 없습니다. 다시 시도하세요.",
+	"live.heat.pauseDevice": "기기 한 대 일시 중지",
+	"live.heat.letBackOn": "다시 허용",
+	"live.heat.clientPaused": "다른 Wi-Fi 기기 한 대의 인터넷을 일시 중지했습니다. 휴대전화 방송 연결은 유지됩니다.",
+	"live.heat.clientFailed": "기기 일시 중지 변경을 확인할 수 없습니다. 다시 시도하세요."
 }

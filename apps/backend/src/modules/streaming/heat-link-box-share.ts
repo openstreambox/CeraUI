@@ -5,6 +5,7 @@ import { advanceHeat, initialHeat } from "./heat-ladder.ts";
  * No production producer or hardware effects are registered here. */
 export interface BoxSample {
 	now: number;
+	pauseMode?: "auto" | "suggest";
 	soc: number | null;
 	/** SoC observation time, at most two seconds old; absent/stale means unknown. */
 	socAt: number;
@@ -35,6 +36,8 @@ export interface BoxSample {
 	}[];
 	clients: {
 		id: string;
+		/** A name bound to this observed identity, not an address used as a label. */
+		name?: string;
 		bound: boolean;
 		ipv4Only: boolean;
 		joinedAt: number;
@@ -46,6 +49,7 @@ export interface BoxSample {
 	}[];
 }
 export interface BoxPlan {
+	suggestion?: string;
 	usb: boolean;
 	lend: string | null;
 	pause: string[];
@@ -75,6 +79,11 @@ export class LinkBoxHeatPolicy {
 		peers: string[];
 	} | null = null;
 	private paused: string[] = [];
+	private pauseMode: "auto" | "suggest" = "auto";
+	private requestedPause: string | null = null;
+	requestPause(id: string): void {
+		this.requestedPause = id;
+	}
 	private badAt: number | null = null;
 	private thermalUnknownAt: number | null = null;
 	private rollbacks = 0;
@@ -105,6 +114,8 @@ export class LinkBoxHeatPolicy {
 	}
 	tick(s: BoxSample, stageCeiling = 3): BoxPlan {
 		const now = s.now;
+		const requestedPause = this.requestedPause;
+		this.requestedPause = null;
 		const result: BoxPlan = { usb: false, lend: null, pause: [] };
 		if (!Number.isFinite(now)) {
 			this.unknown = true;
@@ -112,6 +123,13 @@ export class LinkBoxHeatPolicy {
 			this.release(this.lastAt ?? 0, "unknown clock", true);
 			return result;
 		}
+		const mode = s.pauseMode ?? "auto";
+		if (mode !== this.pauseMode && mode === "suggest" && this.paused.length) {
+			for (const id of this.paused) this.clientLocked.set(id, now + 600000);
+			this.paused = [];
+			this.nextPauseAt = now + 120000;
+		}
+		this.pauseMode = mode;
 		const changed = this.session !== s.session;
 		const gap =
 			this.lastAt !== null && (now < this.lastAt || now - this.lastAt > 2000);
@@ -318,6 +336,8 @@ export class LinkBoxHeatPolicy {
 			clientsKnown &&
 			c.id !== s.phone &&
 			!!c.id &&
+			typeof c.name === "string" &&
+			c.name.trim().length > 0 &&
 			c.bound &&
 			c.ipv4Only &&
 			!c.management &&
@@ -356,11 +376,11 @@ export class LinkBoxHeatPolicy {
 				.sort(
 					(a, b) => b.trafficKbps - a.trafficKbps || a.id.localeCompare(b.id),
 				)[0];
-			if (c) {
+			if (c && (mode === "auto" || (!changed && requestedPause === c.id))) {
 				this.paused = [c.id];
 				this.lastPause = now;
 				this.nextPauseAt = now + 120000;
-			}
+			} else if (c) result.suggestion = c.id;
 		}
 		result.lend = this.loan?.id ?? null;
 		result.pause = [...this.paused];
@@ -408,6 +428,18 @@ export class LinkBoxHeatSession {
 	constructor(private readonly effects: BoxHeatEffects) {}
 	letBackOn(id: string): void {
 		this.policy.letBackOn(id);
+	}
+	pauseSuggested(id: string, read: () => BoxSample) {
+		const next = this.tail.then(async () => {
+			const sample = read();
+			if (this.policy.preview(sample).suggestion !== id) return this.snapshot();
+			this.policy.requestPause(id);
+			return this.apply(read);
+		});
+		this.tail = next.catch(() => {
+			// Preserve the queue after a rejected control request.
+		});
+		return next;
 	}
 	update(read: () => BoxSample) {
 		const next = this.tail.then(() => this.apply(read));
@@ -479,6 +511,16 @@ export class LinkBoxHeatSession {
 		)
 			this.confirmed.pause = [client];
 		return this.snapshot();
+	}
+	inspect(sample: BoxSample) {
+		const plan = this.policy.preview(sample);
+		return {
+			paused: this.confirmed.pause[0] ?? null,
+			suggestion:
+				!this.returning && plan.lend === this.confirmed.lend
+					? (plan.suggestion ?? null)
+					: null,
+		};
 	}
 	private snapshot() {
 		return {
