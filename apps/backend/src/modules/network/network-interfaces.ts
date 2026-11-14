@@ -937,7 +937,7 @@ export function processIfconfigOutput(
 			if (
 				!netif[name] ||
 				netif[name].ip !== inetAddr ||
-				netif[name].ipv6 !== ipv6
+				(!inetAddr && netif[name].ipv6 !== ipv6)
 			) {
 				intsChanged = true;
 			}

@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { isIP } from "node:net";
+
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 import killall from "../../helpers/killall.ts";
 
@@ -47,11 +49,30 @@ let receiverIpv6Only = false;
 
 export async function resolveSrtla(addr: string) {
 	let srtlaAddr = addr;
+	const interfaces = Object.entries(getNetworkInterfaces())
+		.filter(([name, entry]) => isBondCandidate(name, entry))
+		.map(([, entry]) => entry);
+	const hasV4 = interfaces.some((entry) => entry.ip);
+	const hasV6 = interfaces.some((entry) => entry.ipv6);
 
 	let addrs: string[] | undefined;
 	let fromCache: boolean | undefined;
 	try {
-		const res = await dnsCacheResolve(addr);
+		// Resolve the preferred family first; a dropped AAAA query must not hold
+		// an IPv4 start open. Fall back to AAAA for an AAAA-only receiver.
+		const literal = isIP(addr) !== 0;
+		let res: Awaited<ReturnType<typeof dnsCacheResolve>>;
+		try {
+			res = await dnsCacheResolve(
+				addr,
+				literal ? undefined : hasV4 ? "a" : hasV6 ? "aaaa" : undefined,
+			);
+		} catch (error) {
+			if (!hasV4 || literal) throw error;
+			res = await dnsCacheResolve(addr, "aaaa");
+		}
+		if (!literal && hasV4 && res.addrs.length === 0)
+			res = await dnsCacheResolve(addr, "aaaa");
 		addrs = res.addrs;
 		fromCache = res.fromCache;
 	} catch (_err) {
@@ -64,12 +85,22 @@ export async function resolveSrtla(addr: string) {
 	if (fromCache) {
 		// Prefer IPv4 for compatibility when available; on a v6-only host keep
 		// DNS64/native AAAA answers rather than pinning an unusable A record.
-		const interfaces = Object.entries(getNetworkInterfaces())
-			.filter(([name, entry]) => isBondCandidate(name, entry))
-			.map(([, entry]) => entry);
-		const hasV4 = interfaces.some((entry) => entry.ip);
-		const hasV6 = interfaces.some((entry) => entry.ipv6);
-		const cachedAddr = addrs.find((ip) => (ip.includes(":") ? hasV6 : hasV4));
+		const ipv4 = addrs.filter((ip) => !ip.includes(":"));
+		const ipv6 = addrs.filter((ip) => ip.includes(":"));
+		// With no bond candidate, leave admission to IP preparation. It supplies
+		// the normal no-network error and still permits a local receiver path.
+		const compatible =
+			interfaces.length === 0
+				? ipv4.length > 0
+					? ipv4
+					: ipv6
+				: hasV4 && ipv4.length > 0
+					? ipv4
+					: hasV6
+						? ipv6
+						: [];
+		const cachedAddr =
+			compatible[Math.floor(Math.random() * compatible.length)];
 		if (!cachedAddr) throw `No compatible cached SRTLA address for ${addr}`;
 		srtlaAddr = cachedAddr;
 		receiverIpv6Only = cachedAddr.includes(":");

@@ -2,6 +2,11 @@ import { expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	deviceBoundProbeExclusionReason,
+	eligibleProbeCandidates,
+	probeExclusionReason,
+} from "../modules/network/connectivity-candidates.ts";
 import type { NetworkInterface } from "../modules/network/network-interfaces.ts";
 import { UplinkHealthRuntimeCore } from "../modules/network/uplink-health/runtime-core.ts";
 
@@ -100,3 +105,51 @@ it("imports the core without setup and preserves production setup validation", a
 		await rm(cwd, { recursive: true, force: true });
 	}
 });
+
+for (const missingV6Target of [false, true]) {
+	it(`probes each source family with its own target (missing IPv6 target: ${missingV6Target})`, async () => {
+		const interfaces: Record<string, NetworkInterface> = {
+			wan4: { ip: "192.0.2.1", error: 0, tp: 0, txb: 0 },
+			wan6: { ipv6: "fd51::1", error: 0, tp: 0, txb: 0 },
+		};
+		const families: (4 | 6 | undefined)[] = [];
+		const probes: [string, string][] = [];
+		const runtime = new UplinkHealthRuntimeCore({
+			now: () => 100,
+			interfaces: () => interfaces,
+			streaming: () => false,
+			telemetry: () => undefined,
+			resolveTarget: async (family) => {
+				families.push(family);
+				return family === 6
+					? missingV6Target
+						? undefined
+						: "fd51::2"
+					: "192.0.2.2";
+			},
+			probe: async (candidate, target) => {
+				probes.push([candidate.name, target]);
+				return "success";
+			},
+			publish: () => {},
+			exclusionReason: deviceBoundProbeExclusionReason,
+			candidates: eligibleProbeCandidates,
+			identity: () => ({ kind: "ethernet" }),
+		});
+		await runtime.tick();
+		expect(families).toEqual([4, 6]);
+		expect(probes).toEqual(
+			missingV6Target
+				? [["wan4", "192.0.2.2"]]
+				: [
+						["wan4", "192.0.2.2"],
+						["wan6", "fd51::2"],
+					],
+		);
+		expect(runtime.records().find((row) => row.iface === "wan6")).toEqual(
+			missingV6Target ? undefined : expect.objectContaining({ state: "up" }),
+		);
+		expect(probeExclusionReason(interfaces.wan6)).toBeUndefined();
+		runtime.dispose();
+	});
+}
