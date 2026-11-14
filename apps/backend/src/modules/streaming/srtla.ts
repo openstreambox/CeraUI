@@ -57,6 +57,14 @@ const entryPaths = new WeakMap<
 >();
 let resolutionGeneration = 0;
 
+/** Clear session-only selection state between isolated inventory tests. */
+export function resetSrtlaSelectionForTest(): void {
+	receiverFamilies = undefined;
+	familySelector.reset();
+	familyStatus.clear();
+	resolutionGeneration++;
+}
+
 export async function resolveSrtla(addr: string) {
 	let srtlaAddr = addr;
 	const generation = ++resolutionGeneration;

@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+
+import { m } from "@ceraui/i18n/svelte";
 import { fireEvent, render } from "@testing-library/svelte";
 import { expect, it } from "vitest";
 import LinkPathStatus from "./LinkPathStatus.svelte";
@@ -9,7 +11,7 @@ it.each([
 	["clat", "IPv4 through translation (CLAT)"],
 	[
 		"receiver-ipv4-only",
-		"Unused: receiver has no IPv6; translation unavailable",
+		"Unused: receiver address in use is IPv4; translation unavailable",
 	],
 	["waiting", "Waiting for a compatible path"],
 	["no-source", "Waiting for a link address"],
@@ -21,14 +23,25 @@ it.each([
 	expect(container.querySelector('[role="alert"]')).toBeNull();
 	const details = container.querySelector("details");
 	expect(details?.open).toBe(false);
-	await fireEvent.click(getByText("Why this path?"));
-	expect(container.querySelector("p")?.textContent?.length).toBeGreaterThan(20);
+	expect(container.querySelector("summary")?.className).toContain(
+		"min-h-[var(--touch-target-min)]",
+	);
+	expect(container.querySelector("summary span")?.className).toContain(
+		"whitespace-nowrap",
+	);
+	await fireEvent.click(getByText("Details"));
+	expect(details?.open).toBe(true);
+	expect(container.querySelector("p")?.textContent).toBe(
+		m[`network.path.${status ?? "unknown"}Why`](),
+	);
 });
 it("replaces a path on withdrawal and labels stale data", async () => {
 	const { getByText, rerender } = render(LinkPathStatus, { status: "clat" });
 	await rerender({ status: "receiver-ipv4-only" });
 	expect(
-		getByText("Unused: receiver has no IPv6; translation unavailable"),
+		getByText(
+			"Unused: receiver address in use is IPv4; translation unavailable",
+		),
 	).toBeTruthy();
 	await rerender({ status: "ipv6", stale: true });
 	expect(getByText("Receiver path is out of date")).toBeTruthy();

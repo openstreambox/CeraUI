@@ -164,7 +164,9 @@ const totalStale = $derived(
 							<LinkTelemetry class="gap-x-2.5" {entry} loading={telemetryLoading} />
 						</div>
 					</div>
-					<LinkPathStatus status={linkPaths?.[link.id]} stale={pathsStale} />
+					{#if linkPaths?.[link.id]}
+						<LinkPathStatus status={linkPaths[link.id]} stale={pathsStale} />
+					{/if}
 				</div>
 			{/each}
 		</div>

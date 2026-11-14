@@ -303,3 +303,15 @@ it("uses device-connection freshness for paths, rather than unchanged telemetry"
 			?.textContent,
 	).toContain("Receiver path is out of date");
 });
+
+it("keeps absent and retracted path maps quiet", async () => {
+	const { queryByTestId, rerender } = render(BondedLinksSection, {
+		links: [linkFor("eth0", 0)],
+		modemEntries: [],
+	});
+	expect(queryByTestId("link-path-status")).toBeNull();
+	await rerender({ linkPaths: { eth0: "ipv4" } });
+	expect(queryByTestId("link-path-status")).not.toBeNull();
+	await rerender({ linkPaths: {} });
+	expect(queryByTestId("link-path-status")).toBeNull();
+});
