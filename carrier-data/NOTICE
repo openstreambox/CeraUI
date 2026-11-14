@@ -1,0 +1,15 @@
+carriers.json is a modified, filtered projection of LineageOS android_vendor_apn
+2842825e44b5ad6e247467bd7a16c1d8bf80407f, including its Google upstream base.
+SPDX-FileCopyrightText: Google Inc
+SPDX-FileCopyrightText: The LineageOS Project
+SPDX-License-Identifier: Apache-2.0
+
+fixtures/android14-regressions.json is a modified projection of real APN rows
+from AOSP device/sample 89b86021ff1ee7977a4e979eb70d5d7cec72a4aa,
+etc/apns-full-conf.xml.
+Copyright 2006, The Android Open Source Project
+SPDX-License-Identifier: Apache-2.0
+
+Original source notices are retained. Modifications filter data candidates,
+apply upstream rules, normalize the documented C Spire defect, preserve selected
+attributes, and collapse connection duplicates.

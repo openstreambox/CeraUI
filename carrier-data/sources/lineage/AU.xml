@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="505"
+        mnc="11"
+        carrier="Telstra Internet"
+        apn="Telstra.wap"
+        type="default,supl"
+    />
+    <apn
+        mcc="505"
+        mnc="11"
+        carrier="Telstra MMS"
+        apn="Telstra.mms"
+        mmsc="http://mmsc.telstra.com:8002"
+        mmsport="80"
+        mmsproxy="10.1.1.180"
+        type="mms"
+    />
+</apns>

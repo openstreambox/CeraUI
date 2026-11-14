@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="234"
+        mnc="09"
+        carrier="Sure Internet"
+        apn="internet"
+        type="default,supl"
+    />
+    <apn
+        mcc="234"
+        mnc="09"
+        carrier="Sure MMS"
+        apn="mms"
+        mmsc="http://mmsc.gprs.cw.com/"
+        mmsport="80"
+        mmsproxy="10.0.3.101"
+        type="mms"
+    />
+    <apn
+        mcc="234"
+        mnc="09"
+        carrier="Sure WAP"
+        apn="wap"
+        port="80"
+        proxy="10.0.3.101"
+        type="default,supl"
+    />
+    <apn
+        mcc="234"
+        mnc="34"
+        carrier="EE Internet"
+        apn="everywhere"
+        authtype="1"
+        password="secure"
+        protocol="IPV4V6"
+        type="default,supl,dun"
+        user="eesecure"
+    />
+    <apn
+        mcc="234"
+        mnc="34"
+        carrier="EE MMS"
+        apn="eezone"
+        authtype="1"
+        mmsc="http://mms/"
+        mmsport="8080"
+        mmsproxy="149.254.201.135"
+        password="secure"
+        type="mms"
+        user="eesecure"
+    />
+    <apn
+        mcc="234"
+        mnc="34"
+        carrier="Orange Internet"
+        apn="orangeinternet"
+        type="default,supl"
+    />
+    <apn
+        mcc="234"
+        mnc="34"
+        carrier="Orange MMS"
+        apn="orangemms"
+        mmsc="http://mms.orange.co.uk/"
+        mmsport="8080"
+        mmsproxy="192.168.224.10"
+        password="Multimedia"
+        type="mms"
+        user="Orange"
+    />
+    <apn
+        mcc="234"
+        mnc="34"
+        carrier="Orange WAP"
+        apn="orangewap"
+        password="Multimedia"
+        port="8080"
+        proxy="192.168.71.35"
+        type="default,supl"
+        user="Orange"
+    />
+    <apn
+        mcc="234"
+        mnc="34"
+        carrier="Orange WAP"
+        apn="paygwap"
+        password="Multimedia"
+        port="8080"
+        proxy="192.168.71.35"
+        type="default,supl"
+        user="Orange"
+    />
+    <apn
+        mcc="234"
+        mnc="35"
+        carrier="Truphone Internet"
+        apn="truphone.com"
+        type="default,supl"
+    />
+</apns>

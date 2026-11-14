@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="202"
+        mnc="17"
+        carrier="Nova Internet"
+        apn="internet.nova.gr"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="default"
+    />
+    <apn
+        mcc="202"
+        mnc="17"
+        carrier="Nova MMS"
+        apn="mms.nova.gr"
+        mmsc="http://mms.nova.gr/mms/"
+        mmsport="8080"
+        mmsproxy="212.251.24.200"
+        protocol="IPV4V6"
+        roaming_protocol="IPV4V6"
+        type="mms"
+    />
+</apns>

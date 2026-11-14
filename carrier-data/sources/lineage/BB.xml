@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="342"
+        mnc="750"
+        carrier="Digicel BB"
+        apn="web.digicelbarbados.com"
+        mmsc=""
+        password=""
+        port=""
+        proxy=""
+        type="default,supl"
+        user=""
+    />
+    <apn
+        mcc="342"
+        mnc="750"
+        carrier="Digicel BB MMS"
+        apn="wap.digicelbarbados.com"
+        mmsc="http://mme.digiceljamaica.com/servlets/mms"
+        mmsport="8080"
+        mmsproxy="172.16.7.12"
+        password="wap03barb"
+        port=""
+        proxy=""
+        type="mms"
+        user="wapbarb"
+    />
+</apns>

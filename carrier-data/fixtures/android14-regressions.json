@@ -1,0 +1,206 @@
+[
+  {
+    "plmn": "20810",
+    "apn": "fnetcoriolis",
+    "name": "Coriolis WAP",
+    "mvno": "gid",
+    "match": "12",
+    "source": "android",
+    "types": [
+      "default",
+      "ia",
+      "supl"
+    ],
+    "carrierId": "2135"
+  },
+  {
+    "plmn": "20810",
+    "apn": "mmscoriolis",
+    "name": "Coriolis MMS",
+    "mvno": "gid",
+    "match": "12",
+    "source": "android",
+    "types": [
+      "mms"
+    ],
+    "carrierId": "2135"
+  },
+  {
+    "plmn": "20810",
+    "apn": "internetcoriolis",
+    "name": "Coriolis WEB",
+    "mvno": "gid",
+    "match": "12",
+    "source": "android",
+    "types": [
+      "default",
+      "ia",
+      "supl",
+      "fota",
+      "dun"
+    ],
+    "authtype": "0",
+    "carrierId": "2135"
+  },
+  {
+    "plmn": "20827",
+    "apn": "coriolis",
+    "name": "Coriolis",
+    "mvno": "spn",
+    "match": "Coriolis",
+    "source": "android",
+    "types": [
+      "default",
+      "ia",
+      "supl"
+    ],
+    "authtype": "1",
+    "carrierId": "2135"
+  },
+  {
+    "plmn": "20827",
+    "apn": "mmscoriolis",
+    "name": "Coriolis MMS",
+    "mvno": "spn",
+    "match": "Coriolis",
+    "source": "android",
+    "types": [
+      "mms"
+    ],
+    "carrierId": "2135"
+  },
+  {
+    "plmn": "310260",
+    "apn": "wap.tracfone",
+    "name": "TFWAP",
+    "mvno": "gid",
+    "match": "deff",
+    "source": "android",
+    "types": [
+      "default",
+      "ia",
+      "mms",
+      "supl",
+      "hipri",
+      "fota"
+    ],
+    "carrierId": "2022",
+    "protocol": "IP",
+    "roamingProtocol": "IP"
+  },
+  {
+    "plmn": "310280",
+    "apn": "ereseller",
+    "name": "Tracfone AT&T",
+    "mvno": "gid",
+    "match": "DEFF",
+    "source": "android",
+    "types": [
+      "default",
+      "ia",
+      "mms",
+      "supl"
+    ],
+    "user": "",
+    "password": "",
+    "proxy": "",
+    "port": "",
+    "carrierId": "10000",
+    "protocol": "IPV4V6",
+    "roamingProtocol": "IPV4V6"
+  },
+  {
+    "plmn": "310280",
+    "apn": "resellermht",
+    "name": "Tracfone AT&T",
+    "mvno": "gid",
+    "match": "DEFF",
+    "source": "android",
+    "types": [
+      "dun"
+    ],
+    "carrierId": "10000",
+    "protocol": "IPV4V6",
+    "roamingProtocol": "IPV4V6"
+  },
+  {
+    "plmn": "310410",
+    "apn": "tfdata",
+    "name": "TFDATA",
+    "mvno": "gid",
+    "match": "deff",
+    "source": "android",
+    "types": [
+      "default",
+      "ia",
+      "mms",
+      "supl",
+      "hipri",
+      "fota"
+    ],
+    "carrierId": "2022",
+    "protocol": "IP",
+    "roamingProtocol": "IP"
+  },
+  {
+    "plmn": "310410",
+    "apn": "ereseller",
+    "name": "Tracfone AT&T",
+    "mvno": "gid",
+    "match": "DEFF",
+    "source": "android",
+    "types": [
+      "default",
+      "ia",
+      "mms",
+      "supl"
+    ],
+    "user": "",
+    "password": "",
+    "proxy": "",
+    "port": "",
+    "carrierId": "10000",
+    "protocol": "IPV4V6",
+    "roamingProtocol": "IPV4V6"
+  },
+  {
+    "plmn": "310410",
+    "apn": "resellermht",
+    "name": "Tracfone AT&T",
+    "mvno": "gid",
+    "match": "DEFF",
+    "source": "android",
+    "types": [
+      "dun"
+    ],
+    "carrierId": "10000",
+    "protocol": "IPV4V6",
+    "roamingProtocol": "IPV4V6"
+  },
+  {
+    "plmn": "64710",
+    "apn": "fnetcoriolis",
+    "name": "Coriolis WAP",
+    "mvno": "gid",
+    "match": "12",
+    "source": "android",
+    "types": [
+      "default",
+      "ia",
+      "supl"
+    ],
+    "carrierId": "2135"
+  },
+  {
+    "plmn": "64710",
+    "apn": "mmscoriolis",
+    "name": "Coriolis MMS",
+    "mvno": "gid",
+    "match": "12",
+    "source": "android",
+    "types": [
+      "mms"
+    ],
+    "carrierId": "2135"
+  }
+]

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<apns version="8">
+    <apn
+        mcc="732"
+        mnc="102"
+        carrier="Movistar CO"
+        apn="internet.movistar.com.co"
+        password="movistar"
+        type="default,supl"
+        user="movistar"
+    />
+    <apn
+        mcc="732"
+        mnc="102"
+        carrier="Movistar CO"
+        apn="internet.movistar.com.co"
+        mmsc=""
+        password="movistar"
+        port=""
+        proxy=""
+        type="default,supl"
+        user="movistar"
+    />
+</apns>
