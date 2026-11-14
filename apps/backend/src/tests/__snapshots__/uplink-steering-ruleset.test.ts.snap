@@ -11,8 +11,8 @@ table inet ceralive_share {
 
 	chain forward {
 		type filter hook forward priority filter; policy accept;
-		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new drop comment "no selectable client uplink"
-		iifname "eth9" ip saddr 10.43.0.0/24 ct state new drop comment "no selectable client uplink"
+		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new meta mark != 0xcb000100 drop comment "no selectable client uplink"
+		iifname "eth9" ip saddr 10.43.0.0/24 ct state new meta mark != 0xcb000100 drop comment "no selectable client uplink"
 	}
 
 	chain postrouting {
@@ -42,9 +42,9 @@ table inet ceralive_share {
 	chain prerouting {
 		type filter hook prerouting priority mangle; policy accept;
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca336b00 meta mark set meta mark & 0x000000ff | 0xca336b00 comment "restore client flow"
-		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca336b00 meta mark set meta mark & 0x000000ff | 0xca336b00 comment "restore client flow"
-		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 	}
 
 	chain postrouting {
@@ -83,10 +83,10 @@ table inet ceralive_share {
 		type filter hook prerouting priority mangle; policy accept;
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca336b00 meta mark set meta mark & 0x000000ff | 0xca336b00 comment "restore client flow"
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca31c400 meta mark set meta mark & 0x000000ff | 0xca31c400 comment "restore client flow"
-		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca336b00 meta mark set meta mark & 0x000000ff | 0xca336b00 comment "restore client flow"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca31c400 meta mark set meta mark & 0x000000ff | 0xca31c400 comment "restore client flow"
-		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 	}
 
 	chain postrouting {
@@ -134,11 +134,11 @@ table inet ceralive_share {
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca336b00 meta mark set meta mark & 0x000000ff | 0xca336b00 comment "restore client flow"
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca31c400 meta mark set meta mark & 0x000000ff | 0xca31c400 comment "restore client flow"
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca36b100 meta mark set meta mark & 0x000000ff | 0xca36b100 comment "restore client flow"
-		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca336b00 meta mark set meta mark & 0x000000ff | 0xca336b00 comment "restore client flow"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca31c400 meta mark set meta mark & 0x000000ff | 0xca31c400 comment "restore client flow"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca36b100 meta mark set meta mark & 0x000000ff | 0xca36b100 comment "restore client flow"
-		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 	}
 
 	chain postrouting {
@@ -209,14 +209,14 @@ table inet ceralive_share {
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca332200 meta mark set meta mark & 0x000000ff | 0xca332200 comment "restore client flow"
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca312700 meta mark set meta mark & 0x000000ff | 0xca312700 comment "restore client flow"
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca339000 meta mark set meta mark & 0x000000ff | 0xca339000 comment "restore client flow"
-		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca336b00 meta mark set meta mark & 0x000000ff | 0xca336b00 comment "restore client flow"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca31c400 meta mark set meta mark & 0x000000ff | 0xca31c400 comment "restore client flow"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca36b100 meta mark set meta mark & 0x000000ff | 0xca36b100 comment "restore client flow"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca332200 meta mark set meta mark & 0x000000ff | 0xca332200 comment "restore client flow"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca312700 meta mark set meta mark & 0x000000ff | 0xca312700 comment "restore client flow"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca339000 meta mark set meta mark & 0x000000ff | 0xca339000 comment "restore client flow"
-		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 	}
 
 	chain postrouting {
@@ -258,7 +258,7 @@ table inet ceralive_share {
 	chain prerouting {
 		type filter hook prerouting priority mangle; policy accept;
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xcac81f00 meta mark set meta mark & 0x000000ff | 0xcac81f00 comment "restore client flow"
-		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 	}
 
 	chain postrouting {
@@ -289,7 +289,7 @@ table inet ceralive_share {
 	chain prerouting {
 		type filter hook prerouting priority mangle; policy accept;
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xcac81f00 meta mark set meta mark & 0x000000ff | 0xcac81f00 comment "restore client flow"
-		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 	}
 
 	chain postrouting {
@@ -320,9 +320,9 @@ table inet ceralive_share {
 	chain prerouting {
 		type filter hook prerouting priority mangle; policy accept;
 		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xcac81f00 meta mark set meta mark & 0x000000ff | 0xcac81f00 comment "restore client flow"
-		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "clap-wlan0" ip saddr 10.42.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 		iifname "eth9" ip saddr 10.43.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xcac81f00 meta mark set meta mark & 0x000000ff | 0xcac81f00 comment "restore client flow"
-		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
+		iifname "eth9" ip saddr 10.43.0.0/24 ct state new ct mark != 0xcb000100 ct mark & 0xff000000 != 0xca000000 numgen random mod 10000 vmap @uplink_verdicts comment "select client uplink"
 	}
 
 	chain postrouting {

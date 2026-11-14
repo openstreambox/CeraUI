@@ -104,6 +104,7 @@ cp dist/99-ceralive-check-usb-devices.rules "$TEMP_DIR/etc/udev/rules.d/"
 cp -r dist/public/* "$TEMP_DIR/var/www/ceralive/"
 cp dist/config.json "$TEMP_DIR/etc/ceralive/"
 cp apps/backend/setup.json "$TEMP_DIR/opt/ceralive/"
+install -m 0755 deployment/captive-portal-window.py "$TEMP_DIR/opt/ceralive/captive-portal-window.py"
 # Stamp the build commit into the packaged tree so the backend's initRevisions()
 # reads it at runtime (WorkingDirectory=/opt/ceralive). A deployed /opt/ceralive is
 # not a git checkout, so without this file both the primary read AND its
@@ -427,6 +428,12 @@ fpm -s dir -t deb \
     --depends "adduser" \
     --depends "sudo" \
     --depends "util-linux" \
+    --depends "python3" \
+    --depends "nftables" \
+    --depends "conntrack" \
+    --depends "iproute2" \
+    --depends "curl" \
+    --depends "iw" \
     --depends "gpgv" \
     --depends "debian-archive-keyring" \
     --depends "network-manager" \

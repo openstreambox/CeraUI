@@ -13,6 +13,8 @@ export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	// Two 15 s journal attempts plus cancellation, redaction and delivery.
 	"system.getLog": 45_000,
 	"system.getSyslog": 45_000,
+	// Boot sweep + pre-open sweep + open/rollback + retirement, plus identity reads.
+	"wifi.portal": 540_000,
 	"modems.esimOperation": 245_000,
 };
 

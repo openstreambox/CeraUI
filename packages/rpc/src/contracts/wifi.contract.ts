@@ -2,12 +2,15 @@
  * WiFi ORPC Contract
  */
 import { oc } from '@orpc/contract';
+import { z } from 'zod';
 
 import {
 	hotspotConfigInputSchema,
 	hotspotPrepareInputSchema,
 	hotspotPrepareOutputSchema,
 	hotspotToggleInputSchema,
+	portalWindowInputSchema,
+	portalWindowStatusSchema,
 	setWifiAdapterModeInputSchema,
 	setWifiAdapterModeOutputSchema,
 	setWifiCountryInputSchema,
@@ -24,6 +27,7 @@ import {
 } from '../schemas';
 
 export const wifiContract = oc.router({
+	portal: oc.input(portalWindowInputSchema).output(portalWindowStatusSchema),
 	/**
 	 * Get WiFi status for all interfaces
 	 */

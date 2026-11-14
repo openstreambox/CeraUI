@@ -584,7 +584,9 @@ describe("UplinkSteeringCoordinator", () => {
 			desired = prepared([selected]);
 			await coordinator.requestReconcile();
 			expect(statuses.at(-1)).toEqual({ available: true });
-			expect(liveRuleset).not.toContain("ct state new drop");
+			expect(liveRuleset).not.toContain(
+				"ct state new meta mark != 0xcb000100 drop",
+			);
 			expect(liveRuleset).toContain("numgen random");
 			const recoveredReloads = reloads;
 			await coordinator.requestReconcile();

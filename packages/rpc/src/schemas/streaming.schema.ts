@@ -908,6 +908,7 @@ export const configMessageSchema = z.object({
 	pipeline: z.string().optional(),
 	srt_latency: z.number().optional(),
 	bitrate_overlay: z.boolean().optional(),
+	captive_portal_enabled: z.boolean().optional(),
 	autostart: z.boolean().optional(),
 	srtla_addr: z.string().optional(),
 	srtla_port: z.number().optional(),

@@ -243,10 +243,10 @@ table inet ceralive_share {
 				"type filter hook forward priority filter; policy accept;",
 			);
 			expect(forward).toContain(
-				'iifname "client0" ip saddr 10.42.0.0/24 ct state new drop',
+				'iifname "client0" ip saddr 10.42.0.0/24 ct state new meta mark != 0xcb000100 drop',
 			);
 			expect(forward).toContain(
-				'iifname "client1" ip saddr 10.43.0.0/24 ct state new drop',
+				'iifname "client1" ip saddr 10.43.0.0/24 ct state new meta mark != 0xcb000100 drop',
 			);
 			expect(
 				ruleset.split("\n").filter((line) => line.includes(" drop")),
@@ -266,7 +266,7 @@ table inet ceralive_share {
 			uplinks: [steeringUplink("returned", "wan0", 100)],
 		});
 
-		expect(unavailable).toContain("ct state new drop");
+		expect(unavailable).toContain("ct state new meta mark != 0xcb000100 drop");
 		expect(recovered).toContain("numgen random");
 		expect(recovered).not.toContain("drop");
 	});
@@ -346,3 +346,19 @@ function steeringUplink(identity: string, ifname: string, weight: number) {
 function hexMark(mark: number): string {
 	return `0x${mark.toString(16).padStart(8, "0")}`;
 }
+
+test("preserves the portal conntrack mark while a flow has no reply yet", () => {
+	const rules = buildShareRuleset({
+		clientZones: [{ ifname: "ap0", ipv4Cidr: "10.42.0.0/24" }],
+		uplinks: [
+			{
+				identity: "wifi-test",
+				ifname: "wan0",
+				mark: stableUplinkMark("wifi-test"),
+				selectable: true,
+				weight: 100,
+			},
+		],
+	});
+	expect(rules).toContain("ct state new ct mark != 0xcb000100");
+});
