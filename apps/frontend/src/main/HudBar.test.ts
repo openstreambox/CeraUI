@@ -713,21 +713,21 @@ describe("HudBar strip — the FOUR-fact budget is locked", () => {
 	});
 });
 
-it("keeps the verdict uncompressed and bounds bitrate content in the narrow HUD", () => {
-	state.hud = makeHud({ isStreaming: true, bitrateKbps: 12500 });
-	state.health = "healthy";
-	render(HudBar);
-	// jsdom cannot measure geometry; lock the flex constraints that prevent
-	// the verdict's children painting into the adjacent bitrate allocation.
-	const region = compactStrip();
-	const verdict =
-		screen.getByTestId("stream-health").parentElement?.parentElement;
-	if (!verdict) throw new Error("missing verdict cluster");
-	const bitrate = screen.getByTestId("hud-bitrate");
-	expect(classesOf(verdict)).toContain("shrink-0");
-	expect(classesOf(bitrate)).toContain("min-w-0");
-	expect(classesOf(bitrate)).toContain("overflow-hidden");
-	expect(classesOf(region)).toContain("gap-2");
+describe("HudBar verdict and bitrate allocation", () => {
+	it("keeps the verdict and the bitrate from shrinking", () => {
+		state.hud = makeHud({ isStreaming: true, bitrateKbps: 12500 });
+		state.health = "healthy";
+		render(HudBar);
+		// jsdom cannot measure geometry; lock the flex constraints that prevent
+		// the verdict's children painting into the adjacent bitrate allocation.
+		const region = compactStrip();
+		const verdict = screen.getByTestId("stream-verdict");
+		if (!verdict) throw new Error("missing verdict cluster");
+		const bitrate = screen.getByTestId("hud-bitrate");
+		expect(classesOf(verdict)).toContain("shrink-0");
+		expect(classesOf(bitrate)).toContain("shrink-0");
+		expect(region.contains(bitrate)).toBe(true);
+	});
 });
 
 describe("HudBar lifecycle colors", () => {
@@ -736,6 +736,26 @@ describe("HudBar lifecycle colors", () => {
 		render(HudBar);
 		const lifecycle =
 			compactStrip().querySelector<HTMLElement>('[id$="-lifecycle"]');
-		expect(lifecycle?.style.backgroundColor).toBe("var(--status-live)");
+		expect(lifecycle?.classList.contains("bg-status-live")).toBe(true);
+	});
+});
+
+describe("HudBar long health reasons", () => {
+	it("bounds the reason at tablet widths and reserves the full bitrate value", () => {
+		state.hud = makeHud({ isStreaming: true, bitrateKbps: 12500 });
+		state.health = "degraded";
+		state.rollup = {
+			...healthyRollup(),
+			state: "degraded",
+			reason: {
+				component: "frames",
+				detail:
+					"A long explanation of why the video frames have stopped advancing",
+			},
+		};
+		render(HudBar);
+		const reason = screen.getByTestId("stream-health-reason");
+		expect(classesOf(reason)).not.toContain("sm:max-w-none");
+		expect(classesOf(screen.getByTestId("hud-bitrate"))).toContain("shrink-0");
 	});
 });

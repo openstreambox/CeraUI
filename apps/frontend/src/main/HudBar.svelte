@@ -332,7 +332,7 @@ $effect(() => {
 				  operator cannot recover. The column stays inside the strip's `h-12`
 				  box, so `--mobile-dock-height` does not grow.
 				-->
-				<span class="flex min-w-0 shrink-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+				<span data-testid="stream-verdict" class="flex min-w-0 shrink-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-3">
 					<!-- Keep the visible verdict as the label; telemetry stays independently accessible. -->
 					<button
 						{...props}
@@ -356,8 +356,7 @@ $effect(() => {
 						{:else if isLive}
 							<span
 								id={`${detailsDescriptionId}-lifecycle`}
-								style="background-color: var(--status-live);"
-								class="text-primary-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
+								class="bg-status-live text-primary-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
 								<span class="size-2 rounded-full bg-current motion-safe:animate-pulse"></span>
 								{m["hud.live"]()}
@@ -367,7 +366,7 @@ $effect(() => {
 								id={`${detailsDescriptionId}-lifecycle`}
 								class="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider"
 							>
-								<span class="size-2 rounded-full" style="background-color: var(--status-idle);"></span>
+								<span class="size-2 rounded-full bg-status-idle"></span>
 								{m["hud.idle"]()}
 							</span>
 						{/if}
@@ -386,11 +385,11 @@ $effect(() => {
 					</span>
 
 					{#if healthReason}
-						<!-- Capped below `sm` so the second line cannot widen the cluster
+						<!-- Capped at every width so the reason cannot widen the cluster
 						     past the badge row above it and steal strip width. -->
 						<span
 							data-testid="stream-health-reason"
-							class="text-muted-foreground max-w-[9rem] min-w-0 truncate text-[0.7rem] leading-tight font-medium sm:max-w-none"
+							class="text-muted-foreground max-w-[9rem] min-w-0 truncate text-[0.7rem] leading-tight font-medium sm:max-w-[9rem]"
 							title={healthReason.detail}
 						>
 							{healthReason.detail}
@@ -408,7 +407,7 @@ $effect(() => {
 				     along as a labelled qualifier (and, while throttled, the configured limit
 				     after it) so the operator can see the aim beside the actual. -->
 				<span
-					class={cn('inline-flex min-w-0 items-center gap-1 overflow-hidden font-mono tabular-nums', bitrateDimmed && 'opacity-50')}
+					class={cn('inline-flex shrink-0 items-center gap-1 font-mono tabular-nums', bitrateDimmed && 'opacity-50')}
 					role="img"
 					aria-label={bitrateLabel}
 					title={bitrateBelowLimit ? m["hud.bitrateBelowLimitHint"]() : bitrateHint}
