@@ -34,7 +34,10 @@ import {
 	NotImplementedError,
 	UnknownProtocolError,
 } from "../../modules/streaming/transport/types.ts";
-import { probeReachability } from "../../modules/streaming/transport/validate.ts";
+import {
+	PROBE_TIMEOUT_MS,
+	probeReachability,
+} from "../../modules/streaming/transport/validate.ts";
 import { authMiddleware } from "../middleware/auth.middleware.ts";
 import type { RPCContext } from "../types.ts";
 
@@ -87,20 +90,52 @@ export const relayValidateProcedure = authedProcedure
 		// (shouldUseMocks() === false) takes the real network path, untouched.
 		if (shouldUseMocks()) return resolveMockRelayValidate();
 
+		// Nine seconds includes DNS and leaves 21 seconds before the client RPC
+		// timeout. DNS cannot be cancelled, but a late answer never starts probes.
+		const deadline = performance.now() + 9000;
+		let dnsTimer: ReturnType<typeof setTimeout> | undefined;
 		let addresses: { address: string; family: number }[];
 		try {
-			addresses = await lookup(addr, { all: true });
+			addresses = await Promise.race([
+				lookup(addr, { all: true }),
+				new Promise<never>((_, reject) => {
+					dnsTimer = setTimeout(() => reject(new Error("DNS deadline")), 9000);
+				}),
+			]);
 		} catch {
 			return fail("dns", `Cannot resolve host '${addr}'`);
+		} finally {
+			clearTimeout(dnsTimer);
 		}
 
-		// Try every DNS answer in resolver order, including the other family
-		// when the preferred address is unavailable, refused or silent.
-		let reason = "refused";
-		for (const { address } of addresses) {
-			const probe = await probeReachability(address, input.port);
-			if (probe.reachable) return { valid: true, stage: "probe" };
-			reason = probe.reason;
+		// The live sender prefers IPv4 when available. Preserve order within
+		// each family, alternating so a dead family cannot monopolize the budget.
+		const v4 = addresses.filter(({ family }) => family === 4);
+		const v6 = addresses.filter(({ family }) => family === 6);
+		const ordered = Array.from(
+			{ length: Math.max(v4.length, v6.length) },
+			(_, i) => [v4[i], v6[i]],
+		)
+			.flat()
+			.filter((a) => a !== undefined);
+		let reason = "timeout";
+		let unexpected: unknown;
+		for (const { address, family } of ordered) {
+			const remaining = deadline - performance.now();
+			if (remaining <= 0) break;
+			try {
+				const probe = await probeReachability(
+					address,
+					input.port,
+					Math.min(PROBE_TIMEOUT_MS, remaining),
+				);
+				if (probe.reachable)
+					return { valid: true, stage: "probe", reason: `IPv${family}` };
+				reason = probe.reason;
+			} catch (error) {
+				unexpected ??= error;
+			}
 		}
+		if (unexpected !== undefined) throw unexpected;
 		return fail("probe", reason);
 	});

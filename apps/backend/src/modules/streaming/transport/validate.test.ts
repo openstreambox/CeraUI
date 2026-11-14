@@ -191,3 +191,29 @@ it("does not classify message-only errors as Bun system errors", async () => {
 		socket.mockRestore();
 	}
 });
+
+it("times out during socket setup and closes a socket delivered late", async () => {
+	let deliver!: (socket: AnyUdpSocket) => void;
+	const create = spyOn(Bun, "udpSocket").mockImplementationOnce(
+		() =>
+			new Promise((resolve) => {
+				deliver = resolve;
+			}),
+	);
+	const close = { count: 0 };
+	try {
+		expect(await probeReachability("127.0.0.1", 9000, 5)).toEqual({
+			reachable: false,
+			reason: "timeout",
+		});
+		deliver({
+			close: () => {
+				close.count++;
+			},
+		} as AnyUdpSocket);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(close.count).toBe(1);
+	} finally {
+		create.mockRestore();
+	}
+});

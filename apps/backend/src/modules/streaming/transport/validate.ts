@@ -85,6 +85,11 @@ export async function probeReachability(
 			resolve(result);
 		};
 
+		timer = setTimeout(
+			() => finish({ reachable: false, reason: "timeout" }),
+			timeoutMs,
+		);
+
 		Promise.resolve()
 			.then(() =>
 				Bun.udpSocket({
@@ -112,10 +117,7 @@ export async function probeReachability(
 					return;
 				}
 				socket = s;
-				timer = setTimeout(
-					() => finish({ reachable: false, reason: "timeout" }),
-					timeoutMs,
-				);
+
 				try {
 					s.send(PROBE_PAYLOAD);
 				} catch {
@@ -139,7 +141,12 @@ export async function probeReachability(
 				) {
 					logger.debug("probeReachability: socket setup failed", { err });
 					finish({ reachable: false, reason: "refused" });
-				} else reject(err);
+				} else {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					reject(err);
+				}
 			});
 	}).catch((err: unknown): ProbeResult => {
 		if (

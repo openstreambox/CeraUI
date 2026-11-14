@@ -45,9 +45,12 @@ for (const addresses of [
 						{ addr: "relay.invalid", port: 9000 },
 						{ context: makeContext() },
 					),
-				).toEqual({ valid: true, stage: "probe" });
+				).toEqual({ valid: true, stage: "probe", reason: "IPv6" });
 				expect(lookup).toHaveBeenCalledWith("relay.invalid", { all: true });
-				expect(probe.mock.calls.map((args) => args[0])).toEqual(addresses);
+				expect(probe.mock.calls.map((args) => args[0])).toEqual([
+					"127.0.0.1",
+					"::1",
+				]);
 			} finally {
 				lookup.mockRestore();
 				probe.mockRestore();
@@ -91,10 +94,14 @@ for (const code of ["EAFNOSUPPORT", "EADDRNOTAVAIL"]) {
 		});
 		const lookup = spyOn(dns, "lookup").mockResolvedValue([
 			{ address: "::1", family: 6 },
+			{ address: "127.0.0.2", family: 4 },
 			{ address: "127.0.0.1", family: 4 },
 		] as never);
-		const socket = spyOn(Bun, "udpSocket").mockImplementationOnce(() => {
-			throw Object.assign(new Error(`${code}: connect`), { code });
+		const original = Bun.udpSocket;
+		const socket = spyOn(Bun, "udpSocket").mockImplementation((options) => {
+			if (options.hostname === "::")
+				throw Object.assign(new Error(`${code}: connect`), { code });
+			return original(options);
 		});
 		try {
 			expect(
@@ -103,8 +110,8 @@ for (const code of ["EAFNOSUPPORT", "EADDRNOTAVAIL"]) {
 					{ addr: "relay.invalid", port: server.port },
 					{ context: makeContext() },
 				),
-			).toEqual({ valid: true, stage: "probe" });
-			expect(socket).toHaveBeenCalledTimes(2);
+			).toEqual({ valid: true, stage: "probe", reason: "IPv4" });
+			expect(socket).toHaveBeenCalledTimes(3);
 		} finally {
 			socket.mockRestore();
 			lookup.mockRestore();
@@ -128,8 +135,153 @@ it("stops after the first reachable address", async () => {
 				{ addr: "relay.invalid", port: 9000 },
 				{ context: makeContext() },
 			),
-		).toEqual({ valid: true, stage: "probe" });
+		).toEqual({ valid: true, stage: "probe", reason: "IPv4" });
 		expect(probe).toHaveBeenCalledTimes(1);
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+	}
+});
+
+it("interleaves families starting with IPv4", async () => {
+	const lookup = spyOn(dns, "lookup").mockResolvedValue([
+		{ address: "::1", family: 6 },
+		{ address: "::2", family: 6 },
+		{ address: "127.0.0.1", family: 4 },
+		{ address: "127.0.0.2", family: 4 },
+	] as never);
+	const probe = spyOn(probes, "probeReachability").mockResolvedValue({
+		reachable: false,
+		reason: "refused",
+	});
+	try {
+		await call(
+			relayValidateProcedure,
+			{ addr: "relay.invalid", port: 9000 },
+			{ context: makeContext() },
+		);
+		expect(probe.mock.calls.map((args) => args[0])).toEqual([
+			"127.0.0.1",
+			"::1",
+			"127.0.0.2",
+			"::2",
+		]);
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+	}
+});
+
+// A monotonic test clock advances only when the simulated network consumes time.
+it("bounds many silent answers including DNS to nine seconds", async () => {
+	let now = 0;
+	const clock = spyOn(performance, "now").mockImplementation(() => now);
+	const lookup = spyOn(dns, "lookup").mockImplementation(async () => {
+		now += 1000;
+		return Array.from({ length: 10 }, (_, i) => ({
+			address: `127.0.0.${i + 1}`,
+			family: 4,
+		})) as never;
+	});
+	const probe = spyOn(probes, "probeReachability").mockImplementation(
+		async (_ip, _port, timeout = 3000) => {
+			now += timeout;
+			return { reachable: false, reason: "timeout" };
+		},
+	);
+	try {
+		expect(
+			await call(
+				relayValidateProcedure,
+				{ addr: "relay.invalid", port: 9000 },
+				{ context: makeContext() },
+			),
+		).toEqual({ valid: false, stage: "probe", reason: "timeout" });
+		expect(now).toBe(9000);
+		expect(probe.mock.calls.map((args) => args[2])).toEqual([3000, 3000, 2000]);
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+		clock.mockRestore();
+	}
+});
+
+it("continues after unexpected setup failure and reports the family that answered", async () => {
+	const lookup = spyOn(dns, "lookup").mockResolvedValue([
+		{ address: "127.0.0.1", family: 4 },
+		{ address: "::1", family: 6 },
+	] as never);
+	const probe = spyOn(probes, "probeReachability")
+		.mockRejectedValueOnce(new Error("unexpected setup"))
+		.mockResolvedValueOnce({ reachable: true });
+	try {
+		expect(
+			await call(
+				relayValidateProcedure,
+				{ addr: "relay.invalid", port: 9000 },
+				{ context: makeContext() },
+			),
+		).toEqual({ valid: true, stage: "probe", reason: "IPv6" });
+		expect(probe).toHaveBeenCalledTimes(2);
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+	}
+});
+
+it("does not probe a DNS answer delivered after its deadline", async () => {
+	let deliver!: (value: never) => void;
+	const lookup = spyOn(dns, "lookup").mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				deliver = resolve;
+			}) as never,
+	);
+	const probe = spyOn(probes, "probeReachability");
+	const original = globalThis.setTimeout;
+	const timer = spyOn(globalThis, "setTimeout").mockImplementation(((
+		callback: () => void,
+		delay: number,
+	) => original(callback, delay === 9000 ? 0 : delay)) as typeof setTimeout);
+	try {
+		expect(
+			await call(
+				relayValidateProcedure,
+				{ addr: "relay.invalid", port: 9000 },
+				{ context: makeContext() },
+			),
+		).toEqual({
+			valid: false,
+			stage: "dns",
+			reason: "Cannot resolve host 'relay.invalid'",
+		});
+		deliver([{ address: "127.0.0.1", family: 4 }] as never);
+		await Promise.resolve();
+		expect(probe).not.toHaveBeenCalled();
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+		timer.mockRestore();
+	}
+});
+
+it("surfaces an unexpected error only after all remaining addresses fail", async () => {
+	const lookup = spyOn(dns, "lookup").mockResolvedValue([
+		{ address: "127.0.0.1", family: 4 },
+		{ address: "::1", family: 6 },
+	] as never);
+	const probe = spyOn(probes, "probeReachability")
+		.mockRejectedValueOnce(new Error("unexpected setup"))
+		.mockResolvedValueOnce({ reachable: false, reason: "refused" });
+	try {
+		await expect(
+			call(
+				relayValidateProcedure,
+				{ addr: "relay.invalid", port: 9000 },
+				{ context: makeContext() },
+			),
+		).rejects.toThrow("unexpected setup");
+		expect(probe).toHaveBeenCalledTimes(2);
 	} finally {
 		lookup.mockRestore();
 		probe.mockRestore();
