@@ -1,44 +1,14 @@
 import { constants } from "node:fs";
-import { open, rename, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { lstat, open } from "node:fs/promises";
+import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
+import { logger } from "../../helpers/logger.ts";
 
-/** Publish only fully written, durable private bytes, then persist the rename. */
+/** Use the shared private publisher: mode is enforced before writing bytes. */
 export async function writeForwardFile(
 	path: string,
 	contents: string,
 ): Promise<void> {
-	const dir = dirname(path);
-	const temp = join(
-		dir,
-		`.${basename(path)}.${crypto.randomUUID()}.${process.pid}.tmp`,
-	);
-	try {
-		const file = await open(
-			temp,
-			constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-			0o600,
-		);
-		try {
-			await file.writeFile(contents);
-			await file.sync();
-		} finally {
-			await file.close();
-		}
-		await rename(temp, path);
-		const directory = await open(
-			dir,
-			constants.O_RDONLY | constants.O_DIRECTORY,
-		);
-		try {
-			await directory.sync();
-		} finally {
-			await directory.close();
-		}
-	} finally {
-		await unlink(temp).catch((error) => {
-			if (error.code !== "ENOENT") throw error;
-		});
-	}
+	writeFileAtomicSync(path, contents, { mode: 0o600 });
 }
 
 export async function readForwardSecret(
@@ -76,9 +46,22 @@ export async function readForwardSecret(
 export async function loadForwardSecret(
 	path: string,
 	generated: string,
+	replacedLegacyPath?: string,
 ): Promise<string> {
 	const existing = await readForwardSecret(path);
 	if (existing !== undefined) return existing;
+	const exists = (candidate: string) =>
+		lstat(candidate).then(
+			() => true,
+			(error: NodeJS.ErrnoException) => {
+				if (error.code === "ENOENT") return false;
+				throw error;
+			},
+		);
+	const damaged =
+		(await exists(path)) ||
+		(replacedLegacyPath !== undefined && (await exists(replacedLegacyPath)));
 	await writeForwardFile(path, generated);
+	if (damaged) logger.warn("SRT forwarding credential regenerated");
 	return generated;
 }
