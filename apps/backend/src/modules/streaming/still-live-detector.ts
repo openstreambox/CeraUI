@@ -8,8 +8,19 @@ import {
 } from "@ceraui/rpc/audio-meter-liveness";
 import type { ActiveEncode, AudioLevelMessage } from "@ceraui/rpc/schemas";
 
+import {
+	HEARTBEAT_INTERVAL_MS,
+	PERIODIC_JITTER_FRACTION,
+} from "./constants.ts";
+
 export const LIVE_SILENCE_HOLD_MS = 10_000;
-export const LIVE_CAMERA_HOLD_MS = 5_000;
+
+export const LIVE_CAMERA_MIN_SAMPLE_MS =
+	HEARTBEAT_INTERVAL_MS * (1 - PERIODIC_JITTER_FRACTION);
+// Allow one second of scheduler/observation delay beyond the jittered heartbeat.
+export const LIVE_CAMERA_SAMPLE_GAP_MS =
+	HEARTBEAT_INTERVAL_MS * (1 + PERIODIC_JITTER_FRACTION) + 1_000;
+export const LIVE_CAMERA_CONFIRM_SAMPLES = 2;
 /** The synthetic standby leg is known even on a status without a capture block. */
 export function isLiveNoticeSuppressed(
 	virtualSource: boolean,
@@ -43,7 +54,9 @@ export interface LiveNoticeDeps {
 
 /** Only the streaming-owner program meter can establish silence, never the idle sidecar. */
 export class StillLiveDetector {
-	private cameraSince: number | undefined;
+	private cameraSample:
+		| { at: number; stopped: boolean; count: number }
+		| undefined;
 	private silenceSince: number | undefined;
 	private lastAudioAt: number | undefined;
 	private freshness: MeterFreshness = INITIAL_METER_FRESHNESS;
@@ -57,7 +70,8 @@ export class StillLiveDetector {
 		else this.active.delete(notice);
 		this.deps.publish(notice, active);
 	}
-	update(level?: AudioLevelMessage): void {
+	/** Only an explicit heartbeat observation may advance the camera verdict. */
+	update(level?: AudioLevelMessage, frameSample = false): void {
 		if (this.timer !== undefined) this.deps.clearTimer(this.timer);
 		this.timer = undefined;
 		const now = this.deps.now();
@@ -67,7 +81,7 @@ export class StillLiveDetector {
 			context.suppressed ||
 			context.selection !== this.selection
 		) {
-			this.cameraSince = undefined;
+			this.cameraSample = undefined;
 			this.silenceSince = undefined;
 			this.lastAudioAt = undefined;
 			this.freshness = INITIAL_METER_FRESHNESS;
@@ -76,9 +90,23 @@ export class StillLiveDetector {
 		}
 		this.selection = context.selection;
 		if (!context.streaming || context.suppressed) return;
-		this.cameraSince = context.cameraStopped
-			? (this.cameraSince ?? now)
-			: undefined;
+		if (frameSample) {
+			const previous = this.cameraSample;
+			const gap = previous ? now - previous.at : undefined;
+			// Repeated reads/audio callbacks cannot manufacture another heartbeat.
+			if (gap === undefined || gap < 0 || gap >= LIVE_CAMERA_MIN_SAMPLE_MS) {
+				const continuous =
+					gap !== undefined && gap >= 0 && gap <= LIVE_CAMERA_SAMPLE_GAP_MS;
+				const count =
+					continuous && previous?.stopped === context.cameraStopped
+						? previous.count + 1
+						: 1;
+				this.cameraSample = { at: now, stopped: context.cameraStopped, count };
+				// Two confirming samples to enter AND to recover: one good tick cannot flicker.
+				if (count >= LIVE_CAMERA_CONFIRM_SAMPLES)
+					this.publish("camera", context.cameraStopped);
+			}
+		}
 		if (level !== undefined) {
 			const program =
 				level.source?.owner === "streaming" && level.unavailable !== true;
@@ -101,19 +129,11 @@ export class StillLiveDetector {
 		)
 			this.silenceSince = undefined;
 		this.publish(
-			"camera",
-			this.cameraSince !== undefined &&
-				now - this.cameraSince >= LIVE_CAMERA_HOLD_MS,
-		);
-		this.publish(
 			"silence",
 			this.silenceSince !== undefined &&
 				now - this.silenceSince >= LIVE_SILENCE_HOLD_MS,
 		);
 		const deadlines = [
-			this.cameraSince === undefined || this.active.has("camera")
-				? undefined
-				: this.cameraSince + LIVE_CAMERA_HOLD_MS,
 			this.silenceSince === undefined || this.active.has("silence")
 				? undefined
 				: this.silenceSince + LIVE_SILENCE_HOLD_MS,
@@ -130,7 +150,8 @@ export class StillLiveDetector {
 	reset(): void {
 		if (this.timer !== undefined) this.deps.clearTimer(this.timer);
 		this.timer = undefined;
-		this.cameraSince = this.silenceSince = this.lastAudioAt = undefined;
+		this.cameraSample = undefined;
+		this.silenceSince = this.lastAudioAt = undefined;
 		this.selection = undefined;
 		this.freshness = INITIAL_METER_FRESHNESS;
 		for (const notice of [...this.active]) this.publish(notice, false);

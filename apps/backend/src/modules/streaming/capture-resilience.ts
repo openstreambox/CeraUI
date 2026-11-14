@@ -5,8 +5,9 @@ import {
 	notificationRemove,
 } from "../ui/notifications.ts";
 import { getSourcesMessage } from "./sources.ts";
-import { LIVE_CAMERA_HOLD_MS } from "./still-live-detector.ts";
 
+// Engine capture status arrives about every two seconds, independently of health.
+export const CAPTURE_STANDBY_NOTICE_HOLD_MS = 5_000;
 export const CAPTURE_STANDBY_LONG_NOTICE_MS = 600_000;
 
 export interface CaptureResilienceDeps {
@@ -162,7 +163,7 @@ export function noteCaptureStatus(
 	if (capture.state === "standby") {
 		if (standbySince === undefined) {
 			standbySince = capture.standby_since_ms ?? deps.now();
-			standbyNoticeAt = deps.now() + LIVE_CAMERA_HOLD_MS;
+			standbyNoticeAt = deps.now() + CAPTURE_STANDBY_NOTICE_HOLD_MS;
 			standbyNotice();
 			longStandby();
 		}

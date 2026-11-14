@@ -57,33 +57,135 @@ function harness() {
 	) => {
 		detector.update(level(silent, owner));
 		for (let elapsed = 0; elapsed < ms; elapsed += 200) {
-			advance(200);
+			advance(Math.min(200, ms - elapsed));
 			detector.update(level(silent, owner));
 		}
 	};
 	return { context, events, detector, advance, audio, level, timers };
 }
 
-test("camera holds short gaps, fires at five seconds, deduplicates and clears", () => {
+for (const cadence of [4500, 5000, 5500]) {
+	test(`one late camera sample at ${cadence} ms never fires, even with audio`, () => {
+		const h = harness();
+		h.context.cameraStopped = true;
+		h.detector.update(undefined, true);
+		h.audio(cadence, false);
+		expect(h.events).toEqual([]);
+		h.context.cameraStopped = false;
+		h.detector.update(undefined, true);
+		h.audio(12000, false);
+		expect(h.events).toEqual([]);
+	});
+}
+
+test("ten minutes of jittered stalls and recovery have no single-sample flicker", () => {
+	for (let seed = 1; seed <= 100; seed++) {
+		const h = harness();
+		let random = seed;
+		let elapsed = 0;
+		let sample = 0;
+		while (elapsed < 600000) {
+			random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
+			const gap = 4500 + (random % 1001);
+			h.audio(gap, false);
+			elapsed += gap;
+			// Isolated losses before a sustained outage; isolated recoveries within it.
+			h.context.cameraStopped =
+				elapsed < 200000
+					? sample % 3 === 0
+					: elapsed < 400000
+						? sample % 3 !== 0
+						: false;
+			h.detector.update(undefined, true);
+			sample++;
+		}
+		expect(h.events).toEqual([
+			["camera", true],
+			["camera", false],
+		]);
+	}
+});
+
+test("camera entry and recovery require fresh, consecutive heartbeat observations", () => {
 	const h = harness();
 	h.context.cameraStopped = true;
-	h.detector.update();
-	h.advance(4999);
+	h.detector.update(undefined, true);
+	h.advance(5500);
 	expect(h.events).toEqual([]);
-	h.context.cameraStopped = false;
-	h.detector.update();
-	h.advance(1);
-	expect(h.events).toEqual([]);
-	h.context.cameraStopped = true;
-	h.detector.update();
-	h.advance(5000);
+	h.detector.update(undefined, true);
 	expect(h.events).toEqual([["camera", true]]);
-	h.detector.update();
-	expect(h.events).toHaveLength(1);
 	h.context.cameraStopped = false;
-	h.detector.update();
+	h.advance(4500);
+	h.detector.update(undefined, true);
+	expect(h.events).toHaveLength(1);
+	h.context.cameraStopped = true;
+	h.advance(5000);
+	h.detector.update(undefined, true);
+	h.context.cameraStopped = false;
+	h.advance(5500);
+	h.detector.update(undefined, true);
+	expect(h.events).toHaveLength(1);
+	h.advance(4500);
+	h.detector.update(undefined, true);
 	expect(h.events.at(-1)).toEqual(["camera", false]);
 });
+
+test("a missing heartbeat cannot join two isolated camera observations", () => {
+	const h = harness();
+	h.context.cameraStopped = true;
+	h.detector.update(undefined, true);
+	h.advance(12000);
+	h.detector.update(undefined, true);
+	expect(h.events).toEqual([]);
+	h.advance(5000);
+	h.detector.update(undefined, true);
+	expect(h.events).toEqual([["camera", true]]);
+});
+
+test("reset retracts every active notice and cancels its deadlines", () => {
+	const h = harness();
+	h.context.cameraStopped = true;
+	h.detector.update(undefined, true);
+	h.audio(5000);
+	h.detector.update(undefined, true);
+	h.audio(5000);
+	expect(h.events).toEqual([
+		["camera", true],
+		["silence", true],
+	]);
+	h.detector.reset();
+	expect(h.events.slice(-2)).toEqual([
+		["camera", false],
+		["silence", false],
+	]);
+	expect(h.timers.size).toBe(0);
+	h.advance(60000);
+	expect(h.events).toHaveLength(4);
+});
+
+test("a meter observation gap resets a silent run before readings resume", () => {
+	const h = harness();
+	h.audio(6000);
+	h.advance(2500);
+	h.audio(4000);
+	expect(h.events).toEqual([]);
+	h.audio(6000);
+	expect(h.events).toEqual([["silence", true]]);
+});
+
+for (const invalid of [
+	{ channels: 0, peak_db: [-100] },
+	{ channels: 1, peak_db: [Number.NaN] },
+])
+	test(`continuous invalid samples cannot prove silence: ${invalid.channels} channels, ${invalid.peak_db}`, () => {
+		const h = harness();
+		for (let i = 0; i < 70; i++) {
+			h.detector.update({ ...h.level(), ...invalid });
+			h.advance(200);
+		}
+		expect(h.events).toEqual([]);
+	});
+
 test("silence needs ten seconds of outgoing readings and clears on sound", () => {
 	const h = harness();
 	h.audio(9800);
@@ -106,11 +208,14 @@ test("a short quiet moment and a scene switch restart the silence hold", () => {
 	h.audio(200);
 	expect(h.events).toEqual([["silence", true]]);
 });
-for (const reason of ["intentional mute", "BRB", "privacy"])
+for (const reason of ["explicit suppression"])
 	test(`${reason} suppresses both and clears an existing notice`, () => {
 		const h = harness();
 		h.context.cameraStopped = true;
-		h.audio(10000);
+		h.detector.update(undefined, true);
+		h.audio(5000);
+		h.detector.update(undefined, true);
+		h.audio(5000);
 		expect(h.events).toContainEqual(["silence", true]);
 		h.context.suppressed = true;
 		h.detector.update();
@@ -195,7 +300,10 @@ test("intentional audio-only mute suppresses silence without hiding a camera out
 	const h = harness();
 	h.context.audioSuppressed = true;
 	h.context.cameraStopped = true;
-	h.audio(12000);
+	h.detector.update(undefined, true);
+	h.audio(5000);
+	h.detector.update(undefined, true);
+	h.audio(7000);
 	expect(h.events).toEqual([["camera", true]]);
 	h.context.audioSuppressed = false;
 	h.audio(9800);

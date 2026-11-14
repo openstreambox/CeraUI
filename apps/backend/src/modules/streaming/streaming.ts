@@ -56,9 +56,10 @@ import { searchPipelines } from "./pipelines.ts";
 import { noteSourceSelectionWrite } from "./sources.ts";
 import { resolveSrtla } from "./srtla.ts";
 import { mergePersistedStartConfig } from "./start-config-merge.ts";
-/* Stream starting, stopping, management and monitoring */
 import { resetStillLiveNotices } from "./still-live-notices.ts";
 import { resolveStreamEndpoint } from "./transport/resolve-endpoint.ts";
+
+/* Stream starting, stopping, management and monitoring */
 
 export type StartMessage = { start: ConfigParameters };
 

@@ -14,6 +14,19 @@ import {
 } from "./still-live-detector.ts";
 import { getIsStreaming } from "./streaming.ts";
 
+const keys = {
+	Camera: "notifications.stillLiveCamera",
+	Hdmi: "notifications.stillLiveHdmi",
+	Network: "notifications.stillLiveNetwork",
+};
+const messages = {
+	Camera:
+		"Camera feed stopped. You're still live. Check the camera's connection.",
+	Hdmi: "HDMI camera feed stopped. You're still live. Check the HDMI connection.",
+	Network:
+		"Network camera feed stopped. You're still live. Check the camera's network connection.",
+};
+
 let cameraStopped = false;
 let processAlive = false;
 function selectedSource() {
@@ -41,18 +54,7 @@ function publish(notice: LiveNotice, active: boolean): void {
 			: source?.origin === "capture" && source.kind === "hdmi"
 				? "Hdmi"
 				: "Camera";
-	const keys = {
-		Camera: "notifications.stillLiveCamera",
-		Hdmi: "notifications.stillLiveHdmi",
-		Network: "notifications.stillLiveNetwork",
-	};
-	const messages = {
-		Camera:
-			"Camera feed stopped. You're still live. Check the camera's connection.",
-		Hdmi: "HDMI camera feed stopped. You're still live. Check the HDMI connection.",
-		Network:
-			"Network camera feed stopped. You're still live. Check the camera's network connection.",
-	};
+
 	notificationBroadcast(
 		name,
 		"warning",
@@ -100,7 +102,7 @@ export function noteLiveFrameHealth(
 ): void {
 	processAlive = streaming && alive === true;
 	cameraStopped = stopped;
-	detector.update();
+	detector.update(undefined, true);
 }
 export function resetStillLiveNotices(): void {
 	processAlive = false;

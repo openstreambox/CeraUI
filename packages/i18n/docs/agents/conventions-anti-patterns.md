@@ -12,6 +12,9 @@
   rendered through, and regenerating it from paraglide would overwrite the oracle
   with the very thing it exists to falsify. A deliberate copy change re-freezes it
   in its own separately-reviewed PR.
+- Retired notice surfaces keep the historical oracle unchanged. The reverse-render
+  gate asserts each retired key is absent, its replacement is compiled and no
+  production reader remains. Retained messages still byte-match without diffs.
 - `branding.ts` holds brand names that don't get translated — import from there.
 - Svelte 5 store uses runes — don't convert to stores.
 - Don't hand-edit anything under `generated/` or `src/paraglide/`.

@@ -167,7 +167,6 @@ const {
 	telemetry,
 	bitrateKbps,
 	audioSourceLost = false,
-	videoSignalLost = false,
 	isStreaming,
 	optimismState,
 	onStop,
@@ -216,40 +215,14 @@ const allLinksDown = $derived(
 
 const showAudioLost = $derived(isStreaming && !summaryMode && audioSourceLost);
 
-// Signal loss on a source that is still THERE. Suppressed while
-// `activeSourceLost` is up: that banner names the same dead picture with a more
-// specific cause and a different action (reconnect / switch source), so showing
-// both would stack two alerts for one outage and split the operator's attention.
-const cameraSelection = $derived(
-	activeEncode?.capture?.active_source?.input_id ?? activeEncode?.active_input ?? config?.source,
-);
-let heldVideoLoss = $state(false);
-$effect(() => {
-	heldVideoLoss = false;
-	const selection = cameraSelection;
-	if (!isStreaming || summaryMode || !videoSignalLost || activeSourceLost || onStandby) return;
-	const timer = setTimeout(() => {
-		if (selection === cameraSelection) heldVideoLoss = true;
-	}, 5_000);
-	return () => clearTimeout(timer);
-});
-const cameraNoticeKey = $derived.by(() => {
-	const source = sources?.sources.find(row => row.id === cameraSelection);
-	return source?.origin === 'network'
-		? 'notifications.stillLiveNetwork'
-		: source?.origin === 'capture' && source.kind === 'hdmi'
-			? 'notifications.stillLiveHdmi'
-			: 'notifications.stillLiveCamera';
-});
-const showVideoSignalLost = $derived(
-	isStreaming && !summaryMode && heldVideoLoss && !activeSourceLost && !onStandby,
-);
+// Frame-loss explanations belong to the backend persistent notice. It alone
+// owns heartbeat confirmation and recovery, including when this view is unmounted.
 
 const canCompose = $derived(compositionSupported(capabilities));
 // Whether any banner is up: the banners lead the cards column only when they
 // exist, so an alert-free stream opens no empty row above the telemetry card.
 const hasBanners = $derived(
-	captureBands.length > 0 || showSourceLost || showVideoSignalLost || showAudioLost || allLinksDown,
+	captureBands.length > 0 || showSourceLost || showAudioLost || allLinksDown,
 );
 
 const BAND_CLASS =
@@ -278,7 +251,6 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 						<MonitorOff aria-hidden={true} class={BAND_ICON_CLASS} />
 						<div class="min-w-0 space-y-0.5">
 							<p class="text-status-warning text-sm font-medium">{m["live.capture.standbyTitle"]()}</p>
-							<p class="text-muted-foreground text-xs">{m["notifications.stillLiveStandby"]()}</p>
 						</div>
 					</div>
 				{:else if band.kind === 'composition-suspended'}
@@ -326,21 +298,6 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 					<div class="min-w-0 space-y-0.5">
 						<p class="text-destructive text-sm font-medium">{m["live.source.lostStreamingTitle"]()}</p>
 						<p class="text-muted-foreground text-xs">{m["live.source.lostStreamingBody"]()}</p>
-					</div>
-				</div>
-			{/if}
-
-			{#if showVideoSignalLost}
-				<div
-					class="border-destructive/40 bg-destructive/10 flex items-start gap-3 rounded-lg border p-3"
-					data-testid="video-signal-lost-banner"
-					role="alert"
-				>
-					<TriangleAlert aria-hidden={true} class="text-destructive mt-0.5 size-4 shrink-0" />
-					<div class="min-w-0 space-y-0.5">
-						<p class="text-destructive text-sm font-medium">
-							{m[cameraNoticeKey]()}
-						</p>
 					</div>
 				</div>
 			{/if}

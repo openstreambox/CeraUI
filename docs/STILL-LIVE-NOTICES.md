@@ -4,9 +4,20 @@ A stopped camera input is distinct from a stopped stream. The existing capture
 resilience path continues to own camera failover and standby; its notice now says
 that the stream remains live and viewers see the standby screen. Its notification
 also holds for five seconds, cancelling on recovery. The frame-health
-path adds a five-second hold before a persistent camera notice, with HDMI,
-network-camera and generic connection guidance. The cockpit's existing frame-loss
-banner uses the same hold and copy. Network sources are not assumed to use Wi-Fi.
+path requires two consecutive stalled heartbeat observations before a persistent
+camera notice, with HDMI, network-camera and generic connection guidance. The
+heartbeat is 5 s ±10%; observations must be at least 4.5 s apart and no more than
+6.5 s apart (5.5 s plus 1 s scheduler allowance). Audio callbacks and timers never
+count as camera observations. Two consecutive healthy observations clear it, so
+one recovered tick cannot flicker an existing warning. A selection change, stream
+stop or explicit suppression clears it immediately. Camera onset and recovery
+normally take 4.5–11 s from the physical event, plus engine status latency. One
+late sample cannot raise a warning, even with continuous program audio.
+
+The backend persistent notice is the single frame-loss explanation on every tab;
+the cockpit no longer starts its own frame-loss timer or repeats that sentence.
+The standby band retains its title and actions, with the persistent notice owning
+the explanation. Network sources are not assumed to use Wi-Fi.
 A stalled encoded frame counter is a delivery signal, not image-content analysis:
 a camera sending new frames of the same frozen picture cannot be diagnosed here.
 
@@ -28,8 +39,8 @@ also suppresses them when no capture block is present. Standby retains its own
 camera notice rather than stacking another camera or mic warning. Current
 runtime contracts expose no separate privacy/BRB flag or live master-mute state;
 future owners of those controls must supply intentional suppression before they
-can use this detector. It accepts suppression explicitly and tests it for mute,
-BRB and privacy. No copy claims that standby takes the stream off air.
+can use this detector. It accepts suppression explicitly; the suppression contract
+is tested once. No copy claims that standby takes the stream off air.
 
 ## Operator help (English)
 
@@ -46,3 +57,14 @@ de espera. Si no hay sonido durante diez segundos, revisa el micrófono seleccio
 y su conexión. Elegir Sin audio de forma intencional no genera esta advertencia.
 
 External English/es-419 user-documentation coordination remains a release gate.
+
+## Independent landing and catalog union
+
+This change can land independently of #96; it does not stack on that branch.
+The catalogs include the union of `network.view.connectedIdle*` and
+`notifications.stillLive*` in every locale, with the still-live keys in the
+notification section rather than competing for the final catalog line. A merge
+probe against #96 at `ace4ef21` is conflict-free. If its translations change before
+landing, retain both families and its latest connected-idle translations, then
+regenerate and run catalog parity. There is no runtime dependency between the
+features.
