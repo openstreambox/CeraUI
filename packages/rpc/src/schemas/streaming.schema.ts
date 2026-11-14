@@ -1005,6 +1005,18 @@ export const streamingStopOutputSchema = z
 	.and(stopResultSchema);
 export type StreamingStopOutput = z.infer<typeof streamingStopOutputSchema>;
 
+// The "Restart connection" tap on the stale-link notice. `token` is the offer's
+// own token; the device restarts only while that offer is current.
+export const restartConnectionInputSchema = z.object({
+	token: z.string().min(1).max(128),
+});
+export type RestartConnectionInput = z.infer<typeof restartConnectionInputSchema>;
+export const restartConnectionOutputSchema = z.object({
+	success: z.boolean(),
+	result: z.enum(['restarting', 'refused']),
+});
+export type RestartConnectionOutput = z.infer<typeof restartConnectionOutputSchema>;
+
 // Streaming setConfig output — includes applied config fields post-clamp, plus a
 // stable structured `error` code (e.g. "unknown_source") returned when a setConfig
 // carrying an unresolvable `source` is rejected (T3). Absent on success.

@@ -28,7 +28,6 @@ import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import XIcon from '@lucide/svelte/icons/x';
 
 import { Button } from '$lib/components/ui/button';
-import { requestDialog } from '$lib/stores/dialog-request.svelte';
 import { getDisplayProfile, prefersEinkTheme } from '$lib/stores/display-profile.svelte';
 import { getPersistent } from '$lib/stores/notifications.svelte';
 import { cn } from '$lib/utils';
@@ -39,6 +38,7 @@ import {
 	NOTIFICATION_BAND_ICON_CLASS,
 	NOTIFICATION_ICONS,
 	persistentNotificationText,
+	runNotificationAction,
 } from './notification-presentation';
 
 const items = $derived(getPersistent());
@@ -71,16 +71,14 @@ const frozen = $derived(prefersEinkTheme(getDisplayProfile()));
 						<p class="text-foreground text-sm leading-relaxed break-words">
 							{persistentNotificationText(item)}
 						</p>
-						{#if item.action?.kind === 'navigate'}
+						{#if item.action}
+							{const action = item.action}
 							<Button
 								class="mt-2 h-7 px-2 text-xs"
 								size="sm"
 								variant="outline"
 								data-testid="persistent-notice-action"
-								onclick={() => {
-									const target = item.action?.target;
-									if (target) requestDialog(target);
-								}}
+								onclick={() => void runNotificationAction(action, item.name)}
 							>
 								{resolveMessageKey(item.action.labelKey)}
 							</Button>

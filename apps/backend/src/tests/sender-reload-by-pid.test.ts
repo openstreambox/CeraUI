@@ -19,7 +19,6 @@ import { join } from "node:path";
 import { setProcessSignalRunnerForTest } from "@ceraui/srtla-send/process-signals";
 import { restartSrtla } from "../modules/streaming/srtla.ts";
 import {
-	replaceSender,
 	type StreamingProcess,
 	signalSenders,
 	spawnStreamingLoop,
@@ -185,24 +184,4 @@ describe("signalSenders", () => {
 		expect(signalSenders("SIGHUP", [done])).toBe(0);
 		expect(sent).toEqual([]);
 	});
-});
-
-test("intentional address recovery replaces the owned sender using its original recipe", async () => {
-	const mine = await startTracked("replacement");
-	const next = await replaceSender(mine.sp, () => true);
-	expect(next).toBeDefined();
-	if (!next) throw new Error("missing replacement");
-	tracked.push(next);
-	expect(next.proc.pid).not.toBe(mine.sp.proc.pid);
-	expect(next.spawnfile).toBe(mine.sp.spawnfile);
-	expect(await waitUntil(() => existsSync(`${mine.marker}.ready`))).toBe(true);
-});
-
-test("Stop during sender replacement prevents respawn", async () => {
-	const mine = await startTracked("cancel-replacement");
-	let calls = 0;
-	expect(await replaceSender(mine.sp, () => ++calls === 1)).toBeUndefined();
-	expect(
-		mine.sp.proc.exitCode !== null || mine.sp.proc.signalCode !== null,
-	).toBe(true);
 });

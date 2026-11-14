@@ -1,6 +1,9 @@
 import { readdir, readFile, readlink } from "node:fs/promises";
 
-/** Linux procfs addresses are hex words in host byte order. */
+/**
+ * Linux procfs addresses are hex words in host byte order. Decoded as
+ * little-endian, which every supported device (arm64, amd64) is.
+ */
 export function decodeProcAddress(hex: string): string | undefined {
 	if (!/^[0-9A-F]+$/i.test(hex)) return undefined;
 	const bytes: number[] = [];

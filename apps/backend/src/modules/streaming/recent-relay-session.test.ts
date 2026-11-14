@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { createRecentRelaySession } from "./recent-relay-session.ts";
 
-test("1000 retries require the exact recently valid destination and credentials", () => {
+// The keyed relay authorizes by stream ID, so host, port and stream ID are the
+// whole credential the key needs.
+test("1000 retries require the exact recently valid destination and stream ID", () => {
 	let now = 0;
 	const recent = createRecentRelaySession(() => now);
 	expect(recent.possiblyBusy("a", "SRT connect failed (reason 1000)")).toBe(
@@ -17,8 +19,19 @@ test("1000 retries require the exact recently valid destination and credentials"
 	expect(recent.possiblyBusy("a", "SRT connect failed (reason 1001)")).toBe(
 		false,
 	);
-	// A wrong passphrase is an auth failure, never a busy session.
+	// A wrong passphrase (libsrt BADSECRET, reason 10) is an auth failure, never
+	// a busy session; reason 8 (VERSION) is not busy either.
+	expect(recent.possiblyBusy("a", "SRT connect failed (reason 10)")).toBe(
+		false,
+	);
 	expect(recent.possiblyBusy("a", "SRT connect failed (reason 8)")).toBe(false);
+	// The field's own engine message.
+	expect(
+		recent.possiblyBusy(
+			"a",
+			"internal engine error: transport connect: SRT connect failed (reason 1000)",
+		),
+	).toBe(true);
 	expect(recent.possiblyBusy("a", undefined)).toBe(false);
 	now = 45001;
 	expect(recent.possiblyBusy("a", "SRT connect failed (reason 1000)")).toBe(

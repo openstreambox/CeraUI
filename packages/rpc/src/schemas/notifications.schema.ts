@@ -17,13 +17,35 @@ export type NotificationActionTarget = z.infer<typeof notificationActionTargetSc
 // Versioned optional action descriptor. `schema` is the descriptor version so the
 // shape can evolve additively without breaking older devices/clients (they reject
 // an unknown version rather than misinterpret it). `kind: 'navigate'` opens the
-// allowlisted `target` in-app; `labelKey` is the i18n key for the affordance copy.
-export const notificationActionSchema = z.object({
+// allowlisted `target` in-app; `kind: 'command'` asks the device to run one
+// allowlisted command; `labelKey` is the i18n key for the affordance copy.
+export const notificationNavigateActionSchema = z.object({
 	schema: z.literal(1),
 	kind: z.literal('navigate'),
 	target: notificationActionTargetSchema,
 	labelKey: z.string(),
 });
+
+// Allowlisted device commands a notification may offer. Like navigation
+// targets, a command is a TYPED name, never a free-form call. `token` names the
+// one offer the command answers, so a tap on an outdated notice is refused by
+// the device instead of acting on a different situation.
+export const NOTIFICATION_ACTION_COMMANDS = ['restart-connection'] as const;
+export const notificationActionCommandSchema = z.enum(NOTIFICATION_ACTION_COMMANDS);
+export type NotificationActionCommand = z.infer<typeof notificationActionCommandSchema>;
+
+export const notificationCommandActionSchema = z.object({
+	schema: z.literal(1),
+	kind: z.literal('command'),
+	command: notificationActionCommandSchema,
+	token: z.string().min(1).max(128),
+	labelKey: z.string(),
+});
+
+export const notificationActionSchema = z.discriminatedUnion('kind', [
+	notificationNavigateActionSchema,
+	notificationCommandActionSchema,
+]);
 export type NotificationAction = z.infer<typeof notificationActionSchema>;
 
 // Single notification schema

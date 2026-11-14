@@ -29,6 +29,7 @@ import { appRouter } from "../router.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
 import {
 	reloadAudioDelayProcedure,
+	restartConnectionProcedure,
 	setBitrateProcedure,
 	setConfigProcedure,
 	setMockDeviceAttachedProcedure,
@@ -86,6 +87,12 @@ const MUTATIONS: ReadonlyArray<{
 }> = [
 	{ name: "start", procedure: streamingStartProcedure, args: {} },
 	{ name: "stop", procedure: streamingStopProcedure, args: undefined },
+	// No offer is current in the idle baseline, so the tap is refused.
+	{
+		name: "restartConnection",
+		procedure: restartConnectionProcedure,
+		args: { token: "no-current-offer" },
+	},
 	{
 		name: "setBitrate",
 		procedure: setBitrateProcedure,

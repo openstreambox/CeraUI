@@ -25,18 +25,28 @@ import { logger } from "../../../helpers/logger.ts";
 import { onNetworkInterfacesChange } from "../../network/network-interfaces.ts";
 import { onUsbNetScanCommitted } from "../../network/router-cellular-scan.ts";
 import { isUpdating } from "../../system/software-updates.ts";
-import { notificationBroadcast } from "../../ui/notifications.ts";
 import { sendStatus } from "../../ui/status.ts";
 import { getSocketSenderId } from "../../ui/websocket-server.ts";
 import { clearAsrcProbeReject, isAsrcProbeRejectResolved } from "../audio.ts";
 import { setPendingAudioFollowAsrc } from "../auto-audio.ts";
 import { clearBindMapReport } from "../bind-map-disposition.ts";
 import { announceBindMapReport } from "../bind-map-notification.ts";
-import { stopLinkTelemetry } from "../link-telemetry.ts";
+import { autoRestart, connectionRestartDeps } from "../connection-restart.ts";
+import {
+	CARRY_WINDOW_MS,
+	type CarryVerdict,
+	createCarryTracker,
+} from "../link-carrying.ts";
+import { resolveLinkLabel } from "../link-label.ts";
+import { buildLinkTelemetry, stopLinkTelemetry } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
 import { recentRelaySession } from "../recent-relay-session.ts";
 import {
+	createObservationFailureLog,
 	createReloadQueue,
+	SENDER_RELOAD_POLL_MS,
+	SENDER_RELOAD_WINDOW_MS,
+	SENDER_STOP_HOLD_MS,
 	verifySenderReload,
 	waitForReload,
 } from "../sender-reload.ts";
@@ -46,6 +56,7 @@ import {
 	observeSenderReload,
 	restartSrtla,
 } from "../srtla.ts";
+import { staleLinkNotice, staleSourceResponse } from "../stale-link-notice.ts";
 import {
 	classifyStartFailure,
 	StreamStartFailure,
@@ -63,11 +74,7 @@ import {
 } from "../streaming.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
 import { srtlaSendExec } from "./exec-paths.ts";
-import {
-	getStreamingProcesses,
-	replaceSender,
-	stopProcessAndWait,
-} from "./process-runner.ts";
+import { getStreamingProcesses, stopProcessAndWait } from "./process-runner.ts";
 import { reportSessionInvariant } from "./resource-invariant.ts";
 import { prepareSrtlaIpAddresses } from "./srtla-ip-preparation.ts";
 import { type StartStreamResult, startStream } from "./start-stream.ts";
@@ -84,6 +91,75 @@ type SessionResources = {
 };
 
 let sessionResources: SessionResources | undefined;
+
+/** The generation whose session resources are live, for the restart offer. */
+export function currentSessionGeneration(): number | undefined {
+	return sessionResources?.generation;
+}
+
+export { SENDER_STOP_HOLD_MS };
+
+const DEFAULT_RELOAD_TIMING = {
+	windowMs: SENDER_RELOAD_WINDOW_MS,
+	pollMs: SENDER_RELOAD_POLL_MS,
+	carryWindowMs: CARRY_WINDOW_MS,
+};
+let reloadTiming = DEFAULT_RELOAD_TIMING;
+export function setSenderReloadTimingForTest(
+	timing: typeof DEFAULT_RELOAD_TIMING | null,
+): void {
+	reloadTiming = timing ?? DEFAULT_RELOAD_TIMING;
+}
+
+// Process-wide, so an unreadable /proc logs once a minute, not once a poll.
+const observationFailures = createObservationFailureLog();
+
+async function respondToStaleSource(
+	conn: WebSocket,
+	generation: number,
+	stale: readonly string[],
+	ifaceFor: (ip: string) => string | undefined,
+	verdict: CarryVerdict,
+	current: () => boolean,
+): Promise<void> {
+	const ifaces = stale.map(ifaceFor);
+	const known = ifaces.every((iface) => iface !== undefined);
+	const links = known ? new Set(ifaces).size : stale.length;
+	// Name the link only when there is exactly one and its interface is known.
+	const [only] = ifaces;
+	const name =
+		known && links === 1 && only !== undefined
+			? await resolveLinkLabel(only)
+			: undefined;
+	if (!current()) return;
+	const offer = () =>
+		staleLinkNotice.offer(generation, {
+			count: Math.max(links, 1),
+			...(name === undefined ? {} : { name }),
+			othersCarrying: verdict === "others_carrying",
+		});
+	const response = staleSourceResponse(verdict);
+	switch (response) {
+		case "offer":
+			offer();
+			return;
+		case "restart": {
+			// The stream is already down: a restart costs nothing extra. Held by the
+			// cooldown (or one already running), the operator gets the offer instead.
+			const request = autoRestart.request(
+				generation,
+				await connectionRestartDeps(conn),
+			);
+			if (request.result === "held" && current()) offer();
+			void request.done;
+			return;
+		}
+		default: {
+			const exhaustive: never = response;
+			return exhaustive;
+		}
+	}
+}
 
 export async function start(
 	conn: WebSocket,
@@ -161,24 +237,40 @@ export async function start(
 	const reloads = createReloadQueue();
 	const ownsSession = () =>
 		sessionOpen && sessionResources?.generation === generation && ownsLaunch();
+	// Which interface each source belonged to in this session, so a stale (no
+	// longer published) source can still be named by its link.
+	const ifaceBySource = new Map<string, string>();
+	const rememberBond = () => {
+		for (const entry of getLastPublishedBond()?.entries ?? [])
+			ifaceBySource.set(entry.ip, entry.iface);
+	};
+	rememberBond();
 	const removeReloadObserver = observeSenderReload((delivery) => {
 		const deliveredPromise = delivery;
 		const bond = getLastPublishedBond();
 		const publication = bond?.publication;
 		if (!bond || !publication) return;
+		rememberBond();
 		const sources = bond.entries.map((entry) => entry.ip);
 		reloads.enqueue(JSON.stringify([publication, sources]), async (signal) => {
 			const delivered = await deliveredPromise;
 			let first = true;
 			const sender = () =>
 				getStreamingProcesses().find((p) => p.spawnfile === srtlaSendExec);
-			await verifySenderReload(
+			const log = (_event: string, meta: Record<string, unknown>) =>
+				logger.info("sender reload", meta);
+			// Watches the other links over the same ~20 s, so a stuck link's cost
+			// is judged on what was actually carried.
+			const carrying = createCarryTracker(Date.now, reloadTiming.carryWindowMs);
+			const result = await verifySenderReload(
 				publication.ok ? publication.generation : undefined,
 				sources,
 				{
 					signal,
 					now: Date.now,
 					wait: (ms) => waitForReload(ms, signal),
+					windowMs: reloadTiming.windowMs,
+					pollMs: reloadTiming.pollMs,
 					hup: async () => {
 						if (first) {
 							first = false;
@@ -193,30 +285,29 @@ export async function start(
 						return true;
 					},
 					read: async () => {
+						carrying.sample(buildLinkTelemetry());
 						const owned = sender();
 						if (!owned || !ownsSession()) return undefined;
 						return { sources: await senderSocketSources(owned.proc.pid) };
 					},
-					restart: async () => {
-						const owned = sender();
-						if (!owned || !ownsSession())
-							throw new Error("sender no longer owned");
-						// If a newer publication arrives during stop, finish this replacement
-						// before its queued reload. Stop cancels ownership and prevents respawn.
-						await replaceSender(owned, ownsSession);
-					},
-					notice: () =>
-						notificationBroadcast(
-							"sender_address",
-							"info",
-							"Restarted the connection to use the new mobile address. You're still live",
-							10,
-							false,
-							false,
-						),
-					log: (_event, meta) => logger.info("sender reload", meta),
+					log,
+					observationFailed: (error) => observationFailures.report(error, log),
 				},
 			);
+			if (signal.aborted || !ownsSession()) return;
+			if (result.outcome === "adopted") staleLinkNotice.retract(generation);
+			if (result.outcome === "stale")
+				await respondToStaleSource(
+					conn,
+					generation,
+					result.stale,
+					(ip) => ifaceBySource.get(ip),
+					carrying.judge(
+						result.stale.map((ip) => ifaceBySource.get(ip)),
+						bond.entries.map((entry) => entry.iface),
+					),
+					() => !signal.aborted && ownsSession(),
+				);
 		});
 	});
 
@@ -249,6 +340,7 @@ export async function start(
 			sessionOpen = false;
 			reloads.close();
 			removeReloadObserver();
+			staleLinkNotice.retract(generation);
 			removeNetifListener();
 			removeScanListener();
 		},
@@ -358,7 +450,7 @@ export function stopGeneration(
 				) {
 					setTimeout(() => {
 						void finish();
-					}, 250);
+					}, SENDER_STOP_HOLD_MS);
 				} else {
 					void finish();
 				}

@@ -1,21 +1,33 @@
 /** A reload is complete only when the running sender has adopted the publication. */
 export type Adoption = { generation?: number; sources: readonly string[] };
 
-export function adoptionMatches(
+export type AdoptionState =
+	| { state: "adopted" }
+	| { state: "stale"; stale: string[] }
+	| { state: "unknown" };
+
+/**
+ * Three answers, never two: an observation that cannot be made is "can't
+ * tell", which must not be read as adopted or as stale.
+ */
+export function classifyAdoption(
 	observed: Adoption | undefined,
 	generation: number | undefined,
 	sources: readonly string[],
-): boolean {
-	if (!observed) return false;
+): AdoptionState {
+	if (!observed) return { state: "unknown" };
 	if (observed.generation !== undefined && generation !== undefined)
-		return observed.generation === generation;
+		return observed.generation === generation
+			? { state: "adopted" }
+			: { state: "stale", stale: [] };
+	// Nothing bound that is not loopback or a wildcard: a local relay, or a
+	// sender between sockets. Neither proves a stale source.
+	if (observed.sources.length === 0) return { state: "unknown" };
 	// A source outside the publication means a changed link kept its old
 	// address. A published address that is not bound yet is left alone: the
 	// sender took the change, and a restart could not bind it either.
-	return (
-		observed.sources.length > 0 &&
-		observed.sources.every((ip) => sources.includes(ip))
-	);
+	const stale = observed.sources.filter((ip) => !sources.includes(ip));
+	return stale.length > 0 ? { state: "stale", stale } : { state: "adopted" };
 }
 
 export type ReloadDeps = {
@@ -24,63 +36,119 @@ export type ReloadDeps = {
 	wait: (ms: number) => Promise<void>;
 	hup: () => Promise<boolean>;
 	read: () => Promise<Adoption | undefined>;
-	restart: () => Promise<void>;
-	notice: () => void;
 	log: (event: string, meta: Record<string, unknown>) => void;
+	/** Rate-limited by the caller: /proc can stay unreadable for a whole session. */
+	observationFailed: (error: unknown) => void;
+	windowMs?: number;
+	pollMs?: number;
 };
 
+export type ReloadOutcome =
+	| { outcome: "adopted" }
+	| { outcome: "stale"; stale: string[] }
+	| { outcome: "unknown" }
+	| { outcome: "cancelled" };
+
+/**
+ * After the engine confirms Stop, the sender keeps forwarding this long so the
+ * engine's real SRT shutdown reaches the relay. Without it, a quick restart to
+ * the same stream ID meets a relay that still holds the old session.
+ */
+export const SENDER_STOP_HOLD_MS = 250;
+
+export const SENDER_RELOAD_WINDOW_MS = 10_000;
+export const SENDER_RELOAD_POLL_MS = 250;
+
+/**
+ * Signal, watch for about ten seconds, and signal once more only when a stale
+ * source is positively observed. Never replaces the sender: a new sender
+ * process registers a new relay group, and the engine's SRT session cannot
+ * follow it, so only a full, supervised session restart can fix a source that
+ * stays stale. That restart is the operator's decision (see session.ts).
+ */
 export async function verifySenderReload(
 	generation: number | undefined,
 	sources: readonly string[],
 	deps: ReloadDeps,
-): Promise<"adopted" | "restarted" | "failed" | "cancelled"> {
+): Promise<ReloadOutcome> {
+	const windowMs = deps.windowMs ?? SENDER_RELOAD_WINDOW_MS;
+	const pollMs = deps.pollMs ?? SENDER_RELOAD_POLL_MS;
 	const log = (outcome: string, extra = {}) =>
 		deps.log("sender reload", { generation, outcome, ...extra });
-	const adopted = async () => {
-		const deadline = deps.now() + 10000;
+	const observe = async (): Promise<AdoptionState> => {
+		const deadline = deps.now() + windowMs;
+		let last: AdoptionState = { state: "unknown" };
 		while (!deps.signal.aborted) {
 			try {
-				if (adoptionMatches(await deps.read(), generation, sources))
-					return true;
+				last = classifyAdoption(await deps.read(), generation, sources);
 			} catch (error) {
-				log("observation_failed", { error: String(error) });
+				deps.observationFailed(error);
+				last = { state: "unknown" };
 			}
+			if (last.state === "adopted") return last;
 			if (deps.now() >= deadline) break;
-			await deps.wait(250);
+			await deps.wait(pollMs);
 		}
-		return false;
+		return last;
 	};
 	try {
+		let state: AdoptionState = { state: "unknown" };
 		for (let attempt = 1; attempt <= 2; attempt++) {
-			if (deps.signal.aborted) return "cancelled";
+			if (deps.signal.aborted) return { outcome: "cancelled" };
 			try {
 				log("signal", { attempt, delivered: await deps.hup() });
 			} catch (error) {
 				log("signal_failed", { attempt, error: String(error) });
 			}
-			if (await adopted()) {
+			state = await observe();
+			if (deps.signal.aborted) return { outcome: "cancelled" };
+			if (state.state === "adopted") {
 				log("adopted", { attempt });
-				return "adopted";
+				return { outcome: "adopted" };
 			}
+			// Can't tell is never a reason to act, not even to signal again.
+			if (state.state === "unknown") break;
 		}
-		await deps.wait(500);
-		if (deps.signal.aborted) return "cancelled";
-		await deps.restart();
-		if (deps.signal.aborted) return "cancelled";
-		if (await adopted()) {
-			if (deps.signal.aborted) return "cancelled";
-			log("restarted");
-			deps.notice();
-			return "restarted";
+		// Every observation above is followed by an abort check, so a stale or
+		// unknown result here belongs to a run that is still current.
+		if (state.state === "stale") {
+			log("stale", { stale: state.stale });
+			return { outcome: "stale", stale: state.stale };
 		}
-		if (deps.signal.aborted) return "cancelled";
-		log("exhausted");
-		return "failed";
+		log("unknown");
+		return { outcome: "unknown" };
 	} catch (error) {
-		if (deps.signal.aborted) return "cancelled";
+		if (deps.signal.aborted) return { outcome: "cancelled" };
 		log("failed", { error: String(error) });
-		return "failed";
+		return { outcome: "unknown" };
 	}
+}
+
+/** At most one observation-failure line per interval, with a suppressed count. */
+export function createObservationFailureLog(
+	intervalMs = 60_000,
+	now: () => number = Date.now,
+) {
+	let lastAt = Number.NEGATIVE_INFINITY;
+	let suppressed = 0;
+	return {
+		report(
+			error: unknown,
+			log: (event: string, meta: Record<string, unknown>) => void,
+		) {
+			if (now() - lastAt < intervalMs) {
+				suppressed++;
+				return;
+			}
+			lastAt = now();
+			log("sender reload", {
+				outcome: "observation_failed",
+				error: String(error),
+				suppressed,
+			});
+			suppressed = 0;
+		},
+	};
 }
 
 export function waitForReload(ms: number, signal: AbortSignal): Promise<void> {

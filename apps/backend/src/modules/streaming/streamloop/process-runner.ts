@@ -53,11 +53,6 @@ export function spawnForwardLoop(
 	return spawnStreamingLoop(command, args, errCallback, forwardProcesses);
 }
 
-const recipes = new WeakMap<
-	StreamingProcess,
-	{ command: string; args: string[]; errCallback: (data: string) => void }
->();
-
 let streamingProcesses: Array<StreamingProcess> = [];
 
 // Live view of the supervised processes. Returned by reference so callers see
@@ -85,7 +80,6 @@ export function spawnStreamingLoop(
 		exitListeners: [],
 	};
 	registry.push(streamingProcess);
-	recipes.set(streamingProcess, { command, args: [...args], errCallback });
 
 	if (errCallback) {
 		// Drain stderr by async iteration: chunks arrive in order, matching the
@@ -349,16 +343,4 @@ export function gracefulShutdown(
 			finish();
 		}, timeoutMs);
 	});
-}
-
-/** Intentional, bounded address-reload replacement; unexpected exits remain observe-only. */
-export async function replaceSender(
-	process: StreamingProcess,
-	current: () => boolean,
-): Promise<StreamingProcess | undefined> {
-	const recipe = recipes.get(process);
-	if (!recipe || !current()) return undefined;
-	await stopProcessAndWait(process);
-	if (!current()) return undefined;
-	return spawnStreamingLoop(recipe.command, recipe.args, recipe.errCallback);
 }

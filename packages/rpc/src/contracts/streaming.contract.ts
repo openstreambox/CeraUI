@@ -14,6 +14,8 @@ import {
 	pipelinesSchema,
 	reloadAudioDelayInputSchema,
 	reloadAudioDelayOutputSchema,
+	restartConnectionInputSchema,
+	restartConnectionOutputSchema,
 	setMockDeviceAttachedInputSchema,
 	setMockDeviceAttachedOutputSchema,
 	setMockHardwareInputSchema,
@@ -42,6 +44,11 @@ export const streamingContract = oc.router({
 	 * Stop streaming
 	 */
 	stop: oc.output(streamingStopOutputSchema),
+
+	/**
+	 * Restart the stream session from the stale-link notice's one-tap offer
+	 */
+	restartConnection: oc.input(restartConnectionInputSchema).output(restartConnectionOutputSchema),
 
 	/**
 	 * Set bitrate during streaming

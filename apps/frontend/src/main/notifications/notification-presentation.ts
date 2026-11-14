@@ -14,14 +14,16 @@
  * module's introduction.
  */
 import { m } from "@ceraui/i18n/svelte";
-import type { NotificationType } from "@ceraui/rpc/schemas";
+import type { NotificationAction, NotificationType } from "@ceraui/rpc/schemas";
 import CircleAlert from "@lucide/svelte/icons/circle-alert";
 import CircleCheck from "@lucide/svelte/icons/circle-check";
 import Info from "@lucide/svelte/icons/info";
 import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
 import type { Component } from "svelte";
+import { toast } from "svelte-sonner";
 
 import { rpc } from "$lib/rpc";
+import { requestDialog } from "$lib/stores/dialog-request.svelte";
 import {
 	type ActiveNotification,
 	dismiss,
@@ -81,5 +83,38 @@ export async function dismissPersistentNotification(
 		await rpc.notifications.dismiss({ name });
 	} catch {
 		/* best-effort: the optimistic local removal above already happened. */
+	}
+}
+
+/**
+ * Run a notification's allowlisted action, for every surface that offers it.
+ *
+ * `navigate` opens the in-app target. `command` asks the device to run the
+ * command for the one offer named by its token; the device refuses an outdated
+ * offer, and the operator is told nothing was restarted rather than left
+ * guessing. The device withdraws the notice itself when it accepts.
+ */
+export async function runNotificationAction(
+	action: NotificationAction,
+	name: string,
+): Promise<void> {
+	switch (action.kind) {
+		case "navigate":
+			requestDialog(action.target);
+			return;
+		case "command": {
+			dismiss(name);
+			let accepted = false;
+			try {
+				const result = await rpc.streaming.restartConnection({
+					token: action.token,
+				});
+				accepted = result.result === "restarting";
+			} catch {
+				accepted = false;
+			}
+			if (!accepted) toast.info(m["notifications.restartConnectionRefused"]());
+			return;
+		}
 	}
 }

@@ -1,0 +1,449 @@
+/*
+  The production wiring of sender address adoption, driven through the real
+  session `start` and `stopGeneration` with a fake sender and a fake /proc.
+
+  What it pins, each one because a hand mutant survived without it:
+  - a withheld first HUP gets exactly one retry, by the owned PID, and no notice;
+  - a source still stale after the retry raises the restart OFFER and nothing
+    restarts on its own: no process spawn, no stop, no second start;
+  - an unreadable /proc never escalates: no retry and no notice;
+  - Stop closes the check at once, before the engine-stop callback runs;
+  - the offer belongs to its session: Stop withdraws it and spends its token;
+  - after the engine confirms Stop the sender stays up for the 250 ms hold,
+    and only while a sender exists.
+*/
+
+import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test";
+import WebSocket from "ws";
+
+import type { BindMapPublication } from "../modules/streaming/bind-map-writer.ts";
+import { autoRestart } from "../modules/streaming/connection-restart.ts";
+import * as labels from "../modules/streaming/link-label.ts";
+import * as telemetry from "../modules/streaming/link-telemetry.ts";
+import type { LinkTelemetryMessage } from "../modules/streaming/link-telemetry-rows.ts";
+import * as sockets from "../modules/streaming/sender-sockets.ts";
+import * as srtla from "../modules/streaming/srtla.ts";
+import {
+	STALE_LINK_NOTICE,
+	staleLinkNotice,
+} from "../modules/streaming/stale-link-notice.ts";
+import * as owner from "../modules/streaming/stream-session-orchestrator.ts";
+import * as streaming from "../modules/streaming/streaming.ts";
+import { getStreamingBackend } from "../modules/streaming/streaming-engine.ts";
+import { srtlaSendExec } from "../modules/streaming/streamloop/exec-paths.ts";
+import * as runner from "../modules/streaming/streamloop/process-runner.ts";
+import * as session from "../modules/streaming/streamloop/session.ts";
+import * as preparation from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
+import * as launch from "../modules/streaming/streamloop/start-stream.ts";
+import * as notifications from "../modules/ui/notifications.ts";
+
+const GENERATION = 7431;
+const OLD = "192.0.2.1";
+const NEW = "192.0.2.3";
+const WIRED = "198.51.100.7";
+
+type Observer = (delivered: Promise<boolean>) => void;
+let observer: Observer | undefined;
+let bound: string[] = [];
+let kills: string[] = [];
+let stops: number[] = [];
+let shown: Array<{ name: string; key?: string; action?: unknown }> = [];
+let removed: string[] = [];
+let readFails = false;
+let senderPresent = true;
+
+const fakeSender = {
+	spawnfile: srtlaSendExec,
+	proc: {
+		pid: 424242,
+		kill: (signal: string) => {
+			kills.push(signal);
+			if (signal === "SIGHUP" && onHup) onHup();
+		},
+		exited: new Promise<number>(() => {}),
+	},
+	exitListeners: [],
+} as unknown as runner.StreamingProcess;
+let onHup: (() => void) | undefined;
+
+function publish(
+	ips: Array<{ ip: string; iface: string }>,
+	generation: number,
+) {
+	const publication = {
+		ok: true,
+		generation,
+		changed: true,
+		sidecarPath: "/run/test/map.json",
+	} as BindMapPublication;
+	return { entries: ips, publication } as unknown as srtla.PublishedBond;
+}
+
+let bond: srtla.PublishedBond | undefined;
+/** Which link the sender's telemetry shows carrying; undefined = no telemetry. */
+let carriedBy: string | null | undefined;
+let restarts: string[] = [];
+
+function frame(carrier: string | null): LinkTelemetryMessage {
+	const links = ["wwan0", "eth0"].map((iface) => ({
+		conn_id: iface,
+		iface,
+		rtt_ms: 40,
+		nak_count: 0,
+		weight_percent: 50,
+		bitrate_bps: iface === carrier ? 4_000_000 : 0,
+		stale: false,
+	}));
+	return { links, measured_bps: 0, lastReadMs: 0 };
+}
+
+beforeEach(() => {
+	observer = undefined;
+	bound = [OLD, WIRED];
+	kills = [];
+	stops = [];
+	shown = [];
+	removed = [];
+	readFails = false;
+	senderPresent = true;
+	onHup = undefined;
+	staleLinkNotice.resetForTest();
+	session.setSenderReloadTimingForTest({
+		windowMs: 60,
+		pollMs: 5,
+		carryWindowMs: 100,
+	});
+	autoRestart.resetForTest();
+	carriedBy = undefined;
+	restarts = [];
+	spyOn(telemetry, "buildLinkTelemetry").mockImplementation(() =>
+		carriedBy === undefined ? null : frame(carriedBy),
+	);
+	spyOn(owner, "stopStreamSession").mockImplementation(async (cause) => {
+		restarts.push(`stop:${cause}`);
+		return { result: "stopped" };
+	});
+	spyOn(owner, "startStreamSession").mockImplementation(async (request) => {
+		restarts.push(`start:${request.origin}`);
+		return { result: "started", attemptId: "auto" };
+	});
+	bond = publish(
+		[
+			{ ip: OLD, iface: "wwan0" },
+			{ ip: WIRED, iface: "eth0" },
+		],
+		1,
+	);
+	spyOn(srtla, "getLastPublishedBond").mockImplementation(() => bond);
+	spyOn(srtla, "observeSenderReload").mockImplementation((next) => {
+		observer = next;
+		return () => {
+			if (observer === next) observer = undefined;
+		};
+	});
+	spyOn(srtla, "restartSrtla").mockImplementation(() => Promise.resolve(true));
+	spyOn(runner, "getStreamingProcesses").mockImplementation(() =>
+		senderPresent ? [fakeSender] : [],
+	);
+	spyOn(runner, "stopProcessAndWait").mockImplementation(async () => {
+		stops.push(performance.now());
+	});
+	spyOn(sockets, "senderSocketSources").mockImplementation(async () => {
+		if (readFails) throw new Error("EACCES");
+		return [...bound];
+	});
+	spyOn(labels, "resolveLinkLabel").mockImplementation(async (iface) =>
+		iface === "wwan0" ? "Modem 2" : iface,
+	);
+	spyOn(notifications, "notificationBroadcast").mockImplementation(
+		(
+			name,
+			_type,
+			_msg,
+			_duration,
+			_persistent,
+			_dismissable,
+			_authed,
+			key,
+			_params,
+			opts,
+		) => {
+			shown.push({ name, key, action: opts?.action });
+		},
+	);
+	spyOn(notifications, "notificationRemove").mockImplementation((name) => {
+		removed.push(name);
+		return { remove: [] };
+	});
+	spyOn(preparation, "prepareSrtlaIpAddresses").mockResolvedValue(
+		undefined as never,
+	);
+});
+
+afterEach(async () => {
+	spyOn(getStreamingBackend(), "stop").mockImplementation((complete) => {
+		complete();
+		return true;
+	});
+	await session.stopGeneration(GENERATION);
+	jest.restoreAllMocks();
+	session.setSenderReloadTimingForTest(null);
+	staleLinkNotice.resetForTest();
+	autoRestart.resetForTest();
+});
+
+let launches = 0;
+async function startLive() {
+	let live = false;
+	launches = 0;
+	spyOn(streaming, "getIsStreaming").mockImplementation(() => live);
+	spyOn(streaming, "updateConfig").mockResolvedValue({
+		pipeline: {
+			source: "hdmi",
+			name: "Constructed",
+			hardware: "generic",
+			description: "Constructed",
+			supportsAudio: false,
+			supportsResolutionOverride: false,
+			supportsFramerateOverride: false,
+			audio_kind: "none",
+		},
+		srtlaAddr: "203.0.113.1",
+		srtlaPort: 5000,
+		streamid: "constructed",
+	});
+	spyOn(launch, "startStream").mockImplementation(async () => {
+		launches++;
+		return { success: true };
+	});
+	expect(await session.start(WebSocket.prototype, {}, GENERATION)).toEqual({
+		success: true,
+	});
+	live = true;
+	expect(observer).toBeDefined();
+}
+
+/** The link renumbered: publish the new address and report the reload. */
+function renumber(delivered = true) {
+	bond = publish(
+		[
+			{ ip: NEW, iface: "wwan0" },
+			{ ip: WIRED, iface: "eth0" },
+		],
+		2,
+	);
+	observer?.(Promise.resolve(delivered));
+}
+
+const settle = (ms: number) =>
+	new Promise((resolve) => setTimeout(resolve, ms));
+
+test("a withheld HUP gets one retry by the owned PID and stays quiet", async () => {
+	await startLive();
+	onHup = () => {
+		bound = [NEW, WIRED];
+	};
+	renumber();
+	await settle(200);
+	expect(kills).toEqual(["SIGHUP"]);
+	expect(shown).toEqual([]);
+	expect(launches).toBe(1);
+	expect(stops).toEqual([]);
+});
+
+test("a source still stale after the retry offers a restart and restarts nothing", async () => {
+	await startLive();
+	renumber();
+	await settle(300);
+	expect(kills).toEqual(["SIGHUP"]);
+	expect(shown).toHaveLength(1);
+	expect(shown[0]?.name).toBe(STALE_LINK_NOTICE);
+	expect(shown[0]?.key).toBe("notifications.staleLinkAddress");
+	expect(shown[0]?.action).toMatchObject({
+		kind: "command",
+		command: "restart-connection",
+		token: staleLinkNotice.current()?.token,
+	});
+	expect(staleLinkNotice.current()?.generation).toBe(GENERATION);
+	// Nothing restarted on its own: no stop of any process, no second start.
+	expect(stops).toEqual([]);
+	expect(launches).toBe(1);
+	expect(restarts).toEqual([]);
+});
+
+test("an unreadable /proc never escalates", async () => {
+	await startLive();
+	readFails = true;
+	renumber();
+	await settle(300);
+	expect(kills).toEqual([]);
+	expect(shown).toEqual([]);
+	expect(stops).toEqual([]);
+});
+
+test("Stop closes the check before the engine has stopped", async () => {
+	await startLive();
+	renumber();
+	await settle(20);
+	// The engine acknowledges Stop only later; the check must already be closed.
+	const engineStop = Promise.withResolvers<() => void>();
+	spyOn(getStreamingBackend(), "stop").mockImplementation((complete) => {
+		engineStop.resolve(complete);
+		return true;
+	});
+	const stopping = session.stopGeneration(GENERATION);
+	await settle(300);
+	expect(kills).toEqual([]);
+	expect(shown).toEqual([]);
+	(await engineStop.promise)();
+	await stopping;
+	expect(observer).toBeUndefined();
+});
+
+test("Stop withdraws the offer and spends its token", async () => {
+	await startLive();
+	renumber();
+	await settle(300);
+	const offer = staleLinkNotice.current();
+	expect(offer?.generation).toBe(GENERATION);
+	spyOn(getStreamingBackend(), "stop").mockImplementation((complete) => {
+		complete();
+		return true;
+	});
+	await session.stopGeneration(GENERATION);
+	expect(removed).toContain(STALE_LINK_NOTICE);
+	expect(staleLinkNotice.current()).toBeUndefined();
+	expect(
+		staleLinkNotice.take(
+			offer?.token ?? "",
+			session.currentSessionGeneration(),
+		),
+	).toBeUndefined();
+});
+
+test("a later adoption withdraws an offer that is on screen", async () => {
+	await startLive();
+	renumber();
+	await settle(300);
+	expect(staleLinkNotice.current()).toBeDefined();
+	bound = [NEW, WIRED];
+	bond = publish(
+		[
+			{ ip: NEW, iface: "wwan0" },
+			{ ip: WIRED, iface: "eth0" },
+		],
+		3,
+	);
+	observer?.(Promise.resolve(true));
+	await settle(100);
+	expect(staleLinkNotice.current()).toBeUndefined();
+	expect(removed).toContain(STALE_LINK_NOTICE);
+});
+
+test("the sender stays up for the hold after the engine confirms Stop", async () => {
+	await startLive();
+	spyOn(getStreamingBackend(), "stop").mockImplementation((complete) => {
+		complete();
+		return true;
+	});
+	const before = performance.now();
+	await session.stopGeneration(GENERATION);
+	expect(stops).toHaveLength(1);
+	expect((stops[0] ?? 0) - before).toBeGreaterThanOrEqual(
+		session.SENDER_STOP_HOLD_MS - 5,
+	);
+	expect(session.SENDER_STOP_HOLD_MS).toBe(250);
+});
+
+test("no hold without a sender, and none when the engine is missing", async () => {
+	await startLive();
+	senderPresent = false;
+	spyOn(getStreamingBackend(), "stop").mockImplementation((complete) => {
+		complete();
+		return true;
+	});
+	let before = performance.now();
+	await session.stopGeneration(GENERATION);
+	expect(performance.now() - before).toBeLessThan(100);
+
+	await startLive();
+	senderPresent = true;
+	spyOn(getStreamingBackend(), "stop").mockImplementation(() => false);
+	// No engine session: the stop is confirmed out of band, not by the engine.
+	spyOn(getStreamingBackend(), "confirmStop").mockResolvedValue(undefined);
+	before = performance.now();
+	await session.stopGeneration(GENERATION, true);
+	// The missing-engine path sweeps the sender without the forwarding hold.
+	expect(stops).toHaveLength(1);
+	expect((stops[0] ?? 0) - before).toBeLessThan(200);
+});
+
+/** The only link renumbered: the bond holds nothing else. */
+function renumberOnlyLink() {
+	bond = publish([{ ip: NEW, iface: "wwan0" }], 2);
+	observer?.(Promise.resolve(true));
+}
+
+test("several links, the others carrying: the notice only, saying so", async () => {
+	await startLive();
+	carriedBy = "eth0";
+	renumber();
+	await settle(300);
+	expect(shown.map((n) => n.key)).toEqual([
+		"notifications.staleLinkAddressCarrying",
+	]);
+	expect(restarts).toEqual([]);
+	expect(stops).toEqual([]);
+	expect(launches).toBe(1);
+});
+
+test("several links, no telemetry: can't tell, so the plain notice and no restart", async () => {
+	await startLive();
+	carriedBy = undefined;
+	renumber();
+	await settle(300);
+	expect(shown.map((n) => n.key)).toEqual(["notifications.staleLinkAddress"]);
+	expect(restarts).toEqual([]);
+});
+
+test("several links, none carried for the window: restart on its own", async () => {
+	await startLive();
+	carriedBy = null;
+	renumber();
+	await settle(400);
+	expect(restarts).toEqual(["stop:reconfigure", "start:ui"]);
+	expect(shown.map((n) => n.name)).toEqual(["connection_restarted"]);
+});
+
+test("the only link stuck: restart on its own, exactly once, then announce it", async () => {
+	await startLive();
+	bond = publish([{ ip: OLD, iface: "wwan0" }], 1);
+	bound = [OLD];
+	renumberOnlyLink();
+	await settle(400);
+	expect(restarts).toEqual(["stop:reconfigure", "start:ui"]);
+	// Announced after the new session started, and never as "still live".
+	expect(shown).toHaveLength(1);
+	expect(shown[0]?.name).toBe("connection_restarted");
+	expect(shown[0]?.key).toBe("notifications.connectionRestartedNewAddress");
+	// No offer stands beside the restart.
+	expect(staleLinkNotice.current()).toBeUndefined();
+	// No sender replacement: the restart went through the session supervisor.
+	expect(stops).toEqual([]);
+});
+
+test("the only link stuck again within the cooldown: the offer, not a second restart", async () => {
+	await startLive();
+	bound = [OLD];
+	renumberOnlyLink();
+	await settle(400);
+	expect(restarts).toHaveLength(2);
+	bond = publish([{ ip: "192.0.2.9", iface: "wwan0" }], 3);
+	observer?.(Promise.resolve(true));
+	await settle(400);
+	expect(restarts).toHaveLength(2);
+	expect(shown.map((n) => n.key)).toEqual([
+		"notifications.connectionRestartedNewAddress",
+		"notifications.staleLinkAddress",
+	]);
+});

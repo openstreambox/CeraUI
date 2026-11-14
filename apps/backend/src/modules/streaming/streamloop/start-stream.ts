@@ -321,6 +321,12 @@ export async function startStream(
 				error.failure.message,
 			)
 		) {
+			// The relay may still hold the session that just ended. The original
+			// engine code stays in the log; the wire code drives the busy retry.
+			logger.info("relay session possibly busy after a quick restart", {
+				attemptId,
+				originalCode: error.failure.code,
+			});
 			throw new StreamStartFailure(
 				{
 					...error.failure,
