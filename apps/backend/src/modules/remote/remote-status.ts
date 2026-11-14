@@ -1,3 +1,5 @@
+import { publicSrtConfig } from "../../helpers/srt-secret-redaction.ts";
+
 function omitIncarnation(value: unknown): unknown {
 	if (
 		typeof value !== "object" ||
@@ -37,8 +39,9 @@ export function projectRemoteWifiFrame(payload: unknown): unknown {
 	return projected;
 }
 
-/** Only the internal pairing seed is withheld from authenticated remote config. */
+/** Withhold internal pairing and encryption credentials from remote config. */
 export function projectRemoteConfig(payload: unknown): unknown {
+	payload = publicSrtConfig(payload);
 	if (typeof payload !== "object" || payload === null) return payload;
 	if (!("pairing_secret" in payload)) return payload;
 	const config = { ...payload };

@@ -78,3 +78,54 @@ test("refuses retained encryption settings before acquiring an engine connection
 	).rejects.toThrow();
 	expect(connects).toBe(0);
 });
+
+test("retained passphrases never reach config event or relay boundaries", async () => {
+	const { addClient, removeClient, broadcast, buildMessage, sendToClient } =
+		await import("../rpc/events");
+	const { projectRemoteConfig } = await import(
+		"../modules/remote/remote-status"
+	);
+	const { relayStatusToGateway, setControlChannel } = await import(
+		"../modules/remote-control/status-relay"
+	);
+	const config = { srt_passphrase: "stored-dummy-secret", srt_latency: 2000 };
+	const messages: string[] = [];
+	const ws = {
+		send: (message: string) => messages.push(message),
+		data: { isAuthenticated: true, lastActive: Date.now() },
+	} as unknown as AppWebSocket;
+	addClient(ws);
+	setControlChannel({
+		isConnected: () => true,
+		sendFrame: (frame) => {
+			messages.push(JSON.stringify(frame));
+		},
+	});
+	try {
+		messages.push(buildMessage("config", config));
+		sendToClient(ws, "config", config);
+		broadcast("config", config);
+		messages.push(JSON.stringify(projectRemoteConfig(config)));
+		relayStatusToGateway("config", config, 1);
+		expect(messages).toHaveLength(5);
+		for (const message of messages) {
+			expect(message).not.toContain("stored-dummy-secret");
+			expect(message).not.toContain('"srt_passphrase":');
+			expect(message).toContain('"srt_latency":2000');
+		}
+		expect(config.srt_passphrase).toBe("stored-dummy-secret");
+	} finally {
+		removeClient(ws);
+		setControlChannel(null);
+	}
+});
+
+test("scrubs escaped JSON and camelCase passphrase fields", () => {
+	for (const text of [
+		String.raw`{\"srt_passphrase\":\"dummy-secret\"}`,
+		'{"srtPassphrase":"dummy-secret"}',
+		"srtPassphrase=dummy-secret",
+	]) {
+		expect(redactSrtPassphrases(text)).not.toContain("dummy-secret");
+	}
+});

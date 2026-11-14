@@ -2,7 +2,9 @@
  * RPC Event System
  * Manages subscriptions and broadcasts for real-time data
  */
+
 import { logger } from "../helpers/logger.ts";
+import { publicSrtConfig } from "../helpers/srt-secret-redaction.ts";
 import { isDevelopment } from "../mocks/mock-config.ts";
 import {
 	type CoalesceState,
@@ -264,7 +266,10 @@ export function broadcast(
 	updateCoalesceState(coalesceState, type, data, now);
 
 	const seq = advanceSeq(seqCounters, type);
-	const message = JSON.stringify({ [type]: data, seq });
+	const message = JSON.stringify({
+		[type]: type === "config" ? publicSrtConfig(data) : data,
+		seq,
+	});
 
 	// Per-client failure isolation. `send` is fired synchronously per client in
 	// iteration order (so a given socket keeps receiving in seq order — the
@@ -326,7 +331,11 @@ export function sendToClient(
 	data: unknown,
 ): void {
 	try {
-		ws.send(JSON.stringify({ [type]: data }));
+		ws.send(
+			JSON.stringify({
+				[type]: type === "config" ? publicSrtConfig(data) : data,
+			}),
+		);
 	} catch (error) {
 		logger.error("Send error", { err: error });
 	}
@@ -340,7 +349,9 @@ export function buildMessage(
 	data: unknown,
 	id?: string | null,
 ): string {
-	const obj: Record<string, unknown> = { [type]: data };
+	const obj: Record<string, unknown> = {
+		[type]: type === "config" ? publicSrtConfig(data) : data,
+	};
 	if (id !== undefined) {
 		obj.id = id;
 	}

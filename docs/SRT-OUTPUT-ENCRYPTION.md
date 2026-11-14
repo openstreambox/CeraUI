@@ -4,8 +4,7 @@ The published `@ceralive/cerastream` 2026.9.11 binding has no passphrase or
 key-length fields in `start.srt`. The inspected engine package 2026.9.8 also
 has an eight-field SRT config, with no discoverable passphrase/environment
 option. No supported URI, stream-ID or pipeline workaround was established.
-The engine repository is not publicly readable. This consumer change does
-not enable encrypted output and must remain a draft until the producer lands.
+This consumer change does not enable encrypted output and must remain a draft until the producer lands.
 
 The config input and persistence schema reserve `srt_passphrase` (10–79 UTF-8
 bytes, preserving spaces) and `srt_pbkeylen` (16/24/32 bytes; default 16).
