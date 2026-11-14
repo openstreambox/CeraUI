@@ -52,3 +52,38 @@ test("invalid and occupied births do not open the kernel TUN device", async () =
 		"occupied",
 	);
 });
+
+test("incomplete or ambiguous link inventories cannot authorize TUN birth or absence", () => {
+	for (const inventory of [
+		[null],
+		[{}],
+		[
+			{ ifname: "other0", ifindex: 1 },
+			{ ifname: "other0", ifindex: 2 },
+		],
+		[
+			{ ifname: "other0", ifindex: 1 },
+			{ ifname: "other1", ifindex: 1 },
+		],
+	])
+		expect(() => inspectCellularTun(inventory, 1, owner, epoch)).toThrow(
+			"inventory",
+		);
+	const row = {
+		ifname: "cclat1",
+		ifindex: 7,
+		ifalias: cellularTunAlias(owner, epoch),
+		linkinfo: {
+			info_kind: "tun",
+			info_data: { type: "tun", pi: true, persist: true, multi_queue: false },
+		},
+	};
+	expect(
+		inspectCellularTun(
+			[row, { ...row, ifname: "other0", ifindex: 8 }],
+			1,
+			owner,
+			epoch,
+		),
+	).toBe("foreign");
+});

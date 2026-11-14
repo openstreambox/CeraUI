@@ -79,6 +79,18 @@ test("a virtual link uses its own instance predicate for scoped IPv6 settings, n
 		).toBe(true);
 		expect(value).toBe("0");
 	}
+	value = "3";
+	expect(await readScopedCellularSysctl(scoped, "addr_gen_mode", io)).toBe("3");
+	expect(
+		await compareAndSetScopedCellularSysctl(
+			scoped,
+			"addr_gen_mode",
+			"3",
+			"1",
+			io,
+		),
+	).toBe(true);
+	expect(await readScopedCellularSysctl(scoped, "addr_gen_mode", io)).toBe("1");
 	value = "2";
 	expect(await readScopedCellularSysctl(scoped, "accept_dad", io)).toBe("2");
 	expect(
@@ -178,4 +190,42 @@ test("global and default sysctl names are refused even with a purported physical
 			),
 		).rejects.toThrow("identity");
 	expect(opened).toBe(false);
+});
+
+test("a synchronous observation revocation vetoes a sysctl write after an awaited current read", async () => {
+	let permitted = true,
+		reads = 0,
+		wrote = false,
+		closed = false;
+	expect(
+		await compareAndSetScopedCellularSysctl(
+			{
+				ifname: "cclat1",
+				writable: () => permitted,
+				current: async () => {
+					if (++reads === 2)
+						queueMicrotask(() => {
+							permitted = false;
+						});
+					return true;
+				},
+			},
+			"forwarding",
+			"0",
+			"1",
+			{
+				open: async () => ({
+					readValue: async () => "0",
+					writeValue: async () => {
+						wrote = true;
+					},
+					close: async () => {
+						closed = true;
+					},
+				}),
+			},
+		),
+	).toBe(false);
+	expect(wrote).toBe(false);
+	expect(closed).toBe(true);
 });

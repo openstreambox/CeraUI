@@ -65,15 +65,27 @@ export function cellularFirewallIO(
  * before create. A same-looking existing table is not authority to adopt it.
  * Transitions verify the entire table, then replace only that table atomically.
  */
-export class CellularFirewall {
+export interface CellularNftShape<Mode extends string> {
+	readonly table: string;
+	readonly withdrawn: Mode;
+	readonly definition: (mode: Mode) => string;
+	readonly replace: (mode: Mode) => string;
+	readonly inspect: (
+		raw: unknown,
+		indexes: Readonly<Record<string, number>>,
+	) => Mode | "foreign";
+}
+export class CellularOwnedNftTable<Mode extends string> {
 	constructor(
-		readonly input: CellularPacketFence,
+		private readonly shape: CellularNftShape<Mode>,
 		private readonly io: CellularFirewallIO,
 	) {
-		cellularFenceDefinition(input, "withdrawn");
+		if (!/^ceracell_(?:forward_)?(?:[1-9]|[12]\d|3[0-2])$/.test(shape.table))
+			throw new Error("Invalid cellular firewall namespace");
+		shape.definition(shape.withdrawn);
 	}
-	async inspect(): Promise<CellularFenceMode | "absent" | "foreign"> {
-		const table = cellularFenceTable(this.input.slot);
+	async inspect(): Promise<Mode | "absent" | "foreign"> {
+		const table = this.shape.table;
 		const inventory: unknown = JSON.parse(
 			await this.io.read(["--numeric", "--json", "list", "tables"]),
 		);
@@ -129,7 +141,7 @@ export class CellularFirewall {
 				for (const expression of entry?.rule?.expr ?? []) {
 					const match = expression?.match;
 					if (
-						match?.left?.meta?.key !== "oif" ||
+						!["iif", "oif"].includes(match?.left?.meta?.key) ||
 						typeof match.right !== "string"
 					)
 						continue;
@@ -148,29 +160,28 @@ export class CellularFirewall {
 					} else indexes[name] = first;
 				}
 		}
-		return inspectCellularFence(this.input, raw, indexes);
+		return this.shape.inspect(raw, indexes);
 	}
-	async create(mode: CellularFenceMode): Promise<void> {
+	async create(mode: Mode): Promise<void> {
 		if (
 			!(await this.io.current()) ||
 			(await this.inspect()) !== "absent" ||
 			!(await this.io.current())
 		)
 			throw new Error("Firewall birth slot unavailable");
-		await this.io.write(cellularFenceDefinition(this.input, mode));
+		await this.io.write(this.shape.definition(mode));
 		if (!(await this.io.current()) || (await this.inspect()) !== mode)
 			throw new Error("Firewall birth did not verify");
 	}
-	async transition(mode: CellularFenceMode): Promise<void> {
+	async transition(mode: Mode): Promise<void> {
 		const before = await this.inspect();
 		if (
 			before === "absent" ||
 			before === "foreign" ||
-			(mode !== "withdrawn" && !(await this.io.current()))
+			(mode !== this.shape.withdrawn && !(await this.io.current()))
 		)
 			throw new Error("Firewall ownership changed");
-		if (before !== mode)
-			await this.io.write(cellularFenceReplace(this.input, mode));
+		if (before !== mode) await this.io.write(this.shape.replace(mode));
 		if ((await this.inspect()) !== mode)
 			throw new Error("Firewall transition did not verify");
 	}
@@ -180,9 +191,25 @@ export class CellularFirewall {
 		if (before === "foreign") return false;
 		// An old output-index fence remains ours after USB removal; no device or
 		// global firewall policy is changed by deleting this exact owned table.
-		await this.io.write(
-			`delete table inet ${cellularFenceTable(this.input.slot)}\n`,
-		);
+		await this.io.write(`delete table inet ${this.shape.table}\n`);
 		return (await this.inspect()) === "absent";
+	}
+}
+
+export class CellularFirewall extends CellularOwnedNftTable<CellularFenceMode> {
+	constructor(
+		readonly input: CellularPacketFence,
+		io: CellularFirewallIO,
+	) {
+		super(
+			{
+				table: cellularFenceTable(input.slot),
+				withdrawn: "withdrawn",
+				definition: (mode) => cellularFenceDefinition(input, mode),
+				replace: (mode) => cellularFenceReplace(input, mode),
+				inspect: (raw, indexes) => inspectCellularFence(input, raw, indexes),
+			},
+			io,
+		);
 	}
 }

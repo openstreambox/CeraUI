@@ -39,6 +39,8 @@ type IpState = Pick<CellularIpState, "inspect" | "apply" | "remove">;
 export interface CellularNativeHostDeps {
 	/** Lifetime slot lease and retained actor ownership; checked synchronously at dispatch. */
 	readonly owned: () => boolean;
+	/** Captured observation revision; cleanup retains its separate lease. */
+	readonly currentNow: () => boolean;
 	/** Fresh physical device, SIM, subscription and actual grant identity. */
 	readonly current: () => Promise<boolean>;
 	readonly store: { readonly dir: string };
@@ -103,6 +105,7 @@ export class CellularNativeHost implements CellularPathSession {
 	private closing = false;
 	private retired = false;
 	private removing = false;
+	private withdrawing = false;
 	private withdrawn = false;
 	constructor(
 		readonly authority: CellularNativeHostPlan,
@@ -130,7 +133,12 @@ export class CellularNativeHost implements CellularPathSession {
 				translated: false,
 			},
 			() => this.current(),
-			() => deps.owned() && !this.retired && (!this.closing || this.removing),
+			() =>
+				deps.owned() &&
+				!this.retired &&
+				(this.removing ||
+					this.withdrawing ||
+					(!this.closing && deps.currentNow())),
 		);
 		this.firewall = effects.firewall;
 		this.ip = effects.ip;
@@ -200,10 +208,12 @@ export class CellularNativeHost implements CellularPathSession {
 			!this.closing &&
 			!this.retired &&
 			this.deps.owned() &&
+			this.deps.currentNow() &&
 			(await this.deps.current()) &&
 			!this.closing &&
 			!this.retired &&
-			this.deps.owned()
+			this.deps.owned() &&
+			this.deps.currentNow()
 		);
 	}
 	private serial<T>(operation: () => Promise<T>): Promise<T> {
@@ -251,7 +261,12 @@ export class CellularNativeHost implements CellularPathSession {
 		return this.serial(async () => {
 			if (!this.deps.owned() || this.retired || this.closing) return false;
 			if (ready && !(await this.valid())) return false;
-			await this.firewall.transition(ready ? "ready" : "withdrawn");
+			this.withdrawing = !ready;
+			try {
+				await this.firewall.transition(ready ? "ready" : "withdrawn");
+			} finally {
+				this.withdrawing = false;
+			}
 			return (
 				!this.closing && this.deps.owned() && (!ready || (await this.current()))
 			);

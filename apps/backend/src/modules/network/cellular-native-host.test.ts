@@ -38,6 +38,7 @@ async function fixture() {
 	const deps: CellularNativeHostDeps = {
 		store: { dir },
 		owned: () => owned,
+		currentNow: () => current,
 		current: async () => (hold ? await hold : current),
 		withdraw: () => {
 			events.push("withdraw");

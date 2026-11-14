@@ -733,6 +733,7 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 		const nativeDeps = {
 			store: { dir: join(stateRoot, "state") },
 			owned: () => owned,
+			currentNow: () => owned,
 			current: async () => {
 				const rows = JSON.parse(
 					await ip("-4", "-j", "addr", "show", "dev", "wwan0"),

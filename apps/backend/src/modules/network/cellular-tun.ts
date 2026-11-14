@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { changeLinkByIndex } from "../../helpers/netlink-link.ts";
 import { run } from "../../helpers/run.ts";
+import { isSafeIfname } from "./safe-ifname.ts";
 
 export interface CellularTunIdentity {
 	readonly name: string;
@@ -11,10 +12,15 @@ export interface CellularTunIdentity {
 export interface CellularTunIO {
 	readonly current: () => Promise<boolean>;
 	readonly links: () => Promise<unknown>;
+	readonly writable?: () => boolean;
 }
-export function cellularTunIO(current: () => Promise<boolean>): CellularTunIO {
+export function cellularTunIO(
+	current: () => Promise<boolean>,
+	writable: () => boolean = () => true,
+): CellularTunIO {
 	return {
 		current,
+		writable,
 		links: async () =>
 			JSON.parse(
 				await run("ip", ["-d", "-j", "link", "show"], {
@@ -38,7 +44,24 @@ function rowForName(
 	raw: unknown,
 	name: string,
 ): Record<string, unknown> | undefined {
-	if (!Array.isArray(raw) || raw.length > 4096)
+	if (
+		!Array.isArray(raw) ||
+		raw.length > 4096 ||
+		raw.some(
+			(row) =>
+				!row ||
+				typeof row !== "object" ||
+				Array.isArray(row) ||
+				!Number.isInteger(row.ifindex) ||
+				row.ifindex < 1 ||
+				row.ifindex > 0x7fffffff ||
+				typeof row.ifname !== "string" ||
+				!isSafeIfname(row.ifname) ||
+				(row.ifalias !== undefined && typeof row.ifalias !== "string"),
+		) ||
+		new Set(raw.map((row) => row.ifname)).size !== raw.length ||
+		new Set(raw.map((row) => row.ifindex)).size !== raw.length
+	)
 		throw new Error("Unknown translator link inventory");
 	const found = raw.filter(
 		(entry) => entry && typeof entry === "object" && entry.ifname === name,
@@ -62,6 +85,12 @@ export function inspectCellularTun(
 		return Array.isArray(raw) && raw.some((entry) => entry?.ifalias === alias)
 			? "foreign"
 			: "absent";
+	if (
+		(raw as Record<string, unknown>[]).filter(
+			(entry) => entry.ifalias === alias,
+		).length !== 1
+	)
+		return "foreign";
 	const info = row.linkinfo;
 	if (
 		!Number.isInteger(row.ifindex) ||
@@ -119,7 +148,10 @@ export async function createCellularTun(
 ): Promise<CellularTunIdentity> {
 	const name = nameForSlot(slot),
 		alias = cellularTunAlias(owner, epoch);
-	if (!(await io.current()) || rowForName(await io.links(), name))
+	if (
+		!(await io.current()) ||
+		inspectCellularTun(await io.links(), slot, owner, epoch) !== "absent"
+	)
 		throw new Error("Translator birth slot occupied");
 	runtime ??= openTunLibrary();
 	const { ffi, library } = await runtime,
@@ -135,6 +167,7 @@ export async function createCellularTun(
 		view.setUint16(16, 0x0001 | 0x8000, true);
 		if (
 			!(await io.current()) ||
+			(io.writable && !io.writable()) ||
 			c.ioctl(fd, 0x400454ca, BigInt(ffi.ptr(request))) !== 0
 		)
 			throw new Error("Exclusive translator creation failed");
@@ -142,7 +175,7 @@ export async function createCellularTun(
 		if (
 			!index ||
 			!(await io.current()) ||
-			!(await changeLinkByIndex(index, { kind: "alias", alias }))
+			!(await changeLinkByIndex(index, { kind: "alias", alias }, io.writable))
 		)
 			throw new Error("Translator owner alias did not verify");
 		const before = inspectCellularTun(await io.links(), slot, owner, epoch);
@@ -153,7 +186,7 @@ export async function createCellularTun(
 			!(await io.current())
 		)
 			throw new Error("Translator birth identity changed");
-		if (c.ioctl(fd, 0x400454cb, 1n) !== 0)
+		if ((io.writable && !io.writable()) || c.ioctl(fd, 0x400454cb, 1n) !== 0)
 			throw new Error("Translator persistence acknowledgement failed");
 		const after = inspectCellularTun(await io.links(), slot, owner, epoch);
 		if (
