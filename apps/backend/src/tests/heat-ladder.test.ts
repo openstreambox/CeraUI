@@ -117,8 +117,8 @@ test("updated status fixture verifies CRC and parses appended fields", async () 
 	expect(status?.alive).toBe(true);
 	expect(status?.hot).toEqual(["a"]);
 	expect(status?.shutdowns).toBe(0);
-	expect(status?.fw).toBe("field-cb4b75b2");
-	expect(status?.crc).toBe("3B45");
+	expect(status?.fw).toBe("field-5367fef5");
+	expect(status?.crc).toBe("F362");
 	expect(parseSupervisor(line.replace("30.0C", "31.0C"), 0, 0)).toBeNull();
 	expect(parseSupervisor(`${line.trim()} future=value`, 0, 0)).toBeNull();
 });
@@ -136,7 +136,7 @@ test("CRC reference vector and checksum protection include unknown future fields
 	expect(
 		parseSupervisor(extended.replace("extension", "changed"), 0, 0),
 	).toBeNull();
-	expect(parseSupervisor(line.replace("3B45", "XXXX"), 0, 0)).toBeNull();
+	expect(parseSupervisor(line.replace("F362", "XXXX"), 0, 0)).toBeNull();
 	expect(parseSupervisor(line, 0, 6000)).toBeNull();
 });
 
@@ -209,5 +209,133 @@ test("the supervisor parser and the ladder share one plausible range", () => {
 	).toBeNull();
 	expect(
 		parseSupervisor(line.replace("115.0C", "-21.0C"), 0, 0)?.temperatures.pack,
+	).toBeNull();
+});
+
+test("protection gaps and calibration remain explicit including unknown bits", async () => {
+	const line = (
+		await Bun.file(
+			new URL("./fixtures/supervisor-status-crc.txt", import.meta.url),
+		).text()
+	).trim();
+	const status = parseSupervisor(line, 0, 0);
+	expect(status?.packCalibration).toBe("datasheet");
+	expect(status?.start).toBe("on");
+	expect(status?.gaps).toBe(4);
+	expect(status?.protectionReduced).toBe(true);
+	expect(status?.packDatasheet).toBe(true);
+	const prefix = (line.split(" crc=")[0] ?? "").replace(
+		"gaps=0004",
+		"gaps=8000",
+	);
+	expect(
+		parseSupervisor(`${prefix} crc=${supervisorCrc16(prefix)}`, 0, 0)
+			?.protectionReduced,
+	).toBe(true);
+});
+
+test("missing optional modem evidence allows SoC escalation and blocks cooling", () => {
+	let s = initialHeat();
+	for (let t = 0; t <= 12000; t += 1000)
+		s = advanceHeat(s, { soc: 76 }, t, false);
+	expect(s.stage).toBe(2);
+	for (let t = 13000; t <= 500000; t += 1000)
+		s = advanceHeat(s, { soc: 30 }, t, false);
+	expect(s.stage).toBe(2);
+});
+
+test("calibration, start reasons, all gaps and pack flag survive projection", async () => {
+	const line =
+		(
+			await Bun.file(
+				new URL("./fixtures/supervisor-status-crc.txt", import.meta.url),
+			).text()
+		)
+			.trim()
+			.split(" crc=")[0] ?? "";
+	const parse = (payload: string) =>
+		parseSupervisor(`${payload} crc=${supervisorCrc16(payload)}`, 0, 0);
+	for (const calibration of ["datasheet", "bench", "none"])
+		expect(
+			parse(line.replace("pack_cal=datasheet", `pack_cal=${calibration}`))
+				?.packCalibration,
+		).toBe(calibration);
+	for (const start of [
+		"on",
+		"off",
+		"settling",
+		"no_bank",
+		"too_hot",
+		"temp_unknown",
+		"latched",
+		"unarmed",
+	])
+		expect(parse(line.replace("start=on", `start=${start}`))?.start).toBe(
+			start,
+		);
+	for (let bit = 0; bit < 16; bit++)
+		expect(
+			parse(
+				line.replace(
+					"gaps=0004",
+					`gaps=${(1 << bit).toString(16).padStart(4, "0")}`,
+				),
+			)?.protectionReduced,
+		).toBe(true);
+	expect(parse(line.replace("gaps=0004", "gaps=0000"))?.protectionReduced).toBe(
+		false,
+	);
+	// Present but malformed reads as reduced, never like 0000.
+	for (const bad of ["wrong", "004", "0x04", "00040", ""])
+		expect(
+			parse(line.replace("gaps=0004", `gaps=${bad}`))?.protectionReduced,
+		).toBe(true);
+	expect(parse(line.replace(" gaps=0004", ""))?.protectionReduced).toBeNull();
+	expect(parse(line.replace("pack_cal=datasheet ", ""))?.packDatasheet).toBe(
+		true,
+	);
+});
+
+test("extended protection masks and pack jump flags preserve their reasons", async () => {
+	const line = (
+		await Bun.file(
+			new URL("./fixtures/supervisor-status-gaps2-crc.txt", import.meta.url),
+		).text()
+	).trim();
+	const payload = line.split(" crc=")[0] ?? "";
+	expect(supervisorCrc16(payload)).toBe("296D");
+	expect(parseSupervisor(line, 0, 0)?.gaps2).toBe(0);
+	expect(
+		parseSupervisor(line.replace("gaps2=0000", "gaps2=0001"), 0, 0),
+	).toBeNull();
+	const parse = (value: string, flags = "10") => {
+		const body = payload
+			.replace("gaps=0004", "gaps=0000")
+			.replace("gaps2=0000", `gaps2=${value}`)
+			.replace("pack=ready/30.0C/10", `pack=ready/30.0C/${flags}`);
+		return parseSupervisor(`${body} crc=${supervisorCrc16(body)}`, 0, 0);
+	};
+	expect(parse("0000")?.protectionReduced).toBe(false);
+	expect(parse("0001")?.supplyUnproven).toBe(true);
+	expect(parse("0001")?.packJump).toBe(false);
+	expect(parse("0002")?.packJump).toBe(true);
+	expect(parse("0002")?.supplyUnproven).toBe(false);
+	expect(parse("0003")?.supplyUnproven).toBe(true);
+	expect(parse("0003")?.packJump).toBe(true);
+	for (let bit = 0; bit < 16; bit++) {
+		const status = parse((1 << bit).toString(16).padStart(4, "0"));
+		expect(status?.gaps2).toBe(1 << bit);
+		expect(status?.protectionReduced).toBe(true);
+	}
+	for (const bad of ["wrong", "001", "0x01", "00001", "", "-001"])
+		expect(parse(bad)?.protectionReduced).toBe(true);
+	expect(parse("a000")?.protectionReduced).toBe(true);
+	for (const flags of ["40", "50", "48", "7f"]) {
+		expect(parse("0000", flags)?.packJump).toBe(true);
+		expect(parse("0000", flags)?.protectionReduced).toBe(true);
+	}
+	const legacy = payload.replace(" gaps2=0000", "");
+	expect(
+		parseSupervisor(`${legacy} crc=${supervisorCrc16(legacy)}`, 0, 0)?.gaps2,
 	).toBeNull();
 });

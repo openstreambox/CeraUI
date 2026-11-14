@@ -2841,5 +2841,14 @@
 	"live.heat.hot": "Hot",
 	"live.heat.warmStage": "Warm",
 	"live.heat.normal": "Cooled",
-	"live.heat.restored": "Cooled. Your bitrate ceiling is restored."
+	"live.heat.restored": "Cooled. Your bitrate ceiling is restored.",
+	"live.heat.protection": "Power board protection is reduced.",
+	"live.heat.datasheet": "Reserve pack temperature uses datasheet values.",
+	"live.heat.unprotected": "Reserve pack heat protection is off.",
+	"live.heat.resting": "{link} is resting to reduce heat.",
+	"live.heat.restUnknown": "Link capacity is unknown. Keeping every link in the bond.",
+	"live.heat.modemUnavailable": "Modem temperature isn't available on this box. Heat steps use the SoC temperature.",
+	"network.cellular.heatResting": "Resting to reduce heat. It rejoins the bond on its own; Keep quality brings it back now.",
+	"live.heat.supplyUnproven": "The power board's heat cut-off is paused because it can't confirm the power supply.",
+	"live.heat.packJump": "The reserve pack temperature jumped suddenly. The heat cut-off waits up to a minute to confirm it."
 }

@@ -43,6 +43,40 @@ exactos anteriores a ese campo. Las líneas antiguas sin CRC siguen siendo
 compatibles; el futuro transporte deberá exigir un checksum verificado antes
 de confiar en hardware recién conectado. Esta versión no instala ese transporte.
 
+## Temperatura del módem y enlaces de reserva
+
+Durante una transmisión, la temperatura del RM520N-GL se lee cada diez segundos
+con AT+QTEMP (solo lectura) en el segundo puerto AT del módem, el que
+`ceralive-modem-support` libera de ModemManager. No se usa `mmcli --command`
+(ModemManager estándar solo lo acepta en modo de depuración) ni se inhibe el
+módem. Una respuesta cuenta solo con su OK final completo. Valores fuera de
+−20…125 °C no cuentan.
+
+**Si el puerto no está disponible** (no liberado en udev, usado por ModemManager
+o por otro proceso), ese módem no se lee: el motivo se registra una vez y el
+puerto se revisa cada diez minutos sin enviar nada. Si ningún módem se puede
+leer, el panel dice "La temperatura del módem no está disponible en este
+equipo. Los ajustes por calor usan la temperatura del SoC."
+
+Un módem que dio lecturas y deja de darlas impide la reversión; uno
+desconectado no. Un valor imposible de un módem nunca pausa la protección por
+calor del SoC.
+
+Un módem de reserva puede quedar en reposo solo en memoria, después de que el
+motor aplicó el límite de bitrate y si otros dos enlaces sanos tienen al menos
+30% de capacidad libre conocida. Esta versión no tiene fuente de capacidad, así
+que ningún enlace entra en reposo. El enlace vuelve en cuanto sus pares pierden
+ese margen, aunque un cambio de bitrate esté fallando o la conexión de control
+con el motor esté caída. El panel celular lo muestra como en reposo por calor,
+no como apagado por ti.
+
+La máscara adicional `gaps2` tiene cuatro dígitos hexadecimales. Los bits
+desconocidos y los campos malformados indican protección reducida. El bit 0001
+indica que el corte de 65 °C de la batería de reserva está en pausa porque
+no se puede confirmar el suministro. El bit 0002 o la bandera 40 de la batería
+indican un salto de temperatura: el corte espera hasta un minuto. El panel
+muestra ambos motivos sin afirmar que la transmisión se detuvo.
+
 ## Reintentos de Mantener calidad
 
 Si el motor rechaza el cambio, la solicitud explícita se conserva y se reintenta

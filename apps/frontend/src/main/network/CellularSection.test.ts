@@ -1060,3 +1060,26 @@ describe("the roaming badge — informational, and it never touches the controls
 		expect(badge?.title).not.toMatch(/network\.cellular\./);
 	});
 });
+
+describe("CellularSection — a link resting for heat", () => {
+	it("says the link is resting for heat instead of looking switched off by the operator", () => {
+		const { getByTestId } = renderSection({
+			netif: {
+				usb0: { tp: 500, enabled: false, ip: "10.0.0.5", heat_resting: true },
+			},
+		});
+		const toggle = getByTestId("bond-toggle-usb0");
+		expect(toggle.getAttribute("aria-label")).toMatch(
+			/resting to reduce heat/i,
+		);
+		expect(toggle.hasAttribute("disabled")).toBe(true);
+	});
+	it("an operator opt-out keeps its ordinary toggle", () => {
+		const { getByTestId } = renderSection({
+			netif: { usb0: { tp: 500, enabled: false, ip: "10.0.0.5" } },
+		});
+		expect(
+			getByTestId("bond-toggle-usb0").getAttribute("aria-label"),
+		).not.toMatch(/heat/i);
+	});
+});

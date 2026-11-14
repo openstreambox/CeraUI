@@ -71,7 +71,46 @@ export function parseSupervisor(line: string, receivedAt: number, now: number) {
 		const parts = value.split("/");
 		return parts[0] === "healthy" ? temperature(parts[3]) : null;
 	};
+	const packCalibration = matching(fields.pack_cal, /^(datasheet|bench|none)$/);
+	const gapsText = matching(fields.gaps, /^[0-9a-fA-F]{4}$/);
+	const gaps = gapsText === null ? null : Number.parseInt(gapsText, 16);
+	// A present but malformed field is never read as full protection.
+	const gapsMalformed = fields.gaps !== undefined && gapsText === null;
+	const gaps2Text = matching(fields.gaps2, /^[0-9a-fA-F]{4}$/);
+	const gaps2 = gaps2Text === null ? null : Number.parseInt(gaps2Text, 16);
+	const gaps2Malformed = fields.gaps2 !== undefined && gaps2Text === null;
+	const packFlags = fields.pack.split("/")[2];
+	const packJump =
+		(gaps2 !== null && (gaps2 & 0x0002) !== 0) ||
+		(packFlags !== undefined &&
+			/^[0-9a-fA-F]{2}$/.test(packFlags) &&
+			(Number.parseInt(packFlags, 16) & 0x40) !== 0);
+	const packDatasheet =
+		packCalibration === "datasheet" ||
+		(packFlags !== undefined &&
+			/^[0-9a-fA-F]{2}$/.test(packFlags) &&
+			(Number.parseInt(packFlags, 16) & 0x10) !== 0);
 	return {
+		packCalibration,
+		packDatasheet,
+		start: matching(
+			fields.start,
+			/^(on|off|settling|no_bank|too_hot|temp_unknown|latched|unarmed)$/,
+		),
+		gaps,
+		gaps2,
+		supplyUnproven: gaps2 !== null && (gaps2 & 0x0001) !== 0,
+		packJump,
+		protectionReduced:
+			gapsMalformed ||
+			gaps2Malformed ||
+			packJump ||
+			(gaps !== null && gaps !== 0) ||
+			(gaps2 !== null && gaps2 !== 0)
+				? true
+				: gaps === null && gaps2 === null
+					? null
+					: false,
 		temperatures: {
 			pack: temperature(fields.pack.split("/")[1]),
 			bankA: bank(fields.a),

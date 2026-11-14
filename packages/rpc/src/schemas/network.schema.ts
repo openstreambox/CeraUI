@@ -93,6 +93,9 @@ export const netifEntrySchema = z.object({
 	// Informational CIDR shared with other enabled interfaces; not an error (the
 	// AP/hotspot and lone interfaces are absent). Additive-optional.
 	same_subnet_group: z.string().optional(),
+	// Out of the bond for heat this session (not the operator's opt-out); it
+	// returns on its own. Additive-optional.
+	heat_resting: z.literal(true).optional(),
 	// Measured interface throughput in BITS PER SECOND over the last sample
 	// window. Distinct from `tp`, which is a raw TX byte delta over an unstated
 	// interval and therefore cannot be rendered as a rate. Additive-optional.
