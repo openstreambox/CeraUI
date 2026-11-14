@@ -414,3 +414,29 @@ describe("notification store (reactive API)", () => {
 		expect(getActive().length).toBe(0);
 	});
 });
+
+describe("power notice localization", () => {
+	it("localizes composed copy with bank parameters", () => {
+		expect(
+			resolveNotificationText(
+				{
+					key: "notifications.power.status",
+					msg: "Bank A is hot and resting. Bank B powers the box.",
+				},
+				{
+					"notifications.power.restingHot": ({
+						bank,
+					}: Record<string, string>) => `El banco ${bank} descansa.`,
+					"notifications.power.peer": ({ bank }: Record<string, string>) =>
+						`El banco ${bank} alimenta el equipo.`,
+				},
+			),
+		).toBe("El banco A descansa. El banco B alimenta el equipo.");
+	});
+	it("keeps one original sentence per missing translation", () => {
+		const msg = "Bank A is hot and resting. Bank B powers the box.";
+		expect(
+			resolveNotificationText({ key: "notifications.power.status", msg }, {}),
+		).toBe(msg);
+	});
+});

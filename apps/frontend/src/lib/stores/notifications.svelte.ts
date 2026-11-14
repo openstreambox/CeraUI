@@ -33,6 +33,7 @@
  * `duration` is seconds on the wire and is converted to milliseconds with
  * `* 1000` — never `* 2500`.
  */
+import { localizePowerText } from "@ceraui/i18n/formatters";
 import { m } from "@ceraui/i18n/svelte";
 import type {
 	Notification,
@@ -167,6 +168,11 @@ export function resolveNotificationText(
 	notification: Pick<Notification, "key" | "params" | "msg">,
 	translations: unknown,
 ): string {
+	if (notification.key === "notifications.power.status") {
+		return localizePowerText(notification.msg, (key, params) =>
+			lookupTranslation(translations, key)?.(params),
+		);
+	}
 	if (notification.key) {
 		const translate = lookupTranslation(translations, notification.key);
 		if (translate)

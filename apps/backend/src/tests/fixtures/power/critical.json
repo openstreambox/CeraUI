@@ -1,0 +1,25 @@
+{
+	"schema_version": 1,
+	"link": "ok",
+	"stale": false,
+	"expected": true,
+	"ambiguous": false,
+	"published_mono_ms": 10000,
+	"rx_mono_ms": 10000,
+	"fields": {
+		"boot": "1234abcd",
+		"power": "ok",
+		"thermal": "critical",
+		"sbc": "run",
+		"armed": "1",
+		"redundant": "1",
+		"gaps": "0000",
+		"gaps2": "0000",
+		"hot": "pack"
+	},
+	"temperatures": {
+		"a": { "celsius": 30, "quality": "reported" },
+		"b": { "celsius": 30, "quality": "reported" },
+		"pack": { "celsius": 30, "quality": "reported" }
+	}
+}

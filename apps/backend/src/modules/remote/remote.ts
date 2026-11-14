@@ -247,6 +247,11 @@ const remoteTimeout = 5000;
 const remoteConnectTimeout = 10000;
 
 let remoteWs: WebSocket | undefined;
+let authenticatedPowerPeer: WebSocket | undefined;
+
+export function isRemotePowerPeerAuthenticated(): boolean {
+	return remoteWs !== undefined && authenticatedPowerPeer === remoteWs;
+}
 let remoteStatusHandled = false;
 
 export function getRemoteWebSocket() {
@@ -262,6 +267,7 @@ function handleRemote(conn: WebSocket, msg: RemoteMessage) {
 					type,
 				);
 				if (value === true) {
+					authenticatedPowerPeer = conn;
 					addAuthedSocket(conn);
 					sendInitialStatus(conn);
 					broadcastMsgLocal(
@@ -328,6 +334,7 @@ function remoteClose(conn: WebSocket) {
 	conn.removeListener("close", remoteClose);
 	conn.removeListener("message", (msg) => remoteHandleMsg(conn, msg));
 	remoteWs = undefined;
+	authenticatedPowerPeer = undefined;
 
 	if (!remoteStatusHandled) {
 		broadcastMsgLocal(
@@ -435,6 +442,12 @@ async function remoteConnect() {
 		if (config !== frame.config) projected = { ...projected, config };
 		const wifi = projectRemoteWifiFrame(frame.wifi);
 		if (wifi !== frame.wifi) projected = { ...projected, wifi };
+		if (frame.sensors && typeof frame.sensors === "object") {
+			const sensors = Object.fromEntries(
+				Object.entries(frame.sensors).filter(([key]) => key !== "Power sample"),
+			);
+			projected = { ...projected, sensors };
+		}
 		const message = projected === frame ? data : JSON.stringify(projected);
 		if (typeof options === "function") {
 			send(message, options);
