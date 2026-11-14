@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test";
 import { test } from "./fixtures/index.js";
+import { settleBackendHealthBroadcast } from "./helpers/backend-health.js";
 import { ensureAuthenticated, navigateTo } from "./helpers/index.js";
 
 test.use({ backendScenario: "streaming-active" });
@@ -18,6 +19,8 @@ test("still-live notices remain visible without preview and clear on recovery", 
 		} });
 		return page.getByTestId("live-cockpit").isVisible();
 	}).toBe(true);
+	await settleBackendHealthBroadcast(pageRpc);
+	await page.clock.install();
 	const notices = [
 		["camera", "notifications.stillLiveNetwork", "Network camera feed stopped. You're still live. Check the camera's network connection."],
 		["silence", "notifications.stillLiveSilence", "No sound in your stream for 10 s. You're still live. Check the mic."],
@@ -34,7 +37,7 @@ test("still-live notices remain visible without preview and clear on recovery", 
 				process: { alive: true }, frames: { advancing: false, count: 1500 },
 				srt: { reconnecting: null, reconnectCount: 0 }, bond: { linkCount: 1, activeLinks: 1 },
 			} });
-			await page.waitForTimeout(5500);
+			await page.clock.runFor(5500);
 			await expect(page.getByTestId("video-signal-lost-banner")).toHaveCount(0);
 			await expect(page.getByText(msg, { exact: true })).toHaveCount(1);
 		}
