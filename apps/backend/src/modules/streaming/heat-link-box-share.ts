@@ -6,6 +6,8 @@ import { advanceHeat, initialHeat } from "./heat-ladder.ts";
 export interface BoxSample {
 	now: number;
 	soc: number | null;
+	/** SoC observation time, at most two seconds old; absent/stale means unknown. */
+	socAt: number;
 	session: string;
 	carrying: boolean;
 	encoder: boolean;
@@ -76,6 +78,7 @@ export class LinkBoxHeatPolicy {
 	private badAt: number | null = null;
 	private rollbacks = 0;
 	private lastPause = -Infinity;
+	private nextPauseAt = -Infinity;
 	private unknown = true;
 	readonly timeline: { at: number; reason: string }[] = [];
 
@@ -89,6 +92,7 @@ export class LinkBoxHeatPolicy {
 			if (this.timeline.length > 100) this.timeline.shift();
 		}
 		for (const id of this.paused) this.clientLocked.set(id, now + 600000);
+		if (this.paused.length) this.nextPauseAt = now + 120000;
 		this.paused = [];
 		if (this.loan && rollback) {
 			this.locked.set(this.loan.id, now + 900000);
@@ -98,7 +102,7 @@ export class LinkBoxHeatPolicy {
 		this.badAt = null;
 		this.candidate.clear();
 	}
-	tick(s: BoxSample): BoxPlan {
+	tick(s: BoxSample, stageCeiling = 3): BoxPlan {
 		const now = s.now;
 		const result: BoxPlan = { usb: false, lend: null, pause: [] };
 		if (!Number.isFinite(now)) {
@@ -120,6 +124,7 @@ export class LinkBoxHeatPolicy {
 			this.exempt.clear();
 			this.large.clear();
 			this.rollbacks = 0;
+			this.nextPauseAt = -Infinity;
 		}
 		if (gap) this.candidate.clear();
 		if (!s.session || !s.carrying || s.encoder) {
@@ -127,7 +132,12 @@ export class LinkBoxHeatPolicy {
 			this.heat = initialHeat();
 			return result;
 		}
-		this.heat = advanceHeat(this.heat, { soc: s.soc }, now);
+		const thermalKnown = fresh(now, s.socAt, 2000) && s.soc !== null;
+		this.heat = advanceHeat(
+			this.heat,
+			{ soc: thermalKnown ? s.soc : null },
+			now,
+		);
 		result.usb = !this.heat.unknown && this.heat.stage >= 1;
 		const ids = s.links.map((l) => l.id);
 		const valid =
@@ -150,14 +160,14 @@ export class LinkBoxHeatPolicy {
 					positive(l.rtt) &&
 					positive(l.rttMedian),
 			);
-		this.unknown = !valid;
+		this.unknown = !valid || this.heat.unknown;
 		if (!valid || this.heat.unknown || s.keepQuality || gap) {
 			// Unknown time is never observed time below a protection threshold.
 			for (const id of this.large.keys()) this.large.set(id, null);
 			this.release(
 				now,
 				s.keepQuality ? "keep quality" : "unknown observations",
-				true,
+				!valid || s.keepQuality || gap,
 			);
 			return result;
 		}
@@ -198,23 +208,35 @@ export class LinkBoxHeatPolicy {
 				s.rate <= this.loan.rate * 0.85 ||
 				(this.badAt !== null && now - this.badAt >= 5000);
 			if (unsafe) {
-				this.release(now, "stream protection rollback", true);
+				const reason = missing
+					? "peer leg disappeared"
+					: !leg
+						? "rested leg disappeared"
+						: leg.phoneUplink
+							? "phone started using rested uplink"
+							: leg.recovering || peers.some((l) => l.recovering)
+								? "link recovering"
+								: this.large.has(leg.id)
+									? "rested leg became large"
+									: s.rate <= this.loan.rate * 0.85
+										? "stream receive rate fell"
+										: s.rtt >= this.loan.rtt * 1.5
+											? "stream round-trip time rose"
+											: "peer loss or round-trip time rose";
+				this.release(now, reason, true);
 				rolledBack = true;
 			}
 		}
+		const stage = Math.min(this.heat.stage, stageCeiling);
 		// Cooling sheds restrictions in reverse order; the thermal reducer spaces
 		// downward transitions by two minutes after a five-minute minimum hold.
-		if (this.heat.stage < 3 && this.paused.length) {
+		if (stage < 3 && this.paused.length) {
+			this.nextPauseAt = now + 120000;
 			for (const id of this.paused) this.clientLocked.set(id, now + 600000);
 			this.paused = [];
 		}
-		if (this.heat.stage < 2) this.release(now, "cooled", false);
-		if (
-			!this.loan &&
-			!rolledBack &&
-			this.heat.stage >= 2 &&
-			this.rollbacks < 2
-		) {
+		if (stage < 2) this.release(now, "cooled", false);
+		if (!this.loan && !rolledBack && stage >= 2 && this.rollbacks < 2) {
 			const candidates = s.links
 				.filter((l) => {
 					const peers = s.links.filter(
@@ -293,15 +315,17 @@ export class LinkBoxHeatPolicy {
 		this.paused = this.paused.filter((id) => {
 			if (s.clients.some((c) => c.id === id && safeClient(c))) return true;
 			this.clientLocked.set(id, now + 600000);
+			this.nextPauseAt = now + 120000;
 			return false;
 		});
 		// Conservative single-client limit matches the existing one-target lease.
 		// This draft requires an active loan before considering a client pause.
 		if (
-			this.heat.stage >= 3 &&
+			stage >= 3 &&
 			!rolledBack &&
 			!this.paused.length &&
 			now > this.lastPause &&
+			now >= this.nextPauseAt &&
 			this.loan
 		) {
 			const c = s.clients
@@ -318,11 +342,17 @@ export class LinkBoxHeatPolicy {
 			if (c) {
 				this.paused = [c.id];
 				this.lastPause = now;
+				this.nextPauseAt = now + 120000;
 			}
 		}
 		result.lend = this.loan?.id ?? null;
 		result.pause = [...this.paused];
 		return result;
+	}
+	/** Rechecks must not advance dwell, locks or rollback counters. */
+	preview(s: BoxSample): BoxPlan {
+		const copy = Object.assign(new LinkBoxHeatPolicy(), structuredClone(this));
+		return copy.tick(s);
 	}
 	status(confirmed: Pick<BoxPlan, "lend" | "pause">): string {
 		if (confirmed.pause.length)
@@ -342,7 +372,7 @@ export class LinkBoxHeatPolicy {
  * tunnel and ACK confirmation; a failed or timed-out return is retried. The
  * pause owner uses the existing five-second kernel lease, never AP shutdown. */
 export interface BoxHeatEffects {
-	spareUsb(eligible: boolean): Promise<void>;
+	spareUsb(eligible: boolean, known: boolean): Promise<void>;
 	lend(id: string, safe: () => boolean): Promise<boolean>;
 	returnLink(id: string): Promise<boolean>;
 	pause(id: string | null, safe: () => boolean): Promise<boolean>;
@@ -392,7 +422,7 @@ export class LinkBoxHeatSession {
 				current.now - sample.now > 1000
 			)
 				return false;
-			const latest = this.policy.tick(current);
+			const latest = this.policy.preview(current);
 			return kind === "lend" ? latest.lend === id : latest.pause.includes(id);
 		};
 		// Withdraw in reverse order and block new restrictions until restoration is
@@ -403,6 +433,12 @@ export class LinkBoxHeatSession {
 			if (!(await this.effects.pause(null, () => true))) return this.snapshot();
 			this.confirmed.pause = [];
 		}
+		await this.effects.spareUsb(
+			plan.usb,
+			sample.soc !== null &&
+				Number.isFinite(sample.soc) &&
+				fresh(sample.now, sample.socAt, 2000),
+		);
 		if (this.returning) {
 			if (!(await this.effects.returnLink(this.returning)))
 				return this.snapshot();
@@ -410,7 +446,6 @@ export class LinkBoxHeatSession {
 			this.confirmed.lend = null;
 			return this.snapshot();
 		}
-		await this.effects.spareUsb(plan.usb);
 		if (
 			plan.lend &&
 			!this.confirmed.lend &&

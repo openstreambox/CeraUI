@@ -14,6 +14,7 @@ function sample(now: number, soc = 81): BoxSample {
 	return {
 		now,
 		soc,
+		socAt: now,
 		session: "show",
 		carrying: true,
 		encoder: false,
@@ -619,4 +620,246 @@ test("an invalid clock releases the loan and cannot resume it on the next valid 
 	invalid.now = NaN;
 	expect(p.tick(invalid)).toMatchObject({ lend: null, pause: [] });
 	expect(p.tick(sample(77000))).toMatchObject({ lend: null, pause: [] });
+});
+
+test("largest eligible leg below forty percent is independently protected", () => {
+	const p = new LinkBoxHeatPolicy();
+	let result: ReturnType<LinkBoxHeatPolicy["tick"]> | undefined;
+	for (let t = 0; t <= 80000; t += 1000) {
+		const s = sample(t);
+		s.links.forEach((l, i) => {
+			l.rate = 150 - i * 10;
+			l.phoneUplink = false;
+			l.temperature = 90 - i;
+		});
+		result = p.tick(s);
+		expect(result.lend).not.toBe("leg0");
+	}
+	expect(result?.lend).toBe("leg1");
+});
+test("phone identity alone protects the busiest non-streaming client", () => {
+	const p = new LinkBoxHeatPolicy();
+	let result: ReturnType<LinkBoxHeatPolicy["tick"]> | undefined;
+	for (let t = 0; t <= 80000; t += 1000) {
+		const s = sample(t);
+		item(s.clients, 0).streaming = false;
+		item(s.clients, 0).trafficKbps = 900;
+		result = p.tick(s);
+		expect(result.pause).not.toContain("phone");
+	}
+	expect(result?.pause).toEqual(["guest"]);
+});
+test("four-link peer dropout restores while three valid links remain", () => {
+	const p = new LinkBoxHeatPolicy();
+	const four = (t: number) => {
+		const s = sample(t);
+		s.links.push({ ...item(s.links, 0), id: "leg3" });
+		return s;
+	};
+	for (let t = 0; t <= 75000; t += 1000) p.tick(four(t));
+	const s = four(76000);
+	s.links.splice(3, 1);
+	expect(p.tick(s)).toMatchObject({ lend: null, pause: [] });
+});
+test("lifting a client waits two minutes before pausing another", () => {
+	const p = new LinkBoxHeatPolicy();
+	expect(warm(p).pause).toEqual(["guest"]);
+	for (let t = 76000; t <= 196000; t += 1000) {
+		const s = sample(t);
+		item(s.clients, 1).streaming = true;
+		s.clients.push({ ...item(s.clients, 1), id: "other", streaming: false });
+		expect(p.tick(s).pause).toEqual(t < 196000 ? [] : ["other"]);
+	}
+});
+test("two brief thermal gaps do not spend the session rollback budget", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p);
+	let result: ReturnType<LinkBoxHeatPolicy["tick"]> | undefined;
+	for (let t = 76000; t <= 500000; t += 1000) {
+		const s = sample(t);
+		if (t === 100000 || t === 300000) s.soc = null;
+		result = p.tick(s);
+		if (s.soc === null) expect(result).toMatchObject({ lend: null, pause: [] });
+	}
+	expect(result?.lend).toBe("leg2");
+});
+test("frozen, future and missing thermal timestamps release restrictions", () => {
+	for (const at of [0, 76001, NaN]) {
+		const p = new LinkBoxHeatPolicy();
+		warm(p);
+		const s = sample(76000);
+		s.socAt = at;
+		expect(p.tick(s)).toMatchObject({ lend: null, pause: [] });
+	}
+});
+
+test("permission previews cannot spend rollback budget", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p);
+	const dip = sample(76000);
+	dip.rate = 850;
+	expect(p.preview(dip).lend).toBeNull();
+	expect(p.preview(dip).lend).toBeNull();
+	expect(p.tick(sample(76000)).lend).toBe("leg2");
+});
+test("outer stage dip clears policy admission and requires fresh dwell", async () => {
+	const { planLinkBoxHeat } = await import(
+		"../modules/streaming/heat-link-box.ts"
+	);
+	const policy = new LinkBoxHeatPolicy();
+	warm(policy);
+	const run = (t: number, stage: number) =>
+		planLinkBoxHeat(
+			stage,
+			true,
+			false,
+			{
+				at: t,
+				carrying: "streaming",
+				encoder: false,
+				mainLink: null,
+				phone: null,
+				links: [],
+				clients: null,
+				measured: { sample: sample(t), policy },
+			},
+			t,
+		);
+	expect(run(76000, 1).lend).toBeNull();
+	for (let t = 77000; t < 147000; t += 1000) expect(run(t, 3).lend).toBeNull();
+	expect(run(147000, 3).lend).toBe("leg2");
+});
+test("calm stream, own loss and two healthy peers each gate admission", () => {
+	for (const change of [
+		(s: BoxSample) => {
+			s.rate = 940;
+		},
+		(s: BoxSample) => {
+			s.rtt = 27;
+		},
+		(s: BoxSample) => {
+			item(s.links, 2).loss = 0.021;
+		},
+		(s: BoxSample) => {
+			item(s.links, 0).loss = 0.021;
+		},
+		(s: BoxSample) => {
+			item(s.links, 0).recovering = true;
+		},
+	]) {
+		const p = new LinkBoxHeatPolicy();
+		for (let t = 0; t <= 80000; t += 1000) {
+			const s = sample(t);
+			change(s);
+			expect(p.tick(s).lend).toBeNull();
+		}
+	}
+});
+test("smallest tied-temperature leg and busiest eligible client win", () => {
+	const p = new LinkBoxHeatPolicy();
+	let result: ReturnType<LinkBoxHeatPolicy["tick"]> | undefined;
+	for (let t = 0; t <= 80000; t += 1000) {
+		const s = sample(t);
+		s.links.push({ ...item(s.links, 2), id: "smaller", rate: 90 });
+		item(s.clients, 1).trafficKbps = 100;
+		s.clients.push({ ...item(s.clients, 1), id: "other", trafficKbps: 300 });
+		result = p.tick(s);
+	}
+	expect(result).toMatchObject({ lend: "smaller", pause: ["other"] });
+});
+test("unknown phone membership prevents pausing and tick gaps restore loans", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p);
+	const s = sample(76000);
+	s.clients.shift();
+	expect(p.tick(s).pause).toEqual([]);
+	expect(p.tick(sample(80000))).toMatchObject({ lend: null, pause: [] });
+});
+
+test("USB owner sees unknown temperature while link return is pending", async () => {
+	const { LinkBoxHeatSession } = await import(
+		"../modules/streaming/heat-link-box-share.ts"
+	);
+	let s = sample(0);
+	const usb: boolean[] = [];
+	const owner = new LinkBoxHeatSession({
+		spareUsb: async (_eligible, known) => {
+			usb.push(known);
+		},
+		lend: async (_id, safe) => safe(),
+		pause: async (id, safe) => (id ? safe() : true),
+		returnLink: async () => false,
+	});
+	for (let t = 0; t <= 75000; t += 1000) {
+		s = sample(t);
+		await owner.update(() => s);
+	}
+	s = sample(76000);
+	s.soc = null;
+	expect((await owner.update(() => s)).returning).toBe("leg2");
+	expect(usb.at(-1)).toBe(false);
+});
+test("rollback timeline names the signal", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p);
+	const s = sample(76000);
+	s.rate = 850;
+	p.tick(s);
+	expect(p.timeline.at(-1)?.reason).toBe("stream receive rate fell");
+});
+
+test("one hundred kbit client stays online and hot never pauses even briefly", () => {
+	for (const soc of [76, 81]) {
+		const p = new LinkBoxHeatPolicy();
+		for (let t = 0; t <= 80000; t += 1000) {
+			const s = sample(t, soc);
+			if (soc === 81) item(s.clients, 1).trafficKbps = 100;
+			expect(p.tick(s).pause).toEqual([]);
+		}
+	}
+});
+test("large leg holds protection in the thirty to forty percent band", () => {
+	const p = new LinkBoxHeatPolicy();
+	for (let t = 0; t <= 30000; t += 1000) {
+		const s = sample(t);
+		item(s.links, 2).rate = 410;
+		p.tick(s);
+	}
+	for (let t = 31000; t <= 120000; t += 1000) {
+		const s = sample(t);
+		item(s.links, 2).rate = 350;
+		p.tick(s);
+	}
+	for (let t = 121000; t < 241000; t += 1000)
+		expect(p.tick(sample(t)).lend).toBeNull();
+	expect(p.tick(sample(241000)).lend).toBe("leg2");
+});
+test("a rested leg becoming the largest returns immediately", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p);
+	const s = sample(76000);
+	item(s.links, 0).rate = 80;
+	item(s.links, 1).rate = 90;
+	expect(p.tick(s)).toMatchObject({ lend: null, pause: [] });
+});
+test("no pause is applied without a confirmed link restriction", async () => {
+	const { LinkBoxHeatSession } = await import(
+		"../modules/streaming/heat-link-box-share.ts"
+	);
+	let s = sample(0);
+	let pauses = 0;
+	const owner = new LinkBoxHeatSession({
+		spareUsb: async () => {},
+		lend: async () => false,
+		pause: async (id) => {
+			if (id) pauses++;
+			return true;
+		},
+		returnLink: async () => true,
+	});
+	for (let t = 0; t <= 80000; t += 1000) {
+		s = sample(t);
+		await owner.update(() => s);
+	}
+	expect(pauses).toBe(0);
 });

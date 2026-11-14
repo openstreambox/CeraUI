@@ -49,14 +49,17 @@ export function planLinkBoxHeat(
 		sample.now === now &&
 		sample.encoder === e.encoder &&
 		sample.keepQuality === keep;
-	const measured = policy.tick({
-		...sample,
-		now,
-		carrying: eligible && matches && sample.carrying,
-		encoder: e.encoder,
-		keepQuality: keep,
-		soc: known ? sample.soc : null,
-	});
+	const measured = policy.tick(
+		{
+			...sample,
+			now,
+			carrying: eligible && matches && stage >= 2 && sample.carrying,
+			encoder: e.encoder,
+			keepQuality: keep,
+			soc: known ? sample.soc : null,
+		},
+		stage,
+	);
 	return {
 		usb: result.usb,
 		lend: stage >= 2 ? measured.lend : null,

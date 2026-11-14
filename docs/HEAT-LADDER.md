@@ -199,7 +199,8 @@ The policy uses the existing SoC thresholds, ten-second entry dwell,
 five-minute hold, sixty-second cooling dwell and two-minute reverse steps.
 It admits a loan only after sixty continuous seconds of fresh observations:
 leg counters no older than two seconds, stream observations no older than
-three, a candidate share at most 15%, two healthy peers, and proven spare rate
+three, SoC observations no older than two seconds, a candidate share at most
+15%, two healthy peers, and proven spare rate
 of at least 130% of the candidate's traffic. Loss must be at most 2%, and RTT
 at most 150% of its own five-minute median. The stream must remain within 5%
 of its sixty-second rate and 130% of its median RTT. Never count the phone's
@@ -220,20 +221,28 @@ loan, including its first thirty seconds. Peer dropout, new phone-uplink use,
 large-leg protection, session change, stream end, encoder takeover, Keep
 quality and unknown observations release restrictions immediately. Failed
 loans lock that link for fifteen minutes; two rollbacks disable lending for
-the session. Stale observations reset admission dwell.
+the session. Thermal-only missing or stale readings restore immediately without
+spending that rollback budget or imposing a link lock. Stale observations reset
+admission dwell.
 
 Client identity must be cross-checked by the producer against the authenticated
 streamer and the data plane. Only a bound, IPv4-only client that joined at
 least two minutes ago qualifies. The phone, management sessions, possible
 streamers, receiver-directed traffic, recent carrying and ambiguous clients
 remain online. A candidate must exceed 100 kbit/s over the last sixty seconds.
-The busiest eligible client is selected. Let back on exempts that client for
+The busiest eligible client is selected. After lifting a client, wait two minutes
+before pausing another; pauses also have at least two minutes between starts.
+Let back on exempts that client for
 the session; any other release locks it for ten minutes.
 
 Conservative choices pending review: at most one client may be paused (the
 existing lease owns one target); a pause follows a loan, rather than preceding
 it when lending is withheld; unknown measurements undo immediately instead of
-waiting three seconds. This is stricter than the proposed policy. There is no
+waiting three seconds. The design allows pauses without lending, including
+when stream statistics
+are missing (C6). This draft deliberately withholds both: the mock owner has
+no separate pause-only admission and rollback contract yet. That integration
+must be reviewed before enabling independent pauses. There is no
 phone protocol extension, saved opt-out, radio power-down or AP shutdown.
 
 `LinkBoxHeatSession` serializes effects and rechecks current admission at the
@@ -246,6 +255,11 @@ while its supplied predicate still holds. Neither adapter exists in production
 on this topic; tests inject memory-only owners and synthetic thermal sequences.
 The plain status copy is a contract for later UI integration, not a rendered
 screen. Reasons are retained in a bounded local timeline, not repeated notices.
+
+Thermal timestamps must come from the sensor observation, never from polling a
+cached number. USB owners receive eligibility and known-temperature separately,
+including while a link return is pending. Admission rechecks use a copy of policy
+state, so checking permission cannot spend rollback budget or advance dwell.
 
 ### Español (Latinoamérica): política con datos simulados
 
@@ -267,3 +281,11 @@ contadores reales, integración visual ni activación del controlador de pausa.
 Antes de activarlo se necesitan mediciones completas del tráfico y adaptadores
 que confirmen cada acción y restauración. Las cifras son propuestas sin
 mediciones de ahorro térmico.
+
+Español (Latinoamérica): la lectura térmica lleva su hora de observación; una
+lectura de más de dos segundos es desconocida. Una falta solo térmica devuelve
+las restricciones sin gastar los dos intentos de protección de la transmisión.
+Después de liberar un cliente, espera dos minutos antes de pausar otro.
+El diseño permite pausar sin retirar un enlace, incluso sin estadísticas de
+transmisión (C6); este borrador exige ambas cosas juntas hasta revisar un
+contrato independiente de admisión y restauración para la pausa.
