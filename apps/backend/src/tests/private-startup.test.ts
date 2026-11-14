@@ -80,3 +80,51 @@ test("startup checks opened file identity before tightening", () => {
 	tightenPrivateFiles(dir);
 	expect(fs.statSync(file).mode & 0o777).toBe(0o644);
 });
+
+test("startup refuses a symlink substituted during open before fstat", () => {
+	const dir = fixture();
+	const file = join(dir, "config.json");
+	const retained = join(dir, "retained");
+	fs.writeFileSync(file, "original");
+	fs.chmodSync(file, 0o644);
+	const open = fs.openSync;
+	const fstat = spyOn(fs, "fstatSync");
+	spyOn(fs, "openSync").mockImplementation((path, flags) => {
+		if (path === file) {
+			fs.renameSync(file, retained);
+			fs.symlinkSync(retained, file);
+		}
+		return open(path, flags);
+	});
+	tightenPrivateFiles(dir);
+	// The symlink points to the original inode: identity alone cannot reject it.
+	expect(fstat).toHaveBeenCalledTimes(0);
+	expect(fs.statSync(retained).mode & 0o777).toBe(0o644);
+});
+
+test("startup tightens the opened descriptor after the path changes during fstat", () => {
+	const dir = fixture();
+	const file = join(dir, "config.json");
+	const retained = join(dir, "retained");
+	const unrelated = join(dir, "unrelated");
+	fs.writeFileSync(file, "original");
+	fs.writeFileSync(unrelated, "unrelated");
+	fs.chmodSync(file, 0o644);
+	fs.chmodSync(unrelated, 0o644);
+	const fstat = fs.fstatSync;
+	let swapped = false;
+	spyOn(fs, "fstatSync").mockImplementation((fd) => {
+		const current = fstat(fd);
+		if (!swapped) {
+			swapped = true;
+			fs.renameSync(file, retained);
+			fs.symlinkSync(unrelated, file);
+		}
+		return current;
+	});
+	tightenPrivateFiles(dir);
+	expect(swapped).toBe(true);
+	expect(fs.statSync(retained).mode & 0o777).toBe(0o600);
+	expect(fs.statSync(unrelated).mode & 0o777).toBe(0o644);
+	expect(fs.readFileSync(retained, "utf8")).toBe("original");
+});

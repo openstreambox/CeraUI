@@ -88,7 +88,10 @@ physical epoch. The producer is trusted local code and must invalidate receipts
 on sender/receiver/epoch change. Do not write this file from a connectivity
 probe. Without this producer the owner conservatively times out and restores the
 old holder. No sender is automatically redirected or claimed to be qualified.
-`two-radio/status.json` exposes policy state and session for this integration.
+`/run/ceralive/two-radio/status.json` exposes the full policy state and session
+for diagnostics. It is disposable tmpfs state, recreated after restart, and is
+not read for recovery. `CERALIVE_RUN_DIR` overrides `/run/ceralive` in tests.
+The former config-directory `two-radio/status.json` is no longer updated.
 The durable `journal.json` records intent before each route effect.
 
 After the receipt, logical demotion and at least 3000 ms linger precede holder

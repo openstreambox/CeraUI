@@ -1,6 +1,5 @@
 import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { writePrivateStatusSync } from "../../../helpers/config-loader.ts";
 import { logger } from "../../../helpers/logger.ts";
 import { run } from "../../../helpers/run.ts";
 import { getConfig, getConfigFilePath } from "../../config.ts";
@@ -17,6 +16,7 @@ import {
 } from "./native-owner.ts";
 import { boundProbe, type ProbeResult } from "./probe.ts";
 import { type Event, type Radio, sameEpoch } from "./reducer.ts";
+import { publishStatus } from "./status.ts";
 
 export interface LiveDeps extends NativeDeps {
 	journal: Journal;
@@ -289,16 +289,13 @@ export async function initTwoRadioLive() {
 	const cycle = async () => {
 		await live.cycle();
 		const view = live.coordinator.view();
-		writePrivateStatusSync(
-			join(directory, "status.json"),
-			JSON.stringify({
-				session: live.session,
-				identities: Object.fromEntries(
-					[...live.identities].map(([r, s]) => [r, s.identity]),
-				),
-				...view,
-			}),
-		);
+		publishStatus({
+			session: live.session,
+			identities: Object.fromEntries(
+				[...live.identities].map(([r, s]) => [r, s.identity]),
+			),
+			...view,
+		});
 	};
 	await cycle();
 	const next = async () => {
@@ -310,14 +307,11 @@ export async function initTwoRadioLive() {
 			timer.unref();
 		} catch (error) {
 			logger.warn(`Two-radio reconciliation required: ${error}`);
-			writePrivateStatusSync(
-				join(directory, "status.json"),
-				JSON.stringify({
-					session: live.session,
-					error: String(error),
-					state: live.coordinator.view(),
-				}),
-			);
+			publishStatus({
+				session: live.session,
+				error: String(error),
+				state: live.coordinator.view(),
+			});
 		}
 	};
 	const timer = setTimeout(() => {

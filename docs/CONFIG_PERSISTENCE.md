@@ -40,12 +40,16 @@ files without following symlinks and checks the descriptor identity before chmod
 missing and non-regular files are ignored. It reports one summary of changes (and
 one warning summary if any files could not be tightened), without logging contents.
 
-Disposable two-radio `status.json` is published only when its serialized view
-changes, with private permissions and atomic replacement but no file or directory
-fsync. SIM PIN and kiosk token files are ephemeral tmpfs secrets and also skip
+Disposable two-radio `/run/ceralive/two-radio/status.json` is published only when
+its serialized view changes, with private permissions and atomic replacement but
+no file or directory fsync. SIM PIN and kiosk token files are ephemeral tmpfs secrets and also skip
 fsync. Durable configuration, credentials, tokens and recovery state retain both
-file and directory fsync. Status loss after a crash is acceptable; its existing
-path and consumer contract are unchanged.
+file and directory fsync. Status is diagnostic only and is recreated by the live
+runtime after restart. The full view, including clock and probe-round fields, stays available on tmpfs
+rather than rewriting persistent storage each second. `CERALIVE_RUN_DIR` overrides
+the runtime directory for tests. The former config-directory `two-radio/status.json`
+is no longer updated; diagnostic readers must use the runtime path. The journal,
+owner claim and traffic receipt remain in the config directory.
 
 ## 1. Per-file placement map
 
