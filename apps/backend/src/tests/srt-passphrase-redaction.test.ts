@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { inspect } from "node:util";
-import { formatProdEntry, logRedact } from "../helpers/logger";
+import {
+	formatConsoleEntry,
+	formatProdEntry,
+	logRedact,
+} from "../helpers/logger";
 import { redactSrtPassphrases } from "../helpers/srt-secret-redaction";
 import type { AppWebSocket } from "../rpc/types";
 
@@ -267,42 +271,69 @@ test.each(["syntheticPassphrase42", "synthetic phrase\"'\\~!"])(
 			}
 			for (const detail of [
 				new Detail(secret),
+				{ nested: new Detail(secret) },
+				[Buffer.from(secret)],
 				Buffer.from(secret),
 				{ toJSON: () => secret },
 				{ toJSON: () => ({ nested: new Detail(secret) }) },
 			]) {
-				const output = formatProdEntry(
-					logRedact({
-						level: "error",
-						message: "failed",
-						detail,
-					}) as Parameters<typeof formatProdEntry>[0],
-				);
-				expect(output).not.toContain("synthetic");
-				expect(output).not.toContain(
-					Buffer.from(secret).toJSON().data.join(","),
-				);
-				expect(output).toContain("[REDACTED]");
+				for (const format of [
+					formatProdEntry,
+					(info: Parameters<typeof formatProdEntry>[0]) =>
+						formatConsoleEntry(info, false),
+				]) {
+					const output = format(
+						logRedact({
+							level: "error",
+							message: "failure",
+							detail,
+						}) as Parameters<typeof formatProdEntry>[0],
+					);
+					expect(output).not.toContain("synthetic");
+					expect(output).not.toContain(
+						Buffer.from(secret).toJSON().data.join(","),
+					);
+					expect(output).toContain("[REDACTED]");
+				}
 			}
+			const tokens = [secret, inspect(secret).slice(1, -1)];
 			let escaped = secret;
-			for (let i = 0; i < 4; i++)
+			for (let i = 0; i < 4; i++) {
 				escaped = JSON.stringify(escaped).slice(1, -1);
-			for (const token of [
+				tokens.push(escaped);
+			}
+			for (const encoded of [
+				encodeURIComponent(secret),
 				new URLSearchParams({ value: secret }).toString().slice(6),
-				encodeURIComponent(secret).replace(/%[A-F0-9]{2}/g, (s) =>
-					s.toLowerCase(),
-				),
 				encodeURIComponent(secret).replace(
 					/[!'~]/g,
 					(s) => `%${s.charCodeAt(0).toString(16).toUpperCase()}`,
 				),
-				encodeURIComponent(encodeURIComponent(secret)),
-				inspect(secret).slice(1, -1),
-				escaped,
 			]) {
+				const lower = encoded.replace(/%[A-F0-9]{2}/g, (s) => s.toLowerCase());
+				tokens.push(
+					encoded,
+					lower,
+					encodeURIComponent(encoded),
+					encodeURIComponent(lower),
+				);
+			}
+			for (const token of tokens) {
 				expect(redactSrtPassphrases(`failure: ${token}`)).toBe(
 					"failure: [REDACTED]",
 				);
+				const info = logRedact({
+					level: "error",
+					message: `failure: ${token}`,
+					detail: token,
+				}) as Parameters<typeof formatProdEntry>[0];
+				for (const output of [
+					formatProdEntry(info),
+					formatConsoleEntry(info, false),
+				]) {
+					expect(output).not.toContain("synthetic");
+					expect(output).toContain("[REDACTED]");
+				}
 			}
 		} finally {
 			config.srt_passphrase = previous;

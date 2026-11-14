@@ -71,9 +71,11 @@ A retained encryption setting refuses Start with the stable
 `srt_encryption_unavailable` code and a localized explanation. Clear both
 `srt_passphrase` and `srt_pbkeylen` through the explicit-empty API operation
 before starting with this engine; the hidden controls cannot clear them yet.
+Use `streaming.setConfig({ srt_passphrase: "" })` to clear both saved fields.
 
 Los valores anteriores o no guardados solo se filtran mediante los patrones de
 etiquetas existentes; no se garantiza ocultar otras formas. Si hay ajustes de
 cifrado guardados, el inicio explica que no son compatibles. Borra la contraseña
 y la longitud de clave mediante la operación explícita de borrado de la API
 antes de iniciar con este motor.
+Usa `streaming.setConfig({ srt_passphrase: "" })` para borrar ambos campos.
