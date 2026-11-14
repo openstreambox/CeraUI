@@ -406,7 +406,12 @@ export class FreeAtPorts {
 						ok: false,
 						unavailable: true,
 						reason: "port-stuck",
-						capturedAt: remembered?.at ?? this.deps.now(),
+						capturedAt:
+							remembered?.reason === "port-stuck" &&
+							remembered.identity === identity &&
+							this.deps.now() < remembered.until
+								? remembered.at
+								: this.deps.now(),
 					};
 				}
 				try {
@@ -484,7 +489,7 @@ export class FreeAtPorts {
 					ok: false,
 					unavailable: true,
 					reason: "port-stuck",
-					capturedAt: remembered?.at ?? this.deps.now(),
+					capturedAt: this.refused.get(modemId)?.at ?? this.deps.now(),
 				};
 			}
 		}
