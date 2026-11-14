@@ -76,6 +76,7 @@ export class LinkBoxHeatPolicy {
 	} | null = null;
 	private paused: string[] = [];
 	private badAt: number | null = null;
+	private thermalUnknownAt: number | null = null;
 	private rollbacks = 0;
 	private lastPause = -Infinity;
 	private nextPauseAt = -Infinity;
@@ -118,6 +119,7 @@ export class LinkBoxHeatPolicy {
 		if (changed) {
 			this.release(now, "session changed", false);
 			this.heat = initialHeat();
+			this.thermalUnknownAt = null;
 			this.session = s.session;
 			this.locked.clear();
 			this.clientLocked.clear();
@@ -130,6 +132,7 @@ export class LinkBoxHeatPolicy {
 		if (!s.session || !s.carrying || s.encoder) {
 			this.release(now, "carrying ended", false);
 			this.heat = initialHeat();
+			this.thermalUnknownAt = null;
 			return result;
 		}
 		const thermalKnown = fresh(now, s.socAt, 2000) && s.soc !== null;
@@ -161,7 +164,14 @@ export class LinkBoxHeatPolicy {
 					positive(l.rttMedian),
 			);
 		this.unknown = !valid || this.heat.unknown;
-		if (!valid || this.heat.unknown || s.keepQuality || gap) {
+		if (this.heat.unknown) {
+			this.thermalUnknownAt ??= now;
+			this.candidate.clear();
+			for (const id of this.large.keys()) this.large.set(id, null);
+		} else this.thermalUnknownAt = null;
+		const thermalExpired =
+			this.thermalUnknownAt !== null && now - this.thermalUnknownAt >= 3000;
+		if (!valid || thermalExpired || s.keepQuality || gap) {
 			// Unknown time is never observed time below a protection threshold.
 			for (const id of this.large.keys()) this.large.set(id, null);
 			this.release(
@@ -177,7 +187,7 @@ export class LinkBoxHeatPolicy {
 		for (const l of s.links) {
 			const share = l.rate / s.rate;
 			if (share >= 0.4 || l.rate === largest) this.large.set(l.id, null);
-			else if (this.large.has(l.id)) {
+			else if (!this.heat.unknown && this.large.has(l.id)) {
 				if (share >= 0.3) this.large.set(l.id, null);
 				else {
 					const since = this.large.get(l.id) ?? now;
@@ -236,7 +246,13 @@ export class LinkBoxHeatPolicy {
 			this.paused = [];
 		}
 		if (stage < 2) this.release(now, "cooled", false);
-		if (!this.loan && !rolledBack && stage >= 2 && this.rollbacks < 2) {
+		if (
+			!this.heat.unknown &&
+			!this.loan &&
+			!rolledBack &&
+			stage >= 2 &&
+			this.rollbacks < 2
+		) {
 			const candidates = s.links
 				.filter((l) => {
 					const peers = s.links.filter(
@@ -321,6 +337,7 @@ export class LinkBoxHeatPolicy {
 		// Conservative single-client limit matches the existing one-target lease.
 		// This draft requires an active loan before considering a client pause.
 		if (
+			!this.heat.unknown &&
 			stage >= 3 &&
 			!rolledBack &&
 			!this.paused.length &&

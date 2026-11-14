@@ -219,11 +219,14 @@ its pre-loan value, peer loss above 5%, or peer RTT at twice its median trigger
 rollback after five continuous seconds. These checks continue throughout the
 loan, including its first thirty seconds. Peer dropout, new phone-uplink use,
 large-leg protection, session change, stream end, encoder takeover, Keep
-quality and unknown observations release restrictions immediately. Failed
+quality and unknown traffic observations release restrictions immediately. Failed
 loans lock that link for fifteen minutes; two rollbacks disable lending for
-the session. Thermal-only missing or stale readings restore immediately without
-spending that rollback budget or imposing a link lock. Stale observations reset
-admission dwell.
+the session. Thermal-only missing, invalid or stale readings hold existing
+restrictions for up to three seconds, then restore without spending that rollback
+budget or imposing a link lock. No new loan or pause starts during the grace;
+stream rollback and client protection checks continue. A fresh thermal reading
+ends the grace. This avoids repeated undo/redo on isolated missed samples.
+Unknown observations reset admission dwell and large-leg release dwell.
 
 Client identity must be cross-checked by the producer against the authenticated
 streamer and the data plane. Only a bound, IPv4-only client that joined at
@@ -237,8 +240,9 @@ the session; any other release locks it for ten minutes.
 
 Conservative choices pending review: at most one client may be paused (the
 existing lease owns one target); a pause follows a loan, rather than preceding
-it when lending is withheld; unknown measurements undo immediately instead of
-waiting three seconds. The design allows pauses without lending, including
+it when lending is withheld; unknown traffic measurements undo immediately,
+while thermal-only gaps have the three-second grace described above. The design
+allows pauses without lending, including
 when stream statistics
 are missing (C6). This draft deliberately withholds both: the mock owner has
 no separate pause-only admission and rollback contract yet. That integration
@@ -284,7 +288,11 @@ mediciones de ahorro térmico.
 
 Español (Latinoamérica): la lectura térmica lleva su hora de observación; una
 lectura de más de dos segundos es desconocida. Una falta solo térmica devuelve
-las restricciones sin gastar los dos intentos de protección de la transmisión.
+las restricciones después de tres segundos continuos, sin gastar los dos
+intentos de protección de la transmisión. Durante esa espera conserva los pasos
+actuales, no agrega otros y sigue comprobando la transmisión y los clientes
+protegidos. Una lectura válida termina la espera; así una lectura aislada perdida
+no corta y restablece repetidamente un enlace ni el internet de un invitado.
 Después de liberar un cliente, espera dos minutos antes de pausar otro.
 El diseño permite pausar sin retirar un enlace, incluso sin estadísticas de
 transmisión (C6); este borrador exige ambas cosas juntas hasta revisar un

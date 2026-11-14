@@ -100,7 +100,7 @@ test("largest leg, phone uplink, recovering legs and insufficient room are never
 		}
 	}
 });
-test("unknown or stale numbers fail closed and recover an active loan immediately", () => {
+test("unknown or stale traffic numbers fail closed and recover an active loan immediately", () => {
 	for (const alter of [
 		(s: BoxSample) => {
 			s.at -= 2001;
@@ -110,9 +110,6 @@ test("unknown or stale numbers fail closed and recover an active loan immediatel
 		},
 		(s: BoxSample) => {
 			s.rate = Number.NaN;
-		},
-		(s: BoxSample) => {
-			s.soc = null;
 		},
 	]) {
 		const p = new LinkBoxHeatPolicy();
@@ -679,7 +676,8 @@ test("two brief thermal gaps do not spend the session rollback budget", () => {
 		const s = sample(t);
 		if (t === 100000 || t === 300000) s.soc = null;
 		result = p.tick(s);
-		if (s.soc === null) expect(result).toMatchObject({ lend: null, pause: [] });
+		if (s.soc === null)
+			expect(result).toMatchObject({ lend: "leg2", pause: ["guest"] });
 	}
 	expect(result?.lend).toBe("leg2");
 });
@@ -688,8 +686,15 @@ test("frozen, future and missing thermal timestamps release restrictions", () =>
 		const p = new LinkBoxHeatPolicy();
 		warm(p);
 		const s = sample(76000);
-		s.socAt = at;
-		expect(p.tick(s)).toMatchObject({ lend: null, pause: [] });
+		for (let t = 76000; t <= 79000; t += 1000) {
+			s.now = s.at = s.streamAt = t;
+			s.socAt = at === 76001 ? t + 1 : at;
+			expect(p.tick(s)).toMatchObject(
+				t < 79000
+					? { lend: "leg2", pause: ["guest"] }
+					: { lend: null, pause: [] },
+			);
+		}
 	}
 });
 
@@ -795,6 +800,7 @@ test("USB owner sees unknown temperature while link return is pending", async ()
 		await owner.update(() => s);
 	}
 	s = sample(76000);
+	s.pathsComplete = false;
 	s.soc = null;
 	expect((await owner.update(() => s)).returning).toBe("leg2");
 	expect(usb.at(-1)).toBe(false);
@@ -862,4 +868,130 @@ test("no pause is applied without a confirmed link restriction", async () => {
 		await owner.update(() => s);
 	}
 	expect(pauses).toBe(0);
+});
+
+for (const every of [30, 65, 125, 300]) {
+	for (const fault of ["null", "stale"] as const) {
+		test(`one-hour repeated ${fault} thermal gaps every ${every}s do not cycle restrictions`, () => {
+			const p = new LinkBoxHeatPolicy();
+			let previous = { lend: null as string | null, pause: [] as string[] };
+			let loans = 0,
+				pauses = 0;
+			for (let t = 0; t <= 3600000; t += 1000) {
+				const s = sample(t);
+				s.clients.push(
+					{ ...item(s.clients, 1), id: "g2" },
+					{ ...item(s.clients, 1), id: "g3" },
+				);
+				if (t > 0 && t % (every * 1000) === 0) {
+					if (fault === "null") s.soc = null;
+					else s.socAt = t - 2001;
+				}
+				const next = p.tick(s);
+				if (next.lend && !previous.lend) loans++;
+				if (next.pause.length && !previous.pause.length) pauses++;
+				previous = next;
+			}
+			expect({ loans, pauses }).toEqual(
+				every === 30 ? { loans: 0, pauses: 0 } : { loans: 1, pauses: 1 },
+			);
+			expect(previous).toMatchObject(
+				every === 30
+					? { lend: null, pause: [] }
+					: { lend: "leg2", pause: ["g2"] },
+			);
+			expect(p.timeline).toEqual([]);
+		});
+	}
+}
+
+test("thermal freshness accepts 2000ms and starts grace at 2001ms", () => {
+	for (const age of [2000, 2001]) {
+		const p = new LinkBoxHeatPolicy();
+		warm(p);
+		for (let t = 76000; t <= 79000; t += 1000) {
+			const s = sample(t);
+			s.socAt = t - age;
+			expect(p.tick(s).lend).toBe(age === 2001 && t === 79000 ? null : "leg2");
+		}
+	}
+});
+test("thermal grace adds no steps and keeps stream and client protections active", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p, 70000);
+	const s = sample(71000);
+	s.soc = null;
+	expect(p.tick(s)).toMatchObject({ lend: "leg2", pause: [] });
+	s.now = s.at = s.streamAt = 72000;
+	s.rate = 850;
+	expect(p.tick(s)).toMatchObject({ lend: null, pause: [] });
+	const q = new LinkBoxHeatPolicy();
+	warm(q);
+	const c = sample(76000);
+	c.soc = null;
+	item(c.clients, 1).streaming = true;
+	expect(q.tick(c)).toMatchObject({ lend: "leg2", pause: [] });
+});
+test("thermal expiry releases at three seconds without locking the loan", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p);
+	for (let t = 76000; t <= 79000; t += 1000) {
+		const s = sample(t);
+		s.soc = null;
+		expect(p.tick(s).lend).toBe(t < 79000 ? "leg2" : null);
+	}
+	for (let t = 80000; t <= 140000; t += 1000) p.tick(sample(t));
+	expect(p.tick(sample(141000)).lend).toBe("leg2");
+});
+test("stage ceiling lifts pause and spaces the next pause after reheating", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p);
+	const s = sample(76000);
+	expect(p.tick(s, 2)).toMatchObject({ lend: "leg2", pause: [] });
+	for (let t = 77000; t <= 196000; t += 1000) {
+		const next = sample(t);
+		next.clients.push({ ...item(next.clients, 1), id: "other" });
+		expect(p.tick(next).pause).toEqual(t < 196000 ? [] : ["other"]);
+	}
+});
+test("rollback lift spaces a new client's pause even with another available leg", () => {
+	const p = new LinkBoxHeatPolicy();
+	warm(p);
+	const s = sample(76000);
+	s.rate = 850;
+	p.tick(s);
+	for (let t = 77000; t <= 196000; t += 1000) {
+		const next = sample(t);
+		item(next.links, 1).rate = 100;
+		next.clients.push({ ...item(next.clients, 1), id: "other" });
+		expect(p.tick(next).pause).toEqual(t < 196000 ? [] : ["other"]);
+	}
+});
+test("session rechecks cannot spend rollback budget", async () => {
+	const { LinkBoxHeatSession } = await import(
+		"../modules/streaming/heat-link-box-share.ts"
+	);
+	let s = sample(0);
+	const owner = new LinkBoxHeatSession({
+		spareUsb: async () => {},
+		returnLink: async () => true,
+		lend: async (_id, safe) => {
+			const good = s;
+			s = { ...s, rate: 850 };
+			expect(safe()).toBe(false);
+			expect(safe()).toBe(false);
+			s = good;
+			return safe();
+		},
+		pause: async (_id, safe) => safe(),
+	});
+	for (let t = 0; t <= 75000; t += 1000) {
+		s = sample(t);
+		await owner.update(() => s);
+	}
+	s = sample(76000);
+	expect(await owner.update(() => s)).toMatchObject({
+		lend: "leg2",
+		pause: ["guest"],
+	});
 });
