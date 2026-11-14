@@ -327,6 +327,7 @@ export const runtimeConfigSchema = z.object({
 	// this list. Additive-optional; defaults `[]` so old configs parse.
 	last_seen_devices: z.array(lastSeenDeviceSchema).optional(),
 	autostart: z.boolean().optional(),
+	heat_pause_mode: z.enum(["auto", "suggest"]).optional(),
 
 	// Remote/cloud settings
 	remote_key: z.string().optional(),

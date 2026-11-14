@@ -20,6 +20,10 @@ import {
 	heatStatusSchema,
 	type InputMode,
 	keepHeatQualitySchema,
+	linkBoxHeatActionSchema,
+	linkBoxHeatModeResultSchema,
+	linkBoxHeatModeSchema,
+	linkBoxHeatSettingsSchema,
 	listDevicesOutputSchema,
 	pipelinesMessageSchema,
 	reloadAudioDelayInputSchema,
@@ -45,6 +49,7 @@ import {
 	streamingSetConfigOutputSchema,
 	streamingStartOutputSchemaExtended,
 	streamingStopOutputSchema,
+	successResponseSchema,
 	switchAudioInputSchema,
 	switchAudioOutputSchema,
 	switchInputInputSchema,
@@ -106,6 +111,7 @@ import { deviceRegistry } from "../../modules/streaming/devices.ts";
 import { clampBitrate } from "../../modules/streaming/encoder.ts";
 import { isGatewayActive } from "../../modules/streaming/gateway-availability.ts";
 import { getStreamHealth } from "../../modules/streaming/health.ts";
+import { createHeatSettings } from "../../modules/streaming/heat-link-box-settings.ts";
 import { AUDIO_CODECS } from "../../modules/streaming/pipeline-sources.ts";
 import {
 	getEffectiveHardware,
@@ -1465,3 +1471,19 @@ export const keepHeatQualityProcedure = authedProcedure
 		broadcastMsg("heat", cerastreamBackend.getHeat());
 		return { success: true, applied: cerastreamBackend.getHeat() };
 	});
+
+const linkBoxHeatSettings = createHeatSettings(getConfig, saveConfig);
+export const getLinkBoxHeatProcedure = authedProcedure
+	.output(linkBoxHeatSettingsSchema)
+	.handler(() => linkBoxHeatSettings.get());
+export const setLinkBoxHeatModeProcedure = authedProcedure
+	.input(linkBoxHeatModeSchema)
+	.output(linkBoxHeatModeResultSchema)
+	.handler(({ input }) => linkBoxHeatSettings.set(input.mode));
+
+export const linkBoxHeatActionProcedure = authedProcedure
+	.input(linkBoxHeatActionSchema)
+	.output(successResponseSchema)
+	.handler(async ({ input }) => ({
+		success: await linkBoxHeatSettings.action(input.action, input.id),
+	}));

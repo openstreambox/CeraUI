@@ -56,6 +56,7 @@ const LogsDialog = lazyDialog(() => import('./dialogs/LogsDialog.svelte'));
 const UpdatesDialog = lazyDialog(() => import('./dialogs/UpdatesDialog.svelte'));
 const PowerDialog = lazyDialog(() => import('./dialogs/PowerDialog.svelte'));
 const VersionsDialog = lazyDialog(() => import('./dialogs/VersionsDialog.svelte'));
+const HeatSettingsDialog = lazyDialog(() => import('./dialogs/HeatSettingsDialog.svelte'));
 const DeviceHealthDialog = lazyDialog(() => import('./dialogs/DeviceHealthDialog.svelte'));
 const OnDeviceDisplaySection = lazyDialog(() => import('./settings/OnDeviceDisplaySection.svelte'));
 const AddonsSection = lazyDialog(() => import('./settings/AddonsSection.svelte'));
@@ -199,6 +200,7 @@ const groups = $derived<Group[]>([
 				desc: m["settings.index.deviceHealthDesc"](),
 				icon: Gauge,
 			},
+			{ key: 'heat', title: m['settings.heat.title'](), desc: m['settings.heat.description'](), icon: Gauge },
 			{ key: 'power', title: m["settings.index.power"](), desc: m["settings.index.powerDesc"](), icon: Power, destructive: true },
 			{ key: 'versions', title: m["settings.index.versions"](), desc: m["settings.index.versionsDesc"](), icon: Info },
 		],
@@ -215,6 +217,7 @@ let updatesOpen = $state(false);
 let powerOpen = $state(false);
 let versionsOpen = $state(false);
 let deviceHealthOpen = $state(false);
+let heatOpen = $state(false);
 let displayOpen = $state(false);
 let addonsOpen = $state(false);
 let wifiCountryOpen = $state(false);
@@ -249,6 +252,9 @@ function openEntry(entry: Entry) {
 			return;
 		case 'versions':
 			versionsOpen = true;
+			return;
+		case 'heat':
+			heatOpen = true;
 			return;
 		case 'deviceHealth':
 			deviceHealthOpen = true;
@@ -442,3 +448,5 @@ $effect(() => {
 <LazyDialog dialog={AddonsSection} bind:open={addonsOpen} />
 <LazyDialog dialog={WifiCountryDialog} bind:open={wifiCountryOpen} />
 <LazyDialog dialog={ModemCapabilitiesDialog} bind:open={modemCapabilitiesOpen} />
+
+<LazyDialog dialog={HeatSettingsDialog} bind:open={heatOpen} />

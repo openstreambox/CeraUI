@@ -5,6 +5,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
 	getHeat: vi.fn(),
 	keepHeatQuality: vi.fn(),
+	linkBoxHeatAction: vi.fn(),
 }));
 vi.mock("$lib/rpc/client", () => ({ rpc: { streaming: mocks } }));
 
@@ -156,4 +157,52 @@ test("a sudden pack reading reports a delayed cut-off", () => {
 		),
 	).toBeTruthy();
 	expect(view.queryByText(/can't confirm the power supply/)).toBeNull();
+});
+
+test("a suggestion offers one tap and a confirmed pause offers Let back on", async () => {
+	mocks.linkBoxHeatAction.mockResolvedValue({ success: true });
+	mocks.getHeat.mockReturnValue({
+		...status,
+		linkBox: { suggestion: "guest", paused: null },
+	});
+	const view = render(HeatNotice);
+	expect(
+		view.getByText(
+			"To cool down faster, you can pause internet for one other Wi-Fi device. Your phone stays connected.",
+		),
+	).toBeTruthy();
+	await fireEvent.click(view.getByRole("button", { name: "Pause one device" }));
+	expect(mocks.linkBoxHeatAction).toHaveBeenCalledWith({
+		action: "pause",
+		id: "guest",
+	});
+	view.unmount();
+	mocks.getHeat.mockReturnValue({
+		...status,
+		linkBox: { suggestion: null, paused: "guest" },
+	});
+	const paused = render(HeatNotice);
+	await fireEvent.click(paused.getByRole("button", { name: "Let back on" }));
+	expect(mocks.linkBoxHeatAction).toHaveBeenCalledWith({
+		action: "restore",
+		id: "guest",
+	});
+});
+test("a refused pause stays visible as a failure, never as a confirmed action", async () => {
+	mocks.linkBoxHeatAction.mockResolvedValue({ success: false });
+	mocks.getHeat.mockReturnValue({
+		...status,
+		linkBox: { suggestion: "guest", paused: null },
+	});
+	const view = render(HeatNotice);
+	expect(
+		view.getByText(
+			"To cool down faster, you can pause internet for one other Wi-Fi device. Your phone stays connected.",
+		),
+	).toBeTruthy();
+	await fireEvent.click(view.getByRole("button", { name: "Pause one device" }));
+	await waitFor(() =>
+		expect(view.getByText(/Couldn.t confirm that. Try again./i)).toBeTruthy(),
+	);
+	expect(view.queryByRole("button", { name: "Let back on" })).toBeNull();
 });

@@ -5,10 +5,20 @@ import {
 	type HeatState,
 	initialHeat,
 } from "./heat-ladder.ts";
+import type {
+	BoxPlan,
+	BoxSample,
+	LinkBoxHeatPolicy,
+} from "./heat-link-box-share.ts";
 
 /** Client owners must supply identities and measured capacity, never infer them
  * from carrying alone. An absent snapshot withholds the visible steps. */
 export interface LinkBoxEvidence {
+	/** Legacy identity/headroom fields do not authorize a restriction. Only a
+	 * complete measured snapshot through the session policy can do so. The producer
+	 * must set sample.pauseMode from the saved preference on every observation;
+	 * omitting it selects the legacy automatic default. */
+	measured?: { sample: BoxSample; policy: LinkBoxHeatPolicy };
 	at: number;
 	carrying: StreamLiveness;
 	encoder: boolean;
@@ -28,50 +38,42 @@ export function planLinkBoxHeat(
 	keep: boolean,
 	e: LinkBoxEvidence,
 	now: number,
-): { usb: boolean; lend: string | null; pause: string[] } {
+): BoxPlan {
 	const fresh =
 		Number.isFinite(e.at) && now >= e.at && now - e.at <= HEAT_SETTINGS.staleMs;
-	const eligible = fresh && e.carrying === "streaming" && !e.encoder && known;
-	const result: { usb: boolean; lend: string | null; pause: string[] } = {
-		usb: eligible && stage >= 1,
+	const eligible = fresh && e.carrying === "streaming" && !e.encoder;
+	const result: BoxPlan = {
+		usb: eligible && known && stage >= 1,
 		lend: null,
 		pause: [],
 	};
-	if (
-		!eligible ||
-		keep ||
-		stage < 2 ||
-		!e.mainLink ||
-		!e.links.some((l) => l.id === e.mainLink) ||
-		new Set(e.links.map((l) => l.id)).size !== e.links.length
-	)
-		return result;
-	const strong = (l: LinkBoxEvidence["links"][number]) =>
-		l.healthy &&
-		!l.recovering &&
-		l.headroom !== null &&
-		Number.isFinite(l.headroom) &&
-		l.headroom >= HEAT_SETTINGS.spareLinkHeadroom;
-	result.lend =
-		e.links.find(
-			(l) =>
-				l.id !== e.mainLink &&
-				l.healthy &&
-				!l.recovering &&
-				e.links.filter((p) => p.id !== l.id && strong(p)).length >=
-					HEAT_SETTINGS.spareLinkHealthyPeers,
-		)?.id ?? null;
-	if (
-		stage >= 3 &&
-		result.lend &&
-		e.phone &&
-		e.clients?.some((c) => c.id === e.phone) &&
-		new Set(e.clients.map((c) => c.id)).size === e.clients.length
-	)
-		result.pause = e.clients
-			.filter((c) => c.id !== e.phone && !c.management)
-			.map((c) => c.id);
-	return result;
+	if (!e.measured) return result;
+	const { sample, policy } = e.measured;
+	// A veto must reach the stateful policy as well as the returned plan, so a
+	// later eligible snapshot cannot resume an old restriction without dwell.
+	const matches =
+		sample.now === now &&
+		sample.encoder === e.encoder &&
+		sample.keepQuality === keep;
+	const measured = policy.tick(
+		{
+			...sample,
+			now,
+			carrying: eligible && matches && stage >= 2 && sample.carrying,
+			encoder: e.encoder,
+			keepQuality: keep,
+			soc: known ? sample.soc : null,
+		},
+		stage,
+	);
+	return {
+		usb: result.usb,
+		lend: stage >= 2 ? measured.lend : null,
+		pause: stage >= 3 ? measured.pause : [],
+		...(stage >= 3 && measured.suggestion
+			? { suggestion: measured.suggestion }
+			: {}),
+	};
 }
 
 /** Sensor composition for a carrying-only session. Missing path/client evidence

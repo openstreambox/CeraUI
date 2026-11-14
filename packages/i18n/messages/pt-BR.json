@@ -2847,5 +2847,17 @@
 	"notifications.clientCarryingUnknown": "A caixa verifica a atividade dos clientes. Atualizações, reinícios, desligamento e mudanças de links por inatividade aguardam.",
 	"general.updateReasonClientTraffic": "Há uma transmissão ativa ou em verificação. Encerre as transmissões dos dispositivos conectados e da caixa antes da atualização.",
 	"notifications.disruptiveActionClientTraffic": "Esta ação não foi executada. Tente novamente quando a transmissão da caixa e o tráfego de transmissão dos dispositivos conectados estiverem inativos e nenhuma atualização estiver em andamento.",
-	"notifications.linkBoxHeatWaiting": "A caixa está quente. Os links do telefone continuam disponíveis enquanto a capacidade é verificada. Deixe o ar circular."
+	"notifications.linkBoxHeatWaiting": "A caixa está quente. Os links do telefone continuam disponíveis enquanto a capacidade é verificada. Deixe o ar circular.",
+	"settings.heat.title": "Calor",
+	"settings.heat.description": "Resfriamento ao retransmitir o stream do celular",
+	"settings.heat.automatic": "Quando a caixa estiver muito quente, ela pode pausar a internet de outro dispositivo Wi-Fi, um por vez. Seu celular, quem possa estar transmitindo e dispositivos sem nome ficam protegidos. Toque em Liberar acesso para desfazer.",
+	"settings.heat.suggest": "Apenas sugerir",
+	"settings.heat.suggestHelp": "A caixa pergunta primeiro. Toque uma vez para pausar o dispositivo sugerido.",
+	"settings.heat.dormant": "A pausa de dispositivos ainda não está ativa nesta caixa. Sua escolha fica salva para depois.",
+	"settings.heat.failed": "Não foi possível salvar sua escolha. Tente novamente.",
+	"live.heat.pauseDevice": "Pausar um dispositivo",
+	"live.heat.letBackOn": "Liberar acesso",
+	"live.heat.clientPaused": "Internet pausada para outro dispositivo Wi-Fi. O stream do seu celular mantém suas conexões.",
+	"live.heat.clientFailed": "Não foi possível confirmar. Tente novamente.",
+	"live.heat.clientSuggestion": "Para esfriar mais rápido, você pode pausar a internet de outro dispositivo Wi-Fi. Seu celular continua conectado."
 }

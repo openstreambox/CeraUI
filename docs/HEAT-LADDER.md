@@ -155,14 +155,18 @@ journal/adapter-lock owner; unknown carrying is a final veto before link-down.
 The hot notice keeps the phone's links available while capacity is checked.
 
 `planLinkBoxHeat` specifies the remaining order: lend one link fewer at hot,
-then pause other hotspot clients at critical. It excludes the known phone main
-link, requires two healthy non-recovering peers with measured headroom, and
-protects the phone and management clients. Stale, duplicate or absent identity
-and capacity evidence withholds those steps. Keep quality withdraws both visible
+then pause other hotspot clients at critical. Its measured-share session policy
+protects the largest leg, large legs and
+the phone uplink, requires two healthy peers with proven spare rate, and
+protects the phone and management clients. A legacy main-link label or
+headroom snapshot alone cannot authorize either step. Stale, duplicate or
+absent identity and capacity evidence withholds those steps. Keep quality
+withdraws both visible
 restrictions while permitting an unused USB radio to rest.
 
-**Runtime boundary:** this base has no phone main-link identity/capacity source
-or reversible per-client pause owner. Lending and client pause are policy only;
+**Runtime boundary:** this topic has no complete measured-share producer or
+native lending adapter. The per-client pause primitive remains dormant. Lending
+and client pause are policy only;
 they are not applied to live traffic. The runtime keeps every used link and
 client available. Do not connect this planner to saved bond opt-outs, stop the
 hotspot, or infer the main path from interface names or carrying alone. A future
@@ -176,7 +180,192 @@ Cuando la caja transporta tráfico del teléfono sin codificar, usa los mismos
 umbrales y tiempos de enfriamiento. Puede dejar descansar una radio USB que se
 haya confirmado sin uso. Nunca cambia la tasa de bits del teléfono. El orden
 previsto después es prestar un enlace menos y luego pausar a otros clientes del
-punto de acceso, conservando el teléfono y la administración. Sin identidad del
-enlace principal, capacidad medida y un controlador reversible por cliente,
+punto de acceso, conservando el teléfono y la administración. Sin datos completos
+de uso por enlace,
+capacidad medida y adaptadores que confirmen cada efecto,
 esos dos pasos no se aplican al tráfico. El aviso pide ventilación y mantiene
 los enlaces disponibles; no afirma que terminó la transmisión.
+
+## Measured-share link-box policy (mock source only)
+
+All numerical thresholds in this policy are proposals, not hardware measurements.
+
+`heat-link-box-share.ts` adds the session policy and an injected effect-owner
+boundary. It sits above the carrying-only warm step and the bounded client
+lease. It does not register a production producer or a native effect adapter. Settings → Device → Heat saves the pause preference;
+the current production notification and hardware behavior remain unchanged.
+
+The policy uses the existing SoC thresholds, ten-second entry dwell,
+five-minute hold, sixty-second cooling dwell and two-minute reverse steps.
+It admits a loan only after sixty continuous seconds of fresh observations:
+leg counters no older than two seconds, stream observations no older than
+three, SoC observations no older than two seconds, a candidate share at most
+15%, two healthy peers, and proven spare rate
+of at least 130% of the candidate's traffic. Loss must be at most 2%, and RTT
+at most 150% of its own five-minute median. The stream must remain within 5%
+of its sixty-second rate and 130% of its median RTT. Never count the phone's
+own cellular as capacity. The producer must include the phone's routed flow in
+leg rate and identify its current hotspot uplink; a relay-only counter is not
+a complete snapshot and must not be supplied here.
+
+The largest leg and every leg carrying at least 40% are protected. A previously
+large leg must stay below 30% for sixty seconds before starting the candidate
+dwell. The phone uplink and recovering legs are always protected. Candidate
+ranking prefers the hottest known modem, then the smallest rate, then stable
+identity. Unknown temperatures sort last; they do not manufacture a reading.
+
+A 15% stream-rate fall restores the loan immediately. Stream RTT at 150% of
+its pre-loan value, peer loss above 5%, or peer RTT at twice its median trigger
+rollback after five continuous seconds. These checks continue throughout the
+loan, including its first thirty seconds. Peer dropout, new phone-uplink use,
+large-leg protection, session change, stream end, encoder takeover, Keep
+quality and unknown traffic observations release restrictions immediately. Failed
+loans lock that link for fifteen minutes; two rollbacks disable lending for
+the session. Thermal-only missing, invalid or stale readings hold existing
+restrictions for up to three seconds, then restore without spending that rollback
+budget or imposing a link lock. No new loan or pause starts during the grace;
+stream rollback and client protection checks continue. A fresh thermal reading
+ends the grace. This avoids repeated undo/redo on isolated missed samples.
+Unknown observations reset admission dwell and large-leg release dwell.
+
+Client identity must be cross-checked by the producer against the authenticated
+streamer and the data plane. Only a bound, IPv4-only client that joined at
+least two minutes ago qualifies. The phone, management sessions, possible
+streamers, receiver-directed traffic, recent carrying and ambiguous clients
+remain online. A candidate must exceed 100 kbit/s over the last sixty seconds.
+The busiest eligible client is selected. After lifting a client, wait two minutes
+before pausing another; pauses also have at least two minutes between starts.
+Let back on exempts that client for
+the session; any other release locks it for ten minutes.
+
+Conservative choices pending review: at most one client may be paused (the
+existing lease owns one target); a pause follows a loan, rather than preceding
+it when lending is withheld; unknown traffic measurements undo immediately,
+while thermal-only gaps have the three-second grace described above. The design
+allows pauses without lending, including
+when stream statistics
+are missing (C6). This draft deliberately withholds both: the mock owner has
+no separate pause-only admission and rollback contract yet. That integration
+must be reviewed before enabling independent pauses. There is no
+phone protocol extension, saved opt-out, radio power-down or AP shutdown.
+
+`LinkBoxHeatSession` serializes effects and rechecks current admission at the
+owner's mutation boundary. Only acknowledged actions enter its status. Client
+release precedes link return; pending return blocks new restrictions and is
+retried. A real return adapter must bound each attempt to ten seconds and
+confirm relay identity, open tunnel and flowing ACKs before returning true.
+A real pause adapter must renew the existing five-second kernel lease only
+while its supplied predicate still holds. Neither adapter exists in production
+on this topic; tests inject memory-only owners and synthetic thermal sequences.
+The plain status copy is a contract for later UI integration, not a rendered
+screen. When only temperature is unknown and restrictions have been restored,
+status names the missing temperature reading rather than blaming stream data.
+Reasons are retained in a bounded local timeline, not repeated notices.
+
+Thermal timestamps must come from the sensor observation, never from polling a
+cached number. USB owners receive eligibility and known-temperature separately,
+including while a link return is pending. Admission rechecks use a copy of policy
+state, so checking permission cannot spend rollback budget or advance dwell.
+
+### Español (Latinoamérica): política con datos simulados
+
+La política agrega pasos reversibles sin activar efectos nuevos en producción.
+Primero permite descansar una radio USB sin uso; después presta un enlace menos
+y, con calor crítico, permite pausar un solo cliente adicional. Nunca reduce
+la tasa del teléfono ni cambia sus preferencias guardadas.
+
+Protege el enlace más usado, los enlaces grandes, la salida Wi-Fi del teléfono,
+los enlaces en recuperación, el teléfono, los posibles emisores y los clientes
+de administración o de identidad incierta. Exige datos recientes, capacidad
+comprobada y sesenta segundos continuos de condiciones seguras. Si faltan los
+datos o empeora la transmisión, retira las restricciones. Al enfriarse, libera
+primero al cliente y después devuelve el enlace, con los tiempos de espera de
+la escala térmica. «Dejar entrar» protege al cliente durante esa sesión.
+
+Solo se prueban fuentes térmicas y controladores simulados. No hay nuevos
+contadores reales ni activación del controlador de pausa. La preferencia se
+guarda en Ajustes → Dispositivo → Calor; los controles de pausa solo se muestran
+cuando existe un estado medido de sesión.
+Antes de activarlo se necesitan mediciones completas del tráfico y adaptadores
+que confirmen cada acción y restauración. Las cifras son propuestas sin
+mediciones de ahorro térmico.
+
+Español (Latinoamérica): la lectura térmica lleva su hora de observación; una
+lectura de más de dos segundos es desconocida. Una falta solo térmica devuelve
+las restricciones después de tres segundos continuos, sin gastar los dos
+intentos de protección de la transmisión. Durante esa espera conserva los pasos
+actuales, no agrega otros y sigue comprobando la transmisión y los clientes
+protegidos. Una lectura válida termina la espera; así una lectura aislada perdida
+no corta y restablece repetidamente un enlace ni el internet de un invitado.
+Si solo falta la temperatura, el estado indica esa lectura ausente y no atribuye
+el problema a los datos de transmisión.
+Después de liberar un cliente, espera dos minutos antes de pausar otro.
+El diseño permite pausar sin retirar un enlace, incluso sin estadísticas de
+transmisión (C6); este borrador exige ambas cosas juntas hasta revisar un
+contrato independiente de admisión y restauración para la pausa.
+
+
+## Client pause preference and controls
+
+Settings → Device → Heat defaults to automatic pauses at critical heat. “Suggest
+only” saves `heat_pause_mode: "suggest"`; the streamer then taps “Pause one
+device” once. “Let back on” releases a confirmed pause and exempts that device
+for the session. Both modes protect the phone, management and possible streaming
+clients, and clients without a bound, nonblank name. Only one client is paused
+at a time. Switching to suggest only lifts an automatic pause on the next
+measured update and preserves lift spacing and client cooldown.
+
+The controller reads the saved mode into every sample, including effect-lock
+rechecks. Producers using the outer planner must also put the saved preference
+in `measured.sample.pauseMode` on every observation; omission selects automatic.
+If a tapped pause is refused, its pending request is cancelled without a strike
+or a client lock. Later updates do not retry it; another tap is needed.
+The live suggestion explains that pausing affects internet for one other Wi-Fi
+device and that the phone stays connected. A suggestion is not a confirmed pause.
+Its target is revalidated on the tap and under the effect owner's lock; stale requests never grant later
+permission. Failed persistence preserves the previous mode; corrupt saved modes
+close configuration authority instead of falling back to automatic control.
+
+The settings RPC is available, but the production instance has no measured
+session binding. It reports `active: false` and rejects pause/restore actions.
+The settings dialog says pausing devices is not active on this box yet. The
+optional `heat.linkBox` projection renders count-only live controls, without
+names or addresses. A future qualified owner must bind the session, call
+`update()` for each measured observation and publish its confirmed control state.
+Tests inject an in-memory session; no production producer or adapter is added.
+
+The outer planner lets the policy apply its three-second thermal grace while
+USB remains gated on a known temperature. A missed read every 125 seconds holds
+one loan and one pause over an hour. Repeated outages longer than three seconds
+still release and may repeatedly lend and pause again; thermal-only expiries do
+not spend a rollback strike. This remains a qualification limit.
+
+### Español (Latinoamérica)
+
+Ajustes → Dispositivo → Calor guarda la preferencia. Por defecto, la caja pausa
+internet automáticamente para un solo dispositivo adicional con calor crítico.
+“Solo sugerir” pide que toques “Pausar un dispositivo” una vez. “Permitir de nuevo”
+restaura el acceso y excluye al dispositivo durante esa sesión. El teléfono,
+la administración, quienes puedan estar transmitiendo y los dispositivos sin un
+nombre verificado quedan protegidos en ambos modos. Cambiar a Solo sugerir
+levanta la pausa automática en la siguiente lectura y conserva los tiempos de
+espera. Un error al guardar conserva la elección anterior; un valor guardado
+inválido bloquea la autoridad de configuración.
+
+Los controles muestran solo cantidades, sin nombres ni direcciones. La instancia
+de producción no tiene una sesión medida: informa que no está activa y rechaza
+las acciones. La pantalla lo indica; guardar la preferencia no activa efectos.
+Si una pausa solicitada se rechaza, se cancela la solicitud pendiente sin
+penalizar ni bloquear al cliente. Las lecturas siguientes no la reintentan;
+hace falta otro toque. El aviso explica que se pausa internet para otro
+dispositivo Wi-Fi y que el teléfono sigue conectado. El productor del
+planificador externo debe incluir la preferencia guardada en
+`measured.sample.pauseMode` en cada lectura; omitirla selecciona el modo automático.
+Las pruebas usan una sesión en memoria. Aún faltan el productor y los adaptadores
+reales antes de habilitarlo.
+
+El planificador externo respeta la gracia térmica de tres segundos; USB sigue
+requiriendo una temperatura conocida. Una lectura perdida cada 125 segundos
+mantiene un préstamo y una pausa en una hora. Fallos repetidos de más de tres
+segundos aún restauran y pueden volver a prestar y pausar repetidamente, sin
+sumar un fallo de transmisión. Sigue siendo un límite por comprobar.

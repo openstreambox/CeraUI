@@ -1,6 +1,9 @@
 import {
 	getHeatProcedure,
+	getLinkBoxHeatProcedure,
 	keepHeatQualityProcedure,
+	linkBoxHeatActionProcedure,
+	setLinkBoxHeatModeProcedure,
 } from "./procedures/streaming.procedure";
 /**
  * RPC Router - Main router combining all procedures
@@ -187,6 +190,9 @@ const stableRoutes = {
 		setBitrate: setBitrateProcedure,
 		getHeat: getHeatProcedure,
 		keepHeatQuality: keepHeatQualityProcedure,
+		linkBoxHeatAction: linkBoxHeatActionProcedure,
+		getLinkBoxHeat: getLinkBoxHeatProcedure,
+		setLinkBoxHeatMode: setLinkBoxHeatModeProcedure,
 		getPipelines: getPipelinesProcedure,
 		getAudioCodecs: getAudioCodecsProcedure,
 		getConfig: getConfigProcedure,

@@ -1316,7 +1316,13 @@ export const setMockDeviceAttachedOutputSchema = z.object({
 });
 export type SetMockDeviceAttachedOutput = z.infer<typeof setMockDeviceAttachedOutputSchema>;
 
+export const linkBoxHeatControlsSchema = z.object({
+	paused: z.string().nullable(),
+	suggestion: z.string().nullable(),
+});
+export type LinkBoxHeatControls = z.infer<typeof linkBoxHeatControlsSchema>;
 export const heatStatusSchema = z.object({
+	linkBox: linkBoxHeatControlsSchema.optional(),
 	restingLink: z.string().nullable().optional(),
 	restUnavailable: z.boolean().optional(),
 	modemUnavailable: z.boolean().optional(),
@@ -1342,3 +1348,20 @@ export const keepHeatQualitySchema = z.object({ enabled: z.boolean() });
 
 export const heatMutationSchema = z.object({ success: z.boolean(), applied: heatStatusSchema });
 export type HeatMutation = z.infer<typeof heatMutationSchema>;
+
+export const linkBoxHeatModeSchema = z.object({ mode: z.enum(['auto', 'suggest']) });
+export const linkBoxHeatSettingsSchema = linkBoxHeatModeSchema.extend({
+	active: z.boolean(),
+	paused: z.string().nullable().optional(),
+	suggestion: z.string().nullable().optional(),
+});
+export const linkBoxHeatModeResultSchema = linkBoxHeatModeSchema.extend({ success: z.boolean() });
+
+export type LinkBoxHeatSettings = z.infer<typeof linkBoxHeatSettingsSchema>;
+export type LinkBoxHeatMode = z.infer<typeof linkBoxHeatModeSchema>;
+export type LinkBoxHeatModeResult = z.infer<typeof linkBoxHeatModeResultSchema>;
+export const linkBoxHeatActionSchema = z.object({
+	action: z.enum(['pause', 'restore']),
+	id: z.string().min(1).max(256),
+});
+export type LinkBoxHeatAction = z.infer<typeof linkBoxHeatActionSchema>;

@@ -6,6 +6,7 @@ import { runtimeConfigSchema } from "./config-schemas.ts";
 
 const safetySchema = runtimeConfigSchema.pick({
 	autostart: true,
+	heat_pause_mode: true,
 	bond_opt_out: true,
 	eth_roles: true,
 	wifi_modes: true,

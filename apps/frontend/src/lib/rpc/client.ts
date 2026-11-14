@@ -39,6 +39,10 @@ import type {
 	KioskOskInput,
 	KioskStatus,
 	KioskToggleOutput,
+	LinkBoxHeatAction,
+	LinkBoxHeatMode,
+	LinkBoxHeatModeResult,
+	LinkBoxHeatSettings,
 	ListDevicesOutput,
 	LoginInput,
 	LoginOutput,
@@ -650,6 +654,13 @@ export interface TypedRPC {
 		) => Promise<StreamingStartOutputExtended>;
 		stop: () => Promise<StreamingStopOutput>;
 		getHeat: () => Promise<HeatStatus>;
+		getLinkBoxHeat: () => Promise<LinkBoxHeatSettings>;
+		setLinkBoxHeatMode: (
+			input: LinkBoxHeatMode,
+		) => Promise<LinkBoxHeatModeResult>;
+		linkBoxHeatAction: (
+			input: LinkBoxHeatAction,
+		) => Promise<{ success: boolean }>;
 		keepHeatQuality: (input: { enabled: boolean }) => Promise<HeatMutation>;
 		setBitrate: (input: BitrateInput) => Promise<BitrateOutput>;
 		getPipelines: () => Promise<unknown>;
