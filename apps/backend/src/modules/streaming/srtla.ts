@@ -40,7 +40,7 @@ import {
 	isBondLinkMappable,
 	setBondIdentityResolverForTest,
 } from "./bond-entry.ts";
-import { readClatPath } from "./clat-status.ts";
+import { readClatPath, refreshClatStatus } from "./clat-status.ts";
 import { LinkFamilySelector, type ReceiverFamilies } from "./link-family.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
 
@@ -49,6 +49,10 @@ export { isBondLinkMappable, setBondIdentityResolverForTest };
 let receiverFamilies: ReceiverFamilies | undefined;
 const familySelector = new LinkFamilySelector();
 const familyStatus = new Map<string, string>();
+const entryPaths = new WeakMap<
+	BondEntry,
+	{ interface: string; status: string }
+>();
 let resolutionGeneration = 0;
 
 export async function resolveSrtla(addr: string) {
@@ -61,6 +65,7 @@ export async function resolveSrtla(addr: string) {
 		)
 		.map(([, entry]) => entry);
 	const hasV4 = interfaces.some((entry) => entry.ip);
+	await refreshClatStatus(Object.keys(getNetworkInterfaces()));
 	const hasClat = Object.keys(getNetworkInterfaces()).some((name) =>
 		readClatPath(name),
 	);
@@ -80,10 +85,9 @@ export async function resolveSrtla(addr: string) {
 			(!first?.fromCache || !first.addrs.some((ip) => isIP(ip) === 4))
 				? dnsCacheResolve(addr, "aaaa")
 				: undefined;
-		let ipv6Answer: Awaited<ReturnType<typeof dnsCacheResolve>> | undefined;
+
 		void aaaa
 			?.then((answer) => {
-				ipv6Answer = answer;
 				if (generation === resolutionGeneration && !answer.fromCache)
 					void dnsCacheValidate(addr, emptyA ? "a" : undefined);
 			})
@@ -94,14 +98,9 @@ export async function resolveSrtla(addr: string) {
 		let results: PromiseSettledResult<
 			Awaited<ReturnType<typeof dnsCacheResolve>>
 		>[];
-		if (aaaa && hasV4 && interfaces.every((entry) => entry.ip)) {
+		if (aaaa && hasV4) {
 			if (first?.addrs.length && !first.fromCache) {
-				results = [
-					{ status: "fulfilled", value: first },
-					...(ipv6Answer
-						? [{ status: "fulfilled" as const, value: ipv6Answer }]
-						: []),
-				];
+				results = [{ status: "fulfilled", value: first }];
 				void aaaa
 					.then((answer) => {
 						if (
@@ -201,6 +200,7 @@ function collectBondEntries(
 ): BondEntry[] {
 	const entries: BondEntry[] = [];
 	const networkInterfaces = getNetworkInterfaces();
+	familySelector.retainInterfaces(Object.keys(networkInterfaces));
 	for (const name in networkInterfaces) {
 		const networkInterface = networkInterfaces[name];
 		if (
@@ -226,18 +226,17 @@ function collectBondEntries(
 			...describeBondEntry(name, ip),
 			...(path ? { iface: path.iface } : {}),
 		};
-		const status =
-			path?.mode === "clat"
-				? "IPv4 via translation"
-				: path?.mode === "ipv6"
-					? "Native IPv6"
-					: "Native IPv4";
-		if (familyStatus.get(name) !== status) {
-			familyStatus.set(name, status);
-			logger.info("Stream link path", { interface: name, status });
-		}
 		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
 			continue;
+		entryPaths.set(entry, {
+			interface: name,
+			status:
+				path?.mode === "clat"
+					? "IPv4 via translation"
+					: isIP(ip) === 6
+						? "Native IPv6"
+						: "Native IPv4",
+		});
 		entries.push(entry);
 	}
 	return entries;
@@ -294,6 +293,26 @@ export async function publishSrtlaBond(
 	// follows its PHYSICAL device across a reload rather than a file position,
 	// and keeps the legacy conn_id -> interface fallback in step with it.
 	registerSrtlaBond(entries);
+	const next = new Map(
+		entries.map((entry) => {
+			const path = entryPaths.get(entry);
+			return [
+				path?.interface ?? entry.iface,
+				path?.status ?? (isIP(entry.ip) === 6 ? "Native IPv6" : "Native IPv4"),
+			];
+		}),
+	);
+	for (const [name, status] of next)
+		if (familyStatus.get(name) !== status)
+			logger.info("Stream link path", { interface: name, status });
+	for (const name of familyStatus.keys())
+		if (!next.has(name))
+			logger.info("Stream link path", {
+				interface: name,
+				status: "Unavailable",
+			});
+	familyStatus.clear();
+	for (const [name, status] of next) familyStatus.set(name, status);
 	lastBond = { entries: [...entries], publication };
 	return publication;
 }

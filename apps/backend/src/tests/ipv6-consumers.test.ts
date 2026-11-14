@@ -1,5 +1,8 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { logger } from "../helpers/logger.ts";
 import * as textFiles from "../helpers/text-files.ts";
 import { eligibleProbeCandidates } from "../modules/network/connectivity-candidates.ts";
 import {
@@ -18,7 +21,15 @@ import {
 } from "../modules/network/network-interfaces.ts";
 import { reconcileNetif } from "../modules/network/state/netif-state.ts";
 import { createConnectivityTargetResolver } from "../modules/network/uplink-health/connectivity-target.ts";
-import { genSrtlaIpList, resolveSrtla } from "../modules/streaming/srtla.ts";
+import { setup } from "../modules/setup.ts";
+import * as bondEntry from "../modules/streaming/bond-entry.ts";
+import * as clatStatus from "../modules/streaming/clat-status.ts";
+import {
+	genSrtlaBondEntries,
+	genSrtlaIpList,
+	publishSrtlaBond,
+	resolveSrtla,
+} from "../modules/streaming/srtla.ts";
 import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 
 const originalRandom = Math.random;
@@ -514,6 +525,105 @@ test("the session refreshes bond sources through the source-change subscription"
 	expect(session).toMatch(
 		/const removeListener = onNetworkInterfaceSourcesChange\(refresh\);/,
 	);
+});
+
+test("mixed bond start does not wait for an unanswered AAAA query", async () => {
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+	);
+	getNetworkInterfaces().cell1 = {
+		...getNetworkInterfaces().wwan0!,
+		ip: undefined,
+		ipv6: "fd51::5",
+	};
+	let aaaa = 0;
+	setDnsResolverFactoryForTest(() => ({
+		cancel() {},
+		resolve4(name, cb) {
+			queueMicrotask(() =>
+				cb(null, [
+					name === "wellknown.belabox.net" ? "127.1.33.7" : "192.0.2.2",
+				]),
+			);
+		},
+		resolve6() {
+			aaaa++;
+		},
+	}));
+	expect(
+		await Promise.race([
+			resolveSrtla("mixed-fast-receiver.test.invalid"),
+			new Promise((resolve) => setTimeout(() => resolve("timed out"), 100)),
+		]),
+	).toBe("mixed-fast-receiver.test.invalid");
+	expect(aaaa).toBe(1);
+});
+
+test("consumer binds translation to the TUN while preserving parent identity", async () => {
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow(inventory),
+	);
+	const read = spyOn(clatStatus, "readClatPath").mockReturnValue({
+		ip: "10.254.0.3",
+		iface: "clat3",
+		mode: "clat",
+	});
+	const describe = spyOn(bondEntry, "describeBondEntry").mockImplementation(
+		(iface, ip) => ({ iface, ip, linkId: "uplink-a" }),
+	);
+	try {
+		await resolveSrtla("192.0.2.2");
+		const entries = genSrtlaBondEntries();
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			ip: "10.254.0.3",
+			iface: "clat3",
+			linkId: "uplink-a",
+		});
+		expect(describe).toHaveBeenCalledWith("wwan0", "10.254.0.3");
+	} finally {
+		read.mockRestore();
+		describe.mockRestore();
+	}
+});
+
+test("only bond publication logs transitions and withdrawal with the correct family", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "bond-log-"));
+	const original = { ips: setup.ips_file, map: setup.bind_map_file };
+	const log = spyOn(logger, "info").mockImplementation(() => logger);
+	setup.ips_file = join(directory, "ips");
+	setup.bind_map_file = join(directory, "map.json");
+	try {
+		processIfconfigOutput(
+			"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+			parseIpAddrShow(inventory),
+		);
+		await resolveSrtla("fd51::2");
+		const entries = genSrtlaBondEntries();
+		const transitions = () =>
+			log.mock.calls.filter((call) => call[0] === "Stream link path");
+		expect(transitions()).toHaveLength(0);
+		await publishSrtlaBond(entries);
+		await publishSrtlaBond(entries);
+		expect(transitions()).toHaveLength(1);
+		expect(transitions()[0]?.[1]).toMatchObject({
+			interface: "wwan0",
+			status: "Native IPv6",
+		});
+		await publishSrtlaBond([]);
+		expect(transitions()).toHaveLength(2);
+		expect(transitions()[1]?.[1]).toMatchObject({
+			interface: "wwan0",
+			status: "Unavailable",
+		});
+	} finally {
+		log.mockRestore();
+		setup.ips_file = original.ips;
+		setup.bind_map_file = original.map;
+		rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 for (const code of ["ENODATA", "ENOTFOUND", "empty"]) {

@@ -123,3 +123,24 @@ test("native IPv6 precedes CLAT even when translation is already available", () 
 		new LinkFamilySelector().choose("cell0", v6, receiver, clat, 0)?.mode,
 	).toBe("ipv6");
 });
+
+test("an up CLAT snapshot remains usable with a rediscovery diagnostic", () => {
+	expect(
+		validateClatSnapshot(
+			{ ...snapshot, last_error: "DNS64 refresh failed" },
+			"cell0",
+			3,
+			100,
+			true,
+			true,
+		),
+	).toEqual(clat);
+});
+test("a removed interface returns without the old family's loss grace", () => {
+	const selector = new LinkFamilySelector();
+	selector.choose("cell0", v4, receiver, undefined, 0);
+	selector.retainInterfaces([]);
+	expect(selector.choose("cell0", v6, receiver, undefined, 1)?.mode).toBe(
+		"ipv6",
+	);
+});

@@ -19,8 +19,10 @@
 // bind-map sidecar, before anything is spawned.
 
 import { isLocalIp } from "../../../helpers/ip-addresses.ts";
+import { getNetworkInterfaces } from "../../network/network-interfaces.ts";
 import type { BondEntry } from "../bind-map.ts";
 import type { BindMapPublication } from "../bind-map-writer.ts";
+import { refreshClatStatus } from "../clat-status.ts";
 import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
@@ -55,6 +57,8 @@ export async function prepareSrtlaIpAddresses(
 	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
 	allowEmpty = false,
 ): Promise<BindMapPublication> {
+	if (deps === defaultSrtlaIpPreparationDeps)
+		await refreshClatStatus(Object.keys(getNetworkInterfaces()));
 	const entries = deps.isLocal(srtlaAddr)
 		? deps.localList(srtlaAddr)
 		: deps.bondedList();

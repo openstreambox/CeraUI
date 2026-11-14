@@ -7,8 +7,8 @@ Run `proof.py` as root inside fresh PID, mount and network namespaces. Supply
 The sender under test is `/usr/bin/srtla_send` inside that namespace.
 
 Mixed-family acceptance requires the source-family destination and reload
-registration fix in [sender PR #2](https://github.com/openstreambox/srtla-send-rs/pull/2),
-commit `c926093842a8a4f51d65d9a7758c889fa6138b53` or a release containing it.
+registration fix in [sender PR #3](https://github.com/openstreambox/srtla-send-rs/pull/3) plus
+[PR #4](https://github.com/openstreambox/srtla-send-rs/pull/4) at `7b56a4d7` or a release containing it.
 The tested build identifies as 4.2.0; a version string alone is insufficient
 until that fix is released. Installed 4.1.0 is the negative control: it must
 still fail forwarding after the IPv6-to-IPv4 transition.

@@ -316,6 +316,23 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			"argv-only spawnWithTimeout; RAUC install stays inside the UID pin through confirmed completion",
 	})),
 	{
+		id: "clat.status",
+		file: "modules/streaming/clat-status.ts",
+		symbol: "reader.active",
+		command: "[systemctl, is-active, ceralive-clat.service]",
+		class: "bounded-probe",
+		contract: {
+			timed: true,
+			startupTimeout: false,
+			shutdownCleanup: false,
+			shutdownAbort: false,
+			lifetimeTimeoutExempt: false,
+		},
+		status: "enforced",
+		mechanism:
+			"run() bounds one read-only service probe to 500ms per coalesced status refresh; hot consumers read memory only",
+	},
+	{
 		id: "osStage.orphanLock",
 		file: "modules/system/update-orchestrator/os-stage-orphan-lock.ts",
 		symbol: "acquireOsOrphanLock",

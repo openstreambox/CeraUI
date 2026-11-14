@@ -82,8 +82,8 @@ IP-family default, reconnect policy or NetworkManager setting changes here.
 The draft selector keeps native IPv4 on dual-stack links. With no native IPv4,
 AAAA plus IPv6 uses the native IPv6 source before considering CLAT. An A-only
 receiver can use the image's read-only schema-v1 CLAT grant: active service,
-fresh `up` snapshot, matching parent index/allocation, and existing translator
-TUN are all required. The IPv4 socket binds the TUN while its link identity stays
+fresh `up` snapshot (including one with a diagnostic `last_error`), matching
+parent index/allocation, and existing translator TUN are all required. The IPv4 socket binds the TUN while its link identity stays
 with the physical parent. Translator interfaces are not independent bond links.
 
 A path remains selected through short flaps: withdraw unavailable sources,
@@ -92,13 +92,23 @@ the new family on recovery. A two-second session refresh observes both address
 and translation lifecycle. Only path transitions log `Native IPv4`, `Native IPv6`
 or `IPv4 via translation`. This is a diagnostic line, not a new UI field.
 
-**Merge blocker:** sender source-family matching is required for mixed A/AAAA
-hostnames and family changes. The installed sender may choose an IPv6 destination
-for an IPv4 socket. Independent native IPv6 success is not mixed-family proof.
-The checked-in netns fixture intentionally retains this failing acceptance case.
+Mixed A/AAAA hostnames and family changes require
+[openstreambox/srtla-send-rs #3](https://github.com/openstreambox/srtla-send-rs/pull/3)
+plus [#4](https://github.com/openstreambox/srtla-send-rs/pull/4) at `7b56a4d7`,
+or a release containing both. The checked-in netns fixture passes all nine cases
+with that stack, each 30/30; 4.1.0 fails the IPv6-to-IPv4 transition, 0/30.
 A cached numeric destination supports only its matching source family. Empty IP
 reloads also retain the sender's previous pool; publication alone is not socket
-retirement. Do not advertise mixed-family support until these contracts pass.
+retirement. The draft still requires sender review and deployment-specific
+listener qualification before mixed-family support is advertised.
+
+Restored streams resolve the receiver before publishing their sources and own the
+same two-second timer and source-change subscription as new streams. Status-file
+reads are asynchronous and cached; synchronous consumers never run OS commands.
+A live A answer can start the IPv4 portion of a mixed bond while AAAA completes;
+compatible IPv6 links join on refresh. Publication logs path changes and withdrawals,
+while health/preflight reads do not log session transitions.
+
 
 ### Español (Latinoamérica)
 
@@ -110,6 +120,15 @@ segundos de pérdida continua antes de cambiar de familia y no vuelve a la
 anterior solo porque reaparezca. El diagnóstico cambia únicamente al cambiar
 la ruta. No se añade un campo nuevo a la interfaz de usuario.
 
-La combinación de familias sigue bloqueada: el emisor debe elegir un destino
-compatible con cada dirección de origen, también después de una reconexión.
-Una prueba IPv6 individual no demuestra el funcionamiento de enlaces mixtos.
+La combinación de familias requiere openstreambox/srtla-send-rs #3 más #4
+(`7b56a4d7`), o una versión que incluya ambos cambios. Con esa pila, los nueve
+casos de la prueba aislada pasan con 30/30 paquetes cada uno; 4.1.0 falla después
+del cambio de IPv6 a IPv4 con 0/30. Un estado `up` con un diagnóstico sigue
+siendo utilizable; se comprueban también el servicio, la antigüedad y la TUN.
+
+Los streams restaurados resuelven el receptor antes de publicar las fuentes y
+usan el mismo temporizador y suscripción que los nuevos. Las lecturas del estado
+son asíncronas y usan caché. Una respuesta A en vivo permite iniciar los enlaces
+IPv4 sin esperar AAAA; los enlaces IPv6 compatibles se incorporan al actualizar.
+El registro de publicación incluye cambios y retiros, sin mensajes de sesión
+en las consultas de salud.

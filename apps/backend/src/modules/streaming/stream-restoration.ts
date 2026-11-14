@@ -208,14 +208,14 @@ export interface StreamRestorationDeps {
  * of this graph documents: the launch path reaches `sources.ts`, which is
  * upstream of the orchestrator that imports this module.
  */
-async function defaultLaunch(
+export async function launchRestoredStream(
 	config: ArmedStreamConfig,
 	current: () => boolean,
 ): Promise<RestorationLaunchOutcome> {
 	const [
 		{ validateConfig },
 		{ resolveSrtla },
-		{ prepareSrtlaIpAddresses },
+		{ prepareSrtlaIpAddresses, attachFamilyRefresh },
 		{ startStream },
 		{ startStreamSession },
 		{ StreamStartFailure, classifyStartFailure, typedStartFailure },
@@ -233,7 +233,9 @@ async function defaultLaunch(
 	try {
 		resolved = await validateConfig({ ...config });
 		if (!current()) return { ok: false, reason: "start_cancelled" };
-		await prepareSrtlaIpAddresses(resolved.srtlaAddr);
+		const address = await resolveSrtla(resolved.srtlaAddr);
+		if (!current()) return { ok: false, reason: "start_cancelled" };
+		await prepareSrtlaIpAddresses(address);
 	} catch (error) {
 		defaultLogger.warn("stream restoration: the saved config is not usable", {
 			error,
@@ -244,8 +246,15 @@ async function defaultLaunch(
 	if (!current()) return { ok: false, reason: "start_cancelled" };
 	const result = await startStreamSession({
 		origin: "restoration",
-		launch: async ({ attemptId }) => {
+		launch: async ({ attemptId, generation, cancelled }) => {
 			const srtlaAddr = await resolveSrtla(resolved.srtlaAddr);
+			await prepareSrtlaIpAddresses(srtlaAddr);
+			if (cancelled() || !current()) throw new Error("start_cancelled");
+			attachFamilyRefresh(
+				srtlaAddr,
+				generation,
+				() => !cancelled() && current(),
+			);
 			const launched = await startStream(
 				resolved.pipeline,
 				srtlaAddr,
@@ -315,7 +324,7 @@ function defaultDeps(): StreamRestorationDeps {
 			return state === "idle" || state === "streaming" ? state : "unknown";
 		},
 		lifecycleState: () => getStreamSessionSnapshot().state,
-		launch: defaultLaunch,
+		launch: launchRestoredStream,
 		publish: defaultPublish,
 		wait: (ms) =>
 			new Promise((resolve) => {

@@ -15,6 +15,11 @@ export class LinkFamilySelector {
 		string,
 		{ mode: LinkPath["mode"]; missingSince?: number }
 	>();
+	retainInterfaces(ifaces: Iterable<string>) {
+		const present = new Set(ifaces);
+		for (const name of this.choices.keys())
+			if (!present.has(name)) this.choices.delete(name);
+	}
 	reset() {
 		this.choices.clear();
 	}
@@ -64,7 +69,7 @@ export function validateClatSnapshot(
 		s.interface !== iface ||
 		s.tun !== `clat${index}` ||
 		s.state !== "up" ||
-		s.last_error !== null ||
+		(s.last_error !== null && typeof s.last_error !== "string") ||
 		typeof s.updated_at !== "number" ||
 		!Number.isFinite(s.updated_at) ||
 		!Number.isInteger(index) ||
