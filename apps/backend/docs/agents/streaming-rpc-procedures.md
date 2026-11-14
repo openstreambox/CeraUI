@@ -56,3 +56,13 @@ validation leaves it absent so cerastream applies its engine default; an explici
 stated codec is still checked against the supported codec registry. Keep the merge
 below the RPC layer so every start origin receives identical behavior.
 
+### Manual relay reachability
+
+`relay.validate` resolves all endpoint addresses and tries them in resolver order,
+stopping on the first successful UDP reply. Each attempt has a 3-second timeout;
+a refused or silent address permits the next answer, including the other address
+family. The socket binds `::` for IPv6 and `0.0.0.0` for IPv4. Bun setup codes
+ENETUNREACH, EHOSTUNREACH, EAFNOSUPPORT and EADDRNOTAVAIL are probe refusals;
+unexpected setup failures still propagate as internal errors. Message text alone
+is not a system-error classifier. If every address fails, the last probe reason
+is returned. This probe demonstrates UDP reachability, not an SRT handshake.
