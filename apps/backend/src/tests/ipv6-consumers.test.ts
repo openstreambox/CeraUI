@@ -1,5 +1,6 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import * as textFiles from "../helpers/text-files.ts";
 import { eligibleProbeCandidates } from "../modules/network/connectivity-candidates.ts";
 import {
 	dnsCacheResolve,
@@ -487,3 +488,137 @@ test("the session refreshes bond sources through the source-change subscription"
 		/removeNetworkInterfacesChangeListener:\s*onNetworkInterfaceSourcesChange\(\s*refreshSrtlaIpAddresses\s*,?\s*\)/,
 	);
 });
+
+for (const code of ["ENODATA", "ENOTFOUND", "empty"]) {
+	for (const mixed of [false, true]) {
+		test(`a validated ${code} A answer retires stale IPv4 (mixed cache: ${mixed})`, async () => {
+			const name = `retired-a-${code}-${mixed}.test.invalid`;
+			processIfconfigOutput(
+				"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+				parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+			);
+			setDnsCacheEntryForTest(
+				name,
+				mixed ? ["192.0.2.10", "fd51::2"] : ["192.0.2.10"],
+			);
+			const now = Date.now();
+			const clock = spyOn(Date, "now").mockReturnValue(now + 60_001);
+			const writes: string[] = [];
+			const writer = spyOn(textFiles, "writeTextFileAtomic").mockImplementation(
+				(_file, contents) => {
+					writes.push(contents);
+					return true;
+				},
+			);
+			let aaaa = 0;
+			setDnsResolverFactoryForTest(() => ({
+				cancel() {},
+				resolve4(host, cb) {
+					queueMicrotask(() =>
+						host === "wellknown.belabox.net"
+							? cb(null, ["127.1.33.7"])
+							: cb(
+									code === "empty"
+										? null
+										: Object.assign(new Error(code), { code }),
+									[],
+								),
+					);
+				},
+				resolve6(_host, cb) {
+					aaaa++;
+					queueMicrotask(() => cb(null, ["fd51::3"]));
+				},
+			}));
+			try {
+				for (let attempt = 0; attempt < 3; attempt++) {
+					expect(await resolveSrtla(name)).toBe(name);
+					expect(genSrtlaIpList()).toEqual(["fd51::1"]);
+				}
+				expect(aaaa).toBe(3);
+				expect(writes).toHaveLength(1);
+				expect(JSON.parse(writes[0] ?? "{}")[name].results).toEqual([
+					"fd51::3",
+				]);
+				offlineDns();
+				expect((await dnsCacheResolve(name)).addrs).toEqual(["fd51::3"]);
+				expect(await resolveSrtla(name)).toBe("fd51::3");
+			} finally {
+				writer.mockRestore();
+				clock.mockRestore();
+				setDnsCacheEntryForTest(name, null);
+			}
+		});
+	}
+}
+
+test("an IPv4-only source with only cached IPv6 never queries AAAA", async () => {
+	const name = "incompatible-warm.test.invalid";
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow("2: wwan0: <UP>\n    inet 192.0.2.1/24 scope global\n"),
+	);
+	setDnsCacheEntryForTest(name, ["fd51::2"]);
+	let aaaa = 0;
+	setDnsResolverFactoryForTest(() => ({
+		cancel() {},
+		resolve4(_host, cb) {
+			queueMicrotask(() => cb(new Error("offline"), []));
+		},
+		resolve6(_host, cb) {
+			aaaa++;
+			queueMicrotask(() => cb(null, ["fd51::3"]));
+		},
+	}));
+	try {
+		await expect(resolveSrtla(name)).rejects.toContain(
+			"No compatible cached SRTLA address",
+		);
+		expect(aaaa).toBe(0);
+	} finally {
+		setDnsCacheEntryForTest(name, null);
+	}
+});
+
+for (const failure of ["ESERVFAIL", "ETIMEOUT", "ENODATA-unvalidated"]) {
+	test(`cached IPv4 survives ${failure} without a family switch`, async () => {
+		const name = `uncertain-a-${failure}.test.invalid`;
+		processIfconfigOutput(
+			"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+			parseIpAddrShow(inventory + "    inet 192.0.2.1/24 scope global\n"),
+		);
+		setDnsCacheEntryForTest(name, ["192.0.2.10"]);
+		let aaaa = 0;
+		setDnsResolverFactoryForTest(() => ({
+			cancel() {},
+			resolve4(host, cb) {
+				queueMicrotask(() => {
+					if (host === "wellknown.belabox.net")
+						cb(null, [
+							failure === "ENODATA-unvalidated" ? "192.0.2.99" : "127.1.33.7",
+						]);
+					else
+						cb(
+							Object.assign(new Error(failure), {
+								code: failure.split("-")[0],
+							}),
+							[],
+						);
+				});
+			},
+			resolve6(_host, cb) {
+				aaaa++;
+				queueMicrotask(() => cb(null, ["fd51::3"]));
+			},
+		}));
+		try {
+			expect(await resolveSrtla(name)).toBe("192.0.2.10");
+			expect(genSrtlaIpList()).toEqual(["192.0.2.1"]);
+			expect(aaaa).toBe(0);
+			offlineDns();
+			expect((await dnsCacheResolve(name)).addrs).toEqual(["192.0.2.10"]);
+		} finally {
+			setDnsCacheEntryForTest(name, null);
+		}
+	});
+}

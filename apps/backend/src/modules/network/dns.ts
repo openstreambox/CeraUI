@@ -154,39 +154,16 @@ function resolveP(hostname: string, rrtype: ResolveType | undefined) {
 			}, DNS_TIMEOUT);
 		}
 
-		let ipv4Res: ResolveResult = null;
-		if (rrtype === "a") {
-			resolver.resolve4(hostname, (err, address) => {
-				ipv4Res = err ? null : address;
-				returnResults();
-			});
-		}
-
-		let ipv6Res: ResolveResult = null;
-		if (rrtype === "aaaa") {
-			resolver.resolve6(hostname, (err, address) => {
-				ipv6Res = err ? null : address;
-				returnResults();
-			});
-		}
-
-		const returnResults = () => {
-			let res: ResolveResult = null;
-			if (ipv4Res) {
-				res = ipv4Res;
-			} else if (ipv6Res) {
-				res = ipv6Res;
-			}
-
-			if (res) {
-				if (to) {
-					clearTimeout(to);
-				}
-				resolve(res);
-			} else {
-				reject(`DNS record not found for ${hostname}`);
-			}
+		const complete = (
+			err: NodeJS.ErrnoException | null,
+			addresses: string[],
+		) => {
+			if (to) clearTimeout(to);
+			if (err) reject(err);
+			else resolve(addresses);
 		};
+		if (rrtype === "a") resolver.resolve4(hostname, complete);
+		else resolver.resolve6(hostname, complete);
 	});
 }
 
@@ -224,7 +201,13 @@ function normalizeResolveType(
 	throw "Invalid rrtype";
 }
 
-export async function dnsCacheResolve(name: string, rrtype_?: string) {
+/** `acceptNoData` lets family-aware callers validate a definite empty answer.
+ * Other callers retain the existing cached fallback on lookup errors. */
+export async function dnsCacheResolve(
+	name: string,
+	rrtype_?: string,
+	acceptNoData = false,
+) {
 	const rrtype = normalizeResolveType(rrtype_);
 	if (
 		(isIpv4Addr(name) && rrtype !== "aaaa") ||
@@ -269,8 +252,15 @@ export async function dnsCacheResolve(name: string, rrtype_?: string) {
      issued that query, so logging it would invent a new failure line. */
 	if (!goodDns) {
 		delete dnsResults[name];
-	} else if (answer.ok) {
-		const res = answer.addrs ?? [];
+	} else if (
+		answer.ok ||
+		(acceptNoData &&
+			rrtype !== undefined &&
+			["ENODATA", "ENOTFOUND"].includes(
+				(answer.err as NodeJS.ErrnoException)?.code ?? "",
+			))
+	) {
+		const res = answer.ok ? (answer.addrs ?? []) : [];
 		dnsResults[name] = res;
 
 		return { addrs: res, fromCache: false };
@@ -284,7 +274,10 @@ export async function dnsCacheResolve(name: string, rrtype_?: string) {
 	throw "DNS query failed and no cached value is available";
 }
 
-export async function dnsCacheValidate(name: string) {
+export async function dnsCacheValidate(
+	name: string,
+	emptyFamily?: "a" | "aaaa",
+) {
 	if (!dnsResults[name]) {
 		logger.warn(`DNS: error validating results for ${name}: not found`);
 		return;
@@ -295,6 +288,9 @@ export async function dnsCacheValidate(name: string) {
 	// Refresh each answered family without discarding the other family's
 	// outage fallback. Replace old records within that family, never append them.
 	const families = new Set(live.map((ip) => isIP(ip)));
+	// Retire a validated empty family together with its successful replacement,
+	// so the write throttle cannot persist an intermediate empty cache.
+	if (emptyFamily) families.add(emptyFamily === "a" ? 4 : 6);
 	const results = [
 		...live,
 		...(cachedEntry?.results.filter((ip) => !families.has(isIP(ip))) ?? []),

@@ -11,8 +11,13 @@ source for compatibility; an IPv6-only link uses IPv6. An AAAA-only receiver als
 selects IPv6 on dual-stack links. Receiver lookup asks the source's preferred
 family first. IPv4-only boxes ask for A only. With an IPv6 source, an empty or
 failed A answer can fall back to AAAA; a cache hit tries live AAAA only when it
-holds no IPv4 address. A working A answer never waits for AAAA. Cache updates
-replace records within the answered family and retain the other family.
+holds no IPv4 address. A validated ENODATA or ENOTFOUND A response is a
+fresh empty answer: a bounded AAAA lookup repairs the cache and retires stale
+IPv4 in one update.
+Timeouts, SERVFAIL and failed validation retain cached IPv4 without switching
+families. A working A answer never waits for AAAA. Cache updates replace records
+within the answered family, including an explicitly empty A family, and retain
+the other family.
 Fresh hostnames are preserved so the sender can resolve a destination for each
 source family (including DNS64). Cached fallback prefers a usable IPv4 family, then
 IPv6, and selects randomly within that family. With no usable link, start reports
@@ -40,6 +45,10 @@ IPv6. La consulta usa primero la familia preferida del enlace; una respuesta A
 válida no espera la consulta AAAA. Los equipos solo IPv4 consultan únicamente A.
 Con una fuente IPv6, si A falla o está vacía se puede intentar AAAA; si se usa
 la caché, solo se consulta AAAA en vivo cuando no contiene una dirección IPv4.
+Una respuesta A validada ENODATA o ENOTFOUND consulta AAAA con un tiempo
+límite y actualiza la caché sin las direcciones IPv4 anteriores en una sola
+escritura. Los tiempos de espera,
+SERVFAIL y una validación fallida conservan la caché IPv4 sin cambiar de familia.
 Cada respuesta actualiza su familia en la caché y conserva la otra. Se conserva
 el nombre para que el emisor elija una dirección compatible, incluso con DNS64.
 La caché selecciona al azar dentro de la familia compatible. Si no hay enlaces

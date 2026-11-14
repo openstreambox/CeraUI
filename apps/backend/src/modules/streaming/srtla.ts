@@ -57,28 +57,33 @@ export async function resolveSrtla(addr: string) {
 
 	let addrs: string[] | undefined;
 	let fromCache: boolean | undefined;
+	let emptyA = false;
 	try {
 		// Resolve the preferred family first; a dropped AAAA query must not hold
 		// an IPv4 start open. Fall back to AAAA for an AAAA-only receiver.
 		const literal = isIP(addr) !== 0;
+		const aaaaFallback = !literal && hasV4 && hasV6;
 		let res: Awaited<ReturnType<typeof dnsCacheResolve>>;
 		try {
 			res = await dnsCacheResolve(
 				addr,
 				literal ? undefined : hasV4 ? "a" : hasV6 ? "aaaa" : undefined,
+				aaaaFallback,
 			);
 		} catch (error) {
-			if (!hasV4 || !hasV6 || literal) throw error;
+			if (!aaaaFallback) throw error;
 			res = await dnsCacheResolve(addr, "aaaa");
 		}
 		if (
-			!literal &&
-			hasV4 &&
-			hasV6 &&
+			aaaaFallback &&
 			!res.addrs.some((ip) => isIP(ip) === 4) &&
 			(res.fromCache || res.addrs.length === 0)
-		)
+		) {
+			// A lost A keeps cached IPv4. Only a validated empty A can retire
+			// it, together with the fresh AAAA answer in one cache update.
+			emptyA = !res.fromCache && res.addrs.length === 0;
 			res = await dnsCacheResolve(addr, "aaaa");
+		}
 		addrs = res.addrs;
 		fromCache = res.fromCache;
 	} catch (_err) {
@@ -115,7 +120,7 @@ export async function resolveSrtla(addr: string) {
 		/* At the moment we don't check that the SRTLA connection was established before
        validating the DNS result. The caching DNS resolver checks for invalid
        results from captive portals, etc, so all results *should* be good already */
-		void dnsCacheValidate(addr);
+		void dnsCacheValidate(addr, emptyA ? "a" : undefined);
 	}
 
 	return srtlaAddr;
