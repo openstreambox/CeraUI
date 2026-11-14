@@ -66,7 +66,10 @@ describe("probeReachability", () => {
 
 it("socket setup can fail synchronously when a destination family has no route", async () => {
 	const socket = spyOn(Bun, "udpSocket").mockImplementationOnce(() => {
-		throw new Error("network is unreachable");
+		throw Object.assign(
+			new Error("ENETUNREACH: network is unreachable, connect"),
+			{ code: "ENETUNREACH" },
+		);
 	});
 	try {
 		await expect(probeReachability("2001:db8::1", 9000, 100)).resolves.toEqual({
@@ -93,7 +96,12 @@ for (const asynchronous of [false, true]) {
 			socket.mockRestore();
 		}
 	});
-	for (const code of ["ENETUNREACH", "EHOSTUNREACH"]) {
+	for (const code of [
+		"ENETUNREACH",
+		"EHOSTUNREACH",
+		"EAFNOSUPPORT",
+		"EADDRNOTAVAIL",
+	]) {
 		it(`classifies known setup failure ${code} (async: ${asynchronous})`, async () => {
 			const error = Object.assign(new Error("no route"), { code });
 			const socket = spyOn(Bun, "udpSocket").mockImplementationOnce(() => {
@@ -110,3 +118,44 @@ for (const asynchronous of [false, true]) {
 		});
 	}
 }
+
+// Check listener availability separately so a broken probe cannot become a skip.
+let ipv6Available = false;
+try {
+	const listener = await Bun.udpSocket({ hostname: "::1" });
+	listener.close();
+	ipv6Available = true;
+} catch (error) {
+	if (
+		!(error instanceof Error) ||
+		!("code" in error) ||
+		!["EAFNOSUPPORT", "EADDRNOTAVAIL", "EPROTONOSUPPORT"].includes(
+			String(error.code),
+		)
+	)
+		throw error;
+}
+it.skipIf(!ipv6Available)("reaches a real IPv6 loopback peer", async () => {
+	const server = await Bun.udpSocket({
+		hostname: "::1",
+		socket: {
+			data(socket, _buf, port, addr) {
+				socket.send("pong", port, addr);
+			},
+		},
+	});
+	open.push(server);
+	expect(await probeReachability("::1", server.port, 1000)).toEqual({
+		reachable: true,
+	});
+});
+
+it("does not classify message-only errors as Bun system errors", async () => {
+	const error = new Error("network is unreachable");
+	const socket = spyOn(Bun, "udpSocket").mockRejectedValueOnce(error);
+	try {
+		await expect(probeReachability("::1", 9000)).rejects.toBe(error);
+	} finally {
+		socket.mockRestore();
+	}
+});
