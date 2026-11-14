@@ -5,7 +5,8 @@ ceiling to 75%, then 50% of your chosen maximum. The floor is 2 Mbit/s,
 but a ceiling never increases your chosen bitrate. Adaptive bitrate still works
 below that ceiling. Open the bag or find shade.
 
-**Keep quality** removes this ceiling until the stream ends. Heat warnings stay
+**Keep quality** requests your chosen maximum until the stream ends. A known
+critical temperature retains the critical safety ceiling. Heat warnings stay
 visible. It cannot override kernel thermal protection or independent power
 protection. The saved bitrate stays unchanged. Stopping the stream or restarting
 the backend clears this session policy. A short loss of the engine's control
@@ -36,6 +37,10 @@ best-effort call. If the engine rejects it, it is retried with the same backoff
 even while the temperature is unavailable, because it only repeats your own
 maximum. Keep quality switched on while another change is in flight is applied
 as soon as that change answers, also while the temperature is unavailable.
+Rejection retains this explicit request and retries on sensor ticks with the
+same 5–60 s backoff, including unreadable ticks. Turning Keep quality off
+cancels that request; no automatic recovery runs without temperature evidence.
+A successful restoration clears the warning and stops further sends.
 
 ## Implementation boundary
 
