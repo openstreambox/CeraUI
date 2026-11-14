@@ -86,6 +86,9 @@ export type EthernetRole = z.infer<typeof ethernetRoleSchema>;
 // Network interface entry schema
 export const netifEntrySchema = z.object({
 	ip: z.string().optional(),
+	ipv6: z.string().optional(),
+	/** Present means a complete address snapshot; absent retains legacy merge semantics. */
+	addresses: z.array(z.string()).optional(),
 	tp: z.number(),
 	enabled: z.boolean(),
 	error: z.string().optional(),

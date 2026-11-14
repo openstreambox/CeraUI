@@ -86,7 +86,7 @@ export function probeExclusionReason(
 	const error = getNetifErrorMsg(entry);
 	if (error) return error;
 
-	if (!entry.ip) return "no address";
+	if (!(entry.ip ?? entry.ipv6)) return "no address";
 
 	return undefined;
 }
@@ -115,7 +115,7 @@ export function deviceBoundProbeExclusionReason(
 	});
 	if (error) return error;
 
-	if (!entry.ip) return "no address";
+	if (!(entry.ip ?? entry.ipv6)) return "no address";
 
 	return undefined;
 }
@@ -130,7 +130,7 @@ export function probeBindingFor(
 	entry: NetworkInterface | undefined,
 ): ProbeBinding | undefined {
 	if (deviceBoundProbeExclusionReason(entry) !== undefined) return undefined;
-	if (!entry?.ip) return undefined;
+	if (!(entry?.ip ?? entry?.ipv6)) return undefined;
 
 	return { kind: "device", ifname: name };
 }
@@ -152,8 +152,8 @@ export function eligibleProbeCandidates(
 		const binding = probeBindingFor(name, entry);
 		if (!binding) continue;
 		// `probeBindingFor` already proved it, but narrow for the compiler.
-		if (!entry?.ip) continue;
-		candidates.push({ name, ip: entry.ip, binding });
+		if (!(entry?.ip ?? entry?.ipv6)) continue;
+		candidates.push({ name, ip: (entry.ip ?? entry.ipv6) as string, binding });
 	}
 	return candidates;
 }

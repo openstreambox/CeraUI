@@ -5,6 +5,7 @@ export type NetifState = Record<
 	string,
 	{
 		ip?: string;
+		ipv6?: string;
 		mac?: string;
 		up: boolean;
 		tp: number;

@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { isIP } from "node:net";
+
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 import killall from "../../helpers/killall.ts";
 
@@ -43,13 +45,45 @@ import { registerSrtlaBond } from "./link-telemetry.ts";
 
 export { isBondLinkMappable, setBondIdentityResolverForTest };
 
+let receiverIpv6Only = false;
+
 export async function resolveSrtla(addr: string) {
 	let srtlaAddr = addr;
+	const interfaces = Object.entries(getNetworkInterfaces())
+		.filter(([name, entry]) => isBondCandidate(name, entry))
+		.map(([, entry]) => entry);
+	const hasV4 = interfaces.some((entry) => entry.ip);
+	const hasV6 = interfaces.some((entry) => entry.ipv6);
 
 	let addrs: string[] | undefined;
 	let fromCache: boolean | undefined;
+	let emptyA = false;
 	try {
-		const res = await dnsCacheResolve(addr, "a");
+		// Resolve the preferred family first; a dropped AAAA query must not hold
+		// an IPv4 start open. Fall back to AAAA for an AAAA-only receiver.
+		const literal = isIP(addr) !== 0;
+		const aaaaFallback = !literal && hasV4 && hasV6;
+		let res: Awaited<ReturnType<typeof dnsCacheResolve>>;
+		try {
+			res = await dnsCacheResolve(
+				addr,
+				literal ? undefined : hasV4 ? "a" : hasV6 ? "aaaa" : undefined,
+				aaaaFallback,
+			);
+		} catch (error) {
+			if (!aaaaFallback) throw error;
+			res = await dnsCacheResolve(addr, "aaaa");
+		}
+		if (
+			aaaaFallback &&
+			!res.addrs.some((ip) => isIP(ip) === 4) &&
+			(res.fromCache || res.addrs.length === 0)
+		) {
+			// A lost A keeps cached IPv4. Only a validated empty A can retire
+			// it, together with the fresh AAAA answer in one cache update.
+			emptyA = !res.fromCache && res.addrs.length === 0;
+			res = await dnsCacheResolve(addr, "aaaa");
+		}
 		addrs = res.addrs;
 		fromCache = res.fromCache;
 	} catch (_err) {
@@ -57,15 +91,36 @@ export async function resolveSrtla(addr: string) {
 		throw `Failed to resolve SRTLA addr ${addr}`;
 	}
 
+	receiverIpv6Only = addrs.length > 0 && addrs.every((ip) => ip.includes(":"));
+
 	if (fromCache) {
-		const cachedAddr = addrs[Math.floor(Math.random() * addrs.length)];
-		if (cachedAddr) srtlaAddr = cachedAddr;
+		// Prefer IPv4 for compatibility when available; on a v6-only host keep
+		// DNS64/native AAAA answers rather than pinning an unusable A record.
+		const ipv4 = addrs.filter((ip) => !ip.includes(":"));
+		const ipv6 = addrs.filter((ip) => ip.includes(":"));
+		// With no bond candidate, leave admission to IP preparation. It supplies
+		// the normal no-network error and still permits a local receiver path.
+		const compatible =
+			interfaces.length === 0
+				? ipv4.length > 0
+					? ipv4
+					: ipv6
+				: hasV4 && ipv4.length > 0
+					? ipv4
+					: hasV6
+						? ipv6
+						: [];
+		const cachedAddr =
+			compatible[Math.floor(Math.random() * compatible.length)];
+		if (!cachedAddr) throw `No compatible cached SRTLA address for ${addr}`;
+		srtlaAddr = cachedAddr;
+		receiverIpv6Only = cachedAddr.includes(":");
 		queueUpdateGw();
 	} else {
 		/* At the moment we don't check that the SRTLA connection was established before
        validating the DNS result. The caching DNS resolver checks for invalid
        results from captive portals, etc, so all results *should* be good already */
-		void dnsCacheValidate(addr);
+		void dnsCacheValidate(addr, emptyA ? "a" : undefined);
 	}
 
 	return srtlaAddr;
@@ -94,9 +149,12 @@ function collectBondEntries(
 	const networkInterfaces = getNetworkInterfaces();
 	for (const name in networkInterfaces) {
 		const networkInterface = networkInterfaces[name];
-		if (!networkInterface?.ip) continue;
+		const ip = receiverIpv6Only
+			? (networkInterface?.ipv6 ?? networkInterface?.ip)
+			: (networkInterface?.ip ?? networkInterface?.ipv6);
+		if (!networkInterface || !ip) continue;
 		if (!accept(name, networkInterface)) continue;
-		const entry = describeBondEntry(name, networkInterface.ip);
+		const entry = describeBondEntry(name, ip);
 		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
 			continue;
 		entries.push(entry);

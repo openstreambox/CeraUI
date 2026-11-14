@@ -43,9 +43,9 @@ export type UplinkHealthRuntimeDeps = Omit<
   yet. One shared instance, so the TTL cache is shared by every default runtime.
 */
 let sharedTarget: ConnectivityTargetResolver | undefined;
-const resolveTargetShared: ConnectivityTargetResolver = () => {
+const resolveTargetShared: ConnectivityTargetResolver = (family) => {
 	sharedTarget ??= createConnectivityTargetResolver();
-	return sharedTarget();
+	return sharedTarget(family);
 };
 
 const defaultDeps: UplinkHealthRuntimeDeps = {

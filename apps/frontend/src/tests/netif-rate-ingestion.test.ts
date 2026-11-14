@@ -74,3 +74,20 @@ describe("netif ingestion — measured rate fields", () => {
 		expect(getNetif()?.eth0?.rx_bps).toBe(6000);
 	});
 });
+
+it("authoritative family snapshots replace and withdraw addresses without retaining a stale IPv4", () => {
+	resetState();
+	initSubscriptions();
+	handlers.message?.("netif", {
+		wwan0: { ip: "192.0.2.1", tp: 0, enabled: true },
+	});
+	handlers.message?.("netif", {
+		wwan0: { ipv6: "fd51::1", addresses: ["fd51::1"], tp: 0, enabled: true },
+	});
+	expect(getNetif()?.wwan0?.ip).toBeUndefined();
+	expect(getNetif()?.wwan0?.ipv6).toBe("fd51::1");
+	handlers.message?.("netif", {
+		wwan0: { addresses: [], tp: 0, enabled: true },
+	});
+	expect(getNetif()?.wwan0?.ipv6).toBeUndefined();
+});

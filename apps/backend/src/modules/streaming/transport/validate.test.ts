@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
 import { probeReachability } from "./validate.ts";
 
@@ -62,4 +62,18 @@ describe("probeReachability", () => {
 		expect(result.reachable).toBe(false);
 		expect(Date.now() - start).toBeLessThan(2000);
 	});
+});
+
+it("socket setup can fail synchronously when a destination family has no route", async () => {
+	const socket = spyOn(Bun, "udpSocket").mockImplementationOnce(() => {
+		throw new Error("network is unreachable");
+	});
+	try {
+		await expect(probeReachability("2001:db8::1", 9000, 100)).resolves.toEqual({
+			reachable: false,
+			reason: "refused",
+		});
+	} finally {
+		socket.mockRestore();
+	}
 });
