@@ -782,7 +782,7 @@ describe("the optimistic row on the REAL modems payload", () => {
 		for (const key of ["NODE_ENV", "MOCK_MODE", "MOCK_SCENARIO"]) {
 			saved[key] = process.env[key];
 		}
-		// The udev monitor is `isRealDevice()`-gated and the producer answers
+		// The udev monitor is `modem-control`-gated and the producer answers
 		// mocks with NOTHING, so this path only exists off the mock graph.
 		process.env.NODE_ENV = "test";
 		delete process.env.MOCK_MODE;

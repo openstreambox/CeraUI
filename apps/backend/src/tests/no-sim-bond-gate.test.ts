@@ -67,7 +67,7 @@ function ifconfig(...stanzas: string[]): string {
 
 function probeDeps(body: string): RouterAdminProbeDeps {
 	return {
-		isRealDevice: async () => true,
+		canManageModems: async () => true,
 		runIpRouteShowDefault: async () => ROUTE_OUTPUT,
 		fetchViaInterface: async (_ifname, urls) => urls.map(() => body),
 		postViaInterface: async () => "",

@@ -46,7 +46,7 @@ test("configuration supersedes pending persistence without replaying stale userC
 	broken = false;
 	resetAddonProcedureDeps();
 	setAddonProcedureDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		readDescriptors: async () => [sysextDescriptor],
 		getEffectiveHardware: () => "rk3588",
 	});

@@ -31,7 +31,7 @@ for (const action of ["enable", "disable"] as const) {
 				};
 			});
 			const deps = {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				readDescriptor: async () => sysextDescriptor,
 				exec: () => p.step.run(),
 				createStep: () => p.step,

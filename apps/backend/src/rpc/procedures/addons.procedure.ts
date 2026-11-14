@@ -5,7 +5,7 @@
  * modules/addons/manager.ts). Read-only queries (`listAddons`,
  * `getAddonStatus`) merge the image-baked descriptors with the manager's live
  * phase + persisted state and are NOT gated. The three mutating handlers
- * (`installAddon`, `uninstallAddon`, `configureAddon`) gate on `isRealDevice()`
+ * (`installAddon`, `uninstallAddon`, `configureAddon`) gate on `hasCapability("addons")`
  * (G6) and drive the device only through the manager — never the privileged
  * helper directly.
  *
@@ -51,7 +51,7 @@ import {
 } from "../../modules/addons/state-settlement.ts";
 import { removeAddonState } from "../../modules/config.ts";
 import { getEffectiveHardware as getEffectiveHardwareImpl } from "../../modules/streaming/pipelines.ts";
-import { isRealDevice } from "../../modules/system/kiosk.ts";
+import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import { authMiddleware } from "../middleware/auth.middleware.ts";
 import type { RPCContext } from "../types.ts";
 
@@ -98,7 +98,7 @@ const configureResultSchema = z.union([
  */
 export type AddonProcedureDeps = {
 	readDescriptors: () => Promise<AddonDescriptor[]>;
-	isRealDevice: () => Promise<boolean>;
+	canManageAddons: () => Promise<boolean>;
 	getEffectiveHardware: () => AddonHardware;
 	getAddonPhase: (id: string) => AddonManagerPhase;
 	getAddonState: (id: string) => AddonState | undefined;
@@ -131,7 +131,7 @@ async function readBakedDescriptors(): Promise<AddonDescriptor[]> {
 
 const defaultAddonProcedureDeps: AddonProcedureDeps = {
 	readDescriptors: readBakedDescriptors,
-	isRealDevice: () => isRealDevice(),
+	canManageAddons: () => hasCapability("addons"),
 	getEffectiveHardware: () => getEffectiveHardwareImpl(),
 	getAddonPhase: (id) => getAddonPhase(id),
 	getAddonState: getLiveAddonState,
@@ -185,7 +185,7 @@ async function findDescriptor(
 
 /**
  * List every image-baked add-on merged with its live state. Read-only — NOT
- * gated on isRealDevice() so the UI renders the catalogue in emulated mode too.
+ * gated on hasCapability("addons") so the UI renders the catalogue in emulated mode too.
  */
 export const listAddonsProcedure = authedProcedure
 	.output(z.object({ addons: z.array(addonListItemSchema) }))
@@ -196,7 +196,7 @@ export const listAddonsProcedure = authedProcedure
 	});
 
 /**
- * Materialise + enable an add-on through the manager. Gated on isRealDevice()
+ * Materialise + enable an add-on through the manager. Gated on hasCapability("addons")
  * (G6); an optional `userConfig` is pre-seeded so the manager preserves it.
  */
 export const installAddonProcedure = authedProcedure
@@ -207,7 +207,7 @@ export const installAddonProcedure = authedProcedure
 	.handler(async ({ input }) => {
 		return withAddonMutation(input.id, async () => {
 			const deps = activeDeps;
-			if (!(await deps.isRealDevice())) {
+			if (!(await deps.canManageAddons())) {
 				return { success: false, error: ADDON_UNAVAILABLE_ERROR };
 			}
 			const descriptor = await findDescriptor(input.id, deps);
@@ -245,14 +245,14 @@ export const installAddonProcedure = authedProcedure
 	});
 
 /**
- * Disable + remove an add-on through the manager. Gated on isRealDevice() (G6).
+ * Disable + remove an add-on through the manager. Gated on hasCapability("addons") (G6).
  */
 export const uninstallAddonProcedure = authedProcedure
 	.input(z.object({ id: addonIdSchema }))
 	.output(addonOpResultSchema)
 	.handler(async ({ input }) => {
 		const deps = activeDeps;
-		if (!(await deps.isRealDevice())) {
+		if (!(await deps.canManageAddons())) {
 			return { success: false, error: ADDON_UNAVAILABLE_ERROR };
 		}
 		const descriptor = await findDescriptor(input.id, deps);
@@ -264,7 +264,7 @@ export const uninstallAddonProcedure = authedProcedure
 
 /**
  * Persist an add-on's userConfig without touching its materialised payload.
- * Gated on isRealDevice() (G6); the add-on must already have persisted state.
+ * Gated on hasCapability("addons") (G6); the add-on must already have persisted state.
  */
 export const configureAddonProcedure = authedProcedure
 	.input(z.object({ id: addonIdSchema, fields: userConfigSchema }))
@@ -272,7 +272,7 @@ export const configureAddonProcedure = authedProcedure
 	.handler(async ({ input }) => {
 		return withAddonMutation(input.id, async () => {
 			const deps = activeDeps;
-			if (!(await deps.isRealDevice())) {
+			if (!(await deps.canManageAddons())) {
 				return { success: false, error: ADDON_UNAVAILABLE_ERROR };
 			}
 			const state = deps.getAddonState(input.id);

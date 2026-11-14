@@ -138,7 +138,7 @@ import {
 import { withModemUpdateLock } from "../../modules/network/state/device-lock.ts";
 import { isRecoveryPending } from "../../modules/streaming/recovery-barrier.ts";
 import { getIsStreaming } from "../../modules/streaming/streaming.ts";
-import { isRealDevice } from "../../modules/system/device-detection.ts";
+import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import { authMiddleware } from "../middleware/auth.middleware.ts";
 import { cellularReadyMiddleware } from "../middleware/cellular.middleware.ts";
 import type { RPCContext } from "../types.ts";
@@ -648,7 +648,7 @@ export const getUsbModeOptionsProcedure = modemProcedure
 			);
 			return getMockUsbModeOptions(input.device);
 		}
-		if (!(await isRealDevice())) {
+		if (!(await hasCapability("modem-control"))) {
 			return { certified: [], suppressed: "unavailable_in_emulated_mode" };
 		}
 		return resolveUsbModeOptions(input.device, getUsbModeDispatchDeps());
@@ -679,7 +679,7 @@ export const setFccUnlockProcedure = modemProcedure
 	.input(setFccUnlockInputSchema)
 	.output(setFccUnlockOutputSchema)
 	.handler(async ({ input }) => {
-		if (!(await isRealDevice())) {
+		if (!(await hasCapability("modem-control"))) {
 			return { success: false, error: "unavailable_in_emulated_mode" } as const;
 		}
 		if (getIsStreaming()) {
@@ -731,7 +731,7 @@ export const setUsbModeProcedure = modemProcedure
 			return { success: false, error: "provisioning_disabled" };
 		}
 
-		if (!(await isRealDevice())) {
+		if (!(await hasCapability("modem-control"))) {
 			return { success: false, error: "unavailable_in_emulated_mode" };
 		}
 
@@ -936,7 +936,7 @@ export const setModemBandsProcedure = modemProcedure
 	.input(setModemBandsInputSchema)
 	.output(setModemBandsOutputSchema)
 	.handler(async ({ input }) => {
-		if (!(await isRealDevice())) {
+		if (!(await hasCapability("modem-control"))) {
 			return { success: false, error: "unsupported" as const };
 		}
 		const outcome = await applyBandLock(input.device, input.bands);

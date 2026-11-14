@@ -60,7 +60,7 @@ import {
 	verifyStubDeviceToken,
 } from "../pairing/device-token.ts";
 import { setup } from "../setup.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { addAuthedSocket } from "../ui/auth.ts";
 import { type StatusResponseMessage, sendInitialStatus } from "../ui/status.ts";
 import {
@@ -160,7 +160,7 @@ export type RemoteAuthDecision =
 	| { action: "force-repair"; reason: RemoteRepairReason };
 
 export type RemoteAuthDecisionOptions = {
-	readonly isRealDevice?: boolean;
+	readonly requireVerifiedControl?: boolean;
 };
 
 function shouldFailClosedRemoteAuth(
@@ -169,7 +169,7 @@ function shouldFailClosedRemoteAuth(
 	return (
 		isPasetoVerificationActive() ||
 		isProductionRuntime() ||
-		options.isRealDevice === true
+		options.requireVerifiedControl === true
 	);
 }
 
@@ -472,12 +472,12 @@ async function remoteConnect() {
 		const config = getConfig();
 		if (!config.remote_key) return;
 
-		const realDevice = await isRealDevice();
+		const requireVerifiedControl = await hasCapability("device-control");
 		const decision = resolveRemoteAuthDecision(
 			config.remote_key,
 			protocolVersion,
 			Date.now(),
-			{ isRealDevice: realDevice },
+			{ requireVerifiedControl },
 		);
 		if (decision.action === "force-repair") {
 			forceRepairMigration(decision.reason);

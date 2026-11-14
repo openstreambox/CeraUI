@@ -155,7 +155,9 @@ describe("manager crash-loop auto-disable — purely on mocks", () => {
 
 describe("manager — emulated-mode no-op", () => {
 	test("enable/disable return addon_unavailable and touch nothing", async () => {
-		const { deps, rec } = createMockAddonManagerDeps({ isRealDevice: false });
+		const { deps, rec } = createMockAddonManagerDeps({
+			canManageAddons: false,
+		});
 
 		const enableResult = await enableAddon(MockAddonDescriptor, deps);
 		expect(enableResult).toEqual({
@@ -180,7 +182,7 @@ describe("reconciler — emulated-mode no-op", () => {
 	test("never reads OS version, fetches, refreshes, or writes state", async () => {
 		let osRead = false;
 		const { deps, rec } = createMockReconcilerDeps(
-			{ isRealDevice: false, rawExists: false },
+			{ canManageAddons: false, rawExists: false },
 			{
 				getOsVersionId: () => {
 					osRead = true;

@@ -40,7 +40,7 @@ for (const [name, action] of Object.entries({
 		// When the real primitive reaches final sudo submission.
 		await expect(
 			action("cog-display", {
-				isRealDevice: async () => {
+				canManageAddons: async () => {
 					updateStatus(true);
 					return true;
 				},
@@ -59,7 +59,7 @@ test("privileged refresh refuses live while read-only status remains available",
 	updateStatus(true);
 	const effects: string[] = [];
 	const deps = {
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec: async (_file: string, args: readonly string[]) => {
 			effects.push(args.join(" "));
 			return { stdout: "{}", stderr: "" };
@@ -84,7 +84,7 @@ for (const [name, action] of Object.entries({
 	test(`${name} rolls back prelude bytes when idle evidence is lost in the space probe`, async () => {
 		// Given an admitted entry whose read-only preflight loses positive idle.
 		setAddonManagerDeps({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			getDataFreeBytes: async () => {
 				updateStatus(true);
 				return 2 ** 32;
@@ -108,7 +108,7 @@ for (const [name, action] of Object.entries({
 		// Given an initially idle device that becomes live during verification.
 		const effects: string[] = [];
 		setAddonManagerDeps({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			getDataFreeBytes: async () => 2 ** 32,
 			getOsVersion: async () => "13",
 			download: async () => {
@@ -152,7 +152,7 @@ for (const [name, action] of Object.entries({
 		saveConfig();
 		const effects: string[] = [];
 		setAddonManagerDeps({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			systemctl: async () => {
 				updateStatus(true);
 				return { stdout: "", stderr: "" };
@@ -177,7 +177,7 @@ test("reconciler rechecks after staging before sysext refresh", async () => {
 	const effects: string[] = [];
 	// When the real reconciler resumes.
 	await runAddonReconciler({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getIsStreaming: () => false,
 		getOsVersionId: async () => "13",
 		getBoard: () => "rk3588",
@@ -203,7 +203,7 @@ test("install rechecks after staging before activation", async () => {
 	// Given stream start while a previously admitted stage is finishing.
 	const effects: string[] = [];
 	setAddonManagerDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getDataFreeBytes: async () => 2 ** 32,
 		getOsVersion: async () => "13",
 		download: async () => {},

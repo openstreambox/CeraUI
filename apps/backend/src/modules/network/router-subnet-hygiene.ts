@@ -232,7 +232,10 @@ export async function prepareSubnetRewrite(
 			readonly conflict?: string;
 	  }
 > {
-	if (dialectForVidPid(vidPid) !== "hilink" || !(await deps.isRealDevice())) {
+	if (
+		dialectForVidPid(vidPid) !== "hilink" ||
+		!(await deps.canManageModems())
+	) {
 		return { ok: false, reason: "unsupported" };
 	}
 	let adminUrl: string | undefined;

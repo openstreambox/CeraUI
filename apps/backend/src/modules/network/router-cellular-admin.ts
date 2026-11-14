@@ -96,7 +96,7 @@
  * same request bound to each interface returned two DIFFERENT serials.
  *
  * Safety contract, identical in shape to `policy-route-check.ts`:
- *   - gated on `isRealDevice()`; a dev host never spawns anything;
+ *   - gated on `hasCapability("modem-control")`; a dev host never spawns anything;
  *   - EVERY failure (spawn error, timeout, non-200, malformed body) degrades to
  *     an absent or unreachable reading and never throws into a caller;
  *   - it runs on its OWN slow cadence, never inside the 5 s netif poll.
@@ -110,7 +110,7 @@ import {
 	classifyHilinkLoginState,
 	noteLockOpenEvidence,
 } from "../modems/modem-lock-state.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import {
 	HILINK_CONNECTION_PATH,
 	HILINK_DATA_SWITCH_PATH,
@@ -620,7 +620,7 @@ export function parseUfi(
 }
 
 export type RouterAdminProbeDeps = {
-	isRealDevice: () => Promise<boolean>;
+	canManageModems: () => Promise<boolean>;
 	/** `ip -4 route show default` → stdout. MAY reject. */
 	runIpRouteShowDefault: () => Promise<string>;
 	/**
@@ -706,7 +706,7 @@ async function spawnCurlPost(
 }
 
 export const defaultRouterAdminProbeDeps: RouterAdminProbeDeps = {
-	isRealDevice: () => isRealDevice(),
+	canManageModems: () => hasCapability("modem-control"),
 	runIpRouteShowDefault: async () => {
 		const proc = Bun.spawn(["ip", "-4", "route", "show", "default"], {
 			stdout: "pipe",
@@ -929,7 +929,7 @@ export async function probeRouterCellularAdmin(
 ): Promise<ReadonlyMap<string, RouterAdminReading>> {
 	const readings = new Map<string, RouterAdminReading>();
 	if (targets.size === 0) return readings;
-	if (!(await deps.isRealDevice())) return readings;
+	if (!(await deps.canManageModems())) return readings;
 
 	let gateways: ReadonlyMap<string, string>;
 	try {

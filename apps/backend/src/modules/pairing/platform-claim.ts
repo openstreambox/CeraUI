@@ -43,7 +43,7 @@ import type { CompletePairingOutput } from "@ceraui/rpc/schemas";
 import { z } from "zod";
 
 import { logger } from "../../helpers/logger.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { getDeviceSerial, getPairingSecret } from "./claim-code.ts";
 
 /** Abort the claim request after this long; surfaces as `network-error`. */
@@ -103,7 +103,7 @@ const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set([
 
 function resolvePlatformEndpoint(
 	path: string,
-	isReal: boolean,
+	controlEnabled: boolean,
 ): PlatformEndpointResult {
 	const platformUrl = getPlatformUrl();
 	if (!platformUrl) return { ok: false, error: "platform-not-configured" };
@@ -118,7 +118,7 @@ function resolvePlatformEndpoint(
 	const allowLocalDevelopmentHttp =
 		baseUrl.protocol === "http:" &&
 		LOOPBACK_HOSTNAMES.has(baseUrl.hostname) &&
-		!isReal &&
+		!controlEnabled &&
 		process.env.NODE_ENV === "development";
 	if (baseUrl.protocol !== "https:" && !allowLocalDevelopmentHttp) {
 		return { ok: false, error: "insecure-platform-url" };
@@ -180,8 +180,8 @@ export interface RegisterPairingSecretDeps {
 	authorization?: string;
 	/** Injected fetch (defaults to global `fetch`) — testable without a network. */
 	fetchImpl?: PlatformFetch;
-	/** Real-device gate (defaults to {@link isRealDevice}). */
-	isRealDeviceImpl?: () => Promise<boolean>;
+	/** Device-control capability gate; injectable for fixtures. */
+	canControlDevice?: () => Promise<boolean>;
 	/** Retry backoff sleep (defaults to a real timer) — injectable so tests don't wait. */
 	delayImpl?: (ms: number) => Promise<void>;
 }
@@ -191,7 +191,7 @@ export interface RegisterPairingSecretDeps {
  * platform can verify the device's claim-code (task 6/7 — `POST
  * /api/device/pairing-secret`, body `{ serial, pairingSecret }`).
  *
- * Gated on {@link isRealDevice}: a no-op (`skipped`) in dev/mock mode. The
+ * Gated on the device-control capability: a no-op (`skipped`) in dev/mock mode. The
  * secret is only READ from its existing store ({@link getPairingSecret}) — never
  * persisted anywhere new on-device. A transient HTTP/network failure is retried
  * up to {@link PAIRING_SECRET_REGISTER_MAX_ATTEMPTS} times then logged; this
@@ -201,15 +201,16 @@ export interface RegisterPairingSecretDeps {
 export async function registerPairingSecret(
 	deps: RegisterPairingSecretDeps = {},
 ): Promise<PairingSecretRegisterResult> {
-	const isReal = deps.isRealDeviceImpl ?? isRealDevice;
-	const realDevice = await isReal();
-	if (!realDevice) {
+	const canControlDevice =
+		deps.canControlDevice ?? (() => hasCapability("device-control"));
+	const controlEnabled = await canControlDevice();
+	if (!controlEnabled) {
 		return { registered: false, skipped: true };
 	}
 
 	const endpointResult = resolvePlatformEndpoint(
 		PAIRING_SECRET_REGISTER_PATH,
-		realDevice,
+		controlEnabled,
 	);
 	if (!endpointResult.ok) {
 		logger.error(
@@ -294,7 +295,7 @@ export async function completePlatformPairing(
 ): Promise<CompletePairingOutput> {
 	const endpointResult = resolvePlatformEndpoint(
 		"/api/claim",
-		await isRealDevice(),
+		await hasCapability("device-control"),
 	);
 	if (!endpointResult.ok) {
 		logger.error(

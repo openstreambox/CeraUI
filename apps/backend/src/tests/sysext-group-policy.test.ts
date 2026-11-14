@@ -60,7 +60,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 				};
 			});
 			const deps = {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				readDescriptor: async () => sysextDescriptor,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				createStep: () => step,
@@ -113,7 +113,7 @@ for (const code of ["EPERM", "EINVAL", "EIO", "ENOENT", "unexpected"]) {
 		);
 		// When success still passes through mandatory retirement and then evidence repairs.
 		await addonRefresh({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			exec: async () => ({ stdout: "", stderr: "" }),
 			createStep: () => step,
 		});
@@ -145,7 +145,7 @@ for (const pgid of [0, -1, 1, 2.5, NaN, Infinity]) {
 			probe,
 		};
 		await addonRefresh({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			exec: async () => ({ stdout: "", stderr: "" }),
 			createStep: () => step,
 		});
@@ -170,7 +170,7 @@ test("actual child exit is required before the group syscall", async () => {
 		probe,
 	};
 	await addonRefresh({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec: async () => ({ stdout: "", stderr: "" }),
 		createStep: () => step,
 	});
@@ -194,7 +194,7 @@ test("a zombie retains the group until reaped without a time or census exemption
 		},
 	);
 	await addonRefresh({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec: async () => ({ stdout: "", stderr: "" }),
 		createStep: () => step,
 	});
@@ -228,7 +228,7 @@ for (const euid of [1000, 0]) {
 			},
 		});
 		const result = await addonRefresh({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			exec: async () => ({ stdout: "", stderr: "" }),
 			createStep: () => step,
 		}).catch((error: unknown) => error);
@@ -249,7 +249,7 @@ test("cancelled evidence callbacks perform zero late probes or reschedules and p
 		},
 	);
 	await addonRefresh({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec: async () => ({ stdout: "", stderr: "" }),
 		createStep: () => step,
 	});

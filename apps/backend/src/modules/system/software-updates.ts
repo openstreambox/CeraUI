@@ -84,6 +84,10 @@ import {
 	normalizeAptCommandFailure,
 } from "./apt-transport-result.ts";
 import {
+	hasCapability,
+	isBoardCapabilityDenied,
+} from "./board-capabilities.ts";
+import {
 	logParseError,
 	type ParseResult,
 	parseFail,
@@ -93,7 +97,6 @@ import {
 	requestCompletionReboot,
 	resetCompletionRebootForTest,
 } from "./deferred-completion-reboot.ts";
-import { isRealDevice } from "./device-detection.ts";
 import {
 	assertDisruptiveActionFree,
 	DisruptiveActionRefusal,
@@ -207,7 +210,9 @@ export function resetAptReachabilityProbeForTest(): void {
 async function prepareAptNetwork(options?: {
 	readonly maxAgeMs?: number;
 }): Promise<AptReachability> {
-	if (!(await isRealDevice())) return aptReachabilityProbe(options);
+	if (!aptUpdatesEnabled()) throw new Error("updates_disabled");
+	if (!(await hasCapability("os-updates")))
+		return aptReachabilityProbe(options);
 	if (!(await updateGwWrapper(true))) {
 		logger.warn("Apt preflight refused: host default-route repair failed");
 		return deriveVerdict([]);
@@ -222,7 +227,8 @@ async function openAptNetwork(
 	options?: { readonly maxAgeMs?: number },
 	admission?: AptTransferAdmission,
 ): Promise<AptTransaction> {
-	return (await isRealDevice()) &&
+	if (!aptUpdatesEnabled()) throw new Error("updates_disabled");
+	return (await hasCapability("os-updates")) &&
 		capabilities.mode === "capable" &&
 		capabilities.features.includes("transport-uidrange")
 		? openPinnedAptTransaction(admission)
@@ -314,7 +320,9 @@ function refuseUpdateStart(reason: UpdateStartRefusal): UpdateStartOutcome {
 }
 
 export function aptUpdatesEnabled(): boolean {
-	return setup.apt_update_enabled !== false;
+	return (
+		setup.apt_update_enabled !== false && !isBoardCapabilityDenied("os-updates")
+	);
 }
 
 export function getAvailableUpdates() {
@@ -1176,6 +1184,7 @@ export function runSoftwareUpdateCheck(): Promise<SoftwareUpdateError> {
 	// The orchestrator has its own background cadence. Match the legacy loop's
 	// mock gate before reaching the real refresh runner (including its busy guard).
 	if (shouldUseMocks()) return Promise.resolve(null);
+	if (!aptUpdatesEnabled()) return Promise.resolve("discovery_failed");
 	return new Promise((resolve, reject) => {
 		const started = softwareUpdateCheckRunner((refresh) => {
 			// Exit-zero warnings are benign; discovery must retain a real refresh failure.
@@ -1196,6 +1205,7 @@ export function runSoftwareUpdateCheck(): Promise<SoftwareUpdateError> {
 
 // Publish after discovery's early returns so an empty result is observable.
 export async function runUpdateDiscoveryAndReport(): Promise<SoftwareUpdateError> {
+	if (!aptUpdatesEnabled()) return "discovery_failed";
 	if (pendingPackageSuccess.pending) return "discovery_failed";
 	if (aptDiscoveryRunning) return "busy";
 	aptDiscoveryRunning = true;
@@ -1295,6 +1305,7 @@ export function periodicCheckForSoftwareUpdates() {
 }
 
 export function triggerManualUpdateCheck(): boolean {
+	if (!aptUpdatesEnabled()) return false;
 	if (pendingPackageSuccess.pending) return false;
 	if (isSoftwareUpdateRecoveryInconclusive()) return false;
 	if (shouldUseMocks()) {

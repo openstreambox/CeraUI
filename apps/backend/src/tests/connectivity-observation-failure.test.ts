@@ -48,7 +48,7 @@ test("UNKNOWN cannot release ownership when no candidate proves connectivity", a
 	let releases = 0;
 	// When: the coordinator completes an unknown election.
 	const result = await updateGw({
-		isRealDevice: async () => true,
+		canRouteClients: async () => true,
 		resolve: async () => ({ addrs: [], fromCache: true }),
 		validateDns: () => {},
 		checkConnectivity: async () => false,

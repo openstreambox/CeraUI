@@ -76,7 +76,7 @@ function hilink(options: {
 	let current = options.current;
 
 	const deps: RouterAdminProbeDeps = {
-		isRealDevice: () => Promise.resolve(true),
+		canManageModems: () => Promise.resolve(true),
 		runIpRouteShowDefault: () => Promise.resolve(ROUTES),
 		fetchViaInterface: (_ifname, urls) =>
 			Promise.resolve(
