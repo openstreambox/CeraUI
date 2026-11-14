@@ -74,6 +74,28 @@ function renderSection(
 	});
 }
 
+it("calmly states that this board has no updates offered", () => {
+	renderSection(details({ os: { boardNotOffered: true } }), "idle");
+	expect(
+		screen.getByTestId("update-system-board-not-offered").textContent,
+	).toContain("Updates aren't offered on this board yet");
+	expect(screen.queryByTestId("update-system-no-candidate")).toBeNull();
+});
+
+it("does not offer installation from stale candidate data on an unsupported board", () => {
+	renderSection(
+		details({
+			os: {
+				boardNotOffered: true,
+				candidate: { version: "2026.11.1", sizeBytes: 100 },
+			},
+		}),
+		"os-available",
+	);
+	expect(screen.queryByTestId("update-system-install")).toBeNull();
+	expect(screen.queryByTestId("update-system-candidate")).toBeNull();
+});
+
 afterEach(() => {
 	cleanup();
 });

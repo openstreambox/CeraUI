@@ -158,8 +158,9 @@ test.describe('disabled-reason hints + loading/empty distinction (T15)', () => {
 
 	// ── A1. Hotspot start — never blocked by a form it does not use (#413) ──────
 	// The start used to be gated on a name/password form whose values it then
-	// ignored. With the hotspot off there is no form: Enable carries no disabled
-	// reason and opens the credential gate, which is the only way forward.
+	// ignored. The fork keeps that form as SETUP while the hotspot is off (setup is
+	// separate from activation), so it must gate nothing: Enable carries no
+	// disabled reason and opens the credential gate, which replaces the form.
 	test('Hotspot toggle: enabled while off and opens the credential gate instead of starting', async ({
 		page,
 	}) => {
@@ -171,13 +172,14 @@ test.describe('disabled-reason hints + loading/empty distinction (T15)', () => {
 		const dialog = page.getByRole('dialog', { name: 'Configure Hotspot' });
 		await expect(dialog).toBeVisible();
 
-		await expect(dialog.locator('#hotspot-name')).toHaveCount(0);
+		await expect(dialog.locator('#hotspot-name')).toBeVisible();
 
 		const toggle = dialog.getByRole('button', { name: 'Enable Hotspot', exact: true });
 		await expect(toggle).toBeEnabled();
 		await expect(toggle).not.toHaveAttribute('title', /.+/);
 		await toggle.click();
 		await expect(dialog.getByTestId('hotspot-activation-confirm')).toBeVisible();
+		await expect(dialog.locator('#hotspot-name')).toHaveCount(0);
 		// One action row at a time: the footer start stands down while the gate is open.
 		await expect(toggle).toHaveCount(0);
 	});

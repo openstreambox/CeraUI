@@ -40,7 +40,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			try {
 				// When the actual wrapper/runner/collector boundary rejects without a handle.
 				const result = await invokeHelperAction(action, {
-					isRealDevice: async () => true,
+					canManageAddons: async () => true,
 					exec: async () => ({ stdout: "", stderr: "" }),
 					readDescriptor: async () => sysextDescriptor,
 					createStep: () => step,
@@ -88,7 +88,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			const step = f.createStep([action, "cog-display"]);
 			// When the production resolver retries ten times without completion evidence.
 			await invokeHelperAction(action, {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				readDescriptor: async () => sysextDescriptor,
 				createStep: () => step,

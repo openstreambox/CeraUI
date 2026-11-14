@@ -1,9 +1,10 @@
 import { uplinkFlowsResetEventSchema } from "@ceraui/rpc/schemas";
 import { logger } from "../../../helpers/logger.ts";
-import { isRealDevice } from "../../system/device-detection.ts";
+import { hasCapability } from "../../system/board-capabilities.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
 import { broadcastWifiState } from "../../wifi/wifi.ts";
 import { onNetworkInterfacesChange } from "../network-interfaces.ts";
+import { onUsbNetScanCommitted } from "../router-cellular-scan.ts";
 import { onUplinkHealthChange } from "../uplink-health/state.ts";
 import {
 	applyNftablesRules,
@@ -47,7 +48,7 @@ const applier = new UplinkSteeringApplier({
 });
 
 const coordinator = new UplinkSteeringCoordinator({
-	readDesiredState: readDesiredSteeringState,
+	readDesiredState: (context) => readDesiredSteeringState(undefined, context),
 	apply: async (previous, next) => {
 		publishSteeringReadiness([]);
 		await applier.apply(previous, next);
@@ -66,9 +67,14 @@ const coordinator = new UplinkSteeringCoordinator({
 
 let unsubscribeNetif: (() => void) | undefined;
 let unsubscribeHealth: (() => void) | undefined;
+let unsubscribeScan: (() => void) | undefined;
 
 export async function initUplinkSteering(): Promise<void> {
-	if (unsubscribeNetif !== undefined || !(await isRealDevice())) return;
+	if (
+		unsubscribeNetif !== undefined ||
+		!(await hasCapability("client-internet"))
+	)
+		return;
 	enableSteeringReadiness();
 	const reconcile = () => {
 		void coordinator.requestReconcile().catch((error: unknown) => {
@@ -77,6 +83,7 @@ export async function initUplinkSteering(): Promise<void> {
 	};
 	unsubscribeNetif = onNetworkInterfacesChange(reconcile);
 	unsubscribeHealth = onUplinkHealthChange(reconcile);
+	unsubscribeScan = onUsbNetScanCommitted(reconcile);
 	await coordinator.requestReconcile();
 }
 
@@ -87,6 +94,9 @@ export function requestUplinkSteeringReconcile(): Promise<void> {
 export function stopUplinkSteeringForTest(): void {
 	unsubscribeNetif?.();
 	unsubscribeHealth?.();
+	unsubscribeScan?.();
+	coordinator.stop();
 	unsubscribeNetif = undefined;
 	unsubscribeHealth = undefined;
+	unsubscribeScan = undefined;
 }

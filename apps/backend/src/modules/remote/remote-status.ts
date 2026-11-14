@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import {
 	connectionStatusSchema,
 	hardwareTypeSchema,
+	hotspotClientsSchema,
 	streamProfileIdSchema,
 } from "@ceraui/rpc/schemas";
 
@@ -98,6 +99,15 @@ function wifi(v: unknown): Row {
 					hotspot: {
 						name: "Hotspot",
 						...numbers(row.hotspot, ["max_width_mhz"]),
+						...(hotspotClientsSchema.safeParse(object(row.hotspot).clients)
+							.success
+							? {
+									clients: {
+										count: object(object(row.hotspot).clients).count,
+										stations: [],
+									},
+								}
+							: {}),
 						available_channels: {},
 					},
 				}

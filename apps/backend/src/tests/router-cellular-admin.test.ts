@@ -315,7 +315,7 @@ describe("ZTE readings", () => {
 describe("probe orchestration", () => {
 	function deps(overrides: Partial<RouterAdminProbeDeps> = {}) {
 		return {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () => ROUTE_OUTPUT,
 			fetchViaInterface: async () => [""],
 			postViaInterface: async () => "",
@@ -328,7 +328,7 @@ describe("probe orchestration", () => {
 		const readings = await probeRouterCellularAdmin(
 			new Map([["enx344b50000000", "19d2:1405"]]),
 			deps({
-				isRealDevice: async () => false,
+				canManageModems: async () => false,
 				runIpRouteShowDefault: async () => {
 					called = true;
 					return ROUTE_OUTPUT;
@@ -497,7 +497,7 @@ describe("applyRouterCellularControl", () => {
 		const state = { mobile_data: true, roaming_autoconnect: false };
 		const posts: Array<{ url: string; body: string }> = [];
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () => ROUTE_OUTPUT,
 			fetchViaInterface: async (_ifname, urls) =>
 				urls.map((url) => {
@@ -604,7 +604,7 @@ describe("applyRouterCellularControl", () => {
 			"12d1:14dc",
 			"mobile_data",
 			false,
-			{ ...deps, isRealDevice: async () => false },
+			{ ...deps, canManageModems: async () => false },
 		);
 
 		expect(result).toEqual({ status: "refused", reason: "unsupported" });

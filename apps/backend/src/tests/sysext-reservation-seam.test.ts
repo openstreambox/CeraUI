@@ -61,7 +61,7 @@ async function jobs(): Promise<void> {
 	for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 const device = (exec: () => Promise<{ stdout: string; stderr: string }>) => ({
-	isRealDevice: async () => true,
+	canManageAddons: async () => true,
 	readDescriptor: async () => sysextDescriptor,
 	exec,
 	createStep: (args: readonly string[]) => {

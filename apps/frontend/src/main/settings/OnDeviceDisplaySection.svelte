@@ -125,7 +125,7 @@ async function handleEnableChange(next: boolean) {
 	if (!result) throw new Error('kiosk_toggle_failed');
 	if (result.error && ['streaming', 'stream_liveness_unknown', 'update_in_progress'].includes(result.error)) {
 		unavailable = false;
-		toast.error(m["notifications.disruptiveActionRefused"]());
+		toast.error(m["notifications.disruptiveActionClientTraffic"]());
 		throw new Error(result.error);
 	}
 	if (result.error === KIOSK_UNAVAILABLE_ERROR || !result.applied) {

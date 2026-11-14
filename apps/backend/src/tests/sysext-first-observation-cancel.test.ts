@@ -46,7 +46,7 @@ for (const retired of [false, true]) {
 				},
 			});
 			const work = addonEnable("cog-display", {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				readDescriptor: async () => sysextDescriptor,
 				createStep: () => step,

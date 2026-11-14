@@ -374,3 +374,130 @@ persisted — it NEVER regenerates an existing credential (that stays
 `applyPassword` / `persist` / `refreshStatus`) is injected via
 `SshPasswordProvisionDeps` so `tests/ssh-password-provision.test.ts` drives it
 without a real `passwd`/`/etc/shadow` (and without persisting to disk).
+
+### Process signals and outbound connections in development
+
+All process-name signals use `@ceraui/srtla-send/process-signals`. Production
+executes the supplied command unchanged. Source development suppresses name
+signals before mock initialization. Unit preload installs a fake runner.
+Streaming teardown continues to signal its tracked child handles. The bond
+reload (`restartSrtla`) also sends SIGHUP to the supervised sender handle via
+`signalSenders`, never by name, and reports `false` when no live supervised
+sender received it. The startup orphan sweep is the remaining production
+name signal for the sender.
+
+Unit preload wraps Bun and Node process-spawn APIs and rejects name-signalling
+commands and systemd mutations. The allowlist is empty. A rejected command is
+also retained for the after-test hook, so catching a spawn error cannot hide
+it. Tests should inject an effect dependency before reaching this boundary.
+The check covers `Bun.$`, follows wrappers (`env -S`, `xargs`, `busybox`,
+`find -exec`, `sh -c 'exec "$@"'`) and judges a symlink by its target.
+`process.kill` (and the internal `process._kill`) reaches only the test
+process, the processes it spawned and their process groups (signal 0 probes are
+allowed); a fixture declares an escaped descendant with `adoptTestProcess`.
+Shell scripts run by path or shebang are read: name-based signals and
+absolute-path signal commands are refused, and a builtin `kill` may only target
+PIDs the test owns. Tests may not start Worker threads, where none of this runs.
+A directory of recording stubs at the front of `PATH` shadows `killall`,
+`pkill`, `kill`, `systemctl` and similar commands for every child, so by-name
+calls from scripts and other interpreters fail the test too. Read-only
+`systemctl` verbs pass through to the real binary, or exit 127 like a missing
+binary on a host without one. The unit preload also replaces the default SSH
+status probes (`setSshSystemctlProbesForTest`), so status builders never query the
+host's ssh unit.
+
+The same preload installs the network guard. TCP/TLS, `Bun.connect`, UDP
+(`node:dgram`, `Bun.udpSocket`), fetch and WebSocket reach only loopback, and
+DNS (`node:dns`, its resolvers, `Bun.dns`) answers only localhost and address
+literals. A fetch through a proxy (the `proxy` option or `HTTP(S)_PROXY`) is
+judged by the proxy. Bun's `ws` builtin cannot be wrapped from outside, so
+backend client sockets open through `helpers/outbound-websocket.ts`, which
+calls the guard's check; a unit test fails if another source file imports `ws`
+as a value. `Bun.fetch` is read-only too, so backend source uses the global
+`fetch`, and a scan enforces it. A test that re-runs itself under `unshare -n`
+sets `CERAUI_TEST_PRIVATE_NETNS=1` for the child, which then skips the network
+guard while it still holds only `lo`; any other network-isolated run keeps it.
+
+These guards catch mistakes; they are not containment. A determined command
+(a copied `killall` binary, quoting tricks, an interpreter's own `kill`, a
+script read from stdin, a native call) gets past them, which is why gates
+on shared machines also run inside a PID namespace (below).
+
+Backend development commands and the browser worker entrypoint preload
+`scripts/dev-safety.ts`. It marks the process as a development harness, so name
+signals stay suppressed even without `NODE_ENV=development`, and installs the
+same process and network guards. Caught violations terminate the harness.
+Name-signal suppression uses the mock gate (`NODE_ENV=development` or
+`MOCK_MODE=true`) plus that marker. Under mocks the legacy remote client
+connects only when `remote_endpoint_host` is a loopback address; otherwise it
+stays idle, so the mock pairing key never leaves the machine. Local fixture
+endpoints use localhost, 127.0.0.0/8 or ::1. Keep real credentials out of mock
+configurations.
+
+Concurrent browser runs configure `E2E_PORT`, `E2E_BACKEND_PORT` and
+`E2E_WORKER_BASE_PORT` with disjoint ranges. The last variable sets the first
+worker port. Keep process-spawning gates inside a PID namespace to contain any
+regression in outward signalling. A PID namespace does not shield a child from
+same-account signals sent by an uncontained host process. File-ownership tests
+need the normal UID mapping, so a privileged namespace launcher may drop back
+to the invoking UID/GID after creating the PID namespace.
+
+### Mock DNS answers public names as refused
+
+A mock backend has no real network. Its well-known DNS check, the gateway
+connectivity target and relay names would otherwise reach the host's resolver,
+and the development harness's network guard (above) ends the process on the
+first such query, so a development backend died at boot. Under
+`shouldUseMocks()`, `modules/network/dns.ts` hands out a refusing resolver:
+public names fail with `EREFUSED`, the answer the browser test gate's DNS
+recorder gives, and `localhost` names still go to the real resolver. Address
+literals never query. Production keeps `new Resolver()`. Coverage:
+`tests/mock-dns-refusal.test.ts`, which the unit preload's network guard would
+fail on any real query.
+
+### Scripted scenarios: mock clock and `dev.scenario` (demos, screenshot tests)
+
+`mocks/mock-clock.ts` is the mock providers' only source of randomness and
+drift: `mockRandom()`, `mockRandomFor(key)` and `mockNow()`. Unpinned they are
+`Math.random()` and `Date.now()`, so ordinary development and the existing
+tests are unchanged. `pinMockClock(seed, stepMs)` fixes them: draws come from
+mulberry32 seeded with (seed, step), `mockRandomFor(key)` is stable within a
+step however often a provider re-reads it (relay round trips, interface
+throughput), and `mockNow()` stands still between steps. While pinned, the
+host's 1 s fluctuation timer does nothing; each step applies one fluctuation.
+Only mock values follow this clock. `linkTelemetry.lastReadMs`, health,
+staleness and every real timer keep the host's clock, because the real
+uplink-health expiry compares `lastReadMs` with its own now: a scenario must
+never drive the real logic into states a box would not reach in the same time.
+
+Two overrides sit in `mockState`, written only by the scenario control:
+`linkOverrides[iface]` (`rtt_ms`, `nak_count`, `weight_scale` on the link's
+selection weight, `stale`, and `gone`, which drops the row so the remaining
+links share 100 %) and `bitrateTargetKbps` (the bond's measured total and the
+mock encoder bitrate hold the target within ±2 %). `buildMockLinkTelemetry`
+applies them; the real health and bond derivations read the result as they do
+real telemetry.
+
+`dev.scenario.apply({seed, t_ms, events})`, `.reset()` and `.status()` play a
+script step by step (`mocks/scenario-control.ts`). A step pins the clock,
+re-seeds the random walk on its first step (t 0 or a new seed), fluctuates
+once, applies `box.link`, `box.bitrate` and `box.modem` events (the latter
+through `setMockModemState`), then broadcasts modems, Wi-Fi, link telemetry,
+health and relays before it answers, instead of on the coalesced 5 s ticks. So
+a step's frames depend only on the seed, the step time and the events so far.
+
+Gates, all required: the `dev` namespace is registered only outside
+production; each handler starts with a literal production check; the backend
+runs on mocks; and the socket is the scenario driver. A socket becomes the
+driver when its upgrade carries `x-ceraui-scenario-secret` equal to the 64-hex
+`CERAUI_SCENARIO_SECRET` the driver gave the backend
+(`rpc/scenario-driver-admission.ts`). Browser pages cannot set upgrade
+headers, so they never become the driver; a proxy in front of the backend must
+still strip that header from browser upgrades. No configured secret means no
+driver. `tests/dev-scenario-production-build.test.ts` runs the build script's
+bundle step (`NODE_ENV=production bun build --minify`) and checks that the
+shipped bundle keeps neither the header, the variable nor the dev routes, and
+that a probe bundled the same way refuses a driver's call as production even
+with a development runtime environment and mocks on. Bun keeps unreachable
+module bodies, so that proof is about reachability. Coverage of each event and
+gate: `tests/dev-scenario-control.test.ts`, `tests/mock-clock.test.ts`.

@@ -49,6 +49,8 @@ afterEach(async () => {
 	for (const scope of scopes) {
 		scope.cancel.abort();
 		for (const child of scope.children) {
+			// Exited probe children have no remaining signal authority.
+			if (child.exitCode !== null || child.signalCode !== null) continue;
 			// The guardian forks bash/sleep: kill its private session, not only flock.
 			try {
 				process.kill(-child.pid, "SIGKILL");

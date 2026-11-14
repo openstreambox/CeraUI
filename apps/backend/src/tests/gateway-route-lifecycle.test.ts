@@ -26,7 +26,7 @@ const BASELINE = [
 
 function election(table: DefaultRouteTable): GatewayElectionDeps {
 	return {
-		isRealDevice: async () => true,
+		canRouteClients: async () => true,
 		resolve: async () => ({ addrs: [], fromCache: false }),
 		validateDns: () => {},
 		checkConnectivity: async () => false,

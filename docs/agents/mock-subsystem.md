@@ -108,6 +108,44 @@ ladder by what it returns or throws — no direct flag mutation:
   snapshot, so `getCapabilities()` returns the cached snapshot with
   `engineUnavailable: true`. Simulates a cerastream crash after a successful start.
 
+Full profiles report `encoder.default_codec: "h265"`; the minimal safe floor
+leaves it absent. Active mock encodes report `route_reason: "not-compressed"` for
+capture and `"adaptive-active"` for network ingest. Existing uppercase `codecs`
+values remain unchanged. `mock-capabilities-producer-schema.test.ts` checks every
+scenario through the installed producer parser and the RPC projection.
+
+**Audio mix and free geometry [EXISTS; host simulation].** Only `caps-full`
+adds `audio_mix` (four inputs, four tracks, -60 to 12 dB, up to 2000 ms),
+`audio-mix`, `composition` and `composition-geometry`, and a third audio device
+(the existing HDMI Input fixture name). Other scenarios retain their previous
+fields and omit these additions, including `multi-modem-wifi`.
+
+`startMockStreaming(params)` admits producer-owned `StartParams`, preserving
+`audio.inputs` and `composition.rect` in `mockState.engineStart`. The mock
+enforces the engine's empty/count/duplicate input, track membership/gaps,
+gain/delay, device/mode conflicts and embedded-network rules, then resolves
+audio registry identities and capability support. `setMockAudioMix` validates
+the whole batch before committing, preserves tracks, echoes applied defaults,
+and refuses a non-mix session with `audio-mix-inactive`. Unknown input errors
+carry `cerastream.audio.device_not_found`; `switchMockAudio` refuses a running
+mix with `audio-mix-active`. Stop and reset clear the admitted session.
+
+`changeMockComposition` enforces missing/unexpected/range rectangle errors and
+the geometry feature gate. At start and live, an unavailable compositor returns
+the native `composition-unsupported` refusal: numeric code `-32602`,
+`data.code: "cerastream.params.invalid"` and
+`data.capture_causes: [{ device: "composition", cause: "composition-unsupported" }]`.
+Rectangle validation precedes that refusal, so malformed geometry remains
+`composition-rect-range` without a capture cause. Frame-edge equality and the
+minimum size are inclusive; regression tests cover both sides of each bound
+through start and live admission.
+Presets never enter `custom`; the producer rectangle
+schema and minimum are exported separately by RPC. The preview socket adds
+`inputs[]` only for an admitted live mix, with synthetic post-gain/post-mute
+levels; its existing top-level meter remains unchanged. This simulates control
+and meter contracts, not GStreamer timing or hardware behavior. Settings-to-engine
+audio mapping and the mixer/designer UI are separate work.
+
 **`setMockEngineCapabilities(partial)` — test-only capability override seam (T5):**
 `setMockEngineCapabilities(partial)` (exported from `mocks/providers/streaming.ts`)
 merges a `Partial<ScenarioCapabilities>` onto the active scenario's profile, then
@@ -129,3 +167,19 @@ stream is idle; the override is cleared by `resetMockState()`.
 | `engine-starting` | Engine still booting — minimal safe floor + `engineStarting` flag |
 | `engine-unavailable` | Engine unreachable — cached/minimal snapshot + `engineUnavailable` flag |
 
+
+Mock modem data interfaces publish no IPv4 address, accumulate no traffic and
+emit no sender telemetry unless their SIM is unlocked and their state is connected.
+Unlocking restores normal data on the next sample. A searching bond card names
+its state even when the radio continues reporting signal.
+
+Scenario driver access requires both a non-production build and a non-production launch environment. Keep literal NODE_ENV build gates so production bundles omit admission and development routes. The independent runtime check uses Reflect.get on the environment; do not replace it with a literal property read that the bundler can inline. The build matrix probes handlers, driver admission and actual router registration in all four combinations.
+
+A modem reported as `searching` maps to the bond/HUD `scanning` state, even
+when it retains a signal reading. The bond card therefore states Scanning
+while the Cellular row retains its Searching wording.
+
+The orchestrator's package check returns no update error under mocks without
+calling the APT refresh/discovery runner, just as the legacy background loop skips
+mocks. A live simulated stream therefore produces no unrelated busy refusal at
+the first scheduled check. Real-device runner refusals remain active.

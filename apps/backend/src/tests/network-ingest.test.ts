@@ -194,7 +194,7 @@ describe("network-ingest — LAN/hotspot-ONLY address (never a modem/WWAN IP)", 
 		const MODEM_IPS = ["10.64.0.5", "192.168.42.2", "10.128.0.9"];
 		const info = await refreshNetworkIngestInfo(
 			deps({
-				isRealDevice: async () => true,
+				canManageIngest: async () => true,
 				shouldUseMocks: () => false,
 				probeServiceActive: async () => true,
 				probeMediamtxSrt: async () => false,
@@ -259,7 +259,7 @@ describe("network-ingest — refresh gate (isRealDevice-gated probe)", () => {
 		});
 		const info = await refreshNetworkIngestInfo(
 			deps({
-				isRealDevice: async () => true,
+				canManageIngest: async () => true,
 				shouldUseMocks: () => false,
 				probeServiceActive: probe,
 				probeMediamtxSrt: async () => false,
@@ -323,7 +323,7 @@ describe("network-ingest — GatewayProbe (Todo 17 seam, synchronous)", () => {
 	test("isActive reads the cached snapshot per kind", async () => {
 		await refreshNetworkIngestInfo(
 			deps({
-				isRealDevice: async () => true,
+				canManageIngest: async () => true,
 				shouldUseMocks: () => false,
 				probeServiceActive: async (unit) => unit === RTMP_GATEWAY_UNIT,
 				probeMediamtxSrt: async () => false,
@@ -339,7 +339,7 @@ describe("network-ingest — GatewayProbe (Todo 17 seam, synchronous)", () => {
 	test("a null (capability-excluded) protocol reports inactive", async () => {
 		await refreshNetworkIngestInfo(
 			deps({
-				isRealDevice: async () => true,
+				canManageIngest: async () => true,
 				shouldUseMocks: () => false,
 				probeServiceActive: async () => true,
 				probeMediamtxSrt: async () => false,
@@ -550,7 +550,7 @@ describe("network-ingest — real-path dual-topology probe (B2 fleet transition)
 		overrides: Partial<NetworkIngestDeps> = {},
 	): NetworkIngestDeps {
 		return deps({
-			isRealDevice: async () => true,
+			canManageIngest: async () => true,
 			shouldUseMocks: () => false,
 			getNetif: () => ({ eth0: { ip: LAN, enabled: true } }),
 			getSourceKinds: () => new Set(["rtmp", "srt"]),

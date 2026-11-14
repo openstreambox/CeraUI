@@ -95,7 +95,11 @@ export class UpdateQuarantine {
 
 	private async persist(doc: QuarantineDocument): Promise<void> {
 		await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-		writeFileAtomicSync(this.path, JSON.stringify(quarantineSchema.parse(doc)));
+		writeFileAtomicSync(
+			this.path,
+			JSON.stringify(quarantineSchema.parse(doc)),
+			{ mode: 0o600 },
+		);
 	}
 
 	private async pin(packages: readonly QuarantinedPackage[]): Promise<void> {
@@ -114,6 +118,7 @@ export class UpdateQuarantine {
 		writeFileAtomicSync(
 			this.pendingPath(),
 			JSON.stringify(pendingSchema.parse(packages)),
+			{ mode: 0o600 },
 		);
 	}
 

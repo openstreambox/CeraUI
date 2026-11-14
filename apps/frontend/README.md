@@ -33,7 +33,7 @@ The `backend` app consumes the streaming engine binding as a pinned public npm
 package:
 
 ```
-"@ceralive/cerastream": "2026.9.11"   (public npm, @ceralive scope)
+"@ceralive/cerastream": "2026.11.1"   (public npm, @ceralive scope)
 ```
 
 No sibling checkout or vendored tarball is required for CeraUI to install or
@@ -247,7 +247,8 @@ src/
   list read says so with a retry ([contract](docs/agents/an-update-action-outcome-is-decided-by-evidence.md)).
   No raw backend message or new OS-stage reason is rendered. A `streaming`
   refusal says the stream is running OR its state is unconfirmed, through the
-  additive key `general.updateReasonStreamingUnconfirmed`; the frozen
+  additive key `general.updateReasonClientTraffic`, which asks connected devices
+  as well as the box to stop streaming; the frozen
   `general.updateReasonStreaming` keeps the rendered oracle's text.
 
 - **Unresolved Live Stop**: each press of the unconfirmed-state Stop owns its

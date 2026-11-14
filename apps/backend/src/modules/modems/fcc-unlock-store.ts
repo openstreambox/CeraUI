@@ -41,11 +41,10 @@
  * one before the operator's next toggle replaces it.
  */
 
-import { chmod, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import { FCC_UNLOCK_KEY_RE } from "@ceraui/rpc/schemas";
-
 import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
 import { logger } from "../../helpers/logger.ts";
 import {
@@ -159,8 +158,7 @@ export async function saveFccUnlockPolicy(
 		unlock,
 	};
 	// The trailing newline is for the shell reconciler's reader, not decoration.
-	writeFileAtomicSync(FCC_UNLOCK_POLICY_PATH, `${JSON.stringify(state)}\n`);
-	// chmod AFTER the write (not an open flag) so the mode is 0600 regardless of
-	// umask — the same rule `sim-secrets.ts` follows for the same reason.
-	await chmod(FCC_UNLOCK_POLICY_PATH, 0o600);
+	writeFileAtomicSync(FCC_UNLOCK_POLICY_PATH, `${JSON.stringify(state)}\n`, {
+		mode: 0o600,
+	});
 }

@@ -44,8 +44,22 @@ export function initialOtaStreamLiveness(): "idle" | "unknown" {
 	}
 }
 
+let encoderProtected = initialOtaStreamLiveness() !== "idle";
+let carryingProtected = false;
+
+export function setCarryingOtaProtection(protectedNow: boolean): boolean {
+	carryingProtected = protectedNow;
+	if (protectedNow) return writeMarker();
+	return encoderProtected || removeMarker();
+}
+
 /** A failed write keeps protection unconfirmed and must be retried by the owner. */
 export function setOtaStreamingMarker(): boolean {
+	encoderProtected = true;
+	return writeMarker();
+}
+
+function writeMarker(): boolean {
 	try {
 		fs.writeFileSync(otaStreamingMarkerPath(), "");
 		return true;
@@ -59,6 +73,11 @@ export function setOtaStreamingMarker(): boolean {
  * Stop intent disarms restoration separately; parked/failed/unknown media stops
  * retain this OTA guard. Removing an already-absent file is a no-op. */
 export function clearOtaStreamingMarker(): boolean {
+	encoderProtected = false;
+	return carryingProtected || removeMarker();
+}
+
+function removeMarker(): boolean {
 	try {
 		fs.rmSync(otaStreamingMarkerPath(), { force: true });
 		return true;

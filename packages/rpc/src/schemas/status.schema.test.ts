@@ -8,6 +8,17 @@ import {
 } from './status.schema';
 
 describe('activeEncodeSchema (Todo 19 — realized runtime encode)', () => {
+	test('route_reason is optional and survives status response parsing', () => {
+		const encode = { codec: 'h265', resolution: '1920x1080', framerate: 30 };
+		expect(activeEncodeSchema.parse(encode)).not.toHaveProperty('route_reason');
+		expect(
+			statusResponseSchema.parse({
+				active_encode: { ...encode, route_reason: 'adaptive-active' },
+			}).active_encode,
+		).toMatchObject({ route_reason: 'adaptive-active' });
+		expect(activeEncodeSchema.safeParse({ ...encode, route_reason: 5 }).success).toBe(false);
+	});
+
 	test('parses a full active_encode payload', () => {
 		const parsed = activeEncodeSchema.parse({
 			codec: 'h265',
@@ -298,5 +309,21 @@ describe('statusResponseSchema — network_ingest field (additive)', () => {
 			network_ingest: null,
 		});
 		expect(parsed.network_ingest).toBeNull();
+	});
+});
+
+describe('client carrying projection', () => {
+	test('is additive and preserves explicit unknown independently of encoder streaming', () => {
+		expect(statusResponseSchema.parse({ is_streaming: false }).carrying).toBeUndefined();
+		const parsed = statusResponseSchema.parse({
+			is_streaming: false,
+			carrying: { state: 'streaming' },
+		});
+		expect(parsed.carrying?.state).toBe('streaming');
+		expect(
+			statusResponseSchema.parse({ is_streaming: true, carrying: { state: 'unknown' } }).carrying
+				?.state,
+		).toBe('unknown');
+		expect(statusResponseSchema.safeParse({ carrying: { state: 'offline' } }).success).toBe(false);
 	});
 });

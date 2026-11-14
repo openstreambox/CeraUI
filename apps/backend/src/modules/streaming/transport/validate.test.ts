@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { permitDocumentationTargetForTest } from "../../../../../../scripts/test-safety.ts";
 
 import { probeReachability } from "./validate.ts";
 
@@ -17,6 +18,35 @@ afterEach(() => {
 });
 
 describe("probeReachability", () => {
+	it.each(["ENETUNREACH", "EHOSTUNREACH"])(
+		"reports refused when socket setup throws %s synchronously",
+		async (code) => {
+			const socketSpy = spyOn(Bun, "udpSocket").mockImplementation(() => {
+				throw Object.assign(new Error(code), { code });
+			});
+			try {
+				await expect(probeReachability("192.0.2.1", 9999)).resolves.toEqual({
+					reachable: false,
+					reason: "refused",
+				});
+			} finally {
+				socketSpy.mockRestore();
+			}
+		},
+	);
+
+	it("rejects with the original unexpected synchronous socket setup error", async () => {
+		const error = new Error("unexpected socket setup failure");
+		const socketSpy = spyOn(Bun, "udpSocket").mockImplementation(() => {
+			throw error;
+		});
+		try {
+			await expect(probeReachability("192.0.2.1", 9999)).rejects.toBe(error);
+		} finally {
+			socketSpy.mockRestore();
+		}
+	});
+
 	it("reports reachable when the peer answers", async () => {
 		const server = await Bun.udpSocket({
 			socket: {
@@ -58,6 +88,8 @@ describe("probeReachability", () => {
 		// TEST-NET-1 (RFC 5737) is non-routable; packets are dropped → timeout,
 		// and the promise must still settle inside the bound (no event-loop wedge).
 		const start = Date.now();
+		// TEST-NET-1 leaves the host by design here; the guard permits only this address.
+		permitDocumentationTargetForTest("192.0.2.1");
 		const result = await probeReachability("192.0.2.1", 9999, 200);
 		expect(result.reachable).toBe(false);
 		expect(Date.now() - start).toBeLessThan(2000);

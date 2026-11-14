@@ -40,7 +40,7 @@ test.each([
 		let effects = 0;
 		// When the actual boot reconciler decides whether to apply it.
 		const outcome = await reconcileBluetoothServices({
-			isRealDevice: async () => true,
+			canRouteClients: async () => true,
 			preference: defaultBluetoothPreferenceStore,
 			systemctl: async (args) => {
 				if (["enable", "disable", "start", "stop"].includes(args[0] ?? ""))

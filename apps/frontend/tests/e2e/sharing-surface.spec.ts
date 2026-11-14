@@ -22,6 +22,10 @@ import {
  */
 
 const CARD = '[data-testid="sharing-section"]';
+// The card's diagnostics carry no control. The operator's sharing policy
+// (SharingPolicyControl, data-testid="sharing-policy") is its one deliberate
+// control surface; this suffix excludes it from the no-control assertions.
+const OUTSIDE_POLICY = ':not([data-testid="sharing-policy"] *)';
 
 test.describe('Internet-Sharing surface', () => {
 	let wire: SharingWire;
@@ -201,7 +205,7 @@ test.describe('Internet-Sharing surface', () => {
 			);
 		}
 
-		await expect(page.locator(`${CARD} button`)).toHaveCount(0);
+		await expect(page.locator(`${CARD} button${OUTSIDE_POLICY}`)).toHaveCount(0);
 	});
 
 	test('carries ZERO controls — every signal it renders is diagnostic only', async ({
@@ -211,8 +215,10 @@ test.describe('Internet-Sharing surface', () => {
 		const card = page.locator(CARD);
 
 		for (const selector of ['button', 'input', 'select', 'a[href]', '[role="switch"]']) {
-			await expect(card.locator(selector)).toHaveCount(0);
+			await expect(card.locator(selector + OUTSIDE_POLICY)).toHaveCount(0);
 		}
+		// The operator policy is the card's one control surface, folded in one disclosure.
+		await expect(card.getByTestId('sharing-policy')).toHaveCount(1);
 		// Non-vacuity: the card really did render its degraded content.
 		await expect(page.getByTestId('sharing-band-no-healthy-uplink')).toBeVisible();
 	});
@@ -253,7 +259,9 @@ test.describe('Internet-Sharing surface — quiet when sharing is off', () => {
 		]) {
 			await expect(page.getByTestId(testid)).toHaveCount(0);
 		}
-		// Nothing is merely folded away: no disclosure is left to open.
-		await expect(card.locator('details')).toHaveCount(0);
+		// Nothing diagnostic is merely folded away: the operator policy is the
+		// only disclosure left to open.
+		await expect(card.locator('details')).toHaveCount(1);
+		await expect(card.locator('details')).toHaveAttribute('data-testid', 'sharing-policy');
 	});
 });

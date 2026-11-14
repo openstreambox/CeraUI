@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { initControlChannel, isConnected, sendFrame } from "./channel.ts";
 import type { Frame } from "./protocol.ts";
 
@@ -67,4 +67,17 @@ test("a refused real control socket handles error and close without an uncaught 
 		await initControlChannel({ canDial: () => false });
 		process.off("uncaughtException", uncaught);
 	}
+});
+
+const suiteNodeEnv = process.env.NODE_ENV;
+const suiteMockMode = process.env.MOCK_MODE;
+beforeEach(() => {
+	process.env.NODE_ENV = "development";
+	delete process.env.MOCK_MODE;
+});
+afterEach(() => {
+	if (suiteNodeEnv === undefined) delete process.env.NODE_ENV;
+	else process.env.NODE_ENV = suiteNodeEnv;
+	if (suiteMockMode === undefined) delete process.env.MOCK_MODE;
+	else process.env.MOCK_MODE = suiteMockMode;
 });

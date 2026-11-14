@@ -83,7 +83,7 @@ function makeControlHarness(
 		active?: string[];
 		mediamtxSrt?: boolean;
 		srtUnitPresent?: boolean;
-		isRealDevice?: boolean;
+		canManageIngest?: boolean;
 		systemctlThrows?: boolean;
 	} = {},
 ): ControlHarness {
@@ -96,7 +96,7 @@ function makeControlHarness(
 		saveConfig: () => {
 			counts.save++;
 		},
-		isRealDevice: async () => opts.isRealDevice ?? true,
+		canManageIngest: async () => opts.canManageIngest ?? true,
 		systemctl: async (args) => {
 			calls.push(["systemctl", ...args]);
 			if (opts.systemctlThrows) throw new Error("systemctl failed");
@@ -283,7 +283,7 @@ describe("reconcileIngestDesiredState — boot safety", () => {
 	});
 
 	test("emulated host → no-op, zero spawns", async () => {
-		const h = makeControlHarness({ isRealDevice: false, mediamtxSrt: true });
+		const h = makeControlHarness({ canManageIngest: false, mediamtxSrt: true });
 		await reconcileIngestDesiredState(h.deps);
 		expect(h.calls).toEqual([]);
 		expect(h.counts.refresh).toBe(0);
@@ -519,4 +519,40 @@ describe("network.setIngestEnabled handler — mocks (zero spawns)", () => {
 		expect(ok.success).toBe(true);
 		expect(ok).not.toHaveProperty("error");
 	});
+});
+
+test("denied direct ingest toggle has no persistence or service effects", async () => {
+	const effects: string[] = [];
+	const deps: NetworkIngestControlDeps = {
+		canManageIngest: async () => false,
+		getConfig: () => {
+			effects.push("read");
+			return runtimeConfigSchema.parse({});
+		},
+		saveConfig: () => {
+			effects.push("save");
+		},
+		systemctl: async () => {
+			effects.push("systemctl");
+			return { stdout: "", stderr: "" };
+		},
+		isActive: async () => {
+			effects.push("probe");
+			return false;
+		},
+		readMediamtxSrt: async () => false,
+		srtUnitPresent: async () => false,
+		refreshAndBroadcast: async () => {
+			effects.push("refresh");
+		},
+		broadcastSources: () => {
+			effects.push("broadcast");
+		},
+		log: () => {},
+	};
+	expect(await setIngestEnabled("srt", true, deps)).toEqual({
+		success: false,
+		error: NETWORK_INGEST_UNAVAILABLE_ERROR,
+	});
+	expect(effects).toEqual([]);
 });

@@ -40,10 +40,8 @@
  * working directory.
  */
 
-import { chmodSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-
 import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
 import { logger } from "../../helpers/logger.ts";
 import {
@@ -125,8 +123,9 @@ export const defaultBluetoothPreferenceStore: BluetoothPreferenceStore = {
 			enabled: preference.enabled,
 		};
 		try {
-			writeFileAtomicSync(file, `${JSON.stringify(body, null, 2)}\n`);
-			chmodSync(file, 0o600);
+			writeFileAtomicSync(file, `${JSON.stringify(body, null, 2)}\n`, {
+				mode: 0o600,
+			});
 		} catch (err) {
 			logger.warn(
 				`bluetooth: could not persist the preference: ${String(err)}`,

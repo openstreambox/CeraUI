@@ -12,7 +12,7 @@ import { parseAuthorityJson } from "./strict-authority-json.ts";
 export const KERNEL_STATE_DIR = "/data/ceralive/update-state";
 export const kernelPackage = z
 	.string()
-	.regex(/^linux-image-[0-9]+\.[0-9]+\.[0-9]+-ceralive-rk3588$/);
+	.regex(/^linux-image-[0-9]+\.[0-9]+\.[0-9]+-ceralive-[a-z0-9][a-z0-9_-]*$/);
 export const kernelVersion = z
 	.string()
 	.regex(/^[0-9]+\.[0-9]+\.[0-9]+-ceralive[1-9][0-9]*$/);
@@ -143,7 +143,9 @@ export function acknowledgeKernelState(
 	const state = kernelStateSchema.parse(parseAuthorityJson(text));
 	if (state.attempt !== attempt || kernelPending(state) || state.acknowledged)
 		return;
-	writeFileAtomicSync(file, JSON.stringify({ ...state, acknowledged: true }));
+	writeFileAtomicSync(file, JSON.stringify({ ...state, acknowledged: true }), {
+		mode: 0o600,
+	});
 	syncOrchestratorDirectory(file);
 }
 

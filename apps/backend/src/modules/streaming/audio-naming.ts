@@ -127,7 +127,7 @@ export function isHumanAudioName(
 /**
  * Parse `/proc/asound/cards` into a `Map<cardId, longname>`. NEVER throws —
  * garbled / partial / empty input degrades to an empty (or partial) map, so the
- * `isRealDevice()`-gated read in the caller can pass whatever it got.
+ * `audio`-capability-gated read in the caller can pass whatever it got.
  *
  * The kernel format is two lines per card:
  * ```

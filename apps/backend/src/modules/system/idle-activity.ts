@@ -5,6 +5,7 @@ import {
 } from "../remote-control/command-router.ts";
 import { currentLifecycleHolder } from "../streaming/lifecycle-admission.ts";
 import { getActivePreviewProxyCount } from "../ui/preview-proxy.ts";
+import { carryingTracker, getCarryingLiveness } from "./carrying.ts";
 import { evaluateIdle, type IdleEvaluation } from "./idle-detector.ts";
 import {
 	getIdleMemory,
@@ -27,11 +28,19 @@ export async function getIdleStatus(input: {
 		return { idle: false, since: null, blockers: [error.reason] };
 	}
 	const memory = getIdleMemory();
+	const monoNow = performance.now();
+	const carryAt = carryingTracker.activityAt(monoNow);
 	return evaluateIdle({
 		now: input.now,
 		idleMinutes: 30,
 		schedule: input.schedule,
 		lastActivity: {
+			carrying:
+				getCarryingLiveness() !== "idle"
+					? input.now
+					: carryAt === null
+						? null
+						: input.now - (monoNow - carryAt),
 			// Unknown liveness is current activity: only confirmed idle ages it.
 			stream: !isStreamConfirmedIdle()
 				? input.now

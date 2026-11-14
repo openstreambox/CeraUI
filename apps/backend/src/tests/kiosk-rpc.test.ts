@@ -406,7 +406,7 @@ describe("kioskConfigure", () => {
 });
 
 describe("system.kiosk* RPC procedures", () => {
-	// The four action handlers gate on isRealDevice() (T13); these delegation
+	// The four action handlers gate on the kiosk capability (T13); these delegation
 	// tests pin the real-device branch via the explicit override so the suite is
 	// deterministic on any host.
 	let savedDeviceType: string | undefined;
@@ -533,7 +533,7 @@ describe("system.kiosk* RPC procedures", () => {
 });
 
 /*
- * T13 — the four action handlers gate on isRealDevice(). On a dev/CI/emulated
+ * T13 — the four action handlers gate on the kiosk capability. On a dev/CI/emulated
  * host the user-reported bug was that toggling kiosk pushed the developer's own
  * machine into host kiosk mode. The gate must short-circuit BEFORE any kiosk
  * module function runs, so systemd and the add-on manager are never touched. The
@@ -541,7 +541,7 @@ describe("system.kiosk* RPC procedures", () => {
  * enableAddon/disableAddon); a gated handler must leave every spy untouched and
  * the persisted config unchanged.
  */
-describe("kiosk RPC isRealDevice() gate (T13)", () => {
+describe("kiosk RPC capability gate (T13)", () => {
 	type GateHarness = {
 		deps: KioskDeps;
 		systemctlCalls: string[][];
@@ -730,4 +730,17 @@ describe("kiosk RPC isRealDevice() gate (T13)", () => {
 			expect(h.oskSignals).toContainEqual("SIGUSR2");
 		});
 	});
+});
+
+const suiteNodeEnv = process.env.NODE_ENV;
+const suiteMockMode = process.env.MOCK_MODE;
+beforeEach(() => {
+	process.env.NODE_ENV = "production";
+	delete process.env.MOCK_MODE;
+});
+afterEach(() => {
+	if (suiteNodeEnv === undefined) delete process.env.NODE_ENV;
+	else process.env.NODE_ENV = suiteNodeEnv;
+	if (suiteMockMode === undefined) delete process.env.MOCK_MODE;
+	else process.env.MOCK_MODE = suiteMockMode;
 });

@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
-
+import { resolveModemPhysicalIdentity } from "../modules/modems/physical-identity-source.ts";
 import {
 	NETIF_ERR_DUPIPV4,
 	NETIF_ERR_HOTSPOT,
 	NETIF_ERR_SHAREDLAN,
 	type NetworkInterface,
 } from "../modules/network/network-interfaces.ts";
+import {
+	refreshUsbNetMarkers,
+	resetUsbNetMarkers,
+} from "../modules/network/router-cellular-scan.ts";
 import {
 	UPLINK_HEALTH_CONFIG,
 	UplinkHealthEngine,
@@ -21,7 +25,12 @@ import {
 	readDesiredSteeringState,
 	type SteeringStateBuilderDeps,
 } from "../modules/network/uplink-steering/state-builder.ts";
+import {
+	constructedTwinDeps,
+	constructedTwins,
+} from "./helpers/constructed-usb-twins.ts";
 import { scripted } from "./uplink-steering-route-test-fixtures.ts";
+import { readReadySteeringState } from "./uplink-steering-test-fixtures.ts";
 
 function netif(
 	ip: string,
@@ -61,6 +70,10 @@ function harness(
 ): SteeringStateBuilderDeps & { planned: UplinkRouteCandidate[] } {
 	const planned: UplinkRouteCandidate[] = [];
 	return {
+		netifReady: () => true,
+		zonesReady: () => true,
+		identityCovered: () => true,
+		identityDeadlineExpired: () => false,
 		interfaces: () => ({
 			"clap-wlan0": netif("10.42.0.1", "255.255.255.0", NETIF_ERR_HOTSPOT),
 			eth9: netif("10.43.0.1", "255.255.255.0", NETIF_ERR_SHAREDLAN),
@@ -90,9 +103,81 @@ function harness(
 }
 
 describe("readDesiredSteeringState", () => {
+	test.each(["netif", "zones"] as const)(
+		"keeps the first plan pending before %s readiness, even with no client zones",
+		async (missing) => {
+			const h = harness({
+				netifReady: () => missing !== "netif",
+				zonesReady: () => missing !== "zones",
+				interfaces: () => ({}),
+			});
+			expect(await readDesiredSteeringState(h)).toEqual({
+				pending: true,
+				netifReady: missing !== "netif",
+				reason: missing,
+			});
+			expect(h.planned).toEqual([]);
+		},
+	);
+
+	test("holds the first plan for uncovered identities and omits only new identities after apply", async () => {
+		const h = harness({ identityCovered: () => false });
+		expect(await readDesiredSteeringState(h)).toMatchObject({
+			pending: true,
+			reason: "identity",
+		});
+		expect(h.planned).toEqual([]);
+		const state = await readReadySteeringState(h, { hasAppliedState: true });
+		expect(state.uplinks.map((entry) => entry.ifname)).toEqual(["wlan0"]);
+	});
+
+	test("uses the shared identity deadline to plan an uncovered fallback", async () => {
+		const h = harness({
+			identityCovered: () => false,
+			identityDeadlineExpired: () => true,
+			physicalIdentity: (ifname) => `ifname:${ifname}`,
+		});
+		const state = await readReadySteeringState(h);
+		expect(
+			state.uplinks.find((entry) => entry.ifname === "wwan0")?.identity,
+		).toBe("ifname:wwan0");
+	});
+
+	test("a populated snapshot without wlan devices is ready without Wi-Fi discovery", async () => {
+		const h = harness({ interfaces: () => ({}) });
+		expect(await readDesiredSteeringState(h)).toEqual({
+			clientZones: [],
+			uplinks: [],
+			routes: [],
+		});
+	});
+
+	test("assigns the constructed Dell placeholders two distinct steering marks", async () => {
+		try {
+			await refreshUsbNetMarkers(
+				constructedTwins.map((d) => d.ifname),
+				constructedTwinDeps(),
+			);
+			const h = harness({
+				interfaces: () => ({
+					eth9: netif("10.43.0.1", "255.255.255.0", NETIF_ERR_SHAREDLAN),
+					wwu1u4c2: netif("100.64.1.2"),
+					wwu1c2: netif("100.64.2.2"),
+				}),
+				health: () => [],
+				physicalIdentity: (ifname) =>
+					resolveModemPhysicalIdentity(ifname).identityKey,
+			});
+			const state = await readReadySteeringState(h);
+			expect(state.uplinks).toHaveLength(2);
+			expect(new Set(state.uplinks.map((u) => u.mark)).size).toBe(2);
+		} finally {
+			resetUsbNetMarkers();
+		}
+	});
 	test("derives both client zones and consumes health weights", async () => {
 		const h = harness();
-		const state = await readDesiredSteeringState(h);
+		const state = await readReadySteeringState(h);
 
 		expect(state.clientZones).toEqual([
 			{ ifname: "clap-wlan0", ipv4Cidr: "10.42.0.0/24" },
@@ -115,14 +200,14 @@ describe("readDesiredSteeringState", () => {
 
 	test("defaults an unobserved uplink to full weight during health startup", async () => {
 		const h = harness({ health: () => [] });
-		const state = await readDesiredSteeringState(h);
+		const state = await readReadySteeringState(h);
 
 		expect(state.uplinks.map((item) => item.weight)).toEqual([100, 100, 100]);
 	});
 
 	test("withholds WiFi until its permanent identity is available", async () => {
 		const h = harness({ wifiIdentity: () => undefined });
-		const state = await readDesiredSteeringState(h);
+		const state = await readReadySteeringState(h);
 
 		expect(state.uplinks.map((item) => item.ifname)).toEqual(["wwan0"]);
 	});
@@ -203,7 +288,7 @@ describe("readDesiredSteeringState", () => {
 			isClientZone: (ifname) => ifname === "eth9",
 			planRoute: (candidate) => planUplinkRoute(candidate, routeDeps),
 		});
-		const state = await readDesiredSteeringState(h);
+		const state = await readReadySteeringState(h);
 		expect(state.uplinks.map((uplink) => uplink.ifname)).toEqual(["wlan1"]);
 		expect(state.routes).toHaveLength(1);
 		expect(state.routes[0]).toMatchObject({
@@ -305,7 +390,7 @@ describe("known-down uplink rejoin", () => {
 		for (const now of [lostAt + 1_000, dwellAt]) {
 			observe("passive_degraded", now);
 			h.planned.length = 0;
-			const state = await readDesiredSteeringState(h);
+			const state = await readReadySteeringState(h);
 			expect(
 				state.uplinks.map(({ ifname, weight }) => ({ ifname, weight })),
 			).toEqual([{ ifname: "wwan0", weight: 100 }]);
@@ -347,7 +432,7 @@ describe("known-down uplink rejoin", () => {
 		}
 		expect(engine.get("wlan0")?.probes.successes).toBe(4);
 		expect(
-			(await readDesiredSteeringState(h)).uplinks.map(({ ifname }) => ifname),
+			(await readReadySteeringState(h)).uplinks.map(({ ifname }) => ifname),
 		).toEqual(["wwan0"]);
 		expect(h.planned.map(({ ifname }) => ifname)).toEqual(["wwan0"]);
 
@@ -355,7 +440,7 @@ describe("known-down uplink rejoin", () => {
 		expect(engine.get("wlan0")).toMatchObject({ state: "up", weight: 100 });
 		h.planned.length = 0;
 		expect(
-			(await readDesiredSteeringState(h)).uplinks.map(({ ifname }) => ifname),
+			(await readReadySteeringState(h)).uplinks.map(({ ifname }) => ifname),
 		).toEqual(["wlan0", "wwan0"]);
 		expect(h.planned.map(({ ifname }) => ifname)).toEqual(["wlan0", "wwan0"]);
 	});
@@ -378,7 +463,7 @@ describe("known-down uplink rejoin", () => {
 			lastTransition: lostAt,
 		});
 		expect(
-			(await readDesiredSteeringState(h)).uplinks.map(({ ifname }) => ifname),
+			(await readReadySteeringState(h)).uplinks.map(({ ifname }) => ifname),
 		).toEqual(["wwan0"]);
 
 		observe("success", dwellAt);
@@ -389,7 +474,7 @@ describe("known-down uplink rejoin", () => {
 		});
 		h.planned.length = 0;
 		expect(
-			(await readDesiredSteeringState(h)).uplinks.map(({ ifname }) => ifname),
+			(await readReadySteeringState(h)).uplinks.map(({ ifname }) => ifname),
 		).toEqual(["wlan0", "wwan0"]);
 		expect(h.planned.map(({ ifname }) => ifname)).toEqual(["wlan0", "wwan0"]);
 	});
@@ -411,7 +496,7 @@ describe("known-down uplink rejoin", () => {
 		});
 		expect(engine.isClientSteeringEligible("wlan0")).toBe(false);
 		expect(
-			(await readDesiredSteeringState(h)).uplinks.map(({ ifname, weight }) => ({
+			(await readReadySteeringState(h)).uplinks.map(({ ifname, weight }) => ({
 				ifname,
 				weight,
 			})),

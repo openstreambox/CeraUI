@@ -52,7 +52,7 @@ for (const action of ["enable", "disable"] as const) {
 				});
 				let refreshes = 0;
 				const deps = {
-					isRealDevice: async () => true,
+					canManageAddons: async () => true,
 					readDescriptor: async () => sysextDescriptor,
 					exec: async (_file: string, args: readonly string[]) => {
 						if (args.includes("refresh")) {

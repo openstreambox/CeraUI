@@ -2,7 +2,7 @@
  * Unit tests for the TypeScript wrapper around the privileged
  * `ceralive-addon-helper` binary (T27, src/helpers/addon-helper.ts).
  *
- * These cover the WRAPPER's contract — argv-only construction, the isRealDevice
+ * These cover the WRAPPER's contract — argv-only construction, the add-on capability
  * gate (G6), and id validation — via injected deps, without ever spawning sudo.
  * The helper's OWN security logic (allowlist + sig/sha256 verification) is
  * exercised end-to-end against the real bash script in addon-helper-script.test.ts.
@@ -38,7 +38,7 @@ function spyDeps(over: Partial<AddonHelperDeps> = {}): {
 } {
 	const calls: Call[] = [];
 	const deps: AddonHelperDeps = {
-		isRealDevice: () => Promise.resolve(true),
+		canManageAddons: () => Promise.resolve(true),
 		readDescriptor: async (id) => ({ ...sysextDescriptor, id }),
 		exec: (file, args) => {
 			calls.push({ file, args });
@@ -85,11 +85,11 @@ describe("addon-helper wrapper — action/id forwarding through the legacy exec 
 	});
 });
 
-describe("addon-helper wrapper — isRealDevice gate (G6)", () => {
+describe("addon-helper wrapper — add-on capability gate (G6)", () => {
 	it("refuses every op in emulated mode without reaching the fixture exec ledger", async () => {
 		let spawned = false;
 		const { deps } = spyDeps({
-			isRealDevice: () => Promise.resolve(false),
+			canManageAddons: () => Promise.resolve(false),
 			exec: () => {
 				spawned = true;
 				return Promise.resolve({ stdout: "", stderr: "" });
@@ -113,7 +113,7 @@ describe("addon-helper wrapper — id validation (defense in depth)", () => {
 	it("rejects a malformed / traversal id before the gate or any exec", async () => {
 		let touched = false;
 		const { deps } = spyDeps({
-			isRealDevice: () => {
+			canManageAddons: () => {
 				touched = true;
 				return Promise.resolve(true);
 			},
