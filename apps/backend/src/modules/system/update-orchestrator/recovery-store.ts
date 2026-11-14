@@ -90,6 +90,7 @@ async function durableReplace(path: string, bytes: Buffer): Promise<void> {
 		0o600,
 	);
 	try {
+		await handle.chmod(0o600);
 		await handle.writeFile(bytes);
 		await handle.sync();
 	} finally {

@@ -408,3 +408,12 @@ migration today.
 - `apps/backend/src/helpers/boot-cleanup.ts` — the T7 orphan sweep.
 - `docs/CONVENTIONS.md` — CeraUI-local conventions (this doc doesn't restate
   them).
+
+### Private descriptor writes
+
+Private recovery journals, job authority, preserved damaged records and diagnostic
+evidence set descriptor permissions before writing bytes. Specialized writers keep
+their exclusive-create and pinned-directory contracts. Whole-file replacements,
+including the Wi-Fi rest journal and imported signing key, use the shared atomic
+writer with mode 0600. Creation options on high-level file APIs are insufficient;
+existing readable files and restrictive process umasks must also be handled.

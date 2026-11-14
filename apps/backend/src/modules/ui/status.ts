@@ -46,6 +46,7 @@ import {
 	getResolvedAsrcCandidates,
 	getResolvedAsrcReason,
 } from "../streaming/auto-audio.ts";
+import { cerastreamBackend } from "../streaming/cerastream-backend.ts";
 import { getEngineBitrateStatus } from "../streaming/engine-bitrate-status.ts";
 import { buildBondMapping } from "../streaming/link-mapping-report.ts";
 import {
@@ -149,6 +150,7 @@ export function sendInitialStatus(conn: WebSocket) {
 	conn.send(buildMsg("sensors", getSensors()));
 	conn.send(buildMsg(ENCODER_LOAD_EVENT, getEncoderLoad()));
 	conn.send(buildMsg(FAN_EVENT, getFan()));
+	conn.send(buildMsg("heat", cerastreamBackend.getHeat()));
 	conn.send(buildMsg(CPU_EVENT, getCpuInfo()));
 	conn.send(buildMsg(BLUETOOTH_EVENT, getBluetoothStatusMessage()));
 	conn.send(buildMsg("revisions", getRevisions()));

@@ -13,6 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
 	closeSync,
 	constants,
+	fchmodSync,
 	fstatSync,
 	fsyncSync,
 	linkSync,
@@ -185,6 +186,7 @@ export function preserveDamagedRecord(path: string, bytes: Uint8Array): string {
 		const fd = openSync(temp, "wx", 0o600);
 		pendingArchiveTemps.set(key, { name, fd });
 		try {
+			fchmodSync(fd, 0o600);
 			let written = 0;
 			while (written < bytes.length) {
 				const count = writeSync(fd, bytes, written, bytes.length - written);

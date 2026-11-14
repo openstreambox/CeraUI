@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { chromium, expect, type Page } from '@playwright/test';
+import { writeFileAtomicSync } from '../../../backend/src/helpers/config-loader.ts';
 
 /**
  * Playwright globalSetup — seeds a real persistent auth token before any worker
@@ -116,7 +117,7 @@ async function persistIssuedToken(page: Page): Promise<void> {
 	if (testToken.length === 0 || testToken === 'PLACEHOLDER_NO_TOKEN_YET') {
 		throw new Error('e2e token was not seeded before spec discovery');
 	}
-	fs.writeFileSync(TOKEN_RECORDS, JSON.stringify({ ...records, [digest(testToken)]: true }), { mode: 0o600 });
+	writeFileAtomicSync(TOKEN_RECORDS, JSON.stringify({ ...records, [digest(testToken)]: true }), { mode: 0o600 });
 }
 
 export default async function globalSetup(): Promise<void> {

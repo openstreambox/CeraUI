@@ -39,8 +39,8 @@ import { deriveCaptureBands, type MatchAction } from '$lib/streaming/capture-fai
 import type { EncoderLoadReading } from '$lib/streaming/encoder-load';
 import { deriveLiveSourceState } from '$lib/streaming/live-source-state';
 import type { ActiveSummary } from '$lib/streaming/sourceSummary';
-
 import BitrateAdjuster from './BitrateAdjuster.svelte';
+import HeatNotice from './HeatNotice.svelte';
 import LiveSourceSwitch from './LiveSourceSwitch.svelte';
 import LiveSummaryStrip from './LiveSummaryStrip.svelte';
 import PreviewDisclosure from './PreviewDisclosure.svelte';
@@ -357,6 +357,7 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 		     component, same single-use-token proxy dial, still off until opened. -->
 		<PreviewDisclosure streaming={true} />
 
+		<HeatNotice />
 		<StreamTelemetryStrip
 			{bitrate}
 			{bitrateMeasured}

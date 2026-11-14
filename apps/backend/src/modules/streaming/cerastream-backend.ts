@@ -115,8 +115,18 @@ import { activeEncodeSchema, toEngineResolution } from "@ceraui/rpc/schemas";
 import { z } from "zod";
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { logger as defaultLogger } from "../../helpers/logger.ts";
+import { getms } from "../../helpers/time.ts";
 import { ENGINE_STATE_RECONCILE_TIMEOUT } from "../../helpers/timing-constants.ts";
 import { getConfig, saveConfig } from "../config.ts";
+import { getModems } from "../modems/modems-state.ts";
+import type { ModemHeatSample } from "../modems/temperature.ts";
+import { setHeatBondRest } from "../network/bond-preference.ts";
+import {
+	getNetworkInterfaces,
+	isBondCandidate,
+	onNetworkInterfacesChange,
+	triggerNetworkInterfacesChange,
+} from "../network/network-interfaces.ts";
 import { setup } from "../setup.ts";
 import {
 	notificationBroadcast,
@@ -140,6 +150,14 @@ import {
 	currentRuntimeObservationOwner,
 	currentRuntimeObservationUncertainty,
 } from "./engine-runtime-observation.ts";
+import {
+	advanceHeat,
+	HEAT_SETTINGS,
+	heatCeiling,
+	initialHeat,
+	plausibleTemperature,
+} from "./heat-ladder.ts";
+import { type HeatLinkEvidence, HeatLinkRest } from "./heat-link-rest.ts";
 import {
 	createLaunchTransaction,
 	type LaunchTransaction,
@@ -166,6 +184,7 @@ import type {
 	StreamRunOptions,
 } from "./streaming-backend.ts";
 import { PROCESS_ERROR_CODES } from "./streamloop/process-error-patterns.ts";
+import type { parseSupervisor } from "./supervisor-status.ts";
 
 const CERASTREAM_PIPELINE_PATH = "/tmp/cerastream-pipeline.txt";
 
@@ -212,6 +231,9 @@ export interface CerastreamLogger {
 
 /** Injected collaborators; defaults wire the real CeraUI modules. */
 export interface CerastreamBackendDeps {
+	getHeatLinks?: () => readonly HeatLinkEvidence[];
+	/** Called on link changes while a link rests, so its return never waits for a sensor tick. */
+	onHeatLinksChange?: (callback: () => void) => () => void;
 	connect: (options?: ConnectOptions) => Promise<CerastreamClient>;
 	connectOptions: ConnectOptions;
 	getConfig: () => RuntimeConfig;
@@ -713,6 +735,315 @@ export class CerastreamBackend implements StreamingBackend {
 	private client: CerastreamClient | undefined;
 	private subscription: Subscription | undefined;
 	private active = false;
+	private heat = initialHeat();
+	private heatCanReduce = true;
+	private modemUnavailable = false;
+	private heatRest = new HeatLinkRest();
+	private heatLinksUnsubscribe: (() => void) | undefined;
+	private supervisor: ReturnType<typeof parseSupervisor> = null;
+	private supervisorAt = -Infinity;
+	private heatLinks(): readonly HeatLinkEvidence[] {
+		const resting = this.heatRest.resting;
+		return (
+			this.deps.getHeatLinks?.() ??
+			Object.entries(getNetworkInterfaces()).map(([name, link]) => ({
+				name,
+				modem: Object.values(getModems()).some(
+					(m) => m.ifname === name && !m.removed,
+				),
+				healthy: isBondCandidate(name, link) || name === resting,
+				headroom: null,
+			}))
+		);
+	}
+	private publishHeatRest(before: string | null): void {
+		const after = this.heatRest.resting;
+		if (before === after) return;
+		setHeatBondRest(after);
+		// Watch links only while one rests: its return must not wait for a tick.
+		if (after !== null && !this.heatLinksUnsubscribe)
+			this.heatLinksUnsubscribe = (
+				this.deps.onHeatLinksChange ?? onNetworkInterfacesChange
+			)(() => this.releaseHeatRest());
+		if (after === null) {
+			this.heatLinksUnsubscribe?.();
+			this.heatLinksUnsubscribe = undefined;
+		}
+		triggerNetworkInterfacesChange();
+	}
+	/**
+	 * The return half alone. Runs on every sensor tick and link change, also
+	 * while a heat change is failing or pending and while the engine's control
+	 * connection is down: a rested link comes back as soon as its peers lose
+	 * their headroom.
+	 */
+	private releaseHeatRest(): void {
+		const before = this.heatRest.resting;
+		if (before === null) return;
+		this.heatRest.release(this.heatLinks());
+		this.publishHeatRest(before);
+	}
+	private reconcileHeatRest(): void {
+		const before = this.heatRest.resting;
+		this.heatRest.update(
+			this.active &&
+				!this.heat.keepQuality &&
+				HEAT_SETTINGS.automaticSpareLink &&
+				this.heat.stage >= 2 &&
+				((!this.heat.unknown && this.heatCanReduce) || before !== null),
+			this.heatLinks(),
+		);
+		this.publishHeatRest(before);
+	}
+	/** Fixture/source seam only. A transport must enforce freshness and epoch before calling. */
+	setHeatSupervisor(status: ReturnType<typeof parseSupervisor>): void {
+		this.supervisor = status;
+		this.supervisorAt = getms();
+	}
+
+	/** Ceiling this session last asked the engine for; null until the session is established. */
+	private heatRequested: number | null = null;
+	/** Maximum the engine reported it applied for this session; null when not known. */
+	private heatApplied: number | null = null;
+	/** The engine's value is unknown (adopted or reconnected session): send even if unchanged. */
+	private heatResend = false;
+	private heatInFlight = false;
+	/** Explicit restoration intent, retained through rejection until confirmed or cancelled. */
+	private heatManualPending = false;
+	private heatRecordPending = false;
+	private heatRetryAt = -Infinity;
+	private heatBackoffMs = 0;
+	private heatDrain: Promise<void> = Promise.resolve();
+	private heatError = false;
+	private heatHistory: Array<{
+		at: number;
+		stage: number;
+		ceiling: number;
+		keepQuality: boolean;
+	}> = [];
+	/** The engine holds this session's current ceiling and no change is failing. */
+	private heatCapSettled(): boolean {
+		return (
+			!this.heatError &&
+			!this.heatResend &&
+			this.heatRequested === heatCeiling(this.heat, this.ownBitrate()) &&
+			// The engine must have applied it: a source that kept more than the
+			// cap has not taken the first step, so no link rests after it.
+			this.heatApplied !== null &&
+			this.heatApplied <= this.heatRequested
+		);
+	}
+	private ownBitrate(): number {
+		return this.deps.getConfig().max_br ?? DEFAULT_MAX_BITRATE;
+	}
+	/** Heat inputs (and their modem reads) are wanted only while a stream runs. */
+	wantsHeatInputs(): boolean {
+		return this.active && this.runtimeEvidence?.state !== "idle";
+	}
+	getHeat() {
+		const own = this.ownBitrate();
+		const supervisor =
+			getms() - this.supervisorAt <= HEAT_SETTINGS.staleMs
+				? this.supervisor
+				: null;
+		return {
+			stage: this.heat.stage,
+			restingLink: this.heatRest.resting,
+			restUnavailable:
+				this.heat.stage >= 2 &&
+				!this.heat.keepQuality &&
+				!this.heatRest.resting &&
+				this.heatRest.blocked === "capacity",
+			modemUnavailable: this.active && this.modemUnavailable,
+			protectionReduced: supervisor?.protectionReduced ?? null,
+			supplyUnproven: supervisor?.supplyUnproven ?? false,
+			packJump: supervisor?.packJump ?? false,
+			packDatasheet: supervisor?.packDatasheet ?? false,
+			packUnprotected: supervisor?.packCalibration === "none",
+			unknown:
+				this.heat.unknown ||
+				(this.active &&
+					(this.heat.lastAt === null ||
+						getms() - this.heat.lastAt > HEAT_SETTINGS.staleMs)),
+			phoneAdvice: HEAT_SETTINGS.phoneChargingAdvice,
+			keepQuality: this.heat.keepQuality,
+			ceiling: this.heatApplied,
+			reduced: this.heatApplied !== null && this.heatApplied < own,
+			// Asked for less than the user's maximum, but the engine kept more
+			// (passthrough or a source-fixed rate): nothing was reduced.
+			cannotReduce:
+				this.heatRequested !== null &&
+				this.heatApplied !== null &&
+				this.heatRequested < own &&
+				this.heatApplied > this.heatRequested,
+			error: this.heatError,
+			history: this.heatHistory,
+		};
+	}
+	/**
+	 * Feed one sensor sample. Synchronous on purpose: the 1 s sensor loop must
+	 * never wait on the engine queue or the modems. At most one heat change is
+	 * in flight; it always sends the latest ceiling when it runs.
+	 */
+	updateHeat(
+		temperature: number | null,
+		now: number,
+		modem?: ModemHeatSample,
+	): void {
+		// The return half first, before any guard: a rested link comes back when
+		// its peers weaken even without an engine connection.
+		if (this.active) this.releaseHeatRest();
+		if (!this.active || !this.client || this.runtimeEvidence?.state === "idle")
+			return;
+		this.modemUnavailable = modem?.unavailable === true;
+		// An implausible modem value is missing evidence for that input only; it
+		// never makes the whole state unknown (which would switch off SoC heat).
+		const modemValue =
+			modem && plausibleTemperature(modem.value) ? modem.value : null;
+		const modemMissing =
+			modem?.missing === true || (modem?.value != null && modemValue === null);
+		this.heatCanReduce =
+			!modemMissing ||
+			(temperature !== null &&
+				temperature >= (HEAT_SETTINGS.thresholds.soc?.[1] ?? Infinity));
+		const before = this.heat.stage;
+		const restoringLink = this.heatRest.resting !== null;
+		const capBefore = this.heat.capStage;
+		this.heat = advanceHeat(
+			this.heat,
+			{
+				soc: temperature,
+				...(modemValue === null ? {} : { modem: modemValue }),
+			},
+			now,
+			!modemMissing,
+		);
+		if (before !== this.heat.stage) this.heatRecordPending = true;
+		// Restore the later link action first, then wait for the next reverse step.
+		if (restoringLink && this.heat.stage < 2) this.heat.capStage = capBefore;
+		if (this.heat.stage < 2) this.reconcileHeatRest();
+		// Unknown permits only a session resend or an explicit restoration intent.
+		if (!this.heat.unknown || this.heatResend || this.heatManualPending)
+			this.requestHeatApply(now);
+		// A link rests only after the bitrate cap is confirmed (step order).
+		if (this.heat.stage >= 2 && this.heatCapSettled()) this.reconcileHeatRest();
+	}
+	async keepHeatQuality(enabled: boolean): Promise<void> {
+		if (!this.active) return;
+		this.heat = { ...this.heat, keepQuality: enabled };
+		this.heatRecordPending = true;
+		this.heatManualPending = enabled;
+		if (enabled) this.reconcileHeatRest();
+		// Switching Keep quality on restores the user's maximum even while the
+		// temperature is unknown; switching it off never resumes a cap blind.
+		this.requestHeatApply(getms(), enabled);
+		await this.heatDrain;
+		if (!enabled && this.heatCapSettled()) this.reconcileHeatRest();
+	}
+	private requestHeatApply(now: number, manual = false): void {
+		const client = this.client;
+		if (!client || !this.active) return;
+		if (this.heatRequested === null && !this.heatResend) return;
+		if (this.heat.unknown && !this.heatManualPending && !this.heatResend)
+			return;
+		if (!manual && now < this.heatRetryAt) return;
+		if (this.heatInFlight) {
+			return;
+		}
+		this.heatInFlight = true;
+		const epoch = this.clientEpoch;
+		this.heatDrain = this.enqueue(
+			() => this.runHeatApply(client, epoch),
+			"heat-ceiling",
+			client,
+		);
+	}
+	private async runHeatApply(
+		client: CerastreamClient,
+		epoch: number,
+	): Promise<void> {
+		const owns = () =>
+			this.client === client && this.clientEpoch === epoch && this.active;
+		try {
+			for (;;) {
+				const manualPass = this.heatManualPending;
+				if (!owns() || (this.heat.unknown && !manualPass && !this.heatResend))
+					return;
+				const target = heatCeiling(this.heat, this.ownBitrate());
+				// Without the expected modem evidence, never lower further blind.
+				if (
+					!manualPass &&
+					!this.heatCanReduce &&
+					target < (this.heatRequested ?? this.ownBitrate())
+				)
+					return;
+				if (!this.heatResend && target === this.heatRequested) {
+					if (this.heatRecordPending) this.recordHeat(target);
+					return;
+				}
+				let reply: Awaited<ReturnType<CerastreamClient["setBitrate"]>>;
+				try {
+					reply = await client.setBitrate({ max_bitrate: target });
+				} catch (error) {
+					if (owns()) {
+						if (!this.heatError)
+							this.deps.logger.warn(
+								"cerastream: heat bitrate change failed; retrying with backoff",
+								{ error },
+							);
+						this.heatError = true;
+						this.heatBackoffMs = Math.min(
+							HEAT_SETTINGS.retryMaxMs,
+							Math.max(HEAT_SETTINGS.retryMinMs, this.heatBackoffMs * 2),
+						);
+						// Same clock as the samples that drive the retry check.
+						this.heatRetryAt =
+							(this.heat.lastAt ?? getms()) + this.heatBackoffMs;
+					}
+					this.noteConnectionLoss(client, error, "heat-ceiling");
+					return;
+				}
+				if (!owns()) return;
+				this.noteHeatSent(target, reply);
+				if (this.heatRecordPending) this.recordHeat(target);
+			}
+		} finally {
+			this.heatInFlight = false;
+		}
+	}
+	/** Remember what was sent and what the engine says it applied. */
+	private noteHeatSent(
+		sent: number,
+		reply: Awaited<ReturnType<CerastreamClient["setBitrate"]>> | undefined,
+	): void {
+		// Any confirmed send of the session's ceiling (heat or operator change)
+		// ends a failure streak and its backoff.
+		if (this.heatError)
+			this.deps.logger.info("cerastream: heat bitrate change applied again");
+		this.heatError = false;
+		this.heatBackoffMs = 0;
+		this.heatRetryAt = -Infinity;
+		this.heatResend = false;
+		this.heatRequested = sent;
+		if (sent === this.ownBitrate()) this.heatManualPending = false;
+		const applied = reply?.applied?.max_bitrate;
+		this.heatApplied =
+			typeof applied === "number" && Number.isFinite(applied) ? applied : sent;
+	}
+	private recordHeat(ceiling: number): void {
+		this.heatRecordPending = false;
+		this.heatHistory = [
+			...this.heatHistory,
+			{
+				// Display only; ordering and timing use the monotonic clock.
+				at: Date.now(),
+				stage: this.heat.stage,
+				ceiling,
+				keepQuality: this.heat.keepQuality,
+			},
+		].slice(-50);
+	}
+
 	private clientEpoch = 0;
 	private probeEpoch = 0;
 	private telemetry: EngineTelemetry | null = null;
@@ -785,6 +1116,7 @@ export class CerastreamBackend implements StreamingBackend {
 		opts: StreamRunOptions,
 		transaction?: LaunchTransaction,
 	): Promise<void> {
+		this.resetHeat();
 		this.runtimeEvidence = undefined;
 		this.active = true;
 		this.clearRecoveredEngineError();
@@ -870,8 +1202,14 @@ export class CerastreamBackend implements StreamingBackend {
 					if (parsed.state !== "streaming") await streamingStatus;
 				});
 				// Subscription replay predates this Start acknowledgement.
-				if (this.client === client && this.clientEpoch === clientEpoch)
+				if (this.client === client && this.clientEpoch === clientEpoch) {
 					this.runtimeEvidence = undefined;
+					// The engine started at the user's maximum; heat changes start
+					// from here, so the first reading of a stream sends nothing.
+					const started = config.max_br ?? DEFAULT_MAX_BITRATE;
+					this.heatRequested = started;
+					this.heatApplied = started;
+				}
 			}, "start");
 		} catch (error) {
 			await launchTransaction.rollback();
@@ -1039,8 +1377,18 @@ export class CerastreamBackend implements StreamingBackend {
 			this.deps.saveConfig();
 			const client = this.client;
 			if (client) {
+				const epoch = this.clientEpoch;
 				void this.enqueue(
-					() => client.setBitrate({ max_bitrate: maxBr }).then(() => undefined),
+					async () => {
+						const sent = heatCeiling(
+							this.heat,
+							this.deps.getConfig().max_br ?? maxBr,
+						);
+						const reply = await client.setBitrate({ max_bitrate: sent });
+						// The panel reflects the ceiling actually sent, capped or not.
+						if (this.client === client && this.clientEpoch === epoch)
+							this.noteHeatSent(sent, reply);
+					},
 					"set-bitrate",
 					client,
 				);
@@ -1057,7 +1405,13 @@ export class CerastreamBackend implements StreamingBackend {
 		const client = this.client;
 		if (!client) return;
 		const params = this.toReloadParams(
-			this.deps.getConfig(),
+			{
+				...this.deps.getConfig(),
+				max_br: heatCeiling(
+					this.heat,
+					this.deps.getConfig().max_br ?? DEFAULT_MAX_BITRATE,
+				),
+			},
 			client.hello.schema_version,
 		);
 		void this.enqueue(
@@ -1075,6 +1429,30 @@ export class CerastreamBackend implements StreamingBackend {
 		return this.telemetry;
 	}
 
+	/** End of a session (Stop, confirmed idle engine, new start): heat starts over. */
+	private resetHeat(): void {
+		this.heatCanReduce = true;
+		this.modemUnavailable = false;
+		if (this.heatRest.resting !== null) {
+			const before = this.heatRest.resting;
+			this.heatRest.update(false, []);
+			this.publishHeatRest(before);
+		}
+		this.heatRest.blocked = null;
+		const keep =
+			this.heat.keepQuality && HEAT_SETTINGS.keepQualityDuration === "untilOff";
+		this.heat = { ...initialHeat(), keepQuality: keep };
+		this.heatRequested = null;
+		this.heatApplied = null;
+		this.heatResend = false;
+		this.heatManualPending = false;
+		this.heatRecordPending = false;
+		this.heatRetryAt = -Infinity;
+		this.heatBackoffMs = 0;
+		this.heatHistory = [];
+		this.heatError = false;
+	}
+
 	// `active_encode`, `bitrate` and `preview_encoder_realized` all describe a LIVE
 	// session — what the engine is encoding, the rate its adaptive controller
 	// settled on, and what the preview branch realized. None may outlive the
@@ -1083,6 +1461,7 @@ export class CerastreamBackend implements StreamingBackend {
 	// and a retained realized pair leaves a fallback reason on screen explaining a
 	// stream that is no longer running.
 	private clearSessionScopedTelemetry(): void {
+		this.resetHeat();
 		this.runtimeEvidence = undefined;
 		const previous = this.telemetry;
 		if (previous === null) return;
@@ -1187,11 +1566,21 @@ export class CerastreamBackend implements StreamingBackend {
 				this.clientEpoch === clientEpoch &&
 				runtimeState === "streaming"
 			) {
+				// Heat state belongs to the session, not the control connection: a
+				// reconnect mid-stream keeps the cap, Keep quality and history. Only a
+				// session this process does not know (a new backend process) starts
+				// fresh.
+				if (!this.active) this.resetHeat();
 				this.client = client;
 				adoptedEpoch = ++this.clientEpoch;
 				this.subscription = subscription;
 				this.active = true;
 				adopted = true;
+				// Adopt first; then bring the engine to this session's ceiling as a
+				// best-effort call. A surviving engine may still hold a ceiling from
+				// the previous backend, so this is sent whatever the temperature.
+				this.heatResend = true;
+				this.requestHeatApply(getms(), true);
 				return runtimeState;
 			}
 			subscription?.close();
@@ -1375,6 +1764,8 @@ export class CerastreamBackend implements StreamingBackend {
 				this.deps.bridge.broadcastStatus();
 				break;
 			case "status": {
+				if (classifyRuntimeState(event.state, event.streaming) === "idle")
+					this.resetHeat();
 				this.runtimeEvidence = {
 					state: classifyRuntimeState(event.state, event.streaming),
 					current,

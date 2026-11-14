@@ -48,6 +48,10 @@ import {
 	notificationSend,
 } from "../ui/notifications.ts";
 import { broadcastMsg, buildMsg } from "../ui/websocket-server.ts";
+import {
+	wifiAdapterLockKey,
+	withWifiAdapterLock,
+} from "../wifi/wifi-adapter-lock.ts";
 import { isConcurrentApIfname } from "../wifi/wifi-concurrent-interface.ts";
 import { getWifiInterfacesByMacAddress } from "../wifi/wifi-connections.ts";
 import {
@@ -61,6 +65,7 @@ import { isWirelessInterface } from "../wifi/wifi-radio-identity.ts";
 import {
 	bondPhysicalId,
 	isBondOptedOut,
+	isHeatResting,
 	resetPersistentBondOptOutForTest,
 	resetSessionBondOptOutForTest,
 	setPersistentBondOptOut,
@@ -206,6 +211,17 @@ export function resetBondOptOutSession(): void {
 }
 
 export function setBondOptOut(ifname: string, optOut: boolean): void {
+	if (!optOut) {
+		for (const [mac, radio] of Object.entries(
+			getWifiInterfacesByMacAddress(),
+		)) {
+			if (radio.ifname !== ifname) continue;
+			const key = wifiAdapterLockKey(mac);
+			void withWifiAdapterLock(key, async () => undefined).catch((error) =>
+				logger.warn("Wi-Fi bond wake failed", { error }),
+			);
+		}
+	}
 	setPersistentBondOptOut(ifname, optOut);
 }
 
@@ -1228,6 +1244,7 @@ type NetworkInterfaceResponseMessage = {
 	[key: string]: Pick<NetworkInterface, "ip" | "tp" | "enabled"> & {
 		error?: string;
 		same_subnet_group?: string;
+		heat_resting?: true;
 		tx_bps?: number;
 		rx_bps?: number;
 		dongle?: DongleMarker | null;
@@ -1263,6 +1280,7 @@ export function netIfBuildMsg() {
 			...(networkInterface.ip !== undefined ? { ip: networkInterface.ip } : {}),
 			tp: networkInterface.tp,
 			enabled: isBondCandidate(i, networkInterface),
+			...(isHeatResting(i) ? { heat_resting: true } : {}),
 			...(networkInterface.tx_bps !== undefined
 				? { tx_bps: networkInterface.tx_bps }
 				: {}),

@@ -1,6 +1,15 @@
 import { getConfig, saveConfig } from "../config.ts";
 import { resolveBondPhysicalIdentity } from "../streaming/bond-entry.ts";
 
+let heatRest: string | null = null;
+export function setHeatBondRest(name: string | null): void {
+	heatRest = name;
+}
+/** Out of the bond for heat this session, not by the operator's choice. */
+export function isHeatResting(ifname: string): boolean {
+	return heatRest === ifname;
+}
+
 const sessionOptOut = new Set<string>();
 
 export function bondPhysicalId(ifname: string): string | undefined {
@@ -10,7 +19,7 @@ export function bondPhysicalId(ifname: string): string | undefined {
 }
 
 export function isBondOptedOut(ifname: string): boolean {
-	if (sessionOptOut.has(ifname)) return true;
+	if (heatRest === ifname || sessionOptOut.has(ifname)) return true;
 	const physicalId = bondPhysicalId(ifname);
 	return (
 		physicalId !== undefined && getConfig().bond_opt_out?.[physicalId] === true

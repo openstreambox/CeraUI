@@ -266,7 +266,7 @@ export async function loadJsonConfigSync<T extends z.ZodTypeAny>(
  */
 export function writeFileAtomicSync(
 	file: string,
-	contents: string,
+	contents: string | Uint8Array,
 	options: {
 		mode?: number;
 		permissionSource?: string | undefined;

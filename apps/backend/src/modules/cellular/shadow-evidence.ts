@@ -58,14 +58,17 @@
 
 import {
 	appendFileSync,
-	chmodSync,
+	closeSync,
+	constants,
 	existsSync,
+	fchmodSync,
+	fstatSync,
 	mkdirSync,
+	openSync,
 	readFileSync,
 	renameSync,
 	rmSync,
 	statSync,
-	writeFileSync,
 } from "node:fs";
 import path from "node:path";
 
@@ -202,13 +205,6 @@ export function evidenceDay(at: number): string {
 
 // ── writing ──────────────────────────────────────────────────────────────────
 
-function ensureFileMode(file: string): void {
-	if (!existsSync(file)) {
-		writeFileSync(file, "", { mode: SHADOW_EVIDENCE_FILE_MODE });
-	}
-	chmodSync(file, SHADOW_EVIDENCE_FILE_MODE);
-}
-
 function currentSize(file: string): number {
 	try {
 		return statSync(file).size;
@@ -262,8 +258,23 @@ export function appendShadowEvidence(
 		) {
 			rotateShadowEvidence(baseDir);
 		}
-		ensureFileMode(file);
-		appendFileSync(file, line, { mode: SHADOW_EVIDENCE_FILE_MODE });
+		const fd = openSync(
+			file,
+			constants.O_WRONLY |
+				constants.O_CREAT |
+				constants.O_APPEND |
+				constants.O_NOFOLLOW |
+				constants.O_NONBLOCK,
+			SHADOW_EVIDENCE_FILE_MODE,
+		);
+		try {
+			if (!fstatSync(fd).isFile())
+				throw new Error("Evidence target is not a regular file");
+			fchmodSync(fd, SHADOW_EVIDENCE_FILE_MODE);
+			appendFileSync(fd, line);
+		} finally {
+			closeSync(fd);
+		}
 	} catch (err) {
 		logger.debug(`shadow evidence: append failed: ${describe(err)}`);
 	}

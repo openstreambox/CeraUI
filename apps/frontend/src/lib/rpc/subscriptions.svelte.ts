@@ -17,6 +17,7 @@ import type {
 	DevicesMessage,
 	EncoderLoad,
 	FanReading,
+	HeatStatus,
 	KioskStatus,
 	LinkTelemetryMessage,
 	ModemList,
@@ -135,6 +136,7 @@ let configState = $state.raw<ConfigMessage | undefined>(undefined);
 let statusState = $state.raw<
 	| (StatusResponse & {
 			is_streaming: boolean;
+			heat?: HeatStatus;
 			wifi: WifiStatus;
 			modems: ModemList;
 	  })
@@ -227,6 +229,10 @@ let encoderLoadState = $state.raw<EncoderLoad | undefined>(undefined);
 // payload is frozen by the S1 lock). `undefined` is the honest `unknown` state —
 // a dev host is `isRealDevice()`-gated silent, and that silence IS the
 // real-vs-mock seam, exactly as it is for `encoder-load`.
+let heatState = $state.raw<HeatStatus | undefined>(undefined);
+export function getHeatSnapshot() {
+	return heatState;
+}
 let fanState = $state.raw<FanReading | undefined>(undefined);
 // CPU topology — the denominator `deviceStats.cpuLoad1` is unreadable without.
 // A boot fact rather than a sample, so it arrives once and is re-served by the
@@ -316,8 +322,15 @@ export function getConfig() {
 	return configState;
 }
 
+const statusWithHeat = $derived(
+	statusState === undefined
+		? undefined
+		: heatState === undefined
+			? statusState
+			: { ...statusState, heat: heatState },
+);
 export function getStatus() {
-	return statusState;
+	return statusWithHeat;
 }
 
 export function getIsStreaming() {
@@ -922,6 +935,9 @@ function handleMessage(
 			);
 			break;
 
+		case "heat":
+			heatState = preserveWireIdentity(heatState, data as HeatStatus);
+			break;
 		case "fan":
 			fanState = data as FanReading;
 			break;
@@ -1279,6 +1295,7 @@ export function resetState(): void {
 	deviceStatsState = undefined;
 	encoderLoadState = undefined;
 	fanState = undefined;
+	heatState = undefined;
 	cpuInfoState = undefined;
 	revisionsState = undefined;
 	pipelinesState = undefined;

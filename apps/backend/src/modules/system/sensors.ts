@@ -29,10 +29,17 @@ import {
 	getMockSensorData,
 	shouldMockSensors,
 } from "../../mocks/providers/sensors.ts";
-
 import { getConfig } from "../config.ts";
 import { getRTMPIngestStats } from "../ingest/rtmp.ts";
 import { getSRTIngestStats } from "../ingest/srt.ts";
+import { freeAtPorts } from "../modems/free-at-port.ts";
+import { getModems } from "../modems/modems-state.ts";
+import {
+	MODEM_TEMPERATURE_TIMEOUT_MS,
+	ModemTemperatureReader,
+} from "../modems/temperature.ts";
+import { cerastreamBackend } from "../streaming/cerastream-backend.ts";
+import { parseThermalZone } from "../streaming/heat-ladder.ts";
 import { getSourcesMessage } from "../streaming/sources.ts";
 import {
 	notificationBroadcast,
@@ -40,6 +47,7 @@ import {
 	notificationRemove,
 } from "../ui/notifications.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
+import { updateHeatWifi } from "../wifi/heat-wifi-runtime.ts";
 import { getHardwareKindCached } from "./hardware-kind.ts";
 import {
 	EMI_ADVISORY_MSG,
@@ -51,6 +59,12 @@ import {
 const bootconfigService = "ceralive-firstboot-bootconfig";
 
 const sensors: Record<string, string> = {};
+const modemTemperatureReader = new ModemTemperatureReader(
+	(id) => freeAtPorts.read(id, "AT+QTEMP", MODEM_TEMPERATURE_TIMEOUT_MS),
+	logger,
+);
+/** Numeric thermal-zone readings in °C; absent when missing or implausible. */
+const thermalC: Record<string, number> = {};
 const dmesgWatchers: WatcherHandle[] = [];
 
 function dmesgStdout(proc: WatcherHandle["proc"]): ReadableStream<Uint8Array> {
@@ -65,15 +79,22 @@ export function getSensors() {
 }
 
 async function updateSensorThermal(id: number, name: string) {
+	let celsius: number | null = null;
 	try {
-		const socTempStr = await Bun.file(
-			`/sys/class/thermal/thermal_zone${id}/temp`,
-		).text();
-		const socTemp = Number.parseInt(socTempStr, 10) / 1000.0;
-		sensors[name] = `${socTemp.toFixed(1)} °C`;
+		celsius = parseThermalZone(
+			await Bun.file(`/sys/class/thermal/thermal_zone${id}/temp`).text(),
+		);
 	} catch (_err) {
-		// missing /sys thermal path → leave the signal unset rather than crash
+		// A missing /sys thermal path reads as no sample.
 	}
+	// Missing or implausible readings invalidate the previous sample.
+	if (celsius === null) {
+		delete sensors[name];
+		delete thermalC[name];
+		return;
+	}
+	sensors[name] = `${celsius.toFixed(1)} °C`;
+	thermalC[name] = celsius;
 }
 
 async function updateSensorsJetson() {
@@ -307,6 +328,29 @@ export function initHardwareMonitoring() {
 	if (sensorsFunc) {
 		const updateSensors = async () => {
 			await sensorsFunc();
+			// Never wait on the engine or the modems from the sensor loop: modem
+			// reads run in the background and the backend keeps at most one heat
+			// change in flight, logging its own failures.
+			const now = getms();
+			// Modem reads (one mmcli process each) run only while a stream does.
+			const targets = !cerastreamBackend.wantsHeatInputs()
+				? []
+				: Object.entries(getModems())
+						.filter(([, m]) => m.model === "RM520N-GL" && !m.removed)
+						.map(([id, m]) => ({
+							id: Number(id),
+							// The modem object is replaced on every status refresh; key the
+							// reader on what stays the same for one physical modem.
+							identity: `${id}|${m.ifname}|${m.name}`,
+						}));
+			cerastreamBackend.updateHeat(
+				thermalC["SoC temperature"] ?? null,
+				now,
+				modemTemperatureReader.sample(targets, now),
+			);
+			const heat = cerastreamBackend.getHeat();
+			updateHeatWifi(heat.stage, !heat.unknown);
+			broadcastMsg("heat", heat);
 
 			const data = { ...sensors };
 			const srtIngestStats = getSRTIngestStats();

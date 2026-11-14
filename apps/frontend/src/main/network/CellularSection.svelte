@@ -811,7 +811,11 @@ async function openAdminUi(rowId: string): Promise<void> {
 							name={modem.ifname}
 							enabled={bondBlockedKey ? false : (entry?.enabled ?? false)}
 							ip={entry?.ip}
-							disabledReason={bondBlockedKey ? t(bondBlockedKey) : undefined}
+							disabledReason={bondBlockedKey
+								? t(bondBlockedKey)
+								: entry?.heat_resting
+									? m['network.cellular.heatResting']()
+									: undefined}
 						/>
 						<!-- A blocking lock RENAMES this control rather than quietly
 						     repurposing it: until the card is unlocked the radio cannot
