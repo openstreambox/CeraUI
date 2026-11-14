@@ -370,6 +370,16 @@ export function restartSrtla(
 	return reloadFollowUp.result.promise;
 }
 
+let reloadObserver: ((delivered: Promise<boolean>) => void) | undefined;
+export function observeSenderReload(
+	observer: (delivered: Promise<boolean>) => void,
+): () => void {
+	reloadObserver = observer;
+	return () => {
+		if (reloadObserver === observer) reloadObserver = undefined;
+	};
+}
+
 function runReload(
 	deliver: () => Promise<boolean>,
 	options: SrtlaReloadOptions,
@@ -377,6 +387,7 @@ function runReload(
 	reloadInFlight = true;
 	const session = reloadSession;
 	const run = reloadWithOneRetry(deliver, options);
+	reloadObserver?.(run);
 	void run.then(() => {
 		if (session !== reloadSession) return;
 		reloadInFlight = false;
@@ -402,8 +413,11 @@ async function deliverOnce(
 	});
 	try {
 		/* Unknown or late delivery is not success. */
-		return (await Promise.race([deliver(), deadline])) === true;
-	} catch {
+		const delivered = (await Promise.race([deliver(), deadline])) === true;
+		logger.info("SRTLA reload signal result", { delivered });
+		return delivered;
+	} catch (error) {
+		logger.error("SRTLA reload signal failed", { error });
 		return false;
 	} finally {
 		clearTimeout(timer);

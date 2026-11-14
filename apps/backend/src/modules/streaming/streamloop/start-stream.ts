@@ -51,7 +51,12 @@ import {
 } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
 import { replayPreviewEncodeMode } from "../preview-encode-replay.ts";
+import {
+	recentRelaySession,
+	relaySessionKey,
+} from "../recent-relay-session.ts";
 import { getLastPublishedBond } from "../srtla.ts";
+import { StreamStartFailure } from "../start-failure-taxonomy.ts";
 import { assertStreamLaunchOwnership } from "../stream-launch-ownership.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
 import { srtlaSendExec } from "./exec-paths.ts";
@@ -308,8 +313,26 @@ export async function startStream(
 		);
 	} catch (error) {
 		await transaction.rollback();
+		if (
+			error instanceof StreamStartFailure &&
+			error.liveness === "idle" &&
+			recentRelaySession.possiblyBusy(
+				relaySessionKey(srtlaAddr, srtlaPort, streamid),
+				error.failure.message,
+			)
+		) {
+			throw new StreamStartFailure(
+				{
+					...error.failure,
+					code: "relay_session_busy",
+					retriable: true,
+				},
+				"idle",
+			);
+		}
 		throw error;
 	}
 
+	recentRelaySession.valid(relaySessionKey(srtlaAddr, srtlaPort, streamid));
 	return { success: true };
 }

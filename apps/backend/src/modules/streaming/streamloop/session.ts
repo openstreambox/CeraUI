@@ -25,6 +25,7 @@ import { logger } from "../../../helpers/logger.ts";
 import { onNetworkInterfacesChange } from "../../network/network-interfaces.ts";
 import { onUsbNetScanCommitted } from "../../network/router-cellular-scan.ts";
 import { isUpdating } from "../../system/software-updates.ts";
+import { notificationBroadcast } from "../../ui/notifications.ts";
 import { sendStatus } from "../../ui/status.ts";
 import { getSocketSenderId } from "../../ui/websocket-server.ts";
 import { clearAsrcProbeReject, isAsrcProbeRejectResolved } from "../audio.ts";
@@ -33,7 +34,18 @@ import { clearBindMapReport } from "../bind-map-disposition.ts";
 import { announceBindMapReport } from "../bind-map-notification.ts";
 import { stopLinkTelemetry } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
-import { restartSrtla } from "../srtla.ts";
+import { recentRelaySession } from "../recent-relay-session.ts";
+import {
+	createReloadQueue,
+	verifySenderReload,
+	waitForReload,
+} from "../sender-reload.ts";
+import { senderSocketSources } from "../sender-sockets.ts";
+import {
+	getLastPublishedBond,
+	observeSenderReload,
+	restartSrtla,
+} from "../srtla.ts";
 import {
 	classifyStartFailure,
 	StreamStartFailure,
@@ -50,7 +62,12 @@ import {
 	updateStatus,
 } from "../streaming.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
-import { getStreamingProcesses, stopProcessAndWait } from "./process-runner.ts";
+import { srtlaSendExec } from "./exec-paths.ts";
+import {
+	getStreamingProcesses,
+	replaceSender,
+	stopProcessAndWait,
+} from "./process-runner.ts";
 import { reportSessionInvariant } from "./resource-invariant.ts";
 import { prepareSrtlaIpAddresses } from "./srtla-ip-preparation.ts";
 import { type StartStreamResult, startStream } from "./start-stream.ts";
@@ -140,6 +157,69 @@ export async function start(
 			}),
 		);
 	}
+	let sessionOpen = true;
+	const reloads = createReloadQueue();
+	const ownsSession = () =>
+		sessionOpen && sessionResources?.generation === generation && ownsLaunch();
+	const removeReloadObserver = observeSenderReload((delivery) => {
+		const deliveredPromise = delivery;
+		const bond = getLastPublishedBond();
+		const publication = bond?.publication;
+		if (!bond || !publication) return;
+		const sources = bond.entries.map((entry) => entry.ip);
+		reloads.enqueue(JSON.stringify([publication, sources]), async (signal) => {
+			const delivered = await deliveredPromise;
+			let first = true;
+			const sender = () =>
+				getStreamingProcesses().find((p) => p.spawnfile === srtlaSendExec);
+			await verifySenderReload(
+				publication.ok ? publication.generation : undefined,
+				sources,
+				{
+					signal,
+					now: Date.now,
+					wait: (ms) => waitForReload(ms, signal),
+					hup: async () => {
+						if (first) {
+							first = false;
+							return delivered;
+						}
+						const owned = sender();
+						if (!owned || !ownsSession()) return false;
+						owned.proc.kill("SIGHUP");
+						logger.info("sender reload signal delivered", {
+							pid: owned.proc.pid,
+						});
+						return true;
+					},
+					read: async () => {
+						const owned = sender();
+						if (!owned || !ownsSession()) return undefined;
+						return { sources: await senderSocketSources(owned.proc.pid) };
+					},
+					restart: async () => {
+						const owned = sender();
+						if (!owned || !ownsSession())
+							throw new Error("sender no longer owned");
+						// If a newer publication arrives during stop, finish this replacement
+						// before its queued reload. Stop cancels ownership and prevents respawn.
+						await replaceSender(owned, ownsSession);
+					},
+					notice: () =>
+						notificationBroadcast(
+							"sender_address",
+							"info",
+							"Restarted the connection to use the new mobile address. You're still live",
+							10,
+							false,
+							false,
+						),
+					log: (_event, meta) => logger.info("sender reload", meta),
+				},
+			);
+		});
+	});
+
 	let refreshing = Promise.resolve();
 	const refreshSrtlaIpAddresses = () => {
 		refreshing = refreshing.then(refreshBond);
@@ -166,6 +246,9 @@ export async function start(
 	sessionResources = {
 		generation,
 		removeNetworkInterfacesChangeListener: () => {
+			sessionOpen = false;
+			reloads.close();
+			removeReloadObserver();
 			removeNetifListener();
 			removeScanListener();
 		},
@@ -212,6 +295,9 @@ export function stopGeneration(
 	generation: number,
 	confirmUnknown = false,
 ): Promise<void> {
+	if (sessionResources?.generation === generation) {
+		sessionResources.removeNetworkInterfacesChangeListener();
+	}
 	// A deferred auto-audio follow (T7) only applies at the NEXT start; a stop
 	// cancels it so the picker never keeps a stale "follows on restart" hint.
 	setPendingAudioFollowAsrc(null);
@@ -262,7 +348,20 @@ export function stopGeneration(
 		// then sweep the rest once it has exited.
 		const foundEngine = getStreamingBackend().stop(
 			() => {
-				void finish();
+				recentRelaySession.stopped();
+				// Keep forwarding alive briefly after the engine has emitted its real SRT
+				// shutdown. Never synthesize a packet or infer shutdown from link loss.
+				if (
+					getStreamingProcesses().some(
+						(process) => process.spawnfile === srtlaSendExec,
+					)
+				) {
+					setTimeout(() => {
+						void finish();
+					}, 250);
+				} else {
+					void finish();
+				}
 			},
 			(error) => {
 				void finish({ ok: false, error });
