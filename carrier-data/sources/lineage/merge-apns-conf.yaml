@@ -1,0 +1,295 @@
+excludes:
+- match:
+    carrier: 沃3G手机上网 (China Unicom)
+    mcc: '460'
+    mnc: '01'
+    apn: 3gwap
+    type: default,supl
+- match:
+    carrier: 'ctlte'
+    mcc: '460'
+    mnc: '11'
+    apn: ctlte
+    type: 'cbs,default,supl,hipri,fota'
+- match:
+    carrier: CTWAP
+    mcc: '460'
+    mnc: '11'
+    apn: ctwap
+    type: mms
+overrides:
+- match:
+    carrier: Orange MG MMS
+    carrier_id: '1606'
+    mcc: '646'
+    mnc: '02'
+    apn: orangemms
+    type: mms
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    mmsc: http://10.152.10.70:38090
+- match:
+    carrier: Cosmote MMS
+    carrier_id: null
+    mcc: '202'
+    mnc: '01'
+    apn: mms
+    type: mms
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    protocol: IPV4V6
+- match:
+    carrier: CTNET
+    carrier_id: '2237'
+    mcc: '204'
+    mnc: '04'
+    apn: ctnet
+    type: cbs,default,supl,hipri,fota
+    mvno_type: spn
+    mvno_match_data: 中国电信
+  set:
+    protocol: IPV4V6
+    roaming_protocol: IPV4V6
+- match:
+    carrier: TURKCELL INTERNET
+    carrier_id: '1735'
+    mcc: '286'
+    mnc: '01'
+    apn: internet
+    type: default,supl
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: ims
+    carrier_id: '1736'
+    mcc: '286'
+    mnc: '02'
+    apn: ims
+    type: ims
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: AVEA INTERNET
+    carrier_id: '1737'
+    mcc: '286'
+    mnc: '03'
+    apn: internet
+    type: default,supl
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: OTA
+    carrier_id: '1788'
+    mcc: '310'
+    mnc: '120'
+    apn: otasn
+    type: ia,fota
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: MetroPCS
+    carrier_id: '1949'
+    mcc: '310'
+    mnc: '260'
+    apn: fast.metropcs.com
+    type: default,mms,supl,hipri,xcap
+    mvno_type: gid
+    mvno_match_data: 6D38
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: Walmart MX
+    carrier_id: '2476'
+    mcc: '334'
+    mnc: '140'
+    apn: internet.wm.com
+    type: default
+    mvno_type: spn
+    mvno_match_data: BAIT
+  set:
+    protocol: IPV4V6
+    roaming_protocol: IPV4V6
+- match:
+    carrier: 沃3G连接互联网 (China Unicom)
+    carrier_id: '1436'
+    mcc: '460'
+    mnc: '01'
+    apn: 3gnet
+    type: default,supl
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    type: default,ia,supl,xcap
+    roaming_protocol: IPV4V6
+    protocol: IPV4V6
+- match:
+    carrier: 联通彩信 (China Unicom)
+    carrier_id: '1436'
+    mcc: '460'
+    mnc: '01'
+    apn: 3gwap
+    type: mms
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    protocol: IPV4V6
+    roaming_protocol: IPV4V6
+- match:
+    carrier: CTNET
+    carrier_id: '2237'
+    mcc: '460'
+    mnc: '03'
+    apn: ctnet
+    type: cbs,default,hipri,fota
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    protocol: IPV4V6
+    roaming_protocol: IPV4V6
+- match:
+    carrier: CTWAP
+    carrier_id: '2237'
+    mcc: '460'
+    mnc: '03'
+    apn: ctwap
+    type: default,mms,supl,hipri,fota,cbs
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    protocol: IPV4V6
+    roaming_protocol: IPV4V6
+- match:
+    carrier: China Unicom 3G
+    carrier_id: '1436'
+    mcc: '460'
+    mnc: '09'
+    apn: 3gnet
+    type: default,supl
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    type: default,ia,supl,xcap
+    roaming_protocol: IPV4V6
+    protocol: IPV4V6
+- match:
+    carrier: China Unicom wap
+    carrier_id: '1436'
+    mcc: '460'
+    mnc: '09'
+    apn: 3gwap
+    type: default,mms
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    type: mms
+    protocol: IPV4V6
+    roaming_protocol: IPV4V6
+- match:
+    carrier: 台灣大哥大TS (Internet)
+    carrier_id: '1886'
+    mcc: '466'
+    mnc: '89'
+    apn: internet
+    type: default,supl
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: 台灣大哥大TS (MMS)
+    carrier_id: '1886'
+    mcc: '466'
+    mnc: '89'
+    apn: internet
+    type: mms
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: TIM Connect
+    carrier_id: '1385'
+    mcc: '724'
+    mnc: '02'
+    apn: timbrasil.br
+    type: default,mms,supl
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: TIM Connect
+    carrier_id: '1385'
+    mcc: '724'
+    mnc: '03'
+    apn: timbrasil.br
+    type: default,mms,supl
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: TIM Connect
+    carrier_id: '1385'
+    mcc: '724'
+    mnc: '04'
+    apn: timbrasil.br
+    type: default,mms,supl
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: Vivo Xcap
+    carrier_id: '530'
+    mcc: '724'
+    mnc: '06'
+    apn: xcap.ims
+    type: xcap
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: Vivo Xcap
+    carrier_id: '530'
+    mcc: '724'
+    mnc: '10'
+    apn: xcap.ims
+    type: xcap
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: Vivo Xcap
+    carrier_id: '530'
+    mcc: '724'
+    mnc: '11'
+    apn: xcap.ims
+    type: xcap
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6
+- match:
+    carrier: Vivo Xcap
+    carrier_id: '530'
+    mcc: '724'
+    mnc: '23'
+    apn: xcap.ims
+    type: xcap
+    mvno_type: null
+    mvno_match_data: null
+  set:
+    roaming_protocol: IPV4V6

@@ -1,73 +1,106 @@
 import { expect, test } from "bun:test";
+import snapshot from "./carriers.json";
+import regression from "./fixtures/android14-regressions.json";
 import { matchMvnoApn } from "./index.ts";
 
-const rows = [
-	{
-		plmn: "310410",
-		apn: "ereseller",
-		source: "android",
-		mvno: "gid",
-		match: "20FF",
-	},
-	{
-		plmn: "310410",
-		apn: "ereseller",
-		source: "android",
-		mvno: "spn",
-		match: "US Mobile",
-	},
-	{
-		plmn: "310260",
-		apn: "fast.t-mobile.com",
-		source: "android",
-		mvno: "gid",
-		match: "6910",
-	},
-	{ plmn: "310410", apn: "host", source: "android" },
-];
-test("GID1 criteria preserve reseller fixtures without guessing from the host", () => {
-	expect(matchMvnoApn({ homePlmn: "310410", gid1: "20ff00" }, rows)?.apn).toBe(
-		"ereseller",
-	);
-	expect(matchMvnoApn({ homePlmn: "310260", gid1: "6910" }, rows)?.apn).toBe(
-		"fast.t-mobile.com",
-	);
-	expect(matchMvnoApn({ homePlmn: "310410" }, rows)).toBeUndefined();
-	expect(
-		matchMvnoApn({ homePlmn: "310410", gid1: "20FE" }, rows),
-	).toBeUndefined();
+test("real DEFF candidates cannot shadow each other and retain source order", () => {
+	const evidence = { homePlmn: "310410", gid1: "deffffffffffffff" };
+	const result = matchMvnoApn(evidence, regression);
+	expect(result.ambiguous).toBe(true);
+	expect(result.candidates.map((r) => r.apn)).toContain("tfdata");
+	expect(result.candidates.map((r) => r.apn)).toContain("ereseller");
+	const reversed = matchMvnoApn(evidence, [...regression].reverse());
+	expect(reversed.candidates).toEqual([...result.candidates].reverse());
+	expect(reversed.ambiguous).toBe(true);
 });
-test("SPN is a full name match, not a fuzzy brand match", () => {
-	expect(
-		matchMvnoApn({ homePlmn: "310410", spn: "us mobile" }, rows)?.apn,
-	).toBe("ereseller");
-	expect(
-		matchMvnoApn({ homePlmn: "310410", spn: "not US Mobile" }, rows),
-	).toBeUndefined();
-	expect(
-		matchMvnoApn({ homePlmn: "310410", spn: "usmobile" }, rows),
-	).toBeUndefined();
+test("real rows preserve authentication, proxy and usage metadata", () => {
+	const result = matchMvnoApn({ homePlmn: "23410", spn: "giffgaff" });
+	expect(result.candidates.length).toBeGreaterThan(0);
+	expect(result.candidates.some((r) => r.user === "gg")).toBe(true);
+	for (const row of snapshot.filter(
+		(r) => r.user || r.password || r.authtype || r.proxy,
+	)) {
+		const result = matchMvnoApn({
+			homePlmn: row.plmn,
+			gid1: row.mvno === "gid" ? row.match : undefined,
+			spn: row.mvno === "spn" ? row.match : undefined,
+		});
+		expect(result.candidates).toContainEqual(row);
+	}
 });
-test("missing or invalid home identity never matches another network", () => {
-	for (const homePlmn of [undefined, "", "--", "99999", "bad"])
-		expect(matchMvnoApn({ homePlmn, gid1: "20FF" }, rows)).toBeUndefined();
-	expect(
-		matchMvnoApn({ homePlmn: "310260", gid1: "20FF" }, rows),
-	).toBeUndefined();
+test("Coriolis data excludes WAP and MMS-only entries", () => {
+	const result = matchMvnoApn({ homePlmn: "20810", gid1: "12" }, regression);
+	expect(result.candidates.map((r) => r.apn)).toContain("internetcoriolis");
+	expect(result.candidates.map((r) => r.apn)).not.toContain("fnetcoriolis");
 });
-test("empty, generic and unsupported matching criteria leave NetworkManager unchanged", () => {
-	for (const mvno of [undefined, "imsi", "iccid", "unknown", "gid", "spn"])
+test("unsupported nonempty criteria and invalid evidence never match", () => {
+	for (const mvno of ["imsi", "iccid", "unknown", undefined]) {
 		expect(
-			matchMvnoApn({ homePlmn: "99999", gid1: "AB", spn: "Example" }, [
-				{ plmn: "99999", apn: "bad", source: "android", mvno, match: "" },
+			matchMvnoApn({ homePlmn: "310410", gid1: "DEFF", spn: "Tracfone" }, [
+				{
+					plmn: "310410",
+					apn: "tfdata",
+					source: "android",
+					mvno,
+					match: "DEFF",
+					types: ["default"],
+				},
 			]),
-		).toBeUndefined();
+		).toEqual({ candidates: [], ambiguous: false });
+	}
+	for (const gid1 of ["0xDEFF", "DE FF", "", "ZZ"]) {
+		expect(matchMvnoApn({ homePlmn: "310410", gid1 }).candidates).toEqual([]);
+	}
+	expect(matchMvnoApn({ gid1: "DEFF" }).candidates).toEqual([]);
+	expect(matchMvnoApn({ homePlmn: "26201" }).candidates).toEqual([]);
 });
-test("the pinned snapshot supplies a real GID match and no generic fallback", () => {
-	expect(matchMvnoApn({ homePlmn: "310260", gid1: "2AC9" })).toMatchObject({
-		apn: "wholesale",
-		mvno: "gid",
-		source: "android",
+test("all GID and SPN matches are returned without precedence or shared mutations", () => {
+	const rows = snapshot.filter(
+		(r) =>
+			r.plmn === "23415" &&
+			((r.mvno === "gid" && r.match === "C1") ||
+				(r.mvno === "spn" && r.match.toLowerCase() === "lebara")),
+	);
+	const result = matchMvnoApn({ homePlmn: "23415", gid1: "C1", spn: "Lebara" });
+	expect(result.candidates).toEqual(rows);
+	expect(result.ambiguous).toBe(rows.length > 1);
+	expect(result.candidates[0]).not.toBe(rows[0]);
+});
+test("real T-Mobile GID and full SPN matching, no invented US Mobile coverage", () => {
+	expect(
+		matchMvnoApn({ homePlmn: "310260", gid1: "2ac9" }).candidates.some(
+			(r) => r.apn === "wholesale",
+		),
+	).toBe(true);
+	expect(
+		matchMvnoApn({ homePlmn: "23410", spn: "not giffgaff" }).candidates,
+	).toEqual([]);
+});
+test("snapshot DEFF is updated, 310260 WAP is refused, US Mobile is absent", () => {
+	expect(matchMvnoApn({ homePlmn: "310410", gid1: "DEFF" })).toMatchObject({
+		ambiguous: false,
+		candidates: [{ apn: "ereseller" }],
 	});
-	expect(matchMvnoApn({ homePlmn: "26201" })).toBeUndefined();
+	expect(
+		matchMvnoApn({ homePlmn: "310260", gid1: "DEFF" }, regression).candidates,
+	).toEqual([]);
+	expect(
+		snapshot.some((r) => /us[ -]?mobile/i.test(`${r.name} ${r.match}`)),
+	).toBe(false);
+});
+test("PLMN width and Unicode SPN use real snapshot identities", () => {
+	expect(
+		matchMvnoApn({ homePlmn: "72201", gid1: "02" }).candidates.length,
+	).toBeGreaterThan(0);
+	expect(
+		matchMvnoApn({ homePlmn: "722010", gid1: "01" }).candidates.length,
+	).toBeGreaterThan(0);
+	expect(matchMvnoApn({ homePlmn: "72201", gid1: "01" }).candidates).toEqual(
+		[],
+	);
+	expect(
+		matchMvnoApn({ homePlmn: "20404", spn: "中国电信" }).candidates.some(
+			(r) => r.apn === "ctnet" && r.protocol === "IPV4V6",
+		),
+	).toBe(true);
 });

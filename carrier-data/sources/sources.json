@@ -1,14 +1,9 @@
 {
   "lineage": "2842825e44b5ad6e247467bd7a16c1d8bf80407f",
-  "aosp": "89b86021ff1ee7977a4e979eb70d5d7cec72a4aa",
   "downloads": {
     "lineage.tar.gz": {
       "url": "https://api.github.com/repos/LineageOS/android_vendor_apn/tarball/2842825e44b5ad6e247467bd7a16c1d8bf80407f",
       "sha256": "c3b1e41ee3c014c1a98327018dce74defd4c217a7da1e829742878e7f234db91"
-    },
-    "apns-full-conf.xml": {
-      "url": "https://android.googlesource.com/device/sample/+/89b86021ff1ee7977a4e979eb70d5d7cec72a4aa/etc/apns-full-conf.xml?format=TEXT",
-      "sha256": "3a7c13ab8b2e022f0e913a0262641b685c8068299e4e80070875f352b9c47f3e"
     }
   }
 }

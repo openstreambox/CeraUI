@@ -1,0 +1,2 @@
+# Build-time YAML rules only; runtime matcher has no dependencies.
+PyYAML==6.0.3

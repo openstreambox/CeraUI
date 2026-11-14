@@ -7,5 +7,5 @@
 		"test": "bun test --parallel=1 --max-concurrency=1",
 		"update": "python3 update.py"
 	},
-	"license": "GPL-3.0-only"
+	"license": "GPL-3.0-only AND Apache-2.0"
 }
