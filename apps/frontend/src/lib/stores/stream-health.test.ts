@@ -234,8 +234,8 @@ describe("isVideoSignalLost", () => {
 		expect(isVideoSignalLost(rollup())).toBe(true);
 	});
 
-	it("reports it on a dead rollup too", () => {
-		expect(isVideoSignalLost(rollup({ state: "dead" }))).toBe(true);
+	it("does not claim still live on a dead rollup", () => {
+		expect(isVideoSignalLost(rollup({ state: "dead" }))).toBe(false);
 	});
 
 	it("never contradicts a healthy or idle dot beside it", () => {
@@ -421,5 +421,14 @@ describe("stream-health store (reactive API)", () => {
 
 		expect(getStreamHealthState()).toBe("degraded");
 		expect(getActive()).toHaveLength(1);
+	});
+});
+
+describe("still-live camera truth", () => {
+	it("never claims still live for a dead or unconfirmed process", () => {
+		expect(
+			isVideoSignalLost(rollup({ state: "dead", process: { alive: false } })),
+		).toBe(false);
+		expect(isVideoSignalLost(rollup({ process: { alive: null } }))).toBe(false);
 	});
 });

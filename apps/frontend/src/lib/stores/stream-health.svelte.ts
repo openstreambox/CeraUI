@@ -198,16 +198,22 @@ export function reduceHealth(
  * how a mid-stream HDMI unplug was reported as "not showing signal loss".
  *
  * This is a DISPLAY predicate over the backend's own verdict — it never
- * re-derives liveness. Two deliberate strictnesses:
+ * re-derives liveness. Three deliberate strictnesses:
  *   - a `healthy`/`idle` rollup can never report signal loss, so the banner can
  *     never contradict the dot beside it;
+ *   - the process must be confirmed alive, and health cannot be `dead`, before
+ *     copy may say that the operator is still live;
  *   - `advancing` must be EXACTLY `false`. `null` means "no frame telemetry this
  *     window" (the cold-start branch), and an unknown is not an outage.
  */
 export function isVideoSignalLost(rollup: HealthRollup | null): boolean {
 	if (rollup === null) return false;
 	if (rollup.state === "healthy" || rollup.state === "idle") return false;
-	return rollup.frames.advancing === false;
+	return (
+		rollup.state !== "dead" &&
+		rollup.process.alive === true &&
+		rollup.frames.advancing === false
+	);
 }
 
 /**

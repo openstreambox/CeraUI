@@ -67,7 +67,6 @@ import {
 } from '$lib/rpc/subscriptions.svelte';
 import { getEncoderLoad } from '$lib/stores/device-health-history.svelte';
 import { deriveBitrateReading, deriveMeasuredBitrateKbps } from '$lib/stores/hud/derive';
-import { getStreamHealthRollup, isVideoSignalLost } from '$lib/stores/stream-health.svelte';
 import { isSelectedAudioLost } from '$lib/streaming/audioLost';
 import type { MatchAction } from '$lib/streaming/capture-failover';
 import { configChangeReport } from '$lib/streaming/configChangeCopy';
@@ -135,13 +134,6 @@ const linkTelemetry = $derived(getLinkTelemetry());
 const audioSourceLost = $derived(
 	isSelectedAudioLost(config?.asrc, getStatus()?.asrcs),
 );
-// Mid-stream video-signal loss. The backend health rollup already names this
-// exactly ({component:"frames"}), but its only surfaces were the HUD dot — whose
-// reason text is `hidden` below the `sm` breakpoint — and a 5 s transition toast,
-// so an operator on the Live cockpit saw nothing at all. Distinct from
-// `audioSourceLost`/`activeSourceLost`: the device never left, it went quiet.
-const videoSignalLost = $derived(isVideoSignalLost(getStreamHealthRollup()));
-
 // Streaming optimism state (Task 6): reflects user intent immediately on click.
 const streamingOptimismState = $derived(getStreamingOptimismState());
 const streamingStopReason = $derived(getStreamingStopReason());
@@ -1137,7 +1129,6 @@ const configRows = $derived<ConfigRow[]>([
 			telemetry={linkTelemetry}
 			bitrateKbps={liveBitrate.primaryKbps ?? undefined}
 			{audioSourceLost}
-			{videoSignalLost}
 			{isStreaming}
 			optimismState={streamingOptimismState}
 			{summaryMode}

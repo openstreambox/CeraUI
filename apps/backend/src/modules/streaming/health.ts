@@ -10,6 +10,7 @@ import { getActiveEncodeLiveness } from "./active-passthrough.ts";
 import { reportAllLinksDown } from "./lifecycle-indicators.ts";
 import { buildLinkTelemetry } from "./link-telemetry.ts";
 import { genSrtlaIpList } from "./srtla.ts";
+import { noteLiveFrameHealth } from "./still-live-notices.ts";
 import { getIsStreaming } from "./streaming.ts";
 
 /**
@@ -273,21 +274,33 @@ export function getStreamHealth(): StreamHealthOutput {
 	return deriveStreamHealth(collectLivenessSources());
 }
 
-let lastBroadcastState: StreamHealthOutput["state"] | null = null;
+let lastBroadcastVerdict: string | null = null;
 
 export function resetHealthBroadcastState(): void {
-	lastBroadcastState = null;
+	lastBroadcastVerdict = null;
 }
 
 /**
- * Emit a `health` event only when the rolled-up state transitions. Called on the
+ * Emit a `health` event when the verdict changes, including frame recovery
+ * while an unrelated link problem keeps the rollup degraded. Called on the
  * existing 5s heartbeat tick — read-only, never triggers restart logic.
  */
 export function broadcastHealthIfChanged(): StreamHealthOutput {
 	const sources = collectLivenessSources();
 	const health = deriveStreamHealth(sources);
-	if (health.state !== lastBroadcastState) {
-		lastBroadcastState = health.state;
+	noteLiveFrameHealth(
+		sources.isStreaming,
+		sources.processAlive,
+		sources.framesAdvancing === false,
+	);
+	const verdict = JSON.stringify([
+		health.state,
+		health.reason,
+		health.process.alive,
+		health.frames.advancing,
+	]);
+	if (verdict !== lastBroadcastVerdict) {
+		lastBroadcastVerdict = verdict;
 		broadcast(HEALTH_EVENT_TYPE, health);
 	}
 	// Lifecycle indicator: all bonded links down mid-stream (0 active of N>0) is a

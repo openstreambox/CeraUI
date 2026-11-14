@@ -16,7 +16,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* Stream starting, stopping, management and monitoring */
 import { unsupportedPipelineOverrides } from "@ceraui/rpc";
 import {
 	AUDIO_SOURCE_AUTO,
@@ -57,7 +56,10 @@ import { searchPipelines } from "./pipelines.ts";
 import { noteSourceSelectionWrite } from "./sources.ts";
 import { resolveSrtla } from "./srtla.ts";
 import { mergePersistedStartConfig } from "./start-config-merge.ts";
+import { resetStillLiveNotices } from "./still-live-notices.ts";
 import { resolveStreamEndpoint } from "./transport/resolve-endpoint.ts";
+
+/* Stream starting, stopping, management and monitoring */
 
 export type StartMessage = { start: ConfigParameters };
 
@@ -100,6 +102,7 @@ export function updateStatus(status: boolean) {
 			}
 		}
 		isStreaming = status;
+		if (!status) resetStillLiveNotices();
 		if (!status) void notifyWifiAdapterModeEdge();
 		broadcastMsg("status", { is_streaming: isStreaming });
 

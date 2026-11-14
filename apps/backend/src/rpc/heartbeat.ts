@@ -14,13 +14,16 @@
  */
 import type { Ping } from "@ceraui/rpc/schemas";
 import { logger } from "../helpers/logger.ts";
-import { applyJitter } from "../modules/streaming/constants.ts";
+import {
+	applyJitter,
+	HEARTBEAT_INTERVAL_MS,
+} from "../modules/streaming/constants.ts";
 import { broadcast, pruneStaleClients } from "./events.ts";
 
 /**
  * Interval between server→client pings (~5s).
  */
-export const HEARTBEAT_INTERVAL_MS = 5000;
+export { HEARTBEAT_INTERVAL_MS };
 
 /**
  * Default staleness threshold (~15s ≈ 3 missed 5s pings).

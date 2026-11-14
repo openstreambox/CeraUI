@@ -114,11 +114,6 @@ interface Props {
 	// available audio sources vs config.asrc). Video-source-lost and all-links-down
 	// are derived inside this component from sources/activeEncode and telemetry.
 	audioSourceLost?: boolean;
-	// The source is still enumerated but has stopped delivering frames — an HDMI
-	// cable pulled from the onboard capture node does NOT remove /dev/video0, so
-	// `activeSourceLost` stays false and this is the only thing that reads it.
-	// LiveView derives it from the backend health rollup (isVideoSignalLost).
-	videoSignalLost?: boolean;
 	// ── StreamControlButton (Stop mode) ────────────────────────────────────────
 	isStreaming: boolean;
 	optimismState: StreamingOptimismState;
@@ -167,7 +162,6 @@ const {
 	telemetry,
 	bitrateKbps,
 	audioSourceLost = false,
-	videoSignalLost = false,
 	isStreaming,
 	optimismState,
 	onStop,
@@ -216,19 +210,14 @@ const allLinksDown = $derived(
 
 const showAudioLost = $derived(isStreaming && !summaryMode && audioSourceLost);
 
-// Signal loss on a source that is still THERE. Suppressed while
-// `activeSourceLost` is up: that banner names the same dead picture with a more
-// specific cause and a different action (reconnect / switch source), so showing
-// both would stack two alerts for one outage and split the operator's attention.
-const showVideoSignalLost = $derived(
-	isStreaming && !summaryMode && videoSignalLost && !activeSourceLost && !onStandby,
-);
+// Frame-loss explanations belong to the backend persistent notice. It alone
+// owns heartbeat confirmation and recovery, including when this view is unmounted.
 
 const canCompose = $derived(compositionSupported(capabilities));
 // Whether any banner is up: the banners lead the cards column only when they
 // exist, so an alert-free stream opens no empty row above the telemetry card.
 const hasBanners = $derived(
-	captureBands.length > 0 || showSourceLost || showVideoSignalLost || showAudioLost || allLinksDown,
+	captureBands.length > 0 || showSourceLost || showAudioLost || allLinksDown,
 );
 
 const BAND_CLASS =
@@ -257,7 +246,6 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 						<MonitorOff aria-hidden={true} class={BAND_ICON_CLASS} />
 						<div class="min-w-0 space-y-0.5">
 							<p class="text-status-warning text-sm font-medium">{m["live.capture.standbyTitle"]()}</p>
-							<p class="text-muted-foreground text-xs">{m["live.capture.standbyBody"]()}</p>
 						</div>
 					</div>
 				{:else if band.kind === 'composition-suspended'}
@@ -305,22 +293,6 @@ const BAND_ICON_CLASS = 'text-status-warning mt-0.5 size-4 shrink-0';
 					<div class="min-w-0 space-y-0.5">
 						<p class="text-destructive text-sm font-medium">{m["live.source.lostStreamingTitle"]()}</p>
 						<p class="text-muted-foreground text-xs">{m["live.source.lostStreamingBody"]()}</p>
-					</div>
-				</div>
-			{/if}
-
-			{#if showVideoSignalLost}
-				<div
-					class="border-destructive/40 bg-destructive/10 flex items-start gap-3 rounded-lg border p-3"
-					data-testid="video-signal-lost-banner"
-					role="alert"
-				>
-					<TriangleAlert aria-hidden={true} class="text-destructive mt-0.5 size-4 shrink-0" />
-					<div class="min-w-0 space-y-0.5">
-						<p class="text-destructive text-sm font-medium">
-							{m["live.source.signalLostStreamingTitle"]()}
-						</p>
-						<p class="text-muted-foreground text-xs">{m["live.source.signalLostStreamingBody"]()}</p>
 					</div>
 				</div>
 			{/if}
