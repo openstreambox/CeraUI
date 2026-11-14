@@ -2895,7 +2895,7 @@
 	"network.radio.registration": "Registro",
 	"network.radio.layer": "Tecnologia ativa",
 	"network.radio.band": "Banda ativa",
-	"network.radio.neighbour": "Modem {id}",
+	"network.radio.neighbour": "Modem celular {id}",
 	"network.radio.transmitting": "Enviando dados",
 	"network.radio.usb": "Eventos USB",
 	"network.radio.timeline": "Histórico recente"
