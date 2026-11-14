@@ -728,7 +728,7 @@ export class CerastreamBackend implements StreamingBackend {
 	/** The engine's value is unknown (adopted or reconnected session): send even if unchanged. */
 	private heatResend = false;
 	private heatInFlight = false;
-	/** Keep quality was switched on while a change was in flight; the running pass applies it. */
+	/** Explicit restoration intent, retained through rejection until confirmed or cancelled. */
 	private heatManualPending = false;
 	private heatRecordPending = false;
 	private heatRetryAt = -Infinity;
@@ -779,16 +779,15 @@ export class CerastreamBackend implements StreamingBackend {
 		const before = this.heat.stage;
 		this.heat = advanceHeat(this.heat, { soc: temperature }, now);
 		if (before !== this.heat.stage) this.heatRecordPending = true;
-		// While unknown, only a pending resend may go out: it repeats the
-		// session's own ceiling (after a backend restart, the user's maximum) and
-		// takes no step.
-		if (!this.heat.unknown || this.heatResend) this.requestHeatApply(now);
+		// Unknown permits only a session resend or an explicit restoration intent.
+		if (!this.heat.unknown || this.heatResend || this.heatManualPending)
+			this.requestHeatApply(now);
 	}
 	async keepHeatQuality(enabled: boolean): Promise<void> {
 		if (!this.active) return;
 		this.heat = { ...this.heat, keepQuality: enabled };
 		this.heatRecordPending = true;
-		if (!enabled) this.heatManualPending = false;
+		this.heatManualPending = enabled;
 		// Switching Keep quality on restores the user's maximum even while the
 		// temperature is unknown; switching it off never resumes a cap blind.
 		this.requestHeatApply(getms(), enabled);
@@ -798,17 +797,16 @@ export class CerastreamBackend implements StreamingBackend {
 		const client = this.client;
 		if (!client || !this.active) return;
 		if (this.heatRequested === null && !this.heatResend) return;
-		if (this.heat.unknown && !manual && !this.heatResend) return;
+		if (this.heat.unknown && !this.heatManualPending && !this.heatResend)
+			return;
 		if (!manual && now < this.heatRetryAt) return;
 		if (this.heatInFlight) {
-			// The running pass reads this before its next decision.
-			if (manual) this.heatManualPending = true;
 			return;
 		}
 		this.heatInFlight = true;
 		const epoch = this.clientEpoch;
 		this.heatDrain = this.enqueue(
-			() => this.runHeatApply(client, epoch, manual),
+			() => this.runHeatApply(client, epoch),
 			"heat-ceiling",
 			client,
 		);
@@ -816,17 +814,12 @@ export class CerastreamBackend implements StreamingBackend {
 	private async runHeatApply(
 		client: CerastreamClient,
 		epoch: number,
-		manual: boolean,
 	): Promise<void> {
 		const owns = () =>
 			this.client === client && this.clientEpoch === epoch && this.active;
 		try {
-			let manualPass = manual;
 			for (;;) {
-				if (this.heatManualPending) {
-					this.heatManualPending = false;
-					manualPass = true;
-				}
+				const manualPass = this.heatManualPending;
 				if (!owns() || (this.heat.unknown && !manualPass && !this.heatResend))
 					return;
 				const target = heatCeiling(this.heat, this.ownBitrate());
@@ -859,7 +852,6 @@ export class CerastreamBackend implements StreamingBackend {
 				if (!owns()) return;
 				this.noteHeatSent(target, reply);
 				if (this.heatRecordPending) this.recordHeat(target);
-				manualPass = false;
 			}
 		} finally {
 			this.heatInFlight = false;
@@ -879,6 +871,7 @@ export class CerastreamBackend implements StreamingBackend {
 		this.heatRetryAt = -Infinity;
 		this.heatResend = false;
 		this.heatRequested = sent;
+		if (sent === this.ownBitrate()) this.heatManualPending = false;
 		const applied = reply?.applied?.max_bitrate;
 		this.heatApplied =
 			typeof applied === "number" && Number.isFinite(applied) ? applied : sent;

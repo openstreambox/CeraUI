@@ -36,7 +36,10 @@ test("sawtooth does not enter; override and floor never raise own maximum", () =
 	expect(s.stage).toBe(1);
 	s = { ...s, stage: 3 };
 	expect(heatCeiling(s, 1000)).toBe(1000);
-	expect(heatCeiling({ ...s, keepQuality: true }, 6000)).toBe(6000);
+	expect(heatCeiling({ ...s, keepQuality: true }, 6000)).toBe(3000);
+	expect(heatCeiling({ ...s, keepQuality: true, unknown: true }, 6000)).toBe(
+		6000,
+	);
 });
 test("status fixture preserves missing and uncalibrated temperatures, expires and rejects events", async () => {
 	const line = await Bun.file(

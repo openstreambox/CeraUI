@@ -199,7 +199,11 @@ export function advanceHeat(
 	return s;
 }
 export function heatCeiling(s: HeatState, ownKbps: number): number {
-	if (s.keepQuality || !HEAT_SETTINGS.automaticBitrate || s.stage < 2)
+	if (
+		(s.keepQuality && (s.unknown || s.stage < 3)) ||
+		!HEAT_SETTINGS.automaticBitrate ||
+		s.stage < 2
+	)
 		return ownKbps;
 	const percent =
 		Math.max(s.stage, s.capStage) === 3
