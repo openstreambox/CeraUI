@@ -28,7 +28,7 @@ test("automatic is the default and a single selection saves suggest only", async
 		expect(mocks.setLinkBoxHeatMode).toHaveBeenCalledWith({ mode: "suggest" }),
 	);
 	await waitFor(() => expect((toggle as HTMLInputElement).checked).toBe(true));
-	expect(view.getByText(/not active on this box/i)).toBeTruthy();
+	expect(view.getByText(/isn.t active on this box/i)).toBeTruthy();
 });
 test("a failed save preserves the confirmed mode and reports failure", async () => {
 	mocks.getLinkBoxHeat.mockResolvedValue({ mode: "suggest", active: false });

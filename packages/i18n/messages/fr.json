@@ -2852,11 +2852,12 @@
 	"settings.heat.description": "Refroidir pendant le relais du stream du téléphone",
 	"settings.heat.automatic": "Si le boîtier est très chaud, il peut suspendre Internet pour un autre appareil Wi-Fi à la fois. Ton téléphone, les personnes susceptibles de streamer et les appareils sans nom restent protégés. Touche Rétablir l’accès pour annuler.",
 	"settings.heat.suggest": "Suggérer seulement",
-	"settings.heat.suggestHelp": "Me demander d’abord. Un appui suspend l’appareil suggéré.",
-	"settings.heat.dormant": "Les pauses automatiques ne sont pas encore actives sur ce boîtier. Ton choix est enregistré pour plus tard.",
+	"settings.heat.suggestHelp": "Le boîtier demande d’abord. Touche une fois pour mettre en pause l’appareil proposé.",
+	"settings.heat.dormant": "La pause des appareils n’est pas encore active sur ce boîtier. Ton choix est enregistré pour plus tard.",
 	"settings.heat.failed": "Impossible d’enregistrer ton choix. Réessaie.",
 	"live.heat.pauseDevice": "Suspendre un appareil",
 	"live.heat.letBackOn": "Rétablir l’accès",
 	"live.heat.clientPaused": "Internet suspendu pour un autre appareil Wi-Fi. Le stream de ton téléphone conserve ses liens.",
-	"live.heat.clientFailed": "La modification de la pause de l’appareil n’a pas pu être confirmée. Réessaie."
+	"live.heat.clientFailed": "Impossible de confirmer. Réessaie.",
+	"live.heat.clientSuggestion": "Pour refroidir plus vite, tu peux suspendre l’accès à Internet d’un autre appareil Wi-Fi. Ton téléphone reste connecté."
 }

@@ -2849,11 +2849,12 @@
 	"settings.heat.description": "Kühlen beim Weiterleiten des Telefonstreams",
 	"settings.heat.automatic": "Wenn die Box sehr heiß ist, kann sie den Internetzugang für jeweils ein anderes WLAN-Gerät pausieren. Dein Telefon, mögliche Streamer und unbenannte Geräte bleiben geschützt. Mit Wieder zulassen hebst du die Pause auf.",
 	"settings.heat.suggest": "Nur vorschlagen",
-	"settings.heat.suggestHelp": "Frag mich zuerst. Ein Tippen pausiert das vorgeschlagene Gerät.",
-	"settings.heat.dormant": "Automatische Pausen sind auf dieser Box noch nicht aktiv. Deine Auswahl wird für später gespeichert.",
+	"settings.heat.suggestHelp": "Die Box fragt zuerst. Tippe einmal, um das vorgeschlagene Gerät zu pausieren.",
+	"settings.heat.dormant": "Das Pausieren von Geräten ist auf dieser Box noch nicht aktiv. Deine Auswahl wird für später gespeichert.",
 	"settings.heat.failed": "Deine Auswahl konnte nicht gespeichert werden. Versuche es erneut.",
 	"live.heat.pauseDevice": "Ein Gerät pausieren",
 	"live.heat.letBackOn": "Wieder zulassen",
 	"live.heat.clientPaused": "Internetzugang für ein anderes WLAN-Gerät pausiert. Dein Telefonstream behält seine Verbindungen.",
-	"live.heat.clientFailed": "Die Änderung der Gerätepause konnte nicht bestätigt werden. Versuche es erneut."
+	"live.heat.clientFailed": "Das konnte nicht bestätigt werden. Versuche es erneut.",
+	"live.heat.clientSuggestion": "Zum schnelleren Abkühlen kannst du den Internetzugang für ein anderes WLAN-Gerät pausieren. Dein Telefon bleibt verbunden."
 }

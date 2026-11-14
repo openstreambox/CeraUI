@@ -81,8 +81,20 @@ export class LinkBoxHeatPolicy {
 	private paused: string[] = [];
 	private pauseMode: "auto" | "suggest" = "auto";
 	private requestedPause: string | null = null;
-	requestPause(id: string): void {
+	requestPause(id: string): () => void {
+		const lastPause = this.lastPause;
+		const nextPauseAt = this.nextPauseAt;
 		this.requestedPause = id;
+		// A refused tap must not become permission on a later observation. Undo
+		// only its pending pause and spacing, preserving safety checks and locks.
+		return () => {
+			if (this.requestedPause === id) this.requestedPause = null;
+			if (this.paused.includes(id)) {
+				this.paused = [];
+				this.lastPause = lastPause;
+				this.nextPauseAt = nextPauseAt;
+			}
+		};
 	}
 	private badAt: number | null = null;
 	private thermalUnknownAt: number | null = null;
@@ -433,8 +445,12 @@ export class LinkBoxHeatSession {
 		const next = this.tail.then(async () => {
 			const sample = read();
 			if (this.policy.preview(sample).suggestion !== id) return this.snapshot();
-			this.policy.requestPause(id);
-			return this.apply(read);
+			const cancel = this.policy.requestPause(id);
+			try {
+				return await this.apply(read);
+			} finally {
+				if (!this.confirmed.pause.includes(id)) cancel();
+			}
 		});
 		this.tail = next.catch(() => {
 			// Preserve the queue after a rejected control request.

@@ -30,3 +30,20 @@ test("failed persistence cannot change the effective preference", () => {
 	expect(settings.set("auto")).toEqual({ success: false, mode: "suggest" });
 	expect(settings.get().mode).toBe("suggest");
 });
+
+test("a controller without a measured owner refuses both actions in either mode", async () => {
+	const config: { heat_pause_mode?: "auto" | "suggest" } = {};
+	const settings = createHeatSettings(
+		() => config,
+		() => {},
+	);
+	for (const mode of ["auto", "suggest"] as const) {
+		settings.set(mode);
+		expect(settings.get().mode).toBe(mode);
+		for (const action of ["pause", "restore"] as const)
+			for (const id of ["guest", "phone", "", "x".repeat(256)])
+				expect(await settings.action(action, id)).toBe(false);
+		await settings.update();
+		expect(settings.get().active).toBe(false);
+	}
+});

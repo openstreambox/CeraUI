@@ -13,7 +13,7 @@ test('heat settings and live client controls @visual', async ({ page, pageRpc },
  const toggle = dialog.getByRole('checkbox', { name: 'Suggest only' });
  await expect(toggle).toBeEnabled();
  await expect(toggle).not.toBeChecked();
- await expect(dialog.getByText(/not active on this box yet/)).toBeVisible();
+ await expect(dialog.getByText(/isn.t active on this box yet/)).toBeVisible();
  await shot('after-auto');
  await toggle.click();
  await expect(toggle).toBeChecked();
@@ -39,6 +39,7 @@ test('heat settings and live client controls @visual', async ({ page, pageRpc },
  await expect(notice.getByRole('button', { name: 'Pause one device' })).toBeVisible();
  await notice.evaluate(el => window.scrollBy(0, el.getBoundingClientRect().top - 80));
  await expect(notice.getByRole('button', { name: 'Pause one device' })).toBeInViewport();
+ await expect(notice.getByText('To cool down faster, you can pause internet for one other Wi-Fi device. Your phone stays connected.')).toBeVisible();
  await shot('after-offer');
  await pageRpc.call(['dev', 'emit'], { type: 'heat', payload: { ...heat, linkBox: { paused: 'sample-device', suggestion: null } } });
  await expect(notice.getByRole('button', { name: 'Let back on' })).toBeVisible();
@@ -49,6 +50,6 @@ test('heat settings and live client controls @visual', async ({ page, pageRpc },
  await pageRpc.call(['dev', 'emit'], { type: 'heat', payload: { ...heat, linkBox: { paused: null, suggestion: 'sample-device' } } });
  // Production has no bound measured owner: a forged UI projection cannot pause traffic.
  await notice.getByRole('button', { name: 'Pause one device' }).click();
- await expect(notice.getByRole('alert')).toContainText('could not be confirmed');
+ await expect(notice.getByRole('alert')).toContainText("Couldn't confirm that. Try again.");
 
 });

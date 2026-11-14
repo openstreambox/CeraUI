@@ -2852,11 +2852,12 @@
 	"settings.heat.description": "Enfriamiento al transportar la transmisión de tu teléfono",
 	"settings.heat.automatic": "Si la caja está muy caliente, puede pausar internet para otro dispositivo Wi-Fi, uno a la vez. Tu teléfono, quienes puedan estar transmitiendo y los dispositivos sin nombre quedan protegidos. Puedes tocar Permitir de nuevo.",
 	"settings.heat.suggest": "Solo sugerir",
-	"settings.heat.suggestHelp": "Pregúntame primero. Toco una vez para pausar el dispositivo sugerido.",
-	"settings.heat.dormant": "Las pausas automáticas aún no están activas en esta caja. Tu elección se guarda para más adelante.",
+	"settings.heat.suggestHelp": "La caja pregunta primero. Toca una vez para pausar el dispositivo que sugiere.",
+	"settings.heat.dormant": "La pausa de dispositivos aún no está activa en esta caja. Tu elección queda guardada para después.",
 	"settings.heat.failed": "No se pudo guardar tu elección. Inténtalo de nuevo.",
 	"live.heat.pauseDevice": "Pausar un dispositivo",
 	"live.heat.letBackOn": "Permitir de nuevo",
 	"live.heat.clientPaused": "Se pausó internet para otro dispositivo Wi-Fi. La transmisión de tu teléfono conserva sus enlaces.",
-	"live.heat.clientFailed": "No se pudo confirmar el cambio de pausa del dispositivo. Inténtalo de nuevo."
+	"live.heat.clientFailed": "No se pudo confirmar. Intenta de nuevo.",
+	"live.heat.clientSuggestion": "Para enfriar más rápido, puedes pausar internet para otro dispositivo Wi-Fi. Tu teléfono sigue conectado."
 }

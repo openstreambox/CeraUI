@@ -15,7 +15,9 @@ import type {
  * from carrying alone. An absent snapshot withholds the visible steps. */
 export interface LinkBoxEvidence {
 	/** Legacy identity/headroom fields do not authorize a restriction. Only a
-	 * complete measured snapshot through the session policy can do so. */
+	 * complete measured snapshot through the session policy can do so. The producer
+	 * must set sample.pauseMode from the saved preference on every observation;
+	 * omitting it selects the legacy automatic default. */
 	measured?: { sample: BoxSample; policy: LinkBoxHeatPolicy };
 	at: number;
 	carrying: StreamLiveness;

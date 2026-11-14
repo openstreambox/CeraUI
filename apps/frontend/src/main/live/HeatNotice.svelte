@@ -54,6 +54,7 @@ async function toggle() {
    <p>{m['live.heat.clientPaused']()}</p>
    <Button variant="outline" size="sm" disabled={pending} onclick={() => clientAction('restore', status?.linkBox?.paused)}>{m['live.heat.letBackOn']()}</Button>
   {:else if status?.linkBox?.suggestion}
+   <p>{m['live.heat.clientSuggestion']()}</p>
    <Button variant="outline" size="sm" disabled={pending} onclick={() => clientAction('pause', status?.linkBox?.suggestion)}>{m['live.heat.pauseDevice']()}</Button>
   {/if}
   {#if status?.history.length}

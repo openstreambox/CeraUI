@@ -192,7 +192,7 @@ All numerical thresholds in this policy are proposals, not hardware measurements
 
 `heat-link-box-share.ts` adds the session policy and an injected effect-owner
 boundary. It sits above the carrying-only warm step and the bounded client
-lease. It does not register a production producer, a native effect adapter. Settings → Device → Heat saves the pause preference;
+lease. It does not register a production producer or a native effect adapter. Settings → Device → Heat saves the pause preference;
 the current production notification and hardware behavior remain unchanged.
 
 The policy uses the existing SoC thresholds, ten-second entry dwell,
@@ -316,14 +316,19 @@ at a time. Switching to suggest only lifts an automatic pause on the next
 measured update and preserves lift spacing and client cooldown.
 
 The controller reads the saved mode into every sample, including effect-lock
-rechecks. A suggestion is not a confirmed pause. Its target is revalidated on
-the tap and under the effect owner's lock; stale requests never grant later
+rechecks. Producers using the outer planner must also put the saved preference
+in `measured.sample.pauseMode` on every observation; omission selects automatic.
+If a tapped pause is refused, its pending request is cancelled without a strike
+or a client lock. Later updates do not retry it; another tap is needed.
+The live suggestion explains that pausing affects internet for one other Wi-Fi
+device and that the phone stays connected. A suggestion is not a confirmed pause.
+Its target is revalidated on the tap and under the effect owner's lock; stale requests never grant later
 permission. Failed persistence preserves the previous mode; corrupt saved modes
 close configuration authority instead of falling back to automatic control.
 
 The settings RPC is available, but the production instance has no measured
 session binding. It reports `active: false` and rejects pause/restore actions.
-The settings dialog says automatic pauses are not active on this box yet. The
+The settings dialog says pausing devices is not active on this box yet. The
 optional `heat.linkBox` projection renders count-only live controls, without
 names or addresses. A future qualified owner must bind the session, call
 `update()` for each measured observation and publish its confirmed control state.
@@ -350,6 +355,12 @@ inválido bloquea la autoridad de configuración.
 Los controles muestran solo cantidades, sin nombres ni direcciones. La instancia
 de producción no tiene una sesión medida: informa que no está activa y rechaza
 las acciones. La pantalla lo indica; guardar la preferencia no activa efectos.
+Si una pausa solicitada se rechaza, se cancela la solicitud pendiente sin
+penalizar ni bloquear al cliente. Las lecturas siguientes no la reintentan;
+hace falta otro toque. El aviso explica que se pausa internet para otro
+dispositivo Wi-Fi y que el teléfono sigue conectado. El productor del
+planificador externo debe incluir la preferencia guardada en
+`measured.sample.pauseMode` en cada lectura; omitirla selecciona el modo automático.
 Las pruebas usan una sesión en memoria. Aún faltan el productor y los adaptadores
 reales antes de habilitarlo.
 

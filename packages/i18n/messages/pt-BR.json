@@ -2852,11 +2852,12 @@
 	"settings.heat.description": "Resfriamento ao retransmitir o stream do celular",
 	"settings.heat.automatic": "Quando a caixa estiver muito quente, ela pode pausar a internet de outro dispositivo Wi-Fi, um por vez. Seu celular, quem possa estar transmitindo e dispositivos sem nome ficam protegidos. Toque em Liberar acesso para desfazer.",
 	"settings.heat.suggest": "Apenas sugerir",
-	"settings.heat.suggestHelp": "Pergunte primeiro. Um toque pausa o dispositivo sugerido.",
-	"settings.heat.dormant": "As pausas automáticas ainda não estão ativas nesta caixa. Sua escolha fica salva para depois.",
+	"settings.heat.suggestHelp": "A caixa pergunta primeiro. Toque uma vez para pausar o dispositivo sugerido.",
+	"settings.heat.dormant": "A pausa de dispositivos ainda não está ativa nesta caixa. Sua escolha fica salva para depois.",
 	"settings.heat.failed": "Não foi possível salvar sua escolha. Tente novamente.",
 	"live.heat.pauseDevice": "Pausar um dispositivo",
 	"live.heat.letBackOn": "Liberar acesso",
 	"live.heat.clientPaused": "Internet pausada para outro dispositivo Wi-Fi. O stream do seu celular mantém suas conexões.",
-	"live.heat.clientFailed": "Não foi possível confirmar a alteração da pausa do dispositivo. Tente novamente."
+	"live.heat.clientFailed": "Não foi possível confirmar. Tente novamente.",
+	"live.heat.clientSuggestion": "Para esfriar mais rápido, você pode pausar a internet de outro dispositivo Wi-Fi. Seu celular continua conectado."
 }

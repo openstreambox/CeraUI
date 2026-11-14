@@ -1193,3 +1193,95 @@ test("the outer planner carries a suggest-only offer without pausing", async () 
 		),
 	).toMatchObject({ lend: "leg2", pause: [], suggestion: "guest" });
 });
+
+test("a refused tap is not retried on updates and a new tap can succeed", async () => {
+	const { LinkBoxHeatSession } = await import(
+		"../modules/streaming/heat-link-box-share.ts"
+	);
+	let now = 0;
+	let accept = false;
+	const attempts: string[] = [];
+	const session = new LinkBoxHeatSession({
+		spareUsb: async () => {},
+		lend: async (_, safe) => safe(),
+		returnLink: async () => true,
+		pause: async (id, safe) => {
+			if (!id || !safe()) return false;
+			attempts.push(id);
+			return accept;
+		},
+	});
+	const read = (): BoxSample => ({ ...sample(now), pauseMode: "suggest" });
+	for (now = 0; now <= 75000; now += 1000) await session.update(read);
+	expect((await session.pauseSuggested("guest", read)).pause).toEqual([]);
+	accept = true;
+	for (; now <= 200000; now += 1000)
+		expect((await session.update(read)).pause).toEqual([]);
+	expect(attempts).toEqual(["guest"]);
+	expect(session.inspect(read())).toEqual({
+		paused: null,
+		suggestion: "guest",
+	});
+	expect((await session.pauseSuggested("guest", read)).pause).toEqual([
+		"guest",
+	]);
+	expect(attempts).toEqual(["guest", "guest"]);
+});
+
+test("switching to suggest keeps two-minute lift spacing and the ten-minute client lock", () => {
+	const p = new LinkBoxHeatPolicy();
+	expect(warm(p).pause).toEqual(["guest"]);
+	const read = (now: number, other = false): BoxSample => {
+		const s: BoxSample = { ...sample(now), pauseMode: "suggest" };
+		if (other) {
+			const guest = item(s.clients, 1);
+			guest.id = "other";
+			guest.name = "Other";
+		}
+		return s;
+	};
+	expect(p.tick(read(76000)).pause).toEqual([]);
+	for (let t = 77000; t < 196000; t += 1000) {
+		p.requestPause("other");
+		expect(p.tick(read(t, true))).toMatchObject({ pause: [] });
+		expect(p.preview(read(t, true)).suggestion).toBeUndefined();
+	}
+	expect(p.preview(read(196000, true)).suggestion).toBe("other");
+	for (let t = 196000; t < 676000; t += 1000) {
+		p.requestPause("guest");
+		expect(p.tick(read(t))).toMatchObject({ pause: [] });
+		expect(p.preview(read(t)).suggestion).toBeUndefined();
+	}
+	expect(p.preview(read(676000)).suggestion).toBe("guest");
+	p.requestPause("guest");
+	expect(p.tick(read(676000)).pause).toEqual(["guest"]);
+});
+
+test("inspect withholds a suggestion while a link return remains unconfirmed", async () => {
+	const { LinkBoxHeatSession } = await import(
+		"../modules/streaming/heat-link-box-share.ts"
+	);
+	let now = 0;
+	let keepQuality = false;
+	const session = new LinkBoxHeatSession({
+		spareUsb: async () => {},
+		lend: async (_, safe) => safe(),
+		returnLink: async () => false,
+		pause: async (_, safe) => safe(),
+	});
+	const read = (): BoxSample => ({
+		...sample(now),
+		pauseMode: "suggest",
+		keepQuality,
+	});
+	for (now = 0; now <= 75000; now += 1000) await session.update(read);
+	expect(session.inspect(read()).suggestion).toBe("guest");
+	keepQuality = true;
+	expect((await session.update(read)).returning).toBe("leg2");
+	keepQuality = false;
+	// Fresh observations must not expose a new restriction while the confirmed
+	// link is still returning.
+	for (; now <= 800000; now += 1000) {
+		expect(session.inspect(read())).toEqual({ paused: null, suggestion: null });
+	}
+});

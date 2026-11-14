@@ -2849,11 +2849,12 @@
 	"settings.heat.description": "Cooling while carrying a phone’s stream",
 	"settings.heat.automatic": "When the box is very hot, it can pause internet for one other Wi-Fi device at a time. Your phone, anyone who might be streaming and unnamed devices stay protected. You can tap Let back on.",
 	"settings.heat.suggest": "Suggest only",
-	"settings.heat.suggestHelp": "Ask me first. I tap once to pause a suggested device.",
-	"settings.heat.dormant": "Automatic pauses are not active on this box yet. This saves your choice for later.",
+	"settings.heat.suggestHelp": "The box asks first. Tap once to pause the device it suggests.",
+	"settings.heat.dormant": "Pausing devices isn't active on this box yet. Your choice is saved for later.",
 	"settings.heat.failed": "Could not save your choice. Try again.",
 	"live.heat.pauseDevice": "Pause one device",
 	"live.heat.letBackOn": "Let back on",
 	"live.heat.clientPaused": "Paused internet for one other Wi-Fi device. Your phone’s stream keeps its links.",
-	"live.heat.clientFailed": "The device pause change could not be confirmed. Try again."
+	"live.heat.clientFailed": "Couldn't confirm that. Try again.",
+	"live.heat.clientSuggestion": "To cool down faster, you can pause internet for one other Wi-Fi device. Your phone stays connected."
 }

@@ -2804,11 +2804,12 @@
 	"settings.heat.description": "转发手机直播时降温",
 	"settings.heat.automatic": "盒子非常热时，可以一次暂停一台其他 Wi-Fi 设备的互联网连接。你的手机、可能正在直播的设备和未命名设备始终受到保护。点按重新允许即可恢复。",
 	"settings.heat.suggest": "仅建议",
-	"settings.heat.suggestHelp": "先征求我的同意。点按一次即可暂停建议的设备。",
-	"settings.heat.dormant": "此盒子尚未启用自动暂停。你的选择会保存以供日后使用。",
+	"settings.heat.suggestHelp": "盒子会先询问。轻点一次即可暂停建议的设备。",
+	"settings.heat.dormant": "此盒子尚未启用暂停设备的功能。你的选择已保存，供以后使用。",
 	"settings.heat.failed": "无法保存你的选择。请重试。",
 	"live.heat.pauseDevice": "暂停一台设备",
 	"live.heat.letBackOn": "重新允许",
 	"live.heat.clientPaused": "已暂停另一台 Wi-Fi 设备的互联网连接。手机直播的链路保持不变。",
-	"live.heat.clientFailed": "无法确认设备暂停设置的更改。请重试。"
+	"live.heat.clientFailed": "未能确认。请重试。",
+	"live.heat.clientSuggestion": "为了更快降温，你可以暂停另一台 Wi-Fi 设备的上网连接。你的手机会保持连接。"
 }

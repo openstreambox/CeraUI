@@ -166,6 +166,11 @@ test("a suggestion offers one tap and a confirmed pause offers Let back on", asy
 		linkBox: { suggestion: "guest", paused: null },
 	});
 	const view = render(HeatNotice);
+	expect(
+		view.getByText(
+			"To cool down faster, you can pause internet for one other Wi-Fi device. Your phone stays connected.",
+		),
+	).toBeTruthy();
 	await fireEvent.click(view.getByRole("button", { name: "Pause one device" }));
 	expect(mocks.linkBoxHeatAction).toHaveBeenCalledWith({
 		action: "pause",
@@ -190,9 +195,14 @@ test("a refused pause stays visible as a failure, never as a confirmed action", 
 		linkBox: { suggestion: "guest", paused: null },
 	});
 	const view = render(HeatNotice);
+	expect(
+		view.getByText(
+			"To cool down faster, you can pause internet for one other Wi-Fi device. Your phone stays connected.",
+		),
+	).toBeTruthy();
 	await fireEvent.click(view.getByRole("button", { name: "Pause one device" }));
 	await waitFor(() =>
-		expect(view.getByText(/could not be confirmed/i)).toBeTruthy(),
+		expect(view.getByText(/Couldn.t confirm that. Try again./i)).toBeTruthy(),
 	);
 	expect(view.queryByRole("button", { name: "Let back on" })).toBeNull();
 });
