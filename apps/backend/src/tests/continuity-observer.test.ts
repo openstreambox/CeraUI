@@ -6,6 +6,7 @@ import type { Telemetry } from "@ceraui/srtla-send/telemetry";
 import { logger } from "../helpers/logger.ts";
 import {
 	clearContinuityTelemetry,
+	flushContinuityTelemetryForTest,
 	continuityObserverIo as io,
 	observeSafely,
 	observeStartup,
@@ -40,6 +41,7 @@ beforeEach(async () => {
 afterEach(async () => {
 	stopLinkTelemetry();
 	clearContinuityTelemetry();
+	await flushContinuityTelemetryForTest();
 	setIfaceResolverForTest(null);
 	mock.restore();
 	Object.assign(io, original);
@@ -58,9 +60,6 @@ const telemetry = {
 	connections: [],
 	disposition: { state: "mapped" },
 } as unknown as Telemetry;
-async function settle() {
-	for (let i = 0; i < 10; i++) await Bun.sleep(1);
-}
 
 test("a start finishing after stop cannot reactivate telemetry", async () => {
 	const record = await intent();
@@ -79,7 +78,7 @@ test("a start finishing after stop cannot reactivate telemetry", async () => {
 	release.resolve();
 	await starting;
 	recordSenderTelemetry(telemetry);
-	await settle();
+	await flushContinuityTelemetryForTest();
 	expect(await Bun.file(join(dir, "report.json")).exists()).toBe(false);
 });
 
@@ -107,7 +106,7 @@ test("a newer intent fences an older start completing out of order", async () =>
 	gate.resolve();
 	await starting;
 	recordSenderTelemetry(telemetry);
-	await settle();
+	await flushContinuityTelemetryForTest();
 	expect(
 		JSON.parse(await readFile(join(dir, "report.json"), "utf8")).lifetime,
 	).toBe(current.lifetime);
@@ -171,11 +170,11 @@ test("telemetry ingestion and Stop use the observed sender lifetime", async () =
 			reports.push((value as { lifetime: string }).lifetime);
 	};
 	ingestTelemetryForTest(telemetry);
-	await settle();
+	await flushContinuityTelemetryForTest();
 	expect(reports).toEqual([record.lifetime]);
 	stopLinkTelemetry();
 	recordSenderTelemetry(telemetry);
-	await settle();
+	await flushContinuityTelemetryForTest();
 	expect(reports).toEqual([record.lifetime]);
 });
 
@@ -229,6 +228,29 @@ test("a stopped lifetime cannot publish a report after its write was deferred", 
 	await recordSenderStarted(next, 456);
 	recordSenderTelemetry(telemetry);
 	release.resolve();
-	await settle();
+	await flushContinuityTelemetryForTest();
 	expect(published).toEqual([next.lifetime]);
+});
+
+test("standalone child observers inherit the isolated record directory", async () => {
+	const moduleUrl = new URL(
+		"../modules/streaming/continuity-observer.ts",
+		import.meta.url,
+	).href;
+	const child = Bun.spawn(
+		[
+			process.execPath,
+			"-e",
+			`
+		const {continuityObserverIo: io, recordSenderIntent, senderPaths} = await import(${JSON.stringify(moduleUrl)});
+		if (io.directory.startsWith('/run/')) process.exit(3);
+		await recordSenderIntent([], senderPaths(), '/synthetic/ips');
+		console.log(io.directory);
+	`,
+		],
+		{ stdout: "pipe", stderr: "pipe" },
+	);
+	const output = await new Response(child.stdout).text();
+	expect(await child.exited).toBe(0);
+	expect(output.trim()).toBe(original.directory);
 });

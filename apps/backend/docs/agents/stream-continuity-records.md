@@ -87,3 +87,8 @@ Stop and each new sender intent revoke the previous telemetry lifetime before
 awaiting I/O. Deferred start/report writes check that fence before rename, and
 completed old starts cannot reactivate telemetry. Startup socket observation
 requires matching boot, PID, proc start time and argument digest.
+
+`CERALIVE_CONTINUITY_DIR` optionally selects the diagnostic storage directory;
+the default remains `/run/ceralive/continuity`. The test preload sets and restores
+this value so standalone child processes inherit isolated storage without
+loading the test harness. It changes no recovery or sender-path decisions.

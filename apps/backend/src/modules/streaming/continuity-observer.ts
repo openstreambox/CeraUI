@@ -51,7 +51,7 @@ const reportSchema = z.object({
 export const CONTINUITY_DIR = "/run/ceralive/continuity";
 // Leaf I/O boundary: tests isolate diagnostics even when running as root.
 export const continuityObserverIo = {
-	directory: CONTINUITY_DIR,
+	directory: process.env.CERALIVE_CONTINUITY_DIR ?? CONTINUITY_DIR,
 	bootId,
 	processIdentity,
 	writeRecord,
@@ -393,6 +393,11 @@ const telemetryWriter = createLatestReportWriter<z.infer<typeof reportSchema>>(
 	},
 	() => logger.warn("continuity: observation unavailable; recovery unchanged"),
 );
+/** Test seam: await the bounded writer instead of assuming a storage latency. */
+export async function flushContinuityTelemetryForTest(): Promise<void> {
+	await telemetryWriter.flush();
+}
+
 /** Project telemetry only. This durable report is never evidence of liveness. */
 export function recordSenderTelemetry(telemetry: Telemetry): void {
 	const lifetime = activeLifetime;
