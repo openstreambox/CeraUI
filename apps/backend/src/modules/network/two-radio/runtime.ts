@@ -16,7 +16,7 @@ import {
 } from "./native-owner.ts";
 import { boundProbe, type ProbeResult } from "./probe.ts";
 import { type Event, type Radio, sameEpoch } from "./reducer.ts";
-import { publishStatus } from "./status.ts";
+import { publishStatus, removeLegacyStatus } from "./status.ts";
 
 export interface LiveDeps extends NativeDeps {
 	journal: Journal;
@@ -186,8 +186,12 @@ export async function startLive(
 	};
 }
 
-/** Invoked by the existing network-monitor owner; absent/false does no IO. */
-export async function initTwoRadioLive() {
+/** Invoked once by the network-monitor owner; disabled mode only retires legacy status. */
+export async function initTwoRadioLive(start = startLive) {
+	removeLegacyStatus(
+		join(dirname(getConfigFilePath()), "two-radio"),
+		(message) => logger.info(message),
+	);
 	if (getConfig().two_radio_enabled !== true) return;
 	const config = liveConfigSchema.parse(
 		JSON.parse(
@@ -284,7 +288,7 @@ export async function initTwoRadioLive() {
 		now: () => Math.floor(performance.now()),
 	};
 	// Fresh startup must not adopt a foreign installation.
-	const live = await startLive(true, config, () => deps);
+	const live = await start(true, config, () => deps);
 	if (!live) return;
 	const cycle = async () => {
 		await live.cycle();
