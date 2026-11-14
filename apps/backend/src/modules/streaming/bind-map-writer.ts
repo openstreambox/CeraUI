@@ -48,7 +48,6 @@ import { open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { logger } from "../../helpers/logger.ts";
-
 import {
 	type BondEntry,
 	buildBindMapDocument,
@@ -56,6 +55,7 @@ import {
 	renderIpsFile,
 	sameMapping,
 } from "./bind-map.ts";
+import { observeSafely, reservePublication } from "./continuity-observer.ts";
 
 /** Why a publication could not put a usable mapping on disk. */
 export type BindMapPublishFailure =
@@ -97,6 +97,7 @@ export interface BindMapWriterDeps {
 	) => Promise<void>;
 	readonly renameFile: (from: string, to: string) => Promise<void>;
 	readonly removeFile: (path: string) => Promise<void>;
+	readonly reserve?: typeof reservePublication;
 	/** How long one publication may take before it is abandoned. */
 	readonly deadlineMs?: number;
 	/** Pauses between the writer's own retries while the newest snapshot is not
@@ -196,6 +197,7 @@ export function defaultBindMapWriterDeps(
 			}
 		},
 		removeFile: (path) => unlink(path),
+		reserve: reservePublication,
 	};
 }
 
@@ -699,6 +701,15 @@ async function publishBondMappingSerial(
 			lastPublished === undefined ||
 			!sameMapping(lastPublished, entries) ||
 			(mappable && !identical);
+
+	// Reserve before either publication. Failure is diagnostic only; publication keeps its normal authority.
+	await observeSafely(() =>
+		(deps.reserve ?? (async () => undefined))(
+			generation + 1,
+			createHash("sha256").update(ipsContent, "utf8").digest("hex"),
+			entries,
+		),
+	);
 
 	try {
 		await publishAtomically(deps, attempt, deps.ipsFile, ipsContent);

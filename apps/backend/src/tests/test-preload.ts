@@ -28,10 +28,14 @@ import {
 	SETUP_CONFIG_DEFAULTS,
 	setupConfigSchema,
 } from "../helpers/config-schemas.ts";
+import { continuityObserverIo } from "../modules/streaming/continuity-observer.ts";
 import { setStreamReconciliationCompletedForTest } from "../modules/system/stream-reconciliation-latch.ts";
 
 // Isolated globals still share /run; seed ownership only from this file's sentinel.
 const runtimeRoot = mkdtempSync(join(tmpdir(), "ceraui-backend-test-"));
+const previousContinuityDir = process.env.CERALIVE_CONTINUITY_DIR;
+process.env.CERALIVE_CONTINUITY_DIR = join(runtimeRoot, "continuity");
+continuityObserverIo.directory = process.env.CERALIVE_CONTINUITY_DIR;
 const previousStreamingMarker = process.env.CERALIVE_STREAMING_MARKER;
 process.env.CERALIVE_STREAMING_MARKER = join(runtimeRoot, "streaming");
 
@@ -78,5 +82,8 @@ afterAll(async () => {
 	if (previousStreamingMarker === undefined)
 		delete process.env.CERALIVE_STREAMING_MARKER;
 	else process.env.CERALIVE_STREAMING_MARKER = previousStreamingMarker;
+	if (previousContinuityDir === undefined)
+		delete process.env.CERALIVE_CONTINUITY_DIR;
+	else process.env.CERALIVE_CONTINUITY_DIR = previousContinuityDir;
 	await rm(runtimeRoot, { recursive: true, force: true });
 });

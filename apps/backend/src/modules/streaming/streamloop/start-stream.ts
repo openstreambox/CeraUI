@@ -21,10 +21,7 @@
 // StreamingBackend seam.
 
 import type { StartFailureClass } from "@ceraui/rpc/schemas";
-import {
-	buildSrtlaSendArgs,
-	controlSocketPath,
-} from "@ceraui/srtla-send/sender";
+import { buildSrtlaSendArgs } from "@ceraui/srtla-send/sender";
 import type { RuntimeConfig } from "../../../helpers/config-schemas.ts";
 import { logger } from "../../../helpers/logger.ts";
 import { getConfig } from "../../config.ts";
@@ -41,14 +38,18 @@ import {
 } from "../bind-map-spawn.ts";
 import { getLastCapabilities } from "../capabilities.ts";
 import { SRTLA_LISTEN_PORT } from "../constants.ts";
+import {
+	observeSafely,
+	recordSenderIntent,
+	recordSenderStarted,
+	senderPaths,
+} from "../continuity-observer.ts";
+import type { Lifetime } from "../continuity-records.ts";
+
 import { embeddedAudioActive } from "../embedded-audio.ts";
 import { clearStreamProcessExit } from "../health.ts";
 import { createLaunchTransaction } from "../launch-transaction.ts";
-import {
-	srtlaStatsFile,
-	startLinkTelemetry,
-	stopLinkTelemetry,
-} from "../link-telemetry.ts";
+import { startLinkTelemetry, stopLinkTelemetry } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
 import { replayPreviewEncodeMode } from "../preview-encode-replay.ts";
 import { getLastPublishedBond } from "../srtla.ts";
@@ -65,6 +66,7 @@ interface StartStreamBackend {
 }
 
 export interface StartStreamDeps {
+	readonly recordSenderIntent: typeof recordSenderIntent;
 	readonly getStreamingBackend: () => StartStreamBackend;
 	readonly spawnStreamingLoop: typeof spawnStreamingLoop;
 	readonly startLinkTelemetry: typeof startLinkTelemetry;
@@ -73,6 +75,7 @@ export interface StartStreamDeps {
 }
 
 const defaultStartStreamDeps: StartStreamDeps = {
+	recordSenderIntent,
 	getStreamingBackend,
 	spawnStreamingLoop,
 	startLinkTelemetry,
@@ -230,10 +233,9 @@ export async function startStream(
 			failureClass: "audio_source_unavailable",
 		};
 	}
-	const statsFile = srtlaStatsFile();
+	const { statsFile, controlSocket } = senderPaths();
 	// ADR-001 control socket: telemetry rides the JSON-RPC subscription when the
 	// sender advertises it, with --stats-file as the airtight fallback poll.
-	const controlSocket = controlSocketPath(SRTLA_LISTEN_PORT);
 	let ipsContent: string;
 	try {
 		ipsContent = await Bun.file(setup.ips_file ?? "").text();
@@ -254,24 +256,34 @@ export async function startStream(
 		defaultBindMapSpawnDeps(getLastPublishedBond),
 	);
 	assertStreamLaunchOwnership();
+	const senderArgs = [
+		...buildSrtlaSendArgs({
+			listenPort: SRTLA_LISTEN_PORT,
+			srtlaHost: srtlaAddr,
+			srtlaPort,
+			ipsFile: setup.ips_file,
+			statsFile,
+			controlSocket,
+			execPath: setup.srtla_path,
+		}),
+		...bindMapArgs,
+	];
+	let lifetime: Lifetime | null | undefined;
+	await observeSafely(async () => {
+		lifetime = await startStreamDeps.recordSenderIntent(
+			[srtlaSendExec, ...senderArgs],
+			{ statsFile, controlSocket },
+			setup.ips_file ?? "",
+		);
+	});
+	assertStreamLaunchOwnership();
 	const transaction = createLaunchTransaction(attemptId, {
 		warn: (message, meta) => logger.warn(message, meta),
 	});
 	try {
 		const sender = startStreamDeps.spawnStreamingLoop(
 			srtlaSendExec,
-			[
-				...buildSrtlaSendArgs({
-					listenPort: SRTLA_LISTEN_PORT,
-					srtlaHost: srtlaAddr,
-					srtlaPort,
-					ipsFile: setup.ips_file,
-					statsFile,
-					controlSocket,
-					execPath: setup.srtla_path,
-				}),
-				...bindMapArgs,
-			],
+			senderArgs,
 			(err) => {
 				const resolved = resolveProcessError("srtla", err);
 				if (resolved) {
@@ -295,6 +307,10 @@ export async function startStream(
 			controlSocket,
 		});
 		transaction.register(() => startStreamDeps.stopLinkTelemetry());
+		await observeSafely(async () => {
+			if (lifetime) await recordSenderStarted(lifetime, sender.proc.pid);
+		});
+		assertStreamLaunchOwnership();
 
 		await startStreamDeps.getStreamingBackend().start(
 			launchConfig,
