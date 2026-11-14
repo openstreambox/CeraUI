@@ -981,6 +981,8 @@
 	"network.collision.bindMapReason.unreadable": "无法读取映射文件。",
 	"network.collision.bindMapReason.unsupported": "已安装的发送端不支持按接口映射。",
 	"network.collision.bindMapReasonLabel": "原因",
+	"network.collision.bindMapRequiredBody": "目前尚无链路发送数据。请检查网络设备是否已连接。链路映射有效后即可开始发送。",
+	"network.collision.bindMapRequiredTitle": "正在等待链路映射",
 	"network.collision.bindMapRetainedBody": "所有已聚合链路仍在使用最后一份有效映射运行。重新连接或重启推流即可刷新。",
 	"network.collision.policyRouteBody": "某条绑定链路可能通过了错误的调制解调器进行路由。请重启设备或重新插拔该链路 — 链路恢复后，路由规则会自动重新安装。",
 	"network.collision.policyRouteTitle": "链路路由需要注意",

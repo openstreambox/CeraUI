@@ -1029,6 +1029,8 @@
 	"network.collision.bindMapReason.unreadable": "No se pudo leer el archivo de mapeo.",
 	"network.collision.bindMapReason.unsupported": "El emisor instalado no admite mapeo por interfaz.",
 	"network.collision.bindMapReasonLabel": "Motivo",
+	"network.collision.bindMapRequiredBody": "Todavía no se están enviando datos por ningún enlace. Comprueba que los dispositivos de red estén conectados. El envío podrá empezar cuando el mapeo de enlaces sea válido.",
+	"network.collision.bindMapRequiredTitle": "Esperando el mapeo de enlaces",
 	"network.collision.bindMapRetainedBody": "Todos los enlaces agregados siguen funcionando con el último mapeo válido. Vuelve a conectar o reinicia la transmisión para actualizarlo.",
 	"network.collision.policyRouteBody": "Un enlace agrupado podría estar enrutando a través del módem equivocado. Reinicia el dispositivo o vuelve a conectar el enlace — las reglas de enrutamiento se reinstalan automáticamente cuando el enlace vuelve a activarse.",
 	"network.collision.policyRouteTitle": "El enrutamiento del enlace requiere atención",

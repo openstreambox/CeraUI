@@ -60,6 +60,7 @@ const PRODUCER_ORDERED_FIXTURES: string[] = [
 	"telemetry-reconnect",
 	"telemetry-degraded-startup",
 	"telemetry-degraded-reload",
+	"telemetry-required-binding-refused",
 ];
 
 describe("byte parity: parse(serialize(x)) preserves every sender field", () => {

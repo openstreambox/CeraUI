@@ -27,3 +27,9 @@ config. **Never run `biome check --write` over them**, and never regenerate
 `telemetry-legacy-producer.json` — it is the frozen pre-ADR-003 document that
 forms the old-shape half of the compatibility proof.
 
+`telemetry-required-binding-refused.json` is copied byte-for-byte from the
+sender's required-binding serializer fixture. Its additive disposition is
+`required_binding_refused`, with an empty connection pool and degraded status.
+It participates in the same byte-parity loop; existing fixture bytes and field
+order remain frozen. This state never means a legacy source-only link is running.
+

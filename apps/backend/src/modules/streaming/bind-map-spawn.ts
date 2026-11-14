@@ -84,3 +84,38 @@ export async function resolveBindMapArgs(
 	deps.announce("bind-map-passed", bond);
 	return ["--bind-map", bond.publication.sidecarPath];
 }
+
+export type RequiredBindMapResolution =
+	| { readonly ok: true; readonly args: string[] }
+	| {
+			readonly ok: false;
+			readonly reason: "mapping-unavailable" | "capability-unavailable";
+	  };
+/** Managed cellular paths require the opt-in sender contract. A refusal never
+ * returns a legacy argument vector or claims source-only links are running.
+ * The caller reports the typed refusal before submitting the sender process.
+ */
+export async function resolveRequiredBindMapArgs(
+	execPath: string,
+	deps: BindMapSpawnDeps,
+): Promise<RequiredBindMapResolution> {
+	const before = deps.getBond();
+	if (!before?.publication.ok)
+		return { ok: false, reason: "mapping-unavailable" };
+	let capabilities: CapabilityProbeResult;
+	try {
+		capabilities = await deps.probe(execPath);
+	} catch {
+		return { ok: false, reason: "capability-unavailable" };
+	}
+	if (!capabilities.bindMap || capabilities.bindMapRequired !== true)
+		return { ok: false, reason: "capability-unavailable" };
+	const current = deps.getBond();
+	if (!current?.publication.ok)
+		return { ok: false, reason: "mapping-unavailable" };
+	deps.announce("bind-map-passed", current);
+	return {
+		ok: true,
+		args: ["--bind-map", current.publication.sidecarPath, "--require-bind-map"],
+	};
+}

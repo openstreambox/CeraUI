@@ -81,14 +81,25 @@ const sysctlKeys = [
 	"forwarding",
 	"proxy_ndp",
 ] as const;
+const scopedSysctlKeys = [
+	...sysctlKeys,
+	"autoconf",
+	"accept_dad",
+	"disable_ipv6",
+] as const;
 export type CellularSysctl = (typeof sysctlKeys)[number];
+export type CellularScopedSysctl = (typeof scopedSysctlKeys)[number];
 export type CellularSysctlValue = "0" | "1" | "2";
+export type CellularScopedSysctlValue = CellularSysctlValue | "-1";
 function validValue(
-	key: CellularSysctl,
+	key: CellularScopedSysctl,
 	value: string,
-): value is CellularSysctlValue {
+): value is CellularScopedSysctlValue {
 	return (
-		value === "0" || value === "1" || (key === "accept_ra" && value === "2")
+		value === "0" ||
+		value === "1" ||
+		(key === "accept_dad" && value === "-1") ||
+		(["accept_ra", "accept_dad"].includes(key) && value === "2")
 	);
 }
 interface SysctlHandle {
@@ -134,28 +145,33 @@ const sysctlIO: CellularSysctlIO = {
 		};
 	},
 };
-function sysctlPath(link: CellularPhysicalLink, key: CellularSysctl): string {
+/** A TUN uses its owner alias and kernel index here; never fabricate USB
+ * identity for a virtual link. The supplied predicate must fence that instance.
+ */
+export interface CellularScopedLink {
+	readonly ifname: string;
+	readonly current: () => Promise<boolean>;
+}
+function sysctlPath(ifname: string, key: CellularScopedSysctl): string {
 	if (
-		!validLink(link) ||
-		["all", "default", "lo"].includes(link.ifname) ||
-		!sysctlKeys.includes(key)
+		!isSafeIfname(ifname) ||
+		["all", "default", "lo", ".", ".."].includes(ifname) ||
+		!scopedSysctlKeys.includes(key)
 	)
 		throw new Error("Invalid per-link sysctl identity");
-	return `/proc/sys/net/ipv6/conf/${link.ifname}/${key}`;
+	return `/proc/sys/net/ipv6/conf/${ifname}/${key}`;
 }
-export async function readCellularSysctl(
-	link: CellularPhysicalLink,
-	key: CellularSysctl,
-	io: CellularSysctlIO = sysctlIO,
-): Promise<CellularSysctlValue | undefined> {
-	const path = sysctlPath(link, key);
-	if ((await io.state(link)) !== "present") return undefined;
+export async function readScopedCellularSysctl(
+	link: CellularScopedLink,
+	key: CellularScopedSysctl,
+	io: Pick<CellularSysctlIO, "open"> = sysctlIO,
+): Promise<CellularScopedSysctlValue | undefined> {
+	const path = sysctlPath(link.ifname, key);
+	if (!(await link.current())) return undefined;
 	const handle = await io.open(path, false);
 	try {
 		const value = await handle.readValue();
-		return (await io.state(link)) === "present" && validValue(key, value)
-			? value
-			: undefined;
+		return (await link.current()) && validValue(key, value) ? value : undefined;
 	} finally {
 		await handle.close();
 	}
@@ -164,31 +180,62 @@ export async function readCellularSysctl(
  * descriptor belongs to that device instance, even if a name is later reused.
  * No all/default sysctl, network restart or global forwarding change is allowed.
  */
-export async function compareAndSetCellularSysctl(
+export async function compareAndSetScopedCellularSysctl(
+	link: CellularScopedLink,
+	key: CellularScopedSysctl,
+	expected: CellularScopedSysctlValue,
+	desired: CellularScopedSysctlValue,
+	io: Pick<CellularSysctlIO, "open"> = sysctlIO,
+): Promise<boolean> {
+	const path = sysctlPath(link.ifname, key);
+	if (!validValue(key, expected) || !validValue(key, desired))
+		throw new Error("Invalid per-link sysctl value");
+	if (!(await link.current())) return false;
+	const handle = await io.open(path, true);
+	try {
+		const before = await handle.readValue();
+		if ((before !== expected && before !== desired) || !(await link.current()))
+			return false;
+		if (before !== desired) await handle.writeValue(desired);
+		return (await link.current()) && (await handle.readValue()) === desired;
+	} finally {
+		await handle.close();
+	}
+}
+export async function readCellularSysctl(
+	link: CellularPhysicalLink,
+	key: CellularSysctl,
+	io: CellularSysctlIO = sysctlIO,
+): Promise<CellularSysctlValue | undefined> {
+	if (!validLink(link) || !sysctlKeys.includes(key))
+		return Promise.reject(new Error("Invalid per-link sysctl identity"));
+	const value = await readScopedCellularSysctl(
+		{
+			ifname: link.ifname,
+			current: async () => (await io.state(link)) === "present",
+		},
+		key,
+		io,
+	);
+	return value === "-1" ? undefined : value;
+}
+export function compareAndSetCellularSysctl(
 	link: CellularPhysicalLink,
 	key: CellularSysctl,
 	expected: CellularSysctlValue,
 	desired: CellularSysctlValue,
 	io: CellularSysctlIO = sysctlIO,
 ): Promise<boolean> {
-	const path = sysctlPath(link, key);
-	if (!validValue(key, expected) || !validValue(key, desired))
-		throw new Error("Invalid per-link sysctl value");
-	if ((await io.state(link)) !== "present") return false;
-	const handle = await io.open(path, true);
-	try {
-		const before = await handle.readValue();
-		if (
-			(before !== expected && before !== desired) ||
-			(await io.state(link)) !== "present"
-		)
-			return false;
-		if (before !== desired) await handle.writeValue(desired);
-		return (
-			(await io.state(link)) === "present" &&
-			(await handle.readValue()) === desired
-		);
-	} finally {
-		await handle.close();
-	}
+	if (!validLink(link) || !sysctlKeys.includes(key))
+		return Promise.reject(new Error("Invalid per-link sysctl identity"));
+	return compareAndSetScopedCellularSysctl(
+		{
+			ifname: link.ifname,
+			current: async () => (await io.state(link)) === "present",
+		},
+		key,
+		expected,
+		desired,
+		io,
+	);
 }

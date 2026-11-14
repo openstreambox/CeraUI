@@ -1,21 +1,34 @@
 import { expect, test } from "bun:test";
 import { createSocket } from "node:dgram";
 import { readlinkSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setLinkUpByIndex } from "../helpers/link-up-by-index.ts";
 import { changeLinkByIndex } from "../helpers/netlink-link.ts";
+import { acquirePrivateStateLease } from "../helpers/private-state-lease.ts";
 import { exchangeSourceBoundDatagram } from "../helpers/source-bound-datagram.ts";
 import {
 	CellularFirewall,
 	cellularFirewallIO,
 } from "../modules/network/cellular-firewall.ts";
 import {
+	compareAndSetScopedCellularSysctl,
+	readScopedCellularSysctl,
+} from "../modules/network/cellular-host-identity.ts";
+import {
 	CellularIpState,
 	cellularIpIO,
 } from "../modules/network/cellular-ip-state.ts";
+import { CellularNativeHost } from "../modules/network/cellular-native-host.ts";
 import {
 	cellularFenceDefinition,
 	inspectCellularFence,
@@ -40,11 +53,13 @@ if (
 	process.env.CERALIVE_REQUIRE_CELLULAR_TRANSLATOR === "1"
 )
 	throw new Error("Required pinned translator unavailable");
-const missing = ["unshare", "ip", "nft"].some((binary) => !Bun.which(binary));
+const missing = ["unshare", "mount", "ip", "nft"].some(
+	(binary) => !Bun.which(binary),
+);
 const privilege =
 	child || missing
 		? undefined
-		: await runTestCommand(["unshare", "-Urn", "true"]);
+		: await runTestCommand(["unshare", "-Urnm", "true"]);
 const unavailable = missing || (privilege?.code !== 0 && !child);
 if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 	throw new Error("Required cellular routing namespace unavailable");
@@ -52,22 +67,35 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 	"cellular source routes survive duplicate grants and fail closed without changing the LAN default",
 	async () => {
 		if (!child) {
-			const result = await runTestCommand(
-				[
-					"unshare",
-					"-Urn",
-					process.execPath,
-					"test",
-					fileURLToPath(import.meta.url),
-				],
-				{
-					env: {
-						CERALIVE_CELLULAR_ROUTE_CHILD: "1",
-						CELLULAR_HOST_NETNS: readlinkSync("/proc/self/ns/net"),
+			const root = await mkdtemp(join(tmpdir(), "cellular-route-root-"));
+			await mkdir(join(root, "tmp"), { mode: 0o700 });
+			try {
+				const result = await runTestCommand(
+					[
+						"unshare",
+						"-Urnm",
+						"sh",
+						"-c",
+						'mount --make-rprivate / && mount --bind "$1" /var && exec "$2" test "$3"',
+						"cellular-route",
+						root,
+						process.execPath,
+						fileURLToPath(import.meta.url),
+					],
+					{
+						cwd: root,
+						env: {
+							CERALIVE_CELLULAR_ROUTE_CHILD: "1",
+							CELLULAR_HOST_NETNS: readlinkSync("/proc/self/ns/net"),
+							CELLULAR_HOST_MNTNS: readlinkSync("/proc/self/ns/mnt"),
+							TMPDIR: "/var/tmp",
+						},
 					},
-				},
-			);
-			expect(result.code, result.stdout + result.stderr).toBe(0);
+				);
+				expect(result.code, result.stdout + result.stderr).toBe(0);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
 			return;
 		}
 		if (
@@ -75,6 +103,11 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			readlinkSync("/proc/self/ns/net") === process.env.CELLULAR_HOST_NETNS
 		)
 			throw new Error("Routing fixture must not use the host namespace");
+		if (
+			!process.env.CELLULAR_HOST_MNTNS ||
+			readlinkSync("/proc/self/ns/mnt") === process.env.CELLULAR_HOST_MNTNS
+		)
+			throw new Error("Routing fixture must not use the host mount namespace");
 		const ip = async (...argv: string[]) => {
 			const result = await runTestCommand(["ip", ...argv]);
 			if (result.code) throw new Error(result.stderr);
@@ -111,6 +144,51 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 			tunIo = cellularTunIO(async () => true);
 		const born = await createCellularTun(3, tunOwner, "one", tunIo);
 		expect(born.persistent).toBe(true);
+		const allForwarding = await Bun.file(
+			"/proc/sys/net/ipv6/conf/all/forwarding",
+		).text();
+		const scopedTun = {
+			ifname: born.name,
+			current: async () => {
+				const observed = inspectCellularTun(
+					await tunIo.links(),
+					3,
+					tunOwner,
+					"one",
+				);
+				return (
+					typeof observed !== "string" &&
+					observed.index === born.index &&
+					observed.alias === born.alias &&
+					observed.persistent
+				);
+			},
+		};
+		for (const [key, desired] of [
+			["accept_ra", "0"],
+			["accept_ra_defrtr", "0"],
+			["autoconf", "0"],
+			["accept_dad", "0"],
+			["disable_ipv6", "0"],
+			["forwarding", "1"],
+		] as const) {
+			const original = await readScopedCellularSysctl(scopedTun, key);
+			if (original === undefined)
+				throw new Error(
+					`Owned TUN sysctl unavailable: ${key}=${await Bun.file(`/proc/sys/net/ipv6/conf/${born.name}/${key}`).text()}`,
+				);
+			expect(
+				await compareAndSetScopedCellularSysctl(
+					scopedTun,
+					key,
+					original,
+					desired,
+				),
+			).toBe(true);
+		}
+		expect(
+			await Bun.file("/proc/sys/net/ipv6/conf/all/forwarding").text(),
+		).toBe(allForwarding);
 		if (translatorBinary) {
 			const configPlan = planCellularRoutes({
 				owner: tunOwner,
@@ -517,6 +595,113 @@ if (unavailable && process.env.CERALIVE_REQUIRE_CELLULAR_NETNS === "1")
 		);
 		for (const effect of [...c.effects].reverse())
 			expect(await translatedState.remove(effect)).toBe(true);
+
+		// Exercise the composed native host against the actual kernel, with its
+		// durable inverse and lifetime flock. NM's native address stays untouched.
+		const stateRoot = await mkdtemp(
+				join(tmpdir(), "cellular-native-composed-"),
+			),
+			lease = await acquirePrivateStateLease(
+				{ dir: join(stateRoot, "leases") },
+				"d".repeat(64),
+			);
+		if (!lease) throw new Error("Native fixture lease unavailable");
+		let owned = true,
+			consumers = false,
+			withdrawn = 0;
+		const nativeAuthority = {
+			input: {
+				owner: "d".repeat(64),
+				epoch: "native-one",
+				slot: 5,
+				iface: "wwan0",
+				mtu: 1428,
+				ipv4: "192.0.2.2",
+			},
+			ifindex: index,
+			dns: [],
+		};
+		const nativeDeps = {
+			store: { dir: join(stateRoot, "state") },
+			owned: () => owned,
+			current: async () => {
+				const rows = JSON.parse(
+					await ip("-4", "-j", "addr", "show", "dev", "wwan0"),
+				);
+				return (
+					rows.length === 1 &&
+					rows[0].ifindex === index &&
+					rows[0].addr_info.some(
+						(address: { local: string }) => address.local === "192.0.2.2",
+					)
+				);
+			},
+			withdraw: () => {
+				withdrawn++;
+			},
+			consumersReleased: async () => consumers,
+			cancelProbe: () => {
+				/* No ongoing socket in this finite fixture. */
+			},
+		};
+		try {
+			const native = new CellularNativeHost(nativeAuthority, nativeDeps);
+			await native.install();
+			expect(await native.valid()).toBe(true);
+			expect(await native.setReady(true)).toBe(true);
+			const beforeReady = await tx("wwan0");
+			await exchangeSourceBoundDatagram(packet);
+			expect(await tx("wwan0")).toBeGreaterThan(beforeReady);
+			expect(await native.cleanup()).toBe(false);
+			expect(withdrawn).toBe(1);
+			const beforeDenied = await tx("wwan0");
+			await exchangeSourceBoundDatagram(packet);
+			expect(await tx("wwan0")).toBe(beforeDenied);
+			consumers = true;
+			expect(await native.cleanup()).toBe(true);
+			expect(withdrawn).toBe(1); // Retries retain the original withdrawal boundary.
+			const successor = new CellularNativeHost(
+				{
+					...nativeAuthority,
+					input: { ...nativeAuthority.input, epoch: "native-two" },
+				},
+				nativeDeps,
+			);
+			await successor.install();
+			expect(await successor.setReady(true)).toBe(true);
+			expect(await native.cleanup()).toBe(true);
+			expect(await native.setReady(false)).toBe(false);
+			expect(await successor.valid()).toBe(true);
+			expect(await nativeDeps.current()).toBe(true);
+			await ip("link", "delete", "dev", "wwan0");
+			try {
+				expect(await successor.cleanup()).toBe(true);
+			} catch (cause) {
+				const fence = await runTestCommand([
+					"nft",
+					"--numeric",
+					"--json",
+					"list",
+					"table",
+					"inet",
+					"ceracell_5",
+				]);
+				throw new Error(
+					JSON.stringify({
+						fence: fence.stdout,
+						rules: await ip("-4", "-N", "-j", "rule", "show"),
+					}),
+					{ cause },
+				);
+			}
+			expect(await ip("-j", "-4", "route", "show", "table", "main")).toBe(
+				mainBefore,
+			);
+		} finally {
+			owned = false;
+			lease.release();
+			await rm(stateRoot, { recursive: true, force: true });
+		}
 	},
 	30_000,
 );

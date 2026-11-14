@@ -18,8 +18,8 @@ const input = {
 };
 function fixture() {
 	let raw: unknown,
-		index = 17,
 		current = true;
+	let index: number | "absent" | undefined = 17;
 	const writes: string[] = [];
 	const io: CellularFirewallIO = {
 		current: async () => current,
@@ -52,7 +52,7 @@ function fixture() {
 		set: (value: unknown) => {
 			raw = value;
 		},
-		index: (value: number) => {
+		index: (value: number | "absent" | undefined) => {
 			index = value;
 		},
 		current: (value: boolean) => {
@@ -89,6 +89,21 @@ test("birth refuses matching residue; foreign edits retain the firewall and with
 	expect(f.writes.length).toBe(before);
 	f.set({ nftables: cellularFenceInventory(input, "withdrawn") });
 	expect(await f.firewall.remove()).toBe(true);
+});
+test("a vanished decimal oif requires positive numeric-name absence; unknown and conflicting names retain the fence", async () => {
+	const f = fixture(),
+		raw = JSON.parse(
+			JSON.stringify({ nftables: cellularFenceInventory(input, "withdrawn") }),
+		);
+	raw.nftables[2].rule.expr[1].match.right = "17";
+	f.set(raw);
+	f.index("absent");
+	expect(await f.firewall.inspect()).toBe("withdrawn");
+	f.index(undefined);
+	expect(await f.firewall.remove()).toBe(false);
+	f.index(18); // An actual interface called "17" cannot be mistaken for index 17.
+	expect(await f.firewall.remove()).toBe(false);
+	expect(f.writes).toEqual([]);
 });
 test("named JSON oifs require fresh kernel-index evidence; a reused name grants no cleanup", async () => {
 	const f = fixture(),

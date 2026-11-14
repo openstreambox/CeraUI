@@ -4,7 +4,9 @@ import {
 	type CellularSysctlIO,
 	cellularPhysicalState,
 	compareAndSetCellularSysctl,
+	compareAndSetScopedCellularSysctl,
 	readCellularSysctl,
+	readScopedCellularSysctl,
 } from "./cellular-host-identity.ts";
 
 const link = {
@@ -49,6 +51,60 @@ test("USB loss, missing data link, replacement and unreadable identity stay dist
 			},
 		}),
 	).toBe("unknown");
+});
+test("a virtual link uses its own instance predicate for scoped IPv6 settings, never a fabricated USB identity", async () => {
+	let value = "1",
+		current = true,
+		replaceOnOpen = false,
+		writes = 0;
+	const scoped = { ifname: "cclat1", current: async () => current },
+		io: Pick<CellularSysctlIO, "open"> = {
+			open: async (path) => {
+				expect(path).toStartWith("/proc/sys/net/ipv6/conf/cclat1/");
+				if (replaceOnOpen) current = false;
+				return {
+					readValue: async () => value,
+					writeValue: async (next) => {
+						value = next;
+						writes++;
+					},
+					close: async () => undefined,
+				};
+			},
+		};
+	for (const key of ["autoconf", "accept_dad", "disable_ipv6"] as const) {
+		value = "1";
+		expect(
+			await compareAndSetScopedCellularSysctl(scoped, key, "1", "0", io),
+		).toBe(true);
+		expect(value).toBe("0");
+	}
+	value = "2";
+	expect(await readScopedCellularSysctl(scoped, "accept_dad", io)).toBe("2");
+	expect(
+		await readScopedCellularSysctl(scoped, "autoconf", io),
+	).toBeUndefined();
+	value = "-1";
+	expect(await readScopedCellularSysctl(scoped, "accept_dad", io)).toBe("-1");
+	expect(
+		await compareAndSetScopedCellularSysctl(
+			scoped,
+			"accept_dad",
+			"-1",
+			"0",
+			io,
+		),
+	).toBe(true);
+	await expect(
+		compareAndSetScopedCellularSysctl(scoped, "forwarding", "-1", "0", io),
+	).rejects.toThrow("value");
+	replaceOnOpen = true;
+	value = "1";
+	const before = writes;
+	expect(
+		await compareAndSetScopedCellularSysctl(scoped, "forwarding", "1", "0", io),
+	).toBe(false);
+	expect(writes).toBe(before);
 });
 test("per-link sysctls restore only an understood baseline and never touch a reused name", async () => {
 	let value = "1",

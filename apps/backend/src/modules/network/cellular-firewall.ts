@@ -12,7 +12,7 @@ import { isSafeIfname } from "./safe-ifname.ts";
 export interface CellularFirewallIO {
 	readonly read: (argv: string[]) => Promise<string>;
 	readonly write: (text: string) => Promise<void>;
-	readonly index: (name: string) => Promise<number | undefined>;
+	readonly index: (name: string) => Promise<number | "absent" | undefined>;
 	readonly current: () => Promise<boolean>;
 }
 export function cellularFirewallIO(
@@ -24,21 +24,30 @@ export function cellularFirewallIO(
 			if (!isSafeIfname(name)) return undefined;
 			try {
 				const rows: unknown = JSON.parse(
-					await run("ip", ["-j", "link", "show", "dev", name], {
+					await run("ip", ["-j", "link", "show"], {
 						timeout: 4000,
-						maxBuffer: 16 * 1024,
+						maxBuffer: 256 * 1024,
 					}),
 				);
 				if (
 					!Array.isArray(rows) ||
-					rows.length !== 1 ||
-					rows[0]?.ifname !== name ||
-					!Number.isInteger(rows[0]?.ifindex) ||
-					rows[0].ifindex < 1 ||
-					rows[0].ifindex > 0x7fffffff
+					rows.length > 4096 ||
+					rows.some(
+						(row) =>
+							!row ||
+							typeof row.ifname !== "string" ||
+							!Number.isInteger(row.ifindex) ||
+							row.ifindex < 1 ||
+							row.ifindex > 0x7fffffff,
+					)
 				)
 					return undefined;
-				return rows[0].ifindex;
+				const found = rows.filter((row) => row.ifname === name);
+				return found.length === 0
+					? "absent"
+					: found.length === 1
+						? found[0].ifindex
+						: undefined;
 			} catch {
 				return undefined;
 			}
@@ -129,7 +138,14 @@ export class CellularFirewall {
 					const first = await this.io.index(name),
 						second = await this.io.index(name);
 					if (!first || first !== second) return "foreign";
-					indexes[name] = first;
+					if (first === "absent") {
+						// nft renders a vanished oif as a decimal STRING. Distinguish
+						// that from an actual numeric interface name using two complete
+						// inventories; unreadable lookup is never positive absence.
+						if (!/^[1-9]\d{0,9}$/.test(name) || Number(name) > 0x7fffffff)
+							return "foreign";
+						indexes[name] = Number(name);
+					} else indexes[name] = first;
 				}
 		}
 		return inspectCellularFence(this.input, raw, indexes);

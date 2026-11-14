@@ -1026,6 +1026,8 @@
 	"network.collision.bindMapReason.unreadable": "Die Zuordnungsdatei war nicht lesbar.",
 	"network.collision.bindMapReason.unsupported": "Der installierte Sender unterstützt keine Zuordnung pro Schnittstelle.",
 	"network.collision.bindMapReasonLabel": "Grund",
+	"network.collision.bindMapRequiredBody": "Noch sendet kein Link Daten. Prüfe, ob die Netzwerkgeräte verbunden sind. Sobald die Link-Zuordnung gültig ist, kann das Senden beginnen.",
+	"network.collision.bindMapRequiredTitle": "Warten auf die Link-Zuordnung",
 	"network.collision.bindMapRetainedBody": "Alle gebündelten Links laufen weiterhin mit der letzten gültigen Zuordnung. Verbinde neu oder starte den Stream neu, um sie zu aktualisieren.",
 	"network.collision.policyRouteBody": "Eine gebündelte Verbindung wird möglicherweise über das falsche Modem geroutet. Starten Sie das Gerät neu oder stecken Sie die Verbindung neu ein — die Routing-Regeln werden automatisch neu installiert, sobald die Verbindung wieder aktiv ist.",
 	"network.collision.policyRouteTitle": "Verbindungs-Routing erfordert Aufmerksamkeit",

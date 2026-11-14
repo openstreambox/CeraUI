@@ -1026,6 +1026,8 @@
 	"network.collision.bindMapReason.unreadable": "The mapping file couldn't be read.",
 	"network.collision.bindMapReason.unsupported": "The installed sender doesn't support per-interface mapping.",
 	"network.collision.bindMapReasonLabel": "Reason",
+	"network.collision.bindMapRequiredBody": "No links are sending yet. Check that the network devices are connected. Sending can start once the link mapping is valid.",
+	"network.collision.bindMapRequiredTitle": "Waiting for link mapping",
 	"network.collision.bindMapRetainedBody": "Every bonded link is still running on the last valid mapping. Reconnect or restart the stream to refresh it.",
 	"network.collision.policyRouteBody": "A bonded link may be routing through the wrong modem. Reboot the device or re-plug the link — routing rules are reinstalled automatically when the link comes back up.",
 	"network.collision.policyRouteTitle": "Link routing needs attention",

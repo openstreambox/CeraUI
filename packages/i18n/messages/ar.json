@@ -1038,6 +1038,8 @@
 	"network.collision.bindMapReason.unreadable": "تعذّرت قراءة ملف التعيين.",
 	"network.collision.bindMapReason.unsupported": "المرسِل المثبَّت لا يدعم التعيين لكل واجهة.",
 	"network.collision.bindMapReasonLabel": "السبب",
+	"network.collision.bindMapRequiredBody": "لم يبدأ إرسال البيانات عبر أي رابط بعد. تأكد من توصيل أجهزة الشبكة. يمكن بدء الإرسال عندما يكون تعيين الروابط صالحًا.",
+	"network.collision.bindMapRequiredTitle": "بانتظار تعيين الروابط",
 	"network.collision.bindMapRetainedBody": "لا تزال جميع الروابط المجمّعة تعمل بآخر تعيين صالح. أعد الاتصال أو أعد تشغيل البث لتحديثه.",
 	"network.collision.policyRouteBody": "قد يكون أحد الروابط المدمجة يوجّه عبر مودم خاطئ. أعد تشغيل الجهاز أو أعد توصيل الرابط — تُعاد قواعد التوجيه تلقائياً عند عودة الرابط.",
 	"network.collision.policyRouteTitle": "توجيه الرابط يحتاج إلى انتباه",

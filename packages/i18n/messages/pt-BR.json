@@ -1029,6 +1029,8 @@
 	"network.collision.bindMapReason.unreadable": "Não foi possível ler o arquivo de mapeamento.",
 	"network.collision.bindMapReason.unsupported": "O emissor instalado não suporta mapeamento por interface.",
 	"network.collision.bindMapReasonLabel": "Motivo",
+	"network.collision.bindMapRequiredBody": "Nenhum link está enviando dados ainda. Verifique se os dispositivos de rede estão conectados. O envio poderá começar quando o mapeamento dos links for válido.",
+	"network.collision.bindMapRequiredTitle": "Aguardando o mapeamento dos links",
 	"network.collision.bindMapRetainedBody": "Todos os links agregados continuam funcionando com o último mapeamento válido. Reconecte ou reinicie a transmissão para atualizá-lo.",
 	"network.collision.policyRouteBody": "Um link agregado pode estar roteando pelo modem errado. Reinicie o dispositivo ou reconecte o link — as regras de roteamento são reinstaladas automaticamente quando o link volta a ativar.",
 	"network.collision.policyRouteTitle": "O roteamento do link precisa de atenção",

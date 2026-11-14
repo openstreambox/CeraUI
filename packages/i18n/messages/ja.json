@@ -981,6 +981,8 @@
 	"network.collision.bindMapReason.unreadable": "マッピングファイルを読み取れませんでした。",
 	"network.collision.bindMapReason.unsupported": "インストールされている送信側は、インターフェース単位のマッピングに対応していません。",
 	"network.collision.bindMapReasonLabel": "理由",
+	"network.collision.bindMapRequiredBody": "まだどのリンクからも送信していません。ネットワーク機器が接続されているか確認してください。リンクの割り当てが有効になると送信を開始できます。",
+	"network.collision.bindMapRequiredTitle": "リンクの割り当てを待機中",
 	"network.collision.bindMapRetainedBody": "ボンディング中のリンクはすべて、最後に有効だったマッピングで動作を継続しています。再接続するかストリームを再起動すると更新されます。",
 	"network.collision.policyRouteBody": "ボンディングされたリンクが誤ったモデム経由でルーティングされている可能性があります。デバイスを再起動するか、リンクを接続し直してください — リンクが復帰すると、ルーティングルールは自動的に再設定されます。",
 	"network.collision.policyRouteTitle": "リンクのルーティングに注意が必要です",
