@@ -11,11 +11,18 @@ the configured listener address and passphrase; it never invents credentials.
 Computer screens offer Wi-Fi and address QR codes. Phone and touch layouts use
 Copy. Passwords have no plain-text QR and should be kept off camera and out of screenshots.
 
-Moblin's password goes from Moblin to its relay. This build does not supply a
-Moblink relay service or a credential-writing endpoint for one. The Moblin path
-says so and offers Just internet. It never claims that an unavailable relay is
-connected. The relay integration must supply that owner before enabling the
-password field.
+Moblin: copy the password from Moblin Settings › Moblink › Password into the
+box. A local device operator can save, replace or clear it only while the box
+confirms idle. It is never displayed again. Saving does not confirm a connection:
+check Moblin and the stream itself. If Moblin's password changes, replace the
+box's copy too. One password applies to this box; any local Moblin streamer with
+that password may authenticate. Clearing stops this box's owned relay.
+Saving requires an image provisioned for the managed relay. Clear remains
+available while idle even if that relay is unavailable or storage needs repair.
+Clearing an unsaved password does not create storage. The field asks browsers
+and password managers not to fill or save it; their own policies still apply.
+If a saved credential is empty or the relay stops unexpectedly, Box health
+shows a calm Moblin connection line. Replace or clear the password to recover.
 
 When the box next starts carrying, it remembers only the chosen way (`moblin`, `srt`, `internet`) in
 `/data/phone-way.json`. Development uses a checkout-local file. No phone identity
@@ -37,8 +44,23 @@ comprobando. Esto no confirma lo que ven los espectadores: comprueba la emisión
 La conexión ofrece Moblin, IRL Pro, otra aplicación SRT o solo internet. SRT usa
 la dirección y la contraseña configuradas en la caja. Los códigos QR de Wi-Fi y
 de la dirección solo aparecen en pantallas de ordenador; el teléfono usa Copiar.
-Mantén las contraseñas fuera de cámara. Este borrador no incluye el servicio
-Moblink: muestra esa limitación y ofrece solo internet.
+Mantén las contraseñas fuera de cámara. Sin el relé administrado, la caja
+muestra esa limitación y ofrece solo internet.
+
+Moblin: copia la contraseña de Ajustes › Moblink › Contraseña de Moblin en la
+caja. Un operador local autenticado puede guardarla, reemplazarla o borrarla
+cuando la caja confirme que no transporta una transmisión. Nunca se vuelve a
+mostrar. Guardarla no confirma la conexión: comprueba Moblin y la transmisión.
+Si cambia en Moblin, reemplázala también en la caja. La contraseña se aplica a
+esta caja; cualquier emisor Moblin local que la comparta puede autenticarse.
+Borrarla detiene el relé de esta caja. Guardarla requiere una imagen preparada
+para el relé administrado. Borrar sigue disponible cuando la caja está inactiva,
+aunque el relé no esté disponible o haya que reparar el archivo guardado.
+Si el archivo está vacío o el relé se detiene inesperadamente, Estado de la caja
+muestra un aviso de conexión Moblin. Reemplaza o borra la contraseña para recuperarla.
+Borrar una contraseña no guardada no crea almacenamiento. El campo pide al
+navegador y al gestor de contraseñas que no lo rellenen ni guarden; sus propias
+políticas siguen aplicándose.
 
 Solo se recuerda la opción elegida; no se guarda la identidad del teléfono.
 El reinicio permanece desactivado mientras la caja transporta tráfico o lo
@@ -47,8 +69,9 @@ comprueba. Durante la comprobación inicial de 120 segundos, se permite apagar t
 ## Integration contract
 
 The additive local status fields are `phone_box` and `box_health` (typed part
-and first-failure epoch). Connection credentials are available only through the
-authenticated `system.getPhoneBox` RPC. `system.setPhoneWay` accepts only the
+and first-failure epoch). SRT listener credentials are available only through the
+authenticated `system.getPhoneBox` RPC. Moblin credentials use the local-only,
+write-only `moblink` procedures; see [the ownership contract](../MOBLINK-CREDENTIAL.md). `system.setPhoneWay` accepts only the
 three-valued enum. Phone-only remote status is an allowlist of role, carrying
 state, anonymous link counts (`phone_links`, with `sending: null` until known) and typed health entries; local Wi-Fi names, addresses and passwords are
 not relayed. Backend engine identity applies this projection to every remote frame, including partial status updates; other frame types are withheld on phone-only boxes. The localized helper lines explicitly ask moderators
@@ -80,3 +103,7 @@ Apagar solo está disponible durante la comprobación inicial de 120 segundos qu
 Initial connections and reconnect status pulls include the backend startup permission, so opening Home midway through the window preserves confirmed power-off. After expiry, the blocked reason names both restart and power off.
 
 La conexión inicial y las consultas de estado al reconectar incluyen el permiso inicial del equipo. Abrir Inicio durante ese periodo conserva el apagado con confirmación. Al terminar, el motivo del bloqueo menciona reiniciar y apagar.
+
+The Moblin choice reflects relay availability. Clear remains available for storage recovery even when no relay or valid password exists; success states that no password is saved, without claiming a stream stopped.
+
+La opción Moblin refleja la disponibilidad del retransmisor. Borrar sigue disponible para recuperar el almacenamiento aunque no haya retransmisor ni contraseña válida; el resultado indica que no queda una contraseña guardada, sin afirmar que se detuvo una emisión.

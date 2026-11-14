@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { m } from '@ceraui/i18n/svelte';
-	import type { PhoneBoxSettings, PhoneWay, StatusResponse } from '@ceraui/rpc/schemas';
+	import type {
+		MoblinkResult,
+		MoblinkStatus,
+		PhoneBoxSettings,
+		PhoneWay,
+		StatusResponse,
+	} from '@ceraui/rpc/schemas';
 	import { onMount } from 'svelte';
 	import PhoneBoxHealth from './PhoneBoxHealth.svelte';
 	import { phoneState, remotePhoneState, showPhoneQr } from './phone-home';
@@ -15,11 +21,17 @@
 		temperature = null,
 		kiosk = false,
 		wifi,
+		moblink,
+		oncredential,
+		onclearcredential,
 		onsave,
 		onrestart,
 		onnetwork,
 		onserver,
 	}: {
+		moblink?: MoblinkStatus;
+		oncredential?: (password: string) => Promise<MoblinkResult>;
+		onclearcredential?: () => Promise<MoblinkResult>;
 		wifi?: { name?: string; password?: string; clients?: number };
 		kiosk?: boolean;
 		reachable?: boolean;
@@ -36,6 +48,33 @@
 	} = $props();
 	const viewState = $derived(phoneState(reachable ? carrying : undefined));
 	let connect = $state(false);
+	let password = $state('');
+	let credentialBusy = $state(false);
+	const clearAllowed = $derived(reachable && carrying === 'idle' && !credentialBusy);
+	const credentialAllowed = $derived(
+		reachable && carrying === 'idle' && moblink?.available === true && !credentialBusy,
+	);
+	async function submitCredential(clear = false) {
+		if (clear ? !clearAllowed : !credentialAllowed) return;
+		credentialBusy = true;
+		const submitted = password;
+		password = '';
+		try {
+			const reply = clear ? await onclearcredential?.() : await oncredential?.(submitted);
+			result = reply?.success
+				? clear
+					? m['live.phone.moblinCleared']()
+					: m['live.phone.moblinSaved']()
+				: m['live.phone.moblinFailed']();
+		} catch {
+			result = m['live.phone.moblinFailed']();
+		} finally {
+			credentialBusy = false;
+		}
+	}
+	$effect(() => {
+		if (!connect || selected !== 'moblin' || !credentialAllowed) password = '';
+	});
 	let way = $state<PhoneWay | null>(null);
 	let choosing = $state(true);
 	let result = $state('');
@@ -68,6 +107,7 @@
 		};
 	});
 	function choose(value: PhoneWay) {
+		password = '';
 		way = value;
 		choosing = false;
 		result = '';
@@ -137,7 +177,7 @@
 						type="button"
 						aria-label={m[`live.phone.${app}`]()}
 						onclick={() => choose(app as PhoneWay)}
-						>{m[`live.phone.${app}`]()}<small>{m[`live.phone.${app}Choice`]()}</small></button
+						>{m[`live.phone.${app}`]()}<small>{app === 'moblin' && moblink?.available ? m['live.phone.moblinAvailableChoice']() : m[`live.phone.${app}Choice`]()}</small></button
 					>{/each}
 				<button type="button" onclick={() => choose('srt')}>{m['live.phone.another']()}</button>
 			</div>
@@ -169,16 +209,39 @@
 			</section>
 			{#if selected === 'moblin'}
 				<section>
-					<p>{m['live.phone.moblinUnavailable']()}</p>
 					<h2>2. {m['live.phone.moblinEnable']()}</h2>
 					<p>{m['live.phone.moblinBody']()}</p>
 					<label
 						>{m['live.phone.moblinPassword']()}<input
 							type="password"
 							autocomplete="off"
-							disabled
+							data-1p-ignore=""
+							data-lpignore="true"
+							data-bwignore=""
+							data-form-type="other"
+							bind:value={password}
+							disabled={!credentialAllowed}
 						/></label
 					>
+					{#if moblink?.available}
+						<p>
+							{moblink.configured
+								? m['live.phone.moblinConfigured']()
+								: m['live.phone.moblinBinding']()}
+						</p>
+						{#if !reachable || carrying !== 'idle'}<p>{m['live.phone.moblinBusy']()}</p>{/if}
+						<button
+							type="button"
+							disabled={!credentialAllowed || !password}
+							onclick={() => submitCredential()}>{m['live.phone.moblinSave']()}</button
+						>
+					{:else}<p>{m['live.phone.moblinUnavailable']()}</p>{/if}
+					<button
+						type="button"
+						disabled={!clearAllowed}
+						onclick={() => submitCredential(true)}>{m['live.phone.moblinClear']()}</button
+					>
+
 					<button type="button" onclick={() => choose('internet')}
 						>{m['live.phone.internet']()}</button
 					>

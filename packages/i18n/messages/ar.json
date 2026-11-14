@@ -2896,6 +2896,7 @@
 	"live.phone.change": "[EN] Change app",
 	"live.phone.unsure": "[EN] Not sure? Just internet works with everything. You can switch later.",
 	"live.phone.moblinChoice": "[EN] Not on this box yet. Use Just internet for now.",
+	"live.phone.moblinAvailableChoice": "[EN] Use your Moblin relay password.",
 	"live.phone.srtChoice": "[EN] Your phone sends its stream to the box, and the box sends it on over all its links. Needs a server address that starts with srtla://.",
 	"live.phone.internetChoice": "[EN] Your phone joins the box's Wi-Fi and uses the box's best link, switching if that one fails. Works with any app and any platform, including a plain Twitch, Kick or YouTube stream key. The links aren't combined.",
 	"live.phone.join": "[EN] Join the box's Wi-Fi.",
@@ -2975,5 +2976,13 @@
 	"live.phone.healthWaitOne": "[EN] 1 other part can wait",
 	"live.phone.healthWaitMany": "[EN] {count} other parts can wait",
 	"live.phone.healthRestartParts": "[EN] {parts} need a restart",
-	"live.phone.carryingChecking": "[EN] The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption."
+	"live.phone.carryingChecking": "[EN] The box is checking whether your phone uses it. Updates and restarts wait; you can power off after confirming the interruption.",
+	"live.phone.moblinSave": "[EN] Save Moblin password",
+	"live.phone.moblinClear": "[EN] Clear Moblin password",
+	"live.phone.moblinConfigured": "[EN] A Moblin password is saved. You can replace or clear it; it cannot be displayed.",
+	"live.phone.moblinBinding": "[EN] One password for this box. Any local Moblin streamer with that password may connect.",
+	"live.phone.moblinSaved": "[EN] Saved on the box. Check Moblin to confirm it connects; saving does not confirm a connection.",
+	"live.phone.moblinCleared": "[EN] No Moblin password is saved on this box.",
+	"live.phone.moblinFailed": "[EN] The Moblin password could not be applied. Check the box and try again. It may already be saved.",
+	"live.phone.moblinBusy": "[EN] Wait until the box confirms no stream is using it before changing the Moblin password."
 }
