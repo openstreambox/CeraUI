@@ -43,6 +43,7 @@ import { logger } from "./helpers/logger.ts";
 // allow: SIZE_OK — Sequential boot composition root; ordering and signal wiring are pinned by boot contract tests.
 import { handleTerminationSignal } from "./helpers/shutdown.ts";
 import { notifyServiceReady } from "./helpers/systemd-ready.ts";
+import { startServiceWatchdog } from "./helpers/systemd-watchdog.ts";
 import { isDevelopment } from "./mocks/mock-config.ts";
 import {
 	initMockService,
@@ -300,6 +301,7 @@ logger.info(bootTimer.phase("🚀", "server"));
 // Type=notify holds the add-on poke until the guard exists, including the
 // native-runtime/import window before this module could install any handler.
 await runCritical("systemd-ready", notifyServiceReady);
+startServiceWatchdog();
 
 if (!configAvailableAtBind) {
 	await awaitRuntimeConfig();

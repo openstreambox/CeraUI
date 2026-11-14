@@ -19,13 +19,23 @@ export function setShutdownProtection(
 		logger.warn("Shutdown protection unavailable; stream start will wait");
 	return ok;
 }
+/** Admission owns only the lease it introduces; retained startup/cleanup owners survive. */
+export function ensureEncoderShutdownProtection(): boolean {
+	const retainedEncoder = encoder;
+	if (setShutdownProtection("encoder", true)) return true;
+	if (!retainedEncoder) setShutdownProtection("encoder", false);
+	return false;
+}
+
 export function initShutdownProtection(acquire = acquireLogindInhibitor): void {
 	if (protection) return;
 	protection = createShutdownInhibitor(acquire);
 	process.once("exit", () => protection?.dispose());
-	if (
-		!protection.set("encoder", encoder) ||
-		!protection.set("carrying", carrying)
-	)
-		throw new Error("Cannot establish shutdown protection");
+	// Seed both owners even when logind is not ready. Later publication retries.
+	const encoderReady = protection.set("encoder", encoder);
+	const carryingReady = protection.set("carrying", carrying);
+	if (!encoderReady || !carryingReady)
+		logger.warn(
+			"Shutdown protection unavailable at startup; retaining owners for retry",
+		);
 }

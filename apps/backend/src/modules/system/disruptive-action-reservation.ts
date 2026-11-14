@@ -1,4 +1,5 @@
 /// <reference lib="es2023.collection" />
+import type { PowerFailureReason } from "@ceraui/rpc";
 import { SpawnTimeoutError } from "../../helpers/bounded-spawn.ts";
 import type {
 	DisruptiveActionDecision,
@@ -18,7 +19,19 @@ export class DisruptiveActionRefusal extends Error {
 }
 
 export const PLANNED_POWER_REFUSAL =
-	"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle.";
+	"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle. For an emergency, as root run systemctl stop ceralive, then systemctl reboot; this disconnects streams and clients.";
+
+export function classifyPowerFailure(
+	exitCode: number | null,
+	stderr: string,
+): PowerFailureReason {
+	if (exitCode === null || exitCode >= 128) return "shutdown_uncertain";
+	if (/User .+ is logged in|other users|multiple sessions/i.test(stderr))
+		return "other_users";
+	if (exitCode !== 127 && /Operation inhibited|Access denied/i.test(stderr))
+		return "shutdown_inhibited";
+	return "shutdown_unavailable";
+}
 
 export function plannedPowerFailureMessage(exitCode: number | null): string {
 	return exitCode !== null && exitCode > 0 && exitCode < 128
@@ -32,6 +45,7 @@ export class PowerSubmissionError extends Error {
 		readonly command: string,
 		readonly exitCode: number | null,
 		message?: string,
+		readonly stderr = "",
 	) {
 		super(message ?? `${command} exited with status ${String(exitCode)}`);
 	}

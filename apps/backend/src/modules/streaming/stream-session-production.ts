@@ -1,5 +1,5 @@
 import { logger } from "../../helpers/logger.ts";
-import { setShutdownProtection } from "../system/shutdown-protection.ts";
+import { ensureEncoderShutdownProtection } from "../system/shutdown-protection.ts";
 import { admitAndPrepareStreamStart } from "../system/update-orchestrator/runtime.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
 import { noteStreamStopped } from "./armed-stream-marker.ts";
@@ -78,11 +78,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 				logger.warn("stream restoration arming failed", { error }),
 			);
 	},
-	ensureShutdownProtection: () => {
-		if (setShutdownProtection("encoder", true)) return true;
-		setShutdownProtection("encoder", false);
-		return false;
-	},
+	ensureShutdownProtection: ensureEncoderShutdownProtection,
 	admitLifecycle: () => tryAcquireLifecycle("streaming"),
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,

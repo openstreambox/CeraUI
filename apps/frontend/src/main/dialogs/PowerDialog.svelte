@@ -111,7 +111,15 @@ async function confirmAction() {
 		target: action,
 		rpc: () => (action === 'reboot' ? rpc.system.reboot() : rpc.system.poweroff()),
 		confirmOnResolve: true,
-		failMessage: () => m["network.os.operationFailed"](),
+		failMessage: (result) => {
+			switch (result?.failureReason) {
+				case 'shutdown_inhibited': return m["settings.dialogs.shutdown_inhibited"]();
+				case 'other_users': return m["settings.dialogs.other_users"]();
+				case 'shutdown_unavailable': return m["settings.dialogs.shutdown_unavailable"]();
+				case 'shutdown_uncertain': return m["settings.dialogs.shutdown_uncertain"]();
+				default: return m["network.os.operationFailed"]();
+			}
+		},
 	});
 	pending = null;
 	// undefined → re-entry no-op or a thrown RPC (osCommand already toasted);
@@ -260,6 +268,8 @@ function dismissRecovery() {
 				</div>
 			</div>
 		{:else}
+			<p class="text-xs text-muted-foreground">{m["settings.dialogs.powerOverride"]()}</p>
+
 		{#if blocked}
 			<!-- Why the actions are unavailable right now. -->
 			<div

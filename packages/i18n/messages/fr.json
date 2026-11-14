@@ -1756,10 +1756,10 @@
 	"network.wifiMode.stationHint": "Se connecte à un réseau Wi-Fi. Cette radio peut participer à l'agrégation.",
 	"network.wifiMode.hotspotHint": "Diffuse uniquement un point d'accès. Cette radio ne fournit aucune liaison montante Wi-Fi.",
 	"network.wifiMode.hybridHint": "Reste connecté au Wi-Fi tout en diffusant un point d'accès.",
-  "network.wifiDegraded.unavailable": "L’adaptateur Wi-Fi est temporairement indisponible.",
-  "network.wifiDegraded.operational-mac-missing": "L’adaptateur Wi-Fi n’a pas encore signalé son adresse matérielle actuelle.",
-  "network.wifiDegraded.permanent-mac-unresolved": "L’identité matérielle stable de l’adaptateur Wi-Fi n’a pas pu être confirmée.",
-  "network.wifiMode.unavailable": "{mode} n'est pas disponible — {reason}",
+	"network.wifiDegraded.unavailable": "L’adaptateur Wi-Fi est temporairement indisponible.",
+	"network.wifiDegraded.operational-mac-missing": "L’adaptateur Wi-Fi n’a pas encore signalé son adresse matérielle actuelle.",
+	"network.wifiDegraded.permanent-mac-unresolved": "L’identité matérielle stable de l’adaptateur Wi-Fi n’a pas pu être confirmée.",
+	"network.wifiMode.unavailable": "{mode} n'est pas disponible — {reason}",
 	"network.wifiMode.pending": "Passage en {mode}…",
 	"network.wifiMode.reason.unsupported": "Cette radio ne peut pas héberger de point d'accès.",
 	"network.wifiMode.reason.capabilityAbsent": "Le pilote de cette radio ne peut pas gérer le Wi-Fi et un point d'accès en même temps.",
@@ -2820,5 +2820,10 @@
 	"notifications.clientCarrying": "Le boîtier transporte du trafic client. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
 	"notifications.clientCarryingUnknown": "Le boîtier vérifie les clients. Mises à jour, redémarrage, extinction et changements de liaison à vide attendent.",
 	"general.updateReasonClientTraffic": "Un flux est actif ou en cours de vérification. Arrêtez les flux des appareils connectés et celui du boîtier avant la mise à jour.",
-	"notifications.disruptiveActionClientTraffic": "Cette action n’a pas été exécutée. Réessayez lorsque le flux de la box et le trafic de diffusion des appareils connectés sont inactifs et qu’aucune mise à jour n’est en cours."
+	"notifications.disruptiveActionClientTraffic": "Cette action n’a pas été exécutée. Réessayez lorsque le flux de la box et le trafic de diffusion des appareils connectés sont inactifs et qu’aucune mise à jour n’est en cours.",
+	"settings.dialogs.shutdown_inhibited": "Arrêt refusé pendant une diffusion, le transport du trafic client ou un autre verrou. Arrêtez cette activité puis réessayez.",
+	"settings.dialogs.other_users": "D’autres utilisateurs sont connectés. Demandez-leur de terminer avant de réessayer.",
+	"settings.dialogs.shutdown_unavailable": "Arrêt indisponible. Vérifiez le service système avant de réessayer.",
+	"settings.dialogs.shutdown_uncertain": "La demande n’a pas pu être confirmée. Vérifiez l’appareil avant de réessayer.",
+	"settings.dialogs.powerOverride": "Dérogation d’urgence (root) : exécutez systemctl stop ceralive puis systemctl reboot. Cela arrête les diffusions, déconnecte les clients et ferme cette interface."
 }

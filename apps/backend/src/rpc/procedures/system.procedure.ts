@@ -17,6 +17,7 @@ import {
 	kioskToggleOutputSchema,
 	logInputSchema,
 	logOutputSchema,
+	powerResponseSchema,
 	previewTokenOutputSchema,
 	remoteConfigInputSchema,
 	revisionsSchema,
@@ -163,23 +164,20 @@ export const getSyslogProcedure = authedProcedure
 		return { log: result?.contents ?? "" };
 	});
 
-// Host-power runner DI seam (mirrors setKioskDeps): the default issues the real
-// Explicit inhibitor checks also apply to root and non-interactive callers; tests inject a
-// spy to assert the spawn without powering off the host.
+// Host-power runner DI seam (mirrors setKioskDeps). On systemd 257 logind
+// honours the strong block for root without adding the SSH session check.
+// Tests inject a spy without powering off the host.
 type PowerCommand = "poweroff" | "reboot";
 type PowerCommandRunner = (command: PowerCommand) => void;
 
 const defaultPowerCommandRunner: PowerCommandRunner = (command) => {
-	const result = Bun.spawnSync([
-		"systemctl",
-		"--check-inhibitors=yes",
-		command,
-	]);
+	const result = Bun.spawnSync(["systemctl", command]);
 	if (result.exitCode !== 0)
 		throw new PowerSubmissionError(
 			command,
 			result.exitCode,
 			plannedPowerFailureMessage(result.exitCode),
+			new TextDecoder().decode(result.stderr),
 		);
 };
 
@@ -197,7 +195,7 @@ export function resetPowerCommandRunner(): void {
 // Gate on isDevelopment() — NOT isRealDevice(), which is false for an
 // unrecognised board and would make a real device silently skip poweroff.
 export const poweroffProcedure = authedProcedure
-	.output(successResponseSchema)
+	.output(powerResponseSchema)
 	.handler(() => {
 		if (isDevelopment()) {
 			logger.info("dev: skipping spawn", {
@@ -212,7 +210,7 @@ export const poweroffProcedure = authedProcedure
 	});
 
 export const rebootProcedure = authedProcedure
-	.output(successResponseSchema)
+	.output(powerResponseSchema)
 	.handler(() => {
 		if (isDevelopment()) {
 			logger.info("dev: skipping spawn", {

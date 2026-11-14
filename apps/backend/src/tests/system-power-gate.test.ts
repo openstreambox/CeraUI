@@ -209,8 +209,6 @@ describe("(d) software-update auto-reboot gate", () => {
 
 		rebootAfterUpdate();
 
-		expect(calls).toEqual([
-			["systemctl", ["--check-inhibitors=yes", "reboot"]],
-		]);
+		expect(calls).toEqual([["systemctl", ["reboot"]]]);
 	});
 });

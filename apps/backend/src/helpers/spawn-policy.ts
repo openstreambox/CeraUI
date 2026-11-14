@@ -542,7 +542,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		id: "system.power",
 		file: "rpc/procedures/system.procedure.ts",
 		symbol: "defaultPowerCommandRunner",
-		command: "[systemctl, --check-inhibitors=yes, poweroff|reboot] (spawnSync)",
+		command: "[systemctl, poweroff|reboot] (spawnSync)",
 		class: "terminal-spawnSync",
 		contract: {
 			timed: false,

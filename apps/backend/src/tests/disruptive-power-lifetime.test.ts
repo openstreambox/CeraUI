@@ -166,18 +166,37 @@ for (const [command, procedure] of [
 			expect(result).toEqual({
 				success: false,
 				error:
-					"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle.",
+					"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle. For an emergency, as root run systemctl stop ceralive, then systemctl reboot; this disconnects streams and clients.",
+				failureReason: "shutdown_unavailable",
 			});
-			expect(spawn).toHaveBeenCalledWith([
-				"systemctl",
-				"--check-inhibitors=yes",
-				command,
-			]);
+			expect(spawn).toHaveBeenCalledWith(["systemctl", command]);
 			expect(getDisruptiveActionDecision()).toEqual({ allowed: true });
 		} finally {
 			spawn.mockRestore();
 		}
 	});
+	for (const [stderr, failureReason] of [
+		["Access denied", "shutdown_inhibited"],
+		["User demo is logged in on sshd.", "other_users"],
+		["Failed to connect to bus", "shutdown_unavailable"],
+	] as const) {
+		test(`local ${command} sends typed ${failureReason} from real runner output`, async () => {
+			const safe = Bun.spawnSync(["true"]);
+			const spawn = spyOn(Bun, "spawnSync").mockReturnValue({
+				...safe,
+				exitCode: 1,
+				success: false,
+				stderr: Buffer.from(stderr),
+			});
+			try {
+				const result = await call(procedure, undefined, { context });
+				expect(result.success).toBe(false);
+				expect(result.failureReason).toBe(failureReason);
+			} finally {
+				spawn.mockRestore();
+			}
+		});
+	}
 	test(`local ${command} retains exclusion after successful submission`, async () => {
 		// Given a successful synchronous command sink.
 		setPowerCommandRunner(() => {});

@@ -46,7 +46,7 @@ export function acquireLogindInhibitor(): () => void {
 	};
 	try {
 		checked(api.sd_bus_open_system(ptr(bus)));
-		checked(api.sd_bus_set_method_call_timeout(address(bus), 2_000_000));
+		checked(api.sd_bus_set_method_call_timeout(address(bus), 200_000));
 		checked(
 			api.sd_bus_message_new_method_call(
 				address(bus),
@@ -74,7 +74,7 @@ export function acquireLogindInhibitor(): () => void {
 			api.sd_bus_call(
 				address(bus),
 				address(request),
-				2_000_000,
+				200_000,
 				null,
 				ptr(reply),
 			),

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
-import { plannedPowerFailureMessage } from "../modules/system/disruptive-action-reservation.ts";
+import {
+	classifyPowerFailure,
+	plannedPowerFailureMessage,
+} from "../modules/system/disruptive-action-reservation.ts";
 import { createShutdownInhibitor } from "../modules/system/shutdown-inhibitor.ts";
 
 describe("shutdown inhibitor ownership", () => {
@@ -81,4 +84,16 @@ test("unacknowledged power submission never claims it was refused", () => {
 			"could not be confirmed",
 		);
 	expect(plannedPowerFailureMessage(1)).toContain("was not run");
+});
+
+test("power failures preserve policy, session, command and uncertainty distinctions", () => {
+	expect(classifyPowerFailure(1, "Access denied")).toBe("shutdown_inhibited");
+	expect(classifyPowerFailure(1, "User demo is logged in on sshd.")).toBe(
+		"other_users",
+	);
+	expect(classifyPowerFailure(127, "")).toBe("shutdown_unavailable");
+	expect(classifyPowerFailure(1, "Failed to connect to bus")).toBe(
+		"shutdown_unavailable",
+	);
+	expect(classifyPowerFailure(null, "")).toBe("shutdown_uncertain");
 });

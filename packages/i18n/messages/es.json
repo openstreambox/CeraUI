@@ -1756,10 +1756,10 @@
 	"network.wifiMode.stationHint": "Se conecta a una red Wi-Fi. Esta radio puede formar parte del enlace agregado.",
 	"network.wifiMode.hotspotHint": "Solo emite un punto de acceso. Esta radio no aporta enlace ascendente Wi-Fi.",
 	"network.wifiMode.hybridHint": "Permanece conectado al Wi-Fi mientras emite un punto de acceso.",
-  "network.wifiDegraded.unavailable": "El adaptador Wi-Fi no está disponible temporalmente.",
-  "network.wifiDegraded.operational-mac-missing": "El adaptador Wi-Fi aún no ha informado su dirección de hardware actual.",
-  "network.wifiDegraded.permanent-mac-unresolved": "No se pudo confirmar la identidad de hardware estable del adaptador Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} no está disponible: {reason}",
+	"network.wifiDegraded.unavailable": "El adaptador Wi-Fi no está disponible temporalmente.",
+	"network.wifiDegraded.operational-mac-missing": "El adaptador Wi-Fi aún no ha informado su dirección de hardware actual.",
+	"network.wifiDegraded.permanent-mac-unresolved": "No se pudo confirmar la identidad de hardware estable del adaptador Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} no está disponible: {reason}",
 	"network.wifiMode.pending": "Cambiando a {mode}…",
 	"network.wifiMode.reason.unsupported": "Esta radio no puede alojar un punto de acceso.",
 	"network.wifiMode.reason.capabilityAbsent": "El controlador de esta radio no puede usar Wi-Fi y un punto de acceso a la vez.",
@@ -2820,5 +2820,10 @@
 	"notifications.clientCarrying": "La caja transporta tráfico de clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
 	"notifications.clientCarryingUnknown": "La caja está comprobando la actividad de los clientes. Las actualizaciones, los reinicios, el apagado y los cambios de enlaces por inactividad esperarán.",
 	"general.updateReasonClientTraffic": "Hay una transmisión activa o se está comprobando su estado. Detén las transmisiones de los dispositivos conectados y de la caja antes de instalar una actualización.",
-	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso."
+	"notifications.disruptiveActionClientTraffic": "Esta acción no se ejecutó. Inténtalo de nuevo cuando la transmisión de la caja y el tráfico de transmisión de los dispositivos conectados estén inactivos y no haya una actualización en curso.",
+	"settings.dialogs.shutdown_inhibited": "Se rechazó el apagado por una transmisión, tráfico de clientes u otro bloqueo. Detén la actividad e inténtalo de nuevo.",
+	"settings.dialogs.other_users": "Hay otros usuarios conectados. Pídeles que terminen antes de volver a intentarlo.",
+	"settings.dialogs.shutdown_unavailable": "El apagado no está disponible. Revisa el servicio del sistema antes de volver a intentarlo.",
+	"settings.dialogs.shutdown_uncertain": "No se pudo confirmar la solicitud. Revisa el equipo antes de volver a intentarlo.",
+	"settings.dialogs.powerOverride": "Anulación de emergencia (root): ejecuta systemctl stop ceralive y luego systemctl reboot. Esto detiene las transmisiones, desconecta a los clientes y cierra esta interfaz."
 }

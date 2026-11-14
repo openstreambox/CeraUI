@@ -1756,10 +1756,10 @@
 	"network.wifiMode.stationHint": "Conecta-se a uma rede Wi-Fi. Este rádio pode fazer parte do agrupamento.",
 	"network.wifiMode.hotspotHint": "Apenas transmite um ponto de acesso. Este rádio não fornece enlace Wi-Fi de subida.",
 	"network.wifiMode.hybridHint": "Permanece no Wi-Fi enquanto também transmite um ponto de acesso.",
-  "network.wifiDegraded.unavailable": "O adaptador Wi-Fi está temporariamente indisponível.",
-  "network.wifiDegraded.operational-mac-missing": "O adaptador Wi-Fi ainda não informou seu endereço de hardware atual.",
-  "network.wifiDegraded.permanent-mac-unresolved": "Não foi possível confirmar a identidade de hardware estável do adaptador Wi-Fi.",
-  "network.wifiMode.unavailable": "{mode} não está disponível — {reason}",
+	"network.wifiDegraded.unavailable": "O adaptador Wi-Fi está temporariamente indisponível.",
+	"network.wifiDegraded.operational-mac-missing": "O adaptador Wi-Fi ainda não informou seu endereço de hardware atual.",
+	"network.wifiDegraded.permanent-mac-unresolved": "Não foi possível confirmar a identidade de hardware estável do adaptador Wi-Fi.",
+	"network.wifiMode.unavailable": "{mode} não está disponível — {reason}",
 	"network.wifiMode.pending": "Mudando para {mode}…",
 	"network.wifiMode.reason.unsupported": "Este rádio não consegue hospedar um ponto de acesso.",
 	"network.wifiMode.reason.capabilityAbsent": "O driver deste rádio não consegue usar Wi-Fi e um ponto de acesso ao mesmo tempo.",
@@ -2820,5 +2820,10 @@
 	"notifications.clientCarrying": "A caixa transporta tráfego de clientes. Atualizações, reinícios, desligamento e mudanças de links por inatividade aguardam.",
 	"notifications.clientCarryingUnknown": "A caixa verifica a atividade dos clientes. Atualizações, reinícios, desligamento e mudanças de links por inatividade aguardam.",
 	"general.updateReasonClientTraffic": "Há uma transmissão ativa ou em verificação. Encerre as transmissões dos dispositivos conectados e da caixa antes da atualização.",
-	"notifications.disruptiveActionClientTraffic": "Esta ação não foi executada. Tente novamente quando a transmissão da caixa e o tráfego de transmissão dos dispositivos conectados estiverem inativos e nenhuma atualização estiver em andamento."
+	"notifications.disruptiveActionClientTraffic": "Esta ação não foi executada. Tente novamente quando a transmissão da caixa e o tráfego de transmissão dos dispositivos conectados estiverem inativos e nenhuma atualização estiver em andamento.",
+	"settings.dialogs.shutdown_inhibited": "Desligamento recusado durante uma transmissão, tráfego de clientes ou outro bloqueio. Encerre a atividade e tente novamente.",
+	"settings.dialogs.other_users": "Há outros usuários conectados. Peça que terminem antes de tentar novamente.",
+	"settings.dialogs.shutdown_unavailable": "Desligamento indisponível. Verifique o serviço do sistema antes de tentar novamente.",
+	"settings.dialogs.shutdown_uncertain": "Não foi possível confirmar a solicitação. Verifique o equipamento antes de tentar novamente.",
+	"settings.dialogs.powerOverride": "Exceção de emergência (root): execute systemctl stop ceralive e depois systemctl reboot. Isso encerra transmissões, desconecta clientes e fecha esta interface."
 }

@@ -195,10 +195,7 @@ function defaultSelfFencingOps(): SelfFencingOps {
 		"network.reconfig": configSnapshotOp(),
 		"modem.reconfig": configSnapshotOp(),
 		"device.remoteKeyChange": configSnapshotOp(),
-		"system.reboot": spawnOp(
-			["systemctl", "--check-inhibitors=yes", "reboot"],
-			true,
-		),
+		"system.reboot": spawnOp(["systemctl", "reboot"], true),
 		"device.factoryReset": spawnOp(["ceralive-factory-reset"]),
 	};
 }

@@ -1708,10 +1708,10 @@
 	"network.wifiMode.stationHint": "连接到 Wi-Fi 网络。此无线设备可加入绑定链路。",
 	"network.wifiMode.hotspotHint": "仅广播接入点。此无线设备不提供 Wi-Fi 上行链路。",
 	"network.wifiMode.hybridHint": "保持 Wi-Fi 连接的同时广播接入点。",
-  "network.wifiDegraded.unavailable": "Wi-Fi 适配器暂时不可用。",
-  "network.wifiDegraded.operational-mac-missing": "Wi-Fi 适配器尚未报告当前硬件地址。",
-  "network.wifiDegraded.permanent-mac-unresolved": "无法确认 Wi-Fi 适配器的稳定硬件身份。",
-  "network.wifiMode.unavailable": "{mode} 不可用 — {reason}",
+	"network.wifiDegraded.unavailable": "Wi-Fi 适配器暂时不可用。",
+	"network.wifiDegraded.operational-mac-missing": "Wi-Fi 适配器尚未报告当前硬件地址。",
+	"network.wifiDegraded.permanent-mac-unresolved": "无法确认 Wi-Fi 适配器的稳定硬件身份。",
+	"network.wifiMode.unavailable": "{mode} 不可用 — {reason}",
 	"network.wifiMode.pending": "正在切换到 {mode}…",
 	"network.wifiMode.reason.unsupported": "此无线设备无法作为接入点。",
 	"network.wifiMode.reason.capabilityAbsent": "此无线设备的驱动无法同时运行 Wi-Fi 和接入点。",
@@ -2772,5 +2772,10 @@
 	"notifications.clientCarrying": "本机正在转发客户端流量。更新、重启、关机和空闲链路更改将等待。",
 	"notifications.clientCarryingUnknown": "本机正在检查客户端活动。更新、重启、关机和空闲链路更改将等待。",
 	"general.updateReasonClientTraffic": "直播正在进行或正在检查状态。安装更新前，请停止已连接设备和本机的直播。",
-	"notifications.disruptiveActionClientTraffic": "此操作未执行。请在盒子自身的推流和已连接设备的推流流量均处于空闲状态，且没有更新正在进行时重试。"
+	"notifications.disruptiveActionClientTraffic": "此操作未执行。请在盒子自身的推流和已连接设备的推流流量均处于空闲状态，且没有更新正在进行时重试。",
+	"settings.dialogs.shutdown_inhibited": "正在直播、转发客户端流量或存在其他关机锁，关机被拒绝。请停止活动后重试。",
+	"settings.dialogs.other_users": "其他用户已登录。请让他们完成工作后再重试。",
+	"settings.dialogs.shutdown_unavailable": "关机不可用。请检查系统服务后重试。",
+	"settings.dialogs.shutdown_uncertain": "无法确认电源请求。请检查设备后重试。",
+	"settings.dialogs.powerOverride": "紧急解除（root）：先运行 systemctl stop ceralive，再运行 systemctl reboot。这会停止直播、断开客户端并关闭此界面。"
 }
