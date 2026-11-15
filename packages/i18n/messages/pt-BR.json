@@ -2936,5 +2936,10 @@
 	"network.radio.neighbour": "Modem celular {id}",
 	"network.radio.transmitting": "Enviando dados",
 	"network.radio.usb": "Eventos USB",
-	"network.radio.timeline": "Histórico recente"
+	"network.radio.timeline": "Histórico recente",
+	"settings.dialogs.shutdown_inhibited": "Desligamento recusado durante uma transmissão, tráfego de clientes ou outro bloqueio. Encerre a atividade e tente novamente.",
+	"settings.dialogs.other_users": "Há outros usuários conectados. Peça que terminem antes de tentar novamente.",
+	"settings.dialogs.shutdown_unavailable": "Desligamento indisponível. Verifique o serviço do sistema antes de tentar novamente.",
+	"settings.dialogs.shutdown_uncertain": "Não foi possível confirmar a solicitação. Verifique o equipamento antes de tentar novamente.",
+	"settings.dialogs.powerOverride": "Exceção de emergência (root): execute systemctl stop ceralive e depois systemctl reboot. Isso encerra transmissões, desconecta clientes e fecha esta interface."
 }

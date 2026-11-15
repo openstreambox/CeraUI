@@ -2933,5 +2933,10 @@
 	"network.radio.neighbour": "Modem {id}",
 	"network.radio.transmitting": "Sending payload",
 	"network.radio.usb": "USB events",
-	"network.radio.timeline": "Recent timeline"
+	"network.radio.timeline": "Recent timeline",
+	"settings.dialogs.shutdown_inhibited": "Shutdown was refused while streaming, carrying client traffic, or protected by another shutdown lock. Stop the activity and try again.",
+	"settings.dialogs.other_users": "Other users are logged in. Ask them to finish before trying again.",
+	"settings.dialogs.shutdown_unavailable": "Shutdown is unavailable. Check the system service before trying again.",
+	"settings.dialogs.shutdown_uncertain": "The power request could not be confirmed. Check the box before trying again.",
+	"settings.dialogs.powerOverride": "Emergency override (root): run systemctl stop ceralive, then systemctl reboot. This stops streams, disconnects clients and closes this interface."
 }

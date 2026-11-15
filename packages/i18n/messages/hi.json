@@ -2933,5 +2933,10 @@
 	"network.radio.neighbour": "मोडेम {id}",
 	"network.radio.transmitting": "डेटा भेज रहा है",
 	"network.radio.usb": "USB घटनाएँ",
-	"network.radio.timeline": "हाल का इतिहास"
+	"network.radio.timeline": "हाल का इतिहास",
+	"settings.dialogs.shutdown_inhibited": "स्ट्रीमिंग, क्लाइंट ट्रैफ़िक या किसी अन्य शटडाउन लॉक के कारण बंद करना अस्वीकार हुआ। गतिविधि रोककर फिर प्रयास करें।",
+	"settings.dialogs.other_users": "अन्य उपयोगकर्ता लॉग इन हैं। फिर प्रयास करने से पहले उनसे काम पूरा करने को कहें।",
+	"settings.dialogs.shutdown_unavailable": "शटडाउन उपलब्ध नहीं है। फिर प्रयास करने से पहले सिस्टम सेवा जाँचें।",
+	"settings.dialogs.shutdown_uncertain": "पावर अनुरोध की पुष्टि नहीं हो सकी। फिर प्रयास करने से पहले डिवाइस जाँचें।",
+	"settings.dialogs.powerOverride": "आपातकालीन ओवरराइड (root): पहले systemctl stop ceralive, फिर systemctl reboot चलाएँ। इससे स्ट्रीम रुकती हैं, क्लाइंट डिस्कनेक्ट होते हैं और यह इंटरफ़ेस बंद होता है।"
 }

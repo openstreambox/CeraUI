@@ -2945,5 +2945,10 @@
 	"network.radio.neighbour": "المودم {id}",
 	"network.radio.transmitting": "يرسل بيانات",
 	"network.radio.usb": "أحداث USB",
-	"network.radio.timeline": "السجل الأخير"
+	"network.radio.timeline": "السجل الأخير",
+	"settings.dialogs.shutdown_inhibited": "رُفض الإيقاف أثناء البث أو تمرير بيانات العملاء أو بسبب قفل إيقاف آخر. أوقف النشاط ثم حاول مجددًا.",
+	"settings.dialogs.other_users": "هناك مستخدمون آخرون مسجلون للدخول. اطلب منهم إنهاء عملهم قبل المحاولة مجددًا.",
+	"settings.dialogs.shutdown_unavailable": "الإيقاف غير متاح. تحقق من خدمة النظام قبل المحاولة مجددًا.",
+	"settings.dialogs.shutdown_uncertain": "تعذر تأكيد طلب الطاقة. تحقق من الجهاز قبل المحاولة مجددًا.",
+	"settings.dialogs.powerOverride": "تجاوز الطوارئ (root): شغّل systemctl stop ceralive ثم systemctl reboot. سيوقف هذا البث ويفصل العملاء ويغلق هذه الواجهة."
 }

@@ -2936,5 +2936,10 @@
 	"network.radio.neighbour": "Modem cellulaire {id}",
 	"network.radio.transmitting": "Envoi de données",
 	"network.radio.usb": "Événements USB",
-	"network.radio.timeline": "Historique récent"
+	"network.radio.timeline": "Historique récent",
+	"settings.dialogs.shutdown_inhibited": "Arrêt refusé pendant une diffusion, le transport du trafic client ou un autre verrou. Arrêtez cette activité puis réessayez.",
+	"settings.dialogs.other_users": "D’autres utilisateurs sont connectés. Demandez-leur de terminer avant de réessayer.",
+	"settings.dialogs.shutdown_unavailable": "Arrêt indisponible. Vérifiez le service système avant de réessayer.",
+	"settings.dialogs.shutdown_uncertain": "La demande n’a pas pu être confirmée. Vérifiez l’appareil avant de réessayer.",
+	"settings.dialogs.powerOverride": "Dérogation d’urgence (root) : exécutez systemctl stop ceralive puis systemctl reboot. Cela arrête les diffusions, déconnecte les clients et ferme cette interface."
 }

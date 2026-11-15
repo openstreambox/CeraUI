@@ -2933,5 +2933,10 @@
 	"network.radio.neighbour": "Mobilfunkmodem {id}",
 	"network.radio.transmitting": "Sendet Nutzdaten",
 	"network.radio.usb": "USB-Ereignisse",
-	"network.radio.timeline": "Letzter Verlauf"
+	"network.radio.timeline": "Letzter Verlauf",
+	"settings.dialogs.shutdown_inhibited": "Das Herunterfahren wurde wegen eines Streams, weitergeleiteten Datenverkehrs oder einer anderen Sperre abgelehnt. Aktivität beenden und erneut versuchen.",
+	"settings.dialogs.other_users": "Andere Benutzer sind angemeldet. Vor einem neuen Versuch deren Arbeit beenden lassen.",
+	"settings.dialogs.shutdown_unavailable": "Herunterfahren ist nicht verfügbar. Vor einem neuen Versuch den Systemdienst prüfen.",
+	"settings.dialogs.shutdown_uncertain": "Die Energieaktion konnte nicht bestätigt werden. Vor einem neuen Versuch das Gerät prüfen.",
+	"settings.dialogs.powerOverride": "Notfallzugriff (root): systemctl stop ceralive und danach systemctl reboot ausführen. Dies beendet Streams, trennt Clients und schließt diese Oberfläche."
 }
