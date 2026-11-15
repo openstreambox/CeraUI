@@ -61,17 +61,29 @@ export function object(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-/** Independent expected config projection; preserve all unrelated frame bytes. */
+/**
+ * Independent expected config projection; preserve all unrelated frame bytes.
+ * Local frames carry `*_configured` flags instead of Stream IDs. Remote frames
+ * carry neither, and no pairing seed.
+ */
 export function expectedBytes(
 	frame: unknown,
 	config: unknown,
-	omitPairing = true,
+	remote = true,
 ): string {
 	return JSON.stringify(frame, (_key, value) => {
 		if (value !== config || !object(value) || Array.isArray(value))
 			return value;
 		const { srt_streamid, relay_streamid_override, ...ordinary } = value;
-		if (omitPairing) Reflect.deleteProperty(ordinary, "pairing_secret");
+		if (remote) {
+			for (const key of [
+				"pairing_secret",
+				"srt_streamid_configured",
+				"relay_streamid_override_configured",
+			])
+				Reflect.deleteProperty(ordinary, key);
+			return ordinary;
+		}
 		return {
 			...ordinary,
 			srt_streamid_configured:

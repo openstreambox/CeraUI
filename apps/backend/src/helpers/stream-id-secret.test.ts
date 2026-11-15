@@ -28,13 +28,38 @@ describe("Stream ID disclosure boundaries", () => {
 			relay_streamid_override_configured: true,
 			srtla_port: 5000,
 		});
-		expect(
-			projectRemoteConfig({ ...input, pairing_secret: "dummy-pairing" }),
-		).toEqual(publicStreamIds(input));
 		expect(input.srt_streamid).toBe("dummy-publish-key");
 		expect(publicStreamIds(publicStreamIds(input))).toEqual(
 			publicStreamIds(input),
 		);
+	});
+	test("remote config carries neither Stream IDs nor whether one is saved", () => {
+		const local = publicStreamIds({
+			srt_streamid: "dummy-publish-key",
+			relay_streamid_override: "dummy-override",
+			srt_latency: 2000,
+		});
+		for (const config of [
+			{
+				srt_streamid: "dummy-publish-key",
+				relay_streamid_override: "dummy-override",
+				pairing_secret: "dummy-pairing",
+				srt_latency: 2000,
+			},
+			{ ...local, pairing_secret: "dummy-pairing" },
+		]) {
+			const remote = projectRemoteConfig(config);
+			expect(remote).toMatchObject({ srt_latency: 2000 });
+			for (const key of [
+				"srt_streamid",
+				"relay_streamid_override",
+				"srt_streamid_configured",
+				"relay_streamid_override_configured",
+				"pairing_secret",
+			])
+				expect(remote).not.toHaveProperty(key);
+			expect(JSON.stringify(remote)).not.toContain("dummy-");
+		}
 	});
 	test("scrubs nested trace args and Error fields", () => {
 		const value = logRedact({
