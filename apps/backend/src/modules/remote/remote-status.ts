@@ -1,5 +1,4 @@
 import { publicSrtConfig } from "../../helpers/srt-secret-redaction.ts";
-import { publicStreamIds } from "../../helpers/stream-id-secret.ts";
 
 function omitIncarnation(value: unknown): unknown {
 	if (
@@ -40,17 +39,24 @@ export function projectRemoteWifiFrame(payload: unknown): unknown {
 	return projected;
 }
 
-/** Withhold pairing, Stream ID and encryption credentials from remote config. */
+// The local app gets `*_configured` flags for its Stream ID field. Remote
+// viewers need stream health, not whether a publish key is saved, so they
+// get neither the IDs nor the flags.
+const REMOTE_CONFIG_WITHHELD = [
+	"pairing_secret",
+	"srt_streamid",
+	"relay_streamid_override",
+	"srt_streamid_configured",
+	"relay_streamid_override_configured",
+] as const;
+
+/** Withhold pairing, Stream ID and encryption credentials, and whether a Stream ID is saved, from remote config. */
 export function projectRemoteConfig(payload: unknown): unknown {
 	payload = publicSrtConfig(payload);
 	if (typeof payload !== "object" || payload === null) return payload;
-	const projected =
-		"srt_streamid" in payload || "relay_streamid_override" in payload
-			? publicStreamIds(payload)
-			: payload;
-	if (!("pairing_secret" in projected)) return projected;
-	const config = { ...projected };
-	Reflect.deleteProperty(config, "pairing_secret");
+	if (!REMOTE_CONFIG_WITHHELD.some((key) => key in payload)) return payload;
+	const config = { ...payload };
+	for (const key of REMOTE_CONFIG_WITHHELD) Reflect.deleteProperty(config, key);
 	return config;
 }
 

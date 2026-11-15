@@ -11,6 +11,8 @@ Previously created files gain these permissions on the next save.
 `relay_streamid_override`: omission retains, a nonempty string replaces, and
 `""` clears. Config pulls, pushes, and applied replies omit these values and
 report `srt_streamid_configured` / `relay_streamid_override_configured` instead.
+Remote status and remote command results carry neither the IDs nor these flags:
+a remote viewer needs stream health, not whether a publish key is saved.
 There is no hash or suffix hint: low-entropy IDs should not have an offline
 verification oracle, and no hint is needed for retain/replace/clear.
 Clients must not round-trip a blank displayed field when retaining a saved ID.
@@ -45,7 +47,8 @@ oculto: Mostrar solo revela lo que acabas de escribir. Déjalo sin cambios para
 conservar el valor guardado, escribe un valor nuevo para reemplazarlo o usa
 Borrar y Guardar para eliminarlo. Cancelar conserva el valor anterior. Los
 valores guardados siguen funcionando sin migración, incluso los ID que no son
-secretos. La API devuelve solo si hay un valor configurado, nunca el valor.
+secretos. La API local devuelve solo si hay un valor configurado, nunca el
+valor; el acceso remoto no recibe ni el valor ni esa indicación.
 
 El ID viaja sin cifrar por la red incluso con el cifrado SRT activado. Esta
 protección limita el acceso local y la exposición en la interfaz y los registros;
