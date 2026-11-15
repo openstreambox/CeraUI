@@ -125,6 +125,20 @@ evidence, not regression baselines. This proves rendering over the host mock
 backend; real interruption, durable acknowledgement and replay are owned by the
 backend runtime/ledger tests, and installed-board qualification remains separate.
 
+### Production chunk boundaries
+
+The SPA keeps its lazy dialog and i18n namespace boundaries. Development tools
+are removed through `import.meta.env.DEV`; they must not receive a manual
+application chunk. A manual chunk also gathers shared dependencies before dead
+code is removed, which can pull production views and libraries into one large
+file even when the development tools themselves are absent.
+
+The production build rejects all Vite warnings, including any chunk over the
+unchanged 1,159 kB raw-size threshold. The separate bundle report also checks
+aggregate, precache, initial-route and largest-chunk gzip sizes. Inspect both
+checks when changing chunk boundaries: splitting a file can reduce its largest
+chunk while increasing aggregate transfer size.
+
 ### Other Commands
 
 The separately hosted Encoder/Audio/Server bundles are built with
