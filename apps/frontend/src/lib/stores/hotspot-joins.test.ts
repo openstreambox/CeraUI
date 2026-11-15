@@ -23,6 +23,7 @@ function roster(...macs: string[]): WifiStatus {
 		saved: {},
 		mode: "hotspot",
 		hotspot: {
+			available_channels: { auto: { name: "Automatic" } },
 			name: "Box",
 			password: "correcthorse",
 			channel: "auto",

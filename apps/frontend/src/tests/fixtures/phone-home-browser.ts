@@ -58,6 +58,7 @@ export function emitFixtureRoster(macs: readonly string[]) {
 			saved: {},
 			mode: "hotspot",
 			hotspot: {
+				available_channels: { auto: { name: "Automatic" } },
 				name: "Example;Wifi",
 				password: "example-wifi-password",
 				channel: "auto",

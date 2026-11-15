@@ -16,6 +16,7 @@ function ap(macs: readonly string[] | undefined): WifiInterface {
 		saved: {},
 		mode: "hotspot",
 		hotspot: {
+			available_channels: { auto: { name: "Automatic" } },
 			name: "Box",
 			password: "correcthorse",
 			channel: "auto",
