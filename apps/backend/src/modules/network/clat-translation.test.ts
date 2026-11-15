@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { genSrtlaBondEntries } from "../streaming/srtla.ts";
 import {
-	CLAT_SNAPSHOT_FUTURE_SKEW_MS,
-	CLAT_SNAPSHOT_MAX_AGE_MS,
 	type ClatReadDeps,
 	isSupportedNat64Prefix,
+	leaseLive,
 	parseClatSnapshot,
 	parseUnitShow,
 	readClatTranslations,
@@ -20,17 +19,28 @@ import {
 	setBondOptOut,
 } from "./network-interfaces.ts";
 
-const NOW = 1_794_614_400_000;
+const BOOT = "e35d2950-56b9-4324-858a-c577b756106b";
+const INVOCATION = "5f31d8d55f3141faa50e248d73538aae";
+const GENERATION = "375be5e8cd6d4179909196f2d42ae78c";
+const NOW = 125; // CLOCK_BOOTTIME seconds
+
 const snapshot = (over: Record<string, unknown> = {}) =>
 	JSON.stringify({
-		schema_version: 1,
+		schema_version: 2,
 		interface: "wwan0",
+		ifindex: 3,
 		tun: "clat3",
+		tun_ifindex: 7,
 		prefix: "64:ff9b::/96",
 		ipv4: "10.254.0.3",
 		state: "up",
 		last_error: null,
-		updated_at: NOW / 1000,
+		boot_id: BOOT,
+		invocation_id: INVOCATION,
+		generation: GENERATION,
+		updated_at: 1794614400,
+		observed_at: 120.0,
+		expires_at: 150.0,
 		...over,
 	});
 
@@ -39,11 +49,10 @@ interface FakeBox {
 	sysfs?: Record<string, string>;
 	owner?: number;
 	size?: number;
-	unit?: boolean;
-	invocation?: string;
+	unit?: false | string;
+	boot?: string;
 	modems?: readonly string[];
-	now?: () => number;
-	monotonic?: () => number;
+	now?: number;
 }
 
 function deps(files: Record<string, string>, box: FakeBox = {}): ClatReadDeps {
@@ -51,7 +60,7 @@ function deps(files: Record<string, string>, box: FakeBox = {}): ClatReadDeps {
 	const sysfs: Record<string, string> = {
 		"/sys/class/net/wwan0/ifindex": "3",
 		"/sys/class/net/clat3/flags": "0x1091",
-		"/sys/class/net/clat3/ifindex": "9",
+		"/sys/class/net/clat3/ifindex": "7",
 		...box.sysfs,
 	};
 	return {
@@ -61,8 +70,7 @@ function deps(files: Record<string, string>, box: FakeBox = {}): ClatReadDeps {
 			if (missing.has(path)) return undefined;
 			if (path === "/run/ceralive/clat")
 				return { regular: false, directory: true, uid: 0, size: 4096 };
-			const name = path.split("/").at(-1) ?? "";
-			const text = files[name];
+			const text = files[path.split("/").at(-1) ?? ""];
 			if (text === undefined) return undefined;
 			return {
 				regular: true,
@@ -72,8 +80,7 @@ function deps(files: Record<string, string>, box: FakeBox = {}): ClatReadDeps {
 			};
 		},
 		read: async (path) => {
-			const name = path.split("/").at(-1) ?? "";
-			const text = files[name];
+			const text = files[path.split("/").at(-1) ?? ""];
 			if (text === undefined) throw new Error("ENOENT");
 			return text;
 		},
@@ -81,76 +88,104 @@ function deps(files: Record<string, string>, box: FakeBox = {}): ClatReadDeps {
 		unit: async () =>
 			box.unit === false
 				? undefined
-				: { invocation: box.invocation ?? "a".repeat(32), mainPid: 42 },
-		isModem: (ifname) => (box.modems ?? ["wwan0"]).includes(ifname),
-		now: box.now ?? (() => NOW),
-		monotonic: box.monotonic ?? (() => 1000),
+				: { invocation: box.unit ?? INVOCATION, mainPid: 42 },
+		isModem: async (ifname) => (box.modems ?? ["wwan0"]).includes(ifname),
+		bootId: () => box.boot ?? BOOT,
+		boottime: () => box.now ?? NOW,
 	};
 }
+const usableSize = async (files: Record<string, string>, box: FakeBox = {}) =>
+	(await readClatTranslations(deps(files, box))).size;
 
 beforeEach(() => resetClatTranslationStateForTest());
 
-describe("the snapshot contract", () => {
-	test("a well-formed snapshot parses, and its TUN must match the file", () => {
-		expect(parseClatSnapshot(snapshot(), "3")).toEqual({
+describe("the v2 snapshot contract", () => {
+	test("a well-formed snapshot parses; the file index must match", () => {
+		expect(parseClatSnapshot(snapshot(), "3")).toMatchObject({
+			interface: "wwan0",
+			ifindex: 3,
+			tun: "clat3",
+			tunIfindex: 7,
+			state: "up",
+			observedAt: 120,
+			expiresAt: 150,
+		});
+		expect(parseClatSnapshot(snapshot(), "4")).toBeUndefined();
+	});
+
+	test("v1, a missing field or any malformed field is unavailable", () => {
+		const v1 = JSON.stringify({
+			schema_version: 1,
 			interface: "wwan0",
 			tun: "clat3",
 			prefix: "64:ff9b::/96",
 			ipv4: "10.254.0.3",
 			state: "up",
-			updatedAt: NOW,
+			last_error: null,
+			updated_at: 1794614400,
 		});
-		expect(parseClatSnapshot(snapshot(), "4")).toBeUndefined();
-	});
-
-	test("anything unexpected is unavailable, never a guess", () => {
+		expect(parseClatSnapshot(v1, "3")).toBeUndefined();
+		const full = JSON.parse(snapshot()) as Record<string, unknown>;
+		for (const key of Object.keys(full)) {
+			const without = { ...full };
+			delete without[key];
+			expect(parseClatSnapshot(JSON.stringify(without), "3")).toBeUndefined();
+		}
 		for (const over of [
-			{ schema_version: 2 },
+			{ ifindex: 0 },
+			{ ifindex: "3" },
 			{ tun: "tun0" },
+			{ tun_ifindex: -1 },
 			{ interface: "../wwan0" },
 			{ ipv4: "192.0.2.3" },
 			{ ipv4: "10.254.32.1" },
 			{ state: "ready" },
-			{ updated_at: "now" },
-			{ prefix: 64 },
 			{ prefix: "64:ff9b::/95" },
 			{ last_error: 7 },
-			{ expires_at: "soon" },
-			{ activation: "has spaces" },
+			{ boot_id: "not-a-uuid" },
+			{ invocation_id: "5F31D8D55F3141FAA50E248D73538AAE" },
+			{ generation: `${GENERATION}a` },
+			{ updated_at: "now" },
+			{ observed_at: "later" },
+			{ expires_at: null },
 		])
 			expect(parseClatSnapshot(snapshot(over), "3")).toBeUndefined();
 		expect(parseClatSnapshot("{", "3")).toBeUndefined();
 		expect(parseClatSnapshot("[]", "3")).toBeUndefined();
 	});
+
+	test("the lease: up, 0 <= observed <= now < expires, exactly 30 s long", () => {
+		const up = { state: "up" as const, observedAt: 120, expiresAt: 150 };
+		expect(leaseLive(up, 120)).toBe(true);
+		expect(leaseLive(up, 149.99)).toBe(true);
+		expect(leaseLive(up, 150)).toBe(false);
+		// A future observation fails closed (only /proc/uptime's 10 ms step is allowed).
+		expect(leaseLive(up, 119.995)).toBe(true);
+		expect(leaseLive(up, 119.9)).toBe(false);
+		expect(leaseLive({ ...up, expiresAt: 151 }, 125)).toBe(false);
+		expect(leaseLive({ ...up, observedAt: -1, expiresAt: 29 }, 0)).toBe(false);
+		for (const state of ["starting", "unavailable", "down", "error"] as const)
+			expect(leaseLive({ state, observedAt: 120, expiresAt: 120 }, 120)).toBe(
+				false,
+			);
+	});
 });
 
-const usableSize = async (files: Record<string, string>, box: FakeBox = {}) =>
-	(await readClatTranslations(deps(files, box))).size;
-
 describe("which translations may carry stream traffic", () => {
-	test("an up, fresh snapshot with its TUN, modem and service present", async () => {
+	test("an up lease on this boot, with its unit, modem and TUN", async () => {
 		const usable = await readClatTranslations(deps({ "3.json": snapshot() }));
 		expect([...usable.values()]).toEqual([
 			{
 				parent: "wwan0",
 				tun: "clat3",
 				ipv4: "10.254.0.3",
-				generation: `${"a".repeat(32)}:9:3:`,
+				generation: `${BOOT}:${INVOCATION}:${GENERATION}:3:7`,
+				expiresAt: 150,
 			},
 		]);
 	});
 
-	test("starting, down, error or no prefix yet is unavailable", async () => {
-		for (const over of [
-			{ state: "starting" },
-			{ state: "down" },
-			{ state: "error", last_error: "dns64 lost" },
-			{ prefix: null },
-		])
-			expect(await usableSize({ "3.json": snapshot(over) })).toBe(0);
-	});
-
-	test("a DNS refresh error on a path that is still up does not reject it", async () => {
+	test("a DNS refresh warning on a path that is still up is not a rejection", async () => {
 		expect(
 			await usableSize({
 				"3.json": snapshot({ last_error: "dns64 refresh timed out" }),
@@ -158,47 +193,35 @@ describe("which translations may carry stream traffic", () => {
 		).toBe(1);
 	});
 
-	test("freshness: too old, too far ahead, or expired by the producer", async () => {
-		const at = (ms: number) => ({ updated_at: (NOW + ms) / 1000 });
+	test("no prefix or no TUN yet, another boot or another invocation is unavailable", async () => {
+		expect(await usableSize({ "3.json": snapshot({ prefix: null }) })).toBe(0);
 		expect(
-			await usableSize({
-				"3.json": snapshot(at(-CLAT_SNAPSHOT_MAX_AGE_MS - 1000)),
-			}),
+			await usableSize({ "3.json": snapshot({ tun_ifindex: null }) }),
 		).toBe(0);
-		expect(
-			await usableSize({
-				"3.json": snapshot(at(-CLAT_SNAPSHOT_MAX_AGE_MS + 1000)),
-			}),
-		).toBe(1);
-		expect(
-			await usableSize({
-				"3.json": snapshot(at(CLAT_SNAPSHOT_FUTURE_SKEW_MS + 1000)),
-			}),
-		).toBe(0);
-		expect(
-			await usableSize({ "3.json": snapshot({ expires_at: NOW / 1000 - 1 }) }),
-		).toBe(0);
-		expect(
-			await usableSize({ "3.json": snapshot({ expires_at: NOW / 1000 + 10 }) }),
-		).toBe(1);
-	});
-
-	test("rereading an unchanged snapshot never renews it, even if the clock steps back", async () => {
-		let mono = 0;
-		const box = { monotonic: () => mono };
-		expect(await usableSize({ "3.json": snapshot() }, box)).toBe(1);
-		mono = CLAT_SNAPSHOT_MAX_AGE_MS + 1;
-		expect(await usableSize({ "3.json": snapshot() }, box)).toBe(0);
-		// A new update_at from the producer counts again.
 		expect(
 			await usableSize(
-				{ "3.json": snapshot({ updated_at: (NOW + 1000) / 1000 }) },
-				{ ...box, now: () => NOW + 1000 },
+				{ "3.json": snapshot() },
+				{ boot: "00000000-0000-4000-8000-000000000000" },
 			),
-		).toBe(1);
+		).toBe(0);
+		expect(
+			await usableSize({ "3.json": snapshot() }, { unit: "0".repeat(32) }),
+		).toBe(0);
+		expect(await usableSize({ "3.json": snapshot() }, { unit: false })).toBe(0);
 	});
 
-	test("only bounded, root-owned regular files count", async () => {
+	test("an expired or future lease is unavailable; updated_at cannot help", async () => {
+		expect(await usableSize({ "3.json": snapshot() }, { now: 151 })).toBe(0);
+		expect(await usableSize({ "3.json": snapshot() }, { now: 100 })).toBe(0);
+		expect(
+			await usableSize(
+				{ "3.json": snapshot({ updated_at: 9_999_999_999 }) },
+				{ now: 151 },
+			),
+		).toBe(0);
+	});
+
+	test("only bounded, root-owned regular files in a root-owned directory", async () => {
 		expect(await usableSize({ "3.json": snapshot() }, { owner: 1000 })).toBe(0);
 		expect(await usableSize({ "3.json": snapshot() }, { size: 5000 })).toBe(0);
 		expect(
@@ -209,33 +232,15 @@ describe("which translations may carry stream traffic", () => {
 		).toBe(0);
 	});
 
-	test("the file must match the modem's current ifindex, and it must be a modem", async () => {
-		expect(
-			await usableSize(
-				{ "3.json": snapshot() },
-				{ sysfs: { "/sys/class/net/wwan0/ifindex": "4" } },
-			),
-		).toBe(0);
-		expect(await usableSize({ "3.json": snapshot() }, { modems: [] })).toBe(0);
-	});
-
-	test("a snapshot alone is not a liveness lease", async () => {
-		expect(await usableSize({ "3.json": snapshot() }, { unit: false })).toBe(0);
-		for (const missing of [
-			"/sys/class/net/clat3/flags",
-			"/sys/class/net/clat3/ifindex",
-			"/sys/class/net/wwan0/ifindex",
+	test("the modem's current ifindex, a known modem, an up TUN with its ifindex", async () => {
+		for (const box of [
+			{ sysfs: { "/sys/class/net/wwan0/ifindex": "4" } },
+			{ modems: [] },
+			{ sysfs: { "/sys/class/net/clat3/flags": "0x1090" } },
+			{ sysfs: { "/sys/class/net/clat3/ifindex": "8" } },
+			{ missing: ["/sys/class/net/clat3/flags"] },
 		])
-			expect(
-				await usableSize({ "3.json": snapshot() }, { missing: [missing] }),
-			).toBe(0);
-		// An administratively down TUN does not carry traffic.
-		expect(
-			await usableSize(
-				{ "3.json": snapshot() },
-				{ sysfs: { "/sys/class/net/clat3/flags": "0x1090" } },
-			),
-		).toBe(0);
+			expect(await usableSize({ "3.json": snapshot() }, box)).toBe(0);
 	});
 
 	test("unrelated files are ignored and an unreadable one drops only itself", async () => {
@@ -248,24 +253,6 @@ describe("which translations may carry stream traffic", () => {
 			}),
 		);
 		expect([...usable.keys()]).toEqual(["clat3"]);
-	});
-
-	test("a new unit invocation withdraws the link for one scan before it comes back", async () => {
-		const files = { "3.json": snapshot() };
-		const tun = {
-			ip: "10.254.0.3",
-			tp: 0,
-			txb: 0,
-			rxb: 0,
-			enabled: true,
-			error: 0,
-		};
-		await refreshClatTranslations(deps(files));
-		expect(isBondCandidate("clat3", tun)).toBe(true);
-		await refreshClatTranslations(deps(files, { invocation: "b".repeat(32) }));
-		expect(isBondCandidate("clat3", tun)).toBe(false);
-		await refreshClatTranslations(deps(files, { invocation: "b".repeat(32) }));
-		expect(isBondCandidate("clat3", tun)).toBe(true);
 	});
 
 	test("the unit must be active and running with a live main process", () => {
@@ -292,11 +279,11 @@ describe("which translations may carry stream traffic", () => {
 });
 
 describe("the bond", () => {
-	const stanza = (name: string, ip: string, extra = "") =>
+	const stanza = (name: string, ip: string) =>
 		[
 			`${name}: flags=4305<UP,POINTOPOINT,RUNNING,NOARP,MULTICAST>  mtu 1480`,
 			`        inet ${ip}  netmask 255.255.255.255  destination ${ip}`,
-			`        unspec 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  txqueuelen 500  (UNSPEC)${extra}`,
+			"        unspec 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  txqueuelen 500  (UNSPEC)",
 			"        RX packets 20  bytes 2000 (2.0 KB)",
 			"        TX packets 10  bytes 1000 (1.0 KB)",
 		].join("\n");
@@ -309,44 +296,56 @@ describe("the bond", () => {
 			enabled: true,
 			error: 0,
 		}) as NetworkInterface;
+	const TUN = { parent: "wwan0", tun: "clat3", ipv4: "10.254.0.3" };
 
 	afterEach(() => {
 		resetClatTranslationStateForTest();
 		resetBondOptOut();
 	});
 
-	test("a translator TUN bonds only while its snapshot vouches for it", () => {
+	test("a translator TUN bonds only while its lease vouches for it", () => {
 		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(false);
-		setClatTranslationsForTest(
-			new Map([
-				["clat3", { parent: "wwan0", tun: "clat3", ipv4: "10.254.0.3" }],
-			]),
-		);
+		setClatTranslationsForTest(new Map([["clat3", TUN]]));
 		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(true);
 		// A different address on the TUN is not the one the service assigned.
 		expect(isBondCandidate("clat3", iface("10.254.0.9"))).toBe(false);
 	});
 
-	test("the modem's own bond toggle also covers its translated link", () => {
+	test("an expired lease drops out at the next bond read, before any poll", () => {
+		let now = 140;
 		setClatTranslationsForTest(
-			new Map([
-				["clat3", { parent: "wwan0", tun: "clat3", ipv4: "10.254.0.3" }],
-			]),
+			new Map([["clat3", { ...TUN, expiresAt: 150 }]]),
+			() => now,
 		);
+		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(true);
+		now = 150;
+		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(false);
+	});
+
+	test("the modem's own bond toggle also covers its translated link", () => {
+		setClatTranslationsForTest(new Map([["clat3", TUN]]));
 		setBondOptOut("wwan0", true);
 		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(false);
 	});
 
+	test("a new activation withdraws the link for one poll before it comes back", async () => {
+		const files = { "3.json": snapshot() };
+		expect(await refreshClatTranslations(deps(files))).toBe(true);
+		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(true);
+		expect(await refreshClatTranslations(deps(files))).toBe(false);
+		const next = { "3.json": snapshot({ generation: "f".repeat(32) }) };
+		expect(await refreshClatTranslations(deps(next))).toBe(true);
+		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(false);
+		expect(await refreshClatTranslations(deps(next))).toBe(true);
+		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(true);
+	});
+
 	test("the sender binds the translated IPv4 to the TUN", () => {
-		setClatTranslationsForTest(
-			new Map([
-				["clat3", { parent: "wwan0", tun: "clat3", ipv4: "10.254.0.3" }],
-			]),
-		);
+		setClatTranslationsForTest(new Map([["clat3", TUN]]));
 		processIfconfigOutput(stanza("clat3", "10.254.0.3"));
 		const entries = genSrtlaBondEntries().filter((e) => e.ip === "10.254.0.3");
 		expect(entries.map((e) => e.iface)).toEqual(["clat3"]);
-		setClatTranslationsForTest(new Map());
+		resetClatTranslationStateForTest();
 		processIfconfigOutput(stanza("clat3", "10.254.0.3"));
 		expect(genSrtlaBondEntries().map((e) => e.ip)).not.toContain("10.254.0.3");
 	});
