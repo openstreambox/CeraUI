@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { inspect } from "node:util";
+import ts from "typescript";
 import {
 	formatConsoleEntry,
 	formatProdEntry,
@@ -256,6 +257,71 @@ test("explicit clear accepts a selected key length and clears both stored fields
 		setConfigFilePath(oldPath);
 		await rm(scratch, { recursive: true, force: true });
 	}
+});
+
+test("setConfig writes SRT encryption fields only in the explicit clear, after the destination writes", async () => {
+	const text = await Bun.file(
+		new URL("../rpc/procedures/streaming.procedure.ts", import.meta.url),
+	).text();
+	const source = ts.createSourceFile(
+		"streaming.procedure.ts",
+		text,
+		ts.ScriptTarget.Latest,
+		true,
+	);
+	const declaration = source.statements
+		.flatMap((node) =>
+			ts.isVariableStatement(node)
+				? [...node.declarationList.declarations]
+				: [],
+		)
+		.find((node) => node.name.getText(source) === "setConfigProcedure");
+	const call = declaration?.initializer;
+	const handler =
+		call && ts.isCallExpression(call) ? call.arguments[0] : undefined;
+	if (!handler || !ts.isArrowFunction(handler) || !ts.isBlock(handler.body)) {
+		throw new Error("setConfig handler body unavailable");
+	}
+	const statements = [...handler.body.statements];
+	const condition = (node: ts.Statement) =>
+		ts.isIfStatement(node) ? node.expression.getText(source) : "";
+
+	// Every write to a stored encryption field clears it.
+	const writes: { value: string; statement: number }[] = [];
+	statements.forEach((statement, index) => {
+		const visit = (node: ts.Node) => {
+			if (
+				ts.isBinaryExpression(node) &&
+				node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+				/^config\.srt_(passphrase|pbkeylen)$/.test(node.left.getText(source))
+			) {
+				writes.push({ value: node.right.getText(source), statement: index });
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(statement);
+	});
+	const clear = statements.findIndex(
+		(node) => condition(node) === 'input.srt_passphrase === ""',
+	);
+	expect(clear).toBeGreaterThanOrEqual(0);
+	expect(writes).toEqual([
+		{ value: "undefined", statement: clear },
+		{ value: "undefined", statement: clear },
+	]);
+
+	// The clear is its own step, not part of the run that decides where the
+	// stream goes (relay or custom address through the ingest slot).
+	const destinationStart = statements.findIndex(
+		(node) => condition(node) === "input.relay_server",
+	);
+	const destinationEnd = statements.findIndex(
+		(node) =>
+			condition(node) === "input.selected_ingest_endpoint !== undefined",
+	);
+	expect(destinationStart).toBeGreaterThanOrEqual(0);
+	expect(destinationEnd).toBeGreaterThan(destinationStart);
+	expect(clear).toBeGreaterThan(destinationEnd);
 });
 
 test.each(["syntheticPassphrase42", "synthetic phrase\"'\\~!"])(

@@ -1028,10 +1028,6 @@ export const setConfigProcedure = authedProcedure
 			config.srt_streamid = input.srt_streamid;
 			config.relay_account = undefined;
 		}
-		if (input.srt_passphrase === "") {
-			config.srt_passphrase = undefined;
-			config.srt_pbkeylen = undefined;
-		}
 
 		if (input.relay_streamid_override !== undefined)
 			config.relay_streamid_override = input.relay_streamid_override;
@@ -1049,6 +1045,15 @@ export const setConfigProcedure = authedProcedure
 			input.srtla_addr !== undefined
 		) {
 			config.selected_ingest_endpoint = undefined;
+		}
+
+		// SRT output encryption is gated off, so the only write it can make is the
+		// explicit clear (the guard at the top refuses any non-empty passphrase).
+		// It stays apart from the destination writes above, which only decide
+		// where the stream goes.
+		if (input.srt_passphrase === "") {
+			config.srt_passphrase = undefined;
+			config.srt_pbkeylen = undefined;
 		}
 
 		// Reflect the post-clamp config values back for every field the input
