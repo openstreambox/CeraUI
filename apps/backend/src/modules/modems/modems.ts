@@ -25,6 +25,7 @@ import { basename, dirname, join } from "node:path";
 import {
 	createDbusTransport,
 	type DbusTransport,
+	type DbusTransportOptions,
 } from "@ceralive/modem-control/transport";
 import {
 	decideModemReactivation,
@@ -505,6 +506,25 @@ export function handleModems(conn: WebSocket, msg: ModemsMessage["modems"]) {
 }
 
 /** Private transport projection. Subscriber identifiers never enter the wire roster. */
+/** System-bus sessions for the cellular owners. Address selection lives at
+ * this facade, rather than depending on the D-Bus package's session-bus default.
+ */
+export function createCellularSystemTransport(
+	options: Pick<DbusTransportOptions, "reconnect" | "callTimeoutMs"> = {},
+	factory: typeof createDbusTransport = createDbusTransport,
+): DbusTransport {
+	return factory({
+		...(options.reconnect !== undefined
+			? { reconnect: options.reconnect }
+			: {}),
+		...(options.callTimeoutMs !== undefined
+			? { callTimeoutMs: options.callTimeoutMs }
+			: {}),
+		busAddress:
+			process.env.DBUS_SYSTEM_BUS_ADDRESS ??
+			"unix:path=/run/dbus/system_bus_socket",
+	});
+}
 export interface CellularControlTarget {
 	readonly id: number;
 	readonly key: string;
@@ -699,14 +719,14 @@ export interface CellularControlAcquireDeps {
 	readonly present: typeof cellularTargetPresent;
 	readonly pair: typeof isModemPairAtStableKey;
 	readonly resolveUid: (path: string) => Promise<string>;
-	readonly transport: typeof createDbusTransport;
+	readonly transport: typeof createCellularSystemTransport;
 	readonly exchange: typeof exchangeUsbSerial;
 }
 const defaultCellularControlAcquireDeps: CellularControlAcquireDeps = {
 	present: cellularTargetPresent,
 	pair: isModemPairAtStableKey,
 	resolveUid: realpath,
-	transport: createDbusTransport,
+	transport: createCellularSystemTransport,
 	exchange: exchangeUsbSerial,
 };
 /** Own a dedicated, non-reconnecting bus connection for the inhibition lifetime. */
