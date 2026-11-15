@@ -76,3 +76,5 @@ modem-mutations/
 
 # Generated on-device forwarding credential
 srt-forward.secret
+# Python helper bytecode
+__pycache__/

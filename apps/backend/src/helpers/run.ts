@@ -37,6 +37,7 @@
  *    child's stdin only.
  */
 
+import { resolve } from "node:path";
 import { SpawnAbortError, SpawnTimeoutError } from "./bounded-spawn.ts";
 import { execFileP, redactArgv, withFailureClass } from "./exec.ts";
 import { logger } from "./logger.ts";
@@ -344,7 +345,10 @@ export async function run(
  * argv (so it cannot leak via the process table / `ps`). Resolves with stdout
  * when the child exits 0; rejects with stderr (or the spawn error) otherwise.
  *
- * @throws if `bin` is not in {@link ALLOWED}.
+ * Also permits isolated Python execution of the packaged portal helper with
+ * exactly one named action; it does not grant an interpreter capability.
+ *
+ * @throws if the command is neither allowlisted nor the scoped helper invocation.
  * @throws {@link RunTimeoutError} / {@link RunAbortError} on timeout / abort.
  */
 export async function runWithStdin(
@@ -353,7 +357,16 @@ export async function runWithStdin(
 	input: string,
 	opts?: RunOpts,
 ): Promise<string> {
-	if (!ALLOWED.has(bin)) {
+	if (
+		!ALLOWED.has(bin) &&
+		!(
+			bin === "python3" &&
+			args.length === 3 &&
+			args[0] === "-I" &&
+			args[1] === resolve("captive-portal-window.py") &&
+			["open", "close", "sweep"].includes(args[2] ?? "")
+		)
+	) {
 		throw Object.assign(new Error(`binary not allowlisted: ${bin}`), {
 			failureClass: "rejected-configuration",
 		});
