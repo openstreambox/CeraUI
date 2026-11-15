@@ -70,6 +70,7 @@ afterEach(async () => {
 async function expectEthernetParity() {
 	expect(netIfBuildMsg().eth9).toEqual({
 		ip: "192.0.2.2",
+		addresses: ["192.0.2.2"],
 		tp: 0,
 		enabled: true,
 		tx_bps: 0,

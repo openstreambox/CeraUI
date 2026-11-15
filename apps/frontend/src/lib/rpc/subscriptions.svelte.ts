@@ -58,8 +58,8 @@ import {
 } from "$lib/stores/connection-ux.svelte";
 import {
 	dismiss as dismissNotification,
-	getPersistent as getPersistentNotifications,
 	getActive as getActiveNotifications,
+	getPersistent as getPersistentNotifications,
 	push as pushNotification,
 } from "$lib/stores/notifications.svelte";
 import {

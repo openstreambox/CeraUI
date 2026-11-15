@@ -485,7 +485,13 @@ test("the session refreshes bond sources through the source-change subscription"
 		"utf8",
 	);
 	expect(session).toMatch(
-		/removeNetworkInterfacesChangeListener:\s*onNetworkInterfaceSourcesChange\(\s*refreshSrtlaIpAddresses\s*,?\s*\)/,
+		/const removeNetifListener = onNetworkInterfaceSourcesChange\(\s*refreshSrtlaIpAddresses\s*,?\s*\)/,
+	);
+	expect(session).toContain(
+		"const removeScanListener = onUsbNetScanCommitted(refreshSrtlaIpAddresses)",
+	);
+	expect(session).toMatch(
+		/removeNetworkInterfacesChangeListener:\s*\(\) => \{\s*removeNetifListener\(\);\s*removeScanListener\(\);\s*\}/,
 	);
 });
 

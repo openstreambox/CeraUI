@@ -120,3 +120,34 @@ test("every projected legacy hydration status satisfies the published status sch
 	}
 	expect(count).toBeGreaterThan(0);
 });
+
+test("IPv6 source inventory stays local while remote diagnostics retain their contract", () => {
+	const input = {
+		netif: {
+			uplink0: {
+				ip: "192.0.2.12",
+				ipv6: "2001:db8::12",
+				addresses: ["192.0.2.12", "2001:db8::12"],
+				tp: 12,
+				tx_bps: 34,
+				rx_bps: 56,
+				enabled: true,
+			},
+		},
+	};
+	const projected = projectRemoteLegacyFrame(input);
+	expect(projected).toEqual({
+		netif: {
+			[Object.keys(projected.netif as object)[0]]: {
+				tp: 12,
+				tx_bps: 34,
+				rx_bps: 56,
+				enabled: true,
+			},
+		},
+	});
+	expect(Object.keys(projected.netif as object)).toEqual([
+		expect.stringMatching(/^Link \d+$/),
+	]);
+	expect(input.netif.uplink0.addresses).toEqual(["192.0.2.12", "2001:db8::12"]);
+});
