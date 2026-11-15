@@ -15,6 +15,8 @@
     restart wiring cancels what the older check would have done;
   - the device's own restart starts with its own origin, and the status says
     the connection is restarting while it runs;
+  - a restart whose Start does not run says so once the status has dropped,
+    and is never announced as restarted;
   - with both cooldowns running, a stuck link nothing else covers still gets
     the notice, and no second restart.
 */
@@ -61,6 +63,8 @@ let bound: string[] = [];
 let kills: string[] = [];
 let stops: number[] = [];
 let shown: Array<{ name: string; key?: string; action?: unknown }> = [];
+/** Whether the status said "restarting" when each notice went out. */
+let restartingAtNotice: boolean[] = [];
 let removed: string[] = [];
 let readFails = false;
 let senderPresent = true;
@@ -118,6 +122,7 @@ beforeEach(() => {
 	kills = [];
 	stops = [];
 	shown = [];
+	restartingAtNotice = [];
 	removed = [];
 	readFails = false;
 	senderPresent = true;
@@ -187,6 +192,7 @@ beforeEach(() => {
 			opts,
 		) => {
 			shown.push({ name, key, action: opts?.action });
+			restartingAtNotice.push(isConnectionRestarting());
 		},
 	);
 	spyOn(notifications, "notificationRemove").mockImplementation((name) => {
@@ -481,6 +487,27 @@ test("the only link stuck: restart on its own, exactly once, then announce it", 
 	expect(stops).toEqual([]);
 	// The status said "restarting" through Start, and stops saying it after.
 	expect(restartingAtStart).toEqual([true]);
+	expect(isConnectionRestarting()).toBe(false);
+});
+
+test("the only link stuck and the restart's Start refused: say so, after the status drops", async () => {
+	spyOn(owner, "startStreamSession").mockImplementation(async (request) => {
+		restarts.push(`start:${request.origin}`);
+		return { result: "busy", attemptId: "auto" };
+	});
+	await startLive();
+	bond = publish([{ ip: OLD, iface: "wwan0" }], 1);
+	bound = [OLD];
+	renumberOnlyLink();
+	await settle(400);
+	expect(restarts).toEqual(["stop:reconfigure", "start:link-recovery"]);
+	// One notice, and not "Restarted the connection".
+	expect(shown.map((n) => n.key)).toEqual([
+		"notifications.connectionRestartStartFailed",
+	]);
+	expect(shown[0]?.name).toBe(restart.CONNECTION_RESTART_FAILED);
+	// Never beside a surface still saying "Restarting connection".
+	expect(restartingAtNotice).toEqual([false]);
 	expect(isConnectionRestarting()).toBe(false);
 });
 

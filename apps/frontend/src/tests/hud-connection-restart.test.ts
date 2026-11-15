@@ -129,6 +129,28 @@ describe("the HUD during a supervised connection restart", () => {
 		expect(region.textContent).not.toContain("Streaming stopped");
 	});
 
+	it("keeps the restart announcement when the flag drops before it is spoken", async () => {
+		hudRestart.streaming = true;
+		render(HudBar);
+		flushSync();
+		hudRestart.restarting = true;
+		flushSync();
+		hudRestart.streaming = false;
+		flushSync();
+		// The restart ends inside the announcement's debounce. The stop edge was
+		// the restart's, so what it announced must still be spoken, not dropped.
+		hudRestart.restarting = false;
+		flushSync();
+		const region = screen.getByTestId("hud-transition-status");
+		await waitFor(
+			() =>
+				expect(region.textContent).toBe(
+					m["hud.announceConnectionRestarting"](),
+				),
+			{ timeout: 3000 },
+		);
+	});
+
 	it("still says 'Streaming stopped' for a real stop", async () => {
 		hudRestart.streaming = true;
 		render(HudBar);

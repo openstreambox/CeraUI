@@ -871,6 +871,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	],
 	["remote: presenting device token (standing=", ")"],
 	["remote: trying to connect to ", " (", ")"],
+	["restart failure notice cleanup failed"],
 	["revisions: cerastream version probe failed"],
 	["roaming advisory evaluation failed"],
 	["router subnet rewrite did not confirm; auto-restoring"],

@@ -15,12 +15,21 @@
   announced only after the new session has started. While either runs, the
   status says the connection is restarting (connection-restarting.ts), so no
   surface reads the gap between Stop and Start as "Not streaming".
+
+  A restart that does not end with the new session running says so to every
+  client, once the restarting status has dropped: a Start refused before launch
+  or a launch failure otherwise reaches only a log line, or a socket that may
+  have closed long ago. An operator Stop during the restart says nothing; the
+  operator chose it.
 */
 
 import type { RestartConnectionOutput } from "@ceraui/rpc/schemas";
 
 import { logger } from "../../helpers/logger.ts";
-import { notificationBroadcast } from "../ui/notifications.ts";
+import {
+	notificationBroadcast,
+	notificationRemove,
+} from "../ui/notifications.ts";
 import { beginConnectionRestart } from "./connection-restarting.ts";
 import type { StaleLinkOffer } from "./stale-link-notice.ts";
 import type { StreamLaunchOrigin } from "./stream-session-contract.ts";
@@ -43,6 +52,12 @@ export type ConnectionRestartDeps = {
 	readonly start: () => Promise<StartOutcome>;
 	/** After an automatic restart has started the new session. */
 	readonly announce: () => void;
+	/**
+	 * After a restart that did not end with the new session running: `start`
+	 * when the old session stopped and the new one did not start, `stop` when
+	 * the old session did not stop. Never for an operator Stop.
+	 */
+	readonly announceFailure: (failed: RestartFailure) => void;
 	readonly log: (message: string, meta: Record<string, unknown>) => void;
 };
 
@@ -52,6 +67,11 @@ export type ConnectionRestartRequest = {
 	readonly done: Promise<string>;
 };
 
+export type RestartFailure = "start" | "stop";
+
+/** The persistent notice a restart that did not finish leaves on screen. */
+export const CONNECTION_RESTART_FAILED = "connection_restart_failed";
+
 /** Stop, then Start, unless an operator Stop intervenes. Never rejects. */
 function runRestart(
 	deps: ConnectionRestartDeps,
@@ -59,6 +79,7 @@ function runRestart(
 	origin: "tap" | "automatic",
 ): Promise<string> {
 	const end = deps.beginRestart();
+	let stoppedOld = false;
 	return (async () => {
 		// `reconfigure`, not `operator`: this Stop is the first half of a restart,
 		// so restoration stays armed. An operator Stop during it still wins.
@@ -68,6 +89,7 @@ function runRestart(
 			deps.log("stop did not complete", { origin, stopped });
 			return "stop_failed";
 		}
+		stoppedOld = true;
 		if (!intent()) {
 			deps.log("Stop during restart; not starting", { origin });
 			return "cancelled";
@@ -80,7 +102,14 @@ function runRestart(
 			deps.log("failed", { origin, error: String(error) });
 			return "failed";
 		})
-		.finally(end);
+		.finally(end)
+		.then((result) => {
+			// After `end`, so no surface still says "Restarting connection" beside
+			// a notice that the restart did not finish.
+			if (result !== "started" && result !== "cancelled")
+				deps.announceFailure(stoppedOld ? "start" : "stop");
+			return result;
+		});
 }
 
 export function requestConnectionRestart(
@@ -213,6 +242,38 @@ export async function connectionRestartDeps(
 				true,
 				"notifications.connectionRestartedNewAddress",
 			),
+		announceFailure: announceRestartFailure,
 		log: (event, meta) => logger.info("connection restart", { event, ...meta }),
 	};
+}
+
+function announceRestartFailure(failed: RestartFailure): void {
+	if (failed === "start") {
+		notificationBroadcast(
+			CONNECTION_RESTART_FAILED,
+			"error",
+			"Couldn't restart the connection: the stream stopped but didn't start again. Your settings and links are unchanged, and viewers see your BRB screen. Start the stream to continue.",
+			0,
+			true,
+			true,
+			true,
+			"notifications.connectionRestartStartFailed",
+		);
+		return;
+	}
+	notificationBroadcast(
+		CONNECTION_RESTART_FAILED,
+		"warning",
+		"Couldn't restart the connection because the stream didn't stop cleanly. It may still be running, so check Live before trying again.",
+		0,
+		true,
+		true,
+		true,
+		"notifications.connectionRestartStopFailed",
+	);
+}
+
+/** A new session runs again, so a restart failure notice is out of date. */
+export function clearRestartFailureNotice(): void {
+	notificationRemove(CONNECTION_RESTART_FAILED);
 }

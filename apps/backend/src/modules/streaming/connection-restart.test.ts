@@ -35,6 +35,7 @@ function fixture(overrides: Partial<ConnectionRestartDeps> = {}) {
 			return { result: "started" };
 		},
 		announce: () => calls.push("announce"),
+		announceFailure: (failed) => calls.push(`failed:${failed}`),
 		log: () => {},
 		...overrides,
 	};
@@ -137,6 +138,7 @@ describe("restart connection tap", () => {
 		expect(await requestConnectionRestart("tok", f.deps).done).toBe(
 			"cancelled",
 		);
+		// The operator chose the Stop: no failure notice.
 		expect(f.calls).toEqual(["remove", "restarting", "stop", "restarted"]);
 	});
 
@@ -148,7 +150,110 @@ describe("restart connection tap", () => {
 		expect(await requestConnectionRestart("tok", f.deps).done).toBe(
 			"stop_failed",
 		);
-		expect(f.calls).toEqual(["remove", "restarting", "restarted"]);
+		// Said once the restarting status has dropped, never in silence.
+		expect(f.calls).toEqual([
+			"remove",
+			"restarting",
+			"restarted",
+			"failed:stop",
+		]);
+	});
+
+	test.each(["busy", "failed", "rejected"])(
+		"a Start that ends %s after the Stop says the stream didn't start again",
+		async (result) => {
+			const f = fixture({
+				start: async () => {
+					f.calls.push("start");
+					return { result };
+				},
+			});
+			f.notice.offer(9, { count: 1 });
+			expect(await requestConnectionRestart("tok", f.deps).done).toBe(result);
+			expect(f.calls).toEqual([
+				"remove",
+				"restarting",
+				"stop",
+				"start",
+				"restarted",
+				"failed:start",
+			]);
+		},
+	);
+
+	test("a throw names the half that did not finish", async () => {
+		const stopThrows = fixture({
+			stop: async () => {
+				throw new Error("engine gone");
+			},
+		});
+		stopThrows.notice.offer(9, { count: 1 });
+		await requestConnectionRestart("tok", stopThrows.deps).done;
+		expect(stopThrows.calls.at(-1)).toBe("failed:stop");
+		const startThrows = fixture({
+			start: async () => {
+				throw new Error("engine gone");
+			},
+		});
+		startThrows.notice.offer(9, { count: 1 });
+		await requestConnectionRestart("tok", startThrows.deps).done;
+		expect(startThrows.calls.at(-1)).toBe("failed:start");
+	});
+
+	test("production wiring: the failure notice says what happened, persists, and clears when a session runs", async () => {
+		const notifications = await import("../ui/notifications.ts");
+		const { spyOn } = await import("bun:test");
+		const {
+			CONNECTION_RESTART_FAILED,
+			clearRestartFailureNotice,
+			connectionRestartDeps,
+		} = await import("./connection-restart.ts");
+		const shown: Array<{
+			name: string;
+			type: string;
+			duration: number | undefined;
+			persistent: boolean | undefined;
+			key: string | undefined;
+		}> = [];
+		const broadcast = spyOn(
+			notifications,
+			"notificationBroadcast",
+		).mockImplementation(
+			(name, type, _msg, duration, persistent, _d, _a, key) => {
+				shown.push({ name, type, duration, persistent, key });
+			},
+		);
+		const remove = spyOn(
+			notifications,
+			"notificationRemove",
+		).mockImplementation(() => ({ remove: [] }));
+		try {
+			const conn = {} as unknown as import("ws").default;
+			const deps = await connectionRestartDeps(conn, "link-recovery");
+			deps.announceFailure("start");
+			deps.announceFailure("stop");
+			expect(shown).toEqual([
+				{
+					name: CONNECTION_RESTART_FAILED,
+					type: "error",
+					duration: 0,
+					persistent: true,
+					key: "notifications.connectionRestartStartFailed",
+				},
+				{
+					name: CONNECTION_RESTART_FAILED,
+					type: "warning",
+					duration: 0,
+					persistent: true,
+					key: "notifications.connectionRestartStopFailed",
+				},
+			]);
+			clearRestartFailureNotice();
+			expect(remove).toHaveBeenCalledWith(CONNECTION_RESTART_FAILED);
+		} finally {
+			broadcast.mockRestore();
+			remove.mockRestore();
+		}
 	});
 
 	test("production wiring: Stop for reconfigure, then Start from the given origin", async () => {
@@ -244,10 +349,16 @@ describe("automatic restart when nothing else carries the stream", () => {
 		expect([...f.calls, ...idle.calls]).toEqual([]);
 	});
 
-	test("says nothing when the new session did not start", async () => {
+	test("says the stream didn't start again, not that it restarted, when the new session did not start", async () => {
 		const f = fixture({ start: async () => ({ result: "failed" }) });
 		expect(await auto().restarts.request(9, f.deps).done).toBe("failed");
 		expect(f.calls).not.toContain("announce");
+		expect(f.calls).toEqual([
+			"restarting",
+			"stop",
+			"restarted",
+			"failed:start",
+		]);
 	});
 
 	test("an operator Stop during it wins, and nothing is announced", async () => {
