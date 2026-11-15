@@ -31,6 +31,7 @@ import { getHudState, getSocTelemetry } from '$lib/stores/hud.svelte';
 import { getStreamHealthRollup, getStreamHealthState, type HealthIndicator, type HealthRollup } from '$lib/stores/stream-health.svelte';
 import type { LinkSignal } from '$lib/types/hud';
 import { cn } from '$lib/utils';
+import { phoneState } from './phone-home';
 
 // Rollup state is coded by ICON SHAPE, not color alone — a check, warning
 // triangle, cross, and query glyph stay distinguishable on monochrome / e-ink
@@ -277,6 +278,10 @@ $effect(() => {
 	return () => clearTimeout(id);
 });
 </script>
+{#if getStatus()?.phone_box}
+<div class="border-b px-4 py-2 text-sm" data-testid="phone-hud">{hud.isConnected && getStatus()?.carrying?.state==='streaming'?m['live.phone.badgeActive']():phoneState(hud.isConnected?getStatus()?.carrying?.state:undefined)==='ready'?m['live.phone.badgeReady']():m['live.phone.badgeChecking']()}</div>
+{:else}
+
 
 {#snippet miniBars(link: LinkSignal)}
 	<LinkIndicator
@@ -737,3 +742,5 @@ $effect(() => {
 		</div>
 	</Sheet.Content>
 </Sheet.Root>
+
+{/if}
