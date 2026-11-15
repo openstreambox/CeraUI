@@ -997,6 +997,105 @@ deliberate different-port divergence, hwdb model recovery, the minting contract
 ifname fallback, the mmcli row's byte-identical `stable_key`, and the preserved
 HIMI chain.
 
+### First-sight USB bond admission [EXISTS]
+
+Transport classification, scan coverage and admission are separate facts.
+The OS netif refresh issues an asynchronous read of
+`/sys/class/net/<if>/device/subsystem` for each unsettled name without positive
+USB evidence, using exactly its parsed ifconfig name set. Only `usb` is positive
+evidence; interface names and driver names do not
+classify transport. A positive `usb` latch survives later refreshes for that
+entry. The bus map is the fourth `processIfconfigOutput` parameter; the third
+parameter remains the sample clock.
+
+An addressed USB entry or an entry with an unreadable bus stays out of both global and local-subnet SRTLA collectors
+until `usbNetScanCovers(name)` or the shared `identityDeadlineExpired(name)`
+predicate permits admission. The existing 2 second scan publication bound and
+15 second clock from first netif publication are unchanged. The wire row reports
+`enabled:false` during this hold without overwriting the operator's choice.
+Physical opt-outs still apply when coverage supplies the final identity.
+
+`identitySettled` latches admission on an addressed publication that is no longer
+pending, or synchronously at a covering scan commit. Losing coverage in a later
+scan never withdraws that entry. Classification and settlement die when removal
+is observed by the monitor, a poll without the name, or a non-RUNNING row.
+Per-name presence counters fence bus results issued before an observed create,
+delete or replacement. When names remain uncovered after the existing scan wait,
+the producer awaits one I/O turn to deliver ready classification callbacks.
+Reads still pending then count as unreadable. A changed presence counter causes
+a fresh classification before publication, with a shared 250 ms budget for
+replacement re-reads and one I/O turn after each batch. Only the latest issued
+read owns its result; stale or pending replacement evidence holds the entry.
+The generation is checked again before publication. Covered publication adds no
+await or timer; the ordinary uncovered path adds no timer. These are scheduling
+budgets under a progressing event loop, not wall-clock progress guarantees.
+Settled entries are never re-read. The settlement listener
+is installed once on the first publication, avoiding import-time calls through
+the network/scan/registry dependency cycle.
+
+Each USB descriptor reading records the name's last observed removal epoch from
+the producer's presence counter. A monitor down/removal event, including one
+before first publication, or a poll that drops an existing entry invalidates its
+pending reading. At commit, a reading with a changed epoch loses its descriptor,
+markers and coverage for that name and a fresh scan is requested; other names can
+still commit. Previously committed snapshots retain their existing lifecycle.
+First publication and monitor creation adopt the covering reading without
+invalidating it. `tests/usb-net-incarnation.test.ts` exercises these paths with
+parked reads and both USB and non-USB replacements.
+
+The classifier preserves error codes through the optional `readLinkResult`
+dependency; existing descriptor/driver reads still use `readLinkName`. A bus
+link returning a non-ENOENT error gets exactly one immediate retry. ENOENT
+probes the netdev class link: a present link means `no-device`; another ENOENT
+means `vanished`. A non-ENOENT class-link failure also gets one retry. Both
+absence outcomes retain the previous admission behavior. `no-device` does not
+prove a virtual interface: ordinary parent teardown can remove its subsystem
+link before unregistering the child netdev.
+
+An uncovered entry whose own classification still fails or hangs is temporarily
+ineligible until scan coverage or the shared 15 second deadline from first netif
+publication. This accepted delay applies to non-USB links too: the effective wire
+row is `enabled:false` while held, but the operator's choice is preserved.
+Unreadable state is recomputed on fresh evidence; a readable non-USB result
+releases it on the next publication, including an unchanged-counter release
+frame. Publications without classification evidence retain the existing hold.
+One new unreadable-bus warning is emitted per observed entry lifetime, with the
+interface and error code. The existing shared deadline warning can also appear;
+this is not a promise of one total warning across all owners.
+
+A completed scan covers even a rejected descriptor read, so that commit can
+release a USB entry weakly before 15 seconds. A weak identity is still refused
+for durable bond preferences and modem credentials. Coverage, descriptors and
+the readiness clock remain name-keyed; their existing committed-snapshot and
+deadline limitations remain even after observed reuse. Rapid replug that is not
+observed within one poll cadence is outside the incarnation fence.
+
+Residuals include rename/unregister after the OS snapshot, ordinary parent
+teardown, drivers without a USB parent, vendor ordering differences, and missing,
+partly inaccessible or namespace-mismatched sysfs views. Missing sysfs can look
+vanished and retain the interface-name fallback. The next nominal 5 second poll
+is not a hard recovery bound while commands, drivers or the event loop stall.
+There is no universal sysfs lifetime theorem or measured field failure rate in
+this contract. Host tests do not establish physical modem qualification.
+
+Both release points call `triggerNetworkInterfacesChange()` and `broadcastNetif()`.
+Thus a coverage-only or deadline-only release delivers a real `netif` frame with
+`enabled:true` for an otherwise eligible row even if counters and raw enabled
+state are unchanged. Duplicate frames are allowed. The session serializes the
+release event with its scan-commit refresh; the same applied publication owes
+one restart.
+
+Coverage: `tests/bind-map-identity-readiness.test.ts`,
+`tests/bond-identity-scan-parity.test.ts`,
+`tests/network-module-init-order.test.ts`, and the B13 cases in
+`tests/bond-session-restart-obligation.test.ts`. They cover both collectors,
+disk/registry identity, physical opt-outs, shared-serial twins, real release
+frames, observed replacement and ordinary Ethernet parity.
+`tests/netdev-bus-admission.test.ts`, `tests/netdev-bus-classification.test.ts`
+and `tests/netdev-bus-covered-timing.test.ts` cover queued and hung reads,
+error retry, absence/teardown, conservative holds, visible releases and bounded
+replacement classification.
+
 ### The two `05c6:9024` sticks are RNDIS + read-only UFI devices [EXISTS]
 
 Historical pre-RAUC evidence below records why the kernel fix was required. Todo

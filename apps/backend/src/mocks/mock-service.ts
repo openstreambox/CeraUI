@@ -97,6 +97,10 @@ export type {
 export interface MockState {
 	initialized: boolean;
 	engineStart: StartParams | null;
+	engineCompositionPrimaryInputId: string | null;
+	engineKnownGood: StartParams | null;
+	engineKnownGoodCandidate: StartParams | null;
+	engineChangeCounter: number;
 	modemSignals: Map<number, number>;
 	modemStates: Map<number, "registered" | "connected" | "searching">;
 	networkTraffic: Map<string, number>;
@@ -177,6 +181,10 @@ export interface MockLinkOverride {
 const mockState: MockState = {
 	initialized: false,
 	engineStart: null,
+	engineCompositionPrimaryInputId: null,
+	engineKnownGood: null,
+	engineKnownGoodCandidate: null,
+	engineChangeCounter: 0,
 	modemSignals: new Map(),
 	modemStates: new Map(),
 	networkTraffic: new Map(),
@@ -280,6 +288,10 @@ export function initMockService(scenarioName?: string): void {
 	mockState.relayValidateFault = null;
 	mockState.capabilityOverride = null;
 	mockState.engineStart = null;
+	mockState.engineCompositionPrimaryInputId = null;
+	mockState.engineKnownGood = null;
+	mockState.engineKnownGoodCandidate = null;
+	mockState.engineChangeCounter = 0;
 	mockState.gatewayActive = {};
 	mockState.networkIngestActive = { rtmp: true, srt: true };
 	mockState.networkIngestMediamtxSrt = false;
@@ -707,6 +719,8 @@ export function setStreamingState(isActive: boolean): void {
 	} else {
 		mockState.streaming.connectedRelays = 0;
 		mockState.engineStart = null;
+		mockState.engineCompositionPrimaryInputId = null;
+		mockState.engineKnownGoodCandidate = null;
 	}
 }
 
@@ -795,6 +809,10 @@ function clearMockTimers(): void {
 export function stopMockService(): void {
 	clearMockTimers();
 	mockState.engineStart = null;
+	mockState.engineCompositionPrimaryInputId = null;
+	mockState.engineKnownGood = null;
+	mockState.engineKnownGoodCandidate = null;
+	mockState.engineChangeCounter = 0;
 	setRelaysCacheMock(undefined);
 	mockState.initialized = false;
 	logger.info("🎭 Mock service stopped");

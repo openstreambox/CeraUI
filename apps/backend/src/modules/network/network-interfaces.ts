@@ -81,7 +81,12 @@ import {
 	getModemNetMarker,
 	getRouterCellularMarker,
 	getRouterCellularMarkers,
+	identityDeadlineExpired,
+	invalidateUsbNetReading,
+	type NetdevBus,
 	notePublishedNetifSnapshot,
+	onUsbNetScanCommitted,
+	readNetdevBus,
 	refreshUsbNetMarkers,
 	type UsbModemNetMarker,
 	usbNetScanCovers,
@@ -94,6 +99,10 @@ import {
 } from "./unclaimed-adapters.ts";
 
 export type NetworkInterface = {
+	usb?: boolean;
+	busUnreadable?: boolean;
+	busReadWarned?: boolean;
+	identitySettled?: boolean;
 	ip?: string;
 	netmask?: string;
 	tp: number;
@@ -159,6 +168,11 @@ export const NETIF_ERR_NOSIM = 0x04;
 export const NETIF_ERR_SHAREDLAN = 0x08;
 
 let netif: Record<string, NetworkInterface> = {};
+const presenceEpoch = new Map<string, number>();
+type NetdevBusEvidence = {
+	readonly result: NetdevBus;
+	readonly seen: number;
+};
 let netifSnapshotReady = false;
 let netifRefreshGeneration = 0;
 const scanPublicationWarnings = new Set<string>();
@@ -172,6 +186,36 @@ export function resetNetifSnapshotForTest(): void {
 	netifSnapshotReady = false;
 	netifRefreshGeneration++;
 	scanPublicationWarnings.clear();
+	presenceEpoch.clear();
+}
+
+function bumpPresence(name: string, removed = false): void {
+	const epoch = (presenceEpoch.get(name) ?? 0) + 1;
+	presenceEpoch.set(name, epoch);
+	if (removed) invalidateUsbNetReading(name, epoch);
+}
+
+let scanSettlementInstalled = false;
+function installScanSettlement(): void {
+	if (scanSettlementInstalled) return;
+	scanSettlementInstalled = true;
+	onUsbNetScanCommitted(() => {
+		let released = false;
+		for (const [name, int] of Object.entries(netif)) {
+			if (
+				(int.usb || int.busUnreadable) &&
+				!int.identitySettled &&
+				usbNetScanCovers(name)
+			) {
+				int.identitySettled = true;
+				released = true;
+			}
+		}
+		if (released) {
+			triggerNetworkInterfacesChange();
+			broadcastNetif();
+		}
+	});
 }
 
 // Interfaces excluded from dup-IPv4 detection during a station<->hotspot
@@ -235,6 +279,18 @@ export function isWifiApInterface(name: string): boolean {
 	);
 }
 
+export function isBondIdentityPending(
+	name: string,
+	int: NetworkInterface,
+): boolean {
+	return (
+		(int.usb === true || int.busUnreadable === true) &&
+		!int.identitySettled &&
+		!usbNetScanCovers(name) &&
+		!identityDeadlineExpired(name)
+	);
+}
+
 /**
  * May this interface be offered to the bond?
  *
@@ -246,6 +302,7 @@ export function isWifiApInterface(name: string): boolean {
 export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 	if (isWifiApInterface(name)) return false;
 	if (!int.ip) return false;
+	if (isBondIdentityPending(name, int)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
 	if ((int.error & ~NETIF_ERR_DUPIPV4) !== 0) return false;
@@ -667,9 +724,11 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 		if (!netif[name]) {
 			// New running interface; IP/throughput get filled in by the next poll.
 			netif[name] = { tp: 0, txb: 0, rxb: 0, enabled: true, error: 0 };
+			bumpPresence(name);
 			mutated = true;
 		}
 	} else if (isNetifDownState(event.state)) {
+		bumpPresence(name, true);
 		if (netif[name]) {
 			delete netif[name];
 			mutated = true;
@@ -873,6 +932,29 @@ async function refreshNetifFromOs(): Promise<void> {
 				(name) =>
 					name !== "" && name !== "lo" && !/^(?:docker|l4tbr)/.test(name),
 			);
+		const buses = new Map<string, NetdevBusEvidence>();
+		const reads = new Map<string, { seen: number; promise: Promise<void> }>();
+		const issue = (name: string): void => {
+			buses.delete(name);
+			const seen = presenceEpoch.get(name) ?? 0;
+			const promise = readNetdevBus(name).then(
+				(result) => {
+					if (reads.get(name)?.seen === seen) buses.set(name, { result, seen });
+				},
+				(error: unknown) => {
+					if (reads.get(name)?.seen === seen)
+						buses.set(name, {
+							result: { kind: "unreadable", code: "UNKNOWN" },
+							seen,
+						});
+					logger.debug("netdev bus read failed", { ifname: name, error });
+				},
+			);
+			reads.set(name, { seen, promise });
+		};
+		for (const name of ifnames) {
+			if (!netif[name]?.identitySettled && !netif[name]?.usb) issue(name);
+		}
 		if (ifnames.some((name) => !usbNetScanCovers(name))) {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let expired = false;
@@ -903,7 +985,50 @@ async function refreshNetifFromOs(): Promise<void> {
 				}
 			}
 		}
-		processIfconfigOutput(ifconfigOut, ipOverrides);
+		if (ifnames.some((name) => !usbNetScanCovers(name))) {
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			const stale = () =>
+				[...reads]
+					.filter(
+						([name, read]) =>
+							!usbNetScanCovers(name) &&
+							read.seen !== (presenceEpoch.get(name) ?? 0),
+					)
+					.map(([name]) => name);
+			if (stale().length > 0) {
+				let expired = false;
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const deadline = new Promise<void>((resolve) => {
+					timer = setTimeout(() => {
+						expired = true;
+						resolve();
+					}, 250);
+				});
+				try {
+					let names = stale();
+					while (!expired && names.length > 0) {
+						for (const name of names) issue(name);
+						await Promise.race([
+							Promise.all(names.map((name) => reads.get(name)?.promise)),
+							deadline,
+						]);
+						await new Promise<void>((resolve) => setImmediate(resolve));
+						names = stale();
+					}
+				} finally {
+					clearTimeout(timer);
+				}
+			}
+			for (const [name, read] of reads) {
+				if (!buses.has(name) && !usbNetScanCovers(name))
+					buses.set(name, {
+						result: { kind: "unreadable", code: "TIMEOUT" },
+						seen: read.seen,
+					});
+			}
+		}
+		if (generation !== netifRefreshGeneration) return;
+		processIfconfigOutput(ifconfigOut, ipOverrides, undefined, undefined, buses);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.error(`Error getting ifconfig: ${message}`);
@@ -915,7 +1040,11 @@ export function processIfconfigOutput(
 	ipOverrides?: Map<string, IpAddrSelection>,
 	now: number = getms(),
 	wirelessInterface: (name: string) => boolean = isWirelessInterface,
+	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 ) {
+	installScanSettlement();
+	const previousNetif = netif;
+	const previousIfnames = new Set(Object.keys(netif));
 	const firstSnapshot = !netifSnapshotReady;
 	let intsChanged = false;
 	const newInterfaces: Record<string, NetworkInterface> = {};
@@ -979,6 +1108,20 @@ export function processIfconfigOutput(
 
 			const enabled = !previous || previous.enabled;
 			const error = previous ? previous.error : 0;
+			const evidence = buses?.get(name);
+			const fresh =
+				evidence !== undefined &&
+				evidence.seen === (presenceEpoch.get(name) ?? 0);
+			const usb =
+				previous?.usb === true ||
+				(fresh &&
+					evidence.result.kind === "bus" &&
+					evidence.result.bus === "usb");
+			const busUnreadable =
+				!previous?.identitySettled &&
+				(evidence !== undefined
+					? !fresh || evidence.result.kind === "unreadable"
+					: previous?.busUnreadable === true);
 			newInterfaces[name] = {
 				...(inetAddr !== undefined ? { ip: inetAddr } : {}),
 				...(netmask !== undefined ? { netmask } : {}),
@@ -990,7 +1133,28 @@ export function processIfconfigOutput(
 				tp,
 				enabled,
 				error,
+				...(usb ? { usb } : {}),
+				...(busUnreadable ? { busUnreadable } : {}),
+				...(previous?.busReadWarned ? { busReadWarned: true } : {}),
+				...(previous?.identitySettled ? { identitySettled: true } : {}),
 			};
+			const entry = newInterfaces[name];
+			if (
+				entry.busUnreadable &&
+				!entry.busReadWarned &&
+				isBondIdentityPending(name, entry)
+			) {
+				const code = !fresh
+					? "STALE"
+					: evidence.result.kind === "unreadable"
+						? evidence.result.code
+						: "UNKNOWN";
+				logger.warn(
+					"netdev bus link unreadable; holding first-sight identity until scan coverage or deadline",
+					{ ifname: name, code },
+				);
+				entry.busReadWarned = true;
+			}
 
 			// Detect interfaces that are new or with a different address
 			if (!netif[name] || netif[name].ip !== inetAddr) {
@@ -1046,12 +1210,24 @@ export function processIfconfigOutput(
 		if (newInterfaces[name]?.error !== netif[name]?.error) intsChanged = true;
 	}
 	netif = newInterfaces;
+	for (const name of new Set([...previousIfnames, ...Object.keys(netif)])) {
+		if (previousIfnames.has(name) !== (netif[name] !== undefined))
+			bumpPresence(name, previousIfnames.has(name));
+	}
 	netifSnapshotReady = true;
 	notePublishedNetifSnapshot(Object.keys(netif));
 
-	if (intsChanged || firstSnapshot) {
+	let released = false;
+	for (const [name, int] of Object.entries(netif)) {
+		if (int.ip && !int.identitySettled && !isBondIdentityPending(name, int)) {
+			if (int.usb || previousNetif[name]?.busUnreadable) released = true;
+			int.identitySettled = true;
+		}
+	}
+	if (intsChanged || firstSnapshot || released) {
 		triggerNetworkInterfacesChange();
-		notifyTopologyChange();
+		if (intsChanged || firstSnapshot) notifyTopologyChange();
+		if (released) broadcastNetif();
 	}
 
 	// Reconcile + broadcast (covers throughput-only deltas too); no-op when the
