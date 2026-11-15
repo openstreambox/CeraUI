@@ -2843,5 +2843,5 @@
 	"settings.portal.experimentalDescription": "默认关闭。用手机登录酒店 Wi-Fi。仍需在真实网络中测试。关闭后不会再开启新的登录时段；已开启的会在十分钟内结束。",
 	"network.portal.experimentalDisabled": "要使用此功能，请在设置中启用实验性 Wi-Fi 登录。",
 	"settings.portal.experimentalSaveError": "无法保存此设置。",
-	"network.portal.privacyHint": "If the page doesn't appear, temporarily pause VPN, Private Relay or Private DNS / secure DNS on this phone, then open it again. Restore them when finished. Your stream is unchanged."
+	"network.portal.privacyHint": "如果页面没有出现，请暂时停用这部手机上的 VPN、专用代理或私人 DNS / 安全 DNS，然后重新打开页面。完成后请恢复这些设置。你的推流不受影响。"
 }

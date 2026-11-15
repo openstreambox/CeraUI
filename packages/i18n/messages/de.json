@@ -2888,5 +2888,5 @@
 	"settings.portal.experimentalDescription": "Standardmäßig aus. Hotel-WLAN vom Telefon aus anmelden. Muss noch in echten Netzen getestet werden. Ausschalten verhindert neue Zeitfenster; offene schließen innerhalb von zehn Minuten.",
 	"network.portal.experimentalDisabled": "Aktiviere die experimentelle WLAN-Anmeldung in den Einstellungen, um diese Funktion zu nutzen.",
 	"settings.portal.experimentalSaveError": "Die Einstellung konnte nicht gespeichert werden.",
-	"network.portal.privacyHint": "If the page doesn't appear, temporarily pause VPN, Private Relay or Private DNS / secure DNS on this phone, then open it again. Restore them when finished. Your stream is unchanged."
+	"network.portal.privacyHint": "Wenn die Seite nicht erscheint, pausiere auf diesem Telefon kurz VPN, Privat-Relay oder privates DNS / sicheres DNS und öffne sie dann erneut. Schalte alles danach wieder ein. Dein Stream bleibt unverändert."
 }

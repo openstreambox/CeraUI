@@ -2891,5 +2891,5 @@
 	"settings.portal.experimentalDescription": "Désactivée par défaut. Connectez-vous au Wi-Fi de l'hôtel depuis votre téléphone. Doit encore être testée sur de vrais réseaux. La désactiver empêche d'ouvrir de nouvelles fenêtres ; celles déjà ouvertes se ferment d'ici dix minutes.",
 	"network.portal.experimentalDisabled": "Activez la connexion Wi-Fi expérimentale dans les paramètres pour utiliser cette fonction.",
 	"settings.portal.experimentalSaveError": "Le réglage n'a pas pu être enregistré.",
-	"network.portal.privacyHint": "If the page doesn't appear, temporarily pause VPN, Private Relay or Private DNS / secure DNS on this phone, then open it again. Restore them when finished. Your stream is unchanged."
+	"network.portal.privacyHint": "Si la page n'apparaît pas, mettez temporairement en pause le VPN, le Relais privé ou le DNS privé / DNS sécurisé de ce téléphone, puis rouvrez-la. Réactivez-les une fois terminé. Votre flux ne change pas."
 }
