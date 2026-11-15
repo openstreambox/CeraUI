@@ -22,7 +22,11 @@ import {
 	UplinkHealthRuntimeCore,
 	type UplinkHealthRuntimeCoreDeps,
 } from "./runtime-core.ts";
-import { getUplinkHealthEngine, notifyUplinkHealthChange } from "./state.ts";
+import {
+	getPhoneLinkCounts,
+	getUplinkHealthEngine,
+	notifyUplinkHealthChange,
+} from "./state.ts";
 
 export const UPLINKS_EVENT = "uplinks" as const;
 
@@ -79,7 +83,10 @@ const defaultDeps: UplinkHealthRuntimeDeps = {
 				return "failure";
 		}
 	},
-	publish: (records) => broadcastMsg(UPLINKS_EVENT, records),
+	publish: (records) => {
+		broadcastMsg(UPLINKS_EVENT, records);
+		broadcastMsg("status", { phone_links: getPhoneLinkCounts() });
+	},
 };
 
 /** Production adapter retains the shared engine, identity and publication ports. */

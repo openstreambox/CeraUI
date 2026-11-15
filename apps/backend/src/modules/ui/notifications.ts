@@ -29,9 +29,9 @@
 */
 
 import type { NotificationAction, NotificationType } from "@ceraui/rpc/schemas";
-
 import { logger } from "../../helpers/logger.ts";
 import { getms } from "../../helpers/time.ts";
+import { setup } from "../setup.ts";
 import type { MessageSocket } from "./message-socket.ts";
 import {
 	isNotificationDismissed,
@@ -120,6 +120,11 @@ export function notificationSend(
 	params?: Notification["params"],
 	opts?: NotificationOptions,
 ) {
+	if (
+		setup.engine === "none" &&
+		/^(encoder-mode-clamped|hdmi_error|capture|cerastream)/.test(name)
+	)
+		return false;
 	if (isPersistent && conn !== undefined) {
 		logger.error("error: attempted to send persistent unicast notification");
 		return false;

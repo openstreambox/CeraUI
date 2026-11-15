@@ -25,7 +25,7 @@ import { AppDialog } from '$lib/components/dialogs';
 import { Button } from '$lib/components/ui/button';
 import { getOperationPhase, osCommand } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
-import { getIsConnected, getIsStreaming, getUpdating } from '$lib/rpc/subscriptions.svelte';
+import { getIsConnected, getIsStreaming, getStatus, getUpdating } from '$lib/rpc/subscriptions.svelte';
 import { clearRebooting, getIsRebooting, markRebooting } from '$lib/stores/connection-ux.svelte';
 import { legacyInstallRunning } from '$lib/updates/legacy-install';
 import { cn } from '$lib/utils';
@@ -57,9 +57,11 @@ const updating = $derived(getUpdating());
 // In progress = an install the device has not finished; its terminal object
 // (success or failure) is retained by the store and must release the gate.
 const isUpdating = $derived(legacyInstallRunning(updating));
-const blocked = $derived(streaming || isUpdating);
+const phoneProtected = $derived(getStatus()?.phone_box && getStatus()?.carrying?.state !== 'idle');
+const powerBlocked = $derived(streaming || isUpdating || (phoneProtected && getStatus()?.carrying?.startup !== true));
+const blocked = $derived(streaming || isUpdating || phoneProtected);
 const blockedReason = $derived(
-	streaming
+	phoneProtected ? (getStatus()?.carrying?.state === 'streaming' ? m['live.phone.restartHold']() : (getStatus()?.carrying?.startup === true ? m['live.phone.restartChecking']() : m['live.phone.powerChecking']())) : streaming
 		? m["settings.dialogs.blockedStreaming"]()
 		: isUpdating
 			? m["settings.dialogs.blockedUpdating"]()
@@ -84,12 +86,12 @@ const confirmLabel = $derived(
 );
 const confirmBody = $derived(
 	pending === 'poweroff'
-		? m["settings.dialogs.powerOffConfirm"]()
-		: m["settings.dialogs.rebootConfirm"](),
+		? (getStatus()?.phone_box ? m["live.phone.powerOffCost"]() : m["settings.dialogs.powerOffConfirm"]())
+		: getStatus()?.phone_box ? m['live.phone.restartCost']() : m["settings.dialogs.rebootConfirm"](),
 );
 
 function request(action: PendingAction) {
-	if (blocked) return;
+	if (action === 'poweroff' ? powerBlocked : blocked) return;
 	pending = action;
 	confirmOpen = true;
 }
@@ -105,7 +107,7 @@ function request(action: PendingAction) {
 // refusal; osCommand reports other failures. Neither advances to "rebooting"/close.
 async function confirmAction() {
 	const action = pending;
-	if (!action) return;
+	if (!action || (action === 'poweroff' ? powerBlocked : blocked)) return;
 	const result = await osCommand({
 		key: action,
 		target: action,
@@ -310,7 +312,7 @@ function dismissRecovery() {
 				</div>
 				<Button
 					class="w-full gap-2"
-					disabled={blocked}
+					disabled={powerBlocked}
 					onclick={() => request('poweroff')}
 					variant="destructive"
 				>
@@ -328,7 +330,7 @@ function dismissRecovery() {
 	bind:open={confirmOpen}
 	destructive
 	onPrimary={confirmAction}
-	primaryDisabled={busy}
+	primaryDisabled={busy || (pending === 'poweroff' ? powerBlocked : blocked)}
 	primaryLabel={confirmLabel}
 	title={m["dialogs.areYouSure"]()}
 >

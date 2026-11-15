@@ -58,6 +58,7 @@ import {
 } from "$lib/stores/connection-ux.svelte";
 import {
 	dismiss as dismissNotification,
+	getActive as getActiveNotifications,
 	push as pushNotification,
 } from "$lib/stores/notifications.svelte";
 import {
@@ -614,6 +615,15 @@ function handleMessage(
 				modems: modemsState ?? {},
 			} as Exclude<typeof statusState, undefined>;
 			statusState = preserveWireIdentity(statusState, nextStatus);
+			if (statusState?.phone_box)
+				for (const notice of getActiveNotifications()) {
+					if (
+						/^(encoder-mode-clamped|hdmi_error|capture|cerastream)/.test(
+							notice.name,
+						)
+					)
+						dismissNotification(notice.name);
+				}
 			if ("stream_lifecycle" in statusData) noteLifecycleDelivered(received);
 			const recoveredStart = settleStartRecoveryEvidence(statusData, received);
 			if (recoveredStart !== undefined)
@@ -1001,6 +1011,13 @@ function handleMessage(
 			const message = parsed.data;
 			notificationsState = message;
 			for (const notification of message.show ?? []) {
+				if (
+					statusState?.phone_box &&
+					/^(encoder-mode-clamped|hdmi_error|capture|cerastream)/.test(
+						notification.name,
+					)
+				)
+					continue;
 				pushNotification(notification);
 			}
 			for (const entry of message.remove ?? []) {

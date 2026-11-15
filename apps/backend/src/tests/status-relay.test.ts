@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { StatusSchema } from "../modules/remote-control/protocol.ts";
 import {
 	type ControlChannel,
@@ -52,7 +52,7 @@ describe("relayStatusToGateway", () => {
 		const parsed = StatusSchema.parse(frame);
 		expect(parsed.kind).toBe("status");
 		expect(parsed.type).toBe("status");
-		expect(parsed.payload).toEqual({ is_streaming: true });
+		expect(parsed.payload).toEqual({ remote_status: true, is_streaming: true });
 		expect(parsed.seq).toBeGreaterThanOrEqual(0);
 		expect(Number.isInteger(parsed.seq)).toBe(true);
 		expect(parsed.v).toBe(1);
@@ -110,7 +110,8 @@ describe("relayStatusToGateway", () => {
 		const parsed = StatusSchema.parse(channel.frames[0]);
 		expect(parsed.type).toBe("netif");
 		expect(parsed.seq).toBe(7);
-		expect(parsed.payload).toEqual({ eth0: { up: true } });
+		expect(JSON.stringify(parsed.payload)).not.toContain("eth0");
+		expect(Object.values(parsed.payload ?? {})).toEqual([{}]);
 	});
 });
 
@@ -137,7 +138,10 @@ describe("dual delivery (local + relay)", () => {
 		// Relay delivery: the control channel got the kind:status frame.
 		expect(channel.frames).toHaveLength(1);
 		const relayed = StatusSchema.parse(channel.frames[0]);
-		expect(relayed.payload).toEqual({ is_streaming: true });
+		expect(relayed.payload).toEqual({
+			remote_status: true,
+			is_streaming: true,
+		});
 	});
 });
 
@@ -165,6 +169,7 @@ describe("broadcastMsgLocal is local-only", () => {
 describe("no-secrets contract", () => {
 	it("RELAYABLE_TYPES is exactly the closed v2.0 status set (spec §8)", () => {
 		expect([...RELAYABLE_TYPES]).toEqual([
+			"telemetry",
 			"status",
 			"config",
 			"sensors",
@@ -198,4 +203,104 @@ describe("no-secrets contract", () => {
 			expect(secretLike.test(type)).toBe(false);
 		}
 	});
+});
+
+it("projects actual phone broadcasts including partials and every relayable type", async () => {
+	const { setup } = await import("../modules/setup.ts");
+	const previous = setup.engine;
+	setup.engine = "none";
+	const channel = makeChannel();
+	setControlChannel(channel);
+	try {
+		broadcastMsg("status", {
+			carrying: { state: "streaming" },
+			wifi: { ssid: "planted-private" },
+		});
+		for (const type of RELAYABLE_TYPES.filter((t) => t !== "status"))
+			broadcastMsg(type, { secret: "planted-private" });
+		expect(channel.frames).toHaveLength(1);
+		expect((channel.frames[0] as { payload: unknown }).payload).toEqual({
+			remote_status: true,
+			phone_box: true,
+			carrying: { state: "streaming" },
+		});
+		expect(JSON.stringify(channel.frames)).not.toContain("planted-private");
+	} finally {
+		setup.engine = previous;
+	}
+});
+it("broadcasts runtime box health changes once", async () => {
+	const { markBootDegraded, resetBootReadiness } = await import(
+		"../modules/system/readiness.ts"
+	);
+	const { setup } = await import("../modules/setup.ts");
+	const previous = setup.engine;
+	resetBootReadiness();
+	const channel = makeChannel();
+	setControlChannel(channel);
+	try {
+		setup.engine = "none";
+		markBootDegraded("cellular");
+		markBootDegraded("cellular");
+		expect(channel.frames).toHaveLength(1);
+		expect((channel.frames[0] as { payload: unknown }).payload).toEqual({
+			remote_status: true,
+			phone_box: true,
+			box_health: [{ part: "cellular", since: expect.any(Number) }],
+		});
+		// Encoder status keeps the closed DTO: phone fields never cross.
+		setup.engine = "cerastream";
+		markBootDegraded("hotspot");
+		expect(JSON.stringify(channel.frames.slice(1))).not.toMatch(
+			/box_health|phone_box|phone_links|carrying/,
+		);
+	} finally {
+		setup.engine = previous;
+		resetBootReadiness();
+	}
+});
+
+it("permits phone startup poweroff only, preserving restart and encoder holds", async () => {
+	const { setup } = await import("../modules/setup.ts");
+	const { getDisruptiveActionDecision } = await import(
+		"../modules/system/disruptive-action-runtime.ts"
+	);
+	const { setStreamLivenessSourceForTest } = await import(
+		"../modules/system/stream-liveness-source.ts"
+	);
+	const { carryingTracker } = await import("../modules/system/carrying.ts");
+	const old = setup.engine;
+	const startup = spyOn(carryingTracker, "startupChecking").mockReturnValue(
+		true,
+	);
+	try {
+		setup.engine = "none";
+
+		setStreamLivenessSourceForTest(() => "unknown");
+		expect(getDisruptiveActionDecision({ powerAction: "poweroff" })).toEqual({
+			allowed: true,
+		});
+		expect(getDisruptiveActionDecision({ powerAction: "reboot" })).toEqual({
+			allowed: false,
+			reason: "stream_liveness_unknown",
+		});
+		setup.engine = "cerastream";
+		expect(
+			getDisruptiveActionDecision({ powerAction: "poweroff" }).allowed,
+		).toBe(false);
+	} finally {
+		setup.engine = old;
+		setStreamLivenessSourceForTest(null);
+		startup.mockRestore();
+	}
+});
+
+it("startup checking expires exactly at the 120 second boundary", async () => {
+	const { CarryingTracker } = await import("../modules/system/carrying.ts");
+	const tracker = new CarryingTracker();
+	tracker.start(0);
+	expect(tracker.startupChecking(119999)).toBe(true);
+	expect(tracker.startupChecking(120000)).toBe(false);
+	tracker.session("srt", true, 10);
+	expect(tracker.startupChecking(11)).toBe(false);
 });
