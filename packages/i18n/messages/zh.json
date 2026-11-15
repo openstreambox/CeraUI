@@ -2696,5 +2696,11 @@
 	"hotspotConfigurator.saveRefused": "The Wi-Fi adapter changed, so these settings weren't saved.",
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
-	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot."
+	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.streamIdSecurity": "可能是发布密钥。即使启用 SRT 加密，也会以明文传输。",
+	"settings.streamIdStored": "已保存流 ID。保持不变以保留，输入新值以替换，或明确清除。",
+	"settings.streamIdShow": "显示输入值",
+	"settings.streamIdHide": "隐藏输入值",
+	"settings.streamIdClear": "清除流 ID",
+	"settings.streamIdClearing": "保存时将清除流 ID。"
 }

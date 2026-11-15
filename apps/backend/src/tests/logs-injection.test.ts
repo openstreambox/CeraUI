@@ -137,3 +137,55 @@ describe("oRPC boundary — Zod SERVICE_RE on the log `service` input", () => {
 		expect(logInputSchema.safeParse(undefined).success).toBe(true);
 	});
 });
+
+// The two tests below check what leaves the box, not how getLog builds it, so
+// they hold for the plain journal download and for a filtered support journal.
+it("keeps historical Stream IDs out of the returned journal and the download event", async () => {
+	const record = JSON.stringify({
+		MESSAGE: "dialing srt://relay.example:5000?streamid=dummy-json-key",
+		_SYSTEMD_UNIT: "ceralive.service",
+		_COMM: "ceralive",
+	});
+	spyOn(runModule, "run").mockResolvedValue(
+		`ordinary line\n{"srt_streamid":"dummy-old-publish-key"}\nstreamid=dummy-uri-key\n${record}\nlast line`,
+	);
+	const sent: string[] = [];
+	const conn = {
+		send: (message: string) => sent.push(message),
+		data: { senderId: "test" },
+	} as never;
+	const result = await getLog(conn, "ceralive.service");
+	expect(result).toBeDefined();
+	expect(sent.some((message) => message.includes('"log"'))).toBe(true);
+	expect(result?.contents).not.toContain("dummy-");
+	expect(JSON.stringify(sent)).not.toContain("dummy-");
+});
+
+it("keeps a retained Stream ID out of the log and the notice when the journal read fails", async () => {
+	const { clearRecentLogLines, getRecentLogLines } = await import(
+		"../helpers/logger.ts"
+	);
+	const { setStreamIdRedactionSource } = await import(
+		"../helpers/stream-id-secret.ts"
+	);
+	const previous = setStreamIdRedactionSource(() => ["dummy-publish-key"]);
+	spyOn(runModule, "run").mockRejectedValue(
+		new Error("journal failed: dummy-publish-key"),
+	);
+	const sent: string[] = [];
+	const conn = {
+		send: (message: string) => sent.push(message),
+		data: { senderId: "test" },
+	} as never;
+	clearRecentLogLines();
+	try {
+		expect(await getLog(conn)).toBeUndefined();
+		const logged = getRecentLogLines().join("\n");
+		expect(logged).toContain('"level":"error"');
+		expect(logged).not.toContain("dummy-publish-key");
+		expect(sent.some((message) => message.includes("log_error"))).toBe(true);
+		expect(JSON.stringify(sent)).not.toContain("dummy-publish-key");
+	} finally {
+		setStreamIdRedactionSource(previous);
+	}
+});

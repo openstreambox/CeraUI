@@ -290,8 +290,9 @@ export function writeFileAtomicSync(filePath: string, contents: string): void {
 		`.${path.basename(filePath)}.${process.pid}.tmp`,
 	);
 
-	const fd = fs.openSync(tmpPath, "w");
+	const fd = fs.openSync(tmpPath, "w", 0o600);
 	try {
+		fs.fchmodSync(fd, 0o600);
 		fs.writeFileSync(fd, contents);
 		fs.fsyncSync(fd);
 	} finally {

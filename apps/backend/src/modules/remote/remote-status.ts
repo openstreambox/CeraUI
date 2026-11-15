@@ -37,12 +37,23 @@ export function projectRemoteWifiFrame(payload: unknown): unknown {
 	return projected;
 }
 
-/** Only the internal pairing seed is withheld from authenticated remote config. */
+// The local app gets `*_configured` flags for its Stream ID field. Remote
+// viewers need stream health, not whether a publish key is saved, so they
+// get neither the IDs nor the flags.
+const REMOTE_CONFIG_WITHHELD = [
+	"pairing_secret",
+	"srt_streamid",
+	"relay_streamid_override",
+	"srt_streamid_configured",
+	"relay_streamid_override_configured",
+] as const;
+
+/** Pairing seeds and Stream IDs, including whether one is saved, never leave remote config. */
 export function projectRemoteConfig(payload: unknown): unknown {
 	if (typeof payload !== "object" || payload === null) return payload;
-	if (!("pairing_secret" in payload)) return payload;
+	if (!REMOTE_CONFIG_WITHHELD.some((key) => key in payload)) return payload;
 	const config = { ...payload };
-	Reflect.deleteProperty(config, "pairing_secret");
+	for (const key of REMOTE_CONFIG_WITHHELD) Reflect.deleteProperty(config, key);
 	return config;
 }
 

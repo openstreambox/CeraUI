@@ -29,7 +29,7 @@ afterEach(() => {
 	mock.restore();
 });
 
-test("actual remote streaming.getConfig preserves media keys and preserves local RPC bytes and remote authentication", async () => {
+test("actual remote streaming.getConfig withholds media keys and preserves local RPC bytes and remote authentication", async () => {
 	const context = buildControlContext();
 	const local = await call(getConfigProcedure, undefined, { context });
 	const before = JSON.stringify(local);
@@ -71,8 +71,10 @@ test("actual remote streaming.getConfig preserves media keys and preserves local
 	expect(
 		JSON.stringify(await call(getConfigProcedure, undefined, { context })),
 	).toBe(before);
-	expect(before).toContain(secrets.srt_streamid);
-	expect(before).toContain(secrets.relay_streamid_override);
+	expect(before).not.toContain(secrets.srt_streamid);
+	expect(local.srt_streamid_configured).toBe(true);
+	expect(before).not.toContain(secrets.relay_streamid_override);
+	expect(local.relay_streamid_override_configured).toBe(true);
 });
 
 for (const destination of ["custom", "managed"] as const) {
@@ -115,11 +117,11 @@ for (const destination of ["custom", "managed"] as const) {
 				streamId:
 					typeof remoteConfig.srt_streamid === "string"
 						? remoteConfig.srt_streamid
-						: "",
+						: undefined,
 				relayStreamId:
 					typeof remoteConfig.relay_streamid_override === "string"
 						? remoteConfig.relay_streamid_override
-						: "",
+						: undefined,
 				relayServer:
 					typeof remoteConfig.relay_server === "string"
 						? remoteConfig.relay_server

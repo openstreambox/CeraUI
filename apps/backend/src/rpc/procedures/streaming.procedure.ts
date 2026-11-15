@@ -51,6 +51,10 @@ import { os } from "@orpc/server";
 import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { logger } from "../../helpers/logger.ts";
 import {
+	publicStreamIds,
+	redactStreamIdText,
+} from "../../helpers/stream-id-secret.ts";
+import {
 	getMockState,
 	setMockEncoderConfig,
 	setStreamingState,
@@ -203,7 +207,9 @@ function startResponse(
 			return {
 				success: true,
 				is_streaming: getIsStreaming(),
-				...(applied !== undefined ? { applied } : {}),
+				...(applied !== undefined
+					? { applied: publicStreamIds(applied, getConfig(), false) }
+					: {}),
 			};
 		case "busy":
 			return {
@@ -227,7 +233,9 @@ function startResponse(
 				success: false,
 				is_streaming: getIsStreaming(),
 				error:
-					legacyError ??
+					(legacyError === undefined
+						? undefined
+						: redactStreamIdText(legacyError)) ??
 					(typeof result.failure.code === "string"
 						? result.failure.code
 						: result.failure.class),
@@ -536,11 +544,13 @@ export const getConfigProcedure = authedProcedure
 			sources_visibility: config.sources_visibility,
 			srtla_addr: config.srtla_addr,
 			srtla_port: config.srtla_port,
-			srt_streamid: config.srt_streamid,
+			srt_streamid_configured: Boolean(config.srt_streamid),
 			remote_key: config.remote_key,
 			relay_account: config.relay_account,
 			relay_server: config.relay_server,
-			relay_streamid_override: config.relay_streamid_override,
+			relay_streamid_override_configured: Boolean(
+				config.relay_streamid_override,
+			),
 			relay_protocol: config.relay_protocol,
 			selected_ingest_endpoint: config.selected_ingest_endpoint,
 			detectionMethod: config.detectionMethod,
@@ -1119,7 +1129,11 @@ export const setConfigProcedure = authedProcedure
 			syncAudioMeterPreference();
 		}
 
-		if (staged === undefined) return { success: true, applied };
+		if (staged === undefined)
+			return {
+				success: true,
+				applied: publicStreamIds(applied, getConfig(), false),
+			};
 
 		const outcome = await getApplyNowGate().dispatch({
 			...(staged.resolution === undefined
@@ -1149,7 +1163,7 @@ export const setConfigProcedure = authedProcedure
 			abandonStagedConfigChange();
 			return {
 				success: outcome.result === "reverted",
-				applied,
+				applied: publicStreamIds(applied, getConfig(), false),
 				configChange: outcome,
 			};
 		}
@@ -1170,7 +1184,11 @@ export const setConfigProcedure = authedProcedure
 			applied.pipeline = persisted.pipeline;
 			applied.selected_video_input = persisted.selected_video_input;
 		}
-		return { success: true, applied, configChange: outcome };
+		return {
+			success: true,
+			applied: publicStreamIds(applied, getConfig(), false),
+			configChange: outcome,
+		};
 	});
 
 /**
