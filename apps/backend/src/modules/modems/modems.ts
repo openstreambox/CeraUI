@@ -77,6 +77,7 @@ import type { InitialEpsSettings } from "./transport-policy.ts";
 import {
 	type ModemTransportIdentity,
 	parseInternalIpv4Grant,
+	parseQcfgUsbSpeed,
 	parseQmapAutoConnect,
 	resolveTransportQuirk,
 } from "./transport-policy.ts";
@@ -662,6 +663,9 @@ export interface CellularControl {
 	readonly verifySubscriber: () => Promise<boolean>;
 	readonly readAutoConnect: () => Promise<number | undefined>;
 	readonly disableAutoConnect: () => Promise<boolean>;
+	readonly readUsbSpeed: () => Promise<string | undefined>;
+	/** Writes the value and returns the readback; the caller resets after. */
+	readonly setUsbSpeed: (value: "20") => Promise<string | undefined>;
 	readonly reset: () => Promise<void>;
 	readonly registration: () => Promise<boolean>;
 	readonly defineContext: (
@@ -787,6 +791,10 @@ export async function acquireCellularControl(
 			if (!quirk?.qmapReadback)
 				throw new Error("Transport operation not admitted");
 		};
+		const requireUsbSpeed = (value?: string) => {
+			if (!quirk?.usbSpeed || (value !== undefined && value !== quirk.usbSpeed))
+				throw new Error("Transport operation not admitted");
+		};
 		const requireInternal = () => {
 			if (quirk?.owner !== "internal-call")
 				throw new Error("Transport operation not admitted");
@@ -805,6 +813,16 @@ export async function acquireCellularControl(
 				return (
 					parseQmapAutoConnect(await exchange('AT+QMAP="auto_connect"')) === 0
 				);
+			},
+			readUsbSpeed: async () => {
+				requireUsbSpeed();
+				return parseQcfgUsbSpeed(await exchange('AT+QCFG="usbspeed"'));
+			},
+			setUsbSpeed: async (value) => {
+				requireUsbSpeed(value);
+				await requireSubscriber();
+				await exchange(`AT+QCFG="usbspeed","${value}"`);
+				return parseQcfgUsbSpeed(await exchange('AT+QCFG="usbspeed"'));
 			},
 			reset: async () => {
 				await requireSubscriber();
@@ -945,3 +963,16 @@ export async function writeCellularRawIp(
 	);
 }
 
+/** The USB link speed of the modem's own device in Mbit/s, as sysfs reports it. */
+export async function readCellularUsbSpeed(
+	target: CellularControlTarget,
+): Promise<number | undefined> {
+	try {
+		const value = Number(
+			(await readFile(join(target.usbDevice, "speed"), "utf8")).trim(),
+		);
+		return Number.isFinite(value) && value > 0 ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}

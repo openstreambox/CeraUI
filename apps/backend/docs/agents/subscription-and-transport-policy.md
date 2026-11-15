@@ -88,3 +88,10 @@ A selected `CarrierPolicy` carries `requestFamily`, computed by
 carry a family. `automatic-carrier-profile.ts` writes the APN and that family to
 an existing automatic profile; `cellular-preparation.ts` aligns QMAP and the
 initial EPS bearer on admitted RM520 firmware only while no stream runs.
+
+The RM520 transport quirk carries `usbSpeed: "20"`. `usb-speed-preparation.ts`
+keeps that module's own link at USB 2 for any SIM and in any modem state, before
+the carrier steps: sysfs link speed first, then (idle only) inhibit, read, record
+the original and the attempt, write if different, read back, reset; verified by
+the next USB generation, two attempts per unit, one modem at a time.
+`/etc/ceralive/no-usbspeed` stops writes. See `docs/CELLULAR-AUTOMATION.md`.

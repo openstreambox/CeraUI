@@ -49,6 +49,27 @@ const recordSchema = z.discriminatedUnion("kind", [
 			started: z.number().int().nonnegative(),
 		})
 		.strict(),
+	z
+		.object({
+			version: z.literal(1),
+			kind: z.literal("usbspeed"),
+			key: z.string(),
+			original: z.string().regex(/^\d{1,4}$/),
+			desired: z.literal("20"),
+			wrote: z.boolean(),
+			attempts: z.number().int().min(0).max(16),
+			phase: z.enum([
+				"attempted",
+				"awaiting-usb",
+				"verified",
+				"failed",
+				"blocked",
+			]),
+			epoch: z.string(),
+			started: z.number().int().nonnegative(),
+			reason: z.string().max(200).optional(),
+		})
+		.strict(),
 ]);
 export type PreparationRecord = z.infer<typeof recordSchema>;
 export const preparationKey = (...parts: readonly string[]) => {

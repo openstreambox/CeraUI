@@ -53,6 +53,24 @@ autoconnect choice (or enable a newly created manual profile). Interrupted
 firmware preparation is held for explicit recovery rather than claiming an
 unverified restoration. This has host/fixture evidence only.
 
+### RM520N-GL at USB 2
+
+The RM520N-GL raises its own receiver's noise floor when its USB 3 link is
+active: on a US bench one carrier never registered at USB 3 and always did at
+USB 2, and another carrier's signal-to-noise improved by about 14 dB. Its
+transport entry therefore asks for `AT+QCFG="usbspeed","20"`, for any SIM and in
+any modem state, before any carrier-dependent step.
+
+- The read is the USB link speed in sysfs. At 480 Mbit/s or slower nothing is
+  done: no inhibition and no AT command.
+- At a faster link, and only while no stream runs, CeraUI inhibits that one modem,
+  reads the stored value, records it as the original and the attempt before any
+  setter, writes `"20"` if it differs, reads it back (a mismatch stops before the
+  reset) and resets the module. The stream check runs again after the inhibition.
+- The link is gone for about 50 seconds. One modem is switched at a time.
+- The next USB enumeration verifies it at 480 Mbit/s or slower. Two attempts per
+  unit, 15 minutes apart; then the unit is held until its record is removed.
+- `/etc/ceralive/no-usbspeed` stops every write; the decision is still logged.
 
 This is a partial implementation. It does not establish
 an RNDIS owner, CLAT,
@@ -117,6 +135,28 @@ o la activa para un perfil manual nuevo. Una preparación de firmware interrumpi
 requiere recuperación explícita; no se supone que se haya restaurado. Estos
 cambios solo tienen pruebas en el host y en entornos de prueba.
 
+### RM520N-GL en USB 2
+
+El RM520N-GL eleva el ruido de su propio receptor cuando su enlace USB 3 está
+activo: en un banco de pruebas en EE. UU., un operador nunca registró el módem en
+USB 3 y siempre lo hizo en USB 2, y la relación señal/ruido de otro operador
+mejoró unos 14 dB. Por eso su entrada de transporte pide
+`AT+QCFG="usbspeed","20"`, con cualquier SIM y en cualquier estado del módem,
+antes de cualquier paso que dependa del operador.
+
+- La lectura es la velocidad del enlace USB en sysfs. A 480 Mbit/s o menos no se
+  hace nada: ni inhibición ni comandos AT.
+- Con un enlace más rápido, y solo si no hay ninguna transmisión, CeraUI inhibe
+  ese módem, lee el valor guardado, lo registra como original y registra el
+  intento antes de cualquier cambio, escribe `"20"` si es distinto, lo vuelve a
+  leer (si no coincide, se detiene antes del reinicio) y reinicia el módulo. La
+  comprobación de transmisión se repite tras la inhibición.
+- El enlace se pierde unos 50 segundos. Se cambia un solo módem a la vez.
+- La siguiente enumeración USB lo verifica a 480 Mbit/s o menos. Dos intentos por
+  unidad, con 15 minutos entre ellos; después la unidad queda en espera hasta que
+  se elimine su registro.
+- `/etc/ceralive/no-usbspeed` detiene toda escritura; la decisión se sigue
+  registrando en el log.
 
 La implementación es parcial. Todavía no incluye control de RNDIS, CLAT ni
 comprobaciones del tráfico. Tampoco acredita compatibilidad real con un operador

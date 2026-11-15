@@ -95,6 +95,7 @@ import {
 	triggerGsmConnectionsReset,
 } from "./state/modems-state-cache.ts";
 import { refreshUsagePolicies } from "./usage-policy.ts";
+import { runUsbSpeedPreparation } from "./usb-speed-preparation.ts";
 
 // Retained status poll cadence. Reduced from the old 10s self-recursive loop:
 // signal/status only, no presence detection, no gsm reset.
@@ -349,6 +350,9 @@ export async function discoverModems(): Promise<void> {
 export async function runModemStatusPoll(): Promise<void> {
 	recordModeEvaluations();
 	await withModemUpdateLock(() => reconcileModemPresenceLocked(false));
+	// The USB 2 switch is a transport fix for any SIM, so it comes before the
+	// carrier-dependent steps and does not wait for registration.
+	await runUsbSpeedPreparation();
 	const automatic = await runAutomaticCarrierProfiles();
 	await runCellularPreparation();
 	const configured = [
