@@ -27,6 +27,16 @@ const defaultIO: PrivateJsonMigrationIO = {
 	write: writePrivateJson,
 	acquire: acquirePrivateStateLease,
 };
+/**
+ * Receipts this process has already written and fsynced. Recommitting one on
+ * every access would turn each read into a durable write, and those writes
+ * count as journal changes for runtime readers (a retried withdrawal would
+ * then raise the global recovery barrier).
+ */
+const committedReceipts = new Set<string>();
+export function forgetCommittedMigrationReceiptsForTest(): void {
+	committedReceipts.clear();
+}
 function hash(value: unknown): string {
 	return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -89,7 +99,14 @@ export async function withMigratedPrivateJson<T, Result>(
 		// Visible bytes are not an acknowledgement of a previous directory fsync.
 		// Recommit a retained receipt before granting access, including after a
 		// process restart or a lost reply from its original durable write.
-		if (receipt) await io.write(migration.receipts, key, receipt);
+		// Once per process: after that this process's own write acknowledged it.
+		const committed = receipt
+			? `${migration.receipts.dir}\0${key}\0${receipt.sourceHash}`
+			: undefined;
+		if (receipt && committed && !committedReceipts.has(committed)) {
+			await io.write(migration.receipts, key, receipt);
+			committedReceipts.add(committed);
+		}
 		if (!receipt && source !== undefined) {
 			const destinationValue = await io.read(migration.destination, key),
 				destination =
@@ -101,11 +118,13 @@ export async function withMigratedPrivateJson<T, Result>(
 			// Recommit even a matching copy: a previous visible write may not have
 			// acknowledged its directory fsync. The receipt must follow that boundary.
 			await io.write(migration.destination, key, source);
+			const sourceHash = hash(source);
 			await io.write(migration.receipts, key, {
 				version: 1,
 				key,
-				sourceHash: hash(source),
+				sourceHash,
 			});
+			committedReceipts.add(`${migration.receipts.dir}\0${key}\0${sourceHash}`);
 		}
 		const current = await io.read(migration.destination, key);
 		return await operation(

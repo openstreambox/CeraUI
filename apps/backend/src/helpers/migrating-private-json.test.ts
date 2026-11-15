@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+	forgetCommittedMigrationReceiptsForTest,
 	type PrivateJsonMigrationIO,
 	withMigratedPrivateJson,
 } from "./migrating-private-json.ts";
@@ -162,6 +163,35 @@ test("a contended slot and malformed old authority are unknown, never a fresh ba
 		);
 		await expect(f.read()).rejects.toThrow();
 	} finally {
+		await f.close();
+	}
+});
+
+test("a receipt is recommitted once per process, not on every access", async () => {
+	const f = await fixture();
+	try {
+		forgetCommittedMigrationReceiptsForTest();
+		await writePrivateJson(f.migration.source, key, spent);
+		const receiptWrites: string[] = [];
+		const io: PrivateJsonMigrationIO = {
+			read: readPrivateJson,
+			acquire: acquirePrivateStateLease,
+			write: async (store, slot, value) => {
+				if (store.dir === f.migration.receipts.dir) receiptWrites.push(slot);
+				await writePrivateJson(store, slot, value);
+			},
+		};
+		expect(await f.read(io)).toEqual(spent);
+		expect(receiptWrites).toHaveLength(1);
+		for (let i = 0; i < 5; i++) expect(await f.read(io)).toEqual(spent);
+		expect(receiptWrites).toHaveLength(1);
+		// A new process cannot trust visible bytes and recommits exactly once.
+		forgetCommittedMigrationReceiptsForTest();
+		await f.read(io);
+		await f.read(io);
+		expect(receiptWrites).toHaveLength(2);
+	} finally {
+		forgetCommittedMigrationReceiptsForTest();
 		await f.close();
 	}
 });
