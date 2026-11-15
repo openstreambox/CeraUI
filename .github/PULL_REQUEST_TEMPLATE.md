@@ -1,3 +1,9 @@
+<!--
+This is a working fork of CERALIVE/CeraUI. Please open pull requests upstream:
+https://github.com/CERALIVE/CeraUI/pulls
+Pull requests here are for work on the fork itself.
+-->
+
 <!-- No statistics dumps, no auto-generated changelogs, no diffstat blocks, no AI narration. -->
 
 **Affected repo & language:**
