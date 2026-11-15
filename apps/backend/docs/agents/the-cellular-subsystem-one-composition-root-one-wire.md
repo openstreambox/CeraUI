@@ -440,7 +440,6 @@ alone requires the NEXT STEP two sections above (setting `modem_backend: "dbus"`
 on a real board) to have even started, and it hasn't. This todo documents the
 condition; it does not — and must not — trigger any part of it.
 
-
 ### Existing automatic profile APNs
 
 `automatic-carrier-profile.ts` converges the stored APN and bearer-family fields
@@ -519,3 +518,20 @@ same capped retry owner active. Default-store faults invalidate its existing
 revision and raise the same barrier; runtime verification reads inventories and
 never migrates or repeats hardware. Current-state writes participate in that
 revision. This is storage/recovery host evidence, not modem reboot qualification.
+
+
+### Retained FM350 internal-call boundary
+
+The alternative FM350-GL internal call path is additive and remains disconnected
+from the production composition root. `fm350_internal_calls` is a default-absent
+physical-key map, separate from capability-module gates. Both the owner and its
+control-acquisition facade refuse new calls unless that exact modem is opted in;
+the current ModemManager path remains the default.
+
+The retained context, whole-owner and handoff records share the existing mutation
+journal and native host inverse. New-call opt-in never gates teardown or startup
+inverse replay. The runtime composes replay before ordinary modem rollback and
+retains incomplete attempts for the existing recovery owner. Host and consumer
+census must be scoped to the captured authority, preserving unrelated live links.
+See [FM350 internal calls](../../../../docs/FM350-INTERNAL-CALLS.md) for the
+interfaces, durability order and qualification boundary.
