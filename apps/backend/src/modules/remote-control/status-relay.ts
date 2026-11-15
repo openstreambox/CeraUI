@@ -17,6 +17,8 @@
  * never throws or blocks the local path.
  */
 
+import { strictParseFrame } from "@ceralive/control-protocol/parse";
+import { logger } from "../../helpers/logger.ts";
 import { advanceSeq } from "../../rpc/events.ts";
 import { projectPhoneFrame } from "../remote/remote-status.ts";
 import { setup } from "../setup.ts";
@@ -44,9 +46,10 @@ export interface ControlChannel {
  * detect per-device profile drift. It carries only the four non-secret
  * StreamConfig fields (presetId/latencyMs/fecEnabled/recoveryMode), never a key or
  * token — unlike `telemetry`, which is emitted directly (not via `broadcastMsg`)
- * and so is deliberately absent here.
+ * and is explicitly projected here.
  */
 export const RELAYABLE_TYPES = [
+	"telemetry",
 	"status",
 	"config",
 	"sensors",
@@ -70,6 +73,7 @@ export function isRelayable(type: string): boolean {
  * null the relay is a no-op so the local broadcast path is unaffected.
  */
 let channel: ControlChannel | null = null;
+let warnedInvalidFrame = false;
 
 /** Wire (or clear) the control channel. Task 13 calls this once the WS is up. */
 export function setControlChannel(next: ControlChannel | null): void {
@@ -115,12 +119,11 @@ export function relayStatusToGateway(
 		return;
 	}
 
-	const remotePayload = projectPhoneFrame(
-		type,
-		payload,
-		setup.engine === "none",
-	);
-	if (setup.engine === "none" && remotePayload === undefined) return;
+	if (!isRelayable(type)) return;
+	const phoneBox = setup.engine === "none";
+	const remotePayload = projectPhoneFrame(type, payload, phoneBox, "cloud");
+	if (remotePayload === undefined && (phoneBox || payload !== undefined))
+		return;
 	const frame: Status = {
 		v: PROTOCOL_VERSION,
 		kind: "status",
@@ -132,6 +135,15 @@ export function relayStatusToGateway(
 			: { payload: remotePayload as Record<string, unknown> }),
 	};
 
+	try {
+		strictParseFrame(frame);
+	} catch {
+		if (!warnedInvalidFrame) {
+			warnedInvalidFrame = true;
+			logger.warn("remote status frame rejected by protocol schema");
+		}
+		return;
+	}
 	channel.sendFrame(frame);
 }
 

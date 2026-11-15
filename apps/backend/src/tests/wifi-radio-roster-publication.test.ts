@@ -184,14 +184,24 @@ test("a local token frame cannot acknowledge a pending two-AP global roster chan
 		1, 1,
 	]);
 	expect(remote).toHaveLength(1);
-	expect(StatusSchema.parse(remote[0]).payload).toMatchObject({
-		wifi: {
-			"0": {
-				hotspot: {
-					clients: { count: 1, stations: [{ mac: "aa:bb:cc:dd:ee:ab" }] },
-				},
-			},
-			"1": { hotspot: { clients: { count: 0, stations: [] } } },
-		},
-	});
+	// Local consumers retain the complete roster. Remote consumers receive the
+	// same aggregate change through opaque row labels, without station identity.
+	expect(local.at(-1)?.[0]?.hotspot?.clients?.stations).toEqual([
+		{ mac: "aa:bb:cc:dd:ee:ab" },
+	]);
+	expect(local.at(-1)?.[1]?.hotspot?.clients?.stations).toEqual([]);
+	const payload = StatusSchema.parse(remote[0]).payload;
+	const projected = statusResponseSchema.parse(payload).wifi;
+	expect(Object.keys(projected ?? {})).toHaveLength(2);
+	expect(
+		Object.values(projected ?? {}).map((row) => row.hotspot?.clients),
+	).toEqual([
+		{ count: 1, stations: [] },
+		{ count: 0, stations: [] },
+	]);
+	expect(JSON.stringify(payload)).not.toContain("aa:bb:cc:dd:ee:ab");
+	expect(JSON.stringify(payload)).not.toContain("wlan0");
+	expect(JSON.stringify(payload)).not.toContain(
+		tokenSnapshot?.[0]?.incarnation ?? "missing",
+	);
 });

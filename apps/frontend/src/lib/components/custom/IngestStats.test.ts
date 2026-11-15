@@ -1153,3 +1153,18 @@ describe("IngestStats — cumulative session bytes", () => {
 		).toBe("\u2014");
 	});
 });
+
+it("renders projected bonded telemetry without duplicate row keys", async () => {
+	const { projectRemoteStatus } = await import(
+		"../../../../../backend/src/modules/remote/remote-status.ts"
+	);
+	const status = projectRemoteStatus({ linkTelemetry: TWO_LINKS }) as {
+		linkTelemetry: LinkTelemetryMessage;
+	};
+	const { container } = render(IngestStats, {
+		props: { telemetry: status.linkTelemetry },
+	});
+	expect(container.querySelectorAll('[data-testid="ingest-row"]')).toHaveLength(
+		2,
+	);
+});
