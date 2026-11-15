@@ -2938,5 +2938,11 @@
 	"settings.dialogs.other_users": "अन्य उपयोगकर्ता लॉग इन हैं। फिर प्रयास करने से पहले उनसे काम पूरा करने को कहें।",
 	"settings.dialogs.shutdown_unavailable": "शटडाउन उपलब्ध नहीं है। फिर प्रयास करने से पहले सिस्टम सेवा जाँचें।",
 	"settings.dialogs.shutdown_uncertain": "पावर अनुरोध की पुष्टि नहीं हो सकी। फिर प्रयास करने से पहले डिवाइस जाँचें।",
-	"settings.dialogs.powerOverride": "आपातकालीन ओवरराइड (root): पहले systemctl stop ceralive, फिर systemctl reboot चलाएँ। इससे स्ट्रीम रुकती हैं, क्लाइंट डिस्कनेक्ट होते हैं और यह इंटरफ़ेस बंद होता है।"
+	"settings.dialogs.powerOverride": "आपातकालीन ओवरराइड (root): पहले systemctl stop ceralive, फिर systemctl reboot चलाएँ। इससे स्ट्रीम रुकती हैं, क्लाइंट डिस्कनेक्ट होते हैं और यह इंटरफ़ेस बंद होता है।",
+	"settings.streamIdSecurity": "यह प्रकाशन कुंजी हो सकती है। SRT एन्क्रिप्शन चालू होने पर भी यह नेटवर्क पर खुले रूप में भेजी जाती है।",
+	"settings.streamIdStored": "स्ट्रीम आईडी सहेजी गई है। बनाए रखने के लिए अपरिवर्तित छोड़ें, बदलने के लिए लिखें या स्पष्ट रूप से मिटाएँ।",
+	"settings.streamIdShow": "लिखा मान दिखाएँ",
+	"settings.streamIdHide": "लिखा मान छिपाएँ",
+	"settings.streamIdClear": "स्ट्रीम आईडी मिटाएँ",
+	"settings.streamIdClearing": "सहेजने पर स्ट्रीम आईडी मिटा दी जाएगी।"
 }

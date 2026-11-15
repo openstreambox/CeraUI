@@ -2950,5 +2950,11 @@
 	"settings.dialogs.other_users": "هناك مستخدمون آخرون مسجلون للدخول. اطلب منهم إنهاء عملهم قبل المحاولة مجددًا.",
 	"settings.dialogs.shutdown_unavailable": "الإيقاف غير متاح. تحقق من خدمة النظام قبل المحاولة مجددًا.",
 	"settings.dialogs.shutdown_uncertain": "تعذر تأكيد طلب الطاقة. تحقق من الجهاز قبل المحاولة مجددًا.",
-	"settings.dialogs.powerOverride": "تجاوز الطوارئ (root): شغّل systemctl stop ceralive ثم systemctl reboot. سيوقف هذا البث ويفصل العملاء ويغلق هذه الواجهة."
+	"settings.dialogs.powerOverride": "تجاوز الطوارئ (root): شغّل systemctl stop ceralive ثم systemctl reboot. سيوقف هذا البث ويفصل العملاء ويغلق هذه الواجهة.",
+	"settings.streamIdSecurity": "قد يكون مفتاح نشر. يُرسل بنص واضح عبر الشبكة حتى مع تفعيل تشفير SRT.",
+	"settings.streamIdStored": "تم حفظ معرّف بث. اتركه دون تغيير للاحتفاظ به، أو اكتب لاستبداله، أو امسحه صراحةً.",
+	"settings.streamIdShow": "إظهار القيمة المكتوبة",
+	"settings.streamIdHide": "إخفاء القيمة المكتوبة",
+	"settings.streamIdClear": "مسح معرّف البث",
+	"settings.streamIdClearing": "سيُمسح معرّف البث عند الحفظ."
 }

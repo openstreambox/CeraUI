@@ -2941,5 +2941,11 @@
 	"settings.dialogs.other_users": "D’autres utilisateurs sont connectés. Demandez-leur de terminer avant de réessayer.",
 	"settings.dialogs.shutdown_unavailable": "Arrêt indisponible. Vérifiez le service système avant de réessayer.",
 	"settings.dialogs.shutdown_uncertain": "La demande n’a pas pu être confirmée. Vérifiez l’appareil avant de réessayer.",
-	"settings.dialogs.powerOverride": "Dérogation d’urgence (root) : exécutez systemctl stop ceralive puis systemctl reboot. Cela arrête les diffusions, déconnecte les clients et ferme cette interface."
+	"settings.dialogs.powerOverride": "Dérogation d’urgence (root) : exécutez systemctl stop ceralive puis systemctl reboot. Cela arrête les diffusions, déconnecte les clients et ferme cette interface.",
+	"settings.streamIdSecurity": "Peut être une clé de publication. Transmis en clair, même avec le chiffrement SRT.",
+	"settings.streamIdStored": "Un ID est enregistré. Laissez-le inchangé pour le conserver, saisissez un remplacement ou effacez-le explicitement.",
+	"settings.streamIdShow": "Afficher la saisie",
+	"settings.streamIdHide": "Masquer la saisie",
+	"settings.streamIdClear": "Effacer l’ID de flux",
+	"settings.streamIdClearing": "L’ID de flux sera effacé à l’enregistrement."
 }

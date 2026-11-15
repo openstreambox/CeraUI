@@ -2941,5 +2941,11 @@
 	"settings.dialogs.other_users": "Há outros usuários conectados. Peça que terminem antes de tentar novamente.",
 	"settings.dialogs.shutdown_unavailable": "Desligamento indisponível. Verifique o serviço do sistema antes de tentar novamente.",
 	"settings.dialogs.shutdown_uncertain": "Não foi possível confirmar a solicitação. Verifique o equipamento antes de tentar novamente.",
-	"settings.dialogs.powerOverride": "Exceção de emergência (root): execute systemctl stop ceralive e depois systemctl reboot. Isso encerra transmissões, desconecta clientes e fecha esta interface."
+	"settings.dialogs.powerOverride": "Exceção de emergência (root): execute systemctl stop ceralive e depois systemctl reboot. Isso encerra transmissões, desconecta clientes e fecha esta interface.",
+	"settings.streamIdSecurity": "Pode ser uma chave de publicação. Enviado sem criptografia, mesmo com criptografia SRT.",
+	"settings.streamIdStored": "Há um ID salvo. Deixe sem alterações para manter, digite para substituir ou limpe explicitamente.",
+	"settings.streamIdShow": "Mostrar valor digitado",
+	"settings.streamIdHide": "Ocultar valor digitado",
+	"settings.streamIdClear": "Limpar ID de transmissão",
+	"settings.streamIdClearing": "O ID de transmissão será limpo ao salvar."
 }
