@@ -38,7 +38,6 @@ import {
 	getMockModemNetMarker,
 	shouldMockNetwork,
 } from "../../mocks/providers/network.ts";
-import { modemStableKeyForIfname } from "../modems/mutation-identity.ts";
 import { isBondLinkMappable } from "../streaming/bond-entry.ts";
 import {
 	hasMutationBlocks,
@@ -317,10 +316,25 @@ export function isHeldOutByModemBlock(
 	int: NetworkInterface | undefined,
 ): boolean {
 	if (!hasMutationBlocks()) return false;
-	const key = modemStableKeyForIfname(name);
+	const key = stableKeyForIfname?.(name);
 	if (key !== undefined) return isModemKeyBlocked(key);
 	return int?.usb === true;
 }
+
+/*
+  The modem identity lookup is loaded after this module finishes evaluating:
+  the modem modules import this layer, so a static import here would be a cycle.
+  Until it is loaded no key resolves, and a blocked box holds every USB
+  interface out (fail-closed).
+*/
+let stableKeyForIfname: ((ifname: string) => string | undefined) | undefined;
+void import("../modems/mutation-identity.ts")
+	.then((module) => {
+		stableKeyForIfname = module.modemStableKeyForIfname;
+	})
+	.catch((err: unknown) => {
+		logger.warn(`modem identity lookup unavailable: ${err}`);
+	});
 
 /**
  * May this interface be offered to the bond?
