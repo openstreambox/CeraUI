@@ -1,8 +1,15 @@
+import type { WifiStatus } from "@ceraui/rpc/schemas";
 import { mount } from "svelte";
+
+import { noteHotspotRoster } from "../../lib/stores/hotspot-joins.svelte";
 import PhoneHome from "../../main/PhoneHome.svelte";
 
 /** Browser-only presentation fixture: no production route, RPC or device effects. */
-export function mountPhoneHomeFixture(kiosk = false, moblin = false) {
+export function mountPhoneHomeFixture(
+	kiosk = false,
+	moblin = false,
+	renew = false,
+) {
 	document.getElementById("app")?.setAttribute("hidden", "");
 	const target = document.createElement("main");
 	target.dataset.testid = "phone-home-fixture";
@@ -28,8 +35,37 @@ export function mountPhoneHomeFixture(kiosk = false, moblin = false) {
 				clients: 1,
 			},
 			links: [{ id: "L1", label: "Wi-Fi", internet: "yes" }],
+			...(renew
+				? {
+						wifiRenew: {
+							phase: "idle" as const,
+							streaming: true,
+							onrenew: () => undefined,
+						},
+					}
+				: {}),
 		},
 	});
+}
+
+/** Feed a synthetic hotspot roster to the join notice (documentation MACs). */
+export function emitFixtureRoster(macs: readonly string[]) {
+	const wifi = {
+		"0": {
+			ifname: "wlan0",
+			conn: "fixture-hotspot",
+			hw: "02:00:00:00:00:01",
+			saved: {},
+			mode: "hotspot",
+			hotspot: {
+				name: "Example;Wifi",
+				password: "example-wifi-password",
+				channel: "auto",
+				clients: { count: macs.length, stations: macs.map((mac) => ({ mac })) },
+			},
+		},
+	} as WifiStatus;
+	noteHotspotRoster(wifi);
 }
 
 export async function decodePhoneQrCodes() {

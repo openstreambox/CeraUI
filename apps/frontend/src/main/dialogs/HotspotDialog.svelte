@@ -21,8 +21,10 @@
     which shows the exact credentials the AP will broadcast (or stores the
     operator's own) and needs an explicit acknowledgement. While the hotspot is
     off, Save prepares an inactive profile; Forget removes its saved setup.
-  • When the hotspot is active, ONE QR encoding the live credentials is rendered
-    so phones can join by scan. Its `T:` token follows the LIVE security mode
+  • When the hotspot is active, ONE QR encoding the live credentials can be shown
+    so phones can join by scan. It sits behind Show code in `WifiCode` (hidden by
+    default, hides itself again) together with the join line and New Wi-Fi
+    password. Its `T:` token follows the LIVE security mode
     (`hotspotQrSecurity`): a WPA3-SAE AP advertised as `T:WPA` yields a code that
     scans perfectly and then refuses to join.
 -->
@@ -35,7 +37,6 @@ import {
 	EyeOff,
 	Loader2,
 	Power,
-	QrCode,
 	Radio,
 	Router,
 	Save,
@@ -52,7 +53,6 @@ import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import * as Select from '$lib/components/ui/select';
 import { copyToClipboard } from '$lib/helpers/clipboard';
-import { generateWifiQr, hotspotQrSecurity } from '$lib/helpers/NetworkHelper';
 import {
 	confirmOperation,
 	getOperationPhase,
@@ -63,9 +63,16 @@ import {
 import { rpc } from '$lib/rpc/client';
 import { hotspotIsActive, hotspotToggleConfirmed } from '$lib/rpc/os-toggle-predicates';
 import { getLinkEpoch } from '$lib/rpc/session-epoch.svelte';
+import { getStatus } from '$lib/rpc/subscriptions.svelte';
 import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import { cn } from '$lib/utils';
 import HotspotActivationConfirm from '$main/network/HotspotActivationConfirm.svelte';
+import {
+	canRenewHotspotPassword,
+	mayCarryStream,
+	renewHotspotPassword,
+} from '$main/network/hotspot-new-password';
+import WifiCode from '$main/network/WifiCode.svelte';
 import WifiModeBadge from '$main/network/WifiModeBadge.svelte';
 import WifiModeSelector from '$main/network/WifiModeSelector.svelte';
 import {
@@ -244,25 +251,29 @@ const passwordError = $derived(
 			: m["hotspotConfigurator.validation.passwordMaxLength"](),
 );
 
-// ── QR for the LIVE active credentials (not the unsaved form) ──
-let qrDataUrl = $state('');
+// ── New Wi-Fi password: the live setup with only the password changed ──
+// Offered only while the hotspot runs and this form is bound to its radio; it
+// shares the Save key, so the two can never run at once. A confirmed renewal
+// also refreshes the form's password, so a later Save cannot put the old one back.
+let renewedPassword: string | undefined;
+const renewOffer = $derived(
+	isActive && canEdit && canRenewHotspotPassword(deviceId, iface)
+		? {
+				phase: getOperationPhase(configKey),
+				streaming: mayCarryStream(getStatus()),
+				onrenew: () => {
+					void renewHotspotPassword(deviceId, iface).then((sent) => {
+						renewedPassword = sent;
+					});
+				},
+			}
+		: undefined,
+);
 $effect(() => {
-	const controller = new AbortController();
-	const hs = iface?.hotspot;
-	if (open && hs?.name && hs?.password) {
-		// The LIVE mode, not the draft: this QR carries the credentials the AP is
-		// broadcasting right now, so its auth token must describe that AP too.
-		generateWifiQr(hs.name, hs.password, hotspotQrSecurity(hs.security))
-			.then((url) => {
-				if (!controller.signal.aborted) qrDataUrl = url;
-			})
-			.catch(() => {
-				if (!controller.signal.aborted) qrDataUrl = '';
-			});
-	} else {
-		qrDataUrl = '';
-	}
-	return () => controller.abort();
+	const phase = getOperationPhase(configKey);
+	if (renewedPassword === undefined) return;
+	if (phase === 'confirmed') password = renewedPassword;
+	if (phase !== 'pending') renewedPassword = undefined;
 });
 
 // Save dispatches the reconfigure; `hotspotConfigure` resolves immediately with a
@@ -661,21 +672,21 @@ async function copyPassword() {
 		{/if}
 		{/if}
 
-		<!-- Live QR for the active hotspot credentials -->
-		{#if isActive && qrDataUrl}
-			<div class="bg-muted/40 flex flex-col items-center gap-2 rounded-lg border p-4">
-				<div class="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
-					<QrCode class="size-3.5" />
-					<span>{m["network.accessibility.wifiQrCode"]()}</span>
-				</div>
-				<img
-					class="size-40 rounded-md bg-white p-2"
-					alt={m["network.accessibility.wifiQrCode"]()}
-					src={qrDataUrl}
-				/>
+		<!-- The live hotspot's join code, hidden until Show (WifiCode) -->
+		{#if isActive}
+			<div class="bg-muted/40 space-y-2 rounded-lg border p-4" data-testid="hotspot-wifi-code">
+				<p class="text-muted-foreground text-center text-xs font-medium">
+					{m["network.accessibility.wifiQrCode"]()}
+				</p>
 				{#if iface?.hotspot?.name}
-					<p class="text-sm font-medium">{iface.hotspot.name}</p>
+					<p class="text-center text-sm font-medium">{iface.hotspot.name}</p>
 				{/if}
+				<WifiCode
+					name={iface?.hotspot?.name}
+					password={iface?.hotspot?.password}
+					security={iface?.hotspot?.security}
+					renew={renewOffer}
+				/>
 			</div>
 		{/if}
 	</div>

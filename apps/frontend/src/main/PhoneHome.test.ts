@@ -287,3 +287,26 @@ it("clearing absent credentials reports the resulting state without claiming a s
 	).toBeTruthy();
 	expect(screen.queryByText(/has stopped lending/)).toBeNull();
 });
+
+it("keeps the Wi-Fi code behind Show code and offers New Wi-Fi password", async () => {
+	const onrenew = vi.fn();
+	render(PhoneHome, {
+		carrying: "idle",
+		wifi: { name: "Box", password: "correcthorse" },
+		wifiRenew: { phase: "idle", streaming: false, onrenew },
+	});
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Connect your phone" }),
+	);
+	await fireEvent.click(screen.getByRole("button", { name: "IRL Pro" }));
+	const show = screen.getByRole("button", { name: "Show code" });
+	expect(show.getAttribute("aria-expanded")).toBe("false");
+	expect(screen.getByTestId("wifi-code-frame").querySelector("img")).toBeNull();
+	await fireEvent.click(
+		screen.getByRole("button", { name: "New Wi-Fi password" }),
+	);
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Change the password" }),
+	);
+	expect(onrenew).toHaveBeenCalledTimes(1);
+});

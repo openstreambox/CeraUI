@@ -35,3 +35,30 @@ Coverage: `NetworkHelper.test.ts` asserts the EXACT payload string handed to the
 encoder — including a plain-alphanumeric regression guard proving today's board
 credentials are byte-unchanged.
 
+**The QR is hidden until asked for (D16 S step).** Both Wi-Fi join surfaces, the
+hotspot dialog and the phone Home's join step, render it through
+`$main/network/WifiCode.svelte`: an empty same-size frame plus **Show code**
+(`aria-expanded`/`aria-controls`), the off-camera line while shown, and a self-hide
+after `WIFI_CODE_SHOW_MS` (2 min), on window blur or a hidden page, on a password
+change and on a join. Screens that should carry no QR (`showPhoneQr` false: phone
+widths, the kiosk) pass `qr={false}` and get the join line and New Wi-Fi password
+only. The card is still the ONE hotspot QR.
+
+**Join notice, no new notification type.** `$lib/stores/hotspot-joins.svelte.ts`
+diffs the `hotspot.clients.stations` roster each wifi snapshot carries
+(`$main/network/hotspot-joins.ts`: first reading is a baseline, an address counts
+once per page) and calls the existing `svelte-sonner` toast, unless a `WifiCode`
+card is mounted, which shows "A new device joined · just now · Not mine?" in place.
+The backend makes it prompt and honest: `wifi-hotspot-station-events.ts` runs
+`iw event` (spawn site `wifi.iwStationEvents`) only while a hotspot is up and turns
+nl80211 `new station`/`del station` lines on an AP interface into roster reads (now,
++1 s, +3 s), and `parseIwStationDump` skips `authorized: no` stations, so a phone
+with a wrong password is never counted as joined.
+
+**New Wi-Fi password** (`$main/network/hotspot-new-password.ts`) re-sends the live
+name, channel and security with a fresh `generateHotspotPassword()` through
+`wifi.hotspotConfigure` under the Save key; NetworkManager restarts the profile, so
+every client drops. The card asks first and names that cost, plus
+`live.phone.powerOffCost` when `mayCarryStream` says a stream may be going through
+the box.
+
