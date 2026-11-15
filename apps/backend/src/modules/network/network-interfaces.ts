@@ -66,6 +66,7 @@ import {
 	setPersistentBondOptOut,
 } from "./bond-preference.ts";
 import {
+	CLAT_POLL_INTERVAL_MS,
 	clatTranslationFor,
 	isClatTunName,
 	refreshClatTranslations,
@@ -818,6 +819,18 @@ export function initNetworkInterfaceMonitoring() {
 	setInterval(() => {
 		void refreshUnclaimedAdapterState();
 	}, UNCLAIMED_ADAPTER_POLL_INTERVAL_MS);
+	// The CLAT snapshot has its own poll, off the publication path; a change in
+	// the translated links the bond may use republishes it.
+	const pollClat = () =>
+		void refreshClatTranslations()
+			.then((changed) => {
+				if (changed) triggerNetworkInterfacesChange();
+			})
+			.catch((err: unknown) => {
+				logger.debug(`CLAT snapshot poll failed: ${err}`);
+			});
+	pollClat();
+	setInterval(pollClat, CLAT_POLL_INTERVAL_MS);
 }
 
 /**
@@ -1038,7 +1051,6 @@ async function refreshNetifFromOs(): Promise<void> {
 					});
 			}
 		}
-		await refreshClatTranslations();
 		if (generation !== netifRefreshGeneration) return;
 		processIfconfigOutput(
 			ifconfigOut,

@@ -45,6 +45,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Backend singleton lock path identity changed; refusing to continue"],
 	["Backend singleton lock path identity unproven; refusing to continue"],
 	["Broadcast send error"],
+	["CLAT snapshot poll failed: ", ""],
 	["CLI output drift in ", ": ", ""],
 	[
 		"Can not update hotspot connection, interface already has an active connection",
