@@ -19,16 +19,16 @@ import {
 	type ModemMutationState,
 } from "@ceraui/rpc/schemas";
 import {
-	refreshMutationBlocks,
-	resetMutationBlockDeps,
-} from "../../modules/modems/mutation-blocks.ts";
-import {
 	refreshModemIdPaths,
 	setModemIdPathReader,
 } from "../../modules/modems/modem-wire-producer.ts";
+import {
+	refreshMutationBlocks,
+	resetMutationBlockDeps,
+} from "../../modules/modems/mutation-blocks.ts";
 import { processIfconfigOutput } from "../../modules/network/network-interfaces.ts";
-import { genSrtlaBondEntries } from "../../modules/streaming/srtla.ts";
 import { setMutationBlocks } from "../../modules/streaming/lifecycle-admission.ts";
+import { genSrtlaBondEntries } from "../../modules/streaming/srtla.ts";
 
 export interface BoxLink {
 	readonly ifname: string;

@@ -161,6 +161,10 @@ async function readRecord(key: string): Promise<PreparationRecord | undefined> {
 		parsePreparationRecord,
 		async (value) => value,
 		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR,
+		true,
+		// Each unit's record is its own slot: writing it is not a change to the
+		// modem mutation journal, so it can never raise the global barrier.
+		"slot",
 	);
 }
 async function writeRecord(record: PreparationRecord) {
@@ -170,6 +174,8 @@ async function writeRecord(record: PreparationRecord) {
 		parsePreparationRecord,
 		async (_value, write) => write(record),
 		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR,
+		true,
+		"slot",
 	);
 }
 

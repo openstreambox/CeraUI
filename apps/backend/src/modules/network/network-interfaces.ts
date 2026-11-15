@@ -38,7 +38,13 @@ import {
 	getMockModemNetMarker,
 	shouldMockNetwork,
 } from "../../mocks/providers/network.ts";
+import { modemStableKeyForIfname } from "../modems/mutation-identity.ts";
 import { isBondLinkMappable } from "../streaming/bond-entry.ts";
+import {
+	hasMutationBlocks,
+	isModemKeyBlocked,
+	onMutationBlocksChange,
+} from "../streaming/lifecycle-admission.ts";
 // Type-only: erased at build time, so it adds no runtime edge back into
 // `modules/streaming/`, which imports this module.
 import type { BondMappingState } from "../streaming/link-mapping-report.ts";
@@ -297,6 +303,25 @@ export function isBondIdentityPending(
 }
 
 /**
+ * Is this interface held out of the bond because its modem is blocked?
+ *
+ * A modem whose change could not be undone is kept out by its stable key (the
+ * udev path of where it is plugged in), so a re-enumeration under a new name
+ * keeps it out. While any modem is blocked, a USB interface whose key cannot be
+ * resolved is held out too: it might be that modem. Ethernet, Wi-Fi and other
+ * interfaces with a resolved, unblocked key are never affected.
+ */
+export function isHeldOutByModemBlock(
+	name: string,
+	int: NetworkInterface | undefined,
+): boolean {
+	if (!hasMutationBlocks()) return false;
+	const key = modemStableKeyForIfname(name);
+	if (key !== undefined) return isModemKeyBlocked(key);
+	return int?.usb === true;
+}
+
+/**
  * May this interface be offered to the bond?
  *
  * A duplicate-IP interface is offered — the caller still has to prove it can
@@ -309,10 +334,14 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 	if (!int.ip) return false;
 	// The image's IPv4 translator for an IPv6-only modem carries that modem's
 	// traffic only while its snapshot says so, and follows the modem's toggle.
+	let owner = name;
 	if (isClatTunName(name)) {
 		const translation = clatTranslationFor(name, int.ip);
 		if (!translation || isBondOptedOut(translation.parent)) return false;
+		owner = translation.parent;
 	}
+	if (isHeldOutByModemBlock(owner, owner === name ? int : netif[owner]))
+		return false;
 	if (isBondIdentityPending(name, int)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
@@ -667,6 +696,9 @@ function syncNetifState(): void {
 	}
 	setNetifState(next);
 }
+
+// A modem blocked or released changes the bond's members on the next publish.
+onMutationBlocksChange(() => triggerNetworkInterfacesChange());
 
 export function triggerNetworkInterfacesChange() {
 	// Reconcile + broadcast on any state mutation (poll, UI toggle, hotspot

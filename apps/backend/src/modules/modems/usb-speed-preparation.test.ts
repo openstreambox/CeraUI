@@ -1,11 +1,16 @@
 import { beforeEach, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CellularControl, CellularControlTarget } from "./modems.ts";
+import { mutationJournalRevision } from "./mutation-journal-revision.ts";
 import {
 	parseQcfgUsbSpeed,
 	resolveTransportQuirk,
 } from "./transport-policy.ts";
 import {
 	decideUsbSpeed,
+	defaultUsbSpeedDeps,
 	resetUsbSpeedPreparationForTest,
 	runUsbSpeedPreparation,
 	USB_SPEED_PAUSE_MS,
@@ -355,4 +360,25 @@ test("modems without the quirk are skipped entirely", async () => {
 	};
 	expect(await runUsbSpeedPreparation(other)).toEqual([]);
 	expect(b.calls).toEqual([]);
+});
+
+test("a unit's usbspeed record is slot-scoped and never moves the journal revision", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "usbspeed-slot-"));
+	const previous = process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = dir;
+	try {
+		const key = usbSpeedKey("350000000000001");
+		const before = mutationJournalRevision();
+		await defaultUsbSpeedDeps.write(record({ key }));
+		expect(await defaultUsbSpeedDeps.read(key)).toMatchObject({
+			kind: "usbspeed",
+			phase: "awaiting-usb",
+		});
+		expect(mutationJournalRevision()).toBe(before);
+	} finally {
+		if (previous === undefined)
+			delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+		else process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = previous;
+		await rm(dir, { recursive: true, force: true });
+	}
 });
