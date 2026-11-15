@@ -2973,5 +2973,6 @@
 	"settings.portal.experimentalTitle": "Wi-Fi साइन-इन (प्रायोगिक)",
 	"settings.portal.experimentalDescription": "डिफ़ॉल्ट रूप से बंद। अपने फ़ोन से होटल Wi-Fi में साइन इन करें। असली नेटवर्क पर परीक्षण अभी बाकी है। इसे बंद करने से नई साइन-इन अवधि शुरू नहीं होती; चल रही अवधि दस मिनट के भीतर बंद हो जाती है।",
 	"network.portal.experimentalDisabled": "इस सुविधा का उपयोग करने के लिए सेटिंग्स में प्रायोगिक Wi-Fi साइन-इन चालू करें।",
-	"settings.portal.experimentalSaveError": "सेटिंग सहेजी नहीं जा सकी।"
+	"settings.portal.experimentalSaveError": "सेटिंग सहेजी नहीं जा सकी।",
+	"network.portal.privacyHint": "अगर पेज न दिखे, तो इस फ़ोन पर VPN, Private Relay या Private DNS / सुरक्षित DNS को कुछ देर के लिए रोकें, फिर पेज दोबारा खोलें। काम पूरा होने पर इन्हें फिर से चालू करें। आपकी स्ट्रीम में कोई बदलाव नहीं है।"
 }

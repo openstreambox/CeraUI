@@ -2928,5 +2928,6 @@
 	"settings.portal.experimentalTitle": "Wi-Fi サインイン（試験的）",
 	"settings.portal.experimentalDescription": "初期設定ではオフです。スマートフォンからホテルの Wi-Fi にサインインします。実際のネットワークでのテストがまだ必要です。オフにすると新しい受付は始まらず、受付中のものは 10 分以内に終わります。",
 	"network.portal.experimentalDisabled": "この機能を使うには、設定で試験的な Wi-Fi サインインを有効にしてください。",
-	"settings.portal.experimentalSaveError": "設定を保存できませんでした。"
+	"settings.portal.experimentalSaveError": "設定を保存できませんでした。",
+	"network.portal.privacyHint": "ページが表示されない場合は、このスマートフォンの VPN、プライベートリレー、プライベート DNS / セキュア DNS を一時的に止めてから、もう一度開いてください。終わったら元に戻してください。配信は変わりません。"
 }
