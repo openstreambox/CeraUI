@@ -1,0 +1,85 @@
+import { expect, test } from "bun:test";
+import { strictParseFrame } from "@ceralive/control-protocol/parse";
+import inventory from "../../../../docs/remote-status-inventory.json";
+import { projectRemoteLegacyFrame } from "../modules/remote/remote-status.ts";
+import {
+	isRelayable,
+	relayStatusToGateway,
+	resetStatusRelay,
+	setControlChannel,
+} from "../modules/remote-control/status-relay.ts";
+import { setup } from "../modules/setup.ts";
+import { usePrivacyConfig } from "./helpers/remote-privacy-config.ts";
+import {
+	authenticateRemote,
+	useRemotePrivacySocket,
+} from "./helpers/remote-privacy-socket.ts";
+
+usePrivacyConfig();
+useRemotePrivacySocket();
+test("phone box: identifiers planted at every inventoried source leaf never reach either status transport", async () => {
+	const previous = setup.engine;
+	setup.engine = "none";
+	const legacy = await authenticateRemote();
+	legacy.sent.length = 0;
+	legacy.send(
+		JSON.stringify({
+			remote: {
+				"auth/encoder": {
+					key: "AUTH_KEY_OK",
+					version: 16,
+					extra: "PRIVATE_EXTRA",
+				},
+			},
+		}),
+	);
+	expect(legacy.sent.join("\n")).toContain("AUTH_KEY_OK");
+	expect(legacy.sent.join("\n")).not.toContain("PRIVATE_EXTRA");
+	legacy.sent.length = 0;
+	const secret = "PRIVATE_IDENTIFIER_8b7321";
+	const frames: unknown[] = [];
+	setControlChannel({
+		isConnected: () => true,
+		sendFrame: (f) => {
+			frames.push(f);
+		},
+	});
+	try {
+		for (const call of inventory.calls) {
+			const type = call.message.replaceAll('"', "");
+			for (const field of call.fields) {
+				const parts = field.path
+					.replaceAll("[]", ".0")
+					.split(".")
+					.filter(Boolean);
+				function plant(index: number): unknown {
+					if (index === parts.length) return secret;
+					const part = parts[index];
+					if (part === "0") return [plant(index + 1)];
+					return { [part === "*" ? secret : String(part)]: plant(index + 1) };
+				}
+				const payload = plant(0);
+				const local = JSON.stringify(payload);
+				expect(
+					JSON.stringify(
+						projectRemoteLegacyFrame({ [type]: payload }, "legacy", true),
+					),
+				).not.toContain(secret);
+				legacy.send(JSON.stringify({ [type]: payload }));
+				expect(legacy.sent.join("\n")).not.toContain(secret);
+				if (isRelayable(type)) relayStatusToGateway(type, payload, 1);
+				expect(JSON.stringify(payload)).toBe(local);
+			}
+		}
+		expect(frames.length).toBeGreaterThan(0);
+		for (const frame of frames)
+			expect((frame as { type: string }).type).toBe("status");
+		for (const frame of frames) {
+			expect(JSON.stringify(frame)).not.toContain(secret);
+			expect(() => strictParseFrame(frame)).not.toThrow();
+		}
+	} finally {
+		setup.engine = previous;
+		resetStatusRelay();
+	}
+});

@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { setupConfigSchema } from "../helpers/config-schemas";
-import { projectRemoteStatus } from "../modules/remote/remote-status";
+import {
+	projectPhoneStatus,
+	projectRemoteLegacyFrame,
+	projectRemoteStatus,
+} from "../modules/remote/remote-status";
 import { CarryingTracker } from "../modules/system/carrying";
 import {
 	getPhoneBoxHealth,
@@ -14,7 +18,7 @@ test("no-encoder image metadata stays explicit", () => {
 	);
 });
 test("phone remote status withholds planted network names, addresses and secrets", () => {
-	const result = projectRemoteStatus({
+	const result = projectPhoneStatus({
 		phone_box: true,
 		phone_links: { ready: 2, sending: null },
 		carrying: { state: "streaming" },
@@ -23,6 +27,7 @@ test("phone remote status withholds planted network names, addresses and secrets
 		srt: { address: "srt://192.0.2.1:4000" },
 	});
 	expect(result).toEqual({
+		remote_status: true,
 		phone_box: true,
 		phone_links: { ready: 2, sending: null },
 		carrying: { state: "streaming" },
@@ -66,5 +71,64 @@ test("checking snapshot retires startup permission at 120 s even with unreadable
 	expect(tracker.snapshot(120001)).toEqual({
 		state: "streaming",
 		startup: false,
+	});
+});
+
+test("phone fields are typed leaves: nested planted values never cross", () => {
+	const planted = "planted-moblin-password";
+	const result = projectPhoneStatus({
+		carrying: { state: "streaming", startup: true, ssid: planted },
+		box_health: [
+			{ part: "moblink", since: 5, password: planted },
+			{ part: "moblink", since: 6 },
+			{ part: planted, since: 7 },
+			{ part: "hotspot", since: planted },
+		],
+		phone_links: { ready: 1, sending: planted, address: "192.0.2.9" },
+		moblin: { password: planted },
+		stream_key: planted,
+		srt: { passphrase: planted, streamid: planted },
+	});
+	expect(result).toEqual({
+		remote_status: true,
+		phone_box: true,
+		carrying: { state: "streaming", startup: true },
+		box_health: [{ part: "moblink", since: 5 }],
+		phone_links: { ready: 1, sending: null },
+	});
+	expect(JSON.stringify(result)).not.toMatch(/planted|192\.0\.2/);
+});
+test("encoder status never carries phone fields, even if a producer sets them", () => {
+	const result = projectRemoteStatus({
+		phone_box: true,
+		carrying: { state: "streaming" },
+		box_health: [{ part: "cellular", since: 1 }],
+		phone_links: { ready: 1, sending: null },
+	});
+	expect(JSON.stringify(result)).not.toMatch(
+		/phone_box|carrying|box_health|phone_links/,
+	);
+});
+test("legacy phone-box frame relays status only", () => {
+	const planted = "planted-private-name";
+	const out = projectRemoteLegacyFrame(
+		{
+			status: { carrying: { state: "idle" }, wifi: { ssid: planted } },
+			config: { remote_key: planted, srt_streamid: planted },
+			netif: { [planted]: { ip: "192.0.2.1" } },
+			modems: { [planted]: {} },
+			relays: { servers: { [planted]: {} } },
+			seq: 3,
+		},
+		"legacy",
+		true,
+	);
+	expect(out).toEqual({
+		status: {
+			remote_status: true,
+			phone_box: true,
+			carrying: { state: "idle" },
+		},
+		seq: 3,
 	});
 });

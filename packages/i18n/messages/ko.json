@@ -1,4 +1,5 @@
 {
+	"network.view.remotePrivacy": "원격 네트워크 상태에는 익명 이름을 사용합니다. 네트워크 설정은 기기에서 관리하세요.",
 	"network.esim.reportHelp": "Modem-reported SIM status. Open eSIM profiles below to manage a configured eUICC.",
 	"network.esim.errors.device_decommissioned": "This modem has been decommissioned. Review its recovery state.",
 	"network.esim.errors.rebaseline_required": "This device needs a verified recovery baseline before eSIM management.",
