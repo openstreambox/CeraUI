@@ -111,6 +111,8 @@ export const ALLOWED: Set<string> = new Set<string>([
 	"/usr/libexec/ceralive/esim-helper",
 	"nmcli",
 	"mmcli",
+	// Termios setup on an already-open, generation-checked cellular serial descriptor.
+	"stty",
 	"systemctl",
 	"/usr/bin/systemd-notify",
 	"journalctl",
