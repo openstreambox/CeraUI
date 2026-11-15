@@ -1,7 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { strictParseFrame } from "@ceralive/control-protocol/parse";
 import inventory from "../../../../docs/remote-status-inventory.json";
-import { projectRemoteLegacyFrame } from "../modules/remote/remote-status.ts";
+import { logger } from "../helpers/logger.ts";
+import {
+	getRemoteProjectionDrops,
+	projectRemoteLegacyFrame,
+} from "../modules/remote/remote-status.ts";
 import {
 	isRelayable,
 	relayStatusToGateway,
@@ -81,5 +85,35 @@ test("phone box: identifiers planted at every inventoried source leaf never reac
 	} finally {
 		setup.engine = previous;
 		resetStatusRelay();
+	}
+});
+test("phone box: withheld frames complete their callback and are not counted as drops", async () => {
+	const previous = setup.engine;
+	setup.engine = "none";
+	const warning = spyOn(logger, "warn");
+	try {
+		const legacy = await authenticateRemote();
+		legacy.sent.length = 0;
+		const before = getRemoteProjectionDrops();
+		const done: string[] = [];
+		const invalid = JSON.stringify({
+			notification: { show: [], remove: [], epoch: "invalid", full: true },
+		});
+		legacy.send(invalid, () => done.push("notification"));
+		legacy.send(JSON.stringify({ config: { max_br: 1 } }), {}, () =>
+			done.push("config"),
+		);
+		legacy.send(JSON.stringify({ netif: {} }), () => done.push("netif"));
+		expect(legacy.sent).toHaveLength(0);
+		expect(done).toEqual(["notification", "config", "netif"]);
+		expect(getRemoteProjectionDrops()).toBe(before);
+		expect(
+			warning.mock.calls.filter(([text]) =>
+				String(text).includes("rejected by projection"),
+			),
+		).toHaveLength(0);
+	} finally {
+		warning.mockRestore();
+		setup.engine = previous;
 	}
 });
