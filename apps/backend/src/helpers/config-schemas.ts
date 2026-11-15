@@ -435,6 +435,9 @@ export const runtimeConfigSchema = z.object({
 	// resolves to the D-Bus observer through `DEFAULT_MODEM_BACKEND`; an explicit
 	// `"mmcli"` retains the synchronously-ready legacy rollback path.
 	modem_backend: modemBackendSchema.optional(),
+	fm350_internal_calls: z
+		.record(z.string().min(1).max(4096), z.boolean())
+		.optional(),
 
 	// Opt-in read-only D-Bus observation BESIDE mmcli (Phase-B shadow mode).
 	// DEFAULT-ABSENT ON PURPOSE, NO default entry: absent and `false` are equally
