@@ -66,6 +66,11 @@ import {
 	setPersistentBondOptOut,
 } from "./bond-preference.ts";
 import {
+	clatTranslationFor,
+	isClatTunName,
+	refreshClatTranslations,
+} from "./clat-translation.ts";
+import {
 	type DongleMarker,
 	getDongleMarker,
 	getDongleRecords,
@@ -302,6 +307,12 @@ export function isBondIdentityPending(
 export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 	if (isWifiApInterface(name)) return false;
 	if (!int.ip) return false;
+	// The image's IPv4 translator for an IPv6-only modem carries that modem's
+	// traffic only while its snapshot says so, and follows the modem's toggle.
+	if (isClatTunName(name)) {
+		const translation = clatTranslationFor(name, int.ip);
+		if (!translation || isBondOptedOut(translation.parent)) return false;
+	}
 	if (isBondIdentityPending(name, int)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
@@ -1027,6 +1038,7 @@ async function refreshNetifFromOs(): Promise<void> {
 					});
 			}
 		}
+		await refreshClatTranslations();
 		if (generation !== netifRefreshGeneration) return;
 		processIfconfigOutput(
 			ifconfigOut,
