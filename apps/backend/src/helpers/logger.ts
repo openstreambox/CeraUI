@@ -1,6 +1,7 @@
 import { Writable } from "node:stream";
 import winston from "winston";
 import { isDevelopment } from "../mocks/mock-config.ts";
+import { redactSrtPassphrases } from "./srt-secret-redaction.ts";
 import { isStreamIdKey, redactStreamIdText } from "./stream-id-secret.ts";
 
 const isDev = process.env.NODE_ENV === "development";
@@ -28,7 +29,8 @@ export const REDACTED = "[REDACTED]";
  * `passwordHash` all match). Centralised here so every transport and all 296
  * call sites are covered by one rule.
  */
-const SENSITIVE_KEY_RE = /pin|password|token|secret|paseto|bcrp|auth/i;
+const SENSITIVE_KEY_RE =
+	/pin|password|passphrase|token|secret|paseto|bcrp|auth/i;
 
 /**
  * Value-shaped secrets that can appear under an innocent-looking key (or inside
@@ -282,31 +284,41 @@ function isRedactablePlainObject(
 /**
  * Deep-scrub a single value: drop secret-shaped strings, recurse into arrays
  * and plain objects (redacting sensitive KEYS along the way), and pass
- * everything else through untouched. Ordinary errors retain their identity; errors carrying a Stream ID are
+ * everything else through untouched. Ordinary errors retain their identity; errors carrying a credential are
  * projected with scrubbed message, stack and enumerable fields.
  */
 function redactValue(value: unknown): unknown {
 	if (value instanceof Error) {
+		const name = redactValue(value.name);
+		const message = redactValue(value.message);
+		const stack = value.stack ? redactValue(value.stack) : undefined;
 		if (
-			redactStreamIdText(value.message) === value.message &&
-			(!value.stack || redactStreamIdText(value.stack) === value.stack) &&
-			!Object.keys(value).some(isStreamIdKey)
+			name === value.name &&
+			message === value.message &&
+			stack === value.stack &&
+			!Object.keys(value).some(
+				(key) => isStreamIdKey(key) || SENSITIVE_KEY_RE.test(key),
+			)
 		)
 			return value;
 		return {
-			name: redactStreamIdText(value.name),
-			message: redactStreamIdText(value.message),
-			stack: value.stack ? redactStreamIdText(value.stack) : undefined,
 			...Object.fromEntries(
 				Object.entries(value).map(([key, inner]) => [
 					key,
-					isStreamIdKey(key) ? REDACTED : redactValue(inner),
+					isStreamIdKey(key) || SENSITIVE_KEY_RE.test(key)
+						? REDACTED
+						: redactValue(inner),
 				]),
 			),
+			name,
+			message,
+			stack,
 		};
 	}
 	if (typeof value === "string") {
-		return looksSecret(value) ? REDACTED : redactStreamIdText(value);
+		return looksSecret(value)
+			? REDACTED
+			: redactStreamIdText(redactSrtPassphrases(value));
 	}
 	if (Array.isArray(value)) {
 		return value.map(redactValue);

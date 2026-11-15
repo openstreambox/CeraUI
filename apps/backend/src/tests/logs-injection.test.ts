@@ -140,14 +140,14 @@ describe("oRPC boundary — Zod SERVICE_RE on the log `service` input", () => {
 
 // The two tests below check what leaves the box, not how getLog builds it, so
 // they hold for the plain journal download and for a filtered support journal.
-it("keeps historical Stream IDs out of the returned journal and the download event", async () => {
+it("keeps historical Stream IDs and SRT passphrases out of the returned journal and the download event", async () => {
 	const record = JSON.stringify({
 		MESSAGE: "dialing srt://relay.example:5000?streamid=dummy-json-key",
 		_SYSTEMD_UNIT: "ceralive.service",
 		_COMM: "ceralive",
 	});
 	spyOn(runModule, "run").mockResolvedValue(
-		`ordinary line\n{"srt_streamid":"dummy-old-publish-key"}\nstreamid=dummy-uri-key\n${record}\nlast line`,
+		`ordinary line\n{"srt_streamid":"dummy-old-publish-key"}\nstreamid=dummy-uri-key\n{"srt_passphrase":"dummy-passphrase"}\n${record}\nlast line`,
 	);
 	const sent: string[] = [];
 	const conn = {

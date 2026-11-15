@@ -1,3 +1,5 @@
+import { publicSrtConfig } from "../../helpers/srt-secret-redaction.ts";
+
 function omitIncarnation(value: unknown): unknown {
 	if (
 		typeof value !== "object" ||
@@ -48,8 +50,9 @@ const REMOTE_CONFIG_WITHHELD = [
 	"relay_streamid_override_configured",
 ] as const;
 
-/** Pairing seeds and Stream IDs, including whether one is saved, never leave remote config. */
+/** Withhold pairing, Stream ID and encryption credentials, and whether a Stream ID is saved, from remote config. */
 export function projectRemoteConfig(payload: unknown): unknown {
+	payload = publicSrtConfig(payload);
 	if (typeof payload !== "object" || payload === null) return payload;
 	if (!REMOTE_CONFIG_WITHHELD.some((key) => key in payload)) return payload;
 	const config = { ...payload };

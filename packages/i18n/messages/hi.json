@@ -2742,10 +2742,17 @@
 	"hotspotConfigurator.saveInterrupted": "The new settings couldn't be applied while the hotspot was restarting. The hotspot may be off.",
 	"network.wifiMode.error.radioChanged": "The Wi-Fi adapter changed, so the mode switch didn't finish. Check its current mode before trying again.",
 	"hotspotConfigurator.radioUnverified": "These settings can't be saved until this Wi-Fi adapter can be identified. You can still turn off the hotspot.",
+	"settings.srtEncryptionPassphrase": "SRT एन्क्रिप्शन पासफ़्रेज़",
+	"settings.srtEncryptionShow": "पासफ़्रेज़ दिखाएँ",
+	"settings.srtEncryptionHelp": "सहेजे गए पासफ़्रेज़ को बदलने के लिए ही संपादित करें। एन्क्रिप्शन अगली स्ट्रीम शुरू होने पर लागू होगा।",
+	"settings.srtEncryptionInvalid": "10–79 UTF-8 बाइट का उपयोग करें, या मिटाने के लिए खाली रखें।",
+	"settings.srtEncryptionKeyLength": "SRT एन्क्रिप्शन कुंजी की लंबाई",
 	"settings.streamIdSecurity": "यह प्रकाशन कुंजी हो सकती है। SRT एन्क्रिप्शन चालू होने पर भी यह नेटवर्क पर खुले रूप में भेजी जाती है।",
 	"settings.streamIdStored": "स्ट्रीम आईडी सहेजी गई है। बनाए रखने के लिए अपरिवर्तित छोड़ें, बदलने के लिए लिखें या स्पष्ट रूप से मिटाएँ।",
 	"settings.streamIdShow": "लिखा मान दिखाएँ",
 	"settings.streamIdHide": "लिखा मान छिपाएँ",
 	"settings.streamIdClear": "स्ट्रीम आईडी मिटाएँ",
-	"settings.streamIdClearing": "सहेजने पर स्ट्रीम आईडी मिटा दी जाएगी।"
+	"settings.streamIdClearing": "सहेजने पर स्ट्रीम आईडी मिटा दी जाएगी।",
+	"live.startFailure.srtEncryptionUnavailable": "सहेजी गई SRT एन्क्रिप्शन सेटिंग समर्थित नहीं हैं। शुरू करने से पहले उन्हें मिटाएँ।",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "सहेजी गई SRT एन्क्रिप्शन सेटिंग समर्थित नहीं हैं। शुरू करने से पहले उन्हें मिटाएँ।"
 }

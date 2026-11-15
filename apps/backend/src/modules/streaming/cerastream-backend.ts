@@ -16,6 +16,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { srtEncryptionUnavailable } from "@ceraui/rpc/schemas";
+
 // CerastreamBackend: the StreamingBackend implementation for the Rust `cerastream`
 // engine — the only engine CeraUI drives. Every operation is a structured
 // JSON-RPC call over cerastream's control socket (`@ceralive/cerastream`):
@@ -148,6 +150,7 @@ import { asRawRequestClient } from "./raw-request.ts";
 import {
 	classifyStartFailure,
 	StreamStartFailure,
+	typedStartFailure,
 } from "./start-failure-taxonomy.ts";
 import {
 	ENGINE_CLOSE_DEADLINE_MS,
@@ -1769,6 +1772,16 @@ export class CerastreamBackend implements StreamingBackend {
 		config: RuntimeConfig,
 		opts: StreamRunOptions,
 	): StartParamsWithAudioMode {
+		if (srtEncryptionUnavailable(config)) {
+			throw new StreamStartFailure(
+				typedStartFailure(
+					"backend-start",
+					"params",
+					"start_invalid",
+					"srt_encryption_unavailable",
+				),
+			);
+		}
 		const srt: {
 			host: string;
 			port: number;
