@@ -1028,7 +1028,13 @@ async function refreshNetifFromOs(): Promise<void> {
 			}
 		}
 		if (generation !== netifRefreshGeneration) return;
-		processIfconfigOutput(ifconfigOut, ipOverrides, undefined, undefined, buses);
+		processIfconfigOutput(
+			ifconfigOut,
+			ipOverrides,
+			undefined,
+			undefined,
+			buses,
+		);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.error(`Error getting ifconfig: ${message}`);
