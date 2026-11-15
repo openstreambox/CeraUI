@@ -136,16 +136,10 @@ test("IPv6 source inventory stays local while remote diagnostics retain their co
 		},
 	};
 	const projected = projectRemoteLegacyFrame(input);
-	expect(projected).toEqual({
-		netif: {
-			[Object.keys(projected.netif as object)[0]]: {
-				tp: 12,
-				tx_bps: 34,
-				rx_bps: 56,
-				enabled: true,
-			},
-		},
-	});
+	expect(Object.keys(projected)).toEqual(["netif"]);
+	expect(Object.values(projected.netif as object)).toEqual([
+		{ tp: 12, tx_bps: 34, rx_bps: 56, enabled: true },
+	]);
 	expect(Object.keys(projected.netif as object)).toEqual([
 		expect.stringMatching(/^Link \d+$/),
 	]);
