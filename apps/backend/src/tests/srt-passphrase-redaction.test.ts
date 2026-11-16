@@ -8,6 +8,7 @@ import {
 } from "../helpers/logger";
 import { redactSrtPassphrases } from "../helpers/srt-secret-redaction";
 import type { AppWebSocket } from "../rpc/types";
+import { encryptionWrites } from "./helpers/encryption-writes";
 
 test("scrubs SRT passphrases at nested log and diagnostic boundaries", () => {
 	const secret = "dummy-secret";
@@ -259,10 +260,7 @@ test("explicit clear accepts a selected key length and clears both stored fields
 	}
 });
 
-test("setConfig writes SRT encryption fields only in the explicit clear, after the destination writes", async () => {
-	const text = await Bun.file(
-		new URL("../rpc/procedures/streaming.procedure.ts", import.meta.url),
-	).text();
+function assertReceiverWrites(text: string) {
 	const source = ts.createSourceFile(
 		"streaming.procedure.ts",
 		text,
@@ -289,17 +287,9 @@ test("setConfig writes SRT encryption fields only in the explicit clear, after t
 	// Every write to a stored encryption field clears it.
 	const writes: { value: string; statement: number }[] = [];
 	statements.forEach((statement, index) => {
-		const visit = (node: ts.Node) => {
-			if (
-				ts.isBinaryExpression(node) &&
-				node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-				/^config\.srt_(passphrase|pbkeylen)$/.test(node.left.getText(source))
-			) {
-				writes.push({ value: node.right.getText(source), statement: index });
-			}
-			ts.forEachChild(node, visit);
-		};
-		visit(statement);
+		for (const value of encryptionWrites(statement, source)) {
+			writes.push({ value, statement: index });
+		}
 	});
 	const clear = statements.findIndex(
 		(node) => condition(node) === 'input.srt_passphrase === ""',
@@ -322,7 +312,7 @@ test("setConfig writes SRT encryption fields only in the explicit clear, after t
 	expect(destinationStart).toBeGreaterThanOrEqual(0);
 	expect(destinationEnd).toBeGreaterThan(destinationStart);
 	expect(clear).toBeGreaterThan(destinationEnd);
-});
+}
 
 test.each(["syntheticPassphrase42", "synthetic phrase\"'\\~!"])(
 	"scrubs retained passphrase serialization and encodings: %s",
@@ -479,4 +469,70 @@ test("publishes a specific encryption refusal notification", async () => {
 	} finally {
 		removeClient(ws);
 	}
+});
+
+const receiverSource = () =>
+	Bun.file(
+		new URL("../rpc/procedures/streaming.procedure.ts", import.meta.url),
+	).text();
+
+test("setConfig writes encryption fields only in the explicit clear after destination writes", async () => {
+	assertReceiverWrites(await receiverSource());
+});
+
+const writeMutants = [
+	"config.srt_passphrase = input.srt_passphrase;",
+	'config["srt_pbkeylen"] = 32;',
+	'config[`srt_passphrase`] = "synthetic-secret";',
+	'config["srt_" + "passphrase"] = input.srt_passphrase;',
+	'const key = "srt_passphrase"; config[key] = input.srt_passphrase;',
+	"config[input.key] = input.value;",
+	"config.srt_passphrase ??= input.srt_passphrase;",
+	"config.srt_passphrase ||= input.srt_passphrase;",
+	"config.srt_pbkeylen += 16;",
+	"config.srt_pbkeylen++;",
+	"Object.assign(config, { srt_passphrase: input.srt_passphrase });",
+	'Object.assign(config, { ["srt_pbkeylen"]: 32 });',
+	"Object.assign(config, { ...input });",
+	"Object.assign(config, input);",
+	"config = { ...config, srt_passphrase: input.srt_passphrase };",
+	"config = { ...config, ...input };",
+	'Reflect.set(config, "srt_passphrase", input.srt_passphrase);',
+	"Reflect.set(config, key, input.value);",
+];
+
+test.each(writeMutants)(
+	"receiver-write mutant is rejected: %s",
+	async (mutant) => {
+		const text = await receiverSource();
+		const anchor = "if (input.relay_server) {";
+		expect(text.split(anchor)).toHaveLength(2);
+		expect(() =>
+			assertReceiverWrites(text.replace(anchor, `${anchor}\n${mutant}`)),
+		).toThrow();
+	},
+);
+
+test.each([
+	"const value = config.srt_passphrase;",
+	'const value = config["srt_pbkeylen"];',
+	"const value = config[key];",
+	"config[key] = undefined;",
+	"Reflect.set(config, key, undefined);",
+	"const copy = { ...config, ...input };",
+	"const copy = Object.assign({}, config, input);",
+	'const value = Reflect.get(config, "srt_passphrase");',
+	"other.srt_passphrase = config.srt_passphrase;",
+	"config.srt_latency = input.srt_latency;",
+	"Object.assign(config, { srt_latency: input.srt_latency });",
+	'Reflect.set(config, "srt_latency", input.srt_latency);',
+	"config = { ...config, srt_latency: input.srt_latency };",
+])("receiver reads and unrelated writes stay valid: %s", async (fixture) => {
+	const text = await receiverSource();
+	assertReceiverWrites(
+		text.replace(
+			"if (input.relay_server) {",
+			`if (input.relay_server) {\n${fixture}`,
+		),
+	);
 });
