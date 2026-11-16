@@ -8,6 +8,11 @@ import {
 } from "../../helpers/private-json-state.ts";
 import { acquirePrivateStateLease } from "../../helpers/private-state-lease.ts";
 import {
+	CellularAuthorityBusy,
+	readCellularSlot,
+	writeCellularSlot,
+} from "./cellular-authority-revision.ts";
+import {
 	noteMutationJournalReadFault,
 	withMutationJournalChange,
 } from "./mutation-journal-revision.ts";
@@ -17,7 +22,9 @@ const trackedWrite: typeof writePrivateJson = (store, key, value) =>
 
 export type CellularAuthorityKind =
 	| "automatic-carrier-intent"
-	| "cellular-preparation";
+	| "cellular-preparation"
+	| "cellular-internal-context"
+	| "cellular-internal-owner";
 export function cellularAuthorityMigration<T>(
 	kind: CellularAuthorityKind,
 	parse: PrivateJsonMigration<T>["parse"],
@@ -44,15 +51,24 @@ export async function accessCellularAuthority<T, Result>(
 	) => Promise<Result>,
 	explicitDirectory?: string,
 	protectRecovery = true,
+	revisionScope: "journal" | "slot" = "journal",
 ): Promise<Result> {
+	const slotScoped = revisionScope === "slot";
 	try {
 		if (explicitDirectory !== undefined) {
 			const store = { dir: explicitDirectory },
-				raw = await readPrivateJson(store, key);
+				raw = await (slotScoped ? readCellularSlot : readPrivateJson)(
+					store,
+					key,
+				);
 			return await operation(
 				raw === undefined ? undefined : parse(raw, key),
 				(value) =>
-					(protectRecovery ? trackedWrite : writePrivateJson)(
+					(slotScoped
+						? writeCellularSlot
+						: protectRecovery
+							? trackedWrite
+							: writePrivateJson)(
 						store,
 						key,
 						value === undefined ? undefined : parse(value, key),
@@ -64,13 +80,18 @@ export async function accessCellularAuthority<T, Result>(
 			key,
 			operation,
 			{
-				read: readPrivateJson,
-				write: protectRecovery ? trackedWrite : writePrivateJson,
+				read: slotScoped ? readCellularSlot : readPrivateJson,
+				write: slotScoped
+					? writeCellularSlot
+					: protectRecovery
+						? trackedWrite
+						: writePrivateJson,
 				acquire: acquirePrivateStateLease,
 			},
 		);
 	} catch (error) {
-		if (protectRecovery) noteMutationJournalReadFault();
+		if (protectRecovery && !(error instanceof CellularAuthorityBusy))
+			noteMutationJournalReadFault();
 		throw error;
 	}
 }
