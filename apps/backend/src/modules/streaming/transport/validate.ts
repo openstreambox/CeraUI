@@ -85,9 +85,15 @@ export async function probeReachability(
 			resolve(result);
 		};
 
+		timer = setTimeout(
+			() => finish({ reachable: false, reason: "timeout" }),
+			timeoutMs,
+		);
+
 		Promise.resolve()
 			.then(() =>
 				Bun.udpSocket({
+					hostname: isIP(ip) === 6 ? "::" : "0.0.0.0",
 					connect: { hostname: ip, port },
 					socket: {
 						// Any inbound datagram from the connected peer proves reachability.
@@ -111,10 +117,7 @@ export async function probeReachability(
 					return;
 				}
 				socket = s;
-				timer = setTimeout(
-					() => finish({ reachable: false, reason: "timeout" }),
-					timeoutMs,
-				);
+
 				try {
 					s.send(PROBE_PAYLOAD);
 				} catch {
@@ -124,19 +127,26 @@ export async function probeReachability(
 				}
 			})
 			.catch((err) => {
-				// Known no-route failures are a refusal. Bun can expose them
-				// as a code or a message-only error; preserve every unexpected
-				// setup failure so callers can diagnose a broken socket setup.
+				// Bun system errors carry a code; family availability is a normal
+				// reachability failure, while unexpected setup errors must reject.
 				if (
 					err instanceof Error &&
-					(("code" in err &&
-						(err.code === "ENETUNREACH" || err.code === "EHOSTUNREACH")) ||
-						err.message === "network is unreachable" ||
-						err.message === "host is unreachable")
+					"code" in err &&
+					[
+						"ENETUNREACH",
+						"EHOSTUNREACH",
+						"EAFNOSUPPORT",
+						"EADDRNOTAVAIL",
+					].includes(String(err.code))
 				) {
 					logger.debug("probeReachability: socket setup failed", { err });
 					finish({ reachable: false, reason: "refused" });
-				} else reject(err);
+				} else {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					reject(err);
+				}
 			});
 	}).catch((err: unknown): ProbeResult => {
 		if (
