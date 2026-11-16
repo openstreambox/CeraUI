@@ -60,5 +60,11 @@ name, channel and security with a fresh `generateHotspotPassword()` through
 `wifi.hotspotConfigure` under the Save key; NetworkManager restarts the profile, so
 every client drops. The card asks first and names that cost, plus
 `live.phone.powerOffCost` when `mayCarryStream` says a stream may be going through
-the box.
+the box. In the hotspot dialog a completed renewal also replaces the editable
+password, so a later Save cannot restore the revoked one. The dialog keeps a
+reactive renewal record bound to its form binding (radio, link, dialog session),
+the config key and the op attempt (`getOperationAttempt`), and writes the field
+only when the dispatch ack and the `hotspot.config` confirmation of that attempt
+have both arrived, in either order. Close, rebind, failure, timeout or a replaced
+attempt drops the record.
 

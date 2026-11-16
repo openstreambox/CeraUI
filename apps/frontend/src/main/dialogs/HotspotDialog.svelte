@@ -55,6 +55,7 @@ import * as Select from '$lib/components/ui/select';
 import { copyToClipboard } from '$lib/helpers/clipboard';
 import {
 	confirmOperation,
+	getOperationAttempt,
 	getOperationPhase,
 	getOperationReason,
 	getOperationTarget,
@@ -72,6 +73,7 @@ import {
 	mayCarryStream,
 	renewHotspotPassword,
 } from '$main/network/hotspot-new-password';
+import { generateHotspotPassword } from '$main/network/hotspot-password';
 import WifiCode from '$main/network/WifiCode.svelte';
 import WifiModeBadge from '$main/network/WifiModeBadge.svelte';
 import WifiModeSelector from '$main/network/WifiModeSelector.svelte';
@@ -253,28 +255,87 @@ const passwordError = $derived(
 
 // ── New Wi-Fi password: the live setup with only the password changed ──
 // Offered only while the hotspot runs and this form is bound to its radio; it
-// shares the Save key, so the two can never run at once. A confirmed renewal
+// shares the Save key, so the two can never run at once. A completed renewal
 // also refreshes the form's password, so a later Save cannot put the old one back.
-let renewedPassword: string | undefined;
+//
+// The record belongs to one owner: the form binding (radio, link, dialog
+// session), the config key and the op attempt it began. The form takes the new
+// password only once BOTH the dispatch ack and the device's confirmation of
+// that same attempt have arrived, in either order. Closing, rebinding, a
+// failure or a replaced attempt drops the record, so a late completion can never
+// write into a form it no longer owns.
+type Renewal = {
+	readonly id: object;
+	readonly binding: WifiRadioBinding;
+	readonly key: string;
+	readonly password: string;
+	readonly attempt: symbol | undefined;
+	readonly acked: boolean;
+	readonly confirmed: boolean;
+};
+let renewal = $state.raw<Renewal | undefined>(undefined);
+
+function startRenewal() {
+	const binding = formBinding;
+	if (!binding || !current(binding) || configuring) return;
+	const id = {};
+	const key = configKey;
+	const next = generateHotspotPassword();
+	const update = (patch: Partial<Renewal>) => {
+		if (renewal?.id === id) renewal = { ...renewal, ...patch };
+	};
+	renewal = { id, binding, key, password: next, attempt: undefined, acked: false, confirmed: false };
+	void renewHotspotPassword(deviceId, iface, () => next, (attempt) => update({ attempt })).then(
+		(sent) => {
+			if (renewal?.id !== id) return;
+			if (sent === undefined) renewal = undefined;
+			else update({ acked: true });
+		},
+	);
+}
+
+$effect(() => {
+	const record = renewal;
+	if (record === undefined) return;
+	const owned = record.key === configKey && current(record.binding);
+	const phase = getOperationPhase(record.key);
+	const attempt = getOperationAttempt(record.key);
+	untrack(() => {
+		if (!owned) {
+			renewal = undefined;
+			return;
+		}
+		if (record.attempt === undefined) return;
+		let confirmed = record.confirmed;
+		if (attempt === record.attempt) {
+			if (phase === 'failed' || phase === 'timed_out') {
+				renewal = undefined;
+				return;
+			}
+			if (phase === 'confirmed') confirmed = true;
+		} else if (!confirmed) {
+			// Replaced or cleared before this attempt was confirmed: not ours to apply.
+			renewal = undefined;
+			return;
+		}
+		if (confirmed && record.acked) {
+			password = record.password;
+			renewal = undefined;
+		} else if (confirmed !== record.confirmed) {
+			renewal = { ...record, confirmed };
+		}
+	});
+});
+
 const renewOffer = $derived(
 	isActive && canEdit && canRenewHotspotPassword(deviceId, iface)
 		? {
 				phase: getOperationPhase(configKey),
 				streaming: mayCarryStream(getStatus()),
-				onrenew: () => {
-					void renewHotspotPassword(deviceId, iface).then((sent) => {
-						renewedPassword = sent;
-					});
-				},
+				onrenew: startRenewal,
 			}
 		: undefined,
 );
-$effect(() => {
-	const phase = getOperationPhase(configKey);
-	if (renewedPassword === undefined) return;
-	if (phase === 'confirmed') password = renewedPassword;
-	if (phase !== 'pending') renewedPassword = undefined;
-});
 
 // Save dispatches the reconfigure; `hotspotConfigure` resolves immediately with a
 // dispatch ack, so we DON'T confirmOnResolve — the real outcome arrives later as

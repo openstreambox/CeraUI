@@ -12,7 +12,10 @@ import type {
 	WifiInterface,
 } from "@ceraui/rpc/schemas";
 
-import { osCommand } from "$lib/rpc/async-operation.svelte";
+import {
+	getOperationAttempt,
+	osCommand,
+} from "$lib/rpc/async-operation.svelte";
 import { rpc } from "$lib/rpc/client";
 
 import { generateHotspotPassword } from "./hotspot-password";
@@ -69,23 +72,33 @@ export function newHotspotPasswordKey(
 }
 
 /**
- * Dispatch a renewal. Resolves to the password it sent, or `undefined` when
- * nothing was sent. Whether the device applied it arrives later as its
- * `hotspot.config` reply, which settles the keyed op.
+ * Dispatch a renewal. Resolves to the password the device accepted for dispatch,
+ * or `undefined` when nothing was sent or the dispatch was refused. Whether the
+ * device applied it arrives later as its `hotspot.config` reply, which settles
+ * the keyed op; that reply can arrive before or after this promise resolves.
+ *
+ * `onDispatch` runs once the keyed op has begun, with that attempt's token, so
+ * a caller can tell its own confirmation from a later one under the same key.
  */
 export async function renewHotspotPassword(
 	device: string,
 	iface: WifiInterface | undefined,
 	generate: () => string = generateHotspotPassword,
+	onDispatch?: (attempt: symbol | undefined) => void,
 ): Promise<string | undefined> {
 	const password = generate();
 	const input = newHotspotPasswordInput(device, iface, password);
 	if (!input) return undefined;
+	const key = newHotspotPasswordKey(device, iface);
 	const sent = await osCommand({
-		key: newHotspotPasswordKey(device, iface),
-		rpc: () => rpc.wifi.hotspotConfigure(input),
+		key,
+		rpc: () => {
+			onDispatch?.(getOperationAttempt(key));
+			return rpc.wifi.hotspotConfigure(input);
+		},
 		failMessage: () => m["network.os.operationFailed"](),
 		busyMessage: () => m["network.os.deviceBusy"](),
 	});
-	return sent === undefined ? undefined : password;
+	if (sent === undefined || sent.success === false) return undefined;
+	return password;
 }

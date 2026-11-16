@@ -21,6 +21,7 @@ vi.mock("svelte-sonner", () => ({
 
 import {
 	destroyAsyncOperations,
+	getOperationAttempt,
 	getOperationPhase,
 	initAsyncOperations,
 } from "$lib/rpc/async-operation.svelte";
@@ -151,5 +152,30 @@ describe("renewHotspotPassword", () => {
 			await renewHotspotPassword("0", iface({ incarnation: undefined })),
 		).toBeUndefined();
 		expect(hotspotConfigure).not.toHaveBeenCalled();
+	});
+
+	it("names its own attempt once the op has begun", async () => {
+		const seen: Array<symbol | undefined> = [];
+		await renewHotspotPassword(
+			"0",
+			iface(),
+			() => "fresh-password",
+			(attempt) => seen.push(attempt),
+		);
+		const current = getOperationAttempt(newHotspotPasswordKey("0", iface()));
+		expect(current).toBeTypeOf("symbol");
+		expect(seen).toEqual([current]);
+	});
+
+	it("reports nothing sent when the device refuses the dispatch", async () => {
+		hotspotConfigure.mockResolvedValueOnce(
+			JSON.parse('{"success":false,"error":"saving"}'),
+		);
+		expect(
+			await renewHotspotPassword("0", iface(), () => "fresh-password"),
+		).toBeUndefined();
+		expect(getOperationPhase(newHotspotPasswordKey("0", iface()))).toBe(
+			"failed",
+		);
 	});
 });
