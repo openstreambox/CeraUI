@@ -87,6 +87,19 @@ describe("offline page wording", () => {
 		expect(unreachableTitle()).toBeNull();
 	});
 
+	it("starts on the offline wording when the browser loads without network", () => {
+		const onLine = vi.spyOn(window.navigator, "onLine", "get");
+		onLine.mockReturnValue(false);
+		try {
+			mountWithRealStore();
+		} finally {
+			onLine.mockRestore();
+		}
+
+		expect(offlineTitle()).not.toBeNull();
+		expect(unreachableTitle()).toBeNull();
+	});
+
 	it("re-words when the browser's network comes back before the device", () => {
 		mountWithRealStore();
 		browser("offline");

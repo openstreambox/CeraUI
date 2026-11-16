@@ -2041,7 +2041,7 @@
 	"offline.installNote": "يعمل هذا التطبيق بشكل أفضل عند تثبيته على جهازك",
 	"offline.title": "أنت غير متصل",
 	"offline.tryAgain": "حاول مرة أخرى",
-	"offline.unreachableCheckFailed": "لا يزال تعذّر الوصول إلى الجهاز",
+	"offline.unreachableCheckFailed": "لا يزال الوصول إلى الجهاز متعذّرًا",
 	"offline.unreachableCheckNetwork": "هذا الهاتف أو الكمبيوتر متصل بشبكة الجهاز أو نقطة الاتصال الخاصة به",
 	"offline.unreachableCheckPower": "الجهاز قيد التشغيل",
 	"offline.unreachableDescription": "جارٍ إعادة المحاولة…",
