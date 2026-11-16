@@ -225,3 +225,21 @@ test("fresh physical evidence supersedes a stale blocked name and republishes a 
 		unsubscribe();
 	}
 });
+
+test("a fresh scan republishes an unchanged unblocked device after its name reappears", async () => {
+	box = await realisticBox();
+	await box.journal([journalEntry(MODEMS[0], "failed")]);
+	await box.scan([ETHERNET], { skipPhysical: true });
+	const admitted: boolean[] = [];
+	const unsubscribe = onNetworkInterfacesChange(() => {
+		if (getNetworkInterfaces().wwan1)
+			admitted.push(box?.bonded().includes("wwan1") ?? false);
+	});
+	try {
+		// Include the full original scan set so descriptor/coverage sets are unchanged.
+		await box.scan([ETHERNET, ...MODEMS]);
+		expect(admitted).toEqual([false, true]);
+	} finally {
+		unsubscribe();
+	}
+});

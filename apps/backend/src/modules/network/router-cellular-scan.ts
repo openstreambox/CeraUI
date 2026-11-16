@@ -690,6 +690,7 @@ export function onUsbNetScanCommitted(listener: () => void): () => void {
 function snapshotKey(current: UsbNetMarkerSets): string {
 	return JSON.stringify({
 		covered: [...coveredIfnames].sort(),
+		epochs: [...coveredEpochs].sort(([a], [b]) => a.localeCompare(b)),
 		router: [...current.routerCellular.entries()].sort(([a], [b]) =>
 			a.localeCompare(b),
 		),
