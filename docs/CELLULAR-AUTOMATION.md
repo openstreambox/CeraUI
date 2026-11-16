@@ -45,7 +45,10 @@ requires withdrawn global addresses and precedes the host call. An expected USB
 return has a bounded wait; it does not launch repeated resets. Serial endpoints
 are rediscovered by USB interface. The inhibition session is revoked if the
 service owner changes or its bus connection is lost. Preparation can reset a
-module, so it runs only while no stream is running.
+module, so it waits through stream starts as well as running streams. A start
+before the reset rewinds the QMAP/EPS record to its baseline phase, leaving the EPS attempt
+available for the next idle poll. A rejected setter or failed reset still blocks
+preparation for explicit recovery.
 
 A profile that preparation takes over is disarmed in NetworkManager first;
 CeraUI admits its explicit activation once preparation is done. Manual saves release the original
@@ -126,7 +129,10 @@ direcciones globales antes de la llamada de datos. La espera de retorno USB es
 limitada y no provoca reinicios repetidos. El puerto serie se resuelve por la
 interfaz USB; perder el servicio o la conexión de control revoca la sesión. La
 preparación puede reiniciar un módulo, así que solo se ejecuta cuando no hay
-ninguna transmisión en curso.
+ninguna transmisión en curso ni iniciándose. Si una transmisión empieza antes
+del reinicio, el registro QMAP/EPS vuelve a su fase base y conserva el
+intento EPS para la próxima comprobación en reposo. Un cambio rechazado o un
+reinicio fallido sigue bloqueando la preparación hasta la recuperación explícita.
 
 Un perfil que la preparación toma a su cargo se desarma primero en
 NetworkManager; CeraUI inicia la conexión cuando termina la preparación.

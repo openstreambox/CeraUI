@@ -272,17 +272,26 @@ async function prepareUnit(
 			await deps.write({ ...record, phase: "blocked" });
 			return "blocked";
 		}
+		if (deps.busy?.()) return "pending";
 		await deps.write({
 			...record,
 			phase: "awaiting-usb",
 			epoch: epoch(target),
 			started: deps.now(),
 		});
+		if (deps.busy?.()) {
+			await deps.write({ ...record, phase: "baseline" });
+			return "pending";
+		}
 		if (!(await control.disableAutoConnect())) {
 			await deps.write({ ...record, phase: "blocked" });
 			return "blocked";
 		}
-		if (deps.busy?.()) return "pending";
+		if (deps.busy?.()) {
+			// No reset was submitted: retain the baseline for the next idle poll.
+			await deps.write({ ...record, phase: "baseline" });
+			return "pending";
+		}
 		try {
 			await control.reset();
 		} catch {
@@ -347,8 +356,9 @@ async function prepareEps(
 		await deps.write({ ...record, phase: "blocked" });
 		return "blocked";
 	}
+	if (deps.busy?.()) return "pending";
 	// Consume the pair's only attempt BEFORE the setter, even if it rejects.
-	record = {
+	const attempt: typeof record = {
 		...record,
 		desired,
 		attempted: true,
@@ -356,14 +366,22 @@ async function prepareEps(
 		epoch: epoch(target),
 		started: deps.now(),
 	};
-	await deps.write(record);
-	if (deps.busy?.()) return "pending";
-	if (
-		!(await deps.setEps(target, desired)) ||
-		deps.busy?.() ||
-		!(await deps.reset(target))
-	) {
-		await deps.write({ ...record, phase: "blocked" });
+	await deps.write(attempt);
+	if (deps.busy?.()) {
+		await deps.write({ ...record, phase: "baseline", attempted: false });
+		return "pending";
+	}
+	if (!(await deps.setEps(target, desired))) {
+		await deps.write({ ...attempt, phase: "blocked" });
+		return "blocked";
+	}
+	if (deps.busy?.()) {
+		// A stream interrupted preparation, not a failed firmware attempt.
+		await deps.write({ ...record, phase: "baseline", attempted: false });
+		return "pending";
+	}
+	if (!(await deps.reset(target))) {
+		await deps.write({ ...attempt, phase: "blocked" });
 		return "blocked";
 	}
 	return "waiting-usb";
