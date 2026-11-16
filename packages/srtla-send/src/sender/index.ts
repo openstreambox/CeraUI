@@ -1,3 +1,4 @@
+import { signalProcessName } from "../process-signals.js";
 // Sender CLI args, validation, and process helpers for the srtla sender.
 //
 // Absorbed from the retired npm sender binding (plan upstream-rebase-hard-fork,
@@ -220,7 +221,9 @@ export function spawnSrtlaSend(options: SrtlaSendOptionsInput): Bun.Subprocess {
  */
 export function sendSrtlaSendHup(): void {
 	// killall exits non-zero when no process matches; that is an acceptable no-op.
-	Bun.spawnSync(["killall", "-HUP", DEFAULT_BINARY]);
+	void signalProcessName("killall", ["-HUP", DEFAULT_BINARY], () => {
+		Bun.spawnSync(["killall", "-HUP", DEFAULT_BINARY]);
+	});
 }
 
 export function isSrtlaSendRunning(): boolean {
