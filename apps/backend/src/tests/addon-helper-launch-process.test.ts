@@ -59,7 +59,7 @@ for (const mode of [
 		try {
 			// When the production runner executes the actual launcher.
 			const result = await invokeHelperAction("refresh", {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				createStep: () => step,
 			}).catch((error: unknown) => error);
@@ -133,7 +133,7 @@ test("retained launch FD recovers written identity even when its pathname is rem
 	try {
 		// When the lost-handle path reads the retained inode instead of the removed name.
 		await invokeHelperAction("refresh", {
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			exec: async () => ({ stdout: "", stderr: "" }),
 			createStep: () => step,
 		}).catch((error: unknown) => error);

@@ -79,7 +79,7 @@ function makeManagerHarness(): ManagerHarness {
 	const removeState: string[] = [];
 
 	const deps: AddonManagerDeps = {
-		isRealDevice: () => Promise.resolve(true),
+		canManageAddons: () => Promise.resolve(true),
 		getEffectiveHardware: () => "rk3588",
 		getDataFreeBytes: () => Promise.resolve(100 * 1024 * 1024 * 1024),
 		getOsVersion: () => Promise.resolve("12"),
@@ -172,7 +172,7 @@ describe("addons.list (read-only, not gated)", () => {
 		const descriptor = makeDescriptor();
 		setAddonProcedureDeps({
 			readDescriptors: () => Promise.resolve([descriptor]),
-			isRealDevice: () => Promise.resolve(false),
+			canManageAddons: () => Promise.resolve(false),
 		});
 
 		const result = await call(listAddonsProcedure, undefined, {
@@ -221,7 +221,7 @@ describe("addons.install (gated on isRealDevice, drives the manager)", () => {
 		setAddonManagerDeps(h.deps);
 		const descriptor = makeDescriptor();
 		setAddonProcedureDeps({
-			isRealDevice: () => Promise.resolve(true),
+			canManageAddons: () => Promise.resolve(true),
 			readDescriptors: () => Promise.resolve([descriptor]),
 		});
 
@@ -248,7 +248,7 @@ describe("addons.install (gated on isRealDevice, drives the manager)", () => {
 		setAddonManagerDeps(h.deps);
 		const descriptor = makeDescriptor();
 		setAddonProcedureDeps({
-			isRealDevice: () => Promise.resolve(false),
+			canManageAddons: () => Promise.resolve(false),
 			readDescriptors: () => Promise.resolve([descriptor]),
 		});
 
@@ -266,7 +266,7 @@ describe("addons.install (gated on isRealDevice, drives the manager)", () => {
 
 	test("returns addon_not_found for an id with no descriptor", async () => {
 		setAddonProcedureDeps({
-			isRealDevice: () => Promise.resolve(true),
+			canManageAddons: () => Promise.resolve(true),
 			readDescriptors: () => Promise.resolve([]),
 		});
 
@@ -285,7 +285,7 @@ describe("addons.install (gated on isRealDevice, drives the manager)", () => {
 		const descriptor = makeDescriptor({ compatibleHardware: ["jetson"] });
 		const saved: Array<{ id: string; state: AddonState }> = [];
 		setAddonProcedureDeps({
-			isRealDevice: () => Promise.resolve(true),
+			canManageAddons: () => Promise.resolve(true),
 			getEffectiveHardware: () => "n100",
 			readDescriptors: () => Promise.resolve([descriptor]),
 			setAddonState: (id, state) => {
@@ -316,7 +316,7 @@ describe("addons.uninstall (gated on isRealDevice, reverses install)", () => {
 		setAddonManagerDeps(h.deps);
 		const descriptor = makeDescriptor();
 		setAddonProcedureDeps({
-			isRealDevice: () => Promise.resolve(true),
+			canManageAddons: () => Promise.resolve(true),
 			readDescriptors: () => Promise.resolve([descriptor]),
 		});
 
@@ -344,7 +344,7 @@ describe("addons.uninstall (gated on isRealDevice, reverses install)", () => {
 		setAddonManagerDeps(h.deps);
 		const descriptor = makeDescriptor();
 		setAddonProcedureDeps({
-			isRealDevice: () => Promise.resolve(false),
+			canManageAddons: () => Promise.resolve(false),
 			readDescriptors: () => Promise.resolve([descriptor]),
 		});
 
@@ -368,7 +368,7 @@ describe("addons.configure (gated on isRealDevice)", () => {
 		};
 		const saved: Array<{ id: string; state: AddonState }> = [];
 		setAddonProcedureDeps({
-			isRealDevice: () => Promise.resolve(true),
+			canManageAddons: () => Promise.resolve(true),
 			getAddonState: () => existing,
 			setAddonState: (id, state) => {
 				saved.push({ id, state });
@@ -387,7 +387,7 @@ describe("addons.configure (gated on isRealDevice)", () => {
 	});
 
 	test("returns addon_unavailable in emulated mode", async () => {
-		setAddonProcedureDeps({ isRealDevice: () => Promise.resolve(false) });
+		setAddonProcedureDeps({ canManageAddons: () => Promise.resolve(false) });
 
 		const result = await call(
 			configureAddonProcedure,

@@ -1119,7 +1119,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"isRealDevice()-gated one-shot at boot; Bun.spawnSync timeout caps a hung dpkg lock, and a non-zero exit or empty stdout resolves `undefined` so the ladder falls through to the git rung rather than throwing",
+			"one-shot at boot gated by the system-control capability; Bun.spawnSync timeout caps a hung dpkg lock, and a non-zero exit or empty stdout resolves `undefined` so the ladder falls through to the git rung rather than throwing",
 	},
 	{
 		id: "srtlaSend.capabilityProbe",

@@ -56,7 +56,7 @@ test("held reconciler cannot undo crash-loop auto-disable", async () => {
 	// Given a running add-on and a held refresh preparation.
 	const held = heldBoundary();
 	setAddonManagerDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getNRestarts: async () => 3,
 		systemctl: async () => ({ stdout: "", stderr: "" }),
 		broadcast: (_id, state) => {
@@ -115,7 +115,7 @@ test("typed helper refusal is recorded as deferral", async () => {
 		...f.reconciler,
 		refresh: async () => {
 			await addonRefresh({
-				isRealDevice: async () => {
+				canManageAddons: async () => {
 					updateStatus(true);
 					return true;
 				},
