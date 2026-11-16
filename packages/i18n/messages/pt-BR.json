@@ -3116,5 +3116,6 @@
 	"live.phone.moblinFailed": "Não foi possível aplicar a senha do Moblin. Verifique a caixa e tente de novo. Talvez ela já esteja salva.",
 	"live.phone.moblinBusy": "Espere a caixa confirmar que nenhuma transmissão a está usando antes de trocar a senha do Moblin.",
 	"live.audioMixer.error.audio_input_primary": "A entrada principal fica sempre no mix. Para desativá-la, escolha outra fonte de áudio.",
-	"live.layout.insetCancel": "Pressione Esc antes de soltar para voltar à posição anterior."
+	"live.layout.insetCancel": "Pressione Esc antes de soltar para voltar à posição anterior.",
+	"network.sharing.ipv6Only": "Os dispositivos no Wi-Fi do aparelho ainda não conseguem acessar sites IPv4 por este link."
 }
