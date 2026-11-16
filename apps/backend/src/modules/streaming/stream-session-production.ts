@@ -15,7 +15,7 @@ import {
 } from "./lifecycle-admission.ts";
 import {
 	clearOtaStreamingMarker,
-	initialOtaStreamLiveness,
+	encoderOtaStreamLiveness,
 	setOtaStreamingMarker,
 } from "./ota-streaming-marker.ts";
 import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
@@ -34,7 +34,7 @@ import { getIsStreaming, updateStatus } from "./streaming.ts";
 import { stopGeneration } from "./streamloop/session.ts";
 
 export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
-	initialLiveness: initialOtaStreamLiveness,
+	initialLiveness: encoderOtaStreamLiveness,
 	createAttemptId: newAttemptId,
 	setStreamingStatus: updateStatus,
 	getStreamingStatus: getIsStreaming,
