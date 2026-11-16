@@ -24,7 +24,7 @@
 
 import { existsSync } from "node:fs";
 import { logger } from "../../helpers/logger.ts";
-import { getIsStreaming } from "../streaming/streaming.ts";
+import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import { accessCellularAuthority } from "./cellular-authority-store.ts";
 import {
 	type PreparationRecord,
@@ -100,7 +100,10 @@ export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 				reason: `back at ${speed} Mbit/s`,
 				update: { ...record, phase: "verified", epoch: generation },
 			};
-		} else if (speed === undefined) {
+		} else if (
+			speed === undefined &&
+			now - record.started < USB_SPEED_RETURN_WINDOW_MS
+		) {
 			return { action: "wait", reason: "link speed unreadable" };
 		} else {
 			record = {
@@ -196,7 +199,7 @@ export const defaultUsbSpeedDeps: UsbSpeedDeps = {
 	acquire: acquireCellularControl,
 	read: readRecord,
 	write: writeRecord,
-	streaming: getIsStreaming,
+	streaming: () => getStreamLifecycleState() !== "idle",
 	switchedOff: () => existsSync(SWITCHED_OFF),
 	now: Date.now,
 	log: (message) => logger.info(message, { module: "modems" }),
@@ -209,6 +212,7 @@ export const usbSpeedKey = (equipment: string) =>
 const aborted = new Map<string, number>();
 /** The last logged decision per unit; one log line per change. */
 const reported = new Map<string, string>();
+let inFlight: Promise<readonly number[]> | undefined;
 
 export function resetUsbSpeedPreparationForTest(): void {
 	aborted.clear();
@@ -222,10 +226,28 @@ async function applyUsbSpeed(
 	record: UsbSpeedRecord | undefined,
 	key: string,
 	deps: UsbSpeedDeps,
-): Promise<UsbSpeedRecord> {
+): Promise<UsbSpeedRecord | undefined> {
 	const control = await deps.acquire(target);
 	try {
 		if (deps.streaming()) throw new Error("a stream started");
+		const fresh = await deps.read(key);
+		if (fresh && fresh.kind !== "usbspeed")
+			throw new Error("Unexpected preparation authority");
+		record = fresh;
+		const decision = decideUsbSpeed({
+			desired,
+			speed: await deps.speed(target),
+			generation: target.generation,
+			record,
+			now: deps.now(),
+			switchedOff: deps.switchedOff(),
+			streaming: deps.streaming(),
+			otherInFlight: false,
+		});
+		if (decision.update) await deps.write(decision.update);
+		if (decision.action !== "write") return undefined;
+		if (!(await deps.present(target)))
+			throw new Error("modem changed before the switch");
 		const current = await control.readUsbSpeed();
 		if (current === undefined) throw new Error("usbspeed readback missing");
 		let next: UsbSpeedRecord = {
@@ -250,8 +272,10 @@ async function applyUsbSpeed(
 				return next;
 			}
 		}
+		if (deps.streaming()) throw new Error("a stream started");
 		next = { ...next, phase: "awaiting-usb" };
 		await deps.write(next);
+		if (deps.streaming()) throw new Error("a stream started");
 		try {
 			await control.reset();
 		} catch {
@@ -264,7 +288,7 @@ async function applyUsbSpeed(
 }
 
 /** Check each unit once; switch at most one modem. Returns the modem ids switched. */
-export async function runUsbSpeedPreparation(
+async function runUsbSpeedPreparationOnce(
 	deps: UsbSpeedDeps = defaultUsbSpeedDeps,
 ): Promise<readonly number[]> {
 	const units: {
@@ -331,6 +355,7 @@ export async function runUsbSpeedPreparation(
 				unit.key,
 				deps,
 			);
+			if (!unit.record) continue;
 			aborted.delete(unit.key);
 			deps.log(
 				`${unit.target.ifname} usbspeed: ${unit.record.phase} (stored ${unit.record.original}, wanted ${unit.desired}); module reset, link back in about 50 s`,
@@ -345,4 +370,15 @@ export async function runUsbSpeedPreparation(
 		switched.push(unit.id);
 	}
 	return switched;
+}
+
+/** Overlapping polls join the same attempt and receive the same reset list. */
+export function runUsbSpeedPreparation(
+	deps: UsbSpeedDeps = defaultUsbSpeedDeps,
+): Promise<readonly number[]> {
+	if (inFlight) return inFlight;
+	inFlight = runUsbSpeedPreparationOnce(deps).finally(() => {
+		inFlight = undefined;
+	});
+	return inFlight;
 }

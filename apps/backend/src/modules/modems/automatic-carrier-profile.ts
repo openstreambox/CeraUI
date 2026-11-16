@@ -272,11 +272,12 @@ function policyFor(sim: ReadyModemSim): CarrierPolicy | undefined {
 	const choice = selectSubscription(subscriptionEvidenceFromModem(sim));
 	return choice.state === "recognized" ? choice.policy : undefined;
 }
-export async function runAutomaticCarrierProfiles(): Promise<
-	readonly number[]
-> {
+export async function runAutomaticCarrierProfiles(
+	skip: readonly number[] = [],
+): Promise<readonly number[]> {
 	const changed: number[] = [];
 	for (const id of getModemIds()) {
+		if (skip.includes(id)) continue;
 		const config = getModem(id)?.config;
 		const key = modemStableKeyForId(id);
 		if (!config?.conn || !config.autoconfig || !key) continue;

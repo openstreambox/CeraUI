@@ -6,6 +6,7 @@ import {
 } from "./transport-policy.ts";
 import {
 	decideUsbSpeed,
+	defaultUsbSpeedDeps,
 	resetUsbSpeedPreparationForTest,
 	runUsbSpeedPreparation,
 	USB_SPEED_PAUSE_MS,
@@ -355,4 +356,91 @@ test("modems without the quirk are skipped entirely", async () => {
 	};
 	expect(await runUsbSpeedPreparation(other)).toEqual([]);
 	expect(b.calls).toEqual([]);
+});
+
+test("overlapping polls share one non-exclusive takeover and reset list", async () => {
+	const b = box();
+	let release!: () => void;
+	const barrier = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const deps = {
+		...b.deps,
+		acquire: async (t: CellularControlTarget) => {
+			await barrier;
+			return b.deps.acquire(t);
+		},
+	};
+	const a = runUsbSpeedPreparation(deps);
+	const c = runUsbSpeedPreparation(deps);
+	expect(a).toBe(c);
+	release();
+	expect(await a).toEqual([0]);
+	expect(await c).toEqual([0]);
+	expect(b.calls.filter((x) => x === "reset 0")).toHaveLength(1);
+	expect(b.records.get(b.key(0))?.attempts).toBe(1);
+});
+
+test("authority is read again after inhibition", async () => {
+	const b = box();
+	await runUsbSpeedPreparation({
+		...b.deps,
+		acquire: async (t) => {
+			b.records.set(
+				b.key(0),
+				record({ key: b.key(0), attempts: 2, phase: "blocked" }),
+			);
+			return b.deps.acquire(t);
+		},
+	});
+	expect(b.calls).toEqual(["inhibit 0", "release 0"]);
+});
+
+test("a modem that vanished is never switched", async () => {
+	const b = box();
+	await runUsbSpeedPreparation({ ...b.deps, present: async () => false });
+	expect(b.calls).toEqual([]);
+});
+
+test("a start during the setter stops before reset", async () => {
+	const b = box();
+	await runUsbSpeedPreparation({
+		...b.deps,
+		acquire: async (t) => {
+			const c = await b.deps.acquire(t);
+			return {
+				...c,
+				setUsbSpeed: async (value) => {
+					b.setStreaming(true);
+					return value;
+				},
+			};
+		},
+	});
+	expect(b.calls).not.toContain("reset 0");
+	expect(b.calls).toContain("release 0");
+});
+
+test("unreadable speed on a new enumeration has a bounded wait", () => {
+	const d = decideUsbSpeed({
+		...base,
+		generation: "g2",
+		speed: undefined,
+		record: record({ started: base.now - USB_SPEED_RETURN_WINDOW_MS }),
+	});
+	expect(d.action).not.toBe("wait");
+	expect(d.update?.phase).toBe("failed");
+});
+
+test("starting is busy even before the streaming commit", async () => {
+	const { seedStreamLifecycleState } = await import(
+		"../streaming/stream-lifecycle-status.ts"
+	);
+	try {
+		seedStreamLifecycleState("starting");
+		expect(defaultUsbSpeedDeps.streaming()).toBe(true);
+	} finally {
+		seedStreamLifecycleState("idle");
+	}
+	expect(defaultUsbSpeedDeps.streaming()).toBe(false);
 });
