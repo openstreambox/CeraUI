@@ -1,3 +1,4 @@
+import { idleActionPolicy } from "./idle-action-policy.ts";
 /*
 	CeraUI - web UI for the CERALIVE project
 	Copyright (C) 2024-2025 CeraLive project
@@ -303,7 +304,12 @@ export type UpdateStartOutcome =
 	| { started: false; reason: UpdateStartRefusal };
 
 function refuseUpdateStart(reason: UpdateStartRefusal): UpdateStartOutcome {
-	logger.warn(`Software update refused: ${reason}`);
+	const decision = reason === "streaming" ? idleActionPolicy("update") : null;
+	logger.warn(
+		decision && !decision.allowed
+			? decision.message
+			: `Software update refused: ${reason}`,
+	);
 	return { started: false, reason };
 }
 
