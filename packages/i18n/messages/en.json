@@ -2939,6 +2939,12 @@
 	"settings.dialogs.shutdown_unavailable": "Shutdown is unavailable. Check the system service before trying again.",
 	"settings.dialogs.shutdown_uncertain": "The power request could not be confirmed. Check the box before trying again.",
 	"settings.dialogs.powerOverride": "Emergency override (root): run systemctl stop ceralive, then systemctl reboot. This stops streams, disconnects clients and closes this interface.",
+	"settings.streamIdStored": "A Stream ID is saved. Leave unchanged to retain it, type to replace, or clear explicitly.",
+	"settings.streamIdSecurity": "May be a publish key. Sent in clear on the wire, even with SRT encryption.",
+	"settings.streamIdHide": "Hide typed value",
+	"settings.streamIdShow": "Show typed value",
+	"settings.streamIdClearing": "The Stream ID will be cleared when you save.",
+	"settings.streamIdClear": "Clear Stream ID",
 	"live.audioMixer.error.audio_input_primary": "The main input always stays in the mix. To turn it off, choose another audio source.",
 	"live.layout.insetCancel": "Press Escape before letting go to put it back where it was."
 }

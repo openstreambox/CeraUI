@@ -2939,6 +2939,12 @@
 	"settings.dialogs.shutdown_unavailable": "Herunterfahren ist nicht verfügbar. Vor einem neuen Versuch den Systemdienst prüfen.",
 	"settings.dialogs.shutdown_uncertain": "Die Energieaktion konnte nicht bestätigt werden. Vor einem neuen Versuch das Gerät prüfen.",
 	"settings.dialogs.powerOverride": "Notfallzugriff (root): systemctl stop ceralive und danach systemctl reboot ausführen. Dies beendet Streams, trennt Clients und schließt diese Oberfläche.",
+	"settings.streamIdStored": "Eine Stream-ID ist gespeichert. Unverändert lassen zum Beibehalten, neu eingeben zum Ersetzen oder ausdrücklich löschen.",
+	"settings.streamIdSecurity": "Kann ein Sendeschlüssel sein. Wird auch mit SRT-Verschlüsselung unverschlüsselt übertragen.",
+	"settings.streamIdHide": "Eingabe verbergen",
+	"settings.streamIdShow": "Eingabe anzeigen",
+	"settings.streamIdClearing": "Die Stream-ID wird beim Speichern gelöscht.",
+	"settings.streamIdClear": "Stream-ID löschen",
 	"live.audioMixer.error.audio_input_primary": "Der Haupteingang bleibt immer im Mix. Wähle eine andere Audioquelle, um ihn auszuschalten.",
 	"live.layout.insetCancel": "Drücke Esc, bevor du loslässt, um die vorherige Position wiederherzustellen."
 }

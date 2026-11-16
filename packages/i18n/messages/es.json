@@ -2942,6 +2942,12 @@
 	"settings.dialogs.shutdown_unavailable": "El apagado no está disponible. Revisa el servicio del sistema antes de volver a intentarlo.",
 	"settings.dialogs.shutdown_uncertain": "No se pudo confirmar la solicitud. Revisa el equipo antes de volver a intentarlo.",
 	"settings.dialogs.powerOverride": "Anulación de emergencia (root): ejecuta systemctl stop ceralive y luego systemctl reboot. Esto detiene las transmisiones, desconecta a los clientes y cierra esta interfaz.",
+	"settings.streamIdStored": "Hay un ID guardado. Déjalo sin cambios para conservarlo, escribe para reemplazarlo o bórralo explícitamente.",
+	"settings.streamIdSecurity": "Puede ser una clave de publicación. Se envía sin cifrar, incluso con cifrado SRT.",
+	"settings.streamIdHide": "Ocultar valor escrito",
+	"settings.streamIdShow": "Mostrar valor escrito",
+	"settings.streamIdClearing": "El ID de transmisión se borrará cuando guardes.",
+	"settings.streamIdClear": "Borrar ID de transmisión",
 	"live.audioMixer.error.audio_input_primary": "La entrada principal siempre se queda en la mezcla. Para desactivarla, elige otra fuente de audio.",
 	"live.layout.insetCancel": "Presiona Escape antes de soltarla para dejarla donde estaba."
 }
