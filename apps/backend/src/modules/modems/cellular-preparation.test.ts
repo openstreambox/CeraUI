@@ -414,3 +414,73 @@ test("a start during QMAP takeover prevents commands and reset", async () => {
 	expect(f.calls).not.toContain("serial-reset");
 	expect(f.calls).toContain("release");
 });
+
+// Each asynchronous boundary can let a stream start before the reset.
+for (const kind of ["qmap", "eps"] as const) {
+	for (const point of ["before-attempt", "attempt-write", "setter"] as const) {
+		test(`${kind} retries after a stream starts at ${point} without consuming its attempt`, async () => {
+			const f = fixture();
+			const run = (deps = f.deps) =>
+				prepareCellularActivation(UUID, f.target(), policy, f.current, deps);
+			if (kind === "eps") {
+				f.setQmap(0);
+				expect(await run()).toBe("pending");
+			}
+			let busy = false;
+			const deps: CellularPreparationDeps = {
+				...f.deps,
+				busy: () => busy,
+				write: async (record) => {
+					await f.deps.write(record);
+					if (
+						record.kind === kind &&
+						((point === "before-attempt" && record.phase === "baseline") ||
+							(point === "attempt-write" && record.phase === "awaiting-usb"))
+					)
+						busy = true;
+				},
+				acquire: async (target) => {
+					const control = await f.deps.acquire(target);
+					return {
+						...control,
+						disableAutoConnect: async () => {
+							const result = await control.disableAutoConnect();
+							if (kind === "qmap" && point === "setter") busy = true;
+							return result;
+						},
+					};
+				},
+				setEps: async (target, desired) => {
+					const result = await f.deps.setEps(target, desired);
+					if (kind === "eps" && point === "setter") busy = true;
+					return result;
+				},
+			};
+			expect(await run(deps)).toBe("pending");
+			expect(busy).toBe(true);
+			expect(f.calls).not.toContain("serial-reset");
+			expect(f.calls).not.toContain("host-reset");
+			if (point !== "setter")
+				expect(f.calls).not.toContain(kind === "qmap" ? "qmap-fix" : "eps-set");
+			expect(
+				[...f.records.values()].find((record) => record.kind === kind),
+			).toMatchObject({
+				phase: "baseline",
+				...(kind === "eps" ? { attempted: false } : { original: 1 }),
+			});
+			if (point === "before-attempt")
+				expect(f.calls).not.toContain(`persist-${kind}-awaiting-usb`);
+			// No USB reset occurred. The same epoch must remain retryable past 75 s.
+			f.age();
+			let outcome = await run();
+			for (let i = 0; i < 6 && outcome !== "ready"; i++) {
+				expect(outcome).not.toBe("blocked");
+				outcome = await run();
+			}
+			expect(outcome).toBe("ready");
+			expect(
+				[...f.records.values()].find((record) => record.kind === kind)?.phase,
+			).toBe("verified");
+		});
+	}
+}
