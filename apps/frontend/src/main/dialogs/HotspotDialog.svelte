@@ -259,12 +259,15 @@ const passwordError = $derived(
 // also refreshes the form's password, so a later Save cannot put the old one back.
 //
 // The record belongs to one owner: the form binding (radio, link, dialog
-// session), the config key and the op attempt it began. The form takes the new
-// password from an authoritative signal: the device's confirmation of THAT
-// attempt, or live credentials on the bound radio that already carry it. The
+// session), the config key and the op attempt it began. Only THAT attempt can
+// write the field, from an authoritative signal: the device's confirmation, or
+// live credentials on the bound radio that already carry the new password. The
 // dispatch ack is not waited for: the confirmation already re-enables Save, so a
 // form still holding the revoked password in that gap could send it straight
-// back. The ack only drops a dispatch that was refused or never sent. Closing,
+// back. A timeout also writes the field: the operator asked to revoke the old
+// password and accepted the drop, so a later Save completes the renewal instead
+// of undoing it. The ack only drops a dispatch that was refused or never sent.
+// An operator edit of the password field wins over the renewal. Closing,
 // rebinding, a failure or a replacing dispatch drops the record, so a late
 // completion can never write into a form it no longer owns.
 type Renewal = {
@@ -303,19 +306,19 @@ $effect(() => {
 			return;
 		}
 		if (record.attempt === undefined) return;
-		const ours = attempt === record.attempt;
-		if (ours && phase === 'failed') {
+		// Replaced by another dispatch or released: never ours to write again.
+		if (attempt !== record.attempt) {
 			renewal = undefined;
 			return;
 		}
-		if ((ours && phase === 'confirmed') || live === record.password) {
+		if (phase === 'failed') {
+			renewal = undefined;
+			return;
+		}
+		if (phase === 'confirmed' || phase === 'timed_out' || live === record.password) {
 			password = record.password;
 			renewal = undefined;
-			return;
 		}
-		// Another dispatch under this key replaced it before it was confirmed.
-		// (A timed-out attempt stays: its live credentials may still arrive.)
-		if (attempt !== undefined && !ours) renewal = undefined;
 	});
 });
 
@@ -599,6 +602,10 @@ async function copyPassword() {
 					placeholder={m["hotspotConfigurator.hotspot.placeholderPassword"]()}
 					type={showPassword ? 'text' : 'password'}
 					aria-invalid={Boolean(passwordError)}
+					oninput={() => {
+						// The operator's own password wins over a renewal in flight.
+						renewal = undefined;
+					}}
 					bind:value={password}
 				/>
 				<div class="absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">

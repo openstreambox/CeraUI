@@ -2,12 +2,14 @@
 /**
  * New Wi-Fi password through the real hotspot dialog: once a renewal completes,
  * the editable password field holds the NEW password, so a later Save can never
- * put the revoked one back. "Completes" means an authoritative signal for that
- * one attempt: the device's `hotspot.config` confirmation (which also re-enables
- * Save, so the field must not wait for the dispatch ack), or live credentials on
- * the same radio that already carry the new password. A dispatch ack alone
- * changes nothing. A renewal whose dialog closed or rebound while it was in
- * flight never writes into the form that replaced it.
+ * put the revoked one back. Only that renewal's own attempt writes the field,
+ * from an authoritative signal: the device's `hotspot.config` confirmation
+ * (which also re-enables Save, so the field must not wait for the dispatch ack),
+ * or live credentials on the same radio that already carry the new password. A
+ * timeout writes it too, so a later Save completes the renewal. A dispatch ack
+ * alone changes nothing, and the operator's own edit always wins. A renewal
+ * whose dialog closed or rebound, or that another dispatch replaced, never
+ * writes into the form.
  */
 import type { WifiInterface } from "@ceraui/rpc/schemas";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
@@ -23,6 +25,7 @@ import {
 } from "vitest";
 
 import {
+	clearOperation,
 	destroyAsyncOperations,
 	getOperationPhase,
 	initAsyncOperations,
@@ -111,6 +114,12 @@ const flush = async () => {
 		await tick();
 	}
 };
+
+function nameField(): HTMLInputElement {
+	const element = document.querySelector<HTMLInputElement>("#hotspot-name");
+	if (!element) throw new Error("name field did not render");
+	return element;
+}
 
 function passwordField(): HTMLInputElement {
 	const element = document.querySelector<HTMLInputElement>("#hotspot-password");
@@ -242,11 +251,7 @@ describe("a completed renewal refreshes the editable password", () => {
 		});
 		await flush();
 		// Save is enabled again in this gap; change another setting and press it.
-		await fireEvent.input(
-			document.querySelector<HTMLInputElement>("#hotspot-name") ??
-				passwordField(),
-			{ target: { value: "renamed-box" } },
-		);
+		await fireEvent.input(nameField(), { target: { value: "renamed-box" } });
 		await save();
 		expect(configure).toHaveBeenCalledTimes(2);
 		expect(configure).toHaveBeenLastCalledWith(
@@ -263,12 +268,62 @@ describe("a completed renewal refreshes the editable password", () => {
 		expect(passwordField().value).toBe("renewed-pass-1");
 	});
 
-	it("a renewal whose wait timed out still takes the new password from live credentials", async () => {
-		const view = open();
+	it("timed out with no live update: the field takes the new password, so Save completes the renewal", async () => {
+		open();
 		await renew();
 		timeoutOperation(wifiHotspotConfigOpKey("0", "radio-A"));
 		await flush();
-		expect(passwordField().value).toBe("revoked-password");
+		expect(passwordField().value).toBe("renewed-pass-1");
+		await fireEvent.input(nameField(), { target: { value: "renamed-box" } });
+		await save();
+		expect(configure).toHaveBeenCalledTimes(2);
+		expect(configure).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				name: "renamed-box",
+				password: "renewed-pass-1",
+			}),
+		);
+	});
+
+	for (const signal of ["confirmation", "timeout", "live status"] as const) {
+		it(`a password the operator types during the wait wins over the ${signal}`, async () => {
+			const view = open();
+			await renew();
+			await fireEvent.input(passwordField(), {
+				target: { value: "typed-password" },
+			});
+			if (signal === "confirmation") confirmFrame();
+			if (signal === "timeout")
+				timeoutOperation(wifiHotspotConfigOpKey("0", "radio-A"));
+			if (signal === "live status") {
+				wire.message("status", {
+					wifi: { "0": row("radio-A", "renewed-pass-1") },
+				});
+				await view.rerender({
+					open: true,
+					deviceId: "0",
+					iface: row("radio-A", "renewed-pass-1"),
+				});
+			}
+			await flush();
+			expect(passwordField().value).toBe("typed-password");
+		});
+	}
+
+	it("a renewal replaced by another dispatch never writes the field, even from matching live credentials", async () => {
+		const key = wifiHotspotConfigOpKey("0", "radio-A");
+		const renewalAck = deferred<ConfigureResult>();
+		configure.mockReturnValueOnce(renewalAck.promise);
+		const view = open();
+		await renew();
+		// The renewal's op is released, and a Save takes the key over.
+		clearOperation(key);
+		await flush();
+		await fireEvent.input(nameField(), { target: { value: "renamed-box" } });
+		await save();
+		expect(configure).toHaveBeenCalledTimes(2);
+		expect(getOperationPhase(key)).toBe("pending");
+		// A late status carries the old renewal's password: not this Save's.
 		wire.message("status", {
 			wifi: { "0": row("radio-A", "renewed-pass-1") },
 		});
@@ -277,8 +332,12 @@ describe("a completed renewal refreshes the editable password", () => {
 			deviceId: "0",
 			iface: row("radio-A", "renewed-pass-1"),
 		});
+		renewalAck.resolve({ success: true });
 		await flush();
-		expect(passwordField().value).toBe("renewed-pass-1");
+		expect(passwordField().value).toBe("revoked-password");
+		confirmFrame();
+		await flush();
+		expect(passwordField().value).toBe("revoked-password");
 	});
 
 	it("a failed renewal leaves the form alone and is not applied by a later Save's confirmation", async () => {
