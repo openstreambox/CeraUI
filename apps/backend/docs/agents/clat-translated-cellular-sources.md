@@ -7,7 +7,7 @@ source rules, routes and NAT. CeraUI owns none of it and never writes there.
 
 `modules/network/clat-translation.ts` reads the service's v2 snapshots,
 `/run/ceralive/clat/<ifindex>.json` (the image's `docs/cellular-clat.md` is the
-contract), on its own two-second poll, never in the interface publication path.
+contract), on its own two-second poll and again inside the serialized bond writer immediately before publication.
 A translation is usable only when all of these hold; anything else is
 unavailable:
 
@@ -19,7 +19,8 @@ unavailable:
 - `boot_id` is this boot and `state` is `up` with a prefix and a TUN ifindex;
 - on CLOCK_BOOTTIME (`/proc/uptime`, suspend included)
   `0 <= observed_at <= now < expires_at`, with `expires_at - observed_at == 30`.
-  Only `/proc/uptime`'s 10 ms resolution is allowed for `observed_at`.
+  Future observations are rejected. Expiry uses the upper end of the 10 ms
+  `/proc/uptime` quantum, so truncation cannot extend the lease.
   `updated_at` is diagnostic only. `last_error` alone does not reject an `up`
   lease;
 - `ceralive-clat.service` is active and running with a live MainPID, and its
@@ -31,7 +32,8 @@ unavailable:
 The cached view keeps each lease's `expires_at`, and `clatTranslationFor`
 re-checks it against CLOCK_BOOTTIME at every bond read, so an expired lease
 drops out before the next poll and reading never renews it. A translation's
-generation is boot, invocation, `generation` and both ifindices; a changed
+generation includes boot, invocation, `generation`, both ifindices, the parent
+name, translated IPv4 and physical modem key; a changed
 generation withdraws the link for one poll before it is offered again, so the
 sender's reload path sees a withdrawal, never a silent swap. A poll that changes
 the set offered to the bond republishes the interfaces.
@@ -42,5 +44,11 @@ out of the bond. The bond entry carries the TUN as its interface, so the sender
 binds the translated IPv4 to the TUN, as the image contract specifies. A
 dual-stack link keeps its native IPv4 path: the service creates no TUN for it.
 
-Not done here: the network list still shows the TUN by its own name rather than
-under its modem.
+The wire projection hides translator rows and puts their address, eligibility
+and counters on the parent modem. Bond entries use the parent's physical link
+identity with the TUN as bind device. `clatGeneration` is private writer metadata:
+it participates in mapping equality and advances the existing sidecar generation;
+it adds no sender schema or remote-status field. Queue removals cannot be
+superseded by later admissions. The writer rechecks snapshot, live unit, parent
+identity and TUN topology after queued work and before writing, including retries.
+The TUN suffix accepts a positive kernel ifindex through ten decimal digits.
