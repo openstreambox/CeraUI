@@ -311,7 +311,12 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 	// traffic only while its snapshot says so, and follows the modem's toggle.
 	if (isClatTunName(name)) {
 		const translation = clatTranslationFor(name, int.ip);
-		if (!translation || isBondOptedOut(translation.parent)) return false;
+		if (
+			!translation ||
+			isBondOptedOut(translation.parent) ||
+			!isBondLinkMappable(name, int.ip)
+		)
+			return false;
 	}
 	if (isBondIdentityPending(name, int)) return false;
 	if (isConcurrentApIfname(name)) return false;
