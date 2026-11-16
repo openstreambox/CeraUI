@@ -399,3 +399,18 @@ test("a replacement unit never inherits another unit's QMAP readback or baseline
 	expect(replacement.calls).toContain("qmap-read");
 	expect(replacement.calls).not.toContain("qmap-fix");
 });
+
+test("a start during QMAP takeover prevents commands and reset", async () => {
+	const f = fixture("000000000000007");
+	const result = await prepareCellularActivation(
+		UUID,
+		f.target(),
+		policy,
+		f.current,
+		{ ...f.deps, busy: () => true },
+	);
+	expect(result).toBe("pending");
+	expect(f.calls).not.toContain("qmap-fix");
+	expect(f.calls).not.toContain("serial-reset");
+	expect(f.calls).toContain("release");
+});

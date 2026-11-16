@@ -3,7 +3,7 @@ import {
 	nmConnGetFields,
 	nmConnSetFields,
 } from "../network/network-manager.ts";
-import { getIsStreaming } from "../streaming/streaming.ts";
+import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import {
 	type CarrierIntentIdentity,
 	effectiveCarrierAutomatic,
@@ -78,6 +78,7 @@ export interface CellularPreparationDeps {
 	readonly intent: typeof readCarrierIntent;
 	readonly journal: typeof withJournaledModemMutation;
 	readonly now: () => number;
+	readonly busy?: () => boolean;
 	readonly autoConfigSupported: () => boolean;
 }
 export const defaultCellularPreparationDeps: CellularPreparationDeps = {
@@ -95,6 +96,7 @@ export const defaultCellularPreparationDeps: CellularPreparationDeps = {
 	intent: readCarrierIntent,
 	journal: withJournaledModemMutation,
 	now: Date.now,
+	busy: () => getStreamLifecycleState() !== "idle",
 	autoConfigSupported: resolveGsmAutoconfigSupport,
 };
 export type PreparationOutcome =
@@ -247,6 +249,7 @@ async function prepareUnit(
 	}
 	const control = await deps.acquire(target);
 	try {
+		if (deps.busy?.()) return "pending";
 		const value = await control.readAutoConnect();
 		if (value === undefined) return "blocked";
 		if (!record) {
@@ -279,6 +282,7 @@ async function prepareUnit(
 			await deps.write({ ...record, phase: "blocked" });
 			return "blocked";
 		}
+		if (deps.busy?.()) return "pending";
 		try {
 			await control.reset();
 		} catch {
@@ -353,7 +357,12 @@ async function prepareEps(
 		started: deps.now(),
 	};
 	await deps.write(record);
-	if (!(await deps.setEps(target, desired)) || !(await deps.reset(target))) {
+	if (deps.busy?.()) return "pending";
+	if (
+		!(await deps.setEps(target, desired)) ||
+		deps.busy?.() ||
+		!(await deps.reset(target))
+	) {
 		await deps.write({ ...record, phase: "blocked" });
 		return "blocked";
 	}
@@ -533,12 +542,15 @@ function subscriptionForTarget(target: CellularControlTarget) {
 }
 
 export async function runCellularPreparation(
-	streaming: () => boolean = getIsStreaming,
+	streaming: () => boolean = () => getStreamLifecycleState() !== "idle",
+	skip: readonly number[] = [],
 ): Promise<void> {
 	// Preparation can reset a module. Existing profiles may already carry a
 	// stream, so it waits until no stream runs; a new stream is not delayed.
 	if (streaming()) return;
 	for (const id of getModemIds()) {
+		if (streaming()) return;
+		if (skip.includes(id)) continue;
 		const config = getModem(id)?.config,
 			key = modemStableKeyForId(id);
 		if (!config?.conn || !config.autoconfig || !key) continue;

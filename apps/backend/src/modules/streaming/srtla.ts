@@ -19,6 +19,7 @@ import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 
 import { logger } from "../../helpers/logger.ts";
 
+import { readClatTranslations } from "../network/clat-translation.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
 import { queueUpdateGw } from "../network/gateways.ts";
 import {
@@ -164,6 +165,32 @@ export interface SrtlaPublishOptions extends SrtlaReloadOptions {
 const isStreamingNow = async () =>
 	(await import("./streaming.ts")).getIsStreaming();
 
+/** Recheck the producer and topology immediately before a queued write. */
+export async function revalidateClatBondEntries(
+	entries: readonly BondEntry[],
+	read: typeof readClatTranslations = readClatTranslations,
+): Promise<readonly BondEntry[]> {
+	if (!entries.some((e) => e.clatGeneration !== undefined)) return entries;
+	let fresh: Awaited<ReturnType<typeof readClatTranslations>>;
+	try {
+		fresh = await read();
+	} catch {
+		fresh = new Map();
+	}
+	return entries.filter((e) => {
+		if (e.clatGeneration === undefined) return true;
+		const live = fresh.get(e.iface);
+		const int = getNetworkInterfaces()[e.iface];
+		return (
+			live?.generation === e.clatGeneration &&
+			live.ipv4 === e.ip &&
+			describeBondEntry(e.iface, e.ip, false).linkId === e.linkId &&
+			int !== undefined &&
+			isBondCandidate(e.iface, int)
+		);
+	});
+}
+
 /**
  * Publish the IP list and its sidecar, then keep the telemetry registry in step.
  *
@@ -189,6 +216,11 @@ export async function publishSrtlaBond(
 ): Promise<BindMapPublication> {
 	return publishBondMapping(entries, {
 		...writerDeps,
+		prepareEntries: async (submitted) => {
+			const prepared =
+				(await writerDeps.prepareEntries?.(submitted)) ?? submitted;
+			return revalidateClatBondEntries(prepared);
+		},
 		onSettled: (published, publication, origin) => {
 			writerDeps.onSettled?.(published, publication, origin);
 			// Keys the telemetry registry on the ids just published, so a rendered row
