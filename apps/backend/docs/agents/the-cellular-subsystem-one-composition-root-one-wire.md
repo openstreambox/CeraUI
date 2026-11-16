@@ -440,3 +440,82 @@ alone requires the NEXT STEP two sections above (setting `modem_backend: "dbus"`
 on a real board) to have even started, and it hasn't. This todo documents the
 condition; it does not — and must not — trigger any part of it.
 
+
+### Existing automatic profile APNs
+
+`automatic-carrier-profile.ts` converges the stored APN and bearer-family fields
+for an existing, exact device+SIM profile on an admitted NM transport. It uses
+subscription evidence and preserves manual, unknown and unqualified policy.
+It retains versioned inverses alongside the earlier family-only inverse.
+
+The private `automatic-carrier-intent.ts` store keeps logical operator intent
+separate from NM's auto-config bit, which must be off for an explicit APN. Its
+profile/equipment/SIM key is hashed; files are private, atomically replaced and
+fsynced. Pending intent precedes the NM write; applied intent follows verified
+readback. A manual save persists manual intent before its NM write, including
+when the APN is unchanged. Corrupt authority defers rather than assuming absence.
+An applied APN is a conflict witness, never carrier identity.
+
+The isolated real-NM fixture uses a private system bus, state/config directories,
+network and mount namespaces, with host rfkill hidden. It verifies profile writes,
+intent rehydration and manual retirement. It does not model a modem, initial
+activation, transport preparation, grants, CLAT or data-path qualification.
+
+### Disarmed creation and transport preparation
+
+Registration is read-only. The late-SIM owner creates a profile only with an
+identity-resolved lifecycle lease and a journaled preallocated UUID. Creation
+always uses autoconnect=no; it retains private automatic intent and verifies the
+exact pair/name/flag. Its inverse removes only that inactive, disarmed exact
+profile, verifies absence, then retires intent. A lost create reply is recoverable
+without guessing a UUID. Other SIMs' operator-code settings are never copied.
+
+`cellular-preparation.ts` owns automatic NM activation admission. It retains the
+original profile/autoconnect policy in private durable state and leaves owned
+automatic profiles disarmed across USB and process return. Manual saves release
+the original flag; a profile born under this owner becomes autoconnectable when
+saved manually. A new generic owned profile can delegate APN lookup to a positively
+probed NM capability. Existing unknown/manual/unqualified policy is preserved.
+
+The existing modem transport facade verifies driver/composition, current physical
+pair, USB generation and interface index. Its serial session selects an observed
+USB interface (udev's primary AT marker resolves multiple candidates), never a
+tty number. A dedicated non-reconnecting inhibition connection uses a 300 s
+acquisition timeout, validates acknowledgement and whole-field numeric subscriber
+identity, and revokes on service-owner change or bus loss. Serial IO is bounded,
+descriptor-anchored, and handles EAGAIN without treating it as a lost device.
+
+QMAP baseline is per equipment and readback per USB generation; EPS baseline and
+spent-attempt authority are per equipment/SIM. Failed setters consume the EPS
+attempt. Reset return must verify the result, otherwise it blocks. Raw-IP's
+private baseline precedes its write; global addresses must be absent, link down,
+and readback successful before explicit activation. Firmware effects whose
+restoration is unverified retain the existing mutation block and private baseline
+for explicit recovery. No automatic repeated reset is used to escape that state.
+
+The private JSON file primitive is shared with carrier intent: anchored directory,
+no-follow bounded reads, strict JSON/UTF-8, private ownership, atomic replacement
+and file/parent fsync. The required real-NM fixture includes disarmed creation and
+its exact inverse. Unit replay covers QMAP unit/generation behavior, EPS spent
+attempts, raw-IP ordering and control-session revocation. Hardware qualification,
+internal-call ownership, CLAT and per-path traffic health are separate gates.
+
+### Persistent cellular authority
+
+Default carrier-intent and preparation access uses `/data/ceralive`, shared across
+OS slots. `cellular-authority-store.ts` checks the previous `/var/lib/ceralive`
+slot under a short kernel lease before either reading absence or updating state.
+It validates the complete record and hashed slot, durably copies it, then commits
+a per-slot source digest receipt. The legacy file is retained. A lost copy or
+receipt acknowledgement never authorizes an effect; an identical copy can retry.
+The receipt permits later current-state updates/deletion without resurrecting old
+intent or an EPS baseline. Conflicting copies, changed legacy authority, damaged
+records and lock contention defer work. Explicit store overrides are independent.
+The old writer must be stopped during upgrade; this does not grant two controller
+versions concurrent ownership or make an older version understand the new store.
+The existing mutation replay inventories all retained pairs before lowering its
+boot barrier, including absent SIMs. Damaged or changing inventories keep that
+same capped retry owner active. Default-store faults invalidate its existing
+revision and raise the same barrier; runtime verification reads inventories and
+never migrates or repeats hardware. Current-state writes participate in that
+revision. This is storage/recovery host evidence, not modem reboot qualification.
