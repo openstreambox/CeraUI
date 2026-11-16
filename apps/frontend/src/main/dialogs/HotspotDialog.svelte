@@ -260,18 +260,19 @@ const passwordError = $derived(
 //
 // The record belongs to one owner: the form binding (radio, link, dialog
 // session), the config key and the op attempt it began. The form takes the new
-// password only once BOTH the dispatch ack and the device's confirmation of
-// that same attempt have arrived, in either order. Closing, rebinding, a
-// failure or a replaced attempt drops the record, so a late completion can never
-// write into a form it no longer owns.
+// password from an authoritative signal: the device's confirmation of THAT
+// attempt, or live credentials on the bound radio that already carry it. The
+// dispatch ack is not waited for: the confirmation already re-enables Save, so a
+// form still holding the revoked password in that gap could send it straight
+// back. The ack only drops a dispatch that was refused or never sent. Closing,
+// rebinding, a failure or a replacing dispatch drops the record, so a late
+// completion can never write into a form it no longer owns.
 type Renewal = {
 	readonly id: object;
 	readonly binding: WifiRadioBinding;
 	readonly key: string;
 	readonly password: string;
 	readonly attempt: symbol | undefined;
-	readonly acked: boolean;
-	readonly confirmed: boolean;
 };
 let renewal = $state.raw<Renewal | undefined>(undefined);
 
@@ -281,17 +282,12 @@ function startRenewal() {
 	const id = {};
 	const key = configKey;
 	const next = generateHotspotPassword();
-	const update = (patch: Partial<Renewal>) => {
-		if (renewal?.id === id) renewal = { ...renewal, ...patch };
-	};
-	renewal = { id, binding, key, password: next, attempt: undefined, acked: false, confirmed: false };
-	void renewHotspotPassword(deviceId, iface, () => next, (attempt) => update({ attempt })).then(
-		(sent) => {
-			if (renewal?.id !== id) return;
-			if (sent === undefined) renewal = undefined;
-			else update({ acked: true });
-		},
-	);
+	renewal = { id, binding, key, password: next, attempt: undefined };
+	void renewHotspotPassword(deviceId, iface, () => next, (attempt) => {
+		if (renewal?.id === id) renewal = { ...renewal, attempt };
+	}).then((sent) => {
+		if (renewal?.id === id && sent === undefined) renewal = undefined;
+	});
 }
 
 $effect(() => {
@@ -300,30 +296,26 @@ $effect(() => {
 	const owned = record.key === configKey && current(record.binding);
 	const phase = getOperationPhase(record.key);
 	const attempt = getOperationAttempt(record.key);
+	const live = iface?.hotspot?.password;
 	untrack(() => {
 		if (!owned) {
 			renewal = undefined;
 			return;
 		}
 		if (record.attempt === undefined) return;
-		let confirmed = record.confirmed;
-		if (attempt === record.attempt) {
-			if (phase === 'failed' || phase === 'timed_out') {
-				renewal = undefined;
-				return;
-			}
-			if (phase === 'confirmed') confirmed = true;
-		} else if (!confirmed) {
-			// Replaced or cleared before this attempt was confirmed: not ours to apply.
+		const ours = attempt === record.attempt;
+		if (ours && phase === 'failed') {
 			renewal = undefined;
 			return;
 		}
-		if (confirmed && record.acked) {
+		if ((ours && phase === 'confirmed') || live === record.password) {
 			password = record.password;
 			renewal = undefined;
-		} else if (confirmed !== record.confirmed) {
-			renewal = { ...record, confirmed };
+			return;
 		}
+		// Another dispatch under this key replaced it before it was confirmed.
+		// (A timed-out attempt stays: its live credentials may still arrive.)
+		if (attempt !== undefined && !ours) renewal = undefined;
 	});
 });
 

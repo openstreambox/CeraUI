@@ -68,8 +68,10 @@ every client drops. The card asks first and names that cost, plus
 the box. In the hotspot dialog a completed renewal also replaces the editable
 password, so a later Save cannot restore the revoked one. The dialog keeps a
 reactive renewal record bound to its form binding (radio, link, dialog session),
-the config key and the op attempt (`getOperationAttempt`), and writes the field
-only when the dispatch ack and the `hotspot.config` confirmation of that attempt
-have both arrived, in either order. Close, rebind, failure, timeout or a replaced
-attempt drops the record.
+the config key and the op attempt (`getOperationAttempt`). It writes the field as
+soon as the `hotspot.config` confirmation of that attempt arrives, or live
+credentials on the bound radio already carry the new password, without waiting
+for the dispatch ack: the confirmation re-enables Save, so waiting would leave a
+gap in which Save re-sends the revoked password. The ack only drops a refused
+dispatch. Close, rebind, failure or a replacing dispatch drops the record.
 
