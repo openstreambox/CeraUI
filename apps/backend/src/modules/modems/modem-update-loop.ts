@@ -352,11 +352,11 @@ export async function runModemStatusPoll(): Promise<void> {
 	await withModemUpdateLock(() => reconcileModemPresenceLocked(false));
 	// The USB 2 switch is a transport fix for any SIM, so it comes before the
 	// carrier-dependent steps and does not wait for registration.
-	await runUsbSpeedPreparation();
-	const automatic = await runAutomaticCarrierProfiles();
-	await runCellularPreparation();
+	const reset = await runUsbSpeedPreparation();
+	const automatic = await runAutomaticCarrierProfiles(reset);
+	await runCellularPreparation(undefined, reset);
 	const configured = [
-		...new Set([...automatic, ...(await runModemReadyActivations())]),
+		...new Set([...automatic, ...(await runModemReadyActivations(reset))]),
 	];
 	if (configured.length > 0) {
 		for (const id of configured) triggerGsmConnectionsReset(id);
