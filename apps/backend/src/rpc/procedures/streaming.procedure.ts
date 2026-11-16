@@ -39,6 +39,7 @@ import {
 	setMockHardwareOutputSchema,
 	setSourceVisibilityInputSchema,
 	setSourceVisibilityOutputSchema,
+	srtEncryptionUnavailable,
 	streamHealthOutputSchema,
 	streamingConfigInputSchema,
 	streamingSetConfigInputSchema,
@@ -808,6 +809,13 @@ export const setConfigProcedure = authedProcedure
 	.output(streamingSetConfigOutputSchema)
 	.handler(async ({ input }) => {
 		const config = getConfig();
+		if (input.srt_passphrase !== "" && srtEncryptionUnavailable(input)) {
+			return {
+				success: false,
+				error: "SRT output encryption is not supported by this engine binding",
+				applied: {},
+			};
+		}
 
 		// Device-first source selection (T3). Resolve at the PROCEDURE, BEFORE any
 		// merge: an unknown source rejects with disk unchanged; a known source folds
@@ -1146,6 +1154,15 @@ export const setConfigProcedure = authedProcedure
 			input.srtla_addr !== undefined
 		) {
 			config.selected_ingest_endpoint = undefined;
+		}
+
+		// SRT output encryption is gated off, so the only write it can make is the
+		// explicit clear (the guard at the top refuses any non-empty passphrase).
+		// It stays apart from the destination writes above, which only decide
+		// where the stream goes.
+		if (input.srt_passphrase === "") {
+			config.srt_passphrase = undefined;
+			config.srt_pbkeylen = undefined;
 		}
 
 		// Reflect the post-clamp config values back for every field the input

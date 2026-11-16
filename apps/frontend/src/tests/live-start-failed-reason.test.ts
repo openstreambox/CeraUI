@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
 				retriable: boolean;
 				attemptId: string;
 				message?: string;
+				code?: string;
 				captureCause?: string;
 		  }
 		| undefined,
@@ -305,4 +306,23 @@ describe("LiveView typed start-failure rendering (Todo 29)", () => {
 		expect(shown).not.toContain("hw:CARD=");
 		expect(shown).not.toContain("journalctl");
 	});
+});
+
+it("explains retained encryption refusal without rendering raw diagnostics", async () => {
+	state.failure = {
+		class: "start_invalid",
+		phase: "params",
+		code: "srt_encryption_unavailable",
+		retriable: false,
+		attemptId: "att_encryption",
+		message: "synthetic-secret-diagnostic",
+	};
+	render(LiveView);
+	await tick();
+	expect(toastError).toHaveBeenCalledWith(
+		`Saved SRT encryption settings are not supported. Clear them before starting. ${startFailure.notRetriable}`,
+	);
+	expect(JSON.stringify(toastError.mock.calls)).not.toContain(
+		"synthetic-secret",
+	);
 });

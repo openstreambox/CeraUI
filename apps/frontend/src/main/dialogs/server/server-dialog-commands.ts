@@ -84,11 +84,14 @@ interface SaveServerOptions {
 export async function saveServerConfig(
 	options: SaveServerOptions,
 ): Promise<SaveServerResult> {
-	const fields = Object.entries(options.input);
-	for (const [field, value] of fields) {
-		if (field !== "srt_streamid" && field !== "relay_streamid_override")
-			markPending(field, value);
-	}
+	// Write-only credentials must not enter the client config/dirty-state cache.
+	const fields = Object.entries(options.input).filter(
+		([field]) =>
+			!["srt_passphrase", "srt_streamid", "relay_streamid_override"].includes(
+				field,
+			),
+	);
+	for (const [field, value] of fields) markPending(field, value);
 	try {
 		const result = await (options.hostAdapter?.setConfig(options.input) ??
 			rpc.streaming.setConfig(options.input));
