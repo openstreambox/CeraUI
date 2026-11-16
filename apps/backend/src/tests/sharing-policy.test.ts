@@ -175,7 +175,7 @@ test("queued policy writes serialize and failed reconciliation does not poison t
 	expect(owner.get().administrativelyDown).toEqual([]);
 });
 
-test("startup exclusion flushes recovered client marks while retaining healthy routes", async () => {
+test("startup exclusion retains recovered routes without inferring client flushes", async () => {
 	const routes = candidates.map(({ uplink }) => ({
 		...uplink,
 		sourceAddress: "192.0.2.2",
@@ -208,9 +208,6 @@ test("startup exclusion flushes recovered client marks while retaining healthy r
 			mode: "cellular-only",
 		}).map((c) => c.uplink),
 	});
-	expect(effects).toEqual([
-		"rules",
-		`flush:${candidates[0]?.uplink.mark}`,
-		`flush:${candidates[2]?.uplink.mark}`,
-	]);
+	// A recovered route is no evidence of client flows on an excluded mark.
+	expect(effects).toEqual(["rules"]);
 });
