@@ -143,7 +143,9 @@ export function acknowledgeKernelState(
 	const state = kernelStateSchema.parse(parseAuthorityJson(text));
 	if (state.attempt !== attempt || kernelPending(state) || state.acknowledged)
 		return;
-	writeFileAtomicSync(file, JSON.stringify({ ...state, acknowledged: true }));
+	writeFileAtomicSync(file, JSON.stringify({ ...state, acknowledged: true }), {
+		mode: 0o600,
+	});
 	syncOrchestratorDirectory(file);
 }
 
