@@ -165,9 +165,12 @@ async function readReadiness(
 }
 
 /** The retained status poll calls this only AFTER releasing its reconcile lock. */
-export async function runModemReadyActivations(): Promise<readonly ModemId[]> {
+export async function runModemReadyActivations(
+	skip: readonly number[] = [],
+): Promise<readonly ModemId[]> {
 	const configured: ModemId[] = [];
 	for (const id of getModemIds()) {
+		if (skip.includes(id)) continue;
 		const modem = getModem(id);
 		if (
 			modem?.data_connection_failed === true &&
