@@ -1782,6 +1782,7 @@ export const SUPPORT_LOG_DYNAMIC_CALLS: readonly string[] = [
 	"src/modules/cellular/shadow-divergence.ts: logger.debug(msg)",
 	"src/modules/cellular/shadow-divergence.ts: logger.warn(msg)",
 	"src/modules/network/network-ingest-control.ts: logger.info(msg)",
+	"src/modules/remote/notification-relay.ts: logger.warn(m)",
 	"src/modules/streaming/active-passthrough.ts: defaultLogger.warn(message)",
 	"src/modules/streaming/bluetooth-audio-resilience.ts: logger.info(message)",
 	"src/modules/streaming/stream-session-orchestrator.ts: logger.warn(message)",
