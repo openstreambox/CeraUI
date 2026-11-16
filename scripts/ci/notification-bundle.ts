@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -66,11 +67,55 @@ export function renderCatalogMessage(pattern: string): {
 	return { inputs, expected };
 }
 
-/** Vite's default eight-character hash follows the complete manual chunk name. */
-export function namespaceChunk(files: readonly string[], namespace: string): string {
+/**
+ * A namespace barrel's defining interface is its top-level `messages` export.
+ * Parsed, not executed: an application chunk is never run to find out.
+ */
+export function exportsMessages(source: string): boolean {
+	const tree = ts.createSourceFile(
+		'chunk.js',
+		source,
+		ts.ScriptTarget.Latest,
+		false,
+		ts.ScriptKind.JS,
+	);
+	return tree.statements.some((statement) => {
+		if (ts.isExportDeclaration(statement)) {
+			const clause = statement.exportClause;
+			return (
+				clause !== undefined &&
+				ts.isNamedExports(clause) &&
+				clause.elements.some((element) => element.name.text === 'messages')
+			);
+		}
+		return (
+			ts.isVariableStatement(statement) &&
+			(statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ??
+				false) &&
+			statement.declarationList.declarations.some(
+				(declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'messages',
+			)
+		);
+	});
+}
+
+/**
+ * Vite's default eight-character hash follows the complete chunk name. Natural
+ * chunk boundaries can give application code the same name as a namespace
+ * (a `dialogs/` directory beside the `dialogs` namespace), so a name match must
+ * also export the message registry.
+ */
+export function namespaceChunk(
+	files: readonly string[],
+	namespace: string,
+	source: (file: string) => string,
+): string {
 	const prefix = `${namespace}-`;
 	const chunks = files.filter(
-		(file) => file.startsWith(prefix) && /^[\w-]{8}\.js$/.test(file.slice(prefix.length)),
+		(file) =>
+			file.startsWith(prefix) &&
+			/^[\w-]{8}\.js$/.test(file.slice(prefix.length)) &&
+			exportsMessages(source(file)),
 	);
 	const chunk = chunks[0];
 	if (chunks.length !== 1 || chunk === undefined)
@@ -90,7 +135,9 @@ export async function checkNotificationBundle(assets: string): Promise<number> {
 	const files = await readdir(assets);
 	const registries = new Map<string, Readonly<Record<string, unknown>>>();
 	for (const namespace of new Set(keys.map((key) => key.slice(0, key.indexOf('.'))))) {
-		const chunk = namespaceChunk(files, namespace);
+		const chunk = namespaceChunk(files, namespace, (file) =>
+			readFileSync(join(assets, file), 'utf8'),
+		);
 		const module: unknown = await import(pathToFileURL(join(assets, chunk)).href);
 		if (!isRecord(module) || !isRecord(module.messages))
 			throw new Error(`Missing message registry in ${chunk}`);
