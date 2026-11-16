@@ -67,6 +67,13 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 			.catch((error) =>
 				logger.warn("stream commit bookkeeping failed", { error }),
 			);
+		// A bond published between the spawn and this commit skipped its reload,
+		// because nothing was marked streaming yet; deliver it now.
+		void import("./srtla.ts")
+			.then((srtla) => srtla.reloadOwedAtLaunchCommit(current))
+			.catch((error) =>
+				logger.warn("owed sender reload after commit failed", { error }),
+			);
 	},
 	onStreamArmed: (current) => {
 		void import("./stream-restoration.ts")
