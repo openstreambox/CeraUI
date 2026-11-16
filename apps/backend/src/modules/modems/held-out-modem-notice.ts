@@ -82,13 +82,12 @@ export function syncHeldOutModemNotices(
 		}
 		for (const name of [...standing.keys()]) {
 			if (wanted.has(name)) continue;
-			standing.delete(name);
 			deps.remove(name);
+			standing.delete(name);
 		}
 		for (const [name, label] of wanted) {
 			// Re-raise when the modem gains or loses its row, so the text stays true.
 			if (standing.has(name) && standing.get(name) === label) continue;
-			standing.set(name, label);
 			deps.notify(
 				name,
 				"warning",
@@ -100,6 +99,7 @@ export function syncHeldOutModemNotices(
 				label === undefined ? HELD_OUT_UNKNOWN_KEY : HELD_OUT_KEY,
 				label === undefined ? undefined : { name: label },
 			);
+			standing.set(name, label);
 		}
 	} catch {
 		// A notice must never break the block projection.

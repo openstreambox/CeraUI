@@ -25,7 +25,10 @@ import type {
 	NotificationType,
 	RouterCellularMarker,
 } from "@ceraui/rpc/schemas";
-import { NETIF_DUPLICATE_IPV4_ERROR } from "@ceraui/rpc/schemas";
+import {
+	deriveModemStableKey,
+	NETIF_DUPLICATE_IPV4_ERROR,
+} from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
 import { ipToInt, isSameSubnet } from "../../helpers/ip-addresses.ts";
 import { logger } from "../../helpers/logger.ts";
@@ -92,6 +95,7 @@ import {
 	getModemNetMarker,
 	getRouterCellularMarker,
 	getRouterCellularMarkers,
+	getUsbPhysicalDescriptor,
 	identityDeadlineExpired,
 	invalidateUsbNetReading,
 	type NetdevBus,
@@ -101,6 +105,7 @@ import {
 	refreshUsbNetMarkers,
 	type UsbModemNetMarker,
 	usbNetScanCovers,
+	usbNetScanCoversCurrentPresence,
 } from "./router-cellular-scan.ts";
 import { onNetifChange, setNetifState } from "./state/netif-state.ts";
 import type { MonitorEvent, NetifState } from "./state-types.ts";
@@ -222,7 +227,7 @@ function installScanSettlement(): void {
 				released = true;
 			}
 		}
-		if (released) {
+		if (released || hasMutationBlocks()) {
 			triggerNetworkInterfacesChange();
 			broadcastNetif();
 		}
@@ -303,38 +308,31 @@ export function isBondIdentityPending(
 }
 
 /**
- * Is this interface held out of the bond because its modem is blocked?
- *
- * A modem whose change could not be undone is kept out by its stable key (the
- * udev path of where it is plugged in), so a re-enumeration under a new name
- * keeps it out. While any modem is blocked, a USB interface whose key cannot be
- * resolved is held out too: it might be that modem. Ethernet, Wi-Fi and other
- * interfaces with a resolved, unblocked key are never affected.
+ * Exclude a blocked modem using the current physical scan, never the modem
+ * roster's retained name cache. Settled USB Ethernet and Wi-Fi are independent
+ * uplinks; unresolved USB candidates stay out until their evidence is fresh.
  */
 export function isHeldOutByModemBlock(
 	name: string,
 	int: NetworkInterface | undefined,
 ): boolean {
 	if (!hasMutationBlocks()) return false;
-	const key = stableKeyForIfname?.(name);
-	if (key !== undefined) return isModemKeyBlocked(key);
-	return int?.usb === true;
+	if (usbNetScanCoversCurrentPresence(name)) {
+		const descriptor = getUsbPhysicalDescriptor(name);
+		if (
+			descriptor?.deviceClass === "wired-ethernet" ||
+			isWirelessInterface(name)
+		)
+			return false;
+		if (descriptor) {
+			const key = deriveModemStableKey(descriptor.idPath);
+			return key === undefined || isModemKeyBlocked(key);
+		}
+	}
+	// Settlement/deadline alone cannot identify an unresolved modem. A translated
+	// link whose parent vanished must also wait for positive parent evidence.
+	return int === undefined || int.usb === true || int.busUnreadable === true;
 }
-
-/*
-  The modem identity lookup is loaded after this module finishes evaluating:
-  the modem modules import this layer, so a static import here would be a cycle.
-  Until it is loaded no key resolves, and a blocked box holds every USB
-  interface out (fail-closed).
-*/
-let stableKeyForIfname: ((ifname: string) => string | undefined) | undefined;
-void import("../modems/mutation-identity.ts")
-	.then((module) => {
-		stableKeyForIfname = module.modemStableKeyForIfname;
-	})
-	.catch((err: unknown) => {
-		logger.warn(`modem identity lookup unavailable: ${err}`);
-	});
 
 /**
  * May this interface be offered to the bond?

@@ -181,3 +181,42 @@ servicio indica que funciona (una instantánea reciente, el traductor y la
 interfaz del módem presentes, el servicio en ejecución) y la retira en cuanto
 deja de hacerlo. El interruptor de bonding del módem también se aplica a su
 enlace traducido. CeraUI no ejecuta ni configura el traductor.
+
+## Recovery isolation
+
+A failed or quarantined modem stays out of the stream while healthy uplinks
+remain available. Its persistent warning names the modem when a current row can
+identify it; otherwise it describes a modem that was unplugged or reconnected.
+The warning clears after verified recovery releases the journal block. Dismissing
+a warning or reusing an interface name cannot release a block. An operation still
+in progress continues to hold new starts.
+
+Bond exclusion uses the current USB descriptor scan's physical path, with the
+same stable-key derivation as modem recovery. Removal immediately invalidates
+that name's scan evidence, and a scan overlapping removal cannot restore it.
+The modem roster's retained ID-path cache is not admission authority. Positively
+classified USB Ethernet and sysfs-confirmed Wi-Fi stay available without an
+ID-path cache entry; unresolved USB candidates stay out while a block exists,
+even after the ordinary identity-settlement deadline. Translated IPv4 links
+follow their parent modem's exclusion. A fresh scan republishes membership even
+when the interface name and address have not changed.
+
+The host-plane replay, displacement and recovery-wait mechanisms from the older
+recovery drafts remain outside this implementation. The box fixture covers real
+USB classification, failed roster refresh/name reuse, journal block projection,
+and a Start through the production admission and start-stream composition, with
+OS reads, journal entries, sender spawning and engine I/O substituted.
+
+### Aislamiento durante la recuperación
+
+Un módem con una restauración fallida o en cuarentena queda fuera de la
+transmisión; los demás enlaces siguen disponibles. Un aviso persistente muestra
+su nombre cuando se puede identificar, o indica que se desconectó o reconectó.
+El aviso desaparece cuando una recuperación verificada libera el bloqueo.
+Cambiar el nombre de la interfaz no lo libera. Una operación todavía en curso
+sigue impidiendo iniciar una nueva transmisión.
+
+Los adaptadores USB Ethernet y Wi-Fi identificados siguen disponibles aunque no
+haya una ruta guardada. Un dispositivo USB sin identificar permanece excluido
+mientras exista un bloqueo, hasta obtener evidencia física actual. La interfaz
+IPv4 traducida de un módem sigue el bloqueo de ese módem.

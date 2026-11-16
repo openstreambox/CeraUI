@@ -94,3 +94,31 @@ test("a failing notifier never breaks the block projection", () => {
 	};
 	expect(() => syncHeldOutModemNotices([block("failed")], deps)).not.toThrow();
 });
+
+for (const operation of ["notify", "remove"] as const) {
+	test(`a failed ${operation} is retried on the next projection`, () => {
+		const { deps, events } = fake(new Map());
+		let fail = true;
+		const flaky = {
+			...deps,
+			[operation]: (...args: never[]) => {
+				if (fail) {
+					fail = false;
+					throw new Error("socket gone");
+				}
+				(deps[operation] as (...args: never[]) => void)(...args);
+			},
+		};
+		if (operation === "remove")
+			syncHeldOutModemNotices([block("failed")], deps);
+		const wanted = operation === "notify" ? [block("failed")] : [];
+		syncHeldOutModemNotices(wanted, flaky);
+		syncHeldOutModemNotices(wanted, flaky);
+		syncHeldOutModemNotices(wanted, flaky);
+		expect(
+			events.filter((event) =>
+				event.startsWith(operation === "notify" ? "raise" : "remove"),
+			),
+		).toHaveLength(1);
+	});
+}

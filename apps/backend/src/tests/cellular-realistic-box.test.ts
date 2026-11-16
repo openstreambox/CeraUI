@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { setClatTranslationsForTest } from "../modules/network/clat-translation.ts";
 import {
+	getNetworkInterfaces,
 	isBondCandidate,
 	isHeldOutByModemBlock,
 	onNetworkInterfacesChange,
@@ -16,6 +17,8 @@ import {
 	type RealisticBox,
 	realisticBox,
 	stableKeyOf,
+	USB_ETHERNET,
+	USB_WIFI,
 } from "./fixtures/realistic-box.ts";
 
 let box: RealisticBox | undefined;
@@ -87,29 +90,65 @@ test("L3: a blocked modem that comes back under another name stays out", async (
 	expect(box.bonded()).toEqual(["eth0", "wwan1", "wwan2"]);
 });
 
-test("L4: while a modem is blocked, a USB link with no udev path is held out; Ethernet never", async () => {
+test("settled USB Ethernet and USB Wi-Fi survive another modem's block without cached ID_PATH", async () => {
 	box = await realisticBox();
-	const [first, second, third] = MODEMS;
-	if (!first || !second || !third) throw new Error("fixture");
-	const unknown = { ifname: "wwan9", ip: "198.51.100.90" };
-	await box.scan([ETHERNET, first, second, third, unknown]);
-	// Without a block, an interface without a udev path bonds as before.
-	expect(box.bonded()).toContain("wwan9");
-	await box.journal([journalEntry(first, "failed")]);
-	const usb = {
-		ip: unknown.ip,
-		tp: 0,
-		txb: 0,
-		rxb: 0,
-		enabled: true,
-		error: 0,
+	await box.scan([ETHERNET, ...MODEMS, USB_ETHERNET, USB_WIFI]);
+	for (const link of [USB_ETHERNET, USB_WIFI]) {
+		expect(getNetworkInterfaces()[link.ifname]).toMatchObject({
+			usb: true,
+			identitySettled: true,
+		});
+	}
+	await box.journal([journalEntry(MODEMS[0], "failed")]);
+	expect(box.bonded()).toEqual([
+		"enx001122334455",
+		"eth0",
+		"wlx001122334466",
+		"wwan1",
+		"wwan2",
+	]);
+});
+
+test("an unresolved modem candidate stays out even after identity settlement or deadline", async () => {
+	box = await realisticBox();
+	const unknown = {
+		ifname: "wwan9",
+		ip: "198.51.100.90",
+		kind: "unknown" as const,
 	};
-	expect(isHeldOutByModemBlock("wwan9", { ...usb, usb: true })).toBe(true);
-	expect(isHeldOutByModemBlock("wwan9", usb)).toBe(false);
-	expect(isHeldOutByModemBlock("eth0", { ...usb, ip: ETHERNET.ip })).toBe(
-		false,
-	);
-	expect(box.bonded()).toContain("eth0");
+	await box.scan([ETHERNET, ...MODEMS, unknown]);
+	expect(box.bonded()).toContain("wwan9");
+	await box.journal([journalEntry(MODEMS[0], "failed")]);
+	expect(getNetworkInterfaces().wwan9).toMatchObject({
+		usb: true,
+		identitySettled: true,
+	});
+	expect(box.bonded()).not.toContain("wwan9");
+});
+
+test("a blocked modem reusing a healthy name cannot borrow its key after failed udev refresh", async () => {
+	box = await realisticBox();
+	await box.journal([journalEntry(MODEMS[0], "failed")]);
+	await box.scan([ETHERNET], { failIdPaths: true, skipPhysical: true });
+	const renamed = { ...MODEMS[0], ifname: "wwan1" };
+	await box.scan([ETHERNET, renamed], {
+		failIdPaths: true,
+		skipPhysical: true,
+	});
+	expect(box.bonded()).not.toContain("wwan1");
+	// Even a separately settled caller cannot reuse the removed scan evidence.
+	expect(
+		isHeldOutByModemBlock("wwan1", {
+			...getNetworkInterfaces().wwan1,
+			identitySettled: true,
+		}),
+	).toBe(true);
+	await box.scan([ETHERNET, renamed], { failIdPaths: true });
+	expect(getNetworkInterfaces().wwan1).toMatchObject({
+		usb: true,
+		identitySettled: true,
+	});
+	expect(box.bonded()).toEqual(["eth0"]);
 });
 
 test("the bond republishes when a modem is blocked or released", async () => {
@@ -163,4 +202,26 @@ test("a decommissioned modem never holds streaming", async () => {
 	expect(streamingBlockingMutation()).toBeUndefined();
 	expect(globalStreamHold()).toBeUndefined();
 	expect(box.bonded()).toContain("eth0");
+});
+
+test("fresh physical evidence supersedes a stale blocked name and republishes a settled bond", async () => {
+	box = await realisticBox();
+	await box.journal([journalEntry(MODEMS[0], "failed")]);
+	// Same name, newly observed unblocked socket; the failed roster read retains A.
+	const replacement = { ...MODEMS[1], ifname: "wwan0", ip: MODEMS[0].ip };
+	let changes = 0;
+	const unsubscribe = onNetworkInterfacesChange(() => {
+		changes++;
+	});
+	try {
+		await box.scan([ETHERNET, replacement], { failIdPaths: true });
+		expect(box.bonded()).toContain("wwan0");
+		expect(changes).toBeGreaterThan(0);
+		const settled = changes;
+		await box.scan([ETHERNET, MODEMS[0]], { failIdPaths: true });
+		expect(box.bonded()).not.toContain("wwan0");
+		expect(changes).toBeGreaterThan(settled);
+	} finally {
+		unsubscribe();
+	}
 });
