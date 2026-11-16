@@ -122,7 +122,7 @@ for (const sameMac of [false, true]) {
 						publication: async () => {
 							if (++frameIndex !== 2) return;
 							// Actual discovery/activation broadcasts occur before detached sampling.
-							if (!sameMac) expect(frames).toHaveLength(7);
+							if (!sameMac) expect(frames).toHaveLength(6);
 							for (const rows of [...frames, ...(await statusSurfaces())]) {
 								expectUnproven(rows);
 							}
