@@ -24,6 +24,8 @@ import {
 	pipelinesMessageSchema,
 	reloadAudioDelayInputSchema,
 	reloadAudioDelayOutputSchema,
+	restartConnectionInputSchema,
+	restartConnectionOutputSchema,
 	SRTLA_MIN_LATENCY_MS,
 	type StartFailurePhase,
 	type StartResult,
@@ -459,6 +461,29 @@ export const streamingStartProcedure = authedProcedure
 			},
 		});
 		return startResponse(lifecycleResult, appliedResponse, legacyError);
+	});
+
+/**
+ * The stale-link notice's "Restart connection" tap. Answers as soon as the
+ * offer is checked; the restart itself runs under the session supervisor and
+ * reports through the usual stream status and start notices.
+ */
+export const restartConnectionProcedure = authedProcedure
+	.input(restartConnectionInputSchema)
+	.output(restartConnectionOutputSchema)
+	.handler(async ({ input, context }) => {
+		const { connectionRestartDeps, requestConnectionRestart } = await import(
+			"../../modules/streaming/connection-restart.ts"
+		);
+		const request = requestConnectionRestart(
+			input.token,
+			await connectionRestartDeps(
+				context.ws as unknown as import("ws").default,
+				"ui",
+			),
+		);
+		void request.done;
+		return request.output;
 	});
 
 /**
