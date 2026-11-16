@@ -4,7 +4,10 @@
  */
 
 import { CerastreamRpcError } from "@ceralive/cerastream";
-import { unsupportedPipelineOverrides } from "@ceraui/rpc";
+import {
+	type PipelineOverrideField,
+	unsupportedPipelineOverrides,
+} from "@ceraui/rpc";
 import {
 	AUDIO_CODEC_UNSUPPORTED_TRANSPORT,
 	AUDIO_SOURCE_AUTO,
@@ -102,6 +105,7 @@ import {
 	commitStagedConfigChange,
 } from "../../modules/streaming/config-change-persistence.ts";
 import {
+	type InflightConfigMarker,
 	type StagedConfigFields,
 	stageConfigChange,
 } from "../../modules/streaming/config-change-staging.ts";
@@ -624,18 +628,32 @@ const APPLY_NOW_FIELDS = [
 ] as const;
 
 /**
- * Move the restart-requiring fields off `input` and into a staged marker,
- * returning `undefined` when this save is an ordinary "apply on next start".
+ * Move the restart-requiring fields off `input` and into a marker for this
+ * attempt, returning `undefined` when this save is an ordinary "apply on next
+ * start". The marker is staged later, at dispatch.
  *
  * It MUTATES `input` on purpose: deleting the fields is what makes the existing
  * merge block below skip them, so there is exactly one place that decides
  * whether a value is persisted now — no parallel write path to drift.
  */
-function stageApplyNowFields(
-	input: StreamingSetConfigInput,
-	config: RuntimeConfig,
-	sourceRouting: Extract<ResolveSourceRoutingResult, { ok: true }> | undefined,
-): StagedConfigFields | undefined {
+type StageApplyNowFieldsInput = {
+	readonly input: StreamingSetConfigInput;
+	readonly config: RuntimeConfig;
+	readonly sourceRouting:
+		| Extract<ResolveSourceRoutingResult, { ok: true }>
+		| undefined;
+	readonly inputMode: InputMode | undefined;
+	/** Overrides the destination pipeline cannot honor; the candidate clears them. */
+	readonly derivedClears: readonly PipelineOverrideField[];
+};
+
+function stageApplyNowFields({
+	input,
+	config,
+	sourceRouting,
+	inputMode,
+	derivedClears,
+}: StageApplyNowFieldsInput): InflightConfigMarker | undefined {
 	if (input.apply_now !== true) return undefined;
 	if (
 		!APPLY_NOW_FIELDS.some((field) =>
@@ -651,19 +669,26 @@ function stageApplyNowFields(
 		...(input.source === undefined ? {} : { source: input.source }),
 		...(input.resolution === undefined ? {} : { resolution: input.resolution }),
 		...(input.framerate === undefined ? {} : { framerate: input.framerate }),
+		// Residue the DESTINATION pipeline cannot honor belongs to this change: a
+		// refused or reverted switch must leave the running source's geometry alone.
+		...(derivedClears.includes("resolution") ? { resolution: null } : {}),
+		...(derivedClears.includes("framerate") ? { framerate: null } : {}),
+		// The engine change-config contract cannot clear a codec; use its next-start default.
 		...(input.video_codec == null ? {} : { video_codec: input.video_codec }),
-		...(input.input_mode === undefined ? {} : { input_mode: input.input_mode }),
+		// The mode this save lands on, chosen or derived; a source switch can clear it.
+		...(input.input_mode === undefined && inputMode === config.input_mode
+			? {}
+			: { input_mode: inputMode ?? null }),
 		...(input.composition === undefined
 			? {}
 			: { composition: input.composition }),
-		...(sourceRouting?.pipeline === undefined
-			? {}
-			: { pipeline: sourceRouting.pipeline }),
+		// Routed from the source or the mode: it moves only with them.
+		...(input.pipeline === undefined ? {} : { pipeline: input.pipeline }),
 		...(sourceRouting?.selected_video_input === undefined
 			? {}
 			: { selected_video_input: sourceRouting.selected_video_input }),
 	};
-	const previous: StagedConfigFields = {
+	const previous: InflightConfigMarker["previous"] = {
 		...(input.composition === undefined
 			? {}
 			: { composition: config.composition ?? null }),
@@ -684,21 +709,17 @@ function stageApplyNowFields(
 			: { selected_video_input: config.selected_video_input }),
 	};
 
-	stageConfigChange({
+	// Everything the candidate holds is held back from the merge below, so a
+	// field it gains can never also be saved now.
+	for (const field of Object.keys(candidate) as (keyof StagedConfigFields)[])
+		delete input[field];
+
+	return {
 		attemptId: newAttemptId(),
 		startedAt: Date.now(),
 		candidate,
 		previous,
-	});
-
-	// The engine change-config contract cannot clear a codec; use its next-start default.
-	for (const field of APPLY_NOW_FIELDS) {
-		if (field !== "video_codec" || input.video_codec !== null)
-			delete input[field];
-	}
-	if (sourceRouting !== undefined) delete input.pipeline;
-
-	return candidate;
+	};
 }
 
 /**
@@ -1004,8 +1025,14 @@ export const setConfigProcedure = authedProcedure
 		// back (staged, never written) so `config.json` keeps describing what the
 		// engine is ACTUALLY running until the transaction says `applied`. Every
 		// other field in the same save persists immediately, exactly as before.
-		const staged = stageApplyNowFields(input, config, sourceRouting);
-		if (staged !== undefined) sourceRouting = undefined;
+		const marker = stageApplyNowFields({
+			input,
+			config,
+			sourceRouting,
+			inputMode: effectiveInputMode,
+			derivedClears: staleOverrides,
+		});
+		if (marker !== undefined) sourceRouting = undefined;
 
 		if (input.srt_latency !== undefined)
 			config.srt_latency = Math.max(input.srt_latency, SRTLA_MIN_LATENCY_MS);
@@ -1029,14 +1056,17 @@ export const setConfigProcedure = authedProcedure
 		if (input.framerate !== undefined) config.framerate = input.framerate;
 		for (const field of staleOverrides) {
 			logger.warn(
-				`setConfig: clearing stale ${field} override — pipeline '${overridePipeline?.name}' cannot honor it`,
+				`setConfig: ${
+					marker === undefined ? "clearing" : "staging the clear of"
+				} stale ${field} override — pipeline '${overridePipeline?.name}' cannot honor it`,
 				{
 					module: "streaming",
 					pipeline: overridePipeline?.name,
 					dropped: String(config[field]),
 				},
 			);
-			config[field] = undefined;
+			// Staged clears are owned by the candidate and written only on `applied`.
+			if (marker === undefined) config[field] = undefined;
 		}
 		if (input.video_codec !== undefined)
 			config.video_codec = input.video_codec ?? undefined;
@@ -1076,8 +1106,9 @@ export const setConfigProcedure = authedProcedure
 			noteSourceSelectionWrite(input.source, sourcesSnapshot);
 		}
 		// Written even when it resolves to `undefined`: that is the CLEAR, and it is
-		// what stops a mode chosen for one camera governing the next one.
-		config.input_mode = effectiveInputMode;
+		// what stops a mode chosen for one camera governing the next one. A staged
+		// change carries any new mode in its candidate instead.
+		if (marker === undefined) config.input_mode = effectiveInputMode;
 		if (input.bitrate_overlay !== undefined)
 			config.bitrate_overlay = input.bitrate_overlay;
 
@@ -1210,38 +1241,52 @@ export const setConfigProcedure = authedProcedure
 			syncAudioMeterPreference();
 		}
 
-		if (staged === undefined)
+		if (marker === undefined)
 			return {
 				success: true,
 				applied: publicStreamIds(applied, getConfig(), false),
 			};
 
-		const outcome = await getApplyNowGate().dispatch({
-			...(staged.resolution === undefined
-				? {}
-				: { resolution: staged.resolution }),
-			...(staged.framerate === undefined
-				? {}
-				: { framerate: staged.framerate }),
-			...(staged.video_codec === undefined
-				? {}
-				: { video_codec: staged.video_codec }),
-			...(staged.selected_video_input === undefined
-				? {}
-				: { input_id: staged.selected_video_input }),
-			...(staged.pipeline === undefined ? {} : { pipeline: staged.pipeline }),
-			...(staged.input_mode === undefined
-				? {}
-				: { input_mode: staged.input_mode }),
-			...(staged.composition === undefined
-				? {}
-				: { composition: staged.composition }),
-		});
+		// Staged in the same synchronous stretch as the orchestrator's admission,
+		// after every await above, so of two overlapping saves the later one is
+		// busy before it can touch the other's stage, as admission would answer it.
+		if (!stageConfigChange(marker))
+			return {
+				success: false,
+				applied: publicStreamIds(applied, getConfig(), false),
+				configChange: { result: "busy" },
+			};
+		const staged = marker.candidate;
+		const outcome = await getApplyNowGate()
+			.dispatch({
+				...(staged.resolution == null ? {} : { resolution: staged.resolution }),
+				...(staged.framerate == null ? {} : { framerate: staged.framerate }),
+				...(staged.video_codec === undefined
+					? {}
+					: { video_codec: staged.video_codec }),
+				...(staged.selected_video_input === undefined
+					? {}
+					: { input_id: staged.selected_video_input }),
+				// Only a source switch hands the engine a pipeline; a mode switch is the
+				// engine's own transaction, and the pipeline it routes to is ours to save.
+				...(staged.source === undefined || staged.pipeline === undefined
+					? {}
+					: { pipeline: staged.pipeline }),
+				...(staged.input_mode == null ? {} : { input_mode: staged.input_mode }),
+				...(staged.composition === undefined
+					? {}
+					: { composition: staged.composition }),
+			})
+			.catch((error: unknown) => {
+				// The stage is exclusive, so a dispatch that throws must still release it.
+				abandonStagedConfigChange(marker.attemptId);
+				throw error;
+			});
 
 		if (outcome.result !== "applied") {
 			// reverted / rollback_failed / busy / rejected all leave the persisted
 			// values alone — they are still the ones the engine last ran.
-			abandonStagedConfigChange();
+			abandonStagedConfigChange(marker.attemptId);
 			return {
 				success: outcome.result === "reverted",
 				applied: publicStreamIds(applied, getConfig(), false),
@@ -1249,7 +1294,7 @@ export const setConfigProcedure = authedProcedure
 			};
 		}
 
-		commitStagedConfigChange();
+		commitStagedConfigChange(marker.attemptId);
 		const persisted = getConfig();
 		if (staged.composition !== undefined)
 			applied.composition = persisted.composition ?? null;
@@ -1260,6 +1305,10 @@ export const setConfigProcedure = authedProcedure
 		if (staged.framerate !== undefined) applied.framerate = persisted.framerate;
 		if (staged.video_codec !== undefined)
 			applied.video_codec = persisted.video_codec;
+		if (staged.input_mode !== undefined) {
+			applied.input_mode = persisted.input_mode;
+			applied.pipeline = persisted.pipeline;
+		}
 		if (staged.source !== undefined) {
 			applied.source = persisted.source;
 			applied.pipeline = persisted.pipeline;

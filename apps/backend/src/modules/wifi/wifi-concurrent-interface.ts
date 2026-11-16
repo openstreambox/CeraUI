@@ -38,6 +38,11 @@ const createdInterfaces = new Set<string>();
 let interfaceRunner = defaultRunner;
 let interfaceWaiter = defaultWaiter;
 
+/** Wi-Fi name candidates; NM determines radio type, and clap AP legs are separate. */
+export function isSupportedWifiIfname(ifname: string): boolean {
+	return ifname.startsWith("wl");
+}
+
 export function concurrentApIfname(parentIfname: string): string {
 	return `clap-${parentIfname}`.slice(0, 15);
 }

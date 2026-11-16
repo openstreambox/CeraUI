@@ -2899,7 +2899,7 @@
 	"live.audioMixer.error.audio_delay_range": "يجب أن تكون قيمة Delay عددًا صحيحًا من 0 إلى {max} ms.",
 	"live.audioMixer.error.audio_mix_active": "هذا البث يمزج عدة مدخلات. أوقفه لتغيير المدخل الرئيسي.",
 	"live.audioMixer.error.refused": "رفض الجهاز هذا التغيير، ولم يتغير شيء.",
-	"network.cellular.reason.himiUfiRouter": "الموجّه المدمج في وحدة HIMI U01 هذه يستخدم الاتصال الخلوي، لذلك لا يستطيع CeraLive بدء اتصال البيانات. استخدم وضع الموجّه (شبكة USB) أو مودمًا تقليديًا. راجع docs.ceralive.tv/hardware/cellular-modems/‎.",
+	"network.cellular.reason.himiUfiRouter": "تعذّر على وحدة HIMI U01 هذه بدء اتصال البيانات. قد يكون الموجّه المدمج فيها يستخدم الاتصال الخلوي. استخدم وضع الموجّه (شبكة USB) أو مودمًا تقليديًا. راجع docs.ceralive.tv/hardware/cellular-modems/‎.",
 	"live.layout.custom": "مخصص",
 	"live.layout.openPreviewToPlace": "افتح المعاينة لوضع المدخل الثاني على الصورة.",
 	"live.layout.inset": "موضع المدخل الثاني",
@@ -3100,5 +3100,7 @@
 	"live.phone.moblinSaved": "حُفظت على الجهاز. تحقّق في Moblin من أنه يتصل؛ الحفظ لا يؤكد الاتصال.",
 	"live.phone.moblinCleared": "لا توجد كلمة مرور Moblin محفوظة على هذا الجهاز.",
 	"live.phone.moblinFailed": "تعذّر تطبيق كلمة مرور Moblin. تحقّق من الجهاز وحاول مرة أخرى. ربما تكون محفوظة بالفعل.",
-	"live.phone.moblinBusy": "انتظر حتى يؤكد الجهاز أنه لا يوجد بث يستخدمه قبل تغيير كلمة مرور Moblin."
+	"live.phone.moblinBusy": "انتظر حتى يؤكد الجهاز أنه لا يوجد بث يستخدمه قبل تغيير كلمة مرور Moblin.",
+	"live.audioMixer.error.audio_input_primary": "يبقى المدخل الرئيسي دائمًا ضمن المزج. لإيقافه، اختر مصدر صوت آخر.",
+	"live.layout.insetCancel": "اضغط Escape قبل الإفلات لإعادته إلى موضعه السابق."
 }

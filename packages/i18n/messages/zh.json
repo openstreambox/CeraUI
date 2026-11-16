@@ -2842,7 +2842,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay 必须是 0 到 {max} ms 之间的整数。",
 	"live.audioMixer.error.audio_mix_active": "此推流正在混合多个输入。请停止推流后再更改主输入。",
 	"live.audioMixer.error.refused": "设备拒绝了此更改，因此未做任何更改。",
-	"network.cellular.reason.himiUfiRouter": "此 HIMI U01 上网卡的内置路由器正在占用移动连接，导致 CeraLive 无法建立数据连接。请改用路由器模式（USB 网络）或常规调制解调器。详见 docs.ceralive.tv/hardware/cellular-modems/。",
+	"network.cellular.reason.himiUfiRouter": "此 HIMI U01 上网卡未能建立数据连接。其内置路由器可能正在占用移动连接。请改用路由器模式（USB 网络）或常规调制解调器。详见 docs.ceralive.tv/hardware/cellular-modems/。",
 	"live.layout.custom": "自定义",
 	"live.layout.openPreviewToPlace": "打开预览，即可在画面上放置第二路输入。",
 	"live.layout.inset": "第二路输入的位置",
@@ -3043,5 +3043,7 @@
 	"live.phone.moblinSaved": "已保存在盒子上。请在 Moblin 中确认能否连接；保存并不代表已连接。",
 	"live.phone.moblinCleared": "此盒子上没有保存 Moblin 密码。",
 	"live.phone.moblinFailed": "无法应用 Moblin 密码。请检查盒子后重试。它可能已经保存。",
-	"live.phone.moblinBusy": "请等盒子确认没有直播在使用它，再更改 Moblin 密码。"
+	"live.phone.moblinBusy": "请等盒子确认没有直播在使用它，再更改 Moblin 密码。",
+	"live.audioMixer.error.audio_input_primary": "主输入始终在混音中。要将其关闭，请选择其他音频源。",
+	"live.layout.insetCancel": "松开前按 Esc 可放回原位。"
 }

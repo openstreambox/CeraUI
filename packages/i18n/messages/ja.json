@@ -2842,7 +2842,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay は 0〜{max} ms の整数で指定してください。",
 	"live.audioMixer.error.audio_mix_active": "この配信は入力をミックスしています。メイン入力を変えるには配信を停止してください。",
 	"live.audioMixer.error.refused": "デバイスがこの変更を拒否したため、何も変わっていません。",
-	"network.cellular.reason.himiUfiRouter": "この HIMI U01 の内蔵ルーターがモバイル接続を占有しているため、CeraLive はデータ接続を開始できません。ルーターモード（USB ネットワーク）に切り替えるか、通常のモデムをお使いください。詳しくは docs.ceralive.tv/hardware/cellular-modems/ をご覧ください。",
+	"network.cellular.reason.himiUfiRouter": "この HIMI U01 はデータ接続を開始できませんでした。内蔵ルーターがモバイル接続を占有している可能性があります。ルーターモード（USB ネットワーク）に切り替えるか、通常のモデムをお使いください。詳しくは docs.ceralive.tv/hardware/cellular-modems/ をご覧ください。",
 	"live.layout.custom": "カスタム",
 	"live.layout.openPreviewToPlace": "2 つ目の入力を映像上に配置するには、プレビューを開いてください。",
 	"live.layout.inset": "2 つ目の入力の位置",
@@ -3043,5 +3043,7 @@
 	"live.phone.moblinSaved": "ボックスに保存しました。接続できるか Moblin で確認してください。保存しただけでは接続は確認できません。",
 	"live.phone.moblinCleared": "このボックスには Moblin のパスワードが保存されていません。",
 	"live.phone.moblinFailed": "Moblin のパスワードを適用できませんでした。ボックスを確認して、もう一度お試しください。すでに保存されている可能性があります。",
-	"live.phone.moblinBusy": "Moblin のパスワードを変更する前に、ボックスがどの配信にも使われていないと確認するまでお待ちください。"
+	"live.phone.moblinBusy": "Moblin のパスワードを変更する前に、ボックスがどの配信にも使われていないと確認するまでお待ちください。",
+	"live.audioMixer.error.audio_input_primary": "メイン入力は常にミックスに含まれます。オフにするには、別のオーディオソースを選択してください。",
+	"live.layout.insetCancel": "離す前に Esc を押すと、元の位置に戻ります。"
 }

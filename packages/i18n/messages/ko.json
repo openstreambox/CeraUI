@@ -2842,7 +2842,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay는 0~{max} ms 사이의 정수여야 합니다.",
 	"live.audioMixer.error.audio_mix_active": "이 스트림은 입력을 믹스하고 있습니다. 기본 입력을 바꾸려면 스트리밍을 중지하세요.",
 	"live.audioMixer.error.refused": "기기가 이 변경을 거부해 아무것도 바뀌지 않았습니다.",
-	"network.cellular.reason.himiUfiRouter": "이 HIMI U01 스틱의 내장 라우터가 모바일 연결을 사용하고 있어 CeraLive에서 데이터 연결을 시작할 수 없습니다. 라우터 모드(USB 네트워크)로 전환하거나 일반 모뎀을 사용하세요. 자세히 보기: docs.ceralive.tv/hardware/cellular-modems/.",
+	"network.cellular.reason.himiUfiRouter": "이 HIMI U01 스틱이 데이터 연결을 시작하지 못했습니다. 스틱의 내장 라우터가 모바일 연결을 사용하고 있을 수 있습니다. 라우터 모드(USB 네트워크)로 전환하거나 일반 모뎀을 사용하세요. 자세히 보기: docs.ceralive.tv/hardware/cellular-modems/.",
 	"live.layout.custom": "사용자 지정",
 	"live.layout.openPreviewToPlace": "두 번째 입력을 화면에 배치하려면 미리보기를 여세요.",
 	"live.layout.inset": "두 번째 입력 위치",
@@ -3043,5 +3043,7 @@
 	"live.phone.moblinSaved": "박스에 저장했습니다. 연결되는지 Moblin에서 확인하세요. 저장만으로는 연결이 확인되지 않습니다.",
 	"live.phone.moblinCleared": "이 박스에는 저장된 Moblin 비밀번호가 없습니다.",
 	"live.phone.moblinFailed": "Moblin 비밀번호를 적용하지 못했습니다. 박스를 확인하고 다시 시도하세요. 이미 저장되었을 수도 있습니다.",
-	"live.phone.moblinBusy": "Moblin 비밀번호를 바꾸기 전에, 박스를 사용하는 스트림이 없다고 박스가 확인할 때까지 기다리세요."
+	"live.phone.moblinBusy": "Moblin 비밀번호를 바꾸기 전에, 박스를 사용하는 스트림이 없다고 박스가 확인할 때까지 기다리세요.",
+	"live.audioMixer.error.audio_input_primary": "기본 입력은 항상 믹스에 포함됩니다. 끄려면 다른 오디오 소스를 선택하세요.",
+	"live.layout.insetCancel": "놓기 전에 Esc를 누르면 원래 위치로 돌아갑니다."
 }

@@ -2887,7 +2887,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay muss eine ganze Zahl von 0 bis {max} ms sein.",
 	"live.audioMixer.error.audio_mix_active": "Dieser Stream mischt Eingänge. Beende ihn, um den Haupteingang zu ändern.",
 	"live.audioMixer.error.refused": "Das Gerät hat diese Änderung abgelehnt, es wurde nichts geändert.",
-	"network.cellular.reason.himiUfiRouter": "Der integrierte Router dieses HIMI U01 belegt die Mobilfunkverbindung, sodass CeraLive keine Datenverbindung aufbauen kann. Nutzen Sie den Router-Modus (USB-Netzwerk) oder ein herkömmliches Modem. Mehr dazu: docs.ceralive.tv/hardware/cellular-modems/.",
+	"network.cellular.reason.himiUfiRouter": "Dieser HIMI U01 konnte keine Datenverbindung aufbauen. Möglicherweise belegt sein integrierter Router die Mobilfunkverbindung: Nutzen Sie den Router-Modus (USB-Netzwerk) oder ein herkömmliches Modem. Mehr dazu: docs.ceralive.tv/hardware/cellular-modems/.",
 	"live.layout.custom": "Frei platziert",
 	"live.layout.openPreviewToPlace": "Öffne die Vorschau, um den zweiten Eingang im Bild zu platzieren.",
 	"live.layout.inset": "Position des zweiten Eingangs",
@@ -3088,5 +3088,7 @@
 	"live.phone.moblinSaved": "Auf der Box gespeichert. Prüfe in Moblin, ob es sich verbindet; das Speichern bestätigt keine Verbindung.",
 	"live.phone.moblinCleared": "Auf dieser Box ist kein Moblin-Passwort gespeichert.",
 	"live.phone.moblinFailed": "Das Moblin-Passwort konnte nicht übernommen werden. Prüfe die Box und versuche es erneut. Vielleicht ist es schon gespeichert.",
-	"live.phone.moblinBusy": "Warte, bis die Box bestätigt, dass kein Stream sie nutzt, bevor du das Moblin-Passwort änderst."
+	"live.phone.moblinBusy": "Warte, bis die Box bestätigt, dass kein Stream sie nutzt, bevor du das Moblin-Passwort änderst.",
+	"live.audioMixer.error.audio_input_primary": "Der Haupteingang bleibt immer im Mix. Wähle eine andere Audioquelle, um ihn auszuschalten.",
+	"live.layout.insetCancel": "Drücke Esc, bevor du loslässt, um die vorherige Position wiederherzustellen."
 }

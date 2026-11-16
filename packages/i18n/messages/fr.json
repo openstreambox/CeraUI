@@ -2890,7 +2890,7 @@
 	"live.audioMixer.error.audio_delay_range": "Le delay doit être un nombre entier de 0 à {max} ms.",
 	"live.audioMixer.error.audio_mix_active": "Ce direct mixe plusieurs entrées. Arrêtez-le pour changer l'entrée principale.",
 	"live.audioMixer.error.refused": "L'appareil a refusé cette modification ; rien n'a changé.",
-	"network.cellular.reason.himiUfiRouter": "Le routeur intégré de cette clé HIMI U01 utilise la connexion mobile, ce qui empêche CeraLive d'établir sa connexion de données. Passez en mode routeur (réseau USB) ou utilisez un modem classique. Voir docs.ceralive.tv/hardware/cellular-modems/.",
+	"network.cellular.reason.himiUfiRouter": "Cette clé HIMI U01 n'a pas pu établir sa connexion de données. Son routeur intégré utilise peut-être la connexion mobile : passez en mode routeur (réseau USB) ou utilisez un modem classique. Voir docs.ceralive.tv/hardware/cellular-modems/.",
 	"live.layout.custom": "Libre",
 	"live.layout.openPreviewToPlace": "Ouvrez l'aperçu pour placer la seconde entrée sur l'image.",
 	"live.layout.inset": "Position de la seconde entrée",
@@ -3091,5 +3091,7 @@
 	"live.phone.moblinSaved": "Enregistré sur le boîtier. Vérifiez dans Moblin que la connexion se fait ; l'enregistrement ne confirme pas la connexion.",
 	"live.phone.moblinCleared": "Aucun mot de passe Moblin n'est enregistré sur ce boîtier.",
 	"live.phone.moblinFailed": "Le mot de passe Moblin n'a pas pu être appliqué. Vérifiez le boîtier et réessayez. Il est peut-être déjà enregistré.",
-	"live.phone.moblinBusy": "Attendez que le boîtier confirme qu'aucun flux ne l'utilise avant de changer le mot de passe Moblin."
+	"live.phone.moblinBusy": "Attendez que le boîtier confirme qu'aucun flux ne l'utilise avant de changer le mot de passe Moblin.",
+	"live.audioMixer.error.audio_input_primary": "L'entrée principale reste toujours dans le mix. Pour la désactiver, choisissez une autre source audio.",
+	"live.layout.insetCancel": "Appuyez sur Échap avant de relâcher pour la remettre à sa place."
 }

@@ -189,7 +189,17 @@ bun run --filter frontend test:e2e:visual
 bun run test:e2e:visual
 ```
 
-Baseline images are committed to the repo. A PR that changes them requires a deliberate `--update-snapshots` run and a reviewer sign-off that the visual change was intentional.
+Baseline images are committed to the repo, the mobile project's `*-mobile-linux.png` included. A PR that changes them requires a deliberate `--update-snapshots` run and a reviewer sign-off that the visual change was intentional.
+
+Record baselines against the built preview (`bun run build:frontend`), with `CI=true` exported before the preview and the backend start, as the visual gate runs. The Vite dev server adds dev-only navigation (Identity, Dev Tools) and the Svelte inspector button, so a baseline recorded there fails against the built app.
+
+The exception is a test tagged `@dev-only`: it opens the Identity or Dev Tools destination, which `import.meta.env.DEV` compiles out of the built app. Only the `desktop-dev` and `mobile-dev` projects list it, and they run it on a Vite dev server: in CI mode, when the run selects a `-dev` project (no `--project`, a `-dev` name or a `*` pattern), Playwright starts one on `E2E_PORT + 1` (6174) beside the preview, whose proxy still routes the page's socket to its worker backend. Record its baselines (`*-desktop-dev-linux.png`, `*-mobile-dev-linux.png`) with `--project=desktop-dev --project=mobile-dev`.
+
+---
+
+## One Layout Only
+
+A test that proves only one layout carries the tag `@desktop-only` or `@mobile-only` (on the test or its `describe`). `playwright.config.ts` gives each project a `grepInvert` for the other tag, so the other project never lists the test, instead of skipping it at run time by project name.
 
 ---
 

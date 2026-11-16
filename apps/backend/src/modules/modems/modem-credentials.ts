@@ -81,10 +81,7 @@ import {
 	writeFileAtomicSync,
 } from "../../helpers/config-loader.ts";
 import { logger } from "../../helpers/logger.ts";
-import {
-	listPresentPhysicalDevices,
-	type PhysicalDeviceRecord,
-} from "./physical-identity.ts";
+import type { PhysicalDeviceRecord } from "./physical-identity.ts";
 
 /** Device-persistent directory — survives an OTA slot swap. */
 export const MODEM_CREDENTIALS_DIR = "/data/ceralive";
@@ -190,36 +187,13 @@ export function modemCredentialsPath(): string {
  * The store key for a resolved physical device, or `undefined` when the device
  * cannot be identified strongly enough to file a secret against.
  *
- * The `ifname` rung is REFUSED — see the header. This is the whole safety
- * argument of the module, so it is a single expression with no fallback.
+ * The `ifname` rung is REFUSED — see the header. A rejected serial's legacy id
+ * proves no ownership, even with one device present, so it is never a fallback.
  */
 export function modemCredentialKey(
 	device: PhysicalDeviceRecord,
 ): string | undefined {
 	return device.anchor === "ifname" ? undefined : device.linkId;
-}
-
-function credentialEntry(
-	device: PhysicalDeviceRecord,
-): StoredEntry | undefined {
-	const key = modemCredentialKey(device);
-	if (key === undefined) return undefined;
-	const current = entries[key];
-	if (current !== undefined) return current;
-	const legacy = device.legacyLinkId;
-	if (legacy === undefined || entries[legacy] === undefined) return undefined;
-	const owners = listPresentPhysicalDevices().filter(
-		(present) => present.legacyLinkId === legacy,
-	);
-	if (owners.length !== 1 || owners[0]?.linkId !== key) return undefined;
-	const entry = entries[legacy];
-	entries[key] = {
-		...entry,
-		anchor: device.anchor === "usb-serial" ? "usb-serial" : "id-path",
-	};
-	delete entries[legacy];
-	persist();
-	return entries[key];
 }
 
 /** Private atomic replacement, retaining the credential directory contract. */
@@ -279,7 +253,7 @@ export function readModemCredential(
 ): ModemCredential | undefined {
 	const key = modemCredentialKey(device);
 	if (key === undefined) return undefined;
-	const entry = credentialEntry(device);
+	const entry = entries[key];
 	if (entry === undefined) return undefined;
 	return {
 		username: entry.username,
@@ -372,7 +346,7 @@ export function projectModemCredential(
 	device: PhysicalDeviceRecord,
 ): ModemCredentialStatus {
 	const key = modemCredentialKey(device);
-	const entry = key === undefined ? undefined : credentialEntry(device);
+	const entry = key === undefined ? undefined : entries[key];
 	if (entry === undefined) return { configured: false };
 	return {
 		configured: true,

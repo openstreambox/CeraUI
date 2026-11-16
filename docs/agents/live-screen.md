@@ -1,14 +1,14 @@
-## LIVE SCREEN: CONTRACT AND DESIGN BRIEF [PARTIAL]
+## LIVE SCREEN: CONTRACT AND DESIGN BRIEF [EXISTS]
 
 This file is the target structure of the Live destination, written before any
 of it was built.
 
-Status: changes 1 to 5 below have landed — the regions, both orders, the Live
+Status: all six changes below have landed — the regions, both orders, the Live
 bar, the two-column layout and the preview's open state exist as described, the
 layout, the opacity and the second input change while live, the Encoder
 dialog has the automatic format, the adaptive switch and the route line, the
-Audio card has a strip per input, and the second input is placed on the
-preview. Change 6 is still to come.
+Audio card has a strip per input, the second input is placed on the preview,
+and the final design pass has set the rules in "The final design pass" below.
 
 How to read it:
 
@@ -128,6 +128,9 @@ must contain the `source-audio` block with its ids unchanged.
 - Idle, it must show the first blocking reason from `deriveGoLiveReadiness` as
   visible text, or a ready state, and Start.
 - Live, it must show the bitrate control and Stop.
+- While it is mounted, the document's `scroll-padding-bottom` is the bar's
+  height (plus the mobile dock below desktop chrome), so a control reached with
+  Tab or scrolled into view stops above the bar, never under it (WCAG 2.4.11).
 
 #### Screen sizes
 
@@ -225,8 +228,9 @@ must keep that ABI.
 - The main input is the backend's: the picker's input, Auto's resolution, or
   the embedded audio when the picker defers to the source. Its strip is always
   on and its switch disabled with the reason beside it. Without a main input,
-  no other strip can be turned on. At `max_inputs` enabled strips, the others
-  cannot be turned on and say the mix is full.
+  no other strip can be turned on. At `max_inputs` inputs in the mix (a saved
+  input with no strip, gone or unavailable, still counts), the others cannot be
+  turned on and say the mix is full.
 - The main input is always in the mix Start sends, decided where it is used,
   never by a follow-up save: the backend's `effectiveAudioInputs` adds a main
   input outside the saved mix first at its defaults on Track 1 (the old main
@@ -260,18 +264,20 @@ must keep that ABI.
 - Live on a session whose status says `audio_mix_active`, level, mute and
   delay call `streaming.setAudioMix` with only the changed field (the level
   at most every 100 ms while dragging and once on release), and the values the
-  device applied win. The switches and chips are disabled and described by
+  device applied win. A level still queued when the mix session ends (Stop, or
+  the session stops mixing) or the mixer unmounts is dropped, never sent. The switches and chips are disabled and described by
   `audio-mixer-next-start` ("Applies on next start"). Live on a session started
   without the mix, every strip control is disabled with that text. While a mix
   session runs, the source picker is read-only with `audio-source-mix-locked`.
 - Every refusal shown is the keyed copy of one backend token
   (`live.audioMixer.error.<token>` for `audio_mix_unsupported`,
-  `audio_input_unknown`, `audio_inputs_empty`, `audio_input_duplicate`,
+  `audio_input_unknown`, `audio_input_primary`, `audio_inputs_empty`, `audio_input_duplicate`,
   `audio_inputs_too_many`, `audio_tracks_invalid`, `audio_tracks_gap`,
   `audio_gain_range`, `audio_delay_range` and `audio_mix_active`); any other
   token, such as an engine refusal, reads as a generic refusal and never as the
   raw token. The UI refuses a track change or a delay the backend would refuse,
-  in the backend's order and with the same copy, and sends nothing.
+  in the backend's order and with the same copy, and sends nothing. The track
+  check reads the whole mix, saved inputs with no strip included.
 - The mock backend does not bridge `audio-level` to the main socket (its meter
   bridge is skipped under mocks), so `audio-mixer.spec.ts` injects that frame
   when it checks the per-input meters.
@@ -284,20 +290,23 @@ must keep that ABI.
   It covers the picture's letterboxed area (`videoBox`); while the preview is
   off or unavailable, `PreviewCanvas` gives it an empty 16:9 stage, so placing
   never needs the preview to play. Without the capability no designer node
-  exists.
+  exists. The canvas renders `compact`: the disclosure supplies the card chrome.
 - The inset is where the compositor puts the second input: the saved `rect`
   for `custom`, else the preset's own rectangle (`presetRect`: half of each
   axis, a 5% margin for the four insets). It drags with pointer capture,
   resizes from four corners and, focused, moves with the arrow keys by 1%
   (Shift 5%) and resizes
   with Alt and the arrow keys. It is a native button with an accessible name
-  and a polite live description of its position, size and keys; during a
+  and a polite live description of its position, size and keys, including
+  that Escape before letting go puts it back; during a
   pointer drag the description keeps the starting position. Rectangles are
   fractions of the output frame, so they never mirror right to left.
 - Each corner resizes from a 44 px box centred on it
   (`layout-inset-handle-<corner>`, `data-corner`) that sits under the inset,
   plus a cap in the inset's own corner (`data-corner-cap`) of at most 22 px and
-  at most a quarter of each side. On a normal inset the corner keeps its whole
+  at most a quarter of each side. Each cap extends across the inset's 2 px
+  border, so the border at a corner resizes rather than moving the inset.
+  On a normal inset the corner keeps its whole
   44 px zone; at the smallest size on a 375 px phone (about 30 by 17 px) the
   caps stay small, so most of the inset, its middle included, still moves it.
   The caps and the boxes share one pointer path on the picture-area layer; the
@@ -361,6 +370,45 @@ must keep that ABI.
   closed the radio is described by `live.layout.openPreviewToPlace`.
 - Under mocks, a live layout-only change reaches the mock engine
   (`changeMockComposition`), as `set-audio-mix` does.
+
+#### The final design pass [EXISTS]
+
+An audit of the screen as changes 1 to 5 left it, idle and live, at the four
+sizes, in both themes and in English, Spanish and Arabic. It changed no region,
+order or test id, reworded no string (it added one, the Escape hint) and changed
+no control's effect; it set these rules, each pinned by
+`apps/frontend/tests/e2e/live-design-a11y.spec.ts`:
+
+- Every slider on the screen and in the Encoder dialog is a `LabeledSlider`
+  (`apps/frontend/src/lib/components/custom/LabeledSlider.svelte`): its name,
+  description and value text sit on the thumb, the element that takes focus,
+  and it runs with the reading direction, so in Arabic the maximum is on the
+  left like the Live bar's plus button. The shadcn `Slider` primitive put the
+  name on its root and drew no track or fill (its `data-horizontal:` classes
+  never match bits-ui's `data-orientation`).
+- In touch layout a slider thumb keeps its 12 px dot and reaches 44 px through
+  its `::after` hit area, the switch mechanism in `app.css`; an info button
+  does the same through `data-touch-target="hit-area"`.
+- Below 640 px (`sm`) every control in the Audio card, the layout controls
+  and the Live bar is at least 44 px on its shorter side in the default layout
+  too: those regions carry `data-touch-region`, which sets
+  `--touch-target-min` to 44 px there, and the touch-layout rules in `app.css`
+  (button `min-height`, switch and slider-thumb `::after`) apply to them.
+  Spacing keeps its default scale; no component hard-codes 44 px.
+- Text meets AA in dark and light: the preview encoding helper, the target
+  bitrate in the telemetry card, the encoder cell's "not reported" text and a
+  muted strip's Mute label use full
+  `text-muted-foreground` or `text-foreground`; a muted strip keeps its warning
+  tint and icon.
+- At phone width the Output card's Edit buttons keep their words for screen
+  readers, and the destination check shows its words, not only its dot. Setup
+  values and reasons wrap instead of being cut: a row's text keeps at least
+  12rem, and when its actions do not fit beside that they wrap under it at the
+  inline end. A source tile's name wraps to two lines.
+- Under `prefers-reduced-motion: reduce` nothing on the screen keeps animating;
+  the live dot in the summary stays lit and still.
+
+Deliberately left, with reasons, in `docs/DESIGN-FOLLOWUPS.md` section 5.
 
 ### 1. Job and audience
 
@@ -498,9 +546,12 @@ The screen must handle each of these states:
   `packages/i18n/messages/*.json` file, written natively per locale. A change
   must not alter the text of a key it did not add, and nothing may write
   `packages/i18n/tests/fixtures/*.rendered.json`.
-- **Open for the final design pass.** Whether the desk column stays pinned while
-  the cards column scrolls on wide screens, and the width split between the two
-  columns. Until then both columns must scroll with the page.
+- **Decided in the final design pass.** Both columns scroll with the page and
+  the split stays three fifths for the desk, two for the cards. Pinning the desk
+  was rejected: live at 1024x600 the desk (preview, now-streaming summary, source
+  switch, layout controls) is taller than the space between the header and the
+  Live bar, so a pinned desk would hold its own lower controls out of reach
+  until the cards column ended.
 
 #### Assumptions made without an interview
 

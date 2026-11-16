@@ -7,7 +7,8 @@
 
   Every bound is the capability's: gain from `gain_db_min` to `gain_db_max`,
   delay from 0 to `delay_ms_max`, one chip per track up to `max_tracks`, and at
-  most `max_inputs` enabled strips. The input picked above is the main input:
+  most `max_inputs` inputs in the mix, with or without a strip. The input
+  picked above is the main input:
   its strip is always on, and it is in the mix Start sends even when the saved
   mix lacks it (the backend's effective mix); showing it never saves anything.
 
@@ -16,8 +17,10 @@
   device composes it on its own saved mix, so an edit never carries a stale copy
   of the other inputs; its config echo is what the strips then show.
   Live on a mix session (`status.audio_mix_active`), level, mute and delay go to
-  `streaming.setAudioMix` and the device's applied values win; membership and
-  tracks wait for the next start. Live without a mix, every control waits.
+  `streaming.setAudioMix` and the device's applied values win until a config
+  broadcast changes that input after the change was sent (another tab's write,
+  or the change's own echo with the same values); membership and tracks wait
+  for the next start. Live without a mix, every control waits.
 
   A refusal is shown beside its strip as the copy of the backend token that
   names it. The UI refuses a track change the backend would refuse with the same
@@ -37,8 +40,9 @@ import {
 	defaultAudioInput as defaults,
 } from '@ceraui/rpc/schemas';
 import { Activity, RotateCcw, Volume2, VolumeX } from '@lucide/svelte';
-import { Slider as SliderPrimitive } from 'bits-ui';
+import { untrack } from 'svelte';
 
+import LabeledSlider from '$lib/components/custom/LabeledSlider.svelte';
 import AudioLevelMeter from '$lib/components/preview/AudioLevelMeter.svelte';
 import LiveAudioMeter from '$lib/components/preview/LiveAudioMeter.svelte';
 import { Button } from '$lib/components/ui/button';
@@ -133,20 +137,68 @@ function entryFor(id: string): AudioInputSetting {
 	return inputs.find((input) => input.id === id) ?? defaults(id);
 }
 
-const enabledCount = $derived(strips.filter((strip) => isEnabled(strip.id)).length);
-const full = $derived(mix !== undefined && enabledCount >= mix.max_inputs);
+const full = $derived(mix !== undefined && inputs.length >= mix.max_inputs);
 
-// The device's answer to the latest live change, per input; it wins over the
-// saved value until the session ends.
-let liveApplied = $state<Record<string, Values>>({});
+const valuesKey = ({ gain_db, mute, delay_ms }: Values): string => `${gain_db}|${mute}|${delay_ms}`;
+// An input the saved mix does not list is at its defaults.
+const AT_DEFAULTS = valuesKey(defaults(''));
+
+// The level the device was last sent or answered, per input; asking for that same
+// level again sends nothing. A broadcast that changes the input replaces it with
+// the saved level, which is what the device now holds.
+const gainSent: Record<string, number> = {};
+
+// How many config broadcasts changed each input's saved level, mute or delay,
+// read from the saved mix itself, so an input with no strip (gone or
+// unavailable) still counts. Counted, not compared, so a value changed and
+// changed back still counts.
+let broadcasts = $state<Record<string, number>>({});
+let lastSaved: Record<string, string> = {};
+$effect.pre(() => {
+	const saved: Record<string, string> = {};
+	const savedGain: Record<string, number> = {};
+	for (const input of config?.audio_inputs ?? []) {
+		saved[input.id] = valuesKey(input);
+		savedGain[input.id] = input.gain_db;
+	}
+	untrack(() => {
+		const changed = Object.keys({ ...lastSaved, ...saved }).filter(
+			(id) => (lastSaved[id] ?? AT_DEFAULTS) !== (saved[id] ?? AT_DEFAULTS),
+		);
+		lastSaved = saved;
+		if (changed.length === 0) return;
+		const next = { ...broadcasts };
+		for (const id of changed) {
+			next[id] = (next[id] ?? 0) + 1;
+			gainSent[id] = savedGain[id] ?? defaults(id).gain_db;
+		}
+		broadcasts = next;
+	});
+});
+
+// The device's answer to this tab's latest live change, per input. It wins until
+// the session ends, unless a broadcast changed that input after the change was
+// sent: then the broadcast is newer (another tab's write, or our own echo).
+let liveApplied = $state<Record<string, { values: Values; sentAt: number }>>({});
 $effect(() => {
 	if (!mixLive) liveApplied = {};
+	// A queued live intent ends with its session or this component.
+	return () => {
+		for (const id of Object.keys(gainTimer)) {
+			clearTimeout(gainTimer[id]);
+			gainTimer[id] = undefined;
+			dragging[id] = false;
+			dropDraft(id);
+		}
+	};
 });
 
 function shown(id: string): AudioInputSetting {
 	const entry = entryFor(id);
 	const applied = mixLive ? liveApplied[id] : undefined;
-	return applied === undefined ? entry : { ...entry, ...applied };
+	return applied === undefined || applied.sentAt !== (broadcasts[id] ?? 0)
+		? entry
+		: { ...entry, ...applied.values };
 }
 
 let errors = $state<Record<string, string>>({});
@@ -164,6 +216,7 @@ function clearError(id: string): void {
 const ERROR_COPY: Record<string, () => string> = {
 	audio_mix_unsupported: () => m['live.audioMixer.error.audio_mix_unsupported'](),
 	audio_input_unknown: () => m['live.audioMixer.error.audio_input_unknown'](),
+	audio_input_primary: () => m['live.audioMixer.error.audio_input_primary'](),
 	audio_inputs_empty: () => m['live.audioMixer.error.audio_inputs_empty'](),
 	audio_input_duplicate: () => m['live.audioMixer.error.audio_input_duplicate'](),
 	audio_inputs_too_many: () => m['live.audioMixer.error.audio_inputs_too_many'](),
@@ -206,12 +259,11 @@ function tracksError(next: readonly AudioInputSetting[]): string | undefined {
 	return undefined;
 }
 
-/** Every enabled strip after `change`: an edit's preview and the input to the track rule. */
+/** The full mix after `change`, including inputs absent from the current roster. */
 function nextInputs(
 	change: (entries: AudioInputSetting[]) => AudioInputSetting[],
 ): AudioInputSetting[] {
-	const enabled = strips.filter((strip) => isEnabled(strip.id)).map((strip) => entryFor(strip.id));
-	return change(enabled);
+	return change(inputs);
 }
 
 // One input's delta; `preview` only shows the change until the device's config
@@ -286,6 +338,7 @@ async function sendLive(id: string, update: Omit<SetAudioMixInput, 'id'>): Promi
 	const seq = (liveSeq[id] ?? 0) + 1;
 	liveSeq[id] = seq;
 	inflight[id] = (inflight[id] ?? 0) + 1;
+	const sentAt = broadcasts[id] ?? 0;
 	clearError(id);
 	try {
 		const result = await rpc.streaming.setAudioMix({ id, ...update });
@@ -293,9 +346,10 @@ async function sendLive(id: string, update: Omit<SetAudioMixInput, 'id'>): Promi
 		if (!result.success) {
 			setError(id, result.error);
 			delete gainSent[id];
-		} else if (result.applied !== undefined) {
+		} else if (result.applied !== undefined && sentAt === (broadcasts[id] ?? 0)) {
+			// An answer a broadcast overtook is older than what that broadcast set.
 			const { gain_db, mute, delay_ms } = result.applied;
-			liveApplied = { ...liveApplied, [id]: { gain_db, mute, delay_ms } };
+			liveApplied = { ...liveApplied, [id]: { values: { gain_db, mute, delay_ms }, sentAt } };
 			gainSent[id] = gain_db;
 		}
 	} catch {
@@ -313,7 +367,6 @@ async function sendLive(id: string, update: Omit<SetAudioMixInput, 'id'>): Promi
 // GAIN_SEND_INTERVAL_MS while dragging and once more on release; idle, it is
 // saved once, on release.
 let gainDraft = $state<Record<string, number>>({});
-const gainSent: Record<string, number> = {};
 const gainSentAt: Record<string, number> = {};
 const gainTimer: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
 const dragging: Record<string, boolean> = {};
@@ -324,9 +377,30 @@ function dropDraft(id: string): void {
 	gainDraft = rest;
 }
 
+// A level control that goes away mid-drag (its strip leaves, or its input leaves
+// the mix) never sees its release: end that drag, so the level shows the device's
+// values again when the control returns. Same condition the markup renders it on.
+$effect(() => {
+	const controls = new Set(
+		mix === undefined
+			? []
+			: strips.filter((strip) => isEnabled(strip.id)).map((strip) => strip.id),
+	);
+	untrack(() => {
+		for (const id of Object.keys(gainDraft)) {
+			if (controls.has(id)) continue;
+			dragging[id] = false;
+			clearTimeout(gainTimer[id]);
+			gainTimer[id] = undefined;
+			dropDraft(id);
+		}
+	});
+});
+
 function sendGain(id: string): void {
 	const value = gainDraft[id];
-	if (value === undefined || value === gainSent[id]) return;
+	// A queued level is sent only while its session is still live.
+	if (!mixLive || value === undefined || value === gainSent[id]) return;
 	gainSentAt[id] = Date.now();
 	gainSent[id] = value;
 	void sendLive(id, { gain_db: value });
@@ -502,38 +576,19 @@ const headingId = `${uid}-heading`;
 							<span class="text-muted-foreground w-10 shrink-0 text-xs font-medium">
 								{m['live.audioMixer.gain']()}
 							</span>
-							<SliderPrimitive.Root
-								class="relative flex min-h-6 w-full min-w-0 touch-none items-center select-none data-disabled:opacity-50"
-								data-slot="slider"
+							<LabeledSlider
 								data-testid={`audio-strip-gain-${strip.id}`}
+								{describedBy}
 								disabled={valuesLocked}
+								label={m['live.audioMixer.gainFor']({ name: strip.label })}
 								max={mix.gain_db_max}
 								min={mix.gain_db_min}
-								onValueChange={(value: number) => moveGain(strip.id, value)}
-								onValueCommit={(value: number) => commitGain(strip.id, value)}
+								onValueChange={(value) => moveGain(strip.id, value)}
+								onValueCommit={(value) => commitGain(strip.id, value)}
 								step={1}
-								type="single"
 								value={gain}
-							>
-								{#snippet children({ thumbItems })}
-									<span
-										class="bg-muted relative h-1 w-full grow overflow-hidden rounded-full"
-										data-slot="slider-track"
-									>
-										<SliderPrimitive.Range class="bg-primary absolute h-full select-none" />
-									</span>
-									{#each thumbItems as thumb (thumb.index)}
-										<SliderPrimitive.Thumb
-											aria-describedby={describedBy}
-											aria-label={m['live.audioMixer.gainFor']({ name: strip.label })}
-											aria-valuetext={formatDb(gain)}
-											class="border-ring ring-ring/50 relative block size-3 shrink-0 rounded-full border bg-white transition-[color,box-shadow] select-none after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 disabled:pointer-events-none disabled:opacity-50"
-											data-slot="slider-thumb"
-											index={thumb.index}
-										/>
-									{/each}
-								{/snippet}
-							</SliderPrimitive.Root>
+								valueText={formatDb(gain)}
+							/>
 							<!-- A signed measurement keeps its own order in right-to-left locales. -->
 							<span
 								class="bg-primary/10 text-primary w-16 shrink-0 rounded-md px-2 py-1 text-center font-mono text-xs tabular-nums"
@@ -562,7 +617,7 @@ const headingId = `${uid}-heading`;
 								aria-label={m['live.audioMixer.muteFor']({ name: strip.label })}
 								aria-pressed={values.mute}
 								class={values.mute
-									? 'border-status-warning/60 bg-status-warning/15 text-status-warning hover:bg-status-warning/20 hover:text-status-warning'
+									? 'border-status-warning/60 bg-status-warning/15 hover:bg-status-warning/20'
 									: ''}
 								data-testid={`audio-strip-mute-${strip.id}`}
 								disabled={valuesLocked}
@@ -571,7 +626,8 @@ const headingId = `${uid}-heading`;
 								variant="outline"
 							>
 								{#if values.mute}
-									<VolumeX aria-hidden={true} />
+									<!-- The tint and the icon carry the warning; the word stays foreground (AA). -->
+									<VolumeX aria-hidden={true} class="text-status-warning" />
 								{:else}
 									<Volume2 aria-hidden={true} />
 								{/if}

@@ -2887,7 +2887,7 @@
 	"live.audioMixer.error.audio_delay_range": "Delay 0 से {max} ms तक की पूर्ण संख्या होनी चाहिए।",
 	"live.audioMixer.error.audio_mix_active": "यह स्ट्रीम इनपुट मिक्स कर रही है। मुख्य इनपुट बदलने के लिए इसे रोकें।",
 	"live.audioMixer.error.refused": "डिवाइस ने यह बदलाव अस्वीकार कर दिया, इसलिए कुछ नहीं बदला।",
-	"network.cellular.reason.himiUfiRouter": "इस HIMI U01 डोंगल का अपना राउटर मोबाइल कनेक्शन इस्तेमाल कर रहा है, इसलिए CeraLive अपना डेटा कनेक्शन शुरू नहीं कर सकता। राउटर मोड (USB नेटवर्क) या सामान्य मॉडेम इस्तेमाल करें। देखें: docs.ceralive.tv/hardware/cellular-modems/.",
+	"network.cellular.reason.himiUfiRouter": "यह HIMI U01 डोंगल अपना डेटा कनेक्शन शुरू नहीं कर सका। हो सकता है कि इसका अपना राउटर मोबाइल कनेक्शन इस्तेमाल कर रहा हो। राउटर मोड (USB नेटवर्क) या सामान्य मॉडेम इस्तेमाल करें। देखें: docs.ceralive.tv/hardware/cellular-modems/.",
 	"live.layout.custom": "कस्टम",
 	"live.layout.openPreviewToPlace": "दूसरे इनपुट को तस्वीर पर रखने के लिए पूर्वावलोकन खोलें।",
 	"live.layout.inset": "दूसरे इनपुट की जगह",
@@ -3088,5 +3088,7 @@
 	"live.phone.moblinSaved": "बॉक्स पर सहेजा गया। Moblin में देखें कि वह जुड़ता है; सहेजने से कनेक्शन की पुष्टि नहीं होती।",
 	"live.phone.moblinCleared": "इस बॉक्स पर कोई Moblin पासवर्ड सहेजा नहीं है।",
 	"live.phone.moblinFailed": "Moblin पासवर्ड लागू नहीं हो सका। बॉक्स जाँचें और फिर कोशिश करें। हो सकता है वह पहले से सहेजा हो।",
-	"live.phone.moblinBusy": "Moblin पासवर्ड बदलने से पहले, बॉक्स के यह पुष्टि करने तक रुकें कि कोई स्ट्रीम उसे इस्तेमाल नहीं कर रही।"
+	"live.phone.moblinBusy": "Moblin पासवर्ड बदलने से पहले, बॉक्स के यह पुष्टि करने तक रुकें कि कोई स्ट्रीम उसे इस्तेमाल नहीं कर रही।",
+	"live.audioMixer.error.audio_input_primary": "मुख्य इनपुट हमेशा मिक्स में रहता है। इसे बंद करने के लिए कोई दूसरा ऑडियो स्रोत चुनें।",
+	"live.layout.insetCancel": "पिछली जगह पर लौटाने के लिए छोड़ने से पहले Escape दबाएँ।"
 }
