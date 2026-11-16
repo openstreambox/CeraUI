@@ -402,7 +402,7 @@ test("a modem that vanished is never switched", async () => {
 	expect(b.calls).toEqual([]);
 });
 
-test("a start during the setter stops before reset", async () => {
+test("a start during the setter stops before recording a USB return wait", async () => {
 	const b = box();
 	await runUsbSpeedPreparation({
 		...b.deps,
@@ -417,6 +417,22 @@ test("a start during the setter stops before reset", async () => {
 			};
 		},
 	});
+	expect(b.records.get(b.key(0))?.phase).toBe("attempted");
+	expect(b.calls).not.toContain("reset 0");
+	expect(b.calls).toContain("release 0");
+});
+
+test("a start during the USB return record write stops before reset", async () => {
+	const b = box();
+	await runUsbSpeedPreparation({
+		...b.deps,
+		write: async (record) => {
+			await b.deps.write(record);
+			if (record.kind === "usbspeed" && record.phase === "awaiting-usb")
+				b.setStreaming(true);
+		},
+	});
+	expect(b.records.get(b.key(0))?.phase).toBe("awaiting-usb");
 	expect(b.calls).not.toContain("reset 0");
 	expect(b.calls).toContain("release 0");
 });
