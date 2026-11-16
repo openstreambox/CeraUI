@@ -3113,5 +3113,6 @@
 	"settings.srtEncryptionInvalid": "Use 10–79 UTF-8 bytes, or empty to clear.",
 	"settings.srtEncryptionKeyLength": "SRT encryption key length",
 	"live.startFailure.srtEncryptionUnavailable": "Saved SRT encryption settings are not supported. Clear them before starting.",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "Saved SRT encryption settings are not supported. Clear them before starting."
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "Saved SRT encryption settings are not supported. Clear them before starting.",
+	"network.sharing.ipv6Only": "Devices on the box's Wi-Fi can't reach IPv4 sites through this link yet."
 }

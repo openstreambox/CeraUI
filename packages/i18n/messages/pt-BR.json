@@ -3116,5 +3116,6 @@
 	"settings.srtEncryptionInvalid": "Use de 10 a 79 bytes UTF-8, ou vazio para apagar.",
 	"settings.srtEncryptionKeyLength": "Tamanho da chave SRT",
 	"live.startFailure.srtEncryptionUnavailable": "As configurações de criptografia SRT salvas não são compatíveis. Apague-as antes de iniciar.",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "As configurações de criptografia SRT salvas não são compatíveis. Apague-as antes de iniciar."
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "As configurações de criptografia SRT salvas não são compatíveis. Apague-as antes de iniciar.",
+	"network.sharing.ipv6Only": "Os dispositivos no Wi-Fi do aparelho ainda não conseguem acessar sites IPv4 por este link."
 }

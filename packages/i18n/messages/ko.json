@@ -3068,5 +3068,6 @@
 	"settings.srtEncryptionInvalid": "UTF-8 기준 10~79바이트를 입력하거나 비워서 삭제하세요.",
 	"settings.srtEncryptionKeyLength": "SRT 암호화 키 길이",
 	"live.startFailure.srtEncryptionUnavailable": "저장된 SRT 암호화 설정은 지원되지 않습니다. 시작하기 전에 삭제하세요.",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "저장된 SRT 암호화 설정은 지원되지 않습니다. 시작하기 전에 삭제하세요."
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "저장된 SRT 암호화 설정은 지원되지 않습니다. 시작하기 전에 삭제하세요.",
+	"network.sharing.ipv6Only": "기기의 Wi-Fi에 연결된 장치는 아직 이 링크를 통해 IPv4 사이트에 접속할 수 없습니다."
 }

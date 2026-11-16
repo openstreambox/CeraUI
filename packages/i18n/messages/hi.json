@@ -3113,5 +3113,6 @@
 	"settings.srtEncryptionInvalid": "10–79 UTF-8 बाइट का उपयोग करें, या मिटाने के लिए खाली रखें।",
 	"settings.srtEncryptionKeyLength": "SRT एन्क्रिप्शन कुंजी की लंबाई",
 	"live.startFailure.srtEncryptionUnavailable": "सहेजी गई SRT एन्क्रिप्शन सेटिंग समर्थित नहीं हैं। शुरू करने से पहले उन्हें मिटाएँ।",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "सहेजी गई SRT एन्क्रिप्शन सेटिंग समर्थित नहीं हैं। शुरू करने से पहले उन्हें मिटाएँ।"
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "सहेजी गई SRT एन्क्रिप्शन सेटिंग समर्थित नहीं हैं। शुरू करने से पहले उन्हें मिटाएँ।",
+	"network.sharing.ipv6Only": "बॉक्स के Wi-Fi से जुड़े डिवाइस अभी इस लिंक से IPv4 साइटों तक नहीं पहुँच सकते।"
 }

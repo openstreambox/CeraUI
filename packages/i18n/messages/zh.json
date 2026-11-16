@@ -3068,5 +3068,6 @@
 	"settings.srtEncryptionInvalid": "使用 10–79 个 UTF-8 字节，留空则清除。",
 	"settings.srtEncryptionKeyLength": "SRT 加密密钥长度",
 	"live.startFailure.srtEncryptionUnavailable": "不支持已保存的 SRT 加密设置。请在开始前清除这些设置。",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "不支持已保存的 SRT 加密设置。请在开始前清除这些设置。"
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "不支持已保存的 SRT 加密设置。请在开始前清除这些设置。",
+	"network.sharing.ipv6Only": "连接到本机 Wi-Fi 的设备暂时无法通过此链路访问 IPv4 网站。"
 }

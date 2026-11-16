@@ -3068,5 +3068,6 @@
 	"settings.srtEncryptionInvalid": "10～79 UTF-8バイトで入力。空にすると削除します。",
 	"settings.srtEncryptionKeyLength": "SRT暗号鍵の長さ",
 	"live.startFailure.srtEncryptionUnavailable": "保存されたSRT暗号化設定はサポートされていません。開始する前に削除してください。",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "保存されたSRT暗号化設定はサポートされていません。開始する前に削除してください。"
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "保存されたSRT暗号化設定はサポートされていません。開始する前に削除してください。",
+	"network.sharing.ipv6Only": "この機器の Wi-Fi に接続した端末は、この回線経由で IPv4 サイトにまだアクセスできません。"
 }

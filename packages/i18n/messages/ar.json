@@ -3125,5 +3125,6 @@
 	"settings.srtEncryptionInvalid": "استخدم 10–79 بايت UTF-8، أو اتركه فارغًا للمسح.",
 	"settings.srtEncryptionKeyLength": "طول مفتاح تشفير SRT",
 	"live.startFailure.srtEncryptionUnavailable": "إعدادات تشفير SRT المحفوظة غير مدعومة. امسحها قبل بدء البث.",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "إعدادات تشفير SRT المحفوظة غير مدعومة. امسحها قبل بدء البث."
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "إعدادات تشفير SRT المحفوظة غير مدعومة. امسحها قبل بدء البث.",
+	"network.sharing.ipv6Only": "لا تستطيع الأجهزة المتصلة بشبكة Wi-Fi الخاصة بالجهاز الوصول إلى مواقع IPv4 عبر هذا الرابط بعد."
 }

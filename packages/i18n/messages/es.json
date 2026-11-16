@@ -3116,5 +3116,6 @@
 	"settings.srtEncryptionInvalid": "Usa entre 10 y 79 bytes UTF-8, o déjalo vacío para borrar.",
 	"settings.srtEncryptionKeyLength": "Longitud de clave de cifrado SRT",
 	"live.startFailure.srtEncryptionUnavailable": "Los ajustes de cifrado SRT guardados no son compatibles. Bórralos antes de iniciar.",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "Los ajustes de cifrado SRT guardados no son compatibles. Bórralos antes de iniciar."
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "Los ajustes de cifrado SRT guardados no son compatibles. Bórralos antes de iniciar.",
+	"network.sharing.ipv6Only": "Los dispositivos conectados al Wi-Fi del equipo todavía no pueden acceder a sitios IPv4 a través de este enlace."
 }

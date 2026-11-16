@@ -3116,5 +3116,6 @@
 	"settings.srtEncryptionInvalid": "Utilisez 10 à 79 octets UTF-8, ou vide pour effacer.",
 	"settings.srtEncryptionKeyLength": "Longueur de clé SRT",
 	"live.startFailure.srtEncryptionUnavailable": "Les paramètres de chiffrement SRT enregistrés ne sont pas pris en charge. Effacez-les avant de démarrer.",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "Les paramètres de chiffrement SRT enregistrés ne sont pas pris en charge. Effacez-les avant de démarrer."
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "Les paramètres de chiffrement SRT enregistrés ne sont pas pris en charge. Effacez-les avant de démarrer.",
+	"network.sharing.ipv6Only": "Les appareils connectés au Wi-Fi du boîtier ne peuvent pas encore accéder aux sites IPv4 par cette liaison."
 }

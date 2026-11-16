@@ -3113,5 +3113,6 @@
 	"settings.srtEncryptionInvalid": "10–79 UTF-8-Bytes eingeben oder zum Löschen leeren.",
 	"settings.srtEncryptionKeyLength": "SRT-Schlüssellänge",
 	"live.startFailure.srtEncryptionUnavailable": "Die gespeicherten SRT-Verschlüsselungseinstellungen werden nicht unterstützt. Lösche sie vor dem Start.",
-	"notifications.streamStartSrtEncryptionUnavailableFailed": "Die gespeicherten SRT-Verschlüsselungseinstellungen werden nicht unterstützt. Lösche sie vor dem Start."
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "Die gespeicherten SRT-Verschlüsselungseinstellungen werden nicht unterstützt. Lösche sie vor dem Start.",
+	"network.sharing.ipv6Only": "Geräte im WLAN der Box können über diese Verbindung noch keine IPv4-Seiten erreichen."
 }

@@ -27130,6 +27130,13 @@
       "message": "\"netif\"",
       "fields": [
         {
+          "path": ".*.tp",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
           "path": ".*.enabled",
           "types": [
             "false",
@@ -27140,20 +27147,45 @@
         {
           "path": ".*.ip",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
-          "path": ".*.tp",
+          "path": ".*.ipv6",
           "types": [
-            "number"
+            "undefined",
+            "string"
           ],
-          "decision": "needed: typed diagnostic"
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
           "path": ".*.error",
           "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.mac",
+          "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -27161,6 +27193,7 @@
         {
           "path": ".*.same_subnet_group",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -27168,6 +27201,7 @@
         {
           "path": ".*.tx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -27175,6 +27209,7 @@
         {
           "path": ".*.rx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -27182,6 +27217,7 @@
         {
           "path": ".*.dongle",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -27205,6 +27241,7 @@
         {
           "path": ".*.router_cellular",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -27248,6 +27285,7 @@
         {
           "path": ".*.usb_modem_net",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -27283,6 +27321,7 @@
         {
           "path": ".*.ethRole",
           "types": [
+            "undefined",
             "\"uplink\"",
             "\"shared-lan\""
           ],
@@ -27291,6 +27330,7 @@
         {
           "path": ".*.ethRoleOp",
           "types": [
+            "undefined",
             "false",
             "true"
           ],
@@ -30236,6 +30276,13 @@
       "message": "\"netif\"",
       "fields": [
         {
+          "path": ".*.tp",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
           "path": ".*.enabled",
           "types": [
             "false",
@@ -30246,20 +30293,45 @@
         {
           "path": ".*.ip",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
-          "path": ".*.tp",
+          "path": ".*.ipv6",
           "types": [
-            "number"
+            "undefined",
+            "string"
           ],
-          "decision": "needed: typed diagnostic"
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
           "path": ".*.error",
           "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.mac",
+          "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30267,6 +30339,7 @@
         {
           "path": ".*.same_subnet_group",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30274,6 +30347,7 @@
         {
           "path": ".*.tx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -30281,6 +30355,7 @@
         {
           "path": ".*.rx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -30288,6 +30363,7 @@
         {
           "path": ".*.dongle",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30311,6 +30387,7 @@
         {
           "path": ".*.router_cellular",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30354,6 +30431,7 @@
         {
           "path": ".*.usb_modem_net",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30389,6 +30467,7 @@
         {
           "path": ".*.ethRole",
           "types": [
+            "undefined",
             "\"uplink\"",
             "\"shared-lan\""
           ],
@@ -30397,6 +30476,7 @@
         {
           "path": ".*.ethRoleOp",
           "types": [
+            "undefined",
             "false",
             "true"
           ],
@@ -30455,6 +30535,13 @@
       "message": "\"netif\"",
       "fields": [
         {
+          "path": ".*.tp",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
           "path": ".*.enabled",
           "types": [
             "false",
@@ -30465,20 +30552,45 @@
         {
           "path": ".*.ip",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
-          "path": ".*.tp",
+          "path": ".*.ipv6",
           "types": [
-            "number"
+            "undefined",
+            "string"
           ],
-          "decision": "needed: typed diagnostic"
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
           "path": ".*.error",
           "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.mac",
+          "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30486,6 +30598,7 @@
         {
           "path": ".*.same_subnet_group",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30493,6 +30606,7 @@
         {
           "path": ".*.tx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -30500,6 +30614,7 @@
         {
           "path": ".*.rx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -30507,6 +30622,7 @@
         {
           "path": ".*.dongle",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30530,6 +30646,7 @@
         {
           "path": ".*.router_cellular",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30573,6 +30690,7 @@
         {
           "path": ".*.usb_modem_net",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30608,6 +30726,7 @@
         {
           "path": ".*.ethRole",
           "types": [
+            "undefined",
             "\"uplink\"",
             "\"shared-lan\""
           ],
@@ -30616,6 +30735,7 @@
         {
           "path": ".*.ethRoleOp",
           "types": [
+            "undefined",
             "false",
             "true"
           ],
@@ -30629,6 +30749,13 @@
       "message": "\"netif\"",
       "fields": [
         {
+          "path": ".*.tp",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
           "path": ".*.enabled",
           "types": [
             "false",
@@ -30639,20 +30766,45 @@
         {
           "path": ".*.ip",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
-          "path": ".*.tp",
+          "path": ".*.ipv6",
           "types": [
-            "number"
+            "undefined",
+            "string"
           ],
-          "decision": "needed: typed diagnostic"
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
           "path": ".*.error",
           "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.mac",
+          "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30660,6 +30812,7 @@
         {
           "path": ".*.same_subnet_group",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30667,6 +30820,7 @@
         {
           "path": ".*.tx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -30674,6 +30828,7 @@
         {
           "path": ".*.rx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -30681,6 +30836,7 @@
         {
           "path": ".*.dongle",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30704,6 +30860,7 @@
         {
           "path": ".*.router_cellular",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30747,6 +30904,7 @@
         {
           "path": ".*.usb_modem_net",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -30782,6 +30940,7 @@
         {
           "path": ".*.ethRole",
           "types": [
+            "undefined",
             "\"uplink\"",
             "\"shared-lan\""
           ],
@@ -30790,6 +30949,7 @@
         {
           "path": ".*.ethRoleOp",
           "types": [
+            "undefined",
             "false",
             "true"
           ],
@@ -41639,6 +41799,13 @@
       "message": "\"netif\"",
       "fields": [
         {
+          "path": ".*.tp",
+          "types": [
+            "number"
+          ],
+          "decision": "needed: typed diagnostic"
+        },
+        {
           "path": ".*.enabled",
           "types": [
             "false",
@@ -41649,20 +41816,45 @@
         {
           "path": ".*.ip",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
-          "path": ".*.tp",
+          "path": ".*.ipv6",
           "types": [
-            "number"
+            "undefined",
+            "string"
           ],
-          "decision": "needed: typed diagnostic"
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.addresses[]",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
         },
         {
           "path": ".*.error",
           "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed remotely: withhold local network identity, account or management detail"
+        },
+        {
+          "path": ".*.mac",
+          "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -41670,6 +41862,7 @@
         {
           "path": ".*.same_subnet_group",
           "types": [
+            "undefined",
             "string"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -41677,6 +41870,7 @@
         {
           "path": ".*.tx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -41684,6 +41878,7 @@
         {
           "path": ".*.rx_bps",
           "types": [
+            "undefined",
             "number"
           ],
           "decision": "needed: typed diagnostic"
@@ -41691,6 +41886,7 @@
         {
           "path": ".*.dongle",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -41714,6 +41910,7 @@
         {
           "path": ".*.router_cellular",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -41757,6 +41954,7 @@
         {
           "path": ".*.usb_modem_net",
           "types": [
+            "undefined",
             "null"
           ],
           "decision": "not needed remotely: withhold local network identity, account or management detail"
@@ -41792,6 +41990,7 @@
         {
           "path": ".*.ethRole",
           "types": [
+            "undefined",
             "\"uplink\"",
             "\"shared-lan\""
           ],
@@ -41800,6 +41999,7 @@
         {
           "path": ".*.ethRoleOp",
           "types": [
+            "undefined",
             "false",
             "true"
           ],
@@ -42881,14 +43081,12 @@
     "apps/backend/src/modules/modems/modem-status.ts": "00286b5a7818dc3a260d66ae21e6dca0316fc10c3e78f48d44297e2a38c64406",
     "apps/backend/src/modules/modems/modem-wire-projection.ts": "204e238556c809f97819be13e65b59c17c7b1ddeb4c72f49b1535df805e08c01",
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
-    "apps/backend/src/modules/network/dongle-metadata.ts": "317c464611319b007a717184628697d472d95d7e0761b502a68606f9d8582ef4",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "29234fe5c8db5cce9344d24253b1938857f5dcf3bb2643dbe5fd468f66abc128",
-    "apps/backend/src/modules/network/network-interfaces.ts": "55ba8fab14e38110c634c4756e9443001e06af018b1b0c6f18b8e3b366103227",
-    "apps/backend/src/modules/network/router-cellular-scan.ts": "ef518dd4124430459e4af15464b540d12e7292c57149330ef653f1e7ee341fad",
+    "apps/backend/src/modules/network/network-interfaces.ts": "2865adbdf802c42ddff3e3605e99af512d1c88e20d90d735c52d9e71ada78b05",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "c929bfe403ec8298fdeb737eafa75735d9664723eaab740312d2f3b1049082fe",
-    "apps/backend/src/modules/network/uplink-health/runtime.ts": "3e88571fad2a385f515976029c4026ff87b32baaf2d75db05196f06745968075",
+    "apps/backend/src/modules/network/uplink-health/runtime.ts": "244a0df6b2785d0f7fe57fa102f35929c1f732c3c33d9bb6358d3883ac3c59ad",
     "apps/backend/src/modules/network/uplink-health/state.ts": "261d10a9f6d2e62d6a2fb92dab4a4a8a37ad8eb8fcb672205f0cb241d544174b",
     "apps/backend/src/modules/network/uplink-shaper/status.ts": "f2ef210a8e62db8310afad2083ce02ba17e5a094e6e7081e2b94c396228bfd35",
     "apps/backend/src/modules/network/uplink-steering/runtime.ts": "a360d8cdb1fd972e7f755535faa10347f0b38d68bb131fcb8b435f067b506971",
@@ -42952,7 +43150,7 @@
     "packages/rpc/src/schemas/fan.schema.ts": "8f4ab6b8b302d408994350eb66089f8d0fb195e0bccfc498e2d1b333a3fde841",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
     "packages/rpc/src/schemas/modems.schema.ts": "d3733a5e5d8a4c79adb1a7089f8ebcdee54b3aed877957481eaf73c15ea56295",
-    "packages/rpc/src/schemas/network.schema.ts": "0d515e65ed3d50e483df9e5f835a5ff3f75064b87f679473b54ed8c9229ca313",
+    "packages/rpc/src/schemas/network.schema.ts": "3038e31d908d42c65b1dfb4d936040edfe08f72e1ba8ddbe5862aef44622fb38",
     "packages/rpc/src/schemas/notifications.schema.ts": "73210bfb218535dd2273020347aa18c3ac187d23bed8cf04bcd36dc4743661c4",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
