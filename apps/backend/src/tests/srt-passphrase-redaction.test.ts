@@ -82,7 +82,7 @@ test("refuses retained encryption settings before acquiring an engine connection
 				port: 9000,
 			},
 		),
-	).rejects.toThrow();
+	).rejects.toThrow("params:start_invalid");
 	expect(connects).toBe(0);
 });
 
@@ -295,7 +295,10 @@ function assertReceiverWrites(text: string) {
 		(node) => condition(node) === 'input.srt_passphrase === ""',
 	);
 	expect(clear).toBeGreaterThanOrEqual(0);
-	expect(writes).toEqual([
+	expect(
+		writes,
+		"receiver encryption writes must only be the two explicit clears",
+	).toEqual([
 		{ value: "undefined", statement: clear },
 		{ value: "undefined", statement: clear },
 	]);
@@ -480,7 +483,39 @@ test("setConfig writes encryption fields only in the explicit clear after destin
 	assertReceiverWrites(await receiverSource());
 });
 
+function insertAtAnchor(text: string, code: string) {
+	const anchor = "if (input.relay_server) {";
+	expect(text.split(anchor)).toHaveLength(2);
+	return text.replace(anchor, `${anchor}\n${code}`);
+}
+
+test("receiver fixture insertion requires a unique anchor", () => {
+	expect(() => insertAtAnchor("", "config.srt_latency = 1;")).toThrow(
+		"toHaveLength",
+	);
+	expect(() =>
+		insertAtAnchor("if (input.relay_server) { if (input.relay_server) {", ""),
+	).toThrow("toHaveLength");
+});
+
 const writeMutants = [
+	"({srt_passphrase: config.srt_passphrase} = input);",
+	"[config.srt_pbkeylen] = [32];",
+	"({nested: [config.srt_passphrase = input.srt_passphrase]} = input);",
+	"({...config.srt_passphrase} = input);",
+	"[...config.srt_pbkeylen] = input;",
+	'Object.defineProperty(config, "srt_passphrase", {value: input.srt_passphrase});',
+	"Object.defineProperties(config, {srt_pbkeylen: {value: 32}});",
+	"Object.defineProperties(config, {...input});",
+	"Object.defineProperty(config, key, {value: input.value});",
+	"for (config.srt_passphrase of input.values) {}",
+	"for ([config.srt_pbkeylen] of input.values) {}",
+	"for (config.srt_passphrase in input) {}",
+	'Object["assign"](config, {srt_passphrase: input.srt_passphrase});',
+	'Object["defineProperty"](config, "srt_pbkeylen", {value: 32});',
+	'Object["defineProperties"](config, {srt_passphrase: {value: input.srt_passphrase}});',
+	'Reflect["set"](config, "srt_pbkeylen", 32);',
+	"globalThis.Object.assign(config, {srt_pbkeylen: 32});",
 	"config.srt_passphrase = input.srt_passphrase;",
 	'config["srt_pbkeylen"] = 32;',
 	'config[`srt_passphrase`] = "synthetic-secret";',
@@ -505,15 +540,27 @@ test.each(writeMutants)(
 	"receiver-write mutant is rejected: %s",
 	async (mutant) => {
 		const text = await receiverSource();
-		const anchor = "if (input.relay_server) {";
-		expect(text.split(anchor)).toHaveLength(2);
-		expect(() =>
-			assertReceiverWrites(text.replace(anchor, `${anchor}\n${mutant}`)),
-		).toThrow();
+		expect(() => assertReceiverWrites(insertAtAnchor(text, mutant))).toThrow(
+			"receiver encryption writes must only be the two explicit clears",
+		);
 	},
 );
 
 test.each([
+	"({[config.srt_passphrase]: other.value} = input);",
+	"[other.srt_pbkeylen = config.srt_pbkeylen] = input;",
+	"for (other.srt_passphrase of [config.srt_passphrase]) {}",
+	"for (const value of config.srt_passphrase) {}",
+	'Object.defineProperty(other, "srt_passphrase", {value: config.srt_passphrase});',
+	"Object.defineProperties(other, {srt_pbkeylen: {value: config.srt_pbkeylen}});",
+	'Object.defineProperty(config.audio_inputs, "srt_passphrase", {value: 1});',
+	'Object.defineProperty(config, "srt_latency", {value: 2000});',
+	"Object.defineProperties(config, {srt_latency: {value: 2000}});",
+	'Object["assign"](other, config);',
+	'Object["assign"](config, {srt_latency: 2000});',
+	"other[config.srt_passphrase] = 1;",
+	"this.config.srt_passphrase = input.srt_passphrase;",
+	"delete config.srt_passphrase;",
 	"const value = config.srt_passphrase;",
 	'const value = config["srt_pbkeylen"];',
 	"const value = config[key];",
@@ -529,10 +576,5 @@ test.each([
 	"config = { ...config, srt_latency: input.srt_latency };",
 ])("receiver reads and unrelated writes stay valid: %s", async (fixture) => {
 	const text = await receiverSource();
-	assertReceiverWrites(
-		text.replace(
-			"if (input.relay_server) {",
-			`if (input.relay_server) {\n${fixture}`,
-		),
-	);
+	assertReceiverWrites(insertAtAnchor(text, fixture));
 });
