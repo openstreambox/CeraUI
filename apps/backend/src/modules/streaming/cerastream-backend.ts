@@ -1149,38 +1149,34 @@ export class CerastreamBackend implements StreamingBackend {
 				await client.close();
 				return "unknown";
 			}
-			let resolveRuntimeState:
-				| ((runtimeState: EngineRuntimeState) => void)
-				| undefined;
-			const runtimeStateEvent = new Promise<EngineRuntimeState>((resolve) => {
+			// Hydration can arrive before subscribe acknowledgement. Do not publish
+			// it until subscription succeeds, and do not let an older idle snapshot
+			// win over a newer Start/retirement frame delivered in the same batch.
+			let latestStatus: Extract<EventParams, { type: "status" }> | undefined;
+			let resolveRuntimeState: (() => void) | undefined;
+			const runtimeStateEvent = new Promise<void>((resolve) => {
 				resolveRuntimeState = resolve;
 			});
 			subscription = await client.subscribeEvents(
 				{ topics: ["status"] },
 				(event) => {
+					if (adopted) {
+						if (ownsSession()) this.handleEvent(event, ownsSession);
+						return;
+					}
 					if (
-						adopted
-							? !ownsSession()
-							: !acceptingEvents ||
-								!ownsQuery() ||
-								this.clientEpoch !== clientEpoch
+						!acceptingEvents ||
+						!ownsQuery() ||
+						this.clientEpoch !== clientEpoch
 					)
 						return;
-					this.handleEvent(event, () =>
-						adopted
-							? ownsSession()
-							: acceptingEvents &&
-								ownsQuery() &&
-								this.clientEpoch === clientEpoch,
-					);
 					if (event.type === "status") {
+						latestStatus = event;
 						if (
 							classifyRuntimeState(event.state, event.streaming) === "unknown"
 						)
 							uncertainStatus();
-						resolveRuntimeState?.(
-							classifyRuntimeState(event.state, event.streaming),
-						);
+						resolveRuntimeState?.();
 					}
 				},
 			);
@@ -1190,10 +1186,29 @@ export class CerastreamBackend implements StreamingBackend {
 				return "unknown";
 			}
 			timer = this.deps.scheduleTimeout(
-				() => resolveRuntimeState?.("unknown"),
+				() => resolveRuntimeState?.(),
 				ENGINE_STATE_RECONCILE_TIMEOUT,
 			);
-			const runtimeState = await runtimeStateEvent;
+			await runtimeStateEvent;
+			const runtimeState =
+				latestStatus === undefined
+					? "unknown"
+					: classifyRuntimeState(latestStatus.state, latestStatus.streaming);
+			if (!ownsQuery() || this.clientEpoch !== clientEpoch) {
+				acceptingEvents = false;
+				subscription.close();
+				await client.close();
+				return "unknown";
+			}
+			if (latestStatus !== undefined) {
+				this.handleEvent(latestStatus, () =>
+					adopted
+						? ownsSession()
+						: acceptingEvents &&
+							ownsQuery() &&
+							this.clientEpoch === clientEpoch,
+				);
+			}
 			acceptingEvents = false;
 			if (
 				ownsQuery() &&
@@ -1209,7 +1224,9 @@ export class CerastreamBackend implements StreamingBackend {
 			}
 			subscription?.close();
 			await client.close();
-			return ownsQuery() ? runtimeState : "unknown";
+			return ownsQuery() && this.clientEpoch === clientEpoch
+				? runtimeState
+				: "unknown";
 		} catch (error) {
 			acceptingEvents = false;
 			subscription?.close();

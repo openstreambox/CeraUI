@@ -267,12 +267,40 @@ The existing update reason/catalog keys now offer
 the honest Stop-confirmation hint; downstream disruptive consumers are migrated in
 the separately assigned consumer lane.
 
-**Follow-up — engine status snapshot [GREENFIELD; not done].** Passive idle proof
-needs an additive current-status subscribe reply/hydration or read-only `get_status`
-method, producer-owned exported types and a published/tagged binding before any
-consumer reference. The engine release is owner-gated, cross-repo and out of scope.
-Host fake-engine regressions and the independent delivered-evidence matrix do not
-qualify real engine scheduling, media, power loss, activation or either board.
+**Current-state hydration — consumer ready; producer release required.**
+Reconciliation accepts a current `StatusEvent` on the existing status subscription,
+using the published `@ceralive/cerastream` type/schema (2026.11.1). It buffers status
+until subscription succeeds and classifies the latest delivered frame when the
+probe settles. An idle hydration cannot beat a later starting/stopping frame in
+the same delivery batch, or release protection when subscription fails. Client,
+probe and observation-owner fences apply before publication and after asynchronous
+cleanup. Adoption retains the subscription under its new client epoch; unused
+probes close it. There is no new query method, periodic probe or timeout extension.
+
+Producer integration contract (required before automatic recovery is available):
+
+- Hydrate each status subscription with an affirmative current `StatusEvent`,
+  including while idle. Order the snapshot with subsequent state changes; never
+  replay an earlier idle after a newer transition. Use the existing published
+  status schema, not a consumer-owned wire shape.
+- Report concordant `idle` / `streaming: false` only when there is no active
+  session, pending Start, or retirement/cleanup. Report a transitional state for
+  those operations; an unreadable/failed observation must never synthesize idle.
+- Fix and publish the binding's subscription acquisition before rollout:
+  2026.11.1 registers the handler **after** the subscribe acknowledgement, so it
+  can drop immediate hydration (even when acknowledgement and event share one
+  socket read). Install the handler before dispatch, clean it up on failure, and
+  test real NDJSON acknowledgement/event coalescing. Publish/tag compatible
+  bindings before updating the consumer pin or merging the hydration release.
+
+With producer hydration, an inherited carrying marker after a backend restart
+reaches encoder-idle without Stop; carrying continues to hold its own marker and
+shutdown inhibitor until its hold/traffic ends. A surviving stream is adopted and
+stays protected. Without hydration, older silent engines remain unknown and an
+acknowledged operator Stop remains the escape path. Consumer tests simulate the
+producer contract; they do not establish that the installed engine implements it.
+Host fake-engine regressions do not qualify real engine scheduling, media, power
+loss, activation or either board.
 
 The real-factory interleaving harness uses boundary gates and the real lifecycle
 lease, enumerating enabled event orderings to depth five, plus the six-event

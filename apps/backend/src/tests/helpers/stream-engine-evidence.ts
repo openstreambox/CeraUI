@@ -34,6 +34,7 @@ export function evidenceHarness(protectedAtBoot = false) {
 	let startGate: Promise<void> | undefined;
 	const started = Promise.withResolvers<void>();
 	let subscribeGate: Promise<void> | undefined;
+	let hydration: EventParams[] = [];
 	let beforeDispatch: (() => void) | undefined;
 	let failNextConnect = false;
 	let statusSink:
@@ -87,6 +88,7 @@ export function evidenceHarness(protectedAtBoot = false) {
 			subscribeEvents: async (_params, callback) => {
 				calls.push("subscribe");
 				listener = callback;
+				for (const event of hydration) callback(event);
 				if (index === 0) await subscribeGate;
 				return {
 					result: { subscribed: ["status"] },
@@ -222,6 +224,9 @@ export function evidenceHarness(protectedAtBoot = false) {
 		},
 		holdStart: (gate: Promise<void>) => {
 			startGate = gate;
+		},
+		hydrate: (...events: EventParams[]) => {
+			hydration = events;
 		},
 		holdSubscribe: (gate: Promise<void>) => {
 			subscribeGate = gate;
