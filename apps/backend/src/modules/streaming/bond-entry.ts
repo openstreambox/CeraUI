@@ -30,7 +30,8 @@ export function resolveBondPhysicalIdentity(
 			? clatTranslationForTun(ifname)
 			: undefined;
 		if (isClatTunName(ifname) && !translation) return undefined;
-		return identityResolver(translation?.parent ?? ifname);
+		const record = identityResolver(translation?.parent ?? ifname);
+		return translation && record.anchor === "ifname" ? undefined : record;
 	} catch {
 		return undefined;
 	}
@@ -48,6 +49,8 @@ export function describeBondEntry(
 		if (isClatTunName(ifname) && !translation)
 			return unmappableBondEntry(ip, ifname);
 		const record = identityResolver(translation?.parent ?? ifname);
+		if (translation && record.anchor === "ifname")
+			return unmappableBondEntry(ip, ifname);
 		return {
 			ip,
 			iface: ifname,

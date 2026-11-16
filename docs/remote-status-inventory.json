@@ -42456,7 +42456,7 @@
     "apps/backend/src/modules/network/dongle-metadata.ts": "317c464611319b007a717184628697d472d95d7e0761b502a68606f9d8582ef4",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "d1c6acde7c3cdd48b9463569c370dd911a9d23e0a77652eb58760e954c51aa04",
-    "apps/backend/src/modules/network/network-interfaces.ts": "0e55fabc8d3c379f9dfbf44a47ac90c599f4c7d5dc788c1d41cdc35150272c03",
+    "apps/backend/src/modules/network/network-interfaces.ts": "fa715b744e7a3b760866ed1c8c5e9a5cdc831f7aa15899862e9d2687098a46e8",
     "apps/backend/src/modules/network/router-cellular-scan.ts": "05f6a1007601aa3a84889665c0b0c80ac28469044826d279cb5ae7e3b950615a",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "c929bfe403ec8298fdeb737eafa75735d9664723eaab740312d2f3b1049082fe",

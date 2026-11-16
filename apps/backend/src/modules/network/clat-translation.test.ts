@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { resolvePhysicalDevice } from "../modems/physical-identity.ts";
+import { setBondIdentityResolverForTest } from "../streaming/bond-entry.ts";
 import { genSrtlaBondEntries } from "../streaming/srtla.ts";
 import {
 	type ClatReadDeps,
@@ -294,6 +296,12 @@ describe("which translations may carry stream traffic", () => {
 });
 
 describe("the bond", () => {
+	beforeEach(() =>
+		setBondIdentityResolverForTest((ifname) =>
+			resolvePhysicalDevice({ ifname, idPath: "platform-synthetic-usb-0:1" }),
+		),
+	);
+	afterEach(() => setBondIdentityResolverForTest(null));
 	const stanza = (name: string, ip: string) =>
 		[
 			`${name}: flags=4305<UP,POINTOPOINT,RUNNING,NOARP,MULTICAST>  mtu 1480`,
@@ -649,6 +657,29 @@ test("publication rechecks the snapshot, unit and TUN instead of trusting the po
 		}
 	} finally {
 		resetBindMapWriter();
+		setBondIdentityResolverForTest(null);
+	}
+});
+
+test("CLAT waits for physical identity rather than minting an interface-name link ID", () => {
+	const translation = { parent: "wwan0", tun: "clat3", ipv4: "10.254.0.3" };
+	setClatTranslationsForTest(new Map([["clat3", translation]]));
+	const int = {
+		ip: translation.ipv4,
+		txb: 0,
+		rxb: 0,
+		tp: 0,
+		enabled: true,
+		error: 0,
+	};
+	setBondIdentityResolverForTest((ifname) => resolvePhysicalDevice({ ifname }));
+	try {
+		expect(isBondCandidate("clat3", int)).toBe(false);
+		setBondIdentityResolverForTest((ifname) =>
+			resolvePhysicalDevice({ ifname, idPath: "platform-synthetic-usb-0:1" }),
+		);
+		expect(isBondCandidate("clat3", int)).toBe(true);
+	} finally {
 		setBondIdentityResolverForTest(null);
 	}
 });

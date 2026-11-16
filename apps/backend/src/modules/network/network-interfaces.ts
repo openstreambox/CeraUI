@@ -349,7 +349,12 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 	let owner = name;
 	if (isClatTunName(name)) {
 		const translation = clatTranslationFor(name, int.ip);
-		if (!translation || isBondOptedOut(translation.parent)) return false;
+		if (
+			!translation ||
+			isBondOptedOut(translation.parent) ||
+			!isBondLinkMappable(name, int.ip)
+		)
+			return false;
 		owner = translation.parent;
 	}
 	if (isHeldOutByModemBlock(owner, owner === name ? int : netif[owner]))
