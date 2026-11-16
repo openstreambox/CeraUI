@@ -60,6 +60,10 @@
 	const hud = $derived(getHudState());
 	const hotspotEntry = $derived(Object.entries(getWifi() ?? {}).find(([, iface]) => iface.hotspot));
 	const hotspot = $derived(hotspotEntry?.[1].hotspot);
+	// One hotspot for the card: its credentials, its joins and its renewal.
+	const wifiOwner = $derived(
+		hotspotEntry ? { device: hotspotEntry[0], incarnation: hotspotEntry[1].incarnation } : undefined,
+	);
 	const wifiRenew = $derived.by(() => {
 		if (!hotspotEntry) return undefined;
 		const [device, iface] = hotspotEntry;
@@ -100,6 +104,7 @@ let now = $state(Date.now());
 			}
 		: undefined}
 	{wifiRenew}
+	{wifiOwner}
 	carrying={getIsConnected() ? getStatus()?.carrying?.state : undefined}
 	{settings}
 	{moblink}

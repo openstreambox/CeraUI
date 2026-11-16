@@ -10,6 +10,7 @@
 	} from '@ceraui/rpc/schemas';
 	import { onMount } from 'svelte';
 	import type { AsyncOpPhase } from '$lib/rpc/async-operation.svelte';
+	import type { HotspotOwner } from '$lib/stores/hotspot-joins.svelte';
 	import WifiCode from './network/WifiCode.svelte';
 	import PhoneBoxHealth from './PhoneBoxHealth.svelte';
 	import { phoneState, remotePhoneState, showPhoneQr } from './phone-home';
@@ -25,6 +26,7 @@
 		kiosk = false,
 		wifi,
 		wifiRenew,
+		wifiOwner,
 		moblink,
 		oncredential,
 		onclearcredential,
@@ -44,6 +46,8 @@
 		};
 		/** New Wi-Fi password, present only while the hotspot can take one. */
 		wifiRenew?: { phase: AsyncOpPhase; streaming: boolean; onrenew: () => void };
+		/** The hotspot `wifi` and `wifiRenew` describe; its joins show on the card. */
+		wifiOwner?: HotspotOwner;
 		kiosk?: boolean;
 		reachable?: boolean;
 		carrying?: 'streaming' | 'idle' | 'unknown';
@@ -195,6 +199,7 @@
 					password={wifi?.password}
 					security={wifi?.security}
 					qr={computer}
+					owner={wifiOwner}
 					renew={wifiRenew}
 				/>
 				<button type="button" onclick={onnetwork}>{m['live.phone.wifiSettings']()}</button>

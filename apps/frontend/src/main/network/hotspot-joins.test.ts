@@ -37,16 +37,27 @@ const wifi = (
 ): WifiStatus =>
 	Object.fromEntries(entries.map(([id, macs]) => [id, ap(macs)]));
 
+/** The tracker, read as a total count of new devices per reading. */
+function counting() {
+	const tracker = createHotspotJoinTracker();
+	return {
+		observe: (snapshot: WifiStatus | undefined) =>
+			tracker
+				.observe(snapshot)
+				.reduce((total, event) => total + event.count, 0),
+	};
+}
+
 describe("createHotspotJoinTracker", () => {
 	it("treats the first reading as the baseline", () => {
-		const tracker = createHotspotJoinTracker();
+		const tracker = counting();
 		expect(
 			tracker.observe(wifi(["0", ["aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"]])),
 		).toBe(0);
 	});
 
 	it("counts each address it has not seen before", () => {
-		const tracker = createHotspotJoinTracker();
+		const tracker = counting();
 		tracker.observe(wifi(["0", ["aa:aa:aa:aa:aa:01"]]));
 		expect(
 			tracker.observe(
@@ -60,7 +71,7 @@ describe("createHotspotJoinTracker", () => {
 	});
 
 	it("does not re-announce a known phone that drops and rejoins", () => {
-		const tracker = createHotspotJoinTracker();
+		const tracker = counting();
 		tracker.observe(wifi(["0", []]));
 		expect(tracker.observe(wifi(["0", ["aa:aa:aa:aa:aa:01"]]))).toBe(1);
 		expect(tracker.observe(wifi(["0", []]))).toBe(0);
@@ -70,13 +81,13 @@ describe("createHotspotJoinTracker", () => {
 	});
 
 	it("an empty roster is a reading: the next device is new", () => {
-		const tracker = createHotspotJoinTracker();
+		const tracker = counting();
 		expect(tracker.observe(wifi(["0", []]))).toBe(0);
 		expect(tracker.observe(wifi(["0", ["aa:aa:aa:aa:aa:09"]]))).toBe(1);
 	});
 
 	it("keeps access points apart", () => {
-		const tracker = createHotspotJoinTracker();
+		const tracker = counting();
 		tracker.observe(wifi(["0", ["aa:aa:aa:aa:aa:01"]], ["1", undefined]));
 		// The second AP's first reading is its own baseline.
 		expect(
@@ -95,12 +106,12 @@ describe("createHotspotJoinTracker", () => {
 	});
 
 	it("ignores a missing snapshot", () => {
-		const tracker = createHotspotJoinTracker();
+		const tracker = counting();
 		expect(tracker.observe(undefined)).toBe(0);
 	});
 
 	it("remembers a bounded number of addresses, dropping the oldest", () => {
-		const tracker = createHotspotJoinTracker();
+		const tracker = counting();
 		const mac = (n: number) =>
 			`cc:cc:cc:cc:${(n >> 8).toString(16).padStart(2, "0")}:${(n & 255).toString(16).padStart(2, "0")}`;
 		tracker.observe(wifi(["0", []]));
@@ -109,5 +120,22 @@ describe("createHotspotJoinTracker", () => {
 		// The very first address fell out of the window; the newest did not.
 		expect(tracker.observe(wifi(["0", [mac(HOTSPOT_SEEN_CAP)]]))).toBe(0);
 		expect(tracker.observe(wifi(["0", [mac(0)]]))).toBe(1);
+	});
+
+	it("names the access point each join happened on", () => {
+		const tracker = createHotspotJoinTracker();
+		const snapshot = (a: string[], b: string[]): WifiStatus => ({
+			"0": { ...ap(a), incarnation: "radio-A" },
+			"1": { ...ap(b), incarnation: "radio-B" },
+		});
+		tracker.observe(snapshot(["aa:aa:aa:aa:aa:01"], ["bb:bb:bb:bb:bb:01"]));
+		expect(
+			tracker.observe(
+				snapshot(
+					["aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"],
+					["bb:bb:bb:bb:bb:01"],
+				),
+			),
+		).toEqual([{ device: "0", incarnation: "radio-A", count: 1 }]);
 	});
 });

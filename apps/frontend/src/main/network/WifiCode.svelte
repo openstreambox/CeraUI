@@ -12,7 +12,10 @@
     joins. A screen that should never carry a QR (`qr` false: a phone, the
     kiosk) gets no code at all, only the lines below.
   • A join shows here as "A new device joined · just now · Not mine?" (the app's
-    toast stays quiet while a card is mounted). Not mine opens the same
+    toast stays quiet while a card for that hotspot is mounted). The card is
+    bound to one hotspot (`owner`: device key and radio incarnation) and only
+    shows that hotspot's joins, so with two hotspots up a join on one never
+    offers to renew the other's password. Not mine opens the same
     confirmation as New Wi-Fi password: today's hotspot has one password, so
     dropping one device means a new password for all of them.
   • **New Wi-Fi password** asks first and names the cost: every joined device
@@ -35,7 +38,11 @@ import { onMount } from 'svelte';
 import { Button } from '$lib/components/ui/button';
 import { generateWifiQr, hotspotQrSecurity } from '$lib/helpers/NetworkHelper';
 import type { AsyncOpPhase } from '$lib/rpc/async-operation.svelte';
-import { getLastHotspotJoin, registerWifiCodeCard } from '$lib/stores/hotspot-joins.svelte';
+import {
+	getLastHotspotJoin,
+	type HotspotOwner,
+	registerWifiCodeCard,
+} from '$lib/stores/hotspot-joins.svelte';
 
 interface Props {
 	name?: string | undefined;
@@ -43,7 +50,12 @@ interface Props {
 	security?: HotspotSecurityId | undefined;
 	/** Whether this screen may show a QR at all. */
 	qr?: boolean;
-	/** Present only while a renewal is possible (hotspot up, binding known). */
+	/**
+	 * The hotspot this card shows (device key and radio incarnation). Joins
+	 * show here only for it; without one the card shows no join line.
+	 */
+	owner?: HotspotOwner | undefined;
+	/** Present only while a renewal of `owner`'s password is possible. */
 	renew?:
 		| {
 				phase: AsyncOpPhase;
@@ -55,7 +67,7 @@ interface Props {
 	now?: () => number;
 }
 
-let { name, password, security, qr = true, renew, now = Date.now }: Props = $props();
+let { name, password, security, qr = true, owner, renew, now = Date.now }: Props = $props();
 
 const uid = $props.id();
 const frameId = `wifi-code-frame-${uid}`;
@@ -71,7 +83,13 @@ $effect.pre(() => {
 });
 
 const canShow = $derived(qr && Boolean(name) && Boolean(password));
-const join = $derived(getLastHotspotJoin());
+const ownerDevice = $derived(owner?.device);
+const ownerIncarnation = $derived(owner?.incarnation);
+const join = $derived(
+	ownerDevice === undefined
+		? null
+		: getLastHotspotJoin({ device: ownerDevice, incarnation: ownerIncarnation }),
+);
 const joinVisible = $derived(join !== null && clock - join.at < WIFI_JOIN_LINE_MS);
 const joinWhen = $derived(
 	join === null || clock - join.at < 60_000
@@ -93,8 +111,13 @@ function show() {
 	hideTimer = setTimeout(hide, WIFI_CODE_SHOW_MS);
 }
 
+// The toast stays quiet only for the hotspot this card shows.
+$effect(() => {
+	if (ownerDevice === undefined) return;
+	return registerWifiCodeCard({ device: ownerDevice, incarnation: ownerIncarnation });
+});
+
 onMount(() => {
-	const unregister = registerWifiCodeCard();
 	const onVisibility = () => {
 		if (document.visibilityState === 'hidden') hide();
 	};
@@ -104,7 +127,6 @@ onMount(() => {
 	window.addEventListener('blur', hide);
 	document.addEventListener('visibilitychange', onVisibility);
 	return () => {
-		unregister();
 		clearInterval(tick);
 		window.removeEventListener('blur', hide);
 		document.removeEventListener('visibilitychange', onVisibility);
@@ -131,6 +153,18 @@ $effect(() => {
 });
 $effect(() => {
 	if (!canShow) hide();
+});
+// A card rebound to another hotspot drops a question asked about the old one.
+let seenOwner: string | null = null;
+$effect(() => {
+	const key = `${ownerDevice ?? ''}\u0000${ownerIncarnation ?? ''}`;
+	if (seenOwner !== null && key !== seenOwner) {
+		confirming = false;
+		requested = false;
+		renewed = false;
+		hide();
+	}
+	seenOwner = key;
 });
 $effect(() => {
 	const phase = renew?.phase;

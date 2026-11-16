@@ -746,6 +746,7 @@ async function copyPassword() {
 					name={iface?.hotspot?.name}
 					password={iface?.hotspot?.password}
 					security={iface?.hotspot?.security}
+					owner={{ device: deviceId, incarnation: radioToken }}
 					renew={renewOffer}
 				/>
 			</div>

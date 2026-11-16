@@ -31,8 +31,8 @@ const flush = async () => {
 	await tick();
 };
 
-function roster(...macs: string[]): WifiStatus {
-	const iface: WifiInterface = {
+function ap(macs: readonly string[], incarnation?: string): WifiInterface {
+	return {
 		ifname: "wlan0",
 		conn: "hotspot-uuid",
 		hw: "58:02:05:e1:79:1c",
@@ -45,8 +45,20 @@ function roster(...macs: string[]): WifiStatus {
 			channel: "auto",
 			clients: { count: macs.length, stations: macs.map((mac) => ({ mac })) },
 		},
+		...(incarnation === undefined ? {} : { incarnation }),
 	};
-	return { "0": iface };
+}
+
+function roster(...macs: string[]): WifiStatus {
+	return { "0": ap(macs) };
+}
+
+const owner = { device: "0", incarnation: undefined };
+const A = { device: "0", incarnation: "radio-A" };
+const B = { device: "1", incarnation: "radio-B" };
+
+function twoHotspots(a: string[], b: string[]): WifiStatus {
+	return { "0": ap(a, "radio-A"), "1": ap(b, "radio-B") };
 }
 
 const showButton = () => screen.getByRole("button", { name: "Show code" });
@@ -145,7 +157,7 @@ describe("WifiCode — hidden by default", () => {
 describe("WifiCode — join notice", () => {
 	it("a join hides the code and says so in place, instead of a toast", async () => {
 		noteHotspotRoster(roster("aa:aa:aa:aa:aa:01"));
-		render(WifiCode, { name: "Box", password: "correcthorse" });
+		render(WifiCode, { name: "Box", password: "correcthorse", owner });
 		await fireEvent.click(showButton());
 		await flush();
 		noteHotspotRoster(roster("aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"));
@@ -163,6 +175,7 @@ describe("WifiCode — join notice", () => {
 		render(WifiCode, {
 			name: "Box",
 			password: "correcthorse",
+			owner,
 			renew: { phase: "idle", streaming: false, onrenew },
 		});
 		noteHotspotRoster(roster("aa:aa:aa:aa:aa:01"));
@@ -172,6 +185,103 @@ describe("WifiCode — join notice", () => {
 			screen.getByRole("group", { name: "Make a new Wi-Fi password?" }),
 		).toBeTruthy();
 		expect(onrenew).not.toHaveBeenCalled();
+	});
+});
+
+describe("WifiCode — two hotspots", () => {
+	it("a join on A while B is shown: B keeps its code, claims nothing, offers no renewal for it", async () => {
+		noteHotspotRoster(
+			twoHotspots(["aa:aa:aa:aa:aa:01"], ["bb:bb:bb:bb:bb:01"]),
+		);
+		const renewB = vi.fn();
+		render(WifiCode, {
+			name: "Box B",
+			password: "password-b",
+			owner: B,
+			renew: { phase: "idle", streaming: false, onrenew: renewB },
+		});
+		await fireEvent.click(showButton());
+		await flush();
+		noteHotspotRoster(
+			twoHotspots(
+				["aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"],
+				["bb:bb:bb:bb:bb:01"],
+			),
+		);
+		await flush();
+		expect(screen.queryByTestId("wifi-code-joined")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Not mine?" })).toBeNull();
+		expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy();
+		expect(renewB).not.toHaveBeenCalled();
+		// Nobody on screen speaks for A, so the app's toast does.
+		expect(toast).toHaveBeenCalledTimes(1);
+	});
+
+	it("with both cards up, only A's card says it and only A's renewal is offered", async () => {
+		noteHotspotRoster(
+			twoHotspots(["aa:aa:aa:aa:aa:01"], ["bb:bb:bb:bb:bb:01"]),
+		);
+		const renewA = vi.fn();
+		const renewB = vi.fn();
+		render(WifiCode, {
+			name: "Box A",
+			password: "password-a",
+			owner: A,
+			renew: { phase: "idle", streaming: false, onrenew: renewA },
+		});
+		render(WifiCode, {
+			name: "Box B",
+			password: "password-b",
+			owner: B,
+			renew: { phase: "idle", streaming: false, onrenew: renewB },
+		});
+		noteHotspotRoster(
+			twoHotspots(
+				["aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"],
+				["bb:bb:bb:bb:bb:01"],
+			),
+		);
+		await flush();
+		expect(screen.getAllByTestId("wifi-code-joined")).toHaveLength(1);
+		await fireEvent.click(screen.getByRole("button", { name: "Not mine?" }));
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Change the password" }),
+		);
+		expect(renewA).toHaveBeenCalledTimes(1);
+		expect(renewB).not.toHaveBeenCalled();
+		expect(toast).not.toHaveBeenCalled();
+	});
+
+	it("rebinding a card to another hotspot drops its open question", async () => {
+		noteHotspotRoster(
+			twoHotspots(["aa:aa:aa:aa:aa:01"], ["bb:bb:bb:bb:bb:01"]),
+		);
+		const renewA = vi.fn();
+		const renewB = vi.fn();
+		const view = render(WifiCode, {
+			name: "Box A",
+			password: "password-a",
+			owner: A,
+			renew: { phase: "idle", streaming: false, onrenew: renewA },
+		});
+		noteHotspotRoster(
+			twoHotspots(
+				["aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"],
+				["bb:bb:bb:bb:bb:01"],
+			),
+		);
+		await flush();
+		await fireEvent.click(screen.getByRole("button", { name: "Not mine?" }));
+		await view.rerender({
+			name: "Box B",
+			password: "password-b",
+			owner: B,
+			renew: { phase: "idle", streaming: false, onrenew: renewB },
+		});
+		await flush();
+		expect(screen.queryByTestId("wifi-code-renew-confirm")).toBeNull();
+		expect(screen.queryByTestId("wifi-code-joined")).toBeNull();
+		expect(renewB).not.toHaveBeenCalled();
 	});
 });
 

@@ -34,6 +34,7 @@ export function mountPhoneHomeFixture(
 				password: "example-wifi-password",
 				clients: 1,
 			},
+			wifiOwner: { device: "0", incarnation: undefined },
 			links: [{ id: "L1", label: "Wi-Fi", internet: "yes" }],
 			...(renew
 				? {

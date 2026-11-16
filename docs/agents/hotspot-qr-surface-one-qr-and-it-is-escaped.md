@@ -48,7 +48,12 @@ only. The card is still the ONE hotspot QR.
 diffs the `hotspot.clients.stations` roster each wifi snapshot carries
 (`$main/network/hotspot-joins.ts`: first reading is a baseline, an address counts
 once per page) and calls the existing `svelte-sonner` toast, unless a `WifiCode`
-card is mounted, which shows "A new device joined · just now · Not mine?" in place.
+card for that same hotspot is mounted, which shows "A new device joined · just
+now · Not mine?" in place. Every join carries its access point (wifi device key
+and radio `incarnation`); each card is bound to one hotspot through its `owner`
+prop and shows, registers for and renews only that hotspot. With two hotspots up,
+a join on A never appears on B's card and never offers B's renewal; with no card
+for A on screen, the toast says it.
 The backend makes it prompt and honest: `wifi-hotspot-station-events.ts` runs
 `iw event` (spawn site `wifi.iwStationEvents`) only while a hotspot is up and turns
 nl80211 `new station`/`del station` lines on an AP interface into roster reads (now,
