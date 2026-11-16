@@ -3093,5 +3093,12 @@
 	"live.phone.moblinFailed": "Não foi possível aplicar a senha do Moblin. Verifique a caixa e tente de novo. Talvez ela já esteja salva.",
 	"live.phone.moblinBusy": "Espere a caixa confirmar que nenhuma transmissão a está usando antes de trocar a senha do Moblin.",
 	"live.audioMixer.error.audio_input_primary": "A entrada principal fica sempre no mix. Para desativá-la, escolha outra fonte de áudio.",
-	"live.layout.insetCancel": "Pressione Esc antes de soltar para voltar à posição anterior."
+	"live.layout.insetCancel": "Pressione Esc antes de soltar para voltar à posição anterior.",
+	"settings.srtEncryptionPassphrase": "Frase secreta de criptografia SRT",
+	"settings.srtEncryptionShow": "Mostrar frase secreta",
+	"settings.srtEncryptionHelp": "Altere apenas para substituir a frase salva. A criptografia vale a partir da próxima transmissão.",
+	"settings.srtEncryptionInvalid": "Use de 10 a 79 bytes UTF-8, ou vazio para apagar.",
+	"settings.srtEncryptionKeyLength": "Tamanho da chave SRT",
+	"live.startFailure.srtEncryptionUnavailable": "As configurações de criptografia SRT salvas não são compatíveis. Apague-as antes de iniciar.",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "As configurações de criptografia SRT salvas não são compatíveis. Apague-as antes de iniciar."
 }

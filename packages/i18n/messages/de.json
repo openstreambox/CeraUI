@@ -3090,5 +3090,12 @@
 	"live.phone.moblinFailed": "Das Moblin-Passwort konnte nicht übernommen werden. Prüfe die Box und versuche es erneut. Vielleicht ist es schon gespeichert.",
 	"live.phone.moblinBusy": "Warte, bis die Box bestätigt, dass kein Stream sie nutzt, bevor du das Moblin-Passwort änderst.",
 	"live.audioMixer.error.audio_input_primary": "Der Haupteingang bleibt immer im Mix. Wähle eine andere Audioquelle, um ihn auszuschalten.",
-	"live.layout.insetCancel": "Drücke Esc, bevor du loslässt, um die vorherige Position wiederherzustellen."
+	"live.layout.insetCancel": "Drücke Esc, bevor du loslässt, um die vorherige Position wiederherzustellen.",
+	"settings.srtEncryptionPassphrase": "SRT-Verschlüsselungspassphrase",
+	"settings.srtEncryptionShow": "Passphrase anzeigen",
+	"settings.srtEncryptionHelp": "Nur zum Ersetzen der gespeicherten Passphrase ändern. Die Verschlüsselung gilt ab dem nächsten Streamstart.",
+	"settings.srtEncryptionInvalid": "10–79 UTF-8-Bytes eingeben oder zum Löschen leeren.",
+	"settings.srtEncryptionKeyLength": "SRT-Schlüssellänge",
+	"live.startFailure.srtEncryptionUnavailable": "Die gespeicherten SRT-Verschlüsselungseinstellungen werden nicht unterstützt. Lösche sie vor dem Start.",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "Die gespeicherten SRT-Verschlüsselungseinstellungen werden nicht unterstützt. Lösche sie vor dem Start."
 }

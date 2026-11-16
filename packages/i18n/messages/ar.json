@@ -3102,5 +3102,12 @@
 	"live.phone.moblinFailed": "تعذّر تطبيق كلمة مرور Moblin. تحقّق من الجهاز وحاول مرة أخرى. ربما تكون محفوظة بالفعل.",
 	"live.phone.moblinBusy": "انتظر حتى يؤكد الجهاز أنه لا يوجد بث يستخدمه قبل تغيير كلمة مرور Moblin.",
 	"live.audioMixer.error.audio_input_primary": "يبقى المدخل الرئيسي دائمًا ضمن المزج. لإيقافه، اختر مصدر صوت آخر.",
-	"live.layout.insetCancel": "اضغط Escape قبل الإفلات لإعادته إلى موضعه السابق."
+	"live.layout.insetCancel": "اضغط Escape قبل الإفلات لإعادته إلى موضعه السابق.",
+	"settings.srtEncryptionPassphrase": "عبارة مرور تشفير SRT",
+	"settings.srtEncryptionShow": "إظهار عبارة المرور",
+	"settings.srtEncryptionHelp": "غيّر الحقل فقط لاستبدال عبارة المرور المحفوظة. يبدأ التشفير عند بدء البث التالي.",
+	"settings.srtEncryptionInvalid": "استخدم 10–79 بايت UTF-8، أو اتركه فارغًا للمسح.",
+	"settings.srtEncryptionKeyLength": "طول مفتاح تشفير SRT",
+	"live.startFailure.srtEncryptionUnavailable": "إعدادات تشفير SRT المحفوظة غير مدعومة. امسحها قبل بدء البث.",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "إعدادات تشفير SRT المحفوظة غير مدعومة. امسحها قبل بدء البث."
 }

@@ -19,6 +19,7 @@
 import { readFileSync } from "node:fs";
 import { getRecentLogLines, logger } from "../../helpers/logger.ts";
 import { RunTimeoutError, run } from "../../helpers/run.ts";
+import { redactSrtPassphrases } from "../../helpers/srt-secret-redaction.ts";
 import { redactStreamIdJournal } from "../../helpers/stream-id-secret.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getCarrierSupportSummary } from "../modems/modem-wire-producer.ts";
@@ -186,7 +187,9 @@ async function collectLog(
 		: "";
 	const label = shouldUseMocks() ? `${mockJournalLabel(service)}\n` : "";
 	const contents = redactStreamIdJournal(
-		`${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (lines without a typed shape, messages the code does not write, split or oversized records). [boot 0] is the running boot, [boot -1] the one before it.${quietBoots}\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`,
+		redactSrtPassphrases(
+			`${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (lines without a typed shape, messages the code does not write, split or oversized records). [boot 0] is the running boot, [boot -1] the one before it.${quietBoots}\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`,
+		),
 	);
 	try {
 		conn.send(buildMsg("log", { name, contents }, senderId));

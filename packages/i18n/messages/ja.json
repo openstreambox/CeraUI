@@ -3045,5 +3045,12 @@
 	"live.phone.moblinFailed": "Moblin のパスワードを適用できませんでした。ボックスを確認して、もう一度お試しください。すでに保存されている可能性があります。",
 	"live.phone.moblinBusy": "Moblin のパスワードを変更する前に、ボックスがどの配信にも使われていないと確認するまでお待ちください。",
 	"live.audioMixer.error.audio_input_primary": "メイン入力は常にミックスに含まれます。オフにするには、別のオーディオソースを選択してください。",
-	"live.layout.insetCancel": "離す前に Esc を押すと、元の位置に戻ります。"
+	"live.layout.insetCancel": "離す前に Esc を押すと、元の位置に戻ります。",
+	"settings.srtEncryptionPassphrase": "SRT暗号化パスフレーズ",
+	"settings.srtEncryptionShow": "パスフレーズを表示",
+	"settings.srtEncryptionHelp": "保存済みのパスフレーズを置き換える場合のみ変更します。暗号化は次回の配信開始時に適用されます。",
+	"settings.srtEncryptionInvalid": "10～79 UTF-8バイトで入力。空にすると削除します。",
+	"settings.srtEncryptionKeyLength": "SRT暗号鍵の長さ",
+	"live.startFailure.srtEncryptionUnavailable": "保存されたSRT暗号化設定はサポートされていません。開始する前に削除してください。",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "保存されたSRT暗号化設定はサポートされていません。開始する前に削除してください。"
 }

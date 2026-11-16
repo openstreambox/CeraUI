@@ -3093,5 +3093,12 @@
 	"live.phone.moblinFailed": "Le mot de passe Moblin n'a pas pu être appliqué. Vérifiez le boîtier et réessayez. Il est peut-être déjà enregistré.",
 	"live.phone.moblinBusy": "Attendez que le boîtier confirme qu'aucun flux ne l'utilise avant de changer le mot de passe Moblin.",
 	"live.audioMixer.error.audio_input_primary": "L'entrée principale reste toujours dans le mix. Pour la désactiver, choisissez une autre source audio.",
-	"live.layout.insetCancel": "Appuyez sur Échap avant de relâcher pour la remettre à sa place."
+	"live.layout.insetCancel": "Appuyez sur Échap avant de relâcher pour la remettre à sa place.",
+	"settings.srtEncryptionPassphrase": "Phrase secrète de chiffrement SRT",
+	"settings.srtEncryptionShow": "Afficher la phrase secrète",
+	"settings.srtEncryptionHelp": "Modifiez uniquement pour remplacer la phrase enregistrée. Le chiffrement prend effet au prochain démarrage.",
+	"settings.srtEncryptionInvalid": "Utilisez 10 à 79 octets UTF-8, ou vide pour effacer.",
+	"settings.srtEncryptionKeyLength": "Longueur de clé SRT",
+	"live.startFailure.srtEncryptionUnavailable": "Les paramètres de chiffrement SRT enregistrés ne sont pas pris en charge. Effacez-les avant de démarrer.",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "Les paramètres de chiffrement SRT enregistrés ne sont pas pris en charge. Effacez-les avant de démarrer."
 }

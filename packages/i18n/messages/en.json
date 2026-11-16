@@ -3090,5 +3090,12 @@
 	"live.phone.moblinSaved": "Saved on the box. Check Moblin to confirm it connects; saving does not confirm a connection.",
 	"live.phone.moblinCleared": "No Moblin password is saved on this box.",
 	"live.phone.moblinFailed": "The Moblin password could not be applied. Check the box and try again. It may already be saved.",
-	"live.phone.moblinBusy": "Wait until the box confirms no stream is using it before changing the Moblin password."
+	"live.phone.moblinBusy": "Wait until the box confirms no stream is using it before changing the Moblin password.",
+	"settings.srtEncryptionPassphrase": "SRT encryption passphrase",
+	"settings.srtEncryptionShow": "Show passphrase",
+	"settings.srtEncryptionHelp": "Leave unchanged unless replacing the saved passphrase. Encryption applies at the next stream start.",
+	"settings.srtEncryptionInvalid": "Use 10–79 UTF-8 bytes, or empty to clear.",
+	"settings.srtEncryptionKeyLength": "SRT encryption key length",
+	"live.startFailure.srtEncryptionUnavailable": "Saved SRT encryption settings are not supported. Clear them before starting.",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "Saved SRT encryption settings are not supported. Clear them before starting."
 }

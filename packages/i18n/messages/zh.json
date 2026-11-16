@@ -3045,5 +3045,12 @@
 	"live.phone.moblinFailed": "无法应用 Moblin 密码。请检查盒子后重试。它可能已经保存。",
 	"live.phone.moblinBusy": "请等盒子确认没有直播在使用它，再更改 Moblin 密码。",
 	"live.audioMixer.error.audio_input_primary": "主输入始终在混音中。要将其关闭，请选择其他音频源。",
-	"live.layout.insetCancel": "松开前按 Esc 可放回原位。"
+	"live.layout.insetCancel": "松开前按 Esc 可放回原位。",
+	"settings.srtEncryptionPassphrase": "SRT 加密口令",
+	"settings.srtEncryptionShow": "显示口令",
+	"settings.srtEncryptionHelp": "仅在替换已保存的口令时更改。加密将在下次推流启动时生效。",
+	"settings.srtEncryptionInvalid": "使用 10–79 个 UTF-8 字节，留空则清除。",
+	"settings.srtEncryptionKeyLength": "SRT 加密密钥长度",
+	"live.startFailure.srtEncryptionUnavailable": "不支持已保存的 SRT 加密设置。请在开始前清除这些设置。",
+	"notifications.streamStartSrtEncryptionUnavailableFailed": "不支持已保存的 SRT 加密设置。请在开始前清除这些设置。"
 }

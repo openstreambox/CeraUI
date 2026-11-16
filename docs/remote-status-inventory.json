@@ -413,6 +413,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -525,12 +543,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -699,8 +717,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -1598,6 +1616,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -1710,12 +1746,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -1884,8 +1920,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -2641,6 +2677,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -2753,12 +2807,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -2927,8 +2981,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -4344,6 +4398,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -4456,12 +4528,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -4630,8 +4702,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -5367,6 +5439,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -5479,12 +5569,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -5653,8 +5743,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -6390,6 +6480,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -6502,12 +6610,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -6676,8 +6784,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -7436,6 +7544,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -7548,12 +7674,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -7722,8 +7848,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -8459,6 +8585,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -8571,12 +8715,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -8745,8 +8889,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -9482,6 +9626,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -9594,12 +9756,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -9768,8 +9930,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -10505,6 +10667,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -10617,12 +10797,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -10791,8 +10971,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -11590,8 +11770,8 @@
         {
           "path": "pipelines.*.defaultFramerate",
           "types": [
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -11625,6 +11805,24 @@
       "call": "broadcastMsg",
       "message": "\"config\"",
       "fields": [
+        {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
         {
           "path": "password",
           "types": [
@@ -11738,12 +11936,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -11912,8 +12110,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -25245,6 +25443,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -25357,12 +25573,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -25531,8 +25747,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -26330,8 +26546,8 @@
         {
           "path": "pipelines.*.defaultFramerate",
           "types": [
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -26518,8 +26734,8 @@
           "path": "sources[].defaultFramerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -27616,6 +27832,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -27728,12 +27962,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -27902,8 +28136,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -30811,6 +31045,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -30923,12 +31175,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -31097,8 +31349,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -31986,8 +32238,8 @@
           "path": "sources[].defaultFramerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -32364,8 +32616,8 @@
           "path": "sources[].defaultFramerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -32590,6 +32842,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -32702,12 +32972,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -32876,8 +33146,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -33765,8 +34035,8 @@
           "path": "sources[].defaultFramerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -34656,6 +34926,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -34768,12 +35056,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -34942,8 +35230,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -37314,6 +37602,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -37426,12 +37732,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -37600,8 +37906,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -38439,6 +38745,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -38551,12 +38875,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -38725,8 +39049,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -39462,6 +39786,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -39574,12 +39916,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -39748,8 +40090,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -41030,8 +41372,8 @@
         {
           "path": "pipelines.*.defaultFramerate",
           "types": [
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -41424,6 +41766,24 @@
       "message": "\"config\"",
       "fields": [
         {
+          "path": "srt_passphrase",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "srt_pbkeylen",
+          "types": [
+            "undefined",
+            "16",
+            "24",
+            "32"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "password",
           "types": [
             "undefined",
@@ -41536,12 +41896,12 @@
           "path": "stream_profile",
           "types": [
             "undefined",
+            "\"custom\"",
             "\"balanced\"",
             "\"low-latency\"",
             "\"resilient\"",
             "\"classic\"",
-            "\"low-latency-fec\"",
-            "\"custom\""
+            "\"low-latency-fec\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -41710,8 +42070,8 @@
           "path": "framerate",
           "types": [
             "undefined",
-            "23.98",
             "24",
+            "23.98",
             "25",
             "29.97",
             "30",
@@ -42443,7 +42803,7 @@
     }
   ],
   "dependencies": {
-    "apps/backend/src/helpers/config-schemas.ts": "70a972cfed6a44dac76e1371bd883639ea59c2b0880f2e255c76bde4194fa647",
+    "apps/backend/src/helpers/config-schemas.ts": "ee53927278f15b5811ad8bc33559c13a4fa50c68308a62a7ca54263bb0403707",
     "apps/backend/src/mocks/mock-service.ts": "b858bdfeb042ec57e720fe31fea1696f09c68eb9ace976c6848d4e2af6c1adfc",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -42455,9 +42815,9 @@
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/dongle-metadata.ts": "317c464611319b007a717184628697d472d95d7e0761b502a68606f9d8582ef4",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
-    "apps/backend/src/modules/network/network-ingest.ts": "d1c6acde7c3cdd48b9463569c370dd911a9d23e0a77652eb58760e954c51aa04",
-    "apps/backend/src/modules/network/network-interfaces.ts": "9f9a179fbb67a2acb5f8ea4884efc50042aed17a9b9a96a6d04d411a621632c7",
-    "apps/backend/src/modules/network/router-cellular-scan.ts": "3f53a3364da0543852ec0f62fbb760c659d5b910090c4c1e14a5d07545898092",
+    "apps/backend/src/modules/network/network-ingest.ts": "29234fe5c8db5cce9344d24253b1938857f5dcf3bb2643dbe5fd468f66abc128",
+    "apps/backend/src/modules/network/network-interfaces.ts": "55ba8fab14e38110c634c4756e9443001e06af018b1b0c6f18b8e3b366103227",
+    "apps/backend/src/modules/network/router-cellular-scan.ts": "ef518dd4124430459e4af15464b540d12e7292c57149330ef653f1e7ee341fad",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "c929bfe403ec8298fdeb737eafa75735d9664723eaab740312d2f3b1049082fe",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "3e88571fad2a385f515976029c4026ff87b32baaf2d75db05196f06745968075",
@@ -42472,8 +42832,8 @@
     "apps/backend/src/modules/streaming/audio.ts": "799e5718f07bc7904615edebe34ccd4e7b680f60c4b29b432a0c9d9c0fedfe46",
     "apps/backend/src/modules/streaming/auto-audio.ts": "dc196f13ae03b4d6b19ebf483b245caf46e7de01fef3051d50086c75622bb4ad",
     "apps/backend/src/modules/streaming/capabilities.ts": "df53049c08c0794753a3b5f3bb42854c12a4f8f3164a4d7a09d7424354271d77",
-    "apps/backend/src/modules/streaming/cerastream-backend.ts": "4a23a8fbe4038d353fa0717f6f9fc442328a606490d4f8151b67419a48eb81f2",
-    "apps/backend/src/modules/streaming/config-change-bridge.ts": "7f45fafd479aa125aceedcf0badda03d8d49e8390ddab735fa659726c050e3b5",
+    "apps/backend/src/modules/streaming/cerastream-backend.ts": "012bd1bb61c10acd573b8adcf3b9091cc41d957a20580edcbfe95072a6197b20",
+    "apps/backend/src/modules/streaming/config-change-bridge.ts": "5f71226997a55ecc0e2c1b0274951c521984947e0eb571532ddad7df96d7c42e",
     "apps/backend/src/modules/streaming/devices.ts": "d8daf1992a9cbb6a2663a62d4be1a181462f86bba952c2eb693975508f9d9646",
     "apps/backend/src/modules/streaming/engine-reconnect.ts": "636793d1c73b99b1a139c9d365fb07fcb0d21bfd05b1318f0dcd588625afd6b9",
     "apps/backend/src/modules/streaming/link-telemetry-rows.ts": "5744169c3eb6e18b8d8e567a052cfc6f3236183a983ef11441e44332d6eef399",
@@ -42495,7 +42855,7 @@
     "apps/backend/src/modules/system/encoder-load.ts": "edc310e16747a331b232b09d0b7d3ee7fc811621241840268a85ebda2b9729db",
     "apps/backend/src/modules/system/fan.ts": "e73086dbfd02c219c8c6d644687f1e10fcee62e4bb21d2e9a527a4d5a64180f3",
     "apps/backend/src/modules/system/kiosk.ts": "921df84e43d6960e9a1ab0bfd8768a7a85a7fe682fccc185bd8585f88823e96a",
-    "apps/backend/src/modules/system/logs.ts": "1445d9ef8c95109bd6f9d1c4e62b3a902dd747f7d56443f1f1a0dc21cbb4dd41",
+    "apps/backend/src/modules/system/logs.ts": "b026f90ab04e7e212b29eb6f271932faa51724325f9965258e12d3446d57c3ff",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
     "apps/backend/src/modules/system/sensors.ts": "f14c9498da2adc79d5c494ba556d09c26d4181bd472c88d5d2b0599c95eca5c8",
     "apps/backend/src/modules/system/software-updates.ts": "21668cfcda44364ffc86935c7d101e4602d1296958d7d08b65f65c945f499edb",
@@ -42508,13 +42868,13 @@
     "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "5fd84e04c864980e0b3126fbfd54208b75019acc5676a505cce6417676960e26",
     "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "7ff755fc45367adf99815c2409bdd1f9f80abc76330398a972017c780d0ea95d",
     "apps/backend/src/modules/wifi/wifi-hotspot-types.ts": "f04620f65eba624e2863ccda307a51d230f177629212b0b645b634b44de4f029",
-    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "706783d6be0b0125579782959f9b932d2939e106843bfa964bcc2754e4c22e6c",
+    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "cbe28318193695826712ed36bb3db17ca2f083cffab141ff814ac386871bd0d3",
     "apps/backend/src/modules/wifi/wifi-radio-identity.ts": "3d2ea00730b08e09e7c30fd94a351e6ccbfb356fe43f21bf6c65bf53fdf13f37",
     "apps/backend/src/modules/wifi/wifi.ts": "a0f32750bab152ce3537fc5605e8b0c84d99874f994b1378cf4cf80bad368158",
     "apps/backend/src/rpc/compat.ts": "6fe2d4f3e84dac0477630781679b38a6fe83befd2b721a3421bee3cea9ba8f5a",
     "apps/backend/src/rpc/procedures/audio-mix.procedure.ts": "77fb8974d0078221af7388c1bd211d485af80e5bf0a3b9d433308116f46f0535",
     "apps/backend/src/rpc/procedures/network.procedure.ts": "64c7b15f4efe979e31f7fc7d2c4e4ed05e72580cf431f6dacc27ebbf48777bf3",
-    "apps/backend/src/rpc/procedures/streaming.procedure.ts": "756a17190e4172a186f9af528e62a4c5904ab78b2f01659f272d237f1ed0abf3",
+    "apps/backend/src/rpc/procedures/streaming.procedure.ts": "fba59597288dc0e179c6ae28170afc64a6602e32ce7008bc3f5ffd409b0713bf",
     "bun.lock": "267f90abc9989686f70416871db529b3599f21580f63af11bd6bef931c1a2158",
     "packages/rpc/src/schemas/addons.schema.ts": "4d03862d5f9a8a2353a37ece742a96213d926e0e7ddc735b98329959dbb22ae6",
     "packages/rpc/src/schemas/audio-level.schema.ts": "eb4bd01a1d605776e8f11eab8c8acb5f8333c6868e0bbab5802a4118f507a225",
@@ -42530,7 +42890,7 @@
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
     "packages/rpc/src/schemas/status.schema.ts": "aa92b3179020d119371af3b089a8e160b8bed3f2b6f4ffff88edfbfd85736e54",
-    "packages/rpc/src/schemas/streaming.schema.ts": "b2c311aa692fb6030403b1be3cce6245de1802d3d6107517418dfdae3656af7b",
+    "packages/rpc/src/schemas/streaming.schema.ts": "526859ce1272e3d34bfeb40757b38082faca6d9d9be9de4c45823af4864ff15c",
     "packages/rpc/src/schemas/system.schema.ts": "adfe79f06462f26197bb713d811530cc8fd23040fd249c297d8682ce45363dc1",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "5bb654471ce94854218cdfc84a70bf74a6ea63e7e8b2b7766d33f9853c7d2643",
     "packages/rpc/src/schemas/wifi.schema.ts": "d200119860c47931b03e6c7e74a93ebf9da9c61be977abf0fae513d75b638e23"
