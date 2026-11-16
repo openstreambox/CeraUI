@@ -160,6 +160,11 @@ export function encryptionWrites(
 					}
 					if (
 						(owner === "Reflect" || owner === "globalThis.Reflect") &&
+						method === "defineProperty"
+					)
+						record(key && keyText(key), "<define write>");
+					if (
+						(owner === "Reflect" || owner === "globalThis.Reflect") &&
 						method === "set"
 					)
 						record(

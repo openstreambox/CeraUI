@@ -505,6 +505,7 @@ const writeMutants = [
 	"({...config.srt_passphrase} = input);",
 	"[...config.srt_pbkeylen] = input;",
 	'Object.defineProperty(config, "srt_passphrase", {value: input.srt_passphrase});',
+	'Reflect.defineProperty(config, "srt_passphrase", {value: input.srt_passphrase});',
 	"Object.defineProperties(config, {srt_pbkeylen: {value: 32}});",
 	"Object.defineProperties(config, {...input});",
 	"Object.defineProperty(config, key, {value: input.value});",
