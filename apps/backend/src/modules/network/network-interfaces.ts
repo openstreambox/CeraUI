@@ -25,7 +25,10 @@ import type {
 	NotificationType,
 	RouterCellularMarker,
 } from "@ceraui/rpc/schemas";
-import { NETIF_DUPLICATE_IPV4_ERROR } from "@ceraui/rpc/schemas";
+import {
+	deriveModemStableKey,
+	NETIF_DUPLICATE_IPV4_ERROR,
+} from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
 import { ipToInt, isSameSubnet } from "../../helpers/ip-addresses.ts";
 import { logger } from "../../helpers/logger.ts";
@@ -39,6 +42,11 @@ import {
 	shouldMockNetwork,
 } from "../../mocks/providers/network.ts";
 import { isBondLinkMappable } from "../streaming/bond-entry.ts";
+import {
+	hasMutationBlocks,
+	isModemKeyBlocked,
+	onMutationBlocksChange,
+} from "../streaming/lifecycle-admission.ts";
 // Type-only: erased at build time, so it adds no runtime edge back into
 // `modules/streaming/`, which imports this module.
 import type { BondMappingState } from "../streaming/link-mapping-report.ts";
@@ -86,6 +94,7 @@ import {
 	getModemNetMarker,
 	getRouterCellularMarker,
 	getRouterCellularMarkers,
+	getUsbPhysicalDescriptor,
 	identityDeadlineExpired,
 	invalidateUsbNetReading,
 	type NetdevBus,
@@ -95,6 +104,7 @@ import {
 	refreshUsbNetMarkers,
 	type UsbModemNetMarker,
 	usbNetScanCovers,
+	usbNetScanCoversCurrentPresence,
 } from "./router-cellular-scan.ts";
 import { onNetifChange, setNetifState } from "./state/netif-state.ts";
 import type { MonitorEvent, NetifState } from "./state-types.ts";
@@ -216,7 +226,7 @@ function installScanSettlement(): void {
 				released = true;
 			}
 		}
-		if (released) {
+		if (released || hasMutationBlocks()) {
 			triggerNetworkInterfacesChange();
 			broadcastNetif();
 		}
@@ -297,6 +307,33 @@ export function isBondIdentityPending(
 }
 
 /**
+ * Exclude a blocked modem using the current physical scan, never the modem
+ * roster's retained name cache. Settled USB Ethernet and Wi-Fi are independent
+ * uplinks; unresolved USB candidates stay out until their evidence is fresh.
+ */
+export function isHeldOutByModemBlock(
+	name: string,
+	int: NetworkInterface | undefined,
+): boolean {
+	if (!hasMutationBlocks()) return false;
+	if (usbNetScanCoversCurrentPresence(name)) {
+		const descriptor = getUsbPhysicalDescriptor(name);
+		if (
+			descriptor?.deviceClass === "wired-ethernet" ||
+			isWirelessInterface(name)
+		)
+			return false;
+		if (descriptor) {
+			const key = deriveModemStableKey(descriptor.idPath);
+			return key === undefined || isModemKeyBlocked(key);
+		}
+	}
+	// Settlement/deadline alone cannot identify an unresolved modem. A translated
+	// link whose parent vanished must also wait for positive parent evidence.
+	return int === undefined || int.usb === true || int.busUnreadable === true;
+}
+
+/**
  * May this interface be offered to the bond?
  *
  * A duplicate-IP interface is offered — the caller still has to prove it can
@@ -309,6 +346,7 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 	if (!int.ip) return false;
 	// The image's IPv4 translator for an IPv6-only modem carries that modem's
 	// traffic only while its snapshot says so, and follows the modem's toggle.
+	let owner = name;
 	if (isClatTunName(name)) {
 		const translation = clatTranslationFor(name, int.ip);
 		if (
@@ -317,7 +355,10 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 			!isBondLinkMappable(name, int.ip)
 		)
 			return false;
+		owner = translation.parent;
 	}
+	if (isHeldOutByModemBlock(owner, owner === name ? int : netif[owner]))
+		return false;
 	if (isBondIdentityPending(name, int)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
@@ -672,6 +713,9 @@ function syncNetifState(): void {
 	}
 	setNetifState(next);
 }
+
+// A modem blocked or released changes the bond's members on the next publish.
+onMutationBlocksChange(() => triggerNetworkInterfacesChange());
 
 export function triggerNetworkInterfacesChange() {
 	// Reconcile + broadcast on any state mutation (poll, UI toggle, hotspot

@@ -617,6 +617,7 @@ let modemNetMarkers: Map<string, UsbModemNetMarker> = new Map();
 let physicalDescriptors: Map<string, UsbPhysicalDescriptor> = new Map();
 let sharedSerialHashes = new Set<string>();
 let coveredIfnames = new Set<string>();
+let coveredEpochs = new Map<string, number>();
 const netdevRemovalEpochs = new Map<string, number>();
 const scanCommittedListeners = new Set<() => void>();
 const identityFirstPublishedAt = new Map<string, number>();
@@ -629,7 +630,15 @@ export function usbNetScanCovers(ifname: string): boolean {
 	return coveredIfnames.has(ifname);
 }
 
-/** Creation adopts its covering read; only observed removal invalidates it. */
+/** Admission needs a scan of THIS presence, not a settled name's old scan. */
+export function usbNetScanCoversCurrentPresence(ifname: string): boolean {
+	return (
+		coveredIfnames.has(ifname) &&
+		coveredEpochs.get(ifname) === (netdevRemovalEpochs.get(ifname) ?? 0)
+	);
+}
+
+/** Creation adopts its covering read; observed removal invalidates admission. */
 export function invalidateUsbNetReading(ifname: string, epoch: number): void {
 	netdevRemovalEpochs.set(ifname, epoch);
 }
@@ -681,6 +690,7 @@ export function onUsbNetScanCommitted(listener: () => void): () => void {
 function snapshotKey(current: UsbNetMarkerSets): string {
 	return JSON.stringify({
 		covered: [...coveredIfnames].sort(),
+		epochs: [...coveredEpochs].sort(([a], [b]) => a.localeCompare(b)),
 		router: [...current.routerCellular.entries()].sort(([a], [b]) =>
 			a.localeCompare(b),
 		),
@@ -791,6 +801,9 @@ async function runUsbNetScan(
 		modemNetMarkers = scanned.modemNet;
 		physicalDescriptors = scanned.physical;
 		coveredIfnames = new Set(ifnames.filter((name) => !stale.has(name)));
+		coveredEpochs = new Map(
+			[...readEpochs].filter(([name]) => coveredIfnames.has(name)),
+		);
 		setPresentPhysicalDevices(
 			[...physicalDescriptors.values()].map((descriptor) =>
 				resolvePhysicalDevice(descriptor),
@@ -891,6 +904,7 @@ export function resetUsbNetMarkers(): void {
 	physicalDescriptors = new Map();
 	sharedSerialHashes = new Set();
 	coveredIfnames = new Set();
+	coveredEpochs = new Map();
 	netdevRemovalEpochs.clear();
 	identityFirstPublishedAt.clear();
 	identityDeadlineWarnings.clear();
