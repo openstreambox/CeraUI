@@ -40,6 +40,13 @@ source owner must report faults rather than silently abandon its state.
 
 The OTA sentinel has two owners. Clearing encoder protection cannot remove
 carrying protection, and ending carrying cannot remove encoder protection.
+The stream session reads the sentinel through `encoderOtaStreamLiveness()`: a
+marker this process wrote only for carrying (created from absence, or kept by
+carrying after a confirmed encoder idle) is not stream evidence. Otherwise the
+startup hold, which is published before the first reconciliation, would make
+every clean boot look like an inherited marker; an idle engine pushes no status
+on subscribe, so the session would stay `reconciling` until an operator Stop.
+A marker present before carrying wrote it still counts as unknown.
 The idle clock includes carrying and its last hold boundary. Updates retain all
 existing control leases and final admission checks. A persistent informational
 notice explains why updates, reboot, power-off and idle link changes wait, without
