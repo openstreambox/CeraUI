@@ -27,9 +27,9 @@
   - the TUN is administratively up with exactly the snapshot's `tun_ifindex`
     (the bond also requires the snapshot IPv4 on it).
 
-  The generation is boot, invocation, the producer's `generation` and both
-  ifindices. When it changes, the link is withdrawn for one poll before it is
-  offered again, so the sender's reload path sees a withdrawal, never a swap.
+  The generation includes boot, invocation, the producer token, both ifindices,
+  the parent, IPv4 and physical modem identity. A change withdraws the link for
+  one poll before it is offered again, so the sender's reload path sees a withdrawal, never a swap.
 
   The TUN's IPv4 is the sender's bind source and the TUN its bind device; the
   modem interface itself has no IPv4 address.
@@ -38,6 +38,7 @@
 import { readFileSync } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { isIPv4, isIPv6 } from "node:net";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { run } from "../../helpers/run.ts";
 import { isSafeIfname } from "./safe-ifname.ts";
@@ -48,7 +49,7 @@ export const CLAT_POLL_INTERVAL_MS = 2_000;
 const CLAT_SNAPSHOT_MAX_BYTES = 4096;
 const CLAT_UNIT = "ceralive-clat.service";
 const IFF_UP = 0x1;
-/** `/proc/uptime` has 10 ms resolution; an observation may sit inside that step. */
+/** Use the upper end of `/proc/uptime`'s 10 ms step for conservative expiry. */
 const UPTIME_RESOLUTION_S = 0.01;
 
 export type ClatState = "starting" | "up" | "unavailable" | "down" | "error";
@@ -67,7 +68,7 @@ export interface ClatSnapshot {
 	readonly expiresAt: number;
 }
 
-const TUN_RE = /^clat(\d{1,4})$/;
+const TUN_RE = /^clat(\d{1,10})$/;
 const HEX32 = /^[0-9a-f]{32}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PREFIX_LENGTHS = new Set([32, 40, 48, 56, 64, 96]);
@@ -132,7 +133,11 @@ export function parseClatSnapshot(
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const v = raw as Record<string, unknown>;
 	if (v.schema_version !== 2) return undefined;
-	if (REQUIRED.some((key) => !(key in v))) return undefined;
+	if (
+		REQUIRED.some((key) => !(key in v)) ||
+		Object.keys(v).length !== REQUIRED.length + 1
+	)
+		return undefined;
 	const parent = v.interface;
 	if (typeof parent !== "string" || !isSafeIfname(parent)) return undefined;
 	if (!positiveInt(v.ifindex) || String(v.ifindex) !== fileIndex)
@@ -157,6 +162,7 @@ export function parseClatSnapshot(
 		return undefined;
 	if (!positiveInt(v.updated_at)) return undefined;
 	if (!finite(v.observed_at) || !finite(v.expires_at)) return undefined;
+	if (v.state !== "up" && v.expires_at !== v.observed_at) return undefined;
 	return {
 		interface: parent,
 		ifindex: v.ifindex,
@@ -181,8 +187,8 @@ export function leaseLive(
 	return (
 		snapshot.state === "up" &&
 		snapshot.observedAt >= 0 &&
-		snapshot.observedAt <= now + UPTIME_RESOLUTION_S &&
-		now < snapshot.expiresAt &&
+		snapshot.observedAt <= now &&
+		now + UPTIME_RESOLUTION_S < snapshot.expiresAt &&
 		Math.abs(snapshot.expiresAt - snapshot.observedAt - CLAT_LEASE_SECONDS) <
 			1e-6
 	);
@@ -217,7 +223,9 @@ export interface ClatReadDeps {
 	/** A sysfs attribute, trimmed; `undefined` when absent or unreadable. */
 	readonly sysfs: (path: string) => Promise<string | undefined>;
 	readonly unit: () => Promise<ClatUnitState | undefined>;
+	readonly ipv4: (tun: string, ip: string) => Promise<boolean>;
 	readonly isModem: (ifname: string) => Promise<boolean>;
+	readonly modemKey?: (ifname: string) => Promise<string | undefined>;
 	readonly bootId: () => string | undefined;
 	/** CLOCK_BOOTTIME seconds (suspend included). */
 	readonly boottime: () => number | undefined;
@@ -256,22 +264,24 @@ export function parseUnitShow(stdout: string): ClatUnitState | undefined {
 	return { invocation, mainPid: pid };
 }
 
-async function readUnit(): Promise<ClatUnitState | undefined> {
+export async function readUnit(
+	show: () => Promise<string> = () =>
+		run(
+			"systemctl",
+			[
+				"show",
+				CLAT_UNIT,
+				"--property=ActiveState,SubState,MainPID,InvocationID",
+			],
+			{ timeout: 3_000, maxBuffer: 4096 },
+		),
+	stat: typeof statInfo = statInfo,
+): Promise<ClatUnitState | undefined> {
 	try {
-		const state = parseUnitShow(
-			await run(
-				"systemctl",
-				[
-					"show",
-					CLAT_UNIT,
-					"--property=ActiveState,SubState,MainPID,InvocationID",
-				],
-				{ timeout: 3_000, maxBuffer: 4096 },
-			),
-		);
+		const state = parseUnitShow(await show());
 		if (!state) return undefined;
 		// A MainPID that is gone is not a running translator controller.
-		return (await statInfo(`/proc/${state.mainPid}`))?.directory
+		return (await stat(`/proc/${state.mainPid}`))?.directory
 			? state
 			: undefined;
 	} catch {
@@ -319,7 +329,15 @@ export const defaultClatReadDeps: ClatReadDeps = {
 			return undefined;
 		}
 	},
-	unit: readUnit,
+	unit: () => readUnit(),
+	ipv4: async (tun, ip) =>
+		networkInterfaces()[tun]?.some(
+			(address) => address.family === "IPv4" && address.address === ip,
+		) ?? false,
+	modemKey: async (ifname) =>
+		(await import("../modems/mutation-identity.ts")).modemStableKeyForIfname(
+			ifname,
+		),
 	// Loaded on use: the modem modules import this layer, not the other way.
 	isModem: async (ifname) =>
 		(await import("../modems/mutation-identity.ts")).modemStableKeyForIfname(
@@ -335,7 +353,7 @@ export async function readClatTranslations(
 ): Promise<ReadonlyMap<string, ClatTranslation>> {
 	const usable = new Map<string, ClatTranslation>();
 	const names = (await deps.list(deps.dir)).filter((name) =>
-		/^\d{1,4}\.json$/.test(name),
+		/^\d{1,10}\.json$/.test(name),
 	);
 	if (names.length === 0) return usable;
 	const directory = await deps.stat(deps.dir);
@@ -386,6 +404,9 @@ export async function readClatTranslations(
 				String(snapshot.tunIfindex)
 		)
 			continue;
+		const modemKey = await deps.modemKey?.(snapshot.interface);
+		if (deps.modemKey && !modemKey) continue;
+		if (!(await deps.ipv4(snapshot.tun, snapshot.ipv4))) continue;
 		usable.set(snapshot.tun, {
 			parent: snapshot.interface,
 			tun: snapshot.tun,
@@ -396,6 +417,9 @@ export async function readClatTranslations(
 				snapshot.generation,
 				snapshot.ifindex,
 				snapshot.tunIfindex,
+				snapshot.interface,
+				snapshot.ipv4,
+				...(modemKey ? [modemKey] : []),
 			].join(":"),
 			expiresAt: snapshot.expiresAt,
 		});
@@ -477,7 +501,37 @@ export function clatTranslationFor(
 	const translation = current.get(name);
 	if (!translation || ip !== translation.ipv4) return undefined;
 	const now = boottime();
-	return now !== undefined && now < translation.expiresAt
+	return now !== undefined && now + UPTIME_RESOLUTION_S < translation.expiresAt
 		? translation
 		: undefined;
+}
+
+/** Own polling independently of interface events; a refresh error withdraws. */
+export function startClatTranslationPolling(
+	onChange: () => void,
+	deps: ClatReadDeps = defaultClatReadDeps,
+	schedule: typeof setInterval = setInterval,
+): () => void {
+	let running = false;
+	const poll = async () => {
+		if (running) return;
+		running = true;
+		try {
+			if (await refreshClatTranslations(deps)) onChange();
+		} finally {
+			running = false;
+		}
+	};
+	void poll();
+	const timer = schedule(() => {
+		void poll();
+	}, CLAT_POLL_INTERVAL_MS);
+	return () => clearInterval(timer);
+}
+
+/** Resolve the current parent for identity-only consumers. */
+export function clatTranslationForTun(
+	name: string,
+): ClatTranslation | undefined {
+	return clatTranslationFor(name, current.get(name)?.ipv4);
 }

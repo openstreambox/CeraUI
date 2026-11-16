@@ -66,10 +66,9 @@ import {
 	setPersistentBondOptOut,
 } from "./bond-preference.ts";
 import {
-	CLAT_POLL_INTERVAL_MS,
 	clatTranslationFor,
 	isClatTunName,
-	refreshClatTranslations,
+	startClatTranslationPolling,
 } from "./clat-translation.ts";
 import {
 	type DongleMarker,
@@ -821,16 +820,7 @@ export function initNetworkInterfaceMonitoring() {
 	}, UNCLAIMED_ADAPTER_POLL_INTERVAL_MS);
 	// The CLAT snapshot has its own poll, off the publication path; a change in
 	// the translated links the bond may use republishes it.
-	const pollClat = () =>
-		void refreshClatTranslations()
-			.then((changed) => {
-				if (changed) triggerNetworkInterfacesChange();
-			})
-			.catch((err: unknown) => {
-				logger.debug(`CLAT snapshot poll failed: ${err}`);
-			});
-	pollClat();
-	setInterval(pollClat, CLAT_POLL_INTERVAL_MS);
+	startClatTranslationPolling(triggerNetworkInterfacesChange);
 }
 
 /**
@@ -1526,7 +1516,7 @@ export function netIfBuildMsg() {
 		: undefined;
 	for (const i in netif) {
 		const networkInterface = netif[i];
-		if (!networkInterface) continue;
+		if (!networkInterface || isClatTunName(i)) continue;
 
 		const entry: NetworkInterfaceResponseMessage[string] = {
 			...(networkInterface.ip !== undefined ? { ip: networkInterface.ip } : {}),
@@ -1566,6 +1556,20 @@ export function netIfBuildMsg() {
 		}
 	}
 
+	// Project the translated address and counters onto the modem's existing row.
+	// The kernel TUN remains the sender's bind device, never a second UI link.
+	for (const [name, int] of Object.entries(netif)) {
+		if (!isClatTunName(name)) continue;
+		const translation = clatTranslationFor(name, int.ip);
+		if (!translation) continue;
+		const parent = m[translation.parent];
+		if (!parent || parent.ip) continue; // Native IPv4 still wins.
+		parent.ip = translation.ipv4;
+		parent.enabled = isBondCandidate(name, int);
+		parent.tp = int.tp;
+		if (int.tx_bps !== undefined) parent.tx_bps = int.tx_bps;
+		if (int.rx_bps !== undefined) parent.rx_bps = int.rx_bps;
+	}
 	applyDongleProjection(m);
 	applyRouterCellularProjection(m);
 	applyModemNetProjection(m);
