@@ -1,0 +1,96 @@
+{
+	"firstParty": {
+		"source": "https://github.com/CERALIVE/CeraUI",
+		"licenceFiles": [
+			"apps/backend/LICENSE",
+			"apps/frontend/LICENSE"
+		],
+		"brandNotice": "BRAND-ASSETS-NOTICE.md"
+	},
+	"backendEntrypoints": {
+		"apps/backend/src/main.ts": "/usr/local/bin/ceralive",
+		"apps/backend/src/modules/system/update-orchestrator/recovery-cli.ts": "/usr/libexec/ceralive/ceralive-update-recover"
+	},
+	"webSourcemapDir": "dist/sourcemaps",
+	"web": {
+		"root": "dist/public",
+		"label": "/var/www/ceralive (web app)",
+		"mustBeAttributed": "\\.(?:m?js|woff2?|ttf|otf)$",
+		"rules": [
+			{
+				"files": "^workbox-[0-9a-f]+\\.js$",
+				"markerPackages": {
+					"pattern": "workbox:([a-z-]+):",
+					"name": "workbox-$1"
+				},
+				"resolveFrom": [
+					"apps/frontend",
+					"vite-plugin-pwa",
+					"workbox-build"
+				]
+			},
+			{
+				"files": "^sw\\.js$",
+				"packages": [
+					"workbox-build"
+				],
+				"resolveFrom": [
+					"apps/frontend",
+					"vite-plugin-pwa"
+				]
+			},
+			{
+				"files": "^assets/rolldown-runtime-[^/]+\\.js$",
+				"packages": [
+					"rolldown"
+				],
+				"resolveFrom": [
+					"apps/frontend",
+					"vite"
+				]
+			},
+			{
+				"files": "^assets/space-grotesk-[^/]+\\.woff2$",
+				"packages": [
+					"@fontsource-variable/space-grotesk"
+				],
+				"resolveFrom": [
+					"apps/frontend"
+				]
+			},
+			{
+				"files": "^assets/jetbrains-mono-[^/]+\\.woff2$",
+				"packages": [
+					"@fontsource-variable/jetbrains-mono"
+				],
+				"resolveFrom": [
+					"apps/frontend"
+				]
+			},
+			{
+				"files": "\\.css$",
+				"marker": "/*! tailwindcss v",
+				"packages": [
+					"tailwindcss"
+				],
+				"resolveFrom": [
+					"apps/frontend"
+				]
+			}
+		]
+	},
+	"runtime": {
+		"name": "Bun",
+		"version": "1.4.4",
+		"revision": "38afee6c84fcf48c0edb2466aa4b27d287a59c30",
+		"source": "https://github.com/oven-sh/bun/blob/38afee6c84fcf48c0edb2466aa4b27d287a59c30/LICENSE.md",
+		"file": "scripts/build/notices/bun-v1.4.4-LICENSE.md",
+		"sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd"
+	},
+	"withoutLicenceText": {
+		"@ceralive/cerastream": "Its package.json declares GPL-3.0, but the package contains no licence file.",
+		"@ceralive/control-protocol": "Its package.json declares GPL-3.0, but the package contains no licence file.",
+		"@ceralive/modem-control": "Its package.json declares AGPL-3.0, but the package contains no licence file.",
+		"gsap": "Its package.json and README.md refer to GreenSock's standard no-charge licence at https://gsap.com/standard-license; the licence text itself is not in the package."
+	}
+}

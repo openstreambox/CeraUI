@@ -1,0 +1,10 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"types": ["node", "bun"],
+		"typeRoots": ["../../node_modules/@types", "../../apps/backend/node_modules/@types"]
+	},
+	"include": ["third-party-notices.ts", "third-party-notices.test.ts"]
+}

@@ -110,7 +110,10 @@ get_backend_hash() {
 
 # Check if frontend cache is valid
 is_frontend_cache_valid() {
-    if [ ! -f "$FRONTEND_CACHE/hash.txt" ] || [ ! -d "$FRONTEND_CACHE/public" ]; then
+    # The relocated source maps are kept too: the package's third-party notices
+    # are generated from them, so a cache without them cannot be reused.
+    if [ ! -f "$FRONTEND_CACHE/hash.txt" ] || [ ! -d "$FRONTEND_CACHE/public" ] \
+        || [ ! -d "$FRONTEND_CACHE/sourcemaps" ]; then
         return 1
     fi
 
@@ -146,6 +149,7 @@ build_frontend_only() {
     if is_frontend_cache_valid; then
         echo "✅ Frontend cache valid - reusing existing build"
         cp -r "$FRONTEND_CACHE/public" dist/
+        cp -r "$FRONTEND_CACHE/sourcemaps" dist/
         bun "$BUILD_REPO_ROOT/scripts/ci/notification-bundle.ts" || return $?
         return 0
     fi
@@ -158,8 +162,9 @@ build_frontend_only() {
     )
 
     # Cache the result
-    rm -rf "$FRONTEND_CACHE/public"
+    rm -rf "$FRONTEND_CACHE/public" "$FRONTEND_CACHE/sourcemaps"
     cp -r dist/public "$FRONTEND_CACHE/"
+    cp -r dist/sourcemaps "$FRONTEND_CACHE/"
     get_frontend_hash > "$FRONTEND_CACHE/hash.txt"
 
     echo "✅ Frontend built and cached"

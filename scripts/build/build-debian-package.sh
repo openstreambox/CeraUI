@@ -128,6 +128,13 @@ cp deployment/ceralive-update-recover "$TEMP_DIR/usr/sbin/ceralive-update-recove
 cp deployment/ceralive-os-stage-guard "$TEMP_DIR/usr/libexec/ceralive/ceralive-os-stage-guard"
 cp deployment/ceralive-nbd-release "$TEMP_DIR/usr/libexec/ceralive/ceralive-nbd-release"
 bun build apps/backend/src/modules/system/update-orchestrator/recovery-cli.ts --compile --target="bun-linux-${ARCHITECTURE}" --outfile="$TEMP_DIR/usr/libexec/ceralive/ceralive-update-recover"
+# Licence texts of CeraUI and of everything the executables and the web app bundle,
+# copied verbatim at build time into the one doc file images keep (copyright);
+# the JSON index stays beside the built package. Fails on a bundled package
+# without licence text that scripts/build/third-party-notices.json does not name.
+NODE_ENV=production bun scripts/build/third-party-notices.ts "$TEMP_DIR/usr/share/doc/$PACKAGE_NAME/copyright" \
+    --index dist/debian/third-party-notices.json \
+    --check-binary "$TEMP_DIR/usr/local/bin/ceralive"
 
 # Normalize copied artifacts and builder umask before applying private/executable modes.
 find "$TEMP_DIR" -type d -exec chmod 0755 {} +
