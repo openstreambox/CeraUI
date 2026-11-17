@@ -97,6 +97,11 @@ const CAPTURE_TERMINAL_FALLBACK_MESSAGES: Readonly<
 
 function terminalNotificationKey(diagnostic: StartRetryDiagnostic): string {
 	if (
+		diagnostic.class === "start_invalid" &&
+		diagnostic.code === "srt_encryption_unavailable"
+	)
+		return "notifications.streamStartSrtEncryptionUnavailableFailed";
+	if (
 		diagnostic.class === "capture_source_unavailable" &&
 		diagnostic.captureCause !== undefined
 	) {
@@ -108,6 +113,11 @@ function terminalNotificationKey(diagnostic: StartRetryDiagnostic): string {
 function terminalFallbackMessage(
 	diagnostic: StartRetryDiagnostic,
 ): string | undefined {
+	if (
+		diagnostic.class === "start_invalid" &&
+		diagnostic.code === "srt_encryption_unavailable"
+	)
+		return "Saved SRT encryption settings are not supported. Clear them before starting.";
 	if (
 		diagnostic.class === "capture_source_unavailable" &&
 		diagnostic.captureCause !== undefined
