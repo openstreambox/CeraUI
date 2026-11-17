@@ -1157,7 +1157,14 @@ async function refreshNetifFromOs(): Promise<void> {
 			}
 		}
 		if (generation !== netifRefreshGeneration) return;
-		processIfconfigOutput(ifconfigOut, ipOverrides, undefined, undefined, buses, ifindices);
+		processIfconfigOutput(
+			ifconfigOut,
+			ipOverrides,
+			undefined,
+			undefined,
+			buses,
+			ifindices,
+		);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.error(`Error getting ifconfig: ${message}`);
@@ -1242,7 +1249,8 @@ export function processIfconfigOutput(
 			) {
 				bumpPresence(name, true);
 				intsChanged = true;
-				if (wirelessInterface(name) || isSupportedWifiIfname(name)) wifiIncarnationChanged = true;
+				if (wirelessInterface(name) || isSupportedWifiIfname(name))
+					wifiIncarnationChanged = true;
 			}
 			netifIdentities.set(name, { ifindex, mac });
 			let tp = 0;
@@ -1728,7 +1736,9 @@ export function netIfBuildMsg() {
 		const parent = m[translation.parent];
 		if (!parent || parent.ip) continue; // Native IPv4 still wins.
 		parent.ip = translation.ipv4;
-		parent.addresses = [parent.ip, parent.ipv6].filter((ip): ip is string => ip !== undefined);
+		parent.addresses = [parent.ip, parent.ipv6].filter(
+			(ip): ip is string => ip !== undefined,
+		);
 		parent.enabled = isBondCandidate(name, int);
 		parent.tp = int.tp;
 		if (int.tx_bps !== undefined) parent.tx_bps = int.tx_bps;
