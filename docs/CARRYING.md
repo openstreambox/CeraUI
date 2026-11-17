@@ -71,8 +71,9 @@ connection but not subscriptions, and a status sent in time can sit unread
 behind a timer that fired during an event-loop stall. Lines are written and
 read in order, so a reply means the connection held and every earlier status
 was handled. The reply is the engine's own snapshot of its session: one that
-names a `session_id` is a running session, never silence. A snapshot without
-one shows no session on any schema. A reply that reports nothing (a typed
+names a `session_id`, an `active_input` or any `switch_targets` is a running
+session, never silence. An empty snapshot is treated as no session on any schema,
+subject to the unverified assumption below. A reply that reports nothing (a typed
 error from an engine without the method, or a result the binding cannot
 parse) counts only from an engine whose schema is not newer than the
 binding's, because the binding drops statuses it cannot parse without a trace.
@@ -87,11 +88,14 @@ of the engine reconnect loop (about every 30 s) reconciles again as long as a
 line waits, so an engine that dies after the boot reconciliation is caught
 too; once the engine is reachable the loop reconciles as before.
 
-Limits: the snapshot is only as good as the engine's `session_id`. A running
-engine still reads as silent if it sends no status for two windows on a
-working connection and its snapshot does not name the session: it leaves
-`session_id` out, or it answers the request with an error on a schema the
-binding reads. A positive idle answer from the engine would close that.
+Limits: it is an unverified assumption, not measured engine behaviour, that every
+running session supplies a session id, active input or live switch targets.
+Passthrough and composition always have an empty target list; their protection
+still depends on the engine supplying `session_id` or `active_input`. A running
+engine reads as silent if it sends no status for two windows on a working
+connection and omits all three signs from its snapshot, or answers with an error
+on a schema the binding reads. A positive idle answer from the engine would close
+that gap.
 
 One owner (`createOtaMarkerOwner`) writes the file, and its content follows
 from who holds it at each change: a stream keeps it empty, carrying alone keeps

@@ -700,11 +700,13 @@ export function engineStatusIsReadable(engineSchema: string): boolean {
  * sent before it has already reached the handler; a timeout or a lost
  * connection is no reply.
  *
- * The answer is the engine's own snapshot of its session: `session_id` names
- * the running session, so a snapshot with one is a session and a snapshot
- * without one is an engine that reports none. A typed engine error (an engine
- * without the method) or a result the binding cannot parse is a reply that
- * says nothing about a session.
+ * The answer is the engine's own snapshot of its session: a session id, an
+ * active input or live switch targets each prevent an idle inference. An empty
+ * snapshot still relies on the unverified assumption that every running session
+ * supplies at least one of these fields. Passthrough/composition have no switch
+ * targets, so absence of a session id is not independently proven idle there.
+ * A typed engine error (an engine without the method) or a result the binding
+ * cannot parse is a reply that says nothing about a session.
  */
 export type EngineSessionReply = "none" | "session" | "no-report" | "no-reply";
 
@@ -713,8 +715,11 @@ export async function askEngineSession(
 ): Promise<EngineSessionReply> {
 	try {
 		const snapshot = await client.listSwitchTargets();
-		return typeof snapshot.session_id === "string" &&
-			snapshot.session_id.length > 0
+		return (typeof snapshot.session_id === "string" &&
+			snapshot.session_id.length > 0) ||
+			(typeof snapshot.active_input === "string" &&
+				snapshot.active_input.length > 0) ||
+			snapshot.switch_targets.length > 0
 			? "session"
 			: "none";
 	} catch (error) {

@@ -1442,11 +1442,25 @@ describe("a reconciliation that hears nothing", () => {
 				schemaVersion,
 				roundTrip: async () => ({
 					session_id: "s1",
-					active_input: "hdmi",
 					switch_targets: [],
 				}),
 			});
 			expect(r).toMatchObject({ answer: "unknown", silent: 0 });
+		}
+	});
+
+	test("a snapshot with a live input but no session id is not silence, on any schema", async () => {
+		for (const schemaVersion of [SCHEMA_VERSION, "0.1.0", "99.0.0"]) {
+			for (const snapshot of [
+				{ active_input: "hdmi", switch_targets: [] },
+				{ switch_targets: [{ input_id: "hdmi", kind: "capture" as const }] },
+			]) {
+				const r = await silentWindow({
+					schemaVersion,
+					roundTrip: async () => snapshot,
+				});
+				expect(r).toMatchObject({ answer: "unknown", silent: 0 });
+			}
 		}
 	});
 
