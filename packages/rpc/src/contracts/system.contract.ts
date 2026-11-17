@@ -17,6 +17,7 @@ import {
 	kioskToggleOutputSchema,
 	logInputSchema,
 	logOutputSchema,
+	powerResponseSchema,
 	remoteConfigInputSchema,
 	revisionsSchema,
 	sensorsStatusSchema,
@@ -52,12 +53,12 @@ export const systemContract = oc.router({
 	/**
 	 * Power off the device
 	 */
-	poweroff: oc.output(successResponseSchema),
+	poweroff: oc.output(powerResponseSchema),
 
 	/**
 	 * Reboot the device
 	 */
-	reboot: oc.output(successResponseSchema),
+	reboot: oc.output(powerResponseSchema),
 
 	/**
 	 * Start software update
