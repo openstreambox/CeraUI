@@ -1,0 +1,326 @@
+/*-
+ * Copyright (c) 2003-2010 Tim Kientzle
+ * Copyright (c) 2012 Michihiro NAKAJIMA
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer
+ *    in this position and unchanged.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "archive_platform.h"
+
+#if !defined(_WIN32) || defined(__CYGWIN__)
+
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
+#ifdef HAVE_SYS_ACL_H
+#include <sys/acl.h>
+#endif
+#ifdef HAVE_SYS_EXTATTR_H
+#include <sys/extattr.h>
+#endif
+#if HAVE_SYS_XATTR_H
+#include <sys/xattr.h>
+#elif HAVE_ATTR_XATTR_H
+#include <attr/xattr.h>
+#endif
+#ifdef HAVE_SYS_EA_H
+#include <sys/ea.h>
+#endif
+#ifdef HAVE_SYS_IOCTL_H
+#include <sys/ioctl.h>
+#endif
+#ifdef HAVE_SYS_STAT_H
+#include <sys/stat.h>
+#endif
+#ifdef HAVE_SYS_TIME_H
+#include <sys/time.h>
+#endif
+#ifdef HAVE_SYS_UTIME_H
+#include <sys/utime.h>
+#endif
+#ifdef HAVE_COPYFILE_H
+#include <copyfile.h>
+#endif
+#ifdef HAVE_ERRNO_H
+#include <errno.h>
+#endif
+#ifdef HAVE_FCNTL_H
+#include <fcntl.h>
+#endif
+#ifdef HAVE_GRP_H
+#include <grp.h>
+#endif
+#ifdef HAVE_LANGINFO_H
+#include <langinfo.h>
+#endif
+#ifdef HAVE_LINUX_FS_H
+#include <linux/fs.h>	/* for Linux file flags */
+#endif
+/*
+ * Some Linux distributions have both linux/ext2_fs.h and ext2fs/ext2_fs.h.
+ * As the include guards don't agree, the order of include is important.
+ */
+#ifdef HAVE_LINUX_EXT2_FS_H
+#include <linux/ext2_fs.h>	/* for Linux file flags */
+#endif
+#if defined(HAVE_EXT2FS_EXT2_FS_H) && !defined(__CYGWIN__)
+#include <ext2fs/ext2_fs.h>	/* Linux file flags, broken on Cygwin */
+#endif
+#ifdef HAVE_LIMITS_H
+#include <limits.h>
+#endif
+#ifdef HAVE_PWD_H
+#include <pwd.h>
+#endif
+#include <stdio.h>
+#ifdef HAVE_STDLIB_H
+#include <stdlib.h>
+#endif
+#ifdef HAVE_STRING_H
+#include <string.h>
+#endif
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+#ifdef HAVE_UTIME_H
+#include <utime.h>
+#endif
+#ifdef F_GETTIMES /* Tru64 specific */
+#include <sys/fcntl1.h>
+#endif
+
+/*
+ * Macro to cast st_mtime and time_t to an int64 so that 2 numbers can reliably be compared.
+ *
+ * It assumes that the input is an integer type of no more than 64 bits.
+ * If the number is less than zero, t must be a signed type, so it fits in
+ * int64_t. Otherwise, it's a nonnegative value so we can cast it to uint64_t
+ * without loss. But it could be a large unsigned value, so we have to clip it
+ * to INT64_MAX.*
+ */
+#define to_int64_time(t) \
+   ((t) < 0 ? (int64_t)(t) : (uint64_t)(t) > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)(t))
+
+#if __APPLE__
+#include <TargetConditionals.h>
+#if TARGET_OS_MAC && !TARGET_OS_EMBEDDED && HAVE_QUARANTINE_H
+#include <quarantine.h>
+#define HAVE_QUARANTINE 1
+#endif
+#endif
+
+#ifdef HAVE_ZLIB_H
+#include <zlib.h>
+#endif
+
+/* TODO: Support Mac OS 'quarantine' feature.  This is really just a
+ * standard tag to mark files that have been downloaded as "tainted".
+ * On Mac OS, we should mark the extracted files as tainted if the
+ * archive being read was tainted.  Windows has a similar feature; we
+ * should investigate ways to support this generically. */
+
+#include "archive.h"
+#include "archive_acl_private.h"
+#include "archive_string.h"
+#include "archive_endian.h"
+#include "archive_entry.h"
+#include "archive_private.h"
+#include "archive_write_disk_private.h"
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
+
+/* Ignore non-int O_NOFOLLOW constant. */
+/* gnulib's fcntl.h does this on AIX, but it seems practical everywhere */
+#if defined O_NOFOLLOW && !(INT_MIN <= O_NOFOLLOW && O_NOFOLLOW <= INT_MAX)
+#undef O_NOFOLLOW
+#endif
+
+#ifndef O_NOFOLLOW
+#define O_NOFOLLOW 0
+#endif
+
+#ifndef AT_FDCWD
+#define AT_FDCWD -100
+#endif
+
+struct fixup_entry {
+	struct fixup_entry	*next;
+	struct archive_acl	 acl;
+	mode_t			 mode;
+	__LA_MODE_T		 filetype;
+	int64_t			 atime;
+	int64_t                  birthtime;
+	int64_t			 mtime;
+	int64_t			 ctime;
+	unsigned long		 atime_nanos;
+	unsigned long            birthtime_nanos;
+	unsigned long		 mtime_nanos;
+	unsigned long		 ctime_nanos;
+	unsigned long		 fflags_set;
+	size_t			 mac_metadata_size;
+	void			*mac_metadata;
+	int			 fixup; /* bitmask of what needs fixing */
+	char			*name;
+};
+
+/*
+ * We use a bitmask to track which operations remain to be done for
+ * this file.  In particular, this helps us avoid unnecessary
+ * operations when it's possible to take care of one step as a
+ * side-effect of another.  For example, mkdir() can specify the mode
+ * for the newly-created object but symlink() cannot.  This means we
+ * can skip chmod() if mkdir() succeeded, but we must explicitly
+ * chmod() if we're trying to create a directory that already exists
+ * (mkdir() failed) or if we're restoring a symlink.  Similarly, we
+ * need to verify UID/GID before trying to restore SUID/SGID bits;
+ * that verification can occur explicitly through a stat() call or
+ * implicitly because of a successful chown() call.
+ */
+#define	TODO_MODE_FORCE		0x40000000
+#define	TODO_MODE_BASE		0x20000000
+#define	TODO_SUID		0x10000000
+#define	TODO_SUID_CHECK		0x08000000
+#define	TODO_SGID		0x04000000
+#define	TODO_SGID_CHECK		0x02000000
+#define	TODO_APPLEDOUBLE	0x01000000
+#define	TODO_MODE		(TODO_MODE_BASE|TODO_SUID|TODO_SGID)
+#define	TODO_TIMES		ARCHIVE_EXTRACT_TIME
+#define	TODO_OWNER		ARCHIVE_EXTRACT_OWNER
+#define	TODO_FFLAGS		ARCHIVE_EXTRACT_FFLAGS
+#define	TODO_ACLS		ARCHIVE_EXTRACT_ACL
+#define	TODO_XATTR		ARCHIVE_EXTRACT_XATTR
+#define	TODO_MAC_METADATA	ARCHIVE_EXTRACT_MAC_METADATA
+#define	TODO_HFS_COMPRESSION	ARCHIVE_EXTRACT_HFS_COMPRESSION_FORCED
+
+struct archive_write_disk {
+	struct archive	archive;
+
+	mode_t			 user_umask;
+	struct fixup_entry	*fixup_list;
+	struct fixup_entry	*current_fixup;
+	int64_t			 user_uid;
+	int			 skip_file_set;
+	int64_t			 skip_file_dev;
+	int64_t			 skip_file_ino;
+	time_t			 start_time;
+
+	int64_t (*lookup_gid)(void *private, const char *gname, int64_t gid);
+	void  (*cleanup_gid)(void *private);
+	void			*lookup_gid_data;
+	int64_t (*lookup_uid)(void *private, const char *uname, int64_t uid);
+	void  (*cleanup_uid)(void *private);
+	void			*lookup_uid_data;
+
+	/*
+	 * Full path of last file to satisfy symlink checks.
+	 */
+	struct archive_string	path_safe;
+
+	/*
+	 * Cached stat data from disk for the current entry.
+	 * If this is valid, pst points to st.  Otherwise,
+	 * pst is null.
+	 */
+	struct stat		 st;
+	struct stat		*pst;
+
+	/* Information about the object being restored right now. */
+	struct archive_entry	*entry; /* Entry being extracted. */
+	char			*name; /* Name of entry, possibly edited. */
+	struct archive_string	 _name_data; /* backing store for 'name' */
+	char			*tmpname; /* Temporary name * */
+	struct archive_string	 _tmpname_data; /* backing store for 'tmpname' */
+	/* Tasks remaining for this object. */
+	int			 todo;
+	/* Tasks deferred until end-of-archive. */
+	int			 deferred;
+	/* Options requested by the client. */
+	int			 flags;
+	/* Handle for the file we're restoring. */
+	int			 fd;
+	/* Current offset for writing data to the file. */
+	int64_t			 offset;
+	/* Last offset actually written to disk. */
+	int64_t			 fd_offset;
+	/* Total bytes actually written to files. */
+	int64_t			 total_bytes_written;
+	/* Maximum size of file, -1 if unknown. */
+	int64_t			 filesize;
+	/* Dir we were in before this restore; only for deep paths. */
+	int			 restore_pwd;
+	/* Mode we should use for this entry; affected by _PERM and umask. */
+	mode_t			 mode;
+	/* UID/GID to use in restoring this entry. */
+	int64_t			 uid;
+	int64_t			 gid;
+	/*
+	 * HFS+ Compression.
+	 */
+	/* Xattr "com.apple.decmpfs". */
+	uint32_t		 decmpfs_attr_size;
+	unsigned char		*decmpfs_header_p;
+	/* ResourceFork set options used for fsetxattr. */
+	int			 rsrc_xattr_options;
+	/* Xattr "com.apple.ResourceFork". */
+	unsigned char		*resource_fork;
+	size_t			 resource_fork_allocated_size;
+	unsigned int		 decmpfs_block_count;
+	uint32_t		*decmpfs_block_info;
+	/* Buffer for compressed data. */
+	unsigned char		*compressed_buffer;
+	size_t			 compressed_buffer_size;
+	size_t			 compressed_buffer_remaining;
+	/* The offset of the ResourceFork where compressed data will
+	 * be placed. */
+	uint32_t		 compressed_rsrc_position;
+	uint32_t		 compressed_rsrc_position_v;
+	/* Buffer for uncompressed data. */
+	unsigned char		*uncompressed_buffer;
+	size_t			 block_remaining_bytes;
+	size_t			 file_remaining_bytes;
+#ifdef HAVE_ZLIB_H
+	z_stream		 stream;
+	int			 stream_valid;
+	int			 decmpfs_compression_level;
+#endif
+#if !(ARCHIVE_XATTR_LINUX || ARCHIVE_XATTR_DARWIN || ARCHIVE_XATTR_AIX ||\
+    ARCHIVE_XATTR_FREEBSD)
+	int			 warning_done;
+#endif
+};
+
+/*
+ * Default mode for dirs created automatically (will be modified by umask).
+ * Note that POSIX specifies 0777 for implicitly-created dirs, "modified
+ * by the process' file creation mask."
+ */
+#define	DEFAULT_DIR_MODE 0777
+/*
+ * Dir modes are restored in two steps:  During the extraction, the permissions
+ * in the archive are modified to match the following limits.  During
+ * the post-extract fixup pass, the permissions from the archive are

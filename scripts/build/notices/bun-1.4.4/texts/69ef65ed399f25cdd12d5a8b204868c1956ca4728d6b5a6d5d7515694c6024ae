@@ -1,0 +1,484 @@
+/*-
+ * Copyright (c) 2009-2012 Michihiro NAKAJIMA
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "archive_platform.h"
+
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
+#ifdef HAVE_SYS_UTSNAME_H
+#include <sys/utsname.h>
+#endif
+#ifdef HAVE_ERRNO_H
+#include <errno.h>
+#endif
+#ifdef HAVE_LIMITS_H
+#include <limits.h>
+#endif
+#include <stdio.h>
+#include <stdarg.h>
+#ifdef HAVE_STDLIB_H
+#include <stdlib.h>
+#endif
+#include <time.h>
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+#ifdef HAVE_ZLIB_H
+#include <zlib.h>
+#endif
+
+#include "archive.h"
+#include "archive_endian.h"
+#include "archive_entry.h"
+#include "archive_entry_locale.h"
+#include "archive_private.h"
+#include "archive_rb.h"
+#include "archive_write_private.h"
+
+#if defined(_WIN32) && !defined(__CYGWIN__)
+#define getuid()			0
+#define getgid()			0
+#endif
+
+/*#define DEBUG 1*/
+#ifdef DEBUG
+/* To compare to the ISO image file made by mkisofs. */
+#define COMPAT_MKISOFS		1
+#endif
+
+#define LOGICAL_BLOCK_BITS			11
+#define LOGICAL_BLOCK_SIZE			2048
+#define PATH_TABLE_BLOCK_SIZE			4096
+
+#define SYSTEM_AREA_BLOCK			16
+#define PRIMARY_VOLUME_DESCRIPTOR_BLOCK 	1
+#define SUPPLEMENTARY_VOLUME_DESCRIPTOR_BLOCK 	1
+#define BOOT_RECORD_DESCRIPTOR_BLOCK	 	1
+#define VOLUME_DESCRIPTOR_SET_TERMINATOR_BLOCK	1
+#define NON_ISO_FILE_SYSTEM_INFORMATION_BLOCK	1
+#define RRIP_ER_BLOCK				1
+#define PADDING_BLOCK				150
+
+#define FD_1_2M_SIZE		(1024 * 1200)
+#define FD_1_44M_SIZE		(1024 * 1440)
+#define FD_2_88M_SIZE		(1024 * 2880)
+#define MULTI_EXTENT_SIZE	(ARCHIVE_LITERAL_LL(1) << 32)	/* 4Gi bytes. */
+#define MAX_DEPTH		8
+#define RR_CE_SIZE		28		/* SUSP "CE" extension size */
+
+#define FILE_FLAG_EXISTENCE	0x01
+#define FILE_FLAG_DIRECTORY	0x02
+#define FILE_FLAG_ASSOCIATED	0x04
+#define FILE_FLAG_RECORD	0x08
+#define FILE_FLAG_PROTECTION	0x10
+#define FILE_FLAG_MULTI_EXTENT	0x80
+
+static const char rrip_identifier[] =
+	"RRIP_1991A";
+static const char rrip_descriptor[] =
+	"THE ROCK RIDGE INTERCHANGE PROTOCOL PROVIDES SUPPORT FOR "
+	"POSIX FILE SYSTEM SEMANTICS";
+static const char rrip_source[] =
+	"PLEASE CONTACT DISC PUBLISHER FOR SPECIFICATION SOURCE.  "
+	"SEE PUBLISHER IDENTIFIER IN PRIMARY VOLUME DESCRIPTOR FOR "
+	"CONTACT INFORMATION.";
+#define RRIP_ER_ID_SIZE		(sizeof(rrip_identifier)-1)
+#define RRIP_ER_DSC_SIZE	(sizeof(rrip_descriptor)-1)
+#define RRIP_ER_SRC_SIZE	(sizeof(rrip_source)-1)
+#define RRIP_ER_SIZE		(8 + RRIP_ER_ID_SIZE + \
+				RRIP_ER_DSC_SIZE + RRIP_ER_SRC_SIZE)
+
+static const unsigned char zisofs_magic[8] = {
+	0x37, 0xE4, 0x53, 0x96, 0xC9, 0xDB, 0xD6, 0x07
+};
+
+#define ZF_HEADER_SIZE	16	/* zisofs header size. */
+#define ZF_LOG2_BS	15	/* log2 block size; 32K bytes. */
+#define ZF_BLOCK_SIZE	(1UL << ZF_LOG2_BS)
+
+#define MAX_JOLIET_ID_NUM	46656 /* 3 base 36 digits */
+
+/*
+ * Manage extra records.
+ */
+struct extr_rec {
+	int		 location;
+	int		 offset;
+	unsigned char	 buf[LOGICAL_BLOCK_SIZE];
+	struct extr_rec	*next;
+};
+
+struct ctl_extr_rec {
+	int		 use_extr;
+	unsigned char	*bp;
+	struct isoent	*isoent;
+	unsigned char	*ce_ptr;
+	int		 cur_len;
+	int		 dr_len;
+	int		 limit;
+	int		 extr_off;
+	int		 extr_loc;
+};
+#define DR_SAFETY	RR_CE_SIZE
+#define DR_LIMIT	(254 - DR_SAFETY)
+
+/*
+ * The relation of struct isofile and isoent and archive_entry.
+ *
+ * Primary volume tree  --> struct isoent
+ *                                |
+ *                                v
+ *                          struct isofile --> archive_entry
+ *                                ^
+ *                                |
+ * Joliet volume tree   --> struct isoent
+ *
+ * struct isoent has specific information for volume.
+ */
+
+struct isofile {
+	/* Used for managing struct isofile list. */
+	struct isofile		*allnext;
+	struct isofile		*datanext;
+	/* Used for managing a hardlinked struct isofile list. */
+	struct isofile		*hlnext;
+	struct isofile		*hardlink_target;
+
+	struct archive_entry	*entry;
+
+	/*
+	 * Used for making a directory tree.
+	 */
+	struct archive_string	 parentdir;
+	struct archive_string	 basename;
+	struct archive_string	 basename_utf16;
+	struct archive_string	 symlink;
+	int			 dircnt;	/* The number of elements of
+						 * its parent directory */
+
+	/*
+	 * Used for a Directory Record.
+	 */
+	struct content {
+		int64_t		 offset_of_temp;
+		int64_t		 size;
+		int		 blocks;
+		uint32_t 	 location;
+		/*
+		 * One extent equals one content.
+		 * If this entry has multi extent, `next' variable points
+		 * next content data.
+		 */
+		struct content	*next;		/* next content	*/
+	} content, *cur_content;
+	int			 write_content;
+
+	enum {
+		NO = 0,
+		BOOT_CATALOG,
+		BOOT_IMAGE
+	} boot;
+
+	/*
+	 * Used for a zisofs.
+	 */
+	struct {
+		unsigned char	 header_size;
+		unsigned char	 log2_bs;
+		uint32_t	 uncompressed_size;
+	} zisofs;
+};
+
+struct isoent {
+	/* Keep `rbnode' at the first member of struct isoent. */
+	struct archive_rb_node	 rbnode;
+
+	struct isofile		*file;
+
+	struct isoent		*parent;
+	/* A list of children.(use chnext) */
+	struct {
+		struct isoent	*first;
+		struct isoent	**last;
+		int		 cnt;
+	}			 children;
+	struct archive_rb_tree	 rbtree;
+
+	/* A list of sub directories.(use drnext) */
+	struct {
+		struct isoent	*first;
+		struct isoent	**last;
+		int		 cnt;
+	}			 subdirs;
+	/* A sorted list of sub directories. */
+	struct isoent		**children_sorted;
+	/* Used for managing struct isoent list. */
+	struct isoent		*chnext;
+	struct isoent		*drnext;
+	struct isoent		*ptnext;
+
+	/*
+	 * Used for making a Directory Record.
+	 */
+	int			 dir_number;
+	struct {
+		int		 vd;
+		int		 self;
+		int		 parent;
+		int		 normal;
+	}			 dr_len;
+	uint32_t 		 dir_location;
+	int			 dir_block;
+
+	/*
+	 * Identifier:
+	 *   on primary, ISO9660 file/directory name.
+	 *   on joliet, UCS2 file/directory name.
+	 * ext_off   : offset of identifier extension.
+	 * ext_len   : length of identifier extension.
+	 * id_len    : byte size of identifier.
+	 *   on primary, this is ext_off + ext_len + version length.
+	 *   on joliet, this is ext_off + ext_len.
+	 * mb_len    : length of multibyte-character of identifier.
+	 *   on primary, mb_len and id_len are always the same.
+	 *   on joliet, mb_len and id_len are different.
+	 */
+	char			*identifier;
+	int			 ext_off;
+	int			 ext_len;
+	int			 id_len;
+	int			 mb_len;
+
+	/*
+	 * Used for making a Rockridge extension.
+	 * This is a part of Directory Records.
+	 */
+	struct isoent		*rr_parent;
+	struct isoent		*rr_child;
+
+	/* Extra Record.(which we call in this source file)
+	 * A maximum size of the Directory Record is 254.
+	 * so, if generated RRIP data of a file cannot into a Directory
+	 * Record because of its size, that surplus data relocate this
+	 * Extra Record.
+	 */
+	struct {
+		struct extr_rec	*first;
+		struct extr_rec	**last;
+		struct extr_rec	*current;
+	}			 extr_rec_list;
+
+	unsigned int		 virtual:1;
+	/* If set to one, this file type is a directory.
+	 * A convenience flag to be used as
+	 * "archive_entry_filetype(isoent->file->entry) == AE_IFDIR".
+	 */
+	unsigned int		 dir:1;
+};
+
+struct hardlink {
+	struct archive_rb_node	 rbnode;
+	int			 nlink;
+	struct {
+		struct isofile	*first;
+		struct isofile	**last;
+	}			 file_list;
+};
+
+/*
+ * ISO writer options
+ */
+struct iso_option {
+	/*
+	 * Usage  : abstract-file=<value>
+	 * Type   : string, max 37 bytes
+	 * Default: Not specified
+	 * COMPAT : mkisofs -abstract <value>
+	 *
+	 * Specifies Abstract Filename.
+	 * This file shall be described in the Root Directory
+	 * and containing a abstract statement.
+	 */
+	unsigned int	 abstract_file:1;
+#define OPT_ABSTRACT_FILE_DEFAULT	0	/* Not specified */
+#define ABSTRACT_FILE_SIZE		37
+
+	/*
+	 * Usage  : application-id=<value>
+	 * Type   : string, max 128 bytes
+	 * Default: Not specified
+	 * COMPAT : mkisofs -A/-appid <value>.
+	 *
+	 * Specifies Application Identifier.
+	 * If the first byte is set to '_'(5F), the remaining
+	 * bytes of this option shall specify an identifier
+	 * for a file containing the identification of the
+	 * application.
+	 * This file shall be described in the Root Directory.
+	 */
+	unsigned int	 application_id:1;
+#define OPT_APPLICATION_ID_DEFAULT	0	/* Use default identifier */
+#define APPLICATION_IDENTIFIER_SIZE	128
+
+	/*
+	 * Usage : !allow-vernum
+	 * Type  : boolean
+	 * Default: Enabled
+	 *	  : Violates the ISO9660 standard if disable.
+	 * COMPAT: mkisofs -N
+	 *
+	 * Allow filenames to use version numbers.
+	 */
+	unsigned int	 allow_vernum:1;
+#define OPT_ALLOW_VERNUM_DEFAULT	1	/* Enabled */
+
+	/*
+	 * Usage  : biblio-file=<value>
+	 * Type   : string, max 37 bytes
+	 * Default: Not specified
+	 * COMPAT : mkisofs -biblio <value>
+	 *
+	 * Specifies Bibliographic Filename.
+	 * This file shall be described in the Root Directory
+	 * and containing bibliographic records.
+	 */
+	unsigned int	 biblio_file:1;
+#define OPT_BIBLIO_FILE_DEFAULT		0	/* Not specified */
+#define BIBLIO_FILE_SIZE		37
+
+	/*
+	 * Usage  : boot=<value>
+	 * Type   : string
+	 * Default: Not specified
+	 * COMPAT : mkisofs -b/-eltorito-boot <value>
+	 *
+	 * Specifies "El Torito" boot image file to make
+	 * a bootable CD.
+	 */
+	unsigned int	 boot:1;
+#define OPT_BOOT_DEFAULT		0	/* Not specified */
+
+	/*
+	 * Usage  : boot-catalog=<value>
+	 * Type   : string
+	 * Default: "boot.catalog"
+	 * COMPAT : mkisofs -c/-eltorito-catalog <value>
+	 *
+	 * Specifies a fullpath of El Torito boot catalog.
+	 */
+	unsigned int	 boot_catalog:1;
+#define OPT_BOOT_CATALOG_DEFAULT	0	/* Not specified */
+
+	/*
+	 * Usage  : boot-info-table
+	 * Type   : boolean
+	 * Default: Disabled
+	 * COMPAT : mkisofs -boot-info-table
+	 *
+	 * Modify the boot image file specified by `boot'
+	 * option; ISO writer stores boot file information
+	 * into the boot file in ISO image at offset 8
+	 * through offset 64.
+	 */
+	unsigned int	 boot_info_table:1;
+#define OPT_BOOT_INFO_TABLE_DEFAULT	0	/* Disabled */
+
+	/*
+	 * Usage  : boot-load-seg=<value>
+	 * Type   : hexadecimal
+	 * Default: Not specified
+	 * COMPAT : mkisofs -boot-load-seg <value>
+	 *
+	 * Specifies a load segment for boot image.
+	 * This is used with no-emulation mode.
+	 */
+	unsigned int	 boot_load_seg:1;
+#define OPT_BOOT_LOAD_SEG_DEFAULT	0	/* Not specified */
+
+	/*
+	 * Usage  : boot-load-size=<value>
+	 * Type   : decimal
+	 * Default: Not specified
+	 * COMPAT : mkisofs -boot-load-size <value>
+	 *
+	 * Specifies a sector count for boot image.
+	 * This is used with no-emulation mode.
+	 */
+	unsigned int	 boot_load_size:1;
+#define OPT_BOOT_LOAD_SIZE_DEFAULT	0	/* Not specified */
+
+	/*
+	 * Usage  : boot-type=<boot-media-type>
+	 *        : 'no-emulation' : 'no emulation' image
+	 *        :           'fd' : floppy disk image
+	 *        :    'hard-disk' : hard disk image
+	 * Type   : string
+	 * Default: Auto detect
+	 *        : We check a size of boot image;
+	 *        : If the size is just 1.22M/1.44M/2.88M,
+	 *        : we assume boot_type is 'fd';
+	 *        : otherwise boot_type is 'no-emulation'.
+	 * COMPAT :
+	 *    boot=no-emulation
+	 *	mkisofs -no-emul-boot
+	 *    boot=fd
+	 *	This is a default on the mkisofs.
+	 *    boot=hard-disk
+	 *	mkisofs -hard-disk-boot
+	 *
+	 * Specifies a type of "El Torito" boot image.
+	 */
+	unsigned int	 boot_type:2;
+#define OPT_BOOT_TYPE_AUTO		0	/* auto detect		  */
+#define OPT_BOOT_TYPE_NO_EMU		1	/* ``no emulation'' image */
+#define OPT_BOOT_TYPE_FD		2	/* floppy disk image	  */
+#define OPT_BOOT_TYPE_HARD_DISK		3	/* hard disk image	  */
+#define OPT_BOOT_TYPE_DEFAULT		OPT_BOOT_TYPE_AUTO
+
+	/*
+	 * Usage  : compression-level=<value>
+	 * Type   : decimal
+	 * Default: Not specified
+	 * COMPAT : NONE
+	 *
+	 * Specifies compression level for option zisofs=direct.
+	 */
+	unsigned int	 compression_level:1;
+#define OPT_COMPRESSION_LEVEL_DEFAULT	0	/* Not specified */
+
+	/*
+	 * Usage  : copyright-file=<value>
+	 * Type   : string, max 37 bytes
+	 * Default: Not specified
+	 * COMPAT : mkisofs -copyright <value>
+	 *
+	 * Specifies Copyright Filename.
+	 * This file shall be described in the Root Directory
+	 * and containing a copyright statement.
+	 */
+	unsigned int	 copyright_file:1;
+#define OPT_COPYRIGHT_FILE_DEFAULT	0	/* Not specified */
+#define COPYRIGHT_FILE_SIZE		37

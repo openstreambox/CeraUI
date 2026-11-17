@@ -1,0 +1,102 @@
+.\" Copyright (c) 2003-2009 Tim Kientzle
+.\" Copyright (c) 2016 Martin Matuska
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd December 27, 2016
+.Dt TAR 5
+.Os
+.Sh NAME
+.Nm tar
+.Nd format of tape archive files
+.Sh DESCRIPTION
+The
+.Nm
+archive format collects any number of files, directories, and other
+file system objects (symbolic links, device nodes, etc.) into a single
+stream of bytes.
+The format was originally designed to be used with
+tape drives that operate with fixed-size blocks, but is widely used as
+a general packaging mechanism.
+.Ss General Format
+A
+.Nm
+archive consists of a series of 512-byte records.
+Each file system object requires a header record which stores basic metadata
+(pathname, owner, permissions, etc.) and zero or more records containing any
+file data.
+The end of the archive is indicated by two records consisting
+entirely of zero bytes.
+.Pp
+For compatibility with tape drives that use fixed block sizes,
+programs that read or write tar files always read or write a fixed
+number of records with each I/O operation.
+These
+.Dq blocks
+are always a multiple of the record size.
+The maximum block size supported by early
+implementations was 10240 bytes or 20 records.
+This is still the default for most implementations
+although block sizes of 1MiB (2048 records) or larger are
+commonly used with modern high-speed tape drives.
+(Note: the terms
+.Dq block
+and
+.Dq record
+here are not entirely standard; this document follows the
+convention established by John Gilmore in documenting
+.Nm pdtar . )
+.Ss Old-Style Archive Format
+The original tar archive format has been extended many times to
+include additional information that various implementors found
+necessary.
+This section describes the variant implemented by the tar command
+included in
+.At v7 ,
+which seems to be the earliest widely-used version of the tar program.
+.Pp
+The header record for an old-style
+.Nm
+archive consists of the following:
+.Bd -literal -offset indent
+struct header_old_tar {
+	char name[100];
+	char mode[8];
+	char uid[8];
+	char gid[8];
+	char size[12];
+	char mtime[12];
+	char checksum[8];
+	char linkflag[1];
+	char linkname[100];
+	char pad[255];
+};
+.Ed
+All unused bytes in the header record are filled with nulls.
+.Bl -tag -width indent
+.It Va name
+Pathname, stored as a null-terminated string.
+Early tar implementations only stored regular files (including
+hardlinks to those files).
+One common early convention used a trailing "/" character to indicate
+a directory name, allowing directory permissions and owner information

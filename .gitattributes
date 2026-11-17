@@ -1,2 +1,4 @@
 # Raw command captures retain CRLF, route padding and blank envelope lines.
 apps/backend/src/tests/fixtures/real-device/** -whitespace
+# Third-party licence texts are kept byte for byte, as published.
+scripts/build/notices/** -text -whitespace

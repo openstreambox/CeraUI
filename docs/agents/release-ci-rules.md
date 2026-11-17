@@ -189,3 +189,47 @@ the actual compiled binary; package inspection rejects any shipped `.map`.
 The production package builder also scans the entire staged tree after removing
 the known recovery sidecar and fails before FPM on any remaining `.map` entry,
 including hidden assets and links, or if the scan itself fails.
+
+### What Bun links
+
+Bun's `LICENSE.md` names the libraries compiled into every Bun executable but
+does not carry their licence texts. Those texts are appended to the same
+`copyright` file from `scripts/build/notices/bun-<version>/`: an
+`inventory.json` and the verbatim texts beside it, each stored under its own
+sha256. The policy's `runtime.supplement` pins the inventory's sha256, so the
+package build and the default tests check it offline and fail closed on a
+missing, truncated, moved or extra text, an inventory edited without a new pin,
+an origin whose commit or hash its pin no longer names, a text that no longer
+matches its upstream Git blob, or a gap marked resolved without checkable
+evidence.
+
+- **What is in it:** the licence, copying, notice and authors files of the
+  sources Bun pins for its runtime: its vendored libraries
+  (`scripts/build/deps/*.ts`), WebKit's JavaScriptCore, WTF and bmalloc, ICU,
+  the Rust standard library (the `rust-std` component that links, its sources
+  and `REUSE.toml`), the crates `Cargo.lock` reaches without dev-dependencies,
+  the npm packages Bun embeds as Node.js polyfills, LLVM libc++abi's licence
+  for Bun's copied `__cxa_thread_atexit` fallback, and `gcc-13-base`'s
+  copyright file for the static libstdc++ and libgcc. Source-file headers are
+  included only where a notice points to them (quoted in the rules) or where
+  they are the component's only licence statement.
+- **What it is not:** proof of which files the executables contain. Build-only
+  tools, excluded files (each with its reason, in the inventory) and open gaps
+  are listed in the `copyright` file itself.
+- **Regenerating:** `bun scripts/build/bun-runtime-notices-refresh.ts refresh
+  --repo-root <checkout> --cache <dir> --out <new dir>` derives everything
+  from the Bun revision the policy pins. It reads bare Git repositories at
+  `<cache>/git/<owner>/<repo>.git` (never fetching) and release files at
+  `<cache>/files/<last URL segment>`, checks each against its pin before
+  opening it, and lists missing inputs with their URL and expected hash.
+  `check` instead of `refresh` compares the result with the committed
+  directory byte for byte. Judgement calls live in
+  `scripts/build/bun-runtime-notices.rules.json`: runtime source roots,
+  per-file header rules with the quote that justifies them, build-only inputs
+  and stated gaps. A new recipe kind, build condition or changed quote stops
+  the refresh until the rules are reviewed.
+- **Bumping Bun** therefore means: update the runtime licence and policy as
+  above, adjust the rules (Bun tree, measured rustc commit, GCC package, LLVM
+  tag), fill the cache, `refresh` into the versioned directory, and pin the new
+  inventory's sha256 in the policy. The default tests do not need the cache;
+  they run the same regeneration on small synthetic inputs.

@@ -1,0 +1,420 @@
+/*-
+ * Copyright (c) 2009-2011 Michihiro NAKAJIMA
+ * Copyright (c) 2003-2007 Kees Zeelenberg
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * A set of compatibility glue for building libarchive on Windows platforms.
+ *
+ * Originally created as "libarchive-nonposix.c" by Kees Zeelenberg
+ * for the GnuWin32 project, trimmed significantly by Tim Kientzle.
+ *
+ * Much of the original file was unnecessary for libarchive, because
+ * many of the features it emulated were not strictly necessary for
+ * libarchive.  I hope for this to shrink further as libarchive
+ * internals are gradually reworked to sit more naturally on both
+ * POSIX and Windows.  Any ideas for this are greatly appreciated.
+ *
+ * The biggest remaining issue is the dev/ino emulation; libarchive
+ * has a couple of public APIs that rely on dev/ino uniquely
+ * identifying a file.  This doesn't match well with Windows.  I'm
+ * considering alternative APIs.
+ */
+
+#if defined(_WIN32) && !defined(__CYGWIN__)
+
+#include "archive_platform.h"
+#include "archive_platform_stat.h"
+#include "archive_private.h"
+#include "archive_entry.h"
+#include "archive_time_private.h"
+#include <ctype.h>
+#include <errno.h>
+#include <stddef.h>
+#ifdef HAVE_SYS_UTIME_H
+#include <sys/utime.h>
+#endif
+#include <sys/stat.h>
+#include <locale.h>
+#include <process.h>
+#include <stdlib.h>
+#include <wchar.h>
+#include <windows.h>
+#include <share.h>
+
+struct ustat {
+	int64_t		st_atime;
+	uint32_t	st_atime_nsec;
+	int64_t		st_ctime;
+	uint32_t	st_ctime_nsec;
+	int64_t		st_mtime;
+	uint32_t	st_mtime_nsec;
+	gid_t		st_gid;
+	/* 64bits ino */
+	int64_t		st_ino;
+	mode_t		st_mode;
+	uint32_t	st_nlink;
+	uint64_t	st_size;
+	uid_t		st_uid;
+	dev_t		st_dev;
+	dev_t		st_rdev;
+};
+
+/* Transform 64-bits ino into 32-bits by hashing.
+ * You do not forget that really unique number size is 64-bits.
+ */
+#define INOSIZE (8*sizeof(ino_t)) /* 32 */
+static __inline ino_t
+getino(struct ustat *ub)
+{
+	ULARGE_INTEGER ino64;
+	ino64.QuadPart = ub->st_ino;
+	/* I don't know this hashing is correct way */
+	return ((ino_t)(ino64.LowPart ^ (ino64.LowPart >> INOSIZE)));
+}
+
+/*
+ * Prepend "\\?\" to the path name and convert it to unicode to permit
+ * an extended-length path for a maximum total path length of 32767
+ * characters.
+ * see also http://msdn.microsoft.com/en-us/library/aa365247.aspx
+ */
+wchar_t *
+__la_win_permissive_name(const char *name)
+{
+	wchar_t *wn;
+	wchar_t *ws;
+	size_t ll;
+
+	ll = strlen(name);
+	wn = malloc((ll + 1) * sizeof(wchar_t));
+	if (wn == NULL)
+		return (NULL);
+	ll = mbstowcs(wn, name, ll);
+	if (ll == (size_t)-1) {
+		free(wn);
+		return (NULL);
+	}
+	wn[ll] = L'\0';
+	ws = __la_win_permissive_name_w(wn);
+	free(wn);
+	return (ws);
+}
+
+wchar_t *
+__la_win_permissive_name_w(const wchar_t *wname)
+{
+	wchar_t *wn, *wnp;
+	wchar_t *ws, *wsp;
+	DWORD l, len, slen;
+	int unc;
+
+	/* Get a full-pathname. */
+	l = GetFullPathNameW(wname, 0, NULL, NULL);
+	if (l == 0)
+		return (NULL);
+	/* NOTE: GetFullPathNameW has a bug that if the length of the file
+	 * name is just 1 then it returns incomplete buffer size. Thus, we
+	 * have to add three to the size to allocate a sufficient buffer
+	 * size for the full-pathname of the file name. */
+	l += 3;
+	wnp = malloc(l * sizeof(wchar_t));
+	if (wnp == NULL)
+		return (NULL);
+	len = GetFullPathNameW(wname, l, wnp, NULL);
+	wn = wnp;
+
+	if (wnp[0] == L'\\' && wnp[1] == L'\\' &&
+	    wnp[2] == L'?' && wnp[3] == L'\\')
+		/* We have already a permissive name. */
+		return (wn);
+
+	if (wnp[0] == L'\\' && wnp[1] == L'\\' &&
+		wnp[2] == L'.' && wnp[3] == L'\\') {
+		/* This is a device name */
+		if (((wnp[4] >= L'a' && wnp[4] <= L'z') ||
+		     (wnp[4] >= L'A' && wnp[4] <= L'Z')) &&
+		    wnp[5] == L':' && wnp[6] == L'\\')
+			wnp[2] = L'?';/* Not device name. */
+		return (wn);
+	}
+
+	unc = 0;
+	if (wnp[0] == L'\\' && wnp[1] == L'\\' && wnp[2] != L'\\') {
+		wchar_t *p = &wnp[2];
+
+		/* Skip server-name letters. */
+		while (*p != L'\\' && *p != L'\0')
+			++p;
+		if (*p == L'\\') {
+			wchar_t *rp = ++p;
+			/* Skip share-name letters. */
+			while (*p != L'\\' && *p != L'\0')
+				++p;
+			if (*p == L'\\' && p != rp) {
+				/* Now, match patterns such as
+				 * "\\server-name\share-name\" */
+				wnp += 2;
+				len -= 2;
+				unc = 1;
+			}
+		}
+	}
+
+	slen = 4 + (unc * 4) + len + 1;
+	ws = wsp = malloc(slen * sizeof(wchar_t));
+	if (ws == NULL) {
+		free(wn);
+		return (NULL);
+	}
+	/* prepend "\\?\" */
+	wcsncpy(wsp, L"\\\\?\\", 4);
+	wsp += 4;
+	slen -= 4;
+	if (unc) {
+		/* append "UNC\" ---> "\\?\UNC\" */
+		wcsncpy(wsp, L"UNC\\", 4);
+		wsp += 4;
+		slen -= 4;
+	}
+	wcsncpy(wsp, wnp, slen);
+	wsp[slen - 1] = L'\0'; /* Ensure null termination. */
+	free(wn);
+	return (ws);
+}
+
+/*
+ * Create a file handle.
+ * This can exceed MAX_PATH limitation.
+ */
+static HANDLE
+la_CreateFile(const char *path, DWORD dwDesiredAccess, DWORD dwShareMode,
+    LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition,
+    DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
+{
+	wchar_t *wpath;
+	HANDLE handle;
+# if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+	CREATEFILE2_EXTENDED_PARAMETERS createExParams;
+#endif
+
+#if WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP)
+	handle = CreateFileA(path, dwDesiredAccess, dwShareMode,
+	    lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes,
+	    hTemplateFile);
+	if (handle != INVALID_HANDLE_VALUE)
+		return (handle);
+	if (GetLastError() != ERROR_PATH_NOT_FOUND)
+		return (handle);
+#endif
+	wpath = __la_win_permissive_name(path);
+	if (wpath == NULL)
+		return INVALID_HANDLE_VALUE;
+# if _WIN32_WINNT >= 0x0602 /* _WIN32_WINNT_WIN8 */
+	ZeroMemory(&createExParams, sizeof(createExParams));
+	createExParams.dwSize = sizeof(createExParams);
+	createExParams.dwFileAttributes = dwFlagsAndAttributes & 0xFFFF;
+	createExParams.dwFileFlags = dwFlagsAndAttributes & 0xFFF00000;
+	createExParams.dwSecurityQosFlags = dwFlagsAndAttributes & 0x000F0000;
+	createExParams.lpSecurityAttributes = lpSecurityAttributes;
+	createExParams.hTemplateFile = hTemplateFile;
+	handle = CreateFile2(wpath, dwDesiredAccess, dwShareMode,
+	    dwCreationDisposition, &createExParams);
+#else /* !WINAPI_PARTITION_DESKTOP */
+	handle = CreateFileW(wpath, dwDesiredAccess, dwShareMode,
+	    lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes,
+	    hTemplateFile);
+#endif /* !WINAPI_PARTITION_DESKTOP */
+	free(wpath);
+	return (handle);
+}
+
+#if defined(__LA_LSEEK_NEEDED)
+__int64
+__la_lseek(int fd, __int64 offset, int whence)
+{
+	LARGE_INTEGER distance;
+	LARGE_INTEGER newpointer;
+	HANDLE handle;
+
+	if (fd < 0) {
+		errno = EBADF;
+		return (-1);
+	}
+	handle = (HANDLE)_get_osfhandle(fd);
+	if (GetFileType(handle) != FILE_TYPE_DISK) {
+		errno = EBADF;
+		return (-1);
+	}
+	distance.QuadPart = offset;
+	if (!SetFilePointerEx(handle, distance, &newpointer, whence)) {
+		DWORD lasterr;
+
+		lasterr = GetLastError();
+		if (lasterr == ERROR_BROKEN_PIPE)
+			return (0);
+		if (lasterr == ERROR_ACCESS_DENIED)
+			errno = EBADF;
+		else
+			la_dosmaperr(lasterr);
+		return (-1);
+	}
+	return (newpointer.QuadPart);
+}
+#endif
+
+/* This can exceed MAX_PATH limitation. */
+int
+__la_open(const char *path, int flags, ...)
+{
+	va_list ap;
+	wchar_t *ws;
+	int r, pmode;
+	DWORD attr;
+
+	va_start(ap, flags);
+	pmode = va_arg(ap, int);
+	va_end(ap);
+	ws = NULL;
+
+	/* _(w)sopen_s fails if we provide any other modes */
+	pmode = pmode & (_S_IREAD | _S_IWRITE);
+
+	if ((flags & ~O_BINARY) == O_RDONLY) {
+		/*
+		 * When we open a directory, _open function returns
+		 * "Permission denied" error.
+		 */
+		attr = GetFileAttributesA(path);
+#if WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP)
+		if (attr == (DWORD)-1 && GetLastError() == ERROR_PATH_NOT_FOUND)
+#endif
+		{
+			ws = __la_win_permissive_name(path);
+			if (ws == NULL) {
+				errno = EINVAL;
+				return (-1);
+			}
+			attr = GetFileAttributesW(ws);
+		}
+		if (attr == (DWORD)-1) {
+			la_dosmaperr(GetLastError());
+			free(ws);
+			return (-1);
+		}
+		if (attr & FILE_ATTRIBUTE_DIRECTORY) {
+			HANDLE handle;
+#if WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP)
+			if (ws != NULL)
+				handle = CreateFileW(ws, 0, 0, NULL,
+				    OPEN_EXISTING,
+				    FILE_FLAG_BACKUP_SEMANTICS |
+				    FILE_ATTRIBUTE_READONLY,
+					NULL);
+			else
+				handle = CreateFileA(path, 0, 0, NULL,
+				    OPEN_EXISTING,
+				    FILE_FLAG_BACKUP_SEMANTICS |
+				    FILE_ATTRIBUTE_READONLY,
+					NULL);
+#else /* !WINAPI_PARTITION_DESKTOP */
+			CREATEFILE2_EXTENDED_PARAMETERS createExParams;
+			ZeroMemory(&createExParams, sizeof(createExParams));
+			createExParams.dwSize = sizeof(createExParams);
+			createExParams.dwFileAttributes = FILE_ATTRIBUTE_READONLY;
+			createExParams.dwFileFlags = FILE_FLAG_BACKUP_SEMANTICS;
+			handle = CreateFile2(ws, 0, 0,
+				OPEN_EXISTING, &createExParams);
+#endif /* !WINAPI_PARTITION_DESKTOP */
+			free(ws);
+			if (handle == INVALID_HANDLE_VALUE) {
+				la_dosmaperr(GetLastError());
+				return (-1);
+			}
+			r = _open_osfhandle((intptr_t)handle, _O_RDONLY);
+			return (r);
+		}
+	}
+	if (ws == NULL) {
+#if defined(__BORLANDC__)
+		/* Borland has no mode argument.
+		   TODO: Fix mode of new file.  */
+		r = _open(path, flags);
+#else
+		_sopen_s(&r, path, flags, _SH_DENYNO, pmode);
+#endif
+		if (r < 0 && errno == EACCES && (flags & O_CREAT) != 0) {
+			/* Simulate other POSIX system action to pass our test suite. */
+			attr = GetFileAttributesA(path);
+			if (attr == (DWORD)-1)
+				la_dosmaperr(GetLastError());
+			else if (attr & FILE_ATTRIBUTE_DIRECTORY)
+				errno = EISDIR;
+			else
+				errno = EACCES;
+			return (-1);
+		}
+		if (r >= 0 || errno != ENOENT)
+			return (r);
+		ws = __la_win_permissive_name(path);
+		if (ws == NULL) {
+			errno = EINVAL;
+			return (-1);
+		}
+	}
+	_wsopen_s(&r, ws, flags, _SH_DENYNO, pmode);
+	if (r < 0 && errno == EACCES && (flags & O_CREAT) != 0) {
+		/* Simulate other POSIX system action to pass our test suite. */
+		attr = GetFileAttributesW(ws);
+		if (attr == (DWORD)-1)
+			la_dosmaperr(GetLastError());
+		else if (attr & FILE_ATTRIBUTE_DIRECTORY)
+			errno = EISDIR;
+		else
+			errno = EACCES;
+	}
+	free(ws);
+	return (r);
+}
+
+int
+__la_wopen(const wchar_t *path, int flags, ...)
+{
+	va_list ap;
+	wchar_t *fullpath;
+	int r, pmode;
+	DWORD attr;
+
+	va_start(ap, flags);
+	pmode = va_arg(ap, int);
+	va_end(ap);
+	fullpath = NULL;
+
+	/* _(w)sopen_s fails if we provide any other modes */
+	pmode = pmode & (_S_IREAD | _S_IWRITE);
+
+	if ((flags & ~O_BINARY) == O_RDONLY) {
+		/*
+		 * When we open a directory, _open function returns
+		 * "Permission denied" error.

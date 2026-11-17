@@ -1,0 +1,267 @@
+{
+	"schema": 1,
+	"output": "scripts/build/notices/bun-1.4.4",
+	"statement": "These are the licence, copying, notice and authors files of the sources Bun pins for its runtime: the libraries it vendors, WebKit's JavaScriptCore, WTF and bmalloc, ICU, the Rust standard library and crates, the npm packages it embeds as Node.js polyfills, and the GCC static C++ runtime. Where a component keeps its licence in its source files, the start of those files is included.\nThey were collected from the exact sources Bun's recipes pin, not read out of the executables. They show what Bun is built from, not which files a given executable contains. What could not be established is listed under Known gaps at the end.",
+	"bun": {
+		"repo": "oven-sh/bun",
+		"url": "https://github.com/oven-sh/bun",
+		"tree": "53de228ba331ac4f455999f24cec03a47d5abaad",
+		"runtimeRoots": ["src/", "packages/bun-usockets/", "packages/bun-uws/"],
+		"excludedRoots": {
+			"": "outside the Bun source directories compiled into the runtime (src/, packages/bun-usockets/, packages/bun-uws/)",
+			"test/": "in Bun's test tree; Bun's LICENSE.md says these test cases are not part of the bun binary",
+			"packages/": "a separate package in the Bun repository, not compiled into the runtime",
+			"docs/": "Bun documentation, not compiled into the runtime",
+			"bench/": "Bun benchmarks, not compiled into the runtime"
+		}
+	},
+	"deps": {
+		"dir": "scripts/build/deps/",
+		"enabled": {
+			"cfg => cfg.windows": "exclude: built only for Windows (enabled: cfg => cfg.windows in Bun's recipe)",
+			"cfg => cfg.tinycc": "include"
+		},
+		"notArchive": {
+			"README.md": "documentation of the recipes",
+			"index.ts": "the list of recipes",
+			"webkit.ts": "WebKit, read as its own origin",
+			"nodejs-headers.ts": "Node.js headers, a build input",
+			"sqlite.ts": "SQLite, vendored in Bun's own tree"
+		},
+		"roles": {
+			"boringssl": "BoringSSL (Bun's fork): TLS and cryptography",
+			"brotli": "Brotli compression",
+			"cares": "c-ares DNS resolver",
+			"hdrhistogram": "HdrHistogram_c latency histograms",
+			"highway": "Highway SIMD library",
+			"libarchive": "libarchive: tarball extraction for bun install",
+			"libdeflate": "libdeflate compression",
+			"libjpeg-turbo": "libjpeg-turbo JPEG codec",
+			"libspng": "libspng PNG codec",
+			"libuv": "libuv (Bun's fork), Windows only",
+			"libwebp": "libwebp WebP codec",
+			"lolhtml": "lol-html (Bun's fork): HTML rewriter",
+			"lshpack": "ls-hpack HTTP/2 header compression",
+			"lsqpack": "ls-qpack HTTP/3 header compression",
+			"lsquic": "lsquic QUIC and HTTP/3",
+			"mimalloc": "mimalloc (Bun's fork): memory allocator",
+			"picohttpparser": "picohttpparser HTTP parser",
+			"rust-argon2": "rust-argon2 password hashing",
+			"tinycc": "TinyCC (Bun's fork): C compiler behind bun:ffi",
+			"zlib": "zlib-ng compression",
+			"zstd": "Zstandard compression"
+		},
+		"submodules": {
+			"picohttpparser:picotest": "picohttpparser's test harness; Bun's recipe compiles only picohttpparser.c"
+		}
+	},
+	"webkit": {
+		"repo": "oven-sh/WebKit",
+		"url": "https://github.com/oven-sh/WebKit",
+		"pinFile": "scripts/build/deps/webkit.ts",
+		"runtimeRoots": ["Source/JavaScriptCore/", "Source/WTF/", "Source/bmalloc/"],
+		"skip": {
+			"Source/bmalloc/mimalloc/": {
+				"origin": "webkit",
+				"path": ".github/scripts/lanes.mjs",
+				"quote": "The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).",
+				"reason": "WebKit's own copy of mimalloc; WebKit's .github/scripts/lanes.mjs says the variants that ship in Bun use the mimalloc Bun links itself (dep/mimalloc)"
+			}
+		},
+		"otherReason": "a WebKit component outside JavaScriptCore, WTF and bmalloc, the libraries Bun links from its WebKit build"
+	},
+	"icu": {
+		"pinFile": "icu/source.json",
+		"url": "https://github.com/unicode-org/icu/releases/download/release-{version}/icu4c-{version}-sources.tgz"
+	},
+	"crates": {
+		"lock": "Cargo.lock",
+		"url": "https://static.crates.io/crates/{name}/{name}-{version}.crate",
+		"devOnlyReason": "reached in Bun's Cargo.lock only through dev-dependencies of its workspace (tests and benchmarks)"
+	},
+	"npm": {
+		"lock": "src/node-fallbacks/bun.lock",
+		"url": "https://registry.npmjs.org/{name}/-/{base}-{version}.tgz"
+	},
+	"rust": {
+		"toolchain": "rust-toolchain.toml",
+		"dist": "https://static.rust-lang.org/dist/{date}/",
+		"rustc": "574ff7d98bd6d037e5236a8453029173b32631fd",
+		"repo": "rust-lang/rust",
+		"url": "https://github.com/rust-lang/rust",
+		"std": "aarch64-unknown-linux-gnu",
+		"srcRoot": "rust-src-nightly/rust-src/lib/rustlib/src/rust/library/",
+		"reuse": "REUSE.toml",
+		"reuseQuote": {
+			"origin": "rust",
+			"path": "COPYRIGHT",
+			"quote": "We use [REUSE](https://reuse.software) to track license information for in-tree source files - both those authored by the Rust project and those authored by third parties. See `REUSE.toml`"
+		}
+	},
+	"llvm": {
+		"repo": "llvm/llvm-project",
+		"url": "https://github.com/llvm/llvm-project",
+		"tag": "llvmorg-19.1.0",
+		"tagObject": "4adc0e424295c1744456663d0809a71647321aed",
+		"commit": "a4bf6cd7cfb1a1421ba92bca9d017b49936c55e4",
+		"paths": ["libcxxabi/LICENSE.TXT"],
+		"cited": {
+			"origin": "bun",
+			"path": "src/jsc/bindings/workaround-missing-symbols.cpp",
+			"quote": "https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/libcxxabi/src/cxa_thread_atexit.cpp"
+		}
+	},
+	"gcc": {
+		"pinFile": "scripts/build/ci-images/spec.ts",
+		"asset": "gcc-13-focal-arm64.tar.gz",
+		"arch": "aarch64",
+		"runtimeDeb": "gcc-13-base_13.1.0-8ubuntu1~20.04.2_arm64.deb",
+		"flags": {
+			"origin": "bun",
+			"path": "scripts/build/flags.ts",
+			"quote": "flag: [\"-static-libstdc++\", \"-static-libgcc\"],"
+		},
+		"otherReason": "another package in the same archive (other GCC branches, compilers and development files); the static C++ runtime's terms are in gcc-13-base's copyright file"
+	},
+	"licenceExclusion": "Bun's own LICENSE.md, printed earlier in this file as the runtime licence",
+	"testReason": "test, benchmark, fuzzing, example or documentation material, not compiled into the runtime",
+	"quotes": [
+		{
+			"origin": "bun",
+			"path": "LICENSE.md",
+			"quote": "They are not part of the `bun` binary. Their licenses are next to them."
+		}
+	],
+	"headers": [
+		{
+			"origin": "dep/libarchive",
+			"roots": ["libarchive/"],
+			"pointer": {
+				"origin": "dep/libarchive",
+				"path": "COPYING",
+				"quote": "Each individual file in this distribution should have a clear copyright/licensing statement at the beginning of the file."
+			}
+		},
+		{
+			"origin": "rust-src",
+			"roots": ["rust-src-nightly/rust-src/lib/rustlib/src/rust/library/compiler-builtins/libm/src/"],
+			"pointer": {
+				"origin": "rust-src",
+				"path": "rust-src-nightly/rust-src/lib/rustlib/src/rust/library/compiler-builtins/libm/LICENSE.txt",
+				"quote": "and labelled as such in comments in the individual source files."
+			}
+		},
+		{
+			"origin": "dep/picohttpparser",
+			"paths": ["picohttpparser.c", "picohttpparser.h"],
+			"only": "picohttpparser has no licence file, and the header of its source files is its licence statement"
+		},
+		{
+			"origin": "bun",
+			"paths": ["src/jsc/bindings/sqlite/sqlite3.c"],
+			"only": "the SQLite amalgamation has no licence file, and its header is SQLite's public-domain dedication"
+		},
+		{
+			"origin": "webkit",
+			"roots": ["Source/bmalloc/"],
+			"skip": ["Source/bmalloc/mimalloc/"],
+			"only": "bmalloc and libpas have no licence file, and the headers of their source files are their licence statements"
+		}
+	],
+	"buildOnly": [
+		{
+			"id": "rustc",
+			"what": "Rust compiler, nightly-2026-09-15",
+			"identity": "rustc 1.100.0-nightly (574ff7d98 2026-09-14), as named in the executables' .comment section",
+			"note": "Compiles Bun's Rust code. The standard library it ships is listed above."
+		},
+		{
+			"id": "clang-lld",
+			"what": "Clang and LLD 23.1.1",
+			"identity": "https://github.com/llvm/llvm-project at 6dfe1677ab8dffbc6ec13d53a1e0215d75147689, as named in the executables' .comment section",
+			"note": "Compiler and linker."
+		},
+		{
+			"id": "gcc-compilers",
+			"what": "GCC 13 compilers and development packages",
+			"identity": "gcc-13, g++-13, cpp-13 and the other packages of gcc-13-focal-arm64.tar.gz (sha256 be19db90d94c52c6061280bbadcaad9b09db1e9f2e77a12f8c18c5425d2eb056)",
+			"note": "The same archive holds the static runtime libraries, whose terms are in gcc-13-base's copyright file above."
+		},
+		{
+			"id": "nodejs-headers",
+			"what": "Node.js 26.3.0 headers",
+			"identity": "https://nodejs.org/dist/v26.3.0/node-v26.3.0-headers.tar.gz (sha256 fca113c5d5add8bfb1aa31129a24acb8d49aa69ab3c22a2cc569aec88960526d, pinned in Bun's scripts/build/ci-images/spec.ts)",
+			"note": "Declarations for Bun's N-API layer, read at build time."
+		},
+		{
+			"id": "webkit-tools",
+			"what": "Tools built alongside Bun's WebKit build",
+			"identity": "gtest, gmock and unifdef from WebKit's Source/ThirdParty, WebKit's own mimalloc object, and zstd 1.5.7 (downloaded by WebKit's Dockerfile without a checksum) for the jsc shell",
+			"note": "Seen in the compile database of the WebKit build asset inspected on 17 November 2026, outside the libraries Bun links. Not claimed to be part of the runtime."
+		},
+		{
+			"id": "bun-build",
+			"what": "Bun's build scripts and patches",
+			"identity": "scripts/build/ and patches/ at the Bun revision above",
+			"note": "The build recipe. The patches change some of the vendored sources listed above."
+		}
+	],
+	"gaps": [
+		{
+			"id": "linked-membership",
+			"status": "open",
+			"text": "Which of these sources ended up in the executables is not measured. The executables are stripped, Bun's per-file source lists were not evaluated, and the static archives' linked objects cannot be told apart, so every text here belongs to a source candidate, not to proven content."
+		},
+		{
+			"id": "webkit-build-asset",
+			"status": "open",
+			"text": "Bun links JavaScriptCore, WTF, bmalloc and ICU from a prebuilt WebKit release asset (bun-webkit-linux-arm64-lto, release autobuild-d6375c72affe0f70222cdcb45012b10f0bf3a9d5), which Bun pins only by tag name. The asset served on 17 November 2026 (sha256 78d840c6afda98bebf6036f53f3227a7149514206bfdb60f384fb85a2e8dd212) contains no licence files, so the texts here come from the pinned WebKit and ICU sources. Nothing shows that this asset is the one the release was built with."
+		},
+		{
+			"id": "webkit-file-headers",
+			"status": "open",
+			"text": "JavaScriptCore and WTF source files carry their own BSD or LGPL headers with per-file copyright lines. Those headers are not reproduced here; JavaScriptCore's COPYING.LIB and the third-party licence files of JavaScriptCore and WTF are."
+		},
+		{
+			"id": "gcc-sysroot",
+			"status": "open",
+			"text": "Bun's recipes pin the GCC archive by sha256 and link with -static-libstdc++ -static-libgcc, and the executables name GCC 13.1.0-8ubuntu1~20.04.2. Nothing shows that this release was linked against that exact archive."
+		},
+		{
+			"id": "gcc-gpl-3",
+			"status": "resolved",
+			"text": "The gcc-13 copyright file refers to the full GNU GPL version 3 at /usr/share/common-licenses/GPL-3 instead of including it.",
+			"evidence": [
+				{
+					"kind": "first-party",
+					"file": "apps/backend/LICENSE",
+					"sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+					"official": {
+						"url": "https://www.gnu.org/licenses/gpl-3.0.txt",
+						"sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+					}
+				}
+			]
+		},
+		{
+			"id": "gcc-other-texts",
+			"status": "open",
+			"text": "The gcc-13 copyright file also refers to full texts it does not include: GPL version 2 (the D front end), the Artistic licence and GPL version 1 (the DMD compiler), the LGPL (newlib) and the GFDL 1.2 (documentation). They concern parts of GCC other than libstdc++ and libgcc and are not included."
+		},
+		{
+			"id": "ported-upstreams",
+			"status": "open",
+			"text": "Bun's LICENSE.md names code ported from other projects (among them ESLint, typescript-eslint, typescript-go, Prettier, oxc, esbuild, simdutf, libbase64, uucode, uWebSockets and Tigerbeetle) without pinning the upstream revisions. Bun keeps their licence texts only beside test cases, which it says are not part of the binary, so they are not included."
+		},
+		{
+			"id": "rust-crates-superset",
+			"status": "open",
+			"text": "The Rust crates are those Cargo.lock reaches from Bun's workspace, leaving out dev-dependencies. Features, target conditions, build scripts and procedural macros were not resolved, so the list is a superset, and the executables keep no paths that would show which crates were linked."
+		},
+		{
+			"id": "polyfill-membership",
+			"status": "open",
+			"text": "The Node.js polyfill packages are every package in Bun's node-fallbacks lockfile. Their bundled output was not matched against the executables."
+		}
+	]
+}
