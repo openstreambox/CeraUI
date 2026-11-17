@@ -60,10 +60,11 @@ for (const width of [390, 1280]) {
 		expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 	});
 
-	test(`phone Home join notice @visual at ${width}px`, async ({ page }) => {
+	test(`phone Home join notice @visual at ${width}px`, async ({ page, loadPhoneHome }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await page.goto('/');
 		await ensureAuthenticated(page);
+		await loadPhoneHome();
 		await page.evaluate(async () => {
 			const fixture = window.PhoneHomeFixture;
 			await fixture.preparePhoneHomeFixture();

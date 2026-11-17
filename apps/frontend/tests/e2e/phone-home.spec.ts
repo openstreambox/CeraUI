@@ -43,9 +43,10 @@ for (const width of [390,1280,1024]) {
  });
 }
 for(const width of [390,1280,1024]) {
- test(`configured phone connection @visual at ${width}px`,async({page})=>{
+ test(`configured phone connection @visual at ${width}px`,async({page,loadPhoneHome})=>{
   await page.context().grantPermissions(['clipboard-read','clipboard-write']);
   await page.setViewportSize({width,height:width===1024?600:900});await page.goto('/');await ensureAuthenticated(page);
+  await loadPhoneHome();
   await page.evaluate(async()=>{
    const fixture=window.PhoneHomeFixture; await fixture.preparePhoneHomeFixture();
    fixture.mountPhoneHomeFixture(window.innerWidth===1024);
@@ -77,9 +78,10 @@ for(const width of [390,1280,1024]) {
 }
 
 for (const width of [390, 1280, 1024]) {
- test(`Moblin credential label and cleared field @visual at ${width}px`, async ({ page }) => {
+ test(`Moblin credential label and cleared field @visual at ${width}px`, async ({ page, loadPhoneHome }) => {
   await page.setViewportSize({ width, height: width === 1024 ? 600 : 900 });
   await page.goto('/'); await ensureAuthenticated(page);
+  await loadPhoneHome();
   await page.evaluate(async () => {
    await window.PhoneHomeFixture.preparePhoneHomeFixture();
    window.PhoneHomeFixture.mountPhoneHomeFixture(window.innerWidth === 1024, true);
@@ -102,3 +104,35 @@ for (const width of [390, 1280, 1024]) {
   await page.screenshot({ path: evidencePath(`phone-connect-moblin-${width}.png`), fullPage: true });
  });
 }
+
+test('phone harness @visual stays absent from real app documents and frames', async ({ authedPage: page }) => {
+ await expect(page.getByTestId('phone-home-fixture')).toHaveCount(0);
+ expect(await page.evaluate(() => typeof window.PhoneHomeFixture)).toBe('undefined');
+ await page.evaluate(() => {
+  const frame = document.createElement('iframe');
+  frame.name = 'fixture-isolation';
+  frame.srcdoc = '<p>Independent frame</p>';
+  document.body.append(frame);
+ });
+ const frame = page.frameLocator('iframe[name="fixture-isolation"]');
+ await expect(frame.getByText('Independent frame')).toBeVisible();
+ expect(await frame.locator('body').evaluate(() => typeof window.PhoneHomeFixture)).toBe('undefined');
+ await page.reload();
+ await ensureAuthenticated(page);
+ expect(await page.evaluate(() => typeof window.PhoneHomeFixture)).toBe('undefined');
+});
+
+test('phone harness @visual loads after boot with inline styles and no locale cookie', async ({ authedPage: page, loadPhoneHome }) => {
+ expect(await page.evaluate(() => typeof window.PhoneHomeFixture)).toBe('undefined');
+ await loadPhoneHome();
+ await page.evaluate(async () => {
+  await window.PhoneHomeFixture.preparePhoneHomeFixture();
+  window.PhoneHomeFixture.mountPhoneHomeFixture();
+ });
+ await expect(page.getByTestId('phone-home-fixture')).toBeVisible();
+ expect((await page.context().cookies()).some(cookie => cookie.name === 'PARAGLIDE_LOCALE')).toBe(false);
+ expect(await page.getByTestId('phone-home-fixture').locator('section').first().evaluate(el => getComputedStyle(el).paddingTop)).toBe('20px');
+ await page.reload();
+ await ensureAuthenticated(page);
+ expect(await page.evaluate(() => typeof window.PhoneHomeFixture)).toBe('undefined');
+});

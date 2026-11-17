@@ -1,42 +1,46 @@
-import { initLocale, ensureNamespaces, NAMESPACES } from '@ceraui/i18n/svelte';
-import type { WifiStatus } from '@ceraui/rpc/schemas';
-import { mount } from 'svelte';
+import { ensureNamespaces, initLocale, NAMESPACES } from "@ceraui/i18n/svelte";
+import type { WifiStatus } from "@ceraui/rpc/schemas";
+import { mount } from "svelte";
 
-import { noteHotspotRoster } from '../../../src/lib/stores/hotspot-joins.svelte';
-import PhoneHome from '../../../src/main/PhoneHome.svelte';
+import { noteHotspotRoster } from "../../../src/lib/stores/hotspot-joins.svelte";
+import PhoneHome from "../../../src/main/PhoneHome.svelte";
 
 /** Browser-only presentation fixture: no production route, RPC or device effects. */
-export function mountPhoneHomeFixture(kiosk = false, moblin = false, renew = false) {
-	document.getElementById('app')?.setAttribute('hidden', '');
-	const target = document.createElement('main');
-	target.dataset.testid = 'phone-home-fixture';
-	target.style.cssText = 'max-width:1100px;margin:20px auto;padding:16px';
+export function mountPhoneHomeFixture(
+	kiosk = false,
+	moblin = false,
+	renew = false,
+) {
+	document.getElementById("app")?.setAttribute("hidden", "");
+	const target = document.createElement("main");
+	target.dataset.testid = "phone-home-fixture";
+	target.style.cssText = "max-width:1100px;margin:20px auto;padding:16px";
 	document.body.append(target);
 	return mount(PhoneHome, {
 		target,
 		props: {
 			kiosk,
-			carrying: 'idle',
+			carrying: "idle",
 			moblink: { available: true, configured: false },
 			oncredential: async () => ({ success: true }),
 			settings: {
-				way: moblin ? 'moblin' : 'srt',
+				way: moblin ? "moblin" : "srt",
 				srt: {
-					address: 'srt://192.0.2.1:4000',
-					passphrase: 'example-passphrase',
+					address: "srt://192.0.2.1:4000",
+					passphrase: "example-passphrase",
 				},
 			},
 			wifi: {
-				name: 'Example;Wifi',
-				password: 'example-wifi-password',
+				name: "Example;Wifi",
+				password: "example-wifi-password",
 				clients: 1,
 			},
-			wifiOwner: { device: '0', incarnation: undefined },
-			links: [{ id: 'L1', label: 'Wi-Fi', internet: 'yes' }],
+			wifiOwner: { device: "0", incarnation: undefined },
+			links: [{ id: "L1", label: "Wi-Fi", internet: "yes" }],
 			...(renew
 				? {
 						wifiRenew: {
-							phase: 'idle' as const,
+							phase: "idle" as const,
 							streaming: true,
 							onrenew: () => undefined,
 						},
@@ -49,17 +53,17 @@ export function mountPhoneHomeFixture(kiosk = false, moblin = false, renew = fal
 /** Feed a synthetic hotspot roster to the join notice (documentation MACs). */
 export function emitFixtureRoster(macs: readonly string[]) {
 	const wifi = {
-		'0': {
-			ifname: 'wlan0',
-			conn: 'fixture-hotspot',
-			hw: '02:00:00:00:00:01',
+		"0": {
+			ifname: "wlan0",
+			conn: "fixture-hotspot",
+			hw: "02:00:00:00:00:01",
 			saved: {},
-			mode: 'hotspot',
+			mode: "hotspot",
 			hotspot: {
-				available_channels: { auto: { name: 'Automatic' } },
-				name: 'Example;Wifi',
-				password: 'example-wifi-password',
-				channel: 'auto',
+				available_channels: { auto: { name: "Automatic" } },
+				name: "Example;Wifi",
+				password: "example-wifi-password",
+				channel: "auto",
 				clients: { count: macs.length, stations: macs.map((mac) => ({ mac })) },
 			},
 		},
@@ -68,15 +72,17 @@ export function emitFixtureRoster(macs: readonly string[]) {
 }
 
 export async function decodePhoneQrCodes() {
-	const { default: jsQR } = await import('jsqr');
+	const { default: jsQR } = await import("jsqr");
 	return [
-		...document.querySelectorAll<HTMLImageElement>('[data-testid="phone-home-fixture"] img'),
+		...document.querySelectorAll<HTMLImageElement>(
+			'[data-testid="phone-home-fixture"] img',
+		),
 	].map((img) => {
-		const canvas = document.createElement('canvas');
+		const canvas = document.createElement("canvas");
 		canvas.width = img.naturalWidth;
 		canvas.height = img.naturalHeight;
-		const ctx = canvas.getContext('2d');
-		if (!ctx) throw Error('canvas unavailable');
+		const ctx = canvas.getContext("2d");
+		if (!ctx) throw Error("canvas unavailable");
 		ctx.drawImage(img, 0, 0);
 		return jsQR(
 			ctx.getImageData(0, 0, canvas.width, canvas.height).data,
@@ -87,7 +93,7 @@ export async function decodePhoneQrCodes() {
 }
 
 export async function preparePhoneHomeFixture() {
-	initLocale({ saved: 'en' });
+	initLocale({ saved: "en" });
 	await ensureNamespaces(NAMESPACES);
 }
 
