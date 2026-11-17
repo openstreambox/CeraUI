@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { defineConfig, devices } from '@playwright/test';
+import { writeFileAtomicSync } from '../backend/src/helpers/config-loader.ts';
 import { clearInputPickerHardwareArtifacts } from './tests/e2e/helpers/input-picker-hardware-preflight.js';
 
 clearInputPickerHardwareArtifacts();
@@ -30,7 +31,7 @@ if (
 	process.env.CI !== 'true' &&
 	(!fs.existsSync(e2eTokenPath) || fs.readFileSync(e2eTokenPath, 'utf8').trim() === 'PLACEHOLDER_NO_TOKEN_YET')
 ) {
-	fs.writeFileSync(e2eTokenPath, randomBytes(32).toString('base64'), { mode: 0o600 });
+	writeFileAtomicSync(e2eTokenPath, randomBytes(32).toString('base64'), { mode: 0o600 });
 }
 
 // Seed a server before the backend boots so the Live view leaves its empty state
