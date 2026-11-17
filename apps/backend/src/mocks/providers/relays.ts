@@ -7,6 +7,7 @@ import { relayProviderMetaForId } from "@ceraui/rpc/schemas";
 
 import type { RelaysCache } from "../../helpers/config-schemas.ts";
 import { buildMockRelay } from "../fixture-factory.ts";
+import { mockRandomFor } from "../mock-clock.ts";
 
 // Provider tags for the mock catalog. Both ids are predefined CLOUD_PROVIDERS,
 // so these resolve to defined `{ id, name, kind }` metadata (never undefined).
@@ -86,37 +87,38 @@ export function getMockRelaysCache(): RelaysCache {
 
 /**
  * Get mock RTT for a single relay server
- * Returns a time-varying value within a per-server band using Math.random()
+ * Returns a time-varying value within a per-server band (mock clock: random
+ * unpinned, fixed per scenario step when a scenario pins it)
  * Bands are assigned to exercise all threshold boundaries
  */
 export function getMockRelayRtt(serverId: string): number {
 	// EU-West: steady green (≤RELAY_RTT_GREEN_MS)
 	if (serverId === MOCK_RELAY_SERVER_IDS.EU_WEST) {
-		return 40 + Math.random() * 35; // 40-75ms
+		return 40 + mockRandomFor(`relay.${serverId}`) * 35; // 40-75ms
 	}
 
 	// US-East: oscillating green↔yellow (~70-120ms)
 	if (serverId === MOCK_RELAY_SERVER_IDS.US_EAST) {
-		return 70 + Math.random() * 55; // 70-125ms
+		return 70 + mockRandomFor(`relay.${serverId}`) * 55; // 70-125ms
 	}
 
 	// Asia-SE: yellow/red (>RELAY_RTT_YELLOW_MS occasionally, ~100-200ms)
 	if (serverId === MOCK_RELAY_SERVER_IDS.ASIA_SE) {
-		return 100 + Math.random() * 110; // 100-210ms
+		return 100 + mockRandomFor(`relay.${serverId}`) * 110; // 100-210ms
 	}
 
 	// US-West: oscillating yellow↔red (~120-180ms)
 	if (serverId === MOCK_RELAY_SERVER_IDS.US_WEST) {
-		return 120 + Math.random() * 70; // 120-190ms
+		return 120 + mockRandomFor(`relay.${serverId}`) * 70; // 120-190ms
 	}
 
 	// EU-Central (if present): steady yellow (≤RELAY_RTT_YELLOW_MS)
 	if (serverId === MOCK_RELAY_SERVER_IDS.EU_CENTRAL) {
-		return 90 + Math.random() * 55; // 90-145ms
+		return 90 + mockRandomFor(`relay.${serverId}`) * 55; // 90-145ms
 	}
 
 	// Unknown server: return a neutral value
-	return 50 + Math.random() * 100;
+	return 50 + mockRandomFor(`relay.${serverId}`) * 100;
 }
 
 /**
