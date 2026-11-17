@@ -66,7 +66,7 @@ assert_root_tsconfig_invalidates_cache() (
 
   case "$component" in
     frontend)
-      mkdir -p "$FRONTEND_CACHE/public"
+      mkdir -p "$FRONTEND_CACHE/public" "$FRONTEND_CACHE/sourcemaps"
       get_frontend_hash > "$FRONTEND_CACHE/hash.txt"
       is_frontend_cache_valid
       ;;
@@ -118,6 +118,22 @@ for path in \
 done
 
 assert_root_tsconfig_invalidates_cache frontend
+
+# A cached frontend without its relocated source maps cannot be reused: the
+# package's third-party notices are generated from those maps.
+(
+  fixture="$temp_dir/cache-frontend-without-maps"
+  create_fixture "$fixture"
+  cd "$fixture"
+  # shellcheck source=scripts/build/shared-build-functions.sh
+  source scripts/build/shared-build-functions.sh
+  mkdir -p "$FRONTEND_CACHE/public"
+  get_frontend_hash > "$FRONTEND_CACHE/hash.txt"
+  if is_frontend_cache_valid; then
+    printf 'frontend cache without source maps was accepted\n' >&2
+    exit 1
+  fi
+)
 assert_root_tsconfig_invalidates_cache backend
 
 build_fixture="$temp_dir/bun-build"
@@ -131,8 +147,9 @@ STUB
 cat > "$build_fixture/bin/bun" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > ../../bun-invocation.txt
-mkdir -p ../../dist/public
+mkdir -p ../../dist/public ../../dist/sourcemaps
 printf 'built-with-bun\n' > ../../dist/public/index.html
+printf '{}\n' > ../../dist/sourcemaps/index.js.map
 STUB
 chmod +x "$build_fixture/bin/npm" "$build_fixture/bin/bun"
 
@@ -151,5 +168,9 @@ test ! -e "$build_fixture/npm-invocation.txt" || {
 }
 grep -Fxq 'run build' "$build_fixture/bun-invocation.txt"
 grep -Fxq 'built-with-bun' "$build_fixture/.build-cache/frontend/public/index.html"
+test -f "$build_fixture/.build-cache/frontend/sourcemaps/index.js.map" || {
+  printf 'frontend cache dropped the source maps the package notices are read from\n' >&2
+  exit 1
+}
 
 printf 'PASS: smart-build hashes all production inputs and builds the frontend with Bun\n'

@@ -145,3 +145,21 @@ matrix plus two sibling jobs, and five properties of that split are load-bearing
   the shard width, the `VITEST_SHARD` spec, both upload flags, the artifact name
   template, and the six-way `test.needs` closure.
 
+
+## Package licence notices
+
+- **`ceralive-device` ships its notices in `/usr/share/doc/ceralive-device/`:**
+  `copyright` (the GPL-3.0 text of `apps/backend` and `apps/frontend` plus
+  `BRAND-ASSETS-NOTICE.md`), `THIRD-PARTY-NOTICES` and a JSON index.
+  `scripts/build/third-party-notices.ts` builds them from the bundler's source
+  maps, the shipped web files and the pinned Bun `LICENSE.md`, copying each
+  licence, copying and notice file verbatim.
+- **It fails closed.** A bundled package without a licence file stops the build
+  unless `scripts/build/third-party-notices.json` names it with a reason, and the
+  output lists it as having no text. A Bun other than the pinned release, a
+  changed pinned file, a web script or font with no map, rule or glue shape, or a
+  package in the compiled backend's embedded map that the notices lack also fail.
+- **Bumping Bun** means replacing `scripts/build/notices/bun-v*-LICENSE.md` with
+  that release's file and updating the version, revision and sha256 in the policy.
+- **The frontend cache keeps `dist/sourcemaps/`** because the notices are read
+  from it; a cache without it is rebuilt.

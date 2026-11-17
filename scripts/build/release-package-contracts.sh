@@ -19,6 +19,8 @@ bash scripts/build/deb-public-link.test.sh
 bash scripts/build/deb-update-runtime-dependencies.test.sh
 bash scripts/build/deb-version-stamp.test.sh
 bash scripts/build/deb-sourcemap-policy.test.sh
+bun test scripts/build/third-party-notices.test.ts
+bun scripts/tsc.mjs --project scripts/build/tsconfig.json --noEmit
 bash scripts/build/documentation-contract.test.sh
 bash scripts/build/publish-federation-immutable.test.sh
 bash scripts/ci/service-contract-wiring.test.sh

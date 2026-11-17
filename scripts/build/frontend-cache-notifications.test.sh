@@ -27,8 +27,9 @@ export EXPECTED_GUARD="$fixture/scripts/ci/notification-bundle.ts"
   cd "$fixture"
   # shellcheck source=scripts/build/shared-build-functions.sh
   source scripts/build/shared-build-functions.sh
-  mkdir -p "$FRONTEND_CACHE/public"
+  mkdir -p "$FRONTEND_CACHE/public" "$FRONTEND_CACHE/sourcemaps"
   printf 'cached-public\n' > "$FRONTEND_CACHE/public/index.html"
+  printf '{}\n' > "$FRONTEND_CACHE/sourcemaps/index.js.map"
   get_frontend_hash > "$FRONTEND_CACHE/hash.txt"
 
   # Given a matching input hash but a notification-incomplete cached artifact
@@ -45,5 +46,7 @@ export EXPECTED_GUARD="$fixture/scripts/ci/notification-bundle.ts"
   # When restoring it, then preserve the cache fast path and run the guard again
   build_frontend_only
   test "$(wc -l < "$GUARD_LOG")" -eq 2
+  # The restored build carries the source maps the package notices are read from
+  test -f dist/sourcemaps/index.js.map
 )
 printf 'PASS: cached frontend notification guard rejects bad artifacts and accepts good ones\n'

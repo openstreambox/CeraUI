@@ -53,6 +53,16 @@ for mask in 077 022; do
     log_step() { :; }
     log_error() { fail "$1"; }
     bun() {
+      if [[ "${1:-}" == scripts/build/third-party-notices.ts ]]; then
+        [[ "$*" == "scripts/build/third-party-notices.ts $TEMP_DIR/usr/share/doc/$PACKAGE_NAME --check-binary $TEMP_DIR/usr/local/bin/ceralive" ]] \
+          || fail "unexpected notices command: $*"
+        [[ "${NODE_ENV:-}" == production ]] || fail 'notices must see the production bundle'
+        local name
+        for name in copyright THIRD-PARTY-NOTICES third-party-notices.json; do
+          printf 'fixture %s\n' "$name" > "$2/$name"
+        done
+        return 0
+      fi
       [[ "$*" == 'build apps/backend/src/modules/system/update-orchestrator/recovery-cli.ts --compile --target=bun-linux-arm64 --outfile='* ]] \
         || fail 'unexpected compilation command'
       local outfile="${!#}"
@@ -89,6 +99,9 @@ done << 'EOF'
 700 usr/libexec/ceralive/ceralive-os-stage-guard
 700 usr/libexec/ceralive/ceralive-nbd-release
 440 etc/sudoers.d/ceralive-addon-helper
+644 usr/share/doc/ceralive-device-modes/copyright
+644 usr/share/doc/ceralive-device-modes/THIRD-PARTY-NOTICES
+644 usr/share/doc/ceralive-device-modes/third-party-notices.json
 644 var/www/ceralive/index.html
 644 var/www/ceralive/assets/with space.js
 755 var/www/ceralive/assets
