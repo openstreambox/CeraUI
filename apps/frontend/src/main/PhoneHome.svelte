@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { m } from '@ceraui/i18n/svelte';
 	import type {
+		HotspotSecurityId,
 		MoblinkResult,
 		MoblinkStatus,
 		PhoneBoxSettings,
@@ -8,6 +9,9 @@
 		StatusResponse,
 	} from '@ceraui/rpc/schemas';
 	import { onMount } from 'svelte';
+	import type { AsyncOpPhase } from '$lib/rpc/async-operation.svelte';
+	import type { HotspotOwner } from '$lib/stores/hotspot-joins.svelte';
+	import WifiCode from './network/WifiCode.svelte';
 	import PhoneBoxHealth from './PhoneBoxHealth.svelte';
 	import { phoneState, remotePhoneState, showPhoneQr } from './phone-home';
 
@@ -21,6 +25,8 @@
 		temperature = null,
 		kiosk = false,
 		wifi,
+		wifiRenew,
+		wifiOwner,
 		moblink,
 		oncredential,
 		onclearcredential,
@@ -32,7 +38,16 @@
 		moblink?: MoblinkStatus;
 		oncredential?: (password: string) => Promise<MoblinkResult>;
 		onclearcredential?: () => Promise<MoblinkResult>;
-		wifi?: { name?: string; password?: string; clients?: number };
+		wifi?: {
+			name?: string;
+			password?: string;
+			security?: HotspotSecurityId;
+			clients?: number;
+		};
+		/** New Wi-Fi password, present only while the hotspot can take one. */
+		wifiRenew?: { phase: AsyncOpPhase; streaming: boolean; onrenew: () => void };
+		/** The hotspot `wifi` and `wifiRenew` describe; its joins show on the card. */
+		wifiOwner?: HotspotOwner;
 		kiosk?: boolean;
 		reachable?: boolean;
 		carrying?: 'streaming' | 'idle' | 'unknown';
@@ -79,7 +94,6 @@
 	let choosing = $state(true);
 	let result = $state('');
 	let qr = $state('');
-	let wifiQr = $state('');
 	let width = $state(0);
 	const selected = $derived(way ?? settings?.way ?? null);
 	const computer = $derived(showPhoneQr(width, kiosk));
@@ -133,27 +147,6 @@
 			result = m['live.phone.copyFailed']();
 		}
 	}
-	function escapeWifi(value: string) {
-		return value.replace(/[\\;,:"]/g, '\\$&');
-	}
-	$effect(() => {
-		let active = true;
-		wifiQr = '';
-		if (computer && wifi?.name && wifi.password) {
-			const payload = `WIFI:T:WPA;S:${escapeWifi(wifi.name)};P:${escapeWifi(wifi.password)};;`;
-			void import('qrcode')
-				.then((q) => q.toDataURL(payload))
-				.then((value) => {
-					if (active) wifiQr = value;
-				})
-				.catch(() => {
-					/* Copy remains available. */
-				});
-		}
-		return () => {
-			active = false;
-		};
-	});
 	const lastWay = $derived(settings?.way ?? null);
 	const last = $derived(
 		lastWay === 'moblin'
@@ -199,12 +192,16 @@
 					/><button type="button" onclick={() => copy(wifi?.password ?? '')}
 						>{m['live.phone.copy']()}</button
 					>{/if}
-				{#if computer && wifiQr}<img
-						src={wifiQr}
-						alt={m['live.phone.wifiScan']()}
-						width="160"
-						height="160"
-					/>{/if}
+				<!-- The QR stays behind Show code; on a phone or the kiosk there is
+				     none, and the join line and New Wi-Fi password still show. -->
+				<WifiCode
+					name={wifi?.name}
+					password={wifi?.password}
+					security={wifi?.security}
+					qr={computer}
+					owner={wifiOwner}
+					renew={wifiRenew}
+				/>
 				<button type="button" onclick={onnetwork}>{m['live.phone.wifiSettings']()}</button>
 			</section>
 			{#if selected === 'moblin'}

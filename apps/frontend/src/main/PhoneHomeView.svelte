@@ -4,7 +4,9 @@
 	import { onMount } from 'svelte';
 	import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 	import { navElements } from '$lib/config';
+	import { getOperationPhase } from '$lib/rpc/async-operation.svelte';
 	import { rpc } from '$lib/rpc/client';
+	import { hotspotIsActive } from '$lib/rpc/os-toggle-predicates';
 	import {
 		getConfig,
 		getIsConnected,
@@ -12,9 +14,16 @@
 		getUplinks,
 		getWifi,
 	} from '$lib/rpc/subscriptions.svelte';
+	import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 	import { getHudState } from '$lib/stores/hud.svelte';
 	import { getLayoutMode } from '$lib/stores/layout-mode.svelte';
 	import { navigateTo } from '$lib/stores/navigation.svelte';
+	import {
+		canRenewHotspotPassword,
+		mayCarryStream,
+		newHotspotPasswordKey,
+		renewHotspotPassword,
+	} from './network/hotspot-new-password';
 
 	const ServerDialog = lazyDialog(() => import('./dialogs/ServerDialog.svelte'));
 	let serverOpen = $state(false);
@@ -49,7 +58,23 @@
 			.catch(() => (error = m['live.phone.loadFailed']()));
 	});
 	const hud = $derived(getHudState());
-	const hotspot = $derived(Object.values(getWifi() ?? {}).find((iface) => iface.hotspot)?.hotspot);
+	const hotspotEntry = $derived(Object.entries(getWifi() ?? {}).find(([, iface]) => iface.hotspot));
+	const hotspot = $derived(hotspotEntry?.[1].hotspot);
+	// One hotspot for the card: its credentials, its joins and its renewal.
+	const wifiOwner = $derived(
+		hotspotEntry ? { device: hotspotEntry[0], incarnation: hotspotEntry[1].incarnation } : undefined,
+	);
+	const wifiRenew = $derived.by(() => {
+		if (!hotspotEntry) return undefined;
+		const [device, iface] = hotspotEntry;
+		if (!hotspotIsActive(iface, getWifiAdapterModeEntry(device))) return undefined;
+		if (!canRenewHotspotPassword(device, iface)) return undefined;
+		return {
+			phase: getOperationPhase(newHotspotPasswordKey(device, iface)),
+			streaming: mayCarryStream(getStatus()),
+			onrenew: () => void renewHotspotPassword(device, iface),
+		};
+	});
 	async function save(way: PhoneWay) {
 		await rpc.system.setPhoneWay(way);
 		settings = { way, srt: settings?.srt ?? null };
@@ -71,8 +96,15 @@ let now = $state(Date.now());
 		? `srtla://${getConfig()?.srtla_addr}:${getConfig()?.srtla_port}`
 		: undefined}
 	wifi={hotspot
-		? { name: hotspot.name, password: hotspot.password, clients: hotspot.clients?.count }
+		? {
+				name: hotspot.name,
+				password: hotspot.password,
+				security: hotspot.security,
+				clients: hotspot.clients?.count,
+			}
 		: undefined}
+	{wifiRenew}
+	{wifiOwner}
 	carrying={getIsConnected() ? getStatus()?.carrying?.state : undefined}
 	{settings}
 	{moblink}
