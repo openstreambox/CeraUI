@@ -1,7 +1,7 @@
 import { isFibTableAbsent } from "../../../helpers/iproute2-absent.ts";
 import { argMatch, ID_RE, run } from "../../../helpers/run.ts";
-import { parseDefaultRouteInterface } from "../connectivity-candidates.ts";
-import { parseDefaultRouteLine } from "../gateways.ts";
+import { parseDefaultRouteLine } from "../default-route.ts";
+import { parseDefaultRouteInterface } from "../default-route-interface.ts";
 import type { UplinkRoutePlan } from "./applier.ts";
 import { SOURCE_ROUTE_RULE_PRIORITY } from "./contracts.ts";
 import { isManagedUplinkTable, MANAGED_TABLE_BASE } from "./mark-layout.ts";
