@@ -50,8 +50,8 @@ import {
 	type StartFailureClass,
 	type StartFailurePhase,
 } from "@ceraui/rpc/schemas";
-
 import { randomBase64 } from "../../helpers/crypto.ts";
+import { redactStreamIdText } from "../../helpers/stream-id-secret.ts";
 import type { OrchestratorPhase } from "../system/update-orchestrator/types.ts";
 
 export class StreamStartFailure extends Error {
@@ -122,11 +122,12 @@ function isZodLikeError(err: unknown): boolean {
 }
 
 function diagnosticMessage(error: unknown): string | undefined {
-	if (error instanceof Error && error.message.length > 0) return error.message;
+	if (error instanceof Error && error.message.length > 0)
+		return redactStreamIdText(error.message);
 	if (typeof error !== "object" || error === null) return undefined;
 	const message = Reflect.get(error, "message");
 	return typeof message === "string" && message.length > 0
-		? message
+		? redactStreamIdText(message)
 		: undefined;
 }
 
