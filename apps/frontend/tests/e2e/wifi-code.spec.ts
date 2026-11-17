@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures/index.js';
+import { expect, test } from './fixtures/phone-home.js';
 import { ensureAuthenticated, evidencePath } from './helpers/index.js';
 import { NetworkPage } from './pages/network.js';
 
@@ -13,8 +13,6 @@ import { NetworkPage } from './pages/network.js';
  *     Not mine opens the same confirmation (with the stream line, because the
  *     fixture says a stream may be going through the box).
  */
-
-const FIXTURE = '/src/tests/fixtures/phone-home-browser.ts';
 
 for (const width of [390, 1280]) {
 	test(`hotspot dialog Wi-Fi code @visual at ${width}px`, async ({ authedPage: page }) => {
@@ -66,11 +64,12 @@ for (const width of [390, 1280]) {
 		await page.setViewportSize({ width, height: 900 });
 		await page.goto('/');
 		await ensureAuthenticated(page);
-		await page.evaluate(async (url) => {
-			const fixture = await import(/* @vite-ignore */ url);
+		await page.evaluate(async () => {
+			const fixture = window.PhoneHomeFixture;
+			await fixture.preparePhoneHomeFixture();
 			fixture.mountPhoneHomeFixture(false, false, true);
 			fixture.emitFixtureRoster(['02:00:5e:10:00:01']);
-		}, FIXTURE);
+		});
 		const home = page.getByTestId('phone-home-fixture');
 		await home.getByRole('button', { name: 'Connect your phone', exact: true }).click();
 		const card = home.getByTestId('wifi-code');
@@ -83,10 +82,11 @@ for (const width of [390, 1280]) {
 			await expect(card.getByRole('button', { name: 'Show code' })).toHaveCount(0);
 		}
 
-		await page.evaluate(async (url) => {
-			const fixture = await import(/* @vite-ignore */ url);
+		await page.evaluate(async () => {
+			const fixture = window.PhoneHomeFixture;
+			await fixture.preparePhoneHomeFixture();
 			fixture.emitFixtureRoster(['02:00:5e:10:00:01', '02:00:5e:10:00:02']);
-		}, FIXTURE);
+		});
 		const joined = card.getByTestId('wifi-code-joined');
 		await expect(joined).toContainText('A new device joined · just now');
 		if (width === 1280) {

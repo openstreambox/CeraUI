@@ -161,6 +161,15 @@ federation run `bun scripts/ci/bundle-report.mjs` to check both size budgets.
 | `biome check .` (from workspace root) | Lint/format via Biome (single toolchain) |
 | `bun run --filter frontend preview` | Preview production build locally |
 
+### Presentation fixtures
+
+The phone Home browser specs use `tests/e2e/fixtures/phone-home.ts` to compile
+an isolated presentation harness once per Playwright worker. Playwright loads
+its emitted JavaScript and CSS; the fixture is not part of the shipped frontend
+and needs no source-module URLs from the dev server. Keep functional E2E pages
+on the production-preview contract and retain the source-reference guard in
+`bun run test:build-check-shape`.
+
 ### Unit-test projects [EXISTS]
 
 Unhandled errors fail the run without filtering. Frontend tests enable Biome's

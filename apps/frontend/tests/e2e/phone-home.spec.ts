@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures/index.js';
+import { expect, test } from './fixtures/phone-home.js';
 import { ensureAuthenticated, evidencePath } from './helpers/index.js';
 
 for (const width of [390,1280,1024]) {
@@ -47,8 +47,7 @@ for(const width of [390,1280,1024]) {
   await page.context().grantPermissions(['clipboard-read','clipboard-write']);
   await page.setViewportSize({width,height:width===1024?600:900});await page.goto('/');await ensureAuthenticated(page);
   await page.evaluate(async()=>{
-   const url='/src/tests/fixtures/phone-home-browser.ts';
-   const fixture=await import(/* @vite-ignore */ url);
+   const fixture=window.PhoneHomeFixture; await fixture.preparePhoneHomeFixture();
    fixture.mountPhoneHomeFixture(window.innerWidth===1024);
   });
   const home=page.getByTestId('phone-home-fixture');
@@ -67,7 +66,7 @@ for(const width of [390,1280,1024]) {
   await home.getByRole('button',{name:'Copy',exact:true}).nth(1).click();
   expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe('srt://192.0.2.1:4000');
   if(width===1280){
-   const codes=await page.evaluate(async()=>{const url='/src/tests/fixtures/phone-home-browser.ts';return (await import(/* @vite-ignore */ url)).decodePhoneQrCodes();});
+   const codes=await page.evaluate(async()=>{return (window.PhoneHomeFixture).decodePhoneQrCodes();});
    expect(codes).toContain('srt://192.0.2.1:4000');
    expect(codes[0]).toContain('WIFI:T:WPA;S:Example\\;Wifi;');
    expect(codes.join(' ')).not.toContain('example-passphrase');
@@ -82,8 +81,8 @@ for (const width of [390, 1280, 1024]) {
   await page.setViewportSize({ width, height: width === 1024 ? 600 : 900 });
   await page.goto('/'); await ensureAuthenticated(page);
   await page.evaluate(async () => {
-   const url = '/src/tests/fixtures/phone-home-browser.ts';
-   (await import(/* @vite-ignore */ url)).mountPhoneHomeFixture(window.innerWidth === 1024, true);
+   await window.PhoneHomeFixture.preparePhoneHomeFixture();
+   window.PhoneHomeFixture.mountPhoneHomeFixture(window.innerWidth === 1024, true);
   });
   const home = page.getByTestId('phone-home-fixture');
   await home.getByRole('button', { name: 'Connect your phone', exact: true }).click();
