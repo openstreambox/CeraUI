@@ -113,4 +113,6 @@ export interface StreamingBackend {
 	getTelemetry?(): EngineTelemetry | null;
 	/** Adopt an already-running engine session after a backend reconnect. */
 	reconcileRuntimeState?(): Promise<EngineRuntimeState>;
+	/** Local Start identity, never granted by an observed/adopted subscription. */
+	ownsLaunchedSession?(): boolean;
 }

@@ -39,7 +39,6 @@ import {
 	installBootSignalGuards,
 } from "./helpers/boot-signals.ts";
 import { checkExecPath } from "./helpers/exec.ts";
-import killall from "./helpers/killall.ts";
 import { logger } from "./helpers/logger.ts";
 import { tightenPrivateFiles } from "./helpers/private-startup.ts";
 // allow: SIZE_OK — Sequential boot composition root; ordering and signal wiring are pinned by boot contract tests.
@@ -475,9 +474,9 @@ initCpu();
 await guardNonCritical("encoder-load", initEncoderLoad);
 await guardNonCritical("fan", initFan);
 await guardNonCritical("rtmp-ingest", initRTMPIngestStats);
-// make sure we didn't inherit orphan processes (cerastream is systemd-owned and
-// never spawned by CeraUI, so only srtla_send needs the orphan sweep)
-await killall(["srtla_send"]);
+// Unowned senders may still carry a stream. Never signal them by name.
+// Session reconciliation refuses adoption and Start until ownership is proven
+// or explicit recovery has confirmed that no sender remains.
 await guardNonCritical("srt-ingest", initSRTIngest);
 // Raw passthrough event bridge: the typed cerastream binding strips
 // active_encode.passthrough, so a persistent raw subscription reads it for the

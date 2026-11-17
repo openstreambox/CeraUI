@@ -1704,6 +1704,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["ruleset_reload_failed"],
 	["runtime_config_authority_unavailable"],
 	["second-at-interface-absent"],
+	["sender_ownership_unproven"],
 	["serial_invalid"],
 	["serial_replayed"],
 	["set-audio-mix returned no state for the requested input"],

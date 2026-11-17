@@ -714,6 +714,12 @@ export class CerastreamBackend implements StreamingBackend {
 	private client: CerastreamClient | undefined;
 	private subscription: Subscription | undefined;
 	private active = false;
+	private launchedSessionCurrent: (() => boolean) | undefined;
+
+	/** Only the unchanged client that acknowledged our Start is session proof. */
+	ownsLaunchedSession(): boolean {
+		return this.active && this.launchedSessionCurrent?.() === true;
+	}
 	private audioMixInputs: Array<AudioInputConfig & { id: string }> | undefined;
 	private clientEpoch = 0;
 	private probeEpoch = 0;
@@ -889,6 +895,8 @@ export class CerastreamBackend implements StreamingBackend {
 				// Subscription replay predates this Start acknowledgement.
 				if (this.client === client && this.clientEpoch === clientEpoch) {
 					this.audioMixInputs = audioMixInputs;
+					this.launchedSessionCurrent = () =>
+						this.client === client && this.clientEpoch === clientEpoch;
 					this.runtimeEvidence = undefined;
 				}
 			}, "start");
@@ -1437,6 +1445,8 @@ export class CerastreamBackend implements StreamingBackend {
 				this.deps.bridge.broadcastStatus();
 				break;
 			case "status": {
+				if (event.state === "idle" && event.streaming === false)
+					this.launchedSessionCurrent = undefined;
 				this.runtimeEvidence = {
 					state: classifyRuntimeState(event.state, event.streaming),
 					current,
