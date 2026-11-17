@@ -115,7 +115,8 @@ test('LogsDialog downloads a real, observable backend journal', async ({ page, b
 
 	// The known backend failure we triggered is observable in the downloaded log.
 	expect(deviceLog).toContain('system.getLog');
-	expect(deviceLog).toContain('task13-observable-logs');
+	expect(deviceLog).toContain('RPC system.getLog err');
+	expect(deviceLog).not.toContain('task13-observable-logs');
 
 	// 4. Download the full system log and confirm it too carries real content.
 	const systemDownloadPromise = page.waitForEvent('download');
@@ -124,6 +125,17 @@ test('LogsDialog downloads a real, observable backend journal', async ({ page, b
 	const systemLog = await readDownload(systemDownload);
 	expect(systemDownload.suggestedFilename()).toBe('ceralive_system_log.txt');
 	expect(systemLog.length).toBeGreaterThan(0);
+
+	// Both real browser downloads carry the collection bounds and the separate,
+	// allowlisted carrier snapshot. No full numeric subscriber/device identifier
+	// may survive the exported artifact, including historical journal content.
+	for (const log of [deviceLog, systemLog]) {
+		expect(log).toContain('retained last 7 days; newest 10000 entries');
+		expect(log).toContain('15 s collection limit; 10 MiB raw limit');
+		expect(log).toContain('Carrier support summary (current observations; APN and TAC only):');
+		expect(Buffer.byteLength(log, 'utf8')).toBeLessThan(10 * 1024 * 1024);
+		expect(log).not.toMatch(/\b\d{15,20}\b/);
+	}
 
 	fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
 	fs.writeFileSync(
