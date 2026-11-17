@@ -58,6 +58,16 @@ test("only a known unit without a process proves a stopped engine", () => {
 			},
 			false,
 		],
+		// Starting before its main process exists: only a restart wait counts.
+		[
+			{
+				LoadState: "loaded",
+				ActiveState: "activating",
+				SubState: "start-pre",
+				MainPID: "0",
+			},
+			false,
+		],
 		[
 			{
 				LoadState: "loaded",

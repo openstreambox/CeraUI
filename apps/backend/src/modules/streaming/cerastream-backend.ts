@@ -691,23 +691,52 @@ export function engineStatusIsReadable(engineSchema: string): boolean {
 }
 
 /**
- * One request answered on the subscription's own connection after a silent
- * window. "No callback" is not silence by itself: the connection may have
- * dropped (the client tells pending requests, not subscriptions), or a status
- * the engine sent in time may still sit unread behind a timer that fired
- * during an event-loop stall. The engine writes and the client reads lines in
- * order, so a reply means the connection lasted and every status sent before
- * it has already reached the handler. A result, a typed engine error and a
- * result the binding cannot parse are all replies; a timeout or a lost
- * connection are not.
+ * What one request answered on the subscription's own connection after a
+ * silent window tells. "No callback" is not silence by itself: the connection
+ * may have dropped (the client tells pending requests, not subscriptions), or
+ * a status the engine sent in time may still sit unread behind a timer that
+ * fired during an event-loop stall. The engine writes and the client reads
+ * lines in order, so any reply means the connection lasted and every status
+ * sent before it has already reached the handler; a timeout or a lost
+ * connection is no reply.
+ *
+ * The answer is the engine's own snapshot of its session: `session_id` names
+ * the running session, so a snapshot with one is a session and a snapshot
+ * without one is an engine that reports none. A typed engine error (an engine
+ * without the method) or a result the binding cannot parse is a reply that
+ * says nothing about a session.
  */
-async function repliesInOrder(client: CerastreamClient): Promise<boolean> {
+export type EngineSessionReply = "none" | "session" | "no-report" | "no-reply";
+
+export async function askEngineSession(
+	client: CerastreamClient,
+): Promise<EngineSessionReply> {
 	try {
-		await client.listSwitchTargets();
-		return true;
+		const snapshot = await client.listSwitchTargets();
+		return typeof snapshot.session_id === "string" &&
+			snapshot.session_id.length > 0
+			? "session"
+			: "none";
 	} catch (error) {
-		return error instanceof CerastreamRpcError || isZodLikeError(error);
+		return error instanceof CerastreamRpcError || isZodLikeError(error)
+			? "no-report"
+			: "no-reply";
 	}
+}
+
+/**
+ * Whether a silent window plus that reply shows no running session. A
+ * snapshot without a session is enough on any schema, which also settles an
+ * engine newer than the binding. A reply that reports nothing only counts
+ * where the binding reads every status the engine can send.
+ */
+export function silenceShowsNoSession(
+	reply: EngineSessionReply,
+	engineSchema: string,
+): boolean {
+	if (reply === "none") return true;
+	if (reply === "no-report") return engineStatusIsReadable(engineSchema);
+	return false;
 }
 
 export function classifyConnectHandshakePhase(
@@ -1257,8 +1286,10 @@ export class CerastreamBackend implements StreamingBackend {
 				runtimeState === "unknown" &&
 				timedOut &&
 				stillSilent() &&
-				engineStatusIsReadable(client.hello.schema_version) &&
-				(await repliesInOrder(client)) &&
+				silenceShowsNoSession(
+					await askEngineSession(client),
+					client.hello.schema_version,
+				) &&
 				stillSilent()
 			)
 				silent();

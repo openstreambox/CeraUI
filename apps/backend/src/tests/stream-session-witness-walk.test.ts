@@ -105,6 +105,8 @@ function world() {
 		carriedOver: false,
 		carrying: false,
 		faulted: false,
+		// A second stream was launched beside a carried-over one.
+		secondLaunch: false,
 		// How the next reconciliation's engine behaves.
 		dropNext: false,
 		unreachable: false,
@@ -174,14 +176,19 @@ async function apply({ w, boot }: World, event: Event): Promise<boolean> {
 			w.owner.setCarrying(false);
 			return true;
 		case "start": {
-			if (w.streamLive) return false;
-			await w.session.start({
+			// A second Start is only tried against a stream a restart carried
+			// over, where it must be refused.
+			if (w.streamLive && !w.carriedOver) return false;
+			const second = w.streamLive;
+			const result = await w.session.start({
 				origin: "ui",
 				launch: async () => {
+					if (second) w.secondLaunch = true;
 					w.unitDown = false;
 					w.streamLive = true;
 				},
 			});
+			if (second && result.result === "started") w.secondLaunch = true;
 			return true;
 		}
 		case "stop":
@@ -237,6 +244,8 @@ const SETTLES = new Set<Event>([
 function check({ w }: World, path: readonly Event[]) {
 	const where = path.join(" > ");
 	const state = w.session.snapshot().state;
+	if (w.secondLaunch)
+		throw new Error(`second Start beside a carried-over stream: ${where}`);
 	if (w.streamLive && w.carriedOver) {
 		if (state === "idle" || w.session.streamLiveness() === "idle")
 			throw new Error(`restart reads a running stream as idle: ${where}`);
@@ -282,7 +291,7 @@ async function walk(depth: number): Promise<number> {
 }
 
 test("a restart never reads a running stream as idle, against an imperfect engine", async () => {
-	expect(await walk(5)).toBe(133_872);
+	expect(await walk(5)).toBe(135_356);
 }, 300_000);
 
 test("the walk catches a witness that settles on one silent window", async () => {

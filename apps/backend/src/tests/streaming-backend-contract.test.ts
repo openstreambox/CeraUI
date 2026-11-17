@@ -4,6 +4,7 @@ import type {
 	CaptureDevice,
 	CerastreamClient,
 	EventParams,
+	ListSwitchTargetsResult,
 	StartResult,
 } from "@ceralive/cerastream";
 import {
@@ -19,6 +20,7 @@ import {
 	cerastreamBackend,
 	classifyConnectHandshakePhase,
 	engineStatusIsReadable,
+	silenceShowsNoSession,
 } from "../modules/streaming/cerastream-backend.ts";
 import {
 	currentRuntimeObservationSilence,
@@ -91,7 +93,7 @@ interface FakeClientOptions {
 	/** The engine schema the fake reports in `hello`. */
 	readonly schemaVersion?: string;
 	/** What `listSwitchTargets` does; an empty answer by default. */
-	readonly roundTrip?: () => Promise<{ switch_targets: [] }>;
+	readonly roundTrip?: () => Promise<ListSwitchTargetsResult>;
 }
 
 function makeFakeClient(options: FakeClientOptions = {}): FakeClientHarness {
@@ -1432,13 +1434,58 @@ describe("a reconciliation that hears nothing", () => {
 		expect(r.silent).toBe(1);
 	});
 
-	test("an engine on a newer schema than the binding is not trusted to be silent", async () => {
-		// Its statuses may carry values this binding's parser drops unseen.
+	test("a snapshot that names a session is not silence, on any schema", async () => {
+		// The window heard nothing, yet the engine's own snapshot has a session:
+		// a status was lost on the way (or the binding dropped it unread).
+		for (const schemaVersion of [SCHEMA_VERSION, "0.1.0", "99.0.0"]) {
+			const r = await silentWindow({
+				schemaVersion,
+				roundTrip: async () => ({
+					session_id: "s1",
+					active_input: "hdmi",
+					switch_targets: [],
+				}),
+			});
+			expect(r).toMatchObject({ answer: "unknown", silent: 0 });
+		}
+	});
+
+	test("an engine on a newer schema settles on its own snapshot, not on silence alone", async () => {
+		// Its statuses may carry values this binding's parser drops unseen, so
+		// only its answer that no session runs counts.
 		const r = await silentWindow({ schemaVersion: "99.0.0" });
-		expect(r).toMatchObject({ answer: "unknown", silent: 0 });
-		expect(r.calls).not.toContain("list-switch-targets");
+		expect(r).toMatchObject({ answer: "unknown", silent: 1 });
+		expect(r.calls).toContain("list-switch-targets");
+		for (const reply of [
+			async () => {
+				throw new CerastreamRpcError(-32601, "method not found", undefined, 7);
+			},
+			async () => {
+				throw Object.assign(new Error("invalid result"), { name: "ZodError" });
+			},
+		]) {
+			const newer = await silentWindow({
+				schemaVersion: "99.0.0",
+				roundTrip: reply,
+			});
+			expect(newer.silent).toBe(0);
+			const same = await silentWindow({ roundTrip: reply });
+			expect(same.silent).toBe(1);
+		}
 		const older = await silentWindow({ schemaVersion: "0.1.0" });
 		expect(older.silent).toBe(1);
+	});
+
+	test("which replies show no running session", () => {
+		const newer = "99.0.0";
+		expect(silenceShowsNoSession("none", SCHEMA_VERSION)).toBe(true);
+		expect(silenceShowsNoSession("none", newer)).toBe(true);
+		expect(silenceShowsNoSession("no-report", SCHEMA_VERSION)).toBe(true);
+		expect(silenceShowsNoSession("no-report", newer)).toBe(false);
+		for (const schema of [SCHEMA_VERSION, newer]) {
+			expect(silenceShowsNoSession("session", schema)).toBe(false);
+			expect(silenceShowsNoSession("no-reply", schema)).toBe(false);
+		}
 	});
 
 	test("schema versions compare by number, and anything unreadable is newer", () => {

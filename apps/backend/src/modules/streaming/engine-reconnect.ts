@@ -66,6 +66,7 @@ import {
 } from "./capabilities.ts";
 import { runInflightConfigChangeReconciliation } from "./config-change-reconcile-wiring.ts";
 import { reportEngineState } from "./lifecycle-indicators.ts";
+import { otaMarkerAwaitsIdleWitness } from "./ota-streaming-marker.ts";
 import { getPipelinesMessage, initPipelines } from "./pipelines.ts";
 import {
 	type EngineDeviceCacheDeps,
@@ -117,6 +118,14 @@ export interface EngineReconnectDeps {
 	 * unreachable→reachable transition toasts.
 	 */
 	reportEngineState: (reachable: boolean) => void;
+	/**
+	 * True while a carrying line an earlier backend process left waits for
+	 * engine evidence. Only a reconciliation can settle it, and an engine that
+	 * stays unreachable never triggers one; one whose unit then has no process
+	 * settles it, so each failed recheck reconciles while the line waits.
+	 */
+	awaitsIdleWitness: () => boolean;
+	reconcileSession: () => Promise<unknown>;
 	logger: EngineReconnectLogger;
 	random: () => number;
 	setTimer: (fn: () => void, ms: number) => TimerHandle;
@@ -190,6 +199,8 @@ function defaultDeps(
 		broadcastEngineState: buildDefaultBroadcastEngineState(fetchers.sources),
 		reportEngineState: (reachable) =>
 			reportEngineState({ isStreaming: getIsStreaming(), reachable }),
+		awaitsIdleWitness: otaMarkerAwaitsIdleWitness,
+		reconcileSession: reconcileStreamSession,
 		logger: defaultLogger,
 		random: Math.random,
 		setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -315,6 +326,19 @@ async function tickRecheck(): Promise<void> {
 		state.stopped = true;
 		state.timer = undefined;
 		return;
+	}
+	// Still unreachable. The same tick lets a waiting carrying line be judged
+	// again, so an engine whose unit has since lost its process releases the
+	// marker and the inhibitor without waiting for a reboot.
+	if (state.deps.awaitsIdleWitness()) {
+		try {
+			await state.deps.reconcileSession();
+		} catch (err) {
+			state.deps.logger.warn(
+				`engine reconnect: reconciliation for a waiting carrying line failed: ${errMessage(err)}`,
+			);
+		}
+		if (!state || state.stopped) return;
 	}
 	scheduleRecheck();
 }
