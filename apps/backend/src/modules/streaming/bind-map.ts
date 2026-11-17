@@ -46,6 +46,10 @@ import type { BondLinkIdentityState } from "@ceraui/rpc/schemas";
 export interface BondEntry {
 	/** Source IPv4/IPv6 literal — the line that goes in `BIND_IPS_FILE`. */
 	readonly ip: string;
+	/** Consumer activation identity; changes advance the sidecar generation. */
+	readonly clatGeneration?: string;
+	/** Modem row that owns translated traffic; never the socket bind device. */
+	readonly parentIface?: string;
 	/** Kernel interface name the socket must egress through. */
 	readonly iface: string;
 	/**
@@ -240,7 +244,9 @@ export function sameMapping(
 			other.ip === entry.ip &&
 			other.iface === entry.iface &&
 			other.linkId === entry.linkId &&
-			other.idPath === entry.idPath
+			other.idPath === entry.idPath &&
+			other.clatGeneration === entry.clatGeneration &&
+			other.parentIface === entry.parentIface
 		);
 	});
 }
