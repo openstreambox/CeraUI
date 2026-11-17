@@ -17,7 +17,7 @@
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import type { WifiInterface } from '@ceraui/rpc/schemas';
 import { Copy, Dices, Loader2, TriangleAlert } from '@lucide/svelte';
-import { untrack } from 'svelte';
+import { onDestroy, untrack } from 'svelte';
 import { toast } from 'svelte-sonner';
 
 import { networkConstraints } from '$lib/components/streaming';
@@ -70,9 +70,18 @@ let loaded = { name: '', password: '' };
 let name = $state('');
 let password = $state('');
 let acknowledged = $state(false);
+let confirmationLive = true;
+onDestroy(() => {
+	confirmationLive = false;
+});
+
+function cancel() {
+	confirmationLive = false;
+	onCancel();
+}
 
 function current(seq: number, captured: WifiRadioBinding): boolean {
-	return seq === attempt && sameWifiRadio(captured, {
+	return confirmationLive && seq === attempt && sameWifiRadio(captured, {
 		device, incarnation, link: getLinkEpoch(), session,
 	}) && degradedReason === undefined;
 }
@@ -178,7 +187,7 @@ async function confirm() {
 	const seq = attempt;
 	if (!canConfirm || !captured?.incarnation || !current(seq, captured)) return;
 	const chosen = { name, password };
-	if (name !== loaded.name || password !== loaded.password) {
+	if (firstTime || name !== loaded.name || password !== loaded.password) {
 		phase = 'saving';
 		try {
 			const result = await rpc.wifi.hotspotPrepare({
@@ -366,7 +375,7 @@ async function confirm() {
 		<Button
 			class="h-9 min-h-[var(--touch-target-min)]"
 			data-testid="hotspot-confirm-cancel"
-			onclick={onCancel}
+			onclick={cancel}
 			size="sm"
 			variant="outline"
 		>

@@ -38,7 +38,7 @@ import { broadcastMsg } from "../ui/websocket-server.ts";
 export type { HotspotToggleError };
 
 export type HotspotToggleOutcome =
-	| { success: true }
+	| { success: true; pending?: true; reason?: "steering-readiness-timeout" }
 	| { success: false; error: HotspotToggleError };
 
 export type HotspotOutcomeKind = "start" | "stop";
@@ -56,9 +56,12 @@ export const publishHotspotOutcome: HotspotOutcomePublisher = (
 ) => {
 	broadcastMsg("wifi", {
 		hotspot: {
-			[kind]: outcome.success
-				? { device, success: true }
-				: { device, error: outcome.error },
+			[kind]:
+				outcome.success && outcome.pending
+					? { device, pending: true, reason: outcome.reason }
+					: outcome.success
+						? { device, success: true }
+						: { device, error: outcome.error },
 		},
 	});
 };

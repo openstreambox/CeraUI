@@ -34,7 +34,8 @@
   back through `onSelect` and dispatches nothing, `save()` is the only caller of
   `network.setEthernetRole`, Cancel discards it, and the open edge resets it. A
   staged role that differs from the applied one renders a standing warning band
-  in the control, so a pending change never looks like an applied one. The
+  in the control. Shared LAN's Retry action stages one same-role recovery for
+  Save; it dispatches nothing itself and is consumed once. The
   BACKEND transaction is untouched — same procedure, same keyed op, same
   device-moves-the-control settlement on the terminal `eth_role` frame.
 
@@ -51,10 +52,12 @@
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import type { EthernetRole, NetifConfigError, NetifEntry } from '@ceraui/rpc/schemas';
 import { Info, Network, TriangleAlert } from '@lucide/svelte';
+import { onDestroy } from 'svelte';
 import { toast } from 'svelte-sonner';
 
 import LabeledSwitch from '$lib/components/custom/LabeledSwitch.svelte';
 import { AppDialog } from '$lib/components/dialogs';
+import { Button } from '$lib/components/ui/button';
 import { Label } from '$lib/components/ui/label';
 import { isLinkLocalIpv4 } from '$lib/helpers/ip-classification';
 import { rpc } from '$lib/rpc';
@@ -90,6 +93,23 @@ let enabled = $state(false);
 let dirtyEnabled = $state(false);
 let wasOpen = false;
 let saving = $state(false);
+let previousName: string | undefined;
+let openGeneration = 0;
+let live = true;
+let activeSave: object | undefined;
+let recoveryStaged = $state(false);
+
+function invalidateSave() {
+	openGeneration += 1;
+	activeSave = undefined;
+	saving = false;
+	recoveryStaged = false;
+}
+
+onDestroy(() => {
+	live = false;
+	invalidateSave();
+});
 
 // The port role the operator has PICKED but not yet saved. It is dialog state,
 // exactly like `enabled`: a role change reconfigures the port and can drop the
@@ -111,14 +131,17 @@ const SAVE_ERROR_KEY: Record<NetifConfigError | 'unknown', string> = {
 };
 
 $effect(() => {
-	// Open edge → reset the form from the current interface, clear the dirty flag.
-	if (open && !wasOpen) {
-		enabled = iface?.enabled ?? false;
-		dirtyEnabled = false;
-		saveError = undefined;
+	if (open !== wasOpen || name !== previousName) {
+		invalidateSave();
 		stagedRole = undefined;
+		saveError = undefined;
+		if (open) {
+			enabled = iface?.enabled ?? false;
+			dirtyEnabled = false;
+		}
 	}
 	wasOpen = open;
+	previousName = name;
 });
 
 $effect(() => {
@@ -165,47 +188,75 @@ const roleView = $derived(
 	}),
 );
 const roleContext = $derived(ethernetRoleContext(iface, getIsStreaming()));
+const portBusy = $derived(
+	saving || isOperationPending(netifKey) || isOperationPending(roleKey),
+);
+const canRecover = $derived(
+	roleView.supported && roleView.displayRole === 'shared-lan'
+		&& (stagedRole === undefined || stagedRole === 'shared-lan'),
+);
 
-// A staged role EQUAL to the applied one is not a change, so it dispatches
-// nothing — Save on an untouched role must be byte-identical to the save that
-// shipped before staging existed.
+$effect(() => {
+	if (!canRecover) recoveryStaged = false;
+});
+
+// Equal/untouched Save remains a no-op for the role unless Retry was staged.
 const pendingRoleChange = $derived(
 	stagedRole !== undefined && stagedRole !== roleView.displayRole
 		? stagedRole
-		: undefined,
+		: recoveryStaged && canRecover
+			? 'shared-lan'
+			: undefined,
 );
 
 function discardStagedRole() {
+	invalidateSave();
 	stagedRole = undefined;
 }
 
+function stageRole(role: EthernetRole) {
+	stagedRole = role;
+	if (role !== 'shared-lan') recoveryStaged = false;
+}
+
 async function save() {
-	if (saving) return;
+	if (!live || !open || saving) return;
 	// Cross-surface busy guard: a bond toggle (or another save) on THIS iface is
 	// in flight — refuse with the standard busy feedback, don't dispatch a second.
 	// The role carries its own key, and a transition another client dispatched is
 	// the same class of contention.
-	if (
-		isOperationPending(netifKey) ||
-		(pendingRoleChange !== undefined && isOperationPending(roleKey))
-	) {
+	if (isOperationPending(netifKey) || isOperationPending(roleKey)) {
 		toast.error(m["network.os.deviceBusy"]());
 		return;
 	}
 	saving = true;
 	saveError = undefined;
+	const attempt = {};
+	activeSave = attempt;
+	const generation = openGeneration;
+	const portName = name;
+	const roleTarget = pendingRoleChange;
+	const roleOperationKey = roleKey;
+	const netifOperationKey = netifKey;
+	const requestedEnabled = enabled;
+	const recovering = recoveryStaged && canRecover;
+	const isCurrent = () =>
+		live && open && name === portName
+			&& openGeneration === generation && activeSave === attempt;
+	// One explicit Save consumes the intent, including an unconfirmed outcome.
+	recoveryStaged = false;
 
 	// The role leads, because every other field on this dialog is read in its
 	// light — a shared-LAN port is excluded from the bond by the device, so the
 	// toggle below means nothing until the role has settled. A refused role
 	// change therefore stops the save outright: applying half of it would leave
 	// the operator reading a bond state that belongs to the role they did NOT get.
-	if (pendingRoleChange !== undefined) {
+	if (roleTarget !== undefined) {
 		const request = {
-			name,
-			role: pendingRoleChange,
+			name: portName,
+			role: roleTarget,
 			// getRandomValues also works on the device's plain-HTTP LAN origin.
-			...(supportsEthernetRoleOp(name)
+			...(supportsEthernetRoleOp(portName)
 				? {
 					op: Array.from(
 						crypto.getRandomValues(new Uint8Array(16)),
@@ -215,16 +266,18 @@ async function save() {
 				: {}),
 		};
 		const roleResult = await osCommand({
-			key: roleKey,
-			target: request.op === undefined ? pendingRoleChange : request,
+			key: roleOperationKey,
+			target: request.op === undefined ? (recovering ? undefined : roleTarget) : request,
 			rpc: () =>
 				rpc.network.setEthernetRole(request),
 			// The reason renders inline in the role control's own band; a toast
 			// would say the same thing twice and then take it away.
 			silent: true,
 		});
+		if (!isCurrent()) return;
 		if (roleResult?.success !== true) {
 			saving = false;
+			activeSave = undefined;
 			return;
 		}
 	}
@@ -233,24 +286,31 @@ async function save() {
 	// change. An address-less interface must OMIT the field (`""` fails the
 	// backend regex), which the guard treats as its own no-address case.
 	const result = await osCommand({
-		key: netifKey,
-		target: { name, enabled },
+		key: netifOperationKey,
+		target: { name: portName, enabled: requestedEnabled },
 		confirmOnResolve: true,
 		rpc: () =>
 			rpc.network.configure({
-				name,
+				name: portName,
 				ip: observedIp === '' ? undefined : observedIp,
-				enabled,
+				enabled: requestedEnabled,
 			}),
 		// A STRUCTURED refusal stays `ok` here so it never takes osCommand's toast
 		// path — it is a device FACT with a typed reason, and it is rendered in the
 		// standing band below instead. A thrown rpc still falls through to the
 		// toast, because a transport fault names no reason worth standing.
 		classify: () => ({ ok: true }),
+		// Feedback still belongs to osCommand; a closed/replaced view must not
+		// emit its late transport-failure toast into the new dialog.
+		get silent() {
+			return !isCurrent();
+		},
 		busyMessage: () => m["network.os.deviceBusy"](),
 		failMessage: () => m["network.os.operationFailed"](),
 	});
+	if (!isCurrent()) return;
 	saving = false;
+	activeSave = undefined;
 	// Only a confirmed success closes the dialog. A refusal keeps it open with the
 	// form value preserved AND names what the device refused; a throw keeps it
 	// open with osCommand's single toast.
@@ -285,10 +345,36 @@ async function save() {
 		     dispatches nothing, so the role is applied by `save()` alone. -->
 		<EthernetRoleSelector
 			context={roleContext}
-			onSelect={(role) => (stagedRole = role)}
+			onSelect={stageRole}
 			staged={stagedRole}
 			view={roleView}
 		/>
+
+		{#if canRecover}
+			<div class="space-y-2" data-testid="eth-role-recovery-{name}">
+				<div class="flex items-center justify-between gap-3">
+					<div>
+						<p id="eth-role-recovery-context-{name}" class="text-sm font-medium">{m["network.ethRole.sharedLan"]()}</p>
+						{#if !recoveryStaged}
+							<p id="eth-role-recovery-help-{name}" class="text-muted-foreground text-xs">{m["network.ethRole.staged.title"]()}</p>
+						{/if}
+					</div>
+					<Button type="button" variant="outline" size="sm" class="min-h-[var(--touch-target-min)]"
+						aria-pressed={recoveryStaged}
+						aria-describedby={recoveryStaged ? `eth-role-recovery-context-${name} eth-role-recovery-staged-${name}` : `eth-role-recovery-context-${name} eth-role-recovery-help-${name}`}
+						disabled={portBusy}
+						onclick={() => { if (!portBusy) recoveryStaged = !recoveryStaged; }}>
+						{m["network.os.retry"]()}
+					</Button>
+				</div>
+				{#if recoveryStaged}
+					<div id="eth-role-recovery-staged-{name}" class="border-status-warning/30 bg-status-warning/10 space-y-1.5 rounded-lg border px-2.5 py-2" data-testid="eth-role-recovery-staged-{name}" role="status">
+						<p class="text-status-warning text-xs font-semibold">{m["network.ethRole.staged.title"]()}</p>
+						<p class="text-muted-foreground text-xs">{m["network.ethRole.staged.body"]()}</p>
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		<!-- Enable / disable -->
 		<div class="flex items-start justify-between gap-4">
