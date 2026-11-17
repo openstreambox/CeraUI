@@ -1,8 +1,9 @@
+import { ensureNamespaces, initLocale, NAMESPACES } from "@ceraui/i18n/svelte";
 import type { WifiStatus } from "@ceraui/rpc/schemas";
 import { mount } from "svelte";
 
-import { noteHotspotRoster } from "../../lib/stores/hotspot-joins.svelte";
-import PhoneHome from "../../main/PhoneHome.svelte";
+import { noteHotspotRoster } from "../../../src/lib/stores/hotspot-joins.svelte";
+import PhoneHome from "../../../src/main/PhoneHome.svelte";
 
 /** Browser-only presentation fixture: no production route, RPC or device effects. */
 export function mountPhoneHomeFixture(
@@ -89,4 +90,18 @@ export async function decodePhoneQrCodes() {
 			canvas.height,
 		)?.data;
 	});
+}
+
+export async function preparePhoneHomeFixture() {
+	initLocale({ saved: "en" });
+	await ensureNamespaces(NAMESPACES);
+}
+
+declare global {
+	var PhoneHomeFixture: {
+		mountPhoneHomeFixture: typeof mountPhoneHomeFixture;
+		emitFixtureRoster: typeof emitFixtureRoster;
+		decodePhoneQrCodes: typeof decodePhoneQrCodes;
+		preparePhoneHomeFixture: typeof preparePhoneHomeFixture;
+	};
 }
