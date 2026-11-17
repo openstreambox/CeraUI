@@ -2896,6 +2896,11 @@
 	"network.radio.transmitting": "正在发送数据",
 	"network.radio.usb": "USB事件",
 	"network.radio.timeline": "最近记录",
+	"settings.dialogs.shutdown_inhibited": "正在直播、转发客户端流量或存在其他关机锁，关机被拒绝。请停止活动后重试。",
+	"settings.dialogs.other_users": "其他用户已登录。请让他们完成工作后再重试。",
+	"settings.dialogs.shutdown_unavailable": "关机不可用。请检查系统服务后重试。",
+	"settings.dialogs.shutdown_uncertain": "无法确认电源请求。请检查设备后重试。",
+	"settings.dialogs.powerOverride": "紧急解除（root）：先运行 systemctl stop ceralive，再运行 systemctl reboot。这会停止直播、断开客户端并关闭此界面。",
 	"live.audioMixer.error.audio_input_primary": "主输入始终在混音中。要将其关闭，请选择其他音频源。",
 	"live.layout.insetCancel": "松开前按 Esc 可放回原位。"
 }

@@ -159,6 +159,7 @@ test("failed power retry preserves an earlier possibly accepted shutdown", async
 	expect(result).toEqual({
 		success: false,
 		error: "reboot exited with status 1",
+		failureReason: "shutdown_unavailable",
 	});
 	expect(isDisruptiveActionPending()).toBe(true);
 	expect(await call(poweroffProcedure, undefined, { context })).toEqual({
