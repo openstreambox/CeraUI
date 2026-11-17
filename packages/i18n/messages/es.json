@@ -1896,6 +1896,8 @@
 	"notifications.installFailedDescription": "No se pudo instalar la aplicación. Inténtalo de nuevo.",
 	"notifications.jetsonUndervoltage": "Se detectó un voltaje de alimentación bajo. El sistema puede volverse inestable, con fallas de imagen, bloqueos y desconexiones de los módems",
 	"notifications.linksRecovered": "Enlaces combinados recuperados.",
+	"notifications.modemHeldOut": "{name} queda fuera de la transmisión porque no se pudo deshacer un cambio de configuración en él. Tus otros enlaces no se ven afectados.",
+	"notifications.modemHeldOutUnknown": "Un módem que se desconectó o se volvió a conectar queda fuera de la transmisión porque no se pudo deshacer un cambio de configuración en él. Tus otros enlaces no se ven afectados.",
 	"notifications.modemRoaming": "{name} está en itinerancia. Se ha registrado en una red asociada, por lo que los datos pueden facturarse con tarifas de itinerancia. La transmisión no se ve afectada.",
 	"notifications.openUpdates": "Abrir actualizaciones",
 	"notifications.updatesAvailableMessage": "Hay actualizaciones disponibles. Revísalas en Actualizaciones de software.",
