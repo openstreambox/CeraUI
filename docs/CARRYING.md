@@ -62,9 +62,28 @@ is, holds the encoder inhibitor and stays `reconciling` until the engine
 agrees: two separate status subscriptions that are accepted and hear nothing
 (an idle engine is silent, a running session reports status about every two
 seconds) commit `idle`; a running session is adopted and the file becomes the
-stream's. An unreachable engine or any answer in between leaves the line
-waiting, and the engine reconnect loop reconciles again once it is reachable.
-Engine silence without the line keeps its old meaning (unknown).
+stream's. Engine silence without the line keeps its old meaning (unknown).
+
+"Heard nothing" is proven, not assumed. After a silent window the query sends
+one request on the same connection, and only a reply with still nothing heard
+counts: the client tells pending requests about a dropped connection but not
+subscriptions, and a status sent in time can sit unread behind a timer that
+fired during an event-loop stall. Lines are written and read in order, so a
+reply means the connection held and every earlier status was handled. An
+engine whose schema is newer than the binding's is never taken as silent,
+because the binding drops statuses it cannot parse without a trace.
+
+A query that cannot reach the engine proves nothing either way, unless the
+engine's systemd unit has no process at all (`cerastream.service` loaded,
+`MainPID=0`, and inactive, failed or waiting to restart after a crash): a
+stream runs inside that process, so this counts like a silent answer. An
+engine that stays down therefore does not hold the line, the marker and every
+update until reboot. Any other unreachable engine leaves the line waiting, and
+the engine reconnect loop reconciles again once it is reachable.
+
+Limits: a running engine that sends no status for two windows on a working
+connection, or a status it sends in a shape this binding's own schema rejects,
+still reads as silent. A positive idle answer from the engine would close both.
 
 One owner (`createOtaMarkerOwner`) writes the file, and its content follows
 from who holds it at each change: a stream keeps it empty, carrying alone keeps

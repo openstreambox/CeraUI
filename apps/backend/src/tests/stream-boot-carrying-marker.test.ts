@@ -79,6 +79,8 @@ const markerDeps = (marker: MarkerModule) => ({
 	unmarkStreamingForOta: marker.clearOtaStreamingMarker,
 	confirmStreamingForOta: marker.adoptOtaStreamingMarker,
 	awaitsIdleWitness: marker.otaMarkerAwaitsIdleWitness,
+	// The engine unit runs unless a test stops it; never the host's systemctl.
+	engineStopped: async () => false,
 });
 
 /** The production session with only the engine and status sinks replaced. */
@@ -762,4 +764,66 @@ test("a torn line is not a line, even to a silent engine", async () => {
 	expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
 	restarted.setCarryingOtaProtection(false);
 	expect(markerPresent()).toBe(false);
+});
+
+/**
+ * Review regression: with the engine down for good (a broken package) a
+ * restart inside the hold kept the line, the marker and the encoder inhibitor
+ * until reboot, and with them the update that could fix the engine. A unit
+ * without a process cannot be streaming.
+ */
+test("a restart beside an engine that stays down settles once its unit has no process", async () => {
+	setCarryingOtaProtection(true);
+	const restarted = await restartBackend();
+	let unitStopped = false;
+	const session = createStreamSessionOrchestrator({
+		...streamSessionProductionDeps,
+		...markerDeps(restarted),
+		engineStopped: async () => unitStopped,
+		createAttemptId: () => "engine-down",
+		setStreamingStatus: () => undefined,
+		getStreamingStatus: () => false,
+		seedLifecycleState: () => undefined,
+		setLifecycleState: () => undefined,
+		queryRuntime: engineQuery(() => "unknown"),
+		stopRuntime: async () => undefined,
+		onStreamStopped: () => undefined,
+	});
+	restarted.setCarryingOtaProtection(true);
+	// Unreachable while the unit is (re)starting: nothing proven.
+	expect(await session.reconcile()).toBe("reconciling");
+	restarted.setCarryingOtaProtection(false);
+	expect(markerLine()).toBe("carrying\n");
+	expect(inhibitorHeld).toBe(true);
+
+	// The unit has given up: no engine process, so no stream.
+	unitStopped = true;
+	expect(await session.reconcile()).toBe("idle");
+	expect(markerPresent()).toBe(false);
+	expect(inhibitorHeld).toBe(false);
+});
+
+test("a stopped engine unit does not settle a stream's empty marker", async () => {
+	setCarryingOtaProtection(true);
+	setOtaStreamingMarker();
+	const restarted = await restartBackend();
+	const session = createStreamSessionOrchestrator({
+		...streamSessionProductionDeps,
+		...markerDeps(restarted),
+		engineStopped: async () => true,
+		createAttemptId: () => "empty-marker",
+		setStreamingStatus: () => undefined,
+		getStreamingStatus: () => false,
+		seedLifecycleState: () => undefined,
+		setLifecycleState: () => undefined,
+		queryRuntime: engineQuery(() => "unknown"),
+		stopRuntime: async () => undefined,
+		onStreamStopped: () => undefined,
+	});
+	restarted.setCarryingOtaProtection(true);
+	expect(await session.reconcile()).toBe("reconciling");
+	restarted.setCarryingOtaProtection(false);
+	expect(markerLine()).toBe("");
+	expect(inhibitorHeld).toBe(true);
+	restarted.clearOtaStreamingMarker();
 });

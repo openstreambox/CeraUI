@@ -669,6 +669,47 @@ function isZodLikeError(err: unknown): boolean {
 	);
 }
 
+/**
+ * Whether this binding can read every status the engine may send. An engine
+ * whose schema is newer than the binding's can add a value the binding's
+ * parser rejects, and the client drops such an event without a trace, so a
+ * running session would look silent. Unreadable versions count as newer.
+ */
+export function engineStatusIsReadable(engineSchema: string): boolean {
+	const parse = (version: string) => {
+		const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+		return parts === null ? undefined : parts.slice(1, 4).map(Number);
+	};
+	const engine = parse(engineSchema);
+	const binding = parse(SCHEMA_VERSION);
+	if (engine === undefined || binding === undefined) return false;
+	for (let at = 0; at < 3; at++) {
+		const [e = 0, b = 0] = [engine[at], binding[at]];
+		if (e !== b) return e < b;
+	}
+	return true;
+}
+
+/**
+ * One request answered on the subscription's own connection after a silent
+ * window. "No callback" is not silence by itself: the connection may have
+ * dropped (the client tells pending requests, not subscriptions), or a status
+ * the engine sent in time may still sit unread behind a timer that fired
+ * during an event-loop stall. The engine writes and the client reads lines in
+ * order, so a reply means the connection lasted and every status sent before
+ * it has already reached the handler. A result, a typed engine error and a
+ * result the binding cannot parse are all replies; a timeout or a lost
+ * connection are not.
+ */
+async function repliesInOrder(client: CerastreamClient): Promise<boolean> {
+	try {
+		await client.listSwitchTargets();
+		return true;
+	} catch (error) {
+		return error instanceof CerastreamRpcError || isZodLikeError(error);
+	}
+}
+
 export function classifyConnectHandshakePhase(
 	error: unknown,
 ): "connect" | "hello" {
@@ -1210,12 +1251,15 @@ export class CerastreamBackend implements StreamingBackend {
 			}, ENGINE_STATE_RECONCILE_TIMEOUT);
 			const runtimeState = await runtimeStateEvent;
 			acceptingEvents = false;
+			const stillSilent = () =>
+				!heard && ownsQuery() && this.clientEpoch === clientEpoch;
 			if (
 				runtimeState === "unknown" &&
 				timedOut &&
-				!heard &&
-				ownsQuery() &&
-				this.clientEpoch === clientEpoch
+				stillSilent() &&
+				engineStatusIsReadable(client.hello.schema_version) &&
+				(await repliesInOrder(client)) &&
+				stillSilent()
 			)
 				silent();
 			if (

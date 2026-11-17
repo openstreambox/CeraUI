@@ -97,15 +97,21 @@ type Owner = ReturnType<typeof createOtaMarkerOwner>;
 
 function world() {
 	const { disk, fs } = memoryFs();
-	const boot = () =>
+	// The inhibitor owners this process holds; a restart drops them all.
+	const held = { encoder: false, carrying: false };
+	const boot = (inhibitor: typeof held = held) =>
 		createOtaMarkerOwner({
 			path: () => PATH,
 			fs,
-			setShutdownProtection: () => true,
+			setShutdownProtection: (name, active) => {
+				inhibitor[name] = active;
+				return true;
+			},
 			quiet: true,
 		});
 	return {
 		disk,
+		held,
 		boot,
 		owner: boot(),
 		carrying: false,
@@ -185,6 +191,8 @@ function apply(w: World, event: Event): boolean {
 			// the engine stay.
 			w.inherited = w.disk.files.get(PATH) === LINE;
 			w.streamKnown = w.streamLive && w.disk.files.get(PATH) === "";
+			w.held.encoder = false;
+			w.held.carrying = false;
 			w.owner = w.boot();
 			w.carrying = false;
 			return true;
@@ -200,7 +208,7 @@ function apply(w: World, event: Event): boolean {
 
 /** What a replacement backend concludes from the file and the engine. */
 function replacementReads(w: World): "idle" | "unknown" {
-	const next = w.boot();
+	const next = w.boot({ encoder: false, carrying: false });
 	if (next.liveness() === "idle") return "idle";
 	return next.awaitsIdleWitness() && !w.streamLive ? "idle" : "unknown";
 }
@@ -216,6 +224,11 @@ function check(w: World, path: readonly Event[]) {
 	// unmarked.)
 	if (w.streamLive && w.launchedMarked && content === LINE)
 		throw new Error(`carrying line beside a launched stream: ${where}`);
+	// The inhibitor follows the same knowledge as the file.
+	if (w.streamLive && w.streamKnown && !w.held.encoder)
+		throw new Error(`known stream without the encoder inhibitor: ${where}`);
+	if (w.inherited && !w.held.encoder)
+		throw new Error(`unconfirmed line without the encoder inhibitor: ${where}`);
 	if (w.streamLive && w.streamKnown && content !== undefined) {
 		if (replacement !== "unknown")
 			throw new Error(`replacement backend reads a stream as idle: ${where}`);
@@ -243,6 +256,13 @@ function check(w: World, path: readonly Event[]) {
 	const own = w.streamKnown || w.inherited ? "unknown" : "idle";
 	if (w.owner.liveness() !== own)
 		throw new Error(`this backend misreads its own marker: ${where}`);
+	if (
+		!w.streamKnown &&
+		!w.inherited &&
+		!w.carrying &&
+		(w.held.encoder || w.held.carrying)
+	)
+		throw new Error(`an inhibitor outlives every holder: ${where}`);
 }
 
 function walk(depth: number): number {
@@ -368,10 +388,16 @@ test("a process that dies between the sibling and the rename leaves the old mark
 	first.releaseEncoder();
 	expect(disk.files.get(PATH)).toBe("");
 	expect(disk.files.get(`${PATH}.new`)).toBe(LINE);
-	// Only the marker counts; the orphaned sibling says nothing.
+	// Only the marker counts; the orphaned sibling says nothing, and the next
+	// process tidies it away.
+	(fs as { rmSync: unknown }).rmSync = (path: string) => {
+		disk.files.delete(path);
+	};
 	const next = owner(fs);
 	expect(next.liveness()).toBe("unknown");
 	expect(next.awaitsIdleWitness()).toBe(false);
+	expect(disk.files.has(`${PATH}.new`)).toBe(false);
+	expect(disk.files.get(PATH)).toBe("");
 });
 
 test("content near the line is not the line", () => {

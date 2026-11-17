@@ -10,6 +10,7 @@ import {
 	CerastreamConnectionError,
 	CerastreamRpcError,
 	CerastreamTimeoutError,
+	SCHEMA_VERSION,
 } from "@ceralive/cerastream";
 import type { RuntimeConfig } from "../helpers/config-schemas.ts";
 import {
@@ -17,8 +18,12 @@ import {
 	type CerastreamBackendDeps,
 	cerastreamBackend,
 	classifyConnectHandshakePhase,
+	engineStatusIsReadable,
 } from "../modules/streaming/cerastream-backend.ts";
-import { withRuntimeObservationOwner } from "../modules/streaming/engine-runtime-observation.ts";
+import {
+	currentRuntimeObservationSilence,
+	withRuntimeObservationOwner,
+} from "../modules/streaming/engine-runtime-observation.ts";
 import { deriveStreamHealth } from "../modules/streaming/health.ts";
 import {
 	createLaunchTransaction,
@@ -83,6 +88,10 @@ interface FakeClientOptions {
 	readonly startGate?: Promise<StartResult>;
 	readonly stopGate?: Promise<{ state: "idle" }>;
 	readonly subscribeGate?: Promise<void>;
+	/** The engine schema the fake reports in `hello`. */
+	readonly schemaVersion?: string;
+	/** What `listSwitchTargets` does; an empty answer by default. */
+	readonly roundTrip?: () => Promise<{ switch_targets: [] }>;
 }
 
 function makeFakeClient(options: FakeClientOptions = {}): FakeClientHarness {
@@ -113,7 +122,7 @@ function makeFakeClient(options: FakeClientOptions = {}): FakeClientHarness {
 	const client: CerastreamClient = {
 		hello: {
 			protocol: "cerastream-ipc/1",
-			schema_version: "test",
+			schema_version: options.schemaVersion ?? "test",
 			engine_version: "test",
 		},
 		start: async (params) => {
@@ -207,7 +216,8 @@ function makeFakeClient(options: FakeClientOptions = {}): FakeClientHarness {
 			throw new Error("fixture setEdidProfile is not exercised");
 		},
 		listSwitchTargets: async () => {
-			throw new Error("fixture listSwitchTargets is not exercised");
+			calls.push({ op: "list-switch-targets" });
+			return options.roundTrip?.() ?? { switch_targets: [] };
 		},
 		close: async () => {
 			calls.push({ op: "close" });
@@ -1285,6 +1295,8 @@ describe("a reconciliation that hears nothing", () => {
 			},
 			cancelTimeout: () => undefined,
 			...opts,
+			// An engine on the binding's own schema, unless a test says otherwise.
+			fakeOptions: { schemaVersion: SCHEMA_VERSION, ...opts.fakeOptions },
 		});
 		let silent = 0;
 		const observe = () =>
@@ -1337,6 +1349,128 @@ describe("a reconciliation that hears nothing", () => {
 		h.timers[0]?.();
 		expect(await answer).toBe("unknown");
 		expect(h.silent()).toBe(0);
+	});
+
+	/** One silent window, then whatever the round trip does. */
+	async function silentWindow(
+		fakeOptions: FakeClientOptions,
+	): Promise<{ answer: string; silent: number; calls: string[] }> {
+		const h = silenceHarness({ fakeOptions });
+		const answer = h.observe();
+		await h.fake.subscribed;
+		await waitFor(() => h.timers.length === 1);
+		h.timers[0]?.();
+		return {
+			answer: await answer,
+			silent: h.silent(),
+			calls: h.fake.calls.map((call) => call.op),
+		};
+	}
+
+	test("silence is confirmed by a reply on the same connection", async () => {
+		const r = await silentWindow({});
+		expect(r).toMatchObject({ answer: "unknown", silent: 1 });
+		expect(r.calls).toContain("list-switch-targets");
+	});
+
+	test("a connection that dropped during the window is not silence", async () => {
+		// The client tells pending requests about a lost connection, not
+		// subscriptions, so the window alone looked silent.
+		const r = await silentWindow({
+			roundTrip: async () => {
+				throw new CerastreamConnectionError(
+					"control connection lost",
+					undefined,
+					"lost",
+				);
+			},
+		});
+		expect(r).toMatchObject({ answer: "unknown", silent: 0 });
+	});
+
+	test("a status read after a timer that fired during a stall is not silence", async () => {
+		// The status was on the wire before the reply; the client reads lines in
+		// order, so it reaches the handler before the round trip resolves.
+		let fake: FakeClientHarness | undefined;
+		const h = silenceHarness({
+			fakeOptions: {
+				roundTrip: async () => {
+					fake?.emit({
+						type: "status",
+						seq: 1,
+						state: "streaming",
+						streaming: true,
+					});
+					return { switch_targets: [] };
+				},
+			},
+		});
+		fake = h.fake;
+		const answer = h.observe();
+		await h.fake.subscribed;
+		await waitFor(() => h.timers.length === 1);
+		h.timers[0]?.();
+		expect(await answer).toBe("unknown");
+		expect(h.silent()).toBe(0);
+	});
+
+	test("a round trip that times out is not silence", async () => {
+		const r = await silentWindow({
+			roundTrip: async () => {
+				throw new CerastreamTimeoutError("list-switch-targets", 2500);
+			},
+		});
+		expect(r.silent).toBe(0);
+	});
+
+	test("a typed engine error is still a reply", async () => {
+		const r = await silentWindow({
+			roundTrip: async () => {
+				throw new CerastreamRpcError(-32601, "method not found", undefined, 7);
+			},
+		});
+		expect(r.silent).toBe(1);
+	});
+
+	test("an engine on a newer schema than the binding is not trusted to be silent", async () => {
+		// Its statuses may carry values this binding's parser drops unseen.
+		const r = await silentWindow({ schemaVersion: "99.0.0" });
+		expect(r).toMatchObject({ answer: "unknown", silent: 0 });
+		expect(r.calls).not.toContain("list-switch-targets");
+		const older = await silentWindow({ schemaVersion: "0.1.0" });
+		expect(older.silent).toBe(1);
+	});
+
+	test("schema versions compare by number, and anything unreadable is newer", () => {
+		expect(engineStatusIsReadable(SCHEMA_VERSION)).toBe(true);
+		expect(engineStatusIsReadable("0.0.1")).toBe(true);
+		expect(engineStatusIsReadable("0.9.0")).toBe(
+			Number(SCHEMA_VERSION.split(".")[1]) >= 9,
+		);
+		expect(engineStatusIsReadable("1000.0.0")).toBe(false);
+		const [major, minor, patch] = SCHEMA_VERSION.split(".").map(Number);
+		expect(
+			engineStatusIsReadable(`${major}.${minor}.${(patch ?? 0) + 1}`),
+		).toBe(false);
+		expect(engineStatusIsReadable("test")).toBe(false);
+		expect(engineStatusIsReadable("0.24")).toBe(false);
+	});
+
+	test("a query a newer one replaced on the same backend reports no silence", async () => {
+		const h = silenceHarness();
+		const first = h.observe();
+		await h.fake.subscribed;
+		await waitFor(() => h.timers.length === 1);
+		// The observation owner is still current; only the backend's own probe
+		// epoch says this query is no longer the one being answered.
+		const second = h.observe();
+		await waitFor(() => h.timers.length === 2);
+		h.timers[0]?.();
+		expect(await first).toBe("unknown");
+		expect(h.silent()).toBe(0);
+		h.timers[1]?.();
+		expect(await second).toBe("unknown");
+		expect(h.silent()).toBe(1);
 	});
 
 	test("an unreachable engine is not silence", async () => {
@@ -1411,6 +1545,93 @@ describe("a reconciliation that hears nothing", () => {
 			expect(await reconciled).toBe(second === "silent" ? "idle" : "streaming");
 			expect(witnessPending).toBe(false);
 		}
+	});
+
+	test("a superseded witness asks no further question", async () => {
+		const gate = Promise.withResolvers<void>();
+		let queries = 0;
+		let witnessPending = true;
+		const orchestrator = createStreamSessionOrchestrator({
+			initialLiveness: () => (witnessPending ? "unknown" : "idle"),
+			awaitsIdleWitness: () => witnessPending,
+			confirmStreamingForOta: () => {
+				witnessPending = false;
+				return true;
+			},
+			createAttemptId: () => "superseded",
+			setStreamingStatus: () => undefined,
+			getStreamingStatus: () => false,
+			stopRuntime: async () => undefined,
+			queryRuntime: async () => {
+				queries += 1;
+				// Later queries cannot reach the engine, so the line keeps waiting.
+				if (queries > 1) return "unknown";
+				currentRuntimeObservationSilence()();
+				await gate.promise;
+				return "unknown";
+			},
+		});
+		const first = orchestrator.reconcile();
+		await waitFor(() => queries === 1);
+		// A newer reconciliation takes over while the first one's silent answer
+		// is still on its way back.
+		expect(await orchestrator.reconcile()).toBe("reconciling");
+		gate.resolve();
+		expect(await first).toBe("reconciling");
+		// The superseded one must not go on to a second question.
+		expect(queries).toBe(2);
+		expect(witnessPending).toBe(true);
+	});
+
+	test("an engine without a process confirms the line; one that may be running does not", async () => {
+		for (const [unit, expected] of [
+			[[true, true], "idle"],
+			[[true, false], "reconciling"],
+			[[false], "reconciling"],
+		] as const) {
+			const answers = [...unit];
+			let witnessPending = true;
+			let unitChecks = 0;
+			const orchestrator = createStreamSessionOrchestrator({
+				initialLiveness: () => (witnessPending ? "unknown" : "idle"),
+				awaitsIdleWitness: () => witnessPending,
+				unmarkStreamingForOta: () => {
+					witnessPending = false;
+					return true;
+				},
+				engineStopped: async () => {
+					unitChecks += 1;
+					return answers.shift() ?? false;
+				},
+				createAttemptId: () => "unit",
+				setStreamingStatus: () => undefined,
+				getStreamingStatus: () => false,
+				stopRuntime: async () => undefined,
+				// The engine cannot be reached at all.
+				queryRuntime: async () => "unknown",
+			});
+			expect(await orchestrator.reconcile()).toBe(expected);
+			expect(unitChecks).toBe(unit.length);
+		}
+	});
+
+	test("the engine unit is not consulted without an inherited line", async () => {
+		let unitChecks = 0;
+		const orchestrator = createStreamSessionOrchestrator({
+			initialLiveness: "unknown",
+			awaitsIdleWitness: () => false,
+			engineStopped: async () => {
+				unitChecks += 1;
+				return true;
+			},
+			createAttemptId: () => "plain-unit",
+			setStreamingStatus: () => undefined,
+			getStreamingStatus: () => false,
+			stopRuntime: async () => undefined,
+			queryRuntime: async () => "unknown",
+		});
+		expect(await orchestrator.reconcile()).toBe("reconciling");
+		expect(unitChecks).toBe(0);
 	});
 
 	test("silence without an inherited line keeps the old meaning", async () => {

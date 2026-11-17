@@ -142,6 +142,13 @@ export function createOtaMarkerOwner(io: {
 			: replace(content) || rewrite(content);
 	};
 
+	// A process that died between writing the sibling and renaming it left
+	// the sibling behind. Nothing reads it; it is only tidied away.
+	attempt(
+		() => io.fs.rmSync(`${io.path()}.new`, { force: true }),
+		() => undefined,
+	);
+
 	let carrying = false;
 	// True while the file, if any, is ours and no stream stands behind it:
 	// created from absence or handed back by a confirmed encoder idle.

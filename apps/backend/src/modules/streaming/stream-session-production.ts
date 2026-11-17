@@ -9,6 +9,7 @@ import {
 	changeEngineRuntimeConfig,
 } from "./config-change-bridge.ts";
 import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
+import { engineUnitStopped } from "./engine-unit-state.ts";
 import {
 	globalStreamHold,
 	tryAcquireLifecycle,
@@ -105,5 +106,6 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	unmarkStreamingForOta: clearOtaStreamingMarker,
 	confirmStreamingForOta: adoptOtaStreamingMarker,
 	awaitsIdleWitness: otaMarkerAwaitsIdleWitness,
+	engineStopped: () => engineUnitStopped(),
 	onStreamStopped: noteStreamStopped,
 };

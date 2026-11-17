@@ -244,12 +244,20 @@ export type StreamSessionOrchestratorDeps = {
 	 * separate queries, because a running engine session reports its status.
 	 */
 	readonly awaitsIdleWitness?: () => boolean;
+	/**
+	 * True only when the engine provably has no process (its unit is stopped,
+	 * failed or waiting to restart, with no main process). Asked only while an
+	 * inherited line waits and the engine could not be heard, so an engine
+	 * that stays down does not hold the line, and every update, until reboot.
+	 */
+	readonly engineStopped?: () => Promise<boolean>;
 };
 
 /**
- * Separate silent engine queries that confirm an inherited carrying line. One
- * query waits 2.5 s and a running session reports status about every 2 s, so
- * two give more than two of its periods.
+ * Separate engine queries, each silent or finding no engine process, that
+ * confirm an inherited carrying line. One query waits 2.5 s and a running
+ * session reports status about every 2 s, so two give more than two of its
+ * periods.
  */
 export const SILENT_WITNESS_QUERIES = 2;
 
@@ -950,11 +958,15 @@ export function createStreamSessionOrchestrator(
 				).catch(() => "unknown" as const);
 				if (
 					runtimeState !== "unknown" ||
-					!silent ||
 					superseded() ||
 					deps.awaitsIdleWitness?.() !== true
 				)
 					break;
+				const noSession =
+					silent ||
+					((await deps.engineStopped?.().catch(() => false)) === true &&
+						!superseded());
+				if (!noSession) break;
 				if (++silentQueries < SILENT_WITNESS_QUERIES) continue;
 				runtimeState = "idle";
 				break;
