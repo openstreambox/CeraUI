@@ -53,10 +53,18 @@ carrying alone, takes its own startup hold and reaches `idle`. Without it, a
 restart inside the hold or while carrying (a crash, or the image restarting
 the service early in boot) stayed `reconciling` and refused Start until a Stop.
 Any other marker present before carrying wrote it still counts as unknown, so a
-restart beside a running stream adopts it or stays protected. Start empties the
-line before a launch is submitted, replacing a file it cannot rewrite; if the
-line cannot be taken off the file at all, Start is refused as for unavailable
-shutdown protection, since a later process would read a live stream as idle.
+restart beside a running stream adopts it or stays protected.
+
+One owner (`createOtaMarkerOwner`) writes the file, and its content follows
+from who holds it at each change: a stream keeps it empty, carrying alone keeps
+the line, nobody removes it. A Start changes nothing until its last admission
+step, which runs in the same tick as the launch: the stream takes the file
+(rewritten, or replaced by rename when it cannot be rewritten), and the launch
+goes only if the file is then seen without the line. Otherwise Start is refused
+as for unavailable shutdown protection, since a later process would read a live
+stream as idle. A cancelled or refused Start therefore leaves the marker as it
+was. `ota-marker-owner.test.ts` walks every sequence of holder changes, write
+failures and restarts to a fixed depth against these rules.
 The idle clock includes carrying and its last hold boundary. Updates retain all
 existing control leases and final admission checks. A persistent informational
 notice explains why updates, reboot, power-off and idle link changes wait, without
