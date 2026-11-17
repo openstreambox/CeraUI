@@ -63,6 +63,7 @@ import {
 	setPresentPhysicalDevices,
 	usableUsbSerial,
 } from "../modems/physical-identity.ts";
+import { IDENTITY_READINESS_DEADLINE_MS } from "./identity-readiness.ts";
 import {
 	classifyUsbNetDevice,
 	modelLabel,
@@ -625,7 +626,7 @@ const readingInvalidatedListeners = new Set<() => void>();
 const identityFirstPublishedAt = new Map<string, number>();
 const identityDeadlineWarnings = new Set<string>();
 
-export const IDENTITY_READINESS_DEADLINE_MS = 15_000;
+export { IDENTITY_READINESS_DEADLINE_MS };
 
 /** A completed read counts even when the interface has no USB descriptor. */
 export function usbNetScanCovers(ifname: string): boolean {

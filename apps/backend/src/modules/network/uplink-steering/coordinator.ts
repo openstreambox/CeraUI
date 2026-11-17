@@ -1,5 +1,5 @@
 import { logger } from "../../../helpers/logger.ts";
-import { IDENTITY_READINESS_DEADLINE_MS } from "../router-cellular-scan.ts";
+import { IDENTITY_READINESS_DEADLINE_MS } from "../identity-readiness.ts";
 import type { PreparedSteeringState } from "./applier.ts";
 import {
 	type SteeringAvailability,

@@ -1,6 +1,6 @@
 import { isFibTableAbsent } from "../../../helpers/iproute2-absent.ts";
-import { parseDefaultRouteInterface } from "../connectivity-candidates.ts";
-import { parseDefaultRouteLine } from "../gateways.ts";
+import { parseDefaultRouteLine } from "../default-route.ts";
+import { parseDefaultRouteInterface } from "../default-route-interface.ts";
 import type { RouteProvisioning, UplinkRoutePlan } from "./applier.ts";
 import { routeUnavailable } from "./route-errors.ts";
 import {

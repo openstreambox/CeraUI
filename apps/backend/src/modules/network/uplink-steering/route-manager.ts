@@ -1,5 +1,5 @@
 import { run } from "../../../helpers/run.ts";
-import { parseDefaultRouteInterface } from "../connectivity-candidates.ts";
+import { parseDefaultRouteInterface } from "../default-route-interface.ts";
 import type { RouteProvisioning, UplinkRoutePlan } from "./applier.ts";
 import { markForSlot, slotForManagedTable } from "./mark-layout.ts";
 import { asRouteError } from "./route-errors.ts";
