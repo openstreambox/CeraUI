@@ -46,7 +46,7 @@ carrying after a confirmed encoder idle) is not stream evidence. Otherwise the
 startup hold, which is published before the first reconciliation, would make
 every clean boot look like an inherited marker; an idle engine pushes no status
 on subscribe, so the session would stay `reconciling` until an operator Stop.
-A carrying-only marker holds the line `carrying <uptime seconds>`; a stream's marker is empty,
+A carrying-only marker holds the line `carrying`; a stream's marker is empty,
 and the image checks existence only. `/run` outlives a backend restart, so a
 new process that finds that line knows its predecessor held the file for
 carrying alone, takes its own startup hold and reaches `idle`. Without it, a
@@ -64,17 +64,7 @@ goes only if the file is then seen without the line. Otherwise Start is refused
 as for unavailable shutdown protection, since a later process would read a live
 stream as idle. A cancelled or refused Start therefore leaves the marker as it
 was. `ota-marker-owner.test.ts` walks every sequence of holder changes, write
-failures, ticks and restarts to a fixed depth against these rules.
-
-A stream the backend only adopts cannot be refused, and a write that fails at
-that moment cannot leave any other durable sign. So the line expires: carrying
-refreshes its uptime stamp on every 5 s tick, and a later process trusts a line
-only while it is at most 30 s old (a service restart measured 2 s on a device).
-A stream holder that could not empty the file stops the refresh and retries the
-empty on every tick. What remains is a backend restart within those 30 s beside
-an adopted stream whose marker could not be written, with the fault gone and the
-engine silent afterwards. A restart slower than 30 s reads its predecessor's
-line as unknown and waits for a Stop, as before this change.
+failures and restarts to a fixed depth against these rules.
 The idle clock includes carrying and its last hold boundary. Updates retain all
 existing control leases and final admission checks. A persistent informational
 notice explains why updates, reboot, power-off and idle link changes wait, without
@@ -114,8 +104,7 @@ probe releases its claim. Each full probe, including body reading, is bounded to
 two seconds; overlapping polls are skipped. Valid observations reset the failure
 budget. A previous active session still gets the central reconnect hold.
 
-The marker is updated only when protection changes, with failed writes retried;
-the one exception is the 5 s refresh of a carrying-only line's stamp.
+The marker is updated only when protection changes, with failed writes retried.
 Qualification samples count as idle-clock activity; after carrying ends the clock
 ages from the hold boundary rather than remaining pinned to the current time.
 
