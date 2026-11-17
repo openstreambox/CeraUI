@@ -15,7 +15,7 @@ test("the packaged root entrypoint is locked and unreachable from RPC or remote 
 	expect(wrapper).toContain("$(id -u)");
 	expect(packageScript).toContain("cp deployment/ceralive-update-recover");
 	expect(packageScript).toContain(
-		"bun build apps/backend/src/modules/system/update-orchestrator/recovery-cli.ts --compile",
+		"NODE_ENV=production bun build apps/backend/src/modules/system/update-orchestrator/recovery-cli.ts --minify --sourcemap --compile",
 	);
 	expect(packageScript).toContain(
 		'chmod 0700 "$TEMP_DIR/usr/sbin/ceralive-update-recover"',

@@ -67,6 +67,7 @@ for mask in 077 022; do
       [[ "${NODE_ENV:-}" == production ]] || fail 'recovery must compile for production'
       local outfile="${!#}"
       printf '#!/bin/sh\nexit 0\n' > "${outfile#--outfile=}"
+      printf '{"sourcesContent":["private source"]}\n' > "${outfile#--outfile=}.map"
     }
     # shellcheck source=/dev/null
     source "$work/stage.sh" > "$work/$mask-fpm.log" 2>&1
@@ -75,6 +76,7 @@ for mask in 077 022; do
     cut -d ' ' -f1 "$work/$mask.modes" | sort | uniq -c > "$work/$mask.histogram"
     mkdir extracted
     dpkg-deb -x dist/debian/ceralive-device-modes_0.0.0-test_arm64.deb extracted
+    [[ -z "$(find extracted -name '*.map' -print -quit)" ]] || fail 'source maps shipped in package'
     (
       cd "$TEMP_DIR"
       find . -type f -print0 | sort -z | xargs -0 sha256sum > "$work/$mask.hashes"

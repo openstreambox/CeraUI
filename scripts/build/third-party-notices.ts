@@ -84,7 +84,7 @@ export type BundledPackage = {
 };
 
 const LICENCE_FILE_RE =
-	/(^|[-_.])((?:un)?licen[cs]e|copying|notices?)([-_.]|$)|^third[-_]?party[-_]?notices?(?:[-_.]|$)/i;
+	/(^|[-_.])((?:un)?licen[cs]e|copying|copyright|notices?)([-_.]|$)|^third[-_]?party[-_]?notice(?:s|text)?(?:[-_.]|$)/i;
 const CODE_FILE_RE =
 	/\.(?:[cm]?[jt]sx?|py|sh|c|cc|cpp|h|hpp|css|svelte|json|map|wasm|node|rs|go|rb|java)$/i;
 
@@ -311,6 +311,10 @@ export function cssSources(repoRoot: string, entries: string[]): string[] {
 		if (visited.has(file)) return;
 		visited.add(file);
 		const text = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+		if (/@(?:plugin|config)\b/i.test(text)) {
+			throw new Error(`unsupported CSS attribution directive in ${file}: trace its plugins before use`);
+		}
+
 		for (const statement of text.matchAll(/@import\s+([^;]+);/g)) {
 			const match = /^(?:url\(\s*)?["']([^"']+)["']/.exec(statement[1] ?? "");
 			if (!match) throw new Error(`unsupported CSS import in ${file}: ${statement[0]}`);

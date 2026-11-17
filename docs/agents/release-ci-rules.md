@@ -180,3 +180,8 @@ needs an explicit attribution rule; this is not a general CSS provenance graph.
 Only the named Vite preload and modulepreload virtual helpers may be omitted
 from map paths; Vite's licence is included separately for those helpers. Other
 virtual or scheme sources and unresolved node_modules paths stop generation.
+
+CSS `@plugin` and `@config` directives fail closed until their attribution is
+implemented. The existing Tailwind build-tool rule still names its generated CSS
+and animation plugin. Recovery source-map sidecars are removed after checking
+the actual compiled binary; package inspection rejects any shipped `.map`.

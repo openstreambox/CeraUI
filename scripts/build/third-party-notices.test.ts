@@ -231,6 +231,9 @@ describe("third-party notices", () => {
 				UNLICENSE: "Public domain notice\n",
 				"ThirdPartyNotices.txt": "Inherited notice\n",
 				"notice.js": "code, not a notice",
+				COPYRIGHT: "Copyright fixture text\n",
+				"COPYRIGHT.cpp": "source code fixture",
+				"ThirdPartyNoticeText.txt": "TypeScript-style notice\n",
 			},
 		);
 		f.backend.get("recovery")!.push(second);
@@ -240,9 +243,21 @@ describe("third-party notices", () => {
 		expect(notices).toContain("Apache variant text");
 		expect(notices).toContain("Public domain notice");
 		expect(notices).toContain("Inherited notice");
+		expect(notices).toContain("Copyright fixture text");
+		expect(notices).toContain("TypeScript-style notice");
+		expect(notices).not.toContain("source code fixture");
 		expect(notices).not.toContain("code, not a notice");
 		write(f.root, "node_modules/second/node_modules/alpha/LICENSE", "conflicting");
 		await expect(run(f)).rejects.toThrow(/conflicting licence file/);
+	});
+
+	test("CSS plugin and config directives fail closed, including nested imports", () => {
+		for (const directive of ['@plugin "plug";', '@config "./tailwind.config.ts";']) {
+			const f = fixture();
+			write(f.root, "entry.css", '@import "./nested.css";');
+			write(f.root, "nested.css", directive);
+			expect(() => cssSources(f.root, ["entry.css"])).toThrow(/unsupported CSS attribution directive/);
+		}
 	});
 
 	test("exceptions expire at a version boundary", async () => {

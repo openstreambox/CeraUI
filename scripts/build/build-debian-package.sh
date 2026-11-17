@@ -137,6 +137,10 @@ NODE_ENV=production bun scripts/build/third-party-notices.ts "$TEMP_DIR/usr/shar
     --check-binary "/usr/local/bin/ceralive=$TEMP_DIR/usr/local/bin/ceralive" \
     --check-binary "/usr/libexec/ceralive/ceralive-update-recover=$TEMP_DIR/usr/libexec/ceralive/ceralive-update-recover"
 
+# Bun embeds the map for membership verification and also writes a sidecar.
+# Keep the embedded map, but never ship the source-bearing sidecar.
+rm "$TEMP_DIR/usr/libexec/ceralive/ceralive-update-recover.map"
+
 # Normalize copied artifacts and builder umask before applying private/executable modes.
 find "$TEMP_DIR" -type d -exec chmod 0755 {} +
 find "$TEMP_DIR" -type f -exec chmod 0644 {} +
