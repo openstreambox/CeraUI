@@ -1,4 +1,5 @@
 {
+	"network.view.remotePrivacy": "El estado remoto de la red usa etiquetas privadas. Administra la red en el dispositivo.",
 	"network.esim.reportHelp": "Estado de SIM informado por el módem. Abre Perfiles eSIM abajo para administrar una eUICC configurada.",
 	"network.esim.errors.device_decommissioned": "Este módem se retiró del servicio. Revisa su estado de recuperación.",
 	"network.esim.errors.rebaseline_required": "Este dispositivo necesita una base de recuperación verificada antes de administrar eSIM.",
