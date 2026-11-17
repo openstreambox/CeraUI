@@ -168,6 +168,18 @@ export function getTarget(reg: AsyncOpRegistry, key: string): unknown {
 }
 
 /**
+ * The identity of `key`'s current attempt, unique to each begin. A surface that
+ * must pair a later confirmation with its own dispatch compares this token; a
+ * phase alone cannot tell one attempt's `confirmed` from another's.
+ */
+export function getAttempt(
+	reg: AsyncOpRegistry,
+	key: string,
+): symbol | undefined {
+	return reg.ops[key]?.attempt;
+}
+
+/**
  * Begin an operation: enter `pending` and reset the TTL. Calling `begin` from
  * ANY phase re-arms the entry (overwriting is allowed) — this is what makes a
  * Retry on a stale-pending or terminal op safe. Always succeeds (`true`).
@@ -292,6 +304,7 @@ export const asyncOpCore = {
 	isPending,
 	getReason,
 	getTarget,
+	getAttempt,
 	begin,
 	confirm,
 	fail,
@@ -313,6 +326,7 @@ interface AsyncOpStore {
 	isPending: (key: string) => boolean;
 	getReason: (key: string) => string | undefined;
 	getTarget: (key: string) => unknown;
+	getAttempt: (key: string) => symbol | undefined;
 	begin: (
 		key: string,
 		target?: unknown,
@@ -372,6 +386,7 @@ function createAsyncOpStore(): AsyncOpStore {
 		isPending: (key) => isPending(registry, key),
 		getReason: (key) => getReason(registry, key),
 		getTarget: (key) => getTarget(registry, key),
+		getAttempt: (key) => getAttempt(registry, key),
 		begin: (key, target, now = Date.now(), ttlMs) => {
 			begin(registry, key, target, now, ttlMs);
 			latestOwners.set(key, registry);
@@ -442,6 +457,14 @@ export function getOperationReason(key: string): string | undefined {
 /** The target `key`'s operation was begun with (`undefined` when it holds none). */
 export function getOperationTarget(key: string): unknown {
 	return store().getTarget(key);
+}
+
+/**
+ * The token of `key`'s current attempt (`undefined` while idle). Read inside a
+ * reactive context it re-runs whenever a new attempt begins or the entry ends.
+ */
+export function getOperationAttempt(key: string): symbol | undefined {
+	return store().getAttempt(key);
 }
 
 /**
