@@ -597,10 +597,3 @@ test("a carrying line without a fresh stamp is not trusted", async () => {
 		restarted.setCarryingOtaProtection(false);
 	}
 });
-
-test("production refreshes the marker on the carrying heartbeat", () => {
-	const main = readFileSync(new URL("../main.ts", import.meta.url), "utf8");
-	expect(main).toMatch(
-		/onHeartbeatTick\(\(\) => \{\s*void tickCarrying\(\);\s*tickOtaMarker\(\);/,
-	);
-});

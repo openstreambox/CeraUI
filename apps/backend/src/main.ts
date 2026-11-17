@@ -144,7 +144,6 @@ import {
 	broadcastLinkTelemetryIfChanged,
 	setMockLinkTelemetryProvider,
 } from "./modules/streaming/link-telemetry.ts";
-import { tickOtaMarker } from "./modules/streaming/ota-streaming-marker.ts";
 import { getPipelineList } from "./modules/streaming/pipelines.ts";
 import { setMockPreviewEncoderRealizedProvider } from "./modules/streaming/preview-encoder-status.ts";
 import { beginRecoveryBarrier } from "./modules/streaming/recovery-barrier.ts";
@@ -676,7 +675,6 @@ onHeartbeatTick(broadcastHealthIfChanged);
 onHeartbeatTick(broadcastLinkTelemetryIfChanged);
 onHeartbeatTick(() => {
 	void tickCarrying();
-	tickOtaMarker();
 	void tickUplinkShaper();
 });
 
