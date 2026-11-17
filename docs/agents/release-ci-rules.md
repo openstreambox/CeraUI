@@ -165,3 +165,18 @@ matrix plus two sibling jobs, and five properties of that split are load-bearing
   that release's file and updating the version, revision and sha256 in the policy.
 - **The frontend cache keeps `dist/sourcemaps/`** because the notices are read
   from it; a cache without it is rebuilt.
+
+CSS imports from `apps/frontend/src/app.css` are traversed separately because
+production CSS has no maps. Missing imports fail. Both executable censuses use
+production/minify flags, and each embedded map is checked against that executable's
+own notice membership. Exceptions name an exact package version. Notice files
+from duplicate installations are merged; conflicting copies fail. Fresh builds
+and cache restoration replace the previous source-map directory.
+
+The Tailwind CSS rule also includes `tailwindcss-animate`, which generates CSS
+from the Tailwind configuration. CSS created by future configuration plugins
+needs an explicit attribution rule; this is not a general CSS provenance graph.
+
+Only the named Vite preload and modulepreload virtual helpers may be omitted
+from map paths; Vite's licence is included separately for those helpers. Other
+virtual or scheme sources and unresolved node_modules paths stop generation.

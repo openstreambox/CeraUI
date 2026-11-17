@@ -71,12 +71,16 @@
 				"files": "\\.css$",
 				"marker": "/*! tailwindcss v",
 				"packages": [
-					"tailwindcss"
+					"tailwindcss",
+					"tailwindcss-animate"
 				],
 				"resolveFrom": [
 					"apps/frontend"
 				]
 			}
+		],
+		"additionalPackages": [
+			"vite"
 		]
 	},
 	"runtime": {
@@ -88,9 +92,12 @@
 		"sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd"
 	},
 	"withoutLicenceText": {
-		"@ceralive/cerastream": "Its package.json declares GPL-3.0, but the package contains no licence file.",
-		"@ceralive/control-protocol": "Its package.json declares GPL-3.0, but the package contains no licence file.",
-		"@ceralive/modem-control": "Its package.json declares AGPL-3.0, but the package contains no licence file.",
-		"gsap": "Its package.json and README.md refer to GreenSock's standard no-charge licence at https://gsap.com/standard-license; the licence text itself is not in the package."
-	}
+		"@ceralive/cerastream@2026.11.2": "Its package.json declares GPL-3.0, but the package contains no licence file.",
+		"@ceralive/control-protocol@2026.7.0": "Its package.json declares GPL-3.0, but the package contains no licence file.",
+		"@ceralive/modem-control@1.4.0": "Its package.json declares AGPL-3.0, but the package contains no licence file.",
+		"gsap@3.15.1": "Its package.json and README.md refer to GreenSock's standard no-charge licence at https://gsap.com/standard-license; the licence text itself is not in the package."
+	},
+	"cssEntrypoints": [
+		"apps/frontend/src/app.css"
+	]
 }

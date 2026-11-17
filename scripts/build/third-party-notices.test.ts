@@ -6,12 +6,14 @@ import { dirname, join, relative, resolve } from "node:path";
 import {
 	checkBinary,
 	collectPackages,
+	cssSources,
 	generate,
 	isGlueChunk,
 	loadPolicy,
 	packageRootOf,
 	type Policy,
 	sha256,
+	sourcesOfMap,
 } from "./third-party-notices.ts";
 
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -55,7 +57,11 @@ function fixture(): { root: string; policy: Policy; backend: Map<string, string[
 		root,
 		"node_modules/.bun/@scope+beta@2.0.0/node_modules/@scope/beta",
 		{ name: "@scope/beta", version: "2.0.0", license: "Apache-2.0" },
-		{ "LICENSE.txt": "Beta Apache text\n", NOTICE: "Beta notice\n", "README.md": "not a licence\n" },
+		{
+			"LICENSE.txt": "Beta Apache text\n",
+			NOTICE: "Beta notice\n",
+			"README.md": "not a licence\n",
+		},
 	);
 	const hoisted = pkg(
 		root,
@@ -71,11 +77,36 @@ function fixture(): { root: string; policy: Policy; backend: Map<string, string[
 	write(root, "dist/public/assets/font-x.woff2", "font bytes");
 	write(root, "dist/public/assets/index.css", "/*! styler v1 */ a{}");
 	write(root, "dist/public/assets/other.css", "b{}");
-	pkg(root, "apps/frontend/node_modules/builder", { name: "builder", version: "5.0.0" }, { LICENSE: "Builder text\n" });
-	pkg(root, "apps/frontend/node_modules/builder/node_modules/rt-core", { name: "rt-core", version: "1.0.1" }, { LICENSE: "Core text\n" });
-	pkg(root, "apps/frontend/node_modules/builder/node_modules/rt-extra", { name: "rt-extra", version: "1.0.1" }, { LICENSE: "Extra text\n" });
-	pkg(root, "node_modules/fontpkg", { name: "fontpkg", version: "5.3.0" }, { LICENSE: "OFL fixture text\n" });
-	pkg(root, "node_modules/styler", { name: "styler", version: "1.0.0" }, { LICENSE: "Styler text\n" });
+	pkg(
+		root,
+		"apps/frontend/node_modules/builder",
+		{ name: "builder", version: "5.0.0" },
+		{ LICENSE: "Builder text\n" },
+	);
+	pkg(
+		root,
+		"apps/frontend/node_modules/builder/node_modules/rt-core",
+		{ name: "rt-core", version: "1.0.1" },
+		{ LICENSE: "Core text\n" },
+	);
+	pkg(
+		root,
+		"apps/frontend/node_modules/builder/node_modules/rt-extra",
+		{ name: "rt-extra", version: "1.0.1" },
+		{ LICENSE: "Extra text\n" },
+	);
+	pkg(
+		root,
+		"node_modules/fontpkg",
+		{ name: "fontpkg", version: "5.3.0" },
+		{ LICENSE: "OFL fixture text\n" },
+	);
+	pkg(
+		root,
+		"node_modules/styler",
+		{ name: "styler", version: "1.0.0" },
+		{ LICENSE: "Styler text\n" },
+	);
 	const mapDir = join(root, "dist/sourcemaps/assets");
 	mkdirSync(mapDir, { recursive: true });
 	writeFileSync(
@@ -85,7 +116,7 @@ function fixture(): { root: string; policy: Policy; backend: Map<string, string[
 			sources: [
 				relative(mapDir, hoisted),
 				relative(mapDir, join(root, "apps/frontend/src/main.ts")),
-				"\0virtual:module",
+				"\0vite/preload-helper.js",
 			],
 		}),
 	);
@@ -107,8 +138,17 @@ function fixture(): { root: string; policy: Policy; backend: Map<string, string[
 					markerPackages: { pattern: "rt:([a-z]+):", name: "rt-$1" },
 					resolveFrom: ["apps/frontend", "builder"],
 				},
-				{ files: "^assets/font-[^/]+\\.woff2$", packages: ["fontpkg"], resolveFrom: ["apps/frontend"] },
-				{ files: "\\.css$", marker: "/*! styler v", packages: ["styler"], resolveFrom: ["apps/frontend"] },
+				{
+					files: "^assets/font-[^/]+\\.woff2$",
+					packages: ["fontpkg"],
+					resolveFrom: ["apps/frontend"],
+				},
+				{
+					files: "\\.css$",
+					marker: "/*! styler v",
+					packages: ["styler"],
+					resolveFrom: ["apps/frontend"],
+				},
 			],
 		},
 		runtime: {
@@ -177,6 +217,73 @@ describe("third-party notices", () => {
 		expect(index.runtime.sha256).toBe(sha256(RUNTIME_TEXT));
 	});
 
+	test("keeps notice variants, rejects code files and conflicting copies", async () => {
+		const f = fixture();
+		const second = pkg(
+			f.root,
+			"node_modules/second/node_modules/alpha",
+			{ name: "alpha", version: "1.0.0", license: "MIT" },
+			{
+				LICENSE: "Alpha MIT text\n",
+				NOTICES: "Extra notice\n",
+				"LICENSE.MIT": "MIT variant text\n",
+				"LICENSE.APACHE2": "Apache variant text\n",
+				UNLICENSE: "Public domain notice\n",
+				"ThirdPartyNotices.txt": "Inherited notice\n",
+				"notice.js": "code, not a notice",
+			},
+		);
+		f.backend.get("recovery")!.push(second);
+		const { notices } = await run(f);
+		expect(notices).toContain("Extra notice");
+		expect(notices).toContain("MIT variant text");
+		expect(notices).toContain("Apache variant text");
+		expect(notices).toContain("Public domain notice");
+		expect(notices).toContain("Inherited notice");
+		expect(notices).not.toContain("code, not a notice");
+		write(f.root, "node_modules/second/node_modules/alpha/LICENSE", "conflicting");
+		await expect(run(f)).rejects.toThrow(/conflicting licence file/);
+	});
+
+	test("exceptions expire at a version boundary", async () => {
+		const f = fixture();
+		const source = pkg(f.root, "node_modules/bare", { name: "bare", version: "2" });
+		f.policy.withoutLicenceText["bare@1"] = "Reviewed version one";
+		f.backend.get("backend")!.push(source);
+		await expect(run(f)).rejects.toThrow(/bare@2/);
+	});
+
+	test("CSS-only imports and nested imports are included; unresolved imports fail", () => {
+		const f = fixture();
+		write(f.root, "src/app.css", '@import "styler";');
+		write(
+			f.root,
+			"node_modules/styler/package.json",
+			JSON.stringify({ name: "styler", version: "1", style: "index.css" }),
+		);
+		write(f.root, "node_modules/styler/index.css", '@import "./tokens.css";');
+		write(f.root, "node_modules/styler/tokens.css", ":root { --color: red }");
+		const sources = cssSources(f.root, ["src/app.css"]);
+		expect(sources).toContain(join(f.root, "node_modules/styler/tokens.css"));
+		expect(collectPackages(new Map([["web", sources]]), f.policy)[0]?.name).toBe("styler");
+		write(f.root, "src/app.css", '@import "missing-package";');
+		expect(() => cssSources(f.root, ["src/app.css"])).toThrow(/cannot resolve/);
+		write(f.root, "src/app.css", "@import url(unquoted.css);");
+		expect(() => cssSources(f.root, ["src/app.css"])).toThrow(/unsupported CSS import/);
+	});
+
+	test("binary membership is checked for each artifact separately", () => {
+		const f = fixture();
+		const packages = collectPackages(f.backend, f.policy);
+		const exe = write(
+			f.root,
+			"exe",
+			"node_modules/.bun/@scope+beta@2.0.0/node_modules/@scope/beta/x.js",
+		);
+		expect(checkBinary(exe, packages, "backend")).toEqual([]);
+		expect(checkBinary(exe, packages, "recovery")).toEqual(["@scope/beta@2.0.0"]);
+	});
+
 	test("copyright carries the first-party licence once and the brand notice", async () => {
 		const f = fixture();
 		const { copyright } = await run(f);
@@ -206,7 +313,7 @@ describe("third-party notices", () => {
 		f.backend.get("backend")?.push(bare);
 		await expect(run(f)).rejects.toThrow(/bare@0\.1\.0/);
 
-		f.policy.withoutLicenceText.bare = "Declares MIT; the package has no licence file.";
+		f.policy.withoutLicenceText["bare@0.1.0"] = "Declares MIT; the package has no licence file.";
 		const { notices, index } = await run(f);
 		expect(notices).toContain(
 			"No licence text is published in this package. Declares MIT; the package has no licence file.",
@@ -254,7 +361,13 @@ describe("third-party notices", () => {
 		const web = index.packages
 			.filter((p: { bundledInto: string[] }) => p.bundledInto.includes("web app"))
 			.map((p: { name: string; version: string }) => `${p.name}@${p.version}`);
-		expect(web).toEqual(["fontpkg@5.3.0", "gamma@3.0.0", "rt-core@1.0.1", "rt-extra@1.0.1", "styler@1.0.0"]);
+		expect(web).toEqual([
+			"fontpkg@5.3.0",
+			"gamma@3.0.0",
+			"rt-core@1.0.1",
+			"rt-extra@1.0.1",
+			"styler@1.0.0",
+		]);
 		expect(notices).toContain("OFL fixture text");
 		expect(notices).not.toContain("Builder text");
 	});
@@ -299,13 +412,22 @@ describe("third-party notices", () => {
 		expect(checkBinary(exe, packages)[0]).toMatch(/no node_modules\/\.bun paths/);
 	});
 
+	test("unknown virtual and hidden dependency paths fail closed", () => {
+		const f = fixture();
+		const map = write(f.root, "test.map", JSON.stringify({ sources: ["\0unknown:helper"] }));
+		expect(() => sourcesOfMap(map)).toThrow(/unrecognised virtual source/);
+		for (const source of ["/r/node_modules/.vite/deps/x.js", "/r/node_modules/.bun/a@1/x.js"]) {
+			expect(() => packageRootOf(source)).toThrow(/unresolved/);
+		}
+	});
+
 	test("package roots follow the last node_modules segment", () => {
 		expect(packageRootOf("/r/node_modules/.bun/a@1/node_modules/a/lib/x.js")).toBe(
 			"/r/node_modules/.bun/a@1/node_modules/a",
 		);
 		expect(packageRootOf("/r/node_modules/@s/b/x.js")).toBe("/r/node_modules/@s/b");
 		expect(packageRootOf("/r/apps/backend/src/main.ts")).toBeNull();
-		expect(packageRootOf("/r/node_modules/.bin/tool")).toBeNull();
+		expect(() => packageRootOf("/r/node_modules/.bin/tool")).toThrow(/unresolved/);
 	});
 });
 
@@ -331,7 +453,9 @@ describe("committed notice policy", () => {
 			`--sourcemap --target=$BUN_TARGET ${main?.[0].replace("apps/backend/", "")}`,
 		);
 		expect(debBuild).toContain(`cp dist/ceralive "$TEMP_DIR${main?.[1]}"`);
-		expect(debBuild).toContain(`bun build ${recovery?.[0]} --compile`);
+		expect(debBuild).toContain(
+			`NODE_ENV=production bun build ${recovery?.[0]} --minify --sourcemap --compile`,
+		);
 		expect(debBuild).toContain(`--outfile="$TEMP_DIR${recovery?.[1]}"`);
 		expect(debBuild).toContain('cp -r dist/public/* "$TEMP_DIR/var/www/ceralive/"');
 		expect(policy.web.root).toBe("dist/public");

@@ -76,6 +76,14 @@ describe("SPA sourcemap relocation", () => {
 		]);
 	});
 
+	it("replaces maps from an earlier build", async () => {
+		await mkdir(mapDir, { recursive: true });
+		await writeFile(path.join(mapDir, "stale.js.map"), "old");
+		await write("fresh.js.map");
+		await relocateSourcemaps(outDir, mapDir);
+		expect(await listFiles(mapDir)).toEqual(["fresh.js.map"]);
+	});
+
 	it("leaves a map-free build untouched and creates nothing", async () => {
 		await write("assets/live-abc.js");
 

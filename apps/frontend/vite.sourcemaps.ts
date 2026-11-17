@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import * as path from "node:path";
 
 /**
@@ -22,6 +22,7 @@ export async function relocateSourcemaps(
 	outDir: string,
 	mapDir: string,
 ): Promise<string[]> {
+	await rm(mapDir, { recursive: true, force: true });
 	const moved: string[] = [];
 
 	const walk = async (relative: string): Promise<void> => {

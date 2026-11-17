@@ -43,11 +43,13 @@ export type Policy = {
 	/** Entry point -> installed executable it is compiled into. */
 	backendEntrypoints: Record<string, string>;
 	webSourcemapDir: string;
+	cssEntrypoints?: string[];
 	web: {
 		root: string;
 		label: string;
 		rules: WebRule[];
 		mustBeAttributed: string;
+		additionalPackages?: string[];
 	};
 	runtime: {
 		name: string;
@@ -81,7 +83,10 @@ export type BundledPackage = {
 	missingReason?: string;
 };
 
-const LICENCE_FILE_RE = /(^|[-_.])(licen[cs]e|copying|notice)([-_.]|$)/i;
+const LICENCE_FILE_RE =
+	/(^|[-_.])((?:un)?licen[cs]e|copying|notices?)([-_.]|$)|^third[-_]?party[-_]?notices?(?:[-_.]|$)/i;
+const CODE_FILE_RE =
+	/\.(?:[cm]?[jt]sx?|py|sh|c|cc|cpp|h|hpp|css|svelte|json|map|wasm|node|rs|go|rb|java)$/i;
 
 export function sha256(text: string | Uint8Array): string {
 	return createHash("sha256").update(text).digest("hex");
@@ -93,13 +98,18 @@ export function packageRootOf(file: string): string | null {
 	const at = file.lastIndexOf(marker);
 	if (at < 0) return null;
 	const rest = file.slice(at + marker.length).split(sep);
-	if (!rest[0] || rest[0].startsWith(".")) return null;
+	if (!rest[0] || rest[0].startsWith(".")) {
+		throw new Error(`unresolved node_modules source: ${file}`);
+	}
 	const nameParts = rest[0].startsWith("@") ? rest.slice(0, 2) : rest.slice(0, 1);
-	if (nameParts.length === 2 && !nameParts[1]) return null;
+	if (nameParts.length === 2 && !nameParts[1]) throw new Error(`unresolved package scope: ${file}`);
 	return file.slice(0, at + marker.length) + nameParts.join(sep);
 }
 
 /** Resolved node_modules source files named by one source map. */
+// Vite injects these helpers; their code is covered by the Vite package notice.
+const VITE_HELPERS = new Set(["\0vite/preload-helper.js", "\0vite/modulepreload-polyfill.js"]);
+
 export function sourcesOfMap(mapPath: string): string[] {
 	const map = JSON.parse(readFileSync(mapPath, "utf8")) as {
 		sources?: string[];
@@ -107,7 +117,16 @@ export function sourcesOfMap(mapPath: string): string[] {
 	};
 	const base = resolve(dirname(mapPath), map.sourceRoot ?? "");
 	return (map.sources ?? [])
-		.filter((source) => !source.includes("\0") && !/^[a-z]+:/i.test(source))
+		.filter((source) => {
+			if (source.includes("node_modules/") && (source.includes("\0") || /^[a-z]+:/i.test(source))) {
+				throw new Error(`unresolved node_modules source: ${source}`);
+			}
+			if (VITE_HELPERS.has(source)) return false;
+			if (source.includes("\0") || /^[a-z]+:/i.test(source)) {
+				throw new Error(`unrecognised virtual source: ${source}`);
+			}
+			return true;
+		})
 		.map((source) => resolve(base, source));
 }
 
@@ -173,7 +192,12 @@ function readPackage(root: string): { name: string; version: string; declared: s
 
 function licenceFiles(root: string): BundledPackage["files"] {
 	return readdirSync(root)
-		.filter((name) => LICENCE_FILE_RE.test(name) && statSync(join(root, name)).isFile())
+		.filter(
+			(name) =>
+				LICENCE_FILE_RE.test(name) &&
+				!CODE_FILE_RE.test(name) &&
+				statSync(join(root, name)).isFile(),
+		)
 		.sort()
 		.map((name) => {
 			const text = readFileSync(join(root, name), "utf8");
@@ -206,7 +230,14 @@ function listFiles(root: string, dir = root): string[] {
 		.flatMap((entry) => {
 			const path = join(dir, entry.name);
 			if (entry.isDirectory()) return listFiles(root, path);
-			return entry.isFile() ? [path.slice(root.length + 1).split(sep).join("/")] : [];
+			return entry.isFile()
+				? [
+						path
+							.slice(root.length + 1)
+							.split(sep)
+							.join("/"),
+					]
+				: [];
 		})
 		.sort();
 }
@@ -223,7 +254,10 @@ export function isGlueChunk(text: string): boolean {
  * must-be-attributed kinds (scripts and fonts) that has neither a map, nor a
  * claiming rule, nor is a glue chunk fails the build.
  */
-export function webFilePackages(repoRoot: string, policy: Pick<Policy, "web" | "webSourcemapDir">): string[] {
+export function webFilePackages(
+	repoRoot: string,
+	policy: Pick<Policy, "web" | "webSourcemapDir">,
+): string[] {
 	const root = resolve(repoRoot, policy.web.root);
 	const mapRoot = resolve(repoRoot, policy.webSourcemapDir);
 	const mustAttribute = new RegExp(policy.web.mustBeAttributed);
@@ -269,6 +303,35 @@ export function webFilePackages(repoRoot: string, policy: Pick<Policy, "web" | "
 	return [...found].sort();
 }
 
+/** Follow CSS imports explicitly: production CSS has no source maps. */
+export function cssSources(repoRoot: string, entries: string[]): string[] {
+	const visited = new Set<string>();
+	const walk = (file: string) => {
+		file = realpathSync(file);
+		if (visited.has(file)) return;
+		visited.add(file);
+		const text = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+		for (const statement of text.matchAll(/@import\s+([^;]+);/g)) {
+			const match = /^(?:url\(\s*)?["']([^"']+)["']/.exec(statement[1] ?? "");
+			if (!match) throw new Error(`unsupported CSS import in ${file}: ${statement[0]}`);
+			const spec = match[1];
+			if (!spec) throw new Error(`empty CSS import in ${file}`);
+			if (spec.startsWith(".")) walk(resolve(dirname(file), spec));
+			else {
+				const parts = spec.split("/");
+				const name = parts.splice(0, spec.startsWith("@") ? 2 : 1).join("/");
+				const root = findPackage(dirname(file), name);
+				const meta = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+				const target = parts.join("/") || meta.style;
+				if (!target) throw new Error(`cannot resolve CSS import: ${spec}`);
+				walk(join(root, target));
+			}
+		}
+	};
+	for (const entry of entries) walk(resolve(repoRoot, entry));
+	return [...visited].sort();
+}
+
 /** Group bundled source files by npm package and attach licence files. */
 export function collectPackages(
 	sourcesByArtifact: Map<string, string[]>,
@@ -294,7 +357,7 @@ export function collectPackages(
 		const files = licenceFiles(root);
 		const pkg: BundledPackage = { ...meta, root, usedBy: [...users].sort(), files };
 		if (files.length === 0) {
-			const reason = policy.withoutLicenceText[meta.name];
+			const reason = policy.withoutLicenceText[`${meta.name}@${meta.version}`];
 			if (reason) pkg.missingReason = reason;
 			else unexplained.push(`${meta.name}@${meta.version} (${root})`);
 		}
@@ -312,7 +375,17 @@ export function collectPackages(
 		const key = `${pkg.name}@${pkg.version}`;
 		const seen = unique.get(key);
 		if (!seen) unique.set(key, pkg);
-		else seen.usedBy = [...new Set([...seen.usedBy, ...pkg.usedBy])].sort();
+		else {
+			seen.usedBy = [...new Set([...seen.usedBy, ...pkg.usedBy])].sort();
+			if (seen.declared !== pkg.declared) throw new Error(`conflicting licence metadata: ${key}`);
+			for (const file of pkg.files) {
+				const previous = seen.files.find((f) => f.name === file.name);
+				if (previous && previous.sha256 !== file.sha256)
+					throw new Error(`conflicting licence file: ${key}/${file.name}`);
+				if (!previous) seen.files.push(file);
+			}
+			seen.files.sort((a, b) => a.name.localeCompare(b.name));
+		}
 	}
 	return [...unique.values()].sort((a, b) =>
 		a.name === b.name ? a.version.localeCompare(b.version) : a.name.localeCompare(b.name),
@@ -378,7 +451,11 @@ export function renderCopyright(repoRoot: string, policy: Policy): string {
 	return `${parts.join("\n")}\n`;
 }
 
-export function renderNotices(packages: BundledPackage[], policy: Policy, runtimeText: string): string {
+export function renderNotices(
+	packages: BundledPackage[],
+	policy: Policy,
+	runtimeText: string,
+): string {
 	const parts = [
 		RULE,
 		"Third-party components",
@@ -462,6 +539,10 @@ export async function generate(options: GenerateOptions): Promise<BundledPackage
 	sources.set(policy.web.label, [
 		...webMaps.flatMap(sourcesOfMap),
 		...webFilePackages(repoRoot, policy),
+		...(policy.web.additionalPackages ?? []).map((name) =>
+			join(findPackage(resolve(repoRoot, "apps/frontend"), name), "package.json"),
+		),
+		...cssSources(repoRoot, policy.cssEntrypoints ?? []),
 	]);
 	const packages = collectPackages(sources, policy);
 	const copyright = `${renderCopyright(repoRoot, policy)}\n${renderNotices(packages, policy, runtimeText)}`;
@@ -480,11 +561,14 @@ export async function generate(options: GenerateOptions): Promise<BundledPackage
  * paths (Bun's isolated install layout) name what was really bundled. Every one
  * must have a notice entry; finding none means the check cannot work.
  */
-export function checkBinary(path: string, packages: BundledPackage[]): string[] {
+export function checkBinary(path: string, packages: BundledPackage[], artifact?: string): string[] {
 	const bytes = readFileSync(path).toString("latin1");
-	const known = new Set(packages.map((pkg) => `${pkg.name}@${pkg.version}`));
-	const isolated =
-		/node_modules\/\.bun\/([^/"\s]+)\/node_modules\/((?:@[^/"\s]+\/)?[^/"\s]+)\//g;
+	const known = new Set(
+		packages
+			.filter((pkg) => !artifact || pkg.usedBy.includes(artifact))
+			.map((pkg) => `${pkg.name}@${pkg.version}`),
+	);
+	const isolated = /node_modules\/\.bun\/([^/"\s]+)\/node_modules\/((?:@[^/"\s]+\/)?[^/"\s]+)\//g;
 	const missing = new Set<string>();
 	let seen = 0;
 	for (const [, folder = "", name = ""] of bytes.matchAll(isolated)) {
@@ -545,9 +629,13 @@ if (import.meta.main) {
 			...(args.index ? { indexPath: resolve(args.index) } : {}),
 		});
 		for (const binary of args.binaries) {
-			const missing = checkBinary(binary, packages);
+			const split = binary.indexOf("=");
+			if (split < 0) throw new Error("--check-binary needs installed-artifact=local-path");
+			const missing = checkBinary(binary.slice(split + 1), packages, binary.slice(0, split));
 			if (missing.length > 0) {
-				throw new Error(`${binary} bundles packages missing from the notices: ${missing.join(", ")}`);
+				throw new Error(
+					`${binary} bundles packages missing from the notices: ${missing.join(", ")}`,
+				);
 			}
 		}
 		const without = packages.filter((pkg) => pkg.files.length === 0);

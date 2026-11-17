@@ -44,7 +44,9 @@ export EXPECTED_GUARD="$fixture/scripts/ci/notification-bundle.ts"
   # Given the same cache with a passing artifact guard
   export GUARD_RESULT=0
   # When restoring it, then preserve the cache fast path and run the guard again
+  printf stale > dist/sourcemaps/stale.js.map
   build_frontend_only
+  test ! -e dist/sourcemaps/stale.js.map
   test "$(wc -l < "$GUARD_LOG")" -eq 2
   # The restored build carries the source maps the package notices are read from
   test -f dist/sourcemaps/index.js.map

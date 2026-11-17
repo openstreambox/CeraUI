@@ -54,7 +54,7 @@ for mask in 077 022; do
     log_error() { fail "$1"; }
     bun() {
       if [[ "${1:-}" == scripts/build/third-party-notices.ts ]]; then
-        [[ "$*" == "scripts/build/third-party-notices.ts $TEMP_DIR/usr/share/doc/$PACKAGE_NAME/copyright --index dist/debian/third-party-notices.json --check-binary $TEMP_DIR/usr/local/bin/ceralive" ]] \
+        [[ "$*" == "scripts/build/third-party-notices.ts $TEMP_DIR/usr/share/doc/$PACKAGE_NAME/copyright --index dist/debian/third-party-notices.json --check-binary /usr/local/bin/ceralive=$TEMP_DIR/usr/local/bin/ceralive --check-binary /usr/libexec/ceralive/ceralive-update-recover=$TEMP_DIR/usr/libexec/ceralive/ceralive-update-recover" ]] \
           || fail "unexpected notices command: $*"
         [[ "${NODE_ENV:-}" == production ]] || fail 'notices must see the production bundle'
         mkdir -p "$(dirname "$2")"
@@ -62,8 +62,9 @@ for mask in 077 022; do
         printf '{}\n' > "$4"
         return 0
       fi
-      [[ "$*" == 'build apps/backend/src/modules/system/update-orchestrator/recovery-cli.ts --compile --target=bun-linux-arm64 --outfile='* ]] \
+      [[ "$*" == 'build apps/backend/src/modules/system/update-orchestrator/recovery-cli.ts --minify --sourcemap --compile --target=bun-linux-arm64 --outfile='* ]] \
         || fail 'unexpected compilation command'
+      [[ "${NODE_ENV:-}" == production ]] || fail 'recovery must compile for production'
       local outfile="${!#}"
       printf '#!/bin/sh\nexit 0\n' > "${outfile#--outfile=}"
     }
