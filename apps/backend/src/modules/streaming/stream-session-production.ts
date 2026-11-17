@@ -14,6 +14,7 @@ import {
 	tryAcquireLifecycle,
 } from "./lifecycle-admission.ts";
 import {
+	claimOtaMarkerForLaunch,
 	clearOtaStreamingMarker,
 	encoderOtaStreamLiveness,
 	setOtaStreamingMarker,
@@ -92,6 +93,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 			);
 	},
 	ensureShutdownProtection: ensureEncoderShutdownProtection,
+	claimLaunchMarker: claimOtaMarkerForLaunch,
 	admitLifecycle: () => tryAcquireLifecycle("streaming"),
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,
