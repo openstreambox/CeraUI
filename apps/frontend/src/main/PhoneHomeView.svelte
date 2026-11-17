@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { m } from '@ceraui/i18n/svelte';
-	import type { PhoneBoxSettings, PhoneWay } from '@ceraui/rpc/schemas';
+	import type { MoblinkStatus, PhoneBoxSettings, PhoneWay } from '@ceraui/rpc/schemas';
 	import { onMount } from 'svelte';
 	import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 	import { navElements } from '$lib/config';
@@ -24,8 +24,25 @@
 	import PhoneHome from './PhoneHome.svelte';
 
 	let settings = $state<PhoneBoxSettings>();
+	let moblink = $state<MoblinkStatus>();
+	async function refreshMoblink() {
+		moblink = await rpc.moblink.getStatus();
+	}
+	async function credential(password: string) {
+		const result = await rpc.moblink.setCredential({ password });
+		await refreshMoblink();
+		return result;
+	}
+	async function clearCredential() {
+		const result = await rpc.moblink.clearCredential();
+		await refreshMoblink();
+		return result;
+	}
 	let error = $state('');
 	onMount(() => {
+		void refreshMoblink().catch(() => {
+			moblink = undefined;
+		});
 		void rpc.system
 			.getPhoneBox()
 			.then((value) => (settings = value))
@@ -58,6 +75,9 @@ let now = $state(Date.now());
 		: undefined}
 	carrying={getIsConnected() ? getStatus()?.carrying?.state : undefined}
 	{settings}
+	{moblink}
+	oncredential={credential}
+	onclearcredential={clearCredential}
 	health={getStatus()?.box_health}
 	temperature={hud.temperature}
 	kiosk={getLayoutMode() === 'touch'}
