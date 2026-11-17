@@ -16,6 +16,7 @@ import {
 import {
 	clearOtaStreamingMarker,
 	encoderOtaStreamLiveness,
+	retireCarryingOnlyLine,
 	setOtaStreamingMarker,
 } from "./ota-streaming-marker.ts";
 import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
@@ -92,6 +93,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 			);
 	},
 	ensureShutdownProtection: ensureEncoderShutdownProtection,
+	retireCarryingMarker: retireCarryingOnlyLine,
 	admitLifecycle: () => tryAcquireLifecycle("streaming"),
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,

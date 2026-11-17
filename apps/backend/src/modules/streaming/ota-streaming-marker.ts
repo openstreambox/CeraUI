@@ -105,8 +105,45 @@ export function setOtaStreamingMarker(): boolean {
 	encoderProtected = true;
 	carryingOnlyMarker = false;
 	const shutdownProtected = setShutdownProtection("encoder", true);
-	const written = writeMarker("");
+	const written = emptyMarker();
 	return shutdownProtected && written;
+}
+
+/** A file that cannot be rewritten in place is replaced, never removed first:
+ * a failure must leave the marker standing. */
+function emptyMarker(): boolean {
+	if (writeMarker("")) return true;
+	const path = otaStreamingMarkerPath();
+	try {
+		fs.writeFileSync(`${path}.new`, "");
+		fs.renameSync(`${path}.new`, path);
+		return true;
+	} catch (error) {
+		logger.warn("ota-streaming-marker: failed to replace", { error });
+		try {
+			fs.rmSync(`${path}.new`, { force: true });
+		} catch {
+			// Nothing was renamed; the marker itself is untouched.
+		}
+		return false;
+	}
+}
+
+/**
+ * Before a launch is submitted, the file must stop saying carrying-only: a
+ * later process would read that line beside a live stream and call the box
+ * idle. Only the file changes here; this process still knows who holds it. A
+ * marker that can be neither read, rewritten nor replaced refuses the Start.
+ */
+export function retireCarryingOnlyLine(): boolean {
+	try {
+		if (fs.readFileSync(otaStreamingMarkerPath(), "utf8") !== CARRYING_ONLY)
+			return true;
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT")
+			return true;
+	}
+	return emptyMarker();
 }
 
 /** A stream's marker is empty. Without content the file is created or left as

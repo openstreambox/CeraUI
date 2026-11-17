@@ -187,6 +187,9 @@ export type StreamSessionOrchestratorDeps = {
 	 */
 	readonly admitLifecycle?: () => LifecycleAdmission;
 	/** Confirm the shutdown block before any media launch effect. */
+	/** False when the OTA marker would still read carrying-only beside the
+	 * launch; the Start is then refused like unavailable shutdown protection. */
+	readonly retireCarryingMarker?: () => boolean;
 	readonly ensureShutdownProtection?: (
 		current: () => boolean,
 		signal?: AbortSignal,
@@ -491,10 +494,16 @@ export function createStreamSessionOrchestrator(
 				};
 			}
 			attempt.shutdownAdmission = new AbortController();
-			const protectionResult = deps.ensureShutdownProtection?.(
-				() => !attempt.cancelled && active === attempt && ownership.owns(owner),
-				attempt.shutdownAdmission.signal,
-			);
+			const protectionResult =
+				deps.retireCarryingMarker?.() === false
+					? false
+					: deps.ensureShutdownProtection?.(
+							() =>
+								!attempt.cancelled &&
+								active === attempt &&
+								ownership.owns(owner),
+							attempt.shutdownAdmission.signal,
+						);
 			const shutdownProtected =
 				typeof protectionResult === "object"
 					? await protectionResult

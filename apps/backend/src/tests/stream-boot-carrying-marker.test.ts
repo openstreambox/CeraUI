@@ -11,7 +11,14 @@
  * armed activations until an operator stop.
  */
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname } from "node:path";
 import * as bootMarker from "../modules/streaming/ota-streaming-marker.ts";
 import {
 	clearOtaStreamingMarker,
@@ -36,6 +43,7 @@ initShutdownProtection(() => {
 const markerPresent = () => existsSync(otaStreamingMarkerPath());
 
 function resetOwners() {
+	chmodSync(dirname(otaStreamingMarkerPath()), 0o700);
 	setCarryingOtaProtection(false);
 	clearOtaStreamingMarker();
 	rmSync(otaStreamingMarkerPath(), { force: true });
@@ -293,3 +301,100 @@ test("a marker of unknown origin is never claimed by a restart", async () => {
 	restarted.clearOtaStreamingMarker();
 	restarted.setCarryingOtaProtection(false);
 });
+
+/**
+ * Review regression: Start could not rewrite the carrying-only marker, launched
+ * anyway and left the line on disk under a live stream. The next process read
+ * the line and called the box idle.
+ */
+function launchSession(marker: MarkerModule) {
+	let launches = 0;
+	const session = createStreamSessionOrchestrator({
+		...streamSessionProductionDeps,
+		initialLiveness: marker.encoderOtaStreamLiveness,
+		markStreamingForOta: marker.setOtaStreamingMarker,
+		unmarkStreamingForOta: marker.clearOtaStreamingMarker,
+		retireCarryingMarker: marker.retireCarryingOnlyLine,
+		createAttemptId: () => "launch",
+		setStreamingStatus: () => undefined,
+		getStreamingStatus: () => launches > 0,
+		seedLifecycleState: () => undefined,
+		setLifecycleState: () => undefined,
+		queryRuntime: async () => "unknown",
+		stopRuntime: async () => undefined,
+		onStreamStopped: () => undefined,
+		onStreamCommitted: undefined,
+		onStreamArmed: undefined,
+		admitLifecycle: undefined,
+		admitUpdate: undefined,
+		awaitRecovery: undefined,
+		recoveryPending: undefined,
+		blockingMutation: undefined,
+		pendingGateRemainingMs: () => 0,
+	});
+	const start = () =>
+		session.start({
+			origin: "ui",
+			launch: async () => {
+				launches++;
+			},
+		});
+	return { session, start, launches: () => launches };
+}
+const markerLine = () => readFileSync(otaStreamingMarkerPath(), "utf8");
+const unprivileged = process.getuid?.() !== 0;
+
+test.if(unprivileged)(
+	"a Start that cannot rewrite the carrying marker replaces it before launching",
+	async () => {
+		setCarryingOtaProtection(true);
+		expect(markerLine()).toBe("carrying\n");
+		chmodSync(otaStreamingMarkerPath(), 0o444);
+
+		const live = launchSession(bootMarker);
+		expect(await live.start()).toMatchObject({ result: "started" });
+		expect(live.launches()).toBe(1);
+		expect(markerLine()).toBe("");
+
+		// The backend dies with the stream up and the engine stays silent.
+		const restarted = await restartBackend();
+		const next = launchSession(restarted);
+		restarted.setCarryingOtaProtection(true);
+		expect(await next.session.reconcile()).toBe("reconciling");
+		expect(await next.start()).toMatchObject({ result: "busy" });
+		expect(next.launches()).toBe(0);
+		restarted.setCarryingOtaProtection(false);
+		expect(markerPresent()).toBe(true);
+		expect(inhibitorHeld).toBe(true);
+
+		expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+		await live.session.stop("operator");
+	},
+);
+
+test.if(unprivileged)(
+	"a Start that cannot take the carrying marker at all is refused before launch",
+	async () => {
+		setCarryingOtaProtection(true);
+		chmodSync(otaStreamingMarkerPath(), 0o444);
+		chmodSync(dirname(otaStreamingMarkerPath()), 0o500);
+
+		const live = launchSession(bootMarker);
+		expect(await live.start()).toMatchObject({ result: "failed" });
+		expect(live.launches()).toBe(0);
+		expect(live.session.snapshot().state).toBe("idle");
+		expect(markerLine()).toBe("carrying\n");
+
+		// Nothing was launched, so the line is still true for the next process.
+		chmodSync(dirname(otaStreamingMarkerPath()), 0o700);
+		const restarted = await restartBackend();
+		const next = launchSession(restarted);
+		restarted.setCarryingOtaProtection(true);
+		expect(await next.session.reconcile()).toBe("idle");
+		expect(await next.start()).toMatchObject({ result: "started" });
+		expect(markerLine()).toBe("");
+		expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+		restarted.setCarryingOtaProtection(false);
+		expect(markerPresent()).toBe(false);
+	},
+);
