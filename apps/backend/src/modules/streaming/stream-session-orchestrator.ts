@@ -231,7 +231,27 @@ export type StreamSessionOrchestratorDeps = {
 	 */
 	readonly markStreamingForOta?: (() => boolean) | (() => void);
 	readonly unmarkStreamingForOta?: (() => boolean) | (() => void);
+	/**
+	 * Every commit to streaming, launched or adopted: the sentinel becomes the
+	 * stream's whatever it said before. `markStreamingForOta` alone runs once
+	 * per protection and may already have run for an unknown answer.
+	 */
+	readonly confirmStreamingForOta?: (() => boolean) | (() => void);
+	/**
+	 * True while the sentinel holds a carrying line an earlier backend process
+	 * left and nothing here has confirmed it. Engine silence is not idle on its
+	 * own; with that line it is, once heard on {@link SILENT_WITNESS_QUERIES}
+	 * separate queries, because a running engine session reports its status.
+	 */
+	readonly awaitsIdleWitness?: () => boolean;
 };
+
+/**
+ * Separate silent engine queries that confirm an inherited carrying line. One
+ * query waits 2.5 s and a running session reports status about every 2 s, so
+ * two give more than two of its periods.
+ */
+export const SILENT_WITNESS_QUERIES = 2;
 
 type ActiveAttempt = {
 	readonly attemptId: string;
@@ -910,24 +930,39 @@ export function createStreamSessionOrchestrator(
 		if (!ownership.commit(owner, "reconciling", "unknown"))
 			return ownership.state;
 		const epoch = ++reconciliationEpoch;
-		runtimeObservations++;
-		let runtimeState: EngineRuntimeState;
-		try {
-			runtimeState = await withRuntimeObservationOwner(
-				() => ownership.owns(owner),
-				deps.queryRuntime,
-				ownership.protect,
-			).catch(() => "unknown" as const);
-		} finally {
-			runtimeObservations--;
-		}
-		if (
+		const superseded = () =>
 			epoch !== reconciliationEpoch ||
 			!ownership.owns(owner) ||
 			cleanup.pending ||
-			stopFlight !== undefined
-		)
-			return ownership.state;
+			stopFlight !== undefined;
+		runtimeObservations++;
+		let runtimeState: EngineRuntimeState = "unknown";
+		try {
+			for (let silentQueries = 0; ; ) {
+				let silent = false;
+				runtimeState = await withRuntimeObservationOwner(
+					() => ownership.owns(owner),
+					deps.queryRuntime,
+					ownership.protect,
+					() => {
+						silent = true;
+					},
+				).catch(() => "unknown" as const);
+				if (
+					runtimeState !== "unknown" ||
+					!silent ||
+					superseded() ||
+					deps.awaitsIdleWitness?.() !== true
+				)
+					break;
+				if (++silentQueries < SILENT_WITNESS_QUERIES) continue;
+				runtimeState = "idle";
+				break;
+			}
+		} finally {
+			runtimeObservations--;
+		}
+		if (superseded()) return ownership.state;
 		if (
 			runtimeState !== "unknown" &&
 			ownership.commit(owner, runtimeState, runtimeState) &&

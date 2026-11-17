@@ -19,6 +19,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import { currentRuntimeObservationSilence } from "../modules/streaming/engine-runtime-observation.ts";
 import * as bootMarker from "../modules/streaming/ota-streaming-marker.ts";
 import {
 	clearOtaStreamingMarker,
@@ -27,7 +28,10 @@ import {
 	setCarryingOtaProtection,
 	setOtaStreamingMarker,
 } from "../modules/streaming/ota-streaming-marker.ts";
-import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
+import {
+	createStreamSessionOrchestrator,
+	SILENT_WITNESS_QUERIES,
+} from "../modules/streaming/stream-session-orchestrator.ts";
 import { streamSessionProductionDeps } from "../modules/streaming/stream-session-production.ts";
 import type { EngineRuntimeState } from "../modules/streaming/streaming-backend.ts";
 import { initShutdownProtection } from "../modules/system/shutdown-protection.ts";
@@ -54,29 +58,54 @@ afterEach(resetOwners);
 
 type MarkerModule = typeof bootMarker;
 
+/**
+ * What the engine answers a reconciliation: `unknown` is no answer at all
+ * (unreachable, error), `silent` a reachable engine that sent no status
+ * before the query gave up, which is how an idle engine behaves.
+ */
+type Engine = EngineRuntimeState | "silent";
+const engineQuery =
+	(engine: () => Engine, counted: () => void = () => undefined) =>
+	async (): Promise<EngineRuntimeState> => {
+		counted();
+		const now = engine();
+		if (now !== "silent") return now;
+		currentRuntimeObservationSilence()();
+		return "unknown";
+	};
+const markerDeps = (marker: MarkerModule) => ({
+	initialLiveness: marker.encoderOtaStreamLiveness,
+	markStreamingForOta: marker.setOtaStreamingMarker,
+	unmarkStreamingForOta: marker.clearOtaStreamingMarker,
+	confirmStreamingForOta: marker.adoptOtaStreamingMarker,
+	awaitsIdleWitness: marker.otaMarkerAwaitsIdleWitness,
+});
+
 /** The production session with only the engine and status sinks replaced. */
 function bootSession(
-	runtime: EngineRuntimeState,
+	runtime: Engine | (() => Engine),
 	marker: MarkerModule = bootMarker,
 ) {
 	let stops = 0;
+	let queries = 0;
+	const engine = typeof runtime === "function" ? runtime : () => runtime;
 	const session = createStreamSessionOrchestrator({
 		...streamSessionProductionDeps,
-		initialLiveness: marker.encoderOtaStreamLiveness,
-		markStreamingForOta: marker.setOtaStreamingMarker,
-		unmarkStreamingForOta: marker.clearOtaStreamingMarker,
+		...markerDeps(marker),
 		createAttemptId: () => "boot",
 		setStreamingStatus: () => undefined,
-		getStreamingStatus: () => runtime === "streaming",
+		getStreamingStatus: () => engine() === "streaming",
 		seedLifecycleState: () => undefined,
 		setLifecycleState: () => undefined,
-		queryRuntime: async () => runtime,
+		queryRuntime: engineQuery(engine, () => {
+			queries++;
+		}),
 		stopRuntime: async () => {
 			stops++;
 		},
 		onStreamStopped: () => undefined,
 	});
-	return { session, stops: () => stops };
+	return { session, stops: () => stops, queries: () => queries };
 }
 
 test("a clean boot under the carrying startup hold reaches idle with a silent engine", async () => {
@@ -181,10 +210,14 @@ test("a backend restart inside the startup hold reaches idle without a stop", as
 	expect(markerPresent()).toBe(true);
 
 	const restarted = await restartBackend();
-	const { session, stops } = bootSession("unknown", restarted);
+	const { session, stops, queries } = bootSession("silent", restarted);
 	restarted.setCarryingOtaProtection(true);
+	// The line alone is not idle: it waits, unchanged, for the engine.
+	expect(restarted.encoderOtaStreamLiveness()).toBe("unknown");
+	expect(markerLine()).toBe("carrying\n");
 
 	expect(await session.reconcile()).toBe("idle");
+	expect(queries()).toBe(SILENT_WITNESS_QUERIES);
 	expect(session.streamLiveness()).toBe("idle");
 	expect(restarted.encoderOtaStreamLiveness()).toBe("idle");
 	expect(stops()).toBe(0);
@@ -199,19 +232,19 @@ test("a second restart inside the same hold still reaches idle", async () => {
 	const first = await restartBackend();
 	first.setCarryingOtaProtection(true);
 	const second = await restartBackend();
-	const { session } = bootSession("unknown", second);
+	const { session } = bootSession("silent", second);
 	second.setCarryingOtaProtection(true);
 	expect(await session.reconcile()).toBe("idle");
 	second.setCarryingOtaProtection(false);
 	expect(markerPresent()).toBe(false);
 });
 
-test("a restart before the new process takes its own hold does not read a stream", async () => {
+test("a restart before the new process takes its own hold waits for the engine, not a stop", async () => {
 	setCarryingOtaProtection(true);
 	const restarted = await restartBackend();
 	// The session is built at import, before initCarrying().
-	const { session } = bootSession("unknown", restarted);
-	expect(session.snapshot().state).toBe("idle");
+	const { session } = bootSession("silent", restarted);
+	expect(session.snapshot().state).toBe("reconciling");
 	restarted.setCarryingOtaProtection(true);
 	expect(await session.reconcile()).toBe("idle");
 	restarted.setCarryingOtaProtection(false);
@@ -263,7 +296,7 @@ test("a restart after a confirmed stop under carrying reaches idle", async () =>
 	expect(markerPresent()).toBe(true);
 
 	const restarted = await restartBackend();
-	const { session } = bootSession("unknown", restarted);
+	const { session } = bootSession("silent", restarted);
 	restarted.setCarryingOtaProtection(true);
 	expect(await session.reconcile()).toBe("idle");
 	restarted.setCarryingOtaProtection(false);
@@ -310,13 +343,12 @@ test("a marker of unknown origin is never claimed by a restart", async () => {
 function launchSession(
 	marker: MarkerModule,
 	shutdownAdmission?: () => Promise<boolean>,
+	engine: () => Engine = () => "silent",
 ) {
 	let launches = 0;
 	const session = createStreamSessionOrchestrator({
 		...streamSessionProductionDeps,
-		initialLiveness: marker.encoderOtaStreamLiveness,
-		markStreamingForOta: marker.setOtaStreamingMarker,
-		unmarkStreamingForOta: marker.clearOtaStreamingMarker,
+		...markerDeps(marker),
 		...(shutdownAdmission === undefined
 			? {}
 			: { ensureShutdownProtection: shutdownAdmission }),
@@ -326,7 +358,9 @@ function launchSession(
 		getStreamingStatus: () => launches > 0,
 		seedLifecycleState: () => undefined,
 		setLifecycleState: () => undefined,
-		queryRuntime: async () => "unknown",
+		// Silent by default: an idle engine says nothing, and launches here
+		// dispatch nothing real.
+		queryRuntime: engineQuery(engine),
 		stopRuntime: async () => undefined,
 		onStreamStopped: () => undefined,
 		onStreamCommitted: undefined,
@@ -526,7 +560,206 @@ test("a failed launch under carrying hands the marker back", async () => {
 	expect(session.snapshot().state).toBe("idle");
 	expect(markerLine()).toBe("carrying\n");
 	const restarted = await restartBackend();
-	expect(restarted.encoderOtaStreamLiveness()).toBe("idle");
+	expect(restarted.encoderOtaStreamLiveness()).toBe("unknown");
+	expect(restarted.otaMarkerAwaitsIdleWitness()).toBe(true);
 	restarted.setCarryingOtaProtection(true);
 	restarted.setCarryingOtaProtection(false);
+	// Unwitnessed, the line outlasts the hold.
+	expect(markerLine()).toBe("carrying\n");
+	restarted.clearOtaStreamingMarker();
+	expect(markerPresent()).toBe(false);
+});
+
+/**
+ * Review regression (third pass on the carrying line): the line is only what
+ * the previous process knew at its last write. Another control client started
+ * the engine while the marker could be neither rewritten nor replaced, the
+ * line stayed beside the stream, and the next process called it idle. A
+ * restart now needs the engine to agree before the line counts.
+ */
+const lockMarker = () => {
+	chmodSync(otaStreamingMarkerPath(), 0o444);
+	chmodSync(dirname(otaStreamingMarkerPath()), 0o500);
+};
+const unlockMarker = () => {
+	chmodSync(dirname(otaStreamingMarkerPath()), 0o700);
+	chmodSync(otaStreamingMarkerPath(), 0o600);
+};
+
+test("a restart during a stream this backend launched adopts it and refuses a second start", async () => {
+	setCarryingOtaProtection(true);
+	const live = launchSession(bootMarker);
+	expect(await live.start()).toMatchObject({ result: "started" });
+	expect(markerLine()).toBe("");
+
+	const restarted = await restartBackend();
+	const next = launchSession(restarted, undefined, () => "streaming");
+	restarted.setCarryingOtaProtection(true);
+	expect(await next.session.reconcile()).toBe("streaming");
+	expect(await next.start()).toMatchObject({ result: "busy" });
+	expect(next.launches()).toBe(0);
+	restarted.setCarryingOtaProtection(false);
+	expect(markerLine()).toBe("");
+	expect(inhibitorHeld).toBe(true);
+	expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+	expect(markerPresent()).toBe(false);
+	expect(inhibitorHeld).toBe(false);
+	await live.session.stop("operator");
+});
+
+test.if(unprivileged)(
+	"a stream another client started beside an unwritable line is adopted again after a restart",
+	async () => {
+		setCarryingOtaProtection(true);
+		// The engine runs a session this backend did not launch.
+		const first = launchSession(bootMarker, undefined, () => "streaming");
+		lockMarker();
+		expect(await first.session.reconcile()).toBe("streaming");
+		// Neither the rewrite nor the replacement could take the file.
+		expect(markerLine()).toBe("carrying\n");
+
+		// Storage recovers, the backend restarts, the stream is still up.
+		unlockMarker();
+		const restarted = await restartBackend();
+		const next = launchSession(restarted, undefined, () => "streaming");
+		restarted.setCarryingOtaProtection(true);
+		expect(restarted.encoderOtaStreamLiveness()).toBe("unknown");
+		expect(await next.session.reconcile()).toBe("streaming");
+		expect(markerLine()).toBe("");
+		expect(await next.start()).toMatchObject({ result: "busy" });
+		expect(next.launches()).toBe(0);
+		restarted.setCarryingOtaProtection(false);
+		expect(markerPresent()).toBe(true);
+		expect(inhibitorHeld).toBe(true);
+		expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+		expect(markerPresent()).toBe(false);
+	},
+);
+
+test.if(unprivileged)(
+	"the same stream behind an unreachable engine keeps the restart protected",
+	async () => {
+		setCarryingOtaProtection(true);
+		const first = launchSession(bootMarker, undefined, () => "streaming");
+		lockMarker();
+		expect(await first.session.reconcile()).toBe("streaming");
+		unlockMarker();
+		expect(markerLine()).toBe("carrying\n");
+
+		let engine: Engine = "unknown";
+		const restarted = await restartBackend();
+		const next = launchSession(restarted, undefined, () => engine);
+		restarted.setCarryingOtaProtection(true);
+		expect(await next.session.reconcile()).toBe("reconciling");
+		expect(next.session.streamLiveness()).toBe("unknown");
+		expect(await next.start()).toMatchObject({ result: "busy" });
+		restarted.setCarryingOtaProtection(false);
+		// The line stays, and so does the inhibitor: nothing has been witnessed.
+		expect(markerLine()).toBe("carrying\n");
+		expect(inhibitorHeld).toBe(true);
+
+		// The engine is back (the reconnect loop reconciles again).
+		engine = "streaming";
+		expect(await next.session.reconcile()).toBe("streaming");
+		expect(markerLine()).toBe("");
+		expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+		expect(markerPresent()).toBe(false);
+		expect(inhibitorHeld).toBe(false);
+	},
+);
+
+test("a restart during carrying only waits for a reachable engine before it is idle", async () => {
+	setCarryingOtaProtection(true);
+	let engine: Engine = "unknown";
+	const restarted = await restartBackend();
+	const next = launchSession(restarted, undefined, () => engine);
+	restarted.setCarryingOtaProtection(true);
+	expect(await next.session.reconcile()).toBe("reconciling");
+	expect(await next.start()).toMatchObject({ result: "busy" });
+	restarted.setCarryingOtaProtection(false);
+	expect(markerLine()).toBe("carrying\n");
+	expect(inhibitorHeld).toBe(true);
+
+	// A third process in this state still finds the line, not an empty file.
+	const third = await restartBackend();
+	expect(third.otaMarkerAwaitsIdleWitness()).toBe(true);
+
+	engine = "silent";
+	expect(await next.session.reconcile()).toBe("idle");
+	expect(markerPresent()).toBe(false);
+	expect(inhibitorHeld).toBe(false);
+	expect(await next.start()).toMatchObject({ result: "started" });
+	expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+	third.clearOtaStreamingMarker();
+});
+
+test("one silent answer is not enough when the next one hears a stream", async () => {
+	setCarryingOtaProtection(true);
+	const answers: Engine[] = ["silent", "streaming"];
+	const restarted = await restartBackend();
+	const { session } = bootSession(
+		() => answers.shift() ?? "streaming",
+		restarted,
+	);
+	restarted.setCarryingOtaProtection(true);
+	expect(await session.reconcile()).toBe("streaming");
+	expect(markerLine()).toBe("");
+	expect(await session.stop("operator")).toEqual({ result: "stopped" });
+	restarted.setCarryingOtaProtection(false);
+});
+
+test("one silent answer and then none keeps the line waiting", async () => {
+	setCarryingOtaProtection(true);
+	const answers: Engine[] = ["silent", "unknown"];
+	const restarted = await restartBackend();
+	const { session } = bootSession(
+		() => answers.shift() ?? "unknown",
+		restarted,
+	);
+	restarted.setCarryingOtaProtection(true);
+	expect(await session.reconcile()).toBe("reconciling");
+	restarted.setCarryingOtaProtection(false);
+	expect(markerLine()).toBe("carrying\n");
+	expect(inhibitorHeld).toBe(true);
+	restarted.clearOtaStreamingMarker();
+});
+
+test("a line left by the previous release is confirmed like this release's own", async () => {
+	// The marker format is unchanged: a backend with only the plain line wrote it.
+	writeFileSync(otaStreamingMarkerPath(), "carrying\n");
+	const restarted = await restartBackend();
+	const { session } = bootSession("silent", restarted);
+	restarted.setCarryingOtaProtection(true);
+	expect(await session.reconcile()).toBe("idle");
+	restarted.setCarryingOtaProtection(false);
+	expect(markerPresent()).toBe(false);
+	expect(inhibitorHeld).toBe(false);
+});
+
+test("a marker from a backend without the carrying line stays protected on a silent engine", async () => {
+	// Older backends wrote an empty marker for carrying too: it is a stream's.
+	writeFileSync(otaStreamingMarkerPath(), "");
+	const restarted = await restartBackend();
+	const { session, queries } = bootSession("silent", restarted);
+	restarted.setCarryingOtaProtection(true);
+	expect(await session.reconcile()).toBe("reconciling");
+	expect(queries()).toBe(1);
+	restarted.setCarryingOtaProtection(false);
+	expect(markerLine()).toBe("");
+	expect(inhibitorHeld).toBe(true);
+	expect(await session.stop("operator")).toEqual({ result: "stopped" });
+	expect(markerPresent()).toBe(false);
+});
+
+test("a torn line is not a line, even to a silent engine", async () => {
+	writeFileSync(otaStreamingMarkerPath(), "carr");
+	const restarted = await restartBackend();
+	const next = launchSession(restarted);
+	restarted.setCarryingOtaProtection(true);
+	expect(await next.session.reconcile()).toBe("reconciling");
+	expect(await next.start()).toMatchObject({ result: "busy" });
+	expect(next.launches()).toBe(0);
+	expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+	restarted.setCarryingOtaProtection(false);
+	expect(markerPresent()).toBe(false);
 });

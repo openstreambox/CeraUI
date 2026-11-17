@@ -18,6 +18,7 @@ import {
 	cerastreamBackend,
 	classifyConnectHandshakePhase,
 } from "../modules/streaming/cerastream-backend.ts";
+import { withRuntimeObservationOwner } from "../modules/streaming/engine-runtime-observation.ts";
 import { deriveStreamHealth } from "../modules/streaming/health.ts";
 import {
 	createLaunchTransaction,
@@ -1268,3 +1269,165 @@ function errorEvent(
 }
 
 type RuntimeErrorCode = Extract<EventParams, { type: "error" }>["code"];
+
+// ---------------------------------------------------------------------------
+// Engine silence: reported beside `unknown`, never instead of it.
+// ---------------------------------------------------------------------------
+
+describe("a reconciliation that hears nothing", () => {
+	/** A backend whose reconciliation timers fire only when the test says so. */
+	function silenceHarness(opts: Parameters<typeof makeBackend>[0] = {}) {
+		const timers: (() => void)[] = [];
+		const harness = makeBackend({
+			scheduleTimeout: (callback) => {
+				timers.push(callback);
+				return timers.length as unknown as ReturnType<typeof setTimeout>;
+			},
+			cancelTimeout: () => undefined,
+			...opts,
+		});
+		let silent = 0;
+		const observe = () =>
+			withRuntimeObservationOwner(
+				() => true,
+				() => harness.backend.reconcileRuntimeState(),
+				undefined,
+				() => {
+					silent += 1;
+				},
+			);
+		return { ...harness, timers, observe, silent: () => silent };
+	}
+
+	test("a reachable engine that says nothing is reported silent and stays unknown", async () => {
+		const h = silenceHarness();
+		const answer = h.observe();
+		await h.fake.subscribed;
+		await waitFor(() => h.timers.length === 1);
+		h.timers[0]?.();
+		expect(await answer).toBe("unknown");
+		expect(h.silent()).toBe(1);
+	});
+
+	test("a status that settles nothing is not silence", async () => {
+		const h = silenceHarness();
+		const answer = h.observe();
+		await h.fake.subscribed;
+		await waitFor(() => h.timers.length === 1);
+		h.fake.emit({
+			type: "status",
+			seq: 1,
+			state: "starting",
+			streaming: false,
+		});
+		expect(await answer).toBe("unknown");
+		h.timers[0]?.();
+		expect(h.silent()).toBe(0);
+	});
+
+	test("anything the engine sends is not silence, even when it settles nothing", async () => {
+		const h = silenceHarness();
+		const answer = h.observe();
+		await h.fake.subscribed;
+		await waitFor(() => h.timers.length === 1);
+		h.fake.emit({
+			type: "bitrate",
+			current_bitrate: 5000,
+		} as unknown as EventParams);
+		h.timers[0]?.();
+		expect(await answer).toBe("unknown");
+		expect(h.silent()).toBe(0);
+	});
+
+	test("an unreachable engine is not silence", async () => {
+		const h = silenceHarness({
+			connect: async () => {
+				throw new Error("engine unavailable");
+			},
+		});
+		expect(await h.observe()).toBe("unknown");
+		expect(h.silent()).toBe(0);
+	});
+
+	test("silence is only heard by the query that asked", async () => {
+		const h = silenceHarness();
+		let current = true;
+		let heard = 0;
+		const answer = withRuntimeObservationOwner(
+			() => current,
+			() => h.backend.reconcileRuntimeState(),
+			undefined,
+			() => {
+				heard += 1;
+			},
+		);
+		await h.fake.subscribed;
+		await waitFor(() => h.timers.length === 1);
+		// A newer reconciliation took over while this one waited.
+		current = false;
+		h.timers[0]?.();
+		expect(heard).toBe(0);
+		expect(await answer).toBe("unknown");
+	});
+
+	test("two silent queries confirm an inherited carrying line; a status on the second is adopted", async () => {
+		for (const second of ["silent", "streaming"] as const) {
+			const h = silenceHarness();
+			let witnessPending = true;
+			let streaming = false;
+			const orchestrator = createStreamSessionOrchestrator({
+				initialLiveness: () => (witnessPending ? "unknown" : "idle"),
+				awaitsIdleWitness: () => witnessPending,
+				unmarkStreamingForOta: () => {
+					witnessPending = false;
+					return true;
+				},
+				confirmStreamingForOta: () => {
+					witnessPending = false;
+					return true;
+				},
+				createAttemptId: () => "witness",
+				setStreamingStatus: (next) => {
+					streaming = next;
+				},
+				getStreamingStatus: () => streaming,
+				stopRuntime: async () => undefined,
+				queryRuntime: () => h.backend.reconcileRuntimeState(),
+			});
+			const reconciled = orchestrator.reconcile();
+			await waitFor(() => h.timers.length === 1);
+			h.timers[0]?.();
+			// One silent query is not enough: the session asks again.
+			await waitFor(() => h.timers.length === 2);
+			expect(orchestrator.snapshot().state).toBe("reconciling");
+			if (second === "silent") h.timers[1]?.();
+			else
+				h.fake.emit({
+					type: "status",
+					seq: 2,
+					state: "streaming",
+					streaming: true,
+				});
+			expect(await reconciled).toBe(second === "silent" ? "idle" : "streaming");
+			expect(witnessPending).toBe(false);
+		}
+	});
+
+	test("silence without an inherited line keeps the old meaning", async () => {
+		const h = silenceHarness();
+		const orchestrator = createStreamSessionOrchestrator({
+			initialLiveness: "unknown",
+			awaitsIdleWitness: () => false,
+			createAttemptId: () => "plain",
+			setStreamingStatus: () => undefined,
+			getStreamingStatus: () => false,
+			stopRuntime: async () => undefined,
+			queryRuntime: () => h.backend.reconcileRuntimeState(),
+		});
+		const reconciled = orchestrator.reconcile();
+		await waitFor(() => h.timers.length === 1);
+		h.timers[0]?.();
+		expect(await reconciled).toBe("reconciling");
+		expect(h.timers.length).toBe(1);
+	});
+});

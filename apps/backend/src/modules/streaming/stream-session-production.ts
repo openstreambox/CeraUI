@@ -14,9 +14,11 @@ import {
 	tryAcquireLifecycle,
 } from "./lifecycle-admission.ts";
 import {
+	adoptOtaStreamingMarker,
 	claimOtaMarkerForLaunch,
 	clearOtaStreamingMarker,
 	encoderOtaStreamLiveness,
+	otaMarkerAwaitsIdleWitness,
 	setOtaStreamingMarker,
 } from "./ota-streaming-marker.ts";
 import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
@@ -101,5 +103,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	admitUpdate: admitAndPrepareStreamStart,
 	markStreamingForOta: setOtaStreamingMarker,
 	unmarkStreamingForOta: clearOtaStreamingMarker,
+	confirmStreamingForOta: adoptOtaStreamingMarker,
+	awaitsIdleWitness: otaMarkerAwaitsIdleWitness,
 	onStreamStopped: noteStreamStopped,
 };

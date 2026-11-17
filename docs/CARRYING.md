@@ -48,23 +48,38 @@ every clean boot look like an inherited marker; an idle engine pushes no status
 on subscribe, so the session would stay `reconciling` until an operator Stop.
 A carrying-only marker holds the line `carrying`; a stream's marker is empty,
 and the image checks existence only. `/run` outlives a backend restart, so a
-new process that finds that line knows its predecessor held the file for
-carrying alone, takes its own startup hold and reaches `idle`. Without it, a
+new process that finds that line learns that its predecessor held the file for
+carrying alone, as far as that process knew at its last write. Without it, a
 restart inside the hold or while carrying (a crash, or the image restarting
 the service early in boot) stayed `reconciling` and refused Start until a Stop.
 Any other marker present before carrying wrote it still counts as unknown, so a
 restart beside a running stream adopts it or stays protected.
 
+The line alone is not idle. A stream can begin after it was written (another
+control client, while the file could be neither rewritten nor replaced), and a
+dead process cannot report that. So a restarted backend keeps the line as it
+is, holds the encoder inhibitor and stays `reconciling` until the engine
+agrees: two separate status subscriptions that are accepted and hear nothing
+(an idle engine is silent, a running session reports status about every two
+seconds) commit `idle`; a running session is adopted and the file becomes the
+stream's. An unreachable engine or any answer in between leaves the line
+waiting, and the engine reconnect loop reconciles again once it is reachable.
+Engine silence without the line keeps its old meaning (unknown).
+
 One owner (`createOtaMarkerOwner`) writes the file, and its content follows
 from who holds it at each change: a stream keeps it empty, carrying alone keeps
-the line, nobody removes it. A Start changes nothing until its last admission
+the line, nobody removes it. Every commit to `streaming`, launched or adopted,
+makes the file the stream's. A Start changes nothing until its last admission
 step, which runs in the same tick as the launch: the stream takes the file
 (rewritten, or replaced by rename when it cannot be rewritten), and the launch
 goes only if the file is then seen without the line. Otherwise Start is refused
-as for unavailable shutdown protection, since a later process would read a live
-stream as idle. A cancelled or refused Start therefore leaves the marker as it
-was. `ota-marker-owner.test.ts` walks every sequence of holder changes, write
-failures and restarts to a fixed depth against these rules.
+as for unavailable shutdown protection. A cancelled or refused Start therefore
+leaves the marker as it was. Content already on disk is never written again,
+and the line is written through a renamed sibling first, so a torn write
+cannot leave half a line (which would read unknown anyway).
+`ota-marker-owner.test.ts` walks every sequence of holder changes, engine
+answers, outside starts, write failures (torn writes included) and restarts to
+a fixed depth against these rules.
 The idle clock includes carrying and its last hold boundary. Updates retain all
 existing control leases and final admission checks. A persistent informational
 notice explains why updates, reboot, power-off and idle link changes wait, without

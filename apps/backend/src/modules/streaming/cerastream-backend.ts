@@ -152,6 +152,7 @@ import { validateBitrate } from "./encoder.ts";
 import {
 	classifyRuntimeState,
 	currentRuntimeObservationOwner,
+	currentRuntimeObservationSilence,
 	currentRuntimeObservationUncertainty,
 } from "./engine-runtime-observation.ts";
 import {
@@ -1145,6 +1146,11 @@ export class CerastreamBackend implements StreamingBackend {
 			this.clientEpoch === adoptedEpoch;
 		const observationOwner = currentRuntimeObservationOwner();
 		const uncertainStatus = currentRuntimeObservationUncertainty();
+		const silent = currentRuntimeObservationSilence();
+		// Anything the engine sends on this subscription, owned or not, means it
+		// was not silent.
+		let heard = false;
+		let timedOut = false;
 		const ownsQuery = () =>
 			observationOwner() && this.probeEpoch === probeEpoch;
 		try {
@@ -1166,6 +1172,7 @@ export class CerastreamBackend implements StreamingBackend {
 			subscription = await client.subscribeEvents(
 				{ topics: ["status"] },
 				(event) => {
+					heard = true;
 					if (
 						adopted
 							? !ownsSession()
@@ -1197,12 +1204,20 @@ export class CerastreamBackend implements StreamingBackend {
 				await client.close();
 				return "unknown";
 			}
-			timer = this.deps.scheduleTimeout(
-				() => resolveRuntimeState?.("unknown"),
-				ENGINE_STATE_RECONCILE_TIMEOUT,
-			);
+			timer = this.deps.scheduleTimeout(() => {
+				timedOut = true;
+				resolveRuntimeState?.("unknown");
+			}, ENGINE_STATE_RECONCILE_TIMEOUT);
 			const runtimeState = await runtimeStateEvent;
 			acceptingEvents = false;
+			if (
+				runtimeState === "unknown" &&
+				timedOut &&
+				!heard &&
+				ownsQuery() &&
+				this.clientEpoch === clientEpoch
+			)
+				silent();
 			if (
 				ownsQuery() &&
 				this.clientEpoch === clientEpoch &&
