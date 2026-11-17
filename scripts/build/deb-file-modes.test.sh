@@ -21,9 +21,10 @@ awk '/^# Create directory structure$/ { emit=1 }
      emit && /^cd \.\.\/\.\.$/ { exit }' scripts/build/build-debian-package.sh > "$work/stage.sh"
 [[ -s "$work/stage.sh" ]] || fail 'package staging block not found'
 
-for mask in 077 022; do
+for fixture in 077 022 web-map binary-map hidden-map linked-map scan-failure; do
   (
-    umask "$mask"
+    mask="$fixture"
+    case "$fixture" in 077|022) umask "$fixture" ;; *) umask 022 ;; esac
     cd "$work"
     mkdir -p "$mask/dist/public/assets" "$mask/dist/debian" "$mask/apps/backend"
     cd "$mask"
@@ -39,6 +40,11 @@ for mask in 077 022; do
     # Copied artifacts can carry unrelated executable bits even with umask 022.
     chmod 0777 'dist/public/assets/with space.js'
     ln -s index.html dist/public/index-link.html
+    case "$fixture" in
+      web-map) printf 'source text\n' > dist/public/assets/unexpected.js.map ;;
+      hidden-map) mkdir -p dist/public/assets/.hidden; printf 'source text\n' > dist/public/assets/.hidden/unexpected.map ;;
+      linked-map) ln -s index.html dist/public/unexpected.map ;;
+    esac
     TEMP_DIR="$PWD/dist/debian/temp"
     PACKAGE_NAME=ceralive-device-modes
     VERSION=0.0.0
@@ -60,6 +66,9 @@ for mask in 077 022; do
         mkdir -p "$(dirname "$2")"
         printf 'fixture copyright\n' > "$2"
         printf '{}\n' > "$4"
+        if [[ "$fixture" == binary-map ]]; then
+          printf 'unrelated source text\n' > "$TEMP_DIR/usr/local/bin/unexpected.map"
+        fi
         return 0
       fi
       [[ "$*" == 'build apps/backend/src/modules/system/update-orchestrator/recovery-cli.ts --minify --sourcemap --compile --target=bun-linux-arm64 --outfile='* ]] \
@@ -69,6 +78,28 @@ for mask in 077 022; do
       printf '#!/bin/sh\nexit 0\n' > "${outfile#--outfile=}"
       printf '{"sourcesContent":["private source"]}\n' > "${outfile#--outfile=}.map"
     }
+    case "$fixture" in
+      077|022) ;;
+      *)
+        fpm() { touch "$work/$fixture-fpm-called"; command fpm "$@"; }
+        if [[ "$fixture" == scan-failure ]]; then
+          find() { return 1; }
+        fi
+        set +e
+        # Run with errexit outside a conditional so a production refusal stops
+        # assembly instead of letting the test's shell ignore set -e.
+        ( set -e; source "$work/stage.sh" ) > "$work/$fixture-refusal.log" 2>&1
+        rc=$?
+        set -e
+        [[ "$rc" -ne 0 ]] || fail "$fixture: package staging accepted an unexpected map"
+        refusal='source map in package payload'
+        [[ "$fixture" != scan-failure ]] || refusal='Could not scan package payload'
+        grep -q "$refusal" "$work/$fixture-refusal.log" \
+          || fail "$fixture: staging failed without the map refusal"
+        [[ ! -e "$work/$fixture-fpm-called" ]] || fail "$fixture: fpm ran before map refusal"
+        printf 'PASS: %s rejected before fpm\n' "$fixture"
+        exit 0 ;;
+    esac
     # shellcheck source=/dev/null
     source "$work/stage.sh" > "$work/$mask-fpm.log" 2>&1
     dpkg-deb --fsys-tarfile dist/debian/ceralive-device-modes_0.0.0-test_arm64.deb > "$work/$mask.tar"

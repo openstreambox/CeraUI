@@ -141,6 +141,17 @@ NODE_ENV=production bun scripts/build/third-party-notices.ts "$TEMP_DIR/usr/shar
 # Keep the embedded map, but never ship the source-bearing sidecar.
 rm "$TEMP_DIR/usr/libexec/ceralive/ceralive-update-recover.map"
 
+# Reject any unexpected map, including hidden assets and links, before packaging.
+# A failed scan is also a build failure; an unreadable payload is not a clean one.
+if ! source_map="$(find "$TEMP_DIR" -name '*.map' -print -quit)"; then
+    log_error "Could not scan package payload for source maps"
+    exit 1
+fi
+if [[ -n "$source_map" ]]; then
+    log_error "Unexpected source map in package payload: $source_map"
+    exit 1
+fi
+
 # Normalize copied artifacts and builder umask before applying private/executable modes.
 find "$TEMP_DIR" -type d -exec chmod 0755 {} +
 find "$TEMP_DIR" -type f -exec chmod 0644 {} +

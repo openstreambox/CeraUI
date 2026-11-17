@@ -186,3 +186,6 @@ Tailwind configuration whose Tailwind and animation plugin packages are named
 in the policy; config changes require a new attribution review and hash. The existing Tailwind build-tool rule still names its generated CSS
 and animation plugin. Recovery source-map sidecars are removed after checking
 the actual compiled binary; package inspection rejects any shipped `.map`.
+The production package builder also scans the entire staged tree after removing
+the known recovery sidecar and fails before FPM on any remaining `.map` entry,
+including hidden assets and links, or if the scan itself fails.
