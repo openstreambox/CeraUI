@@ -28,7 +28,10 @@ import { shouldUseMocks } from "../../../mocks/mock-service.ts";
 import { currentLifecycleHolder } from "../../streaming/lifecycle-admission.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
 import { cleanAptCache } from "../apt-cache-clean.ts";
-import { isRealDevice } from "../device-detection.ts";
+import {
+	hasCapability,
+	isBoardCapabilityDenied,
+} from "../board-capabilities.ts";
 import {
 	type UpdateBusyReason,
 	updatePhaseBusyReasons,
@@ -439,13 +442,17 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	checkOsManifest: async (channel) =>
 		checkOsManifestResult(channel ?? (await loadUpdateSettings()).channel),
 	stageOs: async (manifest, onProgress, control) => {
+		if (isBoardCapabilityDenied("os-updates"))
+			throw new Error("updates_disabled");
 		await stageOsBundle(manifest, onProgress, control);
 	},
 	readActivationArmed,
 	isOsStageReady: async () =>
-		!(await isRealDevice()) || (await isOsStageReady()),
+		!isBoardCapabilityDenied("os-updates") &&
+		(!(await hasCapability("os-updates")) || (await isOsStageReady())),
 	isUpdateAdmissionReady: async () => {
-		if (!(await isRealDevice())) return true;
+		if (isBoardCapabilityDenied("os-updates")) return false;
+		if (!(await hasCapability("os-updates"))) return true;
 		try {
 			const job = await (deps.readOsStageJob ?? readOsStageJob)();
 			if (osStageInProcess || activeOsStage)
@@ -470,7 +477,11 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	readBootId,
 	readBootedVersion: readBootedOsReleaseVersion,
 	inspectOsOperation,
-	startSlotSync,
+	startSlotSync: async () => {
+		if (isBoardCapabilityDenied("os-updates"))
+			throw new Error("updates_disabled");
+		await startSlotSync();
+	},
 	inspectSlotSync,
 	resetSlotSyncFailure,
 	readSlotSyncEvidence,
@@ -507,7 +518,8 @@ export const defaultOrchestratorRuntimeDeps: OrchestratorRuntimeDeps = {
 	persist: saveOrchestratorState,
 	quarantine: new UpdateQuarantine(),
 	restartStale: async (isIdle, transactionRunning) => {
-		if (!(await isRealDevice())) return true;
+		if (isBoardCapabilityDenied("os-updates")) return false;
+		if (!(await hasCapability("os-updates"))) return true;
 		return reconcileStaleUnits({
 			...defaultStaleServiceDeps,
 			isIdle,
@@ -603,6 +615,7 @@ const kernelRuntime = createKernelRuntime({
 		return slots.length === 1 ? (slots[0]?.bootname ?? "") : "";
 	},
 	activate: async (now, action) => {
+		if (isBoardCapabilityDenied("os-updates")) return false;
 		await using control = await acquireRuntimeOsStageControl();
 		const { getDisruptiveActionDecision } = await import(
 			"../disruptive-action-runtime.ts"
@@ -867,6 +880,8 @@ function updateAdmissionReady(): Promise<boolean> {
 }
 
 export async function checkUpdatesNow(): Promise<ManualCheckOutcome> {
+	if (isBoardCapabilityDenied("os-updates"))
+		return { started: false, reason: "busy" };
 	startupReadiness.assertReady(
 		!osSettlementPersistence.replayPending &&
 			!publishingIntentPending(deps.osAttemptIntentStore),
@@ -921,6 +936,8 @@ const PACKAGE_PIPELINE_BUSY_PHASES: readonly OrchestratorState["phase"][] = [
 export async function installUpdatesNow(
 	input?: InstallUpdatesNowInput,
 ): Promise<ManualInstallOutcome> {
+	if (isBoardCapabilityDenied("os-updates"))
+		return { started: false, reason: "busy" };
 	const scoped = input?.scope === "packages";
 	const packageRefusal = ():
 		| Extract<ManualInstallOutcome, { started: false }>
@@ -2782,6 +2799,10 @@ function observeCredentialsSafely(
 }
 
 export async function runOrchestratorTick(): Promise<void> {
+	if (isBoardCapabilityDenied("os-updates")) {
+		scheduleNextTick();
+		return;
+	}
 	observeCredentialsSafely(deps);
 	(deps.downloadNotices ?? downloadPausedNotices()).hydrate();
 	if (pendingPackageSuccess.pending) {
@@ -3114,6 +3135,11 @@ async function startOrchestratorRuntime(
 ): Promise<void> {
 	startupReadiness.setReady(false);
 	deps = fencePackageSuccessEffects(runtimeDeps);
+	if (isBoardCapabilityDenied("os-updates")) {
+		started = true;
+		scheduleNextTick();
+		return;
+	}
 	(deps.downloadNotices ?? downloadPausedNotices()).hydrate();
 	await ensurePackageProvenance();
 	await replayPendingOsSettlement();

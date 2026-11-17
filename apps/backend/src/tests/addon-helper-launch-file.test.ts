@@ -45,7 +45,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			const step = createAddonHelperStep([action], ports);
 			// When the real wrapper handles the original throw.
 			const result = await invokeHelperAction(action, {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				readDescriptor: async () => sysextDescriptor,
 				createStep: () => step,
@@ -108,7 +108,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			const step = createAddonHelperStep([action], ports);
 			// When invalid identity reaches initial and controlled retry observations.
 			await invokeHelperAction(action, {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				readDescriptor: async () => sysextDescriptor,
 				createStep: () => step,
@@ -155,7 +155,7 @@ test("unknown-tag absent identity re-reads within 700ms then clears without spin
 	const step = createAddonHelperStep(["refresh"], ports);
 	// When the real reservation observes no identity over the bounded schedule.
 	const result = await invokeHelperAction("refresh", {
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec: async () => ({ stdout: "", stderr: "" }),
 		createStep: () => step,
 	}).catch((error: unknown) => error);
@@ -191,7 +191,7 @@ test("cancellation during identity re-read preserves unknown and schedules zero 
 	const step = createAddonHelperStep(["refresh"], ports);
 	// When shutdown interrupts the catch's recovery window.
 	await invokeHelperAction("refresh", {
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec: async () => ({ stdout: "", stderr: "" }),
 		createStep: () => step,
 	}).catch((error: unknown) => error);
