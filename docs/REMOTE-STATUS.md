@@ -20,6 +20,7 @@ changes. A freshness test pins producer and type declaration sources and the loc
 | Surface | Needed remotely | Withheld or substituted |
 | --- | --- | --- |
 | status | streaming boolean and closed lifecycle state, cellular initialization, password-required boolean | all other top-level fields default-denied |
+| phone box status | only on a phone-only box (setup engine `none`): fixed `phone_box: true`, carrying state enum and startup flag, box health part enum with its first-failure time, ready/sending link counts | every other status field and every nested extra; all non-status frame types; none of these fields on encoders |
 | Wi-Fi | distinguish adapters and saved profiles, connection present/absent | separate process-scoped Wi-Fi/Network/Profile labels; no interface/MAC/radio identity, SSID, profile UUID, BSSID, passwords, nearby scan results, hotspot clients or future identity fields |
 | modem | connection, radio technology, signal, roaming | neutral modem label; no SIM/operator/account/APN/config, serial, interface, device or USB path |
 | netif | enabled and throughput metrics | neutral Link labels; no IP, subnet, hardware markers, operator information or error text |
@@ -74,6 +75,32 @@ hotspot names are absent. This is intentionally a reduced remote view: source,
 network and credential editors that require the withheld fields must remain local.
 Opaque display labels must never be sent back as NetworkManager or modem targets.
 No external hosted remote UI or browser E2E was exercised.
+
+## Phone-only boxes
+
+A box without its own encoder (setup engine `none`) shows a phone Home remotely
+instead of encoder controls. On that box both transports, the legacy socket
+wrapper and the cloud relay, send `status` frames only. Config, netif, modems,
+Wi-Fi, relays, sensors, notifications and every other type stay local. Each
+status frame is built by `projectPhoneStatus` from typed leaves:
+
+| Field | Wire type |
+| --- | --- |
+| `remote_status` | literal `true` |
+| `phone_box` | literal `true`, set from the backend setup flag, never from the payload |
+| `carrying.state` | `streaming`, `idle` or `unknown` |
+| `carrying.startup` | optional boolean |
+| `box_health[]` | `{part, since}`; `part` is `cellular`, `moblink`, `srt-forward`, `hotspot` or `update-orchestrator-maintenance`, unique per frame; `since` is a finite non-negative epoch-ms time |
+| `phone_links.ready` | non-negative safe integer |
+| `phone_links.sending` | non-negative safe integer or `null` |
+
+Unknown enum values, duplicate or invalid health entries and nested extras are
+dropped, never passed through as strings. No credential, Moblin password, stream
+key, Stream ID, network name, address or device identifier can cross. Encoder
+status never carries these fields, even when a producer sets them. Encoder
+authentication on a phone box still goes through the same narrowed auth send.
+Phone-box withholds are designed, so they do not count as projection drops and
+do not use up the one-time warning.
 
 ## Integration with notification delivery
 
