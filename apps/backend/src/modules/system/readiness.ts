@@ -85,3 +85,12 @@ export function resetBootReadiness(): void {
 	degradedSubsystems.length = 0;
 	since.clear();
 }
+
+/** Retract a resolved optional-part failure and publish the current health line. */
+export function clearBootDegraded(subsystem: string): void {
+	const index = degradedSubsystems.indexOf(subsystem);
+	if (index < 0) return;
+	degradedSubsystems.splice(index, 1);
+	since.delete(subsystem);
+	broadcastMsg("status", { box_health: getPhoneBoxHealth() });
+}

@@ -41,6 +41,8 @@ import type {
 	LoginInput,
 	LoginOutput,
 	LogoutOutput,
+	MoblinkResult,
+	MoblinkStatus,
 	ModemBandsInput,
 	ModemBandsOutput,
 	ModemCapabilitiesOutput,
@@ -643,6 +645,11 @@ export type AddonOpResult =
  * Maps contract structure to callable async functions
  */
 export interface TypedRPC {
+	moblink: {
+		getStatus: () => Promise<MoblinkStatus>;
+		setCredential: (input: { password: string }) => Promise<MoblinkResult>;
+		clearCredential: () => Promise<MoblinkResult>;
+	};
 	auth: {
 		login: (input: LoginInput) => Promise<LoginOutput>;
 		setPassword: (input: SetPasswordInput) => Promise<SuccessResponse>;
