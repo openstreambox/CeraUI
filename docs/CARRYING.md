@@ -46,7 +46,14 @@ carrying after a confirmed encoder idle) is not stream evidence. Otherwise the
 startup hold, which is published before the first reconciliation, would make
 every clean boot look like an inherited marker; an idle engine pushes no status
 on subscribe, so the session would stay `reconciling` until an operator Stop.
-A marker present before carrying wrote it still counts as unknown.
+A carrying-only marker holds the line `carrying`; a stream's marker is empty,
+and the image checks existence only. `/run` outlives a backend restart, so a
+new process that finds that line knows its predecessor held the file for
+carrying alone, takes its own startup hold and reaches `idle`. Without it, a
+restart inside the hold or while carrying (a crash, or the image restarting
+the service early in boot) stayed `reconciling` and refused Start until a Stop.
+Any other marker present before carrying wrote it still counts as unknown, so a
+restart beside a running stream adopts it or stays protected.
 The idle clock includes carrying and its last hold boundary. Updates retain all
 existing control leases and final admission checks. A persistent informational
 notice explains why updates, reboot, power-off and idle link changes wait, without

@@ -21,7 +21,9 @@
  * symmetry with the shell script's own `CERALIVE_STREAMING_MARKER` override
  * (test/dev use), not because CeraUI ever needs a different production path.
  *
- * Existence-only sentinel: the file's CONTENT is never read by either side.
+ * Existence-only sentinel for the image: that script never reads the CONTENT.
+ * CeraUI alone writes one line into a marker that only its carrying owner
+ * explains, so a restarted backend can tell that file from a stream's marker.
  */
 
 import fs from "node:fs";
@@ -44,13 +46,28 @@ export function initialOtaStreamLiveness(): "idle" | "unknown" {
 	}
 }
 
-let encoderProtected = initialOtaStreamLiveness() !== "idle";
+/** Written only into a marker that carrying alone explains. */
+const CARRYING_ONLY = "carrying\n";
+
+/** Anything but the exact line (empty, unreadable, absent) is not a claim. */
+function markerSaysCarryingOnly(): boolean {
+	try {
+		return fs.readFileSync(otaStreamingMarkerPath(), "utf8") === CARRYING_ONLY;
+	} catch {
+		return false;
+	}
+}
+
 let carryingProtected = false;
-// True only while this process's carrying owner alone explains the marker:
-// carrying created it from absence, or the encoder confirmed idle while
-// carrying kept it. Anything else (inherited, encoder-written, unexplained)
-// stays evidence of a possible stream.
-let carryingOnlyMarker = false;
+// True only while the carrying owner alone explains the marker: carrying
+// created it from absence, the encoder confirmed idle while carrying kept it,
+// or an earlier backend process left it saying so. `/run` outlives a backend
+// restart, and every start takes the carrying hold again, so the earlier
+// process's hold is not a stream. Anything else (written for the encoder,
+// empty, unexplained) stays evidence of a possible stream.
+let carryingOnlyMarker = markerSaysCarryingOnly();
+let encoderProtected =
+	!carryingOnlyMarker && initialOtaStreamLiveness() !== "idle";
 setShutdownProtection("encoder", encoderProtected);
 
 /**
@@ -58,11 +75,12 @@ setShutdownProtection("encoder", encoderProtected);
  * the image-side activation check, so a marker this process wrote only for
  * client traffic is not evidence that a stream may be running. Counting it
  * made every production boot reconcile into the carrying startup hold and
- * stay `reconciling` until an operator stop.
+ * stay `reconciling` until an operator stop. The same holds for the marker a
+ * restarted backend finds from its predecessor's hold, before and after this
+ * process takes its own.
  */
 export function encoderOtaStreamLiveness(): "idle" | "unknown" {
-	if (carryingOnlyMarker && carryingProtected && !encoderProtected)
-		return "idle";
+	if (carryingOnlyMarker && !encoderProtected) return "idle";
 	return initialOtaStreamLiveness();
 }
 
@@ -71,12 +89,13 @@ export function setCarryingOtaProtection(protectedNow: boolean): boolean {
 	if (protectedNow) {
 		const existed = initialOtaStreamLiveness() !== "idle";
 		const shutdownProtected = setShutdownProtection("carrying", true);
-		const written = writeMarker();
-		if (written && !existed && !encoderProtected) carryingOnlyMarker = true;
+		if (!existed && !encoderProtected) carryingOnlyMarker = true;
+		const written = writeMarker(carryingOnlyMarker ? CARRYING_ONLY : undefined);
+		if (!written && !existed) carryingOnlyMarker = false;
 		return shutdownProtected && written;
 	}
-	carryingOnlyMarker = false;
 	const cleared = encoderProtected || removeMarker();
+	if (cleared) carryingOnlyMarker = false;
 	setShutdownProtection("carrying", !cleared);
 	return cleared;
 }
@@ -86,13 +105,17 @@ export function setOtaStreamingMarker(): boolean {
 	encoderProtected = true;
 	carryingOnlyMarker = false;
 	const shutdownProtected = setShutdownProtection("encoder", true);
-	const written = writeMarker();
+	const written = writeMarker("");
 	return shutdownProtected && written;
 }
 
-function writeMarker(): boolean {
+/** A stream's marker is empty. Without content the file is created or left as
+ * it is: carrying never rewrites a marker it cannot explain. */
+function writeMarker(content?: string): boolean {
 	try {
-		fs.writeFileSync(otaStreamingMarkerPath(), "");
+		fs.writeFileSync(otaStreamingMarkerPath(), content ?? "", {
+			flag: content === undefined ? "a" : "w",
+		});
 		return true;
 	} catch (error) {
 		logger.warn("ota-streaming-marker: failed to set", { error });
@@ -106,7 +129,11 @@ function writeMarker(): boolean {
 export function clearOtaStreamingMarker(): boolean {
 	encoderProtected = false;
 	// Confirmed idle: a marker kept for client traffic is now carrying's alone.
-	if (carryingProtected) carryingOnlyMarker = true;
+	// The line is for a later process; a failed write only costs it that proof.
+	if (carryingProtected) {
+		carryingOnlyMarker = true;
+		writeMarker(CARRYING_ONLY);
+	}
 	const cleared = carryingProtected || removeMarker();
 	setShutdownProtection("encoder", !cleared);
 	return cleared;
