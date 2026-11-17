@@ -3075,5 +3075,6 @@
 	"live.phone.moblinFailed": "无法应用 Moblin 密码。请检查盒子后重试。它可能已经保存。",
 	"live.phone.moblinBusy": "请等盒子确认没有直播在使用它，再更改 Moblin 密码。",
 	"live.audioMixer.error.audio_input_primary": "主输入始终在混音中。要将其关闭，请选择其他音频源。",
-	"live.layout.insetCancel": "松开前按 Esc 可放回原位。"
+	"live.layout.insetCancel": "松开前按 Esc 可放回原位。",
+	"network.sharing.ipv6Only": "连接到本机 Wi-Fi 的设备暂时无法通过此链路访问 IPv4 网站。"
 }
