@@ -335,7 +335,24 @@ EOF
 cat > dist/debian/preinst << 'EOF'
 #!/bin/bash
 set -euo pipefail
-case "$1" in
+# Snapshot migration is best effort and must never block dpkg, even on I/O failure.
+tmp=""
+published=false
+finish_snapshot() {
+    status=$?
+    [ -z "$tmp" ] || rm -f -- "$tmp" || true
+    if [ "$status" -ne 0 ]; then
+        if [ "$published" = true ]; then
+            echo "SRT forwarding snapshot saved but directory sync failed; continuing package installation" >&2 || true
+        else
+            echo "SRT forwarding snapshot unavailable; continuing package installation" >&2 || true
+        fi
+    fi
+    exit 0
+}
+trap '' PIPE
+trap finish_snapshot EXIT
+case "${1:-}" in
     install|upgrade) ;;
     *) exit 0 ;;
 esac
@@ -344,16 +361,23 @@ root="${CERALIVE_FORWARD_MIGRATION_TEST_ROOT:-}"
 dir="$root/data/ceralive"
 source="$root/opt/ceralive/setup.json"
 snapshot="$dir/srt-forward-legacy-setup.json"
-[ ! -e "$dir/srt-forward.json" ] && [ ! -L "$dir/srt-forward.json" ] || exit 0
+if [ -e "$dir/srt-forward.json" ] || [ -L "$dir/srt-forward.json" ]; then
+    rm -f -- "$snapshot"
+    exit 0
+fi
 [ ! -e "$snapshot" ] && [ ! -L "$snapshot" ] || exit 0
 [ -f "$source" ] && [ ! -L "$source" ] || exit 0
+# No runtime or JSON parser dependency in the package hook. False positives
+# only cause an unnecessary private snapshot; boot validates the actual JSON.
+grep -q '"srt_forward"' "$source" || exit 0
 umask 077
 mkdir -p -- "$dir"
 tmp=$(mktemp "$dir/.srt-forward-legacy-setup.XXXXXX")
-trap 'rm -f -- "$tmp"' EXIT
 cat -- "$source" > "$tmp"
 sync -f "$tmp"
 mv -T -- "$tmp" "$snapshot"
+tmp=""
+published=true
 sync -f "$dir"
 EOF
 
