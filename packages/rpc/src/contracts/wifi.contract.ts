@@ -73,6 +73,7 @@ export const wifiContract = oc.router({
 	/**
 	 * Configure hotspot settings
 	 */
+	hotspotDelete: oc.input(hotspotToggleInputSchema).output(successResponseSchema),
 	hotspotConfigure: oc.input(hotspotConfigInputSchema).output(successResponseSchema),
 
 	/**

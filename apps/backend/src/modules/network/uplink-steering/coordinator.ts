@@ -23,6 +23,7 @@ export interface UplinkSteeringCoordinatorDeps {
 		next: PreparedSteeringState,
 	): Promise<void>;
 	publishAvailability(status: SteeringAvailability): void;
+	verifyApplied?(state: PreparedSteeringState): Promise<void>;
 	waitBeforeRetry?(delayMs: number): Promise<void>;
 	retryCleanup?(): Promise<void>;
 	now?(): number;
@@ -33,6 +34,7 @@ export class UplinkSteeringCoordinator {
 	readonly #deps: UplinkSteeringCoordinatorDeps;
 	#applied: PreparedSteeringState | undefined;
 	#dirty = false;
+	#applyUncertain = false;
 	#running: Promise<void> | undefined;
 	#pendingReadiness: PendingSteeringState | undefined;
 	#readinessDeadlineArmed = false;
@@ -112,9 +114,11 @@ export class UplinkSteeringCoordinator {
 					this.#lastFailure === undefined ||
 					(this.#deps.now ?? Date.now)() >= this.#lastFailure.nextAttemptAt
 				) {
-					if (stateKey(this.#applied) !== desiredKey) {
+					if (this.#applyUncertain || stateKey(this.#applied) !== desiredKey) {
 						await this.#deps.apply(this.#applied, desired);
 					}
+					await this.#deps.verifyApplied?.(desired);
+					this.#applyUncertain = false;
 					this.#applied = desired;
 					this.#lastFailure = undefined;
 					this.#deps.publishAvailability({ available: true });
@@ -126,6 +130,8 @@ export class UplinkSteeringCoordinator {
 					logger.warn("uplink steering pending cleanup failed", { err: error });
 				}
 			} catch (error) {
+				// A partial apply can leave the live ruleset unlike the last completed state.
+				this.#applyUncertain = true;
 				const reason =
 					error instanceof SteeringUnavailableError
 						? error.reason

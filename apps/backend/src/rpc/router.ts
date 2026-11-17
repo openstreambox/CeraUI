@@ -34,6 +34,7 @@ import {
 	devEmitProcedure,
 	devRebindWifiProcedure,
 } from "./procedures/dev.procedure.ts";
+import { esimOperationProcedure } from "./procedures/esim.procedure.ts";
 import {
 	acknowledgeMutationProcedure,
 	configureModemProcedure,
@@ -76,8 +77,10 @@ import {
 import {
 	configureNetworkInterfaceProcedure,
 	getNetworkInterfacesProcedure,
+	getSharingPolicyProcedure,
 	setEthernetRoleProcedure,
 	setNetworkIngestEnabledProcedure,
+	setSharingPolicyProcedure,
 } from "./procedures/network.procedure.ts";
 import {
 	dismissNotificationProcedure,
@@ -146,6 +149,7 @@ import {
 	getWifiAdapterModesProcedure,
 	getWifiStatusProcedure,
 	hotspotConfigureProcedure,
+	hotspotDeleteProcedure,
 	hotspotPrepareProcedure,
 	hotspotStartProcedure,
 	hotspotStopProcedure,
@@ -199,6 +203,7 @@ const stableRoutes = {
 
 	modems: base.router({
 		getAll: getAllModemsProcedure,
+		esimOperation: esimOperationProcedure,
 		configure: configureModemProcedure,
 		scan: scanModemProcedure,
 		unlockSim: unlockSimProcedure,
@@ -244,6 +249,7 @@ const stableRoutes = {
 		hotspotStop: hotspotStopProcedure,
 		hotspotPrepare: hotspotPrepareProcedure,
 		hotspotConfigure: hotspotConfigureProcedure,
+		hotspotDelete: hotspotDeleteProcedure,
 		setCountry: setWifiCountryProcedure,
 		getAdapterModes: getWifiAdapterModesProcedure,
 		setAdapterMode: setWifiAdapterModeProcedure,
@@ -266,6 +272,8 @@ const stableRoutes = {
 		getInterfaces: getNetworkInterfacesProcedure,
 		configure: configureNetworkInterfaceProcedure,
 		setIngestEnabled: setNetworkIngestEnabledProcedure,
+		getSharingPolicy: getSharingPolicyProcedure,
+		setSharingPolicy: setSharingPolicyProcedure,
 		setEthernetRole: setEthernetRoleProcedure,
 	}),
 

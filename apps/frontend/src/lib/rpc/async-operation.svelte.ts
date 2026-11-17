@@ -339,6 +339,11 @@ const TICK_INTERVAL_MS = 1_000;
  * inside the Svelte app — never in the rune-free unit tests, which exercise
  * {@link asyncOpCore} directly.
  */
+// biome-ignore lint/nursery/useSvelteReactiveClasses: Attempt ownership is imperative bookkeeping; reactive reads would subscribe callers to dispatches.
+const latestAttempts = new Map<string, object>();
+// biome-ignore lint/nursery/useSvelteReactiveClasses: Store ownership is imperative bookkeeping.
+const latestOwners = new Map<string, object>();
+
 function createAsyncOpStore(): AsyncOpStore {
 	const registry = $state<AsyncOpRegistry>(createRegistry());
 
@@ -369,6 +374,7 @@ function createAsyncOpStore(): AsyncOpStore {
 		getTarget: (key) => getTarget(registry, key),
 		begin: (key, target, now = Date.now(), ttlMs) => {
 			begin(registry, key, target, now, ttlMs);
+			latestOwners.set(key, registry);
 			const attempt = registry.ops[key]?.attempt;
 			return () => registry.ops[key]?.attempt === attempt;
 		},
@@ -601,12 +607,19 @@ export async function osCommand<T>(opts: {
 		undefined,
 		opts.pendingTtlMs,
 	);
+	const ownerToken = latestOwners.get(opts.key);
+	const dispatch = {};
+	latestAttempts.set(opts.key, dispatch);
+	const isCurrent = () =>
+		latestOwners.get(opts.key) === ownerToken &&
+		latestAttempts.get(opts.key) === dispatch &&
+		(!opts.isCurrent || opts.isCurrent());
 	// Broadcasts can replace this key while the RPC is in flight, even with the
 	// same target. Only settle our attempt; feedback still belongs to this call.
 	const canSettle = () => singleton === owner && ownsAttempt();
 	try {
 		const r = await opts.rpc();
-		if (opts.isCurrent && !opts.isCurrent()) return undefined;
+		if (!isCurrent()) return undefined;
 		const v = opts.classify?.(r) ?? defaultClassify(r);
 		if (!v.ok) {
 			if (canSettle())
@@ -627,7 +640,7 @@ export async function osCommand<T>(opts: {
 		opts.onResult?.(r);
 		return r;
 	} catch (e) {
-		if (opts.isCurrent && !opts.isCurrent()) return undefined;
+		if (!isCurrent()) return undefined;
 		if (canSettle())
 			owner.fail(
 				opts.key,

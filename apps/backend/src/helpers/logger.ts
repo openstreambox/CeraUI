@@ -28,7 +28,8 @@ export const REDACTED = "[REDACTED]";
  * `passwordHash` all match). Centralised here so every transport and all 296
  * call sites are covered by one rule.
  */
-const SENSITIVE_KEY_RE = /pin|password|token|secret|paseto|bcrp|auth/i;
+const SENSITIVE_KEY_RE =
+	/pin|password|token|secret|paseto|bcrp|auth|activation.?code|confirmation.?code|matching.?id/i;
 
 /**
  * Value-shaped secrets that can appear under an innocent-looking key (or inside
@@ -256,6 +257,7 @@ const OWN_NUMBER_RECORD_RE =
 
 function looksSecret(value: string): boolean {
 	return (
+		/LPA:1\$/i.test(value) ||
 		PASETO_RE.test(value) ||
 		JWT_RE.test(value) ||
 		BEARER_RE.test(value) ||

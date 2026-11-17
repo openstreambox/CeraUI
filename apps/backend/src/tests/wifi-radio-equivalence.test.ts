@@ -6,7 +6,7 @@ import {
 import { getWifiIdToMacAddress } from "../modules/wifi/wifi-interfaces.ts";
 import { wifiRadioIdentity } from "../modules/wifi/wifi-radio-identity.ts";
 import { radioEquivalenceCases } from "./fixtures/wifi/radio-equivalence-cases.ts";
-import golden from "./fixtures/wifi/radio-equivalence-main.json";
+import golden from "./fixtures/wifi/radio-equivalence-integration.json";
 import { legacyOverlapTranscript } from "./helpers/wifi-legacy-overlap.ts";
 import { radioEquivalenceTranscript } from "./helpers/wifi-radio-equivalence.ts";
 
@@ -16,13 +16,14 @@ const broadcastTranscripts: Readonly<Record<string, unknown>> =
 
 // R-A: shadow identity must preserve main's public discovery and activation bytes.
 for (const fixture of radioEquivalenceCases) {
-	test(`preserves main discovery and public hotspot behavior: ${fixture.name}`, async () => {
+	test(`preserves combined discovery and explicit hotspot lifecycle: ${fixture.name}`, async () => {
 		const { broadcasts, ...transcript } =
 			await radioEquivalenceTranscript(fixture);
 		expect(transcript.unexpected).toEqual([]);
 		for (const frame of transcript.frames) {
 			for (const activation of frame.activations) {
 				expect(activation.prepare.success).toBe(fixture.admitted);
+				expect(activation.configure.success).toBe(fixture.admitted);
 				expect(activation.start.success).toBe(fixture.admitted);
 			}
 		}

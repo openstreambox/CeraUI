@@ -83,8 +83,37 @@ export function isSharedLanPort(ifname: string): boolean {
  */
 export function persistEthernetRole(ifname: string, role: EthernetRole): void {
 	const config = getConfig();
+	const previous = config.eth_roles;
 	config.eth_roles = { ...(config.eth_roles ?? {}), [ifname]: role };
-	saveConfig();
+	try {
+		saveConfig();
+	} catch (error) {
+		config.eth_roles = previous;
+		throw error;
+	}
+}
+
+export function getSharedEthernetProfile(ifname: string): string | undefined {
+	return getConfig().eth_shared_profiles?.[ifname]?.toLowerCase();
+}
+
+/** Durable intent, not evidence that NetworkManager created or activated it. */
+export function reserveSharedEthernetProfile(
+	ifname: string,
+	uuid: string,
+): void {
+	const config = getConfig();
+	const previous = config.eth_shared_profiles;
+	config.eth_shared_profiles = {
+		...(previous ?? {}),
+		[ifname]: uuid.toLowerCase(),
+	};
+	try {
+		saveConfig();
+	} catch (error) {
+		config.eth_shared_profiles = previous;
+		throw error;
+	}
 }
 
 /**
@@ -98,6 +127,7 @@ export function restoreEthernetRole(
 	previous: EthernetRole | undefined,
 ): void {
 	const config = getConfig();
+	const oldRoles = config.eth_roles;
 	const next = { ...(config.eth_roles ?? {}) };
 	if (previous === undefined) {
 		delete next[ifname];
@@ -105,7 +135,12 @@ export function restoreEthernetRole(
 		next[ifname] = previous;
 	}
 	config.eth_roles = next;
-	saveConfig();
+	try {
+		saveConfig();
+	} catch (error) {
+		config.eth_roles = oldRoles;
+		throw error;
+	}
 }
 
 /**

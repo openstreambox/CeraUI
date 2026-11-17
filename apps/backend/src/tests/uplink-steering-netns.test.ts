@@ -2,11 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
+import type { SharingPolicy } from "@ceraui/rpc/schemas";
 import {
 	MAX_STEERING_UPLINKS,
 	type SteeringUplink,
 } from "../modules/network/uplink-steering/contracts.ts";
+import {
+	applySharingPolicy,
+	DEFAULT_SHARING_POLICY,
+} from "../modules/network/uplink-steering/policy.ts";
 import {
 	buildShareRuleset,
 	stableUplinkMark,
@@ -49,10 +53,32 @@ describe.skipIf(!NETNS_ISOLATED)(
 				clientZones,
 				uplinks: [wan0, wan1],
 			});
-			const selectWan0 = buildShareRuleset({
-				clientZones,
-				uplinks: [wan0, { ...wan1, selectable: false, weight: 0 }],
+			// The existing kernel fixture calls its links wan0/wan1. Classify
+			// them as wired/cellular before mapping to those fixture names.
+			const policyRules = (policy: SharingPolicy) =>
+				buildShareRuleset({
+					clientZones,
+					uplinks: applySharingPolicy(
+						[
+							{ uplink: { ...wan0, ifname: "eth0" } },
+							{ uplink: { ...wan1, ifname: "wwan0", weight: 100 } },
+						],
+						policy,
+					).map(({ uplink }) => ({
+						...uplink,
+						ifname: uplink.ifname === "eth0" ? "wan0" : "wan1",
+					})),
+				});
+			const preferredPolicy: SharingPolicy = {
+				...DEFAULT_SHARING_POLICY,
+				priorities: { wired: 0, cellular: 10, wifi: 20 },
+			};
+			const selectWan0 = policyRules(preferredPolicy);
+			const adminDown = policyRules({
+				...preferredPolicy,
+				administrativelyDown: ["eth0"],
 			});
+
 			const transitionWan1 = buildShareRuleset({
 				clientZones,
 				uplinks: [
@@ -60,9 +86,19 @@ describe.skipIf(!NETNS_ISOLATED)(
 					{ ...wan1, weight: 100 },
 				],
 			});
-			const finalWan1 = buildShareRuleset({
+			const finalWan1 = policyRules({
+				...DEFAULT_SHARING_POLICY,
+				mode: "cellular-only",
+			});
+
+			// All-down keeps both uplinks listed (retained restore/NAT support) with
+			// no positive selectable weight, so only the forward drop is added.
+			const allDown = buildShareRuleset({
 				clientZones,
-				uplinks: [{ ...wan1, weight: 100 }],
+				uplinks: [
+					{ ...wan0, selectable: false, weight: 0 },
+					{ ...wan1, selectable: false, weight: 0 },
+				],
 			});
 
 			const root = join(process.cwd(), "test-results", "uplink-sharing");
@@ -74,6 +110,8 @@ describe.skipIf(!NETNS_ISOLATED)(
 				const selectWan0Path = join(temp, "select-wan0.nft");
 				const transitionWan1Path = join(temp, "transition-wan1.nft");
 				const finalWan1Path = join(temp, "final-wan1.nft");
+				const allDownPath = join(temp, "all-down.nft");
+				const adminDownPath = join(temp, "admin-down.nft");
 				const log0 = join(temp, "wan0.log");
 				const log1 = join(temp, "wan1.log");
 				const goldenPaths = [0, 1, 2, 3, MAX_STEERING_UPLINKS].map((count) =>
@@ -84,6 +122,8 @@ describe.skipIf(!NETNS_ISOLATED)(
 					writeFile(selectWan0Path, selectWan0),
 					writeFile(transitionWan1Path, transitionWan1),
 					writeFile(finalWan1Path, finalWan1),
+					writeFile(allDownPath, allDown),
+					writeFile(adminDownPath, adminDown),
 					writeFile(log0, ""),
 					writeFile(log1, ""),
 					...goldenPaths.map((path, index) =>
@@ -126,7 +166,12 @@ describe.skipIf(!NETNS_ISOLATED)(
 						hexMark(wan0.mark),
 						hexMark(wan1.mark),
 						"--nm-shared",
+						allDownPath,
+						// The selectable return state reuses the final single-uplink
+						// ruleset; zones and links are not recreated.
+						finalWan1Path,
 						...goldenPaths,
+						adminDownPath,
 					],
 					{ env: process.env, stdout: "pipe", stderr: "pipe" },
 				);
@@ -155,6 +200,12 @@ describe.skipIf(!NETNS_ISOLATED)(
 				expect(result.newAfterReweight).toBe("wan1");
 				expect(result.drainNew).toBe("wan1");
 				expect(result.stickyPostFlush).toBe("wan1");
+				expect(result.selector).toEqual({
+					force: "wan1",
+					preferred: "wan0",
+					down: "wan1",
+					back: "wan0",
+				});
 				expect(result.localUplink).toBe("wan0");
 				expect(result.localSource).toBe("192.0.2.1");
 				expect(result.overlapLocalSource).toBe("10.42.0.1");
@@ -190,6 +241,42 @@ describe.skipIf(!NETNS_ISOLATED)(
 				expect(result.nmSharing.withoutRejects).toEqual(["reply", "reply"]);
 				expect(result.nmSharing.freshUnmarkedCrossPackets).toBe(4);
 				expect(result.nmSharing.localUnmarkedPackets).toBe(1);
+				// All-down and return. The retained-uplink fixture proves that an
+				// already-established flow keeps its marked route and NAT; it does not
+				// claim traffic survives physical loss of every uplink. UDP 53/67 are
+				// echo reachability probes, not DNS resolution or a DHCP lease.
+				const allDownResult = result.allDown;
+				expect(
+					allDownResult.dropChainDuring,
+					JSON.stringify(allDownResult),
+				).toBe(true);
+				expect(allDownResult.establishedPreUplink).toBe("wan1");
+				expect(allDownResult.establishedDuringUplink).toBe("wan1");
+				expect(allDownResult.establishedDuringSource).toBe("198.51.100.1");
+				expect(allDownResult.newFlowDuring).toBe("blocked");
+				expect(allDownResult.newFlowDeliveredUplink).toBeNull();
+				expect(allDownResult.localServices).toEqual({
+					udp53Echo: "echo",
+					udp67Echo: "echo",
+					httpGet: "ok",
+				});
+				expect(allDownResult.hostOutputUplink).toBe("wan0");
+				expect(allDownResult.hostOutputSource).toBe("192.0.2.1");
+				// NM's source-prefix masquerade remains active in this phase and
+				// also NATs local output. Our table must still leave it unmarked.
+				expect(allDownResult.hostOverlapUnmarkedPackets).toBe(1);
+				expect(allDownResult.hostOverlapSource).toBe("192.0.2.1");
+				expect(allDownResult.routedPeerControl).toBe("reply");
+				expect(allDownResult.routedControlSeen).toBe(1);
+				expect(allDownResult.routedPeerDuring).toBe("blocked");
+				expect(allDownResult.routedDuringSeen).toBe(0);
+				expect(allDownResult.ingestUnchangedDuring).toBe(true);
+				expect(allDownResult.nmTablesPresentDuring).toBe(true);
+				expect(allDownResult.dropChainAfterReturn).toBe(false);
+				expect(allDownResult.returnNewUplink).toBe("wan1");
+				expect(allDownResult.returnNewSource).toBe("198.51.100.1");
+				expect(allDownResult.clientIfindexUnchanged).toBe(true);
+				expect(allDownResult.ingestUnchangedAfterReturn).toBe(true);
 				console.info(JSON.stringify(result));
 			} finally {
 				await rm(temp, { recursive: true, force: true });
@@ -199,6 +286,7 @@ describe.skipIf(!NETNS_ISOLATED)(
 );
 
 interface NetnsResult {
+	selector: { force: string; preferred: string; down: string; back: string };
 	readonly weightedWan0: number;
 	readonly weightedWan1: number;
 	readonly weightedTotal: number;
@@ -231,6 +319,36 @@ interface NetnsResult {
 		readonly freshUnmarkedCrossPackets: number;
 		readonly localUnmarkedPackets: number;
 	};
+	readonly allDown: AllDownResult;
+}
+
+interface AllDownResult {
+	readonly routedPeerControl: "reply" | "blocked" | "unexpected" | "not-run";
+	readonly newFlowDuring: "reply" | "blocked" | "unexpected";
+	readonly routedPeerDuring: "reply" | "blocked" | "unexpected" | "not-run";
+	readonly localServices: {
+		readonly udp53Echo: "echo" | "timeout" | "unexpected";
+		readonly udp67Echo: "echo" | "timeout" | "unexpected";
+		readonly httpGet: "ok" | "error" | "unexpected";
+	};
+	readonly dropChainDuring: boolean;
+	readonly dropChainAfterReturn: boolean;
+	readonly clientIfindexUnchanged: boolean;
+	readonly ingestUnchangedDuring: boolean;
+	readonly ingestUnchangedAfterReturn: boolean;
+	readonly nmTablesPresentDuring: boolean;
+	readonly establishedPreUplink: "wan0" | "wan1" | null;
+	readonly establishedDuringUplink: "wan0" | "wan1" | null;
+	readonly establishedDuringSource: string | null;
+	readonly newFlowDeliveredUplink: "wan0" | "wan1" | null;
+	readonly routedControlSeen: number;
+	readonly routedDuringSeen: number;
+	readonly hostOutputUplink: "wan0" | "wan1" | null;
+	readonly hostOutputSource: string | null;
+	readonly hostOverlapSource: string | null;
+	readonly hostOverlapUnmarkedPackets: number;
+	readonly returnNewUplink: "wan0" | "wan1" | null;
+	readonly returnNewSource: string | null;
 }
 
 interface SharedProbeResults {
