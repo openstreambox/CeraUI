@@ -148,10 +148,12 @@ matrix plus two sibling jobs, and five properties of that split are load-bearing
 
 ## Package licence notices
 
-- **`ceralive-device` ships its notices in `/usr/share/doc/ceralive-device/`:**
-  `copyright` (the GPL-3.0 text of `apps/backend` and `apps/frontend` plus
-  `BRAND-ASSETS-NOTICE.md`), `THIRD-PARTY-NOTICES` and a JSON index.
-  `scripts/build/third-party-notices.ts` builds them from the bundler's source
+- **`ceralive-device` ships one notice file, `/usr/share/doc/ceralive-device/copyright`:**
+  the GPL-3.0 text of `apps/backend` and `apps/frontend`, `BRAND-ASSETS-NOTICE.md`,
+  then every bundled component with its licence texts. It is one file because
+  device images reduce `/usr/share/doc` to `copyright` files. A JSON index of the
+  same content is written to `dist/debian/third-party-notices.json`, not packaged.
+  `scripts/build/third-party-notices.ts` builds both from the bundler's source
   maps, the shipped web files and the pinned Bun `LICENSE.md`, copying each
   licence, copying and notice file verbatim.
 - **It fails closed.** A bundled package without a licence file stops the build

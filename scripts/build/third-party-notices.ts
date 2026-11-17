@@ -1,5 +1,9 @@
 #!/usr/bin/env bun
-// Licence and third-party notice files for the ceralive-device package.
+// The copyright file of the ceralive-device package.
+//
+// Device images reduce /usr/share/doc to files named `copyright`, so every
+// licence text the package must carry goes into that one file, and a JSON index
+// of the same content is written beside the built package.
 //
 // The package ships compiled Bun executables and a bundled web app. Neither
 // carries the licence texts of what was bundled into it, so this generator
@@ -356,8 +360,9 @@ export function renderCopyright(repoRoot: string, policy: Policy): string {
 		"",
 		"The licence files of the CeraUI source tree are reproduced below. The",
 		"brand assets under /var/www/ceralive have their own notice, also below.",
-		"Components bundled into the executables and the web app are listed with",
-		"their own licence texts in THIRD-PARTY-NOTICES in this directory.",
+		"After them come the components bundled into the executables and the web",
+		"app, each with its own licence texts. Everything is in this one file",
+		"because device images keep only the copyright file of each package.",
 	];
 	for (const [text, files] of texts) {
 		parts.push("", RULE, `Licence text from ${files.join(", ")}`, RULE, "", text.trimEnd());
@@ -375,7 +380,9 @@ export function renderCopyright(repoRoot: string, policy: Policy): string {
 
 export function renderNotices(packages: BundledPackage[], policy: Policy, runtimeText: string): string {
 	const parts = [
-		"Third-party components in ceralive-device",
+		RULE,
+		"Third-party components",
+		RULE,
 		"",
 		"Generated at build time from the bundler's source maps and the pinned",
 		"runtime licence. Texts are copied verbatim from each component.",
@@ -429,13 +436,16 @@ export function renderIndex(packages: BundledPackage[], policy: Policy): string 
 export type GenerateOptions = {
 	repoRoot: string;
 	policy: Policy;
-	outDir: string;
+	/** The package's copyright file: first-party texts, then every third-party text. */
+	copyrightPath: string;
+	/** Machine-readable index of the same content (a build artifact, not packaged). */
+	indexPath?: string;
 	bun?: { version: string; revision: string };
 	backend?: Map<string, string[]>;
 };
 
 export async function generate(options: GenerateOptions): Promise<BundledPackage[]> {
-	const { repoRoot, policy, outDir } = options;
+	const { repoRoot, policy, copyrightPath, indexPath } = options;
 	const runtimeText = runtimeLicence(
 		repoRoot,
 		policy.runtime,
@@ -454,10 +464,13 @@ export async function generate(options: GenerateOptions): Promise<BundledPackage
 		...webFilePackages(repoRoot, policy),
 	]);
 	const packages = collectPackages(sources, policy);
-	mkdirSync(outDir, { recursive: true });
-	writeFileSync(join(outDir, "copyright"), renderCopyright(repoRoot, policy));
-	writeFileSync(join(outDir, "THIRD-PARTY-NOTICES"), renderNotices(packages, policy, runtimeText));
-	writeFileSync(join(outDir, "third-party-notices.json"), renderIndex(packages, policy));
+	const copyright = `${renderCopyright(repoRoot, policy)}\n${renderNotices(packages, policy, runtimeText)}`;
+	mkdirSync(dirname(copyrightPath), { recursive: true });
+	writeFileSync(copyrightPath, copyright);
+	if (indexPath) {
+		mkdirSync(dirname(indexPath), { recursive: true });
+		writeFileSync(indexPath, renderIndex(packages, policy));
+	}
 	return packages;
 }
 
@@ -496,10 +509,10 @@ export function loadPolicy(path: string): Policy {
 	return JSON.parse(readFileSync(path, "utf8")) as Policy;
 }
 
-type Args = { outDir: string; policy: string; binaries: string[] };
+type Args = { copyright: string; index: string; policy: string; binaries: string[] };
 
 function parseArgs(argv: string[]): Args {
-	const parsed: Args = { outDir: "", policy: "", binaries: [] };
+	const parsed: Args = { copyright: "", index: "", policy: "", binaries: [] };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i] ?? "";
 		const value = () => {
@@ -508,8 +521,9 @@ function parseArgs(argv: string[]): Args {
 			return next;
 		};
 		if (arg === "--policy") parsed.policy = value();
+		else if (arg === "--index") parsed.index = value();
 		else if (arg === "--check-binary") parsed.binaries.push(value());
-		else if (!parsed.outDir) parsed.outDir = arg;
+		else if (!parsed.copyright) parsed.copyright = arg;
 		else throw new Error(`unexpected argument: ${arg}`);
 	}
 	return parsed;
@@ -519,16 +533,16 @@ if (import.meta.main) {
 	const repoRoot = resolve(dirname(Bun.fileURLToPath(import.meta.url)), "../..");
 	try {
 		const args = parseArgs(process.argv.slice(2));
-		if (!args.outDir) {
+		if (!args.copyright) {
 			throw new Error(
-				"usage: third-party-notices.ts <output-dir> [--policy policy.json] [--check-binary exe]...",
+				"usage: third-party-notices.ts <copyright-file> [--index file.json] [--policy policy.json] [--check-binary exe]...",
 			);
 		}
-		const outDir = resolve(args.outDir);
 		const packages = await generate({
 			repoRoot,
 			policy: loadPolicy(args.policy || join(repoRoot, "scripts/build/third-party-notices.json")),
-			outDir,
+			copyrightPath: resolve(args.copyright),
+			...(args.index ? { indexPath: resolve(args.index) } : {}),
 		});
 		for (const binary of args.binaries) {
 			const missing = checkBinary(binary, packages);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -132,14 +132,17 @@ async function run(f: ReturnType<typeof fixture>, outDir = join(f.root, "out")) 
 	await generate({
 		repoRoot: f.root,
 		policy: f.policy,
-		outDir,
+		copyrightPath: join(outDir, "doc/copyright"),
+		indexPath: join(outDir, "index.json"),
 		bun: BUN,
 		backend: new Map(f.backend),
 	});
+	// The whole notice is the copyright file: devices keep nothing else in /usr/share/doc.
+	const copyright = readFileSync(join(outDir, "doc/copyright"), "utf8");
 	return {
-		copyright: readFileSync(join(outDir, "copyright"), "utf8"),
-		notices: readFileSync(join(outDir, "THIRD-PARTY-NOTICES"), "utf8"),
-		index: JSON.parse(readFileSync(join(outDir, "third-party-notices.json"), "utf8")),
+		copyright,
+		notices: copyright,
+		index: JSON.parse(readFileSync(join(outDir, "index.json"), "utf8")),
 	};
 }
 
@@ -175,11 +178,15 @@ describe("third-party notices", () => {
 	});
 
 	test("copyright carries the first-party licence once and the brand notice", async () => {
-		const { copyright } = await run(fixture());
+		const f = fixture();
+		const { copyright } = await run(f);
 		expect(copyright).toContain("Licence text from apps/backend/LICENSE, apps/frontend/LICENSE");
 		expect(copyright.split("GPL fixture text").length).toBe(2);
 		expect(copyright).toContain("Brand fixture notice");
 		expect(copyright).toContain("https://example.invalid/source");
+		// First-party texts come before the third-party section.
+		expect(copyright.indexOf("GPL fixture text")).toBeLessThan(copyright.indexOf("Alpha MIT text"));
+		expect(readdirSync(join(f.root, "out", "doc"))).toEqual(["copyright"]);
 	});
 
 	test("output is byte-identical across runs", async () => {
@@ -215,7 +222,7 @@ describe("third-party notices", () => {
 			generate({
 				repoRoot: f.root,
 				policy: f.policy,
-				outDir: join(f.root, "out"),
+				copyrightPath: join(f.root, "out/copyright"),
 				bun: { ...BUN, version: "9.9.8" },
 				backend: f.backend,
 			}),
