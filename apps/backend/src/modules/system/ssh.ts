@@ -36,6 +36,7 @@ import {
 	resetDisruptiveActionReservationForTest,
 } from "./disruptive-action-reservation.ts";
 import { withServiceReservation } from "./disruptive-service-reservation.ts";
+import { sshSystemctlProbes } from "./ssh-status-probes.ts";
 
 type SshStatus = {
 	user: string;
@@ -110,8 +111,9 @@ export type SshStatusDeps = {
 };
 
 const defaultSshStatusDeps: SshStatusDeps = {
-	systemctlIsActive: () => execFileP("systemctl", ["is-active", "ssh"]),
-	systemctlIsEnabled: () => execFileP("systemctl", ["is-enabled", "ssh"]),
+	// Read at call time so the unit-test preload can replace the systemd queries.
+	systemctlIsActive: () => sshSystemctlProbes().systemctlIsActive(),
+	systemctlIsEnabled: () => sshSystemctlProbes().systemctlIsEnabled(),
 	readShadow: () => Bun.file("/etc/shadow").text(),
 	broadcast: (status) => broadcastMsg("status", { ssh: status }),
 };
