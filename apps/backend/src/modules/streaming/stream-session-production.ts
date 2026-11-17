@@ -3,6 +3,7 @@ import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { ensureEncoderShutdownProtection } from "../system/shutdown-protection.ts";
 import { admitAndPrepareStreamStart } from "../system/update-orchestrator/runtime.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
+import { notifyWifiAdapterModeEdge } from "../wifi/wifi-adapter-mode-events.ts";
 import { noteStreamStopped } from "./armed-stream-marker.ts";
 import { asrcProbeRemainingMs } from "./audio.ts";
 import {
@@ -22,12 +23,17 @@ import {
 	setOtaStreamingMarker,
 } from "./ota-streaming-marker.ts";
 import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
-import { ownsSessionSender, senderCensus } from "./sender-ownership.ts";
+import {
+	ownedSessionProcessesRemain,
+	ownsSessionSender,
+	unownedSenderCensus,
+} from "./sender-ownership.ts";
 import { newAttemptId } from "./start-failure-taxonomy.ts";
 import {
 	seedStreamLifecycleState,
 	updateStreamLifecycleState,
 } from "./stream-lifecycle-status.ts";
+import { publishStreamSessionUnconfirmed } from "./stream-liveness.ts";
 import type { StreamSessionOrchestratorDeps } from "./stream-session-orchestrator.ts";
 import {
 	getStartSuppressionContext,
@@ -45,7 +51,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	getStreamingStatus: getIsStreaming,
 	stopRuntime: async (generation, confirmUnknown) => {
 		await stopGeneration(generation, confirmUnknown);
-		if (!shouldUseMocks() && senderCensus() !== "absent")
+		if (!shouldUseMocks() && unownedSenderCensus() !== "absent")
 			throw new Error("sender_ownership_unproven");
 	},
 	queryRuntime: async () => {
@@ -53,19 +59,34 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 		if (
 			!shouldUseMocks() &&
 			runtime === "idle" &&
-			senderCensus() !== "absent"
+			unownedSenderCensus() !== "absent"
 		) {
 			currentRuntimeObservationUncertainty()();
 			return "unknown";
 		}
 		return runtime;
 	},
-	canReconcileIdle: () => shouldUseMocks() || senderCensus() === "absent",
+	canReconcileIdle: () =>
+		shouldUseMocks() || unownedSenderCensus() === "absent",
+	ownedSessionRemains: () => !shouldUseMocks() && ownedSessionProcessesRemain(),
+	setLivenessUnconfirmed: (unconfirmed) => {
+		// Clearing reopens the Wi-Fi mode restore that `is_streaming` alone gates.
+		if (
+			publishStreamSessionUnconfirmed(unconfirmed) &&
+			!unconfirmed &&
+			!getIsStreaming()
+		)
+			void notifyWifiAdapterModeEdge();
+	},
 	protectUnownedEngineSession: () => {
 		// A running engine is enough to retire the carrying-only explanation,
 		// but is not enough to establish successful data-path adoption.
 		claimOtaMarkerForLaunch();
 	},
+	// Evidence from this process only: an attempt it launched is retained, a
+	// live sender child with the configured executable runs, and the engine client
+	// that acknowledged this process's Start is unchanged. The three are not bound
+	// to one generation number; together they rule out a predecessor's session.
 	canReconcileStreaming: (generation) =>
 		shouldUseMocks() ||
 		(generation !== undefined &&
@@ -129,7 +150,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	recoveryPending: isRecoveryPending,
 	blockingMutation: globalStreamHold,
 	senderAdmissionSafe: () =>
-		shouldUseMocks() || ownsSessionSender() || senderCensus() === "absent",
+		shouldUseMocks() || unownedSenderCensus() === "absent",
 	admitUpdate: admitAndPrepareStreamStart,
 	markStreamingForOta: setOtaStreamingMarker,
 	unmarkStreamingForOta: clearOtaStreamingMarker,

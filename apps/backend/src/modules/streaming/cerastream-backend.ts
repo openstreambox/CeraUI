@@ -593,7 +593,7 @@ function defaultOnSessionConnectionLost(site: string): void {
 			// for an authoritative runtime state and is self-serialising, so a
 			// second loss cannot start a second one.
 			const { runStreamRestoration } = await import("./stream-restoration.ts");
-			void runStreamRestoration();
+			void runStreamRestoration({}, "engine_restart");
 		} catch (err) {
 			defaultLogger.error(
 				"cerastream: could not retire the session after a control-connection loss",

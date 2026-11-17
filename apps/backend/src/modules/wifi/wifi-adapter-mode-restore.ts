@@ -1,4 +1,5 @@
 import { logger } from "../../helpers/logger.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
 	wifiAdapterLockKey,
@@ -76,7 +77,7 @@ async function applyWifiAdapterModes(
 						row,
 						deps.readCapabilities,
 					);
-					const streaming = getIsStreaming();
+					const streaming = getIsStreaming() || isStreamSessionUnconfirmed();
 					const signature = JSON.stringify([
 						desired,
 						row.ifname,

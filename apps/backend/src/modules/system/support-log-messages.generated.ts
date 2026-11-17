@@ -824,6 +824,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["ota-streaming-marker: failed to clear"],
 	["ota-streaming-marker: failed to set"],
 	["owed sender reload after commit failed"],
+	["owned stream processes outlived an idle engine"],
 	[
 		"pairing: PLATFORM_URL rejected before pairing-secret registration (error=",
 		")",
@@ -1942,6 +1943,7 @@ export const SUPPORT_REASON_TEMPLATES: readonly (readonly string[])[] = [
 	["start_invalid"],
 	["state_drifted"],
 	["steering-readiness-timeout"],
+	["stop_failed"],
 	["stream_active"],
 	["stream_liveness_unknown"],
 	["stream_start_unavailable"],
@@ -1949,6 +1951,7 @@ export const SUPPORT_REASON_TEMPLATES: readonly (readonly string[])[] = [
 	["subnet_conflict"],
 	["switched off (no-usbspeed)"],
 	["the mutation lease is not held"],
+	["the stream session is unconfirmed"],
 	["timed-out"],
 	["timed_out"],
 	["timeout"],

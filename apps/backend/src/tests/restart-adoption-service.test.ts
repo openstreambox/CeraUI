@@ -15,6 +15,8 @@ import {
 } from "../modules/streaming/streamloop/process-runner.ts";
 
 const directory = process.env.CERAUI_RESTART_CONTRACT_DIR;
+// This regression runs in its own transient unit and checks the real kernel census.
+if (directory) process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = "/proc";
 test.skipIf(!directory)(
 	"owned service lifecycle refuses false sender adoption",
 	async () => {

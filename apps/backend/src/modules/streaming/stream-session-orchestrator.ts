@@ -42,7 +42,10 @@ import {
 import { withStreamLaunchOwnership } from "./stream-launch-ownership.ts";
 import { bindStreamLiveness } from "./stream-liveness.ts";
 import { createSessionCleanup } from "./stream-session-cleanup.ts";
-import { createSessionOwnership } from "./stream-session-ownership.ts";
+import {
+	createSessionOwnership,
+	type SessionOwner,
+} from "./stream-session-ownership.ts";
 import { streamSessionProductionDeps } from "./stream-session-production.ts";
 import {
 	runStartWithRetry,
@@ -124,8 +127,18 @@ export type StreamSessionOrchestratorDeps = {
 	readonly queryRuntime: () => Promise<EngineRuntimeState>;
 	/** Reconciliation may retain only a session whose sender we still own. */
 	readonly canReconcileStreaming?: (generation: number | undefined) => boolean;
+	/** False while a sender this backend does not own is, or may be, present. */
 	readonly senderAdmissionSafe?: () => boolean;
 	readonly canReconcileIdle?: () => boolean;
+	/**
+	 * True while a child of this backend's stream session is still running. An
+	 * authoritative engine idle then retires it through the session cleanup
+	 * before the lifecycle may read idle, so no owned sender is orphaned and no
+	 * later Start runs beside it.
+	 */
+	readonly ownedSessionRemains?: () => boolean;
+	/** Mirrors `streamLiveness() === "unknown"` for interlocks outside the session. */
+	readonly setLivenessUnconfirmed?: (unconfirmed: boolean) => void;
 	/** Engine-session evidence protects the marker, without claiming media adoption. */
 	readonly protectUnownedEngineSession?: () => void;
 	readonly seedLifecycleState?: (state: LifecycleState) => void;
@@ -391,16 +404,6 @@ export function createStreamSessionOrchestrator(
 		}
 
 		if (!currentIntent()) return { result: "cancelled", attemptId };
-		if (deps.senderAdmissionSafe?.() === false) {
-			ownership.protect();
-			if (
-				["idle", "streaming", "reconciling", "stop_failed"].includes(
-					ownership.state,
-				)
-			)
-				ownership.commit(ownership.capture(), "reconciling", "unknown");
-			return { result: "busy", attemptId };
-		}
 		const blocked = deps.blockingMutation?.();
 		if (blocked !== undefined) {
 			return refuseStart(attemptId, "mutation_blocked", blocked.stableKey);
@@ -440,7 +443,10 @@ export function createStreamSessionOrchestrator(
 		// from under a launch that has already spawned the sender.
 		const admitLifecycle = deps.admitLifecycle;
 		if (admitLifecycle === undefined)
-			return await admittedStart(attemptId, request, currentIntent);
+			return (
+				refuseUnownedSender(attemptId) ??
+				(await admittedStart(attemptId, request, currentIntent))
+			);
 
 		const admission = admitLifecycle();
 		if (!admission.admitted) {
@@ -461,10 +467,24 @@ export function createStreamSessionOrchestrator(
 				),
 			};
 		}
-		return await releasingLease(admission.lease, () =>
-			admittedStart(attemptId, request, currentIntent),
+		return await releasingLease(
+			admission.lease,
+			async () =>
+				refuseUnownedSender(attemptId) ??
+				(await admittedStart(attemptId, request, currentIntent)),
 		);
 	};
+
+	/**
+	 * The census is an admission check, consulted after the lifecycle interlock so
+	 * forwarding and modem transitions keep their own answers. It refuses only this
+	 * Start: the lifecycle and shutdown protection are left as they are, because a
+	 * name match is not evidence about this backend's session.
+	 */
+	const refuseUnownedSender = (attemptId: string): StartResult | undefined =>
+		deps.senderAdmissionSafe?.() === false
+			? refuseStart(attemptId, "start_invalid", "sender_ownership_unproven")
+			: undefined;
 
 	/**
 	 * The lease is released on EVERY exit of the admission — including a throw —
@@ -723,6 +743,33 @@ export function createStreamSessionOrchestrator(
 		releaseEngineStop();
 	};
 
+	/**
+	 * The engine ended the session itself while our own session children still
+	 * run. Retire them through the single cleanup owner (their handles, never a
+	 * name), then settle idle. A failed retirement stays unknown and protected so
+	 * an operator Stop remains the recovery.
+	 */
+	const retireOwnedSession = async (
+		owner: SessionOwner,
+	): Promise<LifecycleState> => {
+		reconciliationEpoch += 1;
+		try {
+			await stopWithinDeadline(active?.generation ?? ownership.generation);
+		} catch (error) {
+			logger.warn("owned stream processes outlived an idle engine", {
+				reason: error instanceof Error ? error.message : "stop_failed",
+			});
+			return ownership.state;
+		}
+		if (
+			!ownership.launchPending &&
+			ownership.owns(owner) &&
+			ownership.commit(owner, "idle", "idle")
+		)
+			active = undefined;
+		return ownership.state;
+	};
+
 	const noteEngineStatus = (
 		event: Extract<EventParams, { type: "status" }>,
 	): void => {
@@ -747,7 +794,10 @@ export function createStreamSessionOrchestrator(
 				!ownership.launchPending
 			) {
 				const owner = ownership.invalidate();
-				if (
+				if (deps.ownedSessionRemains?.() === true) {
+					if (ownership.commit(owner, "reconciling", "unknown"))
+						void retireOwnedSession(owner);
+				} else if (
 					transition("reconciling") &&
 					ownership.commit(owner, "idle", "idle")
 				)
@@ -970,6 +1020,8 @@ export function createStreamSessionOrchestrator(
 			ownership.protect();
 			return ownership.state;
 		}
+		if (runtimeState === "idle" && deps.ownedSessionRemains?.() === true)
+			return await retireOwnedSession(owner);
 		if (
 			runtimeState !== "unknown" &&
 			ownership.commit(owner, runtimeState, runtimeState) &&
@@ -1022,7 +1074,16 @@ export function createStreamSessionOrchestrator(
 		// Every other rollback_failed is the engine telling us it gave up and went
 		// Idle (the `teardown_timeout` escalation is the canonical case). This is
 		// a genuine stream-end that never routes through stop() — clear the OTA
-		// sentinel here too.
+		// sentinel here too. Our own surviving children, or a sender we cannot
+		// account for, keep it unconfirmed: the reconcile that follows retires
+		// the former or keeps protection for the latter.
+		if (
+			deps.ownedSessionRemains?.() === true ||
+			deps.canReconcileIdle?.() === false
+		) {
+			ownership.commit(ownership.capture(), "reconciling", "unknown");
+			return ownership.state;
+		}
 		if (ownership.commit(ownership.capture(), "idle", "idle"))
 			active = undefined;
 		return ownership.state;
