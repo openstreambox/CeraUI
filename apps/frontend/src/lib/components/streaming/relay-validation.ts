@@ -25,7 +25,7 @@ export interface Validation {
 	state: ValidationState;
 	/** Reached stage on pass; failing stage on fail. */
 	stage?: RelayValidateStage;
-	/** Human-readable failure reason (fail only). */
+	/** Human-readable probe detail or failure reason. */
 	reason?: string;
 }
 
@@ -71,7 +71,11 @@ export function manualSaveEnabled(params: {
 /** Map a successful/failed RPC result onto the validation state. */
 export function reduceValidateResult(result: RelayValidateOutput): Validation {
 	return result.valid
-		? { state: "pass", stage: result.stage }
+		? {
+				state: "pass",
+				stage: result.stage,
+				...(result.reason ? { reason: result.reason } : {}),
+			}
 		: { state: "fail", stage: result.stage, reason: result.reason };
 }
 
