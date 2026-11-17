@@ -181,7 +181,8 @@ Only the named Vite preload and modulepreload virtual helpers may be omitted
 from map paths; Vite's licence is included separately for those helpers. Other
 virtual or scheme sources and unresolved node_modules paths stop generation.
 
-CSS `@plugin` and `@config` directives fail closed until their attribution is
-implemented. The existing Tailwind build-tool rule still names its generated CSS
+CSS `@plugin` directives fail closed. `@config` accepts only the hash-pinned
+Tailwind configuration whose Tailwind and animation plugin packages are named
+in the policy; config changes require a new attribution review and hash. The existing Tailwind build-tool rule still names its generated CSS
 and animation plugin. Recovery source-map sidecars are removed after checking
 the actual compiled binary; package inspection rejects any shipped `.map`.

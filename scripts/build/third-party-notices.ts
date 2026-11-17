@@ -44,6 +44,7 @@ export type Policy = {
 	backendEntrypoints: Record<string, string>;
 	webSourcemapDir: string;
 	cssEntrypoints?: string[];
+	cssConfigs?: Record<string, { sha256: string; packages: string[] }>;
 	web: {
 		root: string;
 		label: string;
@@ -304,15 +305,28 @@ export function webFilePackages(
 }
 
 /** Follow CSS imports explicitly: production CSS has no source maps. */
-export function cssSources(repoRoot: string, entries: string[]): string[] {
+export function cssSources(
+	repoRoot: string,
+	entries: string[],
+	configs: NonNullable<Policy["cssConfigs"]> = {},
+): string[] {
 	const visited = new Set<string>();
 	const walk = (file: string) => {
 		file = realpathSync(file);
 		if (visited.has(file)) return;
 		visited.add(file);
 		const text = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-		if (/@(?:plugin|config)\b/i.test(text)) {
-			throw new Error(`unsupported CSS attribution directive in ${file}: trace its plugins before use`);
+		for (const directive of text.matchAll(/@(plugin|config)\b([^;]*);?/gi)) {
+			const spec = /^\s*["']([^"']+)["']\s*$/.exec(directive[2] ?? "")?.[1];
+			const config = spec && directive[1]?.toLowerCase() === "config"
+				? realpathSync(resolve(dirname(file), spec)) : undefined;
+			const rule = config && Object.entries(configs).find(([path]) =>
+				realpathSync(resolve(repoRoot, path)) === config)?.[1];
+			if (!config || !rule || sha256(readFileSync(config)) !== rule.sha256) {
+				throw new Error(`unsupported CSS attribution directive in ${file}: trace its plugins before use`);
+			}
+			visited.add(config);
+			for (const name of rule.packages) visited.add(join(findPackage(dirname(config), name), "package.json"));
 		}
 
 		for (const statement of text.matchAll(/@import\s+([^;]+);/g)) {
@@ -546,7 +560,7 @@ export async function generate(options: GenerateOptions): Promise<BundledPackage
 		...(policy.web.additionalPackages ?? []).map((name) =>
 			join(findPackage(resolve(repoRoot, "apps/frontend"), name), "package.json"),
 		),
-		...cssSources(repoRoot, policy.cssEntrypoints ?? []),
+		...cssSources(repoRoot, policy.cssEntrypoints ?? [], policy.cssConfigs),
 	]);
 	const packages = collectPackages(sources, policy);
 	const copyright = `${renderCopyright(repoRoot, policy)}\n${renderNotices(packages, policy, runtimeText)}`;

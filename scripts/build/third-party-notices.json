@@ -99,5 +99,14 @@
 	},
 	"cssEntrypoints": [
 		"apps/frontend/src/app.css"
-	]
+	],
+	"cssConfigs": {
+		"apps/frontend/tailwind.config.ts": {
+			"sha256": "d9d625c60735c82b1aa1dc109810bbefff8ffa60ab19510ca1c95f973d7043a0",
+			"packages": [
+				"tailwindcss",
+				"tailwindcss-animate"
+			]
+		}
+	}
 }

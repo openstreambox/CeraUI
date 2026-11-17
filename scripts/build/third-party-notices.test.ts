@@ -256,8 +256,22 @@ describe("third-party notices", () => {
 			const f = fixture();
 			write(f.root, "entry.css", '@import "./nested.css";');
 			write(f.root, "nested.css", directive);
+			write(f.root, "tailwind.config.ts", "export default {};\n");
 			expect(() => cssSources(f.root, ["entry.css"])).toThrow(/unsupported CSS attribution directive/);
 		}
+	});
+
+	test("only a hash-pinned CSS config with named plugin attribution is accepted", () => {
+		const f = fixture();
+		write(f.root, "entry.css", '@config "./tailwind.config.ts";');
+		const config = write(f.root, "tailwind.config.ts", "export default {};\n");
+		pkg(f.root, "node_modules/alpha", { name: "alpha", version: "1.0.0" });
+		const rules = { "tailwind.config.ts": { sha256: sha256(readFileSync(config)), packages: ["alpha"] } };
+		const sources = cssSources(f.root, ["entry.css"], rules);
+		expect(sources).toContain(config);
+		expect(sources.some((path) => path.endsWith("/alpha/package.json"))).toBe(true);
+		write(f.root, "tailwind.config.ts", "export default { plugins: ['new-plugin'] };\n");
+		expect(() => cssSources(f.root, ["entry.css"], rules)).toThrow(/unsupported CSS attribution directive/);
 	});
 
 	test("exceptions expire at a version boundary", async () => {
