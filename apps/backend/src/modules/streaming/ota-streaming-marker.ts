@@ -119,7 +119,7 @@ function emptyMarker(): boolean {
 		fs.renameSync(`${path}.new`, path);
 		return true;
 	} catch (error) {
-		logger.warn("ota-streaming-marker: failed to replace", { error });
+		logger.warn("ota-streaming-marker: failed to set", { error });
 		try {
 			fs.rmSync(`${path}.new`, { force: true });
 		} catch {
