@@ -6,7 +6,10 @@ import {
 	NETIF_ERR_SHAREDLAN,
 } from "../network/network-interfaces.ts";
 import { setup } from "../setup.ts";
-import { setCarryingOtaProtection } from "../streaming/ota-streaming-marker.ts";
+import {
+	setCarryingOtaProtection,
+	tickOtaMarker,
+} from "../streaming/ota-streaming-marker.ts";
 import {
 	notificationBroadcast,
 	notificationRemove,
@@ -99,6 +102,7 @@ export async function tickCarrying(): Promise<void> {
 		carryingTracker.upload(performance.now(), null);
 	} finally {
 		publishCarrying();
+		tickOtaMarker();
 		sampling = false;
 	}
 }

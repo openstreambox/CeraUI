@@ -348,13 +348,14 @@ function launchSession(
 	return { session, start, launches: () => launches };
 }
 const markerLine = () => readFileSync(otaStreamingMarkerPath(), "utf8");
+const CARRYING_LINE = /^carrying \d+\n$/;
 const unprivileged = process.getuid?.() !== 0;
 
 test.if(unprivileged)(
 	"a Start that cannot rewrite the carrying marker replaces it before launching",
 	async () => {
 		setCarryingOtaProtection(true);
-		expect(markerLine()).toBe("carrying\n");
+		expect(markerLine()).toMatch(CARRYING_LINE);
 		chmodSync(otaStreamingMarkerPath(), 0o444);
 
 		const live = launchSession(bootMarker);
@@ -389,7 +390,7 @@ test.if(unprivileged)(
 		expect(await live.start()).toMatchObject({ result: "failed" });
 		expect(live.launches()).toBe(0);
 		expect(live.session.snapshot().state).toBe("idle");
-		expect(markerLine()).toBe("carrying\n");
+		expect(markerLine()).toMatch(CARRYING_LINE);
 
 		// Nothing was launched, so the line is still true for the next process.
 		chmodSync(dirname(otaStreamingMarkerPath()), 0o700);
@@ -422,11 +423,11 @@ test("carrying may come and go while a Start waits for shutdown protection", asy
 	setCarryingOtaProtection(true);
 	const live = await pendingStart();
 	// Nothing is taken before the launch, so the line is still true here.
-	expect(markerLine()).toBe("carrying\n");
+	expect(markerLine()).toMatch(CARRYING_LINE);
 	setCarryingOtaProtection(false);
 	expect(markerPresent()).toBe(false);
 	setCarryingOtaProtection(true);
-	expect(markerLine()).toBe("carrying\n");
+	expect(markerLine()).toMatch(CARRYING_LINE);
 
 	live.admit();
 	expect(await live.starting).toMatchObject({ result: "started" });
@@ -453,7 +454,7 @@ test.if(unprivileged)(
 		expect(await live.starting).toMatchObject({ result: "failed" });
 		expect(live.launches()).toBe(0);
 		expect(live.session.snapshot().state).toBe("idle");
-		expect(markerLine()).toBe("carrying\n");
+		expect(markerLine()).toMatch(CARRYING_LINE);
 
 		// Nothing was launched: the next process is right to call the box idle.
 		chmodSync(dirname(otaStreamingMarkerPath()), 0o700);
@@ -477,7 +478,7 @@ test("a Start cancelled in admission leaves the marker to carrying", async () =>
 	live.admit();
 	expect(await live.starting).toMatchObject({ result: "cancelled" });
 	expect(live.launches()).toBe(0);
-	expect(markerLine()).toBe("carrying\n");
+	expect(markerLine()).toMatch(CARRYING_LINE);
 
 	// A restart before the hold ends must not be stuck behind an empty marker.
 	const restarted = await restartBackend();
@@ -524,9 +525,75 @@ test("a failed launch under carrying hands the marker back", async () => {
 	expect(result.result).not.toBe("started");
 	if (session.snapshot().state !== "idle") await session.stop("operator");
 	expect(session.snapshot().state).toBe("idle");
-	expect(markerLine()).toBe("carrying\n");
+	expect(markerLine()).toMatch(CARRYING_LINE);
 	const restarted = await restartBackend();
 	expect(restarted.encoderOtaStreamLiveness()).toBe("idle");
 	restarted.setCarryingOtaProtection(true);
 	restarted.setCarryingOtaProtection(false);
+});
+
+/**
+ * Third review: a stream the backend only adopts cannot be refused. When the
+ * marker cannot be written at that moment the line stays, so the holder must
+ * take it off as soon as the file can be written again.
+ */
+test.if(unprivileged)(
+	"an adopted stream whose marker could not be written empties it on the next tick",
+	async () => {
+		setCarryingOtaProtection(true);
+		chmodSync(otaStreamingMarkerPath(), 0o444);
+		chmodSync(dirname(otaStreamingMarkerPath()), 0o500);
+		const { session } = bootSession("streaming");
+		expect(await session.reconcile()).toBe("streaming");
+		expect(markerLine()).toMatch(CARRYING_LINE);
+
+		// Still failing: the tick must not refresh the line either.
+		const stale = markerLine();
+		bootMarker.tickOtaMarker();
+		expect(markerLine()).toBe(stale);
+
+		chmodSync(dirname(otaStreamingMarkerPath()), 0o700);
+		chmodSync(otaStreamingMarkerPath(), 0o600);
+		bootMarker.tickOtaMarker();
+		expect(markerLine()).toBe("");
+
+		const restarted = await restartBackend();
+		const next = launchSession(restarted);
+		restarted.setCarryingOtaProtection(true);
+		expect(await next.session.reconcile()).toBe("reconciling");
+		expect(await next.start()).toMatchObject({ result: "busy" });
+		expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+		await session.stop("operator");
+	},
+);
+
+test("carrying's tick keeps its line and leaves a stream's marker alone", () => {
+	setCarryingOtaProtection(true);
+	const written = markerLine();
+	bootMarker.tickOtaMarker();
+	expect(markerLine()).toBe(written);
+	// A line older than one tick is refreshed.
+	writeFileSync(otaStreamingMarkerPath(), "carrying 1\n");
+	bootMarker.tickOtaMarker();
+	expect(markerLine()).toMatch(CARRYING_LINE);
+	expect(markerLine()).not.toBe("carrying 1\n");
+	setOtaStreamingMarker();
+	bootMarker.tickOtaMarker();
+	expect(markerLine()).toBe("");
+	clearOtaStreamingMarker();
+	expect(markerLine()).toMatch(CARRYING_LINE);
+	setCarryingOtaProtection(false);
+	bootMarker.tickOtaMarker();
+	expect(markerPresent()).toBe(false);
+});
+
+test("a carrying line without a fresh stamp is not trusted", async () => {
+	for (const line of ["carrying\n", "carrying 0\n", "carrying 99999999999\n"]) {
+		writeFileSync(otaStreamingMarkerPath(), line);
+		const restarted = await restartBackend();
+		restarted.setCarryingOtaProtection(true);
+		expect(restarted.encoderOtaStreamLiveness()).toBe("unknown");
+		restarted.clearOtaStreamingMarker();
+		restarted.setCarryingOtaProtection(false);
+	}
 });

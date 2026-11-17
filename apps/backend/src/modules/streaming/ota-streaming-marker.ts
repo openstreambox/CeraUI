@@ -29,10 +29,17 @@
  * a stream keeps it empty, carrying alone keeps the line, nobody removes it.
  * Every holder change goes through `sync()` in the same tick, and a launch is
  * submitted only after the file was seen without the line in that tick, so
- * the file cannot say carrying-only beside a stream.
+ * the file cannot say carrying-only beside a stream it launched.
+ *
+ * A stream this backend only adopts cannot be refused, and a write that fails
+ * then cannot leave any other durable sign. So the line is a claim that
+ * expires: it carries the uptime of its last refresh, carrying refreshes it on
+ * its tick, and a later process trusts it only while fresh. A holder that could
+ * not empty the file stops refreshing it and retries the empty on every tick.
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import { logger } from "../../helpers/logger.ts";
 import { setShutdownProtection } from "../system/shutdown-protection.ts";
 
@@ -50,8 +57,18 @@ export function initialOtaStreamLiveness(): "idle" | "unknown" {
 	}
 }
 
-/** Written only into a marker that carrying alone explains. */
-const CARRYING_ONLY = "carrying\n";
+/** Written only into a marker that carrying alone explains: `carrying <uptime s>`. */
+const CARRYING_LINE = /^carrying (\d+)\n$/;
+/**
+ * How old a predecessor's line may be. It was refreshed at most one carrying
+ * tick (5 s) before that process stopped, and a service restart measured 2 s
+ * on a device (2 s more after a crash); 30 s leaves room for a slow stop. A
+ * line that is older, or from the future, proves nothing: `/run` is a tmpfs,
+ * so only an earlier boot of a relocated marker could carry one.
+ */
+export const CARRYING_LINE_FRESH_SECONDS = 30;
+/** Carrying's tick period: the line is not rewritten more often than this. */
+const CARRYING_LINE_REFRESH_SECONDS = 5;
 
 type MarkerFs = Pick<
 	typeof fs,
@@ -69,6 +86,8 @@ export function createOtaMarkerOwner(io: {
 	readonly path: () => string;
 	readonly fs: MarkerFs;
 	readonly setShutdownProtection: typeof setShutdownProtection;
+	/** Seconds since boot: one clock for this process and its successors. */
+	readonly uptime: () => number;
 	/** The exhaustive walk fails writes on purpose, thousands of times. */
 	readonly quiet?: boolean;
 }) {
@@ -81,14 +100,28 @@ export function createOtaMarkerOwner(io: {
 			return isEnoent(error) ? "idle" : "unknown";
 		}
 	};
-	/** True for the exact line, false for anything else readable or no file,
-	 * undefined when the file cannot be read. */
-	const saysCarryingOnly = (): boolean | undefined => {
+	/** The file's content, null for no file, undefined when it cannot be read. */
+	const content = (): string | null | undefined => {
 		try {
-			return io.fs.readFileSync(io.path(), "utf8") === CARRYING_ONLY;
+			return io.fs.readFileSync(io.path(), "utf8");
 		} catch (error) {
-			return isEnoent(error) ? false : undefined;
+			return isEnoent(error) ? null : undefined;
 		}
+	};
+	/** True for a carrying line of any age, false for anything else readable
+	 * or no file, undefined when the file cannot be read. */
+	const saysCarryingOnly = (): boolean | undefined => {
+		const found = content();
+		return found === undefined ? undefined : CARRYING_LINE.test(found ?? "");
+	};
+	/** Seconds since the line's stamp; undefined without a carrying line. */
+	const lineAge = (): number | undefined => {
+		const stamp = CARRYING_LINE.exec(content() ?? "")?.[1];
+		return stamp === undefined ? undefined : io.uptime() - Number(stamp);
+	};
+	const freshCarryingLine = (): boolean => {
+		const age = lineAge();
+		return age !== undefined && age >= 0 && age <= CARRYING_LINE_FRESH_SECONDS;
 	};
 	const attempt = (
 		action: () => void,
@@ -119,11 +152,11 @@ export function createOtaMarkerOwner(io: {
 	let carrying = false;
 	// True while the file, if any, is ours and no stream stands behind it:
 	// created from absence, handed back by a confirmed encoder idle, or left
-	// by an earlier backend process with the carrying line. `/run` outlives a
-	// backend restart, and every start takes the carrying hold again, so the
-	// earlier process's hold is not a stream. Anything else (empty, unreadable,
-	// unexplained) stays evidence of a possible stream.
-	let explained = saysCarryingOnly() === true;
+	// by an earlier backend process with a fresh carrying line. `/run` outlives
+	// a backend restart, and every start takes the carrying hold again, so the
+	// earlier process's hold is not a stream. Anything else (empty, stale,
+	// unreadable, unexplained) stays evidence of a possible stream.
+	let explained = freshCarryingLine();
 	let encoder = !explained && presence() !== "idle";
 	io.setShutdownProtection("encoder", encoder);
 
@@ -135,7 +168,7 @@ export function createOtaMarkerOwner(io: {
 		if (encoder) return put("");
 		if (carrying)
 			return explained
-				? put(CARRYING_ONLY)
+				? put(`carrying ${Math.floor(io.uptime())}\n`)
 				: // Carrying never rewrites a marker it cannot explain.
 					attempt(
 						() => io.fs.writeFileSync(io.path(), "", { flag: "a" }),
@@ -201,6 +234,22 @@ export function createOtaMarkerOwner(io: {
 		 * refused. Until this call a Start changes nothing, so a cancelled one
 		 * leaves nothing to put back.
 		 */
+		/**
+		 * Carrying's tick. Keeps a carrying-only line fresh, and retries the empty
+		 * a stream holder could not write, so a line left beside an adopted
+		 * stream goes stale by itself and is gone once the file can be written.
+		 */
+		tick: (): void => {
+			if (encoder) {
+				if (content() !== "") sync();
+				return;
+			}
+			if (!carrying || !explained) return;
+			// Reports between ticks never rewrite the marker; one tick may.
+			const age = lineAge();
+			if (age === undefined || age < 0 || age >= CARRYING_LINE_REFRESH_SECONDS)
+				sync();
+		},
 		claimForLaunch: (): boolean => {
 			const held = { encoder, explained };
 			encoder = true;
@@ -218,9 +267,11 @@ const owner = createOtaMarkerOwner({
 	path: otaStreamingMarkerPath,
 	fs,
 	setShutdownProtection,
+	uptime: os.uptime,
 });
 export const encoderOtaStreamLiveness = owner.liveness;
 export const setCarryingOtaProtection = owner.setCarrying;
 export const setOtaStreamingMarker = owner.takeEncoder;
 export const clearOtaStreamingMarker = owner.releaseEncoder;
 export const claimOtaMarkerForLaunch = owner.claimForLaunch;
+export const tickOtaMarker = owner.tick;
