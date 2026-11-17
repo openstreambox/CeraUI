@@ -34,7 +34,13 @@ failed or unknown stops and clear only on confirmed idle/cleanup. Reconciliation
 sets/clears that sentinel on authoritative streaming/idle and retains it on unknown.
 Host regression coverage does not qualify image activation on either board.
 At boot and after an engine reconnect, `reconcileRuntimeState()` subscribes to the
-engine's actual status and adopts an engine-held session. Only concordant
+engine's actual status. Production reconciliation retains a streaming session only
+when the same backend still owns its launched generation, the unchanged engine
+client that acknowledged Start, and a live sender child handle with the configured
+executable. A replacement/adopted engine connection cannot prove that identity. An engine-held session alone is not data-path
+proof: without sender ownership, lifecycle stays `reconciling`, liveness stays
+`unknown`, and shutdown protection is retained. Operator Stop is the explicit
+recovery path; no automatic replacement sender is started. Only concordant
 `streaming` or `idle` status is authoritative. A successful subscription that sees
 no event for 2.5 seconds remains UNKNOWN: the published 2026.11.1 client has no
 current-status snapshot and the engine heartbeat is streaming-only. Query failure,
@@ -145,3 +151,19 @@ Contract coverage: `tests/streaming-backend-contract.test.ts` runs the
 structural contract over the production singleton + the cerastream behavioural
 contract, error-mapping, status-bridge, passthroughs, engine-crash, and engine
 selection.
+
+### Sender lifetime limits
+
+Startup never kills a sender by process name. A read-only process census is a
+conservative presence interlock for Start and confirmed cleanup, not identity or
+media proof. An unowned sender, or unreadable census, blocks a replacement even
+when the engine reports idle. Operator Stop can stop the engine but does not
+signal an unowned sender or claim cleanup while one remains. External sender
+recovery therefore requires its actual owner to retire it before Start is safe.
+
+This does not provide continuity across backend service restarts. The sender is
+still a backend child. Independent lifetime requires a sender host/unit contract,
+boot/invocation/cgroup and session/destination identity, current owner leases and
+source witnesses, durable publication generation and applied-map proof, and
+reattached telemetry/control. Sender existence and engine streaming status do not
+prove media delivery or an uninterrupted receiver connection.

@@ -122,6 +122,12 @@ export type StreamSessionOrchestratorDeps = {
 		confirmUnknown?: boolean,
 	) => Promise<void>;
 	readonly queryRuntime: () => Promise<EngineRuntimeState>;
+	/** Reconciliation may retain only a session whose sender we still own. */
+	readonly canReconcileStreaming?: (generation: number | undefined) => boolean;
+	readonly senderAdmissionSafe?: () => boolean;
+	readonly canReconcileIdle?: () => boolean;
+	/** Engine-session evidence protects the marker, without claiming media adoption. */
+	readonly protectUnownedEngineSession?: () => void;
 	readonly seedLifecycleState?: (state: LifecycleState) => void;
 	readonly setLifecycleState?: (state: LifecycleState) => void;
 	readonly invariantViolation?: (
@@ -385,6 +391,16 @@ export function createStreamSessionOrchestrator(
 		}
 
 		if (!currentIntent()) return { result: "cancelled", attemptId };
+		if (deps.senderAdmissionSafe?.() === false) {
+			ownership.protect();
+			if (
+				["idle", "streaming", "reconciling", "stop_failed"].includes(
+					ownership.state,
+				)
+			)
+				ownership.commit(ownership.capture(), "reconciling", "unknown");
+			return { result: "busy", attemptId };
+		}
 		const blocked = deps.blockingMutation?.();
 		if (blocked !== undefined) {
 			return refuseStart(attemptId, "mutation_blocked", blocked.stableKey);
@@ -711,6 +727,17 @@ export function createStreamSessionOrchestrator(
 		event: Extract<EventParams, { type: "status" }>,
 	): void => {
 		if (event.state === "idle" && event.streaming === false) {
+			if (deps.canReconcileIdle?.() === false) {
+				ownership.protect();
+				if (
+					["idle", "streaming", "reconciling", "stop_failed"].includes(
+						ownership.state,
+					)
+				)
+					ownership.commit(ownership.capture(), "reconciling", "unknown");
+				clearEngineTransition();
+				return;
+			}
 			if (
 				(ownership.state === "streaming" ||
 					ownership.state === "stop_failed" ||
@@ -928,6 +955,21 @@ export function createStreamSessionOrchestrator(
 			stopFlight !== undefined
 		)
 			return ownership.state;
+		if (
+			runtimeState === "streaming" &&
+			deps.canReconcileStreaming?.(active?.generation) === false
+		) {
+			// The engine can retain a session after its sender dies. Keep the
+			// inhibitor and require an explicit Stop; never launch a replacement.
+			ownership.protect();
+			deps.protectUnownedEngineSession?.();
+			deps.setStreamingStatus(false);
+			return ownership.state;
+		}
+		if (runtimeState === "idle" && deps.canReconcileIdle?.() === false) {
+			ownership.protect();
+			return ownership.state;
+		}
 		if (
 			runtimeState !== "unknown" &&
 			ownership.commit(owner, runtimeState, runtimeState) &&

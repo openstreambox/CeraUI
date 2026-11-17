@@ -1,4 +1,5 @@
 import { logger } from "../../helpers/logger.ts";
+import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { ensureEncoderShutdownProtection } from "../system/shutdown-protection.ts";
 import { admitAndPrepareStreamStart } from "../system/update-orchestrator/runtime.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
@@ -8,6 +9,7 @@ import {
 	broadcastConfigChangePhase,
 	changeEngineRuntimeConfig,
 } from "./config-change-bridge.ts";
+import { currentRuntimeObservationUncertainty } from "./engine-runtime-observation.ts";
 import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
 import {
 	globalStreamHold,
@@ -20,6 +22,7 @@ import {
 	setOtaStreamingMarker,
 } from "./ota-streaming-marker.ts";
 import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
+import { ownsSessionSender, senderCensus } from "./sender-ownership.ts";
 import { newAttemptId } from "./start-failure-taxonomy.ts";
 import {
 	seedStreamLifecycleState,
@@ -32,6 +35,7 @@ import {
 	reportStartTerminalFailure,
 } from "./stream-start-retry-reporting.ts";
 import { getIsStreaming, updateStatus } from "./streaming.ts";
+import { getStreamingBackend } from "./streaming-engine.ts";
 import { stopGeneration } from "./streamloop/session.ts";
 
 export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
@@ -39,8 +43,34 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	createAttemptId: newAttemptId,
 	setStreamingStatus: updateStatus,
 	getStreamingStatus: getIsStreaming,
-	stopRuntime: stopGeneration,
-	queryRuntime: queryEngineRuntimeStreaming,
+	stopRuntime: async (generation, confirmUnknown) => {
+		await stopGeneration(generation, confirmUnknown);
+		if (!shouldUseMocks() && senderCensus() !== "absent")
+			throw new Error("sender_ownership_unproven");
+	},
+	queryRuntime: async () => {
+		const runtime = await queryEngineRuntimeStreaming();
+		if (
+			!shouldUseMocks() &&
+			runtime === "idle" &&
+			senderCensus() !== "absent"
+		) {
+			currentRuntimeObservationUncertainty()();
+			return "unknown";
+		}
+		return runtime;
+	},
+	canReconcileIdle: () => shouldUseMocks() || senderCensus() === "absent",
+	protectUnownedEngineSession: () => {
+		// A running engine is enough to retire the carrying-only explanation,
+		// but is not enough to establish successful data-path adoption.
+		claimOtaMarkerForLaunch();
+	},
+	canReconcileStreaming: (generation) =>
+		shouldUseMocks() ||
+		(generation !== undefined &&
+			ownsSessionSender() &&
+			getStreamingBackend().ownsLaunchedSession?.() === true),
 	seedLifecycleState: seedStreamLifecycleState,
 	setLifecycleState: updateStreamLifecycleState,
 	invariantViolation: (from, to) => {
@@ -98,6 +128,8 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,
 	blockingMutation: globalStreamHold,
+	senderAdmissionSafe: () =>
+		shouldUseMocks() || ownsSessionSender() || senderCensus() === "absent",
 	admitUpdate: admitAndPrepareStreamStart,
 	markStreamingForOta: setOtaStreamingMarker,
 	unmarkStreamingForOta: clearOtaStreamingMarker,
