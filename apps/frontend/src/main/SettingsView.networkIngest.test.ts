@@ -40,6 +40,8 @@ vi.mock("$lib/rpc/client", () => ({
 }));
 
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
+	getStatus: () => undefined,
+	getUplinks: () => undefined,
 	getConfig: () => ({ autostart: false }),
 	getKiosk: () => undefined,
 }));
