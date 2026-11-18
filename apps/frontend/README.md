@@ -161,6 +161,31 @@ federation run `bun scripts/ci/bundle-report.mjs` to check both size budgets.
 | `biome check .` (from workspace root) | Lint/format via Biome (single toolchain) |
 | `bun run --filter frontend preview` | Preview production build locally |
 
+### Presentation fixtures
+
+The phone Home browser specs use `tests/e2e/fixtures/phone-home.ts` to compile
+an isolated presentation harness once per opted-in Playwright worker. Only the
+mount tests request `loadPhoneHome` and call it after navigation and authentication.
+It inserts JavaScript and inline CSS into that document only, without routes or
+init scripts. Real-app tests never execute the harness. Its separate module graph
+uses the shipped persist and variants aliases; the fixture is not part of the shipped frontend
+and needs no source-module URLs from the dev server. Keep functional E2E pages
+on the production-preview contract and retain the source-reference guard in
+`bun run test:build-check-shape`.
+
+Before starting preview or workers, generate i18n once and compile its runtime
+with the shipped strategy (the dev server also sets this strategy):
+
+```bash
+bun run --filter @ceraui/i18n generate:i18n
+bun run --filter frontend prepare:phone-home
+```
+
+The fixture validates the runtime source as Vite loads it and fails on missing or
+mismatched strategy, including the default cookie strategy. Workers never rewrite
+the shared output. Keep generation and app builds outside concurrent test workers.
+`bun run lint:phone-home` explicitly covers the browser fixture files.
+
 ### Unit-test projects [EXISTS]
 
 Unhandled errors fail the run without filtering. Frontend tests enable Biome's
