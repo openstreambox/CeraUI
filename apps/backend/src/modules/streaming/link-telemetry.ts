@@ -64,6 +64,7 @@ import {
 	SRTLA_CONTROL_CONNECT_TIMEOUT_MS,
 	SRTLA_LISTEN_PORT,
 } from "./constants.ts";
+import { isForwardActive } from "./forward-activity.ts";
 import {
 	buildBondMapping,
 	ingestSenderBindMapReport,
@@ -357,7 +358,8 @@ async function attemptSubscriptionCutover(
 }
 
 /** Stop consuming telemetry (poll + subscription) and clear both registries. */
-export function stopLinkTelemetry(): void {
+export function stopLinkTelemetry(forwardOwner = false): void {
+	if (isForwardActive() && !forwardOwner) return;
 	if (subscriptionCleanup) {
 		subscriptionCleanup();
 		subscriptionCleanup = null;
