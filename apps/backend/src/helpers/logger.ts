@@ -29,7 +29,7 @@ export const REDACTED = "[REDACTED]";
  * call sites are covered by one rule.
  */
 const SENSITIVE_KEY_RE =
-	/pin|password|token|secret|paseto|bcrp|auth|activation.?code|confirmation.?code|matching.?id/i;
+	/pin|password|passphrase|token|secret|paseto|bcrp|auth|activation.?code|confirmation.?code|matching.?id/i;
 
 /**
  * Value-shaped secrets that can appear under an innocent-looking key (or inside
@@ -232,7 +232,7 @@ const SMS_RECORD_RE = /sms\.content\.(?:text|number)\s*:/i;
  */
 const LOCATION_RECORD_RE =
 	/modem\.location\.gps\.(?:raw\.)?(?:latitude|longitude|altitude|nmea)\s*:/i;
-const NMEA_SENTENCE_RE = /\$G[A-Z]{1,2}(?:GGA|RMC|GLL),/;
+const NMEA_SENTENCE_RE = /\$G[A-Z]{1,2}(?:GGA|RMC|GLL|GNS),/;
 
 /**
  * The VALUE-side twin of {@link USSD_SENSITIVE_KEYS}: a raw
@@ -399,7 +399,19 @@ function formatClockTimestamp(raw: unknown): string {
 // Errors serialize to `{}` under JSON.stringify by default — surface the fields.
 function jsonReplacer(_key: string, value: unknown): unknown {
 	if (value instanceof Error) {
-		return { name: value.name, message: value.message, stack: value.stack };
+		// A system or exit code and a tool failure class are typed facts the
+		// support download keeps; the message text is bounded there.
+		const { code, failureClass } = value as {
+			code?: unknown;
+			failureClass?: unknown;
+		};
+		return {
+			name: value.name,
+			message: value.message,
+			stack: value.stack,
+			...(typeof code === "string" || typeof code === "number" ? { code } : {}),
+			...(typeof failureClass === "string" ? { failureClass } : {}),
+		};
 	}
 	return value;
 }
