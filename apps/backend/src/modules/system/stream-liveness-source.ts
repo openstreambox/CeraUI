@@ -2,10 +2,12 @@ import type { LifecycleState } from "@ceraui/rpc/schemas";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import { streamLiveness } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
+import { getCarryingLiveness } from "./carrying.ts";
 import type { StreamLiveness } from "./disruptive-action-gate.ts";
 import { isStreamReconciliationCompleted } from "./stream-reconciliation-latch.ts";
 
 export type StreamLivenessEvidence = {
+	readonly carrying?: StreamLiveness;
 	readonly reconciled: boolean;
 	readonly live: boolean;
 	readonly lifecycle: LifecycleState;
@@ -16,7 +18,9 @@ export type StreamLivenessEvidence = {
 export function deriveStreamLiveness(
 	evidence: StreamLivenessEvidence,
 ): StreamLiveness {
+	if (evidence.carrying === "streaming") return "streaming";
 	if (evidence.live) return "streaming";
+	if (evidence.carrying === "unknown") return "unknown";
 	const confirmedIdle = evidence.reconciled && evidence.lifecycle === "idle";
 	return confirmedIdle && evidence.sentinel === "absent" ? "idle" : "unknown";
 }
@@ -27,6 +31,7 @@ export function getStreamLiveness(): StreamLiveness {
 	if (testSource) return testSource();
 	const leaf = streamLiveness();
 	return deriveStreamLiveness({
+		carrying: getCarryingLiveness(),
 		reconciled: isStreamReconciliationCompleted(),
 		live: getIsStreaming() || leaf === "streaming",
 		lifecycle: getStreamLifecycleState(),
