@@ -515,7 +515,7 @@ export async function readUsbTree(
 		});
 	}
 
-	const roots: MutableNode[] = [];
+	const roots: UsbTreeNode[] = [];
 	for (const node of nodes.values()) {
 		const parent =
 			node.parentKey === null ? undefined : nodes.get(node.parentKey);
