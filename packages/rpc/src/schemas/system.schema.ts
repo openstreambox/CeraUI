@@ -69,6 +69,58 @@ export const sshPersistentInputSchema = z
 	.strict();
 export type SshPersistentInput = z.infer<typeof sshPersistentInputSchema>;
 
+// Remote access over Tailscale (optional; only on images that ship tailscaled).
+//
+// `state` is the only field the cloud remote ever sees (see
+// projectRemoteStatus). `hostname` and `address` are local-UI only: they name
+// this device on the owner's private network. The tailnet name, DNS suffix,
+// peers and the auth key are never part of this object.
+//
+// - unavailable: tailscale/tailscaled is not installed on this image
+// - off: the daemon is stopped (the owner's off switch)
+// - needs_key: the daemon runs but this device is not logged in to a tailnet,
+//   or its login expired
+// - needs_approval: logged in, waiting for a tailnet admin to approve it
+// - joining: a join or reconnect is in progress
+// - connected: on the tailnet
+// - unknown: the daemon did not answer in a way we understand
+export const tailscaleStateSchema = z.enum([
+	'unavailable',
+	'off',
+	'needs_key',
+	'needs_approval',
+	'joining',
+	'connected',
+	'unknown',
+]);
+export type TailscaleState = z.infer<typeof tailscaleStateSchema>;
+
+export const tailscaleStatusSchema = z.object({
+	state: tailscaleStateSchema,
+	hostname: z.string().optional(),
+	address: z.string().optional(),
+});
+export type TailscaleStatus = z.infer<typeof tailscaleStatusSchema>;
+
+// Auth keys are opaque tokens: Tailscale's `tskey-auth-...` and the plain hex
+// keys other control servers issue. Letters, digits, `-` and `_` only, so the
+// value can never carry a newline or be read as a CLI flag. Strict, so an
+// unknown key is rejected, and the issue message never repeats the input.
+export const TAILSCALE_AUTH_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{15,255}$/;
+export const tailscaleJoinInputSchema = z
+	.object({
+		authKey: z.string().trim().regex(TAILSCALE_AUTH_KEY_RE, { message: 'invalid_auth_key' }),
+	})
+	.strict();
+export type TailscaleJoinInput = z.infer<typeof tailscaleJoinInputSchema>;
+
+export const tailscaleEnabledInputSchema = z
+	.object({
+		enabled: z.boolean(),
+	})
+	.strict();
+export type TailscaleEnabledInput = z.infer<typeof tailscaleEnabledInputSchema>;
+
 // Available updates schema
 export const availableUpdatesSchema = z.object({
 	package_count: z.number(),

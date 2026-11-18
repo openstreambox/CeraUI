@@ -149,6 +149,9 @@ export const ALLOWED: Set<string> = new Set<string>([
 	"gpgv",
 	"resolvectl",
 	"openssl",
+	// Optional remote access (modules/system/tailscale.ts). The auth key goes to
+	// stdin only, through runWithStdin.
+	"tailscale",
 ]);
 
 /**

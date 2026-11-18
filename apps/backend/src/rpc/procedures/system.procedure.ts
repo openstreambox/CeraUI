@@ -24,6 +24,8 @@ import {
 	sensorsStatusSchema,
 	sshPersistentInputSchema,
 	successResponseSchema,
+	tailscaleEnabledInputSchema,
+	tailscaleJoinInputSchema,
 	updateCapabilitiesSchema,
 	updateDetailsSchema,
 	updateSettingsInputSchema,
@@ -72,6 +74,11 @@ import {
 	startStopSsh,
 } from "../../modules/system/ssh.ts";
 import { sshDisruptiveResponse } from "../../modules/system/ssh-disruptive-response.ts";
+import {
+	joinTailscale,
+	logoutTailscale,
+	setTailscaleEnabled,
+} from "../../modules/system/tailscale.ts";
 import { reconcileAptChannel } from "../../modules/system/update-apt-channel.ts";
 import { readUpdateCapabilities } from "../../modules/system/update-capabilities.ts";
 import { readUpdateDetails } from "../../modules/system/update-orchestrator/details.ts";
@@ -344,6 +351,39 @@ export const sshSetPersistentProcedure = authedProcedure
 	.output(successResponseSchema)
 	.handler(async ({ input }) => {
 		return sshDisruptiveResponse(() => setSshPersistent(input.enabled));
+	});
+
+/**
+ * Join a Tailscale network with a pasted auth key.
+ *
+ * Same auth and streaming/update gate as the SSH controls. The key is passed to
+ * the module and from there to tailscale's stdin; it is not logged, stored or
+ * returned, and the response carries only success or a refusal reason.
+ */
+export const tailscaleJoinProcedure = authedProcedure
+	.input(tailscaleJoinInputSchema)
+	.output(successResponseSchema)
+	.handler(async ({ input }) => {
+		return sshDisruptiveResponse(() => joinTailscale(input.authKey));
+	});
+
+/**
+ * Remote access off switch (stop + disable tailscaled) and back on.
+ */
+export const tailscaleSetEnabledProcedure = authedProcedure
+	.input(tailscaleEnabledInputSchema)
+	.output(successResponseSchema)
+	.handler(async ({ input }) => {
+		return sshDisruptiveResponse(() => setTailscaleEnabled(input.enabled));
+	});
+
+/**
+ * Forget this device on its tailnet (`tailscale logout`).
+ */
+export const tailscaleLogoutProcedure = authedProcedure
+	.output(successResponseSchema)
+	.handler(async () => {
+		return sshDisruptiveResponse(() => logoutTailscale());
 	});
 
 /**
