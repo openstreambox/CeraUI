@@ -149,8 +149,8 @@ describe("OnDeviceDisplaySection — kiosk enable (kioskStart)", () => {
 				await fireEvent.click(enableSwitch());
 				// Then the same refusal copy is shown and the prior intent survives.
 				await waitFor(() =>
-					expect(toastError).toHaveBeenCalledWith(
-						m["notifications.disruptiveActionRefused"](),
+					expect(toastError).toHaveBeenCalledExactlyOnceWith(
+						m["notifications.disruptiveActionClientTraffic"](),
 					),
 				);
 				expect(enableSwitch().getAttribute("aria-checked")).toBe(
