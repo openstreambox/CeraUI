@@ -3,6 +3,10 @@ import { z } from "zod";
 import { updateChannelUrl } from "../update-channel-url.ts";
 import { OsAgentError } from "./os-identity.ts";
 import {
+	type ManifestSigner,
+	manifestSignerRefusal,
+} from "./os-manifest-signer.ts";
+import {
 	readStoredStateFile,
 	STORED_STATE_LIMITS,
 } from "./stored-state-file.ts";
@@ -89,20 +93,10 @@ export type ManifestVerificationDeps = {
 	readonly verifyCms: (
 		data: Uint8Array,
 		signature: Uint8Array,
-	) => Promise<{
-		readonly cn: string;
-		readonly eku: readonly string[];
-		readonly issuer: string;
-	}>;
+	) => Promise<ManifestSigner>;
 	readonly compare: (candidate: string, installed: string) => Promise<boolean>;
 	readonly isQuarantined: (version: string) => Promise<boolean>;
 };
-
-// The production and persistent bench RAUC intermediates are the only manifest issuers.
-const MANIFEST_SIGNER_ISSUERS = [
-	"CN=CeraLive RAUC Intermediate CA,O=CeraLive",
-	"CN=CeraLive RAUC Bench Intermediate CA,O=CeraLive",
-] as const;
 
 /** CMS trust precedes *all* manifest parsing: an unsigned payload reveals no field-validation result. */
 export async function verifySignedOsManifestTrust(
@@ -117,14 +111,8 @@ export async function verifySignedOsManifestTrust(
 	} catch {
 		return { ok: false, reason: "signature_invalid" };
 	}
-	if (
-		signer.cn !== "CeraLive OTA Manifest Signer" ||
-		!signer.eku.includes("codeSigning") ||
-		signer.eku.includes("emailProtection")
-	)
-		return { ok: false, reason: "signer_not_manifest_signer" };
-	if (!MANIFEST_SIGNER_ISSUERS.some((issuer) => issuer === signer.issuer))
-		return { ok: false, reason: "signer_issuer_invalid" };
+	const refusal = manifestSignerRefusal(signer);
+	if (refusal) return { ok: false, reason: refusal };
 	let raw: unknown;
 	try {
 		if (data.byteLength > STORED_STATE_LIMITS.intent)
