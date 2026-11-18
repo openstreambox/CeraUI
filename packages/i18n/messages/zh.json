@@ -1905,6 +1905,8 @@
 	"notifications.streamHealthRecovered": "推流状态已恢复",
 	"notifications.streamRecovered": "流媒体引擎重启后，直播流已自动恢复。",
 	"notifications.streamRecoveryFailed": "流媒体引擎重启后无法恢复直播流。打开 设置 → 系统日志 查看详情。",
+	"notifications.streamRecoveredAfterRestart": "服务重启后，直播流已自动恢复。",
+	"notifications.streamRecoveryFailedAfterRestart": "服务重启后无法恢复直播流。打开 设置 → 系统日志 查看详情。",
 	"notifications.staleLinkAddress": "{link} 仍在使用旧地址，因此没有参与传输。要重新启动连接吗？观众会看到几秒钟的 BRB 画面。",
 	"notifications.staleLinkAddressUnnamed": "有一条链路仍在使用旧地址，因此没有参与传输。要重新启动连接吗？观众会看到几秒钟的 BRB 画面。",
 	"notifications.staleLinkAddressSeveral": "部分链路仍在使用旧地址，因此没有参与传输。要重新启动连接吗？观众会看到几秒钟的 BRB 画面。",
