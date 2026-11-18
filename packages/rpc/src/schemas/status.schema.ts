@@ -20,6 +20,7 @@ import {
 	updatingStatusSchema,
 } from './system.schema';
 import { updateOrchestratorWireStateSchema } from './update-orchestrator.schema';
+import { usbDevicesWireSchema } from './usb-devices.schema';
 import { wifiStatusSchema } from './wifi.schema';
 
 // Audio sources enum
@@ -491,5 +492,8 @@ export const statusResponseSchema = z.object({
 	// "this device never answered" (an older backend, or a boot that has not
 	// reached the first probe). Absence therefore means UNASKED, never all-clear.
 	unclaimed_adapters: z.array(unclaimedAdapterSchema).optional(),
+	// Read-only USB tree. Explicit on every frame after the first probe so a
+	// client can tell "not read yet" (status unavailable) from an empty bus.
+	usb_devices: usbDevicesWireSchema.optional(),
 });
 export type StatusResponse = z.infer<typeof statusResponseSchema>;
