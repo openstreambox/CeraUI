@@ -183,3 +183,16 @@ record; no implementation, test, configuration or gate was changed to repair the
 run. PID 2772455 was not signalled or cleaned up. Keep the PR draft and blocked
 on its own CI/review and full-gate reconciliation; do not substitute the older
 444/1/281 result for this fresh evidence.
+
+## Signal ownership and fetch redirects
+
+The test and development preloads reject script signal targets when ownership
+cannot be proved, including on hosts without `/proc`. Tracked children are retired
+on exit. Linux ownership records include the process start time; adopted PIDs
+require that identity. Without procfs, only a tracked, live child handle establishes
+ownership. These guards detect mistakes; the PID namespace remains the execution
+backstop for Linux gates.
+
+Guarded fetch defaults to rejecting redirects, including explicit `follow` on
+options or a Request. Explicit `manual` returns the redirect response without
+issuing another request. A caller that follows it must use guarded fetch again.
