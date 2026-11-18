@@ -32,16 +32,18 @@ import type { Framerate, Resolution } from "../../helpers/config-schemas.ts";
 export type { Framerate, Resolution };
 
 /** Selectable pipeline ids only; raw_video/unknown are discovery kinds, not pipelines. */
-export type VideoSource =
-	| "camlink" // Elgato Cam Link 4K (uncompressed YUY2)
-	| "libuvch264" // UVC H264 camera (hardware compressed)
-	| "hdmi" // HDMI capture
-	| "usb_mjpeg" // USB MJPEG capture card
-	| "v4l_mjpeg" // V4L2 MJPEG capture
-	| "rtmp" // RTMP ingest
-	| "srt" // SRT ingest
-	| "test" // Test pattern
-	| "decklink"; // Blackmagic Decklink SDI
+export const VIDEO_SOURCE_IDS = [
+	"camlink",
+	"libuvch264",
+	"hdmi",
+	"usb_mjpeg",
+	"v4l_mjpeg",
+	"rtmp",
+	"srt",
+	"test",
+	"decklink",
+] as const;
+export type VideoSource = (typeof VIDEO_SOURCE_IDS)[number];
 
 /** Hardware platforms with a source table (superset of setup.json `hw`). */
 export type PipelineHardwareType = "jetson" | "n100" | "rk3588" | "generic";
