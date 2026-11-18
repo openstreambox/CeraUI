@@ -253,6 +253,12 @@ export type UsbTreeNode = {
 	 * Elsewhere it comes from the kernel `usbN-portM/peer` link.
 	 */
 	readonly socketKey: string;
+	/**
+	 * `present` for a device the kernel enumerated.
+	 * `nothing-detected` for a mapped socket whose controller brought up
+	 * no host bus. That is not a failed read.
+	 */
+	readonly presence: "present" | "nothing-detected";
 	readonly children: readonly UsbTreeNode[];
 };
 
@@ -494,6 +500,7 @@ export async function readUsbTree(
 			videoNames: item.draft.videoNames,
 			port,
 			socketKey,
+			presence: "present",
 			children: [],
 		});
 	}
@@ -504,6 +511,14 @@ export async function readUsbTree(
 			node.parentKey === null ? undefined : nodes.get(node.parentKey);
 		if (parent) parent.children.push(node);
 		else roots.push(node);
+	}
+	if (board === "rock-5b-plus" && drafts.length > 0) {
+		const seen = new Set(
+			drafts.flatMap((draft) =>
+				draft.controller === null ? [] : [draft.controller],
+			),
+		);
+		for (const extra of undetectedSockets(seen)) roots.push(extra);
 	}
 	sortNodes(roots);
 	return { board, status: "ok", roots };
@@ -761,6 +776,58 @@ function rockSocketKey(
 	}
 	if (port.socketLabel !== null) return port.socketLabel;
 	return `${controller ?? "unknown"}:${portPath ?? "root"}`;
+}
+
+/**
+ * A mapped socket whose controllers never enumerated a host bus.
+ * On the ROCK USB-C port this is the usual no-partner state: no xhci
+ * child under fc000000.usb. The tree read itself succeeded.
+ */
+function undetectedSockets(seen: ReadonlySet<string>): UsbTreeNode[] {
+	const byLabel = new Map<string, RockPortSpec[]>();
+	for (const spec of ROCK_5B_PLUS_PORTS) {
+		if (spec.label === null) continue;
+		const group = byLabel.get(spec.label) ?? [];
+		group.push(spec);
+		byLabel.set(spec.label, group);
+	}
+	const found: UsbTreeNode[] = [];
+	for (const [label, specs] of byLabel) {
+		if (specs.some((spec) => seen.has(spec.controller))) continue;
+		const spec = specs[0];
+		if (spec === undefined) continue;
+		const port = describeUsbPort(
+			"rock-5b-plus",
+			spec.controller,
+			spec.portPath,
+		);
+		found.push({
+			key: `${spec.controller}:nothing-detected:${spec.portPath}`,
+			parentKey: null,
+			kernelName: spec.controller,
+			controller: spec.controller,
+			portPath: spec.portPath,
+			rootSpeedClass: "unknown",
+			speedMbps: null,
+			speedClass: "unknown",
+			usbVersion: null,
+			vendorId: null,
+			productId: null,
+			product: null,
+			deviceClass: null,
+			configurationCount: null,
+			maxPorts: null,
+			kind: "other",
+			drivers: [],
+			netNames: [],
+			videoNames: [],
+			port,
+			socketKey: label,
+			presence: "nothing-detected",
+			children: [],
+		});
+	}
+	return found;
 }
 
 async function genericSocketKey(
