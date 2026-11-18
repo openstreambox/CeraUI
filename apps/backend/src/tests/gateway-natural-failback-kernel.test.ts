@@ -85,7 +85,7 @@ for (const scenario of [
 			let clockReads = 0;
 			const observed: string[] = [];
 			const deps = {
-				isRealDevice: async () => true,
+				canRouteClients: async () => true,
 				resolve: async () => ({ addrs: [], fromCache: true }),
 				validateDns: () => {},
 				checkConnectivity: async () => true,

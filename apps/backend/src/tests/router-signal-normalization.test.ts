@@ -540,7 +540,7 @@ describe("the ZTE and UFI read-only fence", () => {
 		const posted: string[] = [];
 		const fetched: string[] = [];
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () =>
 				`default via ${gateway} dev enx0 proto dhcp metric 106 `,
 			fetchViaInterface: async (_ifname, urls) => {
@@ -590,7 +590,7 @@ describe("the ZTE and UFI read-only fence", () => {
 
 	it("a control write is refused for every dialect but HiLink", async () => {
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () => {
 				throw new Error("must not be reached");
 			},
@@ -616,7 +616,7 @@ describe("probe-level degradation", () => {
 
 	it("an unreachable admin API yields an all-unknown signal for its dialect", async () => {
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () => gateway,
 			fetchViaInterface: async () => {
 				throw new Error("connection refused");
@@ -638,7 +638,7 @@ describe("probe-level degradation", () => {
 	it("a HiLink whose session expired mid-read RE-AUTHS ONCE, then reports honestly", async () => {
 		let sessions = 0;
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () => gateway,
 			fetchViaInterface: async (_ifname, urls) => {
 				if (urls[0]?.endsWith("/api/webserver/SesTokInfo")) {
@@ -672,7 +672,7 @@ describe("probe-level degradation", () => {
 	it("a HiLink still refused after ONE re-auth reports auth expiry, not a retry loop", async () => {
 		let sessions = 0;
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () => gateway,
 			fetchViaInterface: async (_ifname, urls) => {
 				if (urls[0]?.endsWith("/api/webserver/SesTokInfo")) {
@@ -697,7 +697,7 @@ describe("probe-level degradation", () => {
 	it("a UFI whose session expired mid-read RE-AUTHS ONCE", async () => {
 		let logins = 0;
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () =>
 				"default via 192.168.100.1 dev enx0 proto dhcp metric 106 ",
 			fetchViaInterface: async () => [UFI_SHELL],

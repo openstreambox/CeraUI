@@ -162,7 +162,7 @@ for (const state of refused) {
 		const effects: string[] = [];
 		// When a startup/SIGUSR1 reconciliation runs through the real decision body.
 		await runAddonReconciler({
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			getIsStreaming: () => false,
 			getOsVersionId: async () => "13",
 			getBoard: () => "rk3588",
