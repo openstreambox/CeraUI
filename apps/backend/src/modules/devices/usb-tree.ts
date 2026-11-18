@@ -304,14 +304,22 @@ export function sanitizeUsbProduct(raw: string | null): string | null {
 	return text;
 }
 
-/** A whitespace token that is a MAC, a long digit run, or a hex serial. */
+/** A whitespace token that is a MAC, a long digit run, a hex serial, or a long mixed serial. */
 function tokenLooksSecret(token: string): boolean {
 	if (MAC_ADDRESS.test(token)) return true;
 	if (/\d{10,}/.test(token)) return true;
 	if (/^[0-9a-f]{10,}$/i.test(token)) {
 		return (token.match(/\d/g)?.length ?? 0) >= 4;
 	}
-	return /serial/i.test(token) && /\d/.test(token);
+	if (/serial/i.test(token) && /\d/.test(token)) return true;
+	const alnum = token.match(/[A-Za-z0-9]/g) ?? [];
+	if (alnum.length < 12) return false;
+	let digits = 0;
+	for (const char of alnum) {
+		if (char >= "0" && char <= "9") digits += 1;
+	}
+	const letters = alnum.length - digits;
+	return digits >= 4 && letters >= 2;
 }
 
 export type DescribeUsbPortOptions = {
@@ -618,6 +626,8 @@ function nameLooksSecret(name: string): boolean {
 /**
  * systemd names USB netdevs `wlx<MAC>` and `enx<MAC>`. Those names are
  * replaced with `net0`, `net1` so the MAC never leaves this module.
+ * `net0` and `net1` are per-device placeholders, not identities. The
+ * status payload joins the node to its link and sends only the link id.
  */
 function neutralNetNames(names: Iterable<string>): string[] {
 	const kept: string[] = [];
