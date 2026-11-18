@@ -25,6 +25,7 @@ import type {
 	PreviewEncoderRealized,
 	ResolvedAsrcReason,
 	UnclaimedAdapter,
+	UsbDevicesWire,
 } from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
 import {
@@ -33,6 +34,7 @@ import {
 } from "../bluetooth/bluetooth-runtime.ts";
 import { getCellularStack } from "../cellular/cellular-stack.ts";
 import { getConfig } from "../config.ts";
+import { getUsbDevicesWire } from "../devices/usb-devices-wire.ts";
 import { buildModemsWireMessage } from "../modems/modem-status.ts";
 import { getNetworkIngestInfo } from "../network/network-ingest.ts";
 import { netIfBuildMsg } from "../network/network-interfaces.ts";
@@ -122,6 +124,7 @@ export type StatusResponseMessage = {
 	// absent-because-empty — "the probe has not answered yet" — and under
 	// `exactOptionalPropertyTypes` that is the only shape that can express it.
 	unclaimed_adapters?: UnclaimedAdapter[] | undefined;
+	usb_devices?: UsbDevicesWire;
 };
 
 export function sendStatus(conn: WebSocket) {
@@ -160,6 +163,7 @@ export function sendStatus(conn: WebSocket) {
 			cellular_initializing: !getCellularStack().ready,
 			connection_restarting: isConnectionRestarting(),
 			unclaimed_adapters: getUnclaimedAdapters(),
+			usb_devices: getUsbDevicesWire(),
 		} satisfies StatusResponseMessage),
 	);
 }
