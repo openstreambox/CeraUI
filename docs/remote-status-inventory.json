@@ -1433,6 +1433,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -2636,6 +2651,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -3673,6 +3703,21 @@
             "undefined",
             "\"mmcli\"",
             "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -5413,6 +5458,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -6454,6 +6514,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -7491,6 +7566,21 @@
             "undefined",
             "\"mmcli\"",
             "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -8559,6 +8649,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -9600,6 +9705,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -10641,6 +10761,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -11678,6 +11813,21 @@
             "undefined",
             "\"mmcli\"",
             "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -12817,6 +12967,21 @@
             "undefined",
             "\"mmcli\"",
             "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -23374,6 +23539,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -25799,6 +25979,21 @@
             "undefined",
             "\"mmcli\"",
             "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -29136,6 +29331,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -30929,6 +31139,21 @@
             "undefined",
             "\"mmcli\"",
             "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -33013,6 +33238,21 @@
             "undefined",
             "\"mmcli\"",
             "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -38785,6 +39025,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -39928,6 +40183,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -40965,6 +41235,21 @@
             "undefined",
             "\"mmcli\"",
             "\"dbus\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -42989,6 +43274,21 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "fm350_internal_calls",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "fm350_internal_calls.*",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "modem_shadow",
           "types": [
             "undefined",
@@ -43071,7 +43371,7 @@
     }
   ],
   "dependencies": {
-    "apps/backend/src/helpers/config-schemas.ts": "ee53927278f15b5811ad8bc33559c13a4fa50c68308a62a7ca54263bb0403707",
+    "apps/backend/src/helpers/config-schemas.ts": "6e447cf1e3d93d51eb2117d9b08d6aec7936db2cc15ad1534cdffe7e7dfb6591",
     "apps/backend/src/mocks/mock-service.ts": "b858bdfeb042ec57e720fe31fea1696f09c68eb9ace976c6848d4e2af6c1adfc",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
