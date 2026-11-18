@@ -77,6 +77,8 @@ export const SECTIONS = {
 } as const;
 export type SectionId = keyof typeof SECTIONS;
 
+export type CommentSyntax = 'c' | 'hash' | 'roff';
+
 export type NoticeText = {
 	origin: string;
 	path: string;
@@ -86,6 +88,8 @@ export type NoticeText = {
 	 * file that carries a licence statement.
 	 */
 	kind: 'notice' | 'header' | 'excerpt';
+	/** The source file's comment syntax (required for headers and excerpts). */
+	commentSyntax?: CommentSyntax;
 	/** excerpt texts: where they start in the upstream file, in bytes. */
 	offset?: number;
 	section: SectionId;
@@ -161,7 +165,7 @@ export function textKey(text: Pick<NoticeText, 'origin' | 'path'> & { offset?: n
  * an excerpt from running on into code or documentation. Code may follow a
  * closing marker only when the excerpt ends right after it.
  */
-export function isWholeComment(bytes: Uint8Array): boolean {
+export function isWholeComment(bytes: Uint8Array, syntax: CommentSyntax = 'c'): boolean {
 	const text = Buffer.from(bytes).toString('latin1');
 	const lines = text.split('\n');
 	if (lines[lines.length - 1] === '') lines.pop();
@@ -177,7 +181,7 @@ export function isWholeComment(bytes: Uint8Array): boolean {
 			continue;
 		}
 		if (line === '') continue;
-		if (line.startsWith('/*')) {
+		if (syntax === 'c' && line.startsWith('/*')) {
 			sawComment = true;
 			const close = line.indexOf('*/', 2);
 			if (close < 0) {
@@ -188,7 +192,11 @@ export function isWholeComment(bytes: Uint8Array): boolean {
 			if (line !== '') return false;
 			continue;
 		}
-		if (/^(?:\/\/|#|['.]\\")/.test(line)) {
+		if (
+			(syntax === 'c' && line.startsWith('//')) ||
+			(syntax === 'hash' && line.startsWith('#')) ||
+			(syntax === 'roff' && /^['.]\\"/.test(line))
+		) {
 			sawComment = true;
 			continue;
 		}
@@ -411,7 +419,9 @@ export function verifySupplement(
 			} else if (offset + text.size === fileSize && !whole && offset === 0) {
 				fail(problems, `${where}: a whole file recorded as an excerpt with another hash`);
 			}
-			if (!isWholeComment(bytes))
+			if (!['c', 'hash', 'roff'].includes(text.commentSyntax ?? ''))
+				fail(problems, `${where}: excerpt without its comment syntax`);
+			if (!isWholeComment(bytes, text.commentSyntax))
 				fail(problems, `${where}: an excerpt that is not made of whole comments`);
 			if (!HEX64.test(text.fileSha256 ?? ''))
 				fail(problems, `${where}: excerpt without its file hash`);

@@ -27,6 +27,7 @@ import { dirname, join, resolve } from 'node:path';
 
 import {
 	type BuildOnly,
+	type CommentSyntax,
 	type Excluded,
 	type Gap,
 	gitBlobId,
@@ -72,8 +73,6 @@ const GRANT =
 // A copyright line: with a grant, what a source file must not carry outside the packaged comments.
 const MENTION = /copyright|\(c\)\s+\d{4}|\xc2\xa9/i;
 
-export type CommentSyntax = 'c' | 'hash' | 'roff';
-
 /** The words of a comment, without comment markers, on one line. */
 function words(comment: string): string {
 	return comment
@@ -106,7 +105,7 @@ export function commentBlocks(text: string, syntax: CommentSyntax): CommentBlock
 		if (syntax === 'c' && trimmed.startsWith('/*')) {
 			const open = at + (line.length - trimmed.length);
 			const close = text.indexOf('*/', open + 2);
-			if (close < 0) break;
+			require(close >= 0, 'unterminated C comment in notice source');
 			const closeLineEnd = text.indexOf('\n', close);
 			const rest = text.slice(close + 2, closeLineEnd < 0 ? text.length : closeLineEnd);
 			const end =
@@ -626,7 +625,12 @@ export type Rules = {
 		 * Licence texts of projects Bun ports code from, kept beside test cases taken
 		 * from them: path -> the project's URL as Bun's LICENSE.md links it.
 		 */
-		ported: { quote: Quote; texts: Record<string, string> };
+		ported: {
+			quote: Quote;
+			texts: Record<string, string>;
+			/** Ports documented in runtime sources but absent from LICENSE.md. */
+			sourceTexts?: Record<string, { url: string; quote: Quote }>;
+		};
 	};
 	deps: {
 		dir: string;
@@ -744,6 +748,7 @@ class Builder {
 		excerpt: Excerpt,
 		section: SectionId,
 		because: string,
+		commentSyntax: CommentSyntax,
 		gitBlob?: string,
 	) {
 		const leading = excerpt.header === true;
@@ -752,6 +757,7 @@ class Builder {
 				origin,
 				path,
 				kind: leading ? 'header' : 'excerpt',
+				commentSyntax,
 				section,
 				sha256: sha256(excerpt.bytes),
 				size: excerpt.bytes.byteLength,
@@ -953,22 +959,39 @@ export async function refresh(repoRoot: string, cacheDir: string): Promise<Refre
 			pins: [],
 		});
 		// Licence texts of the projects Bun ports code from, which Bun keeps beside
-		// the test cases it took from them: LICENSE.md must still name each project.
+		// the test cases it took from them: keep the LICENSE.md link or runtime-source quote.
 		await checkQuote(b, repos, rules.bun.ported.quote);
 		const bunLicence = decode(licence);
-		const ported = new Map(Object.entries(rules.bun.ported.texts));
-		for (const [path, url] of ported) {
+		const ported = new Map<string, string>();
+		for (const [path, url] of Object.entries(rules.bun.ported.texts)) {
 			require(bunLicence.includes(`](${url})`), `Bun's LICENSE.md no longer links ${url}`);
+			ported.set(path, `Bun's LICENSE.md lists code ported from ${url} into the bun executable`);
+		}
+		for (const [path, claim] of Object.entries(rules.bun.ported.sourceTexts ?? {})) {
+			require(!ported.has(path), `ported licence ${path} has two justifications`);
+			require(claim.quote.origin === 'bun' &&
+				rules.bun.runtimeRoots.some((prefix) =>
+					claim.quote.path.startsWith(prefix),
+				), `ported licence ${path} needs a Bun runtime source quote`);
+			require(/^https:\/\//.test(claim.url) &&
+				claim.quote.quote.includes(claim.url) &&
+				/\bports?\b/i.test(
+					claim.quote.quote,
+				), `ported licence ${path} quote must name its URL and port`);
+			await checkQuote(b, repos, claim.quote);
+			ported.set(path, `${claim.quote.path} says: "${normalise(claim.quote.quote)}"`);
+		}
+		for (const path of ported.keys()) {
 			require(isNamedNotice(path) &&
 				bun.entries.has(path), `ported licence ${path} is not in Bun's tree`);
 		}
 		await gitNotices(b, 'bun', bun, 'linked', (path) => {
 			if (path === 'LICENSE.md') return rules.licenceExclusion;
-			const url = ported.get(path);
-			if (url)
+			const reason = ported.get(path);
+			if (reason)
 				return {
 					section: 'ported',
-					because: `Bun's LICENSE.md lists code ported from ${url} into the bun executable, and Bun keeps this licence beside the test cases it took from that project`,
+					because: `${reason}; Bun keeps this licence beside the test cases it took from that project`,
 				};
 			const root = rules.bun.runtimeRoots.some((prefix) => path.startsWith(prefix));
 			if (!root) return longestPrefix(rules.bun.excludedRoots, path);
@@ -1662,7 +1685,8 @@ async function headerRule(
 				once && excerpt === first
 					? `${because}. ${once.reason}; the ${repeats.length} later copies are not printed`
 					: because;
-			b.excerpt(rule.origin, path, bytes, excerpt, 'headers', why, oid);
+			require(syntax, `${rule.origin}:${path} excerpt has no comment syntax`);
+			b.excerpt(rule.origin, path, bytes, excerpt, 'headers', why, syntax, oid);
 			count++;
 		}
 		const printedOrRepeated = [

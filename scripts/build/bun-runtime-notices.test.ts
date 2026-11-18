@@ -26,6 +26,7 @@ import {
 	verifySupplement,
 } from './bun-runtime-notices.ts';
 import {
+	commentBlocks,
 	compareOutput,
 	grantExcerpts,
 	headerExcerpt,
@@ -95,6 +96,11 @@ describe('committed Bun runtime notices', () => {
 		// Licences of ported projects that Bun keeps beside their test cases.
 		expect(has('bun', 'test/cli/lint/conformance/licenses/eslint.txt')).toBe(true);
 		expect(has('bun', 'test/cli/check/typescript-go/NOTICE.txt')).toBe(true);
+		expect(has('bun', 'test/cli/lint/conformance/licenses/@eslint-json.txt')).toBe(true);
+		expect(has('bun', 'test/cli/lint/conformance/licenses/@eslint-markdown.txt')).toBe(true);
+		expect(
+			inventory.gaps.some((gap) => gap.id === 'bun-vendored-glob' && gap.status === 'open'),
+		).toBe(true);
 		// Third-party grants in Bun's own runtime sources, including one in mid-file.
 		for (const path of [
 			'src/js/node/child_process.ts',
@@ -114,7 +120,7 @@ describe('committed Bun runtime notices', () => {
 		expect(excerpts.length).toBeGreaterThan(0);
 		for (const text of excerpts) {
 			const bytes = payload.get(textKey(text)) as Uint8Array;
-			expect(isWholeComment(bytes)).toBe(true);
+			expect(isWholeComment(bytes, text.commentSyntax)).toBe(true);
 		}
 	});
 
@@ -186,6 +192,33 @@ const check = (copy: Copy, runtime: RuntimeIdentity = committedPolicy.runtime) =
 describe('offline checks reject', () => {
 	test('nothing when the copy is unchanged (green control)', () => {
 		expect(() => check(copyCommitted())).not.toThrow();
+	});
+
+	test('C preprocessor lines in an excerpt even after hashes are re-pinned', () => {
+		const copy = copyCommitted();
+		const text = copy.inventory.texts.find(
+			(entry) => entry.kind === 'header' && entry.commentSyntax === 'c',
+		) as Inventory['texts'][number];
+		const oldFile = textFile(text);
+		const bytes = new TextEncoder().encode('/* Copyright A */\n#include "x.h"\n#define X 1\n');
+		text.sha256 = sha256(bytes);
+		text.size = bytes.byteLength;
+		text.fileSize = bytes.byteLength + 1;
+		write(copy.dir, textFile(text), bytes);
+		if (!copy.inventory.texts.some((entry) => textFile(entry) === oldFile))
+			rmSync(join(copy.dir, oldFile));
+		repin(copy, copy.inventory);
+		expect(() => check(copy)).toThrow(/not made of whole comments/);
+	});
+
+	test('an excerpt without its recorded source syntax', () => {
+		const copy = copyCommitted();
+		const text = copy.inventory.texts.find(
+			(entry) => entry.kind !== 'notice',
+		) as Inventory['texts'][number];
+		Reflect.deleteProperty(text, 'commentSyntax');
+		repin(copy, copy.inventory);
+		expect(() => check(copy)).toThrow(/without its comment syntax/);
 	});
 
 	test('an omitted text', () => {
@@ -636,6 +669,7 @@ function fixture(): Fixture {
 			'// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY.\n\n// A note about the code below.\nexport const b = 2;\n',
 		'src/core/attrib.rs': '//! A port of thing (MIT, Copyright (c) 2020 Someone).\nfn x() {}\n',
 		'src/core/plain.rs': '// Nothing to see.\nfn y() {}\n',
+		'src/core/ported.rs': '// A port of https://example.invalid/source-project.\nfn p() {}\n',
 		'src/win/w.c': '/* Copyright 2020 W\n * Permission is hereby granted.\n */\nint w;\n',
 		'src/data/list.txt': 'text/plain\ntext/vnd.debian.copyright\n',
 		'test/lint/licenses/linty.txt': 'Linty MIT licence\n',
@@ -1117,6 +1151,58 @@ describe('regeneration from pinned inputs', () => {
 		await expect(refresh(f.root, f.cache)).rejects.toThrow(/no longer links/);
 	});
 
+	test('binds additional ported texts to their runtime source quote', async () => {
+		const f = fixture();
+		const rulesPath = join(f.root, 'scripts/build/bun-runtime-notices.rules.json');
+		const quote = {
+			origin: 'bun',
+			path: 'src/core/ported.rs',
+			quote: 'A port of https://example.invalid/source-project.',
+		};
+		const sourceTexts = {
+			'test/lint/licenses/fixture-only.txt': {
+				url: 'https://example.invalid/source-project',
+				quote,
+			},
+		};
+		const save = (entries: typeof sourceTexts) =>
+			writeFileSync(
+				rulesPath,
+				JSON.stringify({
+					...f.rules,
+					bun: { ...f.rules.bun, ported: { ...f.rules.bun.ported, sourceTexts: entries } },
+				}),
+			);
+		save(sourceTexts);
+		const result = await refresh(f.root, f.cache);
+		expect(
+			result.inventory.texts.some(
+				(text) => text.path === 'test/lint/licenses/fixture-only.txt' && text.section === 'ported',
+			),
+		).toBe(true);
+		save({
+			'test/lint/licenses/fixture-only.txt': {
+				...sourceTexts['test/lint/licenses/fixture-only.txt'],
+				quote: { ...quote, quote: 'A port of https://example.invalid/source-project. Changed.' },
+			},
+		});
+		await expect(refresh(f.root, f.cache)).rejects.toThrow(/no longer says/);
+		save({
+			'test/lint/licenses/fixture-only.txt': {
+				...sourceTexts['test/lint/licenses/fixture-only.txt'],
+				quote: { ...quote, path: 'LICENSE.md' },
+			},
+		});
+		await expect(refresh(f.root, f.cache)).rejects.toThrow(/runtime source quote/);
+		save({
+			'test/lint/licenses/fixture-only.txt': {
+				...sourceTexts['test/lint/licenses/fixture-only.txt'],
+				url: 'https://example.invalid/wrong',
+			},
+		});
+		await expect(refresh(f.root, f.cache)).rejects.toThrow(/URL and port/);
+	});
+
 	test('refuses a header rule whose reason no longer holds', async () => {
 		const f = fixture();
 		const rulesPath = join(f.root, 'scripts/build/bun-runtime-notices.rules.json');
@@ -1132,6 +1218,18 @@ describe('regeneration from pinned inputs', () => {
 		await expect(refresh(f.root, f.cache)).rejects.toThrow(
 			/the header rule's reason no longer holds/,
 		);
+	});
+});
+
+describe('comment syntax safety', () => {
+	const enc = (s: string) => new TextEncoder().encode(s);
+	test('C comments cannot absorb preprocessor or roff lines', () => {
+		expect(isWholeComment(enc('/* Copyright A */\n#include "x.h"\n'))).toBe(false);
+		expect(isWholeComment(enc('/* Copyright A */\n#define X 1\n'))).toBe(false);
+		expect(isWholeComment(enc('/* Copyright A */\n.\\" roff\n'))).toBe(false);
+	});
+	test('unterminated C comments stop extraction', () => {
+		expect(() => commentBlocks('/* Copyright A\n', 'c')).toThrow(/unterminated/);
 	});
 });
 
@@ -1227,9 +1325,13 @@ describe('readers', () => {
 			'/* Copyright A\n * Redistribution and use permitted.\n */\n',
 			'/* Copyright B, public domain. */',
 		]);
-		for (const ok of ['/* a\n * b\n */\n', '// a\n\n// b\n', '# a\n', '.\\" a\n', '/* a */ ']) {
-			expect(isWholeComment(enc(ok))).toBe(true);
+		for (const ok of ['/* a\n * b\n */\n', '// a\n\n// b\n', '/* a */ ']) {
+			expect(isWholeComment(enc(ok), 'c')).toBe(true);
 		}
+		expect(isWholeComment(enc('# a\n'), 'hash')).toBe(true);
+		expect(isWholeComment(enc('.\\" a\n'), 'roff')).toBe(true);
+		expect(isWholeComment(enc('# a\n'), 'c')).toBe(false);
+		expect(isWholeComment(enc('// a\n'), 'hash')).toBe(false);
 		for (const bad of ['/* a */\nint x;\n', '/* a\n', 'int x;\n', '', '/* a */ int x;\n']) {
 			expect(isWholeComment(enc(bad))).toBe(false);
 		}

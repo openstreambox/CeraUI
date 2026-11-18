@@ -203,8 +203,8 @@ sha256.
   text must match the size, sha256 and, for Git origins, blob id that the same
   inventory records. That catches a missing, truncated, moved or extra text, an
   inventory edited without a new pin, a text changed without its inventory
-  entry, an excerpt that runs past whole comments, and a gap marked resolved
-  without checkable evidence. It does not authenticate the inventory against
+  entry, an excerpt that runs past whole comments in its recorded source syntax,
+  and a gap marked resolved without checkable evidence. It does not authenticate the inventory against
   the upstream sources: a coordinated rewrite of a text together with its
   recorded hashes and blob id and the policy pin passes offline, for every
   kind of origin, and so does a whole entry removed and re-pinned. The default
@@ -221,8 +221,8 @@ sha256.
   the npm packages Bun embeds as Node.js polyfills, LLVM libc++abi's licence
   for Bun's copied `__cxa_thread_atexit` fallback, `gcc-13-base`'s copyright
   file for the static libstdc++ and libgcc, and the licence and NOTICE files
-  Bun keeps beside the test cases of projects its `LICENSE.md` lists as ported
-  into the executable.
+  Bun keeps beside the test cases of projects its `LICENSE.md` or checked
+  runtime-source statements describe as ported into the executable.
 - **Licence statements in source comments:** comments are found by the comment
   syntax the rules assign to each file type. In Bun's runtime sources (`src/`,
   `packages/bun-usockets/`, `packages/bun-uws/`) every run of comments with a
@@ -250,7 +250,8 @@ sha256.
   file, when cached, must agree). `check` instead of `refresh` compares the
   result with the committed directory byte for byte. Judgement calls live in
   `scripts/build/bun-runtime-notices.rules.json`: runtime source roots, ported
-  licence texts with the `LICENSE.md` link that justifies each, comment syntax,
+  licence texts with the `LICENSE.md` link or checked runtime-source quote that
+  justifies each, comment syntax,
   source-comment rules with their quoted reasons, the Rust manifest pin, crate
   sources, build-only inputs and stated gaps. A new recipe kind, build
   condition, crate source, Rust channel or changed quote stops the refresh

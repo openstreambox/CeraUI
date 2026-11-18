@@ -92,7 +92,7 @@
 		"sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd",
 		"supplement": {
 			"inventory": "scripts/build/notices/bun-1.4.4/inventory.json",
-			"sha256": "d90d572c8aafaa54659aa65123bb71f69eaaf1ab14974947d12a8f0ff65b4a5c"
+			"sha256": "7632f25f9807a3e5587062bb828ced4e73258ad1e12a4641c93fa1c48b87f147"
 		}
 	},
 	"withoutLicenceText": {

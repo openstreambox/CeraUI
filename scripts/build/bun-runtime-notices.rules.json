@@ -13,7 +13,7 @@
 		],
 		"excludedRoots": {
 			"": "outside the Bun source directories compiled into the runtime (src/, packages/bun-usockets/, packages/bun-uws/)",
-			"test/": "in Bun's test tree, and not the licence of a project Bun's LICENSE.md lists as ported into the bun executable; LICENSE.md says these test cases are not part of the bun binary",
+			"test/": "in Bun's test tree, and not a licence justified by LICENSE.md or a checked runtime-source port statement; the remaining files cover test fixtures",
 			"packages/": "a separate package in the Bun repository, not compiled into the runtime",
 			"docs/": "Bun documentation, not compiled into the runtime",
 			"bench/": "Bun benchmarks, not compiled into the runtime"
@@ -44,6 +44,24 @@
 				"test/cli/lint/conformance/licenses/prettier.txt": "https://github.com/prettier/prettier",
 				"test/cli/lint/conformance/licenses/tsgolint.txt": "https://github.com/oxc-project/tsgolint",
 				"test/cli/lint/conformance/licenses/typescript-eslint.txt": "https://github.com/typescript-eslint/typescript-eslint"
+			},
+			"sourceTexts": {
+				"test/cli/lint/conformance/licenses/@eslint-json.txt": {
+					"url": "https://github.com/eslint/json",
+					"quote": {
+						"origin": "bun",
+						"path": "src/lint/json/lib.rs",
+						"quote": "//! The `json/json`, `json/jsonc` and `json/json5` languages and the rules of `@eslint/json` 2.1.1. Each rule is a port\n//! of the upstream rule with the same name, and has the same options, messages and report locations.\n//! - https://github.com/eslint/json (Copyright Nicholas C. Zakas, Apache License 2.0)"
+					}
+				},
+				"test/cli/lint/conformance/licenses/@eslint-markdown.txt": {
+					"url": "https://github.com/eslint/markdown",
+					"quote": {
+						"origin": "bun",
+						"path": "src/lint/markdown/lib.rs",
+						"quote": "//! The `markdown/commonmark` and `markdown/gfm` languages and the rules of `@eslint/markdown` 8.0.3. Each rule is a\n//! port of the upstream rule with the same name, and has the same options, messages and report locations.\n//! - https://github.com/eslint/markdown (Copyright OpenJS Foundation and other contributors, MIT License)"
+					}
+				}
 			}
 		}
 	},
@@ -216,6 +234,21 @@
 			"origin": "bun",
 			"path": "LICENSE.md",
 			"quote": "They are not part of the `bun` binary. Their licenses are next to them."
+		},
+		{
+			"origin": "bun",
+			"path": "src/js/internal/fs/glob.ts",
+			"quote": "backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):"
+		},
+		{
+			"origin": "bun",
+			"path": "src/js/internal/fs/glob.ts",
+			"quote": "node_modules/balanced-match/dist/commonjs/index.js"
+		},
+		{
+			"origin": "bun",
+			"path": "src/js/internal/fs/glob.ts",
+			"quote": "node_modules/brace-expansion/dist/commonjs/index.js"
 		}
 	],
 	"headers": [
@@ -405,7 +438,7 @@
 		{
 			"id": "ported-upstreams",
 			"status": "open",
-			"text": "Bun's LICENSE.md names code ported from other projects without pinning the upstream revisions. For ESLint, typescript-eslint, the ESLint plugins, oxc, tsgolint, Prettier, typescript-go and the import sorting plugin, the licence and NOTICE texts Bun keeps beside the test cases it took from them are included above, as Bun's copies at the pinned revision; whether they are the texts of the revisions that were ported is not established. For the other projects that table names (among them esbuild, simdutf, libbase64, uucode, uWebSockets, Tigerbeetle, esquery, V8, Biome, postcss and Svelte), Bun's tree has no licence file, and none is included except where the ported source keeps its licence in its comments."
+			"text": "Bun's LICENSE.md names code ported from other projects without pinning the upstream revisions. For @eslint/json, @eslint/markdown, ESLint, typescript-eslint, the ESLint plugins, oxc, tsgolint, Prettier, typescript-go and the import sorting plugin, the licence and NOTICE texts Bun keeps beside the test cases it took from them are included above, as Bun's copies at the pinned revision; whether they are the texts of the revisions that were ported is not established. For the other projects that table names (among them esbuild, simdutf, libbase64, uucode, uWebSockets, Tigerbeetle, esquery, V8, Biome, postcss and Svelte), Bun's tree has no licence file, and none is included except where the ported source keeps its licence in its comments."
 		},
 		{
 			"id": "rust-crates-superset",
@@ -416,6 +449,11 @@
 			"id": "polyfill-membership",
 			"status": "open",
 			"text": "The Node.js polyfill packages are every package in Bun's node-fallbacks lockfile. Their bundled output was not matched against the executables."
+		},
+		{
+			"id": "bun-vendored-glob",
+			"status": "open",
+			"text": "Bun's src/js/internal/fs/glob.ts embeds Node.js v26.3.0's minimatch bundle, which also contains balanced-match and brace-expansion. The source labels the bundle ISC without reproducing its full licence text. The three projects' corresponding licence texts have not been pinned and packaged here; the grant detector does not establish coverage from a bare licence name."
 		}
 	]
 }
