@@ -3,12 +3,13 @@ import {
 	mkdir,
 	mkdtemp,
 	readFile,
+	realpath,
 	rm,
 	symlink,
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, relative } from "node:path";
 
 import {
 	boardFromIdentityText,
@@ -38,6 +39,13 @@ type FixtureDevice = {
 	name: string;
 	controller: string;
 	platformPrefix?: string;
+	/**
+	 * ehci: controller/usbN (ROCK onboard and USB 2 host).
+	 * xhci: controller/xhci-hcd.N.auto/usbN.
+	 * pci: pciDDDD:BB/DDDD:BB:DD.F/usbN.
+	 */
+	busDriver?: "ehci" | "xhci" | "pci";
+	xhciIndex?: string;
 	speed?: string;
 	version?: string;
 	deviceClass?: string;
@@ -103,7 +111,7 @@ async function writeFixture(
 			await writeFile(join(physical, name), value);
 		}
 		for (const iface of device.interfaces ?? []) {
-			const ifaceName = `${device.name}:${iface.suffix}`;
+			const ifaceName = interfaceDirName(device.name, iface.suffix);
 			const ifaceDir = join(physical, ifaceName);
 			await mkdir(ifaceDir, { recursive: true });
 			await writeFile(join(ifaceDir, "serial"), SERIAL);
@@ -133,13 +141,35 @@ async function writeFixture(
 	}
 }
 
+function interfaceDirName(deviceName: string, suffix: string): string {
+	if (deviceName.startsWith("usb")) {
+		return `${deviceName.slice(3)}-0:${suffix}`;
+	}
+	return `${deviceName}:${suffix}`;
+}
+
+function busOf(deviceName: string): string {
+	return deviceName.startsWith("usb")
+		? deviceName.slice(3)
+		: (deviceName.split("-")[0] ?? "");
+}
+
 function physicalDir(root: string, device: FixtureDevice): string {
-	const bus = device.name.startsWith("usb")
-		? device.name.slice(3)
-		: device.name.split("-")[0];
-	const parts = [root, "sys/devices/platform"];
-	if (device.platformPrefix) parts.push(device.platformPrefix);
-	parts.push(device.controller, "xhci-hcd.0.auto", `usb${bus}`);
+	const bus = busOf(device.name);
+	const driver = device.busDriver ?? "xhci";
+	const parts = [root, "sys/devices"];
+	if (driver === "pci") {
+		const [segment, busId] = device.controller.split(":");
+		parts.push(`pci${segment}:${busId}`, device.controller);
+	} else {
+		parts.push("platform");
+		if (device.platformPrefix) parts.push(device.platformPrefix);
+		parts.push(device.controller);
+		if (driver === "xhci") {
+			parts.push(`xhci-hcd.${device.xhciIndex ?? "0"}.auto`);
+		}
+	}
+	parts.push(`usb${bus}`);
 	if (!device.name.startsWith("usb")) {
 		const path = device.name.slice(bus.length + 1);
 		const segments = path.split(".");
@@ -207,23 +237,52 @@ describe("ROCK 5B+ port map", () => {
 				label: "A3-bot",
 				name: "Lower blue port",
 				scope: "socket",
+				portClass: "usb3",
+				colour: "blue",
 			},
 		]);
 		expect(byLabel("A2-top")[0]?.portPath).toBe("1.2");
 		expect(byLabel("A2-bot")[0]?.portPath).toBe("1.1");
 		expect(byLabel("M2B")[0]?.name).toBe("Modem slot inside");
-		expect(byLabel("BT")[0]?.name).toBe("Built in");
+		expect(byLabel("BT")[0]?.name).toBe("Bluetooth");
+		expect(byLabel("A3-top")[0]?.portClass).toBe("usb3");
+		expect(byLabel("A3-top")[0]?.colour).toBe("blue");
+		expect(byLabel("A2-top")[0]?.portClass).toBe("usb2");
+		expect(byLabel("A2-top")[0]?.colour).toBe("black");
+		expect(byLabel("M2B")[0]?.portClass).toBe("usb2");
+		expect(byLabel("M2B")[0]?.scope).toBe("socket");
+		expect(byLabel("C")[0]?.portClass).toBe("usb3");
+		expect(describeUsbPort("rock-5b-plus", "fc400000.usb", "1.2.3").label).toBe(
+			">hub.2>hub.3",
+		);
+		expect(describeUsbPort("rock-5b-plus", "fc400000.usb", "1.3.3").label).toBe(
+			">hub.3>hub.3",
+		);
 	});
 
 	it("uses generic names when the board is not a ROCK 5B+", () => {
 		expect(describeUsbPort("generic", "fc000000.usb", "1")).toEqual({
 			label: null,
-			name: "USB port 1",
+			name: "USB 1 port 1",
 			scope: "generic",
 			socketLabel: null,
 			socketName: null,
 			hubPort: null,
+			portClass: null,
+			colour: null,
 		});
+		expect(sanitizeUsbProduct("RM520N-GL")).toBe("RM520N-GL");
+		expect(sanitizeUsbProduct("802.11ac NIC")).toBe("802.11ac NIC");
+		expect(sanitizeUsbProduct("TL-WN823N")).toBe("TL-WN823N");
+		expect(sanitizeUsbProduct("DW5821e Snapdragon X20 LTE")).toBe(
+			"DW5821e Snapdragon X20 LTE",
+		);
+		expect(sanitizeUsbProduct("USB 10/100/1000 LAN 001122334455")).toBeNull();
+		expect(sanitizeUsbProduct("Cam Link 4K 0005D4F2A1B3")).toBeNull();
+		expect(sanitizeUsbProduct("Modem SN 8612345678901")).toBeNull();
+		expect(sanitizeUsbProduct("USB Serial Converter")).toBe(
+			"USB Serial Converter",
+		);
 		expect(boardFromIdentityText("Orange Pi 5 Plus")).toBe("generic");
 		expect(boardFromIdentityText("Radxa ROCK 5B+")).toBe("rock-5b-plus");
 		expect(boardFromIdentityText("radxa,rock-5b-plus")).toBe("rock-5b-plus");
@@ -462,7 +521,10 @@ describe("sysfs fixtures", () => {
 			socketLabel: "A3-bot",
 			socketName: "Lower blue port",
 			hubPort: 2,
+			portClass: "usb3",
+			colour: "blue",
 		});
+		expect(modem.socketKey).toBe("A3-bot>hub.2");
 		expect(modem.parentKey).toBe(hub.key);
 	});
 
@@ -556,7 +618,7 @@ describe("sysfs fixtures", () => {
 		});
 		expect(nodeNamed(tree, "3-1.3").port).toMatchObject({
 			label: "BT",
-			name: "Built in",
+			name: "Bluetooth",
 		});
 		expect(nodeNamed(tree, "3-1.3").kind).toBe("other");
 		const slot = nodeNamed(tree, "3-1.4");
@@ -592,7 +654,7 @@ describe("sysfs fixtures", () => {
 		expect(orange.board).toBe("generic");
 		expect(nodeNamed(orange, "5-1").port).toMatchObject({
 			label: null,
-			name: "USB port 1",
+			name: "USB 1 port 1",
 			scope: "generic",
 		});
 
@@ -629,7 +691,7 @@ describe("sysfs fixtures", () => {
 		expect(nodeNamed(rock, "1-1").port.name).toBe("USB-C data port");
 		expect(nodeNamed(rock, "2-1").port).toMatchObject({
 			label: null,
-			name: "USB port 1",
+			name: "USB 1 port 1",
 			scope: "generic",
 		});
 		expect(nodeNamed(rock, "2-1").kind).toBe("other");
@@ -678,7 +740,10 @@ describe("sysfs fixtures", () => {
 					interfaces: [
 						{
 							suffix: "1.0",
-							net: [{ name: "wlan0", phy80211: true }],
+							net: [
+								{ name: "wlx001122334455", phy80211: true },
+								{ name: "enx001122334466" },
+							],
 						},
 					],
 				},
@@ -701,6 +766,11 @@ describe("sysfs fixtures", () => {
 		expect(nodeNamed(tree, "1-2").product).toBeNull();
 		expect(nodeNamed(tree, "1-3").product).toBe("Archer T3U");
 		expect(nodeNamed(tree, "1-3").kind).toBe("wifi");
+		expect(nodeNamed(tree, "1-3").netNames).toEqual(["net0", "net1"]);
+		expect(encoded).not.toContain("wlx001122334455");
+		expect(encoded).not.toContain("enx001122334466");
+		expect(encoded).not.toContain("001122334455");
+		expect(encoded).not.toContain("001122334466");
 		const allowed = new Set<string>([
 			...USB_DEVICE_ATTRIBUTE_ALLOWLIST,
 			"model",
@@ -729,7 +799,11 @@ describe("sysfs fixtures", () => {
 				sysfsRoot: emptyRoot,
 				board: "generic",
 			});
-			expect(empty).toEqual({ board: "generic", roots: [] });
+			expect(empty).toEqual({
+				board: "generic",
+				status: "unavailable",
+				roots: [],
+			});
 		} finally {
 			await rm(emptyRoot, { recursive: true, force: true });
 		}
@@ -741,6 +815,7 @@ describe("sysfs fixtures", () => {
 					controller: "fc000000.usb",
 					speed: "fast",
 					product: "",
+					configurations: "10",
 				},
 			],
 			"generic",
@@ -750,5 +825,383 @@ describe("sysfs fixtures", () => {
 		expect(root.speedClass).toBe("unknown");
 		expect(root.port.scope).toBe("root");
 		expect(root.product).toBeNull();
+		expect(root.configurationCount).toBe(10);
+		expect(tree.status).toBe("ok");
+	});
+
+	it("pairs PCI USB 2 and USB 3 halves without using the bus number", async () => {
+		const tree = await withTree(
+			[
+				pciRoot("usb1", "0000:00:0d.0", "480"),
+				{
+					name: "1-1",
+					controller: "0000:00:0d.0",
+					busDriver: "pci",
+					speed: "480",
+					product: "USB disk",
+				},
+				pciRoot("usb3", "0000:00:14.0", "480"),
+				{
+					name: "3-1",
+					controller: "0000:00:14.0",
+					busDriver: "pci",
+					speed: "480",
+					product: "USB disk",
+				},
+				pciRoot("usb4", "0000:00:14.0", "5000"),
+				{
+					name: "4-1",
+					controller: "0000:00:14.0",
+					busDriver: "pci",
+					speed: "5000",
+					product: "USB disk",
+				},
+			],
+			"generic",
+			async (root) => {
+				await linkPortPeers(root, "usb3", "usb4");
+			},
+		);
+		const slow = nodeNamed(tree, "1-1");
+		const usb2 = nodeNamed(tree, "3-1");
+		const usb3 = nodeNamed(tree, "4-1");
+		expect(slow.controller).toBe("0000:00:0d.0");
+		expect(slow.key).toBe("0000:00:0d.0:usb2:1");
+		expect(slow.key).not.toContain("1-1");
+		expect(usb2.key).toBe("0000:00:14.0:usb2:1");
+		expect(usb3.key).toBe("0000:00:14.0:usb3:1");
+		expect(usb2.key).not.toContain("3-1");
+		expect(slow.port.name).toBe("USB 1 port 1");
+		expect(usb2.port.name).toBe("USB 2 port 1");
+		expect(usb3.port.name).toBe("USB 2 port 1");
+		expect(usb2.socketKey).toBe("0000:00:14.0:1");
+		expect(usb3.socketKey).toBe(usb2.socketKey);
+		expect(slow.socketKey).toBe("0000:00:0d.0:1");
+	});
+
+	it("follows the measured ROCK2 7.2 device paths", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-tree-"));
+		try {
+			await writeFixture(root, rock2NormalTree());
+			const pathOf = async (name: string) =>
+				realpath(join(root, "sys/bus/usb/devices", name));
+			expect(await pathOf("9-1")).toContain(
+				"fc000000.usb/xhci-hcd.10.auto/usb9/9-1",
+			);
+			expect(await pathOf("9-1:1.4")).toContain("9-1/9-1:1.4");
+			expect(await pathOf("1-1.2")).toContain(
+				"fc400000.usb/xhci-hcd.0.auto/usb1/1-1/1-1.2",
+			);
+			expect(await pathOf("2-1.4")).toContain("fc800000.usb/usb2/2-1/2-1.4");
+			expect(await pathOf("2-1.4")).not.toContain("xhci-hcd");
+			expect(await pathOf("2-1.2:2.6")).toContain("2-1.2/2-1.2:2.6");
+			expect(await pathOf("usb3")).toContain("fc840000.usb/usb3");
+			expect(await pathOf("usb8")).toContain(
+				"fcd00000.usb/xhci-hcd.5.auto/usb8",
+			);
+			await expect(pathOf("usb9:1.0")).rejects.toThrow();
+
+			const tree = await readUsbTree({
+				sysfsRoot: root,
+				board: "rock-5b-plus",
+			});
+			expect(tree.status).toBe("ok");
+			const modem = nodeNamed(tree, "9-1");
+			expect(modem.kind).toBe("modem");
+			expect(modem.speedMbps).toBe(480);
+			expect(modem.speedClass).toBe("usb2");
+			expect(modem.port).toMatchObject({
+				label: "C",
+				name: "USB-C data port",
+				portClass: "usb3",
+			});
+			expect(modem.socketKey).toBe("C");
+			expect(modem.netNames).toEqual(["net0"]);
+			const stick = nodeNamed(tree, "1-1.2");
+			expect(stick.kind).toBe("wifi");
+			expect(stick.port).toMatchObject({
+				label: ">hub.2",
+				socketLabel: "A3-bot",
+				colour: "blue",
+				portClass: "usb3",
+			});
+			expect(stick.netNames).toEqual(["net0"]);
+			expect(nodeNamed(tree, "2-1.2").port.label).toBe("A2-top");
+			expect(nodeNamed(tree, "2-1.3").port).toMatchObject({
+				label: "BT",
+				name: "Bluetooth",
+			});
+			expect(nodeNamed(tree, "2-1.4").port).toMatchObject({
+				label: "M2B",
+				name: "Modem slot inside",
+				portClass: "usb2",
+				scope: "socket",
+			});
+			const encoded = JSON.stringify(tree);
+			expect(encoded).not.toContain("001122334455");
+			expect(encoded).not.toContain("wlx001122334455");
+			expect(encoded).not.toContain("wwx001122334455");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("follows the ROCK1 5.10 usbdrd path", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-tree-"));
+		try {
+			await writeFixture(root, [
+				shapedRoot("usb7", "fc400000.usb", "480", {
+					busDriver: "xhci",
+					xhciIndex: "11",
+					platformPrefix: "usbdrd3_1",
+				}),
+				{
+					name: "7-1",
+					controller: "fc400000.usb",
+					platformPrefix: "usbdrd3_1",
+					xhciIndex: "11",
+					speed: "480",
+					deviceClass: "09",
+					product: "Hub",
+					maxchild: "4",
+					interfaces: [{ suffix: "1.0", driver: "hub" }],
+				},
+				{
+					name: "7-1.1",
+					controller: "fc400000.usb",
+					platformPrefix: "usbdrd3_1",
+					xhciIndex: "11",
+					speed: "480",
+					product: "Wi-Fi stick",
+					interfaces: [
+						{
+							suffix: "1.0",
+							net: [{ name: "wlx001122334455", phy80211: true }],
+						},
+					],
+				},
+				shapedRoot("usb1", "fc800000.usb", "480", { busDriver: "ehci" }),
+				{
+					name: "1-1",
+					controller: "fc800000.usb",
+					busDriver: "ehci",
+					speed: "480",
+					deviceClass: "09",
+					product: "Hub",
+					maxchild: "4",
+					interfaces: [{ suffix: "1.0", driver: "hub" }],
+				},
+				{
+					name: "1-1.4",
+					controller: "fc800000.usb",
+					busDriver: "ehci",
+					speed: "480",
+					product: "Modem",
+					interfaces: [{ suffix: "1.0", driver: "option" }],
+				},
+			]);
+			const pathOf = async (name: string) =>
+				realpath(join(root, "sys/bus/usb/devices", name));
+			expect(await pathOf("7-1.1")).toContain(
+				"usbdrd3_1/fc400000.usb/xhci-hcd.11.auto/usb7/7-1/7-1.1",
+			);
+			expect(await pathOf("1-1.4")).toContain("fc800000.usb/usb1/1-1/1-1.4");
+			expect(await pathOf("1-1.4")).not.toContain("xhci-hcd");
+			expect(await pathOf("7-0:1.0")).toContain("7-0:1.0");
+			const tree = await readUsbTree({
+				sysfsRoot: root,
+				board: "rock-5b-plus",
+			});
+			expect(nodeNamed(tree, "7-1").port.label).toBe("A3-bot");
+			expect(nodeNamed(tree, "7-1.1").kind).toBe("wifi");
+			expect(nodeNamed(tree, "7-1.1").netNames).toEqual(["net0"]);
+			expect(nodeNamed(tree, "1-1.4").kind).toBe("modem");
+			expect(nodeNamed(tree, "1-1.4").port.label).toBe("M2B");
+			expect(JSON.stringify(tree)).not.toContain("001122334455");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });
+
+function pciRoot(
+	name: string,
+	controller: string,
+	speed: string,
+): FixtureDevice {
+	return {
+		...rootHub(name, controller, speed),
+		busDriver: "pci",
+	};
+}
+
+function shapedRoot(
+	name: string,
+	controller: string,
+	speed: string,
+	shape: {
+		busDriver: "ehci" | "xhci";
+		xhciIndex?: string;
+		platformPrefix?: string;
+	},
+): FixtureDevice {
+	return {
+		...rootHub(name, controller, speed, shape.platformPrefix),
+		busDriver: shape.busDriver,
+		...(shape.xhciIndex === undefined ? {} : { xhciIndex: shape.xhciIndex }),
+	};
+}
+
+function numberedIfaces(
+	config: string,
+	count: number,
+	driver: string,
+): FixtureInterface[] {
+	return Array.from({ length: count }, (_, index) => {
+		const suffix = `${config}.${index}`;
+		if (index === 0) return { suffix, driver };
+		return { suffix };
+	});
+}
+
+function rock2NormalTree(): FixtureDevice[] {
+	const xhci = (
+		name: string,
+		controller: string,
+		speed: string,
+		index: string,
+	): FixtureDevice =>
+		shapedRoot(name, controller, speed, {
+			busDriver: "xhci",
+			xhciIndex: index,
+		});
+	const ehci = (
+		name: string,
+		controller: string,
+		speed: string,
+	): FixtureDevice =>
+		shapedRoot(name, controller, speed, { busDriver: "ehci" });
+	return [
+		xhci("usb1", "fc400000.usb", "480", "0"),
+		{
+			name: "1-1",
+			controller: "fc400000.usb",
+			xhciIndex: "0",
+			speed: "480",
+			deviceClass: "09",
+			product: "Hub",
+			maxchild: "4",
+			interfaces: [{ suffix: "1.0", driver: "hub" }],
+		},
+		{
+			name: "1-1.2",
+			controller: "fc400000.usb",
+			xhciIndex: "0",
+			speed: "480",
+			product: "Wi-Fi stick",
+			interfaces: [
+				{
+					suffix: "1.0",
+					net: [{ name: "wlx001122334455", phy80211: true }],
+				},
+			],
+		},
+		{
+			name: "1-1.3",
+			controller: "fc400000.usb",
+			xhciIndex: "0",
+			speed: "480",
+			product: "Wi-Fi stick",
+			interfaces: [{ suffix: "1.0" }],
+		},
+		ehci("usb2", "fc800000.usb", "480"),
+		{
+			name: "2-1",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "480",
+			deviceClass: "09",
+			product: "Hub",
+			maxchild: "4",
+			interfaces: [{ suffix: "1.0", driver: "hub" }],
+		},
+		{
+			name: "2-1.2",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "480",
+			product: "Modem",
+			interfaces: numberedIfaces("2", 7, "option"),
+		},
+		{
+			name: "2-1.3",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "12",
+			product: "Bluetooth adapter",
+			interfaces: [
+				{ suffix: "1.0", driver: "btusb" },
+				{ suffix: "1.1", driver: "btusb" },
+			],
+		},
+		{
+			name: "2-1.4",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "480",
+			product: "Modem",
+			interfaces: numberedIfaces("2", 7, "option"),
+		},
+		ehci("usb3", "fc840000.usb", "12"),
+		xhci("usb4", "fc400000.usb", "5000", "0"),
+		ehci("usb5", "fc880000.usb", "480"),
+		ehci("usb6", "fc8c0000.usb", "12"),
+		xhci("usb7", "fcd00000.usb", "480", "5"),
+		xhci("usb8", "fcd00000.usb", "5000", "5"),
+		xhci("usb9", "fc000000.usb", "480", "10"),
+		{
+			name: "9-1",
+			controller: "fc000000.usb",
+			xhciIndex: "10",
+			speed: "480",
+			version: " 2.00",
+			product: "Modem",
+			interfaces: [
+				{ suffix: "1.0", driver: "option" },
+				{ suffix: "1.1", driver: "option" },
+				{ suffix: "1.2", driver: "option" },
+				{ suffix: "1.3", driver: "option" },
+				{
+					suffix: "1.4",
+					driver: "qmi_wwan",
+					net: [{ name: "wwx001122334455" }],
+				},
+			],
+		},
+		xhci("usb10", "fc000000.usb", "5000", "10"),
+	];
+}
+
+async function linkPortPeers(
+	root: string,
+	left: string,
+	right: string,
+	port = "1",
+): Promise<void> {
+	const dir = (usbName: string) => {
+		const bus = usbName.slice(3);
+		return join(
+			root,
+			"sys/bus/usb/devices",
+			usbName,
+			`${bus}-0:1.0`,
+			`usb${bus}-port${port}`,
+		);
+	};
+	const leftDir = dir(left);
+	const rightDir = dir(right);
+	await mkdir(leftDir, { recursive: true });
+	await mkdir(rightDir, { recursive: true });
+	await symlink(relative(leftDir, rightDir), join(leftDir, "peer"));
+	await symlink(relative(rightDir, leftDir), join(rightDir, "peer"));
+}
