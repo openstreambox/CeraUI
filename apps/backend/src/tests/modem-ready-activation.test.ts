@@ -6,7 +6,10 @@ import { join } from "node:path";
 import * as runner from "../helpers/run.ts";
 import { resetGsmAutoconfigProbe } from "../modules/modems/gsm-autoconfig.ts";
 import { resetGsmConnections } from "../modules/modems/gsm-connections.ts";
-import { setModemReadyActivationDepsForTest } from "../modules/modems/modem-ready-activation.ts";
+import {
+	runModemReadyActivations,
+	setModemReadyActivationDepsForTest,
+} from "../modules/modems/modem-ready-activation.ts";
 import {
 	refreshModemStatus,
 	registerModemSafe,
@@ -666,4 +669,12 @@ test("consumption precedes connection await when the physical key changes in fli
 		await first;
 	}
 	expect(activations()).toEqual([["nmcli", "-w", "45", "conn", "up", UUID]]);
+});
+
+test("a modem just reset is skipped for the rest of the poll", async () => {
+	await discoverModems();
+	await runModemReadyActivations(getModemIds());
+	expect(activations()).toEqual([]);
+	await runModemReadyActivations();
+	expect(activations()).toHaveLength(1);
 });

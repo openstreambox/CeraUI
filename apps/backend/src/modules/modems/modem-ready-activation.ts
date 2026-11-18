@@ -1,6 +1,7 @@
 import { logger } from "../../helpers/logger.ts";
 import { getNetworkInterfaces } from "../network/network-interfaces.ts";
 import { nmConnect, nmConnGetFields } from "../network/network-manager.ts";
+import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
 	readModemNmDeviceProp,
 	resolveModemNmDeviceForConnection,
@@ -29,6 +30,7 @@ export interface ModemReadyActivationDeps {
 	readonly resolveDevice: typeof resolveModemNmDeviceForConnection;
 	readonly readDevice: typeof readModemNmDeviceProp;
 	readonly readAutoconnect: (uuid: string) => Promise<string | undefined>;
+	readonly automaticReady: typeof automaticActivationReady;
 	readonly connect: typeof nmConnect;
 	readonly mutate: typeof withModemMutation;
 	readonly readSim: typeof readReadyModemSim;
@@ -43,6 +45,7 @@ const defaultDeps: ModemReadyActivationDeps = {
 	readDevice: readModemNmDeviceProp,
 	readAutoconnect: async (uuid) =>
 		(await nmConnGetFields(uuid, ["connection.autoconnect"] as const))?.[0],
+	automaticReady: automaticActivationReady,
 	connect: nmConnect,
 	mutate: withModemMutation,
 	readSim: readReadyModemSim,
@@ -147,7 +150,11 @@ async function readReadiness(
 	}
 	if (code !== "30") return undefined;
 	if ((await deps.readRegistration(id)) !== "registered") return undefined;
-	if ((await deps.readAutoconnect(uuid))?.trim() !== "yes") return undefined;
+	if (
+		(await deps.readAutoconnect(uuid))?.trim() !== "yes" &&
+		!(await deps.automaticReady(uuid))
+	)
+		return undefined;
 	const modem = getModem(id);
 	return isPending(id, intent) &&
 		modem?.config?.conn === uuid &&
@@ -158,9 +165,12 @@ async function readReadiness(
 }
 
 /** The retained status poll calls this only AFTER releasing its reconcile lock. */
-export async function runModemReadyActivations(): Promise<readonly ModemId[]> {
+export async function runModemReadyActivations(
+	skip: readonly number[] = [],
+): Promise<readonly ModemId[]> {
 	const configured: ModemId[] = [];
 	for (const id of getModemIds()) {
+		if (skip.includes(id)) continue;
 		const modem = getModem(id);
 		if (
 			modem?.data_connection_failed === true &&
