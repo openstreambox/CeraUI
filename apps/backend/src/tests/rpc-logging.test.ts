@@ -228,3 +228,25 @@ describe("rpc-logging", () => {
 		expect(isRpcTraceEnabled()).toBe(true);
 	});
 });
+
+test("debug traces redact new Stream ID writes before reaching a sink", async () => {
+	const { lines, deps } = makeCapture({ isEnabled: () => true });
+	await instrumentRpcCall(
+		["streaming", "setConfig"],
+		{
+			srt_streamid: "dummy-publish-key",
+			relay_streamid_override: "dummy-override",
+			srt_latency: 2000,
+		},
+		undefined,
+		async () => ({ success: true }),
+		deps,
+	);
+	expect(lines).toHaveLength(1);
+	expect(JSON.stringify(lines)).not.toContain("dummy-");
+	expect(lines[0]?.meta?.args).toMatchObject({
+		srt_streamid: REDACTED,
+		relay_streamid_override: REDACTED,
+		srt_latency: 2000,
+	});
+});
