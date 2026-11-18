@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { notificationKeys, renderCatalogMessage } from './notification-bundle';
+import { namespaceChunk, notificationKeys, renderCatalogMessage } from './notification-bundle';
 
 describe('backend notification key extraction', () => {
 	it('includes keys held in tables and constants when emitters select them dynamically', () => {
@@ -47,5 +47,28 @@ describe('notification catalog interpolation', () => {
 			inputs: { name: '__name__', version: '__version__' },
 			expected: '__name__: __version__, __name__',
 		});
+	});
+});
+
+describe('built namespace discovery', () => {
+	it('distinguishes a namespace from a longer helper name while allowing hash punctuation', () => {
+		expect(
+			namespaceChunk(
+				['network-speed-C7D7YRdk.js', 'network-XfJ-xhR_.js', 'network-XfJ-xhR_.js.map'],
+				'network',
+			),
+		).toBe('network-XfJ-xhR_.js');
+	});
+
+	it('refuses a helper without the actual namespace', () => {
+		expect(() => namespaceChunk(['network-speed-C7D7YRdk.js'], 'network')).toThrow(
+			'Expected one built network namespace, got 0',
+		);
+	});
+
+	it('still refuses two actual namespace chunks', () => {
+		expect(() => namespaceChunk(['network-12345678.js', 'network-abcdefgh.js'], 'network')).toThrow(
+			'Expected one built network namespace, got 2',
+		);
 	});
 });

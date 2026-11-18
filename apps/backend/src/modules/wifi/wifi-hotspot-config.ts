@@ -218,6 +218,8 @@ async function stopHotspotLocked(
 	deps.broadcastState();
 	syncWifiStateCache(macAddress, wifiInterface);
 
+	await deps.nmConnSetFields(conn, { "connection.autoconnect": "no" });
+
 	const disconnected = await deps.nmDisconnect(conn);
 	if (disconnected) {
 		const sameObservation =
@@ -229,8 +231,6 @@ async function stopHotspotLocked(
 		}
 		if (wifiInterface.conn === conn && sameObservation) {
 			wifiInterface.conn = null;
-			wifiInterface.activeConn = null;
-			delete wifiInterface.activeMode;
 			wifiInterface.available.clear();
 		}
 		const current = wifiInterface.concurrentHotspot;
