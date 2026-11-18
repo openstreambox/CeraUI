@@ -65,6 +65,7 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => {
 	return {
 		getConfig: feed.getConfigFeed,
 		getKiosk: () => undefined,
+		getTailscale: () => undefined,
 	};
 });
 

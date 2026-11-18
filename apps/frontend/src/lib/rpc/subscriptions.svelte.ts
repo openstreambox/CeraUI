@@ -143,6 +143,9 @@ let statusState = $state.raw<
 // Individual status components
 let isStreamingState = $state<boolean>(false);
 let sshState = $state.raw<StatusResponse["ssh"] | undefined>(undefined);
+let tailscaleState = $state.raw<StatusResponse["tailscale"] | undefined>(
+	undefined,
+);
 let availableUpdatesState = $state.raw<
 	StatusResponse["available_updates"] | undefined
 >(undefined);
@@ -325,6 +328,11 @@ export function getIsStreaming() {
 
 export function getSsh() {
 	return sshState;
+}
+
+/** Remote access over Tailscale; `undefined` until the device reports it. */
+export function getTailscale() {
+	return tailscaleState;
 }
 
 export function getAvailableUpdates() {
@@ -554,6 +562,12 @@ function handleMessage(
 			}
 			if (statusData.ssh !== undefined) {
 				sshState = preserveWireIdentity(sshState, statusData.ssh);
+			}
+			if (statusData.tailscale !== undefined) {
+				tailscaleState = preserveWireIdentity(
+					tailscaleState,
+					statusData.tailscale,
+				);
 			}
 			if (statusData.available_updates !== undefined) {
 				availableUpdatesState = preserveWireIdentity(
@@ -1243,6 +1257,7 @@ export function resetState(): void {
 	statusState = undefined;
 	isStreamingState = false;
 	sshState = undefined;
+	tailscaleState = undefined;
 	availableUpdatesState = undefined;
 	updatingState = null;
 	updateOrchestratorState = undefined;

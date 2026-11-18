@@ -28,6 +28,7 @@ import {
 	Rocket,
 	ScrollText,
 	SquareTerminal,
+	Waypoints,
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
 import { MediaQuery } from 'svelte/reactivity';
@@ -39,7 +40,7 @@ import ModeToggle from '$lib/components/custom/mode-toggle.svelte';
 import { AppDialog, LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { osCommand } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
-import { getConfig, getKiosk } from '$lib/rpc/subscriptions.svelte';
+import { getConfig, getKiosk, getTailscale } from '$lib/rpc/subscriptions.svelte';
 import { clearRequestedDialog, getRequestedDialog } from '$lib/stores/dialog-request.svelte';
 import { cn } from '$lib/utils';
 
@@ -52,6 +53,7 @@ const PasswordDialog = lazyDialog(() => import('./dialogs/PasswordDialog.svelte'
 const CloudRemoteDialog = lazyDialog(() => import('./dialogs/CloudRemoteDialog.svelte'));
 const NetworkIngestDialog = lazyDialog(() => import('./dialogs/NetworkIngestDialog.svelte'));
 const SshDialog = lazyDialog(() => import('./dialogs/SshDialog.svelte'));
+const RemoteAccessDialog = lazyDialog(() => import('./dialogs/RemoteAccessDialog.svelte'));
 const LogsDialog = lazyDialog(() => import('./dialogs/LogsDialog.svelte'));
 const UpdatesDialog = lazyDialog(() => import('./dialogs/UpdatesDialog.svelte'));
 const PowerDialog = lazyDialog(() => import('./dialogs/PowerDialog.svelte'));
@@ -101,6 +103,13 @@ const displayDesc = $derived.by(() => {
 			return m["settings.onDeviceDisplay.description"]();
 	}
 });
+
+// Remote access appears only on images that ship Tailscale: an absent field
+// (older backend) or `unavailable` (not installed) hides the entry entirely.
+const tailscale = $derived(getTailscale());
+const remoteAccessAvailable = $derived(
+	tailscale !== undefined && tailscale.state !== 'unavailable',
+);
 
 // Autostart streaming. The switch is pessimistic (AsyncSwitch never flips
 // optimistically): `autostart` follows the authoritative config broadcast, and
@@ -168,6 +177,16 @@ const groups = $derived<Group[]>([
 		label: m["settings.index.groups.developer"](),
 		entries: [
 			{ key: 'ssh', title: m["settings.index.ssh"](), desc: m["settings.index.sshDesc"](), icon: SquareTerminal },
+			...(remoteAccessAvailable
+				? [
+						{
+							key: 'remoteAccess',
+							title: m["settings.index.remoteAccess"](),
+							desc: m["settings.index.remoteAccessDesc"](),
+							icon: Waypoints,
+						},
+					]
+				: []),
 			{ key: 'logs', title: m["settings.index.logs"](), desc: m["settings.index.logsDesc"](), icon: ScrollText },
 		],
 	},
@@ -210,6 +229,7 @@ let passwordOpen = $state(false);
 let cloudOpen = $state(false);
 let networkIngestOpen = $state(false);
 let sshOpen = $state(false);
+let remoteAccessOpen = $state(false);
 let logsOpen = $state(false);
 let updatesOpen = $state(false);
 let powerOpen = $state(false);
@@ -237,6 +257,9 @@ function openEntry(entry: Entry) {
 			return;
 		case 'ssh':
 			sshOpen = true;
+			return;
+		case 'remoteAccess':
+			remoteAccessOpen = true;
 			return;
 		case 'logs':
 			logsOpen = true;
@@ -433,6 +456,7 @@ $effect(() => {
 <LazyDialog dialog={CloudRemoteDialog} bind:open={cloudOpen} />
 <LazyDialog dialog={NetworkIngestDialog} bind:open={networkIngestOpen} />
 <LazyDialog dialog={SshDialog} bind:open={sshOpen} />
+<LazyDialog dialog={RemoteAccessDialog} bind:open={remoteAccessOpen} />
 <LazyDialog dialog={LogsDialog} bind:open={logsOpen} />
 <LazyDialog dialog={UpdatesDialog} bind:open={updatesOpen} />
 <LazyDialog dialog={PowerDialog} bind:open={powerOpen} />

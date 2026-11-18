@@ -46,20 +46,37 @@ export function projectRemoteConfig(payload: unknown): unknown {
 	return config;
 }
 
+/**
+ * Remote access is reported to a cloud remote as its state word only. The
+ * device's name and address on the owner's private network stay local.
+ */
+function projectRemoteTailscale(value: unknown): unknown {
+	if (typeof value !== "object" || value === null || !("state" in value)) {
+		return value;
+	}
+	return { state: value.state };
+}
+
 /** Remote status retains credentials and omits only local radio lifetime tokens. */
 export function projectRemoteStatus(payload: unknown): unknown {
+	if (typeof payload !== "object" || payload === null) return payload;
+	let projected = payload;
+	if ("tailscale" in payload) {
+		projected = {
+			...projected,
+			tailscale: projectRemoteTailscale(payload.tailscale),
+		};
+	}
 	if (
-		typeof payload !== "object" ||
-		payload === null ||
 		!("wifi" in payload) ||
 		typeof payload.wifi !== "object" ||
 		payload.wifi === null
 	) {
-		return payload;
+		return projected;
 	}
 
 	return {
-		...payload,
+		...projected,
 		wifi: Array.isArray(payload.wifi)
 			? payload.wifi.map(omitIncarnation)
 			: Object.fromEntries(

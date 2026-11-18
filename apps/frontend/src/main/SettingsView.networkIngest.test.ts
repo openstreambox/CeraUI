@@ -42,6 +42,7 @@ vi.mock("$lib/rpc/client", () => ({
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getConfig: () => ({ autostart: false }),
 	getKiosk: () => undefined,
+	getTailscale: () => undefined,
 }));
 
 vi.mock("svelte-sonner", () => ({

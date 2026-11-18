@@ -140,6 +140,9 @@ import {
 	sshStartProcedure,
 	sshStopProcedure,
 	startUpdateProcedure,
+	tailscaleJoinProcedure,
+	tailscaleLogoutProcedure,
+	tailscaleSetEnabledProcedure,
 } from "./procedures/system.procedure.ts";
 import { heartbeatProcedure } from "./procedures/ui.procedure.ts";
 import {
@@ -289,6 +292,9 @@ const stableRoutes = {
 		sshStop: sshStopProcedure,
 		sshSetPersistent: sshSetPersistentProcedure,
 		sshResetPassword: sshResetPasswordProcedure,
+		tailscaleJoin: tailscaleJoinProcedure,
+		tailscaleSetEnabled: tailscaleSetEnabledProcedure,
+		tailscaleLogout: tailscaleLogoutProcedure,
 		getCloudProviders: getCloudProvidersProcedure,
 		setRemoteConfig: setRemoteConfigProcedure,
 		setAutostart: setAutostartProcedure,

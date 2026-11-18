@@ -16,6 +16,7 @@ import { lifecycleStateSchema } from './streaming-lifecycle.schema';
 import {
 	availableUpdatesSchema,
 	sshStatusSchema,
+	tailscaleStatusSchema,
 	updateStateSchema,
 	updatingStatusSchema,
 } from './system.schema';
@@ -80,6 +81,8 @@ export const statusMessageSchema = z.object({
 	// progress). Absent on a backend that has not started the orchestrator yet.
 	update_orchestrator: updateOrchestratorWireStateSchema.optional(),
 	ssh: sshStatusSchema,
+	// Optional: absent on backends that predate remote access.
+	tailscale: tailscaleStatusSchema.optional(),
 	wifi: wifiStatusSchema,
 	asrcs: z.array(z.string()),
 	// Typed audio-source model (Task 4/6). Additive + optional beside the legacy
@@ -453,6 +456,7 @@ export const statusResponseSchema = z.object({
 	update_state: updateStateSchema.optional(),
 	update_orchestrator: updateOrchestratorWireStateSchema.optional(),
 	ssh: sshStatusSchema.optional(),
+	tailscale: tailscaleStatusSchema.optional(),
 	wifi: wifiStatusSchema.optional(),
 	modems: modemListSchema.optional(),
 	asrcs: z.array(z.string()).optional(),

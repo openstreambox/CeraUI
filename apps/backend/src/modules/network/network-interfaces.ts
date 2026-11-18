@@ -741,6 +741,15 @@ function isNetifDownState(state: string): boolean {
 }
 
 /**
+ * Interfaces that are never uplinks: loopback, container bridges, and VPN
+ * tunnels (`tailscale0` when tailscaled runs in kernel mode). A tunnel carries
+ * traffic only to its private network, so bonding over it would break streams.
+ */
+export function isNonUplinkIfname(name: string): boolean {
+	return name === "lo" || /^(?:docker|l4tbr|tailscale)/.test(name);
+}
+
+/**
  * Primary event-driven driver: react to a monitor `device-state` event by
  * adding (link up) or removing (link down) the interface in the legacy `netif`
  * map, then reconcile+broadcast. IP/throughput are NOT carried by the event —
@@ -751,7 +760,7 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 	if (event.type !== "device-state") return;
 
 	const name = event.device;
-	if (name === "lo" || name.match("^docker") || name.match("^l4tbr")) return;
+	if (isNonUplinkIfname(name)) return;
 
 	let mutated = false;
 	if (isNetifUpState(event.state)) {
@@ -962,10 +971,7 @@ async function refreshNetifFromOs(): Promise<void> {
 		const ifnames = ifconfigOut
 			.split("\n\n")
 			.map((entry) => entry.split(":")[0]?.trim() ?? "")
-			.filter(
-				(name) =>
-					name !== "" && name !== "lo" && !/^(?:docker|l4tbr)/.test(name),
-			);
+			.filter((name) => name !== "" && !isNonUplinkIfname(name));
 		const buses = new Map<string, NetdevBusEvidence>();
 		const reads = new Map<string, { seen: number; promise: Promise<void> }>();
 		const issue = (name: string): void => {
@@ -1098,8 +1104,7 @@ export function processIfconfigOutput(
 		try {
 			const name = int.split(":")[0] ?? "";
 
-			if (name === "lo" || name.match("^docker") || name.match("^l4tbr"))
-				continue;
+			if (isNonUplinkIfname(name)) continue;
 
 			// Prefer the scope-annotated `ip -4 addr` address (a routable global
 			// lease over a link-local) when present; fall back to ifconfig's single
