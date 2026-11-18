@@ -22,6 +22,7 @@ import {
 	getWifiState,
 	setWifiState,
 } from "./state/wifi-state.ts";
+import { waitForHotspotReadiness } from "./wifi-hotspot-readiness.ts";
 import type {
 	HotspotActivationDeps,
 	WifiInterfaceWithHotspot,
@@ -132,7 +133,17 @@ export function registerPendingConfirmation(
 		}
 		deps.broadcastState();
 		syncWifiStateCache(macAddress, wifiInterface); // now mode: 'hotspot'
-		deps.publishOutcome?.("start", device, { success: true });
+		if (!deps.confirmSteering) {
+			deps.publishOutcome?.("start", device, { success: true });
+			return;
+		}
+		const apIfname = wifiInterface.concurrentHotspot?.ifname ?? ifname;
+		void waitForHotspotReadiness(apIfname, deps.confirmSteering).then(
+			(outcome) => {
+				deps.broadcastState();
+				deps.publishOutcome?.("start", device, outcome);
+			},
+		);
 	};
 
 	const giveUp = () => {

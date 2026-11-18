@@ -105,7 +105,7 @@ describe("AP+STA capability probe", () => {
 		}
 	});
 
-	test("maps interface to wiphy and caches the PHY result", async () => {
+	test("maps interface to wiphy and rereads the PHY for replug safety", async () => {
 		const calls: string[][] = [];
 		setApStaCapabilityRunnerForTest(async (_command, args) => {
 			calls.push(args);
@@ -119,6 +119,7 @@ describe("AP+STA capability probe", () => {
 			["dev", "wlan0", "info"],
 			["phy", "phy2", "info"],
 			["dev", "wlan0", "info"],
+			["phy", "phy2", "info"],
 		]);
 	});
 
