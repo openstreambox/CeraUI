@@ -6,7 +6,7 @@ import {
 } from "@ceraui/rpc/schemas";
 import { call } from "@orpc/server";
 
-import { logger } from "../helpers/logger.ts";
+import { logger, logRedact, REDACTED } from "../helpers/logger.ts";
 import * as mockService from "../mocks/mock-service.ts";
 import { isNonUplinkIfname } from "../modules/network/network-interfaces.ts";
 import { buildControlContext } from "../modules/remote-control/control-context.ts";
@@ -15,9 +15,12 @@ import { updateStatus } from "../modules/streaming/streaming.ts";
 import {
 	getCachedTailscaleStatus,
 	getTailscaleStatus,
+	type JoinOutcome,
 	joinTailscale,
 	logoutTailscale,
 	parseTailscaleStatusJson,
+	pickRestorePrefs,
+	type RestorePrefs,
 	resetTailscaleForTest,
 	scrubSecret,
 	setTailscaleDepsForTest,
@@ -50,21 +53,42 @@ function statusJson(backend: string): string {
 	});
 }
 
-/** A fake tailscaled: a running flag, a login flag, and a call log. */
-function fakeDaemon(initial: { active: boolean; backend: string }) {
-	const state = { ...initial };
+/**
+ * A fake tailscaled: a running flag, a backend state, remembered prefs, an
+ * optional image enrolment, and a call log.
+ */
+function fakeDaemon(initial: {
+	active: boolean;
+	backend: string;
+	joinOutcome?: JoinOutcome;
+	enroll?: {
+		hasState: boolean;
+		result: "joined" | "gave-up" | "slow" | "retry";
+	};
+	prefs?: Record<string, unknown>;
+	restore?: RestorePrefs;
+}) {
+	const state = {
+		...initial,
+		restore: initial.restore,
+		pending: false,
+		enrollStatus: undefined as string | undefined,
+	};
 	const calls: string[] = [];
 	const broadcasts: TailscaleStatus[] = [];
+	const joins: Array<{ key: string; restore: RestorePrefs | undefined }> = [];
+	const submits: Array<{ key: string; hostname: string }> = [];
 	const deps: Partial<TailscaleDeps> = {
 		isInstalled: async () => true,
 		isDaemonActive: async () => state.active,
 		statusJson: async () => statusJson(state.backend),
 		setUnit: async (enabled) => {
 			calls.push(enabled ? "enable --now" : "disable --now");
-			state.active = enabled;
+			// An image unit gated on state starts only once there is state.
+			state.active = enabled && (!state.enroll || state.enroll.hasState);
 		},
-		up: async (authKey) => {
-			calls.push(authKey === undefined ? "up" : "up --auth-key");
+		reconnect: async () => {
+			calls.push("up");
 			state.backend = "Running";
 		},
 		down: async () => {
@@ -75,9 +99,57 @@ function fakeDaemon(initial: { active: boolean; backend: string }) {
 			calls.push("logout");
 			state.backend = "NeedsLogin";
 		},
+		apiJoin: async (key, restore) => {
+			calls.push("api join");
+			joins.push({ key, restore });
+			const outcome = state.joinOutcome ?? "joined";
+			if (outcome === "joined") state.backend = "Running";
+			if (outcome === "approval") state.backend = "NeedsMachineAuth";
+			return outcome;
+		},
+		readPrefs: async () =>
+			state.prefs ?? {
+				ControlURL: "https://control.example",
+				Hostname: "studio-box",
+				RunSSH: true,
+				CorpDNS: false,
+				RouteAll: false,
+				ShieldsUp: false,
+				Persist: { PrivateNodeKey: "privkey:secret" },
+			},
+		readRestore: async () => state.restore,
+		writeRestore: async (prefs) => {
+			calls.push("remember");
+			state.restore = prefs;
+		},
+		enrollPresent: async () => state.enroll !== undefined,
+		enrollHasState: async () => state.enroll?.hasState ?? false,
+		enrollPending: async () => state.pending,
+		enrollLastStatus: async () => state.enrollStatus,
+		enrollSubmit: async (key, hostname) => {
+			calls.push("enroll");
+			submits.push({ key, hostname });
+			state.pending = true;
+			const result = state.enroll?.result;
+			if (result === "slow") return;
+			if (result === "retry") {
+				state.enrollStatus = "pending 1 1700000120 retry";
+				return;
+			}
+			state.pending = false;
+			if (result === "joined") {
+				state.enrollStatus = "joined 1 0 ok";
+				state.active = true;
+				state.backend = "Running";
+				if (state.enroll) state.enroll.hasState = true;
+			} else {
+				state.enrollStatus = "gave-up 1 0 the control server refused the key";
+			}
+		},
 		broadcast: (status) => broadcasts.push(status),
+		sleep: async () => {},
 	};
-	return { state, calls, broadcasts, deps };
+	return { state, calls, broadcasts, joins, submits, deps };
 }
 
 const env = { ...process.env };
@@ -148,6 +220,10 @@ describe("status probe", () => {
 				seen.push("status");
 				return "{}";
 			},
+			enrollPresent: async () => {
+				seen.push("enroll");
+				return false;
+			},
 			broadcast: () => {},
 		});
 		expect(await getTailscaleStatus()).toEqual({ state: "unavailable" });
@@ -157,6 +233,21 @@ describe("status probe", () => {
 	test("a stopped daemon is off", async () => {
 		const daemon = fakeDaemon({ active: false, backend: "Running" });
 		setTailscaleDepsForTest(daemon.deps);
+		expect(await getTailscaleStatus()).toEqual({ state: "off" });
+	});
+
+	test("with image enrolment, a box that never joined needs a key, not a switch", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "joined" },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await getTailscaleStatus()).toEqual({ state: "needs_key" });
+		daemon.state.pending = true;
+		expect(await getTailscaleStatus()).toEqual({ state: "joining" });
+		daemon.state.pending = false;
+		if (daemon.state.enroll) daemon.state.enroll.hasState = true;
 		expect(await getTailscaleStatus()).toEqual({ state: "off" });
 	});
 
@@ -185,16 +276,44 @@ describe("status probe", () => {
 	});
 });
 
-describe("join", () => {
-	test("starts a stopped daemon, then joins with the key", async () => {
-		const daemon = fakeDaemon({ active: false, backend: "NeedsLogin" });
+describe("join through the local API", () => {
+	test("starts a stopped daemon, then joins with the key and the remembered prefs", async () => {
+		const restore = { ControlURL: "https://control.example", RunSSH: true };
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NeedsLogin",
+			restore,
+		});
 		setTailscaleDepsForTest(daemon.deps);
 		expect(await joinTailscale(KEY)).toBe(true);
-		expect(daemon.calls).toEqual(["enable --now", "up --auth-key"]);
+		expect(daemon.calls).toEqual(["enable --now", "api join"]);
+		expect(daemon.joins).toEqual([{ key: KEY, restore }]);
 		expect(getCachedTailscaleStatus()?.state).toBe("connected");
 	});
 
-	test("the key is passed to tailscale and nowhere else", async () => {
+	test("waiting for approval counts as joined", async () => {
+		const daemon = fakeDaemon({
+			active: true,
+			backend: "NeedsLogin",
+			joinOutcome: "approval",
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await joinTailscale(KEY)).toBe(true);
+		expect(getCachedTailscaleStatus()?.state).toBe("needs_approval");
+	});
+
+	test("a refused key reports failure", async () => {
+		const daemon = fakeDaemon({
+			active: true,
+			backend: "NeedsLogin",
+			joinOutcome: "refused",
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await joinTailscale(KEY)).toBe(false);
+		expect(getCachedTailscaleStatus()?.state).toBe("needs_key");
+	});
+
+	test("the key is passed to the join and nowhere else", async () => {
 		const daemon = fakeDaemon({ active: true, backend: "NeedsLogin" });
 		let received: string | undefined;
 		const logged: string[] = [];
@@ -206,9 +325,9 @@ describe("join", () => {
 		);
 		setTailscaleDepsForTest({
 			...daemon.deps,
-			up: async (authKey) => {
+			apiJoin: async (authKey) => {
 				received = authKey;
-				// A CLI that echoes its input in the error must not leak it.
+				// A daemon that echoes its input in the error must not leak it.
 				throw Object.assign(new Error(`invalid key ${authKey}`), {
 					code: 1,
 					stderr: `backend error: invalid key ${authKey}`,
@@ -232,9 +351,10 @@ describe("join", () => {
 		const release = Promise.withResolvers<void>();
 		setTailscaleDepsForTest({
 			...daemon.deps,
-			up: async () => {
+			apiJoin: async () => {
 				await release.promise;
 				daemon.state.backend = "Running";
+				return "joined";
 			},
 		});
 		const first = joinTailscale(KEY);
@@ -242,6 +362,103 @@ describe("join", () => {
 		expect(getCachedTailscaleStatus()?.state).toBe("joining");
 		release.resolve();
 		expect(await first).toBe(true);
+	});
+});
+
+describe("join through the image's enrolment", () => {
+	test("hands the key and the remembered name to the enrolment, never to the local API", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "joined" },
+			restore: { Hostname: "Studio-Box" },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await joinTailscale(KEY)).toBe(true);
+		expect(daemon.calls).toEqual(["enroll"]);
+		expect(daemon.submits).toEqual([{ key: KEY, hostname: "studio-box" }]);
+		expect(getCachedTailscaleStatus()?.state).toBe("connected");
+	});
+
+	test("a name the enrolment would reject is not passed on", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "joined" },
+			restore: { Hostname: "studio box; rm -rf" },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		await joinTailscale(KEY);
+		expect(daemon.submits[0]?.hostname).toBe("");
+	});
+
+	test("a refusal by the enrolment reports failure", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "gave-up" },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await joinTailscale(KEY)).toBe(false);
+		expect(getCachedTailscaleStatus()?.state).toBe("needs_key");
+	});
+
+	test("a slow enrolment is still joining, not failed", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "slow" },
+		});
+		let clock = 0;
+		const now = spyOn(Date, "now").mockImplementation(() => {
+			clock += 5_000;
+			return clock;
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		try {
+			expect(await joinTailscale(KEY)).toBe(true);
+		} finally {
+			now.mockRestore();
+		}
+		expect(getCachedTailscaleStatus()?.state).toBe("joining");
+	});
+});
+
+describe("enrolment retries", () => {
+	test("a failed first attempt is reported at once as still joining", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "retry" },
+		});
+		let polls = 0;
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			sleep: async () => {
+				polls += 1;
+			},
+		});
+		expect(await joinTailscale(KEY)).toBe(true);
+		expect(polls).toBe(1);
+		expect(getCachedTailscaleStatus()?.state).toBe("joining");
+	});
+});
+
+describe("on, right after the unit starts", () => {
+	test("waits for the daemon to settle before deciding to reconnect", async () => {
+		const daemon = fakeDaemon({ active: false, backend: "Stopped" });
+		const answers = ["NoState", "NoState", "Stopped"];
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			statusJson: async () => {
+				const next = answers.shift();
+				if (next === undefined) return statusJson(daemon.state.backend);
+				if (next === "NoState") return statusJson("NoState");
+				return statusJson(next);
+			},
+		});
+		expect(await setTailscaleEnabled(true)).toBe(true);
+		expect(daemon.calls).toEqual(["enable --now", "up"]);
 	});
 });
 
@@ -254,7 +471,7 @@ describe("off switch and forget", () => {
 		expect(getCachedTailscaleStatus()).toEqual({ state: "off" });
 	});
 
-	test("on reconnects a logged-in device without a key", async () => {
+	test("on reconnects a logged-in device with a flag-less up", async () => {
 		const daemon = fakeDaemon({ active: false, backend: "Stopped" });
 		setTailscaleDepsForTest(daemon.deps);
 		expect(await setTailscaleEnabled(true)).toBe(true);
@@ -270,11 +487,32 @@ describe("off switch and forget", () => {
 		expect(getCachedTailscaleStatus()?.state).toBe("needs_key");
 	});
 
-	test("forget logs out and leaves the daemon running", async () => {
+	test("on, on an image box that never joined, offers the key field", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "joined" },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await setTailscaleEnabled(true)).toBe(true);
+		expect(daemon.calls).toEqual(["enable --now"]);
+		expect(getCachedTailscaleStatus()?.state).toBe("needs_key");
+	});
+
+	test("forget remembers the owner's prefs, then logs out", async () => {
 		const daemon = fakeDaemon({ active: true, backend: "Running" });
 		setTailscaleDepsForTest(daemon.deps);
 		expect(await logoutTailscale()).toBe(true);
-		expect(daemon.calls).toEqual(["logout"]);
+		expect(daemon.calls).toEqual(["remember", "logout"]);
+		expect(daemon.state.restore).toEqual({
+			ControlURL: "https://control.example",
+			Hostname: "studio-box",
+			RunSSH: true,
+			CorpDNS: false,
+			RouteAll: false,
+			ShieldsUp: false,
+		});
+		expect(JSON.stringify(daemon.state.restore)).not.toContain("privkey");
 		expect(getCachedTailscaleStatus()?.state).toBe("needs_key");
 	});
 
@@ -285,8 +523,12 @@ describe("off switch and forget", () => {
 			setUnit: async () => {
 				calls.push("unit");
 			},
-			up: async () => {
+			reconnect: async () => {
 				calls.push("up");
+			},
+			apiJoin: async () => {
+				calls.push("join");
+				return "joined";
 			},
 			logout: async () => {
 				calls.push("logout");
@@ -337,6 +579,18 @@ describe("procedures", () => {
 		});
 	}
 
+	test("a refused join does not leave the card stuck on joining", async () => {
+		const daemon = fakeDaemon({ active: true, backend: "NeedsLogin" });
+		setTailscaleDepsForTest(daemon.deps);
+		updateStatus(true);
+		await call(
+			tailscaleJoinProcedure,
+			{ authKey: KEY },
+			{ context: buildControlContext() },
+		);
+		expect(getCachedTailscaleStatus()?.state).not.toBe("joining");
+	});
+
 	test("a malformed key is rejected without echoing it", async () => {
 		const bad = `${KEY}\n--reset`;
 		const parsed = tailscaleJoinInputSchema.safeParse({ authKey: bad });
@@ -375,6 +629,29 @@ describe("helpers", () => {
 	test("scrubSecret removes every copy", () => {
 		expect(scrubSecret(`a ${KEY} b ${KEY}`, KEY)).toBe("a *** b ***");
 		expect(scrubSecret("plain", undefined)).toBe("plain");
+	});
+
+	test("the log redactor drops auth keys wherever they appear", () => {
+		expect(logRedact(`failed with ${KEY}`)).toBe(REDACTED);
+		expect(logRedact({ note: `hskey-auth-abcdef0123456789` })).toEqual({
+			note: REDACTED,
+		});
+		expect(logRedact("tailscale up failed: exit 1")).toBe(
+			"tailscale up failed: exit 1",
+		);
+	});
+
+	test("pickRestorePrefs keeps only the known, typed fields", () => {
+		expect(
+			pickRestorePrefs({
+				ControlURL: "https://c.example",
+				Hostname: 7,
+				RunSSH: "yes",
+				CorpDNS: false,
+				Persist: { PrivateNodeKey: "x" },
+			}),
+		).toEqual({ ControlURL: "https://c.example", CorpDNS: false });
+		expect(pickRestorePrefs(null)).toEqual({});
 	});
 
 	test("tunnel interfaces are never uplinks", () => {

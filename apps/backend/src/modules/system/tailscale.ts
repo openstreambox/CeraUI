@@ -20,29 +20,83 @@
  * Optional: images that do not ship tailscale/tailscaled report `unavailable`
  * and the UI hides the entry, so nothing changes for them.
  *
- * Reading is `tailscale status --json` (argv only, read-only). Joining feeds the
- * pasted auth key to `tailscale up --auth-key=file:/dev/stdin` on stdin, so the
- * key never appears on argv, in a file, in config, in a log line or in any
- * status frame. The off switch stops and disables tailscaled (the login stays);
- * "forget" is `tailscale logout`. There is deliberately no interactive login:
- * a login link would let whoever opens it first choose the network.
+ * Reading is `tailscale status --json` (argv only, read-only).
+ *
+ * Joining never passes the key on argv, stdin or disk. It talks to tailscaled's
+ * local API over its unix socket, the same API the CLI uses: read the current
+ * prefs, send them back unchanged with the key (`start`), then ask for a login
+ * (`login-interactive`, which uses the key; no URL is ever shown). Keeping the
+ * prefs is the point: `tailscale up` with any flag refuses to run when the
+ * device has non-default settings it does not repeat (`--ssh`, `--hostname`,
+ * `--accept-dns=false`...), and `tailscale login` silently resets them.
+ * A `tailscale logout` resets the prefs too, so "forget" first remembers the
+ * few the owner chose (control server, name, SSH, DNS, routes, shields) in a
+ * local file next to the config, and the next join restores them. A device
+ * that never had any gets `accept-dns=false`: a streaming box should not have
+ * its DNS taken over unasked.
+ *
+ * Images may bring their own enrolment (ENROLL_UNIT, e.g. a key file on the
+ * boot drive). There the card hands the key to that unit's pending-key file
+ * instead, so the image's own flags stay the single source, and the unit can
+ * start tailscaled even on a box that never ran it.
+ *
+ * The off switch is `tailscale down`, then `systemctl disable --now
+ * tailscaled`. On re-enables the unit and reconnects with a flag-less
+ * `tailscale up`, which only sets WantRunning and keeps every pref. It never
+ * starts a login. "Forget" is `tailscale logout`. There is deliberately no
+ * interactive login: whoever opens a login link first picks the network.
  */
+
+import {
+	chmod,
+	mkdir,
+	readFile,
+	rename,
+	rm,
+	writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import type { TailscaleState, TailscaleStatus } from "@ceraui/rpc/schemas";
 
 import { execFileP } from "../../helpers/exec.ts";
 import { logger } from "../../helpers/logger.ts";
-import { run, runWithStdin } from "../../helpers/run.ts";
+import { run } from "../../helpers/run.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
+import { getConfigFilePath } from "../config.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
 import { describeCliError } from "./cli-parse.ts";
 import { DisruptiveActionRefusal } from "./disruptive-action-reservation.ts";
 import { withServiceReservation } from "./disruptive-service-reservation.ts";
 
 const UNIT = "tailscaled.service";
-const JOIN_TIMEOUT_S = 45;
+const TAILSCALE = "tailscale";
+const DEFAULT_SOCKET = "/var/run/tailscale/tailscaled.sock";
+/** How long a join waits for the daemon's answer before reporting "joining". */
+const JOIN_WAIT_MS = 50_000;
+/** Bound for the flag-less reconnect; it returns as soon as WantRunning is set. */
+const RECONNECT_TIMEOUT_MS = 30_000;
 const SETTLE_POLL_MS = 2_000;
 const SETTLE_POLL_COUNT = 15;
+/** How long "on" waits for a just-started daemon to answer. */
+const SETTLE_WAIT_MS = 10_000;
+
+/**
+ * Image-side enrolment hand-off. All paths are the image's own: the unit reads
+ * a pending key from STATE_DIR, joins with the image's flags, and removes it.
+ */
+export const ENROLL_UNIT = "ceralive-tailscale-enroll.service";
+const STATE_DIR = "/var/lib/tailscale";
+const ENROLL_NAME_RE = /^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/;
+
+/** The socket of the tailscaled this backend talks to (env override for tests). */
+export function tailscaleSocket(): string {
+	return process.env.CERALIVE_TAILSCALE_SOCKET || DEFAULT_SOCKET;
+}
+
+function stateDir(): string {
+	return process.env.CERALIVE_TAILSCALE_STATE_DIR || STATE_DIR;
+}
 
 /** The subset of `tailscale status --json` this module reads. */
 type TailscaleStatusJson = {
@@ -103,7 +157,51 @@ export function parseTailscaleStatusJson(stdout: string): TailscaleStatus {
 	return status;
 }
 
-/** Injectable OS surface; tests replace every member. */
+/** Prefs that "forget" remembers so the next join restores them. Not secret. */
+export type RestorePrefs = {
+	ControlURL?: string;
+	Hostname?: string;
+	RunSSH?: boolean;
+	CorpDNS?: boolean;
+	RouteAll?: boolean;
+	ShieldsUp?: boolean;
+};
+const RESTORE_KEYS = [
+	"ControlURL",
+	"Hostname",
+	"RunSSH",
+	"CorpDNS",
+	"RouteAll",
+	"ShieldsUp",
+] as const;
+
+/** Pick the remembered prefs out of a full prefs object, type-checked. */
+export function pickRestorePrefs(prefs: unknown): RestorePrefs {
+	const out: Record<string, unknown> = {};
+	if (typeof prefs !== "object" || prefs === null) return {};
+	for (const key of RESTORE_KEYS) {
+		const value = (prefs as Record<string, unknown>)[key];
+		const want =
+			key === "ControlURL" || key === "Hostname" ? "string" : "boolean";
+		if (typeof value === want) out[key] = value;
+	}
+	return out as RestorePrefs;
+}
+
+/** What a join reports back. */
+export type JoinOutcome = "joined" | "approval" | "refused" | "pending";
+
+/** One IPN bus notification, the fields a join reads. */
+type BusNotify = {
+	State?: number;
+	ErrMessage?: string | null;
+	BrowseToURL?: string | null;
+};
+// ipn.State: NeedsMachineAuth = 3, Running = 6.
+const IPN_NEEDS_MACHINE_AUTH = 3;
+const IPN_RUNNING = 6;
+
+/** Injectable OS surface; tests replace members. */
 export type TailscaleDeps = {
 	/** True when the tailscale CLI and the tailscaled unit both exist. */
 	isInstalled: () => Promise<boolean>;
@@ -113,37 +211,201 @@ export type TailscaleDeps = {
 	statusJson: () => Promise<string>;
 	/** `systemctl enable|disable --now tailscaled`. */
 	setUnit: (enabled: boolean) => Promise<void>;
-	/** `tailscale up` with the key on stdin, or a plain reconnect without one. */
-	up: (authKey?: string) => Promise<void>;
+	/** Flag-less `tailscale up`: sets WantRunning, keeps every pref. */
+	reconnect: () => Promise<void>;
 	/** `tailscale down`. */
 	down: () => Promise<void>;
 	/** `tailscale logout`. */
 	logout: () => Promise<void>;
+	/** Join through the local API with the given prefs patch. */
+	apiJoin: (
+		authKey: string,
+		restore: RestorePrefs | undefined,
+	) => Promise<JoinOutcome>;
+	/** Current prefs from the local API (for "forget" to remember). */
+	readPrefs: () => Promise<unknown>;
+	/** The remembered prefs file. */
+	readRestore: () => Promise<RestorePrefs | undefined>;
+	writeRestore: (prefs: RestorePrefs) => Promise<void>;
+	/** Image enrolment hand-off. */
+	enrollPresent: () => Promise<boolean>;
+	enrollHasState: () => Promise<boolean>;
+	enrollPending: () => Promise<boolean>;
+	enrollLastStatus: () => Promise<string | undefined>;
+	enrollSubmit: (authKey: string, hostname: string) => Promise<void>;
 	/** Emit the status to clients. */
 	broadcast: (status: TailscaleStatus) => void;
+	/** Delay used while polling a hand-off (tests shorten it). */
+	sleep: (ms: number) => Promise<void>;
 };
 
-const TAILSCALE = "tailscale";
+function socketArg(): string {
+	return `--socket=${tailscaleSocket()}`;
+}
 
 function isTailscaleOnPath(): boolean {
 	return Bun.which(TAILSCALE) !== null;
 }
 
-const defaultDeps: TailscaleDeps = {
-	isInstalled: async () => {
-		if (!isTailscaleOnPath()) return false;
-		try {
-			const { stdout } = await execFileP("systemctl", [
-				"show",
-				"--property=LoadState",
-				"--value",
-				UNIT,
-			]);
-			return stdout.trim() === "loaded";
-		} catch {
-			return false;
+async function unitLoaded(unit: string): Promise<boolean> {
+	try {
+		const { stdout } = await execFileP("systemctl", [
+			"show",
+			"--property=LoadState",
+			"--value",
+			unit,
+		]);
+		return stdout.trim() === "loaded";
+	} catch {
+		return false;
+	}
+}
+
+/** A request to tailscaled's local API over its unix socket. */
+async function localApi(
+	method: "GET" | "POST",
+	path: string,
+	body?: unknown,
+	signal?: AbortSignal,
+): Promise<Response> {
+	const response = await fetch(
+		`http://local-tailscaled.sock/localapi/v0/${path}`,
+		{
+			method,
+			unix: tailscaleSocket(),
+			headers: {
+				"Sec-Tailscale": "localapi",
+				...(body === undefined ? {} : { "Content-Type": "application/json" }),
+			},
+			...(body === undefined ? {} : { body: JSON.stringify(body) }),
+			...(signal ? { signal } : {}),
+		},
+	);
+	return response;
+}
+
+async function localApiOk(
+	method: "GET" | "POST",
+	path: string,
+	body?: unknown,
+) {
+	const response = await localApi(method, path, body);
+	if (!response.ok) {
+		// The local API answers in plain text; it never repeats the request body.
+		const text = (await response.text()).slice(0, 200);
+		throw Object.assign(
+			new Error(`tailscaled ${path}: ${response.status} ${text}`),
+			{
+				code: 1,
+			},
+		);
+	}
+	return response;
+}
+
+/** Read newline-delimited JSON notifications until `stop` returns a value. */
+async function readBus<T>(
+	response: Response,
+	stop: (notify: BusNotify) => T | undefined,
+): Promise<T | undefined> {
+	const reader = response.body?.getReader();
+	if (!reader) return undefined;
+	const decoder = new TextDecoder();
+	let buffer = "";
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) return undefined;
+			buffer += decoder.decode(value, { stream: true });
+			let newline = buffer.indexOf("\n");
+			while (newline >= 0) {
+				const line = buffer.slice(0, newline).trim();
+				buffer = buffer.slice(newline + 1);
+				newline = buffer.indexOf("\n");
+				if (!line) continue;
+				let notify: BusNotify;
+				try {
+					notify = JSON.parse(line) as BusNotify;
+				} catch {
+					continue;
+				}
+				const result = stop(notify);
+				if (result !== undefined) return result;
+			}
 		}
-	},
+	} finally {
+		reader.releaseLock();
+	}
+}
+
+/**
+ * Join through the local API, keeping the device's prefs. A device that was
+ * logged out (fresh, or forgotten) gets the remembered prefs back, or
+ * `CorpDNS=false` when there are none.
+ */
+async function defaultApiJoin(
+	authKey: string,
+	restore: RestorePrefs | undefined,
+): Promise<JoinOutcome> {
+	const prefs = (await (await localApiOk("GET", "prefs")).json()) as Record<
+		string,
+		unknown
+	>;
+	const patch: Record<string, unknown> =
+		prefs.LoggedOut === true ? { CorpDNS: false, ...(restore ?? {}) } : {};
+	const update = { ...prefs, ...patch, WantRunning: true, LoggedOut: false };
+
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), JOIN_WAIT_MS);
+	try {
+		// Subscribe first so no answer is missed.
+		const bus = await localApi(
+			"GET",
+			"watch-ipn-bus?mask=0",
+			undefined,
+			controller.signal,
+		);
+		await localApiOk("POST", "start", {
+			UpdatePrefs: update,
+			AuthKey: authKey,
+		});
+		await localApiOk("POST", "login-interactive");
+		const outcome = await readBus<JoinOutcome>(bus, (notify) => {
+			if (notify.ErrMessage) return "refused";
+			// An interactive URL means the key did not log in; never show it.
+			if (notify.BrowseToURL) return "refused";
+			if (notify.State === IPN_RUNNING) return "joined";
+			if (notify.State === IPN_NEEDS_MACHINE_AUTH) return "approval";
+			return undefined;
+		}).catch((err: unknown) => {
+			if (controller.signal.aborted) return "pending" as const;
+			throw err;
+		});
+		return outcome ?? "pending";
+	} finally {
+		clearTimeout(timer);
+		controller.abort();
+	}
+}
+
+function restorePath(): string {
+	return join(dirname(getConfigFilePath()), "tailscale-restore.json");
+}
+
+/** Write a file readable only by its owner, atomically. */
+async function writePrivate(path: string, content: string): Promise<void> {
+	const tmp = `${path}.tmp`;
+	await writeFile(tmp, content, { mode: 0o600 });
+	await chmod(tmp, 0o600);
+	await rename(tmp, path);
+}
+
+async function exists(path: string): Promise<boolean> {
+	return Bun.file(path).exists();
+}
+
+const defaultDeps: TailscaleDeps = {
+	isInstalled: async () => isTailscaleOnPath() && (await unitLoaded(UNIT)),
 	isDaemonActive: async () => {
 		try {
 			const { stdout } = await execFileP("systemctl", ["is-active", UNIT]);
@@ -152,43 +414,62 @@ const defaultDeps: TailscaleDeps = {
 			return false;
 		}
 	},
-	statusJson: () => run(TAILSCALE, ["status", "--json", "--peers=false"]),
+	statusJson: () =>
+		run(TAILSCALE, [socketArg(), "status", "--json", "--peers=false"]),
 	setUnit: async (enabled) => {
 		await run("systemctl", [enabled ? "enable" : "disable", "--now", UNIT]);
 	},
-	up: async (authKey) => {
-		const args = ["up", `--timeout=${JOIN_TIMEOUT_S}s`];
-		const timeout = (JOIN_TIMEOUT_S + 15) * 1000;
-		if (authKey === undefined) {
-			await run(TAILSCALE, args, { timeout });
-			return;
-		}
-		// The key reaches tailscale on stdin only. `file:` makes the CLI read the
-		// key from a path, and /dev/stdin is that path.
-		try {
-			await runWithStdin(
-				TAILSCALE,
-				[...args, "--auth-key=file:/dev/stdin"],
-				authKey,
-				{ timeout },
-			);
-		} catch (err) {
-			// runWithStdin folds stderr into the message. Rebuild the error without
-			// the key, keeping the exit code so the reservation sees a plain failure.
-			const message = err instanceof Error ? err.message : String(err);
-			const code = Number(message.match(/exited with code (\d+)/)?.[1]);
-			throw Object.assign(new Error(scrubSecret(message, authKey)), {
-				...(Number.isInteger(code) ? { code } : {}),
-			});
-		}
+	reconnect: async () => {
+		// No flags at all: the CLI's "bare up" only sets WantRunning. Any flag,
+		// even --timeout, makes it demand every non-default pref again.
+		await run(TAILSCALE, [socketArg(), "up"], {
+			timeout: RECONNECT_TIMEOUT_MS,
+		});
 	},
 	down: async () => {
-		await run(TAILSCALE, ["down"]);
+		await run(TAILSCALE, [socketArg(), "down"]);
 	},
 	logout: async () => {
-		await run(TAILSCALE, ["logout"]);
+		await run(TAILSCALE, [socketArg(), "logout"]);
+	},
+	apiJoin: defaultApiJoin,
+	readPrefs: async () => (await localApiOk("GET", "prefs")).json(),
+	readRestore: async () => {
+		try {
+			return pickRestorePrefs(
+				JSON.parse(await readFile(restorePath(), "utf8")),
+			);
+		} catch {
+			return undefined;
+		}
+	},
+	writeRestore: async (prefs) => {
+		await writePrivate(restorePath(), JSON.stringify(prefs));
+	},
+	enrollPresent: () => unitLoaded(ENROLL_UNIT),
+	enrollHasState: () => exists(join(stateDir(), "tailscaled.state")),
+	enrollPending: () => exists(join(stateDir(), "pending-authkey")),
+	enrollLastStatus: async () => {
+		try {
+			return (await readFile(join(stateDir(), "enroll-status"), "utf8")).trim();
+		} catch {
+			return undefined;
+		}
+	},
+	enrollSubmit: async (authKey, hostname) => {
+		const dir = stateDir();
+		await mkdir(dir, { recursive: true, mode: 0o700 });
+		await writePrivate(join(dir, "pending-hostname"), hostname);
+		await writePrivate(join(dir, "pending-authkey"), authKey);
+		// A fresh key starts a fresh count, exactly as a key file on BOOT does,
+		// so an earlier back-off does not delay it.
+		await writePrivate(join(dir, "enroll-status"), "pending 0 0 new-key\n");
+		// Boot persistence for the daemon (the unit starts it now itself).
+		await run("systemctl", ["enable", UNIT]);
+		await run("systemctl", ["start", "--no-block", ENROLL_UNIT]);
 	},
 	broadcast: (status) => broadcastMsg("status", { tailscale: status }),
+	sleep: (ms) => Bun.sleep(ms),
 };
 
 let deps: TailscaleDeps = defaultDeps;
@@ -198,6 +479,11 @@ let joining = false;
 /** Test seam: replace the OS surface. */
 export function setTailscaleDepsForTest(next: Partial<TailscaleDeps>): void {
 	deps = { ...defaultDeps, ...next };
+}
+
+/** Test seam: the real defaults, for tests that drive them against fakes. */
+export function getDefaultTailscaleDepsForTest(): TailscaleDeps {
+	return defaultDeps;
 }
 
 /** Test seam: restore the OS surface and clear cached state. */
@@ -227,9 +513,7 @@ function publish(status: TailscaleStatus): TailscaleStatus {
 	return cached;
 }
 
-async function probe(): Promise<TailscaleStatus> {
-	if (!(await deps.isInstalled())) return { state: "unavailable" };
-	if (!(await deps.isDaemonActive())) return { state: "off" };
+async function readDaemonStatus(): Promise<TailscaleStatus> {
 	try {
 		return parseTailscaleStatusJson(await deps.statusJson());
 	} catch (err) {
@@ -240,6 +524,57 @@ async function probe(): Promise<TailscaleStatus> {
 		}
 		return { state: "unknown" };
 	}
+}
+
+/**
+ * Right after the unit starts, tailscaled answers NoState (or not at all) for
+ * a moment. Wait for a settled state before deciding what "on" should do.
+ */
+async function readSettledBackend(): Promise<string | undefined> {
+	const deadline = Date.now() + SETTLE_WAIT_MS;
+	for (;;) {
+		let backend: unknown;
+		try {
+			backend = (
+				JSON.parse(await deps.statusJson()) as { BackendState?: unknown }
+			).BackendState;
+		} catch (err) {
+			const stdout = (err as { stdout?: unknown } | null)?.stdout;
+			try {
+				backend =
+					typeof stdout === "string"
+						? (JSON.parse(stdout) as { BackendState?: unknown }).BackendState
+						: undefined;
+			} catch {
+				backend = undefined;
+			}
+		}
+		if (typeof backend === "string" && backend !== "NoState") return backend;
+		if (Date.now() >= deadline) return undefined;
+		await deps.sleep(250);
+	}
+}
+
+async function probe(): Promise<TailscaleStatus> {
+	if (!(await deps.isInstalled())) return { state: "unavailable" };
+	const hook = await deps.enrollPresent();
+	const pending = hook && (await deps.enrollPending());
+	if (!(await deps.isDaemonActive())) {
+		if (pending) return { state: "joining" };
+		// An image whose enrolment starts tailscaled: a box that never joined
+		// has nothing to switch on, only a key to give.
+		if (hook && !(await deps.enrollHasState())) return { state: "needs_key" };
+		return { state: "off" };
+	}
+	const status = await readDaemonStatus();
+	if (
+		pending &&
+		status.state !== "connected" &&
+		status.state !== "needs_approval"
+	) {
+		return { state: "joining" };
+	}
+	return status;
 }
 
 /** Re-probe the daemon and broadcast when the status changed. */
@@ -282,11 +617,41 @@ async function reserved<T>(effect: () => Promise<T>): Promise<T> {
 	});
 }
 
+/** Hand the key to the image's enrolment and wait for its answer. */
+async function enrollJoin(authKey: string): Promise<JoinOutcome> {
+	const remembered = (await deps.readRestore())?.Hostname?.toLowerCase() ?? "";
+	await deps.enrollSubmit(
+		authKey,
+		ENROLL_NAME_RE.test(remembered) ? remembered : "",
+	);
+	const deadline = Date.now() + JOIN_WAIT_MS;
+	while (Date.now() < deadline) {
+		await deps.sleep(1_000);
+		if (await deps.isDaemonActive()) {
+			const status = await readDaemonStatus();
+			if (status.state === "connected") return "joined";
+			if (status.state === "needs_approval") return "approval";
+		}
+		const last = (await deps.enrollLastStatus()) ?? "";
+		if (!(await deps.enrollPending())) {
+			if (last.startsWith("joined")) return "joined";
+			if (last.startsWith("gave-up")) return "refused";
+		} else if (last.startsWith("pending ") && last.endsWith(" retry")) {
+			// The first attempt failed without a final answer (no network yet,
+			// or a refusal the enrolment does not recognise). It keeps the key
+			// and retries on its own schedule; report that now, not in 50 s.
+			return "pending";
+		}
+	}
+	return "pending";
+}
+
 /**
- * Join with a pasted auth key. Starts tailscaled first if the owner had it off.
- * The key is never stored: it goes to stdin and the reference is dropped when
- * this returns. Returns whether the device reports itself on the tailnet (or
- * waiting for approval) afterwards.
+ * Join with a pasted auth key. The key goes to tailscaled's local API in a
+ * request body (or, on images with their own enrolment, to its pending-key
+ * file, which that unit consumes and wipes). It is never logged, stored by
+ * CeraUI or echoed. Returns whether the device joined, waits for approval, or
+ * is still joining.
  */
 export async function joinTailscale(authKey: string): Promise<boolean> {
 	if (shouldUseMocks()) return mockJoin(authKey);
@@ -298,32 +663,36 @@ export async function joinTailscale(authKey: string): Promise<boolean> {
 		return false;
 	}
 	publish({ state: "joining" });
+	let outcome: JoinOutcome = "refused";
 	try {
-		await reserved(async () => {
+		outcome = await reserved(async () => {
+			if (await deps.enrollPresent()) return enrollJoin(authKey);
 			if (!(await deps.isDaemonActive())) await deps.setUnit(true);
-			await deps.up(authKey);
+			return deps.apiJoin(authKey, await deps.readRestore());
 		});
 	} catch (err) {
-		if (err instanceof DisruptiveActionRefusal) throw err;
+		if (err instanceof DisruptiveActionRefusal) {
+			joining = false;
+			await getTailscaleStatus();
+			throw err;
+		}
 		logger.error(
 			`Tailscale join failed: ${scrubSecret(describeCliError(err), authKey)}`,
 		);
 	} finally {
 		joining = false;
 	}
+	if (outcome === "refused") logger.warn("Tailscale refused the auth key");
 	const status = await getTailscaleStatus();
 	if (status.state === "joining") pollUntilSettled();
-	return (
-		status.state === "connected" ||
-		status.state === "needs_approval" ||
-		status.state === "joining"
-	);
+	return outcome !== "refused";
 }
 
 /**
  * The owner's off switch. Off: `tailscale down`, then stop and disable the unit
- * so nothing runs or listens. On: enable and start the unit, then reconnect if
- * this device is still logged in. Never asks for a login.
+ * so nothing runs or listens. On: enable and start the unit, then reconnect
+ * with a flag-less `up` if this device is still logged in. Never asks for a
+ * login.
  */
 export async function setTailscaleEnabled(enabled: boolean): Promise<boolean> {
 	if (shouldUseMocks()) return mockSetEnabled(enabled);
@@ -332,8 +701,10 @@ export async function setTailscaleEnabled(enabled: boolean): Promise<boolean> {
 		await reserved(async () => {
 			if (enabled) {
 				await deps.setUnit(true);
-				const now = await probe();
-				if (now.state === "off") await deps.up();
+				if (!(await deps.isDaemonActive())) return;
+				// Stopped = logged in with WantRunning off: reconnect. Anything else
+				// (no login, already running) needs nothing from "on".
+				if ((await readSettledBackend()) === "Stopped") await deps.reconnect();
 			} else {
 				if (await deps.isDaemonActive()) {
 					try {
@@ -347,7 +718,10 @@ export async function setTailscaleEnabled(enabled: boolean): Promise<boolean> {
 			}
 		});
 	} catch (err) {
-		if (err instanceof DisruptiveActionRefusal) throw err;
+		if (err instanceof DisruptiveActionRefusal) {
+			await getTailscaleStatus();
+			throw err;
+		}
 		logger.error(
 			`Turning Tailscale ${enabled ? "on" : "off"} failed: ${describeCliError(err)}`,
 		);
@@ -359,19 +733,40 @@ export async function setTailscaleEnabled(enabled: boolean): Promise<boolean> {
 		: status.state === "off";
 }
 
-/** Forget this device: log out of the tailnet. The daemon keeps running. */
+/**
+ * Forget this device: log out of the tailnet. The daemon keeps running. The
+ * owner's few chosen prefs are remembered first, because logout resets them.
+ */
 export async function logoutTailscale(): Promise<boolean> {
 	if (shouldUseMocks()) return mockLogout();
 	if (!(await deps.isInstalled())) return false;
 	if (!(await deps.isDaemonActive())) return false;
 	try {
-		await reserved(() => deps.logout());
+		await reserved(async () => {
+			try {
+				const keep = pickRestorePrefs(await deps.readPrefs());
+				if (Object.keys(keep).length > 0) await deps.writeRestore(keep);
+			} catch (err) {
+				logger.warn(
+					`Could not remember Tailscale settings: ${describeCliError(err)}`,
+				);
+			}
+			await deps.logout();
+		});
 	} catch (err) {
-		if (err instanceof DisruptiveActionRefusal) throw err;
+		if (err instanceof DisruptiveActionRefusal) {
+			await getTailscaleStatus();
+			throw err;
+		}
 		logger.error(`Tailscale logout failed: ${describeCliError(err)}`);
 	}
 	const status = await getTailscaleStatus();
 	return status.state === "needs_key";
+}
+
+/** Test seam: drop the remembered prefs file. */
+export async function removeRestoreFileForTest(): Promise<void> {
+	await rm(restorePath(), { force: true });
 }
 
 // ── Dev mock ────────────────────────────────────────────────────────────────

@@ -51,7 +51,10 @@ test.describe('Remote access', () => {
 		const toggle = d.getByTestId('remote-access-switch');
 
 		// Start from off, whatever an earlier attempt left behind.
-		if ((await toggle.getAttribute('aria-checked')) === 'true') await toggle.click();
+		if ((await toggle.getAttribute('aria-checked')) === 'true') {
+			await toggle.click();
+			await d.getByRole('button', { name: 'Turn off' }).click();
+		}
 		await expectState(page, 'off', 'Off');
 		await expect(toggle).toHaveAttribute('aria-checked', 'false');
 		await expect(d.getByTestId('remote-access-body')).toContainText('Tailscale is stopped');
@@ -68,6 +71,7 @@ test.describe('Remote access', () => {
 		// Text that is not a key never reaches the device.
 		await keyField.fill('--advertise-exit-node');
 		await expect(join).toBeDisabled();
+		await expect(d.getByText("That doesn't look like an auth key.")).toBeVisible();
 
 		// A refused key says so plainly and leaves the device waiting for a key.
 		await keyField.fill(`tskey-auth-expired-${'0'.repeat(16)}`);
@@ -98,8 +102,14 @@ test.describe('Remote access', () => {
 		await expectState(page, 'needs_key', 'Needs a key');
 		await expect(d.getByRole('button', { name: 'Forget this device' })).toHaveCount(0);
 
-		// Off again: the owner's switch.
+		// Off again: the owner's switch asks first, and says a session over
+		// Tailscale ends; "Keep it on" backs out.
 		await toggle.click();
+		await expect(d.getByTestId('remote-access-off-confirm')).toContainText("you'll lose it");
+		await d.getByRole('button', { name: 'Keep it on' }).click();
+		await expectState(page, 'needs_key', 'Needs a key');
+		await toggle.click();
+		await d.getByRole('button', { name: 'Turn off' }).click();
 		await expectState(page, 'off', 'Off');
 		await expect(toggle).toHaveAttribute('aria-checked', 'false');
 	});
