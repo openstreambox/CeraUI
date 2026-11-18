@@ -1,7 +1,7 @@
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
 import type { Modem, NetifEntry, NetifMessage, WifiInterface, WifiStatus } from '@ceraui/rpc/schemas';
-import { Network as NetworkIcon } from '@lucide/svelte';
+import { Network as NetworkIcon, Usb } from '@lucide/svelte';
 import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { Skeleton } from '$lib/components/ui/skeleton';
 import { hotspotIsActive } from '$lib/rpc/os-toggle-predicates';
@@ -31,6 +31,7 @@ import CaptivePortal from './network/CaptivePortal.svelte';
 import CellularSection from './network/CellularSection.svelte';
 import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
+import DevicesPage from './network/DevicesPage.svelte';
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
 import {
@@ -121,6 +122,7 @@ function openHotspotDialog() {
 	hotspotDialogOpen = true;
 }
 let wifiCountryOpen = $state(false);
+let devicesOpen = $state(false);
 
 const modemEntries = $derived(Object.entries(modems ?? {}) as [string, Modem][]);
 
@@ -242,6 +244,12 @@ function openModemConfig(id: string) {
 	frames are what separate the cards.
 -->
 <div class="mx-auto w-full max-w-5xl space-y-3 p-4 sm:px-6 sm:py-5">
+	{#if devicesOpen}
+		<DevicesPage
+			wire={getStatus()?.usb_devices}
+			onBack={() => (devicesOpen = false)}
+		/>
+	{:else}
 	<!-- Destination header -->
 	<header class="flex items-center gap-2.5">
 		<NetworkIcon aria-hidden="true" class="text-primary size-5 shrink-0" />
@@ -308,6 +316,19 @@ function openModemConfig(id: string) {
 			onSetup={openHotspotDialog}
 		/>
 		<BluetoothSection status={bluetooth} {audioBackend} />
+		<button
+			type="button"
+			data-testid="open-devices"
+			class="bg-card hover:bg-accent focus-visible:ring-ring flex min-h-11 w-full items-center gap-3 rounded-xl border p-4 text-left focus-visible:ring-2 focus-visible:outline-none"
+			onclick={() => (devicesOpen = true)}
+		>
+			<Usb aria-hidden="true" class="text-primary size-5 shrink-0" />
+			<span class="min-w-0">
+				<span class="block text-sm font-semibold">{m["network.devices.open"]()}</span>
+				<span class="text-muted-foreground block text-sm">{m["network.devices.lede"]()}</span>
+			</span>
+		</button>
+	{/if}
 	{/if}
 </div>
 
