@@ -28,8 +28,8 @@ const alive = (proc: ManagedProcess): boolean =>
 	proc.exitCode === null && proc.signalCode === null;
 
 describe("spawn-policy registry consistency", () => {
-	it("classifies all 76 production spawn sites with unique ids", () => {
-		expect(SPAWN_POLICY).toHaveLength(76);
+	it("classifies all 77 production spawn sites with unique ids", () => {
+		expect(SPAWN_POLICY).toHaveLength(77);
 		expect(getSpawnSite("ingest.srtForward")).toMatchObject({
 			file: "modules/ingest/srt-forward.ts",
 			class: "supervised-worker",
@@ -48,8 +48,18 @@ describe("spawn-policy registry consistency", () => {
 				lifetimeTimeoutExempt: true,
 			},
 		});
+		// The hotspot join trigger never returns and dies with the backend.
+		expect(getSpawnSite("wifi.iwStationEvents")).toMatchObject({
+			file: "modules/wifi/wifi-hotspot-station-events.ts",
+			class: "watcher",
+			contract: {
+				timed: false,
+				shutdownAbort: true,
+				lifetimeTimeoutExempt: true,
+			},
+		});
 		const ids = new Set(SPAWN_POLICY.map((s) => s.id));
-		expect(ids.size).toBe(76);
+		expect(ids.size).toBe(77);
 		expect(getSpawnSite("updateRecovery.probe")).toMatchObject({
 			file: "modules/system/update-orchestrator/recovery-probes.ts",
 			class: "bounded-probe",

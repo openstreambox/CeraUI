@@ -146,13 +146,31 @@ function wifiSyncState(): boolean {
 export function wifiStateInit(
 	monitor?: IMonitorEmitter,
 	hotspotTimers?: HotspotClientsTimers,
+	opts?: {
+		/**
+		 * Told on every roster poll tick whether any hotspot is up. Production
+		 * passes the nl80211 station-event watcher (`wifi-hotspot-station-events.ts`);
+		 * tests leave it out, so a driven poll never spawns `iw event`.
+		 */
+		readonly stationEvents?: (anyApUp: boolean) => void;
+	},
 ): IMonitorEmitter {
 	onWifiChange(() => {
 		diffBroadcastFired = true;
 		broadcastWifiState();
 	});
 	setHotspotClientsChangeListener(() => broadcastWifiState());
-	startHotspotClientsPoll(currentHotspotApIfnames, hotspotTimers);
+	const stationEvents = opts?.stationEvents;
+	startHotspotClientsPoll(
+		stationEvents === undefined
+			? currentHotspotApIfnames
+			: () => {
+					const ifnames = currentHotspotApIfnames();
+					stationEvents(ifnames.length > 0);
+					return ifnames;
+				},
+		hotspotTimers,
+	);
 
 	const emitter =
 		monitor ??
