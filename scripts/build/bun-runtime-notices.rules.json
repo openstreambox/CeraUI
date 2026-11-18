@@ -1,18 +1,50 @@
 {
 	"schema": 1,
 	"output": "scripts/build/notices/bun-1.4.4",
-	"statement": "These are the licence, copying, notice and authors files of the sources Bun pins for its runtime: the libraries it vendors, WebKit's JavaScriptCore, WTF and bmalloc, ICU, the Rust standard library and crates, the npm packages it embeds as Node.js polyfills, and the GCC static C++ runtime. Where a component keeps its licence in its source files, the start of those files is included.\nThey were collected from the exact sources Bun's recipes pin, not read out of the executables. They show what Bun is built from, not which files a given executable contains. What could not be established is listed under Known gaps at the end.",
+	"statement": "These are the licence, copying, notice and authors files of the sources Bun pins for its runtime: the libraries it vendors, WebKit's JavaScriptCore, WTF and bmalloc, ICU, the Rust standard library and crates, the npm packages it embeds as Node.js polyfills, and the GCC static C++ runtime, together with the licences of projects Bun ports code from. Where a source keeps its licence statement in the comments of its files, those comments are included as they are; the files searched that way and what that search leaves out are listed under Known gaps.\nThey were collected from the exact sources Bun's recipes pin, not read out of the executables. They show what Bun is built from, not which files a given executable contains. What could not be established is listed under Known gaps at the end.",
 	"bun": {
 		"repo": "oven-sh/bun",
 		"url": "https://github.com/oven-sh/bun",
 		"tree": "53de228ba331ac4f455999f24cec03a47d5abaad",
-		"runtimeRoots": ["src/", "packages/bun-usockets/", "packages/bun-uws/"],
+		"runtimeRoots": [
+			"src/",
+			"packages/bun-usockets/",
+			"packages/bun-uws/"
+		],
 		"excludedRoots": {
 			"": "outside the Bun source directories compiled into the runtime (src/, packages/bun-usockets/, packages/bun-uws/)",
-			"test/": "in Bun's test tree; Bun's LICENSE.md says these test cases are not part of the bun binary",
+			"test/": "in Bun's test tree, and not the licence of a project Bun's LICENSE.md lists as ported into the bun executable; LICENSE.md says these test cases are not part of the bun binary",
 			"packages/": "a separate package in the Bun repository, not compiled into the runtime",
 			"docs/": "Bun documentation, not compiled into the runtime",
 			"bench/": "Bun benchmarks, not compiled into the runtime"
+		},
+		"ported": {
+			"quote": {
+				"origin": "bun",
+				"path": "LICENSE.md",
+				"quote": "The tests in `test/cli/lint/conformance` and `test/cli/format` include test cases from ESLint, typescript-eslint, the ESLint plugins above, oxc, tsgolint, Prettier and the two import sorting plugins."
+			},
+			"texts": {
+				"test/cli/check/typescript-go/LICENSE": "https://github.com/microsoft/typescript-go",
+				"test/cli/check/typescript-go/NOTICE.txt": "https://github.com/microsoft/typescript-go",
+				"test/cli/format/oxfmt-cli/LICENSE": "https://github.com/oxc-project/oxc",
+				"test/cli/format/oxfmt/LICENSE": "https://github.com/oxc-project/oxc",
+				"test/cli/format/prettier-cli/LICENSE": "https://github.com/prettier/prettier",
+				"test/cli/format/prettier/LICENSE": "https://github.com/prettier/prettier",
+				"test/cli/format/sort-imports/LICENSE": "https://github.com/trivago/prettier-plugin-sort-imports",
+				"test/cli/format/tailwind/LICENSE": "https://github.com/oxc-project/oxc",
+				"test/cli/lint/conformance/licenses/@typescript-eslint-types.txt": "https://github.com/typescript-eslint/typescript-eslint",
+				"test/cli/lint/conformance/licenses/eslint-plugin-import.txt": "https://github.com/import-js/eslint-plugin-import",
+				"test/cli/lint/conformance/licenses/eslint-plugin-n.txt": "https://github.com/eslint-community/eslint-plugin-n",
+				"test/cli/lint/conformance/licenses/eslint-plugin-prettier.txt": "https://github.com/prettier/eslint-plugin-prettier",
+				"test/cli/lint/conformance/licenses/eslint-plugin-react-hooks.txt": "https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks",
+				"test/cli/lint/conformance/licenses/eslint-plugin-react.txt": "https://github.com/jsx-eslint/eslint-plugin-react",
+				"test/cli/lint/conformance/licenses/eslint.txt": "https://github.com/eslint/eslint",
+				"test/cli/lint/conformance/licenses/oxc.txt": "https://github.com/oxc-project/oxc",
+				"test/cli/lint/conformance/licenses/prettier.txt": "https://github.com/prettier/prettier",
+				"test/cli/lint/conformance/licenses/tsgolint.txt": "https://github.com/oxc-project/tsgolint",
+				"test/cli/lint/conformance/licenses/typescript-eslint.txt": "https://github.com/typescript-eslint/typescript-eslint"
+			}
 		}
 	},
 	"deps": {
@@ -59,7 +91,11 @@
 		"repo": "oven-sh/WebKit",
 		"url": "https://github.com/oven-sh/WebKit",
 		"pinFile": "scripts/build/deps/webkit.ts",
-		"runtimeRoots": ["Source/JavaScriptCore/", "Source/WTF/", "Source/bmalloc/"],
+		"runtimeRoots": [
+			"Source/JavaScriptCore/",
+			"Source/WTF/",
+			"Source/bmalloc/"
+		],
 		"skip": {
 			"Source/bmalloc/mimalloc/": {
 				"origin": "webkit",
@@ -77,7 +113,11 @@
 	"crates": {
 		"lock": "Cargo.lock",
 		"url": "https://static.crates.io/crates/{name}/{name}-{version}.crate",
-		"devOnlyReason": "reached in Bun's Cargo.lock only through dev-dependencies of its workspace (tests and benchmarks)"
+		"devOnlyReason": "reached in Bun's Cargo.lock only through dev-dependencies of its workspace (tests and benchmarks)",
+		"registries": [
+			"registry+https://github.com/rust-lang/crates.io-index"
+		],
+		"otherSources": {}
 	},
 	"npm": {
 		"lock": "src/node-fallbacks/bun.lock",
@@ -85,7 +125,9 @@
 	},
 	"rust": {
 		"toolchain": "rust-toolchain.toml",
+		"channel": "nightly-2026-09-15",
 		"dist": "https://static.rust-lang.org/dist/{date}/",
+		"manifestSha256": "f0c1bc94dd5c23ce4a5aa405a1b81188805e2801589c9f44984b3b5ab17d2136",
 		"rustc": "574ff7d98bd6d037e5236a8453029173b32631fd",
 		"repo": "rust-lang/rust",
 		"url": "https://github.com/rust-lang/rust",
@@ -104,7 +146,9 @@
 		"tag": "llvmorg-19.1.0",
 		"tagObject": "4adc0e424295c1744456663d0809a71647321aed",
 		"commit": "a4bf6cd7cfb1a1421ba92bca9d017b49936c55e4",
-		"paths": ["libcxxabi/LICENSE.TXT"],
+		"paths": [
+			"libcxxabi/LICENSE.TXT"
+		],
 		"cited": {
 			"origin": "bun",
 			"path": "src/jsc/bindings/workaround-missing-symbols.cpp",
@@ -123,6 +167,48 @@
 		},
 		"otherReason": "another package in the same archive (other GCC branches, compilers and development files); the static C++ runtime's terms are in gcc-13-base's copyright file"
 	},
+	"commentSyntax": {
+		".c": "c",
+		".cc": "c",
+		".cpp": "c",
+		".cxx": "c",
+		".h": "c",
+		".hh": "c",
+		".hpp": "c",
+		".hxx": "c",
+		".inc": "c",
+		".m": "c",
+		".mm": "c",
+		".js": "c",
+		".mjs": "c",
+		".cjs": "c",
+		".ts": "c",
+		".mts": "c",
+		".cts": "c",
+		".tsx": "c",
+		".jsx": "c",
+		".rs": "c",
+		".zig": "c",
+		".css": "c",
+		".idl": "c",
+		".gperf": "c",
+		".in": "c",
+		".pl": "hash",
+		".py": "hash",
+		".sh": "hash",
+		".cmake": "hash",
+		".toml": "hash",
+		".1": "roff",
+		".3": "roff",
+		".5": "roff",
+		".7": "roff",
+		".8": "roff",
+		"src/codegen/create_hash_table": "hash",
+		"packages/bun-usockets/certdata.txt": "hash",
+		".xcconfig": "c",
+		".def": "c",
+		".rb": "hash"
+	},
 	"licenceExclusion": "Bun's own LICENSE.md, printed earlier in this file as the runtime licence",
 	"testReason": "test, benchmark, fuzzing, example or documentation material, not compiled into the runtime",
 	"quotes": [
@@ -135,37 +221,100 @@
 	"headers": [
 		{
 			"origin": "dep/libarchive",
-			"roots": ["libarchive/"],
+			"roots": [
+				"libarchive/"
+			],
 			"pointer": {
 				"origin": "dep/libarchive",
 				"path": "COPYING",
 				"quote": "Each individual file in this distribution should have a clear copyright/licensing statement at the beginning of the file."
+			},
+			"extent": "leading",
+			"notNotices": {
+				"libarchive/archive_write_set_format_iso9660.c": {
+					"quotes": [
+						"copyright-file=<value>",
+						"Copyright File Identifier"
+					],
+					"reason": "the copyright-file option and the Copyright File Identifier field of the ISO 9660 writer, not licence statements"
+				}
 			}
 		},
 		{
 			"origin": "rust-src",
-			"roots": ["rust-src-nightly/rust-src/lib/rustlib/src/rust/library/compiler-builtins/libm/src/"],
+			"roots": [
+				"rust-src-nightly/rust-src/lib/rustlib/src/rust/library/compiler-builtins/libm/src/"
+			],
 			"pointer": {
 				"origin": "rust-src",
 				"path": "rust-src-nightly/rust-src/lib/rustlib/src/rust/library/compiler-builtins/libm/LICENSE.txt",
 				"quote": "and labelled as such in comments in the individual source files."
-			}
+			},
+			"extent": "leading"
 		},
 		{
 			"origin": "dep/picohttpparser",
-			"paths": ["picohttpparser.c", "picohttpparser.h"],
-			"only": "picohttpparser has no licence file, and the header of its source files is its licence statement"
-		},
-		{
-			"origin": "bun",
-			"paths": ["src/jsc/bindings/sqlite/sqlite3.c"],
-			"only": "the SQLite amalgamation has no licence file, and its header is SQLite's public-domain dedication"
+			"paths": [
+				"picohttpparser.c",
+				"picohttpparser.h"
+			],
+			"only": "picohttpparser has no licence file, and the header of its source files is its licence statement",
+			"extent": "leading"
 		},
 		{
 			"origin": "webkit",
-			"roots": ["Source/bmalloc/"],
-			"skip": ["Source/bmalloc/mimalloc/"],
-			"only": "bmalloc and libpas have no licence file, and the headers of their source files are their licence statements"
+			"roots": [
+				"Source/bmalloc/"
+			],
+			"skip": {
+				"Source/bmalloc/mimalloc/": "WebKit's own copy of mimalloc; WebKit's .github/scripts/lanes.mjs says the variants that ship in Bun use the mimalloc Bun links itself (dep/mimalloc)",
+				"Source/bmalloc/Configurations/": "Xcode build settings of bmalloc, not compiled into the library",
+				"Source/bmalloc/libpas/Documentation.md": "libpas documentation, not compiled into the library",
+				"Source/bmalloc/libpas/build.sh": "a libpas build or test script, not compiled into the library",
+				"Source/bmalloc/libpas/build_and_test.sh": "a libpas build or test script, not compiled into the library",
+				"Source/bmalloc/libpas/clean.sh": "a libpas build or test script, not compiled into the library",
+				"Source/bmalloc/libpas/export.rb": "a libpas build or test script, not compiled into the library",
+				"Source/bmalloc/libpas/test-impl.sh": "a libpas build or test script, not compiled into the library",
+				"Source/bmalloc/libpas/test.sh": "a libpas build or test script, not compiled into the library"
+			},
+			"only": "bmalloc and libpas have no licence file, and the headers of their source files are their licence statements",
+			"extent": "leading"
+		},
+		{
+			"origin": "bun",
+			"roots": [
+				"src/",
+				"packages/bun-usockets/",
+				"packages/bun-uws/"
+			],
+			"skip": {
+				"src/jsc/bindings/windows/": "Windows-only source of Bun, not built for Linux",
+				"src/windows-app-info.rc": "the Windows resource script of Bun's executable, not built for Linux",
+				"src/format/CLAUDE.md": "documentation in Bun's source tree, not compiled into the runtime",
+				"src/js/internal/util/README.md": "documentation in Bun's source tree, not compiled into the runtime"
+			},
+			"extent": "grants",
+			"only": "Bun's runtime sources keep the licences of code they derive from other projects (Node.js, libuv, WebKit's WebCore, ESLint and others) in comments, and no licence file of Bun's tree carries them",
+			"notNotices": {
+				"packages/bun-usockets/certdata.txt": {
+					"quotes": [
+						"# Issuer: "
+					],
+					"reason": "issuer and subject names of certificates in Mozilla's list of trusted roots, not licence statements; the list's own licence comment is printed"
+				},
+				"src/http_types/mime_type_list.txt": {
+					"quotes": [
+						"text/vnd.debian.copyright"
+					],
+					"reason": "a MIME type name in Bun's list, not a licence statement"
+				}
+			},
+			"repeated": {
+				"src/jsc/bindings/sqlite/sqlite3.c": {
+					"quote": "The author disclaims copyright to this source code.",
+					"reason": "The SQLite amalgamation joins many source files and repeats this public-domain dedication at the start of each"
+				}
+			}
 		}
 	],
 	"buildOnly": [
@@ -223,6 +372,11 @@
 			"text": "JavaScriptCore and WTF source files carry their own BSD or LGPL headers with per-file copyright lines. Those headers are not reproduced here; JavaScriptCore's COPYING.LIB and the third-party licence files of JavaScriptCore and WTF are."
 		},
 		{
+			"id": "source-comment-scope",
+			"status": "open",
+			"text": "Licence statements in source comments were searched only in Bun's runtime sources (src/, packages/bun-usockets/, packages/bun-uws/: every run of comments with a licence grant), libarchive's libarchive/, Rust's libm sources, picohttpparser and bmalloc with libpas (each file's leading comment and every later comment with a grant). Comments were recognised by the comment syntax the rules assign to each file type. The per-file comments of the other vendored libraries, of JavaScriptCore and WTF, of ICU, of the crates and of the polyfill packages were not searched; their licence files are included. Files in the searched scope that still mention copyright outside the printed comments are listed in their own gaps below."
+		},
+		{
 			"id": "gcc-sysroot",
 			"status": "open",
 			"text": "Bun's recipes pin the GCC archive by sha256 and link with -static-libstdc++ -static-libgcc, and the executables name GCC 13.1.0-8ubuntu1~20.04.2. Nothing shows that this release was linked against that exact archive."
@@ -251,7 +405,7 @@
 		{
 			"id": "ported-upstreams",
 			"status": "open",
-			"text": "Bun's LICENSE.md names code ported from other projects (among them ESLint, typescript-eslint, typescript-go, Prettier, oxc, esbuild, simdutf, libbase64, uucode, uWebSockets and Tigerbeetle) without pinning the upstream revisions. Bun keeps their licence texts only beside test cases, which it says are not part of the binary, so they are not included."
+			"text": "Bun's LICENSE.md names code ported from other projects without pinning the upstream revisions. For ESLint, typescript-eslint, the ESLint plugins, oxc, tsgolint, Prettier, typescript-go and the import sorting plugin, the licence and NOTICE texts Bun keeps beside the test cases it took from them are included above, as Bun's copies at the pinned revision; whether they are the texts of the revisions that were ported is not established. For the other projects that table names (among them esbuild, simdutf, libbase64, uucode, uWebSockets, Tigerbeetle, esquery, V8, Biome, postcss and Svelte), Bun's tree has no licence file, and none is included except where the ported source keeps its licence in its comments."
 		},
 		{
 			"id": "rust-crates-superset",

@@ -1,0 +1,12 @@
+// Vendored from Node.js v26.3.0 deps (acorn.js), minified with esbuild to keep
+// the embedded-source literal within compiler limits.
+//
+// acorn — Copyright (C) 2012-2022 by various contributors (see AUTHORS)
+// MIT License. https://github.com/acornjs/acorn
+//
+// The minified dist uses ES5 `function Foo(){} Foo.prototype.x = ...`; JSC
+// does not auto-materialize `.prototype` on builtin `function` declarations
+// (only that — nested `function`/`class` in builtins are constructible), so
+// evaluate via vm.Script under full JS semantics. Lazy: deferred to first
+// property access so `require('node:repl')` stays cheap.
+// prettier-ignore

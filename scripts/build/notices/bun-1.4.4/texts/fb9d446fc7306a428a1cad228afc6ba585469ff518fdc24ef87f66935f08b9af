@@ -1,0 +1,16 @@
+//! `prettier-plugin-packagejson`'s order.
+//!
+//! The plugin runs the npm package [`sort-package-json`](https://github.com/keithamus/sort-package-json) (MIT license, Keith
+//! Cirkel) on the text before Prettier formats it. This is a port of version 3.7.1 of that package, which is what version 3.0.2
+//! of the plugin installs.
+//!
+//! The keys end up where the plugin puts them. Besides what the header of `sort_package_json.rs` lists, this differs where the
+//! package drops a key or throws:
+//! - `__proto__` is an ordinary key here. The package drops it.
+//! - The package throws for text that isn't strict JSON, like a trailing comma.
+//! - With `npm-run-all` in `devDependencies`, the package throws if a script isn't a string. It also throws for
+//!   `"devDependencies": null`.
+//! - In `pnpm.overrides`, it throws when it compares `a@b` with `a@c` and `b` or `c` isn't a valid version range. Here those keys
+//!   come after the valid ones.
+//! - With `rangeStart` or `rangeEnd`, Prettier looks for the offsets in the text that the package wrote. Here they're offsets in
+//!   the file, and for this parser any range is the whole file.

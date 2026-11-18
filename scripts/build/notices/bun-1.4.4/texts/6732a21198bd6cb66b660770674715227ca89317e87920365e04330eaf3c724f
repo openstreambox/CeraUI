@@ -1,0 +1,13 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
+//! Dead code elimination pass.
+//!
+//! Eliminates instructions whose values are unused, reducing generated code size.
+//! Performs mark-and-sweep analysis to identify and remove dead code while
+//! preserving side effects and program semantics.
+//!
+//! Ported from TypeScript `src/Optimization/DeadCodeElimination.ts`.
+//! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).

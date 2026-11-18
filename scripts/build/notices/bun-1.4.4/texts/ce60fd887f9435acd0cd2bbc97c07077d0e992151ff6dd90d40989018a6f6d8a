@@ -1,0 +1,22 @@
+            // Specially handle modules shaped like this:
+            //
+            //   CommonJS:
+            //
+            //    if (process.env.NODE_ENV === 'production')
+            //         module.exports = require('./foo.prod.js')
+            //     else
+            //         module.exports = require('./foo.dev.js')
+            //
+            // Find the part containing the actual module.exports = require() statement,
+            // skipping over parts that only contain comments, directives, and empty statements.
+            // This handles files like:
+            //
+            //    /*!
+            //     * express
+            //     * MIT Licensed
+            //     */
+            //    'use strict';
+            //    module.exports = require('./lib/express');
+            //
+            // When tree-shaking is enabled, each statement becomes its own part, so we need
+            // to look across all parts to find the single meaningful statement.

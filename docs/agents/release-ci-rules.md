@@ -196,40 +196,68 @@ Bun's `LICENSE.md` names the libraries compiled into every Bun executable but
 does not carry their licence texts. Those texts are appended to the same
 `copyright` file from `scripts/build/notices/bun-<version>/`: an
 `inventory.json` and the verbatim texts beside it, each stored under its own
-sha256. The policy's `runtime.supplement` pins the inventory's sha256, so the
-package build and the default tests check it offline and fail closed on a
-missing, truncated, moved or extra text, an inventory edited without a new pin,
-an origin whose commit or hash its pin no longer names, a text that no longer
-matches its upstream Git blob, or a gap marked resolved without checkable
-evidence.
+sha256.
 
+- **What the package build and default tests check:** internal consistency
+  only. The policy's `runtime.supplement` pins the inventory's sha256, and every
+  text must match the size, sha256 and, for Git origins, blob id that the same
+  inventory records. That catches a missing, truncated, moved or extra text, an
+  inventory edited without a new pin, a text changed without its inventory
+  entry, an excerpt that runs past whole comments, and a gap marked resolved
+  without checkable evidence. It does not authenticate the inventory against
+  the upstream sources: a coordinated rewrite of a text together with its
+  recorded hashes and blob id and the policy pin passes offline, for every
+  kind of origin, and so does a whole entry removed and re-pinned. The default
+  tests include such rewrites to show this.
+- **What relates the texts to upstream:** only `check` (below) against the
+  pinned inputs, which regenerates everything from them. It needs the input
+  cache and no CI job runs it, so run it whenever the inventory, the rules or
+  the Bun pin change.
 - **What is in it:** the licence, copying, notice and authors files of the
   sources Bun pins for its runtime: its vendored libraries
   (`scripts/build/deps/*.ts`), WebKit's JavaScriptCore, WTF and bmalloc, ICU,
   the Rust standard library (the `rust-std` component that links, its sources
   and `REUSE.toml`), the crates `Cargo.lock` reaches without dev-dependencies,
   the npm packages Bun embeds as Node.js polyfills, LLVM libc++abi's licence
-  for Bun's copied `__cxa_thread_atexit` fallback, and `gcc-13-base`'s
-  copyright file for the static libstdc++ and libgcc. Source-file headers are
-  included only where a notice points to them (quoted in the rules) or where
-  they are the component's only licence statement.
+  for Bun's copied `__cxa_thread_atexit` fallback, `gcc-13-base`'s copyright
+  file for the static libstdc++ and libgcc, and the licence and NOTICE files
+  Bun keeps beside the test cases of projects its `LICENSE.md` lists as ported
+  into the executable.
+- **Licence statements in source comments:** comments are found by the comment
+  syntax the rules assign to each file type. In Bun's runtime sources (`src/`,
+  `packages/bun-usockets/`, `packages/bun-uws/`) every run of comments with a
+  licence grant is included, wherever it is in the file. Where a notice points
+  to per-file statements (libarchive, Rust's `libm`) or the files have no
+  licence file (picohttpparser, bmalloc and libpas), each file's leading
+  comment is included, and so is any later comment with a grant. A run of
+  comments is kept from its start through its last block with a licence,
+  copyright or author line, so it never includes code. Files in that scope that
+  still mention copyright outside the printed comments are listed in an open
+  gap, unless the rules give a quoted reason why the mention is not a licence
+  statement. Other sources' per-file comments are not searched, and the
+  `copyright` file says so.
 - **What it is not:** proof of which files the executables contain. Build-only
   tools, excluded files (each with its reason, in the inventory) and open gaps
   are listed in the `copyright` file itself.
 - **Regenerating:** `bun scripts/build/bun-runtime-notices-refresh.ts refresh
   --repo-root <checkout> --cache <dir> --out <new dir>` derives everything
   from the Bun revision the policy pins. It reads bare Git repositories at
-  `<cache>/git/<owner>/<repo>.git` (never fetching) and release files at
-  `<cache>/files/<last URL segment>`, checks each against its pin before
-  opening it, and lists missing inputs with their URL and expected hash.
-  `check` instead of `refresh` compares the result with the committed
-  directory byte for byte. Judgement calls live in
-  `scripts/build/bun-runtime-notices.rules.json`: runtime source roots,
-  per-file header rules with the quote that justifies them, build-only inputs
-  and stated gaps. A new recipe kind, build condition or changed quote stops
-  the refresh until the rules are reviewed.
+  `<cache>/git/<owner>/<repo>.git` (never fetching, rehashing every object) and
+  release files at `<cache>/files/<last URL segment>`, checks each against the
+  pin it is derived from before opening it, and lists missing inputs with their
+  URL and expected hash. The Rust channel manifest is checked against the
+  sha256 in the rules, not against the `.sha256` file published beside it (that
+  file, when cached, must agree). `check` instead of `refresh` compares the
+  result with the committed directory byte for byte. Judgement calls live in
+  `scripts/build/bun-runtime-notices.rules.json`: runtime source roots, ported
+  licence texts with the `LICENSE.md` link that justifies each, comment syntax,
+  source-comment rules with their quoted reasons, the Rust manifest pin, crate
+  sources, build-only inputs and stated gaps. A new recipe kind, build
+  condition, crate source, Rust channel or changed quote stops the refresh
+  until the rules are reviewed.
 - **Bumping Bun** therefore means: update the runtime licence and policy as
-  above, adjust the rules (Bun tree, measured rustc commit, GCC package, LLVM
-  tag), fill the cache, `refresh` into the versioned directory, and pin the new
+  above, adjust the rules (Bun tree, measured rustc commit, Rust channel and
+  manifest sha256, GCC package, LLVM tag, ported texts), fill the cache,
+  `refresh` into the versioned directory, run `check`, and pin the new
   inventory's sha256 in the policy. The default tests do not need the cache;
   they run the same regeneration on small synthetic inputs.

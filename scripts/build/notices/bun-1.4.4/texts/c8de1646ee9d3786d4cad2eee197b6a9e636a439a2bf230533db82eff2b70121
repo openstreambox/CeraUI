@@ -1,0 +1,10 @@
+//! The React Compiler as lint rules: `react-hooks/refs`, `react-hooks/immutability` and so on in
+//! `eslint-plugin-react-hooks`, and `react/refs`, `react/immutability` and so on in oxlint.
+//!
+//! The compiler is Bun's (`src/react_compiler`), with its own lowering. Each function that could be
+//! a component or a hook is converted to the tree that Bun's parser would produce for it
+//! ([`convert`]), and is compiled once for all rules.
+//!
+//! The choice of functions to compile, and the wording and placement of the diagnostics, are a port of
+//! - https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
+//! - which is a port of https://github.com/facebook/react (Copyright Meta Platforms, Inc. and affiliates, MIT License)

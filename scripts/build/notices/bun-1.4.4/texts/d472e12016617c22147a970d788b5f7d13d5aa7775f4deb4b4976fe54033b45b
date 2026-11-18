@@ -1,0 +1,8 @@
+// Vendored from Node.js v26.3.0 deps (acorn-walk.js), minified with esbuild
+// to keep the embedded-source literal within compiler limits.
+//
+// acorn-walk — Copyright (C) 2012-2022 by various contributors (see AUTHORS)
+// MIT License. https://github.com/acornjs/acorn
+//
+// See internal/repl/acorn.js for the vm.Script rationale. Lazy-loaded.
+// prettier-ignore

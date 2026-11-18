@@ -1,0 +1,9 @@
+//! The formatter: prints the syntax of a file the way Prettier does.
+//!
+//! See `CLAUDE.md` in this directory.
+//!
+//! The intermediate representation and the printer (`ir/`) come from [Biome](https://github.com/biomejs/biome) by way
+//! of `oxc_formatter_core`, and the rules for JavaScript and TypeScript (`js/`) are a port of
+//! [`oxc_formatter`](https://github.com/oxc-project/oxc/tree/main/crates/oxc_formatter) to `bun check`'s syntax tree.
+//! Both are under the MIT license. Both implement [Prettier](https://github.com/prettier/prettier), also under the MIT
+//! license, which is the specification wherever they differ from it.

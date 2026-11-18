@@ -1,0 +1,3 @@
+//! typescript-eslint's rules. Each is a port of the rule with the same name in
+//! https://github.com/typescript-eslint/typescript-eslint (Copyright typescript-eslint and other contributors, MIT
+//! License), with the same options, the same messages and the same report locations.

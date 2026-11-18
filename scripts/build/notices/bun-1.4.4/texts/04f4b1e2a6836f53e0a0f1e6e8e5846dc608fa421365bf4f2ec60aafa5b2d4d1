@@ -1,0 +1,7 @@
+//! The order of oxfmt's `sortPackageJson`, which comes from the
+//! [`sort-package-json`](https://crates.io/crates/sort-package-json) crate (MIT license, VoidZero Inc. and
+//! contributors).
+//!
+//! Besides what the header of `sort_package_json.rs` lists, this differs from the crate in two ways:
+//! - From a list like `keywords`, the crate drops whatever isn't a string. Here such a list is left alone.
+//! - The crate sorts nothing if `serde_json` can't read the text: it isn't strict JSON, or it's nested more than 127 deep.

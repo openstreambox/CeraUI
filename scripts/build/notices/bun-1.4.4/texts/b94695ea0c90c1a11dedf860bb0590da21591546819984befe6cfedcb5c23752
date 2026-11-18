@@ -1,0 +1,2 @@
+//! ESLint's rules. Each is a port of the rule of the same name in https://github.com/eslint/eslint (Copyright OpenJS
+//! Foundation and other contributors, MIT License), with the same options, messages and report locations.

@@ -1,8 +1,0 @@
-use super::{exp, fabs, get_high_word, with_set_low_word};
-/* origin: FreeBSD /usr/src/lib/msun/src/s_erf.c */
-/*
- * ====================================================
- * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
- *
- * Developed at SunPro, a Sun Microsystems, Inc. business.
- * Permission to use, copy, modify, and distribute this

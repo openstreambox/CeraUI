@@ -1,0 +1,8 @@
+// `context.report()` and the `fixer` of JavaScript lint plugins.
+//
+// Ported from ESLint's lib/linter/file-report.js, rule-fixer.js and interpolate.js (MIT License, see LICENSE.md).
+//
+// A rule can pass anything. Every property is read once, where ESLint reads it first, so getters and Proxies see the same
+// order of reads and exceptions come in the same order.
+//
+// A report doesn't become a JavaScript value. It's written as bytes, which `sendReports` hands to Rust when the file is done.

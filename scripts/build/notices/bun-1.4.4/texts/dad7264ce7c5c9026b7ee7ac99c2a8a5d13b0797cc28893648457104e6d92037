@@ -1,0 +1,3 @@
+// Port of Node.js lib/internal/repl/await.js (v26.3.0)
+// Attribution: This module is derived from code originating from Node.js,
+// licensed under the Node.js contributors' MIT license.
