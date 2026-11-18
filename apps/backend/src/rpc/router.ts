@@ -50,6 +50,7 @@ import {
 	getModemGpsProcedure,
 	getModemSmsProcedure,
 	getModemUssdProcedure,
+	getRadioHealthProcedure,
 	getUsbModeOptionsProcedure,
 	listMutationBlocksProcedure,
 	rebaselineMutationProcedure,
@@ -207,6 +208,7 @@ const stableRoutes = {
 
 	modems: base.router({
 		getAll: getAllModemsProcedure,
+		getRadioHealth: getRadioHealthProcedure,
 		esimOperation: esimOperationProcedure,
 		configure: configureModemProcedure,
 		scan: scanModemProcedure,

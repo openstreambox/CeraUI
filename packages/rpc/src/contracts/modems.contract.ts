@@ -2,7 +2,6 @@
  * Modems ORPC Contract
  */
 import { oc } from '@orpc/contract';
-
 import {
 	esimOperationInputSchema,
 	esimOperationOutputSchema,
@@ -51,12 +50,14 @@ import {
 	usbModeOptionsInputSchema,
 	usbModeOptionsOutputSchema,
 } from '../schemas';
+import { radioHealthListSchema } from '../schemas/radio-health.schema';
 
 export const modemsContract = oc.router({
 	/**
 	 * Get all modems status
 	 */
 	getAll: oc.output(modemListSchema),
+	getRadioHealth: oc.output(radioHealthListSchema),
 	esimOperation: oc.input(esimOperationInputSchema).output(esimOperationOutputSchema),
 
 	/**
