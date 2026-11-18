@@ -1,8 +1,17 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { usbDevicesWireSchema } from "../../../../../packages/rpc/src/schemas/usb-devices.schema.ts";
-
-import { projectUsbDevices, usbLinkRefFromIdPath } from "./usb-devices-wire.ts";
+import { projectRemoteLegacyFrame } from "../remote/remote-status.ts";
+import {
+	deliverUsbDevicesWire,
+	projectUsbDevices,
+	usbLinkRefFromIdPath,
+	usbLinkRefFromIdPathResolved,
+} from "./usb-devices-wire.ts";
 import type { UsbTree, UsbTreeNode } from "./usb-tree.ts";
 
 const MAC = "aa:bb:cc:dd:ee:ff";
@@ -10,6 +19,11 @@ const IMEI = "490154203237518";
 const ICCID = "89014103211118510720";
 const SERIAL = "SECRET-SERIAL-9f3a";
 const WLX = "wlx001122334455";
+
+/** Same derivation as `mintLinkId` in physical-identity.ts. */
+function mintLinkId(identityKey: string): string {
+	return `lnk_${createHash("sha256").update(identityKey).digest("hex").slice(0, 16)}`;
+}
 
 function node(overrides: Partial<UsbTreeNode> = {}): UsbTreeNode {
 	return {
@@ -107,5 +121,124 @@ describe("usb device status payload", () => {
 			}).success,
 		).toBe(false);
 		expect(wire.nodes[0]?.product).toBe("C920");
+	});
+
+	it("accepts a minted link id and the real port paths", () => {
+		const linkId = mintLinkId("j11");
+		expect(linkId).toMatch(/^lnk_[0-9a-f]{16}$/);
+		const map = {
+			"xhci-hcd.10.auto": "fc000000.usb",
+			"xhci-hcd.0.auto": "fc400000.usb",
+			"xhci-hcd.5.auto": "fcd00000.usb",
+		};
+		expect(
+			usbLinkRefFromIdPath(
+				"platform-xhci-hcd.10.auto-usb-0:1:1.0",
+				linkId,
+				map,
+			),
+		).toEqual({ controller: "fc000000.usb", portPath: "1", linkId });
+		expect(
+			usbLinkRefFromIdPath(
+				"platform-xhci-hcd.0.auto-usb-0:1.2:1.0",
+				linkId,
+				map,
+			),
+		).toEqual({ controller: "fc400000.usb", portPath: "1.2", linkId });
+		expect(
+			usbLinkRefFromIdPath("platform-xhci-hcd.5.auto-usb-0:1:1.0", linkId, map)
+				?.controller,
+		).toBe("fcd00000.usb");
+		expect(
+			usbLinkRefFromIdPath("platform-xhci-hcd.0.auto-usb-0:1.4.1", linkId, map)
+				?.portPath,
+		).toBe("1.4.1");
+		expect(
+			usbLinkRefFromIdPath("platform-xhci-hcd.9.auto-usb-0:1.4.4:1.3", linkId, {
+				"xhci-hcd.9.auto": "fcd00000.usb",
+			})?.portPath,
+		).toBe("1.4.4");
+		expect(
+			usbLinkRefFromIdPath("pci-0000:00:14.0-usb-0:3:1.0", linkId),
+		).toEqual({ controller: "0000:00:14.0", portPath: "3", linkId });
+		expect(
+			usbLinkRefFromIdPath("platform-fc880000.usb-usb-0:1:1.0", linkId)
+				?.controller,
+		).toBe("fc880000.usb");
+	});
+
+	it("resolves an xhci name through the platform device", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-xhci-"));
+		try {
+			const target = join(
+				root,
+				"sys/devices/platform/fc400000.usb/xhci-hcd.0.auto",
+			);
+			const link = join(root, "sys/bus/platform/devices/xhci-hcd.0.auto");
+			await mkdir(target, { recursive: true });
+			await mkdir(join(root, "sys/bus/platform/devices"), {
+				recursive: true,
+			});
+			await symlink(target, link);
+			expect(
+				await usbLinkRefFromIdPathResolved(
+					"platform-xhci-hcd.0.auto-usb-0:1:1.0",
+					mintLinkId("a3-bot"),
+					{},
+					root,
+				),
+			).toMatchObject({ controller: "fc400000.usb", portPath: "1" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("broadcasts only when the tree changes and drops an oversized tree", () => {
+		const calls: unknown[] = [];
+		const wire = projectUsbDevices(
+			{ status: "ok", board: "generic", roots: [node({ product: "C920" })] },
+			[],
+		);
+		expect(deliverUsbDevicesWire(wire, (next) => calls.push(next))).toBe(true);
+		expect(deliverUsbDevicesWire(wire, (next) => calls.push(next))).toBe(false);
+		expect(calls).toHaveLength(1);
+
+		const many = Array.from({ length: 65 }, (_, index) =>
+			node({
+				key: `fc400000.usb:usb2:${index + 1}`,
+				portPath: String(index + 1),
+				product: "C920",
+			}),
+		);
+		const overflow = projectUsbDevices(
+			{ status: "ok", board: "rock-5b-plus", roots: many },
+			[],
+		);
+		expect(overflow).toEqual({
+			status: "unavailable",
+			board: "rock-5b-plus",
+			nodes: [],
+		});
+	});
+
+	it("keeps the usb tree off both remote frames", () => {
+		const local = {
+			usb_devices: {
+				status: "ok",
+				board: "rock-5b-plus",
+				nodes: [
+					{
+						controller: "fc000000.usb",
+						product: "Modem",
+						portPath: "1",
+					},
+				],
+			},
+			is_streaming: true,
+		};
+		const socket = JSON.stringify(projectRemoteLegacyFrame({ status: local }));
+		expect(socket).not.toContain("usb_devices");
+		expect(socket).not.toContain("fc000000");
+		expect(socket).toContain("is_streaming");
 	});
 });
