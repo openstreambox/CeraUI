@@ -29,6 +29,7 @@ test.describe("@visual Network devices", () => {
 				const usbC = ports.getByRole("heading", { name: "USB-C data port" });
 				await expect(upper).toBeVisible();
 				await expect(ports.getByTestId("device-empty")).toBeVisible();
+				await page.evaluate(() => window.scrollTo(0, 0));
 				await page.screenshot({
 					path: evidencePath(`devices-${project}-top.png`),
 				});
