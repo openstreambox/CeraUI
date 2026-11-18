@@ -1,0 +1,12 @@
+//! Locates the tags in JSDoc comments, and each tag's type, name, default and text.
+//!
+//! There's one reader. It's the part of jsdoc.go, from TypeScript 7's parser, that decides where
+//! these are. It skips types and default values by matching their brackets. With [`Flavor::Oxc`] it
+//! behaves like the oxc_jsdoc crate in the five places that check the flavor: `starts_tag`,
+//! `next_jsdoc_comment_text_token`, the `{` in the two loops, and `parse_tag`. `LineStartRule` and
+//! the three `find_*` functions follow `oxc_jsdoc`'s parser, which is MIT licensed.
+//!
+//! For the parser that builds a JavaScript file's HIR ([`syntax::read`]), the same reader is all of
+//! jsdoc.go. A [`syntax::Syntax`] parses what the reader otherwise skips and receives the errors,
+//! and the result is the tags in [`syntax`]. One jsdoc.go function isn't ported: `parseSeeTag`. A
+//! `@see` tag is read as an unknown tag.

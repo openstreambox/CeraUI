@@ -1,0 +1,52 @@
+// Sections:
+// 1. Exported child_process functions
+// 2. child_process helpers
+// 3. ChildProcess "class"
+// 4. ChildProcess helpers
+// 5. Validators
+// 6. Random utilities
+// 7. Node errors / error polyfills
+
+// TODO:
+// Port rest of node tests
+// Fix exit codes with Bun.spawn
+// ------------------------------
+// Fix errors
+// Support file descriptors being passed in for stdio
+// ------------------------------
+// TODO: Look at Pipe to see if we can support passing Node Pipe objects to stdio param
+
+// stdio <Array> | <string> Child's stdio configuration (see options.stdio).
+// Support wrapped ipc types (e.g. net.Socket, dgram.Socket, TTY, etc.)
+// IPC FD passing support
+
+// From node child_process docs(https://nodejs.org/api/child_process.html#optionsstdio):
+// 'ipc': Create an IPC channel for passing messages/file descriptors between parent and child.
+// A ChildProcess may have at most one IPC stdio file descriptor. Setting this option enables the subprocess.send() method.
+// If the child is a Node.js process, the presence of an IPC channel will enable process.send() and process.disconnect() methods,
+// as well as 'disconnect' and 'message' events within the child.
+
+//------------------------------------------------------------------------------
+// Section 1. Exported child_process functions
+//------------------------------------------------------------------------------
+
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.

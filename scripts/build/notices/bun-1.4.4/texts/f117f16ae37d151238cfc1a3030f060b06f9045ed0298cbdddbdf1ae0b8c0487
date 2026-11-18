@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: MIT */
+/* origin: core-math/src/binary64/cbrt/cbrt.c
+ * Copyright (c) 2021-2022 Alexei Sibidanov.
+ * Ported to Rust in 2025 by Trevor Gross.
+ */

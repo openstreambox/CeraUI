@@ -1,0 +1,14 @@
+//! TOML, the way oxfmt formats it. Prettier has no TOML. Without an oxfmt config, arrays and inline tables get Bun's own
+//! layout, which `printer.rs` describes.
+//!
+//! oxfmt uses the [`oxc-toml`](https://crates.io/crates/oxc-toml) crate (MIT license, Ferenc Tamás,
+//! VoidZero Inc. and contributors), a fork of taplo. `printer.rs` is a port of its formatter,
+//! limited to the options that oxfmt uses. Keys and values are copied verbatim. Only whitespace,
+//! empty lines and whether an array is on one line change.
+//!
+//! ```text
+//! text ─ Bun's TOML scanner ─→ tokens ─ tree::build ─→ taplo's tree ─ printer::print ─→ text
+//! ```
+//!
+//! Anything that Bun's parser rejects as TOML is a syntax error. oxfmt reprints such a file around
+//! its errors, and not always in the same order.

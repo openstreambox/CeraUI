@@ -16,16 +16,24 @@
 			"!.cursor",
 			"!**/tsconfig*.json",
 			"!**/dist",
-			"!**/build",
+			"!**/build/**",
 			"!**/node_modules",
 			"!**/.build-cache",
 			"!**/test-results",
-			"!packages/srtla-send/tests/fixtures"
+			"!packages/srtla-send/tests/fixtures",
+			"scripts/build/bun-runtime-notices.ts",
+			"scripts/build/bun-runtime-notices-refresh.ts",
+			"scripts/build/bun-runtime-notices.test.ts"
 		]
 	},
 	"overrides": [
 		{
-			"includes": ["scripts/sync-brand-assets.ts"],
+			"includes": [
+				"scripts/sync-brand-assets.ts",
+				"scripts/build/bun-runtime-notices.ts",
+				"scripts/build/bun-runtime-notices-refresh.ts",
+				"scripts/build/bun-runtime-notices.test.ts"
+			],
 			"javascript": { "globals": ["Bun"] }
 		}
 	],
@@ -81,6 +89,7 @@
 			},
 
 			"suspicious": {
+				"useBiomeIgnoreFolder": "off",
 				"noArrayIndexKey": "error",
 				"noAssignInExpressions": "error",
 				"noAsyncPromiseExecutor": "error",

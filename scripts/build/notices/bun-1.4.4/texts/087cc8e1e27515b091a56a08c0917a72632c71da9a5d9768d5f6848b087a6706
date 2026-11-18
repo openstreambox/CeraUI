@@ -1,0 +1,13 @@
+	// This function was adapted from
+	// static size_t bcj_arm64(struct xz_dec_bcj *s, uint8_t *buf, size_t size)
+	// in https://git.tukaani.org/xz-embedded.git
+
+	/*
+	 * Branch/Call/Jump (BCJ) filter decoders
+	 *
+	 * Authors: Lasse Collin <lasse.collin@tukaani.org>
+	 *          Igor Pavlov <https://7-zip.org/>
+	 *
+	 * This file has been put into the public domain.
+	 * You can do whatever you want with this file.
+	 */

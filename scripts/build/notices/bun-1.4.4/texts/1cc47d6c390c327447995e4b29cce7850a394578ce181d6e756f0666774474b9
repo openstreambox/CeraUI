@@ -1,0 +1,6 @@
+// ESLint's `TokenStore`: the token and comment methods of `sourceCode`.
+//
+// Rust says where the tokens and comments of the file are (src/lint/js_plugin/tokens.rs). A method searches these tables, and
+// an object is made for a token the first time a plugin gets it.
+//
+// Ported from lib/languages/js/source-code/token-store in ESLint, which is under the MIT License. See LICENSE.md.

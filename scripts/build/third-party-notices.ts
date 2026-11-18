@@ -14,7 +14,11 @@
 //     points; the relocated, non-packaged maps of the web app). The licence,
 //     copying and notice files of each package are copied verbatim.
 //   - Bun: compiled executables embed the Bun runtime. Its LICENSE.md is pinned
-//     to the Bun release that compiles the package and checked by sha256.
+//     to the Bun release that compiles the package and checked by sha256. The
+//     licence texts of what Bun itself links (its vendored libraries, WebKit,
+//     ICU, the Rust standard library and crates, its Node.js polyfills and the
+//     static C++ runtime) come from a checked-in inventory pinned by sha256; see
+//     bun-runtime-notices.ts.
 //   - CeraUI itself: the GPL-3.0 text of apps/backend and apps/frontend, plus
 //     the brand-asset notice.
 //
@@ -38,6 +42,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
+import {
+	renderSupplement,
+	type SupplementPolicy,
+	supplementIndex,
+	type VerifiedSupplement,
+	verifySupplement,
+} from "./bun-runtime-notices.ts";
+
 export type Policy = {
 	firstParty: { licenceFiles: string[]; brandNotice: string; source: string };
 	/** Entry point -> installed executable it is compiled into. */
@@ -59,6 +71,8 @@ export type Policy = {
 		source: string;
 		file: string;
 		sha256: string;
+		/** Third-party notices of what the runtime links; required for the real package. */
+		supplement?: SupplementPolicy;
 	};
 	withoutLicenceText: Record<string, string>;
 };
@@ -489,6 +503,12 @@ export function renderNotices(
 		"",
 		runtimeText.trimEnd(),
 	];
+	if (policy.runtime.supplement) {
+		parts.push(
+			"",
+			`The licence texts of what ${policy.runtime.name} links into its runtime follow at the end of this file.`,
+		);
+	}
 	for (const pkg of packages) {
 		parts.push(
 			"",
@@ -507,7 +527,11 @@ export function renderNotices(
 	return `${parts.join("\n")}\n`;
 }
 
-export function renderIndex(packages: BundledPackage[], policy: Policy): string {
+export function renderIndex(
+	packages: BundledPackage[],
+	policy: Policy,
+	supplement?: VerifiedSupplement,
+): string {
 	const index = {
 		runtime: {
 			name: policy.runtime.name,
@@ -515,6 +539,9 @@ export function renderIndex(packages: BundledPackage[], policy: Policy): string 
 			revision: policy.runtime.revision,
 			source: policy.runtime.source,
 			sha256: policy.runtime.sha256,
+			...(supplement && policy.runtime.supplement
+				? { thirdParty: supplementIndex(supplement, policy.runtime.supplement.inventory) }
+				: {}),
 		},
 		packages: packages.map((pkg) => ({
 			name: pkg.name,
@@ -546,6 +573,14 @@ export async function generate(options: GenerateOptions): Promise<BundledPackage
 		policy.runtime,
 		options.bun ?? { version: Bun.version, revision: Bun.revision },
 	);
+	const supplement = policy.runtime.supplement
+		? verifySupplement(
+				repoRoot,
+				policy.runtime.supplement,
+				policy.runtime,
+				policy.firstParty.licenceFiles,
+			)
+		: undefined;
 	const sources = options.backend ?? (await backendSources(repoRoot, policy.backendEntrypoints));
 	const webDir = resolve(repoRoot, policy.webSourcemapDir);
 	const webMaps = existsSync(webDir) ? listMaps(webDir) : [];
@@ -565,10 +600,16 @@ export async function generate(options: GenerateOptions): Promise<BundledPackage
 	const packages = collectPackages(sources, policy);
 	const copyright = `${renderCopyright(repoRoot, policy)}\n${renderNotices(packages, policy, runtimeText)}`;
 	mkdirSync(dirname(copyrightPath), { recursive: true });
-	writeFileSync(copyrightPath, copyright);
+	// The supplement is written as bytes: its texts are kept exactly as published.
+	writeFileSync(
+		copyrightPath,
+		supplement
+			? Buffer.concat([Buffer.from(copyright, "utf8"), renderSupplement(supplement)])
+			: copyright,
+	);
 	if (indexPath) {
 		mkdirSync(dirname(indexPath), { recursive: true });
-		writeFileSync(indexPath, renderIndex(packages, policy));
+		writeFileSync(indexPath, renderIndex(packages, policy, supplement));
 	}
 	return packages;
 }

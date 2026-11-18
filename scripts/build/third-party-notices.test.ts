@@ -15,6 +15,7 @@ import {
 	sha256,
 	sourcesOfMap,
 } from "./third-party-notices.ts";
+import { gitBlobId, type Inventory, verifySupplement } from "./bun-runtime-notices.ts";
 
 const repoRoot = resolve(import.meta.dir, "../..");
 const RUNTIME_TEXT = "Runtime fixture licence\nline two\n";
@@ -371,6 +372,87 @@ describe("third-party notices", () => {
 		await expect(run(f)).rejects.toThrow(/pinned runtime licence missing/);
 	});
 
+	test("appends the runtime's third-party texts byte for byte and indexes them", async () => {
+		const f = fixture();
+		// Not UTF-8 and without a final newline: it must still come out unchanged.
+		const text = new Uint8Array([
+			...new TextEncoder().encode("Caf"),
+			0xe9,
+			...new TextEncoder().encode(" licence"),
+		]);
+		const inventory: Inventory = {
+			schema: 1,
+			runtime: {
+				name: "Runtime",
+				version: BUN.version,
+				revision: BUN.revision,
+				tree: "a".repeat(40),
+				licenceSha256: sha256(RUNTIME_TEXT),
+			},
+			statement: "Fixture statement.",
+			origins: [
+				{
+					id: "bun",
+					kind: "git",
+					url: "https://example.invalid/bun",
+					commit: BUN.revision,
+					tree: "a".repeat(40),
+					role: "runtime",
+					pins: [],
+				},
+				{
+					id: "dep/x",
+					kind: "git",
+					url: "https://example.invalid/x",
+					commit: "b".repeat(40),
+					tree: "c".repeat(40),
+					role: "a library",
+					pins: [
+						{
+							origin: "bun",
+							path: "deps/x.ts",
+							gitBlob: "d".repeat(40),
+							text: `X = "${"b".repeat(40)}"`,
+						},
+					],
+				},
+			],
+			texts: [
+				{
+					origin: "dep/x",
+					path: "LICENSE",
+					kind: "notice",
+					section: "linked",
+					sha256: sha256(text),
+					size: text.byteLength,
+					gitBlob: gitBlobId(text),
+				},
+			],
+			excluded: [{ origin: "dep/x", path: "tests/LICENSE", reason: "test material" }],
+			buildOnly: [],
+			gaps: [{ id: "one", status: "open", text: "An open gap." }],
+		};
+		const raw = `${JSON.stringify(inventory)}\n`;
+		write(f.root, "notices/supplement/inventory.json", raw);
+		mkdirSync(join(f.root, "notices/supplement/texts"));
+		writeFileSync(join(f.root, "notices/supplement/texts", sha256(text)), text);
+		f.policy.runtime.supplement = {
+			inventory: "notices/supplement/inventory.json",
+			sha256: sha256(raw),
+		};
+		const { index, copyright } = await run(f);
+		const bytes = readFileSync(join(f.root, "out/doc/copyright"));
+		expect(bytes.includes(Buffer.from(text))).toBe(true);
+		expect(copyright).toContain("follow at the end of this file");
+		expect(copyright).toContain("[open] An open gap.");
+		expect(index.runtime.thirdParty.texts).toEqual([
+			{ origin: "dep/x", path: "LICENSE", kind: "notice", section: "linked", sha256: sha256(text) },
+		]);
+
+		writeFileSync(join(f.root, "notices/supplement/texts", sha256(text)), "edited");
+		await expect(run(f)).rejects.toThrow(/text changed or truncated/);
+	});
+
 	test("missing first-party licence, brand notice or web maps fail the build", async () => {
 		let f = fixture();
 		rmSync(join(f.root, "apps/frontend/LICENSE"));
@@ -491,6 +573,19 @@ describe("committed notice policy", () => {
 		const spa = readFileSync(join(repoRoot, "apps/frontend/vite.sourcemaps.ts"), "utf8");
 		const dir = /SPA_SOURCEMAP_OUT_DIR = "([^"]+)"/.exec(spa)?.[1];
 		expect(policy.webSourcemapDir).toBe(`dist/${dir}`);
+	});
+
+	test("pins the third-party notices of what Bun links, for the same Bun revision", () => {
+		const supplement = policy.runtime.supplement;
+		expect(supplement).toBeDefined();
+		const { inventory } = verifySupplement(
+			repoRoot,
+			supplement as NonNullable<typeof supplement>,
+			policy.runtime,
+			policy.firstParty.licenceFiles,
+		);
+		expect(inventory.runtime.revision).toBe(policy.runtime.revision);
+		expect(inventory.texts.length).toBeGreaterThan(100);
 	});
 
 	test("first-party texts exist and every exception carries a reason", () => {

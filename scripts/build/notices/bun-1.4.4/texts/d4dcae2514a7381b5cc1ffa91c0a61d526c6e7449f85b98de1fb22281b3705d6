@@ -1,0 +1,8 @@
+//! A file's JSDoc comments. See [`File::jsdoc`].
+//!
+//! The names, fields and shapes match the oxc_jsdoc crate, which oxlint and oxfmt use to read comments, so code ported
+//! from them stays a straight port. How each part's text is processed follows `oxc_jsdoc`, which is MIT licensed.
+//! `bun_sema::check::jsdoc` locates the parts, once per file.
+//!
+//! Text is a slice of [`File::text`]. Whitespace means `char::is_whitespace`, and bytes that aren't valid UTF-8 count
+//! as U+FFFD.

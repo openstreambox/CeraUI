@@ -1,0 +1,2 @@
+// Gregorian Y/M/D from Unix-epoch seconds, using Howard Hinnant's
+// `civil_from_days` algorithm (public domain).

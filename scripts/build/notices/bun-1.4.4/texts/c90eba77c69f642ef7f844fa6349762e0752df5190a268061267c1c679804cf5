@@ -1,0 +1,8 @@
+//! oxlint's `jest` and `vitest` rules. Each is a port of the oxlint 1.87 rule of the same name, with the same options,
+//! messages and report positions. They're only available with an oxlint config.
+//! - https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
+//! - which are ports of https://github.com/jest-community/eslint-plugin-jest (Copyright Jonathan Kim, MIT License) and
+//!   https://github.com/vitest-dev/eslint-plugin-vitest (Copyright Verite Mugabo, MIT License)
+//!
+//! The `bun:test` rules are the same rules applied to `bun test` tests. They're Bun's own and are available with every
+//! config.

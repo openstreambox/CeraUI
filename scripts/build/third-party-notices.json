@@ -89,7 +89,11 @@
 		"revision": "38afee6c84fcf48c0edb2466aa4b27d287a59c30",
 		"source": "https://github.com/oven-sh/bun/blob/38afee6c84fcf48c0edb2466aa4b27d287a59c30/LICENSE.md",
 		"file": "scripts/build/notices/bun-v1.4.4-LICENSE.md",
-		"sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd"
+		"sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd",
+		"supplement": {
+			"inventory": "scripts/build/notices/bun-1.4.4/inventory.json",
+			"sha256": "7632f25f9807a3e5587062bb828ced4e73258ad1e12a4641c93fa1c48b87f147"
+		}
 	},
 	"withoutLicenceText": {
 		"@ceralive/cerastream@2026.11.2": "Its package.json declares GPL-3.0, but the package contains no licence file.",

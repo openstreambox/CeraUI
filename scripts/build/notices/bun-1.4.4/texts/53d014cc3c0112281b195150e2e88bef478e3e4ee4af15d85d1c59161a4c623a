@@ -1,0 +1,14 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
+//! Propagates scope dependencies through the HIR, computing which values each
+//! reactive scope depends on.
+//!
+//! Ported from TypeScript:
+//! - `src/HIR/PropagateScopeDependenciesHIR.ts`
+//! - `src/HIR/CollectOptionalChainDependencies.ts`
+//! - `src/HIR/CollectHoistablePropertyLoads.ts`
+//! - `src/HIR/DeriveMinimalDependenciesHIR.ts`
+//! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).

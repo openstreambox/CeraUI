@@ -1,0 +1,3 @@
+// Ported from Node.js v26.3.0 lib/internal/repl/utils.js for Bun's node:repl.
+// Attribution: derived from Node.js, MIT licensed (Node.js contributors).
+// prettier-ignore

@@ -1,0 +1,5 @@
+//! oxfmt's `jsdoc` option: formats JSDoc comments the way
+//! [prettier-plugin-jsdoc](https://github.com/hosseinmd/prettier-plugin-jsdoc) does.
+//!
+//! This follows `oxc_formatter`'s `formatter/jsdoc`, which is under the MIT license. `File::jsdoc` parses the comments,
+//! and this crate's Markdown parser parses the descriptions.

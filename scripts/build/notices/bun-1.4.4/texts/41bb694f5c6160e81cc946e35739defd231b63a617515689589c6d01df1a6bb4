@@ -1,0 +1,17 @@
+//! Line- and character-level diffing for test-runner output.
+//!
+//! The core is Myers' O(ND) algorithm in its linear-space, bidirectional
+//! ("middle snake") form, made unconditional-time-limit-free by bounding
+//! *work* instead: every box first gets a cheap exact attempt; a box that
+//! exceeds it is searched exhaustively up to a depth its size justifies, then
+//! cut at a skeleton of unique, in-order common lines if it has a strong one,
+//! and only past that cut greedily at the point of furthest progress. Lines that cannot match anything are eliminated before the
+//! search, so in practice almost every input is solved exactly and the rest
+//! degrade predictably instead of falling off a cliff.
+//!
+//! The semantic post-processing (`cleanup_semantic`) is a port of the
+//! corresponding passes from diff-match-patch, operating on index ranges
+//! instead of owned strings.
+//
+// diff-match-patch is Copyright 2018 The diff-match-patch Authors,
+// licensed under the Apache License, Version 2.0.

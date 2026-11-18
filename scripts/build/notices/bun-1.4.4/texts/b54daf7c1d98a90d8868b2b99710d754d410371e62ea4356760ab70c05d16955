@@ -1,0 +1,5 @@
+// ESLint's `SourceCode` for JavaScript lint plugins, apart from the token methods, which are in LintTokens.cpp.
+//
+// Ported from ESLint's lib/languages/js/source-code/source-code.js (MIT License, see LICENSE.md).
+//
+// The methods don't look at `this`: see LintHost.h. Each argument and each property of it is read once.
