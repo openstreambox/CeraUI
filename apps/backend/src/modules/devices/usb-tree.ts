@@ -69,10 +69,15 @@ export type UsbPortScope =
 	| "root"
 	| "generic";
 
+/** What the socket can do, not the speed the device negotiated. */
+export type UsbPortClass = "usb2" | "usb3";
+
+export type UsbPortColour = "blue" | "black";
+
 export type UsbPortPlacement = {
-	/** Board label (`A3-bot`, `C`, `>hub.2`), or null when the board has no map. */
+	/** Board label (`A3-bot`, `C`, `>hub.2>hub.3`), or null when the board has no map. */
 	readonly label: string | null;
-	/** Printed name ("Lower blue port", "Hub port 2", "USB port 1"). */
+	/** Printed name ("Lower blue port", "Hub port 2", "USB 2 port 1"). */
 	readonly name: string;
 	readonly scope: UsbPortScope;
 	/** Physical socket this hub port hangs from, when there is one. */
@@ -80,6 +85,10 @@ export type UsbPortPlacement = {
 	readonly socketName: string | null;
 	/** Downstream port on the parent hub. Null on the socket itself. */
 	readonly hubPort: number | null;
+	/** USB 2 or USB 3 wires of this socket. Null when the board has no map. */
+	readonly portClass: UsbPortClass | null;
+	/** Blue USB 3 A port or black USB 2 A port. Null for USB-C and internal slots. */
+	readonly colour: UsbPortColour | null;
 };
 
 export type RockPortSpec = {
@@ -88,6 +97,8 @@ export type RockPortSpec = {
 	readonly label: string | null;
 	readonly name: string;
 	readonly scope: "socket" | "built-in";
+	readonly portClass: UsbPortClass;
+	readonly colour: UsbPortColour | null;
 };
 
 /**
@@ -105,6 +116,8 @@ export const ROCK_5B_PLUS_PORTS: readonly RockPortSpec[] = [
 		label: "A3-top",
 		name: "Upper blue port",
 		scope: "socket",
+		portClass: "usb3",
+		colour: "blue",
 	},
 	{
 		controller: "fc8c0000.usb",
@@ -112,6 +125,8 @@ export const ROCK_5B_PLUS_PORTS: readonly RockPortSpec[] = [
 		label: "A3-top",
 		name: "Upper blue port",
 		scope: "socket",
+		portClass: "usb3",
+		colour: "blue",
 	},
 	{
 		controller: "fcd00000.usb",
@@ -119,6 +134,8 @@ export const ROCK_5B_PLUS_PORTS: readonly RockPortSpec[] = [
 		label: "A3-top",
 		name: "Upper blue port",
 		scope: "socket",
+		portClass: "usb3",
+		colour: "blue",
 	},
 	{
 		controller: "fc400000.usb",
@@ -126,6 +143,8 @@ export const ROCK_5B_PLUS_PORTS: readonly RockPortSpec[] = [
 		label: "A3-bot",
 		name: "Lower blue port",
 		scope: "socket",
+		portClass: "usb3",
+		colour: "blue",
 	},
 	{
 		controller: "fc000000.usb",
@@ -133,6 +152,8 @@ export const ROCK_5B_PLUS_PORTS: readonly RockPortSpec[] = [
 		label: "C",
 		name: "USB-C data port",
 		scope: "socket",
+		portClass: "usb3",
+		colour: null,
 	},
 	{
 		controller: "fc800000.usb",
@@ -140,6 +161,8 @@ export const ROCK_5B_PLUS_PORTS: readonly RockPortSpec[] = [
 		label: null,
 		name: "Onboard hub",
 		scope: "built-in",
+		portClass: "usb2",
+		colour: null,
 	},
 	{
 		controller: "fc800000.usb",
@@ -147,6 +170,8 @@ export const ROCK_5B_PLUS_PORTS: readonly RockPortSpec[] = [
 		label: "A2-bot",
 		name: "Lower black port",
 		scope: "socket",
+		portClass: "usb2",
+		colour: "black",
 	},
 	{
 		controller: "fc800000.usb",
@@ -154,20 +179,26 @@ export const ROCK_5B_PLUS_PORTS: readonly RockPortSpec[] = [
 		label: "A2-top",
 		name: "Upper black port",
 		scope: "socket",
+		portClass: "usb2",
+		colour: "black",
 	},
 	{
 		controller: "fc800000.usb",
 		portPath: "1.3",
 		label: "BT",
-		name: "Built in",
+		name: "Bluetooth",
 		scope: "built-in",
+		portClass: "usb2",
+		colour: null,
 	},
 	{
 		controller: "fc800000.usb",
 		portPath: "1.4",
 		label: "M2B",
 		name: "Modem slot inside",
-		scope: "built-in",
+		scope: "socket",
+		portClass: "usb2",
+		colour: null,
 	},
 ];
 
@@ -178,12 +209,15 @@ const MODEM_DRIVERS: ReadonlySet<string> = new Set([
 ]);
 
 const MAC_ADDRESS = /(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}/i;
-const LONG_DIGIT_RUN = /\d{14,}/;
+const MAC_IFACE = /^(?:en|wl|ww)x[0-9a-f]{12}$/i;
+const HEX_RUN = /[0-9a-f]{12}/i;
 const PRIVATE_WORD = /\b(?:imei|iccid|imeisv)\b/i;
 const INTERFACE_NAME = /:\d+\.\d+$/;
 const DEVICE_NAME = /^usb\d+$|^\d+-\d+(?:\.\d+)*$/;
 const ENDPOINT_NAME = /^[A-Za-z][A-Za-z0-9._-]{0,15}$/;
 const DRIVER_NAME = /^[a-z0-9_]+$/;
+const PCI_CONTROLLER =
+	/([0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f])(?=\/usb\d+(?:\/|$))/;
 
 export type UsbTreeNode = {
 	/**
@@ -213,11 +247,21 @@ export type UsbTreeNode = {
 	readonly netNames: readonly string[];
 	readonly videoNames: readonly string[];
 	readonly port: UsbPortPlacement;
+	/**
+	 * Shared by the USB 2 and USB 3 halves of one socket.
+	 * On a ROCK 5B+ this is the board label (`A3-bot`, `A3-bot>hub.2`).
+	 * Elsewhere it comes from the kernel `usbN-portM/peer` link.
+	 */
+	readonly socketKey: string;
 	readonly children: readonly UsbTreeNode[];
 };
 
+export type UsbTreeStatus = "ok" | "unavailable";
+
 export type UsbTree = {
 	readonly board: UsbTreeBoard;
+	/** `unavailable` when `/sys/bus/usb/devices` could not be read. */
+	readonly status: UsbTreeStatus;
 	readonly roots: readonly UsbTreeNode[];
 };
 
@@ -244,34 +288,56 @@ export function boardFromIdentityText(raw: string | null): UsbTreeBoard {
 
 export function sanitizeUsbProduct(raw: string | null): string | null {
 	if (raw === null) return null;
-	const text = raw.replaceAll("\0", "").trim();
+	const text = raw
+		.replaceAll("\0", "")
+		.replace(/[\p{Cc}\p{Cf}]/gu, "")
+		.trim();
 	if (text.length === 0 || text.length > 80) return null;
-	if (MAC_ADDRESS.test(text) || LONG_DIGIT_RUN.test(text)) return null;
 	if (PRIVATE_WORD.test(text)) return null;
-	if (/^[0-9a-f]{12,}$/i.test(text)) return null;
-	// One long token that contains a digit is a serial-shaped name, not a model.
-	// "USB Serial Converter" has spaces and stays. "RM520N-GL" is short and stays.
-	if (!/\s/.test(text) && text.length >= 16 && /\d/.test(text)) return null;
+	if (text.split(/\s+/).some((token) => tokenLooksSecret(token))) return null;
 	return text;
 }
+
+/** A whitespace token that is a MAC, a long digit run, or a hex serial. */
+function tokenLooksSecret(token: string): boolean {
+	if (MAC_ADDRESS.test(token)) return true;
+	if (/\d{10,}/.test(token)) return true;
+	if (/^[0-9a-f]{10,}$/i.test(token)) {
+		return (token.match(/\d/g)?.length ?? 0) >= 4;
+	}
+	return /serial/i.test(token) && /\d/.test(token);
+}
+
+export type DescribeUsbPortOptions = {
+	/** 1-based index of this controller among the board's controllers, sorted by address. */
+	readonly ordinal?: number;
+	/** Used for a generic port when the root hub's speed is known. */
+	readonly portClass?: UsbPortClass | null;
+};
 
 export function describeUsbPort(
 	board: UsbTreeBoard,
 	controller: string | null,
 	portPath: string | null,
+	options?: DescribeUsbPortOptions,
 ): UsbPortPlacement {
+	const ordinal = options?.ordinal ?? 1;
+	const hinted = options?.portClass ?? null;
 	if (portPath === null) {
 		return {
 			label: null,
-			name: "USB root hub",
+			name:
+				board === "rock-5b-plus" ? "USB root hub" : `USB ${ordinal} root hub`,
 			scope: "root",
 			socketLabel: null,
 			socketName: null,
 			hubPort: null,
+			portClass: null,
+			colour: null,
 		};
 	}
 	if (board !== "rock-5b-plus" || controller === null) {
-		return genericPort(portPath);
+		return genericPort(portPath, ordinal, hinted);
 	}
 	const onController = ROCK_5B_PLUS_PORTS.filter(
 		(spec) => spec.controller === controller,
@@ -285,6 +351,8 @@ export function describeUsbPort(
 			socketLabel: exact.label,
 			socketName: exact.label === null ? null : exact.name,
 			hubPort: null,
+			portClass: exact.portClass,
+			colour: exact.colour,
 		};
 	}
 	let best: RockPortSpec | null = null;
@@ -294,27 +362,41 @@ export function describeUsbPort(
 			best = spec;
 		}
 	}
-	if (best === null) return genericPort(portPath);
-	const last = portPath.slice(portPath.lastIndexOf(".") + 1);
-	const hubPort = /^\d+$/.test(last) ? Number(last) : null;
+	if (best === null) return genericPort(portPath, ordinal, hinted);
+	const rest = portPath.slice(best.portPath.length + 1);
+	const parts = rest.split(".").filter((part) => /^\d+$/.test(part));
+	const last = parts[parts.length - 1];
+	const hubPort = last === undefined ? null : Number(last);
+	const chain = parts.map((part) => `>hub.${part}`).join("");
 	return {
-		label: hubPort === null ? null : `>hub.${hubPort}`,
-		name: hubPort === null ? genericPort(portPath).name : `Hub port ${hubPort}`,
+		label: chain.length === 0 ? null : chain,
+		name:
+			parts.length === 0
+				? genericPort(portPath, ordinal, hinted).name
+				: parts.map((part) => `Hub port ${part}`).join(", "),
 		scope: "hub-port",
 		socketLabel: best.label,
 		socketName: best.name,
 		hubPort,
+		portClass: best.portClass,
+		colour: best.colour,
 	};
 }
 
-function genericPort(portPath: string): UsbPortPlacement {
+function genericPort(
+	portPath: string,
+	ordinal: number,
+	portClass: UsbPortClass | null,
+): UsbPortPlacement {
 	return {
 		label: null,
-		name: `USB port ${portPath}`,
+		name: `USB ${ordinal} port ${portPath}`,
 		scope: "generic",
 		socketLabel: null,
 		socketName: null,
 		hubPort: null,
+		portClass,
+		colour: null,
 	};
 }
 
@@ -329,7 +411,7 @@ export async function readUsbTree(
 	try {
 		names = await readdir(devicesDir);
 	} catch {
-		return { board, roots: [] };
+		return { board, status: "unavailable", roots: [] };
 	}
 	names.sort((a, b) => a.localeCompare(b, "en"));
 
@@ -363,6 +445,7 @@ export async function readUsbTree(
 		const key = unique ? item.key : `${item.key}:${item.draft.kernelName}`;
 		keyByKernel.set(item.draft.kernelName, key);
 	}
+	const ordinals = controllerOrdinals(drafts.map((draft) => draft.controller));
 
 	const nodes = new Map<string, MutableNode>();
 	for (const item of preferred) {
@@ -371,6 +454,24 @@ export async function readUsbTree(
 		const parentKernel = parentKernelName(item.draft.kernelName);
 		const parentKey =
 			parentKernel === null ? null : (keyByKernel.get(parentKernel) ?? null);
+		const hinted =
+			item.rootSpeedClass === "usb2" || item.rootSpeedClass === "usb3"
+				? item.rootSpeedClass
+				: null;
+		const ordinal =
+			item.draft.controller === null
+				? 1
+				: (ordinals.get(item.draft.controller) ?? 1);
+		const port = describeUsbPort(
+			board,
+			item.draft.controller,
+			item.draft.portPath,
+			hinted === null ? { ordinal } : { ordinal, portClass: hinted },
+		);
+		const socketKey =
+			board === "rock-5b-plus" && port.scope !== "generic"
+				? rockSocketKey(port, item.draft.controller, item.draft.portPath)
+				: await genericSocketKey(devicesDir, item.draft, byName);
 		nodes.set(key, {
 			key,
 			parentKey,
@@ -391,7 +492,8 @@ export async function readUsbTree(
 			drivers: item.draft.drivers,
 			netNames: item.draft.netNames,
 			videoNames: item.draft.videoNames,
-			port: describeUsbPort(board, item.draft.controller, item.draft.portPath),
+			port,
+			socketKey,
 			children: [],
 		});
 	}
@@ -404,7 +506,7 @@ export async function readUsbTree(
 		else roots.push(node);
 	}
 	sortNodes(roots);
-	return { board, roots };
+	return { board, status: "ok", roots };
 }
 
 type Draft = {
@@ -477,7 +579,7 @@ async function readDevice(
 		productId: parseHexId(attrs.idProduct),
 		product: sanitizeUsbProduct(attrs.product),
 		deviceClass,
-		configurationCount: parseHexByte(attrs.bNumConfigurations),
+		configurationCount: parseDecimal(attrs.bNumConfigurations),
 		maxPorts,
 		kind: classify({
 			deviceClass,
@@ -487,9 +589,31 @@ async function readDevice(
 			hasVideo: endpoints.videos.size > 0,
 		}),
 		drivers,
-		netNames: [...endpoints.nets].sort((a, b) => a.localeCompare(b, "en")),
-		videoNames: [...endpoints.videos].sort((a, b) => a.localeCompare(b, "en")),
+		netNames: neutralNetNames(endpoints.nets),
+		videoNames: [...endpoints.videos]
+			.filter((name) => !nameLooksSecret(name))
+			.sort((a, b) => a.localeCompare(b, "en")),
 	};
+}
+
+function nameLooksSecret(name: string): boolean {
+	return MAC_IFACE.test(name) || HEX_RUN.test(name);
+}
+
+/**
+ * systemd names USB netdevs `wlx<MAC>` and `enx<MAC>`. Those names are
+ * replaced with `net0`, `net1` so the MAC never leaves this module.
+ */
+function neutralNetNames(names: Iterable<string>): string[] {
+	const kept: string[] = [];
+	const hidden: string[] = [];
+	for (const name of names) {
+		if (nameLooksSecret(name)) hidden.push(name);
+		else if (ENDPOINT_NAME.test(name)) kept.push(name);
+	}
+	hidden.sort((a, b) => a.localeCompare(b, "en"));
+	const replaced = hidden.map((_, index) => `net${index}`);
+	return [...kept, ...replaced].sort((a, b) => a.localeCompare(b, "en"));
 }
 
 function classify(args: {
@@ -610,10 +734,83 @@ async function readMaybe(
 }
 
 function controllerOf(devicePath: string): string | null {
-	const match = devicePath
-		.toLowerCase()
-		.match(/(?:^|\/)([0-9a-f]+\.usb)(?=\/|$)/);
-	return match?.[1] ?? null;
+	const lower = devicePath.toLowerCase();
+	const platform = lower.match(/(?:^|\/)([0-9a-f]+\.usb)(?=\/|$)/);
+	if (platform?.[1]) return platform[1];
+	return lower.match(PCI_CONTROLLER)?.[1] ?? null;
+}
+
+function controllerOrdinals(
+	controllers: readonly (string | null)[],
+): Map<string, number> {
+	const unique = [
+		...new Set(controllers.filter((item): item is string => item !== null)),
+	].sort((a, b) => a.localeCompare(b, "en"));
+	return new Map(unique.map((controller, index) => [controller, index + 1]));
+}
+
+function rockSocketKey(
+	port: UsbPortPlacement,
+	controller: string | null,
+	portPath: string | null,
+): string {
+	if (port.scope === "root") return `${controller ?? "unknown"}:root`;
+	if (port.label !== null && !port.label.startsWith(">hub.")) return port.label;
+	if (port.socketLabel !== null && port.label !== null) {
+		return `${port.socketLabel}${port.label}`;
+	}
+	if (port.socketLabel !== null) return port.socketLabel;
+	return `${controller ?? "unknown"}:${portPath ?? "root"}`;
+}
+
+async function genericSocketKey(
+	devicesDir: string,
+	draft: Draft,
+	byName: Map<string, Draft>,
+): Promise<string> {
+	const controller = draft.controller ?? "unknown";
+	if (draft.portPath === null) return `${controller}:root`;
+	const rootPort = draft.portPath.split(".")[0] ?? draft.portPath;
+	const rest = draft.portPath.slice(rootPort.length);
+	const rootName = rootKernelName(draft.kernelName);
+	const mine = `${controller}:${rootPort}`;
+	const peer =
+		rootName === null
+			? null
+			: await readRootPeer(devicesDir, rootName, rootPort);
+	if (peer === null) return `${mine}${rest}`;
+	const peerController =
+		byName.get(`usb${peer.bus}`)?.controller ?? `bus${peer.bus}`;
+	const other = `${peerController}:${peer.port}`;
+	const base =
+		mine === other
+			? mine
+			: [mine, other].sort((a, b) => a.localeCompare(b, "en")).join("+");
+	return `${base}${rest}`;
+}
+
+/** `usbN-portM/peer` names the companion port. The link target is not file content. */
+async function readRootPeer(
+	devicesDir: string,
+	rootKernel: string,
+	rootPort: string,
+): Promise<{ bus: string; port: string } | null> {
+	const bus = rootKernel.slice(3);
+	const peerPath = join(
+		devicesDir,
+		rootKernel,
+		`${bus}-0:1.0`,
+		`usb${bus}-port${rootPort}`,
+		"peer",
+	);
+	try {
+		const target = await readlink(peerPath);
+		const match = /usb(\d+)-port(\d+)/.exec(target);
+		if (match?.[1] === undefined || match[2] === undefined) return null;
+		return { bus: match[1], port: match[2] };
+	} catch {
+		return null;
+	}
 }
 
 function portPathOf(kernelName: string): string | null {
