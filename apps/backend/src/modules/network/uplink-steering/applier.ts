@@ -70,11 +70,6 @@ export class UplinkSteeringApplier {
 		try {
 			const recoveredRoutes =
 				previous === undefined ? await this.#deps.discoverRoutes() : [];
-			const recoveredPolicyExclusions = recoveredRoutes.filter(
-				(route) =>
-					next.routes.some((candidate) => candidate.mark === route.mark) &&
-					!next.uplinks.some((uplink) => uplink.mark === route.mark),
-			);
 			const staleRecoveredRoutes = recoveredRoutePlans(
 				recoveredRoutes,
 				next.routes,
@@ -139,8 +134,6 @@ export class UplinkSteeringApplier {
 				await this.#deps.applyRuleset(buildShareRuleset(next), mode);
 				activatedService = mode === "activate";
 				stateCommitted = true;
-				for (const route of recoveredPolicyExclusions)
-					await this.#deps.flushConntrack(route.mark);
 				await this.#retireRecoveredRoutes(staleRecoveredRoutes);
 				if (!wasActive) await this.#deps.setIpForwarding(true);
 			}

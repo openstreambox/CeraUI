@@ -4,7 +4,10 @@ import {
 	planUplinkRoute,
 	type UplinkRouteManagerDeps,
 } from "../modules/network/uplink-steering/route-manager.ts";
-import { scripted } from "./uplink-steering-route-test-fixtures.ts";
+import {
+	absentTableError,
+	scripted,
+} from "./uplink-steering-route-test-fixtures.ts";
 
 test.each(["eth0", "wlan1", "wwan0"])(
 	"allocates an absent %s FIB before installing policy rules",
@@ -25,12 +28,8 @@ test.each(["eth0", "wlan1", "wwan0"])(
 		);
 		const deps: UplinkRouteManagerDeps = {
 			run: async (cmd, args) => {
-				if (args.join(" ") === `route show table ${plan.table}`) {
-					throw Object.assign(new Error("missing FIB"), {
-						code: 2,
-						stderr: "Error: ipv4: FIB table does not exist.\nDump terminated\n",
-					});
-				}
+				if (args.join(" ") === `route show table ${plan.table}`)
+					throw absentTableError();
 				return h.run(cmd, args);
 			},
 		};
@@ -69,7 +68,7 @@ test.each([
 		ensureUplinkRoute(plan, {
 			run: async (cmd, args) => {
 				if (args.includes("table"))
-					throw Object.assign(new Error("kernel failure"), failure);
+					throw Object.assign(absentTableError(), failure);
 				return h.run(cmd, args);
 			},
 		}),
@@ -94,11 +93,7 @@ test("retries an NM activation still waiting for its default route before publis
 		run: async (cmd, args) => {
 			if (args.join(" ") === "-4 route show default dev eth0")
 				return nmActivated ? "default via 192.0.2.1 dev eth0" : "";
-			if (args.join(" ") === "route show table 30001")
-				throw Object.assign(new Error("absent"), {
-					code: 2,
-					stderr: "Error: ipv4: FIB table does not exist.\nDump terminated",
-				});
+			if (args.join(" ") === "route show table 30001") throw absentTableError();
 			return h.run(cmd, args);
 		},
 	};
