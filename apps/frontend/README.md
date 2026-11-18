@@ -139,6 +139,11 @@ aggregate, precache, initial-route and largest-chunk gzip sizes. Inspect both
 checks when changing chunk boundaries: splitting a file can reduce its largest
 chunk while increasing aggregate transfer size.
 
+The eSIM image decoder (`jsqr`) has its own `vendor-qr-reader` chunk. Its
+dynamic import runs after an image is selected; keep it separate from the
+startup vendor group so opening the app does not download the decoder. It
+remains in the offline precache, so this split primarily reduces startup JS.
+
 ### Other Commands
 
 The separately hosted Encoder/Audio/Server bundles are built with
