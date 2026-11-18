@@ -1052,7 +1052,7 @@
 	"network.devices.detail.usbId": "USB 識別子",
 	"network.devices.details": "手助け用の詳細",
 	"network.devices.empty": "空です。",
-	"network.devices.hint.captureUsb2": "このキャプチャはここでは USB 2 です。1080p60 には青いポートへ移してください。",
+	"network.devices.hint.captureUsb2": "このキャプチャは USB 3 に対応していますが、USB 2 で動作しています。",
 	"network.devices.hint.rm520Usb2": "意図的に USB 2 のままです。USB 3 はこのモデムの無線に雑音を足します。",
 	"network.devices.kind.capture": "HDMI キャプチャ",
 	"network.devices.kind.hub": "USB ハブ",

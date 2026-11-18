@@ -59,6 +59,17 @@ export function getUsbDevicesWire(): UsbDevicesWire {
 	return cached;
 }
 
+/**
+ * The tree a browser receives when it authenticates. Polls that find the
+ * same tree do not broadcast, so this replay is the only way a later login
+ * sees a walk that already finished. It is not part of `status.getStatus`.
+ */
+export function replayAuthenticatedUsbDevices<
+	T extends Record<string, unknown>,
+>(status: T): T & { usb_devices: UsbDevicesWire } {
+	return { ...status, usb_devices: cached };
+}
+
 /** `platform-fc800000.usb-usb-0:1.2:1.0` → controller fc800000.usb, port 1.2. */
 export function usbLinkRefFromIdPath(
 	idPath: string | undefined,
@@ -192,9 +203,9 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				linkId: "lnk_0123456789abcdef",
 			}),
 			mockNode({
-				key: "fc880000.usb:usb2:1",
-				controller: "fc880000.usb",
-				portPath: "1",
+				key: "fc800000.usb:usb2:1.2",
+				controller: "fc800000.usb",
+				portPath: "1.2",
 				socketKey: "A2-top",
 				speedClass: "usb2",
 				portClass: "usb2",
@@ -240,6 +251,7 @@ function mockNode(
 		vendorId: null,
 		productId: null,
 		presence: "present",
+		superspeedCapable: false,
 		linkId: null,
 		...overrides,
 	};
@@ -302,6 +314,12 @@ export function deliverUsbDevicesWire(
 	return true;
 }
 
+function deviceCanUseSuperSpeed(version: string | null): boolean {
+	if (version === null) return false;
+	const major = Number(version.split(".")[0]);
+	return Number.isInteger(major) && major >= 3;
+}
+
 function toWireNode(node: UsbTreeNode, links: readonly UsbLinkRef[]) {
 	const linkId = chooseLinkId(node, links);
 	return {
@@ -321,6 +339,7 @@ function toWireNode(node: UsbTreeNode, links: readonly UsbLinkRef[]) {
 		vendorId: node.vendorId,
 		productId: node.productId,
 		presence: node.presence,
+		superspeedCapable: deviceCanUseSuperSpeed(node.usbVersion),
 		linkId,
 	};
 }

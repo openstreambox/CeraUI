@@ -1167,7 +1167,7 @@
 	"network.devices.detail.usbId": "USB ID",
 	"network.devices.details": "Details for helpers",
 	"network.devices.empty": "Empty.",
-	"network.devices.hint.captureUsb2": "This capture card runs at USB 2 here. Move it to a blue port for 1080p60.",
+	"network.devices.hint.captureUsb2": "This capture card can use USB 3, and it is running at USB 2.",
 	"network.devices.hint.rm520Usb2": "Kept at USB 2 on purpose: USB 3 adds noise to this modem's radio.",
 	"network.devices.kind.capture": "HDMI capture card",
 	"network.devices.kind.hub": "USB hub",

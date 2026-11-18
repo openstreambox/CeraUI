@@ -11,9 +11,14 @@ test.describe("Network devices page", () => {
 		await ensureAuthenticated(page);
 		await navigateTo(page, "network");
 		await page.getByTestId("open-devices").click();
+		const ports = page.getByTestId("devices-ports");
 		await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
-		await expect(page.getByText("Upper blue port")).toBeVisible();
-		await expect(page.getByText("Lower blue port")).toBeVisible();
+		await expect(
+			ports.getByRole("heading", { name: "Upper blue port" }),
+		).toBeVisible();
+		await expect(
+			ports.getByRole("heading", { name: "Lower blue port" }),
+		).toBeVisible();
 		const empty = page.getByTestId("device-empty");
 		await expect(empty).toBeVisible();
 		await expect(empty).not.toContainText("Unknown");

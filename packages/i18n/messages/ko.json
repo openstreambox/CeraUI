@@ -1052,7 +1052,7 @@
 	"network.devices.detail.usbId": "USB 식별자",
 	"network.devices.details": "도움을 위한 세부 정보",
 	"network.devices.empty": "비어 있습니다.",
-	"network.devices.hint.captureUsb2": "이 캡처 카드는 여기서 USB 2로 동작합니다. 1080p60에는 파란 포트로 옮기세요.",
+	"network.devices.hint.captureUsb2": "이 캡처 카드는 USB 3를 쓸 수 있는데 USB 2로 동작하고 있습니다.",
 	"network.devices.hint.rm520Usb2": "일부러 USB 2로 둡니다. USB 3는 이 모뎀 무선에 잡음을 더합니다.",
 	"network.devices.kind.capture": "HDMI 캡처 카드",
 	"network.devices.kind.hub": "USB 허브",

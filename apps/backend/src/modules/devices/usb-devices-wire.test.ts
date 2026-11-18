@@ -16,6 +16,7 @@ import {
 	deliverUsbDevicesWire,
 	mockUsbDevicesWire,
 	projectUsbDevices,
+	replayAuthenticatedUsbDevices,
 	usbLinkRefFromIdPath,
 	usbLinkRefFromIdPathResolved,
 } from "./usb-devices-wire.ts";
@@ -247,6 +248,51 @@ describe("usb device status payload", () => {
 		expect(socket).not.toContain("usb_devices");
 		expect(socket).not.toContain("fc000000");
 		expect(socket).toContain("is_streaming");
+	});
+
+	it("replays a cached tree for a browser that connects after publication", async () => {
+		const wire = mockUsbDevicesWire();
+		expect(
+			wire.nodes.find((node) => node.socketKey === "A2-top"),
+		).toMatchObject({
+			controller: "fc800000.usb",
+			portPath: "1.2",
+		});
+		let broadcasts = 0;
+		expect(
+			deliverUsbDevicesWire(wire, () => {
+				broadcasts += 1;
+			}),
+		).toBe(true);
+		expect(
+			deliverUsbDevicesWire(wire, () => {
+				broadcasts += 1;
+			}),
+		).toBe(false);
+		const hydrated = replayAuthenticatedUsbDevices({ is_streaming: false });
+		expect(hydrated.usb_devices).toEqual(wire);
+		expect(hydrated.is_streaming).toBe(false);
+		expect(broadcasts).toBe(1);
+		const remote = JSON.stringify(
+			projectRemoteLegacyFrame({ status: hydrated }),
+		);
+		expect(remote).not.toContain("usb_devices");
+		expect(remote).not.toContain("RM520N-GL");
+		const adapter = await Bun.file(
+			new URL("../../rpc/adapter.ts", import.meta.url),
+		).text();
+		expect(adapter).toContain(
+			"replayAuthenticatedUsbDevices(initialStatus.status)",
+		);
+		const procedure = await Bun.file(
+			new URL("../../rpc/procedures/status.procedure.ts", import.meta.url),
+		).text();
+		const getStatus = procedure.slice(
+			procedure.indexOf("export const getStatusProcedure"),
+			procedure.indexOf("export function buildInitialStatus"),
+		);
+		expect(getStatus).not.toContain("usb_devices");
+		expect(getStatus).not.toContain("replayAuthenticatedUsbDevices");
 	});
 
 	it("publishes a fixture tree for mock mode, including an empty USB-C port", () => {

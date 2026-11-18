@@ -1167,7 +1167,7 @@
 	"network.devices.detail.usbId": "USB पहचान",
 	"network.devices.details": "मदद के लिए विवरण",
 	"network.devices.empty": "खाली।",
-	"network.devices.hint.captureUsb2": "यह कैप्चर कार्ड यहाँ USB 2 पर चलता है। 1080p60 के लिए इसे नीले पोर्ट पर लगाएँ।",
+	"network.devices.hint.captureUsb2": "यह कैप्चर कार्ड USB 3 इस्तेमाल कर सकता है, और USB 2 पर चल रहा है।",
 	"network.devices.hint.rm520Usb2": "जानबूझकर USB 2 पर रखा गया: USB 3 इस मॉडेम के रेडियो में शोर जोड़ता है।",
 	"network.devices.kind.capture": "HDMI कैप्चर कार्ड",
 	"network.devices.kind.hub": "USB हब",

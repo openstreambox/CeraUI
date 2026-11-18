@@ -276,7 +276,7 @@ describe("ROCK 5B+ port map", () => {
 	it("uses generic names when the board is not a ROCK 5B+", () => {
 		expect(describeUsbPort("generic", "fc000000.usb", "1")).toEqual({
 			label: null,
-			name: "USB fc000000.usb port 1",
+			name: "USB port 1",
 			scope: "generic",
 			socketLabel: null,
 			socketName: null,
@@ -681,7 +681,7 @@ describe("sysfs fixtures", () => {
 		expect(orange.board).toBe("generic");
 		expect(nodeNamed(orange, "5-1").port).toMatchObject({
 			label: null,
-			name: "USB fc400000.usb:1",
+			name: "USB port 1",
 			scope: "generic",
 		});
 
@@ -718,7 +718,7 @@ describe("sysfs fixtures", () => {
 		expect(nodeNamed(rock, "1-1").port.name).toBe("USB-C data port");
 		expect(nodeNamed(rock, "2-1").port).toMatchObject({
 			label: null,
-			name: "USB aaaa0000.usb:1",
+			name: "USB port 1",
 			scope: "generic",
 		});
 		expect(nodeNamed(rock, "2-1").kind).toBe("other");
@@ -899,9 +899,10 @@ describe("sysfs fixtures", () => {
 		expect(usb2.key).toBe("0000:00:14.0:usb2:1");
 		expect(usb3.key).toBe("0000:00:14.0:usb3:1");
 		expect(usb2.key).not.toContain("3-1");
-		expect(slow.port.name).toBe("USB 0000:00:0d.0:1");
-		expect(usb2.port.name).toBe("USB 0000:00:14.0:1");
-		expect(usb3.port.name).toBe("USB 0000:00:14.0:1");
+		expect(slow.port.name).toBe("USB port 1");
+		expect(usb2.port.name).toBe("USB port 1");
+		expect(usb3.port.name).toBe("USB port 1");
+		expect(slow.socketKey).not.toBe(usb2.socketKey);
 		expect(usb2.socketKey).toBe("0000:00:14.0:1");
 		expect(usb3.socketKey).toBe(usb2.socketKey);
 		expect(slow.socketKey).toBe("0000:00:0d.0:1");
@@ -1014,6 +1015,48 @@ describe("sysfs fixtures", () => {
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
+	});
+
+	it("shows an empty socket when its root hub is up and the port is idle", async () => {
+		const tree = await withTree(
+			[
+				rootHub("usb1", "fc400000.usb", "480"),
+				rootHub("usb2", "fc800000.usb", "480"),
+				{
+					name: "2-1",
+					controller: "fc800000.usb",
+					speed: "480",
+					deviceClass: "09",
+					product: "Hub",
+					maxchild: "4",
+					interfaces: [{ suffix: "1.0", driver: "hub" }],
+				},
+				{
+					name: "2-1.4",
+					controller: "fc800000.usb",
+					speed: "480",
+					product: "DW5821e",
+					interfaces: [{ suffix: "1.0" }],
+				},
+			],
+			"rock-5b-plus",
+		);
+		expect(
+			flatten(tree.roots).find((node) => node.socketKey === "A3-bot"),
+		).toMatchObject({
+			presence: "nothing-detected",
+			port: { name: "Lower blue port" },
+		});
+		expect(
+			flatten(tree.roots).find((node) => node.socketKey === "A2-top"),
+		).toMatchObject({ presence: "nothing-detected" });
+		expect(
+			flatten(tree.roots).find((node) => node.socketKey === "A2-bot"),
+		).toMatchObject({ presence: "nothing-detected" });
+		expect(nodeNamed(tree, "2-1.4")).toMatchObject({
+			socketKey: "M2B",
+			presence: "present",
+		});
 	});
 
 	it("keeps the same socket key when bus numbers change", async () => {

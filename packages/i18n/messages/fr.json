@@ -1175,7 +1175,7 @@
 	"network.devices.detail.usbId": "Identifiant USB",
 	"network.devices.details": "Détails pour l'aide",
 	"network.devices.empty": "Vide.",
-	"network.devices.hint.captureUsb2": "Cette carte de capture tourne ici en USB 2. Une prise bleue donne le 1080p60.",
+	"network.devices.hint.captureUsb2": "Cette carte de capture peut utiliser l'USB 3, et elle tourne en USB 2.",
 	"network.devices.hint.rm520Usb2": "Laissé en USB 2 volontairement : l'USB 3 ajoute du bruit à la radio de ce modem.",
 	"network.devices.kind.capture": "Carte de capture HDMI",
 	"network.devices.kind.hub": "Concentrateur USB",

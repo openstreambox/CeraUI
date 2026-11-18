@@ -1052,7 +1052,7 @@
 	"network.devices.detail.usbId": "USB 标识",
 	"network.devices.details": "给协助者的详情",
 	"network.devices.empty": "空。",
-	"network.devices.hint.captureUsb2": "这块采集卡在这里以 USB 2 运行。要 1080p60，请换到蓝色端口。",
+	"network.devices.hint.captureUsb2": "这块采集卡可以使用 USB 3，现在以 USB 2 运行。",
 	"network.devices.hint.rm520Usb2": "故意保持在 USB 2：USB 3 会给这只调制解调器的射频增加噪声。",
 	"network.devices.kind.capture": "HDMI 采集卡",
 	"network.devices.kind.hub": "USB 集线器",

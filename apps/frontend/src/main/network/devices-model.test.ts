@@ -20,6 +20,7 @@ function node(
 		vendorId: null,
 		productId: null,
 		presence: "present",
+		superspeedCapable: false,
 		linkId: null,
 		...overrides,
 	};
@@ -107,6 +108,19 @@ describe("devices page model", () => {
 					product: "USB capture",
 					speedClass: "usb2",
 					portClass: "usb3",
+					superspeedCapable: true,
+				}),
+				node({
+					key: "usb2cam",
+					socketKey: "A2-top",
+					name: "Upper black port",
+					label: "A2-top",
+					kind: "capture",
+					product: "USB2 camera",
+					speedClass: "usb2",
+					portClass: "usb2",
+					colour: "black",
+					superspeedCapable: false,
 				}),
 			]),
 		);
@@ -115,6 +129,45 @@ describe("devices page model", () => {
 		expect(rows.find((row) => row.key === "modem")?.hint).toBe("rm520-usb2");
 		expect(rows.find((row) => row.key === "slot")?.hint).toBeNull();
 		expect(rows.find((row) => row.key === "cam")?.hint).toBe("capture-usb2");
+		expect(rows.find((row) => row.key === "usb2cam")?.hint).toBeNull();
+	});
+
+	it("keeps a generic hub and its child on one socket", () => {
+		const page = devicesPageModel(
+			wire([
+				node({
+					key: "hub",
+					socketKey: "0000:00:14.0:1",
+					name: "USB port 1",
+					label: null,
+					controller: "0000:00:14.0",
+					portPath: "1",
+					kind: "hub",
+					scope: "generic",
+					colour: null,
+				}),
+				node({
+					key: "child",
+					parentKey: "hub",
+					socketKey: "0000:00:14.0:1.2",
+					name: "USB port 1.2",
+					label: null,
+					controller: "0000:00:14.0",
+					portPath: "1.2",
+					kind: "wifi",
+					scope: "generic",
+					colour: null,
+				}),
+			]),
+		);
+		if (page.status !== "ok") throw new Error("expected a tree");
+		expect(page.groups).toHaveLength(1);
+		expect(page.groups[0]?.id).toBe("0000:00:14.0:1");
+		expect(page.groups[0]?.name).toBe("USB port 1");
+		expect(page.groups[0]?.rows.map((row) => row.key)).toEqual([
+			"hub",
+			"child",
+		]);
 	});
 
 	it("says checking when the reader has not answered", () => {
