@@ -235,17 +235,16 @@ async function spawnCollect(
 		throw new RunAbortError(cmd);
 	}
 
+	// Secret goes to stdin ONLY, never to argv. It is handed over as bytes, not
+	// as a pipe: Bun backs `stdin: "pipe"` with a socketpair, and a child that
+	// opens /dev/stdin by path (e.g. `--auth-key=file:/dev/stdin`) gets ENXIO on
+	// a socket. For bytes Bun uses an anonymous in-memory file, which can be
+	// both read and opened, and never touches disk.
 	const child = Bun.spawn(argv, {
-		stdin: input === undefined ? "ignore" : "pipe",
+		stdin: input === undefined ? "ignore" : new TextEncoder().encode(input),
 		stdout: "pipe",
 		stderr: "pipe",
 	});
-
-	if (input !== undefined) {
-		// Secret goes to stdin ONLY — never to argv.
-		child.stdin?.write(input);
-		child.stdin?.end();
-	}
 
 	const kill = () => {
 		try {

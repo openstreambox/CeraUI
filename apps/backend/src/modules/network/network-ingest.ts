@@ -174,7 +174,7 @@ const LAN_PREFERRED_RE = /^(?:eth|en)/;
 // valid publish target: the ingress firewall drops WAN/modem paths, so
 // advertising one would be a lie. WiFi is handled separately (AP-mode included,
 // station excluded) so `wl` is deliberately absent here.
-const LAN_EXCLUDE_RE = /^(?:usb|ww|lo$|docker|veth|l4tbr|tun|tap)/;
+const LAN_EXCLUDE_RE = /^(?:usb|ww|lo$|docker|veth|l4tbr|tun|tap|tailscale)/;
 
 function isHotspotIface(entry: { error?: number }): boolean {
 	return ((entry.error ?? 0) & NETIF_ERR_HOTSPOT) !== 0;

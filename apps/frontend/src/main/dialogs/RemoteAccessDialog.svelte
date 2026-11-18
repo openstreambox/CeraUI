@@ -49,8 +49,11 @@ const forgetBusy = $derived(getOperationPhase(FORGET_KEY) === 'pending');
 
 let authKey = $state('');
 let confirmingForget = $state(false);
+let confirmingOff = $state(false);
 
 const keyLooksValid = $derived(TAILSCALE_AUTH_KEY_RE.test(authKey.trim()));
+// Say why Join is disabled once something has been typed.
+const showKeyHint = $derived(authKey.trim() !== '' && !keyLooksValid);
 
 const stateLabel = $derived.by(() => {
 	switch (phase) {
@@ -80,8 +83,20 @@ function failureMessage(reason: string | undefined, fallback: () => string): str
 	}
 }
 
+// Off asks first: on a box reached over Tailscale, it ends this very session.
+function onSwitch(next: boolean) {
+	confirmingForget = false;
+	if (next) {
+		confirmingOff = false;
+		void setEnabled(true);
+	} else {
+		confirmingOff = true;
+	}
+}
+
 async function setEnabled(next: boolean) {
 	let refusal: string | undefined;
+	confirmingOff = false;
 	confirmingForget = false;
 	await osCommand({
 		key: SWITCH_KEY,
@@ -157,8 +172,10 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 				'flex items-center justify-between gap-3 rounded-lg border px-4 py-3',
 				phase === 'connected' ? 'border-primary/30 bg-primary/5' : 'border-border bg-muted/40',
 			)}
+			aria-live="polite"
 			data-state={phase}
 			data-testid="remote-access-status"
+			role="status"
 		>
 			<div class="flex min-w-0 items-center gap-2.5 text-sm">
 				{#if phase === 'joining'}
@@ -216,13 +233,39 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 					{/if}
 					<Switch
 						aria-label={m["advanced.remoteAccess.switch"]()}
-						bind:checked={() => on, (next) => void setEnabled(next)}
+						bind:checked={() => on, (next) => onSwitch(next)}
 						data-testid="remote-access-switch"
 						disabled={switchBusy || joinBusy || forgetBusy}
 					/>
 				</span>
 			</div>
 		</div>
+
+		{#if confirmingOff}
+			<div
+				class="border-destructive/40 bg-destructive/5 space-y-3 rounded-lg border px-4 py-3"
+				data-testid="remote-access-off-confirm"
+			>
+				<p class="text-sm">{m["advanced.remoteAccess.offHint"]()}</p>
+				<div class="flex gap-2">
+					<Button
+						class="flex-1"
+						data-testid="remote-access-off-cancel"
+						onclick={() => (confirmingOff = false)}
+						variant="outline"
+					>
+						{m["advanced.remoteAccess.offCancel"]()}
+					</Button>
+					<Button
+						class="bg-destructive text-destructive-foreground hover:bg-destructive/90 flex-1"
+						data-testid="remote-access-off-yes"
+						onclick={() => void setEnabled(false)}
+					>
+						{m["advanced.remoteAccess.offConfirm"]()}
+					</Button>
+				</div>
+			</div>
+		{/if}
 
 		{#if phase === 'off'}
 			<p class="text-muted-foreground text-sm" data-testid="remote-access-body">
@@ -258,6 +301,8 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 					id="remote-access-key"
 					class="font-mono"
 					autocapitalize="off"
+					aria-describedby={showKeyHint ? 'remote-access-key-hint' : undefined}
+					aria-invalid={showKeyHint}
 					autocomplete="off"
 					bind:value={authKey}
 					data-testid="remote-access-key"
@@ -265,6 +310,11 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 					spellcheck={false}
 					type="password"
 				/>
+				{#if showKeyHint}
+					<p class="text-destructive text-xs" data-testid="remote-access-key-hint" id="remote-access-key-hint">
+						{m["advanced.remoteAccess.keyInvalid"]()}
+					</p>
+				{/if}
 				<Button
 					class="w-full gap-2"
 					data-testid="remote-access-join-button"

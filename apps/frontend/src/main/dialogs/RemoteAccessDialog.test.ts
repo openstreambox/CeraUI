@@ -163,11 +163,35 @@ describe("states", () => {
 });
 
 describe("off switch", () => {
-	it("turning off sends enabled:false and waits for the device", async () => {
+	it("asks before turning off, and says the session over Tailscale ends", async () => {
+		await open({ state: "connected", hostname: "box" });
+		await fireEvent.click(switchEl());
+		expect(tailscaleSetEnabled).not.toHaveBeenCalled();
+		// Still on: the switch shows the device, not the click.
+		expect(switchEl().getAttribute("aria-checked")).toBe("true");
+		expect(
+			screen.getByTestId("remote-access-off-confirm").textContent,
+		).toContain(m["advanced.remoteAccess.offHint"]());
+		expect(m["advanced.remoteAccess.offHint"]()).toContain(
+			"Tailscale, you'll lose it",
+		);
+	});
+
+	it("Keep it on backs out without a request", async () => {
+		await open({ state: "connected", hostname: "box" });
+		await fireEvent.click(switchEl());
+		await fireEvent.click(screen.getByTestId("remote-access-off-cancel"));
+		expect(screen.queryByTestId("remote-access-off-confirm")).toBeNull();
+		expect(switchEl().getAttribute("aria-checked")).toBe("true");
+		expect(tailscaleSetEnabled).not.toHaveBeenCalled();
+	});
+
+	it("turning off sends enabled:false after the confirm and waits for the device", async () => {
 		const reply = Promise.withResolvers<{ success: boolean }>();
 		tailscaleSetEnabled.mockReturnValue(reply.promise);
 		await open({ state: "connected", hostname: "box" });
 		await fireEvent.click(switchEl());
+		await fireEvent.click(screen.getByTestId("remote-access-off-yes"));
 		expect(tailscaleSetEnabled).toHaveBeenCalledWith({ enabled: false });
 		// Pessimistic: still on until the device reports off.
 		expect(switchEl().getAttribute("aria-checked")).toBe("true");
@@ -178,7 +202,7 @@ describe("off switch", () => {
 		);
 	});
 
-	it("turning on sends enabled:true", async () => {
+	it("turning on needs no confirm and sends enabled:true", async () => {
 		await open({ state: "off" });
 		await fireEvent.click(switchEl());
 		expect(tailscaleSetEnabled).toHaveBeenCalledWith({ enabled: true });
@@ -191,7 +215,7 @@ describe("off switch", () => {
 	]) {
 		it(`explains a ${reason} refusal`, async () => {
 			tailscaleSetEnabled.mockResolvedValue({ success: false, error: reason });
-			await open({ state: "connected", hostname: "box" });
+			await open({ state: "off" });
 			await fireEvent.click(switchEl());
 			await waitFor(() =>
 				expect(toastError).toHaveBeenCalledWith(
@@ -200,6 +224,13 @@ describe("off switch", () => {
 			);
 		});
 	}
+
+	it("announces state changes", async () => {
+		await open({ state: "off" });
+		const status = screen.getByTestId("remote-access-status");
+		expect(status.getAttribute("role")).toBe("status");
+		expect(status.getAttribute("aria-live")).toBe("polite");
+	});
 });
 
 describe("join", () => {
@@ -224,6 +255,10 @@ describe("join", () => {
 		await fireEvent.input(input, {
 			target: { value: "--advertise-exit-node" },
 		});
+		expect(screen.getByTestId("remote-access-key-hint").textContent).toContain(
+			m["advanced.remoteAccess.keyInvalid"](),
+		);
+		expect(input.getAttribute("aria-invalid")).toBe("true");
 		const button = screen.getByTestId(
 			"remote-access-join-button",
 		) as HTMLButtonElement;
@@ -258,6 +293,14 @@ describe("forget", () => {
 		await fireEvent.click(screen.getByTestId("remote-access-forget-cancel"));
 		expect(screen.queryByTestId("remote-access-forget-confirm")).toBeNull();
 		expect(tailscaleLogout).not.toHaveBeenCalled();
+	});
+
+	it("warns that a session over Tailscale ends", async () => {
+		await open({ state: "connected", hostname: "box" });
+		await fireEvent.click(screen.getByTestId("remote-access-forget"));
+		expect(m["advanced.remoteAccess.forgetHint"]()).toContain(
+			"Tailscale, you'll lose it",
+		);
 	});
 
 	it("logs out after the second click", async () => {
