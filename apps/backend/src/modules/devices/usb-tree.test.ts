@@ -916,6 +916,7 @@ describe("sysfs fixtures", () => {
 				portClass: "usb3",
 			});
 			expect(modem.socketKey).toBe("C");
+			expect(modem.presence).toBe("present");
 			expect(modem.netNames).toEqual(["net0"]);
 			const stick = nodeNamed(tree, "1-1.2");
 			expect(stick.kind).toBe("wifi");
@@ -941,6 +942,47 @@ describe("sysfs fixtures", () => {
 			expect(encoded).not.toContain("001122334455");
 			expect(encoded).not.toContain("wlx001122334455");
 			expect(encoded).not.toContain("wwx001122334455");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("shows J11 as nothing detected when the USB-C controller has no host bus", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-tree-"));
+		try {
+			await writeFixture(root, rock2StuckTree());
+			const pathOf = async (name: string) =>
+				realpath(join(root, "sys/bus/usb/devices", name));
+			expect(await pathOf("3-1.4")).toContain("fc800000.usb/usb3/3-1/3-1.4");
+			expect(await pathOf("3-1.4")).not.toContain("xhci-hcd");
+			expect(await pathOf("usb2")).toContain("fc840000.usb/usb2");
+			expect(await pathOf("usb7")).toContain(
+				"fcd00000.usb/xhci-hcd.9.auto/usb7",
+			);
+			await expect(pathOf("9-1")).rejects.toThrow();
+			await expect(pathOf("usb9")).rejects.toThrow();
+
+			const tree = await readUsbTree({
+				sysfsRoot: root,
+				board: "rock-5b-plus",
+			});
+			expect(tree.status).toBe("ok");
+			const j11 = flatten(tree.roots).find((node) => node.socketKey === "C");
+			expect(j11).toMatchObject({
+				controller: "fc000000.usb",
+				presence: "nothing-detected",
+				port: { label: "C", name: "USB-C data port" },
+				speedClass: "unknown",
+				product: null,
+			});
+			expect(
+				flatten(tree.roots).some(
+					(node) =>
+						node.controller === "fc000000.usb" && node.presence === "present",
+				),
+			).toBe(false);
+			expect(nodeNamed(tree, "3-1.4").port.label).toBe("M2B");
+			expect(nodeNamed(tree, "1-1.2").port.socketLabel).toBe("A3-bot");
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -1179,6 +1221,98 @@ function rock2NormalTree(): FixtureDevice[] {
 			],
 		},
 		xhci("usb10", "fc000000.usb", "5000", "10"),
+	];
+}
+
+function rock2StuckTree(): FixtureDevice[] {
+	const xhci = (
+		name: string,
+		controller: string,
+		speed: string,
+		index: string,
+	): FixtureDevice =>
+		shapedRoot(name, controller, speed, {
+			busDriver: "xhci",
+			xhciIndex: index,
+		});
+	const ehci = (
+		name: string,
+		controller: string,
+		speed: string,
+	): FixtureDevice =>
+		shapedRoot(name, controller, speed, { busDriver: "ehci" });
+	return [
+		xhci("usb1", "fc400000.usb", "480", "0"),
+		{
+			name: "1-1",
+			controller: "fc400000.usb",
+			xhciIndex: "0",
+			speed: "480",
+			deviceClass: "09",
+			product: "Hub",
+			maxchild: "4",
+			interfaces: [{ suffix: "1.0", driver: "hub" }],
+		},
+		{
+			name: "1-1.2",
+			controller: "fc400000.usb",
+			xhciIndex: "0",
+			speed: "480",
+			product: "Wi-Fi stick",
+			interfaces: [{ suffix: "1.0" }],
+		},
+		{
+			name: "1-1.3",
+			controller: "fc400000.usb",
+			xhciIndex: "0",
+			speed: "480",
+			product: "Wi-Fi stick",
+			interfaces: [{ suffix: "1.0" }],
+		},
+		ehci("usb2", "fc840000.usb", "12"),
+		ehci("usb3", "fc800000.usb", "480"),
+		{
+			name: "3-1",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "480",
+			deviceClass: "09",
+			product: "Hub",
+			maxchild: "4",
+			interfaces: [{ suffix: "1.0", driver: "hub" }],
+		},
+		{
+			name: "3-1.2",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "480",
+			product: "Modem",
+			interfaces: numberedIfaces("2", 7, "option"),
+		},
+		{
+			name: "3-1.3",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "12",
+			product: "Bluetooth adapter",
+			interfaces: [
+				{ suffix: "1.0", driver: "btusb" },
+				{ suffix: "1.1", driver: "btusb" },
+			],
+		},
+		{
+			name: "3-1.4",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "480",
+			product: "Modem",
+			interfaces: numberedIfaces("2", 7, "option"),
+		},
+		xhci("usb4", "fc400000.usb", "5000", "0"),
+		ehci("usb5", "fc880000.usb", "480"),
+		ehci("usb6", "fc8c0000.usb", "12"),
+		xhci("usb7", "fcd00000.usb", "480", "9"),
+		xhci("usb8", "fcd00000.usb", "5000", "9"),
 	];
 }
 
