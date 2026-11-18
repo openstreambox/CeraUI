@@ -93,6 +93,13 @@ describe("Stream ID disclosure boundaries", () => {
 		"--streamid syntheticUnsavedKey --port: 1",
 		'stream_id: Some(\n    "syntheticUnsavedKey",\n),',
 		'{\n  "streamid":\n    "syntheticUnsavedKey"\n}',
+		"cfg.streamid=syntheticUnsavedKey",
+		"TypeError: config.srt_streamid: syntheticUnsavedKey",
+		'opts.relay_streamid_override = "syntheticUnsavedKey"',
+		JSON.stringify(JSON.stringify({ srt_streamid: "syntheticUnsavedKey" })),
+		JSON.stringify(
+			JSON.stringify(JSON.stringify({ stream_id: "syntheticUnsavedKey" })),
+		),
 	])("scrubs unretained labelled record %s while keeping frames", (record) => {
 		const frame = "    at connect (/app/helpers/stream-id-secret.ts:63:4)";
 		for (const redact of [redactStreamIdText, redactStreamIdJournal]) {
@@ -135,11 +142,71 @@ describe("Stream ID disclosure boundaries", () => {
 			expect(logRedact({ message: text })).toEqual({ message: expected });
 		},
 	);
+	test.each([
+		[
+			"a raw journal",
+			[
+				'Nov 15 10:00:00 box ceralive[612]: stream_id: Some(\n                                       "syntheticUnsavedKey",\n                                   ),',
+				"Nov 15 10:00:01 box ceralive[612]: link wwan0 up",
+				"Nov 15 10:00:02 box kernel: usb 2-1: disconnect",
+			],
+		],
+		[
+			"the support journal",
+			[
+				"[boot 0] 2026-11-15T10:00:00.000Z systemd: validating stream_id:",
+				"[boot 0] 2026-11-15T10:00:01.000Z ceralive: start ok",
+				"[boot 0] 2026-11-15T10:00:02.000Z kernel: thermal 70C",
+				'[boot 0] 2026-11-15T10:00:03.000Z ceralive: "stream_id": {\n  "key": "syntheticUnsavedKey"\n}',
+				"[boot 0] 2026-11-15T10:00:04.000Z ModemManager: modem 1 reconnected",
+			],
+		],
+	] as const)(
+		"a labelled value in %s hides only its own record",
+		(_, records) => {
+			const output = redactStreamIdJournal(records.join("\n"));
+			expect(output).not.toContain("syntheticUnsavedKey");
+			for (const later of records.slice(1).filter((r) => !/stream_id/.test(r)))
+				expect(output).toContain(later);
+			// Outside a journal, a value still runs to the next stack frame.
+			expect(
+				redactStreamIdText("stream_id:\nsyntheticUnsavedKey\nnext line"),
+			).not.toContain("next line");
+		},
+	);
+	test.each([
+		"SRT streamid not specified",
+		"Error: invalid streamid",
+		"stream_id is required",
+		"    at streamId (/app/a.ts:1:1)",
+		"    at async Object.streamId [as start] (file:///app/a.ts:1:1)",
+		'[boot 0] 2026-11-15T10:00:00.000Z ceralive: {"msg":"SRT streamid not specified","level":"error"}',
+	])("keeps a line that only names the field: %s", (line) => {
+		expect(redactStreamIdJournal(line)).toBe(line);
+		if (!line.startsWith("[boot")) expect(redactStreamIdText(line)).toBe(line);
+	});
+	test.each([
+		"srt_streamid must be at most 512 characters",
+		"receiver rejected the streamid (access denied)",
+		"syntheticUnsavedKey: invalid streamid",
+		'"syntheticUnsavedKey" rejected: unknown stream_id',
+		"live: invalid streamid",
+		"streamid not specified syntheticUnsavedKey",
+		"streamid syntheticUnsavedKey",
+		"    at streamid=syntheticUnsavedKey:1:1",
+		'[boot 0] ceralive: {"msg":"SRT streamid not specified","meta":{"stream_id":"syntheticUnsavedKey"}}',
+	])("still blanks a labelled line that may hold a value: %s", (line) => {
+		expect(redactStreamIdText(line)).toBe("[REDACTED]");
+		expect(redactStreamIdJournal(line)).toBe("[REDACTED]");
+	});
 	test("unrelated field names do not erase diagnostics", () => {
 		for (const text of [
 			"engine upstream_idle: true",
 			"12:30: stream identity established",
 			"streamid_configured: true",
+			"reading settings.streamId from the form",
+			"    at StreamId.parse (/app/a.ts:1:1)",
+			"    at load (C:\\app\\streamid\\config.ts:1:1)",
 		]) {
 			expect(redactStreamIdText(text)).toBe(text);
 			expect(redactStreamIdJournal(text)).toBe(text);
