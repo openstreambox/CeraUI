@@ -283,6 +283,20 @@ describe("ROCK 5B+ port map", () => {
 		expect(sanitizeUsbProduct("USB Serial Converter")).toBe(
 			"USB Serial Converter",
 		);
+		for (const kept of [
+			"RTL8812BU",
+			"RTL8188EUS",
+			"MT7921AUN",
+			"USB3.0-CRW",
+			"RM520N-GL",
+			"C920",
+			"Archer T3U Plus",
+		]) {
+			expect(sanitizeUsbProduct(kept)).toBe(kept);
+		}
+		expect(sanitizeUsbProduct("Cam Link 4K 2C1MX4A01234")).toBeNull();
+		expect(sanitizeUsbProduct("Capture A1B2C3D4E5F6G7H8")).toBeNull();
+		expect(sanitizeUsbProduct("A1B2C3D4E5F6G7H8")).toBeNull();
 		expect(boardFromIdentityText("Orange Pi 5 Plus")).toBe("generic");
 		expect(boardFromIdentityText("Radxa ROCK 5B+")).toBe("rock-5b-plus");
 		expect(boardFromIdentityText("radxa,rock-5b-plus")).toBe("rock-5b-plus");
