@@ -212,7 +212,77 @@ table inet ceralive_share {
 		}
 
 		expect(ruleset).not.toContain("hook output");
+		expect(ruleset).not.toContain("drop");
 		expect(ruleset).not.toMatch(/\b(?:limit rate|meter|police)\b/);
+	});
+
+	test("blocks new forwarded client IPv4 flows only when no uplink is selectable", () => {
+		const retained = steeringUplink("retained", "wan0", 100);
+		for (const uplinks of [
+			[],
+			[{ ...retained, weight: 0 }],
+			[{ ...retained, selectable: false }],
+			[{ ...retained, selectable: false, weight: 0 }],
+		]) {
+			const ruleset = buildShareRuleset({
+				clientZones: [
+					{ ifname: "client0", ipv4Cidr: "10.42.0.0/24" },
+					{ ifname: "client1", ipv4Cidr: "10.43.0.0/24" },
+				],
+				uplinks,
+			});
+			const prerouting = ruleset
+				.split("chain prerouting {")[1]
+				?.split("\n\t}")[0];
+			const forward = ruleset.split("chain forward {")[1]?.split("\n\t}")[0];
+
+			// Local DHCP, DNS and UI requests take input, not forward. Host-originated
+			// traffic takes output; neither path may acquire the all-down drop.
+			expect(prerouting).not.toContain("drop");
+			expect(forward).toContain(
+				"type filter hook forward priority filter; policy accept;",
+			);
+			expect(forward).toContain(
+				'iifname "client0" ip saddr 10.42.0.0/24 ct state new drop',
+			);
+			expect(forward).toContain(
+				'iifname "client1" ip saddr 10.43.0.0/24 ct state new drop',
+			);
+			expect(
+				ruleset.split("\n").filter((line) => line.includes(" drop")),
+			).toHaveLength(2);
+			expect(ruleset).not.toContain("hook input");
+			expect(ruleset).not.toContain("hook output");
+			expect(ruleset).not.toContain("ceralive_ingest_fw");
+			expect(ruleset).not.toContain("numgen random");
+		}
+	});
+
+	test("removes the all-down drop when a selectable uplink returns", () => {
+		const clientZones = [{ ifname: "client0", ipv4Cidr: "10.42.0.0/24" }];
+		const unavailable = buildShareRuleset({ clientZones, uplinks: [] });
+		const recovered = buildShareRuleset({
+			clientZones,
+			uplinks: [steeringUplink("returned", "wan0", 100)],
+		});
+
+		expect(unavailable).toContain("ct state new drop");
+		expect(recovered).toContain("numgen random");
+		expect(recovered).not.toContain("drop");
+	});
+
+	test("keeps a selectable primary available alongside a zero-weight backup", () => {
+		const primary = steeringUplink("primary", "wan0", 100);
+		const backup = steeringUplink("backup", "wan1", 100);
+		for (const selectable of [false, true]) {
+			const ruleset = buildShareRuleset({
+				clientZones: [{ ifname: "client0", ipv4Cidr: "10.42.0.0/24" }],
+				uplinks: [primary, { ...backup, selectable, weight: 0 }],
+			});
+			expect(ruleset).toContain("numgen random");
+			expect(ruleset).not.toContain("hook forward");
+			expect(ruleset).not.toContain("drop");
+		}
 	});
 
 	test("emits bookworm-compatible single-register mark expressions", () => {

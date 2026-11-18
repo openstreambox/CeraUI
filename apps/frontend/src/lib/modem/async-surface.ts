@@ -164,6 +164,13 @@ export const MODEM_NETWORK_SCAN_BOUND_MS = 270_000;
  * up here.
  */
 export const MODEM_ASYNC_SURFACES = {
+	esimOperation: {
+		what: "exclusive eUICC management and verified profile readback",
+		bound: "reply-bounded",
+		boundMs: 240_000,
+		terminal: ["loaded", "applied", "refused", "failed", "timed-out"],
+		staleAfterMs: undefined,
+	},
 	getCapabilities: {
 		what: "the device-wide capability gates, read on every open",
 		bound: "read-bound",

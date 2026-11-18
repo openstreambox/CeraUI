@@ -773,6 +773,26 @@ for (const unverified of [false, true]) {
 		deps.findHotspotConn = async () => undefined;
 
 		const prepared = await prepareHotspotForInterface(B, iface, {}, deps);
+		deps.configureProfile = async (_mac, fields, _fallback, remember) => {
+			effects.push([
+				"configure",
+				fields["802-11-wireless.ssid"],
+				fields["802-11-wireless-security.psk"],
+			]);
+			remember?.("b-new-profile");
+			return "b-new-profile";
+		};
+		const configured = await prepareHotspotForInterface(
+			B,
+			iface,
+			{ name: OWN_PAIR.ssid, password: OWN_PAIR.password },
+			deps,
+		);
+		expect(configured).toEqual({
+			success: true,
+			name: OWN_PAIR.ssid,
+			password: OWN_PAIR.password,
+		});
 		const started = await startHotspotForInterface(B, iface, deps);
 
 		expect(prepared).toEqual({
@@ -782,8 +802,8 @@ for (const unverified of [false, true]) {
 			firstTime: true,
 		});
 		expect(started).toEqual({ success: true });
-		expect(effects.filter((effect) => effect[0] === "create")).toEqual([
-			["create", OWN_PAIR.ssid, OWN_PAIR.password],
+		expect(effects.filter((effect) => effect[0] === "configure")).toEqual([
+			["configure", OWN_PAIR.ssid, OWN_PAIR.password],
 		]);
 		expect(getHotspotCredentials(B)).toMatchObject({
 			...OWN_PAIR,
@@ -948,6 +968,25 @@ for (const stage of [
 			if (stage === "saved sweep") await pause();
 		};
 		const start = startHotspotForInterface(B, iface, deps);
+		if (stage !== "binding" && stage !== "activation") {
+			const result = await start;
+			if (stage === "autoconnect") {
+				expect(result).toEqual({ success: true });
+				expect(effects.some((effect) => effect[0] === "up")).toBe(true);
+			} else {
+				expect(result).toEqual({ success: false, error: "activation-failed" });
+				expect(effects).toEqual([]);
+			}
+			expect(
+				effects.some(
+					(effect) =>
+						effect[0] === "create" ||
+						String(effect[1]).includes("connection.autoconnect"),
+				),
+			).toBe(false);
+			expect(getHotspotCredentials(B)?.password).toBe(OWN_PAIR.password);
+			return;
+		}
 		await entered.promise;
 		ownByA(false);
 		iface.hotspot.conn = FOREIGN;
@@ -1227,7 +1266,7 @@ for (const stage of ["binding", "activation", "autoconnect"] as const) {
 		deps.nmConnSetFields = async (uuid, fields) => {
 			effects.push([uuid, JSON.stringify(fields)]);
 			if (
-				(stage === "binding" &&
+				((stage === "binding" || stage === "autoconnect") &&
 					fields["802-11-wireless.mac-address"] !== undefined) ||
 				(stage === "autoconnect" && fields["connection.autoconnect"] === "yes")
 			) {
