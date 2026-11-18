@@ -30,6 +30,7 @@ import {
 	collisionGroups,
 	isMappableEntry,
 	renderIpsFile,
+	sameMapping,
 } from "../modules/streaming/bind-map.ts";
 import {
 	defaultBindMapWriterDeps,
@@ -360,4 +361,76 @@ describe("ADR-003 publication protocol", () => {
 			"if (publication.changed && getIsStreaming()) restartSrtla();",
 		);
 	});
+});
+
+test("a queued withdrawal is never coalesced into a readmission", async () => {
+	const deps = writerDeps();
+	let release!: () => void;
+	const barrier = new Promise<void>((r) => {
+		release = r;
+	});
+	const writes: string[] = [];
+	let first = true;
+	const slowed = {
+		...deps,
+		writeFile: async (path: string, contents: string, target?: string) => {
+			if (first) {
+				first = false;
+				await barrier;
+			}
+			return deps.writeFile(path, contents, target);
+		},
+		onSettled: (entries: readonly BondEntry[]) => {
+			writes.push(entries.map((e) => e.clatGeneration ?? e.iface).join(","));
+		},
+	};
+	const old = [
+		{ ...entry("10.254.0.3", "clat3", "lnk_physical"), clatGeneration: "old" },
+	];
+	const next = [
+		{ ...entry("10.254.0.3", "clat3", "lnk_physical"), clatGeneration: "new" },
+	];
+	const a = publishBondMapping(old, slowed);
+	const withdrawal = publishBondMapping([], slowed);
+	const b = publishBondMapping(next, slowed);
+	release();
+	await Promise.all([a, withdrawal, b]);
+	expect(writes).toEqual(["old", "", "new"]);
+});
+
+test("a CLAT activation change advances mapping generation with identical IP bytes", async () => {
+	const deps = writerDeps();
+	const old = [
+		{ ...entry("10.254.0.3", "clat3", "lnk_physical"), clatGeneration: "old" },
+	];
+	const next = [
+		{ ...entry("10.254.0.3", "clat3", "lnk_physical"), clatGeneration: "new" },
+	];
+	expect(sameMapping(old, next)).toBe(false);
+	const a = await publishBondMapping(old, deps);
+	const b = await publishBondMapping(next, deps);
+	expect(a.ok && b.ok && b.generation > a.generation && b.changed).toBe(true);
+});
+
+test("source revalidation runs after queued and observer work, before writing", async () => {
+	const deps = writerDeps();
+	let valid = true;
+	const written: string[] = [];
+	let registered: readonly BondEntry[] = [];
+	await publishBondMapping([entry("10.254.0.3", "clat3", "lnk_physical")], {
+		...deps,
+		reserve: async () => {
+			valid = false;
+		},
+		prepareEntries: async (entries) => (valid ? entries : []),
+		writeFile: async (path, contents, target) => {
+			written.push(contents);
+			await deps.writeFile(path, contents, target);
+		},
+		onSettled: (entries) => {
+			registered = entries;
+		},
+	});
+	expect(written[0]).toBe("");
+	expect(registered).toEqual([]);
 });
