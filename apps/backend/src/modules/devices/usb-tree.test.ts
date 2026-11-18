@@ -58,6 +58,19 @@ type FixtureDevice = {
 	interfaces?: FixtureInterface[];
 };
 
+function socketKeysByPlace(tree: UsbTree): Map<string, string> {
+	const keys = new Map<string, string>();
+	for (const node of flatten(tree.roots)) {
+		if (node.presence !== "present" || node.controller === null) continue;
+		const place =
+			node.portPath === null
+				? `${node.controller}:root:${node.rootSpeedClass}`
+				: `${node.controller}:${node.portPath}:${node.rootSpeedClass}`;
+		keys.set(place, node.socketKey);
+	}
+	return keys;
+}
+
 function flatten(nodes: readonly UsbTreeNode[]): UsbTreeNode[] {
 	const out: UsbTreeNode[] = [];
 	for (const node of nodes) {
@@ -263,7 +276,7 @@ describe("ROCK 5B+ port map", () => {
 	it("uses generic names when the board is not a ROCK 5B+", () => {
 		expect(describeUsbPort("generic", "fc000000.usb", "1")).toEqual({
 			label: null,
-			name: "USB 1 port 1",
+			name: "USB fc000000.usb port 1",
 			scope: "generic",
 			socketLabel: null,
 			socketName: null,
@@ -668,7 +681,7 @@ describe("sysfs fixtures", () => {
 		expect(orange.board).toBe("generic");
 		expect(nodeNamed(orange, "5-1").port).toMatchObject({
 			label: null,
-			name: "USB 1 port 1",
+			name: "USB fc400000.usb:1",
 			scope: "generic",
 		});
 
@@ -705,7 +718,7 @@ describe("sysfs fixtures", () => {
 		expect(nodeNamed(rock, "1-1").port.name).toBe("USB-C data port");
 		expect(nodeNamed(rock, "2-1").port).toMatchObject({
 			label: null,
-			name: "USB 1 port 1",
+			name: "USB aaaa0000.usb:1",
 			scope: "generic",
 		});
 		expect(nodeNamed(rock, "2-1").kind).toBe("other");
@@ -886,9 +899,9 @@ describe("sysfs fixtures", () => {
 		expect(usb2.key).toBe("0000:00:14.0:usb2:1");
 		expect(usb3.key).toBe("0000:00:14.0:usb3:1");
 		expect(usb2.key).not.toContain("3-1");
-		expect(slow.port.name).toBe("USB 1 port 1");
-		expect(usb2.port.name).toBe("USB 2 port 1");
-		expect(usb3.port.name).toBe("USB 2 port 1");
+		expect(slow.port.name).toBe("USB 0000:00:0d.0:1");
+		expect(usb2.port.name).toBe("USB 0000:00:14.0:1");
+		expect(usb3.port.name).toBe("USB 0000:00:14.0:1");
 		expect(usb2.socketKey).toBe("0000:00:14.0:1");
 		expect(usb3.socketKey).toBe(usb2.socketKey);
 		expect(slow.socketKey).toBe("0000:00:0d.0:1");
@@ -1001,6 +1014,22 @@ describe("sysfs fixtures", () => {
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
+	});
+
+	it("keeps the same socket key when bus numbers change", async () => {
+		const normal = await withTree(rock2NormalTree(), "rock-5b-plus");
+		const stuck = await withTree(rock2StuckTree(), "rock-5b-plus");
+		const normalKeys = socketKeysByPlace(normal);
+		const stuckKeys = socketKeysByPlace(stuck);
+		const shared = [...normalKeys.keys()].filter((key) => stuckKeys.has(key));
+		expect(shared.length).toBeGreaterThan(0);
+		for (const key of shared) {
+			expect(stuckKeys.get(key)).toBe(normalKeys.get(key));
+		}
+		expect(shared.some((key) => key.startsWith("fc800000.usb:"))).toBe(true);
+		expect(shared.some((key) => key.startsWith("fcd00000.usb:"))).toBe(true);
+		expect(stuckKeys.has("fc000000.usb:1:usb2")).toBe(false);
+		expect(normalKeys.has("fc000000.usb:1:usb2")).toBe(true);
 	});
 
 	it("follows the ROCK1 5.10 usbdrd path", async () => {

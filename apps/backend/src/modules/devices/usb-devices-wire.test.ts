@@ -1,18 +1,25 @@
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { usbDevicesWireSchema } from "../../../../../packages/rpc/src/schemas/usb-devices.schema.ts";
+import { usbDevicesWireSchema } from "@ceraui/rpc/schemas";
+import { buildMsg } from "../../rpc/compat.ts";
 import { serializeRemoteSocketMessage } from "../remote/remote-status.ts";
 import {
+	relayStatusToGateway,
+	resetStatusRelay,
+	setControlChannel,
+} from "../remote-control/status-relay.ts";
+import {
 	deliverUsbDevicesWire,
+	mockUsbDevicesWire,
 	projectUsbDevices,
 	usbLinkRefFromIdPath,
 	usbLinkRefFromIdPathResolved,
 } from "./usb-devices-wire.ts";
-import type { UsbTree, UsbTreeNode } from "./usb-tree.ts";
+import { readUsbTree, type UsbTree, type UsbTreeNode } from "./usb-tree.ts";
 
 const MAC = "aa:bb:cc:dd:ee:ff";
 const IMEI = "490154203237518";
@@ -243,5 +250,71 @@ describe("usb device status payload", () => {
 		expect(socket).not.toContain("fc000000");
 		expect(socket).toContain("is_streaming");
 		expect(socket).toContain("ready");
+	});
+
+	it("publishes a fixture tree for mock mode, including an empty USB-C port", () => {
+		const wire = mockUsbDevicesWire();
+		expect(wire.board).toBe("rock-5b-plus");
+		const empty = wire.nodes.find((item) => item.socketKey === "C");
+		expect(empty).toMatchObject({
+			presence: "nothing-detected",
+			kind: "other",
+			name: "USB-C data port",
+		});
+		expect(wire.nodes.some((item) => item.product === "RM520N-GL")).toBe(true);
+	});
+
+	it("keeps planted identifiers out of the status bytes and the remote frame", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-bytes-"));
+		try {
+			const device = join(root, "sys/devices/platform/fc400000.usb/usb1/1-1");
+			await mkdir(device, { recursive: true });
+			await writeFile(join(device, "speed"), "480\n");
+			await writeFile(join(device, "idVendor"), "2c7c\n");
+			await writeFile(join(device, "idProduct"), "0801\n");
+			await writeFile(join(device, "product"), `Modem ${IMEI}\n`);
+			await writeFile(join(device, "serial"), `${SERIAL}\n`);
+			await writeFile(join(device, "manufacturer"), `${MAC}\n`);
+			const flat = join(root, "sys/bus/usb/devices");
+			await mkdir(flat, { recursive: true });
+			await symlink(device, join(flat, "1-1"));
+			const tree = await readUsbTree({ sysfsRoot: root, board: "generic" });
+			const wire = projectUsbDevices(tree, []);
+			const local = buildMsg("status", {
+				is_streaming: false,
+				usb_devices: wire,
+			});
+			for (const secret of [IMEI, SERIAL, MAC, ICCID]) {
+				expect(local).not.toContain(secret);
+			}
+			expect(local).toContain("usb_devices");
+			const sent: string[] = [];
+			setControlChannel({
+				isConnected: () => true,
+				sendFrame: (frame) => {
+					sent.push(JSON.stringify(frame));
+				},
+			});
+			relayStatusToGateway(
+				"status",
+				{ is_streaming: false, usb_devices: wire },
+				1,
+			);
+			resetStatusRelay();
+			const remote = sent.join("\n");
+			const socket = serializeRemoteSocketMessage(
+				JSON.stringify({
+					status: { is_streaming: false, usb_devices: wire },
+				}),
+			);
+			for (const frame of [remote, socket]) {
+				expect(frame).not.toContain("usb_devices");
+				for (const secret of [IMEI, SERIAL, MAC, ICCID, "fc400000"]) {
+					expect(frame).not.toContain(secret);
+				}
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });

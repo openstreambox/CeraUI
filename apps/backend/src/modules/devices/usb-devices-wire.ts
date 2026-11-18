@@ -23,8 +23,7 @@
  * controller and port path, and only that link id is sent.
  */
 
-import type { UsbDevicesWire } from "../../../../../packages/rpc/src/schemas/usb-devices.schema.ts";
-import { usbDevicesWireSchema } from "../../../../../packages/rpc/src/schemas/usb-devices.schema.ts";
+import { type UsbDevicesWire, usbDevicesWireSchema } from "@ceraui/rpc/schemas";
 import { logger } from "../../helpers/logger.ts";
 
 import {
@@ -137,8 +136,125 @@ export async function refreshUsbDevices(input?: {
 	return wire;
 }
 
+/**
+ * The tree screenshots and the dev UI read. It does not walk the machine
+ * that happens to be running the mock backend.
+ */
+export function mockUsbDevicesWire(): UsbDevicesWire {
+	return usbDevicesWireSchema.parse({
+		status: "ok",
+		board: "rock-5b-plus",
+		nodes: [
+			mockNode({
+				key: "fcd00000.usb:usb3:1",
+				controller: "fcd00000.usb",
+				portPath: "1",
+				socketKey: "A3-top",
+				speedClass: "usb3",
+				portClass: "usb3",
+				colour: "blue",
+				label: "A3-top",
+				name: "Upper blue port",
+				kind: "capture",
+				product: "USB capture",
+				vendorId: "345f",
+				productId: "2130",
+			}),
+			mockNode({
+				key: "fc400000.usb:usb2:1",
+				controller: "fc400000.usb",
+				portPath: "1",
+				socketKey: "A3-bot",
+				speedClass: "usb2",
+				portClass: "usb3",
+				colour: "blue",
+				label: "A3-bot",
+				name: "Lower blue port",
+				kind: "hub",
+				product: null,
+			}),
+			mockNode({
+				key: "fc400000.usb:usb2:1.1",
+				parentKey: "fc400000.usb:usb2:1",
+				controller: "fc400000.usb",
+				portPath: "1.1",
+				socketKey: "A3-bot>hub.1",
+				speedClass: "usb2",
+				portClass: "usb3",
+				colour: "blue",
+				scope: "hub-port",
+				label: ">hub.1",
+				name: "Hub port 1",
+				kind: "modem",
+				product: "RM520N-GL",
+				vendorId: "2c7c",
+				productId: "0801",
+				linkId: "lnk_0123456789abcdef",
+			}),
+			mockNode({
+				key: "fc880000.usb:usb2:1",
+				controller: "fc880000.usb",
+				portPath: "1",
+				socketKey: "A2-top",
+				speedClass: "usb2",
+				portClass: "usb2",
+				colour: "black",
+				label: "A2-top",
+				name: "Upper black port",
+				kind: "wifi",
+				product: "Archer T2U Nano",
+			}),
+			mockNode({
+				key: "fc000000.usb:nothing-detected:1",
+				controller: "fc000000.usb",
+				portPath: "1",
+				socketKey: "C",
+				speedClass: "unknown",
+				portClass: "usb3",
+				label: "C",
+				name: "USB-C data port",
+				kind: "other",
+				presence: "nothing-detected",
+			}),
+		],
+	});
+}
+
+function mockNode(
+	overrides: Partial<UsbDevicesWire["nodes"][number]> &
+		Pick<
+			UsbDevicesWire["nodes"][number],
+			"key" | "socketKey" | "name" | "kind"
+		>,
+): UsbDevicesWire["nodes"][number] {
+	return {
+		parentKey: null,
+		controller: null,
+		portPath: null,
+		speedClass: "unknown",
+		portClass: null,
+		colour: null,
+		scope: "socket",
+		label: null,
+		product: null,
+		vendorId: null,
+		productId: null,
+		presence: "present",
+		linkId: null,
+		...overrides,
+	};
+}
+
 /** Read the host tree, join published links, and push one status field when it changed. */
 export async function publishUsbDevices(): Promise<void> {
+	const { shouldUseMocks } = await import("../../mocks/mock-service.ts");
+	if (shouldUseMocks()) {
+		const { broadcastMsg } = await import("../../rpc/compat.ts");
+		deliverUsbDevicesWire(mockUsbDevicesWire(), (next) => {
+			broadcastMsg("status", { usb_devices: next });
+		});
+		return;
+	}
 	try {
 		const { publishedLinkPaths } = await import(
 			"../streaming/link-registry.ts"

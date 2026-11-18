@@ -353,7 +353,7 @@ export function describeUsbPort(
 		};
 	}
 	if (board !== "rock-5b-plus" || controller === null) {
-		return genericPort(portPath, ordinal, hinted);
+		return genericPort(controller, portPath, ordinal, hinted);
 	}
 	const onController = ROCK_5B_PLUS_PORTS.filter(
 		(spec) => spec.controller === controller,
@@ -378,7 +378,7 @@ export function describeUsbPort(
 			best = spec;
 		}
 	}
-	if (best === null) return genericPort(portPath, ordinal, hinted);
+	if (best === null) return genericPort(controller, portPath, ordinal, hinted);
 	const rest = portPath.slice(best.portPath.length + 1);
 	const parts = rest.split(".").filter((part) => /^\d+$/.test(part));
 	const last = parts[parts.length - 1];
@@ -388,7 +388,7 @@ export function describeUsbPort(
 		label: chain.length === 0 ? null : chain,
 		name:
 			parts.length === 0
-				? genericPort(portPath, ordinal, hinted).name
+				? genericPort(controller, portPath, ordinal, hinted).name
 				: parts.map((part) => `Hub port ${part}`).join(", "),
 		scope: "hub-port",
 		socketLabel: best.label,
@@ -400,13 +400,15 @@ export function describeUsbPort(
 }
 
 function genericPort(
+	controller: string | null,
 	portPath: string,
 	ordinal: number,
 	portClass: UsbPortClass | null,
 ): UsbPortPlacement {
+	const identity = controller ?? String(ordinal);
 	return {
 		label: null,
-		name: `USB ${ordinal} port ${portPath}`,
+		name: clipPortName(`USB ${identity} port ${portPath}`),
 		scope: "generic",
 		socketLabel: null,
 		socketName: null,
@@ -414,6 +416,27 @@ function genericPort(
 		portClass,
 		colour: null,
 	};
+}
+
+/**
+ * The published name of a generic port. `socketKey` stays put when a
+ * controller appears or disappears. A per-walk ordinal does not.
+ */
+function stableSocketName(
+	socketKey: string,
+	scope: "generic" | "root",
+): string {
+	if (scope === "root") {
+		const controller = socketKey.endsWith(":root")
+			? socketKey.slice(0, -":root".length)
+			: socketKey;
+		return clipPortName(`USB ${controller} root hub`);
+	}
+	return clipPortName(`USB ${socketKey}`);
+}
+
+function clipPortName(name: string): string {
+	return name.length <= 80 ? name : name.slice(0, 80);
 }
 
 export async function readUsbTree(
@@ -488,6 +511,11 @@ export async function readUsbTree(
 			board === "rock-5b-plus" && port.scope !== "generic"
 				? rockSocketKey(port, item.draft.controller, item.draft.portPath)
 				: await genericSocketKey(devicesDir, item.draft, byName);
+		const namedPort =
+			port.scope === "generic" ||
+			(port.scope === "root" && board !== "rock-5b-plus")
+				? { ...port, name: stableSocketName(socketKey, port.scope) }
+				: port;
 		nodes.set(key, {
 			key,
 			parentKey,
@@ -508,7 +536,7 @@ export async function readUsbTree(
 			drivers: item.draft.drivers,
 			netNames: item.draft.netNames,
 			videoNames: item.draft.videoNames,
-			port,
+			port: namedPort,
 			socketKey,
 			presence: "present",
 			children: [],
@@ -851,6 +879,11 @@ function undetectedSockets(seen: ReadonlySet<string>): UsbTreeNode[] {
 	return found;
 }
 
+/**
+ * Pair the USB 2 and USB 3 halves of one socket when the kernel publishes
+ * `usbN-portM/peer`. EHCI and OHCI companions do not publish that link, so
+ * on a generic board they stay separate sockets. That limit is known.
+ */
 async function genericSocketKey(
 	devicesDir: string,
 	draft: Draft,
