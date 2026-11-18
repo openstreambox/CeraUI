@@ -43499,7 +43499,7 @@
     "apps/backend/src/modules/system/sensors.ts": "f14c9498da2adc79d5c494ba556d09c26d4181bd472c88d5d2b0599c95eca5c8",
     "apps/backend/src/modules/system/software-updates.ts": "21668cfcda44364ffc86935c7d101e4602d1296958d7d08b65f65c945f499edb",
     "apps/backend/src/modules/system/ssh.ts": "76480301bb9dc3a9483a7b9fb7073a2a1ec91c315653df945bfb2fcc1ce86f43",
-    "apps/backend/src/modules/system/tailscale.ts": "1391b70b44c3fd1e42fcaccc50883cbb5445d50219847899848e20decacab363",
+    "apps/backend/src/modules/system/tailscale.ts": "1bdaa2ebd580775f1049e9a29c8ac5a873d051ad09de0454b8069e75e5f54dff",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "16969dce21a2f26d71c3d317aa38d77fe221f33b12175ca724e9067ad7250050",
     "apps/backend/src/modules/ui/notifications.ts": "1ee552f0c791e0c0a544fc0bed066f56372e3a882d9a5caf097ed6d7e9974aa2",
     "apps/backend/src/modules/ui/status.ts": "f91f94ec8f2462e91f82f3f1ae39b58ccc5aed34bbb50e962a47fc2b422a2475",

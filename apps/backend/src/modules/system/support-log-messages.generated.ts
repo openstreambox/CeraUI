@@ -1454,6 +1454,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["Start requires a fresh coordinator session"],
 	["Stop hotspot before configuring"],
 	["Stop hotspot before deletion"],
+	["Tailscale enrolment requires a private inbox"],
 	["Target must be a regular file"],
 	["Transport operation not admitted"],
 	["Transport reset did not retire its generation"],

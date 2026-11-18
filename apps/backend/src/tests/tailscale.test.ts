@@ -72,6 +72,7 @@ function fakeDaemon(initial: {
 		...initial,
 		restore: initial.restore,
 		pending: false,
+		queued: false,
 		enrollStatus: undefined as string | undefined,
 	};
 	const calls: string[] = [];
@@ -90,6 +91,9 @@ function fakeDaemon(initial: {
 		reconnect: async () => {
 			calls.push("up");
 			state.backend = "Running";
+		},
+		pinAutoUpdateOff: async () => {
+			calls.push("pin updates off");
 		},
 		down: async () => {
 			calls.push("down");
@@ -124,6 +128,7 @@ function fakeDaemon(initial: {
 		},
 		enrollPresent: async () => state.enroll !== undefined,
 		enrollHasState: async () => state.enroll?.hasState ?? false,
+		enrollQueued: async () => state.queued,
 		enrollPending: async () => state.pending,
 		enrollLastStatus: async () => state.enrollStatus,
 		enrollSubmit: async (key, hostname) => {
@@ -249,6 +254,17 @@ describe("status probe", () => {
 		daemon.state.pending = false;
 		if (daemon.state.enroll) daemon.state.enroll.hasState = true;
 		expect(await getTailscaleStatus()).toEqual({ state: "off" });
+	});
+
+	test("a drop awaiting adoption shows as joining outside an active RPC", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "slow" },
+		});
+		daemon.state.queued = true;
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await getTailscaleStatus()).toEqual({ state: "joining" });
 	});
 
 	test("broadcasts once per change", async () => {
@@ -403,6 +419,47 @@ describe("join through the image's enrolment", () => {
 		expect(getCachedTailscaleStatus()?.state).toBe("needs_key");
 	});
 
+	test("ignores an old refusal until the new drop has been adopted", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "joined" },
+		});
+		daemon.state.enrollStatus = "gave-up 1 0 the previous key expired";
+		let polls = 0;
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			enrollSubmit: async () => {
+				daemon.state.queued = true;
+			},
+			sleep: async () => {
+				polls += 1;
+				if (polls === 1) {
+					expect(await getTailscaleStatus()).toEqual({ state: "joining" });
+					return;
+				}
+				daemon.state.queued = false;
+				daemon.state.enrollStatus = "joined 1 0 ok";
+				daemon.state.active = true;
+				daemon.state.backend = "Running";
+			},
+		});
+		expect(await joinTailscale(KEY)).toBe(true);
+		expect(polls).toBe(2);
+		expect(getCachedTailscaleStatus()?.state).toBe("connected");
+	});
+
+	test("refuses a key format the image enrolment cannot accept before dropping it", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "joined" },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await joinTailscale("0123456789abcdef")).toBe(false);
+		expect(daemon.submits).toEqual([]);
+	});
+
 	test("a slow enrolment is still joining, not failed", async () => {
 		const daemon = fakeDaemon({
 			active: false,
@@ -477,6 +534,17 @@ describe("off switch and forget", () => {
 		expect(await setTailscaleEnabled(true)).toBe(true);
 		expect(daemon.calls).toEqual(["enable --now", "up"]);
 		expect(getCachedTailscaleStatus()?.state).toBe("connected");
+	});
+
+	test("on reapplies the image's auto-update policy after reconnect", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "Stopped",
+			enroll: { hasState: true, result: "joined" },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect(await setTailscaleEnabled(true)).toBe(true);
+		expect(daemon.calls).toEqual(["enable --now", "up", "pin updates off"]);
 	});
 
 	test("on never starts a login for a device without one", async () => {

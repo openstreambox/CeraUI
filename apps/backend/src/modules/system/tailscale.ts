@@ -22,7 +22,7 @@
  *
  * Reading is `tailscale status --json` (argv only, read-only).
  *
- * Joining never passes the key on argv, stdin or disk. It talks to tailscaled's
+ * On a standard installation, joining sends the key only to tailscaled's
  * local API over its unix socket, the same API the CLI uses: read the current
  * prefs, send them back unchanged with the key (`start`), then ask for a login
  * (`login-interactive`, which uses the key; no URL is ever shown). Keeping the
@@ -36,20 +36,23 @@
  * its DNS taken over unasked.
  *
  * Images may bring their own enrolment (ENROLL_UNIT, e.g. a key file on the
- * boot drive). There the card hands the key to that unit's pending-key file
- * instead, so the image's own flags stay the single source, and the unit can
- * start tailscaled even on a box that never ran it.
+ * boot drive). The card atomically drops /data/tailscale-enroll/incoming-authkey
+ * with the key and an optional hostname on separate lines. The enrolment
+ * service claims it, writes the retry status and applies the image's flags.
+ * This can start tailscaled even on a box that never ran it.
  *
  * The off switch is `tailscale down`, then `systemctl disable --now
  * tailscaled`. On re-enables the unit and reconnects with a flag-less
- * `tailscale up`, which only sets WantRunning and keeps every pref. It never
- * starts a login. "Forget" is `tailscale logout`. There is deliberately no
- * interactive login: whoever opens a login link first picks the network.
+ * `tailscale up`, which never starts a login. On images with the enrolment
+ * unit, reconnect also reapplies the image's auto-update policy.
+ * "Forget" is `tailscale logout`. Interactive login would let whoever opens
+ * the link first pick the network.
  */
 
+import { randomUUID } from "node:crypto";
 import {
 	chmod,
-	mkdir,
+	lstat,
 	readFile,
 	rename,
 	rm,
@@ -82,11 +85,14 @@ const SETTLE_POLL_COUNT = 15;
 const SETTLE_WAIT_MS = 10_000;
 
 /**
- * Image-side enrolment hand-off. All paths are the image's own: the unit reads
- * a pending key from STATE_DIR, joins with the image's flags, and removes it.
+ * Image-side enrolment hand-off. The root-only inbox is separate from the
+ * state directory owned by tailscaled.
  */
 export const ENROLL_UNIT = "ceralive-tailscale-enroll.service";
 const STATE_DIR = "/var/lib/tailscale";
+const ENROLL_DIR = "/data/tailscale-enroll";
+const ENROLL_INCOMING = "incoming-authkey";
+const ENROLL_KEY_RE = /^tskey-auth-[A-Za-z0-9_-]{8,200}$/;
 const ENROLL_NAME_RE = /^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/;
 
 /** The socket of the tailscaled this backend talks to (env override for tests). */
@@ -96,6 +102,10 @@ export function tailscaleSocket(): string {
 
 function stateDir(): string {
 	return process.env.CERALIVE_TAILSCALE_STATE_DIR || STATE_DIR;
+}
+
+function enrollDir(): string {
+	return process.env.CERALIVE_TAILSCALE_ENROLL_DIR || ENROLL_DIR;
 }
 
 /** The subset of `tailscale status --json` this module reads. */
@@ -211,8 +221,10 @@ export type TailscaleDeps = {
 	statusJson: () => Promise<string>;
 	/** `systemctl enable|disable --now tailscaled`. */
 	setUnit: (enabled: boolean) => Promise<void>;
-	/** Flag-less `tailscale up`: sets WantRunning, keeps every pref. */
+	/** Flag-less `tailscale up` to reconnect without starting a login. */
 	reconnect: () => Promise<void>;
+	/** Reapply the image enrolment policy after `up`. */
+	pinAutoUpdateOff: () => Promise<void>;
 	/** `tailscale down`. */
 	down: () => Promise<void>;
 	/** `tailscale logout`. */
@@ -230,6 +242,8 @@ export type TailscaleDeps = {
 	/** Image enrolment hand-off. */
 	enrollPresent: () => Promise<boolean>;
 	enrollHasState: () => Promise<boolean>;
+	/** A drop that the unit has yet to adopt as its pending key. */
+	enrollQueued: () => Promise<boolean>;
 	enrollPending: () => Promise<boolean>;
 	enrollLastStatus: () => Promise<string | undefined>;
 	enrollSubmit: (authKey: string, hostname: string) => Promise<void>;
@@ -394,10 +408,15 @@ function restorePath(): string {
 
 /** Write a file readable only by its owner, atomically. */
 async function writePrivate(path: string, content: string): Promise<void> {
-	const tmp = `${path}.tmp`;
-	await writeFile(tmp, content, { mode: 0o600 });
-	await chmod(tmp, 0o600);
-	await rename(tmp, path);
+	const tmp = `${path}.${randomUUID()}.tmp`;
+	try {
+		await writeFile(tmp, content, { flag: "wx", mode: 0o600 });
+		await chmod(tmp, 0o600);
+		await rename(tmp, path);
+	} catch (err) {
+		await rm(tmp, { force: true });
+		throw err;
+	}
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -426,6 +445,14 @@ const defaultDeps: TailscaleDeps = {
 			timeout: RECONNECT_TIMEOUT_MS,
 		});
 	},
+	pinAutoUpdateOff: async () => {
+		await run(TAILSCALE, [
+			socketArg(),
+			"set",
+			"--auto-update=false",
+			"--update-check=false",
+		]);
+	},
 	down: async () => {
 		await run(TAILSCALE, [socketArg(), "down"]);
 	},
@@ -448,24 +475,34 @@ const defaultDeps: TailscaleDeps = {
 	},
 	enrollPresent: () => unitLoaded(ENROLL_UNIT),
 	enrollHasState: () => exists(join(stateDir(), "tailscaled.state")),
-	enrollPending: () => exists(join(stateDir(), "pending-authkey")),
+	enrollQueued: async () => {
+		const dir = enrollDir();
+		// The unit renames incoming-authkey to .claimed before adopting it.
+		return (
+			(await exists(join(dir, ENROLL_INCOMING))) ||
+			(await exists(join(dir, ".claimed")))
+		);
+	},
+	enrollPending: () => exists(join(enrollDir(), "pending-authkey")),
 	enrollLastStatus: async () => {
 		try {
-			return (await readFile(join(stateDir(), "enroll-status"), "utf8")).trim();
+			return await readFile(join(enrollDir(), "enroll-status"), "utf8");
 		} catch {
 			return undefined;
 		}
 	},
 	enrollSubmit: async (authKey, hostname) => {
-		const dir = stateDir();
-		await mkdir(dir, { recursive: true, mode: 0o700 });
-		await writePrivate(join(dir, "pending-hostname"), hostname);
-		await writePrivate(join(dir, "pending-authkey"), authKey);
-		// A fresh key starts a fresh count, exactly as a key file on BOOT does,
-		// so an earlier back-off does not delay it.
-		await writePrivate(join(dir, "enroll-status"), "pending 0 0 new-key\n");
-		// Boot persistence for the daemon (the unit starts it now itself).
-		await run("systemctl", ["enable", UNIT]);
+		const dir = enrollDir();
+		const inbox = await lstat(dir);
+		if (
+			!inbox.isDirectory() ||
+			inbox.uid !== process.geteuid?.() ||
+			(inbox.mode & 0o777) !== 0o700
+		) {
+			throw new Error("Tailscale enrolment requires a private inbox");
+		}
+		const content = hostname ? `${authKey}\n${hostname}\n` : `${authKey}\n`;
+		await writePrivate(join(dir, ENROLL_INCOMING), content);
 		await run("systemctl", ["start", "--no-block", ENROLL_UNIT]);
 	},
 	broadcast: (status) => broadcastMsg("status", { tailscale: status }),
@@ -558,7 +595,8 @@ async function readSettledBackend(): Promise<string | undefined> {
 async function probe(): Promise<TailscaleStatus> {
 	if (!(await deps.isInstalled())) return { state: "unavailable" };
 	const hook = await deps.enrollPresent();
-	const pending = hook && (await deps.enrollPending());
+	const pending =
+		hook && ((await deps.enrollQueued()) || (await deps.enrollPending()));
 	if (!(await deps.isDaemonActive())) {
 		if (pending) return { state: "joining" };
 		// An image whose enrolment starts tailscaled: a box that never joined
@@ -617,8 +655,27 @@ async function reserved<T>(effect: () => Promise<T>): Promise<T> {
 	});
 }
 
+/**
+ * The enrolment's status line: `<pending|joined|gave-up> <attempts>
+ * <next-epoch> <reason>`. The reason is free text and may contain spaces.
+ */
+function parseEnrollStatus(line: string): {
+	state: string;
+	attempts: number;
+	reason: string;
+} {
+	const [state = "", attempts = "", , ...reason] = line.trim().split(/\s+/);
+	const count = Number(attempts);
+	return {
+		state,
+		attempts: Number.isInteger(count) ? count : 0,
+		reason: reason.join(" "),
+	};
+}
+
 /** Hand the key to the image's enrolment and wait for its answer. */
 async function enrollJoin(authKey: string): Promise<JoinOutcome> {
+	if (!ENROLL_KEY_RE.test(authKey)) return "refused";
 	const remembered = (await deps.readRestore())?.Hostname?.toLowerCase() ?? "";
 	await deps.enrollSubmit(
 		authKey,
@@ -627,16 +684,22 @@ async function enrollJoin(authKey: string): Promise<JoinOutcome> {
 	const deadline = Date.now() + JOIN_WAIT_MS;
 	while (Date.now() < deadline) {
 		await deps.sleep(1_000);
+		// Status still belongs to the previous key until the unit adopts ours.
+		if (await deps.enrollQueued()) continue;
 		if (await deps.isDaemonActive()) {
 			const status = await readDaemonStatus();
 			if (status.state === "connected") return "joined";
 			if (status.state === "needs_approval") return "approval";
 		}
-		const last = (await deps.enrollLastStatus()) ?? "";
+		const last = parseEnrollStatus((await deps.enrollLastStatus()) ?? "");
 		if (!(await deps.enrollPending())) {
-			if (last.startsWith("joined")) return "joined";
-			if (last.startsWith("gave-up")) return "refused";
-		} else if (last.startsWith("pending ") && last.endsWith(" retry")) {
+			if (last.state === "joined") return "joined";
+			if (last.state === "gave-up") return "refused";
+		} else if (
+			last.state === "pending" &&
+			last.attempts > 0 &&
+			last.reason === "retry"
+		) {
 			// The first attempt failed without a final answer (no network yet,
 			// or a refusal the enrolment does not recognise). It keeps the key
 			// and retries on its own schedule; report that now, not in 50 s.
@@ -648,9 +711,9 @@ async function enrollJoin(authKey: string): Promise<JoinOutcome> {
 
 /**
  * Join with a pasted auth key. The key goes to tailscaled's local API in a
- * request body (or, on images with their own enrolment, to its pending-key
- * file, which that unit consumes and wipes). It is never logged, stored by
- * CeraUI or echoed. Returns whether the device joined, waits for approval, or
+ * request body (or, on images with their own enrolment, to its private
+ * inbox, which that unit consumes). It is never logged, saved in config or
+ * echoed. Returns whether the device joined, waits for approval, or
  * is still joining.
  */
 export async function joinTailscale(authKey: string): Promise<boolean> {
@@ -688,6 +751,16 @@ export async function joinTailscale(authKey: string): Promise<boolean> {
 	return outcome !== "refused";
 }
 
+async function reconnectTailscale(): Promise<void> {
+	const imageEnrolment = await deps.enrollPresent();
+	try {
+		await deps.reconnect();
+	} finally {
+		// An `up` can change prefs before the CLI finishes, even if it times out.
+		if (imageEnrolment) await deps.pinAutoUpdateOff();
+	}
+}
+
 /**
  * The owner's off switch. Off: `tailscale down`, then stop and disable the unit
  * so nothing runs or listens. On: enable and start the unit, then reconnect
@@ -704,7 +777,8 @@ export async function setTailscaleEnabled(enabled: boolean): Promise<boolean> {
 				if (!(await deps.isDaemonActive())) return;
 				// Stopped = logged in with WantRunning off: reconnect. Anything else
 				// (no login, already running) needs nothing from "on".
-				if ((await readSettledBackend()) === "Stopped") await deps.reconnect();
+				if ((await readSettledBackend()) === "Stopped")
+					await reconnectTailscale();
 			} else {
 				if (await deps.isDaemonActive()) {
 					try {
