@@ -52,6 +52,8 @@ export const usbDeviceWireNodeSchema = z
 		vendorId: z.string().regex(HEX4).nullable(),
 		productId: z.string().regex(HEX4).nullable(),
 		presence: usbSocketPresenceSchema,
+		/** The device's own bcdUSB is 3 or higher. The port class is not this. */
+		superspeedCapable: z.boolean(),
 		linkId: z.string().regex(LINK_ID).nullable(),
 	})
 	.strict();

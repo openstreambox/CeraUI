@@ -400,15 +400,14 @@ export function describeUsbPort(
 }
 
 function genericPort(
-	controller: string | null,
+	_controller: string | null,
 	portPath: string,
-	ordinal: number,
+	_ordinal: number,
 	portClass: UsbPortClass | null,
 ): UsbPortPlacement {
-	const identity = controller ?? String(ordinal);
 	return {
 		label: null,
-		name: clipPortName(`USB ${identity} port ${portPath}`),
+		name: clipPortName(`USB port ${portPath}`),
 		scope: "generic",
 		socketLabel: null,
 		socketName: null,
@@ -419,20 +418,16 @@ function genericPort(
 }
 
 /**
- * The published name of a generic port. `socketKey` stays put when a
- * controller appears or disappears. A per-walk ordinal does not.
+ * Plain name of a generic port. The socket key stays the stable identity
+ * and is not repeated here: a PCI address belongs in the details.
  */
 function stableSocketName(
 	socketKey: string,
 	scope: "generic" | "root",
 ): string {
-	if (scope === "root") {
-		const controller = socketKey.endsWith(":root")
-			? socketKey.slice(0, -":root".length)
-			: socketKey;
-		return clipPortName(`USB ${controller} root hub`);
-	}
-	return clipPortName(`USB ${socketKey}`);
+	if (scope === "root") return "USB root hub";
+	const port = socketKey.match(/:(\d+(?:\.\d+)*)$/)?.[1];
+	return clipPortName(port === undefined ? "USB port" : `USB port ${port}`);
 }
 
 function clipPortName(name: string): string {
@@ -551,12 +546,12 @@ export async function readUsbTree(
 		else roots.push(node);
 	}
 	if (board === "rock-5b-plus" && drafts.length > 0) {
-		const seen = new Set(
-			drafts.flatMap((draft) =>
-				draft.controller === null ? [] : [draft.controller],
-			),
-		);
-		for (const extra of undetectedSockets(seen)) roots.push(extra);
+		const occupied = new Set<string>();
+		for (const node of nodes.values()) {
+			if (node.controller === null || node.portPath === null) continue;
+			occupied.add(`${node.controller}:${node.portPath}`);
+		}
+		for (const extra of undetectedSockets(occupied)) roots.push(extra);
 	}
 	sortNodes(roots);
 	const xhciControllers: Record<string, string> = {};
@@ -828,11 +823,12 @@ function rockSocketKey(
 }
 
 /**
- * A mapped socket whose controllers never enumerated a host bus.
- * On the ROCK USB-C port this is the usual no-partner state: no xhci
- * child under fc000000.usb. The tree read itself succeeded.
+ * A mapped socket with no device on its port. A live root hub is not a
+ * device, and a neighbour on the same controller does not fill this socket.
+ * On the ROCK USB-C port the usual no-partner state has no host bus at all.
+ * The tree read itself succeeded. Companion controllers share the label.
  */
-function undetectedSockets(seen: ReadonlySet<string>): UsbTreeNode[] {
+function undetectedSockets(occupied: ReadonlySet<string>): UsbTreeNode[] {
 	const byLabel = new Map<string, RockPortSpec[]>();
 	for (const spec of ROCK_5B_PLUS_PORTS) {
 		if (spec.label === null) continue;
@@ -842,7 +838,7 @@ function undetectedSockets(seen: ReadonlySet<string>): UsbTreeNode[] {
 	}
 	const found: UsbTreeNode[] = [];
 	for (const [label, specs] of byLabel) {
-		if (specs.some((spec) => seen.has(spec.controller))) continue;
+		if (specs.some((spec) => socketOccupied(occupied, spec))) continue;
 		const spec = specs[0];
 		if (spec === undefined) continue;
 		const port = describeUsbPort(
@@ -877,6 +873,17 @@ function undetectedSockets(seen: ReadonlySet<string>): UsbTreeNode[] {
 		});
 	}
 	return found;
+}
+
+function socketOccupied(
+	occupied: ReadonlySet<string>,
+	spec: RockPortSpec,
+): boolean {
+	const exact = `${spec.controller}:${spec.portPath}`;
+	for (const key of occupied) {
+		if (key === exact || key.startsWith(`${exact}.`)) return true;
+	}
+	return false;
 }
 
 /**

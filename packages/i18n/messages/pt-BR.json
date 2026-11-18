@@ -1087,7 +1087,7 @@
 	"network.devices.detail.usbId": "ID USB",
 	"network.devices.details": "Detalhes para quem ajuda",
 	"network.devices.empty": "Vazio.",
-	"network.devices.hint.captureUsb2": "Esta placa de captura roda em USB 2 aqui. Passe para uma porta azul para 1080p60.",
+	"network.devices.hint.captureUsb2": "Esta placa de captura pode usar USB 3 e está funcionando em USB 2.",
 	"network.devices.hint.rm520Usb2": "Mantido em USB 2 de propósito: USB 3 adiciona ruído ao rádio deste modem.",
 	"network.devices.kind.capture": "Placa de captura HDMI",
 	"network.devices.kind.hub": "Hub USB",

@@ -78,7 +78,7 @@ export function devicesPageModel(
 	const byKey = new Map(wire.nodes.map((node) => [node.key, node]));
 	const groups = new Map<string, UsbDeviceWireNode[]>();
 	for (const node of wire.nodes) {
-		const id = groupId(node);
+		const id = groupId(node, byKey);
 		const list = groups.get(id) ?? [];
 		list.push(node);
 		groups.set(id, list);
@@ -106,10 +106,22 @@ export function devicesPageModel(
 	return { status: "ok", board: wire.board, groups: built };
 }
 
-function groupId(node: UsbDeviceWireNode): string {
-	if (node.scope === "built-in") return "built-in";
-	const cut = node.socketKey.indexOf(">");
-	return cut === -1 ? node.socketKey : node.socketKey.slice(0, cut);
+function groupId(
+	node: UsbDeviceWireNode,
+	byKey: Map<string, UsbDeviceWireNode>,
+): string {
+	let current = node;
+	const seen = new Set<string>();
+	while (current.parentKey !== null && !seen.has(current.parentKey)) {
+		const parent = byKey.get(current.parentKey);
+		if (parent === undefined) break;
+		seen.add(current.parentKey);
+		if (parent.scope === "root" || parent.portPath === null) break;
+		current = parent;
+	}
+	if (current.scope === "built-in") return "built-in";
+	const cut = current.socketKey.indexOf(">");
+	return cut === -1 ? current.socketKey : current.socketKey.slice(0, cut);
 }
 
 function socketLabel(node: UsbDeviceWireNode): string | null {
@@ -182,7 +194,12 @@ function hintFor(node: UsbDeviceWireNode): DeviceHint | null {
 	) {
 		return "rm520-usb2";
 	}
-	if (node.kind === "capture" && node.speedClass === "usb2")
+	if (
+		node.kind === "capture" &&
+		node.speedClass === "usb2" &&
+		node.superspeedCapable
+	) {
 		return "capture-usb2";
+	}
 	return null;
 }

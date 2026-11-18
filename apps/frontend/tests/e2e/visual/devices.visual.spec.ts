@@ -24,11 +24,24 @@ test.describe("@visual Network devices", () => {
 				await ensureAuthenticated(page);
 				await navigateTo(page, "network");
 				await page.getByTestId("open-devices").click();
-				const view = page.getByTestId("devices-page");
-				await expect(view.getByText("Upper blue port")).toBeVisible();
-				await expect(view.getByTestId("device-empty")).toBeVisible();
-				await view.screenshot({
-					path: evidencePath(`devices-${project}.png`),
+				const ports = page.getByTestId("devices-ports");
+				const upper = ports.getByRole("heading", { name: "Upper blue port" });
+				const usbC = ports.getByRole("heading", { name: "USB-C data port" });
+				await expect(upper).toBeVisible();
+				await expect(ports.getByTestId("device-empty")).toBeVisible();
+				await page.screenshot({
+					path: evidencePath(`devices-${project}-top.png`),
+				});
+				await usbC.evaluate((element) => {
+					const chrome = document.querySelector("header");
+					const offset = chrome?.getBoundingClientRect().bottom ?? 0;
+					const top =
+						element.getBoundingClientRect().top + window.scrollY - offset - 12;
+					window.scrollTo(0, Math.max(0, top));
+				});
+				await expect(usbC).toBeVisible();
+				await page.screenshot({
+					path: evidencePath(`devices-${project}-usbc.png`),
 				});
 			},
 		);

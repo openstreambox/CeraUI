@@ -26,6 +26,7 @@ const WIRE: UsbDevicesWire = {
 			vendorId: null,
 			productId: null,
 			presence: "nothing-detected",
+			superspeedCapable: false,
 			linkId: null,
 		},
 		{
@@ -45,6 +46,7 @@ const WIRE: UsbDevicesWire = {
 			vendorId: "2c7c",
 			productId: "0801",
 			presence: "present",
+			superspeedCapable: false,
 			linkId: null,
 		},
 	],
