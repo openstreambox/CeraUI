@@ -16,11 +16,12 @@
 */
 
 /*
- * Real-device detection (T4 — gating prerequisite for the kiosk RPC, T13).
+ * Legacy device detection for images without a board capability record.
  *
- * Answers a single fail-safe question: are we running on a shipping CeraLive
- * device, or in dev/CI/an emulated host where touching the host OS
- * (cage/Chromium/systemd) would be wrong? The default is ALWAYS false — we only
+ * New subsystem gates use board-capabilities.ts; this classifier remains the
+ * older-image fallback. It recognises shipping hardware while keeping dev/CI
+ * and emulated hosts away from host OS operations (cage/Chromium/systemd).
+ * The default is ALWAYS false — we only
  * return true when we positively recognise RK3588 or x86 mini-PC hardware (or an
  * explicit `CERALIVE_DEVICE_TYPE=real` override). Jetson remains deliberately
  * deferred: no Jetson marker is recognised here.
@@ -243,7 +244,7 @@ export type HardwareIdentityDriftDeps = {
 	/** The static `setup.json` `hw` value packaged in the .deb. */
 	configuredHw: () => string;
 	/** Only meaningful on a real device (dev hosts have no device-tree). */
-	isRealDevice: () => Promise<boolean>;
+	canInspectSystem: () => Promise<boolean>;
 	/** Loud, journal-visible warning sink. */
 	warn: (message: string) => void;
 };
@@ -264,13 +265,13 @@ export type HardwareIdentityDriftDeps = {
  * `setup.hw`), it just makes a mismatch visible in the journal at boot instead
  * of failing silently for a whole session. It warns only on a POSITIVE
  * mismatch — an `unknown` detection defers to the configured value (never cries
- * wolf), and it is gated on `isRealDevice()` so a dev/emulated host (where
+ * wolf), and it is gated on `canInspectSystem()` so a dev/emulated host (where
  * `setup.hw` is only the checked-in default) stays quiet.
  */
 export async function warnOnHardwareIdentityDrift(
 	deps: HardwareIdentityDriftDeps,
 ): Promise<{ checked: boolean; drift: boolean }> {
-	if (!(await deps.isRealDevice())) return { checked: false, drift: false };
+	if (!(await deps.canInspectSystem())) return { checked: false, drift: false };
 
 	const detected = await deps.detectKind();
 	// `unknown` = probes could not name a supported board; defer to the

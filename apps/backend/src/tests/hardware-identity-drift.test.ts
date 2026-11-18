@@ -87,13 +87,13 @@ describe("warnOnHardwareIdentityDrift", () => {
 	function makeDriftDeps(overrides: {
 		detected: "rk3588" | "jetson" | "n100" | "unknown";
 		configuredHw: string;
-		isRealDevice?: boolean;
+		canInspectSystem?: boolean;
 	}) {
 		const warnings: string[] = [];
 		const deps = {
 			detectKind: async () => overrides.detected,
 			configuredHw: () => overrides.configuredHw,
-			isRealDevice: async () => overrides.isRealDevice ?? true,
+			canInspectSystem: async () => overrides.canInspectSystem ?? true,
 			warn: (m: string) => warnings.push(m),
 		};
 		return { deps, warnings };
@@ -135,7 +135,7 @@ describe("warnOnHardwareIdentityDrift", () => {
 		const { deps, warnings } = makeDriftDeps({
 			detected: "n100",
 			configuredHw: "rk3588",
-			isRealDevice: false,
+			canInspectSystem: false,
 		});
 		const result = await warnOnHardwareIdentityDrift(deps);
 		expect(result).toEqual({ checked: false, drift: false });
