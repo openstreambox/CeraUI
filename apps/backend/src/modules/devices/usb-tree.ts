@@ -269,6 +269,8 @@ export type UsbTree = {
 	/** `unavailable` when `/sys/bus/usb/devices` could not be read. */
 	readonly status: UsbTreeStatus;
 	readonly roots: readonly UsbTreeNode[];
+	/** `xhci-hcd.N.auto` to the controller address seen on that walk. */
+	readonly xhciControllers?: Readonly<Record<string, string>>;
 };
 
 export type ReadUsbTreeOptions = {
@@ -425,7 +427,7 @@ export async function readUsbTree(
 	try {
 		names = await readdir(devicesDir);
 	} catch {
-		return { board, status: "unavailable", roots: [] };
+		return { board, status: "unavailable", roots: [], xhciControllers: {} };
 	}
 	names.sort((a, b) => a.localeCompare(b, "en"));
 
@@ -529,7 +531,13 @@ export async function readUsbTree(
 		for (const extra of undetectedSockets(seen)) roots.push(extra);
 	}
 	sortNodes(roots);
-	return { board, status: "ok", roots };
+	const xhciControllers: Record<string, string> = {};
+	for (const draft of drafts) {
+		if (draft.xhciName !== null && draft.controller !== null) {
+			xhciControllers[draft.xhciName] = draft.controller;
+		}
+	}
+	return { board, status: "ok", roots, xhciControllers };
 }
 
 type Draft = {
@@ -549,6 +557,7 @@ type Draft = {
 	drivers: string[];
 	netNames: string[];
 	videoNames: string[];
+	xhciName: string | null;
 };
 
 type MutableNode = Omit<UsbTreeNode, "children"> & {
@@ -616,6 +625,8 @@ async function readDevice(
 		videoNames: [...endpoints.videos]
 			.filter((name) => !nameLooksSecret(name))
 			.sort((a, b) => a.localeCompare(b, "en")),
+		xhciName:
+			devicePath.toLowerCase().match(/xhci-hcd\.\d+\.auto/)?.[0] ?? null,
 	};
 }
 

@@ -46,27 +46,42 @@ export function projectRemoteConfig(payload: unknown): unknown {
 	return config;
 }
 
-/** Remote status retains credentials and omits only local radio lifetime tokens. */
+/**
+ * Remote status retains credentials and omits only local radio lifetime tokens.
+ * The USB tree is local. A later counts-only devices case is the remote form.
+ */
 export function projectRemoteStatus(payload: unknown): unknown {
-	if (
-		typeof payload !== "object" ||
-		payload === null ||
-		!("wifi" in payload) ||
-		typeof payload.wifi !== "object" ||
-		payload.wifi === null
-	) {
-		return payload;
-	}
+	if (typeof payload !== "object" || payload === null) return payload;
+	const hasUsbDevices = "usb_devices" in payload;
+	const hasWifi =
+		"wifi" in payload &&
+		typeof payload.wifi === "object" &&
+		payload.wifi !== null;
+	if (!hasUsbDevices && !hasWifi) return payload;
 
-	return {
-		...payload,
-		wifi: Array.isArray(payload.wifi)
-			? payload.wifi.map(omitIncarnation)
-			: Object.fromEntries(
-					Object.entries(payload.wifi).map(([id, iface]) => [
-						id,
-						omitIncarnation(iface),
-					]),
-				),
-	};
+	const projected: Record<string, unknown> = { ...payload };
+	if (hasUsbDevices) Reflect.deleteProperty(projected, "usb_devices");
+	if (!hasWifi) return projected;
+
+	const wifi = payload.wifi;
+	projected.wifi = Array.isArray(wifi)
+		? wifi.map(omitIncarnation)
+		: Object.fromEntries(
+				Object.entries(wifi).map(([id, iface]) => [id, omitIncarnation(iface)]),
+			);
+	return projected;
+}
+
+/** The bytes the cloud remote socket sends. Local status keeps usb_devices. */
+export function serializeRemoteSocketMessage(data: string): string {
+	const frame: Record<string, unknown> = JSON.parse(data);
+	let projected =
+		frame.status === undefined
+			? frame
+			: { ...frame, status: projectRemoteStatus(frame.status) };
+	const config = projectRemoteConfig(frame.config);
+	if (config !== frame.config) projected = { ...projected, config };
+	const wifi = projectRemoteWifiFrame(frame.wifi);
+	if (wifi !== frame.wifi) projected = { ...projected, wifi };
+	return projected === frame ? data : JSON.stringify(projected);
 }

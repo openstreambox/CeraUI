@@ -817,6 +817,7 @@ describe("sysfs fixtures", () => {
 				board: "generic",
 				status: "unavailable",
 				roots: [],
+				xhciControllers: {},
 			});
 		} finally {
 			await rm(emptyRoot, { recursive: true, force: true });
