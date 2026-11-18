@@ -145,7 +145,7 @@ async function attemptRuntimeConfig(
 	let copy: string;
 	try {
 		copy = preserveDamagedRecord(path, read.bytes);
-		writeFileAtomicSync(path, firstRunRecord(read.bytes));
+		writeFileAtomicSync(path, firstRunRecord(read.bytes), { mode: 0o600 });
 		notice.copy = copy;
 	} catch (err) {
 		logger.error("config: damaged config.json could not be archived", { err });
