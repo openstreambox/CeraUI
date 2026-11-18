@@ -114,6 +114,7 @@ import {
 	getPipelinesProcedure,
 	listDevicesProcedure,
 	reloadAudioDelayProcedure,
+	restartConnectionProcedure,
 	setBitrateProcedure,
 	setConfigProcedure,
 	setMockDeviceAttachedProcedure,
@@ -193,6 +194,7 @@ const stableRoutes = {
 	streaming: base.router({
 		start: streamingStartProcedure,
 		stop: streamingStopProcedure,
+		restartConnection: restartConnectionProcedure,
 		setBitrate: setBitrateProcedure,
 		getPipelines: getPipelinesProcedure,
 		getAudioCodecs: getAudioCodecsProcedure,
