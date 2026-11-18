@@ -53,22 +53,23 @@ export function projectRemoteConfig(payload: unknown): unknown {
 export function projectRemoteStatus(payload: unknown): unknown {
 	if (typeof payload !== "object" || payload === null) return payload;
 	const hasUsbDevices = "usb_devices" in payload;
-	const hasWifi =
-		"wifi" in payload &&
-		typeof payload.wifi === "object" &&
-		payload.wifi !== null;
-	if (!hasUsbDevices && !hasWifi) return payload;
+	const wifi = "wifi" in payload ? payload.wifi : undefined;
+	if (!hasUsbDevices && (typeof wifi !== "object" || wifi === null)) {
+		return payload;
+	}
 
 	const projected: Record<string, unknown> = { ...payload };
 	if (hasUsbDevices) Reflect.deleteProperty(projected, "usb_devices");
-	if (!hasWifi) return projected;
-
-	const wifi = payload.wifi;
-	projected.wifi = Array.isArray(wifi)
-		? wifi.map(omitIncarnation)
-		: Object.fromEntries(
-				Object.entries(wifi).map(([id, iface]) => [id, omitIncarnation(iface)]),
-			);
+	if (typeof wifi === "object" && wifi !== null) {
+		projected.wifi = Array.isArray(wifi)
+			? wifi.map(omitIncarnation)
+			: Object.fromEntries(
+					Object.entries(wifi).map(([id, iface]) => [
+						id,
+						omitIncarnation(iface),
+					]),
+				);
+	}
 	return projected;
 }
 
