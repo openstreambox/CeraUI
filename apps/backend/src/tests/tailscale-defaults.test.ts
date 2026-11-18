@@ -5,7 +5,17 @@
  * image enrolment hand-off.
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,6 +37,9 @@ beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "ts-defaults-"));
 	process.env.CERALIVE_TAILSCALE_SOCKET = join(dir, "ts.sock");
 	process.env.CERALIVE_TAILSCALE_STATE_DIR = join(dir, "state");
+	process.env.CERALIVE_TAILSCALE_ENROLL_DIR = join(dir, "enroll");
+	mkdirSync(join(dir, "state"), { mode: 0o700 });
+	mkdirSync(join(dir, "enroll"), { mode: 0o700 });
 });
 afterEach(() => {
 	server?.stop(true);
@@ -34,6 +47,7 @@ afterEach(() => {
 	for (const key of [
 		"CERALIVE_TAILSCALE_SOCKET",
 		"CERALIVE_TAILSCALE_STATE_DIR",
+		"CERALIVE_TAILSCALE_ENROLL_DIR",
 	]) {
 		if (env[key] === undefined) delete process.env[key];
 		else process.env[key] = env[key];
@@ -189,6 +203,7 @@ describe("CLI calls", () => {
 		try {
 			const deps = getDefaultTailscaleDepsForTest();
 			await deps.reconnect();
+			await deps.pinAutoUpdateOff();
 			await deps.down();
 			await deps.logout();
 			await deps.statusJson();
@@ -198,6 +213,13 @@ describe("CLI calls", () => {
 		const socket = `--socket=${process.env.CERALIVE_TAILSCALE_SOCKET}`;
 		expect(runs).toEqual([
 			["tailscale", socket, "up"],
+			[
+				"tailscale",
+				socket,
+				"set",
+				"--auto-update=false",
+				"--update-check=false",
+			],
 			["tailscale", socket, "down"],
 			["tailscale", socket, "logout"],
 			["tailscale", socket, "status", "--json", "--peers=false"],
@@ -206,37 +228,60 @@ describe("CLI calls", () => {
 });
 
 describe("image enrolment hand-off", () => {
-	test("writes the pending key and name privately, resets the back-off, starts the unit", async () => {
-		const runs: string[][] = [];
-		const spy = spyOn(commands, "run").mockImplementation(async (bin, args) => {
-			runs.push([bin, ...args]);
-			return "";
+	for (const name of ["box1", ""]) {
+		test(`writes only a private incoming key ${name ? "with" : "without"} a name before starting enrolment`, async () => {
+			const inbox = join(dir, "enroll");
+			const incoming = join(inbox, "incoming-authkey");
+			const status = "pending 3 1700000120 backing off after a failure";
+			writeFileSync(join(inbox, "enroll-status"), status);
+			writeFileSync(join(inbox, "pending-authkey"), "old pending key");
+			writeFileSync(join(dir, "state", "tailscaled.state"), "daemon state");
+			const runs: string[][] = [];
+			const spy = spyOn(commands, "run").mockImplementation(
+				async (bin, args) => {
+					runs.push([bin, ...args]);
+					expect(readFileSync(incoming, "utf8")).toBe(
+						name ? `${KEY}\n${name}\n` : `${KEY}\n`,
+					);
+					expect(statSync(incoming).mode & 0o777).toBe(0o600);
+					return "";
+				},
+			);
+			const deps = getDefaultTailscaleDepsForTest();
+			try {
+				await deps.enrollSubmit(KEY, name);
+			} finally {
+				spy.mockRestore();
+			}
+			expect(runs).toEqual([["systemctl", "start", "--no-block", ENROLL_UNIT]]);
+			for (const argv of runs) expect(argv.join(" ")).not.toContain(KEY);
+			expect(readdirSync(inbox).sort()).toEqual([
+				"enroll-status",
+				"incoming-authkey",
+				"pending-authkey",
+			]);
+			expect(readFileSync(join(inbox, "pending-authkey"), "utf8")).toBe(
+				"old pending key",
+			);
+			expect(readdirSync(join(dir, "state"))).toEqual(["tailscaled.state"]);
+			expect(await deps.enrollHasState()).toBe(true);
+			expect(await deps.enrollLastStatus()).toBe(status);
+			expect(await deps.enrollPending()).toBe(true);
+			expect(await deps.enrollQueued()).toBe(true);
+			renameSync(incoming, join(inbox, ".claimed"));
+			expect(await deps.enrollQueued()).toBe(true);
+			rmSync(join(inbox, ".claimed"));
+			expect(await deps.enrollQueued()).toBe(false);
 		});
-		try {
-			await getDefaultTailscaleDepsForTest().enrollSubmit(KEY, "box1");
-		} finally {
-			spy.mockRestore();
-		}
-		const state = process.env.CERALIVE_TAILSCALE_STATE_DIR as string;
-		expect(readFileSync(join(state, "pending-authkey"), "utf8")).toBe(KEY);
-		expect(readFileSync(join(state, "pending-hostname"), "utf8")).toBe("box1");
-		expect(readFileSync(join(state, "enroll-status"), "utf8")).toBe(
-			"pending 0 0 new-key\n",
-		);
-		for (const name of [
-			"pending-authkey",
-			"pending-hostname",
-			"enroll-status",
-		]) {
-			expect(statSync(join(state, name)).mode & 0o777).toBe(0o600);
-		}
-		expect(runs).toEqual([
-			["systemctl", "enable", "tailscaled.service"],
-			["systemctl", "start", "--no-block", ENROLL_UNIT],
-		]);
-		for (const argv of runs) expect(argv.join(" ")).not.toContain(KEY);
-		const deps = getDefaultTailscaleDepsForTest();
-		expect(await deps.enrollPending()).toBe(true);
-		expect(await deps.enrollLastStatus()).toBe("pending 0 0 new-key");
+	}
+
+	test("refuses to write a key through a symlinked inbox", async () => {
+		const inbox = join(dir, "enroll");
+		rmSync(inbox, { recursive: true });
+		symlinkSync(join(dir, "state"), inbox);
+		await expect(
+			getDefaultTailscaleDepsForTest().enrollSubmit(KEY, ""),
+		).rejects.toThrow("private inbox");
+		expect(readdirSync(join(dir, "state"))).toEqual([]);
 	});
 });
