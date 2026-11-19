@@ -129,6 +129,20 @@ describe("uplink diversity", () => {
 			),
 		).toBe("same-uplink");
 	});
+	test("same gateway and subnet with a gateway MAC missing is unknown, not one uplink", () => {
+		expect(
+			classifyUplink(
+				up("192.168.0.1", null, "192.168.0.0/24"),
+				up("192.168.0.1", "02:00:00:00:00:02", "192.168.0.0/24"),
+			),
+		).toBe("unknown");
+		expect(
+			classifyUplink(
+				up("192.168.0.1", null, "192.168.0.0/24"),
+				up("192.168.0.1", null, "192.168.0.0/24"),
+			),
+		).toBe("unknown");
+	});
 	test("against several holders the least diverse relation counts", () => {
 		const path = up("g2", "m2", "s2");
 		expect(
@@ -154,8 +168,7 @@ describe("candidate choice", () => {
 	) => ({
 		goal,
 		holderBssids: new Set(["AA:00:00:00:00:01"]),
-		holderSsids: new Set(["venue"]),
-		savedSsids: new Set(saved),
+		savedSsids: new Set(["venue", ...saved]),
 		learned: new Map(learned),
 	});
 	test("never the holder's BSSID, in any letter case, except for capacity", () => {
@@ -204,6 +217,31 @@ describe("candidate choice", () => {
 			ctx("capacity"),
 		);
 		expect(pick?.bssid).toBe("bb:00:00:00:00:02");
+	});
+	test("the holder's SSID is no candidate without a profile bound to this radio", () => {
+		expect(
+			pickCandidate([row("bb:00:00:00:00:02", "venue", 90)], {
+				...ctx("continuity"),
+				savedSsids: new Set(["home"]),
+			}),
+		).toBeUndefined();
+	});
+	test("a BSSID that failed recently goes behind the others, and alone is retried", () => {
+		const rows = [
+			row("bb:00:00:00:00:02", "venue", 80),
+			row("cc:00:00:00:00:03", "home", 60),
+		];
+		const failures = new Map([["bb:00:00:00:00:02", 1]]);
+		for (const goal of ["continuity", "diversity", "capacity"] as const)
+			expect(
+				pickCandidate(rows, { ...ctx(goal, ["home"]), failures })?.bssid,
+			).toBe("cc:00:00:00:00:03");
+		expect(
+			pickCandidate([row("bb:00:00:00:00:02", "venue", 80)], {
+				...ctx("continuity"),
+				failures,
+			})?.bssid,
+		).toBe("bb:00:00:00:00:02");
 	});
 	test("networks without a saved profile are never candidates", () => {
 		expect(

@@ -91,6 +91,19 @@ describe("rescans while a radio holds the stream", () => {
 		expect(spawns).toEqual(["wlan1"]);
 	});
 
+	test("a radio protected while the loop runs is skipped and keeps its stamp", async () => {
+		protectRadiosFromScans(["wlan0"]);
+		setRescanActionForTest(async (device) => {
+			spawns.push(device);
+			// The coordinator starts a join on wlan2 while wlan1 scans.
+			if (device === "wlan1") protectRadiosFromScans(["wlan0", "wlan2"]);
+		});
+		await wifiRescan();
+		expect(spawns).toEqual(["wlan1"]);
+		expect(getWifiScanStampForDevice(1)?.generation).toBe(1);
+		expect(getWifiScanStampForDevice(2)).toBeUndefined();
+	});
+
 	test("a rescan aimed at another radio is unchanged", async () => {
 		protectRadiosFromScans(["wlan0"]);
 		await wifiRescan(1);
