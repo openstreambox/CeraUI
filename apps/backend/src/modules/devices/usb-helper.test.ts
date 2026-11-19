@@ -161,7 +161,7 @@ describe("usb helper reads", () => {
 		}
 	});
 
-	it("joins a hold only through returned_as, and only while that device is present", async () => {
+	it("leaves a hold unassigned when a replacement sits at the returned address", async () => {
 		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-helper-"));
 		try {
 			const marks = join(root, "run/ceralive/modem-usbspeed");
@@ -171,31 +171,28 @@ describe("usb helper reads", () => {
 				JSON.stringify({
 					phase: "verified",
 					original: "312",
+					model: "RM520N-GL",
 					returned_as: "1-1",
 					unit: IMEI,
 				}),
 			);
-			const present = await readUsbHelper({
+			const sameModel = await readUsbHelper({
 				root,
 				kernelKeys: new Map([
-					["4-1", "replacement"],
-					["1-1", "modem-now"],
+					["4-1", "old-address"],
+					["1-1", "replacement-same-model"],
 				]),
 			});
-			expect(present.holds).toEqual([
-				{ key: "modem-now", stored: "20", outcome: "verified" },
-			]);
-			expect(JSON.stringify(present)).not.toContain("4-1");
-			expect(JSON.stringify(present)).not.toContain("1-1");
-			expect(JSON.stringify(present)).not.toContain(IMEI);
-			const reused = await readUsbHelper({
-				root,
-				kernelKeys: new Map([["4-1", "replacement"]]),
-			});
-			expect(reused.holds).toEqual([
+			expect(sameModel.holds).toEqual([
 				{ key: null, stored: "20", outcome: "verified" },
 			]);
-			expect(JSON.stringify(reused)).not.toContain("replacement");
+			const encoded = JSON.stringify(sameModel);
+			expect(encoded).not.toContain("replacement-same-model");
+			expect(encoded).not.toContain("old-address");
+			expect(encoded).not.toContain("1-1");
+			expect(encoded).not.toContain("4-1");
+			expect(encoded).not.toContain(IMEI);
+			expect(encoded).not.toContain("RM520N-GL");
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

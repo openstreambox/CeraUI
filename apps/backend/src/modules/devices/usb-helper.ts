@@ -25,6 +25,16 @@
  * or the outcome token. Marker JSON may carry a unit id, a model string
  * and the previous speed; none of that is copied.
  *
+ * image #61's save_marker stores phase, time, and the caller's fields. The
+ * verified line is save_marker(port, phase, **base, speed=speed,
+ * returned_as=pick). base is model, revision, speed_before, unit, and
+ * port_paths. returned_as and the filename are kernel addresses such as
+ * "1-1". unit is a hash of the IMEI, not a USB serial. The marker has no
+ * boot id, busnum, or devnum, so a later device at that address would
+ * inherit the hold. Every boot record stays unassigned. A follow-up on #61
+ * could record the USB serial, or busnum and devnum with the boot id. The
+ * writer is not changed here.
+ *
  * This module never writes sysfs or /run, and it never opens a partner
  * directory or a journal.
  */
@@ -45,13 +55,12 @@ import {
 	usbHelperSchema,
 } from "@ceraui/rpc/schemas";
 
-import type { UsbTreeBoard, UsbTreeNode } from "./usb-tree.ts";
+import type { UsbTreeBoard } from "./usb-tree.ts";
 
 const ROLE = /\[(source|sink|host|device|dual)\]/;
 const REPROBE =
 	/^(recovered|no-partner|skipped|failed-unbind|failed-bind|attempted|port-missing)(?: ([0-9]{10}))?$/;
 const PORT_FILE = /^[0-9]+-[0-9]+(?:\.[0-9]+)*\.json$/;
-const KERNEL_NAME = /^[0-9]+-[0-9]+(?:\.[0-9]+)*$/;
 const REGULATOR = /^regulator\.\d+$/;
 const VBUS_NAME = "vbus5v0_typec";
 
@@ -77,25 +86,16 @@ export type ReadUsbHelperOptions = {
 	readonly root: string;
 	/** J11 is the ROCK 5B+ USB-C socket. Other boards do not get that read. */
 	readonly board?: UsbTreeBoard;
-	/** Kernel device name (`1-1`) to the local USB node key. */
+	/**
+	 * Accepted and ignored. A kernel address is not a device instance, and
+	 * the marker does not record one.
+	 */
 	readonly kernelKeys?: ReadonlyMap<string, string>;
 	/** Test hook. Production does not pass one. */
 	readonly trace?: UsbHelperTrace;
 };
 
-export function kernelKeysFromTree(
-	roots: readonly UsbTreeNode[],
-): Map<string, string> {
-	const keys = new Map<string, string>();
-	const walk = (node: UsbTreeNode) => {
-		keys.set(node.kernelName, node.key);
-		for (const child of node.children) walk(child);
-	};
-	for (const root of roots) walk(root);
-	return keys;
-}
-
-/** The development fixture. The design RM520 row is the one hold. */
+/** The development fixture. The design RM520 row is the one hold. The reader never sets a row key. */
 export function mockUsbHelper(): UsbHelperWire {
 	return usbHelperSchema.parse({
 		typec: {
@@ -125,11 +125,7 @@ export async function readUsbHelper(
 				? await readTypec(options.root, options.trace)
 				: null;
 		const reprobe = await readReprobe(options.root, options.trace);
-		const holds = await readHolds(
-			options.root,
-			options.kernelKeys ?? new Map(),
-			options.trace,
-		);
+		const holds = await readHolds(options.root, options.trace);
 		return usbHelperSchema.parse({ typec, reprobe, holds });
 	} catch {
 		return EMPTY;
@@ -220,7 +216,6 @@ async function readReprobe(
 
 async function readHolds(
 	root: string,
-	kernelKeys: ReadonlyMap<string, string>,
 	trace?: UsbHelperTrace,
 ): Promise<UsbHelperHold[]> {
 	const dir = join(root, "run/ceralive/modem-usbspeed");
@@ -243,34 +238,24 @@ async function readHolds(
 		} catch {
 			continue;
 		}
-		const hold = holdFrom(parsed, kernelKeys);
+		const hold = holdFrom(parsed);
 		if (hold !== null) holds.push(hold);
 	}
 	return holds;
 }
 
 /**
- * The marker filename is the address before a reset. Only `returned_as`,
- * when that device is still present, joins the hold to a row. Anything else
- * stays unassigned. The raw names are not copied onto the wire.
+ * Every boot record stays unassigned. returned_as is only the kernel address
+ * the writer saw, and a different device can sit there later.
  */
-function holdFrom(
-	raw: unknown,
-	kernelKeys: ReadonlyMap<string, string>,
-): UsbHelperHold | null {
+function holdFrom(raw: unknown): UsbHelperHold | null {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw))
 		return null;
 	const phase = "phase" in raw ? raw.phase : undefined;
 	if (typeof phase !== "string" || !HOLD_OUTCOMES.has(phase)) return null;
 	const original = "original" in raw ? raw.original : undefined;
 	const stored = original === "20" || STORED_PHASES.has(phase) ? "20" : null;
-	const returned = "returned_as" in raw ? raw.returned_as : undefined;
-	const mapped =
-		typeof returned === "string" && KERNEL_NAME.test(returned)
-			? kernelKeys.get(returned)
-			: undefined;
-	const nodeKey = mapped !== undefined && mapped.length <= 120 ? mapped : null;
-	return { key: nodeKey, stored, outcome: phase as UsbHelperHold["outcome"] };
+	return { key: null, stored, outcome: phase as UsbHelperHold["outcome"] };
 }
 
 async function exists(path: string, trace?: UsbHelperTrace): Promise<boolean> {
