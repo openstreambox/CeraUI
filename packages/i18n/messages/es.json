@@ -1246,7 +1246,7 @@
 	"network.devices.whereAria": "Borde de puertos de la ROCK 5B+, visto desde el lado de los puertos",
 	"network.devices.whereCaption": "Visto desde el lado de los puertos. El USB-C está en el otro borde; la ranura del módem está adentro.",
 	"network.devices.wherePower": "alimentación",
-	"network.devices.whereHdmi": "← HDMI, alimentación",
+	"network.devices.whereHdmi": "← HDMI y alimentación",
 	"network.devices.helper.power": "Rol de potencia",
 	"network.devices.helper.data": "Rol de datos",
 	"network.devices.helper.partner": "Compañero",
