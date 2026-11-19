@@ -278,6 +278,7 @@ function openModemConfig(id: string) {
 			wire={getStatus()?.usb_devices}
 			events={getStatus()?.usb_events}
 			calm={getStatus()?.device_calm}
+			helper={getStatus()?.usb_helper}
 			onBack={() => (devicesOpen = false)}
 		/>
 	{:else}

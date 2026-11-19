@@ -27,6 +27,10 @@ import type {
 	DeviceCalm,
 	UsbDevicesWire,
 	UsbDeviceWireNode,
+	UsbHelperHold,
+	UsbHelperReprobe,
+	UsbHelperTypec,
+	UsbHelperWire,
 } from "@ceraui/rpc/schemas";
 
 export type DeviceHint =
@@ -75,6 +79,14 @@ export type DeviceRow = {
 	readonly hubPorts: number | null;
 	readonly since: string | null;
 	readonly drops: number | null;
+	readonly helper: DeviceRowHelper | null;
+};
+
+/** J11, the port-fix marker, and USB 2 holds. Only inside helper details. */
+export type DeviceRowHelper = {
+	readonly typec: UsbHelperTypec | null;
+	readonly reprobe: UsbHelperReprobe | null;
+	readonly holds: readonly UsbHelperHold[];
 };
 
 export type DevicePortGroup = {
@@ -117,6 +129,7 @@ const ROCK_LABEL_ORDER = [
 
 export function devicesPageModel(
 	wire: UsbDevicesWire | undefined,
+	helper?: UsbHelperWire,
 ): DevicesPageModel {
 	if (wire === undefined || wire.status !== "ok") return { status: "checking" };
 	const byKey = new Map(wire.nodes.map((node) => [node.key, node]));
@@ -154,10 +167,11 @@ export function devicesPageModel(
 	built.sort(
 		(a, b) => groupRank(a) - groupRank(b) || a.id.localeCompare(b.id, "en"),
 	);
+	const grouped = helper === undefined ? built : attachHelper(built, helper);
 	return {
 		status: "ok",
 		board: wire.board,
-		groups: built,
+		groups: grouped,
 		summary: summarize(built, undefined),
 	};
 }
@@ -326,7 +340,46 @@ function toRow(
 		hubPorts: node.hubPorts ?? null,
 		since: node.since ?? null,
 		drops: node.drops ?? null,
+		helper: null,
 	};
+}
+
+function attachHelper(
+	groups: DevicePortGroup[],
+	helper: UsbHelperWire,
+): DevicePortGroup[] {
+	const used = new Set<UsbHelperHold>();
+	const next = groups.map((group) => ({
+		...group,
+		rows: group.rows.map((row) => {
+			const holds = helper.holds.filter(
+				(hold) => hold.key !== null && hold.key === row.key,
+			);
+			for (const hold of holds) used.add(hold);
+			if (holds.length === 0) return row;
+			return {
+				...row,
+				helper: { typec: null, reprobe: null, holds },
+			};
+		}),
+	}));
+	const spare = helper.holds.filter((hold) => !used.has(hold));
+	const port = next.find((group) => group.id === "C" || group.label === "C");
+	const head = port?.rows[0];
+	if (port === undefined || head === undefined) return next;
+	if (helper.typec === null && helper.reprobe === null && spare.length === 0) {
+		return next;
+	}
+	const rows = port.rows.slice();
+	rows[0] = {
+		...head,
+		helper: {
+			typec: helper.typec,
+			reprobe: helper.reprobe,
+			holds: [...(head.helper?.holds ?? []), ...spare],
+		},
+	};
+	return next.map((group) => (group === port ? { ...group, rows } : group));
 }
 
 function rowState(node: UsbDeviceWireNode, empty: boolean): DeviceRowState {

@@ -300,6 +300,7 @@ describe("usb device status payload", () => {
 			procedure.indexOf("export function buildInitialStatus"),
 		);
 		expect(getStatus).not.toContain("usb_devices");
+		expect(getStatus).not.toContain("usb_helper");
 		expect(getStatus).not.toContain("replayAuthenticatedUsbDevices");
 	});
 

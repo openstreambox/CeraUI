@@ -23,6 +23,7 @@ import {
 } from './system.schema';
 import { updateOrchestratorWireStateSchema } from './update-orchestrator.schema';
 import { deviceCalmSchema, usbDevicesWireSchema, usbEventsWireSchema } from './usb-devices.schema';
+import { usbHelperSchema } from './usb-helper.schema';
 import { wifiStatusSchema } from './wifi.schema';
 
 // Audio sources enum
@@ -579,5 +580,8 @@ export const statusResponseSchema = z.object({
 	// belong here. Heat rest and the off-by-you record are not on this branch,
 	// so the field stays absent until those writers exist.
 	device_calm: deviceCalmSchema.optional(),
+	// J11, the Type-C rebind marker, and the RM520 USB 2 hold. Local only.
+	// Absent until the first read. Remote frames drop the object.
+	usb_helper: usbHelperSchema.optional(),
 });
 export type StatusResponse = z.infer<typeof statusResponseSchema>;
