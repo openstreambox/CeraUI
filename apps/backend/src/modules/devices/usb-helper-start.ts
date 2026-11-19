@@ -16,9 +16,11 @@
 */
 
 /*
- * Start the image's own helper units. The argv is an allowlist: the Type-C
- * recheck oneshot, or one modem USB 2 instance whose name is a kernel port.
+ * Start the image's own helper units, and ask systemd whether that unit
+ * is still active. The argv is an allowlist: the Type-C recheck oneshot,
+ * or one modem USB 2 instance whose name is a kernel port.
  * This file does not talk to ModemManager. The USB 2 unit does that itself.
+ * Failures thrown here never include the command or the unit name.
  */
 
 import { spawnWithTimeout } from "../../helpers/spawn-policy.ts";
@@ -29,6 +31,14 @@ const USB2_UNIT =
 
 const TYPEC_TIMEOUT_MS = 70_000;
 const USB2_TIMEOUT_MS = 310_000;
+const SHOW_TIMEOUT_MS = 5_000;
+
+const BUSY_STATES = new Set([
+	"active",
+	"activating",
+	"reloading",
+	"deactivating",
+]);
 
 /** Argv for an allowlisted unit, or null when the name is not one of ours. */
 export function helperUnitArgv(unit: string): readonly string[] | null {
@@ -36,15 +46,55 @@ export function helperUnitArgv(unit: string): readonly string[] | null {
 	return ["systemctl", "start", unit];
 }
 
-/** `systemctl start` of one allowlisted unit. The oneshot's own timeout applies. */
+/** Argv that reads ActiveState for an allowlisted unit, or null. */
+export function helperUnitShowArgv(unit: string): readonly string[] | null {
+	if (helperUnitArgv(unit) === null) return null;
+	return ["systemctl", "show", "-p", "ActiveState", "--value", unit];
+}
+
+/**
+ * `systemctl start` of one allowlisted unit.
+ * A timeout or a non-zero exit becomes a generic error. The oneshot may
+ * still be running; the caller waits on ActiveState before it drops the lease.
+ */
 export async function startHelperUnit(unit: string): Promise<void> {
 	const argv = helperUnitArgv(unit);
 	if (argv === null) {
 		throw new Error("helper unit is not allowlisted");
 	}
 	const timeoutMs = unit === TYPEC_UNIT ? TYPEC_TIMEOUT_MS : USB2_TIMEOUT_MS;
-	const result = await spawnWithTimeout([...argv], { timeoutMs });
-	if (result.exitCode !== 0) {
+	try {
+		const result = await spawnWithTimeout([...argv], { timeoutMs });
+		if (result.exitCode !== 0) {
+			throw new Error("helper unit failed");
+		}
+	} catch (err) {
+		if (
+			err instanceof Error &&
+			(err.message === "helper unit failed" ||
+				err.message === "helper unit is not allowlisted")
+		) {
+			throw err;
+		}
 		throw new Error("helper unit failed");
+	}
+}
+
+/**
+ * True when the unit is active or the state cannot be read.
+ * Unknown stays busy so a lease is not dropped on a probe failure.
+ * The returned boolean is the only thing callers log.
+ */
+export async function helperUnitIsActive(unit: string): Promise<boolean> {
+	const argv = helperUnitShowArgv(unit);
+	if (argv === null) return true;
+	try {
+		const result = await spawnWithTimeout([...argv], {
+			timeoutMs: SHOW_TIMEOUT_MS,
+		});
+		if (result.exitCode !== 0) return true;
+		return BUSY_STATES.has(result.stdout.trim());
+	} catch {
+		return true;
 	}
 }
