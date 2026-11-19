@@ -1128,7 +1128,7 @@
 	"network.devices.helper.data": "데이터 역할",
 	"network.devices.helper.partner": "상대",
 	"network.devices.helper.vbus": "VBUS 레귤레이터",
-	"network.devices.helper.fix": "포트 복구",
+	"network.devices.helper.fix": "마지막 포트 복구",
 	"network.devices.helper.usb2": "USB 2 고정",
 	"network.devices.helper.role.source": "공급",
 	"network.devices.helper.role.sink": "수전",

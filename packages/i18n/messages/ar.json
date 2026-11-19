@@ -1275,7 +1275,7 @@
 	"network.devices.helper.data": "دور البيانات",
 	"network.devices.helper.partner": "الطرف المقابل",
 	"network.devices.helper.vbus": "منظم VBUS",
-	"network.devices.helper.fix": "إصلاح المنفذ",
+	"network.devices.helper.fix": "آخر إصلاح للمنفذ",
 	"network.devices.helper.usb2": "تثبيت USB 2",
 	"network.devices.helper.role.source": "مصدر",
 	"network.devices.helper.role.sink": "مستقبل",

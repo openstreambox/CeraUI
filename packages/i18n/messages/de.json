@@ -1243,7 +1243,7 @@
 	"network.devices.helper.data": "Datenrolle",
 	"network.devices.helper.partner": "Gegenstelle",
 	"network.devices.helper.vbus": "VBUS-Regler",
-	"network.devices.helper.fix": "Anschlusskorrektur",
+	"network.devices.helper.fix": "Letzte Anschlusskorrektur",
 	"network.devices.helper.usb2": "USB-2-Haltung",
 	"network.devices.helper.role.source": "Quelle",
 	"network.devices.helper.role.sink": "Senke",
