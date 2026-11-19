@@ -1,5 +1,5 @@
-import { expect, type Page, test } from "./fixtures/index.js";
-import { ensureAuthenticated, evidencePath, navigateTo } from "./helpers/index.js";
+import { expect, type Page, test } from "../fixtures/index.js";
+import { ensureAuthenticated, evidencePath, navigateTo } from "../helpers/index.js";
 
 /**
  * Two events from one poll can share a label, a time and a kind. The list
@@ -57,7 +57,10 @@ const SAME_LABEL = {
 };
 
 test.describe("duplicate device events", () => {
-	test("shows both rows when the labels match", async ({ page }, testInfo) => {
+	test(
+		"@visual shows both rows when the labels match",
+		{ tag: "@visual" },
+		async ({ page }, testInfo) => {
 		test.skip(
 			testInfo.project.name !== "desktop" && testInfo.project.name !== "mobile",
 			"desktop and phone",
