@@ -77,7 +77,9 @@ export class PersistentTokenStore {
 		this.#filterRevocations();
 		for (const key of Object.keys(this.records))
 			if (!/^[0-9a-f]{64}$/.test(key)) delete this.records[key];
-		writeFileAtomicSync(this.#path, JSON.stringify(this.records));
+		writeFileAtomicSync(this.#path, JSON.stringify(this.records), {
+			mode: 0o600,
+		});
 		this.#state = "valid";
 		this.#revokeAll = false;
 		this.#revoked.clear();

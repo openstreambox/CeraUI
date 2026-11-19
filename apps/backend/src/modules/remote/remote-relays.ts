@@ -154,7 +154,9 @@ export async function updateCachedRelays(relays: RelaysCache | undefined) {
 	} catch (_err) {
 		logger.debug("updated the relays cache", relays);
 		relaysCache = relays;
-		writeTextFileAtomic(RELAYS_CACHE_FILE, JSON.stringify(relays));
+		writeTextFileAtomic(RELAYS_CACHE_FILE, JSON.stringify(relays), {
+			mode: 0o600,
+		});
 		return true;
 	}
 	return undefined;
