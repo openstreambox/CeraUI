@@ -47,9 +47,13 @@ import {
 	tryAcquireLifecycle,
 } from "../modules/streaming/lifecycle-admission.ts";
 import { resetRecoveryBarrier } from "../modules/streaming/recovery-barrier.ts";
+import { publishStreamSessionUnconfirmed } from "../modules/streaming/stream-liveness.ts";
 import { updateStatus } from "../modules/streaming/streaming.ts";
 import { withDeviceType } from "../modules/system/device-detection.ts";
-import { setUsbModeProcedure } from "../rpc/procedures/modems.procedure.ts";
+import {
+	setFccUnlockProcedure,
+	setUsbModeProcedure,
+} from "../rpc/procedures/modems.procedure.ts";
 import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
 
 // The one SKU the shipped catalog certifies. Every REAL modem is uncertified
@@ -220,6 +224,41 @@ describe("TIER A — an entry refusal fires ZERO engine calls", () => {
 		});
 
 		expect(spy.engineBuilds).toBe(0);
+	});
+
+	test("an UNCONFIRMED stream session never reaches the engine", async () => {
+		const { spy } = deps();
+
+		await withDeviceType("real", async () => {
+			provisioned();
+			publishStreamSessionUnconfirmed(true);
+			try {
+				expect(
+					await call(setUsbModeProcedure, REQUEST, { context: makeContext() }),
+				).toEqual({ success: false, error: "streaming_active" });
+			} finally {
+				publishStreamSessionUnconfirmed(false);
+			}
+		});
+
+		expect(spy.engineBuilds).toBe(0);
+	});
+
+	test("an UNCONFIRMED stream session refuses an FCC unlock change before any write", async () => {
+		await withDeviceType("real", async () => {
+			publishStreamSessionUnconfirmed(true);
+			try {
+				expect(
+					await call(
+						setFccUnlockProcedure,
+						{ device: "modem-1", enabled: true, confirm: true },
+						{ context: makeContext() },
+					),
+				).toEqual({ success: false, refusal: "streaming_active" });
+			} finally {
+				publishStreamSessionUnconfirmed(false);
+			}
+		});
 	});
 
 	test("an ADMITTED-but-not-yet-live start never reaches the engine — the window `getIsStreaming()` cannot see", async () => {

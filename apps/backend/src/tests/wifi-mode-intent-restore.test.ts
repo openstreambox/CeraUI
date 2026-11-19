@@ -20,6 +20,7 @@ import {
 	setConfigFilePath,
 } from "../modules/config.ts";
 import * as networkManager from "../modules/network/network-manager.ts";
+import { publishStreamSessionUnconfirmed } from "../modules/streaming/stream-liveness.ts";
 import * as streaming from "../modules/streaming/streaming.ts";
 import { hotspotCredentialsStore } from "../modules/wifi/hotspot-credentials.ts";
 import {
@@ -324,6 +325,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	publishStreamSessionUnconfirmed(false);
 	stopRestore?.();
 	stopRestore = undefined;
 	wifiRadioObservation.stop();
@@ -500,6 +502,35 @@ for (const path of ["direct", "mode"] as const) {
 		);
 	});
 }
+
+for (const path of ["direct", "mode"] as const) {
+	test(`(7) ${path} exclusive start refuses while the stream session is unconfirmed`, async () => {
+		// The session cannot confirm the engine is idle, and is_streaming stays false.
+		publishStreamSessionUnconfirmed(true);
+		const result =
+			path === "direct"
+				? await wifiHotspotStart({ device: 0 })
+				: await transition.setWifiAdapterMode(0, "hotspot", modeDeps());
+		expect(streaming.getIsStreaming()).toBe(false);
+		expect(result).toEqual({ success: false, error: "DEVICE_BUSY" });
+		expect(getPersistedWifiAdapterModes()).toEqual({});
+		expect(transcript).toEqual([]);
+	});
+}
+
+test("(4) restore stays pending while the stream session is unconfirmed", async () => {
+	persistWifiAdapterMode(MAC, "hotspot");
+	publishStreamSessionUnconfirmed(true);
+	const source = bootSource();
+	startRestore(source);
+	await source.publish();
+	expect(transcript).toEqual([]);
+	expect(await diskModes()).toEqual({ [MAC]: "hotspot" });
+	publishStreamSessionUnconfirmed(false);
+	await source.publish(false);
+	settlePending(IFNAME, true);
+	expect(observedWifiAdapterMode(row)).toBe("hotspot");
+});
 
 for (const path of ["direct-hybrid", "stop", "station", "hybrid"] as const) {
 	test(`(7) streaming permits ${path} without dropping the station connection`, async () => {

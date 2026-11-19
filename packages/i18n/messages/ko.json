@@ -1905,6 +1905,8 @@
 	"notifications.streamHealthRecovered": "스트림 상태가 복구되었습니다",
 	"notifications.streamRecovered": "스트리밍 엔진이 다시 시작된 뒤 스트림이 자동으로 복구되었습니다.",
 	"notifications.streamRecoveryFailed": "스트리밍 엔진이 다시 시작된 뒤 스트림을 복구하지 못했습니다. 자세한 내용은 설정 → 시스템 로그를 열어 확인하세요.",
+	"notifications.streamRecoveredAfterRestart": "서비스가 다시 시작된 뒤 스트림이 자동으로 복구되었습니다.",
+	"notifications.streamRecoveryFailedAfterRestart": "서비스가 다시 시작된 뒤 스트림을 복구하지 못했습니다. 자세한 내용은 설정 → 시스템 로그를 열어 확인하세요.",
 	"notifications.staleLinkAddress": "{link}이(가) 아직 이전 주소를 사용하고 있어 전송에 참여하지 않습니다. 연결을 다시 시작할까요? 시청자에게 몇 초 동안 BRB 화면이 표시됩니다.",
 	"notifications.staleLinkAddressUnnamed": "링크 하나가 아직 이전 주소를 사용하고 있어 전송에 참여하지 않습니다. 연결을 다시 시작할까요? 시청자에게 몇 초 동안 BRB 화면이 표시됩니다.",
 	"notifications.staleLinkAddressSeveral": "일부 링크가 아직 이전 주소를 사용하고 있어 전송에 참여하지 않습니다. 연결을 다시 시작할까요? 시청자에게 몇 초 동안 BRB 화면이 표시됩니다.",
