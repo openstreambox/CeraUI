@@ -49,7 +49,7 @@ function dash(tone: EdgeTone): string | undefined {
 		<rect x="66" y="78" width="22" height="12" rx="2" fill="none" stroke="var(--border)" />
 		<rect x="102" y="78" width="22" height="12" rx="2" fill="none" stroke="var(--border)" />
 		<text x="49" y="104" text-anchor="middle" fill="var(--muted-foreground)" font-size="6.5">{m['network.devices.wherePower']()}</text>
-		<text x="120" y="104" fill="var(--muted-foreground)" font-size="6.5">{m['network.devices.whereHdmi']()}</text>
+		<text x="132" y="104" text-anchor="end" fill="var(--muted-foreground)" font-size="6">{m['network.devices.whereHdmi']()}</text>
 		<rect x="135.4" y="38" width="40" height="52" rx="2" fill="var(--muted)" stroke="var(--border)" />
 		<rect
 			x="140"
@@ -62,8 +62,8 @@ function dash(tone: EdgeTone): string | undefined {
 			stroke-width="1.6"
 			stroke-dasharray={dash(marks['A2-top'].tone)}
 		/>
-		<rect x="146" y="52" width="19" height="5" fill="var(--muted)" />
-		<text x="155.5" y="55" text-anchor="middle" fill={stroke(marks['A2-top'].tone)} font-size="6">
+		<rect x="144" y="53" width="23" height="4" fill="var(--muted)" />
+		<text x="155.5" y="50.5" text-anchor="middle" fill={stroke(marks['A2-top'].tone)} font-size="5.6">
 			{marks['A2-top'].caption}
 		</text>
 		<rect
@@ -77,8 +77,8 @@ function dash(tone: EdgeTone): string | undefined {
 			stroke-width="1.6"
 			stroke-dasharray={dash(marks['A2-bot'].tone)}
 		/>
-		<rect x="146" y="75" width="19" height="5" fill="var(--muted)" />
-		<text x="155.5" y="78" text-anchor="middle" fill="var(--muted-foreground)" font-size="6">
+		<rect x="144" y="76" width="23" height="4" fill="var(--muted)" />
+		<text x="155.5" y="73.5" text-anchor="middle" fill="var(--muted-foreground)" font-size="5.6">
 			{marks['A2-bot'].caption}
 		</text>
 		<text x="155.4" y="32" text-anchor="middle" fill="var(--foreground)" font-size="7">USB 2</text>
@@ -94,8 +94,8 @@ function dash(tone: EdgeTone): string | undefined {
 			stroke={stroke(marks['A3-top'].tone)}
 			stroke-width="1.6"
 		/>
-		<rect x="201" y="52" width="19" height="5" fill="var(--status-info)" />
-		<text x="210.5" y="55" text-anchor="middle" fill={stroke(marks['A3-top'].tone)} font-size="6">
+		<rect x="199" y="53" width="23" height="4" fill="var(--status-info)" />
+		<text x="210.5" y="50.5" text-anchor="middle" fill={stroke(marks['A3-top'].tone)} font-size="5.6">
 			{marks['A3-top'].caption}
 		</text>
 		<rect
@@ -108,8 +108,8 @@ function dash(tone: EdgeTone): string | undefined {
 			stroke={stroke(marks['A3-bot'].tone)}
 			stroke-width="1.6"
 		/>
-		<rect x="201" y="75" width="19" height="5" fill="var(--status-info)" />
-		<text x="210.5" y="78" text-anchor="middle" fill={stroke(marks['A3-bot'].tone)} font-size="6">
+		<rect x="199" y="76" width="23" height="4" fill="var(--status-info)" />
+		<text x="210.5" y="73.5" text-anchor="middle" fill={stroke(marks['A3-bot'].tone)} font-size="5.6">
 			{marks['A3-bot'].caption}
 		</text>
 		<text x="210.6" y="32" text-anchor="middle" fill="var(--foreground)" font-size="7">USB 3</text>
