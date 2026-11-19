@@ -28,11 +28,17 @@ import {
 	deviceCalmSchema,
 	type UsbDevicesWire,
 	type UsbEventWire,
+	type UsbHelperWire,
 	usbDevicesWireSchema,
 	usbEventsWireSchema,
 } from "@ceraui/rpc/schemas";
 import { logger } from "../../helpers/logger.ts";
 import { getUsbEvents, observeUsbDevices } from "./usb-events.ts";
+import {
+	kernelKeysFromTree,
+	mockUsbHelper,
+	readUsbHelper,
+} from "./usb-helper.ts";
 
 import {
 	readUsbTree,
@@ -66,6 +72,13 @@ let cached: UsbDevicesWire = {
 /** Set only while the development fixture is what the page should show. */
 let mockStory: { events: UsbEventWire[]; calm: DeviceCalm } | null = null;
 
+/** Null until the first helper read. Local replay and status keep it. */
+let cachedHelper: UsbHelperWire | null = null;
+
+export function getUsbHelper(): UsbHelperWire | null {
+	return cachedHelper;
+}
+
 export function getUsbDevicesWire(): UsbDevicesWire {
 	return cached;
 }
@@ -77,16 +90,24 @@ export function getUsbDevicesWire(): UsbDevicesWire {
  */
 export function replayAuthenticatedUsbDevices<
 	T extends Record<string, unknown>,
->(status: T): T & { usb_devices: UsbDevicesWire; device_calm?: DeviceCalm } {
-	if (mockStory) {
-		return {
-			...status,
-			usb_devices: cached,
-			usb_events: mockStory.events,
-			device_calm: mockStory.calm,
-		};
-	}
-	return { ...status, usb_devices: cached, usb_events: getUsbEvents() };
+>(
+	status: T,
+): T & {
+	usb_devices: UsbDevicesWire;
+	device_calm?: DeviceCalm;
+	usb_helper?: UsbHelperWire;
+} {
+	const withTree = mockStory
+		? {
+				...status,
+				usb_devices: cached,
+				usb_events: mockStory.events,
+				device_calm: mockStory.calm,
+			}
+		: { ...status, usb_devices: cached, usb_events: getUsbEvents() };
+	return cachedHelper === null
+		? withTree
+		: { ...withTree, usb_helper: cachedHelper };
 }
 
 /** `platform-fc800000.usb-usb-0:1.2:1.0` → controller fc800000.usb, port 1.2. */
@@ -483,13 +504,19 @@ export async function publishUsbDevices(): Promise<void> {
 	if (shouldUseMocks()) {
 		const { broadcastMsg } = await import("../../rpc/compat.ts");
 		mockStory = { events: mockUsbEvents(), calm: mockDeviceCalm() };
-		deliverUsbDevicesWire(mockUsbDevicesWire(), (next) => {
-			broadcastMsg("status", {
-				usb_devices: next,
-				usb_events: mockUsbEvents(),
-				device_calm: mockDeviceCalm(),
-			});
-		});
+		const helper = mockUsbHelper();
+		deliverUsbDevicesWire(
+			mockUsbDevicesWire(),
+			(next) => {
+				broadcastMsg("status", {
+					usb_devices: next,
+					usb_events: mockUsbEvents(),
+					device_calm: mockDeviceCalm(),
+					usb_helper: helper,
+				});
+			},
+			helper,
+		);
 		return;
 	}
 	try {
@@ -508,15 +535,25 @@ export async function publishUsbDevices(): Promise<void> {
 			if (ref !== null) links.push(ref);
 		}
 		const wire = projectUsbDevices(tree, links);
-		const { broadcastMsg } = await import("../../rpc/compat.ts");
-		deliverUsbDevicesWire(wire, (next) => {
-			broadcastMsg("status", {
-				usb_devices: next,
-				usb_events: getUsbEvents(),
-			});
+		const helper = await readUsbHelper({
+			root: "/",
+			kernelKeys: kernelKeysFromTree(tree.roots),
 		});
+		const { broadcastMsg } = await import("../../rpc/compat.ts");
+		deliverUsbDevicesWire(
+			wire,
+			(next) => {
+				broadcastMsg("status", {
+					usb_devices: next,
+					usb_events: getUsbEvents(),
+					usb_helper: helper,
+				});
+			},
+			helper,
+		);
 	} catch (err) {
 		logger.warn("usb device tree was not published", { err });
+		const helper = await readUsbHelper({ root: "/" });
 		const { broadcastMsg } = await import("../../rpc/compat.ts");
 		deliverUsbDevicesWire(
 			{
@@ -528,8 +565,10 @@ export async function publishUsbDevices(): Promise<void> {
 				broadcastMsg("status", {
 					usb_devices: next,
 					usb_events: getUsbEvents(),
+					usb_helper: helper,
 				});
 			},
+			helper,
 		);
 	}
 }
@@ -538,10 +577,18 @@ export async function publishUsbDevices(): Promise<void> {
 export function deliverUsbDevicesWire(
 	next: UsbDevicesWire,
 	broadcast: (wire: UsbDevicesWire) => void,
+	helper?: UsbHelperWire,
 ): boolean {
-	if (JSON.stringify(next) === JSON.stringify(cached)) return false;
-	observeUsbDevices(next);
-	cached = next;
+	const sameWire = JSON.stringify(next) === JSON.stringify(cached);
+	const sameHelper =
+		helper === undefined ||
+		JSON.stringify(helper) === JSON.stringify(cachedHelper);
+	if (sameWire && sameHelper) return false;
+	if (!sameWire) {
+		observeUsbDevices(next);
+		cached = next;
+	}
+	if (helper !== undefined) cachedHelper = helper;
 	broadcast(next);
 	return true;
 }

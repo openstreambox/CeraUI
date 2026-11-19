@@ -321,6 +321,63 @@ describe("devices page model", () => {
 		).toBe("unplugged");
 	});
 
+	it("keeps helper facts on the USB-C row and the matching modem", () => {
+		const page = devicesPageModel(
+			wire([
+				node({
+					key: "c",
+					socketKey: "C",
+					label: "C",
+					name: "USB-C data port",
+					kind: "other",
+					presence: "nothing-detected",
+				}),
+				node({
+					key: "modem",
+					socketKey: "A3-bot>hub.1",
+					label: ">hub.1",
+					name: "Hub port 1",
+					kind: "modem",
+					scope: "hub-port",
+					product: "RM520N-GL",
+				}),
+			]),
+			{
+				typec: {
+					powerRole: "source",
+					dataRole: "host",
+					partner: true,
+					vbus: "on",
+				},
+				reprobe: { outcome: "recovered", rearm: 2 },
+				holds: [
+					{ key: "modem", stored: "20", outcome: "verified" },
+					{ key: null, stored: "20", outcome: "reset-sent" },
+				],
+			},
+		);
+		if (page.status !== "ok") throw new Error("expected a tree");
+		expect(
+			page.groups.find((group) => group.id === "C")?.rows[0]?.helper,
+		).toEqual({
+			typec: {
+				powerRole: "source",
+				dataRole: "host",
+				partner: true,
+				vbus: "on",
+			},
+			reprobe: { outcome: "recovered", rearm: 2 },
+			holds: [{ key: null, stored: "20", outcome: "reset-sent" }],
+		});
+		const modem = page.groups
+			.flatMap((group) => group.rows)
+			.find((row) => row.key === "modem");
+		expect(modem?.helper?.holds).toEqual([
+			{ key: "modem", stored: "20", outcome: "verified" },
+		]);
+		expect(modem?.helper?.typec).toBeNull();
+	});
+
 	it("says checking when the reader has not answered", () => {
 		expect(devicesPageModel(undefined).status).toBe("checking");
 		expect(

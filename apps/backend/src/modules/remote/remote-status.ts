@@ -55,7 +55,8 @@ export function projectRemoteStatus(payload: unknown): unknown {
 	const hasLocal =
 		"usb_devices" in payload ||
 		"usb_events" in payload ||
-		"device_calm" in payload;
+		"device_calm" in payload ||
+		"usb_helper" in payload;
 	const wifi = "wifi" in payload ? payload.wifi : undefined;
 	if (!hasLocal && (typeof wifi !== "object" || wifi === null)) {
 		return payload;
@@ -65,6 +66,7 @@ export function projectRemoteStatus(payload: unknown): unknown {
 	Reflect.deleteProperty(projected, "usb_devices");
 	Reflect.deleteProperty(projected, "usb_events");
 	Reflect.deleteProperty(projected, "device_calm");
+	Reflect.deleteProperty(projected, "usb_helper");
 	if (typeof wifi === "object" && wifi !== null) {
 		projected.wifi = Array.isArray(wifi)
 			? wifi.map(omitIncarnation)

@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
-import type { DeviceCalm, UsbDevicesWire, UsbEventWire } from '@ceraui/rpc/schemas';
+import type { DeviceCalm, UsbDevicesWire, UsbEventWire, UsbHelperHold, UsbHelperWire } from '@ceraui/rpc/schemas';
 import { ChevronRight, Copy, Info, Usb } from '@lucide/svelte';
 import DevicesPortEdge, { type EdgeTone } from './DevicesPortEdge.svelte';
 import { deviceCountSentence } from './device-counts';
@@ -16,11 +16,12 @@ interface Props {
 	wire: UsbDevicesWire | undefined;
 	events?: readonly UsbEventWire[] | undefined;
 	calm?: DeviceCalm | undefined;
+	helper?: UsbHelperWire | undefined;
 	onBack: () => void;
 }
 
-const { wire, events = [], calm, onBack }: Props = $props();
-const page = $derived(devicesPageModel(wire));
+const { wire, events = [], calm, helper, onBack }: Props = $props();
+const page = $derived(devicesPageModel(wire, helper));
 const summary = $derived(devicesSummary(wire, calm));
 
 const LINK_COLOR = [
@@ -162,6 +163,52 @@ const alert = $derived(
 	page.status === 'ok' && page.groups.some((group) => group.rows.some((row) => row.state === 'unresponsive')),
 );
 
+function powerLabel(role: 'source' | 'sink' | 'dual' | 'unknown'): string {
+	if (role === 'source') return m['network.devices.helper.role.source']();
+	if (role === 'sink') return m['network.devices.helper.role.sink']();
+	if (role === 'dual') return m['network.devices.helper.role.dual']();
+	return m['network.devices.helper.role.unknown']();
+}
+
+function dataLabel(role: 'host' | 'device' | 'dual' | 'unknown'): string {
+	if (role === 'host') return m['network.devices.helper.role.host']();
+	if (role === 'device') return m['network.devices.helper.role.device']();
+	if (role === 'dual') return m['network.devices.helper.role.dual']();
+	return m['network.devices.helper.role.unknown']();
+}
+
+function vbusLabel(state: 'on' | 'off' | 'unknown'): string {
+	if (state === 'on') return m['network.devices.helper.vbus.on']();
+	if (state === 'off') return m['network.devices.helper.vbus.off']();
+	return m['network.devices.helper.vbus.unknown']();
+}
+
+function fixLabel(outcome: string): string {
+	if (outcome === 'recovered') return m['network.devices.helper.fix.recovered']();
+	if (outcome === 'no-partner') return m['network.devices.helper.fix.noPartner']();
+	return m['network.devices.helper.fix.recorded']();
+}
+
+function holdLabel(hold: UsbHelperHold): string {
+	const stored = hold.stored === '20' ? m['network.devices.helper.usb2.stored']() : '';
+	const outcome =
+		hold.outcome === 'reset-sent'
+			? m['network.devices.helper.usb2.reset']()
+			: hold.outcome === 'verified'
+				? m['network.devices.helper.usb2.verified']()
+				: hold.outcome === 'stored-no-reset'
+					? m['network.devices.helper.usb2.held']()
+					: hold.outcome === 'failed' ||
+						  hold.outcome === 'not-back' ||
+						  hold.outcome === 'not-reset' ||
+						  hold.outcome === 'write-failed' ||
+						  hold.outcome === 'reset-refused' ||
+						  hold.outcome === 'gave-up'
+						? m['network.devices.helper.usb2.failed']()
+						: m['network.devices.helper.usb2.recorded']();
+	return stored === '' ? outcome : `${stored} · ${outcome}`;
+}
+
 function edgeCaption(kind: DeviceRow['kind']): string {
 	if (kind === 'wifi') return m['network.devices.edge.wifi']();
 	if (kind === 'capture') return m['network.devices.edge.capture']();
@@ -199,6 +246,35 @@ const marks = $derived({
 	'A3-bot': markFor('A3-bot'),
 });
 </script>
+
+{#snippet helperFacts(row: DeviceRow)}
+	{#if row.helper?.typec}
+		<dt class="text-muted-foreground">{m['network.devices.helper.power']()}</dt>
+		<dd>{powerLabel(row.helper.typec.powerRole)}</dd>
+		<dt class="text-muted-foreground">{m['network.devices.helper.data']()}</dt>
+		<dd>{dataLabel(row.helper.typec.dataRole)}</dd>
+		<dt class="text-muted-foreground">{m['network.devices.helper.partner']()}</dt>
+		<dd>
+			{row.helper.typec.partner
+				? m['network.devices.helper.partner.present']()
+				: m['network.devices.helper.partner.none']()}
+		</dd>
+		<dt class="text-muted-foreground">{m['network.devices.helper.vbus']()}</dt>
+		<dd>{vbusLabel(row.helper.typec.vbus)}</dd>
+	{/if}
+	{#if row.helper?.reprobe}
+		<dt class="text-muted-foreground">{m['network.devices.helper.fix']()}</dt>
+		<dd>{fixLabel(row.helper.reprobe.outcome)}</dd>
+		{#if row.helper.reprobe.rearm}
+			<dt class="text-muted-foreground">{m['network.devices.helper.fix']()}</dt>
+			<dd>{m['network.devices.helper.fix.rearm']({ k: row.helper.reprobe.rearm })}</dd>
+		{/if}
+	{/if}
+	{#each row.helper?.holds ?? [] as hold, index (`${hold.key ?? 'hold'}-${index}`)}
+		<dt class="text-muted-foreground">{m['network.devices.helper.usb2']()}</dt>
+		<dd>{holdLabel(hold)}</dd>
+	{/each}
+{/snippet}
 
 <div class="space-y-3" data-testid="devices-page">
 	<button
@@ -282,6 +358,19 @@ const marks = $derived({
 								{/if}
 								{#if row.state === 'empty'}
 									<p class="text-muted-foreground col-span-3 pl-6 text-sm">{m['network.devices.empty']()}</p>
+									{#if row.helper}
+										<details class="group col-span-3 pl-6 text-sm">
+											<summary
+												class="text-muted-foreground focus-visible:ring-ring inline-flex min-h-11 cursor-pointer items-center gap-1 rounded-md focus-visible:ring-2 focus-visible:outline-none"
+											>
+												<ChevronRight aria-hidden="true" class="size-4 transition-transform group-open:rotate-90" />
+												{m['network.devices.details']()}
+											</summary>
+											<dl class="bg-muted grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg p-2.5 text-xs">
+												{@render helperFacts(row)}
+											</dl>
+										</details>
+									{/if}
 								{:else}
 									<span class="mt-1.5 size-2 shrink-0 rounded-full {dotClass(row.state)}" aria-hidden="true"></span>
 									<p class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium">
@@ -372,6 +461,7 @@ const marks = $derived({
 												<dt class="text-muted-foreground">{m['network.devices.detail.link']()}</dt>
 												<dd class="font-mono break-all" dir="ltr">{row.linkId}</dd>
 											{/if}
+											{@render helperFacts(row)}
 										</dl>
 									</details>
 									{/if}

@@ -104,6 +104,18 @@ test("usb_devices is absent from both serialized remote frames", () => {
 			board: "rock-5b-plus",
 			nodes: [{ controller: "fc000000.usb", product: "Modem", portPath: "1" }],
 		},
+		usb_helper: {
+			typec: {
+				powerRole: "source",
+				dataRole: "host",
+				partner: true,
+				vbus: "on",
+			},
+			reprobe: { outcome: "recovered", rearm: 2 },
+			holds: [
+				{ key: "fc000000.usb:usb2:1", stored: "20", outcome: "verified" },
+			],
+		},
 		is_streaming: true,
 	};
 	const frames: unknown[] = [];
@@ -114,6 +126,7 @@ test("usb_devices is absent from both serialized remote frames", () => {
 	relayStatusToGateway("status", local, 4);
 	const relayed = JSON.stringify(frames[0]);
 	expect(relayed).not.toContain("usb_devices");
+	expect(relayed).not.toContain("usb_helper");
 	expect(relayed).not.toContain("fc000000");
 	expect(relayed).toContain("is_streaming");
 
@@ -121,6 +134,7 @@ test("usb_devices is absent from both serialized remote frames", () => {
 		JSON.stringify({ status: local, wifi: { ready: true } }),
 	);
 	expect(socket).not.toContain("usb_devices");
+	expect(socket).not.toContain("usb_helper");
 	expect(socket).not.toContain("fc000000");
 	expect(socket).toContain("is_streaming");
 	expect(socket).toContain("ready");
