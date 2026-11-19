@@ -155,6 +155,7 @@ import {
 	getUnclaimedAdapters,
 	refreshUnclaimedAdapters,
 } from "./unclaimed-adapters.ts";
+import { isHeldOutOfBond } from "./wifi-roaming/bond-hold.ts";
 
 export { getNetifTopologyGeneration } from "./netif-topology-generation.ts";
 
@@ -576,6 +577,9 @@ function admitsBondLink(
 	if (bondIdentityPending(name, int, view.deadlineElapsed)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
+	// The two-radio search takes its radio out of the bond while it scans and
+	// joins another access point, and returns it once the new path is verified.
+	if (isHeldOutOfBond(name)) return false;
 	if ((int.error & ~NETIF_ERR_DUPIPV4) !== 0) return false;
 	if (view.optedOut(name)) return false;
 	if (isDupIpOnly(int)) return view.mappable(name, int.ip ?? int.ipv6 ?? "");

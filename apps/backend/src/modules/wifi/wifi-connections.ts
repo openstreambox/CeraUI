@@ -30,6 +30,7 @@ import type {
 	MonitorEvent,
 	WifiState,
 } from "../network/state-types.ts";
+import { scanProtectedRadios } from "../network/wifi-roaming/scan-gate.ts";
 import {
 	getModeForInterface,
 	onWifiChange,
@@ -763,16 +764,49 @@ export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
 	return run;
 }
 
+function scanKeyForIfname(ifname: string): WifiScanKey {
+	for (const macAddress in wifiInterfacesByMacAddress) {
+		if (wifiInterfacesByMacAddress[macAddress]?.ifname === ifname)
+			return wifiAdapterLockKey(macAddress);
+	}
+	return `dev:${ifname}`;
+}
+
+/*
+  Which radios a rescan request actually scans. Normally the request as given.
+  While the roaming coordinator protects the radios that carry the stream,
+  those are never scanned: a request for one scans nothing, and a request for
+  every radio scans each of the others by name.
+*/
+function rescanTargets(ifname: string | undefined): (string | undefined)[] {
+	const holders = scanProtectedRadios();
+	if (holders.size === 0) return [ifname];
+	if (ifname !== undefined) return holders.has(ifname) ? [] : [ifname];
+	const others: string[] = [];
+	for (const macAddress in wifiInterfacesByMacAddress) {
+		const name = wifiInterfacesByMacAddress[macAddress]?.ifname;
+		if (name && !holders.has(name)) others.push(name);
+	}
+	return others;
+}
+
 async function runRescan(
 	key: WifiScanKey,
 	ifname: string | undefined,
 ): Promise<void> {
 	try {
-		await rescanAction(ifname);
+		const targets = rescanTargets(ifname);
+		for (const target of targets) await rescanAction(target);
 
 		/* A rescan request will fail if a previous one is in progress,
-     but we still attempt to update the results */
-		if (await scanResultReader()) noteScanCompleted(key);
+     but we still attempt to update the results. Only radios that were
+     actually rescanned get their scan stamp advanced. */
+		if (await scanResultReader()) {
+			if (targets.length === 1 && targets[0] === ifname) noteScanCompleted(key);
+			else
+				for (const target of targets)
+					if (target !== undefined) noteScanCompleted(scanKeyForIfname(target));
+		}
 		wifiScheduleScanRefresh();
 	} catch (err) {
 		// A shared promise must not reject: every joined caller would raise its own
