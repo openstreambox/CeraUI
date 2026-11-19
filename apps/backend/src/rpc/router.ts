@@ -35,6 +35,11 @@ import {
 	devRebindWifiProcedure,
 } from "./procedures/dev.procedure.ts";
 import {
+	helperOfferProcedure,
+	helperRetryPortProcedure,
+	helperUsb2Procedure,
+} from "./procedures/devices.procedure.ts";
+import {
 	acknowledgeMutationProcedure,
 	configureModemProcedure,
 	decommissionMutationProcedure,
@@ -247,6 +252,12 @@ const stableRoutes = {
 		setCountry: setWifiCountryProcedure,
 		getAdapterModes: getWifiAdapterModesProcedure,
 		setAdapterMode: setWifiAdapterModeProcedure,
+	}),
+
+	devices: base.router({
+		helperOffer: helperOfferProcedure,
+		retryPort: helperRetryPortProcedure,
+		usb2: helperUsb2Procedure,
 	}),
 
 	bluetooth: base.router({

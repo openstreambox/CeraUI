@@ -1271,6 +1271,23 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		status: "enforced",
 		mechanism: "run() bounds scoped conntrack flushes during hard-down",
 	},
+	{
+		id: "devices.helperUnit",
+		file: "modules/devices/usb-helper-start.ts",
+		symbol: "startHelperUnit",
+		command: "[systemctl, start, <allowlisted unit>]",
+		class: "bounded-command",
+		contract: {
+			timed: true,
+			startupTimeout: false,
+			shutdownCleanup: false,
+			shutdownAbort: false,
+			lifetimeTimeoutExempt: false,
+		},
+		status: "enforced",
+		mechanism:
+			"spawnWithTimeout starts only ceralive-typec-recheck.service (70s) or ceralive-modem-usbspeed@<kernel port>.service (310s). The argv is built from an allowlist. The Type-C oneshot keeps its own re-arm file. The USB 2 oneshot takes the ModemManager inhibit itself; this site does not call mmcli.",
+	},
 ] as const;
 
 /**
