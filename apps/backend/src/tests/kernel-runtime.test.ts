@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { defaultDeviceDetectionDeps } from "../modules/system/device-detection.ts";
 import {
 	createKernelRuntime,
 	defaultKernelEffects,
@@ -457,5 +458,122 @@ test("OS and slot-sync cannot overwrite a pending kernel target", () => {
 				mirrorTarget: "good",
 			}),
 		).toEqual({ allowed: false, reason: "update-busy" });
+	}
+});
+
+for (const status of [
+	"staging",
+	"staged",
+	"armed",
+	"activating",
+	"activated",
+	"succeeded",
+	"rolled_back",
+	"failed",
+] as const) {
+	test(`unsupported policy preserves ${status} recovery evidence until policy returns`, async () => {
+		const reader = spyOn(
+			defaultDeviceDetectionDeps,
+			"readCeraliveRelease",
+		).mockResolvedValue(
+			'ID=ceralive\nBOARD=example\nFAMILY=rk3588\nCAPABILITIES="os-updates"\n',
+		);
+		let bootedReads = 0;
+		let removals = 0;
+		const f = fixture(
+			{},
+			{
+				readBooted: async () => {
+					bootedReads++;
+					return kernelRecord;
+				},
+				removeDownload: async () => {
+					removals++;
+				},
+			},
+		);
+		const retained = { ...kernelState, state: status };
+		f.device(retained);
+		try {
+			expect(await f.lane.reconcile()).toBe(false);
+			expect(await f.lane.reconcile()).toBe(false);
+			expect(f.state().phase).toBe("idle");
+			expect(bootedReads).toBe(0);
+			expect(f.arms).toEqual([]);
+			expect(f.acks()).toBe(0);
+			expect(removals).toBe(0);
+			expect((await f.lane.summary()).state).toBe(status);
+			expect(retained).toEqual({ ...kernelState, state: status });
+			reader.mockRestore();
+			expect(await f.lane.reconcile()).toBe(true);
+			expect(f.state().phase.startsWith("kernel-")).toBe(true);
+		} finally {
+			reader.mockRestore();
+		}
+	});
+}
+test("unsupported policy still inspects and fences a pending writer", async () => {
+	const reader = spyOn(
+		defaultDeviceDetectionDeps,
+		"readCeraliveRelease",
+	).mockResolvedValue(
+		'ID=ceralive\nBOARD=example\nFAMILY=rk3588\nCAPABILITIES="os-updates"\n',
+	);
+	const attempt = {
+		id: kernelState.attempt,
+		package: kernelState.package,
+		version: kernelState.version,
+		deb_sha256: kernelState.deb_sha256,
+		deb: "/var/tmp/fixture/kernel.deb",
+	};
+	const f = fixture({ phase: "kernel-staging", kernelAttempt: attempt });
+	f.device({ ...kernelState, state: "staging" });
+	f.unit({ kind: "running" });
+	try {
+		expect(await f.lane.reconcile()).toBe(true);
+		expect(f.state().phase).toBe("kernel-staging");
+		expect(f.state().kernelAttempt).toEqual(attempt);
+		expect(await f.lane.install(true)).toBe(false);
+		expect(f.acks()).toBe(0);
+		expect(f.arms).toEqual([]);
+	} finally {
+		reader.mockRestore();
+	}
+});
+
+test("unsupported policy cannot bypass uncertain stage ownership", async () => {
+	const reader = spyOn(
+		defaultDeviceDetectionDeps,
+		"readCeraliveRelease",
+	).mockResolvedValue(
+		'ID=ceralive\nBOARD=example\nFAMILY=rk3588\nCAPABILITIES="os-updates"\n',
+	);
+	const attempt = {
+		id: kernelState.attempt,
+		package: kernelState.package,
+		version: kernelState.version,
+		deb_sha256: kernelState.deb_sha256,
+		deb: "/var/tmp/fixture/kernel.deb",
+	};
+	const f = fixture(
+		{ phase: "kernel-staging", kernelAttempt: attempt },
+		{
+			inspect: async () => {
+				throw new KernelUpdateError("kernel_stage_ownership_unknown");
+			},
+		},
+	);
+	f.device({ ...kernelState, state: "staging" });
+	try {
+		await expect(f.lane.reconcile()).rejects.toMatchObject({
+			reason: "kernel_stage_ownership_unknown",
+		});
+		expect(f.state().phase).toBe("kernel-staging");
+		expect(f.state().kernelAttempt).toEqual(attempt);
+		expect(await f.lane.install(true)).toBe(false);
+		expect(f.acks()).toBe(0);
+		expect(f.arms).toEqual([]);
+	} finally {
+		reader.mockRestore();
 	}
 });
