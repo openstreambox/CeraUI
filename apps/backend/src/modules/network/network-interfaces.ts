@@ -113,6 +113,7 @@ import {
 	getUnclaimedAdapters,
 	refreshUnclaimedAdapters,
 } from "./unclaimed-adapters.ts";
+import { isHeldOutOfBond } from "./wifi-roaming/bond-hold.ts";
 
 export type NetworkInterface = {
 	usb?: boolean;
@@ -397,6 +398,9 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 	if (isBondIdentityPending(name, int)) return false;
 	if (isConcurrentApIfname(name)) return false;
 	if (isSharedLanPort(name)) return false;
+	// The two-radio search takes its radio out of the bond while it scans and
+	// joins another access point, and returns it once the new path is verified.
+	if (isHeldOutOfBond(name)) return false;
 	if ((int.error & ~NETIF_ERR_DUPIPV4) !== 0) return false;
 	if (isBondOptedOut(name)) return false;
 	if (isDupIpOnly(int))
