@@ -713,6 +713,12 @@ initFccUnlockModule();
 await guardNonCritical("modem-mutation-recovery", async () => {
 	await initMutationRecovery();
 });
+await guardNonCritical("helper-action-interlock", async () => {
+	const { restoreHelperInterlock } = await import(
+		"./modules/devices/usb-helper-actions.ts"
+	);
+	await restoreHelperInterlock();
+});
 logger.info(bootTimer.phase("🌐", "network"));
 
 // check for Cam Links on USB2 at startup
