@@ -35,7 +35,7 @@ import {
 import { logger } from "../../helpers/logger.ts";
 import { getUsbEvents, observeUsbDevices } from "./usb-events.ts";
 import { mockUsbHelper, readUsbHelper } from "./usb-helper.ts";
-import { rememberHelperPorts } from "./usb-helper-actions.ts";
+import { captureHelperSeen } from "./usb-helper-actions.ts";
 
 import {
 	readUsbTree,
@@ -521,7 +521,7 @@ export async function publishUsbDevices(): Promise<void> {
 			"../streaming/link-registry.ts"
 		);
 		const tree = await readUsbTree({ sysfsRoot: "/" });
-		rememberHelperPorts(tree.roots);
+		await captureHelperSeen(tree.roots, "/");
 		const map = tree.xhciControllers ?? {};
 		const links: UsbLinkRef[] = [];
 		for (const item of publishedLinkPaths()) {
