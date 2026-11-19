@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { UsbDevicesWire } from "@ceraui/rpc/schemas";
-import { render } from "@testing-library/svelte";
+import { fireEvent, render } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 
 import DevicesPage from "./DevicesPage.svelte";
@@ -143,6 +143,58 @@ describe("Devices page", () => {
 		expect(view.getByTestId("devices-where")).toBeTruthy();
 		expect(view.getByTestId("devices-summary").textContent).toContain(
 			"isn't responding",
+		);
+	});
+
+	it("hides helper actions unless the image unit is offered, and keeps them in the disclosure", async () => {
+		const helper = {
+			typec: {
+				powerRole: "source" as const,
+				dataRole: "host" as const,
+				partner: true,
+				vbus: "on" as const,
+			},
+			reprobe: null,
+			holds: [],
+		};
+		const absent = render(DevicesPage, {
+			props: {
+				wire: WIRE,
+				helper,
+				offer: { retryPort: false, rearmExhausted: false, usb2: false },
+				onBack: () => undefined,
+			},
+		});
+		expect(absent.queryByTestId("helper-retry")).toBeNull();
+		expect(absent.queryByTestId("helper-usb2")).toBeNull();
+		expect(absent.queryByTestId("helper-rearm-exhausted")).toBeNull();
+		absent.unmount();
+
+		const view = render(DevicesPage, {
+			props: {
+				wire: WIRE,
+				helper,
+				offer: { retryPort: true, rearmExhausted: false, usb2: true },
+				onBack: () => undefined,
+			},
+		});
+		const retry = view.getByTestId("helper-retry");
+		const usb2 = view.getByTestId("helper-usb2");
+		expect(retry.closest("details")).not.toBeNull();
+		expect(usb2.closest("details")).not.toBeNull();
+		await fireEvent.click(retry);
+		expect(view.getByTestId("helper-retry-confirm")).toBeTruthy();
+		expect(view.getByText("Retry this port? The link can drop.")).toBeTruthy();
+
+		view.rerender({
+			wire: WIRE,
+			helper,
+			offer: { retryPort: false, rearmExhausted: true, usb2: false },
+			onBack: () => undefined,
+		});
+		expect(view.queryByTestId("helper-retry")).toBeNull();
+		expect(view.getByTestId("helper-rearm-exhausted").textContent).toContain(
+			"3/3",
 		);
 	});
 

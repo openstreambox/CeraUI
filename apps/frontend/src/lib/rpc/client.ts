@@ -1105,6 +1105,23 @@ export interface TypedRPC {
 			input: SetIngestEnabledInput,
 		) => Promise<SetIngestEnabledOutput>;
 	};
+	devices: {
+		helperOffer: () => Promise<{
+			ok: boolean;
+			refusal?: string;
+			retryPort: boolean;
+			rearmExhausted: boolean;
+			usb2: boolean;
+		}>;
+		retryPort: (input: { confirmed: boolean }) => Promise<{
+			ok: boolean;
+			refusal?: string;
+		}>;
+		usb2: (input: {
+			confirmed: boolean;
+			key: string;
+		}) => Promise<{ ok: boolean; refusal?: string }>;
+	};
 	/**
 	 * The BlueZ operator surface. Every mutation answers the ONE shared
 	 * `bluetoothMutationRefusalSchema` enum, so a surface renders a refusal the

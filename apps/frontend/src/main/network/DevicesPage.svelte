@@ -8,8 +8,14 @@
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import type { DeviceCalm, UsbDevicesWire, UsbEventWire, UsbHelperHold, UsbHelperWire } from '@ceraui/rpc/schemas';
 import { ChevronRight, Copy, Info, Usb } from '@lucide/svelte';
+import { rpc } from '$lib/rpc/client';
 import DevicesPortEdge, { type EdgeTone } from './DevicesPortEdge.svelte';
 import { deviceCountSentence } from './device-counts';
+import {
+	type HelperActionOffer,
+	helperActionButtons,
+	helperActionNote,
+} from './devices-actions';
 import { type DeviceRow, type DeviceRowState, devicesPageModel, devicesSummary } from './devices-model';
 
 interface Props {
@@ -17,10 +23,49 @@ interface Props {
 	events?: readonly UsbEventWire[] | undefined;
 	calm?: DeviceCalm | undefined;
 	helper?: UsbHelperWire | undefined;
+	offer?: HelperActionOffer | null;
+	onSettled?: () => void;
 	onBack: () => void;
 }
 
-const { wire, events = [], calm, helper, onBack }: Props = $props();
+const { wire, events = [], calm, helper, offer = null, onSettled, onBack }: Props = $props();
+let pendingId = $state<string | null>(null);
+let busyId = $state<string | null>(null);
+let actionNotes = $state<Record<string, string>>({});
+
+function actionsFor(row: DeviceRow) {
+	return helperActionButtons(offer, {
+		kind: row.kind,
+		helperTypec: row.helper?.typec != null,
+	});
+}
+
+function actionSentence(ok: boolean, refusal: string | undefined): string {
+	const note = helperActionNote(ok, refusal);
+	if (note === 'started') return m['network.devices.helper.action.started']();
+	if (note === 'streaming') return m['network.devices.helper.action.streaming']();
+	if (note === 'exhausted') return m['network.devices.helper.action.exhausted']();
+	if (note === 'busy') return m['network.devices.helper.action.busy']();
+	return m['network.devices.helper.action.refused']();
+}
+
+async function runHelperAction(
+	id: string,
+	call: () => Promise<{ ok: boolean; refusal?: string }>,
+): Promise<void> {
+	if (busyId !== null) return;
+	busyId = id;
+	try {
+		const result = await call();
+		actionNotes = { ...actionNotes, [id]: actionSentence(result.ok, result.refusal) };
+		onSettled?.();
+	} catch {
+		actionNotes = { ...actionNotes, [id]: m['network.devices.helper.action.refused']() };
+	} finally {
+		busyId = null;
+		pendingId = null;
+	}
+}
 const page = $derived(devicesPageModel(wire, helper));
 const summary = $derived(devicesSummary(wire, calm));
 
@@ -276,6 +321,92 @@ const marks = $derived({
 	{/each}
 {/snippet}
 
+{#snippet helperActions(row: DeviceRow)}
+	{#if actionsFor(row).retry || actionsFor(row).exhausted || actionsFor(row).usb2}
+		<div class="mt-2 space-y-2">
+			{#if actionsFor(row).exhausted}
+				<p data-testid="helper-rearm-exhausted">{m['network.devices.helper.action.exhausted']()}</p>
+			{/if}
+			{#if actionsFor(row).retry}
+				{#if pendingId === `retry:${row.key}`}
+					<p>{m['network.devices.helper.action.retryConfirm']()}</p>
+					<div class="flex flex-wrap gap-2">
+						<button
+							type="button"
+							data-testid="helper-retry-confirm"
+							class="bg-secondary focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
+							disabled={busyId !== null}
+							onclick={() =>
+								runHelperAction(`retry:${row.key}`, () => rpc.devices.retryPort({ confirmed: true }))}
+						>
+							{m['network.devices.helper.action.confirm']()}
+						</button>
+						<button
+							type="button"
+							class="bg-secondary focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
+							disabled={busyId !== null}
+							onclick={() => (pendingId = null)}
+						>
+							{m['network.devices.helper.action.cancel']()}
+						</button>
+					</div>
+				{:else}
+					<button
+						type="button"
+						data-testid="helper-retry"
+						class="bg-secondary focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none"
+						onclick={() => (pendingId = `retry:${row.key}`)}
+					>
+						{m['network.devices.helper.action.retry']()}
+					</button>
+				{/if}
+			{/if}
+			{#if actionsFor(row).usb2}
+				{#if pendingId === `usb2:${row.key}`}
+					<p>{m['network.devices.helper.action.usb2Confirm']()}</p>
+					<div class="flex flex-wrap gap-2">
+						<button
+							type="button"
+							data-testid="helper-usb2-confirm"
+							class="bg-secondary focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
+							disabled={busyId !== null}
+							onclick={() =>
+								runHelperAction(`usb2:${row.key}`, () =>
+									rpc.devices.usb2({ confirmed: true, key: row.key }),
+								)}
+						>
+							{m['network.devices.helper.action.confirm']()}
+						</button>
+						<button
+							type="button"
+							class="bg-secondary focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
+							disabled={busyId !== null}
+							onclick={() => (pendingId = null)}
+						>
+							{m['network.devices.helper.action.cancel']()}
+						</button>
+					</div>
+				{:else}
+					<button
+						type="button"
+						data-testid="helper-usb2"
+						class="bg-secondary focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none"
+						onclick={() => (pendingId = `usb2:${row.key}`)}
+					>
+						{m['network.devices.helper.action.usb2']()}
+					</button>
+				{/if}
+			{/if}
+			{#if actionNotes[`retry:${row.key}`]}
+				<p data-testid="helper-action-note">{actionNotes[`retry:${row.key}`]}</p>
+			{/if}
+			{#if actionNotes[`usb2:${row.key}`]}
+				<p data-testid="helper-action-note">{actionNotes[`usb2:${row.key}`]}</p>
+			{/if}
+		</div>
+	{/if}
+{/snippet}
+
 <div class="space-y-3" data-testid="devices-page">
 	<button
 		type="button"
@@ -369,6 +500,7 @@ const marks = $derived({
 											<dl class="bg-muted grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg p-2.5 text-xs">
 												{@render helperFacts(row)}
 											</dl>
+											{@render helperActions(row)}
 										</details>
 									{/if}
 								{:else}
@@ -463,6 +595,7 @@ const marks = $derived({
 											{/if}
 											{@render helperFacts(row)}
 										</dl>
+										{@render helperActions(row)}
 									</details>
 									{/if}
 								{/if}
