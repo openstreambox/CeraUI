@@ -537,6 +537,7 @@ export async function publishUsbDevices(): Promise<void> {
 		const wire = projectUsbDevices(tree, links);
 		const helper = await readUsbHelper({
 			root: "/",
+			board: tree.board,
 			kernelKeys: kernelKeysFromTree(tree.roots),
 		});
 		const { broadcastMsg } = await import("../../rpc/compat.ts");

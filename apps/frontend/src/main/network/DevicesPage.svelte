@@ -527,5 +527,22 @@ const marks = $derived({
 				</section>
 			</div>
 		</div>
+		{#if page.unassignedHolds.length > 0}
+			<section class="bg-card rounded-xl border p-4" data-testid="devices-unassigned">
+				<details class="group text-sm">
+					<summary
+						class="text-muted-foreground focus-visible:ring-ring inline-flex min-h-11 cursor-pointer items-center gap-1 rounded-md focus-visible:ring-2 focus-visible:outline-none"
+					>
+						<ChevronRight aria-hidden="true" class="size-4 transition-transform group-open:rotate-90" />
+						{m['network.devices.helper.unassigned']()}
+					</summary>
+					<ul class="mt-2 space-y-1 text-sm">
+						{#each page.unassignedHolds as hold, index (`unassigned-${index}`)}
+							<li>{holdLabel(hold)}</li>
+						{/each}
+					</ul>
+				</details>
+			</section>
+		{/if}
 	{/if}
 </div>

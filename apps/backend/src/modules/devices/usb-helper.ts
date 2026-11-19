@@ -29,6 +29,7 @@
  * directory or a journal.
  */
 
+import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -44,12 +45,13 @@ import {
 	usbHelperSchema,
 } from "@ceraui/rpc/schemas";
 
-import type { UsbTreeNode } from "./usb-tree.ts";
+import type { UsbTreeBoard, UsbTreeNode } from "./usb-tree.ts";
 
 const ROLE = /\[(source|sink|host|device|dual)\]/;
 const REPROBE =
 	/^(recovered|no-partner|skipped|failed-unbind|failed-bind|attempted|port-missing)(?: ([0-9]{10}))?$/;
 const PORT_FILE = /^[0-9]+-[0-9]+(?:\.[0-9]+)*\.json$/;
+const KERNEL_NAME = /^[0-9]+-[0-9]+(?:\.[0-9]+)*$/;
 const REGULATOR = /^regulator\.\d+$/;
 const VBUS_NAME = "vbus5v0_typec";
 
@@ -65,11 +67,20 @@ function isReprobe(value: string): value is UsbHelperReprobe["outcome"] {
 
 const EMPTY: UsbHelperWire = { typec: null, reprobe: null, holds: [] };
 
+export type UsbHelperTrace = (event: {
+	readonly op: "open" | "readdir" | "stat";
+	readonly path: string;
+}) => void;
+
 export type ReadUsbHelperOptions = {
 	/** Directory that contains `sys/` and `run/`. `/` on a device. */
 	readonly root: string;
-	/** Kernel device name (`4-1`) to the local USB node key. */
+	/** J11 is the ROCK 5B+ USB-C socket. Other boards do not get that read. */
+	readonly board?: UsbTreeBoard;
+	/** Kernel device name (`1-1`) to the local USB node key. */
 	readonly kernelKeys?: ReadonlyMap<string, string>;
+	/** Test hook. Production does not pass one. */
+	readonly trace?: UsbHelperTrace;
 };
 
 export function kernelKeysFromTree(
@@ -109,11 +120,15 @@ export async function readUsbHelper(
 	options: ReadUsbHelperOptions,
 ): Promise<UsbHelperWire> {
 	try {
-		const typec = await readTypec(options.root);
-		const reprobe = await readReprobe(options.root);
+		const typec =
+			options.board === "rock-5b-plus"
+				? await readTypec(options.root, options.trace)
+				: null;
+		const reprobe = await readReprobe(options.root, options.trace);
 		const holds = await readHolds(
 			options.root,
 			options.kernelKeys ?? new Map(),
+			options.trace,
 		);
 		return usbHelperSchema.parse({ typec, reprobe, holds });
 	} catch {
@@ -121,17 +136,20 @@ export async function readUsbHelper(
 	}
 }
 
-async function readTypec(root: string): Promise<UsbHelperWire["typec"]> {
+async function readTypec(
+	root: string,
+	trace?: UsbHelperTrace,
+): Promise<UsbHelperWire["typec"]> {
 	const port = join(root, "sys/class/typec/port0");
-	if (!(await exists(port))) return null;
-	const power = await readCapped(join(port, "power_role"), 80);
-	const data = await readCapped(join(port, "data_role"), 80);
+	if (!(await exists(port, trace))) return null;
+	const power = await readCapped(join(port, "power_role"), 80, trace);
+	const data = await readCapped(join(port, "data_role"), 80, trace);
 	if (power === null && data === null) return null;
 	return {
 		powerRole: role(power, POWER_ROLES, "unknown"),
 		dataRole: role(data, DATA_ROLES, "unknown"),
-		partner: await exists(join(root, "sys/class/typec/port0-partner")),
-		vbus: await readVbus(root),
+		partner: await exists(join(root, "sys/class/typec/port0-partner"), trace),
+		vbus: await readVbus(root, trace),
 	};
 }
 
@@ -147,10 +165,14 @@ function role<T extends string>(
 	return fallback;
 }
 
-async function readVbus(root: string): Promise<"on" | "off" | "unknown"> {
+async function readVbus(
+	root: string,
+	trace?: UsbHelperTrace,
+): Promise<"on" | "off" | "unknown"> {
 	const dir = join(root, "sys/class/regulator");
 	let entries: string[] = [];
 	try {
+		trace?.({ op: "readdir", path: dir });
 		entries = await readdir(dir);
 	} catch {
 		return "unknown";
@@ -158,27 +180,36 @@ async function readVbus(root: string): Promise<"on" | "off" | "unknown"> {
 	for (const name of entries
 		.filter((item) => REGULATOR.test(item))
 		.slice(0, 64)) {
-		const label = await readCapped(join(dir, name, "name"), 64);
+		const label = await readCapped(join(dir, name, "name"), 64, trace);
 		if (label?.trim() !== VBUS_NAME) continue;
-		const state = (await readCapped(join(dir, name, "state"), 32))?.trim();
+		const state = (
+			await readCapped(join(dir, name, "state"), 32, trace)
+		)?.trim();
 		if (state === "enabled") return "on";
 		if (state === "disabled") return "off";
-		const users = (await readCapped(join(dir, name, "num_users"), 16))?.trim();
-		if (users !== undefined && /^[0-9]+$/.test(users)) {
-			return Number(users) > 0 ? "on" : "off";
-		}
 		return "unknown";
 	}
 	return "unknown";
 }
 
-async function readReprobe(root: string): Promise<UsbHelperWire["reprobe"]> {
-	const raw = await readCapped(join(root, "run/ceralive-typec/reprobe"), 80);
+async function readReprobe(
+	root: string,
+	trace?: UsbHelperTrace,
+): Promise<UsbHelperWire["reprobe"]> {
+	const raw = await readRegular(
+		join(root, "run/ceralive-typec/reprobe"),
+		80,
+		trace,
+	);
 	const match = raw === null ? null : REPROBE.exec(raw.trim());
 	if (match === null) return null;
 	const outcome = match[1];
 	if (outcome === undefined || !isReprobe(outcome)) return null;
-	const rearmRaw = await readCapped(join(root, "run/ceralive-typec/rearm"), 8);
+	const rearmRaw = await readRegular(
+		join(root, "run/ceralive-typec/rearm"),
+		8,
+		trace,
+	);
 	const rearmText = rearmRaw?.trim();
 	const rearm =
 		rearmText === "1" || rearmText === "2" || rearmText === "3"
@@ -190,10 +221,12 @@ async function readReprobe(root: string): Promise<UsbHelperWire["reprobe"]> {
 async function readHolds(
 	root: string,
 	kernelKeys: ReadonlyMap<string, string>,
+	trace?: UsbHelperTrace,
 ): Promise<UsbHelperHold[]> {
 	const dir = join(root, "run/ceralive/modem-usbspeed");
 	let entries: string[] = [];
 	try {
+		trace?.({ op: "readdir", path: dir });
 		entries = (await readdir(dir))
 			.filter((name) => PORT_FILE.test(name))
 			.sort();
@@ -202,7 +235,7 @@ async function readHolds(
 	}
 	const holds: UsbHelperHold[] = [];
 	for (const name of entries.slice(0, 8)) {
-		const text = await readCapped(join(dir, name), 4096);
+		const text = await readRegular(join(dir, name), 4096, trace);
 		if (text === null) continue;
 		let parsed: unknown;
 		try {
@@ -210,28 +243,39 @@ async function readHolds(
 		} catch {
 			continue;
 		}
-		const hold = holdFrom(
-			parsed,
-			kernelKeys.get(name.slice(0, -".json".length)),
-		);
+		const hold = holdFrom(parsed, kernelKeys);
 		if (hold !== null) holds.push(hold);
 	}
 	return holds;
 }
 
-function holdFrom(raw: unknown, key: string | undefined): UsbHelperHold | null {
+/**
+ * The marker filename is the address before a reset. Only `returned_as`,
+ * when that device is still present, joins the hold to a row. Anything else
+ * stays unassigned. The raw names are not copied onto the wire.
+ */
+function holdFrom(
+	raw: unknown,
+	kernelKeys: ReadonlyMap<string, string>,
+): UsbHelperHold | null {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw))
 		return null;
 	const phase = "phase" in raw ? raw.phase : undefined;
 	if (typeof phase !== "string" || !HOLD_OUTCOMES.has(phase)) return null;
 	const original = "original" in raw ? raw.original : undefined;
 	const stored = original === "20" || STORED_PHASES.has(phase) ? "20" : null;
-	const nodeKey = key !== undefined && key.length <= 120 ? key : null;
+	const returned = "returned_as" in raw ? raw.returned_as : undefined;
+	const mapped =
+		typeof returned === "string" && KERNEL_NAME.test(returned)
+			? kernelKeys.get(returned)
+			: undefined;
+	const nodeKey = mapped !== undefined && mapped.length <= 120 ? mapped : null;
 	return { key: nodeKey, stored, outcome: phase as UsbHelperHold["outcome"] };
 }
 
-async function exists(path: string): Promise<boolean> {
+async function exists(path: string, trace?: UsbHelperTrace): Promise<boolean> {
 	try {
+		trace?.({ op: "stat", path });
 		await lstat(path);
 		return true;
 	} catch {
@@ -239,9 +283,39 @@ async function exists(path: string): Promise<boolean> {
 	}
 }
 
-/** A longer file is refused whole, so a planted dump cannot ride along. */
-async function readCapped(path: string, max: number): Promise<string | null> {
+/** Runtime markers must be real files. A symlink or a FIFO is not a record. */
+async function readRegular(
+	path: string,
+	max: number,
+	trace?: UsbHelperTrace,
+): Promise<string | null> {
 	try {
+		trace?.({ op: "stat", path });
+		const info = await lstat(path);
+		if (!info.isFile()) return null;
+		trace?.({ op: "open", path });
+		const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+		try {
+			const buf = Buffer.alloc(max + 1);
+			const { bytesRead } = await handle.read(buf, 0, max + 1, 0);
+			if (bytesRead > max) return null;
+			return buf.subarray(0, bytesRead).toString("utf8");
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		return null;
+	}
+}
+
+/** A longer file is refused whole, so a planted dump cannot ride along. */
+async function readCapped(
+	path: string,
+	max: number,
+	trace?: UsbHelperTrace,
+): Promise<string | null> {
+	try {
+		trace?.({ op: "open", path });
 		const handle = await open(path, "r");
 		try {
 			const buf = Buffer.alloc(max + 1);

@@ -1,12 +1,27 @@
 import { describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { readUsbHelper } from "./usb-helper.ts";
 
 const IMEI = "490154203237518";
 const SERIAL = "2C1MX4A01234";
+const mkfifo = promisify(execFile);
+
+async function rock(root: string) {
+	const opened: { op: string; path: string }[] = [];
+	return {
+		opened,
+		options: {
+			root,
+			board: "rock-5b-plus" as const,
+			trace: (event: { op: string; path: string }) => opened.push(event),
+		},
+	};
+}
 
 describe("usb helper reads", () => {
 	it("keeps J11, the rebind marker and a stored 20, and drops everything else", async () => {
@@ -48,10 +63,21 @@ describe("usb helper reads", () => {
 				join(marks, "notes.json"),
 				JSON.stringify({ phase: "verified", note: IMEI }),
 			);
+			const traced = await rock(root);
 			const helper = await readUsbHelper({
-				root,
-				kernelKeys: new Map([["4-1", "hub-port-1"]]),
+				...traced.options,
+				kernelKeys: new Map([["4-1", "replacement"]]),
 			});
+			expect(
+				traced.opened.filter(
+					(event) => event.op !== "stat" && event.path.startsWith(partner),
+				),
+			).toEqual([]);
+			expect(
+				traced.opened.some(
+					(event) => event.op === "stat" && event.path === partner,
+				),
+			).toBe(true);
 			expect(helper.typec).toEqual({
 				powerRole: "source",
 				dataRole: "host",
@@ -60,7 +86,7 @@ describe("usb helper reads", () => {
 			});
 			expect(helper.reprobe).toEqual({ outcome: "recovered", rearm: 2 });
 			expect(helper.holds).toEqual([
-				{ key: "hub-port-1", stored: "20", outcome: "verified" },
+				{ key: null, stored: "20", outcome: "verified" },
 			]);
 			const encoded = JSON.stringify(helper);
 			expect(encoded).not.toContain(IMEI);
@@ -114,17 +140,86 @@ describe("usb helper reads", () => {
 				join(root, "run/ceralive/modem-usbspeed/2-1.json"),
 				JSON.stringify({ phase: "stored-no-reset", original: "20" }),
 			);
-			const helper = await readUsbHelper({ root });
+			const helper = await readUsbHelper({
+				root,
+				board: "rock-5b-plus",
+			});
 			expect(helper.typec).toMatchObject({
 				powerRole: "sink",
 				dataRole: "device",
 				partner: false,
-				vbus: "off",
+				vbus: "unknown",
 			});
 			expect(helper.reprobe).toEqual({ outcome: "no-partner", rearm: null });
 			expect(helper.holds).toEqual([
 				{ key: null, stored: "20", outcome: "stored-no-reset" },
 			]);
+			const elsewhere = await readUsbHelper({ root, board: "generic" });
+			expect(elsewhere.typec).toBeNull();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("joins a hold only through returned_as, and only while that device is present", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-helper-"));
+		try {
+			const marks = join(root, "run/ceralive/modem-usbspeed");
+			await mkdir(marks, { recursive: true });
+			await writeFile(
+				join(marks, "4-1.json"),
+				JSON.stringify({
+					phase: "verified",
+					original: "312",
+					returned_as: "1-1",
+					unit: IMEI,
+				}),
+			);
+			const present = await readUsbHelper({
+				root,
+				kernelKeys: new Map([
+					["4-1", "replacement"],
+					["1-1", "modem-now"],
+				]),
+			});
+			expect(present.holds).toEqual([
+				{ key: "modem-now", stored: "20", outcome: "verified" },
+			]);
+			expect(JSON.stringify(present)).not.toContain("4-1");
+			expect(JSON.stringify(present)).not.toContain("1-1");
+			expect(JSON.stringify(present)).not.toContain(IMEI);
+			const reused = await readUsbHelper({
+				root,
+				kernelKeys: new Map([["4-1", "replacement"]]),
+			});
+			expect(reused.holds).toEqual([
+				{ key: null, stored: "20", outcome: "verified" },
+			]);
+			expect(JSON.stringify(reused)).not.toContain("replacement");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not follow a marker symlink or open a marker FIFO", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-helper-"));
+		try {
+			const marks = join(root, "run/ceralive/modem-usbspeed");
+			await mkdir(marks, { recursive: true });
+			const secret = join(root, "secret.json");
+			await writeFile(
+				secret,
+				JSON.stringify({ phase: "verified", original: "20", unit: IMEI }),
+			);
+			await symlink(secret, join(marks, "5-1.json"));
+			await mkfifo("mkfifo", [join(marks, "6-1.json")]);
+			const helper = await readUsbHelper({
+				root,
+				kernelKeys: new Map([["5-1", "followed"]]),
+			});
+			expect(helper.holds).toEqual([]);
+			expect(JSON.stringify(helper)).not.toContain(IMEI);
+			expect(JSON.stringify(helper)).not.toContain("followed");
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

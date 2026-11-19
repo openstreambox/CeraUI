@@ -30,6 +30,23 @@ test.describe('@visual devices diagram', () => {
 				await expect(diagram).toBeVisible();
 				await diagram.scrollIntoViewIfNeeded();
 				await diagram.screenshot({ path: `${OUT}/diagram-${width}-${theme}.png` });
+
+				const usbC = page.getByTestId('device-empty');
+				await usbC.getByText('Details for helpers').click();
+				await expect(usbC).toContainText('VBUS regulator');
+				await expect(usbC).toContainText('Enabled');
+				await expect(usbC).toContainText('Recovered');
+				await expect(usbC).toContainText('Re-arm 2/3');
+				await usbC.screenshot({ path: `${OUT}/helper-j11-${width}-${theme}.png` });
+
+				const modem = page
+					.locator('[data-testid="device-row"]')
+					.filter({ hasText: 'RM520N-GL' })
+					.first();
+				await expect(modem).toContainText('Stored as 20');
+				await expect(modem).toContainText('Back on USB 2');
+				await modem.scrollIntoViewIfNeeded();
+				await modem.screenshot({ path: `${OUT}/helper-rm520-${width}-${theme}.png` });
 			}
 		});
 	}
