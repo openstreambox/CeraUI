@@ -1122,6 +1122,8 @@
 	"network.devices.detail.modemMode": "调制解调器模式",
 	"network.devices.whereAria": "从接口一侧看 ROCK 5B+ 的接口边",
 	"network.devices.whereCaption": "从接口一侧看。USB-C 在另一边；调制解调器槽在里面。",
+	"network.devices.wherePower": "电源",
+	"network.devices.whereHdmi": "← HDMI、电源",
 	"network.devices.whereCaptionAlert": "从接口一侧看。这个集线器要看一下：上面有一只调制解调器没有回应。USB-C 在另一边；调制解调器槽在里面。",
 	"network.devices.edge.wifi": "无线",
 	"network.devices.edge.capture": "采集",

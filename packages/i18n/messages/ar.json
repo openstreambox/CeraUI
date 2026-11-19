@@ -1269,6 +1269,8 @@
 	"network.devices.detail.modemMode": "وضع المودم",
 	"network.devices.whereAria": "حافة منافذ ROCK 5B+ كما تُرى من جهة المنافذ",
 	"network.devices.whereCaption": "من جهة المنافذ. USB-C على الحافة الأخرى؛ فتحة المودم في الداخل.",
+	"network.devices.wherePower": "الطاقة",
+	"network.devices.whereHdmi": "← HDMI، الطاقة",
 	"network.devices.whereCaptionAlert": "من جهة المنافذ. المحور يحتاج نظرة: مودم عليه لا يستجيب. USB-C على الحافة الأخرى؛ فتحة المودم في الداخل.",
 	"network.devices.edge.wifi": "واي فاي",
 	"network.devices.edge.capture": "صورة",

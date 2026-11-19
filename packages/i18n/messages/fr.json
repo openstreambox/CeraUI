@@ -1245,6 +1245,8 @@
 	"network.devices.detail.modemMode": "mode modem",
 	"network.devices.whereAria": "Tranche des ports de la ROCK 5B+, vue du côté des ports",
 	"network.devices.whereCaption": "Vu du côté des ports. L'USB-C est sur l'autre tranche ; le logement modem est à l'intérieur.",
+	"network.devices.wherePower": "alimentation",
+	"network.devices.whereHdmi": "← HDMI, alimentation",
 	"network.devices.whereCaptionAlert": "Vu du côté des ports. Le hub mérite un coup d'œil : un modem dessus ne répond pas. L'USB-C est sur l'autre tranche ; le logement modem est à l'intérieur.",
 	"network.devices.edge.wifi": "wifi",
 	"network.devices.edge.capture": "vidéo",
