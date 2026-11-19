@@ -198,9 +198,30 @@ function executeStartup(
 			}
 		}
 	}
+	// Dynamic imports are inert like unlisted static ones.
+	bindings.__dynamicImport = async (specifier: string) =>
+		modules[specifier] ?? inert;
+	const inertDynamicImports =
+		(context: ts.TransformationContext) => (root: ts.SourceFile) => {
+			const visit = (node: ts.Node): ts.Node =>
+				ts.isCallExpression(node) &&
+				node.expression.kind === ts.SyntaxKind.ImportKeyword
+					? ts.factory.updateCallExpression(
+							node,
+							ts.factory.createIdentifier("__dynamicImport"),
+							node.typeArguments,
+							node.arguments,
+						)
+					: ts.visitEachChild(node, visit, context);
+			return ts.visitNode(root, visit) as ts.SourceFile;
+		};
 	const executable = ts
 		.createPrinter()
-		.printFile(ts.factory.updateSourceFile(parsed, body));
+		.printFile(
+			ts.transform(ts.factory.updateSourceFile(parsed, body), [
+				inertDynamicImports,
+			]).transformed[0] as ts.SourceFile,
+		);
 	const { outputText } = ts.transpileModule(executable, {
 		compilerOptions: { target: ts.ScriptTarget.ESNext },
 	});
