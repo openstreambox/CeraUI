@@ -62,6 +62,7 @@ export type UsbDeviceWireNode = z.infer<typeof usbDeviceWireNodeSchema>;
 export const USB_EVENT_REASONS = ['appeared', 'left'] as const;
 export const usbEventSchema = z
 	.object({
+		seq: z.number().int().positive(),
 		at: z.number().int().nonnegative(),
 		reason: z.enum(USB_EVENT_REASONS),
 		kind: usbDeviceKindSchema,

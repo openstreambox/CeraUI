@@ -29,14 +29,21 @@ export const USB_EVENT_LIMIT = 100;
 export type UsbEventReason = "appeared" | "left";
 
 export type UsbEvent = {
+	readonly seq: number;
 	readonly at: number;
 	readonly reason: UsbEventReason;
 	readonly kind: UsbDeviceWireNode["kind"];
 	readonly socketName: string;
 };
 
-let baseline: Map<string, UsbEvent> | null = null;
+type Occupant = {
+	readonly kind: UsbDeviceWireNode["kind"];
+	readonly socketName: string;
+};
+
+let baseline: Map<string, Occupant> | null = null;
 let events: UsbEvent[] = [];
+let nextSeq = 1;
 
 export function getUsbEvents(): readonly UsbEvent[] {
 	return events;
@@ -45,6 +52,19 @@ export function getUsbEvents(): readonly UsbEvent[] {
 export function resetUsbEvents(): void {
 	baseline = null;
 	events = [];
+	nextSeq = 1;
+}
+
+function presenceKey(node: UsbDeviceWireNode): string {
+	return `${node.socketKey}\0${node.portPath ?? ""}`;
+}
+
+function isDevice(node: UsbDeviceWireNode): boolean {
+	return (
+		node.presence === "present" &&
+		node.scope !== "root" &&
+		node.portPath !== null
+	);
 }
 
 export function observeUsbDevices(
@@ -52,13 +72,10 @@ export function observeUsbDevices(
 	now = Date.now(),
 ): boolean {
 	if (wire.status !== "ok") return false;
-	const next = new Map<string, UsbEvent>();
+	const next = new Map<string, Occupant>();
 	for (const node of wire.nodes) {
-		if (node.presence !== "present") continue;
-		const key = `${node.socketKey}\0${node.portPath ?? ""}\0${node.kind}`;
-		next.set(key, {
-			at: now,
-			reason: "appeared",
+		if (!isDevice(node)) continue;
+		next.set(presenceKey(node), {
 			kind: node.kind,
 			socketName: node.name,
 		});
@@ -69,15 +86,23 @@ export function observeUsbDevices(
 	}
 	const fresh: UsbEvent[] = [];
 	for (const [key, row] of next) {
-		if (!baseline.has(key)) fresh.push(row);
+		if (!baseline.has(key)) fresh.push(makeEvent(row, "appeared", now));
 	}
 	for (const [key, row] of baseline) {
-		if (!next.has(key)) {
-			fresh.push({ ...row, at: now, reason: "left" });
-		}
+		if (!next.has(key)) fresh.push(makeEvent(row, "left", now));
 	}
 	baseline = next;
 	if (fresh.length === 0) return false;
 	events = [...fresh.reverse(), ...events].slice(0, USB_EVENT_LIMIT);
 	return true;
+}
+
+function makeEvent(
+	row: Occupant,
+	reason: UsbEventReason,
+	at: number,
+): UsbEvent {
+	const seq = nextSeq;
+	nextSeq += 1;
+	return { seq, at, reason, kind: row.kind, socketName: row.socketName };
 }

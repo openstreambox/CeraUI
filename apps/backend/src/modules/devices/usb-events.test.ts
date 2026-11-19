@@ -43,6 +43,7 @@ describe("usb event ring", () => {
 		expect(observeUsbDevices(tree(["M2B"]), 2_000)).toBe(true);
 		expect(getUsbEvents()).toEqual([
 			{
+				seq: 1,
 				at: 2_000,
 				reason: "left",
 				kind: "modem",
@@ -59,5 +60,75 @@ describe("usb event ring", () => {
 		}
 		expect(getUsbEvents()).toHaveLength(USB_EVENT_LIMIT);
 		expect(getUsbEvents()[0]?.at).toBe(10 + USB_EVENT_LIMIT + 4);
+	});
+
+	it("keeps two same-label departures and ignores kind and root hubs", () => {
+		resetUsbEvents();
+		const port = (
+			socketKey: string,
+			kind: "other" | "wifi",
+			scope: "socket" | "root" = "socket",
+		) => ({
+			key: socketKey,
+			parentKey: null,
+			controller: socketKey,
+			portPath: scope === "root" ? null : "1",
+			socketKey,
+			speedClass: "usb2" as const,
+			portClass: "usb2" as const,
+			colour: null,
+			scope,
+			label: null,
+			name: "USB port 1",
+			kind,
+			product: null,
+			vendorId: null,
+			productId: null,
+			presence: "present" as const,
+			superspeedCapable: false,
+			linkId: null,
+		});
+		const both = {
+			status: "ok" as const,
+			board: "generic" as const,
+			nodes: [port("0000:00:14.0:1", "wifi"), port("0000:00:0d.0:1", "wifi")],
+		};
+		expect(observeUsbDevices(both, 5_000)).toBe(false);
+		expect(
+			observeUsbDevices(
+				{
+					...both,
+					nodes: [
+						port("0000:00:14.0:1", "other"),
+						port("0000:00:0d.0:1", "wifi"),
+					],
+				},
+				6_000,
+			),
+		).toBe(false);
+		expect(
+			observeUsbDevices(
+				{
+					status: "ok",
+					board: "generic",
+					nodes: [
+						port("0000:00:14.0:1", "other"),
+						port("0000:00:0d.0:1", "wifi"),
+						port("fc000000.usb:root", "hub", "root"),
+					],
+				},
+				7_000,
+			),
+		).toBe(false);
+		expect(
+			observeUsbDevices({ status: "ok", board: "generic", nodes: [] }, 8_000),
+		).toBe(true);
+		const left = getUsbEvents();
+		expect(left).toHaveLength(2);
+		expect(left.map((event) => event.seq)).toEqual([2, 1]);
+		expect(left.every((event) => event.socketName === "USB port 1")).toBe(true);
+		expect(left.every((event) => event.reason === "left")).toBe(true);
+		expect(JSON.stringify(left)).not.toContain("0000:00");
+		expect(JSON.stringify(left)).not.toContain("fc000000");
 	});
 });
