@@ -67,10 +67,14 @@ const usb2Schema = z
 	.strict();
 
 function callerFrom(context: RPCContext): HelperCaller {
+	const senderId = context.getSenderId();
+	const remoteAddress = context.ws.remoteAddress;
 	return {
 		authenticated: context.isAuthenticated(),
-		senderId: context.getSenderId(),
-		remoteAddress: context.ws.remoteAddress,
+		...(typeof senderId === "string" && senderId.length > 0
+			? { senderId }
+			: {}),
+		...(typeof remoteAddress === "string" ? { remoteAddress } : {}),
 	};
 }
 
