@@ -231,6 +231,50 @@ describe("devices page model", () => {
 		]);
 	});
 
+	it("counts the design story without treating an empty port as a device", () => {
+		const page = devicesPageModel(
+			wire([
+				node({
+					key: "hub",
+					socketKey: "A3-bot",
+					name: "Lower blue port",
+					label: "A3-bot",
+					kind: "hub",
+					hubPorts: 4,
+				}),
+				node({
+					key: "bad",
+					parentKey: "hub",
+					socketKey: "A3-bot>hub.2",
+					name: "Hub port 2",
+					label: ">hub.2",
+					scope: "hub-port",
+					kind: "modem",
+					displayState: "not-responding",
+				}),
+				node({
+					key: "gone",
+					socketKey: "A2-bot",
+					name: "Lower black port",
+					label: "A2-bot",
+					kind: "wifi",
+					presence: "nothing-detected",
+					displayState: "unplugged",
+				}),
+			]),
+		);
+		if (page.status !== "ok") throw new Error("expected a tree");
+		expect(page.summary).toMatchObject({
+			devices: 1,
+			hubs: 1,
+			ports: 1,
+			unresponsive: 1,
+		});
+		expect(
+			page.groups.find((group) => group.label === "A2-bot")?.rows[0]?.state,
+		).toBe("unplugged");
+	});
+
 	it("says checking when the reader has not answered", () => {
 		expect(devicesPageModel(undefined).status).toBe("checking");
 		expect(

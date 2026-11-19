@@ -17,13 +17,21 @@ const { calm, onOpen }: Props = $props();
 const resting = $derived(calm?.resting ?? 0);
 const off = $derived(calm?.off ?? 0);
 
-function restingText(count: number): string {
+function restingText(count: number, joined: boolean): string {
+	if (count === 1 && calm?.restingKind === 'wifi') {
+		const text = m['network.devices.calm.restingWifi']().replace(/[.。]$/, '');
+		return joined ? text : `${text}.`;
+	}
 	return count === 1
 		? m['network.devices.calm.restingOne']()
 		: m['network.devices.calm.restingMany']({ count });
 }
 
 function offText(count: number): string {
+	if (count === 1 && calm?.offKind === 'modem' && calm.offAt) {
+		return m['network.devices.calm.offModemAt']({ time: calm.offAt });
+	}
+	if (count === 1 && calm?.offKind === 'modem') return m['network.devices.calm.offModem']();
 	return count === 1
 		? m['network.devices.calm.offOne']()
 		: m['network.devices.calm.offMany']({ count });
@@ -39,9 +47,9 @@ function offText(count: number): string {
 		<Info class="text-status-info mt-0.5 size-5 shrink-0" aria-hidden="true" />
 		<p class="min-w-0 flex-1 text-sm">
 			{#if resting > 0 && off > 0}
-				{restingText(resting)}{m['network.devices.calm.join']()}{offText(off)}
+				{restingText(resting, true)}{m['network.devices.calm.join']()}{offText(off)}
 			{:else if resting > 0}
-				{restingText(resting)}
+				{restingText(resting, false)}
 			{:else}
 				{offText(off)}
 			{/if}

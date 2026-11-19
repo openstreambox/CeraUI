@@ -23,25 +23,56 @@
  * wire, and rendering the kind would call an empty USB-C port an unknown
  * device.
  */
-import type { UsbDevicesWire, UsbDeviceWireNode } from "@ceraui/rpc/schemas";
+import type {
+	DeviceCalm,
+	UsbDevicesWire,
+	UsbDeviceWireNode,
+} from "@ceraui/rpc/schemas";
 
-export type DeviceHint = "rm520-usb2" | "capture-usb2";
-export type DeviceRowState = "on" | "unused" | "empty" | "checking";
+export type DeviceHint =
+	| "rm520-usb2"
+	| "rm520-usb3"
+	| "capture-usb2"
+	| "capture-usb3";
+export type DeviceRowState =
+	| "on"
+	| "resting"
+	| "off"
+	| "unresponsive"
+	| "unplugged"
+	| "unused"
+	| "empty"
+	| "checking";
 
 export type DeviceRow = {
 	readonly key: string;
 	readonly depth: number;
+	readonly lastChild: boolean;
 	readonly state: DeviceRowState;
 	readonly kind: UsbDeviceWireNode["kind"] | null;
 	readonly product: string | null;
 	readonly hint: DeviceHint | null;
 	readonly speedClass: UsbDeviceWireNode["speedClass"];
+	readonly portClass: UsbDeviceWireNode["portClass"];
 	readonly controller: string | null;
 	readonly portPath: string | null;
+	readonly place: string | null;
 	readonly vendorId: string | null;
 	readonly productId: string | null;
 	readonly linkId: string | null;
 	readonly slot: string | null;
+	readonly title: string | null;
+	readonly reasonKey: UsbDeviceWireNode["reasonKey"] | null;
+	readonly linkSlot: number | null;
+	readonly generation: NonNullable<UsbDeviceWireNode["generation"]> | null;
+	readonly sourceName: string | null;
+	readonly clock: string | null;
+	readonly minutesAgo: number | null;
+	readonly retry: number | null;
+	readonly retryMax: number | null;
+	readonly hubPorts: number | null;
+	readonly since: string | null;
+	readonly drops: number | null;
 };
 
 export type DevicePortGroup = {
@@ -59,7 +90,18 @@ export type DevicesPageModel =
 			readonly status: "ok";
 			readonly board: UsbDevicesWire["board"];
 			readonly groups: readonly DevicePortGroup[];
+			readonly summary: DevicesSummary;
 	  };
+
+export type DevicesSummary = {
+	readonly devices: number;
+	readonly hubs: number;
+	readonly ports: number;
+	readonly resting: number;
+	readonly off: number;
+	readonly unresponsive: number;
+	readonly restingWifi: boolean;
+};
 
 const ROCK_LABEL_ORDER = [
 	"A3-top",
@@ -88,22 +130,81 @@ export function devicesPageModel(
 		const anchor = nodes.find((node) => node.socketKey === id) ?? nodes[0];
 		if (anchor === undefined) continue;
 		const builtIn = anchor.scope === "built-in" || id === "built-in";
+		const ordered = nodes.slice().sort((a, b) => compareNodes(a, b, byKey));
+		const rows = ordered.map((node, index) =>
+			toRow(
+				node,
+				byKey,
+				anchor.key,
+				builtIn ? null : socketLabel(anchor),
+				index === ordered.length - 1,
+			),
+		);
 		built.push({
 			id,
 			name: builtIn ? "" : anchor.name,
 			label: builtIn ? null : socketLabel(anchor),
 			portClass: anchor.portClass,
 			builtIn,
-			rows: nodes
-				.slice()
-				.sort((a, b) => compareNodes(a, b, byKey))
-				.map((node) => toRow(node, byKey)),
+			rows,
 		});
 	}
 	built.sort(
 		(a, b) => groupRank(a) - groupRank(b) || a.id.localeCompare(b.id, "en"),
 	);
-	return { status: "ok", board: wire.board, groups: built };
+	return {
+		status: "ok",
+		board: wire.board,
+		groups: built,
+		summary: summarize(built, undefined),
+	};
+}
+
+/** Counts for the page summary and the Network card. Calm fills a count the rows cannot see yet. */
+export function devicesSummary(
+	wire: UsbDevicesWire | undefined,
+	calm?: DeviceCalm,
+): DevicesSummary | null {
+	const page = devicesPageModel(wire);
+	if (page.status !== "ok") return null;
+	return summarize(page.groups, calm);
+}
+
+function summarize(
+	groups: readonly DevicePortGroup[],
+	calm: DeviceCalm | undefined,
+): DevicesSummary {
+	const rows = groups.flatMap((group) =>
+		group.builtIn ? [] : group.rows.map((row) => row),
+	);
+	const occupied = (row: DeviceRow) =>
+		row.state !== "empty" && row.state !== "unplugged";
+	const devices = rows.filter(
+		(row) => row.kind !== "hub" && row.kind !== null && occupied(row),
+	).length;
+	const hubs = rows.filter((row) => row.kind === "hub").length;
+	const ports = groups.filter(
+		(group) => !group.builtIn && group.rows.some(occupied),
+	).length;
+	const restingRows = rows.filter((row) => row.state === "resting");
+	return {
+		devices,
+		hubs,
+		ports,
+		resting: Math.max(restingRows.length, calm?.resting ?? 0),
+		off: Math.max(
+			rows.filter((row) => row.state === "off").length,
+			calm?.off ?? 0,
+		),
+		unresponsive: Math.max(
+			rows.filter((row) => row.state === "unresponsive").length,
+			calm?.unresponsive ?? 0,
+		),
+		restingWifi:
+			restingRows.length === 1
+				? restingRows[0]?.kind === "wifi"
+				: calm?.restingKind === "wifi" && (calm.resting ?? 0) === 1,
+	};
 }
 
 /** A board socket such as A2-top or M2B. A hub port and a generic port are not. */
@@ -179,33 +280,91 @@ function depthOf(
 function toRow(
 	node: UsbDeviceWireNode,
 	byKey: Map<string, UsbDeviceWireNode>,
+	anchorKey: string,
+	groupLabel: string | null,
+	last: boolean,
 ): DeviceRow {
-	const empty = node.presence === "nothing-detected";
+	const unplugged = node.displayState === "unplugged";
+	const empty = node.presence === "nothing-detected" && !unplugged;
+	const hubLabel = node.label?.startsWith(">") ? node.label.slice(1) : null;
+	const place =
+		hubLabel !== null && groupLabel !== null
+			? `${groupLabel} › ${hubLabel}`
+			: groupLabel;
 	return {
 		key: node.key,
-		depth: depthOf(node, byKey),
-		state: empty ? "empty" : node.kind === "other" ? "unused" : "on",
+		depth: depthInGroup(node, anchorKey, byKey),
+		lastChild: last && node.key !== anchorKey,
+		state: rowState(node, empty),
 		kind: empty ? null : node.kind,
 		product: empty ? null : node.product,
 		hint: empty ? null : hintFor(node),
 		speedClass: node.speedClass,
+		portClass: node.portClass,
 		controller: node.controller,
 		portPath: node.portPath,
+		place,
 		vendorId: node.vendorId,
 		productId: node.productId,
 		linkId: node.linkId,
 		slot: node.scope === "hub-port" ? node.name : null,
+		title: node.scope === "built-in" ? node.name : null,
+		reasonKey: node.reasonKey ?? null,
+		linkSlot: node.linkSlot ?? null,
+		generation: node.generation ?? null,
+		sourceName: node.sourceName ?? null,
+		clock: node.clock ?? null,
+		minutesAgo: node.minutesAgo ?? null,
+		retry: node.retry ?? null,
+		retryMax: node.retryMax ?? null,
+		hubPorts: node.hubPorts ?? null,
+		since: node.since ?? null,
+		drops: node.drops ?? null,
 	};
 }
 
+function rowState(node: UsbDeviceWireNode, empty: boolean): DeviceRowState {
+	if (empty) return "empty";
+	if (node.displayState === "not-responding") return "unresponsive";
+	if (node.displayState !== undefined) return node.displayState;
+	if (node.kind === "other") return "unused";
+	return "on";
+}
+
+function depthInGroup(
+	node: UsbDeviceWireNode,
+	anchorKey: string,
+	byKey: Map<string, UsbDeviceWireNode>,
+): number {
+	if (node.key === anchorKey) return 0;
+	let depth = 0;
+	const seen = new Set<string>();
+	let parentKey = node.parentKey;
+	while (parentKey !== null && !seen.has(parentKey)) {
+		seen.add(parentKey);
+		depth += 1;
+		if (parentKey === anchorKey) return depth;
+		parentKey = byKey.get(parentKey)?.parentKey ?? null;
+	}
+	return depth;
+}
+
 function hintFor(node: UsbDeviceWireNode): DeviceHint | null {
+	// A row that is down or switched off already has its reason. A speed hint
+	// on top of that is the mock's working-modem case only.
 	if (
-		node.product !== null &&
-		/RM520/i.test(node.product) &&
-		node.speedClass === "usb2" &&
-		node.portClass === "usb3"
+		node.displayState === "not-responding" ||
+		node.displayState === "off" ||
+		node.displayState === "unplugged"
 	) {
+		return null;
+	}
+	const rm520 = node.product !== null && /RM520/i.test(node.product);
+	if (rm520 && node.speedClass === "usb2" && node.portClass === "usb3") {
 		return "rm520-usb2";
+	}
+	if (rm520 && node.speedClass === "usb3" && node.portClass === "usb3") {
+		return "rm520-usb3";
 	}
 	if (
 		node.kind === "capture" &&
@@ -213,6 +372,9 @@ function hintFor(node: UsbDeviceWireNode): DeviceHint | null {
 		node.superspeedCapable
 	) {
 		return "capture-usb2";
+	}
+	if (node.kind === "capture" && node.speedClass === "usb3") {
+		return "capture-usb3";
 	}
 	return null;
 }

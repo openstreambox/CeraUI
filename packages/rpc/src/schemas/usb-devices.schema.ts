@@ -33,6 +33,34 @@ export const usbTreeBoardSchema = z.enum(USB_TREE_BOARDS);
 
 const HEX4 = /^[0-9a-f]{4}$/;
 const LINK_ID = /^[A-Za-z0-9:._-]{1,80}$/;
+const CLOCK = /^\d{2}:\d{2}$/;
+const SOURCE_NAME = /^[A-Za-z0-9._-]{1,24}$/;
+
+/**
+ * Story fields the sysfs reader does not know yet. The development fixture
+ * fills them so the page can show the design. A real tree leaves them unset.
+ * They stay on the local status feed. Remote status drops the whole tree.
+ */
+export const USB_DISPLAY_STATES = ['on', 'resting', 'off', 'not-responding', 'unplugged'] as const;
+export const usbDisplayStateSchema = z.enum(USB_DISPLAY_STATES);
+
+export const USB_REASON_KEYS = [
+	'in-bond',
+	'video-source',
+	'hub-own-power',
+	'dropped',
+	'resting-warm',
+	'unused-heat',
+	'unplugged-wifi',
+	'turned-off',
+	'bond-hotspot',
+	'bond-venue',
+	'not-used',
+] as const;
+export const usbReasonKeySchema = z.enum(USB_REASON_KEYS);
+
+export const USB_GENERATIONS = ['4g', '5g'] as const;
+export const usbGenerationSchema = z.enum(USB_GENERATIONS);
 
 export const usbDeviceWireNodeSchema = z
 	.object({
@@ -55,11 +83,31 @@ export const usbDeviceWireNodeSchema = z
 		/** The device's own bcdUSB is 3 or higher. The port class is not this. */
 		superspeedCapable: z.boolean(),
 		linkId: z.string().regex(LINK_ID).nullable(),
+		displayState: usbDisplayStateSchema.optional(),
+		reasonKey: usbReasonKeySchema.optional(),
+		linkSlot: z.number().int().min(1).max(8).optional(),
+		generation: usbGenerationSchema.optional(),
+		sourceName: z.string().regex(SOURCE_NAME).optional(),
+		clock: z.string().regex(CLOCK).optional(),
+		minutesAgo: z.number().int().min(0).max(1440).optional(),
+		retry: z.number().int().min(1).max(9).optional(),
+		retryMax: z.number().int().min(1).max(9).optional(),
+		hubPorts: z.number().int().min(1).max(16).optional(),
+		since: z.string().regex(CLOCK).optional(),
+		drops: z.number().int().min(0).max(99).optional(),
 	})
 	.strict();
 export type UsbDeviceWireNode = z.infer<typeof usbDeviceWireNodeSchema>;
 
-export const USB_EVENT_REASONS = ['appeared', 'left'] as const;
+export const USB_EVENT_REASONS = [
+	'appeared',
+	'left',
+	'resting',
+	'retry',
+	'dropped',
+	'turned-off',
+	'usb2',
+] as const;
 export const usbEventSchema = z
 	.object({
 		seq: z.number().int().positive(),
@@ -67,6 +115,12 @@ export const usbEventSchema = z
 		reason: z.enum(USB_EVENT_REASONS),
 		kind: usbDeviceKindSchema,
 		socketName: z.string().min(1).max(80),
+		/** Shown instead of the local clock, so a fixture does not depend on the timezone. */
+		clock: z.string().regex(CLOCK).optional(),
+		linkSlot: z.number().int().min(1).max(8).optional(),
+		tempC: z.number().int().min(0).max(120).optional(),
+		retry: z.number().int().min(1).max(9).optional(),
+		generation: usbGenerationSchema.optional(),
 	})
 	.strict();
 export type UsbEventWire = z.infer<typeof usbEventSchema>;
@@ -76,6 +130,12 @@ export const deviceCalmSchema = z
 	.object({
 		resting: z.number().int().nonnegative().max(64),
 		off: z.number().int().nonnegative().max(64),
+		/** Which kind the single resting line should name. Absent: a generic device. */
+		restingKind: z.enum(['wifi', 'modem']).optional(),
+		offKind: z.enum(['modem', 'wifi']).optional(),
+		offAt: z.string().regex(CLOCK).optional(),
+		/** Faults stay off the calm line. The Devices card can still count them. */
+		unresponsive: z.number().int().nonnegative().max(64).optional(),
 	})
 	.strict();
 export type DeviceCalm = z.infer<typeof deviceCalmSchema>;

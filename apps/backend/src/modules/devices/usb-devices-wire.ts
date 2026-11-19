@@ -23,7 +23,14 @@
  * controller and port path, and only that link id is sent.
  */
 
-import { type UsbDevicesWire, usbDevicesWireSchema } from "@ceraui/rpc/schemas";
+import {
+	type DeviceCalm,
+	deviceCalmSchema,
+	type UsbDevicesWire,
+	type UsbEventWire,
+	usbDevicesWireSchema,
+	usbEventsWireSchema,
+} from "@ceraui/rpc/schemas";
 import { logger } from "../../helpers/logger.ts";
 import { getUsbEvents, observeUsbDevices } from "./usb-events.ts";
 
@@ -56,6 +63,9 @@ let cached: UsbDevicesWire = {
 	nodes: [],
 };
 
+/** Set only while the development fixture is what the page should show. */
+let mockStory: { events: UsbEventWire[]; calm: DeviceCalm } | null = null;
+
 export function getUsbDevicesWire(): UsbDevicesWire {
 	return cached;
 }
@@ -67,7 +77,15 @@ export function getUsbDevicesWire(): UsbDevicesWire {
  */
 export function replayAuthenticatedUsbDevices<
 	T extends Record<string, unknown>,
->(status: T): T & { usb_devices: UsbDevicesWire } {
+>(status: T): T & { usb_devices: UsbDevicesWire; device_calm?: DeviceCalm } {
+	if (mockStory) {
+		return {
+			...status,
+			usb_devices: cached,
+			usb_events: mockStory.events,
+			device_calm: mockStory.calm,
+		};
+	}
 	return { ...status, usb_devices: cached, usb_events: getUsbEvents() };
 }
 
@@ -151,8 +169,13 @@ export async function refreshUsbDevices(input?: {
 /**
  * The tree screenshots and the dev UI read. It does not walk the machine
  * that happens to be running the mock backend.
+ *
+ * displayState, reasonKey, linkSlot, generation, clock, since and drops are
+ * not produced by the sysfs reader. They exist so this fixture can show the
+ * design until those records exist.
  */
 export function mockUsbDevicesWire(): UsbDevicesWire {
+	const hub = "fc400000.usb:usb2:1";
 	return usbDevicesWireSchema.parse({
 		status: "ok",
 		board: "rock-5b-plus",
@@ -171,9 +194,13 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				product: "USB capture",
 				vendorId: "345f",
 				productId: "2130",
+				superspeedCapable: true,
+				displayState: "on",
+				reasonKey: "video-source",
+				sourceName: "cam-0",
 			}),
 			mockNode({
-				key: "fc400000.usb:usb2:1",
+				key: hub,
 				controller: "fc400000.usb",
 				portPath: "1",
 				socketKey: "A3-bot",
@@ -183,11 +210,12 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				label: "A3-bot",
 				name: "Lower blue port",
 				kind: "hub",
-				product: null,
+				reasonKey: "hub-own-power",
+				hubPorts: 4,
 			}),
 			mockNode({
 				key: "fc400000.usb:usb2:1.1",
-				parentKey: "fc400000.usb:usb2:1",
+				parentKey: hub,
 				controller: "fc400000.usb",
 				portPath: "1.1",
 				socketKey: "A3-bot>hub.1",
@@ -202,6 +230,67 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				vendorId: "2c7c",
 				productId: "0801",
 				linkId: "lnk_0123456789abcdef",
+				generation: "5g",
+				linkSlot: 3,
+				reasonKey: "in-bond",
+				since: "12:31",
+				drops: 0,
+			}),
+			mockNode({
+				key: "fc400000.usb:usb2:1.2",
+				parentKey: hub,
+				controller: "fc400000.usb",
+				portPath: "1.2",
+				socketKey: "A3-bot>hub.2",
+				speedClass: "usb2",
+				portClass: "usb3",
+				colour: "blue",
+				scope: "hub-port",
+				label: ">hub.2",
+				name: "Hub port 2",
+				kind: "modem",
+				product: "RM520N-GL",
+				vendorId: "2c7c",
+				productId: "0801",
+				generation: "5g",
+				linkSlot: 4,
+				displayState: "not-responding",
+				reasonKey: "dropped",
+				clock: "14:06",
+				retry: 2,
+				retryMax: 3,
+			}),
+			mockNode({
+				key: "fc400000.usb:usb2:1.3",
+				parentKey: hub,
+				controller: "fc400000.usb",
+				portPath: "1.3",
+				socketKey: "A3-bot>hub.3",
+				speedClass: "usb2",
+				portClass: "usb3",
+				colour: "blue",
+				scope: "hub-port",
+				label: ">hub.3",
+				name: "Hub port 3",
+				kind: "wifi",
+				product: "Archer T3U",
+				displayState: "resting",
+				reasonKey: "resting-warm",
+			}),
+			mockNode({
+				key: "fc400000.usb:usb2:1.4",
+				parentKey: hub,
+				controller: "fc400000.usb",
+				portPath: "1.4",
+				socketKey: "A3-bot>hub.4",
+				speedClass: "usb2",
+				portClass: "usb3",
+				colour: "blue",
+				scope: "hub-port",
+				label: ">hub.4",
+				name: "Hub port 4",
+				kind: "other",
+				reasonKey: "unused-heat",
 			}),
 			mockNode({
 				key: "fc800000.usb:usb2:1.2",
@@ -215,6 +304,24 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				name: "Upper black port",
 				kind: "wifi",
 				product: "Archer T2U Nano",
+				linkSlot: 2,
+				reasonKey: "bond-hotspot",
+			}),
+			mockNode({
+				key: "fc800000.usb:unplugged:1.4",
+				controller: "fc800000.usb",
+				portPath: "1.4",
+				socketKey: "A2-bot",
+				speedClass: "unknown",
+				portClass: "usb2",
+				colour: "black",
+				label: "A2-bot",
+				name: "Lower black port",
+				kind: "wifi",
+				presence: "nothing-detected",
+				displayState: "unplugged",
+				reasonKey: "unplugged-wifi",
+				minutesAgo: 13,
 			}),
 			mockNode({
 				key: "fc000000.usb:nothing-detected:1",
@@ -228,7 +335,116 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				kind: "other",
 				presence: "nothing-detected",
 			}),
+			mockNode({
+				key: "fc800000.usb:m2:1.4",
+				controller: "fc800000.usb",
+				portPath: "1.4",
+				socketKey: "M2B",
+				speedClass: "usb2",
+				portClass: "usb2",
+				colour: "black",
+				label: "M2B",
+				name: "Modem slot inside",
+				kind: "modem",
+				product: "DW5821e",
+				generation: "4g",
+				displayState: "off",
+				reasonKey: "turned-off",
+				clock: "12:40",
+			}),
+			mockNode({
+				key: "builtin:wifi",
+				socketKey: "builtin-wifi",
+				scope: "built-in",
+				name: "Wi-Fi",
+				kind: "wifi",
+				linkSlot: 1,
+				reasonKey: "bond-venue",
+				speedClass: "unknown",
+			}),
+			mockNode({
+				key: "builtin:bt",
+				socketKey: "BT",
+				scope: "built-in",
+				label: "BT",
+				name: "Bluetooth",
+				kind: "other",
+				displayState: "on",
+				reasonKey: "not-used",
+				speedClass: "unknown",
+			}),
 		],
+	});
+}
+
+/** The design's helper list. The real ring only records plugged and unplugged. */
+export function mockUsbEvents(): UsbEventWire[] {
+	return usbEventsWireSchema.parse([
+		{
+			seq: 1,
+			at: 0,
+			clock: "14:12",
+			reason: "resting",
+			kind: "wifi",
+			socketName: "Hub port 3",
+			tempC: 71,
+		},
+		{
+			seq: 2,
+			at: 0,
+			clock: "14:08",
+			reason: "retry",
+			kind: "modem",
+			socketName: "Hub port 2",
+			linkSlot: 4,
+			retry: 2,
+		},
+		{
+			seq: 3,
+			at: 0,
+			clock: "14:06",
+			reason: "dropped",
+			kind: "modem",
+			socketName: "Hub port 2",
+			linkSlot: 4,
+		},
+		{
+			seq: 4,
+			at: 0,
+			clock: "14:01",
+			reason: "left",
+			kind: "wifi",
+			socketName: "Lower black port",
+		},
+		{
+			seq: 5,
+			at: 0,
+			clock: "12:40",
+			reason: "turned-off",
+			kind: "modem",
+			socketName: "Modem slot inside",
+			generation: "4g",
+		},
+		{
+			seq: 6,
+			at: 0,
+			clock: "12:31",
+			reason: "usb2",
+			kind: "modem",
+			socketName: "Hub port 1",
+			linkSlot: 3,
+		},
+	]);
+}
+
+export function mockDeviceCalm(): DeviceCalm {
+	return deviceCalmSchema.parse({
+		resting: 1,
+		off: 1,
+		restingKind: "wifi",
+		offKind: "modem",
+		offAt: "12:40",
+		unresponsive: 1,
 	});
 }
 
@@ -263,10 +479,12 @@ export async function publishUsbDevices(): Promise<void> {
 	const { shouldUseMocks } = await import("../../mocks/mock-service.ts");
 	if (shouldUseMocks()) {
 		const { broadcastMsg } = await import("../../rpc/compat.ts");
+		mockStory = { events: mockUsbEvents(), calm: mockDeviceCalm() };
 		deliverUsbDevicesWire(mockUsbDevicesWire(), (next) => {
 			broadcastMsg("status", {
 				usb_devices: next,
-				usb_events: getUsbEvents(),
+				usb_events: mockUsbEvents(),
+				device_calm: mockDeviceCalm(),
 			});
 		});
 		return;
