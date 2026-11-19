@@ -91,6 +91,14 @@ function mount(target?: WifiInterface) {
 	});
 }
 
+function showCode(): void {
+	const button = Array.from(dialog().querySelectorAll("button")).find(
+		(b) => b.textContent?.trim() === "Show code",
+	);
+	if (!button) throw new Error("Show code did not render");
+	button.click();
+}
+
 function deferred<T>(): {
 	readonly promise: Promise<T>;
 	readonly resolve: (value: T) => void;
@@ -264,10 +272,14 @@ describe("dialog lifecycle", () => {
 		const oldIface = iface({ name: "Old hotspot", password: "old-password" });
 		const newIface = iface({ name: "New hotspot", password: "new-password" });
 		const view = mount(oldIface);
+		// The code is hidden until asked for, every time the dialog opens.
+		expect(qrDataUrl).not.toHaveBeenCalled();
+		showCode();
 		await waitFor(() => expect(qrDataUrl).toHaveBeenCalledTimes(1));
 
 		await view.rerender({ open: false, deviceId: "0", iface: oldIface });
 		await view.rerender({ open: true, deviceId: "0", iface: newIface });
+		showCode();
 		await waitFor(() =>
 			expect(qrDataUrl.mock.calls.length).toBeGreaterThanOrEqual(2),
 		);
@@ -321,7 +333,11 @@ describe("dialog lifecycle", () => {
   normalized and NOTHING else, or the lock stops locking.
 */
 describe("regression lock — a pre-todo-8 device is byte-identical", () => {
-	const normalize = (html: string) => html.replace(/bits-c\d+/g, "bits-cN");
+	// Per-mount ids: bits-ui's, and the Wi-Fi code card's `$props.id()`.
+	const normalize = (html: string) =>
+		html
+			.replace(/bits-c\d+/g, "bits-cN")
+			.replace(/wifi-code-frame-c\d+/g, "wifi-code-frame-cN");
 
 	it("renders the same DOM as a capability-bearing device minus the new blocks", () => {
 		const legacy = mount(iface());
