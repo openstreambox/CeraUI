@@ -1,5 +1,6 @@
 /*
-  Two radios on two networks must stay on two networks.
+  Two radios on two networks must stay on two networks, and the check that
+  keeps them there must never cost a working link for nothing.
 
   Board-observed with two USB radios bonded over two access points: each radio
   held a saved profile for both networks. When network 1 went away,
@@ -7,8 +8,11 @@
   where the other radio already was, and never moved it back after network 1
   returned. Losing network 2's uplink then took the whole stream down.
 
-  These tests drive the planner and the runtime with fake NetworkManager
-  operations, then check the join/connect hooks against a spied nmcli layer.
+  The world below is a fake NetworkManager: device links, per-radio scans,
+  profile priorities and MAC bindings. The review scenarios (stale merged
+  visibility, phantom duplicates from monitor events, a stale multi-move plan,
+  flapping, operator races, memory overwrite, unbound profiles, scan budget)
+  are each pinned as an assertion.
 */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -19,6 +23,8 @@ import * as websocket from "../modules/ui/websocket-server.ts";
 import { handleWifi, setWifiJoinNmcliRunner } from "../modules/wifi/wifi.ts";
 import {
 	addWifiInterface,
+	getWifiInterfacesByMacAddress,
+	handleWifiMonitorEvent,
 	removeWifiInterface,
 } from "../modules/wifi/wifi-connections.ts";
 import {
@@ -26,272 +32,536 @@ import {
 	type WifiInterface,
 } from "../modules/wifi/wifi-interfaces.ts";
 import {
+	type DiversityProfile,
 	type DiversityRadio,
 	diversityRadioOf,
-	planWifiNetworkDiversity,
+	parseDiversityLinks,
 	WIFI_CHOSEN_NETWORK_PRIORITY,
-	WIFI_DIVERSITY_FIRST_RETRY_MS,
+	WIFI_DIVERSITY,
+	WIFI_DIVERSITY_TICK_MS,
 	WifiNetworkDiversity,
-	type WifiNetworkDiversityDeps,
 } from "../modules/wifi/wifi-network-diversity.ts";
 
 const A = "02:00:00:00:a0:01";
 const B = "02:00:00:00:b0:02";
-const NET1 = "Lab-Net-1";
-const NET2 = "Lab-Net-2";
+const N1 = "Lab-Net-1";
+const N2 = "Lab-Net-2";
+const N3 = "Lab-Net-3";
 // Each radio holds its own profile for each network (MAC-bound).
 const A1 = "00000000-0000-4000-8000-0000000000a1";
 const A2 = "00000000-0000-4000-8000-0000000000a2";
+const A3 = "00000000-0000-4000-8000-0000000000a3";
 const B1 = "00000000-0000-4000-8000-0000000000b1";
 const B2 = "00000000-0000-4000-8000-0000000000b2";
+const B3 = "00000000-0000-4000-8000-0000000000b3";
+const U = "00000000-0000-4000-8000-0000000000ff";
+const MARK = WIFI_CHOSEN_NETWORK_PRIORITY;
+const MIN = 60_000;
 
-type Air = { a: string | null; b: string | null; visible: Set<string> };
+const SSID_OF: Record<string, string> = {
+	[A1]: N1,
+	[A2]: N2,
+	[A3]: N3,
+	[B1]: N1,
+	[B2]: N2,
+	[B3]: N3,
+	[U]: N1,
+};
 
-function radio(
-	key: string,
-	device: number,
-	ssid: string | null,
-	profiles: Record<string, string>,
-	visible: Set<string>,
-): DiversityRadio {
+function radio(key: string, ifname: string, uuids: string[]): DiversityRadio {
 	const savedAll: Record<string, string[]> = {};
-	for (const [net, uuid] of Object.entries(profiles)) savedAll[net] = [uuid];
-	return { key, device, ssid, saved: profiles, savedAll, visible };
+	for (const uuid of uuids) {
+		const ssid = SSID_OF[uuid] as string;
+		savedAll[ssid] = [...(savedAll[ssid] ?? []), uuid];
+	}
+	return { key, ifname, savedAll };
 }
 
-function pair(air: Air): DiversityRadio[] {
-	return [
-		radio(A, 0, air.a, { [NET1]: A1, [NET2]: A2 }, air.visible),
-		radio(B, 1, air.b, { [NET1]: B1, [NET2]: B2 }, air.visible),
-	];
-}
+/* A fake NetworkManager with two radios on ifnames wlA and wlB. */
+class World {
+	clock = 0;
+	links = new Map<string, string | null>([
+		["wlA", null],
+		["wlB", null],
+	]);
+	profiles = new Map<string, DiversityProfile>();
+	/** What each radio's own scan sees: SSID -> signal. */
+	air: Record<string, Record<string, number>> = { wlA: {}, wlB: {} };
+	log: string[] = [];
+	busyLock = false;
+	activateOk = true;
+	diversity: WifiNetworkDiversity;
 
-function harness(
-	air: Air,
-	priorities: Record<string, number> = {},
-	onRescan: () => void = () => {},
-) {
-	let clock = 0;
-	const calls: string[] = [];
-	let connectResult = true;
-	let busy = false;
-	const deps: WifiNetworkDiversityDeps = {
-		radios: () => pair(air),
-		readPriority: async (uuid) => priorities[uuid] ?? 0,
-		setPriority: async (uuid, priority) => {
-			calls.push(`priority ${uuid} ${priority}`);
-			priorities[uuid] = priority;
-			return true;
-		},
-		connect: async (uuid) => {
-			calls.push(`connect ${uuid}`);
-			if (connectResult && uuid === A1) air.a = NET1;
-			return connectResult;
-		},
-		rescan: async (device) => {
-			calls.push(`rescan ${device}`);
-			onRescan();
-		},
-		withLock: async (_key, fn) => {
-			if (busy) return false;
-			await fn();
-			return true;
-		},
-		now: () => clock,
-	};
-	return {
-		diversity: new WifiNetworkDiversity(deps),
-		calls,
-		advance: (ms: number) => {
-			clock += ms;
-		},
-		failConnects: () => {
-			connectResult = false;
-		},
-		setBusy: (value: boolean) => {
-			busy = value;
-		},
-	};
-}
+	constructor(
+		readonly radios: () => DiversityRadio[] = () => [
+			radio(A, "wlA", [A1, A2, A3]),
+			radio(B, "wlB", [B1, B2, B3]),
+		],
+	) {
+		for (const uuid of [A1, A2, A3]) {
+			this.profiles.set(uuid, { priority: 0, mac: A });
+		}
+		for (const uuid of [B1, B2, B3]) {
+			this.profiles.set(uuid, { priority: 0, mac: B });
+		}
+		this.diversity = new WifiNetworkDiversity({
+			radios: () => this.radios(),
+			readLinks: async () => new Map(this.links),
+			readProfile: async (uuid) => this.profiles.get(uuid),
+			setPriority: async (uuid, priority) => {
+				this.log.push(`priority ${uuid} ${priority}`);
+				const old = this.profiles.get(uuid);
+				if (old) this.profiles.set(uuid, { ...old, priority });
+				return true;
+			},
+			scan: async (ifname) => {
+				this.log.push(`scan ${ifname}`);
+				return new Map(Object.entries(this.air[ifname] ?? {}));
+			},
+			activate: async (uuid, ifname) => {
+				this.log.push(`activate ${uuid} ${ifname}`);
+				if (!this.activateOk) return false;
+				this.links.set(ifname, uuid);
+				return true;
+			},
+			withLock: async (_key, fn) => {
+				if (this.busyLock) return false;
+				await fn();
+				return true;
+			},
+			now: () => this.clock,
+		});
+	}
 
-describe("planWifiNetworkDiversity", () => {
-	const visible = new Set([NET1, NET2]);
+	mark(...uuids: string[]) {
+		for (const uuid of uuids) {
+			const old = this.profiles.get(uuid);
+			if (old) this.profiles.set(uuid, { ...old, priority: MARK });
+		}
+	}
 
-	test("moves the radio that left its own network, not its sibling", () => {
-		const radios = pair({ a: NET2, b: NET2, visible });
-		const prefs: Record<string, string> = { [A]: NET1, [B]: NET2 };
-		expect(planWifiNetworkDiversity(radios, (key) => prefs[key])).toEqual([
-			{ key: A, device: 0, ssid: NET1, uuid: A1, visible: true },
-		]);
-	});
+	/** Both radios' own scans see these networks. */
+	onAir(signals: Record<string, number>) {
+		this.air = { wlA: { ...signals }, wlB: { ...signals } };
+	}
 
-	test("leaves radios alone when they are on distinct networks", () => {
-		const radios = pair({ a: NET1, b: NET2, visible });
-		expect(planWifiNetworkDiversity(radios, () => NET1)).toEqual([]);
-	});
+	async run(ms: number) {
+		const end = this.clock + ms;
+		while (this.clock < end) {
+			this.clock += WIFI_DIVERSITY_TICK_MS;
+			await this.diversity.tick();
+		}
+	}
 
-	test("respects both radios being chosen for one network", () => {
-		const radios = pair({ a: NET2, b: NET2, visible });
-		expect(planWifiNetworkDiversity(radios, () => NET2)).toEqual([]);
-	});
+	activations() {
+		return this.log.filter((line) => line.startsWith("activate"));
+	}
 
-	test("does nothing for a single radio", () => {
-		const [only] = pair({ a: NET2, b: null, visible });
-		expect(
-			planWifiNetworkDiversity([only as DiversityRadio], () => NET1),
-		).toEqual([]);
-	});
-
-	test("never moves onto a network another radio holds", () => {
-		const third = radio(
-			"02:00:00:00:c0:03",
-			2,
-			NET1,
-			{ [NET1]: "c1" },
-			visible,
+	scans(ifname?: string) {
+		return this.log.filter((line) =>
+			ifname ? line === `scan ${ifname}` : line.startsWith("scan"),
 		);
-		const radios = [...pair({ a: NET2, b: NET2, visible }), third];
-		const prefs: Record<string, string> = { [A]: NET1, [B]: NET2 };
-		expect(planWifiNetworkDiversity(radios, (key) => prefs[key])).toEqual([]);
+	}
+
+	actionsOnly() {
+		return this.log.filter((line) => !line.startsWith("priority"));
+	}
+}
+
+/* Both radios settled on their own networks, then AP1 lost: A falls back. */
+async function fallenBack(w: World) {
+	w.mark(A1, B2);
+	w.onAir({ [N1]: 70, [N2]: 70 });
+	w.links.set("wlA", A1);
+	w.links.set("wlB", B2);
+	await w.run(MIN);
+	w.onAir({ [N2]: 70 });
+	w.links.set("wlA", A2);
+}
+
+describe("moving a radio back", () => {
+	test("waits while its network is gone, returns once its own scans see it", async () => {
+		const w = new World();
+		await fallenBack(w);
+
+		// AP1 stays off for 10 minutes: the fallback link is never touched.
+		await w.run(10 * MIN);
+		expect(w.activations()).toEqual([]);
+		expect(w.scans("wlB")).toEqual([]);
+
+		// AP1 is back: one move, on the right radio, with its ifname.
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		await w.run(20 * MIN);
+		expect(w.activations()).toEqual([`activate ${A1} wlA`]);
+		expect(w.links.get("wlA")).toBe(A1);
+		expect(w.links.get("wlB")).toBe(B2);
 	});
 
-	test("hands a free network to only one of two radios that want it", () => {
-		const radios = pair({ a: NET2, b: NET2, visible });
-		const actions = planWifiNetworkDiversity(radios, () => NET1);
-		expect(actions.map((action) => action.key)).toEqual([A]);
+	test("returns within about a minute and a half when its network is back early", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		const start = w.clock;
+		while (w.activations().length === 0 && w.clock - start < 10 * MIN) {
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+		}
+		// Two confirm ticks and 30 s settle, then two sightings 20 s apart.
+		expect(w.activations()).toHaveLength(1);
+		expect(w.clock - start).toBeLessThanOrEqual(90_000);
 	});
 
-	test("needs a saved profile on the moving radio", () => {
-		const radios = [
-			radio(A, 0, NET2, { [NET2]: A2 }, visible),
-			radio(B, 1, NET2, { [NET2]: B2 }, visible),
+	test("review P1-1: a sibling's stale view of the network is never trusted", async () => {
+		const w = new World();
+		await fallenBack(w);
+		// B (connected, rarely scanning) still lists N1; A's own scans do not.
+		w.air.wlB = { [N1]: 70, [N2]: 70 };
+		await w.run(15 * MIN);
+		expect(w.activations()).toEqual([]);
+		expect(w.scans("wlB")).toEqual([]);
+	});
+
+	test("review P1-1: one sighting is not enough", async () => {
+		const w = new World();
+		await fallenBack(w);
+		await w.run(MIN); // confirm, settle; the first scan finds nothing
+		// N1 shows up in exactly one of A's scans, then is gone again.
+		w.air.wlA = { [N1]: 70, [N2]: 70 };
+		const scans = w.scans("wlA").length;
+		while (w.scans("wlA").length === scans) {
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+		}
+		w.air.wlA = { [N2]: 70 };
+		await w.run(10 * MIN);
+		expect(w.activations()).toEqual([]);
+	});
+
+	test("needs a usable signal, not much weaker than the shared link", async () => {
+		const weak = new World();
+		await fallenBack(weak);
+		weak.onAir({ [N1]: WIFI_DIVERSITY.signalFloor - 1, [N2]: 50 });
+		await weak.run(10 * MIN);
+		expect(weak.activations()).toEqual([]);
+
+		const worse = new World();
+		await fallenBack(worse);
+		worse.onAir({ [N1]: 55, [N2]: 55 + WIFI_DIVERSITY.signalMargin + 1 });
+		await worse.run(10 * MIN);
+		expect(worse.activations()).toEqual([]);
+	});
+
+	test("a failed move restores the fallback link and backs off", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.activateOk = false;
+		while (w.activations().length === 0) {
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+		}
+		expect(w.activations()).toEqual([
+			`activate ${A1} wlA`,
+			`activate ${A2} wlA`,
+		]);
+		await w.run(WIFI_DIVERSITY.moveBackoffMs - WIFI_DIVERSITY_TICK_MS);
+		expect(w.activations()).toHaveLength(2);
+	});
+});
+
+describe("never a move that gains nothing", () => {
+	test("review P1-2: monitor events cannot invent a duplicate", async () => {
+		// The registry's `conn` is patched from monitor events by connection
+		// NAME across radios; the check must read NetworkManager's device table.
+		const spies = [
+			spyOn(websocket, "broadcastMsg").mockImplementation(() => {}),
 		];
-		expect(planWifiNetworkDiversity(radios, () => NET1)).toEqual([]);
+		const avail = () =>
+			new Map([
+				[N1, { active: false, ssid: N1, signal: 60, security: "", freq: 1 }],
+				[N2, { active: false, ssid: N2, signal: 60, security: "", freq: 1 }],
+			]);
+		const row = (
+			id: number,
+			ifname: string,
+			conn: string,
+			one: string,
+			two: string,
+		): WifiInterface => ({
+			id,
+			ifname,
+			conn,
+			hw: "Fixture",
+			available: avail(),
+			saved: { [N1]: one, [N2]: two },
+			savedAll: { [N1]: [one], [N2]: [two] },
+		});
+		addWifiInterface(A, row(0, "wlA", A1, A1, A2));
+		addWifiInterface(B, row(1, "wlB", B2, B1, B2));
+		try {
+			const live = () => {
+				const out: DiversityRadio[] = [];
+				const all = getWifiInterfacesByMacAddress();
+				for (const mac in all) {
+					const entry = all[mac];
+					const r = entry && diversityRadioOf(mac, entry);
+					if (r) out.push(r);
+				}
+				return out;
+			};
+			const w = new World(live);
+			w.mark(A1, B2);
+			w.onAir({ [N1]: 70, [N2]: 70 });
+			w.links.set("wlA", A1);
+			w.links.set("wlB", B2);
+			await w.run(MIN);
+			// A's own move-back emits these when profile names equal SSIDs.
+			handleWifiMonitorEvent({
+				type: "connection-state",
+				connection: N2,
+				state: "deactivated",
+			});
+			handleWifiMonitorEvent({
+				type: "connection-state",
+				connection: N1,
+				state: "activated",
+			});
+			// The registry now claims B is on N1 next to A: a phantom duplicate.
+			expect(getWifiInterfacesByMacAddress()[B]?.conn).toBe(B1);
+			await w.run(5 * MIN);
+			expect(w.actionsOnly()).toEqual([]);
+		} finally {
+			for (const spy of spies) spy.mockRestore();
+			removeWifiInterface(A);
+			removeWifiInterface(B);
+		}
+	});
+
+	test("review P1-3: one move per tick, and no second move once diversity is back", async () => {
+		const w = new World();
+		w.mark(A1, B3);
+		w.onAir({ [N1]: 70, [N2]: 70, [N3]: 70 });
+		w.links.set("wlA", A2);
+		w.links.set("wlB", B2);
+		await w.run(20 * MIN);
+		expect(w.activations()).toEqual([`activate ${A1} wlA`]);
+		expect(w.links.get("wlB")).toBe(B2);
+	});
+
+	test("never activates a profile that is already active", async () => {
+		const w = new World(() => [
+			radio(A, "wlA", [A1, A2]),
+			radio(B, "wlB", [A1, B2]), // an odd setup: B lists A's profile too
+		]);
+		w.mark(A1);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.links.set("wlA", A2);
+		w.links.set("wlB", A1);
+		await w.run(10 * MIN);
+		expect(w.activations()).toEqual([]);
+	});
+
+	test("waits for a fresh link change to settle", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		await w.run(WIFI_DIVERSITY.settleMs - WIFI_DIVERSITY_TICK_MS);
+		expect(w.actionsOnly()).toEqual([]);
+	});
+
+	test("a busy adapter lock skips the turn", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.busyLock = true;
+		await w.run(10 * MIN);
+		expect(w.actionsOnly()).toEqual([]);
+		w.busyLock = false;
+		await w.run(2 * MIN);
+		expect(w.activations()).toEqual([`activate ${A1} wlA`]);
 	});
 });
 
-describe("WifiNetworkDiversity", () => {
-	test("brings a radio back after NetworkManager parked it on its sibling's network", async () => {
-		const air: Air = { a: NET1, b: NET2, visible: new Set([NET1, NET2]) };
-		const { diversity, calls, advance } = harness(air);
-
-		// Both radios on their own networks: remembered, nothing to do.
-		await diversity.tick();
-		expect(calls).toEqual([]);
-
-		// Network 1 goes away; NetworkManager falls back to radio A's NET2 profile.
-		air.a = NET2;
-		air.visible = new Set([NET2]);
-		await diversity.tick();
-		// Only the duplicating radio is rescanned; it stays as a last resort.
-		expect(calls).toEqual(["rescan 0"]);
-
-		// Within the back-off nothing happens.
-		advance(WIFI_DIVERSITY_FIRST_RETRY_MS - 1);
-		await diversity.tick();
-		expect(calls).toEqual(["rescan 0"]);
-
-		// Network 1 is back.
-		air.visible = new Set([NET1, NET2]);
-		advance(1);
-		await diversity.tick();
-		expect(calls).toEqual(["rescan 0", `connect ${A1}`]);
-		expect(air).toMatchObject({ a: NET1, b: NET2 });
-
-		// Settled: no more actions.
-		await diversity.tick();
-		expect(calls).toHaveLength(2);
+describe("hysteresis", () => {
+	test("review P2-1: a preferred network that keeps dropping parks the radio", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		let moves = 0;
+		for (let i = 0; i < 6 * 60; i++) {
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+			// NM drops A from the weak AP1 within a tick and falls back.
+			if (w.links.get("wlA") === A1) {
+				moves += 1;
+				w.links.set("wlA", A2);
+			}
+		}
+		// One hour: three quick reverts, then parked (the signal never improves).
+		expect(moves).toBe(WIFI_DIVERSITY.parkAfterReverts);
 	});
 
-	test("connects right after the rescan finds the network", async () => {
-		const air: Air = { a: NET1, b: NET2, visible: new Set([NET1, NET2]) };
-		const { diversity, calls } = harness(air, {}, () => {
-			air.visible = new Set([NET1, NET2]);
-		});
-		await diversity.tick();
-		air.a = NET2;
-		air.visible = new Set([NET2]);
-		await diversity.tick();
-		expect(calls).toEqual(["rescan 0", `connect ${A1}`]);
+	test("a parked radio moves again when the signal is clearly stronger", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 50, [N2]: 50 });
+		for (let i = 0; i < 6 * 30; i++) {
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+			if (w.links.get("wlA") === A1) w.links.set("wlA", A2);
+		}
+		const before = w.activations().length;
+		expect(before).toBe(WIFI_DIVERSITY.parkAfterReverts);
+		w.onAir({ [N1]: 50 + WIFI_DIVERSITY.parkSignalGain, [N2]: 50 });
+		await w.run(40 * MIN);
+		expect(w.activations()).toHaveLength(before + 1);
+		expect(w.links.get("wlA")).toBe(A1);
 	});
 
-	test("the operator's recorded choice wins over what the radio last held", async () => {
-		// Marks in NetworkManager: A was chosen for NET2, B for NET2.
-		const air: Air = { a: NET1, b: NET2, visible: new Set([NET1, NET2]) };
-		const priorities = {
-			[A2]: WIFI_CHOSEN_NETWORK_PRIORITY,
-			[B2]: WIFI_CHOSEN_NETWORK_PRIORITY,
-		};
-		const { diversity, calls } = harness(air, priorities);
-		await diversity.tick();
-		air.a = NET2;
-		await diversity.tick();
-		expect(calls).toEqual([]);
+	test("a move that holds clears the revert count", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		for (let reverts = 0; reverts < 2; ) {
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+			if (w.links.get("wlA") === A1) {
+				w.links.set("wlA", A2);
+				reverts += 1;
+			}
+		}
+		// Then a move that holds past the hold time, and a later fallback.
+		while (w.links.get("wlA") !== A1) await w.run(WIFI_DIVERSITY_TICK_MS);
+		await w.run(WIFI_DIVERSITY.holdMs + WIFI_DIVERSITY_TICK_MS);
+		w.links.set("wlA", A2);
+		const before = w.activations().length;
+		await w.run(2 * MIN);
+		// No back-off left: it returns within the normal confirm time.
+		expect(w.activations()).toHaveLength(before + 1);
 	});
 
-	test("a choice read from NetworkManager after a restart moves the radio", async () => {
-		// No memory of this run: A starts out sharing NET2.
-		const air: Air = { a: NET2, b: NET2, visible: new Set([NET1, NET2]) };
-		const { diversity, calls } = harness(air, {
-			[A1]: WIFI_CHOSEN_NETWORK_PRIORITY,
-		});
-		await diversity.tick();
-		expect(calls).toEqual([`connect ${A1}`]);
-	});
-
-	test("without a choice or memory nothing moves", async () => {
-		const air: Air = { a: NET2, b: NET2, visible: new Set([NET1, NET2]) };
-		const { diversity, calls } = harness(air);
-		await diversity.tick();
-		expect(calls).toEqual([]);
-	});
-
-	test("backs off after a failed move", async () => {
-		const air: Air = { a: NET1, b: NET2, visible: new Set([NET1, NET2]) };
-		const { diversity, calls, advance, failConnects } = harness(air);
-		await diversity.tick();
-		air.a = NET2;
-		failConnects();
-		await diversity.tick();
-		advance(WIFI_DIVERSITY_FIRST_RETRY_MS);
-		await diversity.tick();
-		advance(WIFI_DIVERSITY_FIRST_RETRY_MS);
-		await diversity.tick();
-		advance(WIFI_DIVERSITY_FIRST_RETRY_MS);
-		await diversity.tick();
-		// 0 s, 15 s, then the doubled 30 s wait ends at 45 s.
-		expect(calls).toEqual([`connect ${A1}`, `connect ${A1}`, `connect ${A1}`]);
-	});
-
-	test("a busy adapter is skipped without starting a back-off", async () => {
-		const air: Air = { a: NET1, b: NET2, visible: new Set([NET1, NET2]) };
-		const { diversity, calls, setBusy } = harness(air);
-		await diversity.tick();
-		air.a = NET2;
-		setBusy(true);
-		await diversity.tick();
-		setBusy(false);
-		await diversity.tick();
-		expect(calls).toEqual([`connect ${A1}`]);
-	});
-
-	test("recording a choice marks that profile and clears the old mark", async () => {
-		const air: Air = { a: NET1, b: NET2, visible: new Set([NET1, NET2]) };
-		const priorities = { [A1]: WIFI_CHOSEN_NETWORK_PRIORITY, [B1]: 5 };
-		const { diversity, calls } = harness(air, priorities);
-		await diversity.recordChoice(A, A2);
-		expect(calls.sort()).toEqual([`priority ${A1} 0`, `priority ${A2} 10`]);
-		// The radio's sibling and unrelated priorities are untouched.
-		expect(priorities[B1]).toBe(5);
-
-		// The operator put A on NET2 next to B: it stays there.
-		air.a = NET2;
-		await diversity.tick();
-		expect(calls).toHaveLength(2);
+	test("review P2-4: forced scans are budgeted while the network is absent", async () => {
+		const w = new World();
+		await fallenBack(w);
+		await w.run(60 * MIN);
+		// Three fast scans, then one per slow interval.
+		expect(w.scans("wlA").length).toBeLessThanOrEqual(
+			WIFI_DIVERSITY.scanDelaysMs.length +
+				1 +
+				Math.ceil((60 * MIN) / WIFI_DIVERSITY.scanSlowMs),
+		);
+		expect(w.scans("wlB")).toEqual([]);
 	});
 });
 
-describe("diversityRadioOf", () => {
+describe("operator intent", () => {
+	test("review P2-2: an operator op in flight is never raced", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		const release = w.diversity.beginOperatorChoice(A);
+		await w.run(10 * MIN);
+		expect(w.actionsOnly()).toEqual([]);
+		// The operator deliberately put A on N2 next to B.
+		await w.diversity.recordChoice(A, A2);
+		release();
+		await w.run(10 * MIN);
+		expect(w.activations()).toEqual([]);
+		expect(w.profiles.get(A2)?.priority).toBe(MARK);
+		expect(w.profiles.get(A1)?.priority).toBe(0);
+	});
+
+	test("both radios chosen for one network stay there", async () => {
+		const w = new World();
+		w.mark(A2, B2);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.links.set("wlA", A2);
+		w.links.set("wlB", B2);
+		await w.run(20 * MIN);
+		expect(w.activations()).toEqual([]);
+	});
+
+	test("review P2-3: an unmarked radio is not moved on a remembered network", async () => {
+		const w = new World();
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		// Past the migration window, so nothing gets marked.
+		await w.run(WIFI_DIVERSITY.migrationWindowMs + MIN);
+		w.links.set("wlA", A1);
+		w.links.set("wlB", B2);
+		await w.run(5 * MIN);
+		w.links.set("wlA", A2);
+		w.links.set("wlB", null); // sibling blip
+		await w.run(WIFI_DIVERSITY_TICK_MS);
+		w.links.set("wlB", B2);
+		await w.run(20 * MIN);
+		expect(w.log).toEqual([]);
+	});
+
+	test("an upgraded box marks each radio's own network once, early and when stable", async () => {
+		const w = new World();
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.links.set("wlA", A1);
+		w.links.set("wlB", B2);
+		await w.run(WIFI_DIVERSITY.migrationStableMs - WIFI_DIVERSITY_TICK_MS);
+		expect(w.log).toEqual([]);
+		await w.run(2 * WIFI_DIVERSITY_TICK_MS);
+		expect([...w.log].sort()).toEqual([
+			`priority ${A1} ${MARK}`,
+			`priority ${B2} ${MARK}`,
+		]);
+		// Later the fallback happens and the marks bring A back.
+		w.onAir({ [N2]: 70 });
+		w.links.set("wlA", A2);
+		await w.run(5 * MIN);
+		// Back after the fast scans are spent: the next slow scan finds it.
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		await w.run(WIFI_DIVERSITY.scanSlowMs + MIN);
+		expect(w.activations()).toEqual([`activate ${A1} wlA`]);
+	});
+
+	test("no migration when the radios share a network or a mark exists", async () => {
+		const shared = new World();
+		shared.links.set("wlA", A2);
+		shared.links.set("wlB", B2);
+		await shared.run(WIFI_DIVERSITY.migrationWindowMs + MIN);
+		expect(shared.log).toEqual([]);
+
+		const marked = new World();
+		marked.mark(B3);
+		marked.links.set("wlA", A1);
+		marked.links.set("wlB", B2);
+		await marked.run(WIFI_DIVERSITY.migrationWindowMs + MIN);
+		expect(marked.log).toEqual([]);
+	});
+
+	test("review P2-5: a choice of an unbound profile marks nothing, for anyone", async () => {
+		const w = new World(() => [
+			radio(A, "wlA", [U, A2]),
+			radio(B, "wlB", [U, B2]),
+		]);
+		w.profiles.set(U, { priority: 0, mac: undefined });
+		w.mark(B2);
+		await w.diversity.recordChoice(A, U);
+		expect(w.log).toEqual([]);
+		expect(w.profiles.get(B2)?.priority).toBe(MARK);
+		// An unbound profile is never a move target either.
+		w.mark(U);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.links.set("wlA", A2);
+		w.links.set("wlB", B2);
+		await w.run(10 * MIN);
+		expect(w.activations()).toEqual([]);
+	});
+
+	test("quick successive choices end with exactly one mark", async () => {
+		const w = new World();
+		w.mark(A1);
+		await Promise.all([
+			w.diversity.recordChoice(A, A2),
+			w.diversity.recordChoice(A, A3),
+		]);
+		const marked = [A1, A2, A3].filter(
+			(uuid) => w.profiles.get(uuid)?.priority === MARK,
+		);
+		expect(marked).toEqual([A3]);
+	});
+});
+
+describe("wiring", () => {
 	function iface(overrides: Partial<WifiInterface> = {}): WifiInterface {
 		return {
 			id: 3,
@@ -299,21 +569,21 @@ describe("diversityRadioOf", () => {
 			conn: A2,
 			hw: "Fixture",
 			available: new Map(),
-			saved: { [NET1]: A1, [NET2]: A2 },
-			savedAll: { [NET1]: [A1], [NET2]: [A2] },
+			saved: { [N1]: A1, [N2]: A2 },
+			savedAll: { [N1]: [A1], [N2]: [A2] },
 			...overrides,
 		};
 	}
 
-	test("names the network of the active profile", () => {
-		expect(diversityRadioOf(A, iface())).toMatchObject({
+	test("a station radio is projected by key and ifname", () => {
+		expect(diversityRadioOf(A, iface())).toEqual({
 			key: A,
-			device: 3,
-			ssid: NET2,
+			ifname: "wlx0",
+			savedAll: { [N1]: [A1], [N2]: [A2] },
 		});
 	});
 
-	test("leaves out a radio running a hotspot", () => {
+	test("radios running a hotspot, alone or concurrently, are exempt", () => {
 		expect(
 			diversityRadioOf(
 				A,
@@ -323,6 +593,30 @@ describe("diversityRadioOf", () => {
 				} as unknown as Partial<WifiInterface>),
 			),
 		).toBeUndefined();
+		expect(
+			diversityRadioOf(
+				A,
+				iface({
+					hotspot: { conn: "hs" },
+					concurrentHotspot: { ifname: "clap-wlx0", activeConn: "hs" },
+				} as unknown as Partial<WifiInterface>),
+			),
+		).toBeUndefined();
+	});
+
+	test("device links come from NetworkManager's device table", () => {
+		const links = parseDiversityLinks([
+			`wlA:wifi:connected:${A1}`,
+			"wlB:wifi:disconnected:",
+			"wlC:wifi:connecting (getting IP configuration):x",
+			`eth0:ethernet:connected:${B1}`,
+			"",
+		]);
+		expect([...links]).toEqual([
+			["wlA", A1],
+			["wlB", null],
+			["wlC", null],
+		]);
 	});
 });
 
@@ -331,7 +625,7 @@ describe("join and connect record the operator's choice", () => {
 	const writes: Array<[string, Record<string, string>]> = [];
 	let replied: Promise<void> = Promise.resolve();
 	let socket: MessageSocket;
-	// recordChoice runs detached; let its reads and writes settle.
+	// The choice is recorded after the reply; let its reads and writes settle.
 	const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 	beforeEach(() => {
@@ -340,7 +634,7 @@ describe("join and connect record the operator's choice", () => {
 		replied = reply.promise;
 		socket = { send: () => reply.resolve() } as unknown as MessageSocket;
 		const priorities: Record<string, string> = {
-			[A1]: String(WIFI_CHOSEN_NETWORK_PRIORITY),
+			[A1]: String(MARK),
 			[A2]: "0",
 		};
 		addWifiInterface(A, {
@@ -349,8 +643,8 @@ describe("join and connect record the operator's choice", () => {
 			conn: A1,
 			hw: "Fixture",
 			available: new Map(),
-			saved: { [NET1]: A1, [NET2]: A2 },
-			savedAll: { [NET1]: [A1], [NET2]: [A2] },
+			saved: { [N1]: A1, [N2]: A2 },
+			savedAll: { [N1]: [A1], [N2]: [A2] },
 		});
 		getWifiIdToMacAddress()[7] = A;
 		spies.push(
@@ -361,18 +655,22 @@ describe("join and connect record the operator's choice", () => {
 				fields: readonly string[],
 			) =>
 				fields.includes("802-11-wireless.ssid")
-					? ["infrastructure", uuid === A1 ? NET1 : NET2, A]
-					: [priorities[uuid] ?? "0"]) as unknown as typeof nm.nmConnGetFields),
+					? ["infrastructure", uuid === A1 ? N1 : N2, A]
+					: [
+							priorities[uuid] ?? "0",
+							A.toUpperCase(),
+						]) as unknown as typeof nm.nmConnGetFields),
 			spyOn(nm, "nmConnsGet").mockResolvedValue([
 				`${A1}:802-11-wireless`,
 				`${A2}:802-11-wireless`,
 			]),
 			spyOn(nm, "nmConnSetWifiMacAddress").mockResolvedValue(true),
-			spyOn(websocket, "broadcastMsg").mockImplementation(() => {}),
 			spyOn(nm, "nmConnSetFields").mockImplementation(async (uuid, fields) => {
 				writes.push([uuid, fields]);
+				priorities[uuid] = fields["connection.autoconnect-priority"] ?? "0";
 				return true;
 			}),
+			spyOn(websocket, "broadcastMsg").mockImplementation(() => {}),
 		);
 	});
 
@@ -389,7 +687,7 @@ describe("join and connect record the operator's choice", () => {
 		await settle();
 		expect(writes).toContainEqual([
 			A2,
-			{ "connection.autoconnect-priority": "10" },
+			{ "connection.autoconnect-priority": String(MARK) },
 		]);
 		expect(writes).toContainEqual([
 			A1,
@@ -404,17 +702,13 @@ describe("join and connect record the operator's choice", () => {
 			exitCode: 0,
 		}));
 		handleWifi(socket, {
-			new: { device: 7, ssid: NET2, password: "fixture-pass", security: "" },
+			new: { device: 7, ssid: N2, password: "fixture-pass", security: "" },
 		});
 		await replied;
 		await settle();
 		expect(writes).toContainEqual([
 			A2,
-			{ "connection.autoconnect-priority": "10" },
-		]);
-		expect(writes).toContainEqual([
-			A1,
-			{ "connection.autoconnect-priority": "0" },
+			{ "connection.autoconnect-priority": String(MARK) },
 		]);
 	});
 
