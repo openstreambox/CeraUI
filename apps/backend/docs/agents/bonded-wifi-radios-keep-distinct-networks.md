@@ -20,6 +20,8 @@ down a link that carries traffic, so the trigger is deliberately strict.
   resets its other profiles carrying exactly 17 to 0. Unbound profiles are
   shared by every radio, so they are never marked and never a move target.
   Choices are serialized; a radio left with two marks is ignored and logged.
+  Choosing a profile CeraUI cannot mark (unbound or unknown) clears the radio's
+  marks, so an old mark never undoes that choice.
 - **Operator ops win.** The join/connect paths flag the radio before dispatch
   and release it after the choice is recorded; a flagged radio is never moved.
 - **Truth is NetworkManager's device table**, read each tick and again under
@@ -37,11 +39,18 @@ down a link that carries traffic, so the trigger is deliberately strict.
 - **Hysteresis.** A move counts once the radio holds the network for 90 s. A
   quicker revert backs off (60 s doubling to 15 min); after 3 reverts the radio
   is parked until the operator chooses again or the network is 15 points
-  stronger. A failed move re-activates the fallback profile at once.
+  stronger. A parked radio is also released when NetworkManager itself puts it
+  back on its preferred network and that holds for 90 s. A failed move
+  re-activates the fallback profile at once.
 - **Scan budget.** Forced scans stall a connected radio for a few seconds on
   some USB drivers, and the duplicating link still carries bond traffic. Per
   episode: three fast scans (30, 60, 120 s apart), then one every 10 minutes.
-  So after a long outage, the return can take up to about 10 minutes.
+  A short gap in the duplicate (a sibling blip) keeps the episode's budget; only
+  5 minutes out of it, or a move, resets it. The lock is taken only when a scan
+  is due. The merged scan list is a hint only: when the preferred network newly
+  appears there, the radio gets one early scan (never a move by itself). After a
+  long outage without such a hint, the return can take up to about 10 minutes;
+  the slow cadence waits for a measured forced-scan freeze on hardware.
 - **Upgraded boxes.** Within the first 10 minutes after start, if no radio has
   a mark and every connected radio has sat on its own distinct network (bound
   profile) for 2 minutes, each active profile is marked once. Otherwise an

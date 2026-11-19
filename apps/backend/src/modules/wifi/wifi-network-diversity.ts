@@ -110,6 +110,8 @@ export const WIFI_DIVERSITY = {
 	migrationWindowMs: 600_000,
 	migrationStableMs: 120_000,
 	activateTimeoutS: 20,
+	/** Out of the duplicate this long before the scan budget starts over. */
+	episodeGapMs: 300_000,
 } as const;
 
 /** A station radio as the registry knows it: identity and saved profiles. */
@@ -147,6 +149,11 @@ export type WifiNetworkDiversityDeps = {
 		fn: () => Promise<void>,
 	) => Promise<boolean>;
 	readonly now: () => number;
+	/**
+	 * SSIDs in the merged scan list. Never evidence for a move (another radio's
+	 * cache can be stale); a network newly listed only earns one early scan.
+	 */
+	readonly listed?: () => ReadonlySet<SSID>;
 };
 
 type Track = {
@@ -155,6 +162,9 @@ type Track = {
 	dupTicks: number;
 	scans: number;
 	nextScanAt: number;
+	lastScanAt: number | undefined;
+	lastCandidateAt: number | undefined;
+	listed: boolean;
 	sighting: { at: number; signal: number } | undefined;
 	nextMoveAt: number;
 	reverts: number;
@@ -235,13 +245,23 @@ export class WifiNetworkDiversity {
 		// current marks, not on what an earlier tick cached.
 		await this.loadProfiles(this.deps.radios(), radio);
 		const ssid = ssidOf(radio, uuid);
+		this.resetTrack(key, true);
 		if (ssid === null || this.profiles.get(uuid)?.mac !== key) {
+			// The operator chose something we cannot mark. An old mark would make
+			// the check undo that choice, so the radio is left without one.
 			logger.info(
-				`Wi-Fi diversity: ${key} chose a profile not bound to it; no preference recorded`,
+				`Wi-Fi diversity: ${key} chose a profile not bound to it; clearing its preference`,
 			);
+			for (const profile of this.bound(radio)) {
+				if (
+					this.profiles.get(profile.uuid)?.priority ===
+					WIFI_CHOSEN_NETWORK_PRIORITY
+				) {
+					await this.writePriority(profile.uuid, 0);
+				}
+			}
 			return;
 		}
-		this.resetTrack(key, true);
 		for (const profile of this.bound(radio)) {
 			const priority = this.profiles.get(profile.uuid)?.priority;
 			const want =
@@ -335,6 +355,9 @@ export class WifiNetworkDiversity {
 				dupTicks: 0,
 				scans: 0,
 				nextScanAt: 0,
+				lastScanAt: undefined,
+				lastCandidateAt: undefined,
+				listed: false,
 				sighting: undefined,
 				nextMoveAt: 0,
 				reverts: 0,
@@ -351,10 +374,12 @@ export class WifiNetworkDiversity {
 		const t = this.tracks.get(key);
 		if (!t) return;
 		t.dupTicks = 0;
-		t.scans = 0;
-		t.nextScanAt = 0;
 		t.sighting = undefined;
 		if (all) {
+			t.scans = 0;
+			t.nextScanAt = 0;
+			t.lastCandidateAt = undefined;
+			t.listed = false;
 			t.nextMoveAt = 0;
 			t.reverts = 0;
 			t.parkedSignal = undefined;
@@ -424,7 +449,23 @@ export class WifiNetworkDiversity {
 			}
 		}
 
+		for (const s of seen) {
+			const t = this.track(s.radio.key, now);
+			if (
+				(t.reverts > 0 || t.parkedSignal !== undefined) &&
+				s.uuid !== null &&
+				s.uuid === this.preferred(s.radio)?.uuid &&
+				now - t.since >= WIFI_DIVERSITY.holdMs
+			) {
+				// The preferred network held without us: it is usable again.
+				t.reverts = 0;
+				t.parkedSignal = undefined;
+				t.nextMoveAt = 0;
+			}
+		}
+
 		await this.migrate(seen, now);
+		const listed = this.deps.listed?.() ?? new Set<SSID>();
 
 		const used = new Map<SSID, number>();
 		const active = new Set<ConnectionUUID>();
@@ -453,14 +494,35 @@ export class WifiNetworkDiversity {
 				!active.has(target.uuid);
 			if (!candidate) {
 				this.resetTrack(s.radio.key);
+				// A short blip keeps the episode's scan budget; a real gap resets it.
+				if (
+					t.lastCandidateAt === undefined ||
+					now - t.lastCandidateAt >= WIFI_DIVERSITY.episodeGapMs
+				) {
+					t.scans = 0;
+					t.nextScanAt = 0;
+					t.lastCandidateAt = undefined;
+				}
+				t.listed = false;
 				continue;
 			}
 			t.dupTicks += 1;
+			t.lastCandidateAt = now;
+			const nowListed = listed.has(target.ssid);
+			if (nowListed && !t.listed && t.lastScanAt !== undefined) {
+				// Newly listed in the merged scan: one early scan, never a move.
+				t.nextScanAt = Math.min(
+					t.nextScanAt,
+					t.lastScanAt + WIFI_DIVERSITY.sightingGapMs,
+				);
+			}
+			t.listed = nowListed;
 			if (
 				!pick &&
 				settled &&
 				t.dupTicks >= WIFI_DIVERSITY.confirmTicks &&
-				now >= t.nextMoveAt
+				now >= t.nextMoveAt &&
+				now >= t.nextScanAt
 			) {
 				pick = { seen: s, target };
 			}
@@ -532,6 +594,7 @@ export class WifiNetworkDiversity {
 			if (now < t.nextScanAt) return;
 			const scan = await this.deps.scan(s.radio.ifname);
 			t.scans += 1;
+			t.lastScanAt = now;
 			const delays = WIFI_DIVERSITY.scanDelaysMs;
 			t.nextScanAt =
 				now +
@@ -572,6 +635,10 @@ export class WifiNetworkDiversity {
 			const after = this.deps.now();
 			if (ok) {
 				t.moved = { uuid: target.uuid, at: after, signal };
+				// The episode ended; a later fallback starts with a full scan budget.
+				t.scans = 0;
+				t.nextScanAt = 0;
+				t.lastCandidateAt = undefined;
 				// We know the link changed; a revert before the next tick still counts.
 				t.uuid = target.uuid;
 				t.since = after;
@@ -581,7 +648,14 @@ export class WifiNetworkDiversity {
 				`Wi-Fi diversity: could not move ${key} to ${JSON.stringify(target.ssid)}; restoring its previous link`,
 			);
 			this.backoff(t, after);
-			if (s.uuid !== null) await this.deps.activate(s.uuid, s.radio.ifname);
+			if (
+				s.uuid !== null &&
+				!(await this.deps.activate(s.uuid, s.radio.ifname))
+			) {
+				logger.warn(
+					`Wi-Fi diversity: could not restore ${key}'s previous link; NetworkManager's autoconnect has to recover it`,
+				);
+			}
 		});
 	}
 
@@ -681,6 +755,17 @@ export function createLiveWifiNetworkDiversity(): WifiNetworkDiversity {
 			return ok;
 		},
 		withLock: async (key, fn) => (await withWifiAdapterLock(key, fn)).success,
+		listed: () => {
+			const ssids = new Set<SSID>();
+			for (const wifiInterface of Object.values(
+				getWifiInterfacesByMacAddress(),
+			)) {
+				for (const ssid of wifiInterface?.available.keys() ?? []) {
+					ssids.add(ssid);
+				}
+			}
+			return ssids;
+		},
 		now: () => Date.now(),
 	});
 }

@@ -90,6 +90,13 @@ class World {
 	log: string[] = [];
 	busyLock = false;
 	activateOk = true;
+	locks = 0;
+	/** SSIDs in the merged scan list (a hint only). */
+	merged = new Set<string>();
+	/** Runs after each scan returns, to change the world mid-decision. */
+	afterScan: (ifname: string, count: number) => void = () => {};
+	/** Runs once the lock is taken, before the decision inside it. */
+	inLock: () => void = () => {};
 	diversity: WifiNetworkDiversity;
 
 	constructor(
@@ -116,7 +123,9 @@ class World {
 			},
 			scan: async (ifname) => {
 				this.log.push(`scan ${ifname}`);
-				return new Map(Object.entries(this.air[ifname] ?? {}));
+				const seen = new Map(Object.entries(this.air[ifname] ?? {}));
+				this.afterScan(ifname, this.scans(ifname).length);
+				return seen;
 			},
 			activate: async (uuid, ifname) => {
 				this.log.push(`activate ${uuid} ${ifname}`);
@@ -125,11 +134,16 @@ class World {
 				return true;
 			},
 			withLock: async (_key, fn) => {
+				this.locks += 1;
 				if (this.busyLock) return false;
+				// Acquire a microtask later, like a real lock that was just freed.
+				await Promise.resolve();
+				this.inLock();
 				await fn();
 				return true;
 			},
 			now: () => this.clock,
+			listed: () => this.merged,
 		});
 	}
 
@@ -558,6 +572,131 @@ describe("operator intent", () => {
 			(uuid) => w.profiles.get(uuid)?.priority === MARK,
 		);
 		expect(marked).toEqual([A3]);
+	});
+});
+
+describe("re-check fixes", () => {
+	test("R1: choosing an unbound legacy profile clears the old mark, so the choice stands", async () => {
+		const w = new World(() => [
+			radio(A, "wlA", [A2, U]),
+			radio(B, "wlB", [B1, B2]),
+		]);
+		w.profiles.set(U, { priority: 0, mac: undefined });
+		w.mark(A2, B1);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.links.set("wlA", A2);
+		w.links.set("wlB", B1);
+		await w.run(MIN);
+		// The operator deliberately puts A on N1, next to B, via the legacy profile.
+		const release = w.diversity.beginOperatorChoice(A);
+		w.links.set("wlA", U);
+		await w.diversity.recordChoice(A, U);
+		release();
+		expect(w.profiles.get(A2)?.priority).toBe(0);
+		expect(w.profiles.get(U)?.priority).toBe(0);
+		await w.run(10 * MIN);
+		expect(w.activations()).toEqual([]);
+		expect(w.links.get("wlA")).toBe(U);
+	});
+
+	test("R2: an operator op that starts while the lock is being taken wins", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		let release: (() => void) | undefined;
+		w.inLock = () => {
+			release ??= w.diversity.beginOperatorChoice(A);
+		};
+		w.log.length = 0;
+		await w.run(5 * MIN);
+		expect(w.log).toEqual([]);
+		release?.();
+	});
+
+	test("R2: the sibling taking the target during the confirming scan stops the move", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.afterScan = (ifname, count) => {
+			if (ifname === "wlA" && count === 2) w.links.set("wlB", B1);
+		};
+		await w.run(5 * MIN);
+		expect(w.activations()).toEqual([]);
+		expect(w.links.get("wlA")).toBe(A2);
+	});
+
+	test("a sibling blip does not reset the scan budget", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.log.length = 0;
+		for (let i = 0; i < 6; i++) {
+			await w.run(5 * MIN);
+			w.links.set("wlB", null);
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+			w.links.set("wlB", B2);
+		}
+		// About 31 minutes: the fast scans once, then the slow cadence.
+		expect(w.scans("wlA").length).toBeLessThanOrEqual(
+			WIFI_DIVERSITY.scanDelaysMs.length +
+				1 +
+				Math.ceil((31 * MIN) / WIFI_DIVERSITY.scanSlowMs),
+		);
+	});
+
+	test("a parked radio is unparked when NetworkManager's own recovery holds", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.onAir({ [N1]: 50, [N2]: 50 });
+		for (let i = 0; i < 400; i++) {
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+			if (w.links.get("wlA") === A1) w.links.set("wlA", A2);
+		}
+		const before = w.activations().length;
+		expect(before).toBe(WIFI_DIVERSITY.parkAfterReverts);
+		// NM puts A back on N1 itself, and it holds.
+		w.links.set("wlA", A1);
+		await w.run(60 * MIN);
+		// A new fallback at the same signal: the radio is no longer parked.
+		w.links.set("wlA", A2);
+		await w.run(60 * MIN);
+		expect(w.activations().length).toBe(before + 1);
+	});
+
+	test("the lock is not taken while no scan is due", async () => {
+		const w = new World();
+		await fallenBack(w);
+		w.locks = 0;
+		await w.run(30 * MIN);
+		expect(w.locks).toBe(w.scans("wlA").length);
+	});
+
+	test("a network newly listed in the merged scan earns one early scan, never a move", async () => {
+		const w = new World();
+		await fallenBack(w);
+		// Spend the fast scans; the next one is the slow cadence away.
+		await w.run(5 * MIN);
+		const spent = w.scans("wlA").length;
+		w.merged = new Set([N1, N2]);
+		await w.run(MIN);
+		expect(w.scans("wlA").length).toBe(spent + 1);
+		expect(w.activations()).toEqual([]);
+		// Still listed: no further early scans.
+		await w.run(3 * MIN);
+		expect(w.scans("wlA").length).toBe(spent + 1);
+	});
+
+	test("the merged list speeds up the return once the network is really back", async () => {
+		const w = new World();
+		await fallenBack(w);
+		await w.run(5 * MIN);
+		w.onAir({ [N1]: 70, [N2]: 70 });
+		w.merged = new Set([N1, N2]);
+		const back = w.clock;
+		while (w.links.get("wlA") !== A1 && w.clock - back < 20 * MIN) {
+			await w.run(WIFI_DIVERSITY_TICK_MS);
+		}
+		// One early scan, then the confirming one 20 s later.
+		expect(w.clock - back).toBeLessThanOrEqual(MIN);
 	});
 });
 
