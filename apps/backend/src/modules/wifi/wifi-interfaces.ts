@@ -1,3 +1,9 @@
+import {
+	getNetifTopologyGeneration,
+	getNetworkInterfaceIncarnation,
+	getNetworkInterfaces,
+	triggerNetworkInterfacesChange,
+} from "../network/network-interfaces.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -18,14 +24,6 @@
 import { logger } from "../../helpers/logger.ts";
 import { getms } from "../../helpers/time.ts";
 import {
-	getNetifTopologyGeneration,
-	getNetworkInterfaceIncarnation,
-	getNetworkInterfaces,
-	NETIF_ERR_HOTSPOT,
-	setNetifHotspot,
-	triggerNetworkInterfacesChange,
-} from "../network/network-interfaces.ts";
-import {
 	type ConnectionUUID,
 	type MacAddress,
 	nmConnGetFields,
@@ -39,6 +37,11 @@ import {
 	parseFail,
 	parseOk,
 } from "../system/cli-parse.ts";
+import {
+	capturePortalBinding,
+	type PortalBindingReaders,
+	type PortalCapture,
+} from "./captive-portal-session.ts";
 import { getDerivedApChannels, refreshHotspotChannels } from "./regdomain.ts";
 import {
 	broadcastWifiState,
@@ -46,7 +49,10 @@ import {
 	wifiUpdateSavedConns,
 } from "./wifi.ts";
 import { notifyWifiAdapterModeDiscovery } from "./wifi-adapter-mode-events.ts";
-import { supportsApStaConcurrency } from "./wifi-ap-sta-capability.ts";
+import {
+	readApModeSupport,
+	supportsApStaConcurrency,
+} from "./wifi-ap-sta-capability.ts";
 import { refreshWifiCapabilities } from "./wifi-capabilities.ts";
 import type { AutoWifiChannel } from "./wifi-channels.ts";
 import {
@@ -72,7 +78,6 @@ import {
 import { handleHotspotConn } from "./wifi-hotspot-discovery.ts";
 import {
 	canHotspot,
-	isApMode,
 	type WifiHotspot,
 	type WifiInterfaceWithHotspot,
 } from "./wifi-hotspot-types.ts";
@@ -82,11 +87,46 @@ import {
 	retainWifiPermanentMacs,
 } from "./wifi-permanent-mac.ts";
 import {
+	readWifiRadioIdentity,
 	recordWifiRadioShadowFailure,
+	resolveWirelessAddress,
+	type WifiRadioIdentity,
 	wifiRadioIdentity,
 } from "./wifi-radio-identity.ts";
 import { wifiRadioObservation } from "./wifi-radio-observation.ts";
 import { invalidateWifiRadioRow } from "./wifi-radio-publication.ts";
+
+/** No native epoch/kernel reader is installed here; absence is unavailable. */
+export function captureWifiPortalBinding(
+	deviceId: WifiInterfaceId,
+	readers?: PortalBindingReaders,
+): Promise<PortalCapture> {
+	if (!readers)
+		return Promise.resolve({ ok: false, reason: "identity_unavailable" });
+	return capturePortalBinding(() => {
+		const matches = Object.entries(getWifiInterfacesByMacAddress()).filter(
+			([, radio]) => radio.id === deviceId,
+		);
+		const match = matches[0];
+		if (matches.length !== 1 || !match) return undefined;
+		const [permanentMac, radio] = match;
+		if (
+			radio.removed ||
+			radio.degradedReason ||
+			radio.activeMode !== "infrastructure" ||
+			!radio.conn ||
+			radio.conn !== radio.activeConn
+		)
+			return undefined;
+		return {
+			deviceId,
+			permanentMac,
+			ifname: radio.ifname,
+			profileUuid: radio.conn,
+			mode: radio.activeMode,
+		};
+	}, readers);
+}
 
 export type SSID = string;
 export type WifiInterfaceId = number;
@@ -99,6 +139,7 @@ export type WifiAdapterDegradedReason =
 	| "permanent-mac-unresolved";
 
 export type BaseWifiInterface = {
+	radioIdentity?: WifiRadioIdentity;
 	id: WifiInterfaceId; // numeric id for the adapter - temporary for each CeraLive execution
 	ifname: string;
 	conn: ConnectionUUID | null; // the active connection, gated on the radio holding an IP
@@ -159,6 +200,7 @@ function parseNmcliBoolean(value: string | undefined): boolean | undefined {
 
 export function parseWifiDeviceProperties(
 	prop: readonly string[] | undefined,
+	phyApSupport?: boolean,
 ): ParseResult<WifiDeviceProperties> {
 	if (prop === undefined || prop.length < 5) {
 		return parseFail(
@@ -169,7 +211,7 @@ export function parseWifiDeviceProperties(
 	}
 
 	const [vendorRaw, productRaw, apRaw, fiveGhzRaw, twoGhzRaw] = prop;
-	const supportsAp = parseNmcliBoolean(apRaw);
+	const supportsAp = phyApSupport ?? parseNmcliBoolean(apRaw);
 	const supports5Ghz = parseNmcliBoolean(fiveGhzRaw);
 	const supports2Ghz = parseNmcliBoolean(twoGhzRaw);
 	if (
@@ -487,7 +529,6 @@ async function discoverWifiDevices() {
 				concurrentDevices.set(ifname, connUuid !== "" ? connUuid : null);
 				continue;
 			}
-			if (!isSupportedWifiIfname(ifname)) continue;
 			if (state === "unavailable") {
 				classificationComplete = false;
 				unavailableDevices = true;
@@ -510,7 +551,12 @@ async function discoverWifiDevices() {
 				activeConn !== null && wifiDeviceListGetInetAddress(ifname)
 					? activeConn
 					: null;
-			const currentMac = wifiDeviceListGetMacAddress(ifname);
+			const currentMac = await resolveWirelessAddress(
+				ifname,
+				wifiDeviceListGetMacAddress(ifname),
+				undefined,
+				async (name) => (await nmDeviceProp(name, "GENERAL.HWADDR"))?.[0],
+			);
 			if (!currentMac) {
 				classificationComplete = false;
 				seenIfnames.push(ifname);
@@ -572,11 +618,13 @@ async function discoverWifiDevices() {
 			} else {
 				const id = recoveredId ?? wifiIfId++;
 
+				const phyApSupport = await readApModeSupport(ifname);
 				const parsedProps = parseWifiDeviceProperties(
 					await nmDeviceProp(
 						ifname,
 						"GENERAL.VENDOR,GENERAL.PRODUCT,WIFI-PROPERTIES.AP,WIFI-PROPERTIES.5GHZ,WIFI-PROPERTIES.2GHZ",
 					),
+					phyApSupport,
 				);
 				if (signal.aborted) return;
 				if (!parsedProps.ok) {
@@ -634,6 +682,16 @@ async function discoverWifiDevices() {
 			const updatedInterface = getWifiInterfaceByMacAddress(macAddress);
 			if (updatedInterface) {
 				invalidateWifiRadioRow(updatedInterface, observation);
+				const identity = permanentMacResolved
+					? await readWifiRadioIdentity(ifname, macAddress)
+					: undefined;
+				if (
+					JSON.stringify(updatedInterface.radioIdentity) !==
+					JSON.stringify(identity)
+				)
+					statusChange = true;
+				if (identity) updatedInterface.radioIdentity = identity;
+				else delete updatedInterface.radioIdentity;
 				wifiIdToMacAddress[updatedInterface.id] = macAddress;
 				if (
 					await syncActiveConnection(updatedInterface, macAddress, activeConn)
@@ -717,30 +775,7 @@ async function discoverWifiDevices() {
 		wifiScheduleScanRefresh();
 	}
 
-	if (newDevices || statusChange) {
-		broadcastWifiState();
-
-		// Mark any WiFi hotspot interfaces as unavailable for bonding
-		let hotspotCount = 0;
-		const wifiInterfacesByMacAddress = getWifiInterfacesByMacAddress();
-		const networkInterfaces = getNetworkInterfaces();
-		for (const i in wifiInterfacesByMacAddress) {
-			const wifiInterface = wifiInterfacesByMacAddress[i];
-			if (wifiInterface && isApMode(wifiInterface)) {
-				const n = networkInterfaces[wifiInterface.ifname];
-				if (!n) continue;
-				if (n.error & NETIF_ERR_HOTSPOT) continue;
-
-				setNetifHotspot(n);
-				hotspotCount++;
-			}
-		}
-
-		if (hotspotCount) {
-			triggerNetworkInterfacesChange();
-			// Remove hotspot IPs from the source IP address list for BCRPT
-		}
-	}
+	if (newDevices || statusChange) broadcastWifiState();
 	if (signal.aborted) return;
 	logger.debug("Wifi interfaces", wifiInterfacesByMacAddress);
 
@@ -805,4 +840,20 @@ async function discoverWifiDevices() {
 		scheduleWifiUpdate(0);
 	triggerNetworkInterfacesChange();
 	return statusChange;
+}
+
+/** A supplied stable target must resolve exactly; never fall back to another radio. */
+export function resolveHotspotRadioDevice(input: {
+	device: string;
+	radio_id?: string | undefined;
+}): number {
+	if (input.radio_id !== undefined) {
+		for (const [mac, radio] of Object.entries(
+			getWifiInterfacesByMacAddress(),
+		)) {
+			if (mac === input.radio_id && !radio.removed) return radio.id;
+		}
+		return Number.NaN;
+	}
+	return Number(input.device);
 }
