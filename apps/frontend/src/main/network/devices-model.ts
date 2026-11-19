@@ -106,13 +106,26 @@ export function devicesPageModel(
 	return { status: "ok", board: wire.board, groups: built };
 }
 
+/** A board socket such as A2-top or M2B. A hub port and a generic port are not. */
+function isMappedPhysicalSocket(node: UsbDeviceWireNode): boolean {
+	return (
+		node.scope === "socket" &&
+		node.label !== null &&
+		!node.label.startsWith(">")
+	);
+}
+
 function groupId(
 	node: UsbDeviceWireNode,
 	byKey: Map<string, UsbDeviceWireNode>,
 ): string {
 	let current = node;
 	const seen = new Set<string>();
-	while (current.parentKey !== null && !seen.has(current.parentKey)) {
+	// A mapped socket is its own heading. Climbing through it put A2-top and
+	// M2B under the onboard hub. Generic hubs have no such label, so their
+	// children still walk up to the root port.
+	while (!isMappedPhysicalSocket(current)) {
+		if (current.parentKey === null || seen.has(current.parentKey)) break;
 		const parent = byKey.get(current.parentKey);
 		if (parent === undefined) break;
 		seen.add(current.parentKey);
