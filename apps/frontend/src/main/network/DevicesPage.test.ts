@@ -65,6 +65,22 @@ describe("Devices page", () => {
 			"Kept at USB 2 on purpose",
 		);
 		expect(view.getByText("No serial numbers or addresses.")).toBeTruthy();
+		view.rerender({
+			wire: WIRE,
+			events: [
+				{
+					at: Date.UTC(2026, 10, 19, 12, 40),
+					reason: "left",
+					kind: "wifi",
+					socketName: "Upper black port",
+				},
+			],
+			onBack: () => undefined,
+		});
+		const event = view.getByTestId("device-event");
+		expect(event.textContent).toContain("Upper black port");
+		expect(event.textContent).toContain("Unplugged");
+		expect(event.textContent).not.toContain("SECRET");
 	});
 
 	it("says the tree is still being read", () => {
