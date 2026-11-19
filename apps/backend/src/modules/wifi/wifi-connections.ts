@@ -774,18 +774,19 @@ function scanKeyForIfname(ifname: string): WifiScanKey {
 
 /*
   Which radios a rescan request actually scans. Normally the request as given.
-  While the roaming coordinator protects the radios that carry the stream,
-  those are never scanned: a request for one scans nothing, and a request for
-  every radio scans each of the others by name.
+  While the roaming coordinator protects radios (those that carry the stream,
+  serve the hotspot or are joining a network), those are never scanned: a
+  request for one scans nothing, and a request for every radio scans each of
+  the others by name.
 */
 function rescanTargets(ifname: string | undefined): (string | undefined)[] {
-	const holders = scanProtectedRadios();
-	if (holders.size === 0) return [ifname];
-	if (ifname !== undefined) return holders.has(ifname) ? [] : [ifname];
+	const protectedNow = scanProtectedRadios();
+	if (protectedNow.size === 0) return [ifname];
+	if (ifname !== undefined) return protectedNow.has(ifname) ? [] : [ifname];
 	const others: string[] = [];
 	for (const macAddress in wifiInterfacesByMacAddress) {
 		const name = wifiInterfacesByMacAddress[macAddress]?.ifname;
-		if (name && !holders.has(name)) others.push(name);
+		if (name && !protectedNow.has(name)) others.push(name);
 	}
 	return others;
 }
@@ -796,15 +797,21 @@ async function runRescan(
 ): Promise<void> {
 	try {
 		const targets = rescanTargets(ifname);
-		for (const target of targets) await rescanAction(target);
+		const scanned: (string | undefined)[] = [];
+		for (const target of targets) {
+			// Each scan takes seconds; a radio may have become protected meanwhile.
+			if (target !== undefined && scanProtectedRadios().has(target)) continue;
+			await rescanAction(target);
+			scanned.push(target);
+		}
 
 		/* A rescan request will fail if a previous one is in progress,
      but we still attempt to update the results. Only radios that were
      actually rescanned get their scan stamp advanced. */
 		if (await scanResultReader()) {
-			if (targets.length === 1 && targets[0] === ifname) noteScanCompleted(key);
+			if (scanned.length === 1 && scanned[0] === ifname) noteScanCompleted(key);
 			else
-				for (const target of targets)
+				for (const target of scanned)
 					if (target !== undefined) noteScanCompleted(scanKeyForIfname(target));
 		}
 		wifiScheduleScanRefresh();

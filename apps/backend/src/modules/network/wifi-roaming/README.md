@@ -11,7 +11,7 @@ Each client radio has a role:
 
 | Role | Carries traffic | May scan or join |
 |---|---|---|
-| holder | yes | never on purpose |
+| holder | yes | never by CeraUI (see "Not yet" for NetworkManager's own background scan) |
 | assister | yes | only after leaving the bond |
 | searcher | no | yes, one radio at a time |
 | standby | no (associated, verified) | no |
@@ -20,22 +20,38 @@ Each client radio has a role:
 Nothing in the model assumes two radios. A third client radio is another
 searcher or assister.
 
+A radio is hotspot-reserved when it is configured that way, and also while it
+or another interface on its phy (the `clap-` AP leg of a hybrid radio) is in
+AP mode. The mode is read every round and again right before each scan or
+join, under CeraUI's per-adapter Wi-Fi lock that hotspot changes hold. When
+the hotspot stops, the radio becomes a searcher again.
+
 ## What runs today
 
 - **Search triggers** (`policy.ts`). A holder that fades (signal, signal slope,
   delivered rate against the encoder rate, loss) expedites a search for
   continuity. A holder with headroom allows a proactive search for path
   diversity. An idle radio may search at any time, because it carries nothing.
-  When searches keep finding nothing, the proactive cadence backs off.
+  When searches keep finding nothing, the proactive cadence backs off. Idle
+  radios take turns, least recently searched first, and a radio whose scan
+  failed rests for 20 s, then 40, 80 and 120 s, so one broken radio cannot
+  take every turn. A radio that shares a phy with a holder never scans.
 - **Candidate choice.** A candidate is a BSSID from the searching radio's own
   scan on a network it has a saved, interface-bound profile for. It must not
   be a holder's BSSID and must be no more than 10 points weaker than the
-  holder's. On a fade the strongest one wins. With headroom, a path on a
-  different uplink wins, as learned from earlier joins.
+  holder's. The holder's own SSID is no exception: a profile bound to a
+  sibling radio does not make it joinable. On a fade the strongest one wins.
+  With headroom, a path on a different uplink wins, as learned from earlier
+  joins. A BSSID whose join or verification failed in the last 10 minutes goes
+  behind every other candidate; alone, it is retried.
 - **Uplink identity.** After a join, a path is compared with the holders' by
   gateway MAC, gateway and subnet, and egress address when known. The result
   is same-uplink, distinct-gateway or diverse. One SSID can front several
   routers and two SSIDs can share one, so the SSID is never used for this.
+  The same gateway address and subnet without both gateway MACs is unknown,
+  not one uplink, because factory-default routers share them. Each BSSID's
+  identity is remembered for 30 minutes and compared with whichever radios
+  hold at the time of the next search.
 - **Join** (`nm-port.ts`). The coordinator makes an in-memory clone of the
   radio's own profile, locks it to the BSSID, turns autoconnect off and
   activates it on that interface. With a BSSID set, NetworkManager adds no
@@ -44,16 +60,23 @@ searcher or assister.
 - **Verification.** The joined radio must show the BSSID, its owned
   activation, a lease, a gateway and a default route within 15 s. Otherwise
   the clone is removed and joins cool down for 20, 40, 80, then 120 s.
+- **Losing the holder mid-search.** A holder that loses its AP while another
+  radio scans, joins or verifies does not cost that replacement. The search
+  goes on, the joined radio is verified at once and promoted to holder. Only a
+  holder that moves to another BSSID during a scan discards that scan.
 - **Assist mode.** When nothing new is found, the holders have not moved
   (steady BSSID and signal for 60 s) and the bond has no other uplink, an idle
   radio joins the best BSSID, the holder's own included, to add capacity. It
   is recalled to search when a fade starts. With headroom it is also recalled
   to look for a diverse path.
 - **Gates.**
-  - `scan-gate.ts`: CeraUI's own rescans skip every holder.
+  - `scan-gate.ts`: CeraUI's own rescans skip holders, assisters, the
+    hotspot radio and a radio that is joining.
   - `bond-hold.ts`: a radio leaves the SRTLA bond while it searches.
   - `ownership.ts`: other Wi-Fi automation leaves coordinator-owned radios
-    alone.
+    alone. A radio in hotspot use is not coordinator-owned.
+  - `radio-lock.ts`: scans and joins run under CeraUI's per-adapter Wi-Fi
+    lock and are skipped while another operation holds it.
 
 ## Not yet
 
@@ -61,8 +84,17 @@ These come in later parts:
 
 - Proving a path at the stream rate from receiver-acknowledged bytes.
 - Promoting a proven path to holder, lingering, then releasing the old holder.
-- Boot wiring and configuration.
-- The egress-address observer.
+- Boot wiring and configuration, with the preconditions it needs: IPv6-only
+  paths counted as associated, `stop()` fenced against a round in flight, a
+  startup sweep of leftover `ceraui-search-*` profiles, and radio state keyed
+  by incarnation rather than by interface name.
+- The first holder is whatever NetworkManager activated with the operator's
+  profile. Without a BSSID lock, NetworkManager gives it a background scan
+  every 30 s below -65 dBm on a multi-AP network. `status()` reports
+  `bssidLocked` per radio so this is visible until holders are locked.
+- The egress-address observer. Until it exists, `distinct-gateway` is not
+  proof of a diverse uplink (double NAT, per-VLAN router MACs) and must not
+  decide a promotion.
 
 The two-radio reducer in `../two-radio/` holds the reference safety rules for
 the swap. They are one departure at a time, holders never depart, a proof is
@@ -85,4 +117,10 @@ They cover these cases:
 - no candidate, failed joins and wrong landings;
 - a holder that moves during a scan, and a scan that overruns its budget;
 - one SSID on two routers, and two SSIDs on one router;
-- assist mode.
+- assist mode;
+- a holder lost during a scan, a join or verification;
+- the holder's SSID without a bound profile, and a BSSID that keeps failing;
+- a client radio switched to hotspot, an AP leg on its phy, a hotspot that
+  starts right before a scan, and a busy adapter lock;
+- idle radios taking turns, and one radio whose scans fail;
+- learned uplinks judged against a new holder, and their expiry.
