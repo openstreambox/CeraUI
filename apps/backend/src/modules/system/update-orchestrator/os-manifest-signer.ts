@@ -34,9 +34,10 @@ export const MANIFEST_SIGNER_IDENTITIES: readonly ManifestSignerIdentity[] = [
 	},
 ];
 
-export type ManifestSignerRefusal =
-	| "signer_not_manifest_signer"
-	| "signer_issuer_invalid";
+type ManifestSignerRefusal = {
+	readonly ok: false;
+	readonly reason: "signer_not_manifest_signer" | "signer_issuer_invalid";
+};
 
 /**
  * A known name with code signing only, then the issuer paired with that name.
@@ -52,8 +53,8 @@ export function manifestSignerRefusal(
 		!signer.eku.includes("codeSigning") ||
 		signer.eku.includes("emailProtection")
 	)
-		return "signer_not_manifest_signer";
+		return { ok: false, reason: "signer_not_manifest_signer" };
 	if (!named.some((identity) => identity.issuer === signer.issuer))
-		return "signer_issuer_invalid";
+		return { ok: false, reason: "signer_issuer_invalid" };
 	return null;
 }

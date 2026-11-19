@@ -112,7 +112,7 @@ export async function verifySignedOsManifestTrust(
 		return { ok: false, reason: "signature_invalid" };
 	}
 	const refusal = manifestSignerRefusal(signer);
-	if (refusal) return { ok: false, reason: refusal };
+	if (refusal) return refusal;
 	let raw: unknown;
 	try {
 		if (data.byteLength > STORED_STATE_LIMITS.intent)
