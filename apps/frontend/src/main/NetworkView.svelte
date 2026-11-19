@@ -28,8 +28,8 @@ import BondedLinksSection from './network/BondedLinksSection.svelte';
 import CellularSection from './network/CellularSection.svelte';
 import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
-import DeviceCalmLine from './network/DeviceCalmLine.svelte';
 import DevicesPage from './network/DevicesPage.svelte';
+import { deviceCountSentence } from './network/device-counts';
 import { devicesSummary } from './network/devices-model';
 import { consumeDevicesOpen } from './network/devices-open.svelte';
 import EthernetSection from './network/EthernetSection.svelte';
@@ -99,17 +99,10 @@ $effect(() => {
 
 const deviceCounts = $derived(devicesSummary(getStatus()?.usb_devices, getStatus()?.device_calm));
 
-function entryTitle(): string {
+function entryCounts(): string {
 	const counts = deviceCounts;
-	if (counts === null) return m['network.devices.open']();
-	if (counts.hubs > 0) {
-		return m['network.devices.summary.withHub']({
-			devices: counts.devices,
-			ports: counts.ports,
-		});
-	}
-	if (counts.devices === 1 && counts.ports === 1) return m['network.devices.summary.one']();
-	return m['network.devices.summary.plain']({ devices: counts.devices, ports: counts.ports });
+	if (counts === null) return m['network.devices.lede']();
+	return deviceCountSentence(counts);
 }
 
 function entrySub(): string {
@@ -305,10 +298,6 @@ function openModemConfig(id: string) {
 		/>
 		<HotspotSection {hotspotInterfaces} {hotspotTarget} onSetup={() => (hotspotDialogOpen = true)} />
 		<BluetoothSection status={bluetooth} {audioBackend} />
-		<DeviceCalmLine
-			calm={getStatus()?.device_calm}
-			onOpen={() => (devicesOpen = true)}
-		/>
 		<button
 			type="button"
 			data-testid="open-devices"
@@ -317,8 +306,16 @@ function openModemConfig(id: string) {
 		>
 			<Usb aria-hidden="true" class="text-primary size-5 shrink-0" />
 			<span class="min-w-0 flex-1">
-				<span class="block text-sm font-semibold">{entryTitle()}</span>
-				<span class="text-muted-foreground block text-sm">{entrySub()}</span>
+				<span class="flex items-baseline justify-between gap-2">
+					<span class="text-sm font-semibold">{m['network.devices.open']()}</span>
+					{#if getStatus()?.usb_devices?.board === 'rock-5b-plus'}
+						<span class="text-muted-foreground text-xs">ROCK 5B+</span>
+					{/if}
+				</span>
+				<span class="text-muted-foreground block text-sm">{entryCounts()}</span>
+				{#if entrySub() !== m['network.devices.lede']()}
+					<span class="text-muted-foreground block text-sm">{entrySub()}</span>
+				{/if}
 			</span>
 			<ChevronRight aria-hidden="true" class="text-muted-foreground size-4 shrink-0" />
 		</button>

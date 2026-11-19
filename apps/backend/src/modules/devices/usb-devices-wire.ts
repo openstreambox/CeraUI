@@ -198,6 +198,7 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				displayState: "on",
 				reasonKey: "video-source",
 				sourceName: "cam-0",
+				speedNote: "capture-needs-usb3",
 			}),
 			mockNode({
 				key: hub,
@@ -235,6 +236,8 @@ export function mockUsbDevicesWire(): UsbDevicesWire {
 				reasonKey: "in-bond",
 				since: "12:31",
 				drops: 0,
+				speedNote: "rm520-held-usb2",
+				exampleDetails: true,
 			}),
 			mockNode({
 				key: "fc400000.usb:usb2:1.2",

@@ -71,8 +71,22 @@ test.describe('@visual devices mockup parity', () => {
 				await expect(page.getByTestId('devices-summary')).toBeVisible();
 				await expect(page.getByTestId('devices-where')).toBeVisible();
 				await page.screenshot({
-					path: `${OUT}/app-devices-${width}-${theme}.png`,
-					fullPage: true,
+					path: `${OUT}/app-devices-top-${width}-${theme}.png`,
+				});
+				await page.getByTestId('devices-where').scrollIntoViewIfNeeded();
+				await page.screenshot({
+					path: `${OUT}/app-devices-drawing-${width}-${theme}.png`,
+				});
+				const retry = page.getByText('Not responding');
+				if (await retry.count()) {
+					await retry.first().scrollIntoViewIfNeeded();
+					await page.screenshot({
+						path: `${OUT}/app-devices-row-${width}-${theme}.png`,
+					});
+				}
+				await page.getByTestId('device-events').scrollIntoViewIfNeeded();
+				await page.screenshot({
+					path: `${OUT}/app-devices-events-${width}-${theme}.png`,
 				});
 			}
 		});

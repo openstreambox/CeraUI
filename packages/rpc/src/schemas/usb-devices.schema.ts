@@ -83,6 +83,13 @@ export const usbDeviceWireNodeSchema = z
 		/** The device's own bcdUSB is 3 or higher. The port class is not this. */
 		superspeedCapable: z.boolean(),
 		linkId: z.string().regex(LINK_ID).nullable(),
+		/**
+		 * A speed sentence the box has recorded. The sysfs reader does not set
+		 * this, and the page must not invent it from the product and the link class.
+		 */
+		speedNote: z.enum(['rm520-held-usb2', 'rm520-pending-usb2', 'capture-needs-usb3']).optional(),
+		/** The design example may start with its helper details open. A real row never does. */
+		exampleDetails: z.boolean().optional(),
 		displayState: usbDisplayStateSchema.optional(),
 		reasonKey: usbReasonKeySchema.optional(),
 		linkSlot: z.number().int().min(1).max(8).optional(),
