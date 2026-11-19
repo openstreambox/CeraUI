@@ -1158,7 +1158,7 @@
 	"network.devices.whereAria": "Borda das portas da ROCK 5B+, vista pelo lado das portas",
 	"network.devices.whereCaption": "Visto pelo lado das portas. O USB-C fica na outra borda; o slot do modem fica por dentro.",
 	"network.devices.wherePower": "energia",
-	"network.devices.whereHdmi": "← HDMI, energia",
+	"network.devices.whereHdmi": "← HDMI e energia",
 	"network.devices.helper.power": "Papel de energia",
 	"network.devices.helper.data": "Papel de dados",
 	"network.devices.helper.partner": "Parceiro",

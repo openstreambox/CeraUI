@@ -120,8 +120,6 @@ function captionClass(tone: EdgeTone): string {
 		<p class="text-muted-foreground text-sm">Ethernet</p>
 	</div>
 	<p class="text-muted-foreground mt-2 text-sm leading-5">
-		{m['network.devices.wherePower']()}
-		<span aria-hidden="true"> · </span>
 		{m['network.devices.whereHdmi']()}
 	</p>
 	<p class="text-muted-foreground mt-2 text-xs">

@@ -153,7 +153,9 @@ test.describe('@visual devices diagram', () => {
 		const diagram = page.getByTestId('devices-where');
 		await expect(diagram).toBeVisible();
 		await expect(diagram).toContainText('WLAN');
-		await expect(diagram).toContainText('Verteiler');
+		await expect(diagram).toContainText('Hub');
+		await expect(diagram).toContainText('Capture-Karte');
+		await expect(diagram).toContainText('HDMI und Strom');
 		await diagram.scrollIntoViewIfNeeded();
 		await diagram.screenshot({ path: `${OUT}/diagram-390-dark-de.png` });
 	});

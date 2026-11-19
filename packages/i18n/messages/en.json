@@ -1155,7 +1155,7 @@
 	"network.devices.whereAria": "Port edge of the ROCK 5B+, seen from the port side",
 	"network.devices.whereCaption": "Seen from the port side. USB-C is on the other edge; the modem slot is inside.",
 	"network.devices.wherePower": "power",
-	"network.devices.whereHdmi": "← HDMI, power",
+	"network.devices.whereHdmi": "← HDMI and power",
 	"network.devices.helper.power": "Power role",
 	"network.devices.helper.data": "Data role",
 	"network.devices.helper.partner": "Partner",
