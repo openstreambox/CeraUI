@@ -1,7 +1,7 @@
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
 import type { Modem, NetifEntry, NetifMessage, WifiInterface, WifiStatus } from '@ceraui/rpc/schemas';
-import { Network as NetworkIcon, Usb } from '@lucide/svelte';
+import { ChevronRight, Network as NetworkIcon, Usb } from '@lucide/svelte';
 import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { Skeleton } from '$lib/components/ui/skeleton';
 import { hotspotIsActive } from '$lib/rpc/os-toggle-predicates';
@@ -30,6 +30,7 @@ import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
 import DeviceCalmLine from './network/DeviceCalmLine.svelte';
 import DevicesPage from './network/DevicesPage.svelte';
+import { devicesSummary } from './network/devices-model';
 import { consumeDevicesOpen } from './network/devices-open.svelte';
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
@@ -95,6 +96,35 @@ let devicesOpen = $state(false);
 $effect(() => {
 	if (consumeDevicesOpen()) devicesOpen = true;
 });
+
+const deviceCounts = $derived(devicesSummary(getStatus()?.usb_devices, getStatus()?.device_calm));
+
+function entryTitle(): string {
+	const counts = deviceCounts;
+	if (counts === null) return m['network.devices.open']();
+	if (counts.hubs > 0) {
+		return m['network.devices.summary.withHub']({
+			devices: counts.devices,
+			ports: counts.ports,
+		});
+	}
+	if (counts.devices === 1 && counts.ports === 1) return m['network.devices.summary.one']();
+	return m['network.devices.summary.plain']({ devices: counts.devices, ports: counts.ports });
+}
+
+function entrySub(): string {
+	const counts = deviceCounts;
+	if (counts === null) return m['network.devices.lede']();
+	const parts: string[] = [];
+	if (counts.resting > 0) {
+		parts.push(m['network.devices.entry.resting']({ count: counts.resting }));
+	}
+	if (counts.off > 0) parts.push(m['network.devices.entry.off']({ count: counts.off }));
+	if (counts.unresponsive > 0) {
+		parts.push(m['network.devices.entry.bad']({ count: counts.unresponsive }));
+	}
+	return parts.length > 0 ? parts.join(' · ') : m['network.devices.lede']();
+}
 
 const modemEntries = $derived(Object.entries(modems ?? {}) as [string, Modem][]);
 
@@ -217,6 +247,7 @@ function openModemConfig(id: string) {
 		<DevicesPage
 			wire={getStatus()?.usb_devices}
 			events={getStatus()?.usb_events}
+			calm={getStatus()?.device_calm}
 			onBack={() => (devicesOpen = false)}
 		/>
 	{:else}
@@ -285,10 +316,11 @@ function openModemConfig(id: string) {
 			onclick={() => (devicesOpen = true)}
 		>
 			<Usb aria-hidden="true" class="text-primary size-5 shrink-0" />
-			<span class="min-w-0">
-				<span class="block text-sm font-semibold">{m["network.devices.open"]()}</span>
-				<span class="text-muted-foreground block text-sm">{m["network.devices.lede"]()}</span>
+			<span class="min-w-0 flex-1">
+				<span class="block text-sm font-semibold">{entryTitle()}</span>
+				<span class="text-muted-foreground block text-sm">{entrySub()}</span>
 			</span>
+			<ChevronRight aria-hidden="true" class="text-muted-foreground size-4 shrink-0" />
 		</button>
 	{/if}
 	{/if}

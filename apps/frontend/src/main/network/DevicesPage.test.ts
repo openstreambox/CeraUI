@@ -88,8 +88,45 @@ describe("Devices page", () => {
 		const rows = view.getAllByTestId("device-event");
 		expect(rows).toHaveLength(2);
 		expect(rows[0]?.textContent).toContain("USB port 1");
-		expect(rows[1]?.textContent).toContain("Unplugged");
+		expect(rows[1]?.textContent).toContain("unplugged");
 		expect(rows[0]?.textContent).not.toContain("0000:");
+	});
+
+	it("names a fixture state the reader does not produce yet", () => {
+		const view = render(DevicesPage, {
+			props: {
+				wire: {
+					...WIRE,
+					nodes: [
+						...WIRE.nodes,
+						{
+							...WIRE.nodes[1],
+							key: "bad",
+							socketKey: "A3-bot>hub.2",
+							parentKey: "modem",
+							scope: "hub-port",
+							label: ">hub.2",
+							name: "Hub port 2",
+							displayState: "not-responding",
+							reasonKey: "dropped",
+							clock: "14:06",
+							retry: 2,
+							retryMax: 3,
+							generation: "5g",
+							linkSlot: 4,
+						},
+					],
+				},
+				onBack: () => undefined,
+			},
+		});
+		expect(view.getByText("Not responding")).toBeTruthy();
+		expect(view.getByText("5G modem")).toBeTruthy();
+		expect(view.getByText("L4")).toBeTruthy();
+		expect(view.getByTestId("devices-where")).toBeTruthy();
+		expect(view.getByTestId("devices-summary").textContent).toContain(
+			"isn't responding",
+		);
 	});
 
 	it("says the tree is still being read", () => {

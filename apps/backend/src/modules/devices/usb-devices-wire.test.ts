@@ -14,7 +14,9 @@ import {
 } from "../remote-control/status-relay.ts";
 import {
 	deliverUsbDevicesWire,
+	mockDeviceCalm,
 	mockUsbDevicesWire,
+	mockUsbEvents,
 	projectUsbDevices,
 	replayAuthenticatedUsbDevices,
 	usbLinkRefFromIdPath,
@@ -314,6 +316,11 @@ describe("usb device status payload", () => {
 			name: "USB-C data port",
 		});
 		expect(wire.nodes.some((item) => item.product === "RM520N-GL")).toBe(true);
+		expect(
+			wire.nodes.some((item) => item.displayState === "not-responding"),
+		).toBe(true);
+		expect(mockUsbEvents().map((event) => event.reason)).toContain("usb2");
+		expect(mockDeviceCalm().restingKind).toBe("wifi");
 	});
 
 	it("keeps planted identifiers out of the status bytes and the remote frame", async () => {
@@ -332,6 +339,9 @@ describe("usb device status payload", () => {
 			await symlink(device, join(flat, "1-1"));
 			const tree = await readUsbTree({ sysfsRoot: root, board: "generic" });
 			const wire = projectUsbDevices(tree, []);
+			expect(wire.nodes.every((node) => node.displayState === undefined)).toBe(
+				true,
+			);
 			const local = buildMsg("status", {
 				is_streaming: false,
 				usb_devices: wire,
