@@ -77,6 +77,7 @@ test.describe('@visual devices diagram', () => {
 		});
 	}
 
+	for (const project of ['desktop', 'mobile'] as const) {
 	test(`helper states ${project}`, async ({ page }, testInfo) => {
 		test.skip(testInfo.project.name !== project, 'one layout per project');
 		const theme = project === 'mobile' ? 'dark' : 'light';
@@ -134,6 +135,7 @@ test.describe('@visual devices diagram', () => {
 		}
 		await page.evaluate(() => localStorage.removeItem('cera-usb-helper-fixture'));
 	});
+	}
 
 	test('diagram de phone dark', async ({ page }, testInfo) => {
 		test.skip(testInfo.project.name !== 'mobile', 'one phone capture');
