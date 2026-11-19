@@ -117,10 +117,12 @@ test.describe('@visual devices diagram', () => {
 				continue;
 			}
 			const usbC = page.getByTestId('device-empty');
-			const summary = usbC.getByText('Details for helpers');
-			if ((await summary.count()) > 0 && (await usbC.locator('dd').count()) === 0) {
-				await summary.click();
+			const details = usbC.locator('details');
+			await expect(details).toBeVisible();
+			if ((await details.getAttribute('open')) === null) {
+				await details.locator('summary').click();
 			}
+			await expect(details).toHaveAttribute('open', '');
 			if (name === 'j11') {
 				await expect(usbC).toContainText('Power role');
 				await expect(usbC).toContainText('Source');
