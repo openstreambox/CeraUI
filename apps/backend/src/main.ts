@@ -183,6 +183,10 @@ import { startWifiAdapterModeRestore } from "./modules/wifi/wifi-adapter-mode-tr
 import { wifiStateInit } from "./modules/wifi/wifi-connections.ts";
 import { handleWifiMonitorEvent as handleHotspotMonitorEvent } from "./modules/wifi/wifi-hotspot-monitor.ts";
 import { terminateWifiDiscovery } from "./modules/wifi/wifi-interfaces.ts";
+import {
+	startWifiNetworkDiversity,
+	stopWifiNetworkDiversity,
+} from "./modules/wifi/wifi-network-diversity.ts";
 import { wifiRadioObservation } from "./modules/wifi/wifi-radio-observation.ts";
 import { onHeartbeatTick, startHeartbeat } from "./rpc/heartbeat.ts";
 import { getServer, initServer } from "./rpc/index.ts";
@@ -523,6 +527,9 @@ networkMonitor.start();
 // Event-driven wifi: same monitor drives connection up/down + diff broadcast
 wifiStateInit(networkMonitor);
 
+// Keep bonded radios on distinct networks after a NetworkManager fallback.
+if (!shouldUseMocks()) startWifiNetworkDiversity();
+
 // Hotspot NM-confirmation: flips station↔hotspot once NM reports the switch
 networkMonitor.on("monitor-event", handleHotspotMonitorEvent);
 
@@ -689,6 +696,7 @@ process.on("SIGTERM", () =>
 		stopRecoveryRetries,
 		terminateWifiObservation: () => {
 			stopWifiAdapterModeRestore();
+			stopWifiNetworkDiversity();
 			wifiRadioObservation.terminate();
 		},
 		terminateWifiDiscovery,
@@ -705,6 +713,7 @@ process.on("SIGINT", () =>
 		stopRecoveryRetries,
 		terminateWifiObservation: () => {
 			stopWifiAdapterModeRestore();
+			stopWifiNetworkDiversity();
 			wifiRadioObservation.terminate();
 		},
 		terminateWifiDiscovery,

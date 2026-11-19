@@ -111,6 +111,7 @@ import {
 	type WifiInterface,
 	type WifiInterfaceId,
 } from "./wifi-interfaces.ts";
+import { recordWifiNetworkChoice } from "./wifi-network-diversity.ts";
 import { wifiRadioIdentity } from "./wifi-radio-identity.ts";
 import {
 	projectWifiRadioIncarnation,
@@ -924,6 +925,7 @@ async function runWifiNew(
 
 	await wifiUpdateSavedConns();
 	await wifiUpdateScanResult();
+	recordWifiNetworkChoice(macAddress, outcome.uuid);
 
 	conn.send(
 		buildMsg("wifi", { new: { success: true, device: msg.device } }, senderId),
@@ -937,6 +939,12 @@ async function wifiConnect(conn: MessageSocket, uuid: ConnectionUUID) {
 	const senderId = getSocketSenderId(conn);
 	const success = await nmConnect(uuid);
 	await wifiUpdateScanResult();
+	if (success) {
+		const macAddress = getMacAddressForWifiInterface(
+			Number.parseInt(deviceId, 10),
+		);
+		if (macAddress) recordWifiNetworkChoice(macAddress, uuid);
+	}
 	conn.send(buildMsg("wifi", { connect: success, device: deviceId }, senderId));
 }
 
