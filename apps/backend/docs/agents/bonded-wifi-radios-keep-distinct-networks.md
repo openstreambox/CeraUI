@@ -48,7 +48,8 @@ down a link that carries traffic, so the trigger is deliberately strict.
   A short gap in the duplicate (a sibling blip) keeps the episode's budget; only
   5 minutes out of it, or a move, resets it. The lock is taken only when a scan
   is due. The merged scan list is a hint only: when the preferred network newly
-  appears there, the radio gets one early scan (never a move by itself). After a
+  appears there at signal ≥ 40, the radio gets one early scan, at most one per
+  5 minutes (never a move by itself). After a
   long outage without such a hint, the return can take up to about 10 minutes;
   the slow cadence waits for a measured forced-scan freeze on hardware.
 - **Upgraded boxes.** Within the first 10 minutes after start, if no radio has

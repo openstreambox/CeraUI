@@ -112,6 +112,8 @@ export const WIFI_DIVERSITY = {
 	activateTimeoutS: 20,
 	/** Out of the duplicate this long before the scan budget starts over. */
 	episodeGapMs: 300_000,
+	/** At most one early scan from the merged-list hint per this window. */
+	earlyScanGapMs: 300_000,
 } as const;
 
 /** A station radio as the registry knows it: identity and saved profiles. */
@@ -150,10 +152,11 @@ export type WifiNetworkDiversityDeps = {
 	) => Promise<boolean>;
 	readonly now: () => number;
 	/**
-	 * SSIDs in the merged scan list. Never evidence for a move (another radio's
-	 * cache can be stale); a network newly listed only earns one early scan.
+	 * SSID -> best signal in the merged scan list. Never evidence for a move
+	 * (another radio's cache can be stale); a network newly listed at a usable
+	 * signal earns at most one early scan per `earlyScanGapMs`.
 	 */
-	readonly listed?: () => ReadonlySet<SSID>;
+	readonly listed?: () => ReadonlyMap<SSID, number>;
 };
 
 type Track = {
@@ -165,6 +168,7 @@ type Track = {
 	lastScanAt: number | undefined;
 	lastCandidateAt: number | undefined;
 	listed: boolean;
+	lastEarlyScanAt: number | undefined;
 	sighting: { at: number; signal: number } | undefined;
 	nextMoveAt: number;
 	reverts: number;
@@ -358,6 +362,7 @@ export class WifiNetworkDiversity {
 				lastScanAt: undefined,
 				lastCandidateAt: undefined,
 				listed: false,
+				lastEarlyScanAt: undefined,
 				sighting: undefined,
 				nextMoveAt: 0,
 				reverts: 0,
@@ -465,7 +470,7 @@ export class WifiNetworkDiversity {
 		}
 
 		await this.migrate(seen, now);
-		const listed = this.deps.listed?.() ?? new Set<SSID>();
+		const listed = this.deps.listed?.() ?? new Map<SSID, number>();
 
 		const used = new Map<SSID, number>();
 		const active = new Set<ConnectionUUID>();
@@ -508,13 +513,23 @@ export class WifiNetworkDiversity {
 			}
 			t.dupTicks += 1;
 			t.lastCandidateAt = now;
-			const nowListed = listed.has(target.ssid);
-			if (nowListed && !t.listed && t.lastScanAt !== undefined) {
+			// Listed only counts at a usable signal, so a marginal AP flickering
+			// in and out of the merged list cannot keep pulling scans forward.
+			const nowListed =
+				(listed.get(target.ssid) ?? 0) >= WIFI_DIVERSITY.signalFloor;
+			if (
+				nowListed &&
+				!t.listed &&
+				t.lastScanAt !== undefined &&
+				(t.lastEarlyScanAt === undefined ||
+					now - t.lastEarlyScanAt >= WIFI_DIVERSITY.earlyScanGapMs)
+			) {
 				// Newly listed in the merged scan: one early scan, never a move.
-				t.nextScanAt = Math.min(
-					t.nextScanAt,
-					t.lastScanAt + WIFI_DIVERSITY.sightingGapMs,
-				);
+				const early = t.lastScanAt + WIFI_DIVERSITY.sightingGapMs;
+				if (early < t.nextScanAt) {
+					t.nextScanAt = early;
+					t.lastEarlyScanAt = now;
+				}
 			}
 			t.listed = nowListed;
 			if (
@@ -756,12 +771,12 @@ export function createLiveWifiNetworkDiversity(): WifiNetworkDiversity {
 		},
 		withLock: async (key, fn) => (await withWifiAdapterLock(key, fn)).success,
 		listed: () => {
-			const ssids = new Set<SSID>();
+			const ssids = new Map<SSID, number>();
 			for (const wifiInterface of Object.values(
 				getWifiInterfacesByMacAddress(),
 			)) {
-				for (const ssid of wifiInterface?.available.keys() ?? []) {
-					ssids.add(ssid);
+				for (const [ssid, network] of wifiInterface?.available ?? []) {
+					ssids.set(ssid, Math.max(ssids.get(ssid) ?? 0, network.signal));
 				}
 			}
 			return ssids;

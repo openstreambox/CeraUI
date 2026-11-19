@@ -91,8 +91,8 @@ class World {
 	busyLock = false;
 	activateOk = true;
 	locks = 0;
-	/** SSIDs in the merged scan list (a hint only). */
-	merged = new Set<string>();
+	/** SSID -> signal in the merged scan list (a hint only). */
+	merged = new Map<string, number>();
 	/** Runs after each scan returns, to change the world mid-decision. */
 	afterScan: (ifname: string, count: number) => void = () => {};
 	/** Runs once the lock is taken, before the decision inside it. */
@@ -676,7 +676,10 @@ describe("re-check fixes", () => {
 		// Spend the fast scans; the next one is the slow cadence away.
 		await w.run(5 * MIN);
 		const spent = w.scans("wlA").length;
-		w.merged = new Set([N1, N2]);
+		w.merged = new Map([
+			[N1, 70],
+			[N2, 70],
+		]);
 		await w.run(MIN);
 		expect(w.scans("wlA").length).toBe(spent + 1);
 		expect(w.activations()).toEqual([]);
@@ -685,12 +688,60 @@ describe("re-check fixes", () => {
 		expect(w.scans("wlA").length).toBe(spent + 1);
 	});
 
+	test("a network flickering in the merged list cannot defeat the scan budget", async () => {
+		for (const signal of [70, WIFI_DIVERSITY.signalFloor - 1]) {
+			const w = new World();
+			await fallenBack(w);
+			// A's own scans still do not see N1 (absent, or too weak to count).
+			w.air.wlA = { [N1]: 30, [N2]: 70 };
+			w.log.length = 0;
+			for (let tick = 1; tick <= (30 * MIN) / WIFI_DIVERSITY_TICK_MS; tick++) {
+				w.merged = new Map(
+					tick % 2 === 0
+						? [
+								[N1, signal],
+								[N2, 70],
+							]
+						: [[N2, 70]],
+				);
+				await w.run(WIFI_DIVERSITY_TICK_MS);
+			}
+			// The budget alone, plus at most one early scan per window.
+			const budget =
+				WIFI_DIVERSITY.scanDelaysMs.length +
+				1 +
+				Math.ceil((30 * MIN) / WIFI_DIVERSITY.scanSlowMs);
+			const early =
+				signal >= WIFI_DIVERSITY.signalFloor
+					? Math.ceil((30 * MIN) / WIFI_DIVERSITY.earlyScanGapMs)
+					: 0;
+			expect(w.scans("wlA").length).toBeLessThanOrEqual(budget + early);
+			expect(w.activations()).toEqual([]);
+		}
+	});
+
+	test("a weak listing in the merged list earns no early scan", async () => {
+		const w = new World();
+		await fallenBack(w);
+		await w.run(5 * MIN);
+		const spent = w.scans("wlA").length;
+		w.merged = new Map([
+			[N1, WIFI_DIVERSITY.signalFloor - 1],
+			[N2, 70],
+		]);
+		await w.run(MIN);
+		expect(w.scans("wlA").length).toBe(spent);
+	});
+
 	test("the merged list speeds up the return once the network is really back", async () => {
 		const w = new World();
 		await fallenBack(w);
 		await w.run(5 * MIN);
 		w.onAir({ [N1]: 70, [N2]: 70 });
-		w.merged = new Set([N1, N2]);
+		w.merged = new Map([
+			[N1, 70],
+			[N2, 70],
+		]);
 		const back = w.clock;
 		while (w.links.get("wlA") !== A1 && w.clock - back < 20 * MIN) {
 			await w.run(WIFI_DIVERSITY_TICK_MS);
