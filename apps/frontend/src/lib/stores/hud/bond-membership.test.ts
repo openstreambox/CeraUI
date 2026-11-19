@@ -104,3 +104,34 @@ describe("buildBond keeps two same-address, same-model devices independent", () 
 		expect(snapshot.links[1]?.rateTxKbps).toBe(1);
 	});
 });
+
+it("a translated IPv6-only modem renders as one modem with its own signal and rates", () => {
+	const roster: ModemList = {
+		"1": {
+			ifname: "wwan0",
+			name: "Mobile",
+			network_type: { supported: [], active: null },
+			status: { connection: "connected", signal: 73 },
+		},
+	};
+	const netif: NetifMessage = {
+		wwan0: {
+			ip: "10.254.0.3",
+			enabled: true,
+			tp: 128000,
+			tx_bps: 1000000,
+			rx_bps: 2000000,
+		},
+	};
+	const result = buildBond(roster, undefined, netif, false, false, false);
+	expect(result.links).toHaveLength(1);
+	expect(result.links[0]).toMatchObject({
+		id: "wwan0",
+		type: "modem",
+		label: "Mobile",
+		signal: 73,
+		rateTxKbps: 1000,
+		rateRxKbps: 2000,
+	});
+	expect(result.unbondedCount).toBe(0);
+});
