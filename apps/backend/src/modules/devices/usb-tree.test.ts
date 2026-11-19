@@ -11,6 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 
+import { devicesPageModel } from "../../../../frontend/src/main/network/devices-model.ts";
+import { projectUsbDevices } from "./usb-devices-wire.ts";
 import {
 	boardFromIdentityText,
 	describeUsbPort,
@@ -1057,6 +1059,40 @@ describe("sysfs fixtures", () => {
 			socketKey: "M2B",
 			presence: "present",
 		});
+	});
+
+	it("keeps populated sockets behind the onboard hub under their own headings", async () => {
+		const tree = await withTree(rock2NormalTree(), "rock-5b-plus");
+		const page = devicesPageModel(projectUsbDevices(tree, []));
+		expect(page.status).toBe("ok");
+		if (page.status !== "ok") return;
+		const upper = page.groups.find((group) => group.id === "A2-top");
+		const slot = page.groups.find((group) => group.id === "M2B");
+		expect(upper).toMatchObject({
+			builtIn: false,
+			name: "Upper black port",
+			label: "A2-top",
+		});
+		expect(upper?.rows.some((row) => row.state === "on")).toBe(true);
+		expect(slot).toMatchObject({
+			builtIn: false,
+			name: "Modem slot inside",
+			label: "M2B",
+		});
+		expect(slot?.rows.some((row) => row.state === "on")).toBe(true);
+		const builtIn = page.groups.find((group) => group.builtIn);
+		expect(builtIn).toBeDefined();
+		expect(builtIn?.rows.some((row) => row.state === "on")).toBe(true);
+		expect(
+			builtIn?.rows.some((row) =>
+				upper?.rows.some((item) => item.key === row.key),
+			),
+		).toBe(false);
+		expect(
+			builtIn?.rows.some((row) =>
+				slot?.rows.some((item) => item.key === row.key),
+			),
+		).toBe(false);
 	});
 
 	it("keeps the same socket key when bus numbers change", async () => {

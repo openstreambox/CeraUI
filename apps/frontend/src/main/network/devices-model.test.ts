@@ -132,6 +132,67 @@ describe("devices page model", () => {
 		expect(rows.find((row) => row.key === "usb2cam")?.hint).toBeNull();
 	});
 
+	it("keeps a mapped socket behind the onboard hub out of Built in", () => {
+		const page = devicesPageModel(
+			wire([
+				node({
+					key: "hub",
+					socketKey: "fc800000.usb:1",
+					name: "Onboard hub",
+					label: null,
+					scope: "built-in",
+					portPath: "1",
+					kind: "hub",
+					controller: "fc800000.usb",
+				}),
+				node({
+					key: "a2",
+					parentKey: "hub",
+					socketKey: "A2-top",
+					name: "Upper black port",
+					label: "A2-top",
+					scope: "socket",
+					portPath: "1.2",
+					kind: "modem",
+					controller: "fc800000.usb",
+				}),
+				node({
+					key: "m2",
+					parentKey: "hub",
+					socketKey: "M2B",
+					name: "Modem slot inside",
+					label: "M2B",
+					scope: "socket",
+					portPath: "1.4",
+					kind: "modem",
+					controller: "fc800000.usb",
+				}),
+				node({
+					key: "bt",
+					parentKey: "hub",
+					socketKey: "BT",
+					name: "Bluetooth",
+					label: "BT",
+					scope: "built-in",
+					portPath: "1.3",
+					kind: "other",
+					controller: "fc800000.usb",
+				}),
+			]),
+		);
+		if (page.status !== "ok") throw new Error("expected a tree");
+		expect(page.groups.find((group) => group.id === "A2-top")).toMatchObject({
+			builtIn: false,
+			name: "Upper black port",
+		});
+		expect(page.groups.find((group) => group.id === "M2B")).toMatchObject({
+			builtIn: false,
+			name: "Modem slot inside",
+		});
+		const builtIn = page.groups.find((group) => group.builtIn);
+		expect(builtIn?.rows.map((row) => row.key).sort()).toEqual(["bt", "hub"]);
+	});
+
 	it("keeps a generic hub and its child on one socket", () => {
 		const page = devicesPageModel(
 			wire([
