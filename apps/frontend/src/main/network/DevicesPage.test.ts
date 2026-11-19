@@ -69,18 +69,27 @@ describe("Devices page", () => {
 			wire: WIRE,
 			events: [
 				{
+					seq: 1,
 					at: Date.UTC(2026, 10, 19, 12, 40),
 					reason: "left",
 					kind: "wifi",
-					socketName: "Upper black port",
+					socketName: "USB port 1",
+				},
+				{
+					seq: 2,
+					at: Date.UTC(2026, 10, 19, 12, 40),
+					reason: "left",
+					kind: "wifi",
+					socketName: "USB port 1",
 				},
 			],
 			onBack: () => undefined,
 		});
-		const event = view.getByTestId("device-event");
-		expect(event.textContent).toContain("Upper black port");
-		expect(event.textContent).toContain("Unplugged");
-		expect(event.textContent).not.toContain("SECRET");
+		const rows = view.getAllByTestId("device-event");
+		expect(rows).toHaveLength(2);
+		expect(rows[0]?.textContent).toContain("USB port 1");
+		expect(rows[1]?.textContent).toContain("Unplugged");
+		expect(rows[0]?.textContent).not.toContain("0000:");
 	});
 
 	it("says the tree is still being read", () => {

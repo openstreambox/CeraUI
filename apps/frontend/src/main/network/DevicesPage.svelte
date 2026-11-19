@@ -228,7 +228,7 @@ async function copyEvents() {
 						<p class="text-muted-foreground text-sm">{m['network.devices.events.empty']()}</p>
 					{:else}
 						<ul class="space-y-1">
-							{#each events as event (`${event.at}:${event.reason}:${event.socketName}:${event.kind}`)}
+							{#each events as event (event.seq)}
 								<li class="text-sm" data-testid="device-event">{eventLine(event)}</li>
 							{/each}
 						</ul>
