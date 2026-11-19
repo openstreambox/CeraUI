@@ -331,6 +331,32 @@ if [ "$1" = "configure" ]; then
 fi
 EOF
 
+# Preserve legacy operator settings before dpkg replaces package-owned setup.json.
+cat > dist/debian/preinst << 'EOF'
+#!/bin/bash
+set -euo pipefail
+case "$1" in
+    install|upgrade) ;;
+    *) exit 0 ;;
+esac
+# Empty on devices; the prefix seam is for the fake-root package contract.
+root="${CERALIVE_FORWARD_MIGRATION_TEST_ROOT:-}"
+dir="$root/data/ceralive"
+source="$root/opt/ceralive/setup.json"
+snapshot="$dir/srt-forward-legacy-setup.json"
+[ ! -e "$dir/srt-forward.json" ] && [ ! -L "$dir/srt-forward.json" ] || exit 0
+[ ! -e "$snapshot" ] && [ ! -L "$snapshot" ] || exit 0
+[ -f "$source" ] && [ ! -L "$source" ] || exit 0
+umask 077
+mkdir -p -- "$dir"
+tmp=$(mktemp "$dir/.srt-forward-legacy-setup.XXXXXX")
+trap 'rm -f -- "$tmp"' EXIT
+cat -- "$source" > "$tmp"
+sync -f "$tmp"
+mv -T -- "$tmp" "$snapshot"
+sync -f "$dir"
+EOF
+
 # Create pre-remove script
 cat > dist/debian/prerm << 'EOF'
 #!/bin/bash
@@ -377,7 +403,7 @@ fi
 EOF
 
 # Make scripts executable
-chmod +x dist/debian/{postinst,prerm,postrm}
+chmod +x dist/debian/{preinst,postinst,prerm,postrm}
 
 log_step "Building Debian package with FPM"
 
@@ -410,6 +436,7 @@ fpm -s dir -t deb \
     --conflicts "belaui" \
     --replaces "belaui" \
     --provides "ceralive" \
+    --before-install preinst \
     --after-install postinst \
     --before-remove prerm \
     --after-remove postrm \
@@ -555,7 +582,7 @@ bundle optimization, and shared build functions.
 EOF
 
 # Cleanup
-rm -rf dist/debian/temp dist/debian/{postinst,prerm,postrm}
+rm -rf dist/debian/temp dist/debian/{preinst,postinst,prerm,postrm}
 
 log_success "Debian package created successfully!"
 log_info "Architecture: $ARCHITECTURE"
