@@ -61,6 +61,8 @@ export type DeviceRow = {
 	readonly productId: string | null;
 	readonly linkId: string | null;
 	readonly slot: string | null;
+	readonly scope: UsbDeviceWireNode["scope"];
+	readonly exampleDetails: boolean;
 	readonly title: string | null;
 	readonly reasonKey: UsbDeviceWireNode["reasonKey"] | null;
 	readonly linkSlot: number | null;
@@ -177,14 +179,16 @@ function summarize(
 	const rows = groups.flatMap((group) =>
 		group.builtIn ? [] : group.rows.map((row) => row),
 	);
-	const occupied = (row: DeviceRow) =>
-		row.state !== "empty" && row.state !== "unplugged";
+	const counted = (row: DeviceRow) =>
+		row.scope !== "root" && row.state !== "empty" && row.state !== "unplugged";
 	const devices = rows.filter(
-		(row) => row.kind !== "hub" && row.kind !== null && occupied(row),
+		(row) => row.kind !== "hub" && row.kind !== null && counted(row),
 	).length;
-	const hubs = rows.filter((row) => row.kind === "hub").length;
+	const hubs = rows.filter(
+		(row) => row.kind === "hub" && row.scope !== "root",
+	).length;
 	const ports = groups.filter(
-		(group) => !group.builtIn && group.rows.some(occupied),
+		(group) => !group.builtIn && group.rows.some(counted),
 	).length;
 	const restingRows = rows.filter((row) => row.state === "resting");
 	return {
@@ -308,6 +312,8 @@ function toRow(
 		productId: node.productId,
 		linkId: node.linkId,
 		slot: node.scope === "hub-port" ? node.name : null,
+		scope: node.scope,
+		exampleDetails: node.exampleDetails === true,
 		title: node.scope === "built-in" ? node.name : null,
 		reasonKey: node.reasonKey ?? null,
 		linkSlot: node.linkSlot ?? null,
@@ -350,31 +356,17 @@ function depthInGroup(
 }
 
 function hintFor(node: UsbDeviceWireNode): DeviceHint | null {
-	// A row that is down or switched off already has its reason. A speed hint
-	// on top of that is the mock's working-modem case only.
-	if (
-		node.displayState === "not-responding" ||
-		node.displayState === "off" ||
-		node.displayState === "unplugged"
-	) {
-		return null;
-	}
-	const rm520 = node.product !== null && /RM520/i.test(node.product);
-	if (rm520 && node.speedClass === "usb2" && node.portClass === "usb3") {
-		return "rm520-usb2";
-	}
-	if (rm520 && node.speedClass === "usb3" && node.portClass === "usb3") {
-		return "rm520-usb3";
-	}
+	// The 14 dB line, the promised USB 2 switch and the 1080p60 claim are
+	// records, not guesses from the product name and the link class.
+	if (node.speedNote === "rm520-held-usb2") return "rm520-usb2";
+	if (node.speedNote === "rm520-pending-usb2") return "rm520-usb3";
+	if (node.speedNote === "capture-needs-usb3") return "capture-usb3";
 	if (
 		node.kind === "capture" &&
 		node.speedClass === "usb2" &&
 		node.superspeedCapable
 	) {
 		return "capture-usb2";
-	}
-	if (node.kind === "capture" && node.speedClass === "usb3") {
-		return "capture-usb3";
 	}
 	return null;
 }

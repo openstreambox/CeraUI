@@ -8,8 +8,8 @@
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import type { DeviceCalm, UsbDevicesWire, UsbEventWire } from '@ceraui/rpc/schemas';
 import { ChevronRight, Copy, Info, Usb } from '@lucide/svelte';
-
 import DevicesPortEdge, { type EdgeTone } from './DevicesPortEdge.svelte';
+import { deviceCountSentence } from './device-counts';
 import { type DeviceRow, type DeviceRowState, devicesPageModel, devicesSummary } from './devices-model';
 
 interface Props {
@@ -101,10 +101,11 @@ function dotClass(state: DeviceRowState): string {
 
 function speedText(row: DeviceRow): string {
 	if (row.hint === 'rm520-usb2') return m['network.devices.detail.speedUsb2Set']();
-	if (row.speedClass === 'usb3') return m['network.devices.detail.speedUsb3']();
+	if (row.speedClass === 'usb3') return 'USB 3';
 	if (row.speedClass === 'usb2') return 'USB 2';
 	return row.speedClass;
 }
+
 
 function eventSentence(event: UsbEventWire): string {
 	const kind = resolveMessageKey(`network.devices.kind.${event.kind}`);
@@ -146,28 +147,16 @@ async function copyEvents() {
 
 function summaryLine(): string {
 	if (summary === null) return '';
-	const head =
-		summary.hubs > 0
-			? m['network.devices.summary.withHub']({ devices: summary.devices, ports: summary.ports })
-			: summary.devices === 1 && summary.ports === 1
-				? m['network.devices.summary.one']()
-				: m['network.devices.summary.plain']({ devices: summary.devices, ports: summary.ports });
 	const extra: string[] = [];
 	if (summary.restingWifi) extra.push(m['network.devices.summary.restingWifi']());
-	else if (summary.resting > 0) extra.push(m['network.devices.calm.restingMany']({ count: summary.resting }));
-	if (summary.unresponsive > 0) extra.push(m['network.devices.summary.unresponsive']());
-	return [head, ...extra].join(' ');
-}
-
-const openDetailsKey = $derived.by(() => {
-	if (page.status !== 'ok') return null;
-	for (const group of page.groups) {
-		for (const row of group.rows) {
-			if (row.hint === 'rm520-usb2') return row.key;
-		}
+	else if (summary.resting === 1) extra.push(m['network.devices.calm.restingOne']());
+	else if (summary.resting > 1) extra.push(m['network.devices.calm.restingMany']({ count: summary.resting }));
+	if (summary.unresponsive === 1) extra.push(m['network.devices.summary.unresponsive']());
+	else if (summary.unresponsive > 1) {
+		extra.push(m['network.devices.summary.unresponsiveMany']({ count: summary.unresponsive }));
 	}
-	return null;
-});
+	return [deviceCountSentence(summary), ...extra].join(' ');
+}
 
 const alert = $derived(
 	page.status === 'ok' && page.groups.some((group) => group.rows.some((row) => row.state === 'unresponsive')),
@@ -319,17 +308,17 @@ const marks = $derived({
 									</p>
 									<span class="pt-0.5 text-xs font-semibold {stateClass(row.state)}">{stateLabel(row.state)}</span>
 									{#if reason(row)}
-										<p class="text-muted-foreground col-start-2 text-sm">
+										<p class="text-muted-foreground col-span-2 text-sm">
 											{reason(row)}
 											{#if row.reasonKey === 'turned-off'}
 												<button type="button" class="text-foreground font-medium" onclick={onBack}>
-													{m['network.devices.reason.turnOn']()}
+													{m['network.devices.reason.backToNetwork']()}
 												</button>
 											{/if}
 										</p>
 									{/if}
 									{#if row.hint}
-										<p class="text-muted-foreground col-start-2 flex items-start gap-1.5 text-sm" data-testid="device-hint">
+										<p class="text-muted-foreground col-span-2 flex items-start gap-1.5 text-sm" data-testid="device-hint">
 											<Info
 												aria-hidden="true"
 												class="mt-0.5 size-3.5 shrink-0 {row.hint === 'capture-usb2' ? 'text-status-warning' : 'text-status-info'}"
@@ -348,7 +337,7 @@ const marks = $derived({
 										</p>
 									{/if}
 									{#if row.state !== 'unplugged'}
-									<details class="group col-start-2 text-sm" open={row.key === openDetailsKey ? true : undefined}>
+									<details class="group col-span-2 text-sm" open={row.exampleDetails ? true : undefined}>
 										<summary
 											class="text-muted-foreground focus-visible:ring-ring inline-flex min-h-11 cursor-pointer items-center gap-1 rounded-md focus-visible:ring-2 focus-visible:outline-none"
 										>
@@ -392,7 +381,7 @@ const marks = $derived({
 					</div>
 				{/each}
 			</section>
-			<div class="order-1 contents gap-3 lg:order-2 lg:grid">
+			<div class="order-1 contents gap-3 lg:order-2 lg:grid lg:self-start">
 				{#if page.board === 'rock-5b-plus'}
 					<div class="order-1">
 						<DevicesPortEdge {marks} {alert} />
@@ -410,7 +399,7 @@ const marks = $derived({
 						</ul>
 					</section>
 				{/if}
-				<section data-testid="device-events" class="bg-card order-3 overflow-hidden rounded-xl border">
+				<section data-testid="device-events" class="bg-card order-3 scroll-mt-24 overflow-hidden rounded-xl border">
 					<div class="flex items-center justify-between gap-2 px-4 py-3">
 						<h2 class="text-sm font-semibold tracking-tight">{m['network.devices.events.heading']()}</h2>
 						<span class="text-muted-foreground text-xs">{m['network.devices.events.helpers']()}</span>

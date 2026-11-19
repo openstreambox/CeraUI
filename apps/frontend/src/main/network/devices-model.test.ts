@@ -74,6 +74,36 @@ describe("devices page model", () => {
 		expect(page.groups[0]?.rows[0]?.kind).toBe("other");
 	});
 
+	it("does not invent an RM520 speed claim from the product and the link class", () => {
+		const page = devicesPageModel(
+			wire([
+				node({
+					key: "modem",
+					socketKey: "A3-bot",
+					name: "Lower blue port",
+					kind: "modem",
+					product: "RM520N-GL",
+					speedClass: "usb2",
+					portClass: "usb3",
+				}),
+				node({
+					key: "fast",
+					socketKey: "A3-top",
+					name: "Upper blue port",
+					label: "A3-top",
+					kind: "capture",
+					speedClass: "usb3",
+					portClass: "usb3",
+					superspeedCapable: true,
+				}),
+			]),
+		);
+		if (page.status !== "ok") throw new Error("expected a tree");
+		const rows = page.groups.flatMap((group) => group.rows);
+		expect(rows.find((row) => row.key === "modem")?.hint).toBeNull();
+		expect(rows.find((row) => row.key === "fast")?.hint).toBeNull();
+	});
+
 	it("hints when an RM520 is kept at USB 2, and when a capture card is at USB 2", () => {
 		const page = devicesPageModel(
 			wire([
@@ -87,6 +117,7 @@ describe("devices page model", () => {
 					product: "RM520N-GL",
 					speedClass: "usb2",
 					portClass: "usb3",
+					speedNote: "rm520-held-usb2",
 				}),
 				node({
 					key: "slot",
@@ -270,6 +301,21 @@ describe("devices page model", () => {
 			ports: 1,
 			unresponsive: 1,
 		});
+		const rooted = devicesPageModel(
+			wire([
+				node({
+					key: "root",
+					socketKey: "fc400000.usb:1",
+					name: "USB root",
+					label: null,
+					scope: "root",
+					kind: "hub",
+					portPath: null,
+				}),
+			]),
+		);
+		if (rooted.status !== "ok") throw new Error("expected a tree");
+		expect(rooted.summary).toMatchObject({ devices: 0, hubs: 0, ports: 0 });
 		expect(
 			page.groups.find((group) => group.label === "A2-bot")?.rows[0]?.state,
 		).toBe("unplugged");

@@ -61,9 +61,26 @@ describe("Devices page", () => {
 		expect(empty.textContent).toContain("Empty.");
 		expect(empty.textContent).not.toContain("Unknown device");
 		expect(view.getAllByText("Lower blue port").length).toBeGreaterThan(0);
+		expect(view.queryByText("Kept at USB 2 on purpose")).toBeNull();
+		expect(view.queryByText(/14 dB/)).toBeNull();
+		expect(view.queryByText(/set by the box/)).toBeNull();
+		const claimed = {
+			...WIRE,
+			nodes: WIRE.nodes.map((node) =>
+				node.key === "modem"
+					? {
+							...node,
+							speedNote: "rm520-held-usb2" as const,
+							exampleDetails: true,
+						}
+					: node,
+			),
+		};
+		view.rerender({ wire: claimed, onBack: () => undefined });
 		expect(view.getByTestId("device-hint").textContent).toContain(
 			"Kept at USB 2 on purpose",
 		);
+		expect(view.getByText(/14 dB/)).toBeTruthy();
 		expect(view.getByText("No serial numbers or addresses.")).toBeTruthy();
 		view.rerender({
 			wire: WIRE,

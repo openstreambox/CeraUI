@@ -22,7 +22,11 @@ test.describe("Network devices page", () => {
 		const empty = page.getByTestId("device-empty");
 		await expect(empty).toBeVisible();
 		await expect(empty).not.toContainText("Unknown");
-		await expect(page.getByTestId("device-hint")).toContainText(
+		const rm520 = ports
+			.locator('[data-testid="device-row"]')
+			.filter({ hasText: "RM520N-GL" })
+			.first();
+		await expect(rm520.getByTestId("device-hint")).toContainText(
 			"Kept at USB 2 on purpose",
 		);
 		await expect(page.getByText("No serial numbers or addresses.")).toBeVisible();

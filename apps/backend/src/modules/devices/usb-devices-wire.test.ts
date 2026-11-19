@@ -336,9 +336,14 @@ describe("usb device status payload", () => {
 			await symlink(device, join(flat, "1-1"));
 			const tree = await readUsbTree({ sysfsRoot: root, board: "generic" });
 			const wire = projectUsbDevices(tree, []);
-			expect(wire.nodes.every((node) => node.displayState === undefined)).toBe(
-				true,
-			);
+			expect(
+				wire.nodes.every(
+					(node) =>
+						node.displayState === undefined &&
+						node.speedNote === undefined &&
+						node.exampleDetails === undefined,
+				),
+			).toBe(true);
 			const local = buildMsg("status", {
 				is_streaming: false,
 				usb_devices: wire,
