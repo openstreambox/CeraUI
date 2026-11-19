@@ -5,6 +5,7 @@ import { ChevronRight, Network as NetworkIcon, Usb } from '@lucide/svelte';
 import { onMount } from 'svelte';
 import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { Skeleton } from '$lib/components/ui/skeleton';
+import { rpc } from '$lib/rpc/client';
 import { hotspotIsActive } from '$lib/rpc/os-toggle-predicates';
 import {
 	getBluetooth,
@@ -31,6 +32,7 @@ import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
 import DevicesPage from './network/DevicesPage.svelte';
 import { deviceCountSentence } from './network/device-counts';
+import type { HelperActionOffer } from './network/devices-actions';
 import { devicesSummary } from './network/devices-model';
 import { consumeDevicesOpen } from './network/devices-open.svelte';
 
@@ -118,9 +120,34 @@ const hotspotTarget = $derived(
 let hotspotDialogOpen = $state(false);
 let wifiCountryOpen = $state(false);
 let devicesOpen = $state(false);
+let helperOffer = $state<HelperActionOffer | null>(null);
+let offerGeneration = 0;
+
+async function loadHelperOffer(): Promise<void> {
+	const generation = ++offerGeneration;
+	try {
+		const result = await rpc.devices.helperOffer();
+		if (generation !== offerGeneration) return;
+		helperOffer = result.ok
+			? {
+					retryPort: result.retryPort,
+					rearmExhausted: result.rearmExhausted,
+					usb2: result.usb2,
+				}
+			: null;
+	} catch {
+		if (generation !== offerGeneration) return;
+		helperOffer = null;
+	}
+}
 
 $effect(() => {
 	if (consumeDevicesOpen()) devicesOpen = true;
+});
+
+$effect(() => {
+	if (!devicesOpen) return;
+	void loadHelperOffer();
 });
 
 const deviceCounts = $derived(devicesSummary(getStatus()?.usb_devices, getStatus()?.device_calm));
@@ -268,6 +295,8 @@ function openModemConfig(id: string) {
 			events={getStatus()?.usb_events}
 			calm={getStatus()?.device_calm}
 			helper={import.meta.env.DEV && fixtureHelper ? fixtureHelper : getStatus()?.usb_helper}
+			offer={helperOffer}
+			onSettled={loadHelperOffer}
 			onBack={() => (devicesOpen = false)}
 		/>
 	{:else}
