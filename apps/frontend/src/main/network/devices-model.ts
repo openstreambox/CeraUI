@@ -105,6 +105,8 @@ export type DevicesPageModel =
 			readonly board: UsbDevicesWire["board"];
 			readonly groups: readonly DevicePortGroup[];
 			readonly summary: DevicesSummary;
+			/** Holds the writer did not tie to a device that is still present. */
+			readonly unassignedHolds: readonly UsbHelperHold[];
 	  };
 
 export type DevicesSummary = {
@@ -173,6 +175,8 @@ export function devicesPageModel(
 		board: wire.board,
 		groups: grouped,
 		summary: summarize(built, undefined),
+		unassignedHolds:
+			helper === undefined ? [] : holdsNotOnARow(grouped, helper),
 	};
 }
 
@@ -363,23 +367,34 @@ function attachHelper(
 			};
 		}),
 	}));
-	const spare = helper.holds.filter((hold) => !used.has(hold));
 	const port = next.find((group) => group.id === "C" || group.label === "C");
 	const head = port?.rows[0];
 	if (port === undefined || head === undefined) return next;
-	if (helper.typec === null && helper.reprobe === null && spare.length === 0) {
-		return next;
-	}
+	if (helper.typec === null && helper.reprobe === null) return next;
 	const rows = port.rows.slice();
 	rows[0] = {
 		...head,
 		helper: {
 			typec: helper.typec,
 			reprobe: helper.reprobe,
-			holds: [...(head.helper?.holds ?? []), ...spare],
+			holds: head.helper?.holds ?? [],
 		},
 	};
 	return next.map((group) => (group === port ? { ...group, rows } : group));
+}
+
+/** A hold with no current row stays off every socket, including USB-C. */
+function holdsNotOnARow(
+	groups: readonly DevicePortGroup[],
+	helper: UsbHelperWire,
+): UsbHelperHold[] {
+	const shown = new Set<UsbHelperHold>();
+	for (const group of groups) {
+		for (const row of group.rows) {
+			for (const hold of row.helper?.holds ?? []) shown.add(hold);
+		}
+	}
+	return helper.holds.filter((hold) => !shown.has(hold));
 }
 
 function rowState(node: UsbDeviceWireNode, empty: boolean): DeviceRowState {

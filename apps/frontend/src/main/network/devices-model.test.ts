@@ -367,8 +367,11 @@ describe("devices page model", () => {
 				vbus: "on",
 			},
 			reprobe: { outcome: "recovered", rearm: 2 },
-			holds: [{ key: null, stored: "20", outcome: "reset-sent" }],
+			holds: [],
 		});
+		expect(page.unassignedHolds).toEqual([
+			{ key: null, stored: "20", outcome: "reset-sent" },
+		]);
 		const modem = page.groups
 			.flatMap((group) => group.rows)
 			.find((row) => row.key === "modem");
