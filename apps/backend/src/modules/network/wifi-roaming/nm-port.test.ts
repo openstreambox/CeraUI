@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+	apOnPhyOf,
 	createSearchNm,
 	parseCloneUuid,
+	parseIwDev,
 	parseIwLink,
 	parseScanRows,
 	searchProfileName,
@@ -45,11 +47,42 @@ describe("parsers", () => {
 		expect(subnetOf("192.0.2.17/32")).toBe("192.0.2.17/32");
 		expect(subnetOf("nonsense")).toBeNull();
 	});
+	test("iw dev: phys, interfaces and AP legs", () => {
+		const devs = parseIwDev(IW_DEV_HYBRID);
+		expect(devs.get("wlan1")).toEqual({ phy: "phy1", type: "managed" });
+		expect(devs.get("clap-wlan1")).toEqual({ phy: "phy1", type: "AP" });
+		expect(apOnPhyOf(devs, "wlan1")).toEqual({ phy: "phy1", apOnPhy: true });
+		expect(apOnPhyOf(devs, "wlan2")).toEqual({ phy: "phy2", apOnPhy: false });
+		expect(apOnPhyOf(devs, "wlan0")).toEqual({ phy: "phy0", apOnPhy: true });
+		expect(apOnPhyOf(devs, "wlan9")).toEqual({ phy: null, apOnPhy: null });
+	});
 	test("owned profile names are per radio and validated", () => {
 		expect(searchProfileName("wlan2")).toBe("ceraui-search-wlan2");
 		expect(() => searchProfileName("-x")).toThrow();
 	});
 });
+
+const IW_DEV_HYBRID = `phy#2
+	Interface wlan2
+		ifindex 6
+		addr 02:00:00:00:00:0b
+		type managed
+phy#1
+	Interface clap-wlan1
+		ifindex 7
+		addr 02:00:00:00:00:0c
+		ssid box-hotspot
+		type AP
+	Interface wlan1
+		ifindex 5
+		addr 02:00:00:00:00:0a
+		ssid venue
+		type managed
+phy#0
+	Interface wlan0
+		ifindex 4
+		type AP
+`;
 
 /** Answers nmcli/ip/iw from a table; records every call. */
 function fakeRun(fail: (args: string[]) => boolean = () => false) {
@@ -70,6 +103,7 @@ function fakeRun(fail: (args: string[]) => boolean = () => false) {
 			line.endsWith(OTHER)
 		)
 			return "venue\n02\\:00\\:00\\:00\\:00\\:0a\n\n";
+		if (line === "iw dev") return IW_DEV_HYBRID;
 		if (line.startsWith("nmcli connection clone"))
 			return `venue (${SOURCE}) cloned as ceraui-search-wlan2 (${CLONE}).`;
 		return "";
@@ -118,6 +152,48 @@ describe("join", () => {
 		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
 		await expect(nm.join("wlan2", "venue", "aa:00:00:00:00")).rejects.toThrow();
 		expect(f.calls).toEqual([]);
+	});
+});
+
+describe("escaped SSIDs", () => {
+	test("a saved SSID with a colon matches the scan's unescaped SSID", async () => {
+		const calls: string[] = [];
+		const run = async (bin: string, args: string[]) => {
+			const line = `${bin} ${args.join(" ")}`;
+			calls.push(line);
+			if (line === "nmcli -t -f NAME,UUID,TYPE connection show")
+				return `cafe\\:2:${SOURCE}:802-11-wireless\n`;
+			if (line.startsWith("nmcli -g 802-11-wireless.ssid"))
+				return `cafe\\:2\n${MAC.replace(/:/g, "\\:")}\n\n`;
+			if (line.startsWith("nmcli connection clone"))
+				return `cafe:2 (${SOURCE}) cloned as ceraui-search-wlan2 (${CLONE}).`;
+			return "";
+		};
+		const nm = createSearchNm({ run, macOf: async () => MAC });
+		expect([...(await nm.savedSsids("wlan2"))]).toEqual(["cafe:2"]);
+		expect(await nm.join("wlan2", "cafe:2", "aa:00:00:00:00:02")).toEqual({
+			activation: CLONE,
+		});
+	});
+});
+
+describe("hotspot mode", () => {
+	test("observe reports the phy and an AP leg on it", async () => {
+		const f = fakeRun();
+		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		expect(await nm.observe("wlan1")).toMatchObject({
+			phy: "phy1",
+			apOnPhy: true,
+		});
+		expect(await nm.observe("wlan2")).toMatchObject({
+			phy: "phy2",
+			apOnPhy: false,
+		});
+	});
+	test("an unreadable interface list leaves the mode unknown", async () => {
+		const f = fakeRun((args) => args.length === 1 && args[0] === "dev");
+		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		expect(await nm.observe("wlan2")).toMatchObject({ apOnPhy: null });
 	});
 });
 

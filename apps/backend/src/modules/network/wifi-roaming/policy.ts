@@ -42,6 +42,13 @@ export type SearchPolicy = Readonly<{
 	minCandidateQuality: number;
 	/** A candidate may be at most this much weaker than the holder's BSSID. */
 	candidateMargin: number;
+	/**
+	 * How long what a join learned about a BSSID's uplink stays usable. Phone
+	 * hotspots and travel routers change their addresses between sessions.
+	 */
+	learnedTtlMs: number;
+	/** How long a failed join or verification counts against a BSSID. */
+	failureMemoryMs: number;
 }>;
 
 export const DEFAULT_SEARCH_POLICY: SearchPolicy = {
@@ -58,6 +65,8 @@ export const DEFAULT_SEARCH_POLICY: SearchPolicy = {
 	fadeNakRatio: 0.05,
 	minCandidateQuality: 40,
 	candidateMargin: 10,
+	learnedTtlMs: 30 * 60_000,
+	failureMemoryMs: 10 * 60_000,
 };
 
 export type HolderCondition =
@@ -195,7 +204,8 @@ export const normalizeBssid = (bssid: string): string => bssid.toLowerCase();
  * - searcher: out of the bond; may scan and join.
  * - standby: associated and verified, out of the bond (a lingering old holder
  *   or a candidate waiting for proof).
- * - hotspot-reserved: serves the phone hotspot; never touched.
+ * - hotspot-reserved: serves the phone hotspot, by configuration or because
+ *   the radio or its phy is in AP mode right now; never touched.
  */
 export type Role =
 	| "holder"
@@ -238,14 +248,12 @@ export function classifyUplink(
 	// address, so when both gateway MACs are known they decide.
 	if (a.gatewayMac !== null && b.gatewayMac !== null)
 		return a.gatewayMac === b.gatewayMac ? "same-uplink" : "distinct-gateway";
-	if (
-		a.gateway !== null &&
-		a.gateway === b.gateway &&
-		a.subnet !== null &&
-		a.subnet === b.subnet
-	)
-		return "same-uplink";
 	if (a.gateway === null || b.gateway === null) return "unknown";
+	// The same gateway on the same subnet without both MACs could be one router
+	// or two with factory defaults. Right after a join the gateway's neighbour
+	// entry often does not exist yet, so this is common, not an edge case.
+	if (a.gateway === b.gateway && a.subnet !== null && a.subnet === b.subnet)
+		return "unknown";
 	return "distinct-gateway";
 }
 
@@ -280,12 +288,16 @@ export type CandidateContext = Readonly<{
 	goal: SearchGoal;
 	/** BSSIDs the holders are on. */
 	holderBssids: ReadonlySet<string>;
-	/** SSIDs the holders are on: always joinable with the radio's profile. */
-	holderSsids: ReadonlySet<string>;
-	/** SSIDs this radio has saved, interface-bound profiles for. */
+	/**
+	 * SSIDs this radio has saved, interface-bound profiles for. Only these are
+	 * joinable: a profile bound to a sibling radio's MAC does not help, even
+	 * for the network the holder is on.
+	 */
 	savedSsids: ReadonlySet<string>;
-	/** What earlier joins learned about each BSSID's uplink. */
+	/** What earlier joins learned about each BSSID's uplink, judged against the current holders. */
 	learned: ReadonlyMap<string, Diversity>;
+	/** Recent failed joins or verifications per BSSID. */
+	failures?: ReadonlyMap<string, number>;
 }>;
 
 const DIVERSITY_RANK: Record<Diversity, number> = {
@@ -313,7 +325,7 @@ export function pickCandidate(
 	const usable = rows.filter(
 		(r) =>
 			r.ssid !== "" &&
-			(ctx.holderSsids.has(r.ssid) || ctx.savedSsids.has(r.ssid)) &&
+			ctx.savedSsids.has(r.ssid) &&
 			r.quality >= policy.minCandidateQuality &&
 			(ctx.goal === "capacity" ||
 				(!holders.has(normalizeBssid(r.bssid)) &&
@@ -322,17 +334,20 @@ export function pickCandidate(
 	);
 	const learned = (r: ScanRow): Diversity =>
 		ctx.learned.get(normalizeBssid(r.bssid)) ?? "unknown";
+	// A BSSID that failed recently goes behind every other candidate, so one
+	// unjoinable network cannot win every search. Alone, it is retried.
+	const failed = (r: ScanRow): number =>
+		ctx.failures?.get(normalizeBssid(r.bssid)) ?? 0;
 	const score = (r: ScanRow): number[] => {
 		const div = DIVERSITY_RANK[learned(r)];
 		const fresh = holders.has(normalizeBssid(r.bssid)) ? 0 : 1;
 		switch (ctx.goal) {
 			case "continuity":
-				return [r.quality, div];
+				return [-failed(r), r.quality, div];
 			case "diversity":
-				// A BSSID already known to share the holder's uplink adds nothing.
-				return learned(r) === "same-uplink" ? [-1] : [div, r.quality];
+				return [-failed(r), div, r.quality];
 			case "capacity":
-				return [fresh * div, r.quality];
+				return [-failed(r), fresh * div, r.quality];
 		}
 	};
 	const better = (x: number[], y: number[]) => {
@@ -344,7 +359,8 @@ export function pickCandidate(
 	};
 	let best: ScanRow | undefined;
 	for (const r of usable) {
-		if (score(r)[0] === -1) continue;
+		// A BSSID already known to share the holder's uplink adds nothing.
+		if (ctx.goal === "diversity" && learned(r) === "same-uplink") continue;
 		if (best === undefined || better(score(r), score(best))) best = r;
 	}
 	return best;

@@ -27,6 +27,8 @@ const BSSID_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/;
 const UUID_RE =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const JOIN_WAIT_S = 12;
+/** Below the coordinator's 15 s scan budget, so a slow scan fails rather than overruns. */
+const SCAN_TIMEOUT_MS = 14_000;
 const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 
 /** Network address of an IPv4 CIDR, e.g. 192.0.2.17/24 -> 192.0.2.0/24. */
@@ -65,6 +67,56 @@ export function parseIwLink(
 		signalDbm: signal === undefined ? null : Number(signal),
 	};
 }
+
+/**
+ * Parse `iw dev`: each interface's phy and type. The AP leg CeraUI adds for a
+ * hotspot next to a station (`clap-<parent>`) shows up as its own interface
+ * on the parent's phy.
+ */
+export function parseIwDev(
+	stdout: string,
+): Map<string, { phy: string; type: string | null }> {
+	const out = new Map<string, { phy: string; type: string | null }>();
+	let phy: string | null = null;
+	let current: string | null = null;
+	for (const line of stdout.split("\n")) {
+		const p = /^phy#(\d+)/.exec(line);
+		if (p) {
+			phy = `phy${p[1]}`;
+			current = null;
+			continue;
+		}
+		const i = /^\s+Interface (\S+)/.exec(line);
+		if (i?.[1] && phy) {
+			current = i[1];
+			out.set(current, { phy, type: null });
+			continue;
+		}
+		const t = /^\s+type (.+)$/.exec(line);
+		if (t?.[1] && current) {
+			const entry = out.get(current);
+			if (entry) entry.type = t[1].trim();
+		}
+	}
+	return out;
+}
+
+/** Whether `ifname` or another interface on its phy is in AP mode. */
+export function apOnPhyOf(
+	devs: ReadonlyMap<string, { phy: string; type: string | null }>,
+	ifname: string,
+): { phy: string | null; apOnPhy: boolean | null } {
+	const own = devs.get(ifname);
+	if (!own) return { phy: null, apOnPhy: null };
+	for (const d of devs.values())
+		if (d.phy === own.phy && d.type === "AP")
+			return { phy: own.phy, apOnPhy: true };
+	return { phy: own.phy, apOnPhy: false };
+}
+
+/** Undo nmcli's `-g` escaping of `:` and `\\`. */
+export const unescapeNmcli = (value: string): string =>
+	value.replace(/\\(.)/g, "$1");
 
 /** Parse `nmcli -t -f BSSID,SSID,SIGNAL,CHAN device wifi list …`. */
 export function parseScanRows(stdout: string): ScanRow[] {
@@ -155,9 +207,9 @@ export function createSearchNm(deps: SearchNmDeps) {
 		if (out === undefined) return undefined;
 		const [ssid = "", mac = "", bssid = ""] = out.split("\n");
 		return {
-			ssid,
-			mac: mac.replace(/\\:/g, ":").toLowerCase(),
-			bssid: bssid.replace(/\\:/g, ":").toLowerCase(),
+			ssid: unescapeNmcli(ssid),
+			mac: unescapeNmcli(mac).toLowerCase(),
+			bssid: unescapeNmcli(bssid).toLowerCase(),
 		};
 	}
 
@@ -200,6 +252,12 @@ export function createSearchNm(deps: SearchNmDeps) {
 			const link = await quiet("iw", ["dev", dev, "link"]);
 			if (link === undefined) return undefined;
 			const parsed = parseIwLink(link);
+			// A radio in AP mode reads "Not connected" here, like an idle one.
+			const devs = await quiet("iw", ["dev"]);
+			const mode =
+				devs === undefined
+					? { phy: null, apOnPhy: null }
+					: apOnPhyOf(parseIwDev(devs), dev);
 			const activation = await activeProfile(dev);
 			const locked = activation
 				? ((await profileFields(activation))?.bssid ?? "") !== ""
@@ -239,6 +297,8 @@ export function createSearchNm(deps: SearchNmDeps) {
 				routed: gateway !== null,
 				activation,
 				bssidLocked: locked,
+				phy: mode.phy,
+				apOnPhy: mode.apOnPhy,
 			};
 		},
 
@@ -257,7 +317,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 					"--rescan",
 					"yes",
 				],
-				30_000,
+				SCAN_TIMEOUT_MS,
 			);
 			return out === undefined ? undefined : parseScanRows(out);
 		},
