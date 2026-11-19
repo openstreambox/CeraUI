@@ -15,17 +15,25 @@ Create `/data/ceralive/srt-forward.json` (mode 0600) with the forwarding setting
 ```
 
 These files are operator-owned state, outside the package payload, and survive OTA.
-Before package unpack, the installer privately saves the old setup metadata.
+Before package unpack, the installer privately saves old setup metadata only when
+it contains forwarding settings. This best-effort snapshot never blocks a package
+upgrade if storage or copying fails.
 On first boot after upgrading, its legacy `setup.json.srt_forward` block is copied
 here if no persistent config exists, preserving its generated credential from
 `srt-forward.secret` beside setup.json. Persistent settings then take precedence;
-the temporary setup backup is removed after successful migration.
+the temporary setup backup is removed once persistent settings are available,
+including backups left by an interrupted migration. If cleanup fails, a warning
+is logged and valid persistent settings still load.
 Edit persistent settings and restart the backend to change forwarding. Remove the legacy block
 before removing persistent settings to disable forwarding. Invalid persistent
 settings are refused rather than replaced with image defaults.
 Generated credentials are written to a private sibling temp file, fsynced,
 renamed atomically and followed by directory fsync. Empty or corrupt private
-credential files regenerate automatically; unsafe paths and permissions are refused.
+credential files, including legacy credentials during migration, regenerate
+automatically with one warning after replacement
+(no credential bytes are logged); unsafe paths and permissions are refused.
+Both settings and secrets use the shared private-file publisher, enforcing 0600
+before writing any bytes, independently of Bun creation-mode behavior.
 
 `host` must be the box's LAN/hotspot IPv4 address (loopback is also accepted for
 host tests); wildcard and public binds are refused. Keep the image's LAN-only
@@ -104,8 +112,14 @@ guarda en /data/ceralive/srt-forward.secret con permisos 0600. La configuración
 se guarda en /data/ceralive/srt-forward.json, fuera del paquete, y sobrevive a
 las actualizaciones. Se migra la opción antigua de setup.json y su contraseña
 cuando no existe configuración persistente. Antes de reemplazar setup.json, el
-instalador guarda una copia privada para migrar sus opciones tras la actualización. Los archivos de contraseña vacíos
-o dañados se regeneran; la escritura usa un archivo temporal, fsync, cambio de
+instalador guarda una copia privada solo si contiene opciones de reenvío. Si falla
+la copia, la actualización continúa. La copia se elimina cuando existe la
+configuración persistente, incluso tras una migración interrumpida. Si no se puede
+eliminar, se registra una advertencia y la configuración válida sigue cargando.
+Ambos archivos
+se crean con permisos 0600 explícitos antes de escribir datos. Los archivos de contraseña vacíos
+o dañados, incluidos los heredados durante la migración, se regeneran y se registra
+una advertencia sin mostrar la contraseña; la escritura usa un archivo temporal, fsync, cambio de
 nombre atómico y fsync del directorio. La espera se restablece tras aceptar el
 receptor. El límite maxbw predeterminado es
 2.500.000 bytes/s. Una configuración inválida desactiva el reenvío sin impedir el

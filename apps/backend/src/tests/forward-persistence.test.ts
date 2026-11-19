@@ -69,36 +69,30 @@ test("damaged operator settings never fall back to stale image settings", async 
 });
 
 import { spyOn } from "bun:test";
+import fs from "node:fs";
 import * as files from "node:fs/promises";
 import { writeForwardFile } from "../modules/ingest/forward-secret.ts";
 
 test("private publication fsyncs file before rename and directory afterwards", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "forward-atomic-"));
 	const events: string[] = [];
-	const originalOpen = files.open;
-	const originalRename = files.rename;
-	const opening = spyOn(files, "open").mockImplementation(
-		async (...args: Parameters<typeof files.open>) => {
-			const handle = await originalOpen(...args);
-			const sync = handle.sync.bind(handle);
-			handle.sync = async () => {
-				events.push(String(args[0]) === dir ? "directory-sync" : "file-sync");
-				await sync();
-			};
-			return handle;
-		},
-	);
-	const renaming = spyOn(files, "rename").mockImplementation(
-		async (...args: Parameters<typeof files.rename>) => {
-			events.push("rename");
-			await originalRename(...args);
-		},
-	);
+	const sync = fs.fsyncSync;
+	const rename = fs.renameSync;
+	const syncing = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+		events.push(
+			fs.fstatSync(fd).isDirectory() ? "directory-sync" : "file-sync",
+		);
+		sync(fd);
+	});
+	const renaming = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+		events.push("rename");
+		rename(from, to);
+	});
 	try {
 		await writeForwardFile(join(dir, "secret"), "durable-test-secret");
 		expect(events).toEqual(["file-sync", "rename", "directory-sync"]);
 	} finally {
-		opening.mockRestore();
+		syncing.mockRestore();
 		renaming.mockRestore();
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -108,16 +102,9 @@ test("failed file fsync preserves published credential and cleans temporary byte
 	const dir = await mkdtemp(join(tmpdir(), "forward-atomic-"));
 	const path = join(dir, "secret");
 	await writeFile(path, "previous-test-secret", { mode: 0o600 });
-	const originalOpen = files.open;
-	const opening = spyOn(files, "open").mockImplementation(
-		async (...args: Parameters<typeof files.open>) => {
-			const handle = await originalOpen(...args);
-			handle.sync = async () => {
-				throw Error("injected-sync-fault");
-			};
-			return handle;
-		},
-	);
+	const syncing = spyOn(fs, "fsyncSync").mockImplementation(() => {
+		throw Error("injected-sync-fault");
+	});
 	try {
 		await expect(writeForwardFile(path, "replacement-secret")).rejects.toThrow(
 			"injected-sync-fault",
@@ -125,7 +112,7 @@ test("failed file fsync preserves published credential and cleans temporary byte
 		expect(await readFile(path, "utf8")).toBe("previous-test-secret");
 		expect(await files.readdir(dir)).toEqual(["secret"]);
 	} finally {
-		opening.mockRestore();
+		syncing.mockRestore();
 		await rm(dir, { recursive: true, force: true });
 	}
 });
@@ -167,6 +154,121 @@ test("migration recovers settings saved before package unpack replaced setup.jso
 		).toBe("preserved-operator-secret");
 		expect(await files.readdir(dir)).toEqual(["srt-forward.json"]);
 	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+for (const persistent of [false, true]) {
+	test(`removes stale snapshot when ${persistent ? "persistent" : "current legacy"} settings win`, async () => {
+		const dir = await mkdtemp(join(tmpdir(), "forward-stale-"));
+		try {
+			const config = { host: "127.0.0.1", passphrase: "operator-test-secret" };
+			const snapshot = join(dir, "srt-forward-legacy-setup.json");
+			await writeFile(snapshot, "{broken stale snapshot", { mode: 0o600 });
+			if (persistent)
+				await writeFile(join(dir, "srt-forward.json"), JSON.stringify(config), {
+					mode: 0o600,
+				});
+			expect(
+				(
+					await loadForwardConfig(
+						dir,
+						persistent ? undefined : config,
+						join(dir, "absent"),
+					)
+				)?.host,
+			).toBe(config.host);
+			expect(await Bun.file(snapshot).exists()).toBe(false);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+}
+test("creates settings and generated secret as 0600 under umask 0022", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "forward-mode-"));
+	const mask = process.umask(0o022);
+	try {
+		await loadForwardConfig(dir, { host: "127.0.0.1" }, join(dir, "absent"));
+		for (const name of ["srt-forward.json", "srt-forward.secret"])
+			expect((await stat(join(dir, name))).mode & 0o777).toBe(0o600);
+	} finally {
+		process.umask(mask);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+import { logger } from "../helpers/logger.ts";
+
+test("warns once after recovering a damaged credential without logging bytes", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "forward-warning-"));
+	const warning = spyOn(logger, "warn").mockImplementation(() => logger);
+	try {
+		const path = join(dir, "secret");
+		await writeFile(path, "bad", { mode: 0o600 });
+		await loadForwardSecret(path, "replacement-test-secret");
+		await loadForwardSecret(path, "unused-test-secret");
+		expect(warning).toHaveBeenCalledTimes(1);
+		expect(warning).toHaveBeenCalledWith(
+			"SRT forwarding credential regenerated",
+		);
+	} finally {
+		warning.mockRestore();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("persistent settings discard stale backup even when their JSON is damaged", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "forward-invalid-"));
+	try {
+		const snapshot = join(dir, "srt-forward-legacy-setup.json");
+		await writeFile(snapshot, "private obsolete bytes", { mode: 0o600 });
+		await writeFile(join(dir, "srt-forward.json"), "{broken", { mode: 0o600 });
+		await expect(
+			loadForwardConfig(dir, undefined, join(dir, "absent")),
+		).rejects.toThrow();
+		expect(await Bun.file(snapshot).exists()).toBe(false);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("valid persistent settings survive an unremovable stale snapshot", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "forward-cleanup-"));
+	const warning = spyOn(logger, "warn").mockImplementation(() => logger);
+	try {
+		await files.mkdir(join(dir, "srt-forward-legacy-setup.json"));
+		await writeFile(
+			join(dir, "srt-forward.json"),
+			JSON.stringify({ host: "127.0.0.1", passphrase: "operator-test-secret" }),
+			{ mode: 0o600 },
+		);
+		expect(
+			(await loadForwardConfig(dir, undefined, join(dir, "absent")))?.host,
+		).toBe("127.0.0.1");
+		expect(warning).toHaveBeenCalledWith(
+			"SRT forwarding stale snapshot cleanup failed",
+		);
+	} finally {
+		warning.mockRestore();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("warns once when migration replaces a damaged legacy credential", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "forward-legacy-warning-"));
+	const warning = spyOn(logger, "warn").mockImplementation(() => logger);
+	try {
+		const secret = join(dir, "legacy.secret");
+		await writeFile(secret, "bad", { mode: 0o600 });
+		const first = await loadForwardConfig(dir, { host: "127.0.0.1" }, secret);
+		expect(first?.passphrase).toMatch(/^[a-f0-9]{32}$/);
+		expect(await loadForwardConfig(dir, undefined, secret)).toEqual(first);
+		expect(warning).toHaveBeenCalledTimes(1);
+		expect(warning).toHaveBeenCalledWith(
+			"SRT forwarding credential regenerated",
+		);
+	} finally {
+		warning.mockRestore();
 		await rm(dir, { recursive: true, force: true });
 	}
 });
