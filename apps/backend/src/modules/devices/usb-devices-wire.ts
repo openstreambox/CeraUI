@@ -34,11 +34,7 @@ import {
 } from "@ceraui/rpc/schemas";
 import { logger } from "../../helpers/logger.ts";
 import { getUsbEvents, observeUsbDevices } from "./usb-events.ts";
-import {
-	kernelKeysFromTree,
-	mockUsbHelper,
-	readUsbHelper,
-} from "./usb-helper.ts";
+import { mockUsbHelper, readUsbHelper } from "./usb-helper.ts";
 
 import {
 	readUsbTree,
@@ -538,7 +534,6 @@ export async function publishUsbDevices(): Promise<void> {
 		const helper = await readUsbHelper({
 			root: "/",
 			board: tree.board,
-			kernelKeys: kernelKeysFromTree(tree.roots),
 		});
 		const { broadcastMsg } = await import("../../rpc/compat.ts");
 		deliverUsbDevicesWire(
