@@ -59,6 +59,26 @@ export const usbDeviceWireNodeSchema = z
 	.strict();
 export type UsbDeviceWireNode = z.infer<typeof usbDeviceWireNodeSchema>;
 
+export const USB_EVENT_REASONS = ['appeared', 'left'] as const;
+export const usbEventSchema = z
+	.object({
+		at: z.number().int().nonnegative(),
+		reason: z.enum(USB_EVENT_REASONS),
+		kind: usbDeviceKindSchema,
+		socketName: z.string().min(1).max(80),
+	})
+	.strict();
+export type UsbEventWire = z.infer<typeof usbEventSchema>;
+export const usbEventsWireSchema = z.array(usbEventSchema).max(100);
+
+export const deviceCalmSchema = z
+	.object({
+		resting: z.number().int().nonnegative().max(64),
+		off: z.number().int().nonnegative().max(64),
+	})
+	.strict();
+export type DeviceCalm = z.infer<typeof deviceCalmSchema>;
+
 export const usbDevicesWireSchema = z
 	.object({
 		status: usbTreeStatusSchema,

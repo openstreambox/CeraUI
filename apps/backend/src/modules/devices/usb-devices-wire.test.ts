@@ -243,12 +243,17 @@ describe("usb device status payload", () => {
 				],
 			},
 			is_streaming: true,
+			usb_events: [{ at: 1, reason: "left", socketName: "Upper black port" }],
+			device_calm: { resting: 1, off: 0 },
 		};
 		const socket = serializeRemoteSocketMessage(
 			JSON.stringify({ status: local, wifi: { ready: true } }),
 		);
 		expect(socket).not.toContain("usb_devices");
+		expect(socket).not.toContain("usb_events");
+		expect(socket).not.toContain("device_calm");
 		expect(socket).not.toContain("fc000000");
+		expect(socket).not.toContain("Upper black port");
 		expect(socket).toContain("is_streaming");
 		expect(socket).toContain("ready");
 	});
@@ -280,6 +285,7 @@ describe("usb device status payload", () => {
 			JSON.stringify({ status: hydrated }),
 		);
 		expect(remote).not.toContain("usb_devices");
+		expect(remote).not.toContain("usb_events");
 		expect(remote).not.toContain("RM520N-GL");
 		const adapter = await Bun.file(
 			new URL("../../rpc/adapter.ts", import.meta.url),

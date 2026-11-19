@@ -4,17 +4,18 @@
 -->
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
-import type { UsbDevicesWire } from '@ceraui/rpc/schemas';
+import type { UsbDevicesWire, UsbEventWire } from '@ceraui/rpc/schemas';
 import { ChevronRight, Info, Usb } from '@lucide/svelte';
 
 import { type DeviceRow, devicesPageModel } from './devices-model';
 
 interface Props {
 	wire: UsbDevicesWire | undefined;
+	events?: readonly UsbEventWire[] | undefined;
 	onBack: () => void;
 }
 
-const { wire, onBack }: Props = $props();
+const { wire, events = [], onBack }: Props = $props();
 const page = $derived(devicesPageModel(wire));
 
 function kindLabel(row: DeviceRow): string {
@@ -36,6 +37,23 @@ function reason(row: DeviceRow): string {
 	return m['network.devices.reason.on']();
 }
 
+function eventLine(event: UsbEventWire): string {
+	const when = new Date(event.at).toLocaleTimeString(undefined, {
+		hour: '2-digit',
+		minute: '2-digit',
+	});
+	const reason =
+		event.reason === 'left'
+			? m['network.devices.events.left']()
+			: m['network.devices.events.appeared']();
+	return `${when} · ${event.socketName} · ${resolveMessageKey(`network.devices.kind.${event.kind}`)} · ${reason}`;
+}
+
+async function copyEvents() {
+	const text = events.map((event) => eventLine(event)).join('\n');
+	if (text.length === 0 || navigator.clipboard === undefined) return;
+	await navigator.clipboard.writeText(text);
+}
 </script>
 
 <div class="space-y-3" data-testid="devices-page">
@@ -190,6 +208,32 @@ function reason(row: DeviceRow): string {
 					</ul>
 				</section>
 				<p class="text-muted-foreground text-xs">{m['network.devices.privacy']()}</p>
+				<section data-testid="device-events" class="bg-card space-y-2 rounded-xl border p-4">
+					<div class="flex items-center justify-between gap-2">
+						<h2 class="text-sm font-semibold tracking-tight">
+							{m['network.devices.events.title']()}
+						</h2>
+						{#if events.length > 0}
+							<button
+								type="button"
+								data-testid="device-events-copy"
+								class="focus-visible:ring-ring min-h-11 rounded-md px-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
+								onclick={copyEvents}
+							>
+								{m['network.devices.events.copy']()}
+							</button>
+						{/if}
+					</div>
+					{#if events.length === 0}
+						<p class="text-muted-foreground text-sm">{m['network.devices.events.empty']()}</p>
+					{:else}
+						<ul class="space-y-1">
+							{#each events as event (`${event.at}:${event.reason}:${event.socketName}:${event.kind}`)}
+								<li class="text-sm" data-testid="device-event">{eventLine(event)}</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
 			</aside>
 		</div>
 	{/if}

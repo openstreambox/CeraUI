@@ -25,6 +25,7 @@
 
 import { type UsbDevicesWire, usbDevicesWireSchema } from "@ceraui/rpc/schemas";
 import { logger } from "../../helpers/logger.ts";
+import { getUsbEvents, observeUsbDevices } from "./usb-events.ts";
 
 import {
 	readUsbTree,
@@ -67,7 +68,7 @@ export function getUsbDevicesWire(): UsbDevicesWire {
 export function replayAuthenticatedUsbDevices<
 	T extends Record<string, unknown>,
 >(status: T): T & { usb_devices: UsbDevicesWire } {
-	return { ...status, usb_devices: cached };
+	return { ...status, usb_devices: cached, usb_events: getUsbEvents() };
 }
 
 /** `platform-fc800000.usb-usb-0:1.2:1.0` → controller fc800000.usb, port 1.2. */
@@ -263,7 +264,10 @@ export async function publishUsbDevices(): Promise<void> {
 	if (shouldUseMocks()) {
 		const { broadcastMsg } = await import("../../rpc/compat.ts");
 		deliverUsbDevicesWire(mockUsbDevicesWire(), (next) => {
-			broadcastMsg("status", { usb_devices: next });
+			broadcastMsg("status", {
+				usb_devices: next,
+				usb_events: getUsbEvents(),
+			});
 		});
 		return;
 	}
@@ -285,7 +289,10 @@ export async function publishUsbDevices(): Promise<void> {
 		const wire = projectUsbDevices(tree, links);
 		const { broadcastMsg } = await import("../../rpc/compat.ts");
 		deliverUsbDevicesWire(wire, (next) => {
-			broadcastMsg("status", { usb_devices: next });
+			broadcastMsg("status", {
+				usb_devices: next,
+				usb_events: getUsbEvents(),
+			});
 		});
 	} catch (err) {
 		logger.warn("usb device tree was not published", { err });
@@ -297,7 +304,10 @@ export async function publishUsbDevices(): Promise<void> {
 				nodes: [],
 			},
 			(next) => {
-				broadcastMsg("status", { usb_devices: next });
+				broadcastMsg("status", {
+					usb_devices: next,
+					usb_events: getUsbEvents(),
+				});
 			},
 		);
 	}
@@ -309,6 +319,7 @@ export function deliverUsbDevicesWire(
 	broadcast: (wire: UsbDevicesWire) => void,
 ): boolean {
 	if (JSON.stringify(next) === JSON.stringify(cached)) return false;
+	observeUsbDevices(next);
 	cached = next;
 	broadcast(next);
 	return true;

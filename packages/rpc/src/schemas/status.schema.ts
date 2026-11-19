@@ -20,7 +20,7 @@ import {
 	updatingStatusSchema,
 } from './system.schema';
 import { updateOrchestratorWireStateSchema } from './update-orchestrator.schema';
-import { usbDevicesWireSchema } from './usb-devices.schema';
+import { deviceCalmSchema, usbDevicesWireSchema, usbEventsWireSchema } from './usb-devices.schema';
 import { wifiStatusSchema } from './wifi.schema';
 
 // Audio sources enum
@@ -495,5 +495,12 @@ export const statusResponseSchema = z.object({
 	// Read-only USB tree. Explicit on every frame after the first probe so a
 	// client can tell "not read yet" (status unavailable) from an empty bus.
 	usb_devices: usbDevicesWireSchema.optional(),
+	// Plug and unplug since boot. Local only, same as the tree. The first
+	// tree is a baseline and is not a list of events.
+	usb_events: usbEventsWireSchema.optional(),
+	// Intentional rests and switch-offs. Absent means none. Faults do not
+	// belong here. Heat rest and the off-by-you record are not on this branch,
+	// so the field stays absent until those writers exist.
+	device_calm: deviceCalmSchema.optional(),
 });
 export type StatusResponse = z.infer<typeof statusResponseSchema>;

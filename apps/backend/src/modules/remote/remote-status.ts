@@ -52,14 +52,19 @@ export function projectRemoteConfig(payload: unknown): unknown {
  */
 export function projectRemoteStatus(payload: unknown): unknown {
 	if (typeof payload !== "object" || payload === null) return payload;
-	const hasUsbDevices = "usb_devices" in payload;
+	const hasLocal =
+		"usb_devices" in payload ||
+		"usb_events" in payload ||
+		"device_calm" in payload;
 	const wifi = "wifi" in payload ? payload.wifi : undefined;
-	if (!hasUsbDevices && (typeof wifi !== "object" || wifi === null)) {
+	if (!hasLocal && (typeof wifi !== "object" || wifi === null)) {
 		return payload;
 	}
 
 	const projected: Record<string, unknown> = { ...payload };
-	if (hasUsbDevices) Reflect.deleteProperty(projected, "usb_devices");
+	Reflect.deleteProperty(projected, "usb_devices");
+	Reflect.deleteProperty(projected, "usb_events");
+	Reflect.deleteProperty(projected, "device_calm");
 	if (typeof wifi === "object" && wifi !== null) {
 		projected.wifi = Array.isArray(wifi)
 			? wifi.map(omitIncarnation)

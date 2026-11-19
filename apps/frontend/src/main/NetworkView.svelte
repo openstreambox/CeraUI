@@ -28,7 +28,9 @@ import BondedLinksSection from './network/BondedLinksSection.svelte';
 import CellularSection from './network/CellularSection.svelte';
 import CollisionBands from './network/CollisionBands.svelte';
 import { activeSimLock, isBlockingSimLock } from './network/cellular-row';
+import DeviceCalmLine from './network/DeviceCalmLine.svelte';
 import DevicesPage from './network/DevicesPage.svelte';
+import { consumeDevicesOpen } from './network/devices-open.svelte';
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
 import SharingSection from './network/SharingSection.svelte';
@@ -89,6 +91,10 @@ const hotspotTarget = $derived(
 let hotspotDialogOpen = $state(false);
 let wifiCountryOpen = $state(false);
 let devicesOpen = $state(false);
+
+$effect(() => {
+	if (consumeDevicesOpen()) devicesOpen = true;
+});
 
 const modemEntries = $derived(Object.entries(modems ?? {}) as [string, Modem][]);
 
@@ -210,6 +216,7 @@ function openModemConfig(id: string) {
 	{#if devicesOpen}
 		<DevicesPage
 			wire={getStatus()?.usb_devices}
+			events={getStatus()?.usb_events}
 			onBack={() => (devicesOpen = false)}
 		/>
 	{:else}
@@ -267,6 +274,10 @@ function openModemConfig(id: string) {
 		/>
 		<HotspotSection {hotspotInterfaces} {hotspotTarget} onSetup={() => (hotspotDialogOpen = true)} />
 		<BluetoothSection status={bluetooth} {audioBackend} />
+		<DeviceCalmLine
+			calm={getStatus()?.device_calm}
+			onOpen={() => (devicesOpen = true)}
+		/>
 		<button
 			type="button"
 			data-testid="open-devices"
