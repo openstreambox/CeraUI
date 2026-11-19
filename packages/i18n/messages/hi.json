@@ -1154,6 +1154,8 @@
 	"network.devices.detail.modemMode": "मॉडेम मोड",
 	"network.devices.whereAria": "पोर्ट की ओर से देखा ROCK 5B+ का पोर्ट किनारा",
 	"network.devices.whereCaption": "पोर्ट की ओर से। USB-C दूसरे किनारे पर है; मॉडेम स्लॉट अंदर है।",
+	"network.devices.wherePower": "बिजली",
+	"network.devices.whereHdmi": "← HDMI, बिजली",
 	"network.devices.whereCaptionAlert": "पोर्ट की ओर से। हब पर नज़र डालें: उस पर एक मॉडेम जवाब नहीं दे रहा। USB-C दूसरे किनारे पर है; मॉडेम स्लॉट अंदर है।",
 	"network.devices.edge.wifi": "वाई-फाई",
 	"network.devices.edge.capture": "चित्र",

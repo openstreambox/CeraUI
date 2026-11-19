@@ -48,8 +48,8 @@ function dash(tone: EdgeTone): string | undefined {
 		<rect x="42" y="82" width="14" height="8" rx="3" fill="none" stroke="var(--border)" />
 		<rect x="66" y="78" width="22" height="12" rx="2" fill="none" stroke="var(--border)" />
 		<rect x="102" y="78" width="22" height="12" rx="2" fill="none" stroke="var(--border)" />
-		<text x="49" y="104" text-anchor="middle" fill="var(--muted-foreground)" font-size="6.5">power</text>
-		<text x="120" y="104" fill="var(--muted-foreground)" font-size="6.5">← HDMI, power</text>
+		<text x="49" y="104" text-anchor="middle" fill="var(--muted-foreground)" font-size="6.5">{m['network.devices.wherePower']()}</text>
+		<text x="120" y="104" fill="var(--muted-foreground)" font-size="6.5">{m['network.devices.whereHdmi']()}</text>
 		<rect x="135.4" y="38" width="40" height="52" rx="2" fill="var(--muted)" stroke="var(--border)" />
 		<rect
 			x="140"

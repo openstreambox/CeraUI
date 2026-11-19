@@ -1109,6 +1109,8 @@
 	"network.devices.detail.modemMode": "モデムモード",
 	"network.devices.whereAria": "ポート側から見た ROCK 5B+ のポート面",
 	"network.devices.whereCaption": "ポート側から見た図です。USB-C は反対側の縁、モデムスロットは内部です。",
+	"network.devices.wherePower": "電源",
+	"network.devices.whereHdmi": "← HDMI、電源",
 	"network.devices.whereCaptionAlert": "ポート側から見た図です。ハブを確認してください。上のモデムの一つが応答しません。USB-C は反対側、モデムスロットは内部です。",
 	"network.devices.edge.wifi": "無線",
 	"network.devices.edge.capture": "映像",

@@ -1157,6 +1157,8 @@
 	"network.devices.detail.modemMode": "modo módem",
 	"network.devices.whereAria": "Borde de puertos de la ROCK 5B+, visto desde el lado de los puertos",
 	"network.devices.whereCaption": "Visto desde el lado de los puertos. El USB-C está en el otro borde; la ranura del módem está adentro.",
+	"network.devices.wherePower": "alimentación",
+	"network.devices.whereHdmi": "← HDMI, alimentación",
 	"network.devices.whereCaptionAlert": "Visto desde el lado de los puertos. El concentrador necesita una mirada: un módem en él no responde. El USB-C está en el otro borde; la ranura del módem está adentro.",
 	"network.devices.edge.wifi": "wifi",
 	"network.devices.edge.capture": "captura",

@@ -1157,6 +1157,8 @@
 	"network.devices.detail.modemMode": "modo modem",
 	"network.devices.whereAria": "Borda das portas da ROCK 5B+, vista pelo lado das portas",
 	"network.devices.whereCaption": "Visto pelo lado das portas. O USB-C fica na outra borda; o slot do modem fica por dentro.",
+	"network.devices.wherePower": "energia",
+	"network.devices.whereHdmi": "← HDMI, energia",
 	"network.devices.whereCaptionAlert": "Visto pelo lado das portas. O hub precisa de uma olhada: um modem nele não responde. O USB-C fica na outra borda; o slot do modem fica por dentro.",
 	"network.devices.edge.wifi": "wifi",
 	"network.devices.edge.capture": "captura",
