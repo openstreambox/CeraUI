@@ -1163,7 +1163,7 @@
 	"network.devices.helper.data": "Rol de datos",
 	"network.devices.helper.partner": "Compañero",
 	"network.devices.helper.vbus": "Regulador VBUS",
-	"network.devices.helper.fix": "Corrección del puerto",
+	"network.devices.helper.fix": "Última corrección del puerto",
 	"network.devices.helper.usb2": "Retención USB 2",
 	"network.devices.helper.role.source": "Fuente",
 	"network.devices.helper.role.sink": "Sumidero",

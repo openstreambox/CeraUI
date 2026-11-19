@@ -1163,7 +1163,7 @@
 	"network.devices.helper.data": "Papel de dados",
 	"network.devices.helper.partner": "Parceiro",
 	"network.devices.helper.vbus": "Regulador VBUS",
-	"network.devices.helper.fix": "Correção da porta",
+	"network.devices.helper.fix": "Última correção da porta",
 	"network.devices.helper.usb2": "Retenção USB 2",
 	"network.devices.helper.role.source": "Fonte",
 	"network.devices.helper.role.sink": "Dreno",

@@ -1160,7 +1160,7 @@
 	"network.devices.helper.data": "डेटा भूमिका",
 	"network.devices.helper.partner": "साथी",
 	"network.devices.helper.vbus": "VBUS नियामक",
-	"network.devices.helper.fix": "पोर्ट सुधार",
+	"network.devices.helper.fix": "पिछला पोर्ट सुधार",
 	"network.devices.helper.usb2": "USB 2 रोक",
 	"network.devices.helper.role.source": "स्रोत",
 	"network.devices.helper.role.sink": "सिंक",

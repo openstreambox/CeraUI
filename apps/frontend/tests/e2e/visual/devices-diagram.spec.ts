@@ -128,7 +128,7 @@ test.describe('@visual devices diagram', () => {
 				await expect(usbC).toContainText('Source');
 				await expect(usbC).toContainText('VBUS regulator');
 				await expect(usbC).toContainText('Enabled');
-				await expect(usbC).not.toContainText('Port fix');
+				await expect(usbC).not.toContainText('Last port fix');
 			}
 			if (name === 'recovered') await expect(usbC).toContainText('Recovered');
 			if (name === 'no-partner') await expect(usbC).toContainText('No partner');

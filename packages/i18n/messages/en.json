@@ -1160,7 +1160,7 @@
 	"network.devices.helper.data": "Data role",
 	"network.devices.helper.partner": "Partner",
 	"network.devices.helper.vbus": "VBUS regulator",
-	"network.devices.helper.fix": "Port fix",
+	"network.devices.helper.fix": "Last port fix",
 	"network.devices.helper.usb2": "USB 2 hold",
 	"network.devices.helper.role.source": "Source",
 	"network.devices.helper.role.sink": "Sink",

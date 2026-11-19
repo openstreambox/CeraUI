@@ -1115,7 +1115,7 @@
 	"network.devices.helper.data": "数据角色",
 	"network.devices.helper.partner": "对端",
 	"network.devices.helper.vbus": "VBUS 稳压器",
-	"network.devices.helper.fix": "端口修复",
+	"network.devices.helper.fix": "上次端口修复",
 	"network.devices.helper.usb2": "USB 2 保持",
 	"network.devices.helper.role.source": "供电",
 	"network.devices.helper.role.sink": "受电",
