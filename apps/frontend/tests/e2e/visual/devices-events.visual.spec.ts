@@ -81,6 +81,12 @@ test.describe("duplicate device events", () => {
 		await expect(rows.nth(0)).toContainText("USB port 1");
 		await expect(rows.nth(1)).toContainText("USB port 1");
 		await expect(page.getByTestId("device-events")).not.toContainText("0000:");
+		await page.getByTestId("device-events").evaluate((element) => {
+			const chrome = document.querySelector("header");
+			const offset = chrome?.getBoundingClientRect().bottom ?? 0;
+			const top = element.getBoundingClientRect().top + window.scrollY - offset - 12;
+			window.scrollTo(0, Math.max(0, top));
+		});
 		await page.screenshot({
 			path: evidencePath(`devices-events-${testInfo.project.name}.png`),
 		});
