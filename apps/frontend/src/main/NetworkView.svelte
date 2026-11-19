@@ -1,7 +1,8 @@
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
-import type { Modem, NetifEntry, NetifMessage, WifiInterface, WifiStatus } from '@ceraui/rpc/schemas';
+import type { Modem, NetifEntry, NetifMessage, UsbHelperWire, WifiInterface, WifiStatus } from '@ceraui/rpc/schemas';
 import { ChevronRight, Network as NetworkIcon, Usb } from '@lucide/svelte';
+import { onMount } from 'svelte';
 import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
 import { Skeleton } from '$lib/components/ui/skeleton';
 import { hotspotIsActive } from '$lib/rpc/os-toggle-predicates';
@@ -32,6 +33,31 @@ import DevicesPage from './network/DevicesPage.svelte';
 import { deviceCountSentence } from './network/device-counts';
 import { devicesSummary } from './network/devices-model';
 import { consumeDevicesOpen } from './network/devices-open.svelte';
+
+// Development captures swap the helper fixture without touching a real box.
+// Production builds drop this: import.meta.env.DEV is folded to false.
+const FIXTURE_KEY = 'cera-usb-helper-fixture';
+let fixtureHelper = $state<UsbHelperWire | undefined>();
+
+onMount(() => {
+	if (!import.meta.env.DEV) return;
+	const readFixture = () => {
+		const raw = localStorage.getItem(FIXTURE_KEY);
+		if (!raw) {
+			fixtureHelper = undefined;
+			return;
+		}
+		try {
+			fixtureHelper = JSON.parse(raw) as UsbHelperWire;
+		} catch {
+			fixtureHelper = undefined;
+		}
+	};
+	readFixture();
+	window.addEventListener(FIXTURE_KEY, readFixture);
+	return () => window.removeEventListener(FIXTURE_KEY, readFixture);
+});
+
 import EthernetSection from './network/EthernetSection.svelte';
 import HotspotSection from './network/HotspotSection.svelte';
 import SharingSection from './network/SharingSection.svelte';
@@ -241,7 +267,7 @@ function openModemConfig(id: string) {
 			wire={getStatus()?.usb_devices}
 			events={getStatus()?.usb_events}
 			calm={getStatus()?.device_calm}
-			helper={getStatus()?.usb_helper}
+			helper={import.meta.env.DEV && fixtureHelper ? fixtureHelper : getStatus()?.usb_helper}
 			onBack={() => (devicesOpen = false)}
 		/>
 	{:else}
