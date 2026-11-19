@@ -55,7 +55,13 @@ export type CapabilityProbeFailure =
 	| "schema-unsupported";
 
 export type CapabilityProbeResult =
-	| { readonly bindMap: true; readonly bindMapSchemaVersion: number }
+	| {
+			readonly bindMap: true;
+			readonly bindMapSchemaVersion: number;
+			readonly bindMapRequired?: true;
+			readonly bindMapRequiredEmptyReload?: true;
+			readonly bindMapContract?: number;
+	  }
 	| { readonly bindMap: false; readonly reason: CapabilityProbeFailure };
 
 /** The sidecar schema version this writer produces. */
@@ -65,6 +71,9 @@ interface CapabilityDocument {
 	readonly capabilities?: {
 		readonly bind_map?: unknown;
 		readonly bind_map_schema_version?: unknown;
+		readonly bind_map_required?: unknown;
+		readonly bind_map_required_empty_reload?: unknown;
+		readonly bind_map_contract?: unknown;
 	};
 }
 
@@ -105,7 +114,23 @@ export function classifyCapabilityDocument(
 		return { bindMap: false, reason: "schema-unsupported" };
 	}
 
-	return { bindMap: true, bindMapSchemaVersion: version };
+	// The strict flags mean what contract 2 says they mean, and nothing under any
+	// other (or missing, or mistyped) contract version: a consumer that trusted
+	// them there could require a guarantee the sender never promised.
+	if (capabilities.bind_map_contract !== 2) {
+		return { bindMap: true, bindMapSchemaVersion: version };
+	}
+	return {
+		bindMap: true,
+		bindMapSchemaVersion: version,
+		bindMapContract: 2,
+		...(capabilities.bind_map_required === true
+			? { bindMapRequired: true as const }
+			: {}),
+		...(capabilities.bind_map_required_empty_reload === true
+			? { bindMapRequiredEmptyReload: true as const }
+			: {}),
+	};
 }
 
 export interface CapabilityProbeDeps {
