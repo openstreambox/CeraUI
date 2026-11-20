@@ -15,8 +15,8 @@ function makeDeps(overrides: Partial<ReauthDeps> = {}): {
 } {
 	const dispatched: Array<[string, unknown]> = [];
 	const deps: ReauthDeps = {
-		getStoredToken: vi.fn(() => "stored-secret"),
-		clearStoredToken: vi.fn(),
+		getToken: vi.fn(() => "stored-secret"),
+		forgetToken: vi.fn(),
 		login: vi.fn(async () => ({ success: true })),
 		getConfig: vi.fn(async () => ({ max_br: 6000 })),
 		getStatus: vi.fn(async () => ({ is_streaming: true })),
@@ -36,7 +36,7 @@ describe("reauthenticateAndHydrate", () => {
 	});
 
 	it("does nothing when no credential is stored", async () => {
-		const { deps } = makeDeps({ getStoredToken: vi.fn(() => null) });
+		const { deps } = makeDeps({ getToken: vi.fn(() => null) });
 
 		const outcome = await reauthenticateAndHydrate(deps);
 
@@ -57,7 +57,7 @@ describe("reauthenticateAndHydrate", () => {
 		expect(deps.getConfig).toHaveBeenCalledOnce();
 		expect(deps.getStatus).toHaveBeenCalledOnce();
 		expect(deps.routeToLogin).not.toHaveBeenCalled();
-		expect(deps.clearStoredToken).not.toHaveBeenCalled();
+		expect(deps.forgetToken).not.toHaveBeenCalled();
 
 		// Auth result + both hydrate payloads routed through handleMessage.
 		expect(dispatched).toEqual([
@@ -75,7 +75,7 @@ describe("reauthenticateAndHydrate", () => {
 		const outcome = await reauthenticateAndHydrate(deps);
 
 		expect(outcome).toBe("expired");
-		expect(deps.clearStoredToken).toHaveBeenCalledOnce();
+		expect(deps.forgetToken).toHaveBeenCalledOnce();
 		expect(deps.routeToLogin).toHaveBeenCalledOnce();
 		expect(deps.getConfig).not.toHaveBeenCalled();
 		expect(deps.getStatus).not.toHaveBeenCalled();
@@ -84,12 +84,12 @@ describe("reauthenticateAndHydrate", () => {
 
 	it("invalid token does not loop: a second reconnect short-circuits at no-token", async () => {
 		// Model the live wiring: clearing the credential mutates what the next
-		// getStoredToken() read returns, so the follow-up reconnect is inert.
+		// getToken() read returns, so the follow-up reconnect is inert.
 		let stored: string | null = "stale-secret";
 		const login = vi.fn(async () => ({ success: false }));
 		const deps = makeDeps({
-			getStoredToken: vi.fn(() => stored),
-			clearStoredToken: vi.fn(() => {
+			getToken: vi.fn(() => stored),
+			forgetToken: vi.fn(() => {
 				stored = null;
 			}),
 			login,
@@ -116,7 +116,7 @@ describe("reauthenticateAndHydrate", () => {
 
 		expect(outcome).toBe("unreachable");
 		expect(deps.onError).toHaveBeenCalledOnce();
-		expect(deps.clearStoredToken).not.toHaveBeenCalled();
+		expect(deps.forgetToken).not.toHaveBeenCalled();
 		expect(deps.routeToLogin).not.toHaveBeenCalled();
 		expect(deps.getConfig).not.toHaveBeenCalled();
 		expect(dispatched).toEqual([]);
@@ -134,7 +134,7 @@ describe("reauthenticateAndHydrate", () => {
 		// Re-auth succeeded; a hydrate failure is non-fatal (backend push still feeds the stores).
 		expect(outcome).toBe("hydrated");
 		expect(deps.routeToLogin).not.toHaveBeenCalled();
-		expect(deps.clearStoredToken).not.toHaveBeenCalled();
+		expect(deps.forgetToken).not.toHaveBeenCalled();
 		expect(deps.onError).toHaveBeenCalledOnce();
 		// The status answer was received on the authenticated link; a failed
 		// config read does not withhold it (FIX-16-F5, F4-R1).
@@ -235,6 +235,6 @@ describe("each hydrate answer is consumed at its own receipt (FIX-16-F5)", () =>
 		]);
 		expect(deps.onError).toHaveBeenCalledOnce();
 		expect(deps.routeToLogin).not.toHaveBeenCalled();
-		expect(deps.clearStoredToken).not.toHaveBeenCalled();
+		expect(deps.forgetToken).not.toHaveBeenCalled();
 	});
 });

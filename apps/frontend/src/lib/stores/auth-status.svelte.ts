@@ -11,10 +11,12 @@ import { NotSentError, RpcError } from "$lib/rpc/rpc-error";
 
 let authStatus = $state(false);
 let interaction = new AbortController();
-// The token this page signed in with: the one the device issued for a password
+// The token THIS TAB signed in with: the one the device issued for a password
 // login (remembered or not), or the stored token a token login presented. The
 // device authenticates sockets, not pages, so the reconnect re-auth presents it
-// again on every new socket. Memory only; "Remember me" alone decides storage.
+// again on every new socket. Memory only, and only while signed in: the shared
+// `auth` slot belongs to every tab of this origin and is read and written only
+// by an explicit sign-in, never by a reconnect.
 let sessionToken: string | null = null;
 // Whether this page has signed in at least once. Set by EVERY successful sign-in
 // (password or token), because it is what arms the reconnect re-auth.
@@ -55,14 +57,33 @@ export function setAuthStatus(status: boolean): void {
 		authenticatedOnce = true;
 	} else {
 		sessionToken = null;
+		// The retained login result must not keep the credential either.
+		if (authMessage?.auth_token !== undefined) {
+			const { auth_token: _retired, ...rest } = authMessage;
+			authMessage = rest;
+		}
 	}
 	rpcClient.setSessionActive(status);
 	notifySubscribers();
 }
 
-/** The token to sign in again with on a new socket, if this page holds one. */
+/**
+ * This tab is signed in with `token` (the credential its sign-in established).
+ * The reconnect re-auth presents it on every new socket until sign-out.
+ */
+export function beginSession(token: string | null): void {
+	sessionToken = token;
+	setAuthStatus(true);
+}
+
+/** The token to sign in again with on a new socket, while this tab is signed in. */
 export function getSessionToken(): string | null {
 	return sessionToken;
+}
+
+/** The device refused this tab's token: never present it again. */
+export function forgetSessionToken(): void {
+	sessionToken = null;
 }
 
 /** Record that the page has signed in at least once (see `authenticatedOnce`). */
@@ -204,9 +225,8 @@ async function authenticateInput(
 		// Token reauthentication succeeds without issuing a replacement. In that
 		// case retain the existing token, just as on an unreachable attempt.
 		persistCredential(result, persistent);
-		sessionToken = result.auth_token ?? input.token ?? sessionToken;
 		ingestAuth(result);
-		setAuthStatus(true);
+		beginSession(result.auth_token ?? input.token ?? sessionToken);
 		return { kind: "ok" };
 	} finally {
 		clearPassword();

@@ -139,6 +139,7 @@ import {
 	receivePulledStatus,
 	resetState,
 } from "../lib/rpc/subscriptions.svelte";
+import { beginSession, setAuthStatus } from "../lib/stores/auth-status.svelte";
 import {
 	clearStartRecoveryUnknown,
 	latestStopOwner,
@@ -205,7 +206,6 @@ beforeEach(() => {
 	globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
 	// biome-ignore lint/complexity/useLiteralKeys: test-only private transport seam
 	rpcClient["getUrl"] = () => "ws://device.test/ws";
-	localStorage.setItem("auth", "token-abc");
 	resetState();
 	resetNavigationFeed();
 	initAsyncOperations();
@@ -219,11 +219,14 @@ beforeEach(() => {
 	socket().readyState = FakeWebSocket.OPEN;
 	socket().onopen?.();
 	session.authenticated = true;
+	// The operator signs in on the first link; later links re-authenticate.
+	beginSession("token-abc");
 	flushSync();
 	deliverStatus({ is_streaming: false, stream_lifecycle: "idle" });
 });
 
 afterEach(() => {
+	setAuthStatus(false);
 	rpcClient.disconnect();
 	destroyAsyncOperations();
 	destroyStreamingOptimism();

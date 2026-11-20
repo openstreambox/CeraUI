@@ -212,6 +212,21 @@ interface HeldCall {
 const SESSION_GATE_EXEMPT = new Set(["auth.login"]);
 
 /**
+ * Procedures that are never held for a reconnect re-auth: credential changes and
+ * power actions. Replaying one after the link dropped would surprise the
+ * operator even when it is correct, so they fail unsent ("reconnected") and the
+ * operator decides again.
+ */
+const SESSION_GATE_NEVER_HELD = new Set([
+	"auth.setPassword",
+	"auth.revokeToken",
+	"auth.logout",
+	"system.reboot",
+	"system.poweroff",
+	"system.sshResetPassword",
+]);
+
+/**
  * RPC Client class
  */
 class RPCClient {
@@ -288,6 +303,8 @@ class RPCClient {
 			if (this.socket !== null) {
 				this.stopKeepAlive();
 				this.socket = null;
+				// Held calls belong to the socket they waited on, never its successor.
+				this.failHeldCalls("disconnected");
 				this.rejectPendingRequests();
 			}
 
@@ -300,7 +317,9 @@ class RPCClient {
 				// a call onto the new socket ahead of the re-auth.
 				this.socketSignedIn = !this.sessionActive;
 				this.setConnectionState("connected");
-				this.reconnectAttempts = 0;
+				// A socket that still has to be signed in is not a recovery yet: the
+				// backoff keeps growing until the re-auth confirms it.
+				if (this.socketSignedIn) this.reconnectAttempts = 0;
 				this.heartbeatTracker.recordTraffic(Date.now());
 				this.startKeepAlive();
 			};
@@ -377,6 +396,7 @@ class RPCClient {
 	/** The reconnect re-auth signed this socket in: send what was held. */
 	confirmSocketSignedIn(): void {
 		this.socketSignedIn = true;
+		this.reconnectAttempts = 0;
 		const held = [...this.heldCalls];
 		this.heldCalls.clear();
 		for (const call of held) call.release();
@@ -583,22 +603,33 @@ class RPCClient {
 			throw new NotSentError();
 		}
 
-		if (!this.socketSignedIn && !SESSION_GATE_EXEMPT.has(path.join("."))) {
+		const id = this.generateId();
+		const request: RPCRequest = { id, path, input };
+		// Serialized now: callers may scrub or reuse `input` as soon as this
+		// returns (a password field is cleared right after), held or not.
+		const frame = JSON.stringify(request);
+		let budget = timeout;
+
+		const procedure = path.join(".");
+		if (!this.socketSignedIn && !SESSION_GATE_EXEMPT.has(procedure)) {
+			if (SESSION_GATE_NEVER_HELD.has(procedure)) {
+				throw new NotSentError("reconnected");
+			}
 			// Never sent, so safe to send once the session is back on this socket.
+			const heldSince = Date.now();
 			await this.holdForSignIn(timeout);
 			if (this.socket?.readyState !== WebSocket.OPEN) {
 				throw new NotSentError();
 			}
+			// The wait counts against the caller's budget, not on top of it.
+			budget = Math.max(1, timeout - (Date.now() - heldSince));
 		}
-
-		const id = this.generateId();
-		const request: RPCRequest = { id, path, input };
 
 		return new Promise<T>((resolve, reject) => {
 			const timeoutHandle = setTimeout(() => {
 				this.pendingRequests.delete(id);
 				reject(new Error(`Request timeout: ${path.join(".")}`));
-			}, timeout);
+			}, budget);
 
 			this.pendingRequests.set(id, {
 				resolve: resolve as (value: unknown) => void,
@@ -607,7 +638,7 @@ class RPCClient {
 				path,
 			});
 
-			this.socket?.send(JSON.stringify(request));
+			this.socket?.send(frame);
 		});
 	}
 

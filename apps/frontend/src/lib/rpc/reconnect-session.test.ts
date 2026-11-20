@@ -25,18 +25,23 @@ import {
 	vi,
 } from "vitest";
 
-import { rpcClient } from "$lib/rpc/client";
+import { rpc, rpcClient } from "$lib/rpc/client";
 import { NotSentError } from "$lib/rpc/rpc-error";
 import { initSubscriptions, resetState } from "$lib/rpc/subscriptions.svelte";
 import {
 	type AuthAttempt,
 	authenticate,
 	authStatusStore,
+	createPassword,
 } from "$lib/stores/auth-status.svelte";
 import {
 	destroyConnectionUxStore,
 	getSessionExpired,
 } from "$lib/stores/connection-ux.svelte";
+import {
+	clearNotifications,
+	getActive as getActiveNotifications,
+} from "$lib/stores/notifications.svelte";
 
 import {
 	answer,
@@ -73,6 +78,7 @@ beforeEach(() => {
 	// biome-ignore lint/complexity/useLiteralKeys: test-only private transport seam
 	rpcClient["getUrl"] = () => "ws://device.test/ws";
 	localStorage.clear();
+	clearNotifications();
 	resetState();
 	initSubscriptions();
 	// Later tests: the store is initialised and its client was disconnected by
@@ -243,7 +249,9 @@ describe("reconnect re-authentication", () => {
 
 			expect(authStatusStore.value).toBe(false);
 			expect(getSessionExpired()).toBe(true);
-			expect(localStorage.getItem("auth")).toBeNull();
+			// A reconnect never touches the shared slot: only an explicit sign-in or
+			// sign-out writes it (the next page load drops a dead token itself).
+			expect(localStorage.getItem("auth")).toBe(remember ? ISSUED_TOKEN : null);
 			const error = await failure;
 			expect(error).toBeInstanceOf(NotSentError);
 			expect((error as NotSentError).reason).toBe("signed-out");
@@ -261,5 +269,158 @@ describe("reconnect re-authentication", () => {
 		expect(sentCount("captive.open")).toBe(1);
 		answer("captive.open", { ok: true });
 		await expect(action).resolves.toEqual({ ok: true });
+	});
+});
+
+describe("held calls on a reconnecting socket", () => {
+	it("sends a held call with the payload it was started with", async () => {
+		await signInFromForm(true);
+		await reconnect();
+
+		const input = { action: "start" as const, radio: 1 };
+		const action = rpc.wifi.portal(input);
+		await flush();
+		// The caller reuses its object after the call returned.
+		input.radio = 2;
+
+		answer("auth.login", { success: true });
+		await flush();
+		expect(outstanding("wifi.portal").map((request) => request.input)).toEqual([
+			{ action: "start", radio: 1 },
+		]);
+		answer("wifi.portal", { phase: "signing_in" });
+		await expect(action).resolves.toEqual({ phase: "signing_in" });
+	});
+
+	it("never holds a password change: it fails unsent and nothing is replayed", async () => {
+		await signInFromForm(false);
+		await reconnect();
+
+		const changed = createPassword("a-new-password-9");
+		await flush();
+		await expect(changed).resolves.toBe(false);
+
+		answer("auth.login", { success: true });
+		await flush();
+		expect(sentCount("auth.setPassword")).toBe(0);
+		expect(authStatusStore.value).toBe(true);
+	});
+
+	it.each([
+		["system", "reboot"],
+		["system", "poweroff"],
+		["auth", "revokeToken"],
+	])("never holds %s.%s", async (group, name) => {
+		await signInFromForm(false);
+		await reconnect();
+
+		const call = rpcClient.call([group, name], {});
+		const error = await call.catch((cause: unknown) => cause);
+		expect(error).toBeInstanceOf(NotSentError);
+		expect((error as NotSentError).reason).toBe("reconnected");
+
+		answer("auth.login", { success: true });
+		await flush();
+		expect(sentCount(`${group}.${name}`)).toBe(0);
+	});
+
+	it("does not carry a held call over to a replacement socket", async () => {
+		await signInFromForm(false);
+		await reconnect();
+		const action = startAction();
+		const failure = action.catch((error: unknown) => error);
+		await flush();
+
+		// The socket starts closing, and a new one is opened before its close
+		// event arrives.
+		socket().readyState = FakeWebSocket.CLOSING;
+		rpcClient.connect();
+		socket().readyState = FakeWebSocket.OPEN;
+		socket().onopen?.();
+		await flush();
+		answer("auth.login", { success: true });
+		await flush();
+
+		expect(await failure).toBeInstanceOf(NotSentError);
+		expect(sentCount("captive.open")).toBe(0);
+	});
+});
+
+describe("a re-auth that keeps stalling", () => {
+	it("backs off further on every stalled socket, then returns to the login screen", async () => {
+		await signInFromForm(false);
+		await reconnect();
+
+		const gaps: number[] = [];
+		for (let stall = 0; stall < 2; stall += 1) {
+			await elapse(RPC_TIMEOUT_MS);
+			const closedAt = Date.now();
+			await restoreLink();
+			gaps.push(Date.now() - closedAt);
+			expect(loginsOnThisSocket()).toEqual([
+				{ token: ISSUED_TOKEN, persistent_token: true },
+			]);
+		}
+		expect(gaps[1]).toBeGreaterThan(gaps[0] ?? 0);
+
+		await elapse(RPC_TIMEOUT_MS);
+		expect(authStatusStore.value).toBe(false);
+	});
+
+	it("announces the connection as restored only once the session is back", async () => {
+		await signInFromForm(false);
+		await reconnect();
+		const restored = () =>
+			getActiveNotifications().some(
+				(notification) => notification.name === "connection-recovered",
+			);
+
+		expect(restored()).toBe(false);
+		answer("auth.login", { success: true });
+		await flush();
+		expect(restored()).toBe(true);
+	});
+});
+
+describe("tabs share the remembered token", () => {
+	const OTHER_TAB_TOKEN = "other-tab-token";
+
+	it("presents this tab's own token, not one another tab remembered", async () => {
+		await signInFromForm(false);
+		// Another tab signs in with Remember me.
+		localStorage.setItem("auth", OTHER_TAB_TOKEN);
+
+		await reconnect();
+		expect(loginsOnThisSocket()).toEqual([
+			{ token: ISSUED_TOKEN, persistent_token: true },
+		]);
+	});
+
+	it("leaves another tab's remembered token in place when this tab's token is refused", async () => {
+		await signInFromForm(true);
+		await reconnect();
+		// Another tab signs in with Remember me while this tab's login is out.
+		localStorage.setItem("auth", OTHER_TAB_TOKEN);
+
+		answer("auth.login", { success: false });
+		await flush();
+
+		expect(authStatusStore.value).toBe(false);
+		expect(localStorage.getItem("auth")).toBe(OTHER_TAB_TOKEN);
+	});
+
+	it("does not sign a signed-out tab back in with another tab's token", async () => {
+		await signInFromForm(true);
+		await reconnect();
+		answer("auth.login", { success: false });
+		await flush();
+		expect(authStatusStore.value).toBe(false);
+
+		localStorage.setItem("auth", OTHER_TAB_TOKEN);
+		await reconnect();
+		await flush();
+
+		expect(loginsOnThisSocket()).toEqual([]);
+		expect(sentCount("streaming.getConfig")).toBe(0);
 	});
 });

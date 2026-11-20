@@ -14,6 +14,10 @@ import { flushSync } from "svelte";
 import { expect } from "vitest";
 
 import { getRestoredSessions } from "$lib/rpc/session-epoch.svelte";
+import { beginSession, setAuthStatus } from "$lib/stores/auth-status.svelte";
+
+/** The token the scripted page signed in with on its first link. */
+export const SESSION_TOKEN = "token-abc";
 
 export interface ScriptedTransport {
 	message: ((type: string, data: unknown, seq?: number) => void) | undefined;
@@ -72,12 +76,21 @@ export function push(
 	flushSync();
 }
 
-/** The page's first link comes up; nothing re-authenticates on it. */
+/**
+ * The page's first link comes up; nothing re-authenticates on it. The operator
+ * then signs in on it, so later links re-authenticate with that session.
+ */
 export function firstLink(transport: ScriptedTransport): void {
 	transport.authenticated = false;
 	transport.connection?.("connected");
 	transport.authenticated = true;
+	beginSession(SESSION_TOKEN);
 	flushSync();
+}
+
+/** The page signs out (test teardown), so the next test starts signed out. */
+export function endSession(): void {
+	setAuthStatus(false);
 }
 
 /** The socket closed. `RPCClient` rejects the in-flight requests, then reports the edge. */

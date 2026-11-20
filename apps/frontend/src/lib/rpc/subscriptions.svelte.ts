@@ -52,13 +52,11 @@ import { downloadLog } from "$lib/helpers/SystemHelper";
 import { isSameWireValue, preserveWireIdentity } from "$lib/rpc/value-identity";
 import {
 	authStatusStore,
+	forgetSessionToken,
 	getSessionToken,
 } from "$lib/stores/auth-status.svelte";
 import { ingestBuffering } from "$lib/stores/buffering.svelte";
-import {
-	markSessionExpired,
-	wasAuthenticated,
-} from "$lib/stores/connection-ux.svelte";
+import { markSessionExpired } from "$lib/stores/connection-ux.svelte";
 import { noteHotspotRoster } from "$lib/stores/hotspot-joins.svelte";
 import {
 	dismiss as dismissNotification,
@@ -1203,30 +1201,15 @@ export function receivePulledStatus<T>(
 	return { status, receipt: receiveEvidence(dispatch) };
 }
 
-const AUTH_STORAGE_KEY = "auth";
-
 let reauthInFlight = false;
 let reauthAgain = false;
-
-function readStoredToken(): string | null {
-	return typeof localStorage !== "undefined"
-		? localStorage.getItem(AUTH_STORAGE_KEY)
-		: null;
-}
-
 /**
- * The credential for a new socket: the remembered token when "Remember me" is
- * set, else the token this page signed in with (kept in memory only).
+ * Consecutive sockets whose re-auth got no answer although the link stayed up.
+ * Each one is replaced with a longer backoff; after this many the page stops
+ * presenting a session that cannot be restored and goes to the login screen.
  */
-function readSessionCredential(): string | null {
-	return readStoredToken() ?? getSessionToken();
-}
-
-function clearStoredToken(): void {
-	if (typeof localStorage !== "undefined") {
-		localStorage.removeItem(AUTH_STORAGE_KEY);
-	}
-}
+let reauthStalls = 0;
+const MAX_REAUTH_STALLS = 3;
 
 function routeToLogin(): void {
 	if (authStatusStore.value) {
@@ -1250,8 +1233,10 @@ async function runReconnectReauth(): Promise<void> {
 	const reauthSocket = rpcClient.getSocket();
 	try {
 		const outcome = await reauthenticateAndHydrate({
-			getStoredToken: readSessionCredential,
-			clearStoredToken,
+			// This tab's own token only. The origin-wide `auth` slot may hold
+			// another tab's newer token, and a reconnect never reads or clears it.
+			getToken: getSessionToken,
+			forgetToken: forgetSessionToken,
 			// A REVOCABLE device-issued token, so it authenticates through
 			// `input.token`; sent as `password` it is bcrypt-compared against
 			// the password hash and every reconnect fails.
@@ -1259,7 +1244,20 @@ async function runReconnectReauth(): Promise<void> {
 				const result = await loginWithToken(token);
 				// Release held calls before the safety hydrate, whose own reads
 				// would otherwise wait behind the gate they are part of.
-				if (result.success) rpcClient.confirmSocketSignedIn();
+				if (result.success) {
+					rpcClient.confirmSocketSignedIn();
+					reauthStalls = 0;
+					// Announced only now: an open socket is not a restored session.
+					pushNotification({
+						name: "connection-recovered",
+						type: "success",
+						key: "notifications.connectionRecovered",
+						msg: "Connection restored",
+						is_dismissable: true,
+						is_persistent: false,
+						duration: 3,
+					});
+				}
 				return result;
 			},
 			getConfig: () => rpc.streaming.getConfig(),
@@ -1297,6 +1295,7 @@ function settleReauth(
 			return;
 		case "expired":
 			// `routeToLogin` already ran; its sign-out failed the held calls.
+			reauthStalls = 0;
 			return;
 		case "no-token":
 			// Signed in on an earlier socket with nothing to present on this
@@ -1312,6 +1311,12 @@ function settleReauth(
 				rpcClient.isConnected() &&
 				rpcClient.getSocket() === reauthSocket
 			) {
+				reauthStalls += 1;
+				if (reauthStalls >= MAX_REAUTH_STALLS) {
+					reauthStalls = 0;
+					routeToLogin();
+					return;
+				}
 				rpcClient.failHeldCalls("reconnected");
 				rpcClient.recycleSocket();
 			}
@@ -1344,23 +1349,12 @@ function handleConnectionChange(state: ConnectionState): void {
 		if (previous !== "connected") {
 			seqTracker.resetOnReconnect();
 		}
-		// Recovery toast: only emit when reconnecting after a prior drop (wasAuthenticated).
-		// Suppress the initial connect of a page-load — that's owned by Layout's login flow.
-		// The client arms its session gate on every new socket of a signed-in
-		// page; that alone must start the re-auth, or held calls never leave.
-		const signedInBefore = wasAuthenticated();
-		if (signedInBefore || rpcClient.isAwaitingSignIn()) {
-			if (signedInBefore) {
-				pushNotification({
-					name: "connection-recovered",
-					type: "success",
-					key: "notifications.connectionRecovered",
-					msg: "Connection restored",
-					is_dismissable: true,
-					is_persistent: false,
-					duration: 3,
-				});
-			}
+		// Re-authenticate only for a CURRENT session of this tab: a page that
+		// signed out (or never signed in) has no token, and the initial connect
+		// of a page-load belongs to Layout's login flow. The client arms its
+		// session gate on every new socket of a signed-in page; that alone must
+		// start the re-auth, or held calls never leave.
+		if (getSessionToken() !== null || rpcClient.isAwaitingSignIn()) {
 			void runReconnectReauth();
 		}
 	}
