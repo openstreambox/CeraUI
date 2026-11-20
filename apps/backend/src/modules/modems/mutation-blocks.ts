@@ -43,6 +43,7 @@ import {
 	setMutationBlocks,
 } from "../streaming/lifecycle-admission.ts";
 
+import { syncHeldOutModemNotices } from "./held-out-modem-notice.ts";
 import { listMutationEntries } from "./mutation-journal.ts";
 import {
 	assertMutationJournalRevision,
@@ -134,6 +135,7 @@ export async function refreshMutationBlocks(
 		setMutationBlocks([]);
 		lastBlocks = [];
 		lastRevision = revision;
+		syncHeldOutModemNotices(lastBlocks);
 		return lastBlocks;
 	}
 
@@ -164,5 +166,6 @@ export async function refreshMutationBlocks(
 	);
 	lastBlocks = blocks;
 	lastRevision = revision;
+	syncHeldOutModemNotices(lastBlocks);
 	return lastBlocks;
 }
