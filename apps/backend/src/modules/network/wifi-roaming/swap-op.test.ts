@@ -255,3 +255,108 @@ describe("identity changes", () => {
 		expect(op.swap(T0 + 3_000)).toHaveLength(0);
 	});
 });
+
+describe("how an operation ends", () => {
+	/** Prove, promote and demote; returns the time at the start of the linger. */
+	function intoLinger(op: SwapOperation): number {
+		const t = T0 + 3_000;
+		prove(op, t);
+		const promote = only(op.swap(t));
+		op.ack(t, promote.command, true);
+		const demote = only(op.traffic(t, C));
+		op.ack(t, demote.command, true);
+		return t;
+	}
+
+	test("a completed swap ends as released", () => {
+		const op = operation();
+		const { t, effects } = runSwap(op);
+		op.ack(t, only(effects).command, true);
+		expect(op.endReason).toBe("released");
+	});
+
+	test("a confirmed restore ends as restored", () => {
+		const op = operation();
+		const t = intoLinger(op);
+		const restore = only(op.cancel(t + 1_000));
+		op.ack(t + 2_000, restore.command, true);
+		expect(op.ended).toBe(true);
+		expect(op.endReason).toBe("restored");
+	});
+
+	test("a restore without evidence by its deadline ends the operation as restore-failed", () => {
+		const op = operation();
+		const t = intoLinger(op);
+		const restore = only(op.cancel(t + 1_000));
+		expect(restore.action).toBe("cancel-drain-restore");
+		op.expect(restore.command, t + 11_000);
+		expect(op.tick(t + 10_999)).toHaveLength(0);
+		expect(op.ended).toBe(false);
+		expect(op.tick(t + 11_000)).toHaveLength(0);
+		expect(op.ended).toBe(true);
+		expect(op.endReason).toBe("restore-failed");
+		expect(op.phase).toBe("done");
+	});
+
+	test("a refused restore ends the operation as restore-failed", () => {
+		const op = operation();
+		const t = intoLinger(op);
+		const restore = only(op.cancel(t + 1_000));
+		op.ack(t + 1_500, restore.command, false);
+		expect(op.endReason).toBe("restore-failed");
+	});
+
+	test("dropping an operation records it", () => {
+		const op = operation();
+		op.end();
+		expect(op.endReason).toBe("dropped");
+	});
+});
+
+describe("renewals", () => {
+	test("a renewal keeps the proof exactly renewMs ahead", () => {
+		const op = operation();
+		const t = T0 + 3_000;
+		prove(op, t);
+		op.renew(t + 1_000, "c-epoch");
+		op.tick(t + 3_999);
+		expect(op.candidateProven).toBe(true);
+		op.tick(t + 4_000);
+		expect(op.candidateProven).toBe(false);
+	});
+
+	test("a renewal under another sender epoch is refused", () => {
+		const op = operation();
+		const t = T0 + 3_000;
+		op.startSpan(t - 3_000, "c-epoch-1", null);
+		op.endSpan(
+			t,
+			{ candidate: "pass", holder: "inconclusive", independentFailed: false },
+			"c-epoch-1",
+			null,
+		);
+		// The span's own proof lapses at +9 s; a renewal at +8 s under another
+		// epoch must not carry it past that.
+		expect(op.renew(t + 8_000, "c-epoch-2")).toHaveLength(0);
+		op.tick(t + 10_000);
+		expect(op.candidateProven).toBe(false);
+	});
+
+	test("a lapsed proof is not renewed; the candidate has to prove itself again", () => {
+		const op = operation();
+		const t = T0 + 3_000;
+		op.startSpan(t - 3_000, "c-epoch", null);
+		op.endSpan(
+			t,
+			{ candidate: "pass", holder: "inconclusive", independentFailed: false },
+			"c-epoch",
+			null,
+		);
+		// No event between the lapse and the renewal: the expired proof is still
+		// in the reducer's state when the renewal looks at it.
+		expect(op.renew(t + 14_000, "c-epoch")).toHaveLength(0);
+		// `candidateProven` answers as of the last event; bring it to now.
+		op.tick(t + 14_000);
+		expect(op.candidateProven).toBe(false);
+	});
+});
