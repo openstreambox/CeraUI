@@ -130,6 +130,7 @@ function useDeps(extra?: {
 	) => { ok: true; release: () => void } | { ok: false; refusal: string };
 	readonly startUnit?: (unit: string) => Promise<void>;
 	readonly beforeLease?: () => Promise<void>;
+	readonly beforeStart?: () => Promise<void>;
 	readonly unitActive?: (unit: string) => Promise<boolean>;
 	readonly unitWaitMs?: number;
 	readonly resolveUsb2?: (key: string) => Promise<Usb2Bound | null>;
@@ -165,6 +166,9 @@ function useDeps(extra?: {
 		...(extra?.beforeLease === undefined
 			? {}
 			: { beforeLease: extra.beforeLease }),
+		...(extra?.beforeStart === undefined
+			? {}
+			: { beforeStart: extra.beforeStart }),
 		...(extra?.resolveUsb2 === undefined
 			? {}
 			: { resolveUsb2: extra.resolveUsb2 }),
@@ -991,6 +995,44 @@ describe("helper action RPCs", () => {
 		const result = await call(
 			helperUsb2Procedure,
 			{ confirmed: true, token: token ?? "", key: "fc800000.usb:usb2:1.4" },
+			{ context: callerContext() },
+		);
+		expect(result).toEqual({ ok: false, refusal: "identity_unresolved" });
+		expect(started).toEqual([]);
+	});
+
+	test("a replacement cached before start is still refused", async () => {
+		await fresh();
+		await plant(USB2_REL);
+		await plant("proc/device-tree/compatible", "radxa,rock-5b-plus\0");
+		await plantModem("4");
+		useDeps({
+			stableKey: (ifname) =>
+				ifname === "wwan0" ? USB2_BOUND.leaseKey : undefined,
+			beforeStart: async () => {
+				await plantModem("9");
+				const swapped = await readUsbTree({ sysfsRoot: root });
+				await captureHelperSeen(swapped.roots, root);
+			},
+		});
+		const tree = await readUsbTree({ sysfsRoot: root });
+		await captureHelperSeen(tree.roots, root);
+		const offer = await call(helperOfferProcedure, undefined, {
+			context: callerContext(),
+		});
+		expect(offer.ok).toBe(true);
+		if (!offer.ok) return;
+		const token = offer.tokens.find(
+			(row) => row.key === "fc800000.usb:usb2:1.4",
+		)?.token;
+		expect(token).toBeDefined();
+		const result = await call(
+			helperUsb2Procedure,
+			{
+				confirmed: true,
+				token: token ?? "",
+				key: "fc800000.usb:usb2:1.4",
+			},
 			{ context: callerContext() },
 		);
 		expect(result).toEqual({ ok: false, refusal: "identity_unresolved" });
