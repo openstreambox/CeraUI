@@ -32,7 +32,7 @@ def validate(c):
         raise ValueError('invalid station')
     if not isinstance(c['seconds'], int) or not 1 <= c['seconds'] <= 600:
         raise ValueError('invalid duration')
-    if type(c['ap_ifindex']) is not int or c['ap_ifindex'] < 1:
+    if type(c['ap_ifindex']) is not int or not 1 <= c['ap_ifindex'] <= 0x7fffffff:
         raise ValueError('invalid ingress lifetime')
 
 
@@ -53,14 +53,16 @@ def pinned(c):
 
 def rules(c):
     validate(c)
-    ap, wan, phone, mac, dns, seconds = (c[k] for k in ('ap', 'wan', 'phone', 'mac', 'dns', 'seconds'))
+    ingress, wan, phone, mac, dns, seconds = (
+        c[k] for k in ('ap_ifindex', 'wan', 'phone', 'mac', 'dns', 'seconds'))
     # After sharing's mangle hook: override ONLY the selected web/DNS packets.
     # A separate timed set gates replies too; expired conntracks are dropped,
     # never restored onto a healthy link with the hotel's old NAT identity.
-    # `iif` binds the AP's ifindex when the table loads, so a replacement under
-    # the same name never matches; the policy rule below also needs our mark.
-    match = f'iif "{ap}" ip saddr . ether saddr @phone'
-    v6 = f'iif "{ap}" meta nfproto ipv6 ether saddr @station'
+    # Ingress is the AP's pinned numeric ifindex, never its name: nft does not
+    # resolve anything at install time, so a replacement under the same name
+    # never matches. The policy rule below also needs our mark.
+    match = f'meta iif {ingress} ip saddr . ether saddr @phone'
+    v6 = f'meta iif {ingress} meta nfproto ipv6 ether saddr @station'
     return f'''table inet {TABLE} {{
  set station {{ type ether_addr; flags timeout; elements = {{ {mac} timeout {seconds}s }}; }}
  set doh4 {{ type ipv4_addr; elements = {{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112 }}; }}
@@ -95,7 +97,7 @@ def rules(c):
   ct mark {MARK} drop
  }}
  chain nat {{ type nat hook postrouting priority 90; policy accept;
-  iif "{ap}" meta mark {MARK} oifname "{wan}" masquerade
+  meta iif {ingress} meta mark {MARK} oifname "{wan}" masquerade
  }}
 }}\n'''
 
@@ -131,7 +133,8 @@ def open_window(c):
             'from', c['phone'], 'fwmark', MARK, 'lookup', ROUTE_TABLE)
         clear_flows(c)
         run('nft', '-f', '-', data=f'delete table inet {TABLE}\n' + rules(c))
-        # A swap between the first check and the load would bind the newcomer.
+        # The rules match only the pinned index; a name that no longer names it
+        # means the AP was replaced during installation, so roll back.
         pinned(c)
     except BaseException:
         close_window(c)

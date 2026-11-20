@@ -33,13 +33,18 @@ same published incarnation. A rotated incarnation reports a changed Wi-Fi; a
 Limited or Unverified radio, or a publication that does not return within two
 seconds, reports unconfirmed identity. The AP the phone arrived through (the
 front door's proven arrival interface, else the route back to the phone) is
-pinned separately: its hotspot row, active AP profile, netif incarnation and
-kernel ifindex, with no later Start, Stop or reconfigure on that row. Each
-identity check rechecks both. The helper matches the AP with nftables `iif`,
-which binds the ifindex when the table loads, and refuses or rolls back if the
-interface under the AP name is not the pinned ifindex. A Stop, restart or
-replacement under the same name closes the window; nothing transfers to the
-newcomer.
+pinned separately at entry, before any cleanup or identity capture: its hotspot
+row and operation, active AP profile, NM activation (active connection path and
+profile instance), netif incarnation and kernel ifindex. Only that pin is used
+afterwards. Fresh observations of both ends bracket the association evidence
+and the window installation, before the helper runs and after it returns; a
+change on either end closes the installed window. Each periodic identity check
+rechecks both. The helper matches ingress only by the pinned numeric ifindex
+(`meta iif <index>`, never the AP name) and refuses or rolls back if the
+interface under the AP name is not that ifindex. A Stop, restart, same-profile
+reactivation on the same netdev or replacement under the same name closes the
+window; nothing transfers to the newcomer. The marked policy route and its
+exact cleanup are unchanged.
 
 `captive-portal-window.py` is shipped beside the application in `/opt/ceralive`.
 It needs Python 3, nftables, iproute2 and conntrack, and runs with the backend's

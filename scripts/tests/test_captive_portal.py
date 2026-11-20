@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import re
 import unittest
 import subprocess
 from unittest.mock import patch
@@ -33,7 +34,7 @@ class WindowTests(unittest.TestCase):
         self.assertIn('chain input { type filter hook input priority -10;', rules)
         self.assertIn('set station { type ether_addr; flags timeout;', rules)
         self.assertIn('02:00:00:00:00:02 timeout 600s', rules)
-        self.assertIn('iif "ap0" meta nfproto ipv6 ether saddr @station', rules)
+        self.assertIn('meta iif 7 meta nfproto ipv6 ether saddr @station', rules)
         self.assertIn('tcp dport { 53, 80, 443, 853 } reject with tcp reset', rules)
         self.assertIn('udp dport { 53, 443, 853 } reject with icmpx port-unreachable', rules)
         self.assertIn('ip saddr . ether saddr @phone tcp dport 853 reject with tcp reset', rules)
@@ -43,7 +44,8 @@ class WindowTests(unittest.TestCase):
 
     def test_rejects_unbounded_and_injection(self):
         for field, value in [('seconds', 601), ('seconds', 0), ('wan', 'wan0; reboot'), ('phone', '::1'), ('mac', 'bad'),
-                             ('ap_ifindex', 0), ('ap_ifindex', '7'), ('ap_ifindex', True)]:
+                             ('ap_ifindex', 0), ('ap_ifindex', '7'), ('ap_ifindex', True),
+                             ('ap_ifindex', 7.0), ('ap_ifindex', 2 ** 31), ('ap_ifindex', -7)]:
             config = self.config()
             config[field] = value
             with self.assertRaises(ValueError):
@@ -51,10 +53,17 @@ class WindowTests(unittest.TestCase):
 
     def test_ingress_is_bound_to_the_pinned_interface_lifetime(self):
         rules = portal.rules(self.config())
-        # iifname follows a same-name replacement; iif binds the loaded ifindex.
+        # A name follows a same-name replacement: every ingress match is the
+        # pinned numeric ifindex, and the AP name never appears in the table.
         self.assertNotIn('iifname', rules)
-        self.assertIn('iif "ap0" ip saddr . ether saddr @phone', rules)
-        self.assertIn('iif "ap0" meta mark 0xcb000100 oifname "wan1" masquerade', rules)
+        self.assertNotIn('"ap0"', rules)
+        self.assertNotIn('ap0', rules)
+        self.assertIn('meta iif 7 ip saddr . ether saddr @phone', rules)
+        self.assertIn('meta iif 7 meta mark 0xcb000100 oifname "wan1" masquerade', rules)
+        iifs = re.findall(r'\biif\s+(\S+)', rules)
+        self.assertTrue(iifs)
+        self.assertEqual(set(iifs), {'7'})
+        self.assertEqual(rules.count('meta iif 7'), len(iifs))
         with self.assertRaises(KeyError):
             portal.rules({k: v for k, v in self.config().items() if k != 'ap_ifindex'})
 
