@@ -102,12 +102,51 @@ radio associated without an address is not idle.
   - `radio-lock.ts`: scans and joins run under CeraUI's per-adapter Wi-Fi
     lock and are skipped while another operation holds it.
 
+## Proof and swap: the pieces (not wired yet)
+
+These pure parts of the next step exist and are tested; the coordinator does
+not call them yet.
+
+- `sender-links.ts` reads the sender's per-link arrival reports
+  (`srtla_ack_entries_total`, `data_packets_queued_total`,
+  `last_srtla_ack_age_ms`, `srtla_ack_epoch`) and its health flags from
+  `get_stats`, and maps links onto radios by interface, else by source
+  address. The arrival field names come from an unmerged upstream proposal
+  and are read only here. Without them there is no snapshot, and the
+  coordinator behaves as before.
+- `proof.ts` judges a link over a span of one connection epoch. A candidate
+  passes when its ACK entries, read a round trip later, reach 0.95 of the
+  packets queued on it, minus one receiver batch for the whole span. It must
+  also clear these checks:
+  - at least 3 s and 60 packets;
+  - no busy second without arrivals;
+  - a fresh last ACK for its rate;
+  - congestion-control loss under 2 %;
+  - an RTT within a quarter of the SRT latency;
+  - at least its share of the bond;
+  - the sender's capacity estimate at 1.25 times the encoder rate, when it
+    gives one.
+
+  The sender holding a link back (stall gate, weak, sole-carrier, in-flight
+  cap) makes a candidate's span inconclusive but fails a holder. A holder
+  with no ACKs while another link still gets them is dead. A holder below
+  0.90 is fading. This proves the offered share, not spare capacity.
+- `swap-op.ts` runs one holder/candidate swap through the two-radio reducer.
+  - It uses one reducer state per operation, with explicit timings: a 30 s
+    operation, a 10 s linger, and a 2 s emergency promotion.
+  - One challenge covers a whole proof span. Renewals every second keep a
+    passing candidate's proof alive through the linger.
+  - The receiver is treated as the common cause only when a link outside
+    the pair failed too.
+  - A command the coordinator cannot confirm from evidence in time aborts.
+
 ## Not yet
 
 These come in later parts:
 
-- Proving a path at the stream rate from receiver-acknowledged bytes.
-- Promoting a proven path to holder, lingering, then releasing the old holder.
+- Wiring the proof and swap into the coordinator: promotion as a relabel that
+  moves scan protection, with a hold-out of the old holder only when it dies,
+  fails hard or is needed to search, and the abrupt-loss relabel.
 - Boot wiring and configuration, with the preconditions it needs: IPv6-only
   paths counted as associated, `stop()` fenced against a round in flight, a
   startup sweep of leftover `ceraui-search-*` profiles, and radio state keyed
@@ -131,6 +170,17 @@ radio-keyed roles.
 ```sh
 bun test apps/backend/src/modules/network/wifi-roaming/ apps/backend/src/tests/wifi-rescan-holder-gate.test.ts
 ```
+
+`proof.test.ts`, `sender-links.test.ts` and `swap-op.test.ts` cover the
+pieces above on synthetic snapshots and a fake clock. The cases include:
+- a 10 s linger completing, where the reducer's 5 s default would abort it;
+- ack deadlines;
+- the emergency promotion at exactly 2 s;
+- the common-target witness;
+- the 87 % threshold at 3 s and 40 pkt/s;
+- low-rate spans;
+- bufferbloat;
+- the asymmetric holder rules.
 
 The coordinator tests run a fake world of radios, APs, routers and a clock.
 They cover these cases:
