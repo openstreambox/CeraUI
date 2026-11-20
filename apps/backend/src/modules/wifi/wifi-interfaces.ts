@@ -66,7 +66,11 @@ import {
 import { retryWifiAdapterReconcile } from "./wifi-adapter-reconciler.ts";
 import { supportsApStaConcurrency } from "./wifi-ap-sta-capability.ts";
 import { quiesceHotspotAutoconnect } from "./wifi-autoconnect-policy.ts";
-import { refreshWifiCapabilities } from "./wifi-capabilities.ts";
+import {
+	getWifiCapabilitiesForInterface,
+	getWifiCapabilityEvidenceRevision,
+	refreshWifiCapabilities,
+} from "./wifi-capabilities.ts";
 import type { AutoWifiChannel } from "./wifi-channels.ts";
 import {
 	concurrentApIfname,
@@ -315,6 +319,76 @@ export function parseWifiDeviceProperties(
 	});
 }
 
+/*
+  NetworkManager's `WIFI-PROPERTIES.AP` decides whether a radio is offered a
+  hotspot. Some drivers leave that flag at `no` while the phy's own `iw phy`
+  "Supported interface modes" lists AP, so until NM and iw are shown to agree
+  on every supported radio the parsed capability evidence can lift NM's `no`.
+  Evidence that is absent (no read yet, unmapped phy, parse drift) never does:
+  NM's answer stands, and a later evidence revision re-runs discovery.
+*/
+const apFallbackLogged = new Set<string>();
+const apEvidenceRechecked = new Map<string, number>();
+
+function phyListsApMode(ifname: string): boolean {
+	return (getWifiCapabilitiesForInterface(ifname)?.apModes.length ?? 0) > 0;
+}
+
+function radioSupportsAp(
+	registryKey: string,
+	ifname: string,
+	nmSupportsAp: boolean,
+): boolean {
+	if (nmSupportsAp) return true;
+	if (!phyListsApMode(ifname)) return false;
+	if (!apFallbackLogged.has(registryKey)) {
+		apFallbackLogged.add(registryKey);
+		logger.info(
+			`wifi: NetworkManager reports no AP support on ${ifname}, but its phy lists AP mode; offering the hotspot`,
+		);
+	}
+	return true;
+}
+
+async function attachHotspot(
+	row: WifiInterface,
+	ifname: string,
+	props: WifiDeviceProperties,
+	signal: AbortSignal,
+): Promise<boolean> {
+	row.supportsApStaConcurrency =
+		isQualifiedNmManagedHybrid(ifname) &&
+		(await supportsApStaConcurrency(ifname));
+	if (signal.aborted) return false;
+
+	const bandCapability: AutoWifiChannel[] = ["auto"];
+	if (props.supports5Ghz) bandCapability.push("auto_50");
+	if (props.supports2Ghz) bandCapability.push("auto_24");
+
+	const hotspot: WifiHotspot = {
+		warnings: {},
+		bandCapability,
+		availableChannels: [...bandCapability],
+	};
+	// Fold in the concrete channels the kernel currently permits, and
+	// retire any band its regulatory rules forbid initiating on.
+	refreshHotspotChannels(hotspot, getDerivedApChannels());
+	(row as WifiInterfaceWithHotspot).hotspot = hotspot;
+	return true;
+}
+
+/** New AP evidence for a radio without a hotspot re-runs its classification once. */
+function recheckApEvidence(): void {
+	for (const row of Object.values(getWifiInterfacesByMacAddress())) {
+		if (!row || canHotspot(row) || row.removed || !phyListsApMode(row.ifname))
+			continue;
+		const revision = getWifiCapabilityEvidenceRevision(row.ifname);
+		if (apEvidenceRechecked.get(row.ifname) === revision) continue;
+		apEvidenceRechecked.set(row.ifname, revision);
+		scheduleWifiUpdate(0);
+	}
+}
+
 let wifiIdToMacAddress: Record<WifiInterfaceId, MacAddress> = {};
 
 export function getWifiIdToMacAddress() {
@@ -418,6 +492,8 @@ export function resetWifiInterfaceDiscoveryForTest(): void {
 	wifiDeviceRefreshCompleted = false;
 	classifiedWifiIfnames.clear();
 	nonWifiIfnames.clear();
+	apFallbackLogged.clear();
+	apEvidenceRechecked.clear();
 }
 
 export function recordDegradedWifiInterface(
@@ -1015,6 +1091,34 @@ async function discoverWifiDevices() {
 							wifiInterface.conn = conn;
 							statusChange = true;
 						}
+						if (!canHotspot(wifiInterface) && phyListsApMode(ifname)) {
+							const parsedProps = parseWifiDeviceProperties(
+								await nmDeviceProp(
+									ifname,
+									"GENERAL.VENDOR,GENERAL.PRODUCT,WIFI-PROPERTIES.AP,WIFI-PROPERTIES.5GHZ,WIFI-PROPERTIES.2GHZ",
+								),
+							);
+							if (signal.aborted) return;
+							if (!parsedProps.ok) logParseError(parsedProps);
+							else if (
+								radioSupportsAp(
+									macAddress,
+									ifname,
+									parsedProps.value.supportsAp,
+								)
+							) {
+								if (
+									!(await attachHotspot(
+										wifiInterface,
+										ifname,
+										parsedProps.value,
+										signal,
+									))
+								)
+									return;
+								statusChange = true;
+							}
+						}
 					} else {
 						const id = recoveredId ?? wifiIfId++;
 
@@ -1045,28 +1149,20 @@ async function discoverWifiDevices() {
 						};
 						invalidateWifiRadioRow(newInterface, observation);
 
-						if (parsedProps.value.supportsAp) {
-							newInterface.supportsApStaConcurrency =
-								isQualifiedNmManagedHybrid(ifname) &&
-								(await supportsApStaConcurrency(ifname));
-							if (signal.aborted) return;
-
-							const bandCapability: AutoWifiChannel[] = ["auto"];
-							if (parsedProps.value.supports5Ghz)
-								bandCapability.push("auto_50");
-							if (parsedProps.value.supports2Ghz)
-								bandCapability.push("auto_24");
-
-							const hotspot: WifiHotspot = {
-								warnings: {},
-								bandCapability,
-								availableChannels: [...bandCapability],
-							};
-							// Fold in the concrete channels the kernel currently permits, and
-							// retire any band its regulatory rules forbid initiating on.
-							refreshHotspotChannels(hotspot, getDerivedApChannels());
-							(newInterface as WifiInterfaceWithHotspot).hotspot = hotspot;
-						}
+						if (
+							radioSupportsAp(
+								macAddress,
+								ifname,
+								parsedProps.value.supportsAp,
+							) &&
+							!(await attachHotspot(
+								newInterface,
+								ifname,
+								parsedProps.value,
+								signal,
+							))
+						)
+							return;
 						newDevices = true;
 						statusChange = true;
 						addWifiInterface(macAddress, newInterface);
@@ -1209,7 +1305,7 @@ async function discoverWifiDevices() {
 
 	// Fire-and-forget: the capability read is bounded and never throws, and the
 	// wire builder serves whatever the last successful read produced.
-	void refreshWifiCapabilities(seenIfnames);
+	void refreshWifiCapabilities(seenIfnames).then(recheckApEvidence);
 
 	// delete removed adapters
 	const wifiInterfacesByMacAddress = getWifiInterfacesByMacAddress();

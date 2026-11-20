@@ -1728,6 +1728,8 @@
 	"network.wifiMode.error.noDevice": "Das Gerät konnte diesen Adapter nicht finden, daher wurde nichts geändert.",
 	"network.wifiMode.error.unsupported": "Dieses Funkmodul unterstützt den angeforderten Modus nicht und behielt den vorherigen bei.",
 	"network.wifiMode.error.capabilityUnproven": "Der gleichzeitige Betrieb von WLAN und Zugangspunkt ist für dieses Funkmodul nicht nachgewiesen, daher hat das Gerät die Änderung abgelehnt.",
+	"network.wifiMode.savedHybrid.title": "Hybrid-Modus ist gespeichert, aber dieses Funkmodul kann ihn nicht ausführen",
+	"network.wifiMode.savedHybrid.body": "Dieses Funkmodul ist nicht für den gleichzeitigen Betrieb von WLAN und Zugangspunkt qualifiziert. Das Gerät hat deshalb die WLAN-Verbindung beibehalten und den Zugangspunkt nicht gestartet. Ihre Wahl des Hybrid-Modus und die Zugangspunkt-Einstellungen bleiben gespeichert. Wechseln Sie zu Zugangspunkt, um nur von diesem Funkmodul aus zu senden (sein WLAN-Uplink wird getrennt), oder betreiben Sie den Zugangspunkt auf einem anderen Funkmodul.",
 	"network.wifiMode.error.activationFailed": "Der Adapter konnte den angeforderten Modus nicht aktivieren und behielt den vorherigen bei.",
 	"network.wifiMode.error.hybridChannelNotPermitted": "Hybrid ist nicht verfügbar, weil der Kanal des verbundenen WLANs keinen Hotspot erlaubt. Das WLAN bleibt verbunden.",
 	"network.wifiMode.error.notConfirmed": "Das Gerät hat das Ergebnis nie gemeldet, daher ist der Modus des Adapters unbekannt.",

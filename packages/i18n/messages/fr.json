@@ -1731,6 +1731,8 @@
 	"network.wifiMode.error.noDevice": "L'appareil n'a pas trouvé cet adaptateur ; rien n'a été modifié.",
 	"network.wifiMode.error.unsupported": "Cette radio ne prend pas en charge le mode demandé ; elle a conservé le précédent.",
 	"network.wifiMode.error.capabilityUnproven": "Le fonctionnement simultané du Wi-Fi et d'un point d'accès n'a pas été démontré sur cette radio ; l'appareil a refusé le changement.",
+	"network.wifiMode.savedHybrid.title": "Le mode Hybride est enregistré, mais cette radio ne peut pas l'utiliser",
+	"network.wifiMode.savedHybrid.body": "Cette radio n'est pas qualifiée pour faire fonctionner le Wi-Fi et un point d'accès en même temps ; l'appareil a donc conservé la connexion Wi-Fi et n'a pas démarré le point d'accès. Votre choix du mode Hybride et les réglages du point d'accès restent enregistrés. Passez en Point d'accès pour diffuser depuis cette radio seule (sa liaison montante Wi-Fi se déconnectera), ou utilisez le point d'accès sur une autre radio.",
 	"network.wifiMode.error.activationFailed": "L'adaptateur n'a pas pu activer le mode demandé et a conservé le précédent.",
 	"network.wifiMode.error.hybridChannelNotPermitted": "Le mode hybride est indisponible car le canal du réseau Wi-Fi connecté ne permet pas de démarrer un point d'accès. Le Wi-Fi reste connecté.",
 	"network.wifiMode.error.notConfirmed": "L'appareil n'a jamais signalé le résultat ; le mode de l'adaptateur est donc inconnu.",

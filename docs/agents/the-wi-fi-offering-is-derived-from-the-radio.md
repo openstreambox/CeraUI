@@ -56,6 +56,15 @@ and publishes it on the additive, optional `wifiInterfaceSchema.capabilities?`. 
 means "older device", and the UI must render today's legacy set for it, never an empty
 offering. A DOM byte-comparison regression lock pins exactly that.
 
+**Hotspot support is NetworkManager's flag, lifted by the phy's AP mode
+[EXISTS].** NM's `WIFI-PROPERTIES.AP` decides whether discovery gives a radio a
+hotspot. When NM answers `no` but the radio's parsed `iw phy` "Supported
+interface modes" (`apModes`) list AP, discovery offers the hotspot anyway and
+logs that once per radio at info level. Absent capability evidence never lifts
+NM's answer; evidence that lands after a radio was classified re-runs discovery
+once per evidence revision. The bridge stays until NM and iw are shown to agree
+on every supported radio.
+
 **Bind the adapter to its wiphy, never by position.** `iw dev` lists phys in
 *descending* order (`phy#1` before `phy#0` on a dual board), so any positional read
 binds the wrong radio. The binding is `basename(readlink('/sys/class/net/<if>/phy80211'))`,

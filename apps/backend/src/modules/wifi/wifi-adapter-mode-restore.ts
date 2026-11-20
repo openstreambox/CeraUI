@@ -32,6 +32,8 @@ import {
 	getWifiCapabilityEvidenceRevision,
 } from "./wifi-capabilities.ts";
 import { HYBRID_CHANNEL_REFUSAL } from "./wifi-concurrent-interface.ts";
+import { captureWifiFrameIncarnation } from "./wifi-frame-binding.ts";
+import { withWifiFrameIncarnation } from "./wifi-frame-incarnation.ts";
 import { canHotspot } from "./wifi-hotspot-types.ts";
 import { restoreLimitedHotspot } from "./wifi-limited-hotspot-restore.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
@@ -119,6 +121,18 @@ async function applyWifiAdapterModes(
 											wifiAdapterModeOptions(capability),
 										)
 									) {
+										// A saved hybrid intent on a radio that does not qualify stays
+										// saved, credentials included: it is refused visibly and never
+										// translated into an exclusive AP that would drop the station.
+										if (desired === "hybrid")
+											withWifiFrameIncarnation(
+												captureWifiFrameIncarnation(row.id, "mode"),
+												() =>
+													deps.publishOutcome(row.id, {
+														success: false,
+														error: "capability-unproven",
+													}),
+											);
 										if (
 											desired === "hybrid" &&
 											rawCapability?.staApCombo.supported === true &&

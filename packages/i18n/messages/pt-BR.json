@@ -1731,6 +1731,8 @@
 	"network.wifiMode.error.noDevice": "O dispositivo não encontrou este adaptador, portanto nada foi alterado.",
 	"network.wifiMode.error.unsupported": "Este rádio não é compatível com o modo solicitado, por isso manteve o anterior.",
 	"network.wifiMode.error.capabilityUnproven": "O uso simultâneo de Wi-Fi e ponto de acesso não foi comprovado neste rádio, por isso o dispositivo recusou a mudança.",
+	"network.wifiMode.savedHybrid.title": "O modo Híbrido está salvo, mas este rádio não consegue usá-lo",
+	"network.wifiMode.savedHybrid.body": "Este rádio não é qualificado para usar Wi-Fi e ponto de acesso ao mesmo tempo, por isso o dispositivo manteve a conexão Wi-Fi e não iniciou o ponto de acesso. Sua escolha do modo Híbrido e as configurações do ponto de acesso continuam salvas. Mude para Ponto de acesso para transmitir apenas deste rádio (o enlace Wi-Fi dele será desconectado) ou use o ponto de acesso em outro rádio.",
 	"network.wifiMode.error.activationFailed": "O adaptador não conseguiu ativar o modo solicitado e manteve o anterior.",
 	"network.wifiMode.error.hybridChannelNotPermitted": "O modo híbrido está indisponível porque o canal da rede Wi-Fi conectada não permite iniciar um hotspot. O Wi-Fi continua conectado.",
 	"network.wifiMode.error.notConfirmed": "O dispositivo nunca informou o resultado, portanto o modo do adaptador é desconhecido.",

@@ -1683,6 +1683,8 @@
 	"network.wifiMode.error.noDevice": "设备未找到此适配器，因此未做任何更改。",
 	"network.wifiMode.error.unsupported": "此无线设备不支持所请求的模式，因此保持了之前的模式。",
 	"network.wifiMode.error.capabilityUnproven": "尚未在此无线设备上验证 Wi-Fi 与接入点同时运行，因此设备拒绝了此更改。",
+	"network.wifiMode.savedHybrid.title": "已保存混合模式，但此无线设备无法运行该模式",
+	"network.wifiMode.savedHybrid.body": "此无线设备未经验证可同时运行 Wi-Fi 和热点，因此设备保留了 Wi-Fi 连接，没有启动热点。您的混合模式选择和热点设置仍会保留。若要仅由此无线设备广播，请切换到热点（其 Wi-Fi 上行链路将断开），或在另一个无线设备上运行热点。",
 	"network.wifiMode.error.activationFailed": "适配器无法启用所请求的模式，保持了之前的模式。",
 	"network.wifiMode.error.hybridChannelNotPermitted": "已连接 Wi-Fi 网络的信道不允许启动热点，因此混合模式不可用。Wi-Fi 保持连接。",
 	"network.wifiMode.error.notConfirmed": "设备从未报告结果，因此适配器的模式未知。",
