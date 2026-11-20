@@ -21,8 +21,16 @@ import type { AppWebSocket, RPCContext } from "../../rpc/types.ts";
 import {
 	heldModemMutations,
 	resetLifecycleInterlock,
+	tryAcquireLifecycle,
 	tryAcquireModemMutation,
 } from "../streaming/lifecycle-admission.ts";
+import {
+	beginHelperRecovery,
+	beginRecoveryBarrier,
+	completeRecoveryBarrier,
+	isHelperRecoveryPending,
+	isRecoveryPending,
+} from "../streaming/recovery-barrier.ts";
 import { updateStatus } from "../streaming/streaming.ts";
 import {
 	bindUsb2Target,
@@ -31,6 +39,7 @@ import {
 	HELPER_REARM_MAX,
 	pollHelperInterlock,
 	resetHelperActionGuardForTest,
+	restoreHelperInterlock,
 	setHelperActionDepsForTest,
 	TYPEC_SUBJECT,
 	TYPEC_UNIT,
@@ -125,6 +134,7 @@ function useDeps(extra?: {
 	readonly resolveUsb2?: (key: string) => Promise<Usb2Bound | null>;
 	readonly stableKey?: (ifname: string) => string | undefined;
 	readonly sleep?: () => Promise<void>;
+	readonly useProductionAdmit?: boolean;
 }): void {
 	setHelperActionDepsForTest({
 		root,
@@ -142,7 +152,11 @@ function useDeps(extra?: {
 				started.push(unit);
 			}),
 		liveStream: extra?.liveStream ?? (() => false),
-		admit: extra?.admit ?? (() => ({ ok: true as const, release() {} })),
+		...(extra?.useProductionAdmit
+			? {}
+			: {
+					admit: extra?.admit ?? (() => ({ ok: true as const, release() {} })),
+				}),
 		unitActive: extra?.unitActive ?? (async () => false),
 		log: (message, fields) => {
 			logs.push(JSON.stringify({ message, fields }));
@@ -178,6 +192,7 @@ async function plantJournal(entry: Record<string, unknown>): Promise<void> {
 afterEach(async () => {
 	resetHelperActionGuardForTest();
 	resetLifecycleInterlock();
+	completeRecoveryBarrier();
 	updateStatus(false);
 	if (root !== "") await rm(root, { recursive: true, force: true });
 	root = "";
@@ -664,6 +679,60 @@ describe("helper action RPCs", () => {
 		expect(started).toEqual([TYPEC_UNIT]);
 		expect(heldModemMutations()).toContain(TYPEC_SUBJECT);
 		expect((await readEntries())[0]?.phase).toBe("started");
+	});
+
+	test("helper recovery finishes before streaming admission opens", async () => {
+		await fresh();
+		await plant(TYPEC_REL);
+		await plant("proc/device-tree/compatible", "radxa,rock-5b-plus\0");
+		await plant("run/ceralive-typec/rearm", "0\n");
+		await plantJournal({
+			id: CRASH_ID,
+			action: "retry-port",
+			unit: TYPEC_UNIT,
+			scope: "socket:C",
+			leaseKey: TYPEC_SUBJECT,
+			phase: "started",
+			process: "dead-process",
+			at: 1,
+		});
+		beginRecoveryBarrier();
+		beginHelperRecovery();
+		expect(tryAcquireLifecycle("streaming").admitted).toBe(false);
+		useDeps({ useProductionAdmit: true, unitActive: async () => true });
+		const early = await call(
+			helperRetryPortProcedure,
+			{ confirmed: true },
+			{ context: callerContext() },
+		);
+		expect(early).toEqual({ ok: false, refusal: "start_failed" });
+		expect(started).toEqual([]);
+		expect(await restoreHelperInterlock()).toBe(true);
+		expect(isHelperRecoveryPending()).toBe(false);
+		expect(isRecoveryPending()).toBe(true);
+		expect(heldModemMutations()).toContain(TYPEC_SUBJECT);
+		expect(tryAcquireLifecycle("streaming").admitted).toBe(false);
+		completeRecoveryBarrier();
+		expect(tryAcquireLifecycle("streaming").admitted).toBe(false);
+		expect(started).toEqual([]);
+	});
+
+	test("an unreadable helper journal keeps admission closed", async () => {
+		await fresh();
+		await plant("run/ceralive/devices-actions/bad.json", "{");
+		beginRecoveryBarrier();
+		beginHelperRecovery();
+		useDeps({ useProductionAdmit: true });
+		expect(await restoreHelperInterlock()).toBe(false);
+		expect(isHelperRecoveryPending()).toBe(true);
+		completeRecoveryBarrier();
+		expect(tryAcquireLifecycle("streaming").admitted).toBe(false);
+		const early = await call(
+			helperRetryPortProcedure,
+			{ confirmed: true },
+			{ context: callerContext() },
+		);
+		expect(early).toEqual({ ok: false, refusal: "start_failed" });
 	});
 
 	test("a queued job keeps the interlock even when ActiveState is inactive", async () => {

@@ -60,7 +60,15 @@ import { dirname, join, sep } from "node:path";
 
 import { logger } from "../../helpers/logger.ts";
 import { modemStableKeyForIfname } from "../modems/mutation-identity.ts";
-import { tryAcquireModemMutation } from "../streaming/lifecycle-admission.ts";
+import {
+	tryAcquireHelperRecoveryLease,
+	tryAcquireModemMutation,
+} from "../streaming/lifecycle-admission.ts";
+import {
+	completeHelperRecovery,
+	isHelperRecoveryPending,
+	isRecoveryPending,
+} from "../streaming/recovery-barrier.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
 	helperUnitArgv,
@@ -224,7 +232,10 @@ const defaultDeps: Deps = {
 		await publishUsbDevices();
 	},
 	admit: (key) => {
-		const admission = tryAcquireModemMutation(key);
+		const admission =
+			isRecoveryPending() || isHelperRecoveryPending()
+				? tryAcquireHelperRecoveryLease(key)
+				: tryAcquireModemMutation(key);
 		if (!admission.admitted) {
 			return { ok: false, refusal: admission.refusal };
 		}
@@ -349,6 +360,7 @@ export function resetHelperActionGuardForTest(): void {
 	for (const release of retained.values()) release();
 	retained.clear();
 	inFlight.clear();
+	completeHelperRecovery();
 	cooldownUntil.clear();
 	seen.clear();
 	override = null;
@@ -511,7 +523,7 @@ function rememberCooldown(entries: readonly JournalEntry[], now: number): void {
  * busy. Otherwise mark the record failed. Do not start the unit again.
  */
 export async function restoreHelperInterlock(): Promise<boolean> {
-	return withJournal(async () => {
+	const ok = await withJournal(async () => {
 		const deps = currentDeps();
 		const entries = await loadJournal(deps.root);
 		if (entries === null) return false;
@@ -531,11 +543,14 @@ export async function restoreHelperInterlock(): Promise<boolean> {
 			inFlight.add(entry.scope);
 			if (retained.has(entry.scope)) continue;
 			const admission = await deps.admit(entry.leaseKey);
-			if (admission.ok) retained.set(entry.scope, admission.release);
+			if (!admission.ok) return false;
+			retained.set(entry.scope, admission.release);
 		}
 		if (deps.watch) ensureWatch();
 		return true;
 	});
+	if (ok) completeHelperRecovery();
+	return ok;
 }
 
 async function appendJournal(entry: JournalEntry): Promise<boolean> {
@@ -904,6 +919,7 @@ export async function readHelperActionOffer(
 	if (callerRefusal !== null) {
 		return { ok: false, refusal: callerRefusal };
 	}
+	if (isHelperRecoveryPending()) return refuse("start_failed");
 	await restoreHelperInterlock();
 	const deps = currentDeps();
 	const rock = await rockBoard(deps.root);
@@ -927,6 +943,7 @@ export async function runHelperAction(
 ): Promise<HelperActionResult> {
 	const callerRefusal = helperCallerRefusal(caller);
 	if (callerRefusal !== null) return refuse(callerRefusal);
+	if (isHelperRecoveryPending()) return refuse("start_failed");
 	if (!request.confirmed) return refuse("not_confirmed");
 
 	const deps = currentDeps();
