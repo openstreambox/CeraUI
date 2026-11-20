@@ -588,18 +588,32 @@ export async function captureWifiPortalBindingFromSystem(
 		)
 			.map(object)
 			.filter((r) => r.dst === "default");
-		if (routes.length !== 1) unavailable();
-		const route = routes[0];
+		// Uplink steering copies each uplink's default route into a table of its
+		// own, so the venue Wi-Fi normally has two: NetworkManager's and the copy.
+		// Every one of them must be the same single-path route via the captured
+		// gateway; the binding records NetworkManager's main-table route, or the
+		// only route when there is just one.
+		if (routes.length === 0 || routes.length > 8) unavailable();
+		const tables = new Set<number>();
+		for (const route of routes) {
+			if (
+				(route.dev !== undefined && route.dev !== ifname) ||
+				route.gateway !== a.gateway ||
+				route.multipath !== undefined ||
+				route.nexthops !== undefined ||
+				(route.prefsrc !== undefined && route.prefsrc !== a.address) ||
+				(route.type !== undefined && route.type !== "unicast")
+			)
+				unavailable();
+			const table = tableId(route.table);
+			if (tables.has(table)) unavailable();
+			tables.add(table);
+		}
+		const route =
+			routes.length === 1
+				? routes[0]
+				: routes.find((r) => tableId(r.table) === 254);
 		if (!route) unavailable();
-		if (
-			(route.dev !== undefined && route.dev !== ifname) ||
-			route.gateway !== a.gateway ||
-			route.multipath !== undefined ||
-			route.nexthops !== undefined ||
-			(route.prefsrc !== undefined && route.prefsrc !== a.address) ||
-			(route.type !== undefined && route.type !== "unicast")
-		)
-			unavailable();
 		const routeTable = tableId(route.table);
 		const routeMetric = integer(route.metric);
 		return { routeTable, routeMetric };

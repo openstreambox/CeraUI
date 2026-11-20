@@ -517,16 +517,55 @@ describe("explicit bounded system binding reader", () => {
 		const r = await f.capture();
 		expect(r.ok && r.binding.link.routeTable).toBe(254);
 	});
+	const routesOf = (
+		f: ReturnType<typeof fixture>,
+		routes: Record<string, unknown>[],
+	) => {
+		f.deps.runIp = async (args) =>
+			JSON.stringify(args.includes("route") ? routes : [f.state.address]);
+	};
+	// The shape uplink steering leaves on a real box: NetworkManager's route in
+	// main plus the same route copied into the uplink's own table.
+	test("a steering copy of the venue route binds NetworkManager's main route", async () => {
+		const f = fixture();
+		const main = { ...f.state.route, metric: 601 };
+		delete main.table;
+		routesOf(f, [{ ...f.state.route, table: "45934", metric: 601 }, main]);
+		const r = await f.capture();
+		expect(r.ok && r.binding.link.routeTable).toBe(254);
+		expect(r.ok && r.binding.link.routeMetric).toBe(601);
+	});
+	test("several default routes without a main-table route refuse", async () => {
+		const f = fixture();
+		routesOf(f, [
+			{ ...f.state.route, table: "45934" },
+			{ ...f.state.route, table: "45935" },
+		]);
+		expect((await f.capture()).ok).toBe(false);
+	});
+	test("a steering copy via another gateway, or a duplicate table, refuses", async () => {
+		for (const other of [
+			{ table: "45934", gateway: "192.0.2.254" },
+			{ table: "45934", prefsrc: "192.0.2.20" },
+			{ table: "45934", nexthops: [] },
+			// a second main-table route, named rather than omitted
+			{ table: "main", metric: 20 },
+		]) {
+			const f = fixture();
+			const main = { ...f.state.route };
+			delete main.table;
+			routesOf(f, [main, { ...f.state.route, ...other }]);
+			expect((await f.capture()).ok).toBe(false);
+		}
+	});
 	test("ambiguous/ECMP/conflicting routes and multiple source addresses refuse", async () => {
 		for (const mutation of ["route", "ecmp", "dev", "source", "address"]) {
 			const f = fixture();
 			if (mutation === "route")
-				f.deps.runIp = async (args) =>
-					JSON.stringify(
-						args.includes("route")
-							? [f.state.route, { ...f.state.route, table: 999 }]
-							: [f.state.address],
-					);
+				routesOf(f, [
+					f.state.route,
+					{ ...f.state.route, table: 999, gateway: "192.0.2.254" },
+				]);
 			if (mutation === "ecmp") f.state.route.nexthops = [];
 			if (mutation === "dev") f.state.route.dev = "eth0";
 			if (mutation === "source") f.state.route.prefsrc = "192.0.2.20";
