@@ -277,7 +277,10 @@ describe("transports", () => {
 		expect(valid?.()).toBe(false);
 	});
 
-	test("a private-path socket still needs RPC login, then names its phone and AP", async () => {
+	// The socket comes from a real Unix upgrade and the procedure is the real
+	// one; authentication is set on the socket directly (no login over the
+	// socket), which shows the auth gate applies before and after.
+	test("a private-path socket is refused until authenticated, then names its phone and AP", async () => {
 		const captured: Captured = {};
 		const target = unix({ websocket: capturing(captured) });
 		expect(await statusLine(target, upgradeLines("/ws", [header()]))).toBe(
