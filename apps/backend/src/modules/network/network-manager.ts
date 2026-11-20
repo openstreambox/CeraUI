@@ -428,6 +428,7 @@ export async function nmConnect(
 	uuid: ConnectionUUID,
 	timeout?: number,
 	onActivated?: (path: string) => void,
+	ifname?: string,
 ) {
 	try {
 		// In mock mode, simulate successful connection
@@ -439,7 +440,10 @@ export async function nmConnect(
 		const timeoutArgs = timeout ? ["-w", String(timeout)] : [];
 		const stdout = await run(
 			"nmcli",
-			timeoutArgs.concat(["conn", "up", argMatch(ID_RE, uuid)]),
+			timeoutArgs.concat(
+				["conn", "up", argMatch(ID_RE, uuid)],
+				ifname ? ["ifname", argMatch(ID_RE, ifname)] : [],
+			),
 		);
 		const path = stdout.match(
 			/D-Bus active path: (\/org\/freedesktop\/NetworkManager\/ActiveConnection\/\d+)/,
@@ -594,6 +598,43 @@ export async function nmRescan(device?: string) {
 		logger.error(`nmRescan err: ${describeCliError(err)}`);
 	}
 	return false;
+}
+
+/**
+ * Scan on ONE radio and return what that radio itself sees, as SSID -> best
+ * signal (0-100). `--rescan yes` makes nmcli wait for the scan to finish, so
+ * the answer is fresh, unlike the merged cached list `nmScanResults` reads.
+ * `undefined` is a failed scan, never an empty one.
+ */
+export async function nmScanDevice(
+	ifname: string,
+): Promise<Map<string, number> | undefined> {
+	try {
+		const stdout = await run("nmcli", [
+			"--terse",
+			"--fields",
+			"SSID,SIGNAL",
+			"device",
+			"wifi",
+			"list",
+			"ifname",
+			argMatch(ID_RE, ifname),
+			"--rescan",
+			"yes",
+		]);
+		const seen = new Map<string, number>();
+		for (const row of stdout.split("\n")) {
+			if (!row) continue;
+			const [ssid, signalRaw] = nmcliParseSep(row) as [string, string];
+			const signal = Number.parseInt(signalRaw ?? "", 10);
+			if (!ssid || Number.isNaN(signal)) continue;
+			seen.set(ssid, Math.max(seen.get(ssid) ?? 0, signal));
+		}
+		return seen;
+	} catch (err) {
+		logger.warn(`nmScanDevice err: ${describeCliError(err)}`);
+	}
+	return undefined;
 }
 
 export async function nmScanResults(fields: string) {
