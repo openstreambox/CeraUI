@@ -109,7 +109,7 @@ import { setWifiAdapterMode } from "../../modules/wifi/wifi-adapter-mode-transit
 import { withoutWifiRequestBinding } from "../../modules/wifi/wifi-binding.ts";
 import {
 	getWifiInterfacesByMacAddress,
-	wifiRescan,
+	wifiRescanDispatched,
 } from "../../modules/wifi/wifi-connections.ts";
 import {
 	persistWifiCountry,
@@ -364,16 +364,23 @@ export const wifiScanProcedure = authedProcedure
 		// While the roaming coordinator's scan gate is active, the scan itself
 		// is dispatched under this lock after the gate's fresh mode check, so
 		// the lock is held across the dispatch and passed down rather than
-		// taken twice. Otherwise the scan stays fire-and-forget, as before.
-		const busy = scanGateActive()
-			? await runGuarded(lockKey, () =>
-					wifiRescan(Number(input.device), {
-						adapterLockHeld: lockKey !== undefined,
-					}),
-				)
-			: await runGuarded(lockKey, () => {
-					void handleWifi(ws, { scan: Number(input.device) });
+		// taken twice, and the reply says whether the radio was really scanned:
+		// a radio the gate refuses (it carries the stream, serves the hotspot or
+		// shares a protected phy) is as unavailable as a busy one. Otherwise the
+		// scan stays fire-and-forget, as before.
+		if (scanGateActive()) {
+			let scanned = false;
+			const busy = await runGuarded(lockKey, async () => {
+				scanned = await wifiRescanDispatched(Number(input.device), {
+					adapterLockHeld: lockKey !== undefined,
 				});
+			});
+			if (busy || !scanned) return { success: false, error: "DEVICE_BUSY" };
+			return { success: true };
+		}
+		const busy = await runGuarded(lockKey, () => {
+			void handleWifi(ws, { scan: Number(input.device) });
+		});
 		if (busy) return { success: false, error: "DEVICE_BUSY" };
 		return { success: true };
 	});

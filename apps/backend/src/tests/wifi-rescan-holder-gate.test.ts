@@ -218,7 +218,21 @@ describe("the scan RPC while the gate is active", () => {
 			phy: `phy-${ifname}`,
 			apOnPhy: ifname === "wlan1",
 		}));
-		await call(wifiScanProcedure, { device: "1" }, { context: ctx() });
+		expect(
+			await call(wifiScanProcedure, { device: "1" }, { context: ctx() }),
+		).toEqual({ success: false, error: "DEVICE_BUSY" });
+		expect(spawns).toEqual([]);
+	});
+
+	test("a named scan of a protected radio reports that it did not run", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		setScanGateModeReader(async (ifname) => ({
+			phy: `phy-${ifname}`,
+			apOnPhy: false,
+		}));
+		expect(
+			await call(wifiScanProcedure, { device: "0" }, { context: ctx() }),
+		).toEqual({ success: false, error: "DEVICE_BUSY" });
 		expect(spawns).toEqual([]);
 	});
 
