@@ -486,6 +486,8 @@ async function startConfirmed(incarnation: string) {
 	await osCommand({
 		key: toggleKey,
 		target: 'hotspot',
+		// The terminal waits for verified client steering after NM confirms.
+		pendingTtlMs: 60_000,
 		classify: classifyWifiMutation,
 		rpc: async (handoff) => {
 			const result = await withWifiEntryRetry(original,
