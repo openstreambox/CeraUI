@@ -35,21 +35,29 @@ import type { HotspotToggleError } from "@ceraui/rpc/schemas";
 
 import { broadcastMsg } from "../ui/websocket-server.ts";
 import { withoutWifiRequestBinding } from "./wifi-binding.ts";
+import type { HotspotOperationTicket } from "./wifi-hotspot-readiness.ts";
 
 export type { HotspotToggleError };
 
 export type HotspotToggleOutcome =
-	| { success: true }
+	| { success: true; pending?: true; reason?: "steering-readiness-timeout" }
 	| { success: false; error: HotspotToggleError; reason?: string };
 
 export type HotspotOutcomeKind = "start" | "stop";
 
-export type HotspotOutcomePublisher = (
-	kind: HotspotOutcomeKind,
-	device: number | string,
-	outcome: HotspotToggleOutcome,
-	attempt?: string,
-) => void;
+export type HotspotOutcomePublisher = {
+	(
+		kind: HotspotOutcomeKind,
+		device: number | string,
+		outcome: HotspotToggleOutcome,
+		attempt?: string,
+	): void;
+	/**
+	 * A chained caller (a mode change) learns which Start operation its terminal
+	 * belongs to, so its own backstop can tell when that Start was superseded.
+	 */
+	readonly startTicket?: (ticket: HotspotOperationTicket) => void;
+};
 
 export const publishHotspotOutcome: HotspotOutcomePublisher = (
 	kind,
@@ -61,11 +69,18 @@ export const publishHotspotOutcome: HotspotOutcomePublisher = (
 		broadcastMsg("wifi", {
 			hotspot: {
 				[kind]: outcome.success
-					? {
-							device,
-							success: true,
-							...(kind === "start" && attempt ? { attempt } : {}),
-						}
+					? outcome.pending
+						? {
+								device,
+								pending: true,
+								reason: outcome.reason,
+								...(kind === "start" && attempt ? { attempt } : {}),
+							}
+						: {
+								device,
+								success: true,
+								...(kind === "start" && attempt ? { attempt } : {}),
+							}
 					: {
 							device,
 							error: outcome.error,
