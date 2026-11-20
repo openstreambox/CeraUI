@@ -97,10 +97,12 @@ test("each radio is in use only on its own network", async () => {
 				"wlx020000000001",
 				"02\\:00\\:00\\:00\\:00\\:01",
 			),
+			// Only the station radio heard the venue; the spare never did.
 			row(true, "Hotel", 90, "wlx020000000002"),
-			// The spare radio hears the same venue later in the list; that must
-			// not clear the station radio's in-use row.
-			row(false, "Hotel", 70, "wlx020000000003"),
+			// The spare uses another network, which the station radio also hears
+			// later in the list; that later row must not clear the spare's in-use.
+			row(true, "Lobby", 80, "wlx020000000003", "33\\:33\\:33\\:33\\:33\\:33"),
+			row(false, "Lobby", 60, "wlx020000000002", "33\\:33\\:33\\:33\\:33\\:33"),
 			row(false, "Cafe", 40, "wlx020000000002", "11\\:22\\:33\\:44\\:55\\:66"),
 		]),
 	);
@@ -124,7 +126,8 @@ test("each radio is in use only on its own network", async () => {
 		ssid: "Hotel",
 		active: false,
 	});
-	expect(inUse(spare)).toEqual([]);
+	expect(inUse(spare)).toEqual(["Lobby"]);
+	expect(station?.available.get("Lobby")).toMatchObject({ active: false });
 	expect(spare?.available.has("Box Hotspot")).toBe(false);
 	expect(
 		linkLabelFor(
