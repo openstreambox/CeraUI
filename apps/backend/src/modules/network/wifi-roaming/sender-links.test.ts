@@ -107,6 +107,13 @@ describe("arrival reports", () => {
 		).toBe(8_000);
 	});
 
+	test("the CC state is kept, null when not reported", () => {
+		expect(toLinkSample(link({ cc_state: "holding" }))?.ccState).toBe(
+			"holding",
+		);
+		expect(toLinkSample(link({}))?.ccState).toBeNull();
+	});
+
 	test("a zero capacity estimate means none", () => {
 		expect(toLinkSample(link({ cc_target_bps: 0 }))?.ccTargetBps).toBeNull();
 		expect(toLinkSample(link({ cc_target_bps: 5 }))?.ccTargetBps).toBe(5);
@@ -212,6 +219,17 @@ describe("evidence for hold-outs and restores", () => {
 		);
 		expect(twice?.radios.has("wlan1")).toBe(false);
 		expect(twice && holdOutConfirmed(twice, "wlan1")).toBe(false);
+	});
+
+	test("one link matching two radios blocks a hold-out on both", () => {
+		const shared = [
+			{ ifname: "wlan1", addresses: ["10.0.0.5"] },
+			{ ifname: "wlan2", addresses: ["10.0.0.5"] },
+		];
+		const snap = snapshotOf(stats([link({ ip: "10.0.0.5" })]), shared, 0);
+		expect(snap?.radios.size).toBe(0);
+		expect(snap && holdOutConfirmed(snap, "wlan1")).toBe(false);
+		expect(snap && holdOutConfirmed(snap, "wlan2")).toBe(false);
 	});
 
 	test("a restore needs a new epoch, registration and a first ACK", () => {

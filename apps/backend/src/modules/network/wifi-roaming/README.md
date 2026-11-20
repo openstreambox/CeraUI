@@ -143,7 +143,10 @@ not call them yet.
     - at least 1.25 times the encoder rate is an estimate;
     - a target at the CC's climb clamp (about twice what the link carries)
       only says it is capped by its share, and doesn't count against it;
-    - a target below both fails.
+    - a target below both fails only once the CC has settled (`holding`,
+      `backing_off`, `drain`). While it is still climbing, as when a fade
+      shifts load onto the candidate faster than the target rises, the proof
+      says "climbing" instead.
   - Two checks fail open: the latency cap without a negotiated latency, and
     headroom without a target or an encoder rate. Each proof records which
     checks ran and the load it was taken at.
@@ -166,6 +169,7 @@ not call them yet.
   - The receiver is treated as the common cause only when a link outside
     the pair failed too.
   - A command the coordinator cannot confirm from evidence in time aborts.
+  - Every restore it emits gets a 10 s evidence deadline automatically.
   - A restore that can't be confirmed ends the operation as
     `restore-failed`, since the reducer can't abort a cleanup. The
     coordinator then re-releases the hold and treats the old holder through
@@ -177,7 +181,19 @@ These come in later parts:
 
 - Wiring the proof and swap into the coordinator: promotion as a relabel that
   moves scan protection, with a hold-out of the old holder only when it dies,
-  fails hard or is needed to search, and the abrupt-loss relabel.
+  fails hard or is needed to search, and the abrupt-loss relabel. Points the
+  wiring has to respect:
+  - Linger renewals must not depend on the headroom verdict. With a hold-out,
+    the candidate's share jumps at demotion, and a passing headroom check
+    can lag behind. Renew on delivery, continuity, age and the holder-style
+    checks.
+  - `srtla_ack_epoch` is per sender process. After a sender restart a
+    re-added link can repeat its held-out epoch and never confirm, which
+    ends as `restore-failed`. That fails safe, through the abrupt-loss path.
+  - `candidateProven` answers as of the last event. A status view should
+    tick first.
+  - The one-batch slack still passes 78 % delivery at the 60-packet floor.
+    The bench decides whether to keep it there or raise the floor.
 - Boot wiring and configuration, with the preconditions it needs: IPv6-only
   paths counted as associated, `stop()` fenced against a round in flight, a
   startup sweep of leftover `ceraui-search-*` profiles, and radio state keyed

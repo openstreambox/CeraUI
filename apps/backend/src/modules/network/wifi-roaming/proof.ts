@@ -113,6 +113,18 @@ export function ageBoundMs(
 
 type Lookup = (snap: Snapshot) => LinkSample | undefined;
 
+/**
+ * CC states in which a target below the load means "no headroom". While the
+ * CC is still in `bootstrap` or `climbing` (as it is when a fade shifts load
+ * onto the candidate faster than the target rises, a few percent per tick), a
+ * low target only says it has not climbed yet.
+ */
+const SETTLED_CC_STATES: ReadonlySet<string> = new Set([
+	"holding",
+	"backing_off",
+	"drain",
+]);
+
 export type SpanMeasure =
 	| Readonly<{ status: "absent" | "open" | "too-little" }>
 	| Readonly<{
@@ -256,12 +268,14 @@ export type ProofLoad = Readonly<{
 
 /**
  * Which checks a proof could run. The latency cap needs the negotiated SRT
- * latency; headroom needs a CC target and the encoder rate, and a target at
- * the climb clamp only says the link is capped by its share.
+ * latency; headroom needs a CC target and the encoder rate. A target at the
+ * climb clamp only says the link is capped by its share, and a low target
+ * while the CC is still climbing (or its state is not reported) only says it
+ * has not caught up: neither counts against the candidate.
  */
 export type ProofChecks = Readonly<{
 	latency: boolean;
-	headroom: "estimated" | "at-clamp" | "not-reported";
+	headroom: "estimated" | "at-clamp" | "climbing" | "not-reported";
 }>;
 
 export type CandidateProof = Readonly<{
@@ -323,7 +337,9 @@ export function evaluateCandidate(
 			target >= policy.clampFactor * latest.bitrateBps
 		)
 			headroom = "at-clamp";
-		else headroom = "below";
+		else if (latest.ccState !== null && SETTLED_CC_STATES.has(latest.ccState))
+			headroom = "below";
+		else headroom = "climbing";
 	}
 	const checks: ProofChecks = {
 		latency: latency !== null,
