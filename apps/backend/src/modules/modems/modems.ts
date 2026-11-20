@@ -57,6 +57,7 @@ import {
 } from "./automatic-carrier-intent.ts";
 import { automaticProfileConnectionFlags } from "./cellular-preparation.ts";
 import { readFiveGPreference } from "./five-g-preference.ts";
+import { fm350InternalCallEnabled } from "./fm350-internal-call-gate.ts";
 import { resolveGsmAutoconfigSupport } from "./gsm-autoconfig.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
 import { reconcileDuplicateGsmProfiles } from "./gsm-duplicate-reconcile.ts";
@@ -76,8 +77,17 @@ import { tryClaimNetworkModeWrite } from "./network-mode-slot.ts";
 import type { RequestedFamily } from "./subscription-policy.ts";
 import type { InitialEpsSettings } from "./transport-policy.ts";
 import {
+	type InternalContext,
+	type InternalGrant,
+	type InternalRegistration,
+	internalContextCommand,
 	type ModemTransportIdentity,
+	parseInternalContext,
+	parseInternalContextActive,
+	parseInternalContextDns,
+	parseInternalGrant,
 	parseInternalIpv4Grant,
+	parseInternalRegistration,
 	parseQcfgUsbSpeed,
 	parseQmapAutoConnect,
 	resolveTransportQuirk,
@@ -697,6 +707,25 @@ export interface CellularControl {
 	readonly readIpv4Grant: (cid: number) => Promise<string | undefined>;
 	readonly close: () => Promise<void>;
 }
+export interface InternalCellularControl extends CellularControl {
+	/** Positive digit-only observation; unreadable is not a different SIM. */
+	readonly readSubscriber: () => Promise<string | undefined>;
+	readonly newCallAllowed?: () => boolean;
+	readonly registrationState: () => Promise<InternalRegistration>;
+	readonly readContext: (cid: number) => Promise<InternalContext | undefined>;
+	readonly contextActive: (cid: number) => Promise<boolean | undefined>;
+	readonly readGrant: (cid: number) => Promise<InternalGrant | undefined>;
+	readonly readContextDns: (
+		cid: number,
+	) => Promise<readonly string[] | undefined>;
+	readonly onRevoked: (callback: () => void) => () => void;
+	readonly defineContext: (
+		cid: number,
+		apn: string,
+		family: RequestedFamily,
+		settings?: readonly string[],
+	) => Promise<void>;
+}
 const MM_DEST = "org.freedesktop.ModemManager1";
 async function inhibitControl(
 	transport: DbusTransport,
@@ -716,13 +745,15 @@ async function inhibitControl(
 		throw new Error("Invalid inhibition acknowledgement");
 }
 export interface CellularControlAcquireDeps {
+	readonly enabled?: (target: CellularControlTarget) => boolean;
+	readonly scopeCurrent?: () => boolean;
 	readonly present: typeof cellularTargetPresent;
 	readonly pair: typeof isModemPairAtStableKey;
 	readonly resolveUid: (path: string) => Promise<string>;
 	readonly transport: typeof createCellularSystemTransport;
 	readonly exchange: typeof exchangeUsbSerial;
 }
-const defaultCellularControlAcquireDeps: CellularControlAcquireDeps = {
+export const defaultCellularControlAcquireDeps: CellularControlAcquireDeps = {
 	present: cellularTargetPresent,
 	pair: isModemPairAtStableKey,
 	resolveUid: realpath,
@@ -734,16 +765,36 @@ export async function acquireCellularControl(
 	target: CellularControlTarget,
 	signal?: AbortSignal,
 	deps: CellularControlAcquireDeps = defaultCellularControlAcquireDeps,
-): Promise<CellularControl> {
+): Promise<InternalCellularControl> {
+	target = Object.freeze({
+		...target,
+		identity: Object.freeze({ ...target.identity }),
+		...(target.serial ? { serial: Object.freeze({ ...target.serial }) } : {}),
+		sim: Object.freeze({
+			modemInfo: Object.freeze({ ...target.sim.modemInfo }),
+			simInfo: Object.freeze({ ...target.sim.simInfo }),
+		}),
+	});
+	const enabled = () =>
+		resolveTransportQuirk(target.identity)?.owner !== "internal-call" ||
+		(deps.enabled?.(target) ??
+			fm350InternalCallEnabled(target.key, target.identity));
 	if (
+		!enabled() ||
 		!target.serial ||
 		!/^\d{14,16}$/.test(target.subscriber) ||
 		!(await deps.present(target)) ||
 		!(await deps.pair(target.key, target))
 	)
 		throw new Error("Cellular control identity unresolved");
-	const uid = target.sim.modemInfo["modem.generic.device"];
-	if (!uid || (await deps.resolveUid(uid)) !== target.usbDevice)
+	const uid = (target.sim.modemInfo as unknown as Record<string, unknown>)[
+		"modem.generic.device"
+	];
+	if (
+		typeof uid !== "string" ||
+		!uid ||
+		(await deps.resolveUid(uid)) !== target.usbDevice
+	)
 		throw new Error("Inhibition identity unresolved");
 	const serial = target.serial;
 	const transport = deps.transport({
@@ -753,20 +804,38 @@ export async function acquireCellularControl(
 	let held = false,
 		closed = false,
 		revoked = false;
-	transport.on("disconnected", () => {
+	let closing: Promise<void> | undefined;
+	let closingRequested = false;
+	const revocationListeners = new Set<() => void>();
+	const revoke = () => {
+		if (revoked) return;
 		revoked = true;
-	});
+		for (const callback of revocationListeners) callback();
+	};
+	transport.on("disconnected", revoke);
+	signal?.addEventListener("abort", revoke, { once: true });
 	const valid = async () =>
 		held &&
+		deps.scopeCurrent?.() !== false &&
 		!closed &&
+		!closingRequested &&
+		!closing &&
 		!revoked &&
 		!signal?.aborted &&
 		transport.isConnected() &&
 		(await deps.present(target));
-	const exchange = async (command: string) =>
-		deps.exchange(serial, command, valid, signal);
+	const exchange = async (command: string) => {
+		if (!(await valid()))
+			throw new Error("Internal control authority was revoked");
+		const reply = await deps.exchange(serial, command, valid, signal);
+		if (!(await valid()))
+			throw new Error("Internal control authority was revoked");
+		return reply;
+	};
+	const readSubscriber = async () =>
+		parseCellularSubscriber(await exchange("AT+CIMI"));
 	const verifySubscriber = async () =>
-		parseCellularSubscriber(await exchange("AT+CIMI")) === target.subscriber;
+		(await readSubscriber()) === target.subscriber;
 	const requireSubscriber = async () => {
 		if (!(await verifySubscriber()))
 			throw new Error("Cellular subscription changed");
@@ -778,13 +847,23 @@ export async function acquireCellularControl(
 	};
 	const close = async () => {
 		if (closed) return;
-		closed = true;
+		if (closing) return closing;
+		closingRequested = true;
+		closing = (async () => {
+			try {
+				if (held && !revoked && transport.isConnected())
+					await inhibitControl(transport, uid, false);
+			} finally {
+				held = false;
+				signal?.removeEventListener("abort", revoke);
+				await transport.disconnect();
+			}
+		})();
 		try {
-			if (held && !revoked && transport.isConnected())
-				await inhibitControl(transport, uid, false);
+			await closing;
+			closed = true;
 		} finally {
-			held = false;
-			await transport.disconnect();
+			closing = undefined;
 		}
 	};
 	try {
@@ -797,7 +876,7 @@ export async function acquireCellularControl(
 				sender: "org.freedesktop.DBus",
 			},
 			(event) => {
-				if (event.body[0] === MM_DEST) revoked = true;
+				if (event.body[0] === MM_DEST) revoke();
 			},
 		);
 		await inhibitControl(transport, uid, true);
@@ -821,7 +900,44 @@ export async function acquireCellularControl(
 		};
 		return {
 			valid,
+			readSubscriber,
+			newCallAllowed: enabled,
 			verifySubscriber,
+			onRevoked: (callback) => {
+				revocationListeners.add(callback);
+				if (revoked || closed || closingRequested || signal?.aborted)
+					callback();
+				return () => {
+					revocationListeners.delete(callback);
+				};
+			},
+			registrationState: async () =>
+				parseInternalRegistration(await exchange("AT+CEREG?")),
+			readContext: async (cid) => {
+				requireInternal();
+				return parseInternalContext(await exchange("AT+CGDCONT?"), cidArg(cid));
+			},
+			contextActive: async (cid) => {
+				requireInternal();
+				return parseInternalContextActive(
+					await exchange("AT+CGACT?"),
+					cidArg(cid),
+				);
+			},
+			readGrant: async (cid) => {
+				requireInternal();
+				return parseInternalGrant(
+					await exchange(`AT+CGPADDR=${cidArg(cid)}`),
+					cid,
+				);
+			},
+			readContextDns: async (cid) => {
+				requireInternal();
+				return parseInternalContextDns(
+					await exchange(`AT+CGCONTRDP=${cidArg(cid)}`),
+					cid,
+				);
+			},
 			readAutoConnect: async () => {
 				requireQmap();
 				return parseQmapAutoConnect(await exchange('AT+QMAP="auto_connect"'));
@@ -845,25 +961,33 @@ export async function acquireCellularControl(
 				return parseQcfgUsbSpeed(await exchange('AT+QCFG="usbspeed"'));
 			},
 			reset: async () => {
+				if (resolveTransportQuirk(target.identity)?.owner === "internal-call")
+					throw new Error("FM350 internal calls cannot reset the modem");
 				await requireSubscriber();
 				await exchange("AT+CFUN=1,1");
 			},
 			registration: async () => {
 				const reply = await exchange("AT+CEREG?");
-				return /^\+CEREG:\s*\d+,\s*[15](?:,|\s*$)/m.test(reply);
+				return ["home", "roaming"].includes(parseInternalRegistration(reply));
 			},
-			defineContext: async (cid, apn, family) => {
+			defineContext: async (cid, apn, family, settings) => {
 				requireInternal();
-				if (!/^[a-zA-Z0-9._-]{1,100}$/.test(apn))
-					throw new Error("Invalid APN");
-				await requireSubscriber();
-				await exchange(
-					`AT+CGDCONT=${cidArg(cid)},"${family === "ipv4" ? "IP" : family === "ipv6" ? "IPV6" : "IPV4V6"}","${apn}"`,
+				const command = internalContextCommand(
+					cidArg(cid),
+					apn,
+					family,
+					settings,
 				);
+				await requireSubscriber();
+				await exchange(command);
 			},
 			activateContext: async (cid, active) => {
 				requireInternal();
+				if (active && !enabled())
+					throw new Error("Internal new-call permission was withdrawn");
 				await requireSubscriber();
+				if (active && !enabled())
+					throw new Error("Internal new-call permission was withdrawn");
 				await exchange(`AT+CGACT=${active ? 1 : 0},${cidArg(cid)}`);
 			},
 			readIpv4Grant: async (cid) => {
@@ -880,6 +1004,7 @@ export async function acquireCellularControl(
 		throw error;
 	}
 }
+
 export async function setCellularInitialEps(
 	target: CellularControlTarget,
 	settings: InitialEpsSettings,
