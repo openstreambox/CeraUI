@@ -133,7 +133,7 @@ export type HelperActionOffer = {
 	readonly retryPort: boolean;
 	readonly rearmExhausted: boolean;
 	readonly usb2: boolean;
-	readonly tokens: readonly { readonly key: string; readonly token: string }[];
+	readonly tokens: { key: string; token: string }[];
 };
 
 export type HelperCaller = {
@@ -1020,7 +1020,9 @@ export async function readHelperActionOffer(
 	if (callerRefusal !== null) {
 		return { ok: false, refusal: callerRefusal };
 	}
-	if (isHelperRecoveryPending()) return refuse("start_failed");
+	if (isHelperRecoveryPending()) {
+		return { ok: false, refusal: "start_failed" };
+	}
 	await restoreHelperInterlock();
 	const deps = currentDeps();
 	const rock = await rockBoard(deps.root);
