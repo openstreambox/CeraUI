@@ -20,6 +20,19 @@ export interface SocketData {
 	 * may call `dev.scenario.*` (rpc/scenario-driver-admission.ts).
 	 */
 	scenarioDriver?: boolean;
+	/**
+	 * Set only on sockets accepted by the private local ingress listener
+	 * (rpc/local-ingress.ts): the browser's on-link address as seen by the
+	 * image's front door. Never derived from a TCP request's headers.
+	 */
+	ingressPath?: IngressPath;
+}
+
+/** The front door's validated evidence for one direct, on-link WebSocket. */
+export interface IngressPath {
+	readonly peer: string;
+	readonly interface: string;
+	readonly local: string;
 }
 
 /**

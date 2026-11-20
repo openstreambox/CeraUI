@@ -3,7 +3,11 @@ import { os } from "@orpc/server";
 import { authMiddleware } from "../middleware/auth.middleware.ts";
 import type { RPCContext } from "../types.ts";
 
-/** Peer is transport-derived; never accept an IP, MAC or forwarding header. */
+/**
+ * Peer is transport-derived; never accept an IP, MAC or forwarding header from
+ * the caller. Behind the image's front door the TCP peer is loopback, so a
+ * socket accepted on the private local ingress uses the front door's evidence.
+ */
 type Owner = Pick<
 	typeof import("../../modules/wifi/captive-portal-runtime.ts").signInWindow,
 	"start" | "finish" | "refresh" | "status"
@@ -26,7 +30,9 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 		.input(portalWindowInputSchema)
 		.handler(async ({ input, context }) => {
 			const sender = context.getSenderId();
-			const peer = context.ws.remoteAddress.replace(/^::ffff:/, "");
+			const peer =
+				context.ws.data.ingressPath?.peer ??
+				context.ws.remoteAddress.replace(/^::ffff:/, "");
 
 			if (input.action === "start" || input.action === "configure") {
 				const settings = await deps.settings();

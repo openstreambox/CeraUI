@@ -22,6 +22,7 @@ import {
 import { initPreviewSocketData } from "../modules/ui/preview-proxy.ts";
 import { createServerWebSocketHandler, initSocketData } from "./adapter.ts";
 import { permitsE2eWorkerUpgrade } from "./e2e-worker-admission.ts";
+import { startLocalIngress } from "./local-ingress.ts";
 import { issueKioskSessionToken } from "./procedures/auth.procedure.ts";
 import { permitsScenarioDriver } from "./scenario-driver-admission.ts";
 import type { ServerSocketData } from "./types.ts";
@@ -309,10 +310,18 @@ function startServer(): void {
 	}
 }
 
+let localIngress: ReturnType<typeof startLocalIngress> = null;
+
 /**
  * Initialize and start the HTTP/WebSocket server
  */
 export function initServer(): void {
+	try {
+		localIngress ??= startLocalIngress();
+		if (localIngress) logger.info("Local ingress listener started");
+	} catch (error) {
+		logger.warn(`Local ingress unavailable: ${error}`);
+	}
 	const systemdSocket = getSystemdSocket();
 	if (systemdSocket) {
 		logger.warn(
@@ -344,6 +353,8 @@ export function getServer(): typeof server {
  * Stop the server
  */
 export function stopServer(): void {
+	localIngress?.stop(true);
+	localIngress = null;
 	if (server) {
 		server.stop();
 		server = null;

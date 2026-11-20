@@ -75,6 +75,26 @@ test("the transport peer wins over a caller's requested phone", async () => {
 	expect(start).toHaveBeenCalledWith("10.42.0.2", "2");
 });
 
+test("behind the front door the private ingress evidence names the phone", async () => {
+	const proxied = createContext({
+		remoteAddress: "127.0.0.1",
+		data: {
+			isAuthenticated: true,
+			lastActive: 0,
+			ingressPath: {
+				peer: "10.42.0.13",
+				interface: "wlan1",
+				local: "10.42.0.1",
+			},
+		},
+	} as unknown as AppWebSocket);
+	await call(
+		captivePortalProcedure,
+		{ action: "start", radio: 2 },
+		{ context: proxied },
+	);
+	expect(start).toHaveBeenCalledWith("10.42.0.13", "2");
+});
 test("disabled and absent gates refuse starts but permit retirement", async () => {
 	for (const value of [undefined, false]) {
 		config.captive_portal_enabled = value;
