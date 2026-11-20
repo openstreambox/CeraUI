@@ -84,6 +84,7 @@ import {
 	setMockHotspotConfig,
 } from "../../mocks/providers/wifi.ts";
 import { getMockWifiIncarnation } from "../../mocks/providers/wifi-incarnation.ts";
+import { scanGateActive } from "../../modules/network/wifi-roaming/scan-gate.ts";
 import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import { handleWifi, wifiBuildMsg } from "../../modules/wifi/wifi.ts";
 import {
@@ -98,7 +99,10 @@ import {
 } from "../../modules/wifi/wifi-adapter-mode.ts";
 import { publishAdapterModeOutcome } from "../../modules/wifi/wifi-adapter-mode-outcome.ts";
 import { setWifiAdapterMode } from "../../modules/wifi/wifi-adapter-mode-transition.ts";
-import { getWifiInterfacesByMacAddress } from "../../modules/wifi/wifi-connections.ts";
+import {
+	getWifiInterfacesByMacAddress,
+	wifiRescan,
+} from "../../modules/wifi/wifi-connections.ts";
 import {
 	persistWifiCountry,
 	setWifiCountry,
@@ -371,9 +375,19 @@ export const wifiScanProcedure = authedProcedure
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
 		const ws = context.ws;
 		const lockKey = wifiAdapterLockKeyForDeviceId(input.device);
-		const busy = await runGuarded(lockKey, () => {
-			handleWifi(ws, { scan: Number(input.device) });
-		});
+		// While the roaming coordinator's scan gate is active, the scan itself
+		// is dispatched under this lock after the gate's fresh mode check, so
+		// the lock is held across the dispatch and passed down rather than
+		// taken twice. Otherwise the scan stays fire-and-forget, as before.
+		const busy = scanGateActive()
+			? await runGuarded(lockKey, () =>
+					wifiRescan(Number(input.device), {
+						adapterLockHeld: lockKey !== undefined,
+					}),
+				)
+			: await runGuarded(lockKey, () => {
+					handleWifi(ws, { scan: Number(input.device) });
+				});
 		if (busy) return { success: false, error: "DEVICE_BUSY" };
 		return { success: true };
 	});

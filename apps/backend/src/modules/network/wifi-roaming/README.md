@@ -31,10 +31,14 @@ becomes a searcher again.
 A phy that runs AP and station at once keeps its station. When an AP leg
 appears next to a station the coordinator joined, that station is left
 exactly as it is, carrying or still verifying, and is picked up again when
-the AP goes. Only a clone the AP has already replaced is removed. Every
-removal of an owned clone runs under the adapter lock after a fresh look, and
-waits for a later round while the lock is busy or the clone is still the
-active connection on a phy with an AP. A clone is treated as gone only when
+the AP goes; meanwhile the other radios search as usual. Only a clone the AP
+has already replaced is removed. Every removal of an owned clone runs under
+the adapter lock after a fresh look. Nothing is removed while the
+active-profile listing cannot be read: unreadable is never treated as "not
+active". On a holder, a reserved radio or a radio with an AP on its phy, a
+clone is removed only on positive evidence that it is no longer the active
+connection. A join removes the radio's earlier clone only after its last
+check before activation. Anything that has to wait is retried later. A clone is treated as gone only when
 its BSSID or activation changed, never because a lease renewal left it
 briefly without an address; a holder keeps its role through that too, and a
 radio associated without an address is not idle.
@@ -89,7 +93,9 @@ radio associated without an address is not idle.
     hotspot radio, a radio that is searching or joining, and every radio on
     the phys those use. The set is republished on every role, hold or
     ownership change. Each rescan of a radio goes out under its adapter lock
-    after a fresh, fail-closed read of its mode and phy.
+    after a fresh, fail-closed read of its mode and phy. The scan RPC holds
+    that lock across the dispatch and passes it down, so a named scan of an
+    eligible radio really runs, and a busy radio is reported as busy.
   - `bond-hold.ts`: a radio leaves the SRTLA bond while it searches.
   - `ownership.ts`: other Wi-Fi automation leaves coordinator-owned radios
     alone. A radio in hotspot use is not coordinator-owned.

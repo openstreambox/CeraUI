@@ -4,6 +4,7 @@
   name; a rescan aimed at the holder scans nothing and leaves its stamp alone.
 */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { call } from "@orpc/server";
 
 import type { MacAddress } from "../modules/network/network-manager.ts";
 import {
@@ -23,6 +24,8 @@ import {
 	wifiRescan,
 } from "../modules/wifi/wifi-connections.ts";
 import type { WifiInterface } from "../modules/wifi/wifi-interfaces.ts";
+import { wifiScanProcedure } from "../rpc/procedures/wifi.procedure.ts";
+import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
 import {
 	isolateWifiRegistry,
 	restoreWifiRegistry,
@@ -175,5 +178,65 @@ describe("rescans checked at dispatch, under the adapter lock", () => {
 		await wifiRescan();
 		expect(spawns).toEqual(["wlan1", "wlan2"]);
 		expect(reads).toEqual(["wlan1", "wlan2"]);
+	});
+});
+
+describe("the scan RPC while the gate is active", () => {
+	const ctx = (): RPCContext => ({
+		ws: {
+			send: () => {},
+			data: { isAuthenticated: true, lastActive: Date.now() },
+		} as unknown as AppWebSocket,
+		isAuthenticated: () => true,
+		authenticate: () => {},
+		deauthenticate: () => {},
+		markActive: () => {},
+		getLastActive: () => 0,
+		setSenderId: () => {},
+		getSenderId: () => undefined,
+		clearSenderId: () => {},
+	});
+
+	test("a named scan of an eligible radio really scans it, under the RPC's own lock", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		setScanGateModeReader(async (ifname) => ({
+			phy: `phy-${ifname}`,
+			apOnPhy: false,
+		}));
+		expect(
+			await call(wifiScanProcedure, { device: "1" }, { context: ctx() }),
+		).toEqual({
+			success: true,
+		});
+		expect(spawns).toEqual(["wlan1"]);
+		expect(getWifiScanStampForDevice(1)?.generation).toBe(1);
+	});
+
+	test("a named scan of a radio that turned into an AP is not dispatched", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		setScanGateModeReader(async (ifname) => ({
+			phy: `phy-${ifname}`,
+			apOnPhy: ifname === "wlan1",
+		}));
+		await call(wifiScanProcedure, { device: "1" }, { context: ctx() });
+		expect(spawns).toEqual([]);
+	});
+
+	test("the RPC reports a busy radio instead of a scan it never ran", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		setScanGateModeReader(async (ifname) => ({
+			phy: `phy-${ifname}`,
+			apOnPhy: false,
+		}));
+		let result: unknown;
+		await withWifiAdapterLock(SEARCHER, async () => {
+			result = await call(
+				wifiScanProcedure,
+				{ device: "1" },
+				{ context: ctx() },
+			);
+		});
+		expect(result).toEqual({ success: false, error: "DEVICE_BUSY" });
+		expect(spawns).toEqual([]);
 	});
 });

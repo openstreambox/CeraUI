@@ -97,6 +97,10 @@ class World {
 	beforeActivate: (() => void) | null = null;
 	/** Mode reads that fail (`iw dev` unreadable). */
 	modeFails = false;
+	/** A different active profile reported for a radio (a transient listing). */
+	activationOverride = new Map<string, string>();
+	/** Radios whose active-profile listing cannot be read (nmcli failed). */
+	activationFails = new Set<string>();
 	/** Radios associated without an address (lease renewal, IPv6-only). */
 	noAddress = new Set<string>();
 
@@ -193,7 +197,10 @@ class World {
 							: null,
 					gateway: ap && !this.noAddress.has(ifname) ? `${ap.subnet}.1` : null,
 					routed: !!ap && !this.noAddress.has(ifname),
-					activation: s.activation,
+					activation: this.activationFails.has(ifname)
+						? null
+						: (this.activationOverride.get(ifname) ?? s.activation),
+					activationRead: !this.activationFails.has(ifname),
 					bssidLocked: s.locked,
 					phy: this.phyOf(ifname),
 					apOnPhy: this.apOnPhyOf(ifname),
@@ -1292,5 +1299,116 @@ describe("second fix round: protection is current, cleanup never cuts a live sta
 		w.noNeighbour.add("wlan2");
 		await c.step();
 		expect(radio(c, "wlan2").diversity).toBe("unknown");
+	});
+});
+
+describe("third fix round: unknown is not absent", () => {
+	test("an unreadable active-profile listing on an AP phy keeps the live station", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		await c.step();
+		expect(radio(c, "wlan2").verified).toBe(true);
+		w.hotspotOn("wlan2", "clap-wlan2");
+		w.activationFails.add("wlan2");
+		for (let i = 0; i < 3; i++) {
+			w.now += 20_000;
+			await c.step();
+		}
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([]);
+		expect(w.stations.get("wlan2")?.bssid).toBe(AP2);
+		expect(radio(c, "wlan2").joined?.bssid).toBe(AP2);
+	});
+
+	test("an unreadable listing never tears down a promoted holder's clone", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -74);
+		w.station("wlan2", AP1, -75);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		w.st("wlan1").bssid = null;
+		w.now += 1_000;
+		await c.step();
+		expect(radio(c, "wlan2")).toMatchObject({ role: "holder", verified: true });
+		w.activationFails.add("wlan2");
+		for (let i = 0; i < 3; i++) {
+			w.now += 20_000;
+			await c.step();
+		}
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([]);
+		expect(role(c, "wlan2")).toBe("holder");
+		expect(w.stations.get("wlan2")?.bssid).toBe(AP2);
+		expect(radio(c, "wlan2").joined?.bssid).toBe(AP2);
+	});
+
+	test("a holder's clone that is active again at the fresh look is never removed", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -74);
+		w.station("wlan2", AP1, -75);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		w.st("wlan1").bssid = null;
+		w.now += 1_000;
+		await c.step();
+		expect(role(c, "wlan2")).toBe("holder");
+		// The round's listing shows another profile; by the time the cleanup
+		// looks again under the lock, the clone is the active connection.
+		w.activationOverride.set("wlan2", "00000000-0000-4000-8000-0000000000aa");
+		w.insideLock = () => w.activationOverride.clear();
+		w.now += 1_000;
+		await c.step();
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([]);
+		expect(w.stations.get("wlan2")?.bssid).toBe(AP2);
+	});
+
+	test("an unreadable listing defers even an ordinary cleanup, which runs once readable", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		w.st("wlan2").locked = false; // never verifies
+		w.activationFails.add("wlan2");
+		w.now += 15_000;
+		await c.step();
+		expect(c.status().lastOutcome).toBe("verify-timeout");
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([]);
+		w.activationFails.clear();
+		w.now += 1_000;
+		await c.step();
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([
+			"abandon:wlan2",
+		]);
+	});
+
+	test("a station frozen on a reserved radio does not stop another radio from searching", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -74);
+		w.station("wlan2", AP1, -75);
+		w.station("wlan3", null, null);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2", "wlan3"),
+		});
+		await c.step();
+		expect(w.joins).toEqual([`wlan3>${AP2}`]);
+		// wlan3's join stays unverified when its phy gains an AP leg.
+		w.st("wlan3").locked = false;
+		w.hotspotOn("wlan3", "clap-wlan3");
+		w.now += 1_000;
+		await c.step();
+		expect(role(c, "wlan3")).toBe("hotspot-reserved");
+		w.now += 60_000;
+		await c.step();
+		expect(w.touched("wlan2")).toContain("scan:wlan2");
 	});
 });

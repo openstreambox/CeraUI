@@ -71,8 +71,13 @@ export type RadioObservation = Readonly<{
 	gateway: string | null;
 	/** A default route through `gateway` on this interface exists. */
 	routed: boolean;
-	/** UUID of the active NetworkManager profile. */
+	/** UUID of the active NetworkManager profile, `null` when none is active. */
 	activation: string | null;
+	/**
+	 * The active-profile listing was read. When it was not, `activation` is
+	 * `null` but says nothing: no decision may treat it as "not active".
+	 */
+	activationRead: boolean;
 	/** The active profile is locked to one BSSID. */
 	bssidLocked: boolean;
 	/** The wiphy this interface belongs to, when known. */
@@ -394,7 +399,13 @@ export class RoamingCoordinator {
 		r.diversity = null;
 		r.samples = [];
 		const owned = r.owned;
-		if (owned && r.obs?.activation !== owned.activation) {
+		// Only a readable listing that shows another activation proves the AP
+		// replaced the clone; an unreadable one keeps everything as it is.
+		if (
+			owned &&
+			r.obs?.activationRead === true &&
+			r.obs.activation !== owned.activation
+		) {
 			r.owned = null;
 			await this.#abandon(r, owned.activation);
 		}
@@ -405,17 +416,22 @@ export class RoamingCoordinator {
 
 	/**
 	 * Remove an owned clone, under the radio's adapter lock and after a fresh
-	 * look. A clone that is still the active connection on a phy with an AP
-	 * (or whose mode cannot be read) is a live station and is not torn down;
-	 * neither is anything while the lock is busy. Both wait for a later round.
+	 * look. Nothing is removed while the active-profile listing cannot be read.
+	 * On a protected radio (a holder, a reserved radio, or one with an AP on
+	 * its phy or an unreadable mode) the clone is removed only on positive
+	 * evidence that it is no longer the active connection. Anything that waits
+	 * is retried in a later round.
 	 */
 	async #abandon(r: RadioRecord, activation: string): Promise<void> {
 		const done = await this.#ports.withRadioLock(r.ifname, async () => {
 			const mode = await this.#ports.radioMode(r.ifname);
-			if (mode?.apOnPhy !== false) {
-				const now = await this.#ports.observe(r.ifname);
-				if (!now || now.activation === activation) return false;
-			}
+			const now = await this.#ports.observe(r.ifname);
+			if (!now?.activationRead) return false;
+			const protectedRadio =
+				r.role === "holder" ||
+				r.role === "hotspot-reserved" ||
+				mode?.apOnPhy !== false;
+			if (protectedRadio && now.activation === activation) return false;
 			await this.#ports.abandon(r.ifname, activation);
 			return true;
 		});
@@ -626,7 +642,7 @@ export class RoamingCoordinator {
 				r.obs !== undefined &&
 				(r.obs.bssid === null ||
 					normalizeBssid(r.obs.bssid) !== o.bssid ||
-					r.obs.activation !== o.activation)
+					(r.obs.activationRead && r.obs.activation !== o.activation))
 			) {
 				r.owned = null;
 				this.#protectFromScans();
@@ -660,9 +676,13 @@ export class RoamingCoordinator {
 		for (const r of this.#radios)
 			if (r.owned && !r.owned.verified && r.role !== "hotspot-reserved")
 				await this.#verify(r, now);
+		// A station frozen on a reserved radio waits for its AP to go; it must
+		// not stop the other radios from searching meanwhile.
 		if (
 			this.#departure ||
-			this.#radios.some((r) => r.owned && !r.owned.verified)
+			this.#radios.some(
+				(r) => r.owned && !r.owned.verified && r.role !== "hotspot-reserved",
+			)
 		)
 			return;
 
