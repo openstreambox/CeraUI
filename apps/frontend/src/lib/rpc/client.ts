@@ -62,6 +62,8 @@ import type {
 	LogRetention,
 	LogStorage,
 	LogStorageOutput,
+	MoblinkResult,
+	MoblinkStatus,
 	ModemBandsInput,
 	ModemBandsOutput,
 	ModemCapabilitiesOutput,
@@ -690,6 +692,11 @@ export type AddonOpResult =
  * Maps contract structure to callable async functions
  */
 export interface TypedRPC {
+	moblink: {
+		getStatus: () => Promise<MoblinkStatus>;
+		setCredential: (input: { password: string }) => Promise<MoblinkResult>;
+		clearCredential: () => Promise<MoblinkResult>;
+	};
 	events: {
 		list: (input: EventListInput) => Promise<EventListOutput>;
 		boots: () => Promise<EventBootRecord[]>;
