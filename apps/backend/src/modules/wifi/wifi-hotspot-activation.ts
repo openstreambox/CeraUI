@@ -129,7 +129,10 @@ import {
 	wifiUpdateDevices,
 } from "./wifi-interfaces.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
-import { activeProvisioningAp } from "./wifi-provisioning-ap.ts";
+import {
+	activeProvisioningAp,
+	isProvisioningSetupHeld,
+} from "./wifi-provisioning-ap.ts";
 import { transitionVirtualBinding } from "./wifi-virtual-binding.ts";
 
 /** Production defaults: real NetworkManager + broadcast + dup-IP suppression. */
@@ -580,6 +583,11 @@ export async function startHotspotForInterface(
 	return lock.result;
 }
 
+/** The image's setup holds the radio; Start leaves it alone and says why. */
+function setupInProgress(): HotspotStartResult {
+	return { success: false, error: "DEVICE_BUSY", reason: "setup-in-progress" };
+}
+
 /**
  * Internal delegate: the caller owns the adapter lock, its intent transaction
  * and request admission, so a mode transition's start never re-admits after it
@@ -605,6 +613,13 @@ export async function startHotspotLocked(
 	)
 		return { success: false, error: "radio-unverified" };
 	const ifname = wifiInterface.ifname;
+	// While the image's setup marker exists, the setup radio is the image's.
+	if (isProvisioningSetupHeld(ifname)) {
+		logger.warn(
+			`wifi hotspot start: the device image's setup is in progress on ${ifname}; leaving the radio to it`,
+		);
+		return setupInProgress();
+	}
 	// Starting here would displace the image's running setup AP from its radio.
 	if (activeProvisioningAp(wifiInterface)) {
 		logger.warn(
@@ -787,6 +802,17 @@ export async function startHotspotLocked(
 	let cleanupConfirmed = true;
 	let refusal: HotspotStartResult | undefined;
 	let rollbackState: (() => HotspotStartResult) | undefined;
+	let setupHeld = false;
+	// The marker may appear during the transaction; it is checked again, under
+	// the adapter lock, immediately before NetworkManager is asked to activate.
+	const heldAtDispatch = (): boolean => {
+		if (!isProvisioningSetupHeld(ifname)) return false;
+		logger.warn(
+			`wifi hotspot start: the device image's setup started on ${ifname}; not activating`,
+		);
+		setupHeld = true;
+		return true;
+	};
 	try {
 		const stillOwned = owned();
 		const noTarget = useConcurrentAp && concurrentInterface === undefined;
@@ -868,11 +894,13 @@ export async function startHotspotLocked(
 			};
 		};
 		const rollback = (): HotspotStartResult => {
-			refusal = {
-				success: false,
-				error: "activation-failed",
-				...(channelRefused ? { reason: HYBRID_CHANNEL_REFUSAL } : {}),
-			};
+			refusal = setupHeld
+				? setupInProgress()
+				: {
+						success: false,
+						error: "activation-failed",
+						...(channelRefused ? { reason: HYBRID_CHANNEL_REFUSAL } : {}),
+					};
 			return refusal;
 		};
 
@@ -977,7 +1005,7 @@ export async function startHotspotLocked(
 					uuid: existingUuid,
 					kind: "up",
 					run: async () => {
-						if (!(await ready())) return false;
+						if (!(await ready()) || heldAtDispatch()) return false;
 						return deps.nmConnect(existingUuid, HOTSPOT_UP_TO, activated);
 					},
 				}))
@@ -1055,7 +1083,7 @@ export async function startHotspotLocked(
 					uuid,
 					kind: "up",
 					run: async () => {
-						if (!(await ready())) return false;
+						if (!(await ready()) || heldAtDispatch()) return false;
 						activationAttempted = true;
 						return deps.nmConnect(uuid, HOTSPOT_UP_TO, activated);
 					},

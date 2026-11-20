@@ -70,6 +70,7 @@ import {
 	isProvisioningApConn,
 	observeProvisioningApProfile,
 	PROVISIONING_AP_FIELDS,
+	witnessProvisioningAp,
 } from "./wifi-provisioning-ap.ts";
 
 const hotspotProfilePins = new WeakMap<
@@ -272,6 +273,15 @@ async function observeHotspotConn(
 ): Promise<void> {
 	// The image's setup AP stays observable as the radio's active AP, never claimed.
 	if (isProvisioningApConn(uuid)) return releaseProvisioningAp(uuid);
+	// Under the image's marker, its active AP is the setup AP whatever its name.
+	if (
+		witnessProvisioningAp(
+			Object.values(getWifiInterfacesByMacAddress()),
+			uuid,
+			(id) => getHotspotCredentialOwners(id).length > 0,
+		)
+	)
+		return releaseProvisioningAp(uuid);
 	if (
 		macAddress_ !== undefined &&
 		(!normalizeMacAddress(macAddress_) ||

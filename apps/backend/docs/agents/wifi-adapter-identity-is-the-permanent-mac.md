@@ -179,6 +179,29 @@ Its activity stays visible as the row's active AP, while Start and Stop on that
 radio refuse with `DEVICE_BUSY` (Start adds `setup-ap-active`). A persisted
 claim from an older build grants no authority either.
 
+The image's setup marker (`PROVISIONING_ACTIVE_MARKER`,
+`/data/ceralive/provision/portal-active`, mirroring the script's
+`ACTIVE_FLAG`) is the second witness and the interlock. While it exists, the AP
+active on `wlan0` is the setup AP whatever its connection name, and its UUID
+stays excluded until the marker is gone. A same-named AP seen without the
+marker keeps only the conservative name exemption. Under the marker, Start and
+mode switches to `hotspot` or `hybrid` on `wlan0` refuse with `DEVICE_BUSY`
+and `setup-in-progress`; Start checks again under the adapter lock right before
+NM activation, as limited restore does. B2 restore defers on the marker (the
+marker state is part of its signature) and resumes on the edge the marker
+watch publishes when the file disappears.
+
+The setup hands `wlan0` back as a station on its `ceralive-wifi` profile and
+the setup join wins: before restore reads the intent for `wlan0`, a station
+there whose UUID is a `ceralive-wifi` profile not yet listed in
+`wifi_setup_stations` turns that radio's `hotspot`/`hybrid` intent (its owner
+and intent keys and keys sharing its permanent MAC) into `station`, in the same
+config write that records the UUID. The portal re-creates the profile for each
+submission, so a new UUID is the handoff witness; the first run records the
+existing profiles as a baseline and clears nothing. Without a new station on
+`wlan0` the intent is kept. A failed write leaves both unchanged and restore
+waits.
+
 Before discovery publishes rows, it examines
 every persisted current and historical owned AP UUID under Start's canonical
 adapter lock, including the profile read, policy check and write. A busy lock

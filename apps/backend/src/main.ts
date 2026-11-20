@@ -215,6 +215,7 @@ import {
 	startWifiNetworkDiversity,
 	stopWifiNetworkDiversity,
 } from "./modules/wifi/wifi-network-diversity.ts";
+import { startProvisioningMarkerWatch } from "./modules/wifi/wifi-provisioning-handoff.ts";
 import { wifiRadioObservation } from "./modules/wifi/wifi-radio-observation.ts";
 import { broadcastMsgLocal } from "./rpc/compat.ts";
 import { onHeartbeatTick, startHeartbeat } from "./rpc/heartbeat.ts";
@@ -607,6 +608,8 @@ networkMonitor.on("monitor-event", handleHotspotMonitorEvent);
 // Apply-only restore starts after discovery publication and follows late radio,
 // capability and stream-clearance edges without a boot-time polling deadline.
 const stopWifiAdapterModeRestore = startWifiAdapterModeRestore();
+// Restore deferred on the device image's setup marker resumes when it goes.
+const stopProvisioningMarkerWatch = startProvisioningMarkerWatch();
 
 // Re-apply the operator's persisted shared-LAN Ethernet roles. Deliberately NOT
 // awaited, for the reason above: it rewrites NetworkManager profiles, and a
@@ -765,6 +768,7 @@ process.on("SIGTERM", () =>
 		stopRecoveryRetries,
 		terminateWifiObservation: () => {
 			stopWifiAdapterModeRestore();
+			stopProvisioningMarkerWatch();
 			stopHotspotStationEvents();
 			stopWifiNetworkDiversity();
 			wifiRadioObservation.terminate();
@@ -786,6 +790,7 @@ process.on("SIGINT", () =>
 		stopRecoveryRetries,
 		terminateWifiObservation: () => {
 			stopWifiAdapterModeRestore();
+			stopProvisioningMarkerWatch();
 			stopHotspotStationEvents();
 			stopWifiNetworkDiversity();
 			wifiRadioObservation.terminate();
