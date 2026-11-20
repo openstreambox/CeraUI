@@ -125,6 +125,7 @@ import {
 	wifiUpdateDevices,
 } from "./wifi-interfaces.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
+import { activeProvisioningAp } from "./wifi-provisioning-ap.ts";
 import { transitionVirtualBinding } from "./wifi-virtual-binding.ts";
 
 /** Production defaults: real NetworkManager + broadcast + dup-IP suppression. */
@@ -596,6 +597,13 @@ export async function startHotspotLocked(
 	)
 		return { success: false, error: "radio-unverified" };
 	const ifname = wifiInterface.ifname;
+	// Starting here would displace the image's running setup AP from its radio.
+	if (activeProvisioningAp(wifiInterface)) {
+		logger.warn(
+			`wifi hotspot start: the device image's setup AP is active on ${ifname}; leaving it alone`,
+		);
+		return { success: false, error: "DEVICE_BUSY", reason: "setup-ap-active" };
+	}
 	const owned = hotspotOwnershipGuard(owner, wifiInterface);
 	if (!owned()) {
 		return { success: false, error: "activation-failed" };
@@ -968,7 +976,7 @@ export async function startHotspotLocked(
 			if (!owned(conn, identity.profileMac)) return rollback();
 			await reconcileWifiAdapterProfileLocked(owner, {
 				uuid: conn,
-				fields: hotspotAutoconnectFields(owner, bindingFields),
+				fields: hotspotAutoconnectFields(owner, bindingFields, ifname),
 				write: (id, fields) =>
 					writeProfile({
 						uuid: id,
@@ -1047,7 +1055,7 @@ export async function startHotspotLocked(
 			if (
 				!(await reconcileWifiAdapterProfileLocked(owner, {
 					uuid,
-					fields: hotspotAutoconnectFields(owner, bindingFields),
+					fields: hotspotAutoconnectFields(owner, bindingFields, ifname),
 					write: (id, fields) =>
 						writeProfile({
 							uuid: id,

@@ -163,6 +163,22 @@ owner keys and `wifi_modes`.
 Hybrid profiles explicitly remain autoconnect off. Direct Starts retain their
 mode intent even when no safe autoconnect path exists; B2 restores that intent.
 
+The device image's setup radio (`PROVISIONING_AP_IFNAME`, `wlan0`, mirroring
+the image's first-boot setup script) is never armed: neither Start nor the
+discovery policy leaves an owned AP profile with autoconnect on while its radio
+carries that name. A pinned profile there first gains durable `hotspot` intent,
+then autoconnect is disabled, and B2 restore starts the AP once CeraUI runs.
+Other radios, including a rename away from `wlan0`, keep the rule above.
+
+`wifi-provisioning-ap.ts` keeps the image's own setup AP outside CeraUI. A
+profile is that AP only on positive NM evidence: AP mode and connection name
+`ceralive-ap`; its `CeraLive-Setup-*` SSID alone is not enough. Discovery,
+lookup, credential readback, the store, the owner policy, limited restore and
+cleanup never adopt, repin, re-prioritise, remember, disarm, stop or delete it.
+Its activity stays visible as the row's active AP, while Start and Stop on that
+radio refuse with `DEVICE_BUSY` (Start adds `setup-ap-active`). A persisted
+claim from an older build grants no authority either.
+
 Before discovery publishes rows, it examines
 every persisted current and historical owned AP UUID under Start's canonical
 adapter lock, including the profile read, policy check and write. A busy lock

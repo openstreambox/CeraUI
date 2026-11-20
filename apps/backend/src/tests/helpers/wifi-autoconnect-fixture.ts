@@ -69,7 +69,11 @@ export {
 	type Witness,
 } from "./wifi-autoconnect-network.ts";
 
-export function autoconnectFixture() {
+/**
+ * `ifname` names the fixture radio. Arming tests use a radio other than the
+ * device image's setup radio, which CeraUI never arms.
+ */
+export function autoconnectFixture(ifname = "wlan0") {
 	const network = autoconnectNetworkFixture();
 	const { profiles, witnesses, effects, publications, reads, activations } =
 		network;
@@ -100,7 +104,7 @@ export function autoconnectFixture() {
 		findHotspotConn: async () => undefined,
 		pruneHotspotConns: async () => undefined,
 		ensureConcurrentInterface: async () => ({
-			ifname: "clap-wlan0",
+			ifname: `clap-${ifname}`,
 			created: false,
 		}),
 	};
@@ -108,7 +112,7 @@ export function autoconnectFixture() {
 	function seed(hybrid = false): WifiInterfaceWithHotspot {
 		row = {
 			id: 0,
-			ifname: "wlan0",
+			ifname,
 			hw: "Policy radio",
 			conn: null,
 			available: new Map(),
@@ -125,18 +129,18 @@ export function autoconnectFixture() {
 			},
 		};
 		addWifiInterface(MAC, row);
-		witnesses.set("wlan0", {
+		witnesses.set(ifname, {
 			ifindex: 3,
 			phy: "/sys/devices/policy/phy0",
 			mac: MAC,
 			path: PORT,
 		});
-		network.list(["wlan0:wifi:disconnected:"]);
+		network.list([`${ifname}:wifi:disconnected:`]);
 		profiles.set(PROFILE, {
 			"802-11-wireless.mode": "ap",
 			"802-11-wireless.ssid": "Policy AP",
 			"802-11-wireless-security.psk": "fixture-password",
-			"connection.interface-name": hybrid ? "clap-wlan0" : "",
+			"connection.interface-name": hybrid ? `clap-${ifname}` : "",
 			"802-11-wireless.mac-address": hybrid ? "" : MAC,
 			"connection.autoconnect": "yes",
 			"connection.autoconnect-priority": "999",
@@ -215,7 +219,7 @@ export function autoconnectFixture() {
 	});
 
 	afterEach(async () => {
-		settlePending("wlan0", false);
+		settlePending(ifname, false);
 		wifiRadioObservation.stop();
 		await wifiRadioObservation.settled;
 		resetWifiInterfaceDiscoveryForTest();
@@ -234,6 +238,7 @@ export function autoconnectFixture() {
 	});
 
 	return {
+		ifname,
 		profiles,
 		witnesses,
 		effects,

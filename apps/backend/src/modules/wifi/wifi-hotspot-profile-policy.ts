@@ -31,6 +31,7 @@ import {
 } from "./wifi-hotspot-profile-operation.ts";
 import { canHotspot } from "./wifi-hotspot-types.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
+import { PROVISIONING_AP_IFNAME } from "./wifi-provisioning-ap.ts";
 import { literalWifiDevicePath } from "./wifi-radio-read-budget.ts";
 
 /** Checked profile actions; the reconciler owns serialization, health and retries. */
@@ -64,7 +65,8 @@ export async function applyHotspotProfilePolicy(
 			case "read":
 				break;
 		}
-		if (profile.mode !== "ap") continue;
+		// A persisted claim on the image's setup AP grants no policy authority.
+		if (profile.mode !== "ap" || profile.provisioning) continue;
 		const owners = getHotspotCredentialOwners(uuid);
 		if (!owners.includes(owner)) continue;
 		const resolved = owners.length === 1;
@@ -166,8 +168,13 @@ export async function applyHotspotProfilePolicy(
 					const identity = candidates.find(
 						(row) => row.classification === "verified",
 					);
+					// The image's setup radio stays disarmed; CeraUI's restore owns the AP there.
+					const setupRadio =
+						profile.ifname === PROVISIONING_AP_IFNAME ||
+						candidates.some((row) => row.ifname === PROVISIONING_AP_IFNAME);
 					if (
 						!hybrid &&
+						!setupRadio &&
 						mac &&
 						identity?.devicePath &&
 						profile.mac.toLowerCase() === mac &&

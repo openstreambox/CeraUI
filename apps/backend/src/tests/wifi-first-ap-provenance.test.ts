@@ -15,7 +15,7 @@ import { cancelWifiAdapterReconciliation } from "../modules/wifi/wifi-adapter-re
 import { reconcileWifiAdapterPolicies } from "../modules/wifi/wifi-adapter-reconciler.ts";
 import { settlePending } from "../modules/wifi/wifi-hotspot-monitor.ts";
 import { wifiRadioIdentity } from "../modules/wifi/wifi-radio-identity.ts";
-import { firstAp, MAC } from "./helpers/wifi-first-ap-fixture.ts";
+import { firstAp, MAC, OTHER_RADIO } from "./helpers/wifi-first-ap-fixture.ts";
 import { replayFirstApState as replay } from "./helpers/wifi-first-ap-instances.ts";
 
 for (const completion of ["confirmation", "cleanup"] as const) {
@@ -81,7 +81,7 @@ test("a refused creation-record write dispatches no add or activation", async ()
 });
 
 test("ordinary adoption of an operator AP cannot create first-start provenance", async () => {
-	const f = await firstAp();
+	const f = await firstAp(undefined, false, OTHER_RADIO);
 	const uuid = "22222222-2222-4222-8222-222222222222";
 	try {
 		const fields = {
@@ -93,7 +93,8 @@ test("ordinary adoption of an operator AP cannot create first-start provenance",
 			"connection.interface-name": "",
 			"connection.autoconnect": "yes",
 			"connection.autoconnect-priority": "999",
-			"match.path": wifiRadioIdentity.state.rows.get("wlan0")?.devicePath ?? "",
+			"match.path":
+				wifiRadioIdentity.state.rows.get(OTHER_RADIO)?.devicePath ?? "",
 		};
 		expect(
 			await replay({
@@ -101,6 +102,7 @@ test("ordinary adoption of an operator AP cannot create first-start provenance",
 				settings: [[uuid, fields]],
 				autoconnect: [uuid],
 				operator: true,
+				radioIfname: OTHER_RADIO,
 			}),
 		).toEqual({
 			result: true,

@@ -56,6 +56,10 @@ import {
 export { retryWifiAdapterReconcile } from "./wifi-adapter-reconcile-retry.ts";
 
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
+import {
+	activeProvisioningAp,
+	isProvisioningApConn,
+} from "./wifi-provisioning-ap.ts";
 import { sameRadioLifetime, wifiRadioIdentity } from "./wifi-radio-identity.ts";
 
 const MAX_RESTORE_ATTEMPTS = 3;
@@ -122,6 +126,12 @@ export async function reconcileWifiAdapterStopLocked(
 	row: WifiInterfaceWithHotspot,
 	deps: HotspotStopDeps,
 ): Promise<HotspotStopResult> {
+	// The image's setup AP is torn down by the image, never by a CeraUI Stop.
+	if (
+		isProvisioningApConn(row.hotspot.conn) ||
+		(!isHotspotActive(row) && activeProvisioningAp(row))
+	)
+		return { success: false, error: "DEVICE_BUSY" };
 	const owner = resolveWifiAdapterOwner(registryKey, row);
 	const cleanup = await reconcileWifiAdapterTeardownLocked(owner);
 	const conn = row.hotspot.conn;

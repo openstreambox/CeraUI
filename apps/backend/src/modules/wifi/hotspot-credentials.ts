@@ -46,6 +46,7 @@ import { logger } from "../../helpers/logger.ts";
 import type { NmProfileInstance } from "../network/network-manager-profile-instance.ts";
 import { isWifiChannelName, type WifiChannel } from "./wifi-channels.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
+import { isProvisioningApConn } from "./wifi-provisioning-ap.ts";
 
 /** Default on-disk location, relative to the backend's working directory. */
 export const HOTSPOT_CREDENTIALS_FILE = "hotspot_credentials.json";
@@ -280,6 +281,8 @@ function nextCredentialEntry(
 	const key = keyFor(macAddress);
 	if (!key || !credentials.ssid || !credentials.password) return undefined;
 	if (!canUseHotspotConnection(macAddress, credentials.conn)) return undefined;
+	// The image's setup AP is never CeraUI's identity, whoever offers it.
+	if (isProvisioningApConn(credentials.conn)) return undefined;
 
 	const previous = entries[key];
 	// A suggestion must not erase evidence of an already contaminated UUID.
