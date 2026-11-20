@@ -63,6 +63,7 @@ import {
 	markSessionExpired,
 	wasAuthenticated,
 } from "$lib/stores/connection-ux.svelte";
+import { noteHotspotRoster } from "$lib/stores/hotspot-joins.svelte";
 import {
 	dismiss as dismissNotification,
 	getActive as getActiveNotifications,
@@ -665,6 +666,9 @@ function handleMessage(
 				const before = wifiLiveApSignature(wifiState);
 				wifiState = preserveWireIdentity(wifiState, statusData.wifi);
 				noteWifiStatus(statusData.wifi);
+				// "A new device joined": the existing toast, from the roster the
+				// device already sends (no new notification type).
+				noteHotspotRoster(wifiState);
 				// A hotspot started or stopped elsewhere (API, another client, the
 				// device) moves these facts before any frame this UI tracked; the
 				// adapter-mode answer is a pull, so ask again. The first snapshot
