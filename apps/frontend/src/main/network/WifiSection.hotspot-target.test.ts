@@ -85,6 +85,31 @@ function row(incarnation: string): WifiInterface {
 	};
 }
 
+/** A live AP; without an incarnation it is a tokenless (unproven) row. */
+function liveRow(
+	incarnation?: string,
+	degraded_reason?: "permanent-mac-unresolved",
+): WifiInterface {
+	return {
+		ifname: "wlan0",
+		hw: "same-model",
+		conn: "ap-uuid",
+		saved: {},
+		supports_hotspot: true,
+		mode: "hotspot",
+		...(incarnation ? { incarnation } : {}),
+		...(degraded_reason ? { degraded_reason } : {}),
+		hotspot: {
+			name: "live-name",
+			password: "live-password",
+			channel: "auto",
+			available_channels: { auto: { name: "Automatic" } },
+			security: "wpa2",
+			available_security: { wpa2: { name: "WPA2" } },
+		},
+	};
+}
+
 function renderSection(radios: [string, WifiInterface][]) {
 	return render(WifiSection, {
 		props: {
@@ -213,4 +238,58 @@ it("reports a late failed Start after its radio was lost", async () => {
 	);
 	expect(screen.queryByTestId("hotspot-status")).toBeNull();
 	expect(start).toHaveBeenCalledTimes(1);
+});
+
+it.each([undefined, "permanent-mac-unresolved"] as const)(
+	"opens a tokenless live AP read-only: details and Stop, no guarded edits (%s)",
+	async (degraded) => {
+		renderSection([["0", liveRow(undefined, degraded)]]);
+		await fireEvent.click(
+			screen.getByTestId(
+				degraded ? "open-hotspot-details" : "open-hotspot-setup",
+			),
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("hotspot-status").dataset.active).toBe("true"),
+		);
+		expect(
+			document.querySelector<HTMLInputElement>("#hotspot-name")?.readOnly,
+		).toBe(true);
+		await fireEvent.click(screen.getByRole("button", { name: /turn off/i }));
+		expect(stop).toHaveBeenCalledWith({ device: "0" });
+		expect(prepare).not.toHaveBeenCalled();
+		expect(start).not.toHaveBeenCalled();
+		expect(configure).not.toHaveBeenCalled();
+	},
+);
+
+it.each([
+	["leaves the roster", [] as [string, WifiInterface][]],
+	[
+		"comes back under an incarnation",
+		[["0", liveRow("radio-B")]] as [string, WifiInterface][],
+	],
+])("closes a tokenless pick when its radio %s", async (_case, next) => {
+	const view = renderSection([["0", liveRow()]]);
+	await fireEvent.click(screen.getByTestId("open-hotspot-setup"));
+	await screen.findByTestId("hotspot-status");
+	await rerender(view, next);
+	await closedWithNotice();
+	await tick();
+	expect(screen.queryByTestId("hotspot-status")).toBeNull();
+	expect(stop).not.toHaveBeenCalled();
+	expect(configure).not.toHaveBeenCalled();
+});
+
+it("a tokenless pick ends when the token arrives; a fresh pick then has guarded actions", async () => {
+	const view = renderSection([["0", liveRow()]]);
+	await fireEvent.click(screen.getByTestId("open-hotspot-setup"));
+	await screen.findByTestId("hotspot-status");
+	await rerender(view, [["0", liveRow("radio-A")]]);
+	await closedWithNotice();
+	await fireEvent.click(screen.getByTestId("open-hotspot-setup"));
+	await screen.findByTestId("hotspot-status");
+	expect(
+		document.querySelector<HTMLInputElement>("#hotspot-name")?.readOnly,
+	).toBe(false);
 });

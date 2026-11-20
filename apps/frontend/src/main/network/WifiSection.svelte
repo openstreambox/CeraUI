@@ -10,6 +10,8 @@ import {
 	TriangleAlert,
 	Wifi,
 } from '@lucide/svelte';
+import { untrack } from 'svelte';
+import { toast } from 'svelte-sonner';
 import Badge from '$lib/components/custom/Badge.svelte';
 import BondToggle from '$lib/components/custom/BondToggle.svelte';
 import { LazyDialog, lazyDialog } from '$lib/components/dialogs';
@@ -76,26 +78,38 @@ function activeWifiNetwork(iface: WifiInterface) {
 // reported `INEFFECTIVE_DYNAMIC_IMPORT` and fused it back into the entry chunk.
 const HotspotDialog = lazyDialog(() => import('../dialogs/HotspotDialog.svelte'));
 
-// The dialog is bound to the `[id, incarnation]` it was opened for and stays
-// mounted while that pick lasts. It gets the row only while the row still
-// carries that incarnation: a lost or replaced radio leaves it without one, so
-// it closes with a notice (a Start already sent still reports), and the same
-// id under a new incarnation needs a fresh pick instead of reopening.
+// The dialog is bound to the row it was opened for and stays mounted while that
+// pick lasts. It gets the row only while the row still carries the incarnation
+// it was opened with: a lost or replaced radio leaves it without one, so it
+// closes with a notice (a Start already sent still reports), and the same id
+// under a new incarnation needs a fresh pick instead of reopening. A tokenless
+// row (identity not yet proven, or a degraded radio) opens read-only: live
+// details, Copy and Stop, no guarded edits. The dialog cannot tell its absence
+// from its presence, so this section closes that pick itself.
 let hotspotDialogOpen = $state(false);
-let hotspotDialogTarget = $state.raw<readonly [string, string]>();
+let hotspotDialogTarget = $state.raw<{ readonly id: string; readonly incarnation?: string }>();
 const hotspotIface = $derived.by(() => {
 	if (!hotspotDialogTarget) return undefined;
-	const [target, incarnation] = hotspotDialogTarget;
+	const { id: target, incarnation } = hotspotDialogTarget;
 	const row = wifiRadios.find(([id]) => id === target)?.[1];
 	return row?.incarnation === incarnation ? row : undefined;
 });
 
 function openHotspotSetup(id: string) {
-	const incarnation = wifiRadios.find(([rowId]) => rowId === id)?.[1].incarnation;
-	if (!incarnation) return;
-	hotspotDialogTarget = [id, incarnation];
+	const row = wifiRadios.find(([rowId]) => rowId === id)?.[1];
+	if (!row) return;
+	hotspotDialogTarget = row.incarnation ? { id, incarnation: row.incarnation } : { id };
 	hotspotDialogOpen = true;
 }
+
+$effect(() => {
+	if (!hotspotDialogOpen || !hotspotDialogTarget || hotspotDialogTarget.incarnation) return;
+	if (hotspotIface) return;
+	untrack(() => {
+		hotspotDialogOpen = false;
+		toast.warning(m['network.view.hotspotRadioLost']());
+	});
+});
 
 // ── The per-adapter mode offering (station / hotspot / hybrid) ──
 // The row hosts the saved-hybrid band (the popover may be closed), so its
@@ -617,7 +631,7 @@ $effect(() => {
 	<LazyDialog
 		dialog={HotspotDialog}
 		bind:open={hotspotDialogOpen}
-		deviceId={hotspotDialogTarget[0]}
+		deviceId={hotspotDialogTarget.id}
 		iface={hotspotIface}
 	/>
 {/if}
