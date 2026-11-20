@@ -7,13 +7,16 @@ export function createShutdownInhibitor(
 	const owners = new Set<InhibitorOwner>();
 	let release: (() => void) | undefined;
 	let disposed = false;
+	// Set while an admitted power action runs: owners are kept, the lock is not.
+	let yielded = false;
 	let pending: Promise<void> | undefined;
 	let retryAt = 0;
-	return {
+	const lock = {
 		set(owner: InhibitorOwner, active: boolean): boolean {
 			if (disposed) return false;
 			if (active) owners.add(owner);
 			else owners.delete(owner);
+			if (yielded) return owners.size === 0;
 			if (owners.size && !release) {
 				try {
 					if (pending || performance.now() < retryAt) return false;
@@ -23,7 +26,7 @@ export function createShutdownInhibitor(
 						pending = result
 							.then(
 								(close) => {
-									if (disposed || !owners.size) close();
+									if (disposed || yielded || !owners.size) close();
 									else release = close;
 								},
 								() => {
@@ -48,6 +51,28 @@ export function createShutdownInhibitor(
 		},
 		pending: () => pending,
 		confirmed: () => Boolean(release),
+		/**
+		 * This process's own lock must not refuse a power action this process
+		 * has already admitted. Closes the descriptor and stops reacquisition
+		 * while keeping the owners; the returned function takes the lock again
+		 * for a submission that failed. Other processes' locks still apply.
+		 */
+		yieldForPowerAction(): () => void {
+			if (disposed) return () => undefined;
+			yielded = true;
+			const close = release;
+			release = undefined;
+			close?.();
+			let resumed = false;
+			return () => {
+				if (resumed || disposed) return;
+				resumed = true;
+				yielded = false;
+				retryAt = 0;
+				const owner = owners.values().next();
+				if (!owner.done) lock.set(owner.value, true);
+			};
+		},
 		dispose() {
 			disposed = true;
 			owners.clear();
@@ -56,4 +81,5 @@ export function createShutdownInhibitor(
 			close?.();
 		},
 	};
+	return lock;
 }

@@ -43,6 +43,12 @@ export function ensureEncoderShutdownProtection(
 	return pending ? pending.then(finish) : finish();
 }
 
+/** See `yieldForPowerAction`: returns the function that takes the lock again. */
+export function yieldShutdownProtectionForPowerAction(): () => void {
+	// Development and unit-test imports never open the bus: nothing to yield.
+	return protection?.yieldForPowerAction() ?? (() => undefined);
+}
+
 export function initShutdownProtection(
 	acquire: Parameters<
 		typeof createShutdownInhibitor

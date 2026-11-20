@@ -9,6 +9,7 @@ import {
 	reservePowerAction,
 } from "./disruptive-action-reservation.ts";
 import { getDisruptiveActionDecision } from "./disruptive-action-runtime.ts";
+import { yieldShutdownProtectionForPowerAction } from "./shutdown-protection.ts";
 
 export function submitPowerCommand(
 	command: "reboot" | "poweroff",
@@ -23,13 +24,18 @@ export function submitPowerCommand(
 		return { success: false, error: admission.reason };
 	}
 	let effectInvoked = false;
+	let retakeOwnLock: (() => void) | undefined;
 	try {
 		notePlannedShutdown(command);
+		// Admitted above; this process's own lock must not refuse it (a
+		// phone-only box may power off while its startup check still holds it).
+		retakeOwnLock = yieldShutdownProtectionForPowerAction();
 		effectInvoked = true;
 		runner(command);
 		admission.reservation.releaseAfterCompletion();
 		return { success: true };
 	} catch (error) {
+		retakeOwnLock?.();
 		if (!effectInvoked || isPositiveDisruptiveFailure(error))
 			admission.reservation.releaseAfterFailure();
 		logger.error("System power submission failed", { command, error });

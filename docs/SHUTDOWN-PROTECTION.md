@@ -39,6 +39,10 @@ honours strong block inhibitors for root without requiring polkit. Explicit
 `--check-inhibitors=yes` is deliberately omitted: it also refuses an idle
 box when a non-root support user is logged in over SSH.
 They retain the existing stream/update admission gates and failure bookkeeping.
+A local power action that those gates admitted first closes this process's own
+descriptor, so CeraUI's lock never refuses what CeraUI just allowed (a phone-only
+box may power off while its startup check still holds the lock); a failed
+submission takes it again. Locks held by other processes still apply.
 The dialog shows the emergency override only after a shutdown-lock refusal.
 A local refused submission uses a typed, translated reason for shutdown
 protection, other logged-in users, command unavailability or an uncertain result. No forced retry is introduced. The companion image provides
@@ -58,9 +62,13 @@ Only continue if stopping the service succeeds. Stopping disconnects streams,
 carried clients and the web interface; it also closes the inhibitor. The second
 command still checks other strong shutdown locks through logind. The power
 dialog shows this override and its consequences in every supported locale.
-Do not rely on `systemctl reboot -i` or `--check-inhibitors=no`: with a strong
-block on systemd 257 they require polkit, which the image does not ship. Plain
-`reboot` and scheduled `shutdown` are also refused while the block is held.
+Do not rely on `systemctl reboot -i` or `--check-inhibitors=no` unless the image
+grants it: with a strong block on systemd 257, logind asks polkit even for root
+(`POLKIT_ALWAYS_QUERY`), and polkit 126 then skips its usual root shortcut. The
+image does ship polkitd (a NetworkManager/ModemManager dependency), so without a
+rule that allows `org.freedesktop.login1.*-ignore-inhibit` for root the answer is
+"Interactive authentication required"; without polkitd it is "Access denied".
+Plain `reboot` and scheduled `shutdown` are also refused while the block is held.
 Direct target activation and `--force` bypass logind and are not this supported
 procedure.
 
