@@ -500,7 +500,10 @@ export function setScanRefreshAction(action: () => unknown): void {
   (`wifiAdapterLockKey`, the adapter's permanent MAC), and one key's in-flight
   run can never answer for another's.
 */
-const rescanInFlight = new Map<WifiScanKey, Promise<void>>();
+/** Radios a run actually dispatched a scan to (`undefined`: device-less). */
+type RescanReport = ReadonlySet<string | undefined>;
+
+const rescanInFlight = new Map<WifiScanKey, Promise<RescanReport>>();
 
 /*
   The key a device-LESS `wifiRescan()` coalesces on: "refresh every radio". A
@@ -624,6 +627,28 @@ export function wifiRescan(
 	device?: WifiInterfaceId,
 	opts: { adapterLockHeld?: boolean } = {},
 ): Promise<void> {
+	return startRescan(device, opts).then(() => undefined);
+}
+
+/**
+ * Like {@link wifiRescan} for one named radio, resolving to whether a scan of
+ * that radio was actually dispatched. While the roaming coordinator's scan
+ * gate is active it can refuse the radio (it carries the stream, serves the
+ * hotspot or shares a protected phy) or find its adapter lock busy; the scan
+ * RPC reports that instead of a success that never happened.
+ */
+export async function wifiRescanDispatched(
+	device: WifiInterfaceId,
+	opts: { adapterLockHeld?: boolean } = {},
+): Promise<boolean> {
+	const report = await startRescan(device, opts);
+	return report.has(ifnameForDevice(device));
+}
+
+function startRescan(
+	device: WifiInterfaceId | undefined,
+	opts: { adapterLockHeld?: boolean },
+): Promise<RescanReport> {
 	const key =
 		device === undefined ? WIFI_SCAN_ALL_KEY : wifiScanKeyForDevice(device);
 
@@ -671,10 +696,10 @@ async function runRescan(
 	key: WifiScanKey,
 	ifname: string | undefined,
 	adapterLockHeld = false,
-): Promise<void> {
+): Promise<RescanReport> {
+	const scanned: (string | undefined)[] = [];
 	try {
 		const targets = rescanTargets(ifname);
-		const scanned: (string | undefined)[] = [];
 		for (const target of targets) {
 			if (target === undefined || !scanGateActive()) {
 				await rescanAction(target);
@@ -713,4 +738,5 @@ async function runRescan(
 		// returns), so reaching here is drift worth logging, never worth throwing.
 		logger.warn(`wifiRescan failed: ${err}`);
 	}
+	return new Set(scanned);
 }
