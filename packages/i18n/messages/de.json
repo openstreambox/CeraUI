@@ -3011,6 +3011,7 @@
 	"network.portal.duration": "Etwa eine Minute. Der Chat auf diesem Telefon kann bis dahin pausieren. Das Zeitfenster für die Anmeldung schließt nach zehn Minuten.",
 	"network.portal.open": "Seite des Hotels öffnen",
 	"network.portal.unavailable": "Das Zeitfenster für die Anmeldung konnte nicht geöffnet werden. Versuche es gleich noch einmal.",
+	"network.portal.reconnected": "Die Verbindung zur Box ist wieder da. Versuche es noch einmal.",
 	"network.portal.not_captive": "Dieses WLAN braucht keine Anmeldung.",
 	"network.portal.wifi_changed": "Das WLAN hat sich geändert. Wähle es erneut aus und versuche es dann noch einmal.",
 	"network.portal.identity_unavailable": "Die Box kann dieses WLAN noch nicht bestätigen. Warte einen Moment und versuche es dann erneut.",

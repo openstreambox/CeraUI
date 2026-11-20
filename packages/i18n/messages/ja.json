@@ -2966,6 +2966,7 @@
 	"network.portal.duration": "1 分ほどかかります。終わるまで、このスマートフォンのチャットが止まることがあります。サインインの受付時間は 10 分後に終わります。",
 	"network.portal.open": "ホテルのページを開く",
 	"network.portal.unavailable": "サインインの受付を開始できませんでした。少し待ってからもう一度お試しください。",
+	"network.portal.reconnected": "ボックスとの接続が回復しました。もう一度お試しください。",
 	"network.portal.not_captive": "この Wi-Fi はサインイン不要です。",
 	"network.portal.wifi_changed": "Wi-Fi が変わりました。もう一度選んでから、再試行してください。",
 	"network.portal.identity_unavailable": "ボックスはまだこの Wi-Fi を確認できません。少し待ってから再試行してください。",

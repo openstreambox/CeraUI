@@ -2966,6 +2966,7 @@
 	"network.portal.duration": "大约一分钟。完成前，这部手机上的聊天可能会暂停。登录时段会在十分钟后结束。",
 	"network.portal.open": "打开酒店页面",
 	"network.portal.unavailable": "无法开启登录时段。请稍后再试。",
+	"network.portal.reconnected": "与盒子的连接已恢复。请再试一次。",
 	"network.portal.not_captive": "此 Wi-Fi 无需登录。",
 	"network.portal.wifi_changed": "Wi-Fi 已更改。请重新选择，然后重试。",
 	"network.portal.identity_unavailable": "盒子暂时无法确认此 Wi-Fi。请稍等片刻，然后重试。",

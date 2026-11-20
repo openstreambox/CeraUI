@@ -3014,6 +3014,7 @@
 	"network.portal.duration": "Cerca de um minuto. O chat neste celular pode pausar até lá. A janela de login fecha após dez minutos.",
 	"network.portal.open": "Abrir a página do hotel",
 	"network.portal.unavailable": "Não foi possível abrir a janela de login. Tente de novo em instantes.",
+	"network.portal.reconnected": "A conexão com a caixa foi restabelecida. Tente de novo.",
 	"network.portal.not_captive": "Este Wi-Fi não precisa de login.",
 	"network.portal.wifi_changed": "O Wi-Fi mudou. Escolha-o de novo e tente outra vez.",
 	"network.portal.identity_unavailable": "A caixa ainda não consegue confirmar este Wi-Fi. Espere um momento e tente de novo.",

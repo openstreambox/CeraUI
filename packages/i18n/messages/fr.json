@@ -3014,6 +3014,7 @@
 	"network.portal.duration": "Environ une minute. Le chat sur ce téléphone peut se mettre en pause jusque-là. La fenêtre de connexion se ferme au bout de dix minutes.",
 	"network.portal.open": "Ouvrir la page de l'hôtel",
 	"network.portal.unavailable": "La fenêtre de connexion n'a pas pu s'ouvrir. Réessayez dans un instant.",
+	"network.portal.reconnected": "La connexion au boîtier est rétablie. Réessayez.",
 	"network.portal.not_captive": "Ce Wi-Fi ne demande pas de connexion.",
 	"network.portal.wifi_changed": "Le Wi-Fi a changé. Choisissez-le à nouveau, puis réessayez.",
 	"network.portal.identity_unavailable": "Le boîtier ne peut pas encore confirmer ce Wi-Fi. Patientez un instant, puis réessayez.",

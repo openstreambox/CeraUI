@@ -2966,6 +2966,7 @@
 	"network.portal.duration": "1분 정도 걸립니다. 마칠 때까지 이 휴대폰의 채팅이 멈출 수 있습니다. 로그인 허용 시간은 10분 후에 끝납니다.",
 	"network.portal.open": "호텔 페이지 열기",
 	"network.portal.unavailable": "로그인을 시작하지 못했습니다. 잠시 후 다시 시도하세요.",
+	"network.portal.reconnected": "박스와의 연결이 복구되었습니다. 다시 시도하세요.",
 	"network.portal.not_captive": "이 Wi-Fi는 로그인이 필요하지 않습니다.",
 	"network.portal.wifi_changed": "Wi-Fi가 바뀌었습니다. 다시 선택한 뒤 재시도하세요.",
 	"network.portal.identity_unavailable": "박스가 아직 이 Wi-Fi를 확인할 수 없습니다. 잠시 기다린 뒤 재시도하세요.",

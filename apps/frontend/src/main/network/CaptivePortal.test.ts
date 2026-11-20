@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { beforeEach, expect, it, vi } from "vitest";
+import { NotSentError } from "$lib/rpc/rpc-error";
 import CaptivePortal from "./CaptivePortal.svelte";
 
 const { portal, gate } = vi.hoisted(() => ({
@@ -180,4 +181,24 @@ it.each([
 	);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	expect(view.queryByText(/temporarily pause VPN/)).toBeNull();
+});
+
+it("asks to try again when the action was dropped by a reconnect", async () => {
+	const view = render(CaptivePortal);
+	await waitFor(() =>
+		expect(portal).toHaveBeenCalledWith({ action: "status" }),
+	);
+	await fireEvent.change(view.getByRole("combobox"), {
+		target: { value: "2" },
+	});
+	vi.spyOn(window, "open").mockReturnValue(null);
+	portal.mockRejectedValue(new NotSentError("reconnected"));
+	await fireEvent.click(
+		view.getByRole("button", { name: "Open the hotel's page" }),
+	);
+	await waitFor(() =>
+		expect(view.getByRole("status").textContent).toBe(
+			"The connection to the box was restored. Try again.",
+		),
+	);
 });

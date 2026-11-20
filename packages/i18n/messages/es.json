@@ -3014,6 +3014,7 @@
 	"network.portal.duration": "Alrededor de un minuto. El chat de este teléfono puede pausarse. La ventana se cierra después de diez minutos.",
 	"network.portal.open": "Abrir la página del hotel",
 	"network.portal.unavailable": "No se pudo abrir la ventana de inicio de sesión. Vuelve a intentarlo en un momento.",
+	"network.portal.reconnected": "Se restableció la conexión con la caja. Vuelve a intentarlo.",
 	"network.portal.not_captive": "Esta red Wi-Fi no necesita que inicies sesión.",
 	"network.portal.wifi_changed": "La red Wi-Fi cambió. Elígela de nuevo y vuelve a intentarlo.",
 	"network.portal.identity_unavailable": "El equipo aún no puede confirmar esta red Wi-Fi. Espera un momento y vuelve a intentarlo.",

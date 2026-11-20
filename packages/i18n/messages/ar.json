@@ -3023,6 +3023,7 @@
 	"network.portal.duration": "نحو دقيقة. قد تتوقف الدردشة على هذا الهاتف مؤقتًا حتى تنتهي. تُغلَق فترة تسجيل الدخول بعد عشر دقائق.",
 	"network.portal.open": "افتح صفحة الفندق",
 	"network.portal.unavailable": "تعذّر فتح فترة تسجيل الدخول. حاول مجددًا بعد لحظة.",
+	"network.portal.reconnected": "عاد الاتصال بالجهاز. حاول مجددًا.",
 	"network.portal.not_captive": "شبكة Wi-Fi هذه لا تحتاج إلى تسجيل دخول.",
 	"network.portal.wifi_changed": "تغيّرت شبكة Wi-Fi. اخترها مجددًا ثم أعد المحاولة.",
 	"network.portal.identity_unavailable": "لا يستطيع الجهاز تأكيد شبكة Wi-Fi هذه بعد. انتظر لحظة ثم أعد المحاولة.",

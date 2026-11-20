@@ -3011,6 +3011,7 @@
 	"network.portal.duration": "About a minute. Chat on this phone may pause until you're done. The sign-in window closes after ten minutes.",
 	"network.portal.open": "Open the hotel's page",
 	"network.portal.unavailable": "The sign-in window could not be opened. Try again in a moment.",
+	"network.portal.reconnected": "The connection to the box was restored. Try again.",
 	"network.portal.not_captive": "This Wi-Fi does not need sign-in.",
 	"network.portal.wifi_changed": "The Wi-Fi changed. Choose it again, then retry.",
 	"network.portal.identity_unavailable": "The box cannot confirm this Wi-Fi yet. Wait a moment, then retry.",

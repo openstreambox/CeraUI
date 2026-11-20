@@ -3011,6 +3011,7 @@
 	"network.portal.duration": "लगभग एक मिनट। तब तक इस फ़ोन पर चैट रुक सकती है। साइन-इन अवधि दस मिनट बाद बंद हो जाती है।",
 	"network.portal.open": "होटल का पेज खोलें",
 	"network.portal.unavailable": "साइन-इन अवधि शुरू नहीं हो सकी। थोड़ी देर में फिर से कोशिश करें।",
+	"network.portal.reconnected": "बॉक्स से कनेक्शन फिर से जुड़ गया है। फिर से कोशिश करें।",
 	"network.portal.not_captive": "इस Wi-Fi को साइन-इन की ज़रूरत नहीं है।",
 	"network.portal.wifi_changed": "Wi-Fi बदल गया। इसे फिर से चुनें, फिर दोबारा कोशिश करें।",
 	"network.portal.identity_unavailable": "बॉक्स अभी इस Wi-Fi की पुष्टि नहीं कर सकता। थोड़ा रुकें, फिर दोबारा कोशिश करें।",
