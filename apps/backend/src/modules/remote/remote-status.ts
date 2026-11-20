@@ -46,27 +46,50 @@ export function projectRemoteConfig(payload: unknown): unknown {
 	return config;
 }
 
-/** Remote status retains credentials and omits only local radio lifetime tokens. */
+/**
+ * Remote status retains credentials and omits only local radio lifetime tokens.
+ * The USB tree is local. A later counts-only devices case is the remote form.
+ */
 export function projectRemoteStatus(payload: unknown): unknown {
-	if (
-		typeof payload !== "object" ||
-		payload === null ||
-		!("wifi" in payload) ||
-		typeof payload.wifi !== "object" ||
-		payload.wifi === null
-	) {
+	if (typeof payload !== "object" || payload === null) return payload;
+	const hasLocal =
+		"usb_devices" in payload ||
+		"usb_events" in payload ||
+		"device_calm" in payload ||
+		"usb_helper" in payload;
+	const wifi = "wifi" in payload ? payload.wifi : undefined;
+	if (!hasLocal && (typeof wifi !== "object" || wifi === null)) {
 		return payload;
 	}
 
-	return {
-		...payload,
-		wifi: Array.isArray(payload.wifi)
-			? payload.wifi.map(omitIncarnation)
+	const projected: Record<string, unknown> = { ...payload };
+	Reflect.deleteProperty(projected, "usb_devices");
+	Reflect.deleteProperty(projected, "usb_events");
+	Reflect.deleteProperty(projected, "device_calm");
+	Reflect.deleteProperty(projected, "usb_helper");
+	if (typeof wifi === "object" && wifi !== null) {
+		projected.wifi = Array.isArray(wifi)
+			? wifi.map(omitIncarnation)
 			: Object.fromEntries(
-					Object.entries(payload.wifi).map(([id, iface]) => [
+					Object.entries(wifi).map(([id, iface]) => [
 						id,
 						omitIncarnation(iface),
 					]),
-				),
-	};
+				);
+	}
+	return projected;
+}
+
+/** The bytes the cloud remote socket sends. Local status keeps usb_devices. */
+export function serializeRemoteSocketMessage(data: string): string {
+	const frame: Record<string, unknown> = JSON.parse(data);
+	let projected =
+		frame.status === undefined
+			? frame
+			: { ...frame, status: projectRemoteStatus(frame.status) };
+	const config = projectRemoteConfig(frame.config);
+	if (config !== frame.config) projected = { ...projected, config };
+	const wifi = projectRemoteWifiFrame(frame.wifi);
+	if (wifi !== frame.wifi) projected = { ...projected, wifi };
+	return projected === frame ? data : JSON.stringify(projected);
 }

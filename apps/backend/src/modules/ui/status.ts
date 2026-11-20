@@ -25,6 +25,8 @@ import type {
 	PreviewEncoderRealized,
 	ResolvedAsrcReason,
 	UnclaimedAdapter,
+	UsbDevicesWire,
+	UsbHelperWire,
 } from "@ceraui/rpc/schemas";
 import type WebSocket from "ws";
 import {
@@ -33,6 +35,10 @@ import {
 } from "../bluetooth/bluetooth-runtime.ts";
 import { getCellularStack } from "../cellular/cellular-stack.ts";
 import { getConfig } from "../config.ts";
+import {
+	getUsbDevicesWire,
+	getUsbHelper,
+} from "../devices/usb-devices-wire.ts";
 import { buildModemsWireMessage } from "../modems/modem-status.ts";
 import { getNetworkIngestInfo } from "../network/network-ingest.ts";
 import { netIfBuildMsg } from "../network/network-interfaces.ts";
@@ -106,11 +112,14 @@ export type StatusResponseMessage = {
 	// absent-because-empty — "the probe has not answered yet" — and under
 	// `exactOptionalPropertyTypes` that is the only shape that can express it.
 	unclaimed_adapters?: UnclaimedAdapter[] | undefined;
+	usb_devices?: UsbDevicesWire;
+	usb_helper?: UsbHelperWire;
 };
 
 export function sendStatus(conn: WebSocket) {
 	// Re-probe SSH in the background; broadcasts only if the status changed.
 	void getSshStatus();
+	const usbHelper = getUsbHelper();
 	conn.send(
 		buildMsg("status", {
 			is_streaming: getIsStreaming(),
@@ -137,6 +146,8 @@ export function sendStatus(conn: WebSocket) {
 			preview_encoder_realized: getPreviewEncoderRealizedStatus(),
 			cellular_initializing: !getCellularStack().ready,
 			unclaimed_adapters: getUnclaimedAdapters(),
+			usb_devices: getUsbDevicesWire(),
+			...(usbHelper === null ? {} : { usb_helper: usbHelper }),
 		} satisfies StatusResponseMessage),
 	);
 }

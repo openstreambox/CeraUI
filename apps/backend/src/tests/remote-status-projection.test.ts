@@ -1,5 +1,8 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { projectRemoteStatus } from "../modules/remote/remote-status.ts";
+import {
+	projectRemoteStatus,
+	serializeRemoteSocketMessage,
+} from "../modules/remote/remote-status.ts";
 import {
 	PROTOCOL_VERSION,
 	StatusSchema,
@@ -92,4 +95,47 @@ for (const row of remoteStatusCases) {
 
 test("an undefined status payload stays undefined", () => {
 	expect(projectRemoteStatus(undefined)).toBeUndefined();
+});
+
+test("usb_devices is absent from both serialized remote frames", () => {
+	const local = {
+		usb_devices: {
+			status: "ok",
+			board: "rock-5b-plus",
+			nodes: [{ controller: "fc000000.usb", product: "Modem", portPath: "1" }],
+		},
+		usb_helper: {
+			typec: {
+				powerRole: "source",
+				dataRole: "host",
+				partner: true,
+				vbus: "on",
+			},
+			reprobe: { outcome: "recovered", rearm: 2 },
+			holds: [
+				{ key: "fc000000.usb:usb2:1", stored: "20", outcome: "verified" },
+			],
+		},
+		is_streaming: true,
+	};
+	const frames: unknown[] = [];
+	setControlChannel({
+		isConnected: () => true,
+		sendFrame: (frame) => frames.push(frame),
+	});
+	relayStatusToGateway("status", local, 4);
+	const relayed = JSON.stringify(frames[0]);
+	expect(relayed).not.toContain("usb_devices");
+	expect(relayed).not.toContain("usb_helper");
+	expect(relayed).not.toContain("fc000000");
+	expect(relayed).toContain("is_streaming");
+
+	const socket = serializeRemoteSocketMessage(
+		JSON.stringify({ status: local, wifi: { ready: true } }),
+	);
+	expect(socket).not.toContain("usb_devices");
+	expect(socket).not.toContain("usb_helper");
+	expect(socket).not.toContain("fc000000");
+	expect(socket).toContain("is_streaming");
+	expect(socket).toContain("ready");
 });

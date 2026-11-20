@@ -32,4 +32,6 @@ export * from './update-capabilities.schema';
 export * from './update-details.schema';
 export * from './update-orchestrator.schema';
 export * from './update-settings.schema';
+export * from './usb-devices.schema';
+export * from './usb-helper.schema';
 export * from './wifi.schema';

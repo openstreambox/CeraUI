@@ -131,7 +131,10 @@ import {
 } from "./modules/streaming/link-telemetry.ts";
 import { getPipelineList } from "./modules/streaming/pipelines.ts";
 import { setMockPreviewEncoderRealizedProvider } from "./modules/streaming/preview-encoder-status.ts";
-import { beginRecoveryBarrier } from "./modules/streaming/recovery-barrier.ts";
+import {
+	beginHelperRecovery,
+	beginRecoveryBarrier,
+} from "./modules/streaming/recovery-barrier.ts";
 import { refreshAndBroadcastSources } from "./modules/streaming/sources.ts";
 import { runStreamRestoration } from "./modules/streaming/stream-restoration.ts";
 import { reconcileStreamSession } from "./modules/streaming/stream-session-orchestrator.ts";
@@ -275,6 +278,7 @@ if (configAvailableAtBind) reseedMockPipeline();
 // device cannot say whether a modem is mid-rollback. Internal boot origins await
 // this promise; external arrivals get the typed `recovery_pending` refusal.
 beginRecoveryBarrier();
+beginHelperRecovery();
 
 // Clean up orphaned atomic-write temp files from a prior crash (fail-soft).
 // This must run after config load so we know the config dir exists.
@@ -578,7 +582,12 @@ void initModemUpdateLoop({ monitor: networkMonitor });
 initFccUnlockModule();
 
 await guardNonCritical("modem-mutation-recovery", async () => {
-	await initMutationRecovery();
+	const { restoreHelperInterlock } = await import(
+		"./modules/devices/usb-helper-actions.ts"
+	);
+	await initMutationRecovery({
+		beforeLower: () => restoreHelperInterlock(),
+	});
 });
 logger.info(bootTimer.phase("🌐", "network"));
 

@@ -569,6 +569,9 @@ class RPCClient {
  */
 const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	"streaming.start": 75_000,
+	// The image oneshots wait out their own timeouts (60s and 300s).
+	"devices.retryPort": 70_000,
+	"devices.usb2": 320_000,
 };
 
 function createRPCProxy<T extends object>(
@@ -850,6 +853,25 @@ export interface TypedRPC {
 		setIngestEnabled: (
 			input: SetIngestEnabledInput,
 		) => Promise<SetIngestEnabledOutput>;
+	};
+	devices: {
+		helperOffer: () => Promise<{
+			ok: boolean;
+			refusal?: string;
+			retryPort: boolean;
+			rearmExhausted: boolean;
+			usb2: boolean;
+			tokens: { key: string; token: string }[];
+		}>;
+		retryPort: (input: { confirmed: boolean }) => Promise<{
+			ok: boolean;
+			refusal?: string;
+		}>;
+		usb2: (input: {
+			confirmed: boolean;
+			key: string;
+			token: string;
+		}) => Promise<{ ok: boolean; refusal?: string }>;
 	};
 	/**
 	 * The BlueZ operator surface. Every mutation answers the ONE shared

@@ -76,11 +76,7 @@ import {
 	updateCachedRelays,
 	type ValidateRemoteRelaysMessage,
 } from "./remote-relays.ts";
-import {
-	projectRemoteConfig,
-	projectRemoteStatus,
-	projectRemoteWifiFrame,
-} from "./remote-status.ts";
+import { serializeRemoteSocketMessage } from "./remote-status.ts";
 import { buildRemoteWsUrl } from "./remote-url.ts";
 
 type RemoteAuthEncoderMessage = {
@@ -423,23 +419,13 @@ async function remoteConnect() {
 	// Local fan-out is already serialized. Keep this JSON-text boundary remote-only.
 	const send = remoteWs.send.bind(remoteWs);
 	remoteWs.send = (data, options?, cb?: (err?: Error) => void) => {
-		const frame: Record<string, unknown> = JSON.parse(String(data));
-		let projected =
-			frame.status === undefined
-				? frame
-				: {
-						...frame,
-						status: projectRemoteStatus(frame.status),
-					};
-		const config = projectRemoteConfig(frame.config);
-		if (config !== frame.config) projected = { ...projected, config };
-		const wifi = projectRemoteWifiFrame(frame.wifi);
-		if (wifi !== frame.wifi) projected = { ...projected, wifi };
-		const message = projected === frame ? data : JSON.stringify(projected);
+		const text = String(data);
+		const message = serializeRemoteSocketMessage(text);
+		const outbound = message === text ? data : message;
 		if (typeof options === "function") {
-			send(message, options);
+			send(outbound, options);
 		} else {
-			send(message, options ?? {}, cb);
+			send(outbound, options ?? {}, cb);
 		}
 	};
 	markConnectionActive(

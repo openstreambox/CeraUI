@@ -41,6 +41,10 @@ import {
 	getMockModemNetMarker,
 	shouldMockNetwork,
 } from "../../mocks/providers/network.ts";
+import {
+	publishUsbDevices,
+	USB_DEVICE_POLL_INTERVAL_MS,
+} from "../devices/usb-devices-wire.ts";
 import { isBondLinkMappable } from "../streaming/bond-entry.ts";
 // Type-only: erased at build time, so it adds no runtime edge back into
 // `modules/streaming/`, which imports this module.
@@ -840,6 +844,10 @@ export function initNetworkInterfaceMonitoring() {
 	setInterval(() => {
 		void refreshUnclaimedAdapterState();
 	}, UNCLAIMED_ADAPTER_POLL_INTERVAL_MS);
+	void publishUsbDevices();
+	setInterval(() => {
+		void publishUsbDevices();
+	}, USB_DEVICE_POLL_INTERVAL_MS);
 }
 
 /**

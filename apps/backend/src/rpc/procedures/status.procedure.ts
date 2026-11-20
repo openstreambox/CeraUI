@@ -122,7 +122,11 @@ export const getRelaysProcedure = authedProcedure
 	});
 
 /**
- * Build initial status message for new connections
+ * Build initial status message for new connections.
+ *
+ * The USB tree is not in this object and not in `getStatus`. The authenticated
+ * adapter replays the cached tree onto the browser status push, because a
+ * later unchanged poll does not broadcast it again.
  */
 export function buildInitialStatus() {
 	const config = getConfig();

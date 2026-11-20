@@ -44,7 +44,10 @@ import type { ModemMutationRefusal } from "@ceraui/rpc/schemas";
 import { logger } from "../../helpers/logger.ts";
 import { noteStartLeaseEnded } from "../system/idle-state.ts";
 
-import { isRecoveryPending } from "./recovery-barrier.ts";
+import {
+	isHelperRecoveryPending,
+	isRecoveryPending,
+} from "./recovery-barrier.ts";
 
 export const LIFECYCLE_HOLDERS = ["streaming", "modem-transition"] as const;
 export type LifecycleHolder = (typeof LIFECYCLE_HOLDERS)[number];
@@ -112,6 +115,13 @@ let nextToken = 0;
  * specific error instead of decaying into a generic lease-busy one.
  */
 export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
+	if (isHelperRecoveryPending()) {
+		return {
+			admitted: false,
+			heldBy: "modem-transition",
+			refusal: leaseRefusal("modem-transition"),
+		};
+	}
 	// A per-device mutation lease is the SAME exclusion as the legacy
 	// `"modem-transition"` holder, so it has to refuse a requester here too —
 	// otherwise a stream admission could slip past a mutation that took the
@@ -250,7 +260,7 @@ let nextMutationToken = 0;
 export function tryAcquireModemMutation(
 	stableKey: string,
 ): ModemMutationAdmission {
-	if (isRecoveryPending()) {
+	if (isRecoveryPending() || isHelperRecoveryPending()) {
 		return { admitted: false, refusal: "recovery_pending" };
 	}
 	const block = mutationBlocks.get(stableKey);
@@ -270,6 +280,29 @@ export function tryAcquireModemMutation(
 		};
 	}
 
+	return { admitted: true, lease: grantKeyLease(stableKey, false) };
+}
+
+/**
+ * Reconstruct the lease for a helper job that systemd already owns.
+ * Fresh actions use tryAcquireModemMutation, which stays closed until
+ * ordinary recovery has finished. This path does not open that admission.
+ */
+export function tryAcquireHelperRecoveryLease(
+	stableKey: string,
+): ModemMutationAdmission {
+	if (activeMutations.has(stableKey)) {
+		return { admitted: false, refusal: "mutation_in_progress" };
+	}
+	if (held !== undefined) {
+		return {
+			admitted: false,
+			refusal:
+				held.holder === "streaming"
+					? "streaming_active"
+					: "mutation_in_progress",
+		};
+	}
 	return { admitted: true, lease: grantKeyLease(stableKey, false) };
 }
 

@@ -240,6 +240,11 @@ async function journalReadsCompletely(): Promise<boolean> {
 export interface MutationRecoveryOptions {
 	/** Injected clock for the retry owner's backoff. */
 	readonly sleep?: MutationRecoveryDeps["sleep"];
+	/**
+	 * Runs after the modem journal is readable and before admission opens.
+	 * A false result keeps the barrier up.
+	 */
+	readonly beforeLower?: () => Promise<boolean>;
 }
 
 /**
@@ -265,9 +270,12 @@ export async function initMutationRecovery(
 		schedule: () => scheduleMutationRecovery(deps, "verify"),
 		cancel: stopMutationRecovery,
 	});
+	const readyForAdmission =
+		options.beforeLower === undefined ? true : await options.beforeLower();
 	if (
 		summary.unreadable === 0 &&
 		isMutationJournalRevisionCurrent(reconciledMutationJournalRevision()) &&
+		readyForAdmission &&
 		completeRecoveryBarrier()
 	)
 		return summary;
