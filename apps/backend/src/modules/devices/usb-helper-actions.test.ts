@@ -723,6 +723,30 @@ describe("helper action RPCs", () => {
 		expect(started).toEqual([]);
 	});
 
+	test("a fresh action stays refused while ordinary modem recovery is pending", async () => {
+		await fresh();
+		await plant(TYPEC_REL);
+		await plant("proc/device-tree/compatible", "radxa,rock-5b-plus\0");
+		await plant("run/ceralive-typec/rearm", "0\n");
+		beginRecoveryBarrier();
+		useDeps({ useProductionAdmit: true });
+		const during = await call(
+			helperRetryPortProcedure,
+			{ confirmed: true },
+			{ context: callerContext() },
+		);
+		expect(during).toEqual({ ok: false, refusal: "start_failed" });
+		expect(started).toEqual([]);
+		completeRecoveryBarrier();
+		const after = await call(
+			helperRetryPortProcedure,
+			{ confirmed: true },
+			{ context: callerContext() },
+		);
+		expect(after).toEqual({ ok: true });
+		expect(started).toEqual([TYPEC_UNIT]);
+	});
+
 	test("an unreadable helper journal keeps admission closed", async () => {
 		await fresh();
 		await plant("run/ceralive/devices-actions/bad.json", "{");
