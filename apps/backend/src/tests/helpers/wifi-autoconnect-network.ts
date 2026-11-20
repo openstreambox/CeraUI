@@ -202,7 +202,15 @@ export function autoconnectNetworkFixture() {
 				return encodeProfile(fields);
 			},
 		);
-		spyOn(compat, "broadcastMsg").mockImplementation(() => {
+		spyOn(compat, "broadcastMsg").mockImplementation((_type, data) => {
+			// The train's boot-readiness marks also publish box health; only a
+			// Wi-Fi status frame is a row publication here.
+			if (
+				data === null ||
+				typeof data !== "object" ||
+				!("wifi" in (data as Record<string, unknown>))
+			)
+				return;
 			publications.push(
 				profiles.get(PROFILE)?.["connection.autoconnect"] ?? "",
 			);
