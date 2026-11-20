@@ -212,3 +212,9 @@ const _exhaustive: Validation[] = [
 	{ state: "fail", stage: "dns", reason: "x" },
 ];
 void _exhaustive;
+
+it("preserves the responding address family for the success display", () => {
+	expect(
+		reduceValidateResult({ valid: true, stage: "probe", reason: "IPv6" }),
+	).toEqual({ state: "pass", stage: "probe", reason: "IPv6" });
+});
