@@ -217,6 +217,7 @@ const securityChoice = $derived(deriveHotspotSecurityChoice(iface?.hotspot));
 const radioTruth = $derived(deriveHotspotRadioTruth(iface?.hotspot, iface?.capabilities));
 
 let prevOpen = false;
+let openedTarget: { device: string; incarnation: string | undefined } | undefined;
 let prevActive = false;
 // The last resolved lifetime of the live AP this dialog showed.
 let shownLifetime: number | undefined;
@@ -227,6 +228,19 @@ $effect.pre(() => {
 	const next = { device: radioDevice, incarnation: radioToken, link: getLinkEpoch() };
 	radioReason;
 	untrack(() => {
+		if (opened && !prevOpen) openedTarget = { device: next.device, incarnation: next.incarnation };
+		// The dialog is bound to the radio lifetime it opened on. A changed or
+		// vanished pair closes it with a notice; it never follows a new
+		// incarnation of the same id, which needs a fresh pick.
+		if (opened && prevOpen && openedTarget && (openedTarget.device !== next.device ||
+			openedTarget.incarnation !== next.incarnation)) {
+			admission?.abort();
+			confirmingStart = false;
+			openedTarget = undefined;
+			open = false;
+			toast.warning(m['network.view.hotspotRadioLost']());
+			return;
+		}
 		if (!opened || (admissionOwner &&
 			(admissionOwner.device !== next.device || admissionOwner.link !== next.link))) admission?.abort();
 		const changed = formBinding !== undefined && (

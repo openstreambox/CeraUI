@@ -247,6 +247,31 @@ function rememberIdentity(
 	});
 }
 
+/**
+ * {@link rememberIdentity} for an operator's explicit pair: true only once the
+ * store holds it on disk. A store without a checked write fails closed.
+ */
+function rememberIdentityDurably(
+	macAddress: string,
+	wifiInterface: WifiInterfaceWithHotspot,
+	deps: HotspotActivationDeps,
+	pair: { name: string; password: string },
+	conn?: string,
+	profileMac?: string,
+): boolean {
+	if (!hotspotOwnershipGuard(macAddress, wifiInterface)(conn, profileMac))
+		return false;
+	const { channel } = wifiInterface.hotspot;
+	if (!pair.name || !pair.password || !deps.credentials.rememberChecked)
+		return false;
+	return deps.credentials.rememberChecked(macAddress, {
+		ssid: pair.name,
+		password: pair.password,
+		...(conn !== undefined ? { conn } : {}),
+		...(channel !== undefined ? { channel } : {}),
+	});
+}
+
 /*
   The ONE resolution order, shared by the start and by the pre-activation read
   (#413): live profile -> discovered profile -> persisted identity -> generated.
@@ -428,17 +453,36 @@ async function prepareHotspotLocked(
 		msg.name !== undefined && msg.password !== undefined
 			? { name: msg.name, password: msg.password }
 			: undefined;
-	if (
-		!chosen ||
-		isHotspotActive(wifiInterface) ||
-		(chosen.name === identity.name && chosen.password === identity.password)
-	) {
-		return {
-			success: true,
-			name: identity.name,
-			password: identity.password,
-			...firstTime,
-		};
+	const shown = {
+		success: true,
+		name: identity.name,
+		password: identity.password,
+		...firstTime,
+	} as const;
+	if (!chosen) return shown;
+	const unchanged =
+		chosen.name === identity.name && chosen.password === identity.password;
+	// A live AP accepts no change here; it answers with its own pair, which the
+	// caller sees is not the one it asked for.
+	if (isHotspotActive(wifiInterface) && !unchanged) return shown;
+	// From here an explicit pair is acknowledged only once the store holds it on
+	// disk, including an unchanged pair whose earlier best-effort write failed.
+	const unwritten = {
+		success: false,
+		error: "activation-failed",
+		reason: "credential-store-unwritten",
+	} as const;
+	if (unchanged) {
+		return rememberIdentityDurably(
+			owner,
+			wifiInterface,
+			deps,
+			identity,
+			identity.conn,
+			identity.profileMac,
+		)
+			? shown
+			: unwritten;
 	}
 	// The profile is written FIRST: a store that ran ahead of a refused write
 	// would show the operator credentials the AP never broadcasts.
@@ -448,23 +492,10 @@ async function prepareHotspotLocked(
 	const credentialUuid = identity.conn;
 	if (!credentialUuid) {
 		// No profile yet: the store is the only copy of the operator's choice
-		// until the first start creates one, so the reply vouches for it only
-		// once it is on disk. Ordinary remembering stays best effort.
-		const stored = deps.credentials.rememberChecked?.(owner, {
-			ssid: chosen.name,
-			password: chosen.password,
-			...(wifiInterface.hotspot.channel !== undefined
-				? { channel: wifiInterface.hotspot.channel }
-				: {}),
-		});
-		if (!stored) {
-			return {
-				success: false,
-				error: "activation-failed",
-				reason: "credential-store-unwritten",
-			};
-		}
-		// Synchronous since the ownership check above: nothing interleaved.
+		// until the first start creates one. Memory follows only a durable write.
+		if (!rememberIdentityDurably(owner, wifiInterface, deps, chosen))
+			return unwritten;
+		// Synchronous since the write: nothing interleaved.
 		wifiInterface.hotspot.name = chosen.name;
 		wifiInterface.hotspot.password = chosen.password;
 		return { success: true, ...chosen, ...firstTime };
@@ -487,15 +518,29 @@ async function prepareHotspotLocked(
 	if (!owned(identity.conn, identity.profileMac)) {
 		return { success: false, error: "activation-failed" };
 	}
+	// The profile now carries the pair, so memory follows it either way; the
+	// reply still vouches for it only once the store is on disk too.
 	wifiInterface.hotspot.name = chosen.name;
 	wifiInterface.hotspot.password = chosen.password;
-	rememberIdentity(
-		owner,
-		wifiInterface,
-		deps,
-		identity.conn,
-		identity.profileMac,
-	);
+	if (
+		!rememberIdentityDurably(
+			owner,
+			wifiInterface,
+			deps,
+			chosen,
+			identity.conn,
+			identity.profileMac,
+		)
+	) {
+		rememberIdentity(
+			owner,
+			wifiInterface,
+			deps,
+			identity.conn,
+			identity.profileMac,
+		);
+		return unwritten;
+	}
 	return { success: true, ...chosen, ...firstTime };
 }
 

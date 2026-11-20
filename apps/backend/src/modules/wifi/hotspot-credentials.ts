@@ -336,26 +336,28 @@ export function rememberHotspotCredentials(
 
 /**
  * {@link rememberHotspotCredentials} for a write the caller must be able to
- * report: an operator's chosen pair saved while no profile exists, where this
- * store is the only copy until the first start creates one. Returns `true` only
+ * report: an operator's explicit pair, which Prepare acknowledges only once it
+ * is on disk (before a first start creates the profile, this store is its only
+ * copy). Returns `true` only
  * once the whole store is on disk with this entry (it is rewritten even when the
  * entry is unchanged in memory, since an earlier best-effort write may have
- * failed). A refused or failed write changes nothing in memory.
+ * failed). A store that was never initialized has no file to vouch for, so it
+ * refuses. A refused or failed write changes nothing in memory.
  */
 export function rememberHotspotCredentialsChecked(
 	macAddress: string,
 	credentials: HotspotCredentials,
 ): boolean {
+	if (!initialized) return false;
 	const entry = nextCredentialEntry(macAddress, credentials);
 	if (!entry) return false;
 	const next = { ...entries, [entry.key]: entry.next };
 	try {
-		if (initialized)
-			writeFileAtomicSync(
-				filePath,
-				JSON.stringify({ version: STORE_VERSION, adapters: next }),
-				{ mode: 0o600 },
-			);
+		writeFileAtomicSync(
+			filePath,
+			JSON.stringify({ version: STORE_VERSION, adapters: next }),
+			{ mode: 0o600 },
+		);
 	} catch (error: unknown) {
 		logger.warn("Could not persist the chosen hotspot credentials", {
 			error: error instanceof Error ? error.name : "unknown",
