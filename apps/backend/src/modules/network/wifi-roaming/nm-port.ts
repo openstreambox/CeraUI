@@ -13,8 +13,11 @@
  */
 import { readFile } from "node:fs/promises";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
-import { nmcliParseSep } from "../network-manager.ts";
-import type { JoinResult, RadioObservation } from "./coordinator.ts";
+import {
+	JOIN_REFUSED,
+	type JoinResult,
+	type RadioObservation,
+} from "./coordinator.ts";
 import type { ScanRow, UplinkIdentity } from "./policy.ts";
 
 export type Runner = (
@@ -118,12 +121,36 @@ export function apOnPhyOf(
 export const unescapeNmcli = (value: string): string =>
 	value.replace(/\\(.)/g, "$1");
 
+/**
+ * Split one line of nmcli terse output (`-t`) into fields. nmcli escapes both
+ * `:` and `\\` in terse values, so a backslash always escapes the next
+ * character and only an unescaped colon separates fields. The same rule as
+ * {@link unescapeNmcli}, so an SSID reads the same from a scan and from a
+ * saved profile.
+ */
+export function splitTerse(line: string): string[] {
+	const fields: string[] = [];
+	let cur = "";
+	for (let i = 0; i < line.length; i++) {
+		const ch = line[i];
+		if (ch === "\\" && i + 1 < line.length) {
+			cur += line[i + 1];
+			i++;
+		} else if (ch === ":") {
+			fields.push(cur);
+			cur = "";
+		} else cur += ch;
+	}
+	fields.push(cur);
+	return fields;
+}
+
 /** Parse `nmcli -t -f BSSID,SSID,SIGNAL,CHAN device wifi list …`. */
 export function parseScanRows(stdout: string): ScanRow[] {
 	const rows: ScanRow[] = [];
 	for (const line of stdout.split("\n")) {
 		if (!line) continue;
-		const [bssid, ssid, signal, chan] = nmcliParseSep(line);
+		const [bssid, ssid, signal, chan] = splitTerse(line);
 		const b = bssid?.toLowerCase() ?? "";
 		const quality = Number.parseInt(signal ?? "", 10);
 		if (!BSSID_RE.test(b) || Number.isNaN(quality)) continue;
@@ -188,7 +215,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 			"--active",
 		]);
 		for (const line of out?.split("\n") ?? []) {
-			const [device, uuid] = nmcliParseSep(line);
+			const [device, uuid] = splitTerse(line);
 			if (device === ifname && uuid && UUID_RE.test(uuid)) return uuid;
 		}
 		return null;
@@ -227,7 +254,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 		]);
 		const owned = searchProfileName(ifname);
 		for (const line of out?.split("\n") ?? []) {
-			const [name, uuid, type] = nmcliParseSep(line);
+			const [name, uuid, type] = splitTerse(line);
 			if (type !== "802-11-wireless" || !uuid || !UUID_RE.test(uuid)) continue;
 			if (name === owned) continue;
 			const f = await profileFields(uuid);
@@ -302,6 +329,15 @@ export function createSearchNm(deps: SearchNmDeps) {
 			};
 		},
 
+		/** Phy and AP state from `iw dev` alone: cheap enough to read late. */
+		async radioMode(
+			ifname: string,
+		): Promise<{ phy: string | null; apOnPhy: boolean | null } | undefined> {
+			const dev = argMatch(ID_RE, ifname);
+			const devs = await quiet("iw", ["dev"]);
+			return devs === undefined ? undefined : apOnPhyOf(parseIwDev(devs), dev);
+		},
+
 		async scan(ifname: string): Promise<readonly ScanRow[] | undefined> {
 			const out = await quiet(
 				"nmcli",
@@ -330,7 +366,8 @@ export function createSearchNm(deps: SearchNmDeps) {
 			ifname: string,
 			ssid: string,
 			bssid: string,
-		): Promise<JoinResult | undefined> {
+			mayActivate: () => Promise<boolean> = async () => true,
+		): Promise<JoinResult | typeof JOIN_REFUSED | undefined> {
 			const dev = argMatch(ID_RE, ifname);
 			const target = argMatch(BSSID_RE, bssid.toLowerCase());
 			const source = (await boundProfiles(dev)).get(ssid);
@@ -356,6 +393,10 @@ export function createSearchNm(deps: SearchNmDeps) {
 				"connection.autoconnect",
 				"no",
 			]);
+			if (modified !== undefined && !(await mayActivate())) {
+				await quiet("nmcli", ["connection", "delete", uuid]);
+				return JOIN_REFUSED;
+			}
 			const up =
 				modified !== undefined &&
 				(await quiet(
