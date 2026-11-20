@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import * as credentials from "../modules/wifi/hotspot-credentials.ts";
+import { admitWifiAdapter } from "../modules/wifi/wifi-adapter-admission.ts";
 import {
 	ownsWifiAdapterLock,
 	wifiAdapterLockKey,
@@ -29,6 +30,7 @@ import {
 	WIFI_DIVERSITY_TICK_MS,
 	type WifiNetworkDiversity,
 } from "../modules/wifi/wifi-network-diversity.ts";
+import { wifiRadioIdentity } from "../modules/wifi/wifi-radio-identity.ts";
 import {
 	type SeedRadio,
 	seedWifiRadios,
@@ -238,6 +240,68 @@ describe("one resolved lock for operator, move-back and AP reconciliation", () =
 		await nm.run(5 * MIN);
 		expect(nm.activations()).toEqual([`activate ${A1} wlA`]);
 		expect(nm.underLock).toEqual([true]);
+	});
+});
+
+describe("only the current publication of a radio is acted on", () => {
+	test("mid-discovery the stale verified sample admits nothing and the tick defers", async () => {
+		const nm = new Nm();
+		await nm.run(2 * WIFI_DIVERSITY_TICK_MS);
+		// A discovery pass invalidated the publication; the old sample remains.
+		seeded.invalidate();
+		expect(wifiRadioIdentity.state.rows.get("wlA")?.classification).toBe(
+			"verified",
+		);
+		expect(admitWifiAdapter(A)).toBeUndefined();
+		// An operator choice made now is deferred, not dropped and not written.
+		const choice = beginWifiOperatorChoice(A, nm.diversity);
+		await choice.record(A2);
+		choice.release();
+		await nm.run(5 * MIN);
+		expect(nm.log).toEqual([]);
+		// Republished: the deferred choice is written under A's owner lock.
+		await seeded.republish();
+		await nm.run(WIFI_DIVERSITY_TICK_MS);
+		expect(nm.writes().sort()).toEqual(
+			[`priority ${A1} 0`, `priority ${A2} ${MARK}`].sort(),
+		);
+		expect(nm.underLock).toEqual([true, true]);
+	});
+
+	test("the deferred tick keeps its state and moves once republished", async () => {
+		const nm = new Nm();
+		seeded.invalidate();
+		await nm.run(5 * MIN);
+		expect(nm.log).toEqual([]);
+		await seeded.republish();
+		await nm.run(5 * MIN);
+		expect(nm.activations()).toEqual([`activate ${A1} wlA`]);
+	});
+
+	test("a netif replugged under the same name before the move is not moved", async () => {
+		const nm = new Nm();
+		nm.afterScan = (ifname, count) => {
+			// Between the confirming scan and the activation; nothing republished.
+			if (ifname === "wlA" && count === 2)
+				seeded.sysfs(radios({ ifindex: 31 }));
+		};
+		await nm.run(10 * MIN);
+		expect(nm.scans("wlA").length).toBeGreaterThanOrEqual(2);
+		expect(nm.activations()).toEqual([]);
+	});
+
+	test("a netif replugged under the same name before a choice is written gets no write", async () => {
+		const nm = new Nm();
+		const choice = beginWifiOperatorChoice(A, nm.diversity);
+		seeded.sysfs(radios({ ifindex: 31 }));
+		await choice.record(A2);
+		choice.release();
+		await nm.run(2 * MIN);
+		expect(nm.writes()).toEqual([]);
+		// Discovery catches up: a new radio, and the choice is not carried over.
+		await seeded.publish(radios({ ifindex: 31 }));
+		await nm.run(2 * WIFI_DIVERSITY_TICK_MS);
+		expect(nm.writes()).toEqual([]);
 	});
 });
 

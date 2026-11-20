@@ -31,6 +31,14 @@
   `wifiAdapterAdmissionCurrent` re-checks all of it once that owner lock is held:
   the same registry object under the same key, the same lifetime, and the same
   owner. Anything uncertain is refused rather than guessed.
+
+  The identity state alone is not current. Discovery invalidates every row's
+  publication before its awaited NetworkManager read, while the previous
+  verified sample stays in `wifiRadioIdentity.state`. Admission therefore also
+  requires the publication guard the wire incarnation uses
+  (`projectWifiRadioIncarnation`), and `confirmWifiAdapterLifetime` compares a
+  fresh bracketed sysfs sample of the netif with the admitted lifetime right
+  before an effect is dispatched.
 */
 
 import type { MacAddress } from "../network/network-manager.ts";
@@ -44,9 +52,15 @@ import type { WifiInterface } from "./wifi-interfaces.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
 import {
 	type RadioLifetime,
+	radioIdentityReaders,
 	sameRadioLifetime,
 	wifiRadioIdentity,
 } from "./wifi-radio-identity.ts";
+import { projectWifiRadioIncarnation } from "./wifi-radio-publication.ts";
+import { sampleRadio } from "./wifi-radio-read-budget.ts";
+
+/** Bound on the fresh sysfs sample taken before an effect. */
+const CONFIRM_TIMEOUT_MS = 2_000;
 
 /** A verified radio and the owner lock its current registry row resolves to. */
 export type WifiAdapterAdmission = Readonly<{
@@ -56,6 +70,8 @@ export type WifiAdapterAdmission = Readonly<{
 	row: WifiInterface;
 	permanentMac: MacAddress;
 	lifetime: RadioLifetime;
+	/** The published incarnation the admission was made under. */
+	incarnation: string;
 	/** Lock key the row resolved to at admission. Never compared as identity. */
 	owner: WifiAdapterLockKey;
 }>;
@@ -68,6 +84,13 @@ export type WifiAdapterAdmission = Readonly<{
  */
 export function admitWifiAdapter(
 	registryKey: string,
+	options: {
+		/**
+		 * Accept a sample whose publication a discovery pass has invalidated.
+		 * Only for identifying a radio; never for authorizing an effect.
+		 */
+		readonly publicationPending?: boolean;
+	} = {},
 ): WifiAdapterAdmission | undefined {
 	const permanentMac = normalizeMacAddress(registryKey);
 	if (!permanentMac || permanentMac !== registryKey) return undefined;
@@ -83,6 +106,12 @@ export function admitWifiAdapter(
 		!identity.lifetime
 	)
 		return undefined;
+	// The identity must be the current publication, not a sample a discovery
+	// pass has already invalidated.
+	const incarnation = options.publicationPending
+		? identity.incarnation
+		: projectWifiRadioIncarnation(row, identity);
+	if (incarnation === undefined) return undefined;
 	const owner = wifiAdapterLockKey(registryKey);
 	// A MAC-keyed row resolves to its own MAC or a `mac@...` owner; anything else
 	// would serialize this radio against another one.
@@ -93,8 +122,29 @@ export function admitWifiAdapter(
 		row,
 		permanentMac,
 		lifetime: identity.lifetime,
+		incarnation,
 		owner,
 	};
+}
+
+/**
+ * Is a radio's identity publication in flux? True while a discovery pass has
+ * invalidated a sampled row's publication and not yet republished it (or the
+ * row is suspended). Rows that never had a sample are not "pending": they are
+ * simply never admitted.
+ */
+export function wifiRadioPublicationPending(): boolean {
+	for (const row of Object.values(getWifiInterfacesByMacAddress())) {
+		const identity = wifiRadioIdentity.state.rows.get(row.ifname);
+		if (
+			identity === undefined ||
+			identity.row !== row ||
+			identity.lifetime === undefined
+		)
+			continue;
+		if (projectWifiRadioIncarnation(row, identity) === undefined) return true;
+	}
+	return false;
 }
 
 /** Admit the radio a permanent MAC names; refused when no verified row has it. */
@@ -138,6 +188,41 @@ export function wifiAdapterAdmissionCurrent(
 		now !== undefined &&
 		now.row === admission.row &&
 		now.owner === admission.owner &&
+		now.incarnation === admission.incarnation &&
 		samePhysicalWifiAdapter(now, admission)
 	);
+}
+
+/**
+ * Right before an effect, with the owner lock held: take a fresh bracketed
+ * sample of the netif behind the admitted row and require the admitted lifetime
+ * and permanent MAC, then re-check the admission after that await. A replug
+ * under the same name, a sample that cannot be completed in time, or an
+ * invalidated publication refuses.
+ */
+export async function confirmWifiAdapterLifetime(
+	admission: WifiAdapterAdmission,
+	signal?: AbortSignal,
+): Promise<boolean> {
+	if (!wifiAdapterAdmissionCurrent(admission)) return false;
+	const controller = new AbortController();
+	const abort = () => controller.abort();
+	signal?.addEventListener("abort", abort, { once: true });
+	if (signal?.aborted) abort();
+	const timer = setTimeout(abort, CONFIRM_TIMEOUT_MS);
+	try {
+		const fresh = await sampleRadio(
+			admission.row.ifname,
+			radioIdentityReaders,
+			controller.signal,
+		);
+		if (controller.signal.aborted || !fresh) return false;
+		if (!sameRadioLifetime(fresh.lifetime, admission.lifetime)) return false;
+		if (!fresh.macReadFailed && fresh.permanentMac !== admission.permanentMac)
+			return false;
+		return wifiAdapterAdmissionCurrent(admission);
+	} finally {
+		clearTimeout(timer);
+		signal?.removeEventListener("abort", abort);
+	}
 }

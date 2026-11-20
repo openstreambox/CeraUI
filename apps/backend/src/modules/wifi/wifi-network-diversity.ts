@@ -71,9 +71,11 @@
 
   Boxes upgraded from before the marks existed are migrated conservatively:
   only during the first minutes after start, and only when no radio has a mark
-  and every connected radio has sat on its own distinct network for a while,
-  each radio's active profile is marked. Otherwise an unmarked radio is left
-  alone. Single-radio boxes, radios in AP mode or running a concurrent hotspot,
+  other than the one profile it is connected on and every connected radio has
+  sat on its own distinct network for a while, each unmarked radio's active
+  profile is marked. A pass interrupted part way (a radio gone, a failed write,
+  a restart) resumes from the marks already written. Otherwise an unmarked
+  radio is left alone. Single-radio boxes, radios in AP mode or running a concurrent hotspot,
   and radios whose preferred network is the shared one are never touched.
 */
 
@@ -89,9 +91,11 @@ import {
 } from "../network/network-manager.ts";
 import {
 	admitWifiAdapter,
+	confirmWifiAdapterLifetime,
 	physicalWifiAdapterId,
 	type WifiAdapterAdmission,
 	wifiAdapterAdmissionCurrent,
+	wifiRadioPublicationPending,
 } from "./wifi-adapter-admission.ts";
 import {
 	type WifiAdapterLockKey,
@@ -155,7 +159,11 @@ export type DiversityProfile = {
 export type DiversityLinks = ReadonlyMap<string, ConnectionUUID | null>;
 
 export type WifiNetworkDiversityDeps = {
-	readonly radios: () => DiversityRadio[];
+	/**
+	 * The station radios now; undefined while their identity publication is in
+	 * flux (a discovery pass is under way), which defers the whole tick.
+	 */
+	readonly radios: () => DiversityRadio[] | undefined;
 	readonly readLinks: () => Promise<DiversityLinks | undefined>;
 	readonly readProfile: (
 		uuid: ConnectionUUID,
@@ -178,6 +186,12 @@ export type WifiNetworkDiversityDeps = {
 	 * projection itself is always re-read and compared.
 	 */
 	readonly current?: (radio: DiversityRadio) => boolean;
+	/**
+	 * Called with `radio.lock` held right before a write or activation: a fresh
+	 * sample of the radio's netif still shows the projected lifetime. Defaults
+	 * to true.
+	 */
+	readonly confirm?: (radio: DiversityRadio) => Promise<boolean>;
 	readonly now: () => number;
 	/**
 	 * SSID -> best signal in the merged scan list. Never evidence for a move
@@ -289,7 +303,7 @@ export class WifiNetworkDiversity {
 		const next = this.choices.then(() => {
 			const target =
 				typeof radio === "string"
-					? this.deps.radios().find((r) => r.id === radio)
+					? this.deps.radios()?.find((r) => r.id === radio)
 					: radio;
 			return target ? this.writeChoice(target, uuid, seq) : undefined;
 		});
@@ -301,7 +315,7 @@ export class WifiNetworkDiversity {
 
 	/** The radio's current projection, if `radio` still names it under its lock. */
 	private held(radio: DiversityRadio): DiversityRadio | undefined {
-		const now = this.deps.radios().find((r) => r.id === radio.id);
+		const now = this.deps.radios()?.find((r) => r.id === radio.id);
 		if (
 			!now ||
 			now.lock !== radio.lock ||
@@ -311,6 +325,16 @@ export class WifiNetworkDiversity {
 		)
 			return undefined;
 		return (this.deps.current?.(now) ?? true) ? now : undefined;
+	}
+
+	/**
+	 * Under the radio's lock, right before an effect: still held, and a fresh
+	 * look at the netif confirms the same lifetime (live wiring).
+	 */
+	private async confirmed(radio: DiversityRadio): Promise<boolean> {
+		if (!this.held(radio)) return false;
+		if (this.deps.confirm && !(await this.deps.confirm(radio))) return false;
+		return this.held(radio) !== undefined;
 	}
 
 	private async retryChoices(): Promise<void> {
@@ -331,28 +355,38 @@ export class WifiNetworkDiversity {
 		// A newer choice for this radio was made after this one: it wins.
 		if (this.latestChoice.get(radio.id) !== seq) return;
 		this.pending.delete(radio.id);
-		let outcome = "done" as "done" | "replaced" | "moved";
-		const locked = await this.deps.withLock(radio.lock, async () => {
-			const held = this.held(radio);
-			if (!held) {
-				outcome = this.sameRow(radio) ? "moved" : "replaced";
-				return;
-			}
-			// Re-read this radio's profiles: a choice must act on NetworkManager's
-			// current marks, not on what an earlier tick cached.
-			await this.loadProfiles(this.deps.radios(), held);
-			if (!this.held(radio)) {
-				outcome = "replaced";
-				return;
-			}
-			await this.markChoice(held, uuid);
-		});
-		if (!locked || outcome === "moved") {
-			// Busy, or the same row now resolves to another owner: try again under
-			// whatever lock the row resolves to on the next tick.
-			const now = this.sameRow(radio);
-			if (now) this.pending.set(radio.id, { radio: now, uuid, seq });
-			else this.settleChoice(radio.id, seq);
+		const defer = (as: DiversityRadio) =>
+			this.pending.set(radio.id, { radio: as, uuid, seq });
+		// Write under whatever lock the same row resolves to now.
+		const current = this.sameRow(radio);
+		if (current === "in-flux") {
+			defer(radio);
+			return;
+		}
+		let outcome = "replaced" as "done" | "replaced" | "deferred";
+		const locked =
+			current !== undefined &&
+			(await this.deps.withLock(current.lock, async () => {
+				const held = this.held(current);
+				if (!held) {
+					outcome =
+						this.sameRow(current) === undefined ? "replaced" : "deferred";
+					return;
+				}
+				// Re-read this radio's profiles: a choice must act on NetworkManager's
+				// current marks, not on what an earlier tick cached.
+				await this.loadProfiles(this.deps.radios() ?? [], held);
+				if (!(await this.confirmed(current))) {
+					outcome =
+						this.sameRow(current) === undefined ? "replaced" : "deferred";
+					return;
+				}
+				outcome = "done";
+				await this.markChoice(held, uuid);
+			}));
+		if (current !== undefined && (!locked || outcome === "deferred")) {
+			// Busy, mid-discovery or the owner moved: retry on the next tick.
+			defer(current);
 			return;
 		}
 		this.settleChoice(radio.id, seq);
@@ -367,16 +401,21 @@ export class WifiNetworkDiversity {
 		if (this.latestChoice.get(id) === seq) this.latestChoice.delete(id);
 	}
 
-	/** The current projection of the same physical radio and registry row. */
-	private sameRow(radio: DiversityRadio): DiversityRadio | undefined {
-		return this.deps
-			.radios()
-			.find(
-				(r) =>
-					r.id === radio.id &&
-					r.mac === radio.mac &&
-					r.admission?.row === radio.admission?.row,
-			);
+	/**
+	 * The current projection of the same physical radio and registry row;
+	 * "in-flux" while a discovery pass has the registry unpublished.
+	 */
+	private sameRow(
+		radio: DiversityRadio,
+	): DiversityRadio | "in-flux" | undefined {
+		const radios = this.deps.radios();
+		if (radios === undefined) return "in-flux";
+		return radios.find(
+			(r) =>
+				r.id === radio.id &&
+				r.mac === radio.mac &&
+				r.admission?.row === radio.admission?.row,
+		);
 	}
 
 	/** Under the radio's lock: the operator's choice becomes its only mark. */
@@ -548,6 +587,8 @@ export class WifiNetworkDiversity {
 		const now = this.deps.now();
 		this.startedAt ??= now;
 		const radios = this.deps.radios();
+		// Mid-discovery: defer the whole tick, keeping every radio's state.
+		if (!radios) return;
 		const links = await this.deps.readLinks();
 		if (!links) return;
 		await this.loadProfiles(radios);
@@ -681,22 +722,32 @@ export class WifiNetworkDiversity {
 		if (pick) await this.act(pick.seen, pick.target);
 	}
 
-	/** Mark each radio's own network on an upgraded box, once, conservatively. */
+	/**
+	 * Mark each radio's own network on an upgraded box, once, conservatively.
+	 *
+	 * Resumable: a radio whose only mark is the profile it is connected on is
+	 * already migrated (possibly by a pass interrupted part way, in this process
+	 * or before a restart), so only the unmarked radios are written. Any other
+	 * mark is an operator's choice and ends the migration. It is done only once
+	 * every connected radio carries its mark; a vanished radio, a busy lock or a
+	 * failed write leaves the rest for a later tick inside the window.
+	 */
 	private async migrate(seen: readonly Seen[], now: number) {
 		if (this.migrated) return;
 		if (now - (this.startedAt ?? now) > WIFI_DIVERSITY.migrationWindowMs) {
 			this.migrated = true;
 			return;
 		}
-		if (
-			seen.some((s) =>
-				this.bound(s.radio).some(
-					(p) =>
-						this.profiles.get(p.uuid)?.priority ===
-						WIFI_CHOSEN_NETWORK_PRIORITY,
-				),
-			)
-		) {
+		const marks = (s: Seen) =>
+			this.bound(s.radio).filter(
+				(p) =>
+					this.profiles.get(p.uuid)?.priority === WIFI_CHOSEN_NETWORK_PRIORITY,
+			);
+		const migratedRadio = (s: Seen) => {
+			const own = marks(s);
+			return own.length === 1 && s.uuid !== null && own[0]?.uuid === s.uuid;
+		};
+		if (seen.some((s) => marks(s).length > 0 && !migratedRadio(s))) {
 			this.migrated = true;
 			return;
 		}
@@ -718,9 +769,14 @@ export class WifiNetworkDiversity {
 					WIFI_DIVERSITY.migrationStableMs,
 			);
 		if (!ready) return;
-		// All marks or none, each written under its radio's current owner lock;
-		// a busy or replaced radio leaves the migration for a later tick.
-		const locks = [...new Set(connected.map((s) => s.radio.lock))].sort();
+		const todo = connected.filter((s) => marks(s).length === 0);
+		if (todo.length === 0) {
+			this.migrated = true;
+			return;
+		}
+		// Each mark is written under its radio's current owner lock, after a
+		// fresh look at the netif; whatever is not written is resumed later.
+		const locks = [...new Set(todo.map((s) => s.radio.lock))].sort();
 		await this.withLocks(locks, async () => {
 			if (
 				connected.some(
@@ -737,17 +793,18 @@ export class WifiNetworkDiversity {
 				connected.some((s) => (links.get(s.radio.ifname) ?? null) !== s.uuid)
 			)
 				return;
-			this.migrated = true;
-			for (const s of connected) {
-				if (!this.held(s.radio)) return;
+			for (const s of todo) {
+				if (!(await this.confirmed(s.radio))) return;
 				logger.info(
 					`Wi-Fi diversity: marking ${JSON.stringify(s.ssid)} as the network of ${s.radio.mac}`,
 				);
-				await this.writePriority(
+				const ok = await this.writePriority(
 					s.uuid as ConnectionUUID,
 					WIFI_CHOSEN_NETWORK_PRIORITY,
 				);
+				if (!ok) return;
 			}
+			this.migrated = true;
 		});
 	}
 
@@ -821,6 +878,8 @@ export class WifiNetworkDiversity {
 			if (now - t.sighting.at < WIFI_DIVERSITY.sightingGapMs) return;
 			t.sighting = undefined;
 			if (!(await this.stillShared(s, target)) || yields()) return;
+			// The activation is bound to the interface name: confirm the netif.
+			if (!(await this.confirmed(radio)) || yields()) return;
 
 			logger.info(
 				`Wi-Fi diversity: moving ${radio.mac} back to its own network ${JSON.stringify(target.ssid)} (signal ${signal})`,
@@ -842,7 +901,7 @@ export class WifiNetworkDiversity {
 				`Wi-Fi diversity: could not move ${radio.mac} to ${JSON.stringify(target.ssid)}; restoring its previous link`,
 			);
 			this.backoff(t, after);
-			if (!this.held(radio)) return;
+			if (!(await this.confirmed(radio))) return;
 			if (
 				s.uuid !== null &&
 				!(await this.deps.activate(s.uuid, s.radio.ifname))
@@ -863,7 +922,9 @@ export class WifiNetworkDiversity {
 		if ((links.get(s.radio.ifname) ?? null) !== s.uuid || s.ssid === null) {
 			return false;
 		}
-		const seen = this.view(this.deps.radios(), links);
+		const radios = this.deps.radios();
+		if (!radios) return false;
+		const seen = this.view(radios, links);
 		let sharing = 0;
 		for (const other of seen) {
 			if (other.uuid === target.uuid || other.ssid === target.ssid)
@@ -904,7 +965,9 @@ export function diversityRadioOf(
 	};
 }
 
-function liveRadios(): DiversityRadio[] {
+/** The projected radios; undefined while a discovery pass has them unpublished. */
+function liveRadios(): DiversityRadio[] | undefined {
+	if (wifiRadioPublicationPending()) return undefined;
 	const radios: DiversityRadio[] = [];
 	const interfaces = getWifiInterfacesByMacAddress();
 	for (const registryKey in interfaces) {
@@ -942,6 +1005,9 @@ export function createLiveWifiNetworkDiversity(
 		current: (radio) =>
 			radio.admission !== undefined &&
 			wifiAdapterAdmissionCurrent(radio.admission),
+		confirm: async (radio) =>
+			radio.admission !== undefined &&
+			(await confirmWifiAdapterLifetime(radio.admission)),
 		readLinks: async () => {
 			const rows = await nmDevices("DEVICE,TYPE,STATE,CON-UUID");
 			return rows ? parseDiversityLinks(rows) : undefined;
@@ -1030,14 +1096,19 @@ export type WifiOperatorChoice = {
 
 /**
  * An operator join/connect is starting on the registry row `registryKey`. The
- * physical radio is admitted now, so the choice can never land on a radio that
- * replaced it while the join ran.
+ * physical radio is identified now, so the choice can never land on a radio
+ * that replaced it while the join ran. A join that starts mid-discovery is
+ * identified from the previous sample; that grants nothing by itself, because
+ * the choice is written only through a fully published admission of the same
+ * radio and row.
  */
 export function beginWifiOperatorChoice(
 	registryKey: string,
 	instance: WifiNetworkDiversity = liveInstance(),
 ): WifiOperatorChoice {
-	const admission = admitWifiAdapter(registryKey);
+	const admission = admitWifiAdapter(registryKey, {
+		publicationPending: true,
+	});
 	if (!admission) {
 		return {
 			release: () => {
@@ -1054,9 +1125,22 @@ export function beginWifiOperatorChoice(
 	return {
 		release: instance.beginOperatorChoice(id),
 		record: async (uuid) => {
-			const radio = liveRadios().find(
-				(r) => r.id === id && r.admission?.row === admission.row,
-			);
+			const radios = liveRadios();
+			// Mid-discovery the write is deferred; it resolves the radio again,
+			// fully admitted, before anything is written.
+			const radio =
+				radios === undefined
+					? {
+							id,
+							mac: admission.permanentMac,
+							lock: admission.owner,
+							ifname: admission.row.ifname,
+							savedAll: {},
+							admission,
+						}
+					: radios.find(
+							(r) => r.id === id && r.admission?.row === admission.row,
+						);
 			if (!radio) {
 				logger.info(
 					`Wi-Fi diversity: ${admission.row.ifname} changed during the operator's choice; nothing recorded`,
