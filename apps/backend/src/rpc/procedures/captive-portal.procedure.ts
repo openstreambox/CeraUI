@@ -30,9 +30,15 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 		.input(portalWindowInputSchema)
 		.handler(async ({ input, context }) => {
 			const sender = context.getSenderId();
+			// Behind the front door, the private ingress proves the phone's
+			// address and arrival interface. Every action rechecks that path; a
+			// path that no longer holds acts as no phone at all.
+			const path = context.ws.data.ingressPath;
+			if (path && context.ws.data.ingressPathValid?.() !== true)
+				throw Error("not_on_box_wifi");
 			const peer =
-				context.ws.data.ingressPath?.peer ??
-				context.ws.remoteAddress.replace(/^::ffff:/, "");
+				path?.peer ?? context.ws.remoteAddress.replace(/^::ffff:/, "");
+			const via = path?.interface;
 
 			if (input.action === "start" || input.action === "configure") {
 				const settings = await deps.settings();
@@ -48,7 +54,7 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 						throw error;
 					}
 					settings.broadcastMsg("config", config);
-					return (await deps.owner()).status(peer);
+					return (await deps.owner()).status(peer, via);
 				}
 				if (sender) throw Error("Sign in from the box's Wi-Fi.");
 				if (input.action === "start" && config.captive_portal_enabled !== true)
@@ -58,10 +64,10 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 			const signInWindow = await deps.owner();
 			if (input.action === "start") {
 				if (input.radio === undefined) throw Error("Choose Wi-Fi");
-				return signInWindow.start(peer, String(input.radio));
+				return signInWindow.start(peer, String(input.radio), via);
 			}
-			if (input.action === "finish") return signInWindow.finish(peer);
-			return signInWindow.refresh(peer);
+			if (input.action === "finish") return signInWindow.finish(peer, via);
+			return signInWindow.refresh(peer, via);
 		});
 }
 export const captivePortalProcedure = createCaptivePortalProcedure({

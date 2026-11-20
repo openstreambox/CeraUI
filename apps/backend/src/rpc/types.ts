@@ -26,6 +26,8 @@ export interface SocketData {
 	 * image's front door. Never derived from a TCP request's headers.
 	 */
 	ingressPath?: IngressPath;
+	/** Rechecks the ingress path's link; false once it failed. */
+	ingressPathValid?: () => boolean;
 }
 
 /** The front door's validated evidence for one direct, on-link WebSocket. */

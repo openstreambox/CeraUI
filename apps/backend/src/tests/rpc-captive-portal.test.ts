@@ -3,8 +3,14 @@ import { call } from "@orpc/server";
 import { createContext } from "../rpc/context.ts";
 import type { AppWebSocket } from "../rpc/types.ts";
 
-const start = mock(async (_peer: string, _radio: string) => ({
+const start = mock(async (_peer: string, _radio: string, _via?: string) => ({
 	phase: "signing_in",
+}));
+const finish = mock(async (_peer: string, _via?: string) => ({
+	phase: "needs_sign_in" as const,
+}));
+const refresh = mock(async (_peer: string, _via?: string) => ({
+	phase: "idle" as const,
 }));
 const { createCaptivePortalProcedure } = await import(
 	"../rpc/procedures/captive-portal.procedure.ts"
@@ -18,8 +24,8 @@ const captivePortalProcedure = createCaptivePortalProcedure({
 	owner: async () => ({
 		start,
 		status: () => ({ phase: ownerPhase }),
-		finish: async () => ({ phase: "needs_sign_in" as const }),
-		refresh: async () => ({ phase: "idle" as const }),
+		finish,
+		refresh,
 	}),
 	settings: async () => ({
 		getConfig: () => {
@@ -39,6 +45,8 @@ const context = (authenticated = true) =>
 	} as unknown as AppWebSocket);
 beforeEach(() => {
 	start.mockClear();
+	finish.mockClear();
+	refresh.mockClear();
 	enabled = true;
 	config.captive_portal_enabled = enabled;
 	failSave = false;
@@ -72,11 +80,11 @@ test("the transport peer wins over a caller's requested phone", async () => {
 		mac: "02:00:00:00:00:99",
 	};
 	await call(captivePortalProcedure, input, { context: context() });
-	expect(start).toHaveBeenCalledWith("10.42.0.2", "2");
+	expect(start).toHaveBeenCalledWith("10.42.0.2", "2", undefined);
 });
 
-test("behind the front door the private ingress evidence names the phone", async () => {
-	const proxied = createContext({
+const frontDoor = (holds: () => boolean) =>
+	createContext({
 		remoteAddress: "127.0.0.1",
 		data: {
 			isAuthenticated: true,
@@ -86,14 +94,48 @@ test("behind the front door the private ingress evidence names the phone", async
 				interface: "wlan1",
 				local: "10.42.0.1",
 			},
+			ingressPathValid: holds,
 		},
 	} as unknown as AppWebSocket);
+test("behind the front door the window is keyed by the phone and its AP", async () => {
+	const proxied = frontDoor(() => true);
 	await call(
 		captivePortalProcedure,
 		{ action: "start", radio: 2 },
 		{ context: proxied },
 	);
-	expect(start).toHaveBeenCalledWith("10.42.0.13", "2");
+	expect(start).toHaveBeenCalledWith("10.42.0.13", "2", "wlan1");
+	await call(
+		captivePortalProcedure,
+		{ action: "finish" },
+		{ context: proxied },
+	);
+	expect(finish).toHaveBeenCalledWith("10.42.0.13", "wlan1");
+	await call(
+		captivePortalProcedure,
+		{ action: "status" },
+		{ context: proxied },
+	);
+	expect(refresh).toHaveBeenCalledWith("10.42.0.13", "wlan1");
+});
+test("a front-door path that no longer holds drives nothing", async () => {
+	let checks = 0;
+	const stale = frontDoor(() => {
+		checks++;
+		return false;
+	});
+	for (const input of [
+		{ action: "start" as const, radio: 2 },
+		{ action: "finish" as const },
+		{ action: "status" as const },
+	])
+		await expect(
+			call(captivePortalProcedure, input, { context: stale }),
+		).rejects.toThrow("not_on_box_wifi");
+	expect(checks).toBe(3);
+	expect(start).not.toHaveBeenCalled();
+	expect(finish).not.toHaveBeenCalled();
+	expect(refresh).not.toHaveBeenCalled();
 });
 test("disabled and absent gates refuse starts but permit retirement", async () => {
 	for (const value of [undefined, false]) {

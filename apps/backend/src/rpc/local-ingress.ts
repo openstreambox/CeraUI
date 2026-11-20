@@ -1,5 +1,5 @@
 /**
- * Private local ingress.
+ * Private local ingress: the one listener for the image's front door.
  *
  * On images with the device-bound browser front door, every browser reaches
  * the backend through that front door, so the TCP peer of every WebSocket is
@@ -11,16 +11,25 @@
  * The header is read ONLY on that Unix listener. Only root can connect there
  * (the directory is root:root 0700, the socket 0600), so the header cannot be
  * forged by a network client; a TCP request carrying it is never consulted.
- * The evidence is still checked against the interface addresses at upgrade.
+ *
+ * Consumers: a socket from this listener carries `ingressPath` (the validated
+ * evidence) and `ingressPathValid()`, which rechecks that the local address is
+ * still on that interface with the peer inside its subnet and stays false once
+ * it failed. Consumers that act on the path call it before every action and
+ * add their own checks (Wi-Fi sign-in requires the interface to be the current
+ * hotspot AP; button confirmation adds its interface-kind rule). There is one
+ * listener per process: the socket path refuses a second owner.
+ *
  * Without the directory (development, older images) nothing listens and the
  * ordinary TCP path is unchanged.
  */
-import { chmodSync, lstatSync } from "node:fs";
+import { chmodSync, lstatSync, type Stats } from "node:fs";
 import { isIPv4 } from "node:net";
 import { networkInterfaces } from "node:os";
-import type { Server } from "bun";
+import type { Server, WebSocketHandler } from "bun";
 
 import { createServerWebSocketHandler, initSocketData } from "./adapter.ts";
+import { permitsE2eWorkerUpgrade } from "./e2e-worker-admission.ts";
 import type { IngressPath, ServerSocketData } from "./types.ts";
 
 export const LOCAL_INGRESS_DIRECTORY = "/run/ceralive-button-ingress";
@@ -48,14 +57,51 @@ const ipv4Number = (address: string) =>
 	address.split(".").reduce((value, octet) => value * 256 + Number(octet), 0);
 
 /**
- * Validate the front door's evidence. Returns the path only when the local
- * address is currently on the named interface and the peer is inside that
- * address's subnet; anything else is null.
+ * The evidence still describes a current on-link path: the local address is on
+ * the named interface and the peer is inside that address's subnet.
+ */
+export function ingressLinkHolds(
+	path: IngressPath,
+	links: () => readonly IngressLink[],
+): boolean {
+	let current: readonly IngressLink[];
+	try {
+		current = links();
+	} catch {
+		return false;
+	}
+	const link = current.find(
+		(candidate) =>
+			candidate.name === path.interface &&
+			candidate.address === path.local &&
+			(candidate.family === "IPv4" || candidate.family === "4") &&
+			isIPv4(candidate.netmask),
+	);
+	if (!link) return false;
+	const mask = ipv4Number(link.netmask);
+	if (mask === 0) return false;
+	return (
+		(ipv4Number(path.peer) & mask) >>> 0 ===
+		(ipv4Number(path.local) & mask) >>> 0
+	);
+}
+
+/**
+ * Validate the front door's evidence on one request. The front door never
+ * passes forwarding metadata on this path, so its presence refuses.
  */
 export function parseIngressPath(
-	header: string | null,
+	headers: Headers,
 	links: () => readonly IngressLink[],
 ): IngressPath | null {
+	for (const name of headers.keys())
+		if (
+			name === "forwarded" ||
+			name === "via" ||
+			name.startsWith("x-forwarded-")
+		)
+			return null;
+	const header = headers.get(LOCAL_INGRESS_HEADER);
 	if (!header || header.length > 512) return null;
 	let evidence: unknown;
 	try {
@@ -63,8 +109,7 @@ export function parseIngressPath(
 	} catch {
 		return null;
 	}
-	if (!evidence || typeof evidence !== "object" || Array.isArray(evidence))
-		return null;
+	if (!evidence || typeof evidence !== "object") return null;
 	const {
 		version,
 		peer,
@@ -84,31 +129,23 @@ export function parseIngressPath(
 		peer.startsWith("0.")
 	)
 		return null;
-	let current: readonly IngressLink[];
-	try {
-		current = links();
-	} catch {
-		return null;
-	}
-	const link = current.find(
-		(candidate) =>
-			candidate.name === name &&
-			candidate.address === local &&
-			(candidate.family === "IPv4" || candidate.family === "4") &&
-			isIPv4(candidate.netmask),
-	);
-	if (!link) return null;
-	const mask = ipv4Number(link.netmask);
-	if ((ipv4Number(peer) & mask) >>> 0 !== (ipv4Number(local) & mask) >>> 0)
-		return null;
-	return Object.freeze({ peer, interface: name, local });
+	const path = Object.freeze({ peer, interface: name, local });
+	return ingressLinkHolds(path, links) ? path : null;
+}
+
+export interface LocalIngressOptions {
+	links?: () => readonly IngressLink[];
+	/** Same transport admission as the TCP listener (E2E worker isolation). */
+	workerSecret?: string | undefined;
+	websocket?: WebSocketHandler<ServerSocketData>;
 }
 
 /** Separated listener construction for tests on a temporary Unix socket. */
 export function serveLocalIngress(
 	socket: string,
-	links: () => readonly IngressLink[] = systemLinks,
+	options: LocalIngressOptions = {},
 ): Server<ServerSocketData> {
+	const links = options.links ?? systemLinks;
 	return Bun.serve<ServerSocketData>({
 		unix: socket,
 		fetch(request, server) {
@@ -118,20 +155,49 @@ export function serveLocalIngress(
 				request.headers.get("upgrade")?.toLowerCase() !== "websocket"
 			)
 				return new Response("Not found", { status: 404 });
-			const ingressPath = parseIngressPath(
-				request.headers.get(LOCAL_INGRESS_HEADER),
-				links,
-			);
+			if (!permitsE2eWorkerUpgrade(request, options.workerSecret))
+				return new Response("Worker proxy admission required", {
+					status: 403,
+				});
+			const ingressPath = parseIngressPath(request.headers, links);
 			if (!ingressPath)
 				return new Response("Direct path required", { status: 403 });
+			let holds = true;
+			const ingressPathValid = () => {
+				holds &&= ingressLinkHolds(ingressPath, links);
+				return holds;
+			};
 			if (
-				server.upgrade(request, { data: { ...initSocketData(), ingressPath } })
+				server.upgrade(request, {
+					data: { ...initSocketData(), ingressPath, ingressPathValid },
+				})
 			)
 				return undefined;
 			return new Response("Upgrade failed", { status: 500 });
 		},
-		websocket: createServerWebSocketHandler(),
+		websocket: options.websocket ?? createServerWebSocketHandler(),
 	});
+}
+
+export interface LocalIngressStartDeps {
+	lstat(path: string): Stats;
+	getuid(): number | undefined;
+	chmod(path: string, mode: number): void;
+	serve(socket: string): Server<ServerSocketData>;
+}
+
+const systemStartDeps: LocalIngressStartDeps = {
+	lstat: (path) => lstatSync(path),
+	getuid: () => process.getuid?.(),
+	chmod: (path, mode) => chmodSync(path, mode),
+	serve: (socket) =>
+		serveLocalIngress(socket, {
+			workerSecret: process.env.E2E_WORKER_PROXY_SECRET,
+		}),
+};
+
+function refuse(reason: string): never {
+	throw new Error(`Local ingress refused: ${reason}`);
 }
 
 /**
@@ -140,35 +206,35 @@ export function serveLocalIngress(
  */
 export function startLocalIngress(
 	directory = LOCAL_INGRESS_DIRECTORY,
+	deps: LocalIngressStartDeps = systemStartDeps,
 ): Server<ServerSocketData> | null {
-	let info: ReturnType<typeof lstatSync>;
+	let info: Stats;
 	try {
-		info = lstatSync(directory);
+		info = deps.lstat(directory);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
 		throw error;
 	}
-	if (
-		!info.isDirectory() ||
-		info.isSymbolicLink() ||
-		info.uid !== 0 ||
-		(info.mode & 0o777) !== 0o700 ||
-		process.getuid?.() !== 0
-	)
-		throw new Error("Local ingress needs a root-owned private directory");
+	if (info.isSymbolicLink()) refuse("directory is a symlink");
+	if (!info.isDirectory()) refuse("not a directory");
+	if (info.uid !== 0) refuse("directory not owned by root");
+	if ((info.mode & 0o777) !== 0o700) refuse("directory mode not 0700");
+	if (deps.getuid() !== 0) refuse("backend not running as root");
 	// Never unlink an existing socket: the image's ExecStartPre removes a stale
 	// one after the previous backend stopped, and a second backend must not
 	// take over a running one's socket.
 	const socket = `${directory}/rpc.sock`;
+	let occupied = true;
 	try {
-		lstatSync(socket);
-		throw new Error("Local ingress socket already exists");
+		deps.lstat(socket);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		occupied = false;
 	}
-	const server = serveLocalIngress(socket);
+	if (occupied) refuse("socket path already exists");
+	const server = deps.serve(socket);
 	try {
-		chmodSync(socket, 0o600);
+		deps.chmod(socket, 0o600);
 	} catch (error) {
 		server.stop(true);
 		throw error;
