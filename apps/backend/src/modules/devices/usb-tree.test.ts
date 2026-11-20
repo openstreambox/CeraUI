@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+	cp,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -112,7 +113,7 @@ async function withTree(
 	}
 }
 
-async function writeFixture(
+export async function writeFixture(
 	root: string,
 	devices: FixtureDevice[],
 ): Promise<void> {
@@ -133,7 +134,7 @@ async function writeFixture(
 			if (iface.driver) {
 				const driverDir = join(root, "sys/bus/usb/drivers", iface.driver);
 				await mkdir(driverDir, { recursive: true });
-				await symlink(driverDir, join(ifaceDir, "driver"));
+				await symlink(relative(ifaceDir, driverDir), join(ifaceDir, "driver"));
 			}
 			for (const net of iface.net ?? []) {
 				const netDir = join(ifaceDir, "net", net.name);
@@ -142,7 +143,7 @@ async function writeFixture(
 					const phy = join(root, "sys/class/ieee80211/phy0");
 					await mkdir(phy, { recursive: true });
 					await writeFile(join(phy, "macaddress"), `${MAC}\n`);
-					await symlink(phy, join(netDir, "phy80211"));
+					await symlink(relative(netDir, phy), join(netDir, "phy80211"));
 				}
 			}
 			for (const video of iface.video ?? []) {
@@ -150,9 +151,9 @@ async function writeFixture(
 					recursive: true,
 				});
 			}
-			await symlink(ifaceDir, join(flat, ifaceName));
+			await symlink(relative(flat, ifaceDir), join(flat, ifaceName));
 		}
-		await symlink(physical, join(flat, device.name));
+		await symlink(relative(flat, physical), join(flat, device.name));
 	}
 }
 
@@ -1082,7 +1083,12 @@ describe("sysfs fixtures", () => {
 		expect(slot?.rows.some((row) => row.state === "on")).toBe(true);
 		const builtIn = page.groups.find((group) => group.builtIn);
 		expect(builtIn).toBeDefined();
-		expect(builtIn?.rows.some((row) => row.state === "on")).toBe(true);
+		expect(builtIn?.rows.some((row) => row.title === "Bluetooth")).toBe(true);
+		expect(builtIn?.internals.some((row) => row.scope === "root")).toBe(true);
+		expect(builtIn?.rows.some((row) => row.scope === "root")).toBe(false);
+		expect(page.groups.some((group) => group.name === "USB root hub")).toBe(
+			false,
+		);
 		expect(
 			builtIn?.rows.some((row) =>
 				upper?.rows.some((item) => item.key === row.key),
@@ -1093,6 +1099,151 @@ describe("sysfs fixtures", () => {
 				slot?.rows.some((item) => item.key === row.key),
 			),
 		).toBe(false);
+	});
+
+	it("reads the image 3 ROCK2 tree and folds its controllers", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-tree-"));
+		try {
+			await writeFixture(root, rock2Image3Tree());
+			const pathOf = async (name: string) =>
+				realpath(join(root, "sys/bus/usb/devices", name));
+			expect(await pathOf("9-1")).toContain(
+				"fc000000.usb/xhci-hcd.10.auto/usb9/9-1",
+			);
+			expect(await pathOf("1-1.2")).toContain(
+				"fc400000.usb/xhci-hcd.0.auto/usb1/1-1/1-1.2",
+			);
+			expect(await pathOf("2-1.3")).toContain("fc800000.usb/usb2/2-1/2-1.3");
+			expect(await pathOf("2-1.3")).not.toContain("xhci-hcd");
+			expect(await pathOf("usb3")).toContain("fc840000.usb/usb3");
+			expect(await pathOf("usb6")).toContain("fc8c0000.usb/usb6");
+
+			const tree = await readUsbTree({
+				sysfsRoot: root,
+				board: "rock-5b-plus",
+			});
+			expect(tree.status).toBe("ok");
+			expect(nodeNamed(tree, "1-1")).toMatchObject({
+				kind: "hub",
+				product: "USB2.0 HUB",
+				vendorId: "214b",
+				productId: "7250",
+				port: { label: "A3-bot", name: "Lower blue port" },
+			});
+			expect(nodeNamed(tree, "1-1.2")).toMatchObject({
+				kind: "wifi",
+				product: "802.11ac NIC",
+				vendorId: "2357",
+				productId: "012d",
+				port: { label: ">hub.2", socketLabel: "A3-bot" },
+			});
+			expect(nodeNamed(tree, "1-1.3").kind).toBe("wifi");
+			expect(nodeNamed(tree, "2-1.2")).toMatchObject({
+				kind: "modem",
+				product: "DW5821e Snapdragon X20 LTE",
+				vendorId: "413c",
+				productId: "81d7",
+				port: { label: "A2-top" },
+			});
+			expect(nodeNamed(tree, "2-1")).toMatchObject({
+				kind: "hub",
+				product: "USB 2.0 Hub",
+				vendorId: "1a40",
+				productId: "0101",
+				port: { scope: "built-in", name: "Onboard hub" },
+			});
+			expect(nodeNamed(tree, "2-1.3")).toMatchObject({
+				kind: "other",
+				product: "Bluetooth Radio",
+				vendorId: "13d3",
+				productId: "3572",
+				speedClass: "full",
+				port: { label: "BT", name: "Bluetooth", scope: "built-in" },
+			});
+			expect(nodeNamed(tree, "2-1.4").port).toMatchObject({
+				label: "M2B",
+				name: "Modem slot inside",
+			});
+			expect(nodeNamed(tree, "9-1")).toMatchObject({
+				kind: "modem",
+				product: "RM520N-GL",
+				vendorId: "2c7c",
+				productId: "0801",
+				speedMbps: 480,
+				socketKey: "C",
+			});
+			expect(nodeNamed(tree, "usb9").product).toBe("xHCI Host Controller");
+			expect(nodeNamed(tree, "usb10").product).toBe("xHCI Host Controller");
+			expect(nodeNamed(tree, "usb2").product).toBe("EHCI Host Controller");
+			expect(nodeNamed(tree, "usb3").product).toBe(
+				"Generic Platform OHCI controller",
+			);
+			expect(nodeNamed(tree, "usb5").port.scope).toBe("root");
+			expect(nodeNamed(tree, "usb6").product).toBe(
+				"Generic Platform OHCI controller",
+			);
+
+			const wire = projectUsbDevices(tree, []);
+			const page = devicesPageModel(wire);
+			expect(page.status).toBe("ok");
+			if (page.status !== "ok") return;
+			expect(page.groups.map((group) => group.name)).toEqual([
+				"Upper blue port",
+				"Lower blue port",
+				"Upper black port",
+				"Lower black port",
+				"USB-C data port",
+				"Modem slot inside",
+				"",
+			]);
+			expect(page.groups.some((group) => group.name === "USB root hub")).toBe(
+				false,
+			);
+			const builtIn = page.groups.find((group) => group.builtIn);
+			expect(builtIn?.rows.map((row) => row.title)).toEqual(["Bluetooth"]);
+			expect(builtIn?.internals.length).toBeGreaterThan(8);
+			expect(
+				builtIn?.internals.some(
+					(row) => row.product === "xHCI Host Controller",
+				),
+			).toBe(true);
+			expect(
+				builtIn?.internals.some(
+					(row) => row.product === "EHCI Host Controller",
+				),
+			).toBe(true);
+			expect(
+				builtIn?.internals.some(
+					(row) => row.product === "Generic Platform OHCI controller",
+				),
+			).toBe(true);
+			expect(
+				builtIn?.internals.some((row) => row.product === "USB 2.0 Hub"),
+			).toBe(true);
+			expect(
+				page.groups
+					.filter((group) => !group.builtIn)
+					.some((group) => group.rows.some((row) => row.scope === "root")),
+			).toBe(false);
+			expect(page.summary).toMatchObject({
+				devices: 5,
+				hubs: 1,
+				ports: 4,
+			});
+			const encoded = JSON.stringify({ tree, wire, page });
+			expect(encoded).not.toContain(SERIAL);
+			expect(encoded).not.toContain(IMEI);
+			expect(encoded).not.toContain(ICCID);
+			expect(encoded).not.toContain("aabbccddeeff");
+			expect(encoded).not.toContain("wwxaabbccddeeff");
+			const keep = process.env.CERAUI_USB_KEEP;
+			if (keep) {
+				await rm(keep, { recursive: true, force: true });
+				await cp(root, keep, { recursive: true, verbatimSymlinks: true });
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 
 	it("keeps the same socket key when bus numbers change", async () => {
@@ -1437,6 +1588,171 @@ function rock2StuckTree(): FixtureDevice[] {
 		xhci("usb7", "fcd00000.usb", "480", "9"),
 		xhci("usb8", "fcd00000.usb", "5000", "9"),
 	];
+}
+
+/**
+ * Sysfs shape from the image 3 ROCK2 Devices page: the same controller
+ * addresses and the 9-1 modem path, with the hub, sticks, modems and
+ * radios that page listed. Attributes that are not on the allowlist are
+ * planted so a leak fails the test.
+ */
+export function rock2Image3Tree(): FixtureDevice[] {
+	const xhci = (
+		name: string,
+		controller: string,
+		speed: string,
+		index: string,
+	): FixtureDevice =>
+		image3Root(
+			name,
+			controller,
+			speed,
+			{
+				busDriver: "xhci",
+				xhciIndex: index,
+			},
+			"xHCI Host Controller",
+			speed === "5000" ? "0003" : "0002",
+		);
+	const ehci = (name: string, controller: string): FixtureDevice =>
+		image3Root(
+			name,
+			controller,
+			"480",
+			{ busDriver: "ehci" },
+			"EHCI Host Controller",
+			"0002",
+		);
+	const ohci = (name: string, controller: string): FixtureDevice =>
+		image3Root(
+			name,
+			controller,
+			"12",
+			{ busDriver: "ehci" },
+			"Generic Platform OHCI controller",
+			"0001",
+		);
+	const wifi = (name: string): FixtureDevice => ({
+		name,
+		controller: "fc400000.usb",
+		xhciIndex: "0",
+		speed: "480",
+		version: " 2.00",
+		vendor: "2357",
+		productId: "012d",
+		product: "802.11ac NIC",
+		interfaces: [
+			{
+				suffix: "1.0",
+				net: [{ name: "wlxaabbccddeeff", phy80211: true }],
+			},
+		],
+	});
+	const dell = (name: string): FixtureDevice => ({
+		name,
+		controller: "fc800000.usb",
+		busDriver: "ehci",
+		speed: "480",
+		version: " 2.00",
+		vendor: "413c",
+		productId: "81d7",
+		product: "DW5821e Snapdragon X20 LTE",
+		interfaces: [{ suffix: "1.0", driver: "option" }],
+	});
+	return [
+		xhci("usb1", "fc400000.usb", "480", "0"),
+		{
+			name: "1-1",
+			controller: "fc400000.usb",
+			xhciIndex: "0",
+			speed: "480",
+			version: " 2.00",
+			deviceClass: "09",
+			vendor: "214b",
+			productId: "7250",
+			product: "USB2.0 HUB",
+			maxchild: "4",
+			interfaces: [{ suffix: "1.0", driver: "hub" }],
+		},
+		wifi("1-1.2"),
+		wifi("1-1.3"),
+		ehci("usb2", "fc800000.usb"),
+		{
+			name: "2-1",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "480",
+			version: " 2.00",
+			deviceClass: "09",
+			vendor: "1a40",
+			productId: "0101",
+			product: "USB 2.0 Hub",
+			maxchild: "4",
+			interfaces: [{ suffix: "1.0", driver: "hub" }],
+		},
+		dell("2-1.2"),
+		{
+			name: "2-1.3",
+			controller: "fc800000.usb",
+			busDriver: "ehci",
+			speed: "12",
+			version: " 1.10",
+			vendor: "13d3",
+			productId: "3572",
+			product: "Bluetooth Radio",
+			interfaces: [
+				{ suffix: "1.0", driver: "btusb" },
+				{ suffix: "1.1", driver: "btusb" },
+			],
+		},
+		dell("2-1.4"),
+		ohci("usb3", "fc840000.usb"),
+		xhci("usb4", "fc400000.usb", "5000", "0"),
+		ehci("usb5", "fc880000.usb"),
+		ohci("usb6", "fc8c0000.usb"),
+		xhci("usb7", "fcd00000.usb", "480", "5"),
+		xhci("usb8", "fcd00000.usb", "5000", "5"),
+		xhci("usb9", "fc000000.usb", "480", "10"),
+		{
+			name: "9-1",
+			controller: "fc000000.usb",
+			xhciIndex: "10",
+			speed: "480",
+			version: " 2.00",
+			vendor: "2c7c",
+			productId: "0801",
+			product: "RM520N-GL",
+			planted: { imei: IMEI, serial: SERIAL, iccid: ICCID },
+			interfaces: [
+				{ suffix: "1.0", driver: "option" },
+				{
+					suffix: "1.4",
+					driver: "qmi_wwan",
+					net: [{ name: "wwxaabbccddeeff" }],
+				},
+			],
+		},
+		xhci("usb10", "fc000000.usb", "5000", "10"),
+	];
+}
+
+function image3Root(
+	name: string,
+	controller: string,
+	speed: string,
+	shape: {
+		busDriver: "ehci" | "xhci";
+		xhciIndex?: string;
+	},
+	product: string,
+	productId: string,
+): FixtureDevice {
+	return {
+		...shapedRoot(name, controller, speed, shape),
+		vendor: "1d6b",
+		productId,
+		product,
+	};
 }
 
 async function linkPortPeers(

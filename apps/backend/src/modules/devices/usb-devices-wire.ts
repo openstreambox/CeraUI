@@ -500,6 +500,34 @@ export async function publishUsbDevices(): Promise<void> {
 	const { shouldUseMocks } = await import("../../mocks/mock-service.ts");
 	if (shouldUseMocks()) {
 		const { broadcastMsg } = await import("../../rpc/compat.ts");
+		const sysfs = process.env.CERAUI_USB_SYSFS;
+		if (sysfs) {
+			// A capture points this at a fixture tree. The design story stays
+			// the default, and this path never runs outside mock mode.
+			mockStory = null;
+			const tree = await readUsbTree({
+				sysfsRoot: sysfs,
+				board: "rock-5b-plus",
+			});
+			const wire = projectUsbDevices(tree, []);
+			const helper: UsbHelperWire = {
+				typec: null,
+				reprobe: null,
+				holds: [],
+			};
+			deliverUsbDevicesWire(
+				wire,
+				(next) => {
+					broadcastMsg("status", {
+						usb_devices: next,
+						usb_events: [],
+						usb_helper: helper,
+					});
+				},
+				helper,
+			);
+			return;
+		}
 		mockStory = { events: mockUsbEvents(), calm: mockDeviceCalm() };
 		const helper = mockUsbHelper();
 		deliverUsbDevicesWire(

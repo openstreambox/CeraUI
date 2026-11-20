@@ -198,6 +198,69 @@ describe("Devices page", () => {
 		);
 	});
 
+	it("keeps host controllers behind the Built in disclosure", () => {
+		const view = render(DevicesPage, {
+			props: {
+				wire: {
+					status: "ok",
+					board: "rock-5b-plus",
+					nodes: [
+						...WIRE.nodes,
+						{
+							key: "root",
+							parentKey: null,
+							controller: "fc880000.usb",
+							portPath: null,
+							socketKey: "fc880000.usb:root",
+							speedClass: "usb2",
+							portClass: null,
+							colour: null,
+							scope: "root",
+							label: null,
+							name: "USB root hub",
+							kind: "hub",
+							product: "EHCI Host Controller",
+							vendorId: "1d6b",
+							productId: "0002",
+							presence: "present",
+							superspeedCapable: false,
+							linkId: null,
+						},
+						{
+							key: "bt",
+							parentKey: null,
+							controller: "fc800000.usb",
+							portPath: "1.3",
+							socketKey: "BT",
+							speedClass: "full",
+							portClass: "usb2",
+							colour: null,
+							scope: "built-in",
+							label: "BT",
+							name: "Bluetooth",
+							kind: "other",
+							product: "Bluetooth Radio",
+							vendorId: "13d3",
+							productId: "3572",
+							presence: "present",
+							superspeedCapable: false,
+							linkId: null,
+						},
+					],
+				},
+				onBack: () => undefined,
+			},
+		});
+		expect(view.queryByRole("heading", { name: "USB root hub" })).toBeNull();
+		expect(view.getByRole("heading", { name: "Built in" })).toBeTruthy();
+		expect(view.getByText("Bluetooth Radio")).toBeTruthy();
+		const internals = view.getByTestId("device-internals");
+		expect(internals.hasAttribute("open")).toBe(false);
+		expect(internals.textContent).toContain("EHCI Host Controller");
+		expect(internals.textContent).toContain("fc880000.usb");
+		expect(view.getByText("Lower blue port")).toBeTruthy();
+	});
+
 	it("says the tree is still being read", () => {
 		const view = render(DevicesPage, {
 			props: { wire: undefined, onBack: () => undefined },

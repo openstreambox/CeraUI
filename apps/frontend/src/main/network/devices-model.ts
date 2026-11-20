@@ -96,6 +96,11 @@ export type DevicePortGroup = {
 	readonly portClass: UsbDeviceWireNode["portClass"];
 	readonly builtIn: boolean;
 	readonly rows: readonly DeviceRow[];
+	/**
+	 * Host controllers and the onboard interconnect hub. The mock draws
+	 * neither, so they stay behind the Built in helper disclosure.
+	 */
+	readonly internals: readonly DeviceRow[];
 };
 
 export type DevicesPageModel =
@@ -129,6 +134,19 @@ const ROCK_LABEL_ORDER = [
 	"BT",
 ] as const;
 
+/**
+ * A USB root hub, an xHCI/EHCI/OHCI controller, or the onboard hub that
+ * only ties sockets together. A Bluetooth radio or other device with no
+ * socket stays a visible Built in row. An external hub on a port does not.
+ */
+export function isBoardInternal(node: {
+	readonly scope: UsbDeviceWireNode["scope"];
+	readonly kind: UsbDeviceWireNode["kind"];
+}): boolean {
+	if (node.scope === "root") return true;
+	return node.scope === "built-in" && node.kind === "hub";
+}
+
 export function devicesPageModel(
 	wire: UsbDevicesWire | undefined,
 	helper?: UsbHelperWire,
@@ -136,7 +154,12 @@ export function devicesPageModel(
 	if (wire === undefined || wire.status !== "ok") return { status: "checking" };
 	const byKey = new Map(wire.nodes.map((node) => [node.key, node]));
 	const groups = new Map<string, UsbDeviceWireNode[]>();
+	const internalNodes: UsbDeviceWireNode[] = [];
 	for (const node of wire.nodes) {
+		if (isBoardInternal(node)) {
+			internalNodes.push(node);
+			continue;
+		}
 		const id = groupId(node, byKey);
 		const list = groups.get(id) ?? [];
 		list.push(node);
@@ -161,10 +184,40 @@ export function devicesPageModel(
 			id,
 			name: builtIn ? "" : anchor.name,
 			label: builtIn ? null : socketLabel(anchor),
-			portClass: anchor.portClass,
+			// The mock's Built in heading has no speed tag. The tag belonged
+			// to the onboard hub, which is not a row.
+			portClass: builtIn ? null : anchor.portClass,
 			builtIn,
 			rows,
+			internals: [],
 		});
+	}
+	if (internalNodes.length > 0) {
+		const internals = internalNodes
+			.slice()
+			.sort((a, b) => compareInternal(a, b))
+			.map((node) => ({
+				...toRow(node, byKey, node.key, null, false),
+				depth: 0,
+				lastChild: false,
+			}));
+		const index = built.findIndex((group) => group.builtIn);
+		if (index === -1) {
+			built.push({
+				id: "built-in",
+				name: "",
+				label: null,
+				portClass: null,
+				builtIn: true,
+				rows: [],
+				internals,
+			});
+		} else {
+			const group = built[index];
+			if (group !== undefined) {
+				built[index] = { ...group, internals };
+			}
+		}
 	}
 	built.sort(
 		(a, b) => groupRank(a) - groupRank(b) || a.id.localeCompare(b.id, "en"),
@@ -274,6 +327,17 @@ function groupRank(group: DevicePortGroup): number {
 	return index === -1 ? 500 : index;
 }
 
+function compareInternal(a: UsbDeviceWireNode, b: UsbDeviceWireNode): number {
+	const controller = (a.controller ?? "").localeCompare(
+		b.controller ?? "",
+		"en",
+	);
+	if (controller !== 0) return controller;
+	const path = (a.portPath ?? "").localeCompare(b.portPath ?? "", "en");
+	if (path !== 0) return path;
+	return a.key.localeCompare(b.key, "en");
+}
+
 function compareNodes(
 	a: UsbDeviceWireNode,
 	b: UsbDeviceWireNode,
@@ -352,20 +416,20 @@ function attachHelper(
 	groups: DevicePortGroup[],
 	helper: UsbHelperWire,
 ): DevicePortGroup[] {
-	const used = new Set<UsbHelperHold>();
+	const withHolds = (row: DeviceRow): DeviceRow => {
+		const holds = helper.holds.filter(
+			(hold) => hold.key !== null && hold.key === row.key,
+		);
+		if (holds.length === 0) return row;
+		return {
+			...row,
+			helper: { typec: null, reprobe: null, holds },
+		};
+	};
 	const next = groups.map((group) => ({
 		...group,
-		rows: group.rows.map((row) => {
-			const holds = helper.holds.filter(
-				(hold) => hold.key !== null && hold.key === row.key,
-			);
-			for (const hold of holds) used.add(hold);
-			if (holds.length === 0) return row;
-			return {
-				...row,
-				helper: { typec: null, reprobe: null, holds },
-			};
-		}),
+		rows: group.rows.map(withHolds),
+		internals: group.internals.map(withHolds),
 	}));
 	const port = next.find((group) => group.id === "C" || group.label === "C");
 	const head = port?.rows[0];
@@ -390,7 +454,7 @@ function holdsNotOnARow(
 ): UsbHelperHold[] {
 	const shown = new Set<UsbHelperHold>();
 	for (const group of groups) {
-		for (const row of group.rows) {
+		for (const row of [...group.rows, ...group.internals]) {
 			for (const hold of row.helper?.holds ?? []) shown.add(hold);
 		}
 	}
