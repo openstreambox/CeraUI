@@ -98,10 +98,14 @@ export class CarryingTracker {
 			this.read(now) === "unknown"
 		);
 	}
-	read(now: number): StreamLiveness {
+	/** `waiveStartupHold` drops only the restart window's blanket unknown; real
+	 * evidence (sessions, qualifying traffic, unreadable counters) still counts. */
+	read(now: number, waiveStartupHold = false): StreamLiveness {
 		let unknown =
 			this.aboveSince !== null ||
-			(this.startedUntil !== null && now < this.startedUntil) ||
+			(!waiveStartupHold &&
+				this.startedUntil !== null &&
+				now < this.startedUntil) ||
 			(this.lastAboveAt !== null && now - this.lastAboveAt < DWELL_MS) ||
 			this.uploadUnknown ||
 			(this.uploadAt !== null && now - this.uploadAt > MAX_SAMPLE_MS);

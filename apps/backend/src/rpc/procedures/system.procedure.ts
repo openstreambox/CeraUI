@@ -55,6 +55,7 @@ import {
 	resolveActiveKioskDeps,
 } from "../../modules/system/kiosk.ts";
 import { getLog } from "../../modules/system/logs.ts";
+import { powerAdmissionArgv } from "../../modules/system/power-admission.ts";
 import { submitPowerCommand } from "../../modules/system/power-submission.ts";
 import {
 	getRevisions,
@@ -169,14 +170,22 @@ export const getSyslogProcedure = authedProcedure
 type PowerCommand = "poweroff" | "reboot";
 type PowerCommandRunner = (command: PowerCommand) => void;
 
+// With the image's power admission broker, the admitted action goes there: it
+// passes this process's own shutdown lock and waits for a running update first.
+// Without it, plain systemctl keeps today's behaviour.
 const defaultPowerCommandRunner: PowerCommandRunner = (command) => {
-	const result = Bun.spawnSync(["systemctl", command]);
+	const admission = powerAdmissionArgv(command);
+	const result = admission
+		? Bun.spawnSync(admission, { timeout: 20_000 })
+		: Bun.spawnSync(["systemctl", command]);
 	if (result.exitCode !== 0)
 		throw new PowerSubmissionError(
 			command,
 			result.exitCode,
 			plannedPowerFailureMessage(result.exitCode),
-			new TextDecoder().decode(result.stderr),
+			// The broker's client answers on stdout ("REFUSED <reason>").
+			new TextDecoder().decode(result.stderr) +
+				(admission ? new TextDecoder().decode(result.stdout) : ""),
 		);
 };
 
