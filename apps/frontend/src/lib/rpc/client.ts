@@ -154,6 +154,7 @@ import {
 	type RpcErrorEnvelope,
 } from "./rpc-error";
 import { PROCEDURE_TIMEOUT_MS, RPC_CALL_TIMEOUT_MS } from "./rpc-timeouts";
+import { mayHoldForReauth, SIGN_IN_PROCEDURE } from "./session-gate-policy";
 
 export class ConnectionResetError extends Error {
 	override readonly name = "ConnectionResetError";
@@ -201,30 +202,11 @@ type ConnectionHandler = (state: ConnectionState) => void;
 
 /** A call waiting for the session to be signed in again on a new socket. */
 interface HeldCall {
+	/** Monotonic time after which it may never be sent. */
+	deadline: number;
 	release: () => void;
 	fail: (error: NotSentError) => void;
 }
-
-/**
- * Procedures that may go out on a socket that is not signed in yet. Only the
- * sign-in itself: everything else waits for it (see `RPCClient.call`).
- */
-const SESSION_GATE_EXEMPT = new Set(["auth.login"]);
-
-/**
- * Procedures that are never held for a reconnect re-auth: credential changes and
- * power actions. Replaying one after the link dropped would surprise the
- * operator even when it is correct, so they fail unsent ("reconnected") and the
- * operator decides again.
- */
-const SESSION_GATE_NEVER_HELD = new Set([
-	"auth.setPassword",
-	"auth.revokeToken",
-	"auth.logout",
-	"system.reboot",
-	"system.poweroff",
-	"system.sshResetPassword",
-]);
 
 /**
  * RPC Client class
@@ -423,12 +405,26 @@ class RPCClient {
 		this.socket?.close();
 	}
 
-	private holdForSignIn(timeout: number): Promise<void> {
-		return new Promise<void>((resolve, reject) => {
+	/** Monotonic clock for held-call deadlines (a test seam, like `getUrl`). */
+	private now = (): number => performance.now();
+
+	/**
+	 * Wait for the re-auth to sign this socket in. Resolves with the deadline the
+	 * call must still meet. A call whose deadline passes leaves the queue at that
+	 * moment, and one released after its deadline (its timer was late, say in a
+	 * throttled tab) is refused at release: either way it is never sent.
+	 */
+	private holdForSignIn(timeout: number): Promise<number> {
+		return new Promise<number>((resolve, reject) => {
 			const call: HeldCall = {
+				deadline: this.now() + timeout,
 				release: () => {
 					clearTimeout(timer);
-					resolve();
+					if (this.now() >= call.deadline) {
+						reject(new NotSentError("reconnected"));
+					} else {
+						resolve(call.deadline);
+					}
 				},
 				fail: (error) => {
 					clearTimeout(timer);
@@ -611,18 +607,20 @@ class RPCClient {
 		let budget = timeout;
 
 		const procedure = path.join(".");
-		if (!this.socketSignedIn && !SESSION_GATE_EXEMPT.has(procedure)) {
-			if (SESSION_GATE_NEVER_HELD.has(procedure)) {
+		if (!this.socketSignedIn && procedure !== SIGN_IN_PROCEDURE) {
+			// Only reads may wait for the re-auth (session-gate-policy.ts); any
+			// other call fails now and is never sent, whatever happens next.
+			if (!mayHoldForReauth(procedure)) {
 				throw new NotSentError("reconnected");
 			}
-			// Never sent, so safe to send once the session is back on this socket.
-			const heldSince = Date.now();
-			await this.holdForSignIn(timeout);
+			const deadline = await this.holdForSignIn(timeout);
 			if (this.socket?.readyState !== WebSocket.OPEN) {
 				throw new NotSentError();
 			}
-			// The wait counts against the caller's budget, not on top of it.
-			budget = Math.max(1, timeout - (Date.now() - heldSince));
+			// The wait counts against the caller's budget, not on top of it, and a
+			// call past its deadline is never sent.
+			budget = deadline - this.now();
+			if (budget <= 0) throw new NotSentError("reconnected");
 		}
 
 		return new Promise<T>((resolve, reject) => {

@@ -25,6 +25,11 @@ import {
 	vi,
 } from "vitest";
 
+import {
+	destroyAsyncOperations,
+	initAsyncOperations,
+	osCommand,
+} from "$lib/rpc/async-operation.svelte";
 import { rpc, rpcClient } from "$lib/rpc/client";
 import { NotSentError } from "$lib/rpc/rpc-error";
 import { initSubscriptions, resetState } from "$lib/rpc/subscriptions.svelte";
@@ -60,6 +65,8 @@ const ISSUED_TOKEN = "issued-token-1";
 
 // biome-ignore lint/complexity/useLiteralKeys: test-only private transport seam
 const realGetUrl = rpcClient["getUrl"];
+// biome-ignore lint/complexity/useLiteralKeys: test-only clock seam
+const realNow = rpcClient["now"];
 const realWebSocket = globalThis.WebSocket;
 let jitter: { mockRestore(): void } | undefined;
 
@@ -95,6 +102,8 @@ afterEach(async () => {
 	await flush();
 	// biome-ignore lint/complexity/useLiteralKeys: test-only private transport seam
 	rpcClient["getUrl"] = realGetUrl;
+	// biome-ignore lint/complexity/useLiteralKeys: test-only clock seam
+	rpcClient["now"] = realNow;
 	globalThis.WebSocket = realWebSocket;
 	jitter?.mockRestore();
 	vi.useRealTimers();
@@ -123,9 +132,12 @@ function loginsOnThisSocket(): unknown[] {
 		.map((request) => request.input);
 }
 
-/** The operator presses an action (e.g. "Open") on the page. */
+/**
+ * The page reads device state (a read may wait for the re-auth; anything
+ * that changes the device may not, see `session-gate-policy.ts`).
+ */
 function startAction(): Promise<unknown> {
-	return rpcClient.call(["captive", "open"], { ifname: "wlan1" });
+	return rpcClient.call(["modems", "getSms"], { device: "modem-1" });
 }
 
 describe("reconnect re-authentication", () => {
@@ -145,8 +157,8 @@ describe("reconnect re-authentication", () => {
 		expect(authStatusStore.value).toBe(true);
 		const action = startAction();
 		await flush();
-		expect(outstanding("captive.open")).toHaveLength(1);
-		answer("captive.open", { ok: true });
+		expect(outstanding("modems.getSms")).toHaveLength(1);
+		answer("modems.getSms", { ok: true });
 		await expect(action).resolves.toEqual({ ok: true });
 	});
 
@@ -186,19 +198,19 @@ describe("reconnect re-authentication", () => {
 		const action = startAction();
 		await flush();
 		// Not on the wire while the new socket is still signed out.
-		expect(sentCount("captive.open")).toBe(0);
+		expect(sentCount("modems.getSms")).toBe(0);
 
 		answer("auth.login", { success: true });
 		await flush();
 
-		expect(sentCount("captive.open")).toBe(1);
+		expect(sentCount("modems.getSms")).toBe(1);
 		const [login, open] = socket().sent.filter(
 			(request) =>
-				request.path === "auth.login" || request.path === "captive.open",
+				request.path === "auth.login" || request.path === "modems.getSms",
 		);
 		expect(login?.path).toBe("auth.login");
-		expect(open?.path).toBe("captive.open");
-		answer("captive.open", { ok: true });
+		expect(open?.path).toBe("modems.getSms");
+		answer("modems.getSms", { ok: true });
 		await expect(action).resolves.toEqual({ ok: true });
 	});
 
@@ -220,7 +232,7 @@ describe("reconnect re-authentication", () => {
 		expect((error as Error).message).toBe(
 			"Reconnected to the device. Please try again.",
 		);
-		expect(sentCount("captive.open")).toBe(0);
+		expect(sentCount("modems.getSms")).toBe(0);
 		// The socket that could not be signed in is replaced, and the next one
 		// is signed in again.
 		expect(recycled.readyState).toBe(FakeWebSocket.CLOSED);
@@ -255,7 +267,7 @@ describe("reconnect re-authentication", () => {
 			const error = await failure;
 			expect(error).toBeInstanceOf(NotSentError);
 			expect((error as NotSentError).reason).toBe("signed-out");
-			expect(sentCount("captive.open")).toBe(0);
+			expect(sentCount("modems.getSms")).toBe(0);
 
 			// Signed out for good: the next reconnect presents no stale token.
 			await reconnect();
@@ -266,8 +278,8 @@ describe("reconnect re-authentication", () => {
 	it("does not gate the socket before the first sign-in", async () => {
 		const action = startAction();
 		await flush();
-		expect(sentCount("captive.open")).toBe(1);
-		answer("captive.open", { ok: true });
+		expect(sentCount("modems.getSms")).toBe(1);
+		answer("modems.getSms", { ok: true });
 		await expect(action).resolves.toEqual({ ok: true });
 	});
 });
@@ -277,19 +289,19 @@ describe("held calls on a reconnecting socket", () => {
 		await signInFromForm(true);
 		await reconnect();
 
-		const input = { action: "start" as const, radio: 1 };
-		const action = rpc.wifi.portal(input);
+		const input = { device: "modem-1" };
+		const read = rpc.modems.getSms(input);
 		await flush();
 		// The caller reuses its object after the call returned.
-		input.radio = 2;
+		input.device = "modem-2";
 
 		answer("auth.login", { success: true });
 		await flush();
-		expect(outstanding("wifi.portal").map((request) => request.input)).toEqual([
-			{ action: "start", radio: 1 },
-		]);
-		answer("wifi.portal", { phase: "signing_in" });
-		await expect(action).resolves.toEqual({ phase: "signing_in" });
+		expect(
+			outstanding("modems.getSms").map((request) => request.input),
+		).toEqual([{ device: "modem-1" }]);
+		answer("modems.getSms", { success: true, messages: [] });
+		await expect(read).resolves.toEqual({ success: true, messages: [] });
 	});
 
 	it("never holds a password change: it fails unsent and nothing is replayed", async () => {
@@ -310,19 +322,32 @@ describe("held calls on a reconnecting socket", () => {
 		["system", "reboot"],
 		["system", "poweroff"],
 		["auth", "revokeToken"],
-	])("never holds %s.%s", async (group, name) => {
-		await signInFromForm(false);
-		await reconnect();
+		["wifi", "hotspotDelete"],
+		["wifi", "forget"],
+		["wifi", "portal"],
+		["moblink", "clearCredential"],
+		["modems", "setCredentials"],
+		["modems", "esimOperation"],
+		["system", "installUpdatesNow"],
+		["notifications", "dismiss"],
+		["addons", "uninstall"],
+		["captive", "open"],
+	])(
+		"never holds %s.%s: it fails at once and is never sent",
+		async (group, name) => {
+			await signInFromForm(false);
+			await reconnect();
 
-		const call = rpcClient.call([group, name], {});
-		const error = await call.catch((cause: unknown) => cause);
-		expect(error).toBeInstanceOf(NotSentError);
-		expect((error as NotSentError).reason).toBe("reconnected");
+			const call = rpcClient.call([group, name], {});
+			const error = await call.catch((cause: unknown) => cause);
+			expect(error).toBeInstanceOf(NotSentError);
+			expect((error as NotSentError).reason).toBe("reconnected");
 
-		answer("auth.login", { success: true });
-		await flush();
-		expect(sentCount(`${group}.${name}`)).toBe(0);
-	});
+			answer("auth.login", { success: true });
+			await flush();
+			expect(sentCount(`${group}.${name}`)).toBe(0);
+		},
+	);
 
 	it("does not carry a held call over to a replacement socket", async () => {
 		await signInFromForm(false);
@@ -342,7 +367,7 @@ describe("held calls on a reconnecting socket", () => {
 		await flush();
 
 		expect(await failure).toBeInstanceOf(NotSentError);
-		expect(sentCount("captive.open")).toBe(0);
+		expect(sentCount("modems.getSms")).toBe(0);
 	});
 });
 
@@ -422,5 +447,77 @@ describe("tabs share the remembered token", () => {
 
 		expect(loginsOnThisSocket()).toEqual([]);
 		expect(sentCount("streaming.getConfig")).toBe(0);
+	});
+});
+
+describe("held calls that outlive their caller", () => {
+	beforeEach(() => {
+		initAsyncOperations();
+	});
+	afterEach(() => {
+		destroyAsyncOperations();
+	});
+
+	it("never sends a timed-out Forget, nor its retry, once the session is back", async () => {
+		await signInFromForm(false);
+		await reconnect();
+		const forget = () =>
+			osCommand({
+				key: "hotspot-config:wlan1",
+				rpc: () => rpc.wifi.hotspotDelete({ device: "wlan1" }),
+				confirmOnResolve: true,
+			});
+
+		void forget();
+		await flush();
+		// The operation's own timeout passes and Forget is enabled again.
+		await elapse(16_000);
+		void forget();
+		await flush();
+
+		answer("auth.login", { success: true });
+		await flush();
+		expect(sentCount("wifi.hotspotDelete")).toBe(0);
+	});
+
+	it("never sends a held read whose deadline passed before the re-auth released it", async () => {
+		await signInFromForm(false);
+		await reconnect();
+		const read = startAction();
+		const failure = read.catch((error: unknown) => error);
+		await flush();
+
+		// The page was throttled: the clock moved past the read's deadline but
+		// its timer has not run yet when the sign-in reply is processed.
+		const late = Date.now() + RPC_TIMEOUT_MS + 1;
+		vi.setSystemTime(late);
+		// biome-ignore lint/complexity/useLiteralKeys: test-only clock seam
+		rpcClient["now"] = () => late;
+		answer("auth.login", { success: true });
+		for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+
+		const error = await failure;
+		expect(error).toBeInstanceOf(NotSentError);
+		expect((error as NotSentError).reason).toBe("reconnected");
+		expect(sentCount("modems.getSms")).toBe(0);
+	});
+});
+
+describe("the last stalled socket", () => {
+	it("is closed when the tab gives up, so a late sign-in can't leave it authenticated", async () => {
+		await signInFromForm(false);
+		await reconnect();
+		for (let stall = 0; stall < 2; stall += 1) {
+			await elapse(RPC_TIMEOUT_MS);
+			await restoreLink();
+		}
+		const last = socket();
+
+		await elapse(RPC_TIMEOUT_MS);
+
+		expect(authStatusStore.value).toBe(false);
+		expect(last.readyState).toBe(FakeWebSocket.CLOSED);
+		await restoreLink();
+		expect(loginsOnThisSocket()).toEqual([]);
 	});
 });

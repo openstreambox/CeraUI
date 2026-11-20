@@ -2964,15 +2964,50 @@ describe("F5 sweep: the stop watchdog's pull keeps receipt order", () => {
 });
 
 describe("F6 request causality and action lifetime over the real socket", () => {
+	it("a Stop pressed while the new socket is being signed in is not replayed by the gate; the stop watchdog sends it once signed in", async () => {
+		const { container } = render(LiveView);
+		deliverStatus({ is_streaming: true, stream_lifecycle: "streaming" });
+		dropLink();
+		await settle();
+		await restoreLink();
+
+		await fireEvent.click(button(container, "Stop Stream"));
+		await settle();
+		answer("auth.login", { success: true });
+		await settle();
+		// The gate refused it unsent; the operator's Stop stays visible.
+		expect(sentCount("streaming.stop")).toBe(0);
+		expect(controls(container)).toEqual([
+			{ label: "Stopping...", disabled: true },
+		]);
+		answer("streaming.getConfig", {});
+		answer("status.getStatus", {
+			is_streaming: true,
+			stream_lifecycle: "streaming",
+		});
+		await settle();
+
+		// The stop watchdog (not the gate) re-checks and dispatches it, on the
+		// signed-in socket, exactly once.
+		await elapse(15_000);
+		flushSync();
+		answer("status.getStatus", {
+			is_streaming: true,
+			stream_lifecycle: "streaming",
+		});
+		await settle();
+		await elapse(2_000);
+		await settle();
+		expect(sentCount("streaming.stop")).toBe(1);
+	});
+
 	it.each([
 		[true, true, true, "pending", 2],
 		[true, true, false, "pending", 2],
 		[true, false, true, "pending", 2],
 		[true, false, false, "pending", 2],
-		[false, true, true, "pending", 2],
-		[false, true, false, "pending", 2],
-		[false, false, true, "confirmed", 1],
-		[false, false, false, "confirmed", 1],
+		// preclaim=false (Stop pressed while the new socket is still being
+		// signed in) is no longer held and replayed: see the test below.
 	] as const)(
 		"ordering matrix preclaim=%s push-first=%s config-first=%s",
 		async (preclaim, pushFirst, configFirst, phase, reads) => {

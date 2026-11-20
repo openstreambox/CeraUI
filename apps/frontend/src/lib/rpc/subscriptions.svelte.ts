@@ -1315,6 +1315,10 @@ function settleReauth(
 				if (reauthStalls >= MAX_REAUTH_STALLS) {
 					reauthStalls = 0;
 					routeToLogin();
+					// Its sign-in may still land after we gave up on it, leaving an
+					// authenticated socket under the login screen. A fresh socket
+					// serves the manual login instead.
+					rpcClient.recycleSocket();
 					return;
 				}
 				rpcClient.failHeldCalls("reconnected");
