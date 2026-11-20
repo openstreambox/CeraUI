@@ -1224,6 +1224,26 @@ describe("helper action RPCs", () => {
 		expect(helperUnitArgv("ceralive-modem-usbspeed@$(id).service")).toBeNull();
 	});
 
+	test("a missing re-arm file means none used", async () => {
+		await fresh();
+		await plant(TYPEC_REL);
+		await plant("proc/device-tree/compatible", "radxa,rock-5b-plus\0");
+		const offer = await call(helperOfferProcedure, undefined, {
+			context: callerContext(),
+		});
+		expect(offer).toMatchObject({
+			retryPort: true,
+			rearmExhausted: false,
+		});
+		const result = await call(
+			helperRetryPortProcedure,
+			{ confirmed: true },
+			{ context: callerContext() },
+		);
+		expect(result).toEqual({ ok: true });
+		expect(started).toEqual([TYPEC_UNIT]);
+	});
+
 	test("a re-arm path that cannot be read is spent, not zero", async () => {
 		await fresh();
 		await plant(TYPEC_REL);
