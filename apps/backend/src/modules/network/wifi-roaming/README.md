@@ -128,9 +128,13 @@ never promotes on its own. With them, each round:
   traffic off it, and its probes see a recovery. With nobody else
   delivering, a lone dead holder keeps the label, but next to another holder
   (a handover's old one) it gives the label up.
-- **Dead radio.** A radio the sender has judged dead for 10 s adds nothing to
-  the bond, whatever its uplink. Slice 1 may withdraw it to search even
-  while the holders only hold steady, which restores the second path.
+- **Dead radio.** A radio counts as dead when the receiver no longer answers
+  it while another link still gets ACKs, and the sender queued at least two
+  receiver batches on it after its last ACK. A link the sender leaves idle
+  was owed no answer and is not dead. One dead for 10 s adds nothing to the
+  bond, whatever its uplink: slice 1 may withdraw it to search even while
+  the holders only hold steady, which restores the second path. A dead radio
+  is never a continuity candidate.
 - **Fading holder** (slice 1's triggers, or delivery below 0.90, or the
   sender giving up on it):
   - It gets a continuity candidate: a carrying assister on another BSSID,
@@ -157,7 +161,9 @@ last one ended.
 The port contract for `senderLinks()`:
 - A snapshot is one sample, and its `at` must advance. Spans and lags are
   counted in samples, so a snapshot no newer than the last is ignored, and
-  nothing is judged on that round.
+  nothing is judged on that round. One whose `at` has not advanced for more
+  than 3 s counts as no reports at all: dead verdicts are cleared and a
+  handover in progress ends.
 - Return `undefined` when the sender reports nothing.
 - Without `encoderRate()` the headroom check is skipped and labelled "not
   reported": a promotion then rests on delivery alone. In mode R that only
@@ -300,7 +306,11 @@ reports arrivals per radio. Its cases:
 - the dead-holder relabel skipping a carrier that does not deliver;
 - cool-downs that start over after a quiet period or a completed handover;
 - the common-target back-off;
-- a slower sender whose repeated snapshots are not counted as samples.
+- a slower sender whose repeated snapshots are not counted as samples;
+- an idle diverse assister that is not dead and keeps carrying;
+- a sole dead holder keeping its label;
+- no dead recall after reports stop or freeze;
+- a dead radio never chosen as a candidate.
 
 `proof.test.ts`, `sender-links.test.ts` and `swap-op.test.ts` cover the
 pieces above on synthetic snapshots and a fake clock. The cases include:

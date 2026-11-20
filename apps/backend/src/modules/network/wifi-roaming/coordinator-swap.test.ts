@@ -77,6 +77,8 @@ class World {
 	/** Report a new sample only every this many calls (a slower sender). */
 	sampleEvery = 1;
 	calls = 0;
+	/** A stuck sender: keeps handing out its last sample, `at` unchanged. */
+	frozen = false;
 	/** Delivered and encoder rates the holder health reports (default: unknown). */
 	rates = new Map<string, { attributedBps: number; encoderBps: number }>();
 	last: Snapshot | undefined;
@@ -127,6 +129,7 @@ class World {
 	/** Advance the sender one second and report it. */
 	snapshot(): Snapshot | undefined {
 		if (!this.reports) return undefined;
+		if (this.frozen && this.last) return this.last;
 		// A slower sender hands out the same sample again in between.
 		if (this.calls++ % this.sampleEvery !== 0 && this.last) return this.last;
 		const sample = (l: Link): LinkSample => {
@@ -652,5 +655,87 @@ describe("continuity handover on arrival reports", () => {
 		for (let i = 0; i < 40 && t.c.status().swap === null; i++)
 			await t.rounds(1);
 		expect(t.w.now - failedAt).toBeLessThanOrEqual(11_000);
+	});
+
+	test("an idle but healthy diverse assister is not judged dead and keeps carrying", async () => {
+		const t = await settled();
+		await t.rounds(5);
+		const l = t.w.link("wlan2");
+		// The sender puts nothing on it, so no SRTLA ACK comes back either.
+		l.pps = 0;
+		l.over = { weak: true, weakReason: "no_traffic" };
+		for (let i = 0; i < 40; i++) {
+			l.ageMs = (l.ageMs ?? 0) + 1_000;
+			await t.rounds(1);
+		}
+		expect(t.w.bond).not.toContain("hold:wlan2");
+		expect(t.role("wlan2")).toBe("assister");
+	});
+
+	test("a sole dead holder with no delivering replacement keeps the holder label", async () => {
+		const t = await settled();
+		await t.rounds(5);
+		// wlan2 still gets ACKs (so wlan1 is judged dead) but delivers only
+		// half, so it is no replacement.
+		t.w.link("wlan2").deliver = 0.5;
+		await t.rounds(5);
+		t.w.link("wlan1").deliver = 0;
+		t.w.link("wlan1").ageMs = 5_000;
+		await t.rounds(3);
+		expect(t.role("wlan1")).toBe("holder");
+		expect(t.c.status().radios.filter((r) => r.role === "holder").length).toBe(
+			1,
+		);
+	});
+
+	test("a dead verdict is not acted on after arrival reports stop", async () => {
+		const t = await settled();
+		await t.rounds(5);
+		t.w.link("wlan1").deliver = 0;
+		t.w.link("wlan1").ageMs = 5_000;
+		await t.rounds(1);
+		expect(t.role("wlan1")).toBe("assister");
+		// Reports stop inside the grace period: nothing is known any more.
+		t.w.reports = false;
+		t.w.rates.set("wlan2", { attributedBps: 1_300_000, encoderBps: 1_000_000 });
+		await t.rounds(30);
+		expect(t.w.bond).not.toContain("hold:wlan1");
+	});
+
+	test("a dead verdict is not acted on while the sender's reports are frozen", async () => {
+		const t = await settled();
+		await t.rounds(5);
+		t.w.link("wlan1").deliver = 0;
+		t.w.link("wlan1").ageMs = 5_000;
+		await t.rounds(1);
+		expect(t.role("wlan1")).toBe("assister");
+		// The port keeps answering with the same sample: no new evidence.
+		t.w.frozen = true;
+		t.w.rates.set("wlan2", { attributedBps: 1_300_000, encoderBps: 1_000_000 });
+		await t.rounds(30);
+		expect(t.w.bond).not.toContain("hold:wlan1");
+	});
+
+	test("a radio judged dead is no continuity candidate", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -45);
+		w.station("wlan2", AP2, -50); // dead below, ranks first by signal
+		w.station("wlan3", AP3, -60);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }, { ifname: "wlan3" }],
+		});
+		const step = async (n = 1) => {
+			for (let i = 0; i < n; i++) {
+				w.now += 1_000;
+				await c.step();
+			}
+		};
+		await step(6);
+		w.link("wlan2").deliver = 0;
+		w.link("wlan2").ageMs = 5_000;
+		await step(1);
+		w.signal("wlan1", -78);
+		await step(3);
+		expect(c.status().swap?.candidate).toBe("wlan3");
 	});
 });
