@@ -535,6 +535,36 @@ describe("explicit bounded system binding reader", () => {
 		expect(r.ok && r.binding.link.routeTable).toBe(254);
 		expect(r.ok && r.binding.link.routeMetric).toBe(601);
 	});
+	test("no default route on the venue interface refuses", async () => {
+		const f = fixture();
+		routesOf(f, []);
+		expect((await f.capture()).ok).toBe(false);
+	});
+	test("more than eight default routes on one interface refuse", async () => {
+		const copies = (n: number) =>
+			Array.from({ length: n }, (_, i) =>
+				i === 0
+					? { ...fixture().state.route, table: "main" }
+					: { ...fixture().state.route, table: String(45000 + i) },
+			);
+		const ok = fixture();
+		routesOf(ok, copies(8));
+		expect((await ok.capture()).ok).toBe(true);
+		const f = fixture();
+		routesOf(f, copies(9));
+		expect((await f.capture()).ok).toBe(false);
+	});
+	for (const [name, other] of [
+		["a multipath copy", { multipath: [] }],
+		["a blackhole copy", { type: "blackhole" }],
+	] as const)
+		test(`${name} of the venue route refuses`, async () => {
+			const f = fixture();
+			const main = { ...f.state.route };
+			delete main.table;
+			routesOf(f, [main, { ...f.state.route, table: "45934", ...other }]);
+			expect((await f.capture()).ok).toBe(false);
+		});
 	test("several default routes without a main-table route refuse", async () => {
 		const f = fixture();
 		routesOf(f, [

@@ -593,7 +593,7 @@ export async function captureWifiPortalBindingFromSystem(
 		// Every one of them must be the same single-path route via the captured
 		// gateway; the binding records NetworkManager's main-table route, or the
 		// only route when there is just one.
-		if (routes.length === 0 || routes.length > 8) unavailable();
+		if (routes.length > 8) unavailable();
 		const tables = new Set<number>();
 		for (const route of routes) {
 			if (
