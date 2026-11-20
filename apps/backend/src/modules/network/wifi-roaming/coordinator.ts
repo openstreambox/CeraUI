@@ -80,7 +80,7 @@ import {
 	type RadioMode,
 	setScanGateModeReader,
 } from "./scan-gate.ts";
-import type { Snapshot } from "./sender-links.ts";
+import type { LinkSample, Snapshot } from "./sender-links.ts";
 import {
 	CANDIDATE,
 	HOLDER,
@@ -319,6 +319,14 @@ const COMMON_TARGET_BACKOFF_MS = 10_000;
  * it may leave it to search, whatever its uplink.
  */
 const DEAD_RECALL_MS = 10_000;
+/**
+ * Packets the sender must have queued on a link since its last ACK before its
+ * silence counts as death: two receiver batches, so the receiver owed it an
+ * answer. A link the sender leaves idle owes nothing and is not dead.
+ */
+const DEAD_MIN_QUEUED = 20;
+/** A sender whose snapshot `at` has not advanced for this long reports nothing. */
+const SNAPSHOT_STALE_MS = 3_000;
 
 const CONDITION_RANK: Record<HolderCondition, number> = {
 	fade: 0,
@@ -867,15 +875,22 @@ export class RoamingCoordinator {
 	 */
 	#continuity(now: number): void {
 		const snap = this.#ports.senderLinks?.();
-		if (!snap) {
+		const last = this.#history.at(-1);
+		// A sender stuck on one sample reports nothing new: like no reports at
+		// all, nothing judged on its last sample may keep maturing.
+		const frozen =
+			snap !== undefined &&
+			last !== undefined &&
+			snap.at <= last.at &&
+			now - last.at > SNAPSHOT_STALE_MS;
+		if (!snap || frozen) {
 			this.#history = [];
 			for (const r of this.#radios) r.deadSince = null;
-			this.#dropSwap("no-arrival-reports");
+			this.#dropSwap(frozen ? "stale-arrival-reports" : "no-arrival-reports");
 			return;
 		}
 		// Spans and lags are counted in samples: a snapshot that is not newer
 		// than the last one is no new sample, and nothing is judged on it.
-		const last = this.#history.at(-1);
 		if (last !== undefined && snap.at <= last.at) return;
 		this.#history.push(snap);
 		while (
@@ -889,12 +904,40 @@ export class RoamingCoordinator {
 				continue;
 			}
 			const judged = evaluateHolder(this.#history, r.ifname, this.#proofPolicy);
-			r.deadSince = judged.dead ? (r.deadSince ?? now) : null;
+			r.deadSince =
+				judged.dead && this.#owedAnAnswer(r) ? (r.deadSince ?? now) : null;
 		}
 		for (const h of this.#holders())
 			if (h.deadSince !== null) this.#abruptLoss(h, now);
 		if (this.#swap) this.#driveSwap(now);
 		else this.#maybeStartSwap(now);
+	}
+
+	/**
+	 * The sender queued at least `DEAD_MIN_QUEUED` packets on this radio's link
+	 * after its last ACK (same epoch), so its silence means something. Counted
+	 * from the first sample at or after that ACK to now, so nothing queued
+	 * before it is counted. A path that dies is still offered traffic until the
+	 * sender's own stall gate holds it out, and what was queued after the last
+	 * ACK stays counted, so the gate taking it out later does not undo the
+	 * verdict. A link the sender leaves idle was owed nothing.
+	 */
+	#owedAnAnswer(r: RadioRecord): boolean {
+		const latestSnap = this.#history.at(-1);
+		const latest = latestSnap?.radios.get(r.ifname);
+		if (!latestSnap || !latest) return false;
+		const sinceAt =
+			latest.ageMs === null
+				? Number.NEGATIVE_INFINITY
+				: latestSnap.at - latest.ageMs;
+		let from: LinkSample | undefined;
+		for (let i = this.#history.length - 1; i >= 0; i--) {
+			const snap = this.#history[i] as Snapshot;
+			const s = snap.radios.get(r.ifname);
+			if (!s || s.epoch !== latest.epoch || snap.at < sinceAt) break;
+			from = s;
+		}
+		return from !== undefined && latest.queued - from.queued >= DEAD_MIN_QUEUED;
 	}
 
 	#senderDead(r: RadioRecord, now: number): boolean {
@@ -964,6 +1007,7 @@ export class RoamingCoordinator {
 				(r) =>
 					// Only assisters: a swap drives an assister (standby is S2's).
 					r.role === "assister" &&
+					r.deadSince === null &&
 					this.#associated(r) &&
 					!r.heldOut &&
 					normalizeBssid(r.obs?.bssid ?? "") !== holderBssid &&
