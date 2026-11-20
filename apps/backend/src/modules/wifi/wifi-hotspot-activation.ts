@@ -88,8 +88,9 @@ import {
 	rememberHotspotProfilePin,
 } from "./wifi-hotspot-discovery.ts";
 import {
+	adoptPendingStart,
 	beginHotspotTransition,
-	publishStartWhenSteered,
+	beginStartTerminal,
 	registerPendingConfirmation,
 	syncWifiStateCache,
 } from "./wifi-hotspot-monitor.ts";
@@ -98,7 +99,10 @@ import {
 	type HotspotProfileOperation,
 	runHotspotProfileOperation,
 } from "./wifi-hotspot-profile-operation.ts";
-import { defaultHotspotSteeringDeps } from "./wifi-hotspot-readiness.ts";
+import {
+	advanceHotspotOperation,
+	defaultHotspotSteeringDeps,
+} from "./wifi-hotspot-readiness.ts";
 import {
 	DEFAULT_HOTSPOT_SECURITY,
 	hotspotSecurityFields,
@@ -160,6 +164,10 @@ export const defaultHotspotDeps: HotspotActivationDeps = {
 		reconcile: () => defaultHotspotSteeringDeps.reconcile(),
 		verified: (ifname, incarnation, since) =>
 			defaultHotspotSteeringDeps.verified(ifname, incarnation, since),
+		active: () => defaultHotspotSteeringDeps.active?.() ?? true,
+		readActivation: (apIfname, uuid) =>
+			defaultHotspotSteeringDeps.readActivation?.(apIfname, uuid) ??
+			Promise.resolve(undefined),
 	},
 	confirmHybridActivation,
 	releaseConcurrentInterface: releaseConcurrentApInterface,
@@ -703,18 +711,21 @@ export async function startHotspotLocked(
 				reason: HYBRID_CHANNEL_REFUSAL,
 			};
 		}
-		// Already up: nothing is dispatched, so no confirmation will ever settle
-		// and this branch owes the terminal frame itself, once the AP's client
-		// zone is verified. The wait runs after this locked call returns.
+		// Already up: nothing is dispatched, so this branch owes the terminal frame
+		// itself, once the AP's client zone is verified. It is still a Start: it
+		// takes a new ticket, so an older Start's wait publishes nothing, and an
+		// activation still awaiting NM confirmation hands its terminal over. The
+		// steering wait reads the current NM activation as its witness and runs
+		// after this locked call returns.
 		recordChosenMode(observedWifiAdapterMode(wifiInterface));
-		if (wifiInterface.hotspot.conn)
-			publishStartWhenSteered(
-				wifiInterface,
-				wifiInterface.hotspot.conn,
-				wifiInterface.id,
-				deps,
-			);
-		else deps.publishOutcome?.("start", wifiInterface.id, { success: true });
+		const uuid = wifiInterface.hotspot.conn;
+		const ticket = advanceHotspotOperation(wifiInterface);
+		deps.publishOutcome?.startTicket?.(ticket);
+		const start = { ticket, deps, device: wifiInterface.id };
+		if (!uuid)
+			deps.publishOutcome?.("start", wifiInterface.id, { success: true });
+		else if (!adoptPendingStart(wifiInterface, uuid, start))
+			beginStartTerminal(wifiInterface, uuid, start)();
 		return { success: true };
 	}
 	/*
@@ -834,7 +845,8 @@ export async function startHotspotLocked(
 
 		// Begin the transition: broadcast `activating` immediately (responsive UI),
 		// suppress dup-IP warnings for the window, but DO NOT flip mode yet.
-		beginHotspotTransition(wifiInterface, "activating");
+		const ticket = beginHotspotTransition(wifiInterface, "activating");
+		deps.publishOutcome?.startTicket?.(ticket);
 		if (!concurrentInterface) deps.setDupIpSuppression(ifname, true);
 		deps.broadcastState();
 		syncWifiStateCache(macAddress, wifiInterface); // still station (isHotspot false)

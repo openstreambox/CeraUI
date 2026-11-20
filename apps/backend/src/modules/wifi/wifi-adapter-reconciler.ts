@@ -336,11 +336,20 @@ export async function reconcileWifiAdapterModeLocked(
 		return result;
 	}
 	const current = observedWifiAdapterMode(row);
-	if (current === target) {
+	if (current === target && target === "station") {
 		publish(row.id, { success: true, mode: target });
 		return { success: true, applied: target };
 	}
 	request.publishPending();
+	// An AP mode that is already effective still completes through Start: its
+	// already-up branch takes a ticket and settles the mode on the same
+	// steering-aware terminal (verified, or `pending` at the deadline).
+	if (current === target) {
+		const started = await request.start();
+		return started.success
+			? { success: true, accepted: true, applied: target }
+			: started;
+	}
 	if (current !== "station") {
 		const stopped = await request.stop(target === "station");
 		if (!stopped.success) {

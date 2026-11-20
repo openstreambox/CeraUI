@@ -35,6 +35,7 @@ import type { HotspotToggleError } from "@ceraui/rpc/schemas";
 
 import { broadcastMsg } from "../ui/websocket-server.ts";
 import { withoutWifiRequestBinding } from "./wifi-binding.ts";
+import type { HotspotOperationTicket } from "./wifi-hotspot-readiness.ts";
 
 export type { HotspotToggleError };
 
@@ -44,11 +45,18 @@ export type HotspotToggleOutcome =
 
 export type HotspotOutcomeKind = "start" | "stop";
 
-export type HotspotOutcomePublisher = (
-	kind: HotspotOutcomeKind,
-	device: number | string,
-	outcome: HotspotToggleOutcome,
-) => void;
+export type HotspotOutcomePublisher = {
+	(
+		kind: HotspotOutcomeKind,
+		device: number | string,
+		outcome: HotspotToggleOutcome,
+	): void;
+	/**
+	 * A chained caller (a mode change) learns which Start operation its terminal
+	 * belongs to, so its own backstop can tell when that Start was superseded.
+	 */
+	readonly startTicket?: (ticket: HotspotOperationTicket) => void;
+};
 
 export const publishHotspotOutcome: HotspotOutcomePublisher = (
 	kind,

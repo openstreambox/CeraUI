@@ -839,7 +839,8 @@ test("a leaked admission for adapter A cannot refuse adapter B's internal restor
 				{ device: "0", expected: "leaked-adapter-A-token", kind: "config" },
 				() => setWifiAdapterMode("1", "hotspot"),
 			),
-		).toEqual({ success: true, applied: "hotspot" });
+			// Already a hotspot: the mode still settles through its Start.
+		).toEqual({ success: true, accepted: true, applied: "hotspot" });
 	} finally {
 		await state.restore();
 	}

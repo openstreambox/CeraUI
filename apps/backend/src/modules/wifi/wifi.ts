@@ -15,7 +15,10 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { refreshWifiApClientZones } from "../network/network-interfaces.ts";
+import {
+	getNetworkInterfaceIncarnation,
+	refreshWifiApClientZones,
+} from "../network/network-interfaces.ts";
 import { hotspotSteeringPending } from "../network/uplink-steering/readiness.ts";
 
 /* NetworkManager / nmcli based Wifi Manager */
@@ -96,6 +99,7 @@ import { captureWifiFrameIncarnation } from "./wifi-frame-binding.ts";
 import { wifiHotspotConfig, wifiHotspotStop } from "./wifi-hotspot-config.ts";
 import { handleHotspotConn } from "./wifi-hotspot-discovery.ts";
 import { publishHotspotOutcome } from "./wifi-hotspot-outcome.ts";
+import { hotspotAwaitingSteering } from "./wifi-hotspot-readiness.ts";
 import {
 	getHotspotSecurityMap,
 	type HotspotBandMaxWidth,
@@ -412,15 +416,21 @@ export function wifiBuildMsg() {
 		}
 
 		entry.mode = isApMode(wifiInterface) ? "hotspot" : "station";
-		if (
-			(isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) &&
-			hotspotSteeringPending(
-				wifiInterface.concurrentHotspot?.activeConn
-					? wifiInterface.concurrentHotspot.ifname
-					: wifiInterface.ifname,
+		// The same evidence as the Start terminal: a Start still awaiting its
+		// verified client zone, or (at boot, or after a `pending` Start) no zone
+		// verified for this AP's current lifetime.
+		if (isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) {
+			const apIfname = wifiInterface.concurrentHotspot?.activeConn
+				? wifiInterface.concurrentHotspot.ifname
+				: wifiInterface.ifname;
+			if (
+				hotspotAwaitingSteering(wifiInterface) ||
+				hotspotSteeringPending(
+					apIfname,
+					getNetworkInterfaceIncarnation(apIfname),
+				)
 			)
-		) {
-			entry.transition = "activating";
+				entry.transition = "activating";
 		}
 		if (canHotspot(wifiInterface) && wifiInterface.hotspot.transition) {
 			entry.transition = wifiInterface.hotspot.transition;
