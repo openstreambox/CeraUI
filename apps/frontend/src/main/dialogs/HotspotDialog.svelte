@@ -135,6 +135,27 @@ let startAdmission = $state.raw<{ readonly key: string; readonly controller: Abo
 // A Start already sent when the dialog closed for a changed radio keeps its
 // receipt; its correlated refusal then arrives as a notice.
 let detachedStart: AbortController | undefined;
+let detachedExpiry: ReturnType<typeof setTimeout> | undefined;
+const START_RECEIPT_TTL_MS = 60_000;
+
+/** At most one detached receipt, bounded on its own and gone with the view. */
+function retireDetachedStart() {
+	clearTimeout(detachedExpiry);
+	detachedExpiry = undefined;
+	detachedStart?.abort();
+	detachedStart = undefined;
+}
+
+/** The dialog's own refusal wording for a Start it no longer shows. */
+function startRefusalNotice(result: { error?: string; reason?: string }): string {
+	if (result.reason === 'deactivation-failed') return m['network.wifiMode.error.notConfirmed']();
+	if (result.error === 'radio-changed') return m['hotspotConfirm.radioChangedNotStarted']();
+	if (result.error === 'DEVICE_BUSY') return m['network.os.deviceBusy']();
+	if (wifiFailureReason(result) === 'hybrid-channel-not-permitted')
+		return m['network.wifiMode.error.hybridChannelNotPermitted']();
+	if (result.error === 'radio-unverified') return m['hotspotConfirm.radioUnverified']();
+	return m['network.os.operationFailed']();
+}
 
 function capture(): WifiRadioBinding {
 	return { device: deviceId, incarnation: radioToken, link: getLinkEpoch(), session: ownerSession };
@@ -144,7 +165,7 @@ function current(binding: WifiRadioBinding): boolean {
 	return open && sameWifiRadio(binding, capture());
 }
 
-onDestroy(() => { ownerSession += 1; admission?.abort(); });
+onDestroy(() => { ownerSession += 1; admission?.abort(); retireDetachedStart(); });
 
 function beginAdmission(binding: WifiRadioBinding): AbortController {
 	admission?.abort();
@@ -238,7 +259,10 @@ $effect.pre(() => {
 	const next = { device: radioDevice, incarnation: radioToken, link: getLinkEpoch() };
 	radioReason;
 	untrack(() => {
-		if (opened && !prevOpen) openedTarget = { device: next.device, incarnation: next.incarnation };
+		if (opened && !prevOpen) {
+			retireDetachedStart();
+			openedTarget = { device: next.device, incarnation: next.incarnation };
+		}
 		// The dialog is bound to the radio lifetime it opened on. A changed or
 		// vanished pair closes it with a notice; it never follows a new
 		// incarnation of the same id, which needs a fresh pick.
@@ -246,8 +270,14 @@ $effect.pre(() => {
 			openedTarget.incarnation !== next.incarnation)) {
 			if (startAdmission && startAdmission.controller === admission &&
 				getOperationPhase(startAdmission.key) === 'pending') {
-				detachedStart = admission;
+				retireDetachedStart();
+				const detached = startAdmission.controller;
+				detachedStart = detached;
 				admission = undefined;
+				// Bounded like the Start operation itself.
+				detachedExpiry = setTimeout(() => {
+					if (detachedStart === detached) retireDetachedStart();
+				}, START_RECEIPT_TTL_MS);
 			} else admission?.abort();
 			confirmingStart = false;
 			openedTarget = undefined;
@@ -508,6 +538,7 @@ async function handleToggle() {
 }
 
 async function startConfirmed(incarnation: string) {
+	retireDetachedStart();
 	const original = capture();
 	if (incarnation !== original.incarnation || radioReason) return;
 	let binding = original;
@@ -520,7 +551,7 @@ async function startConfirmed(incarnation: string) {
 		key: toggleKey,
 		target: 'hotspot',
 		// The terminal waits for verified client steering after NM confirms.
-		pendingTtlMs: 60_000,
+		pendingTtlMs: START_RECEIPT_TTL_MS,
 		classify: classifyWifiMutation,
 		rpc: async (handoff) => {
 			startAdmission = { key: toggleKey, controller };
@@ -542,11 +573,8 @@ async function startConfirmed(incarnation: string) {
 				},
 			);
 			correlated = result?.correlated === true;
-			if (correlated && result && !result.success && detachedStart === controller) {
-				toast.error(result.reason === 'deactivation-failed'
-					? m['network.wifiMode.error.notConfirmed']()
-					: m['hotspotConfirm.radioChangedNotStarted']());
-			}
+			if (correlated && result && !result.success && detachedStart === controller)
+				toast.error(startRefusalNotice(result));
 			if (!result && !controller.signal.aborted && ownsAdmission(original)) {
 				bindingUnsupported = true;
 				ownerSession += 1;
@@ -569,7 +597,7 @@ async function startConfirmed(incarnation: string) {
 		busyMessage: () => m["network.os.deviceBusy"](),
 	});
 	if (startAdmission?.controller === controller) startAdmission = undefined;
-	if (detachedStart === controller) detachedStart = undefined;
+	if (detachedStart === controller) retireDetachedStart();
 }
 
 // Confirm a pending start/stop as soon as the authoritative `wifi` snapshot

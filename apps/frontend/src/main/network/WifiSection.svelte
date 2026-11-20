@@ -76,12 +76,24 @@ function activeWifiNetwork(iface: WifiInterface) {
 // reported `INEFFECTIVE_DYNAMIC_IMPORT` and fused it back into the entry chunk.
 const HotspotDialog = lazyDialog(() => import('../dialogs/HotspotDialog.svelte'));
 
+// The dialog is bound to the `[id, incarnation]` it was opened for and stays
+// mounted while that pick lasts. It gets the row only while the row still
+// carries that incarnation: a lost or replaced radio leaves it without one, so
+// it closes with a notice (a Start already sent still reports), and the same
+// id under a new incarnation needs a fresh pick instead of reopening.
 let hotspotDialogOpen = $state(false);
-let hotspotDeviceId = $state('');
-const hotspotIface = $derived(wifiRadios.find(([id]) => id === hotspotDeviceId)?.[1]);
+let hotspotDialogTarget = $state.raw<readonly [string, string]>();
+const hotspotIface = $derived.by(() => {
+	if (!hotspotDialogTarget) return undefined;
+	const [target, incarnation] = hotspotDialogTarget;
+	const row = wifiRadios.find(([id]) => id === target)?.[1];
+	return row?.incarnation === incarnation ? row : undefined;
+});
 
 function openHotspotSetup(id: string) {
-	hotspotDeviceId = id;
+	const incarnation = wifiRadios.find(([rowId]) => rowId === id)?.[1].incarnation;
+	if (!incarnation) return;
+	hotspotDialogTarget = [id, incarnation];
 	hotspotDialogOpen = true;
 }
 
@@ -601,11 +613,11 @@ $effect(() => {
 </section>
 
 <!-- Per-radio hotspot configurator -->
-{#if hotspotIface}
+{#if hotspotDialogTarget}
 	<LazyDialog
 		dialog={HotspotDialog}
 		bind:open={hotspotDialogOpen}
-		deviceId={hotspotDeviceId}
+		deviceId={hotspotDialogTarget[0]}
 		iface={hotspotIface}
 	/>
 {/if}

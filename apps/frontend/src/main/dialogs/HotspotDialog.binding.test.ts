@@ -32,7 +32,10 @@ import { rpc } from "$lib/rpc/client";
 import { NotSentError, RpcError } from "$lib/rpc/rpc-error";
 import { noteLinkState } from "$lib/rpc/session-epoch.svelte";
 import { initSubscriptions, resetState } from "$lib/rpc/subscriptions.svelte";
-import { noteWifiConfig } from "$lib/rpc/wifi-status-receipt";
+import {
+	noteWifiConfig,
+	pendingWifiStartReceiptsForTest,
+} from "$lib/rpc/wifi-status-receipt";
 import WifiModeSelector from "$main/network/WifiModeSelector.svelte";
 import { deriveWifiAdapterModeView } from "$main/network/wifi-adapter-mode-view";
 import { withWifiEntryRetry } from "$main/network/wifi-entry-request";
@@ -2220,4 +2223,122 @@ describe("Configure receipt retirement", () => {
 			),
 		);
 	});
+});
+
+describe("a Start receipt detached by a radio change", () => {
+	async function startThenRotate(view: ReturnType<typeof render>) {
+		start.mockResolvedValueOnce({ success: true, accepted: true });
+		await gate();
+		await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
+		await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
+		await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+		const attempt = start.mock.calls[0]?.[0].attempt;
+		await view.rerender({ open: true, deviceId: "0", iface: row("radio-B") });
+		await closedWithNotice();
+		expect(pendingWifiStartReceiptsForTest()).toBe(1);
+		return attempt;
+	}
+
+	function lateTerminal(
+		attempt: string | undefined,
+		error: string,
+		reason?: string,
+	) {
+		wire.message("wifi", {
+			hotspot: {
+				start: { device: 0, attempt, error, ...(reason ? { reason } : {}) },
+			},
+		});
+	}
+
+	async function settle() {
+		await tick();
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+	}
+
+	it("ends with the view: nothing waits and a later terminal reports nothing", async () => {
+		const view = render(HotspotDialog, {
+			open: true,
+			deviceId: "0",
+			iface: row(),
+		});
+		const attempt = await startThenRotate(view);
+		view.unmount();
+		expect(pendingWifiStartReceiptsForTest()).toBe(0);
+		sweepOperations(Date.now() + 61_000);
+		lateTerminal(attempt, "radio-changed", "deactivation-failed");
+		await settle();
+		expect(toast.error).not.toHaveBeenCalled();
+	});
+
+	it("ends on a fresh pick: a second Start's dialog never shows the first one's terminal", async () => {
+		const view = render(HotspotDialog, {
+			open: true,
+			deviceId: "0",
+			iface: row(),
+		});
+		const attempt = await startThenRotate(view);
+		await view.rerender({ open: false, deviceId: "0", iface: row("radio-B") });
+		await view.rerender({ open: true, deviceId: "0", iface: row("radio-B") });
+		await waitFor(() => expect(pendingWifiStartReceiptsForTest()).toBe(0));
+		start.mockResolvedValueOnce({ success: true, accepted: true });
+		await gate();
+		await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
+		await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
+		await waitFor(() => expect(start).toHaveBeenCalledTimes(2));
+		expect(start.mock.calls[1]?.[0]).toMatchObject({ incarnation: "radio-B" });
+		expect(pendingWifiStartReceiptsForTest()).toBe(1);
+		lateTerminal(attempt, "radio-changed", "deactivation-failed");
+		await settle();
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("hotspot-start-refused")).toBeNull();
+	});
+
+	it("ends by the Start's 60 s bound", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			const view = render(HotspotDialog, {
+				open: true,
+				deviceId: "0",
+				iface: row(),
+			});
+			const attempt = await startThenRotate(view);
+			vi.advanceTimersByTime(60_000);
+			await waitFor(() => expect(pendingWifiStartReceiptsForTest()).toBe(0));
+			lateTerminal(attempt, "radio-changed", "deactivation-failed");
+			await settle();
+			expect(toast.error).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it.each([
+		[
+			"DEVICE_BUSY",
+			"setup-in-progress",
+			"Device is busy, try again in a moment",
+		],
+		["not-confirmed", undefined, "Couldn't complete the action"],
+		[
+			"radio-changed",
+			undefined,
+			"The Wi-Fi adapter changed, so the hotspot wasn't turned on.",
+		],
+	] as const)(
+		"reports a late %s refusal in the dialog's own words",
+		async (error, reason, text) => {
+			const view = render(HotspotDialog, {
+				open: true,
+				deviceId: "0",
+				iface: row(),
+			});
+			const attempt = await startThenRotate(view);
+			lateTerminal(attempt, error, reason);
+			await waitFor(() =>
+				expect(toast.error).toHaveBeenCalledWith(expect.stringContaining(text)),
+			);
+			expect(pendingWifiStartReceiptsForTest()).toBe(0);
+		},
+	);
 });
