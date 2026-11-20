@@ -25,7 +25,7 @@ class WindowTests(unittest.TestCase):
         rules = portal.rules(self.config())
         self.assertIn('tcp dport { 80, 443 }', rules)
         self.assertIn('udp dport 53', rules)
-        self.assertIn('fib daddr type local', rules)
+        self.assertIn('ip daddr @local4 return', rules)
         self.assertIn('udp dport 443 reject with icmpx port-unreachable', rules)
         self.assertIn('priority -140', rules)
 
@@ -87,6 +87,7 @@ class IngressLifetimeTests(unittest.TestCase):
     def test_replacement_during_open_rolls_back(self):
         closed = []
         with patch.object(portal, 'run', return_value=''), patch.object(portal, 'clear_flows'), \
+                patch.object(portal, 'local_addresses', return_value=[]), \
                 patch.object(portal, 'ifindex', side_effect=[7, 8]), \
                 patch.object(portal, 'close_window', side_effect=closed.append):
             with self.assertRaises(ValueError):
@@ -95,10 +96,115 @@ class IngressLifetimeTests(unittest.TestCase):
 
     def test_unchanged_ap_opens(self):
         with patch.object(portal, 'run', return_value=''), patch.object(portal, 'clear_flows'), \
+                patch.object(portal, 'local_addresses', return_value=[]), \
                 patch.object(portal, 'ifindex', return_value=7), \
                 patch.object(portal, 'close_window') as close:
             portal.open_window(WindowTests().config())
         close.assert_not_called()
+# nft expressions that need a kernel module beyond core nf_tables, and the
+# symbols each needs. Anything the helper's ruleset uses must be covered by the
+# image kernel; core expressions (payload, meta, sets, verdicts) need nothing.
+MODULE_EXPRESSIONS = [
+    (r'\bfib\b', {'NFT_FIB_INET', 'NFT_FIB_IPV4', 'NFT_FIB_IPV6'}),
+    (r'\bct\b', {'NFT_CT', 'NF_CONNTRACK_MARK'}),
+    (r'\bmasquerade\b', {'NFT_MASQ'}),
+    (r'\b[ds]nat\b', {'NFT_NAT'}),
+    (r'\bredirect\b', {'NFT_REDIR'}),
+    (r'\breject\b', {'NFT_REJECT', 'NFT_REJECT_INET'}),
+    (r'\blimit\b', {'NFT_LIMIT'}),
+    (r'\bnumgen\b', {'NFT_NUMGEN'}),
+    (r'\bquota\b', {'NFT_QUOTA'}),
+    (r'\blog\b', {'NFT_LOG'}),
+    (r'\bqueue\b', {'NFT_QUEUE'}),
+    (r'\b(?:jhash|symhash)\b', {'NFT_HASH'}),
+    (r'\bsocket\b', {'NFT_SOCKET'}),
+    (r'\btproxy\b', {'NFT_TPROXY'}),
+    (r'\bosf\b', {'NFT_OSF'}),
+    (r'\bsynproxy\b', {'NFT_SYNPROXY'}),
+    (r'\bct count\b', {'NFT_CONNLIMIT'}),
+    (r'\bflow add\b', {'NFT_FLOW_OFFLOAD'}),
+    (r'\bdup to\b', {'NFT_DUP_IPV4'}),
+    (r'\bfwd to\b', {'NFT_FWD_NETDEV'}),
+    (r'\bipsec\b', {'NFT_XFRM'}),
+]
+# What CeraLive images guarantee for nftables consumers (the image's required
+# kernel symbol list). The sign-in helper must stay inside it.
+IMAGE_NFT_SYMBOLS = {'NFT_CT', 'NF_CONNTRACK_MARK', 'NFT_NAT', 'NFT_MASQ',
+                     'NFT_REJECT', 'NFT_REJECT_INET'}
+
+
+def required_symbols(ruleset):
+    import re
+    needed = set()
+    for pattern, symbols in MODULE_EXPRESSIONS:
+        if re.search(pattern, ruleset):
+            needed |= symbols
+    return needed
+
+
+class KernelFeatureTests(unittest.TestCase):
+    def ruleset(self):
+        return portal.rules(WindowTests().config(), ['10.42.0.1', '198.51.100.1'])
+
+    def test_ruleset_needs_only_what_images_guarantee(self):
+        needed = required_symbols(self.ruleset())
+        self.assertEqual(needed - IMAGE_NFT_SYMBOLS, set())
+        self.assertIn('NFT_CT', needed)
+        self.assertIn('NFT_MASQ', needed)
+
+    def test_a_fib_rule_would_be_caught(self):
+        # The image kernel has no nft fib; the earlier rule failed to load there.
+        self.assertTrue(required_symbols('fib daddr type local return') - IMAGE_NFT_SYMBOLS)
+
+    def test_ruleset_against_a_real_kernel_config(self):
+        import os
+        path = os.environ.get('CERALIVE_KERNEL_CONFIG')
+        if not path:
+            self.skipTest('set CERALIVE_KERNEL_CONFIG to a resolved kernel .config')
+        enabled = set()
+        for line in pathlib.Path(path).read_text().splitlines():
+            if line.startswith('CONFIG_') and line.rstrip().endswith(('=y', '=m')):
+                enabled.add(line.split('=', 1)[0][len('CONFIG_'):])
+        self.assertEqual(required_symbols(self.ruleset()) - enabled, set())
+
+
+class LocalExemptionTests(unittest.TestCase):
+    def test_box_addresses_are_exempt_and_loopback_is_one_range(self):
+        listing = json_dump([
+            {'ifname': 'lo', 'addr_info': [{'family': 'inet', 'local': '127.0.0.1'}]},
+            {'ifname': 'ap0', 'addr_info': [{'family': 'inet', 'local': '10.42.0.1'}]},
+            {'ifname': 'wan1', 'addr_info': [{'family': 'inet', 'local': '198.51.100.1'},
+                                             {'family': 'inet6', 'local': 'fe80::1'}]},
+        ])
+        with patch.object(portal, 'run', return_value=listing):
+            local = portal.local_addresses()
+        self.assertEqual([str(a) for a in local], ['10.42.0.1', '198.51.100.1'])
+        rules = portal.rules(WindowTests().config(), local)
+        self.assertIn('set local4 { type ipv4_addr; flags interval; elements = { 127.0.0.0/8, 10.42.0.1, 198.51.100.1 }; }', rules)
+        # The exemption comes before web traffic is selected.
+        self.assertLess(rules.index('ip daddr @local4 return'), rules.index('tcp dport { 80, 443 } jump selected'))
+
+    def test_open_checks_and_loads_the_ruleset_with_current_addresses(self):
+        config = WindowTests().config()
+        loaded = []
+        def run(*args, data=None, check=True):
+            if args[:3] == ('ip', '-j', '-4'):
+                return json_dump([{'ifname': 'ap0', 'addr_info': [{'family': 'inet', 'local': '10.42.0.1'}]}])
+            if data and 'table inet ceralive_portal {' in data and 'chain pre' in data:
+                loaded.append(data)
+            return ''
+        with patch.object(portal, 'run', side_effect=run), patch.object(portal, 'clear_flows'), \
+                patch.object(portal, 'ifindex', return_value=config['ap_ifindex']):
+            portal.open_window(config)
+        self.assertEqual(len(loaded), 2)
+        for data in loaded:
+            self.assertIn('elements = { 127.0.0.0/8, 10.42.0.1 }', data)
+            self.assertNotIn('fib', data)
+
+
+def json_dump(value):
+    import json
+    return json.dumps(value)
 
 
 class CleanupTests(unittest.TestCase):

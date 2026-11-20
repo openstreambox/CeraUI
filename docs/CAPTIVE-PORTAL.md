@@ -60,7 +60,10 @@ table are owned. Sharing and physical source-routing tables remain separate.
 
 A kernel timed set binds the selected source IP and MAC to the AP. Only TCP
 80/443 and TCP/UDP 53 match; DNS is sent to the selected Wi-Fi's resolver. Local
-web control stays local. During the window, the selected phone’s alternative
+web control stays local: traffic to the box's own IPv4 addresses (taken when
+the window opens) is never selected. The rules need only core nf_tables plus
+conntrack, NAT, masquerade and reject, which CeraLive kernels carry; they avoid
+`fib`, which those kernels do not build. During the window, the selected phone’s alternative
 web/DNS protocols receive TCP resets or kernel-rate-limited ICMP errors for UDP,
 as detailed below.
 VPNs, Private Relay and strict Private DNS / secure DNS may still require a temporary pause

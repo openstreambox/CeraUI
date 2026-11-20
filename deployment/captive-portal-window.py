@@ -51,10 +51,27 @@ def pinned(c):
         raise ValueError('ingress changed')
 
 
-def rules(c):
+def local_addresses():
+    """The box's own IPv4 addresses now, for the local-destination exemption."""
+    found = set()
+    for link in json.loads(run('ip', '-j', '-4', 'address', 'show')):
+        for entry in link.get('addr_info', []):
+            if entry.get('family') == 'inet':
+                address = ipaddress.IPv4Address(entry['local'])
+                if not address.is_loopback:
+                    found.add(address)
+    return sorted(found)
+
+
+def rules(c, local=()):
     validate(c)
     ingress, wan, phone, mac, dns, seconds = (
         c[k] for k in ('ap_ifindex', 'wan', 'phone', 'mac', 'dns', 'seconds'))
+    # Traffic to the box itself (its UI on the AP address, any other own
+    # address) is never selected, so its connections keep no portal mark and
+    # survive the window. A set of the addresses at opening time instead of
+    # `fib daddr type local`: CeraLive kernels ship without nft fib.
+    own = ', '.join(['127.0.0.0/8', *(str(ipaddress.IPv4Address(a)) for a in local)])
     # After sharing's mangle hook: override ONLY the selected web/DNS packets.
     # A separate timed set gates replies too; expired conntracks are dropped,
     # never restored onto a healthy link with the hotel's old NAT identity.
@@ -68,12 +85,13 @@ def rules(c):
  set doh4 {{ type ipv4_addr; elements = {{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112 }}; }}
  set phone {{ type ipv4_addr . ether_addr; flags timeout; elements = {{ {phone} . {mac} timeout {seconds}s }}; }}
  set reply {{ type ipv4_addr; flags timeout; elements = {{ {phone} timeout {seconds}s }}; }}
+ set local4 {{ type ipv4_addr; flags interval; elements = {{ {own} }}; }}
  chain selected {{ meta mark set {MARK}; ct mark set {MARK}; return; }}
  chain pre {{ type filter hook prerouting priority -140; policy accept;
   {match} udp dport 53 jump selected
   {match} tcp dport 53 jump selected
   ct direction reply return
-  fib daddr type local return
+  ip daddr @local4 return
   {match} tcp dport {{ 80, 443 }} jump selected
   ct mark {MARK} meta mark != {MARK} drop
  }}
@@ -122,7 +140,8 @@ def open_window(c):
     if any(line.startswith(PRIORITY + ':') for line in run('ip', '-4', 'rule', 'show').splitlines()):
         raise ValueError('rule priority occupied')
     pinned(c)
-    run('nft', '--check', '-f', '-', data=rules(c))
+    local = local_addresses()
+    run('nft', '--check', '-f', '-', data=rules(c, local))
     try:
         # Publish ownership before the first route write. Even a hard stop between
         # route and rule installation then leaves enough evidence for startup.
@@ -132,7 +151,7 @@ def open_window(c):
         run('ip', '-4', 'rule', 'add', 'priority', PRIORITY, 'iif', c['ap'],
             'from', c['phone'], 'fwmark', MARK, 'lookup', ROUTE_TABLE)
         clear_flows(c)
-        run('nft', '-f', '-', data=f'delete table inet {TABLE}\n' + rules(c))
+        run('nft', '-f', '-', data=f'delete table inet {TABLE}\n' + rules(c, local))
         # The rules match only the pinned index; a name that no longer names it
         # means the AP was replaced during installation, so roll back.
         pinned(c)
