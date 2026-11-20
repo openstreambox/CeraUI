@@ -92,15 +92,24 @@ radio associated without an address is not idle.
   - `scan-gate.ts`: CeraUI's own rescans skip holders, assisters, the
     hotspot radio, a radio that is searching or joining, and every radio on
     the phys those use. The set is republished on every role, hold or
-    ownership change. Each rescan of a radio goes out under its adapter lock
-    after a fresh, fail-closed read of its mode and phy. The scan RPC holds
-    that lock across the dispatch and passes it down, so a named scan of an
-    eligible radio really runs, and a busy radio is reported as busy.
+    ownership change. Each rescan of a radio goes out under its
+    owner-resolved adapter lock after a fresh, fail-closed read of its mode
+    and phy. The scan RPC holds that lock across the dispatch, and the rescan
+    sees it already owns the lock and dispatches inline. So a named scan of
+    an eligible radio really runs, and a busy radio is reported as busy.
   - `bond-hold.ts`: a radio leaves the SRTLA bond while it searches.
   - `ownership.ts`: other Wi-Fi automation leaves coordinator-owned radios
     alone. A radio in hotspot use is not coordinator-owned.
   - `radio-lock.ts`: scans and joins run under CeraUI's per-adapter Wi-Fi
-    lock and are skipped while another operation holds it.
+    lock and are skipped while another operation holds it. A radio is
+    admitted the way every Wi-Fi mutation admits one:
+    - only a verified, currently published identity row under exactly one
+      registry entry for its name qualifies;
+    - its owner-resolved lock is taken;
+    - under that lock, a fresh sample must show the same permanent MAC and
+      lifetime.
+
+    A Limited, Unverified, unpublished or replaced radio is not acted on.
 
 ## Not yet
 
