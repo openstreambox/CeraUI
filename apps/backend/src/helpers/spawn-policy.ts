@@ -543,7 +543,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		file: "rpc/procedures/system.procedure.ts",
 		symbol: "defaultPowerCommandRunner",
 		command:
-			"[/usr/bin/ceralive-poweroff|ceralive-reboot, --no-wait] (spawnSync, 20 s timeout) when the image's power broker is installed, else [systemctl, poweroff|reboot] (spawnSync)",
+			"[/usr/bin/ceralive-poweroff|ceralive-reboot, --no-wait] (spawnSync, 20 s timeout) when the image's power broker is installed, else [busctl, --system, --timeout=25, call, login1 PowerOffWithFlags|RebootWithFlags, t, 0] (spawnSync, 30 s timeout); no fallback to a direct target start",
 		class: "terminal-spawnSync",
 		contract: {
 			timed: false,

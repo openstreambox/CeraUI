@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { dirname, join } from "node:path";
 import {
 	notificationBroadcast,
 	notificationRemove,
@@ -116,14 +117,37 @@ type BrokerState = {
 	readonly id?: unknown;
 };
 
+type Read = (path: string) => string;
+const readText: Read = (path) => fs.readFileSync(path, "utf8");
+
 function readBrokerRecord(
-	read: (path: string) => string = (path) => fs.readFileSync(path, "utf8"),
+	path: string,
+	read: Read = readText,
 ): BrokerState | undefined {
 	try {
-		return JSON.parse(read(powerAdmissionStatePath())) as BrokerState;
+		return JSON.parse(read(path)) as BrokerState;
 	} catch {
 		return undefined;
 	}
+}
+
+const BROKER_REQUEST_ID = /^[0-9a-f]{12}$/;
+
+/** The broker's record of one request: requests/<id>.json, so a newer request
+ * can't hide this one's result. A broker that keeps no per-request records only
+ * has its latest state. */
+function brokerRequestRecord(
+	id: string,
+	read: Read = readText,
+): BrokerState | undefined {
+	if (!BROKER_REQUEST_ID.test(id)) return undefined;
+	const statePath = powerAdmissionStatePath();
+	return (
+		readBrokerRecord(
+			join(dirname(statePath), "requests", `${id}.json`),
+			read,
+		) ?? readBrokerRecord(statePath, read)
+	);
 }
 
 export function powerAdmissionStatePath(): string {
@@ -135,7 +159,7 @@ export function readPowerAdmissionState(
 	read: (path: string) => string = (path) => fs.readFileSync(path, "utf8"),
 	nowSeconds: number = Date.now() / 1000,
 ): "waiting" | "stuck" | "submitted" | "uncertain" | "failed" | undefined {
-	const parsed = readBrokerRecord(read);
+	const parsed = readBrokerRecord(powerAdmissionStatePath(), read);
 	if (!parsed) return undefined;
 	const state = parsed.state;
 	if (state === "admitted" || state === "submitting") return "waiting";
@@ -185,13 +209,11 @@ let shown: keyof typeof NOTICES | undefined;
 /** A definite failure of the request this backend is answerable for releases
  * its reservation; anything else (waiting, uncertain, another id) keeps it. */
 export function reconcileBrokerRequest(
-	record: BrokerState | undefined = readBrokerRecord(),
+	lookup: (id: string) => BrokerState | undefined = brokerRequestRecord,
 ): void {
-	if (
-		outstanding &&
-		record?.state === "failed" &&
-		record.id === outstanding.id
-	) {
+	if (!outstanding) return;
+	const record = lookup(outstanding.id);
+	if (record?.state === "failed" && record.id === outstanding.id) {
 		const { release } = outstanding;
 		outstanding = undefined;
 		release();

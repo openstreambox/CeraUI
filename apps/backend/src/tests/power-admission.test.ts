@@ -3,6 +3,7 @@ import fs, { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { call } from "@orpc/server";
+import { getSpawnSite } from "../helpers/spawn-policy.ts";
 import { buildControlContext } from "../modules/remote-control/control-context.ts";
 import { setup } from "../modules/setup.ts";
 import { updateStreamLifecycleState } from "../modules/streaming/stream-lifecycle-status.ts";
@@ -245,11 +246,24 @@ describe("local power actions through the RPC", () => {
 	});
 });
 
+test("the spawn registry names the commands the power runner spawns, and no systemctl", () => {
+	const command = getSpawnSite("system.power")?.command ?? "";
+	const broker = powerAdmissionArgv("poweroff", () => true) ?? [];
+	for (const word of [
+		broker[0],
+		broker[1],
+		...logindPowerArgv("reboot").slice(0, 2),
+	])
+		expect(command).toContain(String(word));
+	expect(command).not.toContain("systemctl");
+});
+
 describe("the reservation follows the broker's answer for this request", () => {
 	const saved = {
 		NODE_ENV: process.env.NODE_ENV,
 		MOCK_MODE: process.env.MOCK_MODE,
 		CERALIVE_STREAMING_MARKER: process.env.CERALIVE_STREAMING_MARKER,
+		CERALIVE_POWER_STATE: process.env.CERALIVE_POWER_STATE,
 	};
 	let dir = "";
 	beforeEach(() => {
@@ -303,11 +317,63 @@ describe("the reservation follows the broker's answer for this request", () => {
 			(await powerOffVia(0, "ADMITTED poweroff 0a1b2c3d4e5f\n")).success,
 		).toBe(true);
 		expect(isDisruptiveActionPending()).toBe(true);
-		reconcileBrokerRequest({ state: "waiting", id: "0a1b2c3d4e5f" });
-		reconcileBrokerRequest({ state: "failed", id: "ffffffffffff" });
+		reconcileBrokerRequest(() => ({ state: "waiting", id: "0a1b2c3d4e5f" }));
+		reconcileBrokerRequest(() => ({ state: "failed", id: "ffffffffffff" }));
 		expect(isDisruptiveActionPending()).toBe(true);
-		reconcileBrokerRequest({ state: "failed", id: "0a1b2c3d4e5f" });
+		reconcileBrokerRequest(() => ({ state: "failed", id: "0a1b2c3d4e5f" }));
 		expect(isDisruptiveActionPending()).toBe(false);
+	});
+
+	test("a newer request in state.json can't hide this request's failure", async () => {
+		process.env.CERALIVE_POWER_STATE = join(dir, "state.json");
+		fs.mkdirSync(join(dir, "requests"));
+		const record = (id: string, state: string) =>
+			JSON.stringify({ state, id, time: Date.now() / 1000 });
+		expect(
+			(await powerOffVia(0, "ADMITTED poweroff 0a1b2c3d4e5f\n")).success,
+		).toBe(true);
+		// The broker refused this request, then admitted a newer one (the button)
+		// that is now the latest state.
+		writeFileSync(
+			join(dir, "requests", "0a1b2c3d4e5f.json"),
+			record("0a1b2c3d4e5f", "failed"),
+		);
+		writeFileSync(
+			join(dir, "requests", "ffffffffffff.json"),
+			record("ffffffffffff", "waiting"),
+		);
+		writeFileSync(join(dir, "state.json"), record("ffffffffffff", "waiting"));
+		reconcileBrokerRequest();
+		expect(isDisruptiveActionPending()).toBe(false);
+	});
+
+	test("without a per-request record, only a failure under this id in state.json releases", async () => {
+		process.env.CERALIVE_POWER_STATE = join(dir, "state.json");
+		const record = (id: string, state: string) =>
+			JSON.stringify({ state, id, time: Date.now() / 1000 });
+		expect(
+			(await powerOffVia(0, "ADMITTED poweroff 0a1b2c3d4e5f\n")).success,
+		).toBe(true);
+		writeFileSync(join(dir, "state.json"), record("ffffffffffff", "failed"));
+		reconcileBrokerRequest();
+		expect(isDisruptiveActionPending()).toBe(true);
+		writeFileSync(join(dir, "state.json"), record("0a1b2c3d4e5f", "failed"));
+		reconcileBrokerRequest();
+		expect(isDisruptiveActionPending()).toBe(false);
+	});
+
+	test("an id that isn't the broker's shape is never used as a path", async () => {
+		process.env.CERALIVE_POWER_STATE = join(dir, "state.json");
+		fs.mkdirSync(join(dir, "requests"));
+		writeFileSync(
+			join(dir, "escape.json"),
+			JSON.stringify({ state: "failed", id: "../escape" }),
+		);
+		expect(
+			(await powerOffVia(0, "ADMITTED poweroff ../escape\n")).success,
+		).toBe(true);
+		reconcileBrokerRequest();
+		expect(isDisruptiveActionPending()).toBe(true);
 	});
 
 	test("no answer keeps the reservation; a definite refusal releases it", async () => {

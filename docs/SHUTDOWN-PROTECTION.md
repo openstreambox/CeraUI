@@ -53,7 +53,10 @@ The client's answer decides the reservation: admitted (with the broker's request
 id) keeps it like any submitted power action; a refusal or an unreachable broker
 releases it; no answer is uncertain and keeps it. A later broker failure of that
 same request id, seen on the heartbeat, releases it; a failure of another
-request, waiting or uncertain don't. The backend shows the broker's state on
+request, waiting or uncertain don't. The heartbeat reads that request's own
+record (`/run/ceralive-power/requests/<id>.json`), so a newer request (the
+button, say) can't hide its result; `state.json` is only the latest request and
+counts only under the same id. The backend shows the broker's state on
 every heartbeat: waiting for the update, still waiting after 15 minutes, shutting
 down, no answer, or refused. The phone-only power-off exception waives only
 the carrying restart hold; encoder uncertainty, an unexplained marker and client
