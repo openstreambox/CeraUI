@@ -1732,7 +1732,9 @@ export function netIfBuildMsg() {
 		const parent = m[translation.parent];
 		if (!parent || parent.ip) continue; // Native IPv4 still wins.
 		parent.ip = translation.ipv4;
-		parent.addresses = [parent.ip, parent.ipv6].filter((ip): ip is string => ip !== undefined);
+		parent.addresses = [parent.ip, parent.ipv6].filter(
+			(ip): ip is string => ip !== undefined,
+		);
 		parent.enabled = isBondCandidate(name, int);
 		parent.tp = int.tp;
 		if (int.tx_bps !== undefined) parent.tx_bps = int.tx_bps;
