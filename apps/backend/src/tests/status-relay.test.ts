@@ -52,7 +52,7 @@ describe("relayStatusToGateway", () => {
 		const parsed = StatusSchema.parse(frame);
 		expect(parsed.kind).toBe("status");
 		expect(parsed.type).toBe("status");
-		expect(parsed.payload).toEqual({ is_streaming: true });
+		expect(parsed.payload).toEqual({ remote_status: true, is_streaming: true });
 		expect(parsed.seq).toBeGreaterThanOrEqual(0);
 		expect(Number.isInteger(parsed.seq)).toBe(true);
 		expect(parsed.v).toBe(1);
@@ -110,7 +110,8 @@ describe("relayStatusToGateway", () => {
 		const parsed = StatusSchema.parse(channel.frames[0]);
 		expect(parsed.type).toBe("netif");
 		expect(parsed.seq).toBe(7);
-		expect(parsed.payload).toEqual({ eth0: { up: true } });
+		expect(JSON.stringify(parsed.payload)).not.toContain("eth0");
+		expect(Object.values(parsed.payload ?? {})).toEqual([{}]);
 	});
 });
 
@@ -137,7 +138,10 @@ describe("dual delivery (local + relay)", () => {
 		// Relay delivery: the control channel got the kind:status frame.
 		expect(channel.frames).toHaveLength(1);
 		const relayed = StatusSchema.parse(channel.frames[0]);
-		expect(relayed.payload).toEqual({ is_streaming: true });
+		expect(relayed.payload).toEqual({
+			remote_status: true,
+			is_streaming: true,
+		});
 	});
 });
 
@@ -165,6 +169,7 @@ describe("broadcastMsgLocal is local-only", () => {
 describe("no-secrets contract", () => {
 	it("RELAYABLE_TYPES is exactly the closed v2.0 status set (spec §8)", () => {
 		expect([...RELAYABLE_TYPES]).toEqual([
+			"telemetry",
 			"status",
 			"config",
 			"sensors",
