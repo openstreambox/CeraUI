@@ -169,6 +169,18 @@ function dict(value: unknown): Map<string, unknown> {
 	}
 	return result;
 }
+/**
+ * Routing table as `ip -j route` prints it: no `table` key for main, a name for
+ * the other reserved tables, and a decimal string for numbered ones.
+ */
+function tableId(value: unknown): number {
+	if (value === undefined || value === "main") return 254;
+	if (value === "default") return 253;
+	if (value === "local") return 255;
+	if (typeof value === "string" && /^[1-9][0-9]{0,9}$/.test(value))
+		return integer(Number(value), 1);
+	return integer(value, 1);
+}
 function json(raw: string): unknown[] {
 	if (Buffer.byteLength(raw) > PORTAL_READER_LIMITS.jsonBytes) unavailable();
 	return array(JSON.parse(raw));
@@ -588,16 +600,7 @@ export async function captureWifiPortalBindingFromSystem(
 			(route.type !== undefined && route.type !== "unicast")
 		)
 			unavailable();
-		const routeTable = integer(
-			route.table === "main"
-				? 254
-				: route.table === "default"
-					? 253
-					: route.table === "local"
-						? 255
-						: route.table,
-			1,
-		);
+		const routeTable = tableId(route.table);
 		const routeMetric = integer(route.metric);
 		return { routeTable, routeMetric };
 	};

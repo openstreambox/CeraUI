@@ -475,10 +475,39 @@ describe("explicit bounded system binding reader", () => {
 			expect((await f.capture()).ok).toBe(false);
 		}
 	});
-	for (const field of ["table", "metric", "gateway"])
+	for (const field of ["metric", "gateway"])
 		test(`missing kernel route ${field} is unknown, not defaulted`, async () => {
 			const f = fixture();
 			delete f.state.route[field];
+			expect((await f.capture()).ok).toBe(false);
+		});
+	// iproute2 prints no `table` for main and a decimal string for numbered
+	// tables; these are the shapes a real box returns.
+	for (const [table, expected] of [
+		[undefined, 254],
+		["45934", 45934],
+		["default", 253],
+	] as const)
+		test(`kernel route table ${String(table)} is read as ip -j prints it`, async () => {
+			const f = fixture();
+			if (table === undefined) delete f.state.route.table;
+			else f.state.route.table = table;
+			const r = await f.capture();
+			expect(r.ok && r.binding.link.routeTable).toBe(expected);
+		});
+	for (const table of [
+		"0",
+		"045934",
+		"4294967296",
+		"1e3",
+		"",
+		null,
+		-1,
+		"unknown",
+	])
+		test(`malformed kernel route table ${JSON.stringify(table)} refuses`, async () => {
+			const f = fixture();
+			f.state.route.table = table;
 			expect((await f.capture()).ok).toBe(false);
 		});
 	test("explicit known table aliases and device-filter omission are accepted", async () => {
