@@ -201,6 +201,8 @@ export const senderLinkStatsSchema = z.object({
 	weak_reason: z.string().optional(),
 	/** Per-link capacity estimate in bits/s; 0 means no signal. */
 	cc_target_bps: z.number().int().min(0).optional(),
+	/** `bootstrap`, `climbing`, `holding`, `backing_off` or `drain`. */
+	cc_state: z.string().optional(),
 	/** Loss the per-link congestion control sees, per mille. */
 	cc_loss_permille: z.number().int().min(0).optional(),
 	cc_loss_degraded: z.boolean().optional(),

@@ -135,7 +135,8 @@ describe("acks come from evidence", () => {
 		expect(op.tick(t + 4_999)).toHaveLength(0);
 		const restore = only(op.tick(t + 5_000));
 		expect(restore.action).toBe("cancel-drain-restore");
-		expect(op.pendingCommands).toHaveLength(0);
+		// The demote's deadline is gone; the restore now has its own.
+		expect(op.pendingCommands).toEqual([restore.command]);
 	});
 
 	test("evidence in time clears the deadline", () => {
@@ -296,6 +297,26 @@ describe("how an operation ends", () => {
 		expect(op.ended).toBe(true);
 		expect(op.endReason).toBe("restore-failed");
 		expect(op.phase).toBe("done");
+	});
+
+	test("every restore gets the 10 s evidence deadline without the caller arming it", () => {
+		expect(SWAP_TIMINGS.restoreEvidenceMs).toBe(10_000);
+		const op = operation();
+		const t = intoLinger(op);
+		const restore = only(op.cancel(t + 1_000));
+		expect(op.pendingCommands).toEqual([restore.command]);
+		op.tick(t + 10_999);
+		expect(op.ended).toBe(false);
+		op.tick(t + 11_000);
+		expect(op.endReason).toBe("restore-failed");
+	});
+
+	test("a restore the reducer starts on its own is armed too", () => {
+		const op = operation();
+		const { effects } = runSwap(op, false);
+		const restore = only(effects);
+		expect(restore.action).toBe("cancel-drain-restore");
+		expect(op.pendingCommands).toEqual([restore.command]);
 	});
 
 	test("a refused restore ends the operation as restore-failed", () => {

@@ -29,6 +29,7 @@ const base: LinkSample = {
 	inFlightCapActive: false,
 	ccLossDegraded: false,
 	ccTargetBps: null,
+	ccState: null,
 	ccLossPermille: null,
 };
 
@@ -313,14 +314,37 @@ describe("candidate proof", () => {
 		expect(p.checks?.headroom).toBe("estimated");
 	});
 
-	test("headroom: a target below the clamp and below 1.25 × fails", () => {
-		// ~1.1 Mbit/s carried, target 1.5 Mbit/s: CC is holding, not climbing.
-		const s = snaps({
-			wlan2: run(4, { pps: 100, over: { ccTargetBps: 1_500_000 } }),
-		});
-		const p = candidate(s, { encoderBps: 1_400_000 });
-		expect(p.verdict).toBe("fail");
-		expect(p.reason).toBe("capacity estimate below the headroom factor");
+	test("headroom: a target below the clamp and below 1.25 × fails once the CC has settled", () => {
+		// ~1.1 Mbit/s carried, target 1.5 Mbit/s, and the CC no longer climbing.
+		for (const ccState of ["holding", "backing_off", "drain"]) {
+			const s = snaps({
+				wlan2: run(4, {
+					pps: 100,
+					over: { ccTargetBps: 1_500_000, ccState },
+				}),
+			});
+			const p = candidate(s, { encoderBps: 1_400_000 });
+			expect(p.verdict).toBe("fail");
+			expect(p.reason).toBe("capacity estimate below the headroom factor");
+		}
+	});
+
+	test("headroom: a share rising faster than a climbing CC is not a failure", () => {
+		// A fade moves the candidate from 0.5 E to 0.8 E of a 1.4 Mbit/s stream;
+		// its target (1.5 Mbit/s) is past the old clamp and still climbing.
+		const enc = 1_400_000;
+		const perS = enc / BITS_PER_PACKET;
+		for (const ccState of ["climbing", "bootstrap", null]) {
+			const s = snaps({
+				wlan2: run(6, {
+					pps: (t) => (t > 3 ? 0.8 * perS : 0.5 * perS),
+					over: { ccTargetBps: 1_500_000, ccState },
+				}),
+			});
+			const p = candidate(s, { encoderBps: enc });
+			expect(p.verdict).toBe("pass");
+			expect(p.checks?.headroom).toBe("climbing");
+		}
 	});
 
 	test("headroom: no target, or no encoder rate, is reported as not estimated", () => {
@@ -378,6 +402,16 @@ describe("pre-fade rate", () => {
 		);
 		expect(preFadeBondRate(s, s[6]?.at as number)).toBe(60);
 		expect(preFadeBondRate(s.slice(0, 1), s[0]?.at as number)).toBeNull();
+	});
+
+	test("ignores snapshots older than its 60 s window", () => {
+		// 100 busy seconds long before the fade, then a quiet minute: unbounded,
+		// the busy stretch would be the median.
+		const s = snaps({
+			wlan1: run(160, { pps: (t) => (t <= 100 ? 500 : 20) }),
+		});
+		expect(preFadeBondRate(s, s[160]?.at as number)).toBe(20);
+		expect(preFadeBondRate(s, s[60]?.at as number)).toBe(500);
 	});
 });
 

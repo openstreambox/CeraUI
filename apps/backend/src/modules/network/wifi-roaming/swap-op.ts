@@ -36,6 +36,7 @@ import {
 	type State,
 	useful,
 } from "../two-radio/reducer.ts";
+import { RESTORE_EVIDENCE_MS } from "./sender-links.ts";
 
 export type SwapTimings = Readonly<{
 	/** The whole operation, fixed when it is created. */
@@ -48,6 +49,12 @@ export type SwapTimings = Readonly<{
 	proofChallengeMs: number;
 	/** How far ahead a passing candidate's proof is renewed. */
 	renewMs: number;
+	/**
+	 * Every restore the adapter emits must be confirmed within this, or the
+	 * operation ends as `restore-failed`. Armed automatically; `expect()` can
+	 * change it.
+	 */
+	restoreEvidenceMs: number;
 }>;
 
 export const SWAP_TIMINGS: SwapTimings = {
@@ -56,6 +63,7 @@ export const SWAP_TIMINGS: SwapTimings = {
 	emergencyMs: 2_000,
 	proofChallengeMs: 12_000,
 	renewMs: 3_000,
+	restoreEvidenceMs: RESTORE_EVIDENCE_MS,
 };
 
 export const HOLDER: Radio = "a";
@@ -378,6 +386,16 @@ export class SwapOperation {
 		// an ack for the current one.
 		const current = this.#state.op?.command;
 		this.#pending = this.#pending.filter((p) => p.command === current);
+		// A restore must not wait for evidence forever, whatever the caller does.
+		for (const e of t.effects)
+			if (
+				e.action === "cancel-drain-restore" &&
+				!this.#pending.some((p) => p.command === e.command)
+			)
+				this.#pending.push({
+					command: e.command,
+					deadline: now + this.timings.restoreEvidenceMs,
+				});
 		return t.effects;
 	}
 

@@ -40,6 +40,12 @@ export type LinkSample = Readonly<{
 	ccLossDegraded: boolean;
 	/** Per-link capacity estimate, `null` when the sender reports none (0). */
 	ccTargetBps: number | null;
+	/**
+	 * The per-link CC's state (`bootstrap`, `climbing`, `holding`,
+	 * `backing_off`, `drain`), `null` when not reported. A target below the
+	 * load says "no headroom" only once the CC has stopped climbing.
+	 */
+	ccState: string | null;
 	ccLossPermille: number | null;
 }>;
 
@@ -131,6 +137,7 @@ export function toLinkSample(link: SenderLinkStats): LinkSample | undefined {
 			link.cc_target_bps !== undefined && link.cc_target_bps > 0
 				? link.cc_target_bps
 				: null,
+		ccState: link.cc_state ?? null,
 		ccLossPermille: link.cc_loss_permille ?? null,
 	};
 }
