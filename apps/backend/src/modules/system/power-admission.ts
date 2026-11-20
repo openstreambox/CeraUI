@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { dirname, join } from "node:path";
 import {
 	notificationBroadcast,
 	notificationRemove,
@@ -133,21 +132,26 @@ function readBrokerRecord(
 
 const BROKER_REQUEST_ID = /^[0-9a-f]{12}$/;
 
-/** The broker's record of one request: requests/<id>.json, so a newer request
- * can't hide this one's result. A broker that keeps no per-request records only
- * has its latest state. */
+/** The broker's record of one request. state.json is the broker's one record:
+ * the latest request at the top level and every request of this boot under
+ * "requests" by id (a finished one is kept for a day), so newer requests can't
+ * hide this one's result. An older broker without "requests" only has its
+ * latest request, which counts only under the same id. */
 function brokerRequestRecord(
 	id: string,
 	read: Read = readText,
 ): BrokerState | undefined {
 	if (!BROKER_REQUEST_ID.test(id)) return undefined;
-	const statePath = powerAdmissionStatePath();
-	return (
-		readBrokerRecord(
-			join(dirname(statePath), "requests", `${id}.json`),
-			read,
-		) ?? readBrokerRecord(statePath, read)
-	);
+	const record = readBrokerRecord(powerAdmissionStatePath(), read) as
+		| (BrokerState & { readonly requests?: unknown })
+		| undefined;
+	if (!record) return undefined;
+	const requests = record.requests;
+	if (requests && typeof requests === "object" && !Array.isArray(requests)) {
+		const own = (requests as Record<string, unknown>)[id];
+		return own && typeof own === "object" ? (own as BrokerState) : undefined;
+	}
+	return record;
 }
 
 export function powerAdmissionStatePath(): string {

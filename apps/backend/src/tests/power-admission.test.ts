@@ -324,30 +324,79 @@ describe("the reservation follows the broker's answer for this request", () => {
 		expect(isDisruptiveActionPending()).toBe(false);
 	});
 
-	test("a newer request in state.json can't hide this request's failure", async () => {
+	// The broker's one record: the latest request at the top level, every
+	// request of this boot under "requests" by id.
+	const brokerRecord = (
+		latest: { id: string; state: string },
+		requests: Record<string, string>,
+	) =>
+		JSON.stringify({
+			...latest,
+			time: Date.now() / 1000,
+			requests: Object.fromEntries(
+				Object.entries(requests).map(([id, state]) => [
+					id,
+					{ id, state, time: Date.now() / 1000 },
+				]),
+			),
+		});
+
+	test("a newer request at the top of state.json can't hide this request's failure", async () => {
 		process.env.CERALIVE_POWER_STATE = join(dir, "state.json");
-		fs.mkdirSync(join(dir, "requests"));
-		const record = (id: string, state: string) =>
-			JSON.stringify({ state, id, time: Date.now() / 1000 });
 		expect(
 			(await powerOffVia(0, "ADMITTED poweroff 0a1b2c3d4e5f\n")).success,
 		).toBe(true);
-		// The broker refused this request, then admitted a newer one (the button)
-		// that is now the latest state.
+		// The broker refused this request, then admitted a newer one (the button).
 		writeFileSync(
-			join(dir, "requests", "0a1b2c3d4e5f.json"),
-			record("0a1b2c3d4e5f", "failed"),
+			join(dir, "state.json"),
+			brokerRecord(
+				{ id: "ffffffffffff", state: "waiting" },
+				{ "0a1b2c3d4e5f": "failed", ffffffffffff: "waiting" },
+			),
 		);
-		writeFileSync(
-			join(dir, "requests", "ffffffffffff.json"),
-			record("ffffffffffff", "waiting"),
-		);
-		writeFileSync(join(dir, "state.json"), record("ffffffffffff", "waiting"));
 		reconcileBrokerRequest();
 		expect(isDisruptiveActionPending()).toBe(false);
 	});
 
-	test("without a per-request record, only a failure under this id in state.json releases", async () => {
+	test("a delayed heartbeat still finds the failure after many newer requests", async () => {
+		process.env.CERALIVE_POWER_STATE = join(dir, "state.json");
+		expect(
+			(await powerOffVia(0, "ADMITTED poweroff 0a1b2c3d4e5f\n")).success,
+		).toBe(true);
+		const newer = Object.fromEntries(
+			Array.from({ length: 40 }, (_, i) => [
+				i.toString(16).padStart(12, "0"),
+				"failed",
+			]),
+		);
+		writeFileSync(
+			join(dir, "state.json"),
+			brokerRecord(
+				{ id: "000000000027", state: "failed" },
+				{ ...newer, "0a1b2c3d4e5f": "failed" },
+			),
+		);
+		reconcileBrokerRequest();
+		expect(isDisruptiveActionPending()).toBe(false);
+	});
+
+	test("no record for this request keeps the reservation (the broker keeps a failure for a day)", async () => {
+		process.env.CERALIVE_POWER_STATE = join(dir, "state.json");
+		expect(
+			(await powerOffVia(0, "ADMITTED poweroff 0a1b2c3d4e5f\n")).success,
+		).toBe(true);
+		writeFileSync(
+			join(dir, "state.json"),
+			brokerRecord(
+				{ id: "ffffffffffff", state: "failed" },
+				{ ffffffffffff: "failed" },
+			),
+		);
+		reconcileBrokerRequest();
+		expect(isDisruptiveActionPending()).toBe(true);
+	});
+
+	test("an older broker's state.json (no requests) releases only a failure under this id", async () => {
 		process.env.CERALIVE_POWER_STATE = join(dir, "state.json");
 		const record = (id: string, state: string) =>
 			JSON.stringify({ state, id, time: Date.now() / 1000 });
