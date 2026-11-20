@@ -33,12 +33,8 @@ const TYPEC_TIMEOUT_MS = 70_000;
 const USB2_TIMEOUT_MS = 310_000;
 const SHOW_TIMEOUT_MS = 5_000;
 
-const BUSY_STATES = new Set([
-	"active",
-	"activating",
-	"reloading",
-	"deactivating",
-]);
+const BUSY_STATES = new Set(["active", "activating", "deactivating"]);
+const IDLE_STATES = new Set(["inactive", "failed"]);
 
 /** Argv for an allowlisted unit, or null when the name is not one of ours. */
 export function helperUnitArgv(unit: string): readonly string[] | null {
@@ -46,10 +42,31 @@ export function helperUnitArgv(unit: string): readonly string[] | null {
 	return ["systemctl", "start", unit];
 }
 
-/** Argv that reads ActiveState for an allowlisted unit, or null. */
+/** Argv that reads ActiveState and Job for an allowlisted unit, or null. */
 export function helperUnitShowArgv(unit: string): readonly string[] | null {
 	if (helperUnitArgv(unit) === null) return null;
-	return ["systemctl", "show", "-p", "ActiveState", "--value", unit];
+	return ["systemctl", "show", "-p", "ActiveState,Job", unit];
+}
+
+/**
+ * Busy unless systemd reports a terminal ActiveState and an empty Job.
+ * A queued job can leave ActiveState inactive. Blank or unknown output
+ * stays busy so the lease is not dropped on a probe we cannot read.
+ */
+export function helperUnitBusyFromShow(stdout: string): boolean {
+	const fields = new Map<string, string>();
+	for (const line of stdout.split("\n")) {
+		const eq = line.indexOf("=");
+		if (eq <= 0) continue;
+		fields.set(line.slice(0, eq).trim(), line.slice(eq + 1).trim());
+	}
+	if (!fields.has("ActiveState") || !fields.has("Job")) return true;
+	const job = fields.get("Job") ?? "";
+	if (job !== "") return true;
+	const state = fields.get("ActiveState") ?? "";
+	if (BUSY_STATES.has(state)) return true;
+	if (IDLE_STATES.has(state)) return false;
+	return true;
 }
 
 /**
@@ -81,7 +98,7 @@ export async function startHelperUnit(unit: string): Promise<void> {
 }
 
 /**
- * True when the unit is active or the state cannot be read.
+ * True when the unit is busy or the state cannot be read.
  * Unknown stays busy so a lease is not dropped on a probe failure.
  * The returned boolean is the only thing callers log.
  */
@@ -93,7 +110,7 @@ export async function helperUnitIsActive(unit: string): Promise<boolean> {
 			timeoutMs: SHOW_TIMEOUT_MS,
 		});
 		if (result.exitCode !== 0) return true;
-		return BUSY_STATES.has(result.stdout.trim());
+		return helperUnitBusyFromShow(result.stdout);
 	} catch {
 		return true;
 	}

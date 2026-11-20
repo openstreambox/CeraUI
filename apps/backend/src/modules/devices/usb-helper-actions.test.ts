@@ -36,7 +36,11 @@ import {
 	TYPEC_UNIT,
 	type Usb2Bound,
 } from "./usb-helper-actions.ts";
-import { helperUnitArgv } from "./usb-helper-start.ts";
+import {
+	helperUnitArgv,
+	helperUnitBusyFromShow,
+	helperUnitShowArgv,
+} from "./usb-helper-start.ts";
 import { readUsbTree } from "./usb-tree.ts";
 
 const TYPEC_REL = "etc/systemd/system/ceralive-typec-recheck.service";
@@ -660,6 +664,45 @@ describe("helper action RPCs", () => {
 		expect(started).toEqual([TYPEC_UNIT]);
 		expect(heldModemMutations()).toContain(TYPEC_SUBJECT);
 		expect((await readEntries())[0]?.phase).toBe("started");
+	});
+
+	test("a queued job keeps the interlock even when ActiveState is inactive", async () => {
+		await fresh();
+		await plant(TYPEC_REL);
+		await plant("proc/device-tree/compatible", "radxa,rock-5b-plus\0");
+		await plant("run/ceralive-typec/rearm", "0\n");
+		const queued = "ActiveState=inactive\nJob=91\n";
+		expect(helperUnitBusyFromShow(queued)).toBe(true);
+		expect(helperUnitBusyFromShow("ActiveState=inactive\nJob=\n")).toBe(false);
+		expect(helperUnitBusyFromShow("ActiveState=active\nJob=\n")).toBe(true);
+		expect(helperUnitBusyFromShow("ActiveState=\nJob=\n")).toBe(true);
+		expect(helperUnitBusyFromShow("")).toBe(true);
+		expect(helperUnitShowArgv(TYPEC_UNIT)).toEqual([
+			"systemctl",
+			"show",
+			"-p",
+			"ActiveState,Job",
+			TYPEC_UNIT,
+		]);
+		useDeps({
+			admit: realAdmit,
+			unitActive: async () => helperUnitBusyFromShow(queued),
+			startUnit: async (unit) => {
+				started.push(unit);
+				throw new Error("helper unit failed");
+			},
+		});
+		expect(
+			await call(
+				helperRetryPortProcedure,
+				{ confirmed: true },
+				{ context: callerContext() },
+			),
+		).toEqual({ ok: false, refusal: "start_failed" });
+		expect(heldModemMutations().length).toBeGreaterThan(0);
+		expect((await readEntries())[0]?.phase).toBe("started");
+		await pollHelperInterlock();
+		expect(heldModemMutations().length).toBeGreaterThan(0);
 	});
 
 	test("a missed journal read keeps the lease of a unit that is still active", async () => {

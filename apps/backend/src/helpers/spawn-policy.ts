@@ -1400,7 +1400,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		id: "devices.helperUnitState",
 		file: "modules/devices/usb-helper-start.ts",
 		symbol: "helperUnitIsActive",
-		command: "[systemctl, show, -p, ActiveState, --value, <allowlisted unit>]",
+		command: "[systemctl, show, -p, ActiveState,Job, <allowlisted unit>]",
 		class: "bounded-probe",
 		contract: {
 			timed: true,
@@ -1411,7 +1411,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"spawnWithTimeout reads ActiveState (5s) for the same allowlisted units as devices.helperUnit. The caller sees only a busy/idle boolean.",
+			"spawnWithTimeout reads ActiveState and Job (5s) for the same allowlisted units as devices.helperUnit. A non-empty job is busy. The caller sees only a busy/idle boolean.",
 	},
 ] as const;
 
