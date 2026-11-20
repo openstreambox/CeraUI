@@ -173,7 +173,8 @@ The transitions:
     the same connection, counted from the first sample at or after that ACK;
   - the sender's stall gate holds it out (`stall_gated`);
   - the sender times it out (`timed_out`);
-  - the sender reports it disconnected.
+  - the sender reports it disconnected in two samples running (a link that
+    re-registers is reported disconnected for one sample).
 - **dead stays dead (latched):** through history trims, report pauses,
   absence from the snapshot (held out to search) and new connections (a
   re-added link). The verdict does not depend on evidence still being in the
@@ -190,6 +191,8 @@ connected.
 last one ended.
 
 The port contract for `senderLinks()`:
+- `at` is on the coordinator's clock (`ports.now()`), stamped when the reply
+  arrived, never the sender's own time. Freeze detection compares the two.
 - A snapshot is one sample, and its `at` must advance. Spans and lags are
   counted in samples, so a snapshot no newer than the last is ignored, and
   nothing is judged on that round.
@@ -200,7 +203,9 @@ The port contract for `senderLinks()`:
     recalled.
 
   When reports resume, the clocks are shifted by the pause, so nothing
-  matures on old data and nothing judged before is forgotten.
+  matures on old data and nothing judged before is forgotten. A freeze is
+  only recognised after 3 s; until then rounds take no sample, but a dead
+  radio's 10 s clock keeps running, so a recall can come up to 3 s early.
 - Return `undefined` when the sender reports nothing.
 - Without `encoderRate()` the headroom check is skipped and labelled "not
   reported": a promotion then rests on delivery alone. In mode R that only
@@ -208,6 +213,16 @@ The port contract for `senderLinks()`:
 
 The pieces:
 
+- `sender-port.ts` is the real port: `poll()` fetches one `get_stats` over
+  the sender's control socket, `senderLinks()` hands out the latest mapped
+  snapshot, and `encoderRate()` is the engine's applied bitrate in bits/s.
+  - `at` advances only when some link's counters, age, epoch or state moved,
+    so a sender that hangs but keeps answering looks frozen.
+  - A failed, unreachable or counter-less read is `undefined`, which pauses
+    the coordinator at once.
+  - `defaultSenderPortDeps(radios, now)` supplies the control socket, each
+    radio's current IPv4 address from the network registry, and the engine
+    bitrate.
 - `sender-links.ts` does three things:
   - It reads the sender's per-link arrival reports (`srtla_ack_entries_total`,
     `data_packets_queued_total`, `last_srtla_ack_age_ms`, `srtla_ack_epoch`)
@@ -280,10 +295,8 @@ The pieces:
 
 These come in later parts:
 
-- The ports behind the swap:
-  - `senderLinks()` built from the control client's `get_stats` (or the
-    `stats` push) through `snapshotOf`, with each radio's current addresses;
-  - `encoderRate()` from the encoder.
+- Constructing the coordinator and the sender port, and calling `poll()`
+  before each round (boot wiring, slice 3).
 - Mode H, holding the old holder out of the bond at a soft fade, for the
   bench comparison with mode R. It uses the evidence predicates in
   `sender-links.ts` for its acks. Points to respect there:
@@ -322,6 +335,14 @@ radio-keyed roles.
 ```sh
 bun test apps/backend/src/modules/network/wifi-roaming/ apps/backend/src/tests/wifi-rescan-holder-gate.test.ts
 ```
+
+`sender-port.test.ts` covers the real port against a fake control client:
+- mapping and the caller's clock;
+- an unchanged reply keeping its time, while a changed count, age or epoch
+  advances it;
+- failed, throwing, unreachable and counter-less reads;
+- reconnecting;
+- the encoder rate.
 
 `coordinator-swap.test.ts` runs the handover against a fake sender that
 reports arrivals per radio. Its cases:
