@@ -85,6 +85,14 @@ export type SwapStep = Readonly<{
 
 type PendingAck = { command: number; deadline: number };
 
+/**
+ * How an operation ended: the old holder released, the old holder restored
+ * after an abort, a restore that could not be confirmed (the coordinator
+ * re-releases the hold and treats the old holder through the abrupt-loss path
+ * if it stays absent), or dropped by the caller.
+ */
+export type SwapEnd = "released" | "restored" | "restore-failed" | "dropped";
+
 export class SwapOperation {
 	readonly holder: string;
 	readonly candidate: string;
@@ -97,6 +105,7 @@ export class SwapOperation {
 	#spans = 0;
 	#pending: PendingAck[] = [];
 	#ended = false;
+	#endReason: SwapEnd | null = null;
 
 	constructor(
 		opts: Readonly<{
@@ -143,7 +152,7 @@ export class SwapOperation {
 		return this.#state.op?.phase ?? "idle";
 	}
 
-	/** The candidate holds a live proof. */
+	/** The candidate holds a live proof, as of the last event fed in. */
 	get candidateProven(): boolean {
 		return useful(this.#state, CANDIDATE);
 	}
@@ -153,9 +162,20 @@ export class SwapOperation {
 		return this.#ended;
 	}
 
+	/** How the operation ended, `null` while it runs. */
+	get endReason(): SwapEnd | null {
+		return this.#endReason;
+	}
+
 	/** Drop the operation (abrupt holder loss): nothing it says applies any more. */
 	end(): void {
+		this.#finish("dropped");
+	}
+
+	#finish(reason: SwapEnd): void {
+		if (this.#ended) return;
 		this.#ended = true;
+		this.#endReason = reason;
 		this.#pending = [];
 	}
 
@@ -245,6 +265,17 @@ export class SwapOperation {
 	/** Keep a passing candidate's proof alive `renewMs` ahead. */
 	renew(now: number, candidateSocket: string): readonly Effect[] {
 		if (this.#ended) return [];
+		// Only a live proof taken under this same sender epoch is extended: a
+		// candidate whose connection was replaced, or whose proof lapsed, has to
+		// prove itself again over a new span.
+		const proof = this.#state.paths[CANDIDATE].proof;
+		if (
+			!proof ||
+			proof.socket !== candidateSocket ||
+			proof.expiresAt <= this.#at(now) ||
+			!useful(this.#state, CANDIDATE)
+		)
+			return [];
 		const round = `renew-${++this.#renewals}`;
 		return [
 			...this.#challenge(
@@ -280,6 +311,12 @@ export class SwapOperation {
 		const op = this.#state.op;
 		if (!op) return [];
 		this.#pending = this.#pending.filter((p) => p.command !== command);
+		// The reducer's abort is a no-op in cleanup, so a restore that fails
+		// would leave the operation there for good and block every later move.
+		if (!ok && op.phase === "cleanup" && command === op.command) {
+			this.#finish("restore-failed");
+			return [];
+		}
 		return this.#feed(now, { type: "ack", operation: op.id, command, ok });
 	}
 
@@ -333,9 +370,10 @@ export class SwapOperation {
 			at: this.#at(now),
 			event,
 		});
-		const hadOp = this.#state.op !== null;
+		const before = this.#state.op?.phase;
 		this.#state = t.state;
-		if (hadOp && this.#state.op === null) this.#ended = true;
+		if (before !== undefined && this.#state.op === null)
+			this.#finish(before === "cleanup" ? "restored" : "released");
 		// A new command supersedes the ones before it: the reducer only accepts
 		// an ack for the current one.
 		const current = this.#state.op?.command;
