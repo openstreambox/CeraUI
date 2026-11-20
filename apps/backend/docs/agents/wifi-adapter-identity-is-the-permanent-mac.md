@@ -197,9 +197,16 @@ there whose UUID is a `ceralive-wifi` profile not yet listed in
 `wifi_setup_stations` turns that radio's `hotspot`/`hybrid` intent (its owner
 and intent keys and keys sharing its permanent MAC) into `station`, in the same
 config write that records the UUID. The portal re-creates the profile for each
-submission, so a new UUID is the handoff witness; the first run records the
-existing profiles as a baseline and clears nothing. Without a new station on
-`wlan0` the intent is kept. A failed write leaves both unchanged and restore
+submission, so a new UUID is the handoff witness. The first run (no
+`wifi_setup_stations` yet) cannot tell a join that just completed from an older
+one, so it is conservative: a `ceralive-wifi` station active on `wlan0` counts
+as a fresh handoff, and only without one are the existing profiles recorded as
+a baseline that clears nothing. Once a station is recorded, a later boot on it
+restores whatever intent was chosen after the handoff. Without a new station on
+`wlan0` the intent is kept. A live unaccounted station is never displaced on
+unknown evidence: while the profile inventory cannot be read, or the station
+changes during the read, restore for `wlan0` holds and retries on the bounded
+discovery schedule. A failed write leaves both unchanged and restore also
 waits.
 
 Before discovery publishes rows, it examines

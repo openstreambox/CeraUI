@@ -79,11 +79,12 @@ async function applyWifiAdapterModes(
 						observedOwner,
 						...(key === undefined ? [] : [key]),
 					]);
-					if (
-						handoff === "hold" ||
-						cycle?.stopped() ||
-						deps.resolveInterfaces()[registryKey] !== row
-					)
+					// Unknown never restores: the bounded discovery retry decides later.
+					if (handoff === "hold") {
+						retryWifiAdapterReconcile(owner, undefined, "restore");
+						return;
+					}
+					if (cycle?.stopped() || deps.resolveInterfaces()[registryKey] !== row)
 						return;
 					const held = isProvisioningSetupHeld(row.ifname);
 					const desired =
