@@ -24,11 +24,17 @@ import {
 	nmRescan,
 	nmScanResults,
 } from "../network/network-manager.ts";
+import { withDeviceLock } from "../network/state/device-lock.ts";
 import type {
 	IMonitorEmitter,
 	MonitorEvent,
 	WifiState,
 } from "../network/state-types.ts";
+import {
+	mayScanNow,
+	scanGateActive,
+	scanProtectedRadios,
+} from "../network/wifi-roaming/scan-gate.ts";
 import {
 	getModeForInterface,
 	onWifiChange,
@@ -494,7 +500,10 @@ export function setScanRefreshAction(action: () => unknown): void {
   (`wifiAdapterLockKey`, the adapter's permanent MAC), and one key's in-flight
   run can never answer for another's.
 */
-const rescanInFlight = new Map<WifiScanKey, Promise<void>>();
+/** Radios a run actually dispatched a scan to (`undefined`: device-less). */
+type RescanReport = ReadonlySet<string | undefined>;
+
+const rescanInFlight = new Map<WifiScanKey, Promise<RescanReport>>();
 
 /*
   The key a device-LESS `wifiRescan()` coalesces on: "refresh every radio". A
@@ -607,8 +616,39 @@ export function setScanResultReaderForTest(
  * Concurrent callers for the SAME adapter join one run; callers for DIFFERENT
  * adapters each get their own, because a scan of one radio says nothing about
  * another.
+ *
+ * `adapterLockHeld`: the caller already holds `device`'s per-adapter Wi-Fi lock
+ * and awaits this run inside it (the scan RPC). While the roaming coordinator's
+ * scan gate is active, the run then dispatches that radio's scan under the
+ * caller's lock instead of taking it a second time, which the non-reentrant
+ * lock would refuse.
  */
-export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
+export function wifiRescan(
+	device?: WifiInterfaceId,
+	opts: { adapterLockHeld?: boolean } = {},
+): Promise<void> {
+	return startRescan(device, opts).then(() => undefined);
+}
+
+/**
+ * Like {@link wifiRescan} for one named radio, resolving to whether a scan of
+ * that radio was actually dispatched. While the roaming coordinator's scan
+ * gate is active it can refuse the radio (it carries the stream, serves the
+ * hotspot or shares a protected phy) or find its adapter lock busy; the scan
+ * RPC reports that instead of a success that never happened.
+ */
+export async function wifiRescanDispatched(
+	device: WifiInterfaceId,
+	opts: { adapterLockHeld?: boolean } = {},
+): Promise<boolean> {
+	const report = await startRescan(device, opts);
+	return report.has(ifnameForDevice(device));
+}
+
+function startRescan(
+	device: WifiInterfaceId | undefined,
+	opts: { adapterLockHeld?: boolean },
+): Promise<RescanReport> {
 	const key =
 		device === undefined ? WIFI_SCAN_ALL_KEY : wifiScanKeyForDevice(device);
 
@@ -616,23 +656,80 @@ export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
 	if (joined) return joined;
 
 	const ifname = device === undefined ? undefined : ifnameForDevice(device);
-	const run = runRescan(key, ifname).finally(() => {
-		rescanInFlight.delete(key);
-	});
+	const run = runRescan(key, ifname, opts.adapterLockHeld === true).finally(
+		() => {
+			rescanInFlight.delete(key);
+		},
+	);
 	rescanInFlight.set(key, run);
 	return run;
+}
+
+function scanKeyForIfname(ifname: string): WifiScanKey {
+	for (const macAddress in wifiInterfacesByMacAddress) {
+		if (wifiInterfacesByMacAddress[macAddress]?.ifname === ifname)
+			return wifiAdapterLockKey(macAddress);
+	}
+	return `dev:${ifname}`;
+}
+
+/*
+  Which radios a rescan request actually scans. Normally the request as given.
+  While the roaming coordinator protects radios (those that carry the stream,
+  serve the hotspot or are joining a network), those are never scanned: a
+  request for one scans nothing, and a request for every radio scans each of
+  the others by name.
+*/
+function rescanTargets(ifname: string | undefined): (string | undefined)[] {
+	const protectedNow = scanProtectedRadios();
+	if (!scanGateActive()) return [ifname];
+	if (ifname !== undefined) return protectedNow.has(ifname) ? [] : [ifname];
+	const others: string[] = [];
+	for (const macAddress in wifiInterfacesByMacAddress) {
+		const name = wifiInterfacesByMacAddress[macAddress]?.ifname;
+		if (name && !protectedNow.has(name)) others.push(name);
+	}
+	return others;
 }
 
 async function runRescan(
 	key: WifiScanKey,
 	ifname: string | undefined,
-): Promise<void> {
+	adapterLockHeld = false,
+): Promise<RescanReport> {
+	const scanned: (string | undefined)[] = [];
 	try {
-		await rescanAction(ifname);
+		const targets = rescanTargets(ifname);
+		for (const target of targets) {
+			if (target === undefined || !scanGateActive()) {
+				await rescanAction(target);
+				scanned.push(target);
+				continue;
+			}
+			// While the coordinator runs, each scan goes out under the radio's
+			// adapter lock (the one hotspot changes hold) after a fresh look at
+			// its mode and phy. A busy lock or a refused check skips the radio.
+			const dispatch = async () => {
+				if (!(await mayScanNow(target))) return false;
+				await rescanAction(target);
+				return true;
+			};
+			const sent =
+				adapterLockHeld && target === ifname
+					? { success: true as const, result: await dispatch() }
+					: await withDeviceLock(scanKeyForIfname(target), dispatch);
+			if (sent.success && sent.result) scanned.push(target);
+		}
 
 		/* A rescan request will fail if a previous one is in progress,
-     but we still attempt to update the results */
-		if (await scanResultReader()) noteScanCompleted(key);
+     but we still attempt to update the results. Only radios that were
+     actually rescanned get their scan stamp advanced. */
+		if (await scanResultReader()) {
+			if (scanned.length === 1 && scanned[0] === ifname) noteScanCompleted(key);
+			else
+				for (const target of scanned)
+					if (target !== undefined) noteScanCompleted(scanKeyForIfname(target));
+		}
 		wifiScheduleScanRefresh();
 	} catch (err) {
 		// A shared promise must not reject: every joined caller would raise its own
@@ -641,4 +738,5 @@ async function runRescan(
 		// returns), so reaching here is drift worth logging, never worth throwing.
 		logger.warn(`wifiRescan failed: ${err}`);
 	}
+	return new Set(scanned);
 }
