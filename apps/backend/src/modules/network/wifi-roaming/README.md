@@ -125,15 +125,24 @@ never promotes on its own. With them, each round:
   still gets ACKs. The best currently delivering carrier becomes holder at
   once: a proven candidate first, then the most diverse path, then signal.
   The dead radio stays in the bond as an assister. The sender already keeps
-  traffic off it, and its probes see a recovery.
+  traffic off it, and its probes see a recovery. With nobody else
+  delivering, a lone dead holder keeps the label, but next to another holder
+  (a handover's old one) it gives the label up.
+- **Dead radio.** A radio the sender has judged dead for 10 s adds nothing to
+  the bond, whatever its uplink. Slice 1 may withdraw it to search even
+  while the holders only hold steady, which restores the second path.
 - **Fading holder** (slice 1's triggers, or delivery below 0.90, or the
   sender giving up on it):
   - It gets a continuity candidate: a carrying assister on another BSSID,
     separate gateways first. An assister on the holder's own AP never
     qualifies.
-  - The candidate proves itself on the share it already carries. A failed
-    proof cools its BSSID down for 10 s, doubling up to 120 s; a
-    common-target failure doesn't.
+  - The candidate proves itself on the share it already carries. Only
+    assisters are candidates (standby belongs to S2).
+  - A failed proof cools its BSSID down for 10 s, doubling up to 120 s. The
+    count starts over after five quiet minutes, or after a completed
+    handover to that BSSID.
+  - A common-target failure cools nothing down, but no new handover starts
+    for 10 s.
   - Promotion is a relabel (mode R). The candidate becomes a holder and
     takes the scan protection, and the old holder keeps carrying through the
     10 s linger and is an assister afterwards.
@@ -144,6 +153,15 @@ never promotes on its own. With them, each round:
 
 `status().swap` shows the handover in progress, and `lastSwapOutcome` how the
 last one ended.
+
+The port contract for `senderLinks()`:
+- A snapshot is one sample, and its `at` must advance. Spans and lags are
+  counted in samples, so a snapshot no newer than the last is ignored, and
+  nothing is judged on that round.
+- Return `undefined` when the sender reports nothing.
+- Without `encoderRate()` the headroom check is skipped and labelled "not
+  reported": a promotion then rests on delivery alone. In mode R that only
+  moves labels and scan protection.
 
 The pieces:
 
@@ -275,7 +293,14 @@ reports arrivals per radio. Its cases:
   delivers;
 - a Wi-Fi-only double failure;
 - reports going away;
-- candidate ranking and exclusion.
+- candidate ranking and exclusion;
+- a dead new holder giving up the label next to a fading old one;
+- a dead radio freed to search after its grace period, also while the
+  holder only holds steady;
+- the dead-holder relabel skipping a carrier that does not deliver;
+- cool-downs that start over after a quiet period or a completed handover;
+- the common-target back-off;
+- a slower sender whose repeated snapshots are not counted as samples.
 
 `proof.test.ts`, `sender-links.test.ts` and `swap-op.test.ts` cover the
 pieces above on synthetic snapshots and a fake clock. The cases include:
