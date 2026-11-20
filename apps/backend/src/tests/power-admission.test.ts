@@ -8,12 +8,21 @@ import { setup } from "../modules/setup.ts";
 import { updateStreamLifecycleState } from "../modules/streaming/stream-lifecycle-status.ts";
 import { updateStatus } from "../modules/streaming/streaming.ts";
 import { carryingTracker } from "../modules/system/carrying.ts";
+import {
+	isDisruptiveActionPending,
+	isPositiveDisruptiveFailure,
+	type PowerSubmissionError,
+} from "../modules/system/disruptive-action-reservation.ts";
 import { getDisruptiveActionDecision } from "../modules/system/disruptive-action-runtime.ts";
 import {
+	brokerOutcome,
+	logindOutcome,
+	logindPowerArgv,
 	POWER_BROKER_SOCKET,
 	powerAdmissionArgv,
 	publishPowerAdmissionStatus,
 	readPowerAdmissionState,
+	reconcileBrokerRequest,
 	resetPowerAdmissionStatusForTest,
 } from "../modules/system/power-admission.ts";
 import { setStreamReconciliationCompletedForTest } from "../modules/system/stream-reconciliation-latch.ts";
@@ -26,22 +35,77 @@ import {
 } from "../rpc/procedures/system.procedure.ts";
 
 describe("the image's power broker", () => {
-	test("is used only when both its socket and its client are installed", () => {
-		const all = () => true;
-		expect(powerAdmissionArgv("poweroff", all)).toEqual([
-			"/usr/bin/ceralive-poweroff",
-			"--no-wait",
-		]);
-		expect(powerAdmissionArgv("reboot", all)).toEqual([
-			"/usr/bin/ceralive-reboot",
-			"--no-wait",
-		]);
+	test("counts as installed from its files, even when its socket is down", () => {
+		const only = (path: string) => (p: string) => p === path;
+		// Installed but the socket isn't there: still the broker (fails closed).
 		expect(
-			powerAdmissionArgv("poweroff", (path) => path !== POWER_BROKER_SOCKET),
-		).toBeUndefined();
+			powerAdmissionArgv("poweroff", only("/usr/bin/ceralive-poweroff")),
+		).toEqual(["/usr/bin/ceralive-poweroff", "--no-wait"]);
 		expect(
-			powerAdmissionArgv("reboot", (path) => path === POWER_BROKER_SOCKET),
+			powerAdmissionArgv(
+				"reboot",
+				only("/usr/libexec/ceralive/ceralive-power-broker"),
+			),
+		).toEqual(["/usr/bin/ceralive-reboot", "--no-wait"]);
+		// The socket alone doesn't make an image a broker image.
+		expect(
+			powerAdmissionArgv("poweroff", only(POWER_BROKER_SOCKET)),
 		).toBeUndefined();
+	});
+
+	test("older images ask logind directly, never systemctl", () => {
+		expect(logindPowerArgv("reboot")).toEqual([
+			"busctl",
+			"--system",
+			"--timeout=25",
+			"call",
+			"org.freedesktop.login1",
+			"/org/freedesktop/login1",
+			"org.freedesktop.login1.Manager",
+			"RebootWithFlags",
+			"t",
+			"0",
+		]);
+	});
+
+	test("the client's answer: admitted with an id, definite refusal, or uncertain", () => {
+		expect(
+			brokerOutcome("reboot", 0, "ADMITTED reboot 0a1b2c3d4e5f\n", ""),
+		).toEqual({ brokerRequestId: "0a1b2c3d4e5f" });
+		expect(
+			brokerOutcome("reboot", 0, "PENDING reboot 0a1b2c3d4e5f\n", ""),
+		).toEqual({ brokerRequestId: "0a1b2c3d4e5f" });
+		const thrown = (exitCode: number | null) => {
+			try {
+				brokerOutcome("poweroff", exitCode, "X\n", "");
+			} catch (error) {
+				return error as PowerSubmissionError;
+			}
+			throw new Error("no failure");
+		};
+		expect(thrown(1).exitCode).toBe(1); // refused: nothing submitted
+		expect(thrown(75).exitCode).toBe(75); // broker unreachable: nothing submitted
+		expect(thrown(70).exitCode).toBeNull(); // no answer: uncertain
+		expect(thrown(null).exitCode).toBeNull();
+		expect(isPositiveDisruptiveFailure(thrown(1))).toBe(true);
+		expect(isPositiveDisruptiveFailure(thrown(70))).toBe(false);
+	});
+
+	test("logind's lost or timed-out answer is uncertain", () => {
+		const exitOf = (code: number | null, stderr: string) => {
+			try {
+				logindOutcome("poweroff", code, stderr, "refused");
+				return "ok";
+			} catch (error) {
+				return (error as PowerSubmissionError).exitCode;
+			}
+		};
+		expect(exitOf(0, "")).toBe("ok");
+		expect(
+			exitOf(1, "Call failed: Access denied due to active block inhibitor"),
+		).toBe(1);
+		expect(exitOf(1, "Call failed: Connection timed out")).toBeNull();
+		expect(exitOf(null, "")).toBeNull();
 	});
 
 	test("broker states map to what the UI says, and an old refusal fades", () => {
@@ -138,7 +202,7 @@ describe("local power actions through the RPC", () => {
 
 	test("with the broker installed, the admitted action goes to it, not systemctl", async () => {
 		const exists = spyOn(fs, "existsSync").mockReturnValue(true);
-		const { seen, spawn } = spawnRecorder(0, "ADMITTED reboot\n");
+		const { seen, spawn } = spawnRecorder(0, "ADMITTED reboot 0a1b2c3d4e5f\n");
 		try {
 			const result = await call(rebootProcedure, undefined, {
 				context: buildControlContext(),
@@ -166,18 +230,95 @@ describe("local power actions through the RPC", () => {
 		}
 	});
 
-	test("without the broker, plain systemctl keeps today's behaviour", async () => {
+	test("without the broker, logind is asked directly (no systemctl fallback)", async () => {
 		const exists = spyOn(fs, "existsSync").mockReturnValue(false);
 		const { seen, spawn } = spawnRecorder(0);
 		try {
 			await call(poweroffProcedure, undefined, {
 				context: buildControlContext(),
 			});
-			expect(seen).toEqual([["systemctl", "poweroff"]]);
+			expect(seen).toEqual([logindPowerArgv("poweroff")]);
 		} finally {
 			spawn.mockRestore();
 			exists.mockRestore();
 		}
+	});
+});
+
+describe("the reservation follows the broker's answer for this request", () => {
+	const saved = {
+		NODE_ENV: process.env.NODE_ENV,
+		MOCK_MODE: process.env.MOCK_MODE,
+		CERALIVE_STREAMING_MARKER: process.env.CERALIVE_STREAMING_MARKER,
+	};
+	let dir = "";
+	beforeEach(() => {
+		process.env.NODE_ENV = "production";
+		delete process.env.MOCK_MODE;
+		dir = mkdtempSync(join(tmpdir(), "power-reservation-"));
+		process.env.CERALIVE_STREAMING_MARKER = join(dir, "streaming");
+		setStreamReconciliationCompletedForTest(true);
+		resetOrchestratorRuntimeForTest();
+		updateStatus(false);
+		updateStreamLifecycleState("idle");
+		resetPowerCommandRunner();
+		resetPowerAdmissionStatusForTest();
+	});
+	afterEach(() => {
+		resetPowerCommandRunner();
+		resetOrchestratorRuntimeForTest();
+		resetPowerAdmissionStatusForTest();
+		for (const [key, value] of Object.entries(saved)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	async function powerOffVia(exitCode: number, stdout: string) {
+		const exists = spyOn(fs, "existsSync").mockReturnValue(true);
+		const safe = Bun.spawnSync(["true"]);
+		const spawn = spyOn(Bun, "spawnSync").mockImplementation(
+			() =>
+				({
+					...safe,
+					exitCode,
+					success: exitCode === 0,
+					stdout: Buffer.from(stdout),
+					stderr: Buffer.from(""),
+				}) as unknown as ReturnType<typeof Bun.spawnSync>,
+		);
+		try {
+			return await call(poweroffProcedure, undefined, {
+				context: buildControlContext(),
+			});
+		} finally {
+			spawn.mockRestore();
+			exists.mockRestore();
+		}
+	}
+
+	test("admitted, then a later failure of that request releases the reservation", async () => {
+		expect(
+			(await powerOffVia(0, "ADMITTED poweroff 0a1b2c3d4e5f\n")).success,
+		).toBe(true);
+		expect(isDisruptiveActionPending()).toBe(true);
+		reconcileBrokerRequest({ state: "waiting", id: "0a1b2c3d4e5f" });
+		reconcileBrokerRequest({ state: "failed", id: "ffffffffffff" });
+		expect(isDisruptiveActionPending()).toBe(true);
+		reconcileBrokerRequest({ state: "failed", id: "0a1b2c3d4e5f" });
+		expect(isDisruptiveActionPending()).toBe(false);
+	});
+
+	test("no answer keeps the reservation; a definite refusal releases it", async () => {
+		expect((await powerOffVia(70, "NOANSWER\n")).success).toBe(false);
+		expect(isDisruptiveActionPending()).toBe(true);
+		resetOrchestratorRuntimeForTest();
+		resetPowerCommandRunner();
+		expect(
+			(await powerOffVia(1, "REFUSED unverifiable caller\n")).success,
+		).toBe(false);
+		expect(isDisruptiveActionPending()).toBe(false);
 	});
 });
 

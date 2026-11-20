@@ -39,14 +39,23 @@ honours strong block inhibitors for root without requiring polkit. Explicit
 `--check-inhibitors=yes` is deliberately omitted: it also refuses an idle
 box when a non-root support user is logged in over SSH.
 They retain the existing stream/update admission gates and failure bookkeeping.
-On images with the power admission broker (`/run/ceralive-power/request.sock`
-and `/usr/bin/ceralive-poweroff`), the local power dialog's admitted action goes
-to the broker instead (`ceralive-poweroff|ceralive-reboot --no-wait`). The broker
-identifies this service by its unit, lets the action pass this process's own
-lock, waits for a running update or package install to finish, then asks logind.
-The backend shows its state on every heartbeat: waiting for the update, still
-waiting after 15 minutes, shutting down, no answer, or refused. Images without
-the broker keep plain `systemctl`. The phone-only power-off exception waives only
+On images with the power admission broker (its files
+`/usr/libexec/ceralive/ceralive-power-broker` or `/usr/bin/ceralive-poweroff`,
+whatever its socket is doing), the local power dialog's admitted action goes to
+the broker (`ceralive-poweroff|ceralive-reboot --no-wait`). The broker identifies
+this service by its unit, lets the action pass this process's own lock, waits for
+running writes, then asks logind. If the broker is down the action fails; it
+never falls back. Images without the broker ask logind directly
+(`busctl … PowerOffWithFlags|RebootWithFlags t 0`, lock-checked). Neither path
+uses `systemctl`, which can start a power target itself when logind fails.
+
+The client's answer decides the reservation: admitted (with the broker's request
+id) keeps it like any submitted power action; a refusal or an unreachable broker
+releases it; no answer is uncertain and keeps it. A later broker failure of that
+same request id, seen on the heartbeat, releases it; a failure of another
+request, waiting or uncertain don't. The backend shows the broker's state on
+every heartbeat: waiting for the update, still waiting after 15 minutes, shutting
+down, no answer, or refused. The phone-only power-off exception waives only
 the carrying restart hold; encoder uncertainty, an unexplained marker and client
 traffic that is still qualifying keep refusing.
 The dialog shows the emergency override only after a shutdown-lock refusal.

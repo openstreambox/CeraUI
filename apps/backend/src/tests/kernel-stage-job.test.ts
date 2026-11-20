@@ -39,6 +39,7 @@ test("kernel stage has the OS guard shape with only the stager and exact bound a
 			"--property=StandardOutput=null",
 			"--property=StandardError=journal",
 			"--property=RuntimeMaxSec=1800",
+			"--property=Before=ceralive-write-drain.service",
 			"/usr/bin/flock",
 			"-n",
 			"-E",
