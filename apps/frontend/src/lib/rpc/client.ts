@@ -861,6 +861,7 @@ export interface TypedRPC {
 			retryPort: boolean;
 			rearmExhausted: boolean;
 			usb2: boolean;
+			tokens: { key: string; token: string }[];
 		}>;
 		retryPort: (input: { confirmed: boolean }) => Promise<{
 			ok: boolean;
@@ -869,6 +870,7 @@ export interface TypedRPC {
 		usb2: (input: {
 			confirmed: boolean;
 			key: string;
+			token: string;
 		}) => Promise<{ ok: boolean; refusal?: string }>;
 	};
 	/**

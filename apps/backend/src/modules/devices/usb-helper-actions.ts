@@ -133,6 +133,7 @@ export type HelperActionOffer = {
 	readonly retryPort: boolean;
 	readonly rearmExhausted: boolean;
 	readonly usb2: boolean;
+	readonly tokens: readonly { readonly key: string; readonly token: string }[];
 };
 
 export type HelperCaller = {
@@ -147,6 +148,7 @@ export type HelperActionRequest =
 			readonly action: "usb2";
 			readonly confirmed: boolean;
 			readonly key: string;
+			readonly token: string;
 	  };
 
 /** Identity captured when the device list was published. */
@@ -212,12 +214,22 @@ type Plan =
 			readonly unit: string;
 			readonly leaseKey: string;
 			readonly scope: string;
+			readonly identity: Usb2Identity | null;
 	  };
 
 const processToken = randomUUID();
+const TOKEN =
+	/^[1-9][0-9]{0,8}\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const inFlight = new Set<string>();
 const cooldownUntil = new Map<string, number>();
-const seen = new Map<string, Usb2Identity>();
+
+type SeenSlot = {
+	readonly generation: number;
+	readonly token: string;
+	readonly identity: Usb2Identity;
+};
+
+const seen = new Map<string, SeenSlot>();
 const retained = new Map<string, () => void>();
 let journalChain: Promise<void> = Promise.resolve();
 let watching = false;
@@ -318,6 +330,21 @@ export function bindUsb2Target(
 	return { unit, leaseKey: fresh.stableKey, scope: fresh.scope };
 }
 
+function sameIdentity(left: Usb2Identity, right: Usb2Identity): boolean {
+	return (
+		left.devnum === right.devnum &&
+		left.stableKey === right.stableKey &&
+		left.scope === right.scope &&
+		left.kernelName === right.kernelName
+	);
+}
+
+function listedTokens(): { key: string; token: string }[] {
+	return [...seen.entries()]
+		.map(([key, slot]) => ({ key, token: slot.token }))
+		.sort((left, right) => (left.key < right.key ? -1 : 1));
+}
+
 /** Remember the enumeration just published. The names stay off the wire. */
 export async function captureHelperSeen(
 	roots: readonly UsbTreeNode[],
@@ -342,8 +369,21 @@ export async function captureHelperSeen(
 		});
 		return;
 	}
+	const previous = new Map(seen);
 	seen.clear();
-	for (const [key, identity] of next) seen.set(key, identity);
+	for (const [key, identity] of next) {
+		const prior = previous.get(key);
+		if (prior !== undefined && sameIdentity(prior.identity, identity)) {
+			seen.set(key, prior);
+			continue;
+		}
+		const generation = (prior?.generation ?? 0) + 1;
+		seen.set(key, {
+			generation,
+			token: `${generation}.${randomUUID()}`,
+			identity,
+		});
+	}
 }
 
 /** @deprecated The action no longer trusts a cached kernel port. */
@@ -780,9 +820,11 @@ async function readIdentity(
 	};
 }
 
-async function resolveUsb2(key: string): Promise<Usb2Bound | null> {
+async function resolveFresh(
+	key: string,
+	expected: Usb2Identity,
+): Promise<Usb2Bound | null> {
 	const deps = currentDeps();
-	if (deps.resolveUsb2 !== undefined) return deps.resolveUsb2(key);
 	let tree: Awaited<ReturnType<typeof readUsbTree>>;
 	try {
 		tree = await readUsbTree({ sysfsRoot: deps.root });
@@ -793,7 +835,7 @@ async function resolveUsb2(key: string): Promise<Usb2Bound | null> {
 	if (node === null) return null;
 	const fresh = await readIdentity(deps.root, node);
 	return bindUsb2Target(
-		seen.get(key),
+		expected,
 		fresh === null
 			? null
 			: {
@@ -803,6 +845,62 @@ async function resolveUsb2(key: string): Promise<Usb2Bound | null> {
 					kernelName: fresh.kernelName,
 				},
 	);
+}
+
+/**
+ * The token is the identity the operator was shown. A refresh that
+ * changed the device bumps it, and that check happens before the walk.
+ * The snapshot is what later checks compare, not a newer cache entry.
+ */
+async function resolveUsb2(
+	key: string,
+	token: string,
+): Promise<{
+	readonly bound: Usb2Bound;
+	readonly identity: Usb2Identity;
+} | null> {
+	const deps = currentDeps();
+	if (deps.resolveUsb2 !== undefined) {
+		if (!TOKEN.test(token)) return null;
+		const bound = await deps.resolveUsb2(key);
+		if (bound === null) return null;
+		return {
+			bound,
+			identity: {
+				devnum: "0",
+				stableKey: bound.leaseKey,
+				scope: bound.scope,
+				kernelName: "0-0",
+			},
+		};
+	}
+	const slot = seen.get(key);
+	if (slot === undefined || slot.token !== token) return null;
+	const bound = await resolveFresh(key, slot.identity);
+	if (bound === null) return null;
+	return { bound, identity: slot.identity };
+}
+
+async function matchUsb2(
+	request: { readonly key: string },
+	planned: {
+		readonly unit: string;
+		readonly leaseKey: string;
+		readonly scope: string;
+		readonly identity: Usb2Identity | null;
+	},
+	strict: boolean,
+): Promise<boolean> {
+	const deps = currentDeps();
+	const again =
+		deps.resolveUsb2 !== undefined
+			? await deps.resolveUsb2(request.key)
+			: planned.identity === null
+				? null
+				: await resolveFresh(request.key, planned.identity);
+	if (again === null || again.unit !== planned.unit) return false;
+	if (!strict) return true;
+	return again.leaseKey === planned.leaseKey && again.scope === planned.scope;
 }
 
 async function usb2TemplateReady(root: string): Promise<boolean> {
@@ -838,21 +936,23 @@ async function plan(request: HelperActionRequest, deps: Deps): Promise<Plan> {
 			unit: TYPEC_UNIT,
 			leaseKey: TYPEC_SUBJECT,
 			scope: TYPEC_SCOPE,
+			identity: null,
 		};
 	}
 	if (!(await usb2TemplateReady(deps.root))) {
 		return { ok: false, refusal: "unit_absent" };
 	}
-	const bound = await resolveUsb2(request.key);
-	if (bound === null) return { ok: false, refusal: "identity_unresolved" };
-	if (!(await helperUnitReady(deps.root, bound.unit))) {
+	const resolved = await resolveUsb2(request.key, request.token);
+	if (resolved === null) return { ok: false, refusal: "identity_unresolved" };
+	if (!(await helperUnitReady(deps.root, resolved.bound.unit))) {
 		return { ok: false, refusal: "unit_absent" };
 	}
 	return {
 		ok: true,
-		unit: bound.unit,
-		leaseKey: bound.leaseKey,
-		scope: bound.scope,
+		unit: resolved.bound.unit,
+		leaseKey: resolved.bound.leaseKey,
+		scope: resolved.bound.scope,
+		identity: resolved.identity,
 	};
 }
 
@@ -934,6 +1034,7 @@ export async function readHelperActionOffer(
 		retryPort: retry,
 		rearmExhausted: exhausted,
 		usb2,
+		tokens: listedTokens(),
 	};
 }
 
@@ -979,13 +1080,7 @@ export async function runHelperAction(
 		if (await deps.liveStream()) return refuse("streaming_active");
 
 		if (request.action === "usb2") {
-			const again = await resolveUsb2(request.key);
-			if (
-				again === null ||
-				again.unit !== planned.unit ||
-				again.leaseKey !== planned.leaseKey ||
-				again.scope !== planned.scope
-			) {
+			if (!(await matchUsb2(request, planned, true))) {
 				return refuse("identity_unresolved");
 			}
 		}
@@ -1008,8 +1103,7 @@ export async function runHelperAction(
 		});
 
 		if (request.action === "usb2") {
-			const again = await resolveUsb2(request.key);
-			if (again === null || again.unit !== planned.unit) {
+			if (!(await matchUsb2(request, planned, false))) {
 				await updateJournal(id, "failed", "identity-changed");
 				return refuse("identity_unresolved");
 			}

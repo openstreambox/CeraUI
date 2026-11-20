@@ -133,6 +133,7 @@ async function loadHelperOffer(): Promise<void> {
 					retryPort: result.retryPort,
 					rearmExhausted: result.rearmExhausted,
 					usb2: result.usb2,
+					tokens: result.tokens,
 				}
 			: null;
 	} catch {
