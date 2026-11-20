@@ -12,6 +12,13 @@
  * it a fresh sample must show the same physical radio (permanent MAC and
  * lifetime) before the action runs. A Limited, Unverified, unpublished or
  * replaced radio is refused, so the coordinator does not act on it.
+ *
+ * Identity is confirmed once, at lock entry, not again at activation or after
+ * the action. A replug during a join is still bounded: the clone keeps the
+ * source profile's MAC binding, so NetworkManager does not bring it up on
+ * another radio, and verification next round needs the clone's activation on
+ * this interface. Confirming in `mayActivate` and after the action, as the
+ * two-radio effect adapter does, is a slice-3 item.
  */
 import {
 	admitWifiAdapter,

@@ -745,12 +745,15 @@ export function setScanResultReaderForTest(
  * another.
  *
  * While the roaming coordinator's scan gate is active, each radio's scan is
- * dispatched under its owner-resolved adapter lock. A caller that already
- * holds that lock (the scan RPC) has the scan dispatched inline under it,
- * since the lock is not reentrant.
+ * dispatched under its owner-resolved adapter lock, which this run contends
+ * for like anyone else. Holding that lock is not enough to scan inline: a
+ * caller that starts a rescan inside its lock without awaiting it (hotspot
+ * teardown does) would otherwise have the scan go out after it released the
+ * lock, racing whoever takes it next. Only {@link wifiRescanDispatched} with
+ * `underHeldLock` dispatches inline.
  */
 export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
-	return startRescan(device).then(() => undefined);
+	return startRescan(device, false).then(() => undefined);
 }
 
 /**
@@ -759,16 +762,23 @@ export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
  * gate is active it can refuse the radio (it carries the stream, serves the
  * hotspot or shares a protected phy) or find its adapter lock busy; the scan
  * RPC reports that instead of a success that never happened.
+ *
+ * `underHeldLock`: the caller holds this radio's owner-resolved adapter lock
+ * and awaits this call inside it (the scan RPC). The radio's scan is then
+ * dispatched inline under that lock, which is not reentrant, and only while
+ * the caller still owns it right before the scan goes out.
  */
 export async function wifiRescanDispatched(
 	device: WifiInterfaceId,
+	opts: { underHeldLock?: boolean } = {},
 ): Promise<boolean> {
-	const report = await startRescan(device);
+	const report = await startRescan(device, opts.underHeldLock === true);
 	return report.has(ifnameForDevice(device));
 }
 
 function startRescan(
 	device: WifiInterfaceId | undefined,
+	underHeldLock: boolean,
 ): Promise<RescanReport> {
 	const key =
 		device === undefined ? WIFI_SCAN_ALL_KEY : wifiScanKeyForDevice(device);
@@ -777,7 +787,7 @@ function startRescan(
 	if (joined) return joined;
 
 	const ifname = device === undefined ? undefined : ifnameForDevice(device);
-	const run = runRescan(key, ifname).finally(() => {
+	const run = runRescan(key, ifname, underHeldLock).finally(() => {
 		rescanInFlight.delete(key);
 	});
 	rescanInFlight.set(key, run);
@@ -814,6 +824,7 @@ function rescanTargets(ifname: string | undefined): (string | undefined)[] {
 async function runRescan(
 	key: WifiScanKey,
 	ifname: string | undefined,
+	underHeldLock = false,
 ): Promise<RescanReport> {
 	const scanned: (string | undefined)[] = [];
 	try {
@@ -826,15 +837,20 @@ async function runRescan(
 			}
 			// While the coordinator runs, each scan goes out under the radio's
 			// owner-resolved adapter lock (the one hotspot changes hold) after a
-			// fresh look at its mode and phy. A caller already holding that lock
-			// dispatches under it. A busy lock or a refused check skips the radio.
+			// fresh look at its mode and phy. Only the awaiting scan RPC, for its
+			// own radio, dispatches under the lock it holds, and only while it
+			// still owns it right before the scan. Everyone else contends; a busy
+			// lock or a refused check skips the radio.
+			const lockKey = scanKeyForIfname(target);
+			const inline =
+				underHeldLock && target === ifname && ownsWifiAdapterLock(lockKey);
 			const dispatch = async () => {
 				if (!(await mayScanNow(target))) return false;
+				if (inline && !ownsWifiAdapterLock(lockKey)) return false;
 				await rescanAction(target);
 				return true;
 			};
-			const lockKey = scanKeyForIfname(target);
-			const sent = ownsWifiAdapterLock(lockKey)
+			const sent = inline
 				? { success: true as const, result: await dispatch() }
 				: await withWifiAdapterLock(lockKey, dispatch);
 			if (sent.success && sent.result) scanned.push(target);
