@@ -348,6 +348,7 @@ export function recordHotspotProfileCreation(
 			writeFileAtomicSync(
 				filePath,
 				JSON.stringify({ version: STORE_VERSION, adapters: next }),
+				{ mode: 0o600 },
 			);
 	} catch (error: unknown) {
 		logger.warn("Could not persist first-hotspot creation evidence", {
