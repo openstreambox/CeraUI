@@ -273,10 +273,13 @@ export function createSearchNm(deps: SearchNmDeps) {
 	}
 
 	/**
-	 * Remove this radio's earlier owned clones, keeping `keep`. Runs only after
-	 * the last check before activation, so it shares that check.
+	 * Remove this radio's earlier owned clones, keeping `keep`. Only a clone
+	 * that is verifiably not the radio's active connection is deleted; with an
+	 * unreadable listing nothing is.
 	 */
 	async function deleteStaleOwned(ifname: string, keep: string): Promise<void> {
+		const active = await activeProfile(ifname);
+		if (active === undefined) return;
 		const out = await quiet("nmcli", [
 			"-t",
 			"-f",
@@ -287,7 +290,13 @@ export function createSearchNm(deps: SearchNmDeps) {
 		const owned = searchProfileName(ifname);
 		for (const line of out?.split("\n") ?? []) {
 			const [name, uuid] = splitTerse(line);
-			if (name === owned && uuid && uuid !== keep && UUID_RE.test(uuid))
+			if (
+				name === owned &&
+				uuid &&
+				uuid !== keep &&
+				uuid !== active &&
+				UUID_RE.test(uuid)
+			)
 				await quiet("nmcli", ["connection", "delete", uuid]);
 		}
 	}
@@ -417,7 +426,15 @@ export function createSearchNm(deps: SearchNmDeps) {
 				await quiet("nmcli", ["connection", "delete", uuid]);
 				return JOIN_REFUSED;
 			}
-			if (modified !== undefined) await deleteStaleOwned(dev, uuid);
+			if (modified !== undefined) {
+				await deleteStaleOwned(dev, uuid);
+				// The listing and deletes take time: check once more right before
+				// activation, so a hotspot that came up meanwhile still stops it.
+				if (!(await mayActivate())) {
+					await quiet("nmcli", ["connection", "delete", uuid]);
+					return JOIN_REFUSED;
+				}
+			}
 			const up =
 				modified !== undefined &&
 				(await quiet(
@@ -429,6 +446,9 @@ export function createSearchNm(deps: SearchNmDeps) {
 				await quiet("nmcli", ["connection", "delete", uuid]);
 				return undefined;
 			}
+			// An earlier clone that was still active before has been replaced
+			// now and can go.
+			await deleteStaleOwned(dev, uuid);
 			return { activation: uuid };
 		},
 
