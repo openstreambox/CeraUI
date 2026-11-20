@@ -264,6 +264,11 @@ type RadioRecord = {
 	/** Failed scans in a row, and no search on this radio before `restUntil`. */
 	scanFailures: number;
 	restUntil: number;
+	/**
+	 * Since when the sender has judged this radio dead (no ACKs while another
+	 * link still gets them), `null` when it is not, or without arrival reports.
+	 */
+	deadSince: number | null;
 };
 
 type Departure = {
@@ -305,6 +310,15 @@ const DIVERSITY_RANK: Record<Diversity, number> = {
 
 /** Cool-down after a candidate fails a proof: 10 s, then doubling to 120 s. */
 const SWAP_COOLDOWN_MS = [10_000, 20_000, 40_000, 80_000, 120_000] as const;
+/** A BSSID quiet this long after its cool-down starts over at the first step. */
+const SWAP_COOLDOWN_QUIET_MS = 300_000;
+/** After a common-target failure, no new handover for this long. */
+const COMMON_TARGET_BACKOFF_MS = 10_000;
+/**
+ * A radio the sender has judged dead this long adds nothing to the bond, so
+ * it may leave it to search, whatever its uplink.
+ */
+const DEAD_RECALL_MS = 10_000;
 
 const CONDITION_RANK: Record<HolderCondition, number> = {
 	fade: 0,
@@ -340,6 +354,8 @@ export class RoamingCoordinator {
 	/** Recent failed proofs per BSSID. */
 	readonly #swapCooldown = new Map<string, { count: number; until: number }>();
 	#lastSwapOutcome: string | null = null;
+	/** No new handover before this, after a common-target failure. */
+	#swapBackoffUntil = 0;
 	#busy = false;
 	#started = false;
 	#stopped = false;
@@ -371,6 +387,7 @@ export class RoamingCoordinator {
 			searchedAt: Number.NEGATIVE_INFINITY,
 			scanFailures: 0,
 			restUntil: 0,
+			deadSince: null,
 		}));
 		this.#publishOwnership();
 		this.#protectFromScans();
@@ -809,21 +826,33 @@ export class RoamingCoordinator {
 		const holderBssids = new Set(
 			this.#holders().map((h) => normalizeBssid(h.obs?.bssid ?? "")),
 		);
-		const recallable = this.#radios.find(
-			(r) =>
-				(r.role === "assister" || r.role === "searcher") &&
-				this.#associated(r) &&
-				mayAct(r) &&
-				(condition === "fade"
-					? holderBssids.has(normalizeBssid(r.obs?.bssid ?? ""))
-					: r.diversity === "same-uplink" || r.diversity === "unknown"),
+		// A radio the sender has judged dead for a while carries nothing, so its
+		// path adds nothing either, whatever its uplink: it goes first.
+		const carrying = (r: RadioRecord) =>
+			(r.role === "assister" || r.role === "searcher") &&
+			this.#associated(r) &&
+			mayAct(r);
+		const dead = this.#radios.find(
+			(r) => carrying(r) && this.#senderDead(r, now),
 		);
+		const recallable =
+			dead ??
+			this.#radios.find(
+				(r) =>
+					carrying(r) &&
+					(condition === "fade"
+						? holderBssids.has(normalizeBssid(r.obs?.bssid ?? ""))
+						: r.diversity === "same-uplink" || r.diversity === "unknown"),
+			);
 		const radio = idle ?? recallable;
 		if (!radio) return;
 		// Withdrawing a carrying radio needs proven headroom, or a fade that makes
-		// it necessary. An idle radio costs the bond nothing to scan with.
+		// it necessary. An idle radio, or a dead one, costs the bond nothing to
+		// scan with.
 		const effective: HolderCondition =
-			radio === idle && condition === "steady" ? "headroom" : condition;
+			(radio === idle || radio === dead) && condition === "steady"
+				? "headroom"
+				: condition;
 		if (!searchDue(now, effective, this.#clock, this.#policy)) return;
 		await this.#search(
 			radio,
@@ -840,21 +869,36 @@ export class RoamingCoordinator {
 		const snap = this.#ports.senderLinks?.();
 		if (!snap) {
 			this.#history = [];
+			for (const r of this.#radios) r.deadSince = null;
 			this.#dropSwap("no-arrival-reports");
 			return;
 		}
+		// Spans and lags are counted in samples: a snapshot that is not newer
+		// than the last one is no new sample, and nothing is judged on it.
+		const last = this.#history.at(-1);
+		if (last !== undefined && snap.at <= last.at) return;
 		this.#history.push(snap);
 		while (
 			this.#history.length > 0 &&
 			(this.#history[0] as Snapshot).at < snap.at - this.#historyMs
 		)
 			this.#history.shift();
-		for (const h of this.#holders()) {
-			const judged = evaluateHolder(this.#history, h.ifname, this.#proofPolicy);
-			if (judged.dead) this.#abruptLoss(h, now);
+		for (const r of this.#radios) {
+			if (r.role === "hotspot-reserved") {
+				r.deadSince = null;
+				continue;
+			}
+			const judged = evaluateHolder(this.#history, r.ifname, this.#proofPolicy);
+			r.deadSince = judged.dead ? (r.deadSince ?? now) : null;
 		}
+		for (const h of this.#holders())
+			if (h.deadSince !== null) this.#abruptLoss(h, now);
 		if (this.#swap) this.#driveSwap(now);
 		else this.#maybeStartSwap(now);
+	}
+
+	#senderDead(r: RadioRecord, now: number): boolean {
+		return r.deadSince !== null && now - r.deadSince >= DEAD_RECALL_MS;
 	}
 
 	/** The reducer's view of a radio's path; `null` when it has none. */
@@ -888,9 +932,17 @@ export class RoamingCoordinator {
 		return c !== undefined && now < c.until;
 	}
 
+	/** Forget cool-downs that have been over for a quiet period. */
+	#pruneCooldowns(now: number): void {
+		for (const [key, c] of this.#swapCooldown)
+			if (now >= c.until + SWAP_COOLDOWN_QUIET_MS)
+				this.#swapCooldown.delete(key);
+	}
+
 	#coolDown(r: RadioRecord, now: number): void {
 		const bssid = r.obs?.bssid;
 		if (!bssid) return;
+		this.#pruneCooldowns(now);
 		const key = normalizeBssid(bssid);
 		const count = (this.#swapCooldown.get(key)?.count ?? 0) + 1;
 		const step =
@@ -910,7 +962,8 @@ export class RoamingCoordinator {
 		return this.#radios
 			.filter(
 				(r) =>
-					(r.role === "assister" || r.role === "standby") &&
+					// Only assisters: a swap drives an assister (standby is S2's).
+					r.role === "assister" &&
 					this.#associated(r) &&
 					!r.heldOut &&
 					normalizeBssid(r.obs?.bssid ?? "") !== holderBssid &&
@@ -925,6 +978,8 @@ export class RoamingCoordinator {
 	}
 
 	#maybeStartSwap(now: number): void {
+		if (now < this.#swapBackoffUntil) return;
+		this.#pruneCooldowns(now);
 		const fading = this.#holders().find((h) => this.#holderFading(h, now));
 		if (!fading) return;
 		const candidate = this.#continuityCandidate(fading, now);
@@ -1038,6 +1093,9 @@ export class RoamingCoordinator {
 						);
 						return;
 					} else if (step.conclusion === "common-target") {
+						// The receiver side failed for every link: no cool-down
+						// for the candidate, but no new attempt for a moment either.
+						this.#swapBackoffUntil = now + COMMON_TARGET_BACKOFF_MS;
 						this.#dropSwap("common-target");
 						return;
 					}
@@ -1075,6 +1133,10 @@ export class RoamingCoordinator {
 		if (op.ended && this.#swap === s) {
 			this.#swap = null;
 			this.#lastSwapOutcome = `${op.endReason ?? "ended"}:${s.candidate.ifname}`;
+			// A completed handover clears the new holder's failure record.
+			const bssid = s.candidate.obs?.bssid;
+			if (op.endReason === "released" && bssid)
+				this.#swapCooldown.delete(normalizeBssid(bssid));
 		}
 	}
 
@@ -1160,7 +1222,19 @@ export class RoamingCoordinator {
 							DIVERSITY_RANK[b.diversity ?? "unknown"] ||
 						(b.obs?.signalDbm ?? -200) - (a.obs?.signalDbm ?? -200),
 				)[0];
-		if (!next) return;
+		if (!next) {
+			// Nobody else delivers. Alone, the dead holder keeps the label: the
+			// bond has nothing better. Next to another holder (a handover's old
+			// holder), it gives the label up, so it does not stay scan-protected
+			// and can be recalled to search.
+			if (this.#holders().some((o) => o !== h)) {
+				h.role = this.#associated(h) ? "assister" : "searcher";
+				h.samples = [];
+				this.#lastOutcome = `holder-dead:${h.ifname}`;
+				this.#protectFromScans();
+			}
+			return;
+		}
 		next.role = "holder";
 		h.role = this.#associated(h) ? "assister" : "searcher";
 		h.samples = [];

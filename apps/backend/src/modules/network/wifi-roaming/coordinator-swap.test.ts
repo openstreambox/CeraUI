@@ -72,6 +72,14 @@ class World {
 	bond: string[] = [];
 	reports = true;
 	encoderBps: number | null = null;
+	/** Links outside the radios (cellular), keyed like the sender does. */
+	others = new Map<string, Link>();
+	/** Report a new sample only every this many calls (a slower sender). */
+	sampleEvery = 1;
+	calls = 0;
+	/** Delivered and encoder rates the holder health reports (default: unknown). */
+	rates = new Map<string, { attributedBps: number; encoderBps: number }>();
+	last: Snapshot | undefined;
 
 	station(ifname: string, bssid: string, signalDbm = -55, pps = 60) {
 		this.stations.set(ifname, {
@@ -103,15 +111,29 @@ class World {
 		return l;
 	}
 
+	cellular(key: string, pps = 60) {
+		this.others.set(key, {
+			epoch: 100 + this.others.size,
+			pps,
+			deliver: 1,
+			queued: 0,
+			arrived: 0,
+			ackedArrived: 0,
+			ageMs: 100,
+			over: {},
+		});
+	}
+
 	/** Advance the sender one second and report it. */
 	snapshot(): Snapshot | undefined {
 		if (!this.reports) return undefined;
-		const radios = new Map<string, LinkSample>();
-		for (const [ifname, l] of this.links) {
+		// A slower sender hands out the same sample again in between.
+		if (this.calls++ % this.sampleEvery !== 0 && this.last) return this.last;
+		const sample = (l: Link): LinkSample => {
 			l.ackedArrived = l.arrived;
 			l.queued += l.pps;
 			l.arrived += l.pps * l.deliver;
-			radios.set(ifname, {
+			return {
 				epoch: l.epoch,
 				connected: true,
 				timedOut: false,
@@ -130,15 +152,20 @@ class World {
 				ccState: null,
 				ccLossPermille: null,
 				...l.over,
-			});
-		}
-		return {
+			};
+		};
+		const radios = new Map<string, LinkSample>();
+		for (const [ifname, l] of this.links) radios.set(ifname, sample(l));
+		const others = new Map<string, LinkSample>();
+		for (const [key, l] of this.others) others.set(key, sample(l));
+		this.last = {
 			at: this.now,
 			radios,
-			others: new Map(),
+			others,
 			negotiatedLatencyMs: 2000,
 			claimed: new Set(radios.keys()),
 		};
+		return this.last;
 	}
 
 	ports(): CoordinatorPorts {
@@ -179,8 +206,8 @@ class World {
 			},
 			holderHealth: (ifname) => ({
 				signalDbm: this.stations.get(ifname)?.signalDbm ?? null,
-				attributedBps: null,
-				encoderBps: null,
+				attributedBps: this.rates.get(ifname)?.attributedBps ?? null,
+				encoderBps: this.rates.get(ifname)?.encoderBps ?? null,
 				nakRatio: null,
 			}),
 			otherUplinks: () => 0,
@@ -431,5 +458,199 @@ describe("continuity handover on arrival reports", () => {
 			[AP3, -65],
 		]);
 		expect(c.status().swap?.candidate).toBe("wlan3");
+	});
+
+	test("a new holder that dies during the linger gives the label up next to a fading old holder", async () => {
+		const t = await settled();
+		await t.rounds(3);
+		t.w.signal("wlan1", -78);
+		for (let i = 0; i < 15 && t.role("wlan2") !== "holder"; i++)
+			await t.rounds(1);
+		expect(t.role("wlan2")).toBe("holder");
+		expect(t.c.status().swap?.phase).toBe("linger");
+		// The old holder is the fading one and delivers half; then the new
+		// holder's path dies while it stays associated.
+		t.w.link("wlan1").deliver = 0.5;
+		await t.rounds(5);
+		t.w.link("wlan2").deliver = 0;
+		t.w.link("wlan2").ageMs = 5_000;
+		await t.rounds(30);
+		expect(t.role("wlan1") === "holder" && t.role("wlan2") === "holder").toBe(
+			false,
+		);
+		expect(t.role("wlan1")).toBe("holder");
+	});
+
+	test("a radio the receiver no longer hears is freed to search after a grace period", async () => {
+		const t = await settled();
+		await t.rounds(5);
+		t.w.link("wlan1").deliver = 0;
+		t.w.link("wlan1").ageMs = 5_000;
+		await t.rounds(1);
+		expect(t.role("wlan2")).toBe("holder");
+		expect(t.role("wlan1")).toBe("assister");
+		// Not before the grace period: it may only be a short gap.
+		await t.rounds(8);
+		expect(t.w.bond).toEqual([]);
+		await t.rounds(20);
+		expect(t.w.bond).toContain("hold:wlan1");
+		expect(t.c.status().searches).toBeGreaterThan(0);
+	});
+
+	test("the dead-holder relabel skips a more diverse carrier that is not delivering", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -45);
+		w.station("wlan2", AP3, -50); // a separate gateway: ranks first
+		w.station("wlan3", AP4, -50); // behind wlan1's router
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }, { ifname: "wlan3" }],
+		});
+		const step = async (n = 1) => {
+			for (let i = 0; i < n; i++) {
+				w.now += 1_000;
+				await c.step();
+			}
+		};
+		await step(6);
+		w.link("wlan2").deliver = 0.5; // still gets ACKs, below the fade ratio
+		await step(5);
+		w.link("wlan1").deliver = 0;
+		w.link("wlan1").ageMs = 5_000;
+		await step(1);
+		const role = (i: string) =>
+			c.status().radios.find((r) => r.ifname === i)?.role;
+		expect(c.status().lastOutcome).toBe("holder-dead:wlan1>wlan3");
+		expect(role("wlan3")).toBe("holder");
+		expect(role("wlan2")).toBe("assister");
+	});
+
+	test("a cool-down starts over at its first step after a quiet period", async () => {
+		const t = await settled();
+		await t.rounds(3);
+		t.w.link("wlan2").deliver = 0.6;
+		const failOnce = async () => {
+			t.w.signal("wlan1", -78);
+			for (
+				let i = 0;
+				i < 20 && !t.c.status().lastSwapOutcome?.startsWith("candidate-failed");
+				i++
+			)
+				await t.rounds(1);
+			expect(t.c.status().lastSwapOutcome).toStartWith(
+				"candidate-failed:wlan2",
+			);
+			const failedAt = t.w.now;
+			for (let i = 0; i < 40 && t.c.status().swap === null; i++)
+				await t.rounds(1);
+			return t.w.now - failedAt;
+		};
+		const first = await failOnce();
+		// The holder recovers, and nothing fails for well over five minutes.
+		t.w.signal("wlan1", -55);
+		await t.rounds(400);
+		expect(t.c.status().swap).toBeNull();
+		const again = await failOnce();
+		expect(first).toBeLessThanOrEqual(11_000);
+		expect(again).toBeLessThanOrEqual(11_000);
+	});
+
+	test("a common-target failure backs off before the next attempt", async () => {
+		const t = setup();
+		t.w.cellular("modem-a");
+		await t.rounds(4);
+		expect(t.role("wlan1")).toBe("holder");
+		// Everything loses half: the receiver side, not the candidate.
+		t.w.link("wlan1").deliver = 0.5;
+		t.w.link("wlan2").deliver = 0.5;
+		const cell = t.w.others.get("modem-a");
+		if (cell) cell.deliver = 0.5;
+		for (
+			let i = 0;
+			i < 20 && t.c.status().lastSwapOutcome !== "common-target";
+			i++
+		)
+			await t.rounds(1);
+		expect(t.c.status().lastSwapOutcome).toBe("common-target");
+		const at = t.w.now;
+		while (t.w.now < at + 9_000) {
+			await t.rounds(1);
+			expect(t.c.status().swap).toBeNull();
+		}
+	});
+
+	test("a snapshot that is not newer than the last is no new sample", async () => {
+		const w = new World();
+		w.station("wlan1", AP1);
+		w.station("wlan2", AP2);
+		// The coordinator steps every half second; the sender has a new sample
+		// only every second and hands out the last one in between.
+		w.sampleEvery = 2;
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }],
+		});
+		const half = async (n: number) => {
+			for (let i = 0; i < n; i++) {
+				w.now += 500;
+				await c.step();
+			}
+		};
+		await half(8);
+		w.signal("wlan1", -78);
+		let promoted = false;
+		for (let i = 0; i < 30 && !promoted; i++) {
+			await half(1);
+			promoted =
+				c.status().radios.find((r) => r.ifname === "wlan2")?.role === "holder";
+		}
+		expect(promoted).toBe(true);
+	});
+
+	test("a dead radio is recalled even while the holder only holds steady", async () => {
+		const t = await settled();
+		await t.rounds(5);
+		t.w.link("wlan1").deliver = 0;
+		t.w.link("wlan1").ageMs = 5_000;
+		await t.rounds(1);
+		expect(t.role("wlan2")).toBe("holder");
+		// The new holder carries only 1.3 x the encoder rate: steady, no proven
+		// headroom, so no live carrier would be withdrawn. A dead one still is.
+		t.w.rates.set("wlan2", { attributedBps: 1_300_000, encoderBps: 1_000_000 });
+		await t.rounds(25);
+		expect(t.w.bond).toContain("hold:wlan1");
+	});
+
+	test("a completed handover clears the new holder's failure record", async () => {
+		const t = await settled();
+		await t.rounds(3);
+		const waitFor = async (outcome: string) => {
+			for (
+				let i = 0;
+				i < 40 && !t.c.status().lastSwapOutcome?.startsWith(outcome);
+				i++
+			)
+				await t.rounds(1);
+			expect(t.c.status().lastSwapOutcome).toStartWith(outcome);
+		};
+		// wlan2 fails once: its BSSID's count is 1.
+		t.w.link("wlan2").deliver = 0.6;
+		t.w.signal("wlan1", -78);
+		await waitFor("candidate-failed:wlan2");
+		// Then it recovers and takes over.
+		t.w.link("wlan2").deliver = 1;
+		await waitFor("released:wlan2");
+		// And hands back to wlan1 when it fades in turn.
+		t.w.signal("wlan1", -55);
+		t.w.signal("wlan2", -78);
+		await waitFor("released:wlan1");
+		// Failing again soon after costs only the first step: the success
+		// cleared the record.
+		t.w.signal("wlan2", -55);
+		t.w.link("wlan2").deliver = 0.6;
+		t.w.signal("wlan1", -78);
+		await waitFor("candidate-failed:wlan2");
+		const failedAt = t.w.now;
+		for (let i = 0; i < 40 && t.c.status().swap === null; i++)
+			await t.rounds(1);
+		expect(t.w.now - failedAt).toBeLessThanOrEqual(11_000);
 	});
 });
