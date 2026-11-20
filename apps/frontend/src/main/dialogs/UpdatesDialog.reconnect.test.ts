@@ -113,6 +113,12 @@ vi.mock("$lib/rpc/client", () => {
 			},
 		},
 		rpcClient: {
+			// The session gate (reconnect re-auth): never armed in this stub.
+			setSessionActive: () => undefined,
+			confirmSocketSignedIn: () => undefined,
+			failHeldCalls: () => undefined,
+			isAwaitingSignIn: () => false,
+			recycleSocket: () => undefined,
 			onMessage: (fn: (type: string, data: unknown, seq?: number) => void) => {
 				device.message = fn;
 			},

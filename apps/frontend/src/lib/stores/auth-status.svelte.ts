@@ -11,6 +11,14 @@ import { NotSentError, RpcError } from "$lib/rpc/rpc-error";
 
 let authStatus = $state(false);
 let interaction = new AbortController();
+// The token this page signed in with: the one the device issued for a password
+// login (remembered or not), or the stored token a token login presented. The
+// device authenticates sockets, not pages, so the reconnect re-auth presents it
+// again on every new socket. Memory only; "Remember me" alone decides storage.
+let sessionToken: string | null = null;
+// Whether this page has signed in at least once. Set by EVERY successful sign-in
+// (password or token), because it is what arms the reconnect re-auth.
+let authenticatedOnce = false;
 
 export type AuthAttempt =
 	| { kind: "ok" }
@@ -43,7 +51,34 @@ export function getAuthStatus(): boolean {
 export function setAuthStatus(status: boolean): void {
 	clearAuthInteraction();
 	authStatus = status;
+	if (status) {
+		authenticatedOnce = true;
+	} else {
+		sessionToken = null;
+	}
+	rpcClient.setSessionActive(status);
 	notifySubscribers();
+}
+
+/** The token to sign in again with on a new socket, if this page holds one. */
+export function getSessionToken(): string | null {
+	return sessionToken;
+}
+
+/** Record that the page has signed in at least once (see `authenticatedOnce`). */
+export function markAuthenticated(): void {
+	authenticatedOnce = true;
+}
+
+/** Whether the page has signed in at least once since it loaded. */
+export function wasAuthenticated(): boolean {
+	return authenticatedOnce;
+}
+
+/** Forget the sign-in latch and session token. For tests/HMR. */
+export function resetAuthSession(): void {
+	authenticatedOnce = false;
+	sessionToken = null;
 }
 
 /** Retire local pending auth before notifying the interaction's field owner. */
@@ -169,6 +204,7 @@ async function authenticateInput(
 		// Token reauthentication succeeds without issuing a replacement. In that
 		// case retain the existing token, just as on an unreachable attempt.
 		persistCredential(result, persistent);
+		sessionToken = result.auth_token ?? input.token ?? sessionToken;
 		ingestAuth(result);
 		setAuthStatus(true);
 		return { kind: "ok" };
@@ -239,6 +275,9 @@ async function createPasswordInput(
 		if (signal.aborted) return false;
 		// The device revokes all remembered tokens on a successful password change.
 		if (result.success) localStorage.removeItem("auth");
+		// The visit's token is revoked too; the device does not hand this page
+		// the replacement it signs the calling socket in with.
+		if (result.success) sessionToken = null;
 		return result.success;
 	} finally {
 		clearPassword();

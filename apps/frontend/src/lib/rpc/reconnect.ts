@@ -8,7 +8,8 @@
  * showing the authenticated shell while every view is blank — the live-reload
  * blank-state bug.
  *
- * This module re-establishes the session using the stored credential, then fires
+ * This module re-establishes the session using the page's credential (the
+ * remembered token, else the token of this visit's sign-in), then fires
  * a safety hydrate (`streaming.getConfig` + `status.getStatus`, both authed
  * procedures) and routes the results through the existing `handleMessage` path so
  * the HUD and destination views repopulate even if the backend's post-login push
@@ -36,7 +37,11 @@ export type ReauthOutcome =
 	| "unreachable";
 
 export interface ReauthDeps {
-	/** Read the stored credential (localStorage `auth`); null when absent. */
+	/**
+	 * The credential to present on the new socket: the remembered token
+	 * (localStorage `auth`), else the token the page signed in with this visit;
+	 * null when the page holds neither.
+	 */
 	getStoredToken: () => string | null;
 	/** Remove the stored credential after a rejection (natural loop break). */
 	clearStoredToken: () => void;
