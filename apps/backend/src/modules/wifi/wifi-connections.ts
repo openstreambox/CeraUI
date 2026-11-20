@@ -25,7 +25,6 @@ import {
 	nmRescan,
 	nmScanResults,
 } from "../network/network-manager.ts";
-import { withDeviceLock } from "../network/state/device-lock.ts";
 import type {
 	IMonitorEmitter,
 	MonitorEvent,
@@ -47,8 +46,10 @@ import {
 	type WifiNetwork,
 } from "./wifi.ts";
 import {
+	ownsWifiAdapterLock,
 	type WifiAdapterLockKey,
 	wifiAdapterLockKey,
+	withWifiAdapterLock,
 } from "./wifi-adapter-lock.ts";
 import {
 	notifyWifiAdapterModeEdge,
@@ -757,17 +758,13 @@ export function setScanResultReaderForTest(
  * adapters each get their own, because a scan of one radio says nothing about
  * another.
  *
- * `adapterLockHeld`: the caller already holds `device`'s per-adapter Wi-Fi lock
- * and awaits this run inside it (the scan RPC). While the roaming coordinator's
- * scan gate is active, the run then dispatches that radio's scan under the
- * caller's lock instead of taking it a second time, which the non-reentrant
- * lock would refuse.
+ * While the roaming coordinator's scan gate is active, each radio's scan is
+ * dispatched under its owner-resolved adapter lock. A caller that already
+ * holds that lock (the scan RPC) has the scan dispatched inline under it,
+ * since the lock is not reentrant.
  */
-export function wifiRescan(
-	device?: WifiInterfaceId,
-	opts: { adapterLockHeld?: boolean } = {},
-): Promise<void> {
-	return startRescan(device, opts).then(() => undefined);
+export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
+	return startRescan(device).then(() => undefined);
 }
 
 /**
@@ -779,15 +776,13 @@ export function wifiRescan(
  */
 export async function wifiRescanDispatched(
 	device: WifiInterfaceId,
-	opts: { adapterLockHeld?: boolean } = {},
 ): Promise<boolean> {
-	const report = await startRescan(device, opts);
+	const report = await startRescan(device);
 	return report.has(ifnameForDevice(device));
 }
 
 function startRescan(
 	device: WifiInterfaceId | undefined,
-	opts: { adapterLockHeld?: boolean },
 ): Promise<RescanReport> {
 	const key =
 		device === undefined ? WIFI_SCAN_ALL_KEY : wifiScanKeyForDevice(device);
@@ -796,11 +791,9 @@ function startRescan(
 	if (joined) return joined;
 
 	const ifname = device === undefined ? undefined : ifnameForDevice(device);
-	const run = runRescan(key, ifname, opts.adapterLockHeld === true).finally(
-		() => {
-			rescanInFlight.delete(key);
-		},
-	);
+	const run = runRescan(key, ifname).finally(() => {
+		rescanInFlight.delete(key);
+	});
 	rescanInFlight.set(key, run);
 	return run;
 }
@@ -835,7 +828,6 @@ function rescanTargets(ifname: string | undefined): (string | undefined)[] {
 async function runRescan(
 	key: WifiScanKey,
 	ifname: string | undefined,
-	adapterLockHeld = false,
 ): Promise<RescanReport> {
 	const scanned: (string | undefined)[] = [];
 	try {
@@ -847,17 +839,18 @@ async function runRescan(
 				continue;
 			}
 			// While the coordinator runs, each scan goes out under the radio's
-			// adapter lock (the one hotspot changes hold) after a fresh look at
-			// its mode and phy. A busy lock or a refused check skips the radio.
+			// owner-resolved adapter lock (the one hotspot changes hold) after a
+			// fresh look at its mode and phy. A caller already holding that lock
+			// dispatches under it. A busy lock or a refused check skips the radio.
 			const dispatch = async () => {
 				if (!(await mayScanNow(target))) return false;
 				await rescanAction(target);
 				return true;
 			};
-			const sent =
-				adapterLockHeld && target === ifname
-					? { success: true as const, result: await dispatch() }
-					: await withDeviceLock(scanKeyForIfname(target), dispatch);
+			const lockKey = scanKeyForIfname(target);
+			const sent = ownsWifiAdapterLock(lockKey)
+				? { success: true as const, result: await dispatch() }
+				: await withWifiAdapterLock(lockKey, dispatch);
 			if (sent.success && sent.result) scanned.push(target);
 		}
 

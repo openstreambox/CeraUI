@@ -158,14 +158,34 @@ describe("rescans checked at dispatch, under the adapter lock", () => {
 		expect(spawns).toEqual([]);
 	});
 
-	test("a radio whose adapter lock is held is skipped, not waited for", async () => {
+	test("a radio whose adapter lock someone else holds is skipped, not waited for", async () => {
 		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
 		const reads = modes();
-		await withWifiAdapterLock(SEARCHER, async () => {
-			await wifiRescan(1);
-		});
+		// A hotspot change holds the radio's lock in its own async context.
+		let release = () => {};
+		const held = withWifiAdapterLock(
+			SEARCHER,
+			() =>
+				new Promise<void>((done) => {
+					release = done;
+				}),
+		);
+		await wifiRescan(1);
+		release();
+		expect((await held).success).toBe(true);
 		expect(spawns).toEqual([]);
 		expect(reads).toEqual([]);
+	});
+
+	test("the caller that owns the radio's lock has the scan dispatched under it", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		const reads = modes();
+		const owned = await withWifiAdapterLock(SEARCHER, async () => {
+			await wifiRescan(1);
+		});
+		expect(owned.success).toBe(true);
+		expect(spawns).toEqual(["wlan1"]);
+		expect(reads).toEqual(["wlan1"]);
 	});
 
 	test("the mode is read for each radio right before its scan", async () => {
