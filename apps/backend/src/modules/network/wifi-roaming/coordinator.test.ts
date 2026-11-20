@@ -6,7 +6,11 @@ import {
 } from "./coordinator.ts";
 import { isCoordinatorOwnedRadio } from "./ownership.ts";
 import type { HolderHealth, ScanRow } from "./policy.ts";
-import { protectRadiosFromScans, scanProtectedRadios } from "./scan-gate.ts";
+import {
+	protectRadiosFromScans,
+	scanProtectedRadios,
+	setScanGateModeReader,
+} from "./scan-gate.ts";
 
 type Ap = {
 	ssid: string;
@@ -89,6 +93,16 @@ class World {
 	lockBusy = new Set<string>();
 	/** Applied inside the adapter lock, before the action runs. */
 	insideLock: (() => void) | null = null;
+	/** Applied after the join's profile work, right before activation. */
+	beforeActivate: (() => void) | null = null;
+	/** Mode reads that fail (`iw dev` unreadable). */
+	modeFails = false;
+	/** Radios associated without an address (lease renewal, IPv6-only). */
+	noAddress = new Set<string>();
+
+	apOnPhyOf(ifname: string): boolean {
+		return [...this.apVifs.values()].includes(this.phyOf(ifname));
+	}
 	calls: string[] = [];
 	/** Every join attempt as `<radio>><bssid>`. */
 	joins: string[] = [];
@@ -173,13 +187,16 @@ class World {
 					ssid: ap?.ssid ?? null,
 					bssid: s.bssid,
 					signalDbm: s.bssid ? s.signalDbm : null,
-					address: ap ? `${ap.subnet}.${host}/24` : null,
-					gateway: ap ? `${ap.subnet}.1` : null,
-					routed: !!ap,
+					address:
+						ap && !this.noAddress.has(ifname)
+							? `${ap.subnet}.${host}/24`
+							: null,
+					gateway: ap && !this.noAddress.has(ifname) ? `${ap.subnet}.1` : null,
+					routed: !!ap && !this.noAddress.has(ifname),
 					activation: s.activation,
 					bssidLocked: s.locked,
 					phy: this.phyOf(ifname),
-					apOnPhy: [...this.apVifs.values()].includes(this.phyOf(ifname)),
+					apOnPhy: this.apOnPhyOf(ifname),
 				};
 			},
 			scan: async (ifname): Promise<readonly ScanRow[] | undefined> => {
@@ -197,7 +214,7 @@ class World {
 					}));
 			},
 			savedSsids: async (ifname) => this.saved.get(ifname) ?? new Set(),
-			join: async (ifname, ssid, bssid) => {
+			join: async (ifname, ssid, bssid, mayActivate) => {
 				this.calls.push(`join:${ifname}`);
 				this.joins.push(`${ifname}>${bssid}`);
 				this.now += this.joinMs;
@@ -205,6 +222,8 @@ class World {
 				if (this.joinFails || this.joinFailsOn.has(bssid)) return undefined;
 				// The real port joins only through a profile bound to this radio.
 				if (!this.saved.get(ifname)?.has(ssid)) return undefined;
+				this.beforeActivate?.();
+				if (!(await mayActivate())) return "refused" as const;
 				const activation = `00000000-0000-4000-8000-${String(this.nextUuid++).padStart(12, "0")}`;
 				const s = this.st(ifname);
 				s.bssid = this.landOn ?? bssid;
@@ -243,6 +262,10 @@ class World {
 					nakRatio: null,
 				},
 			otherUplinks: () => this.otherLinks,
+			radioMode: async (ifname) => {
+				if (this.modeFails || !this.stations.has(ifname)) return undefined;
+				return { phy: this.phyOf(ifname), apOnPhy: this.apOnPhyOf(ifname) };
+			},
 			withRadioLock: async <T>(ifname: string, fn: () => Promise<T>) => {
 				if (this.lockBusy.has(ifname)) return { ok: false as const };
 				this.insideLock?.();
@@ -268,7 +291,10 @@ const radio = (c: RoamingCoordinator, ifname: string) => {
 const role = (c: RoamingCoordinator, ifname: string) =>
 	c.status().radios.find((r) => r.ifname === ifname)?.role;
 
-afterEach(() => protectRadiosFromScans([]));
+afterEach(() => {
+	protectRadiosFromScans([]);
+	setScanGateModeReader(null);
+});
 
 describe("shared-AP start", () => {
 	test("holder carries untouched while the other radio finds and joins AP2", async () => {
@@ -413,11 +439,16 @@ describe("N radios", () => {
 		w.now = 1_000;
 		await c.step();
 		expect(role(c, "wlan2")).toBe("holder");
-		// The old holder is idle now and may be rescanned; the hotspot may not.
-		expect([...scanProtectedRadios()].sort()).toEqual(["wlan0", "wlan2"]);
 		expect(w.touched("wlan2")).toEqual([]);
-		// The old holder is now an idle searcher and may look for a path at once.
+		// The old holder is now an idle searcher and looks for a path at once.
+		// While it is out of the bond and joining, the gate covers it too.
 		expect(role(c, "wlan1")).toBe("searcher");
+		expect(w.touched("wlan1")).toEqual(["scan:wlan1", "join:wlan1"]);
+		expect([...scanProtectedRadios()].sort()).toEqual([
+			"wlan0",
+			"wlan1",
+			"wlan2",
+		]);
 	});
 
 	test("no holder at all releases every bond hold", async () => {
@@ -1036,5 +1067,230 @@ describe("scan gate covers every radio that must not scan", () => {
 			"wlan1",
 			"wlan2",
 		]);
+	});
+});
+
+describe("second fix round: protection is current, cleanup never cuts a live station", () => {
+	test("a searcher is in the scan gate as soon as it leaves the bond, before the next round", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", null, null);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		expect(radio(c, "wlan2").joined?.bssid).toBe(AP2);
+		expect(radio(c, "wlan2").verified).toBe(false);
+		expect([...scanProtectedRadios()]).toContain("wlan2");
+	});
+
+	test("a hotspot that appears after the profile work stops the activation", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", null, null);
+		w.beforeActivate = () => w.hotspotOn("wlan2", "clap-wlan2");
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		expect(c.status().lastOutcome).toBe("radio-in-ap-mode");
+		expect(w.stations.get("wlan2")?.bssid).toBeNull();
+		expect(radio(c, "wlan2").joined).toBeNull();
+		expect(w.bond.at(-1)).toBe("release:wlan2");
+	});
+
+	test("an unreadable mode refuses the scan", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", null, null);
+		w.modeFails = true;
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		expect(w.touched("wlan2")).toEqual([]);
+		expect(c.status().lastOutcome).toBe("radio-in-ap-mode");
+	});
+
+	test("an AP leg next to a verified station leaves the station and its clone alone", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		await c.step();
+		expect(radio(c, "wlan2")).toMatchObject({ verified: true, bssid: AP2 });
+		w.hotspotOn("wlan2", "clap-wlan2");
+		for (let i = 0; i < 3; i++) {
+			w.now += 20_000;
+			await c.step();
+		}
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([]);
+		expect(w.stations.get("wlan2")?.bssid).toBe(AP2);
+		expect(radio(c, "wlan2")).toMatchObject({
+			role: "hotspot-reserved",
+			joined: { bssid: AP2 },
+		});
+		// The AP leg goes: the station carries on as a verified assister.
+		w.apVifs.clear();
+		w.now += 1_000;
+		await c.step();
+		expect(radio(c, "wlan2")).toMatchObject({
+			role: "assister",
+			verified: true,
+		});
+	});
+
+	test("an AP leg next to a station still verifying keeps it, out of the bond", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		w.hotspotOn("wlan2", "clap-wlan2");
+		w.now += 30_000;
+		await c.step();
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([]);
+		expect(w.stations.get("wlan2")?.bssid).toBe(AP2);
+		expect(w.bond).toEqual(["hold:wlan2"]);
+	});
+
+	test("a standalone AP that replaced the station gets the stale clone removed", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		await c.step();
+		w.hotspotOn("wlan2");
+		w.now += 1_000;
+		await c.step();
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([
+			"abandon:wlan2",
+		]);
+		expect(radio(c, "wlan2").joined).toBeNull();
+	});
+
+	test("a cleanup waits while the adapter lock is busy, then runs", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		await c.step();
+		w.hotspotOn("wlan2");
+		w.lockBusy.add("wlan2");
+		w.now += 1_000;
+		await c.step();
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([]);
+		w.lockBusy.clear();
+		w.now += 1_000;
+		await c.step();
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([
+			"abandon:wlan2",
+		]);
+	});
+
+	test("a verify timeout does not tear down a station whose phy just gained an AP", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		w.st("wlan2").locked = false; // never verifies
+		w.now += 15_000;
+		// The AP leg comes up between this round's look and the cleanup.
+		w.insideLock = () => w.hotspotOn("wlan2", "clap-wlan2");
+		await c.step();
+		expect(c.status().lastOutcome).toBe("verify-timeout");
+		expect(w.calls.filter((x) => x.startsWith("abandon"))).toEqual([]);
+		expect(w.stations.get("wlan2")?.bssid).toBe(AP2);
+	});
+
+	test("a lease renewal keeps a verified station and a holder in their roles, unscanned", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		await c.step();
+		w.noAddress.add("wlan1");
+		w.noAddress.add("wlan2");
+		for (let i = 0; i < 4; i++) {
+			w.now += 70_000;
+			await c.step();
+		}
+		expect(role(c, "wlan1")).toBe("holder");
+		expect(w.calls).toEqual(["scan:wlan2", "join:wlan2"]);
+		expect(radio(c, "wlan2").joined?.bssid).toBe(AP2);
+	});
+
+	test("a radio associated without an address is not idle and is not scanned", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		// NetworkManager associated it on its own; the lease is still pending.
+		w.station("wlan2", AP2, -56);
+		w.noAddress.add("wlan2");
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		expect(w.touched("wlan2")).toEqual([]);
+	});
+
+	test("a backfilled gateway MAC ages from when it was really seen, at pick time too", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP2, -56);
+		w.ap(AP3).visible = true;
+		w.saved.set("wlan2", new Set(["venue", "venue-guest"]));
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step(); // AP2's gateway MAC is seen once, at 0
+		w.noNeighbour.add("wlan2");
+		for (const min of [10, 20, 29]) {
+			w.now = min * 60_000;
+			await c.step();
+			expect(radio(c, "wlan2").diversity).toBe("distinct-gateway");
+		}
+		expect(w.calls).toEqual([]);
+		// wlan2 leaves AP2 at 31 min. AP2 was associated two minutes ago, but its
+		// MAC is 31 minutes old: on the holder's gateway and subnet it is unknown,
+		// so the slightly stronger AP3 wins the diversity search.
+		w.st("wlan2").bssid = null;
+		w.st("wlan2").activation = null;
+		w.now = 31 * 60_000;
+		await c.step();
+		expect(w.joins).toEqual([`wlan2>${AP3}`]);
+	});
+
+	test("a gateway MAC older than the learned lifetime is not backfilled", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP2, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		await c.step();
+		expect(radio(c, "wlan2").diversity).toBe("distinct-gateway");
+		// AP2 is gone for 31 min with no lookup in between, then back without a
+		// neighbour entry, on the holder's gateway address and subnet.
+		w.now += 31 * 60_000;
+		w.noNeighbour.add("wlan2");
+		await c.step();
+		expect(radio(c, "wlan2").diversity).toBe("unknown");
 	});
 });
