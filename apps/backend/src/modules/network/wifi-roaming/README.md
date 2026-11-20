@@ -119,38 +119,69 @@ radio associated without an address is not idle.
 These pure parts of the next step exist and are tested; the coordinator does
 not call them yet.
 
-- `sender-links.ts` reads the sender's per-link arrival reports
-  (`srtla_ack_entries_total`, `data_packets_queued_total`,
-  `last_srtla_ack_age_ms`, `srtla_ack_epoch`) and its health flags from
-  `get_stats`, and maps links onto radios by interface, else by source
-  address. The arrival field names come from an unmerged upstream proposal
-  and are read only here. Without them there is no snapshot, and the
-  coordinator behaves as before.
-- `proof.ts` judges a link over a span of one connection epoch. A candidate
-  passes when its ACK entries, read a round trip later, reach 0.95 of the
-  packets queued on it, minus one receiver batch for the whole span. It must
-  also clear these checks:
-  - at least 3 s and 60 packets;
-  - no busy second without arrivals;
-  - a fresh last ACK for its rate;
-  - congestion-control loss under 2 %;
-  - an RTT within a quarter of the SRT latency;
-  - at least its share of the bond;
-  - the sender's capacity estimate at 1.25 times the encoder rate, when it
-    gives one.
+- `sender-links.ts` does three things:
+  - It reads the sender's per-link arrival reports (`srtla_ack_entries_total`,
+    `data_packets_queued_total`, `last_srtla_ack_age_ms`, `srtla_ack_epoch`)
+    and its health flags from `get_stats`. The arrival field names come from
+    an unmerged upstream proposal and are read only here. Without them there
+    is no snapshot, and the coordinator behaves as before.
+  - It maps links onto radios by interface, otherwise by source address.
+  - It turns the sender's flags into what they mean for each role:
+    - A candidate is *held back* by the stall gate, the sole-carrier
+      election, or a weak flag.
+    - The sender has *given up* on a holder's path with the stall gate, the
+      sole-carrier election, a high-RTT weak flag, or degraded CC loss.
+    - It merely *prefers a sibling* for a holder that is weak for another
+      reason, such as `low_share` or `no_traffic`.
+    - The in-flight cap is a per-tick queueing bound on any loaded link and
+      plays no part.
 
-  The sender holding a link back (stall gate, weak, sole-carrier, in-flight
-  cap) makes a candidate's span inconclusive but fails a holder. A holder
-  with no ACKs while another link still gets them is dead. A holder below
-  0.90 is fading. This proves the offered share, not spare capacity.
+  It also has the evidence predicates for acks. A hold-out is confirmed when
+  no link maps to the radio, not even ambiguously, within 5 s. A restore is
+  confirmed by a new epoch, registered, with a first ACK, within 10 s.
+- `proof.ts` judges a link over the shortest trailing span of one connection
+  epoch that reaches 3 s and 60 packets. That is 3 s at 20 pkt/s and up, and
+  at most 10 s for a slower link.
+  - A candidate passes when its ACK entries, read a round trip later, reach
+    0.95 of the packets queued on it, minus one receiver batch for the whole
+    span. It must also show:
+    - no busy second without arrivals;
+    - a fresh last ACK for its rate;
+    - congestion-control loss under 2 % and not degraded;
+    - an RTT within a quarter of the SRT latency.
+  - A candidate offered less than 0.75/N of the bond, or measured while the
+    bond carries under half its pre-fade rate, is inconclusive, not failed.
+  - Headroom comes from the sender's capacity estimate, in three cases:
+    - at least 1.25 times the encoder rate is an estimate;
+    - a target at the CC's climb clamp (about twice what the link carries)
+      only says it is capped by its share, and doesn't count against it;
+    - a target below both fails.
+  - Two checks fail open: the latency cap without a negotiated latency, and
+    headroom without a target or an encoder rate. Each proof records which
+    checks ran and the load it was taken at.
+  - A held-back candidate is inconclusive, and the span restarts.
+  - Holders:
+    - A holder the sender gave up on fails.
+    - A holder the sender only sidelines is inconclusive.
+    - A holder with no ACKs is dead while another link still gets them
+      within its own rate's bound. "No ACKs" includes a new connection that
+      has never had one.
+    - A holder below 0.90 is fading.
+
+  This proves the offered share, not spare capacity.
 - `swap-op.ts` runs one holder/candidate swap through the two-radio reducer.
   - It uses one reducer state per operation, with explicit timings: a 30 s
-    operation, a 10 s linger, and a 2 s emergency promotion.
+    operation, a 10 s linger and a 2 s emergency promotion.
   - One challenge covers a whole proof span. Renewals every second keep a
-    passing candidate's proof alive through the linger.
+    passing candidate's proof alive through the linger. A renewal only
+    extends a live proof taken under the same sender epoch.
   - The receiver is treated as the common cause only when a link outside
     the pair failed too.
   - A command the coordinator cannot confirm from evidence in time aborts.
+  - A restore that can't be confirmed ends the operation as
+    `restore-failed`, since the reducer can't abort a cleanup. The
+    coordinator then re-releases the hold and treats the old holder through
+    the abrupt-loss path.
 
 ## Not yet
 

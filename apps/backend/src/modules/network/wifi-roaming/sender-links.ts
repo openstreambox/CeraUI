@@ -24,14 +24,58 @@ export type LinkSample = Readonly<{
 	/** `last_srtla_ack_age_ms`, `null` before the first ACK of the epoch. */
 	ageMs: number | null;
 	rttMs: number;
-	/** Any flag that means the sender itself is holding the link back. */
-	gated: boolean;
-	/** Which flag, for logs. */
-	gatedBy: string | null;
+	/** What the sender put on the link lately, bits/s (`bitrate_bytes_per_sec` × 8). */
+	bitrateBps: number;
+	/** Held out by the stall gate: probes only. */
+	stallGated: boolean;
+	soleCarrierExcluded: boolean;
+	/** The weak-link classifier flags it; `weakReason` says why. */
+	weak: boolean;
+	weakReason: string | null;
+	/**
+	 * In flight above 1.5 × BDP at the snapshot: a per-tick queueing bound that
+	 * flips on any loaded link. Kept for logs only; it is not "held back".
+	 */
+	inFlightCapActive: boolean;
+	ccLossDegraded: boolean;
 	/** Per-link capacity estimate, `null` when the sender reports none (0). */
 	ccTargetBps: number | null;
 	ccLossPermille: number | null;
 }>;
+
+/**
+ * Why the sender is keeping a candidate from carrying its share, or `null`.
+ * Such a span can't prove anything.
+ */
+export function heldBack(s: LinkSample): string | null {
+	if (s.stallGated) return "stall_gated";
+	if (s.soleCarrierExcluded) return "sole_carrier_excluded";
+	if (s.weak) return `weak: ${s.weakReason ?? "unknown"}`;
+	return null;
+}
+
+/**
+ * Why the sender has given up on a holder's path, or `null`: the stall gate,
+ * the sole-carrier election, a high-RTT weak flag, or degraded CC loss.
+ */
+export function holderFailing(s: LinkSample): string | null {
+	if (s.stallGated) return "stall_gated";
+	if (s.soleCarrierExcluded) return "sole_carrier_excluded";
+	if (s.weak && s.weakReason === "high_rtt") return "weak: high_rtt";
+	if (s.ccLossDegraded) return "cc_loss_degraded";
+	return null;
+}
+
+/**
+ * The sender prefers a sibling for now (weak with `low_share`, `no_traffic`
+ * or any reason other than `high_rtt`): the holder is offered too little to
+ * judge, which says nothing about its path.
+ */
+export function holderSidelined(s: LinkSample): string | null {
+	if (s.weak && s.weakReason !== "high_rtt")
+		return `weak: ${s.weakReason ?? "unknown"}`;
+	return null;
+}
 
 /** One `get_stats` snapshot, keyed by radio. */
 export type Snapshot = Readonly<{
@@ -44,6 +88,8 @@ export type Snapshot = Readonly<{
 	 */
 	others: ReadonlyMap<string, LinkSample>;
 	negotiatedLatencyMs: number | null;
+	/** Radios some link claimed, mapped or left out as ambiguous. */
+	claimed: ReadonlySet<string>;
 }>;
 
 export type RadioAddresses = Readonly<{
@@ -64,16 +110,8 @@ export function hasArrivalReports(link: SenderLinkStats): boolean {
 	);
 }
 
-const GATING_FLAGS = [
-	"stall_gated",
-	"weak",
-	"sole_carrier_excluded",
-	"in_flight_cap_active",
-] as const;
-
 export function toLinkSample(link: SenderLinkStats): LinkSample | undefined {
 	if (!hasArrivalReports(link)) return undefined;
-	const gatedBy = GATING_FLAGS.find((flag) => link[flag] === true) ?? null;
 	return {
 		epoch: link.srtla_ack_epoch as number,
 		connected: link.connected,
@@ -82,8 +120,13 @@ export function toLinkSample(link: SenderLinkStats): LinkSample | undefined {
 		entries: link.srtla_ack_entries_total as number,
 		ageMs: link.last_srtla_ack_age_ms ?? null,
 		rttMs: link.rtt_ms,
-		gated: gatedBy !== null,
-		gatedBy,
+		bitrateBps: link.bitrate_bytes_per_sec * 8,
+		stallGated: link.stall_gated === true,
+		soleCarrierExcluded: link.sole_carrier_excluded === true,
+		weak: link.weak === true,
+		weakReason: link.weak_reason ?? null,
+		inFlightCapActive: link.in_flight_cap_active === true,
+		ccLossDegraded: link.cc_loss_degraded === true,
 		ccTargetBps:
 			link.cc_target_bps !== undefined && link.cc_target_bps > 0
 				? link.cc_target_bps
@@ -111,6 +154,7 @@ export function snapshotOf(
 	if (withReports.length === 0) return undefined;
 	const claims = new Map<string, LinkSample[]>();
 	const others = new Map<string, LinkSample>();
+	const claimed = new Set<string>();
 	for (const link of withReports) {
 		const sample = toLinkSample(link) as LinkSample;
 		const owners = radios.filter((r) =>
@@ -118,6 +162,7 @@ export function snapshotOf(
 				? link.iface === r.ifname
 				: link.ip !== undefined && r.addresses.includes(link.ip),
 		);
+		for (const owner of owners) claimed.add(owner.ifname);
 		if (owners.length === 1) {
 			const ifname = (owners[0] as RadioAddresses).ifname;
 			claims.set(ifname, [...(claims.get(ifname) ?? []), sample]);
@@ -135,5 +180,39 @@ export function snapshotOf(
 			stats.negotiated_latency_ms > 0
 				? stats.negotiated_latency_ms
 				: null,
+		claimed,
 	};
+}
+
+/** How long a hold-out may take to show in `get_stats` (the IP-list reload). */
+export const HOLD_OUT_EVIDENCE_MS = 5_000;
+/** How long a re-added link may take to register again and get a first ACK. */
+export const RESTORE_EVIDENCE_MS = 10_000;
+
+/**
+ * The sender no longer carries the radio: no link it reports maps to it, not
+ * even ambiguously.
+ */
+export function holdOutConfirmed(snap: Snapshot, ifname: string): boolean {
+	return !snap.claimed.has(ifname);
+}
+
+/**
+ * The radio is back in the bond under a new connection (an epoch other than
+ * the one it was held out with), registered, and the receiver has answered on
+ * it at least once.
+ */
+export function restoreConfirmed(
+	snap: Snapshot,
+	ifname: string,
+	heldOutEpoch: number,
+): boolean {
+	const s = snap.radios.get(ifname);
+	return (
+		s !== undefined &&
+		s.epoch !== heldOutEpoch &&
+		s.connected &&
+		!s.timedOut &&
+		s.ageMs !== null
+	);
 }

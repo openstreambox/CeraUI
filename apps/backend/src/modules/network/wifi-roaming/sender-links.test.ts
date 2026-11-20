@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type { SenderLinkStats, SenderStats } from "@ceraui/srtla-send/control";
-import { hasArrivalReports, snapshotOf, toLinkSample } from "./sender-links.ts";
+import {
+	HOLD_OUT_EVIDENCE_MS,
+	hasArrivalReports,
+	heldBack,
+	holderFailing,
+	holderSidelined,
+	holdOutConfirmed,
+	RESTORE_EVIDENCE_MS,
+	restoreConfirmed,
+	snapshotOf,
+	toLinkSample,
+} from "./sender-links.ts";
 
 const link = (over: Partial<SenderLinkStats>): SenderLinkStats => ({
 	conn_id: 0,
@@ -50,18 +61,50 @@ describe("arrival reports", () => {
 		expect(toLinkSample(link({ last_srtla_ack_age_ms: 40 }))?.ageMs).toBe(40);
 	});
 
-	test("any sender gating flag marks the link held back, and names it", () => {
-		for (const flag of [
-			"stall_gated",
-			"weak",
+	test("the sender's flags map onto the two roles", () => {
+		const sample = (over: Partial<SenderLinkStats>) =>
+			toLinkSample(link(over)) as NonNullable<ReturnType<typeof toLinkSample>>;
+		// Held back: a candidate can't be measured.
+		expect(heldBack(sample({ stall_gated: true }))).toBe("stall_gated");
+		expect(heldBack(sample({ sole_carrier_excluded: true }))).toBe(
 			"sole_carrier_excluded",
-			"in_flight_cap_active",
-		] as const) {
-			const sample = toLinkSample(link({ [flag]: true }));
-			expect(sample?.gated).toBe(true);
-			expect(sample?.gatedBy).toBe(flag);
+		);
+		expect(heldBack(sample({ weak: true, weak_reason: "low_share" }))).toBe(
+			"weak: low_share",
+		);
+		// The in-flight cap is a per-tick queueing bound, not a hold-back.
+		expect(heldBack(sample({ in_flight_cap_active: true }))).toBeNull();
+		expect(holderFailing(sample({ in_flight_cap_active: true }))).toBeNull();
+		expect(sample({ in_flight_cap_active: true }).inFlightCapActive).toBe(true);
+		// The sender giving up on a holder's path.
+		expect(holderFailing(sample({ stall_gated: true }))).toBe("stall_gated");
+		expect(holderFailing(sample({ sole_carrier_excluded: true }))).toBe(
+			"sole_carrier_excluded",
+		);
+		expect(holderFailing(sample({ weak: true, weak_reason: "high_rtt" }))).toBe(
+			"weak: high_rtt",
+		);
+		expect(holderFailing(sample({ cc_loss_degraded: true }))).toBe(
+			"cc_loss_degraded",
+		);
+		// The sender only preferring a sibling.
+		for (const weak_reason of ["low_share", "no_traffic"]) {
+			const s = sample({ weak: true, weak_reason });
+			expect(holderFailing(s)).toBeNull();
+			expect(holderSidelined(s)).toBe(`weak: ${weak_reason}`);
 		}
-		expect(toLinkSample(link({ weak: false }))?.gated).toBe(false);
+		expect(
+			holderSidelined(sample({ weak: true, weak_reason: "high_rtt" })),
+		).toBeNull();
+		expect(heldBack(sample({}))).toBeNull();
+		expect(holderFailing(sample({}))).toBeNull();
+		expect(holderSidelined(sample({}))).toBeNull();
+	});
+
+	test("the observed bitrate is kept in bits per second", () => {
+		expect(
+			toLinkSample(link({ bitrate_bytes_per_sec: 1_000 }))?.bitrateBps,
+		).toBe(8_000);
 	});
 
 	test("a zero capacity estimate means none", () => {
@@ -133,5 +176,67 @@ describe("mapping links to radios", () => {
 			snapshotOf(stats([link({})], { negotiated_latency_ms: 0 }), radios, 0)
 				?.negotiatedLatencyMs,
 		).toBeNull();
+	});
+});
+
+describe("evidence for hold-outs and restores", () => {
+	test("the deadlines are explicit", () => {
+		expect(HOLD_OUT_EVIDENCE_MS).toBe(5_000);
+		expect(RESTORE_EVIDENCE_MS).toBe(10_000);
+	});
+
+	test("a hold-out is confirmed once no link maps to the radio, even ambiguously", () => {
+		const present = snapshotOf(
+			stats([
+				link({ ip: "192.168.1.10" }),
+				link({ conn_id: 1, ip: "100.64.0.2" }),
+			]),
+			radios,
+			0,
+		);
+		expect(present && holdOutConfirmed(present, "wlan1")).toBe(false);
+		const gone = snapshotOf(
+			stats([link({ conn_id: 1, ip: "100.64.0.2" })]),
+			radios,
+			0,
+		);
+		expect(gone && holdOutConfirmed(gone, "wlan1")).toBe(true);
+		// Two links claiming the radio leave it unmapped, but not held out.
+		const twice = snapshotOf(
+			stats([
+				link({ ip: "192.168.1.10" }),
+				link({ conn_id: 1, iface: "wlan1" }),
+			]),
+			radios,
+			0,
+		);
+		expect(twice?.radios.has("wlan1")).toBe(false);
+		expect(twice && holdOutConfirmed(twice, "wlan1")).toBe(false);
+	});
+
+	test("a restore needs a new epoch, registration and a first ACK", () => {
+		const snap = (over: Partial<SenderLinkStats>) =>
+			snapshotOf(
+				stats([link({ ip: "192.168.1.10", ...over })]),
+				radios,
+				0,
+			) as NonNullable<ReturnType<typeof snapshotOf>>;
+		const ok = { srtla_ack_epoch: 8, last_srtla_ack_age_ms: 50 };
+		expect(restoreConfirmed(snap(ok), "wlan1", 3)).toBe(true);
+		expect(restoreConfirmed(snap(ok), "wlan1", 8)).toBe(false);
+		expect(
+			restoreConfirmed(
+				snap({ ...ok, last_srtla_ack_age_ms: undefined }),
+				"wlan1",
+				3,
+			),
+		).toBe(false);
+		expect(
+			restoreConfirmed(snap({ ...ok, connected: false }), "wlan1", 3),
+		).toBe(false);
+		expect(restoreConfirmed(snap({ ...ok, timed_out: true }), "wlan1", 3)).toBe(
+			false,
+		);
+		expect(restoreConfirmed(snap(ok), "wlan2", 3)).toBe(false);
 	});
 });
