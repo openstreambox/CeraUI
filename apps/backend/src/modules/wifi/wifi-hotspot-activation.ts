@@ -38,6 +38,7 @@ import {
 	isNmWifiSecretAvailable,
 	readVerifiedNmWifiSecret,
 } from "../network/network-manager-secret.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import { hotspotCredentialsStore } from "./hotspot-credentials.ts";
 import { getWifiState, setWifiState } from "./state/wifi-state.ts";
@@ -693,7 +694,13 @@ export async function startHotspotLocked(
 	  was asked for. An adapter with no stated preference resolves to concurrency,
 	  which is the behaviour every capable radio had before the mode was selectable.
 	*/
-	if (!useConcurrentAp && wifiInterface.conn && getIsStreaming()) {
+	// An unconfirmed stream session counts as live: is_streaming stays false
+	// while ownership cannot confirm that no stream runs.
+	if (
+		!useConcurrentAp &&
+		wifiInterface.conn &&
+		(getIsStreaming() || isStreamSessionUnconfirmed())
+	) {
 		logger.warn(
 			`wifi hotspot start: streaming keeps the station link on ${ifname}`,
 		);
