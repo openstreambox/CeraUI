@@ -163,6 +163,33 @@ describe("the sender port", () => {
 		expect(port.encoderRate()).toBeNull();
 	});
 
+	test("overlapping polls share one read and never leak a client", async () => {
+		const { state, port } = fake();
+		state.replies.push(
+			stats([link()]),
+			stats([link({ data_packets_queued_total: 160 })]),
+		);
+		// Two rounds' polls overlap (a timer that does not await the last one).
+		await Promise.all([port.poll(), port.poll()]);
+		expect(state.connects).toBe(1);
+		port.close();
+		expect(state.connects - state.closes).toBe(0);
+		// The two callers got one read; the next poll reads the second reply.
+		expect(port.senderLinks()).toBeUndefined();
+	});
+
+	test("polls that do not overlap each read", async () => {
+		const { state, port } = fake();
+		state.replies.push(
+			stats([link()]),
+			stats([link({ data_packets_queued_total: 160 })]),
+		);
+		await port.poll();
+		state.now = 2_000;
+		await port.poll();
+		expect(port.senderLinks()?.radios.get("wlan1")?.queued).toBe(160);
+	});
+
 	test("close drops the client and the snapshot", async () => {
 		const { state, port } = fake();
 		state.replies.push(stats([link()]));

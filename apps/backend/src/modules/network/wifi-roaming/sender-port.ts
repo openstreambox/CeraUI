@@ -88,30 +88,41 @@ export function createSenderPort(deps: SenderPortDeps): SenderPort {
 		lastPrint = null;
 	};
 
-	return {
-		async poll() {
-			try {
-				client ??= await deps.connect();
-				if (!client) {
-					latest = undefined;
-					return;
-				}
-				const stats = await client.getStats();
-				if (!stats) {
-					drop();
-					return;
-				}
-				const print = fingerprint(stats);
-				// The same state again is the same sample: keep its time, so a
-				// sender that hangs but answers looks frozen to the coordinator.
-				const at = print === lastPrint && lastAt !== null ? lastAt : deps.now();
-				lastPrint = print;
-				lastAt = at;
-				latest = snapshotOf(stats, deps.radios(), at);
-			} catch (error) {
-				logger.debug("wifi-roaming: sender read failed", { error });
-				drop();
+	// One read at a time: overlapping callers share it, so no client is opened
+	// twice and no older reply can overwrite a newer snapshot.
+	let inFlight: Promise<void> | null = null;
+
+	const read = async () => {
+		try {
+			client ??= await deps.connect();
+			if (!client) {
+				latest = undefined;
+				return;
 			}
+			const stats = await client.getStats();
+			if (!stats) {
+				drop();
+				return;
+			}
+			const print = fingerprint(stats);
+			// The same state again is the same sample: keep its time, so a
+			// sender that hangs but answers looks frozen to the coordinator.
+			const at = print === lastPrint && lastAt !== null ? lastAt : deps.now();
+			lastPrint = print;
+			lastAt = at;
+			latest = snapshotOf(stats, deps.radios(), at);
+		} catch (error) {
+			logger.debug("wifi-roaming: sender read failed", { error });
+			drop();
+		}
+	};
+
+	return {
+		poll() {
+			inFlight ??= read().finally(() => {
+				inFlight = null;
+			});
+			return inFlight;
 		},
 		senderLinks: () => latest,
 		encoderRate() {
