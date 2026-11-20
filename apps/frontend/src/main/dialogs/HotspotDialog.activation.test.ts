@@ -155,29 +155,6 @@ describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
 		});
 	});
 
-	it("configures while off without starting", async () => {
-		render(HotspotDialog, {
-			props: { open: true, deviceId: "0", iface: STATION },
-		});
-		await fireEvent.input(document.querySelector("#hotspot-name")!, {
-			target: { value: "Example" },
-		});
-		await fireEvent.input(document.querySelector("#hotspot-password")!, {
-			target: { value: "example-password" },
-		});
-		const save = [...document.querySelectorAll("button")].find(
-			(b) => b.textContent?.trim() === "Save",
-		)!;
-		await fireEvent.click(save);
-		expect(rpc.wifi.hotspotConfigure).toHaveBeenCalledWith({
-			device: "0",
-			incarnation: "radio-A",
-			name: "Example",
-			password: "example-password",
-			channel: "auto",
-		});
-		expect(start).not.toHaveBeenCalled();
-	});
 	it("forgets the inactive setup through the delete API", async () => {
 		render(HotspotDialog, {
 			props: { open: true, deviceId: "0", iface: STATION },

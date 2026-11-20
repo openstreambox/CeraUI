@@ -434,8 +434,30 @@ async function prepareHotspotLocked(
 		return { success: false, error: "activation-failed" };
 	}
 	const credentialUuid = identity.conn;
+	if (!credentialUuid) {
+		// No profile yet: the store is the only copy of the operator's choice
+		// until the first start creates one, so the reply vouches for it only
+		// once it is on disk. Ordinary remembering stays best effort.
+		const stored = deps.credentials.rememberChecked?.(owner, {
+			ssid: chosen.name,
+			password: chosen.password,
+			...(wifiInterface.hotspot.channel !== undefined
+				? { channel: wifiInterface.hotspot.channel }
+				: {}),
+		});
+		if (!stored) {
+			return {
+				success: false,
+				error: "activation-failed",
+				reason: "credential-store-unwritten",
+			};
+		}
+		// Synchronous since the ownership check above: nothing interleaved.
+		wifiInterface.hotspot.name = chosen.name;
+		wifiInterface.hotspot.password = chosen.password;
+		return { success: true, ...chosen, ...firstTime };
+	}
 	if (
-		credentialUuid &&
 		!(
 			await runHotspotProfileOperation({
 				uuid: credentialUuid,

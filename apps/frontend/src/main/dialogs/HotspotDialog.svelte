@@ -21,9 +21,12 @@
     entry retry, terminal receipt, one keyed op).
   • Start never dispatches directly (#413): it opens `HotspotActivationConfirm`,
     which shows the exact credentials the AP will broadcast (or stores the
-    operator's own) and needs an explicit acknowledgement. While the hotspot is
-    off, the edit form is NOT rendered — `hotspotConfigure` only reconfigures a
-    live AP, so fields typed here used to be silently ignored by the start.
+    operator's own) and needs an explicit acknowledgement.
+  • While the hotspot is off, the live form is NOT rendered (`hotspotConfigure`
+    only reconfigures a live AP). `HotspotOffEditor` edits the name and password
+    instead, through `hotspotPrepare` with the chosen pair: it modifies the
+    owned profile, or before a first start stores the choice durably. Saving
+    never brings the AP up. Channel and security stay live-only.
   • When the hotspot is active, ONE QR encoding the live credentials can be shown
     so phones can join by scan. It sits behind Show code in `WifiCode` (hidden by
     default, hides itself again) together with the join line and New Wi-Fi
@@ -74,6 +77,7 @@ import { getHotspotLifetime } from '$lib/stores/hotspot-joins.svelte';
 import { cn } from '$lib/utils';
 import HotspotActivationConfirm from '$main/network/HotspotActivationConfirm.svelte';
 import { type HotspotConfigFields, writeHotspotConfig } from '$main/network/hotspot-config-write';
+import HotspotOffEditor from '$main/network/HotspotOffEditor.svelte';
 import {
 	canRenewHotspotPassword,
 	mayCarryStream,
@@ -657,6 +661,14 @@ async function copyPassword() {
 				<p class="text-muted-foreground text-xs" data-testid="hotspot-inactive-hint">
 					{m["hotspotConfirm.inactiveHint"]()}
 				</p>
+				{#if radioReason !== 'permanent-mac-unresolved'}
+					<HotspotOffEditor
+						device={deviceId}
+						incarnation={radioToken}
+						degradedReason={radioReason}
+						session={ownerSession}
+					/>
+				{/if}
 			{/if}
 		{:else}
 		<!-- Name -->

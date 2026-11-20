@@ -268,18 +268,18 @@ export function canUseHotspotConnection(
 }
 
 /**
- * Record (or update) an adapter's hotspot identity. Writes only on a real
- * change, so the routine re-assertions made on every hotspot start cost no I/O.
- * A replaced `conn` is retired into `previousConns`; a caller-supplied history
- * is ignored.
+ * The entry an adapter carries after recording `credentials`, or `undefined`
+ * when the write is refused (invalid input, or a UUID another adapter owns). A
+ * replaced `conn` is retired into `previousConns`; a caller-supplied history is
+ * ignored.
  */
-export function rememberHotspotCredentials(
+function nextCredentialEntry(
 	macAddress: string,
 	credentials: HotspotCredentials,
-): void {
+): { key: string; next: StoredEntry; changed: boolean } | undefined {
 	const key = keyFor(macAddress);
-	if (!key || !credentials.ssid || !credentials.password) return;
-	if (!canUseHotspotConnection(macAddress, credentials.conn)) return;
+	if (!key || !credentials.ssid || !credentials.password) return undefined;
+	if (!canUseHotspotConnection(macAddress, credentials.conn)) return undefined;
 
 	const previous = entries[key];
 	// A suggestion must not erase evidence of an already contaminated UUID.
@@ -287,7 +287,7 @@ export function rememberHotspotCredentials(
 		!credentials.conn &&
 		!canUseHotspotConnection(macAddress, previous?.conn)
 	) {
-		return;
+		return undefined;
 	}
 	const next: StoredEntry = {
 		ssid: credentials.ssid,
@@ -305,19 +305,62 @@ export function rememberHotspotCredentials(
 			: {}),
 		updatedAt: Date.now(),
 	};
-
-	if (
+	const changed = !(
 		previous &&
 		previous.ssid === next.ssid &&
 		previous.password === next.password &&
 		previous.conn === next.conn &&
 		previous.channel === next.channel
-	) {
-		return;
-	}
+	);
+	return { key, next: changed || !previous ? next : previous, changed };
+}
 
-	entries[key] = next;
+/**
+ * Record (or update) an adapter's hotspot identity. Writes only on a real
+ * change, so the routine re-assertions made on every hotspot start cost no I/O.
+ * Best effort: a failed write is logged and the in-memory entry stands, because
+ * NetworkManager still holds the profile (see {@link persist}).
+ */
+export function rememberHotspotCredentials(
+	macAddress: string,
+	credentials: HotspotCredentials,
+): void {
+	const entry = nextCredentialEntry(macAddress, credentials);
+	if (!entry?.changed) return;
+	entries[entry.key] = entry.next;
 	persist();
+}
+
+/**
+ * {@link rememberHotspotCredentials} for a write the caller must be able to
+ * report: an operator's chosen pair saved while no profile exists, where this
+ * store is the only copy until the first start creates one. Returns `true` only
+ * once the whole store is on disk with this entry (it is rewritten even when the
+ * entry is unchanged in memory, since an earlier best-effort write may have
+ * failed). A refused or failed write changes nothing in memory.
+ */
+export function rememberHotspotCredentialsChecked(
+	macAddress: string,
+	credentials: HotspotCredentials,
+): boolean {
+	const entry = nextCredentialEntry(macAddress, credentials);
+	if (!entry) return false;
+	const next = { ...entries, [entry.key]: entry.next };
+	try {
+		if (initialized)
+			writeFileAtomicSync(
+				filePath,
+				JSON.stringify({ version: STORE_VERSION, adapters: next }),
+				{ mode: 0o600 },
+			);
+	} catch (error: unknown) {
+		logger.warn("Could not persist the chosen hotspot credentials", {
+			error: error instanceof Error ? error.name : "unknown",
+		});
+		return false;
+	}
+	entries = next;
+	return true;
 }
 
 /** Stage before add, then bind the returned settings instance; never ordinary adoption. */
@@ -383,6 +426,15 @@ export function clearHotspotProfileCreation(owner: string, uuid: string): void {
 export type HotspotCredentialsStore = {
 	get(macAddress: string): HotspotCredentials | undefined;
 	remember(macAddress: string, credentials: HotspotCredentials): void;
+	/**
+	 * A durable write the caller reports (see
+	 * {@link rememberHotspotCredentialsChecked}). Absent means no durable write
+	 * is available, and a caller that needs one fails closed.
+	 */
+	rememberChecked?(
+		macAddress: string,
+		credentials: HotspotCredentials,
+	): boolean;
 	recordCreation?(
 		owner: string,
 		uuid: string,
@@ -394,6 +446,7 @@ export type HotspotCredentialsStore = {
 export const hotspotCredentialsStore: HotspotCredentialsStore = {
 	get: getHotspotCredentials,
 	remember: rememberHotspotCredentials,
+	rememberChecked: rememberHotspotCredentialsChecked,
 	recordCreation: recordHotspotProfileCreation,
 	clearCreation: clearHotspotProfileCreation,
 };
