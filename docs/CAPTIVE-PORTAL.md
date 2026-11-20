@@ -12,7 +12,14 @@ hotel's page, and accept its terms yourself in your browser. Use **Check sign-in
 or **Cancel sign-in** to close the window early. Remote helpers cannot open it.
 
 The backend derives the source address from the WebSocket peer, resolves its
-neighbor MAC and confirms association on the AP. It captures the existing radio
+neighbor MAC and confirms association on the AP. Behind the image's
+device-bound front door the TCP peer is loopback; a direct on-link WebSocket
+then arrives on the private Unix listener in `/run/ceralive-button-ingress`
+(root-only), and the front door's `X-Ceralive-Button-Path` evidence names the
+phone. That header is never read on the TCP listener. On that path the window
+also belongs to the proven arrival interface: it must be the hotspot AP the
+phone's address routes through, every action rechecks the path, and the same
+address arriving on another link cannot open, check or cancel the window. It captures the existing radio
 session identity twice before opening and checks for changes during the window.
 No credentials, cookies, page contents or terms acceptance are collected.
 
