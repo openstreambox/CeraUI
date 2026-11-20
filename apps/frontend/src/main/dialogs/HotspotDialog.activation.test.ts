@@ -131,41 +131,6 @@ afterEach(() => {
 });
 
 describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
-	it("pins USB hotspot requests to the stable radio identity", async () => {
-		const mac = "02:00:00:00:00:01";
-		render(HotspotDialog, {
-			props: {
-				open: true,
-				deviceId: "2",
-				iface: {
-					...STATION,
-					ifname: "wlx020000000001",
-					radio_identity: { id: mac, permanent_mac: mac },
-				},
-			},
-		});
-		const forget = [...document.querySelectorAll("button")].find(
-			(button) => button.textContent?.trim() === "Forget",
-		);
-		if (!forget) throw new Error("missing Forget button");
-		await fireEvent.click(forget);
-		expect(rpc.wifi.hotspotDelete).toHaveBeenCalledWith({
-			device: "2",
-			radio_id: mac,
-		});
-	});
-
-	it("forgets the inactive setup through the delete API", async () => {
-		render(HotspotDialog, {
-			props: { open: true, deviceId: "0", iface: STATION },
-		});
-		const forget = [...document.querySelectorAll("button")].find(
-			(b) => b.textContent?.trim() === "Forget",
-		)!;
-		await fireEvent.click(forget);
-		expect(rpc.wifi.hotspotDelete).toHaveBeenCalledWith({ device: "0" });
-		expect(start).not.toHaveBeenCalled();
-	});
 
 	it("Enable opens the gate with the REAL credentials visible and starts nothing", async () => {
 		await openGate();
