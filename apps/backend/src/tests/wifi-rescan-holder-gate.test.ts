@@ -22,6 +22,7 @@ import {
 	setScanResultReaderForTest,
 	wifiCancelScanRefresh,
 	wifiRescan,
+	wifiRescanDispatched,
 } from "../modules/wifi/wifi-connections.ts";
 import type { WifiInterface } from "../modules/wifi/wifi-interfaces.ts";
 import { wifiScanProcedure } from "../rpc/procedures/wifi.procedure.ts";
@@ -177,15 +178,48 @@ describe("rescans checked at dispatch, under the adapter lock", () => {
 		expect(reads).toEqual([]);
 	});
 
-	test("the caller that owns the radio's lock has the scan dispatched under it", async () => {
+	test("holding the radio's lock is not enough to scan inline", async () => {
 		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
 		const reads = modes();
 		const owned = await withWifiAdapterLock(SEARCHER, async () => {
 			await wifiRescan(1);
 		});
 		expect(owned.success).toBe(true);
+		expect(spawns).toEqual([]);
+		expect(reads).toEqual([]);
+	});
+
+	test("the awaiting caller that says it holds the lock has the scan dispatched under it", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		const reads = modes();
+		let dispatched = false;
+		const owned = await withWifiAdapterLock(SEARCHER, async () => {
+			dispatched = await wifiRescanDispatched(1, { underHeldLock: true });
+		});
+		expect(owned.success).toBe(true);
+		expect(dispatched).toBe(true);
 		expect(spawns).toEqual(["wlan1"]);
 		expect(reads).toEqual(["wlan1"]);
+	});
+
+	test("a caller that stops owning the lock before the scan goes out does not scan", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		let answer: (m: RadioMode) => void = () => {};
+		setScanGateModeReader(
+			() =>
+				new Promise<RadioMode>((resolve) => {
+					answer = resolve;
+				}),
+		);
+		let run: Promise<boolean> | undefined;
+		await withWifiAdapterLock(SEARCHER, async () => {
+			// Claims the lock but does not await: by the mode read's answer the
+			// lock is released.
+			run = wifiRescanDispatched(1, { underHeldLock: true });
+		});
+		answer({ phy: "phy-wlan1", apOnPhy: false });
+		expect(await run).toBe(false);
+		expect(spawns).toEqual([]);
 	});
 
 	test("the mode is read for each radio right before its scan", async () => {
