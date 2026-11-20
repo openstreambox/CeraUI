@@ -301,6 +301,8 @@ function handleDeviceStateEvent(device: string, state: string): void {
 
 type ParsedWifiScanRow = {
 	active: boolean;
+	/** The radio that reported the row; absent in rows without the field. */
+	device?: string;
 	bssid: string;
 	ssid: string;
 	signal: number;
@@ -311,20 +313,31 @@ type ParsedWifiScanRow = {
 // Parse one nmcli `device wifi list` terse row. A malformed row would otherwise
 // store NaN signal/chan — a wrong value silently broadcast to the UI; instead we
 // log the raw row and return null (a typed "no result") so callers skip it.
-// Format: IN-USE:BSSID:SSID:MODE:CHAN:RATE:SIGNAL:BARS:SECURITY
+// Format: IN-USE:BSSID:SSID:MODE:CHAN:RATE:SIGNAL:BARS:SECURITY[:DEVICE]
 export function parseWifiScanRow(raw: string): ParsedWifiScanRow | null {
-	const [active, bssid, ssid, _mode, chan, _rate, signal, _bars, security] =
-		nmcliParseSep(raw) as [
-			string,
-			string,
-			string,
-			string,
-			string,
-			string,
-			string,
-			string,
-			string,
-		];
+	const [
+		active,
+		bssid,
+		ssid,
+		_mode,
+		chan,
+		_rate,
+		signal,
+		_bars,
+		security,
+		device,
+	] = nmcliParseSep(raw) as [
+		string,
+		string,
+		string,
+		string,
+		string,
+		string,
+		string,
+		string,
+		string,
+		string | undefined,
+	];
 
 	// An empty SSID is a hidden network, not a parse failure — skip it quietly.
 	if (ssid == null || ssid === "") return null;
@@ -345,6 +358,7 @@ export function parseWifiScanRow(raw: string): ParsedWifiScanRow | null {
 		signal: signalValue,
 		security: security ?? "",
 		chan: chanValue,
+		...(device ? { device } : {}),
 	};
 }
 
@@ -354,7 +368,9 @@ export async function wifiUpdateScanResult(): Promise<boolean> {
 	// Retry transient nmcli scan/list failures with exponential backoff (T7).
 	const wifiNetworks = await pollWithBackoff(
 		() =>
-			nmScanResults("IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY"),
+			nmScanResults(
+				"IN-USE,BSSID,SSID,MODE,CHAN,RATE,SIGNAL,BARS,SECURITY,DEVICE",
+			),
 		{
 			signal,
 			maxAttempts: 3,
@@ -381,13 +397,18 @@ export async function wifiUpdateScanResult(): Promise<boolean> {
 	for (const wifiNetwork of wifiNetworks) {
 		const parsed = parseWifiScanRow(wifiNetwork);
 		if (!parsed) continue;
-		const { active, ssid, signal, security, chan } = parsed;
+		const { active, ssid, signal, security, chan, device } = parsed;
 
-		// All wifi interfaces see the same scan results. Add this network to every
-		// interface; the active flag indicates which interface is connected.
+		// Every radio is offered every visible network, but IN-USE belongs to the
+		// radio that reported the row. With several radios, the hotspot radio
+		// reports its own hotspot as in use and a station radio its venue Wi-Fi;
+		// copying those onto the other radios labelled a station link with the
+		// hotspot's SSID and listed the box's own hotspot as "connected".
 		for (const wifiInterface of Object.values(wifiInterfacesByMacAddress)) {
-			if (!wifiInterface || (!active && wifiInterface.available.has(ssid)))
+			if (!wifiInterface) continue;
+			if (active && device !== undefined && device !== wifiInterface.ifname)
 				continue;
+			if (!active && wifiInterface.available.has(ssid)) continue;
 
 			wifiInterface.available.set(ssid, {
 				active,
