@@ -101,44 +101,78 @@ class IngressLifetimeTests(unittest.TestCase):
                 patch.object(portal, 'close_window') as close:
             portal.open_window(WindowTests().config())
         close.assert_not_called()
-# nft expressions that need a kernel module beyond core nf_tables, and the
-# symbols each needs. Anything the helper's ruleset uses must be covered by the
-# image kernel; core expressions (payload, meta, sets, verdicts) need nothing.
-MODULE_EXPRESSIONS = [
-    (r'\bfib\b', {'NFT_FIB_INET', 'NFT_FIB_IPV4', 'NFT_FIB_IPV6'}),
-    (r'\bct\b', {'NFT_CT', 'NF_CONNTRACK_MARK'}),
-    (r'\bmasquerade\b', {'NFT_MASQ'}),
-    (r'\b[ds]nat\b', {'NFT_NAT'}),
-    (r'\bredirect\b', {'NFT_REDIR'}),
-    (r'\breject\b', {'NFT_REJECT', 'NFT_REJECT_INET'}),
-    (r'\blimit\b', {'NFT_LIMIT'}),
-    (r'\bnumgen\b', {'NFT_NUMGEN'}),
-    (r'\bquota\b', {'NFT_QUOTA'}),
-    (r'\blog\b', {'NFT_LOG'}),
-    (r'\bqueue\b', {'NFT_QUEUE'}),
-    (r'\b(?:jhash|symhash)\b', {'NFT_HASH'}),
-    (r'\bsocket\b', {'NFT_SOCKET'}),
-    (r'\btproxy\b', {'NFT_TPROXY'}),
-    (r'\bosf\b', {'NFT_OSF'}),
-    (r'\bsynproxy\b', {'NFT_SYNPROXY'}),
-    (r'\bct count\b', {'NFT_CONNLIMIT'}),
-    (r'\bflow add\b', {'NFT_FLOW_OFFLOAD'}),
-    (r'\bdup to\b', {'NFT_DUP_IPV4'}),
-    (r'\bfwd to\b', {'NFT_FWD_NETDEV'}),
-    (r'\bipsec\b', {'NFT_XFRM'}),
-]
+
+
+# Every word the helper's ruleset may use. Core nf_tables words need nothing
+# beyond NF_TABLES/NF_TABLES_INET; module words need the listed kernel symbols.
+# A word in neither list fails the test, so a new expression has to be
+# classified here (and checked against the image kernel) before it ships.
+CORE_WORDS = {
+    'table', 'inet', 'set', 'type', 'flags', 'timeout', 'interval', 'elements',
+    'ipv4_addr', 'ether_addr', 'chain', 'hook', 'priority', 'policy', 'filter',
+    'nat', 'prerouting', 'input', 'forward', 'postrouting', 'accept', 'drop',
+    'return', 'jump', 'meta', 'mark', 'nfproto', 'ipv4', 'ipv6', 'iif', 'iifname',
+    'oifname', 'ip', 'saddr', 'daddr', 'ether', 'tcp', 'udp', 'dport', 'sport',
+}
+MODULE_WORDS = {
+    'fib': {'NFT_FIB_INET', 'NFT_FIB_IPV4', 'NFT_FIB_IPV6'},
+    'local': {'NFT_FIB_INET', 'NFT_FIB_IPV4', 'NFT_FIB_IPV6'},  # fib ... type local
+    'ct': {'NFT_CT', 'NF_CONNTRACK_MARK'},
+    'direction': {'NFT_CT'},
+    'masquerade': {'NFT_MASQ'},
+    'dnat': {'NFT_NAT'},
+    'snat': {'NFT_NAT'},
+    'to': {'NFT_NAT'},
+    'redirect': {'NFT_REDIR'},
+    'reject': {'NFT_REJECT', 'NFT_REJECT_INET'},
+    'with': {'NFT_REJECT'},
+    'icmpx': {'NFT_REJECT_INET'},
+    'port-unreachable': {'NFT_REJECT_INET'},
+    'reset': {'NFT_REJECT'},
+    'limit': {'NFT_LIMIT'},
+    'numgen': {'NFT_NUMGEN'},
+    'quota': {'NFT_QUOTA'},
+    'log': {'NFT_LOG'},
+    'queue': {'NFT_QUEUE'},
+    'jhash': {'NFT_HASH'},
+    'symhash': {'NFT_HASH'},
+    'socket': {'NFT_SOCKET'},
+    'tproxy': {'NFT_TPROXY'},
+    'osf': {'NFT_OSF'},
+    'synproxy': {'NFT_SYNPROXY'},
+    'count': {'NFT_CONNLIMIT'},
+    'flow': {'NFT_FLOW_OFFLOAD'},
+    'dup': {'NFT_DUP_IPV4'},
+    'fwd': {'NFT_FWD_NETDEV'},
+    'ipsec': {'NFT_XFRM'},
+}
 # What CeraLive images guarantee for nftables consumers (the image's required
 # kernel symbol list). The sign-in helper must stay inside it.
 IMAGE_NFT_SYMBOLS = {'NFT_CT', 'NF_CONNTRACK_MARK', 'NFT_NAT', 'NFT_MASQ',
                      'NFT_REJECT', 'NFT_REJECT_INET'}
 
 
-def required_symbols(ruleset):
+def ruleset_words(ruleset):
     import re
+    text = re.sub(r'"[^"]*"', ' ', ruleset)
+    names = set(re.findall(r'\b(?:table inet|set|chain)\s+([A-Za-z0-9_]+)', text))
+    names |= set(re.findall(r'@([A-Za-z0-9_]+)', text))
+    text = re.sub(r'@[A-Za-z0-9_]+', ' ', text)
+    text = re.sub(r'\b0x[0-9a-fA-F]+\b', ' ', text)
+    text = re.sub(r'\b(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b', ' ', text)
+    text = re.sub(r'\b\d+(?:\.\d+){3}(?:/\d+)?\b', ' ', text)
+    text = re.sub(r'-?\b\d+[smhd]?\b', ' ', text)
+    return set(re.findall(r'[A-Za-z][A-Za-z0-9_-]*', text)) - names
+
+
+def required_symbols(ruleset):
+    words = ruleset_words(ruleset)
+    unknown = words - CORE_WORDS - set(MODULE_WORDS)
+    if unknown:
+        raise AssertionError(f'unclassified nft words: {sorted(unknown)}')
     needed = set()
-    for pattern, symbols in MODULE_EXPRESSIONS:
-        if re.search(pattern, ruleset):
-            needed |= symbols
+    for word in words & set(MODULE_WORDS):
+        needed |= MODULE_WORDS[word]
     return needed
 
 
@@ -155,6 +189,14 @@ class KernelFeatureTests(unittest.TestCase):
     def test_a_fib_rule_would_be_caught(self):
         # The image kernel has no nft fib; the earlier rule failed to load there.
         self.assertTrue(required_symbols('fib daddr type local return') - IMAGE_NFT_SYMBOLS)
+
+    def test_an_unclassified_expression_fails(self):
+        with self.assertRaises(AssertionError):
+            required_symbols(self.ruleset() + ' meta cpu 1 counter accept')
+
+    def test_hex_marks_addresses_and_names_are_not_words(self):
+        self.assertEqual(ruleset_words('table inet t { set s1 { elements = { 0xcb000100, 10.0.0.0/8, aa:bb:cc:dd:ee:ff } } }'),
+                         {'table', 'inet', 'set', 'elements'})
 
     def test_ruleset_against_a_real_kernel_config(self):
         import os

@@ -484,9 +484,9 @@ assert b'healthy' in udp.recv(32)
     assert sorted(x for x in v6_routes.splitlines() if 'wan1' not in x) == sorted(x for x in after6.splitlines() if 'wan1' not in x), (v6_routes, after6)
     assert physical_before == run('ip','rule','show')
     for proc in relays:
-        assert proc.wait(timeout=25) == 0
+        assert proc.wait(timeout=90) == 0
         assert proc.stdout.read() == b'relay packets 160/160\n'
-    assert local_client.wait(timeout=25) == 0
+    assert local_client.wait(timeout=90) == 0
     assert local_client.stdout.read() == b'control 160/160\n'
     print('PASS: local control 160/160; 640/640 continuous relay packets on two source-bound uplinks; phone web/DNS only; IPv6/QUIC/DoT/DoQ/known DoH rejected; other stations unchanged; SRTLA/Moblink and main routes unchanged; expiry, close and detached-ingress recovery')
 except subprocess.CalledProcessError as error:

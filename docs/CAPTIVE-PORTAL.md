@@ -63,7 +63,10 @@ A kernel timed set binds the selected source IP and MAC to the AP. Only TCP
 web control stays local: traffic to the box's own IPv4 addresses (taken when
 the window opens) is never selected. The rules need only core nf_tables plus
 conntrack, NAT, masquerade and reject, which CeraLive kernels carry; they avoid
-`fib`, which those kernels do not build. During the window, the selected phone’s alternative
+`fib`, which those kernels do not build. An IPv4 address the box gains while a
+window is open is not in that set: the phone's web traffic to it is selected
+(it still reaches the box), and such a flow can stall when the window expires
+until it is torn down. IPv6 traffic to the box is never selected. During the window, the selected phone’s alternative
 web/DNS protocols receive TCP resets or kernel-rate-limited ICMP errors for UDP,
 as detailed below.
 VPNs, Private Relay and strict Private DNS / secure DNS may still require a temporary pause
