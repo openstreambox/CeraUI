@@ -123,6 +123,7 @@ import {
 import {
 	refreshWifiAdapterModes,
 	resetWifiAdapterModes,
+	wifiLiveApSignature,
 } from "./wifi-adapter-modes.svelte";
 import { noteWifiConfig, noteWifiStatus } from "./wifi-status-receipt";
 
@@ -623,8 +624,16 @@ function handleMessage(
 				);
 			}
 			if (statusData.wifi !== undefined) {
+				const before = wifiLiveApSignature(wifiState);
 				wifiState = preserveWireIdentity(wifiState, statusData.wifi);
 				noteWifiStatus(statusData.wifi);
+				// A hotspot started or stopped elsewhere (API, another client, the
+				// device) moves these facts before any frame this UI tracked; the
+				// adapter-mode answer is a pull, so ask again. The first snapshot
+				// is left to the mount-time pull.
+				if (before !== "" && before !== wifiLiveApSignature(wifiState)) {
+					void refreshWifiAdapterModes();
+				}
 			}
 			if (statusData.modems !== undefined) {
 				modemsState = mergeModemList(modemsState, statusData.modems);
@@ -904,6 +913,15 @@ function handleMessage(
 						failOperation(key, wifiFailureReason(config) ?? "failed");
 					}
 				}
+			}
+			// A terminal hotspot start/stop is broadcast to every client, whoever
+			// asked for it. The radio's mode changed, so the adapter-mode answer
+			// is pulled again here rather than only by the client that clicked.
+			if (
+				wifiData.hotspot?.start?.success === true ||
+				wifiData.hotspot?.stop?.success === true
+			) {
+				void refreshWifiAdapterModes();
 			}
 			// `begin` on the pending frame is deliberate: it re-arms the TTL and
 			// makes a transition dispatched from ANOTHER client visible here too.

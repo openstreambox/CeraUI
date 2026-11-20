@@ -259,13 +259,13 @@ describe("SharingSection — per-uplink rows", () => {
 	});
 });
 
-describe("SharingSection — the weight is a STEERING SHARE, never link quality", () => {
+describe("SharingSection — health weight precedes client policy", () => {
 	it("labels it in words, so a bare percentage cannot read as a quality score", () => {
 		const { container } = mount({ uplinks: uplinks({ iface: "wwan0" }) });
 		const share = q(container, "sharing-uplink-weight-wwan0");
 		expect(share).not.toBeNull();
-		expect(share?.textContent ?? "").toContain("Steering share");
-		expect(share?.textContent ?? "").toContain("100%");
+		expect(share?.textContent ?? "").toContain("Health weight (before policy)");
+		expect(share?.textContent ?? "").toContain("100");
 	});
 
 	it("is WITHHELD when no client zone exists — nothing is being shared", () => {
@@ -465,7 +465,7 @@ describe("SharingSection — quiet when sharing is off", () => {
 		"sharing-dns-note",
 	];
 
-	it("renders the hint row and NOTHING below it", () => {
+	it("renders the sharing-off hint and policy controls without active diagnostics", () => {
 		// The card is quiet because no client zone exists — never because there
 		// was nothing to say: every signal below is on the wire and two of them
 		// are degraded.
@@ -478,8 +478,11 @@ describe("SharingSection — quiet when sharing is off", () => {
 		for (const testid of SILENCED) {
 			expect(q(container, testid), `${testid} is still rendered`).toBeNull();
 		}
-		// Not merely folded away either — no disclosure is left to open.
-		expect(container.querySelectorAll("details")).toHaveLength(0);
+		// Policy remains available before enabling sharing; diagnostics are absent.
+		expect(container.querySelectorAll("details")).toHaveLength(1);
+		expect(
+			container.querySelector("[data-testid=sharing-policy]"),
+		).not.toBeNull();
 	});
 
 	it("keeps the card, because the hint row IS the discovery affordance", () => {
@@ -931,7 +934,7 @@ describe("SharingSection — wire-field inventory", () => {
 			field: "uplinks[].weight",
 			props: ROWS,
 			selector: '[data-testid="sharing-uplink-weight-wwan0"]',
-			contains: "70%",
+			contains: "70",
 		},
 		{
 			field: "uplinks[].probes",
@@ -1098,10 +1101,9 @@ describe("SharingSection — the surface's own guarantees", () => {
 		}
 	});
 
-	it("carries ZERO controls — every input it renders is diagnostic only", () => {
-		// The strongest form of "nothing here gates anything": there is no
-		// affordance to gate WITH. Asserted against the rendered DOM, because
-		// absence has no syntax to grep for.
+	it("confines controls to the explicit client-policy surface", () => {
+		// Only the explicit client-policy surface offers controls.
+		// Diagnostics remain read-only even when they report a fault.
 		const { container } = mount({
 			uplinks: uplinks({ iface: "wwan0", state: "down", weight: 0 }),
 			steering: uplinkSteeringStatusSchema.parse({
@@ -1116,7 +1118,13 @@ describe("SharingSection — the surface's own guarantees", () => {
 			netif: netif({ eth0: { ethRole: "shared-lan", ip: "10.42.1.1" } }),
 		});
 
-		expect(container.querySelectorAll("button")).toHaveLength(0);
+		const policy = container.querySelector("[data-testid=sharing-policy]");
+		expect(policy?.querySelector("button")).not.toBeNull();
+		expect(
+			[...container.querySelectorAll("button,input,select")].every((node) =>
+				policy?.contains(node),
+			),
+		).toBe(true);
 		expect(container.querySelectorAll("input")).toHaveLength(0);
 		expect(container.querySelectorAll("select")).toHaveLength(0);
 		expect(container.querySelectorAll("a[href]")).toHaveLength(0);

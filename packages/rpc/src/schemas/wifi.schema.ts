@@ -433,6 +433,14 @@ export const wifiInterfaceSchema = z.object({
 	// an interface that cannot host a hotspot — the backend omits both there.
 	available: z.array(availableWifiNetworkSchema).optional(),
 	saved: z.record(z.string(), z.string()),
+	radio_identity: z
+		.object({
+			id: z.string(),
+			permanent_mac: z.string(),
+			phy: z.string().optional(),
+			device_path: z.string().optional(),
+		})
+		.optional(),
 	supports_hotspot: z.boolean().optional(),
 	supports_ap_sta_concurrency: z.boolean().optional(),
 	transition: z.enum(['activating', 'deactivating']).optional(),
@@ -529,6 +537,7 @@ export type WifiScanInput = z.infer<typeof wifiScanInputSchema>;
 export const hotspotToggleInputSchema = z.object({
 	device: z.string(),
 	incarnation: wifiIncarnationSchema.optional(),
+	radio_id: z.string().optional(),
 });
 export type HotspotToggleInput = z.infer<typeof hotspotToggleInputSchema>;
 
@@ -570,6 +579,8 @@ export type HotspotToggleError = z.infer<typeof hotspotToggleErrorSchema>;
   outcome itself, `success: false` carries the reason.
 */
 export const hotspotToggleOutputSchema = z.object({
+	pending: z.literal(true).optional(),
+	reason: z.literal('steering-readiness-timeout').optional(),
 	success: z.boolean(),
 	accepted: z.literal(true).optional(),
 	error: hotspotToggleErrorSchema.optional(),
@@ -586,6 +597,7 @@ export type HotspotToggleOutput = z.infer<typeof hotspotToggleOutputSchema>;
 export const hotspotPrepareInputSchema = z.object({
 	device: z.string(),
 	incarnation: wifiIncarnationSchema.optional(),
+	radio_id: z.string().optional(),
 	name: z.string().min(HOTSPOT_NAME_MIN).max(HOTSPOT_NAME_MAX).optional(),
 	password: z
 		.string()
@@ -611,6 +623,7 @@ export type HotspotPrepareOutput = z.infer<typeof hotspotPrepareOutputSchema>;
 export const hotspotConfigInputSchema = z.object({
 	device: z.string(),
 	incarnation: wifiIncarnationSchema.optional(),
+	radio_id: z.string().optional(),
 	name: z
 		.string()
 		.min(HOTSPOT_NAME_MIN, 'Hotspot name must be at least 1 character')
@@ -644,6 +657,8 @@ export type WifiOperationOutput = z.infer<typeof wifiOperationOutputSchema>;
 
 // A terminal hotspot start/stop frame: the deferred half of an `accepted` reply.
 export const hotspotToggleResultSchema = z.object({
+	pending: z.literal(true).optional(),
+	reason: z.literal('steering-readiness-timeout').optional(),
 	device: z.union([z.number(), z.string()]),
 	success: z.boolean().optional(),
 	error: hotspotToggleErrorSchema.optional(),

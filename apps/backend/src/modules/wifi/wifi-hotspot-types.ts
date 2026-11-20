@@ -169,7 +169,7 @@ export function hotspotBindingFields(
 
 /** Result of a hotspot start request. */
 export type HotspotStartResult =
-	| { success: true }
+	| { success: true; pending?: true; reason?: "steering-readiness-timeout" }
 	| {
 			success: false;
 			error:
@@ -201,6 +201,10 @@ export type HotspotActivationInstance = {
  * events and positive poll hints still require selected-AP NM evidence.
  */
 export type HotspotActivationDeps = {
+	confirmSteering?: (ifname: string) => Promise<boolean>;
+	stationChannel?: typeof import("./wifi-concurrent-interface.ts").concurrentStationChannel;
+	configureProfile?: typeof import("./wifi-hotspot-profile.ts").configureHotspotProfile;
+	ownedProfile?: typeof import("./wifi-hotspot-profile.ts").ownedHotspotProfile;
 	/** Present only for explicit user toggles; mode transitions and boot omit it. */
 	recordIntent?: WifiAdapterModeRecorder;
 	/** Current kernel proof; production never treats a failed legacy probe as absence. */
