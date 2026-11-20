@@ -30,10 +30,11 @@ keeps its runtime directory across restarts. A claim that already exists or
 cannot be created counts as a restart. Without this, every boot refused restart,
 power-off and the SSH switch for about two minutes after the backend started.
 Packages from before the claim never wrote it, so the package's postinst writes
-it before restarting the backend on an upgrade, when systemd reports that the
-backend already started in this boot (`ExecMainStartTimestampMonotonic`, kept
-across a stop and reset at boot). A fresh install and an image build write
-nothing.
+it before restarting the backend on every upgrade while systemd runs: that is a
+restart within the boot. It does not ask systemd whether the backend ran, because
+an old prerm may already have stopped, disabled and unloaded the unit, which
+clears that record. At worst a backend that had not run yet gets the restart
+hold. A fresh install and an image build write nothing.
 A two-minute hold after the last
 positive evidence covers reconnects. While an above-threshold upload is still
 qualifying, liveness is unknown, so idle actions wait without calling a short burst

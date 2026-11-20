@@ -344,8 +344,12 @@ claim_case() {
 }
 claim_case 4815162342 configure 2026.8.5
 [[ -f "$claim" ]] || fail "postinst upgrade must write the boot claim when the backend already ran in this boot"
+# A legacy prerm stopped and disabled the unit and systemd unloaded it: its
+# start time reads 0, yet the upgrade still restarts within this boot.
 claim_case 0 configure 2026.8.5
-[[ ! -e "$claim" ]] || fail "postinst upgrade must not write the boot claim when the backend has not run in this boot"
+[[ -f "$claim" ]] || fail "postinst upgrade must write the boot claim even when systemd forgot the backend's start"
+claim_case "" configure 2026.8.5
+[[ -f "$claim" ]] || fail "postinst upgrade must write the boot claim when systemd reports nothing"
 claim_case 4815162342 configure
 [[ ! -e "$claim" ]] || fail "a fresh install must never write the boot claim"
 rm -f "$claim"; started_stub 4815162342
