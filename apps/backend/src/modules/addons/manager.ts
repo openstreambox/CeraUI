@@ -32,7 +32,7 @@
  *     so the whole machine is unit-testable without a board, sudo, or network;
  *   - the SAME crash-loop discriminator (NRestarts >= threshold → mask +
  *     auto-disable) keeps a crash-looping add-on from wedging the device;
- *   - EVERY mutating op gates on `isRealDevice()` FIRST (G6) and returns
+ *   - EVERY mutating op gates on `hasCapability("addons")` FIRST (G6) and returns
  *     {@link ADDON_UNAVAILABLE_ERROR} in dev/emulated mode, never touching
  *     systemd/sysext/the network.
  *
@@ -68,7 +68,7 @@ import {
 } from "../../mocks/providers/addons.ts";
 import { removeAddonState, setAddonState } from "../config.ts";
 import { getEffectiveHardware as getEffectiveHardwareImpl } from "../streaming/pipelines.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import { DisruptiveActionRefusedError } from "../system/disruptive-action-error.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
 import { aptClientTlsFor } from "./apt-client-tls.ts";
@@ -95,7 +95,7 @@ import {
 } from "./state-settlement.ts";
 
 // Re-export the helper's emulated-mode error so callers resolve the single
-// source from the manager surface (mirrors kiosk re-exporting isRealDevice).
+// source from the manager surface.
 export { ADDON_UNAVAILABLE_ERROR };
 
 /** Returned when `/data` cannot fit the materialised add-on plus headroom. */
@@ -357,7 +357,7 @@ function allUnits(units: AddonUnits | undefined): string[] {
  */
 export type AddonManagerDeps = {
 	/** G6 gate — true only on a real RK3588 board. */
-	isRealDevice: () => Promise<boolean>;
+	canManageAddons: () => Promise<boolean>;
 	/** Effective board (resolves `generic`) for the compatibleHardware gate (T23). */
 	getEffectiveHardware: () => AddonHardware;
 	/** Free bytes on /data (E1 precheck input). */
@@ -496,7 +496,7 @@ async function runValidateCmd(
 }
 
 const defaultAddonManagerDeps: AddonManagerDeps = {
-	isRealDevice: () => isRealDevice(),
+	canManageAddons: () => hasCapability("addons"),
 	getEffectiveHardware: () => getEffectiveHardwareImpl(),
 	getDataFreeBytes: probeDataFreeBytes,
 	getOsVersion: probeOsVersion,
@@ -704,7 +704,7 @@ function restoreRefusedState(
 
 /**
  * Enable an add-on. Ordered pipeline, each step gated/atomic:
- *   1. isRealDevice() (G6)               5. atomic rename → scan dir
+ *   1. hasCapability("addons") (G6)               5. atomic rename → scan dir
  *   2. free-space precheck (E1)          6. helper enable (privileged)
  *   3. download → /data/tmp temp         7. unmask + start descriptor units
  *   4. sha256 (+ helper GPG) verify      8. validation probe → auto-disable
@@ -730,7 +730,7 @@ async function enableAddonLocked(
 	retryAddonPersistence(id);
 
 	// 1. G6 — never drive the host OS in dev/emulated mode.
-	if (!(await deps.isRealDevice())) {
+	if (!(await deps.canManageAddons())) {
 		return { success: false, error: ADDON_UNAVAILABLE_ERROR };
 	}
 	const admission = await getSysextActionDecision();
@@ -877,7 +877,7 @@ async function disableAddonLocked(
 	retryAddonPersistence(id);
 
 	// G6 gate.
-	if (!(await deps.isRealDevice())) {
+	if (!(await deps.canManageAddons())) {
 		return { success: false, error: ADDON_UNAVAILABLE_ERROR };
 	}
 	const admission = await getSysextActionDecision();
@@ -927,7 +927,7 @@ async function disableAddonLocked(
 /**
  * One crash-loop observation for an enabled add-on: read NRestarts across its
  * `start` units and, if any unit hit the threshold, mask + auto-disable. Gated
- * on isRealDevice() (G6) and a no-op unless the add-on is currently `enabled`.
+ * on hasCapability("addons") (G6) and a no-op unless the add-on is currently `enabled`.
  * Returns the resolved manager phase.
  */
 export async function pollAddonCrashLoop(
@@ -946,7 +946,7 @@ async function pollAddonCrashLoopLocked(
 	const id = descriptor.id;
 
 	// G6 — never probe systemd off-device.
-	if (!(await deps.isRealDevice())) return getAddonPhase(id);
+	if (!(await deps.canManageAddons())) return getAddonPhase(id);
 	// Only a running add-on can crash-loop.
 	if (getAddonPhase(id) !== "enabled") return getAddonPhase(id);
 

@@ -36,7 +36,7 @@ for (const action of ["enable", "disable"] as const) {
 			},
 		);
 		const deps = {
-			isRealDevice: async () => true,
+			canManageAddons: async () => true,
 			readDescriptor: async () => sysextDescriptor,
 			exec: async () => {
 				throw new Error("uncertain helper client");
@@ -74,7 +74,7 @@ test("unreadable descriptor prevents helper submission instead of borrowing an e
 		code: "EACCES",
 	});
 	const deps = {
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		readDescriptor: async () => {
 			throw error;
 		},

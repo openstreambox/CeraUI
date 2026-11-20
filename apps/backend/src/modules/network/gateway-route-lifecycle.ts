@@ -1,5 +1,5 @@
 import { run } from "../../helpers/run.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import {
 	type DefaultRouteAdmission,
 	type DefaultRouteReleaseCondition,
@@ -63,9 +63,11 @@ export class GatewayRoutePreference {
 export const gatewayRoutePreference = new GatewayRoutePreference();
 
 export async function initGatewayRoutes(): Promise<void> {
-	if (await isRealDevice()) await gatewayRoutePreference.start();
+	if (await hasCapability("client-internet"))
+		await gatewayRoutePreference.start();
 }
 
 export async function stopGatewayRoutes(): Promise<void> {
-	if (await isRealDevice()) await gatewayRoutePreference.stop();
+	if (await hasCapability("client-internet"))
+		await gatewayRoutePreference.stop();
 }
