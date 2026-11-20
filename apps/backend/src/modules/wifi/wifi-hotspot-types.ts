@@ -201,7 +201,8 @@ export type HotspotActivationInstance = {
  * events and positive poll hints still require selected-AP NM evidence.
  */
 export type HotspotActivationDeps = {
-	confirmSteering?: (ifname: string) => Promise<boolean>;
+	/** Client-zone steering the terminal Start waits for; absent means none. */
+	steering?: import("./wifi-hotspot-readiness.ts").HotspotSteeringDeps;
 	/** Present only for explicit user toggles; mode transitions and boot omit it. */
 	recordIntent?: WifiAdapterModeRecorder;
 	/** Current kernel proof; production never treats a failed legacy probe as absence. */

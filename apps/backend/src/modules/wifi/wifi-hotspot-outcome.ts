@@ -39,7 +39,7 @@ import { withoutWifiRequestBinding } from "./wifi-binding.ts";
 export type { HotspotToggleError };
 
 export type HotspotToggleOutcome =
-	| { success: true }
+	| { success: true; pending?: true; reason?: "steering-readiness-timeout" }
 	| { success: false; error: HotspotToggleError; reason?: string };
 
 export type HotspotOutcomeKind = "start" | "stop";
@@ -59,7 +59,9 @@ export const publishHotspotOutcome: HotspotOutcomePublisher = (
 		broadcastMsg("wifi", {
 			hotspot: {
 				[kind]: outcome.success
-					? { device, success: true }
+					? outcome.pending
+						? { device, pending: true, reason: outcome.reason }
+						: { device, success: true }
 					: {
 							device,
 							error: outcome.error,

@@ -88,6 +88,7 @@ import {
 } from "./wifi-hotspot-discovery.ts";
 import {
 	beginHotspotTransition,
+	publishStartWhenSteered,
 	registerPendingConfirmation,
 	syncWifiStateCache,
 } from "./wifi-hotspot-monitor.ts";
@@ -96,6 +97,7 @@ import {
 	type HotspotProfileOperation,
 	runHotspotProfileOperation,
 } from "./wifi-hotspot-profile-operation.ts";
+import { defaultHotspotSteeringDeps } from "./wifi-hotspot-readiness.ts";
 import {
 	DEFAULT_HOTSPOT_SECURITY,
 	hotspotSecurityFields,
@@ -151,6 +153,12 @@ export const defaultHotspotDeps: HotspotActivationDeps = {
 		HYBRID_CHANNEL_REFUSAL,
 	readHybridChannel: readHybridStationChannel,
 	validateConcurrentInterface: revalidateConcurrentApInterface,
+	// Resolved at call time: the readiness module sits in an import cycle.
+	steering: {
+		reconcile: () => defaultHotspotSteeringDeps.reconcile(),
+		verified: (ifname, incarnation, since) =>
+			defaultHotspotSteeringDeps.verified(ifname, incarnation, since),
+	},
 	confirmHybridActivation,
 	releaseConcurrentInterface: releaseConcurrentApInterface,
 	rollbackConcurrentInterface: releaseCreatedHybridTarget,
@@ -665,9 +673,17 @@ export async function startHotspotLocked(
 			};
 		}
 		// Already up: nothing is dispatched, so no confirmation will ever settle
-		// and this branch owes the terminal frame itself.
+		// and this branch owes the terminal frame itself, once the AP's client
+		// zone is verified. The wait runs after this locked call returns.
 		recordChosenMode(observedWifiAdapterMode(wifiInterface));
-		deps.publishOutcome?.("start", wifiInterface.id, { success: true });
+		if (wifiInterface.hotspot.conn)
+			publishStartWhenSteered(
+				wifiInterface,
+				wifiInterface.hotspot.conn,
+				wifiInterface.id,
+				deps,
+			);
+		else deps.publishOutcome?.("start", wifiInterface.id, { success: true });
 		return { success: true };
 	}
 	/*

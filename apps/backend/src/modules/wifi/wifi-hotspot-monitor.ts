@@ -40,6 +40,11 @@ import type {
 	HotspotConfirmationTarget,
 	WifiInterfaceWithHotspot,
 } from "./wifi-hotspot-types.ts";
+import {
+	advanceHotspotOperation,
+	awaitHotspotSteering,
+	captureHotspotSteeringFence,
+} from "./wifi-hotspot-readiness.ts";
 import type { WifiInterface } from "./wifi-interfaces.ts";
 import { sameRadioLifetime, wifiRadioIdentity } from "./wifi-radio-identity.ts";
 import { transitionVirtualBinding } from "./wifi-virtual-binding.ts";
@@ -164,7 +169,42 @@ export function beginHotspotTransition(
 		if (pendingByRow.get(previous.row) === previous)
 			pendingByRow.delete(previous.row);
 	}
+	advanceHotspotOperation(wifiInterface);
 	wifiInterface.hotspot.transition = transition;
+}
+
+/**
+ * The terminal Start frame for an AP that is up: at once without steering,
+ * otherwise once its client zone is verified (or `pending` at the deadline).
+ * The wait runs outside any adapter lock; a superseded Start publishes nothing.
+ */
+export function publishStartWhenSteered(
+	row: WifiInterfaceWithHotspot,
+	uuid: string,
+	device: number,
+	deps: Pick<
+		HotspotActivationDeps,
+		"steering" | "publishOutcome" | "broadcastState"
+	>,
+): void {
+	const steering = deps.steering;
+	if (!steering) {
+		deps.publishOutcome?.("start", device, { success: true });
+		return;
+	}
+	const fence = captureHotspotSteeringFence(row, uuid);
+	void awaitHotspotSteering(fence, steering).then(
+		(result) => {
+			if (!result || !fence.owned()) return;
+			deps.broadcastState();
+			deps.publishOutcome?.("start", device, result);
+		},
+		(error: unknown) => {
+			logger.warn("Wi-Fi AP steering wait failed", {
+				error: error instanceof Error ? error.name : "unknown",
+			});
+		},
+	);
 }
 
 /** Events trigger selected-AP observation; names or parent connectivity are not proof. */
@@ -233,7 +273,7 @@ export function registerPendingConfirmation(
 		if (!virtual) deps.setDupIpSuppression(ifname, false);
 		deps.broadcastState();
 		syncWifiStateCache(target.macAddress, wifiInterface);
-		deps.publishOutcome?.("start", device, { success: true });
+		publishStartWhenSteered(wifiInterface, target.uuid, device, deps);
 	};
 	const giveUp = (): void => {
 		if (wifiInterface.hotspot === hotspot) {
