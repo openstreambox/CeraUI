@@ -7,7 +7,9 @@ import {
 	parseIwLink,
 	parseScanRows,
 	searchProfileName,
+	splitTerse,
 	subnetOf,
+	unescapeNmcli,
 } from "./nm-port.ts";
 
 const SOURCE = "11111111-1111-4111-8111-111111111111";
@@ -212,5 +214,53 @@ describe("reads never scan", () => {
 		expect(f.calls).toEqual([
 			"nmcli -t -f BSSID,SSID,SIGNAL,CHAN device wifi list ifname wlan2 --rescan yes",
 		]);
+	});
+});
+
+describe("backslashes in SSIDs", () => {
+	test("terse fields: escaped colons and backslashes, both sides alike", () => {
+		expect(splitTerse("a\\\\b:c\\:d:e")).toEqual(["a\\b", "c:d", "e"]);
+		// A field that ends in a literal backslash, then a separator.
+		expect(splitTerse("x\\\\:y")).toEqual(["x\\", "y"]);
+		expect(unescapeNmcli("a\\\\b\\:c")).toBe("a\\b:c");
+	});
+
+	test("a scan SSID with a backslash matches the saved profile", async () => {
+		const run = async (bin: string, args: string[]) => {
+			const line = `${bin} ${args.join(" ")}`;
+			if (line === "nmcli -t -f NAME,UUID,TYPE connection show")
+				return `cafe\\\\2:${SOURCE}:802-11-wireless\n`;
+			if (line.startsWith("nmcli -g 802-11-wireless.ssid"))
+				return `cafe\\\\2\n${MAC.replace(/:/g, "\\:")}\n\n`;
+			if (line.startsWith("nmcli -t -f BSSID,SSID,SIGNAL,CHAN"))
+				return "AA\\:00\\:00\\:00\\:00\\:02:cafe\\\\2:70:6\n";
+			if (line.startsWith("nmcli connection clone"))
+				return `x (${SOURCE}) cloned as ceraui-search-wlan2 (${CLONE}).`;
+			return "";
+		};
+		const nm = createSearchNm({ run, macOf: async () => MAC });
+		const rows = await nm.scan("wlan2");
+		expect(rows?.[0]?.ssid).toBe("cafe\\2");
+		expect(await nm.savedSsids("wlan2")).toEqual(new Set(["cafe\\2"]));
+	});
+});
+
+describe("late checks", () => {
+	test("radioMode reads iw dev only", async () => {
+		const f = fakeRun();
+		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		expect(await nm.radioMode("wlan1")).toEqual({ phy: "phy1", apOnPhy: true });
+		expect(f.calls).toEqual(["iw dev"]);
+	});
+
+	test("a join refused right before activation removes the clone and never activates", async () => {
+		const f = fakeRun();
+		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		expect(
+			await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => false),
+		).toBe("refused");
+		const writes = f.calls.filter((c) => /clone|modify| up |delete/.test(c));
+		expect(writes.some((c) => c.includes("connection up"))).toBe(false);
+		expect(writes.at(-1)).toBe(`nmcli connection delete ${CLONE}`);
 	});
 });
