@@ -34,17 +34,17 @@ import {
 	getWifiState,
 	setWifiState,
 } from "./state/wifi-state.ts";
+import {
+	advanceHotspotOperation,
+	awaitHotspotSteering,
+	captureHotspotSteeringFence,
+} from "./wifi-hotspot-readiness.ts";
 import type {
 	HotspotActivationDeps,
 	HotspotActivationInstance,
 	HotspotConfirmationTarget,
 	WifiInterfaceWithHotspot,
 } from "./wifi-hotspot-types.ts";
-import {
-	advanceHotspotOperation,
-	awaitHotspotSteering,
-	captureHotspotSteeringFence,
-} from "./wifi-hotspot-readiness.ts";
 import type { WifiInterface } from "./wifi-interfaces.ts";
 import { sameRadioLifetime, wifiRadioIdentity } from "./wifi-radio-identity.ts";
 import { transitionVirtualBinding } from "./wifi-virtual-binding.ts";

@@ -131,7 +131,6 @@ afterEach(() => {
 });
 
 describe("HotspotDialog — no hotspot starts unseen (#413)", () => {
-
 	it("Enable opens the gate with the REAL credentials visible and starts nothing", async () => {
 		await openGate();
 

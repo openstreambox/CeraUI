@@ -76,8 +76,8 @@ import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 import { getHotspotLifetime } from '$lib/stores/hotspot-joins.svelte';
 import { cn } from '$lib/utils';
 import HotspotActivationConfirm from '$main/network/HotspotActivationConfirm.svelte';
-import { type HotspotConfigFields, writeHotspotConfig } from '$main/network/hotspot-config-write';
 import HotspotOffEditor from '$main/network/HotspotOffEditor.svelte';
+import { type HotspotConfigFields, writeHotspotConfig } from '$main/network/hotspot-config-write';
 import {
 	canRenewHotspotPassword,
 	mayCarryStream,
