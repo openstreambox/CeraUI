@@ -67,7 +67,6 @@ import {
 import {
 	completeHelperRecovery,
 	isHelperRecoveryPending,
-	isRecoveryPending,
 } from "../streaming/recovery-barrier.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
@@ -245,10 +244,7 @@ const defaultDeps: Deps = {
 		await publishUsbDevices();
 	},
 	admit: (key) => {
-		const admission =
-			isRecoveryPending() || isHelperRecoveryPending()
-				? tryAcquireHelperRecoveryLease(key)
-				: tryAcquireModemMutation(key);
+		const admission = tryAcquireModemMutation(key);
 		if (!admission.admitted) {
 			return { ok: false, refusal: admission.refusal };
 		}
@@ -583,9 +579,9 @@ export async function restoreHelperInterlock(): Promise<boolean> {
 			}
 			inFlight.add(entry.scope);
 			if (retained.has(entry.scope)) continue;
-			const admission = await deps.admit(entry.leaseKey);
-			if (!admission.ok) return false;
-			retained.set(entry.scope, admission.release);
+			const admission = tryAcquireHelperRecoveryLease(entry.leaseKey);
+			if (!admission.admitted) return false;
+			retained.set(entry.scope, admission.lease.release);
 		}
 		if (deps.watch) ensureWatch();
 		return true;

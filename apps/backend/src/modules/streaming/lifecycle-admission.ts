@@ -284,9 +284,9 @@ export function tryAcquireModemMutation(
 }
 
 /**
- * The boot recovery of a helper unit. The admission barrier is still up,
- * so the ordinary acquire would refuse and leave the job unleased.
- * This does not open streaming admission.
+ * Reconstruct the lease for a helper job that systemd already owns.
+ * Fresh actions use tryAcquireModemMutation, which stays closed until
+ * ordinary recovery has finished. This path does not open that admission.
  */
 export function tryAcquireHelperRecoveryLease(
 	stableKey: string,
