@@ -447,8 +447,13 @@ class LineConnection {
 		}
 	}
 
-	/** Called by Bun's socket close/error callbacks. Fails every waiter. */
+	/**
+	 * Called by Bun's socket close/error callbacks. Fails every waiter, and
+	 * marks the connection closed so a later request fails at once instead of
+	 * waiting out its timeout on a socket that is gone.
+	 */
 	onDisconnect(): void {
+		this.closed = true;
 		const handler = this.disconnectHandler;
 		for (const [, waiter] of this.pending) {
 			clearTimeout(waiter.timer);

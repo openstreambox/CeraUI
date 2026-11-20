@@ -304,6 +304,28 @@ describe("get_capabilities", () => {
 });
 
 describe("get_stats and the stats-topic projection", () => {
+	test("a request after the sender closed the socket fails at once, not after the timeout", async () => {
+		const { path } = await startServer(socketPath("restart"), (frame) => [
+			JSON.stringify({ jsonrpc: "2.0", result: statsResult(), id: frame.id }),
+		]);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 3000,
+		});
+		expect(await client?.getStats()).not.toBeNull();
+		// The sender exits: its end of the socket goes away.
+		servers.pop()?.stop();
+		await Bun.sleep(50);
+		const started = Date.now();
+		const outcome = await client?.getStats().then(
+			() => "resolved",
+			() => "rejected",
+		);
+		expect(outcome).toBe("rejected");
+		expect(Date.now() - started).toBeLessThan(1000);
+		client?.close();
+	});
+
 	test("get_stats parses the snapshot and keeps the ADR-003 pair", async () => {
 		const { path } = await startServer(socketPath("stats"), (frame) => [
 			JSON.stringify({ jsonrpc: "2.0", result: statsResult(), id: frame.id }),

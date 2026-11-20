@@ -219,7 +219,10 @@ The pieces:
   - `at` advances only when some link's counters, age, epoch or state moved,
     so a sender that hangs but keeps answering looks frozen.
   - A failed, unreachable or counter-less read is `undefined`, which pauses
-    the coordinator at once.
+    the coordinator at once. After a sender restart the dead connection
+    fails the next read immediately, and the port reconnects on the
+    following poll.
+  - `poll()` runs one read at a time: overlapping callers share it.
   - `defaultSenderPortDeps(radios, now)` supplies the control socket, each
     radio's current IPv4 address from the network registry, and the engine
     bitrate.
