@@ -20,11 +20,20 @@ keep-level traffic cannot extend it. A restart therefore cannot lose the
 remaining protection. The first start after a boot takes no such window: no
 earlier process held evidence to lose, anything carried before the reboot was
 already cut, and new client traffic is measured from the first sample interval.
+The first readable sample is only a baseline: it clears "unreadable", and the
+first rate needs a second sample of the same interfaces, five seconds later.
+A phone already forwarding when the backend starts is therefore reported idle
+for up to one heartbeat before it counts as qualifying traffic.
 The backend tells the two apart by creating `/run/ceralive/carrying-boot-claim`
 (`CERALIVE_CARRYING_BOOT_CLAIM`): `/run` is empty after every boot, and the unit
 keeps its runtime directory across restarts. A claim that already exists or
 cannot be created counts as a restart. Without this, every boot refused restart,
 power-off and the SSH switch for about two minutes after the backend started.
+Packages from before the claim never wrote it, so the package's postinst writes
+it before restarting the backend on an upgrade, when systemd reports that the
+backend already started in this boot (`ExecMainStartTimestampMonotonic`, kept
+across a stop and reset at boot). A fresh install and an image build write
+nothing.
 A two-minute hold after the last
 positive evidence covers reconnects. While an above-threshold upload is still
 qualifying, liveness is unknown, so idle actions wait without calling a short burst

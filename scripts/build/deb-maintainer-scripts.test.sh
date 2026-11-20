@@ -324,6 +324,40 @@ log_has 'systemctl enable ceralive-addon-reconciler.service' \
 grep -q 'upgrade_from_present=no' "$work/out.txt" \
     || fail "postinst fresh configure must mark upgrade_from_present=no"
 
+# Boot claim for the carrying restart hold: an upgrade whose backend already ran
+# in this boot writes it before the restart; nothing else does.
+claim="$work/carrying-boot-claim"
+started_stub() {
+    cat > "$stubdir/systemctl" <<STUB
+#!/bin/bash
+printf '%s %s\n' "\${0##*/}" "\$*" >> "\$CERALIVE_STUB_LOG"
+[ "\$1" = show ] && printf '%s\n' "$1"
+exit 0
+STUB
+    chmod +x "$stubdir/systemctl"
+}
+claim_case() {
+    # $1 = start timestamp systemd reports, rest = postinst argv
+    local ts="$1"; shift
+    rm -f "$claim"; started_stub "$ts"
+    CERALIVE_CARRYING_BOOT_CLAIM="$claim" run_maintainer postinst "$rundir_present" "$@"
+}
+claim_case 4815162342 configure 2026.8.5
+[[ -f "$claim" ]] || fail "postinst upgrade must write the boot claim when the backend already ran in this boot"
+claim_case 0 configure 2026.8.5
+[[ ! -e "$claim" ]] || fail "postinst upgrade must not write the boot claim when the backend has not run in this boot"
+claim_case 4815162342 configure
+[[ ! -e "$claim" ]] || fail "a fresh install must never write the boot claim"
+rm -f "$claim"; started_stub 4815162342
+CERALIVE_CARRYING_BOOT_CLAIM="$claim" run_maintainer postinst "$rundir_absent" configure 2026.8.5
+[[ ! -e "$claim" ]] || fail "an image build (no running systemd) must not write the boot claim"
+cat > "$stubdir/systemctl" <<'STUB'
+#!/bin/bash
+printf '%s %s\n' "${0##*/}" "$*" >> "$CERALIVE_STUB_LOG"
+exit 0
+STUB
+chmod +x "$stubdir/systemctl"
+
 # Given: old prerm removed the enablement link, but the helper remembers an install.
 # Its successful no-op above reproduces deb-systemd-helper's retained-state branch.
 cat > "$stubdir/systemctl" <<'STUB'
