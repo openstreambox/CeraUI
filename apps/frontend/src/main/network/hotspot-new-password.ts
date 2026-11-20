@@ -1,30 +1,35 @@
 /**
  * New Wi-Fi password: a fresh random password on the running hotspot, through the
- * same reconfigure the hotspot dialog's Save uses (same RPC, same keyed op, so the
- * two can never run at once). NetworkManager keeps one password per hotspot
- * profile and restarts the profile to apply a new one, so every joined device
- * drops and has to join again; the UI says so before it asks.
+ * same bound config write the hotspot dialog's Save uses (`writeHotspotConfig`:
+ * same RPC, same `{device, incarnation}` binding, same keyed op and terminal
+ * receipt, so the two can never run at once). NetworkManager keeps one password
+ * per hotspot profile and restarts the profile to apply a new one, so every
+ * joined device drops and has to join again; the UI says so before it asks.
+ *
+ * Renewal exists only while the AP is up: `hotspotConfigure` reconfigures a live
+ * AP, and a stopped hotspot has no `hotspot` block to renew from.
  */
-import { m } from "@ceraui/i18n/svelte";
 import type {
 	HotspotConfigInput,
 	StatusResponse,
 	WifiInterface,
 } from "@ceraui/rpc/schemas";
 
-import {
-	getOperationAttempt,
-	osCommand,
-} from "$lib/rpc/async-operation.svelte";
-import { rpc } from "$lib/rpc/client";
+import { resolveAsyncOpTtlMs } from "$lib/rpc/async-operation.svelte";
+import { getLinkEpoch } from "$lib/rpc/session-epoch.svelte";
 
+import {
+	type HotspotConfigFields,
+	type HotspotConfigWriteOwner,
+	writeHotspotConfig,
+} from "./hotspot-config-write";
 import { generateHotspotPassword } from "./hotspot-password";
 import { wifiHotspotConfigOpKey } from "./wifi-station-lock";
 
 /**
- * The reconfigure input that changes ONLY the password. `undefined` when the
- * live hotspot is not fully known (no binding token, name or channel), so a
- * partial setup is never written.
+ * The config input that changes ONLY the password. `undefined` when the live
+ * hotspot is not fully known (no live AP, no binding token, name or channel) or
+ * its radio is unverified, so a partial setup is never written.
  */
 export function newHotspotPasswordInput(
 	device: string,
@@ -32,7 +37,12 @@ export function newHotspotPasswordInput(
 	password: string,
 ): HotspotConfigInput | undefined {
 	const hotspot = iface?.hotspot;
-	if (!iface?.incarnation || !hotspot?.name || !hotspot.channel)
+	if (
+		!iface?.incarnation ||
+		iface.degraded_reason !== undefined ||
+		!hotspot?.name ||
+		!hotspot.channel
+	)
 		return undefined;
 	return {
 		device,
@@ -42,6 +52,18 @@ export function newHotspotPasswordInput(
 		channel: hotspot.channel,
 		...(hotspot.security !== undefined ? { security: hotspot.security } : {}),
 	};
+}
+
+/** The same input without its binding, for a caller that binds it itself. */
+export function newHotspotPasswordFields(
+	device: string,
+	iface: WifiInterface | undefined,
+	password: string,
+): HotspotConfigFields | undefined {
+	const input = newHotspotPasswordInput(device, iface, password);
+	if (!input) return undefined;
+	const { device: _device, incarnation: _incarnation, ...fields } = input;
+	return fields;
 }
 
 /** Whether the live hotspot is known well enough to renew its password. */
@@ -70,34 +92,56 @@ export function newHotspotPasswordKey(
 	return wifiHotspotConfigOpKey(device, iface?.incarnation);
 }
 
+export type RenewHotspotPasswordOptions = {
+	readonly generate?: () => string;
+	/** Runs once the keyed op has begun, with that attempt's token. */
+	readonly onDispatch?: (attempt: symbol | undefined) => void;
+	/**
+	 * Aborts the wait for the device's terminal frame. Without one, the wait
+	 * ends with the keyed op's pending window.
+	 */
+	readonly signal?: AbortSignal;
+};
+
 /**
- * Dispatch a renewal. Resolves to the password the device accepted for dispatch,
- * or `undefined` when nothing was sent or the dispatch was refused. Whether the
- * device applied it arrives later as its `hotspot.config` reply, which settles
- * the keyed op; that reply can arrive before or after this promise resolves.
- *
- * `onDispatch` runs once the keyed op has begun, with that attempt's token, so
- * a caller can tell its own confirmation from a later one under the same key.
+ * Renew from a surface without its own form (the Connect your phone panel).
+ * Resolves to the password once the device's terminal frame accepted it (or
+ * the wait ended with the request still accepted), or `undefined` when nothing
+ * was sent, the dispatch was refused, or the terminal refused it.
+ * `onDispatch` lets a caller tell its own confirmation from a later one under
+ * the same key.
  */
 export async function renewHotspotPassword(
 	device: string,
 	iface: WifiInterface | undefined,
-	generate: () => string = generateHotspotPassword,
-	onDispatch?: (attempt: symbol | undefined) => void,
+	options: RenewHotspotPasswordOptions = {},
 ): Promise<string | undefined> {
-	const password = generate();
-	const input = newHotspotPasswordInput(device, iface, password);
-	if (!input) return undefined;
-	const key = newHotspotPasswordKey(device, iface);
-	const sent = await osCommand({
-		key,
-		rpc: () => {
-			onDispatch?.(getOperationAttempt(key));
-			return rpc.wifi.hotspotConfigure(input);
-		},
-		failMessage: () => m["network.os.operationFailed"](),
-		busyMessage: () => m["network.os.deviceBusy"](),
-	});
-	if (sent === undefined || sent.success === false) return undefined;
-	return password;
+	const password = (options.generate ?? generateHotspotPassword)();
+	const fields = newHotspotPasswordFields(device, iface, password);
+	const incarnation = iface?.incarnation;
+	if (!fields || !incarnation) return undefined;
+	const link = getLinkEpoch();
+	const local = new AbortController();
+	const timer = setTimeout(() => local.abort(), resolveAsyncOpTtlMs());
+	const signal = options.signal
+		? AbortSignal.any([options.signal, local.signal])
+		: local.signal;
+	const owner: HotspotConfigWriteOwner = {
+		signal,
+		current: () => getLinkEpoch() === link,
+		...(options.onDispatch
+			? { onDispatch: (_key, attempt) => options.onDispatch?.(attempt) }
+			: {}),
+	};
+	try {
+		const result = await writeHotspotConfig(
+			{ device, incarnation, link, session: 0 },
+			fields,
+			owner,
+		);
+		return result?.success === true ? password : undefined;
+	} finally {
+		clearTimeout(timer);
+		local.abort();
+	}
 }
