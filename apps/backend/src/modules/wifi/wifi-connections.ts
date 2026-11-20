@@ -48,6 +48,7 @@ import {
 	setHotspotClientsChangeListener,
 	startHotspotClientsPoll,
 } from "./wifi-hotspot-clients.ts";
+import { hotspotApIfname } from "./wifi-hotspot-types.ts";
 import type { WifiInterface, WifiInterfaceId } from "./wifi-interfaces.ts";
 import {
 	recordWifiRadioShadowFailure,
@@ -393,25 +394,34 @@ export async function wifiUpdateScanResult(): Promise<boolean> {
 	for (const wifiInterface of Object.values(wifiInterfacesByMacAddress)) {
 		wifiInterface.available = new Map();
 	}
+	const ownAps = new Set(
+		Object.values(wifiInterfacesByMacAddress).flatMap((wifiInterface) => {
+			const ifname = wifiInterface && hotspotApIfname(wifiInterface);
+			return ifname ? [ifname] : [];
+		}),
+	);
 
 	for (const wifiNetwork of wifiNetworks) {
 		const parsed = parseWifiScanRow(wifiNetwork);
 		if (!parsed) continue;
 		const { active, ssid, signal, security, chan, device } = parsed;
 
-		// Every radio is offered every visible network, but IN-USE belongs to the
-		// radio that reported the row. With several radios, the hotspot radio
-		// reports its own hotspot as in use and a station radio its venue Wi-Fi;
-		// copying those onto the other radios labelled a station link with the
-		// hotspot's SSID and listed the box's own hotspot as "connected".
+		// Every radio is offered every network a station radio heard, but IN-USE
+		// belongs to the radio that reported the row: another radio's venue
+		// Wi-Fi is a candidate here, not this radio's connection. Rows from the
+		// box's own access points (a radio running the hotspot, or its
+		// concurrent AP interface) are the hotspot itself, which NetworkManager
+		// reports as that interface's in-use network; no other radio is offered
+		// it. Copying those flags labelled a station link with the hotspot's SSID.
 		for (const wifiInterface of Object.values(wifiInterfacesByMacAddress)) {
 			if (!wifiInterface) continue;
-			if (active && device !== undefined && device !== wifiInterface.ifname)
-				continue;
-			if (!active && wifiInterface.available.has(ssid)) continue;
+			const own = device === undefined || device === wifiInterface.ifname;
+			if (!own && device !== undefined && ownAps.has(device)) continue;
+			const inUse = active && own;
+			if (!inUse && wifiInterface.available.has(ssid)) continue;
 
 			wifiInterface.available.set(ssid, {
-				active,
+				active: inUse,
 				ssid,
 				signal,
 				security,

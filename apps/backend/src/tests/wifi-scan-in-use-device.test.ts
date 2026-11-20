@@ -27,6 +27,7 @@ beforeEach(() => {
 	for (const [mac, id, ifname] of [
 		["02:00:00:00:00:01", 1, "wlx020000000001"],
 		["02:00:00:00:00:02", 2, "wlx020000000002"],
+		["02:00:00:00:00:03", 3, "wlx020000000003"],
 	] as const)
 		addWifiInterface(mac, {
 			id,
@@ -36,6 +37,19 @@ beforeEach(() => {
 			available: new Map(),
 			saved: {},
 			savedAll: {},
+			// Radio 1 runs the hotspot: NetworkManager reports AP mode.
+			...(id === 1
+				? {
+						activeMode: "ap" as const,
+						activeConn: "hotspot-profile",
+						hotspot: {
+							conn: "hotspot-profile",
+							name: "Box Hotspot",
+							availableChannels: ["auto"],
+							warnings: {},
+						} as never,
+					}
+				: {}),
 		});
 });
 afterEach(() => {
@@ -84,6 +98,9 @@ test("each radio is in use only on its own network", async () => {
 				"02\\:00\\:00\\:00\\:00\\:01",
 			),
 			row(true, "Hotel", 90, "wlx020000000002"),
+			// The spare radio hears the same venue later in the list; that must
+			// not clear the station radio's in-use row.
+			row(false, "Hotel", 70, "wlx020000000003"),
 			row(false, "Cafe", 40, "wlx020000000002", "11\\:22\\:33\\:44\\:55\\:66"),
 		]),
 	);
@@ -91,6 +108,7 @@ test("each radio is in use only on its own network", async () => {
 	const radios = Object.values(getWifiInterfacesByMacAddress());
 	const station = radios.find((r) => r.id === 2);
 	const hotspot = radios.find((r) => r.id === 1);
+	const spare = radios.find((r) => r.id === 3);
 	const inUse = (r: typeof station) =>
 		[...(r?.available.values() ?? [])]
 			.filter((n) => n.active)
@@ -99,8 +117,15 @@ test("each radio is in use only on its own network", async () => {
 	expect(inUse(hotspot)).toEqual(["Box Hotspot"]);
 	// The box's own hotspot is not offered to the station radio as a network.
 	expect(station?.available.has("Box Hotspot")).toBe(false);
-	// Networks only the station radio heard are still offered to both radios.
+	// Networks a station radio heard are still offered to every radio, the
+	// other station's venue Wi-Fi as a candidate rather than its connection.
 	expect(hotspot?.available.has("Cafe")).toBe(true);
+	expect(spare?.available.get("Hotel")).toMatchObject({
+		ssid: "Hotel",
+		active: false,
+	});
+	expect(inUse(spare)).toEqual([]);
+	expect(spare?.available.has("Box Hotspot")).toBe(false);
 	expect(
 		linkLabelFor(
 			"wlx020000000002",
