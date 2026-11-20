@@ -126,12 +126,16 @@ describe("join", () => {
 		const writes = f.calls.filter((c) => /clone|modify|up|delete/.test(c));
 		// The earlier clone of this radio goes only after the last check before
 		// activation, and the new one is kept.
-		expect(writes).toEqual([
+		expect(writes.slice(0, 4)).toEqual([
 			`nmcli connection clone --temporary ${SOURCE} ceraui-search-wlan2`,
 			`nmcli connection modify --temporary ${CLONE} 802-11-wireless.bssid aa:00:00:00:00:02 connection.autoconnect no`,
 			`nmcli connection delete ${STALE}`,
 			`nmcli -w 12 connection up ${CLONE} ifname wlan2`,
 		]);
+		// After activation only earlier clones are cleaned up, never the new one.
+		expect(
+			writes.slice(4).every((c) => c === `nmcli connection delete ${STALE}`),
+		).toBe(true);
 		// The sibling's profile (bound to another MAC) is never the source.
 		expect(writes.join("\n")).not.toContain(OTHER);
 	});
@@ -293,6 +297,54 @@ describe("active-profile listing", () => {
 		const f = fakeRun();
 		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
 		await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => false);
+		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
+	});
+});
+
+describe("join's last check and stale clones", () => {
+	test("a hotspot that comes up during the stale-clone listing stops the activation", async () => {
+		const f = fakeRun();
+		let ap = false;
+		const run = async (bin: string, args: string[]) => {
+			const out = await f.run(bin, args);
+			// The mode flips to AP while the old clones are being listed.
+			if (args.join(" ") === "-t -f NAME,UUID connection show") ap = true;
+			return out;
+		};
+		const nm = createSearchNm({ run, macOf: async () => MAC });
+		expect(
+			await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => !ap),
+		).toBe("refused");
+		expect(f.calls.some((c) => c.includes("connection up"))).toBe(false);
+		expect(f.calls.at(-1)).toBe(`nmcli connection delete ${CLONE}`);
+	});
+
+	test("an earlier clone that is still active is not deleted before activation, only after", async () => {
+		const f = fakeRun();
+		let upDone = false;
+		const run = async (bin: string, args: string[]) => {
+			const line = args.join(" ");
+			if (line.includes("connection up")) upDone = true;
+			if (line === "-t -f DEVICE,UUID connection show --active") {
+				f.calls.push(`${bin} ${line}`);
+				return upDone ? `wlan2:${CLONE}\n` : `wlan2:${STALE}\n`;
+			}
+			return f.run(bin, args);
+		};
+		const nm = createSearchNm({ run, macOf: async () => MAC });
+		expect(
+			await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => true),
+		).toEqual({ activation: CLONE });
+		const up = f.calls.findIndex((c) => c.includes("connection up"));
+		const del = f.calls.indexOf(`nmcli connection delete ${STALE}`);
+		expect(up).toBeGreaterThan(-1);
+		expect(del).toBeGreaterThan(up);
+	});
+
+	test("an unreadable active listing deletes no earlier clone", async () => {
+		const f = fakeRun((args) => args.includes("--active"));
+		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => true);
 		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
 	});
 });
