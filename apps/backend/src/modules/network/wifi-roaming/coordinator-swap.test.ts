@@ -739,3 +739,291 @@ describe("continuity handover on arrival reports", () => {
 		expect(c.status().swap?.candidate).toBe("wlan3");
 	});
 });
+
+/*
+  A realistic dying link: after its last ACK the sender queues a short burst
+  on it, then its stall gate holds it out (nothing more queued, stall_gated),
+  and the ACK age keeps growing. Withdrawing the radio from the bond and
+  returning it re-adds the link under a new epoch, which the sender again
+  bursts on and then gates.
+*/
+type Dying = { burst: number; on: boolean };
+function harness(opts: {
+	burst: number;
+	timedOut?: boolean;
+	/** The stall gate holds the link out once the burst is over (default). */
+	gate?: boolean;
+	/** A re-added link gets the burst again (default). */
+	reBurst?: boolean;
+}) {
+	const w = new World();
+	w.station("wlan1", AP1);
+	w.station("wlan2", AP2);
+	const base = w.ports();
+	const dying = new Map<string, Dying>();
+	let frozen: ReturnType<World["snapshot"]> | undefined;
+	let freeze = false;
+	let nextEpoch = 100;
+	const reAdd = (ifname: string) => {
+		const d = dying.get(ifname);
+		if (!d) return;
+		const l = w.link(ifname);
+		l.epoch = nextEpoch++;
+		l.queued = 0;
+		l.arrived = 0;
+		l.ackedArrived = 0;
+		l.ageMs = null;
+		d.burst = opts.reBurst === false ? 0 : opts.burst;
+	};
+	const ports = {
+		...base,
+		releaseBondHold: (ifname: string) => {
+			base.releaseBondHold(ifname);
+			reAdd(ifname);
+		},
+		senderLinks: () => {
+			if (freeze && frozen) return frozen;
+			for (const [ifname, d] of dying) {
+				const l = w.link(ifname);
+				if (l.ageMs !== null) l.ageMs += 1_000;
+				if (d.burst > 0) {
+					d.burst--;
+					l.pps = 60;
+					l.over = {};
+				} else {
+					l.pps = 0;
+					l.over =
+						opts.gate === false
+							? {}
+							: opts.timedOut
+								? { stallGated: true, timedOut: true }
+								: { stallGated: true };
+				}
+			}
+			frozen = w.snapshot();
+			return frozen;
+		},
+	};
+	const c = new RoamingCoordinator(ports, {
+		radios: [{ ifname: "wlan1" }, { ifname: "wlan2" }],
+	});
+	const rounds = async (n: number) => {
+		for (let i = 0; i < n; i++) {
+			w.now += 1_000;
+			await c.step();
+		}
+	};
+	const role = (ifname: string) =>
+		c.status().radios.find((r) => r.ifname === ifname)?.role;
+	const kill = (ifname: string) => {
+		const l = w.link(ifname);
+		l.deliver = 0;
+		dying.set(ifname, { burst: opts.burst, on: true });
+	};
+	return {
+		w,
+		c,
+		rounds,
+		role,
+		kill,
+		setFreeze: (v: boolean) => {
+			freeze = v;
+		},
+		holds: (ifname: string) =>
+			w.bond.filter((b) => b === `hold:${ifname}`).length,
+	};
+}
+
+describe("dead verdicts on a stall-gated link", () => {
+	test("a holder the sender reports timed out is relabelled at once, even after few packets", async () => {
+		const t = harness({ burst: 0, timedOut: true });
+		await t.rounds(6);
+		expect(t.role("wlan1")).toBe("holder");
+		t.kill("wlan1");
+		await t.rounds(3);
+		expect(t.c.status().lastOutcome).toStartWith("holder-dead:wlan1");
+	});
+
+	test("a port freeze after the stall gate does not make a dead radio undetectable", async () => {
+		const t = harness({ burst: 3 });
+		await t.rounds(6);
+		t.kill("wlan1");
+		await t.rounds(4);
+		expect(t.role("wlan1")).toBe("assister");
+		t.setFreeze(true);
+		await t.rounds(5);
+		t.setFreeze(false);
+		t.w.rates.set("wlan2", { attributedBps: 1_300_000, encoderBps: 1_000_000 });
+		await t.rounds(60);
+		expect(t.holds("wlan1")).toBeGreaterThanOrEqual(1);
+	});
+
+	test("a dead radio is freed again on later searches, not only once", async () => {
+		const t = harness({ burst: 3 });
+		await t.rounds(6);
+		t.kill("wlan1");
+		await t.rounds(4);
+		t.w.rates.set("wlan2", { attributedBps: 1_300_000, encoderBps: 1_000_000 });
+		await t.rounds(600);
+		expect(t.holds("wlan1")).toBeGreaterThanOrEqual(2);
+	});
+
+	test("a dead assister whose link got fewer than 20 packets before the stall gate is still freed", async () => {
+		const t = harness({ burst: 0 });
+		await t.rounds(6);
+		t.kill("wlan2");
+		t.w.rates.set("wlan1", { attributedBps: 1_300_000, encoderBps: 1_000_000 });
+		await t.rounds(60);
+		expect(t.holds("wlan2")).toBeGreaterThanOrEqual(1);
+	});
+});
+
+describe("what counts as owed", () => {
+	test("packets queued right after the last ACK's sample count", async () => {
+		const t = await settled();
+		await t.rounds(5);
+		const l = t.w.link("wlan2");
+		// Idle and connected, never gated: only the owed packets can make it
+		// dead. 25 are queued in the second after its last ACK, then nothing.
+		l.pps = 0;
+		await t.rounds(1);
+		const ackAt = t.w.now;
+		l.deliver = 0;
+		l.pps = 25;
+		await t.rounds(1);
+		l.pps = 0;
+		for (let i = 0; i < 25; i++) {
+			l.ageMs = t.w.now + 1_000 - ackAt;
+			await t.rounds(1);
+		}
+		expect(t.w.bond).toContain("hold:wlan2");
+	});
+
+	test("counters from another epoch never count toward the owed packets", async () => {
+		const t = await settled();
+		await t.rounds(5);
+		const l = t.w.link("wlan2");
+		l.pps = 0;
+		l.queued = 0;
+		l.arrived = 0;
+		l.ackedArrived = 0;
+		await t.rounds(3);
+		// A new connection whose counters start above the old one's, with an
+		// ACK age carried over from before it (longer than the new epoch):
+		// only its own counters may be compared.
+		l.epoch = 50;
+		l.queued = 30;
+		l.arrived = 30;
+		l.ackedArrived = 30;
+		l.deliver = 0;
+		// The age reaches back to the old connection's last samples (queued 0),
+		// not before them.
+		for (let i = 0; i < 30; i++) {
+			l.ageMs = 3_000 + i * 1_000;
+			await t.rounds(1);
+		}
+		expect(t.w.bond).not.toContain("hold:wlan2");
+		expect(t.role("wlan2")).toBe("assister");
+	});
+});
+
+describe("the dead-evidence state machine", () => {
+	/** wlan2 is a carrying assister; settle, then make it idle (owes nothing). */
+	async function idleAssister() {
+		const t = await settled();
+		await t.rounds(5);
+		const l = t.w.link("wlan2");
+		l.pps = 0;
+		l.deliver = 0;
+		t.w.rates.set("wlan1", { attributedBps: 1_300_000, encoderBps: 1_000_000 });
+		await t.rounds(1);
+		return { t, l };
+	}
+
+	/** Silence for the next rounds: the age grows by a second each round. */
+	async function silent(
+		t: Awaited<ReturnType<typeof settled>>,
+		l: Link,
+		n: number,
+	) {
+		for (let i = 0; i < n; i++) {
+			l.ageMs = (l.ageMs ?? 0) + 1_000;
+			await t.rounds(1);
+		}
+	}
+
+	test("a link the sender times out is dead without owed packets or a stall gate", async () => {
+		const { t, l } = await idleAssister();
+		l.over = { timedOut: true };
+		await silent(t, l, 25);
+		expect(t.w.bond).toContain("hold:wlan2");
+	});
+
+	test("a link the sender reports disconnected is dead without owed packets or a stall gate", async () => {
+		const { t, l } = await idleAssister();
+		l.over = { connected: false };
+		await silent(t, l, 25);
+		expect(t.w.bond).toContain("hold:wlan2");
+	});
+
+	/** Dead on owed packets alone: 25 queued after its last ACK, no gate. */
+	async function deadOnOwedPackets() {
+		const { t, l } = await idleAssister();
+		const ackAt = t.w.now;
+		l.pps = 25;
+		await t.rounds(1);
+		l.pps = 0;
+		// The age the next sample reports: since the ACK, as of that sample.
+		l.ageMs = t.w.now + 1_000 - ackAt;
+		await t.rounds(1);
+		return { t, l, ackAt };
+	}
+
+	test("a report pause keeps a verdict made on packets that leave the history", async () => {
+		const { t, l } = await deadOnOwedPackets();
+		await silent(t, l, 2);
+		t.w.frozen = true;
+		await t.rounds(8);
+		t.w.frozen = false;
+		await silent(t, l, 20);
+		expect(t.w.bond).toContain("hold:wlan2");
+	});
+
+	test("a report pause stops the grace clock instead of letting it run", async () => {
+		const { t, l } = await deadOnOwedPackets();
+		await silent(t, l, 2);
+		t.w.frozen = true;
+		await t.rounds(8);
+		t.w.frozen = false;
+		// About 6 s of the grace period passed before the reports froze; the
+		// paused stretch does not count, so no recall right after resuming.
+		await silent(t, l, 2);
+		expect(t.w.bond).not.toContain("hold:wlan2");
+		await silent(t, l, 10);
+		expect(t.w.bond).toContain("hold:wlan2");
+	});
+
+	test("a dead link re-added without an ACK stays dead and is freed again", async () => {
+		const t = harness({ burst: 3, gate: false, reBurst: false });
+		await t.rounds(6);
+		t.kill("wlan1");
+		await t.rounds(4);
+		t.w.rates.set("wlan2", { attributedBps: 1_300_000, encoderBps: 1_000_000 });
+		await t.rounds(600);
+		expect(t.holds("wlan1")).toBeGreaterThanOrEqual(2);
+	});
+
+	test("more ACK entries are a sign of life, whatever the reported age does", async () => {
+		const { t, l } = await deadOnOwedPackets();
+		await silent(t, l, 2);
+		// The path recovers; the port reports the same coarse age a while longer.
+		l.deliver = 1;
+		l.pps = 60;
+		const age = l.ageMs;
+		for (let i = 0; i < 20; i++) {
+			l.ageMs = age;
+			await t.rounds(1);
+		}
+		expect(t.w.bond).not.toContain("hold:wlan2");
+	});
+});
