@@ -86,6 +86,12 @@ import { canHotspot, HOTSPOT_UP_TO } from "./wifi-hotspot-types.ts";
 import type { HybridRestoreAttempt } from "./wifi-hybrid-target-diagnostics.ts";
 import type { WifiInterface } from "./wifi-interfaces.ts";
 import { takeWifiModeRequestRefusal } from "./wifi-mode-request.ts";
+import {
+	bindingForRow,
+	type WifiOperationBinding,
+	wifiOperationChanged,
+	wifiOperationGuard,
+} from "./wifi-operation-binding.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
 import { isProvisioningSetupHeld } from "./wifi-provisioning-ap.ts";
 
@@ -105,10 +111,12 @@ export interface AdapterModeTransitionDeps {
 		device: number,
 		publish: HotspotOutcomePublisher,
 		restoreAttempt?: HybridRestoreAttempt,
+		binding?: WifiOperationBinding,
 	) => Promise<HotspotStartResult>;
 	readonly stopHotspot: (
 		device: number,
 		publish: HotspotOutcomePublisher,
+		binding?: WifiOperationBinding,
 	) => Promise<HotspotStopResult>;
 	readonly publishOutcome: AdapterModeOutcomePublisher;
 	readonly publishHotspotOutcome: HotspotOutcomePublisher;
@@ -236,7 +244,11 @@ export async function setWifiAdapterMode(
 	if (await deps.isAdapterBusy(macAddress)) {
 		return refuse(wifiInterface.id, "DEVICE_BUSY", publishRefusal);
 	}
-	const transition = async (): Promise<SetWifiAdapterModeOutput> => {
+	const transition = async (
+		binding = target === "station"
+			? undefined
+			: bindingForRow(macAddress, wifiInterface),
+	): Promise<SetWifiAdapterModeOutput> => {
 		const id = wifiInterface.id;
 		const owner = resolveWifiAdapterOwner(macAddress, wifiInterface);
 		const intentKey = normalizeMacAddress(owner.split("@")[0])
@@ -311,6 +323,9 @@ export async function setWifiAdapterMode(
 			return refuse(id, "DEVICE_BUSY", publishRefusal);
 		}
 
+		const operation = wifiOperationGuard(binding);
+		if (binding && (!(await operation.check()) || !operation.current()))
+			return refuse(id, "radio-changed", publishRefusal);
 		const undo = recordWifiAdapterModeIntent(intentKey, target, {
 			read: deps.readPersistedMode,
 			persist: deps.persistMode,
@@ -325,14 +340,26 @@ export async function setWifiAdapterMode(
 				publishPending: () => {
 					deps.publishOutcome(id, { pending: true, mode: target });
 				},
-				start: () => deps.startHotspot(id, chainModeTerminal(id, target, deps)),
-				stop: (terminal) =>
-					deps.stopHotspot(
-						id,
-						terminal
-							? chainModeTerminal(id, target, deps)
-							: deps.publishHotspotOutcome,
-					),
+				start: async () => {
+					if (binding && (!(await operation.check()) || !operation.current())) {
+						deps.publishOutcome(id, wifiOperationChanged);
+						return wifiOperationChanged;
+					}
+					const publish = chainModeTerminal(id, target, deps);
+					return binding
+						? deps.startHotspot(id, publish, undefined, binding)
+						: deps.startHotspot(id, publish);
+				},
+				stop: async (terminal) => {
+					if (binding && (!(await operation.check()) || !operation.current()))
+						return wifiOperationChanged;
+					const publish = terminal
+						? chainModeTerminal(id, target, deps)
+						: deps.publishHotspotOutcome;
+					return binding
+						? deps.stopHotspot(id, publish, binding)
+						: deps.stopHotspot(id, publish);
+				},
 			});
 			succeeded = result.success;
 			return result;

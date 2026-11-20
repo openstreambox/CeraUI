@@ -50,6 +50,7 @@ export type HotspotOutcomePublisher = {
 		kind: HotspotOutcomeKind,
 		device: number | string,
 		outcome: HotspotToggleOutcome,
+		attempt?: string,
 	): void;
 	/**
 	 * A chained caller (a mode change) learns which Start operation its terminal
@@ -62,17 +63,28 @@ export const publishHotspotOutcome: HotspotOutcomePublisher = (
 	kind,
 	device,
 	outcome,
+	attempt,
 ) =>
 	withoutWifiRequestBinding(() => {
 		broadcastMsg("wifi", {
 			hotspot: {
 				[kind]: outcome.success
 					? outcome.pending
-						? { device, pending: true, reason: outcome.reason }
-						: { device, success: true }
+						? {
+								device,
+								pending: true,
+								reason: outcome.reason,
+								...(kind === "start" && attempt ? { attempt } : {}),
+							}
+						: {
+								device,
+								success: true,
+								...(kind === "start" && attempt ? { attempt } : {}),
+							}
 					: {
 							device,
 							error: outcome.error,
+							...(kind === "start" && attempt ? { attempt } : {}),
 							...(outcome.reason === undefined
 								? {}
 								: { reason: outcome.reason }),

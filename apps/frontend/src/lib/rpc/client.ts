@@ -35,6 +35,7 @@ import type {
 	HotspotConfigOutput,
 	HotspotPrepareInput,
 	HotspotPrepareOutput,
+	HotspotStartInput,
 	HotspotToggleInput,
 	HotspotToggleOutput,
 	InstallUpdatesNowInput,
@@ -892,7 +893,7 @@ export interface TypedRPC {
 		connectNew: (input: WifiNewInput) => Promise<WifiOperationOutput>;
 		forget: (input: WifiForgetInput) => Promise<SuccessResponse>;
 		scan: (input: WifiScanInput) => Promise<SuccessResponse>;
-		hotspotStart: (input: HotspotToggleInput) => Promise<HotspotToggleOutput>;
+		hotspotStart: (input: HotspotStartInput) => Promise<HotspotToggleOutput>;
 		hotspotStop: (input: HotspotToggleInput) => Promise<SuccessResponse>;
 		hotspotPrepare: (
 			input: HotspotPrepareInput,

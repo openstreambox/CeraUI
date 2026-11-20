@@ -121,6 +121,8 @@ function makeStartDeps(
 ): HotspotActivationDeps {
 	return {
 		nmConnect: async () => true,
+		readProfileInstance: async () => undefined,
+		releaseConcurrentInterface: async () => true,
 		nmConnSetFields: async () => true,
 		nmApConnAdd: async () => "hotspot-uuid",
 		nmConnDelete: async () => true,
@@ -140,7 +142,7 @@ function makeStopDeps(over: Partial<HotspotStopDeps>): HotspotStopDeps {
 	return {
 		nmConnSetFields: async () => true,
 		nmDisconnect: async () => true,
-		releaseConcurrentInterface: async () => {},
+		releaseConcurrentInterface: async () => true,
 		broadcastState: () => {},
 		setDupIpSuppression: () => {},
 		rescan: async () => {},

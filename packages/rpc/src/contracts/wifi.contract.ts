@@ -9,6 +9,7 @@ import {
 	hotspotConfigOutputSchema,
 	hotspotPrepareInputSchema,
 	hotspotPrepareOutputSchema,
+	hotspotStartInputSchema,
 	hotspotToggleInputSchema,
 	portalWindowInputSchema,
 	portalWindowStatusSchema,
@@ -63,7 +64,7 @@ export const wifiContract = oc.router({
 	/**
 	 * Start hotspot mode
 	 */
-	hotspotStart: oc.input(hotspotToggleInputSchema).output(hotspotToggleOutputSchema),
+	hotspotStart: oc.input(hotspotStartInputSchema).output(hotspotToggleOutputSchema),
 
 	/**
 	 * Stop hotspot mode
