@@ -94,9 +94,12 @@ radio associated without an address is not idle.
     the phys those use. The set is republished on every role, hold or
     ownership change. Each rescan of a radio goes out under its
     owner-resolved adapter lock after a fresh, fail-closed read of its mode
-    and phy. The scan RPC holds that lock across the dispatch, and the rescan
-    sees it already owns the lock and dispatches inline. So a named scan of
-    an eligible radio really runs, and a busy radio is reported as busy.
+    and phy. The scan RPC holds that lock across the dispatch and says so
+    (`underHeldLock`), so its own radio's scan goes out inline under it,
+    re-checked right before the scan; every other rescan contends for the
+    lock, including one a lock holder starts without awaiting (hotspot
+    teardown). So a named scan of an eligible radio really runs, a busy radio
+    is reported as busy, and no scan escapes a released lock.
   - `bond-hold.ts`: a radio leaves the SRTLA bond while it searches.
   - `ownership.ts`: other Wi-Fi automation leaves coordinator-owned radios
     alone. A radio in hotspot use is not coordinator-owned.
