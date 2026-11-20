@@ -293,7 +293,6 @@ export type HotspotConfigDeps = {
 			conn?: string;
 		},
 	) => void;
-	configureProfile?: typeof configureHotspotProfile;
 	/** The adapter's own capability read — the sole evidence for a WPA3 offer. */
 	getCapabilities: (ifname: string) => WifiAdapterCapabilities | undefined;
 	readHybridChannel?: typeof readHybridStationChannel;
@@ -303,7 +302,6 @@ export type HotspotConfigDeps = {
 };
 
 export const defaultHotspotConfigDeps: HotspotConfigDeps = {
-	configureProfile: configureHotspotProfile,
 	nmConnSetFields,
 	nmConnect,
 	wifiUpdateSavedConns,
@@ -420,6 +418,8 @@ export async function wifiHotspotConfig(
 	)
 		return refuse("radio-unverified");
 	if (!canHotspot(wifiInterface)) return refuse();
+	// Make sure the interface is already in hotspot mode
+	if (!isHotspotActive(wifiInterface)) return refuse();
 
 	// Make sure all required fields are present and valid
 	if (

@@ -201,7 +201,6 @@ export type WifiInterfaceResponseMessage = Pick<
 		clients?: HotspotClients;
 		warnings?: string[];
 	};
-	radio_identity?: BaseWifiInterface["radioIdentity"];
 	supports_hotspot?: true;
 	supports_ap_sta_concurrency?: true;
 	mode?: "station" | "hotspot";
@@ -340,8 +339,6 @@ export function wifiBuildMsg() {
 			wifiRadioIdentity.state.rows.get(wifiInterface.ifname),
 		);
 		if (incarnation !== undefined) entry.incarnation = incarnation;
-		if (wifiInterface.radioIdentity)
-			entry.radio_identity = wifiInterface.radioIdentity;
 		if (wifiInterface.degradedReason !== undefined) {
 			entry.degraded_reason = wifiInterface.degradedReason;
 		}
@@ -353,7 +350,7 @@ export function wifiBuildMsg() {
 		}
 		ifs[id] = entry;
 
-		if (canHotspot(wifiInterface)) {
+		if (isApMode(wifiInterface) || isConcurrentHotspot(wifiInterface)) {
 			// One capability read backs both derivations, so the security the
 			// device OFFERS and the width it REPORTS can never describe different
 			// radios.

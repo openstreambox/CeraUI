@@ -1,5 +1,3 @@
-import { wifiHotspotDelete } from "../../modules/wifi/wifi-hotspot-profile.ts";
-import { resolveHotspotRadioDevice } from "../../modules/wifi/wifi-interfaces.ts";
 /**
  * WiFi Procedures
  * Wraps existing WiFi logic from modules/wifi/
@@ -309,18 +307,6 @@ export const wifiForgetProcedure = authedProcedure
 	.output(successResponseSchema)
 	.handler(async ({ input, context }): Promise<MutationResult> => {
 		if (mockWifiBusy()) return { success: false, error: "DEVICE_BUSY" };
-		for (const iface of Object.values(getWifiInterfacesByMacAddress())) {
-			if (iface && "hotspot" in iface && iface.hotspot.conn === input.uuid) {
-				const result = await wifiHotspotDelete(iface.id);
-				return result.success
-					? { success: true }
-					: {
-							success: false,
-							error: result.error === "DEVICE_BUSY" ? "DEVICE_BUSY" : "generic",
-						};
-			}
-		}
-
 		const ws = context.ws;
 		const lockKey = wifiAdapterLockKeyForConnectionUuid(input.uuid);
 		const busy = await runGuarded(lockKey, () => {
@@ -378,9 +364,7 @@ export const hotspotStartProcedure = authedProcedure
 					setMockWifiConnection(device, { activeNetwork: undefined });
 				}
 			}
-			publishHotspotOutcome("start", resolveHotspotRadioDevice(input), {
-				success: true,
-			});
+			publishHotspotOutcome("start", Number(input.device), { success: true });
 			return { success: true, accepted: true };
 		}
 		const result = await wifiHotspotStart({ device: Number(input.device) });
@@ -408,10 +392,7 @@ export const hotspotPrepareProcedure = authedProcedure
 			const { name, password } = getMockHotspotConfig(device);
 			return { success: true, name, password };
 		}
-		return wifiHotspotPrepare({
-			device: resolveHotspotRadioDevice(input),
-			...chosen,
-		});
+		return wifiHotspotPrepare({ device: Number(input.device), ...chosen });
 	});
 
 /**
@@ -422,18 +403,8 @@ export const hotspotStopProcedure = authedProcedure
 	.output(hotspotToggleOutputSchema)
 	.handler(async ({ input }): Promise<HotspotToggleOutput> => {
 		if (mockWifiBusy()) return refuseHotspot("stop", input.device);
-		if (
-			!shouldUseMocks() &&
-			!Number.isFinite(resolveHotspotRadioDevice(input))
-		) {
-			return { success: false, error: "no-device" };
-		}
 		// Admission probe, on `hotspotStart`'s terms.
-		if (
-			await adapterBusy(
-				wifiAdapterLockKeyForDeviceId(resolveHotspotRadioDevice(input)),
-			)
-		) {
+		if (await adapterBusy(wifiAdapterLockKeyForDeviceId(input.device))) {
 			return refuseHotspot("stop", input.device);
 		}
 		if (shouldUseMocks()) {
@@ -441,15 +412,11 @@ export const hotspotStopProcedure = authedProcedure
 				const device = resolveMockWifiDevice(input.device);
 				if (device) getMockState().wifiModes[device] = "station";
 			}
-			publishHotspotOutcome("stop", resolveHotspotRadioDevice(input), {
-				success: true,
-			});
+			publishHotspotOutcome("stop", Number(input.device), { success: true });
 			return { success: true };
 		}
 
-		const result = await wifiHotspotStop({
-			device: resolveHotspotRadioDevice(input),
-		});
+		const result = await wifiHotspotStop({ device: Number(input.device) });
 		if (!result.success) return { success: false, error: result.error };
 		return { success: true };
 	});
@@ -604,10 +571,3 @@ export const setWifiCountryProcedure = authedProcedure
 
 		return setWifiCountry(input.country);
 	});
-
-export const hotspotDeleteProcedure = authedProcedure
-	.input(hotspotToggleInputSchema)
-	.output(successResponseSchema)
-	.handler(async ({ input }) =>
-		wifiHotspotDelete(resolveHotspotRadioDevice(input)),
-	);

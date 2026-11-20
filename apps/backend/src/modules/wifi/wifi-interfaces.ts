@@ -99,8 +99,6 @@ import {
 import {
 	type RadioIdentity,
 	recordWifiRadioShadowFailure,
-	resolveWirelessAddress,
-	type WifiRadioIdentity,
 	wifiRadioIdentity,
 } from "./wifi-radio-identity.ts";
 import { wifiRadioObservation } from "./wifi-radio-observation.ts";
@@ -157,7 +155,6 @@ export type WifiAdapterDegradedReason =
 	| "permanent-mac-unresolved";
 
 export type BaseWifiInterface = {
-	radioIdentity?: WifiRadioIdentity;
 	id: WifiInterfaceId; // numeric id for the adapter - temporary for each CeraLive execution
 	ifname: string;
 	conn: ConnectionUUID | null; // the active connection, gated on the radio holding an IP
@@ -215,7 +212,6 @@ function parseNmcliBoolean(value: string | undefined): boolean | undefined {
 
 export function parseWifiDeviceProperties(
 	prop: readonly string[] | undefined,
-	phyApSupport?: boolean,
 ): ParseResult<WifiDeviceProperties> {
 	if (prop === undefined || prop.length < 5) {
 		return parseFail(
@@ -226,7 +222,7 @@ export function parseWifiDeviceProperties(
 	}
 
 	const [vendorRaw, productRaw, apRaw, fiveGhzRaw, twoGhzRaw] = prop;
-	const supportsAp = phyApSupport ?? parseNmcliBoolean(apRaw);
+	const supportsAp = parseNmcliBoolean(apRaw);
 	const supports5Ghz = parseNmcliBoolean(fiveGhzRaw);
 	const supports2Ghz = parseNmcliBoolean(twoGhzRaw);
 	if (
@@ -1233,20 +1229,4 @@ async function discoverWifiDevices() {
 		scheduleWifiUpdate(0);
 	triggerNetworkInterfacesChange();
 	return statusChange;
-}
-
-/** A supplied stable target must resolve exactly; never fall back to another radio. */
-export function resolveHotspotRadioDevice(input: {
-	device: string;
-	radio_id?: string | undefined;
-}): number {
-	if (input.radio_id !== undefined) {
-		for (const [mac, radio] of Object.entries(
-			getWifiInterfacesByMacAddress(),
-		)) {
-			if (mac === input.radio_id && !radio.removed) return radio.id;
-		}
-		return Number.NaN;
-	}
-	return Number(input.device);
 }

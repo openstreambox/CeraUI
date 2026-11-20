@@ -76,12 +76,7 @@ beforeEach(async () => {
 	await wifiRadioIdentity.discover([]);
 	clearWifiInterfacesForTest();
 	resetUsbNetMarkers();
-	processIfconfigOutput(
-		snapshot,
-		undefined,
-		undefined,
-		(name) => name === "wlan0",
-	);
+	processIfconfigOutput(snapshot);
 	await refreshUsbNetMarkers(["wlan0", "wwu1c2"], constructedTwinDeps());
 	addWifiInterface(mac, {
 		id: 0,
@@ -96,11 +91,6 @@ beforeEach(async () => {
 	onWifiChange(() => undefined);
 	setWifiState({});
 	setPermanentMacReaderForTest(async () => mac);
-	// These synthetic radios have no sysfs nodes. Other names stay non-wireless
-	// unless a test explicitly supplies radio evidence; NM still decides type.
-	spyOn(radioIdentity, "isWirelessInterface").mockImplementation((name) =>
-		(wifiIfnames as readonly string[]).includes(name),
-	);
 	spyOn(nm, "nmDevices").mockResolvedValue([`wlan0:wifi:connected:${ap}`]);
 	spyOn(nm, "nmConnGetFields").mockResolvedValue(["ap"]);
 	spyOn(hotspotDiscovery, "handleHotspotConn").mockResolvedValue(undefined);
@@ -410,22 +400,9 @@ test.each(["", "unknown"])(
 	},
 );
 
-test("discovery admits a sysfs radio outside wl* names without making readiness wait for it", async () => {
-	const otherMac = "02:00:00:00:00:02";
-	spyOn(radioIdentity, "isWirelessInterface").mockImplementation(
-		(name) =>
-			name === "ath0" || (wifiIfnames as readonly string[]).includes(name),
-	);
-	setPermanentMacReaderForTest(async (name) =>
-		name === "ath0" ? otherMac : mac,
-	);
-	spyOn(nm, "nmDeviceProp").mockImplementation(async (name, fields) =>
-		fields === "GENERAL.HWADDR"
-			? [name === "ath0" ? otherMac : mac]
-			: ["Test", "radio", "yes", "no", "yes"],
-	);
+test("discovery ignores an NM Wi-Fi device outside supported radio and clap names", async () => {
 	processIfconfigOutput(
-		`${snapshot}\n\nath0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>\n        ether ${otherMac}`,
+		`${snapshot}\n\nath0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>\n        ether 02:00:00:00:00:02`,
 	);
 	spyOn(nm, "nmDevices").mockResolvedValue([
 		`wlan0:wifi:connected:${ap}`,
@@ -433,38 +410,9 @@ test("discovery admits a sysfs radio outside wl* names without making readiness 
 	]);
 	await wifiUpdateDevices();
 	expect(
-		Object.values(getWifiInterfacesByMacAddress())
-			.map((entry) => entry.ifname)
-			.sort(),
-	).toEqual(["ath0", "wlan0"]);
+		Object.values(getWifiInterfacesByMacAddress()).map((entry) => entry.ifname),
+	).toEqual(["wlan0"]);
 	expect(wifiZonesReady()).toBe(true);
-});
-
-test("an ifindex change republishes a sysfs radio outside wl* names", () => {
-	spyOn(radioIdentity, "isWirelessInterface").mockImplementation(
-		(name) =>
-			name === "ath0" || (wifiIfnames as readonly string[]).includes(name),
-	);
-	const output = `${snapshot}\n\nath0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>\n        ether 02:00:00:00:00:02`;
-	processIfconfigOutput(
-		output,
-		undefined,
-		0,
-		undefined,
-		undefined,
-		new Map([["ath0", 41]]),
-	);
-	const info = spyOn(logger, "info");
-	info.mockClear();
-	processIfconfigOutput(
-		output,
-		undefined,
-		0,
-		undefined,
-		undefined,
-		new Map([["ath0", 42]]),
-	);
-	expect(info).toHaveBeenCalledWith("updated wifi devices");
 });
 
 test.each(
@@ -483,7 +431,6 @@ test.each(
 			undefined,
 			0,
 			undefined,
-			undefined,
 			new Map([[ifname, 41]]),
 		);
 		const oldRow = `${ifname}:wireguard:connected:old-vpn`;
@@ -500,7 +447,6 @@ test.each(
 			output,
 			undefined,
 			0,
-			undefined,
 			undefined,
 			new Map([[ifname, 42]]),
 		);
@@ -527,28 +473,14 @@ test.each(["wlwg0", "wlx020000000001"])(
 	async (ifname) => {
 		const output = `${snapshot}\n\n${ifname}: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>\n        inet 172.22.0.2  netmask 255.255.255.0\n        ether 02:00:00:00:00:02`;
 		const ifindices = new Map([[ifname, 41]]);
-		processIfconfigOutput(
-			output,
-			undefined,
-			0,
-			undefined,
-			undefined,
-			ifindices,
-		);
+		processIfconfigOutput(output, undefined, 0, undefined, ifindices);
 		spyOn(nm, "nmDevices").mockResolvedValue([
 			`wlan0:wifi:connected:${ap}`,
 			`${ifname}:wireguard:connected:current-vpn`,
 		]);
 		await wifiUpdateDevices();
 		const h = recovered();
-		processIfconfigOutput(
-			output,
-			undefined,
-			100,
-			undefined,
-			undefined,
-			ifindices,
-		);
+		processIfconfigOutput(output, undefined, 100, undefined, ifindices);
 		await h.controller.requestReconcile();
 		expect(wifiZonesReady()).toBe(true);
 		expect(h.effects).toEqual(["ruleset"]);
@@ -604,7 +536,6 @@ test.each(["wlwg0", "wlx020000000001"])(
 			snapshot.replace("wlan0", ifname),
 			undefined,
 			0,
-			undefined,
 			undefined,
 			new Map([[ifname, 42]]),
 		);
