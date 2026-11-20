@@ -22,6 +22,7 @@ import {
 import { initPreviewSocketData } from "../modules/ui/preview-proxy.ts";
 import { createServerWebSocketHandler, initSocketData } from "./adapter.ts";
 import { permitsE2eWorkerUpgrade } from "./e2e-worker-admission.ts";
+import { startLocalIngress } from "./local-ingress.ts";
 import { issueKioskSessionToken } from "./procedures/auth.procedure.ts";
 import { permitsScenarioDriver } from "./scenario-driver-admission.ts";
 import type { ServerSocketData } from "./types.ts";
@@ -188,6 +189,56 @@ async function handleRequest(
 	return new Response("Not Found", { status: 404 });
 }
 
+/**
+ * WebSocket upgrade on the TCP listener. It never reads front-door evidence:
+ * `X-Ceralive-Button-Path` is honoured only on the private local ingress.
+ */
+export function upgradeTcpRequest(
+	req: Request,
+	server: Server<ServerSocketData>,
+): Response | undefined {
+	const requestUrl = new URL(req.url);
+	const pathname = requestUrl.pathname;
+	if (pathname !== RPC_WS_PATH && pathname !== PREVIEW_WS_PATH) {
+		return new Response("WebSocket path not found", { status: 404 });
+	}
+	if (!permitsE2eWorkerUpgrade(req, e2eWorkerProxySecret)) {
+		return new Response("Worker proxy admission required", {
+			status: 403,
+		});
+	}
+	// Preview proxy fork — MUST branch on pathname BEFORE the oRPC
+	// upgrade, so `/preview` sockets carry a token (validated on open)
+	// instead of the RPC auth flags. The route ALWAYS upgrades on a
+	// pathname match; the proxy closes with 4401 after the upgrade when
+	// the token is invalid — never a pre-upgrade HTTP refusal.
+	if (pathname === PREVIEW_WS_PATH) {
+		const token = requestUrl.searchParams.get(PREVIEW_TOKEN_PARAM) ?? "";
+		const previewOk = server.upgrade(req, {
+			data: initPreviewSocketData(token),
+		});
+		if (previewOk) {
+			return undefined;
+		}
+		return new Response("WebSocket upgrade failed", { status: 500 });
+	}
+
+	const data = initSocketData();
+	if (
+		process.env.NODE_ENV !== "production" &&
+		runtimeAllowsDevelopment() &&
+		permitsScenarioDriver(req, scenarioDriverSecret)
+	) {
+		data.scenarioDriver = true;
+	}
+	const success = server.upgrade(req, { data });
+	if (success) {
+		// Bun automatically returns a 101 Switching Protocols response
+		return undefined;
+	}
+	return new Response("WebSocket upgrade failed", { status: 500 });
+}
+
 // Bun.serve cannot adopt a systemd-inherited fd: it has no `fd` option and
 // `unix` is a filesystem path (`unix: "3"` creates a file, not an fd bind). So
 // we always bind a real TCP port; the LISTEN_FDS handoff is logged in
@@ -230,50 +281,8 @@ function startServer(): void {
 
 			fetch(req, server) {
 				// Handle WebSocket upgrade
-				const upgradeHeader = req.headers.get("upgrade");
-				if (upgradeHeader?.toLowerCase() === "websocket") {
-					const requestUrl = new URL(req.url);
-					const pathname = requestUrl.pathname;
-					if (pathname !== RPC_WS_PATH && pathname !== PREVIEW_WS_PATH) {
-						return new Response("WebSocket path not found", { status: 404 });
-					}
-					if (!permitsE2eWorkerUpgrade(req, e2eWorkerProxySecret)) {
-						return new Response("Worker proxy admission required", {
-							status: 403,
-						});
-					}
-					// Preview proxy fork — MUST branch on pathname BEFORE the oRPC
-					// upgrade, so `/preview` sockets carry a token (validated on open)
-					// instead of the RPC auth flags. The route ALWAYS upgrades on a
-					// pathname match; the proxy closes with 4401 after the upgrade when
-					// the token is invalid — never a pre-upgrade HTTP refusal.
-					if (pathname === PREVIEW_WS_PATH) {
-						const token =
-							requestUrl.searchParams.get(PREVIEW_TOKEN_PARAM) ?? "";
-						const previewOk = server.upgrade(req, {
-							data: initPreviewSocketData(token),
-						});
-						if (previewOk) {
-							return undefined;
-						}
-						return new Response("WebSocket upgrade failed", { status: 500 });
-					}
-
-					const data = initSocketData();
-					if (
-						process.env.NODE_ENV !== "production" &&
-						runtimeAllowsDevelopment() &&
-						permitsScenarioDriver(req, scenarioDriverSecret)
-					) {
-						data.scenarioDriver = true;
-					}
-					const success = server.upgrade(req, { data });
-					if (success) {
-						// Bun automatically returns a 101 Switching Protocols response
-						return undefined;
-					}
-					return new Response("WebSocket upgrade failed", { status: 500 });
-				}
+				if (req.headers.get("upgrade")?.toLowerCase() === "websocket")
+					return upgradeTcpRequest(req, server);
 
 				// Handle HTTP requests
 				return handleRequest(req, server);
@@ -309,10 +318,18 @@ function startServer(): void {
 	}
 }
 
+let localIngress: ReturnType<typeof startLocalIngress> = null;
+
 /**
  * Initialize and start the HTTP/WebSocket server
  */
 export function initServer(): void {
+	try {
+		localIngress ??= startLocalIngress();
+		if (localIngress) logger.info("Local ingress listener started");
+	} catch (error) {
+		logger.warn(`Local ingress unavailable: ${error}`);
+	}
 	const systemdSocket = getSystemdSocket();
 	if (systemdSocket) {
 		logger.warn(
@@ -344,6 +361,8 @@ export function getServer(): typeof server {
  * Stop the server
  */
 export function stopServer(): void {
+	localIngress?.stop(true);
+	localIngress = null;
 	if (server) {
 		server.stop();
 		server = null;
