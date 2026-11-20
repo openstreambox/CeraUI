@@ -753,8 +753,17 @@ export function setScanResultReaderForTest(
  * Concurrent callers for the SAME adapter join one run; callers for DIFFERENT
  * adapters each get their own, because a scan of one radio says nothing about
  * another.
+ *
+ * `adapterLockHeld`: the caller already holds `device`'s per-adapter Wi-Fi lock
+ * and awaits this run inside it (the scan RPC). While the roaming coordinator's
+ * scan gate is active, the run then dispatches that radio's scan under the
+ * caller's lock instead of taking it a second time, which the non-reentrant
+ * lock would refuse.
  */
-export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
+export function wifiRescan(
+	device?: WifiInterfaceId,
+	opts: { adapterLockHeld?: boolean } = {},
+): Promise<void> {
 	const key =
 		device === undefined ? WIFI_SCAN_ALL_KEY : wifiScanKeyForDevice(device);
 
@@ -762,9 +771,11 @@ export function wifiRescan(device?: WifiInterfaceId): Promise<void> {
 	if (joined) return joined;
 
 	const ifname = device === undefined ? undefined : ifnameForDevice(device);
-	const run = runRescan(key, ifname).finally(() => {
-		rescanInFlight.delete(key);
-	});
+	const run = runRescan(key, ifname, opts.adapterLockHeld === true).finally(
+		() => {
+			rescanInFlight.delete(key);
+		},
+	);
 	rescanInFlight.set(key, run);
 	return run;
 }
@@ -799,6 +810,7 @@ function rescanTargets(ifname: string | undefined): (string | undefined)[] {
 async function runRescan(
 	key: WifiScanKey,
 	ifname: string | undefined,
+	adapterLockHeld = false,
 ): Promise<void> {
 	try {
 		const targets = rescanTargets(ifname);
@@ -812,11 +824,15 @@ async function runRescan(
 			// While the coordinator runs, each scan goes out under the radio's
 			// adapter lock (the one hotspot changes hold) after a fresh look at
 			// its mode and phy. A busy lock or a refused check skips the radio.
-			const sent = await withDeviceLock(scanKeyForIfname(target), async () => {
+			const dispatch = async () => {
 				if (!(await mayScanNow(target))) return false;
 				await rescanAction(target);
 				return true;
-			});
+			};
+			const sent =
+				adapterLockHeld && target === ifname
+					? { success: true as const, result: await dispatch() }
+					: await withDeviceLock(scanKeyForIfname(target), dispatch);
 			if (sent.success && sent.result) scanned.push(target);
 		}
 

@@ -16,6 +16,7 @@ const SOURCE = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
 const CLONE = "33333333-3333-4333-8333-333333333333";
 const MAC = "02:00:00:00:00:0b";
+const STALE = "55555555-5555-4555-8555-555555555555";
 
 describe("parsers", () => {
 	test("iw link, associated and not", () => {
@@ -106,6 +107,8 @@ function fakeRun(fail: (args: string[]) => boolean = () => false) {
 		)
 			return "venue\n02\\:00\\:00\\:00\\:00\\:0a\n\n";
 		if (line === "iw dev") return IW_DEV_HYBRID;
+		if (line === "nmcli -t -f NAME,UUID connection show")
+			return `ceraui-search-wlan2:${STALE}\nceraui-search-wlan2:${CLONE}\nvenue:${SOURCE}\n`;
 		if (line.startsWith("nmcli connection clone"))
 			return `venue (${SOURCE}) cloned as ceraui-search-wlan2 (${CLONE}).`;
 		return "";
@@ -121,10 +124,12 @@ describe("join", () => {
 			activation: CLONE,
 		});
 		const writes = f.calls.filter((c) => /clone|modify|up|delete/.test(c));
+		// The earlier clone of this radio goes only after the last check before
+		// activation, and the new one is kept.
 		expect(writes).toEqual([
-			"nmcli connection delete id ceraui-search-wlan2",
 			`nmcli connection clone --temporary ${SOURCE} ceraui-search-wlan2`,
 			`nmcli connection modify --temporary ${CLONE} 802-11-wireless.bssid aa:00:00:00:00:02 connection.autoconnect no`,
+			`nmcli connection delete ${STALE}`,
 			`nmcli -w 12 connection up ${CLONE} ifname wlan2`,
 		]);
 		// The sibling's profile (bound to another MAC) is never the source.
@@ -262,5 +267,32 @@ describe("late checks", () => {
 		const writes = f.calls.filter((c) => /clone|modify| up |delete/.test(c));
 		expect(writes.some((c) => c.includes("connection up"))).toBe(false);
 		expect(writes.at(-1)).toBe(`nmcli connection delete ${CLONE}`);
+	});
+});
+
+describe("active-profile listing", () => {
+	test("an unreadable listing is reported as unread, not as nothing active", async () => {
+		const f = fakeRun((args) => args.includes("--active"));
+		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		expect(await nm.observe("wlan2")).toMatchObject({
+			activation: null,
+			activationRead: false,
+		});
+	});
+
+	test("a readable listing with nothing on the radio is read and empty", async () => {
+		const f = fakeRun();
+		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		expect(await nm.observe("wlan2")).toMatchObject({
+			activation: null,
+			activationRead: true,
+		});
+	});
+
+	test("a refused join leaves the earlier clone alone", async () => {
+		const f = fakeRun();
+		const nm = createSearchNm({ run: f.run, macOf: async () => MAC });
+		await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => false);
+		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
 	});
 });

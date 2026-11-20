@@ -205,7 +205,14 @@ export function createSearchNm(deps: SearchNmDeps) {
 		}
 	};
 
-	async function activeProfile(ifname: string): Promise<string | null> {
+	/**
+	 * UUID of the profile active on `ifname`, `null` when the listing shows
+	 * none, `undefined` when the listing could not be read. Callers must not
+	 * treat an unreadable listing as "nothing active".
+	 */
+	async function activeProfile(
+		ifname: string,
+	): Promise<string | null | undefined> {
 		const out = await quiet("nmcli", [
 			"-t",
 			"-f",
@@ -214,7 +221,8 @@ export function createSearchNm(deps: SearchNmDeps) {
 			"show",
 			"--active",
 		]);
-		for (const line of out?.split("\n") ?? []) {
+		if (out === undefined) return undefined;
+		for (const line of out.split("\n")) {
 			const [device, uuid] = splitTerse(line);
 			if (device === ifname && uuid && UUID_RE.test(uuid)) return uuid;
 		}
@@ -264,13 +272,24 @@ export function createSearchNm(deps: SearchNmDeps) {
 		return bySsid;
 	}
 
-	async function deleteOwned(ifname: string): Promise<void> {
-		await quiet("nmcli", [
+	/**
+	 * Remove this radio's earlier owned clones, keeping `keep`. Runs only after
+	 * the last check before activation, so it shares that check.
+	 */
+	async function deleteStaleOwned(ifname: string, keep: string): Promise<void> {
+		const out = await quiet("nmcli", [
+			"-t",
+			"-f",
+			"NAME,UUID",
 			"connection",
-			"delete",
-			"id",
-			searchProfileName(ifname),
+			"show",
 		]);
+		const owned = searchProfileName(ifname);
+		for (const line of out?.split("\n") ?? []) {
+			const [name, uuid] = splitTerse(line);
+			if (name === owned && uuid && uuid !== keep && UUID_RE.test(uuid))
+				await quiet("nmcli", ["connection", "delete", uuid]);
+		}
 	}
 
 	return {
@@ -285,7 +304,8 @@ export function createSearchNm(deps: SearchNmDeps) {
 				devs === undefined
 					? { phy: null, apOnPhy: null }
 					: apOnPhyOf(parseIwDev(devs), dev);
-			const activation = await activeProfile(dev);
+			const active = await activeProfile(dev);
+			const activation = active ?? null;
 			const locked = activation
 				? ((await profileFields(activation))?.bssid ?? "") !== ""
 				: false;
@@ -323,6 +343,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 				gateway,
 				routed: gateway !== null,
 				activation,
+				activationRead: active !== undefined,
 				bssidLocked: locked,
 				phy: mode.phy,
 				apOnPhy: mode.apOnPhy,
@@ -372,7 +393,6 @@ export function createSearchNm(deps: SearchNmDeps) {
 			const target = argMatch(BSSID_RE, bssid.toLowerCase());
 			const source = (await boundProfiles(dev)).get(ssid);
 			if (!source) return undefined;
-			await deleteOwned(dev);
 			const name = searchProfileName(dev);
 			const cloned = await quiet("nmcli", [
 				"connection",
@@ -397,6 +417,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 				await quiet("nmcli", ["connection", "delete", uuid]);
 				return JOIN_REFUSED;
 			}
+			if (modified !== undefined) await deleteStaleOwned(dev, uuid);
 			const up =
 				modified !== undefined &&
 				(await quiet(
