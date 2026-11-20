@@ -1,7 +1,7 @@
 import type { UsbDevicesWire, UsbDeviceWireNode } from "@ceraui/rpc/schemas";
 import { describe, expect, it } from "vitest";
 
-import { devicesPageModel } from "./devices-model";
+import { devicesPageModel, isBoardInternal } from "./devices-model";
 
 function node(
 	overrides: Partial<UsbDeviceWireNode> &
@@ -221,7 +221,142 @@ describe("devices page model", () => {
 			name: "Modem slot inside",
 		});
 		const builtIn = page.groups.find((group) => group.builtIn);
-		expect(builtIn?.rows.map((row) => row.key).sort()).toEqual(["bt", "hub"]);
+		expect(builtIn?.rows.map((row) => row.key)).toEqual(["bt"]);
+		expect(builtIn?.internals.map((row) => row.key)).toEqual(["hub"]);
+		expect(builtIn?.portClass).toBeNull();
+	});
+
+	it("folds root hubs into Built in and leaves a port hub where it is plugged in", () => {
+		const page = devicesPageModel(
+			wire([
+				node({
+					key: "root-usb3",
+					socketKey: "fc000000.usb:root",
+					name: "USB root hub",
+					label: null,
+					scope: "root",
+					kind: "hub",
+					portPath: null,
+					product: "xHCI Host Controller",
+					controller: "fc000000.usb",
+				}),
+				node({
+					key: "root-usb2",
+					socketKey: "fc000000.usb:root",
+					name: "USB root hub",
+					label: null,
+					scope: "root",
+					kind: "hub",
+					portPath: null,
+					product: "xHCI Host Controller",
+					controller: "fc000000.usb",
+					speedClass: "usb2",
+				}),
+				node({
+					key: "ehci",
+					socketKey: "fc880000.usb:root",
+					name: "USB root hub",
+					label: null,
+					scope: "root",
+					kind: "hub",
+					portPath: null,
+					product: "EHCI Host Controller",
+					controller: "fc880000.usb",
+					portClass: "usb2",
+					colour: null,
+				}),
+				node({
+					key: "ohci",
+					socketKey: "fc840000.usb:root",
+					name: "USB root hub",
+					label: null,
+					scope: "root",
+					kind: "hub",
+					portPath: null,
+					product: "Generic Platform OHCI controller",
+					controller: "fc840000.usb",
+					speedClass: "full",
+					portClass: null,
+					colour: null,
+				}),
+				node({
+					key: "onboard",
+					socketKey: "fc800000.usb:1",
+					name: "Onboard hub",
+					label: null,
+					scope: "built-in",
+					kind: "hub",
+					portPath: "1",
+					product: "USB 2.0 Hub",
+					controller: "fc800000.usb",
+					portClass: "usb2",
+					colour: null,
+				}),
+				node({
+					key: "bt",
+					parentKey: "onboard",
+					socketKey: "BT",
+					name: "Bluetooth",
+					label: "BT",
+					scope: "built-in",
+					kind: "other",
+					portPath: "1.3",
+					product: "Bluetooth Radio",
+					controller: "fc800000.usb",
+					portClass: "usb2",
+					colour: null,
+				}),
+				node({
+					key: "ext",
+					socketKey: "A3-bot",
+					name: "Lower blue port",
+					label: "A3-bot",
+					kind: "hub",
+					product: "USB2.0 HUB",
+				}),
+				node({
+					key: "stick",
+					parentKey: "ext",
+					socketKey: "A3-bot>hub.2",
+					name: "Hub port 2",
+					label: ">hub.2",
+					scope: "hub-port",
+					kind: "wifi",
+					portPath: "1.2",
+				}),
+			]),
+		);
+		if (page.status !== "ok") throw new Error("expected a tree");
+		expect(page.groups.map((group) => group.name)).toEqual([
+			"Lower blue port",
+			"",
+		]);
+		expect(page.groups.some((group) => group.name === "USB root hub")).toBe(
+			false,
+		);
+		const builtIn = page.groups.find((group) => group.builtIn);
+		expect(builtIn?.rows.map((row) => row.key)).toEqual(["bt"]);
+		expect(builtIn?.internals.map((row) => row.key)).toEqual([
+			"root-usb2",
+			"root-usb3",
+			"onboard",
+			"ohci",
+			"ehci",
+		]);
+		const blue = page.groups.find((group) => group.id === "A3-bot");
+		expect(blue?.rows.map((row) => row.key)).toEqual(["ext", "stick"]);
+		expect(page.summary).toMatchObject({ devices: 1, hubs: 1, ports: 1 });
+	});
+
+	it("counts a root hub and the onboard hub as internal, and a port device as not", () => {
+		expect(isBoardInternal({ scope: "root", kind: "hub" })).toBe(true);
+		expect(isBoardInternal({ scope: "built-in", kind: "hub" })).toBe(true);
+		expect(isBoardInternal({ scope: "built-in", kind: "other" })).toBe(false);
+		expect(isBoardInternal({ scope: "built-in", kind: "wifi" })).toBe(false);
+		expect(isBoardInternal({ scope: "socket", kind: "hub" })).toBe(false);
+		expect(isBoardInternal({ scope: "socket", kind: "modem" })).toBe(false);
+		expect(isBoardInternal({ scope: "hub-port", kind: "wifi" })).toBe(false);
+		expect(isBoardInternal({ scope: "generic", kind: "hub" })).toBe(false);
 	});
 
 	it("keeps a generic hub and its child on one socket", () => {
@@ -316,6 +451,9 @@ describe("devices page model", () => {
 		);
 		if (rooted.status !== "ok") throw new Error("expected a tree");
 		expect(rooted.summary).toMatchObject({ devices: 0, hubs: 0, ports: 0 });
+		expect(rooted.groups.map((group) => group.id)).toEqual(["built-in"]);
+		expect(rooted.groups[0]?.internals.map((row) => row.key)).toEqual(["root"]);
+		expect(rooted.groups[0]?.rows).toEqual([]);
 		expect(
 			page.groups.find((group) => group.label === "A2-bot")?.rows[0]?.state,
 		).toBe("unplugged");

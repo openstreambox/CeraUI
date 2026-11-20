@@ -609,6 +609,40 @@ const marks = $derived({
 								{/if}
 							</div>
 						{/each}
+						{#if group.internals.length > 0}
+							<details class="group/internals border-t" data-testid="device-internals">
+								<summary
+									class="text-muted-foreground focus-visible:ring-ring inline-flex min-h-11 cursor-pointer items-center gap-1 rounded-md px-4 focus-visible:ring-2 focus-visible:outline-none"
+								>
+									<ChevronRight
+										aria-hidden="true"
+										class="size-4 transition-transform group-open/internals:rotate-90"
+									/>
+									{m['network.devices.details']()}
+								</summary>
+								{#each group.internals as row (row.key)}
+									<div
+										class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-4 py-2.5"
+										data-testid="device-internal"
+									>
+										<span class="mt-1.5 size-2 shrink-0 rounded-full {dotClass(row.state)}" aria-hidden="true"></span>
+										<p class="min-w-0 text-sm font-medium">
+											{kindLabel(row)}
+											{#if row.product}
+												<span class="text-muted-foreground font-normal">{row.product}</span>
+											{/if}
+										</p>
+										<span class="pt-0.5 text-xs font-semibold {stateClass(row.state)}">{stateLabel(row.state)}</span>
+										<p class="text-muted-foreground col-span-2 font-mono text-xs" dir="ltr">
+											{row.controller ?? ''}{row.portPath ? ` · ${row.portPath}` : ''}
+											{#if row.vendorId && row.productId}
+												· {row.vendorId}:{row.productId}
+											{/if}
+										</p>
+									</div>
+								{/each}
+							</details>
+						{/if}
 					</div>
 				{/each}
 			</section>
