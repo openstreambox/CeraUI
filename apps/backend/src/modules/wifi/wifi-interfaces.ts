@@ -1,9 +1,3 @@
-import {
-	getNetifTopologyGeneration,
-	getNetworkInterfaceIncarnation,
-	getNetworkInterfaces,
-	triggerNetworkInterfacesChange,
-} from "../network/network-interfaces.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -24,6 +18,12 @@ import {
 import { logger } from "../../helpers/logger.ts";
 import { getms } from "../../helpers/time.ts";
 import {
+	getNetifTopologyGeneration,
+	getNetworkInterfaceIncarnation,
+	getNetworkInterfaces,
+	triggerNetworkInterfacesChange,
+} from "../network/network-interfaces.ts";
+import {
 	type ConnectionUUID,
 	type MacAddress,
 	nmConnGetFields,
@@ -38,6 +38,11 @@ import {
 	parseOk,
 } from "../system/cli-parse.ts";
 import { getHotspotCredentials } from "./hotspot-credentials.ts";
+import {
+	capturePortalBinding,
+	type PortalBindingReaders,
+	type PortalCapture,
+} from "./captive-portal-session.ts";
 import { getDerivedApChannels, refreshHotspotChannels } from "./regdomain.ts";
 import {
 	broadcastWifiState,
@@ -1175,28 +1180,9 @@ async function discoverWifiDevices() {
 	}
 
 	if (newDevices || statusChange) {
+		// The every-pass AP bond gate in network-interfaces.ts owns the hotspot
+		// flag, including clearing it when the AP stops.
 		broadcastWifiState();
-
-		// Mark any WiFi hotspot interfaces as unavailable for bonding
-		let hotspotCount = 0;
-		const wifiInterfacesByMacAddress = getWifiInterfacesByMacAddress();
-		const networkInterfaces = getNetworkInterfaces();
-		for (const i in wifiInterfacesByMacAddress) {
-			const wifiInterface = wifiInterfacesByMacAddress[i];
-			if (wifiInterface && isApMode(wifiInterface)) {
-				const n = networkInterfaces[wifiInterface.ifname];
-				if (!n) continue;
-				if (n.error & NETIF_ERR_HOTSPOT) continue;
-
-				setNetifHotspot(n);
-				hotspotCount++;
-			}
-		}
-
-		if (hotspotCount) {
-			triggerNetworkInterfacesChange();
-			// Remove hotspot IPs from the source IP address list for BCRPT
-		}
 	} else if (
 		Object.values(getWifiInterfacesByMacAddress()).some(
 			(row) =>
