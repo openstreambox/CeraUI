@@ -7,10 +7,23 @@
  * holder fades, for uplink diversity while holders have headroom, or for extra
  * capacity when nothing new is around (assist mode).
  *
- * This first part covers roles, search, join, path verification and learning
- * which uplink a path uses. A verified path rejoins the bond as an assister.
- * Proof at the stream rate, promotion to holder, linger and release follow in
- * the next part.
+ * It covers roles, search, join, path verification and learning which uplink
+ * a path uses; a verified path rejoins the bond as an assister. When the
+ * sender reports per-link arrival counters, it also hands the holder role
+ * over (see "Continuity" below); without them it never promotes on its own.
+ *
+ * Continuity, when the sender reports arrival counters:
+ * - A fading holder gets a continuity candidate: a carrying assister on another
+ *   BSSID, diverse paths first. The candidate proves itself on the share it
+ *   already carries (`proof.ts`), so nothing is withheld for the proof.
+ * - Promotion is a relabel through the two-radio reducer's swap rules
+ *   (`swap-op.ts`): the candidate becomes a holder and takes the scan
+ *   protection; the old holder keeps carrying through the linger and is an
+ *   assister afterwards. Leaving the bond stays a separate decision.
+ * - A holder the receiver no longer hears from, while another link still gets
+ *   ACKs, is relabelled at once: the best currently delivering carrier becomes
+ *   holder. No proof, linger or hold-out; the sender already keeps traffic off
+ *   the dead path, and the bond's second path is what keeps the stream going.
  *
  * Guarantees, each covered by `coordinator.test.ts`:
  * - No holder or hotspot-reserved radio is named in a scan, join or abandon.
@@ -31,6 +44,7 @@
  *   the replacement: it is joined, verified and promoted.
  */
 
+import { type Effect, type Epoch, sameEpoch } from "../two-radio/reducer.ts";
 import { setCoordinatorOwnedRadios } from "./ownership.ts";
 import {
 	classifyHolder,
@@ -54,10 +68,26 @@ import {
 	type UplinkIdentity,
 } from "./policy.ts";
 import {
+	evaluateCandidate,
+	evaluateHolder,
+	independentLinkFailed,
+	PROOF_POLICY,
+	type ProofPolicy,
+	preFadeBondRate,
+} from "./proof.ts";
+import {
 	protectRadiosFromScans,
 	type RadioMode,
 	setScanGateModeReader,
 } from "./scan-gate.ts";
+import type { Snapshot } from "./sender-links.ts";
+import {
+	CANDIDATE,
+	HOLDER,
+	SWAP_TIMINGS,
+	SwapOperation,
+	type SwapTimings,
+} from "./swap-op.ts";
 
 /** What one read-only look at a radio shows. Never involves a scan. */
 export type RadioObservation = Readonly<{
@@ -133,6 +163,14 @@ export type CoordinatorPorts = Readonly<{
 	holderHealth(ifname: string): HolderHealth;
 	/** Links in the bond that are not coordinated Wi-Fi (cellular, Ethernet). */
 	otherUplinks(): number;
+	/**
+	 * The sender's latest per-link arrival reports, mapped onto these radios
+	 * (`sender-links.ts`), or `undefined` when the sender reports none. Without
+	 * this port the coordinator never promotes a candidate on its own.
+	 */
+	senderLinks?(): Snapshot | undefined;
+	/** What the encoder is producing right now, bits/s, `null` when unknown. */
+	encoderRate?(): number | null;
 	holdOutOfBond(ifname: string): void;
 	releaseBondHold(ifname: string): void;
 	/**
@@ -161,6 +199,10 @@ export type CoordinatorConfig = Readonly<{
 	/** Signal spread over the window below which a holder is not moving. */
 	stableSpreadDb?: number;
 	stableWindowMs?: number;
+	proofPolicy?: ProofPolicy;
+	swapTimings?: SwapTimings;
+	/** How much sender history the proof keeps. */
+	historyMs?: number;
 }>;
 
 export type RadioStatus = Readonly<{
@@ -177,11 +219,22 @@ export type RadioStatus = Readonly<{
 	bssidLocked: boolean;
 }>;
 
+export type SwapStatus = Readonly<{
+	holder: string;
+	candidate: string;
+	/** `proving` until promotion, then the reducer's phase. */
+	phase: string;
+}>;
+
 export type CoordinatorStatus = Readonly<{
 	radios: readonly RadioStatus[];
 	searches: number;
 	lastSearchAt: number | null;
 	lastOutcome: string | null;
+	/** The handover in progress, `null` when none. */
+	swap: SwapStatus | null;
+	/** How the last handover attempt ended. */
+	lastSwapOutcome: string | null;
 }>;
 
 type Owned = {
@@ -231,6 +284,28 @@ type Learned = {
 	macAt: number | null;
 };
 
+type Swap = {
+	op: SwapOperation;
+	holder: RadioRecord;
+	candidate: RadioRecord;
+	/** Sender epochs the open proof span was started under, `null` between spans. */
+	span: { candidate: string; holder: string | null } | null;
+	/** The bond's packet rate before the fade, for the proof's load floor. */
+	preFade: number | null;
+	promoted: boolean;
+};
+
+/** Continuity candidates, best first: a separate uplink fixes more. */
+const DIVERSITY_RANK: Record<Diversity, number> = {
+	diverse: 0,
+	"distinct-gateway": 1,
+	"same-uplink": 2,
+	unknown: 3,
+};
+
+/** Cool-down after a candidate fails a proof: 10 s, then doubling to 120 s. */
+const SWAP_COOLDOWN_MS = [10_000, 20_000, 40_000, 80_000, 120_000] as const;
+
 const CONDITION_RANK: Record<HolderCondition, number> = {
 	fade: 0,
 	steady: 1,
@@ -256,6 +331,15 @@ export class RoamingCoordinator {
 	#searches = 0;
 	#lastOutcome: string | null = null;
 	#departure: Departure | null = null;
+	readonly #proofPolicy: ProofPolicy;
+	readonly #swapTimings: SwapTimings;
+	readonly #historyMs: number;
+	/** Sender snapshots, oldest first, kept for `historyMs`. */
+	#history: Snapshot[] = [];
+	#swap: Swap | null = null;
+	/** Recent failed proofs per BSSID. */
+	readonly #swapCooldown = new Map<string, { count: number; until: number }>();
+	#lastSwapOutcome: string | null = null;
 	#busy = false;
 	#started = false;
 	#stopped = false;
@@ -270,6 +354,9 @@ export class RoamingCoordinator {
 		this.#verifyMs = config.verifyMs ?? 15_000;
 		this.#stableSpreadDb = config.stableSpreadDb ?? 3;
 		this.#stableWindowMs = config.stableWindowMs ?? 60_000;
+		this.#proofPolicy = config.proofPolicy ?? PROOF_POLICY;
+		this.#swapTimings = config.swapTimings ?? SWAP_TIMINGS;
+		this.#historyMs = config.historyMs ?? 70_000;
 		this.#radios = config.radios.map((r) => ({
 			ifname: r.ifname,
 			reserved: r.reserved === "hotspot",
@@ -315,12 +402,22 @@ export class RoamingCoordinator {
 			searches: this.#searches,
 			lastSearchAt: this.#clock.lastSearchAt,
 			lastOutcome: this.#lastOutcome,
+			swap: this.#swap
+				? {
+						holder: this.#swap.holder.ifname,
+						candidate: this.#swap.candidate.ifname,
+						phase: this.#swap.promoted ? this.#swap.op.phase : "proving",
+					}
+				: null,
+			lastSwapOutcome: this.#lastSwapOutcome,
 		};
 	}
 
 	/** Release every gate. Radios keep whatever association they have. */
 	stop(): void {
 		this.#stopped = true;
+		this.#dropSwap("stopped");
+		this.#history = [];
 		for (const r of this.#radios) this.#release(r);
 		protectRadiosFromScans([]);
 		setScanGateModeReader(null);
@@ -670,8 +767,11 @@ export class RoamingCoordinator {
 				if (!(r.owned && !r.owned.verified)) this.#release(r);
 			this.#protectFromScans();
 			this.#lastOutcome = "no-holder";
+			this.#dropSwap("no-holder");
 			return;
 		}
+
+		this.#continuity(now);
 
 		for (const r of this.#radios)
 			if (r.owned && !r.owned.verified && r.role !== "hotspot-reserved")
@@ -729,6 +829,351 @@ export class RoamingCoordinator {
 			radio,
 			condition === "fade" ? "continuity" : "diversity",
 		);
+	}
+
+	/**
+	 * Continuity on the sender's arrival reports: record the snapshot, relabel
+	 * a dead holder at once, then advance the handover in progress or start one
+	 * for a fading holder. Without arrival reports nothing here acts.
+	 */
+	#continuity(now: number): void {
+		const snap = this.#ports.senderLinks?.();
+		if (!snap) {
+			this.#history = [];
+			this.#dropSwap("no-arrival-reports");
+			return;
+		}
+		this.#history.push(snap);
+		while (
+			this.#history.length > 0 &&
+			(this.#history[0] as Snapshot).at < snap.at - this.#historyMs
+		)
+			this.#history.shift();
+		for (const h of this.#holders()) {
+			const judged = evaluateHolder(this.#history, h.ifname, this.#proofPolicy);
+			if (judged.dead) this.#abruptLoss(h, now);
+		}
+		if (this.#swap) this.#driveSwap(now);
+		else this.#maybeStartSwap(now);
+	}
+
+	/** The reducer's view of a radio's path; `null` when it has none. */
+	#epochOf(r: RadioRecord): Epoch | null {
+		const o = r.obs;
+		if (!o?.bssid || !o.address || !o.activation) return null;
+		return {
+			bssid: normalizeBssid(o.bssid),
+			lease: o.address,
+			routeGeneration: o.routed ? 1 : 0,
+			activation: o.activation,
+		};
+	}
+
+	/** Losing ACKs while delivering is a fade, as is the sender giving up on it. */
+	#holderFading(h: RadioRecord, now: number): boolean {
+		const condition = classifyHolder(
+			this.#ports.holderHealth(h.ifname),
+			signalSlope(h.samples, now, this.#policy.slopeWindowMs),
+			this.#policy,
+		);
+		if (condition === "fade") return true;
+		const judged = evaluateHolder(this.#history, h.ifname, this.#proofPolicy);
+		return judged.fading || judged.verdict === "fail";
+	}
+
+	#swapCooledDown(r: RadioRecord, now: number): boolean {
+		const bssid = r.obs?.bssid;
+		if (!bssid) return true;
+		const c = this.#swapCooldown.get(normalizeBssid(bssid));
+		return c !== undefined && now < c.until;
+	}
+
+	#coolDown(r: RadioRecord, now: number): void {
+		const bssid = r.obs?.bssid;
+		if (!bssid) return;
+		const key = normalizeBssid(bssid);
+		const count = (this.#swapCooldown.get(key)?.count ?? 0) + 1;
+		const step =
+			SWAP_COOLDOWN_MS[Math.min(count, SWAP_COOLDOWN_MS.length) - 1] ??
+			SWAP_COOLDOWN_MS[0];
+		this.#swapCooldown.set(key, { count, until: now + step });
+	}
+
+	/**
+	 * A carrying assister on another BSSID than the holder (an assister on the
+	 * holder's own AP shares its fade), diverse paths first, then signal.
+	 * `distinct-gateway` only orders candidates here: a promotion still needs a
+	 * fading holder and a proof.
+	 */
+	#continuityCandidate(h: RadioRecord, now: number): RadioRecord | undefined {
+		const holderBssid = normalizeBssid(h.obs?.bssid ?? "");
+		return this.#radios
+			.filter(
+				(r) =>
+					(r.role === "assister" || r.role === "standby") &&
+					this.#associated(r) &&
+					!r.heldOut &&
+					normalizeBssid(r.obs?.bssid ?? "") !== holderBssid &&
+					!this.#swapCooledDown(r, now),
+			)
+			.sort(
+				(a, b) =>
+					DIVERSITY_RANK[a.diversity ?? "unknown"] -
+						DIVERSITY_RANK[b.diversity ?? "unknown"] ||
+					(b.obs?.signalDbm ?? -200) - (a.obs?.signalDbm ?? -200),
+			)[0];
+	}
+
+	#maybeStartSwap(now: number): void {
+		const fading = this.#holders().find((h) => this.#holderFading(h, now));
+		if (!fading) return;
+		const candidate = this.#continuityCandidate(fading, now);
+		if (!candidate) return;
+		const holderEpoch = this.#epochOf(fading);
+		const candidateEpoch = this.#epochOf(candidate);
+		if (!holderEpoch || !candidateEpoch) return;
+		this.#swap = {
+			op: new SwapOperation({
+				holder: fading.ifname,
+				candidate: candidate.ifname,
+				holderEpoch,
+				candidateEpoch,
+				target: "receiver",
+				now,
+				timings: this.#swapTimings,
+			}),
+			holder: fading,
+			candidate,
+			span: null,
+			preFade: preFadeBondRate(this.#history, now, this.#proofPolicy),
+			promoted: false,
+		};
+		this.#lastSwapOutcome = `proving:${candidate.ifname}`;
+	}
+
+	/** Links carrying in the bond right now, for the candidate's fair share. */
+	#carryingLinks(snap: Snapshot | undefined): number {
+		if (!snap) return 1;
+		let n = 0;
+		for (const l of [...snap.radios.values(), ...snap.others.values()])
+			if (l.connected && !l.timedOut) n++;
+		return Math.max(1, n);
+	}
+
+	#driveSwap(now: number): void {
+		const s = this.#swap as Swap;
+		const op = s.op;
+		// The old holder gone mid-handover: the candidate keeps what it has (a
+		// promoted one stays holder), and the slice-1 path handles the rest.
+		if (this.#epochOf(s.holder) === null || s.holder.role !== "holder") {
+			this.#dropSwap(`holder-gone:${s.holder.ifname}`);
+			return;
+		}
+		if (
+			!s.promoted &&
+			(!this.#holderFading(s.holder, now) ||
+				s.candidate.role !== "assister" ||
+				s.candidate.heldOut)
+		) {
+			this.#dropSwap(`not-needed:${s.candidate.ifname}`);
+			return;
+		}
+		const effects: Effect[] = [];
+		const candidateEpoch = this.#epochOf(s.candidate);
+		if (!sameEpoch(candidateEpoch, op.state.paths[CANDIDATE].epoch))
+			effects.push(...op.identity(now, CANDIDATE, candidateEpoch));
+		const holderEpoch = this.#epochOf(s.holder);
+		if (!sameEpoch(holderEpoch, op.state.paths[HOLDER].epoch))
+			effects.push(...op.identity(now, HOLDER, holderEpoch));
+		effects.push(...op.tick(now));
+		const latest = this.#history.at(-1);
+		const cl = latest?.radios.get(s.candidate.ifname);
+		const hl = latest?.radios.get(s.holder.ifname);
+		const candidateSocket = cl ? String(cl.epoch) : null;
+		const holderSocket = hl ? String(hl.epoch) : null;
+		if (!op.ended && !s.promoted) {
+			if (s.span === null) {
+				if (candidateSocket !== null) {
+					effects.push(...op.startSpan(now, candidateSocket, holderSocket));
+					s.span = { candidate: candidateSocket, holder: holderSocket };
+				}
+			} else {
+				const proof = evaluateCandidate(
+					this.#history,
+					s.candidate.ifname,
+					{
+						carrying: this.#carryingLinks(latest),
+						encoderBps: this.#ports.encoderRate?.() ?? null,
+						preFadeBondPacketsPerS: s.preFade,
+					},
+					this.#proofPolicy,
+				);
+				if (proof.verdict !== "open") {
+					const holder = evaluateHolder(
+						this.#history,
+						s.holder.ifname,
+						this.#proofPolicy,
+					);
+					const step = op.endSpan(
+						now,
+						{
+							candidate: proof.verdict,
+							holder: holder.verdict,
+							independentFailed: independentLinkFailed(
+								this.#history,
+								new Set([s.holder.ifname, s.candidate.ifname]),
+								this.#proofPolicy,
+							),
+						},
+						s.span.candidate,
+						s.span.holder,
+					);
+					s.span = null;
+					effects.push(...step.effects);
+					if (step.conclusion === "proven") effects.push(...op.swap(now));
+					else if (step.conclusion === "candidate-failed") {
+						this.#coolDown(s.candidate, now);
+						this.#dropSwap(
+							`candidate-failed:${s.candidate.ifname}:${proof.reason}`,
+						);
+						return;
+					} else if (step.conclusion === "common-target") {
+						this.#dropSwap("common-target");
+						return;
+					}
+				}
+			}
+		} else if (!op.ended) {
+			// Through traffic and linger the new holder is judged like a holder:
+			// delivery, continuity and age, never the headroom estimate, which
+			// lags while its share jumps.
+			const judged = evaluateHolder(
+				this.#history,
+				s.candidate.ifname,
+				this.#proofPolicy,
+			);
+			if (judged.verdict === "fail") {
+				// The new holder failing is the candidate's failure: undo, and
+				// keep its BSSID out of the next attempts for a while.
+				this.#coolDown(s.candidate, now);
+				effects.push(...op.cancel(now));
+			} else if (judged.verdict === "pass" && candidateSocket !== null)
+				effects.push(...op.renew(now, candidateSocket));
+		}
+		this.#applySwapEffects(now, effects);
+		// Traffic before demotion: as soon as the promoted candidate is seen
+		// carrying (registered, ACKs coming back), in the same round.
+		if (
+			!op.ended &&
+			s.promoted &&
+			op.phase === "traffic" &&
+			candidateEpoch !== null &&
+			cl?.connected &&
+			cl.ageMs !== null
+		)
+			this.#applySwapEffects(now, op.traffic(now, candidateEpoch));
+		if (op.ended && this.#swap === s) {
+			this.#swap = null;
+			this.#lastSwapOutcome = `${op.endReason ?? "ended"}:${s.candidate.ifname}`;
+		}
+	}
+
+	/**
+	 * Carry out the reducer's commands. Promotion, demotion and release are
+	 * relabels of this coordinator's own roles (mode R): the bond membership
+	 * does not change, so each is confirmed as soon as the roles and the scan
+	 * protection are republished.
+	 */
+	#applySwapEffects(now: number, effects: readonly Effect[]): void {
+		const s = this.#swap;
+		if (!s) return;
+		const queue = [...effects];
+		for (let e = queue.shift(); e !== undefined; e = queue.shift()) {
+			switch (e.action) {
+				case "promote":
+					s.candidate.role = "holder";
+					s.promoted = true;
+					this.#lastOutcome = `promoted:${s.candidate.ifname}`;
+					break;
+				case "demote":
+					// The old holder keeps carrying through the linger.
+					break;
+				case "disconnect":
+					// Release: the old holder carries on as an assister.
+					if (s.holder.role === "holder")
+						s.holder.role = this.#associated(s.holder)
+							? "assister"
+							: "searcher";
+					this.#lastOutcome = `released:${s.holder.ifname}`;
+					break;
+				case "cancel-drain-restore":
+					if (s.candidate.role === "holder")
+						s.candidate.role = this.#associated(s.candidate)
+							? "assister"
+							: "searcher";
+					s.promoted = false;
+					this.#lastOutcome = `restored:${s.holder.ifname}`;
+					break;
+				default:
+					// The swap never asks a radio to depart.
+					continue;
+			}
+			this.#protectFromScans();
+			queue.push(...s.op.ack(now, e.command, true));
+		}
+	}
+
+	/**
+	 * A holder the receiver no longer hears from while another link still gets
+	 * ACKs. Any handover involving it ends first (a dead radio has nothing to
+	 * restore). Then the best currently delivering carrier becomes holder: a
+	 * proven candidate first, then the most diverse, then signal. The dead
+	 * radio stays in the bond as an assister: the sender already keeps traffic
+	 * off it, and its probes see a recovery.
+	 */
+	#abruptLoss(h: RadioRecord, now: number): void {
+		const proven = this.#swap?.op.candidateProven
+			? this.#swap.candidate
+			: undefined;
+		if (this.#swap && (this.#swap.holder === h || this.#swap.candidate === h)) {
+			this.#swap.op.identity(
+				now,
+				this.#swap.holder === h ? HOLDER : CANDIDATE,
+				null,
+			);
+			this.#dropSwap(`holder-dead:${h.ifname}`);
+		}
+		const delivering = (r: RadioRecord) =>
+			r !== h &&
+			(r.role === "assister" || r.role === "standby" || r.role === "holder") &&
+			this.#associated(r) &&
+			!r.heldOut &&
+			evaluateHolder(this.#history, r.ifname, this.#proofPolicy).verdict ===
+				"pass";
+		const next =
+			(proven && proven !== h && delivering(proven) ? proven : undefined) ??
+			this.#radios
+				.filter(delivering)
+				.sort(
+					(a, b) =>
+						DIVERSITY_RANK[a.diversity ?? "unknown"] -
+							DIVERSITY_RANK[b.diversity ?? "unknown"] ||
+						(b.obs?.signalDbm ?? -200) - (a.obs?.signalDbm ?? -200),
+				)[0];
+		if (!next) return;
+		next.role = "holder";
+		h.role = this.#associated(h) ? "assister" : "searcher";
+		h.samples = [];
+		this.#lastOutcome = `holder-dead:${h.ifname}>${next.ifname}`;
+		this.#protectFromScans();
+	}
+
+	/** Forget the handover in progress, recording why. Roles stay as they are. */
+	#dropSwap(outcome: string): void {
+		if (!this.#swap) return;
+		this.#swap.op.end();
+		this.#swap = null;
+		this.#lastSwapOutcome = outcome;
 	}
 
 	#worstHolderCondition(now: number): HolderCondition {
