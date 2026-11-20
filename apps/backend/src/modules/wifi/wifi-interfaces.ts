@@ -37,12 +37,14 @@ import {
 	parseFail,
 	parseOk,
 } from "../system/cli-parse.ts";
-import { getHotspotCredentials } from "./hotspot-credentials.ts";
 import {
 	capturePortalBinding,
+	PORTAL_RADIO_CHANGED,
 	type PortalBindingReaders,
 	type PortalCapture,
+	type PortalRadioRead,
 } from "./captive-portal-session.ts";
+import { getHotspotCredentials } from "./hotspot-credentials.ts";
 import { getDerivedApChannels, refreshHotspotChannels } from "./regdomain.ts";
 import {
 	broadcastWifiState,
@@ -112,35 +114,91 @@ import {
 	type VirtualHotspotBinding,
 } from "./wifi-virtual-binding.ts";
 
-/** No native epoch/kernel reader is installed here; absence is unavailable. */
+/** Upper bound on waiting for a row's identity publication during one capture. */
+export const PORTAL_PUBLICATION_WAIT_MS = 2000;
+const PORTAL_PUBLICATION_POLL_MS = 50;
+
+/**
+ * The venue radio as currently published for the exact registry row `deviceId`
+ * names: the permanent MAC comes from that row's Verified identity (the same
+ * row/lifetime/address predicate steering uses), and the incarnation from the
+ * publication guard, never from a raw token. `"pending"` means the row's
+ * identity is being re-published; anything else that is not a record refuses.
+ */
+function readPublishedPortalRadio(
+	deviceId: WifiInterfaceId,
+	incarnation: string,
+): PortalRadioRead | "pending" {
+	const matches = Object.entries(getWifiInterfacesByMacAddress()).filter(
+		([, radio]) => radio.id === deviceId,
+	);
+	const match = matches[0];
+	if (matches.length !== 1 || !match) return undefined;
+	const [registryKey, radio] = match;
+	if (
+		radio.removed ||
+		radio.degradedReason ||
+		radio.activeMode !== "infrastructure" ||
+		!radio.conn ||
+		radio.conn !== radio.activeConn
+	)
+		return undefined;
+	const identity = wifiRadioIdentity.state.rows.get(radio.ifname);
+	// Another registry object under this name is never this radio.
+	if (identity?.row !== undefined && identity.row !== radio) return undefined;
+	// A published row without a sampled lifetime is Unverified, not pending.
+	if (identity?.row === radio && identity.lifetime === undefined)
+		return undefined;
+	const token = projectWifiRadioIncarnation(radio, identity);
+	if (token === undefined || !identity?.lifetime) return "pending";
+	if (token !== incarnation) return PORTAL_RADIO_CHANGED;
+	if (
+		identity.classification !== "verified" ||
+		identity.degradedReason !== undefined ||
+		!identity.permanentMac ||
+		identity.key !== registryKey ||
+		identity.ifname !== radio.ifname
+	)
+		return undefined;
+	return {
+		deviceId,
+		permanentMac: identity.permanentMac,
+		ifname: radio.ifname,
+		profileUuid: radio.conn,
+		mode: radio.activeMode,
+		incarnation: token,
+		lifetime: {
+			ifindex: identity.lifetime.ifindex,
+			wiphy: identity.lifetime.wiphy,
+			phyPath: identity.lifetime.phyPath,
+		},
+	};
+}
+
+/**
+ * No native epoch/kernel reader is installed here; absence is unavailable.
+ * `incarnation` is the token the operator chose the radio by; every bracketed
+ * read re-resolves the row and refuses a different or missing publication.
+ * A publication in progress is awaited for at most `publicationWaitMs` per
+ * capture, then refused.
+ */
 export function captureWifiPortalBinding(
 	deviceId: WifiInterfaceId,
+	incarnation: string,
 	readers?: PortalBindingReaders,
+	publicationWaitMs = PORTAL_PUBLICATION_WAIT_MS,
 ): Promise<PortalCapture> {
 	if (!readers)
 		return Promise.resolve({ ok: false, reason: "identity_unavailable" });
-	return capturePortalBinding(() => {
-		const matches = Object.entries(getWifiInterfacesByMacAddress()).filter(
-			([, radio]) => radio.id === deviceId,
-		);
-		const match = matches[0];
-		if (matches.length !== 1 || !match) return undefined;
-		const [permanentMac, radio] = match;
-		if (
-			radio.removed ||
-			radio.degradedReason ||
-			radio.activeMode !== "infrastructure" ||
-			!radio.conn ||
-			radio.conn !== radio.activeConn
-		)
-			return undefined;
-		return {
-			deviceId,
-			permanentMac,
-			ifname: radio.ifname,
-			profileUuid: radio.conn,
-			mode: radio.activeMode,
-		};
+	const deadline = performance.now() + publicationWaitMs;
+	return capturePortalBinding(async () => {
+		for (;;) {
+			const radio = readPublishedPortalRadio(deviceId, incarnation);
+			if (radio !== "pending") return radio;
+			const remaining = deadline - performance.now();
+			if (remaining <= 0) return undefined;
+			await Bun.sleep(Math.min(PORTAL_PUBLICATION_POLL_MS, remaining));
+		}
 	}, readers);
 }
 

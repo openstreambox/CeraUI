@@ -174,7 +174,7 @@ print('control 160/160',flush=True)'''
     v6_routes = run('ip','-6','route','show','table','all')
     physical_before = run('ip','rule','show')
     mac = json.loads(ns(phone, 'ip', '-j', 'link', 'show', 'ap0p'))[0]['address']
-    c = dict(ap='ap0',phone='10.42.0.2',mac=mac,wan='wan1',address='198.51.100.1',gateway='198.51.100.2',dns='203.0.113.10',seconds=10)
+    c = dict(ap='ap0',ap_ifindex=p.ifindex('ap0'),phone='10.42.0.2',mac=mac,wan='wan1',address='198.51.100.1',gateway='198.51.100.2',dns='203.0.113.10',seconds=10)
     v6_code = """import socket,sys,time
 start=time.monotonic()
 try:
@@ -464,7 +464,7 @@ assert b'healthy' in udp.recv(32)
     # Use a disposable AP so the continuous phone/control proof stays intact.
     run('ip', 'link', 'add', 'retiredap', 'type', 'dummy')
     run('ip', 'link', 'set', 'retiredap', 'up')
-    p.open_window({**c, 'ap': 'retiredap'})
+    p.open_window({**c, 'ap': 'retiredap', 'ap_ifindex': p.ifindex('retiredap')})
     run('ip', 'link', 'del', 'retiredap')
     detached = json.loads(run('ip', '-j', '-4', 'rule', 'show'))
     assert any('iif_detached' in rule for rule in detached if str(rule.get('table')) == p.ROUTE_TABLE)

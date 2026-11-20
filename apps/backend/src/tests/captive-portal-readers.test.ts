@@ -56,6 +56,10 @@ const { addWifiInterface } = await import(
 const { isolateWifiRegistry, restoreWifiRegistry } = await import(
 	"./helpers/wifi-registry.ts"
 );
+const { portalRadioIdentity } = await import(
+	"./helpers/portal-radio-identity.ts"
+);
+const identity = portalRadioIdentity();
 const { logger } = await import("../helpers/logger.ts");
 const logs = [
 	spyOn(logger, "error"),
@@ -63,10 +67,12 @@ const logs = [
 	spyOn(logger, "debug"),
 ];
 let inherited: ReturnType<typeof isolateWifiRegistry>;
-beforeEach(() => {
+beforeEach(async () => {
 	inherited = isolateWifiRegistry();
+	await identity.install();
 });
-afterEach(() => {
+afterEach(async () => {
+	await identity.uninstall();
 	restoreWifiRegistry(inherited);
 	expect(forbidden).not.toHaveBeenCalled();
 	for (const guard of guards) expect(guard).not.toHaveBeenCalled();
@@ -123,17 +129,30 @@ function fixture(id = 1) {
 			prefsrc: "192.0.2.10",
 		} as Record<string, unknown>,
 	};
-	addWifiInterface(permanentMac, {
+	const row = {
 		id,
 		ifname,
 		conn: profile,
 		activeConn: profile,
-		activeMode: "infrastructure",
+		activeMode: "infrastructure" as const,
 		hw: "Synthetic radio",
 		available: new Map(),
 		saved: { venue: profile },
 		savedAll: {},
+	};
+	addWifiInterface(permanentMac, row);
+	// Verified: its own PHY and permanent address, the lifetime the kernel reads.
+	void identity.prove(row, {
+		ifindex: id + 1,
+		phy: id,
+		permanent: permanentMac,
 	});
+	let chosen: string | undefined;
+	const incarnation = async () => {
+		await identity.published();
+		chosen ??= identity.token(row);
+		return chosen;
+	};
 	const properties: Record<string, { signature: string; value: unknown }> = {
 		"Device.Interface": v("s", ifname),
 		"Device.IpInterface": v("s", ifname),
@@ -316,7 +335,9 @@ function fixture(id = 1) {
 		onCall: (fn: typeof onCall) => {
 			onCall = fn;
 		},
-		capture: () => capture(id, deps),
+		row,
+		incarnation,
+		capture: async () => capture(id, await incarnation(), deps),
 		advance: (ms: number) => {
 			state.time += ms;
 			for (const timer of [...timers])
@@ -330,10 +351,16 @@ function fixture(id = 1) {
 
 describe("explicit bounded system binding reader", () => {
 	test("omitted dependencies refuse, and constructing opt-in I/O refs does not execute them", async () => {
-		expect(await capture(1)).toEqual({
+		expect(await capture(1, "synthetic-incarnation")).toEqual({
 			ok: false,
 			reason: "identity_unavailable",
 		});
+		const f = fixture();
+		expect(await capture(1, "", f.deps)).toEqual({
+			ok: false,
+			reason: "identity_unavailable",
+		});
+		expect(f.deps.createTransport).not.toHaveBeenCalled();
 		expect(typeof createSystemPortalReaderDeps().createTransport).toBe(
 			"function",
 		);
@@ -359,6 +386,35 @@ describe("explicit bounded system binding reader", () => {
 			);
 			expect(call.timeoutMs).toBe(LIMITS.callMs);
 		}
+	});
+	test("binds the venue row's published incarnation and refuses a rotated or Limited one", async () => {
+		const f = fixture();
+		const token = await f.incarnation();
+		const result = await f.capture();
+		expect(result.ok && result.binding.radio.incarnation).toBe(token);
+		// Same name and MAC, new kernel lifetime: the chosen token is stale.
+		f.state.link.ifindex = 9;
+		f.state.address.ifindex = 9;
+		await identity.change(f.ifname, { ifindex: 9 });
+		expect(identity.token(f.row)).not.toBe(token);
+		expect(await capture(f.id, token, f.deps)).toEqual({
+			ok: false,
+			reason: "binding_changed",
+		});
+		const current = await capture(f.id, identity.token(f.row), f.deps);
+		expect(current.ok).toBe(true);
+		// A second ordinary netdev on the PHY makes the row Limited.
+		const twin = { ...f.row, id: 7, ifname: "wlan7" };
+		addWifiInterface("02:00:00:00:00:07", twin);
+		await identity.prove(twin, {
+			ifindex: 8,
+			phy: 1,
+			permanent: "02:00:00:00:00:07",
+		});
+		expect(await capture(f.id, identity.token(f.row), f.deps)).toEqual({
+			ok: false,
+			reason: "identity_unavailable",
+		});
 	});
 	test("adapter completion requires independent portal verification", async () => {
 		const f = fixture();
@@ -541,13 +597,15 @@ describe("explicit bounded system binding reader", () => {
 		expect((await f.capture()).ok).toBe(false);
 	});
 	test("more than eight default routes on one interface refuse", async () => {
+		// One registered radio supplies the template: another fixture would
+		// replace the row whose published incarnation `ok` was chosen by.
+		const ok = fixture();
 		const copies = (n: number) =>
 			Array.from({ length: n }, (_, i) =>
 				i === 0
-					? { ...fixture().state.route, table: "main" }
-					: { ...fixture().state.route, table: String(45000 + i) },
+					? { ...ok.state.route, table: "main" }
+					: { ...ok.state.route, table: String(45000 + i) },
 			);
-		const ok = fixture();
 		routesOf(ok, copies(8));
 		expect((await ok.capture()).ok).toBe(true);
 		const f = fixture();

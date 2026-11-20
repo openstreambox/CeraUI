@@ -23,6 +23,24 @@ address arriving on another link cannot open, check or cancel the window. It cap
 session identity twice before opening and checks for changes during the window.
 No credentials, cookies, page contents or terms acceptance are collected.
 
+Both ends are bound to an exact lifetime. The card offers a Wi-Fi only while it
+is a station holding a connection, reads captive and has a published identity;
+a hybrid radio that also hosts the box's AP qualifies. A start carries the
+radio's numeric id and the `incarnation` it was chosen by. Every bracketed read
+re-resolves that exact registry row and requires its Verified identity (own PHY,
+coherent permanent MAC, sampled lifetime matching the kernel ifindex) and the
+same published incarnation. A rotated incarnation reports a changed Wi-Fi; a
+Limited or Unverified radio, or a publication that does not return within two
+seconds, reports unconfirmed identity. The AP the phone arrived through (the
+front door's proven arrival interface, else the route back to the phone) is
+pinned separately: its hotspot row, active AP profile, netif incarnation and
+kernel ifindex, with no later Start, Stop or reconfigure on that row. Each
+identity check rechecks both. The helper matches the AP with nftables `iif`,
+which binds the ifindex when the table loads, and refuses or rolls back if the
+interface under the AP name is not the pinned ifindex. A Stop, restart or
+replacement under the same name closes the window; nothing transfers to the
+newcomer.
+
 `captive-portal-window.py` is shipped beside the application in `/opt/ceralive`.
 It needs Python 3, nftables, iproute2 and conntrack, and runs with the backend's
 existing root privilege. No image routing changes or global default-route changes
@@ -119,7 +137,11 @@ anteriores, incluso si aún no vencieron. Si el Wi-Fi cambia, la ventana se cier
 en la siguiente comprobación de identidad. Las comprobaciones se inician cada diez segundos.
 Los mensajes distinguen una red desconectada, una red que cambió, una identidad
 sin confirmar, otra ventana abierta, un cierre en curso, una red que no necesita
-inicio de sesión y un teléfono fuera del Wi-Fi del equipo. El cierre muestra
+inicio de sesión y un teléfono fuera del Wi-Fi del equipo. La tarjeta ofrece
+un Wi-Fi solo mientras está conectado como cliente y detecta un portal cautivo;
+un radio híbrido que además emite el Wi-Fi del equipo también aparece. Si el
+Wi-Fi elegido cambió, vuelve a elegirlo. Detener, reiniciar o reemplazar el
+Wi-Fi del equipo cierra la ventana; nunca pasa al nuevo punto de acceso. El cierre muestra
 la hora límite del acceso web. Tu transmisión no se ve afectada.
 Comprobar y cancelar cierran la ventana antes de comprobar el acceso web.
 

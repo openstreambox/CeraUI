@@ -32,6 +32,23 @@ def validate(c):
         raise ValueError('invalid station')
     if not isinstance(c['seconds'], int) or not 1 <= c['seconds'] <= 600:
         raise ValueError('invalid duration')
+    if type(c['ap_ifindex']) is not int or c['ap_ifindex'] < 1:
+        raise ValueError('invalid ingress lifetime')
+
+
+def ifindex(name):
+    with open(f'/sys/class/net/{name}/ifindex', encoding='ascii') as f:
+        return int(f.read(32).strip())
+
+
+def pinned(c):
+    """The AP must still be the lifetime the backend pinned, never a same-name replacement."""
+    try:
+        current = ifindex(c['ap'])
+    except (OSError, ValueError):
+        raise ValueError('ingress changed') from None
+    if current != c['ap_ifindex']:
+        raise ValueError('ingress changed')
 
 
 def rules(c):
@@ -40,8 +57,10 @@ def rules(c):
     # After sharing's mangle hook: override ONLY the selected web/DNS packets.
     # A separate timed set gates replies too; expired conntracks are dropped,
     # never restored onto a healthy link with the hotel's old NAT identity.
-    match = f'iifname "{ap}" ip saddr . ether saddr @phone'
-    v6 = f'iifname "{ap}" meta nfproto ipv6 ether saddr @station'
+    # `iif` binds the AP's ifindex when the table loads, so a replacement under
+    # the same name never matches; the policy rule below also needs our mark.
+    match = f'iif "{ap}" ip saddr . ether saddr @phone'
+    v6 = f'iif "{ap}" meta nfproto ipv6 ether saddr @station'
     return f'''table inet {TABLE} {{
  set station {{ type ether_addr; flags timeout; elements = {{ {mac} timeout {seconds}s }}; }}
  set doh4 {{ type ipv4_addr; elements = {{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112 }}; }}
@@ -76,7 +95,7 @@ def rules(c):
   ct mark {MARK} drop
  }}
  chain nat {{ type nat hook postrouting priority 90; policy accept;
-  iifname "{ap}" meta mark {MARK} oifname "{wan}" masquerade
+  iif "{ap}" meta mark {MARK} oifname "{wan}" masquerade
  }}
 }}\n'''
 
@@ -100,6 +119,7 @@ def open_window(c):
         raise ValueError('route table occupied')
     if any(line.startswith(PRIORITY + ':') for line in run('ip', '-4', 'rule', 'show').splitlines()):
         raise ValueError('rule priority occupied')
+    pinned(c)
     run('nft', '--check', '-f', '-', data=rules(c))
     try:
         # Publish ownership before the first route write. Even a hard stop between
@@ -111,6 +131,8 @@ def open_window(c):
             'from', c['phone'], 'fwmark', MARK, 'lookup', ROUTE_TABLE)
         clear_flows(c)
         run('nft', '-f', '-', data=f'delete table inet {TABLE}\n' + rules(c))
+        # A swap between the first check and the load would bind the newcomer.
+        pinned(c)
     except BaseException:
         close_window(c)
         raise
