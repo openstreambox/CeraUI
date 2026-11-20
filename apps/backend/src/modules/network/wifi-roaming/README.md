@@ -114,10 +114,38 @@ radio associated without an address is not idle.
 
     A Limited, Unverified, unpublished or replaced radio is not acted on.
 
-## Proof and swap: the pieces (not wired yet)
+## Proof and swap
 
-These pure parts of the next step exist and are tested; the coordinator does
-not call them yet.
+The coordinator hands the holder role over on the sender's per-link arrival
+reports, through two optional ports: `senderLinks()` (a mapped snapshot per
+round) and `encoderRate()`. Without them it behaves exactly as before and
+never promotes on its own. With them, each round:
+
+- **Dead holder.** The receiver no longer hears a holder while another link
+  still gets ACKs. The best currently delivering carrier becomes holder at
+  once: a proven candidate first, then the most diverse path, then signal.
+  The dead radio stays in the bond as an assister. The sender already keeps
+  traffic off it, and its probes see a recovery.
+- **Fading holder** (slice 1's triggers, or delivery below 0.90, or the
+  sender giving up on it):
+  - It gets a continuity candidate: a carrying assister on another BSSID,
+    separate gateways first. An assister on the holder's own AP never
+    qualifies.
+  - The candidate proves itself on the share it already carries. A failed
+    proof cools its BSSID down for 10 s, doubling up to 120 s; a
+    common-target failure doesn't.
+  - Promotion is a relabel (mode R). The candidate becomes a holder and
+    takes the scan protection, and the old holder keeps carrying through the
+    10 s linger and is an assister afterwards.
+  - Through traffic and linger the new holder is judged like a holder.
+    Delivery, continuity and age keep its proof alive; headroom plays no
+    part. A failure undoes the handover and cools the candidate's BSSID down.
+  - A holder that recovers before the proof completes ends it.
+
+`status().swap` shows the handover in progress, and `lastSwapOutcome` how the
+last one ended.
+
+The pieces:
 
 - `sender-links.ts` does three things:
   - It reads the sender's per-link arrival reports (`srtla_ack_entries_total`,
@@ -191,25 +219,29 @@ not call them yet.
 
 These come in later parts:
 
-- Wiring the proof and swap into the coordinator: promotion as a relabel that
-  moves scan protection, with a hold-out of the old holder only when it dies,
-  fails hard or is needed to search, and the abrupt-loss relabel. Points the
-  wiring has to respect:
-  - Linger renewals must not depend on the headroom verdict. With a hold-out,
-    the candidate's share jumps at demotion, and a passing headroom check
-    can lag behind. Renew on delivery, continuity, age and the holder-style
-    checks.
+- The ports behind the swap:
+  - `senderLinks()` built from the control client's `get_stats` (or the
+    `stats` push) through `snapshotOf`, with each radio's current addresses;
+  - `encoderRate()` from the encoder.
+- Mode H, holding the old holder out of the bond at a soft fade, for the
+  bench comparison with mode R. It uses the evidence predicates in
+  `sender-links.ts` for its acks. Points to respect there:
   - `srtla_ack_epoch` is per sender process. After a sender restart a
     re-added link can repeat its held-out epoch and never confirm, which
     ends as `restore-failed`. That fails safe, through the abrupt-loss path.
-  - `candidateProven` answers as of the last event. A status view should
-    tick first.
-  - The one-batch slack still passes 78 % delivery at the 60-packet floor.
-    The bench decides whether to keep it there or raise the floor.
+  - The candidate's share jumps at demotion, so renewals must keep ignoring
+    the headroom verdict, as they do in mode R.
+- A bond-wide delivery check during the linger, next to the new holder's
+  own.
+- `candidateProven` answers as of the last event. A status view should
+  tick first.
+- The one-batch slack still passes 78 % delivery at the 60-packet floor. The
+  bench decides whether to keep it there or raise the floor.
 - Boot wiring and configuration, with the preconditions it needs: IPv6-only
   paths counted as associated, `stop()` fenced against a round in flight, a
-  startup sweep of leftover `ceraui-search-*` profiles, and radio state keyed
-  by incarnation rather than by interface name.
+  startup sweep of leftover `ceraui-search-*` profiles, and radio state
+  (bond holds, the hotspot-reserved radio) keyed by `[id, incarnation]`
+  rather than by interface name.
 - The first holder is whatever NetworkManager activated with the operator's
   profile. Without a BSSID lock, NetworkManager gives it a background scan
   every 30 s below -65 dBm on a multi-AP network. `status()` reports
@@ -229,6 +261,21 @@ radio-keyed roles.
 ```sh
 bun test apps/backend/src/modules/network/wifi-roaming/ apps/backend/src/tests/wifi-rescan-holder-gate.test.ts
 ```
+
+`coordinator-swap.test.ts` runs the handover against a fake sender that
+reports arrivals per radio. Its cases:
+- no reports, no promotion;
+- a steady holder;
+- a relabel promotion with the old holder carrying through the linger;
+- linger renewals that ignore headroom;
+- a failing candidate and its cool-down;
+- a holder that recovers;
+- a handover undone during the linger;
+- a dead holder relabelled without a hold-out, or kept when nobody else
+  delivers;
+- a Wi-Fi-only double failure;
+- reports going away;
+- candidate ranking and exclusion.
 
 `proof.test.ts`, `sender-links.test.ts` and `swap-op.test.ts` cover the
 pieces above on synthetic snapshots and a fake clock. The cases include:
