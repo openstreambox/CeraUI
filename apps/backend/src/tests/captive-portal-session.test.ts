@@ -47,6 +47,16 @@ const { addWifiInterface, removeWifiInterface } = await import(
 const { isolateWifiRegistry, restoreWifiRegistry } = await import(
 	"./helpers/wifi-registry.ts"
 );
+const { portalRadioIdentity } = await import(
+	"./helpers/portal-radio-identity.ts"
+);
+const { wifiRadioIdentity } = await import(
+	"../modules/wifi/wifi-radio-identity.ts"
+);
+const { invalidateWifiRadioRow } = await import(
+	"../modules/wifi/wifi-radio-publication.ts"
+);
+const identity = portalRadioIdentity();
 const { logger } = await import("../helpers/logger.ts");
 const loggers = [
 	spyOn(logger, "debug"),
@@ -55,10 +65,12 @@ const loggers = [
 	spyOn(logger, "error"),
 ];
 let inherited: ReturnType<typeof isolateWifiRegistry>;
-beforeEach(() => {
+beforeEach(async () => {
 	inherited = isolateWifiRegistry();
+	await identity.install();
 });
-afterEach(() => {
+afterEach(async () => {
+	await identity.uninstall();
 	restoreWifiRegistry(inherited);
 	expect(forbidden).not.toHaveBeenCalled();
 	for (const guard of nativeGuards) expect(guard).not.toHaveBeenCalled();
@@ -68,6 +80,8 @@ afterAll(() => {
 });
 
 const PROFILE = "00000000-0000-4000-8000-000000000001";
+// Short: a refusal that waits for a publication must not slow every case.
+const WAIT_MS = 100;
 function fixture(id = 1) {
 	const permanentMac = `02:00:00:00:00:0${id}`;
 	const ifname = `wlan${id}`;
@@ -83,6 +97,12 @@ function fixture(id = 1) {
 		savedAll: {},
 	};
 	addWifiInterface(permanentMac, radio);
+	// The venue row is Verified: its own PHY, a coherent permanent address.
+	void identity.prove(radio, {
+		ifindex: id + 1,
+		phy: id,
+		permanent: permanentMac,
+	});
 	const state = {
 		epoch: { busId: "0123456789abcdef0123456789abcdef", nmOwner: ":1.42" },
 		activation: {
@@ -111,12 +131,21 @@ function fixture(id = 1) {
 		readActivation: mock(async () => structuredClone(state.activation)),
 		readLink: mock(async () => structuredClone(state.link)),
 	};
+	// The token the phone chose this row by, fixed at its first use.
+	let chosen: string | undefined;
+	const incarnation = async () => {
+		await identity.published();
+		chosen ??= identity.token(radio);
+		return chosen;
+	};
 	return {
 		state,
 		radio,
 		readers,
 		permanentMac,
-		capture: () => captureWifiPortalBinding(id, readers),
+		incarnation,
+		capture: async (wait = WAIT_MS) =>
+			captureWifiPortalBinding(id, await incarnation(), readers, wait),
 	};
 }
 function deferred<T>() {
@@ -179,8 +208,8 @@ describe("authoritative private Wi-Fi binding capture", () => {
 		expect(ca.binding.link.ifindex).not.toBe(cb.binding.link.ifindex);
 	});
 	test("has no native/default authoritative reader", async () => {
-		fixture();
-		expect(await captureWifiPortalBinding(1)).toEqual({
+		const f = fixture();
+		expect(await captureWifiPortalBinding(1, await f.incarnation())).toEqual({
 			ok: false,
 			reason: "identity_unavailable",
 		});
@@ -277,6 +306,134 @@ describe("authoritative private Wi-Fi binding capture", () => {
 			});
 			expect((await f.capture()).ok).toBe(false);
 		}
+	});
+});
+
+describe("venue identity is the exact registry row's Verified publication", () => {
+	test("binds the row's permanent MAC, incarnation and sampled lifetime", async () => {
+		const f = fixture();
+		const captured = await f.capture();
+		if (!captured.ok) throw new Error("fixture capture unavailable");
+		const published = wifiRadioIdentity.state.rows.get("wlan1");
+		expect(published?.classification).toBe("verified");
+		expect(captured.binding.radio).toEqual({
+			deviceId: 1,
+			permanentMac: f.permanentMac,
+			ifname: "wlan1",
+			profileUuid: PROFILE,
+			mode: "infrastructure",
+			incarnation: await f.incarnation(),
+			lifetime: {
+				ifindex: 2,
+				wiphy: 1,
+				phyPath: "/sys/devices/equivalence/phy1",
+			},
+		});
+	});
+	test("a stale or missing incarnation refuses before any NM read", async () => {
+		const f = fixture();
+		await f.incarnation();
+		for (const stale of ["stale-incarnation", ""])
+			expect(
+				await captureWifiPortalBinding(1, stale, f.readers, WAIT_MS),
+			).toEqual({ ok: false, reason: "binding_changed" });
+		expect(f.readers.readEpoch).not.toHaveBeenCalled();
+	});
+	test("a lifetime rotation during capture is a change, never a pass", async () => {
+		const f = fixture();
+		await f.incarnation();
+		const pending = deferred<unknown>(),
+			started = deferred<void>();
+		f.readers.readActivation = async () => {
+			started.resolve();
+			return pending.promise;
+		};
+		const capture = f.capture();
+		await started.promise;
+		// Same name, same MAC, a new kernel lifetime: a new incarnation.
+		await identity.change("wlan1", { ifindex: 12 });
+		pending.resolve(f.state.activation);
+		expect(await capture).toEqual({ ok: false, reason: "binding_changed" });
+	});
+	test("the kernel ifindex read must be the sampled lifetime's", async () => {
+		const f = fixture();
+		f.state.link.ifindex = 7;
+		expect((await f.capture()).ok).toBe(false);
+	});
+	test("Limited and Unverified station rows refuse", async () => {
+		// Limited: a second ordinary netdev on the same PHY.
+		const f = fixture();
+		const sibling = { ...f.radio, id: 5, ifname: "wlan5" };
+		addWifiInterface("02:00:00:00:00:05", sibling);
+		await identity.prove(sibling, {
+			ifindex: 6,
+			phy: 1,
+			permanent: "02:00:00:00:00:05",
+		});
+		expect(wifiRadioIdentity.state.rows.get("wlan1")?.classification).toBe(
+			"limited",
+		);
+		expect(await f.capture()).toEqual({
+			ok: false,
+			reason: "identity_unavailable",
+		});
+		removeWifiInterface("02:00:00:00:00:05");
+		// Limited: the permanent address is also another PHY's.
+		const g = fixture(2);
+		await g.incarnation();
+		await identity.change("wlan5", { phy: 5, permanent: g.permanentMac });
+		expect(wifiRadioIdentity.state.rows.get("wlan2")?.classification).toBe(
+			"limited",
+		);
+		expect(
+			await captureWifiPortalBinding(
+				2,
+				identity.token(g.radio),
+				g.readers,
+				WAIT_MS,
+			),
+		).toEqual({ ok: false, reason: "identity_unavailable" });
+		// Unverified: no coherent lifetime sample.
+		await identity.change("wlan5", { permanent: "02:00:00:00:00:05" });
+		await identity.change("wlan2", { ifindex: 0 });
+		expect(wifiRadioIdentity.state.rows.get("wlan2")?.classification).toBe(
+			"unverified",
+		);
+		expect((await g.capture()).ok).toBe(false);
+		for (const readers of [f.readers, g.readers])
+			expect(readers.readEpoch).not.toHaveBeenCalled();
+	});
+	test("a registry key that is not the Verified permanent MAC refuses", async () => {
+		const f = fixture();
+		const token = await f.incarnation();
+		removeWifiInterface(f.permanentMac);
+		addWifiInterface("02:00:00:00:00:0a", f.radio);
+		expect(
+			await captureWifiPortalBinding(1, token, f.readers, WAIT_MS),
+		).toEqual({ ok: false, reason: "identity_unavailable" });
+		expect(f.readers.readEpoch).not.toHaveBeenCalled();
+	});
+	test("a re-publication in progress is awaited, then binds the same incarnation", async () => {
+		const f = fixture();
+		const token = await f.incarnation();
+		// Discovery invalidates the row before it re-publishes it.
+		invalidateWifiRadioRow(f.radio, Number.MAX_SAFE_INTEGER);
+		const capture = f.capture(1000);
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		await identity.change("wlan1", {});
+		const captured = await capture;
+		expect(captured.ok).toBe(true);
+		if (captured.ok) expect(captured.binding.radio.incarnation).toBe(token);
+	});
+	test("a publication that does not return is a clean refusal, never a pass", async () => {
+		const f = fixture();
+		await f.incarnation();
+		invalidateWifiRadioRow(f.radio, Number.MAX_SAFE_INTEGER);
+		expect(await f.capture()).toEqual({
+			ok: false,
+			reason: "identity_unavailable",
+		});
+		expect(f.readers.readEpoch).not.toHaveBeenCalled();
 	});
 });
 
@@ -383,6 +540,9 @@ describe("private expiring owner-bound portal gate", () => {
 		mac: (f: ReturnType<typeof fixture>) => {
 			f.state.link.stationMac = "02:00:00:00:00:09";
 			f.state.activation.stationMac = f.state.link.stationMac;
+		},
+		"venue radio lifetime and incarnation": (f: ReturnType<typeof fixture>) => {
+			void identity.change(f.radio.ifname, { ifindex: 12 });
 		},
 	};
 	for (const [name, change] of Object.entries(changes))
