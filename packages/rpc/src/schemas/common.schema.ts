@@ -24,3 +24,16 @@ export const errorResponseSchema = z.object({
 	error: z.string(),
 });
 export type ErrorResponse = z.infer<typeof errorResponseSchema>;
+
+export const powerFailureReasonSchema = z.enum([
+	'shutdown_inhibited',
+	'other_users',
+	'shutdown_unavailable',
+	'shutdown_uncertain',
+]);
+export type PowerFailureReason = z.infer<typeof powerFailureReasonSchema>;
+export const powerResponseSchema = successResponseSchema.extend({
+	failureReason: powerFailureReasonSchema.optional(),
+});
+
+export type PowerResponse = z.infer<typeof powerResponseSchema>;
