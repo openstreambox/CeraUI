@@ -6,7 +6,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { MacAddress } from "../modules/network/network-manager.ts";
-import { protectRadiosFromScans } from "../modules/network/wifi-roaming/scan-gate.ts";
+import {
+	protectRadiosFromScans,
+	type RadioMode,
+	setScanGateModeReader,
+} from "../modules/network/wifi-roaming/scan-gate.ts";
+import { withWifiAdapterLock } from "../modules/wifi/wifi-adapter-lock.ts";
 import {
 	addWifiInterface,
 	getWifiScanStampForDevice,
@@ -58,6 +63,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	protectRadiosFromScans([]);
+	setScanGateModeReader(null);
 	wifiCancelScanRefresh();
 	restoreWifiRegistry(inherited);
 	resetWifiScanStampsForTest();
@@ -109,5 +115,65 @@ describe("rescans while a radio holds the stream", () => {
 		await wifiRescan(1);
 		expect(spawns).toEqual(["wlan1"]);
 		expect(getWifiScanStampForDevice(1)?.generation).toBe(1);
+	});
+});
+
+describe("rescans checked at dispatch, under the adapter lock", () => {
+	/** Each radio on its own phy, none in AP mode, unless overridden. */
+	const modes = (over: Record<string, RadioMode | undefined> = {}) => {
+		const reads: string[] = [];
+		setScanGateModeReader(async (ifname) => {
+			reads.push(ifname);
+			return ifname in over
+				? over[ifname]
+				: { phy: `phy-${ifname}`, apOnPhy: false };
+		});
+		return reads;
+	};
+
+	test("a radio that became an AP since the last publication is not scanned", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		modes({ wlan1: { phy: "phy-wlan1", apOnPhy: true } });
+		await wifiRescan(1);
+		expect(spawns).toEqual([]);
+		expect(getWifiScanStampForDevice(1)).toBeUndefined();
+	});
+
+	test("a radio on a protected radio's phy is not scanned", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		modes({ wlan2: { phy: "phy-wlan0", apOnPhy: false } });
+		await wifiRescan();
+		expect(spawns).toEqual(["wlan1"]);
+	});
+
+	test("an unreadable mode refuses the scan", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		setScanGateModeReader(async () => {
+			throw new Error("iw failed");
+		});
+		await wifiRescan(1);
+		expect(spawns).toEqual([]);
+	});
+
+	test("a radio whose adapter lock is held is skipped, not waited for", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		const reads = modes();
+		await withWifiAdapterLock(SEARCHER, async () => {
+			await wifiRescan(1);
+		});
+		expect(spawns).toEqual([]);
+		expect(reads).toEqual([]);
+	});
+
+	test("the mode is read for each radio right before its scan", async () => {
+		protectRadiosFromScans(["wlan0"], ["phy-wlan0"]);
+		const reads = modes();
+		setRescanActionForTest(async (device) => {
+			spawns.push(device);
+			expect(reads.at(-1)).toBe(device);
+		});
+		await wifiRescan();
+		expect(spawns).toEqual(["wlan1", "wlan2"]);
+		expect(reads).toEqual(["wlan1", "wlan2"]);
 	});
 });

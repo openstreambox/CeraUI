@@ -22,9 +22,22 @@ searcher or assister.
 
 A radio is hotspot-reserved when it is configured that way, and also while it
 or another interface on its phy (the `clap-` AP leg of a hybrid radio) is in
-AP mode. The mode is read every round and again right before each scan or
-join, under CeraUI's per-adapter Wi-Fi lock that hotspot changes hold. When
-the hotspot stops, the radio becomes a searcher again.
+AP mode. The mode is read every round, and again with a dedicated `iw dev`
+read right before each scan and right before each activation (after the
+profile work), under CeraUI's per-adapter Wi-Fi lock that hotspot changes
+hold. A read that fails refuses the action. When the hotspot stops, the radio
+becomes a searcher again.
+
+A phy that runs AP and station at once keeps its station. When an AP leg
+appears next to a station the coordinator joined, that station is left
+exactly as it is, carrying or still verifying, and is picked up again when
+the AP goes. Only a clone the AP has already replaced is removed. Every
+removal of an owned clone runs under the adapter lock after a fresh look, and
+waits for a later round while the lock is busy or the clone is still the
+active connection on a phy with an AP. A clone is treated as gone only when
+its BSSID or activation changed, never because a lease renewal left it
+briefly without an address; a holder keeps its role through that too, and a
+radio associated without an address is not idle.
 
 ## What runs today
 
@@ -51,7 +64,9 @@ the hotspot stops, the radio becomes a searcher again.
   The same gateway address and subnet without both gateway MACs is unknown,
   not one uplink, because factory-default routers share them. Each BSSID's
   identity is remembered for 30 minutes and compared with whichever radios
-  hold at the time of the next search.
+  hold at the time of the next search. A gateway MAC carries the time it was
+  really observed: filling a missing neighbour entry from it never makes it
+  younger, and a MAC older than 30 minutes is not used.
 - **Join** (`nm-port.ts`). The coordinator makes an in-memory clone of the
   radio's own profile, locks it to the BSSID, turns autoconnect off and
   activates it on that interface. With a BSSID set, NetworkManager adds no
@@ -71,7 +86,10 @@ the hotspot stops, the radio becomes a searcher again.
   to look for a diverse path.
 - **Gates.**
   - `scan-gate.ts`: CeraUI's own rescans skip holders, assisters, the
-    hotspot radio and a radio that is joining.
+    hotspot radio, a radio that is searching or joining, and every radio on
+    the phys those use. The set is republished on every role, hold or
+    ownership change. Each rescan of a radio goes out under its adapter lock
+    after a fresh, fail-closed read of its mode and phy.
   - `bond-hold.ts`: a radio leaves the SRTLA bond while it searches.
   - `ownership.ts`: other Wi-Fi automation leaves coordinator-owned radios
     alone. A radio in hotspot use is not coordinator-owned.

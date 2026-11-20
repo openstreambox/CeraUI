@@ -53,7 +53,11 @@ import {
 	signalSlope,
 	type UplinkIdentity,
 } from "./policy.ts";
-import { protectRadiosFromScans } from "./scan-gate.ts";
+import {
+	protectRadiosFromScans,
+	type RadioMode,
+	setScanGateModeReader,
+} from "./scan-gate.ts";
 
 /** What one read-only look at a radio shows. Never involves a scan. */
 export type RadioObservation = Readonly<{
@@ -82,6 +86,9 @@ export type RadioObservation = Readonly<{
 
 export type JoinResult = Readonly<{ activation: string }>;
 
+/** `join` declined to activate because the last check before it said no. */
+export const JOIN_REFUSED = "refused";
+
 /** `ok: false` when another CeraUI operation holds the radio's adapter lock. */
 export type RadioLockResult<T> =
 	| Readonly<{ ok: true; value: T }>
@@ -94,12 +101,22 @@ export type CoordinatorPorts = Readonly<{
 	scan(ifname: string): Promise<readonly ScanRow[] | undefined>;
 	/** SSIDs this radio has saved, interface-bound profiles for. */
 	savedSsids(ifname: string): Promise<ReadonlySet<string>>;
-	/** Activate an owned profile on this radio, locked to `bssid`. */
+	/**
+	 * Activate an owned profile on this radio, locked to `bssid`. `mayActivate`
+	 * runs after the profile work, right before activation; when it says no,
+	 * the profile is removed and the result is {@link JOIN_REFUSED}.
+	 */
 	join(
 		ifname: string,
 		ssid: string,
 		bssid: string,
-	): Promise<JoinResult | undefined>;
+		mayActivate: () => Promise<boolean>,
+	): Promise<JoinResult | typeof JOIN_REFUSED | undefined>;
+	/**
+	 * A dedicated, cheap read of the radio's phy and AP state (`iw dev` only),
+	 * taken late: right before a scan, an activation or a cleanup.
+	 */
+	radioMode(ifname: string): Promise<RadioMode | undefined>;
 	/** Remove the owned profile from `join`. */
 	abandon(ifname: string, activation: string): Promise<boolean>;
 	/** Gateway and egress of an associated radio's path. */
@@ -180,6 +197,8 @@ type RadioRecord = {
 	uplink: UplinkIdentity | null;
 	diversity: Diversity | null;
 	owned: Owned | null;
+	/** When `uplink.gatewayMac` was last really observed, `null` if never. */
+	uplinkMacAt: number | null;
 	samples: SignalSample[];
 	heldOut: boolean;
 	/** When this radio last started a search; idle radios take turns. */
@@ -199,7 +218,13 @@ type Departure = {
 /** Why an action did not run or was discarded. */
 type ActStop = "aborted" | "radio-busy" | "radio-in-ap-mode";
 
-type Learned = { uplink: UplinkIdentity; at: number };
+type Learned = {
+	uplink: UplinkIdentity;
+	/** When this BSSID was last associated. */
+	at: number;
+	/** When its gateway MAC was last really observed, `null` if never. */
+	macAt: number | null;
+};
 
 const CONDITION_RANK: Record<HolderCondition, number> = {
 	fade: 0,
@@ -219,6 +244,8 @@ export class RoamingCoordinator {
 	readonly #learned = new Map<string, Learned>();
 	/** Recent failed joins or verifications per BSSID. */
 	readonly #failed = new Map<string, { count: number; at: number }>();
+	/** Owned clones whose removal had to wait (busy lock, or still carrying). */
+	readonly #pendingAbandon = new Map<string, string>();
 	#clock: SearchClock = FRESH_SEARCH_CLOCK;
 	#joinFailures = 0;
 	#searches = 0;
@@ -246,6 +273,7 @@ export class RoamingCoordinator {
 			uplink: null,
 			diversity: null,
 			owned: null,
+			uplinkMacAt: null,
 			samples: [],
 			heldOut: false,
 			searchedAt: Number.NEGATIVE_INFINITY,
@@ -253,6 +281,8 @@ export class RoamingCoordinator {
 			restUntil: 0,
 		}));
 		this.#publishOwnership();
+		this.#protectFromScans();
+		setScanGateModeReader((ifname) => ports.radioMode(ifname));
 	}
 
 	#publishOwnership(): void {
@@ -288,6 +318,7 @@ export class RoamingCoordinator {
 		this.#stopped = true;
 		for (const r of this.#radios) this.#release(r);
 		protectRadiosFromScans([]);
+		setScanGateModeReader(null);
 		setCoordinatorOwnedRadios([]);
 	}
 
@@ -324,14 +355,20 @@ export class RoamingCoordinator {
 				await this.#reserve(r);
 				continue;
 			}
-			if (r.role === "hotspot-reserved") r.role = "searcher";
-			r.uplink =
-				r.obs && this.#associated(r)
-					? this.#withKnownMac(
-							r.obs,
-							await this.#ports.uplinkOf(r.ifname, r.obs),
-						)
-					: null;
+			if (r.role === "hotspot-reserved")
+				r.role = r.owned?.verified ? "assister" : "searcher";
+			if (r.obs && this.#associated(r)) {
+				const known = this.#withKnownMac(
+					r.obs,
+					await this.#ports.uplinkOf(r.ifname, r.obs),
+					now,
+				);
+				r.uplink = known.uplink;
+				r.uplinkMacAt = known.macAt;
+			} else {
+				r.uplink = null;
+				r.uplinkMacAt = null;
+			}
 			if (r.obs?.signalDbm != null)
 				r.samples.push({ at: now, dbm: r.obs.signalDbm });
 			r.samples = r.samples.filter(
@@ -342,45 +379,127 @@ export class RoamingCoordinator {
 		}
 	}
 
-	/** A radio that became a hotspot: drop any search state, never act on it. */
+	/**
+	 * A radio that became a hotspot, or gained an AP leg on its phy: no search
+	 * state, no action. A phy that runs AP and station at once keeps its
+	 * station: an owned clone that is still the active connection (carrying or
+	 * verifying) is left exactly as it is, hold included, and picked up again
+	 * when the AP goes. Only a clone the AP has already replaced is removed.
+	 */
 	async #reserve(r: RadioRecord): Promise<void> {
 		if (r.role === "holder") this.#lastOutcome = `holder-lost:${r.ifname}`;
 		r.role = "hotspot-reserved";
 		r.uplink = null;
+		r.uplinkMacAt = null;
 		r.diversity = null;
 		r.samples = [];
 		const owned = r.owned;
-		r.owned = null;
-		this.#release(r);
-		// Deleting the owned clone touches only that profile, never the AP's.
-		if (owned) await this.#ports.abandon(r.ifname, owned.activation);
+		if (owned && r.obs?.activation !== owned.activation) {
+			r.owned = null;
+			await this.#abandon(r, owned.activation);
+		}
+		// An unverified station stays out of the bond; nothing else changes.
+		if (!r.owned) this.#release(r);
+		this.#protectFromScans();
 	}
 
 	/**
-	 * Keep a gateway MAC learned earlier for the same BSSID, gateway and subnet.
-	 * Right after a join the neighbour entry is often missing, and without it
-	 * two factory-default routers would look alike.
+	 * Remove an owned clone, under the radio's adapter lock and after a fresh
+	 * look. A clone that is still the active connection on a phy with an AP
+	 * (or whose mode cannot be read) is a live station and is not torn down;
+	 * neither is anything while the lock is busy. Both wait for a later round.
 	 */
-	#withKnownMac(obs: RadioObservation, uplink: UplinkIdentity): UplinkIdentity {
-		if (uplink.gatewayMac !== null || !obs.bssid) return uplink;
-		const prev = this.#learned.get(normalizeBssid(obs.bssid))?.uplink;
-		return prev?.gatewayMac &&
-			prev.gateway === uplink.gateway &&
-			prev.subnet === uplink.subnet
-			? { ...uplink, gatewayMac: prev.gatewayMac }
-			: uplink;
+	async #abandon(r: RadioRecord, activation: string): Promise<void> {
+		const done = await this.#ports.withRadioLock(r.ifname, async () => {
+			const mode = await this.#ports.radioMode(r.ifname);
+			if (mode?.apOnPhy !== false) {
+				const now = await this.#ports.observe(r.ifname);
+				if (!now || now.activation === activation) return false;
+			}
+			await this.#ports.abandon(r.ifname, activation);
+			return true;
+		});
+		if (done.ok && done.value) this.#pendingAbandon.delete(r.ifname);
+		else this.#pendingAbandon.set(r.ifname, activation);
+	}
+
+	/** Retry removals that had to wait, unless the clone is in use again. */
+	async #retryAbandons(): Promise<void> {
+		for (const [ifname, activation] of [...this.#pendingAbandon]) {
+			const r = this.#radios.find((x) => x.ifname === ifname);
+			if (!r || r.owned?.activation === activation) {
+				this.#pendingAbandon.delete(ifname);
+				continue;
+			}
+			await this.#abandon(r, activation);
+		}
+	}
+
+	/**
+	 * Keep a gateway MAC observed earlier for the same BSSID, gateway and
+	 * subnet. Right after a join the neighbour entry is often missing, and
+	 * without it two factory-default routers would look alike. The MAC keeps
+	 * the time it was really seen, and a backfill never makes it younger, so
+	 * the learned lifetime holds for it too.
+	 */
+	#withKnownMac(
+		obs: RadioObservation,
+		uplink: UplinkIdentity,
+		now: number,
+	): { uplink: UplinkIdentity; macAt: number | null } {
+		if (uplink.gatewayMac !== null) return { uplink, macAt: now };
+		if (!obs.bssid) return { uplink, macAt: null };
+		const prev = this.#learned.get(normalizeBssid(obs.bssid));
+		return prev?.uplink.gatewayMac &&
+			prev.macAt !== null &&
+			now - prev.macAt <= this.#policy.learnedTtlMs &&
+			prev.uplink.gateway === uplink.gateway &&
+			prev.uplink.subnet === uplink.subnet
+			? {
+					uplink: { ...uplink, gatewayMac: prev.uplink.gatewayMac },
+					macAt: prev.macAt,
+				}
+			: { uplink, macAt: null };
 	}
 
 	/**
 	 * CeraUI's own rescans skip every radio that carries traffic, serves the
-	 * hotspot or is in the middle of an owned join. Only idle searchers remain.
+	 * hotspot, is out of the bond for a search or in the middle of an owned
+	 * join, and every radio on the phys those use. Only idle searchers remain.
+	 * Published on every change of role, hold or ownership, not once a round.
 	 */
 	#protectFromScans(): void {
-		protectRadiosFromScans(
-			this.#radios
-				.filter((r) => r.role !== "searcher" || r.owned !== null)
-				.map((r) => r.ifname),
+		const prot = this.#radios.filter(
+			(r) => r.role !== "searcher" || r.owned !== null || r.heldOut,
 		);
+		protectRadiosFromScans(
+			prot.map((r) => r.ifname),
+			prot.map((r) => r.obs?.phy).filter((p): p is string => !!p),
+		);
+	}
+
+	#holderPhys(): Set<string> {
+		return new Set(
+			this.#holders()
+				.map((h) => h.obs?.phy)
+				.filter((p): p is string => !!p),
+		);
+	}
+
+	/**
+	 * The last check before a scan or an activation: a fresh `iw dev` read,
+	 * failing closed. The radio and its phy must not be in AP mode, and the
+	 * phy must not be a holder's.
+	 */
+	async #mayActNow(r: RadioRecord): Promise<boolean> {
+		let mode: RadioMode | undefined;
+		try {
+			mode = await this.#ports.radioMode(r.ifname);
+		} catch {
+			return false;
+		}
+		if (mode?.apOnPhy !== false) return false;
+		return !(mode.phy !== null && this.#holderPhys().has(mode.phy));
 	}
 
 	#assignRoles(): void {
@@ -392,7 +511,10 @@ export class RoamingCoordinator {
 				!r.heldOut
 			)
 				r.role = "searcher";
-			if (r.role === "holder" && !this.#associated(r)) {
+			// A holder keeps its role while it holds its BSSID, even through a
+			// lease renewal without an address: losing the role would make it a
+			// scan target.
+			if (r.role === "holder" && !r.obs?.bssid) {
 				r.role = "searcher";
 				r.samples = [];
 				this.#lastOutcome = `holder-lost:${r.ifname}`;
@@ -423,6 +545,7 @@ export class RoamingCoordinator {
 			best.role = "holder";
 			if (this.#started) this.#lastOutcome = `promoted:${best.ifname}`;
 		}
+		this.#protectFromScans();
 	}
 
 	#holderUplinks(): UplinkIdentity[] {
@@ -443,6 +566,7 @@ export class RoamingCoordinator {
 				this.#learned.set(normalizeBssid(r.obs.bssid), {
 					uplink: r.uplink,
 					at: now,
+					macAt: r.uplinkMacAt,
 				});
 			r.diversity =
 				r.role === "holder" || !r.uplink
@@ -456,8 +580,14 @@ export class RoamingCoordinator {
 		const holders = this.#holderUplinks();
 		const out = new Map<string, Diversity>();
 		for (const [bssid, e] of this.#learned) {
-			if (now - e.at > this.#policy.learnedTtlMs) this.#learned.delete(bssid);
-			else out.set(bssid, diversityAgainst(e.uplink, holders));
+			if (now - e.at > this.#policy.learnedTtlMs) {
+				this.#learned.delete(bssid);
+				continue;
+			}
+			const macFresh =
+				e.macAt !== null && now - e.macAt <= this.#policy.learnedTtlMs;
+			const uplink = macFresh ? e.uplink : { ...e.uplink, gatewayMac: null };
+			out.set(bssid, diversityAgainst(uplink, holders));
 		}
 		return out;
 	}
@@ -482,14 +612,25 @@ export class RoamingCoordinator {
 	async #round(): Promise<void> {
 		await this.#observeAll();
 		this.#publishOwnership();
+		await this.#retryAbandons();
 		this.#assignRoles();
 		this.#started = true;
 		for (const r of this.#radios) {
 			// A verified owned join whose association went away is just gone.
-			if (r.owned?.verified && !this.#associated(r)) {
-				const gone = r.owned;
+			// Gone means the BSSID or the activation changed, not a missing
+			// address: a lease renewal must not tear down a working station.
+			const o = r.owned;
+			if (
+				o?.verified &&
+				r.role !== "hotspot-reserved" &&
+				r.obs !== undefined &&
+				(r.obs.bssid === null ||
+					normalizeBssid(r.obs.bssid) !== o.bssid ||
+					r.obs.activation !== o.activation)
+			) {
 				r.owned = null;
-				await this.#ports.abandon(r.ifname, gone.activation);
+				this.#protectFromScans();
+				await this.#abandon(r, o.activation);
 			}
 		}
 		const now = this.#ports.now();
@@ -498,7 +639,8 @@ export class RoamingCoordinator {
 			// Every holder is gone. A replacement that is joining is now the best
 			// path there is: verify it at once and promote it, never discard it.
 			for (const r of this.#radios)
-				if (r.owned && !r.owned.verified) await this.#verify(r, now);
+				if (r.owned && !r.owned.verified && r.role !== "hotspot-reserved")
+					await this.#verify(r, now);
 			this.#assignRoles();
 		}
 		this.#protectFromScans();
@@ -510,12 +652,14 @@ export class RoamingCoordinator {
 			// verify window, which joins the bond when it verifies.
 			for (const r of this.#radios)
 				if (!(r.owned && !r.owned.verified)) this.#release(r);
+			this.#protectFromScans();
 			this.#lastOutcome = "no-holder";
 			return;
 		}
 
 		for (const r of this.#radios)
-			if (r.owned && !r.owned.verified) await this.#verify(r, now);
+			if (r.owned && !r.owned.verified && r.role !== "hotspot-reserved")
+				await this.#verify(r, now);
 		if (
 			this.#departure ||
 			this.#radios.some((r) => r.owned && !r.owned.verified)
@@ -524,11 +668,7 @@ export class RoamingCoordinator {
 
 		const condition = this.#worstHolderCondition(now);
 		// Two interfaces on one phy share its radio: scanning one stalls the other.
-		const holderPhys = new Set(
-			this.#holders()
-				.map((h) => h.obs?.phy)
-				.filter((p): p is string => !!p),
-		);
+		const holderPhys = this.#holderPhys();
 		const mayAct = (r: RadioRecord) =>
 			r.obs !== undefined &&
 			r.obs.apOnPhy === false &&
@@ -536,8 +676,12 @@ export class RoamingCoordinator {
 			!(r.obs.phy && holderPhys.has(r.obs.phy));
 		// Idle radios take turns, least recently searched first, so one radio
 		// whose scans fail or find nothing cannot take every search.
+		// Idle means no association at all: a radio that holds a BSSID without
+		// an address (a lease renewal, an IPv6-only network) is not scanned.
 		const idle = this.#radios
-			.filter((r) => r.role === "searcher" && !this.#associated(r) && mayAct(r))
+			.filter(
+				(r) => r.role === "searcher" && !r.obs?.bssid && !r.owned && mayAct(r),
+			)
 			.sort((a, b) => a.searchedAt - b.searchedAt)[0];
 		// A carrying radio is recalled only when its path adds nothing the
 		// holders lack: on a fade, one sharing a holder's BSSID; otherwise one
@@ -673,8 +817,15 @@ export class RoamingCoordinator {
 	): Promise<void> {
 		const bssid = normalizeBssid(pick.bssid);
 		const joined = await this.#act(radio, "join", () =>
-			this.#ports.join(radio.ifname, pick.ssid, bssid),
+			this.#ports.join(radio.ifname, pick.ssid, bssid, () =>
+				this.#mayActNow(radio),
+			),
 		);
+		if (joined.stop === null && joined.value === JOIN_REFUSED) {
+			this.#settle(radio);
+			this.#lastOutcome = "radio-in-ap-mode";
+			return;
+		}
 		if (joined.stop !== null) {
 			// The join never ran: the radio is busy or became a hotspot.
 			this.#settle(radio);
@@ -686,6 +837,7 @@ export class RoamingCoordinator {
 			await this.#giveUp(radio, "join-failed");
 			return;
 		}
+		if (joined.value === JOIN_REFUSED) return;
 		radio.owned = {
 			ssid: pick.ssid,
 			bssid,
@@ -694,6 +846,7 @@ export class RoamingCoordinator {
 			verifyUntil: this.#ports.now() + this.#verifyMs,
 			verified: false,
 		};
+		this.#protectFromScans();
 		this.#lastOutcome = `joining:${goal}`;
 	}
 
@@ -722,6 +875,7 @@ export class RoamingCoordinator {
 			if (o.goal !== "capacity")
 				this.#clock = { ...this.#clock, emptySearches: 0 };
 			this.#release(r);
+			this.#protectFromScans();
 			this.#lastOutcome = `verified:${o.goal}:${r.diversity ?? "unknown"}`;
 			return;
 		}
@@ -740,7 +894,7 @@ export class RoamingCoordinator {
 			...this.#clock,
 			notBefore: this.#ports.now() + joinCooldownMs(this.#joinFailures),
 		};
-		if (owned) await this.#ports.abandon(r.ifname, owned.activation);
+		if (owned) await this.#abandon(r, owned.activation);
 		this.#release(r);
 		this.#lastOutcome = outcome;
 	}
@@ -753,18 +907,21 @@ export class RoamingCoordinator {
 			r.heldOut = true;
 			this.#ports.holdOutOfBond(r.ifname);
 		}
+		this.#protectFromScans();
 	}
 
 	#release(r: RadioRecord): void {
 		if (!r.heldOut) return;
 		r.heldOut = false;
 		this.#ports.releaseBondHold(r.ifname);
+		this.#protectFromScans();
 	}
 
 	/** Back to the bond; an associated radio carries again as an assister. */
 	#settle(r: RadioRecord): void {
 		this.#release(r);
 		if (r.role === "searcher" && this.#associated(r)) r.role = "assister";
+		this.#protectFromScans();
 	}
 
 	/**
@@ -797,8 +954,7 @@ export class RoamingCoordinator {
 		this.#departure = departure;
 		try {
 			const locked = await this.#ports.withRadioLock(r.ifname, async () => {
-				const fresh = await this.#ports.observe(r.ifname);
-				if (fresh?.apOnPhy !== false) return { refused: true as const };
+				if (!(await this.#mayActNow(r))) return { refused: true as const };
 				return { refused: false as const, value: await action() };
 			});
 			if (!locked.ok) return { value: undefined, stop: "radio-busy" };

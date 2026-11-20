@@ -24,12 +24,17 @@ import {
 	nmRescan,
 	nmScanResults,
 } from "../network/network-manager.ts";
+import { withDeviceLock } from "../network/state/device-lock.ts";
 import type {
 	IMonitorEmitter,
 	MonitorEvent,
 	WifiState,
 } from "../network/state-types.ts";
-import { scanProtectedRadios } from "../network/wifi-roaming/scan-gate.ts";
+import {
+	mayScanNow,
+	scanGateActive,
+	scanProtectedRadios,
+} from "../network/wifi-roaming/scan-gate.ts";
 import {
 	getModeForInterface,
 	onWifiChange,
@@ -641,7 +646,7 @@ function scanKeyForIfname(ifname: string): WifiScanKey {
 */
 function rescanTargets(ifname: string | undefined): (string | undefined)[] {
 	const protectedNow = scanProtectedRadios();
-	if (protectedNow.size === 0) return [ifname];
+	if (!scanGateActive()) return [ifname];
 	if (ifname !== undefined) return protectedNow.has(ifname) ? [] : [ifname];
 	const others: string[] = [];
 	for (const macAddress in wifiInterfacesByMacAddress) {
@@ -659,10 +664,20 @@ async function runRescan(
 		const targets = rescanTargets(ifname);
 		const scanned: (string | undefined)[] = [];
 		for (const target of targets) {
-			// Each scan takes seconds; a radio may have become protected meanwhile.
-			if (target !== undefined && scanProtectedRadios().has(target)) continue;
-			await rescanAction(target);
-			scanned.push(target);
+			if (target === undefined || !scanGateActive()) {
+				await rescanAction(target);
+				scanned.push(target);
+				continue;
+			}
+			// While the coordinator runs, each scan goes out under the radio's
+			// adapter lock (the one hotspot changes hold) after a fresh look at
+			// its mode and phy. A busy lock or a refused check skips the radio.
+			const sent = await withDeviceLock(scanKeyForIfname(target), async () => {
+				if (!(await mayScanNow(target))) return false;
+				await rescanAction(target);
+				return true;
+			});
+			if (sent.success && sent.result) scanned.push(target);
 		}
 
 		/* A rescan request will fail if a previous one is in progress,
