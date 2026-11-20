@@ -1037,6 +1037,7 @@
 	"network.devices.detail.port": "ポート",
 	"network.devices.detail.speed": "リンク速度",
 	"network.devices.detail.usbId": "USB 識別子",
+	"network.devices.controllers": "箱の中のUSBコントローラー",
 	"network.devices.details": "手助け用の詳細",
 	"network.devices.empty": "空です。",
 	"network.devices.hint.captureUsb2": "このキャプチャは USB 3 に対応していますが、USB 2 で動作しています。",

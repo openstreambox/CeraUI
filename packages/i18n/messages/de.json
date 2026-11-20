@@ -1082,6 +1082,7 @@
 	"network.devices.detail.port": "Anschluss",
 	"network.devices.detail.speed": "Verbindungsgeschwindigkeit",
 	"network.devices.detail.usbId": "USB-Kennung",
+	"network.devices.controllers": "USB-Controller in der Box",
 	"network.devices.details": "Details für Helfer",
 	"network.devices.empty": "Leer.",
 	"network.devices.hint.captureUsb2": "Diese Aufnahmekarte kann USB 3 nutzen und läuft mit USB 2.",

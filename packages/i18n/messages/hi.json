@@ -1082,6 +1082,7 @@
 	"network.devices.detail.port": "पोर्ट",
 	"network.devices.detail.speed": "लिंक गति",
 	"network.devices.detail.usbId": "USB पहचान",
+	"network.devices.controllers": "बॉक्स के USB नियंत्रक",
 	"network.devices.details": "मदद के लिए विवरण",
 	"network.devices.empty": "खाली।",
 	"network.devices.hint.captureUsb2": "यह कैप्चर कार्ड USB 3 इस्तेमाल कर सकता है, और USB 2 पर चल रहा है।",

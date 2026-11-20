@@ -1085,6 +1085,7 @@
 	"network.devices.detail.port": "Porta",
 	"network.devices.detail.speed": "Velocidade do link",
 	"network.devices.detail.usbId": "ID USB",
+	"network.devices.controllers": "Controladores USB na caixa",
 	"network.devices.details": "Detalhes para quem ajuda",
 	"network.devices.empty": "Vazio.",
 	"network.devices.hint.captureUsb2": "Esta placa de captura pode usar USB 3 e está funcionando em USB 2.",

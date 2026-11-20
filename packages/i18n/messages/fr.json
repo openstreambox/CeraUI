@@ -1085,6 +1085,7 @@
 	"network.devices.detail.port": "Prise",
 	"network.devices.detail.speed": "Débit du lien",
 	"network.devices.detail.usbId": "Identifiant USB",
+	"network.devices.controllers": "Contrôleurs USB dans le boîtier",
 	"network.devices.details": "Détails pour l'aide",
 	"network.devices.empty": "Vide.",
 	"network.devices.hint.captureUsb2": "Cette carte de capture peut utiliser l'USB 3, et elle tourne en USB 2.",

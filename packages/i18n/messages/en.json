@@ -1082,6 +1082,7 @@
 	"network.devices.detail.port": "Port",
 	"network.devices.detail.speed": "Link speed",
 	"network.devices.detail.usbId": "USB ID",
+	"network.devices.controllers": "USB controllers in the box",
 	"network.devices.details": "Details for helpers",
 	"network.devices.empty": "Empty.",
 	"network.devices.hint.captureUsb2": "This capture card can use USB 3, and it is running at USB 2.",

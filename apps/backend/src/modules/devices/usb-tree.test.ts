@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	cp,
+	lstat,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -155,6 +156,34 @@ export async function writeFixture(
 		}
 		await symlink(relative(flat, physical), join(flat, device.name));
 	}
+}
+
+/**
+ * Copy a fixture tree to a path the caller names. The destination must not
+ * exist yet. This never removes a path the caller supplied.
+ */
+export async function exportUsbFixture(
+	source: string,
+	destination: string,
+): Promise<void> {
+	if (destination.length === 0) {
+		throw new Error("CERAUI_USB_KEEP must name a new path");
+	}
+	try {
+		await lstat(destination);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+			await cp(source, destination, {
+				recursive: true,
+				verbatimSymlinks: true,
+			});
+			return;
+		}
+		throw err;
+	}
+	throw new Error(
+		`CERAUI_USB_KEEP must name a path that does not exist: ${destination}`,
+	);
 }
 
 function interfaceDirName(deviceName: string, suffix: string): string {
@@ -1101,6 +1130,25 @@ describe("sysfs fixtures", () => {
 		).toBe(false);
 	});
 
+	it("refuses to replace an existing fixture export path", async () => {
+		const source = await mkdtemp(join(tmpdir(), "ceraui-usb-src-"));
+		const dest = await mkdtemp(join(tmpdir(), "ceraui-usb-dest-"));
+		try {
+			await writeFile(join(source, "tree"), "fixture\n");
+			await writeFile(join(dest, "keep-me"), "safe\n");
+			await expect(exportUsbFixture(source, dest)).rejects.toThrow(
+				/does not exist/,
+			);
+			expect(await readFile(join(dest, "keep-me"), "utf8")).toBe("safe\n");
+			const fresh = join(dest, "fresh");
+			await exportUsbFixture(source, fresh);
+			expect(await readFile(join(fresh, "tree"), "utf8")).toBe("fixture\n");
+		} finally {
+			await rm(source, { recursive: true, force: true });
+			await rm(dest, { recursive: true, force: true });
+		}
+	});
+
 	it("reads the image 3 ROCK2 tree and folds its controllers", async () => {
 		const root = await mkdtemp(join(tmpdir(), "ceraui-usb-tree-"));
 		try {
@@ -1237,10 +1285,7 @@ describe("sysfs fixtures", () => {
 			expect(encoded).not.toContain("aabbccddeeff");
 			expect(encoded).not.toContain("wwxaabbccddeeff");
 			const keep = process.env.CERAUI_USB_KEEP;
-			if (keep) {
-				await rm(keep, { recursive: true, force: true });
-				await cp(root, keep, { recursive: true, verbatimSymlinks: true });
-			}
+			if (keep) await exportUsbFixture(root, keep);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

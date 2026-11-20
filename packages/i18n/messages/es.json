@@ -1085,6 +1085,7 @@
 	"network.devices.detail.port": "Puerto",
 	"network.devices.detail.speed": "Velocidad del enlace",
 	"network.devices.detail.usbId": "ID USB",
+	"network.devices.controllers": "Controladores USB en la caja",
 	"network.devices.details": "Detalles para quien ayuda",
 	"network.devices.empty": "Vacío.",
 	"network.devices.hint.captureUsb2": "Esta capturadora puede usar USB 3 y está funcionando en USB 2.",
