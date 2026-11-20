@@ -1026,4 +1026,36 @@ describe("the dead-evidence state machine", () => {
 		}
 		expect(t.w.bond).not.toContain("hold:wlan2");
 	});
+
+	test("a holder whose link only re-registers keeps its role", async () => {
+		const t = await settled();
+		await t.rounds(10);
+		// A new connection, reported disconnected for one sample, then ACKed.
+		const l = t.w.link("wlan1");
+		l.epoch = 50;
+		l.queued = 0;
+		l.arrived = 0;
+		l.ackedArrived = 0;
+		l.ageMs = null;
+		l.over = { connected: false };
+		await t.rounds(1);
+		l.over = {};
+		l.ageMs = 100;
+		await t.rounds(5);
+		expect(t.role("wlan1")).toBe("holder");
+		expect(t.role("wlan2")).toBe("assister");
+		expect(t.c.status().lastOutcome).not.toStartWith("holder-dead");
+	});
+
+	test("a holder that stays disconnected is relabelled on the second sample", async () => {
+		const t = await settled();
+		await t.rounds(10);
+		const l = t.w.link("wlan1");
+		l.deliver = 0;
+		l.over = { connected: false };
+		await t.rounds(1);
+		expect(t.role("wlan1")).toBe("holder");
+		await t.rounds(1);
+		expect(t.c.status().lastOutcome).toBe("holder-dead:wlan1>wlan2");
+	});
 });

@@ -1289,6 +1289,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 		" waits to learn whether ",
 		" is the setup's station",
 	],
+	["wifi-roaming: sender read failed"],
 	[
 		"wifi: NetworkManager reports no AP support on ",
 		", but its phy lists AP mode; offering the hotspot",

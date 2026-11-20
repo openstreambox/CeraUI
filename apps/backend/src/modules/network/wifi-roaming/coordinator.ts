@@ -943,10 +943,10 @@ export class RoamingCoordinator {
 	 *   sign it expected an answer (an idle link); nothing acts on it;
 	 * - dead: silent with evidence: at least two batches queued since the last
 	 *   ACK, or the sender holding the link out (stall gate), timing it out or
-	 *   reporting it disconnected. Latched: it stays dead, through history
-	 *   trims, report pauses, absence and new connections, until a sign of
-	 *   life (more ACK entries in the same connection, or a first ACK in a new
-	 *   one).
+	 *   reporting it disconnected in two samples running. Latched: it stays
+	 *   dead, through history trims, report pauses, absence and new
+	 *   connections, until a sign of life (more ACK entries in the same
+	 *   connection, or a first ACK in a new one).
 	 */
 	#advanceDeadEvidence(r: RadioRecord, snap: Snapshot, now: number): void {
 		const latest = snap.radios.get(r.ifname);
@@ -962,11 +962,16 @@ export class RoamingCoordinator {
 		}
 		if (!latest) return;
 		const judged = evaluateHolder(this.#history, r.ifname, this.#proofPolicy);
+		// A link reports disconnected for one sample while it re-registers (a
+		// DHCP change, a receiver restart): only a disconnect that persists to
+		// a second sample counts.
+		const staysDisconnected =
+			!latest.connected && previous !== null && !previous.connected;
 		const evidence =
 			this.#owedAnAnswer(r) ||
 			latest.stallGated ||
 			latest.timedOut ||
-			!latest.connected;
+			staysDisconnected;
 		if (judged.dead && evidence) r.deadSince = now;
 	}
 
