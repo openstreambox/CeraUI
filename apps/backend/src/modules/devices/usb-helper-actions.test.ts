@@ -605,6 +605,10 @@ describe("helper action RPCs", () => {
 		expect(heldModemMutations().length).toBeGreaterThan(0);
 		expect(logs.join("\n")).not.toContain("2-1.4");
 		expect(logs.join("\n")).not.toContain("systemctl");
+		expect((await readEntries())[0]?.phase).toBe("started");
+		await pollHelperInterlock();
+		expect(heldModemMutations().length).toBeGreaterThan(0);
+		expect((await readEntries())[0]?.phase).toBe("started");
 		const second = await call(
 			helperRetryPortProcedure,
 			{ confirmed: true },
@@ -612,6 +616,77 @@ describe("helper action RPCs", () => {
 		);
 		expect(second).toEqual({ ok: false, refusal: "action_in_progress" });
 		expect(started).toEqual([TYPEC_UNIT]);
+	});
+
+	test("a restart recovers a unit left running at the deadline", async () => {
+		await fresh();
+		await plant(TYPEC_REL);
+		await plant("proc/device-tree/compatible", "radxa,rock-5b-plus\0");
+		await plant("run/ceralive-typec/rearm", "0\n");
+		useDeps({
+			admit: realAdmit,
+			unitActive: async () => true,
+			startUnit: async (unit) => {
+				started.push(unit);
+				throw new Error("helper unit failed");
+			},
+		});
+		expect(
+			await call(
+				helperRetryPortProcedure,
+				{ confirmed: true },
+				{ context: callerContext() },
+			),
+		).toEqual({ ok: false, refusal: "start_failed" });
+		const running = await readEntries();
+		expect(running[0]?.phase).toBe("started");
+		const id = String(running[0]?.id);
+		await plant(
+			`run/ceralive/devices-actions/${id}.json`,
+			JSON.stringify({ ...running[0], process: "dead-process" }),
+		);
+		resetHelperActionGuardForTest();
+		resetLifecycleInterlock();
+		useDeps({
+			admit: realAdmit,
+			unitActive: async () => true,
+		});
+		const again = await call(
+			helperRetryPortProcedure,
+			{ confirmed: true },
+			{ context: callerContext() },
+		);
+		expect(again).toEqual({ ok: false, refusal: "action_in_progress" });
+		expect(started).toEqual([TYPEC_UNIT]);
+		expect(heldModemMutations()).toContain(TYPEC_SUBJECT);
+		expect((await readEntries())[0]?.phase).toBe("started");
+	});
+
+	test("a missed journal read keeps the lease of a unit that is still active", async () => {
+		await fresh();
+		await plant(TYPEC_REL);
+		await plant("proc/device-tree/compatible", "radxa,rock-5b-plus\0");
+		await plant("run/ceralive-typec/rearm", "0\n");
+		useDeps({
+			admit: realAdmit,
+			unitActive: async () => true,
+			startUnit: async () => {
+				throw new Error("helper unit failed");
+			},
+		});
+		expect(
+			await call(
+				helperRetryPortProcedure,
+				{ confirmed: true },
+				{ context: callerContext() },
+			),
+		).toEqual({ ok: false, refusal: "start_failed" });
+		await rm(join(root, "run/ceralive/devices-actions"), {
+			recursive: true,
+			force: true,
+		});
+		await pollHelperInterlock();
+		expect(heldModemMutations().length).toBeGreaterThan(0);
 	});
 
 	test("a restart treats a still-active unit as busy", async () => {
