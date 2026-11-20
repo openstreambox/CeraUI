@@ -24,7 +24,7 @@ import {
 	it,
 	vi,
 } from "vitest";
-
+import { stopStreaming } from "$lib/helpers/SystemHelper";
 import {
 	destroyAsyncOperations,
 	initAsyncOperations,
@@ -519,5 +519,51 @@ describe("the last stalled socket", () => {
 		expect(last.readyState).toBe(FakeWebSocket.CLOSED);
 		await restoreLink();
 		expect(loginsOnThisSocket()).toEqual([]);
+	});
+});
+
+describe("a Stop requested while the new socket is being signed in", () => {
+	/** The device reports a live stream on the current socket. */
+	function live(): void {
+		socket().deliver({ status: { is_streaming: true } });
+	}
+
+	it("sends one Stop for several requests once the session is back", async () => {
+		await signInFromForm(false);
+		live();
+		await reconnect();
+
+		const first = stopStreaming();
+		const second = stopStreaming();
+		await flush();
+		expect(sentCount("streaming.stop")).toBe(0);
+
+		answer("auth.login", { success: true });
+		await flush();
+		answer("status.getStatus", { is_streaming: true });
+		await flush();
+
+		expect(sentCount("streaming.stop")).toBe(1);
+		answer("streaming.stop", { success: true, result: "stopped" });
+		await expect(first).resolves.toBeUndefined();
+		await expect(second).resolves.toBeUndefined();
+	});
+
+	it("is dropped with the session: a later sign-in never sends it", async () => {
+		await signInFromForm(false);
+		live();
+		await reconnect();
+		const stop = stopStreaming().catch((error: unknown) => error);
+		await flush();
+
+		answer("auth.login", { success: false });
+		await flush();
+		expect(await stop).toBeInstanceOf(NotSentError);
+
+		// The operator signs in again on the same socket; the stream is live.
+		await signInFromForm(false);
+		live();
+		await flush();
+		expect(sentCount("streaming.stop")).toBe(0);
 	});
 });

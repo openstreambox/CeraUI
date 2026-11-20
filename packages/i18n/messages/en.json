@@ -1898,6 +1898,7 @@
 	"notifications.ceraliveUpdateFailed": "The software update failed. Open Settings → Software Updates to see the reason and retry.",
 	"notifications.connectionLost": "Connection lost",
 	"notifications.connectionRecovered": "Connection restored",
+	"notifications.stopNotSent": "The stream may still be live: Stop was not sent. Sign in and stop it again.",
 	"notifications.encoderModeClamped": "Your saved encoder settings weren't supported by the connected camera and have been adjusted to {resolution} at {framerate} fps.",
 	"notifications.engineCrashed": "The streaming engine stopped unexpectedly. Recovering…",
 	"notifications.engineRecovered": "The streaming engine recovered.",

@@ -1901,6 +1901,7 @@
 	"notifications.ceraliveUpdateFailed": "A atualização de software falhou. Abra Configurações → Atualizações de software para ver o motivo e tentar novamente.",
 	"notifications.connectionLost": "Conexão perdida",
 	"notifications.connectionRecovered": "Conexão restaurada",
+	"notifications.stopNotSent": "A transmissão pode continuar ao vivo: o comando Parar não foi enviado. Entre e pare de novo.",
 	"notifications.encoderModeClamped": "A câmera conectada não é compatível com as configurações de codificador salvas, então elas foram ajustadas para {resolution} a {framerate} fps.",
 	"notifications.engineCrashed": "O motor de transmissão parou inesperadamente. Recuperando…",
 	"notifications.engineRecovered": "O motor de transmissão se recuperou.",

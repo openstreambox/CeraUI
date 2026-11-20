@@ -101,6 +101,7 @@ import {
 import { mergeModemList } from "./modem-list-merge";
 import { pullStatusEvidence } from "./pulled-status";
 import { type ReauthOutcome, reauthenticateAndHydrate } from "./reconnect";
+import { NotSentError } from "./rpc-error";
 import { createSeqTracker } from "./seq-guard";
 import {
 	noteLifecycleDelivered,
@@ -1211,7 +1212,85 @@ let reauthAgain = false;
 let reauthStalls = 0;
 const MAX_REAUTH_STALLS = 3;
 
+/**
+ * A Stop Stream the operator pressed while a new socket was being signed in.
+ * The client refuses to replay it (session-gate-policy.ts); this one pending
+ * intent, fenced to the session it was made in, is sent ONCE after the re-auth
+ * succeeds, and only if the device still reports a live stream. Newer requests
+ * join it. It survives a stalled socket being replaced, and is dropped (and the
+ * operator told) when the session ends instead.
+ *
+ * Limit: `streaming.stop` names no stream. If another tab started a new stream
+ * while this one was reconnecting, the late Stop stops that stream. The device
+ * coalesces stops of one lifecycle and answers "stopped" when idle.
+ */
+interface StopIntent {
+	session: string;
+	send: () => Promise<unknown>;
+	resolve: () => void;
+	reject: (error: Error) => void;
+	promise: Promise<void>;
+}
+let stopIntent: StopIntent | undefined;
+
+/**
+ * Keep a Stop for after the re-auth (see `StopIntent`). `send` dispatches it;
+ * the newest request's `send` is the one used. Rejects with
+ * `NotSentError("signed-out")` when the session ends first.
+ */
+export function stopOnceSignedIn(send: () => Promise<unknown>): Promise<void> {
+	const session = getSessionToken();
+	if (session === null) return Promise.reject(new NotSentError("signed-out"));
+	if (stopIntent === undefined || stopIntent.session !== session) {
+		dropStopIntent();
+		let resolve!: () => void;
+		let reject!: (error: Error) => void;
+		const promise = new Promise<void>((ok, fail) => {
+			resolve = ok;
+			reject = fail;
+		});
+		stopIntent = { session, send, resolve, reject, promise };
+	} else {
+		stopIntent.send = send;
+	}
+	return stopIntent.promise;
+}
+
+/** The session is back on a signed-in socket: send the pending Stop once. */
+function flushStopIntent(): void {
+	const intent = stopIntent;
+	if (intent === undefined || rpcClient.isAwaitingSignIn()) return;
+	if (intent.session !== getSessionToken()) {
+		dropStopIntent();
+		return;
+	}
+	stopIntent = undefined;
+	if (!isStreamingState) {
+		intent.resolve();
+		return;
+	}
+	intent.send().then(() => intent.resolve(), intent.reject);
+}
+
+/** The session ended before the Stop could be sent: say so. */
+function dropStopIntent(): void {
+	const intent = stopIntent;
+	if (intent === undefined) return;
+	stopIntent = undefined;
+	intent.reject(new NotSentError("signed-out"));
+	pushNotification({
+		name: "stop-not-sent",
+		type: "error",
+		key: "notifications.stopNotSent",
+		msg: "The stream may still be live: Stop was not sent. Sign in and stop it again.",
+		is_dismissable: true,
+		is_persistent: false,
+		duration: 10,
+	});
+}
+
 function routeToLogin(): void {
+	dropStopIntent();
 	if (authStatusStore.value) {
 		markSessionExpired();
 		authStatusStore.set(false);
@@ -1267,6 +1346,8 @@ async function runReconnectReauth(): Promise<void> {
 					const answer = data as ReceivedStatus | undefined;
 					if (answer !== undefined)
 						ingestPulledStatus(answer.status, answer.receipt);
+					// Fresh device state: a pending Stop goes out now if still live.
+					flushStopIntent();
 				} else {
 					handleMessage(type, data);
 				}
@@ -1292,6 +1373,8 @@ function settleReauth(
 	switch (outcome) {
 		case "hydrated":
 			noteSessionRestored();
+			// The status read failed or was superseded: decide on the last state.
+			flushStopIntent();
 			return;
 		case "expired":
 			// `routeToLogin` already ran; its sign-out failed the held calls.

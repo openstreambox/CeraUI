@@ -1901,6 +1901,7 @@
 	"notifications.ceraliveUpdateFailed": "La actualización de software falló. Abre Configuración → Actualizaciones de software para ver el motivo y reintentar.",
 	"notifications.connectionLost": "Se perdió la conexión",
 	"notifications.connectionRecovered": "Se restableció la conexión",
+	"notifications.stopNotSent": "Es posible que la transmisión siga en vivo: no se envió Detener. Inicia sesión y detenla de nuevo.",
 	"notifications.encoderModeClamped": "La cámara conectada no admitía tus ajustes de codificador guardados, así que se ajustaron a {resolution} a {framerate} fps.",
 	"notifications.engineCrashed": "El motor de streaming se detuvo inesperadamente. Recuperando…",
 	"notifications.engineRecovered": "El motor de streaming se recuperó.",

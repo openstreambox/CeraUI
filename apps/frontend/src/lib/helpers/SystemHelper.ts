@@ -5,7 +5,8 @@ import type {
 	StreamingConfigInput,
 } from "@ceraui/rpc/schemas";
 
-import { rpc } from "$lib/rpc/client";
+import { rpc, rpcClient } from "$lib/rpc/client";
+import { NotSentError } from "$lib/rpc/rpc-error";
 import { createPassword } from "$lib/stores/auth-status.svelte";
 import { sendSessionTransition } from "$lib/streaming/compositionWrites.svelte";
 
@@ -123,9 +124,23 @@ export const setBitrate = async (bitrate: number) => {
 };
 
 export const stopStreaming = async () => {
+	const send = () => sendSessionTransition("idle", () => rpc.streaming.stop());
 	try {
-		await sendSessionTransition("idle", () => rpc.streaming.stop());
+		await send();
 	} catch (error) {
+		if (
+			error instanceof NotSentError &&
+			error.reason === "reconnected" &&
+			rpcClient.isAwaitingSignIn()
+		) {
+			// Refused while the new socket is being signed in: keep it as the one
+			// pending Stop, sent once the session is back (subscriptions.svelte).
+			const { stopOnceSignedIn } = await import(
+				"$lib/rpc/subscriptions.svelte"
+			);
+			await stopOnceSignedIn(send);
+			return;
+		}
 		console.error("Failed to stop streaming:", error);
 		throw error;
 	}

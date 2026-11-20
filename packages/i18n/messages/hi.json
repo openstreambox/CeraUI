@@ -1898,6 +1898,7 @@
 	"notifications.ceraliveUpdateFailed": "सॉफ़्टवेयर अपडेट विफल रहा। कारण देखने और पुनः प्रयास करने के लिए सेटिंग्स → सॉफ़्टवेयर अपडेट खोलें।",
 	"notifications.connectionLost": "कनेक्शन टूट गया",
 	"notifications.connectionRecovered": "कनेक्शन बहाल हो गया",
+	"notifications.stopNotSent": "स्ट्रीम शायद अभी भी लाइव है: रोकने का आदेश नहीं भेजा गया। साइन इन करें और इसे फिर से रोकें।",
 	"notifications.encoderModeClamped": "आपकी सहेजी गई एन्कोडर सेटिंग्स जुड़े हुए कैमरे द्वारा समर्थित नहीं थीं, इसलिए उन्हें {resolution} पर {framerate} fps में बदल दिया गया है।",
 	"notifications.engineCrashed": "स्ट्रीमिंग इंजन अप्रत्याशित रूप से रुक गया। पुनर्प्राप्त हो रहा है…",
 	"notifications.engineRecovered": "स्ट्रीमिंग इंजन पुनर्प्राप्त हो गया।",

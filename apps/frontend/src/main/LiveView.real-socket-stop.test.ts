@@ -140,6 +140,7 @@ import {
 	resetState,
 } from "../lib/rpc/subscriptions.svelte";
 import { beginSession, setAuthStatus } from "../lib/stores/auth-status.svelte";
+import { getActive as getActiveNotifications } from "../lib/stores/notifications.svelte";
 import {
 	clearStartRecoveryUnknown,
 	latestStopOwner,
@@ -2964,41 +2965,93 @@ describe("F5 sweep: the stop watchdog's pull keeps receipt order", () => {
 });
 
 describe("F6 request causality and action lifetime over the real socket", () => {
-	it("a Stop pressed while the new socket is being signed in is not replayed by the gate; the stop watchdog sends it once signed in", async () => {
+	/** Live, then the link drops and a new socket opens (its sign-in still out). */
+	async function liveThenReconnecting(): Promise<HTMLElement> {
 		const { container } = render(LiveView);
 		deliverStatus({ is_streaming: true, stream_lifecycle: "streaming" });
 		dropLink();
 		await settle();
 		await restoreLink();
+		return container;
+	}
+
+	/** The re-auth on the current socket succeeds and its status read says live. */
+	async function signedInStillLive(): Promise<void> {
+		answer("auth.login", { success: true });
+		await settle();
+		answer("status.getStatus", {
+			is_streaming: true,
+			stream_lifecycle: "streaming",
+		});
+		await settle();
+	}
+
+	it("a Stop pressed while the new socket is being signed in goes out once, as soon as the session is back", async () => {
+		const container = await liveThenReconnecting();
 
 		await fireEvent.click(button(container, "Stop Stream"));
 		await settle();
-		answer("auth.login", { success: true });
-		await settle();
-		// The gate refused it unsent; the operator's Stop stays visible.
 		expect(sentCount("streaming.stop")).toBe(0);
 		expect(controls(container)).toEqual([
 			{ label: "Stopping...", disabled: true },
 		]);
-		answer("streaming.getConfig", {});
+
+		await signedInStillLive();
+		expect(sentCount("streaming.stop")).toBe(1);
+		expect(outstanding("streaming.stop")).toHaveLength(1);
+	});
+
+	it("a Stop pressed during a first stalled sign-in goes out once after the next socket signs in", async () => {
+		const container = await liveThenReconnecting();
+		await fireEvent.click(button(container, "Stop Stream"));
+		await settle();
+
+		// The first socket's sign-in never answers; the tab replaces the socket.
+		await elapse(30_000);
+		await restoreLink();
+		await signedInStillLive();
+
+		expect(sentCount("streaming.stop")).toBe(1);
+		const [stop] = socket().sent.filter(
+			(request) => request.path === "streaming.stop",
+		);
+		const [login] = socket().sent.filter(
+			(request) => request.path === "auth.login",
+		);
+		expect(stop).toBeDefined();
+		expect(login).toBeDefined();
+	});
+
+	it("a Stop pressed before the sign-in is refused is never sent, and the operator is told", async () => {
+		const container = await liveThenReconnecting();
+		await fireEvent.click(button(container, "Stop Stream"));
+		await settle();
+
+		answer("auth.login", { success: false });
+		await settle();
+
+		expect(sentCount("streaming.stop")).toBe(0);
+		expect(
+			getActiveNotifications().some(
+				(notification) => notification.name === "stop-not-sent",
+			),
+		).toBe(true);
+	});
+
+	it("a Stop pressed during the sign-in is not sent when the device is no longer live", async () => {
+		const container = await liveThenReconnecting();
+		await fireEvent.click(button(container, "Stop Stream"));
+		await settle();
+
+		answer("auth.login", { success: true });
+		await settle();
 		answer("status.getStatus", {
-			is_streaming: true,
-			stream_lifecycle: "streaming",
+			is_streaming: false,
+			stream_lifecycle: "idle",
 		});
 		await settle();
 
-		// The stop watchdog (not the gate) re-checks and dispatches it, on the
-		// signed-in socket, exactly once.
-		await elapse(15_000);
-		flushSync();
-		answer("status.getStatus", {
-			is_streaming: true,
-			stream_lifecycle: "streaming",
-		});
-		await settle();
-		await elapse(2_000);
-		await settle();
-		expect(sentCount("streaming.stop")).toBe(1);
+		expect(sentCount("streaming.stop")).toBe(0);
 	});
 
 	it.each([

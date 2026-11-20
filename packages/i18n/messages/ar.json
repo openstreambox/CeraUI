@@ -1910,6 +1910,7 @@
 	"notifications.ceraliveUpdateFailed": "فشل تحديث البرنامج. افتح الإعدادات ← تحديثات البرامج لمعرفة السبب وإعادة المحاولة.",
 	"notifications.connectionLost": "انقطع الاتصال",
 	"notifications.connectionRecovered": "تمت استعادة الاتصال",
+	"notifications.stopNotSent": "قد يكون البث لا يزال مباشرًا: لم يُرسل أمر الإيقاف. سجّل الدخول وأوقفه مجددًا.",
 	"notifications.encoderModeClamped": "لم تكن إعدادات المُشفِّر المحفوظة مدعومة من الكاميرا المتصلة، وتم ضبطها على {resolution} بمعدل {framerate} إطارًا في الثانية.",
 	"notifications.engineCrashed": "توقّف محرك البث بشكل غير متوقع. جارٍ الاستعادة…",
 	"notifications.engineRecovered": "تعافى محرك البث.",
