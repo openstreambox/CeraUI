@@ -62,6 +62,7 @@ const USB2_BOUND: Usb2Bound = {
 	scope: "socket:M2B",
 };
 const CRASH_ID = "11111111-1111-4111-8111-111111111111";
+const SHOWN = "1.11111111-1111-4111-8111-111111111111";
 
 let root = "";
 let now = 1_000;
@@ -244,7 +245,7 @@ describe("helper action RPCs", () => {
 		await plant(TYPEC_REL);
 		const result = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "modem" },
+			{ confirmed: true, token: SHOWN, key: "modem" },
 			{ context: callerContext({ senderId: "relay-1" }) },
 		);
 		expect(result).toEqual({ ok: false, refusal: "remote_channel" });
@@ -310,6 +311,7 @@ describe("helper action RPCs", () => {
 			retryPort: false,
 			rearmExhausted: false,
 			usb2: false,
+			tokens: [],
 		});
 		const result = await call(
 			helperRetryPortProcedure,
@@ -331,7 +333,7 @@ describe("helper action RPCs", () => {
 		if (offer.ok) expect(offer.usb2).toBe(false);
 		const result = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "modem" },
+			{ confirmed: true, token: SHOWN, key: "modem" },
 			{ context: callerContext() },
 		);
 		expect(result).toEqual({ ok: false, refusal: "unit_absent" });
@@ -530,7 +532,7 @@ describe("helper action RPCs", () => {
 		expect(offer).toMatchObject({ usb2: true });
 		const result = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "modem" },
+			{ confirmed: true, token: SHOWN, key: "modem" },
 			{ context: callerContext() },
 		);
 		expect(result).toEqual({ ok: true });
@@ -538,7 +540,7 @@ describe("helper action RPCs", () => {
 		expect(published).toBe(1);
 		const missing = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "other" },
+			{ confirmed: true, token: SHOWN, key: "other" },
 			{ context: callerContext() },
 		);
 		expect(missing).toEqual({ ok: false, refusal: "identity_unresolved" });
@@ -845,7 +847,7 @@ describe("helper action RPCs", () => {
 		expect(offer).toMatchObject({ usb2: false, retryPort: false });
 		const result = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "modem" },
+			{ confirmed: true, token: SHOWN, key: "modem" },
 			{ context: callerContext() },
 		);
 		expect(result).toEqual({ ok: false, refusal: "not_this_board" });
@@ -906,7 +908,7 @@ describe("helper action RPCs", () => {
 		});
 		const result = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "modem" },
+			{ confirmed: true, token: SHOWN, key: "modem" },
 			{ context: callerContext() },
 		);
 		expect(result).toEqual({ ok: false, refusal: "identity_unresolved" });
@@ -927,9 +929,18 @@ describe("helper action RPCs", () => {
 		});
 		const tree = await readUsbTree({ sysfsRoot: root });
 		await captureHelperSeen(tree.roots, root);
+		const offer = await call(helperOfferProcedure, undefined, {
+			context: callerContext(),
+		});
+		expect(offer.ok).toBe(true);
+		if (!offer.ok) return;
+		const token = offer.tokens.find(
+			(row) => row.key === "fc800000.usb:usb2:1.4",
+		)?.token;
+		expect(token?.startsWith("1.")).toBe(true);
 		const matched = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "fc800000.usb:usb2:1.4" },
+			{ confirmed: true, token: token ?? "", key: "fc800000.usb:usb2:1.4" },
 			{ context: callerContext() },
 		);
 		expect(matched).toEqual({ ok: true });
@@ -937,11 +948,53 @@ describe("helper action RPCs", () => {
 		await plantModem("9");
 		const result = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "fc800000.usb:usb2:1.4" },
+			{ confirmed: true, token: token ?? "", key: "fc800000.usb:usb2:1.4" },
 			{ context: callerContext() },
 		);
 		expect(result).toEqual({ ok: false, refusal: "identity_unresolved" });
 		expect(started).toEqual([USB2_BOUND.unit]);
+	});
+
+	test("a stale confirmation does not start the replacement", async () => {
+		await fresh();
+		await plant(USB2_REL);
+		await plant("proc/device-tree/compatible", "radxa,rock-5b-plus\0");
+		await plantModem("4");
+		useDeps({
+			stableKey: (ifname) =>
+				ifname === "wwan0" ? USB2_BOUND.leaseKey : undefined,
+		});
+		const firstTree = await readUsbTree({ sysfsRoot: root });
+		await captureHelperSeen(firstTree.roots, root);
+		const shown = await call(helperOfferProcedure, undefined, {
+			context: callerContext(),
+		});
+		expect(shown.ok).toBe(true);
+		if (!shown.ok) return;
+		const token = shown.tokens.find(
+			(row) => row.key === "fc800000.usb:usb2:1.4",
+		)?.token;
+		expect(token?.startsWith("1.")).toBe(true);
+		await plantModem("9");
+		const replaced = await readUsbTree({ sysfsRoot: root });
+		await captureHelperSeen(replaced.roots, root);
+		const refreshed = await call(helperOfferProcedure, undefined, {
+			context: callerContext(),
+		});
+		expect(refreshed.ok).toBe(true);
+		if (!refreshed.ok) return;
+		const next = refreshed.tokens.find(
+			(row) => row.key === "fc800000.usb:usb2:1.4",
+		)?.token;
+		expect(next?.startsWith("2.")).toBe(true);
+		expect(next).not.toBe(token);
+		const result = await call(
+			helperUsb2Procedure,
+			{ confirmed: true, token: token ?? "", key: "fc800000.usb:usb2:1.4" },
+			{ context: callerContext() },
+		);
+		expect(result).toEqual({ ok: false, refusal: "identity_unresolved" });
+		expect(started).toEqual([]);
 	});
 
 	test("concurrent actions keep both journal records finished", async () => {
@@ -995,12 +1048,12 @@ describe("helper action RPCs", () => {
 		});
 		const first = call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "a" },
+			{ confirmed: true, token: SHOWN, key: "a" },
 			{ context: callerContext() },
 		);
 		const second = call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "b" },
+			{ confirmed: true, token: SHOWN, key: "b" },
 			{ context: callerContext() },
 		);
 		await readyA;
@@ -1036,13 +1089,13 @@ describe("helper action RPCs", () => {
 		expect(
 			await call(
 				helperUsb2Procedure,
-				{ confirmed: true, key: "usb3" },
+				{ confirmed: true, token: SHOWN, key: "usb3" },
 				{ context: callerContext() },
 			),
 		).toEqual({ ok: true });
 		const companion = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "usb2" },
+			{ confirmed: true, token: SHOWN, key: "usb2" },
 			{ context: callerContext() },
 		);
 		expect(companion).toEqual({ ok: false, refusal: "cooldown" });
@@ -1055,7 +1108,7 @@ describe("helper action RPCs", () => {
 		).toEqual({ ok: true });
 		const onTypec = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "j11" },
+			{ confirmed: true, token: SHOWN, key: "j11" },
 			{ context: callerContext() },
 		);
 		expect(onTypec).toEqual({ ok: false, refusal: "cooldown" });
@@ -1121,7 +1174,7 @@ describe("helper action RPCs", () => {
 		});
 		const result = await call(
 			helperUsb2Procedure,
-			{ confirmed: true, key: "modem" },
+			{ confirmed: true, token: SHOWN, key: "modem" },
 			{ context: callerContext() },
 		);
 		expect(result).toEqual({ ok: false, refusal: "unit_absent" });

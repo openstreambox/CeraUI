@@ -30,6 +30,7 @@ interface Props {
 
 const { wire, events = [], calm, helper, offer = null, onSettled, onBack }: Props = $props();
 let pendingId = $state<string | null>(null);
+let pendingToken = $state("");
 let busyId = $state<string | null>(null);
 let actionNotes = $state<Record<string, string>>({});
 
@@ -370,10 +371,13 @@ const marks = $derived({
 							data-testid="helper-usb2-confirm"
 							class="bg-secondary focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
 							disabled={busyId !== null}
-							onclick={() =>
-								runHelperAction(`usb2:${row.key}`, () =>
-									rpc.devices.usb2({ confirmed: true, key: row.key }),
-								)}
+							onclick={() => {
+								const token = pendingToken;
+								const key = row.key;
+								runHelperAction(`usb2:${key}`, () =>
+									rpc.devices.usb2({ confirmed: true, key, token }),
+								);
+							}}
 						>
 							{m['network.devices.helper.action.confirm']()}
 						</button>
@@ -391,7 +395,11 @@ const marks = $derived({
 						type="button"
 						data-testid="helper-usb2"
 						class="bg-secondary focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md border px-3 text-sm focus-visible:ring-2 focus-visible:outline-none"
-						onclick={() => (pendingId = `usb2:${row.key}`)}
+						onclick={() => {
+							pendingToken =
+								offer?.tokens?.find((entry) => entry.key === row.key)?.token ?? "";
+							pendingId = `usb2:${row.key}`;
+						}}
 					>
 						{m['network.devices.helper.action.usb2']()}
 					</button>

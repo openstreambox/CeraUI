@@ -43,6 +43,12 @@ const resultSchema = z
 	})
 	.strict();
 
+const identityTokenSchema = z
+	.string()
+	.regex(
+		/^[1-9][0-9]{0,8}\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+	);
+
 const offerSchema = z
 	.object({
 		ok: z.boolean(),
@@ -50,6 +56,16 @@ const offerSchema = z
 		retryPort: z.boolean(),
 		rearmExhausted: z.boolean(),
 		usb2: z.boolean(),
+		tokens: z
+			.array(
+				z
+					.object({
+						key: z.string().min(1).max(120),
+						token: identityTokenSchema,
+					})
+					.strict(),
+			)
+			.max(32),
 	})
 	.strict();
 
@@ -63,6 +79,7 @@ const usb2Schema = z
 	.object({
 		confirmed: z.boolean(),
 		key: z.string().min(1).max(120),
+		token: identityTokenSchema,
 	})
 	.strict();
 
@@ -89,6 +106,7 @@ export const helperOfferProcedure = base
 				retryPort: false,
 				rearmExhausted: false,
 				usb2: false,
+				tokens: [],
 			};
 		}
 		return offer;
@@ -109,7 +127,12 @@ export const helperUsb2Procedure = base
 	.output(resultSchema)
 	.handler(async ({ input, context }) => {
 		return runHelperAction(
-			{ action: "usb2", confirmed: input.confirmed, key: input.key },
+			{
+				action: "usb2",
+				confirmed: input.confirmed,
+				key: input.key,
+				token: input.token,
+			},
 			callerFrom(context),
 		);
 	});

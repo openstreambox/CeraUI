@@ -3,6 +3,7 @@ export type HelperActionOffer = {
 	readonly retryPort: boolean;
 	readonly rearmExhausted: boolean;
 	readonly usb2: boolean;
+	readonly tokens?: readonly { readonly key: string; readonly token: string }[];
 };
 
 export type HelperActionButtons = {
