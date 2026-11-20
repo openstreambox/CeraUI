@@ -43460,6 +43460,6 @@
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
     "packages/rpc/src/schemas/system.schema.ts": "adfe79f06462f26197bb713d811530cc8fd23040fd249c297d8682ce45363dc1",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "5bb654471ce94854218cdfc84a70bf74a6ea63e7e8b2b7766d33f9853c7d2643",
-    "packages/rpc/src/schemas/wifi.schema.ts": "d200119860c47931b03e6c7e74a93ebf9da9c61be977abf0fae513d75b638e23"
+    "packages/rpc/src/schemas/wifi.schema.ts": "90ade884596a8f9068eb13340cf59aafd51e35a0e5432fa8ea8d8501148e712a"
   }
 }
