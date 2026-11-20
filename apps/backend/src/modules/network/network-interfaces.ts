@@ -68,7 +68,6 @@ import {
 } from "../wifi/wifi-device-list.ts";
 import { isApMode } from "../wifi/wifi-hotspot-types.ts";
 import { scheduleWifiUpdate } from "../wifi/wifi-interfaces.ts";
-import { isWirelessInterface } from "../wifi/wifi-radio-identity.ts";
 import {
 	bondPhysicalId,
 	isBondOptedOut,
@@ -355,7 +354,7 @@ export function isHeldOutByModemBlock(
 		const descriptor = getUsbPhysicalDescriptor(name);
 		if (
 			descriptor?.deviceClass === "wired-ethernet" ||
-			isWirelessInterface(name)
+			isSupportedWifiIfname(name)
 		)
 			return false;
 		if (descriptor) {
@@ -1157,7 +1156,13 @@ async function refreshNetifFromOs(): Promise<void> {
 			}
 		}
 		if (generation !== netifRefreshGeneration) return;
-		processIfconfigOutput(ifconfigOut, ipOverrides, undefined, undefined, buses, ifindices);
+		processIfconfigOutput(
+			ifconfigOut,
+			ipOverrides,
+			undefined,
+			buses,
+			ifindices,
+		);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.error(`Error getting ifconfig: ${message}`);
@@ -1168,7 +1173,6 @@ export function processIfconfigOutput(
 	stdout: string,
 	ipOverrides?: Map<string, IpAddrSelection>,
 	now: number = getms(),
-	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
 	ifindices?: ReadonlyMap<string, number>,
 ) {
@@ -1209,7 +1213,7 @@ export function processIfconfigOutput(
 			const mac = int.match(/ether ([0-9a-f:]+)/)?.[1];
 
 			// update the list of WiFi devices
-			if (wirelessInterface(name)) {
+			if (isSupportedWifiIfname(name)) {
 				if (mac) {
 					wifiDeviceListAdd(name, mac, isRunning ? inetAddr : null);
 				}
@@ -1242,7 +1246,7 @@ export function processIfconfigOutput(
 			) {
 				bumpPresence(name, true);
 				intsChanged = true;
-				if (wirelessInterface(name) || isSupportedWifiIfname(name)) wifiIncarnationChanged = true;
+				if (isSupportedWifiIfname(name)) wifiIncarnationChanged = true;
 			}
 			netifIdentities.set(name, { ifindex, mac });
 			let tp = 0;

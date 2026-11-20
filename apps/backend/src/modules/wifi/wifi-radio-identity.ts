@@ -1,5 +1,4 @@
 import { realpath } from "node:fs/promises";
-import { ID_RE } from "../../helpers/run.ts";
 import type { MacAddress } from "../network/network-manager.ts";
 import type {
 	BaseWifiInterface,
@@ -288,16 +287,3 @@ export class WifiRadioIdentityProducer {
 export const wifiRadioIdentity = new WifiRadioIdentityProducer(
 	radioIdentityReaders,
 );
-
-import { existsSync } from "node:fs";
-
-export function isWirelessInterface(
-	ifname: string,
-	root = "/sys/class/net",
-): boolean {
-	return (
-		ID_RE.test(ifname) &&
-		(existsSync(`${root}/${ifname}/wireless`) ||
-			existsSync(`${root}/${ifname}/phy80211`))
-	);
-}
