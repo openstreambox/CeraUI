@@ -128,13 +128,10 @@ never promotes on its own. With them, each round:
   traffic off it, and its probes see a recovery. With nobody else
   delivering, a lone dead holder keeps the label, but next to another holder
   (a handover's old one) it gives the label up.
-- **Dead radio.** A radio counts as dead when the receiver no longer answers
-  it while another link still gets ACKs, and the sender queued at least two
-  receiver batches on it after its last ACK. A link the sender leaves idle
-  was owed no answer and is not dead. One dead for 10 s adds nothing to the
-  bond, whatever its uplink: slice 1 may withdraw it to search even while
-  the holders only hold steady, which restores the second path. A dead radio
-  is never a continuity candidate.
+- **Dead radio** (see "Dead evidence" below). A radio dead for 10 s of fresh
+  reports adds nothing to the bond, whatever its uplink. Slice 1 may withdraw
+  it to search even while the holders only hold steady, which restores the
+  second path. A dead radio is never a continuity candidate.
 - **Fading holder** (slice 1's triggers, or delivery below 0.90, or the
   sender giving up on it):
   - It gets a continuity candidate: a carrying assister on another BSSID,
@@ -155,15 +152,55 @@ never promotes on its own. With them, each round:
     part. A failure undoes the handover and cools the candidate's BSSID down.
   - A holder that recovers before the proof completes ends it.
 
+### Dead evidence
+
+Each radio's link is in one of three states. They are advanced once per
+fresh sample.
+
+| State | Meaning | Acts on it |
+|---|---|---|
+| alive | the receiver answers, or nothing points to death | nothing |
+| suspect | silent while another link still gets ACKs, but with no sign the sender expected an answer (an idle link it is not sending on) | nothing |
+| dead | silent, with evidence the sender expected an answer | abrupt-loss relabel at once (holders); recall after 10 s of fresh reports |
+
+The transitions:
+
+- **alive or suspect → dead:** silent (the holder rule in `proof.ts`: no ACK
+  within the link's age bound while a sibling's is fresh, or the sender
+  reports it timed out or disconnected), **and** at least one piece of
+  evidence:
+  - at least two receiver batches (20 packets) queued after its last ACK, in
+    the same connection, counted from the first sample at or after that ACK;
+  - the sender's stall gate holds it out (`stall_gated`);
+  - the sender times it out (`timed_out`);
+  - the sender reports it disconnected.
+- **dead stays dead (latched):** through history trims, report pauses,
+  absence from the snapshot (held out to search) and new connections (a
+  re-added link). The verdict does not depend on evidence still being in the
+  history.
+- **dead → alive, only on a sign of life:** more ACK entries in the same
+  connection, or a first ACK in a new one. (The ACK age only resets on a
+  non-empty ACK, which also adds entries.)
+
+A link the sender simply leaves idle never becomes dead: it was owed no
+answer, its stall gate needs unproven sends, and keepalives keep it
+connected.
+
 `status().swap` shows the handover in progress, and `lastSwapOutcome` how the
 last one ended.
 
 The port contract for `senderLinks()`:
 - A snapshot is one sample, and its `at` must advance. Spans and lags are
   counted in samples, so a snapshot no newer than the last is ignored, and
-  nothing is judged on that round. One whose `at` has not advanced for more
-  than 3 s counts as no reports at all: dead verdicts are cleared and a
-  handover in progress ends.
+  nothing is judged on that round.
+- Reports are **paused** when the port returns `undefined`, or when `at` has
+  not advanced for more than 3 s. While paused:
+  - nothing is sampled and a handover in progress ends;
+  - dead verdicts are kept, but their 10 s clock stops, and nothing is
+    recalled.
+
+  When reports resume, the clocks are shifted by the pause, so nothing
+  matures on old data and nothing judged before is forgotten.
 - Return `undefined` when the sender reports nothing.
 - Without `encoderRate()` the headroom check is skipped and labelled "not
   reported": a promotion then rests on delivery alone. In mode R that only
@@ -309,8 +346,15 @@ reports arrivals per radio. Its cases:
 - a slower sender whose repeated snapshots are not counted as samples;
 - an idle diverse assister that is not dead and keeps carrying;
 - a sole dead holder keeping its label;
-- no dead recall after reports stop or freeze;
-- a dead radio never chosen as a candidate.
+- no dead recall while reports are missing or frozen, with the verdict kept
+  and its clock paused;
+- a dead radio never chosen as a candidate;
+- the dead-evidence state machine: a holder the sender times out relabelled
+  at once; a stall-gated link dead after fewer than 20 packets; timed-out and
+  disconnected links dead without owed packets; a dead radio freed again on
+  later searches, including after a re-add without an ACK; the owed count's
+  boundary sample and its stop at a connection change; and more ACK entries
+  as the sign of life.
 
 `proof.test.ts`, `sender-links.test.ts` and `swap-op.test.ts` cover the
 pieces above on synthetic snapshots and a fake clock. The cases include:

@@ -265,10 +265,13 @@ type RadioRecord = {
 	scanFailures: number;
 	restUntil: number;
 	/**
-	 * Since when the sender has judged this radio dead (no ACKs while another
-	 * link still gets them), `null` when it is not, or without arrival reports.
+	 * Since when this radio has been dead (see "Dead evidence" in the README):
+	 * silent while another link gets ACKs, with evidence the sender expected an
+	 * answer. Latched until a sign of life; `null` while alive or suspect.
 	 */
 	deadSince: number | null;
+	/** This radio's link in the last sample taken, to see a sign of life. */
+	lastLink: LinkSample | null;
 };
 
 type Departure = {
@@ -328,6 +331,18 @@ const DEAD_MIN_QUEUED = 20;
 /** A sender whose snapshot `at` has not advanced for this long reports nothing. */
 const SNAPSHOT_STALE_MS = 3_000;
 
+/**
+ * The receiver answered this link since the previous sample: more ACK
+ * entries in the same connection, or a first ACK in a new one. (The ACK age
+ * only resets on a non-empty ACK, which also adds entries.) Without a
+ * previous sample, an ACK within the last second.
+ */
+function lifeSign(previous: LinkSample | null, latest: LinkSample): boolean {
+	if (previous === null) return latest.ageMs !== null && latest.ageMs <= 1_000;
+	if (previous.epoch !== latest.epoch) return latest.ageMs !== null;
+	return latest.entries > previous.entries;
+}
+
 const CONDITION_RANK: Record<HolderCondition, number> = {
 	fade: 0,
 	steady: 1,
@@ -364,6 +379,10 @@ export class RoamingCoordinator {
 	#lastSwapOutcome: string | null = null;
 	/** No new handover before this, after a common-target failure. */
 	#swapBackoffUntil = 0;
+	/** `at` of the last sample taken; survives history resets. */
+	#lastSampleAt: number | null = null;
+	/** Since when the sender's reports are missing or frozen, `null` when fresh. */
+	#reportsPausedSince: number | null = null;
 	#busy = false;
 	#started = false;
 	#stopped = false;
@@ -396,6 +415,7 @@ export class RoamingCoordinator {
 			scanFailures: 0,
 			restUntil: 0,
 			deadSince: null,
+			lastLink: null,
 		}));
 		this.#publishOwnership();
 		this.#protectFromScans();
@@ -869,48 +889,85 @@ export class RoamingCoordinator {
 	}
 
 	/**
-	 * Continuity on the sender's arrival reports: record the snapshot, relabel
-	 * a dead holder at once, then advance the handover in progress or start one
-	 * for a fading holder. Without arrival reports nothing here acts.
+	 * Continuity on the sender's arrival reports: take the sample, advance each
+	 * radio's dead-evidence state, relabel a dead holder at once, then advance
+	 * the handover in progress or start one for a fading holder.
+	 *
+	 * Missing or frozen reports pause everything: no sample, no handover, and
+	 * dead verdicts neither mature nor get forgotten. When reports resume, the
+	 * maturity clocks are shifted by the pause.
 	 */
 	#continuity(now: number): void {
 		const snap = this.#ports.senderLinks?.();
-		const last = this.#history.at(-1);
-		// A sender stuck on one sample reports nothing new: like no reports at
-		// all, nothing judged on its last sample may keep maturing.
-		const frozen =
-			snap !== undefined &&
-			last !== undefined &&
-			snap.at <= last.at &&
-			now - last.at > SNAPSHOT_STALE_MS;
-		if (!snap || frozen) {
+		const lastAt = this.#lastSampleAt;
+		const stale =
+			snap === undefined ||
+			(lastAt !== null &&
+				snap.at <= lastAt &&
+				now - lastAt > SNAPSHOT_STALE_MS);
+		if (stale) {
 			this.#history = [];
-			for (const r of this.#radios) r.deadSince = null;
-			this.#dropSwap(frozen ? "stale-arrival-reports" : "no-arrival-reports");
+			this.#reportsPausedSince ??= now;
+			this.#dropSwap(
+				snap === undefined ? "no-arrival-reports" : "stale-arrival-reports",
+			);
 			return;
 		}
 		// Spans and lags are counted in samples: a snapshot that is not newer
 		// than the last one is no new sample, and nothing is judged on it.
-		if (last !== undefined && snap.at <= last.at) return;
+		if (lastAt !== null && snap.at <= lastAt) return;
+		if (this.#reportsPausedSince !== null) {
+			const paused = now - this.#reportsPausedSince;
+			for (const r of this.#radios)
+				if (r.deadSince !== null) r.deadSince += paused;
+			this.#reportsPausedSince = null;
+		}
+		this.#lastSampleAt = snap.at;
 		this.#history.push(snap);
 		while (
 			this.#history.length > 0 &&
 			(this.#history[0] as Snapshot).at < snap.at - this.#historyMs
 		)
 			this.#history.shift();
-		for (const r of this.#radios) {
-			if (r.role === "hotspot-reserved") {
-				r.deadSince = null;
-				continue;
-			}
-			const judged = evaluateHolder(this.#history, r.ifname, this.#proofPolicy);
-			r.deadSince =
-				judged.dead && this.#owedAnAnswer(r) ? (r.deadSince ?? now) : null;
-		}
+		for (const r of this.#radios) this.#advanceDeadEvidence(r, snap, now);
 		for (const h of this.#holders())
 			if (h.deadSince !== null) this.#abruptLoss(h, now);
 		if (this.#swap) this.#driveSwap(now);
 		else this.#maybeStartSwap(now);
+	}
+
+	/**
+	 * One radio's dead-evidence state machine (README, "Dead evidence"):
+	 * - alive: the receiver answers, or nothing points to death;
+	 * - suspect: silent while another link gets ACKs, but the sender gave no
+	 *   sign it expected an answer (an idle link); nothing acts on it;
+	 * - dead: silent with evidence: at least two batches queued since the last
+	 *   ACK, or the sender holding the link out (stall gate), timing it out or
+	 *   reporting it disconnected. Latched: it stays dead, through history
+	 *   trims, report pauses, absence and new connections, until a sign of
+	 *   life (more ACK entries in the same connection, or a first ACK in a new
+	 *   one).
+	 */
+	#advanceDeadEvidence(r: RadioRecord, snap: Snapshot, now: number): void {
+		const latest = snap.radios.get(r.ifname);
+		const previous = r.lastLink;
+		if (latest) r.lastLink = latest;
+		if (r.role === "hotspot-reserved") {
+			r.deadSince = null;
+			return;
+		}
+		if (r.deadSince !== null) {
+			if (latest && lifeSign(previous, latest)) r.deadSince = null;
+			return;
+		}
+		if (!latest) return;
+		const judged = evaluateHolder(this.#history, r.ifname, this.#proofPolicy);
+		const evidence =
+			this.#owedAnAnswer(r) ||
+			latest.stallGated ||
+			latest.timedOut ||
+			!latest.connected;
+		if (judged.dead && evidence) r.deadSince = now;
 	}
 
 	/**
@@ -940,8 +997,13 @@ export class RoamingCoordinator {
 		return from !== undefined && latest.queued - from.queued >= DEAD_MIN_QUEUED;
 	}
 
+	/** Dead long enough to be recalled, with the sender's reports fresh. */
 	#senderDead(r: RadioRecord, now: number): boolean {
-		return r.deadSince !== null && now - r.deadSince >= DEAD_RECALL_MS;
+		return (
+			this.#reportsPausedSince === null &&
+			r.deadSince !== null &&
+			now - r.deadSince >= DEAD_RECALL_MS
+		);
 	}
 
 	/** The reducer's view of a radio's path; `null` when it has none. */
