@@ -184,6 +184,7 @@ type Deps = {
 	readonly admit: (key: string) => Promise<Admission> | Admission;
 	readonly liveStream: () => boolean | Promise<boolean>;
 	readonly beforeLease?: () => Promise<void>;
+	readonly beforeStart?: () => Promise<void>;
 	readonly startUnit: (unit: string) => Promise<void>;
 	readonly unitActive: (unit: string) => Promise<boolean>;
 	readonly unitWaitMs: number;
@@ -1103,6 +1104,11 @@ export async function runHelperAction(
 		});
 
 		if (request.action === "usb2") {
+			// The image unit receives only the kernel port. Re-read the
+			// device against the identity captured with the confirmation,
+			// under the lease, immediately before start. A cache refresh
+			// that now describes a replacement does not count.
+			if (deps.beforeStart !== undefined) await deps.beforeStart();
 			if (!(await matchUsb2(request, planned, false))) {
 				await updateJournal(id, "failed", "identity-changed");
 				return refuse("identity_unresolved");
