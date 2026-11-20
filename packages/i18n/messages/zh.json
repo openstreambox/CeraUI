@@ -1050,6 +1050,7 @@
 	"network.devices.detail.port": "端口",
 	"network.devices.detail.speed": "链路速度",
 	"network.devices.detail.usbId": "USB 标识",
+	"network.devices.controllers": "盒子里的 USB 控制器",
 	"network.devices.details": "给协助者的详情",
 	"network.devices.empty": "空。",
 	"network.devices.hint.captureUsb2": "这块采集卡可以使用 USB 3，现在以 USB 2 运行。",

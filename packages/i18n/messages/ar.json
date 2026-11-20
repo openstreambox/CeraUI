@@ -1197,6 +1197,7 @@
 	"network.devices.detail.port": "المنفذ",
 	"network.devices.detail.speed": "سرعة الرابط",
 	"network.devices.detail.usbId": "معرّف USB",
+	"network.devices.controllers": "متحكمات USB في الصندوق",
 	"network.devices.details": "تفاصيل لمن يساعد",
 	"network.devices.empty": "فارغ.",
 	"network.devices.hint.captureUsb2": "بطاقة الالتقاط هذه تستطيع استخدام USB 3، وهي تعمل على USB 2.",

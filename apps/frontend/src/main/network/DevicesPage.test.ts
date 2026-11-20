@@ -256,6 +256,10 @@ describe("Devices page", () => {
 		expect(view.getByText("Bluetooth Radio")).toBeTruthy();
 		const internals = view.getByTestId("device-internals");
 		expect(internals.hasAttribute("open")).toBe(false);
+		const controllerCaption = internals.querySelector("summary")?.textContent;
+		expect(controllerCaption).toContain("USB controllers in the box");
+		expect(controllerCaption).not.toContain("Details for helpers");
+		expect(view.getAllByText("Details for helpers").length).toBeGreaterThan(0);
 		expect(internals.textContent).toContain("EHCI Host Controller");
 		expect(internals.textContent).toContain("fc880000.usb");
 		expect(view.getByText("Lower blue port")).toBeTruthy();

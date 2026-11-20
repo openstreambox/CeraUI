@@ -618,7 +618,7 @@ const marks = $derived({
 										aria-hidden="true"
 										class="size-4 transition-transform group-open/internals:rotate-90"
 									/>
-									{m['network.devices.details']()}
+									{m['network.devices.controllers']()}
 								</summary>
 								{#each group.internals as row (row.key)}
 									<div

@@ -1050,6 +1050,7 @@
 	"network.devices.detail.port": "포트",
 	"network.devices.detail.speed": "링크 속도",
 	"network.devices.detail.usbId": "USB 식별자",
+	"network.devices.controllers": "상자 안의 USB 컨트롤러",
 	"network.devices.details": "도움을 위한 세부 정보",
 	"network.devices.empty": "비어 있습니다.",
 	"network.devices.hint.captureUsb2": "이 캡처 카드는 USB 3를 쓸 수 있는데 USB 2로 동작하고 있습니다.",
