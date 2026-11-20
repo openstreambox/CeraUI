@@ -6,6 +6,7 @@ import {
 	JSON_RPC_METHOD_NOT_FOUND,
 	SENDER_CONTROL_METHODS,
 	STATS_TOPIC,
+	senderStatsSchema,
 	senderStatsToTelemetry,
 	supportsStatsSubscription,
 	topicNotificationMethod,
@@ -617,5 +618,78 @@ describe("setters echo the APPLIED value", () => {
 		});
 		expect(await client?.setConnTimeout(999_999)).toBe(60_000);
 		client?.close();
+	});
+});
+
+describe("per-link arrival reports and sender health", () => {
+	const link = {
+		conn_id: 0,
+		connected: true,
+		timed_out: false,
+		window: 8192,
+		in_flight: 10,
+		rtt_ms: 30,
+		nak_count: 0,
+		bitrate_bytes_per_sec: 100_000,
+		base_score: 81,
+		quality_multiplier: 1,
+	};
+
+	test("keeps the arrival counters, the epoch and the health flags", () => {
+		const parsed = senderStatsSchema.parse({
+			mode: "enhanced",
+			negotiated_latency_ms: 2000,
+			links: [
+				{
+					...link,
+					ip: "10.0.0.2",
+					data_packets_queued_total: 735,
+					srtla_ack_entries_total: 730,
+					last_srtla_ack_age_ms: 120,
+					srtla_ack_epoch: 7,
+					rtt_min_ms: 21.5,
+					weak: false,
+					weak_reason: "healthy",
+					cc_target_bps: 4_000_000,
+					cc_loss_permille: 3,
+					cc_loss_degraded: false,
+					stall_gated: false,
+					sole_carrier_excluded: false,
+					in_flight_cap_active: false,
+				},
+			],
+		});
+		expect(parsed.negotiated_latency_ms).toBe(2000);
+		expect(parsed.links[0]).toMatchObject({
+			ip: "10.0.0.2",
+			data_packets_queued_total: 735,
+			srtla_ack_entries_total: 730,
+			last_srtla_ack_age_ms: 120,
+			srtla_ack_epoch: 7,
+			weak: false,
+			cc_target_bps: 4_000_000,
+			cc_loss_permille: 3,
+			stall_gated: false,
+			sole_carrier_excluded: false,
+			in_flight_cap_active: false,
+		});
+	});
+
+	test("a sender without them still parses, and the age may be absent", () => {
+		const old = senderStatsSchema.parse({ mode: "enhanced", links: [link] });
+		expect(old.links[0]?.srtla_ack_epoch).toBeUndefined();
+		const beforeFirstAck = senderStatsSchema.parse({
+			mode: "enhanced",
+			links: [
+				{
+					...link,
+					data_packets_queued_total: 3,
+					srtla_ack_entries_total: 0,
+					srtla_ack_epoch: 1,
+				},
+			],
+		});
+		expect(beforeFirstAck.links[0]?.last_srtla_ack_age_ms).toBeUndefined();
+		expect(beforeFirstAck.links[0]?.srtla_ack_epoch).toBe(1);
 	});
 });
