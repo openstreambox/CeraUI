@@ -870,27 +870,27 @@ function ensureWatch(): void {
 	})();
 }
 
-/** Drop leases whose units have reached a terminal state. */
+/**
+ * Release a retained lease only once its journaled unit is idle.
+ * A missed journal read, or a record that is still `started`, keeps the lease.
+ */
 export async function pollHelperInterlock(): Promise<void> {
 	const deps = currentDeps();
 	for (const [scope, release] of [...retained.entries()]) {
 		const entries = await loadJournal(deps.root);
-		const entry = entries?.find(
+		if (entries === null) continue;
+		const entry = entries.find(
 			(item) => item.scope === scope && item.phase === "started",
 		);
-		const active =
-			entry === undefined
-				? false
-				: await deps.unitActive(entry.unit).catch(() => true);
+		if (entry === undefined) continue;
+		const active = await deps.unitActive(entry.unit).catch(() => true);
 		if (active) continue;
 		release();
 		retained.delete(scope);
 		inFlight.delete(scope);
-		if (entry !== undefined) {
-			const until = deps.now() + HELPER_ACTION_COOLDOWN_MS;
-			cooldownUntil.set(scope, until);
-			await updateJournal(entry.id, "failed", "interrupted", until);
-		}
+		const until = deps.now() + HELPER_ACTION_COOLDOWN_MS;
+		cooldownUntil.set(scope, until);
+		await updateJournal(entry.id, "failed", "interrupted", until);
 	}
 }
 
@@ -1006,13 +1006,15 @@ export async function runHelperAction(
 		}
 		const idle = await waitUntilIdle(planned.unit, deps);
 		if (!idle) {
+			// The client gave up. systemd may still own the job, so the
+			// journal stays `started` and the lease stays held until a
+			// later poll sees the unit idle.
 			retain = true;
-			await updateJournal(id, "failed", "start-failed");
 			deps.log("helper port action finished", {
 				module: "devices",
 				action: request.action,
 				ok: false,
-				reason: "start-failed",
+				reason: "still-running",
 			});
 			if (deps.watch) ensureWatch();
 			return refuse("start_failed");
