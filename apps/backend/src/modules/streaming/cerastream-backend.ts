@@ -152,6 +152,7 @@ import { validateBitrate } from "./encoder.ts";
 import {
 	classifyRuntimeState,
 	currentRuntimeObservationOwner,
+	currentRuntimeObservationSilence,
 	currentRuntimeObservationUncertainty,
 } from "./engine-runtime-observation.ts";
 import {
@@ -668,6 +669,81 @@ function isZodLikeError(err: unknown): boolean {
 	);
 }
 
+/**
+ * Whether this binding can read every status the engine may send. An engine
+ * whose schema is newer than the binding's can add a value the binding's
+ * parser rejects, and the client drops such an event without a trace, so a
+ * running session would look silent. Unreadable versions count as newer.
+ */
+export function engineStatusIsReadable(engineSchema: string): boolean {
+	const parse = (version: string) => {
+		const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+		return parts === null ? undefined : parts.slice(1, 4).map(Number);
+	};
+	const engine = parse(engineSchema);
+	const binding = parse(SCHEMA_VERSION);
+	if (engine === undefined || binding === undefined) return false;
+	for (let at = 0; at < 3; at++) {
+		const [e = 0, b = 0] = [engine[at], binding[at]];
+		if (e !== b) return e < b;
+	}
+	return true;
+}
+
+/**
+ * What one request answered on the subscription's own connection after a
+ * silent window tells. "No callback" is not silence by itself: the connection
+ * may have dropped (the client tells pending requests, not subscriptions), or
+ * a status the engine sent in time may still sit unread behind a timer that
+ * fired during an event-loop stall. The engine writes and the client reads
+ * lines in order, so any reply means the connection lasted and every status
+ * sent before it has already reached the handler; a timeout or a lost
+ * connection is no reply.
+ *
+ * The answer is the engine's own snapshot of its session: a session id, an
+ * active input or live switch targets each prevent an idle inference. An empty
+ * snapshot still relies on the unverified assumption that every running session
+ * supplies at least one of these fields. Passthrough/composition have no switch
+ * targets, so absence of a session id is not independently proven idle there.
+ * A typed engine error (an engine without the method) or a result the binding
+ * cannot parse is a reply that says nothing about a session.
+ */
+export type EngineSessionReply = "none" | "session" | "no-report" | "no-reply";
+
+export async function askEngineSession(
+	client: CerastreamClient,
+): Promise<EngineSessionReply> {
+	try {
+		const snapshot = await client.listSwitchTargets();
+		return (typeof snapshot.session_id === "string" &&
+			snapshot.session_id.length > 0) ||
+			(typeof snapshot.active_input === "string" &&
+				snapshot.active_input.length > 0) ||
+			snapshot.switch_targets.length > 0
+			? "session"
+			: "none";
+	} catch (error) {
+		return error instanceof CerastreamRpcError || isZodLikeError(error)
+			? "no-report"
+			: "no-reply";
+	}
+}
+
+/**
+ * Whether a silent window plus that reply shows no running session. A
+ * snapshot without a session is enough on any schema, which also settles an
+ * engine newer than the binding. A reply that reports nothing only counts
+ * where the binding reads every status the engine can send.
+ */
+export function silenceShowsNoSession(
+	reply: EngineSessionReply,
+	engineSchema: string,
+): boolean {
+	if (reply === "none") return true;
+	if (reply === "no-report") return engineStatusIsReadable(engineSchema);
+	return false;
+}
+
 export function classifyConnectHandshakePhase(
 	error: unknown,
 ): "connect" | "hello" {
@@ -1145,6 +1221,11 @@ export class CerastreamBackend implements StreamingBackend {
 			this.clientEpoch === adoptedEpoch;
 		const observationOwner = currentRuntimeObservationOwner();
 		const uncertainStatus = currentRuntimeObservationUncertainty();
+		const silent = currentRuntimeObservationSilence();
+		// Anything the engine sends on this subscription, owned or not, means it
+		// was not silent.
+		let heard = false;
+		let timedOut = false;
 		const ownsQuery = () =>
 			observationOwner() && this.probeEpoch === probeEpoch;
 		try {
@@ -1166,6 +1247,7 @@ export class CerastreamBackend implements StreamingBackend {
 			subscription = await client.subscribeEvents(
 				{ topics: ["status"] },
 				(event) => {
+					heard = true;
 					if (
 						adopted
 							? !ownsSession()
@@ -1197,12 +1279,25 @@ export class CerastreamBackend implements StreamingBackend {
 				await client.close();
 				return "unknown";
 			}
-			timer = this.deps.scheduleTimeout(
-				() => resolveRuntimeState?.("unknown"),
-				ENGINE_STATE_RECONCILE_TIMEOUT,
-			);
+			timer = this.deps.scheduleTimeout(() => {
+				timedOut = true;
+				resolveRuntimeState?.("unknown");
+			}, ENGINE_STATE_RECONCILE_TIMEOUT);
 			const runtimeState = await runtimeStateEvent;
 			acceptingEvents = false;
+			const stillSilent = () =>
+				!heard && ownsQuery() && this.clientEpoch === clientEpoch;
+			if (
+				runtimeState === "unknown" &&
+				timedOut &&
+				stillSilent() &&
+				silenceShowsNoSession(
+					await askEngineSession(client),
+					client.hello.schema_version,
+				) &&
+				stillSilent()
+			)
+				silent();
 			if (
 				ownsQuery() &&
 				this.clientEpoch === clientEpoch &&
