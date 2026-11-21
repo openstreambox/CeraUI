@@ -13,6 +13,7 @@ import { RunTimeoutError } from "../helpers/run.ts";
 import * as nm from "../modules/network/network-manager.ts";
 import {
 	concurrentApIfname,
+	concurrentStationChannel,
 	ensureConcurrentApInterface,
 	releaseConcurrentApInterface,
 	releaseCreatedConcurrentApInterface,
@@ -65,7 +66,7 @@ describe("concurrent AP virtual interface", () => {
 		setConcurrentInterfaceDepsForTest(
 			async (_command, args) => {
 				calls.push(args);
-				return "";
+				throw new Error("competing owner");
 			},
 			async () => true,
 		);

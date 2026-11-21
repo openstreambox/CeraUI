@@ -35,13 +35,21 @@ import {
 	type ModemRegistrationRejection,
 	modemRadioPowerSchema,
 } from "@ceraui/rpc/schemas";
-
 import { logger } from "../../helpers/logger.ts";
 import { pollWithBackoff } from "../../helpers/retry.ts";
 import {
 	type NetworkManagerConnection,
 	nmConnAdd,
+	nmConnGetFields,
+	nmConnSetFields,
 } from "../network/network-manager.ts";
+import { modemTac } from "../system/support-export.ts";
+import {
+	type BearerIpFamilyDecision,
+	bearerIpFamilyFields,
+	convergeBearerIpFamily,
+	resolveBearerIpFamily,
+} from "./bearer-ip-family.ts";
 import { getGsmConnections, resetGsmConnections } from "./gsm-connections.ts";
 import {
 	defaultGsmReconcileDeps,
@@ -275,6 +283,17 @@ function buildSimLock(modemInfo: Readonly<ModemInfo>): SimLockReading {
 	};
 }
 
+function decideBearerIpFamily(
+	modemInfo: ModemInfo,
+	simInfo: SimInfo,
+): BearerIpFamilyDecision {
+	return resolveBearerIpFamily({
+		simOperatorCode: simInfo["sim.properties.operator-code"],
+		networkOperatorCode: modemInfo["modem.3gpp.operator-code"],
+		attachIpType: modemInfo["modem.3gpp.eps.initial-bearer.settings.ip-type"],
+	});
+}
+
 async function addConnectionForModem(
 	modemInfo: ModemInfo,
 	simInfo: SimInfo,
@@ -291,7 +310,7 @@ async function addConnectionForModem(
 		ifname: "", // Can be empty for GSM connections - matches by device-id and sim-id
 		autoconnect: "yes",
 		"connection.autoconnect-retries": 2,
-		"ipv6.method": "ignore",
+		...bearerIpFamilyFields(decideBearerIpFamily(modemInfo, simInfo).family),
 		"gsm.device-id": modemId,
 		"gsm.sim-id": simId,
 		...sanitizeModemConfigForNetworkManager(config),
@@ -319,7 +338,30 @@ async function resolveModemProfile(
 	if (config && !config.conn) {
 		await addConnectionForModem(modemInfo, simInfo, config);
 	} else if (config?.conn) {
-		const enforced = sanitizeModemConfigForNetworkManager({ ...config });
+		// The default decision never rewrites a stored profile: only positive
+		// evidence that IPv4-only cannot work here may change an existing request.
+		const ipFamily = decideBearerIpFamily(modemInfo, simInfo);
+		const ipFields =
+			ipFamily.source === "default"
+				? {}
+				: bearerIpFamilyFields(ipFamily.family);
+		if (ipFamily.source !== "default" && isCurrent()) {
+			const outcome = await convergeBearerIpFamily(
+				config.conn,
+				ipFamily.family,
+				{ getFields: nmConnGetFields, setFields: nmConnSetFields },
+			);
+			if (outcome === "updated") {
+				logger.info(
+					`gsm profile ${config.conn} now requests ${ipFamily.family} (${ipFamily.source})`,
+					{ module: "modems" },
+				);
+			}
+		}
+		const enforced = {
+			...sanitizeModemConfigForNetworkManager({ ...config }),
+			...ipFields,
+		};
 		const result = await reconcileDuplicateGsmProfiles(
 			modemInfo["modem.generic.device-identifier"],
 			simInfo["sim.properties.iccid"],
@@ -701,7 +743,9 @@ async function registerModem(id: number) {
 		},
 	});
 
+	const tac = modemTac(modemInfo["modem.generic.equipment-identifier"]);
 	const modem: Modem = {
+		...(tac !== undefined ? { tac } : {}),
 		ifname: ifname,
 		name: hwName,
 		sim_network: simNetwork,
