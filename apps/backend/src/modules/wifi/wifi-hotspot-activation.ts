@@ -38,6 +38,7 @@ import {
 	isNmWifiSecretAvailable,
 	readVerifiedNmWifiSecret,
 } from "../network/network-manager-secret.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
 	hotspotCredentialsStore,
@@ -96,16 +97,26 @@ import {
 	rememberHotspotProfilePin,
 } from "./wifi-hotspot-discovery.ts";
 import {
+	adoptPendingStart,
 	beginHotspotTransition,
+	beginStartTerminal,
 	matchesHotspotActivation,
 	registerPendingConfirmation,
 	syncWifiStateCache,
 } from "./wifi-hotspot-monitor.ts";
-import { publishHotspotOutcome } from "./wifi-hotspot-outcome.ts";
+import {
+	type HotspotOutcomeKind,
+	type HotspotToggleOutcome,
+	publishHotspotOutcome,
+} from "./wifi-hotspot-outcome.ts";
 import {
 	type HotspotProfileOperation,
 	runHotspotProfileOperation,
 } from "./wifi-hotspot-profile-operation.ts";
+import {
+	advanceHotspotOperation,
+	defaultHotspotSteeringDeps,
+} from "./wifi-hotspot-readiness.ts";
 import {
 	DEFAULT_HOTSPOT_SECURITY,
 	hotspotSecurityFields,
@@ -143,6 +154,10 @@ import {
 	wifiOperationGuard,
 } from "./wifi-operation-binding.ts";
 import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
+import {
+	activeProvisioningAp,
+	isProvisioningSetupHeld,
+} from "./wifi-provisioning-ap.ts";
 import { sameRadioLifetime } from "./wifi-radio-identity.ts";
 import type { RadioSample } from "./wifi-radio-read-budget.ts";
 import { transitionVirtualBinding } from "./wifi-virtual-binding.ts";
@@ -174,6 +189,16 @@ export const defaultHotspotDeps: HotspotActivationDeps = {
 		HYBRID_CHANNEL_REFUSAL,
 	readHybridChannel: readHybridStationChannel,
 	validateConcurrentInterface: revalidateConcurrentApInterface,
+	// Resolved at call time: the readiness module sits in an import cycle.
+	steering: {
+		reconcile: () => defaultHotspotSteeringDeps.reconcile(),
+		verified: (ifname, incarnation, since) =>
+			defaultHotspotSteeringDeps.verified(ifname, incarnation, since),
+		active: () => defaultHotspotSteeringDeps.active?.() ?? true,
+		readActivation: (apIfname, uuid) =>
+			defaultHotspotSteeringDeps.readActivation?.(apIfname, uuid) ??
+			Promise.resolve(undefined),
+	},
 	confirmHybridActivation,
 	releaseConcurrentInterface: releaseConcurrentApInterface,
 	rollbackConcurrentInterface: releaseCreatedHybridTarget,
@@ -249,6 +274,36 @@ function rememberIdentity(
 		...(channel !== undefined ? { channel } : {}),
 	};
 	deps.credentials.remember(macAddress, credentials, portAlias);
+}
+
+/**
+ * {@link rememberIdentity} for an operator's explicit pair: true only once the
+ * store holds it on disk. A store without a checked write fails closed.
+ */
+function rememberIdentityDurably(
+	macAddress: string,
+	wifiInterface: WifiInterfaceWithHotspot,
+	deps: HotspotActivationDeps,
+	pair: { name: string; password: string },
+	conn?: string,
+	profileMac?: string,
+	portAlias?: string,
+): boolean {
+	if (!hotspotOwnershipGuard(macAddress, wifiInterface)(conn, profileMac))
+		return false;
+	const { channel } = wifiInterface.hotspot;
+	if (!pair.name || !pair.password || !deps.credentials.rememberChecked)
+		return false;
+	return deps.credentials.rememberChecked(
+		macAddress,
+		{
+			ssid: pair.name,
+			password: pair.password,
+			...(conn !== undefined ? { conn } : {}),
+			...(channel !== undefined ? { channel } : {}),
+		},
+		portAlias,
+	);
 }
 
 /*
@@ -460,31 +515,46 @@ async function prepareHotspotLocked(
 		msg.name !== undefined && msg.password !== undefined
 			? { name: msg.name, password: msg.password }
 			: undefined;
-	if (
-		!chosen ||
-		isHotspotActive(wifiInterface) ||
-		(chosen.name === identity.name && chosen.password === identity.password)
-	) {
+	const shown = {
+		success: true,
+		name: identity.name,
+		password: identity.password,
+		...firstTime,
+	} as const;
+	if (!chosen) {
+		seedWifiPortMode(owner, portAlias);
+		return shown;
+	}
+	const unchanged =
+		chosen.name === identity.name && chosen.password === identity.password;
+	// A live AP accepts no change here; it answers with its own pair, which the
+	// caller sees is not the one it asked for.
+	if (isHotspotActive(wifiInterface) && !unchanged) {
+		seedWifiPortMode(owner, portAlias);
+		return shown;
+	}
+	// From here an explicit pair is acknowledged only once the store holds it on
+	// disk, including an unchanged pair whose earlier best-effort write failed.
+	const unwritten = {
+		success: false,
+		error: "activation-failed",
+		reason: "credential-store-unwritten",
+	} as const;
+	if (unchanged) {
 		if (
-			chosen &&
-			chosen.name === identity.name &&
-			chosen.password === identity.password
-		)
-			rememberIdentity(
+			!rememberIdentityDurably(
 				owner,
 				wifiInterface,
 				deps,
+				identity,
 				identity.conn,
 				identity.profileMac,
 				portAlias,
-			);
+			)
+		)
+			return unwritten;
 		seedWifiPortMode(owner, portAlias);
-		return {
-			success: true,
-			name: identity.name,
-			password: identity.password,
-			...firstTime,
-		};
+		return shown;
 	}
 	// The profile is written FIRST: a store that ran ahead of a refused write
 	// would show the operator credentials the AP never broadcasts.
@@ -492,8 +562,28 @@ async function prepareHotspotLocked(
 		return { success: false, error: "activation-failed" };
 	}
 	const credentialUuid = identity.conn;
+	if (!credentialUuid) {
+		// No profile yet: the store is the only copy of the operator's choice
+		// until the first start creates one. Memory follows only a durable write.
+		if (
+			!rememberIdentityDurably(
+				owner,
+				wifiInterface,
+				deps,
+				chosen,
+				undefined,
+				undefined,
+				portAlias,
+			)
+		)
+			return unwritten;
+		// Synchronous since the write: nothing interleaved.
+		wifiInterface.hotspot.name = chosen.name;
+		wifiInterface.hotspot.password = chosen.password;
+		seedWifiPortMode(owner, portAlias);
+		return { success: true, ...chosen, ...firstTime };
+	}
 	if (
-		credentialUuid &&
 		!(
 			await runHotspotProfileOperation({
 				uuid: credentialUuid,
@@ -522,16 +612,31 @@ async function prepareHotspotLocked(
 	if (!owned(identity.conn, identity.profileMac)) {
 		return { success: false, error: "activation-failed" };
 	}
+	// The profile now carries the pair, so memory follows it either way; the
+	// reply still vouches for it only once the store is on disk too.
 	wifiInterface.hotspot.name = chosen.name;
 	wifiInterface.hotspot.password = chosen.password;
-	rememberIdentity(
-		owner,
-		wifiInterface,
-		deps,
-		identity.conn,
-		identity.profileMac,
-		portAlias,
-	);
+	if (
+		!rememberIdentityDurably(
+			owner,
+			wifiInterface,
+			deps,
+			chosen,
+			identity.conn,
+			identity.profileMac,
+			portAlias,
+		)
+	) {
+		rememberIdentity(
+			owner,
+			wifiInterface,
+			deps,
+			identity.conn,
+			identity.profileMac,
+			portAlias,
+		);
+		return unwritten;
+	}
 	seedWifiPortMode(owner, portAlias);
 	return { success: true, ...chosen, ...firstTime };
 }
@@ -549,13 +654,23 @@ export async function wifiHotspotStart(
 	if (attempt && publishOutcome)
 		deps = {
 			...deps,
-			publishOutcome: (kind, device, outcome) =>
-				publishOutcome(
-					kind,
-					device,
-					outcome,
-					kind === "start" ? attempt : undefined,
-				),
+			// The chained-caller hook travels with the publisher it decorates.
+			publishOutcome: Object.assign(
+				(
+					kind: HotspotOutcomeKind,
+					device: number | string,
+					outcome: HotspotToggleOutcome,
+				) =>
+					publishOutcome(
+						kind,
+						device,
+						outcome,
+						kind === "start" ? attempt : undefined,
+					),
+				publishOutcome.startTicket
+					? { startTicket: publishOutcome.startTicket }
+					: {},
+			),
 		};
 	const result = await resolveAndStart(msg, deps);
 	/*
@@ -641,6 +756,11 @@ export async function startHotspotForInterface(
 	return lock.result;
 }
 
+/** The image's setup holds the radio; Start leaves it alone and says why. */
+function setupInProgress(): HotspotStartResult {
+	return { success: false, error: "DEVICE_BUSY", reason: "setup-in-progress" };
+}
+
 /**
  * Internal delegate: the caller owns the adapter lock, its intent transaction
  * and request admission, so a mode transition's start never re-admits after it
@@ -671,6 +791,20 @@ export async function startHotspotLocked(
 	)
 		return { success: false, error: "radio-unverified" };
 	const ifname = wifiInterface.ifname;
+	// While the image's setup marker exists, the setup radio is the image's.
+	if (isProvisioningSetupHeld(ifname)) {
+		logger.warn(
+			`wifi hotspot start: the device image's setup is in progress on ${ifname}; leaving the radio to it`,
+		);
+		return setupInProgress();
+	}
+	// Starting here would displace the image's running setup AP from its radio.
+	if (activeProvisioningAp(wifiInterface)) {
+		logger.warn(
+			`wifi hotspot start: the device image's setup AP is active on ${ifname}; leaving it alone`,
+		);
+		return { success: false, error: "DEVICE_BUSY", reason: "setup-ap-active" };
+	}
 	const portAlias = soleWifiPortAlias(binding);
 	const owned = hotspotOwnershipGuard(owner, wifiInterface);
 	if (!owned()) {
@@ -778,12 +912,23 @@ export async function startHotspotLocked(
 				reason: HYBRID_CHANNEL_REFUSAL,
 			};
 		}
-		// Already up: nothing is dispatched, so no confirmation will ever settle
-		// and this branch owes the terminal frame itself.
+		// Already up: nothing is dispatched, so this branch owes the terminal frame
+		// itself, once the AP's client zone is verified. It is still a Start: it
+		// takes a new ticket, so an older Start's wait publishes nothing, and an
+		// activation still awaiting NM confirmation hands its terminal over. The
+		// steering wait reads the current NM activation as its witness and runs
+		// after this locked call returns.
 		if (binding && (!(await operation.check()) || !operation.current()))
 			return wifiOperationChanged;
 		recordChosenMode(observedWifiAdapterMode(wifiInterface));
-		deps.publishOutcome?.("start", wifiInterface.id, { success: true });
+		const uuid = wifiInterface.hotspot.conn;
+		const ticket = advanceHotspotOperation(wifiInterface);
+		deps.publishOutcome?.startTicket?.(ticket);
+		const start = { ticket, deps, device: wifiInterface.id };
+		if (!uuid)
+			deps.publishOutcome?.("start", wifiInterface.id, { success: true });
+		else if (!adoptPendingStart(wifiInterface, uuid, start))
+			beginStartTerminal(wifiInterface, uuid, start)();
 		return { success: true };
 	}
 	/*
@@ -793,7 +938,13 @@ export async function startHotspotLocked(
 	  was asked for. An adapter with no stated preference resolves to concurrency,
 	  which is the behaviour every capable radio had before the mode was selectable.
 	*/
-	if (!useConcurrentAp && wifiInterface.conn && getIsStreaming()) {
+	// An unconfirmed stream session counts as live: is_streaming stays false
+	// while ownership cannot confirm that no stream runs.
+	if (
+		!useConcurrentAp &&
+		wifiInterface.conn &&
+		(getIsStreaming() || isStreamSessionUnconfirmed())
+	) {
 		logger.warn(
 			`wifi hotspot start: streaming keeps the station link on ${ifname}`,
 		);
@@ -848,6 +999,17 @@ export async function startHotspotLocked(
 	let cleanupConfirmed = true;
 	let refusal: HotspotStartResult | undefined;
 	let rollbackState: (() => HotspotStartResult) | undefined;
+	let setupHeld = false;
+	// The marker may appear during the transaction; it is checked again, under
+	// the adapter lock, immediately before NetworkManager is asked to activate.
+	const heldAtDispatch = (): boolean => {
+		if (!isProvisioningSetupHeld(ifname)) return false;
+		logger.warn(
+			`wifi hotspot start: the device image's setup started on ${ifname}; not activating`,
+		);
+		setupHeld = true;
+		return true;
+	};
 	let targetRadio: RadioSample | undefined;
 	try {
 		if (binding && concurrentInterface) {
@@ -927,7 +1089,8 @@ export async function startHotspotLocked(
 
 		// Begin the transition: broadcast `activating` immediately (responsive UI),
 		// suppress dup-IP warnings for the window, but DO NOT flip mode yet.
-		beginHotspotTransition(wifiInterface, "activating");
+		const ticket = beginHotspotTransition(wifiInterface, "activating");
+		deps.publishOutcome?.startTicket?.(ticket);
 		if (!concurrentInterface) deps.setDupIpSuppression(ifname, true);
 		deps.broadcastState();
 		syncWifiStateCache(macAddress, wifiInterface); // still station (isHotspot false)
@@ -958,15 +1121,20 @@ export async function startHotspotLocked(
 			};
 		};
 		const rollback = (): HotspotStartResult => {
-			refusal = {
-				success: false,
-				error: operation.changed ? "radio-changed" : "activation-failed",
-				...(channelDownFailed
-					? { reason: "deactivation-failed" as const }
-					: !operation.changed && channelRefused
-						? { reason: HYBRID_CHANNEL_REFUSAL }
-						: {}),
-			};
+			// A radio change (the operator must pick again) and a failed
+			// deactivation (an AP may still be up) outrank the setup refusal.
+			refusal =
+				setupHeld && !operation.changed && !channelDownFailed
+					? setupInProgress()
+					: {
+							success: false,
+							error: operation.changed ? "radio-changed" : "activation-failed",
+							...(channelDownFailed
+								? { reason: "deactivation-failed" as const }
+								: !operation.changed && channelRefused
+									? { reason: HYBRID_CHANNEL_REFUSAL }
+									: {}),
+						};
 			return refusal;
 		};
 
@@ -1107,6 +1275,8 @@ export async function startHotspotLocked(
 				run: async (before) => {
 					if (!(await ready())) return false;
 					if (binding && !(await operation.permit())) return false;
+					// The marker is read last, immediately before NetworkManager.
+					if (heldAtDispatch()) return false;
 					return connect(existingUuid, before);
 				},
 			});
@@ -1118,7 +1288,7 @@ export async function startHotspotLocked(
 			if (!owned(conn, identity.profileMac)) return rollback();
 			await reconcileWifiAdapterProfileLocked(owner, {
 				uuid: conn,
-				fields: hotspotAutoconnectFields(owner, bindingFields),
+				fields: hotspotAutoconnectFields(owner, bindingFields, ifname),
 				write: (id, fields) =>
 					writeProfile({
 						uuid: id,
@@ -1201,6 +1371,8 @@ export async function startHotspotLocked(
 					run: async (before) => {
 						if (!(await ready())) return false;
 						if (binding && !(await operation.permit())) return false;
+						// The marker is read last, immediately before NetworkManager.
+						if (heldAtDispatch()) return false;
 						activationAttempted = true;
 						return connect(uuid, before);
 					},
@@ -1213,7 +1385,7 @@ export async function startHotspotLocked(
 			if (
 				!(await reconcileWifiAdapterProfileLocked(owner, {
 					uuid,
-					fields: hotspotAutoconnectFields(owner, bindingFields),
+					fields: hotspotAutoconnectFields(owner, bindingFields, ifname),
 					write: (id, fields) =>
 						writeProfile({
 							uuid: id,
