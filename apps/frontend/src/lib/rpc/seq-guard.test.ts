@@ -142,4 +142,13 @@ describe("seq-guard pure core", () => {
 		// Type A is unaffected
 		expect(tracker.shouldDrop("typeA", 101)).toBe(false);
 	});
+
+	it("reset(type) clears one type's fence and leaves the others", () => {
+		const tracker = createSeqTracker();
+		tracker.advance("typeA", 100);
+		tracker.advance("typeB", 50);
+		tracker.reset("typeA");
+		expect(tracker.shouldDrop("typeA", 1)).toBe(false);
+		expect(tracker.shouldDrop("typeB", 50)).toBe(true);
+	});
 });
