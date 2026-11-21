@@ -3618,6 +3618,8 @@
 	"notifications.power.restingWeak": "Powerbank {bank} ist schwach und pausiert.",
 	"notifications.power.resting": "Powerbank {bank} pausiert.",
 	"notifications.power.peer": "Powerbank {bank} versorgt das Gerät.",
+	"notifications.power.restLost": "Powerbank {bank} hat während der Pause aufgehört zu antworten. Sie hat sich vielleicht selbst ausgeschaltet: Drücken Sie ihre Taste oder stecken Sie sie neu ein.",
+	"notifications.power.restLostHot": "Powerbank {bank} hat während der Pause aufgehört zu antworten. Sie hat sich vielleicht selbst ausgeschaltet: Lassen Sie sie abkühlen, drücken Sie dann ihre Taste oder stecken Sie sie neu ein.",
 	"notifications.power.bench": "Der Stromversorgungsschutz ist im Testmodus: Er meldet nur.",
 	"notifications.power.protection": "Die Stromversorgungsplatine meldet einen eingeschränkten Schutz. Eine Überprüfung ist nötig.",
 	"notifications.power.calibration": "Der Reserveakku hat keinen Überhitzungsschutz: Sein Sensor ist nicht eingerichtet.",
