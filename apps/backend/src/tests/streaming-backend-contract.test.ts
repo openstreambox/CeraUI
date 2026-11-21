@@ -578,6 +578,7 @@ describe("CerastreamBackend behavioural contract", () => {
 
 		// Then the backend adopts the client and can stop the existing runtime.
 		expect(await reconciliation).toBe("streaming");
+		expect(backend.ownsLaunchedSession()).toBe(false);
 		let stopped = false;
 		expect(backend.stop(() => (stopped = true))).toBe(true);
 		await backend.settle();
@@ -747,6 +748,9 @@ describe("CerastreamBackend behavioural contract", () => {
 		await backend.start(STREAM_CONFIG, RUN_OPTS);
 		await backend.settle();
 
+		expect(backend.ownsLaunchedSession()).toBe(true);
+		fake.emit({ type: "status", seq: 2, state: "idle", streaming: false });
+		expect(backend.ownsLaunchedSession()).toBe(false);
 		const ops = fake.calls.map((c) => c.op);
 		expect(ops).toContain("subscribe-events");
 		expect(ops).toContain("start");
