@@ -3696,5 +3696,17 @@
 	"notifications.power.sink": "A placa de alimentação não consegue se comunicar com o chip de carga de um carregador portátil. Esse carregador portátil não pode ligar o dispositivo nem entrar em repouso.",
 	"notifications.power.unproven": "A placa de alimentação não consegue ver um carregador portátil alimentando o dispositivo. Ela não o desligará automaticamente se a bateria de reserva superaquecer.",
 	"notifications.power.jump": "A temperatura da bateria de reserva subiu de repente. O sensor pode estar com defeito. O dispositivo desliga em um minuto se ela continuar tão alta.",
-	"notifications.power.status": "{text}"
+	"notifications.power.status": "{text}",
+	"network.changeSafety.askBefore.own": "Esta mudança desconecta você da caixa por {via}.",
+	"network.changeSafety.askBefore.unknown": "Esta mudança pode desconectar você da caixa.",
+	"network.changeSafety.askBefore.undo": "Fazer a mudança (desfeita se eu não confirmar em {seconds} s)",
+	"network.changeSafety.askBefore.keep": "Sei o que estou fazendo: me desconecte e não desfaça. Talvez eu precise trocar de conexão ou redefinir a caixa para voltar.",
+	"network.changeSafety.confirm.prompt": "Ainda conectado? Confirme em {seconds} s ou a caixa desfaz a mudança.",
+	"network.changeSafety.confirm.action": "Confirmar",
+	"network.changeSafety.notice.disconnected": "Ninguém confirmou a mudança a tempo, então a caixa a desfez. Ainda quer fazê-la?",
+	"network.changeSafety.notice.restart": "A rede reiniciou antes da sua confirmação, então a caixa desfez. Ainda quer?",
+	"network.changeSafety.notice.make": "Fazer a mudança",
+	"network.changeSafety.notice.leave": "Deixar desfeita",
+	"network.changeSafety.kept.undo": "Desfazer a última mudança de rede",
+	"network.changeSafety.summary.ethernetRole": "Mudança da função da porta {ifname}"
 }
