@@ -147,7 +147,11 @@ a MAC-named one (`radioName`, also the picker's). An interface named `usb<N>`
 is "USB tether"; everything else keeps its type label ("Ethernet 1"). The
 interface id is a secondary detail and no MAC address is a name. The session
 summary is bound to what was measured: a link whose name changed during the
-session lists every name it had, in order.
+session lists every name it had, in order ("SIM 1 · A → SIM 1 · B"),
+recorded with each sample (`createSessionLinkNames`, keyed by a `Map`, so any
+interface name is a plain key). Such a row gives its names a full line at every
+width, wrapping, never clipped; a link with one name keeps the narrow column
+above 640 px. The interface id stays the row's tooltip.
 
 #### A supervised connection restart [EXISTS]
 

@@ -31,6 +31,7 @@ import {
 } from '$lib/components/custom/ingest-link-view';
 import LinkCarryingNote from '$lib/components/custom/LinkCarryingNote.svelte';
 import { Button } from '$lib/components/ui/button';
+import { createSessionLinkNames } from '$lib/helpers/session-link-names';
 import {
 	computeSessionRollup,
 	createSample,
@@ -154,16 +155,18 @@ let rollup = $state<SessionRollup | null>(null);
 // recorded with each sample. A SIM that registers on another operator mid-session
 // reads "SIM 1 · A → B" in the summary instead of the name at viewing time.
 // Plain data, like the samples: nothing renders from it until the session ends.
-let sessionNames: Record<string, string[]> = {};
+let sessionNames = createSessionLinkNames();
 let summaryNames = $state<ReadonlyMap<string, readonly string[]>>(new Map());
 
 function recordNames(links: readonly LinkTelemetryEntry[] | undefined) {
 	for (const link of links ?? []) {
-		const name = nameOf(link.iface);
-		const seen = sessionNames[link.iface];
-		if (!seen) sessionNames[link.iface] = [name];
-		else if (seen.at(-1) !== name) seen.push(name);
+		sessionNames.record(link.iface, nameOf(link.iface));
 	}
+}
+
+/** Whether a session row's link carried more than one name. */
+function renamedInSession(iface: string): boolean {
+	return (summaryNames.get(iface)?.length ?? 0) > 1;
 }
 
 /** A session row's name: every name it had, in order. */
@@ -180,7 +183,7 @@ $effect(() => {
 
 	if (streaming && !wasStreaming) {
 		sessionSamples = [];
-		sessionNames = {};
+		sessionNames = createSessionLinkNames();
 		rollup = null;
 	}
 	if (streaming) {
@@ -190,7 +193,7 @@ $effect(() => {
 	}
 	if (!streaming && wasStreaming) {
 		rollup = sessionSamples.length > 0 ? computeSessionRollup(sessionSamples) : null;
-		summaryNames = new Map(Object.entries(sessionNames));
+		summaryNames = sessionNames.snapshot();
 		// Clear the live sparkline ring so the next session starts fresh without a
 		// remount; the folded rollup above is what the summary renders from now on.
 		history = {};
@@ -411,11 +414,22 @@ function exportCsv(): void {
 						<li
 							data-testid="ingest-contribution-row"
 							data-iface={link.iface}
-							class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b py-2 text-xs last:border-b-0 sm:flex-nowrap"
+							data-renamed={renamedInSession(link.iface)}
+							class={cn(
+								'flex flex-wrap items-center gap-x-3 gap-y-1 border-b py-2 text-xs last:border-b-0',
+								!renamedInSession(link.iface) && 'sm:flex-nowrap',
+							)}
 						>
-							<!-- On a phone the name has its own line: it can carry every name the
-							     link had during the session. -->
-							<div class="flex min-w-0 basis-full items-start gap-2 sm:w-24 sm:shrink-0 sm:basis-auto">
+							<!-- Below 640 px the name has its own line, and so does a link that
+							     was renamed during the session at every width: every name it had
+							     stays readable, wrapping, never clipped in the narrow name column. -->
+							<div
+								class={cn(
+									'flex min-w-0 basis-full items-start gap-2',
+									!renamedInSession(link.iface) && 'sm:w-24 sm:shrink-0 sm:basis-auto',
+								)}
+								data-session-link-name-cell
+							>
 								<!-- Spectral per-link identity dot (--link-1..6 ramp). -->
 								<span
 									aria-hidden="true"
