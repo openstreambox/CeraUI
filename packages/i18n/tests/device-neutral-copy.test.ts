@@ -98,6 +98,18 @@ const REWORDED_KEYS: readonly string[] = [
 	"network.hotspot.newPasswordStreaming",
 	"carrying.active",
 	"carrying.idle",
+	"live.phone.checkingBody",
+	"live.phone.remoteChecking",
+	"live.phone.update-orchestrator-maintenance",
+	"live.phone.powerOffCost",
+	"live.phone.moblink",
+	"live.phone.cellular",
+	"live.phone.srt-forward",
+	"live.phone.hotspot",
+	"live.phone.internetChoice",
+	"live.phone.unsure",
+	"live.phone.srtChoice",
+	"live.phone.small",
 ];
 
 // Japanese used the word for a mobile phone (携帯電話) for these cellular labels.
@@ -202,6 +214,14 @@ describe("Home copy on a box without an encoder", () => {
 
 describe("Copy about the reader's or the sender's device", () => {
 	for (const locale of ALL_LOCALES) {
+		it(`${locale} quotes the hotel sign-in button exactly in the sign-in intro`, () => {
+			const catalog = readCatalog(locale);
+			const label = normalize(catalog["network.portal.open"] as string);
+			const intro = normalize(catalog["network.portal.intro"] as string);
+			const pairs = QUOTE_PAIRS.filter(([open, close]) => intro.includes(`${open}${label}${close}`));
+			expect(pairs.length).toBe(1);
+		});
+
 		it(`${locale} still has every reworded key, free of phone and viewer words`, () => {
 			const catalog = readCatalog(locale);
 			const missing = REWORDED_KEYS.filter((key) => typeof catalog[key] !== "string");
