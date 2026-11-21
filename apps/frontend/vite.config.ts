@@ -215,12 +215,15 @@ export default defineConfig(({ mode }) => {
 					},
 				},
 			},
-			// Vite's raw-size notice is presentation-only. The gzip initial-route,
+			// Vite's raw-size notice fails the build: scripts/ci/build-warnings-gate.mjs
+			// rejects "chunks are larger" output. The gzip initial-route,
 			// largest-chunk, precache, and aggregate budgets are enforced by
-			// scripts/ci/bundle-report.mjs. Re-derived 2026-11-14 from the integrated
-			// build's largest emitted chunk (devtools: 1,163.55 kB, which carries the
-			// Live screen and so its audio mixer):
-			// ceil(1,163.55 * 1.05) = 1,222 kB, preserving 5% raw-notice headroom.
+			// scripts/ci/bundle-report.mjs. This limit was derived 2026-11-14 as
+			// ceil(1,163.55 * 1.05) = 1,222 kB from a manual `devtools` chunk that
+			// fused production views. That chunk no longer exists; the largest raw
+			// chunk is now the lazily loaded `network` i18n namespace (882.76 kB on
+			// 2026-11-15, all ten locales inline), and this limit sits about 38%
+			// above it until it is re-derived.
 			chunkSizeWarningLimit: 1222,
 		},
 		resolve: {
