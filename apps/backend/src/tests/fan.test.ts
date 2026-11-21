@@ -725,6 +725,47 @@ describe("unreadable-path logging", () => {
 		}
 	});
 
+	test("the re-log window runs on a monotonic clock, not the wall clock", async () => {
+		resetFanUnreadableLog();
+		const coolingDir = `${THERMAL}/cooling_device11`;
+		const h = makeHarness(
+			buildBacklinklessBoard({
+				coolingIndex: 11,
+				hwmons: [{ index: 3, name: "pwmfan", pwm: "120" }],
+			}),
+		);
+		const realDateNow = Date.now;
+		let wall = 10_000_000;
+		Date.now = () => wall;
+		let mono = 5_000;
+		setFanLogClockForTest(() => mono);
+		try {
+			const messages = await debugMessages(async () => {
+				await readFanDuty(h.deps, coolingDir, HWMON);
+				// Time sync steps the wall clock back an hour; 10 real minutes pass.
+				wall -= 60 * 60_000;
+				mono += 10 * 60_000;
+				await readFanDuty(h.deps, coolingDir, HWMON);
+			});
+			expect(
+				messages.filter((m) => m === "fan: hwmon directory unreadable").length,
+			).toBe(2);
+		} finally {
+			Date.now = realDateNow;
+			setFanLogClockForTest();
+		}
+	});
+
+	test("the default clock for the re-log window is performance.now", async () => {
+		const src = await Bun.file(
+			new URL("../modules/system/fan.ts", import.meta.url),
+		).text();
+		expect(src).toContain(
+			"let fanLogNow: () => number = () => performance.now();",
+		);
+		expect(src).not.toMatch(/fanLogNow\s*=\s*now \?\? Date\.now/);
+	});
+
 	test("an unreadable correlated pwm1 is logged once, not every tick", async () => {
 		resetFanUnreadableLog();
 		const h = makeHarness(

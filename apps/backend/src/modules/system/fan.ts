@@ -278,7 +278,9 @@ export const FAN_UNREADABLE_RELOG_MS = 10 * 60 * 1000;
 
 const unreadableLogged = new Map<string, { signature: string; at: number }>();
 
-let fanLogNow: () => number = Date.now;
+// Monotonic: chrony may step the wall clock (also backwards) after boot, which
+// would stretch or skip the window if it ran on Date.now.
+let fanLogNow: () => number = () => performance.now();
 
 function firstUnreadable(key: string, err: unknown): boolean {
 	const e = err as NodeJS.ErrnoException | undefined;
@@ -298,7 +300,7 @@ function firstUnreadable(key: string, err: unknown): boolean {
 
 /** Test seam: replace the clock used for the re-log window (none restores it). */
 export function setFanLogClockForTest(now?: () => number): void {
-	fanLogNow = now ?? Date.now;
+	fanLogNow = now ?? (() => performance.now());
 }
 
 /** Test seam: forget which unreadable paths were already logged. */
