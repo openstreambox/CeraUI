@@ -461,3 +461,60 @@ describe("wifiModeTarget narrows the opaque async-op target", () => {
 		}
 	});
 });
+
+describe("a saved hybrid this radio cannot run", () => {
+	const unqualified = entry({
+		desired: "hybrid",
+		options: [
+			{ mode: "station", available: true },
+			{ mode: "hotspot", available: true },
+			{ mode: "hybrid", available: false, reason: "capability-unknown" },
+		],
+	});
+
+	it("is stated while the radio stays a station", () => {
+		const v = view({ entry: unqualified });
+		expect(v.savedHybridRefused).toBe(true);
+		expect(v.displayMode).toBe("station");
+		expect(v.desiredMode).toBe("hybrid");
+	});
+
+	it("absorbs the device's capability-unproven terminal instead of stating it twice", () => {
+		const v = view({
+			entry: unqualified,
+			phase: "failed",
+			failureReason: "capability-unproven",
+		});
+		expect(v.savedHybridRefused).toBe(true);
+		expect(v.errorKey).toBeUndefined();
+	});
+
+	it("keeps every other terminal failure", () => {
+		const v = view({
+			entry: unqualified,
+			phase: "failed",
+			failureReason: "activation-failed",
+		});
+		expect(v.errorKey).toBe("network.wifiMode.error.activationFailed");
+	});
+
+	it("is not raised for a qualified radio, a running hybrid, another preference or a pending switch", () => {
+		expect(
+			view({ entry: entry({ desired: "hybrid" }) }).savedHybridRefused,
+		).toBe(undefined);
+		expect(
+			view({
+				entry: { ...unqualified, mode: "hybrid" },
+				iface: iface({ mode: "station" }),
+			}).savedHybridRefused,
+		).toBe(undefined);
+		expect(
+			view({ entry: { ...unqualified, desired: "station" } })
+				.savedHybridRefused,
+		).toBe(undefined);
+		expect(
+			view({ entry: unqualified, phase: "pending", target: "hotspot" })
+				.savedHybridRefused,
+		).toBe(undefined);
+	});
+});
