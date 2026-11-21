@@ -445,6 +445,7 @@ export type UnclaimedAdapter = z.infer<typeof unclaimedAdapterSchema>;
 
 // Status response message schema (what server sends)
 export const statusResponseSchema = z.object({
+	carrying: z.object({ state: z.enum(['streaming', 'idle', 'unknown']) }).optional(),
 	is_streaming: z.boolean().optional(),
 	audio_mix_active: z.boolean().optional(),
 	stream_lifecycle: lifecycleStateSchema.optional(),
