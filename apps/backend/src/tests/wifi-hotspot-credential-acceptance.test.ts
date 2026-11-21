@@ -60,8 +60,9 @@ for (const entry of ["prepare", "start", "prepare-start"] as const) {
 						);
 						const fields = args[selector + 1]?.split(",") ?? [];
 						const secret = fields.indexOf("802-11-wireless-security.psk");
+						// The AP profile lookup: six profile fields plus connection.id.
 						const lookup =
-							fields[0] === "802-11-wireless.mode" && fields.length === 6;
+							fields[0] === "802-11-wireless.mode" && fields.length === 7;
 						if (
 							selector < 0 ||
 							secret < 0 ||

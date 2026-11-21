@@ -57,6 +57,10 @@ import * as interfaces from "../modules/wifi/wifi-interfaces.ts";
 import { getWifiIdToMacAddress } from "../modules/wifi/wifi-interfaces.ts";
 import { restoreLimitedHotspot } from "../modules/wifi/wifi-limited-hotspot-restore.ts";
 import {
+	PROVISIONING_AP_CONNECTION_ID,
+	resetProvisioningApForTest,
+} from "../modules/wifi/wifi-provisioning-ap.ts";
+import {
 	radioIdentityReaders,
 	wifiRadioIdentity,
 } from "../modules/wifi/wifi-radio-identity.ts";
@@ -89,6 +93,7 @@ let frames: string[];
 let channel: string;
 let profileIfname: string;
 let hasProfile: boolean;
+let profileId: string;
 let streamingOn: boolean;
 let originalConfigPath: string;
 let scratch: string;
@@ -125,6 +130,8 @@ beforeEach(async () => {
 	channel = "0";
 	profileIfname = "";
 	hasProfile = true;
+	profileId = "";
+	resetProvisioningApForTest();
 	streamingOn = false;
 	row = radio();
 	addWifiInterface(KEY, row);
@@ -171,6 +178,7 @@ beforeEach(async () => {
 			"802-11-wireless.channel": channel,
 			"802-11-wireless-security.key-mgmt": "wpa-psk",
 			"connection.interface-name": profileIfname,
+			"connection.id": profileId,
 		};
 		return nmcliFieldOutput(args, (field) => values[field] ?? "");
 	});
@@ -227,6 +235,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	mock.restore();
+	resetProvisioningApForTest();
 	concurrent.resetConcurrentInterfaceDepsForTest();
 	setWifiJoinNmcliRunner(null);
 	getConfig().wifi_modes = modes;
@@ -1090,6 +1099,7 @@ for (const scenario of [
 	"channel",
 	"replacement",
 	"missing-profile",
+	"setup-profile",
 	"streaming",
 	"hybrid-unproven",
 ] as const) {
@@ -1105,6 +1115,8 @@ for (const scenario of [
 		if (scenario === "channel") channel = "165";
 		if (scenario === "replacement") row.ifname = "replacement";
 		if (scenario === "missing-profile") hasProfile = false;
+		// A stored claim on the device image's setup AP is never restored.
+		if (scenario === "setup-profile") profileId = PROVISIONING_AP_CONNECTION_ID;
 		if (scenario === "streaming") {
 			streamingOn = true;
 			row.conn = "station-uplink";
