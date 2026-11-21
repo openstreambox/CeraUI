@@ -18,6 +18,7 @@ import {
 } from "../modules/streaming/armed-stream-marker.ts";
 import {
 	initHotspotCredentials,
+	recordHotspotProfileCreation,
 	rememberHotspotCredentials,
 	resetHotspotCredentialsForTest,
 } from "../modules/wifi/hotspot-credentials.ts";
@@ -86,6 +87,22 @@ const writers = [
 		save: async () => {
 			await initHotspotCredentials();
 			rememberHotspotCredentials(mac, credentials);
+		},
+	},
+	{
+		name: "hotspot first-profile creation record",
+		file: "hotspot_credentials.json",
+		save: async () => {
+			await initHotspotCredentials();
+			rememberHotspotCredentials(mac, credentials);
+			// Make the creation record prove its own mode, independently of remember.
+			fs.chmodSync("hotspot_credentials.json", 0o644);
+			expect(
+				recordHotspotProfileCreation(
+					mac,
+					"00000000-0000-4000-8000-0000000000a1",
+				),
+			).toBe(true);
 		},
 	},
 	{
