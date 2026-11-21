@@ -12,9 +12,9 @@ import {
 	setEthernetRoleOutputSchema,
 	setIngestEnabledInputSchema,
 	setIngestEnabledOutputSchema,
+	sharingPolicySchema,
 } from "@ceraui/rpc/schemas";
 import { os } from "@orpc/server";
-
 import {
 	setMockNetifConfig,
 	shouldUseMocks,
@@ -33,6 +33,8 @@ import {
 	netIfBuildMsg,
 	readAppliedNetifConfig,
 } from "../../modules/network/network-interfaces.ts";
+import { sharingPolicyOwner } from "../../modules/network/uplink-steering/policy.ts";
+import { requestUplinkSteeringReconcile } from "../../modules/network/uplink-steering/runtime.ts";
 import { broadcastSources } from "../../modules/streaming/sources.ts";
 import { isRealDevice } from "../../modules/system/device-detection.ts";
 import { broadcastMsg } from "../compat.ts";
@@ -152,4 +154,19 @@ export const setNetworkIngestEnabledProcedure = authedProcedure
 		}
 
 		return setIngestEnabled(protocol, enabled);
+	});
+
+export const getSharingPolicyProcedure = authedProcedure
+	.output(sharingPolicySchema)
+	.handler(() => sharingPolicyOwner.get());
+export const setSharingPolicyProcedure = authedProcedure
+	.input(sharingPolicySchema)
+	.output(sharingPolicySchema)
+	.handler(async ({ input }) => {
+		if (!shouldUseMocks() && !(await isRealDevice()))
+			throw new Error("Sharing unavailable on emulated hosts");
+		return sharingPolicyOwner.set(
+			input,
+			shouldUseMocks() ? async () => undefined : requestUplinkSteeringReconcile,
+		);
 	});

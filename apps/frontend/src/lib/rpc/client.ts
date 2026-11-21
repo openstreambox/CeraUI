@@ -23,6 +23,8 @@ import type {
 	ClaimCodeOutput,
 	CompletePairingInput,
 	CompletePairingOutput,
+	EsimOperationInput,
+	EsimOperationOutput,
 	EventBootRecord,
 	EventListInput,
 	EventListOutput,
@@ -160,7 +162,7 @@ import { nextBackoffDelay } from "./backoff";
 import { parseServerPing, shouldForceCloseHalfOpen } from "./half-open";
 import { createHeartbeatTracker, HEARTBEAT_THRESHOLD_MS } from "./heartbeat";
 import { NotSentError, RpcError, type RpcErrorEnvelope } from "./rpc-error";
-import { RPC_CALL_TIMEOUT_MS } from "./rpc-timeouts";
+import { PROCEDURE_TIMEOUT_MS, RPC_CALL_TIMEOUT_MS } from "./rpc-timeouts";
 
 export class ConnectionResetError extends Error {
 	override readonly name = "ConnectionResetError";
@@ -624,15 +626,6 @@ class RPCClient {
  * clearAll: 10s admission + 15s drain + 4 commands + Rotate + deletion
  *           + 4 readouts = 191.5s. Late settlement is not on the reply path.
  */
-const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
-	"streaming.start": 75_000,
-	"logs.previewBundle": 75_000,
-	"logs.createBundle": 75_000,
-	"logs.getStorage": 60_000,
-	"logs.setRetention": 135_000,
-	"logs.deleteLegacyDebug": 75_000,
-	"logs.clearAll": 210_000,
-};
 
 function createRPCProxy<T extends object>(
 	client: RPCClient,
@@ -751,6 +744,7 @@ export interface TypedRPC {
 		) => Promise<ReloadAudioDelayOutput>;
 	};
 	modems: {
+		esimOperation: (input: EsimOperationInput) => Promise<EsimOperationOutput>;
 		getAll: () => Promise<unknown>;
 		configure: (input: ModemConfigInput) => Promise<ModemConfigOutput>;
 		scan: (input: ModemScanInput) => Promise<ModemScanOutput>;
@@ -906,6 +900,12 @@ export interface TypedRPC {
 		) => Promise<SetWifiAdapterModeOutput>;
 	};
 	network: {
+		getSharingPolicy: () => Promise<
+			import("@ceraui/rpc/schemas").SharingPolicy
+		>;
+		setSharingPolicy: (
+			input: import("@ceraui/rpc/schemas").SharingPolicy,
+		) => Promise<import("@ceraui/rpc/schemas").SharingPolicy>;
 		getInterfaces: () => Promise<unknown>;
 		configure: (input: NetifConfigInput) => Promise<NetifConfigOutput>;
 		/**
