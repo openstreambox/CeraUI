@@ -22,6 +22,8 @@ function isLocalIPv4(a: number, b: number): boolean {
 
 interface Redactor {
 	structured(value: string | number | boolean | null): void;
+	/** Held secrets only, without the identifier and address patterns. */
+	known(value: string): { readonly text: string; readonly redactions: number };
 	text(
 		value: string,
 		bootSpan?: readonly [start: number, end: number],
@@ -76,6 +78,15 @@ export function buildRedactor(
 			if (exact === null || value === null) return;
 			exact.lastIndex = 0;
 			if (exact.test(String(value))) throw new BundleReadError();
+		},
+		known(value: string) {
+			if (exact === null) return { text: value, redactions: 0 };
+			let redactions = 0;
+			const text = value.replace(exact, (match) => {
+				redactions++;
+				return literals.get(percentCase(match)) ?? "[REDACTED]";
+			});
+			return { text, redactions };
 		},
 		text(value: string, bootSpan) {
 			const spans: Array<{
