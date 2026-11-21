@@ -1,11 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { netifMessageSchema } from "@ceraui/rpc/schemas";
 
-import { initMockService, stopMockService } from "../mocks/mock-service.ts";
+import {
+	getMockState,
+	initMockService,
+	setMockSimState,
+	setStreamingState,
+	stopMockService,
+} from "../mocks/mock-service.ts";
 import {
 	getMockIfconfigOutput,
 	getMockModemNetMarker,
 } from "../mocks/providers/network.ts";
+import { buildMockLinkTelemetry } from "../mocks/providers/streaming.ts";
 import {
 	netIfBuildMsg,
 	processIfconfigOutput,
@@ -75,4 +82,37 @@ describe("multi-modem-wifi modem data interfaces", () => {
 			expect(wire[name]?.usb_modem_net).toBeUndefined();
 		}
 	});
+});
+
+test("locked and searching modems have no address, counter growth or sender telemetry", () => {
+	process.env.MOCK_MODE = "true";
+	initMockService("modem-pin-locked");
+	setStreamingState(true);
+	const block = () =>
+		getMockIfconfigOutput()
+			.split("\n\n")
+			.find((s) => s.startsWith("usb0:"))!;
+	for (const lock of ["pin-locked", "puk-locked"] as const) {
+		setMockSimState("0", { lock });
+		const first = block();
+		expect(first).not.toContain("inet ");
+		expect(block()).toBe(first);
+		expect(
+			buildMockLinkTelemetry()?.links.some((l) => l.iface === "usb0"),
+		).toBe(false);
+	}
+	setMockSimState("0", { lock: "unlocked" });
+	expect(block()).toContain("inet 10.0.0.2");
+	const connected = block();
+	expect(block()).not.toBe(connected);
+	expect(buildMockLinkTelemetry()?.links.some((l) => l.iface === "usb0")).toBe(
+		true,
+	);
+	getMockState().modemStates.set(0, "searching");
+	const searching = block();
+	expect(searching).not.toContain("inet ");
+	expect(block()).toBe(searching);
+	expect(buildMockLinkTelemetry()?.links.some((l) => l.iface === "usb0")).toBe(
+		false,
+	);
 });
