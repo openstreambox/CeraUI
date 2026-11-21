@@ -153,14 +153,15 @@ let rollup = $state<SessionRollup | null>(null);
 // Every name a link carried during the session, in the order they were seen,
 // recorded with each sample. A SIM that registers on another operator mid-session
 // reads "SIM 1 · A → B" in the summary instead of the name at viewing time.
-let sessionNames = new Map<string, string[]>();
+// Plain data, like the samples: nothing renders from it until the session ends.
+let sessionNames: Record<string, string[]> = {};
 let summaryNames = $state<ReadonlyMap<string, readonly string[]>>(new Map());
 
 function recordNames(links: readonly LinkTelemetryEntry[] | undefined) {
 	for (const link of links ?? []) {
 		const name = nameOf(link.iface);
-		const seen = sessionNames.get(link.iface);
-		if (!seen) sessionNames.set(link.iface, [name]);
+		const seen = sessionNames[link.iface];
+		if (!seen) sessionNames[link.iface] = [name];
 		else if (seen.at(-1) !== name) seen.push(name);
 	}
 }
@@ -179,7 +180,7 @@ $effect(() => {
 
 	if (streaming && !wasStreaming) {
 		sessionSamples = [];
-		sessionNames = new Map();
+		sessionNames = {};
 		rollup = null;
 	}
 	if (streaming) {
@@ -189,7 +190,7 @@ $effect(() => {
 	}
 	if (!streaming && wasStreaming) {
 		rollup = sessionSamples.length > 0 ? computeSessionRollup(sessionSamples) : null;
-		summaryNames = new Map(sessionNames);
+		summaryNames = new Map(Object.entries(sessionNames));
 		// Clear the live sparkline ring so the next session starts fresh without a
 		// remount; the folded rollup above is what the summary renders from now on.
 		history = {};
