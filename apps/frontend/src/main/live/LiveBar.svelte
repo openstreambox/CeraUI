@@ -24,10 +24,14 @@ interface Props {
 	status?: string;
 	/** Whether `status` is a blocking reason. */
 	blocked?: boolean;
+	/** Whether `status` is an advisory from the device that does not disable Start. */
+	warn?: boolean;
 	children: Snippet;
 }
 
-const { status, blocked = false, children }: Props = $props();
+const { status, blocked = false, warn = false, children }: Props = $props();
+
+const tone = $derived(blocked ? 'blocked' : warn ? 'warn' : 'ready');
 
 const HEIGHT_PROPERTY = '--live-bar-height';
 
@@ -40,7 +44,7 @@ $effect(() => (bar ? publishHeight(bar, HEIGHT_PROPERTY) : undefined));
 <div
 	bind:this={bar}
 	class="live-bar bg-background fixed inset-x-0 z-30 border-t"
-	data-state={status === undefined ? undefined : blocked ? 'blocked' : 'ready'}
+	data-state={status === undefined ? undefined : tone}
 	data-testid="live-bar" data-touch-region
 >
 	<!-- Below 640 px the line takes the full width above the action: a blocking
@@ -53,7 +57,11 @@ $effect(() => (bar ? publishHeight(bar, HEIGHT_PROPERTY) : undefined));
 			<p class="flex min-h-10 min-w-0 items-start gap-2 text-sm sm:flex-1" aria-live="polite">
 				<span
 					class="mt-1.5 size-2 shrink-0 rounded-full"
-					style="background: {blocked ? 'var(--destructive)' : 'var(--status-success)'};"
+					style="background: {tone === 'blocked'
+						? 'var(--destructive)'
+						: tone === 'warn'
+							? 'var(--status-warning)'
+							: 'var(--status-success)'};"
 					aria-hidden={true}
 				></span>
 				<span class="line-clamp-2 min-w-0">{status}</span>

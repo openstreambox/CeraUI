@@ -65,6 +65,7 @@ import {
 	getSensors,
 	getSources,
 	getStatus,
+	getStreamReadiness,
 } from '$lib/rpc/subscriptions.svelte';
 import { getEncoderLoad } from '$lib/stores/device-health-history.svelte';
 import { deriveBitrateReading, deriveMeasuredBitrateKbps } from '$lib/stores/hud/derive';
@@ -1190,6 +1191,7 @@ const configRows = $derived<ConfigRow[]>([
 			optimismState={streamingOptimismState}
 			{destinationValidated}
 			maxBitrate={config?.max_br}
+			boxReadiness={getStreamReadiness()}
 			onStart={handleStart}
 			onStop={handleStop}
 			onOpenSource={handleOpenSource}

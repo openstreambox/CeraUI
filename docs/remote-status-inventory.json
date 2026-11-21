@@ -42615,6 +42615,101 @@
       ]
     },
     {
+      "source": "apps/backend/src/modules/streaming/stream-readiness.ts",
+      "call": "broadcastMsg",
+      "message": "\"stream_readiness\"",
+      "fields": [
+        {
+          "path": "ready",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "live",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "checks[].id",
+          "types": [
+            "\"source\"",
+            "\"lock\"",
+            "\"uplinks\"",
+            "\"receiver\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "checks[].state",
+          "types": [
+            "\"unknown\"",
+            "\"ok\"",
+            "\"blocked\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "checks[].code",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "uplinks.usable",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "uplinks.total",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "at",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "reason",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "reason.check",
+          "types": [
+            "\"source\"",
+            "\"lock\"",
+            "\"uplinks\"",
+            "\"receiver\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "reason.code",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
       "source": "apps/backend/src/rpc/procedures/captive-portal.procedure.ts",
       "call": "broadcastMsg",
       "message": "\"config\"",
@@ -44130,7 +44225,7 @@
   ],
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
-    "apps/backend/src/main.ts": "43a1769312ca9a9ec48ae091fbbb6a88171aa65ca360513d6a4767cfb987f200",
+    "apps/backend/src/main.ts": "25d08d0803966ec5dac3ba52667a268a520ed5e68847401ffe4dc448a54f8479",
     "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -44169,6 +44264,7 @@
     "apps/backend/src/modules/streaming/pipelines.ts": "5dec75a516b948749321bc8e386434b2aa2a5298d300b96d68e340b76e810023",
     "apps/backend/src/modules/streaming/sources.ts": "83e1dd9470e5c950dd036d014924c7ff7777a094ce65c43f198b700260973b56",
     "apps/backend/src/modules/streaming/stream-lifecycle-status.ts": "33aa1a07d69097df21fb3288ef4af93078d71a44e85a7f22d1b79d928357aa80",
+    "apps/backend/src/modules/streaming/stream-readiness.ts": "34f8f080b0c1a617f03440672dd0922e12dd256b3e78ab9588c22ffb4aaad95f",
     "apps/backend/src/modules/streaming/streaming.ts": "83a8a4edfc179e43cd71912cdbb331ca0b5308589ca1bc498b288d2dbbcf7730",
     "apps/backend/src/modules/streaming/streamloop/autostart.ts": "03d8a15d80b4dd164b75c124e815803be9dd56a6b584e3b93a100c7f21eebd49",
     "apps/backend/src/modules/system/carrying-runtime.ts": "3e885cf7736e3ec69a6f1aea2fc7310288567417209cae2f00747975e8a5c1a1",
@@ -44182,7 +44278,7 @@
     "apps/backend/src/modules/system/encoder-load.ts": "edc310e16747a331b232b09d0b7d3ee7fc811621241840268a85ebda2b9729db",
     "apps/backend/src/modules/system/fan.ts": "cfdd9d1bc579dc0f8e11fcf7bfa184f1f7b557392f720c3326ee561f532d5c51",
     "apps/backend/src/modules/system/kiosk.ts": "921df84e43d6960e9a1ab0bfd8768a7a85a7fe682fccc185bd8585f88823e96a",
-    "apps/backend/src/modules/system/logs.ts": "b026f90ab04e7e212b29eb6f271932faa51724325f9965258e12d3446d57c3ff",
+    "apps/backend/src/modules/system/logs.ts": "44f18bbf614f5bc3ec1e3d33b9c8ed76efd64cbc3506dc8dcab6455d81b0bdd4",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
     "apps/backend/src/modules/system/sensors.ts": "a8b7c1792525f429bd06018831c18832fa56f588fdf8f8345b265768375f4e4c",
     "apps/backend/src/modules/system/software-updates.ts": "d1ad6da3eb559be5336b74bb6519ba6caf9fba051b2dc1593f41a31dbfab9763",
@@ -44220,6 +44316,7 @@
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
     "packages/rpc/src/schemas/status.schema.ts": "3fc784b7ab196cbd05d9712b3a945a330ef8927333907e6826217faa7fff8893",
+    "packages/rpc/src/schemas/stream-readiness.schema.ts": "a511cc1bb8250e3c77da78d50367c4693b2e3bcbeffc41cb63030dd768c81eca",
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
     "packages/rpc/src/schemas/system.schema.ts": "f50d34847a01f4ce036f66277b8639a1c1c7c51385f8d8eda1b614c21c0f14a0",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",

@@ -29,6 +29,10 @@ import { os } from "@orpc/server";
 import { validatePortNo } from "../../helpers/number.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { resolveMockRelayValidate } from "../../mocks/providers/relay-validate.ts";
+import {
+	noteReceiverEvidence,
+	receiverKey,
+} from "../../modules/streaming/stream-readiness.ts";
 import { getAdapter } from "../../modules/streaming/transport/registry.ts";
 import {
 	NotImplementedError,
@@ -49,6 +53,16 @@ function fail(
 	reason: string,
 ): RelayValidateOutput {
 	return { valid: false, stage, reason };
+}
+
+/** Feed the stream-ready flag when the tested destination is the configured one. */
+function noteRelayEvidence(
+	addr: string,
+	port: number,
+	evidence: "reachable" | "refused" | "unresolved",
+): void {
+	const key = receiverKey({ srtla_addr: addr, srtla_port: port });
+	if (key !== undefined) noteReceiverEvidence(key, evidence);
 }
 
 export const relayValidateProcedure = authedProcedure
@@ -103,6 +117,7 @@ export const relayValidateProcedure = authedProcedure
 				}),
 			]);
 		} catch {
+			noteRelayEvidence(addr, input.port, "unresolved");
 			return fail("dns", `Cannot resolve host '${addr}'`);
 		} finally {
 			clearTimeout(dnsTimer);
@@ -129,13 +144,18 @@ export const relayValidateProcedure = authedProcedure
 					input.port,
 					Math.min(PROBE_TIMEOUT_MS, remaining),
 				);
-				if (probe.reachable)
+				if (probe.reachable) {
+					noteRelayEvidence(addr, input.port, "reachable");
 					return { valid: true, stage: "probe", reason: `IPv${family}` };
+				}
 				reason = probe.reason;
 			} catch (error) {
 				unexpected ??= error;
 			}
 		}
 		if (unexpected !== undefined) throw unexpected;
+		// A silent UDP port proves nothing (receivers need not answer a stray
+		// datagram); only an explicit refusal counts against the receiver.
+		if (reason === "refused") noteRelayEvidence(addr, input.port, "refused");
 		return fail("probe", reason);
 	});
