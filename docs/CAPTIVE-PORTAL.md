@@ -33,7 +33,11 @@ same published incarnation. A rotated incarnation reports a changed Wi-Fi; a
 Limited or Unverified radio, or a publication that does not return within two
 seconds, reports unconfirmed identity. The AP the phone arrived through (the
 front door's proven arrival interface, else the route back to the phone) is
-pinned separately at entry, before any cleanup or identity capture: its hotspot
+pinned separately at entry, before any cleanup or identity capture. Behind the
+front door the private listener records the arrival interface's kernel ifindex
+and netif incarnation when it accepts the socket's evidence; the socket's path
+stops holding once either changes, and a proven AP is pinned before the first
+route read and must still be that accepted lifetime. The pin holds: its hotspot
 row and operation, active AP profile, NM activation (active connection path and
 profile instance), netif incarnation and kernel ifindex. Only that pin is used
 afterwards. Fresh observations of both ends bracket the association evidence
