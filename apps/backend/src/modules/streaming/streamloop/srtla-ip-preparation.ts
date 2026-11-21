@@ -22,6 +22,7 @@ import { isLocalIp } from "../../../helpers/ip-addresses.ts";
 import type { BondEntry } from "../bind-map.ts";
 import type { BindMapPublication } from "../bind-map-writer.ts";
 import {
+	configuredReceiver,
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
 	publishSrtlaBond,
@@ -54,8 +55,11 @@ export async function prepareSrtlaIpAddresses(
 	srtlaAddr: string,
 	deps: SrtlaIpPreparationDeps = defaultSrtlaIpPreparationDeps,
 ): Promise<BindMapPublication> {
-	const entries = deps.isLocal(srtlaAddr)
-		? deps.localList(srtlaAddr)
+	// A literal chosen for a configured name is admitted as that name: a
+	// private receiver reached over the bond stays a bonded receiver.
+	const admitted = configuredReceiver(srtlaAddr);
+	const entries = deps.isLocal(admitted)
+		? deps.localList(admitted)
 		: deps.bondedList();
 	if (entries.length === 0) {
 		throw new Error("no_available_network_connections");

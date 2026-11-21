@@ -138,7 +138,7 @@ export async function autoStartStream(linkAttempt = 1): Promise<void> {
 	const result = await startStreamSession({
 		origin: "autostart",
 		launch: async ({ attemptId }) => {
-			const srtlaAddr: string = await resolveSrtla(c.srtlaAddr);
+			const srtlaAddr: string = await resolveSrtla(c.srtlaAddr, c.srtlaPort);
 			const launched = await startStream(
 				c.pipeline,
 				srtlaAddr,

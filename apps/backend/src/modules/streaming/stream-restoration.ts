@@ -257,7 +257,10 @@ async function defaultLaunch(
 	const result = await startStreamSession({
 		origin: "restoration",
 		launch: async ({ attemptId }) => {
-			const srtlaAddr = await resolveSrtla(resolved.srtlaAddr);
+			const srtlaAddr = await resolveSrtla(
+				resolved.srtlaAddr,
+				resolved.srtlaPort,
+			);
 			const launched = await startStream(
 				resolved.pipeline,
 				srtlaAddr,

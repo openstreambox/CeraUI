@@ -285,7 +285,7 @@ export async function updateConfig(requestedParams: ConfigParameters) {
 		streamid,
 	} = await validateConfig(params);
 
-	const srtlaAddr = await resolveSrtla(initialAddr);
+	const srtlaAddr = await resolveSrtla(initialAddr, srtlaPort);
 	const config = getConfig();
 	// Save the updated config
 	config.delay = params.delay;

@@ -61,7 +61,7 @@ import {
 	recentRelaySession,
 	relaySessionKey,
 } from "../recent-relay-session.ts";
-import { getLastPublishedBond } from "../srtla.ts";
+import { configuredReceiver, getLastPublishedBond } from "../srtla.ts";
 import { StreamStartFailure } from "../start-failure-taxonomy.ts";
 import { assertStreamLaunchOwnership } from "../stream-launch-ownership.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
@@ -356,7 +356,7 @@ export async function startStream(
 			error instanceof StreamStartFailure &&
 			error.liveness === "idle" &&
 			recentRelaySession.possiblyBusy(
-				relaySessionKey(srtlaAddr, srtlaPort, streamid),
+				relaySessionKey(configuredReceiver(srtlaAddr), srtlaPort, streamid),
 				error.failure.message,
 			)
 		) {
@@ -378,6 +378,8 @@ export async function startStream(
 		throw error;
 	}
 
-	recentRelaySession.valid(relaySessionKey(srtlaAddr, srtlaPort, streamid));
+	recentRelaySession.valid(
+		relaySessionKey(configuredReceiver(srtlaAddr), srtlaPort, streamid),
+	);
 	return { success: true };
 }

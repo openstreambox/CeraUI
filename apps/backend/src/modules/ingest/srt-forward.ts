@@ -240,7 +240,7 @@ export async function runForwardAttempt(
 			}
 		},
 		start: async () => {
-			address = await deps.resolveSrtla(endpoint.srtlaAddr);
+			address = await deps.resolveSrtla(endpoint.srtlaAddr, endpoint.srtlaPort);
 			await deps.prepareSrtlaIpAddresses(address);
 			const bind = await deps.resolveBindMapArgs(
 				srtlaSendExec,

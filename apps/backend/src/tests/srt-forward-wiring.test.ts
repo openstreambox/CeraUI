@@ -115,6 +115,7 @@ test.each([
 	};
 	let sender: { exitListeners: Array<() => void> } | undefined;
 	let spawned = 0;
+	const resolved: unknown[][] = [];
 	const deps: Parameters<typeof runForwardAttempt>[1] = {
 		getConfig: () => ({
 			srtla_addr: "127.0.0.1",
@@ -122,7 +123,10 @@ test.each([
 			srt_streamid: "test",
 		}),
 		getRelays: () => ({}),
-		resolveSrtla: async () => "127.0.0.1",
+		resolveSrtla: async (...args: unknown[]) => {
+			resolved.push(args);
+			return "127.0.0.1";
+		},
 		prepareSrtlaIpAddresses: async () => ({ changed: false }) as never,
 		resolveBindMapArgs: async () => [],
 		spawnForwardLoop: () => {
@@ -182,6 +186,8 @@ test.each([
 			return;
 		}
 		while (!spawned) await Bun.sleep(1);
+		// The receiver port reaches the resolver, so it can choose among answers.
+		expect(resolved[0]).toEqual(["127.0.0.1", 19403]);
 		expect(getCarryingLiveness()).not.toBe("streaming");
 		expect(currentLifecycleHolder()).toBe("streaming");
 		emit("SRT target connected");
