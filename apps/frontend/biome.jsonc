@@ -5,6 +5,8 @@
 	"files": {
 		"includes": [
 			"package.json",
+			"tests/e2e/fixtures/phone-home*.ts",
+			"tests/e2e/fixtures/prepare-phone-home.ts",
 			"src/**/*.ts",
 			"src/**/*.js",
 			"src/**/*.json",
