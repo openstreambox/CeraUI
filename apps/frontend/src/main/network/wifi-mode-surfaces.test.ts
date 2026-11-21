@@ -280,5 +280,8 @@ describe("an unavailable mode states its reason on every surface that offers it"
 		expect((reason?.textContent ?? "").trim().length).toBeGreaterThan(0);
 		// Never a raw dotted key.
 		expect(reason?.textContent).not.toContain("network.wifiMode.");
+		// It names the choice the way the picker shows it.
+		expect(rung?.textContent?.trim()).toBe("Both");
+		expect(reason?.textContent?.trim().startsWith("Both: ")).toBe(true);
 	});
 });
