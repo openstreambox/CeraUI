@@ -20,8 +20,7 @@
   • Start never dispatches directly (#413): it opens `HotspotActivationConfirm`,
     which shows the exact credentials the AP will broadcast (or stores the
     operator's own) and needs an explicit acknowledgement. While the hotspot is
-    off, the edit form is NOT rendered — `hotspotConfigure` only reconfigures a
-    live AP, so fields typed here used to be silently ignored by the start.
+    off, Save prepares an inactive profile; Forget removes its saved setup.
   • When the hotspot is active, ONE QR encoding the live credentials is rendered
     so phones can join by scan. Its `T:` token follows the LIVE security mode
     (`hotspotQrSecurity`): a WPA3-SAE AP advertised as `T:WPA` yields a code that
@@ -97,8 +96,11 @@ let { open = $bindable(false), deviceId, iface }: Props = $props();
 
 const bounds = networkConstraints.hotspot;
 
-// The hotspot is "active" when the interface is currently broadcasting one.
-const isActive = $derived(hotspotIsActive(iface));
+// "Active" means the AP is broadcasting NOW — read from the radio's live mode and
+// the AP's own state, never from the saved setup the device sends while it is off.
+// Every input is live (`iface` from the wifi snapshot, the adapter-mode cache), so
+// a Start or Stop from the API, another client or the device re-renders this too.
+const isActive = $derived(hotspotIsActive(iface, getWifiAdapterModeEntry(deviceId)));
 const radioDevice = $derived(deviceId);
 const radioToken = $derived(iface?.incarnation);
 const radioReason = $derived(iface?.degraded_reason);
@@ -314,13 +316,23 @@ $effect(() => {
 // a `wifi` event carrying `hotspot.config`, which the subscriptions handler routes
 // into `hotspot-config:${deviceId}`. The one-time form sync (`initialized` guard)
 // keeps the live QR/iface re-broadcast from clobbering the in-progress edits.
+async function handleDelete() {
+	await osCommand({
+		key: configKey,
+		rpc: () => rpc.wifi.hotspotDelete({ device: deviceId, radio_id: iface?.radio_identity?.id }),
+		confirmOnResolve: true,
+		failMessage: () => m["network.os.operationFailed"](),
+		busyMessage: () => m["network.os.deviceBusy"](),
+	});
+}
+
 async function handleSave() {
 	const original = formBinding;
 	if (!isFormValid || configuring || !canEdit || !original?.incarnation) return;
 	let binding = original;
 	const controller = beginAdmission(original);
 	const input = {
-		device: binding.device, incarnation: binding.incarnation, name, password, channel,
+		device: binding.device, ...(iface?.radio_identity?.id ? { radio_id: iface.radio_identity.id } : {}), incarnation: binding.incarnation, name, password, channel,
 		...(security !== undefined ? { security } : {}),
 	};
 	configAdmissionKey = wifiHotspotConfigOpKey(binding.device, binding.incarnation);
@@ -369,7 +381,7 @@ async function handleSave() {
 
 // Start/stop through the shared keyed op. Stay `pending` after dispatch; the
 // confirm $effect below flips to `confirmed` once the snapshot reports the target
-// mode (the 15 s TTL valve is the backstop if the device never reports back).
+// mode (the 60 s Start TTL valve is the backstop if the device never reports back).
 async function handleToggle() {
 	if (isActive) {
 		const binding = capture();
@@ -455,7 +467,7 @@ async function startConfirmed(incarnation: string) {
 // naturally (post-confirm).
 $effect(() => {
 	if (getOperationPhase(toggleKey) !== 'pending') return;
-	if (hotspotToggleConfirmed(toggleTarget, isActive)) {
+	if (hotspotToggleConfirmed(toggleTarget, isActive, iface?.transition)) {
 		confirmOperation(toggleKey);
 	}
 });
@@ -535,7 +547,7 @@ async function copyPassword() {
 				<Wifi class="size-4" />
 			</span>
 			<div class="min-w-0 flex-1">
-				<p class="text-sm font-medium">
+				<p class="text-sm font-medium" data-testid="hotspot-status" data-active={isActive}>
 					{isActive ? m["network.status.active"]() : m["network.status.inactive"]()}
 				</p>
 				{#if iface?.ifname}
@@ -594,7 +606,8 @@ async function copyPassword() {
 					{m["hotspotConfirm.inactiveHint"]()}
 				</p>
 			{/if}
-		{:else}
+		{/if}
+		{#if !confirmingStart}
 		<!-- Name -->
 		<div class="space-y-1.5">
 			<Label class="text-sm font-medium" for="hotspot-name">{m["network.hotspot.name"]()}</Label>

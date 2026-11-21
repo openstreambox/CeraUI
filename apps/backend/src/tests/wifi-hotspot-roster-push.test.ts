@@ -550,7 +550,7 @@ for (const rename of [false, true]) {
 			if (rename) {
 				expect(getHotspotClientsForInterface("clap-wlan2")?.count).toBe(1);
 			} else {
-				expect(h.frames[0]).not.toHaveProperty("data.wifi.1.hotspot");
+				expect(h.frames[0]).not.toHaveProperty("data.wifi.1.hotspot.clients");
 			}
 		} finally {
 			first.resolve(newRoster);
@@ -708,7 +708,7 @@ test("an obsolete Hybrid dump cannot restore a pruned roster or broadcast again"
 			type: "status",
 			data: { wifi: { "0": {} } },
 		});
-		expect(h.frames[0]).not.toHaveProperty("data.wifi.0.hotspot");
+		expect(h.frames[0]).not.toHaveProperty("data.wifi.0.hotspot.clients");
 	} finally {
 		oldDump.resolve(STATION);
 		await pending;
@@ -848,7 +848,7 @@ for (const hybrid of [false, true]) {
 					data: { wifi: { "0": {} } },
 				});
 				expect(broadcast.mock.calls[1]?.[1]).not.toHaveProperty(
-					"wifi.0.hotspot",
+					"wifi.0.hotspot.clients",
 				);
 				await tick([]);
 				expect(frames).toHaveLength(2);
