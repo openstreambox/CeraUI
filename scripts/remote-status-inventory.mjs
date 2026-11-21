@@ -122,6 +122,21 @@ function decision(message, path) {
 			'config.recoveryMode',
 		],
 	};
+	// Phone-only boxes (setup engine "none") relay these status leaves and nothing else.
+	if (m === 'status' && path === 'phone_box')
+		return 'needed on phone box only: fixed true from backend setup, never read from the payload; withheld from encoder status';
+	if (
+		m === 'status' &&
+		[
+			'carrying.state',
+			'carrying.startup',
+			'box_health[].part',
+			'box_health[].since',
+			'phone_links.ready',
+			'phone_links.sending',
+		].includes(path)
+	)
+		return 'needed on phone box only: closed enum, boolean or bounded number; withheld from encoder status';
 	if (scalar[m]?.includes(path)) return 'needed: typed scalar or closed enum';
 	if (
 		(m === 'netif' && /\.\*\.(tp|tx_bps|rx_bps|enabled)$/.test(path)) ||

@@ -426,13 +426,15 @@ export function getRemoteProjectionDrops(): number {
 export function projectRemoteLegacyFrame(
 	v: unknown,
 	transport = "legacy",
+	phoneBox = false,
 ): Row {
 	const src = object(v),
 		out: Row = {};
 	for (const [type, payload] of Object.entries(src)) {
-		const projected = projectRemotePayload(type, payload, transport);
+		const projected = projectPhoneFrame(type, payload, phoneBox, transport);
 		if (projected !== undefined) out[type] = projected;
-		else if (type === "notification" && payload !== undefined) {
+		// A phone box withholds every non-status frame by design; that is not a drop.
+		else if (!phoneBox && type === "notification" && payload !== undefined) {
 			const legacy = object(payload);
 			// The base notification producer has no revisioned relay envelope. It is
 			// deliberately withheld until the relay producer is installed.
@@ -448,4 +450,72 @@ export function projectRemoteLegacyFrame(
 	)
 		out.seq = src.seq;
 	return out;
+}
+
+const PHONE_PARTS = [
+	"cellular",
+	"moblink",
+	"srt-forward",
+	"hotspot",
+	"update-orchestrator-maintenance",
+] as const;
+const count = (v: unknown) =>
+	typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
+/** Phone-box status carries only the typed Home fields. */
+export function projectPhoneStatus(v: unknown): Row {
+	const src = object(v),
+		out: Row = { remote_status: true, phone_box: true };
+	if (src.carrying !== undefined) {
+		const state = choice(object(src.carrying).state, [
+			"streaming",
+			"idle",
+			"unknown",
+		]);
+		if (state !== undefined)
+			out.carrying = {
+				state,
+				...booleans(src.carrying, ["startup"]),
+			};
+	}
+	if (Array.isArray(src.box_health)) {
+		const seen = new Set<string>();
+		out.box_health = (src.box_health as unknown[]).flatMap((raw) => {
+			const part = choice(object(raw).part, PHONE_PARTS);
+			const since = object(raw).since;
+			if (
+				part === undefined ||
+				seen.has(part) ||
+				typeof since !== "number" ||
+				!Number.isFinite(since) ||
+				since < 0
+			)
+				return [];
+			seen.add(part);
+			return [{ part, since }];
+		});
+	}
+	if (src.phone_links !== undefined) {
+		const links = object(src.phone_links);
+		const ready = count(links.ready);
+		if (ready !== undefined)
+			out.phone_links = {
+				ready,
+				sending: count(links.sending) ?? null,
+			};
+	}
+	return out;
+}
+/** A phone box relays status only; every other frame type stays local.
+ * Phone identity comes from the backend setup, never from the payload.
+ */
+export function projectPhoneFrame(
+	type: string,
+	v: unknown,
+	phoneBox: boolean,
+	transport = "legacy",
+): unknown {
+	if (!phoneBox) return projectRemotePayload(type, v, transport);
+	return type === "status" && v !== undefined
+		? projectPhoneStatus(v)
+		: undefined;
 }
