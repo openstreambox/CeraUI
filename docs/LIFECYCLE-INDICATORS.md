@@ -371,7 +371,8 @@ engine receiving the start (a bounded read on that connection), and a live custo
 placement needs geometry evidence from the running engine; a start that leaves
 either out (or whose saved mix assembly already left out for an engine known to
 lack a mixer) keeps the selected audio input and raises a `stream-start-features`
-warning notification; a composition change applied on air removes its layout part. `apps/frontend/src/lib/streaming/go-live-readiness.ts:270-295`
+warning notification (a catalog key with the dropped features as tokens, which
+the UI renders as a localized list); a composition change applied on air removes its layout part. `apps/frontend/src/lib/streaming/go-live-readiness.ts:270-295`
 surfaces the flag as an advisory (non-blocking) readiness warning.
 **Status: EXISTS**
 

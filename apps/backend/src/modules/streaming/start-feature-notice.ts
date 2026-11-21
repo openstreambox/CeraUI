@@ -7,7 +7,7 @@
  */
 import {
 	type DroppedStartFeature,
-	droppedStartFeaturesMessage,
+	droppedStartFeaturesNotice,
 } from "./start-feature-authorization.ts";
 
 /** Notification naming configured start features the engine did not get. */
@@ -21,6 +21,9 @@ export interface StartFeatureNoticeBridge {
 		duration: number,
 		isPersistent: boolean,
 		isDismissable: boolean,
+		authedOnly?: boolean,
+		key?: string,
+		params?: Record<string, unknown>,
 	): void;
 	notificationExists(name: string): boolean;
 	removeNotification(name: string): void;
@@ -45,13 +48,17 @@ export function postStartFeatureNotice(
 		return;
 	}
 	posted = { dropped: [...dropped], answered, bridge };
+	const notice = droppedStartFeaturesNotice(dropped, answered);
 	bridge.notify(
 		START_FEATURES_NOTIFICATION,
 		"warning",
-		droppedStartFeaturesMessage(dropped, answered),
+		notice.msg,
 		0,
 		true,
 		true,
+		true,
+		notice.key,
+		notice.params,
 	);
 }
 

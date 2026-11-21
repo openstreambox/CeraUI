@@ -107,8 +107,33 @@ export function authorizeStartFeatures(
 	return { params: authorized, dropped };
 }
 
-/** Operator-facing text for a start that left configured features out. */
-export function droppedStartFeaturesMessage(
+/** Catalog key of the notice when the receiving engine said it lacks a feature. */
+export const START_FEATURES_UNSUPPORTED_KEY =
+	"notifications.startFeatures.unsupported";
+/** Catalog key of the notice when no engine answer confirmed support. */
+export const START_FEATURES_UNCONFIRMED_KEY =
+	"notifications.startFeatures.unconfirmed";
+
+/**
+ * What the operator notice says, as data: a catalog key for the reason and the
+ * dropped features as tokens (`features`), which the UI renders as a localized
+ * list. `msg` is the English wire fallback for a client without the key.
+ */
+export function droppedStartFeaturesNotice(
+	dropped: readonly DroppedStartFeature[],
+	answered: boolean,
+): { msg: string; key: string; params: { features: DroppedStartFeature[] } } {
+	return {
+		msg: droppedStartFeaturesMessage(dropped, answered),
+		key: answered
+			? START_FEATURES_UNSUPPORTED_KEY
+			: START_FEATURES_UNCONFIRMED_KEY,
+		params: { features: [...dropped] },
+	};
+}
+
+/** English fallback text for a start that left configured features out. */
+function droppedStartFeaturesMessage(
 	dropped: readonly DroppedStartFeature[],
 	answered: boolean,
 ): string {
@@ -124,7 +149,7 @@ export function droppedStartFeaturesMessage(
 			? parts[0]
 			: `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 	const why = answered
-		? `the streaming engine does not support ${parts.length === 1 ? "it" : "them"}`
+		? "the streaming engine does not support this"
 		: "support was not confirmed by the streaming engine";
 	return `Streaming without ${what}: ${why}. Your saved settings are kept.`;
 }

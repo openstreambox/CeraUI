@@ -14,23 +14,28 @@ import {
 
 function recordingBridge() {
 	const shown = new Map<string, string>();
+	const localized = new Map<
+		string,
+		{ key?: string; params?: Record<string, unknown> }
+	>();
 	const bridge: StartFeatureNoticeBridge = {
-		notify: (name, _type, msg) => {
+		notify: (name, _type, msg, _d, _p, _dis, _authed, key, params) => {
 			shown.set(name, msg);
+			localized.set(name, { key, params });
 		},
 		notificationExists: (name) => shown.has(name),
 		removeNotification: (name) => {
 			shown.delete(name);
 		},
 	};
-	return { bridge, shown };
+	return { bridge, shown, localized };
 }
 
 beforeEach(() => resetStartFeatureNoticeForTest());
 afterEach(() => resetStartFeatureNoticeForTest());
 
 test("a live composition change removes the layout part and keeps the mix part", () => {
-	const { bridge, shown } = recordingBridge();
+	const { bridge, shown, localized } = recordingBridge();
 	postStartFeatureNotice(bridge, ["audio-mix", "custom-layout"], false);
 
 	noteLiveCompositionApplied();
@@ -38,6 +43,30 @@ test("a live composition change removes the layout part and keeps the mix part",
 	const msg = shown.get(START_FEATURES_NOTIFICATION);
 	expect(msg).toContain("audio mix");
 	expect(msg).not.toContain("layout");
+	expect(localized.get(START_FEATURES_NOTIFICATION)?.params).toEqual({
+		features: ["audio-mix"],
+	});
+});
+
+// The notice is localized in the UI: it carries a catalog key for the reason
+// and the dropped features as tokens, with the English sentence as fallback.
+test("the notice sends a catalog key and the dropped features, not only English", () => {
+	const { bridge, shown, localized } = recordingBridge();
+
+	postStartFeatureNotice(bridge, ["audio-mix", "custom-layout"], false);
+	expect(localized.get(START_FEATURES_NOTIFICATION)).toEqual({
+		key: "notifications.startFeatures.unconfirmed",
+		params: { features: ["audio-mix", "custom-layout"] },
+	});
+
+	postStartFeatureNotice(bridge, ["composition"], true);
+	expect(localized.get(START_FEATURES_NOTIFICATION)).toEqual({
+		key: "notifications.startFeatures.unsupported",
+		params: { features: ["composition"] },
+	});
+	expect(shown.get(START_FEATURES_NOTIFICATION)).toBe(
+		"Streaming without the picture-in-picture composition: the streaming engine does not support this. Your saved settings are kept.",
+	);
 });
 
 test("a live composition change clears a notice that was only about the layout", () => {
