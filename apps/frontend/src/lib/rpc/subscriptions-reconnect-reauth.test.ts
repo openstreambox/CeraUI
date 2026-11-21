@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const transport = vi.hoisted(() => ({
 	connection: undefined as ((state: string) => void) | undefined,
 	loginResult: { success: true } as { success: boolean },
+	// When set, the safety hydrate's config read waits for this promise.
+	hydrateGate: null as Promise<void> | null,
 }));
 const auth = vi.hoisted(() => ({
 	status: true,
@@ -32,7 +34,12 @@ const markSessionExpired = vi.hoisted(() => vi.fn());
 vi.mock("$lib/rpc/client", () => ({
 	rpc: {
 		auth: { login },
-		streaming: { getConfig: vi.fn(async () => ({})) },
+		streaming: {
+			getConfig: vi.fn(async () => {
+				if (transport.hydrateGate) await transport.hydrateGate;
+				return {};
+			}),
+		},
 		status: { getStatus: vi.fn(async () => ({})) },
 	},
 	rpcClient: {
@@ -93,6 +100,7 @@ beforeEach(async () => {
 	auth.status = false;
 	auth.sessionToken = null;
 	transport.loginResult = { success: true };
+	transport.hydrateGate = null;
 	resetState();
 	initSubscriptions();
 	transport.connection?.("connected");
@@ -148,6 +156,44 @@ describe("reconnect re-auth", () => {
 		expect(login).not.toHaveBeenCalled();
 		await vi.waitFor(() => expect(auth.set).toHaveBeenCalledWith(false));
 		expect(recovered()).toBe(false);
+	});
+
+	it("reports nothing when the link drops again while it is hydrating", async () => {
+		auth.sessionToken = "session-token";
+		let release = () => {};
+		transport.hydrateGate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		await dropAndReconnect();
+		expect(login).toHaveBeenCalledTimes(1);
+		transport.connection?.("disconnected");
+		release();
+		for (let i = 0; i < 5; i++)
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(recovered()).toBe(false);
+		expect(auth.set).not.toHaveBeenCalled();
+	});
+
+	it("lets a newer link re-authenticate while an older re-auth is still running", async () => {
+		auth.sessionToken = "session-token";
+		let release = () => {};
+		transport.hydrateGate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		await dropAndReconnect();
+		await dropAndReconnect();
+		expect(login).toHaveBeenCalledTimes(2);
+		release();
+		await vi.waitFor(() => expect(recovered()).toBe(true));
+		expect(
+			push.mock.calls.filter(
+				([n]) => (n as { name?: string }).name === "connection-recovered",
+			),
+			"only the current link reports recovery",
+		).toHaveLength(1);
 	});
 
 	it("does nothing for a signed-out page", async () => {

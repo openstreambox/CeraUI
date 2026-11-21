@@ -73,7 +73,7 @@ function mockPreviewSocket(ws: WebSocketRoute): void {
 /**
  * Proxy the backend WS, force is_streaming:false on status frames.
  *
- * Single-origin preview proxy (Task 20): PreviewCanvas mints a token over the RPC
+ * Single-origin preview proxy: PreviewCanvas mints a token over the RPC
  * socket, then dials the SAME backend origin at `/preview?token=…`, so the preview
  * socket matches THIS route too. Fake that leg in-page (codec-config + audio-level,
  * no access units → terminal `waiting`) rather than proxying to the real
@@ -135,7 +135,7 @@ test.describe('LiveView preview placement (#72)', () => {
 		pageWs = null;
 		// The mock preview leg speaks WebCodecs codec-config only, so force the
 		// non-WebRTC tier: neutralize RTCPeerConnection before app boot so the tier
-		// ladder (Todo 16) does not put WebRTC on top of the mock's WebCodecs path.
+		// ladder does not put WebRTC on top of the mock's WebCodecs path.
 		await page.addInitScript(() => {
 			(window as { RTCPeerConnection?: unknown }).RTCPeerConnection = undefined;
 		});

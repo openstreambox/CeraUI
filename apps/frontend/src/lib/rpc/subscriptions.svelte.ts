@@ -1289,7 +1289,11 @@ export function receivePulledStatus<T>(
 
 const AUTH_STORAGE_KEY = "auth";
 
-let reauthInFlight = false;
+// Each reconnect edge starts a new link generation. A re-auth belongs to the
+// link it started on: a drop or a newer link while it runs makes it stale, so
+// it reports nothing, and the newer link runs its own re-auth.
+let linkGeneration = 0;
+let reauthInFlight: number | null = null;
 
 // This session's in-memory token first (it exists without "remember me"), then
 // the remembered credential.
@@ -1316,8 +1320,9 @@ function routeToLogin(): void {
 }
 
 async function runReconnectReauth(): Promise<void> {
-	if (reauthInFlight) return;
-	reauthInFlight = true;
+	const generation = linkGeneration;
+	if (reauthInFlight === generation) return;
+	reauthInFlight = generation;
 	try {
 		const outcome = await reauthenticateAndHydrate({
 			getStoredToken: readStoredToken,
@@ -1340,6 +1345,11 @@ async function runReconnectReauth(): Promise<void> {
 			routeToLogin,
 			onError: (error) => console.error("Reconnect re-auth failed:", error),
 		});
+		const stillCurrent =
+			generation === linkGeneration &&
+			connectionState === "connected" &&
+			authStatusStore.value;
+		if (!stillCurrent) return;
 		if (outcome === "hydrated") {
 			noteSessionRestored();
 			// Only now is the connection really back: the new socket is signed in.
@@ -1358,7 +1368,7 @@ async function runReconnectReauth(): Promise<void> {
 			routeToLogin();
 		}
 	} finally {
-		reauthInFlight = false;
+		if (reauthInFlight === generation) reauthInFlight = null;
 	}
 }
 
@@ -1386,6 +1396,7 @@ function handleConnectionChange(state: ConnectionState): void {
 		// `previous !== "connected"` keeps steady connected ticks inert.
 		if (previous !== "connected") {
 			seqTracker.resetOnReconnect();
+			linkGeneration += 1;
 		}
 		// Re-authenticate the new socket after a drop, while the session is signed
 		// in. The initial connect of a page-load is owned by Layout's login flow,
