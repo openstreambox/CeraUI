@@ -73,8 +73,12 @@ export type SshPersistentInput = z.infer<typeof sshPersistentInputSchema>;
 //
 // None of it reaches the cloud remote: remote status is an allowlist and
 // `tailscale` is not on it. `hostname` and `address` name this device on the
-// owner's private network. The tailnet name, DNS suffix,
-// peers and the auth key are never part of this object.
+// owner's private network. `tailnet` is that network's MagicDNS name
+// (`tail1234.ts.net`, what its admin console shows), never the account name.
+// `keyExpiry` is when this device's login expires (ISO 8601); absent while
+// connected means it does not expire (tagged, or expiry turned off). Both are
+// local-UI data like `hostname`. Peers and the auth key are never part of this
+// object.
 //
 // - unavailable: tailscale/tailscaled is not installed on this image
 // - off: the daemon is stopped (the owner's off switch)
@@ -106,6 +110,8 @@ export const tailscaleStatusSchema = z.object({
 	state: tailscaleStateSchema,
 	hostname: z.string().optional(),
 	address: z.string().optional(),
+	tailnet: z.string().optional(),
+	keyExpiry: z.string().datetime().optional(),
 	notice: tailscaleNoticeSchema.optional(),
 });
 export type TailscaleStatus = z.infer<typeof tailscaleStatusSchema>;

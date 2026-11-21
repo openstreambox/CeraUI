@@ -40,7 +40,7 @@ const KEY = "tskey-auth-kPRIVACY7CNTRL-0123456789abcdefFEDCBA";
 
 function statusJson(
 	backend: string,
-	self: { id?: string; key?: string; host?: string } = {},
+	self: { id?: string; key?: string; host?: string; expiry?: string } = {},
 ): string {
 	return JSON.stringify({
 		BackendState: backend,
@@ -50,6 +50,7 @@ function statusJson(
 			PublicKey: self.key ?? "nodekey:aa11",
 			DNSName: "studio-box.example-tailnet.ts.net.",
 			TailscaleIPs: ["100.101.102.103", "fd7a:115c:a1e0::1"],
+			...(self.expiry ? { KeyExpiry: self.expiry } : {}),
 		},
 		CurrentTailnet: {
 			Name: "owner@example.com",
@@ -81,7 +82,7 @@ function fakeDaemon(initial: {
 		queued: false,
 		enrollStatus: undefined as string | undefined,
 		sshOffNode: undefined as string | undefined,
-		self: {} as { id?: string; key?: string; host?: string },
+		self: {} as { id?: string; key?: string; host?: string; expiry?: string },
 		statusFails: false,
 		later: [] as Array<() => Promise<unknown>>,
 	};
@@ -239,15 +240,79 @@ describe("parseTailscaleStatusJson", () => {
 		}
 	});
 
-	test("carries only the hostname and IPv4 address, and only when connected", () => {
+	test("carries the hostname, IPv4 address and tailnet's DNS name, and only when connected", () => {
 		expect(parseTailscaleStatusJson(statusJson("Running"))).toEqual({
 			state: "connected",
 			hostname: "studio-box",
 			address: "100.101.102.103",
+			tailnet: "example-tailnet.ts.net",
 		});
 		expect(parseTailscaleStatusJson(statusJson("NeedsLogin"))).toEqual({
 			state: "needs_key",
 		});
+		// never the tailnet's account name
+		expect(
+			JSON.stringify(parseTailscaleStatusJson(statusJson("Running"))),
+		).not.toContain("owner@example.com");
+	});
+
+	test("carries the login's expiry, normalised to ISO", () => {
+		expect(
+			parseTailscaleStatusJson(
+				statusJson("Running", {
+					expiry: "2027-04-02T10:11:12.123456789+02:00",
+				}),
+			).keyExpiry,
+		).toBe("2027-04-02T08:11:12.123Z");
+		// tagged or expiry turned off: no field
+		expect(
+			parseTailscaleStatusJson(statusJson("Running")).keyExpiry,
+		).toBeUndefined();
+		for (const bad of ["", "soon", "0001-01-01T00:00:00Z", 42]) {
+			const out = JSON.parse(statusJson("Running"));
+			out.Self.KeyExpiry = bad;
+			expect(
+				parseTailscaleStatusJson(JSON.stringify(out)).keyExpiry,
+			).toBeUndefined();
+		}
+	});
+
+	test("an expired login keeps its network and date; other states without a login get neither", () => {
+		expect(
+			parseTailscaleStatusJson(
+				statusJson("NeedsLogin", { expiry: "2026-01-02T03:04:05Z" }),
+			),
+		).toEqual({
+			state: "needs_key",
+			tailnet: "example-tailnet.ts.net",
+			keyExpiry: "2026-01-02T03:04:05.000Z",
+		});
+		for (const backend of ["Stopped", "NeedsMachineAuth", "Starting"]) {
+			const status = parseTailscaleStatusJson(
+				statusJson(backend, { expiry: "2026-01-02T03:04:05Z" }),
+			);
+			expect(status.tailnet).toBeUndefined();
+			expect(status.keyExpiry).toBeUndefined();
+		}
+	});
+
+	test("the tailnet name falls back to the legacy suffix, then to the device's DNS name", () => {
+		const out = JSON.parse(statusJson("Running"));
+		delete out.CurrentTailnet;
+		out.MagicDNSSuffix = "Legacy-Net.ts.net.";
+		expect(parseTailscaleStatusJson(JSON.stringify(out)).tailnet).toBe(
+			"legacy-net.ts.net",
+		);
+		delete out.MagicDNSSuffix;
+		expect(parseTailscaleStatusJson(JSON.stringify(out)).tailnet).toBe(
+			"example-tailnet.ts.net",
+		);
+		// not a DNS name: nothing, rather than free text on the card
+		out.Self.DNSName = "studio-box.<b>x</b> y.";
+		out.CurrentTailnet = { MagicDNSSuffix: "a b" };
+		expect(
+			parseTailscaleStatusJson(JSON.stringify(out)).tailnet,
+		).toBeUndefined();
 	});
 
 	test("never reports success for unreadable output", () => {
@@ -325,11 +390,40 @@ describe("status probe", () => {
 		]);
 	});
 
+	test("a changed expiry reaches open pages", async () => {
+		const daemon = fakeDaemon({ active: true, backend: "Running" });
+		setTailscaleDepsForTest(daemon.deps);
+		await getTailscaleStatus();
+		// an admin extends the key, or turns its expiry off and on again
+		daemon.state.self = { expiry: "2027-01-01T00:00:00Z" };
+		await getTailscaleStatus();
+		daemon.state.self = { expiry: "2027-06-01T00:00:00Z" };
+		await getTailscaleStatus();
+		await getTailscaleStatus();
+		expect(daemon.broadcasts.map((s) => s.keyExpiry)).toEqual([
+			undefined,
+			"2027-01-01T00:00:00.000Z",
+			"2027-06-01T00:00:00.000Z",
+		]);
+	});
+
 	test("the status wire schema accepts the field", () => {
 		const parsed = statusResponseSchema.parse({
-			tailscale: { state: "connected", hostname: "box", address: "100.64.0.1" },
+			tailscale: {
+				state: "connected",
+				hostname: "box",
+				address: "100.64.0.1",
+				tailnet: "tail1234.ts.net",
+				keyExpiry: "2027-04-02T08:11:12.123Z",
+			},
 		});
 		expect(parsed.tailscale?.state).toBe("connected");
+		expect(parsed.tailscale?.keyExpiry).toBe("2027-04-02T08:11:12.123Z");
+		expect(
+			statusResponseSchema.safeParse({
+				tailscale: { state: "connected", keyExpiry: "next week" },
+			}).success,
+		).toBe(false);
 		expect(
 			statusResponseSchema.safeParse({ tailscale: { state: "maybe" } }).success,
 		).toBe(false);
