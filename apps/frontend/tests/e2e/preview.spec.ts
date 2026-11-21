@@ -6,14 +6,14 @@ import { expect, test } from './fixtures/index.js';
 import { ensureAuthenticated, navigateTo } from './helpers/index.js';
 
 /**
- * Todo 27 — PreviewCanvas honest states + working dev preview.
+ * PreviewCanvas honest states and a working dev preview.
  *
  * TIER DISCIPLINE (the load-bearing convention here): the preview delivery tier
  * is selected by the harness browser's WebCodecs support, so this spec BRANCHES
  * on it rather than asserting one path unconditionally:
  *
  *   • WebCodecs tier — asserts the canvas reaches `data-status="live"` decoding
- *     the REAL Todo-21 mock preview upstream on :9997 through the backend
+ *     the REAL mock preview upstream on :9997 through the backend
  *     `/preview` proxy (real Annex-B H.264 access units, no stub decoder), and
  *     that the decoded pictures are painted onto the canvas and keep advancing.
  *     Playwright's Chromium (Chrome for Testing and its headless shell) decodes
@@ -48,7 +48,7 @@ let pageWs: WebSocketRoute | null = null;
 /**
  * Proxy the backend WS, force is_streaming:false so the idle Live DOM is stable.
  *
- * Single-origin preview proxy (Task 20): PreviewCanvas mints a token over the RPC
+ * Single-origin preview proxy: PreviewCanvas mints a token over the RPC
  * socket, then dials the SAME backend origin at `/preview?token=…`, so the preview
  * socket matches THIS route too. With no `onPreview`, that leg proxies to the real
  * mock-preview upstream (the WebCodecs-tier decode path). The MSE-tier block passes
@@ -116,7 +116,7 @@ async function webcodecsH264Supported(page: Page): Promise<boolean> {
 		).VideoDecoder;
 		if (!VD || typeof VD.isConfigSupported !== 'function') return false;
 		try {
-			const result = await VD.isConfigSupported({ codec, codedWidth: 320, codedHeight: 240 });
+			const result = await VD.isConfigSupported({ codec, codedWidth: 320, codedHeight: 180 });
 			return result?.supported === true;
 		} catch {
 			return false;
@@ -186,7 +186,7 @@ test.describe('PreviewCanvas — WebCodecs tier + idle copy', () => {
 		test.skip(testInfo.project.name !== 'desktop', 'desktop layout drives the Live column');
 		pageWs = null;
 		// WebCodecs-tier proof: neutralize RTCPeerConnection before app boot so the
-		// tier ladder (Todo 16) selects WebCodecs (matching the real mock upstream's
+		// tier ladder selects WebCodecs (matching the real mock upstream's
 		// WebCodecs framing) instead of putting WebRTC on top.
 		await page.addInitScript(() => {
 			(window as { RTCPeerConnection?: unknown }).RTCPeerConnection = undefined;
@@ -220,13 +220,22 @@ test.describe('PreviewCanvas — WebCodecs tier + idle copy', () => {
 		expect(first.width).toBe(320);
 		expect(first.height).toBe(180);
 		expect(first.colours, 'a painted testsrc2 frame is many-coloured, not blank').toBeGreaterThan(8);
-		// ...and later access units keep decoding: the picture moves.
+		// ...and later access units keep decoding: another painted picture, not
+		// the same one and not a cleared canvas.
 		await expect
-			.poll(async () => (await sampleCanvas(page)).hash, {
-				timeout: 10_000,
-				message: 'later frames must repaint the canvas',
-			})
-			.not.toBe(first.hash);
+			.poll(
+				async () => {
+					const next = await sampleCanvas(page);
+					return (
+						next.width === 320 &&
+						next.height === 180 &&
+						next.colours > 8 &&
+						next.hash !== first.hash
+					);
+				},
+				{ timeout: 10_000, message: 'later frames must paint a new picture' },
+			)
+			.toBe(true);
 		await expect(page.getByTestId('preview')).toHaveAttribute('data-status', 'live');
 	});
 
@@ -234,7 +243,7 @@ test.describe('PreviewCanvas — WebCodecs tier + idle copy', () => {
 		await toggleAndReachLive(page);
 		await page
 			.getByTestId('preview')
-			.screenshot({ path: path.join(EVIDENCE_DIR, 'task-27-webcodecs-live.png') });
+			.screenshot({ path: path.join(EVIDENCE_DIR, 'preview-webcodecs-live.png') });
 	});
 });
 
@@ -253,7 +262,7 @@ test.describe('PreviewCanvas — forced MSE tier', () => {
 		await page.addInitScript(() => {
 			// biome-ignore lint/performance/noDelete: force the MSE fallback path.
 			delete (window as { VideoDecoder?: unknown }).VideoDecoder;
-			// Also drop WebRTC so the tier ladder (Todo 16) selects the MSE floor
+			// Also drop WebRTC so the tier ladder selects the MSE floor
 			// rather than putting WebRTC on top of the mock's MSE codec-config.
 			(window as { RTCPeerConnection?: unknown }).RTCPeerConnection = undefined;
 		});
@@ -305,7 +314,7 @@ test.describe('PreviewCanvas — forced MSE tier', () => {
 });
 
 /**
- * Todo 19(b) — the preview surface must exist WHILE STREAMING.
+ * The preview surface must exist WHILE STREAMING.
  *
  * The engine attaches its MSE publisher during an active session (wave2 14e), but
  * the disclosure only ever lived in IdleCockpit, which LiveView unmounts the

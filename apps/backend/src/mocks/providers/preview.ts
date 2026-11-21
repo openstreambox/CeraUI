@@ -2,7 +2,7 @@
 	CeraUI - Mock Preview WebSocket Server (DEV-ONLY)
 
 	A Bun WebSocket server that reproduces cerastream's committed preview-ws wire
-	contract (cerastream Todo 15) so the Live-view / EncoderDialog `PreviewCanvas`
+	contract so the Live-view / EncoderDialog `PreviewCanvas`
 	component works end-to-end in dev WITHOUT a real engine. cerastream serves the
 	real preview socket as a loopback upstream (commonly port 9997). On a dev host
 	that upstream is absent, so without this the backend `/preview` proxy would only

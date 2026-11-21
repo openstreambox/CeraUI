@@ -10,7 +10,7 @@
  * then split on Annex-B AUD (NAL type 9) boundaries into access units and mark an
  * AU keyframe when it carries an IDR slice (NAL type 5).
  *
- * Wire shape mirrors cerastream's committed preview server (cerastream Todo 15):
+ * Wire shape mirrors the engine's preview server:
  *   • codec-config carries { codec, coded_width/height } and no avcC
  *     `description`: the access units are Annex-B byte-stream with in-band
  *     SPS (7) + PPS (8), the same stream format the engine's preview leg emits

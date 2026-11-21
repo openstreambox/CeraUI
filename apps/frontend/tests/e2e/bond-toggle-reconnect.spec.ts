@@ -62,6 +62,15 @@ interface ControlLink {
 	holdServerFrames: boolean;
 }
 
+function isNetifFrame(message: string | Buffer): boolean {
+	try {
+		const frame: unknown = JSON.parse(typeof message === "string" ? message : message.toString());
+		return typeof frame === "object" && frame !== null && Object.hasOwn(frame, "netif");
+	} catch {
+		return false;
+	}
+}
+
 class ControlProxy {
 	readonly links: ControlLink[] = [];
 
@@ -74,8 +83,7 @@ class ControlProxy {
 				const server = route.connectToServer();
 				route.onMessage((message) => server.send(message));
 				server.onMessage((message) => {
-					const text = typeof message === "string" ? message : message.toString();
-					if (text.startsWith('{"netif"')) link.netifFrames += 1;
+					if (isNetifFrame(message)) link.netifFrames += 1;
 					if (link.holdServerFrames) return;
 					route.send(message);
 				});
@@ -145,19 +153,34 @@ function ariaLog(page: Page): Promise<(string | null)[]> {
 	return page.evaluate(() => (window as any).__ariaLog ?? []);
 }
 
-/** The first in-bond, enabled bond toggle and its interface name. */
-async function firstInBondToggle(page: Page): Promise<{ toggle: Locator; name: string }> {
+/** Every in-bond, enabled bond toggle and its interface name. */
+async function inBondToggles(page: Page): Promise<{ toggle: Locator; name: string }[]> {
 	const toggles = page.locator('[role="switch"][data-testid^="bond-toggle-"]');
 	await expect(toggles.first()).toBeVisible({ timeout: 10_000 });
+	const found: { toggle: Locator; name: string }[] = [];
 	const count = await toggles.count();
 	for (let i = 0; i < count; i++) {
 		const candidate = toggles.nth(i);
 		if ((await candidate.getAttribute("aria-checked")) !== "true") continue;
 		if (!(await candidate.isEnabled())) continue;
 		const testid = (await candidate.getAttribute("data-testid")) as string;
-		return { toggle: page.getByTestId(testid), name: testid.slice("bond-toggle-".length) };
+		found.push({ toggle: page.getByTestId(testid), name: testid.slice("bond-toggle-".length) });
 	}
-	throw new Error("the mock scenario must offer at least one in-bond interface");
+	return found;
+}
+
+async function firstInBondToggle(page: Page): Promise<{ toggle: Locator; name: string }> {
+	const [first] = await inBondToggles(page);
+	if (!first) throw new Error("the mock scenario must offer at least one in-bond interface");
+	return first;
+}
+
+/** Change a link's bond membership from outside the page, as another client would. */
+async function configureFromBackend(rpc: BackendRpc, name: string, enabled: boolean): Promise<void> {
+	const entry = await backendNetif(rpc, name);
+	const ip = typeof entry?.ip === "string" ? entry.ip : undefined;
+	const result = await rpc.call<{ success: boolean }>(["network", "configure"], { name, ip, enabled });
+	expect(result.success, `backend configure ${name} enabled=${enabled}`).toBe(true);
 }
 
 /** Wait for a toggle to settle: not busy, operable, showing `checked`. */
@@ -183,13 +206,21 @@ test.describe("bond-toggle reconnect (real backend, genuine control-socket recon
 		await page.goto("/");
 		await ensureAuthenticated(page);
 		await navigateTo(page, "network");
+		// The recorder must see the same control sockets the route sees; if a
+		// Playwright upgrade reorders the init scripts it would see none.
+		expect(await socketCount(page), "recorded control sockets match routed ones").toBe(
+			proxy.links.length,
+		);
+		expect(proxy.links.length).toBeGreaterThan(0);
 	});
 
 	test("a link leaves the bond, survives a reconnect, ignores the replaced socket and rejoins", async ({
 		page,
 		backendRpc,
 	}) => {
-		const { toggle, name } = await firstInBondToggle(page);
+		const links = await inBondToggles(page);
+		expect(links.length, "need two in-bond links").toBeGreaterThanOrEqual(2);
+		const [{ toggle, name }, other] = links;
 		expect(await backendEnabled(backendRpc, name), "backend starts with the link in the bond").toBe(true);
 
 		// Out of the bond through the real configure RPC.
@@ -198,10 +229,20 @@ test.describe("bond-toggle reconnect (real backend, genuine control-socket recon
 		await expectSettled(toggle, false);
 		await expect.poll(() => backendEnabled(backendRpc, name)).toBe(false);
 
-		// Genuine reconnect: the page's socket closes, the client opens a new one,
-		// re-authenticates and receives the backend's snapshot on it.
+		// While this connection hears nothing, another client takes a second link
+		// out of the bond. The page can only learn that over its next connection.
 		const before = await socketCount(page);
 		const linksBefore = proxy.links.length;
+		proxy.current.holdServerFrames = true;
+		await configureFromBackend(backendRpc, other.name, false);
+		await flush(page);
+		await expect(other.toggle, "held connection: the page has not heard yet").toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+
+		// Genuine reconnect: the page's socket closes, the client opens a new one,
+		// re-authenticates and receives the backend's snapshot on it.
 		await page.evaluate(() => {
 			const w = window as any;
 			const old = (w.__ctlSockets as WebSocket[]).at(-1) as WebSocket;
@@ -209,20 +250,18 @@ test.describe("bond-toggle reconnect (real backend, genuine control-socket recon
 			old.close();
 		});
 		await waitForSocket(page, before + 1);
-		await expect
-			.poll(() => proxy.links.length > linksBefore && proxy.current.netifFrames > 0, {
-				timeout: 15_000,
-				message: "the new connection must deliver a fresh netif snapshot",
-			})
-			.toBe(true);
-		await flush(page);
+		expect(proxy.links.length).toBeGreaterThan(linksBefore);
+		await expect(other.toggle, "the new connection's state reaches the UI").toHaveAttribute(
+			"aria-checked",
+			"false",
+		);
 		await expectSettled(toggle, false);
 		expect(await ariaLog(page), "one ON to OFF transition, no flash across the reconnect").toEqual(["true"]);
 
 		// A frame arriving on the replaced socket is stale and must be ignored, even
 		// when it disagrees with the backend.
 		const snapshot = await backendRpc.call<NetifMap>(["network", "getInterfaces"]);
-		const stale = { ...snapshot, [name]: { ...snapshot[name], enabled: true } };
+		const stale = JSON.stringify({ netif: { ...snapshot, [name]: { ...snapshot[name], enabled: true } } });
 		await page.evaluate((frame) => {
 			const { socket, onmessage } = (window as any).__replacedSocket as {
 				socket: WebSocket;
@@ -230,7 +269,7 @@ test.describe("bond-toggle reconnect (real backend, genuine control-socket recon
 			};
 			if (typeof onmessage !== "function") throw new Error("the app installed no message handler");
 			onmessage.call(socket, new MessageEvent("message", { data: frame }));
-		}, JSON.stringify({ netif: stale }));
+		}, stale);
 		for (let i = 0; i < 4; i++) {
 			await flush(page);
 			expect(
@@ -238,12 +277,19 @@ test.describe("bond-toggle reconnect (real backend, genuine control-socket recon
 				"a netif frame on the replaced socket must not reach the UI",
 			).toBe("false");
 		}
+		// Positive control: the same frame on the current socket does reach it.
+		await page.evaluate((frame) => {
+			const current = ((window as any).__ctlSockets as WebSocket[]).at(-1) as WebSocket;
+			current.onmessage?.call(current, new MessageEvent("message", { data: frame }));
+		}, stale);
+		await expect(toggle, "the frame itself is one the UI applies").toHaveAttribute("aria-checked", "true");
+		// The backend's next netif broadcast restores its truth.
+		await expect(toggle).toHaveAttribute("aria-checked", "false", { timeout: 15_000 });
 
 		// Back into the bond over the new socket.
 		await toggle.click();
 		await expectSettled(toggle, true);
 		await expect.poll(() => backendEnabled(backendRpc, name)).toBe(true);
-		expect(await ariaLog(page)).toEqual(["true", "false"]);
 	});
 
 	test("a configure reply lost in a reconnect: the toggle converges to what the backend applied", async ({
@@ -252,6 +298,7 @@ test.describe("bond-toggle reconnect (real backend, genuine control-socket recon
 	}) => {
 		const { toggle, name } = await firstInBondToggle(page);
 		expect(await backendEnabled(backendRpc, name)).toBe(true);
+		await observeAria(toggle);
 
 		// The backend applies the change, but neither its reply nor its netif
 		// broadcasts reach this connection.
@@ -266,7 +313,7 @@ test.describe("bond-toggle reconnect (real backend, genuine control-socket recon
 		await expect(toggle).toHaveAttribute("aria-checked", "false");
 
 		// The connection drops with the request unanswered. The client rejects it,
-		// reconnects, and must adopt the backend's state from the fresh snapshot,
+		// reconnects, and must adopt the backend's state from the new connection,
 		// not stay on its pre-click value.
 		await lossy.route.close();
 		await waitForSocket(page, before + 1);
@@ -283,9 +330,21 @@ test.describe("bond-toggle reconnect (real backend, genuine control-socket recon
 				"false",
 			);
 		}
+		// The whole window, observed from the click (old values of aria-checked):
+		// the optimistic OFF, then at most one revert to the last confirmed ON
+		// before the new connection's OFF. Nothing else.
+		const transitions = await ariaLog(page);
+		console.log(`lost-reply aria-checked transitions: ${JSON.stringify(transitions)}`);
+		expect([["true"], ["true", "false", "true"]]).toContainEqual(transitions);
 		expect(await backendEnabled(backendRpc, name)).toBe(false);
 
-		// The lock released with the reset: the link rejoins normally.
+		// The field lock released with the reset: a change made elsewhere flows in.
+		await configureFromBackend(backendRpc, name, true);
+		await expect(toggle, "an unlocked field follows the backend").toHaveAttribute("aria-checked", "true");
+		await configureFromBackend(backendRpc, name, false);
+		await expect(toggle).toHaveAttribute("aria-checked", "false");
+
+		// And the link rejoins normally from the page.
 		await toggle.click();
 		await expectSettled(toggle, true);
 		await expect.poll(() => backendEnabled(backendRpc, name)).toBe(true);
