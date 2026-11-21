@@ -35,7 +35,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Auth: stored token authority unreadable; token login withheld"],
 	["Auth: token login successful"],
 	[
-		"Automatic package check waits: every uplink is metered and packages may not use cellular",
+		"Automatic package check waits: no unmetered uplink confirmed and packages may not use cellular",
 	],
 	["Backend singleton acquisition failed; another instance may be running"],
 	[
