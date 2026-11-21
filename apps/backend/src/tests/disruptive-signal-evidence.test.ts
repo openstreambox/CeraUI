@@ -98,7 +98,14 @@ for (const [exitCode, expectedHeld] of [
 			throw failure;
 		});
 		// Then signal-derived or unavailable exit evidence cannot open a launch window.
-		expect(result).toEqual({ success: false, error: failure.message });
+		expect(result).toEqual({
+			success: false,
+			error: failure.message,
+			failureReason:
+				exitCode === null || exitCode >= 128
+					? "shutdown_uncertain"
+					: "shutdown_unavailable",
+		});
 		expect(isDisruptiveActionPending()).toBe(expectedHeld);
 	});
 }
