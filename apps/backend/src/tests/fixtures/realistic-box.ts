@@ -28,6 +28,7 @@ import {
 	resetMutationBlockDeps,
 } from "../../modules/modems/mutation-blocks.ts";
 import {
+	getNetworkInterfaceIncarnation,
 	processIfconfigOutput,
 	resetNetifSnapshotForTest,
 } from "../../modules/network/network-interfaces.ts";
@@ -128,8 +129,6 @@ export interface RealisticBox {
 export async function realisticBox(): Promise<RealisticBox> {
 	let entries: readonly ModemMutationEntry[] = [];
 	let present: readonly BoxLink[] = [ETHERNET, ...MODEMS];
-	const epochs = new Map<string, number>();
-	let scanned = new Set<string>();
 	resetNetifSnapshotForTest();
 	resetUsbNetMarkers();
 	const wireless = spyOn(wifiRadio, "isWirelessInterface").mockImplementation(
@@ -148,32 +147,30 @@ export async function realisticBox(): Promise<RealisticBox> {
 				);
 			});
 			await refreshModemIdPaths();
-			// Bus observation precedes the descriptor sweep, as at first sight in production.
+			// Publish presence first, then observe the bus against the actual owner token.
+			// A new or reused name can advance the token during its first publication.
+			// Both observations precede the descriptor sweep, as in production.
 			const output = links.map(stanza).join("\n\n");
-			processIfconfigOutput(
-				output,
-				undefined,
-				undefined,
-				wifiRadio.isWirelessInterface,
-				new Map(
-					links.map((link) => [
-						link.ifname,
-						{
-							result: {
-								kind: "bus" as const,
-								bus: link === ETHERNET ? "pci" : "usb",
+			for (let observation = 0; observation < 2; observation++) {
+				processIfconfigOutput(
+					output,
+					undefined,
+					undefined,
+					wifiRadio.isWirelessInterface,
+					new Map(
+						links.map((link) => [
+							link.ifname,
+							{
+								result: {
+									kind: "bus" as const,
+									bus: link === ETHERNET ? "pci" : "usb",
+								},
+								seen: getNetworkInterfaceIncarnation(link.ifname) ?? 0,
 							},
-							seen: epochs.get(link.ifname) ?? 0,
-						},
-					]),
-				),
-			);
-			const names = new Set(links.map((link) => link.ifname));
-			for (const name of new Set([...scanned, ...names])) {
-				if (scanned.has(name) !== names.has(name))
-					epochs.set(name, (epochs.get(name) ?? 0) + 1);
+						]),
+					),
+				);
 			}
-			scanned = names;
 			if (!options.skipPhysical)
 				await refreshUsbNetMarkers(
 					links.map((link) => link.ifname),
