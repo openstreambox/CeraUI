@@ -1685,6 +1685,7 @@
 	"network.view.configure": "Konfigurieren",
 	"network.view.connect": "Verbinden",
 	"network.view.connected": "Verbunden",
+	"network.view.noStreamData": "Keine Streamdaten über diese Verbindung",
 	"network.view.disableBond": "Aus Bond entfernen",
 	"network.view.disconnected": "Getrennt",
 	"network.view.enableBond": "Zum Bond hinzufügen",
