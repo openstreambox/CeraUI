@@ -121,12 +121,53 @@ function enrollDir(): string {
 /** The subset of `tailscale status --json` this module reads. */
 type TailscaleStatusJson = {
 	BackendState?: unknown;
+	MagicDNSSuffix?: unknown;
+	CurrentTailnet?: { MagicDNSSuffix?: unknown } | null;
 	Self?: {
 		HostName?: unknown;
+		DNSName?: unknown;
 		TailscaleIPs?: unknown;
 		ID?: unknown;
+		KeyExpiry?: unknown;
 	} | null;
 };
+
+/** A MagicDNS name: dot-separated DNS labels, no trailing dot. */
+const TAILNET_NAME_RE =
+	/^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/**
+ * The tailnet's MagicDNS name (`tail1234.ts.net`): `CurrentTailnet`, else the
+ * legacy top-level field, else this device's DNS name minus its own label.
+ * Never `CurrentTailnet.Name`, which is often the owner's account email.
+ */
+function tailnetNameOf(parsed: TailscaleStatusJson): string | undefined {
+	const self = parsed.Self;
+	const fromSelf =
+		typeof self?.DNSName === "string" && self.DNSName.includes(".")
+			? self.DNSName.slice(self.DNSName.indexOf(".") + 1)
+			: undefined;
+	for (const value of [
+		parsed.CurrentTailnet?.MagicDNSSuffix,
+		parsed.MagicDNSSuffix,
+		fromSelf,
+	]) {
+		if (typeof value !== "string") continue;
+		const name = value.replace(/\.$/, "").toLowerCase();
+		if (TAILNET_NAME_RE.test(name)) return name;
+	}
+	return undefined;
+}
+
+/** `Self.KeyExpiry` as an ISO string; undefined when absent or unreadable. */
+function keyExpiryOf(parsed: TailscaleStatusJson): string | undefined {
+	const value = parsed.Self?.KeyExpiry;
+	if (typeof value !== "string" || value === "") return undefined;
+	const time = Date.parse(value);
+	// Go's zero time means "no expiry"; anything before 2000 is not a real one.
+	if (!Number.isFinite(time) || time < Date.UTC(2000, 0, 1)) return undefined;
+	return new Date(time).toISOString();
+}
 
 /**
  * The daemon's stable node ID from `status --json` (`Self.ID`). It survives a
@@ -190,6 +231,16 @@ export function parseTailscaleStatusJson(stdout: string): TailscaleStatus {
 				typeof ip === "string" && /^\d+\.\d+\.\d+\.\d+$/.test(ip),
 		);
 		if (v4) status.address = v4;
+	}
+	// Which network and until when: while connected, and for an expired login
+	// (tailscaled asks for a new login but still knows the old one).
+	if (state === "connected" || state === "needs_key") {
+		const tailnet = tailnetNameOf(parsed);
+		const keyExpiry = keyExpiryOf(parsed);
+		if (state === "connected" || keyExpiry !== undefined) {
+			if (tailnet) status.tailnet = tailnet;
+			if (keyExpiry) status.keyExpiry = keyExpiry;
+		}
 	}
 	return status;
 }
@@ -604,6 +655,8 @@ function publish(status: TailscaleStatus): TailscaleStatus {
 		cached.state !== status.state ||
 		cached.hostname !== status.hostname ||
 		cached.address !== status.address ||
+		cached.tailnet !== status.tailnet ||
+		cached.keyExpiry !== status.keyExpiry ||
 		cached.notice !== status.notice
 	) {
 		cached = status;
@@ -1081,7 +1134,12 @@ function resetMockTailscaleState(): void {
 function mockStatus(): TailscaleStatus {
 	if (!mock.daemon) return { state: "off" };
 	if (!mock.loggedIn) return { state: "needs_key" };
-	return { state: "connected", hostname: "ceralive", address: "100.64.0.7" };
+	return {
+		state: "connected",
+		hostname: "ceralive",
+		address: "100.64.0.7",
+		tailnet: "tail1234.ts.net",
+	};
 }
 
 function mockJoin(authKey: string): boolean {
