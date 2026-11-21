@@ -11,6 +11,8 @@
 		"src/tests/wifi-profile-activation-serialization.test.ts",
 		"src/tests/wifi-hybrid-target-integration.test.ts",
 		"src/tests/wifi-hotspot-ownership.test.ts",
+		"src/tests/wifi-setup-ap-boundary.test.ts",
+		"src/tests/wifi-setup-radio-arming.test.ts",
 		"src/tests/wifi-limited-mode.test.ts",
 		"src/tests/wifi-hybrid-channel-refresh.test.ts",
 		"src/tests/wifi-hybrid-legal-roam.test.ts",
