@@ -20,14 +20,18 @@ const state: PreparedSteeringState = {
 };
 const rules =
 	"100: from 192.0.2.2 lookup 30001\n110: from all fwmark 0xca000100/0xffffff00 lookup 30001\n";
+/** `nft list` output for an applied state without a selectable uplink. */
+const dropTable = `table inet ceralive_share {
+	chain forward {
+		iifname "wlan93" ip saddr 10.42.0.0/24 ct state new meta mark != 0xcb000100 drop comment "no selectable client uplink"
+	}
+}`;
 test.each(["rules", "route", "zone"])(
 	"refuses readiness when %s readback is missing",
 	async (missing) => {
 		const execute: typeof run = async (cmd, args) => {
 			if (cmd === "nft")
-				return missing === "zone"
-					? "table inet ceralive_share {}"
-					: 'iifname "wlan93"';
+				return missing === "zone" ? "table inet ceralive_share {}" : dropTable;
 			if (args[0] === "rule") return missing === "rules" ? "" : rules;
 			return missing === "route" ? "default dev foreign0" : "default dev eth93";
 		};
@@ -39,11 +43,54 @@ test.each(["rules", "route", "zone"])(
 test("accepts complete kernel readback", async () => {
 	const execute: typeof run = async (cmd, args) =>
 		cmd === "nft"
-			? 'iifname "wlan93"'
+			? dropTable
 			: args[0] === "rule"
 				? rules
 				: "default dev eth93";
 	await verifySteeringState(state, execute);
+});
+
+test("refuses readiness when the live selection differs from the plan", async () => {
+	// `nft list` output for a table whose selection chain marks cellular.
+	const selecting = (mark: string) => `table inet ceralive_share {
+	chain select_0 {
+		meta mark set meta mark & 0x000000ff | ${mark}
+		ct mark set ct mark & 0x000000ff | ${mark}
+		return
+	}
+	chain prerouting {
+		iifname "wlan93" ip saddr 10.42.0.0/24 ct state established,related ct mark & 0xffffff00 == 0xca000100 meta mark set meta mark & 0x000000ff | 0xca000100 comment "restore client flow"
+	}
+}`;
+	const wired = { ...state.routes[0], mark: 0xca000100 };
+	const selected: PreparedSteeringState = {
+		...state,
+		uplinks: [
+			{
+				identity: "wired",
+				ifname: "eth93",
+				mark: wired.mark,
+				selectable: true,
+				weight: 100,
+			},
+		],
+	};
+	const execute =
+		(table: string): typeof run =>
+		async (cmd, args) =>
+			cmd === "nft" ? table : args[0] === "rule" ? rules : "default dev eth93";
+	await verifySteeringState(selected, execute(selecting("0xca000100")));
+	// A restore rule for the planned mark is not a selection of it.
+	await expect(
+		verifySteeringState(selected, execute(selecting("0xca000200"))),
+	).rejects.toThrow("selection readback failed");
+	await expect(
+		verifySteeringState(selected, execute(dropTable)),
+	).rejects.toThrow("selection readback failed");
+	// The plan selects nothing, but the kernel still selects an uplink.
+	await expect(
+		verifySteeringState(state, execute(selecting("0xca000100"))),
+	).rejects.toThrow("selection readback failed");
 });
 
 test("hotspot readiness starts pending and only admits a verified zone", async () => {

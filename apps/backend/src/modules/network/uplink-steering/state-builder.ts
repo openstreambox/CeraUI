@@ -118,7 +118,24 @@ export async function readDesiredSteeringState(
 	const { candidates: rawCandidates, identityPending } = collected;
 	if (!context.hasAppliedState && identityPending)
 		return { pending: true, netifReady: true, reason: "identity" };
-	// Planning only: the runtime commits the selector plan after the apply.
+	assertNoOverlap(zones, rawCandidates);
+	assertDistinctMarks(rawCandidates);
+	const routes: UplinkRoutePlan[] = [];
+	for (const candidate of rawCandidates) {
+		routes.push(
+			await deps.planRoute({
+				identity: candidate.uplink.identity,
+				ifname: candidate.uplink.ifname,
+				sourceAddress: candidate.sourceAddress,
+				sourceAddressUnique: candidate.sourceAddressUnique,
+				mark: candidate.uplink.mark,
+			}),
+		);
+	}
+	// Planning only: the runtime commits the selector plan once installed.
+	// The clock is read after route planning, which awaits OS calls, so the
+	// evidence is judged when the plan is ready; the applier checks it again
+	// right before installing.
 	const plan = deps.policy
 		? applyClientUplinkPolicy(
 				rawCandidates,
@@ -136,26 +153,13 @@ export async function readDesiredSteeringState(
 			)
 		: undefined;
 	const candidates = plan?.candidates ?? rawCandidates;
-	assertNoOverlap(zones, rawCandidates);
-	assertDistinctMarks(rawCandidates);
-	const routes: UplinkRoutePlan[] = [];
-	for (const candidate of rawCandidates) {
-		routes.push(
-			await deps.planRoute({
-				identity: candidate.uplink.identity,
-				ifname: candidate.uplink.ifname,
-				sourceAddress: candidate.sourceAddress,
-				sourceAddressUnique: candidate.sourceAddressUnique,
-				mark: candidate.uplink.mark,
-			}),
-		);
-	}
 	const prepared: PreparedSteeringState = {
 		clientZones: zones,
 		uplinks: candidates.map((candidate) => candidate.uplink),
 		routes,
 	};
-	if (plan !== undefined) recordSelectorPlan(prepared, plan.next);
+	if (plan !== undefined)
+		recordSelectorPlan(prepared, plan.next, plan.validUntil);
 	return prepared;
 }
 

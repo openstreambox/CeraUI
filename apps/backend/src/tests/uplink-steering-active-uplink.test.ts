@@ -421,16 +421,59 @@ describe("single-active client uplink selection", () => {
 		]);
 	});
 
-	test("a fresh selector trusts a probe run that predates it", () => {
-		// After a restart or a spread-to-single switch, a link the engine has
-		// confirmed keeps clients online in the first plan.
+	test("a fresh selector counts only probe successes it has observed", () => {
+		// After a restart or a spread-to-single switch, a success older than
+		// the selector's first look is not evidence for what is there now.
 		expect(
 			driver().pick(
 				60_000,
 				["eth0", "wwan0"],
-				[live("eth0", 60_000, 0), live("wwan0", 60_000, 0)],
+				[live("eth0", 55_000, 0), live("wwan0", 55_000, 0)],
+			),
+		).toEqual([]);
+		// The next round's success admits the best one at once.
+		const d = driver();
+		d.pick(
+			60_000,
+			["eth0", "wwan0"],
+			[live("eth0", 55_000, 0), live("wwan0", 55_000, 0)],
+		);
+		expect(
+			d.pick(
+				65_000,
+				["eth0", "wwan0"],
+				[live("eth0", 65_000, 0), live("wwan0", 65_000, 0)],
 			),
 		).toEqual(["eth0"]);
+	});
+
+	test("an incumbent whose address changes must be confirmed again", () => {
+		const selector = new ActiveUplinkSelector();
+		const pick = (now: number, address: string, eth0: UplinkHealthRecord) => {
+			const result = applyClientUplinkPolicy(
+				[{ ...uplink("eth0"), sourceAddress: address }, uplink("wwan0")],
+				selector,
+				{
+					now,
+					policy: DEFAULT_SHARING_POLICY,
+					health: new Map([
+						["eth0", eth0],
+						["wwan0", live("wwan0", now, 0)],
+					]),
+					interfaces: new Set(["eth0", "wwan0"]),
+				},
+			);
+			selector.commit(result.next);
+			return result.candidates
+				.filter(({ uplink: u }) => u.selectable)
+				.map(({ uplink: u }) => u.ifname);
+		};
+		expect(pick(0, "192.0.2.2", live("eth0", 0))).toEqual(["eth0"]);
+		// Streaming: no probe on the new network, the run was cleared.
+		expect(
+			pick(5_000, "192.0.3.2", record("eth0", "up", 0, 20_000, 0)),
+		).toEqual(["wwan0"]);
+		expect(selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
 	});
 
 	test("losing the active uplink's address counts as a failure before health catches up", () => {
