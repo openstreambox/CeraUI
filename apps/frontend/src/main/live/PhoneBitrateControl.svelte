@@ -55,6 +55,6 @@ let sheetOpen = $state(false);
 		<Sheet.Header class="px-0">
 			<Sheet.Title>{m["live.adjustBitrate"]()}</Sheet.Title>
 		</Sheet.Header>
-		<BitrateAdjuster {...props} />
+		<BitrateAdjuster {...props} showLabel={false} />
 	</Sheet.Content>
 </Sheet.Root>
