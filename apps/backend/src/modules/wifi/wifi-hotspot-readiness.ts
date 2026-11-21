@@ -326,7 +326,11 @@ async function readHotspotActivation(
 	const activePath = state[2];
 	const profile = await readNmProfileInstance(uuid);
 	const after = await nmDeviceProp(apIfname, "GENERAL.CON-PATH");
-	return after?.[0] === activePath ? { profile, activePath } : undefined;
+	// The profile was read between two equal path reads, so its NM run owns
+	// that path (the run proof the activation match expects).
+	return after?.[0] === activePath
+		? { profile, activePath, activeRunId: profile?.runId }
+		: undefined;
 }
 
 /** Production steering: reconcile, then read the verified zones. */
