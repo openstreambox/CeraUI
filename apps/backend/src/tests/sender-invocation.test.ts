@@ -458,8 +458,24 @@ describe("the real service manager, read only", () => {
 			.find((line) => line.startsWith("0::"))
 			?.slice(3);
 		const owner = cgroup ? unitOfCgroup(cgroup) : null;
-		// No unit to read (a container, cgroup root) or no systemctl: skip.
+		// No unit to read (a container, cgroup root), no systemctl, or a
+		// manager this namespace cannot reach (a gate's private network and
+		// PID namespace): skip. Whenever the manager answers, facts are due.
 		if (!owner || !Bun.which("systemctl")) return;
+		const reachable = Bun.spawnSync(
+			[
+				"systemctl",
+				...(owner.manager === "user" ? ["--user"] : []),
+				"show",
+				"--property=Version",
+			],
+			{ stdout: "pipe", stderr: "ignore" },
+		);
+		if (
+			reachable.exitCode !== 0 ||
+			!reachable.stdout.toString().includes("Version=")
+		)
+			return;
 		const facts = await readUnitFacts(owner.unit, owner.manager);
 		if (!facts)
 			throw new Error(`no facts for ${owner.manager} unit ${owner.unit}`);
