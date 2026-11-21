@@ -37,7 +37,8 @@ export class CarryingTracker {
 	private uploadAt: number | null = null;
 	private uploadUnknown = false;
 
-	/** A fresh hold on every process start also covers a lost pre-restart hold. */
+	/** A fresh hold when the backend restarts within a boot covers a hold the
+	 * earlier process lost with its memory (see `initCarrying`). */
 	start(now: number): void {
 		this.startedUntil = Math.max(this.startedUntil ?? 0, now + HOLD_MS);
 	}
