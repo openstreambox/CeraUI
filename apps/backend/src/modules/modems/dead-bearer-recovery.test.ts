@@ -61,7 +61,7 @@ function input(
 		record: record({ state: "down" }),
 		otherUplinkUp: true,
 		owned: true,
-		translated: false,
+		nativeAnswers: false,
 		carryingStream: false,
 		nmState: "100",
 		mmState: "connected",
@@ -140,7 +140,10 @@ describe("decideDeadBearer", () => {
 
 	for (const [name, overrides] of [
 		["a manual profile", { owned: false }],
-		["a modem with a CLAT translator", { translated: true }],
+		[
+			"a translated modem whose native IPv6 still answers",
+			{ nativeAnswers: true },
+		],
 		[
 			"address loss",
 			{ record: record({ state: "down", reason: "definitive_loss" }) },
@@ -201,6 +204,7 @@ describe("runDeadBearerRecovery", () => {
 	let health: UplinkHealthRecord | undefined;
 	let others: UplinkHealthRecord[];
 	let clatParents: Record<string, string>;
+	let tunHealth: UplinkHealthRecord | undefined;
 	let streaming: boolean;
 	let telemetryRows: { iface: string; stale: boolean }[];
 	let autoconnect: string;
@@ -237,9 +241,16 @@ describe("runDeadBearerRecovery", () => {
 			wallNow: () => wall,
 			ids: () => getModemIds(),
 			stableKey: (id) => (id === 2 ? KEY : undefined),
-			health: (iface) => (iface === "wwan0" ? health : undefined),
-			healthList: () => [...(health ? [health] : []), ...others],
+			health: (iface) =>
+				iface === "wwan0" ? health : iface === "clat7" ? tunHealth : undefined,
+			healthList: () => [
+				...(health ? [health] : []),
+				...(tunHealth ? [tunHealth] : []),
+				...others,
+			],
 			clatParent: (iface) => clatParents[iface],
+			clatTun: (parent) =>
+				Object.keys(clatParents).find((tun) => clatParents[tun] === parent),
 			streaming: () => streaming,
 			telemetry: () =>
 				streaming
@@ -282,6 +293,10 @@ describe("runDeadBearerRecovery", () => {
 	const eth = () =>
 		record({ iface: "eth0", kind: "ethernet", state: "up" }, wall);
 	const dead = () => record({ state: "down" }, wall);
+	const tunDead = () =>
+		record({ iface: "clat7", kind: "other", state: "down" }, wall);
+	const tunUp = () =>
+		record({ iface: "clat7", kind: "other", state: "up" }, wall);
 
 	/** Polls every 15 s until `until`, keeping health fresh. */
 	async function pollUntil(until: number): Promise<number[]> {
@@ -290,6 +305,8 @@ describe("runDeadBearerRecovery", () => {
 			now += 15_000;
 			wall += 15_000;
 			if (health?.state === "down") health = dead();
+			if (tunHealth)
+				tunHealth = tunHealth.state === "down" ? tunDead() : tunUp();
 			others = others.map((other) => ({ ...other, staleAt: wall + 15_000 }));
 			const before = calls.length;
 			await runDeadBearerRecovery();
@@ -307,6 +324,7 @@ describe("runDeadBearerRecovery", () => {
 		health = undefined;
 		others = [];
 		clatParents = {};
+		tunHealth = undefined;
 		streaming = false;
 		telemetryRows = [];
 		autoconnect = "no";
@@ -365,14 +383,76 @@ describe("runDeadBearerRecovery", () => {
 		expect(at).toEqual([DEAD_BEARER_ALONE_HOLD_MS + 15_000]);
 	});
 
-	test("a modem with an active CLAT translator is judged by it, never reconnected here", async () => {
-		others = [
-			eth(),
-			record({ iface: "clat7", kind: "other", state: "up" }, wall),
-		];
+	/*
+	  An IPv6-only modem with a live CLAT translation carries an IPv4 stream
+	  through its clat TUN, so the TUN's own health record is the evidence. A
+	  dead bearer keeps the translator's lease up for minutes; skipping such a
+	  modem left it dead for that whole time and then for the hold again.
+	*/
+	test("a translated modem is judged by its translator: a live translator keeps it", async () => {
+		others = [eth()];
 		clatParents = { clat7: "wwan0" };
+		tunHealth = tunUp();
 		health = dead();
 		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	test("a translated modem whose translator and native path both fail is reconnected", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		expect(await pollUntil(120_000)).toEqual([75_000]);
+		expect(calls).toEqual([`down ${UUID}`, `up ${UUID} 45`]);
+	});
+
+	test("a translated modem whose native IPv6 still answers is not reconnected", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = record({ state: "up" }, wall);
+		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	test("a translated modem with no record for its translator yet is left alone", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		others = [eth(), record({ iface: "clat9", kind: "other", state: "down" })];
+		health = dead();
+		// clat7 is the translation, but only an unrelated TUN has a record.
+		expect(await pollUntil(600_000)).toEqual([]);
+	});
+
+	test("a stream carried on the translator's row vetoes the reconnect", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		streaming = true;
+		telemetryRows = [{ iface: "clat7", stale: false }];
+		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	test("the outage keeps its start when the translator's lease runs out", async () => {
+		// Alone, as in the harness: no other uplink, the dead bearer keeps the
+		// lease up for about 210 s, then the translation is withdrawn.
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		const reconnectedAt: number[] = [];
+		while (now < DEAD_BEARER_ALONE_HOLD_MS + 60_000) {
+			now += 15_000;
+			wall += 15_000;
+			health = dead();
+			if (now >= 210_000) {
+				clatParents = {};
+				tunHealth = undefined;
+			} else tunHealth = tunDead();
+			const before = calls.length;
+			await runDeadBearerRecovery();
+			if (calls.length > before) reconnectedAt.push(now);
+		}
+		expect(reconnectedAt).toEqual([DEAD_BEARER_ALONE_HOLD_MS + 15_000]);
 	});
 
 	test("a manual profile is never reconnected", async () => {

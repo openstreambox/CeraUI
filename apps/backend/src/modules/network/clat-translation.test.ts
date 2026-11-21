@@ -5,6 +5,7 @@ import { genSrtlaBondEntries } from "../streaming/srtla.ts";
 import {
 	type ClatReadDeps,
 	clatTranslationFor,
+	clatTunForParent,
 	defaultClatReadDeps,
 	isSupportedNat64Prefix,
 	leaseLive,
@@ -332,6 +333,19 @@ describe("the bond", () => {
 		expect(isBondCandidate("clat3", iface("10.254.0.3"))).toBe(true);
 		// A different address on the TUN is not the one the service assigned.
 		expect(isBondCandidate("clat3", iface("10.254.0.9"))).toBe(false);
+	});
+
+	test("the modem's TUN is found from its interface only while the lease holds", () => {
+		let now = 140;
+		expect(clatTunForParent("wwan0")).toBeUndefined();
+		setClatTranslationsForTest(
+			new Map([["clat3", { ...TUN, expiresAt: 150 }]]),
+			() => now,
+		);
+		expect(clatTunForParent("wwan0")).toBe("clat3");
+		expect(clatTunForParent("wwan1")).toBeUndefined();
+		now = 150;
+		expect(clatTunForParent("wwan0")).toBeUndefined();
 	});
 
 	test("an expired lease drops out at the next bond read, before any poll", () => {
