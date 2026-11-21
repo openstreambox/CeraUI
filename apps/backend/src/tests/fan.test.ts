@@ -35,6 +35,7 @@ import {
 	parsePwmDuty,
 	readFanDuty,
 	resetFanUnreadableLog,
+	setFanLogClockForTest,
 } from "../modules/system/fan.ts";
 
 // ─── synthetic sysfs trees ───────────────────────────────────────────────────
@@ -662,5 +663,106 @@ describe("unreadable-path logging", () => {
 			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
 			`fan: pwm1 unreadable ${pwm}`,
 		]);
+	});
+
+	test("the same errno with a different message is a new diagnostic", async () => {
+		resetFanUnreadableLog();
+		const coolingDir = `${THERMAL}/cooling_device7`;
+		let reads = 0;
+		const deps: FanDeps = {
+			// A backlink exists, so only the direct candidates are read.
+			readDir: async (path) => {
+				if (path === coolingDir) return ["cur_state", "device"];
+				throw Object.assign(new Error(`EIO: ${path}`), { code: "EIO" });
+			},
+			// Same errno each time; the message changes after the second read,
+			// as when a replacement device reuses the sysfs path.
+			readText: async (path) => {
+				reads++;
+				const which = reads <= 2 ? "first device" : "replacement";
+				throw Object.assign(new Error(`EIO: ${path} (${which})`), {
+					code: "EIO",
+				});
+			},
+		};
+		const messages = await debugMessages(async () => {
+			for (let tick = 0; tick < 4; tick++) {
+				expect(await readFanDuty(deps, coolingDir, HWMON)).toBeNull();
+			}
+		});
+		expect(
+			messages.filter((m) => m.startsWith("fan: pwm1 unreadable")),
+		).toEqual([
+			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
+			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
+		]);
+	});
+
+	test("a failure that persists is logged again after the suppression window", async () => {
+		resetFanUnreadableLog();
+		let now = 1_000_000;
+		setFanLogClockForTest(() => now);
+		try {
+			const h = makeHarness(
+				buildBacklinklessBoard({
+					coolingIndex: 11,
+					hwmons: [{ index: 3, name: "pwmfan", pwm: "120" }],
+				}),
+			);
+			const coolingDir = `${THERMAL}/cooling_device11`;
+			const messages = await debugMessages(async () => {
+				await readFanDuty(h.deps, coolingDir, HWMON);
+				now += 9 * 60_000;
+				await readFanDuty(h.deps, coolingDir, HWMON);
+				now += 2 * 60_000;
+				await readFanDuty(h.deps, coolingDir, HWMON);
+			});
+			expect(
+				messages.filter((m) => m === "fan: hwmon directory unreadable").length,
+			).toBe(2);
+		} finally {
+			setFanLogClockForTest();
+		}
+	});
+
+	test("an unreadable correlated pwm1 is logged once, not every tick", async () => {
+		resetFanUnreadableLog();
+		const h = makeHarness(
+			buildBacklinklessBoard({
+				coolingIndex: 11,
+				hwmons: [{ index: 3, name: "pwmfan" }],
+			}),
+		);
+		const coolingDir = `${THERMAL}/cooling_device11`;
+		const messages = await debugMessages(async () => {
+			for (let tick = 0; tick < 5; tick++) {
+				expect(await readFanDuty(h.deps, coolingDir, HWMON)).toBeNull();
+			}
+		});
+		expect(
+			messages.filter((m) => m.startsWith("fan: correlated pwm1 unreadable"))
+				.length,
+		).toBe(1);
+	});
+
+	test("a cooling device with no correlating hwmon is logged once, not every tick", async () => {
+		resetFanUnreadableLog();
+		const h = makeHarness(
+			buildBacklinklessBoard({
+				coolingIndex: 11,
+				hwmons: [{ index: 3, name: "cpu_thermal" }],
+			}),
+		);
+		const coolingDir = `${THERMAL}/cooling_device11`;
+		const messages = await debugMessages(async () => {
+			for (let tick = 0; tick < 5; tick++) {
+				expect(await readFanDuty(h.deps, coolingDir, HWMON)).toBeNull();
+			}
+		});
+		expect(
+			messages.filter((m) =>
+				m.startsWith("fan: no hwmon correlates to the pwm-fan cooling device"),
+			).length,
+		).toBe(1);
 	});
 });

@@ -269,15 +269,36 @@ export async function discoverPwmFanCoolingDevice(
  * Paths already reported unreadable, with the error code last logged. A board
  * without the expected hwmon fails the same read on every tick, and that line
  * went to debug.log (on the SD card) every few seconds. Each path is now logged
- * once, again when its error changes, and forgotten after a successful read.
+ * when it first fails, again when the diagnostic changes (errno or message, as
+ * when a replacement device reuses the path), again after
+ * {@link FAN_UNREADABLE_RELOG_MS} if it is still failing (so a rotated log keeps
+ * a recent record), and forgotten after a successful read.
  */
-const unreadableLogged = new Map<string, string>();
+export const FAN_UNREADABLE_RELOG_MS = 10 * 60 * 1000;
 
-function firstUnreadable(path: string, err: unknown): boolean {
-	const code = String((err as NodeJS.ErrnoException)?.code ?? err);
-	if (unreadableLogged.get(path) === code) return false;
-	unreadableLogged.set(path, code);
+const unreadableLogged = new Map<string, { signature: string; at: number }>();
+
+let fanLogNow: () => number = Date.now;
+
+function firstUnreadable(key: string, err: unknown): boolean {
+	const e = err as NodeJS.ErrnoException | undefined;
+	const signature =
+		e instanceof Error ? `${e.code ?? ""}:${e.message}` : String(err);
+	const now = fanLogNow();
+	const previous = unreadableLogged.get(key);
+	if (
+		previous?.signature === signature &&
+		now - previous.at < FAN_UNREADABLE_RELOG_MS
+	) {
+		return false;
+	}
+	unreadableLogged.set(key, { signature, at: now });
 	return true;
+}
+
+/** Test seam: replace the clock used for the re-log window (none restores it). */
+export function setFanLogClockForTest(now?: () => number): void {
+	fanLogNow = now ?? Date.now;
 }
 
 /** Test seam: forget which unreadable paths were already logged. */
@@ -418,20 +439,29 @@ export async function readFanDuty(
 	if (await coolingDeviceHasDeviceLink(deps, coolingDir)) return null;
 
 	const correlation = await correlatePwmFanHwmon(deps, hwmonClassDir);
+	const correlationKey = `correlation:${coolingDir}`;
 	if (correlation.kind !== "found") {
-		logger.debug("fan: no hwmon correlates to the pwm-fan cooling device", {
-			coolingDir,
-			correlation: correlation.kind,
-		});
+		if (firstUnreadable(correlationKey, correlation.kind)) {
+			logger.debug("fan: no hwmon correlates to the pwm-fan cooling device", {
+				coolingDir,
+				correlation: correlation.kind,
+			});
+		}
 		return null;
 	}
+	unreadableLogged.delete(correlationKey);
+	const correlatedPwm = `${correlation.hwmonDir}/pwm1`;
 	try {
-		return parsePwmDuty(await deps.readText(`${correlation.hwmonDir}/pwm1`));
+		const duty = parsePwmDuty(await deps.readText(correlatedPwm));
+		unreadableLogged.delete(correlatedPwm);
+		return duty;
 	} catch (err) {
-		logger.debug("fan: correlated pwm1 unreadable", {
-			hwmonDir: correlation.hwmonDir,
-			err,
-		});
+		if (firstUnreadable(correlatedPwm, err)) {
+			logger.debug("fan: correlated pwm1 unreadable", {
+				hwmonDir: correlation.hwmonDir,
+				err,
+			});
+		}
 		return null;
 	}
 }
