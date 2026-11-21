@@ -71,3 +71,30 @@ for(const width of [390,1280,1024]) {
   await page.screenshot({path:evidencePath(`phone-configured-srt-${width}.png`),fullPage:true});
  });
 }
+
+for (const width of [390, 1280, 1024]) {
+ test(`Moblin credential label and cleared field @visual at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: width === 1024 ? 600 : 900 });
+  await page.goto('/'); await ensureAuthenticated(page);
+  await page.evaluate(async () => {
+   const url = '/src/tests/fixtures/phone-home-browser.ts';
+   (await import(/* @vite-ignore */ url)).mountPhoneHomeFixture(window.innerWidth === 1024, true);
+  });
+  const home = page.getByTestId('phone-home-fixture');
+  await home.getByRole('button', { name: 'Connect your phone', exact: true }).click();
+  const input = home.getByLabel("Moblin's password (from Moblin, not the Wi-Fi password)");
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveAttribute('autocomplete', 'off');
+  await expect(input).toHaveAttribute('data-1p-ignore', '');
+  await expect(input).toHaveAttribute('data-lpignore', 'true');
+  await expect(input).toHaveAttribute('data-bwignore', '');
+  await expect(input).toHaveAttribute('data-form-type', 'other');
+  await expect(home).not.toContainText(/inputs =|experimentalStaticLocale/);
+  await input.fill('synthetic-phone-password');
+  await home.getByRole('button', { name: 'Save Moblin password' }).click();
+  await expect(input).toHaveValue('');
+  await expect(home).toContainText('saving does not confirm a connection');
+  expect(await home.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.screenshot({ path: evidencePath(`phone-connect-moblin-${width}.png`), fullPage: true });
+ });
+}
