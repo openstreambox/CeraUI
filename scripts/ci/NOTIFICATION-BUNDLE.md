@@ -21,8 +21,12 @@ also fails rather than passing vacuously.
 
 Namespace discovery matches the complete `namespace-[hash].js` name using
 Vite's default eight-character hash (including `-` and `_`). A helper such as
-`network-speed-[hash].js` is not a second `network` namespace. Missing or duplicate
-exact namespace chunks still fail.
+`network-speed-[hash].js` is not a second `network` namespace. Natural chunk
+boundaries can also give application code a namespace's exact name (the lazy
+dialog components emit `dialogs-[hash].js` beside the `dialogs` namespace), so
+a match must also export `messages` at the top level. The guard parses that
+export; it never runs a chunk to find out. Missing or duplicate namespace chunks
+still fail.
 
 The chunk naming/export contract is intentional: a bundler-layout change must
 update the guard, not silently fall back to source translations. Notification
