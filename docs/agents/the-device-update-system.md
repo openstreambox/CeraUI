@@ -395,3 +395,5 @@ Known gaps, recorded rather than smoothed over:
 - **Board evidence is narrow.** The capable APT candidate/installation above was
   verified on a bench-enabled board, not a released capable image. OS staging,
   slot mirroring and UID-pinned transport are still not qualified by that run.
+
+Planned power and traffic protection: [shutdown contract](../SHUTDOWN-PROTECTION.md).
