@@ -397,12 +397,19 @@ that managed source rule needs validation with real route retirement.
 `uplink-steering/active-uplink.ts` plans the active uplink on every
 reconcile from the uplinks the mode and administrative filters allow.
 
-- **Plans follow what is applied.** Planning has no side effects. The plan
-  becomes the selector's state only when the steering runtime has installed
-  the ruleset built from it (and again after readback on unchanged passes). A rejected reload, a retry or a
-  read-only caller such as the shaper never moves the incumbent, starts or
-  ends a hold, or charges a failure. A state without client zones, or with
-  `spread`, commits as a reset.
+- **Plans follow what is installed.** Planning has no side effects. The
+  applier reports every ruleset load that changes the live selection
+  (`selectionInstalled`): the exclusion and hard-down transition rulesets
+  already carry the next selection, the final load does, and a rollback that
+  restores the previous ruleset reports that. The plan of whatever state the
+  kernel holds becomes the selector's state, and readback commits it again
+  on unchanged passes. A rejected reload, a retry or a read-only caller such
+  as the shaper never moves the incumbent, starts or ends a hold, or charges
+  a failure; a partial apply whose rollback also failed leaves the selector
+  on the selection that stayed live. A state without client zones, or with
+  `spread`, commits as a reset. The coordinator retires routes and marks from
+  the last state whose apply completed, even when its readback then failed,
+  while status keeps reporting the last verified state.
 - **Rank.** Healthy before degraded, then lower operator priority for the
   uplink's kind, then wired, Wi-Fi, cellular. Health comes before priority so a
   preferred uplink that health only marks `degraded` (a captive portal, or a
@@ -412,23 +419,38 @@ reconcile from the uplinks the mode and administrative filters allow.
 - **Failover is immediate.** Health withdraws an uplink after a hard loss
   (address gone, interface gone) or three failed probe rounds (a silent
   blackhole with the link still up). The state builder then no longer offers
-  it, and the best remaining uplink becomes active in the same reconcile. The
+  it, and the best remaining probe-confirmed uplink becomes active in the
+  same reconcile. With none confirmed nothing is selectable and the all-down
+  drop applies to new client flows until a probe confirms one; the first pick
+  after startup, after `spread` or after the client zone returns follows the
+  same rule, so clients wait for the first probe round (up to 5 s). The
   applier retires the lost uplink's client conntracks as for any hard-down, so
   apps reconnect over the new uplink. An administrative or mode exclusion, or
   an uplink held back while its identity proof is pending, switches the same
   way but does not count as a failure; only a missing interface, a lost
   address or a `down` health record does.
-- **Only the general-internet probe qualifies.** A better-ranked uplink
-  displaces a working active one only after the device-bound connectivity probe
-  has confirmed it without a gap for the rejoin hold, 30 s by default. Evidence
-  is the health record's last active observation (`signals.activeAt`) with an
-  `up` state and a real success. Sender (SRTLA) telemetry proves the path to
-  the relay, not internet for clients, and never sets `activeAt`: it can demote
-  an uplink, never qualify one. The hold restarts on a gap of more than 15 s
-  between probe observations, on a failed round, and ignores observations
-  taken before the uplink's identity first appeared (a predecessor on the same
-  interface name). A failover with no incumbent also prefers a probe-confirmed
-  uplink.
+- **Only the general-internet probe qualifies.** Sender (SRTLA) telemetry
+  proves the path to the relay, not internet for clients: it can demote an
+  uplink (`degraded`, or `down` when it expires), never qualify one. The
+  health engine keeps the provenance. Sender rows reduce as
+  `passive_healthy` or `passive_degraded` and set `signals.passiveAt`; only a
+  device-bound probe sets `signals.activeAt`. `signals.probeSince` is the
+  start of the current unbroken run of probe successes. A failed or captive
+  probe, degraded sender rows, loss, a new interface incarnation (address,
+  presence or eligibility change, noticed by event or by the tick roster) or
+  a gap of more than 15 s between two probe successes ends the run; healthy
+  sender rows neither start nor extend it. Healthy sender rows still count
+  toward health's own recovery from `degraded`, as before; they never
+  confirm an uplink for clients. An uplink is confirmed while it has a run
+  whose latest success is at most 15 s old and its record is unexpired and
+  not `down`.
+- **Rejoin is held.** A better-ranked uplink displaces a working active one
+  only after its probe run covers the rejoin hold, 30 s by default. Because
+  the engine sees every round, a reconcile that was delayed or coalesced
+  (readback can take long) neither hides a failed round nor restarts a
+  continuous run. The selector only clips a run that predates the identity
+  now on that interface name (a replacement device the engine could not tell
+  apart), starting it at the first success it sees for the new identity.
   Each failure while active doubles that uplink's next hold, up to 300 s; a
   failure older than ten minutes, or ten minutes as the active uplink, clears
   the history. An equal-ranked uplink never displaces the active one.
@@ -451,17 +473,33 @@ concurrent probes, so a blackhole on an idle uplink is withdrawn after roughly
 target resolution fails and rounds are skipped. While streaming, bonded links
 are judged from SRTLA telemetry and are not actively probed: a streaming link
 whose sender rows go stale is only `degraded`, never withdrawn, and a
-streaming link can never become the client uplink by rejoin, since only
-probes qualify. Single selection moves clients off a degraded one once another
+streaming link can never become the client uplink, by first pick, failover
+or rejoin, since only probes qualify. A streaming link that already carries
+clients keeps them as long as it stays offered. Single selection moves clients off a degraded one once another
 uplink is proven healthy, but with
 no healthy alternative, or with sender telemetry that stays healthy while
 other destinations are unreachable, clients stay on it. A returning uplink
-first needs health's five good rounds and 15 s dwell, then the selector's
-hold, about 55 to 60 s after recovery. When idle every candidate uplink,
+first needs health's five good rounds and 15 s dwell before the state
+builder offers it again; its rejoin hold counts from the first success of
+its current probe run, but not from before its identity appeared on that
+interface name. When idle every candidate uplink,
 including standby cellular, is probed every 5 s with a small HTTP request
 (about 0.9 KB). A faster confirmation on the active uplink, active probing of
 the client uplink while streaming, and a slower cadence for metered standby
 links are not part of this change.
+
+`spread` keeps the weighted policy unchanged, including its health
+eligibility: it is the explicit legacy mode, and a streaming link judged
+from sender rows still receives its weighted share there.
+
+`uplink-steering-probe-provenance.test.ts` drives the health runtime core,
+state builder, selector, coordinator and applier together with injected
+clocks and system calls: sender rows never promote or admit an uplink, rounds
+skipped for DNS and failed rounds hidden behind a blocked readback restart
+the hold while coalesced successful rounds do not, replacements and new
+addresses need their own run, and failed applies, readbacks and rollbacks
+charge only the uplink that carried new flows and retire from what was
+installed.
 
 `active-uplink-netns.test.ts` runs the selector's rulesets in network
 namespaces through failover on a silent blackhole, the rejoin hold and rejoin,
@@ -502,7 +540,9 @@ device-bound eligibility change discards counted successes and restarts the
 15-second hold-down synchronously at the interface event. This also applies when
 the interface changes and returns entirely between health ticks or during a
 probe batch. In-flight evidence from the old generation remains invalid.
-The same events do not change an up path's health state.
+The same events do not change an up path's health state; on any path they
+end the current probe run (`signals.probeSince`), so a new incarnation earns
+its own general-internet evidence before single selection can use it.
 
 A missing interface retains its down verdict and resets its recovery streak, so
 brief reappearance still requires five fresh successful probes. Normal health

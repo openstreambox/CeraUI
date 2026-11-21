@@ -26,10 +26,17 @@ export const UPLINK_HEALTH_CONFIG = {
 	passiveNakWindowMs: 10_000,
 } as const;
 
+/**
+ * `success`, `failure` and `captive_portal` come only from the device-bound
+ * general-internet probe. `passive_healthy` and `passive_degraded` come from
+ * sender (SRTLA) telemetry, which proves the path to the relay and nothing
+ * more. `definitive_loss` is address or interface loss, or expired telemetry.
+ */
 export type UplinkHealthOutcome =
 	| "success"
 	| "failure"
 	| "captive_portal"
+	| "passive_healthy"
 	| "passive_degraded"
 	| "definitive_loss";
 
@@ -47,9 +54,25 @@ export interface UplinkHealthRecord {
 		readonly successes: number;
 		readonly failures: number;
 	};
+	/**
+	 * Evidence provenance. `probes` counts both probe rounds and healthy
+	 * sender rows (the health state machine treats them alike); these say
+	 * which kind of evidence was seen and when.
+	 */
 	readonly signals: {
+		/** Last device-bound general-internet probe result, of any outcome. */
 		readonly activeAt?: number;
+		/** Last sender telemetry or loss observation, of any outcome. */
 		readonly passiveAt?: number;
+		/**
+		 * Start of the current unbroken run of successful general-internet
+		 * probes; while set, `activeAt` is the latest of them. A failed or
+		 * captive probe, degraded sender telemetry, loss, a new interface
+		 * incarnation, or a gap longer than the telemetry expiry between two
+		 * probe successes clears it. Healthy sender rows neither start nor
+		 * extend it: only the probe can qualify an uplink for client traffic.
+		 */
+		readonly probeSince?: number;
 	};
 }
 
@@ -77,6 +100,7 @@ const reasonFor = (
 ): UplinkHealthReason | undefined => {
 	switch (outcome) {
 		case "success":
+		case "passive_healthy":
 			return undefined;
 		case "failure":
 			return "probe_failed";
@@ -122,6 +146,17 @@ export class UplinkHealthEngine {
 			lastTransition: now,
 			probes: { ...entry.record.probes, successes: 0 },
 		};
+	}
+
+	/**
+	 * A new interface incarnation (address, presence or eligibility changed)
+	 * must earn its own probe evidence; the previous one's run does not carry.
+	 */
+	restartProbeStreak(iface: string): void {
+		const entry = this.#records.get(iface);
+		if (entry?.record.signals.probeSince === undefined) return;
+		const { probeSince: _cleared, ...signals } = entry.record.signals;
+		entry.record = { ...entry.record, signals };
 	}
 
 	list(): readonly UplinkHealthRecord[] {
@@ -190,6 +225,7 @@ export class UplinkHealthEngine {
 		observation: UplinkObservation,
 	): UplinkHealthRecord {
 		const passive =
+			observation.outcome === "passive_healthy" ||
 			observation.outcome === "passive_degraded" ||
 			observation.outcome === "definitive_loss";
 		const probes = this.#nextCounters(current, observation.outcome);
@@ -211,9 +247,31 @@ export class UplinkHealthEngine {
 			lastTransition: transitioned ? observation.now : current.lastTransition,
 			staleAt: observation.now + UPLINK_HEALTH_CONFIG.telemetryExpiryMs,
 			probes,
-			signals: passive
-				? { ...current.signals, passiveAt: observation.now }
-				: { ...current.signals, activeAt: observation.now },
+			signals: this.#nextSignals(current.signals, observation, passive),
+		};
+	}
+
+	#nextSignals(
+		current: UplinkHealthRecord["signals"],
+		{ outcome, now }: UplinkObservation,
+		passive: boolean,
+	): UplinkHealthRecord["signals"] {
+		const { probeSince, ...rest } = current;
+		if (passive) {
+			// Sender rows may only demote: a healthy row keeps the probe run as
+			// it is, anything worse ends it.
+			const keep = outcome === "passive_healthy" && probeSince !== undefined;
+			return { ...rest, passiveAt: now, ...(keep ? { probeSince } : {}) };
+		}
+		if (outcome !== "success") return { ...rest, activeAt: now };
+		const continuous =
+			probeSince !== undefined &&
+			current.activeAt !== undefined &&
+			now - current.activeAt <= UPLINK_HEALTH_CONFIG.telemetryExpiryMs;
+		return {
+			...rest,
+			activeAt: now,
+			probeSince: continuous ? probeSince : now,
 		};
 	}
 
@@ -223,6 +281,7 @@ export class UplinkHealthEngine {
 	): UplinkHealthRecord["probes"] {
 		switch (outcome) {
 			case "success":
+			case "passive_healthy":
 				return { successes: current.probes.successes + 1, failures: 0 };
 			case "failure":
 				return { successes: 0, failures: current.probes.failures + 1 };
@@ -248,7 +307,8 @@ export class UplinkHealthEngine {
 				return probes.failures >= UPLINK_HEALTH_CONFIG.failedRoundsDown
 					? "down"
 					: current.state;
-			case "success": {
+			case "success":
+			case "passive_healthy": {
 				if (current.state === "up") return "up";
 				const dwellMet =
 					observation.now - current.lastTransition >=

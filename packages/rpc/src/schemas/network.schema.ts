@@ -172,8 +172,12 @@ export const uplinkHealthRecordSchema = z.object({
 		failures: z.number().int().nonnegative(),
 	}),
 	signals: z.object({
+		/** Last device-bound general-internet probe result. */
 		activeAt: z.number().nonnegative().optional(),
+		/** Last sender-telemetry or loss observation. */
 		passiveAt: z.number().nonnegative().optional(),
+		/** Start of the current unbroken run of successful probes. */
+		probeSince: z.number().nonnegative().optional(),
 	}),
 });
 export const uplinksMessageSchema = z.array(uplinkHealthRecordSchema);

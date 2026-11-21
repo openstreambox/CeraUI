@@ -14,16 +14,20 @@ import {
  * selection matches client zones by input interface and source subnet, so
  * host-originated traffic (SRTLA, Moblink, management) keeps its own routes.
  *
+ * - Only the general-internet probe qualifies an uplink. Sender (SRTLA)
+ *   telemetry proves the path to the relay, not internet for clients: it can
+ *   demote an uplink (degraded, down), never qualify one. The health engine
+ *   records which kind of evidence it saw (`signals.probeSince`).
  * - Failover is immediate: when the active uplink leaves the candidate set
  *   (health `down` after a hard loss or a failed-probe blackhole, interface
- *   gone, policy exclusion) the best remaining candidate takes over in the
- *   same reconcile.
+ *   gone, policy exclusion) the best remaining probe-confirmed candidate
+ *   takes over in the same reconcile. With none, nothing is selected and new
+ *   client flows are dropped until a probe confirms one. The first pick
+ *   follows the same rule.
  * - Rejoin is held: a better-ranked uplink displaces a working active one
- *   only after the general-internet probe has confirmed it, without a gap,
- *   for the rejoin hold. Sender (SRTLA) telemetry proves the path to the
- *   relay, not internet for clients: it can demote an uplink, never qualify
- *   one. Each failure while active doubles that uplink's next
- *   hold, up to a cap, so a flapping link cannot keep pulling clients back.
+ *   only after an unbroken run of probe successes covers the rejoin hold.
+ *   Each failure while active doubles that uplink's next hold, up to a cap,
+ *   so a flapping link cannot keep pulling clients back.
  * - A displaced uplink stays listed (not selectable, weight 0), so flows it
  *   already carries keep their restore and NAT rules and drain naturally.
  *
@@ -39,8 +43,9 @@ export const ACTIVE_UPLINK_CONFIG = {
 	/** A failure older than this no longer lengthens the next hold. */
 	flapWindowMs: 600_000,
 	/**
-	 * Largest gap between two active probe observations that still counts as
-	 * continuous evidence (three 5 s rounds, the health telemetry expiry).
+	 * Oldest probe success that still confirms an uplink (three 5 s rounds,
+	 * the health telemetry expiry). The health engine applies the same bound
+	 * between two successes of one run.
 	 */
 	maxProbeGapMs: 15_000,
 } as const;
@@ -67,11 +72,21 @@ interface Penalty {
 	readonly lastFailureAt: number;
 }
 
-/** Continuous general-internet probe evidence, in probe timestamps. */
+/**
+ * A probe run as the selector counts it, in probe timestamps. `since` is the
+ * producer's run start, or later when the run predates the identity now on
+ * that interface name.
+ */
 interface Proof {
+	readonly runSince: number;
 	readonly since: number;
-	readonly lastActiveAt: number;
-	readonly lastSuccesses: number;
+	readonly lastAt: number;
+}
+
+/** The identity last seen on an interface name, and since when. */
+interface Incarnation {
+	readonly identity: string;
+	readonly since: number;
 }
 
 export interface ActiveUplinkState {
@@ -79,15 +94,15 @@ export interface ActiveUplinkState {
 	readonly activeSince: number;
 	readonly proofs: ReadonlyMap<string, Proof>;
 	readonly penalties: ReadonlyMap<string, Penalty>;
-	/** When each candidate identity was first offered, to ignore older samples. */
-	readonly seen: ReadonlyMap<string, number>;
+	/** Per interface name, to ignore a predecessor device's probe run. */
+	readonly incarnations: ReadonlyMap<string, Incarnation>;
 }
 
 const EMPTY_STATE: ActiveUplinkState = {
 	activeSince: 0,
 	proofs: new Map(),
 	penalties: new Map(),
-	seen: new Map(),
+	incarnations: new Map(),
 };
 
 export interface ActiveUplinkPlan<T> {
@@ -124,13 +139,12 @@ export class ActiveUplinkSelector {
 	): ActiveUplinkPlan<T> {
 		const { now } = context;
 		const prior = this.#state;
-		const seen = new Map(
-			candidates.map(({ uplink }) => [
-				uplink.identity,
-				prior.seen.get(uplink.identity) ?? now,
-			]),
+		const incarnations = trackIncarnations(
+			prior.incarnations,
+			candidates,
+			context,
 		);
-		const proofs = trackProofs(prior.proofs, seen, candidates, context);
+		const proofs = trackProofs(prior.proofs, incarnations, candidates, context);
 		const penalties = new Map(
 			[...prior.penalties].filter(
 				([, penalty]) =>
@@ -160,13 +174,12 @@ export class ActiveUplinkSelector {
 		}
 		let chosen = current;
 		if (chosen === undefined) {
-			// Failover: prefer an uplink the probe has confirmed over one with
-			// no probe evidence (fresh, or judged only from sender telemetry).
-			chosen = [...usable].sort(
-				(a, b) =>
-					Number(proofs.has(b.uplink.identity)) -
-						Number(proofs.has(a.uplink.identity)) || compare(a, b, context),
-			)[0];
+			// First pick or failover: only an uplink the probe currently
+			// confirms. A candidate judged only from sender telemetry, or not
+			// yet probed, waits; with none confirmed nothing is selected.
+			chosen = usable
+				.filter(({ uplink }) => proofs.has(uplink.identity))
+				.sort((a, b) => compare(a, b, context))[0];
 		} else {
 			const incumbent = chosen;
 			const challenger = usable
@@ -208,7 +221,7 @@ export class ActiveUplinkSelector {
 				activeSince,
 				proofs,
 				penalties,
-				seen,
+				incarnations,
 			},
 		};
 	}
@@ -231,61 +244,92 @@ function holdFor(
 }
 
 /**
- * The latest general-internet probe observation that confirms `ifname`: an
- * `up`, unexpired record with a real success whose last ACTIVE observation is
- * recent. Passive sender telemetry never sets `activeAt`, so a link judged
- * only from SRTLA rows (probing is suppressed while streaming) has none.
+ * The current run of general-internet probe successes on `ifname`, if it is
+ * still confirming: not `down`, unexpired, and its latest success recent.
+ * Sender telemetry never starts or extends a run (see the health engine), so
+ * a link judged only from SRTLA rows has none.
  */
-function probeEvidence(
+function probeRun(
 	ifname: string,
 	{ health, now }: ActiveUplinkContext,
-): { readonly activeAt: number; readonly successes: number } | undefined {
+): { readonly since: number; readonly lastAt: number } | undefined {
 	const record = health.get(ifname);
-	const activeAt = record?.signals.activeAt;
+	const since = record?.signals.probeSince;
+	const lastAt = record?.signals.activeAt;
 	if (
-		record?.state !== "up" ||
-		record.probes.successes <= 0 ||
+		record === undefined ||
+		record.state === "down" ||
 		record.staleAt <= now ||
-		activeAt === undefined ||
-		now - activeAt > ACTIVE_UPLINK_CONFIG.maxProbeGapMs
+		since === undefined ||
+		lastAt === undefined ||
+		lastAt < since ||
+		now - lastAt > ACTIVE_UPLINK_CONFIG.maxProbeGapMs
 	)
 		return undefined;
-	return { activeAt, successes: record.probes.successes };
+	return { since, lastAt };
 }
 
 /**
- * Evidence restarts on any gap between probe observations, on a reset
- * success counter (a failed round), and ignores observations older than the
- * identity's first appearance (a predecessor on the same interface name).
+ * Remembers which identity sits on each interface name. A different identity
+ * on a known name is a replacement and starts its own incarnation; a name
+ * the selector has not tracked yet (first plan, after a reset) trusts the
+ * producer, which restarts the run on every interface change it sees.
+ */
+function trackIncarnations(
+	prior: ReadonlyMap<string, Incarnation>,
+	candidates: readonly ActiveUplinkCandidate[],
+	{ interfaces, now }: ActiveUplinkContext,
+): Map<string, Incarnation> {
+	const next = new Map([...prior].filter(([ifname]) => interfaces.has(ifname)));
+	for (const { uplink } of candidates) {
+		const before = prior.get(uplink.ifname);
+		next.set(
+			uplink.ifname,
+			before === undefined
+				? { identity: uplink.identity, since: Number.NEGATIVE_INFINITY }
+				: before.identity === uplink.identity
+					? before
+					: { identity: uplink.identity, since: now },
+		);
+	}
+	return next;
+}
+
+/**
+ * The health engine owns run continuity: it sees every probe round, so a
+ * coalesced reconcile, a skipped round or a failure between two samples
+ * cannot hide a break. The selector only clips a run that started before the
+ * identity now on that name appeared, starting it at the first success it
+ * observes for the new identity.
  */
 function trackProofs(
 	prior: ReadonlyMap<string, Proof>,
-	seen: ReadonlyMap<string, number>,
+	incarnations: ReadonlyMap<string, Incarnation>,
 	candidates: readonly ActiveUplinkCandidate[],
 	context: ActiveUplinkContext,
 ): Map<string, Proof> {
 	const proofs = new Map<string, Proof>();
 	for (const { uplink } of candidates) {
-		const evidence = probeEvidence(uplink.ifname, context);
-		const firstSeen = seen.get(uplink.identity) ?? context.now;
-		if (evidence === undefined || evidence.activeAt < firstSeen) continue;
-		const before = prior.get(uplink.identity);
-		const continuous =
-			before !== undefined &&
-			evidence.activeAt >= before.lastActiveAt &&
-			evidence.activeAt - before.lastActiveAt <=
-				ACTIVE_UPLINK_CONFIG.maxProbeGapMs &&
-			evidence.successes >= before.lastSuccesses;
+		const run = probeRun(uplink.ifname, context);
+		if (run === undefined) continue;
+		const appeared =
+			incarnations.get(uplink.ifname)?.since ?? Number.NEGATIVE_INFINITY;
+		let since = run.since;
+		if (since < appeared) {
+			if (run.lastAt < appeared) continue;
+			const before = prior.get(uplink.identity);
+			since = before?.runSince === run.since ? before.since : run.lastAt;
+		}
 		proofs.set(uplink.identity, {
-			since: continuous ? before.since : evidence.activeAt,
-			lastActiveAt: evidence.activeAt,
-			lastSuccesses: evidence.successes,
+			runSince: run.since,
+			since,
+			lastAt: run.lastAt,
 		});
 	}
 	return proofs;
 }
 
-/** The hold must be covered end to end by continuous probe evidence. */
+/** The hold must be covered end to end by one unbroken probe run. */
 function rejoinReady(
 	{ uplink }: ActiveUplinkCandidate,
 	proofs: ReadonlyMap<string, Proof>,
@@ -294,7 +338,7 @@ function rejoinReady(
 	const proof = proofs.get(uplink.identity);
 	return (
 		proof !== undefined &&
-		proof.lastActiveAt - proof.since >= holdFor(uplink.identity, penalties)
+		proof.lastAt - proof.since >= holdFor(uplink.identity, penalties)
 	);
 }
 
@@ -365,10 +409,16 @@ export function recordSelectorPlan(
 	plannedStates.set(prepared, next);
 }
 
-/** Called once `prepared` is the applied, verified steering state. */
+/**
+ * Called once `prepared` is the live steering state: its ruleset installed
+ * (the applier reports that, even when a later step fails) or read back.
+ * `undefined` (client forwarding off) resets.
+ */
 export function commitSelectorPlan(
-	prepared: object,
+	prepared: object | undefined,
 	selector: ActiveUplinkSelector = activeUplinkSelector,
 ): void {
-	selector.commit(plannedStates.get(prepared));
+	selector.commit(
+		prepared === undefined ? undefined : plannedStates.get(prepared),
+	);
 }
