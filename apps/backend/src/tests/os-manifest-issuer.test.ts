@@ -141,6 +141,8 @@ let benchRoot: string;
 let productionIntermediate: string;
 let benchIntermediate: string;
 let alternateIntermediate: string;
+let osbRoot: string;
+let osbIntermediate: string;
 
 beforeAll(async () => {
 	dir = await mkdtemp(join(tmpdir(), "ceraui-manifest-issuer-"));
@@ -177,13 +179,38 @@ beforeAll(async () => {
 	] as const) {
 		await issued(name, "/CN=CeraLive OTA Manifest Signer", ca, leafExtensions);
 	}
+	osbRoot = root("osb-root", "OpenStreamBox Release Root CA");
+	osbIntermediate = await issued(
+		"osb-intermediate",
+		"/O=OpenStreamBox/CN=OpenStreamBox Release Intermediate CA",
+		"osb-root",
+		intermediateExtensions,
+	);
+	await issued(
+		"osb",
+		"/O=OpenStreamBox/CN=OpenStreamBox OTA Manifest Signer",
+		"osb-intermediate",
+		leafExtensions,
+	);
+	await issued(
+		"osb-under-ceralive",
+		"/O=OpenStreamBox/CN=OpenStreamBox OTA Manifest Signer",
+		"intermediate",
+		leafExtensions,
+	);
+	await issued(
+		"osb-bundle",
+		"/O=OpenStreamBox/CN=OpenStreamBox RAUC Bundle Signer",
+		"osb-intermediate",
+		"basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=codeSigning,emailProtection\n",
+	);
 	await issued(
 		"bundle",
 		"/CN=CeraLive Bundle Signer",
 		"intermediate",
 		"basicConstraints=critical,CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=codeSigning,emailProtection\n",
 	);
-	// Twelve synchronous RSA-2048 keygens: ~1 s on an idle workstation, but
+	// Seventeen synchronous RSA-2048 keygens: ~1 s on an idle workstation, but
 	// they exceeded bun's 5 s default hook bound on a loaded CI runner.
 }, 60_000);
 
@@ -226,6 +253,26 @@ test.each([
 		"bundle",
 		(): string => productionRoot,
 		(): string => productionIntermediate,
+		"signer_not_manifest_signer",
+	],
+	["osb", (): string => osbRoot, (): string => osbIntermediate, "accepted"],
+	// The keyring stays the trust anchor: our names alone do not pass under another root.
+	[
+		"osb",
+		(): string => productionRoot,
+		(): string => osbIntermediate,
+		"signature_invalid",
+	],
+	[
+		"osb-under-ceralive",
+		(): string => productionRoot,
+		(): string => productionIntermediate,
+		"signer_issuer_invalid",
+	],
+	[
+		"osb-bundle",
+		(): string => osbRoot,
+		(): string => osbIntermediate,
 		"signer_not_manifest_signer",
 	],
 ] as const)(
