@@ -155,7 +155,7 @@ The November 9 held-package retry corrects product accessibility gaps:
 ### Known issues carried by this baseline
 
 - **The federation catalog is scoped to the keys the bundles render.** Since
-  November 21, 2026 toast-host carries 415 keys instead of 2,696 and its budget
+  November 21, 2026 toast-host carries 324 keys instead of 2,696 and its budget
   is enforced on every PR, as detailed below. `TD-federation-i18n-catalog-size`
   in `docs/TECHNICAL_DEBT.md` is resolved.
 - **The dependency-refresh visual comparison remains historical.**
@@ -230,32 +230,41 @@ guardrail command; the original federation budget/hash tests remain intact.
 The publish-only gate let the catalog grow past its ceiling without any PR
 noticing: on `4b042965` toast-host measured **719,011 B** gzip, 30,468 B over
 **688,543 B**. The bundle carried every key of the 14 registered namespaces
-(2,696 keys, ten locales each), although the three dialogs name 389 of them.
+(2,696 keys, ten locales each), although the three dialogs need a few hundred.
 
 `apps/frontend/vite.federation-catalog.ts` now loads each namespace barrel
 narrowed to `src/lib/federation/catalog-keys.json`, so tree-shaking drops the
 unused messages from every locale module. The list is the keys the rendered,
 tree-shaken federation code names (exact literals plus template heads such as
-`live.layout.error.`), plus the producer's wire vocabulary: keys in the
-backend and RPC sources that arrive as data, such as source descriptors'
-`unavailableReason` (`live.education.reason.pipelineNotOffered`), restricted to
-the namespaces the bundles read. After bundling, the plugin re-derives the list
-and fails the build on a missing or stale key;
+`live.layout.error.`), plus producer wire keys: keys in the backend and RPC
+sources that arrive as data, such as source descriptors' `unavailableReason`
+(`live.education.reason.pipelineNotOffered`), kept when the bundled code reads
+their family (`live.education.reason`). Backend notification copy and template
+heads no dialog renders stay out. A lookup whose key the code computes
+(`t(option.reason)`, `m[key]`) must be declared by hand in
+`src/lib/federation/computed-lookups.json` with the key families it can produce,
+and every key of those families ships. After bundling, the plugin re-derives the
+list and fails the build on a missing or stale key, or on an undeclared or stale
+computed lookup (also in write mode, so regenerating cannot bless one);
 `bun run --filter frontend generate:federation-catalog` rewrites it. The built
-harness asserts the signed JS carries exactly the listed keys.
+harness renders every listed key through the built bundle's own resolver in all
+ten locales against the full compiled catalog, and checks that every unlisted key
+of the registered namespaces is absent.
 
 | Asset (Bun 1.4.4, gzip 9) | Before | After | Delta |
 | --- | ---: | ---: | ---: |
-| toast-host.js gzip | 719,011 B | 245,952 B | -473,059 B (-65.8%) |
-| toast-host.js raw | 3,037,755 B | 917,214 B | -2,120,541 B |
-| Catalog keys shipped | 2,696 | 415 | -2,281 |
+| toast-host.js gzip | 719,011 B | 212,698 B | -506,313 B (-70.4%) |
+| toast-host.js raw | 3,037,755 B | 759,875 B | -2,277,880 B |
+| Catalog keys shipped | 2,696 | 324 | -2,372 |
 
 Every other federation asset is unchanged apart from the hashed chunk names it
 imports. The toast-host baseline moves to
-245,952 B with the unchanged 8,192 B allowance (ceiling 254,144 B); the
+212,698 B with the unchanged 8,192 B allowance (ceiling 220,890 B); the
 displaced 680,351 B baseline stays in the report. Build Check now runs
-`bun run build:federation` before its bundle report (about 11 s locally), so the
-federation budgets and the key check run on every PR. Per-locale lazy chunks
+`bun run build:federation` (about 11 s locally), the strict
+`bundle-report.mjs --federation-only` and `test:federation-catalog`, so the key
+check, the federation budgets and the complete-graph check run on every
+code-changing PR. Per-locale lazy chunks
 were not pursued: the platform loads one signed, manifest-pinned graph under a
 strict CSP, and splitting would move catalog bytes rather than remove them.
 

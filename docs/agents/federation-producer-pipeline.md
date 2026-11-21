@@ -29,8 +29,10 @@ Federation uses an isolated Paraglide `locale-modules` output and full output
 minification; its message imports and locale-runtime shim resolve together through
 `vite.federation-i18n.ts`. `vite.federation-catalog.ts` narrows each namespace
 barrel to `src/lib/federation/catalog-keys.json`: the keys the bundled code names
-plus the producer's wire vocabulary (keys the backend sends as data, such as
-source `unavailableReason` values). Those keys, in every locale, remain inside
+plus producer wire keys (keys the backend sends as data, such as source
+`unavailableReason` values) in the families that code reads, plus every key of the
+families declared for computed lookups in `src/lib/federation/computed-lookups.json`
+(maintained by hand). Those keys, in every locale, remain inside
 the signed static graph. The build fails when the list drifts from the bundled
 code; `bun run --filter frontend generate:federation-catalog` regenerates it.
 The SPA's direct imports and lazy message-module output are unchanged.

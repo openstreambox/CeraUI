@@ -35,11 +35,19 @@ test('PR builds measure the federation bundles alongside the SPA', () => {
 	const spa = steps.findIndex((step) => step.run === 'bun run build:frontend');
 	const federation = steps.findIndex((step) => step.run === 'bun run build:federation');
 	const report = steps.findIndex((step) => step.run === 'bun scripts/ci/bundle-report.mjs');
+	const strict = steps.findIndex(
+		(step) => step.run === 'bun scripts/ci/bundle-report.mjs --federation-only',
+	);
+	const catalog = steps.findIndex(
+		(step) => step.run === 'bun run --filter frontend test:federation-catalog',
+	);
 	expect(spa).toBeGreaterThanOrEqual(0);
 	expect(federation).toBeGreaterThanOrEqual(0);
 	expect(report).toBeGreaterThan(spa);
 	expect(report).toBeGreaterThan(federation);
-	for (const index of [federation, report]) {
+	expect(strict).toBeGreaterThan(federation);
+	expect(catalog).toBeGreaterThan(federation);
+	for (const index of [federation, report, strict, catalog]) {
 		expect(steps[index]['working-directory']).toBe('CeraUI');
 		expect(steps[index].if).toBeUndefined();
 		expect(steps[index]['continue-on-error']).toBeUndefined();
