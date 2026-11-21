@@ -116,7 +116,7 @@ describe("bond reload signals the supervised sender by PID", () => {
 		const mine = await startTracked("tracked");
 		const other = await startForeign("foreign");
 
-		expect(restartSrtla()).toBe(true);
+		expect(await restartSrtla()).toBe(true);
 
 		expect(await waitUntil(() => hups(mine.marker) === 1)).toBe(true);
 		// Give a stray signal time to land before judging the bystander.
@@ -131,7 +131,7 @@ describe("bond reload signals the supervised sender by PID", () => {
 	test("with no supervised sender the reload reports a failed delivery", async () => {
 		const other = await startForeign("bystander");
 
-		expect(restartSrtla()).toBe(false);
+		expect(await restartSrtla()).toBe(false);
 
 		await Bun.sleep(150);
 		expect(hups(other.marker)).toBe(0);
@@ -143,7 +143,7 @@ describe("bond reload signals the supervised sender by PID", () => {
 		mine.sp.proc.kill("SIGTERM");
 		await mine.sp.proc.exited;
 
-		expect(restartSrtla()).toBe(false);
+		expect(await restartSrtla()).toBe(false);
 		expect(nameSignals).toEqual([]);
 	});
 });
