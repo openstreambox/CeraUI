@@ -4,12 +4,19 @@ import type { AppWebSocket } from "../../rpc/types.ts";
 
 export class StubRemoteSocket
 	extends EventEmitter
-	implements Pick<WebSocket, "send">
+	implements Pick<WebSocket, "send" | "terminate">
 {
 	static readonly OPEN = 1;
+	static readonly CLOSED = 3;
 	readyState = 1;
 	bufferedAmount = 0;
 	readonly sent: string[] = [];
+	terminate(): void {
+		if (this.readyState === StubRemoteSocket.CLOSED) return;
+		this.readyState = StubRemoteSocket.CLOSED;
+		this.emit("close");
+	}
+
 	send(
 		message: Parameters<WebSocket["send"]>[0],
 		options?: Parameters<WebSocket["send"]>[1] | ((error?: Error) => void),
