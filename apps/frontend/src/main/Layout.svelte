@@ -169,6 +169,13 @@ $effect(() => {
 // store by one render, which is a flash of the pre-auth shell on every re-mount.
 const authStatus = $derived(authStatusStore.value);
 
+// Any successful login arms reconnect re-auth, not just the saved-token check
+// above: after a password login the stored credential exists too, and without
+// the latch a dropped socket reconnects unauthenticated and receives no state.
+$effect(() => {
+	if (authStatus) markAuthenticated();
+});
+
 $effect(() => {
 	if (!authStatus) return;
 	const sendHeartbeat = () => {
