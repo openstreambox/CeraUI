@@ -15,6 +15,8 @@
 import { m } from '@ceraui/i18n/svelte';
 import type { LinkTelemetryMessage } from '@ceraui/rpc/schemas';
 
+import CompactRate from './CompactRate.svelte';
+
 interface Props {
 	/** The headline rate, already formatted. */
 	bitrate: string;
@@ -26,14 +28,30 @@ interface Props {
 const { bitrate, bitrateMeasured = false, telemetry }: Props = $props();
 
 const links = $derived(telemetry?.links ?? []);
-const anyDown = $derived(links.some((link) => link.stale));
-const verdict = $derived(
+// What the rows can actually show. A stale row is a link whose report has not
+// been refreshed, which is not proof the link failed, so it reads as "stopped
+// reporting". A fresh row with no share of the bond is idle. Only when every
+// row is fresh and carrying a share does it read "All links sending".
+type Verdict = 'waiting' | 'stopped-reporting' | 'idle' | 'sending';
+const verdictKind = $derived<Verdict>(
 	links.length === 0
-		? m["live.ingest.waiting"]()
-		: anyDown
-			? m["live.glance.linkDown"]()
-			: m["live.glance.allSending"](),
+		? 'waiting'
+		: links.some((link) => link.stale)
+			? 'stopped-reporting'
+			: links.some((link) => !(link.weight_percent > 0))
+				? 'idle'
+				: 'sending',
 );
+const verdict = $derived(
+	verdictKind === 'waiting'
+		? m["live.ingest.waiting"]()
+		: verdictKind === 'stopped-reporting'
+			? m["live.glance.linkDown"]()
+			: verdictKind === 'idle'
+				? m["live.glance.linkIdle"]()
+				: m["live.glance.allSending"](),
+);
+const anyDown = $derived(verdictKind !== 'sending');
 </script>
 
 <section
@@ -47,17 +65,19 @@ const verdict = $derived(
 			<p class="text-muted-foreground text-xs font-medium">
 				{bitrateMeasured ? m["hud.bitrateSending"]() : m["hud.bitrateTarget"]()}
 			</p>
-			<p class="font-mono text-2xl font-semibold" style="color: var(--status-live);">{bitrate}</p>
+			<p class="font-mono text-2xl font-semibold" style="color: var(--status-live);">
+				<CompactRate value={bitrate} />
+			</p>
 		</div>
 		<p
 			class="mt-1 inline-flex shrink-0 items-center gap-1.5 text-sm font-medium"
-			data-verdict={links.length === 0 ? 'waiting' : anyDown ? 'link-down' : 'sending'}
+			data-verdict={verdictKind}
 			role="status"
 		>
 			<span
 				aria-hidden={true}
 				class="size-2 rounded-full"
-				style="background: {links.length === 0
+				style="background: {verdictKind === 'waiting'
 					? 'var(--muted-foreground)'
 					: anyDown
 						? 'var(--status-warning)'
@@ -80,7 +100,7 @@ const verdict = $derived(
 					</div>
 					<div aria-hidden={true} class="bg-muted h-1.5 overflow-hidden rounded-full">
 						<div
-							class="h-full rounded-full transition-[width] duration-500"
+							class="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none"
 							style="width: {link.stale ? 0 : Math.max(2, Math.min(100, link.weight_percent))}%; background-color: var(--link-{(i % 6) + 1});"
 						></div>
 					</div>

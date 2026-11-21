@@ -58,7 +58,7 @@ describe("LiveGlance", () => {
 		expect(container.textContent).not.toContain(en.live.ingest.nak);
 	});
 
-	it("says a link is down and marks it", () => {
+	it("says a link stopped reporting and marks it, without claiming it failed", () => {
 		const { container } = render(LiveGlance, {
 			props: {
 				bitrate: "2 Mbps",
@@ -70,11 +70,37 @@ describe("LiveGlance", () => {
 		});
 		expect(
 			container.querySelector("[data-verdict]")?.getAttribute("data-verdict"),
-		).toBe("link-down");
+		).toBe("stopped-reporting");
 		expect(container.textContent).toContain(en.live.glance.linkDown);
 		expect(
 			container.querySelector('li[data-stale="true"]')?.textContent,
 		).toContain(en.live.glance.down);
+	});
+
+	it("a fresh link with no share of the bond reads idle, not sending", () => {
+		const { container } = render(LiveGlance, {
+			props: {
+				bitrate: "2 Mbps",
+				telemetry: telemetry([
+					{ iface: "usb0", weight: 100 },
+					{ iface: "wlan0", weight: 0 },
+				]),
+			},
+		});
+		expect(
+			container.querySelector("[data-verdict]")?.getAttribute("data-verdict"),
+		).toBe("idle");
+		expect(container.textContent).toContain(en.live.glance.linkIdle);
+		expect(container.textContent).not.toContain(en.live.glance.allSending);
+	});
+
+	it("stacks the unit (Mb over s) and keeps the plain rate for screen readers", () => {
+		const { container } = render(LiveGlance, {
+			props: { bitrate: "3.6 Mbps", telemetry: null },
+		});
+		const rate = container.querySelector("[data-compact-rate]");
+		expect(rate?.querySelector(".sr-only")?.textContent).toBe("3.6 Mbps");
+		expect(rate?.textContent?.replace(/\s+/g, "")).toContain("3.6Mbs");
 	});
 
 	it("waits while no link has reported", () => {
@@ -157,6 +183,30 @@ describe("LiveDetails", () => {
 		expect(details(container).open).toBe(true);
 	});
 
+	it("cannot be folded while forced open, and the stored choice applies again after", async () => {
+		localStorage.setItem("ceraui.live.detailsOpen", "false");
+		const { container, rerender } = render(LiveDetails, {
+			props: { children: body, forceOpen: true },
+		});
+		const summary = container.querySelector("summary") as HTMLElement;
+		expect(summary.classList.contains("hidden")).toBe(true);
+		// Closing it some other way is undone while forced open.
+		details(container).open = false;
+		await fireEvent(details(container), new Event("toggle"));
+		expect(details(container).open).toBe(true);
+		expect(localStorage.getItem("ceraui.live.detailsOpen")).toBe("false");
+		await rerender({ forceOpen: false });
+		expect(details(container).open).toBe(false);
+	});
+
+	it("uses the width-only breakpoint, the same as the stream card", () => {
+		render(LiveDetails, { props: { children: body } });
+		const calls = (
+			window.matchMedia as unknown as { mock: { calls: string[][] } }
+		).mock.calls;
+		expect(calls.at(-1)?.[0]).toBe("(min-width: 1024px)");
+	});
+
 	it("names what is inside, in every locale", async () => {
 		const { ar, de, es, fr, hi, ja, ko, ptBR, zh } = await import(
 			"../../tests/helpers/catalog"
@@ -167,6 +217,7 @@ describe("LiveDetails", () => {
 				g.title,
 				g.allSending,
 				g.linkDown,
+				g.linkIdle,
 				g.down,
 				g.details,
 				g.detailsHint,
@@ -194,6 +245,40 @@ describe("PhoneBitrateControl", () => {
 	afterEach(() => {
 		cleanup();
 		vi.unstubAllGlobals();
+	});
+
+	it("closes the sheet when the screen widens past 640 px", async () => {
+		let listener: (() => void) | undefined;
+		const query = {
+			matches: false,
+			addEventListener: (_: string, fn: () => void) => (listener = fn),
+			removeEventListener: () => {},
+		};
+		vi.stubGlobal(
+			"matchMedia",
+			vi.fn(() => query),
+		);
+		render(PhoneBitrateControl, {
+			props: {
+				bitrateDraft: 5000,
+				bitrateLabel: "5 Mbps",
+				step: 250,
+				bitrateMin: 500,
+				bitrateMax: 12000,
+				sliderMin: 1000,
+				sliderMax: 10000,
+				onStep: () => {},
+				onSliderChange: () => {},
+				onSliderCommit: () => {},
+			},
+		});
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Change bitrate, now 5 Mbps" }),
+		);
+		await screen.findByRole("dialog");
+		query.matches = true;
+		listener?.();
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	});
 
 	it("the phone value button opens the same adjuster in a sheet", async () => {

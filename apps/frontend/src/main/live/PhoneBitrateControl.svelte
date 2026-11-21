@@ -15,6 +15,7 @@ import { Button } from '$lib/components/ui/button';
 import * as Sheet from '$lib/components/ui/sheet';
 
 import BitrateAdjuster from './BitrateAdjuster.svelte';
+import CompactRate from './CompactRate.svelte';
 
 interface Props {
 	bitrateDraft: number;
@@ -32,6 +33,18 @@ interface Props {
 const props: Props = $props();
 
 let sheetOpen = $state(false);
+
+// The sheet is the phone's way to the slider. When the screen widens past 640 px
+// the inline slider is back, so the sheet closes rather than cover it.
+$effect(() => {
+	if (typeof window === 'undefined' || !window.matchMedia) return;
+	const wide = window.matchMedia('(min-width: 640px)');
+	const onChange = () => {
+		if (wide.matches) sheetOpen = false;
+	};
+	wide.addEventListener('change', onChange);
+	return () => wide.removeEventListener('change', onChange);
+});
 </script>
 
 <div class="shrink-0 sm:min-w-0 sm:flex-1">
@@ -46,12 +59,16 @@ let sheetOpen = $state(false);
 		variant="outline"
 	>
 		<Gauge aria-hidden={true} class="size-4" />
-		{props.bitrateLabel}
+		<CompactRate value={props.bitrateLabel} />
 	</Button>
 </div>
 
 <Sheet.Root bind:open={sheetOpen}>
-	<Sheet.Content class="gap-0 px-4 pt-2 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]" side="bottom">
+	<Sheet.Content
+		class="gap-0 px-4 pt-2 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))]"
+		data-touch-region
+		side="bottom"
+	>
 		<Sheet.Header class="px-0">
 			<Sheet.Title>{m["live.adjustBitrate"]()}</Sheet.Title>
 		</Sheet.Header>
