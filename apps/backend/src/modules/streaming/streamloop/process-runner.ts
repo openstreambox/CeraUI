@@ -284,6 +284,7 @@ export function stopProcess(streamingProcess: StreamingProcess) {
 
 export async function stopProcessAndWait(
 	streamingProcess: StreamingProcess,
+	escalationMs: number = SHUTDOWN_SIGKILL_TIMEOUT_MS,
 ): Promise<void> {
 	if (stopProcess(streamingProcess)) return;
 	let killTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
@@ -299,13 +300,72 @@ export async function stopProcessAndWait(
 						streamingProcess.proc.kill("SIGKILL");
 					}
 					resolve();
-				}, SHUTDOWN_SIGKILL_TIMEOUT_MS);
+				}, escalationMs);
 			}),
 		]);
+		if (streamingProcess.hosted) {
+			await stopHostedBounded(streamingProcess.hosted, escalationMs);
+			return;
+		}
 		await streamingProcess.proc.exited;
 	} finally {
 		if (killTimer !== undefined) globalThis.clearTimeout(killTimer);
 	}
+}
+
+/** Whether `promise` settles within `ms`. */
+async function settlesWithin(
+	promise: Promise<unknown>,
+	ms: number,
+): Promise<boolean> {
+	let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise.then(() => true),
+			new Promise<boolean>((resolve) => {
+				timer = globalThis.setTimeout(() => resolve(false), ms);
+			}),
+		]);
+	} finally {
+		if (timer !== undefined) globalThis.clearTimeout(timer);
+	}
+}
+
+/**
+ * A hosted sender whose pidfd never confirms the exit after TERM and KILL:
+ * ask systemd to stop its unit (bounded), look again, and if the exit is
+ * still not confirmed, fail the stop instead of waiting forever. Unknown is
+ * never taken as exited.
+ */
+async function stopHostedBounded(
+	hosted: HostedSender,
+	ms: number,
+): Promise<void> {
+	if (await settlesWithin(hosted.exited, ms)) return;
+	const outcome = await hosted.stopUnit().catch(() => "failed" as const);
+	hosted.refresh();
+	if (hosted.exitCode !== null) return;
+	if (
+		(outcome === "stopped" || outcome === "absent") &&
+		(await settlesWithin(hosted.exited, ms))
+	)
+		return;
+	logger.warn("stop: the hosted sender's exit is not confirmed", {
+		unit: hosted.unit,
+		outcome,
+	});
+	throw new Error("hosted_sender_stop_unconfirmed");
+}
+
+/**
+ * Drop a hosted sender from supervision without signalling it: a takeover
+ * that rolls back hands the sender to systemd, which stops its unit by name.
+ */
+export function forgetHostedSender(streamingProcess: StreamingProcess): void {
+	if (!streamingProcess.hosted) return;
+	streamingProcess.exitListeners = [];
+	streamingProcess.hosted.release();
+	removeProc(streamingProcess);
 }
 
 const stopCheckInterval = 50;

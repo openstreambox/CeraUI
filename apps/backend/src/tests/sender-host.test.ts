@@ -30,6 +30,8 @@ function showText(over: Record<string, string> = {}): string {
 		InvocationID: INVOCATION,
 		ControlGroup: CGROUP,
 		Restart: "no",
+		Transient: "yes",
+		Description: "CeraLive SRTLA sender",
 		...over,
 	};
 	return Object.entries(rows)
@@ -80,6 +82,8 @@ function hostDeps(over: Partial<SenderHostDeps> = {}) {
 			shows++;
 			return showText();
 		},
+		// The stop path's own read; by default the same answers as `show`.
+		showSender: (unit) => deps.show(unit, "system"),
 		pin: async () => fakePin().pin,
 		readStat: async (pid) => statLine(pid, "555"),
 		readCgroup: async () => CGROUP,
@@ -197,6 +201,31 @@ describe("launchHostedSender", () => {
 		).rejects.toMatchObject({ reason: "identity_unconfirmed" });
 	});
 
+	test("a start request whose reply is lost still stops the unit it may have started", async () => {
+		let shows = 0;
+		const h = hostDeps({
+			run: async (command, args) => {
+				h.runs.push([command, ...args]);
+				if (command === "systemd-run") throw new Error("timeout");
+				return "";
+			},
+			show: async () =>
+				++shows === 1
+					? showText()
+					: showText({ ActiveState: "inactive", MainPID: "0" }),
+		});
+		await expect(
+			launchHostedSender("/usr/bin/srtla_send", [], h.deps),
+		).rejects.toMatchObject({ reason: "start_unconfirmed" });
+		expect(h.runs.at(-1)).toEqual([
+			"systemctl",
+			"stop",
+			"--no-block",
+			"--",
+			UNIT,
+		]);
+	});
+
 	test("no pidfd: the unit is stopped and nothing is supervised", async () => {
 		const h = hostDeps({ pin: async () => null });
 		await expect(
@@ -218,9 +247,28 @@ describe("launchHostedSender", () => {
 describe("stopSenderUnit", () => {
 	test("never acts on a unit without our prefix", async () => {
 		const h = hostDeps();
-		expect(await stopSenderUnit("ceralive.service", h.deps)).toBe("failed");
+		expect(await stopSenderUnit("ceralive.service", h.deps)).toBe("not_ours");
 		expect(h.runs).toEqual([]);
 		expect(h.shows).toBe(0);
+	});
+
+	test("a unit with our name that is not our transient sender is left alone", async () => {
+		for (const over of [
+			{ Transient: "no" },
+			{ Description: "Something else" },
+		]) {
+			const h = hostDeps({ show: async () => showText(over) });
+			expect(await stopSenderUnit(UNIT, h.deps)).toBe("not_ours");
+			expect(h.runs).toEqual([]);
+		}
+	});
+
+	test("another start of the recorded unit name is left alone", async () => {
+		const h = hostDeps();
+		expect(await stopSenderUnit(UNIT, h.deps, 1_000, "f".repeat(32))).toBe(
+			"not_ours",
+		);
+		expect(h.runs).toEqual([]);
 	});
 
 	test("a unit that is gone or inactive is absent, with no stop sent", async () => {
@@ -233,6 +281,23 @@ describe("stopSenderUnit", () => {
 		expect([...gone.runs, ...inactive.runs]).toEqual([]);
 	});
 
+	test("an unanswered first read is a failure, never absent", async () => {
+		const h = hostDeps({
+			show: async () => {
+				throw new Error("timeout");
+			},
+		});
+		expect(await stopSenderUnit(UNIT, h.deps)).toBe("failed");
+		expect(h.runs).toEqual([]);
+	});
+
+	test("MainPID 0 while systemd still says active is not stopped", async () => {
+		const h = hostDeps({
+			show: async () => showText({ ActiveState: "deactivating", MainPID: "0" }),
+		});
+		expect(await stopSenderUnit(UNIT, h.deps, 300)).toBe("timed_out");
+	});
+
 	test("stops by name and waits until systemd reports it inactive", async () => {
 		let shows = 0;
 		const h = hostDeps({
@@ -241,18 +306,25 @@ describe("stopSenderUnit", () => {
 					? showText()
 					: showText({ ActiveState: "inactive", MainPID: "0" }),
 		});
-		expect(await stopSenderUnit(UNIT, h.deps)).toBe("stopped");
+		expect(await stopSenderUnit(UNIT, h.deps, 10_000, INVOCATION)).toBe(
+			"stopped",
+		);
 		expect(h.runs).toEqual([["systemctl", "stop", "--no-block", "--", UNIT]]);
 	});
 
-	test("a unit that does not stop in time is reported, not assumed stopped", async () => {
-		let now = 0;
+	test("unanswered reads after the stop request never count as stopped", async () => {
+		let shows = 0;
 		const h = hostDeps({
-			now: () => now,
-			wait: async (ms) => {
-				now += ms;
+			show: async () => {
+				if (++shows === 1) return showText();
+				throw new Error("timeout");
 			},
 		});
+		expect(await stopSenderUnit(UNIT, h.deps, 300)).toBe("timed_out");
+	});
+
+	test("a unit that does not stop in time is reported, not assumed stopped", async () => {
+		const h = hostDeps();
 		expect(await stopSenderUnit(UNIT, h.deps, 300)).toBe("timed_out");
 	});
 

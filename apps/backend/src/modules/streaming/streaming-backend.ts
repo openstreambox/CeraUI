@@ -131,6 +131,8 @@ export interface StreamingBackend {
 	 * and a reconnect or an idle status drops it the same way.
 	 */
 	adoptLaunchedSession?(sessionId: string, connection: number): boolean;
+	/** Undo `adoptLaunchedSession` for that id (a takeover's rollback). */
+	releaseAdoptedSession?(sessionId: string): void;
 }
 
 export type EngineSessionEvidence = {

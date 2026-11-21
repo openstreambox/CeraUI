@@ -31,7 +31,6 @@ import {
 	readUnitFacts,
 	statFields,
 	systemctlShow,
-	type UnitFacts,
 	type UnitShow,
 } from "../sender-invocation.ts";
 
@@ -77,9 +76,16 @@ export type HostedSender = {
 	signal(signal: NodeJS.Signals | number): boolean | null;
 	/** Stop watching (the sender keeps running); closes the pidfd. */
 	release(): void;
+	/** Ask the pidfd now instead of waiting for the next poll. */
+	refresh(): void;
+	/** Stop this sender's unit by name through systemd (bounded). */
+	stopUnit(): Promise<UnitStopOutcome>;
 };
 
 export type HostedSenderOptions = {
+	/** The unit's InvocationID; a unit stop then acts only on that start. */
+	readonly invocation?: string | null;
+	readonly stopUnit?: () => Promise<UnitStopOutcome>;
 	readonly pollMs?: number;
 	readonly schedule?: (callback: () => void, ms: number) => unknown;
 	readonly cancel?: (timer: unknown) => void;
@@ -166,12 +172,22 @@ export function hostedSenderHandle(
 			timer = undefined;
 			pin.close();
 		},
+		refresh: () => {
+			if (exitCode !== null || released) return;
+			if (pin.alive() === false) markExited();
+		},
+		stopUnit:
+			options.stopUnit ??
+			(() =>
+				stopSenderUnit(unit, undefined, undefined, options.invocation ?? null)),
 	};
 }
 
 export type SenderHostDeps = {
 	readonly run: (command: string, args: string[]) => Promise<string>;
 	readonly show: UnitShow;
+	/** `systemctl show` of a sender unit with the properties a stop needs. */
+	readonly showSender: (unit: string) => Promise<string>;
 	readonly pin: (pid: number) => Promise<ProcessPin | null>;
 	readonly readStat: (pid: number) => Promise<string>;
 	readonly readCgroup: (pid: number) => Promise<string | null>;
@@ -188,6 +204,12 @@ export type SenderHostDeps = {
 export const defaultSenderHostDeps: SenderHostDeps = {
 	run: (command, args) => run(command, args, { timeout: 5_000 }),
 	show: systemctlShow,
+	showSender: (unit) =>
+		run(
+			"systemctl",
+			["show", `--property=${SENDER_UNIT_PROPERTIES}`, "--", unit],
+			{ timeout: 3_000, maxBuffer: 8192 },
+		),
 	pin: pinProcess,
 	readStat: (pid) => readFile(`/proc/${pid}/stat`, "utf8"),
 	readCgroup: (pid) => readProcessCgroup("/proc", pid),
@@ -231,21 +253,27 @@ export async function launchHostedSender(
 	const unit = `${SENDER_UNIT_PREFIX}${deps.unitId()}.service`;
 	if (!isSenderUnit(unit)) throw new HostedLaunchError("unit_name", unit);
 	await deps.mkdir(SENDER_OUTPUT_DIR);
-	await deps.run("systemd-run", [
-		`--unit=${unit}`,
-		"--description=CeraLive SRTLA sender",
-		"--service-type=exec",
-		"--collect",
-		"--quiet",
-		"--property=Restart=no",
-		"--property=KillMode=control-group",
-		"--property=StandardOutput=journal",
-		`--property=StandardError=truncate:${senderStderrFile(unit)}`,
-		"--setenv=NO_COLOR=1",
-		"--",
-		command,
-		...args,
-	]);
+	try {
+		await deps.run("systemd-run", [
+			`--unit=${unit}`,
+			"--description=CeraLive SRTLA sender",
+			"--service-type=exec",
+			"--collect",
+			"--quiet",
+			"--property=Restart=no",
+			"--property=KillMode=control-group",
+			"--property=StandardOutput=journal",
+			`--property=StandardError=truncate:${senderStderrFile(unit)}`,
+			"--setenv=NO_COLOR=1",
+			"--",
+			command,
+			...args,
+		]);
+	} catch {
+		// systemd may have started it although the reply never came.
+		await stopSenderUnit(unit, deps).catch(() => undefined);
+		throw new HostedLaunchError("start_unconfirmed", unit);
+	}
 	let pin: ProcessPin | null = null;
 	try {
 		const before = await readUnitFacts(unit, "system", deps.show);
@@ -267,7 +295,9 @@ export async function launchHostedSender(
 			pin.alive() !== true
 		)
 			throw new HostedLaunchError("identity_unconfirmed", unit);
-		const sender = hostedSenderHandle(before.mainPid, startTime, unit, pin);
+		const sender = hostedSenderHandle(before.mainPid, startTime, unit, pin, {
+			invocation: before.invocation,
+		});
 		pin = null;
 		return { sender, followers: deps.follow(unit, "start") };
 	} catch (error) {
@@ -279,23 +309,81 @@ export async function launchHostedSender(
 	}
 }
 
-export type UnitStopOutcome = "stopped" | "absent" | "timed_out" | "failed";
+export type UnitStopOutcome =
+	| "stopped"
+	| "absent"
+	| "timed_out"
+	| "failed"
+	| "not_ours";
+
+const SENDER_DESCRIPTION = "CeraLive SRTLA sender";
+const SENDER_UNIT_PROPERTIES =
+	"Id,LoadState,ActiveState,SubState,MainPID,InvocationID,Transient,Description";
+
+type SenderUnitState =
+	| { readonly state: "absent" }
+	| { readonly state: "unknown" }
+	| {
+			readonly state: "loaded";
+			readonly active: string;
+			readonly invocation: string;
+			readonly transient: boolean;
+			readonly description: string;
+	  };
+
+/** One `systemctl show` read; a failed or unparsable read is unknown. */
+async function readSenderUnit(
+	unit: string,
+	deps: Pick<SenderHostDeps, "showSender">,
+): Promise<SenderUnitState> {
+	let out: string;
+	try {
+		out = await deps.showSender(unit);
+	} catch {
+		return { state: "unknown" };
+	}
+	const rows = new Map<string, string>();
+	for (const line of out.split("\n")) {
+		const at = line.indexOf("=");
+		if (at > 0) rows.set(line.slice(0, at), line.slice(at + 1).trim());
+	}
+	const load = rows.get("LoadState");
+	if (load === "not-found") return { state: "absent" };
+	if (load !== "loaded" || rows.get("Id") !== unit) return { state: "unknown" };
+	return {
+		state: "loaded",
+		active: rows.get("ActiveState") ?? "",
+		invocation: rows.get("InvocationID") ?? "",
+		transient: rows.get("Transient") === "yes",
+		description: rows.get("Description") ?? "",
+	};
+}
 
 /**
  * Stop a sender unit by name and wait until systemd reports it inactive or
- * gone. Never addresses a PID. Refuses any unit without our prefix.
+ * gone. Never addresses a PID. Only a transient unit with our name and
+ * description is stopped; with `invocation`, only that start of it. Only a
+ * read that systemd answered counts: an unanswered read is never taken as
+ * stopped or absent.
  */
 export async function stopSenderUnit(
 	unit: string,
 	deps: Pick<
 		SenderHostDeps,
-		"run" | "show" | "wait" | "now"
+		"run" | "showSender" | "wait" | "now"
 	> = defaultSenderHostDeps,
 	timeoutMs = SENDER_UNIT_STOP_TIMEOUT_MS,
+	invocation: string | null = null,
 ): Promise<UnitStopOutcome> {
-	if (!isSenderUnit(unit)) return "failed";
-	const initial = await readUnitFacts(unit, "system", deps.show);
-	if (initial === null || isInactive(initial)) return "absent";
+	if (!isSenderUnit(unit)) return "not_ours";
+	const initial = await readSenderUnit(unit, deps);
+	if (initial.state === "absent") return "absent";
+	if (initial.state === "unknown") return "failed";
+	if (!initial.transient || initial.description !== SENDER_DESCRIPTION)
+		return "not_ours";
+	if (invocation && initial.invocation && initial.invocation !== invocation)
+		return "not_ours";
+	if (isInactive(initial.active)) return "absent";
 	try {
 		await deps.run("systemctl", ["stop", "--no-block", "--", unit]);
 	} catch {
@@ -303,19 +391,16 @@ export async function stopSenderUnit(
 	}
 	const deadline = deps.now() + timeoutMs;
 	for (;;) {
-		const facts = await readUnitFacts(unit, "system", deps.show);
-		if (facts === null || isInactive(facts)) return "stopped";
+		const state = await readSenderUnit(unit, deps);
+		if (state.state === "absent") return "stopped";
+		if (state.state === "loaded" && isInactive(state.active)) return "stopped";
 		if (deps.now() >= deadline) return "timed_out";
 		await deps.wait(100);
 	}
 }
 
-function isInactive(facts: UnitFacts): boolean {
-	return (
-		facts.activeState === "inactive" ||
-		facts.activeState === "failed" ||
-		facts.mainPid === 0
-	);
+function isInactive(active: string): boolean {
+	return active === "inactive" || active === "failed";
 }
 
 /** Every loaded sender unit, or null when systemd cannot be asked. */

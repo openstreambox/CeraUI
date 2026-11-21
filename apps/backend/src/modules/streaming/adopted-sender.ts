@@ -21,9 +21,13 @@ export function clearAdoptedSender(sender?: StreamingProcess): void {
 	if (sender === undefined || adopted === sender) adopted = undefined;
 }
 
-/** The adopted sender, while it is alive. */
+/**
+ * The adopted sender, while its pidfd says it is alive right now. The cached
+ * exit fields lag the exit poll, and an unknown answer is not alive.
+ */
 export function adoptedSender(): StreamingProcess | undefined {
 	if (adopted === undefined) return undefined;
 	const { exitCode, signalCode } = adopted.proc;
-	return exitCode === null && signalCode === null ? adopted : undefined;
+	if (exitCode !== null || signalCode !== null) return undefined;
+	return adopted.hosted?.pin.alive() === true ? adopted : undefined;
 }

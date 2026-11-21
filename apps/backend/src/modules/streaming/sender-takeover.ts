@@ -85,34 +85,55 @@ export type TakeoverDeps = {
 	readonly readStat: (pid: number) => Promise<string | null>;
 	readonly readMarker: SenderAdoptionIo["readMarker"];
 	readonly captureConfig: () => ArmedStreamConfig;
+	/** The recorded IP list's contents, for telemetry; throws when unreadable. */
+	readonly readIps: (lifetime: Lifetime) => Promise<string>;
+	/** The receiver address of the armed configuration; throws when invalid. */
+	readonly resolveSrtlaAddr: (
+		evidence: SenderAdoptionEvidence,
+	) => Promise<string>;
 	readonly adoptEngineSession: (
 		sessionId: string,
 		connection: number,
 	) => boolean;
+	readonly releaseEngineSession: (sessionId: string) => void;
 	readonly hostedHandle: (
 		pid: number,
 		startTime: string,
 		unit: string,
 		pin: ProcessPin,
+		invocation: string | null,
 	) => HostedSender;
 	readonly register: (sender: HostedSender) => StreamingProcess;
+	/** Drop a registered hosted sender without signalling it (rollback). */
+	readonly forgetSender: (sender: StreamingProcess) => void;
+	/** True only when the sender's pidfd says alive right now. */
+	readonly senderAlive: (sender: StreamingProcess) => boolean;
 	readonly continueGeneration: (applied: number) => void;
 	readonly adoptLifetime: (lifetime: Lifetime) => void;
-	readonly attachTelemetry: (
-		lifetime: Lifetime,
-		current: () => boolean,
-	) => Promise<void>;
+	/** Throws when telemetry cannot attach. */
+	readonly attachTelemetry: (lifetime: Lifetime, ips: string) => void;
 	readonly reconcile: () => Promise<LifecycleState>;
 	readonly attachSession: (
 		generation: number,
-		evidence: SenderAdoptionEvidence,
+		srtlaAddr: string,
 		current: () => boolean,
-	) => Promise<boolean>;
-	readonly stopAdopted: (sender: StreamingProcess) => Promise<void>;
+	) => boolean;
+	readonly detachSession: (generation: number) => void;
 	readonly stopTelemetry: () => void;
-	readonly stopUnit: (unit: string) => Promise<UnitStopOutcome>;
+	/**
+	 * Stop a sender unit by name. With `invocation`, only that start of it:
+	 * a unit that is not ours, or another invocation, is left alone.
+	 */
+	readonly stopUnit: (
+		unit: string,
+		invocation?: string | null,
+	) => Promise<UnitStopOutcome>;
 	readonly listUnits: () => Promise<string[] | null>;
-	readonly detectOnly: () => Promise<unknown>;
+	/** The detect-only observer, given the boot id and record already read. */
+	readonly detectOnly: (
+		bootId: string,
+		lifetime: Lifetime | null,
+	) => Promise<unknown>;
 };
 
 function refusal(check: string, reason: string): TakeoverRefusal {
@@ -130,19 +151,31 @@ function hostedUnitOf(
 	return isSenderUnit(lifetime.unit) ? lifetime.unit : null;
 }
 
+/** Systemd confirmed the unit is not running. Anything else is doubt. */
+function confirmedGone(outcome: UnitStopOutcome | "none"): boolean {
+	return outcome === "stopped" || outcome === "absent" || outcome === "none";
+}
+
 /**
  * Stop the recorded unit by name (and, with the flag, every other sender unit
- * except `keep`), then reconcile again. The order is fixed: no sender is left
- * that the next reconciliation could mistake for ours.
+ * except `keep`), and only once systemd confirms them gone, reconcile again.
+ * Stop, see it gone, then reconcile: an unconfirmed stop leaves the session
+ * as the startup reconciliation left it, protected.
  */
 async function fallback(
 	deps: TakeoverDeps,
 	unit: string | null,
 	why: TakeoverRefusal,
+	invocation: string | null = null,
 ): Promise<TakeoverOutcome> {
 	let stopped: UnitStopOutcome | "none" = "none";
-	if (unit) stopped = await deps.stopUnit(unit).catch(() => "failed" as const);
-	const swept = deps.flagOn() ? await sweepUnits(deps, unit) : 0;
+	if (unit)
+		stopped = await deps
+			.stopUnit(unit, invocation)
+			.catch(() => "failed" as const);
+	const sweep = deps.flagOn()
+		? await sweepUnits(deps, unit)
+		: { asked: 0, confirmed: true };
 	if (unit)
 		logger.warn("sender takeover refused; the sender unit is stopped", {
 			check: why.check,
@@ -154,31 +187,36 @@ async function fallback(
 			check: why.check,
 			reason: why.reason,
 		});
-	// Without a stopped sender nothing changed for reconciliation.
-	if (unit || swept > 0) await deps.reconcile().catch(() => undefined);
+	const changed = unit !== null || sweep.asked > 0;
+	if (changed && confirmedGone(stopped) && sweep.confirmed)
+		await deps.reconcile().catch(() => undefined);
+	else if (changed)
+		logger.warn("sender takeover: a sender unit is not confirmed stopped");
 	return { result: "fallback", ...why, stopped };
 }
 
-/** Stop every loaded sender unit other than `keep`; how many were asked. */
+/** Stop every loaded sender unit other than `keep`. */
 async function sweepUnits(
 	deps: TakeoverDeps,
 	keep: string | null,
-): Promise<number> {
+): Promise<{ asked: number; confirmed: boolean }> {
 	const units = await deps.listUnits().catch(() => null);
 	if (units === null) {
 		logger.warn("sender takeover: sender units could not be listed");
-		return 0;
+		return { asked: 0, confirmed: true };
 	}
 	let asked = 0;
+	let confirmed = true;
 	for (const other of units) {
 		if (other === keep) continue;
 		asked++;
 		const outcome = await deps.stopUnit(other).catch(() => "failed" as const);
+		if (!confirmedGone(outcome) && outcome !== "not_ours") confirmed = false;
 		logger.warn("sender takeover: stopped a sender unit with no record", {
 			outcome,
 		});
 	}
-	return asked;
+	return { asked, confirmed };
 }
 
 /**
@@ -190,13 +228,16 @@ export async function takeOverSenderAtStartup(
 	deps: TakeoverDeps = defaultTakeoverDeps(),
 ): Promise<TakeoverOutcome> {
 	let unit: string | null = null;
+	let invocation: string | null = null;
 	try {
 		const bootId = await deps.bootId().catch(() => "");
 		const lifetime = await deps.readLifetime().catch(() => null);
 		unit = hostedUnitOf(lifetime, bootId);
+		invocation = unit ? (lifetime?.invocation ?? null) : null;
 		if (!deps.flagOn()) {
-			if (unit) return await fallback(deps, unit, refusal("flag", "off"));
-			void deps.detectOnly().catch(() => undefined);
+			if (unit)
+				return await fallback(deps, unit, refusal("flag", "off"), invocation);
+			void deps.detectOnly(bootId, lifetime).catch(() => undefined);
 			return { result: "detect_only" };
 		}
 		if (!lifetime || !unit)
@@ -204,17 +245,20 @@ export async function takeOverSenderAtStartup(
 		const modem = await deps
 			.modemGates()
 			.catch(() => refusal("modem", "unreadable"));
-		if (modem) return await fallback(deps, unit, modem);
+		if (modem) return await fallback(deps, unit, modem, invocation);
 		return await adopt(deps, lifetime, unit);
 	} catch {
-		return await fallback(deps, unit, refusal("takeover", "failed")).catch(
-			() => ({
-				result: "fallback" as const,
-				check: "takeover",
-				reason: "failed",
-				stopped: "failed" as const,
-			}),
-		);
+		return await fallback(
+			deps,
+			unit,
+			refusal("takeover", "failed"),
+			invocation,
+		).catch(() => ({
+			result: "fallback" as const,
+			check: "takeover",
+			reason: "failed",
+			stopped: "failed" as const,
+		}));
 	}
 }
 
@@ -224,27 +268,31 @@ async function adopt(
 	unit: string,
 ): Promise<TakeoverOutcome> {
 	const pid = lifetime.pid;
+	const back = (why: TakeoverRefusal) =>
+		fallback(deps, unit, why, lifetime.invocation ?? null);
 	if (pid === null || lifetime.startTime === null)
-		return fallback(deps, unit, refusal("lifetime", "never_started"));
+		return back(refusal("lifetime", "never_started"));
 	const intent = deps.captureIntent();
 	// One pin for the collection and the takeover: the process the evidence
 	// describes is the process the handle signals.
 	const pin = await deps.pin(pid).catch(() => null);
 	if (!pin?.pidfd) {
 		pin?.close();
-		return fallback(deps, unit, refusal("process", "pin_unavailable"));
+		return back(refusal("process", "pin_unavailable"));
 	}
 	let kept = false;
 	try {
 		const io = deps.adoptionIo();
 		const shared: ProcessPin = { ...pin, close: () => undefined };
+		// The collector judges this very record, never a fresh read of it.
 		const evidence = await collectSenderAdoptionEvidence({
 			...io,
+			readLifetime: async () => lifetime,
 			pin: async (asked) => (asked === pid ? shared : io.pin(asked)),
 		});
 		const verdict = senderAdoptionVerdict(evidence);
 		if (verdict.decision !== "adopt")
-			return await fallback(deps, unit, refusal(verdict.check, verdict.reason));
+			return await back(refusal(verdict.check, verdict.reason));
 		const outcome = await commit(deps, lifetime, unit, pin, evidence, intent);
 		kept = outcome.result === "adopted";
 		return outcome;
@@ -253,7 +301,63 @@ async function adopt(
 	}
 }
 
-/** The commit, in order; each step can still abort into the fallback. */
+/** A commit step that failed, with the reason the fallback reports. */
+class CommitRefused extends Error {
+	constructor(readonly refusal: TakeoverRefusal) {
+		super(refusal.reason);
+	}
+}
+
+/**
+ * Everything that can change under a commit, read again: modem state, the
+ * record, the pinned process, then (sampled last, after the slow reads)
+ * operator intent, the session state and the armed configuration.
+ */
+async function validate(
+	deps: TakeoverDeps,
+	lifetime: Lifetime,
+	pin: ProcessPin,
+	evidence: SenderAdoptionEvidence,
+	intent: () => boolean,
+): Promise<TakeoverRefusal | null> {
+	const modem = await deps
+		.modemGates()
+		.catch(() => refusal("modem", "unreadable"));
+	if (modem) return modem;
+	const record = await deps.readLifetime().catch(() => null);
+	if (!record || canonicalRecord(record) !== canonicalRecord(lifetime))
+		return refusal("commit", "record_changed");
+	const stat = await deps.readStat(lifetime.pid as number).catch(() => null);
+	const fields = stat === null ? [] : statFields(stat);
+	if (
+		pin.alive() !== true ||
+		fields[19] !== lifetime.startTime ||
+		!eligibleProcessState(fields[0] ?? null)
+	)
+		return refusal("commit", "sender_changed");
+	if (!intent() || deps.sessionState() !== "reconciling")
+		return refusal("commit", "operator_intent");
+	if (!sameArmedIntent(evidence, deps.readMarker(), deps.captureConfig()))
+		return refusal("commit", "config_changed");
+	return null;
+}
+
+function canonicalRecord(record: Lifetime): string {
+	return JSON.stringify(
+		Object.keys(record)
+			.sort()
+			.map((key) => [key, (record as Record<string, unknown>)[key]]),
+	);
+}
+
+/**
+ * The commit, as a transaction. First everything that can fail is prepared
+ * with no side effect; then each step registers its undo; any failure undoes
+ * every step done, in reverse, and falls back. The adopted marker and the
+ * one reconciliation (the only step that marks the session streaming) come
+ * last, right after a final validation. The lifetime is adopted (which lets
+ * telemetry write its report) only once reconciliation committed streaming.
+ */
 async function commit(
 	deps: TakeoverDeps,
 	lifetime: Lifetime,
@@ -262,60 +366,78 @@ async function commit(
 	evidence: SenderAdoptionEvidence,
 	intent: () => boolean,
 ): Promise<TakeoverOutcome> {
+	const back = (why: TakeoverRefusal) =>
+		fallback(deps, unit, why, lifetime.invocation ?? null);
 	const pid = lifetime.pid as number;
 	const startTime = lifetime.startTime as string;
-	// 1. Operator intent, the session and the armed configuration unchanged.
-	if (!intent() || deps.sessionState() !== "reconciling")
-		return fallback(deps, unit, refusal("commit", "operator_intent"));
-	if (!sameArmedIntent(evidence, deps.readMarker(), deps.captureConfig()))
-		return fallback(deps, unit, refusal("commit", "config_changed"));
-	// 2. The pinned process, still the recorded one and still eligible.
-	const stat = await deps.readStat(pid).catch(() => null);
-	const fields = stat === null ? [] : statFields(stat);
-	if (
-		pin.alive() !== true ||
-		fields[19] !== startTime ||
-		!eligibleProcessState(fields[0] ?? null)
-	)
-		return fallback(deps, unit, refusal("commit", "sender_changed"));
-	// 3. The engine session, on the connection that answered.
+	// Prepare: no side effects.
+	let ips: string;
+	try {
+		ips = await deps.readIps(lifetime);
+	} catch {
+		return back(refusal("commit", "ips_unreadable"));
+	}
+	let srtlaAddr: string;
+	try {
+		srtlaAddr = await deps.resolveSrtlaAddr(evidence);
+	} catch {
+		return back(refusal("commit", "config_invalid"));
+	}
 	const session = evidence.engineSession;
 	const connection = evidence.engineConnection;
-	if (
-		!session ||
-		connection === null ||
-		connection === undefined ||
-		!deps.adoptEngineSession(session.sessionId, connection)
-	)
-		return fallback(deps, unit, refusal("commit", "engine_changed"));
-	// 4. The sender, supervised through the pin.
-	const sender = deps.register(deps.hostedHandle(pid, startTime, unit, pin));
-	noteAdoptedSender(sender);
-	const live = () =>
-		sender.proc.exitCode === null && sender.proc.signalCode === null;
-	// 5. Publications continue above what the sender applied.
-	if (evidence.appliedMap)
-		deps.continueGeneration(evidence.appliedMap.generation);
-	// 6. Telemetry and observations, from the recorded paths.
-	deps.adoptLifetime(lifetime);
-	await deps.attachTelemetry(lifetime, live).catch(() => undefined);
-	// 7. One reconciliation: `streaming` only with this handle and this session.
-	const state = await deps.reconcile().catch(() => "unknown" as const);
-	if (state !== "streaming" || !live()) {
-		clearAdoptedSender(sender);
-		deps.stopTelemetry();
-		await deps.stopAdopted(sender).catch(() => undefined);
-		return fallback(deps, unit, refusal("commit", `reconciled_${state}`));
+	if (!session || connection === null || connection === undefined)
+		return back(refusal("commit", "engine_changed"));
+	const prepared = await validate(deps, lifetime, pin, evidence, intent);
+	if (prepared) return back(prepared);
+
+	// Apply: each step undone if a later one fails.
+	const undo: (() => void)[] = [];
+	let committed = false;
+	try {
+		if (!deps.adoptEngineSession(session.sessionId, connection))
+			throw new CommitRefused(refusal("commit", "engine_changed"));
+		undo.push(() => deps.releaseEngineSession(session.sessionId));
+		const sender = deps.register(
+			deps.hostedHandle(pid, startTime, unit, pin, lifetime.invocation ?? null),
+		);
+		undo.push(() => deps.forgetSender(sender));
+		deps.attachTelemetry(lifetime, ips);
+		undo.push(() => deps.stopTelemetry());
+		const generation = deps.sessionGeneration();
+		// The listeners act only once the adoption is committed.
+		const current = () => committed && deps.senderAlive(sender);
+		if (!deps.attachSession(generation, srtlaAddr, current))
+			throw new CommitRefused(refusal("commit", "listeners_unattached"));
+		undo.push(() => deps.detachSession(generation));
+
+		// Final validation, then the marker and the reconciliation.
+		const last = await validate(deps, lifetime, pin, evidence, intent);
+		if (last) throw new CommitRefused(last);
+		if (!deps.senderAlive(sender))
+			throw new CommitRefused(refusal("commit", "sender_changed"));
+		if (evidence.appliedMap)
+			deps.continueGeneration(evidence.appliedMap.generation);
+		noteAdoptedSender(sender);
+		undo.push(() => clearAdoptedSender(sender));
+		const state = await deps.reconcile().catch(() => "unknown" as const);
+		if (state !== "streaming")
+			throw new CommitRefused(refusal("commit", `reconciled_${state}`));
+		committed = true;
+	} catch (error) {
+		for (const step of undo.reverse()) {
+			try {
+				step();
+			} catch {
+				// Every remaining undo still runs.
+			}
+		}
+		return back(
+			error instanceof CommitRefused
+				? error.refusal
+				: refusal("commit", "failed"),
+		);
 	}
-	// 8. The session's listeners and reload verification.
-	const generation = deps.sessionGeneration();
-	const attached = await deps
-		.attachSession(generation, evidence, live)
-		.catch(() => false);
-	if (!attached)
-		logger.warn("sender takeover: session listeners not attached", {
-			unit,
-		});
+	deps.adoptLifetime(lifetime);
 	if (deps.flagOn()) await sweepUnits(deps, unit);
 	logger.info("sender takeover: adopted the running sender", { unit });
 	return { result: "adopted", unit };
@@ -460,12 +582,22 @@ export function defaultTakeoverDeps(): TakeoverDeps {
 		},
 		readMarker: () => adoptionIo().readMarker(),
 		captureConfig: () => captureConfig(),
+		readIps: (lifetime) => Bun.file(lifetime.ipsFile).text(),
+		resolveSrtlaAddr: async (evidence) => {
+			if (!evidence.marker) throw new Error("no armed configuration");
+			const resolved = await m().streaming.validateConfig({
+				...evidence.marker.config,
+			});
+			return resolved.srtlaAddr;
+		},
 		adoptEngineSession: (sessionId, connection) =>
 			m()
 				.engine.getStreamingBackend()
 				.adoptLaunchedSession?.(sessionId, connection) === true,
-		hostedHandle: (pid, startTime, unit, pin) =>
-			hostedSenderHandle(pid, startTime, unit, pin),
+		releaseEngineSession: (sessionId) =>
+			m().engine.getStreamingBackend().releaseAdoptedSession?.(sessionId),
+		hostedHandle: (pid, startTime, unit, pin, invocation) =>
+			hostedSenderHandle(pid, startTime, unit, pin, { invocation }),
 		register: (sender) =>
 			m().runner.registerHostedSender(
 				sender,
@@ -473,45 +605,32 @@ export function defaultTakeoverDeps(): TakeoverDeps {
 				m().launch.notifySenderError,
 				m().host.followSenderOutput(sender.unit, "now"),
 			),
+		forgetSender: (sender) => m().runner.forgetHostedSender(sender),
+		senderAlive: (sender) =>
+			sender.hosted !== undefined &&
+			sender.proc.exitCode === null &&
+			sender.hosted.pin.alive() === true,
 		continueGeneration: (applied) =>
 			m().writer.continueBindMapGenerationAbove(applied),
 		adoptLifetime: (lifetime) => m().observer.adoptContinuityLifetime(lifetime),
-		attachTelemetry: async (lifetime, current) => {
-			const ips = await Bun.file(lifetime.ipsFile).text();
-			if (!current()) return;
+		attachTelemetry: (lifetime, ips) =>
 			m().telemetry.startLinkTelemetry(lifetime.statsFile, ips.split("\n"), {
 				controlSocket: lifetime.controlSocket,
-			});
-		},
+			}),
 		reconcile: () => m().orchestrator.reconcileStreamSession(),
-		attachSession: async (generation, evidence, current) => {
-			if (!evidence.marker) return false;
-			const resolved = await m().streaming.validateConfig({
-				...evidence.marker.config,
-			});
-			if (!current()) return false;
-			return m().session.attachAdoptedSession(
-				generation,
-				resolved.srtlaAddr,
-				current,
-			);
-		},
-		stopAdopted: async (sender) => {
-			await m().runner.stopProcessAndWait(sender);
-			if (sender.hosted)
-				await m()
-					.host.stopSenderUnit(sender.hosted.unit)
-					.catch(() => undefined);
-		},
+		attachSession: (generation, srtlaAddr, current) =>
+			m().session.attachAdoptedSession(generation, srtlaAddr, current),
+		detachSession: (generation) => m().session.detachAdoptedSession(generation),
 		stopTelemetry: () => m().telemetry.stopLinkTelemetry(),
-		stopUnit: async (unit) => {
+		stopUnit: async (unit, invocation) => {
 			modules ??= await lazy();
-			return m().host.stopSenderUnit(unit);
+			return m().host.stopSenderUnit(unit, undefined, undefined, invocation);
 		},
 		listUnits: async () => {
 			modules ??= await lazy();
 			return m().host.listSenderUnits();
 		},
-		detectOnly: () => observeSenderAdoption(),
+		detectOnly: (bootId, lifetime) =>
+			observeSenderAdoption(undefined, { bootId, lifetime }),
 	};
 }

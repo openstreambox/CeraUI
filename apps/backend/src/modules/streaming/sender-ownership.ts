@@ -12,13 +12,20 @@ function isLive({ proc }: StreamingProcess): boolean {
 	return proc.exitCode === null && proc.signalCode === null;
 }
 
-/** Live child handles cannot be replaced by a reused PID before Bun reaps them. */
+/**
+ * Live child handles cannot be replaced by a reused PID before Bun reaps them.
+ * A hosted sender is not our child: it counts only while its pidfd says it is
+ * alive right now, the same answer the census uses.
+ */
 export function ownsSessionSender(
 	processes: ReadonlyArray<StreamingProcess> = getStreamingProcesses(),
 	executable = srtlaSendExec,
 ): boolean {
 	return processes.some(
-		(process) => process.spawnfile === executable && isLive(process),
+		(process) =>
+			process.spawnfile === executable &&
+			isLive(process) &&
+			(process.hosted === undefined || process.hosted.pin.alive() === true),
 	);
 }
 

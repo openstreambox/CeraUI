@@ -1029,14 +1029,23 @@ function localFingerprint(e: SenderAdoptionEvidence): string {
  */
 export async function observeSenderAdoption(
 	io?: SenderAdoptionIo,
+	preread?: { readonly bootId: string; readonly lifetime: Lifetime | null },
 ): Promise<SenderAdoptionVerdict> {
 	let verdict: SenderAdoptionVerdict;
 	try {
-		const source =
+		const base =
 			io ??
 			defaultSenderAdoptionIo(
 				(await import("./stream-restoration.ts")).captureArmedStreamConfig,
 			);
+		// A caller that already read the boot id and record hands them on.
+		const source: SenderAdoptionIo = preread
+			? {
+					...base,
+					bootId: async () => preread.bootId,
+					readLifetime: async () => preread.lifetime,
+				}
+			: base;
 		verdict = senderAdoptionVerdict(
 			await collectSenderAdoptionEvidence(source),
 		);

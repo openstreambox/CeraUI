@@ -854,8 +854,22 @@ export class CerastreamBackend implements StreamingBackend {
 		this.launchedSessionCurrent = () =>
 			this.client === client && this.clientEpoch === epoch;
 		this.launchedSessionId = sessionId;
+		this.adoptedSessionId = sessionId;
 		return true;
 	}
+
+	/** Undo an adoption of `sessionId`; an own launch is never touched. */
+	releaseAdoptedSession(sessionId: string): void {
+		if (
+			this.adoptedSessionId !== sessionId ||
+			this.launchedSessionId !== sessionId
+		)
+			return;
+		this.launchedSessionCurrent = undefined;
+		this.launchedSessionId = undefined;
+		this.adoptedSessionId = undefined;
+	}
+	private adoptedSessionId: string | undefined;
 
 	/**
 	 * Read only. The state is the last status the current session connection

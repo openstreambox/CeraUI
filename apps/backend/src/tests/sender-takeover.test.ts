@@ -179,6 +179,7 @@ let pin: ProcessPin;
 let session: LifecycleState = "reconciling";
 let reconcileState: LifecycleState = "streaming";
 let registered: StreamingProcess | undefined;
+let detectOnlyArgs: unknown[] = [];
 
 function writeProcess(
 	pid: number,
@@ -329,9 +330,20 @@ function deps(
 			readFileSync(join(root, "proc", String(pid), "stat"), "utf8"),
 		readMarker: () => adoption.readMarker(),
 		captureConfig: () => adoption.captureConfig(),
+		readIps: async () => {
+			calls.push("readIps");
+			return "10.0.0.2\n192.168.1.5\n";
+		},
+		resolveSrtlaAddr: async () => {
+			calls.push("resolveAddr");
+			return "198.51.100.7";
+		},
 		adoptEngineSession: (sessionId, connection) => {
 			calls.push(`adoptEngine:${sessionId}:${connection}`);
 			return true;
+		},
+		releaseEngineSession: (sessionId) => {
+			calls.push(`releaseEngine:${sessionId}`);
 		},
 		hostedHandle: (pid, startTime, unit, held) => {
 			calls.push(`handle:${pid}:${startTime}:${unit}`);
@@ -342,21 +354,26 @@ function deps(
 			calls.push("register");
 			return registeredSender(sender);
 		},
+		forgetSender: () => {
+			calls.push("forgetSender");
+		},
+		senderAlive: (sender) =>
+			pinState.alive === true && sender.proc.exitCode === null,
 		continueGeneration: (applied) => calls.push(`generation:${applied}`),
 		adoptLifetime: () => calls.push("adoptLifetime"),
-		attachTelemetry: async () => {
+		attachTelemetry: () => {
 			calls.push("telemetry");
 		},
 		reconcile: async () => {
 			calls.push("reconcile");
 			return reconcileState;
 		},
-		attachSession: async (generation) => {
+		attachSession: (generation) => {
 			calls.push(`session:${generation}`);
 			return true;
 		},
-		stopAdopted: async () => {
-			calls.push("stopAdopted");
+		detachSession: (generation) => {
+			calls.push(`detachSession:${generation}`);
 		},
 		stopTelemetry: () => calls.push("stopTelemetry"),
 		stopUnit: async (unit): Promise<UnitStopOutcome> => {
@@ -367,8 +384,9 @@ function deps(
 			calls.push("listUnits");
 			return [UNIT];
 		},
-		detectOnly: async () => {
+		detectOnly: async (bootId, record) => {
 			calls.push("detectOnly");
+			detectOnlyArgs = [bootId, record];
 		},
 		...over,
 	};
@@ -389,6 +407,241 @@ function expectFallback(stopped = true) {
 	expect(pinState.closed).toBe(true);
 }
 
+/**
+ * A failure after the first side effect: every step done is undone in
+ * reverse, then the unit is stopped by name, then reconciliation runs.
+ * Nothing was marked adopted and the lifetime was never adopted.
+ */
+function expectRolledBack(steps: readonly string[]) {
+	const undo = [
+		"detachSession:0",
+		"stopTelemetry",
+		"forgetSender",
+		"releaseEngine:session-1",
+	].filter((step) => steps.includes(step));
+	const failedAt = calls.findIndex((call) => undo.includes(call));
+	expect(failedAt).toBeGreaterThan(-1);
+	expect(calls.slice(failedAt, failedAt + undo.length)).toEqual(undo);
+	const stop = calls.indexOf(`stopUnit:${UNIT}`);
+	expect(stop).toBeGreaterThan(failedAt);
+	expect(calls.lastIndexOf("reconcile")).toBeGreaterThan(stop);
+	expect(calls).not.toContain("adoptLifetime");
+	expect(adoptedSender()).toBeUndefined();
+	expect(pinState.signals).toEqual([]);
+}
+
+const ALL_STEPS = [
+	"detachSession:0",
+	"stopTelemetry",
+	"forgetSender",
+	"releaseEngine:session-1",
+];
+
+describe("takeover: the commit is a transaction", () => {
+	test("telemetry that cannot attach (IP list gone) undoes everything", async () => {
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				attachTelemetry: () => {
+					calls.push("telemetry");
+					throw new Error("ENOENT");
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({
+			result: "fallback",
+			check: "commit",
+			reason: "failed",
+		});
+		expectRolledBack(["forgetSender", "releaseEngine:session-1"]);
+		expect(calls).not.toContain("reconcile:before-stop");
+		expect(calls.indexOf("reconcile")).toBeGreaterThan(
+			calls.indexOf(`stopUnit:${UNIT}`),
+		);
+	});
+
+	test("an IP list that cannot be read refuses before any side effect", async () => {
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				readIps: async () => {
+					throw new Error("ENOENT");
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({
+			check: "commit",
+			reason: "ips_unreadable",
+		});
+		expectFallback();
+	});
+
+	test("a saved configuration that does not resolve refuses before any side effect", async () => {
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				resolveSrtlaAddr: async () => {
+					throw new Error("Invalid config");
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({
+			check: "commit",
+			reason: "config_invalid",
+		});
+		expectFallback();
+	});
+
+	test("session listeners that cannot attach undo everything", async () => {
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				attachSession: (generation) => {
+					calls.push(`session:${generation}`);
+					return false;
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({ reason: "listeners_unattached" });
+		expectRolledBack([
+			"stopTelemetry",
+			"forgetSender",
+			"releaseEngine:session-1",
+		]);
+	});
+
+	test("a sender that dies while the listeners attach is caught by the final validation", async () => {
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				attachSession: (generation) => {
+					calls.push(`session:${generation}`);
+					pinState.alive = false;
+					return true;
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({ reason: "sender_changed" });
+		expectRolledBack(ALL_STEPS);
+		expect(calls).not.toContain("generation:7");
+	});
+
+	test("a pidfd that turns unknown before reconciliation is not adopted", async () => {
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				attachSession: (generation) => {
+					calls.push(`session:${generation}`);
+					pinState.alive = null;
+					return true;
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({ reason: "sender_changed" });
+		expectRolledBack(ALL_STEPS);
+	});
+
+	test("an exception at registration releases the engine session", async () => {
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				register: () => {
+					calls.push("register");
+					throw new Error("boom");
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({ check: "commit", reason: "failed" });
+		expectRolledBack(["releaseEngine:session-1"]);
+	});
+
+	test("an operator Stop during the final validation refuses and undoes everything", async () => {
+		let stopped = false;
+		let stats = 0;
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				captureIntent: () => () => !stopped,
+				readStat: async (pid) => {
+					// The second commit read is the final validation's.
+					if (++stats === 2) stopped = true;
+					return readFileSync(join(root, "proc", String(pid), "stat"), "utf8");
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({ reason: "operator_intent" });
+		expectRolledBack(ALL_STEPS);
+	});
+
+	test("modem state that appears during the commit refuses and undoes everything", async () => {
+		let gates = 0;
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				modemGates: async () => {
+					calls.push("modemGates");
+					return ++gates === 3
+						? { check: "modem", reason: "mutation_in_flight" }
+						: null;
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({ reason: "mutation_in_flight" });
+		expectRolledBack(ALL_STEPS);
+	});
+
+	test("modem state that appears during the collection refuses before any side effect", async () => {
+		let gates = 0;
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				modemGates: async () => {
+					calls.push("modemGates");
+					return ++gates === 2
+						? { check: "modem", reason: "internal_call_lease" }
+						: null;
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({ reason: "internal_call_lease" });
+		expectFallback();
+	});
+
+	test("the collector judges the very record the commit uses; a replaced record refuses", async () => {
+		let reads = 0;
+		const outcome = await takeOverSenderAtStartup(
+			deps(
+				{
+					readLifetime: async () =>
+						++reads === 1
+							? lifetime()
+							: lifetime({ lifetime: "11111111-2222-4333-8444-555555555555" }),
+				},
+				{
+					readLifetime: async () => {
+						throw new Error("the collector must not read the record again");
+					},
+				},
+			),
+		);
+		expect(outcome).toMatchObject({
+			check: "commit",
+			reason: "record_changed",
+		});
+		expectFallback();
+	});
+
+	test("nothing is adopted or marked until reconciliation commits streaming", async () => {
+		let adoptedAtReconcile: unknown = "unset";
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				reconcile: async () => {
+					calls.push("reconcile");
+					adoptedAtReconcile = adoptedSender();
+					expect(calls).not.toContain("adoptLifetime");
+					return reconcileState;
+				},
+			}),
+		);
+		expect(outcome.result).toBe("adopted");
+		// The marker is set just before the reconciliation that needs it.
+		expect(adoptedAtReconcile).toBe(registered);
+		expect(calls.indexOf("adoptLifetime")).toBeGreaterThan(
+			calls.indexOf("reconcile"),
+		);
+	});
+});
+
 describe("takeover: adoption", () => {
 	test("adopts when every piece of evidence agrees, in the commit order", async () => {
 		const outcome = await takeOverSenderAtStartup(deps());
@@ -398,14 +651,21 @@ describe("takeover: adoption", () => {
 			`pin:${PID}`,
 			"readStats",
 			"queryEngine",
+			// Prepared with no side effects: everything that can fail first.
+			"readIps",
+			"resolveAddr",
+			"modemGates",
+			// Each step from here is undone if a later one fails.
 			`adoptEngine:session-1:${CONNECTION}`,
 			`handle:${PID}:${START}:${UNIT}`,
 			"register",
-			"generation:7",
-			"adoptLifetime",
 			"telemetry",
-			"reconcile",
 			"session:0",
+			// The final validation, then the one step that marks it streaming.
+			"modemGates",
+			"generation:7",
+			"reconcile",
+			"adoptLifetime",
 			"listUnits",
 		]);
 		// The pin the evidence used is the one the handle holds: still open.
@@ -440,6 +700,11 @@ describe("takeover: the flag", () => {
 		expect(outcome).toEqual({ result: "detect_only" });
 		await Bun.sleep(0);
 		expect(calls).toEqual(["detectOnly"]);
+		// The record and boot id already read are handed on, not read again.
+		expect(detectOnlyArgs).toEqual([
+			BOOT,
+			lifetime({ host: "backend-child", invocation: null }),
+		]);
 	});
 
 	test("switched off during the restart: the hosted unit left behind is stopped by name", async () => {
@@ -625,10 +890,10 @@ describe("takeover: the sender dies mid-adoption", () => {
 	test("between the verdict and registration: the commit's pin check refuses", async () => {
 		const outcome = await takeOverSenderAtStartup(
 			deps({
-				captureConfig: () => {
+				readIps: async () => {
 					// Read at the commit, after the verdict.
 					pinState.alive = false;
-					return { ...CONFIG };
+					return "10.0.0.2\n";
 				},
 			}),
 		);
@@ -642,9 +907,9 @@ describe("takeover: the sender dies mid-adoption", () => {
 	test("stopped (SIGSTOP) between the verdict and registration: refused", async () => {
 		const outcome = await takeOverSenderAtStartup(
 			deps({
-				captureConfig: () => {
+				readIps: async () => {
 					writeProcess(PID, "T");
-					return { ...CONFIG };
+					return "10.0.0.2\n";
 				},
 			}),
 		);
@@ -668,11 +933,7 @@ describe("takeover: the sender dies mid-adoption", () => {
 			check: "commit",
 			reason: "reconciled_reconciling",
 		});
-		const undo = calls.indexOf("stopAdopted");
-		expect(calls.indexOf("stopTelemetry")).toBeLessThan(undo);
-		expect(calls.indexOf(`stopUnit:${UNIT}`)).toBeGreaterThan(undo);
-		expect(adoptedSender()).toBeUndefined();
-		expect(calls).not.toContain("session:0");
+		expectRolledBack(ALL_STEPS);
 	});
 
 	test("after adoption: the adopted sender no longer counts once it exits", async () => {
@@ -780,9 +1041,9 @@ describe("takeover: PID reuse", () => {
 	test("reused between the verdict and the commit: the fresh start time refuses", async () => {
 		const outcome = await takeOverSenderAtStartup(
 			deps({
-				captureConfig: () => {
+				readIps: async () => {
 					writeProcess(PID, "S", "6");
-					return { ...CONFIG };
+					return "10.0.0.2\n";
 				},
 			}),
 		);
@@ -874,8 +1135,8 @@ describe("takeover: the engine changed", () => {
 		reconcileState = "reconciling";
 		const outcome = await takeOverSenderAtStartup(deps());
 		expect(outcome).toMatchObject({ reason: "reconciled_reconciling" });
-		expect(calls).toContain("stopAdopted");
-		expect(adoptedSender()).toBeUndefined();
+		// The engine reference is released too, not only the marker.
+		expectRolledBack(ALL_STEPS);
 	});
 });
 
@@ -944,7 +1205,7 @@ describe("takeover: modem state", () => {
 });
 
 describe("takeover: the fallback itself", () => {
-	test("a unit that cannot be confirmed stopped is reported, and reconciliation still runs", async () => {
+	test("a unit that cannot be confirmed stopped is reported, and no reconciliation follows", async () => {
 		const outcome = await takeOverSenderAtStartup(
 			deps(
 				{
@@ -960,7 +1221,8 @@ describe("takeover: the fallback itself", () => {
 			result: "fallback",
 			stopped: "timed_out",
 		});
-		expect(calls.at(-1)).toBe("reconcile");
+		// Stop, see it gone, then reconcile: without the second, no third.
+		expect(calls).not.toContain("reconcile");
 	});
 
 	test("units that cannot be listed are logged, not guessed", async () => {
@@ -982,7 +1244,7 @@ describe("takeover: the fallback itself", () => {
 	test("an exception anywhere ends in the fallback, never in a throw", async () => {
 		const outcome = await takeOverSenderAtStartup(
 			deps({
-				register: () => {
+				adoptionIo: () => {
 					throw new Error("boom");
 				},
 			}),

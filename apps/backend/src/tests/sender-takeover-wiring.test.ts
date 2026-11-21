@@ -27,7 +27,10 @@ import {
 	CerastreamBackend,
 	type CerastreamBackendDeps,
 } from "../modules/streaming/cerastream-backend.ts";
-import { unownedSenderCensus } from "../modules/streaming/sender-ownership.ts";
+import {
+	ownsSessionSender,
+	unownedSenderCensus,
+} from "../modules/streaming/sender-ownership.ts";
 // The orchestrator loads before its production deps, as at runtime.
 import { getStreamSessionSnapshot } from "../modules/streaming/stream-session-orchestrator.ts";
 import { streamSessionProductionDeps } from "../modules/streaming/stream-session-production.ts";
@@ -44,6 +47,7 @@ import {
 import {
 	type HostedSender,
 	hostedSenderHandle,
+	type UnitStopOutcome,
 } from "../modules/streaming/streamloop/sender-host.ts";
 
 // How a hosted sender plugs into supervision: the runner, the census, the
@@ -74,10 +78,15 @@ function fakePin() {
 }
 
 const fixtures: ReturnType<typeof hosted>[] = [];
-function hosted(pid: number, start = "555") {
+function hosted(
+	pid: number,
+	start = "555",
+	stopUnit: () => Promise<UnitStopOutcome> = async () => "stopped",
+) {
 	const p = fakePin();
 	const timers: (() => void)[] = [];
 	const sender = hostedSenderHandle(pid, start, UNIT, p.pin, {
+		stopUnit,
 		schedule: (callback) => {
 			timers.push(callback);
 			return timers.length;
@@ -151,6 +160,43 @@ describe("runner", () => {
 		h.pinState.alive = false;
 		h.poll();
 		await stopping;
+		expect(getStreamingProcesses()).not.toContain(handle);
+	});
+});
+
+describe("bounded stop of a hosted sender", () => {
+	test("a pidfd that never confirms the exit ends in a unit stop, then a failed Stop, never a hang", async () => {
+		let unitStops = 0;
+		const h = hosted(100_005, "555", async () => {
+			unitStops++;
+			return "timed_out";
+		});
+		const handle = register(h.sender);
+		h.pinState.alive = null;
+		const error = await stopProcessAndWait(handle, 5)
+			.then(() => null)
+			.catch((e: unknown) => e);
+		expect((error as Error | null)?.message).toBe(
+			"hosted_sender_stop_unconfirmed",
+		);
+		expect(unitStops).toBe(1);
+		// TERM and KILL through the pidfd; unknown never became "exited".
+		expect(h.pinState.signals).toEqual(["SIGTERM", "SIGKILL"]);
+		expect(h.sender.exitCode).toBeNull();
+	});
+
+	test("a unit stop that systemd confirms and the pidfd then shows ends the Stop", async () => {
+		let pin: { alive: boolean | null } | undefined;
+		const h = hosted(100_006, "555", async () => {
+			if (pin) pin.alive = false;
+			return "stopped";
+		});
+		pin = h.pinState;
+		const handle = register(h.sender);
+		h.pinState.alive = null;
+		await stopProcessAndWait(handle, 5);
+		expect(h.sender.exitCode).toBe(-1);
+		await Bun.sleep(0);
 		expect(getStreamingProcesses()).not.toContain(handle);
 	});
 });
@@ -233,7 +279,18 @@ describe("reconciliation rule", () => {
 			owns = false;
 			expect(can(undefined)).toBe(false);
 			owns = true;
-			// The adopted sender exits: the exception goes with it.
+			// A pidfd that cannot confirm the process right now: not ours, at
+			// once, and the same answer the census gives.
+			h.pinState.alive = null;
+			expect(adoptedSender()).toBeUndefined();
+			expect(ownsSessionSender([handle])).toBe(false);
+			expect(can(undefined)).toBe(false);
+			h.pinState.alive = true;
+			expect(can(undefined)).toBe(true);
+			// The adopted sender exits: the exception goes with it, even
+			// before the exit poll runs.
+			h.pinState.alive = false;
+			expect(can(undefined)).toBe(false);
 			h.pinState.alive = false;
 			h.poll();
 			expect(adoptedSender()).toBeUndefined();
@@ -334,6 +391,19 @@ describe("engine session adoption", () => {
 		expect(h.backend.launchedSession()).toBe("s9");
 		// Only once.
 		expect(h.backend.adoptLaunchedSession("s9", connection)).toBe(false);
+	});
+
+	test("a rolled-back adoption releases the engine session; an own launch is never released", async () => {
+		const h = await reconciledStreaming();
+		const { connection } = await h.backend.sessionEvidence();
+		expect(h.backend.adoptLaunchedSession("s9", connection as number)).toBe(
+			true,
+		);
+		h.backend.releaseAdoptedSession("other");
+		expect(h.backend.ownsLaunchedSession()).toBe(true);
+		h.backend.releaseAdoptedSession("s9");
+		expect(h.backend.ownsLaunchedSession()).toBe(false);
+		expect(h.backend.launchedSession()).toBeNull();
 	});
 
 	test("an idle status drops an adopted session exactly like an own launch", async () => {

@@ -288,26 +288,40 @@ stopped by hand leaves the stream running.
 
 After a restart the backend then acts on the check above, all or nothing. It
 also refuses while a modem mutation journal entry, an internal-call lease or a
-cellular host record exists, or cannot be read. When every check passes it
-commits in this order, and any failure undoes what was done: operator intent
-and the stream session (still reconciling) unchanged, the armed configuration
-unchanged, the same pidfd still alive with the same start time and an eligible
-state, the engine session taken over on the connection that answered, the
-sender registered under that pidfd, map generations continued above the
-applied one, telemetry reattached to the recorded stats file and control
-socket, one reconciliation that must report streaming, then the session's
-interface and USB listeners and reload checks. The adopted session is then
-handled like one this backend started: Stop, reload and the sender check reach
-it, and its exit is reported the same way.
+cellular host record exists, or cannot be read. The check judges the same
+record the takeover then uses. When every check passes, the takeover is one
+transaction. First it prepares everything that can fail, with no side effect:
+it reads the recorded IP list, resolves the armed configuration's receiver
+address, and validates again (modem state, the record, the same pidfd alive
+with the same start time and an eligible state, then operator intent, the
+stream session still reconciling and the armed configuration). Then each step
+registers its undo: the engine session taken over on the connection that
+answered, the sender registered under that pidfd, telemetry reattached to the
+recorded stats file and control socket, the session's interface and USB
+listeners and reload checks (inert until the commit completes). A final
+validation repeats the checks and requires the pidfd to say the sender is
+alive at that moment. Only then is the sender marked adopted and one
+reconciliation run, which must report streaming. Any failure on the way undoes
+every step done, in reverse, including the engine session. Reconciliation
+reads the sender's pidfd at that moment, not a cached exit state, so a sender
+that exited or whose pidfd cannot answer is not accepted. The adopted session
+is then handled like one this backend started: Stop, reload and the sender
+check reach it, and its exit is reported the same way. A Stop whose pidfd
+never confirms the exit after SIGTERM and SIGKILL asks systemd to stop the
+unit and, if the exit is still not confirmed, reports a failed Stop instead of
+waiting.
 
 On any refusal or failure the backend stops the recorded sender unit by its
 name through systemd (never by PID), and with the flag also every other sender
-unit, waits until systemd reports it gone, reconciles again and continues as
-described at the start of this section. A unit that cannot be confirmed
-stopped keeps the session unconfirmed and protected. Without the flag, a record
-naming such a unit (left by a backend that had the flag) is also stopped this
-way. Takeover writes nothing to disk, so a backend that dies during it leaves
-the same evidence for the next start. On a sender without the contract-2
+unit. It stops only a transient unit with the sender's name and description,
+and for the recorded unit only the recorded invocation. Only once systemd
+answers that each unit is inactive or gone does it reconcile again and
+continue as described at the start of this section; an unanswered or
+unconfirmed stop leaves the session unconfirmed and protected. Without the
+flag, a record naming such a unit (left by a backend that had the flag) is
+also stopped this way. Nothing is written before the takeover completes, so a
+backend that dies during it leaves the same evidence for the next start. On a
+sender without the contract-2
 applied identity, or a kernel without SO_PEERPIDFD, the check refuses, so the
 flag then only changes how the sender is hosted.
 
@@ -405,26 +419,41 @@ unidades; un backend detenido a mano deja la transmisión en marcha.
 Tras un reinicio el backend actúa entonces según la comprobación anterior, todo
 o nada. También rechaza mientras exista, o no se pueda leer, una entrada del
 registro de cambios de módem, una concesión de llamada interna o un registro de
-host celular. Cuando todo cumple, confirma en este orden, y cualquier fallo
-deshace lo hecho: la intención del operador y la sesión de transmisión (todavía
-en reconciliación) sin cambios, la configuración armada sin cambios, el mismo
-pidfd todavía vivo con la misma hora de inicio y un estado válido, la sesión del
-motor adoptada en la conexión que respondió, el emisor registrado con ese pidfd,
-las generaciones del mapa continuadas por encima de la aplicada, la telemetría
-conectada otra vez al archivo de estadísticas y al socket de control
-registrados, una reconciliación que debe indicar transmisión, y después los
-escuchas de interfaces y USB y las comprobaciones de recarga de la sesión. La
-sesión adoptada se trata entonces como una iniciada por este backend: Detener,
-la recarga y la comprobación del emisor llegan a ella, y su fin se informa igual.
+host celular. La comprobación evalúa el mismo registro que luego usa la
+adopción. Cuando todo cumple, la adopción es una sola transacción. Primero
+prepara todo lo que puede fallar, sin efectos: lee la lista de IP registrada,
+resuelve la dirección del receptor de la configuración armada y valida otra vez
+(estado del módem, el registro, el mismo pidfd vivo con la misma hora de inicio
+y un estado válido, y después la intención del operador, la sesión de
+transmisión todavía en reconciliación y la configuración armada). Luego cada
+paso registra cómo deshacerse: la sesión del motor adoptada en la conexión que
+respondió, el emisor registrado con ese pidfd, la telemetría conectada otra vez
+al archivo de estadísticas y al socket de control registrados, y los escuchas de
+interfaces y USB y las comprobaciones de recarga de la sesión (inactivos hasta
+que la adopción se completa). Una validación final repite las comprobaciones y
+exige que el pidfd indique al emisor vivo en ese momento. Solo entonces se marca
+el emisor como adoptado y se ejecuta una reconciliación, que debe indicar
+transmisión. Cualquier fallo en el camino deshace cada paso hecho, en orden
+inverso, incluida la sesión del motor. La reconciliación consulta el pidfd del
+emisor en ese momento, no un estado de salida guardado, así que no acepta un
+emisor que terminó o cuyo pidfd no puede responder. La sesión adoptada se trata
+entonces como una iniciada por este backend: Detener, la recarga y la
+comprobación del emisor llegan a ella, y su fin se informa igual. Si tras
+SIGTERM y SIGKILL el pidfd nunca confirma la salida, Detener pide a systemd que
+detenga la unidad y, si la salida sigue sin confirmarse, informa que no pudo
+detener en lugar de esperar.
 
 Ante cualquier rechazo o fallo, el backend detiene la unidad del emisor
 registrada por su nombre a través de systemd (nunca por PID), y con la opción
-activa también cualquier otra unidad de emisor, espera hasta que systemd la
-indique terminada, reconcilia otra vez y sigue como se describe al inicio de
-esta sección. Si no se puede confirmar que una unidad se detuvo, la sesión queda
-sin confirmar y protegida. Sin la opción, un registro que nombra una unidad así
-(dejada por un backend que tenía la opción) también se detiene de esta manera.
-La adopción no escribe nada en disco, así que un backend que termina durante
-ella deja la misma evidencia para el siguiente arranque. Con un emisor sin la
+activa también cualquier otra unidad de emisor. Solo detiene una unidad
+transitoria con el nombre y la descripción del emisor, y para la unidad
+registrada solo la invocación registrada. Solo cuando systemd responde que cada
+unidad está inactiva o ya no existe reconcilia otra vez y sigue como se
+describe al inicio de esta sección; una detención sin respuesta o sin confirmar
+deja la sesión sin confirmar y protegida. Sin la opción, un registro que nombra
+una unidad así (dejada por un backend que tenía la opción) también se detiene de
+esta manera. No se escribe nada antes de que la adopción se complete, así que un
+backend que termina durante ella deja la misma evidencia para el siguiente
+arranque. Con un emisor sin la
 identidad aplicada del contrato 2, o un kernel sin SO_PEERPIDFD, la comprobación
 rechaza, así que la opción solo cambia cómo se aloja el emisor.
