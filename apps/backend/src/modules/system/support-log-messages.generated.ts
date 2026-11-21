@@ -1925,6 +1925,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["sender_ownership_unproven"],
 	["serial_invalid"],
 	["serial_replayed"],
+	["session_identity_timeout"],
 	["set-audio-mix returned no state for the requested input"],
 	["setDefaultRoute: ", " via ", ""],
 	["setRemoteConfig requires either remote_key or token"],
