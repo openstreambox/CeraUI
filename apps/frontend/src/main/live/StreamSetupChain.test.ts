@@ -624,6 +624,12 @@ describe("StreamSetupChain — the Live bar lists every blocker with its fix", (
 		expect(fixButtons(container).map((b) => b.dataset.fix)).toEqual([
 			"openSource",
 		]);
+		expect(
+			within(bar(container)).getByRole("button", {
+				name: "Choose source",
+				description: "Select a video source before starting the stream",
+			}),
+		).toBe(fixButtons(container)[0]);
 	});
 
 	it("no usable link offers the way to Network", async () => {

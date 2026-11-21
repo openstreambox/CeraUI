@@ -13,7 +13,7 @@ type Frame = Record<string, unknown>;
  * config frames are rewritten so both gates are blocked whatever the worker
  * was seeded with.
  */
-async function blockSourceAndServer(page: Page) {
+async function blockSourceAndServer(page: Page, blockNetworkAndEngine = false) {
 	await page.routeWebSocket(/:(3002|31\d\d|6173|8090|8091)\//, (ws) => {
 		const server = ws.connectToServer();
 		ws.onMessage((message) => server.send(message));
@@ -27,6 +27,13 @@ async function blockSourceAndServer(page: Page) {
 					config.relay_server = "";
 					config.srtla_addr = "";
 					delete config.selected_ingest_endpoint;
+				}
+				if (blockNetworkAndEngine) {
+					if (frame.netif) frame.netif = {};
+					const status = frame.status as Frame | undefined;
+					if (status?.netif) status.netif = {};
+					const caps = frame.capabilities as Frame | undefined;
+					if (caps) caps.engineUnavailable = true;
 				}
 				ws.send(JSON.stringify(frame));
 			} catch {
@@ -78,6 +85,56 @@ test.describe("A blocked Start lists what to fix", () => {
 		expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
 		expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
 		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+	});
+
+	test("@mobile-only the blocker list scrolls both ways without refreshing Live", async ({ page }) => {
+		await page.setViewportSize({ width: 390, height: 500 });
+		await blockSourceAndServer(page, true);
+		await page.goto("/");
+		await ensureAuthenticated(page);
+		await navigateTo(page, "live");
+
+		const list = page.getByTestId("live-bar").getByRole("list", {
+			name: "Fix these before you go live",
+		});
+		await expect(list.getByRole("listitem")).toHaveCount(4);
+		const box = await list.boundingBox();
+		if (!box) throw new Error("Blocker list has no bounding box");
+		const maxScroll = await list.evaluate((el) => el.scrollHeight - el.clientHeight);
+		expect(maxScroll).toBeGreaterThan(0);
+		const documentStart = await page.evaluate(() => {
+			window.scrollTo(0, 0);
+			return performance.timeOrigin;
+		});
+		const scrollTop = () => list.evaluate((el) => el.scrollTop);
+		const pageScroll = () => page.evaluate(() => window.scrollY);
+		await expect.poll(scrollTop).toBe(0);
+		await expect.poll(pageScroll).toBe(0);
+
+		const touch = await page.context().newCDPSession(page);
+		const x = Math.round(box.x + box.width / 2);
+		async function swipe(fromY: number, deltaY: number) {
+			await touch.send("Input.dispatchTouchEvent", {
+				type: "touchStart",
+				touchPoints: [{ x, y: fromY }],
+			});
+			for (let step = 1; step <= 12; step++) {
+				await touch.send("Input.dispatchTouchEvent", {
+					type: "touchMove",
+					touchPoints: [{ x, y: fromY + deltaY * step / 12 }],
+				});
+			}
+			await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		}
+
+		// Both drags exceed the page refresh threshold. The page stays at the top.
+		await swipe(box.y + box.height - 12, -100);
+		await expect.poll(scrollTop).toBe(maxScroll);
+		await expect.poll(pageScroll).toBe(0);
+		await swipe(box.y + 12, 100);
+		await expect.poll(scrollTop).toBe(0);
+		await expect.poll(pageScroll).toBe(0);
+		expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentStart);
 	});
 
 	for (const size of [

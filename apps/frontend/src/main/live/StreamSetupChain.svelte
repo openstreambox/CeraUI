@@ -211,6 +211,7 @@ const blockers = $derived<Blocker[]>(
 			}),
 );
 const fixable = $derived(blockers.filter((blocker) => blocker.fix !== 'none'));
+const singleBlockerReasonId = $props.id();
 // One blocker reads as its own reason; two or more as one line above the buttons.
 const barStatus = $derived(
 	blockers.length >= 2
@@ -602,6 +603,7 @@ const networkSummary = $derived(
 		<LiveBar
 			blocked={startDisabledReason !== undefined}
 			status={barStatus}
+			statusId={blockers.length === 1 && fixable.length === 1 ? singleBlockerReasonId : undefined}
 		>
 			{#snippet checklist()}
 				{#if blockers.length >= 2}
@@ -619,6 +621,7 @@ const networkSummary = $derived(
 							? 'ring-destructive/60 ring-2'
 							: ''}"
 						data-blockers={blockers.length}
+						data-no-pull-to-refresh
 						aria-label={barStatus}
 					>
 						{#each blockers as blocker (blocker.key)}
@@ -657,6 +660,7 @@ const networkSummary = $derived(
 					>
 						{#each fixable as blocker (blocker.key)}
 							<Button
+								aria-describedby={singleBlockerReasonId}
 								class="min-h-[44px] gap-1.5"
 								data-blocker={blocker.key}
 								data-fix={blocker.fix}

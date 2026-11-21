@@ -22,6 +22,8 @@ import { publishHeight } from '$lib/layout';
 interface Props {
 	/** The idle readiness line: a blocking reason, or the ready text. */
 	status?: string;
+	/** ID of the readiness text when it describes a fix button. */
+	statusId?: string;
 	/** Whether `status` is a blocking reason. */
 	blocked?: boolean;
 	/**
@@ -32,7 +34,7 @@ interface Props {
 	children: Snippet;
 }
 
-const { status, blocked = false, checklist, children }: Props = $props();
+const { status, statusId, blocked = false, checklist, children }: Props = $props();
 
 const HEIGHT_PROPERTY = '--live-bar-height';
 
@@ -63,7 +65,7 @@ $effect(() => (bar ? publishHeight(bar, HEIGHT_PROPERTY) : undefined));
 						style="background: {blocked ? 'var(--destructive)' : 'var(--status-success)'};"
 						aria-hidden={true}
 					></span>
-					<span class="line-clamp-2 min-w-0">{status}</span>
+					<span id={statusId} class="line-clamp-2 min-w-0">{status}</span>
 				</p>
 				{#if blocked && checklist}
 					{@render checklist()}

@@ -143,7 +143,9 @@ must contain the `source-audio` block with its ids unchanged.
   less (landscape, split view) the rows stay rows with every reason as visible
   text; they only tighten, and Start and the status line take less height. A
   row cut off at the bottom of the list shows that more scrolls into view.
-  Each fix button is also described by its reason (`aria-describedby`).
+  Touch drags that start inside the list scroll it without triggering page
+  pull-to-refresh. Each fix button is described by its reason
+  (`aria-describedby`), including when the status line carries the sole reason.
 - Live, it must show the bitrate control and Stop.
 - While it is mounted, the document's `scroll-padding-bottom` is the bar's
   height (plus the mobile dock below desktop chrome), so a control reached with
