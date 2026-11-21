@@ -123,13 +123,16 @@ describe("network change confirmation", () => {
 		await expect(w.owner.apply(creator, plan(), UNDO)).rejects.toThrow();
 		expect(w.fake.calls).toEqual([]);
 	});
-	it("refuses simultaneous applies while checkpoint creation is in flight", async () => {
+	it("serialises simultaneous applies: the second waits, then sees the first pending", async () => {
 		const w = world();
 		const first = w.owner.apply(creator, w.ethPlan, UNDO);
 		await expect(w.owner.apply(creator, w.modemPlan, UNDO)).rejects.toThrow(
-			"busy",
+			"pending",
 		);
-		await first;
+		expect((await first).kind).toBe("pending");
+		expect(w.fake.calls.filter((c) => c.startsWith("create"))).toEqual([
+			"create:eth0:90",
+		]);
 	});
 	it("refuses a session opened during apply before the candidate was ready", async () => {
 		const w = world();
@@ -354,6 +357,8 @@ describe("no unconfirmed edit outlives a restart", () => {
 		expect(await w.owner.reconcile("network-restart")).toBe("incomplete");
 		expect((await w.owner.status()).undoIncomplete).toBe(true);
 		w.effects.failUndo.delete("hotspot");
+		// The retry waits for its backoff (5 s after the first failure).
+		w.at(w.now() + 5_000);
 		await w.owner.tick();
 		expect((await w.owner.status()).undoIncomplete).toBe(false);
 		expect(w.effects.interfaces.has("ap0")).toBe(true);

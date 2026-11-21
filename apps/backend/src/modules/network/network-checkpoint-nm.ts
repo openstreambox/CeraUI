@@ -11,6 +11,8 @@ export type NmCheckpointRunner = (
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEVICE = /^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,14}$/;
 const PROPERTY = /^[a-z0-9-]+\.[a-z0-9-]+$/;
+const CHECKPOINT_PATH =
+	/^\/org\/freedesktop\/NetworkManager\/Checkpoint\/[0-9]{1,10}$/;
 const OWNED_NAME = /^ceralive-(candidate|backup)-[0-9a-f]{8}-[0-9]{1,3}$/;
 
 function uuid(value: string) {
@@ -129,6 +131,25 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 			if (!Array.isArray(value))
 				throw new Error("Network checkpoint state unavailable");
 			return value.includes(path);
+		},
+		async checkpointCreated(path: string) {
+			if (!CHECKPOINT_PATH.test(path))
+				throw new Error("Invalid network checkpoint");
+			const output = await runner("busctl", [
+				"--system",
+				"--json=short",
+				"get-property",
+				DESTINATION,
+				path,
+				`${DESTINATION}.Checkpoint`,
+				"Created",
+			]);
+			const value: unknown = JSON.parse(output).data;
+			// int64 milliseconds of CLOCK_BOOTTIME; kept as a string so a journal
+			// round-trip cannot lose precision.
+			return typeof value === "number" && Number.isInteger(value)
+				? String(value)
+				: undefined;
 		},
 		async destroy(path: string) {
 			await call(MANAGER, DESTINATION, "CheckpointDestroy", "o", [path]);

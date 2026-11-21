@@ -1719,6 +1719,7 @@
 	"network.ethRole.error.noConnection": "このポートには設定できるネットワークプロファイルがないため、何も変更されていません。",
 	"network.ethRole.error.applyFailed": "本体は新しい役割を適用できず、以前の役割のままです。",
 	"network.ethRole.error.unavailableEmulated": "ポートの役割は実機でのみ利用できます。",
+	"network.ethRole.error.changeInFlight": "このポートでは別のネットワーク変更が保留中、取り消し中、または保存中のため、何も変更されませんでした。終わってから再試行してください。",
 	"network.ethRole.error.notConfirmed": "本体から結果が報告されなかったため、このポートの役割は不明です。",
 	"network.ethRole.error.generic": "本体が変更を拒否したため、このポートは以前の役割のままです。",
 	"network.netifSave.error.title": "何も保存されませんでした",
@@ -3511,5 +3512,16 @@
 	"network.changeSafety.notice.make": "変更する",
 	"network.changeSafety.notice.leave": "元に戻したままにする",
 	"network.changeSafety.kept.undo": "直前のネットワーク変更を元に戻す",
-	"network.changeSafety.summary.ethernetRole": "{ifname} のポート役割の変更"
+	"network.changeSafety.summary.ethernetRole": "{ifname} のポート役割の変更",
+	"network.changeSafety.askBefore.routeCuts": "この変更で接続が切れる可能性が高いです：ボックスは {via} 経由であなたに届いています。",
+	"network.changeSafety.askBefore.routeMayCut": "この変更で接続が途切れる可能性があります：{via} はボックスの回線の一つです。",
+	"network.changeSafety.askBefore.undoVia": "変更する（{via} の誰かが確認しなければ {seconds} 秒後に元に戻す）",
+	"network.changeSafety.askBefore.undoLocal": "変更する（現地の誰かが確認しなければ {seconds} 秒後に元に戻す）",
+	"network.changeSafety.askBefore.reachable": "変更する（{settle} 秒後もボックスがインターネットに届く場合のみ維持）",
+	"network.changeSafety.askBefore.keepRemote": "元に戻さずに変更する。ボックスが切断されたら現地での対応が必要です。",
+	"network.changeSafety.askBefore.live": "配信中です：期限での取り消しで配信が一瞬途切れることがあります。",
+	"network.changeSafety.confirm.reachable": "ボックスがインターネットに届くか確認中です。届けば変更を維持します。",
+	"network.changeSafety.notice.unreachable": "変更後にボックスがインターネットに届かなくなったため、元に戻しました。それでも変更しますか？",
+	"network.changeSafety.notice.interrupted": "変更中にボックスが再起動したため、変更されませんでした。それでも変更しますか？",
+	"network.changeSafety.notice.unsaved": "確認済みの変更を保存する前にボックスが再起動したため、元に戻しました。それでも変更しますか？"
 }

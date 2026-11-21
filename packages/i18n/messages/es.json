@@ -1767,6 +1767,7 @@
 	"network.ethRole.error.noConnection": "No se pudo confirmar el perfil de red de este puerto. Revisa la función y la dirección que informa el equipo antes de volver a intentarlo.",
 	"network.ethRole.error.applyFailed": "No se pudo confirmar el cambio de función. Es posible que el perfil de red ya haya cambiado. Revisa la función y la dirección que informa el equipo para este puerto antes de volver a intentarlo.",
 	"network.ethRole.error.unavailableEmulated": "Las funciones de puerto solo están disponibles en hardware real.",
+	"network.ethRole.error.changeInFlight": "Otro cambio de red en este puerto sigue pendiente, deshaciéndose o guardándose, así que no se cambió nada. Inténtalo cuando termine.",
 	"network.ethRole.error.notConfirmed": "El equipo nunca informó del resultado, así que se desconoce la función de este puerto.",
 	"network.ethRole.error.generic": "No se pudo confirmar el cambio de función. Revisa la función y la dirección que informa el equipo para este puerto antes de volver a intentarlo.",
 	"network.netifSave.error.title": "No se guardó nada",
@@ -3559,5 +3560,16 @@
 	"network.changeSafety.notice.make": "Hacer el cambio",
 	"network.changeSafety.notice.leave": "Dejarlo deshecho",
 	"network.changeSafety.kept.undo": "Deshacer el último cambio de red",
-	"network.changeSafety.summary.ethernetRole": "Cambio de función del puerto {ifname}"
+	"network.changeSafety.summary.ethernetRole": "Cambio de función del puerto {ifname}",
+	"network.changeSafety.askBefore.routeCuts": "Es probable que este cambio te desconecte: la caja te alcanza por {via}.",
+	"network.changeSafety.askBefore.routeMayCut": "Este cambio puede cortar tu conexión: {via} es uno de los enlaces de la caja.",
+	"network.changeSafety.askBefore.undoVia": "Hacer el cambio, se deshace en {seconds} s salvo que alguien en {via} confirme",
+	"network.changeSafety.askBefore.undoLocal": "Hacer el cambio, se deshace en {seconds} s salvo que alguien en el lugar confirme",
+	"network.changeSafety.askBefore.reachable": "Hacer el cambio y mantenerlo solo si la caja sigue con internet tras {settle} s",
+	"network.changeSafety.askBefore.keepRemote": "Hacer el cambio sin deshacer. Si deja a la caja sin conexión, habrá que ir al lugar.",
+	"network.changeSafety.askBefore.live": "Estás en vivo: deshacer al vencer el plazo puede cortar la transmisión un momento.",
+	"network.changeSafety.confirm.reachable": "Comprobando que la caja sigue con internet. Si es así, mantiene el cambio.",
+	"network.changeSafety.notice.unreachable": "La caja perdió internet tras este cambio, así que lo deshizo. ¿Lo quieres?",
+	"network.changeSafety.notice.interrupted": "La caja se reinició mientras hacía este cambio, así que no lo hizo. ¿Lo quieres?",
+	"network.changeSafety.notice.unsaved": "La caja se reinició antes de guardar el cambio que confirmaste, así que lo deshizo. ¿Lo quieres?"
 }

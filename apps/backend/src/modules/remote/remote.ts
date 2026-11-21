@@ -56,6 +56,7 @@ import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
 import { queueUpdateGw } from "../network/gateways.ts";
+import { parseTarget } from "../network/network-reachability.ts";
 import {
 	DEVICE_TOKEN_PUBLIC_KEY_ENV,
 	verifyStubDeviceToken,
@@ -246,6 +247,29 @@ function getCurrentProvider(): CloudProviderEndpoint {
 		throw new Error("No cloud providers configured");
 	}
 	return defaultProvider;
+}
+
+/**
+ * The relay endpoint the box dials, as host and port, when remote access is
+ * configured; undefined otherwise. Network-change safety probes it to tell
+ * whether a remote owner's way back to the box still exists.
+ */
+export function remoteEndpointTarget():
+	| { host: string; port: number }
+	| undefined {
+	const config = getConfig();
+	if (!config.remote_key) return undefined;
+	let provider: CloudProviderEndpoint;
+	try {
+		provider = getCurrentProvider();
+	} catch {
+		return undefined;
+	}
+	const host = setup.remote_endpoint_host ?? provider.host;
+	if (!host) return undefined;
+	const secure =
+		setup.remote_endpoint_secure === false ? false : provider.secure !== false;
+	return parseTarget(`${secure ? "wss" : "ws"}://${host}`)[0];
 }
 
 // Setup overrides take precedence over provider config

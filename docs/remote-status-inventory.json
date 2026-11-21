@@ -38493,7 +38493,8 @@
             "\"not_ethernet\"",
             "\"no_connection\"",
             "\"apply_failed\"",
-            "\"unavailable_in_emulated_mode\""
+            "\"unavailable_in_emulated_mode\"",
+            "\"change_in_flight\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
@@ -43971,7 +43972,7 @@
     "apps/backend/src/modules/network/uplink-steering/status.ts": "9c305c576faa8d32bfab922275f0bd7e69a327575185c82abd9138139eab9f65",
     "apps/backend/src/modules/remote-control/set-profile-wiring.ts": "f3d4ef2c672e440b940062dc2ad9fefbbf19f8b66c9d4f39e0bf25866ba39b72",
     "apps/backend/src/modules/remote/remote-relays.ts": "eb9e79c0404cb498065c5c2d041de52f80e1161626fa566fc70fc74d4e4b0789",
-    "apps/backend/src/modules/remote/remote.ts": "496724cf3ebf225fe3f966829e6b9f4cdce888367b465dec19b214c9e2472356",
+    "apps/backend/src/modules/remote/remote.ts": "b0e6bf3eeb664752e42978920e3ed3f59f8c08b329e184dd599298b0922fdcbe",
     "apps/backend/src/modules/streaming/audio-meter-bridge.ts": "3e299d67c8928795e835ed615ca8d696ab26e6310dc2b71f67b645f38caf6aa3",
     "apps/backend/src/modules/streaming/audio.ts": "799e5718f07bc7904615edebe34ccd4e7b680f60c4b29b432a0c9d9c0fedfe46",
     "apps/backend/src/modules/streaming/auto-audio.ts": "dc196f13ae03b4d6b19ebf483b245caf46e7de01fef3051d50086c75622bb4ad",
@@ -44017,7 +44018,7 @@
     "apps/backend/src/modules/wifi/wifi.ts": "567f85bf7a449aaacbd1649e21191c9a91e3bb410ee1c9fec7d47b20fc46b05b",
     "apps/backend/src/rpc/compat.ts": "6902642f8e2bae6039ac29880faa4bd7e92ffbea9a77be7c3a428da467d115ec",
     "apps/backend/src/rpc/procedures/audio-mix.procedure.ts": "77fb8974d0078221af7388c1bd211d485af80e5bf0a3b9d433308116f46f0535",
-    "apps/backend/src/rpc/procedures/network.procedure.ts": "a44dfdcbe37ac32f9c65392671072332b072e50b841344e13dc467954d207640",
+    "apps/backend/src/rpc/procedures/network.procedure.ts": "2ae39e2ab7d791d30ba275ca8a5f477137fc01a460b9c85e781ada03c29dae8a",
     "apps/backend/src/rpc/procedures/streaming.procedure.ts": "7f2bcee314c274fa99b64f8efca65cde63fec4afba3280375dc3d4e1eb3a9c28",
     "bun.lock": "38e3694c4af724eb86c125772c0e3256c4fe715af896fdfa2c22ee24b5efa687",
     "packages/rpc/src/schemas/addons.schema.ts": "4d03862d5f9a8a2353a37ece742a96213d926e0e7ddc735b98329959dbb22ae6",
@@ -44029,7 +44030,7 @@
     "packages/rpc/src/schemas/logs.schema.ts": "17625d634e1266d00ef2a4ead5267a0c0e7ea01cddbeced29239990adc7017b5",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
     "packages/rpc/src/schemas/modems.schema.ts": "d3733a5e5d8a4c79adb1a7089f8ebcdee54b3aed877957481eaf73c15ea56295",
-    "packages/rpc/src/schemas/network.schema.ts": "fd3ccb0b89bd33488e52125e541f4a68ad9a6d9eaa2119769972d58bf961220e",
+    "packages/rpc/src/schemas/network.schema.ts": "f2dba78ed79c15e551baf0f0376f82de80916710262f4baae9ba732025e8f017",
     "packages/rpc/src/schemas/notifications.schema.ts": "8919cd114f148a39e8cdb540f0e91429b847151db197a3942bb4617037dad764",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",

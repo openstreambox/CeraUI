@@ -20,6 +20,9 @@ import {
 	type NoticeReason,
 	needsAskBefore,
 	noticeMessageKey,
+	REACHABILITY_PROBE_GAP_MS,
+	REACHABILITY_PROBES_NEEDED,
+	type SessionRoute,
 } from "./network-change-policy.ts";
 
 export interface NetworkChangeSession {
@@ -28,12 +31,24 @@ export interface NetworkChangeSession {
 	readonly authenticated: boolean;
 	/** Trusted arrival interface; unavailable evidence must remain undefined. */
 	readonly ingress: string | undefined;
+	/**
+	 * The box's own route back to a session without arrival evidence. Used only
+	 * to tell the person up front that a change cuts them; never to confirm.
+	 */
+	readonly route?: SessionRoute | undefined;
 }
 
 /** NetworkManager operations. Candidates are the only profiles edited in memory. */
 export interface NmChangeDeps {
 	create(devices: string[], timeout: number): Promise<string>;
 	live(path: string): Promise<boolean>;
+	/**
+	 * The checkpoint's creation stamp (NetworkManager's `Created` property).
+	 * NetworkManager numbers checkpoint paths from 1 again after a restart, so
+	 * a path alone can name someone else's checkpoint; the stamp tells them
+	 * apart. Optional: without it the path alone is compared.
+	 */
+	checkpointCreated?(path: string): Promise<string | undefined>;
 	destroy(path: string): Promise<void>;
 	rollback(path: string): Promise<void>;
 	describe(uuid: string): Promise<{ id: string; autoconnect: boolean }>;
@@ -74,6 +89,21 @@ export interface NetworkChangeDeps {
 	 * idempotent. A throw leaves the transaction in place for the next attempt.
 	 */
 	readonly onSettled?: (event: SettledEvent) => Promise<void> | void;
+	/**
+	 * The box's own outside reachability, for keep-if-reachable changes:
+	 * `available` says whether there is anything to probe (no remote endpoint
+	 * configured: the answer is not offered), `probe` opens fresh outbound
+	 * connections and resolves true only if one succeeded. Absent: never
+	 * offered.
+	 */
+	readonly reachability?: {
+		available(): boolean | Promise<boolean>;
+		probe(): Promise<boolean>;
+	};
+	/** Whether a stream is live, so the prompt can warn about an undo. */
+	readonly isStreaming?: () => boolean;
+	/** Diagnostics for retries that would otherwise be silent. */
+	readonly log?: (message: string) => void;
 }
 
 export interface SettledEvent {
@@ -107,7 +137,16 @@ export type ApplyResult =
 			readonly id: string;
 			readonly expiresAt: number;
 	  }
-	| { readonly kind: "kept"; readonly id: string };
+	| {
+			readonly kind: "kept";
+			readonly id: string;
+			/**
+			 * The change is live and kept, but saving it did not finish (a failed
+			 * profile or intent write). The tick finishes it and the caller's
+			 * settle handler reports the outcome then.
+			 */
+			readonly saving?: true;
+	  };
 
 export interface ApplyOptions {
 	readonly answer?: AskBeforeAnswer | undefined;
@@ -120,6 +159,11 @@ export interface NetworkChangeStatus {
 		readonly id: string;
 		readonly expiresAt: number;
 		readonly path: string;
+		/**
+		 * session: a new session over the changed path confirms. reachability:
+		 * the box keeps it once it still reaches the internet after the settle.
+		 */
+		readonly confirmBy: "session" | "reachability";
 	} | null;
 	readonly kept: { readonly id: string; readonly undoKey: string } | null;
 	readonly undoIncomplete: boolean;
@@ -128,12 +172,25 @@ export interface NetworkChangeStatus {
 	 * write or intent write). The tick retries it.
 	 */
 	readonly commitIncomplete: boolean;
+	/**
+	 * Why an undo or a commit is stuck, and when the box tries again, so a
+	 * person can see it instead of a change that silently never finishes.
+	 */
+	readonly problem: {
+		readonly errors: string[];
+		readonly nextAttemptAt?: number;
+	} | null;
 	readonly notice: {
 		readonly id: string;
 		readonly reason: NoticeReason;
 		readonly messageKey: string;
 		readonly summary: NetworkChangePlan["summary"];
 	} | null;
+}
+
+/** Retry delay after the nth incomplete undo: 5 s doubling, at most 5 min. */
+export function undoBackoffMs(attempts: number): number {
+	return Math.min(5_000 * 2 ** Math.max(0, attempts - 1), 300_000);
 }
 
 /**
@@ -153,6 +210,13 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 	const window = deps.windowSeconds ?? DEFAULT_WINDOW_SECONDS;
 	const settle = deps.settleMs ?? DEFAULT_SETTLE_MS;
 	let busy = false;
+	let queue: Promise<unknown> = Promise.resolve();
+	/**
+	 * Reachability probes of the pending keep-if-reachable change, in memory: a
+	 * backend restart only restarts the count, and NetworkManager's timer still
+	 * bounds the change.
+	 */
+	let probes: { tx: string; ok: number; lastAt: number } | undefined;
 
 	async function save(journal: Journal) {
 		await deps.journal.write(journal);
@@ -171,19 +235,45 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		});
 	}
 
-	async function exclusive<T>(fn: () => Promise<T>): Promise<T> {
-		if (busy) throw new Error("Network change busy");
-		busy = true;
-		try {
-			return await fn();
-		} finally {
-			busy = false;
-		}
+	/**
+	 * One operation at a time. A request that arrives while another runs waits
+	 * for it rather than failing with "busy"; the tick alone skips a turn.
+	 */
+	function exclusive<T>(fn: () => Promise<T>): Promise<T> {
+		const run = queue.then(async () => {
+			busy = true;
+			try {
+				return await fn();
+			} finally {
+				busy = false;
+			}
+		});
+		queue = run.catch(() => undefined);
+		return run;
 	}
 
-	/** No checkpoint (an effect-only change): the journaled deadline alone. */
+	/**
+	 * No checkpoint (an effect-only change): the journaled deadline alone. A
+	 * checkpoint counts as ours only while its path exists and, when the stamp
+	 * was recorded, still carries the same creation stamp.
+	 */
 	async function checkpointLive(tx: TxRecord) {
-		return tx.checkpoint ? deps.nm.live(tx.checkpoint) : true;
+		if (!tx.checkpoint) return true;
+		if (!(await deps.nm.live(tx.checkpoint))) return false;
+		if (tx.checkpointCreated === undefined || !deps.nm.checkpointCreated)
+			return true;
+		return (
+			(await deps.nm.checkpointCreated(tx.checkpoint)) === tx.checkpointCreated
+		);
+	}
+
+	/** A restart before the apply finished interrupted it; nobody could confirm. */
+	function restartReason(tx: TxRecord): NoticeReason {
+		return tx.appliedAt === undefined ? "interrupted" : "restart";
+	}
+
+	function expiredReason(tx: TxRecord): NoticeReason {
+		return tx.mode === "keep-if-reachable" ? "unreachable" : "disconnected";
 	}
 
 	function allDevices(plan: NetworkChangePlan) {
@@ -228,7 +318,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		if (tx.checkpoint) {
 			const path = tx.checkpoint;
 			await attempt("checkpoint", async () => {
-				if (await deps.nm.live(path)) await deps.nm.rollback(path);
+				if (await checkpointLive(tx)) await deps.nm.rollback(path);
 			});
 		}
 		for (const profile of [...tx.profiles].reverse()) {
@@ -256,19 +346,30 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 			});
 		}
 		if (errors.length) {
-			// Keep the record: the next tick or restart retries the same undo.
+			// Keep the record: the next tick or restart retries the same undo,
+			// backing off so a device that stays missing (an unplugged USB NIC)
+			// is retried every few minutes, not every 5 s, and logged each time.
+			const attempts = (tx.undoAttempts ?? 0) + 1;
+			tx.undoAttempts = attempts;
+			tx.nextAttemptAt = deps.now() + undoBackoffMs(attempts);
 			tx.errors = errors;
 			await save(journal);
+			deps.log?.(
+				`network change ${tx.id.slice(0, 8)}: undo attempt ${attempts} incomplete (${errors.join("; ")}); next try in ${Math.round(undoBackoffMs(attempts) / 1000)} s`,
+			);
 			return false;
 		}
 		const noticeReason = tx.undoReason;
 		await settled(tx, "undone");
 		journal.tx = null;
-		// A kept change lost before it reached disk is reported too: the person
-		// chose to keep it, and the box could not.
+		// A kept or confirmed change lost before it reached disk is reported
+		// too: the person chose it, and the box could not keep it.
 		if (
-			(tx.mode === "undo-automatically" && noticeReason === "disconnected") ||
-			noticeReason === "restart"
+			(tx.mode !== "keep-change" &&
+				(noticeReason === "disconnected" || noticeReason === "unreachable")) ||
+			noticeReason === "restart" ||
+			noticeReason === "interrupted" ||
+			noticeReason === "unsaved"
 		) {
 			journal.notice = {
 				id: randomUUID(),
@@ -355,7 +456,9 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				await save(journal);
 				return "incomplete";
 			}
-			return (await undo(journal, "restart")) ? "undone" : "incomplete";
+			// Confirmed or kept, then lost before it reached disk: say so, rather
+			// than "the network restarted before you confirmed".
+			return (await undo(journal, "unsaved")) ? "undone" : "incomplete";
 		}
 		try {
 			await promote(journal, keep);
@@ -388,9 +491,9 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 			if (live && deps.now() < (tx.expiresAt ?? 0))
 				throw new Error("Network change pending");
 			const early = !live && deps.now() < (tx.expiresAt ?? 0) - 2_000;
-			await undo(journal, early ? "restart" : "disconnected");
+			await undo(journal, early ? "restart" : expiredReason(tx));
 		} else {
-			await undo(journal, tx.undoReason ?? "restart");
+			await undo(journal, tx.undoReason ?? restartReason(tx));
 		}
 		if (journal.tx) throw new Error("Undo of the previous change incomplete");
 	}
@@ -411,8 +514,29 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		await settleStale(journal);
 		const path = classifyPath(devices, session.ingress);
 		const deliberate = options.deliberate === true;
+		const reachable = deps.reachability
+			? await deps.reachability.available()
+			: false;
 		if (needsAskBefore(path, deliberate) && options.answer === undefined)
-			return askBeforePrompt(path, session.ingress, window);
+			return askBeforePrompt({
+				path,
+				ingress: session.ingress,
+				devices,
+				route: session.route,
+				seconds: window,
+				settleSeconds: Math.round(settle / 1000),
+				reachability: reachable,
+				live: deps.isStreaming?.() === true,
+			});
+		// Keep-if-reachable proves the box still reaches the internet, not that
+		// this person can reach it. A session whose own arrival interface the
+		// change cuts (a laptop on that port) is never offered it, and its
+		// answer is refused; so is the answer when there is nothing to probe.
+		if (
+			options.answer === "keep-if-reachable" &&
+			(!reachable || path === "own")
+		)
+			throw new Error("Reachability check unavailable for this change");
 		// Only an explicit "keep-change" keeps a change without the undo.
 		const mode: AskBeforeAnswer = options.answer ?? "undo-automatically";
 		await finishKept(journal);
@@ -434,7 +558,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		journal.tx = tx;
 		await save(journal);
 		try {
-			if (mode === "undo-automatically") {
+			if (mode !== "keep-change") {
 				tx.expiresAt = startedAt + window * 1000;
 				// Only interfaces NetworkManager manages. Effect interfaces may not be
 				// NetworkManager devices, and a torn-down one no longer exists.
@@ -442,6 +566,8 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				if (plan.profiles.length) {
 					if (!managed.length) throw new Error("Network change unavailable");
 					tx.checkpoint = await deps.nm.create(managed, window);
+					const created = await deps.nm.checkpointCreated?.(tx.checkpoint);
+					if (created !== undefined) tx.checkpointCreated = created;
 				}
 				await save(journal);
 			}
@@ -493,8 +619,19 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				await save(journal);
 				// A failure from here on leaves an unsettled kept change, which
 				// reconcile and the tick finish (or undo, if nothing reached disk).
-				if ((await finishCommit(journal)) === "undone")
+				// The change is live either way, so a failed save is reported as
+				// kept-and-saving, not as a failed apply.
+				let outcome: Awaited<ReturnType<typeof finishCommit>>;
+				try {
+					outcome = await finishCommit(journal);
+				} catch {
+					return { kind: "kept", id: tx.id, saving: true };
+				}
+				// Lost before it reached disk: undone (or being undone), not kept.
+				if (outcome === "undone" || journal.tx?.state === "rolling-back")
 					throw new Error("Network change could not be kept");
+				if (outcome === "incomplete")
+					return { kind: "kept", id: tx.id, saving: true };
 				return { kind: "kept", id: tx.id };
 			}
 			if (deps.now() >= (tx.expiresAt ?? 0) || !(await checkpointLive(tx)))
@@ -510,6 +647,49 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 			if (journal.tx?.state !== "kept") await undo(journal, "failed");
 			throw error;
 		}
+	}
+
+	/**
+	 * Destroy is the daemon-side expiry fence. Never promote before it: a
+	 * timed-out checkpoint must not race a persistent candidate write.
+	 */
+	async function commitPending(journal: Journal) {
+		const tx = journal.tx as TxRecord;
+		if (tx.checkpoint) await deps.nm.destroy(tx.checkpoint);
+		tx.state = "confirming";
+		await save(journal);
+		// A failure here leaves "confirming"; the tick retries it.
+		return finishCommit(journal);
+	}
+
+	/**
+	 * Keep-if-reachable: after the settle time, probe the box's outside
+	 * reachability on each tick; enough fresh successes in a row commit the
+	 * change exactly like a confirmation. A failed probe resets the count.
+	 */
+	async function probeReachability(journal: Journal): Promise<boolean> {
+		const tx = journal.tx as TxRecord;
+		const now = deps.now();
+		const appliedAt = tx.appliedAt ?? Number.POSITIVE_INFINITY;
+		if (!deps.reachability || now < appliedAt + settle) return false;
+		if (probes?.tx !== tx.id) probes = { tx: tx.id, ok: 0, lastAt: 0 };
+		if (probes.lastAt && now - probes.lastAt < REACHABILITY_PROBE_GAP_MS)
+			return false;
+		let ok = false;
+		try {
+			ok = await deps.reachability.probe();
+		} catch {
+			ok = false;
+		}
+		probes = { tx: tx.id, ok: ok ? probes.ok + 1 : 0, lastAt: now };
+		if (probes.ok < REACHABILITY_PROBES_NEEDED) return false;
+		// The probe may have taken a while: re-check the deadline and the
+		// checkpoint before the destroy fence.
+		if (deps.now() >= (tx.expiresAt ?? 0) || !(await checkpointLive(tx)))
+			return false;
+		probes = undefined;
+		await commitPending(journal);
+		return true;
 	}
 
 	function confirmable(tx: TxRecord, session: NetworkChangeSession) {
@@ -544,6 +724,8 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 								id: tx.id,
 								expiresAt: tx.expiresAt as number,
 								path: tx.path,
+								confirmBy:
+									tx.mode === "keep-if-reachable" ? "reachability" : "session",
 							}
 						: null,
 				kept:
@@ -552,6 +734,14 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 						: null,
 				undoIncomplete: tx?.state === "rolling-back",
 				commitIncomplete: commitOpen(tx ?? null),
+				problem: tx?.errors?.length
+					? {
+							errors: [...tx.errors],
+							...(tx.nextAttemptAt === undefined
+								? {}
+								: { nextAttemptAt: tx.nextAttemptAt }),
+						}
+					: null,
 				notice: notice
 					? {
 							id: notice.id,
@@ -584,13 +774,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 						"Reconnect over the changed network before confirming",
 					);
 				}
-				// Destroy is the daemon-side expiry fence. Never promote before it:
-				// a timed-out checkpoint must not race a persistent candidate write.
-				if (tx.checkpoint) await deps.nm.destroy(tx.checkpoint);
-				tx.state = "confirming";
-				await save(journal);
-				// A failure here leaves "confirming"; the tick retries it.
-				await finishCommit(journal);
+				await commitPending(journal);
 			});
 		},
 		/** Run by a timer: NetworkManager's deadline passed or its checkpoint is gone. */
@@ -603,11 +787,17 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				if (tx.state === "pending") {
 					const live = await checkpointLive(tx);
 					const expiresAt = tx.expiresAt ?? 0;
-					if (live && deps.now() < expiresAt) return false;
+					if (live && deps.now() < expiresAt)
+						return tx.mode === "keep-if-reachable"
+							? probeReachability(journal)
+							: false;
 					const early = !live && deps.now() < expiresAt - 2_000;
-					return undo(journal, early ? "restart" : "disconnected");
+					return undo(journal, early ? "restart" : expiredReason(tx));
 				}
-				if (tx.state === "rolling-back") return undo(journal, tx.undoReason);
+				if (tx.state === "rolling-back") {
+					if (deps.now() < (tx.nextAttemptAt ?? 0)) return false;
+					return undo(journal, tx.undoReason);
+				}
 				if (commitOpen(tx))
 					return (await finishCommit(journal)) !== "incomplete";
 				return false;
@@ -649,7 +839,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				}
 				const done = await undo(
 					journal,
-					tx.state === "rolling-back" ? tx.undoReason : "restart",
+					tx.state === "rolling-back" ? tx.undoReason : restartReason(tx),
 				);
 				return done ? ("undone" as const) : ("incomplete" as const);
 			});

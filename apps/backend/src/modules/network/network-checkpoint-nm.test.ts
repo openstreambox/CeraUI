@@ -181,3 +181,42 @@ describe("NetworkManager candidate profiles through nmcli", () => {
 		await expect(nm.activate(B, "-x")).rejects.toThrow();
 	});
 });
+
+describe("checkpoint identity", () => {
+	it("reads the checkpoint's Created stamp from its own object", async () => {
+		const calls: string[][] = [];
+		const nm = createNmCheckpointAdapter(async (_bin, args) => {
+			calls.push(args);
+			return JSON.stringify({ type: "x", data: 123456789 });
+		});
+		expect(
+			await nm.checkpointCreated(
+				"/org/freedesktop/NetworkManager/Checkpoint/3",
+			),
+		).toBe("123456789");
+		expect(calls[0]?.slice(-4)).toEqual([
+			"org.freedesktop.NetworkManager",
+			"/org/freedesktop/NetworkManager/Checkpoint/3",
+			"org.freedesktop.NetworkManager.Checkpoint",
+			"Created",
+		]);
+	});
+
+	it("refuses anything but a checkpoint path, and an unreadable stamp is undefined", async () => {
+		let dispatched = false;
+		const nm = createNmCheckpointAdapter(async () => {
+			dispatched = true;
+			return JSON.stringify({ type: "s", data: "x" });
+		});
+		await expect(nm.checkpointCreated("--help")).rejects.toThrow();
+		await expect(
+			nm.checkpointCreated("/org/freedesktop/NetworkManager/Devices/1"),
+		).rejects.toThrow();
+		expect(dispatched).toBe(false);
+		expect(
+			await nm.checkpointCreated(
+				"/org/freedesktop/NetworkManager/Checkpoint/1",
+			),
+		).toBeUndefined();
+	});
+});

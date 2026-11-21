@@ -1767,6 +1767,7 @@
 	"network.ethRole.error.noConnection": "Ce port n'a aucun profil réseau à configurer, rien n'a été modifié.",
 	"network.ethRole.error.applyFailed": "L'appareil n'a pas pu appliquer le nouveau rôle et a conservé le précédent.",
 	"network.ethRole.error.unavailableEmulated": "Les rôles de port ne sont disponibles que sur du matériel réel.",
+	"network.ethRole.error.changeInFlight": "Un autre changement réseau sur ce port est en attente, en cours d'annulation ou d'enregistrement, rien n'a donc changé. Réessayez ensuite.",
 	"network.ethRole.error.notConfirmed": "L'appareil n'a jamais signalé le résultat, le rôle de ce port est donc inconnu.",
 	"network.ethRole.error.generic": "L'appareil a refusé le changement, ce port a conservé son rôle précédent.",
 	"network.netifSave.error.title": "Rien n'a été enregistré",
@@ -3559,5 +3560,16 @@
 	"network.changeSafety.notice.make": "Faire le changement",
 	"network.changeSafety.notice.leave": "Laisser annulé",
 	"network.changeSafety.kept.undo": "Annuler le dernier changement réseau",
-	"network.changeSafety.summary.ethernetRole": "Changement du rôle du port {ifname}"
+	"network.changeSafety.summary.ethernetRole": "Changement du rôle du port {ifname}",
+	"network.changeSafety.askBefore.routeCuts": "Ce changement va sans doute vous déconnecter : le boîtier vous joint via {via}.",
+	"network.changeSafety.askBefore.routeMayCut": "Ce changement peut couper votre connexion : {via} est un des liens du boîtier.",
+	"network.changeSafety.askBefore.undoVia": "Appliquer, annulé après {seconds} s sauf si quelqu'un sur {via} confirme",
+	"network.changeSafety.askBefore.undoLocal": "Appliquer, annulé après {seconds} s sauf si quelqu'un sur place confirme",
+	"network.changeSafety.askBefore.reachable": "Appliquer, gardé seulement si le boîtier joint encore Internet après {settle} s",
+	"network.changeSafety.askBefore.keepRemote": "Appliquer sans annulation. Si le boîtier est coupé, il faudra intervenir sur place.",
+	"network.changeSafety.askBefore.live": "Vous êtes en direct : une annulation à l'échéance peut couper le flux un instant.",
+	"network.changeSafety.confirm.reachable": "Vérification que le boîtier joint encore Internet. Si oui, il garde le changement.",
+	"network.changeSafety.notice.unreachable": "Le boîtier a perdu Internet après ce changement, il l'a donc annulé. Le refaire ?",
+	"network.changeSafety.notice.interrupted": "Le boîtier a redémarré pendant ce changement, il ne l'a donc pas fait. Le refaire ?",
+	"network.changeSafety.notice.unsaved": "Le boîtier a redémarré avant d'enregistrer le changement confirmé, il l'a donc annulé. Le refaire ?"
 }

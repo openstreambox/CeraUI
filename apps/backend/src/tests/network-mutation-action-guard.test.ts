@@ -33,6 +33,7 @@ interface NetworkMutationAction {
 const ETH_ROLE_TRANSITION = "modules/network/ethernet-role-transition.ts";
 const NETWORK_PROCEDURE = "rpc/procedures/network.procedure.ts";
 const INGEST_CONTROL = "modules/network/network-ingest-control.ts";
+const ETH_ROLE_SAFETY = "modules/network/ethernet-role-safety.ts";
 
 const NETWORK_MUTATION_ACTIONS: readonly NetworkMutationAction[] = [
 	{
@@ -48,6 +49,29 @@ const NETWORK_MUTATION_ACTIONS: readonly NetworkMutationAction[] = [
 			// config nor the netif flags half-applied.
 			"deps.persistRole(",
 			"deps.restoreRole(name, previous)",
+		],
+	},
+	{
+		// The protected path (behind CERALIVE_NETWORK_CHANGE_SAFETY): a pending
+		// frame when the owner accepts the change, and a terminal frame from the
+		// settle handler on commit, revert and undo. Refusals name their reason.
+		name: "Ethernet port role, protected path",
+		key: "eth-role-protected",
+		file: ETH_ROLE_TRANSITION,
+		mustContain: [
+			"deps.publishOutcome(name, { pending: true, role, ...correlation });",
+			'return refuse("change_in_flight");',
+			'return { success: false, error: "apply_failed" };',
+		],
+	},
+	{
+		name: "Ethernet port role, protected settle",
+		key: "eth-role-settle",
+		file: ETH_ROLE_SAFETY,
+		mustContain: [
+			"deps.persistRole(ifname, intent.role);",
+			"deps.restoreRole(ifname, intent.previous);",
+			'error: "apply_failed",',
 		],
 	},
 	{
@@ -72,6 +96,8 @@ const NETWORK_MUTATION_ACTIONS: readonly NetworkMutationAction[] = [
 /** The canonical key set — a meta-guard so the list cannot silently shrink. */
 const EXPECTED_KEYS: readonly string[] = [
 	"eth-role",
+	"eth-role-protected",
+	"eth-role-settle",
 	"netif-configure",
 	"ingest-enabled",
 ];

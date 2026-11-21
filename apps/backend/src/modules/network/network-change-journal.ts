@@ -94,6 +94,8 @@ export interface TxRecord {
 	appliedAt?: number;
 	expiresAt?: number;
 	checkpoint?: string;
+	/** The checkpoint's creation stamp, compared with the path (see live). */
+	checkpointCreated?: string;
 	plan: NetworkChangePlan;
 	profiles: ProfileRecord[];
 	effects: EffectRecord[];
@@ -106,6 +108,9 @@ export interface TxRecord {
 	/** Set when an undo started, so a crash mid-undo finishes the same way. */
 	undoReason?: NoticeReason | "failed" | undefined;
 	errors?: string[];
+	/** Incomplete undo attempts so far, and when the tick may retry. */
+	undoAttempts?: number;
+	nextAttemptAt?: number;
 }
 
 export interface NoticeRecord {

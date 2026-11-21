@@ -4,8 +4,9 @@ This holds a network-change owner, a NetworkManager adapter, a journal, an
 undo interface for effects outside NetworkManager, arrival-interface evidence,
 and the copy for the prompts. One change path is wired to it: the Ethernet port
 role (uplink or shared LAN), behind `CERALIVE_NETWORK_CHANGE_SAFETY=1`, which is
-off by default. With the flag off, network behavior is unchanged. No UI uses it
-yet.
+off by default and takes effect only on an image with the front door (the
+`/run/ceralive-button-ingress` listener). With the flag off, network behavior is
+unchanged. No UI uses it yet.
 
 ## The idea
 
@@ -36,6 +37,54 @@ An unknown arrival interface counts as the person's own path. It costs one tap
 when the box is unsure, and the box could not accept a confirmation without
 that evidence anyway.
 
+## Sessions that cannot confirm
+
+A session without front-door evidence (a relay, a tailnet, a VPN, the front
+door's TCP proxy) can never confirm: the box cannot tell it apart from anyone
+else on the internet. Asking it to "confirm within 90 s" would promise an undo,
+followed by a "Nobody confirmed" notice offering the same dead end. Two things
+change for such a session.
+
+**It is told up front whether the change cuts it.** `network-session-route.ts`
+asks the kernel for the box's route back to the session's peer (`ip -j route
+get`). A directly routed peer depends on that one interface. A tunnel or a
+loopback peer depends on every uplink that holds a default route in any table.
+The prompt then says "This change will likely cut your connection: the box
+reaches you via eth0" (`cut: "cuts"`), or "may interrupt" when the change
+touches one of several uplinks (`may-cut`). This is a prediction, not evidence:
+it never skips the prompt, never turns a session into "another path" and never
+confirms. A route that misses the changed port still gets the "may disconnect
+you" prompt.
+
+**It gets a confirm flow it can actually complete: keep if the box can still
+reach the internet.** The primary action for such a session is "Make the
+change, kept only if the box still reaches the internet after {settle} s"
+(`keep-if-reachable`). It runs inside the same checkpoint and candidate as any
+protected change. After the 15 s settle time, each 5 s tick the box opens fresh
+TCP connections to the endpoints a remote owner's way back depends on: the
+relay endpoint it dials, the pinned device-control hub and, when `tailscale0`
+exists, the tailnet's coordination server. Two successes in a row, at least
+5 s apart, commit the change exactly like a confirmation (`CheckpointDestroy`,
+then promotion and the role write). A failed probe resets the count. If the box
+cannot get out by the deadline, NetworkManager undoes the change and the notice
+says "The box lost its internet connection after this change, so it undid it."
+
+The alternative stays available: "Make the change, undone after {seconds} s
+unless someone on eth0 confirms" (or "on site" when the box can't name the
+port). The deliberate answer for such a session reads "Make the change with no
+undo. If it cuts the box off, someone has to fix it on site.", without claiming
+a disconnect it can't know about. With no endpoint configured there is nothing
+to probe: keep-if-reachable is not offered and is refused if sent.
+
+Why this and not "confirm from a new remote session": a new remote session
+proves only that some path to the box exists, which is what the box can check
+itself without waiting for a browser to reconnect, and without trusting a
+session that has no arrival evidence. Keep-if-reachable proves the box's own
+outside reachability, not that a particular person can reach it. That is why a
+session on the changed port (front-door evidence names it) is never offered it,
+and why the flag requires the front door: without it a laptop on the shared LAN
+would look like a remote session.
+
 ## How a change runs
 
 | Step | What happens |
@@ -58,10 +107,11 @@ writes the ask-after notice. The same undo runs on `reconcile`:
 | --- | --- |
 | NetworkManager's bus name gets a new owner (restart) | Unconfirmed change undone at once. The candidate reloaded from `/run` is deleted, so nothing is orphaned |
 | Backend start, same boot, checkpoint still live | Resumed: NetworkManager still holds the timer |
-| Backend start or boot otherwise | Undone, notice "The network restarted before you confirmed, so the box undid it." |
-| Crash or failed write after the confirmation's checkpoint destroy | Rolls forward to finish the promotion; the tick retries it and the status shows `commitIncomplete`. If the candidate is gone before it reached disk (a reboot), the originals are intact, so the change is undone with the restart notice |
-| Crash or failed intent write on the deliberate answer | The kept change stays unsettled; the tick and the next start finish it (or undo it, if it never reached disk) |
-| An undo step fails | The record stays as "undo incomplete" and is retried on every tick and restart |
+| Backend start or boot otherwise | Undone, notice "The network restarted before you confirmed, so the box undid it." If the box restarted before the apply finished, the notice says the change was never made (`interrupted`) |
+| Crash or failed write after the confirmation's checkpoint destroy | Rolls forward to finish the promotion; the tick retries it and the status shows `commitIncomplete`. If the candidate is gone before it reached disk (a reboot), the originals are intact, so the change is undone with a notice that the confirmed change was not saved (`unsaved`) |
+| Crash or failed intent write on the deliberate answer | The kept change stays unsettled; the tick and the next start finish it (or undo it with the `unsaved` notice, if it never reached disk). The caller gets `kept` with `saving: true` and a pending frame, not a failure |
+| An undo step fails | The record stays as "undo incomplete" with its errors in the status (`problem`). The tick retries after 5 s, doubling up to 5 minutes, and logs each attempt; a restart retries at once |
+| The journal is unreadable | Every protected change and every role write to any port is refused with `change_in_flight`; the status reports `journalUnavailable`. The warning is logged once (again only when it changes or every ten minutes). `network.resetChangeJournal` moves an unreadable journal aside (kept next to it) and reconciles; a readable one is never moved |
 
 Any `ceralive-candidate-…` profile the journal does not name (a crash between
 clone and journal write) is deleted by the same sweep.
@@ -90,24 +140,37 @@ on a port with an active connection to the owner:
   there is not a cut).
 - While a change in flight names the port (anything but a fully settled kept
   change), the role reconciler skips the port and legacy role writes to it are
-  refused, so nothing edits the owner's candidate. Re-applying a stored role
-  change from a notice runs inside the port's role queue.
+  refused with `change_in_flight`, so nothing edits the owner's candidate.
+- "Make the change" on a stored role-change notice plans the change again from
+  the port's state now, through `setEthernetRole` (and so its queue), asked
+  before again. It never replays the stored plan, whose profile or previous
+  role may be stale.
 
 The arrival interface comes from the front door's local ingress evidence
 (`ingressPath`, rechecked with `ingressPathValid()`). A session without it is
-"unknown": it is asked before, and it cannot confirm. Each WebSocket carries
-its own session id and open time, so a reconnect is a new session.
+"unknown": it is asked before, cannot confirm, and is offered keep-if-reachable
+(see "Sessions that cannot confirm"). Each WebSocket carries its own session id
+and open time, so a reconnect is a new session.
+
+Requests to the owner are queued, one at a time: a confirmation that lands
+during a tick waits for it instead of failing with "busy". The tick alone skips
+a turn when something else runs. While a stream is live, the prompt carries
+`liveKey` ("an undo at the deadline can drop the stream for a moment"); the
+undo itself is never deferred.
 
 At backend start the owner reconciles before the role reconciler runs, and a
 5-second tick undoes a change whose deadline passed or whose checkpoint vanished
 (a NetworkManager restart). Both run whenever a journal exists, even with the
 flag off, so turning the flag off cannot strand a pending change.
 
-RPC: `network.setEthernetRole` takes an optional `changeAnswer` and may return
-`changeSafety` (the ask-before prompt, `pending` with its id and deadline, or
-`kept`). `network.getChangeSafety` reads the journal, and
-`network.confirmChange`, `network.undoKeptChange` and
-`network.answerChangeNotice` act on it.
+RPC: `network.setEthernetRole` takes an optional `changeAnswer`
+(`undo-automatically`, `keep-if-reachable` or `keep-change`) and may return
+`changeSafety` (the ask-before prompt with `cut`, `canConfirm`, `primary`,
+optional `alternative` and `deliberate`; `pending` with its id and deadline; or
+`kept`, with `saving` while the save is unfinished). `network.getChangeSafety`
+reads the journal (`pending.confirmBy` is `session` or `reachability`), and
+`network.confirmChange`, `network.undoKeptChange`,
+`network.answerChangeNotice` and `network.resetChangeJournal` act on it.
 
 ## Arrival-interface evidence
 
@@ -177,14 +240,19 @@ The TypeScript unit tests use the ordinary runner with
   own keyfile permissions.
 - While an Ethernet role change is pending, the persisted role (and so the bond
   gate's view of the port) is still the old one. It catches up on commit.
-- A session with no front-door evidence (a remote relay or tailnet session, for
-  example) can make a protected change but never confirm it, so such a change is
-  always undone unless the deliberate answer was chosen.
-- Re-applying from an ask-after notice uses the stored plan (its profile and
-  previous role), which may be stale by then.
-- Checkpoints are matched by D-Bus path. NetworkManager numbers them from 1
-  again after a restart; the tick undoes the change as soon as the old path is
-  gone, but a new checkpoint reusing the path before that tick is not detected.
+- A session with no front-door evidence still cannot confirm. It completes a
+  change through keep-if-reachable, which proves the box's outside
+  reachability, not the person's own path. A remote owner whose only way in is
+  an inbound port forward to the changed uplink is not covered by the probe.
+- The route back to a session is read from the routing table when the prompt is
+  built. Policy routing that picks a different uplink per flow can make the
+  "cuts" prediction wrong in either direction; it only changes the message.
+- Probe endpoints are reached by name, so a probe needs working DNS on the new
+  configuration. A box whose resolver depends on the changed uplink is reported
+  unreachable and undone, which is the safe direction.
+- Checkpoints are matched by D-Bus path and NetworkManager's `Created` stamp. A
+  foreign checkpoint reusing the path after a restart is neither rolled back
+  nor destroyed; the change is undone as a restart.
 
 ## Before wiring more paths or turning the flag on
 

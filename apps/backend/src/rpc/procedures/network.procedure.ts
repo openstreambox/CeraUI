@@ -28,17 +28,16 @@ import {
 import { setMockNetworkIngestActive } from "../../mocks/providers/network-ingest.ts";
 import { setMockGatewayActive } from "../../mocks/providers/streaming.ts";
 import {
-	ethernetRolePortOfSummary,
+	ethernetRoleOfSummary,
 	networkChangeSafetyEnabled,
 } from "../../modules/network/ethernet-role-safety.ts";
-import {
-	setEthernetRole,
-	withEthernetRolePort,
-} from "../../modules/network/ethernet-role-transition.ts";
+import { setEthernetRole } from "../../modules/network/ethernet-role-transition.ts";
 import {
 	getNetworkChangeOwner,
 	networkChangeJournalPath,
 	networkChangeSession,
+	resetDamagedNetworkChangeJournal,
+	resolveNetworkChangeSession,
 } from "../../modules/network/network-change-runtime.ts";
 import { refreshAndBroadcastNetworkIngest } from "../../modules/network/network-ingest.ts";
 import {
@@ -142,11 +141,13 @@ export const setEthernetRoleProcedure = authedProcedure
 
 		// Behind the off-by-default flag, a real role change runs through the
 		// network-change owner: checkpoint, candidate, confirm or automatic undo.
+		// A session without arrival evidence also carries the box's route back
+		// to it, so the prompt can say up front that the change cuts it.
 		const safety =
 			!shouldUseMocks() && networkChangeSafetyEnabled()
 				? {
 						owner: getNetworkChangeOwner(),
-						session: networkChangeSession(context.ws),
+						session: await resolveNetworkChangeSession(context.ws),
 						answer: input.changeAnswer,
 					}
 				: undefined;
@@ -166,6 +167,8 @@ const NO_CHANGE: Omit<ChangeSafetyStatus, "enabled"> = {
 	kept: null,
 	undoIncomplete: false,
 	commitIncomplete: false,
+	problem: null,
+	journalUnavailable: false,
 	notice: null,
 };
 
@@ -175,7 +178,33 @@ export const getChangeSafetyStatusProcedure = authedProcedure
 	.handler(async () => {
 		const enabled = !shouldUseMocks() && networkChangeSafetyEnabled();
 		if (!changeSafetyActive()) return { enabled, ...NO_CHANGE };
-		return { enabled, ...(await getNetworkChangeOwner().status()) };
+		try {
+			return {
+				enabled,
+				...(await getNetworkChangeOwner().status()),
+				journalUnavailable: false,
+			};
+		} catch {
+			// A damaged journal refuses every protected change and role write on
+			// the ports it might name; say so instead of an all-clear.
+			return { enabled, ...NO_CHANGE, journalUnavailable: true };
+		}
+	});
+
+/**
+ * Move a damaged change journal aside (kept for support) so changes work
+ * again. Refused while the journal is readable: it may hold an undo.
+ */
+export const resetNetworkChangeJournalProcedure = authedProcedure
+	.output(changeSafetyActionOutputSchema)
+	.handler(async () => {
+		if (shouldUseMocks()) return { success: false, error: "unavailable" };
+		try {
+			await resetDamagedNetworkChangeJournal();
+			return { success: true };
+		} catch (error) {
+			return refusal(error);
+		}
 	});
 
 function refusal(error: unknown) {
@@ -232,18 +261,42 @@ export const answerNetworkChangeNoticeProcedure = authedProcedure
 			// Re-applying is deliberate: the owner always asks before again.
 			if (!networkChangeSafetyEnabled())
 				return { success: false, error: "unavailable" };
-			// A stored role change re-applies inside that port's role queue, so
-			// it cannot interleave with a role write on the same port.
+			// A stored role change is planned again from the port's state now,
+			// through the normal role path (and so its queue), never replayed
+			// from the stored plan: the profile or role may have changed since.
 			const notice = (await owner.status()).notice;
-			const port =
+			const intent =
 				notice?.id === input.id
-					? ethernetRolePortOfSummary(notice.summary)
+					? ethernetRoleOfSummary(notice.summary)
 					: undefined;
-			const reapply = () =>
-				owner.reapply(input.id, session, input.changeAnswer);
-			const changeSafety = port
-				? await withEthernetRolePort(port, reapply)
-				: await reapply();
+			if (intent) {
+				const result = await setEthernetRole(
+					intent.ifname,
+					intent.role,
+					undefined,
+					intent.op,
+					{
+						owner,
+						session: await resolveNetworkChangeSession(context.ws),
+						answer: input.changeAnswer,
+						deliberate: true,
+					},
+				);
+				// The change went through; a notice someone else answered
+				// meanwhile is already gone, which is fine.
+				if (result.success)
+					await owner.leaveUndone(input.id, session).catch(() => undefined);
+				return {
+					success: result.success,
+					...(result.error ? { error: result.error } : {}),
+					...(result.changeSafety ? { changeSafety: result.changeSafety } : {}),
+				};
+			}
+			const changeSafety = await owner.reapply(
+				input.id,
+				await resolveNetworkChangeSession(context.ws),
+				input.changeAnswer,
+			);
 			return { success: changeSafety.kind !== "ask-before", changeSafety };
 		} catch (error) {
 			return refusal(error);
