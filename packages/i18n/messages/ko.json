@@ -2726,7 +2726,7 @@
 	"hotspotConfirm.activate": "핫스팟 켜기",
 	"hotspotConfirm.saveFailed": "새 이름과 비밀번호를 저장할 수 없습니다. 아무것도 변경되지 않았으며 핫스팟은 꺼진 상태로 유지됩니다.",
 	"hotspotConfirm.passwordCharacters": "표준 영문자, 숫자, 기호만 사용하세요(악센트 문자나 이모지 불가).",
-	"hotspotConfirm.inactiveHint": "핫스팟이 꺼져 있을 때 이름, 비밀번호, 채널을 바꾸고 저장을 누르세요. 핫스팟 활성화를 누르면 저장된 설정으로 켜집니다.",
+	"hotspotConfirm.inactiveHint": "핫스팟이 꺼져 있을 때 이름, 비밀번호, 채널을 바꾸고 저장을 누르세요. 핫스팟 활성화를 누르면 이름과 비밀번호를 확인하는 화면이 열리고, 핫스팟 켜기를 누르면 시작됩니다.",
 	"network.wifiMode.confirm.switchTo": "{mode}(으)로 전환",
 	"hotspotConfirm.firstTimeTitle": "핫스팟 설정",
 	"hotspotConfirm.firstTimeBody": "이 무선 장치는 아직 핫스팟을 실행한 적이 없습니다. 제안된 이름과 비밀번호를 그대로 쓰거나 직접 정하세요.",
