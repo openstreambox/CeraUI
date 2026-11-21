@@ -24,6 +24,19 @@ down a link that carries traffic, so the trigger is deliberately strict.
   marks, so an old mark never undoes that choice.
 - **Operator ops win.** The join/connect paths flag the radio before dispatch
   and release it after the choice is recorded; a flagged radio is never moved.
+  A choice that finds the adapter lock busy is kept and written on the next
+  tick, and the radio is not moved while it waits.
+- **Physical identity, not the lock key.** A radio is tracked by the permanent
+  MAC and sampled lifetime of its verified identity row
+  (`wifi-adapter-admission.ts`); profiles are matched against that MAC. The
+  adapter lock key names the current owner, which can be a composite `mac@...`
+  hotspot owner, and is used only to take the lock. Every write (choice, move,
+  restore, migration mark) runs under the lock the current row resolves to and
+  re-checks there that the same registry row, lifetime and owner still hold.
+  The join/connect paths admit the radio when the op starts, so a choice is
+  never written to a radio that replaced it, even under the same name and MAC.
+  A replacement starts with no back-off, parking or pending choice. Limited and
+  Unverified radios are never tracked or written.
 - **Truth is NetworkManager's device table**, read each tick and again under
   the adapter lock right before acting (`nmcli device status`, by ifname and
   connection UUID). The registry's `conn` is patched from monitor events by
@@ -66,4 +79,7 @@ re-reads the radio's profiles, but an external `nmcli` edit to a mark is seen
 only after the profile set changes or CeraUI restarts. Automated moves are
 logged, not yet shown in the UI.
 
-Tests: `tests/wifi-network-diversity.test.ts`.
+Tests: `tests/wifi-network-diversity.test.ts`,
+`tests/wifi-network-diversity-ownership.test.ts` (operator join racing a
+move-back and an AP reconciliation on one owner lock, replacement radios,
+Limited radios).
