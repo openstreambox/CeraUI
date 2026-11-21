@@ -1898,6 +1898,8 @@
 	"notifications.installFailedDescription": "Impossible d'installer l'application. Veuillez réessayer.",
 	"notifications.jetsonUndervoltage": "Sous-tension du système détectée. Le système peut devenir instable : artefacts d'image, blocages et déconnexion des modems.",
 	"notifications.linksRecovered": "Liens agrégés rétablis.",
+	"notifications.modemHeldOut": "{name} est tenu à l'écart du stream, car une modification de ses réglages n'a pas pu être annulée. Vos autres liens ne sont pas concernés.",
+	"notifications.modemHeldOutUnknown": "Un modem débranché ou reconnecté est tenu à l'écart du stream, car une modification de ses réglages n'a pas pu être annulée. Vos autres liens ne sont pas concernés.",
 	"notifications.modemRoaming": "{name} est en itinérance. Il est enregistré sur un réseau partenaire, les données peuvent donc être facturées au tarif itinérance. Le streaming n'est pas affecté.",
 	"notifications.openUpdates": "Ouvrir les mises à jour",
 	"notifications.viewLogs": "Voir les journaux",
