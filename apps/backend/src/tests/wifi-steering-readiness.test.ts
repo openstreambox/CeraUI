@@ -28,7 +28,10 @@ import {
 	resetWifiCapabilitiesForTest,
 	setWifiCapabilityDepsForTest,
 } from "../modules/wifi/wifi-capabilities.ts";
-import { concurrentApIfname } from "../modules/wifi/wifi-concurrent-interface.ts";
+import {
+	concurrentApIfname,
+	isSupportedWifiIfname,
+} from "../modules/wifi/wifi-concurrent-interface.ts";
 import {
 	addWifiInterface,
 	clearWifiInterfacesForTest,
@@ -96,6 +99,11 @@ beforeEach(async () => {
 	onWifiChange(() => undefined);
 	setWifiState({});
 	setPermanentMacReaderForTest(async () => mac);
+	// Synthetic interfaces have no sysfs nodes; give supported Wi-Fi names the
+	// wireless sysfs answer a real radio would have. NM still decides the type.
+	spyOn(radioIdentity, "isWirelessInterface").mockImplementation((name) =>
+		isSupportedWifiIfname(name),
+	);
 	spyOn(nm, "nmDevices").mockResolvedValue([`wlan0:wifi:connected:${ap}`]);
 	spyOn(nm, "nmConnGetFields").mockResolvedValue(["ap"]);
 	spyOn(hotspotDiscovery, "handleHotspotConn").mockResolvedValue(undefined);
@@ -436,6 +444,7 @@ test.each(
 			undefined,
 			0,
 			undefined,
+			undefined,
 			new Map([[ifname, 41]]),
 		);
 		const oldRow = `${ifname}:wireguard:connected:old-vpn`;
@@ -452,6 +461,7 @@ test.each(
 			output,
 			undefined,
 			0,
+			undefined,
 			undefined,
 			new Map([[ifname, 42]]),
 		);
@@ -478,14 +488,28 @@ test.each(["wlwg0", "wlx020000000001"])(
 	async (ifname) => {
 		const output = `${snapshot}\n\n${ifname}: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>\n        inet 172.22.0.2  netmask 255.255.255.0\n        ether 02:00:00:00:00:02`;
 		const ifindices = new Map([[ifname, 41]]);
-		processIfconfigOutput(output, undefined, 0, undefined, ifindices);
+		processIfconfigOutput(
+			output,
+			undefined,
+			0,
+			undefined,
+			undefined,
+			ifindices,
+		);
 		spyOn(nm, "nmDevices").mockResolvedValue([
 			`wlan0:wifi:connected:${ap}`,
 			`${ifname}:wireguard:connected:current-vpn`,
 		]);
 		await wifiUpdateDevices();
 		const h = recovered();
-		processIfconfigOutput(output, undefined, 100, undefined, ifindices);
+		processIfconfigOutput(
+			output,
+			undefined,
+			100,
+			undefined,
+			undefined,
+			ifindices,
+		);
 		await h.controller.requestReconcile();
 		expect(wifiZonesReady()).toBe(true);
 		expect(h.effects).toEqual(["ruleset"]);
@@ -541,6 +565,7 @@ test.each(["wlwg0", "wlx020000000001"])(
 			snapshot.replace("wlan0", ifname),
 			undefined,
 			0,
+			undefined,
 			undefined,
 			new Map([[ifname, 42]]),
 		);
