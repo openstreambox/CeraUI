@@ -463,10 +463,7 @@ async function prepareHotspotLocked(
 	if (
 		!chosen ||
 		isHotspotActive(wifiInterface) ||
-		(!deps.configureProfile &&
-			identity.conn &&
-			chosen.name === identity.name &&
-			chosen.password === identity.password)
+		(chosen.name === identity.name && chosen.password === identity.password)
 	) {
 		if (
 			chosen &&
@@ -488,43 +485,6 @@ async function prepareHotspotLocked(
 			password: identity.password,
 			...firstTime,
 		};
-	}
-	if (deps.configureProfile) {
-		const channel = wifiInterface.hotspot.channel ?? "auto";
-		const radio = nmSettingsForChannel(
-			channel,
-			wifiInterface.hotspot.derivedChannels ?? [],
-		);
-		if (!radio) return { success: false, error: "activation-failed" };
-		try {
-			const uuid = await deps.configureProfile(
-				macAddress,
-				{
-					"802-11-wireless.ssid": chosen.name,
-					"802-11-wireless-security.psk": chosen.password,
-					"802-11-wireless.band": radio.nmBand,
-					"802-11-wireless.channel": radio.nmChannel,
-					...hotspotSecurityFields(wifiInterface.hotspot.security ?? "wpa2"),
-				},
-				undefined,
-				(uuid) =>
-					deps.credentials.remember(macAddress, {
-						ssid: chosen.name,
-						password: chosen.password,
-						channel,
-						conn: uuid,
-					}),
-			);
-			Object.assign(wifiInterface.hotspot, {
-				conn: uuid,
-				name: chosen.name,
-				password: chosen.password,
-			});
-			rememberIdentity(macAddress, wifiInterface, deps, uuid);
-			return { success: true, ...chosen };
-		} catch {
-			return { success: false, error: "activation-failed" };
-		}
 	}
 	// The profile is written FIRST: a store that ran ahead of a refused write
 	// would show the operator credentials the AP never broadcasts.
@@ -823,12 +783,8 @@ export async function startHotspotLocked(
 		if (binding && (!(await operation.check()) || !operation.current()))
 			return wifiOperationChanged;
 		recordChosenMode(observedWifiAdapterMode(wifiInterface));
-		const result = await waitForHotspotReadiness(
-			wifiInterface.concurrentHotspot?.ifname ?? ifname,
-			deps.confirmSteering,
-		);
-		deps.publishOutcome?.("start", wifiInterface.id, result);
-		return result;
+		deps.publishOutcome?.("start", wifiInterface.id, { success: true });
+		return { success: true };
 	}
 	/*
 	  Capability answers whether this radio CAN keep its station leg; the operator's
@@ -837,11 +793,7 @@ export async function startHotspotLocked(
 	  was asked for. An adapter with no stated preference resolves to concurrency,
 	  which is the behaviour every capable radio had before the mode was selectable.
 	*/
-	if (
-		!useConcurrentAp &&
-		wifiInterface.conn &&
-		(getIsStreaming() || isStreamSessionUnconfirmed())
-	) {
+	if (!useConcurrentAp && wifiInterface.conn && getIsStreaming()) {
 		logger.warn(
 			`wifi hotspot start: streaming keeps the station link on ${ifname}`,
 		);

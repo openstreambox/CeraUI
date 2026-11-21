@@ -46,6 +46,7 @@ import { logger } from "../../helpers/logger.ts";
 import type { NmProfileInstance } from "../network/network-manager-profile-instance.ts";
 import { isWifiChannelName, type WifiChannel } from "./wifi-channels.ts";
 import { normalizeWifiAdapterKey } from "./wifi-permanent-mac.ts";
+import { isProvisioningApConn } from "./wifi-provisioning-ap.ts";
 
 /** Default on-disk location, relative to the backend's working directory. */
 export const HOTSPOT_CREDENTIALS_FILE = "hotspot_credentials.json";
@@ -187,9 +188,9 @@ function persist(): void {
 			{ mode: 0o600 },
 		);
 	} catch (err) {
-		// Setup must not acknowledge credentials it could not durably save.
+		// A hotspot must never fail to start because its credential backstop could
+		// not be written — NetworkManager still holds the profile.
 		logger.warn(`Failed to persist hotspot credentials: ${err}`);
-		throw err;
 	}
 }
 
@@ -285,19 +286,20 @@ export function canUseHotspotConnection(
 }
 
 /**
- * Record (or update) an adapter's hotspot identity. Writes only on a real
- * change, so the routine re-assertions made on every hotspot start cost no I/O.
- * A replaced `conn` is retired into `previousConns`; a caller-supplied history
- * is ignored.
+ * The entry an adapter carries after recording `credentials`, or `undefined`
+ * when the write is refused (invalid input, or a UUID another adapter owns). A
+ * replaced `conn` is retired into `previousConns`; a caller-supplied history is
+ * ignored.
  */
-export function rememberHotspotCredentials(
+function nextCredentialEntry(
 	macAddress: string,
 	credentials: HotspotCredentials,
-	portAlias?: string,
-): void {
+): { key: string; next: StoredEntry; changed: boolean } | undefined {
 	const key = keyFor(macAddress);
-	if (!key || !credentials.ssid || !credentials.password) return;
-	if (!canUseHotspotConnection(macAddress, credentials.conn)) return;
+	if (!key || !credentials.ssid || !credentials.password) return undefined;
+	if (!canUseHotspotConnection(macAddress, credentials.conn)) return undefined;
+	// The image's setup AP is never CeraUI's identity, whoever offers it.
+	if (isProvisioningApConn(credentials.conn)) return undefined;
 
 	const previous = entries[key];
 	// A suggestion must not erase evidence of an already contaminated UUID.
@@ -305,7 +307,7 @@ export function rememberHotspotCredentials(
 		!credentials.conn &&
 		!canUseHotspotConnection(macAddress, previous?.conn)
 	) {
-		return;
+		return undefined;
 	}
 	const next: StoredEntry = {
 		ssid: credentials.ssid,
@@ -323,57 +325,100 @@ export function rememberHotspotCredentials(
 			: {}),
 		updatedAt: Date.now(),
 	};
-
-	const same =
+	const changed = !(
 		previous &&
 		previous.ssid === next.ssid &&
 		previous.password === next.password &&
 		previous.conn === next.conn &&
-		previous.channel === next.channel;
-	let mirrored = false;
-	if (portAlias?.startsWith(`${key}@`) && !key.includes("@")) {
-		const alias = entries[portAlias];
-		if (
-			(!alias || isHotspotPortCredentialCopy(portAlias)) &&
-			(alias?.ssid !== next.ssid ||
-				alias.password !== next.password ||
-				alias.channel !== next.channel)
-		) {
-			entries[portAlias] = {
-				ssid: next.ssid,
-				password: next.password,
-				...(next.channel !== undefined ? { channel: next.channel } : {}),
-			};
-			mirrored = true;
-		}
-	}
-	if (!same) entries[key] = next;
-	if (!same || mirrored) {
-		try {
-			persist();
-		} catch (error) {
-			if (!same) {
-				if (previous) entries[key] = previous;
-				else delete entries[key];
-			}
-			throw error;
-		}
-	}
+		previous.channel === next.channel
+	);
+	return { key, next: changed || !previous ? next : previous, changed };
 }
 
-/** Remove durable prepared identity atomically; failed persistence retains retry evidence. */
-export function forgetHotspotCredentials(macAddress: string): void {
-	const key = keyFor(macAddress);
-	if (!key || !entries[key]) return;
-	const next = { ...entries };
-	delete next[key];
-	if (initialized)
+/**
+ * The plain-address copy a same-address twin keeps under its port alias: written
+ * only while the alias holds no entry of its own or an earlier copy, and only on
+ * a real difference.
+ */
+function portAliasCopy(
+	key: string,
+	next: StoredEntry,
+	portAlias: string | undefined,
+): StoredEntry | undefined {
+	if (!portAlias?.startsWith(`${key}@`) || key.includes("@")) return undefined;
+	const alias = entries[portAlias];
+	if (
+		(!alias || isHotspotPortCredentialCopy(portAlias)) &&
+		(alias?.ssid !== next.ssid ||
+			alias.password !== next.password ||
+			alias.channel !== next.channel)
+	)
+		return {
+			ssid: next.ssid,
+			password: next.password,
+			...(next.channel !== undefined ? { channel: next.channel } : {}),
+		};
+	return undefined;
+}
+
+/**
+ * Record (or update) an adapter's hotspot identity. Writes only on a real
+ * change, so the routine re-assertions made on every hotspot start cost no I/O.
+ * Best effort: a failed write is logged and the in-memory entry stands, because
+ * NetworkManager still holds the profile (see {@link persist}).
+ */
+export function rememberHotspotCredentials(
+	macAddress: string,
+	credentials: HotspotCredentials,
+	portAlias?: string,
+): void {
+	const entry = nextCredentialEntry(macAddress, credentials);
+	if (!entry) return;
+	const alias = portAliasCopy(entry.key, entry.next, portAlias);
+	if (!entry.changed && !alias) return;
+	if (entry.changed) entries[entry.key] = entry.next;
+	if (alias && portAlias) entries[portAlias] = alias;
+	persist();
+}
+
+/**
+ * {@link rememberHotspotCredentials} for a write the caller must be able to
+ * report: an operator's explicit pair, which Prepare acknowledges only once it
+ * is on disk (before a first start creates the profile, this store is its only
+ * copy). Returns `true` only
+ * once the whole store is on disk with this entry (it is rewritten even when the
+ * entry is unchanged in memory, since an earlier best-effort write may have
+ * failed). A store that was never initialized has no file to vouch for, so it
+ * refuses. A refused or failed write changes nothing in memory.
+ */
+export function rememberHotspotCredentialsChecked(
+	macAddress: string,
+	credentials: HotspotCredentials,
+	portAlias?: string,
+): boolean {
+	if (!initialized) return false;
+	const entry = nextCredentialEntry(macAddress, credentials);
+	if (!entry) return false;
+	const alias = portAliasCopy(entry.key, entry.next, portAlias);
+	const next = {
+		...entries,
+		[entry.key]: entry.next,
+		...(alias && portAlias ? { [portAlias]: alias } : {}),
+	};
+	try {
 		writeFileAtomicSync(
 			filePath,
 			JSON.stringify({ version: STORE_VERSION, adapters: next }),
 			{ mode: 0o600 },
 		);
+	} catch (error: unknown) {
+		logger.warn("Could not persist the chosen hotspot credentials", {
+			error: error instanceof Error ? error.name : "unknown",
+		});
+		return false;
+	}
 	entries = next;
+	return true;
 }
 
 /** Stage before add, then bind the returned settings instance; never ordinary adoption. */
@@ -404,6 +449,7 @@ export function recordHotspotProfileCreation(
 			writeFileAtomicSync(
 				filePath,
 				JSON.stringify({ version: STORE_VERSION, adapters: next }),
+				{ mode: 0o600 },
 			);
 	} catch (error: unknown) {
 		logger.warn("Could not persist first-hotspot creation evidence", {
@@ -438,6 +484,12 @@ export function clearHotspotProfileCreation(owner: string, uuid: string): void {
 export type HotspotCredentialsStore = {
 	get(macAddress: string): HotspotCredentials | undefined;
 	remember: typeof rememberHotspotCredentials;
+	/**
+	 * A durable write the caller reports (see
+	 * {@link rememberHotspotCredentialsChecked}). Absent means no durable write
+	 * is available, and a caller that needs one fails closed.
+	 */
+	rememberChecked?: typeof rememberHotspotCredentialsChecked;
 	recordCreation?(
 		owner: string,
 		uuid: string,
@@ -449,6 +501,7 @@ export type HotspotCredentialsStore = {
 export const hotspotCredentialsStore: HotspotCredentialsStore = {
 	get: getHotspotCredentials,
 	remember: rememberHotspotCredentials,
+	rememberChecked: rememberHotspotCredentialsChecked,
 	recordCreation: recordHotspotProfileCreation,
 	clearCreation: clearHotspotProfileCreation,
 };
