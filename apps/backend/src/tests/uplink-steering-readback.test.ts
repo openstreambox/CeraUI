@@ -48,17 +48,23 @@ test("accepts complete kernel readback", async () => {
 
 test("hotspot readiness starts pending and only admits a verified zone", async () => {
 	const {
+		beginSteeringVerification,
 		hotspotSteeringPending,
 		publishSteeringReadiness,
 		enableSteeringReadiness,
 	} = await import("../modules/network/uplink-steering/readiness.ts");
+	const lifetime = (ifname: string) => (ifname === "wlan93" ? 3 : 4);
 	enableSteeringReadiness();
-	expect(hotspotSteeringPending("wlan93")).toBe(true);
-	publishSteeringReadiness(state.clientZones);
-	expect(hotspotSteeringPending("wlan93")).toBe(false);
-	expect(hotspotSteeringPending("wlan94")).toBe(true);
+	expect(hotspotSteeringPending("wlan93", 3)).toBe(true);
+	publishSteeringReadiness(
+		state.clientZones,
+		beginSteeringVerification(["wlan93", "wlan94"], lifetime),
+		lifetime,
+	);
+	expect(hotspotSteeringPending("wlan93", 3)).toBe(false);
+	expect(hotspotSteeringPending("wlan94", 4)).toBe(true);
 	publishSteeringReadiness([]);
-	expect(hotspotSteeringPending("wlan93")).toBe(true);
+	expect(hotspotSteeringPending("wlan93", 3)).toBe(true);
 });
 
 test("unchanged desired state is read back and repaired before readiness", async () => {
