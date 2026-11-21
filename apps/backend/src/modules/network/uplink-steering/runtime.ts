@@ -5,6 +5,7 @@ import { broadcastMsg } from "../../ui/websocket-server.ts";
 import { broadcastWifiState } from "../../wifi/wifi.ts";
 import {
 	getNetworkInterfaceIncarnation,
+	getNetworkInterfaces,
 	onNetworkInterfacesChange,
 } from "../network-interfaces.ts";
 import { onUsbNetScanCommitted } from "../router-cellular-scan.ts";
@@ -15,11 +16,16 @@ import {
 	flushConntrack,
 	setIpForwarding,
 } from "../uplink-sharing.ts";
-import { UplinkSteeringApplier } from "./applier.ts";
+import {
+	type PreparedSteeringState,
+	UplinkSteeringApplier,
+} from "./applier.ts";
 import { UplinkSteeringCoordinator } from "./coordinator.ts";
 import {
+	beginSteeringVerification,
 	enableSteeringReadiness,
 	publishSteeringReadiness,
+	type SteeringVerificationEntry,
 } from "./readiness.ts";
 import {
 	discoverOwnedUplinkRoutes,
@@ -50,15 +56,34 @@ const applier = new UplinkSteeringApplier({
 		),
 });
 
+// Each plan carries the AP lifetimes it was built for, taken before any await.
+const verificationEntries = new WeakMap<
+	PreparedSteeringState,
+	SteeringVerificationEntry
+>();
+
 const coordinator = new UplinkSteeringCoordinator({
-	readDesiredState: (context) => readDesiredSteeringState(undefined, context),
+	readDesiredState: async (context) => {
+		// The builder collects client zones from this snapshot before it awaits.
+		const entry = beginSteeringVerification(
+			Object.keys(getNetworkInterfaces()),
+			getNetworkInterfaceIncarnation,
+		);
+		const desired = await readDesiredSteeringState(undefined, context);
+		if (!("pending" in desired)) verificationEntries.set(desired, entry);
+		return desired;
+	},
 	apply: async (previous, next) => {
 		publishSteeringReadiness([]);
 		await applier.apply(previous, next);
 	},
 	verifyApplied: async (next) => {
 		await verifySteeringState(next);
-		publishSteeringReadiness(next.clientZones, getNetworkInterfaceIncarnation);
+		publishSteeringReadiness(
+			next.clientZones,
+			verificationEntries.get(next),
+			getNetworkInterfaceIncarnation,
+		);
 	},
 	publishAvailability: (availability) => {
 		if (!availability.available) publishSteeringReadiness([]);
