@@ -39,6 +39,12 @@ import {
 	defaultStagingDeps,
 } from "../modules/streaming/config-change-staging.ts";
 import { initPipelines } from "../modules/streaming/pipelines.ts";
+import {
+	postStartFeatureNotice,
+	resetStartFeatureNoticeForTest,
+	START_FEATURES_NOTIFICATION,
+	type StartFeatureNoticeBridge,
+} from "../modules/streaming/start-feature-notice.ts";
 import { setConfigProcedure } from "../rpc/procedures/streaming.procedure.ts";
 import { makeRpcContext } from "./helpers/bond-toggle-fixture.ts";
 
@@ -448,4 +454,52 @@ test("the apply-now gate refuses a custom layout without current geometry eviden
 	});
 	expect(changes).toEqual([{ composition: { ...SAVED } }]);
 	expect(preset.result).toBe("applied");
+});
+
+// The start went without its custom layout (its capability read timed out);
+// once a live placement is applied on air, the notice must stop saying so.
+function noticeBridge() {
+	const shown = new Map<string, string>();
+	const bridge: StartFeatureNoticeBridge = {
+		notify: (name, _type, msg) => {
+			shown.set(name, msg);
+		},
+		notificationExists: (name) => shown.has(name),
+		removeNotification: (name) => {
+			shown.delete(name);
+		},
+	};
+	return { bridge, shown };
+}
+
+test("live, an applied placement clears a notice that the start went without its layout", async () => {
+	const { bridge, shown } = noticeBridge();
+	postStartFeatureNotice(bridge, ["custom-layout"], false);
+	countingLiveGate();
+	try {
+		const result = await save({ composition_rect: PLACED, apply_now: true });
+		expect(result.configChange?.result).toBe("applied");
+		expect(shown.has(START_FEATURES_NOTIFICATION)).toBe(false);
+	} finally {
+		resetStartFeatureNoticeForTest();
+	}
+});
+
+test("live, a refused placement leaves that notice in place", async () => {
+	const { bridge, shown } = noticeBridge();
+	postStartFeatureNotice(bridge, ["custom-layout"], false);
+	setApplyNowGateForTest({
+		isStreamLive: () => true,
+		dispatch: async () => ({
+			result: "reverted",
+			attemptId: "place",
+			reason: "change_rejected",
+		}),
+	});
+	try {
+		await save({ composition_rect: PLACED, apply_now: true });
+		expect(shown.has(START_FEATURES_NOTIFICATION)).toBe(true);
+	} finally {
+		resetStartFeatureNoticeForTest();
+	}
 });

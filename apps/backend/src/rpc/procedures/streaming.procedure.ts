@@ -147,6 +147,7 @@ import {
 	StreamStartFailure,
 	typedStartFailure,
 } from "../../modules/streaming/start-failure-taxonomy.ts";
+import { noteLiveCompositionApplied } from "../../modules/streaming/start-feature-notice.ts";
 import {
 	startStreamSession,
 	stopStreamSession,
@@ -1261,8 +1262,11 @@ export const setConfigProcedure = authedProcedure
 
 		commitStagedConfigChange(marker.attemptId);
 		const persisted = getConfig();
-		if (staged.composition !== undefined)
+		if (staged.composition !== undefined) {
 			applied.composition = persisted.composition ?? null;
+			// What the start went without is no longer the composition on air.
+			noteLiveCompositionApplied();
+		}
 		broadcastMsg("config", persisted);
 		// Post-clamp echo for the staged half, same rule as the merge above.
 		if (staged.resolution !== undefined)

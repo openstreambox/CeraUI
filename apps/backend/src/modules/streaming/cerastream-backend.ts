@@ -175,8 +175,12 @@ import {
 	authorizeStartFeatures,
 	carriesGatedStartFields,
 	type DroppedStartFeature,
-	droppedStartFeaturesMessage,
+	featuresLeftOutAtAssembly,
 } from "./start-feature-authorization.ts";
+import {
+	clearStartFeatureNotice,
+	postStartFeatureNotice,
+} from "./start-feature-notice.ts";
 import {
 	ENGINE_CLOSE_DEADLINE_MS,
 	ENGINE_STOP_REQUEST_DEADLINE_MS,
@@ -214,9 +218,6 @@ function engineAdvertises(feature: string): boolean {
 const ENGINE_ERRORS_CLEARED_BY_HEALTHY_SESSION: ReadonlySet<string> = new Set([
 	PROCESS_ERROR_CODES.CAPTURE_VIDEO_ERROR,
 ]);
-
-/** Notification naming configured start features the engine did not get. */
-export const START_FEATURES_NOTIFICATION = "stream-start-features";
 
 /** The status/notification surface the backend bridges engine events onto. */
 export interface CerastreamBridge {
@@ -905,8 +906,13 @@ export class CerastreamBackend implements StreamingBackend {
 			);
 			const audioWithoutMix =
 				Object.keys(singleAudio).length > 0 ? singleAudio : undefined;
-			let droppedFeatures: DroppedStartFeature[] = [];
-			let capabilitiesAnswered = false;
+			// Assembly already leaves out what the shared snapshot says the engine
+			// lacks (a saved mix after boot or a downgrade); that is a loss too.
+			let droppedFeatures: DroppedStartFeature[] = featuresLeftOutAtAssembly(
+				config,
+				params,
+			);
+			let capabilitiesAnswered = true;
 			const audioMixInputs = params.audio?.inputs?.map((input) => ({
 				...structuredClone(input),
 				id:
@@ -1000,7 +1006,9 @@ export class CerastreamBackend implements StreamingBackend {
 					startParams = authorized.params;
 					if (startParams.audio?.inputs === undefined)
 						startMixInputs = undefined;
-					droppedFeatures = authorized.dropped;
+					droppedFeatures = [
+						...new Set([...droppedFeatures, ...authorized.dropped]),
+					];
 					capabilitiesAnswered = caps !== undefined;
 				}
 				const result = await launchTransaction.runPhase("start-rpc", () => {
@@ -1086,19 +1094,7 @@ export class CerastreamBackend implements StreamingBackend {
 		dropped: readonly DroppedStartFeature[],
 		answered: boolean,
 	): void {
-		if (dropped.length === 0) {
-			if (this.deps.bridge.notificationExists(START_FEATURES_NOTIFICATION))
-				this.deps.bridge.removeNotification(START_FEATURES_NOTIFICATION);
-			return;
-		}
-		this.deps.bridge.notify(
-			START_FEATURES_NOTIFICATION,
-			"warning",
-			droppedStartFeaturesMessage(dropped, answered),
-			0,
-			true,
-			true,
-		);
+		postStartFeatureNotice(this.deps.bridge, dropped, answered);
 	}
 
 	// Send `start` so `audio.mode` / `video_passthrough` survive: an engine that
@@ -1291,7 +1287,7 @@ export class CerastreamBackend implements StreamingBackend {
 	private clearSessionScopedTelemetry(): void {
 		this.audioMixInputs = undefined;
 		// Which configured features the session went without is session news too.
-		this.noteDroppedStartFeatures([], false);
+		clearStartFeatureNotice(this.deps.bridge);
 		this.runtimeEvidence = undefined;
 		const previous = this.telemetry;
 		if (previous === null) return;

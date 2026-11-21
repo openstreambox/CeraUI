@@ -369,8 +369,9 @@ and newer features are gated on its `features` tokens, so nothing shown is
 approximate. A start's audio mix and custom layout are checked against the
 engine receiving the start (a bounded read on that connection), and a live custom
 placement needs geometry evidence from the running engine; a start that leaves
-either out keeps the selected audio input and raises a `stream-start-features`
-warning notification. `apps/frontend/src/lib/streaming/go-live-readiness.ts:270-295`
+either out (or whose saved mix assembly already left out for an engine known to
+lack a mixer) keeps the selected audio input and raises a `stream-start-features`
+warning notification; a composition change applied on air removes its layout part. `apps/frontend/src/lib/streaming/go-live-readiness.ts:270-295`
 surfaces the flag as an advisory (non-blocking) readiness warning.
 **Status: EXISTS**
 

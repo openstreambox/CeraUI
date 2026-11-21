@@ -21,6 +21,7 @@ import {
 	CerastreamBackend,
 	type CerastreamBackendDeps,
 } from "../modules/streaming/cerastream-backend.ts";
+import { resetStartFeatureNoticeForTest } from "../modules/streaming/start-feature-notice.ts";
 import { START_CAPABILITY_PREFLIGHT_DEADLINE_MS } from "../modules/streaming/start-lifecycle-timing.ts";
 
 // The start request carries feature-gated fields (an audio mix, a custom
@@ -196,6 +197,7 @@ const customLayoutConfig = (): RuntimeConfig => ({
 
 beforeEach(() => {
 	clearCapabilitiesCache();
+	resetStartFeatureNoticeForTest();
 	warnings.length = 0;
 	setMockAudioDevicesProvider(() => ({
 		Primary: "hw:CARD=primary",
@@ -368,4 +370,37 @@ test("the start preflight does not publish into the shared capability snapshot",
 
 	expect(getCurrentCapabilities()).toBeUndefined();
 	expect(getLastCapabilities()?.audio_mix).toEqual(MIX);
+});
+
+// After boot or a downgrade the shared snapshot already lacks `audio_mix`, so
+// assembly leaves the saved mix out before the start's own check runs. That is
+// still a configured mix the stream goes without, and the operator must hear it.
+test("a saved mix left out at assembly, on an engine known to lack a mixer, is surfaced too", async () => {
+	await snapshotFrom(OLDER_ENGINE);
+	const { backend, recorded, notices } = backendFor(mixConfig(), OLDER_ENGINE);
+
+	await backend.start(mixConfig(), START);
+
+	expect(recorded.starts[0]?.audio).toEqual({
+		mode: "device",
+		device: "hw:CARD=Primary",
+	});
+	expect(notices).toHaveLength(1);
+	expect(notices[0]?.msg).toContain("audio mix");
+	expect(notices[0]?.msg).toContain("does not support");
+});
+
+test("a saved composition on an engine known to lack composition is surfaced", async () => {
+	const noComposition = engineCaps({ mix: false, features: [] });
+	await snapshotFrom(noComposition);
+	const config: RuntimeConfig = {
+		...customLayoutConfig(),
+		composition: { secondary_input_id: "cam2", layout: "pip-bottom-right" },
+	};
+	const { backend, recorded, notices } = backendFor(config, noComposition);
+
+	await backend.start(config, START);
+
+	expect(recorded.starts[0]).not.toHaveProperty("composition");
+	expect(notices.map((n) => n.msg).join(" ")).toContain("composition");
 });

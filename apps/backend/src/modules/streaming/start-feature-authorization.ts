@@ -12,6 +12,7 @@ import {
 	COMPOSITION_GEOMETRY_FEATURE,
 } from "@ceraui/rpc/schemas";
 
+import type { RuntimeConfig } from "../../helpers/config-schemas.ts";
 import { compositionNeedsGeometry } from "./composition.ts";
 
 interface AuthorizationLogger {
@@ -20,6 +21,24 @@ interface AuthorizationLogger {
 
 /** A configured start feature the receiving engine did not get. */
 export type DroppedStartFeature = "audio-mix" | "composition" | "custom-layout";
+
+/**
+ * Configured features the assembled start already lacks: assembly leaves out a
+ * saved mix when the shared snapshot has no `audio_mix` (after boot or a
+ * downgrade to an older engine), before any check against the receiving engine
+ * could record it.
+ */
+export function featuresLeftOutAtAssembly(
+	config: Pick<RuntimeConfig, "audio_inputs" | "composition">,
+	params: StartParams,
+): DroppedStartFeature[] {
+	const dropped: DroppedStartFeature[] = [];
+	if (config.audio_inputs?.length && params.audio?.inputs === undefined)
+		dropped.push("audio-mix");
+	if (config.composition != null && params.composition === undefined)
+		dropped.push("composition");
+	return dropped;
+}
 
 /** Whether the start carries a field that needs the receiving engine's word. */
 export function carriesGatedStartFields(params: StartParams): boolean {
