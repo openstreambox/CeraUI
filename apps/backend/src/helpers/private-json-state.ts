@@ -11,6 +11,14 @@ import {
 	parseAuthorityJson,
 } from "../modules/system/update-orchestrator/strict-authority-json.ts";
 
+/** Shared store shape for retained inverse adapters. The writer stays the
+ * existing fd-anchored implementation; owners wrap slot revision tracking. */
+export interface PrivateStateStore {
+	readonly dir: string;
+	readonly change?: <T>(operation: () => Promise<T>) => Promise<T>;
+	readonly readFault?: () => void;
+}
+
 function validateKey(key: string) {
 	if (!/^[0-9a-f]{64}$/.test(key)) throw new Error("Invalid private state key");
 }
