@@ -5,6 +5,7 @@ import {
 } from "../../modules/wifi/wifi-connections.ts";
 import type { WifiInterface } from "../../modules/wifi/wifi-interfaces.ts";
 import { wifiRadioIdentity } from "../../modules/wifi/wifi-radio-identity.ts";
+import { invalidateWifiRadioRow } from "../../modules/wifi/wifi-radio-publication.ts";
 import type { RadioFixture } from "./wifi-radio-equivalence.ts";
 import { fakeShadowSysfs } from "./wifi-radio-equivalence-shadow.ts";
 
@@ -27,9 +28,8 @@ export async function seedWifiRadios() {
 	let fixtures: RadioFixture[] = [];
 	let keys: string[] = [];
 	const restoreSysfs = await fakeShadowSysfs(() => fixtures);
-	const publish = async (radios: readonly SeedRadio[]) => {
-		for (const key of keys) removeWifiInterface(key);
-		fixtures = radios.map((r) => ({
+	const fixturesOf = (radios: readonly SeedRadio[]): RadioFixture[] =>
+		radios.map((r) => ({
 			ifname: r.ifname,
 			operational: r.mac,
 			permanent: r.mac,
@@ -37,6 +37,9 @@ export async function seedWifiRadios() {
 			phy: r.phy,
 			state: "disconnected",
 		}));
+	const publish = async (radios: readonly SeedRadio[]) => {
+		for (const key of keys) removeWifiInterface(key);
+		fixtures = fixturesOf(radios);
 		const rows = radios.map(
 			(r, index): WifiInterface =>
 				({
@@ -66,6 +69,25 @@ export async function seedWifiRadios() {
 	};
 	return {
 		publish,
+		/** Change what sysfs reports without a discovery pass publishing it. */
+		sysfs(radios: readonly SeedRadio[]) {
+			fixtures = fixturesOf(radios);
+		},
+		/** A discovery pass finished: the same row objects are republished. */
+		async republish() {
+			await wifiRadioIdentity.discover(
+				Object.values(getWifiInterfacesByMacAddress()).map((row) => ({
+					ifname: row.ifname,
+					row,
+				})),
+			);
+		},
+		/** A discovery pass started: every row's publication is invalidated. */
+		invalidate() {
+			const observation = wifiRadioIdentity.captureObservation();
+			for (const row of Object.values(getWifiInterfacesByMacAddress()))
+				invalidateWifiRadioRow(row, observation);
+		},
 		async restore() {
 			for (const key of keys) removeWifiInterface(key);
 			keys = [];
