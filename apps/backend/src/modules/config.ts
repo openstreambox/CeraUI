@@ -16,7 +16,6 @@
 */
 
 import type { AddonConfig, AddonState } from "@ceraui/rpc/schemas";
-
 import {
 	loadJsonConfig,
 	writeFileAtomicSync,
@@ -115,7 +114,7 @@ export function saveConfig() {
 	// Must stay sync: sync callers (setBitrate/setAutostart) depend on the write
 	// finishing before return. Atomic (temp+fsync+rename) so a crash mid-write
 	// can't corrupt config.json — add-on state lives here too (E3).
-	writeFileAtomicSync(configFile, JSON.stringify(dataToSave));
+	writeFileAtomicSync(configFile, JSON.stringify(dataToSave), { mode: 0o600 });
 }
 
 /** False until a strict load has succeeded; the boot owner retries until it does. */

@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
+
 /**
  * The DURABLE modem-mutation journal.
  *
@@ -99,13 +101,12 @@ function resolveJournalDir(): string {
 		: MUTATION_JOURNAL_DIR;
 }
 
-const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
 
 /** The four durability primitives, plus the reads. Injected for fault injection. */
 export interface MutationJournalFs {
 	ensureDir(dir: string): Promise<void>;
-	writeTemp(path: string, data: string): Promise<void>;
+	writeTemp(path: string, data: string, target?: string): Promise<void>;
 	fsyncFile(path: string): Promise<void>;
 	rename(from: string, to: string): Promise<void>;
 	fsyncDir(dir: string): Promise<void>;
@@ -127,16 +128,8 @@ export const defaultMutationJournalFs: MutationJournalFs = {
 	ensureDir: async (dir) => {
 		await mkdir(dir, { recursive: true, mode: DIR_MODE });
 	},
-	writeTemp: async (path, data) => {
-		const handle = await open(path, "w", FILE_MODE);
-		try {
-			await handle.writeFile(data, "utf8");
-			// A file created by an earlier run under a different umask keeps its old
-			// mode through `open`, so the mode is re-asserted rather than assumed.
-			await handle.chmod(FILE_MODE);
-		} finally {
-			await handle.close();
-		}
+	writeTemp: async (path, data, target) => {
+		writeFileAtomicSync(path, data, { mode: 0o600, permissionSource: target });
 	},
 	fsyncFile: (path) => fsyncPath(path, fsConstants.O_RDONLY),
 	rename: async (from, to) => {
@@ -227,7 +220,7 @@ export async function commitMutationEntry(
 		await deps.fs.ensureDir(deps.dir);
 		const payload = `${JSON.stringify(modemMutationEntrySchema.parse(entry))}\n`;
 		try {
-			await deps.fs.writeTemp(temp, payload);
+			await deps.fs.writeTemp(temp, payload, target);
 			await deps.fs.fsyncFile(temp);
 		} catch (err) {
 			await deps.fs.unlink(temp).catch(() => undefined);
