@@ -16,9 +16,10 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-// Core stream launch: spawns srtla_send under the process-runner supervisor,
-// wires srtla per-uplink telemetry, then starts the engine session over the
-// StreamingBackend seam.
+// Core stream launch: spawns srtla_send under the process-runner supervisor (or,
+// with `srtla_send_unit`, starts it through its systemd unit), wires srtla
+// per-uplink telemetry, then starts the engine session over the StreamingBackend
+// seam.
 
 import type { StartFailureClass } from "@ceraui/rpc/schemas";
 import { buildSrtlaSendArgs } from "@ceraui/srtla-send/sender";
@@ -52,7 +53,11 @@ import {
 	isOnboardHdmiInput,
 	readHdmiVideoSignal,
 } from "../hdmi-audio-signal.ts";
-import { clearStreamProcessExit } from "../health.ts";
+import {
+	broadcastHealthIfChanged,
+	clearStreamProcessExit,
+	reportStreamProcessExit,
+} from "../health.ts";
 import { createLaunchTransaction } from "../launch-transaction.ts";
 import { startLinkTelemetry, stopLinkTelemetry } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
@@ -68,7 +73,18 @@ import { getStreamingBackend } from "../streaming-engine.ts";
 import { srtlaSendExec } from "./exec-paths.ts";
 import { resolveLaunchConfig } from "./launch-config.ts";
 import { resolveProcessError } from "./process-error-patterns.ts";
-import { spawnStreamingLoop, stopProcessAndWait } from "./process-runner.ts";
+import {
+	registerSupervisedSender,
+	type StreamingProcess,
+	spawnStreamingLoop,
+	stopProcessAndWait,
+} from "./process-runner.ts";
+import {
+	SenderUnitError,
+	type SenderUnitHooks,
+	senderHostMode,
+	startSenderUnit,
+} from "./sender-unit.ts";
 
 interface StartStreamBackend {
 	setBitrate: ReturnType<typeof getStreamingBackend>["setBitrate"];
@@ -79,6 +95,10 @@ export interface StartStreamDeps {
 	readonly recordSenderIntent: typeof recordSenderIntent;
 	readonly getStreamingBackend: () => StartStreamBackend;
 	readonly spawnStreamingLoop: typeof spawnStreamingLoop;
+	readonly startSenderUnit: (
+		args: readonly string[],
+		hooks: SenderUnitHooks,
+	) => Promise<StreamingProcess>;
 	readonly startLinkTelemetry: typeof startLinkTelemetry;
 	readonly stopLinkTelemetry: typeof stopLinkTelemetry;
 	readonly stopProcessAndWait: typeof stopProcessAndWait;
@@ -88,6 +108,8 @@ const defaultStartStreamDeps: StartStreamDeps = {
 	recordSenderIntent,
 	getStreamingBackend,
 	spawnStreamingLoop,
+	startSenderUnit: async (args, hooks) =>
+		registerSupervisedSender(await startSenderUnit(args, hooks), srtlaSendExec),
 	startLinkTelemetry,
 	stopLinkTelemetry,
 	stopProcessAndWait,
@@ -113,6 +135,7 @@ export interface AudioProbeDeps {
 export const AUDIO_SOURCE_PROBE_FAILED = "audio_source_probe_failed";
 export const IP_LIST_READ_FAILED = "ip_list_read_failed";
 export const PREVIEW_ENCODE_REPLAY_FAILED = "preview_encode_replay_failed";
+export const SENDER_UNIT_START_FAILED = "sender_unit_start_failed";
 
 export type StartStreamResult =
 	| { success: true }
@@ -308,24 +331,55 @@ export async function startStream(
 	const transaction = createLaunchTransaction(attemptId, {
 		warn: (message, meta) => logger.warn(message, meta),
 	});
+	// systemd restarts a unit-run sender on its own (ADR-0005); the backend only
+	// reports the exit and, once the new process is ready, follows it with the
+	// telemetry reader and the lifetime record.
+	const unitHooks: SenderUnitHooks = {
+		onRestarting: () => {
+			reportStreamProcessExit();
+			broadcastHealthIfChanged();
+		},
+		onRestarted: (handle) => {
+			void (async () => {
+				const ips = await Bun.file(setup.ips_file ?? "")
+					.text()
+					.catch(() => ipsContent);
+				startStreamDeps.startLinkTelemetry(statsFile, ips.split("\n"), {
+					controlSocket,
+				});
+				clearStreamProcessExit();
+				broadcastHealthIfChanged();
+				await observeSafely(async () => {
+					if (lifetime)
+						await recordSenderStarted(lifetime, handle.pid, {
+							host: "systemd",
+							invocation: handle.invocation,
+						});
+				});
+			})();
+		},
+	};
 	try {
-		const sender = startStreamDeps.spawnStreamingLoop(
-			srtlaSendExec,
-			senderArgs,
-			(err) => {
-				const resolved = resolveProcessError("srtla", err);
-				if (resolved) {
-					notificationBroadcast(
-						"srtla",
-						"error",
-						resolved.message,
-						5,
-						true,
-						false,
+		const sender =
+			senderHostMode() === "unit"
+				? await startStreamDeps.startSenderUnit(senderArgs, unitHooks)
+				: startStreamDeps.spawnStreamingLoop(
+						srtlaSendExec,
+						senderArgs,
+						(err) => {
+							const resolved = resolveProcessError("srtla", err);
+							if (resolved) {
+								notificationBroadcast(
+									"srtla",
+									"error",
+									resolved.message,
+									5,
+									true,
+									false,
+								);
+							}
+						},
 					);
-				}
-			},
-		);
 		transaction.register(() => startStreamDeps.stopProcessAndWait(sender));
 
 		// Begin ingesting srtla_send's per-uplink telemetry. Seed the conn_id->iface
@@ -336,7 +390,15 @@ export async function startStream(
 		});
 		transaction.register(() => startStreamDeps.stopLinkTelemetry());
 		await observeSafely(async () => {
-			if (lifetime) await recordSenderStarted(lifetime, sender.proc.pid);
+			if (!lifetime) return;
+			const { proc } = sender;
+			await recordSenderStarted(
+				lifetime,
+				proc.pid,
+				"invocation" in proc && typeof proc.invocation === "string"
+					? { host: "systemd", invocation: proc.invocation }
+					: undefined,
+			);
 		});
 		assertStreamLaunchOwnership();
 
@@ -352,6 +414,19 @@ export async function startStream(
 		);
 	} catch (error) {
 		await transaction.rollback();
+		if (error instanceof SenderUnitError) {
+			logger.warn("startStream: the sender unit did not start", {
+				reason: error.reason,
+				error: error.message,
+			});
+			return {
+				success: false,
+				error: SENDER_UNIT_START_FAILED,
+				reason: error.reason,
+				phase: "spawn-sender",
+				failureClass: "start_invalid",
+			};
+		}
 		if (
 			error instanceof StreamStartFailure &&
 			error.liveness === "idle" &&

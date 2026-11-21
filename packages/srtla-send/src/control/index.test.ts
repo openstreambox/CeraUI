@@ -211,6 +211,67 @@ describe("createControlClient — connect", () => {
 	});
 });
 
+describe("verifyPeer, the check before any request", () => {
+	const answering =
+		(frames: string[]) => (frame: { id?: number; method?: string }) => {
+			frames.push(frame.method ?? "");
+			return [
+				JSON.stringify({
+					jsonrpc: "2.0",
+					result: capabilitiesResult(),
+					id: frame.id,
+				}),
+			];
+		};
+
+	test("is given the connected descriptor; an accepted peer is served", async () => {
+		const frames: string[] = [];
+		const { path } = await startServer(
+			socketPath("peer-ok"),
+			answering(frames),
+		);
+		let seen: unknown;
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 2000,
+			verifyPeer: (fd) => {
+				seen = fd;
+				return true;
+			},
+		});
+		expect(typeof seen).toBe("number");
+		expect((await client?.getCapabilities())?.version).toBe("4.1.0");
+		expect(frames).toEqual(["get_capabilities"]);
+		client?.close();
+	});
+
+	test("a refused or throwing check resolves null and writes nothing", async () => {
+		const frames: string[] = [];
+		const { path } = await startServer(
+			socketPath("peer-no"),
+			answering(frames),
+		);
+		expect(
+			await createControlClient({
+				socketPath: path,
+				timeoutMs: 500,
+				verifyPeer: async () => false,
+			}),
+		).toBeNull();
+		expect(
+			await createControlClient({
+				socketPath: path,
+				timeoutMs: 500,
+				verifyPeer: () => {
+					throw new Error("no credentials");
+				},
+			}),
+		).toBeNull();
+		await Bun.sleep(20);
+		expect(frames).toEqual([]);
+	});
+});
+
 describe("get_capabilities", () => {
 	test("parses the live 4.1.0 document and reports bind_map support", async () => {
 		const { path } = await startServer(socketPath("caps"), (frame) =>

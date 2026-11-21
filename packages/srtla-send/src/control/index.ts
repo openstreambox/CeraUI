@@ -297,6 +297,13 @@ export interface ControlClientOptions {
 	socketPath: string;
 	/** Per-request timeout in ms (default: 5000). */
 	timeoutMs?: number;
+	/**
+	 * Called with the connected socket's file descriptor before any request is
+	 * written. A false answer, a throw or a socket without a descriptor closes
+	 * the connection and resolves `null`, so nothing is ever read from a peer
+	 * the caller did not accept (for example by its SO_PEERCRED PID).
+	 */
+	verifyPeer?: (fd: number) => boolean | Promise<boolean>;
 }
 
 export class ControlRpcError extends Error {
@@ -486,11 +493,12 @@ function isMethodNotFound(error: unknown): boolean {
 export async function createControlClient(
 	options: ControlClientOptions,
 ): Promise<ControlClient | null> {
-	const { socketPath, timeoutMs = 5000 } = options;
+	const { socketPath, timeoutMs = 5000, verifyPeer } = options;
 
 	let conn: LineConnection | null = null;
+	let socket: UnixSocket | null = null;
 	try {
-		const socket = await Bun.connect({
+		socket = await Bun.connect({
 			unix: socketPath,
 			socket: {
 				data(_socket, chunk) {
@@ -507,6 +515,21 @@ export async function createControlClient(
 		conn = new LineConnection(socket);
 	} catch {
 		return null;
+	}
+	if (verifyPeer) {
+		// Bun's socket carries its descriptor at runtime; the typings omit it.
+		const fd = (socket as unknown as { fd?: unknown }).fd;
+		let accepted = false;
+		try {
+			accepted =
+				typeof fd === "number" && fd >= 0 && (await verifyPeer(fd)) === true;
+		} catch {
+			accepted = false;
+		}
+		if (!accepted) {
+			conn.close();
+			return null;
+		}
 	}
 
 	const open = conn;

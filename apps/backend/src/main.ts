@@ -157,6 +157,10 @@ import {
 	gracefulShutdown,
 } from "./modules/streaming/streamloop/process-runner.ts";
 import {
+	resolveSenderHostMode,
+	retireLeftoverSenderUnit,
+} from "./modules/streaming/streamloop/sender-unit.ts";
+import {
 	checkAutoStartStream,
 	srtlaSendExec,
 } from "./modules/streaming/streamloop.ts";
@@ -282,6 +286,11 @@ tightenPrivateFiles(process.cwd(), [
 ]);
 
 checkExecPath(srtlaSendExec);
+// Before anything writes the IP list: with `srtla_send_unit` the sender runs
+// through its systemd unit and its files move into /run/srtla-send.
+await guardNonCritical("sender-host", async () => {
+	await resolveSenderHostMode(setup, srtlaSendExec);
+});
 
 // An unreadable or damaged config.json must not abort boot: the control server
 // is the only place the operator can see and repair it. A damaged file is
@@ -406,6 +415,12 @@ if (!shouldUseMocks()) {
 		noteStreamReconciliationCompleted();
 	});
 	await observeSafely(() => observeStartup(streamLiveness()));
+	// Nothing adopts a sender yet: a sender unit left running by an earlier
+	// backend is stopped (after the observer above has logged its verdict)
+	// before anything streams again. Child mode does nothing here.
+	await guardNonCritical("sender-unit-leftover", async () => {
+		await retireLeftoverSenderUnit();
+	});
 	// The first point at which the persisted config and the engine's own session
 	// are both known — so it is where a `config.inflight.json` left by a process
 	// that died mid transaction can finally be judged. Fire-and-forget: with a

@@ -611,6 +611,10 @@ export const setupConfigSchema = z.preprocess(
 		// Opt-in LAN SRT termination, independent of the encoding engine.
 		srt_forward: srtForwardConfigSchema.optional().catch(undefined),
 		srtla_path: z.string().optional(),
+		// Run srtla_send through the image's srtla-send.service instead of as a
+		// child of the backend. Off unless explicitly true; see
+		// docs/SRTLA-SEND-UNIT.md for what the image must provide.
+		srtla_send_unit: z.boolean().optional(),
 		sound_device_dir: z.string().optional(),
 		usb_device_dir: z.string().optional(),
 		mmcli_binary: z.string().optional(),

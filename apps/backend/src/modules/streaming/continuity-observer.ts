@@ -25,6 +25,7 @@ import {
 	writeRecord,
 } from "./continuity-records.ts";
 import { createLatestReportWriter } from "./latest-report-writer.ts";
+import { senderUnitHostPaths } from "./streamloop/sender-unit.ts";
 
 const liveSchema = z.object({
 	version: z.literal(1),
@@ -94,6 +95,9 @@ async function processIdentity(pid: number) {
 
 /** Diagnostic observation records the existing paths; record storage never supplies sender paths. */
 export function senderPaths() {
+	const unit = senderUnitHostPaths();
+	if (unit)
+		return { statsFile: unit.statsFile, controlSocket: unit.controlSocket };
 	return {
 		statsFile: senderTelemetryPath(SRTLA_LISTEN_PORT),
 		controlSocket: controlSocketPath(SRTLA_LISTEN_PORT),
@@ -152,6 +156,7 @@ export function clearContinuityTelemetry(): void {
 export async function recordSenderStarted(
 	record: Lifetime,
 	pid: number,
+	host?: { host: "systemd"; invocation: string },
 ): Promise<void> {
 	const epoch = telemetryEpoch;
 	const currentIntent = () =>
@@ -164,13 +169,14 @@ export async function recordSenderStarted(
 		lifetimeSchema,
 		{
 			...record,
+			...host,
 			pid,
 			startTime: current.startTime,
 		},
 		currentIntent,
 	);
 	if (!currentIntent()) return;
-	activeLifetime = { ...record, pid, startTime: current.startTime };
+	activeLifetime = { ...record, ...host, pid, startTime: current.startTime };
 }
 export async function captureWitness(p: Publication): Promise<Witness | null> {
 	try {
