@@ -147,7 +147,9 @@ function input(id: string): HTMLInputElement {
 }
 
 async function gate() {
-	await fireEvent.click(screen.getByRole("button", { name: "Enable Hotspot" }));
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Turn on hotspot" }),
+	);
 	await ready();
 }
 
@@ -346,7 +348,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 		prepare.mockResolvedValueOnce(unobserved);
 		render(HotspotDialog, { open: true, deviceId: "0", iface: row() });
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
 		await tick();
@@ -370,7 +372,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 			iface: row(),
 		});
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
 		await tick();
@@ -386,7 +388,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 		prepare.mockResolvedValueOnce(changed);
 		render(HotspotDialog, { open: true, deviceId: "0", iface: row() });
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
 		await tick();
@@ -546,7 +548,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 		});
 		render(HotspotDialog, { open: true, deviceId: "0", iface: row() });
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		await waitFor(() =>
 			expect(
@@ -570,7 +572,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 			iface: tokenless,
 		});
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		expect(screen.getByTestId("hotspot-confirm-unavailable")).toBeTruthy();
 		await view.rerender({ open: true, deviceId: "0", iface: row() });
@@ -747,7 +749,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 			iface: row(),
 		});
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		await view.rerender({ open: true, deviceId: "1", iface: row("radio-B") });
 		await closedWithNotice();
@@ -890,12 +892,12 @@ describe("hotspot draft ownership through the real dialog", () => {
 				const notice = await screen.findByTestId("hotspot-editor-unavailable");
 				expect(notice.textContent).toContain("identified");
 				expect(
-					screen.queryByRole("button", { name: "Enable Hotspot" }),
+					screen.queryByRole("button", { name: "Turn on hotspot" }),
 				).toBeNull();
 				expect(screen.queryByTestId("hotspot-confirm-activate")).toBeNull();
 			} else {
 				await fireEvent.click(
-					screen.getByRole("button", { name: "Enable Hotspot" }),
+					screen.getByRole("button", { name: "Turn on hotspot" }),
 				);
 				expect(
 					screen.getByTestId("hotspot-confirm-unavailable").textContent,
@@ -1179,7 +1181,7 @@ describe("mode owner and echoed settlement use the dispatched lifetime", () => {
 					context: { stationLinkLive: true, hotspotLive: false },
 				},
 			});
-			await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+			await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 			await ready();
 			await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 			await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -1225,7 +1227,7 @@ describe("mode owner and echoed settlement use the dispatched lifetime", () => {
 				context: { stationLinkLive: true, hotspotLive: false },
 			},
 		});
-		await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+		await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 		await ready();
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -1496,7 +1498,7 @@ describe("a current-unobserved retry under the same token owns its operation", (
 		prepare.mockRejectedValueOnce(new Error("connection reset"));
 		render(HotspotDialog, { open: true, deviceId: "0", iface: row() });
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
 		await tick();

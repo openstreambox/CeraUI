@@ -174,7 +174,7 @@ describe("HotspotDialog — Active only while the AP is live", () => {
 		expect(statusWord()).toBe("Inactive");
 		expect(modeBadge()).toBe("station");
 		const labels = buttonLabels();
-		expect(labels).toContain("Enable Hotspot");
+		expect(labels).toContain("Turn on hotspot");
 		expect(labels).not.toContain("Turn Off");
 		// Nothing that needs a live AP: no live edit form, no code, no renewal.
 		expect(labels).not.toContain("New Wi-Fi password");
@@ -241,7 +241,7 @@ describe("HotspotDialog — follows transitions it did not start", () => {
 		expect(modeBadge()).toBe("hotspot");
 		const labels = buttonLabels();
 		expect(labels).toContain("Turn Off");
-		expect(labels).not.toContain("Enable Hotspot");
+		expect(labels).not.toContain("Turn on hotspot");
 		expect(labels).toContain("New Wi-Fi password");
 	});
 
@@ -273,7 +273,7 @@ describe("HotspotDialog — follows transitions it did not start", () => {
 		expect(statusWord()).toBe("Inactive");
 		expect(modeBadge()).toBe("station");
 		const labels = buttonLabels();
-		expect(labels).toContain("Enable Hotspot");
+		expect(labels).toContain("Turn on hotspot");
 		expect(labels).not.toContain("Turn Off");
 		expect(labels).not.toContain("New Wi-Fi password");
 	});
