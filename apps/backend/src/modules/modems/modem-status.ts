@@ -1,3 +1,6 @@
+import type { RadioHealth } from "@ceraui/rpc/schemas";
+import { emptyRadio } from "./radio-health.ts";
+import { radioForModem } from "./radio-health-runtime.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -44,6 +47,7 @@ type ModemsResponseModemStatus = {
 };
 
 export type ModemsResponseModemBase = {
+	radio_health?: RadioHealth | undefined;
 	status?: ModemsResponseModemStatus;
 };
 
@@ -181,7 +185,12 @@ export function buildModemsWireMessage(
 	modemsFullState: Record<number, true> | undefined = undefined,
 ) {
 	try {
-		return buildProjectedModemsMessage(modemsFullState);
+		const result = buildProjectedModemsMessage(modemsFullState);
+		for (const [id, row] of Object.entries(result)) {
+			if (modemsFullState === undefined || modemsFullState[Number(id)] === true)
+				row.radio_health = radioForModem(id, row);
+		}
+		return result;
 	} catch (error) {
 		logger.warn("modem wire projection failed; serving the legacy message", {
 			error,
@@ -217,4 +226,31 @@ export function broadcastModems(
 	} catch (error) {
 		logger.warn("roaming advisory evaluation failed", { error });
 	}
+}
+
+/** Publish diagnostic enrichment with legacy status, without replaying control fields. */
+export function broadcastRadioHealth(): void {
+	const complete = buildModemsWireMessage();
+
+	const modems = Object.fromEntries(
+		Object.entries(complete)
+			.filter(([id]) => committedModemsWireMessage[id] !== undefined)
+			.map(([id, row]) => [
+				id,
+				{
+					status: row.status,
+					radio_health: row.radio_health ?? emptyRadio(0),
+				},
+			]),
+	);
+	for (const [id, partial] of Object.entries(modems)) {
+		const committed = committedModemsWireMessage[id];
+		if (committed)
+			committedModemsWireMessage[id] = {
+				...committed,
+				radio_health: partial.radio_health,
+				...(partial.status === undefined ? {} : { status: partial.status }),
+			};
+	}
+	broadcastMsg("status", { modems });
 }
