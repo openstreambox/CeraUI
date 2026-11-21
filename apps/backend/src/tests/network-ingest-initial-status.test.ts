@@ -54,4 +54,19 @@ describe("buildInitialStatus — network_ingest snapshot completeness", () => {
 			},
 		});
 	});
+	test("the initial snapshot distinguishes a phone-only image without losing unknown carrying", () => {
+		const engine = setup.engine;
+		try {
+			setup.engine = "none";
+			const status = buildInitialStatus().status;
+			expect(status.phone_box).toBe(true);
+			expect(["streaming", "idle", "unknown"]).toContain(status.carrying.state);
+			expect(status.box_health).toBeArray();
+			expect(status.phone_links.sending).toBeNull();
+			setup.engine = "cerastream";
+			expect(buildInitialStatus().status.phone_box).toBe(false);
+		} finally {
+			setup.engine = engine;
+		}
+	});
 });
