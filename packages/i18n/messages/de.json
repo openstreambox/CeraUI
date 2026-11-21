@@ -843,7 +843,7 @@
 	"live.starting": "Wird gestartet...",
 	"live.stopStream": "Stream stoppen",
 	"live.stopConfirm.title": "Stream beenden?",
-	"live.stopConfirm.body": "Die Zuschauer sehen, dass der Stream endet.",
+	"live.stopConfirm.body": "Die Box hört auf, den Stream zu senden.",
 	"live.stopConfirm.keep": "Weiter streamen",
 	"live.stopConfirm.end": "Stream beenden",
 	"live.stopStuck.message": "Das Stoppen dauert länger als erwartet",

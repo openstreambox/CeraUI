@@ -843,7 +843,7 @@
 	"live.starting": "शुरू हो रहा है…",
 	"live.stopStream": "स्ट्रीम रोकें",
 	"live.stopConfirm.title": "स्ट्रीम खत्म करें?",
-	"live.stopConfirm.body": "दर्शक देखेंगे कि स्ट्रीम खत्म हो गई।",
+	"live.stopConfirm.body": "बॉक्स स्ट्रीम भेजना बंद कर देगा।",
 	"live.stopConfirm.keep": "स्ट्रीम जारी रखें",
 	"live.stopConfirm.end": "स्ट्रीम खत्म करें",
 	"live.stopStuck.message": "रोकने में अपेक्षा से अधिक समय लग रहा है",
