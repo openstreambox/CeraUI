@@ -183,7 +183,7 @@ for (const evidence of ["stop", "status"] as const) {
 	});
 }
 
-test("S7 adopted backend session continues receiving later idle status", async () => {
+test("S7 unverified backend session stays protected and receives later idle status", async () => {
 	writeFileSync(marker, "");
 	boot();
 	h.engine.setEngine("streaming");
@@ -191,7 +191,8 @@ test("S7 adopted backend session continues receiving later idle status", async (
 	await flushEvidence();
 	h.engine.status(0, true);
 	await probe;
-	expect(streamLiveness()).toBe("streaming");
+	expect(streamLiveness()).toBe("unknown");
+	expect(existsSync(marker)).toBe(true);
 	h.engine.status(0, false);
 	expect(streamLiveness()).toBe("idle");
 	expect(existsSync(marker)).toBe(false);

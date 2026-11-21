@@ -34,7 +34,21 @@ failed or unknown stops and clear only on confirmed idle/cleanup. Reconciliation
 sets/clears that sentinel on authoritative streaming/idle and retains it on unknown.
 Host regression coverage does not qualify image activation on either board.
 At boot and after an engine reconnect, `reconcileRuntimeState()` subscribes to the
-engine's actual status and adopts an engine-held session. Only concordant
+engine's actual status. Production reconciliation retains a streaming session only
+with three pieces of evidence from this backend process: it still retains a launch
+attempt it began, the engine client that acknowledged this process's Start is
+unchanged, and a live, unreaped sender child handle with the configured executable
+runs. They are not bound to one generation number; together they rule out a
+predecessor's session, not a stale attempt of this same process. A
+replacement/adopted engine connection cannot prove that identity. An engine-held
+session alone is not data-path proof: without sender ownership, lifecycle stays
+`reconciling`, liveness stays `unknown`, and shutdown protection is retained.
+Operator Stop is the explicit recovery path; no automatic replacement sender is
+started. While liveness is `unknown` the session publishes that state to the
+interlocks that otherwise read only `is_streaming` (USB modem mode and its offer,
+FCC unlock, modem transition disruption, exclusive hotspot start and Wi-Fi mode
+switch/restore), so they refuse as for a live stream; `is_streaming` itself stays
+false and the UI never shows the session as live. Only concordant
 `streaming` or `idle` status is authoritative. A successful subscription that sees
 no event for 2.5 seconds remains UNKNOWN: the published 2026.11.1 client has no
 current-status snapshot and the engine heartbeat is streaming-only. Query failure,
@@ -145,3 +159,38 @@ Contract coverage: `tests/streaming-backend-contract.test.ts` runs the
 structural contract over the production singleton + the cerastream behavioural
 contract, error-mapping, status-bridge, passthroughs, engine-crash, and engine
 selection.
+
+### Sender lifetime limits
+
+Startup never kills a sender by process name. A read-only process census is a
+conservative presence interlock for Start and confirmed cleanup, not identity or
+media proof. It subtracts a `srtla_send` process only when one of this backend's
+supervised handles, stream session or SRT forwarding, has that exact PID, is
+still unreaped, and the kernel names this process as its parent. A stale handle,
+a reused PID or an unreadable row still counts. An unowned sender, or unreadable
+census, blocks a replacement even when the engine reports idle. The Start
+refusal (`start_invalid`, `sender_ownership_unproven`) is checked after the
+lifecycle interlock and changes neither lifecycle nor protection. Operator Stop
+can stop the engine but does not signal an unowned sender or claim cleanup while
+one remains. External sender recovery therefore requires its actual owner to
+retire it before Start is safe.
+
+When the engine ends a session itself (an idle status, an idle reconcile, or a
+`rollback_failed` that went idle) while children of this backend's own session
+still run, the session stays `reconciling`/`unknown` and protected, retires those
+children through the normal session cleanup (their handles, never a name), and
+only then settles idle. A Start meanwhile answers busy. If that cleanup fails,
+protection remains and operator Stop is the recovery. SRT forwarding children are
+never retired by this path.
+
+The census reads `CERALIVE_SENDER_CENSUS_PROC_ROOT` when set, else `/proc`. The
+backend test preload points it at an empty private directory, so ordinary unit
+tests never observe host processes; the restart service regression sets `/proc`
+explicitly inside its own transient unit.
+
+This does not provide continuity across backend service restarts. The sender is
+still a backend child. Independent lifetime requires a sender host/unit contract,
+boot/invocation/cgroup and session/destination identity, current owner leases and
+source witnesses, durable publication generation and applied-map proof, and
+reattached telemetry/control. Sender existence and engine streaming status do not
+prove media delivery or an uninterrupted receiver connection.
