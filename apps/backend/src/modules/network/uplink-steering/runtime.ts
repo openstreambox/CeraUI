@@ -3,7 +3,10 @@ import { logger } from "../../../helpers/logger.ts";
 import { hasCapability } from "../../system/board-capabilities.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
 import { broadcastWifiState } from "../../wifi/wifi.ts";
-import { onNetworkInterfacesChange } from "../network-interfaces.ts";
+import {
+	getNetworkInterfaceIncarnation,
+	onNetworkInterfacesChange,
+} from "../network-interfaces.ts";
 import { onUsbNetScanCommitted } from "../router-cellular-scan.ts";
 import { onUplinkHealthChange } from "../uplink-health/state.ts";
 import {
@@ -55,7 +58,7 @@ const coordinator = new UplinkSteeringCoordinator({
 	},
 	verifyApplied: async (next) => {
 		await verifySteeringState(next);
-		publishSteeringReadiness(next.clientZones);
+		publishSteeringReadiness(next.clientZones, getNetworkInterfaceIncarnation);
 	},
 	publishAvailability: (availability) => {
 		if (!availability.available) publishSteeringReadiness([]);

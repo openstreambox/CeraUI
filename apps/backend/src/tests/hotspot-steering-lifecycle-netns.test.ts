@@ -30,7 +30,10 @@ import {
 	registerPendingConfirmation,
 	settlePending,
 } from "../modules/wifi/wifi-hotspot-monitor.ts";
-import type { WifiInterfaceWithHotspot } from "../modules/wifi/wifi-hotspot-types.ts";
+import type {
+	HotspotActivationDeps,
+	WifiInterfaceWithHotspot,
+} from "../modules/wifi/wifi-hotspot-types.ts";
 import { runTestCommand } from "./helpers/run-test-command.ts";
 
 async function run(command: string, args: string[]): Promise<string> {
@@ -249,22 +252,26 @@ test.skipIf(!child)(
 			const completion = new Promise((resolve) => {
 				complete = resolve;
 			});
-			registerPendingConfirmation(mac, iface, {
-				nmConnect: async () => true,
-				nmConnSetFields: async () => true,
-				nmHotspot: async () => null,
-				wifiUpdateSavedConns: async () => {},
-				broadcastState: refreshWifiApClientZones,
-				setDupIpSuppression: () => {},
-				credentials: { get: () => undefined, remember: () => {} },
-				findHotspotConn: async () => undefined,
-				publishOutcome: (_kind, _device, outcome) => complete(outcome),
-				confirmSteering: async () => {
-					if (++readinessChecks === 1) return false;
-					await coordinator.requestReconcile();
-					return (coordinator.appliedState()?.clientZones.length ?? 0) > 0;
-				},
-			});
+			registerPendingConfirmation(
+				{ macAddress: mac, uuid: "ap93", ifname: "wlan93" },
+				iface,
+				{
+					nmConnect: async () => true,
+					nmConnSetFields: async () => true,
+					wifiUpdateSavedConns: async () => {},
+					broadcastState: refreshWifiApClientZones,
+					setDupIpSuppression: () => {},
+					credentials: { get: () => undefined, remember: () => {} },
+					findHotspotConn: async () => undefined,
+					publishOutcome: (_kind, _device, outcome) => complete(outcome),
+					steering: {
+						reconcile: () => coordinator.requestReconcile(),
+						verified: () =>
+							++readinessChecks > 1 &&
+							(coordinator.appliedState()?.clientZones.length ?? 0) > 0,
+					},
+				} as unknown as HotspotActivationDeps,
+			);
 			settlePending("wlan93", true);
 			await coordinator.requestReconcile();
 			await verifySteeringState(active);
