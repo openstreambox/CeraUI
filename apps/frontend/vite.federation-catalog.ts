@@ -226,8 +226,8 @@ const LOOKUP_CALL = new RegExp(
 	`(?<![\\w.$])(?<!function\\s+)(${LOOKUP_NAMES})\\s*(?:\\?\\.\\s*)?([([])`,
 	"g",
 );
-const I18N_SPECIFIERS = /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']@ceraui\/i18n[^"']*["']/g;
-const I18N_NAMESPACE = /import\s+\*\s*as\s+\w+\s+from\s*["']@ceraui\/i18n[^"']*["']/g;
+const I18N_SPECIFIERS = /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']@ceraui\/i18n(?:\/svelte)?["']/g;
+const I18N_NAMESPACE = /import\s+\*\s*as\s+\w+\s+from\s*["']@ceraui\/i18n(?:\/svelte)?["']/g;
 const KEY_TEXT = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_-]+)+$/;
 const KEY_PREFIX = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_-]+)*\.$/;
 
@@ -279,6 +279,13 @@ function literalArgument(code: string, index: number): boolean {
  * - the facade handed on as a value (`format(msg)`, `const tr = t`, `...m`),
  *   since the receiver can compute keys under any name;
  * - the facade imported under another name or as a namespace.
+ *
+ * This is a source heuristic, not binding analysis. Hosted code imports the
+ * facade directly from `@ceraui/i18n/svelte`; a local re-export is caught by
+ * {@link facadeReexports}. Known gaps: a facade destructured from a dynamic
+ * `import()`, and `t.bind(...)` / `t.call(...)`.
+ * The built relay-validation ABI case in Build Check backstops the computed
+ * stage labels, the path such a change would break first.
  */
 export function computedLookups(source: string): string[] {
 	const code = stripComments(source);
@@ -327,6 +334,35 @@ export function computedLookups(source: string): string[] {
 			if (new RegExp(`^(?:const|let|var)\\s+[\\w$]+\\s*=\\s*${name}\\s*;$`).test(line)) continue;
 			found.add(`passes ${name}: ${line}`);
 		}
+	}
+	return [...found].sort();
+}
+
+const I18N_REEXPORT_SPECIFIERS =
+	/export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']@ceraui\/i18n(?:\/svelte)?["']/g;
+const I18N_REEXPORT_ALL = /export\s+\*\s*(?:as\s+[\w$]+\s+)?from\s*["']@ceraui\/i18n(?:\/svelte)?["']/g;
+
+/**
+ * Facade re-exports (`export { resolveMessageKey as translate } from
+ * "@ceraui/i18n/svelte"`, `export * from ...`). A module that only re-exports
+ * renders no code, so it is scanned whether or not the bundle kept any of it:
+ * its importers call the facade under a name the lookup scan cannot follow.
+ */
+export function facadeReexports(source: string): string[] {
+	const code = stripComments(source);
+	const found = new Set<string>();
+	for (const match of code.matchAll(I18N_REEXPORT_SPECIFIERS)) {
+		if (/^export\s+type\b/.test(match[0])) continue;
+		for (const specifier of (match[1] ?? "").split(",")) {
+			if (/^\s*type\s/.test(specifier)) continue;
+			const [imported = ""] = specifier.trim().split(/\s+as\s+/);
+			if (new RegExp(`^(?:${LOOKUP_NAMES})$`).test(imported)) {
+				found.add(`reexport ${specifier.trim().replace(/\s+/g, " ")}`);
+			}
+		}
+	}
+	for (const match of code.matchAll(I18N_REEXPORT_ALL)) {
+		found.add(`reexport ${match[0].replace(/\s+/g, " ")}`);
 	}
 	return [...found].sort();
 }
@@ -434,16 +470,21 @@ export function federationCatalogPlugin(options: {
 			for (const chunk of Object.values(bundle)) {
 				if (chunk.type !== "chunk") continue;
 				for (const [id, module] of Object.entries(chunk.modules)) {
-					if (module.code === null) continue;
 					if (isCatalogModule(id, options.paraglideOutdir)) continue;
-					for (const key of referencedCatalogKeys(module.code, catalogKeys)) {
-						bundled.add(key);
+					if (module.code !== null) {
+						for (const key of referencedCatalogKeys(module.code, catalogKeys)) {
+							bundled.add(key);
+						}
 					}
 					const path = normalizeModulePath(id);
 					if (!path.startsWith(normalizedRoot) || path.includes("/node_modules/")) continue;
 					if (!/\.(ts|js|svelte)$/.test(path) || !existsSync(path)) continue;
-					for (const lookup of computedLookups(readFileSync(path, "utf8"))) {
-						sites.add(`${path.slice(normalizedRoot.length)} ${lookup}`);
+					const source = readFileSync(path, "utf8");
+					const relativePath = path.slice(normalizedRoot.length);
+					for (const reexport of facadeReexports(source)) sites.add(`${relativePath} ${reexport}`);
+					if (module.code === null) continue;
+					for (const lookup of computedLookups(source)) {
+						sites.add(`${relativePath} ${lookup}`);
 					}
 				}
 			}
