@@ -74,9 +74,9 @@ export function createFakeNm() {
 			const snapshot = checkpoints.get(path);
 			if (!snapshot) throw new Error("expired");
 			checkpoints.delete(path);
-			// DELETE_NEW_CONNECTIONS, as measured on NM 1.52.1: global.
-			for (const uuid of [...profiles.keys()])
-				if (!snapshot.profiles.has(uuid)) profiles.delete(uuid);
+			// Created without DELETE_NEW_CONNECTIONS: profiles added during the
+			// window stay (the owner removes its own candidates). Each listed
+			// device gets its snapshot's connection back.
 			active.clear();
 			for (const [device, uuid] of snapshot.active)
 				if (profiles.has(uuid)) active.set(device, uuid);
@@ -134,6 +134,10 @@ export function createFakeNm() {
 			profiles.delete(uuid);
 			for (const [device, current] of active)
 				if (current === uuid) active.delete(device);
+		},
+		async exists(uuid) {
+			guard("exists");
+			return profiles.has(uuid);
 		},
 		async listByPrefix(prefix) {
 			return [...profiles]

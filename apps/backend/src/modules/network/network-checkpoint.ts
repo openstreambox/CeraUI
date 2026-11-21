@@ -6,6 +6,7 @@ import {
 	type JournalStore,
 	type NetworkChangePlan,
 	type NoticeRecord,
+	type ProfileRecord,
 	type TxRecord,
 } from "./network-change-journal.ts";
 import {
@@ -48,6 +49,8 @@ export interface NmChangeDeps {
 	persist(uuid: string, id: string, autoconnect: boolean): Promise<void>;
 	/** Idempotent: a missing profile is not an error. */
 	remove(uuid: string): Promise<void>;
+	/** Whether a profile exists (in memory or on disk). Throws when unknown. */
+	exists(uuid: string): Promise<boolean>;
 	listByPrefix(prefix: string): Promise<string[]>;
 }
 
@@ -120,6 +123,11 @@ export interface NetworkChangeStatus {
 	} | null;
 	readonly kept: { readonly id: string; readonly undoKey: string } | null;
 	readonly undoIncomplete: boolean;
+	/**
+	 * A confirmed or kept change whose commit did not finish (a failed profile
+	 * write or intent write). The tick retries it.
+	 */
+	readonly commitIncomplete: boolean;
 	readonly notice: {
 		readonly id: string;
 		readonly reason: NoticeReason;
@@ -256,9 +264,11 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		const noticeReason = tx.undoReason;
 		await settled(tx, "undone");
 		journal.tx = null;
+		// A kept change lost before it reached disk is reported too: the person
+		// chose to keep it, and the box could not.
 		if (
-			tx.mode === "undo-automatically" &&
-			(noticeReason === "disconnected" || noticeReason === "restart")
+			(tx.mode === "undo-automatically" && noticeReason === "disconnected") ||
+			noticeReason === "restart"
 		) {
 			journal.notice = {
 				id: randomUUID(),
@@ -310,19 +320,75 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		await save(journal);
 	}
 
+	function commitOpen(tx: TxRecord | null): boolean {
+		return (
+			tx?.state === "confirming" ||
+			(tx?.state === "kept" && tx.settled !== true)
+		);
+	}
+
+	/**
+	 * Finish a confirmed ("confirming") or kept change: promote, settle, close.
+	 * Idempotent, so reconcile and the tick can retry it. When a candidate that
+	 * never reached disk is gone (a reboot or a NetworkManager restart after
+	 * the checkpoint was destroyed), nothing was committed and the originals
+	 * are intact on disk, so the change is undone instead of retried forever.
+	 */
+	async function finishCommit(
+		journal: Journal,
+	): Promise<"committed" | "undone" | "incomplete"> {
+		const tx = journal.tx as TxRecord;
+		const keep = tx.state === "kept";
+		const lost: ProfileRecord[] = [];
+		for (const profile of tx.profiles)
+			if (
+				profile.candidate &&
+				!profile.promoted &&
+				!(await deps.nm.exists(profile.candidate))
+			)
+				lost.push(profile);
+		if (lost.length) {
+			if (tx.profiles.some((profile) => profile.promoted)) {
+				// Part of the change is on disk and part is gone: neither a
+				// roll-forward nor an undo is safe without a person.
+				tx.errors = ["A candidate was lost after part of the change was saved"];
+				await save(journal);
+				return "incomplete";
+			}
+			return (await undo(journal, "restart")) ? "undone" : "incomplete";
+		}
+		try {
+			await promote(journal, keep);
+		} catch (error) {
+			tx.errors = [(error as Error).message];
+			await save(journal);
+			throw error;
+		}
+		delete tx.errors;
+		if (keep) {
+			tx.settled = true;
+		} else {
+			journal.tx = null;
+		}
+		await save(journal);
+		return "committed";
+	}
+
 	async function settleStale(journal: Journal) {
 		const tx = journal.tx;
-		if (!tx || tx.state === "kept") return;
+		if (!tx || (tx.state === "kept" && tx.settled === true)) return;
+		if (commitOpen(tx)) {
+			await finishCommit(journal);
+			if (journal.tx && commitOpen(journal.tx))
+				throw new Error("The previous change is still being saved");
+			return;
+		}
 		if (tx.state === "pending") {
 			const live = await checkpointLive(tx);
 			if (live && deps.now() < (tx.expiresAt ?? 0))
 				throw new Error("Network change pending");
 			const early = !live && deps.now() < (tx.expiresAt ?? 0) - 2_000;
 			await undo(journal, early ? "restart" : "disconnected");
-		} else if (tx.state === "confirming") {
-			await promote(journal, false);
-			journal.tx = null;
-			await save(journal);
 		} else {
 			await undo(journal, tx.undoReason ?? "restart");
 		}
@@ -425,7 +491,10 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 			if (mode === "keep-change") {
 				tx.state = "kept";
 				await save(journal);
-				await promote(journal, true);
+				// A failure from here on leaves an unsettled kept change, which
+				// reconcile and the tick finish (or undo, if nothing reached disk).
+				if ((await finishCommit(journal)) === "undone")
+					throw new Error("Network change could not be kept");
 				return { kind: "kept", id: tx.id };
 			}
 			if (deps.now() >= (tx.expiresAt ?? 0) || !(await checkpointLive(tx)))
@@ -454,6 +523,16 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 	}
 
 	return {
+		/**
+		 * Whether a change in flight names this interface: anything but a kept
+		 * change that has fully settled. Other writers to that interface (the
+		 * Ethernet role reconciler, a legacy role write) must leave it alone.
+		 */
+		async touches(device: string): Promise<boolean> {
+			const tx = (await deps.journal.read()).tx;
+			if (!tx || (tx.state === "kept" && tx.settled === true)) return false;
+			return tx.devices.includes(device);
+		},
 		async status(): Promise<NetworkChangeStatus> {
 			const journal = await deps.journal.read();
 			const tx = journal.tx;
@@ -472,6 +551,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 						? { id: tx.id, undoKey: "network.changeSafety.kept.undo" }
 						: null,
 				undoIncomplete: tx?.state === "rolling-back",
+				commitIncomplete: commitOpen(tx ?? null),
 				notice: notice
 					? {
 							id: notice.id,
@@ -509,9 +589,8 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				if (tx.checkpoint) await deps.nm.destroy(tx.checkpoint);
 				tx.state = "confirming";
 				await save(journal);
-				await promote(journal, false);
-				journal.tx = null;
-				await save(journal);
+				// A failure here leaves "confirming"; the tick retries it.
+				await finishCommit(journal);
 			});
 		},
 		/** Run by a timer: NetworkManager's deadline passed or its checkpoint is gone. */
@@ -529,6 +608,8 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 					return undo(journal, early ? "restart" : "disconnected");
 				}
 				if (tx.state === "rolling-back") return undo(journal, tx.undoReason);
+				if (commitOpen(tx))
+					return (await finishCommit(journal)) !== "incomplete";
 				return false;
 			});
 		},
@@ -555,13 +636,14 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 					// Only this process restarted: NetworkManager still holds the timer.
 					return "resumed" as const;
 				}
-				if (tx.state === "confirming") {
-					await promote(journal, false);
-					journal.tx = null;
-					await save(journal);
-					return "promoted" as const;
+				if (commitOpen(tx)) {
+					const kept = tx.state === "kept";
+					const result = await finishCommit(journal);
+					if (result === "undone") return "undone" as const;
+					if (result === "incomplete") return "incomplete" as const;
+					if (!kept) return "promoted" as const;
 				}
-				if (tx.state === "kept") {
+				if (journal.tx?.state === "kept") {
 					await sweepOrphans(journal);
 					return "kept" as const;
 				}

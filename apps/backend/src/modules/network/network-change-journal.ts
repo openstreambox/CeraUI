@@ -97,6 +97,12 @@ export interface TxRecord {
 	plan: NetworkChangePlan;
 	profiles: ProfileRecord[];
 	effects: EffectRecord[];
+	/**
+	 * A kept change whose promotion and settle both finished. Until then
+	 * reconcile and the tick finish it, so a crash or a failed intent write
+	 * can never leave a kept change unsettled.
+	 */
+	settled?: boolean;
 	/** Set when an undo started, so a crash mid-undo finishes the same way. */
 	undoReason?: NoticeReason | "failed" | undefined;
 	errors?: string[];

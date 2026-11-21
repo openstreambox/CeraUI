@@ -124,6 +124,16 @@ export function ethernetRoleFromPlan(
 	return { ifname, role, previous, op };
 }
 
+/** The port a stored role-change summary names, for queueing a re-apply. */
+export function ethernetRolePortOfSummary(summary: {
+	readonly key: string;
+	readonly params?: Readonly<Record<string, string>>;
+}): string | undefined {
+	if (summary.key !== ETHERNET_ROLE_SUMMARY_KEY) return undefined;
+	const ifname = summary.params?.ifname;
+	return typeof ifname === "string" ? ifname : undefined;
+}
+
 export interface EthernetRoleSettledDeps {
 	readonly persistRole: (ifname: string, role: EthernetRole) => void;
 	readonly restoreRole: (

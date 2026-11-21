@@ -36,7 +36,7 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 			"1",
 			"/device/1",
 			"90",
-			"2",
+			"0",
 		]);
 	});
 	it("does not infer liveness from process-local state", async () => {
