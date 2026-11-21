@@ -17,6 +17,16 @@ import {
 let authStatus = $state(false);
 let sessionExpired = $state(false);
 let interaction = new AbortController();
+// The token THIS TAB signed in with: the one the device issued for a password
+// login (remembered or not), or the stored token a token login presented. The
+// device authenticates sockets, not pages, so the reconnect re-auth presents it
+// again on every new socket. Memory only, and only while signed in: the shared
+// `auth` slot belongs to every tab of this origin and is read and written only
+// by an explicit sign-in, never by a reconnect.
+let sessionToken: string | null = null;
+// Whether this page has signed in at least once. Set by EVERY successful sign-in
+// (password or token), because it is what arms the reconnect re-auth.
+let authenticatedOnce = false;
 
 export function getSessionExpired(): boolean {
 	return sessionExpired;
@@ -58,7 +68,68 @@ export function setAuthStatus(status: boolean): void {
 	if (!status) clearAuthenticatedLink();
 	clearAuthInteraction();
 	authStatus = status;
+	if (status) {
+		authenticatedOnce = true;
+	} else {
+		sessionToken = null;
+		// The retained login result must not keep the credential either.
+		if (authMessage?.auth_token !== undefined) {
+			const { auth_token: _retired, ...rest } = authMessage;
+			authMessage = rest;
+		}
+	}
+	rpcClient.setSessionActive(status);
 	notifySubscribers();
+}
+
+/**
+ * This tab is signed in with `token` (the credential its sign-in established).
+ * The reconnect re-auth presents it on every new socket until sign-out.
+ */
+export function beginSession(token: string | null): void {
+	sessionToken = token;
+	setAuthStatus(true);
+}
+
+/** The token to sign in again with on a new socket, while this tab is signed in. */
+export function getSessionToken(): string | null {
+	return sessionToken;
+}
+
+/** The device refused this tab's token: never present it again. */
+export function forgetSessionToken(): void {
+	sessionToken = null;
+}
+
+/**
+ * The device refused `rejectedToken` on a new socket. This tab stops presenting
+ * it unless it has signed in again meanwhile, and the shared `auth` slot loses
+ * it only while it still holds that same dead token: another tab's newer token
+ * survives.
+ */
+export function forgetRejectedToken(rejectedToken: string): void {
+	if (sessionToken === rejectedToken) sessionToken = null;
+	if (
+		typeof localStorage !== "undefined" &&
+		localStorage.getItem("auth") === rejectedToken
+	)
+		localStorage.removeItem("auth");
+}
+
+/** Record that the page has signed in at least once (see `authenticatedOnce`). */
+export function markAuthenticated(): void {
+	authenticatedOnce = true;
+}
+
+/** Whether the page has signed in at least once since it loaded. */
+export function wasAuthenticated(): boolean {
+	return authenticatedOnce;
+}
+
+/** Forget the sign-in latch and session token. For tests/HMR. */
+export function resetAuthSession(): void {
+	authenticatedOnce = false;
+	sessionToken = null;
 }
 
 /** Retire local pending auth before notifying the interaction's field owner. */
@@ -191,7 +262,7 @@ async function authenticateInput(
 		ingestAuth(result);
 		setSessionExpired(false);
 		noteAuthenticatedLink(link);
-		setAuthStatus(true);
+		beginSession(result.auth_token ?? input.token ?? sessionToken);
 		return { kind: "ok" };
 	} finally {
 		clearPassword();
@@ -260,6 +331,9 @@ async function createPasswordInput(
 		if (signal.aborted) return false;
 		// The device revokes all remembered tokens on a successful password change.
 		if (result.success) localStorage.removeItem("auth");
+		// The visit's token is revoked too; the device does not hand this page
+		// the replacement it signs the calling socket in with.
+		if (result.success) sessionToken = null;
 		return result.success;
 	} finally {
 		clearPassword();
