@@ -19,6 +19,7 @@ export const LOG_POINTER_KEYS: ReadonlySet<string | undefined> = new Set([
 	"network.modem.usbMode.reason.transaction_error",
 	"notifications.streamAutostartNoLinksFailed",
 	"notifications.streamRecoveryFailed",
+	"notifications.streamRecoveryFailedAfterRestart",
 	"notifications.streamStartEngineRestartingFailed",
 	"notifications.streamStartEngineUnavailableFailed",
 	"notifications.streamStartInternalFailed",
