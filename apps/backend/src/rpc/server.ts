@@ -11,6 +11,7 @@ import type { Server } from "bun";
 import { logger } from "../helpers/logger.ts";
 import { handleLogBundleRequest } from "../modules/device-logs/bundle.ts";
 import { handleLogExportRequest } from "../modules/device-logs/export.ts";
+import { markFrontDoorListening } from "../modules/network/front-door-state.ts";
 import { getIsStreaming } from "../modules/streaming/streaming.ts";
 import { getLocalObservability } from "../modules/system/observability.ts";
 import { getSystemdSocket } from "../modules/system/systemd.ts";
@@ -276,7 +277,10 @@ let localIngress: ReturnType<typeof startLocalIngress> = null;
 export function initServer(): void {
 	try {
 		localIngress ??= startLocalIngress();
-		if (localIngress) logger.info("Local ingress listener started");
+		if (localIngress) {
+			logger.info("Local ingress listener started");
+			markFrontDoorListening();
+		}
 	} catch (error) {
 		logger.warn(`Local ingress unavailable: ${error}`);
 	}

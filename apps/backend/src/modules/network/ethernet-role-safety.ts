@@ -33,9 +33,9 @@
     shared profile there keeps the existing path.
 */
 
-import { existsSync } from "node:fs";
 import type { EthernetRole } from "@ceraui/rpc/schemas";
 import type { EthernetRoleOutcomePublisher } from "./ethernet-role-outcome.ts";
+import { frontDoorListening } from "./front-door-state.ts";
 import type { NetworkChangePlan } from "./network-change-journal.ts";
 import { CHANGE_SAFETY_COPY } from "./network-change-policy.ts";
 import type { SettledEvent } from "./network-checkpoint.ts";
@@ -43,21 +43,14 @@ import type { SettledEvent } from "./network-checkpoint.ts";
 /** The off-by-default switch. Only the exact value "1" enables it. */
 export const NETWORK_CHANGE_SAFETY_ENV = "CERALIVE_NETWORK_CHANGE_SAFETY";
 /**
- * The front door's private listener directory (rpc/local-ingress.ts, kept as a
- * literal so this module stays free of the server graph; a test pins it).
- */
-export const FRONT_DOOR_DIRECTORY = "/run/ceralive-button-ingress";
-
-/**
- * The flag takes effect only on an image with the front door. Without it no
- * session has arrival evidence: a laptop on the shared LAN and a relay session
- * would look the same ("unknown"), nobody could confirm, and keep-if-reachable
- * (which proves only the box's own outside reachability) could keep a change
- * that strands the laptop.
+ * The flag takes effect only while this process's front-door listener is
+ * running (not merely when its directory exists). Without it no session has
+ * arrival evidence: a laptop on the shared LAN and a remote session would look
+ * the same ("unknown") and nobody could confirm.
  */
 export function networkChangeSafetyEnabled(
 	env: Readonly<Record<string, string | undefined>> = process.env,
-	frontDoor: () => boolean = () => existsSync(FRONT_DOOR_DIRECTORY),
+	frontDoor: () => boolean = frontDoorListening,
 ): boolean {
 	return env[NETWORK_CHANGE_SAFETY_ENV] === "1" && frontDoor();
 }

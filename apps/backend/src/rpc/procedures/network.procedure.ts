@@ -31,7 +31,10 @@ import {
 	ethernetRoleOfSummary,
 	networkChangeSafetyEnabled,
 } from "../../modules/network/ethernet-role-safety.ts";
-import { setEthernetRole } from "../../modules/network/ethernet-role-transition.ts";
+import {
+	reapplyEthernetRoleNotice,
+	setEthernetRole,
+} from "../../modules/network/ethernet-role-transition.ts";
 import {
 	getNetworkChangeOwner,
 	networkChangeJournalPath,
@@ -147,7 +150,8 @@ export const setEthernetRoleProcedure = authedProcedure
 			!shouldUseMocks() && networkChangeSafetyEnabled()
 				? {
 						owner: getNetworkChangeOwner(),
-						session: await resolveNetworkChangeSession(context.ws),
+						// Resolved inside the port's role queue.
+						session: () => resolveNetworkChangeSession(context.ws),
 						answer: input.changeAnswer,
 					}
 				: undefined;
@@ -263,33 +267,27 @@ export const answerNetworkChangeNoticeProcedure = authedProcedure
 				return { success: false, error: "unavailable" };
 			// A stored role change is planned again from the port's state now,
 			// through the normal role path (and so its queue), never replayed
-			// from the stored plan: the profile or role may have changed since.
+			// from the stored plan. The owner checks and consumes the notice in
+			// the same apply, so a notice answered meanwhile refuses it.
 			const notice = (await owner.status()).notice;
-			const intent =
-				notice?.id === input.id
-					? ethernetRoleOfSummary(notice.summary)
-					: undefined;
-			if (intent) {
-				const result = await setEthernetRole(
-					intent.ifname,
-					intent.role,
-					undefined,
-					intent.op,
-					{
-						owner,
-						session: await resolveNetworkChangeSession(context.ws),
-						answer: input.changeAnswer,
-						deliberate: true,
-					},
-				);
-				// The change went through; a notice someone else answered
-				// meanwhile is already gone, which is fine.
-				if (result.success)
+			if (notice?.id === input.id && ethernetRoleOfSummary(notice.summary)) {
+				if (!(await hasCapability("client-internet")))
+					return { success: false, error: "unavailable_in_emulated_mode" };
+				const result = await reapplyEthernetRoleNotice(notice, {
+					owner,
+					session: () => resolveNetworkChangeSession(context.ws),
+					answer: input.changeAnswer,
+				});
+				// Nothing to change (the port already has that role): the owner
+				// wasn't involved, so answer the notice here.
+				if (result?.success && !result.changeSafety)
 					await owner.leaveUndone(input.id, session).catch(() => undefined);
 				return {
-					success: result.success,
-					...(result.error ? { error: result.error } : {}),
-					...(result.changeSafety ? { changeSafety: result.changeSafety } : {}),
+					success: result?.success ?? false,
+					...(result?.error ? { error: result.error } : {}),
+					...(result?.changeSafety
+						? { changeSafety: result.changeSafety }
+						: {}),
 				};
 			}
 			const changeSafety = await owner.reapply(

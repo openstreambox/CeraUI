@@ -1,4 +1,5 @@
 import { run } from "../../helpers/run.ts";
+import type { CheckpointRef } from "./network-checkpoint.ts";
 
 const DESTINATION = "org.freedesktop.NetworkManager";
 const MANAGER = "/org/freedesktop/NetworkManager";
@@ -13,6 +14,8 @@ const DEVICE = /^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,14}$/;
 const PROPERTY = /^[a-z0-9-]+\.[a-z0-9-]+$/;
 const CHECKPOINT_PATH =
 	/^\/org\/freedesktop\/NetworkManager\/Checkpoint\/[0-9]{1,10}$/;
+/** A D-Bus unique connection name, such as ":1.42". */
+const UNIQUE_NAME = /^:[0-9]{1,10}\.[0-9]{1,10}$/;
 const OWNED_NAME = /^ceralive-(candidate|backup)-[0-9a-f]{8}-[0-9]{1,3}$/;
 
 function uuid(value: string) {
@@ -60,7 +63,8 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 				return { uuid: id, name: name.join(":") };
 			});
 	}
-	async function call(
+	async function callAt(
+		destination: string,
 		path: string,
 		iface: string,
 		method: string,
@@ -71,7 +75,7 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 			"--system",
 			"--json=short",
 			"call",
-			DESTINATION,
+			destination,
 			path,
 			iface,
 			method,
@@ -79,9 +83,77 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 		]);
 		return output.trim() ? (JSON.parse(output).data as unknown[]) : [];
 	}
+	const call = (
+		path: string,
+		iface: string,
+		method: string,
+		signature: string,
+		args: string[],
+	) => callAt(DESTINATION, path, iface, method, signature, args);
+
+	/** NetworkManager's current unique bus name; undefined when it has none. */
+	async function currentOwner(): Promise<string | undefined> {
+		try {
+			const [owner] = await callAt(
+				"org.freedesktop.DBus",
+				"/org/freedesktop/DBus",
+				"org.freedesktop.DBus",
+				"GetNameOwner",
+				"s",
+				[DESTINATION],
+			);
+			return typeof owner === "string" && UNIQUE_NAME.test(owner)
+				? owner
+				: undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	async function createdStamp(owner: string, path: string) {
+		const output = await runner("busctl", [
+			"--system",
+			"--json=short",
+			"get-property",
+			owner,
+			path,
+			`${DESTINATION}.Checkpoint`,
+			"Created",
+		]);
+		const parsed = JSON.parse(output) as { type?: unknown; data?: unknown };
+		// int64 milliseconds of CLOCK_MONOTONIC; kept as a string so a journal
+		// round-trip cannot lose precision. Anything else is not a stamp.
+		if (
+			parsed.type !== "x" ||
+			typeof parsed.data !== "number" ||
+			!Number.isSafeInteger(parsed.data) ||
+			parsed.data <= 0
+		)
+			throw new Error("Network checkpoint identity unavailable");
+		return String(parsed.data);
+	}
+
+	function checkRef(ref: CheckpointRef) {
+		if (
+			!CHECKPOINT_PATH.test(ref.path) ||
+			!UNIQUE_NAME.test(ref.owner) ||
+			!/^[1-9][0-9]{0,18}$/.test(ref.created)
+		)
+			throw new Error("Invalid network checkpoint");
+		return ref;
+	}
+
 	return {
 		now: () => Date.now(),
-		async create(devices: string[], timeout: number) {
+		/**
+		 * Create a checkpoint on the NetworkManager instance that owns the bus
+		 * name right now, and return it with that instance's unique bus name and
+		 * the checkpoint's creation stamp. Every later operation on it is sent to
+		 * that unique name, which no other process can ever hold: after a
+		 * NetworkManager restart, a checkpoint at the same path belongs to
+		 * someone else, and calls to the old name fail instead of reaching it.
+		 */
+		async create(devices: string[], timeout: number): Promise<CheckpointRef> {
 			if (
 				!devices.length ||
 				devices.some((name) => !DEVICE.test(name)) ||
@@ -89,9 +161,12 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 				timeout < 1
 			)
 				throw new Error("Invalid network checkpoint request");
+			const owner = await currentOwner();
+			if (!owner) throw new Error("NetworkManager unavailable");
 			const paths: string[] = [];
 			for (const name of devices) {
-				const [path] = await call(
+				const [path] = await callAt(
+					owner,
 					MANAGER,
 					DESTINATION,
 					"GetDeviceByIpIface",
@@ -102,7 +177,8 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 					throw new Error("Network device unavailable");
 				paths.push(path);
 			}
-			const [path] = await call(
+			const [path] = await callAt(
+				owner,
 				MANAGER,
 				DESTINATION,
 				"CheckpointCreate",
@@ -113,16 +189,22 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 				// removes its own candidates by name and UUID instead.
 				[String(paths.length), ...paths, String(timeout), "0"],
 			);
-			if (typeof path !== "string")
+			if (typeof path !== "string" || !CHECKPOINT_PATH.test(path))
 				throw new Error("Network checkpoint unavailable");
-			return path;
+			return { path, owner, created: await createdStamp(owner, path) };
 		},
-		async live(path: string) {
+		/**
+		 * True only while the same NetworkManager instance still holds the bus
+		 * name, still lists the checkpoint, and it still carries its stamp.
+		 */
+		async live(ref: CheckpointRef) {
+			checkRef(ref);
+			if ((await currentOwner()) !== ref.owner) return false;
 			const output = await runner("busctl", [
 				"--system",
 				"--json=short",
 				"get-property",
-				DESTINATION,
+				ref.owner,
 				MANAGER,
 				DESTINATION,
 				"Checkpoints",
@@ -130,37 +212,24 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 			const value: unknown = JSON.parse(output).data;
 			if (!Array.isArray(value))
 				throw new Error("Network checkpoint state unavailable");
-			return value.includes(path);
+			if (!value.includes(ref.path)) return false;
+			return (await createdStamp(ref.owner, ref.path)) === ref.created;
 		},
-		async checkpointCreated(path: string) {
-			if (!CHECKPOINT_PATH.test(path))
-				throw new Error("Invalid network checkpoint");
-			const output = await runner("busctl", [
-				"--system",
-				"--json=short",
-				"get-property",
-				DESTINATION,
-				path,
-				`${DESTINATION}.Checkpoint`,
-				"Created",
+		async destroy(ref: CheckpointRef) {
+			checkRef(ref);
+			await callAt(ref.owner, MANAGER, DESTINATION, "CheckpointDestroy", "o", [
+				ref.path,
 			]);
-			const value: unknown = JSON.parse(output).data;
-			// int64 milliseconds of CLOCK_BOOTTIME; kept as a string so a journal
-			// round-trip cannot lose precision.
-			return typeof value === "number" && Number.isInteger(value)
-				? String(value)
-				: undefined;
 		},
-		async destroy(path: string) {
-			await call(MANAGER, DESTINATION, "CheckpointDestroy", "o", [path]);
-		},
-		async rollback(path: string) {
-			const [results] = await call(
+		async rollback(ref: CheckpointRef) {
+			checkRef(ref);
+			const [results] = await callAt(
+				ref.owner,
 				MANAGER,
 				DESTINATION,
 				"CheckpointRollback",
 				"o",
-				[path],
+				[ref.path],
 			);
 			if (
 				!results ||

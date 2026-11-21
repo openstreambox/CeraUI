@@ -8,6 +8,7 @@
  * NetworkManager's own keyfiles.
  */
 
+import { randomUUID } from "node:crypto";
 import {
 	closeSync,
 	fsyncSync,
@@ -94,8 +95,12 @@ export interface TxRecord {
 	appliedAt?: number;
 	expiresAt?: number;
 	checkpoint?: string;
-	/** The checkpoint's creation stamp, compared with the path (see live). */
+	/** The unique bus name of the NetworkManager instance that made it. */
+	checkpointOwner?: string;
+	/** The checkpoint's `Created` stamp. */
 	checkpointCreated?: string;
+	/** keep-if-reachable: the requester's transport the box tests. */
+	reachability?: { kind: "tailnet-peer"; peer: string };
 	plan: NetworkChangePlan;
 	profiles: ProfileRecord[];
 	effects: EffectRecord[];
@@ -130,22 +135,112 @@ export interface JournalStore {
 	/** Throws when the record cannot be trusted; never returns a guess. */
 	read(): Promise<Journal>;
 	write(journal: Journal): Promise<void>;
+	/**
+	 * Move the stored record aside under a name no other reset can pick, and
+	 * return that name. Only the owner calls it, serialized, after a read
+	 * failed.
+	 */
+	quarantine?(): Promise<string>;
 }
 
 export function emptyJournal(): Journal {
 	return { version: 1, tx: null, notice: null };
 }
 
+const TX_STATES = ["applying", "pending", "confirming", "kept", "rolling-back"];
+const MODES = ["undo-automatically", "keep-if-reachable", "keep-change"];
+const PATHS = ["own", "other", "unknown"];
+const REASONS = [
+	"disconnected",
+	"unreachable",
+	"restart",
+	"interrupted",
+	"unsaved",
+];
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+	!!v && typeof v === "object" && !Array.isArray(v);
+const isStrings = (v: unknown) =>
+	Array.isArray(v) && v.every((item) => typeof item === "string");
+
+function validPlan(plan: unknown): boolean {
+	return (
+		isObject(plan) &&
+		isObject(plan.summary) &&
+		typeof plan.summary.key === "string" &&
+		isStrings(plan.devices) &&
+		Array.isArray(plan.profiles) &&
+		plan.profiles.every(
+			(edit) =>
+				isObject(edit) &&
+				typeof edit.uuid === "string" &&
+				Array.isArray(edit.set),
+		) &&
+		Array.isArray(plan.effects) &&
+		plan.effects.every(
+			(step) =>
+				isObject(step) &&
+				typeof step.kind === "string" &&
+				isStrings(step.devices),
+		)
+	);
+}
+
+/**
+ * The fields every code path relies on. Optional fields added later are not
+ * required, so records written by earlier builds still read.
+ */
+function validTx(tx: unknown): boolean {
+	return (
+		isObject(tx) &&
+		typeof tx.id === "string" &&
+		typeof tx.bootId === "string" &&
+		TX_STATES.includes(tx.state as string) &&
+		MODES.includes(tx.mode as string) &&
+		PATHS.includes(tx.path as string) &&
+		typeof tx.creator === "string" &&
+		isStrings(tx.devices) &&
+		typeof tx.startedAt === "number" &&
+		validPlan(tx.plan) &&
+		Array.isArray(tx.profiles) &&
+		tx.profiles.every(
+			(p) =>
+				isObject(p) &&
+				typeof p.original === "string" &&
+				typeof p.originalId === "string" &&
+				typeof p.originalAutoconnect === "boolean",
+		) &&
+		Array.isArray(tx.effects) &&
+		tx.effects.every(
+			(e) =>
+				isObject(e) &&
+				typeof e.kind === "string" &&
+				["intent", "applied", "undone"].includes(e.state as string),
+		)
+	);
+}
+
+function validNotice(notice: unknown): boolean {
+	return (
+		isObject(notice) &&
+		typeof notice.id === "string" &&
+		REASONS.includes(notice.reason as string) &&
+		typeof notice.createdAt === "number" &&
+		validPlan(notice.plan)
+	);
+}
+
 function parseJournal(json: unknown): Journal {
 	if (
-		!json ||
-		typeof json !== "object" ||
-		(json as { version?: unknown }).version !== 1 ||
+		!isObject(json) ||
+		json.version !== 1 ||
 		!("tx" in json) ||
-		!("notice" in json)
+		!("notice" in json) ||
+		(json.tx !== null && !validTx(json.tx)) ||
+		(json.notice !== null && !validNotice(json.notice))
 	)
 		throw new Error("Unsupported network-change journal");
-	return structuredClone(json as Journal);
+	return structuredClone(json as unknown as Journal);
 }
 
 /** Copies on every read and write so callers cannot alias stored state. */
@@ -184,6 +279,11 @@ export function createFileJournalStore(
 			if (record.kind === "valid") return record.value;
 			// Damaged or unreadable: refuse changes rather than forget an undo.
 			throw new Error("Network-change journal unavailable");
+		},
+		async quarantine() {
+			const movedTo = `${path}.damaged-${Date.now()}-${randomUUID().slice(0, 8)}`;
+			renameSync(path, movedTo);
+			return movedTo;
 		},
 		async write(journal) {
 			const dir = dirname(path);

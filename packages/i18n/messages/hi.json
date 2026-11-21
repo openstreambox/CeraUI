@@ -3562,11 +3562,11 @@
 	"network.changeSafety.askBefore.routeMayCut": "यह बदलाव आपका कनेक्शन रोक सकता है: {via} बॉक्स के अपलिंक में से एक है।",
 	"network.changeSafety.askBefore.undoVia": "बदलाव करें, {seconds} s बाद वापस, जब तक {via} पर कोई पुष्टि न करे",
 	"network.changeSafety.askBefore.undoLocal": "बदलाव करें, {seconds} s बाद वापस, जब तक मौके पर कोई पुष्टि न करे",
-	"network.changeSafety.askBefore.reachable": "बदलाव करें, तभी रखें जब {settle} s बाद भी बॉक्स इंटरनेट तक पहुँचे",
+	"network.changeSafety.askBefore.reachable": "बदलाव करें, तभी रखें जब {settle} s बाद भी बॉक्स आपके डिवाइस तक पहुँचे",
 	"network.changeSafety.askBefore.keepRemote": "बिना वापसी के बदलाव करें। बॉक्स कट गया तो किसी को मौके पर ठीक करना होगा।",
 	"network.changeSafety.askBefore.live": "आप लाइव हैं: समय सीमा पर वापसी से स्ट्रीम एक पल के लिए रुक सकती है।",
-	"network.changeSafety.confirm.reachable": "जाँच रहे हैं कि बॉक्स अब भी इंटरनेट तक पहुँचता है। हाँ तो बदलाव रहेगा।",
-	"network.changeSafety.notice.unreachable": "इस बदलाव के बाद बॉक्स का इंटरनेट चला गया, इसलिए उसने इसे वापस लिया। फिर भी?",
+	"network.changeSafety.confirm.reachable": "जाँच रहे हैं कि बॉक्स अब भी आपके डिवाइस तक पहुँचता है। हाँ तो बदलाव रहेगा।",
+	"network.changeSafety.notice.unreachable": "इस बदलाव के बाद बॉक्स आपके डिवाइस तक नहीं पहुँच सका, इसलिए उसने इसे वापस लिया। फिर भी?",
 	"network.changeSafety.notice.interrupted": "बदलाव के दौरान बॉक्स फिर से शुरू हुआ, इसलिए बदलाव नहीं हुआ। फिर भी?",
 	"network.changeSafety.notice.unsaved": "पुष्टि किया बदलाव सहेजने से पहले बॉक्स फिर से शुरू हुआ, इसलिए उसे वापस लिया। फिर भी?"
 }

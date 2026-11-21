@@ -3574,11 +3574,11 @@
 	"network.changeSafety.askBefore.routeMayCut": "قد يقطع هذا التغيير اتصالك: {via} أحد اتصالات الجهاز بالإنترنت.",
 	"network.changeSafety.askBefore.undoVia": "نفّذ التغيير، ويُتراجع عنه بعد {seconds} ث ما لم يؤكده أحد عبر {via}",
 	"network.changeSafety.askBefore.undoLocal": "نفّذ التغيير، ويُتراجع عنه بعد {seconds} ث ما لم يؤكده أحد في الموقع",
-	"network.changeSafety.askBefore.reachable": "نفّذ التغيير، واحتفظ به فقط إن بقي الجهاز متصلاً بالإنترنت بعد {settle} ث",
+	"network.changeSafety.askBefore.reachable": "نفّذ التغيير، واحتفظ به فقط إن بقي الجهاز قادراً على الوصول إلى جهازك بعد {settle} ث",
 	"network.changeSafety.askBefore.keepRemote": "نفّذ التغيير دون تراجع. إن انقطع الجهاز فسيلزم إصلاحه في الموقع.",
 	"network.changeSafety.askBefore.live": "أنت على الهواء: قد يقطع التراجع عند انتهاء المهلة البث للحظة.",
-	"network.changeSafety.confirm.reachable": "نتحقق من أن الجهاز ما زال يصل إلى الإنترنت. إن كان كذلك يحتفظ بالتغيير.",
-	"network.changeSafety.notice.unreachable": "فقد الجهاز اتصاله بالإنترنت بعد هذا التغيير، لذا تراجع عنه. هل ما زلت تريده؟",
+	"network.changeSafety.confirm.reachable": "نتحقق من أن الجهاز ما زال يصل إلى جهازك. إن كان كذلك يحتفظ بالتغيير.",
+	"network.changeSafety.notice.unreachable": "بعد هذا التغيير لم يعد الجهاز يصل إلى جهازك، لذا تراجع عنه. هل ما زلت تريده؟",
 	"network.changeSafety.notice.interrupted": "أُعيد تشغيل الجهاز أثناء تنفيذ هذا التغيير، لذا لم يُنفَّذ. هل ما زلت تريده؟",
 	"network.changeSafety.notice.unsaved": "أُعيد تشغيل الجهاز قبل حفظ التغيير الذي أكدته، لذا تراجع عنه. هل ما زلت تريده؟"
 }

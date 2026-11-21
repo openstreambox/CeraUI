@@ -3562,11 +3562,11 @@
 	"network.changeSafety.askBefore.routeMayCut": "This change may interrupt your connection: {via} is one of the box's uplinks.",
 	"network.changeSafety.askBefore.undoVia": "Make the change, undone after {seconds} s unless someone on {via} confirms",
 	"network.changeSafety.askBefore.undoLocal": "Make the change, undone after {seconds} s unless someone on site confirms",
-	"network.changeSafety.askBefore.reachable": "Make the change, kept only if the box still reaches the internet after {settle} s",
+	"network.changeSafety.askBefore.reachable": "Make the change, kept only if the box can still reach your device after {settle} s",
 	"network.changeSafety.askBefore.keepRemote": "Make the change with no undo. If it cuts the box off, someone has to fix it on site.",
 	"network.changeSafety.askBefore.live": "You are live: an undo at the deadline can drop the stream for a moment.",
-	"network.changeSafety.confirm.reachable": "Checking that the box still reaches the internet. It keeps the change if so.",
-	"network.changeSafety.notice.unreachable": "The box lost its internet connection after this change, so it undid it. Still want it?",
+	"network.changeSafety.confirm.reachable": "Checking that the box can still reach your device. It keeps the change if so.",
+	"network.changeSafety.notice.unreachable": "After this change the box couldn't reach your device, so it undid it. Still want it?",
 	"network.changeSafety.notice.interrupted": "The box restarted while making this change, so it didn't make it. Still want it?",
 	"network.changeSafety.notice.unsaved": "The box restarted before saving your confirmed change, so it undid it. Still want it?"
 }

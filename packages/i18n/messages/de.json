@@ -3562,11 +3562,11 @@
 	"network.changeSafety.askBefore.routeMayCut": "Diese Änderung kann deine Verbindung unterbrechen: {via} ist ein Uplink der Box.",
 	"network.changeSafety.askBefore.undoVia": "Ändern, nach {seconds} s rückgängig, außer jemand an {via} bestätigt",
 	"network.changeSafety.askBefore.undoLocal": "Ändern, nach {seconds} s rückgängig, außer jemand vor Ort bestätigt",
-	"network.changeSafety.askBefore.reachable": "Ändern, nur behalten, wenn die Box nach {settle} s noch das Internet erreicht",
+	"network.changeSafety.askBefore.reachable": "Ändern, nur behalten, wenn die Box dein Gerät nach {settle} s noch erreicht",
 	"network.changeSafety.askBefore.keepRemote": "Ohne Rückgängig ändern. Trennt es die Box ab, muss jemand vor Ort helfen.",
 	"network.changeSafety.askBefore.live": "Du bist live: Ein Rückgängig zur Frist kann den Stream kurz unterbrechen.",
-	"network.changeSafety.confirm.reachable": "Prüfe, ob die Box noch das Internet erreicht. Dann bleibt die Änderung.",
-	"network.changeSafety.notice.unreachable": "Nach der Änderung verlor die Box ihre Internetverbindung, deshalb wurde rückgängig gemacht. Trotzdem?",
+	"network.changeSafety.confirm.reachable": "Prüfe, ob die Box dein Gerät noch erreicht. Dann bleibt die Änderung.",
+	"network.changeSafety.notice.unreachable": "Nach der Änderung erreichte die Box dein Gerät nicht mehr, deshalb wurde rückgängig gemacht. Trotzdem?",
 	"network.changeSafety.notice.interrupted": "Die Box startete während der Änderung neu, deshalb wurde sie nicht gemacht. Trotzdem?",
 	"network.changeSafety.notice.unsaved": "Die Box startete neu, bevor deine bestätigte Änderung gespeichert war. Rückgängig gemacht. Trotzdem?"
 }
