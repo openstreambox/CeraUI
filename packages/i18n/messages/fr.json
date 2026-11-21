@@ -112,7 +112,7 @@
 	"advanced.remoteAccess.joinFailed": "Impossible de rejoindre le réseau. La clé est peut-être déjà utilisée, expirée ou mal saisie.",
 	"advanced.remoteAccess.noticeSshOff": "Tailscale SSH est désactivé sur cet appareil, car ce réseau ne l'autorisait pas lorsque l'appareil l'a rejoint. Pour l'utiliser, autorisez SSH dans votre politique d'accès Tailscale, puis oubliez cet appareil et rejoignez à nouveau le réseau avec une nouvelle clé.",
 	"advanced.remoteAccess.noticeUpdatesNotPinned": "Les mises à jour automatiques de Tailscale lui-même ne sont pas encore désactivées sur cet appareil. Il réessaie à chaque démarrage de Tailscale ; désactiver puis réactiver l'accès à distance relance la tentative.",
-	"advanced.remoteAccess.joinFailedTailnetSsh": "Impossible de rejoindre le réseau : cet appareil est encore dans un réseau Tailscale qui n'autorise pas Tailscale SSH. Oubliez-le d'abord dans ce réseau, puis rejoignez à nouveau.",
+	"advanced.remoteAccess.joinFailedTailnetSsh": "Impossible de rejoindre le réseau : cet appareil est encore dans un réseau Tailscale qui n'autorise pas Tailscale SSH. Oubliez-le d'abord dans ce réseau, puis réessayez.",
 	"advanced.remoteAccess.keyInvalid": "Cela ne ressemble pas à une clé d'authentification.",
 	"advanced.remoteAccess.forget": "Oublier cet appareil",
 	"advanced.remoteAccess.forgetHint": "Déconnecte cet appareil de votre réseau Tailscale. Pour le rejoindre à nouveau, il faut une nouvelle clé. Si vous utilisez cette page via Tailscale, vous la perdrez.",
