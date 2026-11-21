@@ -92,3 +92,61 @@ test("refuses a different CN despite valid EKU and issuer", async () => {
 	);
 	expect(result).toEqual({ ok: false, reason: "signer_not_manifest_signer" });
 });
+
+test.each([
+	[
+		"OpenStreamBox OTA Manifest Signer",
+		"CN=OpenStreamBox Release Intermediate CA,O=OpenStreamBox",
+		["codeSigning"],
+		"schema_invalid",
+	],
+	// Each name is bound to its own issuer; a trusted chain cannot mix them.
+	[
+		"CeraLive OTA Manifest Signer",
+		"CN=OpenStreamBox Release Intermediate CA,O=OpenStreamBox",
+		["codeSigning"],
+		"signer_issuer_invalid",
+	],
+	[
+		"OpenStreamBox OTA Manifest Signer",
+		"CN=CeraLive RAUC Intermediate CA,O=CeraLive",
+		["codeSigning"],
+		"signer_issuer_invalid",
+	],
+	[
+		"OpenStreamBox OTA Manifest Signer",
+		"CN=OpenStreamBox Release Intermediate CA,O=OpenStreamBox ",
+		["codeSigning"],
+		"signer_issuer_invalid",
+	],
+	// The RAUC bundle signer (S/MIME purpose) is never a manifest signer.
+	[
+		"OpenStreamBox OTA Manifest Signer",
+		"CN=OpenStreamBox Release Intermediate CA,O=OpenStreamBox",
+		["codeSigning", "emailProtection"],
+		"signer_not_manifest_signer",
+	],
+	[
+		"OpenStreamBox RAUC Bundle Signer",
+		"CN=OpenStreamBox Release Intermediate CA,O=OpenStreamBox",
+		["codeSigning"],
+		"signer_not_manifest_signer",
+	],
+] as const)(
+	"signer %s issued by %s (%j) gives %s",
+	async (cn, issuer, eku, reason) => {
+		const result = await validateSignedOsManifest(
+			invalidManifest,
+			signature,
+			context,
+			{
+				verifyCms: async () => ({ cn, eku: [...eku], issuer }),
+				compare: async () => {
+					throw new Error("manifest must not reach comparison");
+				},
+				isQuarantined: async () => false,
+			},
+		);
+		expect(result).toEqual({ ok: false, reason });
+	},
+);
