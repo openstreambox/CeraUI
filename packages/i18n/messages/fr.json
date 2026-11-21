@@ -1956,6 +1956,8 @@
 	"notifications.streamHealthRecovered": "État du flux rétabli",
 	"notifications.streamRecovered": "Le flux a été rétabli automatiquement après le redémarrage du moteur de diffusion.",
 	"notifications.streamRecoveryFailed": "Le flux n'a pas pu être rétabli après le redémarrage du moteur de diffusion. Ouvrez Paramètres → Journaux système pour plus de détails.",
+	"notifications.streamRecoveredAfterRestart": "Le flux a été rétabli automatiquement après le redémarrage d'un service.",
+	"notifications.streamRecoveryFailedAfterRestart": "Le flux n'a pas pu être rétabli après le redémarrage d'un service. Ouvrez Paramètres → Journaux système pour plus de détails.",
 	"notifications.staleLinkAddress": "{link} ne contribue pas, car il utilise encore une ancienne adresse. Redémarrer la connexion ? Vos spectateurs verront votre écran BRB pendant quelques secondes.",
 	"notifications.staleLinkAddressUnnamed": "Un lien ne contribue pas, car il utilise encore une ancienne adresse. Redémarrer la connexion ? Vos spectateurs verront votre écran BRB pendant quelques secondes.",
 	"notifications.staleLinkAddressSeveral": "Certains liens ne contribuent pas, car ils utilisent encore d'anciennes adresses. Redémarrer la connexion ? Vos spectateurs verront votre écran BRB pendant quelques secondes.",
