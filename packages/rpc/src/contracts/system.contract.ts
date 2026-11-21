@@ -1,9 +1,9 @@
 /**
  * System ORPC Contract
  */
+
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
-
 import {
 	allowCellularOnceInputSchema,
 	autostartInputSchema,
@@ -18,6 +18,8 @@ import {
 	logInputSchema,
 	logOutputSchema,
 	powerResponseSchema,
+	phoneBoxSettingsSchema,
+	phoneWaySchema,
 	remoteConfigInputSchema,
 	revisionsSchema,
 	sensorsStatusSchema,
@@ -64,6 +66,8 @@ export const systemContract = oc.router({
 	 * Start software update
 	 */
 	startUpdate: oc.output(successResponseSchema),
+	getPhoneBox: oc.output(phoneBoxSettingsSchema),
+	setPhoneWay: oc.input(phoneWaySchema).output(phoneWaySchema),
 	getUpdateSettings: oc.output(updateSettingsSchema),
 	setUpdateSettings: oc.input(updateSettingsInputSchema).output(updateSettingsSchema),
 	getUpdateCapabilities: oc.output(updateCapabilitiesSchema),
