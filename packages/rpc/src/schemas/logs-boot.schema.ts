@@ -28,13 +28,7 @@ export const logBootInfoSchema = z.strictObject({
 });
 export type LogBootInfo = z.infer<typeof logBootInfoSchema>;
 
-export const logBundleSectionIdSchema = z.enum([
-	'versions',
-	'events',
-	'journal',
-	'settings',
-	'state',
-]);
+export const logBundleSectionIdSchema = z.enum(['versions', 'events', 'journal', 'settings']);
 const bundleSectionCounts = { entries: countSchema, redactions: countSchema };
 
 export const logBundleManifestSchema = z.strictObject({

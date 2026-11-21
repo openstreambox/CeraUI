@@ -95,7 +95,7 @@ test("a download delivers its declared records and then closes each read", async
 	const reader = response.body.getReader();
 	let reading = Promise.resolve();
 	try {
-		// Exporter, stored boot, settings, state and end are five complete gzip members.
+		// Exporter, stored boot, two settings records and end are five complete gzip members.
 		for (let member = 0; member < 6; member++) {
 			let outcome = "pending";
 			reading = reader.read().then(

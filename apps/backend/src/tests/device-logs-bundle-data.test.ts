@@ -245,6 +245,7 @@ test("the device state is collected for the bundle's own boots and events", asyn
 		boots: rows,
 		journalBoots: [bootId, prev],
 		events: [event],
+		secrets: result.secrets,
 	});
 	expect(result.state).toEqual(state);
 	expect(result.events).toEqual([event]);

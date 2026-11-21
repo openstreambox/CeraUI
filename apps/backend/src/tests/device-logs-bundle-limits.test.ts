@@ -46,7 +46,7 @@ const prelude = [
 	{ section: "versions", exportedBy: context },
 	{ section: "versions", bootId, versions: null },
 	{ section: "settings", ...snapshot.settings },
-	{ section: "state", state: snapshot.state },
+	{ section: "settings", state: snapshot.state },
 ];
 const base = { ...toLogEntry(record(1)), message: "" };
 const line = (value: unknown) => `${JSON.stringify(value)}\n`;

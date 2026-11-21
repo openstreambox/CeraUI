@@ -159,7 +159,7 @@ test("a known boot ID with a long digit run survives preview and download", asyn
 		`"event":{"id":"event","seq":1,"bootId":"${numericBootId}"`,
 	);
 	expect(text).toContain(
-		`"section":"state","state":{"uptimeSeconds":60,"memory":null,"boots":[{"bootId":"${numericBootId}","current":true`,
+		`"section":"settings","state":{"uptimeSeconds":60,"memory":null,"boots":[{"bootId":"${numericBootId}","current":true`,
 	);
 	expect(text).toContain("modem identifier [ID]");
 	expect(text).toContain("boot text abeefc[ID]b432da848fa");

@@ -162,8 +162,7 @@ test("preview and download use the same redacted pipeline, stored boot versions 
 		expect(logBundleManifestSchema.safeParse(manifest).success).toBe(true);
 		expect(manifest.sections).toEqual([
 			{ id: "versions", entries: 3, redactions: 0 },
-			{ id: "settings", entries: 1, redactions: 0 },
-			{ id: "state", entries: 1, redactions: 0 },
+			{ id: "settings", entries: 2, redactions: 0 },
 			{ id: "events", entries: 2, redactions: 0 },
 			{
 				id: "journal",
@@ -191,7 +190,7 @@ test("preview and download use the same redacted pipeline, stored boot versions 
 			"versions",
 			"versions",
 			"settings",
-			"state",
+			"settings",
 			"events",
 			"events",
 			"journal",

@@ -2975,7 +2975,6 @@
 	"systemLogs.sharing.bundleSectionEvents": "이벤트",
 	"systemLogs.sharing.bundleSectionJournal": "원본 로그",
 	"systemLogs.sharing.bundleSectionSettings": "설정",
-	"systemLogs.sharing.bundleSectionState": "기기 상태",
 	"systemLogs.sharing.bundleEntries": "항목",
 	"systemLogs.sharing.bundleRedactions": "제거된 값",
 	"systemLogs.sharing.bundleRunning": "현재 실행 중",

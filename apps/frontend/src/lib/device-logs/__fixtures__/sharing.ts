@@ -24,7 +24,6 @@ export function bundleManifest(journalEntries: number): LogBundleManifest {
 		sections: [
 			{ id: "versions", entries: 2, redactions: 0 },
 			{ id: "settings", entries: 6, redactions: 1 },
-			{ id: "state", entries: 1, redactions: 0 },
 			{ id: "events", entries: 14, redactions: 0 },
 			{
 				id: "journal",

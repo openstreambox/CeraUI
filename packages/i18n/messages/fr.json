@@ -3023,7 +3023,6 @@
 	"systemLogs.sharing.bundleSectionEvents": "Événements",
 	"systemLogs.sharing.bundleSectionJournal": "Journaux bruts",
 	"systemLogs.sharing.bundleSectionSettings": "Réglages",
-	"systemLogs.sharing.bundleSectionState": "État de l'appareil",
 	"systemLogs.sharing.bundleEntries": "Entrées",
 	"systemLogs.sharing.bundleRedactions": "Valeurs supprimées",
 	"systemLogs.sharing.bundleRunning": "En cours d'exécution",

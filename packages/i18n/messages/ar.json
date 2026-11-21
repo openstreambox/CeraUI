@@ -3032,7 +3032,6 @@
 	"systemLogs.sharing.bundleSectionEvents": "الأحداث",
 	"systemLogs.sharing.bundleSectionJournal": "السجلات الخام",
 	"systemLogs.sharing.bundleSectionSettings": "الإعدادات",
-	"systemLogs.sharing.bundleSectionState": "حالة الجهاز",
 	"systemLogs.sharing.bundleEntries": "الإدخالات",
 	"systemLogs.sharing.bundleRedactions": "القيم المُزالة",
 	"systemLogs.sharing.bundleRunning": "قيد التشغيل الآن",

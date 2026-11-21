@@ -157,7 +157,7 @@ type Outputs = {
 		| Failure;
 	logBundleManifestSchema: {
 		sections: (
-			| { id: 'versions' | 'events' | 'settings' | 'state'; entries: number; redactions: number }
+			| { id: 'versions' | 'events' | 'settings'; entries: number; redactions: number }
 			| {
 					id: 'journal';
 					entries: number;

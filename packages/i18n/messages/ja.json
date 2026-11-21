@@ -2975,7 +2975,6 @@
 	"systemLogs.sharing.bundleSectionEvents": "イベント",
 	"systemLogs.sharing.bundleSectionJournal": "生ログ",
 	"systemLogs.sharing.bundleSectionSettings": "設定",
-	"systemLogs.sharing.bundleSectionState": "デバイスの状態",
 	"systemLogs.sharing.bundleEntries": "エントリー",
 	"systemLogs.sharing.bundleRedactions": "除去した値",
 	"systemLogs.sharing.bundleRunning": "現在実行中",

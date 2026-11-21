@@ -80,6 +80,7 @@ export async function collectBundleData(): Promise<BundleData> {
 		boots: available,
 		journalBoots,
 		events,
+		secrets,
 	});
 	return structuredClone({
 		exportedBy,

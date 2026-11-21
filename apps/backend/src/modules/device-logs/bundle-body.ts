@@ -87,7 +87,6 @@ export async function buildBundle(
 		sections: [
 			{ id: "versions", ...counts },
 			{ id: "settings", ...counts },
-			{ id: "state", ...counts },
 			{ id: "events", ...counts },
 			journal,
 		],
@@ -191,7 +190,9 @@ export async function buildBundle(
 		["versions", { exportedBy: snapshot.exportedBy }],
 		...snapshot.boots.map((boot) => ["versions", boot] as const),
 		["settings", snapshot.settings],
-		["state", { state: snapshot.state }],
+		// The device state is a second allowlisted settings record, so the manifest
+		// keeps the section list every released viewer accepts.
+		["settings", { state: snapshot.state }],
 		...snapshot.events.map((event) => ["events", { event }] as const),
 		...snapshot.bootRecords.map((boot) => ["events", { boot }] as const),
 	];

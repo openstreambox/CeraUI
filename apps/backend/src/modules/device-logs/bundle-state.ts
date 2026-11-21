@@ -1,8 +1,10 @@
 import { uptime } from "node:os";
-import type {
-	DeviceEvent,
-	LifecycleState,
-	LogBootInfo,
+import {
+	connectionStatusSchema,
+	type DeviceEvent,
+	LIFECYCLE_STATES,
+	type LogBootInfo,
+	simLockRequiredSchema,
 } from "@ceraui/rpc/schemas";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getModems } from "../modems/modems-state.ts";
@@ -22,34 +24,39 @@ import {
 	readRootSlots,
 } from "../system/update-orchestrator/slot-status.ts";
 import { classifyFinishedBoot } from "./classified-boots.ts";
+import { buildRedactor } from "./redaction.ts";
 
 /**
- * The support bundle's `state` record: what the device looks like at export
- * time, built field by field from closed vocabularies, bounded numbers and
- * validated version strings. Nothing is copied from a source object wholesale,
- * so subscriber, SIM and device identifiers, phone numbers, operator and
- * network names, addresses and credentials have no field to arrive in.
+ * The support bundle's device state record, written into the settings section.
+ *
+ * Every string is a member of a closed vocabulary, an anonymous label or a
+ * version string with an explicit grammar; nothing free-form from a modem, the
+ * OS or a package database is copied. Interfaces are labelled by kind and
+ * ordinal, never by name. Before the record is returned each value is screened
+ * with the bundle's own redactor: a value that would match a held secret or an
+ * identifier pattern is replaced (`"[value]"`, or `null` for a number), so the
+ * record can neither leak such a value nor make the bundle refuse to prepare.
  */
 export interface BundleDeviceState {
 	readonly uptimeSeconds: number | null;
 	readonly memory: {
-		readonly totalBytes: number;
-		readonly availableBytes: number;
+		readonly totalBytes: number | null;
+		readonly availableBytes: number | null;
 	} | null;
 	readonly boots: readonly BundleBootEnding[];
 	readonly slots: readonly BundleSlot[] | null;
 	readonly bootAttempts: {
-		readonly order: readonly string[];
-		readonly left: Readonly<Record<string, number>>;
+		readonly order: readonly ("A" | "B")[];
+		readonly left: { readonly A: number; readonly B: number };
 	} | null;
 	readonly packages: ReadonlyArray<{
 		readonly name: string;
-		readonly version: string;
+		readonly version: string | null;
 	}>;
 	readonly modems: readonly BundleModem[];
 	readonly interfaces: readonly BundleInterface[];
 	readonly stream: {
-		readonly lifecycle: LifecycleState;
+		readonly lifecycle: string;
 		readonly bitrateKbps: number | null;
 		readonly ceilingKbps: number | null;
 	};
@@ -65,8 +72,7 @@ export interface BundleBootEnding {
 }
 
 interface BundleSlot {
-	readonly name: string;
-	readonly bootname: string | null;
+	readonly slot: "A" | "B" | null;
 	readonly state: string;
 	readonly bootStatus: string | null;
 	readonly version: string | null;
@@ -74,8 +80,6 @@ interface BundleSlot {
 
 interface BundleModem {
 	readonly modem: number;
-	readonly manufacturer: string | null;
-	readonly model: string | null;
 	readonly connection: string;
 	readonly mode: string | null;
 	readonly accessTechnology: string | null;
@@ -88,7 +92,7 @@ interface BundleModem {
 }
 
 interface BundleInterface {
-	readonly name: string;
+	readonly label: string;
 	readonly usb: boolean;
 	readonly bonded: boolean;
 	readonly ipv4: boolean;
@@ -96,6 +100,8 @@ interface BundleInterface {
 	readonly txKbps: number | null;
 	readonly rxKbps: number | null;
 }
+
+type Secrets = Parameters<typeof buildRedactor>[0];
 
 export interface BundleStateDeps {
 	/** Only a real device reads RAUC and the device files; dev hosts and CI never do. */
@@ -118,46 +124,67 @@ export const defaultBundleStateDeps: BundleStateDeps = {
 	classify: classifyFinishedBoot,
 };
 
-/** First-party and modem/network stack packages whose versions support asks for. */
-const PACKAGE_PREFIXES = [
-	"ceralive",
+/** Exact package names whose installed versions support asks for. */
+export const BUNDLE_PACKAGES: readonly string[] = [
+	"ceralive-device",
 	"cerastream",
 	"srtla",
-	"linux-image-",
 	"modemmanager",
 	"network-manager",
 	"rauc",
-	"libqmi-glib",
-	"libmbim-glib",
+	"libqmi-glib5",
+	"libmbim-glib4",
 ];
-const MAX_PACKAGES = 32;
 const MAX_MODEMS = 16;
 const MAX_INTERFACES = 32;
+const OTHER = "other";
 const UNKNOWN = "[value]";
 
-const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+~:_-]{0,63}$/;
-const PACKAGE = /^[a-z0-9][a-z0-9+.-]{1,63}$/;
-const WORD = /^[a-z0-9][a-z0-9_-]{0,23}$/;
-// Product names, not device names: letters, digits and the punctuation vendors use.
-const PRODUCT = /^[A-Za-z][A-Za-z0-9 ._+/-]{0,39}$/;
-// Kernel interface names; MAC-derived names (enx0a1b…) and anything longer are masked.
-const IFNAME = /^[a-z][a-z0-9_.-]{0,14}$/;
+/** The shutdown classifier's evidence codes, plus this collector's own. */
+const EVIDENCE = new Set([
+	"shutdown_target",
+	"journal_stopped",
+	"next_boot_unclean_journal",
+	"no_shutdown_markers",
+	"shutdown_requested_event",
+	"no_entries",
+	"too_few_entries",
+	"read_failed",
+]);
+const SHUTDOWN = new Set(["clean", "unclean", "unknown", "current"]);
+const CONNECTION = new Set<string>(connectionStatusSchema.options);
+const SIM_LOCK = new Set<string>(simLockRequiredSchema.options);
+const SIM_PRESENCE = new Set(["present", "absent", "unknown"]);
+const LIFECYCLE = new Set<string>(LIFECYCLE_STATES);
+const ACCESS_TECHNOLOGY = new Set(["2G", "3G", "3G+", "4G", "5G"]);
+const SLOT_STATE = new Set(["booted", "active", "inactive"]);
+const SLOT_BOOT_STATUS = new Set(["good", "bad"]);
+// The allowed-mode label mmcli parsing builds: generations, newest first, no repeats.
+const MODE = /^(?=.)(5g)?(4g)?(3g)?(2g)?$/;
+// The boot-state helper's default attempt budget (CERALIVE_BOOT_ATTEMPTS).
+const BOOT_ATTEMPTS = 3;
 
-function token(value: unknown, pattern: RegExp): string | null {
+function member(set: ReadonlySet<string>, value: unknown): string | null {
 	if (typeof value !== "string" || value === "") return null;
-	return pattern.test(value) ? value : UNKNOWN;
+	return set.has(value) ? value : OTHER;
 }
 
-/** A product string survives only without a long digit run (serials, IMEIs). */
-function product(value: unknown): string | null {
-	const text = token(value, PRODUCT);
-	return text !== null && /\d{6}/.test(text) ? UNKNOWN : text;
-}
+// One version component: digits, a known release token with digits, a
+// timestamp, or a short commit hash. Words such as host or person names fail.
+const VERSION_PART =
+	/^(?:\d+|\d*(?:(?:deb|ubuntu|rc|alpha|beta|pre|git|dfsg|ceralive|build|u|b|p)\d+)+|g[0-9a-f]{4,40}|\d{1,8}T\d{4,6}Z|(?=[0-9a-f]*\d)[0-9a-f]{7,40})$/;
 
-function interfaceName(value: string): string {
-	return IFNAME.test(value) && !/[0-9a-f]{8}/.test(value)
-		? value
-		: "[interface]";
+/** A version string, or `"[value]"` when it does not follow the version grammar. */
+export function versionValue(value: unknown): string | null {
+	if (typeof value !== "string" || value === "") return null;
+	if (value.length > 64 || !/^\d/.test(value)) return UNKNOWN;
+	const parts = value.split(/[.+~:-]/);
+	if (!parts.every((part) => VERSION_PART.test(part))) return UNKNOWN;
+	// Four dotted numbers read as an address to people and to the redactor alike.
+	if (/(?:^|[^.\d])\d+(?:\.\d+){3}/.test(value)) return UNKNOWN;
+	// No version part needs nine digits in a row; phone numbers and IMEIs do.
+	if (/\d{9}/.test(value)) return UNKNOWN;
+	return value;
 }
 
 function count(value: unknown, max: number): number | null {
@@ -183,29 +210,75 @@ async function optional<T>(read: () => Promise<T>, fallback: T): Promise<T> {
 	}
 }
 
+/** POSIX `cksum`'s CRC, which the boot-state helper stores as BOOT_CRC. */
+export function posixCksum(text: string): number {
+	const bytes = new TextEncoder().encode(text);
+	let crc = 0;
+	const step = (byte: number) => {
+		crc ^= byte << 24;
+		for (let bit = 0; bit < 8; bit++)
+			crc = crc & 0x80000000 ? (crc << 1) ^ 0x04c11db7 : crc << 1;
+		crc >>>= 0;
+	};
+	for (const byte of bytes) step(byte);
+	for (let length = bytes.length; length > 0; length = Math.floor(length / 256))
+		step(length & 0xff);
+	return ~crc >>> 0;
+}
+
+/**
+ * The boot-state file as the image's helper would accept it: BOOT_ORDER a
+ * non-empty sequence of A and B without repeats, both counters present and
+ * within the attempt budget, each key once, and BOOT_CRC (when present) equal
+ * to the checksum of the canonical payload. Anything else is unavailable.
+ */
 export function parseBootAttempts(
 	text: string,
 ): BundleDeviceState["bootAttempts"] {
-	let order: string[] | undefined;
-	const left: Record<string, number> = {};
-	for (const line of text.split("\n")) {
-		const match = /^(BOOT_ORDER|BOOT_([AB])_LEFT)=(.*)$/.exec(line.trim());
-		if (!match) continue;
-		const [, key, slot, value = ""] = match;
-		if (key === "BOOT_ORDER") {
-			const slots = value.trim().split(/\s+/).filter(Boolean);
-			if (slots.every((name) => name === "A" || name === "B"))
-				order = slots.slice(0, 2);
-		} else if (slot && /^\d{1,2}$/.test(value.trim()))
-			left[slot] = Number(value.trim());
+	const fields = new Map<string, string>();
+	for (const raw of text.split("\n")) {
+		const line = raw.replace(/\r$/, "");
+		const match = /^(BOOT_ORDER|BOOT_A_LEFT|BOOT_B_LEFT|BOOT_CRC)=(.*)$/.exec(
+			line,
+		);
+		if (!match?.[1]) continue;
+		if (fields.has(match[1])) return null;
+		fields.set(match[1], match[2] ?? "");
 	}
-	return order === undefined ? null : { order, left };
+	const order = fields.get("BOOT_ORDER");
+	const a = fields.get("BOOT_A_LEFT");
+	const b = fields.get("BOOT_B_LEFT");
+	if (order === undefined || a === undefined || b === undefined) return null;
+	const slots = order.split(" ").filter(Boolean);
+	if (
+		slots.length === 0 ||
+		!slots.every((slot) => slot === "A" || slot === "B") ||
+		new Set(slots).size !== slots.length ||
+		!/^\d+$/.test(a) ||
+		!/^\d+$/.test(b) ||
+		Number(a) > BOOT_ATTEMPTS ||
+		Number(b) > BOOT_ATTEMPTS
+	)
+		return null;
+	const crc = fields.get("BOOT_CRC");
+	if (
+		crc !== undefined &&
+		crc !==
+			String(
+				posixCksum(`BOOT_ORDER=${order}\nBOOT_A_LEFT=${a}\nBOOT_B_LEFT=${b}\n`),
+			)
+	)
+		return null;
+	return {
+		order: slots as ("A" | "B")[],
+		left: { A: Number(a), B: Number(b) },
+	};
 }
 
 export function parseInstalledPackages(
 	text: string,
 ): BundleDeviceState["packages"] {
-	const found: Array<{ name: string; version: string }> = [];
+	const found = new Map<string, string | null>();
 	for (const stanza of text.split(/\n\s*\n/)) {
 		const fields = new Map<string, string>();
 		for (const line of stanza.split("\n")) {
@@ -215,26 +288,26 @@ export function parseInstalledPackages(
 		}
 		const name = fields.get("Package");
 		if (
-			!name ||
-			!PACKAGE.test(name) ||
-			fields.get("Status") !== "install ok installed" ||
-			!PACKAGE_PREFIXES.some((prefix) => name.startsWith(prefix))
+			name &&
+			BUNDLE_PACKAGES.includes(name) &&
+			fields.get("Status") === "install ok installed"
 		)
-			continue;
-		found.push({ name, version: token(fields.get("Version"), VERSION) ?? "" });
+			found.set(name, versionValue(fields.get("Version")));
 	}
-	return found
-		.sort((a, b) => a.name.localeCompare(b.name))
-		.slice(0, MAX_PACKAGES);
+	return BUNDLE_PACKAGES.flatMap((name) =>
+		found.has(name) ? [{ name, version: found.get(name) ?? null }] : [],
+	);
 }
 
 function slot(status: RootSlotStatus): BundleSlot {
 	return {
-		name: token(status.name, /^[a-z0-9._-]{1,24}$/) ?? UNKNOWN,
-		bootname: token(status.bootname, /^[A-Za-z0-9_-]{1,8}$/),
-		state: token(status.state, WORD) ?? UNKNOWN,
-		bootStatus: token(status.bootStatus, WORD),
-		version: token(status.version, VERSION),
+		slot:
+			status.bootname === "A" || status.bootname === "B"
+				? status.bootname
+				: null,
+		state: member(SLOT_STATE, status.state) ?? OTHER,
+		bootStatus: member(SLOT_BOOT_STATUS, status.bootStatus),
+		version: versionValue(status.version),
 	};
 }
 
@@ -242,23 +315,29 @@ function modems(): BundleModem[] {
 	return Object.values(getModems())
 		.filter((modem) => !modem.removed)
 		.slice(0, MAX_MODEMS)
-		.map((modem, index) => ({
-			modem: index + 1,
-			manufacturer: product(modem.manufacturer),
-			model: product(modem.model),
-			connection: token(modem.status?.connection, WORD) ?? "unknown",
-			mode: token(modem.network_type?.active, WORD),
-			accessTechnology: token(modem.status?.network_type, WORD),
-			signal: count(modem.status?.signal, 100),
-			roaming:
-				typeof modem.status?.roaming === "boolean"
-					? modem.status.roaming
-					: null,
-			sim: token(modem.sim_presence, WORD) ?? "unknown",
-			simLock: token(modem.sim_lock?.required, WORD),
-			apnConfigured: Boolean(modem.config?.apn),
-			dataConnectionFailed: modem.data_connection_failed === true,
-		}));
+		.map((modem, index) => {
+			const mode = modem.network_type?.active;
+			return {
+				modem: index + 1,
+				connection: member(CONNECTION, modem.status?.connection) ?? "unknown",
+				mode:
+					typeof mode === "string" && mode !== ""
+						? MODE.test(mode)
+							? mode
+							: OTHER
+						: null,
+				accessTechnology: member(ACCESS_TECHNOLOGY, modem.status?.network_type),
+				signal: count(modem.status?.signal, 100),
+				roaming:
+					typeof modem.status?.roaming === "boolean"
+						? modem.status.roaming
+						: null,
+				sim: member(SIM_PRESENCE, modem.sim_presence) ?? "unknown",
+				simLock: member(SIM_LOCK, modem.sim_lock?.required),
+				apnConfigured: Boolean(modem.config?.apn),
+				dataConnectionFailed: modem.data_connection_failed === true,
+			};
+		});
 }
 
 const NETIF_FLAGS: ReadonlyArray<readonly [number, string]> = [
@@ -268,21 +347,35 @@ const NETIF_FLAGS: ReadonlyArray<readonly [number, string]> = [
 	[NETIF_ERR_SHAREDLAN, "shared_lan"],
 ];
 
+/** The kind an interface name's kernel prefix stands for; custom names are `other`. */
+function interfaceKind(name: string): string {
+	if (/^(wwan|rmnet|mhi_hwip)/.test(name)) return "cellular";
+	if (/^wl/.test(name)) return "wifi";
+	if (/^(eth|en|usb)/.test(name)) return "ethernet";
+	return OTHER;
+}
+
 function interfaces(): BundleInterface[] {
+	const ordinals = new Map<string, number>();
 	return Object.entries(getNetworkInterfaces())
-		.sort(([a], [b]) => a.localeCompare(b))
+		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 		.slice(0, MAX_INTERFACES)
-		.map(([name, netif]) => ({
-			name: interfaceName(name),
-			usb: netif.usb === true,
-			bonded: netif.enabled === true,
-			ipv4: Boolean(netif.ip),
-			flags: NETIF_FLAGS.flatMap(([bit, flag]) =>
-				(netif.error ?? 0) & bit ? [flag] : [],
-			),
-			txKbps: kbps(netif.tx_bps),
-			rxKbps: kbps(netif.rx_bps),
-		}));
+		.map(([name, netif]) => {
+			const kind = interfaceKind(name);
+			const ordinal = (ordinals.get(kind) ?? 0) + 1;
+			ordinals.set(kind, ordinal);
+			return {
+				label: `${kind}-${ordinal}`,
+				usb: netif.usb === true,
+				bonded: netif.enabled === true,
+				ipv4: Boolean(netif.ip),
+				flags: NETIF_FLAGS.flatMap(([bit, flag]) =>
+					(netif.error ?? 0) & bit ? [flag] : [],
+				),
+				txKbps: kbps(netif.tx_bps),
+				rxKbps: kbps(netif.rx_bps),
+			};
+		});
 }
 
 async function bootEndings(
@@ -315,11 +408,48 @@ async function bootEndings(
 		});
 		result.push({
 			...span,
-			shutdown: ending.shutdown,
-			evidence: ending.evidence.filter((code) => WORD.test(code)),
+			shutdown: SHUTDOWN.has(ending.shutdown) ? ending.shutdown : "unknown",
+			evidence: ending.evidence.filter((code) => EVIDENCE.has(code)),
 		});
 	}
 	return result;
+}
+
+/**
+ * Replace every value the bundle's redactor would act on: a held secret or an
+ * identifier pattern inside a string becomes `"[value]"`, a number or boolean
+ * whose digits hold a secret becomes `null`. Boot ids keep the bundle's own
+ * boot-field handling and are left alone.
+ */
+function screen<T>(value: T, secrets: Secrets): T {
+	let redactor: ReturnType<typeof buildRedactor> | null;
+	try {
+		redactor = buildRedactor(secrets);
+	} catch {
+		redactor = null;
+	}
+	const clean = (text: string) => {
+		if (redactor === null) return false;
+		try {
+			redactor.structured(text);
+			return redactor.text(text).redactions === 0;
+		} catch {
+			return false;
+		}
+	};
+	const visit = (node: unknown, key?: string): unknown => {
+		if (key === "bootId") return node;
+		if (typeof node === "string") return clean(node) ? node : UNKNOWN;
+		if (typeof node === "number" || typeof node === "boolean")
+			return clean(String(node)) ? node : null;
+		if (Array.isArray(node)) return node.map((item) => visit(item));
+		if (node && typeof node === "object")
+			return Object.fromEntries(
+				Object.entries(node).map(([name, inner]) => [name, visit(inner, name)]),
+			);
+		return node;
+	};
+	return visit(value) as T;
 }
 
 /**
@@ -331,24 +461,23 @@ export async function collectBundleState(
 		boots,
 		journalBoots,
 		events,
+		secrets,
 	}: {
 		readonly boots: readonly LogBootInfo[];
 		readonly journalBoots: readonly string[];
 		readonly events: readonly DeviceEvent[];
+		readonly secrets: Secrets;
 	},
 	overrides: Partial<BundleStateDeps> = {},
 ): Promise<BundleDeviceState> {
 	const deps = { ...defaultBundleStateDeps, ...overrides };
 	const device = await optional(deps.device, false);
 	const stats = getDeviceStatsSnapshot();
-	const memory =
-		count(stats?.memTotalBytes, Number.MAX_SAFE_INTEGER) !== null &&
-		count(stats?.memAvailableBytes, Number.MAX_SAFE_INTEGER) !== null
-			? {
-					totalBytes: Math.round(stats?.memTotalBytes ?? 0),
-					availableBytes: Math.round(stats?.memAvailableBytes ?? 0),
-				}
-			: null;
+	const totalBytes = count(stats?.memTotalBytes, Number.MAX_SAFE_INTEGER);
+	const availableBytes = count(
+		stats?.memAvailableBytes,
+		Number.MAX_SAFE_INTEGER,
+	);
 	const bitrate = getEngineBitrateStatus();
 	const [endings, slots, bootAttempts, packages] = await Promise.all([
 		bootEndings(boots, journalBoots, events, deps),
@@ -374,19 +503,25 @@ export async function collectBundleState(
 				)
 			: [],
 	]);
-	return {
-		uptimeSeconds: count(deps.uptimeSeconds(), 10 * 365 * 24 * 3600),
-		memory,
-		boots: endings,
-		slots,
-		bootAttempts,
-		packages,
-		modems: modems(),
-		interfaces: interfaces(),
-		stream: {
-			lifecycle: getStreamLifecycleState(),
-			bitrateKbps: count(bitrate?.applied_kbps, 1e6),
-			ceilingKbps: count(bitrate?.ceiling_kbps, 1e6),
+	return screen(
+		{
+			uptimeSeconds: count(deps.uptimeSeconds(), 10 * 365 * 24 * 3600),
+			memory:
+				totalBytes === null && availableBytes === null
+					? null
+					: { totalBytes, availableBytes },
+			boots: endings,
+			slots,
+			bootAttempts,
+			packages,
+			modems: modems(),
+			interfaces: interfaces(),
+			stream: {
+				lifecycle: member(LIFECYCLE, getStreamLifecycleState()) ?? OTHER,
+				bitrateKbps: count(bitrate?.applied_kbps, 1e6),
+				ceilingKbps: count(bitrate?.ceiling_kbps, 1e6),
+			},
 		},
-	};
+		secrets,
+	);
 }

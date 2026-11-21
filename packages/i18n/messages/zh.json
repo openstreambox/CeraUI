@@ -2975,7 +2975,6 @@
 	"systemLogs.sharing.bundleSectionEvents": "事件",
 	"systemLogs.sharing.bundleSectionJournal": "原始日志",
 	"systemLogs.sharing.bundleSectionSettings": "设置",
-	"systemLogs.sharing.bundleSectionState": "设备状态",
 	"systemLogs.sharing.bundleEntries": "条目",
 	"systemLogs.sharing.bundleRedactions": "已移除的值",
 	"systemLogs.sharing.bundleRunning": "当前运行",
