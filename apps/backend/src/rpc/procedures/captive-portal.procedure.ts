@@ -63,8 +63,14 @@ export function createCaptivePortalProcedure(deps: PortalDeps) {
 			if (sender) throw Error("Sign in from the box's Wi-Fi.");
 			const signInWindow = await deps.owner();
 			if (input.action === "start") {
-				if (input.radio === undefined) throw Error("Choose Wi-Fi");
-				return signInWindow.start(peer, String(input.radio), via);
+				if (input.radio === undefined || input.incarnation === undefined)
+					throw Error("Choose Wi-Fi");
+				return signInWindow.start(
+					peer,
+					String(input.radio),
+					input.incarnation,
+					via,
+				);
 			}
 			if (input.action === "finish") return signInWindow.finish(peer, via);
 			return signInWindow.refresh(peer, via);
