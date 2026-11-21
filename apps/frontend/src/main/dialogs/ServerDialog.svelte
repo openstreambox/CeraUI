@@ -28,9 +28,9 @@
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
 import type { ConfigMessage, RelayProtocol } from '@ceraui/rpc/schemas';
+import { SRT_OUTPUT_ENCRYPTION_AVAILABLE, srtPassphraseSchema } from '@ceraui/rpc/schemas';
 import { Server } from '@lucide/svelte';
 import { untrack } from 'svelte';
-
 import AppDialog from '$lib/components/dialogs/AppDialog.svelte';
 import type { Validation } from '$lib/components/streaming/relay-validation';
 import { parsePort, streamingConstraints } from '$lib/components/streaming/ValidationAdapter';
@@ -63,6 +63,7 @@ import {
 } from '$lib/streaming/receiver-experience';
 import CloudRemoteDialog from './CloudRemoteDialog.svelte';
 import ServerDialogContent from './server/ServerDialogContent.svelte';
+import SrtEncryptionFields from './server/SrtEncryptionFields.svelte';
 import {
 	buildServerDialogInput,
 	saveServerConfig,
@@ -262,6 +263,7 @@ async function handleSave() {
 		latency: clampedLatency, protocol: PROTOCOL, addr, portStr, streamId: draft.srt_streamid,
 		relayStreamId: draft.relay_streamid, relayServer, relayAccount: effectiveRelayAccount, destination,
 	});
+	if (SRT_OUTPUT_ENCRYPTION_AVAILABLE && srtEncryption) Object.assign(input, srtEncryption);
 	const result = await saveServerConfig({
 		hostAdapter,
 		input,
@@ -275,6 +277,8 @@ async function handleSave() {
 		open = false;
 	}
 }
+let srtEncryption = $state<{ srt_passphrase: string; srt_pbkeylen: 16 | 24 | 32 }>();
+$effect(() => { if (!open) srtEncryption = undefined; });
 </script>
 
 <AppDialog
@@ -282,10 +286,17 @@ async function handleSave() {
 	closeOnPrimary={false}
 	icon={Server}
 	onPrimary={handleSave}
-	primaryDisabled={!canSave}
+	primaryDisabled={!canSave || (srtEncryption !== undefined && !srtPassphraseSchema.safeParse(srtEncryption.srt_passphrase).success)}
 	primaryLabel={m["dialogs.save"]()}
 	title={m["settings.receiverServer"]()}
 >
+	{#if open}
+		<SrtEncryptionFields
+			supported={SRT_OUTPUT_ENCRYPTION_AVAILABLE}
+			disabled={isStreaming}
+			onChange={(srt_passphrase, srt_pbkeylen) => { srtEncryption = { srt_passphrase, srt_pbkeylen }; }}
+		/>
+	{/if}
 	<ServerDialogContent
 		{isStreaming} {catalogDrift} {activeProvider} {relays} {destinationChoice} {destination}
 		{selectedManagedActive} {hasManagedSlots} {managedAccounts} {activeSlotId} {slotPrompting}
