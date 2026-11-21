@@ -1,3 +1,4 @@
+import type { SharingPolicy } from "@ceraui/rpc/schemas";
 import { resolveModemPhysicalIdentity } from "../../modems/physical-identity-source.ts";
 import {
 	isConcurrentApIfname,
@@ -28,6 +29,7 @@ import {
 	SteeringUnavailableError,
 	type SteeringUplink,
 } from "./contracts.ts";
+import { applySharingPolicy, sharingPolicyOwner } from "./policy.ts";
 import { planUplinkRoute, type UplinkRouteCandidate } from "./route-manager.ts";
 import { stableUplinkMark } from "./ruleset.ts";
 import { cidrsOverlap, subnetCidr } from "./subnet.ts";
@@ -35,6 +37,7 @@ import { cidrsOverlap, subnetCidr } from "./subnet.ts";
 type NetworkSnapshot = Record<string, NetworkInterface | undefined>;
 
 export interface SteeringStateBuilderDeps {
+	readonly policy?: () => SharingPolicy;
 	readonly netifReady: () => boolean;
 	readonly zonesReady: () => boolean;
 	readonly identityCovered: (ifname: string) => boolean;
@@ -56,6 +59,7 @@ export interface SteeringStateBuilderDeps {
 }
 
 const defaultDeps: SteeringStateBuilderDeps = {
+	policy: () => sharingPolicyOwner.get(),
 	netifReady: hasNetifSnapshot,
 	zonesReady: wifiZonesReady,
 	identityCovered: usbNetScanCovers,
@@ -102,13 +106,16 @@ export async function readDesiredSteeringState(
 	const health = new Map(deps.health().map((record) => [record.iface, record]));
 	const collected = collectUplinkCandidates(interfaces, zones, health, deps);
 	if ("pending" in collected) return collected;
-	const { candidates, identityPending } = collected;
+	const { candidates: rawCandidates, identityPending } = collected;
 	if (!context.hasAppliedState && identityPending)
 		return { pending: true, netifReady: true, reason: "identity" };
-	assertNoOverlap(zones, candidates);
-	assertDistinctMarks(candidates);
+	const candidates = deps.policy
+		? applySharingPolicy(rawCandidates, deps.policy())
+		: rawCandidates;
+	assertNoOverlap(zones, rawCandidates);
+	assertDistinctMarks(rawCandidates);
 	const routes: UplinkRoutePlan[] = [];
-	for (const candidate of candidates) {
+	for (const candidate of rawCandidates) {
 		routes.push(
 			await deps.planRoute({
 				identity: candidate.uplink.identity,

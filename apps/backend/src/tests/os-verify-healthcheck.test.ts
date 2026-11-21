@@ -69,6 +69,38 @@ describe("os-verifying waits for this boot's healthcheck verdict", () => {
 		expect(b.phases).toEqual([]);
 		expect(notices("os-activated", "2026.10.101")).toBe(0);
 		expect(notices("os-rollback", "2026.10.101")).toBe(0);
+		expect(b.effects).toEqual([]);
+	});
+
+	test("local health verification does not consult unavailable cellular update eligibility", async () => {
+		const version = "2026.10.120";
+		const b = board(version, { healthy: healthyFor(V3_BOOTS[0]) });
+		let networkReads = 0;
+		setOrchestratorRuntimeDepsForTest({
+			...b.deps,
+			onlyMeteredCandidateExists: async () => {
+				networkReads++;
+				throw new Error("no uplink available for update discovery");
+			},
+		});
+		verifying();
+		await runOrchestratorTick();
+		expect(networkReads).toBe(0);
+		expect(notices("os-activated", version)).toBe(1);
+		expect(notices("os-rollback", version)).toBe(0);
+		expect(b.effects).toEqual([]);
+	});
+
+	test("a live stream does not block an independent local health verdict or arm activation", async () => {
+		const version = "2026.10.121";
+		const b = board(version, { healthy: healthyFor(V3_BOOTS[0]) });
+		setOrchestratorRuntimeDepsForTest({ ...b.deps, isStreamLive: () => true });
+		verifying();
+		await runOrchestratorTick();
+		expect(b.phases[0]).toBe("sync-eligible");
+		expect(notices("os-activated", version)).toBe(1);
+		expect(notices("os-rollback", version)).toBe(0);
+		expect(b.effects).not.toContain("arm-os");
 	});
 
 	test("booted == staged with this boot's healthy record verifies and notifies", async () => {

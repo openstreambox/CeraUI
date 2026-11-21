@@ -45,3 +45,7 @@ Read the contract for the subsystem you touch before making changes. Every origi
 | UVC package identity | [uvc-package-identity.md](uvc-package-identity.md) | UVC package identity |
 | THE DEVICE UPDATE SYSTEM [EXISTS; capable-image paths PARTIAL] | [the-device-update-system.md](the-device-update-system.md) | Update-system contract |
 | LIVE SCREEN: CONTRACT AND DESIGN BRIEF [PARTIAL] | [live-screen.md](live-screen.md) | `apps/frontend/src/main/live/`, `apps/frontend/src/main/LiveView.svelte`, `apps/frontend/src/lib/components/custom/SourceSection.svelte`, `apps/frontend/src/lib/streaming/go-live-readiness.ts`, `ceraui.live.previewOpen` |
+
+## Experimental eSIM management
+
+Read [eSIM management](../ESIM.md) before editing the profile RPC, helper, modem section or pinned lpac recipe.
