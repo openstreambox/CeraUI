@@ -97,3 +97,14 @@ test("a live composition change does not bring back a notice the streamer dismis
 
 	expect(shown.has(START_FEATURES_NOTIFICATION)).toBe(false);
 });
+
+// The audio a start falls back to depends on the saved source (it can be no
+// audio at all, or the engine's own pick), so the notice names the mix only.
+test("a dropped mix does not promise which audio the stream carries", () => {
+	const { bridge, shown } = recordingBridge();
+	postStartFeatureNotice(bridge, ["audio-mix"], true);
+
+	expect(shown.get(START_FEATURES_NOTIFICATION)).toBe(
+		"Streaming without the audio mix: the streaming engine does not support this. Your saved settings are kept.",
+	);
+});

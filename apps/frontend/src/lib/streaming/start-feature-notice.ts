@@ -2,9 +2,10 @@
  * The `stream-start-features` notice names the configured start features the
  * running stream went without. The backend sends a catalog key for the reason
  * and the features as tokens (`params.features`); each token reads as its own
- * localized phrase, joined by the locale's own pair wording. A token this build
- * does not know means the list cannot be said truthfully, so the caller falls
- * back to the notice's wire text. Pure.
+ * localized phrase, joined by the locale's own pair wording. A list this build
+ * cannot say truthfully (an unknown or repeated token, or both composition
+ * variants at once, which the backend never sends) makes the caller fall back
+ * to the notice's wire text. Pure.
  */
 export const START_FEATURES_NOTICE_KEYS: ReadonlySet<string> = new Set([
 	"notifications.startFeatures.unsupported",
@@ -26,14 +27,17 @@ type Translate = (
 
 /**
  * The localized feature list for the notice's `{features}` slot, or
- * `undefined` when the tokens are missing, empty or unknown, or a phrase is
- * missing from the catalog.
+ * `undefined` when the tokens are missing, empty, unknown, repeated or name
+ * both composition variants, or a phrase is missing from the catalog.
  */
 export function localizedStartFeatureList(
 	features: unknown,
 	translate: Translate,
 ): string | undefined {
 	if (!Array.isArray(features) || features.length === 0) return undefined;
+	if (new Set(features).size !== features.length) return undefined;
+	if (features.includes("composition") && features.includes("custom-layout"))
+		return undefined;
 	const phrases: string[] = [];
 	for (const token of features) {
 		const key = typeof token === "string" ? FEATURE_KEYS.get(token) : undefined;

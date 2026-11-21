@@ -3231,7 +3231,7 @@
 	"notifications.streamStartSrtEncryptionUnavailableFailed": "Die gespeicherten SRT-Verschlüsselungseinstellungen werden nicht unterstützt. Lösche sie vor dem Start.",
 	"notifications.startFeatures.unsupported": "Streaming ohne {features}: Die Streaming-Engine unterstützt das nicht. Deine gespeicherten Einstellungen bleiben erhalten.",
 	"notifications.startFeatures.unconfirmed": "Streaming ohne {features}: Die Streaming-Engine hat die Unterstützung nicht bestätigt. Deine gespeicherten Einstellungen bleiben erhalten.",
-	"notifications.startFeatures.audioMix": "Audiomix (der Stream nutzt den ausgewählten Audioeingang)",
+	"notifications.startFeatures.audioMix": "Audiomix",
 	"notifications.startFeatures.composition": "Bild-in-Bild-Komposition",
 	"notifications.startFeatures.customLayout": "eigene Anordnung",
 	"notifications.startFeatures.pair": "{first} und {second}",

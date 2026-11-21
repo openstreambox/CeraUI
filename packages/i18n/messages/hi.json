@@ -3231,7 +3231,7 @@
 	"notifications.streamStartSrtEncryptionUnavailableFailed": "सहेजी गई SRT एन्क्रिप्शन सेटिंग समर्थित नहीं हैं। शुरू करने से पहले उन्हें मिटाएँ।",
 	"notifications.startFeatures.unsupported": "{features} के बिना स्ट्रीमिंग हो रही है: स्ट्रीमिंग इंजन इसका समर्थन नहीं करता। आपकी सहेजी गई सेटिंग्स सुरक्षित हैं।",
 	"notifications.startFeatures.unconfirmed": "{features} के बिना स्ट्रीमिंग हो रही है: स्ट्रीमिंग इंजन ने समर्थन की पुष्टि नहीं की। आपकी सहेजी गई सेटिंग्स सुरक्षित हैं।",
-	"notifications.startFeatures.audioMix": "ऑडियो मिक्स (स्ट्रीम चयनित ऑडियो इनपुट का उपयोग करती है)",
+	"notifications.startFeatures.audioMix": "ऑडियो मिक्स",
 	"notifications.startFeatures.composition": "पिक्चर-इन-पिक्चर कंपोज़िशन",
 	"notifications.startFeatures.customLayout": "कस्टम लेआउट",
 	"notifications.startFeatures.pair": "{first} और {second}",

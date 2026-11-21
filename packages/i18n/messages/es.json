@@ -3246,7 +3246,7 @@
 	"notifications.streamStartSrtEncryptionUnavailableFailed": "Los ajustes de cifrado SRT guardados no son compatibles. Bórralos antes de iniciar.",
 	"notifications.startFeatures.unsupported": "Transmitiendo sin {features}: el motor de streaming no ofrece compatibilidad. Se conservan tus ajustes guardados.",
 	"notifications.startFeatures.unconfirmed": "Transmitiendo sin {features}: el motor de streaming no confirmó la compatibilidad. Se conservan tus ajustes guardados.",
-	"notifications.startFeatures.audioMix": "la mezcla de audio (la transmisión usa la entrada de audio seleccionada)",
+	"notifications.startFeatures.audioMix": "la mezcla de audio",
 	"notifications.startFeatures.composition": "la composición de imagen en imagen",
 	"notifications.startFeatures.customLayout": "la disposición personalizada",
 	"notifications.startFeatures.pair": "{first} y {second}",

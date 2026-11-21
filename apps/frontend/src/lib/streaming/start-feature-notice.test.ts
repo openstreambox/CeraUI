@@ -44,6 +44,15 @@ describe("localizedStartFeatureList", () => {
 		).toBeUndefined();
 	});
 
+	it("gives up on a list the backend never sends", () => {
+		expect(
+			localizedStartFeatureList(["audio-mix", "audio-mix"], translate),
+		).toBeUndefined();
+		expect(
+			localizedStartFeatureList(["composition", "custom-layout"], translate),
+		).toBeUndefined();
+	});
+
 	it("gives up on a missing, empty or non-list value", () => {
 		expect(localizedStartFeatureList(undefined, translate)).toBeUndefined();
 		expect(localizedStartFeatureList([], translate)).toBeUndefined();

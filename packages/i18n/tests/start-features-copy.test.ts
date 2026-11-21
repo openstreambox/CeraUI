@@ -36,6 +36,9 @@ describe("stream-start-features notice copy", () => {
 				expect(text(locale, key).length).toBeGreaterThan(0);
 				expect(placeholders(text(locale, key))).toEqual([]);
 			}
+			// The fallback audio depends on the saved source, so the mix phrase
+			// names the mix only and adds no aside about what the stream carries.
+			expect(text(locale, "notifications.startFeatures.audioMix")).not.toMatch(/[(（]/);
 		});
 
 		it(`${locale}: the pair template joins two phrases in order`, () => {

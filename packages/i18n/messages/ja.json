@@ -3011,7 +3011,7 @@
 	"notifications.streamStartSrtEncryptionUnavailableFailed": "保存されたSRT暗号化設定はサポートされていません。開始する前に削除してください。",
 	"notifications.startFeatures.unsupported": "{features}なしで配信しています。ストリーミングエンジンが対応していません。保存済みの設定は保持されます。",
 	"notifications.startFeatures.unconfirmed": "{features}なしで配信しています。ストリーミングエンジンの対応を確認できませんでした。保存済みの設定は保持されます。",
-	"notifications.startFeatures.audioMix": "オーディオミックス（選択したオーディオ入力で配信します）",
+	"notifications.startFeatures.audioMix": "オーディオミックス",
 	"notifications.startFeatures.composition": "ピクチャーインピクチャーの合成",
 	"notifications.startFeatures.customLayout": "カスタムレイアウト",
 	"notifications.startFeatures.pair": "{first}と{second}",

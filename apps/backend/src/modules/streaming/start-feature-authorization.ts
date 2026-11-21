@@ -139,7 +139,7 @@ function droppedStartFeaturesMessage(
 ): string {
 	const parts = dropped.map((feature) =>
 		feature === "audio-mix"
-			? "the audio mix (the stream uses the selected audio input)"
+			? "the audio mix"
 			: feature === "custom-layout"
 				? "the custom layout"
 				: "the picture-in-picture composition",

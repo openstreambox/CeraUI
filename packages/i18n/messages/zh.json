@@ -3011,7 +3011,7 @@
 	"notifications.streamStartSrtEncryptionUnavailableFailed": "不支持已保存的 SRT 加密设置。请在开始前清除这些设置。",
 	"notifications.startFeatures.unsupported": "正在推流，但未使用{features}：推流引擎不支持。已保存的设置会保留。",
 	"notifications.startFeatures.unconfirmed": "正在推流，但未使用{features}：推流引擎未确认支持。已保存的设置会保留。",
-	"notifications.startFeatures.audioMix": "音频混音（推流使用所选音频输入）",
+	"notifications.startFeatures.audioMix": "音频混音",
 	"notifications.startFeatures.composition": "画中画合成",
 	"notifications.startFeatures.customLayout": "自定义布局",
 	"notifications.startFeatures.pair": "{first}和{second}",

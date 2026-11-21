@@ -3246,7 +3246,7 @@
 	"notifications.streamStartSrtEncryptionUnavailableFailed": "Les paramètres de chiffrement SRT enregistrés ne sont pas pris en charge. Effacez-les avant de démarrer.",
 	"notifications.startFeatures.unsupported": "Diffusion sans {features} : le moteur de streaming ne prend pas cela en charge. Vos réglages enregistrés sont conservés.",
 	"notifications.startFeatures.unconfirmed": "Diffusion sans {features} : la prise en charge n'a pas été confirmée par le moteur de streaming. Vos réglages enregistrés sont conservés.",
-	"notifications.startFeatures.audioMix": "mix audio (le flux utilise l'entrée audio sélectionnée)",
+	"notifications.startFeatures.audioMix": "mix audio",
 	"notifications.startFeatures.composition": "incrustation",
 	"notifications.startFeatures.customLayout": "disposition personnalisée",
 	"notifications.startFeatures.pair": "{first} ni {second}",

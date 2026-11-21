@@ -3291,7 +3291,7 @@
 	"notifications.streamStartSrtEncryptionUnavailableFailed": "إعدادات تشفير SRT المحفوظة غير مدعومة. امسحها قبل بدء البث.",
 	"notifications.startFeatures.unsupported": "يجري البث بدون {features}: محرك البث لا يدعم ذلك. تبقى إعداداتك المحفوظة كما هي.",
 	"notifications.startFeatures.unconfirmed": "يجري البث بدون {features}: لم يؤكد محرك البث دعم ذلك. تبقى إعداداتك المحفوظة كما هي.",
-	"notifications.startFeatures.audioMix": "مزج الصوت (يستخدم البث مدخل الصوت المحدد)",
+	"notifications.startFeatures.audioMix": "مزج الصوت",
 	"notifications.startFeatures.composition": "تركيب صورة داخل صورة",
 	"notifications.startFeatures.customLayout": "التخطيط المخصص",
 	"notifications.startFeatures.pair": "{first} و{second}",
