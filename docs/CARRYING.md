@@ -198,6 +198,22 @@ a service restart. When the engine ends a session itself, the backend first stop
 its own sender for that session, then reports idle.
 This does not preserve media delivery across a backend service restart.
 
+After a restart the backend also judges, read only, whether a sender its
+predecessor left running could be adopted, and logs the verdict with the first
+failing check. It never adopts, signals or stops anything. It runs after the
+stream session has been reconciled, and startup continues without waiting for
+it; it leaves an unreadable armed-stream marker in place for restoration. On
+this version it reaches neither the sender's control socket nor the engine. A record that could
+never qualify (every record today, because the sender runs inside the backend's
+own service and dies with it) is judged from the record alone. Otherwise the
+check reads the process at the recorded PID (start time, name, the configured
+executable, arguments, not stopped), its own systemd unit and cgroup, the armed
+stream's configuration, the published map against the map on disk, and whether
+that PID holds the control socket; only then does it read the socket. Three
+facts it requires have no source yet: the unit's live invocation, the map
+generation and SHA the sender has applied, and an identity for the engine
+session. The engine is never asked.
+
 ### Reinicio del backend y propiedad del emisor
 
 La sesión del motor puede seguir activa aunque su emisor haya terminado. Después
@@ -214,3 +230,20 @@ anterior no se inicia otra vez; su restauración indica que no se pudo restaurar
 tras reiniciarse un servicio. Cuando el motor termina una sesión por su cuenta, el
 backend primero detiene su propio emisor de esa sesión y luego informa inactividad.
 Esto no mantiene el envío de contenido durante el reinicio del servicio del backend.
+
+Tras un reinicio el backend también evalúa, solo leyendo, si podría adoptar un
+emisor que su predecesor dejó en marcha, y registra el resultado con la primera
+comprobación que falló. Nunca adopta, envía señales ni detiene nada. Se ejecuta
+después de reconciliar la sesión de transmisión, y el arranque continúa sin
+esperar a que termine; deja en su sitio un marcador de transmisión armada
+ilegible para la restauración. En esta versión no llega ni al socket de control
+del emisor ni al motor. Un registro
+que nunca podría cumplir (hoy todos, porque el emisor corre dentro del propio
+servicio del backend y termina con él) se evalúa solo con el registro. Si no, la
+comprobación lee el proceso con el PID registrado (hora de inicio, nombre, el
+ejecutable configurado, argumentos, no detenido), su propia unidad de systemd y
+su cgroup, la configuración de la transmisión armada, el mapa publicado frente al
+del disco y si ese PID tiene el socket de control; solo entonces lee el socket.
+Tres datos que exige todavía no tienen fuente: la invocación actual de la unidad,
+la generación y el SHA del mapa que el emisor ha aplicado, y una identidad para la
+sesión del motor. Nunca se consulta al motor.

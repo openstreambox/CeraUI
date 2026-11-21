@@ -1003,6 +1003,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["self_fencing: ", " (", ") revert failed: ", ""],
 	["self_fencing: ", " (", ") unconfirmed within watchdog, auto-reverted"],
 	["self_fencing: ", " (", ") unconfirmed within watchdog, discarded"],
+	["sender adoption verdict (detect only)"],
 	["sender reload signal delivered"],
 	["sender reload"],
 	["sensors: HDMI raise scope unreadable — raising"],

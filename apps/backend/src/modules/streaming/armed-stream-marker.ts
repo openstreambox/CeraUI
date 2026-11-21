@@ -225,6 +225,28 @@ export function readArmedStreamMarker(
 	}
 }
 
+/**
+ * The marker if it parses, or undefined, with no side effect: an unreadable
+ * marker is left for its owner (`readArmedStreamMarker`) to discard. For
+ * read-only observers that must not change what restoration later finds.
+ */
+export function peekArmedStreamMarker(
+	deps: ArmedStreamMarkerDeps = defaultArmedStreamMarkerDeps,
+): ArmedStreamMarker | undefined {
+	const raw = deps.readMarker(deps.markerPath);
+	if (raw === undefined) return undefined;
+	const parsed = armedStreamMarkerSchema.safeParse(
+		(() => {
+			try {
+				return JSON.parse(raw);
+			} catch {
+				return undefined;
+			}
+		})(),
+	);
+	return parsed.success ? parsed.data : undefined;
+}
+
 export function writeArmedStreamMarker(
 	marker: ArmedStreamMarker,
 	deps: ArmedStreamMarkerDeps = defaultArmedStreamMarkerDeps,
