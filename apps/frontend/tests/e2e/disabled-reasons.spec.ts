@@ -174,7 +174,10 @@ test.describe('disabled-reason hints + loading/empty distinction (T15)', () => {
 
 		await expect(dialog.locator('#hotspot-name')).toBeVisible();
 
-		const toggle = dialog.getByRole('button', { name: 'Enable Hotspot', exact: true });
+		// The footer's start button. The credential gate's own confirm carries the
+		// same label, so the footer one is addressed by its test id.
+		const toggle = dialog.getByTestId('hotspot-toggle');
+		await expect(toggle).toHaveText('Turn on hotspot');
 		await expect(toggle).toBeEnabled();
 		await expect(toggle).not.toHaveAttribute('title', /.+/);
 		await toggle.click();
