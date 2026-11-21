@@ -3277,7 +3277,7 @@
 	"live.phone.moblinEnable": "Moblin で Moblink をオンにします。Moblin で 設定 › Moblink を開き、Streamer の「有効」をオンにします。",
 	"live.phone.moblinPassword": "Moblin のパスワード（Wi-Fi のパスワードではなく Moblin のもの）",
 	"live.phone.moblinBody": "Moblin のパスワードをボックスに入力します。Moblin で 設定 › Moblink › パスワード を開いてコピーしてください。カメラに映さないでください。",
-	"live.phone.moblinUnavailable": "このボックスはまだ Moblink リレーに対応していません。今は「インターネットのみ」を使ってください。Moblin はデバイス自身の接続で配信できます。",
+	"live.phone.moblinUnavailable": "このボックスはまだ Moblink リレーに対応していません。今は「インターネットのみ」を使ってください。",
 	"live.phone.receiver": "ボックスはどこに配信を送りますか？",
 	"live.phone.receiverBody": "サーバー設定にサーバーの srtla:// アドレスを追加してください。Twitch、Kick、YouTube のストリームキーしかない場合、この方法は使えません。「インターネットのみ」を使ってください。",
 	"live.phone.srtPoint": "アプリの送信先をボックスにします。IRL Pro で新しい SRT サーバーを追加し、次を貼り付けます：",

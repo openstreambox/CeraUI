@@ -16,13 +16,13 @@ const PHONE_TERMS: Record<Locale, RegExp> = {
 	en: /\b(?:smart|cell|i)?phones?\b/i,
 	ar: /هاتف|هواتف|جوال|موبايل/,
 	de: /Telefon(?!isch)|Handy|Smartphone|iPhone/i,
-	es: /tel[eé]fono|celular|smartphone|\bm[oó]vil(?![a-zá-ú])/i,
+	es: /tel[eé]fono|celular|smartphone|(?<!datos )\bm[oó]vil(?:es)?(?![a-zá-ú])/i,
 	fr: /t[eé]l[eé]phone(?!r)|smartphone|iphone/i,
 	hi: /फ़?ोन|मोबाइल(?!\s*डेटा)/,
 	ja: /スマートフォン|スマホ|ケータイ|携帯(?!用)|電話/,
 	ko: /휴대폰|핸드폰|스마트폰|전화(?!번호)/,
 	"pt-BR": /(?<!(?:modems|modem|rede|dados) )\bcelular(?:es)?\b|telefone|smartphone/i,
-	zh: /手机|手機|电话(?!号码)|電話/,
+	zh: /手机|手機|电话(?!号码)|電話(?!號碼)/,
 };
 
 const VIEWER_TERMS: Record<Locale, RegExp> = {
@@ -38,9 +38,14 @@ const VIEWER_TERMS: Record<Locale, RegExp> = {
 	zh: /观众|觀眾/,
 };
 
-// Opening and closing quote marks the catalogs use around a quoted UI label.
-const OPEN = `["“„«「]`;
-const CLOSE = `["”“»」]`;
+// Quote pairs the catalogs use around a quoted UI label.
+const QUOTE_PAIRS: [string, string][] = [
+	['"', '"'],
+	["“", "”"],
+	["„", "“"],
+	["«", "»"],
+	["「", "」"],
+];
 
 const normalize = (value: string) => value.normalize("NFC");
 
@@ -49,8 +54,6 @@ function homeCopy(locale: Locale): [string, string][] {
 		.filter(([key]) => key.startsWith("live.phone."))
 		.map(([key, value]) => [key, normalize(typeof value === "string" ? value : JSON.stringify(value))]);
 }
-
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 describe("the term lists themselves", () => {
 	const hits: [Locale, string][] = [
@@ -62,8 +65,9 @@ describe("the term lists themselves", () => {
 		["ko", "핸드폰 연결"],
 		["zh", "手機"],
 		["ar", "موبايل"],
-		["hi", "फ़ोन"],
-		["hi", "फ़ोन".normalize("NFD")],
+		["es", "dos móviles"],
+		["hi", "\u092b\u093c\u094b\u0928"],
+		["hi", "\u095e\u094b\u0928"],
 	];
 	const misses: [Locale, string][] = [
 		["de", "telefonisch erreichbar"],
@@ -73,6 +77,7 @@ describe("the term lists themselves", () => {
 		["ja", "携帯用"],
 		["ko", "전화번호"],
 		["zh", "电话号码"],
+		["zh", "電話號碼"],
 		["hi", "मोबाइल डेटा"],
 	];
 	for (const [locale, text] of hits) {
@@ -88,6 +93,23 @@ describe("the term lists themselves", () => {
 	it("Arabic viewer terms do not match the word for viewing", () => {
 		expect(VIEWER_TERMS.ar.test("المشاهدة")).toBe(false);
 	});
+	const viewerHits: [Locale, string][] = [
+		["en", "what viewers get"],
+		["ar", "ما يصل إلى المشاهدين"],
+		["de", "was die Zuschauer bekommen"],
+		["es", "lo que reciben los espectadores"],
+		["fr", "ce que reçoivent les spectateurs"],
+		["hi", "दर्शकों तक"],
+		["ja", "視聴者に届いている"],
+		["ko", "시청자에게"],
+		["pt-BR", "o que os espectadores recebem"],
+		["zh", "观众收到的内容"],
+	];
+	for (const [locale, text] of viewerHits) {
+		it(`${locale} viewer terms flag ${JSON.stringify(text)}`, () => {
+			expect(VIEWER_TERMS[locale].test(normalize(text))).toBe(true);
+		});
+	}
 });
 
 describe("Home copy on a box without an encoder", () => {
@@ -109,9 +131,10 @@ describe("Home copy on a box without an encoder", () => {
 		it(`${locale} quotes the carrying title exactly where it says what Home will show`, () => {
 			const catalog = readCatalog(locale);
 			const title = normalize(catalog["live.phone.active"] as string);
-			const quoted = new RegExp(`${OPEN}${escape(title)}${CLOSE}`);
 			for (const key of ["live.phone.tryBody", "live.phone.internetTry", "live.phone.srtTry"]) {
-				expect(normalize(catalog[key] as string)).toMatch(quoted);
+				const hint = normalize(catalog[key] as string);
+				const pairs = QUOTE_PAIRS.filter(([open, close]) => hint.includes(`${open}${title}${close}`));
+				expect(pairs.length).toBe(1);
 			}
 		});
 	}

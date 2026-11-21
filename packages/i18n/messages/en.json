@@ -3496,7 +3496,7 @@
 	"live.phone.moblinEnable": "Turn on Moblink in Moblin. In Moblin, open Settings › Moblink. Under Streamer, turn on Enabled.",
 	"live.phone.moblinPassword": "Moblin's password (from Moblin, not the Wi-Fi password)",
 	"live.phone.moblinBody": "Give the box Moblin's password. In Moblin, open Settings › Moblink › Password and copy it. Keep it off camera.",
-	"live.phone.moblinUnavailable": "This box doesn't offer a Moblink relay yet. Use Just internet for now; Moblin can stream over the device's own connection.",
+	"live.phone.moblinUnavailable": "This box doesn't offer a Moblink relay yet. Use Just internet for now.",
 	"live.phone.receiver": "Where should the box send your stream?",
 	"live.phone.receiverBody": "Add your server's srtla:// address in the server settings. If you only have a Twitch, Kick or YouTube stream key, this way doesn't fit: use Just internet.",
 	"live.phone.srtPoint": "Point your app at the box. In IRL Pro, add a new SRT server and paste:",

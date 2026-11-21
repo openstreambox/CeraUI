@@ -3557,7 +3557,7 @@
 	"live.phone.moblinEnable": "فعّل Moblink في Moblin. في Moblin افتح Settings › Moblink، ثم فعّل Enabled تحت Streamer.",
 	"live.phone.moblinPassword": "كلمة مرور Moblin (من Moblin، وليست كلمة مرور Wi-Fi)",
 	"live.phone.moblinBody": "أعطِ الجهاز كلمة مرور Moblin. في Moblin افتح Settings › Moblink › Password وانسخها. أبقها بعيدًا عن الكاميرا.",
-	"live.phone.moblinUnavailable": "لا يوفّر هذا الجهاز مُرحِّل Moblink بعد. استخدم «الإنترنت فقط» الآن؛ يستطيع Moblin البث عبر اتصالك الخاص.",
+	"live.phone.moblinUnavailable": "لا يوفّر هذا الجهاز مُرحِّل Moblink بعد. استخدم «الإنترنت فقط» الآن.",
 	"live.phone.receiver": "إلى أين يرسل الجهاز بثك؟",
 	"live.phone.receiverBody": "أضف عنوان srtla:// الخاص بخادمك في إعدادات الخادم. إذا لم يكن لديك سوى مفتاح بث من Twitch أو Kick أو YouTube، فهذه الطريقة لا تناسبك: استخدم «الإنترنت فقط».",
 	"live.phone.srtPoint": "وجّه تطبيقك إلى الجهاز. في IRL Pro أضف خادم SRT جديدًا والصق:",

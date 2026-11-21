@@ -3277,7 +3277,7 @@
 	"live.phone.moblinEnable": "在 Moblin 中开启 Moblink。在 Moblin 中打开 设置 › Moblink，在 Streamer 下开启“启用”。",
 	"live.phone.moblinPassword": "Moblin 的密码（来自 Moblin，不是 Wi-Fi 密码）",
 	"live.phone.moblinBody": "把 Moblin 的密码交给盒子。在 Moblin 中打开 设置 › Moblink › 密码 并复制。不要让它出现在镜头里。",
-	"live.phone.moblinUnavailable": "此盒子暂不提供 Moblink 中继。请先使用“仅上网”；Moblin 可以用设备自己的连接直播。",
+	"live.phone.moblinUnavailable": "此盒子暂不提供 Moblink 中继。请先使用“仅上网”。",
 	"live.phone.receiver": "盒子应该把你的直播发送到哪里？",
 	"live.phone.receiverBody": "在服务器设置中添加你服务器的 srtla:// 地址。如果你只有 Twitch、Kick 或 YouTube 推流密钥，这种方式不适用：请使用“仅上网”。",
 	"live.phone.srtPoint": "让你的应用发送到盒子。在 IRL Pro 中添加一个新的 SRT 服务器并粘贴：",

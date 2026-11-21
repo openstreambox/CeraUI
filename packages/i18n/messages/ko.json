@@ -3277,7 +3277,7 @@
 	"live.phone.moblinEnable": "Moblin에서 Moblink를 켜세요. Moblin에서 설정 › Moblink를 열고 Streamer 아래의 활성화를 켜세요.",
 	"live.phone.moblinPassword": "Moblin 비밀번호(Wi-Fi 비밀번호가 아니라 Moblin의 비밀번호)",
 	"live.phone.moblinBody": "박스에 Moblin 비밀번호를 입력하세요. Moblin에서 설정 › Moblink › 비밀번호를 열어 복사하세요. 카메라에 나오지 않게 하세요.",
-	"live.phone.moblinUnavailable": "이 박스는 아직 Moblink 릴레이를 제공하지 않습니다. 지금은 인터넷만을 사용하세요. Moblin은 기기 자체 연결로 스트리밍할 수 있습니다.",
+	"live.phone.moblinUnavailable": "이 박스는 아직 Moblink 릴레이를 제공하지 않습니다. 지금은 '인터넷만'을 사용하세요.",
 	"live.phone.receiver": "박스가 스트림을 어디로 보낼까요?",
 	"live.phone.receiverBody": "서버 설정에 서버의 srtla:// 주소를 추가하세요. Twitch, Kick, YouTube 스트림 키만 있다면 이 방식은 맞지 않습니다. 인터넷만을 사용하세요.",
 	"live.phone.srtPoint": "앱이 박스로 보내도록 설정하세요. IRL Pro에서 새 SRT 서버를 추가하고 다음을 붙여 넣으세요:",

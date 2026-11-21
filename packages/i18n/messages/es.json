@@ -3512,7 +3512,7 @@
 	"live.phone.moblinEnable": "Activa Moblink en Moblin. En Moblin, abre Ajustes › Moblink. En Streamer, activa Habilitado.",
 	"live.phone.moblinPassword": "Contraseña de Moblin (la de Moblin, no la del Wi-Fi)",
 	"live.phone.moblinBody": "Dale a la caja la contraseña de Moblin. En Moblin, abre Ajustes › Moblink › Contraseña y cópiala. Mantenla fuera de cámara.",
-	"live.phone.moblinUnavailable": "Esta caja todavía no ofrece un retransmisor Moblink. Usa Solo internet por ahora; Moblin puede emitir por la propia conexión del dispositivo.",
+	"live.phone.moblinUnavailable": "Esta caja todavía no ofrece un retransmisor Moblink. Usa Solo internet por ahora.",
 	"live.phone.receiver": "¿A dónde debe enviar la caja tu emisión?",
 	"live.phone.receiverBody": "Agrega la dirección srtla:// de tu servidor en los ajustes del servidor. Si solo tienes una clave de transmisión de Twitch, Kick o YouTube, esta forma no sirve: usa Solo internet.",
 	"live.phone.srtPoint": "Apunta tu app a la caja. En IRL Pro, agrega un nuevo servidor SRT y pega:",
