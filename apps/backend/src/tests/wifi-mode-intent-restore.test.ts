@@ -7,6 +7,7 @@ import {
 	spyOn,
 	test,
 } from "bun:test";
+import * as fs from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +58,7 @@ import {
 	resetWifiCapabilitiesForTest,
 	setWifiCapabilityDepsForTest,
 } from "../modules/wifi/wifi-capabilities.ts";
+import { concurrentApIfname } from "../modules/wifi/wifi-concurrent-interface.ts";
 import { addWifiInterface } from "../modules/wifi/wifi-connections.ts";
 import {
 	defaultHotspotDeps,
@@ -75,6 +77,8 @@ import {
 	wifiUpdateDevices,
 } from "../modules/wifi/wifi-interfaces.ts";
 import { wifiRadioObservation } from "../modules/wifi/wifi-radio-observation.ts";
+import * as publication from "../modules/wifi/wifi-radio-publication.ts";
+import * as compat from "../rpc/compat.ts";
 import {
 	hotspotStartProcedure,
 	hotspotStopProcedure,
@@ -1013,5 +1017,99 @@ for (const newer of ["station", "hotspot", "mode-only"] as const) {
 		expect(row.activeConn).toBe(uuid);
 		expect(row.activeMode).toBe(newer === "hotspot" ? "ap" : "infrastructure");
 		expect(row.conn).toBe(uuid);
+	});
+}
+
+/** Our radios: an RTL8852BE (rtw89) does not pass upstream's hybrid qualification. */
+function unqualifiedDriver() {
+	return spyOn(fs, "realpathSync").mockReturnValue(
+		"/sys/bus/pci/drivers/rtw89_8852be",
+	);
+}
+
+function adapterModeFrames(broadcast: ReturnType<typeof spyOn>): unknown[] {
+	return broadcast.mock.calls
+		.filter(([type, data]) => type === "wifi" && data && "adapter_mode" in data)
+		.map(([, data]) => (data as { adapter_mode: unknown }).adapter_mode);
+}
+
+for (const capability of [false, undefined, true] as const) {
+	test(`a saved hybrid on an unqualified radio (driver combination ${String(capability)}) survives boot restore, is refused visibly and keeps the station`, async () => {
+		unqualifiedDriver();
+		seed(radio(capability));
+		persistWifiAdapterMode(MAC, "hybrid");
+		const broadcast = spyOn(compat, "broadcastMsg").mockImplementation(
+			() => undefined,
+		);
+		const remember = spyOn(hotspotCredentialsStore, "remember");
+		// The frontend keys a terminal on the radio's published incarnation.
+		spyOn(publication, "projectWifiRadioIncarnation").mockReturnValue(
+			"intent-radio",
+		);
+		const source = bootSource();
+		startRestore(source);
+		await source.publish();
+		await source.publish();
+		expect(transcript).toEqual([]);
+		expect(await diskModes()).toEqual({ [MAC]: "hybrid" });
+		expect(getPersistedWifiAdapterMode(MAC)).toBe("hybrid");
+		expect(remember).not.toHaveBeenCalled();
+		expect(row.hotspot).toMatchObject({
+			conn: PROFILE,
+			name: "Intent AP",
+			password: "fixture-password",
+		});
+		expect(row.conn).toBe("station-link");
+		expect(observedWifiAdapterMode(row)).toBe("station");
+		const frames = adapterModeFrames(broadcast);
+		expect(frames.length).toBeGreaterThan(0);
+		for (const frame of frames)
+			expect(frame).toEqual({
+				device: 0,
+				error: "capability-unproven",
+				incarnation: "intent-radio",
+			});
+
+		// The explicit way out: an exclusive hotspot on this radio, chosen by the
+		// operator, records hotspot and never builds the hybrid leg.
+		transcript = [];
+		expect(
+			await transition.setWifiAdapterMode(0, "hotspot", modeDeps()),
+		).toEqual({ success: true, accepted: true, applied: "hotspot" });
+		await settlePending(IFNAME, true);
+		expect(observedWifiAdapterMode(row)).toBe("hotspot");
+		expect(transcript).not.toContain("virtual");
+		expect(await diskModes()).toEqual({ [MAC]: "hotspot" });
+	});
+}
+
+for (const path of ["stop", "station"] as const) {
+	test(`${path} retires a legacy clap AP on an unqualified radio without touching the station`, async () => {
+		unqualifiedDriver();
+		seed(radio(false));
+		persistWifiAdapterMode(MAC, "hybrid");
+		row.conn = "station-link";
+		row.activeConn = "station-link";
+		row.activeMode = "infrastructure";
+		row.concurrentHotspot = {
+			ifname: concurrentApIfname(IFNAME),
+			activeConn: PROFILE,
+		};
+		expect(observedWifiAdapterMode(row)).toBe("hybrid");
+		const disconnect = spyOn(defaultHotspotStopDeps, "nmDisconnect");
+		const writes = spyOn(defaultHotspotStopDeps, "nmConnSetFields");
+		const result =
+			path === "stop"
+				? await wifiHotspotStop({ device: 0 })
+				: await transition.setWifiAdapterMode(0, "station", modeDeps());
+		expect(result).toMatchObject({ success: true });
+		expect(disconnect.mock.calls.map(([uuid]) => uuid)).toEqual([PROFILE]);
+		for (const [uuid] of writes.mock.calls) expect(uuid).toBe(PROFILE);
+		expect(row.concurrentHotspot).toBeUndefined();
+		expect(observedWifiAdapterMode(row)).toBe("station");
+		expect(row.conn).toBe("station-link");
+		expect(row.activeConn).toBe("station-link");
+		expect(row.activeMode).toBe("infrastructure");
+		expect(transcript).not.toContain("activate");
 	});
 }

@@ -298,7 +298,13 @@ Wi-Fi channel does not permit starting a hotspot. Wi-Fi stays connected."
 Both use the existing dialog, reason field and localization machinery.
 
 Explicit exclusive requests retain the existing station-to-hotspot path and
-streaming guard. Unqualified hybrid remains unavailable/pending. The
+streaming guard. Unqualified hybrid remains unavailable/pending. A saved
+`hybrid` intent on an unqualified radio (for example after an upgrade) keeps the
+intent and the hotspot credentials and is never translated into an exclusive
+AP: restore leaves the station alone and publishes a `capability-unproven` mode
+refusal, and the Wi-Fi row says hybrid is not available on that radio and
+offers an explicit switch to an exclusive hotspot through the usual activation
+gate, or the hotspot can move to another radio. The
 RTL8852BE kernel/qualification prerequisite is engineering debt
 `TD-rtl8852be-hybrid-kernel-7-4`; this is not a promise of future support.
 
