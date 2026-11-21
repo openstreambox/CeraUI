@@ -14,6 +14,7 @@ import { type MessageKey, m } from "@ceraui/i18n/svelte";
 export interface StartFailureCopyInput {
 	readonly class: string;
 	readonly retriable: boolean;
+	readonly code?: string | number;
 	readonly captureCause?: string;
 }
 
@@ -30,9 +31,12 @@ export function startFailureRetryKey(
 
 export function startFailureMessage(failure: StartFailureCopyInput): string {
 	const key =
-		failure.captureCause !== undefined
-			? `live.startFailure.class.${failure.class}.${failure.captureCause}`
-			: `live.startFailure.class.${failure.class}`;
+		failure.class === "start_invalid" &&
+		failure.code === "srt_encryption_unavailable"
+			? "live.startFailure.srtEncryptionUnavailable"
+			: failure.captureCause !== undefined
+				? `live.startFailure.class.${failure.class}.${failure.captureCause}`
+				: `live.startFailure.class.${failure.class}`;
 	const cls = m[key];
 	const reason =
 		typeof cls === "function" ? cls() : m["live.startFailed.generic"]();
