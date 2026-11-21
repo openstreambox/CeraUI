@@ -303,7 +303,7 @@ $effect(() => {
 									view={modeView}
 									context={{
 										stationLinkLive: connected || Boolean(entry?.enabled),
-										hotspotLive: hotspotIsActive(iface),
+										hotspotLive: hotspotIsActive(iface, getWifiAdapterModeEntry(id)),
 									}}
 									errorPlacement="host"
 									lockedReason={isSwitching ? stationLockReason : undefined}
