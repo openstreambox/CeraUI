@@ -42495,7 +42495,7 @@
     "apps/backend/src/modules/system/encoder-load.ts": "edc310e16747a331b232b09d0b7d3ee7fc811621241840268a85ebda2b9729db",
     "apps/backend/src/modules/system/fan.ts": "e73086dbfd02c219c8c6d644687f1e10fcee62e4bb21d2e9a527a4d5a64180f3",
     "apps/backend/src/modules/system/kiosk.ts": "921df84e43d6960e9a1ab0bfd8768a7a85a7fe682fccc185bd8585f88823e96a",
-    "apps/backend/src/modules/system/logs.ts": "84eb076843dffb42ceda3aab14535bf5080ebdda5e4733ce87ff4ff313744ac4",
+    "apps/backend/src/modules/system/logs.ts": "1445d9ef8c95109bd6f9d1c4e62b3a902dd747f7d56443f1f1a0dc21cbb4dd41",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
     "apps/backend/src/modules/system/sensors.ts": "f14c9498da2adc79d5c494ba556d09c26d4181bd472c88d5d2b0599c95eca5c8",
     "apps/backend/src/modules/system/software-updates.ts": "21668cfcda44364ffc86935c7d101e4602d1296958d7d08b65f65c945f499edb",
