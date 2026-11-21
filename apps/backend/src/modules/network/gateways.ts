@@ -19,7 +19,7 @@ import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
 import { getms } from "../../helpers/time.ts";
 import { emitEvent } from "../events/emit.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import {
 	notificationBroadcast,
 	notificationRemove,
@@ -80,7 +80,7 @@ export function queueUpdateGw() {
 }
 
 export type GatewayElectionDeps = {
-	readonly isRealDevice: () => Promise<boolean>;
+	readonly canRouteClients: () => Promise<boolean>;
 	readonly resolve: () => ReturnType<typeof dnsCacheResolve>;
 	readonly validateDns: () => void;
 	readonly checkConnectivity: typeof checkConnectivity;
@@ -103,7 +103,7 @@ export type GatewayElectionDeps = {
 
 function defaultGatewayElectionDeps(): GatewayElectionDeps {
 	return {
-		isRealDevice,
+		canRouteClients: () => hasCapability("client-internet"),
 		resolve: () => dnsCacheResolve(CONNECTIVITY_CHECK_DOMAIN),
 		validateDns: () => {
 			void dnsCacheValidate(CONNECTIVITY_CHECK_DOMAIN);
@@ -143,7 +143,7 @@ function candidateRosterIdentity(
 export async function updateGw(
 	deps: GatewayElectionDeps = defaultGatewayElectionDeps(),
 ): Promise<boolean> {
-	if (!(await deps.isRealDevice())) return true;
+	if (!(await deps.canRouteClients())) return true;
 	let addrs: Array<string> = [];
 	let fromCache = false;
 	try {

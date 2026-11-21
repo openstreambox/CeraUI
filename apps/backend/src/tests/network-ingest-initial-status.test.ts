@@ -27,7 +27,7 @@ describe("buildInitialStatus — network_ingest snapshot completeness", () => {
 		// Fully-explicit deps so the cached snapshot is deterministic regardless of
 		// any global MOCK_MODE / mock-state a sibling test file left behind.
 		await refreshNetworkIngestInfo({
-			isRealDevice: async () => true,
+			canManageIngest: async () => true,
 			shouldUseMocks: () => false,
 			resolveMockSignals: () => ({
 				rtmpUnitActive: true,
