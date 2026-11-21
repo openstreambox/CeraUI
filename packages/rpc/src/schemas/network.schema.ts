@@ -406,3 +406,11 @@ export const sharingPolicySchema = z.object({
 	selection: z.enum(['single', 'spread']).default('single'),
 });
 export type SharingPolicy = z.infer<typeof sharingPolicySchema>;
+/**
+ * The setter's input. A client that predates `selection` omits it; the device
+ * then keeps its current selection instead of resetting it to the default.
+ */
+export const setSharingPolicyInputSchema = sharingPolicySchema.extend({
+	selection: z.enum(['single', 'spread']).optional(),
+});
+export type SetSharingPolicyInput = z.infer<typeof setSharingPolicyInputSchema>;

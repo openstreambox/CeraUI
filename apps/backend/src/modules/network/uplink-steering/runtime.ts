@@ -16,6 +16,7 @@ import {
 	flushConntrack,
 	setIpForwarding,
 } from "../uplink-sharing.ts";
+import { commitSelectorPlan } from "./active-uplink.ts";
 import {
 	type PreparedSteeringState,
 	UplinkSteeringApplier,
@@ -79,6 +80,8 @@ const coordinator = new UplinkSteeringCoordinator({
 	},
 	verifyApplied: async (next) => {
 		await verifySteeringState(next);
+		// The selector's incumbent follows what is live, never a mere plan.
+		commitSelectorPlan(next);
 		publishSteeringReadiness(
 			next.clientZones,
 			verificationEntries.get(next),

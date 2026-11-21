@@ -19,17 +19,25 @@ import {
  *   gone, policy exclusion) the best remaining candidate takes over in the
  *   same reconcile.
  * - Rejoin is held: a better-ranked uplink displaces a working active one
- *   only after it has been continuously `up` with probe evidence for the
- *   rejoin hold. Each failure while active doubles that uplink's next hold,
- *   up to a cap, so a flapping link cannot keep pulling clients back.
+ *   only after it has been continuously `up` with fresh probe evidence for
+ *   the rejoin hold. Each failure while active doubles that uplink's next
+ *   hold, up to a cap, so a flapping link cannot keep pulling clients back.
  * - A displaced uplink stays listed (not selectable, weight 0), so flows it
  *   already carries keep their restore and NAT rules and drain naturally.
+ *
+ * Planning is side-effect free. A plan's state becomes the selector's state
+ * only through `commit`, which the steering runtime calls after the plan's
+ * ruleset was applied and verified. A rejected apply, a retry or a read-only
+ * caller (the shaper) therefore never moves the incumbent or charges a
+ * failure to an uplink that did not carry clients.
  */
 export const ACTIVE_UPLINK_CONFIG = {
 	rejoinHoldMs: 30_000,
 	maxRejoinHoldMs: 300_000,
 	/** A failure older than this no longer lengthens the next hold. */
 	flapWindowMs: 600_000,
+	/** Successful observations a challenger must add during its hold. */
+	freshSuccessesDuringHold: 3,
 } as const;
 
 const KIND_ORDER = { wired: 0, wifi: 1, cellular: 2 } as const;
@@ -42,135 +50,228 @@ export interface ActiveUplinkContext {
 	readonly now: number;
 	readonly policy: SharingPolicy;
 	readonly health: ReadonlyMap<string, UplinkHealthRecord>;
-	/** Identities still present and not health-down, before policy filters. */
-	readonly present: ReadonlySet<string>;
+	/** Interface names present in the current snapshot. */
+	readonly interfaces: ReadonlySet<string>;
 }
 
 interface Penalty {
-	failures: number;
-	lastFailureAt: number;
+	readonly failures: number;
+	readonly lastFailureAt: number;
+}
+
+interface Proof {
+	readonly since: number;
+	readonly successesAtStart: number;
+}
+
+export interface ActiveUplinkState {
+	readonly active?: { readonly identity: string; readonly ifname: string };
+	readonly activeSince: number;
+	readonly proofs: ReadonlyMap<string, Proof>;
+	readonly penalties: ReadonlyMap<string, Penalty>;
+}
+
+const EMPTY_STATE: ActiveUplinkState = {
+	activeSince: 0,
+	proofs: new Map(),
+	penalties: new Map(),
+};
+
+export interface ActiveUplinkPlan<T> {
+	readonly candidates: T[];
+	/** State to commit once this plan is applied; undefined resets. */
+	readonly next: ActiveUplinkState | undefined;
 }
 
 export class ActiveUplinkSelector {
-	#active: string | undefined;
-	#activeSince = 0;
-	readonly #healthySince = new Map<string, number>();
-	readonly #penalties = new Map<string, Penalty>();
+	#state: ActiveUplinkState = EMPTY_STATE;
 
-	/** Identity of the uplink that currently receives new client flows. */
+	/** Identity of the committed uplink that receives new client flows. */
 	active(): string | undefined {
-		return this.#active;
+		return this.#state.active?.identity;
 	}
 
+	commit(next: ActiveUplinkState | undefined): void {
+		this.#state = next ?? EMPTY_STATE;
+	}
+
+	/** Plans and commits at once; for callers that apply unconditionally. */
 	select<T extends ActiveUplinkCandidate>(
 		candidates: readonly T[],
 		context: ActiveUplinkContext,
 	): T[] {
+		const plan = this.plan(candidates, context);
+		this.commit(plan.next);
+		return plan.candidates;
+	}
+
+	plan<T extends ActiveUplinkCandidate>(
+		candidates: readonly T[],
+		context: ActiveUplinkContext,
+	): ActiveUplinkPlan<T> {
 		const { now } = context;
-		this.#trackHealthy(candidates, context);
-		this.#forgetStalePenalties(now);
+		const prior = this.#state;
+		const proofs = trackProofs(prior.proofs, candidates, context);
+		const penalties = new Map(
+			[...prior.penalties].filter(
+				([, penalty]) =>
+					now - penalty.lastFailureAt < ACTIVE_UPLINK_CONFIG.flapWindowMs,
+			),
+		);
 		const usable = candidates.filter(
 			({ uplink }) => uplink.selectable && uplink.weight > 0,
 		);
 		const current = usable.find(
-			({ uplink }) => uplink.identity === this.#active,
+			({ uplink }) => uplink.identity === prior.active?.identity,
 		);
-		if (this.#active !== undefined && current === undefined) {
-			// Lost while active. A policy exclusion is a choice, not a failure.
-			if (!context.present.has(this.#active)) this.#penalize(now);
-			this.#active = undefined;
+		if (prior.active !== undefined && current === undefined) {
+			// Only a real loss counts. A policy exclusion or an uplink held back
+			// for pending identity proof is not a failure of that uplink.
+			const { ifname, identity } = prior.active;
+			if (
+				!context.interfaces.has(ifname) ||
+				context.health.get(ifname)?.state === "down"
+			) {
+				const before = penalties.get(identity);
+				penalties.set(identity, {
+					failures: (before?.failures ?? 0) + 1,
+					lastFailureAt: now,
+				});
+			}
 		}
 		let chosen = current;
 		if (chosen === undefined) {
 			chosen = [...usable].sort((a, b) => compare(a, b, context))[0];
 		} else {
+			const incumbent = chosen;
 			const challenger = usable
 				.filter(
 					(candidate) =>
-						candidate !== current &&
-						rankKey(candidate, context) < rankKey(current as T, context) &&
-						this.#rejoinReady(candidate.uplink.identity, now),
+						candidate !== incumbent &&
+						rankKey(candidate, context) < rankKey(incumbent, context) &&
+						rejoinReady(candidate, proofs, penalties, context),
 				)
 				.sort((a, b) => compare(a, b, context))[0];
 			if (challenger !== undefined) chosen = challenger;
 		}
-		if (chosen?.uplink.identity !== this.#active) {
-			this.#active = chosen?.uplink.identity;
-			this.#activeSince = now;
-		}
+		const active =
+			chosen === undefined
+				? undefined
+				: { identity: chosen.uplink.identity, ifname: chosen.uplink.ifname };
+		const activeSince =
+			active?.identity === prior.active?.identity ? prior.activeSince : now;
 		if (
-			this.#active !== undefined &&
-			now - this.#activeSince >= ACTIVE_UPLINK_CONFIG.flapWindowMs
+			active !== undefined &&
+			now - activeSince >= ACTIVE_UPLINK_CONFIG.flapWindowMs
 		) {
-			this.#penalties.delete(this.#active);
+			penalties.delete(active.identity);
 		}
-		return candidates.map((candidate) => {
-			const selected = candidate === chosen;
-			return {
-				...candidate,
-				uplink: {
-					...candidate.uplink,
-					selectable: selected,
-					weight: selected ? 100 : 0,
-				},
-			};
-		});
+		return {
+			candidates: candidates.map((candidate) => {
+				const selected = candidate === chosen;
+				return {
+					...candidate,
+					uplink: {
+						...candidate.uplink,
+						selectable: selected,
+						weight: selected ? 100 : 0,
+					},
+				};
+			}),
+			next: {
+				...(active === undefined ? {} : { active }),
+				activeSince,
+				proofs,
+				penalties,
+			},
+		};
 	}
 
 	/** The hold a candidate must stay healthy before it may displace another. */
 	rejoinHoldMs(identity: string): number {
-		const failures = this.#penalties.get(identity)?.failures ?? 0;
-		return Math.min(
-			ACTIVE_UPLINK_CONFIG.rejoinHoldMs * 2 ** failures,
-			ACTIVE_UPLINK_CONFIG.maxRejoinHoldMs,
-		);
-	}
-
-	#rejoinReady(identity: string, now: number): boolean {
-		const since = this.#healthySince.get(identity);
-		return since !== undefined && now - since >= this.rejoinHoldMs(identity);
-	}
-
-	#trackHealthy(
-		candidates: readonly ActiveUplinkCandidate[],
-		{ now, health }: ActiveUplinkContext,
-	): void {
-		const seen = new Set<string>();
-		for (const { uplink } of candidates) {
-			const record = health.get(uplink.ifname);
-			// A record that starts `up` before any probe is not evidence.
-			const proven = record?.state === "up" && record.probes.successes > 0;
-			if (!proven) continue;
-			seen.add(uplink.identity);
-			if (!this.#healthySince.has(uplink.identity))
-				this.#healthySince.set(uplink.identity, now);
-		}
-		for (const identity of this.#healthySince.keys()) {
-			if (!seen.has(identity)) this.#healthySince.delete(identity);
-		}
-	}
-
-	#penalize(now: number): void {
-		if (this.#active === undefined) return;
-		const prior = this.#penalties.get(this.#active);
-		this.#penalties.set(this.#active, {
-			failures: (prior?.failures ?? 0) + 1,
-			lastFailureAt: now,
-		});
-	}
-
-	#forgetStalePenalties(now: number): void {
-		for (const [identity, penalty] of this.#penalties) {
-			if (now - penalty.lastFailureAt >= ACTIVE_UPLINK_CONFIG.flapWindowMs)
-				this.#penalties.delete(identity);
-		}
+		return holdFor(identity, this.#state.penalties);
 	}
 }
 
+function holdFor(
+	identity: string,
+	penalties: ReadonlyMap<string, Penalty>,
+): number {
+	const failures = penalties.get(identity)?.failures ?? 0;
+	return Math.min(
+		ACTIVE_UPLINK_CONFIG.rejoinHoldMs * 2 ** failures,
+		ACTIVE_UPLINK_CONFIG.maxRejoinHoldMs,
+	);
+}
+
 /**
- * Lower is better: operator priority for the kind, then healthy before
- * degraded, then the cheaper kind (wired, Wi-Fi, cellular). Interface names
- * only break ties for the first pick and never cause a switch.
+ * Proof is a fresh `up` record with at least one real success. A record that
+ * starts `up` before any probe, or whose last observation has expired (for
+ * example while probe rounds are skipped), is not evidence.
+ */
+function provenSuccesses(
+	ifname: string,
+	{ health, now }: ActiveUplinkContext,
+): number | undefined {
+	const record = health.get(ifname);
+	if (
+		record?.state !== "up" ||
+		record.probes.successes <= 0 ||
+		record.staleAt <= now
+	)
+		return undefined;
+	return record.probes.successes;
+}
+
+function trackProofs(
+	prior: ReadonlyMap<string, Proof>,
+	candidates: readonly ActiveUplinkCandidate[],
+	context: ActiveUplinkContext,
+): Map<string, Proof> {
+	const proofs = new Map<string, Proof>();
+	for (const { uplink } of candidates) {
+		const successes = provenSuccesses(uplink.ifname, context);
+		if (successes === undefined) continue;
+		const before = prior.get(uplink.identity);
+		proofs.set(
+			uplink.identity,
+			before !== undefined && successes >= before.successesAtStart
+				? before
+				: { since: context.now, successesAtStart: successes },
+		);
+	}
+	return proofs;
+}
+
+/**
+ * The hold must be served AND covered by new successful observations, so
+ * counters inherited from an earlier device on the same interface name, or a
+ * record that stopped refreshing, cannot complete it.
+ */
+function rejoinReady(
+	{ uplink }: ActiveUplinkCandidate,
+	proofs: ReadonlyMap<string, Proof>,
+	penalties: ReadonlyMap<string, Penalty>,
+	context: ActiveUplinkContext,
+): boolean {
+	const proof = proofs.get(uplink.identity);
+	const successes = provenSuccesses(uplink.ifname, context);
+	return (
+		proof !== undefined &&
+		successes !== undefined &&
+		context.now - proof.since >= holdFor(uplink.identity, penalties) &&
+		successes - proof.successesAtStart >=
+			ACTIVE_UPLINK_CONFIG.freshSuccessesDuringHold
+	);
+}
+
+/**
+ * Lower is better: healthy before degraded, then operator priority for the
+ * kind, then the cheaper kind (wired, Wi-Fi, cellular). Health comes first so
+ * a preferred uplink that health only marks degraded (captive portal, or a
+ * streaming link judged from sender telemetry) yields to a proven healthy
+ * one. Interface names only break ties for the first pick and never cause a
+ * switch.
  */
 function rankKey(
 	{ uplink }: ActiveUplinkCandidate,
@@ -178,7 +279,7 @@ function rankKey(
 ): number {
 	const kind = sharingUplinkKind(uplink.ifname);
 	const degraded = health.get(uplink.ifname)?.state === "degraded" ? 1 : 0;
-	return policy.priorities[kind] * 100 + degraded * 10 + KIND_ORDER[kind];
+	return degraded * 100_000 + policy.priorities[kind] * 10 + KIND_ORDER[kind];
 }
 
 function compare(
@@ -194,17 +295,21 @@ function compare(
 
 /**
  * The policy step of the state builder. `spread` keeps the weighted
- * distribution unchanged; `single` lets the selector pick one active uplink
- * from everything the mode and administrative filters allow.
+ * distribution unchanged and plans a selector reset; `single` lets the
+ * selector plan one active uplink from everything the mode and administrative
+ * filters allow.
  */
 export function applyClientUplinkPolicy<T extends ActiveUplinkCandidate>(
 	candidates: readonly T[],
 	selector: ActiveUplinkSelector,
 	context: ActiveUplinkContext,
-): T[] {
+): ActiveUplinkPlan<T> {
 	if (context.policy.selection === "spread")
-		return applySharingPolicy(candidates, context.policy);
-	return selector.select(
+		return {
+			candidates: applySharingPolicy(candidates, context.policy),
+			next: undefined,
+		};
+	return selector.plan(
 		candidates.filter(({ uplink }) =>
 			sharingPolicyAllows(uplink, context.policy),
 		),
@@ -213,3 +318,24 @@ export function applyClientUplinkPolicy<T extends ActiveUplinkCandidate>(
 }
 
 export const activeUplinkSelector = new ActiveUplinkSelector();
+
+/**
+ * Plans keyed by the prepared state they were built into. A state without an
+ * entry (no client zone, spread, no policy) commits as a reset.
+ */
+const plannedStates = new WeakMap<object, ActiveUplinkState | undefined>();
+
+export function recordSelectorPlan(
+	prepared: object,
+	next: ActiveUplinkState | undefined,
+): void {
+	plannedStates.set(prepared, next);
+}
+
+/** Called once `prepared` is the applied, verified steering state. */
+export function commitSelectorPlan(
+	prepared: object,
+	selector: ActiveUplinkSelector = activeUplinkSelector,
+): void {
+	selector.commit(plannedStates.get(prepared));
+}

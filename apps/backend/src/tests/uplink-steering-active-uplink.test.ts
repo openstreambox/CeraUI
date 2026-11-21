@@ -13,11 +13,13 @@ import {
 	ACTIVE_UPLINK_CONFIG,
 	ActiveUplinkSelector,
 	applyClientUplinkPolicy,
+	commitSelectorPlan,
 } from "../modules/network/uplink-steering/active-uplink.ts";
 import type { SteeringUplink } from "../modules/network/uplink-steering/contracts.ts";
 import {
 	applySharingPolicy,
 	DEFAULT_SHARING_POLICY,
+	SharingPolicyOwner,
 } from "../modules/network/uplink-steering/policy.ts";
 import {
 	buildShareRuleset,
@@ -48,6 +50,7 @@ function record(
 	iface: string,
 	state: UplinkHealthRecord["state"] = "up",
 	successes = 5,
+	staleAt = Number.MAX_SAFE_INTEGER,
 ): UplinkHealthRecord {
 	return {
 		iface,
@@ -55,33 +58,45 @@ function record(
 		state,
 		weight: state === "down" ? 0 : state === "degraded" ? 25 : 100,
 		lastTransition: 0,
-		staleAt: 0,
+		staleAt,
 		probes: { successes, failures: 0 },
 		signals: {},
 	} as UplinkHealthRecord;
 }
 
-/** Drives one selector the way successive reconciles would. */
+/** A healthy record probed every 5 s up to `now`. */
+function live(iface: string, now: number): UplinkHealthRecord {
+	return record(iface, "up", 1 + Math.floor(now / 5_000), now + 15_000);
+}
+
+/** Drives one selector the way successive applied reconciles would. */
 function driver(policy: SharingPolicy = DEFAULT_SHARING_POLICY) {
 	const selector = new ActiveUplinkSelector();
+	const plan = (
+		now: number,
+		ifnames: readonly string[],
+		health: readonly UplinkHealthRecord[] = ifnames.map((i) => live(i, now)),
+	) =>
+		applyClientUplinkPolicy(ifnames.map(uplink), selector, {
+			now,
+			policy,
+			health: new Map(health.map((r) => [r.iface, r])),
+			interfaces: new Set([...ifnames, ...health.map((r) => r.iface)]),
+		});
+	const selected = (candidates: readonly { uplink: SteeringUplink }[]) =>
+		candidates
+			.filter(({ uplink: u }) => u.selectable && u.weight > 0)
+			.map(({ uplink: u }) => u.ifname);
 	return {
 		selector,
-		pick(
-			now: number,
-			ifnames: readonly string[],
-			health: readonly UplinkHealthRecord[] = ifnames.map((i) => record(i)),
-		): string[] {
-			const candidates = ifnames.map(uplink);
-			return applyClientUplinkPolicy(candidates, selector, {
-				now,
-				policy,
-				health: new Map(health.map((r) => [r.iface, r])),
-				present: new Set(
-					health.filter((r) => r.state !== "down").map((r) => `id-${r.iface}`),
-				),
-			})
-				.filter(({ uplink: u }) => u.selectable && u.weight > 0)
-				.map(({ uplink: u }) => u.ifname);
+		/** Plans without applying, as a retry, a failed apply or the shaper. */
+		peek(...args: Parameters<typeof plan>): string[] {
+			return selected(plan(...args).candidates);
+		},
+		pick(...args: Parameters<typeof plan>): string[] {
+			const result = plan(...args);
+			selector.commit(result.next);
+			return selected(result.candidates);
 		},
 	};
 }
@@ -100,16 +115,17 @@ describe("single-active client uplink selection", () => {
 
 	test("exactly one uplink is selectable and the rest stay listed with weight 0", () => {
 		const selector = new ActiveUplinkSelector();
+		const context = {
+			now: 0,
+			policy: DEFAULT_SHARING_POLICY,
+			health: new Map(),
+			interfaces: new Set<string>(),
+		};
 		const out = applyClientUplinkPolicy(
 			["eth0", "wwan0", "wwan1"].map(uplink),
 			selector,
-			{
-				now: 0,
-				policy: DEFAULT_SHARING_POLICY,
-				health: new Map(),
-				present: new Set(),
-			},
-		).map(({ uplink: u }) => [u.ifname, u.selectable, u.weight]);
+			context,
+		).candidates.map(({ uplink: u }) => [u.ifname, u.selectable, u.weight]);
 		expect(out).toEqual([
 			["eth0", true, 100],
 			["wwan0", false, 0],
@@ -120,13 +136,8 @@ describe("single-active client uplink selection", () => {
 			uplinks: applyClientUplinkPolicy(
 				["eth0", "wwan0"].map(uplink),
 				selector,
-				{
-					now: 1,
-					policy: DEFAULT_SHARING_POLICY,
-					health: new Map(),
-					present: new Set(),
-				},
-			).map(({ uplink: u }) => u),
+				context,
+			).candidates.map(({ uplink: u }) => u),
 		});
 		// One selection chain, but restore and NAT rules for both uplinks.
 		expect(ruleset.match(/chain select_\d+/g)).toEqual(["chain select_0"]);
@@ -139,25 +150,104 @@ describe("single-active client uplink selection", () => {
 		expect(d.pick(0, ["eth0", "wwan0"])).toEqual(["eth0"]);
 		// Health dropped eth0 (state-builder never offers a down uplink).
 		expect(
-			d.pick(1_000, ["wwan0"], [record("eth0", "down", 0), record("wwan0")]),
+			d.pick(
+				1_000,
+				["wwan0"],
+				[record("eth0", "down", 0), live("wwan0", 1_000)],
+			),
 		).toEqual(["wwan0"]);
 		expect(d.selector.rejoinHoldMs("id-eth0")).toBe(HOLD * 2);
 		// No uplink left: nothing is selectable, the ruleset's drop chain applies.
 		expect(d.pick(2_000, [], [record("wwan0", "down", 0)])).toEqual([]);
 	});
 
-	test("a better uplink rejoins only after its hold with probe evidence", () => {
+	test("an unapplied plan neither moves the incumbent nor charges a failure", () => {
+		const d = driver();
+		expect(d.pick(0, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		// A failover plan whose apply is rejected, then eth0 comes back.
+		expect(
+			d.peek(
+				1_000,
+				["wwan0"],
+				[record("eth0", "down", 0), live("wwan0", 1_000)],
+			),
+		).toEqual(["wwan0"]);
+		expect(d.selector.active()).toBe("id-eth0");
+		expect(d.selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
+		expect(d.pick(2_000, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		// A promotion plan that is never applied leaves the backup in charge.
+		const r = driver();
+		r.pick(0, ["wwan0"]);
+		r.pick(10_000, ["eth0", "wwan0"]);
+		expect(r.peek(10_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		expect(r.selector.active()).toBe("id-wwan0");
+		// eth0 then fails before any apply: it never carried clients, no penalty.
+		r.pick(
+			10_000 + HOLD + 1,
+			["wwan0"],
+			[record("eth0", "down", 0), live("wwan0", 10_000 + HOLD + 1)],
+		);
+		expect(r.selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
+	});
+
+	test("a better uplink rejoins only after its hold with fresh probe evidence", () => {
 		const d = driver();
 		expect(d.pick(0, ["wwan0"])).toEqual(["wwan0"]);
 		// A fresh record starts `up` before any probe: no evidence, no switch.
-		const unproven = [record("eth0", "up", 0), record("wwan0")];
-		expect(d.pick(1_000, ["eth0", "wwan0"], unproven)).toEqual(["wwan0"]);
-		expect(d.pick(HOLD * 5, ["eth0", "wwan0"], unproven)).toEqual(["wwan0"]);
+		const unproven = (now: number) => [
+			record("eth0", "up", 0, now + 15_000),
+			live("wwan0", now),
+		];
+		expect(d.pick(1_000, ["eth0", "wwan0"], unproven(1_000))).toEqual([
+			"wwan0",
+		]);
+		expect(d.pick(HOLD * 5, ["eth0", "wwan0"], unproven(HOLD * 5))).toEqual([
+			"wwan0",
+		]);
 		// Proven from t=200 s; the hold counts from there.
 		const start = 200_000;
 		expect(d.pick(start, ["eth0", "wwan0"])).toEqual(["wwan0"]);
 		expect(d.pick(start + HOLD - 1, ["eth0", "wwan0"])).toEqual(["wwan0"]);
 		expect(d.pick(start + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
+	});
+
+	test("expired or inherited evidence cannot complete a rejoin hold", () => {
+		const d = driver();
+		d.pick(0, ["wwan0"]);
+		// One success at t=10 s, then probe rounds stop: the record expires.
+		const frozen = (now: number) => [
+			record("eth0", "up", 1, 25_000),
+			live("wwan0", now),
+		];
+		d.pick(10_000, ["eth0", "wwan0"], frozen(10_000));
+		expect(
+			d.pick(10_000 + HOLD, ["eth0", "wwan0"], frozen(10_000 + HOLD)),
+		).toEqual(["wwan0"]);
+		// Fresh-looking counters that never grow (an earlier device's) do not
+		// complete it either.
+		const stuck = (now: number) => [
+			record("eth0", "up", 9, now + 15_000),
+			live("wwan0", now),
+		];
+		d.pick(100_000, ["eth0", "wwan0"], stuck(100_000));
+		expect(
+			d.pick(100_000 + HOLD * 3, ["eth0", "wwan0"], stuck(100_000 + HOLD * 3)),
+		).toEqual(["wwan0"]);
+	});
+
+	test("a degraded uplink yields to a proven healthy one even against priority", () => {
+		const d = driver({
+			...DEFAULT_SHARING_POLICY,
+			priorities: { wired: 0, cellular: 10, wifi: 10 },
+		});
+		expect(d.pick(0, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		// While streaming, a dead wired link can stay `degraded` from sender
+		// telemetry without being withdrawn.
+		const health = (now: number) => [
+			record("eth0", "degraded", 0, now + 15_000),
+			live("wwan0", now),
+		];
+		expect(d.pick(HOLD, ["eth0", "wwan0"], health(HOLD))).toEqual(["wwan0"]);
 	});
 
 	test("an equal-rank uplink never displaces a working active one", () => {
@@ -171,11 +261,12 @@ describe("single-active client uplink selection", () => {
 		const d = driver();
 		let now = 0;
 		const proven = ["eth0", "wwan0"];
-		const down = [record("eth0", "down", 0), record("wwan0")];
 		d.pick(now, proven);
 		for (const expected of [2, 4, 8, 10, 10]) {
 			now += 1_000;
-			expect(d.pick(now, ["wwan0"], down)).toEqual(["wwan0"]);
+			expect(
+				d.pick(now, ["wwan0"], [record("eth0", "down", 0), live("wwan0", now)]),
+			).toEqual(["wwan0"]);
 			const hold = d.selector.rejoinHoldMs("id-eth0");
 			expect(hold).toBe(Math.min(HOLD * expected, 300_000));
 			now += 1_000;
@@ -190,18 +281,21 @@ describe("single-active client uplink selection", () => {
 		expect(d.selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
 	});
 
-	test("an administrative exclusion switches immediately without a failure penalty", () => {
+	test("an exclusion or a withheld uplink switches immediately without a failure penalty", () => {
 		let policy: SharingPolicy = DEFAULT_SHARING_POLICY;
 		const selector = new ActiveUplinkSelector();
-		const pick = (now: number) =>
-			applyClientUplinkPolicy(["eth0", "wwan0"].map(uplink), selector, {
+		const pick = (now: number, ifnames = ["eth0", "wwan0"]) => {
+			const result = applyClientUplinkPolicy(ifnames.map(uplink), selector, {
 				now,
 				policy,
-				health: new Map(["eth0", "wwan0"].map((i) => [i, record(i)])),
-				present: new Set(["id-eth0", "id-wwan0"]),
-			})
+				health: new Map(["eth0", "wwan0"].map((i) => [i, live(i, now)])),
+				interfaces: new Set(["eth0", "wwan0"]),
+			});
+			selector.commit(result.next);
+			return result.candidates
 				.filter(({ uplink: u }) => u.selectable)
 				.map(({ uplink: u }) => u.ifname);
+		};
 		expect(pick(0)).toEqual(["eth0"]);
 		policy = { ...policy, administrativelyDown: ["eth0"] };
 		expect(pick(1)).toEqual(["wwan0"]);
@@ -211,30 +305,34 @@ describe("single-active client uplink selection", () => {
 		expect(pick(2)).toEqual(["wwan0"]);
 		expect(pick(2 + HOLD - 1)).toEqual(["wwan0"]);
 		expect(pick(2 + HOLD)).toEqual(["eth0"]);
+		// Held back (identity proof pending) while present and healthy.
+		expect(pick(HOLD * 3, ["wwan0"])).toEqual(["wwan0"]);
+		expect(selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
 	});
 
-	test("a degraded active uplink yields to a proven healthy one after the hold", () => {
-		const d = driver();
-		expect(d.pick(0, ["eth0", "eth1"])).toEqual(["eth0"]);
-		const health = [record("eth0", "degraded", 0), record("eth1")];
-		// eth1 has been proven since t=0, so the hold is already served.
-		expect(d.pick(HOLD, ["eth0", "eth1"], health)).toEqual(["eth1"]);
-	});
-
-	test("spread keeps the weighted distribution of the existing policy", () => {
+	test("spread keeps the weighted distribution and resets single-selection state", () => {
 		const policy: SharingPolicy = {
 			...DEFAULT_SHARING_POLICY,
 			selection: "spread",
 		};
 		const candidates = ["eth0", "wwan0", "wlan0"].map(uplink);
-		expect(
-			applyClientUplinkPolicy(candidates, new ActiveUplinkSelector(), {
-				now: 0,
-				policy,
-				health: new Map(),
-				present: new Set(),
-			}),
-		).toEqual(applySharingPolicy(candidates, policy));
+		const selector = new ActiveUplinkSelector();
+		selector.select(candidates, {
+			now: 0,
+			policy: DEFAULT_SHARING_POLICY,
+			health: new Map(),
+			interfaces: new Set(),
+		});
+		expect(selector.active()).toBe("id-eth0");
+		const spread = applyClientUplinkPolicy(candidates, selector, {
+			now: 0,
+			policy,
+			health: new Map(),
+			interfaces: new Set(),
+		});
+		expect(spread.candidates).toEqual(applySharingPolicy(candidates, policy));
+		selector.commit(spread.next);
+		expect(selector.active()).toBeUndefined();
 	});
 });
 
@@ -291,6 +389,10 @@ describe("single-active selection on the live state builder", () => {
 			["eth0", true, 100],
 			["wwan0", false, 0],
 		]);
+		// Reading plans only; the runtime commits after a verified apply.
+		expect(selector.active()).toBeUndefined();
+		commitSelectorPlan(first, selector);
+		expect(selector.active()).toBe("phys-eth0");
 		resetUplinkSteeringStatusForTest();
 		publishUplinkSteeringAvailability({ available: true }, first);
 		expect(getUplinkSteeringStatus()).toEqual({
@@ -304,6 +406,9 @@ describe("single-active selection on the live state builder", () => {
 		expect(
 			failed.uplinks.map((u) => [u.ifname, u.selectable, u.weight]),
 		).toEqual([["wwan0", true, 100]]);
+		commitSelectorPlan(failed, selector);
+		expect(selector.active()).toBe("phys-wwan0");
+		expect(selector.rejoinHoldMs("phys-eth0")).toBe(HOLD * 2);
 		publishUplinkSteeringAvailability({ available: true }, failed);
 		expect(getUplinkSteeringStatus()).toEqual({
 			state: "available",
@@ -327,5 +432,18 @@ describe("sharing policy schema", () => {
 				selection: "all",
 			}).success,
 		).toBe(false);
+	});
+
+	test("a setter without selection keeps the current one", async () => {
+		const owner = new SharingPolicyOwner();
+		const reconcile = async () => {};
+		await owner.set({ ...owner.get(), selection: "spread" }, reconcile);
+		const { selection: _omitted, ...legacy } = owner.get();
+		await owner.set(
+			{ ...legacy, priorities: { wired: 0, cellular: 10, wifi: 0 } },
+			reconcile,
+		);
+		expect(owner.get().selection).toBe("spread");
+		expect(owner.get().priorities.cellular).toBe(10);
 	});
 });
