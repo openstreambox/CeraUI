@@ -16,6 +16,7 @@ import {
 } from "./backend-singleton-proof.ts";
 import type { SingletonCensusIO } from "./backend-singleton-qualify.ts";
 import { logger } from "./logger.ts";
+import { CHILD_STOP_GRACE_MS, waitBounded } from "./shutdown-state.ts";
 import { superviseWorker } from "./spawn-policy.ts";
 
 export const BACKEND_SINGLETON_LOCK = "/run/lock/ceralive-backend.lock";
@@ -36,6 +37,11 @@ export type BackendSingletonLease = {
 };
 
 let processLease: BackendSingletonLease | undefined;
+// Set when the shutdown path asked for a release before any lease existed.
+let releaseRequested = false;
+// The enforcement still in flight (acquisition plus any late release), so a
+// release at shutdown can join it.
+let pendingAcquisition: Promise<unknown> | undefined;
 
 /** Fixed production paths; explicit arguments are only an injected I/O seam. */
 export async function acquireBackendSingleton(
@@ -137,9 +143,27 @@ export async function acquireBackendSingleton(
 export async function enforceBackendSingleton(
 	acquire: () => Promise<BackendSingletonLease> = acquireBackendSingleton,
 ): Promise<void> {
+	const run = enforceOnce(acquire);
+	pendingAcquisition = run;
+	try {
+		await run;
+	} finally {
+		if (pendingAcquisition === run) pendingAcquisition = undefined;
+	}
+}
+
+async function enforceOnce(
+	acquire: () => Promise<BackendSingletonLease>,
+): Promise<void> {
 	try {
 		const lease = await acquire();
 		processLease = lease;
+		// SIGTERM landed while the guardian was coming up and the shutdown path
+		// already reached its release step: release it now instead of leaving it.
+		if (releaseRequested) {
+			await releaseBackendSingleton();
+			return;
+		}
 		void lease.exited.then(() => {
 			if (processLease !== lease) return;
 			logger.error("Backend singleton lock lost; refusing to continue");
@@ -161,5 +185,49 @@ export async function enforceBackendSingleton(
 			{ error },
 		);
 		throw error;
+	}
+}
+
+/** Test seam: forget a release requested before any lease existed. */
+export function resetBackendSingletonReleaseForTest(): void {
+	releaseRequested = false;
+}
+
+/**
+ * Shutdown: release the singleton guardian explicitly instead of leaving its
+ * flock child for systemd to SIGKILL after the backend exits. Called last in
+ * the shutdown sequence, once teardown and guarded work are done, because the
+ * lock is what keeps a restarted backend from writing beside this one.
+ * Bounded: a guardian that does not exit in time is left to the unit.
+ */
+export async function releaseBackendSingleton(
+	graceMs: number = CHILD_STOP_GRACE_MS * 2,
+): Promise<void> {
+	if (!processLease) {
+		releaseRequested = true;
+		// Acquisition still running (boot-time SIGTERM): join it within the same
+		// bound. The joined promise includes the late release enforcement runs
+		// when it sees this request, so exit cannot overtake that release.
+		const acquiring = pendingAcquisition;
+		if (acquiring && !(await waitBounded(acquiring, graceMs)))
+			logger.warn("Backend singleton acquisition still running at shutdown");
+		return;
+	}
+	const lease = processLease;
+	// Detach first so the expected guardian exit is not read as a lost lock.
+	processLease = undefined;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timedOut = new Promise<"timeout">((resolve) => {
+		timer = setTimeout(() => resolve("timeout"), graceMs);
+	});
+	try {
+		const outcome = await Promise.race([
+			lease[Symbol.asyncDispose]().then(() => "released" as const),
+			timedOut,
+		]);
+		if (outcome === "timeout")
+			logger.warn("Backend singleton guardian did not exit after release");
+	} finally {
+		clearTimeout(timer);
 	}
 }

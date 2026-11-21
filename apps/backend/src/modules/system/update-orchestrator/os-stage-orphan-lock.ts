@@ -1,4 +1,8 @@
 import type { Subprocess } from "bun";
+import {
+	admitGuardedWork,
+	isShutdownStarted,
+} from "../../../helpers/shutdown-state.ts";
 import { superviseWorker } from "../../../helpers/spawn-policy.ts";
 import { SOFTWARE_UPDATE_LOCK } from "./lock.ts";
 import { OsStageError, type OsStageFailureReason } from "./os-stage-error.ts";
@@ -13,6 +17,24 @@ export type OsOrphanLock = {
 export async function acquireOsOrphanLock(
 	paths = { lock: SOFTWARE_UPDATE_LOCK, helper: OS_STAGE_GUARD_HELPER },
 	contended: OsStageFailureReason = "rauc_recovery_unproven",
+): Promise<OsOrphanLock> {
+	// Admitted before the guardian is spawned, so a SIGTERM during acquisition
+	// waits for it. Refused once shutdown began: the caller sees ordinary
+	// contention and retries on a later boot, never a new protected write.
+	const finished = admitGuardedWork();
+	if (!finished) throw new OsStageError(contended);
+	try {
+		return await acquireAdmitted(paths, contended, finished);
+	} catch (error) {
+		finished();
+		throw error;
+	}
+}
+
+async function acquireAdmitted(
+	paths: { lock: string; helper: string },
+	contended: OsStageFailureReason,
+	finished: () => void,
 ): Promise<OsOrphanLock> {
 	let child: Subprocess<"pipe", "pipe", "pipe"> | undefined;
 	const handle = superviseWorker(
@@ -65,15 +87,31 @@ export async function acquireOsOrphanLock(
 	}
 	const locked = child;
 	if (!locked) throw new OsStageError("rauc_recovery_unproven");
+	// Shutdown began while the guardian was coming up: release it before the
+	// lease is exposed, so no protected write starts after the signal.
+	if (isShutdownStarted()) {
+		locked.stdin.write("release\n");
+		await locked.stdin.end();
+		await new Response(locked.stderr).text();
+		await locked.exited;
+		throw new OsStageError(contended);
+	}
+	// The work done under this lock stays guarded until its owner disposes the
+	// lease, not until the helper exits: a helper that dies mid-scope must not
+	// let shutdown exit before the owner has observed the loss and settled.
 	return {
 		pid: String(locked.pid),
 		held: () => locked.exitCode === null && locked.signalCode === null,
 		async [Symbol.asyncDispose]() {
-			locked.stdin.write("release\n");
-			await locked.stdin.end();
-			await new Response(locked.stderr).text();
-			if ((await locked.exited) !== 0)
-				throw new OsStageError("rauc_recovery_unproven");
+			try {
+				locked.stdin.write("release\n");
+				await locked.stdin.end();
+				await new Response(locked.stderr).text();
+				if ((await locked.exited) !== 0)
+					throw new OsStageError("rauc_recovery_unproven");
+			} finally {
+				finished();
+			}
 		},
 	};
 }
