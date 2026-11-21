@@ -1895,6 +1895,8 @@
 	"notifications.installFailedDescription": "Unable to install the app. Please try again.",
 	"notifications.jetsonUndervoltage": "System undervoltage detected. You may experience system instability, including glitching, freezes and the modems disconnecting",
 	"notifications.linksRecovered": "Bonded links recovered.",
+	"notifications.modemHeldOut": "{name} is kept out of the stream because a setting change on it could not be undone. Your other links aren't affected.",
+	"notifications.modemHeldOutUnknown": "A modem that was unplugged or reconnected is kept out of the stream because a setting change on it could not be undone. Your other links aren't affected.",
 	"notifications.modemRoaming": "{name} is roaming. It's registered on a partner network, so data may be billed at roaming rates. Streaming is unaffected.",
 	"notifications.openUpdates": "Open updates",
 	"notifications.viewLogs": "View logs",

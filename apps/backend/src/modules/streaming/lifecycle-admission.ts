@@ -364,18 +364,63 @@ export function heldModemMutations(): readonly string[] {
  * the same operation that stops recording it, so the two cannot disagree.
  */
 export function setMutationBlocks(blocks: readonly MutationBlock[]): void {
+	const changed =
+		blocks.length !== mutationBlocks.size ||
+		blocks.some((block) => {
+			const old = mutationBlocks.get(block.stableKey);
+			return (
+				!old ||
+				old.refusal !== block.refusal ||
+				old.blocksStreaming !== block.blocksStreaming
+			);
+		});
 	mutationBlocks.clear();
 	for (const block of blocks) mutationBlocks.set(block.stableKey, block);
+	if (changed) for (const listener of mutationBlockListeners) listener();
+}
+
+const mutationBlockListeners = new Set<() => void>();
+
+/** Called after the block set changed; the bond re-derives its members. */
+export function onMutationBlocksChange(listener: () => void): () => void {
+	mutationBlockListeners.add(listener);
+	return () => mutationBlockListeners.delete(listener);
+}
+
+/** Whether this physical identity is blocked by the journal. */
+export function isModemKeyBlocked(stableKey: string): boolean {
+	return mutationBlocks.has(stableKey);
+}
+
+export function hasMutationBlocks(): boolean {
+	return mutationBlocks.size > 0;
 }
 
 export function getMutationBlocks(): readonly MutationBlock[] {
 	return [...mutationBlocks.values()];
 }
 
-/** The first block holding global stream autostart, if any. */
+/** The first block the journal says holds global stream autostart, if any. */
 export function streamingBlockingMutation(): MutationBlock | undefined {
 	for (const block of mutationBlocks.values()) {
 		if (block.blocksStreaming) return block;
+	}
+	return undefined;
+}
+
+/**
+ * The block that actually refuses a new stream, if any.
+ *
+ * A modem whose change failed or that went missing mid-change
+ * (`mutation_blocked`) is kept out of the bond by its stable key
+ * (`isBondCandidate`), so it can no longer reach a stream and does not hold the
+ * other links. A mutation still in flight (`mutation_in_progress`) keeps holding
+ * every start until it settles.
+ */
+export function globalStreamHold(): MutationBlock | undefined {
+	for (const block of mutationBlocks.values()) {
+		if (block.blocksStreaming && block.refusal !== "mutation_blocked")
+			return block;
 	}
 	return undefined;
 }
