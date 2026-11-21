@@ -37,7 +37,6 @@ export function newHotspotPasswordInput(
 	return {
 		device,
 		incarnation: iface.incarnation,
-		...(iface.radio_identity?.id ? { radio_id: iface.radio_identity.id } : {}),
 		name: hotspot.name,
 		password,
 		channel: hotspot.channel,
