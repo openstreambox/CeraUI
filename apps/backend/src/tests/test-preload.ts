@@ -18,7 +18,7 @@ afterEach(() => {
 	if (violations.length) throw new Error(violations.join("\n"));
 });
 
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,6 +50,10 @@ process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = join(
 	"carrier-intent",
 );
 process.env.CERALIVE_STREAMING_MARKER = join(runtimeRoot, "streaming");
+// The sender census never reads the host's process table in unit tests.
+const previousSenderCensusRoot = process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT;
+process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = join(runtimeRoot, "proc");
+mkdirSync(process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT);
 // Modem registration creates the mode-choice key on first use; never under /data.
 const previousModeChoiceDir = process.env.CERALIVE_MODE_CHOICE_DIR;
 process.env.CERALIVE_MODE_CHOICE_DIR = join(runtimeRoot, "mode-choice");
@@ -93,12 +97,23 @@ function isolateModemEnumeration(): void {
 isolateModemEnumeration();
 beforeEach(isolateModemEnumeration);
 
+// A session left unconfirmed by one test must not close another test's interlocks.
+const { publishStreamSessionUnconfirmed } = await import(
+	"../modules/streaming/stream-liveness.ts"
+);
+beforeEach(() => {
+	publishStreamSessionUnconfirmed(false);
+});
+
 afterAll(async () => {
 	await Bun.sleep(0);
 	await rm("stream.armed.json", { force: true });
 	if (previousStreamingMarker === undefined)
 		delete process.env.CERALIVE_STREAMING_MARKER;
 	else process.env.CERALIVE_STREAMING_MARKER = previousStreamingMarker;
+	if (previousSenderCensusRoot === undefined)
+		delete process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT;
+	else process.env.CERALIVE_SENDER_CENSUS_PROC_ROOT = previousSenderCensusRoot;
 	if (previousModeChoiceDir === undefined)
 		delete process.env.CERALIVE_MODE_CHOICE_DIR;
 	else process.env.CERALIVE_MODE_CHOICE_DIR = previousModeChoiceDir;
