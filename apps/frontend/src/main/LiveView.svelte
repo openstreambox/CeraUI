@@ -1,3 +1,18 @@
+<script module lang="ts">
+// What the last start-refusal toast said, for the Try again → Restart box step.
+// Plain data, not state: nothing renders from it.
+const failureMemory: { lastAttempt: string | undefined; engineStreak: number } = {
+	lastAttempt: undefined,
+	engineStreak: 0,
+};
+
+/** Tests only: forget the last refusal, as a fresh page load does. */
+export function resetStartFailureMemory(): void {
+	failureMemory.lastAttempt = undefined;
+	failureMemory.engineStreak = 0;
+}
+</script>
+
 <script lang="ts">
 import { m, resolveMessageKey } from '@ceraui/i18n/svelte';
 import { isAudioLiveSwitchEnabled } from '@ceraui/rpc';
@@ -15,7 +30,7 @@ import { Cpu, Loader2, Server } from '@lucide/svelte';
 import { toast } from 'svelte-sonner';
 import { LazyDialog, LazyDialogFallback, lazyDialog } from '$lib/components/dialogs';
 import { platformCapsForHardware } from '$lib/components/streaming/ValidationAdapter';
-import { viewLogsToast } from '$lib/device-logs/view-logs';
+import { VIEW_LOGS_TOAST_CLASS, viewLogs, viewLogsToast } from '$lib/device-logs/view-logs';
 import { getPipelineDisplayName } from '$lib/helpers/PipelineHelper';
 import { startStreaming, stopStreaming } from '$lib/helpers/SystemHelper';
 import { rpc } from '$lib/rpc';
@@ -101,7 +116,14 @@ import {
 	resolvedAudioLabel,
 } from '$lib/streaming/sourceSummary';
 import { pipelinesFromSources } from '$lib/streaming/sources-view-model';
-import { startFailureMessage, startFailureRetryKey } from '$lib/streaming/start-failure-copy';
+import {
+	isEngineStartFailure,
+	NEXT_STEP_ACTION,
+	type StartFailureNextStep,
+	startFailureMessage,
+	startFailureNextStep,
+	startFailureRetryKey,
+} from '$lib/streaming/start-failure-copy';
 import { buildStartConfig } from '$lib/streaming/startStreaming';
 import { showUnconfirmedStreamStop, startOptimismSuperseded } from '$lib/streaming/unconfirmed-stream';
 import {
@@ -318,12 +340,52 @@ function startFailedMessage(code: string): string {
 // Show error toast if start failed. Prefer the typed failure (class + retry
 // state); fall back to the legacy code-string reason. A terminal revert sets
 // both, so the typed branch wins and only one toast fires per failure.
+// A refusal with a decided next step carries it as the toast's button (Try
+// again, Restart box, Open stream setup, Open destination, Open Network) and
+// keeps View logs beside it for a helper; the rest keep View logs alone.
+// An engine-group failure that comes back right after one (no stream in
+// between) offers Restart box instead of another Try again. The streak lives
+// in the module script, so leaving Live and coming back does not forget it.
+let lastStartOverrides: { source?: string } = {};
+$effect(() => {
+	if (isStreaming) failureMemory.engineStreak = 0;
+});
+
+function runNextStep(step: StartFailureNextStep) {
+	if (step === 'tryAgain') void handleStart(lastStartOverrides);
+	else if (step === 'restartBox') powerOpen = true;
+	else if (step === 'openServer') serverDialogOpen = true;
+	else if (step === 'openNetwork') void handleManageLinks();
+	else handleOpenSetup();
+}
+
+function startFailureToast(failure: NonNullable<typeof streamingStartFailure>) {
+	const attempt = (failure as { attemptId?: string }).attemptId;
+	if (attempt === undefined || attempt !== failureMemory.lastAttempt) {
+		failureMemory.lastAttempt = attempt;
+		failureMemory.engineStreak = isEngineStartFailure(failure)
+			? failureMemory.engineStreak + 1
+			: 0;
+	}
+	const repeated = isEngineStartFailure(failure) && failureMemory.engineStreak > 1;
+	const step = startFailureNextStep(failure, repeated);
+	const message = startFailureMessage(failure, repeated);
+	if (step === undefined) {
+		toast.error(message, viewLogsToast(startFailureRetryKey(failure)));
+		return;
+	}
+	const at = Date.now();
+	toast.error(message, {
+		class: VIEW_LOGS_TOAST_CLASS,
+		duration: 12_000,
+		action: { label: m[NEXT_STEP_ACTION[step]](), onClick: () => runNextStep(step) },
+		cancel: { label: m["notifications.viewLogs"](), onClick: () => viewLogs(at) },
+	});
+}
+
 $effect(() => {
 	if (streamingStartFailure) {
-		toast.error(
-			startFailureMessage(streamingStartFailure),
-			viewLogsToast(startFailureRetryKey(streamingStartFailure)),
-		);
+		startFailureToast(streamingStartFailure);
 		return;
 	}
 	if (streamingStopReason) {
@@ -523,13 +585,27 @@ function handleOpenSource() {
 	list.focus();
 }
 
+// Start-refusal "Open stream setup": bring the setup card into view and put
+// focus on its first control, so the operator lands on the settings to check.
+function handleOpenSetup() {
+	if (typeof document === 'undefined') return;
+	const card = document.querySelector<HTMLElement>('[data-testid="stream-setup-chain"]');
+	if (!card) return;
+	card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	card.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true });
+}
+
 // ── Dialog open state ──────────────────────────────────────────────────────
+let powerOpen = $state(false);
 let serverDialogOpen = $state(false);
 let audioDialogOpen = $state(false);
 let encoderOpen = $state(false);
 
 // The three Live config dialogs are their own chunks, fetched on first open.
 const ServerDialog = lazyDialog(() => import('$main/dialogs/ServerDialog.svelte'));
+// Restart box from a repeated engine refusal: the same reboot sheet as Settings,
+// so the operator still confirms before anything restarts.
+const PowerDialog = lazyDialog(() => import('$main/dialogs/PowerDialog.svelte'));
 const AudioDialog = lazyDialog(() => import('$main/dialogs/AudioDialog.svelte'));
 const EncoderDialog = lazyDialog(() => import('$main/dialogs/EncoderDialog.svelte'));
 
@@ -954,6 +1030,8 @@ const summaryAudio = $derived.by(() => {
 // immediately on click, then reconciles to authoritative is_streaming.
 async function handleStart(overrides: { source?: string } = {}) {
 	if (streamingOptimismState !== 'idle') return;
+	// Try again from a refusal repeats this start, implicit sole camera included.
+	lastStartOverrides = overrides;
 
 	// Fold the implicit sole-camera source (T10) in, then reconcile source →
 	// pipeline off the sources snapshot so the FE recognition gate and the
@@ -1212,6 +1290,8 @@ const configRows = $derived<ConfigRow[]>([
 </div>
 
 <LazyDialog dialog={ServerDialog} bind:open={serverDialogOpen} onSaved={validateSavedDestination} />
+
+<LazyDialog dialog={PowerDialog} bind:open={powerOpen} />
 
 <!-- Audio configuration dialog (opened from the Audio "Edit" row). -->
 <LazyDialog
