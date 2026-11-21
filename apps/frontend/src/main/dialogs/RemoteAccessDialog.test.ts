@@ -32,17 +32,24 @@ import {
 	resetTailscaleFeed,
 } from "../../tests/helpers/tailscale-feed.svelte.js";
 import RemoteAccessDialog from "./RemoteAccessDialog.svelte";
+import { formatExpiryDate } from "./remote-access-expiry";
+
+const DAY = 24 * 60 * 60 * 1000;
 
 const tailscaleJoin = vi.hoisted(() => vi.fn());
 const tailscaleSetEnabled = vi.hoisted(() => vi.fn());
 const tailscaleLogout = vi.hoisted(() => vi.fn());
+const getStatus = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 
 const KEY = "tskey-auth-kTEST0000CNTRL-0123456789abcdef";
 
 vi.mock("$lib/rpc/client", async (importOriginal) => ({
 	...(await importOriginal<typeof import("$lib/rpc/client")>()),
-	rpc: { system: { tailscaleJoin, tailscaleSetEnabled, tailscaleLogout } },
+	rpc: {
+		system: { tailscaleJoin, tailscaleSetEnabled, tailscaleLogout },
+		status: { getStatus },
+	},
 }));
 
 vi.mock("$lib/rpc/subscriptions.svelte", async () => {
@@ -76,6 +83,8 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+	getStatus.mockReset();
+	getStatus.mockResolvedValue({});
 	for (const fn of [tailscaleJoin, tailscaleSetEnabled, tailscaleLogout]) {
 		fn.mockReset();
 		fn.mockResolvedValue({ success: true });
@@ -114,6 +123,141 @@ describe("states", () => {
 		expect(document.body.textContent).toContain("100.64.0.9");
 		expect(switchEl().getAttribute("aria-checked")).toBe("true");
 		expect(screen.queryByTestId("remote-access-join")).toBeNull();
+	});
+
+	it("connected names the network and says the login does not expire", async () => {
+		await open({
+			state: "connected",
+			hostname: "studio-box",
+			address: "100.64.0.9",
+			tailnet: "tail1234.ts.net",
+		});
+		expect(screen.getByTestId("remote-access-tailnet").textContent).toContain(
+			m["advanced.remoteAccess.network"]({ tailnet: "tail1234.ts.net" }),
+		);
+		const expiry = screen.getByTestId("remote-access-expiry");
+		expect(expiry.dataset.expiry).toBe("never");
+		expect(expiry.textContent).toContain(
+			m["advanced.remoteAccess.keyNoExpiry"](),
+		);
+	});
+
+	it("a login that lasts a while shows its date quietly", async () => {
+		const at = new Date(Date.now() + 90 * DAY);
+		await open({
+			state: "connected",
+			hostname: "studio-box",
+			keyExpiry: at.toISOString(),
+		});
+		const expiry = screen.getByTestId("remote-access-expiry");
+		expect(expiry.dataset.expiry).toBe("later");
+		expect(expiry.getAttribute("role")).toBeNull();
+		expect(expiry.textContent).toContain(
+			m["advanced.remoteAccess.keyExpires"]({
+				date: formatExpiryDate(at, "en"),
+			}),
+		);
+	});
+
+	it("a login that expires within 30 days warns and says how to keep it", async () => {
+		const at = new Date(Date.now() + 10 * DAY);
+		await open({
+			state: "connected",
+			hostname: "studio-box",
+			keyExpiry: at.toISOString(),
+		});
+		const expiry = screen.getByTestId("remote-access-expiry");
+		expect(expiry.dataset.expiry).toBe("soon");
+		expect(expiry.getAttribute("role")).toBe("status");
+		expect(expiry.textContent).toContain(
+			m["advanced.remoteAccess.keyExpiresSoon"]({
+				date: formatExpiryDate(at, "en"),
+			}),
+		);
+		expect(stateText()).toContain(m["advanced.remoteAccess.stateConnected"]());
+	});
+
+	it("an expired login reads Expired, names its network and offers the key field", async () => {
+		const at = new Date(Date.now() - 2 * DAY);
+		await open({
+			state: "needs_key",
+			tailnet: "tail1234.ts.net",
+			keyExpiry: at.toISOString(),
+		});
+		expect(stateText()).toContain(m["advanced.remoteAccess.stateExpired"]());
+		const expiry = screen.getByTestId("remote-access-expiry");
+		expect(expiry.dataset.expiry).toBe("expired");
+		expect(expiry.textContent).toContain(
+			m["advanced.remoteAccess.keyExpired"]({
+				date: formatExpiryDate(at, "en"),
+			}),
+		);
+		expect(expiry.textContent).toContain("tail1234.ts.net");
+		expect(screen.getByTestId("remote-access-join")).toBeTruthy();
+	});
+
+	it("a passed date on a connected card says it is checking, not that access lasts", async () => {
+		const at = new Date(Date.now() - 60_000);
+		await open({
+			state: "connected",
+			hostname: "studio-box",
+			keyExpiry: at.toISOString(),
+		});
+		const expiry = screen.getByTestId("remote-access-expiry");
+		expect(expiry.dataset.expiry).toBe("due");
+		expect(expiry.textContent).toContain(
+			m["advanced.remoteAccess.keyDue"]({ date: formatExpiryDate(at, "en") }),
+		);
+		expect(expiry.textContent).not.toContain(
+			m["advanced.remoteAccess.keyExpiresSoon"]({
+				date: formatExpiryDate(at, "en"),
+			}),
+		);
+	});
+
+	it("an open card asks the device again every minute and shows what it reports", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+		try {
+			const start = Date.now();
+			const at = new Date(start + 90_000);
+			await open({
+				state: "connected",
+				hostname: "studio-box",
+				keyExpiry: at.toISOString(),
+			});
+			await vi.waitFor(() => expect(getStatus).toHaveBeenCalledTimes(1));
+			expect(screen.getByTestId("remote-access-expiry").dataset.expiry).toBe(
+				"soon",
+			);
+			// the login expires; tailscaled now asks for a new one
+			vi.advanceTimersByTime(60_000);
+			await vi.waitFor(() => expect(getStatus).toHaveBeenCalledTimes(2));
+			vi.advanceTimersByTime(60_000);
+			await vi.waitFor(() => expect(getStatus).toHaveBeenCalledTimes(3));
+			expect(screen.getByTestId("remote-access-expiry").dataset.expiry).toBe(
+				"due",
+			);
+			publishTailscale({
+				state: "needs_key",
+				tailnet: "tail1234.ts.net",
+				keyExpiry: at.toISOString(),
+			});
+			await vi.waitFor(() =>
+				expect(stateText()).toContain(
+					m["advanced.remoteAccess.stateExpired"](),
+				),
+			);
+			expect(screen.getByTestId("remote-access-join")).toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("a device without a login shows no expiry or network", async () => {
+		await open({ state: "needs_key" });
+		expect(stateText()).toContain(m["advanced.remoteAccess.stateNeedsKey"]());
+		expect(screen.queryByTestId("remote-access-expiry")).toBeNull();
+		expect(screen.queryByTestId("remote-access-tailnet")).toBeNull();
 	});
 
 	it("off says so, and the switch is off", async () => {
