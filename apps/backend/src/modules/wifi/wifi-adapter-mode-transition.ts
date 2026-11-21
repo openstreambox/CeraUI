@@ -73,7 +73,11 @@ import { captureWifiFrameIncarnation } from "./wifi-frame-binding.ts";
 import { withWifiFrameIncarnation } from "./wifi-frame-incarnation.ts";
 import type { HotspotStopResult } from "./wifi-hotspot-config.ts";
 import type { HotspotOutcomePublisher } from "./wifi-hotspot-outcome.ts";
-import { HOTSPOT_READINESS_GRACE_S } from "./wifi-hotspot-readiness.ts";
+import {
+	HOTSPOT_READINESS_GRACE_S,
+	type HotspotOperationTicket,
+	hotspotOperationCurrent,
+} from "./wifi-hotspot-readiness.ts";
 import type { HotspotStartResult } from "./wifi-hotspot-types.ts";
 import { canHotspot, HOTSPOT_UP_TO } from "./wifi-hotspot-types.ts";
 import type { HybridRestoreAttempt } from "./wifi-hybrid-target-diagnostics.ts";
@@ -128,6 +132,10 @@ export interface AdapterModeTransitionDeps {
  * Forward the hotspot's own terminal outcome AND settle the mode change with it,
  * at most once. The hotspot frame is still published by exactly the branch that
  * always published it; this only adds the mode's terminal beside it.
+ *
+ * The backstop timeout belongs to the Start this chain dispatched: once that
+ * Start is superseded (a newer Start, Stop or reconfigure took a ticket on the
+ * row) the Start publishes nothing and neither does this timeout.
  */
 function chainModeTerminal(
 	device: number,
@@ -135,16 +143,22 @@ function chainModeTerminal(
 	deps: AdapterModeTransitionDeps,
 ): HotspotOutcomePublisher {
 	let settled = false;
+	let ticket: HotspotOperationTicket | undefined;
 	// The hotspot's own terminal waits for its client zone after NM confirms.
 	const cancelTimeout = deps.armTerminalTimeout?.(
 		() => {
 			if (settled) return;
 			settled = true;
+			if (ticket && !hotspotOperationCurrent(ticket)) return;
 			deps.publishOutcome(device, { success: false, error: "not-confirmed" });
 		},
 		(HOTSPOT_UP_TO + HOTSPOT_READINESS_GRACE_S) * 1000,
 	);
-	return (kind, hotspotDevice, outcome) => {
+	const publish = (
+		kind: Parameters<HotspotOutcomePublisher>[0],
+		hotspotDevice: Parameters<HotspotOutcomePublisher>[1],
+		outcome: Parameters<HotspotOutcomePublisher>[2],
+	): void => {
 		deps.publishHotspotOutcome(kind, hotspotDevice, outcome);
 		if (settled) return;
 		settled = true;
@@ -162,6 +176,11 @@ function chainModeTerminal(
 					},
 		);
 	};
+	return Object.assign(publish, {
+		startTicket: (next: HotspotOperationTicket) => {
+			ticket = next;
+		},
+	});
 }
 
 function refuse(
