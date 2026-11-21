@@ -30,6 +30,7 @@ import type {
 	SharingDiag,
 	SourcesMessage,
 	StatusResponse,
+	StreamReadiness,
 	UpdateOrchestratorWireState,
 	UpdateState,
 	UplinkShaperStatus,
@@ -178,6 +179,8 @@ export function supportsEthernetRoleOp(name: string): boolean {
 	return ethernetRoleOpPorts.includes(name);
 }
 let uplinksState = $state.raw<UplinksMessage | undefined>(undefined);
+// The device's own "ready to go live" answer; replaced wholesale on each push.
+let streamReadinessState = $state.raw<StreamReadiness | undefined>(undefined);
 // The read-only sharing-coexistence verdict. REPLACED wholesale, never merged:
 // every check is an EXPLICIT tri-state, so a field-preserving merge would
 // re-create the raise-but-never-lower latch those explicit values exist to
@@ -355,6 +358,10 @@ export function getNetif() {
 
 export function getUplinks(): UplinksMessage | undefined {
 	return uplinksState;
+}
+
+export function getStreamReadiness(): StreamReadiness | undefined {
+	return streamReadinessState;
 }
 
 export function getSharingDiag(): SharingDiag | undefined {
@@ -821,6 +828,10 @@ function handleMessage(
 
 		case "uplinks":
 			uplinksState = data as UplinksMessage;
+			break;
+
+		case "stream_readiness":
+			streamReadinessState = data as StreamReadiness;
 			break;
 
 		case "sharing_diag":
@@ -1344,6 +1355,7 @@ export function resetState(): void {
 	netifState = undefined;
 	ethernetRoleOpPorts = [];
 	uplinksState = undefined;
+	streamReadinessState = undefined;
 	sharingDiagState = undefined;
 	uplinkSteeringState = undefined;
 	uplinkShaperState = undefined;
