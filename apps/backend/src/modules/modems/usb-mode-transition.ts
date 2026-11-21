@@ -66,6 +66,7 @@ import type {
 
 import { logger } from "../../helpers/logger.ts";
 import { getConfig } from "../config.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 
 import { withJournaledModemMutation } from "./mutation-lease.ts";
@@ -93,7 +94,8 @@ export const defaultUsbModeDispatchDeps: UsbModeDispatchDeps = {
 	// use, so the reason an offer is withheld and the reason a dispatch is
 	// refused can never disagree about the state of one device.
 	isProvisioningEnabled: () => getConfig().modem_provisioning === true,
-	isBlockedByLiveState: () => getIsStreaming(),
+	// An unconfirmed session may still be live, so it blocks like a live one.
+	isBlockedByLiveState: () => getIsStreaming() || isStreamSessionUnconfirmed(),
 	resolveConnectionId: defaultResolveConnectionId,
 	// The physical-topology UID is what MM keys a Device inhibit on and is the one
 	// identifier available without a mutation-capable D-Bus client.
