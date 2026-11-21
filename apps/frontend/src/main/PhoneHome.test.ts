@@ -163,3 +163,127 @@ it("keeps unknown link probes calm while carrying", () => {
 	expect(screen.queryByText("Checking internet")).toBeNull();
 	expect(screen.getByText("Link details aren't available yet")).toBeTruthy();
 });
+
+describe("Moblin credential", () => {
+	it("submits once and removes the secret from the form even after failure", async () => {
+		const oncredential = vi.fn(async () => ({ success: false }));
+		render(PhoneHome, {
+			carrying: "idle",
+			moblink: { available: true, configured: false },
+			oncredential,
+		});
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Connect your phone" }),
+		);
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Moblin", exact: true }),
+		);
+		const field = screen.getByLabelText(
+			"Moblin's password (from Moblin, not the Wi-Fi password)",
+		);
+		expect(field).toHaveProperty("disabled", false);
+		await fireEvent.input(field, { target: { value: "form-secret" } });
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Save Moblin password" }),
+		);
+		await waitFor(() =>
+			expect(oncredential).toHaveBeenCalledWith("form-secret"),
+		);
+		expect(field).toHaveProperty("value", "");
+		expect(document.body.textContent).not.toContain("form-secret");
+	});
+	it.each(["streaming", "unknown"] as const)(
+		"protects %s from credential replacement",
+		async (carrying) => {
+			const { rerender } = render(PhoneHome, {
+				carrying: "idle",
+				moblink: { available: true, configured: true },
+			});
+			await fireEvent.click(
+				screen.getByRole("button", { name: "Connect your phone" }),
+			);
+			await fireEvent.click(
+				screen.getByRole("button", { name: "Moblin", exact: true }),
+			);
+			await rerender({
+				carrying,
+				moblink: { available: true, configured: true },
+			});
+			expect(
+				screen.getByLabelText(
+					"Moblin's password (from Moblin, not the Wi-Fi password)",
+				),
+			).toHaveProperty("disabled", true);
+		},
+	);
+});
+
+it.each([false, true])(
+	"allows clearing with unavailable relay and configured=%s",
+	async (configured) => {
+		const onclearcredential = vi.fn(async () => ({ success: true }));
+		render(PhoneHome, {
+			carrying: "idle",
+			moblink: { available: false, configured },
+			onclearcredential,
+		});
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Connect your phone" }),
+		);
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Moblin", exact: true }),
+		);
+		const field = screen.getByLabelText(
+			"Moblin's password (from Moblin, not the Wi-Fi password)",
+		);
+		expect(field.getAttribute("autocomplete")).toBe("off");
+		expect(field.hasAttribute("data-1p-ignore")).toBe(true);
+		expect(field.getAttribute("data-lpignore")).toBe("true");
+		expect(field.hasAttribute("data-bwignore")).toBe(true);
+		expect(field.getAttribute("data-form-type")).toBe("other");
+		const clear = screen.getByRole("button", { name: "Clear Moblin password" });
+		expect(clear).toHaveProperty("disabled", false);
+		await fireEvent.click(clear);
+		await waitFor(() => expect(onclearcredential).toHaveBeenCalledOnce());
+	},
+);
+
+it.each([false, true])(
+	"Moblin choice reflects relay availability=%s",
+	async (available) => {
+		render(PhoneHome, {
+			carrying: "idle",
+			moblink: { available, configured: false },
+		});
+		await fireEvent.click(
+			screen.getByRole("button", { name: "Connect your phone" }),
+		);
+		const choice = screen.getByRole("button", { name: "Moblin", exact: true });
+		expect(choice.textContent).toContain(
+			available ? "Use your Moblin relay password." : "Not on this box yet",
+		);
+	},
+);
+
+it("clearing absent credentials reports the resulting state without claiming a stream stopped", async () => {
+	const onclearcredential = vi.fn(async () => ({ success: true }));
+	render(PhoneHome, {
+		carrying: "idle",
+		moblink: { available: false, configured: false },
+		onclearcredential,
+	});
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Connect your phone" }),
+	);
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Moblin", exact: true }),
+	);
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Clear Moblin password" }),
+	);
+	await waitFor(() => expect(onclearcredential).toHaveBeenCalledOnce());
+	expect(
+		screen.getByText("No Moblin password is saved on this box."),
+	).toBeTruthy();
+	expect(screen.queryByText(/has stopped lending/)).toBeNull();
+});
