@@ -1753,3 +1753,44 @@ Not proven, and not claimed:
   That CLI exists in source packaging but has not shipped in a released `.deb` or
   image, and its root/systemd/APT board proof remains outstanding. Never delete
   `agent.json` to clear a failure.
+
+### Image-owned update identity and channel address
+
+The release record's `BOARD`, `FAMILY` and `CAPABILITIES` remain the board
+capability authority. Updates additionally require `os-updates`, `UPDATE_BOARD`
+(the channel slug), `UPDATE_COMPATIBLE` (the exact RAUC compatible) and
+`KERNEL_ARCH` (`arm64` or `amd64`). The compatible must match RAUC configuration.
+An incomplete or unsupported record yields “Updates aren't offered on this board
+yet.” Missing legacy identity retains the two existing compatible mappings.
+Kernel discovery selects `linux-image-X.Y.Z-ceralive-<FAMILY>` and the recorded
+architecture, retaining RK3588/arm64 defaults only for legacy images.
+
+The authenticated update settings accept optional `channelUrl`; omission uses
+`https://images.ceralive.tv`. The dialog exposes the address beside stable/beta.
+HTTPS is required; credentials, queries and fragments are refused. Manifest
+pointers and kernel sidecars use this base; signed artifact addresses must remain
+under its `/releases/` path. Changing the base never changes signature keys,
+signer admission, board matching, anti-replay or downgrade protection. The APT
+package repository remains separately configured. Family boot/recovery adapters
+and qualification are independent; these settings grant no recovery permission.
+
+En español: la dirección del canal se puede guardar en Actualizaciones. Se
+requiere HTTPS y se conservan todas las verificaciones de firma y placa. Si la
+imagen no declara compatibilidad, se indica que todavía no se ofrecen
+actualizaciones para esa placa.
+
+
+Explicit update admission also checks the release record independently of the
+hardware/mock capability selector. An empty grant or malformed identity,
+including whitespace around identity assignments, denies package checks and
+installation, scheduled update ticks, kernel installation, OS staging and
+activation before submission. A denied capability never chooses the legacy
+unguarded transport path. Recordless legacy images keep their compatibility
+behavior. This admission supplements the shared board-capability and
+authentication gates.
+
+The raw image-record admission fence shares the capability parser's fail-closed
+verdict, including malformed branding-only and lowercase records. It remains
+independent of development mode and device-type overrides: those modes cannot
+turn an explicit image update denial into update effects. Production capability
+fences also remain in place at submission, discovery, startup and staging.
