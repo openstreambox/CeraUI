@@ -31,6 +31,7 @@ import * as devices from "../modules/wifi/wifi-device-list.ts";
 import {
 	type BaseWifiInterface,
 	resetWifiInterfaceDiscoveryForTest,
+	terminateWifiDiscovery,
 	wifiUpdateDevices,
 } from "../modules/wifi/wifi-interfaces.ts";
 import { setPermanentMacReaderForTest } from "../modules/wifi/wifi-permanent-mac.ts";
@@ -293,6 +294,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 			const before = wifiRadioIdentity.state;
 			handleTerminationSignal(signal, {
 				terminateWifiObservation: () => wifiRadioObservation.terminate(),
+				terminateWifiDiscovery,
 				stopSrtIngest: () => cleanup.promise,
 				stopDmesgWatchers: () => undefined,
 				gracefulShutdown: async () => undefined,
