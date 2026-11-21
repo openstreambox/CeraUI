@@ -52,6 +52,47 @@ jobs:
       - run: bun run test
       - run: bun run test:release-package-contracts
 
+  # Browser cases that must run, never skip: the preview's real WebCodecs H.264
+  # decode and the bond-toggle reconnect harness against the mock backend. The
+  # upstream E2E lanes run only for pull requests to main, so this is where the
+  # fork's integration branches exercise them. CI is unset so Playwright starts
+  # its own dev server and reference backend (the local shape).
+  browser-focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+      - run: bun install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: |
+          bun run --filter frontend test:e2e:install-deps
+          bun run --filter frontend test:e2e:install-browser
+      - run: bun run --filter @ceraui/i18n generate:i18n
+      - name: Focused browser cases
+        run: |
+          set -euo pipefail
+          mkdir -p apps/frontend/test-results
+          env -u CI E2E_PASSWORD=12345678 \
+            PLAYWRIGHT_JSON_OUTPUT_FILE="$PWD/apps/frontend/test-results/focused.json" \
+            bun run --filter frontend test:e2e -- --project=desktop --retries=0 --forbid-only \
+            --grep-invert "@visual|@a11y|@gallery|@premigration-upgrade" --reporter=line,json \
+            tests/e2e/preview.spec.ts tests/e2e/bond-toggle-reconnect.spec.ts
+          # A skip here would hide exactly what this job exists to run.
+          jq -e '.stats.expected > 0 and .stats.skipped == 0 and .stats.unexpected == 0 and .stats.flaky == 0' \
+            apps/frontend/test-results/focused.json
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-focused-results
+          path: apps/frontend/test-results/
+          if-no-files-found: ignore
+
   artifacts:
     needs: check
     runs-on: ubuntu-latest
