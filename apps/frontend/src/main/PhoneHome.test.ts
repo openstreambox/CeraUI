@@ -9,21 +9,21 @@ describe("phone Home", () => {
 		render(PhoneHome, { carrying: state });
 		expect(
 			screen.getByRole("heading", {
-				name: "Checking whether your phone uses the box",
+				name: "Checking whether a device is sending through the box",
 			}),
 		).toBeTruthy();
 	});
 	it("renders the carrying card without encoder controls", () => {
 		render(PhoneHome, { carrying: "streaming" });
 		expect(
-			screen.getByRole("heading", { name: "Carrying your phone's stream" }),
+			screen.getByRole("heading", { name: "Carrying your stream" }),
 		).toBeTruthy();
 		expect(screen.queryByText(/engine offline|not live|idle/i)).toBeNull();
 	});
 	it("keeps the selected app and offers Change app", async () => {
 		render(PhoneHome, { carrying: "idle" });
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Connect your phone" }),
+			screen.getByRole("button", { name: "Connect a device" }),
 		);
 		await fireEvent.click(screen.getByRole("button", { name: "IRL Pro" }));
 		expect(screen.getByRole("button", { name: "Change app" })).toBeTruthy();
@@ -55,7 +55,7 @@ describe("phone Home", () => {
 		});
 		expect(
 			screen.getByRole("heading", {
-				name: "Checking whether your phone uses the box",
+				name: "Checking whether a device is sending through the box",
 			}),
 		).toBeTruthy();
 		expect(remotePhoneState("streaming", false)).toContain(
@@ -66,7 +66,7 @@ describe("phone Home", () => {
 		const onsave = vi.fn(async () => {});
 		const { rerender } = render(PhoneHome, { carrying: "idle", onsave });
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Connect your phone" }),
+			screen.getByRole("button", { name: "Connect a device" }),
 		);
 		await fireEvent.click(screen.getByRole("button", { name: "IRL Pro" }));
 		expect(onsave).not.toHaveBeenCalled();
@@ -78,7 +78,7 @@ describe("phone Home", () => {
 it("renders Moblin's password label as text", async () => {
 	render(PhoneHome, { carrying: "idle" });
 	await fireEvent.click(
-		screen.getByRole("button", { name: "Connect your phone" }),
+		screen.getByRole("button", { name: "Connect a device" }),
 	);
 	await fireEvent.click(
 		screen.getByRole("button", { name: "Moblin", exact: true }),
@@ -92,7 +92,7 @@ it("renders Moblin's password label as text", async () => {
 it("offers Just internet at both SRT dead ends with the SRT hint", async () => {
 	render(PhoneHome, { carrying: "idle" });
 	await fireEvent.click(
-		screen.getByRole("button", { name: "Connect your phone" }),
+		screen.getByRole("button", { name: "Connect a device" }),
 	);
 	await fireEvent.click(
 		screen.getByRole("button", { name: "IRL Pro", exact: true }),
@@ -102,7 +102,7 @@ it("offers Just internet at both SRT dead ends with the SRT hint", async () => {
 	).toHaveLength(2);
 	expect(
 		screen.getByText(
-			"This box isn't set up to take SRT from a phone yet. Use Just internet for now.",
+			"This box isn't set up to take SRT from an app yet. Use Just internet for now.",
 		),
 	).toBeTruthy();
 	expect(
@@ -118,14 +118,14 @@ it("does not claim to be checking internet while carrying", () => {
 	});
 	expect(screen.queryByText("Checking internet")).toBeNull();
 	expect(screen.getByText("51 °C · Fine")).toBeTruthy();
-	expect(screen.getByText("1 phone on the box's Wi-Fi")).toBeTruthy();
+	expect(screen.getByText("1 device on the box's Wi-Fi")).toBeTruthy();
 	expect(screen.getByText("Not set up")).toBeTruthy();
 });
 it("explains the startup restart hold", () => {
 	render(PhoneHome, { carrying: "unknown" });
 	expect(
 		screen.getByText(
-			"You can restart once the box knows whether your phone uses it.",
+			"You can restart once the box knows whether a device is sending through it.",
 		),
 	).toBeTruthy();
 });
@@ -141,7 +141,7 @@ it.each(["streaming", "idle", "unknown"] as const)(
 		expect(
 			screen.getByText(
 				carrying === "streaming"
-					? /didn't start. Your phone's stream is going over Wi-Fi/
+					? /didn't start. Your stream is going over Wi-Fi/
 					: /didn't start. Links that work: Wi-Fi/,
 			),
 		).toBeTruthy();
@@ -173,7 +173,7 @@ describe("Moblin credential", () => {
 			oncredential,
 		});
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Connect your phone" }),
+			screen.getByRole("button", { name: "Connect a device" }),
 		);
 		await fireEvent.click(
 			screen.getByRole("button", { name: "Moblin", exact: true }),
@@ -200,7 +200,7 @@ describe("Moblin credential", () => {
 				moblink: { available: true, configured: true },
 			});
 			await fireEvent.click(
-				screen.getByRole("button", { name: "Connect your phone" }),
+				screen.getByRole("button", { name: "Connect a device" }),
 			);
 			await fireEvent.click(
 				screen.getByRole("button", { name: "Moblin", exact: true }),
@@ -228,7 +228,7 @@ it.each([false, true])(
 			onclearcredential,
 		});
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Connect your phone" }),
+			screen.getByRole("button", { name: "Connect a device" }),
 		);
 		await fireEvent.click(
 			screen.getByRole("button", { name: "Moblin", exact: true }),
@@ -256,7 +256,7 @@ it.each([false, true])(
 			moblink: { available, configured: false },
 		});
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Connect your phone" }),
+			screen.getByRole("button", { name: "Connect a device" }),
 		);
 		const choice = screen.getByRole("button", { name: "Moblin", exact: true });
 		expect(choice.textContent).toContain(
@@ -273,7 +273,7 @@ it("clearing absent credentials reports the resulting state without claiming a s
 		onclearcredential,
 	});
 	await fireEvent.click(
-		screen.getByRole("button", { name: "Connect your phone" }),
+		screen.getByRole("button", { name: "Connect a device" }),
 	);
 	await fireEvent.click(
 		screen.getByRole("button", { name: "Moblin", exact: true }),
@@ -296,7 +296,7 @@ it("keeps the Wi-Fi code behind Show code and offers New Wi-Fi password", async 
 		wifiRenew: { phase: "idle", streaming: false, onrenew },
 	});
 	await fireEvent.click(
-		screen.getByRole("button", { name: "Connect your phone" }),
+		screen.getByRole("button", { name: "Connect a device" }),
 	);
 	await fireEvent.click(screen.getByRole("button", { name: "IRL Pro" }));
 	const show = screen.getByRole("button", { name: "Show code" });
@@ -344,7 +344,7 @@ it("shows a join only for the hotspot its card describes", async () => {
 		wifiRenew: { phase: "idle", streaming: false, onrenew },
 	});
 	await fireEvent.click(
-		screen.getByRole("button", { name: "Connect your phone" }),
+		screen.getByRole("button", { name: "Connect a device" }),
 	);
 	await fireEvent.click(screen.getByRole("button", { name: "IRL Pro" }));
 	noteHotspotRoster(snapshot(["aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"]));

@@ -1,7 +1,7 @@
 <!--
   WifiCode.svelte — the box's Wi-Fi code, hidden until someone asks for it.
 
-  Shared by the Connect your phone panel and the hotspot dialog, so both follow
+  Shared by the Connect a device panel and the hotspot dialog, so both follow
   one rule: no secret is on screen by itself.
 
   • The QR sits behind **Show code** (`aria-expanded`, `aria-controls`). Its

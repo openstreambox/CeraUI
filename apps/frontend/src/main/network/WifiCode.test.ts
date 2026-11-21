@@ -391,7 +391,7 @@ describe("WifiCode — New Wi-Fi password", () => {
 		);
 		expect(
 			screen.getByText(
-				"If your phone is streaming through the box, that stream drops",
+				"If a device is streaming through the box, that stream drops",
 			),
 		).toBeTruthy();
 		// Never as if the stream were already off.

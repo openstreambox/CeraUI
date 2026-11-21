@@ -76,7 +76,7 @@ export function canRenewHotspotPassword(
 
 /**
  * Whether a stream may be going through the box's Wi-Fi right now: the box's own
- * encoder is streaming, or a link box is carrying a phone's stream or cannot say
+ * encoder is streaming, or a link box is carrying a client's stream or cannot say
  * yet. The confirmation then adds the cost line for that stream.
  */
 export function mayCarryStream(status: StatusResponse | undefined): boolean {
@@ -104,7 +104,7 @@ export type RenewHotspotPasswordOptions = {
 };
 
 /**
- * Renew from a surface without its own form (the Connect your phone panel).
+ * Renew from a surface without its own form (the Connect a device panel).
  * Resolves to the password once the device's terminal frame accepted it (or
  * the wait ended with the request still accepted), or `undefined` when nothing
  * was sent, the dispatch was refused, or the terminal refused it.
