@@ -123,6 +123,7 @@ import {
 } from "../../modules/modems/ussd.ts";
 import { withModemUpdateLock } from "../../modules/network/state/device-lock.ts";
 import { isRecoveryPending } from "../../modules/streaming/recovery-barrier.ts";
+import { isStreamSessionUnconfirmed } from "../../modules/streaming/stream-liveness.ts";
 import { getIsStreaming } from "../../modules/streaming/streaming.ts";
 import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import { authMiddleware } from "../middleware/auth.middleware.ts";
@@ -504,7 +505,7 @@ export const setFccUnlockProcedure = modemProcedure
 		if (!(await hasCapability("modem-control"))) {
 			return { success: false, error: "unavailable_in_emulated_mode" } as const;
 		}
-		if (getIsStreaming()) {
+		if (getIsStreaming() || isStreamSessionUnconfirmed()) {
 			return { success: false, refusal: "streaming_active" } as const;
 		}
 		try {
@@ -557,7 +558,7 @@ export const setUsbModeProcedure = modemProcedure
 			return { success: false, error: "unavailable_in_emulated_mode" };
 		}
 
-		if (getIsStreaming()) {
+		if (getIsStreaming() || isStreamSessionUnconfirmed()) {
 			return { success: false, error: "streaming_active" };
 		}
 
