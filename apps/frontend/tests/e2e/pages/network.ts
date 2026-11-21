@@ -111,8 +111,8 @@ export class NetworkPage {
 		await trigger.click();
 		const dialog = this.page.getByRole('dialog', { name: 'Available Networks' });
 		await expect(dialog).toBeVisible();
-		// Web-first wait for scan results: a network row (SSID paragraph) appears.
-		await expect(dialog.locator('p[title]').first()).toBeVisible({ timeout: 15_000 });
+		// Web-first wait for scan results: a network row appears.
+		await expect(dialog.getByTestId('wifi-network-row').first()).toBeVisible({ timeout: 15_000 });
 	}
 
 	async closeWifiSelector(): Promise<void> {
