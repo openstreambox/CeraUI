@@ -385,11 +385,11 @@ can be reduced without deleting operator copy or a language.
 id: TD-federation-i18n-catalog-size
 title: Federation toast-host shared chunk carries an oversized static Paraglide catalog
 track: 1
-status: open
+status: resolved
 exit_criteria: `bun run build:federation && bun scripts/ci/bundle-report.mjs --federation-only`
 owner: ceraui-team
 registered_at: 2026-08-15
-resolved_at: null
+resolved_at: 2026-11-21
 unblock: The federation toast-host.js shared chunk measured 613,463 B gzip on 2026-08-15, versus the prior 245,936 B budget, because a hosted federation bundle is one signed manifest-pinned module graph and must carry the Paraglide catalog statically rather than lazy-loading the SPA's locale chunks. Locale-modules compilation and full minification are already in use. Revisit this debt in a dedicated architecture effort by evaluating dynamic federation chunks with manifest/signing/CSP support or a smaller federation-specific catalog surface; keep this entry open until the static catalog footprint and live budget can be reduced.
 ```
 
@@ -415,6 +415,21 @@ references a key outside them. Toast-host now measures 628,355 B gzip
 (2,646,629 B raw, down from 2,940,628 B). The baseline, allowance and ceiling are
 unchanged. The debt stays open, because the scoped catalog is still static and is
 still most of the chunk.
+
+**2026-11-21 — resolved: the federation catalog carries only the keys it can
+render.** On `4b042965` toast-host measured 719,011 B gzip, 30,468 B over the
+688,543 B ceiling, and still carried every key of the 14 namespaces (2,696).
+The dialogs name 389 of them. `apps/frontend/vite.federation-catalog.ts` now
+narrows each namespace barrel to `apps/frontend/src/lib/federation/catalog-keys.json`:
+the keys the rendered federation code names plus the producer's wire vocabulary
+in those namespaces (415 keys). The build fails on a missing or stale entry, and
+the built harness checks the signed JS carries exactly the list. Toast-host now
+measures 245,952 B gzip (917,214 B raw, from 3,037,755 B). Its baseline moves to
+that measurement with the unchanged 8,192 B allowance, the displaced baselines
+stay in the report, and Build Check runs the federation build and budget on
+every PR. The catalog is still static, but it is now the dialogs' own copy, not
+the SPA's; see the
+[dependency baseline](agents/dep-baseline-as-of-2026-11.md#november-21-2026-key-scoped-federation-catalog).
 
 ```debt
 id: TD-pip

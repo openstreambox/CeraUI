@@ -154,9 +154,10 @@ The November 9 held-package retry corrects product accessibility gaps:
 
 ### Known issues carried by this baseline
 
-- **The federation catalog remains oversized.** The prior budget breaches are
-  now explicitly rebaselined and enforced before publication, as detailed below.
-  `TD-federation-i18n-catalog-size` in `docs/TECHNICAL_DEBT.md` remains open.
+- **The federation catalog is scoped to the keys the bundles render.** Since
+  November 21, 2026 toast-host carries 415 keys instead of 2,696 and its budget
+  is enforced on every PR, as detailed below. `TD-federation-i18n-catalog-size`
+  in `docs/TECHNICAL_DEBT.md` is resolved.
 - **The dependency-refresh visual comparison remains historical.**
   Functional E2E still excludes `@visual`; the later
   [container visual PR subset](../VISUAL-CI.md) supplies scoped hosted coverage,
@@ -223,6 +224,40 @@ existing SPA budget gate. The publication mode requires the complete build graph
 entries and CSS, and rejects missing output, partial output, unbaselined assets and
 gzip breaches. Workflow-shape and isolated CLI tests run in Build Check's existing
 guardrail command; the original federation budget/hash tests remain intact.
+
+#### November 21, 2026: key-scoped federation catalog
+
+The publish-only gate let the catalog grow past its ceiling without any PR
+noticing: on `4b042965` toast-host measured **719,011 B** gzip, 30,468 B over
+**688,543 B**. The bundle carried every key of the 14 registered namespaces
+(2,696 keys, ten locales each), although the three dialogs name 389 of them.
+
+`apps/frontend/vite.federation-catalog.ts` now loads each namespace barrel
+narrowed to `src/lib/federation/catalog-keys.json`, so tree-shaking drops the
+unused messages from every locale module. The list is the keys the rendered,
+tree-shaken federation code names (exact literals plus template heads such as
+`live.layout.error.`), plus the producer's wire vocabulary: keys in the
+backend and RPC sources that arrive as data, such as source descriptors'
+`unavailableReason` (`live.education.reason.pipelineNotOffered`), restricted to
+the namespaces the bundles read. After bundling, the plugin re-derives the list
+and fails the build on a missing or stale key;
+`bun run --filter frontend generate:federation-catalog` rewrites it. The built
+harness asserts the signed JS carries exactly the listed keys.
+
+| Asset (Bun 1.4.4, gzip 9) | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| toast-host.js gzip | 719,011 B | 245,952 B | -473,059 B (-65.8%) |
+| toast-host.js raw | 3,037,755 B | 917,214 B | -2,120,541 B |
+| Catalog keys shipped | 2,696 | 415 | -2,281 |
+
+Every other federation asset is unchanged apart from the hashed chunk names it
+imports. The toast-host baseline moves to
+245,952 B with the unchanged 8,192 B allowance (ceiling 254,144 B); the
+displaced 680,351 B baseline stays in the report. Build Check now runs
+`bun run build:federation` before its bundle report (about 11 s locally), so the
+federation budgets and the key check run on every PR. Per-locale lazy chunks
+were not pursued: the platform loads one signed, manifest-pinned graph under a
+strict CSP, and splitting would move catalog bytes rather than remove them.
 
 A scratch sourcemap analysis on `6e0d23db`, before the subsequent six-key update
 addition, attributed final minified toast-host bytes:

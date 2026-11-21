@@ -541,6 +541,13 @@ jobs:
           CERAUI_BUILD_ID: ci-e2e
         run: bun run build:frontend
 
+      # The report measures dist/federation too when it exists. Building it here
+      # puts the federation budgets and the federation catalog key check on every
+      # PR instead of only on the manual publish workflow.
+      - name: Build federation bundles
+        working-directory: CeraUI
+        run: bun run build:federation
+
       - name: Bundle size report (initial-route JS gzip budget)
         working-directory: CeraUI
         run: bun scripts/ci/bundle-report.mjs
