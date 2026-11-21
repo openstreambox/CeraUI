@@ -2193,6 +2193,7 @@
 	"settings.dialogs.addressLinkLocal": "Adresse link-local automatique, conservée pour l'accès local même sans DHCP.",
 	"settings.dialogs.addressNone": "Aucune adresse attribuée",
 	"settings.dialogs.blockedStreaming": "Arrêtez la diffusion avant de redémarrer.",
+	"settings.dialogs.blockedStreamingPower": "Vous êtes en direct. Arrêtez la diffusion pour redémarrer ou éteindre.",
 	"settings.dialogs.blockedUpdating": "Mise à jour en cours. Attendez avant de redémarrer.",
 	"settings.dialogs.confirmPassword": "Confirmer le mot de passe",
 	"settings.dialogs.enableInterface": "Utiliser pour l'agrégation",
