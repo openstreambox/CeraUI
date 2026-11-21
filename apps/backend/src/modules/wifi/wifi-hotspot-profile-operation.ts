@@ -9,7 +9,11 @@ import {
 	sameNmProfileResource,
 } from "../network/network-manager-profile-instance.ts";
 import { openNmProfileFile } from "../network/network-manager-profile-write.ts";
-import { serializeNmProfileModify } from "../network/network-manager-secret.ts";
+import {
+	type NmRollbackScope,
+	runInNmRollbackScope,
+	serializeNmProfileModify,
+} from "../network/network-manager-secret.ts";
 import {
 	clearHotspotProfileCreation,
 	getHotspotCredentialOwners,
@@ -199,15 +203,28 @@ export async function runHotspotProfileOperation(
 		let acknowledged = false;
 		let checked = false;
 		let instance: NmProfileInstance | null | undefined;
+		const scope: NmRollbackScope = { uuid };
 		try {
-			acknowledged = Boolean(await dispatch(before));
+			acknowledged = Boolean(
+				await runInNmRollbackScope(scope, () => dispatch(before)),
+			);
 		} finally {
+			// Only this dispatch's own verified rollback may explain a changed ctime.
+			const restoration = scope.receipt;
 			const after = await observe();
 			exit = `after-${kind}`;
 			warningBefore = before;
 			warningAfter = after;
 			const observed = await classifyHotspotProfileReadback(
-				{ kind, before, held, predicted, acknowledged, fields },
+				{
+					kind,
+					before,
+					held,
+					predicted,
+					acknowledged,
+					fields,
+					restoration: acknowledged ? undefined : restoration,
+				},
 				after,
 				readTrace,
 			);
@@ -220,7 +237,12 @@ export async function runHotspotProfileOperation(
 			} else if (kind === "delete" && after === null) {
 				for (const entry of bound)
 					clearHotspotProfileCreation(entry.owner, uuid);
-			} else if (kind === "modify" && acknowledged && instance) {
+			} else if (
+				kind === "modify" &&
+				instance &&
+				(acknowledged || instance !== before)
+			) {
+				// A committed write, or a rejected one whose verified rollback this readback matched.
 				const record = evidence?.recordCreation ?? recordHotspotProfileCreation;
 				for (const entry of bound) {
 					if (
