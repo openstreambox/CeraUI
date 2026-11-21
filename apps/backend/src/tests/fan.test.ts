@@ -16,6 +16,9 @@
  * fabricate a denominator the hardware never produced.
  */
 import { describe, expect, test } from "bun:test";
+import { Writable } from "node:stream";
+import winston from "winston";
+import { logger } from "../helpers/logger.ts";
 import { withDeviceType } from "../modules/system/device-detection.ts";
 import {
 	candidatePwmPaths,
@@ -31,6 +34,7 @@ import {
 	initFan,
 	parsePwmDuty,
 	readFanDuty,
+	resetFanUnreadableLog,
 } from "../modules/system/fan.ts";
 
 // ─── synthetic sysfs trees ───────────────────────────────────────────────────
@@ -578,5 +582,85 @@ describe("no path invents a fan speed", () => {
 		expect(h.reads.some((path) => /cur_state|max_state/.test(path))).toBe(
 			false,
 		);
+	});
+});
+
+describe("unreadable-path logging", () => {
+	// Capture debug records from the shared logger through a real Stream
+	// transport, so winston's level filter runs as it does on a device.
+	async function debugMessages(run: () => Promise<void>): Promise<string[]> {
+		const messages: string[] = [];
+		const capture = winston.format((info) => {
+			const path = (info as { path?: unknown }).path;
+			messages.push(
+				typeof path === "string"
+					? `${info.message} ${path}`
+					: String(info.message),
+			);
+			return info;
+		});
+		const transport = new winston.transports.Stream({
+			stream: new Writable({
+				write(_chunk, _enc, cb) {
+					cb();
+				},
+			}),
+			level: "debug",
+			format: capture(),
+		});
+		logger.add(transport);
+		try {
+			await run();
+			await new Promise((resolve) => setTimeout(resolve, 15));
+		} finally {
+			logger.remove(transport);
+		}
+		return messages.filter((m) => m.startsWith("fan: "));
+	}
+
+	test("the reference board's missing backlink paths are logged once, not every tick", async () => {
+		resetFanUnreadableLog();
+		const h = makeHarness(
+			buildBacklinklessBoard({
+				coolingIndex: 11,
+				hwmons: [{ index: 3, name: "pwmfan", pwm: "120" }],
+			}),
+		);
+		const coolingDir = `${THERMAL}/cooling_device11`;
+		const messages = await debugMessages(async () => {
+			for (let tick = 0; tick < 5; tick++) {
+				expect(await readFanDuty(h.deps, coolingDir, HWMON)).toBe(47.1);
+			}
+		});
+		expect(messages).toEqual([
+			"fan: hwmon directory unreadable",
+			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
+		]);
+	});
+
+	test("a path that recovers and fails again is logged again", async () => {
+		resetFanUnreadableLog();
+		const tree = buildBoard({ coolingIndex: 5, hwmonIndex: 2, pwm: "200" });
+		const h = makeHarness(tree);
+		const coolingDir = `${THERMAL}/cooling_device5`;
+		const pwm = `${coolingDir}/device/hwmon/hwmon2/pwm1`;
+		const messages = await debugMessages(async () => {
+			await readFanDuty(h.deps, coolingDir, HWMON);
+			delete tree.files[pwm];
+			await readFanDuty(h.deps, coolingDir, HWMON);
+			await readFanDuty(h.deps, coolingDir, HWMON);
+			tree.files[pwm] = "200\n";
+			await readFanDuty(h.deps, coolingDir, HWMON);
+			delete tree.files[pwm];
+			await readFanDuty(h.deps, coolingDir, HWMON);
+		});
+		// Logged when it first fails, silent while it stays failed, logged again
+		// after a successful read in between. The platform fallback node never
+		// read successfully, so it stays logged once.
+		expect(messages).toEqual([
+			`fan: pwm1 unreadable ${pwm}`,
+			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
+			`fan: pwm1 unreadable ${pwm}`,
+		]);
 	});
 });

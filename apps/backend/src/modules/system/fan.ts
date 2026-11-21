@@ -266,6 +266,26 @@ export async function discoverPwmFanCoolingDevice(
 }
 
 /**
+ * Paths already reported unreadable, with the error code last logged. A board
+ * without the expected hwmon fails the same read on every tick, and that line
+ * went to debug.log (on the SD card) every few seconds. Each path is now logged
+ * once, again when its error changes, and forgotten after a successful read.
+ */
+const unreadableLogged = new Map<string, string>();
+
+function firstUnreadable(path: string, err: unknown): boolean {
+	const code = String((err as NodeJS.ErrnoException)?.code ?? err);
+	if (unreadableLogged.get(path) === code) return false;
+	unreadableLogged.set(path, code);
+	return true;
+}
+
+/** Test seam: forget which unreadable paths were already logged. */
+export function resetFanUnreadableLog(): void {
+	unreadableLogged.clear();
+}
+
+/**
  * Candidate `pwm1` paths for a discovered cooling device, in preference order.
  *
  * The cooling device's `device` symlink resolves to the platform device that
@@ -282,13 +302,16 @@ export async function candidatePwmPaths(
 	const paths: string[] = [];
 	try {
 		const entries = await deps.readDir(hwmonRoot);
+		unreadableLogged.delete(hwmonRoot);
 		for (const name of entries
 			.filter((entry) => /^hwmon\d+$/.test(entry))
 			.sort(byNumericSuffix)) {
 			paths.push(`${hwmonRoot}/${name}/pwm1`);
 		}
 	} catch (err) {
-		logger.debug("fan: hwmon directory unreadable", { err });
+		if (firstUnreadable(hwmonRoot, err)) {
+			logger.debug("fan: hwmon directory unreadable", { err });
+		}
 	}
 	paths.push(`${coolingDir}/device/pwm1`);
 	return paths;
@@ -383,9 +406,12 @@ export async function readFanDuty(
 	for (const path of await candidatePwmPaths(deps, coolingDir)) {
 		try {
 			const duty = parsePwmDuty(await deps.readText(path));
+			unreadableLogged.delete(path);
 			if (duty !== null) return duty;
 		} catch (err) {
-			logger.debug("fan: pwm1 unreadable", { path, err });
+			if (firstUnreadable(path, err)) {
+				logger.debug("fan: pwm1 unreadable", { path, err });
+			}
 		}
 	}
 
