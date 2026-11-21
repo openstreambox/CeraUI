@@ -37,6 +37,8 @@
 import {
 	type CaptureCap,
 	type CerastreamClient,
+	CerastreamConnectionError,
+	CerastreamTimeoutError,
 	type ConnectOptions,
 	connect,
 	type GetCapabilitiesResult,
@@ -52,6 +54,10 @@ import {
 } from "@ceraui/rpc/schemas";
 
 import { logger as defaultLogger } from "../../helpers/logger.ts";
+import {
+	forgetEngineSchemaSkew,
+	reportEngineSchemaSkew,
+} from "./engine-schema-skew.ts";
 
 /**
  * The capability snapshot the UI consumes. It is the engine's
@@ -143,6 +149,7 @@ export function beginCapabilitiesEpoch(): void {
 /** Retain display data while revoking evidence from a retired engine connection. */
 export function invalidateCapabilities(): void {
 	beginCapabilitiesEpoch();
+	forgetEngineSchemaSkew();
 	if (lastCapabilities !== undefined)
 		lastCapabilities = { ...lastCapabilities, engineUnavailable: true };
 }
@@ -376,6 +383,7 @@ let lastKnownGood: GetCapabilitiesResult | undefined;
 /** Drop the cached snapshot. Test seam + a hook for an engine-incompatible boot. */
 export function clearCapabilitiesCache(): void {
 	capabilityEpoch += 1;
+	forgetEngineSchemaSkew();
 	acceptedCapabilityEpoch = undefined;
 	lastKnownGood = undefined;
 	lastTransports = [...BASE_TRANSPORTS];
@@ -440,10 +448,10 @@ export async function getCapabilities(
 		if (mismatch) {
 			// Additive-only within the protocol major (ADR-0002): warn + flag, but
 			// still serve — degrading, never crashing, on version skew.
-			deps.logger.warn(
-				"capabilities: engine schema_version differs from bindings; degrading (additive-only, informational)",
-				{ engine: schemaVersion, bindings: deps.bindingsSchemaVersion },
-			);
+			reportEngineSchemaSkew(deps.logger, {
+				engine: schemaVersion,
+				bindings: deps.bindingsSchemaVersion,
+			});
 		}
 		// Speak kbps everywhere downstream: the engine may report the bitrate range
 		// in bps, so normalize it once here — the single unit-conversion seam.
@@ -475,6 +483,12 @@ export async function getCapabilities(
 		acceptedCapabilityEpoch = epoch;
 		return lastCapabilities;
 	} catch (err) {
+		// No engine connection now; the next one reports its skew afresh.
+		if (
+			err instanceof CerastreamConnectionError ||
+			err instanceof CerastreamTimeoutError
+		)
+			forgetEngineSchemaSkew();
 		if (epoch !== capabilityEpoch) return retainedCapabilities();
 		if (lastKnownGood) {
 			deps.logger.warn(

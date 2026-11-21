@@ -156,6 +156,10 @@ import {
 	currentRuntimeObservationUncertainty,
 } from "./engine-runtime-observation.ts";
 import {
+	forgetEngineSchemaSkew,
+	reportEngineSchemaSkew,
+} from "./engine-schema-skew.ts";
+import {
 	createLaunchTransaction,
 	type LaunchTransaction,
 } from "./launch-transaction.ts";
@@ -1348,10 +1352,11 @@ export class CerastreamBackend implements StreamingBackend {
 			client = await this.deps.connect(this.deps.connectOptions);
 			const hello = client.hello;
 			if (hello.schema_version !== SCHEMA_VERSION) {
-				this.deps.logger.warn(
-					"cerastream: engine schema_version differs from bindings (additive-only, informational)",
-					{ engine: hello.schema_version, bindings: SCHEMA_VERSION },
-				);
+				reportEngineSchemaSkew(this.deps.logger, {
+					engine: hello.schema_version,
+					bindings: SCHEMA_VERSION,
+					engineVersion: hello.engine_version,
+				});
 			}
 			return {
 				status: "compatible",
@@ -1360,6 +1365,8 @@ export class CerastreamBackend implements StreamingBackend {
 				schemaVersion: hello.schema_version,
 			};
 		} catch (err) {
+			// No engine connection now; the next one reports its skew afresh.
+			forgetEngineSchemaSkew();
 			return classifyEngineProbeError(err);
 		} finally {
 			try {
