@@ -24,9 +24,10 @@
     so skipping such a modem left it dead for that whole time. Both the TUN
     and the native IPv6 address ride the same bearer, so a translated modem
     whose native IPv6 still reads `up` with fresh evidence is not
-    reconnected, and one whose TUN has no record yet is left alone. A native
-    record that stopped refreshing counts as unknown: it vetoes nothing, and
-    the TUN's record decides;
+    reconnected, and one whose TUN has no record yet is left alone. Both
+    records count only while fresh: a native record that stopped refreshing
+    vetoes nothing, and a TUN record that stopped refreshing is no outage
+    (the hold restarts once fresh evidence returns);
   - while a stream runs, the sender's own per-link evidence says this
     interface carries nothing (`linkCarryingState`: its byte counter stood
     still across fresh snapshots, CLAT translator traffic counted for its
@@ -318,7 +319,15 @@ function pathObservation(iface: string, key: string) {
 	const wallNow = deps.wallNow();
 	const tun = deps.clatTun(iface);
 	const native = deps.health(iface);
-	const record = tun === undefined ? native : deps.health(tun);
+	// A translated modem is judged only on fresh evidence from its TUN: an
+	// expired record says nothing about the bearer now.
+	const tunRecord = tun === undefined ? undefined : deps.health(tun);
+	const record =
+		tun === undefined
+			? native
+			: tunRecord !== undefined && tunRecord.staleAt > wallNow
+				? tunRecord
+				: undefined;
 	return {
 		now,
 		record,
