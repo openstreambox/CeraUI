@@ -19,7 +19,7 @@ describe("hotspot setup hint names the buttons the dialog shows", () => {
 
 	it("English stays short and in order: edit, save, confirm, turn on", () => {
 		expect(readCatalog("en")["hotspotConfirm.inactiveHint"]).toBe(
-			"Edit the name, password or channel while the hotspot is off, then tap Save. Turn on hotspot shows the name and password to confirm before it starts.",
+			"Edit the name or password while the hotspot is off, then tap Save. Turn on hotspot shows the name and password to confirm before it starts.",
 		);
 	});
 });
