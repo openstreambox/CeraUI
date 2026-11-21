@@ -138,11 +138,11 @@ test("a clean boot whose engine reports idle also clears everything after the ho
 	expect(inhibitorHeld).toBe(false);
 });
 
-test("a boot that adopts a running engine session stays protected after the hold", async () => {
+test("a boot with an unowned running engine session stays protected after the hold", async () => {
 	const { session } = bootSession("streaming");
 	setCarryingOtaProtection(true);
-	expect(await session.reconcile()).toBe("streaming");
-	expect(session.streamLiveness()).toBe("streaming");
+	expect(await session.reconcile()).toBe("reconciling");
+	expect(session.streamLiveness()).toBe("unknown");
 
 	setCarryingOtaProtection(false);
 	expect(markerPresent()).toBe(true);
@@ -253,7 +253,7 @@ test("a restart before the new process takes its own hold waits for the engine, 
 	expect(markerPresent()).toBe(false);
 });
 
-test("a restart while a stream is up adopts it and keeps it protected", async () => {
+test("a restart while an unowned stream is up refuses adoption and keeps it protected", async () => {
 	setCarryingOtaProtection(true);
 	setOtaStreamingMarker();
 
@@ -261,8 +261,8 @@ test("a restart while a stream is up adopts it and keeps it protected", async ()
 	const { session } = bootSession("streaming", restarted);
 	restarted.setCarryingOtaProtection(true);
 	expect(restarted.encoderOtaStreamLiveness()).toBe("unknown");
-	expect(await session.reconcile()).toBe("streaming");
-	expect(session.streamLiveness()).toBe("streaming");
+	expect(await session.reconcile()).toBe("reconciling");
+	expect(session.streamLiveness()).toBe("unknown");
 
 	restarted.setCarryingOtaProtection(false);
 	expect(markerPresent()).toBe(true);
