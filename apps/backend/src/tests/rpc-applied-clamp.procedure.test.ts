@@ -281,18 +281,44 @@ describe("streaming.setConfig — applied (post-clamp) state", () => {
 			const context = makeContext();
 			const saveAndReload = async (
 				input: StreamingConfigInput,
-				expected: Partial<ConfigMessage>,
+				expected: Partial<ConfigMessage> & {
+					srt_streamid?: string | undefined;
+				},
 			) => {
 				const result = await call(setConfigProcedure, input, { context });
-				expect(result).toEqual({ success: true, applied: input });
+				const { srt_streamid, relay_streamid_override, ...ordinary } = input;
+				expect(result).toEqual({
+					success: true,
+					applied: {
+						...ordinary,
+						...("srt_streamid" in input
+							? { srt_streamid_configured: Boolean(srt_streamid) }
+							: {}),
+						...("relay_streamid_override" in input
+							? {
+									relay_streamid_override_configured: Boolean(
+										relay_streamid_override,
+									),
+								}
+							: {}),
+					},
+				});
+				const { srt_streamid: expectedId, ...publicExpected } = expected;
+				expect(getConfig().srt_streamid).toBe(expectedId);
 				const echoed = await call(getConfigProcedure, {}, { context });
-				expect(echoed).toMatchObject(expected);
+				expect(echoed).toMatchObject({
+					...publicExpected,
+					srt_streamid_configured: Boolean(expectedId),
+				});
 				expect(getConfig().remote_provider).toBe("ceralive");
 
 				// Read the bytes written by saveConfig, through the production loader.
 				await loadConfig();
 				const reloaded = await call(getConfigProcedure, {}, { context });
-				expect(reloaded).toMatchObject(expected);
+				expect(reloaded).toMatchObject({
+					...publicExpected,
+					srt_streamid_configured: Boolean(expectedId),
+				});
 				expect(getConfig().remote_provider).toBe("ceralive");
 			};
 			const saveManaged = (kind: "catalog" | "slot", latency: number) =>
@@ -466,5 +492,58 @@ describe("network.configure — applied state", () => {
 		expect(result.success).toBe(false);
 		expect(result.error).toBe("unknown_interface");
 		expect(result.applied).toBeUndefined();
+	});
+});
+
+describe("write-only Stream IDs", () => {
+	test("retains legacy values, replaces and explicitly clears without returning keys", async () => {
+		const config = getConfig();
+		const prior = {
+			srt_streamid: config.srt_streamid,
+			relay_streamid_override: config.relay_streamid_override,
+		};
+		try {
+			config.srt_streamid = "dummy-legacy-key";
+			config.relay_streamid_override = "dummy-legacy-override";
+			for (const fields of [
+				{},
+				{
+					srt_streamid: "dummy-replacement",
+					relay_streamid_override: "dummy-new-override",
+				},
+				{ srt_streamid: "", relay_streamid_override: "" },
+			]) {
+				const before = {
+					srt_streamid: config.srt_streamid,
+					relay_streamid_override: config.relay_streamid_override,
+				};
+				const result = await call(setConfigProcedure, fields, {
+					context: makeContext(),
+				});
+				expect(result.success).toBe(true);
+				const readback = await call(
+					getConfigProcedure,
+					{},
+					{ context: makeContext() },
+				);
+				for (const key of [
+					"srt_streamid",
+					"relay_streamid_override",
+				] as const) {
+					expect(config[key]).toBe(fields[key] ?? before[key]);
+					expect(result.applied).not.toHaveProperty(key);
+					expect(readback).not.toHaveProperty(key);
+					expect(readback[`${key}_configured`]).toBe(Boolean(config[key]));
+				}
+				expect(JSON.stringify(result)).not.toContain("dummy-");
+				expect(
+					JSON.parse(
+						(await import("../rpc/events.ts")).buildMessage("config", config),
+					).config,
+				).not.toHaveProperty("srt_streamid");
+			}
+		} finally {
+			Object.assign(config, prior);
+		}
 	});
 });

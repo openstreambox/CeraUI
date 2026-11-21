@@ -12,7 +12,7 @@ import {
 } from "../modules/remote-control/status-relay.ts";
 import type { MessageSocket } from "../modules/ui/message-socket.ts";
 import { createContext } from "./context.ts";
-import { broadcast, buildMessage } from "./events.ts";
+import { broadcast, buildMessage, publicEventData } from "./events.ts";
 import type { AppWebSocket } from "./types.ts";
 
 /**
@@ -61,7 +61,7 @@ export function broadcastMsg(
 ): void {
 	broadcastMsgLocal(type, data, activeMin, undefined, authedOnly);
 	if (isRelayable(type)) {
-		relayStatusToGateway(type, data, nextRelaySeq(type));
+		relayStatusToGateway(type, publicEventData(type, data), nextRelaySeq(type));
 	}
 }
 
@@ -78,7 +78,7 @@ export function broadcastMsgExcept(
 ): void {
 	broadcastMsgLocal(type, data, 0, conn);
 	if (isRelayable(type)) {
-		relayStatusToGateway(type, data, nextRelaySeq(type));
+		relayStatusToGateway(type, publicEventData(type, data), nextRelaySeq(type));
 	}
 }
 
