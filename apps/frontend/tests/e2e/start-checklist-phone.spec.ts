@@ -89,10 +89,15 @@ test.describe("A blocked Start lists what to fix", () => {
 
 	test("@mobile-only the blocker list scrolls both ways without refreshing Live", async ({ page }) => {
 		await page.setViewportSize({ width: 390, height: 500 });
+		// The mobile project sets a narrow viewport but uses a desktop profile.
+		// Enable touch before mounting so the app installs its refresh listeners.
+		const touch = await page.context().newCDPSession(page);
+		await touch.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
 		await blockSourceAndServer(page, true);
 		await page.goto("/");
 		await ensureAuthenticated(page);
 		await navigateTo(page, "live");
+		expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
 
 		const list = page.getByTestId("live-bar").getByRole("list", {
 			name: "Fix these before you go live",
@@ -111,7 +116,6 @@ test.describe("A blocked Start lists what to fix", () => {
 		await expect.poll(scrollTop).toBe(0);
 		await expect.poll(pageScroll).toBe(0);
 
-		const touch = await page.context().newCDPSession(page);
 		const x = Math.round(box.x + box.width / 2);
 		async function swipe(fromY: number, deltaY: number) {
 			await touch.send("Input.dispatchTouchEvent", {
