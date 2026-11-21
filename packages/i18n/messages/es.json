@@ -2184,7 +2184,7 @@
 	"network.sharing.band.sharingOffTitle": "Compartir está desactivado",
 	"network.sharing.band.sharingOffBody": "Activa el punto de acceso, o pon un puerto por cable en LAN compartida, para compartir internet desde este dispositivo.",
 	"network.sharing.band.noHealthyUplinkTitle": "Ningún enlace en buen estado",
-	"network.sharing.band.noHealthyUplinkBody": "Todos los enlaces están caídos, así que los equipos conectados no tienen salida. La emisión no se ve afectada.",
+	"network.sharing.band.noHealthyUplinkBody": "Todos los enlaces están caídos, así que este dispositivo bloquea las conexiones a internet nuevas de los equipos conectados. Sus propios enlaces de emisión se gestionan por separado.",
 	"network.sharing.band.steeringUnavailableTitle": "Reparto entre enlaces no disponible",
 	"network.sharing.band.steeringUnavailableBody": "CeraUI no pudo aplicar el reparto más reciente de los equipos entre enlaces. La configuración anterior puede seguir activa; si no había una, los equipos usan la ruta predeterminada.",
 	"network.sharing.band.uplinksUnreportedTitle": "Estado de los enlaces sin informar",
