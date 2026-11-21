@@ -62,8 +62,9 @@ dead process cannot report that. So a restarted backend keeps the line as it
 is, holds the encoder inhibitor and stays `reconciling` until the engine
 agrees: two separate status subscriptions that are accepted and hear nothing
 (an idle engine is silent, a running session reports status about every two
-seconds) commit `idle`; a running session is adopted and the file becomes the
-stream's. Engine silence without the line keeps its old meaning (unknown).
+seconds) commit `idle`; a running session makes the file the stream's and stays
+unconfirmed (`reconciling`, protected) until an operator Stop, because a
+restarted backend does not own that session's sender. Engine silence without the line keeps its old meaning (unknown).
 
 "Heard nothing" is proven, not assumed. After a silent window the query sends
 `list-switch-targets` on the same connection, and only a reply with still
@@ -100,8 +101,8 @@ that gap.
 
 One owner (`createOtaMarkerOwner`) writes the file, and its content follows
 from who holds it at each change: a stream keeps it empty, carrying alone keeps
-the line, nobody removes it. Every commit to `streaming`, launched or adopted,
-makes the file the stream's. A Start changes nothing until its last admission
+the line, nobody removes it. Every commit to `streaming`, and every running
+session a restarted backend finds, makes the file the stream's. A Start changes nothing until its last admission
 step, which runs in the same tick as the launch: the stream takes the file
 (rewritten, or replaced by rename when it cannot be rewritten), and the launch
 goes only if the file is then seen without the line. Otherwise Start is refused
