@@ -1550,6 +1550,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["stat_failed"],
 	["statfs_failed"],
 	["steering mark collision: ", " and ", ""],
+	["stop_not_idle"],
 	["stop_timeout"],
 	["stuck"],
 	["successful callback lacks authoritative durable acknowledgement"],
