@@ -221,8 +221,15 @@ export function isCatalogModule(id: string, paraglideOutdir: string): boolean {
 }
 
 // The lookup names the facade exports, and the injected `msg` helpers use.
-const LOOKUP_CALL = /(?<![\w.$])(?<!function\s+)(t|m|msg|resolveMessageKey)\s*([([])/g;
-const KEY_HEAD = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_-]+)*\.?$/;
+const LOOKUP_NAMES = "t|m|msg|resolveMessageKey";
+const LOOKUP_CALL = new RegExp(
+	`(?<![\\w.$])(?<!function\\s+)(${LOOKUP_NAMES})\\s*(?:\\?\\.\\s*)?([([])`,
+	"g",
+);
+const I18N_SPECIFIERS = /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']@ceraui\/i18n[^"']*["']/g;
+const I18N_NAMESPACE = /import\s+\*\s*as\s+\w+\s+from\s*["']@ceraui\/i18n[^"']*["']/g;
+const KEY_TEXT = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_-]+)+$/;
+const KEY_PREFIX = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_-]+)*\.$/;
 
 function stripComments(source: string): string {
 	return source
@@ -246,11 +253,32 @@ function callText(source: string, start: number, open: number): string {
 }
 
 /**
- * Message lookups in a module whose key is computed: `t(option.reason)`,
- * `m[key]`, `resolveMessageKey([a, b].join("."))`. A string literal argument,
- * or a template whose static head is a key or ends in a dot, is already covered
- * by {@link referencedCatalogKeys}. Injected lookups (`t` or `msg` parameters)
- * count too, so the scan does not depend on how a module reaches the facade.
+ * Whether the argument starting at `index` is fully accounted for by the literal
+ * collector: a single string literal that is a key and the WHOLE argument, or a
+ * template that is a key, or whose only static head ends in a dot.
+ */
+function literalArgument(code: string, index: number): boolean {
+	const quote = code[index];
+	if (quote !== '"' && quote !== "'" && quote !== "`") return false;
+	let end = index + 1;
+	while (end < code.length && code[end] !== quote) end += code[end] === "\\" ? 2 : 1;
+	let next = end + 1;
+	while (/\s/.test(code[next] ?? "")) next += 1;
+	if (![")", ",", "]"].includes(code[next] ?? "")) return false;
+	const body = code.slice(index + 1, end);
+	if (quote !== "`" || !body.includes("${")) return KEY_TEXT.test(body);
+	return KEY_PREFIX.test(body.slice(0, body.indexOf("${"))) && !body.slice(body.indexOf("${")).includes("`");
+}
+
+/**
+ * The message lookups in a module that the literal collector cannot account
+ * for, each of which must be declared:
+ *
+ * - a lookup whose key is computed: `t(option.reason)`, `m[key]`, `t?.(key)`,
+ *   `resolveMessageKey(["a", b].join("."))`, `t("a." + b)`;
+ * - the facade handed on as a value (`format(msg)`, `const tr = t`, `...m`),
+ *   since the receiver can compute keys under any name;
+ * - the facade imported under another name or as a namespace.
  */
 export function computedLookups(source: string): string[] {
 	const code = stripComments(source);
@@ -259,13 +287,46 @@ export function computedLookups(source: string): string[] {
 		const open = (match.index ?? 0) + match[0].length - 1;
 		let argument = open + 1;
 		while (/\s/.test(code[argument] ?? "")) argument += 1;
-		const first = code[argument];
-		if (first === ")" || first === '"' || first === "'") continue;
-		if (first === "`") {
-			const head = code.slice(argument + 1).split(/`|\$\{/)[0] ?? "";
-			if (KEY_HEAD.test(head)) continue;
-		}
+		if (code[argument] === ")" || literalArgument(code, argument)) continue;
 		found.add(callText(code, match.index ?? 0, open));
+	}
+	// Names bound to the facade in this module: imports from @ceraui/i18n, and
+	// local copies such as `const t = resolveMessageKey`.
+	const isLookupName = (name: string) => new RegExp(`^(?:${LOOKUP_NAMES})$`).test(name);
+	const facade = new Set<string>();
+	for (const match of code.matchAll(I18N_SPECIFIERS)) {
+		if (/^import\s+type\b/.test(match[0])) continue;
+		for (const specifier of (match[1] ?? "").split(",")) {
+			if (/^\s*type\s/.test(specifier)) continue;
+			const [imported = "", local = imported] = specifier.trim().split(/\s+as\s+/);
+			if (!isLookupName(imported)) continue;
+			if (isLookupName(local)) facade.add(local);
+			else found.add(`alias ${imported} as ${local}`);
+		}
+	}
+	for (const match of code.matchAll(I18N_NAMESPACE)) {
+		found.add(`namespace ${match[0].replace(/\s+/g, " ")}`);
+	}
+	for (const match of code.matchAll(/\b(?:const|let|var)\s+([\w$]+)\s*=\s*([\w$]+)\s*;/g)) {
+		const [, local = "", value = ""] = match;
+		if (!facade.has(value)) continue;
+		if (isLookupName(local)) facade.add(local);
+		else found.add(`alias ${value} as ${local}`);
+	}
+	// The facade handed on as a value (an argument, a return, a spread, a
+	// property): the receiver can compute keys under any parameter name.
+	for (const name of facade) {
+		const use = new RegExp(`(?<![\\w.$])(?:\\.\\.\\.)?${name}(?![\\w$])(?!\\s*(?:\\(|\\[|\\?\\.|\\.|=[^=>]))`, "g");
+		for (const match of code.matchAll(use)) {
+			const at = match.index ?? 0;
+			const start = code.lastIndexOf("\n", at) + 1;
+			const end = code.indexOf("\n", at);
+			const line = code.slice(start, end === -1 ? undefined : end).trim().replace(/\s+/g, " ");
+			if (/^import\b/.test(line) || /\bfrom\s*["']@ceraui\/i18n/.test(line)) continue;
+			// A plain copy is reported above as an alias, or kept as a lookup name.
+			if (new RegExp(`^(?:const|let|var)\\s+[\\w$]+\\s*=\\s*${name}\\s*;$`).test(line)) continue;
+			found.add(`passes ${name}: ${line}`);
+		}
 	}
 	return [...found].sort();
 }

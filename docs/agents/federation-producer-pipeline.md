@@ -43,16 +43,19 @@ minification; its message imports and locale-runtime shim resolve together throu
 barrel to `src/lib/federation/catalog-keys.json`: the keys the bundled code names
 plus producer wire keys (keys the backend sends as data, such as source
 `unavailableReason` values) in the families that code reads, plus every key of the
-families declared for computed lookups in `src/lib/federation/computed-lookups.json`
-(maintained by hand). Those keys, in every locale, remain inside
+families declared in `src/lib/federation/computed-lookups.json` (maintained by
+hand) for every lookup the literal scan cannot account for: computed keys,
+renamed or namespace imports of the facade, and the facade handed to another
+function. Those keys, in every locale, remain inside
 the signed static graph. The build fails when the list drifts from the bundled
 code; `bun run --filter frontend generate:federation-catalog` regenerates it.
 The SPA's direct imports and lazy message-module output are unchanged.
 Bonded-link copy belongs to the device-only `hud` namespace. Do not put it in
 `networking`, which the hosted dialogs register. Keep device-only CSS rules
 local to their surface when the federation build does not need the utility.
-`bun scripts/ci/bundle-report.mjs` checks both built outputs, on every PR and
-before publication. The measured November 2026 toast-host/audio baselines and bounded allowances are
+`bun scripts/ci/bundle-report.mjs` checks both built outputs; Build Check runs it,
+its strict `--federation-only` mode and the built-registry tests on every
+code-changing PR, and publication runs `--federation-only` before signing. The measured November 2026 toast-host/audio baselines and bounded allowances are
 recorded in [the dependency baseline](dep-baseline-as-of-2026-11.md#federation-budgets-and-size-analysis);
 the built federation harness also checks full-catalog fixture parity.
 Shared chunks use Rolldown's default eight-character base64url hash. The report

@@ -428,8 +428,8 @@ harness renders every listed key through the shipped resolver in all ten
 locales. Toast-host now measures 212,698 B gzip (759,875 B raw, from
 3,037,755 B). Its baseline moves to
 that measurement with the unchanged 8,192 B allowance, the displaced baselines
-stay in the report, and Build Check runs the federation build and budget on
-every PR. The catalog is still static, but it is now the dialogs' own copy, not
+stay in the report, and Build Check runs the federation build, the strict
+`--federation-only` report and the built-registry tests on every code-changing PR. The catalog is still static, but it is now the dialogs' own copy, not
 the SPA's; see the
 [dependency baseline](agents/dep-baseline-as-of-2026-11.md#november-21-2026-key-scoped-federation-catalog).
 
