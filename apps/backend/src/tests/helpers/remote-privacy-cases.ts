@@ -61,13 +61,45 @@ export function object(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-/** Serialize independently, omitting keys only on known DTO holders. */
-export function expectedBytes(frame: unknown, config: unknown): string {
-	return JSON.stringify(frame, function (this: unknown, key, value) {
-		return this === config && key === "pairing_secret" ? undefined : value;
+/**
+ * Independent expected config projection; preserve all unrelated frame bytes.
+ * Local frames carry `*_configured` flags instead of Stream IDs. Remote frames
+ * carry neither, and no pairing seed.
+ */
+export function expectedBytes(
+	frame: unknown,
+	config: unknown,
+	remote = true,
+): string {
+	return JSON.stringify(frame, (_key, value) => {
+		if (value !== config || !object(value) || Array.isArray(value))
+			return value;
+		const { srt_streamid, relay_streamid_override, ...ordinary } = value;
+		if (remote) {
+			for (const key of [
+				"pairing_secret",
+				"srt_streamid_configured",
+				"relay_streamid_override_configured",
+			])
+				Reflect.deleteProperty(ordinary, key);
+			return ordinary;
+		}
+		return {
+			...ordinary,
+			srt_streamid_configured:
+				srt_streamid === undefined
+					? (ordinary.srt_streamid_configured ?? false)
+					: Boolean(srt_streamid),
+			relay_streamid_override_configured:
+				relay_streamid_override === undefined
+					? (ordinary.relay_streamid_override_configured ?? false)
+					: Boolean(relay_streamid_override),
+		};
 	});
 }
 
 export function expectNoPairingSecret(bytes: string): void {
 	expect(bytes).not.toContain(secrets.pairing_secret);
+	expect(bytes).not.toContain(secrets.srt_streamid);
+	expect(bytes).not.toContain(secrets.relay_streamid_override);
 }
