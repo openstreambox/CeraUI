@@ -31,8 +31,8 @@
 //
 // `get-capabilities` is the additive method #9 on the published
 // `CerastreamClient` surface. A `schema_version` skew is informational only
-// (additive within `cerastream-ipc/1`, mirroring `probeEngine`): it warns and
-// flags the response, never throws.
+// (additive within `cerastream-ipc/1`, mirroring `probeEngine`): it is logged,
+// flags the response only when the engine is newer, and never throws.
 
 import {
 	type CaptureCap,
@@ -55,8 +55,10 @@ import {
 
 import { logger as defaultLogger } from "../../helpers/logger.ts";
 import {
+	classifyEngineSchemaSkew,
 	forgetEngineSchemaSkew,
 	observeEngineSchema,
+	skewMayHideCapabilities,
 } from "./engine-schema-skew.ts";
 
 /**
@@ -64,8 +66,9 @@ import {
  * {@link GetCapabilitiesResult} plus the freshness flags the UI renders:
  *  - `engineUnavailable` — the snapshot is NOT live (cached or minimal).
  *  - `engineStarting` — there has been no live snapshot this run (minimal only).
- *  - `schemaVersionMismatch` — the engine reported a different `schema_version`
- *    than the bindings; additive-only, the data is still served.
+ *  - `schemaVersionMismatch` — the engine reported a `schema_version` newer
+ *    than the bindings (or one that does not parse), so some engine fields may
+ *    be stripped; the data is still served. An older engine is not flagged.
  */
 export type CapabilitiesResult = Omit<
 	GetCapabilitiesResult,
@@ -444,9 +447,14 @@ export async function getCapabilities(
 			transports,
 			network_embedded_audio: networkEmbeddedAudio,
 		} = await deps.fetchEngineCapabilities();
-		// Additive-only within the protocol major (ADR-0002): warn + flag, but
-		// still serve — degrading, never crashing, on version skew.
-		const mismatch = schemaVersion !== deps.bindingsSchemaVersion;
+		// Additive-only within the protocol major (ADR-0002): log, but still
+		// serve — degrading, never crashing, on version skew. Only a skew that
+		// can hide engine capabilities (a newer, different-major or unparsable
+		// engine schema) is flagged to the UI. An older engine's newer features
+		// are gated on its own `features` tokens.
+		const mismatch = skewMayHideCapabilities(
+			classifyEngineSchemaSkew(schemaVersion, deps.bindingsSchemaVersion),
+		);
 		// Speak kbps everywhere downstream: the engine may report the bitrate range
 		// in bps, so normalize it once here — the single unit-conversion seam.
 		const caps: GetCapabilitiesResult = {

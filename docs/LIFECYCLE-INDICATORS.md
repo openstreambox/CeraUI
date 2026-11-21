@@ -362,9 +362,12 @@ Named Follow-ups below).
 ### `engine-schema-skew`
 **Current indicator:** `apps/backend/src/modules/streaming/capabilities.ts:361-375,392-400`
 compares the engine's reported `schema_version` against the binding's expected
-version, logs a warning, and sets a `schemaVersionMismatch` flag;
-`apps/frontend/src/lib/streaming/go-live-readiness.ts:270-295` surfaces it as an
-advisory (non-blocking) readiness warning.
+version through `engine-schema-skew.ts` and logs a skew once per engine
+connection. Only an engine schema newer than the bindings (or one that does not
+parse) sets the `schemaVersionMismatch` flag: an older engine's fields all parse
+and newer features are gated on its `features` tokens, so nothing shown is
+approximate. `apps/frontend/src/lib/streaming/go-live-readiness.ts:270-295`
+surfaces the flag as an advisory (non-blocking) readiness warning.
 **Status: EXISTS**
 
 ### `multiple-browser-tabs`
