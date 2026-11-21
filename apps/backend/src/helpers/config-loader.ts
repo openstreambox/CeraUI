@@ -19,13 +19,14 @@
  * Generic JSON config loader with Zod validation
  * Provides warning-based validation with defaults for missing fields
  *
- * Uses Bun's native file APIs (Bun.file().text() / Bun.write()) for all I/O.
+ * Reads use Bun.file().text(); writes use the atomic descriptor-based writer.
  * Loaders are async; module-level callers await them (top-level await), which
  * preserves the original boot-time load order without introducing races.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { z } from "zod";
 
@@ -259,54 +260,69 @@ export async function loadJsonConfigSync<T extends z.ZodTypeAny>(
 }
 
 /**
- * Save a config to a JSON file asynchronously using Bun's native API
- *
- * @param filePath - Path to the JSON file
- * @param data - Data to save
- * @param pretty - Whether to format with indentation (default: false for smaller files)
+ * Publish a complete file durably; explicit modes apply before any bytes.
+ * Staged publishers may supply the final target as permissionSource to retain
+ * its stricter mode before their own final rename.
  */
-export async function saveJsonConfigAsync<T>(
-	filePath: string,
-	data: T,
-	pretty = false,
-): Promise<void> {
-	const contents = pretty
-		? JSON.stringify(data, null, "\t")
-		: JSON.stringify(data);
-	await Bun.write(filePath, contents);
-}
-
-/**
- * Atomically write a string to disk: write to a sibling temp file, fsync it to
- * durable storage, then rename over the target. The rename is atomic on POSIX,
- * so a crash mid-write leaves the original file intact — readers never observe a
- * truncated config.json (E3 guardrail). Synchronous because config save callers
- * (setBitrate/setAutostart) depend on the write completing before they return.
- */
-export function writeFileAtomicSync(filePath: string, contents: string): void {
-	const dir = path.dirname(filePath);
-	const tmpPath = path.join(
-		dir,
-		`.${path.basename(filePath)}.${process.pid}.tmp`,
+export function writeFileAtomicSync(
+	file: string,
+	contents: string,
+	options: {
+		mode?: number;
+		permissionSource?: string | undefined;
+		durable?: boolean;
+	} = {},
+): void {
+	const directory = dirname(file);
+	const parent = fs.openSync(
+		directory,
+		fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
 	);
-
-	const fd = fs.openSync(tmpPath, "w");
+	let temporary: string | undefined;
 	try {
-		fs.writeFileSync(fd, contents);
-		fs.fsyncSync(fd);
-	} finally {
-		fs.closeSync(fd);
-	}
-
-	try {
-		fs.renameSync(tmpPath, filePath);
-	} catch (err) {
-		try {
-			fs.unlinkSync(tmpPath);
-		} catch {
-			// Temp already gone; nothing to clean up.
+		const requestedMode = options.mode ?? 0o666 & ~process.umask();
+		let mode = requestedMode;
+		for (const target of new Set([file, options.permissionSource ?? file])) {
+			try {
+				const previous = fs.lstatSync(target);
+				if (!previous.isFile())
+					throw new Error("Target must be a regular file");
+				// Atomic replacement must not add owner permissions removed deliberately.
+				mode &= previous.mode;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
 		}
-		throw err;
+		const candidate = join(
+			directory,
+			`.${basename(file)}.${randomUUID()}.${process.pid}.tmp`,
+		);
+		const fd = fs.openSync(
+			candidate,
+			fs.constants.O_WRONLY |
+				fs.constants.O_CREAT |
+				fs.constants.O_EXCL |
+				fs.constants.O_NOFOLLOW,
+			requestedMode,
+		);
+		temporary = candidate;
+		try {
+			// Bun.write's mode option does not enforce creation permissions.
+			fs.fchmodSync(fd, mode);
+			fs.writeFileSync(fd, contents);
+			if (options.durable !== false) fs.fsyncSync(fd);
+		} finally {
+			fs.closeSync(fd);
+		}
+		fs.renameSync(candidate, file);
+		temporary = undefined;
+		if (options.durable !== false) fs.fsyncSync(parent);
+	} finally {
+		try {
+			if (temporary !== undefined) fs.unlinkSync(temporary);
+		} finally {
+			fs.closeSync(parent);
+		}
 	}
 }
 
@@ -352,3 +368,19 @@ export async function loadCacheFile<T extends z.ZodTypeAny>(
  */
 export const fileExists = (filePath: string): Promise<boolean> =>
 	Bun.file(filePath).exists();
+
+/** Publish disposable status only when changed; never force flash synchronization. */
+export function writePrivateStatusSync(file: string, contents: string): void {
+	try {
+		const previous = fs.lstatSync(file);
+		if (!previous.isFile()) throw new Error("Target must be a regular file");
+		if (
+			(previous.mode & 0o177) === 0 &&
+			fs.readFileSync(file, "utf8") === contents
+		)
+			return;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	writeFileAtomicSync(file, contents, { mode: 0o600, durable: false });
+}
