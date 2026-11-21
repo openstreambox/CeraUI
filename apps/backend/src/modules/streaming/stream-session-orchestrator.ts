@@ -197,6 +197,21 @@ export type StreamSessionOrchestratorDeps = {
 	 * restart a stream the operator deliberately ended.
 	 */
 	readonly onStreamStopped?: (cause: StreamStopCause) => void;
+	/** A stop of `cause` completed with its cleanup confirmed. */
+	readonly onStreamStopCompleted?: (cause: StreamStopCause) => void;
+	/**
+	 * True while a session must not be ended by anything but the operator: a
+	 * sender this backend did not start may still carry it. A stop of any other
+	 * cause is then refused without touching the engine, the sender or the
+	 * marker.
+	 */
+	readonly automaticStopRefused?: () => boolean;
+	/**
+	 * True while a sender of unknown state may exist outside this process: an
+	 * idle session's Stop then still runs the runtime stop (which settles that
+	 * sender) instead of answering at once.
+	 */
+	readonly idleStopNeedsRuntime?: () => boolean;
 	/**
 	 * The LifecycleInterlock acquisition (`lifecycle-admission.ts`). ABSENT means
 	 * "no interlock" — the lease is PROCESS-WIDE and `bun test` runs one process,
@@ -309,6 +324,12 @@ export type StreamSessionOrchestrator = {
 	readonly start: (request: StreamStartRequest) => Promise<StartResult>;
 	readonly stop: (cause: StreamStopCause) => Promise<StopResult>;
 	readonly reconcile: () => Promise<LifecycleState>;
+	/**
+	 * Reconcile now, or, while a stop or its cleanup is in flight, once they
+	 * have settled (never dropped). For evidence that arrives inside a stop,
+	 * such as a held sender unit confirmed down.
+	 */
+	readonly reevaluate: () => Promise<LifecycleState>;
 	readonly snapshot: () => StreamSessionSnapshot;
 	readonly changeConfig: (
 		delta: StreamConfigChangeDelta,
@@ -362,10 +383,21 @@ export function createStreamSessionOrchestrator(
 		((timer: ReturnType<typeof globalThis.setTimeout> | number) =>
 			globalThis.clearTimeout(timer));
 
+	// A re-evaluation asked for (by `reevaluate`) while a stop or its cleanup
+	// was in flight owes one fresh look once they settle: a held sender unit
+	// that came down inside a Stop whose answer already timed out has nothing
+	// else to settle the state. Plain `reconcile` keeps its own rule.
+	let reevaluationOwed = false;
+	const settleOwedReevaluation = (): void => {
+		if (!reevaluationOwed) return;
+		reevaluationOwed = false;
+		void Promise.resolve().then(() => reconcile());
+	};
 	const cleanup = createSessionCleanup(deps, {
 		schedule: scheduleTimeout,
 		cancel: cancelTimeout,
 		deadlineMs: stopDeadlineMs,
+		onSettled: () => settleOwedReevaluation(),
 	});
 	const stopWithinDeadline = cleanup.run;
 	const transition = ownership.transition;
@@ -875,6 +907,13 @@ export function createStreamSessionOrchestrator(
 	};
 
 	const stop = (cause: StreamStopCause): Promise<StopResult> => {
+		if (cause !== "operator" && deps.automaticStopRefused?.() === true) {
+			logger.warn(
+				"automatic stream stop refused: only the operator ends a session a held sender may carry",
+				{ cause },
+			);
+			return Promise.resolve({ result: "stop_failed", reason: "sender_held" });
+		}
 		if (cause === "operator") noteOperatorStopIntent();
 		deps.onStreamStopped?.(cause);
 		if (cause === "operator") {
@@ -888,10 +927,12 @@ export function createStreamSessionOrchestrator(
 		stopFlight = reserved.promise;
 		const retire = () => {
 			if (stopFlight === reserved.promise) stopFlight = undefined;
+			settleOwedReevaluation();
 		};
 		void runStop(cause).then(
 			(result) => {
 				retire();
+				if (result.result === "stopped") deps.onStreamStopCompleted?.(cause);
 				reserved.resolve(result);
 			},
 			(error: unknown) => {
@@ -921,7 +962,11 @@ export function createStreamSessionOrchestrator(
 				engineQueuedStop = parkEngineStop(cause);
 			return engineQueuedStop.promise;
 		}
-		if (ownership.state === "idle" && ownership.streamLiveness() !== "idle")
+		if (
+			ownership.state === "idle" &&
+			(ownership.streamLiveness() !== "idle" ||
+				deps.idleStopNeedsRuntime?.() === true)
+		)
 			ownership.commit(ownership.capture(), "reconciling", "unknown");
 		if (ownership.state === "idle") {
 			ownership.commit(ownership.capture(), "idle", "idle");
@@ -995,6 +1040,14 @@ export function createStreamSessionOrchestrator(
 			);
 			return { result: "stop_failed", reason };
 		}
+	};
+
+	const reevaluate = (): Promise<LifecycleState> => {
+		if (stopFlight !== undefined || cleanup.pending) {
+			reevaluationOwed = true;
+			return Promise.resolve(ownership.state);
+		}
+		return reconcile();
 	};
 
 	const reconcile = async (): Promise<LifecycleState> => {
@@ -1226,6 +1279,7 @@ export function createStreamSessionOrchestrator(
 		start,
 		stop,
 		reconcile,
+		reevaluate,
 		snapshot: () => ({
 			state: ownership.state,
 			generation: ownership.generation,
@@ -1253,6 +1307,10 @@ export function stopStreamSession(cause: StreamStopCause): Promise<StopResult> {
 
 export function reconcileStreamSession(): Promise<LifecycleState> {
 	return productionOrchestrator.reconcile();
+}
+
+export function reevaluateStreamSession(): Promise<LifecycleState> {
+	return productionOrchestrator.reevaluate();
 }
 
 export function getStreamSessionSnapshot(): StreamSessionSnapshot {

@@ -156,12 +156,19 @@ import { refreshAndBroadcastSources } from "./modules/streaming/sources.ts";
 import { runStreamRestoration } from "./modules/streaming/stream-restoration.ts";
 import {
 	reconcileStreamSession,
+	reevaluateStreamSession,
 	streamLiveness,
 } from "./modules/streaming/stream-session-orchestrator.ts";
 import {
 	getStreamingProcesses,
 	gracefulShutdown,
 } from "./modules/streaming/streamloop/process-runner.ts";
+import {
+	armSenderHostMode,
+	onSenderUnitHoldChanged,
+	resolveSenderHostMode,
+	settleSenderUnit,
+} from "./modules/streaming/streamloop/sender-unit.ts";
 import {
 	checkAutoStartStream,
 	srtlaSendExec,
@@ -217,7 +224,7 @@ import {
 } from "./modules/wifi/wifi-network-diversity.ts";
 import { startProvisioningMarkerWatch } from "./modules/wifi/wifi-provisioning-handoff.ts";
 import { wifiRadioObservation } from "./modules/wifi/wifi-radio-observation.ts";
-import { broadcastMsgLocal } from "./rpc/compat.ts";
+import { broadcastMsg, broadcastMsgLocal } from "./rpc/compat.ts";
 import { onHeartbeatTick, startHeartbeat } from "./rpc/heartbeat.ts";
 import { getServer, initServer } from "./rpc/index.ts";
 import { stopLegacyTokenMigration } from "./rpc/procedures/auth.procedure.ts";
@@ -295,6 +302,10 @@ tightenPrivateFiles(process.cwd(), [
 ]);
 
 checkExecPath(srtlaSendExec);
+// With `srtla_send_unit`, publish "sender host not decided yet" before the
+// control server can take a Stop: until the unit is read (below, after the
+// bind), nothing may treat a unit-run sender as absent. No I/O here.
+armSenderHostMode(setup, srtlaSendExec);
 
 // An unreadable or damaged config.json must not abort boot: the control server
 // is the only place the operator can see and repair it. A damaged file is
@@ -361,6 +372,14 @@ if (!configAvailableAtBind) {
 //     /api/health via the boot-readiness rollup), and is swallowed so boot never
 //     crashes and the WS server (bound above) stays reachable. ---
 
+// Before anything writes the IP list (network discovery and bond publication
+// start below): with `srtla_send_unit` the sender runs through its systemd unit
+// and its files move into /run/srtla-send. After the control server bind, so
+// the unit reads (bounded, retried) never delay the operator's lifeline.
+await guardNonCritical("sender-host", async () => {
+	await resolveSenderHostMode(setup, srtlaSendExec);
+});
+
 // Recovery must finish before an update may install any new UID routing rule.
 if (await hasCapability("os-updates"))
 	void guardNonCritical("update-route-sweep", async () => {
@@ -417,6 +436,27 @@ await guardNonCritical("pipelines", () =>
 if (!shouldUseMocks()) {
 	// Only a returned reconciliation turns the factory's initial idle projection
 	// into evidence; until then (or after a throw) disruptive actions see unknown.
+	// Nothing adopts a sender yet: a sender unit left running by an earlier
+	// backend (crash, watchdog kill, restart) is held before reconciliation
+	// judges the session. It keeps running, nothing starts beside it, and the
+	// census reads unknown, so the session stays unconfirmed until the
+	// operator's Stop ends it or the unit goes down on its own; then the
+	// session follows the engine again. Flag off: nothing is read.
+	onSenderUnitHoldChanged((change) => {
+		broadcastMsg("status", { stream_sender_held: change === "held" });
+		// Released on its own or stopped: either way the session must look again
+		// (deferred by the orchestrator while a stop or its cleanup is in flight,
+		// so a stop that timed out before the unit came down still settles).
+		if (change === "held") return;
+		void reevaluateStreamSession().catch((error: unknown) =>
+			logger.warn("reconciliation after a released sender unit failed", {
+				error,
+			}),
+		);
+	});
+	await guardNonCritical("sender-unit-leftover", async () => {
+		await settleSenderUnit();
+	});
 	await guardNonCritical("stream-session-reconcile", async () => {
 		await reconcileStreamSession();
 		noteStreamReconciliationCompleted();

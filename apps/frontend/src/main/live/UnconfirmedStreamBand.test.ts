@@ -38,6 +38,8 @@ const stop = vi.mocked(rpc.streaming.stop);
 const TITLE = "Stream state not confirmed";
 const BODY =
 	"The device can't confirm whether a stream is still running, so starting a stream and installing updates are paused. Stop the stream to end anything that may still be running; both resume once the device confirms it has stopped.";
+const HELD_BODY =
+	"A sender started before the device software restarted may still be running. The device can't confirm or change that sender, so changed settings won't reach it, and starting a stream and installing updates are paused. Stop the stream to end it; the next stream uses your current settings.";
 const FAILED =
 	"The device didn't confirm the stop. Try stopping the stream again.";
 const NOT_CONFIRMED =
@@ -103,6 +105,34 @@ describe("UnconfirmedStreamBand — rendered in every protected lifecycle", () =
 			expect(document.activeElement).toBe(button);
 		});
 	}
+
+	it("a sender held from before a restart: the held explanation, the same Stop", () => {
+		const { container } = render(UnconfirmedStreamBand, {
+			props: {
+				lifecycle: "reconciling",
+				isStreaming: false,
+				optimismState: "idle",
+				senderHeld: true,
+			},
+		});
+		const root = band(container);
+		expect(root?.textContent).toContain(TITLE);
+		expect(root?.textContent).toContain(HELD_BODY);
+		expect(root?.textContent).not.toContain(BODY);
+		expect(stopButton(container).disabled).toBe(false);
+	});
+
+	it("the held flag alone never shows the band outside a protected lifecycle", () => {
+		const { container } = render(UnconfirmedStreamBand, {
+			props: {
+				lifecycle: "idle",
+				isStreaming: false,
+				optimismState: "idle",
+				senderHeld: true,
+			},
+		});
+		expect(band(container)).toBeNull();
+	});
 
 	// FIX-16-C3: local `starting` optimism no longer hides the band. The
 	// optimistic live cockpit's control is a disabled "Starting...", so C2's

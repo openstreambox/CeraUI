@@ -62,6 +62,7 @@ import { getPreviewEncoderRealizedStatus } from "../streaming/preview-encoder-st
 import { getSourcesMessage } from "../streaming/sources.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
+import { heldSenderUnit } from "../streaming/streamloop/sender-unit.ts";
 import { getCarryingStatus } from "../system/carrying.ts";
 import { CPU_EVENT, getCpuInfo } from "../system/cpu.ts";
 import { ENCODER_LOAD_EVENT, getEncoderLoad } from "../system/encoder-load.ts";
@@ -87,6 +88,7 @@ export type StatusResponseMessage = {
 	is_streaming?: ReturnType<typeof getIsStreaming>;
 	audio_mix_active?: boolean;
 	stream_lifecycle?: ReturnType<typeof getStreamLifecycleState>;
+	stream_sender_held?: boolean;
 	available_updates?: ReturnType<typeof getAvailableUpdates>;
 	updating?: ReturnType<typeof getSoftUpdateStatus>;
 	update_state?: ReturnType<typeof getUpdateState>;
@@ -126,6 +128,7 @@ export function sendStatus(conn: WebSocket) {
 			is_streaming: getIsStreaming(),
 			audio_mix_active: getAudioMixActive(),
 			stream_lifecycle: getStreamLifecycleState(),
+			stream_sender_held: heldSenderUnit() !== null,
 			available_updates: getAvailableUpdates(),
 			updating: getSoftUpdateStatus(),
 			update_state: getUpdateState(),

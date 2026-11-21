@@ -286,7 +286,9 @@ export async function start(
 						}
 						const owned = sender();
 						if (!owned || !ownsSession()) return false;
-						owned.proc.kill("SIGHUP");
+						if (owned.proc.trySignal) {
+							if (!owned.proc.trySignal("SIGHUP")) return false;
+						} else owned.proc.kill("SIGHUP");
 						logger.info("sender reload signal delivered", {
 							pid: owned.proc.pid,
 						});

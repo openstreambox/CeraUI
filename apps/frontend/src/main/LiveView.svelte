@@ -190,6 +190,7 @@ $effect(() => {
 // the pre-reset snapshot when its hydrate failed (FIX-16-FRONT3 R1). The record
 // lives outside this component, which navigation replaces.
 const streamLifecycle = $derived(getStatus()?.stream_lifecycle);
+const streamSenderHeld = $derived(getStatus()?.stream_sender_held === true);
 $effect(() => {
 	if (streamingOptimismState !== 'starting') return;
 	const generation = getStreamingAttemptGeneration();
@@ -1105,6 +1106,7 @@ const configRows = $derived<ConfigRow[]>([
 		lifecycle={streamLifecycle}
 		{isStreaming}
 		optimismState={streamingOptimismState}
+		senderHeld={streamSenderHeld}
 	/>
 
 	{#if showLiveCockpit}

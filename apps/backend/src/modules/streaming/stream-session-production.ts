@@ -33,6 +33,7 @@ import {
 	unownedSenderCensus,
 } from "./sender-ownership.ts";
 import { newAttemptId } from "./start-failure-taxonomy.ts";
+import { STOP_DEADLINE_MS } from "./start-lifecycle-timing.ts";
 import {
 	getStreamLifecycleState,
 	seedStreamLifecycleState,
@@ -47,6 +48,12 @@ import {
 } from "./stream-start-retry-reporting.ts";
 import { getIsStreaming, updateStatus } from "./streaming.ts";
 import { getStreamingBackend } from "./streaming-engine.ts";
+import {
+	SenderUnitError,
+	senderHostBlocked,
+	senderUnitKeepsSession,
+	stopHeldSenderUnit,
+} from "./streamloop/sender-unit.ts";
 import { stopGeneration } from "./streamloop/session.ts";
 
 function recordEvent(publish: () => void): void {
@@ -58,6 +65,8 @@ function recordEvent(publish: () => void): void {
 }
 
 let streamStartedAt: number | undefined;
+/** Room for a unit stop (TimeoutStopSec=5s plus the kill) even late in a Stop. */
+const SENDER_UNIT_STOP_FLOOR_MS = 7_000;
 
 export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	initialLiveness: encoderOtaStreamLiveness,
@@ -65,7 +74,25 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	setStreamingStatus: updateStatus,
 	getStreamingStatus: getIsStreaming,
 	stopRuntime: async (generation, confirmUnknown) => {
+		const startedAt = performance.now();
 		await stopGeneration(generation, confirmUnknown);
+		// A sender unit an earlier backend left running (or one whose state is
+		// not settled yet) is not in this process's handles; the stop settles it
+		// by unit name, after the engine, inside what is left of the stop budget.
+		// A unit stop that outlives the budget still finishes; the session then
+		// re-evaluates once this cleanup settles.
+		if (!shouldUseMocks()) {
+			const left = STOP_DEADLINE_MS - (performance.now() - startedAt);
+			try {
+				await stopHeldSenderUnit(Math.max(left, SENDER_UNIT_STOP_FLOOR_MS));
+			} catch (error) {
+				throw new Error(
+					error instanceof SenderUnitError && error.reason === "unit_unresolved"
+						? "sender_unit_unresolved"
+						: "sender_unit_stop_unconfirmed",
+				);
+			}
+		}
 		if (!shouldUseMocks() && unownedSenderCensus() !== "absent")
 			throw new Error("sender_ownership_unproven");
 	},
@@ -189,8 +216,15 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	confirmStreamingForOta: adoptOtaStreamingMarker,
 	awaitsIdleWitness: otaMarkerAwaitsIdleWitness,
 	engineStopped: () => engineUnitStopped(),
+	// Only the operator ends a session a held sender may carry; while the unit's
+	// state is not settled at all, the same holds.
+	automaticStopRefused: () => !shouldUseMocks() && senderUnitKeepsSession(),
+	idleStopNeedsRuntime: () => !shouldUseMocks() && senderHostBlocked() !== null,
+	// Disarms restoration at once; the stopped event waits for confirmed cleanup.
 	onStreamStopped: (cause) => {
 		noteStreamStopped(cause);
+	},
+	onStreamStopCompleted: (cause) => {
 		recordEvent(() =>
 			emitEvent("stream_stopped", {
 				cause,

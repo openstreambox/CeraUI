@@ -199,3 +199,7 @@ values. The `logRedact(value)` helper is exported for call sites building metada
 Streaming and ingest loop modules log entry/exit and error paths via `logger.debug`/`logger.warn`
 so the boot sequence and per-tick activity are visible in dev without noise in prod.
 
+**srtla_send under its own unit (opt-in):** with `setup.json`
+`"srtla_send_unit": true` the sender runs through the image's
+`srtla-send.service` instead of as a child; off by default. Contract, paths,
+readiness and gaps: [docs/SRTLA-SEND-UNIT.md](../SRTLA-SEND-UNIT.md).

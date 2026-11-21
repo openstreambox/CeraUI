@@ -5,6 +5,7 @@ import {
 	getStreamingProcesses,
 	type StreamingProcess,
 } from "./streamloop/process-runner.ts";
+import { senderHostBlocked } from "./streamloop/sender-unit.ts";
 
 export type SenderCensus = "absent" | "present" | "unknown";
 
@@ -18,7 +19,10 @@ export function ownsSessionSender(
 	executable = srtlaSendExec,
 ): boolean {
 	return processes.some(
-		(process) => process.spawnfile === executable && isLive(process),
+		(process) =>
+			process.spawnfile === executable &&
+			isLive(process) &&
+			process.proc.isCurrent?.() !== false,
 	);
 }
 
@@ -81,9 +85,10 @@ function parentPid(stat: string): number | undefined {
  *
  * A matching process is subtracted only when one of our supervised handles
  * (stream session or SRT forwarding) has that exact PID, is still unreaped, and
- * the kernel names this process as its parent. Handle liveness is read after
- * the table: a child that is still unreaped now was unreaped during the scan, so
- * its PID could not have been reused. A stale handle, a reused PID, a foreign
+ * the kernel names this process as its parent (or, for a sender run by its own
+ * systemd unit, the handle confirms the process sits in that unit's cgroup).
+ * Handle liveness is read after the table: a child that is still unreaped now
+ * was unreaped during the scan, so its PID could not have been reused. A stale handle, a reused PID, a foreign
  * parent or an unreadable row keeps the census conservative. Names alone never
  * make a sender owned.
  */
@@ -92,11 +97,20 @@ export function unownedSenderCensus(
 	procRoot = senderCensusProcRoot(),
 	selfPid = process.pid,
 ): SenderCensus {
+	// A sender unit in an unresolved state may hold a sender the table does
+	// not show (between a crash and systemd's restart): never "absent".
+	if (senderHostBlocked()) return "unknown";
 	const pids = senderPids(procRoot);
 	if (pids === undefined) return "unknown";
 	for (const pid of pids) {
 		const handle = owned.find(({ proc }) => proc.pid === pid);
 		if (handle === undefined) return "present";
+		// A sender in its own systemd unit is not our child: its handle proves
+		// ownership by the unit's cgroup instead of the parent PID.
+		if (handle.proc.owns) {
+			if (!isLive(handle) || !handle.proc.owns(pid, procRoot)) return "present";
+			continue;
+		}
 		let parent: number | undefined;
 		try {
 			parent = parentPid(readFileSync(`${procRoot}/${pid}/stat`, "utf8"));

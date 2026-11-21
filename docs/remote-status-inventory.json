@@ -7756,6 +7756,14 @@
           "decision": "needed: typed scalar or closed enum"
         },
         {
+          "path": "stream_sender_held",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "available_updates",
           "types": [
             "null",
@@ -43960,11 +43968,26 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
       ]
+    },
+    {
+      "source": "apps/backend/src/main.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "stream_sender_held",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
     }
   ],
   "dependencies": {
-    "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
-    "apps/backend/src/main.ts": "babe80c5210a52453f7832e76e038bb4b22d0f74e3f5eb35a17f1afff0aca2e7",
+    "apps/backend/src/helpers/config-schemas.ts": "826fffda903429139cb9f1ae3bb11811ac851a3fb5740652d4990d07f9c8797f",
+    "apps/backend/src/main.ts": "fc84791be94aaf96775ff4e9fd92446c512eea386aa6c6618da1fcddb2669938",
     "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -44023,7 +44046,7 @@
     "apps/backend/src/modules/system/ssh.ts": "76480301bb9dc3a9483a7b9fb7073a2a1ec91c315653df945bfb2fcc1ce86f43",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "5d6fe150025d879e82f987d25489c4c7125b724f56c9296cc459dc500aade698",
     "apps/backend/src/modules/ui/notifications.ts": "ffe408b78e2f04ffa037890131f177b50569f6530f4cc89208fb6eaf7bd8fd95",
-    "apps/backend/src/modules/ui/status.ts": "3579bc2c06c5b15788015229c0d581997518f56910af10a485a44f0eacdf181f",
+    "apps/backend/src/modules/ui/status.ts": "a036ff184041ab8f3f87c20b62e13467a91219f2ae19b066421b298903d38fb7",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
     "apps/backend/src/modules/wifi/wifi-country.ts": "b9e350f52a819d5cc84fd8a742424ce73c29b35ebb03136b0fd36aea31f4b422",
     "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "acdfaa83e8a4b246bbd8299c426bf5ba76dafa275e3956de12fc0e05c5d71fb2",
@@ -44052,7 +44075,7 @@
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
-    "packages/rpc/src/schemas/status.schema.ts": "cbe3ab63ba27b7de764e7f9233f378e1a2bc05fafcd21f9303180764362eb096",
+    "packages/rpc/src/schemas/status.schema.ts": "3bcd86c8cc722d8c0426fb79ac131a7716dcb234fbe31175030a72ae73878061",
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
     "packages/rpc/src/schemas/system.schema.ts": "872ce7a357ba980c078865c3c8804b35e746284e901834a9c5208d697907288d",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",

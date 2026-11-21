@@ -276,7 +276,7 @@ test("a terminal diagnostic handed to the retry reporter is not a retry", () => 
 	expect(emit.mock.calls).toEqual([]);
 });
 
-test("failed stop records the failure edge without changing lifecycle", async () => {
+test("failed stop records the failure edge, and no stopped event, without changing lifecycle", async () => {
 	const h = session({
 		stopRuntime: async () => {
 			throw new Error("stop refused");
@@ -289,13 +289,9 @@ test("failed stop records the failure edge without changing lifecycle", async ()
 		reason: "stop refused",
 	});
 	streamSessionProductionDeps.setLifecycleState?.("stop_failed");
-	expect(emit.mock.calls).toEqual([
-		[
-			"stream_stopped",
-			{ cause: "engine_loss", durationSec: expect.any(Number) },
-		],
-		["stream_stop_failed", {}],
-	]);
+	// "Stopped" is recorded only once cleanup is confirmed; a stop that failed
+	// may have left the stream running.
+	expect(emit.mock.calls).toEqual([["stream_stop_failed", {}]]);
 	expect(getStreamLifecycleState()).toBe("stop_failed");
 });
 

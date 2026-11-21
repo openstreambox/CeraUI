@@ -14,6 +14,11 @@ export function createSessionCleanup(
 		readonly schedule: (callback: () => void, delayMs: number) => Timer;
 		readonly cancel: (timer: Timer) => void;
 		readonly deadlineMs: number;
+		/**
+		 * The submitted cleanup settled; `late` when the caller's deadline had
+		 * already answered for it, so nobody saw the real outcome.
+		 */
+		readonly onSettled?: (late: boolean) => void;
 	},
 ) {
 	let flight: CleanupFlight | undefined;
@@ -30,10 +35,11 @@ export function createSessionCleanup(
 				reject: answer.reject,
 			};
 			flight = current;
-			const timer = clock.schedule(
-				() => current.reject(new Error("stop_timeout")),
-				clock.deadlineMs,
-			);
+			let late = false;
+			const timer = clock.schedule(() => {
+				late = true;
+				current.reject(new Error("stop_timeout"));
+			}, clock.deadlineMs);
 			let raw: Promise<void>;
 			try {
 				raw = deps.stopRuntime(generation, confirmUnknown);
@@ -43,6 +49,7 @@ export function createSessionCleanup(
 			const retire = () => {
 				clock.cancel(timer);
 				if (flight === current) flight = undefined;
+				clock.onSettled?.(late);
 			};
 			void raw.then(
 				() => {
