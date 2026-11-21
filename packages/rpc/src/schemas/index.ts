@@ -29,6 +29,7 @@ export * from './phone-box.schema';
 export * from './relay.schema';
 export * from './sources.schema';
 export * from './sources-visibility.schema';
+export * from './srt-encryption.schema';
 export * from './status.schema';
 export * from './stream-profile.schema';
 export * from './streaming.schema';
