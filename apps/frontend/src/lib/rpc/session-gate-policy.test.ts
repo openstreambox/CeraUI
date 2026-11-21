@@ -45,7 +45,7 @@ function contractProcedures(
 	return found;
 }
 
-/** Procedure names the device's RPC router registers (router.ts source). */
+/** `namespace.name` of every procedure the device's router registers (router.ts). */
 function routedNames(): Set<string> {
 	const source = readFileSync(
 		fileURLToPath(
@@ -53,9 +53,22 @@ function routedNames(): Set<string> {
 		),
 		"utf8",
 	);
-	return new Set(
-		[...source.matchAll(/^\t\t(\w+): \w+/gm)].map((match) => match[1] ?? ""),
-	);
+	// `namespace: base.router({` opens a namespace; its two-tab keys are its
+	// procedures. Keyed `namespace.name`, so `wifi.getStatus` never vouches for
+	// another namespace's `getStatus`.
+	const routed = new Set<string>();
+	let namespace: string | undefined;
+	for (const line of source.split("\n")) {
+		const opened = /^\t(\w+): base\.router\(/.exec(line);
+		if (opened) {
+			namespace = opened[1];
+			continue;
+		}
+		if (/^\S/.test(line) || /^\t\S/.test(line)) namespace = undefined;
+		const key = /^\t\t(\w+): \w+/.exec(line);
+		if (key && namespace) routed.add(`${namespace}.${key[1]}`);
+	}
+	return routed;
 }
 
 /** The procedures the typed `rpc` proxy exposes (`TypedRPC` in client.ts). */
@@ -116,15 +129,20 @@ describe("reconnect session gate policy", () => {
 		}
 	});
 
+	it("matches routed procedures by namespace, not by bare name", () => {
+		const routed = routedNames();
+		expect(routed.has("wifi.getStatus")).toBe(true);
+		expect(routed.has("addons.list")).toBe(true);
+		expect(routed.has("foo.getStatus")).toBe(false);
+	});
+
 	it("holds only reads the device actually answers", () => {
 		const routed = routedNames();
 		const unanswered = [...HELD_DURING_REAUTH].filter((procedure) => {
 			const answers = contract.get(procedure);
 			// A bare contract entry (no answer declared, no handler) is a
 			// placeholder; outside the contract the router must register it.
-			return answers === undefined
-				? !routed.has(procedure.split(".")[1] ?? "")
-				: !answers;
+			return answers === undefined ? !routed.has(procedure) : !answers;
 		});
 		expect(unanswered).toEqual([]);
 	});

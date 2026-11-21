@@ -1898,7 +1898,7 @@
 	"notifications.ceraliveUpdateFailed": "Das Softwareupdate ist fehlgeschlagen. Öffnen Sie Einstellungen → Softwareupdates, um den Grund zu sehen und es erneut zu versuchen.",
 	"notifications.connectionLost": "Verbindung verloren",
 	"notifications.connectionRecovered": "Verbindung wiederhergestellt",
-	"notifications.stopNotSent": "Der Stream läuft möglicherweise noch: Stopp wurde nicht gesendet. Melde dich an und stoppe ihn erneut.",
+	"notifications.stopNotSent": "Der Stream läuft möglicherweise noch: Stopp wurde nicht gesendet. Prüfe den Stream und stoppe ihn erneut.",
 	"notifications.encoderModeClamped": "Deine gespeicherten Encoder-Einstellungen wurden von der angeschlossenen Kamera nicht unterstützt und auf {resolution} mit {framerate} fps angepasst.",
 	"notifications.engineCrashed": "Die Streaming-Engine wurde unerwartet beendet. Wiederherstellung…",
 	"notifications.engineRecovered": "Die Streaming-Engine wurde wiederhergestellt.",

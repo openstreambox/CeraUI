@@ -1853,7 +1853,7 @@
 	"notifications.ceraliveUpdateFailed": "ソフトウェア更新に失敗しました。設定 → ソフトウェア更新 を開いて理由を確認し、再試行してください。",
 	"notifications.connectionLost": "接続が切断されました",
 	"notifications.connectionRecovered": "接続が回復しました",
-	"notifications.stopNotSent": "配信はまだ続いている可能性があります。停止は送信されませんでした。サインインして、もう一度停止してください。",
+	"notifications.stopNotSent": "配信はまだ続いている可能性があります。停止は送信されませんでした。配信を確認して、もう一度停止してください。",
 	"notifications.encoderModeClamped": "保存されていたエンコーダー設定は接続中のカメラでは対応していなかったため、{resolution} / {framerate} fps に調整しました。",
 	"notifications.engineCrashed": "配信エンジンが予期せず停止しました。復旧中…",
 	"notifications.engineRecovered": "配信エンジンが復旧しました。",

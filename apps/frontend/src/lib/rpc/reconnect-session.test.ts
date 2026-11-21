@@ -32,6 +32,7 @@ import {
 } from "$lib/rpc/async-operation.svelte";
 import { rpc, rpcClient } from "$lib/rpc/client";
 import { NotSentError } from "$lib/rpc/rpc-error";
+import { stopOnceSignedIn } from "$lib/rpc/stop-intent";
 import { initSubscriptions, resetState } from "$lib/rpc/subscriptions.svelte";
 import {
 	type AuthAttempt,
@@ -547,6 +548,71 @@ describe("a Stop requested while the new socket is being signed in", () => {
 		answer("streaming.stop", { success: true, result: "stopped" });
 		await expect(first).resolves.toBeUndefined();
 		await expect(second).resolves.toBeUndefined();
+	});
+
+	it("expires if the session is not back within its lifetime, with a notice, and is never sent later", async () => {
+		await signInFromForm(false);
+		live();
+		await reconnect();
+		const stop = stopStreaming().catch((error: unknown) => error);
+		await flush();
+
+		// The link goes away completely before the sign-in answers; new sockets
+		// never open (phone out of range) for half an hour.
+		dropLink();
+		for (let minute = 0; minute < 30; minute += 1)
+			await vi.advanceTimersByTimeAsync(60_000);
+
+		const error = await stop;
+		expect(error).toBeInstanceOf(NotSentError);
+		expect((error as NotSentError).reason).toBe("signed-out");
+		expect(
+			getActiveNotifications().some(
+				(notification) => notification.name === "stop-not-sent",
+			),
+		).toBe(true);
+
+		// The phone comes back, the session is still valid and a (new) stream
+		// is live: the expired Stop must not end it.
+		socket().readyState = FakeWebSocket.OPEN;
+		socket().onopen?.();
+		await flush();
+		answer("auth.login", { success: true });
+		await flush();
+		answer("status.getStatus", { is_streaming: true });
+		await flush();
+		expect(sentCount("streaming.stop")).toBe(0);
+	});
+
+	it("is sent when the device is still starting a stream, not only when live", async () => {
+		await signInFromForm(false);
+		live();
+		await reconnect();
+		void stopStreaming().catch(() => undefined);
+		await flush();
+
+		answer("auth.login", { success: true });
+		await flush();
+		answer("status.getStatus", {
+			is_streaming: false,
+			stream_lifecycle: "starting",
+		});
+		await flush();
+
+		expect(sentCount("streaming.stop")).toBe(1);
+	});
+
+	it("tells the operator when it arrives after the session already ended", async () => {
+		// Signed out: there is no session to keep a Stop for.
+		const error = await stopOnceSignedIn(async () => undefined).catch(
+			(cause: unknown) => cause,
+		);
+		expect(error).toBeInstanceOf(NotSentError);
+		expect(
+			getActiveNotifications().some(
+				(notification) => notification.name === "stop-not-sent",
+			),
+		).toBe(true);
 	});
 
 	it("is dropped with the session: a later sign-in never sends it", async () => {

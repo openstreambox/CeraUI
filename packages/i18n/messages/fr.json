@@ -1901,7 +1901,7 @@
 	"notifications.ceraliveUpdateFailed": "La mise à jour logicielle a échoué. Ouvrez Paramètres → Mises à jour logicielles pour voir la raison et réessayer.",
 	"notifications.connectionLost": "Connexion perdue",
 	"notifications.connectionRecovered": "Connexion rétablie",
-	"notifications.stopNotSent": "Le flux est peut-être encore en direct : l'arrêt n'a pas été envoyé. Connectez-vous et arrêtez-le à nouveau.",
+	"notifications.stopNotSent": "Le flux est peut-être encore en direct : l'arrêt n'a pas été envoyé. Vérifiez le flux et arrêtez-le à nouveau.",
 	"notifications.encoderModeClamped": "Vos réglages d'encodeur enregistrés n'étaient pas pris en charge par la caméra connectée ; ils ont été ajustés à {resolution} à {framerate} ips.",
 	"notifications.engineCrashed": "Le moteur de streaming s'est arrêté de façon inattendue. Récupération…",
 	"notifications.engineRecovered": "Le moteur de streaming a récupéré.",

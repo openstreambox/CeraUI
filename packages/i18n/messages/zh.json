@@ -1853,7 +1853,7 @@
 	"notifications.ceraliveUpdateFailed": "软件更新失败。打开 设置 → 软件更新 查看原因并重试。",
 	"notifications.connectionLost": "连接已断开",
 	"notifications.connectionRecovered": "连接已恢复",
-	"notifications.stopNotSent": "直播可能仍在进行：停止指令未发送。请登录后再次停止。",
+	"notifications.stopNotSent": "直播可能仍在进行：停止指令未发送。请检查直播并再次停止。",
 	"notifications.encoderModeClamped": "已连接的摄像头不支持你保存的编码器设置，已调整为 {resolution} / {framerate} fps。",
 	"notifications.engineCrashed": "推流引擎意外停止。正在恢复…",
 	"notifications.engineRecovered": "推流引擎已恢复。",
