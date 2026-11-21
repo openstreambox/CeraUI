@@ -5,18 +5,20 @@ import { describe, expect, it } from "vitest";
 import { en } from "../../tests/helpers/catalog";
 import { linkName } from "./link-names";
 
+// Numeric keys, as the backend sends them; key order is the Network list order,
+// so the order written here does not matter.
 const modems = {
-	b: {
-		ifname: "wwan1",
-		name: "Modem M5 1234",
-		status: { network: "Harbor Cell" },
-	},
-	a: {
+	"2": { ifname: "wwan2", name: "Modem M3 9999", status: {} },
+	"0": {
 		ifname: "wwan0",
 		name: "Modem M4 5678",
 		status: { network: "Northwind" },
 	},
-	c: { ifname: "wwan2", name: "Modem M3 9999", status: {} },
+	"1": {
+		ifname: "wwan1",
+		name: "Modem M5 1234",
+		status: { network: "Harbor Cell" },
+	},
 } as unknown as ModemList;
 
 const wifi = {
@@ -25,7 +27,7 @@ const wifi = {
 } as unknown as WifiStatus;
 
 describe("one name per link", () => {
-	it("names a modem by its SIM place and operator, never model or serial", () => {
+	it("names a modem by its place in the modem list and its operator, never model or serial", () => {
 		expect(linkName("wwan0", { modems })).toBe("SIM 1 · Northwind");
 		expect(linkName("wwan1", { modems })).toBe("SIM 2 · Harbor Cell");
 		expect(linkName("wwan2", { modems })).toBe("SIM 3");

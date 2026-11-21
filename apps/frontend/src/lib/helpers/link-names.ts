@@ -57,11 +57,14 @@ export interface LinkNameSources {
 	readonly wifi?: WifiStatus | undefined;
 }
 
-/** The modems in a stable order (by interface id), so "SIM 1" stays SIM 1. */
+/**
+ * The modems in the box's own list order, the order Network shows them in, so
+ * "SIM 2" is the second modem there too. Numeric keys come first in key order.
+ */
 function modemOrder(modems: ModemList | undefined): string[] {
-	return Object.entries(modems ?? {})
-		.map(([key, modem]) => modem.ifname || key)
-		.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+	return Object.entries(modems ?? {}).map(
+		([key, modem]) => modem.ifname || key,
+	);
 }
 
 export function linkName(ifname: string, sources: LinkNameSources): string {

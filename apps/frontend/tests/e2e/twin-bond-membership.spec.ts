@@ -11,7 +11,7 @@ test("captured eligible twins render independently; backend refusal withdraws on
 	const cards = page.getByTestId("bonded-link-card");
 	await expect(cards).toHaveCount(2);
 	// Each twin is its own card under its own name: the two identical dongles
-	// read as SIM 1 and SIM 2 (ordered by interface id), not as one model name
+	// read as SIM 1 and SIM 2 (their order in the modem list), not as one model name
 	// twice that needs an identity line to tell them apart.
 	const names: Record<string, string> = { enx0c5b8f279a64: "SIM 1", eth1: "SIM 2" };
 	for (const iface of Object.keys(TWIN_NETIF)) {

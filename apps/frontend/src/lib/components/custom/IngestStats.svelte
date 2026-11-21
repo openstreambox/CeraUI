@@ -392,7 +392,7 @@ function exportCsv(): void {
 									class="size-2 shrink-0 rounded-full"
 									style={`background-color: var(--link-${(i % 6) + 1})`}
 								></span>
-								<span class="truncate font-medium" title={link.iface}>{nameOf(link.iface)}</span>
+								<span class="line-clamp-2 font-medium break-words" title={link.iface}>{nameOf(link.iface)}</span>
 							</div>
 							<div
 								aria-hidden="true"
@@ -501,7 +501,7 @@ function exportCsv(): void {
 								style={`background-color: var(--link-${(i % 6) + 1})`}
 							></span>
 							<span class="min-w-0">
-								<span class="block truncate font-medium" data-link-name>{nameOf(link.iface)}</span>
+								<span class="line-clamp-2 block font-medium break-words" data-link-name>{nameOf(link.iface)}</span>
 								{#if nameOf(link.iface) !== link.iface}
 									<span class="text-muted-foreground block truncate font-mono text-[10px]">{link.iface}</span>
 								{/if}
