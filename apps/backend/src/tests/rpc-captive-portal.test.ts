@@ -93,6 +93,7 @@ test("the transport peer wins over a caller's requested phone", async () => {
 		"2",
 		"venue-incarnation",
 		undefined,
+		undefined,
 	);
 });
 
@@ -126,6 +127,7 @@ const frontDoor = (holds: () => boolean) =>
 				interface: "wlan1",
 				local: "10.42.0.1",
 			},
+			ingressLifetime: { ifindex: 9, incarnation: 4 },
 			ingressPathValid: holds,
 		},
 	} as unknown as AppWebSocket);
@@ -136,11 +138,13 @@ test("behind the front door the window is keyed by the phone and its AP", async 
 		{ action: "start", radio: 2, incarnation: "venue-incarnation" },
 		{ context: proxied },
 	);
+	// The arrival AP's lifetime from the socket's accepted evidence goes along.
 	expect(start).toHaveBeenCalledWith(
 		"10.42.0.13",
 		"2",
 		"venue-incarnation",
 		"wlan1",
+		{ ifindex: 9, incarnation: 4 },
 	);
 	await call(
 		captivePortalProcedure,

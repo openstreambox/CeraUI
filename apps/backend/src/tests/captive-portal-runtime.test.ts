@@ -35,6 +35,9 @@ const apProfile = {
 let duringSweep: (() => void) | undefined;
 let duringNeigh: (() => void) | undefined;
 let duringOpen: (() => void) | undefined;
+let duringRoute: (() => void) | undefined;
+// The arrival AP's lifetime as the front door's socket evidence recorded it.
+const accepted = () => ({ ifindex: apIfindex, incarnation: apEpoch });
 const apRow = {
 	id: 3,
 	ifname: "ap0",
@@ -81,6 +84,8 @@ mock.module("../helpers/run.ts", () => ({
 			]);
 		if (args.includes("link"))
 			return JSON.stringify([{ ifname: args.at(-1), ifindex: apIfindex }]);
+		duringRoute?.();
+		duringRoute = undefined;
 		return JSON.stringify([{ dev: routeDev }]);
 	},
 	runWithStdin: async (_bin: string, args: string[], stdin: string) => {
@@ -239,18 +244,19 @@ test("a proven arrival interface must be the AP the phone routes through", async
 	failOpen = false;
 	commands.length = 0;
 	await expect(
-		signInWindow.start("10.42.0.6", "2", VENUE, "eth0"),
+		signInWindow.start("10.42.0.6", "2", VENUE, "eth0", accepted()),
 	).rejects.toThrow("not_on_box_wifi");
 	// Refused before any sweep or identity read: nothing ran for that caller.
 	expect(commands).toEqual([]);
 	aps = ["ap0", "ap1"];
 	await expect(
-		signInWindow.start("10.42.0.6", "2", VENUE, "ap1"),
+		signInWindow.start("10.42.0.6", "2", VENUE, "ap1", accepted()),
 	).rejects.toThrow("not_on_box_wifi");
 	expect(commands).not.toContain("open");
-	expect((await signInWindow.start("10.42.0.6", "2", VENUE, "ap0")).phase).toBe(
-		"signing_in",
-	);
+	expect(
+		(await signInWindow.start("10.42.0.6", "2", VENUE, "ap0", accepted()))
+			.phase,
+	).toBe("signing_in");
 	expect(signInWindow.status("10.42.0.6", "eth0").phase).toBe("idle");
 	expect((await signInWindow.refresh("10.42.0.6", "eth0")).phase).toBe("idle");
 	await expect(signInWindow.finish("10.42.0.6", "eth0")).rejects.toThrow(
@@ -363,7 +369,7 @@ test("a phone behind an AP without a pinned lifetime is refused", async () => {
 });
 
 test("behind the front door, a replaced arrival AP closes the window without transfer", async () => {
-	await signInWindow.start("10.42.0.11", "2", VENUE, "ap0");
+	await signInWindow.start("10.42.0.11", "2", VENUE, "ap0", accepted());
 	configs.length = 0;
 	apIfindex = 8;
 	expect((await signInWindow.refresh("10.42.0.11", "ap0")).phase).toBe(
@@ -454,5 +460,50 @@ for (const [name, change] of Object.entries(duringInstall))
 		expect(await portalHealthProbe("venue0", async () => "success")).toBe(
 			"success",
 		);
+		restore();
+	});
+
+// The front door's evidence is accepted with the socket; the start arrives
+// later. The proven AP is pinned before the first route read and must still be
+// the lifetime the evidence was accepted on.
+test("behind the front door, an AP changed since the evidence was accepted is refused before any cleanup", async () => {
+	const atAcceptance = accepted();
+	for (const [name, lifetime] of [
+		["replaced under its name", { ...atAcceptance, ifindex: 6 }],
+		["re-registered", { ...atAcceptance, incarnation: apEpoch - 1 }],
+		["unread ifindex", { ...atAcceptance, ifindex: undefined }],
+		["unread incarnation", { ...atAcceptance, incarnation: undefined }],
+		["no lifetime", undefined],
+	] as const) {
+		commands.length = 0;
+		await expect(
+			signInWindow.start("10.42.0.15", "2", VENUE, "ap0", lifetime),
+			name,
+		).rejects.toThrow("not_on_box_wifi");
+		expect(commands).toEqual([]);
+	}
+});
+
+for (const [name, change] of Object.entries({
+	"reactivated on the same netdev": reactivate,
+	"replaced under its name": () => {
+		apIfindex = 8;
+		return () => {
+			apIfindex = 7;
+		};
+	},
+}))
+	test(`behind the front door, an AP ${name} during the first route read is refused without opening`, async () => {
+		commands.length = 0;
+		let restore: () => void = () => undefined;
+		const atAcceptance = accepted();
+		duringRoute = () => {
+			restore = change();
+		};
+		await expect(
+			signInWindow.start("10.42.0.16", "2", VENUE, "ap0", atAcceptance),
+		).rejects.toThrow("not_on_box_wifi");
+		expect(commands).toEqual([]);
+		expect(signInWindow.status("10.42.0.16", "ap0").phase).toBe("idle");
 		restore();
 	});
