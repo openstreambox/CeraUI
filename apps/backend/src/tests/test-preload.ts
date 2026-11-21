@@ -37,6 +37,18 @@ const previousContinuityDir = process.env.CERALIVE_CONTINUITY_DIR;
 process.env.CERALIVE_CONTINUITY_DIR = join(runtimeRoot, "continuity");
 continuityObserverIo.directory = process.env.CERALIVE_CONTINUITY_DIR;
 const previousStreamingMarker = process.env.CERALIVE_STREAMING_MARKER;
+const previousPreparationDir =
+	process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = join(
+	runtimeRoot,
+	"cellular-preparation",
+);
+const previousCarrierIntentDir =
+	process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
+process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = join(
+	runtimeRoot,
+	"carrier-intent",
+);
 process.env.CERALIVE_STREAMING_MARKER = join(runtimeRoot, "streaming");
 // Modem registration creates the mode-choice key on first use; never under /data.
 const previousModeChoiceDir = process.env.CERALIVE_MODE_CHOICE_DIR;
@@ -93,6 +105,15 @@ afterAll(async () => {
 	if (previousContinuityDir === undefined)
 		delete process.env.CERALIVE_CONTINUITY_DIR;
 	else process.env.CERALIVE_CONTINUITY_DIR = previousContinuityDir;
+	if (previousCarrierIntentDir === undefined)
+		delete process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR;
+	else
+		process.env.CERALIVE_AUTOMATIC_CARRIER_STATE_DIR = previousCarrierIntentDir;
+	if (previousPreparationDir === undefined)
+		delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	else
+		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR =
+			previousPreparationDir;
 	if (previousEventsDir === undefined) delete process.env.CERALIVE_EVENTS_DIR;
 	else process.env.CERALIVE_EVENTS_DIR = previousEventsDir;
 	await rm(runtimeRoot, { recursive: true, force: true });
