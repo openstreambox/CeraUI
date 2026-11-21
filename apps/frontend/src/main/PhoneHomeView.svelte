@@ -14,7 +14,6 @@
 		getUplinks,
 		getWifi,
 	} from '$lib/rpc/subscriptions.svelte';
-	import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
 	import { getHudState } from '$lib/stores/hud.svelte';
 	import { getLayoutMode } from '$lib/stores/layout-mode.svelte';
 	import { navigateTo } from '$lib/stores/navigation.svelte';
@@ -67,7 +66,7 @@
 	const wifiRenew = $derived.by(() => {
 		if (!hotspotEntry) return undefined;
 		const [device, iface] = hotspotEntry;
-		if (!hotspotIsActive(iface, getWifiAdapterModeEntry(device))) return undefined;
+		if (!hotspotIsActive(iface)) return undefined;
 		if (!canRenewHotspotPassword(device, iface)) return undefined;
 		return {
 			phase: getOperationPhase(newHotspotPasswordKey(device, iface)),
