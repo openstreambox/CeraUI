@@ -129,11 +129,29 @@ function answeredLinks(stats: SenderStats): number {
 export function senderAdoptionVerdict(
 	e: SenderAdoptionEvidence,
 ): SenderAdoptionVerdict {
-	const refuse = (check: string, reason: string): SenderAdoptionVerdict => ({
-		decision: "refuse",
-		check,
-		reason,
-	});
+	const before = verdictBeforeSenderReads(e);
+	if (before.decision !== "adopt") return before;
+	const reads = verdictOfSenderReads(e);
+	if (reads.decision !== "adopt") return reads;
+	// The engine still runs the session this sender carries.
+	if (e.engine !== "streaming")
+		return {
+			decision: "refuse",
+			check: "engine",
+			reason: `engine_${e.engine}`,
+		};
+	return { decision: "adopt" };
+}
+
+function refusal(check: string, reason: string): SenderAdoptionVerdict {
+	return { decision: "refuse", check, reason };
+}
+
+/** Records, process identity, supervision, configuration and map on disk. */
+function verdictBeforeSenderReads(
+	e: SenderAdoptionEvidence,
+): SenderAdoptionVerdict {
+	const refuse = refusal;
 	if (!e.bootId) return refuse("boot", "boot_id_unreadable");
 	const l = e.lifetime;
 	if (!l) return refuse("lifetime", "missing_or_invalid");
@@ -183,7 +201,16 @@ export function senderAdoptionVerdict(
 		canonical(pub.links) !== canonical(e.disk.links)
 	)
 		return refuse("bind_map", "disk_mismatch");
+	return { decision: "adopt" };
+}
 
+/** The two live reads over the sender's control socket. */
+function verdictOfSenderReads(
+	e: SenderAdoptionEvidence,
+): SenderAdoptionVerdict {
+	const refuse = refusal;
+	const pub = e.publication;
+	if (!pub) return refuse("bind_map", "publication_missing");
 	// The sender itself, twice: mapped to exactly those links, receiver replies
 	// on at least one of them, and its own byte counter moving.
 	if (e.reads.length !== 2) return refuse("sender", "two_reads_required");
@@ -211,9 +238,6 @@ export function senderAdoptionVerdict(
 		return refuse("sender", "byte_counter_unavailable");
 	if (second.session_bytes_sent <= first.session_bytes_sent)
 		return refuse("sender", "no_progress");
-
-	// The engine still runs the session this sender carries.
-	if (e.engine !== "streaming") return refuse("engine", `engine_${e.engine}`);
 	return { decision: "adopt" };
 }
 
@@ -372,7 +396,14 @@ export async function readSenderProcessFacts(
 	};
 }
 
-/** Fresh evidence. The sender is only contacted once its process identity holds. */
+/**
+ * Fresh evidence, in stages. The sender's socket is contacted only once the
+ * records, its identity, its supervision, the configuration and the map on
+ * disk agree, and the engine is asked only once the sender's reads agree too.
+ * A refusal therefore costs no socket read and no engine query, which keeps
+ * startup and the following reconciliation exactly as they were. Facts that
+ * were not gathered read as `reads: []` and `engine: "unknown"`.
+ */
 export async function collectSenderAdoptionEvidence(
 	io: SenderAdoptionIo,
 ): Promise<SenderAdoptionEvidence> {
@@ -382,16 +413,7 @@ export async function collectSenderAdoptionEvidence(
 		lifetime?.pid != null
 			? await readSenderProcessFacts(io.procRoot, io.cgroupRoot, lifetime.pid)
 			: null;
-	const identityHolds =
-		lifetime !== null &&
-		process !== null &&
-		lifetime.bootId === bootId &&
-		process.startTime === lifetime.startTime &&
-		process.comm === "srtla_send";
-	const reads = identityHolds
-		? await io.readStats(lifetime.controlSocket).catch(() => [null, null])
-		: [];
-	return {
+	const local: SenderAdoptionEvidence = {
 		bootId,
 		lifetime,
 		process,
@@ -399,7 +421,18 @@ export async function collectSenderAdoptionEvidence(
 		currentConfig: io.captureConfig(),
 		publication: await io.readPublication().catch(() => null),
 		disk: lifetime ? await io.readDisk(lifetime).catch(() => null) : null,
-		reads,
+		reads: [],
+		engine: "unknown",
+	};
+	if (!lifetime || verdictBeforeSenderReads(local).decision !== "adopt")
+		return local;
+	const withReads: SenderAdoptionEvidence = {
+		...local,
+		reads: await io.readStats(lifetime.controlSocket).catch(() => [null, null]),
+	};
+	if (verdictOfSenderReads(withReads).decision !== "adopt") return withReads;
+	return {
+		...withReads,
 		engine: await io.queryEngine().catch(() => "unknown" as const),
 	};
 }
