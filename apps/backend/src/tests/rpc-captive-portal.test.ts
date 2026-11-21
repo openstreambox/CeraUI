@@ -3,9 +3,16 @@ import { call } from "@orpc/server";
 import { createContext } from "../rpc/context.ts";
 import type { AppWebSocket } from "../rpc/types.ts";
 
-const start = mock(async (_peer: string, _radio: string, _via?: string) => ({
-	phase: "signing_in",
-}));
+const start = mock(
+	async (
+		_peer: string,
+		_radio: string,
+		_incarnation: string,
+		_via?: string,
+	) => ({
+		phase: "signing_in",
+	}),
+);
 const finish = mock(async (_peer: string, _via?: string) => ({
 	phase: "needs_sign_in" as const,
 }));
@@ -76,11 +83,36 @@ test("the transport peer wins over a caller's requested phone", async () => {
 	const input = {
 		action: "start" as const,
 		radio: 2,
+		incarnation: "venue-incarnation",
 		phone: "10.42.0.99",
 		mac: "02:00:00:00:00:99",
 	};
 	await call(captivePortalProcedure, input, { context: context() });
-	expect(start).toHaveBeenCalledWith("10.42.0.2", "2", undefined);
+	expect(start).toHaveBeenCalledWith(
+		"10.42.0.2",
+		"2",
+		"venue-incarnation",
+		undefined,
+	);
+});
+
+test("a start without the venue row's incarnation never reaches the owner", async () => {
+	for (const input of [
+		{ action: "start" as const, radio: 2 },
+		{ action: "start" as const, incarnation: "venue-incarnation" },
+	])
+		await expect(
+			call(captivePortalProcedure, input, { context: context() }),
+		).rejects.toThrow("Choose Wi-Fi");
+	for (const incarnation of ["", "not a token"])
+		await expect(
+			call(
+				captivePortalProcedure,
+				{ action: "start", radio: 2, incarnation },
+				{ context: context() },
+			),
+		).rejects.toThrow();
+	expect(start).not.toHaveBeenCalled();
 });
 
 const frontDoor = (holds: () => boolean) =>
@@ -101,10 +133,15 @@ test("behind the front door the window is keyed by the phone and its AP", async 
 	const proxied = frontDoor(() => true);
 	await call(
 		captivePortalProcedure,
-		{ action: "start", radio: 2 },
+		{ action: "start", radio: 2, incarnation: "venue-incarnation" },
 		{ context: proxied },
 	);
-	expect(start).toHaveBeenCalledWith("10.42.0.13", "2", "wlan1");
+	expect(start).toHaveBeenCalledWith(
+		"10.42.0.13",
+		"2",
+		"venue-incarnation",
+		"wlan1",
+	);
 	await call(
 		captivePortalProcedure,
 		{ action: "finish" },
@@ -125,7 +162,7 @@ test("a front-door path that no longer holds drives nothing", async () => {
 		return false;
 	});
 	for (const input of [
-		{ action: "start" as const, radio: 2 },
+		{ action: "start" as const, radio: 2, incarnation: "venue-incarnation" },
 		{ action: "finish" as const },
 		{ action: "status" as const },
 	])
