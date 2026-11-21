@@ -122,7 +122,8 @@ export const ALLOWED: Set<string> = new Set<string>([
 	// Termios setup on an already-open, generation-checked cellular serial descriptor.
 	"stty",
 	"systemctl",
-	// Fixed read-only system-bus identity calls for NM resource receipts.
+	// System-bus calls: read-only NM resource receipts, and the NetworkManager
+	// checkpoint lifecycle with confirmed profile persistence.
 	"busctl",
 	"/usr/bin/systemd-notify",
 	"journalctl",

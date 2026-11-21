@@ -1,6 +1,9 @@
 /**
  * RPC Context - Creates context for each WebSocket message
  */
+
+import { randomUUID } from "node:crypto";
+import { bootClock } from "../helpers/boot-clock.ts";
 import type { AppWebSocket, RPCContext } from "./types.ts";
 
 const closedSockets = new WeakSet<AppWebSocket>();
@@ -85,12 +88,32 @@ export function createContext(ws: AppWebSocket): RPCContext {
 	};
 }
 
+/** A header kept on the socket: bounded, lowercased, absent when empty. */
+function uiHeader(request: Request | undefined, name: string) {
+	const value = request?.headers.get(name)?.trim().toLowerCase();
+	return value && value.length <= 512 ? value : undefined;
+}
+
 /**
- * Initialize socket data for a new connection
+ * Initialize socket data for a new connection. With the upgrade request, the
+ * socket also keeps the UI address the browser used (`Origin`, `Host`): a
+ * protected network change is confirmed only from a new connection to the
+ * same address.
  */
-export function initSocketData(): import("./types.ts").SocketData {
+export function initSocketData(
+	request?: Request,
+): import("./types.ts").SocketData {
+	const now = Date.now();
+	const openedClock = bootClock();
+	const uiOrigin = uiHeader(request, "origin");
+	const uiHost = uiHeader(request, "host");
 	return {
 		isAuthenticated: false,
-		lastActive: Date.now(),
+		lastActive: now,
+		sessionId: randomUUID(),
+		openedAt: now,
+		...(openedClock === undefined ? {} : { openedClock }),
+		...(uiOrigin ? { uiOrigin } : {}),
+		...(uiHost ? { uiHost } : {}),
 	};
 }

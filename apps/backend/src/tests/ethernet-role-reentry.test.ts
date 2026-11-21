@@ -38,6 +38,7 @@ function makeDeps(
 		readPersistedRole: (ifname) => roles[ifname],
 		publishOutcome: () => {},
 		refreshInterfaces: () => {},
+		networkChangeTouches: async () => false,
 	};
 }
 

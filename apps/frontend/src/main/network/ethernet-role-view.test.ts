@@ -138,6 +138,7 @@ describe("deriveEthernetRoleView — a TERMINAL failure keeps the prior role", (
 			"unavailable_in_emulated_mode",
 			"network.ethRole.error.unavailableEmulated",
 		],
+		["change_in_flight", "network.ethRole.error.changeInFlight"],
 	])("keys %s onto its own sentence", (reason, key) => {
 		const view = deriveEthernetRoleView({
 			name: "eth0",

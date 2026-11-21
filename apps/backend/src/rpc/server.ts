@@ -11,6 +11,7 @@ import type { Server } from "bun";
 import { logger } from "../helpers/logger.ts";
 import { handleLogBundleRequest } from "../modules/device-logs/bundle.ts";
 import { handleLogExportRequest } from "../modules/device-logs/export.ts";
+import { markFrontDoorListening } from "../modules/network/front-door-state.ts";
 import { getIsStreaming } from "../modules/streaming/streaming.ts";
 import { getLocalObservability } from "../modules/system/observability.ts";
 import { getSystemdSocket } from "../modules/system/systemd.ts";
@@ -173,7 +174,7 @@ export function upgradeTcpRequest(
 		return new Response("WebSocket upgrade failed", { status: 500 });
 	}
 
-	const data = initSocketData();
+	const data = initSocketData(req);
 	if (
 		process.env.NODE_ENV !== "production" &&
 		runtimeAllowsDevelopment() &&
@@ -276,7 +277,10 @@ let localIngress: ReturnType<typeof startLocalIngress> = null;
 export function initServer(): void {
 	try {
 		localIngress ??= startLocalIngress();
-		if (localIngress) logger.info("Local ingress listener started");
+		if (localIngress) {
+			logger.info("Local ingress listener started");
+			markFrontDoorListening();
+		}
 	} catch (error) {
 		logger.warn(`Local ingress unavailable: ${error}`);
 	}
@@ -313,6 +317,9 @@ export function getServer(): typeof server {
 export function stopServer(): void {
 	localIngress?.stop(true);
 	localIngress = null;
+	// Without the listener no session has arrival evidence: the flag must not
+	// read it as running after a stop (or a failed restart).
+	markFrontDoorListening(false);
 	if (server) {
 		server.stop();
 		server = null;

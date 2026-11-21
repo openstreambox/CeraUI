@@ -240,6 +240,9 @@ class RPCClient {
 	/** Tracks last inbound frame time; drives half-open force-close (Task 14). */
 	private heartbeatTracker = createHeartbeatTracker();
 
+	/** Client clock when the current socket opened; undefined while closed. */
+	private openedAt: number | undefined;
+
 	/**
 	 * Get WebSocket URL
 	 */
@@ -291,6 +294,7 @@ class RPCClient {
 
 			socket.onopen = () => {
 				if (this.socket !== socket) return;
+				this.openedAt = Date.now();
 				this.setConnectionState("connected");
 				this.reconnectAttempts = 0;
 				this.heartbeatTracker.recordTraffic(Date.now());
@@ -300,6 +304,7 @@ class RPCClient {
 			socket.onclose = () => {
 				if (this.socket !== socket) return;
 				this.socket = null;
+				this.openedAt = undefined;
 				this.rejectPendingRequests();
 				this.setConnectionState("disconnected");
 				this.stopKeepAlive();
@@ -337,6 +342,17 @@ class RPCClient {
 	}
 
 	/**
+	 * When the current socket opened (client clock), or undefined while
+	 * closed. A protected network change is confirmed only from a socket
+	 * opened after the device's settle time (main/network/change-confirm.ts).
+	 */
+	getOpenedAt(): number | undefined {
+		return this.socket?.readyState === WebSocket.OPEN
+			? this.openedAt
+			: undefined;
+	}
+
+	/**
 	 * Disconnect from WebSocket server
 	 */
 	disconnect(): void {
@@ -344,6 +360,7 @@ class RPCClient {
 		this.stopKeepAlive();
 		const socket = this.socket;
 		this.socket = null;
+		this.openedAt = undefined;
 		this.rejectPendingRequests();
 		socket?.close();
 		this.setConnectionState("disconnected");

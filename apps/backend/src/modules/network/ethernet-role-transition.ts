@@ -36,6 +36,23 @@ import {
 	publishEthernetRoleOutcome,
 } from "./ethernet-role-outcome.ts";
 import {
+	createEthernetRoleSettledHandler,
+	ethernetRoleOfSummary,
+	ethernetRolePlan,
+} from "./ethernet-role-safety.ts";
+import type { NetworkChangePlan } from "./network-change-journal.ts";
+import type { AskBeforeAnswer } from "./network-change-policy.ts";
+import {
+	networkChangeTouches,
+	onNetworkChangeSettled,
+} from "./network-change-runtime.ts";
+import {
+	type ApplyOptions,
+	type ApplyResult,
+	NetworkChangeInFlightError,
+	type NetworkChangeSession,
+} from "./network-checkpoint.ts";
+import {
 	applySharedLanBondGate,
 	getNetworkInterfaces,
 	triggerNetworkInterfacesChange,
@@ -80,6 +97,12 @@ export interface EthernetRoleTransitionDeps {
 	readonly readPersistedRole: (ifname: string) => EthernetRole | undefined;
 	readonly publishOutcome: EthernetRoleOutcomePublisher;
 	readonly refreshInterfaces: () => void;
+	/**
+	 * Whether a protected network change in flight names this port. While it
+	 * does, the candidate profile belongs to the network-change owner: the role
+	 * reconciler skips the port and legacy role writes are refused.
+	 */
+	readonly networkChangeTouches: (ifname: string) => Promise<boolean>;
 }
 
 function refreshNetifRoleFlags(): void {
@@ -102,12 +125,118 @@ export const defaultEthernetRoleDeps: EthernetRoleTransitionDeps = {
 	readPersistedRole: (ifname) => getPersistedEthernetRoles()[ifname],
 	publishOutcome: publishEthernetRoleOutcome,
 	refreshInterfaces: refreshNetifRoleFlags,
+	networkChangeTouches,
 };
+
+// A protected role change persists its intent only when the owner settles it.
+onNetworkChangeSettled(
+	createEthernetRoleSettledHandler(defaultEthernetRoleDeps),
+);
 
 export interface SetEthernetRoleResult {
 	success: boolean;
 	applied?: EthernetRole;
 	error?: EthernetRoleError;
+	/** Present when the change went through the network-change owner. */
+	changeSafety?: ApplyResult;
+}
+
+/**
+ * Run the change through the network-change owner (behind the
+ * `CERALIVE_NETWORK_CHANGE_SAFETY` flag; the procedure decides).
+ */
+export interface EthernetRoleSafety {
+	readonly owner: {
+		apply(
+			session: NetworkChangeSession,
+			plan: NetworkChangePlan,
+			options?: ApplyOptions,
+		): Promise<ApplyResult>;
+		/** Answer a notice ("leave it undone"); refuses one already answered. */
+		leaveUndone?(
+			noticeId: string,
+			session: NetworkChangeSession,
+		): Promise<void>;
+	};
+	/**
+	 * The session, or a lookup of it (its route), resolved inside the port's
+	 * role queue so a slow lookup can't let a later request on the same port
+	 * overtake this one.
+	 */
+	readonly session:
+		| NetworkChangeSession
+		| (() => Promise<NetworkChangeSession>);
+	readonly answer?: AskBeforeAnswer | undefined;
+	/** Re-applying from an ask-after notice: always ask before. */
+	readonly deliberate?: boolean;
+	/** The notice a re-apply answers; the owner checks and consumes it. */
+	readonly noticeId?: string;
+	/** The one-time code the page minted for this change. */
+	readonly confirmationCode?: string | undefined;
+}
+
+function resolveSafetySession(safety: EthernetRoleSafety) {
+	return typeof safety.session === "function"
+		? safety.session()
+		: Promise.resolve(safety.session);
+}
+
+/**
+ * The protected path: the active profile is edited only as an in-memory
+ * candidate inside a NetworkManager checkpoint, and the role is persisted
+ * only when the owner settles the change as committed. Returns undefined
+ * when the port has no active connection: no session can ride it, so the
+ * existing path (which may create the owned shared profile) runs instead.
+ */
+async function applyRoleProtected(
+	name: string,
+	role: EthernetRole,
+	previous: EthernetRole | undefined,
+	deps: EthernetRoleTransitionDeps,
+	safety: EthernetRoleSafety,
+	op: string | undefined,
+): Promise<SetEthernetRoleResult | undefined> {
+	const initial = await deps.resolveConnection(name);
+	if (initial.kind !== "active") return undefined;
+	const correlation = op === undefined ? {} : { op };
+	const plan = ethernetRolePlan({
+		ifname: name,
+		role,
+		previous,
+		activeUuid: initial.uuid,
+		owned: deps.readOwnedProfile(name) === initial.uuid.toLowerCase(),
+		op,
+	});
+	let result: ApplyResult;
+	try {
+		const session = await resolveSafetySession(safety);
+		result = await safety.owner.apply(session, plan, {
+			...(safety.answer === undefined ? {} : { answer: safety.answer }),
+			...(safety.deliberate ? { deliberate: true } : {}),
+			...(safety.noticeId === undefined ? {} : { noticeId: safety.noticeId }),
+			...(safety.confirmationCode === undefined
+				? {}
+				: { confirmationCode: safety.confirmationCode }),
+		});
+	} catch (error) {
+		// No pending frame was published, so none is owed; the caller gets the
+		// error. The owner already undid whatever the apply had started.
+		logger.warn(
+			`ethernet role: protected change on ${name} refused: ${(error as Error).message}`,
+		);
+		if (error instanceof NetworkChangeInFlightError)
+			return { success: false, error: "change_in_flight" };
+		return { success: false, error: "apply_failed" };
+	}
+	if (result.kind === "ask-before")
+		return { success: false, changeSafety: result };
+	if (result.kind === "pending" || (result.kind === "kept" && result.saving)) {
+		// The owner's settle handler publishes the terminal frame: success on
+		// commit, apply_failed when the change is undone. A kept change whose
+		// save did not finish is committed (and reported) by the next tick.
+		deps.publishOutcome(name, { pending: true, role, ...correlation });
+	}
+	return { success: true, applied: role, changeSafety: result };
 }
 async function applyRoleToNetworkManager(
 	ifname: string,
@@ -221,11 +350,24 @@ async function withEthernetRoleQueue<T>(
 	}
 }
 
+/**
+ * Run work for one port inside that port's role queue, so it cannot
+ * interleave with a role change on the same port (re-applying a stored role
+ * change from an ask-after notice uses this).
+ */
+export function withEthernetRolePort<T>(
+	ifname: string,
+	operation: () => Promise<T>,
+): Promise<T> {
+	return withEthernetRoleQueue(ifname, operation);
+}
+
 export async function setEthernetRole(
 	name: string,
 	role: EthernetRole,
 	deps: EthernetRoleTransitionDeps = defaultEthernetRoleDeps,
 	op?: string,
+	safety?: EthernetRoleSafety,
 ): Promise<SetEthernetRoleResult> {
 	return withEthernetRoleQueue(name, async () => {
 		const correlation = op === undefined ? {} : { op };
@@ -236,7 +378,57 @@ export async function setEthernetRole(
 		if (!isEthernetRoleCandidate(name)) return refuse("not_ethernet");
 		if (deps.listInterfaces()[name] === undefined)
 			return refuse("unknown_interface");
+		if (await deps.networkChangeTouches(name)) {
+			// The port's live profile is a candidate the owner will promote or
+			// undo; a direct write would edit it behind the owner's back.
+			logger.warn(
+				`ethernet role: ${name} has a network change in flight; refusing`,
+			);
+			// Named, so the UI can say why: a change is pending confirmation,
+			// being undone or saved, or the journal can't be read (reset path:
+			// network.resetChangeJournal).
+			return refuse("change_in_flight");
+		}
 		const previous = deps.readPersistedRole(name);
+		// A notice naming the role the port already has (someone made the
+		// change meanwhile) is a true no-op: nothing is written to the port or
+		// NetworkManager, and the notice is answered under the owner, which
+		// refuses it if someone else answered it first.
+		if (
+			safety?.noticeId !== undefined &&
+			(previous ?? ETHERNET_ROLE_DEFAULT) === role
+		) {
+			try {
+				if (!safety.owner.leaveUndone)
+					throw new Error("Notice answer unavailable");
+				await safety.owner.leaveUndone(
+					safety.noticeId,
+					await resolveSafetySession(safety),
+				);
+			} catch (error) {
+				logger.warn(
+					`ethernet role: notice for ${name} not answered: ${(error as Error).message}`,
+				);
+				return { success: false, error: "apply_failed" };
+			}
+			return { success: true, applied: role };
+		}
+		// Only a real role change is protected; re-stating the current role
+		// keeps the existing idempotent path.
+		if (safety && (previous ?? ETHERNET_ROLE_DEFAULT) !== role) {
+			const protectedResult = await applyRoleProtected(
+				name,
+				role,
+				previous,
+				deps,
+				safety,
+				op,
+			);
+			if (protectedResult) return protectedResult;
+			// A re-apply from a notice is deliberate: with no active profile to
+			// protect, refuse rather than fall through to an unasked change.
+			if (safety.deliberate) return refuse("no_connection");
+		}
 		let persisted = false;
 		let failure: EthernetRoleError | undefined;
 		try {
@@ -311,6 +503,14 @@ export async function reconcileEthernetRoles(
 							);
 							return;
 						}
+						if (await deps.networkChangeTouches(ifname)) {
+							// A resumed change is not settled: its candidate is the
+							// owner's until it is confirmed or undone.
+							logger.info(
+								`ethernet role reconcile: ${ifname} has a network change in flight; skipping`,
+							);
+							return;
+						}
 
 						const failure = await applyRoleToNetworkManager(
 							ifname,
@@ -341,3 +541,26 @@ export async function reconcileEthernetRoles(
 }
 
 export { getEthernetRole };
+
+/**
+ * "Make the change" on a stored role-change notice: the change is planned
+ * again from the port's state now, through the normal role path and its
+ * queue, asked before again, and the owner consumes the notice in the same
+ * apply. Never a replay of the stored plan. Undefined for any other notice.
+ */
+export async function reapplyEthernetRoleNotice(
+	notice: {
+		readonly id: string;
+		readonly summary: NetworkChangePlan["summary"];
+	},
+	safety: Omit<EthernetRoleSafety, "deliberate" | "noticeId">,
+	deps: EthernetRoleTransitionDeps = defaultEthernetRoleDeps,
+): Promise<SetEthernetRoleResult | undefined> {
+	const intent = ethernetRoleOfSummary(notice.summary);
+	if (!intent) return undefined;
+	return setEthernetRole(intent.ifname, intent.role, deps, intent.op, {
+		...safety,
+		deliberate: true,
+		noticeId: notice.id,
+	});
+}

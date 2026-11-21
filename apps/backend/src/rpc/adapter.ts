@@ -87,13 +87,22 @@ export function parseMessage(
 			bytes: data.length,
 			keys: Object.keys(parsed),
 			hasId: "id" in parsed,
-			preview: logRedact(
-				JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
+			// Redacted as a structure first, so secrets under their key names
+			// (a confirmation code, a password) are masked before the preview
+			// becomes a string the redactor can no longer read by key.
+			preview: JSON.stringify(logRedact(parsed)).slice(
+				0,
+				FRAME_PREVIEW_MAX_CHARS,
 			),
 		});
 		return null;
 	} catch (error) {
-		logger.error(`Failed to parse WebSocket message: ${error}`);
+		// The parser's message can quote the input; log only its class.
+		logger.error("Failed to parse WebSocket message", {
+			module: "rpc.adapter",
+			error: error instanceof Error ? error.name : "Error",
+			bytes: data.length,
+		});
 		return null;
 	}
 }

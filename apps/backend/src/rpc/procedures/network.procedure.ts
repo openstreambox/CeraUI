@@ -3,7 +3,15 @@
  * Wraps existing network logic from modules/network/
  */
 
+import { existsSync } from "node:fs";
 import {
+	type ChangeSafetyStatus,
+	changeSafetyActionOutputSchema,
+	changeSafetyConfirmInputSchema,
+	changeSafetyConfirmOutputSchema,
+	changeSafetyIdInputSchema,
+	changeSafetyNoticeInputSchema,
+	changeSafetyStatusSchema,
 	NETWORK_INGEST_UNAVAILABLE_ERROR,
 	netifConfigInputSchema,
 	netifConfigOutputSchema,
@@ -21,7 +29,22 @@ import {
 } from "../../mocks/mock-service.ts";
 import { setMockNetworkIngestActive } from "../../mocks/providers/network-ingest.ts";
 import { setMockGatewayActive } from "../../mocks/providers/streaming.ts";
-import { setEthernetRole } from "../../modules/network/ethernet-role-transition.ts";
+import {
+	ethernetRoleOfSummary,
+	networkChangeSafetyEnabled,
+} from "../../modules/network/ethernet-role-safety.ts";
+import {
+	reapplyEthernetRoleNotice,
+	setEthernetRole,
+} from "../../modules/network/ethernet-role-transition.ts";
+import {
+	getNetworkChangeOwner,
+	networkChangeJournalPath,
+	networkChangeSession,
+	resetDamagedNetworkChangeJournal,
+	resolveNetworkChangeSession,
+} from "../../modules/network/network-change-runtime.ts";
+import { NetworkChangeConfirmError } from "../../modules/network/network-checkpoint.ts";
 import { refreshAndBroadcastNetworkIngest } from "../../modules/network/network-ingest.ts";
 import {
 	persistIngestDesired,
@@ -117,12 +140,188 @@ export const configureNetworkInterfaceProcedure = authedProcedure
 export const setEthernetRoleProcedure = authedProcedure
 	.input(setEthernetRoleInputSchema)
 	.output(setEthernetRoleOutputSchema)
-	.handler(async ({ input }) => {
+	.handler(async ({ input, context }) => {
 		if (!shouldUseMocks() && !(await hasCapability("client-internet"))) {
 			return { success: false, error: "unavailable_in_emulated_mode" as const };
 		}
 
-		return setEthernetRole(input.name, input.role, undefined, input.op);
+		// Behind the off-by-default flag, a real role change runs through the
+		// network-change owner: checkpoint, candidate, confirm or automatic undo.
+		// A session without arrival evidence also carries the box's route back
+		// to it, so the prompt can say up front that the change cuts it.
+		const safety =
+			!shouldUseMocks() && networkChangeSafetyEnabled()
+				? {
+						owner: getNetworkChangeOwner(),
+						// Resolved inside the port's role queue.
+						session: () => resolveNetworkChangeSession(context.ws),
+						answer: input.changeAnswer,
+						confirmationCode: input.confirmationCode,
+					}
+				: undefined;
+		return setEthernetRole(input.name, input.role, undefined, input.op, safety);
+	});
+
+/** Whether the owner may be consulted at all: flag on, or a journal to recover. */
+function changeSafetyActive(): boolean {
+	return (
+		!shouldUseMocks() &&
+		(networkChangeSafetyEnabled() || existsSync(networkChangeJournalPath()))
+	);
+}
+
+const NO_CHANGE: Omit<ChangeSafetyStatus, "enabled"> = {
+	pending: null,
+	confirmed: null,
+	kept: null,
+	undoIncomplete: false,
+	commitIncomplete: false,
+	problem: null,
+	journalUnavailable: false,
+	notice: null,
+};
+
+/** The pending change, kept change and stored notice; reads the journal only. */
+export const getChangeSafetyStatusProcedure = authedProcedure
+	.output(changeSafetyStatusSchema)
+	.handler(async () => {
+		const enabled = !shouldUseMocks() && networkChangeSafetyEnabled();
+		if (!changeSafetyActive()) return { enabled, ...NO_CHANGE };
+		try {
+			return {
+				enabled,
+				...(await getNetworkChangeOwner().status()),
+				journalUnavailable: false,
+			};
+		} catch {
+			// A damaged journal refuses every protected change and role write on
+			// the ports it might name; say so instead of an all-clear.
+			return { enabled, ...NO_CHANGE, journalUnavailable: true };
+		}
+	});
+
+/**
+ * Move a damaged change journal aside (kept for support) so changes work
+ * again. Refused while the journal is readable: it may hold an undo.
+ */
+export const resetNetworkChangeJournalProcedure = authedProcedure
+	.output(changeSafetyActionOutputSchema)
+	.handler(async () => {
+		if (shouldUseMocks()) return { success: false, error: "unavailable" };
+		try {
+			await resetDamagedNetworkChangeJournal();
+			return { success: true };
+		} catch (error) {
+			return refusal(error);
+		}
+	});
+
+function refusal(error: unknown) {
+	return { success: false, error: (error as Error).message };
+}
+
+/**
+ * Keep a pending change. Only its requester qualifies: a new connection of the
+ * same browser login to the same UI address, opened after the settle time,
+ * presenting the change's one-time code. Refusals are typed (`too_early`
+ * means "reconnect later and try again").
+ */
+export const confirmNetworkChangeProcedure = authedProcedure
+	.input(changeSafetyConfirmInputSchema)
+	.output(changeSafetyConfirmOutputSchema)
+	.handler(async ({ input, context }) => {
+		if (!changeSafetyActive()) return { success: false, error: "unavailable" };
+		try {
+			// Read again at the owner's fence, not snapshotted here: a token
+			// revoked or replaced while this waits must refuse it.
+			const result = await getNetworkChangeOwner().confirm(
+				input.id,
+				input.confirmationCode,
+				() => networkChangeSession(context.ws),
+			);
+			return {
+				success: true,
+				confirmedVia: result.via,
+				...(result.saved ? {} : { saving: true as const }),
+			};
+		} catch (error) {
+			if (error instanceof NetworkChangeConfirmError)
+				return {
+					success: false,
+					error: error.message,
+					refusal: error.reason,
+				};
+			return refusal(error);
+		}
+	});
+
+/** Undo a change someone kept with "don't undo it", from any signed-in session. */
+export const undoKeptNetworkChangeProcedure = authedProcedure
+	.input(changeSafetyIdInputSchema)
+	.output(changeSafetyActionOutputSchema)
+	.handler(async ({ input, context }) => {
+		if (!changeSafetyActive()) return { success: false, error: "unavailable" };
+		try {
+			await getNetworkChangeOwner().undoKept(
+				input.id,
+				networkChangeSession(context.ws),
+			);
+			return { success: true };
+		} catch (error) {
+			return refusal(error);
+		}
+	});
+
+/** Answer the stored "the box undid it" notice: make the change again, or leave it. */
+export const answerNetworkChangeNoticeProcedure = authedProcedure
+	.input(changeSafetyNoticeInputSchema)
+	.output(changeSafetyActionOutputSchema)
+	.handler(async ({ input, context }) => {
+		if (!changeSafetyActive()) return { success: false, error: "unavailable" };
+		const owner = getNetworkChangeOwner();
+		const session = networkChangeSession(context.ws);
+		try {
+			if (input.answer === "leave-undone") {
+				await owner.leaveUndone(input.id, session);
+				return { success: true };
+			}
+			// Re-applying is deliberate: the owner always asks before again.
+			if (!networkChangeSafetyEnabled())
+				return { success: false, error: "unavailable" };
+			// A stored role change is planned again from the port's state now,
+			// through the normal role path (and so its queue), never replayed
+			// from the stored plan. The owner checks and consumes the notice in
+			// the same apply, so a notice answered meanwhile refuses it.
+			const notice = (await owner.status()).notice;
+			if (notice?.id === input.id && ethernetRoleOfSummary(notice.summary)) {
+				if (!(await hasCapability("client-internet")))
+					return { success: false, error: "unavailable_in_emulated_mode" };
+				const result = await reapplyEthernetRoleNotice(notice, {
+					owner,
+					session: () => resolveNetworkChangeSession(context.ws),
+					answer: input.changeAnswer,
+					confirmationCode: input.confirmationCode,
+				});
+				// Nothing to change (the port already has that role): the role
+				// path answered the notice under the owner and touched nothing.
+				return {
+					success: result?.success ?? false,
+					...(result?.error ? { error: result.error } : {}),
+					...(result?.changeSafety
+						? { changeSafety: result.changeSafety }
+						: {}),
+				};
+			}
+			const changeSafety = await owner.reapply(
+				input.id,
+				await resolveNetworkChangeSession(context.ws),
+				input.changeAnswer,
+				input.confirmationCode,
+			);
+			return { success: changeSafety.kind !== "ask-before", changeSafety };
+		} catch (error) {
+			return refusal(error);
+		}
 	});
 
 /**
