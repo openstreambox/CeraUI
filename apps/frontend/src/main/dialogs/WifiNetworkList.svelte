@@ -240,8 +240,14 @@ function toggleDetails(ssid: string) {
 			{const block = $derived(wifiRowBlock(network, iface?.capabilities))}
 			{const blockReason = $derived(block ? resolveMessageKey(block.bodyKey) : undefined)}
 			{const rowBusy = $derived(isConnecting || isConnectTimedOut || isDisconnecting || isForgetting)}
+			<!-- Only a network this radio is on through one of its own saved profiles has
+			     details to open. The scan's active flag alone is not enough: the backend
+			     shares one scan, active flags included, across radios while each radio
+			     keeps its own saved map, so a network another radio is on arrives here
+			     active with no profile. That row keeps the join. -->
+			{const manageable = $derived(network.active && !!uuid)}
 			{const rowDisabled = $derived(
-				network.active ? rowBusy : ifaceBusy || osBusy || !!block,
+				manageable ? rowBusy : ifaceBusy || osBusy || !!block,
 			)}
 			{const detailsShown = $derived(!!uuid && !rowBusy && (detailsFor === network.ssid || confirming))}
 			<div
@@ -257,15 +263,15 @@ function toggleDetails(ssid: string) {
 					     a small plug icon beside a trash icon. -->
 					<button
 						aria-describedby={`wifi-row-meta-${rowIndex}`}
-						aria-expanded={network.active ? detailsShown : undefined}
-						aria-label={network.active
+						aria-expanded={manageable ? detailsShown : undefined}
+						aria-label={manageable
 							? `${m["wifiSelector.button.manage"]()} ${network.ssid}`
 							: `${m["wifiSelector.button.connect"]()} ${network.ssid}`}
 						class="focus-visible:ring-ring/50 -my-1 -ms-1 flex min-h-(--touch-target-min) min-w-0 flex-1 items-center gap-3 rounded-md py-1 ps-1 text-start outline-none focus-visible:ring-3 disabled:cursor-not-allowed"
 						data-testid="wifi-network-row"
 						disabled={rowDisabled}
 						onclick={() => {
-							if (network.active) {
+							if (manageable) {
 								toggleDetails(network.ssid);
 							} else if (expanded) {
 								onResetInteraction();
@@ -334,7 +340,7 @@ function toggleDetails(ssid: string) {
 							</span>
 						</span>
 
-						{#if network.active && !rowBusy}
+						{#if manageable && !rowBusy}
 							<ChevronDown
 								aria-hidden="true"
 								class={cn(

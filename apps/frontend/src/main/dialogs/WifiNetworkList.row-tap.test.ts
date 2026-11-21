@@ -189,6 +189,31 @@ describe("Forget is in the network's details, not next to Connect", () => {
 	});
 });
 
+describe("a network the scan marks active but this radio has no profile for", () => {
+	// The backend copies one scan, active flags included, to every radio, while
+	// each radio has its own saved map. A network another radio is on arrives
+	// here active with no saved profile, so there is nothing to manage: the row
+	// must keep joining on this radio instead of turning into a Manage control
+	// that opens nothing.
+	const ELSEWHERE = net("Office-WPA2", { active: true, signal: 80 });
+
+	it("joins from the row", async () => {
+		const { handlers } = setup([ELSEWHERE]);
+		const row = button(`Connect ${ELSEWHERE.ssid}`);
+		expect(row.disabled).toBe(false);
+		expect(row.getAttribute("aria-expanded")).toBeNull();
+		await fireEvent.click(row);
+		expect(handlers.onConnectNew).toHaveBeenCalledWith(ELSEWHERE);
+		expect(noButton(`Manage ${ELSEWHERE.ssid}`)).toBeNull();
+		expect(screen.queryByTestId("wifi-network-details")).toBeNull();
+	});
+
+	it("stays disabled while the adapter is busy, like any other join", () => {
+		setup([ELSEWHERE], { ifaceBusy: true });
+		expect(button(`Connect ${ELSEWHERE.ssid}`).disabled).toBe(true);
+	});
+});
+
 describe("long network names", () => {
 	it("wraps the name instead of cutting it to one line", () => {
 		const long = net("Hotel-Grand-Conference-Floor3-5G");
