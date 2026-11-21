@@ -844,8 +844,9 @@ export class CerastreamBackend implements StreamingBackend {
 		const evidence = this.runtimeEvidence;
 		const state = evidence?.current() ? evidence.state : "unknown";
 		if (client === undefined || !this.active) return { state, sessionId: null };
-		// The id and the state must describe one moment: the same connection
-		// and the same status before and after the question, still current.
+		// Sampled, not one moment: the same connection and the same cached
+		// status object before and after the question, still current. A status
+		// the engine sent but this process has not yet read is not seen.
 		const unchanged = () =>
 			this.client === client &&
 			this.clientEpoch === epoch &&

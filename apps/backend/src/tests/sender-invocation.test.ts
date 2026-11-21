@@ -451,6 +451,19 @@ describe("readEngineSessionIdentity", () => {
 		).toBeNull();
 	});
 
+	test("an engine unit deactivating by the second read gives no identity", async () => {
+		let reads = 0;
+		expect(
+			await readEngineSessionIdentity(
+				async () => "session-9",
+				async () =>
+					reads++ === 0
+						? engine()
+						: engine({ ActiveState: "deactivating", SubState: "stop-sigterm" }),
+			),
+		).toBeNull();
+	});
+
 	test("an engine that cannot say its session gives no identity", async () => {
 		expect(
 			await readEngineSessionIdentity(

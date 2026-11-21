@@ -229,8 +229,9 @@ nor the engine.
 When a sender starts, the backend records its PID and start time from one read
 of the process (the boot ID is read separately), made while a pidfd holds it
 and while the backend's own handle for the child shows it has not exited, so a
-sender that is already gone records no PID. Without a pidfd nothing is
-recorded. After the unit lookup the process is captured again and its start
+sender that is already gone records no PID. Without a pidfd no PID or unit is
+added to the record prepared before the spawn, so it keeps a null PID. After the
+unit lookup the process is captured again and its start
 time must be the same. It records a systemd unit only when the sender is the main process of
 its own active unit, alone in that unit's cgroup, outside the backend's cgroup.
 For such a sender it also records the session ID from the engine's reply to
@@ -260,11 +261,14 @@ covers the generation and the IP list's hash only, not `id_path`. It then reads
 every local fact again on the same pidfd and requires the same values (the
 process state only has to still qualify). Next it asks the engine for its
 session ID once, on the session connection reconciliation holds, and requires
-the recorded engine unit invocation, main PID and session ID, read from systemd
-before and after the question with the unit still active, and the cached
-streaming status of that connection unchanged across the question. Last, it
-checks that the pidfd still shows the sender alive and not stopped and that the
-armed marker and configuration are unchanged. A positive verdict is agreement
+it to equal the recorded one. It reads the engine unit's invocation ID and main
+PID from systemd before and after that question, with the unit still active,
+and requires both to equal the recorded ones; this brackets the question in
+time but does not prove that the connection reaches that main process. The
+cached streaming status of that connection must be unchanged across the
+question. Last, it checks that the pidfd still shows the sender alive, that
+`/proc` does not show it stopped or exiting, and that the armed marker and
+configuration are unchanged. A positive verdict is agreement
 of these samples within a window of 3 seconds, not a guarantee about the
 instant it is logged; a longer collection refuses. A sender older than contract
 2 is refused at the contract check.
@@ -300,7 +304,8 @@ Cuando un emisor arranca, el backend registra su PID y su hora de inicio con una
 sola lectura del proceso (el ID de arranque del sistema se lee aparte), hecha
 mientras un pidfd lo sostiene y mientras el propio manejador del backend para
 ese hijo indica que no ha terminado; un emisor que ya no existe no registra PID.
-Sin pidfd no se registra nada. Después de consultar la unidad el proceso se lee
+Sin pidfd no se añade PID ni unidad al registro preparado antes del arranque,
+que conserva un PID nulo. Después de consultar la unidad el proceso se lee
 otra vez y su hora de inicio debe ser la misma. Registra una unidad
 de systemd solo cuando el emisor es el proceso principal de su propia unidad
 activa, solo en el cgroup de esa unidad, fuera del cgroup del backend. Para un
@@ -332,12 +337,15 @@ identidad aplicada cubre solo la generación y el hash de la lista de IP, no
 `id_path`. Luego vuelve a leer todos los datos locales con el mismo pidfd y
 exige los mismos valores (el estado del proceso solo tiene que seguir siendo
 válido). Después pide al motor su ID de sesión una sola vez, por la conexión de
-sesión que mantiene la reconciliación, y exige la invocación, el PID principal y
-el ID de sesión del motor registrados, leídos de systemd antes y después de la
-pregunta con la unidad todavía activa, y que el estado de transmisión guardado
-de esa conexión no cambie durante la pregunta. Por último, comprueba que el pidfd
-siga mostrando al emisor vivo y no detenido, y que el marcador de transmisión
-armada y la configuración no hayan cambiado. Un resultado positivo es el acuerdo
+sesión que mantiene la reconciliación, y exige que sea igual al registrado. Lee
+de systemd el ID de invocación y el PID principal de la unidad del motor antes y
+después de esa pregunta, con la unidad todavía activa, y exige que ambos sean
+iguales a los registrados; esto delimita la pregunta en el tiempo, pero no
+prueba que la conexión llegue a ese proceso principal. El estado de transmisión
+guardado de esa conexión no debe cambiar durante la pregunta. Por último,
+comprueba que el pidfd siga mostrando al emisor vivo, que `/proc` no lo muestre
+detenido ni terminando, y que el marcador de transmisión armada y la
+configuración no hayan cambiado. Un resultado positivo es el acuerdo
 de estas muestras dentro de una ventana de 3 segundos, no una garantía sobre el
 instante en que se registra; una recolección más larga se rechaza. Un emisor
 anterior al contrato 2 se rechaza en la comprobación del contrato.
