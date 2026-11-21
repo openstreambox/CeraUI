@@ -26,6 +26,11 @@ type WifiStartReceipt = NonNullable<
 type WifiStartOutcome = HotspotToggleOutput & { readonly correlated?: true };
 const startReceivers = new Map<string, (frame: WifiStartReceipt) => void>();
 
+/** Test seam: Start receipts still waiting for their terminal. */
+export function pendingWifiStartReceiptsForTest(): number {
+	return startReceivers.size;
+}
+
 export function noteWifiStart(frame: WifiStartReceipt): void {
 	if (frame.attempt) startReceivers.get(frame.attempt)?.(frame);
 }
