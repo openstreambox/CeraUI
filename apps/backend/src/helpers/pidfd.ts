@@ -22,8 +22,12 @@ import { constants } from "node:os";
 type PidfdLib = {
 	open(pid: number): number;
 	sendSignal(fd: number, signal: number): number;
+	/** poll(2) for POLLIN with a zero timeout: 1 readable, 0 not, -1 error. */
+	pollIn(fd: number): number;
 	close(fd: number): number;
 };
+
+const POLLIN = 0x001;
 
 let lib: PidfdLib | null | undefined;
 
@@ -38,12 +42,24 @@ function load(): PidfdLib | null {
 		const { symbols } = ffi.dlopen("libc.so.6", {
 			pidfd_open: { args: [t.i32, t.u32], returns: t.i32 },
 			pidfd_send_signal: { args: [t.i32, t.i32, t.ptr, t.u32], returns: t.i32 },
+			poll: { args: [t.ptr, t.u64, t.i32], returns: t.i32 },
 			close: { args: [t.i32], returns: t.i32 },
 		});
+		// struct pollfd { int fd; short events; short revents; }
+		const pollfd = new DataView(new ArrayBuffer(8));
+		const pollfdPtr = ffi.ptr(pollfd);
 		lib = {
 			open: (pid) => symbols.pidfd_open(pid, 0),
 			sendSignal: (fd, signal) =>
 				symbols.pidfd_send_signal(fd, signal, null, 0),
+			pollIn: (fd) => {
+				pollfd.setInt32(0, fd, true);
+				pollfd.setInt16(4, POLLIN, true);
+				pollfd.setInt16(6, 0, true);
+				const ready = symbols.poll(pollfdPtr, 1n, 0);
+				if (ready < 0) return -1;
+				return ready > 0 && (pollfd.getInt16(6, true) & POLLIN) !== 0 ? 1 : 0;
+			},
 			close: (fd) => symbols.close(fd),
 		};
 	} catch {
@@ -69,10 +85,14 @@ export function pidfdSignal(fd: number, signal: NodeJS.Signals): boolean {
 	return c.sendSignal(fd, number) === 0;
 }
 
-/** Whether the process `fd` names is alive (signal 0 through the pidfd). */
+/**
+ * Whether the process `fd` names has not exited. A pidfd becomes readable when
+ * its process exits, before the parent reaps it; signal 0 would still succeed
+ * on such a zombie. Unknown (no libc, poll error) reads as not alive.
+ */
 export function pidfdAlive(fd: number): boolean {
 	const c = load();
-	return c !== null && c.sendSignal(fd, 0) === 0;
+	return c !== null && c.pollIn(fd) === 0;
 }
 
 export function pidfdClose(fd: number): void {

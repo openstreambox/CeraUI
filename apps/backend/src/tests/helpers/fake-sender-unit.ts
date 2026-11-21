@@ -60,6 +60,8 @@ export class FakeSenderUnit {
 	stopExitCode = 1;
 	/** `systemctl show` fails while set. */
 	showFails = false;
+	/** `systemctl show` leaves out the Job= row while set (a truncated reply). */
+	omitJob = false;
 	/** `systemctl stop` fails and leaves the unit as it is while set. */
 	stopFails = false;
 	/** `systemctl start` times out while its job still brings the unit up. */
@@ -157,7 +159,9 @@ export class FakeSenderUnit {
 			`ExecMainStatus=${s.status}`,
 			`NRestarts=${s.restarts}`,
 			`Job=${s.job}`,
-		].join("\n");
+		]
+			.filter((row) => !(this.omitJob && row.startsWith("Job=")))
+			.join("\n");
 	}
 
 	io(overrides: Partial<SenderUnitIo> = {}): SenderUnitIo {

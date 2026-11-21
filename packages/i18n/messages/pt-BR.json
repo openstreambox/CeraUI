@@ -861,6 +861,7 @@
 	"live.transcode.chip": "Entrada {input} → Saída {output}",
 	"live.unconfirmedStream.title": "Estado da transmissão não confirmado",
 	"live.unconfirmedStream.body": "O dispositivo não consegue confirmar se ainda há uma transmissão em andamento, então iniciar uma transmissão e instalar atualizações ficam pausados. Pare a transmissão para encerrar o que ainda possa estar ativo; as duas coisas voltam quando o dispositivo confirmar que ela parou.",
+	"live.unconfirmedStream.heldBody": "O software do dispositivo reiniciou durante uma transmissão, e o emissor iniciado antes da reinicialização ainda pode estar em execução. O dispositivo não consegue confirmar nem alterar esse emissor: as configurações alteradas não chegam a ele, e iniciar uma transmissão e instalar atualizações ficam pausados. Pare a transmissão para encerrá-lo; a próxima transmissão usará suas configurações atuais.",
 	"live.unconfirmedStream.stopFailed": "O dispositivo não confirmou que a transmissão parou. Tente parar de novo.",
 	"live.unconfirmedStream.stopNotConfirmed": "O comando de parar foi enviado, mas o dispositivo ainda não confirmou. Você pode tentar de novo.",
 	"locale.selectLanguage": "Selecionar idioma",

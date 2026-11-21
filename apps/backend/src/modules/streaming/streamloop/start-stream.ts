@@ -81,6 +81,7 @@ import {
 	stopProcessAndWait,
 } from "./process-runner.ts";
 import {
+	heldSenderUnit,
 	SenderUnitError,
 	type SenderUnitHooks,
 	senderHostBlocked,
@@ -322,16 +323,21 @@ export async function startStream(
 		...bindMapArgs,
 	];
 	// With srtla_send_unit, an unresolved unit (unreadable, or a stop that was
-	// not confirmed) may still run a sender: no sender of either kind starts.
+	// not confirmed) or a held one (left running by an earlier backend) may
+	// still run a sender: no sender of either kind starts.
 	const hostBlocked = senderHostBlocked();
 	if (hostBlocked) {
-		logger.warn("startStream: the sender unit is unresolved; not starting", {
-			reason: hostBlocked,
-		});
+		const unitHeld = heldSenderUnit() !== null;
+		logger.warn(
+			unitHeld
+				? "startStream: a sender from before the restart is still running; not starting"
+				: "startStream: the sender unit is unresolved; not starting",
+			{ reason: hostBlocked },
+		);
 		return {
 			success: false,
 			error: SENDER_UNIT_START_FAILED,
-			reason: "unit_unresolved",
+			reason: unitHeld ? "unit_held" : "unit_unresolved",
 			phase: "spawn-sender",
 			failureClass: "start_invalid",
 		};

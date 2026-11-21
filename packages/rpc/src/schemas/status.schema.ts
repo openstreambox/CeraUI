@@ -72,6 +72,9 @@ export const statusMessageSchema = z.object({
 	is_streaming: z.boolean(),
 	audio_mix_active: z.boolean().optional(),
 	stream_lifecycle: lifecycleStateSchema.optional(),
+	// True while a sender started before a backend restart still runs in its
+	// own systemd unit and this backend holds it without controlling it.
+	stream_sender_held: z.boolean().optional(),
 	available_updates: availableUpdatesFieldSchema,
 	updating: updatingStatusSchema,
 	update_state: updateStateSchema.optional(),
@@ -496,6 +499,9 @@ export const statusResponseSchema = z.object({
 	is_streaming: z.boolean().optional(),
 	audio_mix_active: z.boolean().optional(),
 	stream_lifecycle: lifecycleStateSchema.optional(),
+	// True while a sender started before a backend restart still runs in its
+	// own systemd unit and this backend holds it without controlling it.
+	stream_sender_held: z.boolean().optional(),
 	available_updates: availableUpdatesFieldSchema.optional(),
 	updating: updatingStatusSchema.optional(),
 	update_state: updateStateSchema.optional(),

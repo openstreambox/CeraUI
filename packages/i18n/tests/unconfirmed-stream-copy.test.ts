@@ -8,6 +8,7 @@ import { ALL_LOCALES, catalogKeys, readCatalog } from "./helpers/catalog.js";
 const KEYS = [
 	"live.unconfirmedStream.title",
 	"live.unconfirmedStream.body",
+	"live.unconfirmedStream.heldBody",
 	"live.unconfirmedStream.stopFailed",
 	"live.unconfirmedStream.stopNotConfirmed",
 ] as const;
@@ -19,7 +20,7 @@ describe("unconfirmed-stream band copy", () => {
 		expect(ALL_LOCALES.length).toBe(10);
 	});
 
-	it("adds the same four keys, in the same file order, to every catalog", () => {
+	it("adds the same keys, in the same file order, to every catalog", () => {
 		const fileOrder = (locale: (typeof ALL_LOCALES)[number]) =>
 			Object.keys(readCatalog(locale)).filter((k) => k.startsWith("live.unconfirmedStream."));
 		for (const locale of ALL_LOCALES) {
@@ -59,10 +60,24 @@ describe("unconfirmed-stream band copy", () => {
 	it("es speaks to the operator as tú (neutral Latin-American Spanish)", () => {
 		const es = readCatalog("es");
 		expect(es["live.unconfirmedStream.body"]).toContain("Detén la transmisión");
+		expect(es["live.unconfirmedStream.heldBody"]).toContain("Detén la transmisión");
 		expect(es["live.unconfirmedStream.stopFailed"]).toContain("Intenta");
 		expect(es["live.unconfirmedStream.stopNotConfirmed"]).toContain("Puedes");
 		for (const key of KEYS) {
 			expect(es[key] as string).not.toMatch(/\b(vosotros|podéis|intentad|detened|usted)\b/i);
+		}
+	});
+
+	it("the held variant says only what the device knows about its own sender", () => {
+		const en = readCatalog("en")["live.unconfirmedStream.heldBody"] as string;
+		expect(en).toContain("may still be running");
+		expect(en).toContain("changed settings won't reach it");
+		expect(en).toContain("Stop the stream");
+		// The device knows only what it sends, never what a receiver or viewer gets.
+		for (const locale of ALL_LOCALES) {
+			expect(readCatalog(locale)["live.unconfirmedStream.heldBody"] as string).not.toMatch(
+				/\b(receiver|viewers?|audience|on air|empfänger|zuschauer|receptor|espectadores|récepteur|spectateurs)\b/i,
+			);
 		}
 	});
 

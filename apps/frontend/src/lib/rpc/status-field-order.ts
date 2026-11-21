@@ -35,6 +35,7 @@ const unrelatedFields: ReadonlySet<string> = new Set([
 	"cellular_initializing",
 	"connection_restarting",
 	"unclaimed_adapters",
+	"stream_sender_held",
 ] satisfies readonly (keyof StatusResponse)[]);
 
 function isStreamFact(field: string): boolean {

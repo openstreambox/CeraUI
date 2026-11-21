@@ -4,13 +4,17 @@ By default the backend spawns `srtla_send` as its own child. Every stop or
 restart of `ceralive.service` (`KillMode=mixed`) then kills the sender with it.
 With `"srtla_send_unit": true` in `setup.json`, the backend starts, stops and
 supervises the sender through `srtla-send.service` instead, so the sender lives
-in its own cgroup.
+in its own cgroup. A restart of the backend (a crash, a watchdog kill,
+`systemctl restart`, a package update) then leaves the sender running: the
+restarted backend holds it (below) instead of killing it or starting a second
+one.
 
 The flag is off unless set to `true`. With it off, nothing below runs: no unit
 is read, the paths stay where they were, and the sender is a child as before.
 
 Code: `apps/backend/src/modules/streaming/streamloop/sender-unit.ts`. Tests:
-`src/tests/sender-unit.test.ts`, `src/tests/start-stream-sender-unit.test.ts`.
+`src/tests/sender-unit.test.ts`, `src/tests/start-stream-sender-unit.test.ts`,
+`src/tests/sender-unit-held-session.test.ts`.
 
 ## What the image must provide
 
@@ -42,25 +46,31 @@ writes the IP list:
 | cannot be read | no sender of either kind starts until a later read settles it |
 
 Before the stream session is reconciled at startup, the backend checks the
-unit again ("leftovers" below). Until the unit is confirmed down or positively
-absent (and after that, whenever a stop could not be confirmed):
+unit again ("A backend that finds the unit running" below). Until the unit is
+confirmed down or positively absent (and after that, whenever a stop could not
+be confirmed, and for as long as a sender is held):
 
 - every stream start fails in the `spawn-sender` phase with reason
-  `unit_unresolved`, and SRT forwarding refuses to start;
+  `unit_unresolved` (`unit_held` while a sender is held), and SRT forwarding
+  refuses to start;
 - the sender census reads `unknown`, never `absent`, so reconciliation does
   not commit idle and disruptive actions stay protected (a sender between a
   crash and systemd's restart has no process to find);
 - the check is retried every 5 s.
 
 **Confirmed down** means `inactive` or `failed`, no MainPID and no queued or
-running job (`Job=` empty), from a complete `systemctl show` reply. A start job
-can sit behind an inactive state, and a reply without `MainPID` is unreadable,
-never "no process". The same rule is used for stop confirmation, start
+running job (`Job=` present and empty), from a complete `systemctl show`
+reply. A start job can sit behind an inactive state; a reply without `MainPID`
+is unreadable, never "no process", and a reply without a `Job=` row is never
+"no job". The same rule is used for stop confirmation, start
 admission, the startup check and a final exit.
 
 Turning the flag off while a sender unit still runs is not supported: with the
-flag off the backend reads nothing about the unit. Stop it first
+flag off the backend reads nothing about the unit, and the census then sees an
+unowned sender (protected, Stop fails). Stop it first
 (`systemctl stop srtla-send.service`) or reboot (the unit has no `[Install]`).
+Since a graceful backend stop leaves the sender running, this applies after
+`systemctl stop ceralive` too.
 
 ## Files
 
@@ -137,7 +147,10 @@ restart.
 
 ## Supervision, reload and stop
 
-The handle reads the unit once a second.
+The handle reads the unit once a second. Every change of process identity
+(InvocationID, MainPID or ControlGroup) goes through the restart steps below,
+also one that appears while readiness is re-probed after an unreadable read,
+and the stats file is cleared for the invocation that is finally followed.
 
 - **Readiness is current, not cached.** A failed read, or a unit that is not
   `active`/`running` (for example `deactivating`), takes readiness away until a
@@ -158,10 +171,10 @@ The handle reads the unit once a second.
   only while the handle is ready. The reload counts as delivered only when the
   kernel took the signal; otherwise the publication's retry applies. Without
   pidfd support the PID's `comm` and cgroup are checked first.
-- **Stop.** Stopping the stream, a rollback and the backend's graceful
-  shutdown run `systemctl stop srtla-send.service` (final: systemd does not
-  restart after a stop), confirm the unit is down with no MainPID, then remove
-  the argument file, stats file and socket. A stop that cannot be confirmed is
+- **Stop.** Stopping the stream and a rollback run
+  `systemctl stop srtla-send.service` (final: systemd does not restart after a
+  stop), confirm the unit is down with no MainPID, then remove the argument
+  file, stats file and socket. A stop that cannot be confirmed is
   retried every 2 s and the handle stays live, so the stream stays protected
   and the stop path keeps waiting. A retry never stops a unit that a newer
   start owns (it only started once this one was confirmed down). The SIGKILL
@@ -173,24 +186,61 @@ The handle reads the unit once a second.
 The sender census subtracts a unit-run sender only when the handle is ready,
 the PID is the handle's MainPID and `/proc/<pid>/cgroup` is the unit's
 ControlGroup. Reconciliation counts the sender as owned only while the handle
-is ready and its pinned process still takes signal 0 (without a pin, its
-`comm` and cgroup still match), so a sender that died after the last monitor
-read is not claimed. A change of ControlGroup under the same PID and
+is ready and its pinned process has not exited (the pidfd is not readable; a
+pidfd turns readable at exit, before the process is reaped, while signal 0
+would still succeed; without a pin, its `comm` and cgroup still match), so a
+sender that died after the last monitor read is not claimed. A change of ControlGroup under the same PID and
 invocation is treated as a new process and verified from scratch. A child is still subtracted by its parent PID. The continuity
 lifetime record says `host: "systemd"` with the InvocationID.
+
+## Backend shutdown
+
+A graceful shutdown of the backend (SIGTERM from `systemctl stop` or
+`restart`, a package postinst) leaves an owned sender running in its unit and
+logs it; it neither stops the unit nor waits for it. A stop already in
+progress is not abandoned. A reboot or poweroff stops the unit with
+everything else. A crash or watchdog kill leaves it running anyway, since the
+unit is not in `ceralive.service`'s cgroup.
 
 ## A backend that finds the unit running
 
 At startup (before the stream session is reconciled), a unit that is not
-confirmed down was started by an earlier backend, for example one that crashed or
-was killed by its watchdog. Nothing adopts it in this version: the backend
-stops it, confirms it is down and removes the launch state before anything
-streams. A unit that is down with an argument file left over (the backend died
-between publishing and starting) has that file removed.
+confirmed down was started by an earlier backend: running, starting, waiting
+for systemd's restart, or still stopping. Nothing adopts it in this version.
+It is **held**:
 
-So a backend crash no longer kills the sender at once, but the next backend
-still stops it. Keeping the stream across the restart needs adoption, which
-replaces this step.
+- nothing signals or stops it, and its argument file, IP list, bind map,
+  stats file and socket stay in place;
+- every start is refused (`unit_held`), so no second sender runs beside it;
+- the census reads `unknown`, so reconciliation never commits `streaming`
+  (this backend did not launch it) or `idle` (a sender may run): with the
+  engine still streaming the session is "unconfirmed" and protected;
+- no telemetry is attached and no bond change reaches it (the IP list and
+  bind map files are still written, so a sender systemd restarts reads them);
+- `status.stream_sender_held` is true, and the Live view explains that a
+  sender started before the restart may still run, that changed settings do
+  not reach it, and that Stop ends it.
+
+The hold ends in one of two ways:
+
+- **Stop.** The stream stop (operator Stop, or any stop the session runs)
+  stops the engine first, then runs `systemctl stop srtla-send.service` and
+  succeeds only once the unit is confirmed down; launch state is then removed.
+  An unconfirmed stop fails with `sender_unit_stop_unconfirmed` and the hold
+  stays. This also finishes a stop that an earlier backend started and did not
+  live to confirm.
+- **On its own.** The unit is re-read every 5 s. Once it is confirmed down
+  (the start limit, a refused argument file, an earlier backend's stop job
+  finishing), launch state is removed, the hold is released and the session is
+  reconciled again: with an idle engine it becomes idle and Start works; with
+  the engine still streaming it stays unconfirmed until Stop.
+
+A unit that is down with an argument file left over (the backend died
+between publishing and starting) has that file removed at startup.
+
+Adoption would replace the hold with a verified handle over the running
+sender (telemetry, reloads, a confirmed streaming state) and keep the hold as
+its fallback.
 
 ## The activation marker
 
@@ -198,10 +248,17 @@ replaces this step.
 as with a child sender. Neither the unit nor the launcher touches it, and a
 restart by systemd does not change it. Since a stop that is not confirmed keeps
 the handle live, the stream (and the marker) stays protected until it is.
+A backend restart does not remove it either, so a held sender's session keeps
+the same protection as any engine session the restarted backend cannot
+confirm.
 
 ## Known gaps
 
-- **No adoption.** See above.
+- **No adoption.** A held sender runs without telemetry or bond updates until
+  Stop; see above.
+- **Idle engine beside a held sender.** A backend that died between starting
+  the sender and starting the engine leaves a held sender beside an idle
+  engine; the session stays protected until Stop.
 - **No stderr notifications.** The child path turns two sender stderr lines
   ("Failed to establish any initial connections", "no available connections")
   into notifications. The unit's output goes to the journal, so unit mode does
@@ -213,3 +270,6 @@ the handle live, the stream (and the marker) stays protected until it is.
 - **Stream continuity's evidence** (open in a separate change) requires
   `Restart=no`; with this unit's `Restart=on-failure` it refuses, which is
   safe but means the two need one policy before any adoption.
+- **Graceful shutdown cleanups** still reset the host's default-route
+  preference and stop the uplink shaper while the sender keeps running; their
+  effect on a surviving sender has not been measured on hardware.

@@ -60,9 +60,15 @@ interface Props {
 	lifecycle: LifecycleState | undefined;
 	isStreaming: boolean;
 	optimismState: StreamingOptimismState;
+	/**
+	 * `status.stream_sender_held`: a sender started before a backend restart
+	 * may still run, and the device cannot confirm or change it. Only the
+	 * explanation changes; the Stop is the same.
+	 */
+	senderHeld?: boolean;
 }
 
-let { lifecycle, isStreaming, optimismState }: Props = $props();
+let { lifecycle, isStreaming, optimismState, senderHeld = false }: Props = $props();
 
 const phase = $derived(getOperationPhase(UNCONFIRMED_STOP_OPERATION));
 const pending = $derived(phase === 'pending');
@@ -137,7 +143,9 @@ function handleStop() {
 			<CircleHelp aria-hidden="true" class="text-status-warning mt-0.5 size-4 shrink-0" />
 			<div class="min-w-0 space-y-0.5">
 				<p class="text-sm font-medium">{m['live.unconfirmedStream.title']()}</p>
-				<p class="text-muted-foreground text-sm">{m['live.unconfirmedStream.body']()}</p>
+				<p class="text-muted-foreground text-sm" data-testid="unconfirmed-stream-body">
+					{senderHeld ? m['live.unconfirmedStream.heldBody']() : m['live.unconfirmedStream.body']()}
+				</p>
 				{#if phase === 'failed'}
 					<p class="text-sm font-medium" data-testid="unconfirmed-stream-failed">
 						{m['live.unconfirmedStream.stopFailed']()}

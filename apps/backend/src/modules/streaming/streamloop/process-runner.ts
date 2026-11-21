@@ -61,6 +61,13 @@ export interface SupervisedProc {
 	 * a child, which is ours for as long as it is unreaped.
 	 */
 	isCurrent?(): boolean;
+	/**
+	 * Called at backend shutdown instead of SIGTERM. True when the process is
+	 * left running outside this backend (a sender in its own systemd unit, for
+	 * the next backend to hold); shutdown then does not wait for it. Absent
+	 * for a child, which always ends with the backend.
+	 */
+	leaveRunningOnShutdown?(): boolean;
 }
 
 // Bun.Subprocess is not an EventEmitter, so the exit lifecycle is modeled here:
@@ -377,6 +384,10 @@ function isProcAlive(sp: StreamingProcess): boolean {
  * subprocess, resolve as soon as they have all exited, and SIGKILL any survivor
  * once `timeoutMs` elapses. Resolves either way so the caller can exit cleanly.
  *
+ * A sender run by its own systemd unit is left running instead
+ * (`leaveRunningOnShutdown`): a restarted backend holds it, so a restart of
+ * the service does not end the stream.
+ *
  * Unlike {@link stopAll} (the in-app stream-stop poll), this is the short window
  * systemd grants before it kills CeraUI itself. The process list and timers are
  * injectable so the escalation is testable with zero real waits.
@@ -386,7 +397,11 @@ export function gracefulShutdown(
 	procs: Array<StreamingProcess> = streamingProcesses,
 	timers: ShutdownTimers = realShutdownTimers,
 ): Promise<void> {
-	const remaining = new Set([...procs].filter(isProcAlive));
+	const remaining = new Set(
+		[...procs]
+			.filter(isProcAlive)
+			.filter((sp) => sp.proc.leaveRunningOnShutdown?.() !== true),
+	);
 	if (remaining.size === 0) return Promise.resolve();
 
 	return new Promise<void>((resolve) => {

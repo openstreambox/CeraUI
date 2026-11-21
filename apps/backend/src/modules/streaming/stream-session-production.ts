@@ -47,6 +47,7 @@ import {
 } from "./stream-start-retry-reporting.ts";
 import { getIsStreaming, updateStatus } from "./streaming.ts";
 import { getStreamingBackend } from "./streaming-engine.ts";
+import { stopHeldSenderUnit } from "./streamloop/sender-unit.ts";
 import { stopGeneration } from "./streamloop/session.ts";
 
 function recordEvent(publish: () => void): void {
@@ -66,6 +67,15 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	getStreamingStatus: getIsStreaming,
 	stopRuntime: async (generation, confirmUnknown) => {
 		await stopGeneration(generation, confirmUnknown);
+		// A sender unit an earlier backend left running is not in this
+		// process's handles; the stop ends it by unit name, after the engine.
+		if (!shouldUseMocks()) {
+			try {
+				await stopHeldSenderUnit();
+			} catch {
+				throw new Error("sender_unit_stop_unconfirmed");
+			}
+		}
 		if (!shouldUseMocks() && unownedSenderCensus() !== "absent")
 			throw new Error("sender_ownership_unproven");
 	},

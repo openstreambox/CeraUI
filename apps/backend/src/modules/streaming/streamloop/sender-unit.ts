@@ -33,9 +33,13 @@
  *   notices a new invocation, reports the exit, waits for the new process to
  *   be ready and then follows it. Only a final stop of the unit ends the
  *   handle.
- * - **Leftovers.** A backend that starts and finds the unit running did not
- *   start that sender. Nothing adopts it yet, so it is stopped and the launch
- *   state is removed before anything else streams.
+ * - **A sender left by an earlier backend is held, not stopped.** A backend
+ *   that starts and finds the unit running (or starting, restarting or
+ *   stopping) did not start that sender. It keeps running: nothing signals it,
+ *   no file is removed, no second sender starts beside it and the session stays
+ *   unconfirmed. The operator's Stop stops it; the hold also ends when systemd
+ *   reports the unit down on its own. Graceful shutdown leaves an owned sender
+ *   running for the next backend to hold. Adoption would replace the hold.
  */
 
 import { randomBytes } from "node:crypto";
@@ -124,8 +128,11 @@ export type UnitShow = {
 	readonly execMainCode: number | null;
 	readonly execMainStatus: number | null;
 	readonly restarts: number;
-	/** The queued or running job's id; empty when no job is pending. */
-	readonly job: string;
+	/**
+	 * The queued or running job's id; empty when no job is pending, null when
+	 * the reply had no `Job=` row (unknown, never "no job").
+	 */
+	readonly job: string | null;
 };
 
 /** Parse `systemctl show --property=...` output; null when it is not one. */
@@ -154,7 +161,7 @@ export function parseUnitShow(stdout: string): UnitShow | null {
 		execMainCode: int("ExecMainCode"),
 		execMainStatus: int("ExecMainStatus"),
 		restarts: int("NRestarts") ?? 0,
-		job: rows.get("Job") ?? "",
+		job: rows.get("Job") ?? null,
 	};
 }
 
@@ -164,8 +171,9 @@ function isDown(show: UnitShow): boolean {
 }
 
 /**
- * Down with proof: inactive or failed, no main process and no queued or
- * running job (a start job can sit behind an inactive state). The one
+ * Down with proof: inactive or failed, no main process and an explicit empty
+ * `Job=` row (a start job can sit behind an inactive state, and a reply
+ * without the row proves nothing). The one
  * predicate for stop confirmation, start admission, retirement and a final
  * exit.
  */
@@ -233,7 +241,9 @@ export type SenderUnitFailureReason =
 	/** A stop was not confirmed: a sender may still run untracked. */
 	| "stop_unconfirmed"
 	/** The unit's state is unresolved since startup: no sender may start. */
-	| "unit_unresolved";
+	| "unit_unresolved"
+	/** A sender started by an earlier backend is still running. */
+	| "unit_held";
 
 export class SenderUnitError extends Error {
 	override readonly name = "SenderUnitError";
@@ -283,7 +293,7 @@ export interface SenderUnitIo {
 	pidfdOpen(pid: number): number | null;
 	/** Signal through a pidfd; false when the process has exited. */
 	pidfdSignal(fd: number, signal: NodeJS.Signals): boolean;
-	/** Whether the process a pidfd names is still alive (signal 0). */
+	/** Whether the process a pidfd names has not exited (pidfd not readable). */
 	pidfdAlive(fd: number): boolean;
 	pidfdClose(fd: number): void;
 	/** Take the update lock without waiting; null when someone else holds it. */
@@ -459,6 +469,18 @@ let hostSetup: SenderSetup | null = null;
 let hostExec = SENDER_UNIT_EXEC;
 /** Why no sender may start, or null. */
 let blocked: string | null = null;
+/**
+ * What the block waits for, which decides how its retry settles it:
+ * - `mode`: the unit could not be read at boot; decide the mode first;
+ * - `unchecked`: the unit's state is not known yet (boot, or a failed read);
+ * - `held`: a sender this backend did not start is running; keep it;
+ * - `owed_stop`: this backend's own stop was not confirmed; stop again.
+ */
+type BlockKind = "mode" | "unchecked" | "held" | "owed_stop";
+let blockKind: BlockKind | null = null;
+/** The sender unit an earlier backend left running, while it is held. */
+let held: HeldSenderUnit | null = null;
+let onHoldChanged: ((change: HoldChange) => void) | null = null;
 let cancelRetry: (() => void) | null = null;
 /** Bumped by every start; cleanup of an older launch is skipped. */
 let launchGeneration = 0;
@@ -474,6 +496,40 @@ export function senderHostMode(): SenderHostMode {
 /** Why no sender (child or unit) may start right now, or null. */
 export function senderHostBlocked(): string | null {
 	return blocked;
+}
+
+/** A sender unit started by an earlier backend and kept running. */
+export type HeldSenderUnit = {
+	readonly activeState: string;
+	readonly subState: string;
+	readonly invocation: string;
+	readonly mainPid: number;
+};
+
+/** The sender unit this backend holds without having started it, or null. */
+export function heldSenderUnit(): HeldSenderUnit | null {
+	return held;
+}
+
+/**
+ * `held`: a unit from an earlier backend is now held. `released`: it was seen
+ * down on its own, so the session can follow the engine again. `stopped`: the
+ * stop path ended it (the stop itself settles the session).
+ */
+export type HoldChange = "held" | "released" | "stopped";
+
+export function onSenderUnitHoldChanged(
+	listener: ((change: HoldChange) => void) | null,
+): void {
+	onHoldChanged = listener;
+}
+
+function announceHold(change: HoldChange): void {
+	try {
+		onHoldChanged?.(change);
+	} catch (error) {
+		logger.warn("sender unit hold listener failed", { error });
+	}
 }
 
 /** The private paths of the unit host, or null in child mode. */
@@ -495,6 +551,9 @@ export function resetSenderHostModeForTest(): void {
 	hostIo = null;
 	hostSetup = null;
 	blocked = null;
+	blockKind = null;
+	held = null;
+	onHoldChanged = null;
 	launchGeneration = 0;
 	transitions = Promise.resolve();
 }
@@ -546,7 +605,7 @@ async function unitPresence(
  * the sender executable is the one the launcher runs. A unit that is
  * positively absent gives child mode. A unit that is installed but unusable
  * gives child mode too, but the unit may still run a sender, so
- * {@link retireLeftoverSenderUnit} must confirm it down before anything
+ * {@link settleSenderUnit} must see it down (or hold it) before anything
  * starts. A unit that cannot be read leaves the backend blocked (no sender of
  * either kind) until a later read settles it. In unit mode the IP list and
  * bind map move into the private directory, so writer and readers agree.
@@ -562,6 +621,8 @@ export async function resolveSenderHostMode(
 	hostIo = null;
 	hostSetup = null;
 	blocked = null;
+	blockKind = null;
+	held = null;
 	if (setup.srtla_send_unit !== true) return hostMode;
 	hostIo = io;
 	hostSetup = setup;
@@ -569,12 +630,14 @@ export async function resolveSenderHostMode(
 	const reason = await decideMode(BOOT_SHOW_ATTEMPTS);
 	if (reason) {
 		blocked = reason;
+		blockKind = "mode";
 		logger.error(
 			`srtla_send_unit is set, but ${reason}; no sender starts until it can be read`,
 		);
 	} else {
-		// Until the startup check has seen the unit down, nothing may start.
-		blocked = "leftover: not checked yet";
+		// Until the startup check has seen the unit, nothing may start.
+		blocked = `${io.unit}: not checked yet`;
+		blockKind = "unchecked";
 	}
 	return hostMode;
 }
@@ -621,13 +684,25 @@ async function decideMode(attempts: number): Promise<string | null> {
 	return null;
 }
 
-function blockUntilSettled(reason: string): void {
+function blockUntilSettled(reason: string, kind: BlockKind): void {
 	blocked = reason;
+	blockKind = kind;
 	if (cancelRetry || !hostIo) return;
 	cancelRetry = hostIo.schedule(() => {
 		cancelRetry = null;
-		void retireLeftoverSenderUnit();
+		void settleSenderUnit();
 	}, UNRESOLVED_RETRY_MS);
+}
+
+/** Lift the block; a hold that ends is announced as `change`. */
+function releaseBlock(change: "released" | "stopped" = "released"): void {
+	const wasHeld = held !== null;
+	cancelRetry?.();
+	cancelRetry = null;
+	blocked = null;
+	blockKind = null;
+	held = null;
+	if (wasHeld) announceHold(change);
 }
 
 // ---------------------------------------------------------------------------
@@ -897,7 +972,11 @@ export function startSenderUnit(
 ): Promise<SenderUnitProcess> {
 	const io = unitIo();
 	return serialized(async () => {
-		if (blocked) throw new SenderUnitError("unit_unresolved", blocked);
+		if (blocked)
+			throw new SenderUnitError(
+				blockKind === "held" ? "unit_held" : "unit_unresolved",
+				blocked,
+			);
 		const payload = encodeSenderArgv(args);
 		const lock = await io.tryUpdateLock().catch((error) => {
 			throw new SenderUnitError(
@@ -938,7 +1017,10 @@ export function startSenderUnit(
 			await publishArgv(io, payload);
 			const fail = async (error: SenderUnitError): Promise<never> => {
 				if (!(await stopUnit(io, generation))) {
-					blockUntilSettled(`${io.unit} could not be confirmed stopped`);
+					blockUntilSettled(
+						`${io.unit} could not be confirmed stopped`,
+						"owed_stop",
+					);
 					throw new SenderUnitError(
 						"stop_unconfirmed",
 						`${error.message}; and ${io.unit} could not be confirmed stopped`,
@@ -980,51 +1062,143 @@ export function startSenderUnit(
 }
 
 /**
- * At backend startup (and again while unresolved): a sender unit that is not
- * down was started by an earlier backend. Nothing adopts it in this version,
- * so it is stopped and seen down, and stale launch state is removed. Runs
- * whenever the flag is on, also when the backend fell back to child mode,
- * because an installed unit may still run a sender. Until the unit is
- * confirmed down (or positively absent) no sender of either kind may start.
+ * At backend startup, and again every 5 s while blocked: settle what the unit
+ * is doing before anything may start a sender.
+ *
+ * - Not installed, or confirmed down: nothing runs. Stale launch state is
+ *   removed (unit mode) and the block is lifted.
+ * - Anything else (running, starting, waiting to restart, stopping): an
+ *   earlier backend started that sender, or its stop is still finishing. It is
+ *   **held**: nothing signals or stops it, no file is removed, and every start
+ *   stays refused, so no second sender runs beside it. The census reads
+ *   unknown meanwhile, so the session stays unconfirmed and protected. The
+ *   operator's Stop ends it ({@link stopHeldSenderUnit}); otherwise the hold
+ *   ends when systemd reports the unit down on its own.
+ * - This backend's own unconfirmed stop (a failed start): stopped again.
+ * - Unreadable: blocked, retried. A held unit stays held through a failed read.
+ *
+ * Runs whenever the flag is on, also when the backend fell back to child
+ * mode, because an installed unit may still run a sender.
  */
-export function retireLeftoverSenderUnit(): Promise<
-	"none" | "stopped" | "unknown"
+export function settleSenderUnit(): Promise<
+	"none" | "held" | "stopped" | "unknown"
 > {
 	const io = hostIo;
 	if (!io) return Promise.resolve("none");
 	return serialized(async () => {
-		const unresolved = (reason: string): "unknown" => {
-			blockUntilSettled(reason);
-			return "unknown";
-		};
-		if (blocked && !blocked.startsWith("leftover")) {
-			// The unit could not be read at boot, or a stop went unconfirmed:
-			// settle the mode first. The block stays until everything is settled.
+		if (blocked === null) return "none";
+		if (blockKind === "mode") {
 			const reason = await decideMode(1);
-			if (reason) return unresolved(reason);
+			if (reason) {
+				blockUntilSettled(reason, "mode");
+				return "unknown";
+			}
+			blockKind = "unchecked";
 		}
 		let show: UnitShow;
 		try {
 			show = await readShow(io);
 		} catch {
-			return unresolved(`leftover: ${io.unit} cannot be read`);
+			if (held) {
+				blockUntilSettled(blocked ?? "held", "held");
+				return "held";
+			}
+			blockUntilSettled(
+				`${io.unit} cannot be read`,
+				blockKind === "owed_stop" ? "owed_stop" : "unchecked",
+			);
+			return "unknown";
+		}
+		if (show.job === null) {
+			// No Job= row: whether a start or stop job is queued is unknown.
+			blockUntilSettled(
+				blocked ?? `${io.unit} cannot be read`,
+				blockKind ?? "unchecked",
+			);
+			return held ? "held" : "unknown";
 		}
 		if (show.loadState === "not-found") {
-			blocked = null;
+			releaseBlock();
 			return "none";
 		}
 		if (confirmedDown(show)) {
+			if (held)
+				logger.info(
+					`${io.unit} from an earlier backend is down; no longer held`,
+					{ result: show.result },
+				);
+			// Down, so no sender owns these; nothing of ours can start while blocked.
 			if (hostMode === "unit") await removeFiles(io, launchState(io));
-			blocked = null;
+			releaseBlock();
 			return "none";
 		}
-		logger.warn(
-			`${io.unit} is ${show.activeState} from an earlier backend; this build does not adopt it, stopping it`,
-			{ invocation: show.invocation, mainPid: show.mainPid, job: show.job },
+		if (blockKind === "owed_stop") {
+			if (!(await stopUnit(io, hostMode === "unit" ? launchGeneration : -1))) {
+				blockUntilSettled(
+					`${io.unit} could not be confirmed stopped`,
+					"owed_stop",
+				);
+				return "unknown";
+			}
+			releaseBlock();
+			return "stopped";
+		}
+		const newlyHeld = held === null;
+		if (newlyHeld)
+			logger.warn(
+				`${io.unit} is ${show.activeState} from an earlier backend; keeping it running and starting no sender beside it until it is stopped`,
+				{
+					subState: show.subState,
+					invocation: show.invocation,
+					mainPid: show.mainPid,
+					job: show.job,
+				},
+			);
+		held = {
+			activeState: show.activeState,
+			subState: show.subState,
+			invocation: show.invocation,
+			mainPid: show.mainPid,
+		};
+		blockUntilSettled(
+			`${io.unit} is ${show.activeState} from an earlier backend`,
+			"held",
 		);
-		if (!(await stopUnit(io, hostMode === "unit" ? launchGeneration : -1)))
-			return unresolved(`leftover: ${io.unit} could not be confirmed stopped`);
-		blocked = null;
+		if (newlyHeld) announceHold("held");
+		return "held";
+	});
+}
+
+/**
+ * The stop path for a sender this backend did not start: stop the held unit
+ * by name and see it down. A unit already down only lifts the hold. Throws a
+ * {@link SenderUnitError} (`stop_unconfirmed`) when the unit cannot be
+ * confirmed down; the hold then stays and its retry continues. Does nothing
+ * when no unit is held (an owned sender stops through its own handle).
+ */
+export function stopHeldSenderUnit(): Promise<"none" | "stopped"> {
+	const io = hostIo;
+	if (!io) return Promise.resolve("none");
+	return serialized(async () => {
+		if (blockKind !== "held" && blockKind !== "owed_stop") return "none";
+		const kind = blockKind;
+		const reason = blocked ?? `${io.unit} is held`;
+		logger.warn(`stopping ${io.unit}, which this backend did not start`, {
+			invocation: held?.invocation,
+		});
+		const show = await stopUnit(
+			io,
+			hostMode === "unit" ? launchGeneration : -1,
+		);
+		if (!show) {
+			blockUntilSettled(reason, kind);
+			throw new SenderUnitError(
+				"stop_unconfirmed",
+				`${io.unit} could not be confirmed stopped`,
+			);
+		}
+		// Stopped on request: the session settles through the stop itself.
+		releaseBlock("stopped");
 		return "stopped";
 	});
 }
@@ -1048,6 +1222,8 @@ export class SenderUnitProcess implements SupervisedProc {
 	private current: Ready;
 	private ready = true;
 	private restarting = false;
+	/** The invocation whose stats file was last cleared for a restart. */
+	private clearedFor: string | null = null;
 	private notReadySince: number | null = null;
 	private stopping: Promise<void> | null = null;
 	private finished = false;
@@ -1084,9 +1260,11 @@ export class SenderUnitProcess implements SupervisedProc {
 	}
 
 	/**
-	 * Verified ready and the process still alive now: the pinned pidfd takes
-	 * signal 0, or, without a pin, the PID is still `srtla_send` in the unit's
-	 * cgroup. Reconciliation relies on this between monitor reads.
+	 * Verified ready and the process still alive now: the pinned pidfd is not
+	 * readable (a pidfd turns readable once its process has exited, also
+	 * before it is reaped, where signal 0 would still succeed), or, without a
+	 * pin, the PID is still `srtla_send` in the unit's cgroup. Reconciliation
+	 * relies on this between monitor reads.
 	 */
 	isCurrent(): boolean {
 		if (!this.isReady) return false;
@@ -1104,6 +1282,22 @@ export class SenderUnitProcess implements SupervisedProc {
 			pid === this.current.pid &&
 			this.io.readCgroup(pid, procRoot) === this.current.controlGroup
 		);
+	}
+
+	/**
+	 * The backend is shutting down: leave the sender running in its unit for
+	 * the next backend to hold, and stop following it. A stop already in
+	 * flight is not abandoned (false), so shutdown waits for it as before.
+	 */
+	leaveRunningOnShutdown(): boolean {
+		if (this.finished || this.stopping) return false;
+		this.cancelTimer();
+		this.ready = false;
+		logger.warn(
+			`${this.io.unit}: leaving the sender running across the backend shutdown`,
+			{ pid: this.current.pid, invocation: this.current.invocation },
+		);
+		return true;
 	}
 
 	kill(signal: NodeJS.Signals | number = "SIGTERM"): void {
@@ -1274,30 +1468,7 @@ export class SenderUnitProcess implements SupervisedProc {
 			show.controlGroup === this.current.controlGroup;
 		if (same && isRunning(show) && this.ready) return;
 		if (!same && !this.restarting) {
-			this.restarting = true;
-			this.markNotReady();
-			const { exitCode, signalCode } = mainExit(show);
-			logger.warn(`${this.io.unit}: the sender exited; systemd restarts it`, {
-				exitCode,
-				signal: signalCode,
-				restarts: show.restarts,
-			});
-			this.hooks.onRestarting?.(show);
-			// The dead sender's last stats must not pass for the new one's. If
-			// they cannot be removed, file telemetry could not be trusted for
-			// the new process: stop it rather than run blind.
-			const cleared = await serialized(() =>
-				this.generation === launchGeneration
-					? removeFiles(this.io, [this.io.paths.statsFile])
-					: Promise.resolve(true),
-			);
-			if (!cleared) {
-				logger.error(
-					`${this.io.unit}: the old stats file could not be removed; stopping the sender`,
-				);
-				void this.stop();
-				return;
-			}
+			if (!(await this.beginRestart(show))) return;
 		}
 		if (!isRunning(show)) {
 			this.markNotReady();
@@ -1315,6 +1486,36 @@ export class SenderUnitProcess implements SupervisedProc {
 			if (ready.pidfd !== null) this.io.pidfdClose(ready.pidfd);
 			return;
 		}
+		// Readiness may return a process other than the one last verified: a
+		// restart during a re-probe of the same invocation, or a second crash
+		// before the first restart was ready. Every identity change goes
+		// through restart bookkeeping, and the stats file is cleared for the
+		// invocation that is actually adopted, before readiness is published.
+		const switched =
+			ready.invocation !== this.current.invocation ||
+			ready.pid !== this.current.pid ||
+			ready.controlGroup !== this.current.controlGroup;
+		if (switched && !this.restarting) {
+			const replaced: UnitShow = {
+				...show,
+				invocation: ready.invocation,
+				mainPid: ready.pid,
+				controlGroup: ready.controlGroup,
+			};
+			if (!(await this.beginRestart(replaced))) {
+				if (ready.pidfd !== null) this.io.pidfdClose(ready.pidfd);
+				return;
+			}
+		} else if (this.restarting && this.clearedFor !== ready.invocation) {
+			if (!(await this.clearStats(ready.invocation))) {
+				if (ready.pidfd !== null) this.io.pidfdClose(ready.pidfd);
+				return;
+			}
+		}
+		if (this.finished || this.stopping) {
+			if (ready.pidfd !== null) this.io.pidfdClose(ready.pidfd);
+			return;
+		}
 		if (this.current.pidfd !== null) this.io.pidfdClose(this.current.pidfd);
 		this.current = ready;
 		this.ready = true;
@@ -1327,6 +1528,46 @@ export class SenderUnitProcess implements SupervisedProc {
 			});
 			this.hooks.onRestarted?.(this);
 		}
+	}
+
+	/**
+	 * The process this handle followed has exited and systemd is restarting
+	 * it: report the exit and clear the dead sender's stats file. False when
+	 * the file could not be removed; the sender is then stopped.
+	 */
+	private async beginRestart(show: UnitShow): Promise<boolean> {
+		this.restarting = true;
+		this.markNotReady();
+		const { exitCode, signalCode } = mainExit(show);
+		logger.warn(`${this.io.unit}: the sender exited; systemd restarts it`, {
+			exitCode,
+			signal: signalCode,
+			restarts: show.restarts,
+		});
+		this.hooks.onRestarting?.(show);
+		return this.clearStats(show.invocation);
+	}
+
+	/**
+	 * Remove the stats file for invocation `invocation`, so an earlier
+	 * sender's last stats never pass for this one's. If it cannot be removed,
+	 * file telemetry could not be trusted: stop the sender rather than run blind.
+	 */
+	private async clearStats(invocation: string): Promise<boolean> {
+		const cleared = await serialized(() =>
+			this.generation === launchGeneration
+				? removeFiles(this.io, [this.io.paths.statsFile])
+				: Promise.resolve(true),
+		);
+		if (!cleared) {
+			logger.error(
+				`${this.io.unit}: the old stats file could not be removed; stopping the sender`,
+			);
+			void this.stop();
+			return false;
+		}
+		this.clearedFor = invocation;
+		return true;
 	}
 
 	/** A sender that stays unready this long is stopped: the stream ends. */

@@ -26,11 +26,11 @@ import { registerSupervisedSender } from "../modules/streaming/streamloop/proces
 import {
 	resetSenderHostModeForTest,
 	resolveSenderHostMode,
-	retireLeftoverSenderUnit,
 	SENDER_UNIT_EXEC,
 	SenderUnitError,
 	type SenderUnitHooks,
 	type SenderUnitProcess,
+	settleSenderUnit,
 } from "../modules/streaming/streamloop/sender-unit.ts";
 import {
 	SENDER_UNIT_START_FAILED,
@@ -135,7 +135,7 @@ async function enterUnitMode(): Promise<void> {
 			fake.io(),
 		),
 	).toBe("unit");
-	await retireLeftoverSenderUnit();
+	await settleSenderUnit();
 	writeFileSync(join(dir, "ips"), "192.0.2.21\n192.0.2.22\n");
 }
 

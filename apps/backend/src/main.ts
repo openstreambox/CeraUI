@@ -163,8 +163,9 @@ import {
 	gracefulShutdown,
 } from "./modules/streaming/streamloop/process-runner.ts";
 import {
+	onSenderUnitHoldChanged,
 	resolveSenderHostMode,
-	retireLeftoverSenderUnit,
+	settleSenderUnit,
 } from "./modules/streaming/streamloop/sender-unit.ts";
 import {
 	checkAutoStartStream,
@@ -221,7 +222,7 @@ import {
 } from "./modules/wifi/wifi-network-diversity.ts";
 import { startProvisioningMarkerWatch } from "./modules/wifi/wifi-provisioning-handoff.ts";
 import { wifiRadioObservation } from "./modules/wifi/wifi-radio-observation.ts";
-import { broadcastMsgLocal } from "./rpc/compat.ts";
+import { broadcastMsg, broadcastMsgLocal } from "./rpc/compat.ts";
 import { onHeartbeatTick, startHeartbeat } from "./rpc/heartbeat.ts";
 import { getServer, initServer } from "./rpc/index.ts";
 import { stopLegacyTokenMigration } from "./rpc/procedures/auth.procedure.ts";
@@ -427,11 +428,22 @@ if (!shouldUseMocks()) {
 	// Only a returned reconciliation turns the factory's initial idle projection
 	// into evidence; until then (or after a throw) disruptive actions see unknown.
 	// Nothing adopts a sender yet: a sender unit left running by an earlier
-	// backend is stopped and seen down before reconciliation judges the
-	// session. Until that is settled the sender census reads unknown, so
-	// nothing commits idle or launches beside it. Child mode does nothing.
+	// backend (crash, watchdog kill, restart) is held before reconciliation
+	// judges the session. It keeps running, nothing starts beside it, and the
+	// census reads unknown, so the session stays unconfirmed until the
+	// operator's Stop ends it or the unit goes down on its own; then the
+	// session follows the engine again. Flag off: nothing is read.
+	onSenderUnitHoldChanged((change) => {
+		broadcastMsg("status", { stream_sender_held: change === "held" });
+		if (change !== "released") return;
+		void reconcileStreamSession().catch((error: unknown) =>
+			logger.warn("reconciliation after a released sender unit failed", {
+				error,
+			}),
+		);
+	});
 	await guardNonCritical("sender-unit-leftover", async () => {
-		await retireLeftoverSenderUnit();
+		await settleSenderUnit();
 	});
 	await guardNonCritical("stream-session-reconcile", async () => {
 		await reconcileStreamSession();
