@@ -2850,6 +2850,7 @@
 	"live.audioCard.title": "音频",
 	"live.telemetryCard.title": "遥测",
 	"live.bar.ready": "已就绪，可以开始直播",
+	"live.bar.blockedSeveral": "开播前请先处理以下事项",
 	"network.hotspot.steeringPending": "路由准备中",
 	"network.view.hotspotRadio": "热点广播",
 	"network.view.hotspotRadioChoose": "选择无线网卡",

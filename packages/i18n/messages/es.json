@@ -2925,6 +2925,7 @@
 	"live.audioMixer.error.refused": "El dispositivo rechazó este cambio, así que no cambió nada.",
 	"live.telemetryCard.title": "Telemetría",
 	"live.bar.ready": "Listo para transmitir en vivo",
+	"live.bar.blockedSeveral": "Resuelve esto antes de transmitir en vivo",
 	"network.cellular.reason.himiUfiRouter": "Este HIMI U01 no pudo iniciar su conexión de datos. Puede que su propio router esté usando la conexión móvil: usa el modo router (red USB) o un módem convencional. Consulta docs.ceralive.tv/es/hardware/cellular-modems/.",
 	"network.hotspot.steeringPending": "Enrutamiento pendiente",
 	"network.view.hotspotRadio": "Radio del punto de acceso",

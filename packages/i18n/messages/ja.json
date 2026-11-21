@@ -2850,6 +2850,7 @@
 	"live.audioCard.title": "音声",
 	"live.telemetryCard.title": "テレメトリー",
 	"live.bar.ready": "配信を開始できます",
+	"live.bar.blockedSeveral": "配信を始める前にこちらを確認してください",
 	"network.hotspot.steeringPending": "ルーティング準備中",
 	"network.view.hotspotRadio": "ホットスポットラジオ",
 	"network.view.hotspotRadioChoose": "ラジオを選択",
