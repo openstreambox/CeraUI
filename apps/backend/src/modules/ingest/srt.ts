@@ -1,4 +1,5 @@
 import { logger } from "../../helpers/logger.ts";
+import { isShutdownStarted } from "../../helpers/shutdown-state.ts";
 import {
 	type SupervisedHandle,
 	superviseWorker,
@@ -168,8 +169,11 @@ export async function initSRTIngest(): Promise<void> {
 		logger.warn("SRT forwarding disabled: invalid configuration");
 		return;
 	}
+	// Shutdown may already have passed its ingest step: start nothing after it.
+	if (isShutdownStarted()) return;
 	if (setup.srt_forward) {
 		const forward = await import("./srt-forward.ts");
+		if (isShutdownStarted()) return;
 		stopForward = forward.stopSrtForward;
 		await forward.initSrtForward();
 	} else startSrtTransmitter();

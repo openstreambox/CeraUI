@@ -113,42 +113,52 @@ still needs separate qualification.
 
 `ceralive.service` uses `KillMode=mixed`: systemd sends SIGTERM to the backend
 only and SIGKILLs whatever is left in the cgroup once it exits. The SIGTERM
-path therefore stops the backend's long-lived helpers itself:
+path therefore stops the backend's long-lived helpers itself. All of it is
+best effort within fixed bounds; anything still running when a bound expires
+is left to systemd, as before.
 
 - The SIGTERM and SIGINT handlers are installed at the top of boot, before the
-  singleton guardian or any monitor exists, so a stop during boot gets the same
-  cleanup. Steps for subsystems that have not started yet do nothing.
+  singleton guardian or any monitor exists. Steps for subsystems that have not
+  started yet do nothing. Once shutdown began, the boot ladder starts no
+  further step, and a step that was already running when the signal arrived
+  does not hand control back to the ladder. A step's own work that was already
+  in flight can still complete; SRT ingest checks the flag again before it
+  starts a helper.
 - At the signal, a process-wide shutdown flag is set before anything else.
   The `nmcli monitor` and `udevadm monitor` supervisors check it: neither starts
   nor respawns a child once shutdown began.
 - Both monitors get SIGTERM and up to one second to exit, in parallel with the
-  streaming teardown. The udev monitor also joins its inventory read within
-  that second and publishes nothing from a stopped run. Nothing here sends
-  SIGKILL; a child that ignores SIGTERM is left to the unit's stop timeout.
+  streaming teardown. The udev monitor publishes nothing from a stopped run and
+  waits up to the same second for its inventory read; the export it runs has
+  its own ten-second bound and is not cancelled, so it can outlive that wait.
+  Nothing here sends SIGKILL; a child that ignores SIGTERM is left to systemd.
 - Taking an OS stage or update flock guardian is admitted as guarded work
   before the guardian is spawned. Once shutdown began, a new acquisition is
-  refused as ordinary contention, and one that becomes ready after the signal
-  releases its guardian before the lease is handed out, so no protected write
-  starts after SIGTERM. Admitted work stays guarded until its owner disposes
-  the lease, even if the guardian helper dies first. Before exiting, the
-  backend waits up to ten seconds for it.
+  refused as ordinary contention, and one whose guardian becomes ready after
+  the signal releases it before the lease is handed out. Work that already
+  holds a lease is not interrupted: it may go on to its next write after the
+  signal. Admitted work stays guarded until its owner disposes the lease, even
+  if the guardian helper dies first, and the backend waits up to ten seconds
+  for it before exiting.
 - The backend singleton guardian (`flock` on the backend lock) is released last,
   with an explicit release and a two-second bound, after teardown and guarded
   work. Until then it still keeps a restarted backend from writing beside this
-  one. If SIGTERM arrives while the singleton is still being acquired, the
-  guardian is released as soon as acquisition completes.
+  one. If the singleton is still being acquired at that point, the release
+  waits for the acquisition within the same two seconds and then releases the
+  new guardian; if acquisition takes longer, the guardian is left to systemd.
 
-The waits are bounded but not a hard end-to-end deadline. When guarded work is
-still running after ten seconds, the backend logs it, releases the singleton
-and exits anyway; that work is cut short as it would have been before. A long
-OS staging step (download, install proof) holds its lease for minutes and so
-uses the whole ten seconds. Its writer runs under PID 1 and keeps its existing
-durable handoff and recovery. The new waits add at most about 13 seconds after
-the existing cleanup (about 12 when the monitors finished during teardown),
-and there is no shared deadline across the existing cleanup steps. The unit
-inherits the manager's stop timeout (90 seconds by default). The 30-second
-watchdog keeps running while the main loop is alive, so these asynchronous
-waits do not stall it.
+When guarded work is still running after ten seconds, the backend logs it,
+releases the singleton and exits anyway; that work is cut short as it would
+have been before. A long OS staging step (download, install proof) holds its
+lease for minutes and so uses the whole ten seconds. Its writer runs under
+PID 1 and keeps its existing durable handoff and recovery. The new waits add
+at most about 13 seconds after the existing cleanup (about 12 when the
+monitors finished during teardown), and there is no shared deadline across
+the existing cleanup steps. The unit inherits the manager's stop timeout
+(90 seconds by default). During a manager-driven stop systemd no longer
+enforces the 30-second watchdog; a SIGTERM sent directly while the unit is
+running leaves it armed, and the backend keeps pulsing it while its main loop
+runs, since these waits are asynchronous.
 
 Tests: `apps/backend/src/tests/sigterm-child-shutdown.test.ts`.
 
