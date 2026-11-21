@@ -1,9 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	type SeedRadio,
+	seedWifiRadios,
+} from "../../../tests/helpers/wifi-verified-radios.ts";
+import * as credentials from "../../wifi/hotspot-credentials.ts";
+import {
 	wifiAdapterLockKey,
+	wifiAdapterLockKeyForConnectionUuid,
 	withWifiAdapterLock,
 } from "../../wifi/wifi-adapter-lock.ts";
 import {
@@ -24,6 +30,24 @@ const identity = (name = "a"): Identity => ({
 	epoch: { bssid: name, lease: name, activation: name, routeGeneration: 1 },
 });
 const holder: Holder = { radio: "a", identity: identity() };
+
+// Both radios are verified in the live registry, as the Wi-Fi lock sees them.
+const MAC_A = identity().permanentMac;
+const MAC_B = identity("b").permanentMac;
+const verified = (
+	overrides: Partial<Record<"a" | "b", Partial<SeedRadio>>> = {},
+) => [
+	{ ifname: "wlan1", mac: MAC_A, ifindex: 11, phy: 1, ...overrides.a },
+	{ ifname: "wlan2", mac: MAC_B, ifindex: 12, phy: 2, ...overrides.b },
+];
+let radios: Awaited<ReturnType<typeof seedWifiRadios>>;
+beforeEach(async () => {
+	radios = await seedWifiRadios();
+	await radios.publish(verified());
+});
+afterEach(async () => {
+	await radios.restore();
+});
 const command = (action: Effect["action"] = "scan", n = 2): Effect => ({
 	operation: 1,
 	command: n,
@@ -432,4 +456,139 @@ test("crash after durable intent but before command completion is reconciled", a
 	const restart = new EffectAdapter(owner, journal, "next");
 	expect(await restart.reconcile()).toBe(true);
 	expect(owner.log).toEqual(["drain", "restore", "remove"]);
+});
+
+describe("the lock Wi-Fi uses for the radio's current owner", () => {
+	const HOTSPOT = "00000000-0000-4000-8000-0000000000c1";
+	const STATION = "00000000-0000-4000-8000-0000000000c2";
+	const COMPOSITE = `${MAC_B}@usb-2`;
+	const withProfiles: Partial<SeedRadio> = {
+		row: {
+			hotspot: { conn: HOTSPOT },
+			saved: { "Lab-Net": STATION },
+			savedAll: { "Lab-Net": [STATION] },
+		} as Partial<SeedRadio["row"]>,
+	};
+	let owners: string[] = [];
+	beforeEach(() => {
+		owners = [COMPOSITE];
+		spyOn(credentials, "getHotspotCredentialOwners").mockImplementation(
+			(uuid?: string) => (uuid === HOTSPOT ? [...owners] : []),
+		);
+	});
+	afterEach(() => {
+		(
+			credentials.getHotspotCredentialOwners as unknown as {
+				mockRestore(): void;
+			}
+		).mockRestore();
+	});
+
+	test("same-owner station and profile work serializes with every effect", async () => {
+		await radios.publish(verified({ b: withProfiles }));
+		// A station op on a saved profile and the coordinator resolve one owner.
+		expect(wifiAdapterLockKey(MAC_B)).toBe(COMPOSITE);
+		expect(wifiAdapterLockKeyForConnectionUuid(STATION)).toBe(COMPOSITE);
+		const { adapter, owner } = await setup();
+		// Station work holds the owner: the effect is refused before any IO.
+		await withWifiAdapterLock(
+			wifiAdapterLockKeyForConnectionUuid(STATION) as string,
+			async () => {
+				expect(await adapter.execute(command(), holder)).toBeNull();
+			},
+		);
+		expect(owner.log).toEqual([]);
+		// The effect holds the owner: station work on that radio is refused.
+		let release = () => {};
+		owner.gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const effect = adapter.execute(command("scan", 3), holder);
+		await new Promise((r) => setTimeout(r, 5));
+		expect(owner.log).toEqual(["apply"]);
+		const station = await withWifiAdapterLock(
+			wifiAdapterLockKeyForConnectionUuid(STATION) as string,
+			async () => true,
+		);
+		expect(station.success).toBe(false);
+		release();
+		expect((await effect)?.ok).toBe(true);
+	});
+
+	test("a replug between admission and the lock refuses before any effect", async () => {
+		const { adapter, owner, journal } = await setup();
+		const save = journal.save.bind(journal);
+		let replugged = false;
+		journal.save = async (snapshot) => {
+			await save(snapshot);
+			// Durable intent is written after admission and before the lock.
+			if (!replugged && snapshot.operations[0]?.commands.length) {
+				replugged = true;
+				await radios.publish(verified({ b: { ifindex: 22 } }));
+			}
+		};
+		expect(await adapter.execute(command(), holder)).toBeNull();
+		expect(replugged).toBe(true);
+		expect(owner.log).toEqual([]);
+	});
+
+	test("an owner transfer between admission and the lock refuses before any effect", async () => {
+		owners = [];
+		await radios.publish(verified({ b: withProfiles }));
+		expect(wifiAdapterLockKey(MAC_B)).toBe(MAC_B);
+		const { adapter, owner, journal } = await setup();
+		const save = journal.save.bind(journal);
+		journal.save = async (snapshot) => {
+			await save(snapshot);
+			if (snapshot.operations[0]?.commands.length) owners = [COMPOSITE];
+		};
+		expect(await adapter.execute(command(), holder)).toBeNull();
+		expect(wifiAdapterLockKey(MAC_B)).toBe(COMPOSITE);
+		expect(owner.log).toEqual([]);
+	});
+
+	test("a replug while the effect runs never acknowledges it", async () => {
+		const { adapter, owner } = await setup();
+		let release = () => {};
+		owner.gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const effect = adapter.execute(command(), holder);
+		await new Promise((r) => setTimeout(r, 5));
+		await radios.publish(verified({ b: { ifindex: 22 } }));
+		release();
+		expect(await effect).toBeNull();
+	});
+
+	test("Limited, unverified and missing rows refuse without durable intent or effects", async () => {
+		for (const seeded of [
+			// Two netdevs on one phy: Limited although the address is coherent.
+			[...verified(), { ifname: "wlan3", mac: MAC_B, ifindex: 13, phy: 2 }],
+			// Two phys reporting one address.
+			verified({ a: { mac: MAC_B } }),
+			// No permanent address at all (a new lifetime, so none is cached).
+			verified({ b: { mac: undefined, ifindex: 32 } }),
+			// No row for the radio.
+			verified().slice(0, 1),
+		]) {
+			await radios.publish(seeded);
+			const { adapter, owner, journal } = await setup();
+			expect(await adapter.execute(command(), holder)).toBeNull();
+			expect(owner.log).toEqual([]);
+			expect(journal.data?.operations[0]?.commands ?? []).toEqual([]);
+		}
+	});
+
+	test("cleanup refuses to restore a holder whose row became Limited", async () => {
+		const { adapter, owner, journal } = await setup();
+		await radios.publish([
+			...verified(),
+			{ ifname: "wlan4", mac: MAC_A, ifindex: 14, phy: 1 },
+		]);
+		expect(
+			await adapter.execute(command("cancel-drain-restore", 3), holder),
+		).toBeNull();
+		expect(owner.log).toEqual(["drain"]);
+		expect(journal.data?.operations[0]?.clean).toBe(false);
+	});
 });
