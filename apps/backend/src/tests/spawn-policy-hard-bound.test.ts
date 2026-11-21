@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { adoptTestProcess } from "../../../../scripts/test-safety.ts";
 import {
 	BOUNDED_SPAWN_DRAIN_MS,
 	BOUNDED_SPAWN_REAP_MS,
@@ -216,8 +217,10 @@ test("positive parent exit cannot leave the runner draining inherited pipes past
 		if (safetyTimer !== undefined) clearTimeout(safetyTimer);
 		if (inheritedPid === 0 && (await Bun.file(join(directory, "pid")).exists()))
 			inheritedPid = Number(await readFile(join(directory, "pid"), "utf8"));
-		if (Number.isInteger(inheritedPid) && inheritedPid > 0)
+		if (Number.isInteger(inheritedPid) && inheritedPid > 0) {
+			adoptTestProcess(inheritedPid);
 			process.kill(inheritedPid, "SIGKILL");
+		}
 		if (parent !== undefined) {
 			if (parent.exitCode === null && parent.signalCode === null)
 				parent.kill("SIGKILL");
