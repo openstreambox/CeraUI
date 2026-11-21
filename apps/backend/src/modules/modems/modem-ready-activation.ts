@@ -228,18 +228,14 @@ const registeredForRedial = (state: string | undefined): boolean =>
 	state === "registered" || state === "connected";
 
 /**
- * The one value `nmcli --get-values <field> device show` printed. Its output
- * ends in a newline, so the split carries a trailing empty entry; requiring
- * exactly one entry before that (as this reader used to) never matched real
- * nmcli output, and the ready activation never dispatched on a device.
+ * The one value a device property read returned. The reader drops nmcli's
+ * single trailing newline; anything other than exactly one entry (a blank
+ * record, two values) stays ambiguous.
  */
 export function singleDeviceValue(
 	fields: readonly string[] | undefined,
 ): string | undefined {
-	const lines = fields
-		?.map((line) => line.trim())
-		.filter((line) => line !== "");
-	return lines?.length === 1 ? lines[0] : undefined;
+	return fields?.length === 1 ? fields[0]?.trim() : undefined;
 }
 
 /** NetworkManager state code of the profile's device, or undefined. */

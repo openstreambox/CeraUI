@@ -931,3 +931,12 @@ test("two device values are still ambiguous", async () => {
 	await runModemStatusPoll();
 	expect(activations()).toEqual([]);
 });
+
+test("a terminated state record is accepted only when it is the sole record", async () => {
+	nmState = "30 (disconnected)\n\n";
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+	nmState = "30 (disconnected)\n";
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(1);
+});
