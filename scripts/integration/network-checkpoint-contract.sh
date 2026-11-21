@@ -2,7 +2,8 @@
 # Run only in a disposable container with its own PID/network namespaces,
 # NET_ADMIN and SYS_ADMIN (for one client network namespace), no device
 # passthrough, NetworkManager, dbus-daemon, busctl, nmcli, ip, nft, jq,
-# curl, sha256sum and bun. Issues no radio, modem or hotspot command.
+# curl, sha256sum, dnsmasq (NetworkManager's shared mode) and bun. Issues no
+# radio, modem or hotspot command.
 set -euo pipefail
 umask 0022
 [[ ${NM_CHECKPOINT_CONTRACT:-} == 1 ]] || { echo 'Requires an explicitly isolated test container' >&2; exit 2; }
@@ -24,7 +25,7 @@ cleanup() {
     [[ -z $buspid ]] || kill "$buspid" 2>/dev/null || true
     wait || true
     ip netns del contract-client 2>/dev/null || true
-    for link in checkpoint0 spare0 lan0 wan0; do ip link delete "$link" 2>/dev/null || true; done
+    for link in checkpoint0 spare0 role0 lan0 wan0; do ip link delete "$link" 2>/dev/null || true; done
     nft delete table inet ceralive_ingress 2>/dev/null || true
     rm -rf "$base" "$state"
 }
@@ -38,13 +39,13 @@ dhcp=internal
 dns=none
 rc-manager=unmanaged
 [device]
-match-device=interface-name:checkpoint0;interface-name:spare0
+match-device=interface-name:checkpoint0;interface-name:spare0;interface-name:role0
 managed=1
 [connectivity]
 enabled=false
 CONF
 ip link set lo up
-for link in checkpoint0 spare0; do ip link add "$link" type dummy; ip link set "$link" up; done
+for link in checkpoint0 spare0 role0; do ip link add "$link" type dummy; ip link set "$link" up; done
 export DBUS_SYSTEM_BUS_ADDRESS="unix:path=$base/bus"
 dbus-daemon --system --fork --nopidfile --address="$DBUS_SYSTEM_BUS_ADDRESS" --print-pid > "$base/bus.pid"
 buspid=$(cat "$base/bus.pid")
@@ -265,6 +266,44 @@ drv undo-kept "$(jq -r .id <<<"$result")" spare0 >/dev/null
 [[ $(nmcli -g NAME con show | grep -c '^ceralive-') == 0 && $(settings) == "$before" ]]
 [[ $(drv effects) == '{"interfaces":["ap0"],"radio":{"modem0":"4g|5g"}}' ]]
 pass 'deliberate "don'\''t undo it": the recorded undo restores profiles and effects from another connection'
+
+# --- Ethernet role wiring: uplink to shared LAN on the session's own port ---
+# role0 stands in for a wired uplink (a manual address: a dummy link has no DHCP).
+nmcli connection add type dummy ifname role0 con-name checkpoint-wired ipv4.method manual ipv4.addresses 192.0.2.50/24 ipv6.method disabled >/dev/null
+nmcli connection up checkpoint-wired >/dev/null
+method() {
+    nmcli -g ipv4.method con show "$1"
+}
+before=$(profile_hashes)
+result=$(drv apply ethrole role0)
+[[ $(jq -r .kind <<<"$result") == ask-before && $(jq -r .via <<<"$result") == role0 ]]
+[[ $(active_on role0) == checkpoint-wired && $(method checkpoint-wired) == manual ]]
+result=$(drv apply ethrole role0 undo-automatically)
+[[ $(jq -r .kind <<<"$result") == pending ]]
+candidate=$(active_on role0)
+[[ $candidate == ceralive-candidate-* && $(method "$candidate") == shared ]]
+[[ $(method checkpoint-wired) == manual && $(profile_hashes) == "$before" ]]
+sleep 4
+drv tick >/dev/null
+[[ $(active_on role0) == checkpoint-wired && $(method checkpoint-wired) == manual ]]
+[[ $(candidates) == 0 && $(run_candidates) == 0 && $(profile_hashes) == "$before" ]]
+[[ $(drv status | jq -r .notice.reason) == disconnected ]]
+pass 'Ethernet role: an unconfirmed switch to shared LAN is undone, profile files unchanged'
+drv leave "$(drv status | jq -r .notice.id)" >/dev/null
+
+result=$(drv apply ethrole role0 undo-automatically)
+id=$(jq -r .id <<<"$result")
+drv confirm "$id" creator role0 >/dev/null 2>&1 && { echo 'Creator session confirmed its own-port role change' >&2; exit 1; }
+drv confirm "$id" reconnected - >/dev/null 2>&1 && { echo 'Unknown arrival confirmed a role change' >&2; exit 1; }
+[[ $(drv confirm "$id" reconnected role0) == '"confirmed"' ]]
+sleep 4
+[[ $(active_on role0) == checkpoint-wired && $(method checkpoint-wired) == shared ]]
+grep -q 'method=shared' "$(grep -l 'id=checkpoint-wired' /etc/NetworkManager/system-connections/*)"
+stop_nm
+start_nm
+sleep 1
+[[ $(method checkpoint-wired) == shared && $(candidates) == 0 ]]
+pass 'Ethernet role: confirmation from a new session over the port writes shared LAN to disk'
 
 # --- Trusted arrival interface ---------------------------------------------
 drv_nft() { (cd /var/tmp && bun -e "import { ingressRuleset } from '$here/../../apps/backend/src/modules/network/network-ingress.ts'; process.stdout.write(ingressRuleset([8080]));"); }

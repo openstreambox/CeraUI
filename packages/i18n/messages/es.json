@@ -3564,5 +3564,6 @@
 	"network.changeSafety.notice.restart": "La red se reinició antes de que confirmaras, así que la caja lo deshizo. ¿Lo quieres?",
 	"network.changeSafety.notice.make": "Hacer el cambio",
 	"network.changeSafety.notice.leave": "Dejarlo deshecho",
-	"network.changeSafety.kept.undo": "Deshacer el último cambio de red"
+	"network.changeSafety.kept.undo": "Deshacer el último cambio de red",
+	"network.changeSafety.summary.ethernetRole": "Cambio de función del puerto {ifname}"
 }

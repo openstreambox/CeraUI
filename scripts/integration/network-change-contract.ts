@@ -8,6 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { serve, sleep } from 'bun';
+import { ethernetRolePlan } from '../../apps/backend/src/modules/network/ethernet-role-safety.ts';
 import {
 	createEffectRegistry,
 	HOTSPOT_INTERFACE_EFFECT,
@@ -108,6 +109,17 @@ async function uuidsNamed(name: string) {
 
 async function buildPlan(name: string): Promise<NetworkChangePlan> {
 	const summary = { key: 'network.changeSafety.notice.make' };
+	if (name === 'ethrole') {
+		// The Ethernet role wiring's own plan: uplink to shared LAN on role0.
+		const [wired] = await uuidsNamed('checkpoint-wired');
+		return ethernetRolePlan({
+			ifname: 'role0',
+			role: 'shared-lan',
+			previous: undefined,
+			activeUuid: wired as string,
+			owned: false,
+		});
+	}
 	if (name === 'dormant')
 		return {
 			summary,

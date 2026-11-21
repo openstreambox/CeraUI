@@ -3561,5 +3561,6 @@
 	"network.changeSafety.notice.restart": "Das Netzwerk startete vor deiner Bestätigung neu, deshalb wurde rückgängig gemacht. Trotzdem?",
 	"network.changeSafety.notice.make": "Änderung vornehmen",
 	"network.changeSafety.notice.leave": "Rückgängig lassen",
-	"network.changeSafety.kept.undo": "Letzte Netzwerkänderung rückgängig machen"
+	"network.changeSafety.kept.undo": "Letzte Netzwerkänderung rückgängig machen",
+	"network.changeSafety.summary.ethernetRole": "Änderung der Port-Rolle an {ifname}"
 }

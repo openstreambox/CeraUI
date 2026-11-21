@@ -3516,5 +3516,6 @@
 	"network.changeSafety.notice.restart": "在你确认前网络已重启，所以盒子已撤销它。仍要更改吗？",
 	"network.changeSafety.notice.make": "进行更改",
 	"network.changeSafety.notice.leave": "保持撤销",
-	"network.changeSafety.kept.undo": "撤销上一次网络更改"
+	"network.changeSafety.kept.undo": "撤销上一次网络更改",
+	"network.changeSafety.summary.ethernetRole": "{ifname} 端口角色更改"
 }

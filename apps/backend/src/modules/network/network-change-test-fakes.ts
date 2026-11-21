@@ -16,6 +16,7 @@ import {
 } from "./network-change-journal.ts";
 import {
 	createNetworkChangeOwner,
+	type NetworkChangeDeps,
 	type NetworkChangeSession,
 	type NmChangeDeps,
 } from "./network-checkpoint.ts";
@@ -246,7 +247,12 @@ export function plan(
 	};
 }
 
-export function harness(options: { settleMs?: number } = {}) {
+export function harness(
+	options: {
+		settleMs?: number;
+		onSettled?: NetworkChangeDeps["onSettled"];
+	} = {},
+) {
 	let now = 1000;
 	let boot = "boot-1";
 	const fake = createFakeNm();
@@ -261,6 +267,7 @@ export function harness(options: { settleMs?: number } = {}) {
 			effects: effects.registry,
 			journal,
 			settleMs: options.settleMs ?? 15_000,
+			...(options.onSettled ? { onSettled: options.onSettled } : {}),
 			onChange: () => {
 				changes++;
 			},

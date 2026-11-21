@@ -61,6 +61,37 @@ export interface NetworkChangeDeps {
 	readonly settleMs?: number;
 	/** Called after every journal change so every open UI can refresh. */
 	readonly onChange?: () => void;
+	/**
+	 * Called when a change becomes the box's configuration ("committed": a
+	 * confirmation, a roll-forward after a crash, or the deliberate "don't undo
+	 * it" answer), when a kept change is undone ("reverted"), and after an
+	 * automatic undo ("undone"). Callers persist their own intent here, never at
+	 * apply time, so an unconfirmed change leaves nothing behind that a later
+	 * reconcile could re-apply. It may run again after a crash, so it must be
+	 * idempotent. A throw leaves the transaction in place for the next attempt.
+	 */
+	readonly onSettled?: (event: SettledEvent) => Promise<void> | void;
+}
+
+export interface SettledEvent {
+	/**
+	 * committed: the change is now the configuration. reverted: a kept change
+	 * was undone on request. undone: an unconfirmed or failed change was undone
+	 * automatically (nothing was persisted for it).
+	 */
+	readonly outcome: "committed" | "reverted" | "undone";
+	/** Why an automatic undo ran; "failed" means the apply itself failed. */
+	readonly reason?: NoticeReason | "failed" | undefined;
+	readonly plan: NetworkChangePlan;
+	/**
+	 * Each edited profile's original UUID and its candidate's. After a commit
+	 * the candidate is the real profile (promotion gives a new UUID); after a
+	 * revert or an undo the original is.
+	 */
+	readonly profiles: ReadonlyArray<{
+		readonly original: string;
+		readonly candidate: string | undefined;
+	}>;
 }
 
 export const CANDIDATE_PREFIX = "ceralive-candidate-";
@@ -118,6 +149,18 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 	async function save(journal: Journal) {
 		await deps.journal.write(journal);
 		deps.onChange?.();
+	}
+
+	async function settled(tx: TxRecord, outcome: SettledEvent["outcome"]) {
+		await deps.onSettled?.({
+			outcome,
+			...(outcome === "undone" ? { reason: tx.undoReason } : {}),
+			plan: tx.plan,
+			profiles: tx.profiles.map((p) => ({
+				original: p.original,
+				candidate: p.candidate,
+			})),
+		});
 	}
 
 	async function exclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -211,6 +254,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 			return false;
 		}
 		const noticeReason = tx.undoReason;
+		await settled(tx, "undone");
 		journal.tx = null;
 		if (
 			tx.mode === "undo-automatically" &&
@@ -238,7 +282,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				await deps.nm.persist(
 					profile.candidate,
 					profile.originalId,
-					profile.originalAutoconnect,
+					profile.commitAutoconnect ?? profile.originalAutoconnect,
 				);
 				profile.promoted = true;
 				await save(journal);
@@ -254,6 +298,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				await deps.nm.remove(profile.original);
 			}
 		}
+		await settled(tx, "committed");
 	}
 
 	async function finishKept(journal: Journal) {
@@ -340,6 +385,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 					original: edit.uuid,
 					originalId: original.id,
 					originalAutoconnect: original.autoconnect,
+					commitAutoconnect: edit.autoconnect ?? original.autoconnect,
 					wasActiveOn:
 						edit.activateOn &&
 						(await deps.nm.activeOn(edit.activateOn)) === edit.uuid
@@ -553,6 +599,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				for (const profile of tx.profiles)
 					if (profile.wasActiveOn)
 						await deps.nm.activate(profile.original, profile.wasActiveOn);
+				await settled(tx, "reverted");
 				journal.tx = null;
 				await save(journal);
 			});

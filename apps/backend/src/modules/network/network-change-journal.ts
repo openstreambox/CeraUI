@@ -32,6 +32,11 @@ export interface ProfileEdit {
 	readonly set: ReadonlyArray<readonly [string, string]>;
 	/** Interface to activate the candidate on, when the edit is live. */
 	readonly activateOn?: string;
+	/**
+	 * Autoconnect the promoted profile gets on commit. Absent keeps the
+	 * original's. The candidate itself always has autoconnect off.
+	 */
+	readonly autoconnect?: boolean;
 }
 
 export interface EffectStep {
@@ -62,6 +67,8 @@ export interface ProfileRecord {
 	original: string;
 	originalId: string;
 	originalAutoconnect: boolean;
+	/** Autoconnect written on promotion (the edit's, else the original's). */
+	commitAutoconnect?: boolean;
 	candidate?: string;
 	/** Interface the original carried when the change started. */
 	wasActiveOn?: string | undefined;
@@ -148,7 +155,8 @@ export function createMemoryJournalStore(
 	};
 }
 
-export const DEFAULT_JOURNAL_PATH = "/var/lib/ceralive/network-change.json";
+export const DEFAULT_JOURNAL_PATH =
+	"/data/ceralive/network-change/journal.json";
 const MAX_JOURNAL_BYTES = 256 * 1024;
 
 export function createFileJournalStore(

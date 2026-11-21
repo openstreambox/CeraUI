@@ -3564,5 +3564,6 @@
 	"network.changeSafety.notice.restart": "A rede reiniciou antes da sua confirmação, então a caixa desfez. Ainda quer?",
 	"network.changeSafety.notice.make": "Fazer a mudança",
 	"network.changeSafety.notice.leave": "Deixar desfeita",
-	"network.changeSafety.kept.undo": "Desfazer a última mudança de rede"
+	"network.changeSafety.kept.undo": "Desfazer a última mudança de rede",
+	"network.changeSafety.summary.ethernetRole": "Mudança da função da porta {ifname}"
 }
