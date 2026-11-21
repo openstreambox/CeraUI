@@ -83,12 +83,13 @@ different questions:**
   commit to the row's secondary line with NO schema change, NO new wire field and
   NO row-specific branch in `VersionsDialog`. A `dpkg` version whose iteration
   already embeds the commit is left alone rather than repeating it.
-- **`probe(argv)` is a separate primitive from `readRevision(cmd)`**, because the
-  ladder must tell "this rung had no answer" from "this rung answered":
-  `readRevision` answers the literal `"unknown revision"`, which is a fine value
-  to RENDER and useless to RESOLVE with. It is registered separately in
-  `SPAWN_POLICY` (`revisions.installedPackageVersion`, bounded-probe) so a hung
-  `dpkg` lock is capped like every other probe.
+- **Boot commands leave the event loop free to send watchdog pulses.** Git and
+  `dpkg-query` use `spawnWithTimeout` via `probe(argv)`: a live child gets
+  SIGTERM at 30 seconds and SIGKILL after 100 ms, with bounded waits for exit
+  and pipe drainage. A failed or timed-out CeraUI source leaves the rest of the
+  resolution ladder available. `srtla_send -v` goes through
+  `refreshSenderRevision()` and its bounded asynchronous runner; a failed,
+  empty or timed-out read publishes `"unknown revision"`.
 - **`CeraUiRevisionSources` is the seam** (the `*Deps` convention, not
   `set*Runner`), passed as an optional argument to `initRevisions`, so the whole
   ladder is drivable with no packaged tree, no `dpkg` database and no git
