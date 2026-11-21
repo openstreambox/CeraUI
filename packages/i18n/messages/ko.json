@@ -838,7 +838,7 @@
 	"live.starting": "시작 중...",
 	"live.stopStream": "스트림 중지",
 	"live.stopConfirm.title": "스트림을 끝낼까요?",
-	"live.stopConfirm.body": "장치가 스트림 전송을 멈춥니다.",
+	"live.stopConfirm.body": "기기가 스트림 전송을 중단합니다.",
 	"live.stopConfirm.keep": "계속 스트리밍",
 	"live.stopConfirm.end": "스트림 끝내기",
 	"live.stopStuck.message": "중지에 예상보다 시간이 오래 걸리고 있습니다",

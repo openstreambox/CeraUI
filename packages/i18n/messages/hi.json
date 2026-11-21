@@ -912,7 +912,7 @@
 	"live.startStream": "स्ट्रीम शुरू करें",
 	"live.starting": "शुरू हो रहा है…",
 	"live.stopStream": "स्ट्रीम रोकें",
-	"live.stopConfirm.title": "स्ट्रीम खत्म करें?",
+	"live.stopConfirm.title": "स्ट्रीम खत्म करनी है?",
 	"live.stopConfirm.body": "बॉक्स स्ट्रीम भेजना बंद कर देगा।",
 	"live.stopConfirm.keep": "स्ट्रीम जारी रखें",
 	"live.stopConfirm.end": "स्ट्रीम खत्म करें",
