@@ -194,3 +194,30 @@ describe("PowerDialog — poweroff async state", () => {
 		await waitFor(() => expect(poweroffRpc).toHaveBeenCalledTimes(2));
 	});
 });
+
+for (const reason of [
+	"shutdown_inhibited",
+	"other_users",
+	"shutdown_unavailable",
+	"shutdown_uncertain",
+] as const) {
+	it(`renders translated power refusal ${reason} with relevant override`, async () => {
+		rebootRpc.mockResolvedValue({ success: false, failureReason: reason });
+		render(PowerDialog, { props: { open: true } });
+		await confirm(REBOOT_LABEL);
+		await waitFor(() =>
+			expect(toastError).toHaveBeenCalledWith(
+				m[`settings.dialogs.${reason}`](),
+			),
+		);
+		expect(
+			Boolean(screen.queryByText(m["settings.dialogs.powerOverride"]())),
+		).toBe(reason === "shutdown_inhibited");
+		expect(markRebooting).not.toHaveBeenCalled();
+	});
+}
+
+it("keeps the emergency override hidden on an idle box", () => {
+	render(PowerDialog, { props: { open: true } });
+	expect(screen.queryByText(m["settings.dialogs.powerOverride"]())).toBeNull();
+});
