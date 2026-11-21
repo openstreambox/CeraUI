@@ -123,10 +123,10 @@ describe("IngestStats link names", () => {
 				?.className ?? "";
 		// The renamed name keeps the full row width above 640 px too.
 		expect(cell(renamed)).toContain("basis-full");
-		expect(cell(renamed)).not.toMatch(/sm:w-24|sm:basis-auto/);
+		expect(cell(renamed)).not.toMatch(/sm:w-36|sm:basis-auto/);
 		expect(renamed?.className).not.toContain("sm:flex-nowrap");
 		// A link with one name keeps the narrow column beside its bar.
-		expect(cell(steady)).toContain("sm:w-24");
+		expect(cell(steady)).toContain("sm:w-36");
 		const name = renamed?.querySelector<HTMLElement>(
 			"[data-session-link-name]",
 		);

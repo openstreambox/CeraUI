@@ -403,7 +403,7 @@ function exportCsv(): void {
 						'text-[10px] font-medium uppercase tracking-wide',
 					)}
 				>
-					<span class="w-24 shrink-0 ps-4">{m["live.ingest.link"]()}</span>
+					<span class="w-24 shrink-0 ps-4 sm:w-36">{m["live.ingest.link"]()}</span>
 					<span class="flex-1">{m["live.ingest.contribution"]()}</span>
 					<span class="w-12 text-end">{m["live.ingest.nak"]()}</span>
 					<span class="w-14 text-end">{m["live.ingest.rtt"]()}</span>
@@ -426,7 +426,7 @@ function exportCsv(): void {
 							<div
 								class={cn(
 									'flex min-w-0 basis-full items-start gap-2',
-									!renamedInSession(link.iface) && 'sm:w-24 sm:shrink-0 sm:basis-auto',
+									!renamedInSession(link.iface) && 'sm:w-36 sm:shrink-0 sm:basis-auto',
 								)}
 								data-session-link-name-cell
 							>
