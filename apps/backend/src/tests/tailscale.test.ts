@@ -157,6 +157,32 @@ function fakeDaemon(initial: {
 	return { state, calls, broadcasts, joins, submits, deps };
 }
 
+const NO_TAILNET_SSH =
+	"Unable to enable local Tailscale SSH server; not enabled on Tailnet.";
+
+/** Collect warn and error log lines until restore(). */
+function captureLogs() {
+	const warn: string[] = [];
+	const error: string[] = [];
+	const spies = (["warn", "error"] as const).map((level) =>
+		spyOn(logger, level).mockImplementation((...args: unknown[]) => {
+			(level === "warn" ? warn : error).push(
+				args
+					.map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+					.join(" "),
+			);
+			return logger;
+		}),
+	);
+	return {
+		warn,
+		error,
+		restore: () => {
+			for (const spy of spies) spy.mockRestore();
+		},
+	};
+}
+
 const env = { ...process.env };
 beforeEach(() => {
 	process.env.NODE_ENV = "production";
@@ -545,6 +571,99 @@ describe("off switch and forget", () => {
 		setTailscaleDepsForTest(daemon.deps);
 		expect(await setTailscaleEnabled(true)).toBe(true);
 		expect(daemon.calls).toEqual(["enable --now", "up", "pin updates off"]);
+	});
+
+	test("on: a pin refused by a tailnet without Tailscale SSH does not fail the reconnect, and says why", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "Stopped",
+			enroll: { hasState: true, result: "joined" },
+		});
+		const logged = captureLogs();
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			pinAutoUpdateOff: async () => {
+				daemon.calls.push("pin updates off");
+				throw Object.assign(new Error("Command failed: tailscale set"), {
+					code: 1,
+					stderr: NO_TAILNET_SSH,
+				});
+			},
+		});
+		try {
+			expect(await setTailscaleEnabled(true)).toBe(true);
+		} finally {
+			logged.restore();
+		}
+		expect(daemon.calls).toEqual(["enable --now", "up", "pin updates off"]);
+		expect(getCachedTailscaleStatus()?.state).toBe("connected");
+		expect(logged.error).toEqual([]);
+		expect(logged.warn.join("\n")).toContain("does not allow Tailscale SSH");
+	});
+
+	test("on: a failed reconnect is reported even when the pin fails too", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "Stopped",
+			enroll: { hasState: true, result: "joined" },
+		});
+		const logged = captureLogs();
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			reconnect: async () => {
+				daemon.calls.push("up");
+				throw Object.assign(new Error("Command failed: tailscale up"), {
+					code: 1,
+					stderr: "reconnect-broke",
+				});
+			},
+			pinAutoUpdateOff: async () => {
+				daemon.calls.push("pin updates off");
+				throw Object.assign(new Error("Command failed: tailscale set"), {
+					code: 1,
+					stderr: "pin-broke",
+				});
+			},
+		});
+		try {
+			await setTailscaleEnabled(true);
+		} finally {
+			logged.restore();
+		}
+		// The pin still runs: an `up` can change prefs before it fails.
+		expect(daemon.calls).toEqual(["enable --now", "up", "pin updates off"]);
+		expect(logged.error.join("\n")).toContain("reconnect-broke");
+		expect(logged.warn.join("\n")).toContain("pin-broke");
+	});
+
+	test("off and forget name a tailnet without Tailscale SSH when tailscaled refuses them", async () => {
+		const daemon = fakeDaemon({ active: true, backend: "Running" });
+		const refused = () =>
+			Object.assign(new Error("Command failed"), {
+				code: 1,
+				stderr: NO_TAILNET_SSH,
+			});
+		const logged = captureLogs();
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			down: async () => {
+				daemon.calls.push("down");
+				throw refused();
+			},
+			logout: async () => {
+				daemon.calls.push("logout");
+				throw refused();
+			},
+		});
+		try {
+			expect(await logoutTailscale()).toBe(false);
+			// Stopping the unit still turns it off.
+			expect(await setTailscaleEnabled(false)).toBe(true);
+		} finally {
+			logged.restore();
+		}
+		const all = [...logged.warn, ...logged.error].join("\n");
+		expect(all.match(/does not allow Tailscale SSH/g)?.length).toBe(2);
 	});
 
 	test("on never starts a login for a device without one", async () => {

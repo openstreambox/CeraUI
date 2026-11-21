@@ -71,6 +71,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 		" and starting fresh: ",
 		"",
 	],
+	["Could not pin Tailscale auto-update off: ", ""],
 	["Could not read the default route"],
 	[
 		"Could not read the permanent MAC address of ",

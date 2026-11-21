@@ -44,7 +44,10 @@
  * The off switch is `tailscale down`, then `systemctl disable --now
  * tailscaled`. On re-enables the unit and reconnects with a flag-less
  * `tailscale up`, which never starts a login. On images with the enrolment
- * unit, reconnect also reapplies the image's auto-update policy.
+ * unit, reconnect also reapplies the image's auto-update policy; a refused pin
+ * is logged and does not fail the switch. While Tailscale SSH is on and the
+ * tailnet does not allow it, tailscaled refuses every setting change; the
+ * image's enrolment turns SSH off in that case, and logs name the cause.
  * "Forget" is `tailscale logout`. Interactive login would let whoever opens
  * the link first pick the network.
  */
@@ -751,14 +754,41 @@ export async function joinTailscale(authKey: string): Promise<boolean> {
 	return outcome !== "refused";
 }
 
+/**
+ * tailscaled's answer to any pref change (`set`, `down`, `logout`) while
+ * Tailscale SSH is on and the tailnet's policy does not grant this device SSH.
+ */
+const NO_TAILNET_SSH_RE = /not enabled on tailnet/i;
+
+/** A CLI failure for the log, naming that cause when it is the one. */
+function explainCliError(err: unknown): string {
+	const text = describeCliError(err);
+	return NO_TAILNET_SSH_RE.test(text)
+		? `${text} (this tailnet does not allow Tailscale SSH, and tailscaled refuses setting changes while SSH is on)`
+		: text;
+}
+
 async function reconnectTailscale(): Promise<void> {
 	const imageEnrolment = await deps.enrollPresent();
+	let failure: { err: unknown } | undefined;
 	try {
 		await deps.reconnect();
-	} finally {
-		// An `up` can change prefs before the CLI finishes, even if it times out.
-		if (imageEnrolment) await deps.pinAutoUpdateOff();
+	} catch (err) {
+		failure = { err };
 	}
+	// An `up` can change prefs before the CLI finishes, even if it times out.
+	// The pin is the image's policy, not the switch's result: a refusal is
+	// logged, and tailscaled re-applies the pin at its next start.
+	if (imageEnrolment) {
+		try {
+			await deps.pinAutoUpdateOff();
+		} catch (err) {
+			logger.warn(
+				`Could not pin Tailscale auto-update off: ${explainCliError(err)}`,
+			);
+		}
+	}
+	if (failure) throw failure.err;
 }
 
 /**
@@ -785,7 +815,7 @@ export async function setTailscaleEnabled(enabled: boolean): Promise<boolean> {
 						await deps.down();
 					} catch (err) {
 						// Stopping the unit below still turns it off.
-						logger.warn(`tailscale down failed: ${describeCliError(err)}`);
+						logger.warn(`tailscale down failed: ${explainCliError(err)}`);
 					}
 				}
 				await deps.setUnit(false);
@@ -797,7 +827,7 @@ export async function setTailscaleEnabled(enabled: boolean): Promise<boolean> {
 			throw err;
 		}
 		logger.error(
-			`Turning Tailscale ${enabled ? "on" : "off"} failed: ${describeCliError(err)}`,
+			`Turning Tailscale ${enabled ? "on" : "off"} failed: ${explainCliError(err)}`,
 		);
 	}
 	const status = await getTailscaleStatus();
@@ -832,7 +862,7 @@ export async function logoutTailscale(): Promise<boolean> {
 			await getTailscaleStatus();
 			throw err;
 		}
-		logger.error(`Tailscale logout failed: ${describeCliError(err)}`);
+		logger.error(`Tailscale logout failed: ${explainCliError(err)}`);
 	}
 	const status = await getTailscaleStatus();
 	return status.state === "needs_key";
