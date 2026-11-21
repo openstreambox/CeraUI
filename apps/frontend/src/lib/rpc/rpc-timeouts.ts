@@ -10,6 +10,9 @@ export const RPC_CALL_TIMEOUT_MS = 30_000;
 /** Explicit budgets for operations that can legitimately exceed the default call window. */
 export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	"streaming.start": 75_000,
+	// Two 15 s journal attempts plus cancellation, redaction and delivery.
+	"system.getLog": 45_000,
+	"system.getSyslog": 45_000,
 	"modems.esimOperation": 245_000,
 };
 
