@@ -3247,7 +3247,7 @@
 	"notifications.startFeatures.unsupported": "Transmitindo sem {features}: o motor de streaming não oferece suporte a isso. Suas configurações salvas são mantidas.",
 	"notifications.startFeatures.unconfirmed": "Transmitindo sem {features}: o motor de streaming não confirmou o suporte. Suas configurações salvas são mantidas.",
 	"notifications.startFeatures.audioMix": "o mix de áudio",
-	"notifications.startFeatures.composition": "o modo de imagem sobreposta",
+	"notifications.startFeatures.composition": "a composição de imagem em imagem",
 	"notifications.startFeatures.customLayout": "a disposição personalizada",
 	"notifications.startFeatures.pair": "{first} e {second}",
 	"network.view.remotePrivacy": "O status remoto da rede usa nomes neutros. Gerencie a rede no dispositivo.",

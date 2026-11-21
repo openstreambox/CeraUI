@@ -3229,7 +3229,7 @@
 	"settings.streamIdClearing": "सहेजने पर स्ट्रीम आईडी मिटा दी जाएगी।",
 	"live.startFailure.srtEncryptionUnavailable": "सहेजी गई SRT एन्क्रिप्शन सेटिंग समर्थित नहीं हैं। शुरू करने से पहले उन्हें मिटाएँ।",
 	"notifications.streamStartSrtEncryptionUnavailableFailed": "सहेजी गई SRT एन्क्रिप्शन सेटिंग समर्थित नहीं हैं। शुरू करने से पहले उन्हें मिटाएँ।",
-	"notifications.startFeatures.unsupported": "{features} के बिना स्ट्रीमिंग हो रही है: स्ट्रीमिंग इंजन इसका समर्थन नहीं करता। आपकी सहेजी गई सेटिंग्स सुरक्षित हैं।",
+	"notifications.startFeatures.unsupported": "{features} के बिना स्ट्रीमिंग हो रही है। स्ट्रीमिंग इंजन में इसके लिए ज़रूरी सपोर्ट नहीं है। सहेजी गई सेटिंग्स बनी रहेंगी।",
 	"notifications.startFeatures.unconfirmed": "{features} के बिना स्ट्रीमिंग हो रही है: स्ट्रीमिंग इंजन ने समर्थन की पुष्टि नहीं की। आपकी सहेजी गई सेटिंग्स सुरक्षित हैं।",
 	"notifications.startFeatures.audioMix": "ऑडियो मिक्स",
 	"notifications.startFeatures.composition": "पिक्चर-इन-पिक्चर कंपोज़िशन",
