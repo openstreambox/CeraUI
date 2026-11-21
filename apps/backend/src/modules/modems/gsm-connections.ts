@@ -22,6 +22,11 @@ import {
 	nmcliParseSep,
 } from "../network/network-manager.ts";
 import {
+	type CarrierIntent,
+	effectiveCarrierAutomatic,
+	readCarrierIntent,
+} from "./automatic-carrier-intent.ts";
+import {
 	recordGsmAutoconfigProbe,
 	resolveGsmAutoconfigSupport,
 } from "./gsm-autoconfig.ts";
@@ -143,6 +148,20 @@ async function readGsmConnections(): Promise<GsmConnections | undefined> {
 		if (connInfo === undefined || connInfo.length < fields.length)
 			return undefined;
 
+		let intent: CarrierIntent | undefined;
+		try {
+			if (connInfo[0] && connInfo[1])
+				intent = await readCarrierIntent({
+					uuid,
+					deviceId: connInfo[0],
+					simId: connInfo[1],
+				});
+		} catch {
+			logger.warn("automatic carrier intent is unreadable", {
+				module: "modems",
+			});
+			return undefined;
+		}
 		const conn: GsmConnection = {
 			state,
 			uuid,
@@ -154,7 +173,15 @@ async function readGsmConnections(): Promise<GsmConnections | undefined> {
 			password: connInfo[5],
 			roaming: connInfo[6] === "no",
 			network: connInfo[7],
-			...(withAutoconfig ? { autoconfig: connInfo[8] === "yes" } : {}),
+			...(withAutoconfig || intent
+				? {
+						autoconfig: effectiveCarrierAutomatic(
+							intent,
+							withAutoconfig && connInfo[8] === "yes",
+							connInfo[3],
+						),
+					}
+				: {}),
 		};
 
 		byUuid[uuid] = conn;
