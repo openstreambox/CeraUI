@@ -54,8 +54,13 @@ for(const width of [390,1280,1024]) {
   const home=page.getByTestId('phone-home-fixture');
   await home.getByRole('button',{name:'Connect your phone',exact:true}).click();
   await expect(home.getByText('srt://192.0.2.1:4000',{exact:true})).toBeVisible();
-  await expect(home.locator('img')).toHaveCount(width===1280?2:0);
+  // The Wi-Fi code is hidden until Show code (D16); only the address QR is up.
+  await expect(home.locator('img')).toHaveCount(width===1280?1:0);
   if(width===1280){
+   const show=home.getByRole('button',{name:'Show code',exact:true});
+   await expect(show).toHaveAttribute('aria-expanded','false');
+   await show.click();
+   await expect(home.locator('img')).toHaveCount(2);
    for(const img of await home.locator('img').all()) await expect(img).toHaveAttribute('src',/^data:image\/png/);
   }
   await expect(home.getByRole('button',{name:'Copy',exact:true})).toHaveCount(3);
