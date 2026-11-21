@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
 
 import {
+	canonicalIp,
 	chooseReceiverTarget,
 	isReceiverProbeReply,
 	type ReceiverProbe,
@@ -140,6 +141,31 @@ describe("chooseReceiverTarget", () => {
 	});
 });
 
+describe("chooseReceiverTarget with a synchronously failing probe", () => {
+	test("a later address is still waited for", async () => {
+		// A plain function that throws before returning a promise.
+		const probe = (({ address }: { address: string }) => {
+			if (address === "192.0.2.10") throw new Error("EADDRNOTAVAIL");
+			return new Promise<boolean>((resolve) =>
+				setTimeout(() => resolve(true), 5),
+			);
+		}) as ReceiverProbe;
+		const choice = await chooseReceiverTarget(
+			["192.0.2.10", "192.0.2.20"],
+			5000,
+			["198.51.100.1"],
+			{ probe, deadlineMs: 500 },
+		);
+		expect(choice.target).toBe("192.0.2.20");
+	});
+});
+
+test("equivalent IPv6 spellings compare equal; IPv4 is untouched", () => {
+	expect(canonicalIp("0:0:0:0:0:0:0:1")).toBe(canonicalIp("::1"));
+	expect(canonicalIp("FD51:0::0010")).toBe(canonicalIp("fd51::10"));
+	expect(canonicalIp("192.0.2.10")).toBe("192.0.2.10");
+});
+
 describe("probe packet", () => {
 	test("is a REG2 with a fresh 256-byte id each time", () => {
 		const a = receiverProbePacket();
@@ -157,6 +183,10 @@ describe("probe packet", () => {
 		expect(isReceiverProbeReply(new Uint8Array([0x90, 0x00]))).toBe(false); // keepalive
 		expect(isReceiverProbeReply(new Uint8Array([0x91, 0x00]))).toBe(false); // ack
 		expect(isReceiverProbeReply(new Uint8Array([0x92]))).toBe(false);
+		// An echo of the REG2 itself, or a longer packet, is not an answer.
+		expect(isReceiverProbeReply(receiverProbePacket())).toBe(false);
+		expect(isReceiverProbeReply(new Uint8Array([0x92, 0x11, 0]))).toBe(false);
+		expect(isReceiverProbeReply(new Uint8Array([0x92, 0x02]))).toBe(false);
 	});
 });
 
@@ -227,6 +257,104 @@ describe("udpReceiverProbe on loopback", () => {
 				signal: controller.signal,
 			}),
 		).toBe(false);
+	});
+
+	test("a registration reply from another port on the same address does not count", async () => {
+		const dead = await receiver(false);
+		const other = createSocket("udp4");
+		sockets.push(other);
+		await new Promise<void>((resolve) => other.bind(0, "127.0.0.1", resolve));
+		// Whoever hears the REG2 on the probed port, the answer comes from elsewhere.
+		const dead2 = createSocket("udp4");
+		sockets.push(dead2);
+		dead2.on("message", (_msg, rinfo) =>
+			other.send(Buffer.from([0x92, 0x11]), rinfo.port, rinfo.address),
+		);
+		await new Promise<void>((resolve) => dead2.bind(0, "127.0.0.1", resolve));
+		const controller = new AbortController();
+		setTimeout(() => controller.abort(), 200);
+		expect(
+			await udpReceiverProbe({
+				address: "127.0.0.1",
+				port: dead2.address().port,
+				source: undefined,
+				signal: controller.signal,
+			}),
+		).toBe(false);
+		expect(dead.seen).toHaveLength(0);
+	});
+
+	test("an endpoint that echoes the REG2 does not count", async () => {
+		const echo = createSocket("udp4");
+		sockets.push(echo);
+		echo.on("message", (msg, rinfo) =>
+			echo.send(msg, rinfo.port, rinfo.address),
+		);
+		await new Promise<void>((resolve) => echo.bind(0, "127.0.0.1", resolve));
+		const controller = new AbortController();
+		setTimeout(() => controller.abort(), 200);
+		expect(
+			await udpReceiverProbe({
+				address: "127.0.0.1",
+				port: echo.address().port,
+				source: undefined,
+				signal: controller.signal,
+			}),
+		).toBe(false);
+	});
+
+	test("an IPv6 receiver answers over udp6", async () => {
+		const v6 = createSocket("udp6");
+		sockets.push(v6);
+		v6.on("message", (msg, rinfo) => {
+			if (msg.length === 2 + SRTLA_ID_LEN)
+				v6.send(Buffer.from([0x92, 0x11]), rinfo.port, rinfo.address);
+		});
+		const bound = await new Promise<boolean>((resolve) => {
+			v6.once("error", () => resolve(false));
+			v6.bind(0, "::1", () => resolve(true));
+		});
+		// A host without IPv6 loopback cannot run this case; the IPv4 cases
+		// above cover the same code path.
+		if (!bound) return;
+		expect(
+			await udpReceiverProbe({
+				address: "::1",
+				port: v6.address().port,
+				source: undefined,
+				signal: new AbortController().signal,
+			}),
+		).toBe(true);
+	});
+
+	test("a source address the host does not own fails at once without throwing", async () => {
+		const live = await receiver(true);
+		const started = performance.now();
+		expect(
+			await udpReceiverProbe({
+				address: "127.0.0.1",
+				port: live.port,
+				source: "192.0.2.77",
+				signal: new AbortController().signal,
+			}),
+		).toBe(false);
+		expect(performance.now() - started).toBeLessThan(300);
+		expect(live.seen).toHaveLength(0);
+	});
+
+	test("an abort before the socket is bound sends nothing", async () => {
+		const dead = await receiver(false);
+		const controller = new AbortController();
+		const result = udpReceiverProbe({
+			address: "127.0.0.1",
+			port: dead.port,
+			source: "127.0.0.1",
+			signal: controller.signal,
+		});
+		controller.abort();
+		expect(await result).toBe(false);
+		await Bun.sleep(500);
+		expect(dead.seen).toHaveLength(0);
 	});
 
 	test("the real probe picks the live one of two loopback receivers", async () => {

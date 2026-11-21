@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-
+import { isLocalIp } from "../helpers/ip-addresses.ts";
 import {
 	setDnsCacheEntryForTest,
 	setDnsResolverFactoryForTest,
@@ -8,25 +8,34 @@ import {
 	parseIpAddrShow,
 	processIfconfigOutput,
 } from "../modules/network/network-interfaces.ts";
+import type { BondEntry } from "../modules/streaming/bind-map.ts";
 import type { ReceiverProbe } from "../modules/streaming/receiver-target.ts";
 import {
+	configuredReceiver,
+	genSrtlaBondEntries,
+	genSrtlaBondEntriesForLocalIpAddress,
 	resolveSrtla,
 	setReceiverProbeForTest,
 } from "../modules/streaming/srtla.ts";
+import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 
 /*
-  The stream start hands the sender one receiver address for the whole bond
-  when the name has several usable answers: the first in DNS order that a
-  bonding receiver answers on. Synthetic addresses only.
+  The stream start asks every usable answer of the receiver name. A live
+  first answer keeps the name (the sender dials it anyway and keeps its own
+  DNS re-home); a dead first answer with a live later one hands the sender
+  that live address. Synthetic addresses only.
 */
 
 const PORT = 5000;
 const originalRandom = Math.random;
 
-afterEach(() => {
+afterEach(async () => {
 	setDnsResolverFactoryForTest(null);
 	setReceiverProbeForTest(null);
 	Math.random = originalRandom;
+	// Leave no inventory or receiver family behind for later files.
+	processIfconfigOutput("", new Map());
+	await resolveSrtla("192.0.2.2");
 });
 
 function twoLinks() {
@@ -96,35 +105,96 @@ function probeAnswering(...live: string[]) {
 	return asked;
 }
 
-for (const name of ["dead-first.test.invalid", "rotated.test.invalid"]) {
-	test(`a dead first answer starts the bond on the live one (${name})`, async () => {
-		twoLinks();
-		liveDns(["192.0.2.10", "192.0.2.20"]);
-		const asked = probeAnswering("192.0.2.20");
-		try {
-			expect(await resolveSrtla(name, PORT)).toBe("192.0.2.20");
-			// Every bond uplink asked both answers.
-			expect(asked.sort()).toEqual([
-				"192.0.2.10 via 198.51.100.1",
-				"192.0.2.10 via 203.0.113.1",
-				"192.0.2.20 via 198.51.100.1",
-				"192.0.2.20 via 203.0.113.1",
-			]);
-		} finally {
-			setDnsCacheEntryForTest(name, null);
-		}
-	});
-}
+test("a dead first answer starts the bond on the live one", async () => {
+	twoLinks();
+	const name = "dead-first.test.invalid";
+	liveDns(["192.0.2.10", "192.0.2.20"]);
+	const asked = probeAnswering("192.0.2.20");
+	try {
+		expect(await resolveSrtla(name, PORT)).toBe("192.0.2.20");
+		// Every bond uplink asked both answers.
+		expect(asked.sort()).toEqual([
+			"192.0.2.10 via 198.51.100.1",
+			"192.0.2.10 via 203.0.113.1",
+			"192.0.2.20 via 198.51.100.1",
+			"192.0.2.20 via 203.0.113.1",
+		]);
+		// The launch still knows which receiver was configured.
+		expect(configuredReceiver("192.0.2.20")).toBe(name);
+	} finally {
+		setDnsCacheEntryForTest(name, null);
+	}
+});
 
-test("both answering: the first in DNS order, whatever the order is", async () => {
+test("a live first answer keeps the name, whatever the order is", async () => {
 	twoLinks();
 	const name = "both-live.test.invalid";
 	try {
 		probeAnswering("192.0.2.10", "192.0.2.20");
 		liveDns(["192.0.2.10", "192.0.2.20"]);
-		expect(await resolveSrtla(name, PORT)).toBe("192.0.2.10");
+		expect(await resolveSrtla(name, PORT)).toBe(name);
 		liveDns(["192.0.2.20", "192.0.2.10"]);
+		expect(await resolveSrtla(name, PORT)).toBe(name);
+		// Only the second answer live, and listed first: still the name.
+		probeAnswering("192.0.2.20");
+		expect(await resolveSrtla(name, PORT)).toBe(name);
+	} finally {
+		setDnsCacheEntryForTest(name, null);
+	}
+});
+
+test("a chosen private address is admitted as the bonded receiver it stands for", async () => {
+	// Uplinks on 198.51.100.0/24 and 203.0.113.0/24 reach a private receiver
+	// pool. The chosen literal is private, but it is not on a local subnet.
+	twoLinks();
+	const name = "private-pool.test.invalid";
+	liveDns(["10.66.9.9", "10.66.9.10"]);
+	probeAnswering("10.66.9.10");
+	const written: (readonly BondEntry[])[] = [];
+	const deps = {
+		isLocal: isLocalIp,
+		localList: genSrtlaBondEntriesForLocalIpAddress,
+		bondedList: genSrtlaBondEntries,
+		writeList: async (entries: readonly BondEntry[]) => {
+			written.push(entries);
+			return { ok: true, changed: false } as never;
+		},
+	};
+	try {
+		const address = await resolveSrtla(name, PORT);
+		expect(address).toBe("10.66.9.10");
+		await prepareSrtlaIpAddresses(address, deps);
+		expect(written[0]?.map((e) => e.ip).sort()).toEqual([
+			"198.51.100.1",
+			"203.0.113.1",
+		]);
+		// The same literal configured directly is a local-subnet receiver again.
+		expect(await resolveSrtla("10.66.9.10", PORT)).toBe("10.66.9.10");
+		expect(configuredReceiver("10.66.9.10")).toBe("10.66.9.10");
+		await expect(prepareSrtlaIpAddresses("10.66.9.10", deps)).rejects.toThrow(
+			"no_available_network_connections",
+		);
+	} finally {
+		setDnsCacheEntryForTest(name, null);
+	}
+});
+
+test("dual-stack links choose among the A answers", async () => {
+	processIfconfigOutput(
+		"wwan0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n",
+		parseIpAddrShow(
+			"2: wwan0: <UP,LOWER_UP> mtu 1500\n    inet 198.51.100.1/24 scope global\n    inet6 fd51::9/64 scope global\n",
+		),
+	);
+	const name = "dual-stack.test.invalid";
+	liveDns(["192.0.2.10", "192.0.2.20"], ["fd51::10"]);
+	const asked = probeAnswering("192.0.2.20");
+	try {
 		expect(await resolveSrtla(name, PORT)).toBe("192.0.2.20");
+		expect(asked.sort()).toEqual([
+			"192.0.2.10 via 198.51.100.1",
+			"192.0.2.20 via 198.51.100.1",
+		]);
 	} finally {
 		setDnsCacheEntryForTest(name, null);
 	}

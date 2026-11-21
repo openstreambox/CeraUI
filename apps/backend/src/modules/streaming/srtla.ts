@@ -55,6 +55,19 @@ export { isBondLinkMappable, setBondIdentityResolverForTest };
 
 let receiverIpv6Only = false;
 
+/*
+  A literal this module chose in place of a configured name, and that name.
+  The launch keeps the name's semantics for everything except the dial
+  address: bond admission (a private receiver reached over the bond is not a
+  local-subnet receiver) and the relay-session identity.
+*/
+const chosenFor = new Map<string, string>();
+
+/** The receiver the operator configured behind `addr` (itself when not chosen here). */
+export function configuredReceiver(addr: string): string {
+	return chosenFor.get(addr) ?? addr;
+}
+
 let receiverProbe: ReceiverProbe | undefined;
 let receiverProbeDeadlineMs: number | undefined;
 
@@ -86,9 +99,8 @@ function compatibleReceiverAddrs(
 
 /**
  * With several usable answers, the first in DNS order that a bonding receiver
- * answers on (receiver-target.ts), so every link dials the same live address.
- * Undefined keeps the caller's previous choice: one answer, no port, mocks,
- * or nothing answered.
+ * answers on (receiver-target.ts). Undefined keeps the caller's previous
+ * choice: one answer, no port, mocks, or nothing answered.
  */
 async function coordinatedReceiverTarget(
 	compatible: readonly string[],
@@ -113,6 +125,8 @@ async function coordinatedReceiverTarget(
  */
 export async function resolveSrtla(addr: string, port?: number) {
 	let srtlaAddr = addr;
+	// A configured literal is its own receiver, whatever was chosen before.
+	chosenFor.delete(addr);
 	const interfaces = Object.entries(getNetworkInterfaces())
 		.filter(([name, entry]) => isBondCandidate(name, entry))
 		.map(([, entry]) => entry);
@@ -167,9 +181,16 @@ export async function resolveSrtla(addr: string, port?: number) {
 		hasV4,
 		hasV6,
 	);
-	const sources = interfaces.flatMap((entry) =>
-		[entry.ip, entry.ipv6].filter((ip): ip is string => ip !== undefined),
-	);
+	// One question per distinct source address. Twin links that share an
+	// address are asked once, along the kernel's route for that address; a
+	// miss there falls back to the previous behaviour.
+	const sources = [
+		...new Set(
+			interfaces.flatMap((entry) =>
+				[entry.ip, entry.ipv6].filter((ip): ip is string => ip !== undefined),
+			),
+		),
+	];
 	const coordinated = await coordinatedReceiverTarget(
 		compatible,
 		port,
@@ -184,9 +205,15 @@ export async function resolveSrtla(addr: string, port?: number) {
 		receiverIpv6Only = cachedAddr.includes(":");
 		queueUpdateGw();
 	} else {
-		if (coordinated !== undefined) {
+		// The name is handed over unless its first answer is dead and a later
+		// one answers. A live first answer is what the sender dials anyway, and
+		// the name keeps the sender's own DNS re-home for a later cutover. With
+		// a dead first answer the name never registers, so pinning the live
+		// answer loses nothing that works.
+		if (coordinated !== undefined && coordinated !== compatible[0]) {
 			srtlaAddr = coordinated;
 			receiverIpv6Only = coordinated.includes(":");
+			chosenFor.set(coordinated, addr);
 		}
 		/* At the moment we don't check that the SRTLA connection was established before
        validating the DNS result. The caching DNS resolver checks for invalid

@@ -1,5 +1,5 @@
 /*
-  ONE RECEIVER ADDRESS FOR THE WHOLE BOND, AND ONLY ONE THAT ANSWERS.
+  One receiver address for the whole bond, and only one that answers.
 
   A receiver name can resolve to several addresses: a round-robin pool, a
   move between hosts, or a stale record left behind. Handing the sender the
@@ -60,18 +60,31 @@ export function receiverProbePacket(): Uint8Array {
 	return packet;
 }
 
-/** A registration reply: what only a bonding receiver sends back to a REG2. */
+/**
+ * What a bonding receiver sends back to a REG2 for a group it does not know:
+ * a bare 2-byte REG_NGP, or REG_ERR / REG_NAK. An echo of the REG2 itself, or
+ * anything longer, is not an answer.
+ */
 export function isReceiverProbeReply(message: Uint8Array): boolean {
 	const [high, low] = message;
-	if (high === undefined || low === undefined) return false;
+	if (message.length !== 2 || high === undefined || low === undefined)
+		return false;
 	const type = (high << 8) | low;
 	return (
 		type === SRTLA_TYPE_REG_NGP ||
 		type === SRTLA_TYPE_REG_ERR ||
-		type === SRTLA_TYPE_REG_NAK ||
-		type === SRTLA_TYPE_REG3 ||
-		type === SRTLA_TYPE_REG2
+		type === SRTLA_TYPE_REG_NAK
 	);
+}
+
+/** Canonical text form, so equivalent IPv6 spellings compare equal. */
+export function canonicalIp(ip: string): string {
+	if (isIP(ip) !== 6) return ip;
+	try {
+		return new URL(`udp://[${ip}]/`).hostname;
+	} catch {
+		return ip;
+	}
 }
 
 /**
@@ -95,7 +108,8 @@ export const udpReceiverProbe: ReceiverProbe = ({
 }) =>
 	new Promise<boolean>((resolve) => {
 		if (signal.aborted) return resolve(false);
-		const socket = createSocket(isIP(address) === 6 ? "udp6" : "udp4");
+		const peer = canonicalIp(address);
+		let socket: ReturnType<typeof createSocket> | undefined;
 		let resend: ReturnType<typeof setTimeout> | undefined;
 		let settled = false;
 		const finish = (answered: boolean) => {
@@ -104,28 +118,47 @@ export const udpReceiverProbe: ReceiverProbe = ({
 			clearTimeout(resend);
 			signal.removeEventListener("abort", onAbort);
 			try {
-				socket.close();
+				socket?.close();
 			} catch {
 				// Already closed by an error.
 			}
 			resolve(answered);
 		};
 		const onAbort = () => finish(false);
-		signal.addEventListener("abort", onAbort);
-		socket.on("error", () => finish(false));
-		socket.on("message", (message, rinfo) => {
-			if (rinfo.address === address && isReceiverProbeReply(message))
-				finish(true);
-		});
-		const send = () =>
-			socket.send(receiverProbePacket(), port, address, (error) => {
+		// Every socket call can throw synchronously (a vanished source address,
+		// a closed socket); all of them end the probe through `finish`.
+		const guarded = (fn: () => void) => () => {
+			try {
+				fn();
+			} catch {
+				finish(false);
+			}
+		};
+		const send = guarded(() => {
+			if (settled) return;
+			socket?.send(receiverProbePacket(), port, address, (error) => {
 				if (error) finish(false);
 			});
-		socket.bind({ address: source, port: 0 }, () => {
-			if (settled) return;
-			send();
-			resend = setTimeout(send, RECEIVER_PROBE_RESEND_MS);
 		});
+		signal.addEventListener("abort", onAbort);
+		guarded(() => {
+			socket = createSocket(isIP(address) === 6 ? "udp6" : "udp4");
+			socket.on("error", () => finish(false));
+			socket.on("message", (message, rinfo) => {
+				if (
+					rinfo.port === port &&
+					canonicalIp(rinfo.address) === peer &&
+					isReceiverProbeReply(message)
+				)
+					finish(true);
+			});
+			socket.bind({ address: source, port: 0 }, () => {
+				if (settled) return;
+				send();
+				// The second REG2 goes out only while this probe is still waiting.
+				resend = setTimeout(send, RECEIVER_PROBE_RESEND_MS);
+			});
+		})();
 	});
 
 export type ReceiverAnswer = {
@@ -175,28 +208,32 @@ export async function chooseReceiverTarget(
 		return true;
 	};
 
-	const probes = state.flatMap((entry) => {
+	const plan = state.flatMap((entry) => {
 		const family = isIP(entry.address);
 		const familySources = sources.filter((ip) => isIP(ip) === family);
 		const via = familySources.length > 0 ? familySources : [undefined];
-		entry.pending = via.length;
-		return via.map(async (source) => {
-			let ok = false;
-			try {
-				ok = await probe({
-					address: entry.address,
-					port,
-					source,
-					signal: controller.signal,
-				});
-			} catch {
-				ok = false;
-			}
-			entry.pending -= 1;
-			// An unbound probe (no source of this family) is recorded as "".
-			if (ok) entry.answeredVia.push(source ?? "");
-			if (decidable()) decide();
-		});
+		return via.map((source) => ({ entry, source }));
+	});
+	// Every pending count is set before any probe runs, so a probe that fails
+	// synchronously cannot decide while later addresses are still uncounted.
+	for (const { entry } of plan) entry.pending += 1;
+
+	const probes = plan.map(async ({ entry, source }) => {
+		let ok = false;
+		try {
+			ok = await probe({
+				address: entry.address,
+				port,
+				source,
+				signal: controller.signal,
+			});
+		} catch {
+			ok = false;
+		}
+		entry.pending -= 1;
+		// An unbound probe (no source of this family) is recorded as "".
+		if (ok) entry.answeredVia.push(source ?? "");
+		if (decidable()) decide();
 	});
 
 	const deadline = setTimeout(
@@ -206,6 +243,8 @@ export async function chooseReceiverTarget(
 	if (probes.length === 0) decide();
 	await decided;
 	clearTimeout(deadline);
+	// Probes must settle on abort (the ReceiverProbe contract); the join below
+	// relies on it so no socket outlives the choice.
 	controller.abort();
 	await Promise.all(probes);
 

@@ -22,7 +22,7 @@ import { Resolver } from "node:dns";
 import { readlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Subprocess } from "bun";
-
+import { isLocalIp } from "../helpers/ip-addresses.ts";
 import {
 	setDnsCacheEntryForTest,
 	setDnsResolverFactoryForTest,
@@ -31,7 +31,13 @@ import {
 	parseIpAddrShow,
 	processIfconfigOutput,
 } from "../modules/network/network-interfaces.ts";
-import { resolveSrtla } from "../modules/streaming/srtla.ts";
+import type { BondEntry } from "../modules/streaming/bind-map.ts";
+import {
+	genSrtlaBondEntries,
+	genSrtlaBondEntriesForLocalIpAddress,
+	resolveSrtla,
+} from "../modules/streaming/srtla.ts";
+import { prepareSrtlaIpAddresses } from "../modules/streaming/streamloop/srtla-ip-preparation.ts";
 import { runTestCommand } from "./helpers/run-test-command.ts";
 
 const child = process.env.CERALIVE_RECEIVER_TARGET_CHILD === "1";
@@ -39,6 +45,8 @@ const support = child
 	? undefined
 	: await runTestCommand(["unshare", "-Urn", "unshare", "-n", "true"]);
 const unavailable = support !== undefined && support.code !== 0;
+// The CI namespace lane sets this: there, missing namespaces are a failure.
+const required = process.env.CERALIVE_NETNS_ISOLATED === "1";
 
 const NAME = "rec.netns.test.invalid";
 const PORT = 16792;
@@ -47,9 +55,10 @@ const H2 = "10.66.9.10";
 
 if (!child) {
 	const name = "receiver choice in a private namespace";
-	(unavailable ? test.skip : test)(
+	(unavailable && !required ? test.skip : test)(
 		unavailable ? `${name}: ${support?.stderr.trim()}` : name,
 		async () => {
+			expect(unavailable, support?.stderr).toBe(false);
 			const result = await runTestCommand(
 				[
 					"unshare",
@@ -69,7 +78,7 @@ if (!child) {
 			expect(result.code, result.stdout + result.stderr).toBe(0);
 			expect(result.stderr).toContain(" 0 fail");
 			// Every scenario ran in the child.
-			expect(result.stderr).toContain(" 4 pass");
+			expect(result.stderr).toContain(" 5 pass");
 		},
 		60_000,
 	);
@@ -79,6 +88,9 @@ let peer: Subprocess<"pipe", "pipe", "inherit"> | undefined;
 let dns: Socket | undefined;
 let dnsMode: "first" | "second" | "rotate" = "first";
 let dnsQueries = 0;
+let lastOrder: string[] = [];
+let peerOut: ReadableStreamDefaultReader<Uint8Array> | undefined;
+let peerSeen = "";
 
 async function run(cmd: string[]): Promise<string> {
 	const result = await runTestCommand(cmd);
@@ -89,17 +101,35 @@ const ip = (...args: string[]) => run(["ip", ...args]);
 const inPeer = (...args: string[]) =>
 	run(["nsenter", "-t", String(peer?.pid), "-n", "ip", ...args]);
 
-/** Tell the peer which receivers drop everything: "none", "h1" or "h1 h2". */
+/** Read the peer's output until it has printed `wanted` on a line. */
+async function peerLine(wanted: string): Promise<void> {
+	const decoder = new TextDecoder();
+	while (!peerSeen.includes(`${wanted}\n`)) {
+		const chunk = await peerOut?.read();
+		if (!chunk || chunk.done) throw new Error(`peer exited: ${peerSeen}`);
+		peerSeen += decoder.decode(chunk.value, { stream: true });
+	}
+	peerSeen = peerSeen.slice(
+		peerSeen.indexOf(`${wanted}\n`) + wanted.length + 1,
+	);
+}
+
+let drops = 0;
+/** Tell the peer which receivers drop everything ("none", "h1" or "h1 h2"),
+ *  and wait until it has applied it. */
 async function blackhole(spec: string): Promise<void> {
-	peer?.stdin.write(`${spec}\n`);
+	const id = ++drops;
+	peer?.stdin.write(`${id} ${spec}\n`);
 	await peer?.stdin.flush();
-	await Bun.sleep(20);
+	await peerLine(`ACK ${id}`);
 }
 
 function answerOrder(): string[] {
-	if (dnsMode === "second") return [H2, H1];
-	if (dnsMode === "rotate") return dnsQueries++ % 2 === 0 ? [H1, H2] : [H2, H1];
-	return [H1, H2];
+	if (dnsMode === "second") lastOrder = [H2, H1];
+	else if (dnsMode === "rotate")
+		lastOrder = dnsQueries++ % 2 === 0 ? [H1, H2] : [H2, H1];
+	else lastOrder = [H1, H2];
+	return lastOrder;
 }
 
 /** A two-name authoritative stub: A answers only, TTL 0. */
@@ -156,6 +186,7 @@ const PEER_SCRIPT = `
 const cp = require('node:child_process');
 cp.execFileSync('ip', ['link', 'set', 'lo', 'up']);
 let drop = new Set();
+let bound = 0;
 for (const [tag, a] of [['h1', '${H1}'], ['h2', '${H2}']]) {
   cp.execFileSync('ip', ['address', 'add', a + '/32', 'dev', 'lo']);
   const s = require('node:dgram').createSocket('udp4');
@@ -165,11 +196,20 @@ for (const [tag, a] of [['h1', '${H1}'], ['h2', '${H2}']]) {
     if (drop.has(tag)) return;
     if (b.length === 258 && b.readUInt16BE(0) === 0x9201) s.send(Buffer.from([0x92, 0x11]), p.port, p.address);
   });
-  s.bind(${PORT}, a);
+  s.bind(${PORT}, a, () => { if (++bound === 2) console.log('NS_READY'); });
 }
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', (d) => { for (const l of d.split('\\n')) if (l) drop = new Set(l.split(' ').filter((x) => x !== 'none')); });
-console.log('NS_READY');
+let pending = '';
+process.stdin.on('data', (d) => {
+  pending += d;
+  let i;
+  while ((i = pending.indexOf('\\n')) >= 0) {
+    const [id, ...spec] = pending.slice(0, i).split(' ');
+    pending = pending.slice(i + 1);
+    drop = new Set(spec.filter((x) => x !== 'none'));
+    console.log('ACK ' + id);
+  }
+});
 `;
 
 beforeAll(async () => {
@@ -180,13 +220,8 @@ beforeAll(async () => {
 		stdout: "pipe",
 		stderr: "inherit",
 	});
-	const reader = peer.stdout.getReader();
-	let seen = "";
-	while (!seen.includes("NS_READY\n")) {
-		const chunk = await reader.read();
-		if (chunk.done) throw new Error(`peer exited: ${seen}`);
-		seen += new TextDecoder().decode(chunk.value);
-	}
+	peerOut = peer.stdout.getReader();
+	await peerLine("NS_READY");
 	expect(readlinkSync(`/proc/${peer.pid}/ns/net`)).not.toBe(
 		readlinkSync("/proc/self/ns/net"),
 	);
@@ -256,35 +291,36 @@ async function choose(): Promise<{ address: string; ms: number }> {
 // The scenarios exist only in the child; the parent runs the child.
 const childTest = (child ? test : () => {}) as typeof test;
 
-childTest(
-	"both receivers answering: the first answer of each lookup",
-	async () => {
-		await blackhole("none");
-		dnsMode = "first";
-		expect((await choose()).address).toBe(H1);
-		dnsMode = "second";
-		expect((await choose()).address).toBe(H2);
-		dnsMode = "rotate";
-		dnsQueries = 0;
-		expect((await choose()).address).toBe(H1);
-		expect((await choose()).address).toBe(H2);
-	},
-);
+childTest("both receivers answering: the sender keeps the name", async () => {
+	await blackhole("none");
+	for (const mode of ["first", "second", "rotate", "rotate"] as const) {
+		dnsMode = mode;
+		expect((await choose()).address).toBe(NAME);
+	}
+});
 
 childTest(
-	"first target blackholed: ten starts in varied order all land on H2",
+	"first target blackholed: ten starts in varied order all reach H2",
 	async () => {
 		await blackhole("h1");
 		const modes = ["first", "second", "rotate"] as const;
-		const results: { mode: string; address: string; ms: number }[] = [];
+		const results: {
+			mode: string;
+			first: string;
+			address: string;
+			ms: number;
+		}[] = [];
 		dnsQueries = 0;
 		for (let run = 0; run < 10; run++) {
 			dnsMode = modes[run % 3];
-			results.push({ mode: dnsMode, ...(await choose()) });
+			const chosen = await choose();
+			results.push({ mode: dnsMode, first: lastOrder[0] ?? "", ...chosen });
 		}
 		console.log(JSON.stringify(results));
 		for (const r of results) {
-			expect(r.address).toBe(H2);
+			// H1 listed first: the live H2 is pinned. H2 listed first: the name,
+			// which the sender resolves to H2 itself.
+			expect(r.address).toBe(r.first === H1 ? H2 : NAME);
 			// A silent first answer costs at most the probe deadline (1.2 s).
 			expect(r.ms).toBeLessThan(2_000);
 		}
@@ -300,6 +336,31 @@ childTest(
 		const { address, ms } = await choose();
 		expect(address).toBe(NAME);
 		expect(ms).toBeLessThan(2_500);
+	},
+);
+
+childTest(
+	"the pinned private receiver is admitted over both uplinks",
+	async () => {
+		// 10.66.9.10 is private but on no local subnet: it is reached over the bond.
+		await blackhole("h1");
+		dnsMode = "first";
+		const { address } = await choose();
+		expect(address).toBe(H2);
+		const written: (readonly BondEntry[])[] = [];
+		await prepareSrtlaIpAddresses(address, {
+			isLocal: isLocalIp,
+			localList: genSrtlaBondEntriesForLocalIpAddress,
+			bondedList: genSrtlaBondEntries,
+			writeList: async (entries) => {
+				written.push(entries);
+				return { ok: true, changed: false } as never;
+			},
+		});
+		expect(written[0]?.map((e) => e.ip).sort()).toEqual([
+			"10.66.1.2",
+			"10.66.2.2",
+		]);
 	},
 );
 
