@@ -53,6 +53,7 @@ vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getKiosk: () => undefined,
 	getStatus: () => undefined,
 	getTailscale: () => undefined,
+	getDeviceStats: () => undefined,
 	getUplinks: () => undefined,
 	getIsConnected: () => true,
 }));
