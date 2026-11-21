@@ -16,6 +16,9 @@
  * fabricate a denominator the hardware never produced.
  */
 import { describe, expect, test } from "bun:test";
+import { Writable } from "node:stream";
+import winston from "winston";
+import { logger } from "../helpers/logger.ts";
 import { withDeviceType } from "../modules/system/device-detection.ts";
 import {
 	candidatePwmPaths,
@@ -31,6 +34,8 @@ import {
 	initFan,
 	parsePwmDuty,
 	readFanDuty,
+	resetFanUnreadableLog,
+	setFanLogClockForTest,
 } from "../modules/system/fan.ts";
 
 // ─── synthetic sysfs trees ───────────────────────────────────────────────────
@@ -578,5 +583,227 @@ describe("no path invents a fan speed", () => {
 		expect(h.reads.some((path) => /cur_state|max_state/.test(path))).toBe(
 			false,
 		);
+	});
+});
+
+describe("unreadable-path logging", () => {
+	// Capture debug records from the shared logger through a real Stream
+	// transport, so winston's level filter runs as it does on a device.
+	async function debugMessages(run: () => Promise<void>): Promise<string[]> {
+		const messages: string[] = [];
+		const capture = winston.format((info) => {
+			const path = (info as { path?: unknown }).path;
+			messages.push(
+				typeof path === "string"
+					? `${info.message} ${path}`
+					: String(info.message),
+			);
+			return info;
+		});
+		const transport = new winston.transports.Stream({
+			stream: new Writable({
+				write(_chunk, _enc, cb) {
+					cb();
+				},
+			}),
+			level: "debug",
+			format: capture(),
+		});
+		logger.add(transport);
+		try {
+			await run();
+			await new Promise((resolve) => setTimeout(resolve, 15));
+		} finally {
+			logger.remove(transport);
+		}
+		return messages.filter((m) => m.startsWith("fan: "));
+	}
+
+	test("the reference board's missing backlink paths are logged once, not every tick", async () => {
+		resetFanUnreadableLog();
+		const h = makeHarness(
+			buildBacklinklessBoard({
+				coolingIndex: 11,
+				hwmons: [{ index: 3, name: "pwmfan", pwm: "120" }],
+			}),
+		);
+		const coolingDir = `${THERMAL}/cooling_device11`;
+		const messages = await debugMessages(async () => {
+			for (let tick = 0; tick < 5; tick++) {
+				expect(await readFanDuty(h.deps, coolingDir, HWMON)).toBe(47.1);
+			}
+		});
+		expect(messages).toEqual([
+			"fan: hwmon directory unreadable",
+			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
+		]);
+	});
+
+	test("a path that recovers and fails again is logged again", async () => {
+		resetFanUnreadableLog();
+		const tree = buildBoard({ coolingIndex: 5, hwmonIndex: 2, pwm: "200" });
+		const h = makeHarness(tree);
+		const coolingDir = `${THERMAL}/cooling_device5`;
+		const pwm = `${coolingDir}/device/hwmon/hwmon2/pwm1`;
+		const messages = await debugMessages(async () => {
+			await readFanDuty(h.deps, coolingDir, HWMON);
+			delete tree.files[pwm];
+			await readFanDuty(h.deps, coolingDir, HWMON);
+			await readFanDuty(h.deps, coolingDir, HWMON);
+			tree.files[pwm] = "200\n";
+			await readFanDuty(h.deps, coolingDir, HWMON);
+			delete tree.files[pwm];
+			await readFanDuty(h.deps, coolingDir, HWMON);
+		});
+		// Logged when it first fails, silent while it stays failed, logged again
+		// after a successful read in between. The platform fallback node never
+		// read successfully, so it stays logged once.
+		expect(messages).toEqual([
+			`fan: pwm1 unreadable ${pwm}`,
+			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
+			`fan: pwm1 unreadable ${pwm}`,
+		]);
+	});
+
+	test("the same errno with a different message is a new diagnostic", async () => {
+		resetFanUnreadableLog();
+		const coolingDir = `${THERMAL}/cooling_device7`;
+		let reads = 0;
+		const deps: FanDeps = {
+			// A backlink exists, so only the direct candidates are read.
+			readDir: async (path) => {
+				if (path === coolingDir) return ["cur_state", "device"];
+				throw Object.assign(new Error(`EIO: ${path}`), { code: "EIO" });
+			},
+			// Same errno each time; the message changes after the second read,
+			// as when a replacement device reuses the sysfs path.
+			readText: async (path) => {
+				reads++;
+				const which = reads <= 2 ? "first device" : "replacement";
+				throw Object.assign(new Error(`EIO: ${path} (${which})`), {
+					code: "EIO",
+				});
+			},
+		};
+		const messages = await debugMessages(async () => {
+			for (let tick = 0; tick < 4; tick++) {
+				expect(await readFanDuty(deps, coolingDir, HWMON)).toBeNull();
+			}
+		});
+		expect(
+			messages.filter((m) => m.startsWith("fan: pwm1 unreadable")),
+		).toEqual([
+			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
+			`fan: pwm1 unreadable ${coolingDir}/device/pwm1`,
+		]);
+	});
+
+	test("a failure that persists is logged again after the suppression window", async () => {
+		resetFanUnreadableLog();
+		let now = 1_000_000;
+		setFanLogClockForTest(() => now);
+		try {
+			const h = makeHarness(
+				buildBacklinklessBoard({
+					coolingIndex: 11,
+					hwmons: [{ index: 3, name: "pwmfan", pwm: "120" }],
+				}),
+			);
+			const coolingDir = `${THERMAL}/cooling_device11`;
+			const messages = await debugMessages(async () => {
+				await readFanDuty(h.deps, coolingDir, HWMON);
+				now += 9 * 60_000;
+				await readFanDuty(h.deps, coolingDir, HWMON);
+				now += 2 * 60_000;
+				await readFanDuty(h.deps, coolingDir, HWMON);
+			});
+			expect(
+				messages.filter((m) => m === "fan: hwmon directory unreadable").length,
+			).toBe(2);
+		} finally {
+			setFanLogClockForTest();
+		}
+	});
+
+	test("the re-log window runs on a monotonic clock, not the wall clock", async () => {
+		resetFanUnreadableLog();
+		const coolingDir = `${THERMAL}/cooling_device11`;
+		const h = makeHarness(
+			buildBacklinklessBoard({
+				coolingIndex: 11,
+				hwmons: [{ index: 3, name: "pwmfan", pwm: "120" }],
+			}),
+		);
+		const realDateNow = Date.now;
+		let wall = 10_000_000;
+		Date.now = () => wall;
+		let mono = 5_000;
+		setFanLogClockForTest(() => mono);
+		try {
+			const messages = await debugMessages(async () => {
+				await readFanDuty(h.deps, coolingDir, HWMON);
+				// Time sync steps the wall clock back an hour; 10 real minutes pass.
+				wall -= 60 * 60_000;
+				mono += 10 * 60_000;
+				await readFanDuty(h.deps, coolingDir, HWMON);
+			});
+			expect(
+				messages.filter((m) => m === "fan: hwmon directory unreadable").length,
+			).toBe(2);
+		} finally {
+			Date.now = realDateNow;
+			setFanLogClockForTest();
+		}
+	});
+
+	test("the default clock for the re-log window is performance.now", async () => {
+		const src = await Bun.file(
+			new URL("../modules/system/fan.ts", import.meta.url),
+		).text();
+		expect(src).toContain(
+			"let fanLogNow: () => number = () => performance.now();",
+		);
+		expect(src).not.toMatch(/fanLogNow\s*=\s*now \?\? Date\.now/);
+	});
+
+	test("an unreadable correlated pwm1 is logged once, not every tick", async () => {
+		resetFanUnreadableLog();
+		const h = makeHarness(
+			buildBacklinklessBoard({
+				coolingIndex: 11,
+				hwmons: [{ index: 3, name: "pwmfan" }],
+			}),
+		);
+		const coolingDir = `${THERMAL}/cooling_device11`;
+		const messages = await debugMessages(async () => {
+			for (let tick = 0; tick < 5; tick++) {
+				expect(await readFanDuty(h.deps, coolingDir, HWMON)).toBeNull();
+			}
+		});
+		expect(
+			messages.filter((m) => m.startsWith("fan: correlated pwm1 unreadable"))
+				.length,
+		).toBe(1);
+	});
+
+	test("a cooling device with no correlating hwmon is logged once, not every tick", async () => {
+		resetFanUnreadableLog();
+		const h = makeHarness(
+			buildBacklinklessBoard({
+				coolingIndex: 11,
+				hwmons: [{ index: 3, name: "cpu_thermal" }],
+			}),
+		);
+		const coolingDir = `${THERMAL}/cooling_device11`;
+		const messages = await debugMessages(async () => {
+			for (let tick = 0; tick < 5; tick++) {
+				expect(await readFanDuty(h.deps, coolingDir, HWMON)).toBeNull();
+			}
+		});
+		expect(
+			messages.filter((m) =>
+				m.startsWith("fan: no hwmon correlates to the pwm-fan cooling device"),
+			).length,
+		).toBe(1);
 	});
 });
