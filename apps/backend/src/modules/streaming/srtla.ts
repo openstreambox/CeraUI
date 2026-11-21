@@ -20,6 +20,7 @@ import { isIP } from "node:net";
 import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 
 import { logger } from "../../helpers/logger.ts";
+import { shouldUseMocks } from "../../mocks/mock-service.ts";
 
 import { readClatTranslations } from "../network/clat-translation.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
@@ -47,13 +48,70 @@ import {
 	setBondIdentityResolverForTest,
 } from "./bond-entry.ts";
 import { registerSrtlaBond } from "./link-telemetry.ts";
+import { chooseReceiverTarget, type ReceiverProbe } from "./receiver-target.ts";
 import { signalSenders } from "./streamloop/process-runner.ts";
 
 export { isBondLinkMappable, setBondIdentityResolverForTest };
 
 let receiverIpv6Only = false;
 
-export async function resolveSrtla(addr: string) {
+let receiverProbe: ReceiverProbe | undefined;
+let receiverProbeDeadlineMs: number | undefined;
+
+/** Test seam: replace the receiver probe (and its deadline); `null` restores
+ *  the real UDP probe. Never call from production code. */
+export function setReceiverProbeForTest(
+	probe: ReceiverProbe | null,
+	deadlineMs?: number,
+): void {
+	receiverProbe = probe ?? undefined;
+	receiverProbeDeadlineMs = probe ? deadlineMs : undefined;
+}
+
+/**
+ * Answers the bond can use, in DNS order: IPv4 when an IPv4 link exists,
+ * otherwise IPv6 on an IPv6 link. With no bond candidate at all, IPv4 first.
+ */
+function compatibleReceiverAddrs(
+	addrs: readonly string[],
+	haveLinks: boolean,
+	hasV4: boolean,
+	hasV6: boolean,
+): string[] {
+	const ipv4 = addrs.filter((ip) => !ip.includes(":"));
+	const ipv6 = addrs.filter((ip) => ip.includes(":"));
+	if (!haveLinks) return ipv4.length > 0 ? ipv4 : ipv6;
+	return hasV4 && ipv4.length > 0 ? ipv4 : hasV6 ? ipv6 : [];
+}
+
+/**
+ * With several usable answers, the first in DNS order that a bonding receiver
+ * answers on (receiver-target.ts), so every link dials the same live address.
+ * Undefined keeps the caller's previous choice: one answer, no port, mocks,
+ * or nothing answered.
+ */
+async function coordinatedReceiverTarget(
+	compatible: readonly string[],
+	port: number | undefined,
+	sources: readonly string[],
+): Promise<string | undefined> {
+	if (port === undefined || compatible.length < 2) return undefined;
+	if (receiverProbe === undefined && shouldUseMocks()) return undefined;
+	const choice = await chooseReceiverTarget(compatible, port, sources, {
+		...(receiverProbe ? { probe: receiverProbe } : {}),
+		...(receiverProbeDeadlineMs !== undefined
+			? { deadlineMs: receiverProbeDeadlineMs }
+			: {}),
+	});
+	return choice.target;
+}
+
+/**
+ * The receiver address handed to the sender. `port` (the receiver's SRTLA
+ * port) enables the coordinated choice among several DNS answers; without it
+ * a live answer passes the name through as before.
+ */
+export async function resolveSrtla(addr: string, port?: number) {
 	let srtlaAddr = addr;
 	const interfaces = Object.entries(getNetworkInterfaces())
 		.filter(([name, entry]) => isBondCandidate(name, entry))
@@ -99,30 +157,37 @@ export async function resolveSrtla(addr: string) {
 
 	receiverIpv6Only = addrs.length > 0 && addrs.every((ip) => ip.includes(":"));
 
+	// Prefer IPv4 for compatibility when available; on a v6-only host keep
+	// DNS64/native AAAA answers rather than pinning an unusable A record.
+	// With no bond candidate, leave admission to IP preparation. It supplies
+	// the normal no-network error and still permits a local receiver path.
+	const compatible = compatibleReceiverAddrs(
+		addrs,
+		interfaces.length > 0,
+		hasV4,
+		hasV6,
+	);
+	const sources = interfaces.flatMap((entry) =>
+		[entry.ip, entry.ipv6].filter((ip): ip is string => ip !== undefined),
+	);
+	const coordinated = await coordinatedReceiverTarget(
+		compatible,
+		port,
+		sources,
+	);
+
 	if (fromCache) {
-		// Prefer IPv4 for compatibility when available; on a v6-only host keep
-		// DNS64/native AAAA answers rather than pinning an unusable A record.
-		const ipv4 = addrs.filter((ip) => !ip.includes(":"));
-		const ipv6 = addrs.filter((ip) => ip.includes(":"));
-		// With no bond candidate, leave admission to IP preparation. It supplies
-		// the normal no-network error and still permits a local receiver path.
-		const compatible =
-			interfaces.length === 0
-				? ipv4.length > 0
-					? ipv4
-					: ipv6
-				: hasV4 && ipv4.length > 0
-					? ipv4
-					: hasV6
-						? ipv6
-						: [];
 		const cachedAddr =
-			compatible[Math.floor(Math.random() * compatible.length)];
+			coordinated ?? compatible[Math.floor(Math.random() * compatible.length)];
 		if (!cachedAddr) throw `No compatible cached SRTLA address for ${addr}`;
 		srtlaAddr = cachedAddr;
 		receiverIpv6Only = cachedAddr.includes(":");
 		queueUpdateGw();
 	} else {
+		if (coordinated !== undefined) {
+			srtlaAddr = coordinated;
+			receiverIpv6Only = coordinated.includes(":");
+		}
 		/* At the moment we don't check that the SRTLA connection was established before
        validating the DNS result. The caching DNS resolver checks for invalid
        results from captive portals, etc, so all results *should* be good already */
