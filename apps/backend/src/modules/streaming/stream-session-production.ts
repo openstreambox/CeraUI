@@ -27,7 +27,6 @@ import {
 	setOtaStreamingMarker,
 } from "./ota-streaming-marker.ts";
 import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
-import { takeAdoptionForReconcile } from "./sender-adoption.ts";
 import {
 	ownedSessionProcessesRemain,
 	ownsSessionSender,
@@ -103,16 +102,11 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	// live sender child with the configured executable runs, and the engine client
 	// that acknowledged this process's Start is unchanged. The three are not bound
 	// to one generation number; together they rule out a predecessor's session.
-	// The one exception is a predecessor's sender adopted at startup on full
-	// evidence (`sender-adoption.ts`): it serves the first reconciliation after
-	// the adoption only, while that handle is live, because a later one could
-	// not tell the adopted engine session from one that replaced it.
 	canReconcileStreaming: (generation) =>
 		shouldUseMocks() ||
 		(generation !== undefined &&
 			ownsSessionSender() &&
-			getStreamingBackend().ownsLaunchedSession?.() === true) ||
-		takeAdoptionForReconcile(),
+			getStreamingBackend().ownsLaunchedSession?.() === true),
 	seedLifecycleState: (state) => {
 		streamStartedAt = undefined;
 		seedStreamLifecycleState(state);
