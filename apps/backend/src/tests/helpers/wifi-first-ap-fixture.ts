@@ -252,6 +252,11 @@ export async function firstAp(
 					throw new Error("Post-up persistence failed");
 				rememberHotspotCredentials(owner, credentials);
 			},
+			// The fixture's store is in memory; a checked write stands for a durable one.
+			rememberChecked: (owner, credentials) => {
+				rememberHotspotCredentials(owner, credentials);
+				return true;
+			},
 			recordCreation: recordHotspotProfileCreation,
 			clearCreation: clearHotspotProfileCreation,
 		},
