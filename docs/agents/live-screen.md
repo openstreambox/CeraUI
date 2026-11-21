@@ -134,6 +134,23 @@ must contain the `source-audio` block with its ids unchanged.
   height (plus the mobile dock below desktop chrome), so a control reached with
   Tab or scrolled into view stops above the bar, never under it (WCAG 2.4.11).
 
+#### Start refusals end in an action
+
+A typed start refusal is a toast. Where the next step is decided, the toast's
+button is that step and View logs sits beside it
+(`startFailureNextStep`, `apps/frontend/src/lib/streaming/start-failure-copy.ts`):
+
+- `engine_internal`, `engine_unavailable`, `start_timeout`: Try again (repeats
+  the last start, implicit sole camera included). When an engine refusal
+  follows another with no stream in between, Restart box, which opens the same
+  reboot sheet as Settings, so the operator still confirms.
+- `start_invalid`: Open stream setup (scrolls to the setup card and focuses
+  it); saved SRT encryption the engine cannot use opens the destination.
+- `mutation_blocked`: Open Network, where the modem controls live.
+
+The other classes keep their copy and View logs. The copy for these classes no
+longer says "Open Settings → System Logs".
+
 #### A supervised connection restart [EXISTS]
 
 Between a connection restart's Stop and its Start (`status.connection_restarting`

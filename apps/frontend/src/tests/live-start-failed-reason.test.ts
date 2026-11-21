@@ -108,7 +108,7 @@ import {
 	getRequestedDialogContext,
 } from "$lib/stores/dialog-request.svelte";
 
-import LiveView from "../main/LiveView.svelte";
+import LiveView, { resetStartFailureMemory } from "../main/LiveView.svelte";
 
 const startFailed = en.live.startFailed as Readonly<Record<string, string>>;
 
@@ -117,6 +117,17 @@ const VIEW_LOGS = {
 	action: { label: en.notifications.viewLogs, onClick: expect.any(Function) },
 	class: VIEW_LOGS_TOAST_CLASS,
 };
+
+// A refusal with a decided next step: that step is the button, View logs stays
+// beside it for a helper, and the toast stays up long enough to reach it.
+function nextStep(label: string) {
+	return {
+		action: { label, onClick: expect.any(Function) },
+		cancel: { label: en.notifications.viewLogs, onClick: expect.any(Function) },
+		class: VIEW_LOGS_TOAST_CLASS,
+		duration: 12_000,
+	};
+}
 
 afterEach(() => {
 	cleanup();
@@ -128,6 +139,7 @@ afterEach(() => {
 	toastError.mockReset();
 	startStreaming.mockReset();
 	clearRequestedDialog();
+	resetStartFailureMemory();
 });
 
 describe("LiveView start-failure output", () => {
@@ -188,7 +200,7 @@ describe("LiveView start-failure output", () => {
 const startFailure = en.live.startFailure;
 
 describe("LiveView typed start-failure rendering (Todo 29)", () => {
-	it("renders the class message + retried-then-failed suffix for a retriable class", async () => {
+	it("an engine refusal ends in Try again, not in System Logs", async () => {
 		state.failure = {
 			class: "engine_unavailable",
 			phase: "connect",
@@ -200,8 +212,8 @@ describe("LiveView typed start-failure rendering (Todo 29)", () => {
 		await tick();
 
 		expect(toastError).toHaveBeenCalledWith(
-			`${startFailure.class.engine_unavailable} ${startFailure.retriedThenFailed}`,
-			VIEW_LOGS,
+			`${startFailure.class.engine_unavailable} ${startFailure.next.tryAgain}`,
+			nextStep(startFailure.action.tryAgain),
 		);
 	});
 
@@ -217,7 +229,7 @@ describe("LiveView typed start-failure rendering (Todo 29)", () => {
 		render(LiveView);
 		await tick();
 		const after = Date.now();
-		toastError.mock.calls[0]?.[1]?.action.onClick();
+		toastError.mock.calls[0]?.[1]?.cancel.onClick();
 
 		expect(getRequestedDialog()).toBe("logs");
 		const context = getRequestedDialogContext();
@@ -226,7 +238,7 @@ describe("LiveView typed start-failure rendering (Todo 29)", () => {
 		expect(context?.at).toBeLessThanOrEqual(after);
 	});
 
-	it("renders the class message + not-retriable suffix for a deterministic class", async () => {
+	it("an invalid start ends in Open stream setup", async () => {
 		state.failure = {
 			class: "start_invalid",
 			phase: "params",
@@ -238,8 +250,8 @@ describe("LiveView typed start-failure rendering (Todo 29)", () => {
 		await tick();
 
 		expect(toastError).toHaveBeenCalledWith(
-			`${startFailure.class.start_invalid} ${startFailure.notRetriable}`,
-			VIEW_LOGS,
+			`${startFailure.class.start_invalid} ${startFailure.next.openSetup}`,
+			nextStep(startFailure.action.openSetup),
 		);
 	});
 
@@ -257,8 +269,8 @@ describe("LiveView typed start-failure rendering (Todo 29)", () => {
 
 		expect(toastError).toHaveBeenCalledTimes(1);
 		expect(toastError).toHaveBeenCalledWith(
-			`${startFailure.class.engine_internal} ${startFailure.notRetriable}`,
-			VIEW_LOGS,
+			`${startFailure.class.engine_internal} ${startFailure.next.tryAgain}`,
+			nextStep(startFailure.action.tryAgain),
 		);
 	});
 
@@ -342,8 +354,8 @@ describe("LiveView typed start-failure rendering (Todo 29)", () => {
 		await tick();
 
 		expect(toastError).toHaveBeenCalledWith(
-			`${startFailure.class.start_invalid} ${startFailure.notRetriable}`,
-			VIEW_LOGS,
+			`${startFailure.class.start_invalid} ${startFailure.next.openSetup}`,
+			nextStep(startFailure.action.openSetup),
 		);
 		const shown = String(toastError.mock.calls[0]?.[0] ?? "");
 		expect(shown).not.toContain("invalid params");
@@ -364,10 +376,97 @@ it("explains retained encryption refusal without rendering raw diagnostics", asy
 	render(LiveView);
 	await tick();
 	expect(toastError).toHaveBeenCalledWith(
-		`Saved SRT encryption settings are not supported. Clear them before starting. ${startFailure.notRetriable}`,
-		VIEW_LOGS,
+		"Saved SRT encryption settings are not supported. Clear them before starting.",
+		nextStep(startFailure.action.openServer),
 	);
 	expect(JSON.stringify(toastError.mock.calls)).not.toContain(
 		"synthetic-secret",
 	);
+});
+
+describe("LiveView start refusals end in a next step (phone UX)", () => {
+	it("a modem that could not be rolled back sends the operator to Network, not Settings", async () => {
+		state.failure = {
+			class: "mutation_blocked",
+			phase: "params",
+			retriable: false,
+			attemptId: "att_modem",
+		};
+		render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenCalledWith(
+			startFailure.mutationBlockedNetwork,
+			nextStep(startFailure.action.openNetwork),
+		);
+		const [message] = toastError.mock.calls[0] ?? [];
+		expect(message).not.toContain("Settings");
+		expect(message).not.toContain("System Logs");
+	});
+
+	it("Try again starts the stream again", async () => {
+		state.failure = {
+			class: "start_timeout",
+			phase: "confirm",
+			retriable: true,
+			attemptId: "att_retry",
+		};
+		render(LiveView);
+		await tick();
+		startStreaming.mockResolvedValue({ success: true });
+		toastError.mock.calls[0]?.[1]?.action.onClick();
+		await waitFor(() => expect(state.startOptimism).toHaveBeenCalled());
+	});
+
+	it("the same engine failure right after a retry offers Restart box", async () => {
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_first",
+		};
+		const { rerender } = render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenLastCalledWith(
+			`${startFailure.class.engine_internal} ${startFailure.next.tryAgain}`,
+			nextStep(startFailure.action.tryAgain),
+		);
+		cleanup();
+		toastError.mockReset();
+		state.failure = {
+			class: "engine_unavailable",
+			phase: "connect",
+			retriable: true,
+			attemptId: "att_second",
+		};
+		render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenLastCalledWith(
+			`${startFailure.class.engine_unavailable} ${startFailure.next.restartBox}`,
+			nextStep(startFailure.action.restartBox),
+		);
+		void rerender;
+	});
+
+	it("no next-step copy points at System Logs, in any locale", async () => {
+		const { ar, de, es, fr, hi, ja, ko, ptBR, zh } = await import(
+			"./helpers/catalog"
+		);
+		for (const dict of [en, ar, de, es, fr, hi, ja, ko, ptBR, zh]) {
+			const f = dict.live.startFailure;
+			for (const text of [
+				f.next.tryAgain,
+				f.next.restartBox,
+				f.next.openSetup,
+				f.mutationBlockedNetwork,
+				f.action.tryAgain,
+				f.action.restartBox,
+				f.action.openSetup,
+				f.action.openServer,
+				f.action.openNetwork,
+			]) {
+				expect(text.length).toBeGreaterThan(0);
+			}
+		}
+		expect(en.live.startFailure.next.openSetup).not.toContain("System Logs");
+	});
 });
