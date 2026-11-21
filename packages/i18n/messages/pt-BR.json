@@ -1714,7 +1714,7 @@
 	"network.wifiMode.station": "Estação",
 	"network.wifiMode.hotspot": "Ponto de acesso",
 	"network.wifiMode.hybrid": "Híbrido",
-	"network.wifiMode.option.station": "Conectar a Wi-Fi",
+	"network.wifiMode.option.station": "Conectar ao Wi-Fi",
 	"network.wifiMode.option.hotspot": "Compartilhar como ponto de acesso",
 	"network.wifiMode.option.hybrid": "Ambos",
 	"network.wifiMode.optionUnavailable": "{option}: indisponível. {reason}",
