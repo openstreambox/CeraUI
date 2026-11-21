@@ -565,12 +565,17 @@ rule in the maintenance probes.
   `rauc-verity-streaming`). `checkOsChannel()` fetches
   `channels/<channel>/<board>.json` and `.sig` as `ota_uid` under
   `updatePinController.run("os", ...)`; `validateSignedOsManifest()` accepts only
-  a CMS verified against `/etc/rauc/ceralive-keyring.pem` with the exact signer
-  CN, codeSigning and no emailProtection, and the extracted signer's RFC2253
-  issuer DN exactly `CN=CeraLive RAUC Intermediate CA,O=CeraLive` (production)
-  or `CN=CeraLive RAUC Bench Intermediate CA,O=CeraLive` (persistent bench).
-  A root-direct or other intermediate is refused as `signer_issuer_invalid`,
-  before the strict v1 fields.
+  a CMS verified against `/etc/rauc/ceralive-keyring.pem` with codeSigning and
+  no emailProtection, and a signer CN plus RFC2253 issuer DN that form one pair in
+  `MANIFEST_SIGNER_IDENTITIES` (`os-manifest-signer.ts`): `CeraLive OTA Manifest
+  Signer` under `CN=CeraLive RAUC Intermediate CA,O=CeraLive` (production) or
+  `CN=CeraLive RAUC Bench Intermediate CA,O=CeraLive` (persistent bench), and
+  `OpenStreamBox OTA Manifest Signer` under
+  `CN=OpenStreamBox Release Intermediate CA,O=OpenStreamBox` (fork release chain).
+  The keyring still decides which of these chains a device trusts. An unknown CN
+  is `signer_not_manifest_signer`; a root-direct, other or mismatched
+  intermediate is `signer_issuer_invalid`, before the strict v1 fields. The
+  kernel sidecar check uses the same pairs.
   Discovery uses `discoverSignedOsManifest()` after the same trust/identity
   checks: an unexpired current version is successful with no candidate at any
   serial watermark. A consumed pointer at exactly the stored serial is also no
