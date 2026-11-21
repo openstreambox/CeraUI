@@ -15,7 +15,11 @@ import { isolateWifiRegistry, restoreWifiRegistry } from "./wifi-registry.ts";
 
 const MAC = "dc:a6:32:aa:bb:c0";
 
-export async function wifiFrameFixture(active = true, proven = true) {
+export async function wifiFrameFixture(
+	active = true,
+	proven = true,
+	ifname = "wlan0",
+) {
 	jest.useFakeTimers();
 	jest.setSystemTime(0);
 	resetHotspotCredentialsForTest();
@@ -26,7 +30,7 @@ export async function wifiFrameFixture(active = true, proven = true) {
 	ids[0] = MAC;
 	const mocking = spyOn(mocks, "shouldUseMocks").mockReturnValue(false);
 	let radio: RadioFixture = {
-		ifname: "wlan0",
+		ifname,
 		operational: MAC,
 		permanent: MAC,
 		ifindex: 10,
@@ -36,7 +40,7 @@ export async function wifiFrameFixture(active = true, proven = true) {
 	const restoreShadow = await fakeShadowSysfs(() => [radio]);
 	const makeRow = (): WifiInterfaceWithHotspot => ({
 		id: 0,
-		ifname: "wlan0",
+		ifname,
 		hw: "Frame test radio",
 		conn: active ? "test-ap" : null,
 		activeMode: active ? "ap" : "infrastructure",
