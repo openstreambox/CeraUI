@@ -37,7 +37,12 @@
 // allow: SIZE_OK — one connection UX state machine; pure transitions and their sole reactive owner stay co-located.
 import type { ConnectionState } from "$lib/rpc/client";
 import { rpcClient } from "$lib/rpc/client";
-import { clearAuthInteraction } from "./auth-status.svelte";
+import {
+	clearAuthInteraction,
+	markAuthenticated as markSignedIn,
+	resetAuthSession,
+	wasAuthenticated as wasSignedIn,
+} from "./auth-status.svelte";
 import { createStalenessClock } from "./hud/staleness";
 
 // ============================================
@@ -372,16 +377,17 @@ export function shouldExpireSession(
 // Auth latch (plain — reactivity not required)
 // ============================================
 
-let authenticatedOnce = false;
+// The latch lives with the auth state (auth-status.svelte), so every sign-in
+// sets it, including a password login from the login screen.
 
 /** Record that the operator has successfully authenticated at least once. */
 export function markAuthenticated(): void {
-	authenticatedOnce = true;
+	markSignedIn();
 }
 
 /** Whether the operator has ever authenticated this page-load. */
 export function wasAuthenticated(): boolean {
-	return authenticatedOnce;
+	return wasSignedIn();
 }
 
 // ============================================
@@ -596,5 +602,5 @@ export function retryConnection(): void {
 export function destroyConnectionUxStore(): void {
 	singleton?.destroy();
 	singleton = null;
-	authenticatedOnce = false;
+	resetAuthSession();
 }
