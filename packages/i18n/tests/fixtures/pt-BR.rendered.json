@@ -581,7 +581,7 @@
 	"live.networkIngest.disabledInSettingsHint": "Reative isto em Configurações → Ingestão de rede.",
 	"live.networkIngest.inactive": "Serviço parado",
 	"live.networkIngest.includesAudio": "Inclui áudio",
-	"live.networkIngest.infoBody": "Publique para este endereço a partir de um app de streaming ou de um codificador como o OBS. O dispositivo o recebe pela sua rede local e o codifica para transmitir.",
+	"live.networkIngest.infoBody": "Publique para este endereço a partir de um app de streaming ou de um codificador como o OBS. O dispositivo recebe o vídeo pela sua rede local e o codifica para transmitir.",
 	"live.networkIngest.infoTitle": "Entrada de rede",
 	"live.networkIngest.instructions": "Aponte seu app de streaming ou codificador para este endereço e comece a publicar.",
 	"live.networkIngest.instructionsToggle": "Como publicar",

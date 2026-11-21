@@ -85,7 +85,7 @@ it.each([
 	],
 	[
 		"busy_other_phone",
-		"Sign-in is open on another device. It closes within ten minutes.",
+		"A sign-in is already in progress. Try again in a moment. An open sign-in window closes within ten minutes.",
 	],
 	[
 		"wifi_unavailable",

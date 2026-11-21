@@ -64,8 +64,9 @@ with a wrong password is never counted as joined.
 name, channel and security with a fresh `generateHotspotPassword()` through
 `wifi.hotspotConfigure` under the Save key; NetworkManager restarts the profile, so
 every client drops. The card asks first and names that cost, plus
-`live.phone.powerOffCost` when `mayCarryStream` says a stream may be going through
-the box. In the hotspot dialog a completed renewal also replaces the editable
+`network.hotspot.newPasswordStreaming` (traffic through the box from those devices
+stops until they join again) when `mayCarryStream` says a stream may be going
+through the box. The power dialog keeps its own `live.phone.powerOffCost`. In the hotspot dialog a completed renewal also replaces the editable
 password, so a later Save cannot restore the revoked one. The dialog keeps a
 reactive renewal record bound to its form binding (radio, link, dialog session),
 the config key and the op attempt (`getOperationAttempt`). Only that attempt can

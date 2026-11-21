@@ -208,7 +208,7 @@
 	"devtools.response": "الاستجابة",
 	"devtools.rtt": "RTT",
 	"devtools.screen": "الشاشة",
-	"devtools.screenshotCount": "سطح المكتب + الهاتف (5 علامات تبويب، موضوعان لكل منها) + غير متصل (موضوعان) = 22 إجمالي",
+	"devtools.screenshotCount": "عرض سطح المكتب + عرض الأجهزة المحمولة (5 علامات تبويب، موضوعان لكل منها) + غير متصل (موضوعان) = 22 إجمالي",
 	"devtools.screenshotUtility": "أداة لقطات الشاشة",
 	"devtools.screenshotUtilityDescription": "التقاط بسيط لجميع علامات التبويب والمظاهر والوضع غير المتصل",
 	"devtools.settingsSaved": "تم حفظ الإعدادات",

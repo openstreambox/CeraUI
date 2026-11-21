@@ -581,7 +581,7 @@
 	"live.networkIngest.disabledInSettingsHint": "Réactivez-le dans Paramètres → Ingestion réseau.",
 	"live.networkIngest.inactive": "Service inactif",
 	"live.networkIngest.includesAudio": "Audio inclus",
-	"live.networkIngest.infoBody": "Publiez vers cette adresse depuis une app de streaming ou un encodeur comme OBS. L'appareil la reçoit via votre réseau local et l'encode pour la diffusion.",
+	"live.networkIngest.infoBody": "Publiez vers cette adresse depuis une app de streaming ou un encodeur comme OBS. L'appareil reçoit le flux via votre réseau local et l'encode pour la diffusion.",
 	"live.networkIngest.infoTitle": "Entrée réseau",
 	"live.networkIngest.instructions": "Pointez votre app de streaming ou votre encodeur vers cette adresse, puis commencez à publier.",
 	"live.networkIngest.instructionsToggle": "Comment publier",

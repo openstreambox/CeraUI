@@ -75,6 +75,44 @@ const DEVICE_FAMILIES: readonly string[] = [
 	"carrying.",
 ];
 
+// Keys this rewording touched, so renaming one of them fails here instead of
+// slipping out of its family unnoticed.
+const REWORDED_KEYS: readonly string[] = [
+	"network.portal.intro",
+	"network.portal.waiting",
+	"network.portal.duration",
+	"network.portal.closing",
+	"network.portal.closed",
+	"network.portal.busy_other_phone",
+	"network.portal.privacyHint",
+	"settings.portal.experimentalDescription",
+	"live.networkIngest.infoBody",
+	"live.networkIngest.instructions",
+	"live.networkIngest.subtitle",
+	"settings.networkIngest.desc",
+	"settings.networkIngest.explanation",
+	"settings.dialogs.sources.description",
+	"settings.pairing.scanToPair",
+	"offline.unreachableCheckNetwork",
+	"hotspotConfirm.bodyKeepsStation",
+	"network.hotspot.newPasswordStreaming",
+	"carrying.active",
+	"carrying.idle",
+];
+
+// Japanese used the word for a mobile phone (携帯電話) for these cellular labels.
+const JA_CELLULAR_KEYS: readonly string[] = [
+	"network.sharing.policy.cellular",
+	"network.sharing.policy.cellularPriority",
+	"network.esim.confirm_disable",
+];
+
+// English phrasings that promise something about the stream or about other
+// paths, which the box cannot know. Home and hotel sign-in describe what the box
+// does instead. Like the term lists, this catches wording, not every claim.
+const REASSURANCE =
+	/\b(?:isn't|is not|not) affected\b|doesn't change (?:your|the) stream|nothing change[sd]? for your stream|stream is unchanged|still works?\b|works with (?:any|every)/i;
+
 describe("the term lists themselves", () => {
 	const hits: [Locale, string][] = [
 		["en", "Connect your smartphone"],
@@ -164,6 +202,17 @@ describe("Home copy on a box without an encoder", () => {
 
 describe("Copy about the reader's or the sender's device", () => {
 	for (const locale of ALL_LOCALES) {
+		it(`${locale} still has every reworded key, free of phone and viewer words`, () => {
+			const catalog = readCatalog(locale);
+			const missing = REWORDED_KEYS.filter((key) => typeof catalog[key] !== "string");
+			expect(missing).toEqual([]);
+			const offenders = REWORDED_KEYS.filter((key) => {
+				const value = normalize(catalog[key] as string);
+				return PHONE_TERMS[locale].test(value) || VIEWER_TERMS[locale].test(value);
+			});
+			expect(offenders).toEqual([]);
+		});
+
 		for (const family of DEVICE_FAMILIES) {
 			it(`${locale} ${family}* uses no word for a phone or for viewers`, () => {
 				const copy = copyWhere(locale, (key) => key.startsWith(family));
@@ -175,4 +224,33 @@ describe("Copy about the reader's or the sender's device", () => {
 			});
 		}
 	}
+});
+
+describe("Japanese cellular labels", () => {
+	it("name the cellular connection, not a phone", () => {
+		const catalog = readCatalog("ja");
+		for (const key of JA_CELLULAR_KEYS) {
+			expect(typeof catalog[key]).toBe("string");
+			expect(PHONE_TERMS.ja.test(normalize(catalog[key] as string))).toBe(false);
+		}
+	});
+});
+
+describe("English Home and sign-in copy makes no promise about the stream", () => {
+	it("flags the phrasings it is meant to catch", () => {
+		for (const text of ["Your stream isn't affected.", "Wi-Fi and Ethernet links still work.", "Works with any app"]) {
+			expect(REASSURANCE.test(text)).toBe(true);
+		}
+		expect(REASSURANCE.test("Restarting the box usually fixes it.")).toBe(false);
+	});
+
+	it("has none in live.phone.*, network.portal.* or the sign-in setting", () => {
+		const offenders = copyWhere(
+			"en",
+			(key) => key.startsWith("live.phone.") || key.startsWith("network.portal.") || key.startsWith("settings.portal."),
+		)
+			.filter(([, value]) => REASSURANCE.test(value))
+			.map(([key]) => key);
+		expect(offenders).toEqual([]);
+	});
 });
