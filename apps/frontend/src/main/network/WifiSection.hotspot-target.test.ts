@@ -208,7 +208,7 @@ it("does not reopen on the same id under a new incarnation after the radio was l
 it("reports a late failed Start after its radio was lost", async () => {
 	const view = renderSection([["0", row("radio-A")]]);
 	await openFromSection();
-	await fireEvent.click(screen.getByRole("button", { name: "Enable Hotspot" }));
+	await fireEvent.click(screen.getByTestId("hotspot-toggle"));
 	await waitFor(() =>
 		expect(screen.getByTestId("hotspot-activation-confirm").dataset.phase).toBe(
 			"ready",
