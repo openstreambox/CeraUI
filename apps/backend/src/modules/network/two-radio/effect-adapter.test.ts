@@ -13,6 +13,11 @@ import {
 	withWifiAdapterLock,
 } from "../../wifi/wifi-adapter-lock.ts";
 import {
+	addWifiInterface,
+	getWifiInterfacesByMacAddress,
+	removeWifiInterface,
+} from "../../wifi/wifi-connections.ts";
+import {
 	EffectAdapter,
 	type Holder,
 	type Identity,
@@ -486,9 +491,10 @@ describe("the lock Wi-Fi uses for the radio's current owner", () => {
 
 	test("same-owner station and profile work serializes with every effect", async () => {
 		await radios.publish(verified({ b: withProfiles }));
-		// A station op on a saved profile and the coordinator resolve one owner.
-		expect(wifiAdapterLockKey(MAC_B)).toBe(COMPOSITE);
-		expect(wifiAdapterLockKeyForConnectionUuid(STATION)).toBe(COMPOSITE);
+		// A station op on a saved profile and the coordinator resolve one owner;
+		// a sole radio's owner is its plain permanent address.
+		expect(wifiAdapterLockKey(MAC_B)).toBe(MAC_B);
+		expect(wifiAdapterLockKeyForConnectionUuid(STATION)).toBe(MAC_B);
 		const { adapter, owner } = await setup();
 		// Station work holds the owner: the effect is refused before any IO.
 		await withWifiAdapterLock(
@@ -540,10 +546,15 @@ describe("the lock Wi-Fi uses for the radio's current owner", () => {
 		const save = journal.save.bind(journal);
 		journal.save = async (snapshot) => {
 			await save(snapshot);
-			if (snapshot.operations[0]?.commands.length) owners = [COMPOSITE];
+			// A same-address twin arrives: discovery moves the row to its port key.
+			const row = getWifiInterfacesByMacAddress()[MAC_B];
+			if (snapshot.operations[0]?.commands.length && row) {
+				removeWifiInterface(MAC_B);
+				addWifiInterface(COMPOSITE, row);
+			}
 		};
 		expect(await adapter.execute(command(), holder)).toBeNull();
-		expect(wifiAdapterLockKey(MAC_B)).toBe(COMPOSITE);
+		expect(wifiAdapterLockKey(COMPOSITE)).toBe(COMPOSITE);
 		expect(owner.log).toEqual([]);
 	});
 
