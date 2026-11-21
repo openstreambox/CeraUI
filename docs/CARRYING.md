@@ -14,9 +14,27 @@ are per interface, so resets, additions and removals do not manufacture a delta.
 Gaps above ten seconds restart qualification. Recent entry-level traffic withholds
 idle for 20 seconds even if a short dip resets qualification. An isolated burst
 therefore has bounded checking time, while repeated stalls cannot open idle gaps.
-Every backend start seeds a separate two-minute checking window. It reports
-unknown, never carrying without real evidence, and ambient keep-level traffic
-cannot extend it. A restart therefore cannot lose the remaining protection.
+A backend restart within the same boot seeds a separate two-minute checking
+window. It reports unknown, never carrying without real evidence, and ambient
+keep-level traffic cannot extend it. A restart therefore cannot lose the
+remaining protection. The first start after a boot takes no such window: no
+earlier process held evidence to lose, anything carried before the reboot was
+already cut, and new client traffic is measured from the first sample interval.
+The first readable sample is only a baseline: it clears "unreadable", and the
+first rate needs a second sample of the same interfaces, five seconds later.
+A phone already forwarding when the backend starts is therefore reported idle
+for up to one heartbeat before it counts as qualifying traffic.
+The backend tells the two apart by creating `/run/ceralive/carrying-boot-claim`
+(`CERALIVE_CARRYING_BOOT_CLAIM`): `/run` is empty after every boot, and the unit
+keeps its runtime directory across restarts. A claim that already exists or
+cannot be created counts as a restart. Without this, every boot refused restart,
+power-off and the SSH switch for about two minutes after the backend started.
+Packages from before the claim never wrote it, so the package's postinst writes
+it before restarting the backend on every upgrade while systemd runs: that is a
+restart within the boot. It does not ask systemd whether the backend ran, because
+an old prerm may already have stopped, disabled and unloaded the unit, which
+clears that record. At worst a backend that had not run yet gets the restart
+hold. A fresh install and an image build write nothing.
 A two-minute hold after the last
 positive evidence covers reconnects. While an above-threshold upload is still
 qualifying, liveness is unknown, so idle actions wait without calling a short burst

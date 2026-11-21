@@ -1,3 +1,4 @@
+import { closeSync, openSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isSharedLanPort } from "../network/ethernet-role.ts";
 import {
@@ -103,10 +104,43 @@ export async function tickCarrying(): Promise<void> {
 	}
 }
 
-export function initCarrying(): void {
+/** /run starts empty on every boot, and the service keeps /run/ceralive across
+ * its own restarts (RuntimeDirectoryPreserve=yes), so this file tells a restart
+ * from the first start of a boot. */
+export function carryingBootClaimPath(): string {
+	return (
+		process.env.CERALIVE_CARRYING_BOOT_CLAIM ??
+		"/run/ceralive/carrying-boot-claim"
+	);
+}
+
+/** Only creating the claim proves a first start; an existing or unwritable
+ * claim counts as a restart, which keeps the startup hold. */
+export function claimFirstStartThisBoot(
+	path: string = carryingBootClaimPath(),
+): boolean {
+	try {
+		closeSync(openSync(path, "wx", 0o600));
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The startup hold stands in for client evidence an earlier backend process
+ * held and lost with its memory. The first start after a boot has no such
+ * predecessor: anything carried before the reboot was already cut, and new
+ * client traffic is measured by the sampler from its first interval. Holding
+ * there only refused restarts, power-off and SSH for two minutes after every
+ * boot.
+ */
+export function initCarrying(
+	firstStartThisBoot: boolean = claimFirstStartThisBoot(),
+): void {
 	enabled = true;
 	carryingTracker.bind(publishCarrying);
-	carryingTracker.start(performance.now());
+	if (!firstStartThisBoot) carryingTracker.start(performance.now());
 	carryingTracker.upload(performance.now(), null);
 	publishCarrying();
 }
