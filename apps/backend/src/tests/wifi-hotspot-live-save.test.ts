@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import * as exec from "../helpers/exec.ts";
 import * as runner from "../helpers/run.ts";
 import { nmConnSetFields } from "../modules/network/network-manager.ts";
@@ -12,6 +12,7 @@ import {
 	wifiHotspotConfig,
 } from "../modules/wifi/wifi-hotspot-config.ts";
 import { settlePending } from "../modules/wifi/wifi-hotspot-monitor.ts";
+import { runHotspotProfileOperation } from "../modules/wifi/wifi-hotspot-profile-operation.ts";
 import { statusClient } from "./helpers/status-client.ts";
 import { firstAp } from "./helpers/wifi-first-ap-fixture.ts";
 
@@ -271,6 +272,155 @@ test("a rollback never replaces a keyfile someone else wrote after the load", as
 			keptAside: true,
 			error: true,
 		});
+	} finally {
+		await f.restore();
+	}
+});
+
+/** Count loads; `nth` decides what each load does with the fake NM. */
+function interceptLoads(
+	nth: (
+		load: number,
+		apply: () => Promise<unknown>,
+	) => Promise<{ stdout: string; stderr: string }>,
+): () => number {
+	const platform = spyOn(exec, "execFileP").getMockImplementation();
+	if (!platform) throw new Error("Missing fake platform");
+	let loads = 0;
+	spyOn(exec, "execFileP").mockImplementation(async (bin, args, options) => {
+		if (args?.[0] !== "connection" || args[1] !== "load")
+			return platform(bin, args, options);
+		return nth(++loads, () => platform(bin, args, options));
+	});
+	return () => loads;
+}
+
+async function rotatePsk(uuid: string, psk: string) {
+	return runHotspotProfileOperation({
+		uuid,
+		kind: "modify",
+		fields: { "802-11-wireless-security.psk": psk },
+		run: (fields) => nmConnSetFields(uuid, fields),
+	});
+}
+
+test("a lost load reply and a failed rollback reload retire authority", async () => {
+	const { f, uuid } = await runningAp();
+	try {
+		const original = readFileSync(f.nm.files.filename(uuid));
+		const psk = `${f.secret}-rotation`;
+		const loads = interceptLoads(async (load, apply) => {
+			if (load === 2) throw new Error("rollback load rejected before applying");
+			await apply();
+			throw new Error("first load applied but its reply was lost");
+		});
+		const result = await rotatePsk(uuid, psk);
+		expect({
+			loads: loads(),
+			keyfileRestored: readFileSync(f.nm.files.filename(uuid)).equals(original),
+			nmStillNew:
+				f.settings.get(uuid)?.["802-11-wireless-security.psk"] === psk,
+			success: result.success,
+			checked: result.checked,
+			rolledBack: f.logs.includes("NM profile write rolled back"),
+			unverified: f.logs.includes("NM profile rollback could not be verified"),
+			retired: f.logs.includes("Wi-Fi profile authority retired"),
+		}).toEqual({
+			loads: 2,
+			keyfileRestored: true,
+			nmStillNew: true,
+			success: false,
+			checked: false,
+			rolledBack: false,
+			unverified: true,
+			retired: true,
+		});
+	} finally {
+		await f.restore();
+	}
+});
+
+test("a rollback reload that reports success while NM keeps the new secret stays unverified", async () => {
+	const { f, uuid } = await runningAp();
+	try {
+		const psk = `${f.secret}-rotation`;
+		interceptLoads(async (load, apply) => {
+			if (load === 2) return { stdout: "", stderr: "" };
+			await apply();
+			throw new Error("first load applied but its reply was lost");
+		});
+		const result = await rotatePsk(uuid, psk);
+		expect({
+			nmStillNew:
+				f.settings.get(uuid)?.["802-11-wireless-security.psk"] === psk,
+			checked: result.checked,
+			rolledBack: f.logs.includes("NM profile write rolled back"),
+			retired: f.logs.includes("Wi-Fi profile authority retired"),
+		}).toEqual({
+			nmStillNew: true,
+			checked: false,
+			rolledBack: false,
+			retired: true,
+		});
+	} finally {
+		await f.restore();
+	}
+});
+
+test("a same-byte successor written between the restore and its reload is never verified as the restoration", async () => {
+	const { f, uuid } = await runningAp();
+	try {
+		const file = f.nm.files.filename(uuid);
+		const psk = `${f.secret}-rotation`;
+		let successor: bigint | undefined;
+		interceptLoads(async (load, apply) => {
+			if (load === 2) {
+				// Another writer replaces the restored name with identical bytes on a new inode.
+				writeFileSync(`${file}.successor`, readFileSync(file), { mode: 0o600 });
+				renameSync(`${file}.successor`, file);
+				successor = statSync(file, { bigint: true }).ino;
+			}
+			await apply();
+			if (load === 1)
+				throw new Error("first load applied but its reply was lost");
+			return { stdout: "", stderr: "" };
+		});
+		const result = await rotatePsk(uuid, psk);
+		expect({
+			successorLive: statSync(file, { bigint: true }).ino === successor,
+			checked: result.checked,
+			rolledBack: f.logs.includes("NM profile write rolled back"),
+			unverified: f.logs.includes("NM profile rollback could not be verified"),
+			retired: f.logs.includes("Wi-Fi profile authority retired"),
+		}).toEqual({
+			successorLive: true,
+			checked: false,
+			rolledBack: false,
+			unverified: true,
+			retired: true,
+		});
+	} finally {
+		await f.restore();
+	}
+});
+
+test("an unrelated same-byte rewrite during a rejected modify retires authority", async () => {
+	const { f, uuid } = await runningAp();
+	try {
+		const file = f.nm.files.filename(uuid);
+		const result = await runHotspotProfileOperation({
+			uuid,
+			kind: "modify",
+			fields: { "802-11-wireless.ssid": "New AP" },
+			run: async () => {
+				writeFileSync(file, readFileSync(file));
+				return false;
+			},
+		});
+		expect({
+			checked: result.checked,
+			retired: f.logs.includes("Wi-Fi profile authority retired"),
+		}).toEqual({ checked: false, retired: true });
 	} finally {
 		await f.restore();
 	}

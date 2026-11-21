@@ -2,11 +2,14 @@ import { open } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { logger } from "../../helpers/logger.ts";
 import { run, runWithStdin } from "../../helpers/run.ts";
+import { nmConnGetFields } from "./network-manager.ts";
 import { stageKeyfilePublication } from "./network-manager-keyfile-publication.ts";
 import type { NmProfileReadTrace } from "./network-manager-profile-diagnostics.ts";
 import { readNmProfileFileSecret } from "./network-manager-profile-file.ts";
 import {
+	type NmProfileInstance,
 	readNmProfileInstance,
+	sameNmProfileFile,
 	sameNmProfileResource,
 } from "./network-manager-profile-instance.ts";
 import { openNmProfileFile } from "./network-manager-profile-write.ts";
@@ -86,6 +89,47 @@ export async function readVerifiedNmWifiSecret(
 	}
 }
 
+type RollbackReceipt = {
+	readonly serial: number;
+	readonly instance: NmProfileInstance;
+};
+const rollbackReceipts = new Map<string, RollbackReceipt>();
+let writeSerial = 0;
+
+/** Mark taken before a dispatch; only receipts its own writes issue count. */
+export function nmProfileWriteSerial(): number {
+	return writeSerial;
+}
+
+/** The verified rollback a write since `since` left for `uuid`; consumed once. */
+export function takeNmRollbackReceipt(
+	uuid: string,
+	since: number,
+): NmProfileInstance | undefined {
+	const receipt = rollbackReceipts.get(uuid);
+	rollbackReceipts.delete(uuid);
+	return receipt && receipt.serial > since ? receipt.instance : undefined;
+}
+
+/** The restored bytes, and NM's shown secret wherever NM shows one, agree. */
+async function restoredSecretLoaded(
+	uuid: string,
+	file: NmProfileInstance["file"],
+	original: Buffer,
+): Promise<boolean> {
+	const current = await openNmProfileFile(file);
+	try {
+		if (!current?.bytes.equals(original)) return false;
+	} finally {
+		await current?.handle.close();
+	}
+	const kept = (await readNmProfileFileSecret(file))?.password ?? "";
+	const shown = (
+		await nmConnGetFields(uuid, ["802-11-wireless-security.psk"] as const)
+	)?.[0];
+	return !isNmWifiSecretAvailable(shown) || shown === kept;
+}
+
 /** Keep credentials in stdin and mode-0600 keyfiles, never the process table. */
 export async function writeNmWifiSecret(
 	uuid: string,
@@ -115,6 +159,8 @@ export async function writeNmWifiSecret(
 		logger.warn("NM profile write rejected", { reason });
 		return false;
 	};
+	const serial = ++writeSerial;
+	rollbackReceipts.delete(uuid);
 	const beforeTrace: NmProfileReadTrace = {};
 	const before = await readNmProfileInstance(uuid, undefined, beforeTrace);
 	if (!before)
@@ -150,32 +196,35 @@ export async function writeNmWifiSecret(
 	/*
 	  Once NM may have loaded the submitted keyfile, a rejection alone would leave
 	  NM on the new values while every caller keeps the old ones. Put the original
-	  back (only over our own bytes) and reload, so a rejected write leaves NM's
-	  profile as it found it, then prove that with a fresh read.
+	  back (only over our own bytes) and reload it. Only a reload that succeeded,
+	  read back as exactly the restored file on the same NM run and object with
+	  the original settings, earns a receipt; anything less stays unverified.
 	*/
 	const rollBack = async (
 		reason: Parameters<typeof reject>[0],
 	): Promise<false> => {
 		reject(reason);
 		try {
-			if (!publication.restore(submitted)) return false;
+			const restoredFile = publication.restore(submitted);
+			if (!restoredFile) return false;
 			await run("nmcli", ["connection", "load", filename]);
 			const restored = await readNmProfileInstance(uuid);
-			const current = await openNmProfileFile(restored?.file);
-			try {
-				if (
-					restored?.fingerprint === before.fingerprint &&
-					current?.bytes.equals(original)
-				)
-					logger.warn("NM profile write rolled back");
-				else logger.error("NM profile rollback could not be verified");
-			} finally {
-				await current?.handle.close();
+			if (
+				restored?.file &&
+				sameNmProfileFile(restoredFile, restored.file) &&
+				restored.runId === before.runId &&
+				restored.path === before.path &&
+				restored.fingerprint === before.fingerprint &&
+				(await restoredSecretLoaded(uuid, restored.file, original))
+			) {
+				rollbackReceipts.set(uuid, { serial, instance: restored });
+				logger.warn("NM profile write rolled back");
+				return false;
 			}
 		} catch (error: unknown) {
 			if (!(error instanceof Error)) throw error;
-			logger.error("NM profile rollback could not be verified");
 		}
+		logger.error("NM profile rollback could not be verified");
 		return false;
 	};
 	try {
