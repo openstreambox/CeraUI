@@ -13,6 +13,7 @@ import type {
 	FiveGPreference,
 	Modem,
 	ModemFiveGPreference,
+	ModeTrialRecord,
 } from "@ceraui/rpc/schemas";
 
 export type FiveGOptionView = {
@@ -34,13 +35,21 @@ export type FiveGView =
 	  };
 
 const LABEL_KEY: Record<FiveGPreference, string> = {
+	auto: "network.modem.fiveG.option.auto",
+	"lte-only": "network.modem.fiveG.option.lteOnly",
 	"5g-only": "network.modem.fiveG.option.fiveGOnly",
 	"prefer-5g": "network.modem.fiveG.option.preferFiveG",
 	"prefer-4g": "network.modem.fiveG.option.preferFourG",
 	"5g-off": "network.modem.fiveG.option.fiveGOff",
 };
 
+export function fiveGPreferenceLabelKey(preference: FiveGPreference): string {
+	return LABEL_KEY[preference];
+}
+
 const DESCRIPTION_KEY: Record<FiveGPreference, string> = {
+	auto: "network.modem.fiveG.description.auto",
+	"lte-only": "network.modem.fiveG.description.lteOnly",
 	"5g-only": "network.modem.fiveG.description.fiveGOnly",
 	"prefer-5g": "network.modem.fiveG.description.preferFiveG",
 	"prefer-4g": "network.modem.fiveG.description.preferFourG",
@@ -91,6 +100,7 @@ export function fiveGViewForModem(modem: Modem | undefined): FiveGView {
  */
 export function fiveGFailureKey(error: string | undefined): string {
 	switch (error) {
+		case "mutation_in_progress":
 		case "unknown_modem":
 		case "not_offered":
 		case "write_failed":
@@ -100,4 +110,44 @@ export function fiveGFailureKey(error: string | undefined): string {
 		default:
 			return "network.modem.fiveG.error.generic";
 	}
+}
+
+/**
+ * One history line: which sentence, and which mode it names. `mode` is a label
+ * key, or the "a setting not listed here" key for a pair no option names.
+ * Newest first, and only what the device sent (it sends at most ten).
+ */
+export type FiveGHistoryLine = {
+	readonly at: number;
+	readonly key: string;
+	readonly modeKey?: string;
+};
+
+const UNNAMED_MODE_KEY = "network.modem.fiveG.unnamedMode";
+
+export function fiveGHistoryLines(
+	history: readonly ModeTrialRecord[] | undefined,
+): FiveGHistoryLine[] {
+	return [...(history ?? [])]
+		.sort((a, b) => b.at - a.at)
+		.slice(0, 10)
+		.map((record) => {
+			const modeKey =
+				record.target === null ? UNNAMED_MODE_KEY : LABEL_KEY[record.target];
+			if (record.source === "manual") {
+				return {
+					at: record.at,
+					key: record.reasons.includes("via:modem-settings")
+						? "network.modem.fiveG.historySettings"
+						: "network.modem.fiveG.historyManual",
+					modeKey,
+				};
+			}
+			return {
+				at: record.at,
+				key: record.reasons.includes("locked")
+					? "network.modem.fiveG.historyLocked"
+					: "network.modem.fiveG.historyUnavailable",
+			};
+		});
 }
