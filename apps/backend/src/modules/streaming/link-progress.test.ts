@@ -206,19 +206,50 @@ describe("LinkProgressTracker", () => {
 	});
 
 	test("one sample after a long silence is not two samples", () => {
+		// Two snapshots further apart than the evidence window are not a chain:
+		// the second one starts the link over.
 		const tracker = new LinkProgressTracker();
-		tracker.observe([row("wwan0", 0)], 0);
-		tracker.observe([row("wwan0", 0)], LINK_CARRYING_SHOW_MS);
-		// Two distinct snapshots, five seconds apart, counter unchanged: that is
-		// comparable evidence, as long as the evidence is current.
+		tracker.observe([row("wwan0", 100)], 0);
+		expect(tracker.stateFor(row("wwan0", 100), 4_999)).toBe("unknown");
+		tracker.observe([row("wwan0", 100)], LINK_CARRYING_SHOW_MS);
+		expect(tracker.stateFor(row("wwan0", 100), LINK_CARRYING_SHOW_MS)).toBe(
+			"unknown",
+		);
+	});
+
+	test("a zero-rate counter reset drops the progress the old counter showed", () => {
+		const tracker = new LinkProgressTracker();
+		tracker.observe([row("wwan0", 100)], 0);
+		tracker.observe([row("wwan0", 200)], 1_000);
+		tracker.observe([row("wwan0", 0)], 2_000);
+		expect(tracker.stateFor(row("wwan0", 0), 2_000)).toBe("unknown");
+	});
+
+	test("a missing counter drops earlier progress too", () => {
+		const tracker = new LinkProgressTracker();
+		tracker.observe([row("wwan0", 100)], 0);
+		tracker.observe([row("wwan0", 200)], 1_000);
+		tracker.observe([row("wwan0", undefined)], 2_000);
+		expect(tracker.stateFor(row("wwan0", undefined), 2_000)).toBe("unknown");
+	});
+
+	test("a reset with a measured rate is carrying from that rate alone", () => {
+		const tracker = new LinkProgressTracker();
+		tracker.observe([row("wwan0", 100)], 0);
+		tracker.observe([row("wwan0", 0, { bitrate_bps: 900 })], 1_000);
+		expect(tracker.stateFor(row("wwan0", 0), 1_000)).toBe("carrying");
+	});
+
+	test("a gap in the feed cannot supply the progress that clears a verdict", () => {
+		const tracker = new LinkProgressTracker();
+		run(tracker, 0, LINK_CARRYING_SHOW_MS, () => [row("wwan0", 0)]);
 		expect(tracker.stateFor(row("wwan0", 0), LINK_CARRYING_SHOW_MS)).toBe(
 			"not_carrying",
 		);
-		const single = new LinkProgressTracker();
-		single.observe([row("wwan0", 0)], LINK_CARRYING_SHOW_MS);
-		expect(single.stateFor(row("wwan0", 0), LINK_CARRYING_SHOW_MS)).toBe(
-			"unknown",
-		);
+		tracker.observe([row("wwan0", 10)], 6_000);
+		tracker.observe([row("wwan0", 20)], 11_000);
+		tracker.observe([row("wwan0", 20)], 16_000);
+		expect(tracker.stateFor(row("wwan0", 20), 16_000)).toBe("unknown");
 	});
 
 	test("every verdict expires when the sender stops reporting", () => {

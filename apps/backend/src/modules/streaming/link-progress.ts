@@ -35,11 +35,13 @@
   unchanged, in at least two distinct sender snapshots spanning
   LINK_CARRYING_SHOW_MS, with no measured rate. A missing counter, a counter
   that went backwards (the sender rebuilt the link) and a gap in the reports
-  all clear the baseline and any verdict, so the link reads unknown until new
-  evidence has accumulated. The caller feeds each sender snapshot once (it
-  drops repeated reads of the same snapshot), and every verdict expires
-  LINK_CARRYING_EVIDENCE_MS after the last snapshot, so a sender that went
-  silent never leaves a stale answer behind.
+  all clear the baseline, any verdict and earlier progress, so the link reads
+  unknown until new evidence has accumulated. The caller feeds each sender
+  snapshot once (it drops repeated reads of the same snapshot). Consecutive
+  snapshots must be at most LINK_CARRYING_EVIDENCE_MS apart: a verdict expires
+  that long after the last snapshot, and a snapshot that arrives later starts
+  every link over, so a sender that went silent never leaves a stale answer
+  behind or lends it to the next report.
 
   Three answers, and only one of them is a claim:
     - `carrying`: progress within the last LINK_CARRYING_SHOW_MS;
@@ -144,9 +146,12 @@ function observeRow(
 		bytes === undefined ||
 		(track.bytes !== undefined && bytes < track.bytes)
 	) {
-		// No comparable evidence: forget the baseline and any verdict.
+		// No comparable evidence: forget the baseline, any verdict and the
+		// progress the old counter showed. A measured rate below can still
+		// make the link carrying again on its own.
 		track.notCarrying = false;
 		track.progressSinceMs = undefined;
+		track.lastProgressMs = undefined;
 	}
 	if (bytes === undefined) {
 		track.bytes = undefined;
@@ -197,6 +202,9 @@ export class LinkProgressTracker {
 	 * snapshot it already fed; feeding one twice would count as a second sample.
 	 */
 	observe(rows: readonly LinkProgressRow[], nowMs: number): void {
+		// A snapshot after the evidence window is not part of the old chain:
+		// every link starts over, as after a reported gap.
+		if (!this.current(nowMs)) this.tracks.clear();
 		const next = new Map<string, LinkTrack>();
 		for (const row of rows) {
 			const key = linkCarryingKey(row);
