@@ -66,8 +66,9 @@ $effect(() => {
 	>
 		{#if status !== undefined}
 			<div class="flex min-w-0 flex-col gap-2 sm:flex-1">
-				<!-- Two lines are always reserved, so a reason that wraps never moves the bar. -->
-				<p class="flex min-h-10 min-w-0 items-start gap-2 text-sm" aria-live="polite">
+				<!-- Two lines are reserved, so a reason that wraps never moves the bar;
+				     on a short screen one line is enough. -->
+				<p class="flex min-h-10 min-w-0 items-start gap-2 text-sm [@media(max-height:640px)]:min-h-0" aria-live="polite">
 					<span
 						class="mt-1.5 size-2 shrink-0 rounded-full"
 						style="background: {blocked ? 'var(--destructive)' : 'var(--status-success)'};"
