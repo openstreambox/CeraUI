@@ -111,6 +111,7 @@ function netifEntryEquals(
 ): boolean {
 	return (
 		a.ip === b.ip &&
+		a.ipv6 === b.ipv6 &&
 		a.mac === b.mac &&
 		a.up === b.up &&
 		a.tp === b.tp &&

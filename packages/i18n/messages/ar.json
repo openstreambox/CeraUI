@@ -3137,6 +3137,7 @@
 	"live.phone.moblinBusy": "انتظر حتى يؤكد الجهاز أنه لا يوجد بث يستخدمه قبل تغيير كلمة مرور Moblin.",
 	"live.audioMixer.error.audio_input_primary": "يبقى المدخل الرئيسي دائمًا ضمن المزج. لإيقافه، اختر مصدر صوت آخر.",
 	"live.layout.insetCancel": "اضغط Escape قبل الإفلات لإعادته إلى موضعه السابق.",
+	"network.sharing.ipv6Only": "لا تستطيع الأجهزة المتصلة بشبكة Wi-Fi الخاصة بالجهاز الوصول إلى مواقع IPv4 عبر هذا الرابط بعد.",
 	"systemLogs.tabs.label": "طرق عرض السجلات",
 	"systemLogs.tabs.events": "الأحداث",
 	"systemLogs.tabs.raw": "السجلات الخام",
