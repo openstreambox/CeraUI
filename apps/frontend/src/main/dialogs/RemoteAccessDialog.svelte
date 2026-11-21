@@ -68,7 +68,9 @@ const REFRESH_MS = 60_000;
 function refreshDevice() {
 	void Promise.resolve()
 		.then(() => rpc.status.getStatus())
-		.catch(() => {});
+		.catch(() => {
+			// Offline or busy: the next minute asks again.
+		});
 }
 let now = $state(Date.now());
 $effect(() => {
