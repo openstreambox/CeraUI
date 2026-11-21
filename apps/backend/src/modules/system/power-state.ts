@@ -40,7 +40,9 @@ export interface SupervisorFields {
 	packCalibration: string | null;
 	/** `start`: `on`, `off`, or why the box's feed is not on yet. */
 	start: string | null;
-	/** Names of the set `gaps`/`gaps2` bits; unknown bits as `bit<n>`. */
+	/** As the power service reads it: unknown unless both gap halves are valid. */
+	protection: "reduced" | "no_reported_gaps" | "unknown";
+	/** Names of the set `gaps`/`gaps2` bits, unknown bits as `bit<n>`; null unless both halves are valid. */
 	gaps: string[] | null;
 }
 export interface PowerState {
@@ -165,16 +167,19 @@ export async function readPowerState(
 		const feed = f.sbc === "run" ? ` ${powerText("feed")}` : "";
 		const resting = (bank: string) =>
 			/^(stood_down|standing_down)(:|\/|$)/.test(f[bank] ?? "");
-		// Missing gaps is unknown; firmware before gaps2 may omit it.
-		const valid =
-			f.gaps !== undefined &&
-			[f.gaps, f.gaps2].every(
-				(v) => v === undefined || /^[0-9a-fA-F]{4}$/.test(v),
-			);
-		const mask = valid
-			? Number.parseInt(f.gaps ?? "0", 16) +
-				65536 * Number.parseInt(f.gaps2 ?? "0", 16)
-			: 0;
+		// Gap bits are this board profile's; another board's protection is unknown.
+		const profileKnown =
+			f.profile === undefined || f.profile === "dual-input-reserve-v1";
+		const half = (value: string | undefined) =>
+			profileKnown && value !== undefined && /^[0-9a-fA-F]{4}$/.test(value)
+				? Number.parseInt(value, 16)
+				: null;
+		const low = half(f.gaps);
+		const high = half(f.gaps2);
+		// Protection needs both halves: a missing or garbled one is unknown, never
+		// full protection. A readable half still gives its own warnings.
+		const complete = low !== null && high !== null;
+		const mask = (low ?? 0) + 65536 * (high ?? 0);
 		const restLost = (bank: "a" | "b") => (mask & REST_LOST[bank]) !== 0;
 		if (f.power === "low") add("supply", "low", "warning", {}, feed);
 		if (f.power === "holdup") add("supply", "reserve");
@@ -188,9 +193,32 @@ export async function readPowerState(
 		)
 			add("redundancy", "redundancy", "info", {}, feed);
 		const level = f.thermal;
+		const targets = (f.hot ?? "").split(",");
+		/** A plugged bank's heat advice for the current level, if it is among the hottest. */
+		const bankHeat = (bank: "a" | "b"): string[] => {
+			if (
+				(level !== "warm" && level !== "hot" && level !== "critical") ||
+				!targets.includes(bank) ||
+				f[bank]?.startsWith("absent/")
+			)
+				return [];
+			const texts = [
+				powerText(
+					level === "warm"
+						? "bankWarm"
+						: level === "hot"
+							? "bankHot"
+							: "bankCritical",
+					{ bank: bank.toUpperCase() },
+				),
+			];
+			const peer = bank === "a" ? "b" : "a";
+			if (level !== "warm" && !f[peer]?.startsWith("healthy/"))
+				texts.push(powerText("replacement"));
+			return texts;
+		};
 		if (level === "shutdown") add("heat", "shutdownHeat");
 		else if (level === "warm" || level === "hot" || level === "critical") {
-			const targets = (f.hot ?? "").split(",");
 			const texts: string[] = [];
 			for (const target of targets) {
 				if (target === "pack")
@@ -203,25 +231,13 @@ export async function readPowerState(
 									: "packCritical",
 						),
 					);
+				// A resting or lost bank's own notice carries its heat.
 				else if (
 					(target === "a" || target === "b") &&
 					!resting(target) &&
-					!f[target]?.startsWith("absent/")
-				) {
-					texts.push(
-						powerText(
-							level === "warm"
-								? "bankWarm"
-								: level === "hot"
-									? "bankHot"
-									: "bankCritical",
-							{ bank: target.toUpperCase() },
-						),
-					);
-					const peer = target === "a" ? "b" : "a";
-					if (level !== "warm" && !f[peer]?.startsWith("healthy/"))
-						texts.push(powerText("replacement"));
-				}
+					!restLost(target)
+				)
+					texts.push(...bankHeat(target));
 			}
 			if (texts.length)
 				notices.push({
@@ -236,15 +252,19 @@ export async function readPowerState(
 			const peer = bank === "a" ? "b" : "a";
 			const peerCarries = f[peer]?.startsWith("healthy/") === true;
 			if (restLost(bank))
-				add(
-					`bank-${bank}`,
-					"restLost",
-					"warning",
-					{ bank: bank.toUpperCase() },
-					peerCarries
-						? ` ${powerText("peer", { bank: peer.toUpperCase() })}`
-						: feed,
-				);
+				// Heat advice first: a hot bank must cool before it is woken or replugged.
+				notices.push({
+					id: `bank-${bank}`,
+					type: "warning",
+					message:
+						[
+							...bankHeat(bank),
+							powerText("restLost", { bank: bank.toUpperCase() }),
+						].join(" ") +
+						(peerCarries
+							? ` ${powerText("peer", { bank: peer.toUpperCase() })}`
+							: feed),
+				});
 			else if (resting(bank)) {
 				const cause = f[bank]?.split("/")[0]?.split(":")[1];
 				add(
@@ -264,7 +284,7 @@ export async function readPowerState(
 		}
 		if (f.armed === "0") add("bench", "bench", "info");
 		// An unknown bit from newer firmware still means reduced protection.
-		if (!valid || mask >= 2 ** GAP_NAMES.length)
+		if (!complete || mask >= 2 ** GAP_NAMES.length)
 			add("protection", "protection", "warning", {}, feed);
 		GAP_COPY.forEach((key, bit) => {
 			if (key && mask & (2 ** bit))
@@ -310,7 +330,12 @@ export async function readPowerState(
 			supervisor: {
 				packCalibration: supervisorWord(f.pack_cal),
 				start: supervisorWord(f.start),
-				gaps: valid
+				protection: !complete
+					? "unknown"
+					: mask !== 0
+						? "reduced"
+						: "no_reported_gaps",
+				gaps: complete
 					? Array.from({ length: 32 }, (_, bit) => bit)
 							.filter((bit) => mask & (2 ** bit))
 							.map((bit) => GAP_NAMES[bit] ?? `bit${bit}`)

@@ -484,13 +484,13 @@ test("shutdown requested without a cause still explains the shutdown", async () 
 		),
 	).toBe(true);
 });
-test("missing primary gaps stays unknown; legacy missing gaps2 is allowed", async () => {
-	expect(
-		(await changed({}, { gaps: undefined })).notices.some(
-			(n) => n.id === "protection",
-		),
-	).toBe(true);
-	expect((await changed({}, { gaps2: undefined })).notices).toEqual([]);
+test("a missing gaps or gaps2 half leaves protection unknown, never full", async () => {
+	for (const missing of ["gaps", "gaps2"]) {
+		const state = await changed({}, { [missing]: undefined });
+		expect(state.notices.map((n) => n.id)).toEqual(["protection"]);
+		expect(state.supervisor?.protection).toBe("unknown");
+		expect(state.supervisor?.gaps).toBeNull();
+	}
 });
 test("summary says the box remains powered once across multiple notices", async () => {
 	const state = await changed({}, { gaps: "0038", redundant: "0" });
@@ -556,6 +556,19 @@ test("firmware snapshots match the status lines they were decoded from", async (
 	const rows = await firmwareLines();
 	expect(rows.length).toBeGreaterThanOrEqual(7);
 	for (const [name, line] of rows) {
+		// Frame rules of the power service's reader: version prefix, status not event,
+		// bounded length, key=value tokens with unique keys, checksum last.
+		expect(line.startsWith("OSB1 ")).toBe(true);
+		expect(line.startsWith("OSB1 EVT ")).toBe(false);
+		expect(line.length).toBeLessThan(512);
+		expect(line).toMatch(
+			/^OSB1( [a-z][a-z0-9_]{0,30}=[!-~]{1,159})+ crc=[0-9A-F]{4}$/,
+		);
+		const keys = line
+			.split(" ")
+			.slice(1)
+			.map((t) => t.split("=")[0]);
+		expect(new Set(keys).size).toBe(keys.length);
 		const [body, crc] = line.split(" crc=");
 		expect(crc).toBe(crc16(body ?? ""));
 		const fields = Object.fromEntries(
@@ -571,10 +584,15 @@ test("firmware snapshots match the status lines they were decoded from", async (
 	}
 });
 describe("a bank that does not come back from its rest", () => {
-	for (const [name, bank, peer] of [
-		["rest-lost-a-gone", "A", "B"],
-		["rest-lost-a-silent", "A", "B"],
-		["rest-lost-b-gone", "B", "A"],
+	for (const [name, bank, peer, heat] of [
+		["rest-lost-a-gone", "A", "B", ""],
+		[
+			"rest-lost-a-silent",
+			"A",
+			"B",
+			"Bank A is hot. Improve airflow or swap it for a cool bank. ",
+		],
+		["rest-lost-b-gone", "B", "A", ""],
 	] as const) {
 		test(`${name} names the bank, what to do and who powers the box`, async () => {
 			const state = await read(name);
@@ -583,13 +601,14 @@ describe("a bank that does not come back from its rest", () => {
 			);
 			expect(notice?.type).toBe("warning");
 			expect(notice?.message).toBe(
-				`Bank ${bank} stopped answering while it rested. It may have switched itself off: press its button or replug it. Bank ${peer} powers the box.`,
+				`${heat}Bank ${bank} stopped answering while it rested. It may have switched itself off: press its button or replug it. Bank ${peer} powers the box.`,
 			);
 			const ids = state.notices.map((n) => n.id);
 			// The specific words replace the generic ones, and a resting notice for the same bank.
 			expect(ids).not.toContain("protection");
 			expect(ids).not.toContain("redundancy");
 			expect(ids).not.toContain(`gap-${bank.toLowerCase()}_rest_lost`);
+			expect(ids).not.toContain("heat");
 			expect(state.summary).not.toContain("is hot and resting");
 			expect(state.supervisor?.gaps).toContain(
 				`${bank.toLowerCase()}_rest_lost`,
@@ -600,6 +619,41 @@ describe("a bank that does not come back from its rest", () => {
 		expect((await read("rest-lost-a-silent")).notices.map((n) => n.id)).toEqual(
 			["bank-a", "gap-sink"],
 		);
+	});
+	for (const [level, words] of [
+		["warm", "Bank A is warm. Give it more airflow. Bank A stopped"],
+		[
+			"critical",
+			"Bank A is very hot. Improve airflow or swap it for a cool bank. Connect the replacement before removing the only bank. Bank A stopped",
+		],
+	] as const)
+		test(`a ${level} bank that stops answering keeps its heat advice first`, async () => {
+			const state = await changed(
+				{},
+				{
+					thermal: level,
+					hot: "a",
+					a: "stood_down:thermal/5.00V/0.00A/58.0C/41",
+					b: "sagging/18.00V/1.00A/30.0C/00",
+					gaps2: "0004",
+				},
+			);
+			expect(state.notices.map((n) => n.id)).toEqual(["bank-a"]);
+			expect(state.notices[0]?.message).toStartWith(words);
+		});
+	test("heat on the other bank stays its own notice", async () => {
+		const state = await changed(
+			{},
+			{
+				thermal: "hot",
+				hot: "b",
+				a: "absent/0.00V/0.00A/30.0C/00",
+				b: "healthy/20.00V/1.00A/52.0C/00",
+				gaps2: "0004",
+			},
+		);
+		expect(state.notices.map((n) => n.id)).toEqual(["heat", "bank-a"]);
+		expect(state.notices[0]?.message).toContain("Bank B is hot");
 	});
 	test("both banks lost while the reserve carries the box", async () => {
 		const state = await changed(
@@ -639,17 +693,51 @@ describe("supervisor fields across firmware versions", () => {
 		expect((await read("rest-lost-a-silent")).supervisor).toEqual({
 			packCalibration: "bench",
 			start: "on",
+			protection: "reduced",
 			gaps: ["sink", "a_rest_lost"],
 		});
+		expect((await read("rest-lost-cleared")).supervisor?.protection).toBe(
+			"no_reported_gaps",
+		);
 	});
-	test("firmware before gaps2 still reads its resting bank and no gaps", async () => {
+	test("firmware before gaps2 still reads its resting bank; protection is unknown", async () => {
 		const state = await read("firmware-before-gaps2");
-		expect(state.notices.map((n) => n.id)).toEqual(["bank-a"]);
+		expect(state.notices.map((n) => n.id)).toEqual(["bank-a", "protection"]);
 		expect(state.supervisor).toEqual({
 			packCalibration: "bench",
 			start: "on",
-			gaps: [],
+			protection: "unknown",
+			gaps: null,
 		});
+	});
+	for (const [fields, ids] of [
+		[{ gaps: "8000", gaps2: undefined }, ["protection", "gap-sink"]],
+		[{ gaps: "8000", gaps2: "zzzz" }, ["protection", "gap-sink"]],
+		[{ gaps: undefined, gaps2: "0004" }, ["bank-a", "protection"]],
+		[{ gaps: "0x80", gaps2: "0004" }, ["bank-a", "protection"]],
+	] as const)
+		test(`the readable half still warns: ${JSON.stringify(fields)}`, async () => {
+			const state = await changed(
+				{},
+				{ ...fields, a: "absent/0.00V/0.00A/30.0C/00" },
+			);
+			expect(state.notices.map((n) => n.id)).toEqual([...ids]);
+			expect(state.supervisor?.protection).toBe("unknown");
+			expect(state.supervisor?.gaps).toBeNull();
+		});
+	test("an unknown board profile is not read as this board's protection", async () => {
+		const state = await changed({}, { profile: "other-board-v1" });
+		expect(state.notices.map((n) => n.id)).toEqual(["protection"]);
+		expect(state.supervisor?.protection).toBe("unknown");
+		expect(state.supervisor?.gaps).toBeNull();
+		const unknownBits = await changed(
+			{},
+			{ profile: "other-board-v1", gaps: "8000", gaps2: "0004" },
+		);
+		expect(unknownBits.notices.map((n) => n.id)).toEqual(["protection"]);
+		expect(
+			(await changed({}, { profile: "dual-input-reserve-v1" })).notices,
+		).toEqual([]);
 	});
 	test("firmware before the policy fields keeps them unknown", async () => {
 		const state = await read("firmware-before-policy-fields");
@@ -658,6 +746,7 @@ describe("supervisor fields across firmware versions", () => {
 		expect(state.supervisor).toEqual({
 			packCalibration: null,
 			start: null,
+			protection: "unknown",
 			gaps: null,
 		});
 	});

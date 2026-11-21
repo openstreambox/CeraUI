@@ -46,7 +46,10 @@ Warnings describe power and the affected parts, without changing the stream's
 live verdict. A running feed is described as still powered, not as evidence of
 viewer delivery. The UI uses the supervisor's levels rather than duplicating
 thermal thresholds. Missing fields remain unknown, including a missing primary
-gaps field; older firmware may omit gaps2. A shutdown request needs no cause to
+gaps field. Protection needs both gaps and gaps2: if either is missing or
+malformed, or the status names another board profile, protection is unknown
+and the reduced protection warning shows, while the half that was read still
+gives its own warnings. Firmware from before gaps2 therefore always shows it. A shutdown request needs no cause to
 raise a notice. Unknown nonzero protection bits indicate reduced protection.
 Estimated pack temperatures are labelled. Reported bank temperatures require a
 present bank state. Normal bench and datasheet-estimate gap bits do not add
@@ -60,14 +63,17 @@ A bank that went quiet or away while resting, or did not come back after a
 rest (`gaps2` bits `a_rest_lost` and `b_rest_lost`), gets its own warning in
 place of that bank's resting notice: it may have switched itself off, so the
 user is asked to press its button or replug it, and the warning names the bank
-that powers the box when one does. It also replaces the generic reduced
+that powers the box when one does. If that bank is among the hottest, the same
+warning starts with its heat advice, so it cools before anyone wakes it. It also replaces the generic reduced
 protection and missing backup notices for that state, and clears once the
 supervisor reads the bank healthy again.
 
 The state also carries the supervisor's own words for diagnostics: `pack_cal`,
-`start` and the names of the set `gaps`/`gaps2` bits (unknown bits as
-`bit<n>`). Each is null when the field is missing or malformed, so firmware from
-before these fields reads as unknown. A newer firmware's word for `pack_cal` or
+`start`, a protection verdict (`reduced`, `no_reported_gaps` or `unknown`, as
+the power service defines it) and the names of the set `gaps`/`gaps2` bits
+(unknown bits as `bit<n>`). The words are null when missing or malformed and
+the bit names are null unless both halves are valid, so firmware from before
+these fields reads as unknown. A newer firmware's word for `pack_cal` or
 `start` is passed on as reported; status keys CeraUI does not know are ignored.
 No UI shows these diagnostics yet.
 
@@ -101,8 +107,11 @@ marcador local «Power sample».
 Si un banco deja de responder durante su reposo, desaparece o no vuelve
 después de reposar, CeraUI muestra un aviso propio para ese banco en lugar del
 aviso de reposo: puede que se haya apagado solo, así que pide presionar su botón
-o volver a conectarlo, y dice qué banco alimenta el equipo si hay uno. El aviso
-se retira cuando la placa vuelve a leer el banco como sano.
+o volver a conectarlo, y dice qué banco alimenta el equipo si hay uno. Si ese
+banco está caliente, el mismo aviso empieza con el consejo de calor. El aviso
+se retira cuando la placa vuelve a leer el banco como sano. Si falta `gaps` o
+`gaps2`, o no se pueden leer, la protección se considera desconocida y se
+muestra el aviso de protección reducida.
 
 ## Localization
 
