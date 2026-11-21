@@ -38,7 +38,7 @@ it("lets the operator choose a specific radio by its row id", async () => {
 	const picker = view.container.querySelector("select");
 	if (!picker) throw new Error("missing radio picker");
 	expect(picker.options).toHaveLength(2);
-	expect(picker.options[1]?.textContent).toContain("wlan1");
+	expect(picker.options[1]?.textContent).toContain("Wi-Fi 2");
 	// The label never prints a hardware address.
 	expect(picker.textContent).not.toMatch(/([0-9a-f]{2}:){5}[0-9a-f]{2}/i);
 	await fireEvent.change(picker, { target: { value: "1" } });

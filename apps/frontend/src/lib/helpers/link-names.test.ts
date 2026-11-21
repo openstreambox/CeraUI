@@ -1,0 +1,66 @@
+// @vitest-environment jsdom
+import type { ModemList, WifiStatus } from "@ceraui/rpc/schemas";
+import { describe, expect, it } from "vitest";
+
+import { en } from "../../tests/helpers/catalog";
+import { linkName } from "./link-names";
+
+const modems = {
+	b: {
+		ifname: "wwan1",
+		name: "Modem M5 1234",
+		status: { network: "Harbor Cell" },
+	},
+	a: {
+		ifname: "wwan0",
+		name: "Modem M4 5678",
+		status: { network: "Northwind" },
+	},
+	c: { ifname: "wwan2", name: "Modem M3 9999", status: {} },
+} as unknown as ModemList;
+
+const wifi = {
+	r0: { ifname: "wlan0", available: [{ ssid: "HomeNetwork", active: true }] },
+	r1: { ifname: "wlx00c0cafe2f27", available: [] },
+} as unknown as WifiStatus;
+
+describe("one name per link", () => {
+	it("names a modem by its SIM place and operator, never model or serial", () => {
+		expect(linkName("wwan0", { modems })).toBe("SIM 1 · Northwind");
+		expect(linkName("wwan1", { modems })).toBe("SIM 2 · Harbor Cell");
+		expect(linkName("wwan2", { modems })).toBe("SIM 3");
+		expect(linkName("wwan0", { modems })).not.toContain("M4");
+	});
+
+	it("names a Wi-Fi link by the network it joined", () => {
+		expect(linkName("wlan0", { wifi })).toBe("Wi-Fi · HomeNetwork");
+	});
+
+	it("names a MAC-named USB radio by its last four digits", () => {
+		expect(linkName("wlx00c0cafe2f27", { wifi })).toBe("USB Wi-Fi (2f27)");
+	});
+
+	it("calls a USB network device a USB tether, without guessing what it is", () => {
+		expect(linkName("usb0", {})).toBe(en.networking.linkName.usbTether);
+		expect(linkName("usb0", {}).toLowerCase()).not.toContain("phone");
+	});
+
+	it("keeps the type label for everything else", () => {
+		expect(linkName("eth0", {})).toBe("Ethernet 1");
+		expect(linkName("eth1", {})).toBe("Ethernet 2");
+	});
+
+	it("ships every name pattern in every locale", async () => {
+		const { ar, de, es, fr, hi, ja, ko, ptBR, zh } = await import(
+			"../../tests/helpers/catalog"
+		);
+		for (const dict of [en, ar, de, es, fr, hi, ja, ko, ptBR, zh]) {
+			const n = dict.networking.linkName;
+			expect(n.sim).toContain("{n}");
+			expect(n.simOperator).toContain("{operator}");
+			expect(n.wifiNetwork).toContain("{network}");
+			expect(n.usbWifi).toContain("{id}");
+			expect(n.usbTether.length).toBeGreaterThan(0);
+		}
+	});
+});

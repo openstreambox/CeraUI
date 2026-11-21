@@ -128,7 +128,8 @@ it("a translated IPv6-only modem renders as one modem with its own signal and ra
 	expect(result.links[0]).toMatchObject({
 		id: "wwan0",
 		type: "modem",
-		label: "Mobile",
+		// One name per link: its place among the modems, not the model name.
+		label: "SIM 1",
 		signal: 73,
 		rateTxKbps: 1000,
 		rateRxKbps: 2000,
