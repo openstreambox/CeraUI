@@ -300,11 +300,6 @@ tightenPrivateFiles(process.cwd(), [
 ]);
 
 checkExecPath(srtlaSendExec);
-// Before anything writes the IP list: with `srtla_send_unit` the sender runs
-// through its systemd unit and its files move into /run/srtla-send.
-await guardNonCritical("sender-host", async () => {
-	await resolveSenderHostMode(setup, srtlaSendExec);
-});
 
 // An unreadable or damaged config.json must not abort boot: the control server
 // is the only place the operator can see and repair it. A damaged file is
@@ -370,6 +365,14 @@ if (!configAvailableAtBind) {
 //     failure is logged, flags the device readiness-reduced (surfaced on
 //     /api/health via the boot-readiness rollup), and is swallowed so boot never
 //     crashes and the WS server (bound above) stays reachable. ---
+
+// Before anything writes the IP list (network discovery and bond publication
+// start below): with `srtla_send_unit` the sender runs through its systemd unit
+// and its files move into /run/srtla-send. After the control server bind, so
+// the unit reads (bounded, retried) never delay the operator's lifeline.
+await guardNonCritical("sender-host", async () => {
+	await resolveSenderHostMode(setup, srtlaSendExec);
+});
 
 // Recovery must finish before an update may install any new UID routing rule.
 if (await hasCapability("os-updates"))
