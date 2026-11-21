@@ -86,7 +86,7 @@ describe("UplinkSteeringApplier", () => {
 		expect(rulesets).toHaveLength(2);
 		for (const ruleset of rulesets) {
 			expect(ruleset).toContain("hook forward");
-			expect(ruleset).toContain("ct state new drop");
+			expect(ruleset).toContain("ct state new meta mark != 0xcb000100 drop");
 		}
 		await applier.apply(unavailable, available);
 
