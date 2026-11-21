@@ -6,6 +6,9 @@ export class StubRemoteSocket
 	extends EventEmitter
 	implements Pick<WebSocket, "send">
 {
+	static readonly OPEN = 1;
+	readyState = 1;
+	bufferedAmount = 0;
 	readonly sent: string[] = [];
 	send(
 		message: Parameters<WebSocket["send"]>[0],
