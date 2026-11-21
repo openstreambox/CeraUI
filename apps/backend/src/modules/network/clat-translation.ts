@@ -535,3 +535,10 @@ export function clatTranslationForTun(
 ): ClatTranslation | undefined {
 	return clatTranslationFor(name, current.get(name)?.ipv4);
 }
+
+/** The TUN of the usable translation for this modem interface, if any. */
+export function clatTunForParent(parent: string): string | undefined {
+	for (const [tun, translation] of current)
+		if (translation.parent === parent && clatTranslationForTun(tun)) return tun;
+	return undefined;
+}
