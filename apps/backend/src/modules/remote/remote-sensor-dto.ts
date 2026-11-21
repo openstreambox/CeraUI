@@ -21,6 +21,8 @@ const POWER_PHRASES = [
 	"Bank {bank} is weak and resting.",
 	"Bank {bank} is resting.",
 	"Bank {bank} powers the box.",
+	"Bank {bank} stopped answering while it rested. It may have switched itself off: press its button or replug it.",
+	"Bank {bank} stopped answering while it rested. It may have switched itself off: let it cool, then press its button or replug it.",
 	"Power protection is in bench mode: it only reports.",
 	"The power board reports reduced protection. It needs a check.",
 	"The reserve pack has no heat protection: its sensor is not set up.",
