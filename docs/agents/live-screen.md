@@ -140,7 +140,9 @@ must contain the `source-audio` block with its ids unchanged.
   the engine blocks) and while a start is in flight, Start is natively disabled.
 - The blocker list takes at most a quarter of the viewport height and scrolls
   inside past that. At 640 px of viewport height or less (landscape, split
-  view) Start and the status line take less height.
+  view) the rows fold into one wrapping row of fix buttons, each described by
+  its reason (screen-reader text), with the engine as a plain chip, and Start
+  and the status line take less height.
 - Live, it must show the bitrate control and Stop.
 - While it is mounted, the document's `scroll-padding-bottom` is the bar's
   height (plus the mobile dock below desktop chrome), so a control reached with
