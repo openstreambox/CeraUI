@@ -95,6 +95,8 @@ import type {
 	ReloadAudioDelayInput,
 	ReloadAudioDelayOutput,
 	RemoteConfigInput,
+	RestartConnectionInput,
+	RestartConnectionOutput,
 	Revisions,
 	RevokeTokenInput,
 	RevokeTokenOutput,
@@ -723,6 +725,9 @@ export interface TypedRPC {
 			input: StreamingConfigInput,
 		) => Promise<StreamingStartOutputExtended>;
 		stop: () => Promise<StreamingStopOutput>;
+		restartConnection: (
+			input: RestartConnectionInput,
+		) => Promise<RestartConnectionOutput>;
 		setBitrate: (input: BitrateInput) => Promise<BitrateOutput>;
 		getPipelines: () => Promise<unknown>;
 		getAudioCodecs: () => Promise<unknown>;
