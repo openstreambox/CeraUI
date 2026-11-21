@@ -6,14 +6,15 @@ import { join } from "node:path";
 import {
 	enforceBackendSingleton,
 	releaseBackendSingleton,
+	resetBackendSingletonReleaseForTest,
 } from "../helpers/backend-singleton.ts";
 import {
 	handleTerminationSignal,
 	resetShutdownForTest,
 } from "../helpers/shutdown.ts";
 import {
+	admitGuardedWork,
 	beginShutdown,
-	holdGuardedWork,
 	pendingGuardedWork,
 	settleGuardedWork,
 	terminateChild,
@@ -38,31 +39,37 @@ async function until(check: () => boolean, timeoutMs = 2_000): Promise<void> {
 }
 
 /**
- * A long-lived monitor stand-in that records every signal it receives. It
- * exits on SIGTERM unless `ignoreTerm` is set, and can also die on its own.
+ * A long-lived monitor stand-in that records the exact argument of every kill
+ * (undefined when none was passed). On SIGTERM it exits `exitDelayMs` later,
+ * not synchronously, unless `ignoreTerm` is set. It can also die on its own.
  */
 class RecordingChild {
-	readonly signals: number[] = [];
+	readonly signals: (number | undefined)[] = [];
 	readonly exited: Promise<number>;
+	hasExited = false;
 	#exit: (code: number) => void = () => undefined;
 	#ended = false;
 	#wake: () => void = () => undefined;
 
-	constructor(private readonly ignoreTerm = false) {
+	constructor(
+		private readonly ignoreTerm = false,
+		private readonly exitDelayMs = 40,
+	) {
 		this.exited = new Promise<number>((resolve) => {
 			this.#exit = resolve;
 		});
 	}
 
 	kill(signal?: number): void {
-		this.signals.push(signal ?? SIGTERM);
-		if ((signal ?? SIGTERM) === SIGTERM && this.ignoreTerm) return;
-		this.die();
+		this.signals.push(signal);
+		if (signal !== SIGTERM || this.ignoreTerm) return;
+		setTimeout(() => this.die(), this.exitDelayMs);
 	}
 
 	die(): void {
 		this.#ended = true;
 		this.#wake();
+		this.hasExited = true;
 		this.#exit(0);
 	}
 
@@ -82,6 +89,7 @@ class RecordingChild {
 
 afterEach(() => {
 	resetShutdownForTest();
+	resetBackendSingletonReleaseForTest();
 });
 
 describe("terminateChild", () => {
@@ -135,8 +143,12 @@ describe("monitor supervisors stop with SIGTERM", () => {
 		);
 		manager.start();
 		await until(() => spawned.length === 1);
-		await manager.stop();
+		const stopping = manager.stop();
+		// SIGTERM is explicit and sent synchronously; the exit comes later.
 		expect(spawned[0]?.signals).toEqual([SIGTERM]);
+		expect(spawned[0]?.hasExited).toBe(false);
+		await stopping;
+		expect(spawned[0]?.hasExited).toBe(true);
 		expect(spawned[0]?.signals).not.toContain(SIGKILL);
 		await sleep(150);
 		expect(spawned).toHaveLength(1);
@@ -155,10 +167,41 @@ describe("monitor supervisors stop with SIGTERM", () => {
 		);
 		supervisor.start();
 		await until(() => spawned.length === 1);
-		await supervisor.stop();
+		const stopping = supervisor.stop();
 		expect(spawned[0]?.signals).toEqual([SIGTERM]);
+		expect(spawned[0]?.hasExited).toBe(false);
+		await stopping;
+		expect(spawned[0]?.hasExited).toBe(true);
 		await sleep(150);
 		expect(spawned).toHaveLength(1);
+	});
+
+	test("Given a udev inventory read still running, When stop() runs, Then stop joins it and its result publishes nothing", async () => {
+		const cache = new UdevProvisionalCache();
+		const inventory = Promise.withResolvers<string>();
+		let inventoryReads = 0;
+		const supervisor = new UdevMonitorSupervisor(
+			cache,
+			() => new RecordingChild(false, 0),
+			() => {
+				inventoryReads++;
+				return inventory.promise;
+			},
+		);
+		const replace = spyOn(cache, "replaceInventory");
+		supervisor.start();
+		await until(() => inventoryReads === 1);
+		let stopped = false;
+		const stopping = supervisor.stop().then(() => {
+			stopped = true;
+		});
+		await sleep(30);
+		// The child has exited, but stop() still waits for the inventory read.
+		expect(stopped).toBe(false);
+		inventory.resolve("P: /devices/fake\nE: SUBSYSTEM=usb\n");
+		await stopping;
+		await sleep(10);
+		expect(replace).not.toHaveBeenCalled();
 	});
 });
 
@@ -206,10 +249,11 @@ describe("no monitor starts once shutdown has begun", () => {
 						);
 			monitor.start();
 			await until(() => spawned.length === 1);
-			// SIGTERM reaches the process group: the child dies before stop() runs.
-			beginShutdown();
+			// The child dies first, so a retry is already sleeping in its
+			// 100 ms backoff when shutdown begins.
 			spawned[0]?.die();
-			// Longer than the 100 ms first backoff step.
+			await sleep(20);
+			beginShutdown();
 			await sleep(300);
 			expect(spawned).toHaveLength(1);
 			expect(resyncs).toBe(0);
@@ -219,19 +263,31 @@ describe("no monitor starts once shutdown has begun", () => {
 });
 
 describe("guarded work", () => {
-	test("Given guarded work registered while waiting, When settling, Then both entries are waited for", async () => {
-		const first = holdGuardedWork();
-		const settled = settleGuardedWork(1_000);
-		const second = holdGuardedWork();
-		first();
+	test("Given guarded work admitted while waiting, When settling, Then the drain stays pending until both finished", async () => {
+		const first = admitGuardedWork();
+		let settledValue: boolean | undefined;
+		const settled = settleGuardedWork(1_000).then((value) => {
+			settledValue = value;
+		});
+		const second = admitGuardedWork();
+		first?.();
 		await sleep(20);
 		expect(pendingGuardedWork()).toBe(1);
-		second();
-		expect(await settled).toBe(true);
+		expect(settledValue).toBeUndefined();
+		second?.();
+		await settled;
+		expect(settledValue).toBe(true);
+	});
+
+	test("Given shutdown began, When work asks for admission, Then it is refused and the drain finishes empty", async () => {
+		beginShutdown();
+		expect(admitGuardedWork()).toBeUndefined();
+		expect(pendingGuardedWork()).toBe(0);
+		expect(await settleGuardedWork(30)).toBe(true);
 	});
 
 	test("Given guarded work that never finishes, When settling, Then it gives up at the bound", async () => {
-		holdGuardedWork();
+		admitGuardedWork();
 		expect(await settleGuardedWork(30)).toBe(false);
 	});
 });
@@ -246,7 +302,7 @@ describe("SIGTERM path ordering", () => {
 	test("Given a guarded write in flight, When SIGTERM arrives, Then guardians are released only after it finished, and exit comes last", async () => {
 		const order: string[] = [];
 		const exited = Promise.withResolvers<number>();
-		const finishWrite = holdGuardedWork();
+		const finishWrite = admitGuardedWork();
 		handleTerminationSignal("SIGTERM", {
 			...baseDeps,
 			releaseGuardians: async () => {
@@ -260,7 +316,7 @@ describe("SIGTERM path ordering", () => {
 		await sleep(50);
 		expect(order).toEqual([]);
 		order.push("write-finished");
-		finishWrite();
+		finishWrite?.();
 		expect(await exited.promise).toBe(0);
 		expect(order).toEqual(["write-finished", "release", "exit"]);
 	});
@@ -268,7 +324,7 @@ describe("SIGTERM path ordering", () => {
 	test("Given guarded work that outlives its bound, When SIGTERM arrives, Then the backend still releases and exits", async () => {
 		const order: string[] = [];
 		const exited = Promise.withResolvers<number>();
-		holdGuardedWork();
+		admitGuardedWork();
 		handleTerminationSignal("SIGTERM", {
 			...baseDeps,
 			guardedWorkGraceMs: 30,
@@ -324,6 +380,31 @@ describe("SIGTERM path ordering", () => {
 	});
 });
 
+test("Given a synchronous shutdown hook that throws, When SIGTERM arrives, Then monitors still stop and guardians are still released", async () => {
+	const order: string[] = [];
+	const exited = Promise.withResolvers<number>();
+	handleTerminationSignal("SIGTERM", {
+		terminateWifiObservation: () => {
+			throw new Error("not started yet");
+		},
+		stopSrtIngest: async () => undefined,
+		stopDmesgWatchers: () => undefined,
+		gracefulShutdown: async () => undefined,
+		stopMonitors: async () => {
+			order.push("monitors");
+		},
+		releaseGuardians: async () => {
+			order.push("release");
+		},
+		exit: (code) => {
+			order.push("exit");
+			exited.resolve(code);
+		},
+	});
+	expect(await exited.promise).toBe(0);
+	expect(order).toEqual(["monitors", "release", "exit"]);
+});
+
 describe("flock guardians", () => {
 	test("Given a real orphan-lock guardian held by in-flight work, When SIGTERM arrives, Then exit waits until the holder released it", async () => {
 		const root = await mkdtemp(join(tmpdir(), "ceraui-sigterm-guard-"));
@@ -332,16 +413,20 @@ describe("flock guardians", () => {
 			const order: string[] = [];
 			const exited = Promise.withResolvers<number>();
 			const writeMayFinish = Promise.withResolvers<void>();
+			let writing = false;
 			const work = (async () => {
 				await using lease = await acquireOsOrphanLock({
 					lock,
 					helper: shippedOsStageGuard,
 				});
 				expect(lease.held()).toBe(true);
+				writing = true;
 				await writeMayFinish.promise;
 				order.push("write-finished");
 			})();
-			await until(() => pendingGuardedWork() === 1);
+			// The protected write has started under the held lease.
+			await until(() => writing);
+			expect(pendingGuardedWork()).toBe(1);
 			handleTerminationSignal("SIGTERM", {
 				stopSrtIngest: async () => undefined,
 				stopDmesgWatchers: () => undefined,
@@ -367,6 +452,113 @@ describe("flock guardians", () => {
 			expect(await probe.exited).toBe(0);
 		} finally {
 			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("Given shutdown began, When an orphan lock is requested, Then it is refused as contention without spawning a guardian", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-sigterm-refuse-"));
+		try {
+			beginShutdown();
+			await expect(
+				acquireOsOrphanLock(
+					{ lock: join(root, "update.lock"), helper: shippedOsStageGuard },
+					"os_update_lock_held",
+				),
+			).rejects.toHaveProperty("reason", "os_update_lock_held");
+			expect(pendingGuardedWork()).toBe(0);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("Given an orphan lock still being acquired, When SIGTERM arrives, Then the drain waits for it and the lease is never handed out", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-sigterm-acquire-"));
+		const lock = join(root, "update.lock");
+		try {
+			const order: string[] = [];
+			const exited = Promise.withResolvers<number>();
+			// Admission is synchronous: the entry exists before the first await.
+			const acquiring = acquireOsOrphanLock(
+				{ lock, helper: shippedOsStageGuard },
+				"os_update_lock_held",
+			).then(
+				() => order.push("lease-handed-out"),
+				(error: { reason?: string }) =>
+					order.push(`refused:${error.reason ?? "unknown"}`),
+			);
+			expect(pendingGuardedWork()).toBe(1);
+			handleTerminationSignal("SIGTERM", {
+				stopSrtIngest: async () => undefined,
+				stopDmesgWatchers: () => undefined,
+				gracefulShutdown: async () => undefined,
+				exit: (code) => {
+					order.push("exit");
+					exited.resolve(code);
+				},
+			});
+			expect(await exited.promise).toBe(0);
+			await acquiring;
+			expect(order).toEqual(["refused:os_update_lock_held", "exit"]);
+			expect(pendingGuardedWork()).toBe(0);
+			// The guardian that came up was released: the lock is free again.
+			const probe = Bun.spawn(["flock", "-n", "-E", "75", "-x", lock, "true"], {
+				stdin: "ignore",
+				stdout: "ignore",
+				stderr: "ignore",
+			});
+			expect(await probe.exited).toBe(0);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("Given the guardian helper dies mid-scope, When its owner has not disposed yet, Then the work stays guarded", async () => {
+		const root = await mkdtemp(join(tmpdir(), "ceraui-sigterm-death-"));
+		try {
+			const lease = await acquireOsOrphanLock({
+				lock: join(root, "update.lock"),
+				helper: shippedOsStageGuard,
+			});
+			expect(pendingGuardedWork()).toBe(1);
+			if (!lease.pid) throw new Error("guardian pid missing");
+			process.kill(Number(lease.pid), "SIGKILL");
+			await until(() => !lease.held());
+			await sleep(20);
+			expect(pendingGuardedWork()).toBe(1);
+			await lease[Symbol.asyncDispose]().catch(() => undefined);
+			expect(pendingGuardedWork()).toBe(0);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("Given SIGTERM reached the release step before the singleton was acquired, When acquisition completes, Then the guardian is released at once", async () => {
+		const exit = spyOn(process, "exit").mockImplementation(
+			(() => undefined) as never,
+		);
+		try {
+			const acquired = Promise.withResolvers<void>();
+			let disposed = 0;
+			const exitedLease = Promise.withResolvers<number>();
+			const enforcing = enforceBackendSingleton(async () => {
+				await acquired.promise;
+				return {
+					exited: exitedLease.promise,
+					async [Symbol.asyncDispose]() {
+						disposed++;
+						exitedLease.resolve(0);
+					},
+				};
+			});
+			await releaseBackendSingleton();
+			expect(disposed).toBe(0);
+			acquired.resolve();
+			await enforcing;
+			await sleep(10);
+			expect(disposed).toBe(1);
+			expect(exit).not.toHaveBeenCalled();
+		} finally {
+			exit.mockRestore();
 		}
 	});
 
@@ -409,21 +601,26 @@ describe("flock guardians", () => {
 	});
 });
 
-test("production SIGTERM and SIGINT handlers stop the monitors and release the guardians", () => {
+test("production termination handlers are installed at the top of boot and stop the monitors and release the guardians", () => {
 	const main = readFileSync(new URL("../main.ts", import.meta.url), "utf8");
-	const stopMonitors = main.slice(
-		main.indexOf("async function stopMonitors()"),
-		main.indexOf('process.on("SIGTERM"'),
+	const code = main.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+	const handlers = code.indexOf('process.on("SIGTERM"');
+	expect(handlers).toBeGreaterThan(code.indexOf("installBootSignalGuards()"));
+	expect(handlers).toBeLessThan(code.indexOf("await runCritical("));
+	expect(handlers).toBeLessThan(code.indexOf("createMonitorManager("));
+	expect(handlers).toBeLessThan(code.indexOf("initUdevProvisionalMonitor)"));
+	expect(code).toContain('process.on("SIGINT"');
+	const stopMonitors = code.slice(
+		code.indexOf("async function stopMonitors()"),
+		code.indexOf("function terminationDeps()"),
 	);
-	expect(stopMonitors).toContain("networkMonitor.stop()");
+	expect(stopMonitors).toContain("networkMonitorForShutdown?.stop()");
 	expect(stopMonitors).toContain("stopUdevProvisionalMonitor()");
-	for (const signal of ["SIGTERM", "SIGINT"]) {
-		const start = main.indexOf(`process.on("${signal}"`);
-		const handler = main.slice(
-			start,
-			main.indexOf("exit: process.exit", start),
-		);
-		expect(handler).toContain("stopMonitors,");
-		expect(handler).toContain("releaseGuardians: releaseBackendSingleton,");
-	}
+	expect(code).toContain("networkMonitorForShutdown = networkMonitor;");
+	const deps = code.slice(
+		code.indexOf("function terminationDeps()"),
+		code.indexOf('process.on("SIGTERM"'),
+	);
+	expect(deps).toContain("stopMonitors,");
+	expect(deps).toContain("releaseGuardians: releaseBackendSingleton,");
 });

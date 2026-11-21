@@ -68,13 +68,24 @@ export async function terminateChild(
 	} catch {
 		// Already reaped; the `exited` race below still reports it.
 	}
+	return waitBounded(child.exited, graceMs);
+}
+
+/**
+ * Wait for `work` to settle, at most `timeoutMs`. Resolves true when it
+ * settled (fulfilled or rejected) in time. Never rejects.
+ */
+export async function waitBounded(
+	work: Promise<unknown>,
+	timeoutMs: number,
+): Promise<boolean> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timedOut = new Promise<false>((resolve) => {
-		timer = setTimeout(() => resolve(false), graceMs);
+		timer = setTimeout(() => resolve(false), timeoutMs);
 	});
 	try {
 		return await Promise.race([
-			child.exited.then(
+			work.then(
 				() => true as const,
 				() => true as const,
 			),
@@ -86,13 +97,17 @@ export async function terminateChild(
 }
 
 /**
- * Register work that runs while a flock guardian holds a lock on its behalf.
- * The returned function marks the work finished; it is idempotent. Shutdown
- * waits for every registered entry (bounded) before the backend exits, so a
- * guardian is never released, by an explicit release or by the backend's
- * death closing its pipe, while the write it protects is still running.
+ * Admit work that will run while a flock guardian holds a lock on its behalf.
+ * Call it synchronously before the first await of the acquisition, so an
+ * acquisition already in flight when SIGTERM arrives is counted by the drain.
+ * Returns undefined once shutdown has begun: nothing new is admitted after
+ * the signal, so the drain can never finish empty while a late acquisition
+ * goes on to start a protected write. The returned function marks the work
+ * finished and is idempotent. Shutdown waits for every admitted entry
+ * (bounded) before the backend exits.
  */
-export function holdGuardedWork(): () => void {
+export function admitGuardedWork(): (() => void) | undefined {
+	if (started) return undefined;
 	let finish!: () => void;
 	const done = new Promise<void>((resolve) => {
 		finish = resolve;

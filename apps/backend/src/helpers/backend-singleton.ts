@@ -37,6 +37,8 @@ export type BackendSingletonLease = {
 };
 
 let processLease: BackendSingletonLease | undefined;
+// Set when the shutdown path asked for a release before any lease existed.
+let releaseRequested = false;
 
 /** Fixed production paths; explicit arguments are only an injected I/O seam. */
 export async function acquireBackendSingleton(
@@ -141,6 +143,12 @@ export async function enforceBackendSingleton(
 	try {
 		const lease = await acquire();
 		processLease = lease;
+		// SIGTERM landed while the guardian was coming up and the shutdown path
+		// already reached its release step: release it now instead of leaving it.
+		if (releaseRequested) {
+			await releaseBackendSingleton();
+			return;
+		}
 		void lease.exited.then(() => {
 			if (processLease !== lease) return;
 			logger.error("Backend singleton lock lost; refusing to continue");
@@ -165,6 +173,11 @@ export async function enforceBackendSingleton(
 	}
 }
 
+/** Test seam: forget a release requested before any lease existed. */
+export function resetBackendSingletonReleaseForTest(): void {
+	releaseRequested = false;
+}
+
 /**
  * Shutdown: release the singleton guardian explicitly instead of leaving its
  * flock child for systemd to SIGKILL after the backend exits. Called last in
@@ -176,7 +189,10 @@ export async function releaseBackendSingleton(
 	graceMs: number = CHILD_STOP_GRACE_MS * 2,
 ): Promise<void> {
 	const lease = processLease;
-	if (!lease) return;
+	if (!lease) {
+		releaseRequested = true;
+		return;
+	}
 	// Detach first so the expected guardian exit is not read as a lost lock.
 	processLease = undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;

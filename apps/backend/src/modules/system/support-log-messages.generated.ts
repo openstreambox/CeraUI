@@ -829,6 +829,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["modem credentials: loaded ", " device record(s)"],
 	["modem decommission did not commit"],
 	["modem id-path refresh failed; retaining previous map"],
+	["modem loop monitor stop failed: ", ""],
 	["modem mutation acknowledgement did not commit"],
 	["modem mutation journal entry did not validate"],
 	["modem mutation journal entry is filed under another key's slot"],
