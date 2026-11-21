@@ -78,7 +78,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p apps/frontend/test-results
-          env -u CI E2E_PASSWORD=12345678 \
+          # pw:webserver shows the dev server and backend output when one fails to start.
+          env -u CI E2E_PASSWORD=12345678 DEBUG=pw:webserver \
             PLAYWRIGHT_JSON_OUTPUT_FILE="$PWD/apps/frontend/test-results/focused.json" \
             bun run --filter frontend test:e2e -- --project=desktop --retries=0 --forbid-only \
             --grep-invert "@visual|@a11y|@gallery|@premigration-upgrade" --reporter=line,json \
