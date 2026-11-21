@@ -9,6 +9,8 @@
  * running is exactly what its predecessor left behind and that it is working
  * now. Every fact here is read fresh from the kernel, the files the sender
  * reads and the sender's own control socket; a record only says where to look.
+ * A positive verdict means these measured facts agree; it is not proof that a
+ * takeover would be safe.
  *
  * Three facts the verdict requires have no source yet, so it always refuses
  * at one of them on this base:
@@ -74,7 +76,9 @@ export type SenderProcessFacts = {
 	readonly groupMembers: readonly number[] | null;
 	/**
 	 * True only when the control socket path is a listening Unix socket whose
-	 * inode this PID holds open. Ties the socket's answers to this process.
+	 * inode this PID holds open. A sample of the listener, not proof of who
+	 * answers a later connection to that path (that needs the peer's
+	 * credentials on the connection itself).
 	 */
 	readonly ownsControlSocket: boolean;
 };
@@ -182,8 +186,8 @@ function verdictBeforeSenderReads(
 		return refuse("lifetime", "never_started");
 
 	// The record's own host: only a unit that outlives the backend qualifies.
-	if (l.host !== "systemd" || !l.invocation)
-		return refuse("host", "dies_with_backend");
+	if (l.host !== "systemd") return refuse("host", "dies_with_backend");
+	if (!l.invocation) return refuse("host", "invocation_not_recorded");
 	if (!l.cgroup) return refuse("host", "cgroup_not_recorded");
 
 	// The process: the one recorded, the configured executable, unchanged.
@@ -271,7 +275,9 @@ function verdictOfSenderReads(
 	if (second.session_bytes_sent <= first.session_bytes_sent)
 		return refuse("sender", "no_progress");
 	// Link ids and `mapped` cannot tell a map written before a crash (and never
-	// signalled) from the one the sender runs; only its applied identity can.
+	// signalled) from the one the sender runs, so an applied identity is
+	// required. Even that compares generation and the IP-list hash only, not
+	// sidecar-only fields such as `id_path`.
 	if (!e.appliedMap) return refuse("bind_map", "applied_identity_unavailable");
 	if (
 		e.appliedMap.generation !== pub.generation ||
@@ -281,7 +287,11 @@ function verdictOfSenderReads(
 	return ADOPT;
 }
 
-/** The engine still runs the session this sender carries. */
+/**
+ * The engine reports a session and is streaming. A non-empty session id is
+ * required but not matched against anything the sender carries; binding the
+ * two is part of what a takeover would still need.
+ */
 function verdictOfEngine(e: SenderAdoptionEvidence): SenderAdoptionVerdict {
 	if (!e.engineSession)
 		return refusal("engine", "session_identity_unavailable");
@@ -586,9 +596,11 @@ async function collectLocalEvidence(
 
 /**
  * Fresh evidence, in stages. The sender's socket is contacted only once every
- * local fact agrees and this PID holds that socket; the engine is asked only
- * once the sender's reads agree too. A refusal therefore costs no socket read
- * and no engine query. Facts not gathered read as unavailable.
+ * local fact agrees and this PID holds that socket; the engine source is asked
+ * only once the sender's reads agree too, so an earlier refusal reads neither.
+ * With this base's readers neither is ever reached: the record or the missing
+ * live invocation refuses first, and the engine source makes no call. Facts
+ * not gathered read as unavailable.
  */
 export async function collectSenderAdoptionEvidence(
 	io: SenderAdoptionIo,

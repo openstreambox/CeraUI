@@ -17,9 +17,10 @@ import {
 	peekArmedStreamMarker,
 } from "../modules/streaming/armed-stream-marker.ts";
 import { digest } from "../modules/streaming/continuity-observer.ts";
-import type {
-	Lifetime,
-	Publication,
+import {
+	type Lifetime,
+	lifetimeSchema,
+	type Publication,
 } from "../modules/streaming/continuity-records.ts";
 import * as engineRuntimeState from "../modules/streaming/engine-runtime-state.ts";
 import {
@@ -279,10 +280,10 @@ describe("senderAdoptionVerdict", () => {
 			"dies_with_backend",
 		],
 		[
-			"no recorded unit invocation",
+			"a systemd record without its invocation",
 			{ lifetime: lifetime({ invocation: null }) },
 			"host",
-			"dies_with_backend",
+			"invocation_not_recorded",
 		],
 		[
 			"no recorded cgroup",
@@ -674,14 +675,19 @@ describe("collectSenderAdoptionEvidence", () => {
 		});
 	});
 
-	test("a record that could never qualify reads no process, marker or map", async () => {
+	test("a record that could never qualify reads no process facts, marker, publication or map", async () => {
 		writeProcess(PID, "S", PID, START);
 		writeCgroup([PID]);
 		let markerReads = 0;
 		let diskReads = 0;
+		let publicationReads = 0;
 		const e = await collectSenderAdoptionEvidence(
 			io({
 				readLifetime: async () => lifetime({ host: "backend-child" }),
+				readPublication: async () => {
+					publicationReads++;
+					return publication();
+				},
 				readMarker: () => {
 					markerReads++;
 					return marker();
@@ -693,6 +699,7 @@ describe("collectSenderAdoptionEvidence", () => {
 			}),
 		);
 		expect(e.process).toBeNull();
+		expect(publicationReads).toBe(0);
 		expect(markerReads).toBe(0);
 		expect(diskReads).toBe(0);
 		expect(statsReads).toBe(0);
@@ -724,8 +731,8 @@ describe("collectSenderAdoptionEvidence", () => {
 	});
 });
 
-describe("startup wiring", () => {
-	test("detect only: logs a verdict, probes nothing and changes nothing", async () => {
+describe("observeSenderAdoption, the entry point main.ts calls", () => {
+	test("with no record it refuses, probes no engine and registers no process", async () => {
 		const probe = spyOn(
 			engineRuntimeState,
 			"queryEngineRuntimeStreaming",
@@ -885,7 +892,7 @@ describe("a real detached sender", () => {
 		expect(parent).not.toBe(process.pid);
 	});
 
-	test("judged from the real kernel, with the missing sources supplied the verdict would adopt", async () => {
+	test("judged from the real kernel with the missing sources supplied, the facts agree and nothing is taken over", async () => {
 		expect(await observeSenderAdoption(await realIo())).toEqual({
 			decision: "adopt",
 		});
@@ -897,7 +904,7 @@ describe("a real detached sender", () => {
 		expect(readFileSync(`/proc/${pid}/comm`, "utf8").trim()).toBe("srtla_send");
 	});
 
-	test("with this base's readers the same sender is refused at the first missing source", async () => {
+	test("with no live invocation source, as on this base, the same sender is refused there", async () => {
 		expect(
 			await observeSenderAdoption(
 				await realIo({ liveInvocation: async () => null }),
@@ -921,4 +928,10 @@ describe("a real detached sender", () => {
 			process.kill(pid, "SIGCONT");
 		}
 	});
+});
+
+test("a malformed recorded cgroup reads as absent instead of failing the record", () => {
+	const parsed = lifetimeSchema.parse({ ...lifetime(), cgroup: 42 });
+	expect(parsed.cgroup).toBeNull();
+	expect(parsed.pid).toBe(PID);
 });

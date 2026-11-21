@@ -24,7 +24,9 @@ export const lifetimeSchema = z.object({
 	 * The sender's own cgroup, recorded by a host that gives it one. Absent on
 	 * every record a backend child writes, and absent means no adoption.
 	 */
-	cgroup: z.string().min(1).nullable().optional(),
+	// Lenient: a malformed value reads as absent rather than failing the
+	// whole record, as an unknown field did before this one existed.
+	cgroup: z.string().min(1).nullable().optional().catch(null),
 	argsDigest: z.string(),
 	statsFile: z.string(),
 	controlSocket: z.string(),
