@@ -7,12 +7,13 @@
  *     -c:v libx264 -profile:v baseline -pix_fmt yuv420p \
  *     -g 15 -keyint_min 15 -x264-params "repeat-headers=1:aud=1:scenecut=0" \
  *     -b:v 200k -f h264 pattern.264
- * then split on Annex-B AUD (NAL type 9) boundaries into access units, mark an
- * AU keyframe when it carries an IDR slice (NAL type 5), and build the avcC
- * (AVCDecoderConfigurationRecord) from the in-stream SPS (7) + PPS (8).
+ * then split on Annex-B AUD (NAL type 9) boundaries into access units and mark an
+ * AU keyframe when it carries an IDR slice (NAL type 5).
  *
  * Wire shape mirrors cerastream's committed preview server (cerastream Todo 15):
- *   • codec-config carries { codec, description(=base64 avcC), coded_width/height }
+ *   • codec-config carries { codec, coded_width/height } and no avcC
+ *     `description`: the access units are Annex-B byte-stream with in-band
+ *     SPS (7) + PPS (8), the same stream format the engine's preview leg emits
  *   • each access unit is emitted as its Annex-B bytes behind a 9-byte header
  *     [flags:u8][pts_us:i64 BE] — exactly what PreviewCanvas.svelte parses.
  *
@@ -30,8 +31,6 @@ export interface PreviewFixture {
 	readonly codec: string;
 	readonly codedWidth: number;
 	readonly codedHeight: number;
-	/** base64 AVCDecoderConfigurationRecord (avcC) for VideoDecoder.configure. */
-	readonly description: string;
 	/** Per-frame presentation-time step in microseconds (15 fps). */
 	readonly frameDurationUs: number;
 	readonly frames: readonly PreviewFixtureFrame[];
@@ -41,7 +40,6 @@ export const PREVIEW_FIXTURE: PreviewFixture = {
 	codec: "avc1.42c00d",
 	codedWidth: 320,
 	codedHeight: 180,
-	description: "AULADf/hABlnQsAN2QFBn58BEAAAAwAQAAADAeDxQqSAAQAEaMuMsg==",
 	frameDurationUs: 66667,
 	frames: [
 		{

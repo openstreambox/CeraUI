@@ -78,7 +78,7 @@ function mockPreviewSocket(ws: WebSocketRoute): void {
  * socket matches THIS route too. Fake that leg in-page (codec-config + audio-level,
  * no access units → terminal `waiting`) rather than proxying to the real
  * mock-preview upstream, whose real H.264 access units would drive the harness
- * browser's `VideoDecoder` to `error` instead of `waiting`.
+ * browser's `VideoDecoder` on to `live` instead of holding at `waiting`.
  */
 async function routeBackend(page: Page): Promise<void> {
 	await page.routeWebSocket(isBackendSocket, (ws) => {
