@@ -2,6 +2,7 @@ import { uplinkSteeringStatusSchema } from "@ceraui/rpc/schemas";
 
 import { broadcastMsg } from "../../ui/websocket-server.ts";
 import type {
+	ShareRulesetState,
 	SteeringAvailability,
 	UplinkSteeringStatus,
 } from "./contracts.ts";
@@ -16,11 +17,27 @@ export function getUplinkSteeringStatus(): UplinkSteeringStatus {
 	return status;
 }
 
+/**
+ * `applied` is the state the coordinator just committed; its selectable
+ * uplinks are what new client flows can actually use, so the status reports
+ * the ruleset rather than a policy preference.
+ */
 export function publishUplinkSteeringAvailability(
 	availability: SteeringAvailability,
+	applied?: Pick<ShareRulesetState, "uplinks">,
 ): void {
 	const next: UplinkSteeringStatus = availability.available
-		? { state: "available" }
+		? {
+				state: "available",
+				...(applied === undefined
+					? {}
+					: {
+							clientUplinks: applied.uplinks
+								.filter((uplink) => uplink.selectable && uplink.weight > 0)
+								.map((uplink) => uplink.ifname)
+								.sort(),
+						}),
+			}
 		: {
 				state: "steering_unavailable",
 				reason: availability.reason,

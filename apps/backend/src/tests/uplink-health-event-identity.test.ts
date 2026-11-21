@@ -13,10 +13,15 @@ for (const change of [
 		update: { error: NETIF_ERR_SHAREDLAN },
 	},
 ]) {
-	test(`${change.name} events restart down recovery immediately and leave up state untouched`, async () => {
+	test(`${change.name} events restart down recovery immediately and leave up state untouched apart from the probe run`, async () => {
 		for (const state of ["down", "up"] as const) {
 			const h = await eventRecoveryFixture(state);
-			const before = h.engine.get("wwan0");
+			const recorded = h.engine.get("wwan0");
+			if (!recorded) throw new Error("missing fixture record");
+			// A new incarnation earns its own probe run; nothing else changes.
+			const { probeSince, ...signals } = recorded.signals;
+			if (state === "up") expect(probeSince).toBeDefined();
+			const before = { ...recorded, signals };
 			h.gate.iface = "wwan0";
 			h.clock.now += 5_000;
 			const older = h.tick();

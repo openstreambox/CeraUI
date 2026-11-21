@@ -128,12 +128,18 @@ export interface UplinkRowView {
 	/** 1-based spectral token index for `var(--link-N)`. */
 	readonly linkIndex: number;
 	readonly probes: { readonly successes: number; readonly failures: number };
+	/**
+	 * The applied steering ruleset lets new client flows use this uplink. False
+	 * when the device did not report it (older backend, steering unavailable).
+	 */
+	readonly carriesClients: boolean;
 }
 
 function toRow(
 	record: UplinkHealthRecord,
 	position: number,
 	now: number,
+	clientUplinks: ReadonlySet<string> = new Set(),
 ): UplinkRowView {
 	const reasonKey = uplinkReasonKey(record.reason);
 	return {
@@ -151,6 +157,7 @@ function toRow(
 		stale: record.staleAt > 0 && now >= record.staleAt,
 		linkIndex: (position % SHARING_LINK_TOKENS) + 1,
 		probes: record.probes,
+		carriesClients: clientUplinks.has(record.iface),
 	};
 }
 
@@ -601,8 +608,13 @@ export function deriveSharingSection(
 	input: SharingSectionInput,
 ): SharingSectionView {
 	const zones = deriveClientZones(input.hotspotInterfaces, input.netif);
+	const clientUplinks = new Set(
+		input.steering?.state === "available"
+			? (input.steering.clientUplinks ?? [])
+			: [],
+	);
 	const rows = (input.uplinks ?? []).map((record, index) =>
-		toRow(record, index, input.now),
+		toRow(record, index, input.now, clientUplinks),
 	);
 
 	const bands: SharingBand[] = [];

@@ -221,6 +221,14 @@ const SUMMARY =
 								data-testid="sharing-uplink-state-{row.iface}"
 								data-muted={view.headline.restatesRowState ? 'true' : undefined}
 							/>
+							{#if row.carriesClients}
+								<Badge
+									variant="info"
+									label={m['network.sharing.clientUplink']()}
+									class="shrink-0"
+									data-testid="sharing-uplink-clients-{row.iface}"
+								/>
+							{/if}
 
 							<span class="ms-auto flex min-w-0 flex-wrap items-center justify-end gap-2.5">
 								{#if row.stale}

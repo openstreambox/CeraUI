@@ -17,6 +17,10 @@ import {
 	setIpForwarding,
 } from "../uplink-sharing.ts";
 import {
+	commitSelectorPlan,
+	selectionStillQualified,
+} from "./active-uplink.ts";
+import {
 	type PreparedSteeringState,
 	UplinkSteeringApplier,
 } from "./applier.ts";
@@ -49,6 +53,14 @@ const applier = new UplinkSteeringApplier({
 	deactivateSharing: deactivateUplinkSharing,
 	flushConntrack,
 	setIpForwarding,
+	// The selector's incumbent follows what is live for clients, never a mere
+	// plan: a rejected reload commits nothing, a partial apply commits the
+	// selection it left installed.
+	selectionInstalled: (state) => {
+		commitSelectorPlan(state);
+		coordinator.markInstalled(state);
+	},
+	selectionQualified: (state) => selectionStillQualified(state, Date.now()),
 	publishFlowsReset: (event) =>
 		broadcastMsg(
 			UPLINK_FLOWS_RESET_EVENT,
@@ -79,6 +91,8 @@ const coordinator = new UplinkSteeringCoordinator({
 	},
 	verifyApplied: async (next) => {
 		await verifySteeringState(next);
+		// The selector's incumbent follows what is live, never a mere plan.
+		commitSelectorPlan(next);
 		publishSteeringReadiness(
 			next.clientZones,
 			verificationEntries.get(next),
@@ -87,7 +101,10 @@ const coordinator = new UplinkSteeringCoordinator({
 	},
 	publishAvailability: (availability) => {
 		if (!availability.available) publishSteeringReadiness([]);
-		publishUplinkSteeringAvailability(availability);
+		publishUplinkSteeringAvailability(
+			availability,
+			availability.available ? coordinator.appliedState() : undefined,
+		);
 		broadcastWifiState();
 	},
 	retryCleanup: () => applier.retryPendingCleanup(),
