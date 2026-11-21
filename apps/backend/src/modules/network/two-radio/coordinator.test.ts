@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { seedWifiRadios } from "../../../tests/helpers/wifi-verified-radios.ts";
 import {
 	startTwoRadioCoordinator,
 	TwoRadioCoordinator,
@@ -17,6 +18,22 @@ const identity = (r: Radio): Identity => ({
 		activation: `activation-${r}`,
 		routeGeneration: 1,
 	},
+});
+// Effects run under the Wi-Fi lock of a verified radio, so both are in the registry.
+let radios: Awaited<ReturnType<typeof seedWifiRadios>>;
+beforeEach(async () => {
+	radios = await seedWifiRadios();
+	await radios.publish(
+		(["a", "b"] as const).map((r, index) => ({
+			ifname: `wlan${index + 1}`,
+			mac: identity(r).permanentMac,
+			ifindex: 11 + index,
+			phy: index + 1,
+		})),
+	);
+});
+afterEach(async () => {
+	await radios.restore();
 });
 function harness() {
 	let time = 0;
