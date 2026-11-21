@@ -109,6 +109,30 @@ async function readPreferences<T>(
 	return parsed.data;
 }
 
+/**
+ * Package cellular consent from the primary settings file alone, read-only:
+ * no image-channel sidecar and no migration. A missing file is the factory
+ * state and gets the default; an unreadable or invalid one gives null, so a
+ * caller can insist on an unmetered uplink instead of guessing.
+ */
+export async function readPackageCellularConsent(
+	filePath = updateSettingsFilePath,
+): Promise<boolean | null> {
+	const revision = settingsRevision;
+	let consent: boolean | null;
+	try {
+		const settings = await readPreferences(filePath, updateSettingsSchema);
+		consent = (settings ?? updateSettingsSchema.parse({}))
+			.allowPackagesOverCellular;
+	} catch {
+		consent = null;
+	}
+	// A save during the read may have revoked consent; read again.
+	if (revision !== settingsRevision)
+		return readPackageCellularConsent(filePath);
+	return consent;
+}
+
 export async function loadUpdateSettings(
 	filePath = updateSettingsFilePath,
 ): Promise<UpdateSettings> {

@@ -34,6 +34,11 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Auth: revoked all ", " credential(s)"],
 	["Auth: stored token authority unreadable; token login withheld"],
 	["Auth: token login successful"],
+	["Automatic package check failed to start; retrying"],
+	[
+		"Automatic package check waits: no unmetered uplink confirmed and packages may not use cellular",
+	],
+	["Automatic package discovery failed; retrying"],
 	["Backend singleton acquisition failed; another instance may be running"],
 	[
 		"Backend singleton is not enforced for a source-development process; production services never take this path",
@@ -235,6 +240,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	[
 		"PASETO_PUBLIC_KEY is not set: accepting device-control tokens WITHOUT signature verification (MVP unsigned path, ADR-0006). Provision an Ed25519 public key to enable real verification.",
 	],
+	["Package check uplink gate failed; waiting"],
 	["Package success persistence retry withheld scheduler effects"],
 	["Package success replay requires local maintenance; fence remains closed"],
 	["Production mode: Serving static files from ./public"],

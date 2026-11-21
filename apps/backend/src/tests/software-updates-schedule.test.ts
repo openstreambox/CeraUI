@@ -18,6 +18,7 @@ import {
 	SKIP_RETRY_DELAY_MS,
 	type SoftwareUpdateError,
 	setAptReachabilityProbeForTest,
+	setPeriodicUplinkGateForTest,
 	setSoftwareUpdateCheckRunner,
 	setSoftwareUpdateSizeRunner,
 	triggerManualUpdateCheck,
@@ -54,15 +55,22 @@ describe("computeNextCheckDelay() — retry backoff", () => {
 describe("periodicCheckForSoftwareUpdates() — reschedule after a skip", () => {
 	afterEach(() => {
 		resetSoftwareUpdateCheckRunner();
+		setPeriodicUplinkGateForTest(null);
 		jest.restoreAllMocks();
 		jest.useRealTimers();
 	});
 
-	it("still schedules the next check when the current one is skipped", () => {
+	// The uplink gate settles asynchronously before the runner is asked.
+	const settleGate = async () => {
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+	};
+
+	it("still schedules the next check when the current one is skipped", async () => {
 		// Force the skip path: the runner declines (streaming/updating/apt busy)
 		// and, like the real code, never invokes the reschedule callback.
 		const runner = jest.fn(() => false);
 		setSoftwareUpdateCheckRunner(runner);
+		setPeriodicUplinkGateForTest(async () => true);
 		const [seconds, nanoseconds] = process.hrtime();
 		jest.useFakeTimers();
 		// Fake timers reset hrtime, but the imported scheduler retains its deadline.
@@ -71,8 +79,10 @@ describe("periodicCheckForSoftwareUpdates() — reschedule after a skip", () => 
 			.mockReturnValue([seconds, nanoseconds]);
 		const schedule = jest.spyOn(globalThis, "setTimeout");
 		periodicCheckForSoftwareUpdates();
+		await settleGate();
 		clock.mockReturnValue([seconds + SKIP_RETRY_DELAY_MS / 1000, nanoseconds]);
 		jest.advanceTimersByTime(SKIP_RETRY_DELAY_MS);
+		await settleGate();
 
 		// Pre-fix the skip path scheduled nothing, so the loop was dead until the
 		// next backend restart.

@@ -65,9 +65,7 @@ import {
 	createSystemCellularConsentRead,
 	loadUpdateSettings,
 } from "../update-settings.ts";
-import { UPDATE_INVENTORY_NMCLI_FIELDS } from "../update-transport/candidate-inventory.ts";
-import { discoverCandidates } from "../update-transport/core.ts";
-import { defaultUpdateTransportDeps } from "../update-transport/executor.ts";
+import { onlyMeteredUplinksRemain } from "../update-transport/executor.ts";
 import { admitStreamStart, onStreamStart } from "./admission.ts";
 import { isCommitStageRunning } from "./commit-stage-probe.ts";
 import { observeCredentialNotices } from "./credential-notice-observer.ts";
@@ -371,29 +369,7 @@ export interface OrchestratorRuntimeDeps {
 }
 
 async function defaultOnlyMeteredCandidateExists(): Promise<boolean> {
-	const deps = defaultUpdateTransportDeps;
-	let nmcli: { exitCode: number; stdout: string };
-	try {
-		nmcli = await deps.run([
-			"nmcli",
-			"-t",
-			"-f",
-			UPDATE_INVENTORY_NMCLI_FIELDS,
-			"device",
-			"show",
-		]);
-	} catch {
-		return true;
-	}
-	if (nmcli.exitCode !== 0) return true;
-	const candidates = discoverCandidates(
-		deps.listIfnames(),
-		nmcli.stdout,
-		deps.mmIfnames(),
-		deps.routerIfnames(),
-		deps.dongleIfnames(),
-	);
-	return !candidates.some((c) => c.metered === false);
+	return onlyMeteredUplinksRemain();
 }
 
 export async function checkOsManifestResult(
