@@ -80,6 +80,16 @@ an RNDIS owner, CLAT,
 traffic health or carrier/hardware qualification. Existing or synthetic test
 results do not establish those capabilities. Verizon remains unqualified.
 
+### IPv6-only carriers (IPv4 translation)
+
+Some carriers, T-Mobile US among them, give the modem IPv6 only. The image's
+CLAT service then gives that link an IPv4 address on a translator interface
+(`clat<N>`). CeraUI adds that interface to the bond while the service reports it
+working (a fresh snapshot, the translator and the modem interface present, the
+service running) and takes it out as soon as it doesn't. The modem's own bond
+switch also covers its translated link. CeraUI does not run or configure the
+translator itself.
+
 ## Español (Latinoamérica)
 
 Un perfil automático existente puede recibir un APN cuando la suscripción se
@@ -167,3 +177,13 @@ antes de cualquier paso que dependa del operador.
 La implementación es parcial. Todavía no incluye control de RNDIS, CLAT ni
 comprobaciones del tráfico. Tampoco acredita compatibilidad real con un operador
 o hardware. Verizon sigue sin calificar.
+
+### Operadores solo IPv6 (traducción a IPv4)
+
+Algunos operadores, entre ellos T-Mobile US, solo dan IPv6 al módem. El servicio
+CLAT de la imagen asigna entonces a ese enlace una dirección IPv4 en una interfaz
+de traducción (`clat<N>`). CeraUI añade esa interfaz al bonding mientras el
+servicio indica que funciona (una instantánea reciente, el traductor y la
+interfaz del módem presentes, el servicio en ejecución) y la retira en cuanto
+deja de hacerlo. El interruptor de bonding del módem también se aplica a su
+enlace traducido. CeraUI no ejecuta ni configura el traductor.
