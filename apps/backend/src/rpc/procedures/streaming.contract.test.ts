@@ -29,6 +29,7 @@ import { appRouter } from "../router.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
 import {
 	reloadAudioDelayProcedure,
+	restartConnectionProcedure,
 	setAudioMixProcedure,
 	setBitrateProcedure,
 	setConfigProcedure,
@@ -87,6 +88,12 @@ const MUTATIONS: ReadonlyArray<{
 }> = [
 	{ name: "start", procedure: streamingStartProcedure, args: {} },
 	{ name: "stop", procedure: streamingStopProcedure, args: undefined },
+	// No offer is current in the idle baseline, so the tap is refused.
+	{
+		name: "restartConnection",
+		procedure: restartConnectionProcedure,
+		args: { token: "no-current-offer" },
+	},
 	{
 		name: "setBitrate",
 		procedure: setBitrateProcedure,
@@ -199,6 +206,18 @@ describe("streaming setter-contract — contains-envelope (S3)", () => {
 		expect(result.success).toBe(false);
 		expect(result).not.toHaveProperty("reason");
 		expect(result.error).toBeDefined();
+	});
+
+	test("a refused restart tap carries an error and never a reason key", async () => {
+		const result = await callMutation(restartConnectionProcedure, {
+			token: "no-current-offer",
+		});
+		expect(result).toEqual({
+			success: false,
+			result: "refused",
+			error: "offer_not_current",
+		});
+		expect(result).not.toHaveProperty("reason");
 	});
 
 	test("domain-rich mutations carry success WITHOUT a forced applied field", async () => {
