@@ -19,6 +19,12 @@ export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	// The device bounds a support bundle at 60 s; leave room for delivery.
 	"logs.previewBundle": 75_000,
 	"logs.createBundle": 75_000,
+	// Remote access: the device waits up to 50s for tailscaled's answer to a
+	// join (longer when a tailnet admin must approve the device), and the
+	// on/off switch runs a bounded reconnect. Keep above both.
+	"system.tailscaleJoin": 75_000,
+	"system.tailscaleSetEnabled": 75_000,
+	"system.tailscaleLogout": 75_000,
 };
 
 export function rpcCallTimeoutMs(path: string): number {
