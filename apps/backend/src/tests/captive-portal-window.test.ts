@@ -5,8 +5,9 @@ test("only the owning phone can cancel; timeout closes before checking", async (
 	const events: string[] = [];
 	let expire: () => void = () => undefined;
 	const window = createSignInWindow({
-		open: async () => {
+		open: async (_peer, radio, incarnation) => {
 			events.push("open");
+			expect([radio, incarnation]).toEqual(["wifi", "venue-incarnation"]);
 		},
 		close: async () => {
 			events.push("close");
@@ -21,8 +22,12 @@ test("only the owning phone can cancel; timeout closes before checking", async (
 			return () => undefined;
 		},
 	});
-	expect((await window.start("phone", "wifi")).phase).toBe("signing_in");
-	await expect(window.start("other", "wifi")).rejects.toThrow();
+	expect((await window.start("phone", "wifi", "venue-incarnation")).phase).toBe(
+		"signing_in",
+	);
+	await expect(
+		window.start("other", "wifi", "venue-incarnation"),
+	).rejects.toThrow();
 	await expect(window.finish("other")).rejects.toThrow();
 	expire();
 	await new Promise((resolve) => setTimeout(resolve, 0));
@@ -42,10 +47,12 @@ test("cleanup failure never reports a completed window or runs checks", async ()
 		unchanged: async () => true,
 		arm: () => () => undefined,
 	});
-	await window.start("phone", "wifi");
+	await window.start("phone", "wifi", "venue-incarnation");
 	await window.finish("phone");
 	expect(window.status("phone").phase).toBe("cleanup_unknown");
-	await expect(window.start("phone", "wifi")).rejects.toThrow();
+	await expect(
+		window.start("phone", "wifi", "venue-incarnation"),
+	).rejects.toThrow();
 });
 
 test("a changed radio closes the window before any internet claim", async () => {
@@ -62,7 +69,7 @@ test("a changed radio closes the window before any internet claim", async () => 
 		unchanged: async () => false,
 		arm: () => () => undefined,
 	});
-	await window.start("phone", "wifi");
+	await window.start("phone", "wifi", "venue-incarnation");
 	expect((await window.refresh("phone")).phase).toBe("needs_sign_in");
 	expect(calls).toEqual(["close", "check"]);
 });
@@ -109,10 +116,10 @@ test("a late identity read from an older window cannot cancel its successor", as
 			}),
 		arm: () => () => undefined,
 	});
-	await window.start("phone", "wifi");
+	await window.start("phone", "wifi", "venue-incarnation");
 	const oldRead = window.refresh("phone");
 	await window.finish("phone");
-	await window.start("phone", "wifi");
+	await window.start("phone", "wifi", "venue-incarnation");
 	resolve(false);
 	await oldRead;
 	expect(closes).toBe(1);
@@ -132,9 +139,9 @@ test("an uncertain open is closed before failure and remains closable if cleanup
 		unchanged: async () => true,
 		arm: () => () => {},
 	});
-	expect((await owner.start("phone", "2")).expiresAt).toBeGreaterThan(
-		Date.now(),
-	);
+	expect(
+		(await owner.start("phone", "2", "venue-incarnation")).expiresAt,
+	).toBeGreaterThan(Date.now());
 	expect(close).toHaveBeenCalledTimes(1);
 	expect(owner.status("phone").phase).toBe("cleanup_unknown");
 	close.mockImplementation(async () => {});
@@ -157,6 +164,6 @@ test("retry timers receive the current owner even if open failed before config",
 			return () => {};
 		},
 	});
-	await window.start("10.42.0.3", "2");
+	await window.start("10.42.0.3", "2", "venue-incarnation");
 	expect(armedPeer).toBe("10.42.0.3");
 });

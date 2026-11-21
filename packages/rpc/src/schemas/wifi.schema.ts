@@ -718,6 +718,10 @@ export type PortalWindowStatus = z.infer<typeof portalWindowStatusSchema>;
 export const portalWindowInputSchema = z.object({
 	action: z.enum(['start', 'finish', 'status', 'configure']),
 	radio: z.number().int().nonnegative().optional(),
+	// The venue row's published `incarnation` when it was chosen. A start
+	// requires it; a rotated or missing publication refuses instead of binding
+	// whatever radio now holds the numeric id.
+	incarnation: wifiIncarnationSchema.optional(),
 	enabled: z.boolean().optional(),
 });
 export type PortalWindowInput = z.infer<typeof portalWindowInputSchema>;
