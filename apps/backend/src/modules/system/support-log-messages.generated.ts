@@ -2063,6 +2063,7 @@ export const SUPPORT_REASON_TEMPLATES: readonly (readonly string[])[] = [
 	["embedded"],
 	["embedded_audio"],
 	["enable_refused"],
+	["engine_", ""],
 	["engine_internal"],
 	["exited_during_adoption"],
 	["expired"],
