@@ -3128,6 +3128,7 @@
 	"live.phone.moblinBusy": "Espera a que la caja confirme que ninguna emisión la usa antes de cambiar la contraseña de Moblin.",
 	"live.audioMixer.error.audio_input_primary": "La entrada principal siempre se queda en la mezcla. Para desactivarla, elige otra fuente de audio.",
 	"live.layout.insetCancel": "Presiona Escape antes de soltarla para dejarla donde estaba.",
+	"network.sharing.ipv6Only": "Los dispositivos conectados al Wi-Fi del equipo todavía no pueden acceder a sitios IPv4 a través de este enlace.",
 	"systemLogs.tabs.label": "Vistas de registros",
 	"systemLogs.tabs.events": "Eventos",
 	"systemLogs.tabs.raw": "Logs",
