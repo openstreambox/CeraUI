@@ -251,7 +251,7 @@ describe("ADR-003 publication protocol", () => {
 		expect(statSync(deps.sidecarFile).mode & 0o077).toBe(0);
 	});
 
-	test("generation advances on every publication, mapping-only included", async () => {
+	test("generation advances on mapping changes and stays stable on no-op publication", async () => {
 		const deps = writerDeps();
 		const first = await publishBondMapping(
 			[entry("10.0.0.1", "eth0", "lnk_a")],
@@ -272,6 +272,10 @@ describe("ADR-003 publication protocol", () => {
 		expect(second.ok && second.generation).toBe(2);
 		expect(second.changed).toBe(true);
 		expect(third.changed).toBe(false);
+		expect(third.ok && third.generation).toBe(2);
+		expect(third.ok && third.ipsFileSha256).toBe(
+			second.ok && second.ipsFileSha256,
+		);
 	});
 
 	test("an undescribable link publishes the IP list and retires the sidecar", async () => {
