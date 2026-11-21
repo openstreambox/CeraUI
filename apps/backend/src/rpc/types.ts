@@ -26,8 +26,22 @@ export interface SocketData {
 	 * image's front door. Never derived from a TCP request's headers.
 	 */
 	ingressPath?: IngressPath;
-	/** Rechecks the ingress path's link; false once it failed. */
+	/**
+	 * The proven interface's lifetime when the socket's evidence was accepted.
+	 * Absent fields were unreadable then; consumers that need them refuse.
+	 */
+	ingressLifetime?: IngressLifetime;
+	/**
+	 * Rechecks the ingress path's link and, where captured, that the interface
+	 * is still the lifetime it was accepted on; false once it failed.
+	 */
 	ingressPathValid?: () => boolean;
+}
+
+/** Kernel ifindex and netif incarnation of an ingress interface. */
+export interface IngressLifetime {
+	readonly ifindex: number | undefined;
+	readonly incarnation: number | undefined;
 }
 
 /** The front door's validated evidence for one direct, on-link WebSocket. */
