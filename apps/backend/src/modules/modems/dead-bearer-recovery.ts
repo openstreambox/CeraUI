@@ -23,8 +23,10 @@
     out there, and a dead bearer keeps the translator's lease up for minutes,
     so skipping such a modem left it dead for that whole time. Both the TUN
     and the native IPv6 address ride the same bearer, so a translated modem
-    whose native IPv6 still reads `up` is not reconnected, and one whose TUN
-    has no record yet is left alone;
+    whose native IPv6 still reads `up` with fresh evidence is not
+    reconnected, and one whose TUN has no record yet is left alone. A native
+    record that stopped refreshing counts as unknown: it vetoes nothing, and
+    the TUN's record decides;
   - while a stream runs, the sender has no fresh row for this interface: a
     link the sender is using and hearing back from is not dead, whatever the
     probe says;
@@ -108,7 +110,7 @@ export interface DeadBearerInput {
 	readonly otherUplinkUp: boolean;
 	/** The profile is preparation-owned (autoconnect no + live grant). */
 	readonly owned: boolean;
-	/** Translated, and the modem's own native IPv6 still reads `up`. */
+	/** Translated, and the modem's own native IPv6 reads `up`, not stale. */
 	readonly nativeAnswers: boolean;
 	/** The sender has a fresh row for this interface while streaming. */
 	readonly carryingStream: boolean;
@@ -333,7 +335,8 @@ async function readInput(
 		now,
 		record,
 		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
-		nativeAnswers: tun !== undefined && native?.state === "up",
+		nativeAnswers:
+			tun !== undefined && native?.state === "up" && native.staleAt > wallNow,
 		carryingStream: carryingStream(
 			tun === undefined ? [modem.ifname] : [modem.ifname, tun],
 			wallNow,

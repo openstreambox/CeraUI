@@ -205,6 +205,8 @@ describe("runDeadBearerRecovery", () => {
 	let others: UplinkHealthRecord[];
 	let clatParents: Record<string, string>;
 	let tunHealth: UplinkHealthRecord | undefined;
+	/** The modem's own record stops refreshing (its probes stopped reporting). */
+	let healthFrozen: boolean;
 	let streaming: boolean;
 	let telemetryRows: { iface: string; stale: boolean }[];
 	let autoconnect: string;
@@ -304,7 +306,9 @@ describe("runDeadBearerRecovery", () => {
 		while (now < until) {
 			now += 15_000;
 			wall += 15_000;
-			if (health?.state === "down") health = dead();
+			if (health && !healthFrozen)
+				health =
+					health.state === "down" ? dead() : record({ state: "up" }, wall);
 			if (tunHealth)
 				tunHealth = tunHealth.state === "down" ? tunDead() : tunUp();
 			others = others.map((other) => ({ ...other, staleAt: wall + 15_000 }));
@@ -325,6 +329,7 @@ describe("runDeadBearerRecovery", () => {
 		others = [];
 		clatParents = {};
 		tunHealth = undefined;
+		healthFrozen = false;
 		streaming = false;
 		telemetryRows = [];
 		autoconnect = "no";
@@ -412,6 +417,33 @@ describe("runDeadBearerRecovery", () => {
 		tunHealth = tunDead();
 		health = record({ state: "up" }, wall);
 		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	/*
+	  A native record that reads `up` but stopped refreshing is unknown, not an
+	  answer: the veto lifts and the translator's record decides, as it does for
+	  a translated modem with no native record at all.
+	*/
+	test("a stale native `up` does not veto a translated modem's reconnect", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = record({ state: "up" }, wall - 3_600_000);
+		healthFrozen = true;
+		expect(await pollUntil(120_000)).toEqual([75_000]);
+		expect(calls).toEqual([`down ${UUID}`, `up ${UUID} 45`]);
+	});
+
+	test("the native veto lifts once its record stops refreshing", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = record({ state: "up" }, wall);
+		// Native IPv6 answers for five minutes, then its record goes quiet.
+		expect(await pollUntil(300_000)).toEqual([]);
+		healthFrozen = true;
+		// Stale from 315 s (staleAt is not after the wall clock), then the hold.
+		expect(await pollUntil(420_000)).toEqual([375_000]);
 	});
 
 	test("a translated modem with no record for its translator yet is left alone", async () => {
