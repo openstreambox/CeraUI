@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
+import { adoptTestProcess } from "../../../../../scripts/test-safety.ts";
 import { createAddonHelperStep } from "../../helpers/addon-helper-step.ts";
 import * as spawnPolicy from "../../helpers/spawn-policy.ts";
 import { setSysextEvidenceForTest } from "../../modules/addons/disruptive-sysext-step.ts";
@@ -140,6 +141,7 @@ export async function helperLostHandleFixture(error: unknown, actor = "jq") {
 				)
 					throw new Error("invalid tool identity");
 				survivor = row.pid;
+				adoptTestProcess(survivor);
 				pgid = row.pgid;
 				throw error;
 			},
@@ -179,8 +181,10 @@ export async function helperLostHandleFixture(error: unknown, actor = "jq") {
 						cause instanceof Error &&
 						"code" in cause &&
 						cause.code === "ESRCH"
-					)
+					) {
+						survivor = 0;
 						break;
+					}
 					throw cause;
 				}
 				if (Date.now() >= deadline) throw new Error("tool not reaped");
