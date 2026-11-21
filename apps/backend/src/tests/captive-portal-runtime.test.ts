@@ -1,6 +1,7 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 
 const commands: string[] = [];
+const configs: Array<{ action: string; config: Record<string, unknown> }> = [];
 let failOpen = false;
 let unavailable = false;
 let webAvailable = false;
@@ -16,7 +17,46 @@ const binding = {
 		dnsServers: ["198.51.100.2"],
 	},
 };
+// The venue row's published incarnation; the system reader refuses any other.
+const VENUE = "venue-incarnation-1";
+let venueToken = VENUE;
+let rotateVenueOnRoute = false;
+// The phone's AP: one exact hotspot row, its kernel and netif lifetimes.
+let apIfindex = 7;
+let apEpoch = 41;
+const apRow = {
+	id: 3,
+	ifname: "ap0",
+	hw: "Synthetic AP radio",
+	conn: "ap-profile" as string | null,
+	activeConn: "ap-profile" as string | null,
+	activeMode: "ap",
+	available: new Map(),
+	saved: {},
+	savedAll: {},
+	hotspot: { conn: "ap-profile", warnings: {} },
+};
+// Partial replacements keep every other export: the AP pin pulls in modules
+// that import more of these than the runtime itself does.
+const realRun = { ...(await import("../helpers/run.ts")) };
+const realMocks = { ...(await import("../mocks/mock-service.ts")) };
+const realProbe = {
+	...(await import("../modules/network/device-bound-probe.ts")),
+};
+const realTarget = {
+	...(await import("../modules/network/uplink-health/connectivity-target.ts")),
+};
+const realHealth = {
+	...(await import("../modules/network/uplink-health/state.ts")),
+};
+const realReaders = {
+	...(await import("../modules/wifi/captive-portal-readers.ts")),
+};
+const realConnections = {
+	...(await import("../modules/wifi/wifi-connections.ts")),
+};
 mock.module("../helpers/run.ts", () => ({
+	...realRun,
 	run: async (bin: string, args: string[]) => {
 		if (bin === "curl") return "204";
 		if (bin === "iw") return "Station 02:00:00:00:00:02 (on ap0)";
@@ -24,12 +64,16 @@ mock.module("../helpers/run.ts", () => ({
 			return JSON.stringify([
 				{ lladdr: "02:00:00:00:00:02", state: ["REACHABLE"] },
 			]);
+		if (args.includes("link"))
+			return JSON.stringify([{ ifname: args.at(-1), ifindex: apIfindex }]);
+		if (rotateVenueOnRoute) venueToken = "venue-incarnation-2";
 		return JSON.stringify([{ dev: routeDev }]);
 	},
-	runWithStdin: async (_bin: string, args: string[]) => {
+	runWithStdin: async (_bin: string, args: string[], stdin: string) => {
 		expect(args[0]).toBe("-I");
 		const action = args[2]!;
 		commands.push(action);
+		configs.push({ action, config: JSON.parse(stdin) });
 		if (action === "open" && failOpen) {
 			failSweep = failCleanupAfterOpen;
 			throw Error("timeout");
@@ -39,33 +83,55 @@ mock.module("../helpers/run.ts", () => ({
 	},
 }));
 mock.module("../mocks/mock-service.ts", () => ({
+	...realMocks,
 	shouldUseMocks: () => false,
 }));
 mock.module("../modules/network/device-bound-probe.ts", () => ({
+	...realProbe,
 	checkConnectivityViaDevice: async () => webAvailable,
 }));
 mock.module("../modules/network/uplink-health/connectivity-target.ts", () => ({
+	...realTarget,
 	createConnectivityTargetResolver: () => async () =>
 		webAvailable ? "192.0.2.1" : undefined,
 }));
 mock.module("../modules/network/uplink-health/state.ts", () => ({
+	...realHealth,
 	getUplinkHealthEngine: () => ({ get: () => ({ reason: "captive_portal" }) }),
 }));
 mock.module("../modules/wifi/captive-portal-readers.ts", () => ({
-	captureWifiPortalBindingFromSystem: async () => ({
-		ok: !unavailable,
-		binding,
-	}),
+	...realReaders,
+	captureWifiPortalBindingFromSystem: async (
+		_id: number,
+		incarnation: string,
+	) =>
+		unavailable
+			? { ok: false }
+			: incarnation === venueToken
+				? { ok: true, binding }
+				: { ok: false, reason: "binding_changed" },
 	createSystemPortalReaderDeps: () => ({}),
 }));
 mock.module("../modules/wifi/wifi-connections.ts", () => ({
+	...realConnections,
 	getWifiInterfacesByMacAddress: () => ({
 		radio: { id: 2, activeMode: "infrastructure", ifname: "venue0" },
+		// Every running AP in `aps` is a hotspot row; `ap0` is the one pinned.
+		...Object.fromEntries(
+			aps.map((ifname) => [
+				ifname,
+				ifname === "ap0" ? apRow : { ...apRow, id: 4, ifname },
+			]),
+		),
 	}),
 }));
-mock.module("../modules/wifi/wifi-hotspot-clients.ts", () => ({
-	currentHotspotApIfnames: () => aps,
-}));
+const netifs = await import("../modules/network/network-interfaces.ts");
+spyOn(netifs, "getNetworkInterfaceIncarnation").mockImplementation((name) =>
+	aps.includes(name) ? apEpoch : undefined,
+);
+const { advanceHotspotOperation } = await import(
+	"../modules/wifi/wifi-hotspot-readiness.ts"
+);
 const { signInWindow, reconcilePortalWindow } = await import(
 	"../modules/wifi/captive-portal-runtime.ts"
 );
@@ -77,7 +143,9 @@ test("startup sweeps without an in-memory session; interrupted open sweeps befor
 	await reconcilePortalWindow();
 	expect(commands).toEqual(["sweep"]);
 	failOpen = true;
-	await expect(signInWindow.start("10.42.0.2", "2")).rejects.toThrow("timeout");
+	await expect(signInWindow.start("10.42.0.2", "2", VENUE)).rejects.toThrow(
+		"timeout",
+	);
 	expect(commands).toEqual(["sweep", "sweep", "open", "sweep"]);
 	expect(signInWindow.status("10.42.0.2").phase).toBe("idle");
 	expect(await portalHealthProbe("venue0", async () => "success")).toBe(
@@ -88,7 +156,7 @@ test("startup sweeps without an in-memory session; interrupted open sweeps befor
 test("a failed open with uncertain retirement retains ownership and converges on retry", async () => {
 	// Pre-open reconciliation succeeds, then simulate cleanup becoming unavailable.
 	failOpen = false;
-	await signInWindow.start("10.42.0.2", "2");
+	await signInWindow.start("10.42.0.2", "2", VENUE);
 	const beforeLateBoot = commands.length;
 	await reconcilePortalWindow();
 	expect(commands.length).toBe(beforeLateBoot);
@@ -98,7 +166,7 @@ test("a failed open with uncertain retirement retains ownership and converges on
 	failOpen = true;
 	// Fail only after the pre-open sweep has succeeded.
 	failCleanupAfterOpen = true;
-	const status = await signInWindow.start("10.42.0.2", "2");
+	const status = await signInWindow.start("10.42.0.2", "2", VENUE);
 	expect(status.phase).toBe("cleanup_unknown");
 	expect(status.expiresAt).toBeGreaterThan(Date.now());
 	expect(await portalHealthProbe("venue0", async () => "success")).toBe(
@@ -114,11 +182,11 @@ test("a failed open with uncertain retirement retains ownership and converges on
 test("a later pre-config failure never closes the previous phone's config", async () => {
 	failOpen = false;
 	failCleanupAfterOpen = false;
-	await signInWindow.start("10.42.0.2", "2");
+	await signInWindow.start("10.42.0.2", "2", VENUE);
 	await signInWindow.finish("10.42.0.2");
 	commands.length = 0;
 	unavailable = true;
-	await expect(signInWindow.start("10.42.0.3", "2")).rejects.toThrow(
+	await expect(signInWindow.start("10.42.0.3", "2", VENUE)).rejects.toThrow(
 		"identity_unavailable",
 	);
 	expect(commands).toEqual(["sweep"]);
@@ -128,11 +196,11 @@ test("a later pre-config failure never closes the previous phone's config", asyn
 test("the post-close check uses the retired binding once without retaining active config", async () => {
 	failOpen = false;
 	webAvailable = true;
-	await signInWindow.start("10.42.0.4", "2");
+	await signInWindow.start("10.42.0.4", "2", VENUE);
 	expect((await signInWindow.finish("10.42.0.4")).phase).toBe("web_available");
 	commands.length = 0;
 	unavailable = true;
-	await expect(signInWindow.start("10.42.0.5", "2")).rejects.toThrow(
+	await expect(signInWindow.start("10.42.0.5", "2", VENUE)).rejects.toThrow(
 		"identity_unavailable",
 	);
 	expect(commands).toEqual(["sweep"]);
@@ -146,17 +214,17 @@ test("the post-close check uses the retired binding once without retaining activ
 test("a proven arrival interface must be the AP the phone routes through", async () => {
 	failOpen = false;
 	commands.length = 0;
-	await expect(signInWindow.start("10.42.0.6", "2", "eth0")).rejects.toThrow(
-		"not_on_box_wifi",
-	);
+	await expect(
+		signInWindow.start("10.42.0.6", "2", VENUE, "eth0"),
+	).rejects.toThrow("not_on_box_wifi");
 	// Refused before any sweep or identity read: nothing ran for that caller.
 	expect(commands).toEqual([]);
 	aps = ["ap0", "ap1"];
-	await expect(signInWindow.start("10.42.0.6", "2", "ap1")).rejects.toThrow(
-		"not_on_box_wifi",
-	);
+	await expect(
+		signInWindow.start("10.42.0.6", "2", VENUE, "ap1"),
+	).rejects.toThrow("not_on_box_wifi");
 	expect(commands).not.toContain("open");
-	expect((await signInWindow.start("10.42.0.6", "2", "ap0")).phase).toBe(
+	expect((await signInWindow.start("10.42.0.6", "2", VENUE, "ap0")).phase).toBe(
 		"signing_in",
 	);
 	expect(signInWindow.status("10.42.0.6", "eth0").phase).toBe("idle");
@@ -170,4 +238,112 @@ test("a proven arrival interface must be the AP the phone routes through", async
 	);
 	aps = ["ap0"];
 	routeDev = "ap0";
+});
+
+test("a stale venue incarnation refuses at entry, before any window opens", async () => {
+	commands.length = 0;
+	await expect(
+		signInWindow.start("10.42.0.6", "2", "venue-incarnation-0"),
+	).rejects.toThrow("wifi_changed");
+	expect(commands).toEqual(["sweep"]);
+	expect(signInWindow.status("10.42.0.6").phase).toBe("idle");
+});
+
+test("a venue incarnation that rotates before open refuses without opening", async () => {
+	commands.length = 0;
+	rotateVenueOnRoute = true;
+	await expect(signInWindow.start("10.42.0.7", "2", VENUE)).rejects.toThrow(
+		"wifi_changed",
+	);
+	expect(commands).not.toContain("open");
+	rotateVenueOnRoute = false;
+	venueToken = VENUE;
+});
+
+test("the helper receives the AP lifetime the phone arrived through", async () => {
+	configs.length = 0;
+	await signInWindow.start("10.42.0.8", "2", VENUE);
+	const open = configs.find((entry) => entry.action === "open");
+	expect(open?.config).toMatchObject({ ap: "ap0", ap_ifindex: 7 });
+	expect((await signInWindow.refresh("10.42.0.8")).phase).toBe("signing_in");
+	await signInWindow.finish("10.42.0.8");
+});
+
+const replacements: Record<string, () => () => void> = {
+	"AP Stop/Start under the same profile, name and ifindex": () => {
+		advanceHotspotOperation(apRow as never);
+		return () => undefined;
+	},
+	"AP stopped": () => {
+		apRow.conn = null;
+		apRow.activeConn = null;
+		return () => {
+			apRow.conn = "ap-profile";
+			apRow.activeConn = "ap-profile";
+		};
+	},
+	"another AP profile on the same name": () => {
+		apRow.hotspot.conn = "other-ap-profile";
+		apRow.conn = "other-ap-profile";
+		apRow.activeConn = "other-ap-profile";
+		return () => {
+			apRow.hotspot.conn = "ap-profile";
+			apRow.conn = "ap-profile";
+			apRow.activeConn = "ap-profile";
+		};
+	},
+	"a new kernel interface under the same name": () => {
+		apIfindex = 8;
+		return () => {
+			apIfindex = 7;
+		};
+	},
+	"a new netif incarnation under the same name": () => {
+		apEpoch++;
+		return () => undefined;
+	},
+};
+for (const [name, replace] of Object.entries(replacements))
+	test(`${name} closes the open window without transferring it`, async () => {
+		await signInWindow.start("10.42.0.9", "2", VENUE);
+		configs.length = 0;
+		const restore = replace();
+		expect((await signInWindow.refresh("10.42.0.9")).phase).toBe(
+			"needs_sign_in",
+		);
+		// The retirement names the original lifetime; nothing reopens for the newcomer.
+		expect(configs.map((entry) => entry.action)).toEqual(["close"]);
+		expect(configs[0]?.config).toMatchObject({ ap: "ap0", ap_ifindex: 7 });
+		expect((await signInWindow.refresh("10.42.0.9")).phase).toBe(
+			"needs_sign_in",
+		);
+		expect(configs.map((entry) => entry.action)).toEqual(["close"]);
+		restore();
+	});
+
+test("a phone behind an AP without a pinned lifetime is refused", async () => {
+	const epoch = apEpoch;
+	commands.length = 0;
+	spyOn(netifs, "getNetworkInterfaceIncarnation").mockImplementation(
+		() => undefined,
+	);
+	await expect(signInWindow.start("10.42.0.10", "2", VENUE)).rejects.toThrow(
+		"not_on_box_wifi",
+	);
+	expect(commands).not.toContain("open");
+	spyOn(netifs, "getNetworkInterfaceIncarnation").mockImplementation((name) =>
+		aps.includes(name) ? epoch : undefined,
+	);
+});
+
+test("behind the front door, a replaced arrival AP closes the window without transfer", async () => {
+	await signInWindow.start("10.42.0.11", "2", VENUE, "ap0");
+	configs.length = 0;
+	apIfindex = 8;
+	expect((await signInWindow.refresh("10.42.0.11", "ap0")).phase).toBe(
+		"needs_sign_in",
+	);
+	expect(configs.map((entry) => entry.action)).toEqual(["close"]);
+	expect(configs[0]?.config).toMatchObject({ ap: "ap0", ap_ifindex: 7 });
+	apIfindex = 7;
 });
