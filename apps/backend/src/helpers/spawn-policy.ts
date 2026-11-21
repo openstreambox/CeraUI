@@ -623,7 +623,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"startStream readiness gate; stopAll()/gracefulShutdown() SIGTERM→SIGKILL. systemd is the SOLE restart authority (ADR-0005) — never respawned by the app",
+			"startStream readiness gate; stopAll()/gracefulShutdown() SIGTERM→SIGKILL. systemd is the SOLE restart authority (ADR-0005) — never respawned by the app. With setup.json srtla_send_unit the sender is not spawned here: sender-unit.ts starts srtla-send.service through bounded systemctl run() calls",
 	},
 	{
 		id: "ingest.srtLiveTransmit",

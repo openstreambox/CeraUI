@@ -35,11 +35,39 @@ import { stopLinkTelemetry } from "../link-telemetry.ts";
 import { updateStatus } from "../streaming.ts";
 import { captureSenderOutput } from "./sender-output.ts";
 
+/**
+ * The part of a process handle the supervision layer uses. A Bun child
+ * satisfies it as is; a sender run by its own systemd unit
+ * (`sender-unit.ts`) implements it on top of the unit.
+ */
+export interface SupervisedProc {
+	readonly pid: number;
+	readonly exitCode: number | null;
+	readonly signalCode: NodeJS.Signals | number | null;
+	readonly exited: Promise<number>;
+	kill(signal?: NodeJS.Signals | number): void;
+	/**
+	 * Whether process `pid`, as seen in `procRoot`, is this handle's process.
+	 * Absent for a child, where the census checks the parent PID instead.
+	 */
+	owns?(pid: number, procRoot: string): boolean;
+	/**
+	 * Deliver `signal` and say whether the process took it. Absent for a
+	 * child, where `kill` either reaches the unreaped child or throws.
+	 */
+	trySignal?(signal: NodeJS.Signals): boolean;
+	/**
+	 * Whether the process is verified as this handle's right now. Absent for
+	 * a child, which is ours for as long as it is unreaped.
+	 */
+	isCurrent?(): boolean;
+}
+
 // Bun.Subprocess is not an EventEmitter, so the exit lifecycle is modeled here:
 // `exitListeners` replaces .on("exit")/.removeAllListeners("exit") and fires once
 // when `proc.exited` resolves; `spawnfile` replaces ChildProcess.spawnfile.
 export type StreamingProcess = {
-	proc: Bun.Subprocess<"inherit", "inherit" | "pipe", "pipe">;
+	proc: SupervisedProc;
 	spawnfile: string;
 	exitListeners: Array<() => void>;
 };
@@ -117,9 +145,37 @@ export function spawnStreamingLoop(
 		});
 	}
 
+	superviseExit(streamingProcess, registry);
+	return streamingProcess;
+}
+
+/**
+ * Supervise a stream-session sender that runs outside this process (its own
+ * systemd unit). It joins the same list as a child and gets the same exit
+ * handling: when the handle reports a final exit, the stream is reported dead
+ * and nothing respawns it here.
+ */
+export function registerSupervisedSender(
+	proc: SupervisedProc,
+	spawnfile: string,
+): StreamingProcess {
+	const streamingProcess: StreamingProcess = {
+		proc,
+		spawnfile,
+		exitListeners: [],
+	};
+	streamingProcesses.push(streamingProcess);
+	superviseExit(streamingProcess, streamingProcesses);
+	return streamingProcess;
+}
+
+function superviseExit(
+	streamingProcess: StreamingProcess,
+	registry: Array<StreamingProcess>,
+): void {
 	// proc.exited resolves once; run whatever exit listeners are registered at
 	// that moment (mirrors a one-shot EventEmitter "exit").
-	proc.exited.then(() => {
+	void streamingProcess.proc.exited.then(() => {
 		for (const listener of [...streamingProcess.exitListeners]) {
 			listener();
 		}
@@ -151,14 +207,13 @@ export function spawnStreamingLoop(
 		// remove the dead process from the supervised list
 		removeProc(streamingProcess);
 		// srtla_send is the telemetry producer; its exit ends the stats stream.
-		if (sender) {
+		if (isSenderProcess(streamingProcess)) {
 			stopLinkTelemetry();
 		}
 		// notify health state: the stream is now dead until systemd respawns it
 		reportStreamProcessExit();
 		broadcastHealthIfChanged();
 	});
-	return streamingProcess;
 }
 
 function isSenderProcess(streamingProcess: StreamingProcess): boolean {
@@ -185,6 +240,10 @@ export function signalSenders(
 	for (const sp of procs) {
 		if (!isSenderProcess(sp) || !isProcAlive(sp)) continue;
 		try {
+			if (sp.proc.trySignal) {
+				if (sp.proc.trySignal(signal)) delivered++;
+				continue;
+			}
 			sp.proc.kill(signal);
 			delivered++;
 		} catch (err) {

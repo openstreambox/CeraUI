@@ -163,6 +163,10 @@ import {
 	gracefulShutdown,
 } from "./modules/streaming/streamloop/process-runner.ts";
 import {
+	resolveSenderHostMode,
+	retireLeftoverSenderUnit,
+} from "./modules/streaming/streamloop/sender-unit.ts";
+import {
 	checkAutoStartStream,
 	srtlaSendExec,
 } from "./modules/streaming/streamloop.ts";
@@ -295,6 +299,11 @@ tightenPrivateFiles(process.cwd(), [
 ]);
 
 checkExecPath(srtlaSendExec);
+// Before anything writes the IP list: with `srtla_send_unit` the sender runs
+// through its systemd unit and its files move into /run/srtla-send.
+await guardNonCritical("sender-host", async () => {
+	await resolveSenderHostMode(setup, srtlaSendExec);
+});
 
 // An unreadable or damaged config.json must not abort boot: the control server
 // is the only place the operator can see and repair it. A damaged file is
@@ -417,6 +426,13 @@ await guardNonCritical("pipelines", () =>
 if (!shouldUseMocks()) {
 	// Only a returned reconciliation turns the factory's initial idle projection
 	// into evidence; until then (or after a throw) disruptive actions see unknown.
+	// Nothing adopts a sender yet: a sender unit left running by an earlier
+	// backend is stopped and seen down before reconciliation judges the
+	// session. Until that is settled the sender census reads unknown, so
+	// nothing commits idle or launches beside it. Child mode does nothing.
+	await guardNonCritical("sender-unit-leftover", async () => {
+		await retireLeftoverSenderUnit();
+	});
 	await guardNonCritical("stream-session-reconcile", async () => {
 		await reconcileStreamSession();
 		noteStreamReconciliationCompleted();
