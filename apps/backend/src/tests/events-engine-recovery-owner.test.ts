@@ -45,6 +45,9 @@ function harness(
 	let now = 0;
 	const session = owner.createStreamSessionOrchestrator({
 		...streamSessionProductionDeps,
+		// Ownership evidence for adoption is covered elsewhere; these cases
+		// adopt a session this process owns.
+		canReconcileStreaming: () => true,
 		initialLiveness: initial ? "unknown" : "idle",
 		queryRuntime: async () => runtime,
 		markStreamingForOta: () => true,
