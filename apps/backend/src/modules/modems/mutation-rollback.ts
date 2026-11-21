@@ -166,6 +166,15 @@ export async function rollbackMutation(
 	stableKey: string,
 	preState: CapturedState,
 ): Promise<RollbackResult> {
+	if (kind === "modem-config" && typeof preState.format === "string") {
+		const inverse = configInverses.get(preState.format);
+		if (!inverse) return "failed";
+		try {
+			return await inverse.rollback(stableKey, preState);
+		} catch {
+			return "failed";
+		}
+	}
 	const revision = mutationJournalRevision();
 	const current = await captureModemState(stableKey);
 	assertMutationJournalRevision(revision);
