@@ -46,15 +46,36 @@ export function initialOtaStreamLiveness(): "idle" | "unknown" {
 
 let encoderProtected = initialOtaStreamLiveness() !== "idle";
 let carryingProtected = false;
+// True only while this process's carrying owner alone explains the marker:
+// carrying created it from absence, or the encoder confirmed idle while
+// carrying kept it. Anything else (inherited, encoder-written, unexplained)
+// stays evidence of a possible stream.
+let carryingOnlyMarker = false;
 setShutdownProtection("encoder", encoderProtected);
+
+/**
+ * The stream session's view of the sentinel. Both owners share one file for
+ * the image-side activation check, so a marker this process wrote only for
+ * client traffic is not evidence that a stream may be running. Counting it
+ * made every production boot reconcile into the carrying startup hold and
+ * stay `reconciling` until an operator stop.
+ */
+export function encoderOtaStreamLiveness(): "idle" | "unknown" {
+	if (carryingOnlyMarker && carryingProtected && !encoderProtected)
+		return "idle";
+	return initialOtaStreamLiveness();
+}
 
 export function setCarryingOtaProtection(protectedNow: boolean): boolean {
 	carryingProtected = protectedNow;
 	if (protectedNow) {
+		const existed = initialOtaStreamLiveness() !== "idle";
 		const shutdownProtected = setShutdownProtection("carrying", true);
 		const written = writeMarker();
+		if (written && !existed && !encoderProtected) carryingOnlyMarker = true;
 		return shutdownProtected && written;
 	}
+	carryingOnlyMarker = false;
 	const cleared = encoderProtected || removeMarker();
 	setShutdownProtection("carrying", !cleared);
 	return cleared;
@@ -63,6 +84,7 @@ export function setCarryingOtaProtection(protectedNow: boolean): boolean {
 /** A failed write keeps protection unconfirmed and must be retried by the owner. */
 export function setOtaStreamingMarker(): boolean {
 	encoderProtected = true;
+	carryingOnlyMarker = false;
 	const shutdownProtected = setShutdownProtection("encoder", true);
 	const written = writeMarker();
 	return shutdownProtected && written;
@@ -83,6 +105,8 @@ function writeMarker(): boolean {
  * retain this OTA guard. Removing an already-absent file is a no-op. */
 export function clearOtaStreamingMarker(): boolean {
 	encoderProtected = false;
+	// Confirmed idle: a marker kept for client traffic is now carrying's alone.
+	if (carryingProtected) carryingOnlyMarker = true;
 	const cleared = carryingProtected || removeMarker();
 	setShutdownProtection("encoder", !cleared);
 	return cleared;
