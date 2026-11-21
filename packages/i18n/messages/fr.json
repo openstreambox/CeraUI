@@ -3696,5 +3696,17 @@
 	"notifications.power.sink": "La carte d'alimentation ne peut pas communiquer avec la puce de charge d'une batterie externe. Cette batterie externe ne peut ni démarrer l'appareil ni se mettre au repos.",
 	"notifications.power.unproven": "La carte d'alimentation ne voit aucune batterie externe alimenter l'appareil. Elle ne l'éteindra pas automatiquement si la batterie de secours surchauffe.",
 	"notifications.power.jump": "La température de la batterie de secours a brusquement augmenté. Le capteur est peut-être défectueux. L'appareil s'éteint dans une minute si elle reste aussi élevée.",
-	"notifications.power.status": "{text}"
+	"notifications.power.status": "{text}",
+	"network.changeSafety.askBefore.own": "Ce changement vous déconnecte du boîtier via {via}.",
+	"network.changeSafety.askBefore.unknown": "Ce changement peut vous déconnecter du boîtier.",
+	"network.changeSafety.askBefore.undo": "Faire le changement (annulé si je ne confirme pas dans {seconds} s)",
+	"network.changeSafety.askBefore.keep": "Je sais ce que je fais : déconnectez-moi sans annuler. Je devrai peut-être changer de connexion ou réinitialiser le boîtier pour revenir.",
+	"network.changeSafety.confirm.prompt": "Toujours connecté ? Confirmez sous {seconds} s, sinon le boîtier annule le changement.",
+	"network.changeSafety.confirm.action": "Confirmer",
+	"network.changeSafety.notice.disconnected": "Personne n’a confirmé ce changement à temps, le boîtier l’a donc annulé. Le faire quand même ?",
+	"network.changeSafety.notice.restart": "Le réseau a redémarré avant votre confirmation, le boîtier a donc annulé. Le refaire ?",
+	"network.changeSafety.notice.make": "Faire le changement",
+	"network.changeSafety.notice.leave": "Laisser annulé",
+	"network.changeSafety.kept.undo": "Annuler le dernier changement réseau",
+	"network.changeSafety.summary.ethernetRole": "Changement du rôle du port {ifname}"
 }
