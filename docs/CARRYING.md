@@ -201,8 +201,9 @@ This does not preserve media delivery across a backend service restart.
 After a restart the backend also judges, read only, whether a sender its
 predecessor left running could be adopted, and logs the verdict with the first
 failing check. It never adopts, signals or stops anything. It runs after the
-stream session has been reconciled and is not waited for, and it leaves an
-unreadable armed-stream marker in place for restoration. A record that could
+stream session has been reconciled, and startup continues without waiting for
+it; it leaves an unreadable armed-stream marker in place for restoration. On
+this version it reaches neither the sender's control socket nor the engine. A record that could
 never qualify (every record today, because the sender runs inside the backend's
 own service and dies with it) is judged from the record alone. Otherwise the
 check reads the process at the recorded PID (start time, name, the configured
@@ -233,8 +234,10 @@ Esto no mantiene el envío de contenido durante el reinicio del servicio del bac
 Tras un reinicio el backend también evalúa, solo leyendo, si podría adoptar un
 emisor que su predecesor dejó en marcha, y registra el resultado con la primera
 comprobación que falló. Nunca adopta, envía señales ni detiene nada. Se ejecuta
-después de reconciliar la sesión de transmisión, sin esperarla, y deja en su
-sitio un marcador de transmisión armada ilegible para la restauración. Un registro
+después de reconciliar la sesión de transmisión, y el arranque continúa sin
+esperar a que termine; deja en su sitio un marcador de transmisión armada
+ilegible para la restauración. En esta versión no llega ni al socket de control
+del emisor ni al motor. Un registro
 que nunca podría cumplir (hoy todos, porque el emisor corre dentro del propio
 servicio del backend y termina con él) se evalúa solo con el registro. Si no, la
 comprobación lee el proceso con el PID registrado (hora de inicio, nombre, el
