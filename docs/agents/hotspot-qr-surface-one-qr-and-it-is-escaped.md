@@ -35,3 +35,45 @@ Coverage: `NetworkHelper.test.ts` asserts the EXACT payload string handed to the
 encoder — including a plain-alphanumeric regression guard proving today's board
 credentials are byte-unchanged.
 
+**The QR is hidden until asked for (D16 S step).** Both Wi-Fi join surfaces, the
+hotspot dialog and the phone Home's join step, render it through
+`$main/network/WifiCode.svelte`: an empty same-size frame plus **Show code**
+(`aria-expanded`/`aria-controls`), the off-camera line while shown, and a self-hide
+after `WIFI_CODE_SHOW_MS` (2 min), on window blur or a hidden page, on a password
+change and on a join. Screens that should carry no QR (`showPhoneQr` false: phone
+widths, the kiosk) pass `qr={false}` and get the join line and New Wi-Fi password
+only. The card is still the ONE hotspot QR.
+
+**Join notice, no new notification type.** `$lib/stores/hotspot-joins.svelte.ts`
+diffs the `hotspot.clients.stations` roster each wifi snapshot carries
+(`$main/network/hotspot-joins.ts`: first reading is a baseline, an address counts
+once per page) and calls the existing `svelte-sonner` toast, unless a `WifiCode`
+card for that same hotspot is mounted, which shows "A new device joined · just
+now · Not mine?" in place. Every join carries its access point (wifi device key
+and radio `incarnation`); each card is bound to one hotspot through its `owner`
+prop and shows, registers for and renews only that hotspot. With two hotspots up,
+a join on A never appears on B's card and never offers B's renewal; with no card
+for A on screen, the toast says it.
+The backend makes it prompt and honest: `wifi-hotspot-station-events.ts` runs
+`iw event` (spawn site `wifi.iwStationEvents`) only while a hotspot is up and turns
+nl80211 `new station`/`del station` lines on an AP interface into roster reads (now,
++1 s, +3 s), and `parseIwStationDump` skips `authorized: no` stations, so a phone
+with a wrong password is never counted as joined.
+
+**New Wi-Fi password** (`$main/network/hotspot-new-password.ts`) re-sends the live
+name, channel and security with a fresh `generateHotspotPassword()` through
+`wifi.hotspotConfigure` under the Save key; NetworkManager restarts the profile, so
+every client drops. The card asks first and names that cost, plus
+`live.phone.powerOffCost` when `mayCarryStream` says a stream may be going through
+the box. In the hotspot dialog a completed renewal also replaces the editable
+password, so a later Save cannot restore the revoked one. The dialog keeps a
+reactive renewal record bound to its form binding (radio, link, dialog session),
+the config key and the op attempt (`getOperationAttempt`). Only that attempt can
+write the field: as soon as its `hotspot.config` confirmation arrives, or live
+credentials on the bound radio already carry the new password, without waiting
+for the dispatch ack (the confirmation re-enables Save, so waiting would leave a
+gap in which Save re-sends the revoked password). A timeout writes the field
+too, so a later Save completes the renewal instead of undoing it. The ack only
+drops a refused dispatch. An operator edit of the password field wins; close,
+rebind, failure or a replacing dispatch drops the record.
+
