@@ -47,7 +47,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			});
 			// When the admitted real wrapper cannot prepare identity.
 			const result = await invokeHelperAction(action, {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				readDescriptor: async () => sysextDescriptor,
 				createStep: () => step,
@@ -92,7 +92,7 @@ for (const action of ["enable", "disable", "refresh"] as const) {
 			});
 			// When observation retries after repair, not merely after elapsed time.
 			const result = await invokeHelperAction(action, {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: async () => ({ stdout: "", stderr: "" }),
 				readDescriptor: async () => sysextDescriptor,
 				createStep: () => step,

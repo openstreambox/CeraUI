@@ -218,7 +218,7 @@ describe("discovery costs no extra round-trip and keeps its per-unit binding", (
 		netModeListBody: string,
 	): RouterAdminProbeDeps {
 		return {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () => ROUTE_OUTPUT,
 			fetchViaInterface: async (ifname, urls) => {
 				record.bound.push(ifname);
@@ -365,7 +365,7 @@ describe("discovery reads the network mode and never writes it", () => {
 		// something the 30 s poll may do on its own.
 		const fetched: string[] = [];
 		const deps: RouterAdminProbeDeps = {
-			isRealDevice: async () => true,
+			canManageModems: async () => true,
 			runIpRouteShowDefault: async () => ROUTE_OUTPUT,
 			fetchViaInterface: async (_ifname, urls) => {
 				fetched.push(...urls);
