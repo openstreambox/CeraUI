@@ -37,3 +37,45 @@ export function observeEngineSchema(
 export function forgetEngineSchemaSkew(): void {
 	reported = undefined;
 }
+
+/**
+ * How the engine's `schema_version` relates to the bindings' one. The wire
+ * schema is additive-only within protocol major `cerastream-ipc/1`, and CeraUI
+ * gates every feature newer than its oldest supported engine on the engine's
+ * own `get-capabilities.features` tokens, so the two directions differ:
+ *
+ *  - `older`: every field the engine sends parses exactly; newer features are
+ *    absent and their UI stays off. Nothing shown is approximate.
+ *  - `newer`, or `unknown` (a different major or a version that does not
+ *    parse): the engine may send fields the bindings strip, so what CeraUI
+ *    offers can trail what the engine can do.
+ */
+export type EngineSchemaSkew = "match" | "older" | "newer" | "unknown";
+
+function parseSchemaVersion(
+	version: string,
+): readonly [number, number, number] | undefined {
+	const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+	if (parts === null) return undefined;
+	return [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+}
+
+export function classifyEngineSchemaSkew(
+	engine: string,
+	bindings: string,
+): EngineSchemaSkew {
+	if (engine === bindings) return "match";
+	const e = parseSchemaVersion(engine);
+	const b = parseSchemaVersion(bindings);
+	if (e === undefined || b === undefined) return "unknown";
+	// A different schema major is outside the additive-only promise.
+	if (e[0] !== b[0]) return "unknown";
+	if (e[1] !== b[1]) return e[1] < b[1] ? "older" : "newer";
+	if (e[2] !== b[2]) return e[2] < b[2] ? "older" : "newer";
+	return "match";
+}
+
+/** Whether the skew can make the offered capabilities trail the engine. */
+export function skewMayHideCapabilities(skew: EngineSchemaSkew): boolean {
+	return skew === "newer" || skew === "unknown";
+}

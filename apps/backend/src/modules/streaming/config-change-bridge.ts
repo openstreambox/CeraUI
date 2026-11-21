@@ -4,6 +4,7 @@ import {
 	type ChangeConfigResult,
 } from "@ceralive/cerastream";
 import {
+	COMPOSITION_GEOMETRY_FEATURE,
 	CONFIG_CHANGE_EVENT,
 	CONFIG_CHANGE_REASON_ENGINE_LOST,
 	CONFIG_CHANGE_REASON_REJECTED,
@@ -20,6 +21,7 @@ import { changeMockComposition } from "../../mocks/providers/streaming.ts";
 import { broadcastMsg } from "../../rpc/compat.ts";
 import { getCurrentCapabilities } from "./capabilities.ts";
 import type { CerastreamBackend } from "./cerastream-backend.ts";
+import { compositionNeedsGeometry } from "./composition.ts";
 import {
 	type ConfigChangePhaseEvent,
 	changeStreamSessionConfig,
@@ -128,18 +130,49 @@ export function classifyConfigChangeDispatchError(
 
 export type ApplyNowGate = {
 	readonly isStreamLive: () => boolean;
-	readonly prepareCaptureSelectionClear?: () => Promise<void>;
+	/** Read capabilities on the live session's connection when none are current. */
+	readonly refreshSessionCapabilities?: () => Promise<void>;
 	readonly dispatch: (
 		delta: StreamConfigChangeDelta,
 	) => Promise<ConfigChangeResult>;
 };
 
-/** A registry binding permits the syntax; only a live engine permits the clear. */
-export function supportsCaptureSelectionClear(): boolean {
+/** A feature the current engine connection itself advertised. */
+function currentEngineAdvertises(feature: string): boolean {
 	const caps = getCurrentCapabilities();
 	return (
 		caps?.engineUnavailable === false &&
-		caps.features?.includes(CAPTURE_SELECTION_CLEAR_FEATURE) === true
+		caps.features?.includes(feature) === true
+	);
+}
+
+/** A registry binding permits the syntax; only a live engine permits the clear. */
+export function supportsCaptureSelectionClear(): boolean {
+	return currentEngineAdvertises(CAPTURE_SELECTION_CLEAR_FEATURE);
+}
+
+/**
+ * A live custom placement needs the running engine's own `composition-geometry`.
+ * The save gate reads the last snapshot, which can outlive the engine it came
+ * from (a retired connection, a failed refresh).
+ */
+export function supportsLiveCompositionGeometry(): boolean {
+	return currentEngineAdvertises(COMPOSITION_GEOMETRY_FEATURE);
+}
+
+/** Whether an apply-now delta needs evidence from the current engine connection. */
+export function applyNowNeedsCurrentEvidence(
+	delta: Pick<
+		StreamConfigChangeDelta,
+		"input_mode" | "input_id" | "composition"
+	>,
+): boolean {
+	return (
+		((delta.input_mode === null || delta.input_id === null) &&
+			!supportsCaptureSelectionClear()) ||
+		(delta.composition != null &&
+			compositionNeedsGeometry(delta.composition) &&
+			!supportsLiveCompositionGeometry())
 	);
 }
 
@@ -167,16 +200,15 @@ function applyNowMeetsLiveSession(state: LifecycleState): boolean {
 /** The apply-now gate over one stream session's lifecycle and admission. */
 export function createApplyNowGate(
 	session: Pick<StreamSessionOrchestrator, "snapshot" | "changeConfig">,
-	prepareCaptureSelectionClear?: () => Promise<void>,
+	refreshSessionCapabilities?: () => Promise<void>,
 ): ApplyNowGate {
 	return {
 		isStreamLive: () => applyNowMeetsLiveSession(session.snapshot().state),
-		...(prepareCaptureSelectionClear === undefined
+		...(refreshSessionCapabilities === undefined
 			? {}
-			: { prepareCaptureSelectionClear }),
+			: { refreshSessionCapabilities }),
 		dispatch: (delta) =>
-			(delta.input_mode === null || delta.input_id === null) &&
-			!supportsCaptureSelectionClear()
+			applyNowNeedsCurrentEvidence(delta)
 				? Promise.resolve({
 						result: "rejected",
 						reason: "change_config_unsupported",
