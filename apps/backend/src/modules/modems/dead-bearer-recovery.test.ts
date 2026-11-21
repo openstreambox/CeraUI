@@ -490,6 +490,59 @@ describe("runDeadBearerRecovery", () => {
 		expect(await pollUntil(200_000)).toEqual([165_000]);
 	});
 
+	test("a translator outage that expires under the lease restarts the hold", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		// The owner reads at 75 s take a second, and the translator's record
+		// expires in between: the reread under the lease sees no outage.
+		setDeadBearerDepsForTest({
+			...deps(),
+			nmState: async () => {
+				if (now === 75_000) {
+					now += 1_000;
+					wall += 1_000;
+				}
+				return "100";
+			},
+		});
+		expect(await pollUntil(60_000)).toEqual([]);
+		now += 15_000;
+		wall += 15_000;
+		tunHealth = { ...tunDead(), staleAt: wall + 1_000 };
+		others = [eth()];
+		await runDeadBearerRecovery();
+		expect(now).toBe(76_000);
+		expect(calls).toEqual([]);
+		// Fresh failures again from 91 s: a new hold, not the one from 15 s.
+		expect(await pollUntil(151_000)).toEqual([151_000]);
+	});
+
+	test("an expired translator `up` does not reset the reconnect spacing", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		expect(await pollUntil(510_000)).toEqual([
+			75_000, 150_000, 270_000, 510_000,
+		]);
+		// Up for 90 s, then quiet before the five minutes that reset spacing.
+		tunHealth = tunUp();
+		expect(await pollUntil(600_000)).toEqual([]);
+		tunFrozen = true;
+		expect(await pollUntil(840_000)).toEqual([]);
+		tunFrozen = false;
+		tunHealth = tunDead();
+		// The fifth reconnect keeps its 480 s spacing from 510 s.
+		expect(await pollUntil(990_000)).toEqual([990_000]);
+		// Five minutes of fresh `up` reset it; the next outage needs only the hold.
+		tunHealth = tunUp();
+		expect(await pollUntil(1_305_000)).toEqual([]);
+		tunHealth = tunDead();
+		expect(await pollUntil(1_380_000)).toEqual([1_380_000]);
+	});
+
 	test("a translated modem with no record for its translator yet is left alone", async () => {
 		others = [eth()];
 		clatParents = { clat7: "wwan0" };
