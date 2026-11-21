@@ -43,12 +43,10 @@ test("invalid forwarding config cannot fail backend setup; defaults generate a s
 	expect(invalid.srt_forward).toBeUndefined();
 });
 
-test("orphan sender cleanup completes before ingest starts", () => {
+test("ingest startup never name-signals an unowned surviving sender", () => {
 	const main = readFileSync(new URL("../main.ts", import.meta.url), "utf8");
-	expect(main.indexOf('await killall(["srtla_send"])')).toBeLessThan(
-		main.indexOf('await guardNonCritical("srt-ingest"'),
-	);
-	expect(main).not.toContain('void killall(["srtla_send"])');
+	expect(main).not.toContain('killall(["srtla_send"])');
+	expect(main).toContain('await guardNonCritical("srt-ingest"');
 });
 
 import { runForwardAttempt } from "../modules/ingest/srt-forward.ts";
