@@ -75,7 +75,8 @@ write-only `moblink` procedures; see [the ownership contract](../MOBLINK-CREDENT
 three-valued enum. Phone-only remote status is an allowlist of role, carrying
 state, anonymous link counts (`phone_links`, with `sending: null` until known) and typed health entries; local Wi-Fi names, addresses and passwords are
 not relayed. Backend engine identity applies this projection to every remote frame, including partial status updates; other frame types are withheld on phone-only boxes. The localized helper lines explicitly ask moderators
-to check the stream itself. New non-English strings carry `[EN]` until translated.
+to check the stream itself. All ten locales carry the phone Home copy; a native
+read of the non-English wording is still welcome.
 
 The presentation state mapping and QR policy live in `phone-home.ts`. User-facing
 copy lives under `live.phone` in all ten catalogs. The ready-state reminder uses
