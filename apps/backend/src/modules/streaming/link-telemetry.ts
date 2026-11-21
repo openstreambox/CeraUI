@@ -56,6 +56,10 @@ import {
 	watchTelemetry,
 } from "@ceraui/srtla-send/telemetry";
 import { logger } from "../../helpers/logger.ts";
+import {
+	clatTranslationForTun,
+	isClatTunName,
+} from "../network/clat-translation.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
 import type { BondEntry } from "./bind-map.ts";
 import { onBindMapReportChange } from "./bind-map-disposition.ts";
@@ -75,6 +79,10 @@ import {
 	isBondMappingActive,
 	resetSenderBindMapReport,
 } from "./link-mapping-report.ts";
+import {
+	type LinkCarryingState,
+	LinkProgressTracker,
+} from "./link-progress.ts";
 import {
 	registerBondIdentities,
 	resetBondIdentities,
@@ -156,6 +164,42 @@ export function setTelemetryClockForTest(fn: (() => number) | null): void {
 	nowFn = fn ?? Date.now;
 }
 
+// Per-link progress, fed once per fresh snapshot (never per broadcast, which
+// would compare a snapshot with itself). Dwell times are monotonic.
+const carrying = new LinkProgressTracker((iface) =>
+	isClatTunName(iface) ? clatTranslationForTun(iface)?.parent : undefined,
+);
+const monotonicNow = (): number => performance.now();
+let carryingNowFn: () => number = monotonicNow;
+// The sender's own stamp of the last snapshot fed to the tracker. The file poll
+// re-reads an unchanged file every tick until it ages out, and a repeat must
+// not count as another sample.
+let lastFedSnapshotMs: number | undefined;
+
+/** Feed a fresh snapshot to the carrying tracker once, in sender order. */
+function feedCarrying(telemetry: Telemetry): void {
+	const stamp = telemetry.last_updated_ms;
+	if (lastFedSnapshotMs !== undefined && stamp === lastFedSnapshotMs) return;
+	// An older stamp is a restarted sender: its links start over.
+	if (lastFedSnapshotMs !== undefined && stamp < lastFedSnapshotMs)
+		carrying.markGap();
+	lastFedSnapshotMs = stamp;
+	carrying.observe(
+		buildLinkRows(telemetry, false, isBondMappingActive()),
+		carryingNowFn(),
+	);
+}
+
+function resetCarrying(): void {
+	carrying.reset();
+	lastFedSnapshotMs = undefined;
+}
+
+/** Test seam: pin the carrying dwell clock (null restores the monotonic one). */
+export function setCarryingClockForTest(fn: (() => number) | null): void {
+	carryingNowFn = fn ?? monotonicNow;
+}
+
 export interface StartLinkTelemetryOptions {
 	intervalMs?: number;
 	/** Test seam: inject a fake watch implementation. */
@@ -204,8 +248,10 @@ function ingestTelemetry(telemetry: Telemetry | null): void {
 		// The sender's own verdict REPLACES the writer's synthesized one, and it
 		// is the only half that can observe a degraded reload.
 		ingestSenderBindMapReport(telemetry);
+		feedCarrying(telemetry);
 	} else {
 		lastTickFresh = false;
+		resetCarrying();
 	}
 }
 
@@ -243,6 +289,7 @@ export function startLinkTelemetry(
 	lastSnapshot = null;
 	lastTickFresh = false;
 	lastReadMs = 0;
+	resetCarrying();
 
 	if (bindMapReportCleanup) bindMapReportCleanup();
 	bindMapReportCleanup = onBindMapReportChange(() => {
@@ -381,6 +428,7 @@ export function stopLinkTelemetry(forwardOwner = false): void {
 	lastSnapshot = null;
 	lastTickFresh = false;
 	lastReadMs = 0;
+	resetCarrying();
 	resetConnIdRegistry();
 	resetBondIdentities();
 	resetSenderBindMapReport();
@@ -407,22 +455,45 @@ export function buildLinkTelemetry(): LinkTelemetryMessage | null {
 	if (!isLinkTelemetryActive()) return null;
 	if (lastSnapshot === null) return null;
 
+	const now = carryingNowFn();
 	const links = buildLinkRows(
 		lastSnapshot,
 		!lastTickFresh,
 		isBondMappingActive(),
-	);
+	).map((row) => {
+		if (row.stale) return row;
+		const state = carrying.stateFor(row, now);
+		return state === "unknown"
+			? row
+			: { ...row, carrying: state === "carrying" };
+	});
 	// Forwarded verbatim, never summed from `links`: the sender's accumulator is
 	// what stays monotonic across a reconnect or an IP-list reload.
 	const bondBytesSentTotal = lastSnapshot.bytes_sent_total;
 	return {
 		links,
+		...(lastTickFresh
+			? { not_carrying_ifaces: carrying.notCarryingIfaces(now) }
+			: {}),
 		measured_bps: links.reduce((total, link) => total + link.bitrate_bps, 0),
 		...(bondBytesSentTotal === undefined
 			? {}
 			: { bytes_sent_total: bondBytesSentTotal }),
 		lastReadMs,
 	};
+}
+
+/**
+ * Is stream data going out on `iface` right now? The one shared answer for
+ * every consumer that must not treat a listed link as a working one (a modem
+ * recovery veto, a UI line). `unknown` whenever there is no live, fresh
+ * telemetry: callers that act on a dead link must treat it as "do not act".
+ * `iface` is the kernel interface of the device; a CLAT translator's traffic
+ * counts for its modem.
+ */
+export function linkCarryingState(iface: string): LinkCarryingState {
+	if (!isLinkTelemetryActive() || !lastTickFresh) return "unknown";
+	return carrying.stateForIface(iface, carryingNowFn());
 }
 
 let lastBroadcastJson: string | null = null;
