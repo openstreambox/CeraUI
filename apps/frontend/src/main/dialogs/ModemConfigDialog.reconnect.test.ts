@@ -180,6 +180,30 @@ describe("the reconnect notice", () => {
 		expect(notice()).toBeNull();
 	});
 
+	it("stays away while the dialog says the modem has no SIM", () => {
+		// The dialog used to show "No SIM card detected" and "Reconnecting to
+		// apply" at once. With no SIM every control is disabled and Save is off,
+		// so nothing can be applied and nothing will reconnect: the no-SIM state
+		// is the only one to show. The stored config has no autoconfig flag and
+		// no APN, so the seeded form (automatic APN on) already differs from it,
+		// which is what raised the notice on an untouched form.
+		const simless: Modem = {
+			...modem("connected", { apn: "", autoconfig: undefined }),
+			no_sim: true,
+		} as Modem;
+		mount(simless);
+
+		expect(screen.queryByTestId("modem-no-sim-banner")).not.toBeNull();
+		expect(
+			(
+				screen.getByRole("button", {
+					name: m["network.modem.save"](),
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+		expect(notice()).toBeNull();
+	});
+
 	it("keeps an unsaved draft through a connection loss and the returning modem snapshot", async () => {
 		const initial: Modem = {
 			...modem("connected"),
