@@ -8,7 +8,7 @@ import {
 	loadCacheFile,
 	loadJsonConfig,
 	loadJsonConfigSync,
-	saveJsonConfigAsync,
+	writeFileAtomicSync,
 } from "../helpers/config-loader.ts";
 
 // Import the internal type guards and accessor for testing
@@ -177,7 +177,7 @@ describe("loadJsonConfigSync", () => {
 	});
 });
 
-describe("saveJsonConfigAsync", () => {
+describe("writeFileAtomicSync", () => {
 	let tempDir: string;
 	let testFilePath: string;
 
@@ -193,7 +193,7 @@ describe("saveJsonConfigAsync", () => {
 	it("should save config as compact JSON by default", async () => {
 		const config = { name: "test", count: 42 };
 
-		await saveJsonConfigAsync(testFilePath, config);
+		writeFileAtomicSync(testFilePath, JSON.stringify(config));
 
 		const contents = fs.readFileSync(testFilePath, "utf8");
 		expect(contents).toBe('{"name":"test","count":42}');
@@ -202,17 +202,17 @@ describe("saveJsonConfigAsync", () => {
 	it("should save config as pretty JSON when requested", async () => {
 		const config = { name: "test", count: 42 };
 
-		await saveJsonConfigAsync(testFilePath, config, true);
+		writeFileAtomicSync(testFilePath, JSON.stringify(config, null, "\t"));
 
 		const contents = fs.readFileSync(testFilePath, "utf8");
 		expect(contents).toContain("\n");
 		expect(contents).toContain("\t");
 	});
 
-	it("should save config async using Bun.write", async () => {
+	it("should save a complete JSON replacement", async () => {
 		const config = { name: "async-test", count: 99 };
 
-		await saveJsonConfigAsync(testFilePath, config);
+		writeFileAtomicSync(testFilePath, JSON.stringify(config));
 
 		const contents = fs.readFileSync(testFilePath, "utf8");
 		expect(contents).toBe('{"name":"async-test","count":99}');
