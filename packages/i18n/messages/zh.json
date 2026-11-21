@@ -3499,5 +3499,16 @@
 	"timeline.capture_standby_entered.detail": "直播保持连接，并在等待摄像头恢复期间发送黑色画面。",
 	"timeline.capture_standby_exited.title": "黑屏待机已结束",
 	"timeline.capture_standby_exited.detail": "待机时长：{duration}",
-	"timeline.update_failed.detail.os-staging": "准备系统镜像失败。"
+	"timeline.update_failed.detail.os-staging": "准备系统镜像失败。",
+	"network.changeSafety.askBefore.own": "此更改会断开你通过 {via} 与盒子的连接。",
+	"network.changeSafety.askBefore.unknown": "此更改可能会断开你与盒子的连接。",
+	"network.changeSafety.askBefore.undo": "进行更改（如果我在 {seconds} 秒内未确认则撤销）",
+	"network.changeSafety.askBefore.keep": "我知道自己在做什么：断开我的连接，不要撤销。我可能需要切换连接或重置盒子才能重新连上。",
+	"network.changeSafety.confirm.prompt": "仍然连接着？请在 {seconds} 秒内确认，否则盒子会撤销更改。",
+	"network.changeSafety.confirm.action": "确认",
+	"network.changeSafety.notice.disconnected": "没有人及时确认此更改，所以盒子已撤销它。仍要进行更改吗？",
+	"network.changeSafety.notice.restart": "在你确认前网络已重启，所以盒子已撤销它。仍要更改吗？",
+	"network.changeSafety.notice.make": "进行更改",
+	"network.changeSafety.notice.leave": "保持撤销",
+	"network.changeSafety.kept.undo": "撤销上一次网络更改"
 }
