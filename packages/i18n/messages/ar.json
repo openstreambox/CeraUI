@@ -2783,7 +2783,7 @@
 	"hotspotConfirm.activate": "تشغيل نقطة الاتصال",
 	"hotspotConfirm.saveFailed": "تعذّر حفظ الاسم وكلمة المرور الجديدين. لم يتغير شيء وتبقى نقطة الاتصال متوقفة.",
 	"hotspotConfirm.passwordCharacters": "استخدم الأحرف اللاتينية والأرقام والرموز القياسية فقط (بدون حروف مشكّلة أو رموز تعبيرية).",
-	"hotspotConfirm.inactiveHint": "سيظهر اسم الشبكة وكلمة المرور ويمكنك تغييرهما عند تشغيل نقطة الاتصال.",
+	"hotspotConfirm.inactiveHint": "غيّر الاسم أو كلمة المرور أو القناة ونقطة الاتصال متوقفة، ثم اضغط حفظ. يؤدي تفعيل النقطة الساخنة إلى تشغيلها بالإعدادات المحفوظة.",
 	"network.wifiMode.confirm.switchTo": "التبديل إلى {mode}",
 	"hotspotConfirm.firstTimeTitle": "إعداد نقطة الاتصال",
 	"hotspotConfirm.firstTimeBody": "لم يشغّل هذا الراديو نقطة اتصال من قبل. احتفظ بالاسم وكلمة المرور المقترحين أو اختر ما تريد.",
