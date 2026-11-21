@@ -15,6 +15,7 @@ import {
 } from "$lib/federation/host-contract";
 import { rpc } from "$lib/rpc";
 import { markPending, onRpcResolved } from "$lib/rpc/dirty-registry.svelte";
+import { resetDestinationValidation } from "$lib/streaming/destination-validation.svelte";
 import type { ManagedIngestAccount } from "$lib/streaming/receiver-experience";
 import {
 	buildManagedSlotConfig,
@@ -45,8 +46,8 @@ interface ServerInputOptions {
 	readonly protocol: RelayProtocol;
 	readonly addr: string;
 	readonly portStr: string;
-	readonly streamId: string;
-	readonly relayStreamId: string;
+	readonly streamId?: string | undefined;
+	readonly relayStreamId?: string | undefined;
 	readonly relayServer: string;
 	readonly relayAccount: string;
 	readonly destination: "managed" | "custom";
@@ -84,11 +85,19 @@ export async function saveServerConfig(
 	options: SaveServerOptions,
 ): Promise<SaveServerResult> {
 	const fields = Object.entries(options.input);
-	for (const [field, value] of fields) markPending(field, value);
+	for (const [field, value] of fields) {
+		if (field !== "srt_streamid" && field !== "relay_streamid_override")
+			markPending(field, value);
+	}
 	try {
 		const result = await (options.hostAdapter?.setConfig(options.input) ??
 			rpc.streaming.setConfig(options.input));
 		requireAppliedConfig(result);
+		if (
+			"srt_streamid" in options.input ||
+			"relay_streamid_override" in options.input
+		)
+			resetDestinationValidation();
 		toast.success(options.savedMessage);
 		options.onSaved();
 		const requested = options.input.srt_latency;
