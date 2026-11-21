@@ -28,6 +28,7 @@ import {
 	initHotspotCredentials,
 	PREVIOUS_CONNS_LIMIT,
 	rememberHotspotCredentials,
+	rememberHotspotCredentialsChecked,
 	resetHotspotCredentialsForTest,
 } from "../modules/wifi/hotspot-credentials.ts";
 import {
@@ -142,6 +143,10 @@ function makeRecorder(over: Partial<HotspotActivationDeps> = {}): Recorder {
 			get: (mac) => store.get(mac),
 			remember: (mac, creds) => {
 				store.set(mac, { ...creds });
+			},
+			rememberChecked: (mac, creds) => {
+				store.set(mac, { ...creds });
+				return true;
 			},
 		},
 		findHotspotConn: async () => undefined,
@@ -525,6 +530,112 @@ describe("hotspot prepare — credentials before activation", () => {
 		expect(rec.created).toEqual([{ ssid: "Rig Cam", password: "my own pass" }]);
 	});
 
+	test("a chosen pair with no profile is stored durably and starts nothing", async () => {
+		const rec = makeRecorder();
+		const checked: string[] = [];
+		const remember = rec.deps.credentials.rememberChecked;
+		rec.deps.credentials = {
+			...rec.deps.credentials,
+			rememberChecked: (mac, creds) => {
+				checked.push(creds.ssid);
+				return remember?.(mac, creds) ?? false;
+			},
+		};
+		const iface = makeHotspotIface();
+		const result = await prepareHotspotForInterface(
+			PERM_MAC,
+			iface,
+			{ name: "Rig Cam", password: "my own pass" },
+			rec.deps,
+		);
+
+		expect(result).toEqual({
+			success: true,
+			name: "Rig Cam",
+			password: "my own pass",
+			firstTime: true,
+		});
+		expect(checked).toEqual(["Rig Cam"]);
+		expect(rec.store.get(PERM_MAC)).toMatchObject({
+			ssid: "Rig Cam",
+			password: "my own pass",
+		});
+		expect(rec.created).toHaveLength(0);
+		expect(rec.activated).toHaveLength(0);
+		expect(rec.setFields).toHaveLength(0);
+	});
+
+	test("a chosen pair with no profile fails when the store write fails", async () => {
+		const rec = makeRecorder();
+		rec.deps.credentials = {
+			...rec.deps.credentials,
+			rememberChecked: () => false,
+		};
+		const iface = makeHotspotIface();
+		const result = await prepareHotspotForInterface(
+			PERM_MAC,
+			iface,
+			{ name: "Rig Cam", password: "my own pass" },
+			rec.deps,
+		);
+
+		expect(result).toEqual({
+			success: false,
+			error: "activation-failed",
+			reason: "credential-store-unwritten",
+		});
+		expect(iface.hotspot.name).not.toBe("Rig Cam");
+		expect(iface.hotspot.password).not.toBe("my own pass");
+		expect(rec.store.get(PERM_MAC)?.ssid).not.toBe("Rig Cam");
+		expect(rec.created).toHaveLength(0);
+		expect(rec.activated).toHaveLength(0);
+	});
+
+	test("a store without a checked write refuses a store-only save", async () => {
+		const rec = makeRecorder();
+		const { rememberChecked: _unused, ...bestEffort } = rec.deps.credentials;
+		rec.deps.credentials = bestEffort;
+		const result = await prepareHotspotForInterface(
+			PERM_MAC,
+			makeHotspotIface(),
+			{ name: "Rig Cam", password: "my own pass" },
+			rec.deps,
+		);
+
+		expect(result.success).toBe(false);
+	});
+
+	test("an existing profile is modified without the checked store write", async () => {
+		const rec = makeRecorder({
+			findHotspotConn: async () => ({
+				uuid: "profile-uuid",
+				ssid: "CERALIVE_791c",
+				password: "old-secret",
+				channel: "auto",
+			}),
+		});
+		rec.deps.credentials = {
+			...rec.deps.credentials,
+			rememberChecked: () => {
+				throw new Error("not the store-only path");
+			},
+		};
+		const result = await prepareHotspotForInterface(
+			PERM_MAC,
+			makeHotspotIface(),
+			{ name: "Rig Cam", password: "my own pass" },
+			rec.deps,
+		);
+
+		expect(result).toEqual({
+			success: true,
+			name: "Rig Cam",
+			password: "my own pass",
+		});
+		expect(rec.setFields.map(([uuid]) => uuid)).toEqual(["profile-uuid"]);
+		expect(rec.activated).toHaveLength(0);
+	});
+
 	test("a live AP answers with its credentials and accepts no change here", async () => {
 		const rec = makeRecorder();
 		const iface = makeHotspotIface({ hotspotConn: "live-uuid" });
@@ -748,6 +859,78 @@ describe("hotspot credentials store", () => {
 
 		expect(getHotspotCredentials(PERM_MAC)?.ssid).toBe("a");
 		expect(getHotspotCredentials(SECOND_PERM_MAC)?.ssid).toBe("b");
+	});
+});
+
+describe("hotspot credentials store — checked write", () => {
+	let dir: string;
+	let file: string;
+
+	beforeEach(async () => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), "hotspot-checked-"));
+		file = path.join(dir, "hotspot_credentials.json");
+		await initHotspotCredentials(file);
+	});
+
+	afterEach(() => {
+		resetHotspotCredentialsForTest();
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("reports success only once the entry is on disk, owner-only", () => {
+		expect(
+			rememberHotspotCredentialsChecked(PERM_MAC, {
+				ssid: "Rig Cam",
+				password: "my own pass",
+			}),
+		).toBe(true);
+		const key = normalizeMacAddress(PERM_MAC) ?? PERM_MAC;
+		const written = JSON.parse(fs.readFileSync(file, "utf8"));
+		expect(written.adapters[key]).toMatchObject({
+			ssid: "Rig Cam",
+			password: "my own pass",
+		});
+		expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+	});
+
+	test("rewrites an unchanged entry an earlier best-effort write lost", () => {
+		fs.mkdirSync(file);
+		rememberHotspotCredentials(PERM_MAC, { ssid: "a", password: "pa" });
+		expect(getHotspotCredentials(PERM_MAC)?.ssid).toBe("a");
+		fs.rmdirSync(file);
+
+		expect(
+			rememberHotspotCredentialsChecked(PERM_MAC, {
+				ssid: "a",
+				password: "pa",
+			}),
+		).toBe(true);
+		const key = normalizeMacAddress(PERM_MAC) ?? PERM_MAC;
+		expect(JSON.parse(fs.readFileSync(file, "utf8")).adapters[key].ssid).toBe(
+			"a",
+		);
+	});
+
+	test("a failed write returns false and leaves memory unchanged", () => {
+		rememberHotspotCredentials(PERM_MAC, { ssid: "old", password: "old-pass" });
+		fs.rmSync(file);
+		fs.mkdirSync(file);
+
+		expect(
+			rememberHotspotCredentialsChecked(PERM_MAC, {
+				ssid: "Rig Cam",
+				password: "my own pass",
+			}),
+		).toBe(false);
+		expect(getHotspotCredentials(PERM_MAC)?.ssid).toBe("old");
+	});
+
+	test("ordinary remembering still logs and continues on a failed write", () => {
+		fs.mkdirSync(file);
+		expect(() =>
+			rememberHotspotCredentials(PERM_MAC, { ssid: "a", password: "pa" }),
+		).not.toThrow();
+		expect(getHotspotCredentials(PERM_MAC)?.ssid).toBe("a");
 	});
 });
 
