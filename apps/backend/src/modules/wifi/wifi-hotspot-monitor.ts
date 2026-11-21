@@ -34,7 +34,6 @@ import {
 	getWifiState,
 	setWifiState,
 } from "./state/wifi-state.ts";
-import { waitForHotspotReadiness } from "./wifi-hotspot-readiness.ts";
 import {
 	ownsWifiAdapterLock,
 	wifiAdapterLockKey,
@@ -43,6 +42,13 @@ import {
 import { registerWifiAdapterLegRelease } from "./wifi-adapter-reconcile-retry.ts";
 import { getWifiInterfaceByMacAddress } from "./wifi-connections.ts";
 import { nmDisconnectActivation } from "./wifi-hotspot-activity.ts";
+import {
+	advanceHotspotOperation,
+	beginHotspotStartTerminal,
+	currentHotspotOperation,
+	type HotspotOperationTicket,
+	hotspotOperationCurrent,
+} from "./wifi-hotspot-readiness.ts";
 import type {
 	HotspotActivationDeps,
 	HotspotActivationInstance,
@@ -87,8 +93,20 @@ export function syncWifiStateCache(
 
 // ─── pending NM-confirmation registry ────────────────────────────────────────
 
+/** The Start that owns a terminal frame: its ticket, publisher and device. */
+export type HotspotStartOwner = {
+	readonly ticket: HotspotOperationTicket;
+	readonly deps: Pick<
+		HotspotActivationDeps,
+		"steering" | "publishOutcome" | "broadcastState"
+	>;
+	readonly device: number;
+};
+
 type PendingHotspot = {
 	readonly uuid: string;
+	/** A newer already-up Start can take over the terminal of this activation. */
+	start: HotspotStartOwner;
 	activation: HotspotActivationInstance | undefined;
 	readonly ifname: string;
 	readonly apIfname: string;
@@ -214,7 +232,7 @@ export function settlePending(
 export function beginHotspotTransition(
 	wifiInterface: WifiInterfaceWithHotspot,
 	transition: NonNullable<WifiInterfaceWithHotspot["hotspot"]["transition"]>,
-): void {
+): HotspotOperationTicket {
 	for (const previous of [
 		pendingByRow.get(wifiInterface),
 		pendingHotspots.get(wifiInterface.ifname),
@@ -226,7 +244,54 @@ export function beginHotspotTransition(
 		if (pendingByRow.get(previous.row) === previous)
 			pendingByRow.delete(previous.row);
 	}
+	const ticket = advanceHotspotOperation(wifiInterface);
 	wifiInterface.hotspot.transition = transition;
+	return ticket;
+}
+
+/**
+ * The terminal Start frame for an AP that is up: at once without steering,
+ * otherwise once its client zone is verified (or `pending` at the deadline).
+ * The row shows as awaiting steering as soon as this is called; the returned
+ * function starts the wait, which runs outside any adapter lock. A superseded
+ * or cancelled Start publishes nothing.
+ */
+export function beginStartTerminal(
+	row: WifiInterfaceWithHotspot,
+	uuid: string,
+	start: HotspotStartOwner,
+	witness?: HotspotActivationInstance,
+): () => void {
+	return beginHotspotStartTerminal(
+		row,
+		uuid,
+		{ ticket: start.ticket, ...(witness ? { witness } : {}) },
+		start.deps.steering,
+		(result, waited) => {
+			if (waited) start.deps.broadcastState();
+			start.deps.publishOutcome?.("start", start.device, result);
+		},
+		(error: unknown) => {
+			logger.warn("Wi-Fi AP steering wait failed", {
+				error: error instanceof Error ? error.name : "unknown",
+			});
+		},
+	);
+}
+
+/**
+ * An already-up Start that finds this exact activation still awaiting NM
+ * confirmation takes over its terminal (the older Start publishes nothing).
+ */
+export function adoptPendingStart(
+	row: WifiInterfaceWithHotspot,
+	uuid: string,
+	start: HotspotStartOwner,
+): boolean {
+	const pending = pendingByRow.get(row);
+	if (!pending || !current(pending) || pending.uuid !== uuid) return false;
+	pending.start = start;
+	return true;
 }
 
 /** Events trigger selected-AP observation; names or parent connectivity are not proof. */
@@ -290,6 +355,7 @@ export function registerPendingConfirmation(
 				wifiRadioIdentity.state.rows.get(target.ifname)?.lifetime,
 			));
 	const confirm = (): void => {
+		const start = pending.start;
 		deps.credentials.clearCreation?.(owner, target.uuid);
 		if (virtual)
 			transitionVirtualBinding(wifiInterface, {
@@ -300,9 +366,18 @@ export function registerPendingConfirmation(
 		else wifiInterface.conn = target.uuid;
 		delete hotspot.transition;
 		if (!virtual) deps.setDupIpSuppression(ifname, false);
+		// The exact activation the probe confirmed is the witness the terminal
+		// rechecks; the row shows as awaiting steering in this very broadcast.
+		const activation = pending.activation;
+		const terminal = beginStartTerminal(
+			wifiInterface,
+			target.uuid,
+			start,
+			activation?.activePath && activation.profile ? activation : undefined,
+		);
 		deps.broadcastState();
 		syncWifiStateCache(target.macAddress, wifiInterface);
-		deps.publishOutcome?.("start", device, { success: true });
+		terminal();
 	};
 	const reportFailure = (
 		changed: { readonly stopped: boolean } | undefined,
@@ -328,13 +403,15 @@ export function registerPendingConfirmation(
 			deps.broadcastState();
 			syncWifiStateCache(target.macAddress, wifiInterface);
 		}
-		deps.publishOutcome?.("start", device, {
-			success: false,
-			error: changed ? "radio-changed" : "not-confirmed",
-			...(releasePending || (changed && !changed.stopped)
-				? { reason: "deactivation-failed" }
-				: {}),
-		});
+		const start = pending.start;
+		if (hotspotOperationCurrent(start.ticket))
+			start.deps.publishOutcome?.("start", start.device, {
+				success: false,
+				error: changed ? "radio-changed" : "not-confirmed",
+				...(releasePending || (changed && !changed.stopped)
+					? { reason: "deactivation-failed" }
+					: {}),
+			});
 	};
 	const giveUp: PendingHotspot["giveUp"] = (changed, cancelled) => {
 		const allocation = target.allocation;
@@ -441,6 +518,7 @@ export function registerPendingConfirmation(
 	};
 	const pending: PendingHotspot = {
 		uuid: target.uuid,
+		start: { ticket: currentHotspotOperation(wifiInterface), deps, device },
 		activation: target.activation,
 		ifname,
 		apIfname: target.ifname,
