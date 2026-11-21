@@ -50,6 +50,27 @@ import {
 	setShowIOSInstallPrompt,
 } from '$lib/stores/pwa.svelte';
 
+interface Props {
+	/**
+	 * The app shell's fixed bottom dock (tab bar + HUD) is on screen, so the
+	 * install banner must sit above it rather than over the navigation.
+	 */
+	aboveDock?: boolean;
+}
+
+const { aboveDock = false }: Props = $props();
+
+// Above the dock it also clears the Live bar, with the same offset the toast
+// stack uses; the safe area is then under the dock, not under the banner.
+const installBannerBottom = $derived(
+	aboveDock
+		? 'calc(var(--mobile-dock-height) + var(--live-bar-height, 0px) + env(safe-area-inset-bottom, 0px))'
+		: 'env(safe-area-inset-bottom, 0px)',
+);
+const installBannerPadding = $derived(
+	aboveDock ? '1rem' : 'calc(1rem + env(safe-area-inset-bottom, 0px))',
+);
+
 const showOfflineBanner = $derived(
 	deriveConnectionSurfaceUx(
 		{ authTimedOut: false, disconnectedSince: getDisconnectedSince() },
@@ -189,20 +210,19 @@ async function handleMobileInstall() {
 	</div>
 {/if}
 
-<!-- Mobile Install App Banner - All mobile devices, fixed to bottom -->
+<!-- Mobile Install App Banner - All mobile devices, fixed above the dock (or
+     to the bottom edge where the shell shows none) -->
 {#if showIOSBanner && isMobile}
 	<div
-		style:bottom="0px"
-		style="
-      bottom: env(safe-area-inset-bottom, 0px);
-    "
+		data-testid="pwa-install-banner"
+		style:bottom={installBannerBottom}
 		style:overflow-x="hidden"
 		style:box-sizing="border-box"
 		style:width="100%"
 		style:max-width="100vw"
 		style:transform="translateZ(0)"
 		style:-webkit-transform="translateZ(0)"
-		style:padding-bottom="calc(1rem + env(safe-area-inset-bottom, 0px))"
+		style:padding-bottom={installBannerPadding}
 		class="animate-in slide-in-from-bottom bg-primary text-primary-foreground fixed right-0 left-0 z-50 p-4"
 	>
 		<div class="mx-auto flex w-full max-w-sm items-center justify-between gap-3 px-2">
