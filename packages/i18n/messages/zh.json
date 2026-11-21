@@ -1719,6 +1719,7 @@
 	"network.ethRole.error.noConnection": "此端口没有可配置的网络配置文件，未做任何更改。",
 	"network.ethRole.error.applyFailed": "设备无法应用新用途，已保留原有设置。",
 	"network.ethRole.error.unavailableEmulated": "端口用途仅在真实硬件上可用。",
+	"network.ethRole.error.changeInFlight": "此端口上另一项网络更改仍在等待、撤销或保存中，所以没有任何更改。完成后再试。",
 	"network.ethRole.error.notConfirmed": "设备未回报结果，因此此端口的用途未知。",
 	"network.ethRole.error.generic": "设备拒绝了此更改，端口保留了原有用途。",
 	"network.netifSave.error.title": "未保存任何内容",
@@ -3517,5 +3518,16 @@
 	"network.changeSafety.notice.make": "进行更改",
 	"network.changeSafety.notice.leave": "保持撤销",
 	"network.changeSafety.kept.undo": "撤销上一次网络更改",
-	"network.changeSafety.summary.ethernetRole": "{ifname} 端口角色更改"
+	"network.changeSafety.summary.ethernetRole": "{ifname} 端口角色更改",
+	"network.changeSafety.askBefore.routeCuts": "此更改很可能断开你的连接：盒子通过 {via} 连到你。",
+	"network.changeSafety.askBefore.routeMayCut": "此更改可能中断你的连接：{via} 是盒子的上行链路之一。",
+	"network.changeSafety.askBefore.undoVia": "进行更改（除非 {via} 上有人确认，{seconds} 秒后撤销）",
+	"network.changeSafety.askBefore.undoLocal": "进行更改（除非现场有人确认，{seconds} 秒后撤销）",
+	"network.changeSafety.askBefore.reachable": "进行更改（仅当 {settle} 秒后盒子仍能访问互联网时保留）",
+	"network.changeSafety.askBefore.keepRemote": "进行更改且不撤销。如果盒子断开，需要有人到现场处理。",
+	"network.changeSafety.askBefore.live": "正在直播：到期撤销可能使直播短暂中断。",
+	"network.changeSafety.confirm.reachable": "正在检查盒子是否仍能访问互联网。能访问就保留更改。",
+	"network.changeSafety.notice.unreachable": "此更改后盒子失去了互联网连接，所以已撤销。仍要更改吗？",
+	"network.changeSafety.notice.interrupted": "盒子在进行此更改时重启了，所以没有更改。仍要更改吗？",
+	"network.changeSafety.notice.unsaved": "盒子在保存你确认的更改前重启了，所以已撤销。仍要更改吗？"
 }

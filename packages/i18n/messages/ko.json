@@ -1719,6 +1719,7 @@
 	"network.ethRole.error.noConnection": "이 포트에 구성할 네트워크 프로필이 없어 아무것도 변경되지 않았습니다.",
 	"network.ethRole.error.applyFailed": "기기가 새 역할을 적용하지 못하고 이전 역할을 유지했습니다.",
 	"network.ethRole.error.unavailableEmulated": "포트 역할은 실제 하드웨어에서만 사용할 수 있습니다.",
+	"network.ethRole.error.changeInFlight": "이 포트의 다른 네트워크 변경이 아직 대기, 되돌리기 또는 저장 중이라 아무것도 바뀌지 않았습니다. 끝난 뒤 다시 시도하세요.",
 	"network.ethRole.error.notConfirmed": "기기가 결과를 보고하지 않아 이 포트의 역할을 알 수 없습니다.",
 	"network.ethRole.error.generic": "기기가 변경을 거부해 이 포트는 이전 역할을 유지했습니다.",
 	"network.netifSave.error.title": "저장된 내용이 없습니다",
@@ -3517,5 +3518,16 @@
 	"network.changeSafety.notice.make": "변경하기",
 	"network.changeSafety.notice.leave": "되돌린 상태로 두기",
 	"network.changeSafety.kept.undo": "마지막 네트워크 변경 되돌리기",
-	"network.changeSafety.summary.ethernetRole": "{ifname} 포트 역할 변경"
+	"network.changeSafety.summary.ethernetRole": "{ifname} 포트 역할 변경",
+	"network.changeSafety.askBefore.routeCuts": "이 변경으로 연결이 끊길 가능성이 큽니다: 박스는 {via}로 연결되어 있습니다.",
+	"network.changeSafety.askBefore.routeMayCut": "이 변경으로 연결이 끊길 수 있습니다: {via}는 박스의 업링크 중 하나입니다.",
+	"network.changeSafety.askBefore.undoVia": "변경하기 ({via}에서 누군가 확인하지 않으면 {seconds}초 후 되돌림)",
+	"network.changeSafety.askBefore.undoLocal": "변경하기 (현장에서 누군가 확인하지 않으면 {seconds}초 후 되돌림)",
+	"network.changeSafety.askBefore.reachable": "변경하기 ({settle}초 후에도 박스가 인터넷에 닿을 때만 유지)",
+	"network.changeSafety.askBefore.keepRemote": "되돌리지 않고 변경합니다. 박스가 끊기면 누군가 현장에서 고쳐야 합니다.",
+	"network.changeSafety.askBefore.live": "라이브 중입니다: 기한에 되돌리면 방송이 잠시 끊길 수 있습니다.",
+	"network.changeSafety.confirm.reachable": "박스가 아직 인터넷에 닿는지 확인 중입니다. 닿으면 변경을 유지합니다.",
+	"network.changeSafety.notice.unreachable": "변경 후 박스가 인터넷 연결을 잃어 되돌렸습니다. 그래도 변경할까요?",
+	"network.changeSafety.notice.interrupted": "변경하는 중에 박스가 다시 시작되어 변경되지 않았습니다. 그래도 변경할까요?",
+	"network.changeSafety.notice.unsaved": "확인한 변경을 저장하기 전에 박스가 다시 시작되어 되돌렸습니다. 그래도 변경할까요?"
 }

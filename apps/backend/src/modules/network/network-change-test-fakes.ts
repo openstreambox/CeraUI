@@ -40,8 +40,9 @@ export function createFakeNm() {
 	const active = new Map<string, string>();
 	const checkpoints = new Map<
 		string,
-		{ profiles: Set<string>; active: Map<string, string> }
+		{ profiles: Set<string>; active: Map<string, string>; created: string }
 	>();
+	let createdCounter = 0;
 	const calls: string[] = [];
 	const fail = new Set<string>();
 	let checkpointCounter = 0;
@@ -58,11 +59,15 @@ export function createFakeNm() {
 			checkpoints.set(path, {
 				profiles: new Set(profiles.keys()),
 				active: new Map(active),
+				created: String(++createdCounter * 1000),
 			});
 			return path;
 		},
 		async live(path) {
 			return checkpoints.has(path);
+		},
+		async checkpointCreated(path) {
+			return checkpoints.get(path)?.created;
 		},
 		async destroy(path) {
 			guard("destroy");
@@ -165,6 +170,20 @@ export function createFakeNm() {
 		restart() {
 			checkpoints.clear();
 		},
+		/**
+		 * After a daemon restart, someone else creates a checkpoint that gets a
+		 * path the owner already journaled (NetworkManager numbers from 1 again).
+		 */
+		foreignCheckpointAt(path: string) {
+			checkpoints.set(path, {
+				profiles: new Set(profiles.keys()),
+				active: new Map(active),
+				created: String(++createdCounter * 1000 + 7),
+			});
+		},
+		hasCheckpoint(path: string) {
+			return checkpoints.has(path);
+		},
 		/** Reboot: /run is gone; autoconnect brings disk profiles back. */
 		reboot() {
 			checkpoints.clear();
@@ -235,8 +254,30 @@ export function session(
 	id: string,
 	ingress: string | undefined,
 	openedAt = 0,
+	route?: NetworkChangeSession["route"],
 ): NetworkChangeSession {
-	return { id, openedAt, authenticated: true, ingress };
+	return {
+		id,
+		openedAt,
+		authenticated: true,
+		ingress,
+		...(route ? { route } : {}),
+	};
+}
+
+/** A box-side reachability probe the test steers. */
+export function fakeReachability(initial = true) {
+	const state = { available: true, up: initial, probes: 0 };
+	return {
+		state,
+		deps: {
+			available: () => state.available,
+			probe: async () => {
+				state.probes++;
+				return state.up;
+			},
+		},
+	};
 }
 
 export function plan(
@@ -255,6 +296,8 @@ export function harness(
 	options: {
 		settleMs?: number;
 		onSettled?: NetworkChangeDeps["onSettled"];
+		reachability?: NetworkChangeDeps["reachability"];
+		isStreaming?: NetworkChangeDeps["isStreaming"];
 	} = {},
 ) {
 	let now = 1000;
@@ -263,6 +306,7 @@ export function harness(
 	const effects = createFakeEffects();
 	const journal = createMemoryJournalStore();
 	let changes = 0;
+	const logs: string[] = [];
 	const make = () =>
 		createNetworkChangeOwner({
 			now: () => now,
@@ -272,6 +316,11 @@ export function harness(
 			journal,
 			settleMs: options.settleMs ?? 15_000,
 			...(options.onSettled ? { onSettled: options.onSettled } : {}),
+			...(options.reachability ? { reachability: options.reachability } : {}),
+			...(options.isStreaming ? { isStreaming: options.isStreaming } : {}),
+			log: (message) => {
+				logs.push(message);
+			},
 			onChange: () => {
 				changes++;
 			},
@@ -286,6 +335,7 @@ export function harness(
 			return make();
 		},
 		changes: () => changes,
+		logs,
 		at(value: number) {
 			now = value;
 		},

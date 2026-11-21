@@ -1764,6 +1764,7 @@
 	"network.ethRole.error.noConnection": "Für diesen Anschluss gibt es kein Netzwerkprofil zum Konfigurieren, es wurde nichts geändert.",
 	"network.ethRole.error.applyFailed": "Das Gerät konnte die neue Rolle nicht anwenden und hat die vorherige beibehalten.",
 	"network.ethRole.error.unavailableEmulated": "Anschluss-Rollen sind nur auf echter Hardware verfügbar.",
+	"network.ethRole.error.changeInFlight": "Eine andere Netzwerkänderung an diesem Anschluss ist noch offen, wird rückgängig gemacht oder gespeichert, deshalb wurde nichts geändert. Versuch es danach erneut.",
 	"network.ethRole.error.notConfirmed": "Das Gerät hat das Ergebnis nie gemeldet, die Rolle dieses Anschlusses ist unbekannt.",
 	"network.ethRole.error.generic": "Das Gerät hat die Änderung abgelehnt, der Anschluss hat seine vorherige Rolle behalten.",
 	"network.netifSave.error.title": "Es wurde nichts gespeichert",
@@ -3562,5 +3563,16 @@
 	"network.changeSafety.notice.make": "Änderung vornehmen",
 	"network.changeSafety.notice.leave": "Rückgängig lassen",
 	"network.changeSafety.kept.undo": "Letzte Netzwerkänderung rückgängig machen",
-	"network.changeSafety.summary.ethernetRole": "Änderung der Port-Rolle an {ifname}"
+	"network.changeSafety.summary.ethernetRole": "Änderung der Port-Rolle an {ifname}",
+	"network.changeSafety.askBefore.routeCuts": "Diese Änderung trennt dich wahrscheinlich: Die Box erreicht dich über {via}.",
+	"network.changeSafety.askBefore.routeMayCut": "Diese Änderung kann deine Verbindung unterbrechen: {via} ist ein Uplink der Box.",
+	"network.changeSafety.askBefore.undoVia": "Ändern, nach {seconds} s rückgängig, außer jemand an {via} bestätigt",
+	"network.changeSafety.askBefore.undoLocal": "Ändern, nach {seconds} s rückgängig, außer jemand vor Ort bestätigt",
+	"network.changeSafety.askBefore.reachable": "Ändern, nur behalten, wenn die Box nach {settle} s noch das Internet erreicht",
+	"network.changeSafety.askBefore.keepRemote": "Ohne Rückgängig ändern. Trennt es die Box ab, muss jemand vor Ort helfen.",
+	"network.changeSafety.askBefore.live": "Du bist live: Ein Rückgängig zur Frist kann den Stream kurz unterbrechen.",
+	"network.changeSafety.confirm.reachable": "Prüfe, ob die Box noch das Internet erreicht. Dann bleibt die Änderung.",
+	"network.changeSafety.notice.unreachable": "Nach der Änderung verlor die Box ihre Internetverbindung, deshalb wurde rückgängig gemacht. Trotzdem?",
+	"network.changeSafety.notice.interrupted": "Die Box startete während der Änderung neu, deshalb wurde sie nicht gemacht. Trotzdem?",
+	"network.changeSafety.notice.unsaved": "Die Box startete neu, bevor deine bestätigte Änderung gespeichert war. Rückgängig gemacht. Trotzdem?"
 }

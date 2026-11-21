@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import type { EthernetRole } from "@ceraui/rpc/schemas";
+import { LOCAL_INGRESS_DIRECTORY } from "../../rpc/local-ingress.ts";
 import { ETHERNET_ROLE_DEFAULT } from "./ethernet-role.ts";
 import type { EthernetRoleOutcome } from "./ethernet-role-outcome.ts";
 import {
@@ -16,7 +17,9 @@ import {
 	DEFAULT_ROLE,
 	ETHERNET_ROLE_SUMMARY_KEY,
 	ethernetRoleFromPlan,
+	ethernetRoleOfSummary,
 	ethernetRolePlan,
+	FRONT_DOOR_DIRECTORY,
 	NETWORK_CHANGE_SAFETY_ENV,
 	networkChangeSafetyEnabled,
 } from "./ethernet-role-safety.ts";
@@ -25,7 +28,11 @@ import {
 	reconcileEthernetRoles,
 	setEthernetRole,
 } from "./ethernet-role-transition.ts";
-import { harness, session } from "./network-change-test-fakes.ts";
+import {
+	fakeReachability,
+	harness,
+	session,
+} from "./network-change-test-fakes.ts";
 import type { SettledEvent } from "./network-checkpoint.ts";
 
 const UNDO = "undo-automatically" as const;
@@ -33,7 +40,12 @@ const KEEP = "keep-change" as const;
 
 /** A box with eth0 on its uplink profile, plus the role store. */
 function box(
-	options: { role?: EthernetRole; owned?: boolean; settleMs?: number } = {},
+	options: {
+		role?: EthernetRole;
+		owned?: boolean;
+		settleMs?: number;
+		reachability?: ReturnType<typeof fakeReachability>["deps"];
+	} = {},
 ) {
 	const roles: Record<string, EthernetRole> = {};
 	if (options.role) roles.eth0 = options.role;
@@ -44,6 +56,7 @@ function box(
 	let settleFailures = 0;
 	const h = harness({
 		settleMs: options.settleMs ?? 15_000,
+		...(options.reachability ? { reachability: options.reachability } : {}),
 		onSettled: (event) => {
 			if (settleFailures > 0) {
 				settleFailures--;
@@ -107,7 +120,7 @@ function box(
 	handler = createEthernetRoleSettledHandler(deps);
 	const safety = (
 		s: ReturnType<typeof session>,
-		answer?: typeof UNDO | typeof KEEP,
+		answer?: typeof UNDO | typeof KEEP | "keep-if-reachable",
 	) => ({
 		owner: h.owner,
 		session: s,
@@ -134,14 +147,32 @@ const laterOverEth = session("reconnected", "eth0", 1_001);
 
 describe("the flag", () => {
 	it("is off unless set to exactly 1", () => {
-		expect(networkChangeSafetyEnabled({})).toBe(false);
+		const frontDoor = () => true;
+		expect(networkChangeSafetyEnabled({}, frontDoor)).toBe(false);
 		for (const value of ["", "0", "true", "yes", " 1"])
 			expect(
-				networkChangeSafetyEnabled({ [NETWORK_CHANGE_SAFETY_ENV]: value }),
+				networkChangeSafetyEnabled(
+					{ [NETWORK_CHANGE_SAFETY_ENV]: value },
+					frontDoor,
+				),
 			).toBe(false);
 		expect(
-			networkChangeSafetyEnabled({ [NETWORK_CHANGE_SAFETY_ENV]: "1" }),
+			networkChangeSafetyEnabled(
+				{ [NETWORK_CHANGE_SAFETY_ENV]: "1" },
+				frontDoor,
+			),
 		).toBe(true);
+	});
+
+	it("needs the front door: without it no session has arrival evidence", () => {
+		expect(
+			networkChangeSafetyEnabled(
+				{ [NETWORK_CHANGE_SAFETY_ENV]: "1" },
+				() => false,
+			),
+		).toBe(false);
+		// The default looks for the front door's listener directory.
+		expect(FRONT_DOOR_DIRECTORY).toBe(LOCAL_INGRESS_DIRECTORY);
 	});
 
 	it("leaves the existing path unchanged when no safety is passed", async () => {
@@ -494,7 +525,12 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 			b.safety(session("laptop", "eth0", 500), UNDO),
 		);
 		const restated = await setEthernetRole("eth0", "shared-lan", b.deps, "op2");
-		expect(restated).toEqual({ success: false, error: "apply_failed" });
+		// Refused with its own reason, so the UI can say why.
+		expect(restated).toEqual({ success: false, error: "change_in_flight" });
+		expect(b.frames.at(-1)).toMatchObject({
+			name: "eth0",
+			error: "change_in_flight",
+		});
 		expect(b.writes).toEqual([]);
 		expect(b.roles.eth0).toBe("shared-lan");
 	});
@@ -526,7 +562,17 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 			undefined,
 			b.safety(session("remote", undefined, 500), KEEP),
 		);
-		expect(result).toEqual({ success: false, error: "apply_failed" });
+		// The change is live and kept; only saving it is unfinished, so the
+		// caller hears "kept, saving" and a pending frame, not a failure.
+		expect(result).toMatchObject({
+			success: true,
+			applied: "shared-lan",
+			changeSafety: { kind: "kept", saving: true },
+		});
+		expect(b.frames.at(-1)).toMatchObject({
+			pending: true,
+			role: "shared-lan",
+		});
 		expect((await b.owner.status()).commitIncomplete).toBe(true);
 		expect(await b.owner.touches("eth0")).toBe(true);
 		expect(await b.owner.tick()).toBe(true);
@@ -573,7 +619,9 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 		expect(await b.restartBackend().reconcile("backend-start")).toBe("undone");
 		expect(b.fake.active.get("eth0")).toBe(b.wired);
 		expect(b.roles.eth0).toBeUndefined();
-		expect((await b.owner.status()).notice?.reason).toBe("restart");
+		// Kept, then lost before reaching disk: not "restarted before you
+		// confirmed".
+		expect((await b.owner.status()).notice?.reason).toBe("unsaved");
 	});
 
 	it("a confirmation whose profile write failed is retried by the tick and shown meanwhile", async () => {
@@ -621,7 +669,8 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 			commitIncomplete: false,
 			undoIncomplete: false,
 		});
-		expect(status.notice?.reason).toBe("restart");
+		// The person did confirm: the notice says the save was lost.
+		expect(status.notice?.reason).toBe("unsaved");
 		// Not wedged: the next protected change goes through.
 		await owner.leaveUndone(status.notice?.id as string, overEth);
 		const again = await setEthernetRole(
@@ -636,5 +685,178 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 			},
 		);
 		expect(again.changeSafety?.kind).toBe("pending");
+	});
+});
+
+describe("a remote owner whose session the change cuts", () => {
+	/** A relay or tailnet session: no arrival evidence, routed over eth0. */
+	const remoteOverEth = session("relay", undefined, 500, {
+		carriers: ["eth0"],
+		tunnel: true,
+	});
+
+	it("is told up front that the change cuts them, and offered keep-if-reachable", async () => {
+		const probe = fakeReachability();
+		const b = box({ reachability: probe.deps });
+		const result = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			"op1",
+			b.safety(remoteOverEth),
+		);
+		expect(result.success).toBe(false);
+		expect(result.changeSafety).toMatchObject({
+			kind: "ask-before",
+			cut: "cuts",
+			via: "eth0",
+			canConfirm: false,
+			primary: { answer: "keep-if-reachable" },
+			alternative: { answer: "undo-automatically" },
+			deliberate: { answer: "keep-change" },
+		});
+		// Nothing applied, nothing persisted, no frame.
+		expect(b.fake.calls).toEqual([]);
+		expect(b.roles.eth0).toBeUndefined();
+		expect(b.frames).toEqual([]);
+	});
+
+	it("keep-if-reachable commits the role once the box still reaches the internet", async () => {
+		const probe = fakeReachability();
+		const b = box({ reachability: probe.deps });
+		const result = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			"op1",
+			b.safety(remoteOverEth, "keep-if-reachable"),
+		);
+		expect(result).toMatchObject({
+			success: true,
+			changeSafety: { kind: "pending" },
+		});
+		expect(b.frames.at(-1)).toMatchObject({ pending: true, op: "op1" });
+		expect((await b.owner.status()).pending?.confirmBy).toBe("reachability");
+		// Nothing is probed or persisted inside the settle time.
+		b.at(10_000);
+		expect(await b.owner.tick()).toBe(false);
+		expect(probe.state.probes).toBe(0);
+		b.at(16_001);
+		expect(await b.owner.tick()).toBe(false);
+		b.at(21_001);
+		expect(await b.owner.tick()).toBe(true);
+		expect(probe.state.probes).toBe(2);
+		expect(b.roles.eth0).toBe("shared-lan");
+		expect(b.frames.at(-1)).toMatchObject({
+			success: true,
+			role: "shared-lan",
+			op: "op1",
+		});
+		expect(
+			b.fake.profiles.get(b.fake.active.get("eth0") as string),
+		).toMatchObject({ storage: "disk", settings: { "ipv4.method": "shared" } });
+		expect((await b.journal.read()).tx).toBeNull();
+	});
+
+	it("keep-if-reachable is undone when the box loses the internet, with its own notice", async () => {
+		const probe = fakeReachability(false);
+		const b = box({ reachability: probe.deps });
+		await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			"op1",
+			b.safety(remoteOverEth, "keep-if-reachable"),
+		);
+		for (let t = 16_001; t < 90_000; t += 5_000) {
+			b.at(t);
+			expect(await b.owner.tick()).toBe(false);
+		}
+		expect(probe.state.probes).toBeGreaterThan(5);
+		await b.fake.expireAll();
+		b.at(91_001);
+		expect(await b.owner.tick()).toBe(true);
+		expect(b.fake.active.get("eth0")).toBe(b.wired);
+		expect(b.roles.eth0).toBeUndefined();
+		expect(b.frames.at(-1)).toMatchObject({
+			error: "apply_failed",
+			op: "op1",
+		});
+		expect((await b.owner.status()).notice?.reason).toBe("unreachable");
+	});
+
+	it("a laptop on the port itself is never offered keep-if-reachable", async () => {
+		const probe = fakeReachability();
+		const b = box({ reachability: probe.deps });
+		const laptop = session("laptop", "eth0", 500);
+		const ask = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			b.safety(laptop),
+		);
+		expect(ask.changeSafety).toMatchObject({
+			kind: "ask-before",
+			canConfirm: true,
+			primary: { answer: "undo-automatically" },
+		});
+		expect(ask.changeSafety).not.toHaveProperty("alternative");
+		const refused = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			b.safety(laptop, "keep-if-reachable"),
+		);
+		expect(refused).toEqual({ success: false, error: "apply_failed" });
+		expect(b.fake.calls).toEqual([]);
+	});
+});
+
+describe("re-applying from a notice plans the role change again", () => {
+	it("reads the role change back from the notice summary only", () => {
+		const plan = ethernetRolePlan({
+			ifname: "eth0",
+			role: "shared-lan",
+			previous: undefined,
+			activeUuid: "00000000-0000-4000-8000-000000000001",
+			owned: false,
+			op: "op9",
+		});
+		expect(ethernetRoleOfSummary(plan.summary)).toEqual({
+			ifname: "eth0",
+			role: "shared-lan",
+			previous: undefined,
+			op: "op9",
+		});
+		expect(
+			ethernetRoleOfSummary({ key: "network.changeSafety.summary.other" }),
+		).toBeUndefined();
+	});
+
+	it("a deliberate re-plan asks before again, against the port's profile now", async () => {
+		const b = box();
+		// The profile on the port changed since the stored plan was made.
+		const replaced = b.fake.add("Wired connection 2", {
+			"ipv4.method": "auto",
+		});
+		b.fake.active.set("eth0", replaced);
+		const other = session("phone", "wlan0", 500);
+		const ask = await setEthernetRole("eth0", "shared-lan", b.deps, undefined, {
+			...b.safety(other),
+			deliberate: true,
+		});
+		expect(ask.changeSafety?.kind).toBe("ask-before");
+		const pending = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			{ ...b.safety(other, UNDO), deliberate: true },
+		);
+		expect(pending.changeSafety?.kind).toBe("pending");
+		// The candidate is a clone of the profile running now, not the stale one.
+		expect(b.fake.calls).toContain("clone:Wired connection 2");
 	});
 });

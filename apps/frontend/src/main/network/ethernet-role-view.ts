@@ -55,7 +55,7 @@ const ROLE_CONSEQUENCE_KEY: Record<EthernetRole, string> = {
 };
 
 /**
- * `ethernetRoleErrorSchema`'s five members plus the two the transport can add.
+ * `ethernetRoleErrorSchema`'s six members plus the two the transport can add.
  * None is collapsible — each names a different thing the operator can do about
  * it, which is the reason the backend refused to collapse them either.
  */
@@ -65,6 +65,7 @@ const ERROR_KEY: Record<string, string> = {
 	no_connection: "network.ethRole.error.noConnection",
 	apply_failed: "network.ethRole.error.applyFailed",
 	unavailable_in_emulated_mode: "network.ethRole.error.unavailableEmulated",
+	change_in_flight: "network.ethRole.error.changeInFlight",
 };
 
 /** i18n dot-path for the role's own name. */
