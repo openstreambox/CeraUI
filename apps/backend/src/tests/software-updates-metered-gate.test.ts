@@ -24,13 +24,18 @@ import {
 	resetAptReachabilityProbeForTest,
 	resetSoftwareUpdateCheckRunner,
 	resetSoftwareUpdateSizeRunner,
+	SKIP_RETRY_DELAY_MS,
 	type SoftwareUpdateError,
 	setAptReachabilityProbeForTest,
 	setPeriodicUplinkGateForTest,
 	setSoftwareUpdateCheckRunner,
 	setSoftwareUpdateSizeRunner,
 } from "../modules/system/software-updates.ts";
-import { setUpdateSettingsFilePathForTest } from "../modules/system/update-settings.ts";
+import {
+	readPackageCellularConsent,
+	saveUpdateSettings,
+	setUpdateSettingsFilePathForTest,
+} from "../modules/system/update-settings.ts";
 import {
 	defaultUpdateTransportDeps,
 	onlyMeteredUplinksRemain,
@@ -223,6 +228,52 @@ describe("periodicCheckForSoftwareUpdates() — one cycle at a time", () => {
 		expect(runner).toHaveBeenCalledTimes(1);
 	});
 
+	it("releases the loop and retries when the runner throws before it starts", async () => {
+		fakeClock();
+		const runner = jest.fn(() => {
+			throw new Error("broadcast failed");
+		});
+		setSoftwareUpdateCheckRunner(runner);
+		const gate = jest.fn(async () => true);
+		setPeriodicUplinkGateForTest(gate);
+		const schedule = jest.spyOn(globalThis, "setTimeout");
+
+		periodicCheckForSoftwareUpdates();
+		await settleGate();
+
+		expect(runner).toHaveBeenCalledTimes(1);
+		expect(schedule).toHaveBeenCalledWith(
+			periodicCheckForSoftwareUpdates,
+			SKIP_RETRY_DELAY_MS,
+		);
+	});
+
+	it("keeps a timer when discovery rejects after the refresh", async () => {
+		fakeClock();
+		let report:
+			| ((err: SoftwareUpdateError, failures: number) => unknown)
+			| undefined;
+		setSoftwareUpdateCheckRunner((cb) => {
+			report = cb;
+			return true;
+		});
+		setPeriodicUplinkGateForTest(async () => true);
+		setAptReachabilityProbeForTest(async () => {
+			throw new Error("probe exploded");
+		});
+		periodicCheckForSoftwareUpdates();
+		await settleGate();
+		const schedule = jest.spyOn(globalThis, "setTimeout");
+
+		await report?.(null, 0);
+		await settleGate();
+
+		expect(schedule).toHaveBeenCalledWith(
+			periodicCheckForSoftwareUpdates,
+			expect.any(Number),
+		);
+	});
+
 	it("logs the wait once per episode", async () => {
 		fakeClock();
 		setSoftwareUpdateCheckRunner(jest.fn(() => true));
@@ -317,6 +368,17 @@ describe("packageCheckMayUseUplinks()", () => {
 			updateSettingsSchema.parse({}).allowPackagesOverCellular ||
 				!(await onlyMetered()),
 		);
+	});
+
+	it("reads again when a save lands during the read", async () => {
+		writeFileSync(primary, settings(true));
+		writeFileSync(sidecar, goodSidecar);
+		const pending = readPackageCellularConsent(primary);
+		saveUpdateSettings(
+			{ ...updateSettingsSchema.parse({}), allowPackagesOverCellular: false },
+			primary,
+		);
+		expect(await pending).toBe(false);
 	});
 
 	it("never migrates or writes settings", async () => {

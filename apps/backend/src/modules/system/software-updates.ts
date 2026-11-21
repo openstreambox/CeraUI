@@ -1367,6 +1367,14 @@ export function periodicCheckForSoftwareUpdates() {
 			}
 			periodicCheckWaitingForUplink = false;
 			runPeriodicSoftwareUpdateCheck();
+		})
+		.catch((error: unknown) => {
+			// Never leave the loop owned by a cycle that can no longer finish.
+			logger.warn("Automatic package check failed to start; retrying", {
+				error: error instanceof Error ? error : String(error),
+			});
+			periodicCycleRunning = false;
+			scheduleNextSoftwareUpdateCheck(SKIP_RETRY_DELAY_MS);
 		});
 }
 
@@ -1376,6 +1384,13 @@ function runPeriodicSoftwareUpdateCheck(): void {
 			const discovery = await runUpdateDiscoveryAndReport();
 			const err = err_ === null ? discovery : err_;
 			scheduleNextSoftwareUpdateCheck(computeNextCheckDelay(err, failures));
+		} catch (error) {
+			logger.warn("Automatic package discovery failed; retrying", {
+				error: error instanceof Error ? error : String(error),
+			});
+			scheduleNextSoftwareUpdateCheck(
+				computeNextCheckDelay("discovery_failed", failures),
+			);
 		} finally {
 			periodicCycleRunning = false;
 		}

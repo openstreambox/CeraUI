@@ -118,13 +118,19 @@ async function readPreferences<T>(
 export async function readPackageCellularConsent(
 	filePath = updateSettingsFilePath,
 ): Promise<boolean | null> {
+	const revision = settingsRevision;
+	let consent: boolean | null;
 	try {
 		const settings = await readPreferences(filePath, updateSettingsSchema);
-		return (settings ?? updateSettingsSchema.parse({}))
+		consent = (settings ?? updateSettingsSchema.parse({}))
 			.allowPackagesOverCellular;
 	} catch {
-		return null;
+		consent = null;
 	}
+	// A save during the read may have revoked consent; read again.
+	if (revision !== settingsRevision)
+		return readPackageCellularConsent(filePath);
+	return consent;
 }
 
 export async function loadUpdateSettings(
