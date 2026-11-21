@@ -58,8 +58,8 @@ import type {
 } from "@ceraui/rpc/schemas";
 import { deviceTokenClaimsSchema } from "@ceraui/rpc/schemas";
 import { z } from "zod";
-
 import { logger } from "../../helpers/logger.ts";
+import { isDevelopment } from "../../mocks/mock-config.ts";
 import { importEd25519PublicKey, verifyV4Public } from "./paseto-v4.ts";
 
 /** PASETO v4.public header (ADR-0006). The stub keeps it so the shape is real. */
@@ -356,12 +356,12 @@ let warnedControlUnverified = false;
 /** Options for {@link verifyDeviceControlToken}. */
 export interface VerifyDeviceControlTokenOptions {
 	/**
-	 * Whether this is a real hardware device (`isRealDevice()` resolved by the
-	 * caller). On a real device with no provisioned key the unsigned opaque path
-	 * is REFUSED (fail-closed) — only dev/mock hosts accept it. Defaults to
-	 * `false` so the key-less dev/test path is unaffected.
+	 * Whether device control requires verified tokens (resolved by the caller).
+	 * On an enabled device-control path with no provisioned key, the unsigned
+	 * opaque path is REFUSED (fail-closed) — only dev/mock hosts accept it. Defaults to
+	 * `false`; production always requires verification regardless of this option.
 	 */
-	isRealDevice?: boolean;
+	requireVerifiedControl?: boolean;
 }
 
 /**
@@ -391,7 +391,7 @@ export function verifyDeviceControlToken(
 	let payloadJson: string | null;
 	if (publicKey) {
 		payloadJson = verifyRealPayload(token, publicKey);
-	} else if (opts.isRealDevice === true) {
+	} else if (opts.requireVerifiedControl === true || !isDevelopment()) {
 		// FAIL-CLOSED: a real device with no provisioned key cannot verify a
 		// signature, and must NEVER accept an unverified control token. The
 		// unsigned opaque path is dev/mock-only.
