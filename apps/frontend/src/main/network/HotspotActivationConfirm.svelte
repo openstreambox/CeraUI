@@ -108,10 +108,18 @@ async function prepare(captured: WifiRadioBinding, seq: number, chosen?: { name:
 		if (observation === controller) { observation = undefined; awaitingStatus = false; }
 		if (seq !== attempt || captured.device !== device || captured.link !== getLinkEpoch()) return;
 		if (!next?.incarnation) { phase = 'unsupported'; acknowledged = false; return; }
-		accepted = { ...captured, incarnation: next.incarnation, session };
+		// Only the same radio lifetime is retried; a new token is another target.
+		if (next.incarnation !== captured.incarnation) {
+			invalidated = true;
+			refused = true;
+			acknowledged = false;
+			phase = 'load-failed';
+			return;
+		}
+		accepted = { ...captured, session };
 		binding = accepted;
 		retried = true;
-		result = await invoke(next.incarnation);
+		result = await invoke(captured.incarnation);
 	}
 	return { result, captured: accepted, retried };
 }
