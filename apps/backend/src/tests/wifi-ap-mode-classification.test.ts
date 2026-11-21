@@ -238,7 +238,7 @@ describe("wifiBuildMsg — an AP radio is never offered client controls", () => 
 		const entry = buildEntry(iface);
 
 		expect(entry?.mode).toBe("station");
-		expect(entry?.hotspot).toBeUndefined();
+		expect(entry?.hotspot?.available_channels).toBeDefined();
 		expect(entry?.available).toHaveLength(1);
 		expect(entry?.supports_hotspot).toBe(true);
 	});

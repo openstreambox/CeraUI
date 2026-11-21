@@ -84,6 +84,10 @@ export type ModemInfo = {
 	"modem.generic.access-technologies": Array<string>;
 	"modem.generic.signal-quality.value": number;
 	"modem.3gpp.operator-name"?: string;
+	/** MCC+MNC of the serving network; absent until the modem registers. */
+	"modem.3gpp.operator-code"?: string;
+	/** IP family the network negotiated for the LTE/5G attach bearer. */
+	"modem.3gpp.eps.initial-bearer.settings.ip-type"?: string;
 	"modem.3gpp.registration-state"?: string;
 	"modem.3gpp.packet-service-state"?: string;
 	"modem.3gpp.network-rejection-error"?: string;
@@ -526,6 +530,11 @@ export function parseModemInfo(parsed: MmcliRecord): ParseResult<ModemInfo> {
 		.filter((value) => value.length > 0);
 	const powerState = readOptionalString(parsed, "modem.generic.power-state");
 	const operatorName = readOptionalString(parsed, "modem.3gpp.operator-name");
+	const operatorCode = readOptionalString(parsed, "modem.3gpp.operator-code");
+	const attachIpType = readOptionalString(
+		parsed,
+		"modem.3gpp.eps.initial-bearer.settings.ip-type",
+	);
 	const registrationState = readOptionalString(
 		parsed,
 		"modem.3gpp.registration-state",
@@ -579,6 +588,12 @@ export function parseModemInfo(parsed: MmcliRecord): ParseResult<ModemInfo> {
 		),
 		...(operatorName !== undefined
 			? { "modem.3gpp.operator-name": operatorName }
+			: {}),
+		...(operatorCode !== undefined
+			? { "modem.3gpp.operator-code": operatorCode }
+			: {}),
+		...(attachIpType !== undefined
+			? { "modem.3gpp.eps.initial-bearer.settings.ip-type": attachIpType }
 			: {}),
 		...(registrationState !== undefined
 			? { "modem.3gpp.registration-state": registrationState }
