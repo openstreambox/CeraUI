@@ -84,6 +84,9 @@ export function eventRecording(
 	);
 	const session = createStreamSessionOrchestrator({
 		...production,
+		// Ownership evidence for adoption is covered elsewhere; these cases
+		// adopt a session this process owns.
+		canReconcileStreaming: () => true,
 		initialLiveness: "idle",
 		createAttemptId: () => "containment-attempt",
 		getStreamingStatus: streaming.getIsStreaming,
