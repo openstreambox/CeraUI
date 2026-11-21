@@ -2184,7 +2184,7 @@
 	"network.sharing.band.sharingOffTitle": "O compartilhamento está desligado",
 	"network.sharing.band.sharingOffBody": "Ligue o ponto de acesso, ou defina uma porta cabeada como LAN compartilhada, para compartilhar a internet deste dispositivo.",
 	"network.sharing.band.noHealthyUplinkTitle": "Nenhum enlace saudável",
-	"network.sharing.band.noHealthyUplinkBody": "Todos os enlaces estão fora do ar, então este dispositivo bloqueia novas conexões de internet dos aparelhos conectados. Os enlaces de transmissão dele são tratados à parte.",
+	"network.sharing.band.noHealthyUplinkBody": "Não há links de internet disponíveis. A caixa bloqueia novas conexões IPv4 com a internet dos dispositivos conectados. As rotas de transmissão da própria caixa não mudam.",
 	"network.sharing.band.steeringUnavailableTitle": "Distribuição entre enlaces indisponível",
 	"network.sharing.band.steeringUnavailableBody": "O CeraUI não conseguiu aplicar a distribuição mais recente dos aparelhos entre os enlaces. A configuração anterior pode continuar ativa; se não havia uma, os aparelhos usam a rota padrão.",
 	"network.sharing.band.uplinksUnreportedTitle": "Saúde dos enlaces não informada",

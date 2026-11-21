@@ -2172,7 +2172,7 @@
 	"network.sharing.band.sharingOffTitle": "साझाकरण बंद है",
 	"network.sharing.band.sharingOffBody": "इस डिवाइस का इंटरनेट साझा करने के लिए हॉटस्पॉट चालू करें, या किसी तार वाले पोर्ट को साझा LAN पर सेट करें।",
 	"network.sharing.band.noHealthyUplinkTitle": "कोई स्वस्थ अपलिंक नहीं",
-	"network.sharing.band.noHealthyUplinkBody": "सभी अपलिंक बंद हैं, इसलिए यह डिवाइस जुड़े उपकरणों के नए इंटरनेट कनेक्शन रोक देता है। इसके अपने स्ट्रीमिंग लिंक अलग से संभाले जाते हैं।",
+	"network.sharing.band.noHealthyUplinkBody": "कोई अपलिंक उपलब्ध नहीं है। बॉक्स जुड़े डिवाइसों के नए IPv4 इंटरनेट कनेक्शन रोकता है। बॉक्स की अपनी स्ट्रीमिंग के रूट नहीं बदलते।",
 	"network.sharing.band.steeringUnavailableTitle": "अपलिंक बँटवारा उपलब्ध नहीं",
 	"network.sharing.band.steeringUnavailableBody": "CeraUI उपकरणों का अपलिंक के बीच नया बँटवारा लागू नहीं कर सका। पिछली व्यवस्था सक्रिय रह सकती है; अगर कोई पिछली व्यवस्था नहीं थी, तो उपकरण डिफ़ॉल्ट रूट का उपयोग करते हैं।",
 	"network.sharing.band.uplinksUnreportedTitle": "अपलिंक की स्थिति सूचित नहीं",
