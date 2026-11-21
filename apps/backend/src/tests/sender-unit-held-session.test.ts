@@ -273,12 +273,15 @@ describe("review 198 round 1: the session", () => {
 
 	test("a Stop that times out before the unit comes down still settles idle once the cleanup finishes", async () => {
 		await bootBesideRunningSender();
-		onSenderUnitHoldChanged(() => {});
 		const engine = { state: "streaming" as EngineRuntimeState };
 		const slowEngine = Promise.withResolvers<void>();
 		const s = session(engine, {
 			stopDeadlineMs: 20,
 			engineStop: () => slowEngine.promise,
+		});
+		// As main.ts wires it: a hold that ends asks the session to look again.
+		onSenderUnitHoldChanged((change) => {
+			if (change !== "held") void s.orchestrator.reevaluate();
 		});
 		await s.orchestrator.reconcile();
 		const stopped = await s.orchestrator.stop("operator");
@@ -292,7 +295,7 @@ describe("review 198 round 1: the session", () => {
 		expect((await s.start()).result).toBe("started");
 	});
 
-	test("a reconcile asked for while a Stop is in flight is not lost", async () => {
+	test("a re-evaluation asked for while a Stop is in flight is not lost", async () => {
 		await bootBesideRunningSender();
 		const engine = { state: "streaming" as EngineRuntimeState };
 		const gate = Promise.withResolvers<void>();
@@ -300,7 +303,7 @@ describe("review 198 round 1: the session", () => {
 		await s.orchestrator.reconcile();
 		const stopping = s.orchestrator.stop("operator");
 		// Asked while the stop owns the session: deferred, not dropped.
-		await s.orchestrator.reconcile();
+		await s.orchestrator.reevaluate();
 		gate.resolve();
 		expect((await stopping).result).toBe("stopped");
 		await Bun.sleep(5);

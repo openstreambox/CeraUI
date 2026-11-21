@@ -156,6 +156,7 @@ import { refreshAndBroadcastSources } from "./modules/streaming/sources.ts";
 import { runStreamRestoration } from "./modules/streaming/stream-restoration.ts";
 import {
 	reconcileStreamSession,
+	reevaluateStreamSession,
 	streamLiveness,
 } from "./modules/streaming/stream-session-orchestrator.ts";
 import {
@@ -447,7 +448,7 @@ if (!shouldUseMocks()) {
 		// (deferred by the orchestrator while a stop or its cleanup is in flight,
 		// so a stop that timed out before the unit came down still settles).
 		if (change === "held") return;
-		void reconcileStreamSession().catch((error: unknown) =>
+		void reevaluateStreamSession().catch((error: unknown) =>
 			logger.warn("reconciliation after a released sender unit failed", {
 				error,
 			}),

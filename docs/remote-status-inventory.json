@@ -43987,7 +43987,7 @@
   ],
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "826fffda903429139cb9f1ae3bb11811ac851a3fb5740652d4990d07f9c8797f",
-    "apps/backend/src/main.ts": "a532a9ff25769c7c9f49274799328595c430875d97b32096be09ca919f93aadd",
+    "apps/backend/src/main.ts": "fc84791be94aaf96775ff4e9fd92446c512eea386aa6c6618da1fcddb2669938",
     "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",

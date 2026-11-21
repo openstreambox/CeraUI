@@ -324,6 +324,12 @@ export type StreamSessionOrchestrator = {
 	readonly start: (request: StreamStartRequest) => Promise<StartResult>;
 	readonly stop: (cause: StreamStopCause) => Promise<StopResult>;
 	readonly reconcile: () => Promise<LifecycleState>;
+	/**
+	 * Reconcile now, or, while a stop or its cleanup is in flight, once they
+	 * have settled (never dropped). For evidence that arrives inside a stop,
+	 * such as a held sender unit confirmed down.
+	 */
+	readonly reevaluate: () => Promise<LifecycleState>;
 	readonly snapshot: () => StreamSessionSnapshot;
 	readonly changeConfig: (
 		delta: StreamConfigChangeDelta,
@@ -377,9 +383,10 @@ export function createStreamSessionOrchestrator(
 		((timer: ReturnType<typeof globalThis.setTimeout> | number) =>
 			globalThis.clearTimeout(timer));
 
-	// A reconciliation asked for while a stop or its cleanup was in flight, or
-	// a cleanup that finished after its caller's deadline answered, owes one
-	// fresh look: nothing else may ever come to settle the state otherwise.
+	// A re-evaluation asked for (by `reevaluate`) while a stop or its cleanup
+	// was in flight owes one fresh look once they settle: a held sender unit
+	// that came down inside a Stop whose answer already timed out has nothing
+	// else to settle the state. Plain `reconcile` keeps its own rule.
 	let reevaluationOwed = false;
 	const settleOwedReevaluation = (): void => {
 		if (!reevaluationOwed) return;
@@ -390,10 +397,7 @@ export function createStreamSessionOrchestrator(
 		schedule: scheduleTimeout,
 		cancel: cancelTimeout,
 		deadlineMs: stopDeadlineMs,
-		onSettled: (late) => {
-			if (late) reevaluationOwed = true;
-			settleOwedReevaluation();
-		},
+		onSettled: () => settleOwedReevaluation(),
 	});
 	const stopWithinDeadline = cleanup.run;
 	const transition = ownership.transition;
@@ -1038,12 +1042,17 @@ export function createStreamSessionOrchestrator(
 		}
 	};
 
-	const reconcile = async (): Promise<LifecycleState> => {
+	const reevaluate = (): Promise<LifecycleState> => {
 		if (stopFlight !== undefined || cleanup.pending) {
 			reevaluationOwed = true;
-			return ownership.state;
+			return Promise.resolve(ownership.state);
 		}
-		if (ownership.launchPending) return ownership.state;
+		return reconcile();
+	};
+
+	const reconcile = async (): Promise<LifecycleState> => {
+		if (stopFlight !== undefined || cleanup.pending || ownership.launchPending)
+			return ownership.state;
 		// `stop_failed` is included deliberately: a stop we could not confirm
 		// leaves the engine's real state UNKNOWN to us, and adopting its truth is
 		// the only way out. Without this the state latches — `start` refuses while
@@ -1270,6 +1279,7 @@ export function createStreamSessionOrchestrator(
 		start,
 		stop,
 		reconcile,
+		reevaluate,
 		snapshot: () => ({
 			state: ownership.state,
 			generation: ownership.generation,
@@ -1297,6 +1307,10 @@ export function stopStreamSession(cause: StreamStopCause): Promise<StopResult> {
 
 export function reconcileStreamSession(): Promise<LifecycleState> {
 	return productionOrchestrator.reconcile();
+}
+
+export function reevaluateStreamSession(): Promise<LifecycleState> {
+	return productionOrchestrator.reevaluate();
 }
 
 export function getStreamSessionSnapshot(): StreamSessionSnapshot {
