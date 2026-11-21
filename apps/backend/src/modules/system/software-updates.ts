@@ -25,7 +25,10 @@ import {
 	type UpdatePackage,
 	type UpdatePreflightReason,
 } from "@ceraui/rpc";
-import type { UpdateCapabilities } from "@ceraui/rpc/schemas";
+import {
+	type UpdateCapabilities,
+	updateSettingsSchema,
+} from "@ceraui/rpc/schemas";
 import { invariant } from "../../helpers/invariant.ts";
 import { logger } from "../../helpers/logger.ts";
 import { run } from "../../helpers/run.ts";
@@ -136,6 +139,7 @@ import {
 	pendingPackageSuccess,
 } from "./update-orchestrator/pending-success-fence.ts";
 import { getRecoveredUpdateExitHook } from "./update-orchestrator/recovery-exit-gate.ts";
+import { loadUpdateSettings } from "./update-settings.ts";
 import {
 	deriveUpdateIdentity,
 	deriveUpdateState,
@@ -145,6 +149,7 @@ import {
 	type UpdateState,
 	updateDismissalKey,
 } from "./update-state.ts";
+import { onlyMeteredUplinksRemain } from "./update-transport/executor.ts";
 
 let availableUpdates:
 	| {
@@ -1261,6 +1266,41 @@ export async function runUpdateDiscoveryAndReport(): Promise<SoftwareUpdateError
 let nextCheckForSoftwareUpdates = getms();
 let nextCheckForSoftwareUpdatesTimer: ReturnType<typeof setTimeout> | undefined;
 
+/*
+ * The hourly check is the one package refresh nobody asked for, and the first
+ * one after each boot downloads every index again (the lists live in tmpfs).
+ * When every uplink is metered it waits, unless packages may use cellular.
+ * Waiting reads only NetworkManager's state, so it costs no traffic; a manual
+ * check still runs.
+ */
+export const METERED_RECHECK_DELAY_MS = 10 * oneMinute;
+type PeriodicUplinkGate = () => Promise<boolean>;
+
+export async function packageCheckMayUseUplinks(): Promise<boolean> {
+	let allowOverCellular: boolean;
+	try {
+		allowOverCellular = (await loadUpdateSettings()).allowPackagesOverCellular;
+	} catch {
+		// Unreadable settings: fall back to the default, as the orchestrator does.
+		allowOverCellular = updateSettingsSchema.parse(
+			{},
+		).allowPackagesOverCellular;
+	}
+	return allowOverCellular || !(await onlyMeteredUplinksRemain());
+}
+
+let periodicUplinkGate: PeriodicUplinkGate = packageCheckMayUseUplinks;
+let periodicUplinkGatePending = false;
+let periodicCheckWaitingForUplink = false;
+
+export function setPeriodicUplinkGateForTest(
+	gate: PeriodicUplinkGate | null,
+): void {
+	periodicUplinkGate = gate ?? packageCheckMayUseUplinks;
+	periodicUplinkGatePending = false;
+	periodicCheckWaitingForUplink = false;
+}
+
 function scheduleNextSoftwareUpdateCheck(delay: number): void {
 	nextCheckForSoftwareUpdates = getms() + delay;
 	nextCheckForSoftwareUpdatesTimer = setTimeout(
@@ -1294,6 +1334,36 @@ export function periodicCheckForSoftwareUpdates() {
 		return;
 	}
 
+	if (periodicUplinkGatePending) return;
+	periodicUplinkGatePending = true;
+	void periodicUplinkGate()
+		.catch((error: unknown) => {
+			logger.warn("Package check uplink gate failed; waiting", {
+				error: error instanceof Error ? error : String(error),
+			});
+			return false;
+		})
+		.then((allowed) => {
+			periodicUplinkGatePending = false;
+			if (!allowed) {
+				if (!periodicCheckWaitingForUplink) {
+					logger.info(
+						"Automatic package check waits: every uplink is metered and packages may not use cellular",
+					);
+				}
+				periodicCheckWaitingForUplink = true;
+				// A caller may have armed a timer while the gate was pending.
+				if (nextCheckForSoftwareUpdatesTimer)
+					clearTimeout(nextCheckForSoftwareUpdatesTimer);
+				scheduleNextSoftwareUpdateCheck(METERED_RECHECK_DELAY_MS);
+				return;
+			}
+			periodicCheckWaitingForUplink = false;
+			runPeriodicSoftwareUpdateCheck();
+		});
+}
+
+function runPeriodicSoftwareUpdateCheck(): void {
 	const started = softwareUpdateCheckRunner(async (err_, failures) => {
 		const discovery = await runUpdateDiscoveryAndReport();
 		const err = err_ === null ? discovery : err_;
