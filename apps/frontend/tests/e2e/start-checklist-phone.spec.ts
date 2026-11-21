@@ -58,7 +58,9 @@ test.describe("A blocked Start lists what to fix", () => {
 
 		const start = bar.getByRole("button", { name: /start stream/i });
 		await expect(start).toBeDisabled();
-		await start.click();
+		// aria-disabled, not disabled: a real tap still reaches it, but Playwright's
+		// actionability check would wait for it to be enabled.
+		await start.click({ force: true });
 		await expect(fixes.first()).toBeFocused();
 
 		await fixes.nth(1).click();
