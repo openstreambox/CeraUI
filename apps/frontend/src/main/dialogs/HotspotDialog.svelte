@@ -47,6 +47,7 @@ import {
 	Router,
 	Save,
 	ShieldCheck,
+	Trash2,
 	Wifi,
 } from '@lucide/svelte';
 import { onDestroy, untrack } from 'svelte';
@@ -638,6 +639,7 @@ async function copyPassword() {
 	bind:open
 	contentClass="sm:max-w-md"
 	description={m["hotspotConfigurator.help.description"]()}
+	hideFooter={confirmingStart}
 	icon={Router}
 	title={m["hotspotConfigurator.dialog.configHotspot"]()}
 >
@@ -958,36 +960,33 @@ async function copyPassword() {
 	</div>
 
 	{#snippet actions()}
-		<Button class="sm:min-w-24" onclick={() => (open = false)} variant="outline">
-			{m["network.dialog.close"]()}
-		</Button>
-		<!-- One action row at a time: while the credential gate is open, its own
-		     Cancel / Turn on are the only way forward, and Save exists only for a
-		     live AP (`hotspotConfigure` refuses anything else). -->
-		{#if !confirmingStart && (isActive || radioReason !== 'permanent-mac-unresolved')}
-		<Button
-			class="sm:min-w-28"
-			disabled={toggling}
-			onclick={handleToggle}
-			title={toggleDisabledReason}
-			variant="outline"
-		>
-			{#if toggling}
-				<Loader2 class="size-4 animate-spin motion-reduce:animate-none" />
-			{:else}
-				<Power class="size-4" />
-			{/if}
-			{isActive ? m["network.status.turnOff"]() : m["network.status.enableHotspot"]()}
-		</Button>
-		{/if}
-		{#if isActive && radioReason !== 'permanent-mac-unresolved'}
-		<Button class="sm:min-w-24" disabled={!canEdit || !isFormValid || configuring} onclick={handleSave}>
+		{#if !confirmingStart && isActive && radioReason !== 'permanent-mac-unresolved'}
+		<Button class="sm:min-w-24" data-testid="hotspot-save" disabled={!canEdit || !isFormValid || configuring} onclick={handleSave}>
 			{#if configuring}
 				<Loader2 class="size-4 animate-spin motion-reduce:animate-none" />
 			{:else}
 				<Save class="size-4" />
 			{/if}
 			{configuring ? m["hotspotConfigurator.dialog.saving"]() : m["hotspotConfigurator.dialog.save"]()}
+		</Button>
+		{/if}
+		<!-- One action row at a time: while the credential gate is open, its own
+		     Cancel / Turn on are the only way forward. -->
+		{#if !confirmingStart && (isActive || radioReason !== 'permanent-mac-unresolved')}
+		<Button
+			class="sm:min-w-28"
+			data-testid="hotspot-toggle"
+			disabled={toggling}
+			onclick={handleToggle}
+			title={toggleDisabledReason}
+			variant={isActive ? 'outline' : 'default'}
+		>
+			{#if toggling}
+				<Loader2 class="size-4 animate-spin motion-reduce:animate-none" />
+			{:else}
+				<Power class="size-4" />
+			{/if}
+			{isActive ? m["network.status.turnOff"]() : m["hotspotConfirm.activate"]()}
 		</Button>
 		{/if}
 	{/snippet}

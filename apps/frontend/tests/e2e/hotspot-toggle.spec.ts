@@ -286,7 +286,7 @@ async function openHotspotDialog(page: Page): Promise<void> {
  */
 async function startThroughGate(page: Page): Promise<void> {
 	await dialog(page)
-		.getByRole("button", { name: "Enable Hotspot", exact: true })
+		.getByRole("button", { name: "Turn on hotspot", exact: true })
 		.click();
 	const gate = page.locator(
 		'[data-testid="hotspot-activation-confirm"][data-phase="ready"]',
@@ -370,15 +370,15 @@ test.describe(
 			await armFake(page, "wifi.hotspotStart", { success: true });
 
 			const enable = dialog(page).getByRole("button", {
-				name: "Enable Hotspot",
+				name: "Turn on hotspot",
 				exact: true,
 			});
 			await expect(enable).toBeEnabled();
 			await startThroughGate(page);
 
-			// Op pending: the toggle disables and HOLDS its "Enable Hotspot" label.
+			// Op pending: the toggle disables and HOLDS its "Turn on hotspot" label.
 			await expect(enable).toBeDisabled();
-			record('clicked "Enable Hotspot" → op pending (button disabled, label held)');
+			record('clicked "Turn on hotspot" → op pending (button disabled, label held)');
 
 			const device = await lastHotspotDevice(page);
 			expect(device, "hotspot start must capture a device key").toBeTruthy();
