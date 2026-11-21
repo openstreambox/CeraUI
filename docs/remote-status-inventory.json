@@ -3158,6 +3158,14 @@
           "decision": "needed: typed diagnostic"
         },
         {
+          "path": "linkTelemetry.links[].carrying",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "linkTelemetry.links[].stale",
           "types": [
             "false",
@@ -8093,6 +8101,14 @@
             "number"
           ],
           "decision": "needed: typed diagnostic"
+        },
+        {
+          "path": "linkTelemetry.links[].carrying",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
           "path": "linkTelemetry.links[].stale",
@@ -43403,8 +43419,8 @@
     "apps/backend/src/modules/streaming/connection-restarting.ts": "61efbdeb6bfa9a171a1225473cd0b0eaa43679033ffee7496fe8c47f4ca82c25",
     "apps/backend/src/modules/streaming/devices.ts": "d8daf1992a9cbb6a2663a62d4be1a181462f86bba952c2eb693975508f9d9646",
     "apps/backend/src/modules/streaming/engine-reconnect.ts": "b14f44ce4b2c97d264595c230506e7a10b0b47f9325cba05439362affa8b4275",
-    "apps/backend/src/modules/streaming/link-telemetry-rows.ts": "5744169c3eb6e18b8d8e567a052cfc6f3236183a983ef11441e44332d6eef399",
-    "apps/backend/src/modules/streaming/link-telemetry.ts": "8d2503b4f2bac13149b9d0898fe5ce9e2a506504468af08b453c06b948784417",
+    "apps/backend/src/modules/streaming/link-telemetry-rows.ts": "4779e6186e5bd6f3ceeb5b95268a6974665798f855be2efb42ea1a850b549a7f",
+    "apps/backend/src/modules/streaming/link-telemetry.ts": "5f0227bde16fa51a7ddf117a3ccbf083e046790fec95572ae79cc4607cf5d31b",
     "apps/backend/src/modules/streaming/pipeline-sources.ts": "505bc662c4f18ee63770d0e6e327f69018590056bb06ebdcd19fae838535b1e2",
     "apps/backend/src/modules/streaming/pipelines.ts": "5dec75a516b948749321bc8e386434b2aa2a5298d300b96d68e340b76e810023",
     "apps/backend/src/modules/streaming/sources.ts": "83e1dd9470e5c950dd036d014924c7ff7777a094ce65c43f198b700260973b56",
@@ -43456,7 +43472,7 @@
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
-    "packages/rpc/src/schemas/status.schema.ts": "cbe3ab63ba27b7de764e7f9233f378e1a2bc05fafcd21f9303180764362eb096",
+    "packages/rpc/src/schemas/status.schema.ts": "e1277e7f05c689cef71edc95f49b0ed3abd7a600f30430e080e8d17fef46705d",
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
     "packages/rpc/src/schemas/system.schema.ts": "adfe79f06462f26197bb713d811530cc8fd23040fd249c297d8682ce45363dc1",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "5bb654471ce94854218cdfc84a70bf74a6ea63e7e8b2b7766d33f9853c7d2643",
