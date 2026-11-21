@@ -125,10 +125,17 @@ export async function probeReachability(
 
 				try {
 					s.send(PROBE_PAYLOAD);
-				} catch {
-					// A synchronous send failure (e.g. instant ECONNREFUSED) means
-					// the peer rejected us outright.
-					finish({ reachable: false, reason: "refused" });
+				} catch (err) {
+					// An instant ECONNREFUSED is the peer rejecting us; any other
+					// send failure (a vanished route, a local socket error) happened
+					// on this box and proves nothing about the receiver.
+					const code =
+						err instanceof Error && "code" in err ? String(err.code) : "";
+					finish(
+						code === "ECONNREFUSED"
+							? { reachable: false, reason: "refused" }
+							: { reachable: false, reason: "refused", local: true },
+					);
 				}
 			})
 			.catch((err) => {

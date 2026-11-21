@@ -43,9 +43,9 @@
               every address blocks, anything inconclusive is `unknown`. While
               live the saved destination may already be the next one, so only
               a carrying link counts (`ok`), else `unknown`; nothing is stored.
-    uplinks   idle, receiver on the LAN (Start's `isLocalIp`): any
-              same-subnet interface, as Start's local list. Otherwise the
-              interfaces the bond would offer (`isBondCandidate`) qualified by
+    uplinks   idle: Start's own bond-entry collectors pick the interfaces
+              (the same-subnet list for a receiver `isLocalIp` calls local,
+              any of which will do; else the bond list, qualified by
               a fresh health record (`up`, or `degraded` only by passive
               congestion); a candidate without fresh health makes it
               `unknown`. Live: the sender's own link rows and their carrying
@@ -71,16 +71,11 @@ import {
 	type StreamReadinessCheckId,
 	type UplinkHealthRecord,
 } from "@ceraui/rpc/schemas";
-import { isLocalIp, isSameSubnet } from "../../helpers/ip-addresses.ts";
+import { isLocalIp } from "../../helpers/ip-addresses.ts";
 import { logger } from "../../helpers/logger.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { isMockGatewayActive } from "../../mocks/providers/streaming.ts";
 import { getConfig } from "../config.ts";
-import {
-	getNetworkInterfaces,
-	isBondCandidate,
-	type NetworkInterface,
-} from "../network/network-interfaces.ts";
 import { getUplinksMessage } from "../network/uplink-health/state.ts";
 import { getRelays } from "../remote/remote-relays.ts";
 import { isDisruptiveActionPending } from "../system/disruptive-action-reservation.ts";
@@ -106,6 +101,10 @@ import {
 	getSourcesMessage,
 	resolveSourceRouting,
 } from "./sources.ts";
+import {
+	genSrtlaBondEntries,
+	genSrtlaBondEntriesForLocalIpAddress,
+} from "./srtla.ts";
 import { streamStartView } from "./stream-session-orchestrator.ts";
 import { getIsStreaming } from "./streaming.ts";
 import { resolveStreamEndpoint } from "./transport/resolve-endpoint.ts";
@@ -469,28 +468,23 @@ export function currentReceiver(): ReceiverTarget {
 }
 
 /**
- * The interfaces Start would put in the bond, with their health record if any:
- * the same-subnet list for a LAN receiver (the bond toggle does not apply
- * there), else the bond candidates.
+ * The interfaces Start would put in the bond, with their health record if any.
+ * Start's own collectors decide membership (the same-subnet list for a LAN
+ * receiver, else the bond list), so identity settlement, duplicate-IP mapping
+ * and the bond toggle apply exactly as at launch. Nothing is published.
  */
 export function currentCandidates(
 	receiver: ReceiverTarget,
 ): readonly UplinkCandidate[] {
 	const health = new Map(getUplinksMessage().map((r) => [r.iface, r]));
-	const address = receiver.address;
-	const member =
-		receiver.local && address !== undefined
-			? (_name: string, int: NetworkInterface) =>
-					int.netmask !== undefined &&
-					int.ip !== undefined &&
-					isSameSubnet(address, int.ip, int.netmask)
-			: isBondCandidate;
-	return Object.entries(getNetworkInterfaces())
-		.filter(([name, int]) => member(name, int))
-		.map(([iface]) => {
-			const record = health.get(iface);
-			return record === undefined ? { iface } : { iface, health: record };
-		});
+	const entries =
+		receiver.local && receiver.address !== undefined
+			? genSrtlaBondEntriesForLocalIpAddress(receiver.address)
+			: genSrtlaBondEntries();
+	return [...new Set(entries.map((entry) => entry.iface))].map((iface) => {
+		const record = health.get(iface);
+		return record === undefined ? { iface } : { iface, health: record };
+	});
 }
 
 /** The sender's own link rows; empty when it reports nothing. */
@@ -522,7 +516,10 @@ export function setReadinessDepsForTest(next: Partial<ReadinessDeps> | null) {
 export function getStreamReadiness(): StreamReadiness {
 	const now = deps.now();
 	const live = deps.live();
-	const receiver = deps.receiver();
+	// While live the saved destination is not judged, so it is not read either.
+	const receiver: ReceiverTarget = live
+		? { configured: "yes", local: false }
+		: deps.receiver();
 	return evaluateStreamReadiness({
 		now,
 		live,

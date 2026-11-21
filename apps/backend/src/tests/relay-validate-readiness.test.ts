@@ -91,6 +91,22 @@ it("a refusal on one address and silence on another is inconclusive", async () =
 	}
 });
 
+it("a probe that failed on this box counts as inconclusive, not refused", async () => {
+	const lookup = resolvesTo(["::1"]);
+	const probe = spyOn(probes, "probeReachability").mockResolvedValue({
+		reachable: false,
+		reason: "refused",
+		local: true,
+	});
+	try {
+		expect(await validate()).toMatchObject({ valid: false, reason: "refused" });
+		expect(receiverEvidenceFor(KEY, Date.now())).toBe("inconclusive");
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+	}
+});
+
 it("a local socket failure is no refusal", async () => {
 	const lookup = resolvesTo(["127.0.0.1"]);
 	const probe = spyOn(probes, "probeReachability").mockRejectedValue(
