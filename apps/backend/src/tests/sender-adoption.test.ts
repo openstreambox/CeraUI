@@ -34,6 +34,7 @@ import {
 	querySessionEngine,
 	readPeerBoundStats,
 	readSenderProcessFacts,
+	SENDER_ADOPTION_WINDOW_MS,
 	type SenderAdoptionEvidence,
 	type SenderAdoptionIo,
 	senderAdoptionVerdict,
@@ -655,6 +656,12 @@ describe("senderAdoptionVerdict", () => {
 			"changed_during_read",
 		],
 		[
+			"samples older than the window",
+			{ revalidated: "stale" },
+			"evidence",
+			"window_exceeded",
+		],
+		[
 			"evidence never read again",
 			{ revalidated: "not_reached" },
 			"evidence",
@@ -729,6 +736,7 @@ describe("collectSenderAdoptionEvidence", () => {
 		return {
 			procRoot: join(root, "proc"),
 			cgroupRoot: join(root, "cgroup"),
+			now: () => 0,
 			expectedExe: () => EXE,
 			bootId: async () => BOOT,
 			readLifetime: async () => lifetime(),
@@ -918,7 +926,7 @@ describe("collectSenderAdoptionEvidence", () => {
 		});
 	});
 
-	test("a later publication while the engine is asked is caught by the final pass", async () => {
+	test("a later publication during the sender reads is caught before the engine is asked", async () => {
 		writeProcess(PID, "S", PID, START);
 		writeCgroup([PID]);
 		let generation = 7;
@@ -926,13 +934,80 @@ describe("collectSenderAdoptionEvidence", () => {
 			io({
 				readPublication: async () => publication({ generation }),
 				readDisk: async () => publication({ generation }),
-				queryEngine: async () => {
+				readStats: async () => {
 					generation = 8;
-					return { state: "streaming", session: { ...ENGINE_SESSION } };
+					return {
+						peer: "verified",
+						senderContract: 2,
+						senderRequired: true,
+						reads: [stats(1), stats(9)],
+						appliedMap: { generation: 7, sha256: SHA },
+					};
 				},
 			}),
 		);
 		expect(e.revalidated).toBe("changed");
+		expect(engineQueries).toBe(0);
+	});
+
+	test("a sender that stops while the engine is asked is caught by the tail", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				queryEngine: async () => {
+					writeFileSync(
+						join(root, "proc", String(PID), "stat"),
+						statLine(PID, "T", PID, START),
+					);
+					return { state: "streaming", session: { ...ENGINE_SESSION } };
+				},
+			}),
+		);
+		expect(e.revalidated).toBe("exited");
+	});
+
+	test("samples spanning more than the window are too old to report", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		let clock = 0;
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				now: () => clock,
+				queryEngine: async () => {
+					clock = SENDER_ADOPTION_WINDOW_MS + 1;
+					return { state: "streaming", session: { ...ENGINE_SESSION } };
+				},
+			}),
+		);
+		expect(e.revalidated).toBe("stale");
+		expect(senderAdoptionVerdict(e)).toEqual({
+			decision: "refuse",
+			check: "evidence",
+			reason: "window_exceeded",
+		});
+	});
+
+	test("a sender running at first and sleeping later has not changed", async () => {
+		writeProcess(PID, "R", PID, START);
+		writeCgroup([PID]);
+		const statPath = join(root, "proc", String(PID), "stat");
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				readStats: async () => {
+					writeFileSync(statPath, statLine(PID, "S", PID, START));
+					return {
+						peer: "verified",
+						senderContract: 2,
+						senderRequired: true,
+						reads: [stats(1), stats(9)],
+						appliedMap: { generation: 7, sha256: SHA },
+					};
+				},
+			}),
+		);
+		expect(e.revalidated).toBe("agrees");
+		expect(senderAdoptionVerdict(e)).toEqual({ decision: "adopt" });
 	});
 
 	test("only a live pidfd under the recorded number verifies the peer", async () => {

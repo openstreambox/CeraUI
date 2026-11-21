@@ -226,11 +226,12 @@ inside the backend's own service and dies with it) is judged from the record
 alone, so on this version the check reaches neither the sender's control socket
 nor the engine.
 
-When a sender starts, the backend records its PID, start time and boot ID from
-one read of the process, made while a pidfd holds it and while the backend's own
-handle for the child shows it has not exited, so a sender that is already gone
-records no PID. The process is read again after the unit lookup and must be
-unchanged. It records a systemd unit only when the sender is the main process of
+When a sender starts, the backend records its PID and start time from one read
+of the process (the boot ID is read separately), made while a pidfd holds it
+and while the backend's own handle for the child shows it has not exited, so a
+sender that is already gone records no PID. Without a pidfd nothing is
+recorded. After the unit lookup the process is captured again and its start
+time must be the same. It records a systemd unit only when the sender is the main process of
 its own active unit, alone in that unit's cgroup, outside the backend's cgroup.
 For such a sender it also records the session ID from the engine's reply to
 that Start, once the engine still reports it as streaming on the same
@@ -253,13 +254,20 @@ Over that one connection it reads the sender's capabilities and two stats
 snapshots, and requires bind-map contract 2 or later with required binding
 advertised and requested, a mapped bond with the published links, a live link,
 rising bytes, nothing pending, and an applied map generation and SHA equal to
-the published ones. The applied identity covers the generation and the IP list's
-hash only, not `id_path`. It then asks the engine for its session ID once, on
-the session connection reconciliation holds, and requires the recorded engine
-unit invocation, main PID and session ID, with the same streaming status before
-and after the question. Last, it reads every local fact again on the same pidfd;
-any change, or a sender no longer confirmed alive, refuses. A sender older than
-contract 2 is refused at the contract check.
+the published ones. A missing pending field is read as nothing pending, which
+relies on the contract-2 sender omitting it only then. The applied identity
+covers the generation and the IP list's hash only, not `id_path`. It then reads
+every local fact again on the same pidfd and requires the same values (the
+process state only has to still qualify). Next it asks the engine for its
+session ID once, on the session connection reconciliation holds, and requires
+the recorded engine unit invocation, main PID and session ID, read from systemd
+before and after the question with the unit still active, and the cached
+streaming status of that connection unchanged across the question. Last, it
+checks that the pidfd still shows the sender alive and not stopped and that the
+armed marker and configuration are unchanged. A positive verdict is agreement
+of these samples within a window of 3 seconds, not a guarantee about the
+instant it is logged; a longer collection refuses. A sender older than contract
+2 is refused at the contract check.
 
 ### Reinicio del backend y propiedad del emisor
 
@@ -288,11 +296,12 @@ porque el emisor corre dentro del propio servicio del backend y termina con él)
 se evalúa solo con el registro, así que en esta versión la comprobación no llega
 ni al socket de control del emisor ni al motor.
 
-Cuando un emisor arranca, el backend registra su PID, su hora de inicio y el ID
-de arranque del sistema con una sola lectura del proceso, hecha mientras un pidfd
-lo sostiene y mientras el propio manejador del backend para ese hijo indica que
-no ha terminado; un emisor que ya no existe no registra PID. El proceso se lee
-otra vez después de consultar la unidad y debe ser el mismo. Registra una unidad
+Cuando un emisor arranca, el backend registra su PID y su hora de inicio con una
+sola lectura del proceso (el ID de arranque del sistema se lee aparte), hecha
+mientras un pidfd lo sostiene y mientras el propio manejador del backend para
+ese hijo indica que no ha terminado; un emisor que ya no existe no registra PID.
+Sin pidfd no se registra nada. Después de consultar la unidad el proceso se lee
+otra vez y su hora de inicio debe ser la misma. Registra una unidad
 de systemd solo cuando el emisor es el proceso principal de su propia unidad
 activa, solo en el cgroup de esa unidad, fuera del cgroup del backend. Para un
 emisor así registra también el ID de sesión de la respuesta del motor a ese
@@ -317,11 +326,18 @@ las capacidades del emisor y dos lecturas de estadísticas, y exige el contrato
 de mapa de enlaces 2 o posterior con el modo obligatorio anunciado y pedido, un
 enlace agrupado mapeado con los enlaces publicados, un enlace activo, bytes en
 aumento, nada pendiente, y una generación y un SHA del mapa aplicado iguales a
-los publicados. La identidad aplicada cubre solo la generación y el hash de la
-lista de IP, no `id_path`. Después pide al motor su ID de sesión una sola vez,
-por la conexión de sesión que mantiene la reconciliación, y exige la invocación,
-el PID principal y el ID de sesión del motor registrados, con el mismo estado de
-transmisión antes y después de la pregunta. Por último, vuelve a leer todos los
-datos locales con el mismo pidfd; cualquier cambio, o un emisor que ya no se
-confirma vivo, se rechaza. Un emisor anterior al contrato 2 se rechaza en la
-comprobación del contrato.
+los publicados. Un campo de pendiente ausente se entiende como nada pendiente,
+lo que depende de que el emisor del contrato 2 lo omita solo en ese caso. La
+identidad aplicada cubre solo la generación y el hash de la lista de IP, no
+`id_path`. Luego vuelve a leer todos los datos locales con el mismo pidfd y
+exige los mismos valores (el estado del proceso solo tiene que seguir siendo
+válido). Después pide al motor su ID de sesión una sola vez, por la conexión de
+sesión que mantiene la reconciliación, y exige la invocación, el PID principal y
+el ID de sesión del motor registrados, leídos de systemd antes y después de la
+pregunta con la unidad todavía activa, y que el estado de transmisión guardado
+de esa conexión no cambie durante la pregunta. Por último, comprueba que el pidfd
+siga mostrando al emisor vivo y no detenido, y que el marcador de transmisión
+armada y la configuración no hayan cambiado. Un resultado positivo es el acuerdo
+de estas muestras dentro de una ventana de 3 segundos, no una garantía sobre el
+instante en que se registra; una recolección más larga se rechaza. Un emisor
+anterior al contrato 2 se rechaza en la comprobación del contrato.

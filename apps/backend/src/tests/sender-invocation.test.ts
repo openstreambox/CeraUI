@@ -104,19 +104,43 @@ describe("captureProcessInvocation", () => {
 		expect(await captureProcessInvocation(child.pid, io)).toBeNull();
 	});
 
-	test("without a pidfd the capture still works and says so", async () => {
+	test("without a pidfd liveness is unknown, and unknown captures nothing", async () => {
 		const child = Bun.spawn(["sleep", "30"]);
 		try {
-			const invocation = await captureProcessInvocation(child.pid, {
-				...processInvocationIo,
-				pin: async () => ({
-					pidfd: false,
-					alive: () => true,
-					close: () => undefined,
+			expect(
+				await captureProcessInvocation(child.pid, {
+					...processInvocationIo,
+					pin: async () => ({
+						pidfd: false,
+						alive: () => null,
+						close: () => undefined,
+					}),
 				}),
-			});
-			expect(invocation?.pidfd).toBe(false);
-			expect(invocation?.startTime).toBe(startTimeOf(child.pid));
+			).toBeNull();
+		} finally {
+			child.kill("SIGKILL");
+			await child.exited;
+		}
+	});
+
+	test("a child reaped during the read captures nothing", async () => {
+		const child = Bun.spawn(["sleep", "30"]);
+		let reaped = false;
+		try {
+			expect(
+				await captureProcessInvocation(
+					child.pid,
+					{
+						...processInvocationIo,
+						readStat: async (path) => {
+							const stat = readFileSync(path, "utf8");
+							reaped = true;
+							return stat;
+						},
+					},
+					() => !reaped,
+				),
+			).toBeNull();
 		} finally {
 			child.kill("SIGKILL");
 			await child.exited;

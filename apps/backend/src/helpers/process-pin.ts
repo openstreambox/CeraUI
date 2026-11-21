@@ -26,7 +26,6 @@ const SOL_SOCKET = 1;
 const SO_PEERCRED = 17;
 const SO_PEERPIDFD = 77;
 const ESRCH = 3;
-const EPERM = 1;
 const SYS_PIDFD_SEND_SIGNAL = 424;
 const SYS_PIDFD_OPEN = 434;
 
@@ -109,14 +108,13 @@ function runtime(): Promise<Libc | null> {
 
 /**
  * Alive (true), exited (false) or unknown (null) for one pidfd. Signal 0 sends
- * nothing; EPERM still means the process exists.
+ * nothing. Success means the task exists (a zombie included; callers read its
+ * state). EPERM is unknown: it can come from a syscall filter as well as from
+ * the kernel's permission check on a live task.
  */
 function pidfdAlive(c: Libc, pidfd: number): boolean | null {
 	if (c.pidfdSendSignal(pidfd, 0) === 0) return true;
-	const errno = c.errno();
-	if (errno === ESRCH) return false;
-	if (errno === EPERM) return true;
-	return null;
+	return c.errno() === ESRCH ? false : null;
 }
 
 export type ProcessPin = {

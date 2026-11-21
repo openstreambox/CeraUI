@@ -76,10 +76,9 @@ export async function captureProcessInvocation(
 		const stat = await io.readStat(`${io.procRoot}/${pid}/stat`);
 		const bootId = await io.bootId();
 		// Alive now, so alive throughout the read: the stat is this process's.
-		// Without a pidfd the answer is unknown, and the capture stands on the
-		// spawning handle and the start time alone (recorded as `pidfd: false`).
-		const alive = pin.alive();
-		if (alive === false || (pin.pidfd && alive !== true)) return null;
+		// Without a pidfd that is unknown, and unknown records nothing.
+		if (pin.alive() !== true) return null;
+		if (ownChild && !ownChild()) return null;
 		const fields = statFields(stat);
 		if (EXITED_STATES.has(fields[0] ?? "")) return null;
 		const startTime = fields[19] ?? "";
@@ -293,7 +292,7 @@ export async function readEngineSessionIdentity(
 	// The same engine process before and after the question.
 	const after = await readUnitFacts(ENGINE_UNIT, "system", show);
 	if (
-		!after ||
+		after?.activeState !== "active" ||
 		after.invocation !== before.invocation ||
 		after.mainPid !== before.mainPid
 	)

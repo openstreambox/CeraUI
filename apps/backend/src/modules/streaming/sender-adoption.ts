@@ -31,9 +31,13 @@
  *     InvocationID and main PID, compared with the id the engine's Start reply
  *     gave for this sender's launch (recorded then, confirmed live).
  *
- * A positive verdict holds only at the moment it is reported: after the
- * engine answers, every local fact is read again on the same pin and must be
- * unchanged. Any unknown answer refuses.
+ * A positive verdict is sampled agreement, not an instant guarantee: every
+ * local fact is read twice on the same pin, the engine is asked after the
+ * second read, and a short tail (pin, process state, armed marker,
+ * configuration) follows it; the whole collection must fit
+ * SENDER_ADOPTION_WINDOW_MS. Any unknown answer refuses. A guarantee that
+ * holds while the sender is used belongs to a takeover that keeps the pidfd
+ * and to an in-band sender identity, not to this read-only check.
  *
  * On today's devices the sender is a child of the backend, so every record
  * says `host: "backend-child"` and the verdict refuses before any of these
@@ -161,7 +165,12 @@ export type SenderAdoptionEvidence = {
 	 * still passes; `changed` or `exited` otherwise; `not_reached` when an
 	 * earlier check refused.
 	 */
-	readonly revalidated: "agrees" | "changed" | "exited" | "not_reached";
+	readonly revalidated:
+		| "agrees"
+		| "changed"
+		| "exited"
+		| "stale"
+		| "not_reached";
 	/** Two reads of `get_stats` over the recorded control socket, in order. */
 	readonly reads: readonly (SenderStats | null)[];
 	/**
@@ -393,11 +402,12 @@ function verdictOfSenderReads(
 function verdictOfEngine(e: SenderAdoptionEvidence): SenderAdoptionVerdict {
 	const engine = verdictOfEngineSession(e);
 	if (engine.decision !== "adopt") return engine;
-	// Valid only at the moment it is reported: everything read again last.
+	// Sampled agreement within the window, re-read last.
 	if (e.revalidated === "exited")
 		return refusal("process", "exited_during_read");
 	if (e.revalidated === "changed")
 		return refusal("evidence", "changed_during_read");
+	if (e.revalidated === "stale") return refusal("evidence", "window_exceeded");
 	if (e.revalidated !== "agrees") return refusal("evidence", "not_revalidated");
 	return ADOPT;
 }
@@ -425,6 +435,8 @@ function verdictOfEngineSession(
 export type SenderAdoptionIo = {
 	readonly procRoot: string;
 	readonly cgroupRoot: string;
+	/** Monotonic milliseconds, for the sampling window. */
+	readonly now: () => number;
 	readonly expectedExe: () => string | null;
 	readonly bootId: () => Promise<string>;
 	readonly readLifetime: () => Promise<Lifetime | null>;
@@ -465,6 +477,11 @@ export type SenderReads = {
 
 /** Gap between the two control reads; the sender's counters move continuously. */
 export const SENDER_ADOPTION_READ_GAP_MS = 500;
+/**
+ * The longest a positive verdict's samples may span, first local read to the
+ * last check after the engine. Longer, and the agreement is too old to report.
+ */
+export const SENDER_ADOPTION_WINDOW_MS = 3_000;
 const CONTROL_TIMEOUT_MS = 500;
 
 /**
@@ -598,6 +615,7 @@ export function defaultSenderAdoptionIo(
 	return {
 		procRoot: "/proc",
 		cgroupRoot: "/sys/fs/cgroup",
+		now: () => performance.now(),
 		expectedExe: resolvedSenderExe,
 		bootId: () => continuityObserverIo.bootId(),
 		readLifetime: () =>
@@ -860,6 +878,7 @@ export async function collectSenderAdoptionEvidence(
 	// the peer check, the reads and the final pass all describe that one
 	// process. It does not keep the process alive; it is checked again just
 	// before the first request, after the reads, and last of all.
+	const startedAt = io.now();
 	let pin: ProcessPin | null = null;
 	const pinFor = async (pid: number) => {
 		pin ??= await io.pin(pid).catch(() => null);
@@ -886,6 +905,17 @@ export async function collectSenderAdoptionEvidence(
 			exitedDuringRead: !confirmedAlive(),
 		};
 		if (verdictOfSenderReads(withReads).decision !== "adopt") return withReads;
+		// Every local fact read again on the same pin, before the engine is
+		// asked, so the engine answer is not left aging behind slow reads.
+		const again = await collectLocalEvidence(io, pinFor);
+		const localAgrees =
+			verdictBeforeSenderReads(again).decision === "adopt" &&
+			localFingerprint(again) === localFingerprint(local);
+		if (!localAgrees || !confirmedAlive())
+			return {
+				...withReads,
+				revalidated: confirmedAlive() ? "changed" : "exited",
+			};
 		const engine = await io
 			.queryEngine()
 			.catch(() => ({ state: "unknown" as const, session: null }));
@@ -896,28 +926,58 @@ export async function collectSenderAdoptionEvidence(
 		};
 		if (verdictOfEngineSession(withEngine).decision !== "adopt")
 			return withEngine;
-		// The final pass, immediately before the verdict is reported: every
-		// local fact read again on the same pin, unchanged and still passing,
-		// and the process still confirmed alive after it.
-		const again = await collectLocalEvidence(io, pinFor);
-		const revalidated = !confirmedAlive()
-			? "exited"
-			: verdictBeforeSenderReads(again).decision === "adopt" &&
-					localFingerprint(again) === localFingerprint(local)
-				? "agrees"
-				: "changed";
+		// The short tail after the engine: the pin, the process state, the
+		// armed marker and the configuration (operator intent), all local and
+		// fast. This is sampled agreement, not an instant guarantee: the
+		// whole collection must fit the window, or it refuses.
+		const pid = local.lifetime.pid;
+		const tailState = await readProcessState(io.procRoot, pid);
+		const tailIntent = canonical({
+			marker: io.readMarker(),
+			config: io.captureConfig(),
+		});
+		const revalidated: SenderAdoptionEvidence["revalidated"] =
+			!confirmedAlive() ||
+			tailState === null ||
+			GONE_STATES.has(tailState) ||
+			STOPPED_STATES.has(tailState)
+				? "exited"
+				: tailIntent !==
+						canonical({ marker: local.marker, config: local.currentConfig })
+					? "changed"
+					: io.now() - startedAt > SENDER_ADOPTION_WINDOW_MS
+						? "stale"
+						: "agrees";
 		return { ...withEngine, revalidated };
 	} finally {
 		(pin as ProcessPin | null)?.close();
 	}
 }
 
-/** Every local fact, canonically, for the final comparison. */
+/** `/proc/<pid>/stat` state letter, or null when unreadable. */
+async function readProcessState(
+	procRoot: string,
+	pid: number,
+): Promise<string | null> {
+	try {
+		return (
+			statFields(await readFile(`${procRoot}/${pid}/stat`, "utf8"))[0] ?? null
+		);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Every local fact, canonically, for the comparison. The task state is
+ * compared as eligibility (both samples passed it), not as a letter: a sender
+ * that was running and is now sleeping has not changed.
+ */
 function localFingerprint(e: SenderAdoptionEvidence): string {
 	return canonical({
 		bootId: e.bootId,
 		lifetime: e.lifetime,
-		process: e.process,
+		process: e.process && { ...e.process, state: undefined },
 		expectedExe: e.expectedExe,
 		liveUnit: e.liveUnit,
 		marker: e.marker,
