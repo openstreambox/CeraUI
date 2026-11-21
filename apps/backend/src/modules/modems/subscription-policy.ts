@@ -23,7 +23,8 @@ export interface SubscriptionEvidence {
 	readonly attachIpType?: string;
 }
 
-export interface CarrierPolicy {
+/** One row of the carrier table: it chooses the APN, never the IP family. */
+export interface CarrierRow {
 	readonly key: string;
 	readonly plmns: readonly string[];
 	readonly gid1?: string;
@@ -32,9 +33,17 @@ export interface CarrierPolicy {
 	readonly qualified: boolean;
 }
 
+/**
+ * A selected carrier for one SIM: its row plus the bearer family the live
+ * resolver (`bearer-ip-family.ts`) decides from the same evidence.
+ */
+export interface CarrierPolicy extends CarrierRow {
+	readonly requestFamily: RequestedFamily;
+}
+
 const ATT = ["310280", "310410"];
 const TMO = ["310240", "310260"];
-export const CARRIER_POLICIES: readonly CarrierPolicy[] = [
+export const CARRIER_POLICIES: readonly CarrierRow[] = [
 	{
 		key: "us-mobile-att",
 		plmns: ATT,
@@ -111,19 +120,22 @@ export function selectSubscription(
 		return { state: "unknown" };
 	const spn = normalizedSpn(evidence.spn ?? "");
 	const gid = evidence.gid1?.trim().toUpperCase() ?? "";
-	const policy = CARRIER_POLICIES.find(
+	const row = CARRIER_POLICIES.find(
 		(row) =>
 			row.plmns.includes(plmn) &&
 			(row.gid1 === undefined || gid.startsWith(row.gid1)) &&
 			(row.spn === undefined || spn === row.spn),
 	);
-	return policy === undefined
-		? { state: "unknown" }
-		: {
-				state: policy.qualified ? "recognized" : "not-qualified",
-				policy,
-				evidence: hasHome ? "home" : "serving-fallback",
-			};
+	if (row === undefined) return { state: "unknown" };
+	const policy: CarrierPolicy = {
+		...row,
+		requestFamily: subscriptionBearerFamily(evidence).family,
+	};
+	return {
+		state: row.qualified ? "recognized" : "not-qualified",
+		policy,
+		evidence: hasHome ? "home" : "serving-fallback",
+	};
 }
 
 /**
@@ -144,4 +156,42 @@ export function subscriptionBearerFamily(
 /** Translation follows the observed grant, never the requested PDP family. */
 export function requiresClat(grant: ObservedGrant): boolean {
 	return grant === "ipv6";
+}
+
+/** What mmcli reports for a modem and its SIM, as `SubscriptionEvidence`. */
+export interface ModemSimReading {
+	readonly modemInfo: Readonly<Record<string, unknown>>;
+	readonly simInfo: Readonly<Record<string, unknown>>;
+}
+
+function field(
+	source: Readonly<Record<string, unknown>>,
+	name: string,
+): string | undefined {
+	const value = source[name];
+	return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+/** The one place that maps mmcli fields to subscription evidence. */
+export function subscriptionEvidenceFromModem(
+	sim: ModemSimReading,
+): SubscriptionEvidence {
+	const evidence: Record<string, string> = {};
+	const pairs = [
+		["homePlmn", sim.simInfo, "sim.properties.operator-code"],
+		["servingPlmn", sim.modemInfo, "modem.3gpp.operator-code"],
+		["spn", sim.simInfo, "sim.properties.operator-name"],
+		["gid1", sim.simInfo, "sim.properties.gid1"],
+		["registration", sim.modemInfo, "modem.3gpp.registration-state"],
+		[
+			"attachIpType",
+			sim.modemInfo,
+			"modem.3gpp.eps.initial-bearer.settings.ip-type",
+		],
+	] as const;
+	for (const [key, source, name] of pairs) {
+		const value = field(source, name);
+		if (value !== undefined) evidence[key] = value;
+	}
+	return evidence;
 }
