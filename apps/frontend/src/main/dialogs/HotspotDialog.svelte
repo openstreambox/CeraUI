@@ -16,12 +16,17 @@
     hotspot channel-width property, so the control could not act.
   • Save  → rpc.wifi.hotspotConfigure, Start → rpc.wifi.hotspotStart,
     Stop → rpc.wifi.hotspotStop — all dispatched through `osCommand` (the single
-    OS-op feedback path: keyed spinner, DEVICE_BUSY + failure toasts).
+    OS-op feedback path: keyed spinner, DEVICE_BUSY + failure toasts). Save and
+    New Wi-Fi password share one bound write (`writeHotspotConfig`: radio token,
+    entry retry, terminal receipt, one keyed op).
   • Start never dispatches directly (#413): it opens `HotspotActivationConfirm`,
     which shows the exact credentials the AP will broadcast (or stores the
-    operator's own) and needs an explicit acknowledgement. While the hotspot is
-    off, the edit form is NOT rendered — `hotspotConfigure` only reconfigures a
-    live AP, so fields typed here used to be silently ignored by the start.
+    operator's own) and needs an explicit acknowledgement.
+  • While the hotspot is off, the live form is NOT rendered (`hotspotConfigure`
+    only reconfigures a live AP). `HotspotOffEditor` edits the name and password
+    instead, through `hotspotPrepare` with the chosen pair: it modifies the
+    owned profile, or before a first start stores the choice durably. Saving
+    never brings the AP up. Channel and security stay live-only.
   • When the hotspot is active, ONE QR encoding the live credentials can be shown
     so phones can join by scan. It sits behind Show code in `WifiCode` (hidden by
     default, hides itself again) together with the join line and New Wi-Fi
@@ -68,13 +73,16 @@ import { hotspotIsActive, hotspotToggleConfirmed } from '$lib/rpc/os-toggle-pred
 import { getLinkEpoch } from '$lib/rpc/session-epoch.svelte';
 import { getStatus } from '$lib/rpc/subscriptions.svelte';
 import { getWifiAdapterModeEntry } from '$lib/rpc/wifi-adapter-modes.svelte';
-import { withWifiConfigReceipt, withWifiStartReceipt } from '$lib/rpc/wifi-status-receipt';
+import { withWifiStartReceipt } from '$lib/rpc/wifi-status-receipt';
+import { getHotspotLifetime } from '$lib/stores/hotspot-joins.svelte';
 import { cn } from '$lib/utils';
 import HotspotActivationConfirm from '$main/network/HotspotActivationConfirm.svelte';
+import HotspotOffEditor from '$main/network/HotspotOffEditor.svelte';
+import { type HotspotConfigFields, writeHotspotConfig } from '$main/network/hotspot-config-write';
 import {
 	canRenewHotspotPassword,
 	mayCarryStream,
-	renewHotspotPassword,
+	newHotspotPasswordFields,
 } from '$main/network/hotspot-new-password';
 import { generateHotspotPassword } from '$main/network/hotspot-password';
 import WifiCode from '$main/network/WifiCode.svelte';
@@ -111,6 +119,10 @@ const isActive = $derived(hotspotIsActive(iface));
 const radioDevice = $derived(deviceId);
 const radioToken = $derived(iface?.incarnation);
 const radioReason = $derived(iface?.degraded_reason);
+// The page-local lifetime of the AP this row shows (see `hotspot-joins.ts`):
+// it changes on a Stop and Start, another radio, or an AP recreated in another
+// mode or from another profile.
+const apLifetime = $derived(isActive ? getHotspotLifetime(deviceId, iface) : undefined);
 let ownerSession = $state(0);
 let formBinding = $state.raw<WifiRadioBinding | undefined>(undefined);
 let radioNotice = $state(false);
@@ -120,6 +132,30 @@ let admission: AbortController | undefined;
 let admissionOwner: WifiRadioBinding | undefined;
 let configAdmissionKey = $state<string>();
 let startAdmission = $state.raw<{ readonly key: string; readonly controller: AbortController }>();
+// A Start already sent when the dialog closed for a changed radio keeps its
+// receipt; its correlated refusal then arrives as a notice.
+let detachedStart: AbortController | undefined;
+let detachedExpiry: ReturnType<typeof setTimeout> | undefined;
+const START_RECEIPT_TTL_MS = 60_000;
+
+/** At most one detached receipt, bounded on its own and gone with the view. */
+function retireDetachedStart() {
+	clearTimeout(detachedExpiry);
+	detachedExpiry = undefined;
+	detachedStart?.abort();
+	detachedStart = undefined;
+}
+
+/** The dialog's own refusal wording for a Start it no longer shows. */
+function startRefusalNotice(result: { error?: string; reason?: string }): string {
+	if (result.reason === 'deactivation-failed') return m['network.wifiMode.error.notConfirmed']();
+	if (result.error === 'radio-changed') return m['hotspotConfirm.radioChangedNotStarted']();
+	if (result.error === 'DEVICE_BUSY') return m['network.os.deviceBusy']();
+	if (wifiFailureReason(result) === 'hybrid-channel-not-permitted')
+		return m['network.wifiMode.error.hybridChannelNotPermitted']();
+	if (result.error === 'radio-unverified') return m['hotspotConfirm.radioUnverified']();
+	return m['network.os.operationFailed']();
+}
 
 function capture(): WifiRadioBinding {
 	return { device: deviceId, incarnation: radioToken, link: getLinkEpoch(), session: ownerSession };
@@ -129,7 +165,7 @@ function current(binding: WifiRadioBinding): boolean {
 	return open && sameWifiRadio(binding, capture());
 }
 
-onDestroy(() => { ownerSession += 1; admission?.abort(); });
+onDestroy(() => { ownerSession += 1; admission?.abort(); retireDetachedStart(); });
 
 function beginAdmission(binding: WifiRadioBinding): AbortController {
 	admission?.abort();
@@ -212,13 +248,43 @@ const securityChoice = $derived(deriveHotspotSecurityChoice(iface?.hotspot));
 const radioTruth = $derived(deriveHotspotRadioTruth(iface?.hotspot, iface?.capabilities));
 
 let prevOpen = false;
+let openedTarget: { device: string; incarnation: string | undefined } | undefined;
 let prevActive = false;
+// The last resolved lifetime of the live AP this dialog showed.
+let shownLifetime: number | undefined;
 $effect.pre(() => {
 	const opened = open;
 	const active = isActive;
+	const lifetime = apLifetime;
 	const next = { device: radioDevice, incarnation: radioToken, link: getLinkEpoch() };
 	radioReason;
 	untrack(() => {
+		if (opened && !prevOpen) {
+			retireDetachedStart();
+			openedTarget = { device: next.device, incarnation: next.incarnation };
+		}
+		// The dialog is bound to the radio lifetime it opened on. A changed or
+		// vanished pair closes it with a notice; it never follows a new
+		// incarnation of the same id, which needs a fresh pick.
+		if (opened && prevOpen && openedTarget && (openedTarget.device !== next.device ||
+			openedTarget.incarnation !== next.incarnation)) {
+			if (startAdmission && startAdmission.controller === admission &&
+				getOperationPhase(startAdmission.key) === 'pending') {
+				retireDetachedStart();
+				const detached = startAdmission.controller;
+				detachedStart = detached;
+				admission = undefined;
+				// Bounded like the Start operation itself.
+				detachedExpiry = setTimeout(() => {
+					if (detachedStart === detached) retireDetachedStart();
+				}, START_RECEIPT_TTL_MS);
+			} else admission?.abort();
+			confirmingStart = false;
+			openedTarget = undefined;
+			open = false;
+			toast.warning(m['network.view.hotspotRadioLost']());
+			return;
+		}
 		if (!opened || (admissionOwner &&
 			(admissionOwner.device !== next.device || admissionOwner.link !== next.link))) {
 			admission?.abort();
@@ -231,7 +297,12 @@ $effect.pre(() => {
 		if (opened !== prevOpen || changed) ownerSession += 1;
 		if (opened && !prevOpen) confirmingStart = false;
 		if (opened && active) confirmingStart = false;
-		if (opened && ((!prevOpen) || (active && !prevActive) || changed)) {
+		// A live AP replaced by another lifetime of the same radio (recreated in
+		// another mode or from another profile) loads like a fresh Start: the form
+		// holds the AP that is up now, never one that is gone.
+		const replaced = active && prevActive && shownLifetime !== undefined &&
+			lifetime !== undefined && lifetime !== shownLifetime;
+		if (opened && ((!prevOpen) || (active && !prevActive) || changed || replaced)) {
 			bindingUnsupported = false;
 			radioNotice = formBinding !== undefined && (changed || !prevOpen);
 			formBinding = { ...next, session: ownerSession };
@@ -239,6 +310,8 @@ $effect.pre(() => {
 		}
 		prevOpen = opened;
 		prevActive = active;
+		if (!active) shownLifetime = undefined;
+		else if (lifetime !== undefined) shownLifetime = lifetime;
 	});
 });
 
@@ -299,12 +372,14 @@ const passwordError = $derived(
 
 // ── New Wi-Fi password: the live setup with only the password changed ──
 // Offered only while the hotspot runs and this form is bound to its radio; it
-// shares the Save key, so the two can never run at once. A completed renewal
+// goes through Save's own write (`writeConfig`: same binding, keyed op and
+// terminal receipt), so the two can never run at once. A completed renewal
 // also refreshes the form's password, so a later Save cannot put the old one back.
 //
 // The record belongs to one owner: the form binding (radio, link, dialog
-// session), the config key and the op attempt it began. Only THAT attempt can
-// write the field, from an authoritative signal: the device's confirmation, or
+// session), the AP lifetime it was asked on, the config key and the op attempt
+// it began. Only THAT attempt can write the field, from an authoritative
+// signal: the device's confirmation, or
 // live credentials on the bound radio that already carry the new password. The
 // dispatch ack is not waited for: the confirmation already re-enables Save, so a
 // form still holding the revoked password in that gap could send it straight
@@ -312,11 +387,13 @@ const passwordError = $derived(
 // password and accepted the drop, so a later Save completes the renewal instead
 // of undoing it. The ack only drops a dispatch that was refused or never sent.
 // An operator edit of the password field wins over the renewal. Closing,
-// rebinding, a failure or a replacing dispatch drops the record, so a late
-// completion can never write into a form it no longer owns.
+// rebinding, a Stop, a restarted or replaced AP, a failure or a replacing
+// dispatch drops the record, so a late completion can never write into a form
+// it no longer owns.
 type Renewal = {
 	readonly id: object;
 	readonly binding: WifiRadioBinding;
+	readonly lifetime: number | undefined;
 	readonly key: string;
 	readonly password: string;
 	readonly attempt: symbol | undefined;
@@ -325,22 +402,27 @@ let renewal = $state.raw<Renewal | undefined>(undefined);
 
 function startRenewal() {
 	const binding = formBinding;
-	if (!binding || !current(binding) || configuring) return;
-	const id = {};
-	const key = configKey;
+	if (!isActive || !binding?.incarnation || !current(binding) || configuring) return;
 	const next = generateHotspotPassword();
-	renewal = { id, binding, key, password: next, attempt: undefined };
-	void renewHotspotPassword(deviceId, iface, () => next, (attempt) => {
+	const fields = newHotspotPasswordFields(deviceId, iface, next);
+	if (!fields) return;
+	const id = {};
+	renewal = { id, binding, lifetime: apLifetime, key: configKey, password: next, attempt: undefined };
+	void writeConfig(binding, fields, (attempt) => {
 		if (renewal?.id === id) renewal = { ...renewal, attempt };
-	}).then((sent) => {
-		if (renewal?.id === id && sent === undefined) renewal = undefined;
+	}).then((result) => {
+		if (renewal?.id === id && result?.success !== true) renewal = undefined;
 	});
 }
 
 $effect(() => {
 	const record = renewal;
 	if (record === undefined) return;
-	const owned = record.key === configKey && current(record.binding);
+	// Another known lifetime ends the record; a lifetime not resolved yet (the
+	// roster feed has not matched this frame) only holds the write back.
+	const sameAp = apLifetime === record.lifetime;
+	const owned = isActive && record.key === configKey && current(record.binding) &&
+		(sameAp || apLifetime === undefined);
 	const phase = getOperationPhase(record.key);
 	const attempt = getOperationAttempt(record.key);
 	const live = iface?.hotspot?.password;
@@ -349,7 +431,7 @@ $effect(() => {
 			renewal = undefined;
 			return;
 		}
-		if (record.attempt === undefined) return;
+		if (record.attempt === undefined || !sameAp) return;
 		// Replaced by another dispatch or released: never ours to write again.
 		if (attempt !== record.attempt) {
 			renewal = undefined;
@@ -384,54 +466,49 @@ const renewOffer = $derived(
 async function handleSave() {
 	const original = formBinding;
 	if (!isFormValid || configuring || !canEdit || !original?.incarnation) return;
+	await writeConfig(original, {
+		name, password, channel,
+		...(security !== undefined ? { security } : {}),
+	});
+}
+
+// The one config write of this dialog, shared by Save and New Wi-Fi password:
+// the form's radio binding, one admission (closing or rebinding aborts the
+// wait for the terminal frame) and Save's keyed op.
+async function writeConfig(
+	original: WifiRadioBinding,
+	fields: HotspotConfigFields,
+	onDispatch?: (attempt: symbol | undefined) => void,
+) {
+	const incarnation = original.incarnation;
+	if (!incarnation) return undefined;
 	let binding = original;
 	const controller = beginAdmission(original);
-	const input = {
-		device: binding.device, incarnation: binding.incarnation, name, password, channel,
-		...(security !== undefined ? { security } : {}),
-	};
-	configAdmissionKey = wifiHotspotConfigOpKey(binding.device, binding.incarnation);
-	await osCommand({
-		key: wifiHotspotConfigOpKey(binding.device, binding.incarnation),
-		classify: classifyWifiMutation,
-		rpc: async (handoff) => {
-			const result = await withWifiEntryRetry(original,
-				(incarnation, unobserved) => withWifiConfigReceipt(
-					{ device: original.device, incarnation },
-					() => rpc.wifi.hotspotConfigure({ ...input, incarnation }),
-					{ signal: controller.signal, unobserved },
-				),
-				{
-					signal: controller.signal,
-					current: () => ownsAdmission(original),
-					rebind: (incarnation) => {
-						binding = { ...capture(), incarnation };
-						const next = wifiHotspotConfigOpKey(original.device, incarnation);
-						if (!handoff(next)) return false;
-						configAdmissionKey = next;
-						return true;
-					},
-				},
-			);
-			if (!result && !controller.signal.aborted && ownsAdmission(original)) bindingUnsupported = true;
-			return result ?? { success: false, error: 'binding-required' };
-		},
+	configAdmissionKey = wifiHotspotConfigOpKey(original.device, incarnation);
+	const result = await writeHotspotConfig({ ...original, incarnation }, fields, {
+		signal: controller.signal,
+		current: () => ownsAdmission(original),
 		isCurrent: () => current(binding) && admission === controller && !controller.signal.aborted,
-		onResult: (result) => {
-			if (wifiRadioChanged(result) && current(binding)) {
+		...(onDispatch ? { onDispatch: (_key: string, attempt: symbol | undefined) => onDispatch(attempt) } : {}),
+		onRebind: (token) => {
+			binding = { ...capture(), incarnation: token };
+		},
+		onHandoff: (key) => {
+			configAdmissionKey = key;
+		},
+		onUnsupported: () => {
+			bindingUnsupported = true;
+		},
+		onResult: (outcome) => {
+			if (wifiRadioChanged(outcome) && current(binding)) {
 				radioNotice = true;
 				formBinding = capture();
 				reloadForm();
 			}
 		},
-		failMessage: (result) => wifiFailureReason(result ?? {}) === 'hybrid-channel-not-permitted'
-			? m['network.wifiMode.error.hybridChannelNotPermitted']()
-			: result?.error === 'radio-unverified'
-			? m['hotspotConfigurator.radioUnverified']() : m["network.os.operationFailed"](),
-		busyMessage: () => m["network.os.deviceBusy"](),
-		// NO confirmOnResolve — confirm comes from the deferred hotspot.config event.
 	});
 	controller.abort();
+	return result;
 }
 
 // Start/stop through the shared keyed op. Stay `pending` after dispatch; the
@@ -461,6 +538,7 @@ async function handleToggle() {
 }
 
 async function startConfirmed(incarnation: string) {
+	retireDetachedStart();
 	const original = capture();
 	if (incarnation !== original.incarnation || radioReason) return;
 	let binding = original;
@@ -472,6 +550,8 @@ async function startConfirmed(incarnation: string) {
 	await osCommand({
 		key: toggleKey,
 		target: 'hotspot',
+		// The terminal waits for verified client steering after NM confirms.
+		pendingTtlMs: START_RECEIPT_TTL_MS,
 		classify: classifyWifiMutation,
 		rpc: async (handoff) => {
 			startAdmission = { key: toggleKey, controller };
@@ -493,6 +573,8 @@ async function startConfirmed(incarnation: string) {
 				},
 			);
 			correlated = result?.correlated === true;
+			if (correlated && result && !result.success && detachedStart === controller)
+				toast.error(startRefusalNotice(result));
 			if (!result && !controller.signal.aborted && ownsAdmission(original)) {
 				bindingUnsupported = true;
 				ownerSession += 1;
@@ -515,6 +597,7 @@ async function startConfirmed(incarnation: string) {
 		busyMessage: () => m["network.os.deviceBusy"](),
 	});
 	if (startAdmission?.controller === controller) startAdmission = undefined;
+	if (detachedStart === controller) retireDetachedStart();
 }
 
 // Confirm a pending start/stop as soon as the authoritative `wifi` snapshot
@@ -660,6 +743,14 @@ async function copyPassword() {
 				<p class="text-muted-foreground text-xs" data-testid="hotspot-inactive-hint">
 					{m["hotspotConfirm.inactiveHint"]()}
 				</p>
+				{#if radioReason !== 'permanent-mac-unresolved'}
+					<HotspotOffEditor
+						device={deviceId}
+						incarnation={radioToken}
+						degradedReason={radioReason}
+						session={ownerSession}
+					/>
+				{/if}
 			{/if}
 		{:else}
 		<!-- Name -->
@@ -859,7 +950,7 @@ async function copyPassword() {
 					name={iface?.hotspot?.name}
 					password={iface?.hotspot?.password}
 					security={iface?.hotspot?.security}
-					owner={{ device: deviceId, incarnation: radioToken }}
+					owner={{ device: deviceId, incarnation: radioToken, lifetime: apLifetime }}
 					renew={renewOffer}
 				/>
 			</div>
