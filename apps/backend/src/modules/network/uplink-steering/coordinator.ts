@@ -72,6 +72,17 @@ export class UplinkSteeringCoordinator {
 		return this.#applied;
 	}
 
+	/**
+	 * The applier reports the state whose selection and route support it left
+	 * live, also from inside a failed apply (a published transition whose
+	 * rollback failed, or a restored previous state). The next apply retires
+	 * from it. `undefined` (sharing switched off) falls back to the verified
+	 * state.
+	 */
+	markInstalled(state: PreparedSteeringState | undefined): void {
+		this.#installed = state;
+	}
+
 	stop(): void {
 		this.#cancelReadinessDeadline?.();
 		this.#cancelReadinessDeadline = undefined;

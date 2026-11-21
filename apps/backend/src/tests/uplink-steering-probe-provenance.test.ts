@@ -10,6 +10,7 @@ import { UplinkHealthRuntimeCore } from "../modules/network/uplink-health/runtim
 import {
 	ActiveUplinkSelector,
 	commitSelectorPlan,
+	selectionStillQualified,
 } from "../modules/network/uplink-steering/active-uplink.ts";
 import {
 	type PreparedSteeringState,
@@ -145,6 +146,8 @@ interface DriverOptions {
 	rejectRestore?: () => boolean;
 	afterLoad?: (next: PreparedSteeringState) => void | Promise<void>;
 	retry?: () => void;
+	/** Runs while a route is provisioned; returns whether it changed. */
+	provision?: (route: UplinkRoutePlan) => boolean;
 }
 
 /** The production wiring of `uplink-steering/runtime.ts` on stubbed system calls. */
@@ -155,15 +158,20 @@ function driver(w: World, options: DriverOptions = {}) {
 		verified: [] as (string | undefined)[],
 		routes: new Map<string, UplinkRoutePlan>(),
 		flushed: [] as number[],
+		rolledBack: [] as string[],
 	};
 	let restoring = false;
 	const applier = new UplinkSteeringApplier({
 		discoverRoutes: async () => [],
 		ensureRoute: async (route) => {
+			const changed = options.provision?.(route) ?? false;
 			log.routes.set(route.ifname, route);
-			return { route, changed: false };
+			return { route, changed };
 		},
-		rollbackRoute: async () => {},
+		rollbackRoute: async ({ route }) => {
+			log.rolledBack.push(route.ifname);
+			log.routes.delete(route.ifname);
+		},
 		removeRoute: async (route) => {
 			log.routes.delete(route.ifname);
 		},
@@ -185,7 +193,11 @@ function driver(w: World, options: DriverOptions = {}) {
 		},
 		setIpForwarding: async () => {},
 		publishFlowsReset: () => {},
-		selectionInstalled: (state) => commitSelectorPlan(state, w.selector),
+		selectionInstalled: (state) => {
+			commitSelectorPlan(state, w.selector);
+			coordinator.markInstalled(state);
+		},
+		selectionQualified: (state) => selectionStillQualified(state, w.now),
 	});
 	const coordinator = new UplinkSteeringCoordinator({
 		readDesiredState: read(w),
@@ -205,6 +217,7 @@ function driver(w: World, options: DriverOptions = {}) {
 			log.verified.push(active(next));
 		},
 		waitBeforeRetry: async () => options.retry?.(),
+		retryCleanup: () => applier.retryPendingCleanup(),
 	});
 	return {
 		log,
@@ -636,6 +649,10 @@ describe("the selector follows what is installed", () => {
 		w.health = [probed("eth0", 0, undefined, "down"), probed("wwan0", 0)];
 		const d = driver(w);
 		await d.reconcile();
+		// eth0 is offered again from 5 s; health reconciles every round.
+		w.now = 5_000;
+		w.health = [probed("eth0", w.now, 5_000), probed("wwan0", w.now, 0)];
+		await d.reconcile();
 		w.now = 5_000 + HOLD;
 		w.health = [probed("eth0", w.now, 5_000), probed("wwan0", w.now, 0)];
 		expect(active(await read(w)())).toBe("eth0");
@@ -806,9 +823,173 @@ describe("the selector follows what is installed", () => {
 		w.policy = DEFAULT_SHARING_POLICY;
 		w.now = 2_000;
 		await d.reconcile();
+		// A fresh selector waits for a probe success it has observed itself.
+		expect(d.loaded()).toBeUndefined();
+		w.now = 5_000;
+		w.health = [down("eth0", 5_000), probed("wwan0", 5_000, 0)];
+		await d.reconcile();
 		// Wired is down: cellular is a fresh first pick and wired is not
 		// charged for a failure while it carried no single selection.
 		expect(d.loaded()).toBe("wwan0");
 		expect(w.selector.rejoinHoldMs("wired:a")).toBe(HOLD);
+	});
+});
+
+describe("review of #177", () => {
+	test("a replacement after spread cannot use its predecessor's probe run", async () => {
+		// The engine saw no change (same name, address and eligibility); the
+		// replacement appeared while spread had reset the selector.
+		const w = world();
+		delete w.interfaces.wwan0;
+		let streaming = false;
+		const d = healthDriver(w, {
+			telemetry: () => (streaming ? [10] : undefined),
+		});
+		w.policy = { ...DEFAULT_SHARING_POLICY, selection: "spread" };
+		await d.tick(1_000);
+		w.ethId = "wired:replacement";
+		streaming = true;
+		w.now = 2_000;
+		w.policy = DEFAULT_SHARING_POLICY;
+		await d.reconcile();
+		expect(d.loaded()).toBeUndefined();
+		await d.tick(3_000);
+		expect(d.probes).toEqual(["eth0"]);
+		expect(d.loaded()).toBeUndefined();
+		// Once streaming stops, its own first probe success admits it.
+		streaming = false;
+		await d.tick(8_000);
+		expect(d.loaded()).toBe("eth0");
+		expect(w.selector.active()).toBe("wired:replacement");
+	});
+
+	test("an incumbent on a new network loses clients until probed there", async () => {
+		const w = world();
+		let streaming = false;
+		const d = healthDriver(w, {
+			telemetry: () => (streaming ? [10] : undefined),
+		});
+		await d.tick(1_000);
+		expect(d.loaded()).toBe("eth0");
+		streaming = true;
+		w.interfaces.eth0 = netif("192.0.3.2");
+		await d.tick(2_000);
+		expect(d.engine.get("eth0")?.signals.probeSince).toBeUndefined();
+		// The confirmed cellular link takes new flows; no failure is charged.
+		expect(d.loaded()).toBe("wwan0");
+		expect(w.selector.rejoinHoldMs("wired:a")).toBe(HOLD);
+		// Without a backup, nothing is selected.
+		const solo = world();
+		delete solo.interfaces.wwan0;
+		let soloStreaming = false;
+		const s = healthDriver(solo, {
+			telemetry: () => (soloStreaming ? [10] : undefined),
+		});
+		await s.tick(1_000);
+		expect(s.loaded()).toBe("eth0");
+		soloStreaming = true;
+		solo.interfaces.eth0 = netif("192.0.3.2");
+		await s.tick(2_000);
+		expect(s.log.routes.get("eth0")?.sourceAddress).toBe("192.0.3.2");
+		expect(s.loaded()).toBeUndefined();
+	});
+
+	test("evidence that expires during route planning is not used", async () => {
+		const w = world();
+		w.now = 1_000;
+		delete w.interfaces.wwan0;
+		w.health = [probed("eth0", 1_000)];
+		const state = await readReadySteeringState(
+			{
+				policy: () => w.policy,
+				selector: w.selector,
+				now: () => w.now,
+				health: () => w.health,
+				interfaces: () => w.interfaces,
+				wifiIdentity: () => undefined,
+				physicalIdentity: () => "wired:a",
+				markForIdentity: stableUplinkMark,
+				isBondCandidate: () => false,
+				isClientZone: (name) => name === "eth9",
+				planRoute: async (candidate) => {
+					w.now = 17_000;
+					return { ...candidate, table: "30001", managed: true };
+				},
+			},
+			{},
+		);
+		expect(active(state)).toBeUndefined();
+		expect(state.uplinks.map((u) => u.ifname)).toEqual(["eth0"]);
+	});
+
+	test("evidence that expires while routes are provisioned aborts the install", async () => {
+		const w = world();
+		delete w.interfaces.wwan0;
+		w.now = 1_000;
+		w.health = [probed("eth0", 1_000)];
+		let slow = true;
+		const d = driver(w, {
+			// The first provisioning takes 16 s.
+			provision: () => {
+				if (slow) {
+					slow = false;
+					w.now = 17_000;
+				}
+				return true;
+			},
+		});
+		await d.reconcile();
+		expect(d.log.attempted[0]).toBe("eth0");
+		// The retry re-planned with expired evidence: nothing is selected.
+		expect(d.loaded()).toBeUndefined();
+		expect(d.log.rolledBack).toContain("eth0");
+		expect(w.selector.active()).toBeUndefined();
+	});
+
+	test("a failed rollback keeps the live selection's route and retires what it dropped", async () => {
+		// Only Ethernet installed; it fails while a newly confirmed cellular
+		// route is provisioned, and both the flush and the restore fail.
+		const w = world();
+		delete w.interfaces.wwan0;
+		w.health = [probed("eth0", 0)];
+		let failFlush = false;
+		let failRestore = false;
+		const d = driver(w, {
+			provision: (route) => route.ifname === "wwan0",
+			rejectFlush: () => {
+				if (!failFlush) return false;
+				failFlush = false;
+				return true;
+			},
+			rejectRestore: () => {
+				if (!failRestore) return false;
+				failRestore = false;
+				return true;
+			},
+			retry: () => {
+				// Cellular carries new flows and keeps its route.
+				expect(d.loaded()).toBe("wwan0");
+				expect(w.selector.active()).toBe("wwan0");
+				expect(d.log.rolledBack).not.toContain("wwan0");
+				expect(d.log.routes.has("wwan0")).toBe(true);
+				// Cellular then disappears before the retry.
+				delete w.interfaces.wwan0;
+				w.now += 100;
+			},
+		});
+		await d.reconcile();
+		expect(d.loaded()).toBe("eth0");
+		w.now = 5_000;
+		w.interfaces.wwan0 = INTERFACES.wwan0;
+		w.health = [down("eth0", 5_000), probed("wwan0", 5_000)];
+		failFlush = true;
+		failRestore = true;
+		await d.reconcile();
+		// The retry retired cellular from what was installed and charged it.
+		expect(d.log.flushed).toContain(stableUplinkMark("wwan0"));
+		expect(d.log.routes.has("wwan0")).toBe(false);
+		expect(w.selector.rejoinHoldMs("wwan0")).toBe(HOLD * 2);
+		// Ethernet, dropped by the transition, is retired by the cleanup.
+		expect(d.log.routes.has("eth0")).toBe(false);
 	});
 });

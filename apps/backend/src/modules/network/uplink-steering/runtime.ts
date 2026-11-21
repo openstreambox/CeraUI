@@ -16,7 +16,10 @@ import {
 	flushConntrack,
 	setIpForwarding,
 } from "../uplink-sharing.ts";
-import { commitSelectorPlan } from "./active-uplink.ts";
+import {
+	commitSelectorPlan,
+	selectionStillQualified,
+} from "./active-uplink.ts";
 import {
 	type PreparedSteeringState,
 	UplinkSteeringApplier,
@@ -53,7 +56,11 @@ const applier = new UplinkSteeringApplier({
 	// The selector's incumbent follows what is live for clients, never a mere
 	// plan: a rejected reload commits nothing, a partial apply commits the
 	// selection it left installed.
-	selectionInstalled: (state) => commitSelectorPlan(state),
+	selectionInstalled: (state) => {
+		commitSelectorPlan(state);
+		coordinator.markInstalled(state);
+	},
+	selectionQualified: (state) => selectionStillQualified(state, Date.now()),
 	publishFlowsReset: (event) =>
 		broadcastMsg(
 			UPLINK_FLOWS_RESET_EVENT,

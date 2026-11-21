@@ -406,8 +406,13 @@ reconcile from the uplinks the mode and administrative filters allow.
   on unchanged passes. A rejected reload, a retry or a read-only caller such
   as the shaper never moves the incumbent, starts or ends a hold, or charges
   a failure; a partial apply whose rollback also failed leaves the selector
-  on the selection that stayed live. A state without client zones, or with
-  `spread`, commits as a reset. The coordinator retires routes and marks from
+  on the selection that stayed live. In that case the applier also keeps the
+  live selection's route support, queues the routes the failed state dropped
+  for the pending cleanup, and the coordinator takes that state as installed.
+  Readback checks the selection itself: the marks set by the ruleset's
+  selection chains must be exactly the planned selectable uplinks', or the
+  all-down drop must be present when none is planned. A state without client
+  zones, or with `spread`, commits as a reset. The coordinator retires routes and marks from
   the last state whose apply completed, even when its readback then failed,
   while status keeps reporting the last verified state.
 - **Rank.** Healthy before degraded, then lower operator priority for the
@@ -421,9 +426,14 @@ reconcile from the uplinks the mode and administrative filters allow.
   blackhole with the link still up). The state builder then no longer offers
   it, and the best remaining probe-confirmed uplink becomes active in the
   same reconcile. With none confirmed nothing is selectable and the all-down
-  drop applies to new client flows until a probe confirms one; the first pick
+  drop applies to new client flows until a probe confirms one. The first pick
   after startup, after `spread` or after the client zone returns follows the
-  same rule, so clients wait for the first probe round (up to 5 s). The
+  same rule, with evidence the selector observed itself (see incarnations
+  below): clients wait for the next successful probe round, normally one
+  5 s round plus the probe, longer when rounds are skipped for DNS. A WAN
+  that is only judged from sender rows (streaming suppresses its probes)
+  cannot be admitted at all, so if it is the only one, new client flows stay
+  blocked until the stream stops. The
   applier retires the lost uplink's client conntracks as for any hard-down, so
   apps reconnect over the new uplink. An administrative or mode exclusion, or
   an uplink held back while its identity proof is pending, switches the same
@@ -448,9 +458,23 @@ reconcile from the uplinks the mode and administrative filters allow.
   only after its probe run covers the rejoin hold, 30 s by default. Because
   the engine sees every round, a reconcile that was delayed or coalesced
   (readback can take long) neither hides a failed round nor restarts a
-  continuous run. The selector only clips a run that predates the identity
-  now on that interface name (a replacement device the engine could not tell
-  apart), starting it at the first success it sees for the new identity.
+  continuous run.
+- **Evidence belongs to one incarnation.** The selector remembers, per
+  interface name, the physical identity and source address it last offered,
+  and since when. A pair it has not seen before (a replacement device the
+  engine could not tell apart, a new address on the same port, or any name
+  after a reset or at startup) is a new incarnation: only probe successes
+  after that moment count, so a run is clipped to start at the first success
+  the selector observes. An incumbent whose address changes is not kept on
+  the strength of the old network: it competes again like any candidate, so
+  clients move to another confirmed uplink (or none) until it is probed on
+  the new network. That switch is not charged as a failure.
+- **Evidence is checked again at install.** A plan that newly selects an
+  uplink carries the time its evidence expires. The builder judges evidence
+  after route planning, and the applier checks the deadline right before
+  each reload that would install the selection; an expired plan aborts,
+  rolls back and is retried with a fresh plan. An installed incumbent is kept
+  on later reconciles even when its evidence ages, as before.
   Each failure while active doubles that uplink's next hold, up to 300 s; a
   failure older than ten minutes, or ten minutes as the active uplink, clears
   the history. An equal-ranked uplink never displaces the active one.
@@ -472,7 +496,8 @@ concurrent probes, so a blackhole on an idle uplink is withdrawn after roughly
 14 to 19 s (three failures plus the 4 s probe timeout). It takes longer when
 target resolution fails and rounds are skipped. While streaming, bonded links
 are judged from SRTLA telemetry and are not actively probed: a streaming link
-whose sender rows go stale is only `degraded`, never withdrawn, and a
+whose sender rows go stale is only `degraded` (it is withdrawn only when the
+whole telemetry snapshot expires, which reduces as a definitive loss), and a
 streaming link can never become the client uplink, by first pick, failover
 or rejoin, since only probes qualify. A streaming link that already carries
 clients keeps them as long as it stays offered. Single selection moves clients off a degraded one once another
@@ -480,9 +505,8 @@ uplink is proven healthy, but with
 no healthy alternative, or with sender telemetry that stays healthy while
 other destinations are unreachable, clients stay on it. A returning uplink
 first needs health's five good rounds and 15 s dwell before the state
-builder offers it again; its rejoin hold counts from the first success of
-its current probe run, but not from before its identity appeared on that
-interface name. When idle every candidate uplink,
+builder offers it again; its rejoin hold counts from the first probe success
+the selector observes once it is offered again. When idle every candidate uplink,
 including standby cellular, is probed every 5 s with a small HTTP request
 (about 0.9 KB). A faster confirmation on the active uplink, active probing of
 the client uplink while streaming, and a slower cadence for metered standby

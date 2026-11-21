@@ -54,6 +54,8 @@ const KIND_ORDER = { wired: 0, wifi: 1, cellular: 2 } as const;
 
 export interface ActiveUplinkCandidate {
 	readonly uplink: SteeringUplink;
+	/** The address client flows would be NATed to; part of the incarnation. */
+	readonly sourceAddress?: string;
 }
 
 export interface ActiveUplinkContext {
@@ -83,9 +85,15 @@ interface Proof {
 	readonly lastAt: number;
 }
 
-/** The identity last seen on an interface name, and since when. */
+/**
+ * The device and network last seen on an interface name, and since when the
+ * selector has seen that pair. Evidence older than `since` belongs to
+ * something else (a predecessor device, another network on the same port,
+ * or a time before the selector looked) and never qualifies it.
+ */
 interface Incarnation {
 	readonly identity: string;
+	readonly address?: string;
 	readonly since: number;
 }
 
@@ -109,6 +117,12 @@ export interface ActiveUplinkPlan<T> {
 	readonly candidates: T[];
 	/** State to commit once this plan is applied; undefined resets. */
 	readonly next: ActiveUplinkState | undefined;
+	/**
+	 * A plan that newly selects an uplink (first pick, failover, promotion)
+	 * rests on probe evidence that expires; it must not be installed after
+	 * this time. Absent when the selection needs no fresh evidence.
+	 */
+	readonly validUntil?: number;
 }
 
 export class ActiveUplinkSelector {
@@ -139,7 +153,7 @@ export class ActiveUplinkSelector {
 	): ActiveUplinkPlan<T> {
 		const { now } = context;
 		const prior = this.#state;
-		const incarnations = trackIncarnations(
+		const { incarnations, changed } = trackIncarnations(
 			prior.incarnations,
 			candidates,
 			context,
@@ -154,8 +168,13 @@ export class ActiveUplinkSelector {
 		const usable = candidates.filter(
 			({ uplink }) => uplink.selectable && uplink.weight > 0,
 		);
+		// An incumbent whose network changed (new address on the same port)
+		// is not carrying the network it was qualified on: it competes again
+		// like any other candidate and needs fresh probe evidence.
 		const current = usable.find(
-			({ uplink }) => uplink.identity === prior.active?.identity,
+			({ uplink }) =>
+				uplink.identity === prior.active?.identity &&
+				!changed.has(uplink.ifname),
 		);
 		if (prior.active !== undefined && current === undefined) {
 			// Only a real loss counts. A policy exclusion or an uplink held back
@@ -204,7 +223,20 @@ export class ActiveUplinkSelector {
 		) {
 			penalties.delete(active.identity);
 		}
+		const proof =
+			chosen === undefined || chosen === current
+				? undefined
+				: proofs.get(chosen.uplink.identity);
+		const validUntil =
+			proof === undefined || chosen === undefined
+				? undefined
+				: Math.min(
+						proof.lastAt + ACTIVE_UPLINK_CONFIG.maxProbeGapMs,
+						(context.health.get(chosen.uplink.ifname)?.staleAt ??
+							Number.POSITIVE_INFINITY) - 1,
+					);
 		return {
+			...(validUntil === undefined ? {} : { validUntil }),
 			candidates: candidates.map((candidate) => {
 				const selected = candidate === chosen;
 				return {
@@ -270,37 +302,45 @@ function probeRun(
 }
 
 /**
- * Remembers which identity sits on each interface name. A different identity
- * on a known name is a replacement and starts its own incarnation; a name
- * the selector has not tracked yet (first plan, after a reset) trusts the
- * producer, which restarts the run on every interface change it sees.
+ * Remembers which device and network sit on each interface name. A pair the
+ * selector has not seen before, whether a replacement, a new address or a
+ * name it is not tracking (first plan, after a reset), starts a new
+ * incarnation now: only probe successes from then on can qualify it.
  */
 function trackIncarnations(
 	prior: ReadonlyMap<string, Incarnation>,
 	candidates: readonly ActiveUplinkCandidate[],
 	{ interfaces, now }: ActiveUplinkContext,
-): Map<string, Incarnation> {
-	const next = new Map([...prior].filter(([ifname]) => interfaces.has(ifname)));
-	for (const { uplink } of candidates) {
+): { incarnations: Map<string, Incarnation>; changed: Set<string> } {
+	const incarnations = new Map(
+		[...prior].filter(([ifname]) => interfaces.has(ifname)),
+	);
+	const changed = new Set<string>();
+	for (const { uplink, sourceAddress } of candidates) {
 		const before = prior.get(uplink.ifname);
-		next.set(
-			uplink.ifname,
-			before === undefined
-				? { identity: uplink.identity, since: Number.NEGATIVE_INFINITY }
-				: before.identity === uplink.identity
-					? before
-					: { identity: uplink.identity, since: now },
-		);
+		if (
+			before !== undefined &&
+			before.identity === uplink.identity &&
+			before.address === sourceAddress
+		) {
+			incarnations.set(uplink.ifname, before);
+			continue;
+		}
+		if (before !== undefined) changed.add(uplink.ifname);
+		incarnations.set(uplink.ifname, {
+			identity: uplink.identity,
+			...(sourceAddress === undefined ? {} : { address: sourceAddress }),
+			since: now,
+		});
 	}
-	return next;
+	return { incarnations, changed };
 }
 
 /**
  * The health engine owns run continuity: it sees every probe round, so a
  * coalesced reconcile, a skipped round or a failure between two samples
  * cannot hide a break. The selector only clips a run that started before the
- * identity now on that name appeared, starting it at the first success it
- * observes for the new identity.
+ * current incarnation, starting it at the first success it observes after.
  */
 function trackProofs(
 	prior: ReadonlyMap<string, Proof>,
@@ -312,8 +352,7 @@ function trackProofs(
 	for (const { uplink } of candidates) {
 		const run = probeRun(uplink.ifname, context);
 		if (run === undefined) continue;
-		const appeared =
-			incarnations.get(uplink.ifname)?.since ?? Number.NEGATIVE_INFINITY;
+		const appeared = incarnations.get(uplink.ifname)?.since ?? context.now;
 		let since = run.since;
 		if (since < appeared) {
 			if (run.lastAt < appeared) continue;
@@ -401,12 +440,27 @@ export const activeUplinkSelector = new ActiveUplinkSelector();
  * entry (no client zone, spread, no policy) commits as a reset.
  */
 const plannedStates = new WeakMap<object, ActiveUplinkState | undefined>();
+const planDeadlines = new WeakMap<object, number>();
 
 export function recordSelectorPlan(
 	prepared: object,
 	next: ActiveUplinkState | undefined,
+	validUntil?: number,
 ): void {
 	plannedStates.set(prepared, next);
+	if (validUntil !== undefined) planDeadlines.set(prepared, validUntil);
+}
+
+/**
+ * Whether `prepared`'s new selection still rests on current probe evidence.
+ * The applier asks right before a reload installs it, so time spent planning
+ * routes or provisioning them cannot let expired evidence through.
+ */
+export function selectionStillQualified(
+	prepared: object,
+	now: number,
+): boolean {
+	return now <= (planDeadlines.get(prepared) ?? Number.POSITIVE_INFINITY);
 }
 
 /**
