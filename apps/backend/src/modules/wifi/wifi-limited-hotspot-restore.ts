@@ -6,6 +6,7 @@ import {
 	nmDeviceProp,
 	nmDisconnect,
 } from "../network/network-manager.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
 	canUseHotspotConnection,
@@ -136,7 +137,11 @@ export async function restoreLimitedHotspot(
 		}
 		if (desired === "hybrid" && fields[3] !== concurrentApIfname(row.ifname))
 			return reject("owned profile does not target the hybrid interface");
-		if (desired === "hotspot" && row.conn && getIsStreaming())
+		if (
+			desired === "hotspot" &&
+			row.conn &&
+			(getIsStreaming() || isStreamSessionUnconfirmed())
+		)
 			return reject("streaming keeps the station link");
 		return true;
 	};
