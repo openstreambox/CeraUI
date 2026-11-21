@@ -96,14 +96,19 @@ test("phone box: withheld frames complete their callback and are not counted as 
 		legacy.sent.length = 0;
 		const before = getRemoteProjectionDrops();
 		const done: string[] = [];
+		// Real broadcasts carry a per-type seq; a withheld frame must not go out
+		// as a bare {"seq":N} either.
 		const invalid = JSON.stringify({
 			notification: { show: [], remove: [], epoch: "invalid", full: true },
+			seq: 7,
 		});
 		legacy.send(invalid, () => done.push("notification"));
-		legacy.send(JSON.stringify({ config: { max_br: 1 } }), {}, () =>
+		legacy.send(JSON.stringify({ config: { max_br: 1 }, seq: 42 }), {}, () =>
 			done.push("config"),
 		);
-		legacy.send(JSON.stringify({ netif: {} }), () => done.push("netif"));
+		legacy.send(JSON.stringify({ netif: {}, seq: 0 }), () =>
+			done.push("netif"),
+		);
 		expect(legacy.sent).toHaveLength(0);
 		expect(done).toEqual(["notification", "config", "netif"]);
 		expect(getRemoteProjectionDrops()).toBe(before);
