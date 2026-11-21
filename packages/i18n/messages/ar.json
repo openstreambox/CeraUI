@@ -933,7 +933,7 @@
 	"live.starting": "جارٍ البدء…",
 	"live.stopStream": "إيقاف البث",
 	"live.stopConfirm.title": "إنهاء البث؟",
-	"live.stopConfirm.body": "سيرى المشاهدون انتهاء البث.",
+	"live.stopConfirm.body": "سيتوقف الجهاز عن إرسال البث.",
 	"live.stopConfirm.keep": "متابعة البث",
 	"live.stopConfirm.end": "إنهاء البث",
 	"live.stopStuck.message": "يستغرق الإيقاف وقتًا أطول من المتوقع",

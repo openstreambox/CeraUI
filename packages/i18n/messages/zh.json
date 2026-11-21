@@ -838,7 +838,7 @@
 	"live.starting": "正在开始...",
 	"live.stopStream": "停止直播",
 	"live.stopConfirm.title": "结束直播？",
-	"live.stopConfirm.body": "观众会看到直播结束。",
+	"live.stopConfirm.body": "设备将停止发送直播流。",
 	"live.stopConfirm.keep": "继续直播",
 	"live.stopConfirm.end": "结束直播",
 	"live.stopStuck.message": "停止所需时间超出预期",

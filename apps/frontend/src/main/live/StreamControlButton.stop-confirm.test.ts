@@ -59,7 +59,7 @@ describe("StreamControlButton — Stop asks first in the Live bar", () => {
 		expect(onStop).not.toHaveBeenCalled();
 	});
 
-	it("asks 'End the stream?' and says what viewers see", async () => {
+	it("asks 'End the stream?' and says what the box will do", async () => {
 		mount({ confirmStop: true });
 		await fireEvent.click(stopButton());
 		const dialog = await screen.findByRole("alertdialog");
