@@ -174,6 +174,8 @@ function activationDeps(): HotspotActivationDeps {
 		broadcastState: () => {},
 		setDupIpSuppression: () => {},
 		pruneHotspotConns: async () => {},
+		readProfileInstance: async () => undefined,
+		releaseConcurrentInterface: async () => true,
 	};
 }
 
@@ -187,7 +189,7 @@ function stopDeps(): HotspotStopDeps {
 			effects.push(["down", uuid]);
 			return true;
 		},
-		releaseConcurrentInterface: async () => {},
+		releaseConcurrentInterface: async () => true,
 		broadcastState: () => {},
 		setDupIpSuppression: () => {},
 		rescan: async () => {},
