@@ -48,6 +48,7 @@ import { withModemUpdateLock } from "../modules/network/state/device-lock.ts";
 import {
 	isModemMutationHeld,
 	resetLifecycleInterlock,
+	tryAcquireLifecycle,
 } from "../modules/streaming/lifecycle-admission.ts";
 import {
 	completeRecoveryBarrier,
@@ -723,7 +724,7 @@ test("a dropped automatic profile is dialled again after two disconnected polls"
 	]);
 });
 
-test("redials that keep failing are spaced 30, 60, 120, 240, then 300 s apart", async () => {
+test("redials that keep failing are spaced 30, 60, 120, 240, 300 s, then 30 min apart", async () => {
 	await connectAutomaticProfile();
 	nmState = "30 (disconnected)";
 	activationFails = true;
@@ -732,13 +733,14 @@ test("redials that keep failing are spaced 30, 60, 120, 240, then 300 s apart", 
 		dialTimes.push(now);
 	};
 	now = 0;
-	await pollUntil(1_800_000);
+	await pollUntil(4 * 3_600_000);
 	const gaps = dialTimes.slice(1).map((time, index) => time - dialTimes[index]);
 	expect(dialTimes[0]).toBeGreaterThanOrEqual(30_000);
 	expect(gaps.slice(0, 4)).toEqual([60_000, 120_000, 240_000, 300_000]);
-	for (const gap of gaps.slice(4)) expect(gap).toBe(300_000);
+	expect(gaps.length).toBeGreaterThan(5);
+	for (const gap of gaps.slice(4)) expect(gap).toBe(1_800_000);
 	expect(getModem(2)?.data_connection_failed).toBe(true);
-});
+}, 60_000);
 
 test("five connected minutes reset the redial spacing", async () => {
 	await connectAutomaticProfile();
@@ -851,5 +853,59 @@ test("overlapping polls dial a dropped automatic profile once", async () => {
 	await Promise.all([runModemStatusPoll(), runModemStatusPoll()]);
 	release.resolve();
 	await first;
+	expect(activations()).toHaveLength(2);
+});
+
+test("a failing redial raises the data-call warning once, not on every dial", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	activationFails = true;
+	const reported: number[][] = [];
+	while (now < 1_200_000) {
+		now += 15_000;
+		reported.push([...(await runModemReadyActivations())]);
+	}
+	expect(activations().length).toBeGreaterThan(3);
+	expect(reported.filter((ids) => ids.includes(2))).toHaveLength(1);
+	expect(getModem(2)?.data_connection_failed).toBe(true);
+});
+
+test("a redial in flight never refuses a Stream Start", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	now = 60_000;
+	await runModemStatusPoll();
+	now = 90_000;
+	let admitted: boolean | undefined;
+	onConnect = async () => {
+		const admission = tryAcquireLifecycle("streaming");
+		admitted = admission.admitted;
+		if (admission.admitted) admission.lease.release();
+	};
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(2);
+	expect(admitted).toBe(true);
+});
+
+test("no redial starts while a stream is being launched", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	const launch = tryAcquireLifecycle("streaming");
+	if (!launch.admitted) throw new Error("stream admission refused");
+	await pollUntil(600_000);
+	expect(activations()).toHaveLength(1);
+	launch.lease.release();
+	await pollUntil(now + 45_000);
+	expect(activations()).toHaveLength(2);
+});
+
+test("a stale connected bearer in ModemManager with the device disconnected is redialled", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)";
+	mmState = "connected";
+	now = 60_000;
+	await runModemStatusPoll();
+	now = 90_000;
+	await runModemStatusPoll();
 	expect(activations()).toHaveLength(2);
 });

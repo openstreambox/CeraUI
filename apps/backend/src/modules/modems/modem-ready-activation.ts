@@ -14,7 +14,10 @@ import {
 } from "./modem-registration.ts";
 import { getModem, getModemIds, setModem } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
-import { withModemMutation } from "./mutation-lease.ts";
+import {
+	withBackgroundModemLease,
+	withModemMutation,
+} from "./mutation-lease.ts";
 
 interface ActivationIntent {
 	state: "pending" | "consumed";
@@ -33,6 +36,8 @@ export interface ModemReadyActivationDeps {
 	readonly automaticReady: typeof automaticActivationReady;
 	readonly connect: typeof nmConnect;
 	readonly mutate: typeof withModemMutation;
+	/** The redial's lease: same-modem exclusion that never refuses a Stream Start. */
+	readonly backgroundMutate: typeof withBackgroundModemLease;
 	readonly readSim: typeof readReadyModemSim;
 	readonly resolveConfig: typeof resolveLateModemConfig;
 }
@@ -48,6 +53,7 @@ const defaultDeps: ModemReadyActivationDeps = {
 	automaticReady: automaticActivationReady,
 	connect: nmConnect,
 	mutate: withModemMutation,
+	backgroundMutate: withBackgroundModemLease,
 	readSim: readReadyModemSim,
 	resolveConfig: resolveLateModemConfig,
 };
@@ -77,12 +83,22 @@ const COOLDOWN_MS = 300_000;
     state between NetworkManager's own steps never triggers a dial.
   - Dials per physical modem are spaced 30, 60, 120, 240, then 300 s apart,
     counted from the last dial of any kind (the first-activation cooldown uses
-    the same clock). The spacing resets once the link has stayed connected for
-    REDIAL_STABLE_MS.
-  - Each dial runs under the modem's mutation lease, rechecked after it is
-    taken, exactly like the first activation.
+    the same clock). After REDIAL_TAIL_AFTER dials without a lasting
+    connection the spacing becomes REDIAL_TAIL_MS (30 min): a SIM whose plan
+    has lapsed or whose APN is wrong is not dialled every five minutes forever.
+    The spacing resets once the link has stayed connected for REDIAL_STABLE_MS.
+  - ModemManager may still report a stale bearer as `connected` after
+    NetworkManager tore the device down; that counts like `registered`.
+  - Each dial runs under the modem's background lease
+    (`withBackgroundModemLease`), rechecked after it is taken: it excludes
+    other mutations of this modem but never refuses a Stream Start, and it
+    does not begin while a stream is being launched.
+  - A failed dial raises the modem's data-call warning once; repeated failures
+    do not re-broadcast it.
 */
 const REDIAL_DELAYS_MS = [30_000, 60_000, 120_000, 240_000, 300_000] as const;
+const REDIAL_TAIL_AFTER = 5;
+const REDIAL_TAIL_MS = 1_800_000;
 const REDIAL_DWELL_MS = 20_000;
 const REDIAL_STABLE_MS = 300_000;
 
@@ -202,10 +218,14 @@ async function readReadiness(
 }
 
 function redialDelay(failures: number): number {
+	if (failures >= REDIAL_TAIL_AFTER) return REDIAL_TAIL_MS;
 	return (
 		REDIAL_DELAYS_MS[Math.min(failures, REDIAL_DELAYS_MS.length - 1)] ?? 300_000
 	);
 }
+
+const registeredForRedial = (state: string | undefined): boolean =>
+	state === "registered" || state === "connected";
 
 /** NetworkManager state code of the profile's device, or undefined. */
 async function readDeviceState(uuid: string): Promise<string | undefined> {
@@ -252,7 +272,7 @@ async function redialAutomaticProfile(
 		delete state.disconnectedSince;
 		return;
 	}
-	if ((await deps.readRegistration(id)) !== "registered") {
+	if (!registeredForRedial(await deps.readRegistration(id))) {
 		delete state.disconnectedSince;
 		return;
 	}
@@ -271,10 +291,11 @@ async function redialAutomaticProfile(
 		);
 	};
 	if (!spaced()) return;
-	await deps.mutate(key, async () => {
+	await deps.backgroundMutate(key, async () => {
 		if (!redialEligible(id, uuid, key) || !spaced()) return;
 		if ((await readDeviceState(uuid)) !== "30") return;
-		if ((await deps.readRegistration(id)) !== "registered") return;
+		if (!registeredForRedial(await deps.readRegistration(id))) return;
+		if ((await deps.readAutoconnect(uuid))?.trim() !== "no") return;
 		if (!(await deps.automaticReady(uuid))) return;
 		if (!redialEligible(id, uuid, key) || !spaced()) return;
 		lastDispatch.set(key, deps.now());
@@ -285,7 +306,8 @@ async function redialAutomaticProfile(
 		if (
 			result === false &&
 			deps.stableKey(id) === key &&
-			currentModem?.config?.conn === uuid
+			currentModem?.config?.conn === uuid &&
+			currentModem.data_connection_failed !== true
 		) {
 			setModem(id, { ...currentModem, data_connection_failed: true });
 			configured.push(id);
