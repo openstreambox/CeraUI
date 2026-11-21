@@ -2794,6 +2794,8 @@
 	"notifications.power.restingWeak": "보조배터리 {bank}의 출력이 약해 잠시 쉬는 중입니다.",
 	"notifications.power.resting": "보조배터리 {bank}가 잠시 쉬는 중입니다.",
 	"notifications.power.peer": "보조배터리 {bank}가 기기에 전원을 공급하고 있습니다.",
+	"notifications.power.restLost": "보조배터리 {bank}가 쉬는 동안 응답하지 않습니다. 스스로 꺼졌을 수 있습니다. 버튼을 누르거나 다시 연결하세요.",
+	"notifications.power.restLostHot": "보조배터리 {bank}가 쉬는 동안 응답하지 않습니다. 스스로 꺼졌을 수 있습니다. 식힌 뒤 버튼을 누르거나 다시 연결하세요.",
 	"notifications.power.bench": "전원 보호가 테스트 모드입니다. 보고만 합니다.",
 	"notifications.power.protection": "전원 보드가 보호 기능 저하를 보고합니다. 점검이 필요합니다.",
 	"notifications.power.calibration": "백업 배터리에 과열 보호가 없습니다. 센서가 설정되지 않았습니다.",
