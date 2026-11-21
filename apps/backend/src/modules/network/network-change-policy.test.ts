@@ -297,10 +297,10 @@ describe("copy for sessions that cannot confirm", () => {
 		).toEqual(["seconds"]);
 		expect(en[CHANGE_SAFETY_COPY.askBeforeUndoVia]).toMatch(/unless someone/);
 	});
-	it("says what keep-if-reachable checks and when", () => {
+	it("says keep-if-reachable checks the path to your own device, and when", () => {
 		const text = en[CHANGE_SAFETY_COPY.askBeforeReachable] as string;
 		expect(text).toStartWith("Make the change");
-		expect(text).toMatch(/internet/);
+		expect(text).toMatch(/your device/);
 		expect(placeholders(text)).toEqual(["settle"]);
 	});
 	it("never tells a remote session it will be disconnected, only that there is no undo", () => {
@@ -311,7 +311,7 @@ describe("copy for sessions that cannot confirm", () => {
 	it("the reachability notice does not blame a missing confirmation", () => {
 		const text = en[CHANGE_SAFETY_COPY.noticeUnreachable] as string;
 		expect(text).not.toMatch(/confirm/);
-		expect(text).toMatch(/internet/);
+		expect(text).toMatch(/your device/);
 		expect(en[CHANGE_SAFETY_COPY.noticeUnsaved]).toMatch(/confirmed/);
 	});
 });

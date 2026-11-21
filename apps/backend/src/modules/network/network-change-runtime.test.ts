@@ -1,11 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-	existsSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppWebSocket, SocketData } from "../../rpc/types.ts";
@@ -15,11 +9,9 @@ import {
 	networkChangeJournalPath,
 	networkChangeSession,
 	networkChangeTouches,
-	remoteReachabilityTargets,
 	resetDamagedNetworkChangeJournal,
 	resolveNetworkChangeSession,
 	startNetworkChangeSafety,
-	TAILNET_TARGET,
 	TICK_MS,
 } from "./network-change-runtime.ts";
 
@@ -220,6 +212,19 @@ describe("the route back to a session without arrival evidence", () => {
 		expect(looked).toEqual(["100.64.0.7"]);
 	});
 
+	it("keeps the port the front door named even after its evidence stopped holding", async () => {
+		const stale = await resolveNetworkChangeSession(
+			socket({
+				ingressPath: { peer: "192.0.2.10", interface: "eth0", local: "x" },
+				ingressPathValid: () => false,
+			}),
+			async () => undefined,
+		);
+		// It can no longer confirm, but it still refuses keep-if-reachable.
+		expect(stale.ingress).toBeUndefined();
+		expect(stale.capturedIngress).toBe("eth0");
+	});
+
 	it("a failed lookup leaves the session as it was", async () => {
 		const remote = await resolveNetworkChangeSession(socket({}), async () => {
 			throw new Error("ip failed");
@@ -230,41 +235,6 @@ describe("the route back to a session without arrival evidence", () => {
 			async () => undefined,
 		);
 		expect(none).not.toHaveProperty("route");
-	});
-});
-
-describe("endpoints the keep-if-reachable probe uses", () => {
-	it("the relay, the pinned control hub and the tailnet when it is up", async () => {
-		expect(
-			await remoteReachabilityTargets({
-				env: { CERALIVE_CONTROL_HUB_URL: "wss://hub.example.net/ws" },
-				tailnetUp: () => true,
-				relay: async () => ({ host: "relay.example.net", port: 443 }),
-			}),
-		).toEqual([
-			{ host: "relay.example.net", port: 443 },
-			{ host: "hub.example.net", port: 443 },
-			TAILNET_TARGET,
-		]);
-	});
-
-	it("nothing configured means nothing to probe", async () => {
-		expect(
-			await remoteReachabilityTargets({
-				env: {},
-				tailnetUp: () => false,
-				relay: async () => undefined,
-			}),
-		).toEqual([]);
-		expect(
-			await remoteReachabilityTargets({
-				env: {},
-				tailnetUp: () => false,
-				relay: async () => {
-					throw new Error("config unreadable");
-				},
-			}),
-		).toEqual([]);
 	});
 });
 
@@ -322,57 +292,39 @@ describe("warnings that would repeat every 5 s", () => {
 });
 
 describe("the way out of a damaged journal", () => {
-	const dir = () => mkdtempSync(join(tmpdir(), "nc-reset-"));
-	const owner = () => {
-		const calls: string[] = [];
-		return {
-			calls,
-			owner: {
-				async reconcile(reason: "backend-start" | "network-restart" | "boot") {
-					calls.push(reason);
-					return "clean" as const;
-				},
-			},
-		};
-	};
-
-	it("moves only an unreadable journal aside, keeps it, and reconciles", async () => {
-		const d = dir();
+	it("hands the check and the move to the owner, after confirming a journal exists", async () => {
+		const d = mkdtempSync(join(tmpdir(), "nc-reset-"));
 		const path = join(d, "journal.json");
 		writeFileSync(path, "{not json");
-		const o = owner();
-		const { movedTo } = await resetDamagedNetworkChangeJournal({
-			path,
-			now: () => 1234,
-			owner: o.owner,
+		const calls: string[] = [];
+		const owner = {
+			async resetDamagedJournal() {
+				calls.push("reset");
+				return { movedTo: `${path}.damaged-x` };
+			},
+		};
+		expect(await resetDamagedNetworkChangeJournal({ path, owner })).toEqual({
+			movedTo: `${path}.damaged-x`,
 		});
-		expect(movedTo).toBe(`${path}.damaged-1234`);
-		expect(existsSync(path)).toBe(false);
-		expect(readFileSync(movedTo, "utf8")).toBe("{not json");
-		expect(o.calls).toEqual(["backend-start"]);
+		await expect(
+			resetDamagedNetworkChangeJournal({ path: join(d, "absent.json"), owner }),
+		).rejects.toThrow("No network-change journal");
+		expect(calls).toEqual(["reset"]);
 		rmSync(d, { recursive: true, force: true });
 	});
+});
 
-	it("refuses a readable journal: it may hold the undo of a change in flight", async () => {
-		const d = dir();
-		const path = join(d, "journal.json");
-		writeFileSync(
-			path,
-			JSON.stringify({ version: 1, tx: null, notice: null }),
-			{ mode: 0o600 },
-		);
-		const o = owner();
-		await expect(
-			resetDamagedNetworkChangeJournal({ path, owner: o.owner }),
-		).rejects.toThrow("readable");
-		await expect(
-			resetDamagedNetworkChangeJournal({
-				path: join(d, "absent.json"),
-				owner: o.owner,
-			}),
-		).rejects.toThrow("No network-change journal");
-		expect(existsSync(path)).toBe(true);
-		expect(o.calls).toEqual([]);
-		rmSync(d, { recursive: true, force: true });
+describe("warnings by failure class", () => {
+	it("the same damaged journal read for different ports logs once", async () => {
+		const lines: string[] = [];
+		const warn = createRateLimitedWarn((m) => lines.push(m));
+		const owner = {
+			touches: async () => {
+				throw new Error("Network-change journal unavailable");
+			},
+		};
+		for (const port of ["eth0", "eth1", "eth0", "eth1"])
+			await networkChangeTouches(port, { journalExists: true, owner, warn });
+		expect(lines).toHaveLength(1);
 	});
 });

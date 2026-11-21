@@ -1,80 +1,87 @@
 import { describe, expect, it } from "bun:test";
-import { createServer } from "node:net";
 import {
-	createReachability,
-	parseTarget,
-	type ReachabilityTarget,
-	tcpConnect,
+	createTailnetReachability,
+	isTailnetAddress,
+	type LocalApiFetch,
 } from "./network-reachability.ts";
 
-describe("probe targets", () => {
-	it("parses URLs and host:port, defaulting the port by scheme", () => {
-		expect(parseTarget("wss://hub.example.net/ws")).toEqual([
-			{ host: "hub.example.net", port: 443 },
-		]);
-		expect(parseTarget("ws://relay.example.net:8080/x")).toEqual([
-			{ host: "relay.example.net", port: 8080 },
-		]);
-		expect(parseTarget("relay.example.net:7000")).toEqual([
-			{ host: "relay.example.net", port: 7000 },
-		]);
-		expect(parseTarget("ws://[2001:db8::1]:9000")).toEqual([
-			{ host: "2001:db8::1", port: 9000 },
-		]);
-		for (const bad of [undefined, "", "  ", "ws://", "::::"])
-			expect(parseTarget(bad), String(bad)).toEqual([]);
+const PEER = { kind: "tailnet-peer", peer: "100.101.102.103" } as const;
+
+function localApi(answer: { ok?: boolean; body?: unknown; throws?: boolean }) {
+	const calls: Array<{ socket: string; path: string }> = [];
+	const fetch: LocalApiFetch = async (socket, path) => {
+		calls.push({ socket, path });
+		if (answer.throws) throw new Error("connection refused");
+		return { ok: answer.ok ?? true, json: async () => answer.body };
+	};
+	return { calls, fetch };
+}
+
+describe("tailnet addresses", () => {
+	it("accepts only Tailscale's ranges", () => {
+		for (const a of ["100.64.0.1", "100.127.255.254", "fd7a:115c:a1e0::1"])
+			expect(isTailnetAddress(a), a).toBe(true);
+		for (const a of [
+			"100.63.255.255",
+			"100.128.0.1",
+			"10.0.0.1",
+			"fd7a:115c:a1e1::1",
+			"127.0.0.1",
+			"--help",
+			"",
+		])
+			expect(isTailnetAddress(a), a).toBe(false);
 	});
 });
 
-describe("the box's outside reachability", () => {
-	it("one fresh connection to any endpoint is enough; duplicates are probed once", async () => {
-		const tried: string[] = [];
-		const reach = createReachability({
-			targets: () => [
-				{ host: "a.example", port: 443 },
-				{ host: "b.example", port: 443 },
-				{ host: "a.example", port: 443 },
-			],
-			connector: async (target: ReachabilityTarget) => {
-				tried.push(target.host);
-				return target.host === "b.example";
-			},
+describe("testing the requester's own tailnet path", () => {
+	it("asks tailscaled for a TSMP ping to exactly that peer", async () => {
+		const api = localApi({ body: { IP: PEER.peer, LatencySeconds: 0.031 } });
+		const reach = createTailnetReachability({
+			exists: (p) => p === "/run/tailscale/tailscaled.sock",
+			fetch: api.fetch,
 		});
-		expect(await reach.available()).toBe(true);
-		expect(await reach.probe()).toBe(true);
-		expect(tried.sort()).toEqual(["a.example", "b.example"]);
+		expect(reach.available(PEER)).toBe(true);
+		expect(await reach.probe(PEER)).toBe(true);
+		expect(api.calls).toEqual([
+			{
+				socket: "/run/tailscale/tailscaled.sock",
+				path: "/localapi/v0/ping?ip=100.101.102.103&type=TSMP",
+			},
+		]);
 	});
 
-	it("no endpoint reachable, or a connector that throws, is unreachable", async () => {
-		const reach = createReachability({
-			targets: () => [{ host: "a.example", port: 443 }],
-			connector: async () => {
-				throw new Error("ENETUNREACH");
-			},
-		});
-		expect(await reach.probe()).toBe(false);
+	it("an error, a missing pong or a failed call is unreachable", async () => {
+		for (const answer of [
+			{ body: { Err: "timeout", LatencySeconds: 0 } },
+			{ body: { Err: "no matching peer" } },
+			{ body: {} },
+			{ ok: false, body: { LatencySeconds: 0.01 } },
+			{ throws: true },
+		]) {
+			const reach = createTailnetReachability({
+				exists: () => true,
+				fetch: localApi(answer).fetch,
+			});
+			expect(await reach.probe(PEER), JSON.stringify(answer)).toBe(false);
+		}
 	});
 
-	it("nothing to probe is not available, and never reachable", async () => {
-		const reach = createReachability({ targets: async () => [] });
-		expect(await reach.available()).toBe(false);
-		expect(await reach.probe()).toBe(false);
-		const broken = createReachability({
-			targets: async () => {
-				throw new Error("config unreadable");
-			},
+	it("without tailscaled, or for a peer outside the tailnet, there is nothing to test", async () => {
+		const api = localApi({ body: { LatencySeconds: 0.01 } });
+		const none = createTailnetReachability({
+			exists: () => false,
+			fetch: api.fetch,
 		});
-		expect(await broken.available()).toBe(false);
-	});
-
-	it("a real TCP connect succeeds against a listener and fails on a closed port", async () => {
-		const server = createServer((socket) => socket.end());
-		await new Promise<void>((resolve) =>
-			server.listen(0, "127.0.0.1", () => resolve()),
-		);
-		const port = (server.address() as { port: number }).port;
-		expect(await tcpConnect({ host: "127.0.0.1", port }, 1_000)).toBe(true);
-		await new Promise<void>((resolve) => server.close(() => resolve()));
-		expect(await tcpConnect({ host: "127.0.0.1", port }, 1_000)).toBe(false);
+		expect(none.available(PEER)).toBe(false);
+		expect(await none.probe(PEER)).toBe(false);
+		const outside = createTailnetReachability({
+			exists: () => true,
+			fetch: api.fetch,
+		});
+		const lan = { kind: "tailnet-peer", peer: "192.0.2.7" } as const;
+		expect(outside.available(lan)).toBe(false);
+		expect(await outside.probe(lan)).toBe(false);
+		expect(api.calls).toEqual([]);
 	});
 });

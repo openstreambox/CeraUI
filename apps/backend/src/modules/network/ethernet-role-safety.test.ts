@@ -9,7 +9,6 @@
  */
 import { describe, expect, it } from "bun:test";
 import type { EthernetRole } from "@ceraui/rpc/schemas";
-import { LOCAL_INGRESS_DIRECTORY } from "../../rpc/local-ingress.ts";
 import { ETHERNET_ROLE_DEFAULT } from "./ethernet-role.ts";
 import type { EthernetRoleOutcome } from "./ethernet-role-outcome.ts";
 import {
@@ -19,15 +18,16 @@ import {
 	ethernetRoleFromPlan,
 	ethernetRoleOfSummary,
 	ethernetRolePlan,
-	FRONT_DOOR_DIRECTORY,
 	NETWORK_CHANGE_SAFETY_ENV,
 	networkChangeSafetyEnabled,
 } from "./ethernet-role-safety.ts";
 import {
 	type EthernetRoleTransitionDeps,
+	reapplyEthernetRoleNotice,
 	reconcileEthernetRoles,
 	setEthernetRole,
 } from "./ethernet-role-transition.ts";
+import { markFrontDoorListening } from "./front-door-state.ts";
 import {
 	fakeReachability,
 	harness,
@@ -171,8 +171,14 @@ describe("the flag", () => {
 				() => false,
 			),
 		).toBe(false);
-		// The default looks for the front door's listener directory.
-		expect(FRONT_DOOR_DIRECTORY).toBe(LOCAL_INGRESS_DIRECTORY);
+		// The default asks whether the listener actually started, not whether
+		// its directory exists.
+		const env = { [NETWORK_CHANGE_SAFETY_ENV]: "1" };
+		markFrontDoorListening(false);
+		expect(networkChangeSafetyEnabled(env)).toBe(false);
+		markFrontDoorListening(true);
+		expect(networkChangeSafetyEnabled(env)).toBe(true);
+		markFrontDoorListening(false);
 	});
 
 	it("leaves the existing path unchanged when no safety is passed", async () => {
@@ -689,10 +695,11 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 });
 
 describe("a remote owner whose session the change cuts", () => {
-	/** A relay or tailnet session: no arrival evidence, routed over eth0. */
-	const remoteOverEth = session("relay", undefined, 500, {
+	/** A tailnet session: no arrival evidence, routed over eth0. */
+	const remoteOverEth = session("tailnet", undefined, 500, {
 		carriers: ["eth0"],
 		tunnel: true,
+		tailnetPeer: "100.101.102.103",
 	});
 
 	it("is told up front that the change cuts them, and offered keep-if-reachable", async () => {
@@ -858,5 +865,114 @@ describe("re-applying from a notice plans the role change again", () => {
 		expect(pending.changeSafety?.kind).toBe("pending");
 		// The candidate is a clone of the profile running now, not the stale one.
 		expect(b.fake.calls).toContain("clone:Wired connection 2");
+	});
+});
+
+describe("'Make the change' on a role notice, as the RPC runs it", () => {
+	async function undoneChange() {
+		const b = box();
+		await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			"op1",
+			b.safety(session("laptop", "eth0", 500), UNDO),
+		);
+		await b.fake.expireAll();
+		b.at(91_001);
+		await b.owner.tick();
+		const notice = (await b.owner.status()).notice;
+		if (!notice) throw new Error("expected notice");
+		return { b, notice };
+	}
+	const phone = session("phone", "wlan0", 95_000);
+
+	it("plans against the port's profile now and consumes the notice in the same apply", async () => {
+		const { b, notice } = await undoneChange();
+		const replaced = b.fake.add("Wired connection 2", {
+			"ipv4.method": "auto",
+		});
+		b.fake.active.set("eth0", replaced);
+		const ask = await reapplyEthernetRoleNotice(
+			notice,
+			b.safety(phone),
+			b.deps,
+		);
+		expect(ask?.changeSafety?.kind).toBe("ask-before");
+		expect((await b.owner.status()).notice?.id).toBe(notice.id);
+		const result = await reapplyEthernetRoleNotice(
+			notice,
+			b.safety(phone, UNDO),
+			b.deps,
+		);
+		expect(result?.changeSafety?.kind).toBe("pending");
+		expect(b.fake.calls.at(-3)).toBe("clone:Wired connection 2");
+		expect((await b.owner.status()).notice).toBeNull();
+	});
+
+	it("a notice someone answered meanwhile refuses the re-apply before anything changes", async () => {
+		const { b, notice } = await undoneChange();
+		await b.owner.leaveUndone(notice.id, phone);
+		const before = b.fake.calls.length;
+		const result = await reapplyEthernetRoleNotice(
+			notice,
+			b.safety(phone, UNDO),
+			b.deps,
+		);
+		expect(result?.success).toBe(false);
+		expect(b.fake.calls.slice(before)).toEqual([]);
+	});
+
+	it("with no active profile on the port it refuses instead of changing the role unasked", async () => {
+		const { b, notice } = await undoneChange();
+		b.fake.active.delete("eth0");
+		const result = await reapplyEthernetRoleNotice(
+			notice,
+			b.safety(phone, UNDO),
+			b.deps,
+		);
+		expect(result).toEqual({ success: false, error: "no_connection" });
+		expect(b.writes).toEqual([]);
+		expect(b.roles.eth0).toBeUndefined();
+	});
+
+	it("is not for other notices", async () => {
+		const b = box();
+		expect(
+			await reapplyEthernetRoleNotice(
+				{ id: "n", summary: { key: "network.changeSafety.summary.other" } },
+				b.safety(phone),
+				b.deps,
+			),
+		).toBeUndefined();
+	});
+
+	it("a session lookup runs inside the port's queue, after earlier requests", async () => {
+		const b = box();
+		const order: string[] = [];
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const first = setEthernetRole("eth0", "shared-lan", b.deps, "op1", {
+			owner: b.owner,
+			session: async () => {
+				order.push("lookup-1");
+				await gate;
+				return session("laptop", "eth0", 500);
+			},
+		});
+		const second = setEthernetRole("eth0", "shared-lan", b.deps, "op2", {
+			owner: b.owner,
+			session: async () => {
+				order.push("lookup-2");
+				return session("laptop", "eth0", 500);
+			},
+		});
+		await Promise.resolve();
+		release();
+		await first;
+		await second;
+		expect(order).toEqual(["lookup-1", "lookup-2"]);
 	});
 });

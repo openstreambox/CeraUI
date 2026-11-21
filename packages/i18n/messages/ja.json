@@ -3523,11 +3523,11 @@
 	"network.changeSafety.askBefore.routeMayCut": "この変更で接続が途切れる可能性があります：{via} はボックスの回線の一つです。",
 	"network.changeSafety.askBefore.undoVia": "変更する（{via} の誰かが確認しなければ {seconds} 秒後に元に戻す）",
 	"network.changeSafety.askBefore.undoLocal": "変更する（現地の誰かが確認しなければ {seconds} 秒後に元に戻す）",
-	"network.changeSafety.askBefore.reachable": "変更する（{settle} 秒後もボックスがインターネットに届く場合のみ維持）",
+	"network.changeSafety.askBefore.reachable": "変更する（{settle} 秒後もボックスがあなたのデバイスに届く場合のみ維持）",
 	"network.changeSafety.askBefore.keepRemote": "元に戻さずに変更する。ボックスが切断されたら現地での対応が必要です。",
 	"network.changeSafety.askBefore.live": "配信中です：期限での取り消しで配信が一瞬途切れることがあります。",
-	"network.changeSafety.confirm.reachable": "ボックスがインターネットに届くか確認中です。届けば変更を維持します。",
-	"network.changeSafety.notice.unreachable": "変更後にボックスがインターネットに届かなくなったため、元に戻しました。それでも変更しますか？",
+	"network.changeSafety.confirm.reachable": "ボックスがあなたのデバイスに届くか確認中です。届けば変更を維持します。",
+	"network.changeSafety.notice.unreachable": "変更後にボックスがあなたのデバイスに届かなくなったため、元に戻しました。それでも変更しますか？",
 	"network.changeSafety.notice.interrupted": "変更中にボックスが再起動したため、変更されませんでした。それでも変更しますか？",
 	"network.changeSafety.notice.unsaved": "確認済みの変更を保存する前にボックスが再起動したため、元に戻しました。それでも変更しますか？"
 }

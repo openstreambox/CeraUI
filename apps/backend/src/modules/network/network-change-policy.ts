@@ -87,6 +87,12 @@ export interface SessionRoute {
 	readonly carriers: readonly string[];
 	/** The session rides a tunnel (tailnet, VPN) or a local proxy. */
 	readonly tunnel: boolean;
+	/**
+	 * Positive evidence of a transport the box can test for this requester:
+	 * the peer address is a tailnet address and the reply leaves through the
+	 * tailnet interface. Only then is keep-if-reachable offered.
+	 */
+	readonly tailnetPeer?: string;
 }
 
 /**
@@ -218,7 +224,10 @@ export interface AskBeforeInput {
 	readonly route?: SessionRoute | undefined;
 	readonly seconds: number;
 	readonly settleSeconds?: number;
-	/** The box has remote endpoints to probe for keep-if-reachable. */
+	/**
+	 * The box can test this requester's own access path after the change
+	 * (network-reachability.ts), so keep-if-reachable can be offered.
+	 */
 	readonly reachability?: boolean;
 	readonly live?: boolean;
 }

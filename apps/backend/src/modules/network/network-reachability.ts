@@ -1,95 +1,108 @@
 /**
- * The box's own outside reachability, for "keep it if the box can still
- * reach the internet" changes.
+ * The signal behind "keep it if I can still reach the box": a check of the
+ * requesting person's own access path, made after the change, bound to the
+ * transaction.
  *
- * A remote owner reaches the box through connections the box opens itself:
- * the relay socket, the device-control channel, the tailnet's coordination
- * and relay servers. If the box can still open a fresh connection to one of
- * those endpoints after a network change, the owner's way back exists; if it
- * cannot, NetworkManager's checkpoint undoes the change at the deadline.
+ * "The box can reach some server on the internet" is not enough: a role flip
+ * can cut the path a remote owner uses while another uplink still reaches an
+ * unrelated endpoint. So the only transport eligible today is one where the
+ * box can test the path to the requester's own device: a tailnet peer. The
+ * session's peer address must be in Tailscale's ranges and routed through the
+ * tailnet interface (network-session-route.ts); the transaction records that
+ * peer, and after the change the box asks tailscaled for a TSMP ping to it.
+ * A TSMP pong travels through WireGuard and the peer's tailscaled, so it shows
+ * the encrypted path between the box and that device works again, in both
+ * directions, over whatever uplink the tailnet now uses.
  *
- * Each probe is a fresh TCP connect (no reuse of a socket that may have
- * survived the change by luck), bounded by a short timeout, to every known
- * endpoint at once; one success is enough. With no endpoint known (no remote
- * access configured) there is nothing to probe, and the answer is not offered.
+ * The ping goes through tailscaled's LocalAPI on its root-only Unix socket,
+ * not the `tailscale` CLI, so no new binary joins the runner's allowlist.
+ * Without the socket, or for any other transport, there is no signal and the
+ * answer is not offered.
  */
 
-import { connect } from "node:net";
+import { existsSync } from "node:fs";
+import { isIP } from "node:net";
 
-export interface ReachabilityTarget {
-	readonly host: string;
-	readonly port: number;
+/** A transport the box can test end to end for the requesting session. */
+export interface RemoteTransport {
+	readonly kind: "tailnet-peer";
+	readonly peer: string;
 }
 
-export type TcpConnector = (
-	target: ReachabilityTarget,
-	timeoutMs: number,
-) => Promise<boolean>;
-
-export const PROBE_TIMEOUT_MS = 3_000;
-
-export const tcpConnect: TcpConnector = (target, timeoutMs) =>
-	new Promise((resolve) => {
-		const socket = connect({ host: target.host, port: target.port });
-		const done = (ok: boolean) => {
-			socket.removeAllListeners();
-			socket.destroy();
-			resolve(ok);
-		};
-		socket.setTimeout(timeoutMs, () => done(false));
-		socket.once("connect", () => done(true));
-		socket.once("error", () => done(false));
-	});
-
-/** host[:port] or a ws(s)/http(s) URL; anything else is ignored. */
-export function parseTarget(value: string | undefined): ReachabilityTarget[] {
-	if (!value) return [];
-	const text = value.trim();
-	if (!text) return [];
-	try {
-		const url = new URL(/^[a-z]+:\/\//i.test(text) ? text : `tcp://${text}`);
-		const secure = url.protocol === "wss:" || url.protocol === "https:";
-		const port = url.port ? Number(url.port) : secure ? 443 : 80;
-		if (!url.hostname || !Number.isInteger(port) || port < 1 || port > 65535)
-			return [];
-		return [{ host: url.hostname.replace(/^\[|\]$/g, ""), port }];
-	} catch {
-		return [];
+/** Tailscale's address ranges: 100.64.0.0/10 and fd7a:115c:a1e0::/48. */
+export function isTailnetAddress(address: string): boolean {
+	if (isIP(address) === 4) {
+		const [a, b] = address.split(".").map(Number);
+		return a === 100 && b !== undefined && b >= 64 && b <= 127;
 	}
+	if (isIP(address) === 6) return /^fd7a:115c:a1e0:/i.test(address);
+	return false;
 }
 
-export function createReachability(options: {
-	readonly targets: () =>
-		| readonly ReachabilityTarget[]
-		| Promise<readonly ReachabilityTarget[]>;
-	readonly connector?: TcpConnector;
-	readonly timeoutMs?: number;
-}) {
-	const connector = options.connector ?? tcpConnect;
+export const TAILSCALED_SOCKETS = [
+	"/var/run/tailscale/tailscaled.sock",
+	"/run/tailscale/tailscaled.sock",
+];
+
+export type LocalApiFetch = (
+	socket: string,
+	path: string,
+	timeoutMs: number,
+) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
+
+const localApiFetch: LocalApiFetch = (socket, path, timeoutMs) =>
+	fetch(`http://local-tailscaled.sock${path}`, {
+		method: "POST",
+		unix: socket,
+		headers: { "Sec-Tailscale": "localapi" },
+		signal: AbortSignal.timeout(timeoutMs),
+	} as RequestInit);
+
+export const PROBE_TIMEOUT_MS = 4_000;
+
+export function createTailnetReachability(
+	options: {
+		readonly sockets?: readonly string[];
+		readonly exists?: (path: string) => boolean;
+		readonly fetch?: LocalApiFetch;
+		readonly timeoutMs?: number;
+	} = {},
+) {
+	const sockets = options.sockets ?? TAILSCALED_SOCKETS;
+	const exists = options.exists ?? existsSync;
+	const call = options.fetch ?? localApiFetch;
 	const timeout = options.timeoutMs ?? PROBE_TIMEOUT_MS;
-	const unique = async () => {
-		const seen = new Map<string, ReachabilityTarget>();
-		let listed: readonly ReachabilityTarget[] = [];
-		try {
-			listed = await options.targets();
-		} catch {
-			listed = [];
-		}
-		for (const target of listed)
-			seen.set(`${target.host}:${target.port}`, target);
-		return [...seen.values()];
-	};
+	const socket = () => sockets.find((path) => exists(path));
+	const eligible = (transport: RemoteTransport) =>
+		transport.kind === "tailnet-peer" && isTailnetAddress(transport.peer);
 	return {
-		async available(): Promise<boolean> {
-			return (await unique()).length > 0;
+		/** Whether this transport can be tested here at all. */
+		available(transport: RemoteTransport): boolean {
+			return eligible(transport) && socket() !== undefined;
 		},
-		async probe(): Promise<boolean> {
-			const targets = await unique();
-			if (!targets.length) return false;
-			const results = await Promise.all(
-				targets.map((target) => connector(target, timeout).catch(() => false)),
-			);
-			return results.some(Boolean);
+		/** One TSMP ping to the peer; true only for a pong without an error. */
+		async probe(transport: RemoteTransport): Promise<boolean> {
+			const path = socket();
+			if (!eligible(transport) || !path) return false;
+			try {
+				const response = await call(
+					path,
+					`/localapi/v0/ping?ip=${encodeURIComponent(transport.peer)}&type=TSMP`,
+					timeout,
+				);
+				if (!response.ok) return false;
+				const result = (await response.json()) as {
+					Err?: unknown;
+					LatencySeconds?: unknown;
+				};
+				return (
+					(result.Err === undefined || result.Err === "") &&
+					typeof result.LatencySeconds === "number" &&
+					result.LatencySeconds > 0
+				);
+			} catch {
+				return false;
+			}
 		},
 	};
 }

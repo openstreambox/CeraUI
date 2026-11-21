@@ -24,7 +24,7 @@
   a change is pending can never leave that change unconfirmed and in place.
 */
 
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../helpers/logger.ts";
 import type { AppWebSocket } from "../../rpc/types.ts";
@@ -40,11 +40,7 @@ import {
 	type SettledEvent,
 } from "./network-checkpoint.ts";
 import { nmCheckpointAdapter } from "./network-checkpoint-nm.ts";
-import {
-	createReachability,
-	parseTarget,
-	type ReachabilityTarget,
-} from "./network-reachability.ts";
+import { createTailnetReachability } from "./network-reachability.ts";
 import { sessionRouteLookup } from "./network-session-route.ts";
 
 /** Same override/dev-fallback shape as the modem mutation journal. */
@@ -78,42 +74,6 @@ function readBootId(): Promise<string> {
 	);
 }
 
-/** The tailnet's coordination server, probed only when a tailnet is up. */
-export const TAILNET_TARGET: ReachabilityTarget = {
-	host: "controlplane.tailscale.com",
-	port: 443,
-};
-
-/**
- * Endpoints a remote owner's way back depends on: the relay the box dials,
- * the device-control hub, and the tailnet's coordination server when the box
- * is on a tailnet. Loaded lazily so this module stays out of the remote graph.
- */
-export async function remoteReachabilityTargets(
-	options: {
-		readonly env?: Readonly<Record<string, string | undefined>>;
-		readonly tailnetUp?: () => boolean;
-		readonly relay?: () => Promise<ReachabilityTarget | undefined>;
-	} = {},
-): Promise<ReachabilityTarget[]> {
-	const env = options.env ?? process.env;
-	const targets: ReachabilityTarget[] = [];
-	try {
-		const relay = await (
-			options.relay ??
-			(async () => (await import("../remote/remote.ts")).remoteEndpointTarget())
-		)();
-		if (relay) targets.push(relay);
-	} catch {
-		// No relay configured or the config is unreadable: probe the rest.
-	}
-	targets.push(...parseTarget(env.CERALIVE_CONTROL_HUB_URL));
-	const tailnetUp =
-		options.tailnetUp ?? (() => existsSync("/sys/class/net/tailscale0"));
-	if (tailnetUp()) targets.push(TAILNET_TARGET);
-	return targets;
-}
-
 let streaming: (() => boolean) | undefined;
 
 let owner: ReturnType<typeof createNetworkChangeOwner> | undefined;
@@ -135,9 +95,7 @@ export function getNetworkChangeOwner() {
 		// refused because it has no recorded undo.
 		effects: createEffectRegistry([]),
 		journal: createFileJournalStore(networkChangeJournalPath()),
-		reachability: createReachability({
-			targets: () => remoteReachabilityTargets(),
-		}),
+		reachability: createTailnetReachability(),
 		isStreaming: () => streaming?.() === true,
 		log: (message) => logger.warn(`network change safety: ${message}`),
 		onSettled: (event) => {
@@ -161,6 +119,12 @@ export function networkChangeSession(ws: AppWebSocket): NetworkChangeSession {
 		openedAt: data.openedAt ?? 0,
 		authenticated: data.isAuthenticated,
 		ingress,
+		// The interface the front door named when the socket was accepted,
+		// kept even after its evidence stopped holding: it can still refuse
+		// keep-if-reachable for that port, though it can no longer confirm.
+		...(data.ingressPath
+			? { capturedIngress: data.ingressPath.interface }
+			: {}),
 	};
 }
 
@@ -193,19 +157,20 @@ export function createRateLimitedWarn(
 ) {
 	const now = options.now ?? Date.now;
 	const every = options.everyMs ?? 10 * 60_000;
-	let last: { message: string; at: number; suppressed: number } | undefined;
-	return (message: string) => {
+	let last: { key: string; at: number; suppressed: number } | undefined;
+	/** `key` names the failure class; it defaults to the message itself. */
+	return (message: string, key: string = message) => {
 		const at = now();
-		if (last && last.message === message && at - last.at < every) {
+		if (last && last.key === key && at - last.at < every) {
 			last.suppressed++;
 			return;
 		}
 		const repeats =
-			last && last.message === message && last.suppressed
+			last && last.key === key && last.suppressed
 				? ` (repeated ${last.suppressed} times)`
 				: "";
 		warn(`${message}${repeats}`);
-		last = { message, at, suppressed: 0 };
+		last = { key, at, suppressed: 0 };
 	};
 }
 
@@ -224,7 +189,7 @@ export async function networkChangeTouches(
 			ReturnType<typeof createNetworkChangeOwner>,
 			"touches"
 		>;
-		readonly warn?: (message: string) => void;
+		readonly warn?: (message: string, key?: string) => void;
 	} = {},
 ): Promise<boolean> {
 	const journalExists =
@@ -233,44 +198,40 @@ export async function networkChangeTouches(
 	try {
 		return await (options.owner ?? getNetworkChangeOwner()).touches(ifname);
 	} catch (error) {
+		// One failure class whatever the port, so eth0 and eth1 reading the
+		// same damaged journal don't each log again.
 		(options.warn ?? journalWarn)(
 			`network change safety: journal unreadable, treating ${ifname} as in flight: ${(error as Error).message}`,
+			"journal-unreadable",
 		);
 		return true;
 	}
 }
 
 /**
- * The way out of a damaged journal. Only an unreadable journal is moved
- * aside (kept next to it for support, never deleted); a readable one is
- * refused, because it may hold the undo of a change in flight. The owner then
- * reconciles from an empty journal, which removes any leftover candidate.
+ * The way out of a damaged journal. The owner does the check, the move and the
+ * sweep in one serialized operation, so a reset can never move a journal that
+ * an apply has just rewritten. Only an unreadable journal is moved aside (kept
+ * next to it for support, never deleted).
  */
 export async function resetDamagedNetworkChangeJournal(
 	options: {
 		readonly path?: string;
-		readonly now?: () => number;
 		readonly owner?: Pick<
 			ReturnType<typeof createNetworkChangeOwner>,
-			"reconcile"
+			"resetDamagedJournal"
 		>;
 	} = {},
 ): Promise<{ readonly movedTo: string }> {
 	const path = options.path ?? networkChangeJournalPath();
 	if (!existsSync(path)) throw new Error("No network-change journal");
-	let readable = true;
-	try {
-		await createFileJournalStore(path).read();
-	} catch {
-		readable = false;
-	}
-	if (readable)
-		throw new Error("The network-change journal is readable; nothing to reset");
-	const movedTo = `${path}.damaged-${(options.now ?? Date.now)()}`;
-	renameSync(path, movedTo);
-	logger.warn(`network change safety: damaged journal moved to ${movedTo}`);
-	await (options.owner ?? getNetworkChangeOwner()).reconcile("backend-start");
-	return { movedTo };
+	const result = await (
+		options.owner ?? getNetworkChangeOwner()
+	).resetDamagedJournal();
+	logger.warn(
+		`network change safety: damaged journal moved to ${result.movedTo}`,
+	);
+	return result;
 }
 
 export const TICK_MS = 5_000;
