@@ -310,12 +310,25 @@ describe("transports", () => {
 		});
 		const context = createContext(captured.ws as unknown as AppWebSocket);
 		await expect(
-			call(procedure, { action: "start", radio: 2 }, { context }),
+			call(
+				procedure,
+				{ action: "start", radio: 2, incarnation: "venue-incarnation" },
+				{ context },
+			),
 		).rejects.toThrow("Authentication required");
 		expect(start).not.toHaveBeenCalled();
 		data.isAuthenticated = true;
-		await call(procedure, { action: "start", radio: 2 }, { context });
-		expect(start).toHaveBeenCalledWith("10.42.0.13", "2", AP);
+		await call(
+			procedure,
+			{ action: "start", radio: 2, incarnation: "venue-incarnation" },
+			{ context },
+		);
+		expect(start).toHaveBeenCalledWith(
+			"10.42.0.13",
+			"2",
+			"venue-incarnation",
+			AP,
+		);
 	});
 });
 
