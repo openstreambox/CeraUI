@@ -182,4 +182,4 @@ installed image or of stop/restore behavior on a board. Full contract and
 hardware gate: [`../../docs/UPLINK_STEERING.md`](../../../../docs/UPLINK_STEERING.md).
 
 
-Runtime client selection uses this same owner; see [runtime policy](../../../../docs/UPLINK_STEERING.md#runtime-client-uplink-policy). Policy exclusion retires owned flows while retaining healthy route support. Priority changes retain flows.
+Runtime client selection uses this same owner; see [runtime policy](../../../../docs/UPLINK_STEERING.md#runtime-client-uplink-policy). Policy exclusion retires owned flows while retaining healthy route support. Priority changes retain flows. The default `single` selection (`uplink-steering/active-uplink.ts`) makes exactly one uplink selectable and commits its plan only after a verified apply: immediate failover when health withdraws it, a held and flap-damped rejoin, and displaced uplinks kept listed at weight 0 so their flows drain ([single active client uplink](../../../../docs/UPLINK_STEERING.md#single-active-client-uplink)).

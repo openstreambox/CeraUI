@@ -16,6 +16,7 @@ import {
 	flushConntrack,
 	setIpForwarding,
 } from "../uplink-sharing.ts";
+import { commitSelectorPlan } from "./active-uplink.ts";
 import {
 	type PreparedSteeringState,
 	UplinkSteeringApplier,
@@ -76,9 +77,13 @@ const coordinator = new UplinkSteeringCoordinator({
 	apply: async (previous, next) => {
 		publishSteeringReadiness([]);
 		await applier.apply(previous, next);
+		// Installed is live for clients even if the readback below fails.
+		commitSelectorPlan(next);
 	},
 	verifyApplied: async (next) => {
 		await verifySteeringState(next);
+		// The selector's incumbent follows what is live, never a mere plan.
+		commitSelectorPlan(next);
 		publishSteeringReadiness(
 			next.clientZones,
 			verificationEntries.get(next),
@@ -87,7 +92,10 @@ const coordinator = new UplinkSteeringCoordinator({
 	},
 	publishAvailability: (availability) => {
 		if (!availability.available) publishSteeringReadiness([]);
-		publishUplinkSteeringAvailability(availability);
+		publishUplinkSteeringAvailability(
+			availability,
+			availability.available ? coordinator.appliedState() : undefined,
+		);
 		broadcastWifiState();
 	},
 	retryCleanup: () => applier.retryPendingCleanup(),
