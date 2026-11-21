@@ -54,10 +54,24 @@ export class RpcError extends Error {
 export class NotSentError extends Error {
 	override readonly name = "NotSentError";
 
-	constructor() {
-		super("WebSocket not connected");
+	constructor(readonly reason: NotSentReason = "disconnected") {
+		super(NOT_SENT_MESSAGES[reason]);
 	}
 }
+
+/**
+ * Why a call never left the client. `reconnected`: the link came back, but the
+ * session was not signed in again on the new socket in time, so the call was
+ * held and then dropped. `signed-out`: signing in again on the new socket was
+ * refused, and the UI is going back to the login screen.
+ */
+export type NotSentReason = "disconnected" | "reconnected" | "signed-out";
+
+const NOT_SENT_MESSAGES: Record<NotSentReason, string> = {
+	disconnected: "WebSocket not connected",
+	reconnected: "Reconnected to the device. Please try again.",
+	"signed-out": "Signed out. Please sign in and try again.",
+};
 
 export interface RpcErrorDescriptor {
 	/** Dotted i18n key resolved at the toast host. */
