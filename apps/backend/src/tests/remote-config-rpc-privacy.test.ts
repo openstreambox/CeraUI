@@ -67,8 +67,10 @@ test("actual remote streaming.getConfig withholds media keys and preserves local
 	expect(
 		JSON.stringify(await call(getConfigProcedure, undefined, { context })),
 	).toBe(before);
-	expect(before).toContain(secrets.srt_streamid);
-	expect(before).toContain(secrets.relay_streamid_override);
+	expect(before).not.toContain(secrets.srt_streamid);
+	expect(local.srt_streamid_configured).toBe(true);
+	expect(before).not.toContain(secrets.relay_streamid_override);
+	expect(local.relay_streamid_override_configured).toBe(true);
 });
 
 for (const destination of ["custom", "managed"] as const) {
