@@ -32,6 +32,23 @@ def validate(c):
         raise ValueError('invalid station')
     if not isinstance(c['seconds'], int) or not 1 <= c['seconds'] <= 600:
         raise ValueError('invalid duration')
+    if type(c['ap_ifindex']) is not int or not 1 <= c['ap_ifindex'] <= 0x7fffffff:
+        raise ValueError('invalid ingress lifetime')
+
+
+def ifindex(name):
+    with open(f'/sys/class/net/{name}/ifindex', encoding='ascii') as f:
+        return int(f.read(32).strip())
+
+
+def pinned(c):
+    """The AP must still be the lifetime the backend pinned, never a same-name replacement."""
+    try:
+        current = ifindex(c['ap'])
+    except (OSError, ValueError):
+        raise ValueError('ingress changed') from None
+    if current != c['ap_ifindex']:
+        raise ValueError('ingress changed')
 
 
 def local_addresses():
@@ -48,7 +65,8 @@ def local_addresses():
 
 def rules(c, local=()):
     validate(c)
-    ap, wan, phone, mac, dns, seconds = (c[k] for k in ('ap', 'wan', 'phone', 'mac', 'dns', 'seconds'))
+    ingress, wan, phone, mac, dns, seconds = (
+        c[k] for k in ('ap_ifindex', 'wan', 'phone', 'mac', 'dns', 'seconds'))
     # Traffic to the box itself (its UI on the AP address, any other own
     # address) is never selected, so its connections keep no portal mark and
     # survive the window. A set of the addresses at opening time instead of
@@ -57,8 +75,11 @@ def rules(c, local=()):
     # After sharing's mangle hook: override ONLY the selected web/DNS packets.
     # A separate timed set gates replies too; expired conntracks are dropped,
     # never restored onto a healthy link with the hotel's old NAT identity.
-    match = f'iifname "{ap}" ip saddr . ether saddr @phone'
-    v6 = f'iifname "{ap}" meta nfproto ipv6 ether saddr @station'
+    # Ingress is the AP's pinned numeric ifindex, never its name: nft does not
+    # resolve anything at install time, so a replacement under the same name
+    # never matches. The policy rule below also needs our mark.
+    match = f'meta iif {ingress} ip saddr . ether saddr @phone'
+    v6 = f'meta iif {ingress} meta nfproto ipv6 ether saddr @station'
     return f'''table inet {TABLE} {{
  set station {{ type ether_addr; flags timeout; elements = {{ {mac} timeout {seconds}s }}; }}
  set doh4 {{ type ipv4_addr; elements = {{ 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4, 9.9.9.9, 149.112.112.112 }}; }}
@@ -94,7 +115,7 @@ def rules(c, local=()):
   ct mark {MARK} drop
  }}
  chain nat {{ type nat hook postrouting priority 90; policy accept;
-  iifname "{ap}" meta mark {MARK} oifname "{wan}" masquerade
+  meta iif {ingress} meta mark {MARK} oifname "{wan}" masquerade
  }}
 }}\n'''
 
@@ -118,6 +139,7 @@ def open_window(c):
         raise ValueError('route table occupied')
     if any(line.startswith(PRIORITY + ':') for line in run('ip', '-4', 'rule', 'show').splitlines()):
         raise ValueError('rule priority occupied')
+    pinned(c)
     local = local_addresses()
     run('nft', '--check', '-f', '-', data=rules(c, local))
     try:
@@ -130,6 +152,9 @@ def open_window(c):
             'from', c['phone'], 'fwmark', MARK, 'lookup', ROUTE_TABLE)
         clear_flows(c)
         run('nft', '-f', '-', data=f'delete table inet {TABLE}\n' + rules(c, local))
+        # The rules match only the pinned index; a name that no longer names it
+        # means the AP was replaced during installation, so roll back.
+        pinned(c)
     except BaseException:
         close_window(c)
         raise
