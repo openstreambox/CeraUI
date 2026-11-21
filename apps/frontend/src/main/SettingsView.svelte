@@ -47,8 +47,8 @@ import {
 	type LogsDialogContext,
 } from '$lib/stores/dialog-request.svelte';
 import { cn } from '$lib/utils';
-
 import DeviceStatsSection from './settings/DeviceStatsSection.svelte';
+import PortalSetting from './settings/PortalSetting.svelte';
 import RemoteControlStatus from './settings/RemoteControlStatus.svelte';
 
 // Every settings surface below opens as a dialog, so none of them is on the
@@ -353,6 +353,7 @@ $effect(() => {
 				</section>
 			{/if}
 
+			<PortalSetting />
 			{#each groups as group (group.id)}
 				<section class="space-y-2.5">
 					<h2 class="text-muted-foreground px-1 text-sm font-medium">{group.label}</h2>
