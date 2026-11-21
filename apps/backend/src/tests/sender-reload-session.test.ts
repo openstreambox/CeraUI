@@ -326,7 +326,7 @@ test("Stop closes the check before the engine has stopped", async () => {
 
 test("Stop keeps the interface and USB listeners until the engine has stopped", async () => {
 	const listening = { netif: 0, usb: 0 };
-	spyOn(netif, "onNetworkInterfacesChange").mockImplementation(() => {
+	spyOn(netif, "onNetworkInterfaceSourcesChange").mockImplementation(() => {
 		listening.netif++;
 		return () => {
 			listening.netif--;
