@@ -12,6 +12,7 @@ import * as nm from "../../modules/network/network-manager.ts";
 import * as streaming from "../../modules/streaming/streaming.ts";
 import {
 	hotspotCredentialsStore,
+	initHotspotCredentials,
 	rememberHotspotCredentials,
 	resetHotspotCredentialsForTest,
 } from "../../modules/wifi/hotspot-credentials.ts";
@@ -199,6 +200,9 @@ export function autoconnectFixture(ifname = "wlan0") {
 		previousModes = getConfig().wifi_modes;
 		scratch = await mkdtemp(join(tmpdir(), "wifi-policy-"));
 		setConfigFilePath(join(scratch, "config.json"));
+		// A device always loads its store at startup; an explicit pair is
+		// acknowledged only once that store holds it on disk.
+		await initHotspotCredentials(join(scratch, "hotspot_credentials.json"));
 		getConfig().wifi_modes = {};
 		network.reset();
 		seed();
