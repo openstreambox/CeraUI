@@ -40,7 +40,7 @@ for (const action of ["enable", "disable"] as const) {
 			// Given an exclusively owned real child and orphan, and no host lifecycle tools.
 			const p = await groupProcessFixture(mode);
 			const deps = {
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				readDescriptor: async () => sysextDescriptor,
 				exec: () => p.step.run(),
 				createStep: () => p.step,
@@ -92,7 +92,7 @@ for (const action of ["enable", "disable"] as const) {
 test("TERM-induced zero stays a timeout failure and passes mandatory evidence", async () => {
 	const p = await groupProcessFixture("zero-term");
 	const work = addonRefresh({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec: () => p.step.run(),
 		createStep: () => p.step,
 	}).catch((error: unknown) => error);
@@ -121,7 +121,7 @@ test("TERM queued before the fixture waits still yields zero timeout evidence", 
 	// Given a child held before its synchronous TERM wait, with TERM already blocked.
 	const p = await groupProcessFixture("zero-term-pending");
 	const work = addonRefresh({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		exec: () => p.step.run(),
 		createStep: () => p.step,
 	}).catch((error: unknown) => error);
@@ -165,7 +165,7 @@ for (const mode of ["survivor", "double", "escape"] as const) {
 		test(`real ${mode} descendant after helper exit ${code} pins the group boundary and its session-escape limit`, async () => {
 			const p = await groupProcessFixture(mode, code);
 			const work = addonRefresh({
-				isRealDevice: async () => true,
+				canManageAddons: async () => true,
 				exec: () => p.step.run(),
 				createStep: () => p.step,
 			}).catch((error: unknown) => error);

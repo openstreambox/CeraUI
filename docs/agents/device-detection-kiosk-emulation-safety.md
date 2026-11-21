@@ -155,3 +155,12 @@ public functions, so existing tests that pass deps explicitly are unaffected.
 
 Override for tests: set `CERALIVE_DEVICE_TYPE=emulated` or `=real` in `beforeEach`/`afterEach` to pick the branch deterministically on any host.
 
+
+## Image capability records
+
+New subsystem gates use the [image board contract](../BOARD-IDENTITY.md).
+`isRealDevice()` remains the unchanged legacy fallback, not the gate for new
+image profiles. A valid profile's explicit capabilities enable services on any
+family without granting unrelated board hardware. Injected gates and mock fixtures
+use capability-specific permission names;
+legacy device-type overrides remain available for older-image regression tests.
