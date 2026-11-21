@@ -1764,6 +1764,7 @@
 	"network.ethRole.error.noConnection": "Couldn't confirm this port's network profile. Review its reported role and address before trying again.",
 	"network.ethRole.error.applyFailed": "Couldn't confirm the role change. The network profile may already have changed. Review this port's reported role and address before trying again.",
 	"network.ethRole.error.unavailableEmulated": "Port roles are only available on real hardware.",
+	"network.ethRole.error.changeInFlight": "Another network change on this port is still pending, being undone or being saved, so nothing was changed. Try again once it finishes.",
 	"network.ethRole.error.notConfirmed": "The device never reported the result, so this port's role is unknown.",
 	"network.ethRole.error.generic": "Couldn't confirm the role change. Review this port's reported role and address before trying again.",
 	"network.netifSave.error.title": "Nothing was saved",
@@ -3556,5 +3557,16 @@
 	"network.changeSafety.notice.make": "Make the change",
 	"network.changeSafety.notice.leave": "Leave it undone",
 	"network.changeSafety.kept.undo": "Undo the last network change",
-	"network.changeSafety.summary.ethernetRole": "Port role change on {ifname}"
+	"network.changeSafety.summary.ethernetRole": "Port role change on {ifname}",
+	"network.changeSafety.askBefore.routeCuts": "This change will likely cut your connection: the box reaches you via {via}.",
+	"network.changeSafety.askBefore.routeMayCut": "This change may interrupt your connection: {via} is one of the box's uplinks.",
+	"network.changeSafety.askBefore.undoVia": "Make the change, undone after {seconds} s unless someone on {via} confirms",
+	"network.changeSafety.askBefore.undoLocal": "Make the change, undone after {seconds} s unless someone on site confirms",
+	"network.changeSafety.askBefore.reachable": "Make the change, kept only if the box can still reach your device after {settle} s",
+	"network.changeSafety.askBefore.keepRemote": "Make the change with no undo. If it cuts the box off, someone has to fix it on site.",
+	"network.changeSafety.askBefore.live": "You are live: an undo at the deadline can drop the stream for a moment.",
+	"network.changeSafety.confirm.reachable": "Checking that the box can still reach your device. It keeps the change if so.",
+	"network.changeSafety.notice.unreachable": "After this change the box couldn't reach your device, so it undid it. Still want it?",
+	"network.changeSafety.notice.interrupted": "The box restarted while making this change, so it didn't make it. Still want it?",
+	"network.changeSafety.notice.unsaved": "The box restarted before saving your confirmed change, so it undid it. Still want it?"
 }

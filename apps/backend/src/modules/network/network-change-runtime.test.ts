@@ -1,10 +1,16 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AppWebSocket, SocketData } from "../../rpc/types.ts";
 import { DEFAULT_JOURNAL_PATH } from "./network-change-journal.ts";
 import {
+	createRateLimitedWarn,
 	networkChangeJournalPath,
 	networkChangeSession,
 	networkChangeTouches,
+	resetDamagedNetworkChangeJournal,
+	resolveNetworkChangeSession,
 	startNetworkChangeSafety,
 	TICK_MS,
 } from "./network-change-runtime.ts";
@@ -175,5 +181,150 @@ describe("whether a change in flight names a port", () => {
 				},
 			}),
 		).toBe(true);
+	});
+});
+
+describe("the route back to a session without arrival evidence", () => {
+	const socket = (data: Partial<SocketData>, remoteAddress = "100.64.0.7") =>
+		({
+			remoteAddress,
+			data: { isAuthenticated: true, lastActive: 0, ...data },
+		}) as unknown as AppWebSocket;
+	const route = { carriers: ["eth0"], tunnel: true };
+
+	it("is looked up only when the front door gave no evidence", async () => {
+		const looked: string[] = [];
+		const lookup = async (address: string) => {
+			looked.push(address);
+			return route;
+		};
+		const direct = await resolveNetworkChangeSession(
+			socket({
+				ingressPath: { peer: "192.0.2.10", interface: "eth0", local: "x" },
+				ingressPathValid: () => true,
+			}),
+			lookup,
+		);
+		expect(direct.route).toBeUndefined();
+		expect(looked).toEqual([]);
+		const remote = await resolveNetworkChangeSession(socket({}), lookup);
+		expect(remote).toMatchObject({ ingress: undefined, route });
+		expect(looked).toEqual(["100.64.0.7"]);
+	});
+
+	it("keeps the port the front door named even after its evidence stopped holding", async () => {
+		const stale = await resolveNetworkChangeSession(
+			socket({
+				ingressPath: { peer: "192.0.2.10", interface: "eth0", local: "x" },
+				ingressPathValid: () => false,
+			}),
+			async () => undefined,
+		);
+		// It can no longer confirm, but it still refuses keep-if-reachable.
+		expect(stale.ingress).toBeUndefined();
+		expect(stale.capturedIngress).toBe("eth0");
+	});
+
+	it("a failed lookup leaves the session as it was", async () => {
+		const remote = await resolveNetworkChangeSession(socket({}), async () => {
+			throw new Error("ip failed");
+		});
+		expect(remote.route).toBeUndefined();
+		const none = await resolveNetworkChangeSession(
+			socket({}),
+			async () => undefined,
+		);
+		expect(none).not.toHaveProperty("route");
+	});
+});
+
+describe("warnings that would repeat every 5 s", () => {
+	it("says it once, then again only when it changes or after ten minutes", () => {
+		const lines: string[] = [];
+		let now = 0;
+		const warn = createRateLimitedWarn((m) => lines.push(m), {
+			now: () => now,
+		});
+		for (let i = 0; i < 100; i++) {
+			now += 5_000;
+			warn("journal unavailable");
+		}
+		expect(lines).toEqual(["journal unavailable"]);
+		warn("other problem");
+		expect(lines.at(-1)).toBe("other problem");
+		warn("journal unavailable");
+		expect(lines).toHaveLength(3);
+		now += 10 * 60_000;
+		warn("journal unavailable");
+		warn("journal unavailable");
+		now += 10 * 60_000;
+		warn("journal unavailable");
+		expect(lines.slice(3)).toEqual([
+			"journal unavailable",
+			"journal unavailable (repeated 1 times)",
+		]);
+	});
+
+	it("a damaged journal failing every tick is logged once", async () => {
+		const t = timers();
+		const lines: string[] = [];
+		await startNetworkChangeSafety({
+			enabled: false,
+			journalExists: true,
+			owner: {
+				async reconcile() {
+					return "clean" as const;
+				},
+				async tick() {
+					throw new Error("Network-change journal unavailable");
+				},
+			},
+			setInterval: t.setInterval,
+			clearInterval: t.clearInterval,
+			warn: (m) => lines.push(m),
+		});
+		for (let i = 0; i < 50; i++) t.scheduled[0]?.fn();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(lines).toEqual([
+			"network change safety: tick failed: Network-change journal unavailable",
+		]);
+	});
+});
+
+describe("the way out of a damaged journal", () => {
+	it("hands the check and the move to the owner, after confirming a journal exists", async () => {
+		const d = mkdtempSync(join(tmpdir(), "nc-reset-"));
+		const path = join(d, "journal.json");
+		writeFileSync(path, "{not json");
+		const calls: string[] = [];
+		const owner = {
+			async resetDamagedJournal() {
+				calls.push("reset");
+				return { movedTo: `${path}.damaged-x` };
+			},
+		};
+		expect(await resetDamagedNetworkChangeJournal({ path, owner })).toEqual({
+			movedTo: `${path}.damaged-x`,
+		});
+		await expect(
+			resetDamagedNetworkChangeJournal({ path: join(d, "absent.json"), owner }),
+		).rejects.toThrow("No network-change journal");
+		expect(calls).toEqual(["reset"]);
+		rmSync(d, { recursive: true, force: true });
+	});
+});
+
+describe("warnings by failure class", () => {
+	it("the same damaged journal read for different ports logs once", async () => {
+		const lines: string[] = [];
+		const warn = createRateLimitedWarn((m) => lines.push(m));
+		const owner = {
+			touches: async () => {
+				throw new Error("Network-change journal unavailable");
+			},
+		};
+		for (const port of ["eth0", "eth1", "eth0", "eth1"])
+			await networkChangeTouches(port, { journalExists: true, owner, warn });
+		expect(lines).toHaveLength(1);
 	});
 });

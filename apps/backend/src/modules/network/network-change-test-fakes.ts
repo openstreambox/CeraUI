@@ -40,8 +40,11 @@ export function createFakeNm() {
 	const active = new Map<string, string>();
 	const checkpoints = new Map<
 		string,
-		{ profiles: Set<string>; active: Map<string, string> }
+		{ profiles: Set<string>; active: Map<string, string>; created: string }
 	>();
+	let createdCounter = 0;
+	let generation = 1;
+	const owner = () => `:1.${generation}`;
 	const calls: string[] = [];
 	const fail = new Set<string>();
 	let checkpointCounter = 0;
@@ -54,26 +57,34 @@ export function createFakeNm() {
 		async create(devices, timeout) {
 			guard("create");
 			calls.push(`create:${devices.join(",")}:${timeout}`);
-			const path = `/checkpoint/${++checkpointCounter}`;
+			const path = `/org/freedesktop/NetworkManager/Checkpoint/${++checkpointCounter}`;
+			const created = String(++createdCounter * 1000);
 			checkpoints.set(path, {
 				profiles: new Set(profiles.keys()),
 				active: new Map(active),
+				created,
 			});
-			return path;
+			return { path, owner: owner(), created };
 		},
-		async live(path) {
-			return checkpoints.has(path);
+		async live(ref) {
+			return (
+				ref.owner === owner() &&
+				checkpoints.get(ref.path)?.created === ref.created
+			);
 		},
-		async destroy(path) {
+		async destroy(ref) {
 			guard("destroy");
-			if (!checkpoints.delete(path)) throw new Error("expired");
+			// Like a call to a unique bus name that no longer exists.
+			if (ref.owner !== owner()) throw new Error("unknown bus name");
+			if (!checkpoints.delete(ref.path)) throw new Error("expired");
 			calls.push("destroy");
 		},
-		async rollback(path) {
+		async rollback(ref) {
+			if (ref.owner !== owner()) throw new Error("unknown bus name");
 			calls.push("rollback");
-			const snapshot = checkpoints.get(path);
+			const snapshot = checkpoints.get(ref.path);
 			if (!snapshot) throw new Error("expired");
-			checkpoints.delete(path);
+			checkpoints.delete(ref.path);
 			// Created without DELETE_NEW_CONNECTIONS: profiles added during the
 			// window stay (the owner removes its own candidates). Each listed
 			// device gets its snapshot's connection back.
@@ -159,15 +170,35 @@ export function createFakeNm() {
 		},
 		/** The daemon's timer fired: it rolls the checkpoint back by itself. */
 		async expireAll() {
-			for (const path of [...checkpoints.keys()]) await nm.rollback(path);
+			for (const [path, { created }] of [...checkpoints])
+				await nm.rollback({ path, owner: owner(), created });
 		},
-		/** Daemon restart: checkpoints are lost, /run profiles are reloaded. */
+		/**
+		 * Daemon restart: checkpoints are lost, /run profiles are reloaded, and
+		 * the daemon gets a new unique bus name.
+		 */
 		restart() {
 			checkpoints.clear();
+			generation++;
+		},
+		/**
+		 * After a daemon restart, someone else creates a checkpoint that gets a
+		 * path the owner already journaled (NetworkManager numbers from 1 again).
+		 */
+		foreignCheckpointAt(path: string) {
+			checkpoints.set(path, {
+				profiles: new Set(profiles.keys()),
+				active: new Map(active),
+				created: String(++createdCounter * 1000 + 7),
+			});
+		},
+		hasCheckpoint(path: string) {
+			return checkpoints.has(path);
 		},
 		/** Reboot: /run is gone; autoconnect brings disk profiles back. */
 		reboot() {
 			checkpoints.clear();
+			generation++;
 			for (const [uuid, p] of [...profiles])
 				if (p.storage === "memory") profiles.delete(uuid);
 			for (const [device, uuid] of [...active])
@@ -235,8 +266,36 @@ export function session(
 	id: string,
 	ingress: string | undefined,
 	openedAt = 0,
+	route?: NetworkChangeSession["route"],
 ): NetworkChangeSession {
-	return { id, openedAt, authenticated: true, ingress };
+	return {
+		id,
+		openedAt,
+		authenticated: true,
+		ingress,
+		...(route ? { route } : {}),
+	};
+}
+
+/** A test of the requester's access path that the test steers. */
+export function fakeReachability(initial = true) {
+	const state = {
+		available: true,
+		up: initial,
+		probes: 0,
+		peers: [] as string[],
+	};
+	return {
+		state,
+		deps: {
+			available: () => state.available,
+			probe: async (transport: { peer: string }) => {
+				state.probes++;
+				state.peers.push(transport.peer);
+				return state.up;
+			},
+		},
+	};
 }
 
 export function plan(
@@ -255,6 +314,8 @@ export function harness(
 	options: {
 		settleMs?: number;
 		onSettled?: NetworkChangeDeps["onSettled"];
+		reachability?: NetworkChangeDeps["reachability"];
+		isStreaming?: NetworkChangeDeps["isStreaming"];
 	} = {},
 ) {
 	let now = 1000;
@@ -263,6 +324,7 @@ export function harness(
 	const effects = createFakeEffects();
 	const journal = createMemoryJournalStore();
 	let changes = 0;
+	const logs: string[] = [];
 	const make = () =>
 		createNetworkChangeOwner({
 			now: () => now,
@@ -272,6 +334,11 @@ export function harness(
 			journal,
 			settleMs: options.settleMs ?? 15_000,
 			...(options.onSettled ? { onSettled: options.onSettled } : {}),
+			...(options.reachability ? { reachability: options.reachability } : {}),
+			...(options.isStreaming ? { isStreaming: options.isStreaming } : {}),
+			log: (message) => {
+				logs.push(message);
+			},
 			onChange: () => {
 				changes++;
 			},
@@ -286,6 +353,7 @@ export function harness(
 			return make();
 		},
 		changes: () => changes,
+		logs,
 		at(value: number) {
 			now = value;
 		},

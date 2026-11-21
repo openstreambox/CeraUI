@@ -317,7 +317,11 @@ const ethernetRoleOperationIdSchema = z
 // Safe network changes (behind the device's network-change flag). The two
 // ask-before answers are the only ones the device accepts: the protected change
 // (undone unless confirmed) and the deliberate "keep it" that skips the undo.
-export const changeSafetyAnswerSchema = z.enum(['undo-automatically', 'keep-change']);
+export const changeSafetyAnswerSchema = z.enum([
+	'undo-automatically',
+	'keep-if-reachable',
+	'keep-change',
+]);
 export type ChangeSafetyAnswer = z.infer<typeof changeSafetyAnswerSchema>;
 
 export const changeSafetyResultSchema = z.discriminatedUnion('kind', [
@@ -325,25 +329,50 @@ export const changeSafetyResultSchema = z.discriminatedUnion('kind', [
 		kind: z.literal('ask-before'),
 		messageKey: z.string(),
 		via: z.string().optional(),
+		// How the change meets the session's path: cuts it, may cut it, or the
+		// box can't tell. canConfirm: this person can confirm afterwards.
+		cut: z.enum(['cuts', 'may-cut', 'unknown']),
+		canConfirm: z.boolean(),
 		seconds: z.number().int().positive(),
-		primary: z.object({ answer: z.literal('undo-automatically'), labelKey: z.string() }),
+		settleSeconds: z.number().int().positive(),
+		liveKey: z.string().optional(),
+		primary: z.object({
+			answer: z.enum(['undo-automatically', 'keep-if-reachable']),
+			labelKey: z.string(),
+		}),
+		alternative: z
+			.object({ answer: z.literal('undo-automatically'), labelKey: z.string() })
+			.optional(),
 		deliberate: z.object({ answer: z.literal('keep-change'), labelKey: z.string() }),
 	}),
 	z.object({ kind: z.literal('pending'), id: z.string(), expiresAt: z.number() }),
-	z.object({ kind: z.literal('kept'), id: z.string() }),
+	z.object({ kind: z.literal('kept'), id: z.string(), saving: z.literal(true).optional() }),
 ]);
 export type ChangeSafetyResult = z.infer<typeof changeSafetyResultSchema>;
 
 export const changeSafetyStatusSchema = z.object({
 	enabled: z.boolean(),
-	pending: z.object({ id: z.string(), expiresAt: z.number(), path: z.string() }).nullable(),
+	pending: z
+		.object({
+			id: z.string(),
+			expiresAt: z.number(),
+			path: z.string(),
+			confirmBy: z.enum(['session', 'reachability']),
+		})
+		.nullable(),
 	kept: z.object({ id: z.string(), undoKey: z.string() }).nullable(),
 	undoIncomplete: z.boolean(),
 	commitIncomplete: z.boolean(),
+	problem: z
+		.object({ errors: z.array(z.string()), nextAttemptAt: z.number().optional() })
+		.nullable(),
+	// The journal can't be read: protected changes and role writes are refused
+	// until network.resetChangeJournal moves it aside.
+	journalUnavailable: z.boolean(),
 	notice: z
 		.object({
 			id: z.string(),
-			reason: z.enum(['disconnected', 'restart']),
+			reason: z.enum(['disconnected', 'unreachable', 'restart', 'interrupted', 'unsaved']),
 			messageKey: z.string(),
 			summary: z.object({
 				key: z.string(),
@@ -391,6 +420,9 @@ export const ethernetRoleErrorSchema = z.enum([
 	'no_connection',
 	'apply_failed',
 	'unavailable_in_emulated_mode',
+	// A protected network change names this port (pending confirmation, being
+	// undone or saved), or the change journal can't be read.
+	'change_in_flight',
 ]);
 export type EthernetRoleError = z.infer<typeof ethernetRoleErrorSchema>;
 

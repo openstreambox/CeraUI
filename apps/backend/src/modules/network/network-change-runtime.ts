@@ -40,6 +40,8 @@ import {
 	type SettledEvent,
 } from "./network-checkpoint.ts";
 import { nmCheckpointAdapter } from "./network-checkpoint-nm.ts";
+import { createTailnetReachability } from "./network-reachability.ts";
+import { sessionRouteLookup } from "./network-session-route.ts";
 
 /** Same override/dev-fallback shape as the modem mutation journal. */
 export function networkChangeJournalPath(
@@ -72,9 +74,19 @@ function readBootId(): Promise<string> {
 	);
 }
 
+let streaming: (() => boolean) | undefined;
+
 let owner: ReturnType<typeof createNetworkChangeOwner> | undefined;
 
 export function getNetworkChangeOwner() {
+	if (!owner) {
+		// Lazily, so the streaming graph is not loaded by importing this module.
+		void import("../streaming/streaming.ts")
+			.then((module) => {
+				streaming = module.getIsStreaming;
+			})
+			.catch(() => undefined);
+	}
 	owner ??= createNetworkChangeOwner({
 		now: Date.now,
 		bootId: readBootId,
@@ -83,6 +95,9 @@ export function getNetworkChangeOwner() {
 		// refused because it has no recorded undo.
 		effects: createEffectRegistry([]),
 		journal: createFileJournalStore(networkChangeJournalPath()),
+		reachability: createTailnetReachability(),
+		isStreaming: () => streaming?.() === true,
+		log: (message) => logger.warn(`network change safety: ${message}`),
 		onSettled: (event) => {
 			for (const handler of settledHandlers) handler(event);
 		},
@@ -104,8 +119,62 @@ export function networkChangeSession(ws: AppWebSocket): NetworkChangeSession {
 		openedAt: data.openedAt ?? 0,
 		authenticated: data.isAuthenticated,
 		ingress,
+		// The interface the front door named when the socket was accepted,
+		// kept even after its evidence stopped holding: it can still refuse
+		// keep-if-reachable for that port, though it can no longer confirm.
+		...(data.ingressPath
+			? { capturedIngress: data.ingressPath.interface }
+			: {}),
 	};
 }
+
+/**
+ * The session plus the box's route back to it, for the ask-before prompt. Only
+ * a session without arrival evidence gets a route; the route never confirms.
+ */
+export async function resolveNetworkChangeSession(
+	ws: AppWebSocket,
+	lookup: (address: string) => Promise<NetworkChangeSession["route"]> = (
+		address,
+	) => sessionRouteLookup.lookup(address),
+): Promise<NetworkChangeSession> {
+	const session = networkChangeSession(ws);
+	if (session.ingress) return session;
+	const address = (ws as { remoteAddress?: unknown }).remoteAddress;
+	if (typeof address !== "string") return session;
+	const route = await lookup(address).catch(() => undefined);
+	return route ? { ...session, route } : session;
+}
+
+/**
+ * A warning that repeats only when its text changes or after `everyMs`: a
+ * damaged journal is read on every tick and every role write, and logging each
+ * of those would be thousands of identical lines a day.
+ */
+export function createRateLimitedWarn(
+	warn: (message: string) => void,
+	options: { readonly now?: () => number; readonly everyMs?: number } = {},
+) {
+	const now = options.now ?? Date.now;
+	const every = options.everyMs ?? 10 * 60_000;
+	let last: { key: string; at: number; suppressed: number } | undefined;
+	/** `key` names the failure class; it defaults to the message itself. */
+	return (message: string, key: string = message) => {
+		const at = now();
+		if (last && last.key === key && at - last.at < every) {
+			last.suppressed++;
+			return;
+		}
+		const repeats =
+			last && last.key === key && last.suppressed
+				? ` (repeated ${last.suppressed} times)`
+				: "";
+		warn(`${message}${repeats}`);
+		last = { key, at, suppressed: 0 };
+	};
+}
+
+const journalWarn = createRateLimitedWarn((message) => logger.warn(message));
 
 /**
  * Whether a protected change in flight names this interface. Without a journal
@@ -120,6 +189,7 @@ export async function networkChangeTouches(
 			ReturnType<typeof createNetworkChangeOwner>,
 			"touches"
 		>;
+		readonly warn?: (message: string, key?: string) => void;
 	} = {},
 ): Promise<boolean> {
 	const journalExists =
@@ -128,11 +198,40 @@ export async function networkChangeTouches(
 	try {
 		return await (options.owner ?? getNetworkChangeOwner()).touches(ifname);
 	} catch (error) {
-		logger.warn(
+		// One failure class whatever the port, so eth0 and eth1 reading the
+		// same damaged journal don't each log again.
+		(options.warn ?? journalWarn)(
 			`network change safety: journal unreadable, treating ${ifname} as in flight: ${(error as Error).message}`,
+			"journal-unreadable",
 		);
 		return true;
 	}
+}
+
+/**
+ * The way out of a damaged journal. The owner does the check, the move and the
+ * sweep in one serialized operation, so a reset can never move a journal that
+ * an apply has just rewritten. Only an unreadable journal is moved aside (kept
+ * next to it for support, never deleted).
+ */
+export async function resetDamagedNetworkChangeJournal(
+	options: {
+		readonly path?: string;
+		readonly owner?: Pick<
+			ReturnType<typeof createNetworkChangeOwner>,
+			"resetDamagedJournal"
+		>;
+	} = {},
+): Promise<{ readonly movedTo: string }> {
+	const path = options.path ?? networkChangeJournalPath();
+	if (!existsSync(path)) throw new Error("No network-change journal");
+	const result = await (
+		options.owner ?? getNetworkChangeOwner()
+	).resetDamagedJournal();
+	logger.warn(
+		`network change safety: damaged journal moved to ${result.movedTo}`,
+	);
+	return result;
 }
 
 export const TICK_MS = 5_000;
@@ -156,6 +255,7 @@ export async function startNetworkChangeSafety(
 		>;
 		readonly setInterval?: (fn: () => void, ms: number) => unknown;
 		readonly clearInterval?: (handle: unknown) => void;
+		readonly warn?: (message: string) => void;
 	} = {},
 ): Promise<() => void> {
 	const enabled = options.enabled ?? networkChangeSafetyEnabled();
@@ -176,11 +276,14 @@ export async function startNetworkChangeSafety(
 	const clear =
 		options.clearInterval ??
 		((handle: unknown) => clearInterval(handle as Timer));
+	// A damaged journal fails every tick the same way: say so once, then again
+	// only when the error changes or every ten minutes.
+	const warn = createRateLimitedWarn(
+		options.warn ?? ((message) => logger.warn(message)),
+	);
 	const handle = set(() => {
 		target.tick().catch((error: unknown) => {
-			logger.warn(
-				`network change safety: tick failed: ${(error as Error).message}`,
-			);
+			warn(`network change safety: tick failed: ${(error as Error).message}`);
 		});
 	}, TICK_MS);
 	return () => clear(handle);

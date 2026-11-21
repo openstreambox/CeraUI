@@ -35,17 +35,24 @@
 
 import type { EthernetRole } from "@ceraui/rpc/schemas";
 import type { EthernetRoleOutcomePublisher } from "./ethernet-role-outcome.ts";
+import { frontDoorListening } from "./front-door-state.ts";
 import type { NetworkChangePlan } from "./network-change-journal.ts";
 import { CHANGE_SAFETY_COPY } from "./network-change-policy.ts";
 import type { SettledEvent } from "./network-checkpoint.ts";
 
 /** The off-by-default switch. Only the exact value "1" enables it. */
 export const NETWORK_CHANGE_SAFETY_ENV = "CERALIVE_NETWORK_CHANGE_SAFETY";
-
+/**
+ * The flag takes effect only while this process's front-door listener is
+ * running (not merely when its directory exists). Without it no session has
+ * arrival evidence: a laptop on the shared LAN and a remote session would look
+ * the same ("unknown") and nobody could confirm.
+ */
 export function networkChangeSafetyEnabled(
 	env: Readonly<Record<string, string | undefined>> = process.env,
+	frontDoor: () => boolean = frontDoorListening,
 ): boolean {
-	return env[NETWORK_CHANGE_SAFETY_ENV] === "1";
+	return env[NETWORK_CHANGE_SAFETY_ENV] === "1" && frontDoor();
 }
 
 export const ETHERNET_ROLE_SUMMARY_KEY = CHANGE_SAFETY_COPY.summaryEthernetRole;
@@ -122,6 +129,18 @@ export function ethernetRoleFromPlan(
 	if (typeof ifname !== "string" || !isRole(role)) return undefined;
 	if (previous !== undefined && !isRole(previous)) return undefined;
 	return { ifname, role, previous, op };
+}
+
+/** The role change a stored notice summary names, to plan it again. */
+export function ethernetRoleOfSummary(
+	summary: NetworkChangePlan["summary"],
+): EthernetRoleIntent | undefined {
+	return ethernetRoleFromPlan({
+		summary,
+		devices: [],
+		profiles: [],
+		effects: [],
+	});
 }
 
 /** The port a stored role-change summary names, for queueing a re-apply. */

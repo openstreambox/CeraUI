@@ -1776,6 +1776,7 @@
 	"network.ethRole.error.noConnection": "لا يوجد ملف شبكة لهذا المنفذ لتهيئته، فلم يتغيّر شيء.",
 	"network.ethRole.error.applyFailed": "لم يتمكّن الجهاز من تطبيق الدور الجديد وأبقى على الدور السابق.",
 	"network.ethRole.error.unavailableEmulated": "أدوار المنافذ متاحة على العتاد الحقيقي فقط.",
+	"network.ethRole.error.changeInFlight": "تغيير شبكة آخر على هذا المنفذ ما زال معلقاً أو قيد التراجع أو الحفظ، لذا لم يتغير شيء. حاول مجدداً بعد انتهائه.",
 	"network.ethRole.error.notConfirmed": "لم يُبلّغ الجهاز عن النتيجة، لذا دور هذا المنفذ غير معروف.",
 	"network.ethRole.error.generic": "رفض الجهاز التغيير، فأبقى المنفذ على دوره السابق.",
 	"network.netifSave.error.title": "لم يُحفَظ أي شيء",
@@ -3568,5 +3569,16 @@
 	"network.changeSafety.notice.make": "إجراء التغيير",
 	"network.changeSafety.notice.leave": "إبقاؤه ملغى",
 	"network.changeSafety.kept.undo": "التراجع عن آخر تغيير في الشبكة",
-	"network.changeSafety.summary.ethernetRole": "تغيير دور المنفذ {ifname}"
+	"network.changeSafety.summary.ethernetRole": "تغيير دور المنفذ {ifname}",
+	"network.changeSafety.askBefore.routeCuts": "على الأرجح سيقطع هذا التغيير اتصالك: يصل إليك الجهاز عبر {via}.",
+	"network.changeSafety.askBefore.routeMayCut": "قد يقطع هذا التغيير اتصالك: {via} أحد اتصالات الجهاز بالإنترنت.",
+	"network.changeSafety.askBefore.undoVia": "نفّذ التغيير، ويُتراجع عنه بعد {seconds} ث ما لم يؤكده أحد عبر {via}",
+	"network.changeSafety.askBefore.undoLocal": "نفّذ التغيير، ويُتراجع عنه بعد {seconds} ث ما لم يؤكده أحد في الموقع",
+	"network.changeSafety.askBefore.reachable": "نفّذ التغيير، واحتفظ به فقط إن بقي الجهاز قادراً على الوصول إلى جهازك بعد {settle} ث",
+	"network.changeSafety.askBefore.keepRemote": "نفّذ التغيير دون تراجع. إن انقطع الجهاز فسيلزم إصلاحه في الموقع.",
+	"network.changeSafety.askBefore.live": "أنت على الهواء: قد يقطع التراجع عند انتهاء المهلة البث للحظة.",
+	"network.changeSafety.confirm.reachable": "نتحقق من أن الجهاز ما زال يصل إلى جهازك. إن كان كذلك يحتفظ بالتغيير.",
+	"network.changeSafety.notice.unreachable": "بعد هذا التغيير لم يعد الجهاز يصل إلى جهازك، لذا تراجع عنه. هل ما زلت تريده؟",
+	"network.changeSafety.notice.interrupted": "أُعيد تشغيل الجهاز أثناء تنفيذ هذا التغيير، لذا لم يُنفَّذ. هل ما زلت تريده؟",
+	"network.changeSafety.notice.unsaved": "أُعيد تشغيل الجهاز قبل حفظ التغيير الذي أكدته، لذا تراجع عنه. هل ما زلت تريده؟"
 }

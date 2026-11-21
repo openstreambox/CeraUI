@@ -1764,6 +1764,7 @@
 	"network.ethRole.error.noConnection": "इस पोर्ट के लिए कॉन्फ़िगर करने योग्य कोई नेटवर्क प्रोफ़ाइल नहीं है, इसलिए कुछ नहीं बदला।",
 	"network.ethRole.error.applyFailed": "डिवाइस नई भूमिका लागू नहीं कर सका और पिछली भूमिका बनी रही।",
 	"network.ethRole.error.unavailableEmulated": "पोर्ट भूमिकाएँ केवल असली हार्डवेयर पर उपलब्ध हैं।",
+	"network.ethRole.error.changeInFlight": "इस पोर्ट पर एक और नेटवर्क बदलाव अभी लंबित है, वापस लिया या सहेजा जा रहा है, इसलिए कुछ नहीं बदला। उसके पूरा होने पर फिर कोशिश करें।",
 	"network.ethRole.error.notConfirmed": "डिवाइस ने नतीजा नहीं बताया, इसलिए इस पोर्ट की भूमिका अज्ञात है।",
 	"network.ethRole.error.generic": "डिवाइस ने बदलाव अस्वीकार कर दिया, इसलिए पोर्ट की पिछली भूमिका बनी रही।",
 	"network.netifSave.error.title": "कुछ भी सेव नहीं हुआ",
@@ -3556,5 +3557,16 @@
 	"network.changeSafety.notice.make": "बदलाव करें",
 	"network.changeSafety.notice.leave": "वापस ही रहने दें",
 	"network.changeSafety.kept.undo": "आखिरी नेटवर्क बदलाव वापस लें",
-	"network.changeSafety.summary.ethernetRole": "{ifname} पर पोर्ट भूमिका बदलाव"
+	"network.changeSafety.summary.ethernetRole": "{ifname} पर पोर्ट भूमिका बदलाव",
+	"network.changeSafety.askBefore.routeCuts": "यह बदलाव शायद आपका कनेक्शन काट देगा: बॉक्स आप तक {via} से पहुँचता है।",
+	"network.changeSafety.askBefore.routeMayCut": "यह बदलाव आपका कनेक्शन रोक सकता है: {via} बॉक्स के अपलिंक में से एक है।",
+	"network.changeSafety.askBefore.undoVia": "बदलाव करें, {seconds} s बाद वापस, जब तक {via} पर कोई पुष्टि न करे",
+	"network.changeSafety.askBefore.undoLocal": "बदलाव करें, {seconds} s बाद वापस, जब तक मौके पर कोई पुष्टि न करे",
+	"network.changeSafety.askBefore.reachable": "बदलाव करें, तभी रखें जब {settle} s बाद भी बॉक्स आपके डिवाइस तक पहुँचे",
+	"network.changeSafety.askBefore.keepRemote": "बिना वापसी के बदलाव करें। बॉक्स कट गया तो किसी को मौके पर ठीक करना होगा।",
+	"network.changeSafety.askBefore.live": "आप लाइव हैं: समय सीमा पर वापसी से स्ट्रीम एक पल के लिए रुक सकती है।",
+	"network.changeSafety.confirm.reachable": "जाँच रहे हैं कि बॉक्स अब भी आपके डिवाइस तक पहुँचता है। हाँ तो बदलाव रहेगा।",
+	"network.changeSafety.notice.unreachable": "इस बदलाव के बाद बॉक्स आपके डिवाइस तक नहीं पहुँच सका, इसलिए उसने इसे वापस लिया। फिर भी?",
+	"network.changeSafety.notice.interrupted": "बदलाव के दौरान बॉक्स फिर से शुरू हुआ, इसलिए बदलाव नहीं हुआ। फिर भी?",
+	"network.changeSafety.notice.unsaved": "पुष्टि किया बदलाव सहेजने से पहले बॉक्स फिर से शुरू हुआ, इसलिए उसे वापस लिया। फिर भी?"
 }

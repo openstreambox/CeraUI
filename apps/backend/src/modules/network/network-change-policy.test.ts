@@ -9,6 +9,9 @@ import {
 	DEFAULT_WINDOW_SECONDS,
 	isAskBeforeAnswer,
 	needsAskBefore,
+	noticeMessageKey,
+	offeredAnswers,
+	predictCut,
 } from "./network-change-policy.ts";
 
 const MESSAGES = join(
@@ -36,11 +39,25 @@ describe("who is asked, and when", () => {
 		expect(needsAskBefore("other", true)).toBe(true);
 	});
 	it("names the interface only when it is known", () => {
-		expect(askBeforePrompt("own", "ap0", 90)).toMatchObject({
+		expect(
+			askBeforePrompt({
+				path: "own",
+				ingress: "ap0",
+				devices: ["ap0"],
+				seconds: 90,
+			}),
+		).toMatchObject({
 			via: "ap0",
 			messageKey: CHANGE_SAFETY_COPY.askBeforeOwn,
 		});
-		expect(askBeforePrompt("unknown", undefined, 90)).toMatchObject({
+		expect(
+			askBeforePrompt({
+				path: "unknown",
+				ingress: undefined,
+				devices: ["ap0"],
+				seconds: 90,
+			}),
+		).toMatchObject({
 			via: undefined,
 			messageKey: CHANGE_SAFETY_COPY.askBeforeUnknown,
 		});
@@ -52,7 +69,12 @@ describe("who is asked, and when", () => {
 });
 
 describe("ask before: a primary action and a deliberate one, nothing preselected", () => {
-	const prompt = askBeforePrompt("own", "ap0", 90);
+	const prompt = askBeforePrompt({
+		path: "own",
+		ingress: "ap0",
+		devices: ["ap0"],
+		seconds: 90,
+	});
 	it("makes the protected change the primary action", () => {
 		expect(prompt.primary).toEqual({
 			answer: "undo-automatically",
@@ -75,8 +97,9 @@ describe("ask before: a primary action and a deliberate one, nothing preselected
 		])
 			expect(prompt, field).not.toHaveProperty(field);
 	});
-	it("accepts only the two explicit answers", () => {
+	it("accepts only the three explicit answers", () => {
 		expect(isAskBeforeAnswer("undo-automatically")).toBe(true);
+		expect(isAskBeforeAnswer("keep-if-reachable")).toBe(true);
 		expect(isAskBeforeAnswer("keep-change")).toBe(true);
 		for (const value of [undefined, null, "", "keep", "yes", true, 1, {}])
 			expect(isAskBeforeAnswer(value), String(value)).toBe(false);
@@ -132,5 +155,163 @@ describe("change-safety copy", () => {
 		const text = en[CHANGE_SAFETY_COPY.noticeDisconnected] as string;
 		expect(text).toMatch(/confirm/);
 		expect(text).toMatch(/undid/);
+	});
+});
+
+describe("predicting whether a change cuts the session, before applying", () => {
+	const route = (carriers: string[], tunnel = true) => ({ carriers, tunnel });
+	it("trusted arrival evidence decides cuts or clear", () => {
+		expect(predictCut(["eth0"], "eth0", undefined)).toEqual({
+			verdict: "cuts",
+			via: "eth0",
+		});
+		expect(predictCut(["eth0"], "wlan0", route(["eth0"]))).toEqual({
+			verdict: "clear",
+			via: undefined,
+		});
+	});
+	it("route evidence can say cuts or may-cut, never clear", () => {
+		expect(predictCut(["eth0"], undefined, route(["eth0"], false))).toEqual({
+			verdict: "cuts",
+			via: "eth0",
+		});
+		expect(predictCut(["eth0"], undefined, route(["eth0", "wwan0"]))).toEqual({
+			verdict: "may-cut",
+			via: "eth0",
+		});
+		expect(predictCut(["eth0"], undefined, route(["wwan0"]))).toEqual({
+			verdict: "unknown",
+			via: undefined,
+		});
+		expect(predictCut(["eth0"], undefined, undefined).verdict).toBe("unknown");
+	});
+});
+
+describe("ask before, for a session that cannot confirm", () => {
+	const base = {
+		path: "unknown" as const,
+		ingress: undefined,
+		devices: ["eth0"],
+		seconds: 90,
+		settleSeconds: 15,
+	};
+	it("offers keep-if-reachable first when the box has endpoints to probe", () => {
+		const prompt = askBeforePrompt({
+			...base,
+			route: { carriers: ["eth0"], tunnel: true },
+			reachability: true,
+		});
+		expect(prompt).toMatchObject({
+			cut: "cuts",
+			via: "eth0",
+			canConfirm: false,
+			settleSeconds: 15,
+			messageKey: CHANGE_SAFETY_COPY.askBeforeRouteCuts,
+			primary: {
+				answer: "keep-if-reachable",
+				labelKey: CHANGE_SAFETY_COPY.askBeforeReachable,
+			},
+			alternative: {
+				answer: "undo-automatically",
+				labelKey: CHANGE_SAFETY_COPY.askBeforeUndoVia,
+			},
+			deliberate: {
+				answer: "keep-change",
+				labelKey: CHANGE_SAFETY_COPY.askBeforeKeepRemote,
+			},
+		});
+		expect(offeredAnswers(prompt)).toEqual([
+			"keep-if-reachable",
+			"undo-automatically",
+			"keep-change",
+		]);
+	});
+	it("without endpoints, says who can confirm instead of promising a confirm", () => {
+		const prompt = askBeforePrompt(base);
+		expect(prompt.primary).toEqual({
+			answer: "undo-automatically",
+			labelKey: CHANGE_SAFETY_COPY.askBeforeUndoLocal,
+		});
+		expect(prompt).not.toHaveProperty("alternative");
+		expect(prompt.cut).toBe("unknown");
+	});
+	it("never offers keep-if-reachable to a session on the changed port", () => {
+		const prompt = askBeforePrompt({
+			...base,
+			path: "own",
+			ingress: "eth0",
+			reachability: true,
+		});
+		expect(offeredAnswers(prompt)).toEqual([
+			"undo-automatically",
+			"keep-change",
+		]);
+		expect(prompt.canConfirm).toBe(true);
+	});
+	it("a deliberate re-apply from another path can confirm, and is never told 'disconnect me'", () => {
+		const prompt = askBeforePrompt({
+			...base,
+			path: "other",
+			ingress: "wlan0",
+			reachability: true,
+		});
+		expect(prompt).toMatchObject({
+			canConfirm: true,
+			primary: { answer: "undo-automatically" },
+			deliberate: { labelKey: CHANGE_SAFETY_COPY.askBeforeKeepRemote },
+		});
+		expect(prompt).not.toHaveProperty("alternative");
+	});
+	it("warns while live, and only then", () => {
+		expect(askBeforePrompt({ ...base, live: true }).liveKey).toBe(
+			CHANGE_SAFETY_COPY.askBeforeLive,
+		);
+		expect(askBeforePrompt(base)).not.toHaveProperty("liveKey");
+	});
+	it("maps every notice reason to its own sentence", () => {
+		const keys = (
+			[
+				"disconnected",
+				"unreachable",
+				"restart",
+				"interrupted",
+				"unsaved",
+			] as const
+		).map(noticeMessageKey);
+		expect(new Set(keys).size).toBe(5);
+	});
+});
+
+describe("copy for sessions that cannot confirm", () => {
+	const en = JSON.parse(
+		readFileSync(join(MESSAGES, "en.json"), "utf8"),
+	) as Record<string, string>;
+	const placeholders = (text: string) =>
+		[...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+	it("names who can still confirm, and the deadline", () => {
+		expect(
+			placeholders(en[CHANGE_SAFETY_COPY.askBeforeUndoVia] as string),
+		).toEqual(["seconds", "via"]);
+		expect(
+			placeholders(en[CHANGE_SAFETY_COPY.askBeforeUndoLocal] as string),
+		).toEqual(["seconds"]);
+		expect(en[CHANGE_SAFETY_COPY.askBeforeUndoVia]).toMatch(/unless someone/);
+	});
+	it("says keep-if-reachable checks the path to your own device, and when", () => {
+		const text = en[CHANGE_SAFETY_COPY.askBeforeReachable] as string;
+		expect(text).toStartWith("Make the change");
+		expect(text).toMatch(/your device/);
+		expect(placeholders(text)).toEqual(["settle"]);
+	});
+	it("never tells a remote session it will be disconnected, only that there is no undo", () => {
+		const text = en[CHANGE_SAFETY_COPY.askBeforeKeepRemote] as string;
+		expect(text).not.toMatch(/disconnect me/i);
+		expect(text).toMatch(/no undo/);
+	});
+	it("the reachability notice does not blame a missing confirmation", () => {
+		const text = en[CHANGE_SAFETY_COPY.noticeUnreachable] as string;
+		expect(text).not.toMatch(/confirm/);
+		expect(text).toMatch(/your device/);
+		expect(en[CHANGE_SAFETY_COPY.noticeUnsaved]).toMatch(/confirmed/);
 	});
 });

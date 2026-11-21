@@ -107,6 +107,7 @@ import {
 	getChangeSafetyStatusProcedure,
 	getNetworkInterfacesProcedure,
 	getSharingPolicyProcedure,
+	resetNetworkChangeJournalProcedure,
 	setEthernetRoleProcedure,
 	setNetworkIngestEnabledProcedure,
 	setSharingPolicyProcedure,
@@ -335,6 +336,7 @@ const stableRoutes = {
 		confirmChange: confirmNetworkChangeProcedure,
 		undoKeptChange: undoKeptNetworkChangeProcedure,
 		answerChangeNotice: answerNetworkChangeNoticeProcedure,
+		resetChangeJournal: resetNetworkChangeJournalProcedure,
 	}),
 
 	system: base.router({

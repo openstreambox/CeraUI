@@ -1767,6 +1767,7 @@
 	"network.ethRole.error.noConnection": "Esta porta não tem um perfil de rede para configurar, então nada foi alterado.",
 	"network.ethRole.error.applyFailed": "O aparelho não conseguiu aplicar a nova função e manteve a anterior.",
 	"network.ethRole.error.unavailableEmulated": "As funções de porta só estão disponíveis em hardware real.",
+	"network.ethRole.error.changeInFlight": "Outra mudança de rede nesta porta ainda está pendente, sendo desfeita ou salva, então nada mudou. Tente de novo quando terminar.",
 	"network.ethRole.error.notConfirmed": "O aparelho nunca informou o resultado, então a função desta porta é desconhecida.",
 	"network.ethRole.error.generic": "O aparelho recusou a mudança, então esta porta manteve a função anterior.",
 	"network.netifSave.error.title": "Nada foi salvo",
@@ -3559,5 +3560,16 @@
 	"network.changeSafety.notice.make": "Fazer a mudança",
 	"network.changeSafety.notice.leave": "Deixar desfeita",
 	"network.changeSafety.kept.undo": "Desfazer a última mudança de rede",
-	"network.changeSafety.summary.ethernetRole": "Mudança da função da porta {ifname}"
+	"network.changeSafety.summary.ethernetRole": "Mudança da função da porta {ifname}",
+	"network.changeSafety.askBefore.routeCuts": "Esta mudança deve cortar sua conexão: a caixa chega até você por {via}.",
+	"network.changeSafety.askBefore.routeMayCut": "Esta mudança pode interromper sua conexão: {via} é um dos links da caixa.",
+	"network.changeSafety.askBefore.undoVia": "Fazer a mudança, desfeita em {seconds} s a menos que alguém em {via} confirme",
+	"network.changeSafety.askBefore.undoLocal": "Fazer a mudança, desfeita em {seconds} s a menos que alguém no local confirme",
+	"network.changeSafety.askBefore.reachable": "Fazer a mudança, mantida só se a caixa ainda alcançar seu dispositivo após {settle} s",
+	"network.changeSafety.askBefore.keepRemote": "Fazer a mudança sem desfazer. Se a caixa ficar isolada, alguém terá de ir ao local.",
+	"network.changeSafety.askBefore.live": "Você está ao vivo: desfazer no prazo pode derrubar a transmissão por um momento.",
+	"network.changeSafety.confirm.reachable": "Verificando se a caixa ainda alcança seu dispositivo. Se sim, mantém a mudança.",
+	"network.changeSafety.notice.unreachable": "Após esta mudança a caixa não alcançava mais seu dispositivo, então desfez. Ainda quer?",
+	"network.changeSafety.notice.interrupted": "A caixa reiniciou enquanto fazia esta mudança, então não a fez. Ainda quer?",
+	"network.changeSafety.notice.unsaved": "A caixa reiniciou antes de salvar a mudança que você confirmou, então desfez. Ainda quer?"
 }

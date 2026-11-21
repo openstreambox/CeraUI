@@ -37,6 +37,7 @@ import {
 } from "./ethernet-role-outcome.ts";
 import {
 	createEthernetRoleSettledHandler,
+	ethernetRoleOfSummary,
 	ethernetRolePlan,
 } from "./ethernet-role-safety.ts";
 import type { NetworkChangePlan } from "./network-change-journal.ts";
@@ -45,10 +46,11 @@ import {
 	networkChangeTouches,
 	onNetworkChangeSettled,
 } from "./network-change-runtime.ts";
-import type {
-	ApplyOptions,
-	ApplyResult,
-	NetworkChangeSession,
+import {
+	type ApplyOptions,
+	type ApplyResult,
+	NetworkChangeInFlightError,
+	type NetworkChangeSession,
 } from "./network-checkpoint.ts";
 import {
 	applySharedLanBondGate,
@@ -151,8 +153,19 @@ export interface EthernetRoleSafety {
 			options?: ApplyOptions,
 		): Promise<ApplyResult>;
 	};
-	readonly session: NetworkChangeSession;
+	/**
+	 * The session, or a lookup of it (its route), resolved inside the port's
+	 * role queue so a slow lookup can't let a later request on the same port
+	 * overtake this one.
+	 */
+	readonly session:
+		| NetworkChangeSession
+		| (() => Promise<NetworkChangeSession>);
 	readonly answer?: AskBeforeAnswer | undefined;
+	/** Re-applying from an ask-after notice: always ask before. */
+	readonly deliberate?: boolean;
+	/** The notice a re-apply answers; the owner checks and consumes it. */
+	readonly noticeId?: string;
 }
 
 /**
@@ -183,24 +196,31 @@ async function applyRoleProtected(
 	});
 	let result: ApplyResult;
 	try {
-		result = await safety.owner.apply(
-			safety.session,
-			plan,
-			safety.answer === undefined ? {} : { answer: safety.answer },
-		);
+		const session =
+			typeof safety.session === "function"
+				? await safety.session()
+				: safety.session;
+		result = await safety.owner.apply(session, plan, {
+			...(safety.answer === undefined ? {} : { answer: safety.answer }),
+			...(safety.deliberate ? { deliberate: true } : {}),
+			...(safety.noticeId === undefined ? {} : { noticeId: safety.noticeId }),
+		});
 	} catch (error) {
 		// No pending frame was published, so none is owed; the caller gets the
 		// error. The owner already undid whatever the apply had started.
 		logger.warn(
 			`ethernet role: protected change on ${name} refused: ${(error as Error).message}`,
 		);
+		if (error instanceof NetworkChangeInFlightError)
+			return { success: false, error: "change_in_flight" };
 		return { success: false, error: "apply_failed" };
 	}
 	if (result.kind === "ask-before")
 		return { success: false, changeSafety: result };
-	if (result.kind === "pending") {
+	if (result.kind === "pending" || (result.kind === "kept" && result.saving)) {
 		// The owner's settle handler publishes the terminal frame: success on
-		// commit, apply_failed when the change is undone.
+		// commit, apply_failed when the change is undone. A kept change whose
+		// save did not finish is committed (and reported) by the next tick.
 		deps.publishOutcome(name, { pending: true, role, ...correlation });
 	}
 	return { success: true, applied: role, changeSafety: result };
@@ -351,7 +371,10 @@ export async function setEthernetRole(
 			logger.warn(
 				`ethernet role: ${name} has a network change in flight; refusing`,
 			);
-			return refuse("apply_failed");
+			// Named, so the UI can say why: a change is pending confirmation,
+			// being undone or saved, or the journal can't be read (reset path:
+			// network.resetChangeJournal).
+			return refuse("change_in_flight");
 		}
 		const previous = deps.readPersistedRole(name);
 		// Only a real role change is protected; re-stating the current role
@@ -366,6 +389,9 @@ export async function setEthernetRole(
 				op,
 			);
 			if (protectedResult) return protectedResult;
+			// A re-apply from a notice is deliberate: with no active profile to
+			// protect, refuse rather than fall through to an unasked change.
+			if (safety.deliberate) return refuse("no_connection");
 		}
 		let persisted = false;
 		let failure: EthernetRoleError | undefined;
@@ -479,3 +505,26 @@ export async function reconcileEthernetRoles(
 }
 
 export { getEthernetRole };
+
+/**
+ * "Make the change" on a stored role-change notice: the change is planned
+ * again from the port's state now, through the normal role path and its
+ * queue, asked before again, and the owner consumes the notice in the same
+ * apply. Never a replay of the stored plan. Undefined for any other notice.
+ */
+export async function reapplyEthernetRoleNotice(
+	notice: {
+		readonly id: string;
+		readonly summary: NetworkChangePlan["summary"];
+	},
+	safety: Omit<EthernetRoleSafety, "deliberate" | "noticeId">,
+	deps: EthernetRoleTransitionDeps = defaultEthernetRoleDeps,
+): Promise<SetEthernetRoleResult | undefined> {
+	const intent = ethernetRoleOfSummary(notice.summary);
+	if (!intent) return undefined;
+	return setEthernetRole(intent.ifname, intent.role, deps, intent.op, {
+		...safety,
+		deliberate: true,
+		noticeId: notice.id,
+	});
+}
