@@ -64,6 +64,9 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => {
 	const feed = await import("./__fixtures__/settings-config-feed.svelte");
 	return {
 		getConfig: feed.getConfigFeed,
+		getStatus: () => undefined,
+		getUplinks: () => undefined,
+		getIsConnected: () => true,
 		getKiosk: () => undefined,
 	};
 });
