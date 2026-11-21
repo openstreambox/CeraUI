@@ -13,11 +13,14 @@
     kiosk) gets no code at all, only the lines below.
   • A join shows here as "A new device joined · just now · Not mine?" (the app's
     toast stays quiet while a card for that hotspot is mounted). The card is
-    bound to one hotspot (`owner`: device key and radio incarnation) and only
-    shows that hotspot's joins, so with two hotspots up a join on one never
-    offers to renew the other's password. Not mine opens the same
-    confirmation as New Wi-Fi password: today's hotspot has one password, so
-    dropping one device means a new password for all of them.
+    bound to one hotspot (`owner`: device key, radio incarnation and AP
+    lifetime) and only shows that hotspot's joins, so with two hotspots up a
+    join on one never offers to renew the other's password, and a join on an
+    earlier lifetime never shows on a card for the restarted AP. A card whose
+    owner changes (another radio, a Stop and Start) hides its code and drops
+    its open question and its "new password is set" line. Not mine opens the
+    same confirmation as New Wi-Fi password: today's hotspot has one password,
+    so dropping one device means a new password for all of them.
   • **New Wi-Fi password** asks first and names the cost: every joined device
     drops and joins again; with a stream that may be going through the box, the
     D13a line says that stream drops too. Never a dead end, never silent.
@@ -51,8 +54,9 @@ interface Props {
 	/** Whether this screen may show a QR at all. */
 	qr?: boolean;
 	/**
-	 * The hotspot this card shows (device key and radio incarnation). Joins
-	 * show here only for it; without one the card shows no join line.
+	 * The hotspot this card shows (device key, radio incarnation and AP
+	 * lifetime). Joins show here only for it; without one the card shows no
+	 * join line.
 	 */
 	owner?: HotspotOwner | undefined;
 	/** Present only while a renewal of `owner`'s password is possible. */
@@ -85,10 +89,11 @@ $effect.pre(() => {
 const canShow = $derived(qr && Boolean(name) && Boolean(password));
 const ownerDevice = $derived(owner?.device);
 const ownerIncarnation = $derived(owner?.incarnation);
+const ownerLifetime = $derived(owner?.lifetime);
 const join = $derived(
 	ownerDevice === undefined
 		? null
-		: getLastHotspotJoin({ device: ownerDevice, incarnation: ownerIncarnation }),
+		: getLastHotspotJoin({ device: ownerDevice, incarnation: ownerIncarnation, lifetime: ownerLifetime }),
 );
 const joinVisible = $derived(join !== null && clock - join.at < WIFI_JOIN_LINE_MS);
 const joinWhen = $derived(
@@ -114,7 +119,7 @@ function show() {
 // The toast stays quiet only for the hotspot this card shows.
 $effect(() => {
 	if (ownerDevice === undefined) return;
-	return registerWifiCodeCard({ device: ownerDevice, incarnation: ownerIncarnation });
+	return registerWifiCodeCard({ device: ownerDevice, incarnation: ownerIncarnation, lifetime: ownerLifetime });
 });
 
 onMount(() => {
@@ -154,10 +159,11 @@ $effect(() => {
 $effect(() => {
 	if (!canShow) hide();
 });
-// A card rebound to another hotspot drops a question asked about the old one.
+// A card rebound to another hotspot or AP lifetime drops a question asked
+// about the old one.
 let seenOwner: string | null = null;
 $effect(() => {
-	const key = `${ownerDevice ?? ''}\u0000${ownerIncarnation ?? ''}`;
+	const key = `${ownerDevice ?? ''}\u0000${ownerIncarnation ?? ''}\u0000${ownerLifetime ?? ''}`;
 	if (seenOwner !== null && key !== seenOwner) {
 		confirming = false;
 		requested = false;
