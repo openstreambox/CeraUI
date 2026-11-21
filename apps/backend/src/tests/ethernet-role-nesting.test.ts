@@ -13,7 +13,8 @@ function harness() {
 	const applied: Record<string, string | undefined> = {};
 	const deps: EthernetRoleTransitionDeps = {
 		listInterfaces: () => ({ eth1: {}, eth2: {} }),
-		resolveConnection: (name) => Promise.resolve(name),
+		resolveConnection: (name) =>
+			Promise.resolve({ kind: "active" as const, uuid: name }),
 		setFields: (name, fields) => {
 			applied[name] = fields["ipv4.method"];
 			return Promise.resolve(true);
@@ -25,6 +26,15 @@ function harness() {
 		restoreRole: (name, previous) => {
 			if (previous === undefined) delete roles[name];
 			else roles[name] = previous;
+		},
+		readOwnedProfile: () => undefined,
+		readProfile: async () => ({ kind: "absent" }),
+		addConnection: async () => false,
+		reserveProfile: () => {
+			throw new Error("unexpected reservation");
+		},
+		newUuid: () => {
+			throw new Error("unexpected allocation");
 		},
 		readPersistedRole: (name) => roles[name],
 		publishOutcome: () => {},
@@ -60,10 +70,10 @@ test("unawaited nested reconciliation rejects without overtaking the newest outs
 					() => undefined,
 					(error: unknown) => error,
 				);
-			} else if (reads === 2) {
+			} else if (reads === 5) {
 				await release.promise;
 			}
-			return name;
+			return { kind: "active", uuid: name };
 		},
 	};
 
@@ -86,7 +96,7 @@ test("unawaited nested reconciliation rejects without overtaking the newest outs
 		ownerPort: "eth1",
 		requestedPort: "eth1",
 	});
-	expect(reads).toBe(2);
+	expect(reads).toBe(8);
 });
 
 test("reciprocal nested calls reject while both outside owners complete", async () => {
@@ -110,7 +120,7 @@ test("reciprocal nested calls reject while both outside owners complete", async 
 					),
 				);
 			}
-			return name;
+			return { kind: "active", uuid: name };
 		},
 	};
 
@@ -161,11 +171,11 @@ test("an expired timer context queues normally behind a current owner", async ()
 						})
 						.then(late.resolve, late.reject);
 				}, 0);
-			} else if (reads === 2) {
+			} else if (reads === 5) {
 				outsideEntered.resolve();
 				await releaseOutside.promise;
 			}
-			return name;
+			return { kind: "active", uuid: name };
 		},
 	};
 	const lateResult = late.promise.then(
@@ -187,7 +197,7 @@ test("an expired timer context queues normally behind a current owner", async ()
 
 		expect(pendingRole).toBe("uplink");
 		expect(pendingMethod).toBe("shared");
-		expect(pendingReads).toBe(2);
+		expect(pendingReads).toBe(5);
 		expect(results).toEqual([
 			{ success: true, applied: "uplink" },
 			{ success: true, applied: "shared-lan" },
