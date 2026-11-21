@@ -55,7 +55,7 @@
 import { execFileP } from "../../helpers/exec.ts";
 import { logger } from "../../helpers/logger.ts";
 import { spawnWithTimeout } from "../../helpers/spawn-policy.ts";
-import { isRealDevice as defaultIsRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 import {
 	type BluetoothAudioProvider,
 	detectBluetoothAudioProvider,
@@ -125,7 +125,7 @@ export interface CommandResult {
 }
 
 export interface BluetoothServicesDeps {
-	isRealDevice: () => Promise<boolean>;
+	canManageBluetooth: () => Promise<boolean>;
 	/** argv-only, BOUNDED `systemctl <args>`. Never throws; reports exit codes. */
 	systemctl: (args: readonly string[]) => Promise<CommandResult>;
 	/** BOUNDED `<binary> --help`. Never throws; reports exit codes. */
@@ -168,7 +168,7 @@ async function runHelpProbe(binary: string): Promise<CommandResult> {
 }
 
 export const defaultBluetoothServicesDeps: BluetoothServicesDeps = {
-	isRealDevice: () => defaultIsRealDevice(),
+	canManageBluetooth: () => hasCapability("bluetooth"),
 	systemctl: runSystemctl,
 	probeHelp: runHelpProbe,
 	fileExists: (p) => Bun.file(p).exists(),
@@ -381,7 +381,7 @@ export async function setBluetoothEnabled(
 	enabled: boolean,
 	deps: BluetoothServicesDeps = defaultBluetoothServicesDeps,
 ): Promise<BluetoothServicesOutcome> {
-	if (!(await deps.isRealDevice())) {
+	if (!(await deps.canManageBluetooth())) {
 		return btUnavailable(
 			"emulated",
 			"bluetooth service control is unavailable on a dev/emulated host",
@@ -441,7 +441,7 @@ export async function reconcileBluetoothServices(
 	}
 	reconcileInFlight = true;
 	try {
-		if (!(await deps.isRealDevice())) {
+		if (!(await deps.canManageBluetooth())) {
 			deps.log(
 				"bluetooth: service reconcile skipped (emulated / not a real device)",
 			);

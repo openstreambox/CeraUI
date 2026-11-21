@@ -148,7 +148,7 @@ export async function applyRouterCellularControl(
 	if (dialectForVidPid(vidPid) !== "hilink") {
 		return { status: "refused", reason: "unsupported" };
 	}
-	if (!(await deps.isRealDevice())) {
+	if (!(await deps.canManageModems())) {
 		return { status: "refused", reason: "unsupported" };
 	}
 
@@ -261,7 +261,7 @@ export async function applyRouterNetMode(
 	if (dialectForVidPid(vidPid) !== "hilink") {
 		return { status: "refused", reason: "unsupported" };
 	}
-	if (!(await deps.isRealDevice())) {
+	if (!(await deps.canManageModems())) {
 		return { status: "refused", reason: "unsupported" };
 	}
 

@@ -117,7 +117,7 @@ function makeWorld(board: AddonHardware): World {
 	const store = new Map<string, AddonState>();
 
 	const managerDeps: AddonManagerDeps = {
-		isRealDevice: () => Promise.resolve(true),
+		canManageAddons: () => Promise.resolve(true),
 		getEffectiveHardware: () => board,
 		getDataFreeBytes: () => Promise.resolve(100 * 1024 * 1024 * 1024),
 		getOsVersion: () => Promise.resolve("12"),
@@ -142,7 +142,7 @@ function makeWorld(board: AddonHardware): World {
 	setAddonManagerDeps(managerDeps);
 
 	setAddonProcedureDeps({
-		isRealDevice: () => Promise.resolve(true),
+		canManageAddons: () => Promise.resolve(true),
 		getEffectiveHardware: () => board,
 		readDescriptors: loadFixtures,
 		// Read/write the SAME store the manager mutates, so the procedure-level
