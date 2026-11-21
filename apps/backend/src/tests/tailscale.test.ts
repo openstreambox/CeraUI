@@ -38,12 +38,16 @@ import {
 
 const KEY = "tskey-auth-kPRIVACY7CNTRL-0123456789abcdefFEDCBA";
 
-function statusJson(backend: string): string {
+function statusJson(
+	backend: string,
+	self: { id?: string; key?: string; host?: string } = {},
+): string {
 	return JSON.stringify({
 		BackendState: backend,
 		Self: {
-			HostName: "studio-box",
-			PublicKey: "nodekey:aa11",
+			ID: self.id ?? "nStable1",
+			HostName: self.host ?? "studio-box",
+			PublicKey: self.key ?? "nodekey:aa11",
 			DNSName: "studio-box.example-tailnet.ts.net.",
 			TailscaleIPs: ["100.101.102.103", "fd7a:115c:a1e0::1"],
 		},
@@ -77,6 +81,8 @@ function fakeDaemon(initial: {
 		queued: false,
 		enrollStatus: undefined as string | undefined,
 		sshOffNode: undefined as string | undefined,
+		self: {} as { id?: string; key?: string; host?: string },
+		statusFails: false,
 		later: [] as Array<() => void>,
 	};
 	const calls: string[] = [];
@@ -86,7 +92,10 @@ function fakeDaemon(initial: {
 	const deps: Partial<TailscaleDeps> = {
 		isInstalled: async () => true,
 		isDaemonActive: async () => state.active,
-		statusJson: async () => statusJson(state.backend),
+		statusJson: async () => {
+			if (state.statusFails) throw new Error("tailscale status timed out");
+			return statusJson(state.backend, state.self);
+		},
 		setUnit: async (enabled) => {
 			calls.push(enabled ? "enable --now" : "disable --now");
 			// An image unit gated on state starts only once there is state.
@@ -535,7 +544,7 @@ describe("degraded image joins", () => {
 
 	test("an enrolment that turned SSH off says so on the card while SSH stays off", async () => {
 		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
-		daemon.state.sshOffNode = "nodekey:aa11";
+		daemon.state.sshOffNode = "nStable1";
 		setTailscaleDepsForTest(daemon.deps);
 		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
 		// Someone turned SSH back on (policy now allows it): no stale notice.
@@ -549,7 +558,7 @@ describe("degraded image joins", () => {
 
 	test("a later failed key does not erase the note for the login that still has SSH off", async () => {
 		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
-		daemon.state.sshOffNode = "nodekey:aa11";
+		daemon.state.sshOffNode = "nStable1";
 		setTailscaleDepsForTest(daemon.deps);
 		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
 		daemon.state.enrollStatus =
@@ -559,14 +568,14 @@ describe("degraded image joins", () => {
 
 	test("the note belongs to its login: after Forget and a new join it is gone", async () => {
 		const daemon = enrolled("joined 1 0 ok", SSH_OFF);
-		daemon.state.sshOffNode = "nodekey:0ld0";
+		daemon.state.sshOffNode = "nOld0";
 		setTailscaleDepsForTest(daemon.deps);
 		expect((await getTailscaleStatus()).notice).toBeUndefined();
 	});
 
 	test("a failed prefs read keeps a known note instead of clearing it", async () => {
 		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
-		daemon.state.sshOffNode = "nodekey:aa11";
+		daemon.state.sshOffNode = "nStable1";
 		setTailscaleDepsForTest(daemon.deps);
 		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
 		setTailscaleDepsForTest({
@@ -580,7 +589,7 @@ describe("degraded image joins", () => {
 
 	test("an open card follows a repair or an approval without a click", async () => {
 		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
-		daemon.state.sshOffNode = "nodekey:aa11";
+		daemon.state.sshOffNode = "nStable1";
 		setTailscaleDepsForTest(daemon.deps);
 		await getTailscaleStatus();
 		expect(daemon.state.later).toHaveLength(1);
@@ -599,6 +608,65 @@ describe("degraded image joins", () => {
 		expect(follow).toBeDefined();
 		daemon.state.backend = "Running";
 		follow?.();
+		await settle();
+		expect(daemon.broadcasts.at(-1)?.state).toBe("connected");
+	});
+
+	test("a node key rotation on the same node keeps the note", async () => {
+		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
+		daemon.state.sshOffNode = "nStable1";
+		setTailscaleDepsForTest(daemon.deps);
+		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
+		daemon.state.self = { key: "nodekey:bb22" };
+		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
+	});
+
+	test("a failed prefs read does not carry the note to another node", async () => {
+		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
+		daemon.state.sshOffNode = "nStable1";
+		setTailscaleDepsForTest(daemon.deps);
+		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
+		daemon.state.self = { id: "nOther2" };
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			readPrefs: async () => {
+				throw new Error("local API timed out");
+			},
+		});
+		expect((await getTailscaleStatus()).notice).toBeUndefined();
+	});
+
+	test("follow-ups stay bounded while only the name or address changes", async () => {
+		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
+		daemon.state.sshOffNode = "nStable1";
+		setTailscaleDepsForTest(daemon.deps);
+		await getTailscaleStatus();
+		let runs = 0;
+		for (let i = 0; i < 60; i++) {
+			const next = daemon.state.later.shift();
+			if (!next) break;
+			daemon.state.self = { host: i % 2 ? "studio-box" : "studio-box-2" };
+			next();
+			runs += 1;
+			await settle();
+		}
+		expect(runs).toBe(30);
+	});
+
+	test("a passing status failure does not end the follow-up", async () => {
+		const daemon = enrolled("joined 1 0 ok", SSH_OFF);
+		daemon.state.backend = "NeedsMachineAuth";
+		setTailscaleDepsForTest(daemon.deps);
+		await getTailscaleStatus();
+		daemon.state.statusFails = true;
+		daemon.state.later.shift()?.();
+		await settle();
+		expect(daemon.broadcasts.at(-1)?.state).toBe("unknown");
+		const next = daemon.state.later.shift();
+		expect(next).toBeDefined();
+		daemon.state.statusFails = false;
+		daemon.state.backend = "Running";
+		next?.();
 		await settle();
 		expect(daemon.broadcasts.at(-1)?.state).toBe("connected");
 	});
@@ -652,7 +720,7 @@ describe("degraded image joins", () => {
 					AutoUpdate: { Check: false, Apply: false },
 				};
 				daemon.state.pending = false;
-				daemon.state.sshOffNode = "nodekey:aa11";
+				daemon.state.sshOffNode = "nStable1";
 				daemon.state.enrollStatus = "joined 1 0 ok-without-tailnet-ssh";
 			},
 		});
