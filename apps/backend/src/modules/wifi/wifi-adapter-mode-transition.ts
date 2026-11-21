@@ -72,6 +72,7 @@ import { captureWifiFrameIncarnation } from "./wifi-frame-binding.ts";
 import { withWifiFrameIncarnation } from "./wifi-frame-incarnation.ts";
 import type { HotspotStopResult } from "./wifi-hotspot-config.ts";
 import type { HotspotOutcomePublisher } from "./wifi-hotspot-outcome.ts";
+import { HOTSPOT_READINESS_GRACE_S } from "./wifi-hotspot-readiness.ts";
 import type { HotspotStartResult } from "./wifi-hotspot-types.ts";
 import { canHotspot, HOTSPOT_UP_TO } from "./wifi-hotspot-types.ts";
 import type { HybridRestoreAttempt } from "./wifi-hybrid-target-diagnostics.ts";
@@ -133,11 +134,15 @@ function chainModeTerminal(
 	deps: AdapterModeTransitionDeps,
 ): HotspotOutcomePublisher {
 	let settled = false;
-	const cancelTimeout = deps.armTerminalTimeout?.(() => {
-		if (settled) return;
-		settled = true;
-		deps.publishOutcome(device, { success: false, error: "not-confirmed" });
-	}, HOTSPOT_UP_TO * 1000);
+	// The hotspot's own terminal waits for its client zone after NM confirms.
+	const cancelTimeout = deps.armTerminalTimeout?.(
+		() => {
+			if (settled) return;
+			settled = true;
+			deps.publishOutcome(device, { success: false, error: "not-confirmed" });
+		},
+		(HOTSPOT_UP_TO + HOTSPOT_READINESS_GRACE_S) * 1000,
+	);
 	return (kind, hotspotDevice, outcome) => {
 		deps.publishHotspotOutcome(kind, hotspotDevice, outcome);
 		if (settled) return;
@@ -146,7 +151,9 @@ function chainModeTerminal(
 		deps.publishOutcome(
 			device,
 			outcome.success
-				? { success: true, mode: target }
+				? outcome.pending
+					? { pending: true, mode: target }
+					: { success: true, mode: target }
 				: {
 						success: false,
 						error: outcome.error,
