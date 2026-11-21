@@ -2192,6 +2192,7 @@
 	"settings.dialogs.addressLinkLocal": "Dirección local automática, se conserva para el acceso local incluso sin DHCP.",
 	"settings.dialogs.addressNone": "Sin dirección asignada",
 	"settings.dialogs.blockedStreaming": "Detén la transmisión antes de reiniciar.",
+	"settings.dialogs.blockedStreamingPower": "Estás en vivo. Detén la transmisión para reiniciar o apagar.",
 	"settings.dialogs.blockedUpdating": "Actualización en curso. Espera antes de reiniciar.",
 	"settings.dialogs.confirmPassword": "Confirmar contraseña",
 	"settings.dialogs.enableInterface": "Usar para agregación",
