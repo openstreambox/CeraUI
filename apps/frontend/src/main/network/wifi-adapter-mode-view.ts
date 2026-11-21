@@ -179,6 +179,14 @@ export interface WifiAdapterModeView {
 	observedMode: WifiAdapterMode;
 	/** The persisted operator preference, when the device reported one. */
 	desiredMode?: WifiAdapterMode;
+	/**
+	 * Set when the persisted preference is `hybrid` but this radio cannot take it
+	 * and is not running it. The device keeps that preference and the hotspot
+	 * settings and stays a station, so the surface has to say so and offer the
+	 * explicit way out (an exclusive hotspot here, or another radio) instead of
+	 * silently showing a plain station.
+	 */
+	savedHybridRefused?: true;
 	/** All three modes, always, in {@link WIFI_ADAPTER_MODES} order. */
 	options: WifiAdapterModeOptionView[];
 	pending: boolean;
@@ -315,6 +323,17 @@ export function deriveWifiAdapterModeView(
 	});
 
 	const failed = input.phase === "failed" || input.phase === "timed_out";
+	const savedHybridRefused =
+		!pending &&
+		input.entry?.desired === "hybrid" &&
+		observedMode !== "hybrid" &&
+		byMode.get("hybrid")?.available !== true;
+	// The device publishes the same refusal as a `capability-unproven` terminal
+	// when restore declines the saved hybrid; the saved-hybrid band states it
+	// already, and one fact announced twice reads as two failures.
+	const reportsFailure =
+		failed &&
+		!(savedHybridRefused && input.failureReason === "capability-unproven");
 	return {
 		device: input.device,
 		...(input.iface.incarnation !== undefined
@@ -331,10 +350,11 @@ export function deriveWifiAdapterModeView(
 		...(input.entry?.desired !== undefined
 			? { desiredMode: input.entry.desired }
 			: {}),
+		...(savedHybridRefused ? { savedHybridRefused: true as const } : {}),
 		...(pending && input.target !== undefined
 			? { pendingTarget: input.target }
 			: {}),
-		...(failed
+		...(reportsFailure
 			? {
 					errorKey:
 						input.phase === "timed_out"
