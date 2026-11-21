@@ -35,8 +35,8 @@ export async function writeTextFile(file: string, contents: string) {
 /**
  * Crash-safe variant of {@link writeTextFile} for durable named caches
  * (auth_tokens / relays_cache / dns_cache / gsm_operator_cache). Delegates to the
- * single canonical `writeFileAtomicSync` (sibling `.<basename>.<pid>.tmp` + fsync
- * + rename) and swallows write errors like `writeTextFile` does. Deliberately not
+ * single canonical `writeFileAtomicSync` (sibling `.<basename>.<pid>.tmp`, file fsync,
+ * rename, then parent-directory fsync) and swallows write errors. Deliberately not
  * folded into `writeTextFile`: the ephemeral tmpfs writers (srtla IP + key
  * files) must stay non-atomic and emit no `.tmp` sidecars.
  */

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,6 +40,61 @@ describe("durable/cache atomic writers", () => {
 
 	afterEach(() => {
 		fs.rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("flushes the temp file before rename and its parent directory after rename", () => {
+		const filePath = path.join(tempDir, "config.json");
+		const tmpPath = path.join(tempDir, `.config.json.${process.pid}.tmp`);
+		fs.writeFileSync(filePath, "{}");
+		const contents = '{"bitrate":5000}';
+		const fsync = fs.fsyncSync;
+		const syncedPaths: string[] = [];
+		const sync = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+			const { dev, ino } = fs.fstatSync(fd);
+			const target = fs.readFileSync(filePath, "utf8");
+			expect(target).toBe(syncedPaths.length === 0 ? "{}" : contents);
+			const syncedPath = target === contents ? tempDir : tmpPath;
+			const expected = fs.statSync(syncedPath);
+			expect({ dev, ino }).toEqual({ dev: expected.dev, ino: expected.ino });
+			syncedPaths.push(syncedPath);
+			fsync(fd);
+		});
+
+		try {
+			writeFileAtomicSync(filePath, contents);
+			expect(syncedPaths).toEqual([tmpPath, tempDir]);
+			expect(fs.readFileSync(filePath, "utf8")).toBe(contents);
+		} finally {
+			sync.mockRestore();
+		}
+	});
+
+	it("closes the directory and reports a failed sync after publishing the file", () => {
+		const filePath = path.join(tempDir, "config.json");
+		const error = Object.assign(new Error("directory sync failed"), {
+			code: "EIO",
+		});
+		const fsync = fs.fsyncSync;
+		let directoryFd = -1;
+		const sync = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+			if (fs.fstatSync(fd).isDirectory()) {
+				directoryFd = fd;
+				throw error;
+			}
+			fsync(fd);
+		});
+
+		try {
+			expect(() => writeFileAtomicSync(filePath, "{}")).toThrow(error);
+			expect(directoryFd).toBeGreaterThanOrEqual(0);
+			expect(() => fs.fstatSync(directoryFd)).toThrow(
+				expect.objectContaining({ code: "EBADF" }),
+			);
+			expect(fs.readFileSync(filePath, "utf8")).toBe("{}");
+			expect(fs.readdirSync(tempDir)).toEqual(["config.json"]);
+		} finally {
+			sync.mockRestore();
+		}
 	});
 
 	describe("auth_tokens.json", () => {

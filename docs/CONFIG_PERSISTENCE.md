@@ -44,10 +44,11 @@ board. Changing pacing/start-limit policy remains an owner/image decision.
 
 Every file CeraUI's backend writes at runtime, grouped by durability
 category. "Atomic" means the write goes through `writeFileAtomicSync`
-(`apps/backend/src/helpers/config-loader.ts:278`): write to a sibling temp
-file, `fsync`, then `rename` over the target — a crash mid-write can never
-leave a truncated or half-written file on disk, because POSIX `rename` is
-atomic. The exact temp-file name is:
+(`apps/backend/src/helpers/config-loader.ts`): write to a sibling temp file,
+`fsync` the file, `rename` it over the target, then `fsync` the parent directory
+to persist the new directory entry. The rename atomically publishes the complete
+file. A failure after rename is reported even though the new file is already
+visible. The exact temp-file name is:
 
 ```
 .<basename>.<pid>.tmp
@@ -193,9 +194,9 @@ transient behavior.
 **Durability guarantees.**
 
 - **Atomic write** — every `recordDismissal` re-serializes the whole set and writes
-  it through `writeFileAtomicSync` (temp file → `fsync` → `rename`), so a crash
-  mid-write leaves the previously-committed file intact; a torn write can never
-  corrupt the committed dismissals.
+  it through `writeFileAtomicSync` (temp file → file `fsync` → `rename` →
+  directory `fsync`). Readers see complete records, and a successful write
+  persists the new directory entry.
 - **Ordinary-key LRU bound** — ordinary keys are capped
   (`DEFAULT_MAX_DISMISSALS = 256`). Recording past the cap evicts the oldest ordinary
   dismissal; re-recording an existing key refreshes its recency. The same cap applies
