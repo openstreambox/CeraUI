@@ -181,6 +181,14 @@ export const linkTelemetryEntrySchema = z.object({
 	 * Additive + optional: absent means UNKNOWN, not zero.
 	 */
 	bytes_sent_total: z.number().int().nonnegative().optional(),
+	/**
+	 * Whether stream data is going out on this link, judged by the backend from
+	 * progress of its byte counter across fresh snapshots: `true` when it moved
+	 * recently, `false` when it stayed still for a few seconds while the sender
+	 * kept reporting (the link is in the bond but carries nothing). Additive +
+	 * optional: absent makes no claim either way.
+	 */
+	carrying: z.boolean().optional(),
 	stale: z.boolean(),
 });
 export type LinkTelemetryEntry = z.infer<typeof linkTelemetryEntrySchema>;

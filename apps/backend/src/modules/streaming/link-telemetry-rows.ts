@@ -97,6 +97,13 @@ export interface LinkTelemetryEntry {
 	 * SENDER reported none, which is UNKNOWN, never zero.
 	 */
 	bytes_sent_total?: number;
+	/**
+	 * Whether stream data is going out on this link (`link-progress.ts`): true
+	 * when its byte counter advanced recently, false when it stayed still for
+	 * the dwell while snapshots were fresh. Absent makes no claim (no stream,
+	 * stale snapshot, a link seen too briefly, no counter).
+	 */
+	carrying?: boolean;
 	/** True when the underlying snapshot is stale/absent but links are known. */
 	stale: boolean;
 }
