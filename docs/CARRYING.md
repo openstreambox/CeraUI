@@ -48,23 +48,69 @@ every clean boot look like an inherited marker; an idle engine pushes no status
 on subscribe, so the session would stay `reconciling` until an operator Stop.
 A carrying-only marker holds the line `carrying`; a stream's marker is empty,
 and the image checks existence only. `/run` outlives a backend restart, so a
-new process that finds that line knows its predecessor held the file for
-carrying alone, takes its own startup hold and reaches `idle`. Without it, a
+new process that finds that line learns that its predecessor held the file for
+carrying alone, as far as that process knew at its last write. Without it, a
 restart inside the hold or while carrying (a crash, or the image restarting
 the service early in boot) stayed `reconciling` and refused Start until a Stop.
 Any other marker present before carrying wrote it still counts as unknown, so a
 restart beside a running stream adopts it or stays protected.
 
+The line alone is not idle. A stream can begin after it was written (another
+control client, while the file could be neither rewritten nor replaced), and a
+dead process cannot report that. So a restarted backend keeps the line as it
+is, holds the encoder inhibitor and stays `reconciling` until the engine
+agrees: two separate status subscriptions that are accepted and hear nothing
+(an idle engine is silent, a running session reports status about every two
+seconds) commit `idle`; a running session is adopted and the file becomes the
+stream's. Engine silence without the line keeps its old meaning (unknown).
+
+"Heard nothing" is proven, not assumed. After a silent window the query sends
+`list-switch-targets` on the same connection, and only a reply with still
+nothing heard counts: the client tells pending requests about a dropped
+connection but not subscriptions, and a status sent in time can sit unread
+behind a timer that fired during an event-loop stall. Lines are written and
+read in order, so a reply means the connection held and every earlier status
+was handled. The reply is the engine's own snapshot of its session: one that
+names a `session_id`, an `active_input` or any `switch_targets` is a running
+session, never silence. An empty snapshot is treated as no session on any schema,
+subject to the unverified assumption below. A reply that reports nothing (a typed
+error from an engine without the method, or a result the binding cannot
+parse) counts only from an engine whose schema is not newer than the
+binding's, because the binding drops statuses it cannot parse without a trace.
+
+A query that cannot reach the engine proves nothing either way, unless the
+engine's systemd unit has no process at all (`cerastream.service` loaded,
+`MainPID=0`, and inactive, failed or waiting to restart after a crash): a
+stream runs inside that process, so this counts like a silent answer. An
+engine that stays down therefore does not hold the line, the marker and every
+update until reboot. While the engine stays unreachable, each failed recheck
+of the engine reconnect loop (about every 30 s) reconciles again as long as a
+line waits, so an engine that dies after the boot reconciliation is caught
+too; once the engine is reachable the loop reconciles as before.
+
+Limits: it is an unverified assumption, not measured engine behaviour, that every
+running session supplies a session id, active input or live switch targets.
+Passthrough and composition always have an empty target list; their protection
+still depends on the engine supplying `session_id` or `active_input`. A running
+engine reads as silent if it sends no status for two windows on a working
+connection and omits all three signs from its snapshot, or answers with an error
+on a schema the binding reads. A positive idle answer from the engine would close
+that gap.
+
 One owner (`createOtaMarkerOwner`) writes the file, and its content follows
 from who holds it at each change: a stream keeps it empty, carrying alone keeps
-the line, nobody removes it. A Start changes nothing until its last admission
+the line, nobody removes it. Every commit to `streaming`, launched or adopted,
+makes the file the stream's. A Start changes nothing until its last admission
 step, which runs in the same tick as the launch: the stream takes the file
 (rewritten, or replaced by rename when it cannot be rewritten), and the launch
 goes only if the file is then seen without the line. Otherwise Start is refused
-as for unavailable shutdown protection, since a later process would read a live
-stream as idle. A cancelled or refused Start therefore leaves the marker as it
-was. `ota-marker-owner.test.ts` walks every sequence of holder changes, write
-failures and restarts to a fixed depth against these rules.
+as for unavailable shutdown protection. A cancelled or refused Start therefore
+leaves the marker as it was. Content already on disk is never written again,
+and the line is written through a renamed sibling first, so a torn write
+cannot leave half a line (which would read unknown anyway).
+`ota-marker-owner.test.ts` walks every sequence of holder changes, engine
+answers, outside starts, write failures (torn writes included) and restarts to
+a fixed depth against these rules.
 The idle clock includes carrying and its last hold boundary. Updates retain all
 existing control leases and final admission checks. A persistent informational
 notice explains why updates, reboot, power-off and idle link changes wait, without

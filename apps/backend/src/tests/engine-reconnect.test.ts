@@ -7,11 +7,14 @@ import {
 import {
 	backoffDelay,
 	ENGINE_RECONNECT_MAX_MS,
+	type EngineReconnectDeps,
 	type EngineReconnectLogger,
 	initEngineConnection,
 	settleEngineReconnect,
 	stopEngineReconnect,
 } from "../modules/streaming/engine-reconnect.ts";
+import { createOtaMarkerOwner } from "../modules/streaming/ota-streaming-marker.ts";
+import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
 
 const silent: EngineReconnectLogger = { info: () => {}, warn: () => {} };
 
@@ -44,6 +47,9 @@ function harness(outcomes: boolean[], broadcastThrowsFirst = 0) {
 			}
 			broadcasts += 1;
 		},
+		// No carrying line waits unless a test says so; never the process's own.
+		awaitsIdleWitness: () => false,
+		reconcileSession: async () => undefined,
 		logger: silent,
 		random: () => 0.5,
 		setTimer: (fn: () => void, ms: number): TimerHandle => {
@@ -316,5 +322,147 @@ describe("stopEngineReconnect — teardown", () => {
 		const before = h.refreshCount;
 		await settleEngineReconnect();
 		expect(h.refreshCount).toBe(before);
+	});
+});
+
+/**
+ * Review regression: a backend restarted beside an engine whose unit still had
+ * a process (starting slowly, or alive without listening) left the inherited
+ * carrying line waiting, which is right. When that engine then died for good,
+ * nothing reconciled again: the recheck loop only reconciled on reaching the
+ * engine, so the marker, the inhibitor and every update waited for a reboot.
+ */
+describe("initEngineConnection — a carrying line waiting on an engine that stays down", () => {
+	function lineWaitingBox() {
+		const PATH = "/run/test/streaming";
+		const files = new Map<string, string>([[PATH, "carrying\n"]]);
+		const enoent = () => Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+		const fs = {
+			lstatSync: (path: string) => {
+				if (!files.has(path)) throw enoent();
+				return {};
+			},
+			readFileSync: (path: string) => {
+				const content = files.get(path);
+				if (content === undefined) throw enoent();
+				return content;
+			},
+			writeFileSync: (path: string, data: string) => {
+				files.set(path, data);
+			},
+			renameSync: (from: string, to: string) => {
+				files.set(to, files.get(from) ?? "");
+				files.delete(from);
+			},
+			rmSync: (path: string) => {
+				files.delete(path);
+			},
+		};
+		const held = { encoder: false, carrying: false };
+		const owner = createOtaMarkerOwner({
+			path: () => PATH,
+			fs: fs as unknown as Parameters<typeof createOtaMarkerOwner>[0]["fs"],
+			setShutdownProtection: (name, active) => {
+				held[name] = active;
+				return true;
+			},
+			quiet: true,
+		});
+		const unit = { stopped: false };
+		let reconciliations = 0;
+		const session = createStreamSessionOrchestrator({
+			initialLiveness: owner.liveness,
+			markStreamingForOta: owner.takeEncoder,
+			unmarkStreamingForOta: owner.releaseEncoder,
+			confirmStreamingForOta: owner.adoptStream,
+			awaitsIdleWitness: owner.awaitsIdleWitness,
+			engineStopped: async () => unit.stopped,
+			createAttemptId: () => "reconnect",
+			setStreamingStatus: () => undefined,
+			getStreamingStatus: () => false,
+			stopRuntime: async () => undefined,
+			// The engine never answers.
+			queryRuntime: async () => "unknown",
+		});
+		const loop: Partial<EngineReconnectDeps> = {
+			awaitsIdleWitness: owner.awaitsIdleWitness,
+			reconcileSession: () => {
+				reconciliations += 1;
+				return session.reconcile();
+			},
+		};
+		return {
+			files,
+			held,
+			owner,
+			session,
+			unit,
+			loop,
+			get reconciliations() {
+				return reconciliations;
+			},
+			PATH,
+		};
+	}
+
+	test("a failed recheck reconciles the waiting line, and a unit without a process settles it", async () => {
+		const h = harness([false, false, false, false]);
+		const box = lineWaitingBox();
+		await initEngineConnection({ ...h.deps, ...box.loop });
+		// main.ts: the boot reconciliation finds the unit still running.
+		expect(await box.session.reconcile()).toBe("reconciling");
+		expect(box.files.get(box.PATH)).toBe("carrying\n");
+		expect(box.held.encoder).toBe(true);
+
+		// A recheck while the unit still has a process: the line keeps waiting.
+		await h.fireNextTimer();
+		expect(box.reconciliations).toBe(1);
+		expect(box.session.snapshot().state).toBe("reconciling");
+		expect(h.pendingTimers).toBe(1);
+
+		// The engine gives up for good. The next recheck, on the loop's own
+		// timer, settles the line: marker and inhibitor go.
+		box.unit.stopped = true;
+		await h.fireNextTimer();
+		expect(box.reconciliations).toBe(2);
+		expect(box.session.snapshot().state).toBe("idle");
+		expect(box.files.has(box.PATH)).toBe(false);
+		expect(box.held.encoder).toBe(false);
+
+		// Nothing waits any more: later rechecks do not reconcile.
+		await h.fireNextTimer();
+		expect(box.reconciliations).toBe(2);
+		expect(h.pendingTimers).toBe(1);
+	});
+
+	test("no waiting line, no reconciliation from a failed recheck", async () => {
+		const h = harness([false, false, false]);
+		let reconciliations = 0;
+		await initEngineConnection({
+			...h.deps,
+			awaitsIdleWitness: () => false,
+			reconcileSession: async () => {
+				reconciliations += 1;
+			},
+		});
+		await h.fireNextTimer();
+		await h.fireNextTimer();
+		expect(reconciliations).toBe(0);
+		expect(h.pendingTimers).toBe(1);
+	});
+
+	test("a reconciliation that throws does not stop the recheck loop", async () => {
+		const h = harness([false, false, false]);
+		await initEngineConnection({
+			...h.deps,
+			awaitsIdleWitness: () => true,
+			reconcileSession: async () => {
+				throw new Error("reconcile failed (test)");
+			},
+		});
+		await h.fireNextTimer();
+		expect(h.pendingTimers).toBe(1);
+		await h.fireNextTimer();
+		expect(h.pendingTimers).toBe(1);
 	});
 });
