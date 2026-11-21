@@ -115,4 +115,15 @@ export interface StreamingBackend {
 	reconcileRuntimeState?(): Promise<EngineRuntimeState>;
 	/** Local Start identity, never granted by an observed/adopted subscription. */
 	ownsLaunchedSession?(): boolean;
+	/**
+	 * Read only: the last runtime state the current session connection
+	 * reported and the engine's own id for its session, asked once on that
+	 * same connection. Never connects, subscribes or changes ownership.
+	 */
+	sessionEvidence?(): Promise<EngineSessionEvidence>;
 }
+
+export type EngineSessionEvidence = {
+	readonly state: EngineRuntimeState;
+	readonly sessionId: string | null;
+};

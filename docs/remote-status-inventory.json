@@ -44158,7 +44158,7 @@
     "apps/backend/src/modules/streaming/audio.ts": "799e5718f07bc7904615edebe34ccd4e7b680f60c4b29b432a0c9d9c0fedfe46",
     "apps/backend/src/modules/streaming/auto-audio.ts": "dc196f13ae03b4d6b19ebf483b245caf46e7de01fef3051d50086c75622bb4ad",
     "apps/backend/src/modules/streaming/capabilities.ts": "8f8a39248aa0200026a8f3a80ec98b73769c9ea6743d5960a9c55f58d4a32501",
-    "apps/backend/src/modules/streaming/cerastream-backend.ts": "aeca301acba58d68d05003779fc01bedf0e2bfe4375530d666d46d502e3a990c",
+    "apps/backend/src/modules/streaming/cerastream-backend.ts": "9c00706dddc781554d8641c3c03736c46c43077ebe8bb773d62b13530d535045",
     "apps/backend/src/modules/streaming/config-change-bridge.ts": "c69aa207a8a9f7c642a19e65a91f1422f9b4e078c6f3384a9de31bc8ad1b7468",
     "apps/backend/src/modules/streaming/connection-restarting.ts": "61efbdeb6bfa9a171a1225473cd0b0eaa43679033ffee7496fe8c47f4ca82c25",
     "apps/backend/src/modules/streaming/devices.ts": "d8daf1992a9cbb6a2663a62d4be1a181462f86bba952c2eb693975508f9d9646",

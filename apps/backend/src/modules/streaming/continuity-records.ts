@@ -27,6 +27,28 @@ export const lifetimeSchema = z.object({
 	// Lenient: a malformed value reads as absent rather than failing the
 	// whole record, as an unknown field did before this one existed.
 	cgroup: z.string().min(1).nullable().optional().catch(null),
+	/**
+	 * The sender's own systemd unit and its manager, recorded with `cgroup` by
+	 * a host that gives the sender one. Lenient like `cgroup`.
+	 */
+	unit: z.string().min(1).nullable().optional().catch(null),
+	unitManager: z.enum(["system", "user"]).nullable().optional().catch(null),
+	/** Whether a pidfd bracketed the start-time read at launch. */
+	pidfd: z.boolean().optional().catch(false),
+	/**
+	 * The engine session this sender was started for: the engine's session id,
+	 * scoped by the engine unit's InvocationID and main PID. Written after the
+	 * engine confirms the start, and only for a sender with its own unit.
+	 */
+	engineSession: z
+		.object({
+			invocation: z.string().regex(/^[0-9a-f]{32}$/),
+			mainPid: z.number().int().positive(),
+			sessionId: z.string().min(1),
+		})
+		.nullable()
+		.optional()
+		.catch(null),
 	argsDigest: z.string(),
 	statsFile: z.string(),
 	controlSocket: z.string(),

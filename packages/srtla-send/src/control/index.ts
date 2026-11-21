@@ -113,6 +113,15 @@ export const senderCapabilitiesSchema = z.object({
 	control_socket_jsonrpc: z.boolean(),
 	conn_timeout_ms: z.boolean(),
 	modes: z.array(z.string()),
+	/** Required binding (`--require-bind-map`); absent on builds without it. */
+	bind_map_required: z.boolean().optional(),
+	/** Validated empty-map withdrawal in required mode. */
+	bind_map_required_empty_reload: z.boolean().optional(),
+	/**
+	 * Required-binding contract revision; 0 or absent means unsupported. From
+	 * revision 2 the stats report the applied publication identity.
+	 */
+	bind_map_contract: z.number().int().min(0).optional(),
 });
 
 /**
@@ -180,6 +189,19 @@ export const senderLinkStatsSchema = z.object({
 	quality_multiplier: z.number(),
 });
 
+/**
+ * A bind-map publication identity as the sender reports it (contract 2 and
+ * later): the sidecar generation and the SHA-256 of the IP list it names.
+ */
+export const senderBindMapIdentitySchema = z.object({
+	generation: z.number().int().positive(),
+	ips_file_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export type SenderBindMapIdentity = z.output<
+	typeof senderBindMapIdentitySchema
+>;
+
 export const senderStatsSchema = z.object({
 	mode: z.string(),
 	quality_enabled: z.boolean().optional(),
@@ -189,6 +211,13 @@ export const senderStatsSchema = z.object({
 	links: z.array(senderLinkStatsSchema),
 	bind_map_status: bindMapStatusSchema.optional(),
 	disposition: bindMapDispositionSchema.optional(),
+	/**
+	 * The publication the sender has applied. Optional: only a contract-2
+	 * sender reports it, and absent means the sender cannot say.
+	 */
+	bind_map_applied: senderBindMapIdentitySchema.optional(),
+	/** A publication read but not yet applied. Intent, never acknowledgement. */
+	bind_map_pending: senderBindMapIdentitySchema.optional(),
 });
 
 export type SenderLinkStats = z.output<typeof senderLinkStatsSchema>;
@@ -297,6 +326,13 @@ export interface ControlClientOptions {
 	socketPath: string;
 	/** Per-request timeout in ms (default: 5000). */
 	timeoutMs?: number;
+	/**
+	 * Called with the connected socket's file descriptor before any request is
+	 * written. A false answer, a throw or a socket without a descriptor closes
+	 * the connection and resolves `null`, so nothing is ever read from a peer
+	 * the caller did not accept (for example by its SO_PEERCRED PID).
+	 */
+	verifyPeer?: (fd: number) => boolean | Promise<boolean>;
 }
 
 export class ControlRpcError extends Error {
@@ -486,11 +522,12 @@ function isMethodNotFound(error: unknown): boolean {
 export async function createControlClient(
 	options: ControlClientOptions,
 ): Promise<ControlClient | null> {
-	const { socketPath, timeoutMs = 5000 } = options;
+	const { socketPath, timeoutMs = 5000, verifyPeer } = options;
 
 	let conn: LineConnection | null = null;
+	let socket: Awaited<ReturnType<typeof Bun.connect>> | null = null;
 	try {
-		const socket = await Bun.connect({
+		socket = await Bun.connect({
 			unix: socketPath,
 			socket: {
 				data(_socket, chunk) {
@@ -507,6 +544,21 @@ export async function createControlClient(
 		conn = new LineConnection(socket);
 	} catch {
 		return null;
+	}
+	if (verifyPeer) {
+		// Bun's socket carries its descriptor at runtime; the typings omit it.
+		const fd = (socket as unknown as { fd?: unknown }).fd;
+		let accepted = false;
+		try {
+			accepted =
+				typeof fd === "number" && fd >= 0 && (await verifyPeer(fd)) === true;
+		} catch {
+			accepted = false;
+		}
+		if (!accepted) {
+			conn.close();
+			return null;
+		}
 	}
 
 	const open = conn;

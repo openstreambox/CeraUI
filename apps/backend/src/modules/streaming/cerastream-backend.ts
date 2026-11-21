@@ -194,10 +194,15 @@ import type {
 	BackendErrorListener,
 	BitrateParams,
 	EngineRuntimeState,
+	EngineSessionEvidence,
 	EngineTelemetry,
 	StreamingBackend,
 	StreamRunOptions,
 } from "./streaming-backend.ts";
+
+/** Bound on the one read-only session-id question sessionEvidence() asks. */
+const ENGINE_SESSION_IDENTITY_TIMEOUT_MS = 1_000;
+
 import { PROCESS_ERROR_CODES } from "./streamloop/process-error-patterns.ts";
 
 const CERASTREAM_PIPELINE_PATH = "/tmp/cerastream-pipeline.txt";
@@ -812,6 +817,39 @@ export class CerastreamBackend implements StreamingBackend {
 	/** Only the unchanged client that acknowledged our Start is session proof. */
 	ownsLaunchedSession(): boolean {
 		return this.active && this.launchedSessionCurrent?.() === true;
+	}
+
+	/**
+	 * Read only. The state is the last status the current session connection
+	 * delivered; the session id is asked once on that same connection, so both
+	 * describe the engine process that connection reaches. No connect, no
+	 * subscription, and a failed question is not treated as connection loss.
+	 */
+	async sessionEvidence(): Promise<EngineSessionEvidence> {
+		const client = this.client;
+		const evidence = this.runtimeEvidence;
+		const state = evidence?.current() ? evidence.state : "unknown";
+		if (client === undefined || !this.active) return { state, sessionId: null };
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const snapshot = await Promise.race([
+				client.listSwitchTargets(),
+				new Promise<never>((_resolve, reject) => {
+					timer = this.deps.scheduleTimeout(
+						() => reject(new Error("session_identity_timeout")),
+						ENGINE_SESSION_IDENTITY_TIMEOUT_MS,
+					);
+				}),
+			]);
+			const id = snapshot.session_id;
+			return this.client === client && typeof id === "string" && id.length > 0
+				? { state, sessionId: id }
+				: { state, sessionId: null };
+		} catch {
+			return { state, sessionId: null };
+		} finally {
+			if (timer !== undefined) this.deps.cancelTimeout(timer);
+		}
 	}
 	private audioMixInputs: Array<AudioInputConfig & { id: string }> | undefined;
 	private clientEpoch = 0;

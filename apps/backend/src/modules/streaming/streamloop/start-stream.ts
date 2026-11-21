@@ -40,6 +40,7 @@ import { getLastCapabilities } from "../capabilities.ts";
 import { SRTLA_LISTEN_PORT } from "../constants.ts";
 import {
 	observeSafely,
+	recordEngineSession,
 	recordSenderIntent,
 	recordSenderStarted,
 	senderPaths,
@@ -61,6 +62,7 @@ import {
 	recentRelaySession,
 	relaySessionKey,
 } from "../recent-relay-session.ts";
+import { readEngineSessionIdentity } from "../sender-invocation.ts";
 import { getLastPublishedBond } from "../srtla.ts";
 import { StreamStartFailure } from "../start-failure-taxonomy.ts";
 import { assertStreamLaunchOwnership } from "../stream-launch-ownership.ts";
@@ -73,10 +75,12 @@ import { spawnStreamingLoop, stopProcessAndWait } from "./process-runner.ts";
 interface StartStreamBackend {
 	setBitrate: ReturnType<typeof getStreamingBackend>["setBitrate"];
 	start: ReturnType<typeof getStreamingBackend>["start"];
+	sessionEvidence?: ReturnType<typeof getStreamingBackend>["sessionEvidence"];
 }
 
 export interface StartStreamDeps {
 	readonly recordSenderIntent: typeof recordSenderIntent;
+	readonly recordEngineSession: typeof recordEngineSession;
 	readonly getStreamingBackend: () => StartStreamBackend;
 	readonly spawnStreamingLoop: typeof spawnStreamingLoop;
 	readonly startLinkTelemetry: typeof startLinkTelemetry;
@@ -86,6 +90,7 @@ export interface StartStreamDeps {
 
 const defaultStartStreamDeps: StartStreamDeps = {
 	recordSenderIntent,
+	recordEngineSession,
 	getStreamingBackend,
 	spawnStreamingLoop,
 	startLinkTelemetry,
@@ -377,6 +382,22 @@ export async function startStream(
 		}
 		throw error;
 	}
+
+	// Record the engine session this sender serves. Not awaited: a sender with
+	// its own unit is the only one recorded, the record write is fenced by the
+	// sender's lifetime, and nothing about the start waits on it.
+	const started = lifetime;
+	if (started)
+		void observeSafely(() =>
+			startStreamDeps.recordEngineSession(started, () =>
+				readEngineSessionIdentity(async () => {
+					const evidence = await startStreamDeps
+						.getStreamingBackend()
+						.sessionEvidence?.();
+					return evidence?.sessionId ?? null;
+				}),
+			),
+		);
 
 	recentRelaySession.valid(relaySessionKey(srtlaAddr, srtlaPort, streamid));
 	return { success: true };
