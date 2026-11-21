@@ -22,10 +22,8 @@ import type { MessageSocket } from "../modules/ui/message-socket.ts";
 import * as websocket from "../modules/ui/websocket-server.ts";
 import { handleWifi, setWifiJoinNmcliRunner } from "../modules/wifi/wifi.ts";
 import {
-	addWifiInterface,
 	getWifiInterfacesByMacAddress,
 	handleWifiMonitorEvent,
-	removeWifiInterface,
 } from "../modules/wifi/wifi-connections.ts";
 import {
 	getWifiIdToMacAddress,
@@ -41,6 +39,7 @@ import {
 	WIFI_DIVERSITY_TICK_MS,
 	WifiNetworkDiversity,
 } from "../modules/wifi/wifi-network-diversity.ts";
+import { seedWifiRadios } from "./helpers/wifi-verified-radios.ts";
 
 const A = "02:00:00:00:a0:01";
 const B = "02:00:00:00:b0:02";
@@ -74,7 +73,8 @@ function radio(key: string, ifname: string, uuids: string[]): DiversityRadio {
 		const ssid = SSID_OF[uuid] as string;
 		savedAll[ssid] = [...(savedAll[ssid] ?? []), uuid];
 	}
-	return { key, ifname, savedAll };
+	// A fixture radio's physical identity, MAC and owner lock coincide.
+	return { id: key, mac: key, lock: key, ifname, savedAll };
 }
 
 /* A fake NetworkManager with two radios on ifnames wlA and wlB. */
@@ -307,8 +307,23 @@ describe("never a move that gains nothing", () => {
 			saved: { [N1]: one, [N2]: two },
 			savedAll: { [N1]: [one], [N2]: [two] },
 		});
-		addWifiInterface(A, row(0, "wlA", A1, A1, A2));
-		addWifiInterface(B, row(1, "wlB", B2, B1, B2));
+		const seeded = await seedWifiRadios();
+		await seeded.publish([
+			{
+				ifname: "wlA",
+				mac: A,
+				ifindex: 21,
+				phy: 1,
+				row: row(0, "wlA", A1, A1, A2),
+			},
+			{
+				ifname: "wlB",
+				mac: B,
+				ifindex: 22,
+				phy: 2,
+				row: row(1, "wlB", B2, B1, B2),
+			},
+		]);
 		try {
 			const live = () => {
 				const out: DiversityRadio[] = [];
@@ -320,6 +335,8 @@ describe("never a move that gains nothing", () => {
 				}
 				return out;
 			};
+			// Both verified radios are projected, so the assertion below is not vacuous.
+			expect(live().map((r) => r.mac)).toEqual([A, B]);
 			const w = new World(live);
 			w.mark(A1, B2);
 			w.onAir({ [N1]: 70, [N2]: 70 });
@@ -343,8 +360,7 @@ describe("never a move that gains nothing", () => {
 			expect(w.actionsOnly()).toEqual([]);
 		} finally {
 			for (const spy of spies) spy.mockRestore();
-			removeWifiInterface(A);
-			removeWifiInterface(B);
+			await seeded.restore();
 		}
 	});
 
@@ -765,33 +781,43 @@ describe("wiring", () => {
 		};
 	}
 
-	test("a station radio is projected by key and ifname", () => {
-		expect(diversityRadioOf(A, iface())).toEqual({
-			key: A,
+	let seeded: Awaited<ReturnType<typeof seedWifiRadios>>;
+	beforeEach(async () => {
+		seeded = await seedWifiRadios();
+	});
+	afterEach(async () => {
+		await seeded.restore();
+	});
+	const publish = (row: Partial<WifiInterface>) =>
+		seeded.publish([
+			{ ifname: "wlx0", mac: A, ifindex: 3, phy: 0, row: iface(row) },
+		]);
+
+	test("a station radio is projected by physical identity, MAC, owner and ifname", async () => {
+		const rows = await publish({});
+		expect(diversityRadioOf(A, rows[A] as WifiInterface)).toEqual({
+			id: `${A}/3:0:/sys/devices/equivalence/phy0`,
+			mac: A,
+			lock: A,
 			ifname: "wlx0",
 			savedAll: { [N1]: [A1], [N2]: [A2] },
+			admission: expect.objectContaining({ row: rows[A], owner: A }),
 		});
+		// Only the exact registry object the identity names is projected.
+		expect(diversityRadioOf(A, iface())).toBeUndefined();
 	});
 
-	test("radios running a hotspot, alone or concurrently, are exempt", () => {
-		expect(
-			diversityRadioOf(
-				A,
-				iface({
-					activeMode: "ap",
-					hotspot: { conn: "hs" },
-				} as unknown as Partial<WifiInterface>),
-			),
-		).toBeUndefined();
-		expect(
-			diversityRadioOf(
-				A,
-				iface({
-					hotspot: { conn: "hs" },
-					concurrentHotspot: { ifname: "clap-wlx0", activeConn: "hs" },
-				} as unknown as Partial<WifiInterface>),
-			),
-		).toBeUndefined();
+	test("radios running a hotspot, alone or concurrently, are exempt", async () => {
+		for (const row of [
+			{ activeMode: "ap", hotspot: { conn: "hs" } },
+			{
+				hotspot: { conn: "hs" },
+				concurrentHotspot: { ifname: "clap-wlx0", activeConn: "hs" },
+			},
+		] as unknown as Partial<WifiInterface>[]) {
+			const rows = await publish(row);
+			expect(diversityRadioOf(A, rows[A] as WifiInterface)).toBeUndefined();
+		}
 	});
 
 	test("device links come from NetworkManager's device table", () => {
@@ -818,7 +844,9 @@ describe("join and connect record the operator's choice", () => {
 	// The choice is recorded after the reply; let its reads and writes settle.
 	const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
-	beforeEach(() => {
+	let seeded: Awaited<ReturnType<typeof seedWifiRadios>>;
+
+	beforeEach(async () => {
 		writes.length = 0;
 		const reply = Promise.withResolvers<void>();
 		replied = reply.promise;
@@ -827,15 +855,24 @@ describe("join and connect record the operator's choice", () => {
 			[A1]: String(MARK),
 			[A2]: "0",
 		};
-		addWifiInterface(A, {
-			id: 7,
-			ifname: "wlx7",
-			conn: A1,
-			hw: "Fixture",
-			available: new Map(),
-			saved: { [N1]: A1, [N2]: A2 },
-			savedAll: { [N1]: [A1], [N2]: [A2] },
-		});
+		seeded = await seedWifiRadios();
+		await seeded.publish([
+			{
+				ifname: "wlx7",
+				mac: A,
+				ifindex: 7,
+				phy: 7,
+				row: {
+					id: 7,
+					ifname: "wlx7",
+					conn: A1,
+					hw: "Fixture",
+					available: new Map(),
+					saved: { [N1]: A1, [N2]: A2 },
+					savedAll: { [N1]: [A1], [N2]: [A2] },
+				},
+			},
+		]);
 		getWifiIdToMacAddress()[7] = A;
 		spies.push(
 			spyOn(nm, "nmConnect").mockResolvedValue(true),
@@ -864,10 +901,10 @@ describe("join and connect record the operator's choice", () => {
 		);
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		setWifiJoinNmcliRunner(null);
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		removeWifiInterface(A);
+		await seeded.restore();
 		delete getWifiIdToMacAddress()[7];
 	});
 
