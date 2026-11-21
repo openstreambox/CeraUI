@@ -17,7 +17,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { ALL_LOCALES, readRenderedOracle } from "../../../../packages/i18n/tests/helpers/catalog";
+import { ALL_LOCALES, readCatalog, readRenderedOracle } from "../../../../packages/i18n/tests/helpers/catalog";
 
 import { FEDERATION_ABI_VERSION } from "../../src/lib/federation/host-contract";
 import type {
@@ -367,5 +367,39 @@ describe("federation save-failure surface", () => {
 		expect(document.body.textContent ?? "").toContain(expected);
 
 		await handle.destroy();
+	});
+});
+
+describe("federation server bundle — relay validation", () => {
+	// The stage labels are reached only through a computed key
+	// (`settings.validateStages.<stage>`), so this is the path a pruned catalog
+	// would break first.
+	it.each(ALL_LOCALES)("localizes the failed DNS stage from a host response in %s", async (locale) => {
+		const expected = readCatalog(locale)["settings.validateStages.dns"];
+		let calls = 0;
+		const module = await loadEntry("server");
+		const { handle } = await mountInto(module, {
+			host: hostAdapter({
+				validateRelay: async () => {
+					calls += 1;
+					return { valid: false, stage: "dns", reason: "Host validation fixture" } as never;
+				},
+			}),
+			config: { srtla_addr: "receiver.example", srtla_port: 5000 } as FederationMountOptions["config"],
+			locale,
+		});
+		try {
+			const button = document.querySelector<HTMLButtonElement>("#relay-validate");
+			expect(button?.disabled).toBe(false);
+			button?.click();
+			await settle();
+			expect(calls).toBe(1);
+			const label = document.querySelector('[data-stage="dns"]')?.textContent?.trim();
+			expect(typeof expected).toBe("string");
+			expect(label).toBe(expected);
+			expect(label).not.toBe("settings.validateStages.dns");
+		} finally {
+			await handle.destroy();
+		}
 	});
 });

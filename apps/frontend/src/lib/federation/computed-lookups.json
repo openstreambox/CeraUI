@@ -1,10 +1,15 @@
 {
-	"$comment": "Every message lookup in the federation bundles whose key is computed, with the key families it can produce. Maintained by hand: vite.federation-catalog.ts fails the build on an undeclared or stale lookup, and the generator never writes this file.",
+	"$comment": "Every message lookup in the federation bundles that the literal key scan cannot account for: a computed key, the facade renamed or imported as a namespace, or the facade handed to another function. Each names the key families it can produce. Maintained by hand: vite.federation-catalog.ts fails the build on an undeclared or stale entry, and the generator never writes this file.",
 	"lookups": [
 		{
 			"site": "apps/frontend/src/lib/components/streaming/ValidationAdapter.ts t(AUDIO_CAP_LABEL_KEY)",
 			"families": [],
 			"why": "A constant defined as a key literal in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/federation/encoder-entry.ts passes m: toast.error(encoderSaveErrorMessage(result.error, m));",
+			"families": [],
+			"why": "encoderSaveErrorMessage(error, msg) only reads key literals."
 		},
 		{
 			"site": "apps/frontend/src/lib/helpers/PipelineHelper.ts t(source.labelKey)",
@@ -47,9 +52,54 @@
 			"why": "Filled from a literal key table in the same module."
 		},
 		{
+			"site": "apps/frontend/src/lib/stores/notifications.svelte.ts passes m: active = pushNotification(active, notification, m, Date.now());",
+			"families": [],
+			"why": "Renders backend notification keys. The hosted entries never start the device notification subscription, so nothing reaches this store in a federation bundle; notification copy is the SPA's."
+		},
+		{
+			"site": "apps/frontend/src/lib/stores/notifications.svelte.ts passes m: active = replayNotification(active, notification, m, Date.now());",
+			"families": [],
+			"why": "As pushNotification: no notification subscription in a hosted dialog."
+		},
+		{
 			"site": "apps/frontend/src/lib/streaming/sourceSummary.ts t(entry.labelKey)",
 			"families": ["audio.sources", "settings.sources"],
 			"why": "Source summary entries carry a backend or pseudo-source label key."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/AudioDialog.svelte passes m: backendError = audioBackendSaveErrorMessage(result.error, m);",
+			"families": [],
+			"why": "audioBackendSaveErrorMessage(error, msg) only reads key literals."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/AudioDialog.svelte passes t: resolvedAudioLabel({ asrc: activeAudioSource }, getStatus(), audioSourceEntries, t),",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/AudioDialog.svelte passes t: return activeAudioEntry ? audioSourceLabel(activeAudioEntry, t) : activeAudioSource;",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte passes t: <span class=\"truncate text-sm font-medium\">{sourceLabel(activeSource, t)}</span>",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte passes t: <span>{getHardwareLabel(hardware, t)}</span>",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte passes t: const probedCaps = $derived(probedCapsFromSources(sourcesMessage, t));",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte passes t: {getSourceLabel(uvc.sourceKind, t)} · {uvc.displayName}",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
 		},
 		{
 			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte t(copy.key, copy.params)",

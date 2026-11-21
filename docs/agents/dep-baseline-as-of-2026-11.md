@@ -156,7 +156,7 @@ The November 9 held-package retry corrects product accessibility gaps:
 
 - **The federation catalog is scoped to the keys the bundles render.** Since
   November 21, 2026 toast-host carries 324 keys instead of 2,696 and its budget
-  is enforced on every PR, as detailed below. `TD-federation-i18n-catalog-size`
+  is enforced on every code-changing PR, as detailed below. `TD-federation-i18n-catalog-size`
   in `docs/TECHNICAL_DEBT.md` is resolved.
 - **The dependency-refresh visual comparison remains historical.**
   Functional E2E still excludes `@visual`; the later
@@ -240,10 +240,14 @@ tree-shaken federation code names (exact literals plus template heads such as
 sources that arrive as data, such as source descriptors' `unavailableReason`
 (`live.education.reason.pipelineNotOffered`), kept when the bundled code reads
 their family (`live.education.reason`). Backend notification copy and template
-heads no dialog renders stay out. A lookup whose key the code computes
-(`t(option.reason)`, `m[key]`) must be declared by hand in
-`src/lib/federation/computed-lookups.json` with the key families it can produce,
-and every key of those families ships. After bundling, the plugin re-derives the
+heads no dialog renders stay out. Every lookup the literal scan cannot account
+for must be declared by hand in `src/lib/federation/computed-lookups.json` with
+the key families it can produce, and every key of those families ships: a
+computed key (`t(option.reason)`, `m[key]`, `t?.(key)`, a concatenated or
+non-dot-headed template argument), the facade imported under another name or as
+a namespace, or the facade handed to another function. A string literal counts
+only when it is the whole argument, and a template only when it is a key or its
+static head ends in a dot. After bundling, the plugin re-derives the
 list and fails the build on a missing or stale key, or on an undeclared or stale
 computed lookup (also in write mode, so regenerating cannot bless one);
 `bun run --filter frontend generate:federation-catalog` rewrites it. The built

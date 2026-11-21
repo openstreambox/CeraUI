@@ -12,7 +12,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import {
 	ALL_LOCALES,
@@ -93,14 +93,23 @@ function inputSets(key: string, params: ReturnType<typeof readOracleParams>) {
 }
 
 describe("federation registry — the BUILT toast-host chunk", () => {
-	it("renders every listed key exactly as the compiled catalog does, in every locale", async () => {
-		const listed = readFederationCatalogKeys();
-		const audio = (await import(pathToFileURL(join(OUTPUT, "audio.js")).href)) as FederationModule;
-		const compiled = (await import(
+	let audio: FederationModule;
+	let compiled: Record<string, Message>;
+	let resolveKey: Resolve;
+
+	// Each test can run alone: load an entry (it registers the catalog at module
+	// scope), put the runtime in English, then find the resolver.
+	beforeAll(async () => {
+		audio = (await import(pathToFileURL(join(OUTPUT, "audio.js")).href)) as FederationModule;
+		compiled = (await import(
 			pathToFileURL(join(FEDERATION_PARAGLIDE_OUTDIR, "messages.js")).href
 		)) as Record<string, Message>;
-		const resolveKey = await builtResolver(compiled);
+		await useLocale(audio, "en");
+		resolveKey = await builtResolver(compiled);
+	}, 60_000);
 
+	it("renders every listed key exactly as the compiled catalog does, in every locale", async () => {
+		const listed = readFederationCatalogKeys();
 		const problems: string[] = [];
 		let frozen = 0;
 		for (const locale of ALL_LOCALES) {
@@ -132,10 +141,6 @@ describe("federation registry — the BUILT toast-host chunk", () => {
 	}, 60_000);
 
 	it("echoes every unlisted key of the registered namespaces, so the pruning is real", async () => {
-		const compiled = (await import(
-			pathToFileURL(join(FEDERATION_PARAGLIDE_OUTDIR, "messages.js")).href
-		)) as Record<string, Message>;
-		const resolveKey = await builtResolver(compiled);
 		const listed = new Set(readFederationCatalogKeys());
 		const namespaces = new Set([...listed].map((key) => key.slice(0, key.indexOf("."))));
 		const unlisted = readCatalogKeys().filter(

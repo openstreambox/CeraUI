@@ -204,6 +204,73 @@ describe("computedLookups", () => {
 	});
 });
 
+describe("computedLookups: ways around the literal scan", () => {
+	const IMPORT =
+		'import { m, resolveMessageKey } from "@ceraui/i18n/svelte";\n';
+
+	it("reports the facade imported under another name or as a namespace", () => {
+		expect(
+			computedLookups(
+				'import { resolveMessageKey as translate } from "@ceraui/i18n/svelte";\ntranslate(key);',
+			),
+		).toEqual(["alias resolveMessageKey as translate"]);
+		expect(
+			computedLookups(
+				'import * as i18n from "@ceraui/i18n/svelte";\ni18n.t(key);',
+			),
+		).toEqual(['namespace import * as i18n from "@ceraui/i18n/svelte"']);
+	});
+
+	it("reports a local copy under another name and the facade handed to a function", () => {
+		expect(
+			computedLookups(`${IMPORT}const translate = resolveMessageKey;`),
+		).toEqual(["alias resolveMessageKey as translate"]);
+		expect(computedLookups(`${IMPORT}label(source, m);`)).toEqual([
+			"passes m: label(source, m);",
+		]);
+	});
+
+	it("accepts a local copy under a lookup name and keeps scanning calls through it", () => {
+		expect(
+			computedLookups(`${IMPORT}const t = resolveMessageKey;\nt("live.a");`),
+		).toEqual([]);
+		expect(
+			computedLookups(`${IMPORT}const t = resolveMessageKey;\nt(key);`),
+		).toEqual(["t(key)"]);
+	});
+
+	it("reports optional calls, concatenated literals and templates without a dot-terminated head", () => {
+		expect(
+			computedLookups(
+				[
+					"t?.(key);",
+					't("settings.validateStages" + "." + stage);',
+					// biome-ignore lint/suspicious/noTemplateCurlyInString: source text holding a template literal
+					"t(`settings.validateStages${sep}${stage}`);",
+				].join("\n"),
+			),
+		).toEqual([
+			't("settings.validateStages" + "." + stage)',
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: source text holding a template literal
+			"t(`settings.validateStages${sep}${stage}`)",
+			"t?.(key)",
+		]);
+	});
+
+	it("ignores names that are not bound to the facade", () => {
+		expect(
+			computedLookups(
+				"const lerp = (a, b, t) => a + (b - a) * t;\nreturn { t };",
+			),
+		).toEqual([]);
+		expect(
+			computedLookups(
+				'import type { MessageFn } from "@ceraui/i18n/svelte";\nuse(m);',
+			),
+		).toEqual([]);
+	});
+});
+
 describe("committed computed-lookup declarations", () => {
 	it("give every lookup a reason and families that exist in the catalog", () => {
 		const catalog = readCatalogKeys();
