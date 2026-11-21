@@ -61,6 +61,10 @@ export async function buildBundle(
 		bootFields.set(boot, boot.bootId);
 		if (boot.versions) bootFields.set(boot.versions, boot.bootId);
 	}
+	for (const boot of snapshot.state?.boots ?? []) {
+		if (snapshot.journalBoots.includes(boot.bootId))
+			bootFields.set(boot, boot.bootId);
+	}
 	for (const boot of snapshot.bootRecords) {
 		bootFields.set(boot, boot.bootId);
 		if (boot.versions) bootFields.set(boot.versions, boot.bootId);
@@ -203,10 +207,30 @@ export async function buildBundle(
 		}
 		return null;
 	}
+	/**
+	 * The device state is a second allowlisted settings record, so the manifest
+	 * keeps the section list every released viewer accepts. It is optional: a
+	 * record that would not pass the final inspection (a held secret equal to one
+	 * of its keys, for example) is left out instead of refusing the bundle.
+	 */
+	function stateRecord(): Array<readonly [Section, Record<string, unknown>]> {
+		if (!snapshot.state) return [];
+		const payload = { device: snapshot.state };
+		try {
+			redactor.structured(
+				`${inspect({ section: "settings", ...payload }).text}\n`,
+			);
+		} catch (error) {
+			if (error instanceof BundleReadError) return [];
+			throw error;
+		}
+		return [["settings", payload]];
+	}
 	const prelude: Array<readonly [Section, Record<string, unknown>]> = [
 		["versions", { exportedBy: snapshot.exportedBy }],
 		...snapshot.boots.map((boot) => ["versions", boot] as const),
 		["settings", snapshot.settings],
+		...stateRecord(),
 		...snapshot.events.map((event) => ["events", { event }] as const),
 		...snapshot.bootRecords.map((boot) => ["events", { boot }] as const),
 	];

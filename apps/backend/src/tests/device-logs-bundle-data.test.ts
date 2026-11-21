@@ -3,6 +3,7 @@ import { updateSettingsSchema } from "@ceraui/rpc/schemas";
 import { MOCK_DEVICE_STATS } from "../mocks/providers/device-stats.ts";
 import * as config from "../modules/config.ts";
 import { collectBundleData } from "../modules/device-logs/bundle-data.ts";
+import * as bundleState from "../modules/device-logs/bundle-state.ts";
 import { buildRedactor } from "../modules/device-logs/redaction.ts";
 import * as stored from "../modules/events/store.ts";
 import * as credentials from "../modules/modems/modem-credentials.ts";
@@ -19,6 +20,7 @@ import * as hardware from "../modules/system/hardware-kind.ts";
 import * as updates from "../modules/system/update-settings.ts";
 import * as versions from "../modules/system/version-context.ts";
 import * as hotspots from "../modules/wifi/hotspot-credentials.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import { bootId, queryFixture } from "./helpers/device-query.ts";
 
 let fixture: ReturnType<typeof queryFixture>;
@@ -40,6 +42,12 @@ function restore(spy: { mockRestore(): void }) {
 }
 beforeEach(() => {
 	fixture = queryFixture();
+	// Host files (dpkg status, boot state, rauc) are never read by these tests.
+	restore(
+		spyOn(bundleState, "collectBundleState").mockResolvedValue(
+			bundleStateFixture(),
+		),
+	);
 	restore(spyOn(versions, "collectVersionContext").mockResolvedValue(current));
 	restore(
 		spyOn(updates, "readUpdateChannel").mockResolvedValue(
@@ -212,6 +220,41 @@ test.each([false, true])(
 			expect(facts).not.toContain(secret);
 	},
 );
+
+test("the device state is collected for the bundle's own boots and events", async () => {
+	const base = (await fixture.list())[0];
+	if (!base) throw new Error("missing base");
+	const prev = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+	const rows = [
+		{ ...base, current: true, index: 0 },
+		{ ...base, bootId: prev, index: -1 },
+	];
+	fixture.list.mockResolvedValue(rows);
+	const event = {
+		id: "event-one",
+		seq: 1,
+		bootId: prev,
+		at: 1,
+		code: "shutdown_requested",
+		family: "system" as const,
+		severity: "info" as const,
+		params: {},
+	};
+	spyOn(stored, "readEvents").mockReturnValue([event]);
+	const state = { ...bundleStateFixture(), uptimeSeconds: 42 };
+	const collect = spyOn(bundleState, "collectBundleState").mockResolvedValue(
+		state,
+	);
+	const result = await collectBundleData();
+	expect(collect).toHaveBeenCalledWith({
+		boots: rows,
+		journalBoots: [bootId, prev],
+		events: [event],
+		secrets: result.secrets,
+	});
+	expect(result.state).toEqual(state);
+	expect(result.events).toEqual([event]);
+});
 
 test("every held credential class including disconnected router logins is collected solely for redaction", async () => {
 	const result = await collectBundleData();
