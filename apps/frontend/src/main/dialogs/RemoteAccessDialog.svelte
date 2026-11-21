@@ -61,12 +61,24 @@ const keyLooksValid = $derived(TAILSCALE_AUTH_KEY_RE.test(authKey.trim()));
 // Say why Join is disabled once something has been typed.
 const showKeyHint = $derived(authKey.trim() !== '' && !keyLooksValid);
 
-// The viewer's clock, refreshed while the card is open.
+// While the card is open, ask the device again every minute: a status request
+// makes the backend re-read tailscaled and broadcast what changed (an expired
+// login, or an expiry an admin moved). The viewer's clock advances with it.
+const REFRESH_MS = 60_000;
+function refreshDevice() {
+	void Promise.resolve()
+		.then(() => rpc.status.getStatus())
+		.catch(() => {});
+}
 let now = $state(Date.now());
 $effect(() => {
 	if (!open) return;
 	now = Date.now();
-	const timer = setInterval(() => (now = Date.now()), 60_000);
+	refreshDevice();
+	const timer = setInterval(() => {
+		now = Date.now();
+		refreshDevice();
+	}, REFRESH_MS);
 	return () => clearInterval(timer);
 });
 
@@ -332,7 +344,7 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 			</div>
 		{/if}
 
-		{#if expiry?.kind === 'soon' || expiry?.kind === 'expired'}
+		{#if expiry?.kind === 'soon' || expiry?.kind === 'due' || expiry?.kind === 'expired'}
 			<div
 				class="border-status-warning/40 bg-status-warning/10 flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm"
 				data-expiry={expiry.kind}
@@ -341,9 +353,13 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 			>
 				<TriangleAlert aria-hidden="true" class="text-status-warning mt-0.5 size-4 shrink-0" />
 				<span class="min-w-0">
-					{expiry.kind === 'soon'
-						? m["advanced.remoteAccess.keyExpiresSoon"]({ date: expiryDate })
-						: m["advanced.remoteAccess.keyExpired"]({ date: expiryDate })}
+					{#if expiry.kind === 'soon'}
+						{m["advanced.remoteAccess.keyExpiresSoon"]({ date: expiryDate })}
+					{:else if expiry.kind === 'due'}
+						{m["advanced.remoteAccess.keyDue"]({ date: expiryDate })}
+					{:else}
+						{m["advanced.remoteAccess.keyExpired"]({ date: expiryDate })}
+					{/if}
 					{#if expiry.kind === 'expired' && status?.tailnet}
 						<span class="text-muted-foreground mt-1 block truncate font-mono text-xs">
 							{m["advanced.remoteAccess.network"]({ tailnet: status.tailnet })}

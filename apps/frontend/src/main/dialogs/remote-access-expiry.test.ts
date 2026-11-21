@@ -40,11 +40,16 @@ describe("remoteAccessExpiry", () => {
 			remoteAccessExpiry({ state: "connected", keyExpiry: iso(NOW + DAY) }, NOW)
 				?.kind,
 		).toBe("soon");
-		// tailscaled has not noticed yet: still a warning, not "expired"
+		// past by the viewer's clock but still connected: neither a future-tense
+		// warning nor "expired"; the card checks with the device
 		expect(
 			remoteAccessExpiry({ state: "connected", keyExpiry: iso(NOW - DAY) }, NOW)
 				?.kind,
-		).toBe("soon");
+		).toBe("due");
+		expect(
+			remoteAccessExpiry({ state: "connected", keyExpiry: iso(NOW) }, NOW)
+				?.kind,
+		).toBe("due");
 	});
 
 	it("an expired login is expired only once its date has passed, by the viewer clock", () => {

@@ -39,13 +39,17 @@ const DAY = 24 * 60 * 60 * 1000;
 const tailscaleJoin = vi.hoisted(() => vi.fn());
 const tailscaleSetEnabled = vi.hoisted(() => vi.fn());
 const tailscaleLogout = vi.hoisted(() => vi.fn());
+const getStatus = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 
 const KEY = "tskey-auth-kTEST0000CNTRL-0123456789abcdef";
 
 vi.mock("$lib/rpc/client", async (importOriginal) => ({
 	...(await importOriginal<typeof import("$lib/rpc/client")>()),
-	rpc: { system: { tailscaleJoin, tailscaleSetEnabled, tailscaleLogout } },
+	rpc: {
+		system: { tailscaleJoin, tailscaleSetEnabled, tailscaleLogout },
+		status: { getStatus },
+	},
 }));
 
 vi.mock("$lib/rpc/subscriptions.svelte", async () => {
@@ -79,6 +83,8 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+	getStatus.mockReset();
+	getStatus.mockResolvedValue({});
 	for (const fn of [tailscaleJoin, tailscaleSetEnabled, tailscaleLogout]) {
 		fn.mockReset();
 		fn.mockResolvedValue({ success: true });
@@ -188,6 +194,63 @@ describe("states", () => {
 		);
 		expect(expiry.textContent).toContain("tail1234.ts.net");
 		expect(screen.getByTestId("remote-access-join")).toBeTruthy();
+	});
+
+	it("a passed date on a connected card says it is checking, not that access lasts", async () => {
+		const at = new Date(Date.now() - 60_000);
+		await open({
+			state: "connected",
+			hostname: "studio-box",
+			keyExpiry: at.toISOString(),
+		});
+		const expiry = screen.getByTestId("remote-access-expiry");
+		expect(expiry.dataset.expiry).toBe("due");
+		expect(expiry.textContent).toContain(
+			m["advanced.remoteAccess.keyDue"]({ date: formatExpiryDate(at, "en") }),
+		);
+		expect(expiry.textContent).not.toContain(
+			m["advanced.remoteAccess.keyExpiresSoon"]({
+				date: formatExpiryDate(at, "en"),
+			}),
+		);
+	});
+
+	it("an open card asks the device again every minute and shows what it reports", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+		try {
+			const start = Date.now();
+			const at = new Date(start + 90_000);
+			await open({
+				state: "connected",
+				hostname: "studio-box",
+				keyExpiry: at.toISOString(),
+			});
+			await vi.waitFor(() => expect(getStatus).toHaveBeenCalledTimes(1));
+			expect(screen.getByTestId("remote-access-expiry").dataset.expiry).toBe(
+				"soon",
+			);
+			// the login expires; tailscaled now asks for a new one
+			vi.advanceTimersByTime(60_000);
+			await vi.waitFor(() => expect(getStatus).toHaveBeenCalledTimes(2));
+			vi.advanceTimersByTime(60_000);
+			await vi.waitFor(() => expect(getStatus).toHaveBeenCalledTimes(3));
+			expect(screen.getByTestId("remote-access-expiry").dataset.expiry).toBe(
+				"due",
+			);
+			publishTailscale({
+				state: "needs_key",
+				tailnet: "tail1234.ts.net",
+				keyExpiry: at.toISOString(),
+			});
+			await vi.waitFor(() =>
+				expect(stateText()).toContain(
+					m["advanced.remoteAccess.stateExpired"](),
+				),
+			);
+			expect(screen.getByTestId("remote-access-join")).toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("a device without a login shows no expiry or network", async () => {

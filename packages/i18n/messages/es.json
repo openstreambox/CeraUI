@@ -108,6 +108,7 @@
 	"advanced.remoteAccess.keyExpires": "El acceso caduca el {date}.",
 	"advanced.remoteAccess.keyExpiresSoon": "El acceso caduca el {date}. Para conservarlo, desactiva la caducidad de la clave de este dispositivo en la consola de administración de Tailscale.",
 	"advanced.remoteAccess.keyExpired": "El acceso caducó el {date}. Vuelve a unirte con una clave nueva.",
+	"advanced.remoteAccess.keyDue": "El acceso debía terminar el {date}. Consultando de nuevo al dispositivo…",
 	"advanced.remoteAccess.offBody": "Tailscale está detenido. Nadie puede llegar a este dispositivo desde fuera a través de él.",
 	"advanced.remoteAccess.needsKeyBody": "Pega una clave de autenticación de la consola de administración de Tailscale para unir este dispositivo a tu red.",
 	"advanced.remoteAccess.needsApprovalBody": "Unido. Un administrador de tu red de Tailscale todavía tiene que aprobar este dispositivo.",

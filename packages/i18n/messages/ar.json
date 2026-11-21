@@ -108,6 +108,7 @@
 	"advanced.remoteAccess.keyExpires": "تنتهي صلاحية الوصول في {date}.",
 	"advanced.remoteAccess.keyExpiresSoon": "تنتهي صلاحية الوصول في {date}. للاحتفاظ به، أوقف انتهاء صلاحية المفتاح لهذا الجهاز في لوحة إدارة Tailscale.",
 	"advanced.remoteAccess.keyExpired": "انتهت صلاحية الوصول في {date}. انضم مجددًا بمفتاح جديد.",
+	"advanced.remoteAccess.keyDue": "كان من المقرر أن ينتهي الوصول في {date}. جارٍ التحقق من الجهاز…",
 	"advanced.remoteAccess.offBody": "Tailscale متوقف. لا يمكن لأحد من الخارج الوصول إلى هذا الجهاز من خلاله.",
 	"advanced.remoteAccess.needsKeyBody": "الصق مفتاح مصادقة من لوحة إدارة Tailscale لضم هذا الجهاز إلى شبكتك.",
 	"advanced.remoteAccess.needsApprovalBody": "تم الانضمام. لا يزال على مسؤول شبكة Tailscale الموافقة على هذا الجهاز.",

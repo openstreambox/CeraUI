@@ -8,13 +8,15 @@ export const EXPIRES_SOON_MS = 30 * 24 * 60 * 60 * 1000;
  * box may boot with a wrong one):
  * - never: connected, and the login does not expire (tagged, or expiry off)
  * - later: connected, expiry more than EXPIRES_SOON_MS away
- * - soon: connected, expiry within EXPIRES_SOON_MS (or just passed while
- *   tailscaled has not noticed yet)
+ * - soon: connected, expiry within EXPIRES_SOON_MS
+ * - due: connected, but the date has passed by the viewer's clock: tailscaled
+ *   has not reported it yet, or one of the two clocks is off; the card asks
+ *   the device again
  * - expired: the device needs a new login because the old one expired
  */
 export type RemoteAccessExpiry =
 	| { kind: "never" }
-	| { kind: "later" | "soon" | "expired"; at: Date };
+	| { kind: "later" | "soon" | "due" | "expired"; at: Date };
 
 export function remoteAccessExpiry(
 	status: TailscaleStatus | undefined,
@@ -28,6 +30,7 @@ export function remoteAccessExpiry(
 		if (status.keyExpiry === undefined) return { kind: "never" };
 		if (at === undefined || time === undefined || Number.isNaN(time))
 			return undefined;
+		if (time <= now) return { kind: "due", at };
 		return { kind: time - now <= EXPIRES_SOON_MS ? "soon" : "later", at };
 	}
 	if (
