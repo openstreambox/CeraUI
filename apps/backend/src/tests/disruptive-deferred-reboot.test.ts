@@ -51,7 +51,7 @@ test("legacy completion reboot defers under unknown then executes after positive
 		updateStreamLifecycleState("idle");
 		await callbacks[0]?.();
 		// Then the deferred reboot is neither discarded nor falsely called refused.
-		expect(calls).toEqual(["reboot"]);
+		expect(calls).toEqual(["systemctl"]);
 		expect(broadcast).not.toHaveBeenCalled();
 	} finally {
 		broadcast.mockRestore();
@@ -81,7 +81,7 @@ test("legacy deferred completion never reboots during repeated live wakeups", as
 	updateStreamLifecycleState("idle");
 	await callbacks.shift()?.();
 	// Then only the idle recheck submits once.
-	expect(calls).toEqual(["reboot"]);
+	expect(calls).toEqual(["systemctl"]);
 	expect(callbacks.length).toBe(0);
 });
 
