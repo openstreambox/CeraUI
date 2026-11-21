@@ -356,11 +356,16 @@ export async function runModemStatusPoll(): Promise<void> {
 	const reset = await runUsbSpeedPreparation();
 	const automatic = await runAutomaticCarrierProfiles(reset);
 	await runCellularPreparation(undefined, reset);
-	const configured = [
+	const ready = [
 		...new Set([...automatic, ...(await runModemReadyActivations(reset))]),
 	];
 	// A bearer that is up but carries nothing; health probes already said so.
-	await runDeadBearerRecovery([...reset, ...configured]);
+	const configured = [
+		...new Set([
+			...ready,
+			...(await runDeadBearerRecovery([...reset, ...ready])),
+		]),
+	];
 	if (configured.length > 0) {
 		for (const id of configured) triggerGsmConnectionsReset(id);
 		broadcastModems(Object.fromEntries(configured.map((id) => [id, true])));

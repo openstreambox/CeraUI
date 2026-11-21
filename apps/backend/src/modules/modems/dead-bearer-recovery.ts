@@ -4,49 +4,84 @@
   A cellular bearer can stay "connected" in ModemManager and NetworkManager
   while no packet gets through: a stale gateway after a cell change, a carrier
   that stopped routing the session, an MTU or NAT state the network dropped.
-  Uplink health already notices (device-bound probes to the connectivity-check
-  address fail three rounds in a row and the link reads `down`), but nothing
-  acted on it: the link stayed in the bond and stayed dead until someone
-  replugged the modem. A NetworkManager down/up of the same profile brought
-  data back in 4.5–10 s on the bench, so that is the one action taken here.
+  Uplink health notices (device-bound probes to the connectivity-check address
+  fail and the link reads `down`), but nothing acted on it: the link stayed
+  dead until someone replugged the modem. A NetworkManager down/up of the same
+  profile is the one action taken here.
 
-  When a reconnect is due, all of these must hold:
+  The probe is HTTP to one address, so its failure is weaker evidence than the
+  link's own stream traffic. A reconnect is due only when all of these hold:
 
-  - the uplink-health record for the modem's interface is `down` and its
-    latest evidence is a failed active probe (`probe_failed`); address loss,
-    captive portals and passive congestion are other faults;
-  - NetworkManager reports the profile's device connected (state 100) and
-    ModemManager reports the modem registered or connected, so this is not a
-    bearer that already dropped (redial handles that) or a lost registration;
-  - the link has been down for at least 60 s while another uplink is up, which
-    shows the check address is reachable and the fault is on this path; with no
-    other uplink up the hold is 300 s, because a failed check then may be the
-    check address and not the modem;
-  - reconnects of one physical modem are spaced 60, 120, 240, 480, then 900 s
-    apart; the spacing resets once the link has read `up` for five minutes;
-  - the modem is not inhibited, not scanning, not being reset this poll, and
-    its mutation lease is free. Everything is read again under the lease.
+  - the profile is owned by cellular preparation (autoconnect `no` and a live
+    preparation grant): manual profiles stay with NetworkManager, and the
+    redial in `modem-ready-activation.ts` brings an owned profile back if the
+    reconnect's `up` fails;
+  - the modem has no active CLAT translator: an IPv6-only link is probed over
+    native IPv6 while its traffic rides the translator, so the probe says
+    nothing about it;
+  - the health record for the modem's interface is `down`, its latest
+    evidence is a failed probe, and at least DEAD_BEARER_MIN_FAILURES probes
+    in a row have failed since the last success;
+  - while a stream runs, the sender has no fresh row for this interface: a
+    link the sender is using and hearing back from is not dead, whatever the
+    probe says;
+  - NetworkManager reports the device connected (state 100) and ModemManager
+    the modem registered or connected;
+  - this module has seen the outage continuously for 60 s while an
+    independent uplink (another physical link, not a translator, tunnel or this
+    modem) is up, or for 300 s when none is; time is monotonic, never wall
+    clock;
+  - reconnects of one modem are spaced 60, 120, 240, 480, then 900 s apart and
+    no dial or reconnect of it ran in the last 60 s (one clock shared with the
+    redial); the spacing resets after five minutes up;
+  - the modem's background lease is free (never during replay, on a blocked
+    identity, or while a stream is being launched), and everything is read
+    again under it.
+
+  A failed `up` raises the modem's data-call warning; the redial picks the
+  profile up from NetworkManager state 30. No journal entry is written for
+  the down/up: after a crash between the two, first activation and the redial
+  both dial the owned profile again.
 */
 
 import { logger } from "../../helpers/logger.ts";
-import { nmConnect, nmDisconnect } from "../network/network-manager.ts";
+import {
+	clatTranslationForTun,
+	isClatTunName,
+} from "../network/clat-translation.ts";
+import {
+	nmConnect,
+	nmConnGetFields,
+	nmDisconnect,
+} from "../network/network-manager.ts";
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
+import { buildLinkTelemetry } from "../streaming/link-telemetry.ts";
+import { getIsStreaming } from "../streaming/streaming.ts";
+import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
 	readModemNmDeviceProp,
 	resolveModemNmDeviceForConnection,
 } from "./modem-nm-device.ts";
 import {
+	lastModemDialAt,
+	modemDialClock,
+	noteModemDial,
+} from "./modem-ready-activation.ts";
+import {
 	type ModemId,
 	readModemRegistrationState,
 } from "./modem-registration.ts";
-import { getModem, getModemIds } from "./modems-state.ts";
+import { getModem, getModemIds, setModem } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
-import { withModemMutation } from "./mutation-lease.ts";
+import { withBackgroundModemLease } from "./mutation-lease.ts";
 
 export const DEAD_BEARER_HOLD_MS = 60_000;
 export const DEAD_BEARER_ALONE_HOLD_MS = 300_000;
 export const DEAD_BEARER_STABLE_MS = 300_000;
+export const DEAD_BEARER_AFTER_DIAL_MS = 60_000;
+export const DEAD_BEARER_MIN_FAILURES = 6;
+export const DEAD_BEARER_TELEMETRY_FRESH_MS = 15_000;
 export const DEAD_BEARER_SPACING_MS = [
 	60_000, 120_000, 240_000, 480_000, 900_000,
 ] as const;
@@ -56,17 +91,28 @@ export interface DeadBearerMemory {
 	readonly reconnects: number;
 	readonly lastReconnect?: number;
 	readonly upSince?: number;
+	/** Monotonic time this module first saw the current outage. */
+	readonly downSince?: number;
 }
 
 export interface DeadBearerInput {
+	/** Monotonic milliseconds. */
 	readonly now: number;
 	readonly record: UplinkHealthRecord | undefined;
-	/** Another uplink reads `up` with fresh evidence. */
+	/** An independent uplink reads `up` with fresh evidence. */
 	readonly otherUplinkUp: boolean;
+	/** The profile is preparation-owned (autoconnect no + live grant). */
+	readonly owned: boolean;
+	/** The modem has an active CLAT translator. */
+	readonly translated: boolean;
+	/** The sender has a fresh row for this interface while streaming. */
+	readonly carryingStream: boolean;
 	/** NetworkManager device state code of the modem's profile. */
 	readonly nmState: string | undefined;
 	/** ModemManager `modem.generic.state`. */
 	readonly mmState: string | undefined;
+	/** Monotonic time of the last dial or reconnect of this modem. */
+	readonly lastDial: number | undefined;
 	readonly memory: DeadBearerMemory;
 }
 
@@ -79,40 +125,65 @@ export interface DeadBearerDecision {
 export function deadBearerSpacing(reconnects: number): number {
 	return (
 		DEAD_BEARER_SPACING_MS[
-			Math.min(reconnects, DEAD_BEARER_SPACING_MS.length - 1)
+			Math.min(Math.max(reconnects, 0), DEAD_BEARER_SPACING_MS.length - 1)
 		] ?? 900_000
 	);
+}
+
+function outageRecord(record: UplinkHealthRecord | undefined): boolean {
+	return (
+		record?.state === "down" &&
+		record.reason === "probe_failed" &&
+		record.probes.failures >= DEAD_BEARER_MIN_FAILURES
+	);
+}
+
+function without(
+	memory: DeadBearerMemory,
+	key: "downSince" | "upSince",
+): DeadBearerMemory {
+	const { [key]: _dropped, ...rest } = memory;
+	return rest;
 }
 
 /** Pure: what to do about one modem's path this poll. */
 export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	const { now, record } = input;
 	let memory = input.memory;
-	if (record?.state === "up" && record.staleAt > now) {
+	if (record?.state === "up") {
+		memory = without(memory, "downSince");
 		const upSince = memory.upSince ?? now;
 		memory =
 			now - upSince >= DEAD_BEARER_STABLE_MS
-				? { reconnects: 0, upSince, ...withLast(memory) }
+				? { ...memory, reconnects: 0, upSince }
 				: { ...memory, upSince };
 		return { action: "none", reason: "link up", memory };
 	}
-	if (memory.upSince !== undefined) {
-		const { upSince: _dropped, ...rest } = memory;
-		memory = rest;
-	}
-	if (record?.state !== "down" || record.reason !== "probe_failed")
-		return { action: "none", reason: "no failed-probe outage", memory };
-	if (record.staleAt <= now)
-		return { action: "none", reason: "health evidence stale", memory };
-	if (input.nmState !== "100")
-		return { action: "none", reason: "bearer not connected", memory };
+	memory = without(memory, "upSince");
+	const none = (reason: string): DeadBearerDecision => ({
+		action: "none",
+		reason,
+		memory: without(memory, "downSince"),
+	});
+	if (!input.owned) return none("profile not owned by preparation");
+	if (input.translated) return none("judged by its translator");
+	if (!outageRecord(record)) return none("no failed-probe outage");
+	if (input.carryingStream) return none("carrying stream traffic");
+	if (input.nmState !== "100") return none("bearer not connected");
 	if (input.mmState !== "registered" && input.mmState !== "connected")
-		return { action: "none", reason: "modem not registered", memory };
+		return none("modem not registered");
+	const downSince = memory.downSince ?? now;
+	memory = { ...memory, downSince };
 	const hold = input.otherUplinkUp
 		? DEAD_BEARER_HOLD_MS
 		: DEAD_BEARER_ALONE_HOLD_MS;
-	if (now - record.lastTransition < hold)
+	if (now - downSince < hold)
 		return { action: "wait", reason: "outage shorter than the hold", memory };
+	if (
+		input.lastDial !== undefined &&
+		now - input.lastDial < DEAD_BEARER_AFTER_DIAL_MS
+	)
+		return { action: "wait", reason: "dialled recently", memory };
 	if (
 		memory.reconnects > 0 &&
 		memory.lastReconnect !== undefined &&
@@ -132,23 +203,28 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	};
 }
 
-function withLast(memory: DeadBearerMemory): { lastReconnect?: number } {
-	return memory.lastReconnect === undefined
-		? {}
-		: { lastReconnect: memory.lastReconnect };
-}
-
 export interface DeadBearerDeps {
+	/** Monotonic milliseconds, the same base as the shared dial clock. */
 	readonly now: () => number;
 	readonly ids: () => readonly ModemId[];
 	readonly stableKey: typeof modemStableKeyForId;
 	readonly health: (iface: string) => UplinkHealthRecord | undefined;
 	readonly healthList: () => readonly UplinkHealthRecord[];
+	/** The physical modem interface a CLAT TUN translates for, if any. */
+	readonly clatParent: (iface: string) => string | undefined;
+	readonly streaming: () => boolean;
+	readonly telemetry: typeof buildLinkTelemetry;
+	/** Wall clock, only to compare with health and telemetry timestamps. */
+	readonly wallNow: () => number;
+	readonly readAutoconnect: (uuid: string) => Promise<string | undefined>;
+	readonly automaticReady: typeof automaticActivationReady;
 	readonly nmState: (uuid: string) => Promise<string | undefined>;
 	readonly mmState: typeof readModemRegistrationState;
+	readonly lastDial: (key: string) => number | undefined;
+	readonly noteDial: (key: string) => void;
 	readonly disconnect: (uuid: string) => Promise<unknown>;
 	readonly connect: (uuid: string, timeout: number) => Promise<boolean>;
-	readonly mutate: typeof withModemMutation;
+	readonly mutate: typeof withBackgroundModemLease;
 }
 
 async function readNmState(uuid: string): Promise<string | undefined> {
@@ -160,16 +236,26 @@ async function readNmState(uuid: string): Promise<string | undefined> {
 }
 
 const defaultDeps: DeadBearerDeps = {
-	now: Date.now,
+	now: modemDialClock,
 	ids: getModemIds,
 	stableKey: modemStableKeyForId,
 	health: (iface) => getUplinkHealthEngine().get(iface),
 	healthList: () => getUplinkHealthEngine().list(),
+	clatParent: (iface) =>
+		isClatTunName(iface) ? clatTranslationForTun(iface)?.parent : undefined,
+	streaming: getIsStreaming,
+	telemetry: buildLinkTelemetry,
+	wallNow: Date.now,
+	readAutoconnect: async (uuid) =>
+		(await nmConnGetFields(uuid, ["connection.autoconnect"] as const))?.[0],
+	automaticReady: automaticActivationReady,
 	nmState: readNmState,
 	mmState: readModemRegistrationState,
+	lastDial: lastModemDialAt,
+	noteDial: noteModemDial,
 	disconnect: nmDisconnect,
 	connect: nmConnect,
-	mutate: withModemMutation,
+	mutate: withBackgroundModemLease,
 };
 
 let deps = defaultDeps;
@@ -182,13 +268,36 @@ export function setDeadBearerDepsForTest(
 	memories.clear();
 }
 
-function otherUplinkUp(iface: string, now: number): boolean {
+/** Another physical uplink is up: not a translator, tunnel or this modem. */
+function independentUplinkUp(iface: string, wallNow: number): boolean {
 	return deps
 		.healthList()
 		.some(
 			(record) =>
-				record.iface !== iface && record.state === "up" && record.staleAt > now,
+				record.iface !== iface &&
+				record.kind !== "other" &&
+				!isClatTunName(record.iface) &&
+				deps.clatParent(record.iface) === undefined &&
+				record.state === "up" &&
+				record.staleAt > wallNow,
 		);
+}
+
+function translated(iface: string): boolean {
+	return deps
+		.healthList()
+		.some((record) => deps.clatParent(record.iface) === iface);
+}
+
+function carryingStream(iface: string, wallNow: number): boolean {
+	if (!deps.streaming()) return false;
+	const telemetry = deps.telemetry();
+	if (
+		!telemetry ||
+		wallNow - telemetry.lastReadMs >= DEAD_BEARER_TELEMETRY_FRESH_MS
+	)
+		return false;
+	return telemetry.links.some((link) => link.iface === iface && !link.stale);
 }
 
 /** Inputs read fresh; undefined when the modem is not a candidate at all. */
@@ -209,29 +318,39 @@ async function readInput(
 	)
 		return undefined;
 	const now = deps.now();
+	const wallNow = deps.wallNow();
 	const record = deps.health(modem.ifname);
 	const base = {
 		now,
 		record,
-		otherUplinkUp: otherUplinkUp(modem.ifname, now),
+		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
+		translated: translated(modem.ifname),
+		carryingStream: carryingStream(modem.ifname, wallNow),
+		lastDial: deps.lastDial(key),
 		memory,
 	};
-	// Only a path that health calls down needs the owner reads.
-	if (record?.state !== "down" || record.reason !== "probe_failed")
+	// Only a path that health calls dead needs the owner reads.
+	if (!outageRecord(record))
 		return {
 			uuid,
-			input: { ...base, nmState: undefined, mmState: undefined },
+			input: { ...base, owned: true, nmState: undefined, mmState: undefined },
 		};
-	const nmState = await deps.nmState(uuid);
-	const mmState = await deps.mmState(id);
-	return { uuid, input: { ...base, nmState, mmState } };
+	const owned =
+		(await deps.readAutoconnect(uuid))?.trim() === "no" &&
+		(await deps.automaticReady(uuid));
+	const nmState = owned ? await deps.nmState(uuid) : undefined;
+	const mmState = owned ? await deps.mmState(id) : undefined;
+	return { uuid, input: { ...base, owned, nmState, mmState } };
 }
 
-/** The status poll calls this after its reconcile lock is released. */
+/**
+ * The status poll calls this after its reconcile lock is released. Returns the
+ * modems whose data-call warning it raised, for the caller to broadcast.
+ */
 export async function runDeadBearerRecovery(
 	skip: readonly number[] = [],
 ): Promise<readonly ModemId[]> {
-	const reconnected: ModemId[] = [];
+	const changed: ModemId[] = [];
 	for (const id of deps.ids()) {
 		if (skip.includes(id)) continue;
 		const key = deps.stableKey(id);
@@ -252,6 +371,7 @@ export async function runDeadBearerRecovery(
 				const again = decideDeadBearer(fresh.input);
 				if (again.action !== "reconnect") return;
 				memories.set(key, again.memory);
+				deps.noteDial(key);
 				const iface = getModem(id)?.ifname;
 				logger.warn("modem bearer carries no traffic; reconnecting", {
 					id,
@@ -268,7 +388,16 @@ export async function runDeadBearerRecovery(
 					stableKey: key,
 					result,
 				});
-				reconnected.push(id);
+				const current = getModem(id);
+				if (
+					result === false &&
+					deps.stableKey(id) === key &&
+					current?.config?.conn === fresh.uuid &&
+					current.data_connection_failed !== true
+				) {
+					setModem(id, { ...current, data_connection_failed: true });
+					changed.push(id);
+				}
 			});
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
@@ -278,5 +407,5 @@ export async function runDeadBearerRecovery(
 			});
 		}
 	}
-	return reconnected;
+	return changed;
 }
