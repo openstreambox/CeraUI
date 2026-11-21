@@ -425,3 +425,98 @@ test("an unrelated same-byte rewrite during a rejected modify retires authority"
 		await f.restore();
 	}
 });
+
+test("an unreadable NM secret never verifies a rollback", async () => {
+	const { f, uuid } = await runningAp();
+	try {
+		const original = readFileSync(f.nm.files.filename(uuid));
+		const psk = `${f.secret}-rotation`;
+		const loads = interceptLoads(async (load, apply) => {
+			if (load === 2) return { stdout: "", stderr: "" };
+			await apply();
+			throw new Error("first load applied but its reply was lost");
+		});
+		const platform = spyOn(exec, "execFileP").getMockImplementation();
+		if (!platform) throw new Error("Missing fake platform");
+		spyOn(exec, "execFileP").mockImplementation(async (bin, args, options) => {
+			if (
+				loads() === 2 &&
+				args?.includes("--get-values") &&
+				args.includes("802-11-wireless-security.psk")
+			)
+				throw new Error("show-secrets request failed");
+			return platform(bin, args, options);
+		});
+		const result = await rotatePsk(uuid, psk);
+		expect({
+			loads: loads(),
+			keyfileRestored: readFileSync(f.nm.files.filename(uuid)).equals(original),
+			nmStillNew:
+				f.settings.get(uuid)?.["802-11-wireless-security.psk"] === psk,
+			checked: result.checked,
+			rolledBack: f.logs.includes("NM profile write rolled back"),
+			retired: f.logs.includes("Wi-Fi profile authority retired"),
+		}).toEqual({
+			loads: 2,
+			keyfileRestored: true,
+			nmStillNew: true,
+			checked: false,
+			rolledBack: false,
+			retired: true,
+		});
+	} finally {
+		await f.restore();
+	}
+});
+
+test("a dispatch never takes the rollback receipt of another writer", async () => {
+	const { f, uuid } = await runningAp();
+	try {
+		const loads = interceptLoads(async (load, apply) => {
+			await apply();
+			if (load === 1)
+				throw new Error("first load applied but its reply was lost");
+			return { stdout: "", stderr: "" };
+		});
+		let enter = (): void => undefined;
+		let release = (): void => undefined;
+		const entered = new Promise<void>((resolve) => {
+			enter = resolve;
+		});
+		const released = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const rejected = runHotspotProfileOperation({
+			uuid,
+			kind: "modify",
+			fields: { "802-11-wireless.ssid": "New AP" },
+			run: async () => {
+				enter();
+				await released;
+				return false;
+			},
+		});
+		await entered;
+		let other: boolean;
+		try {
+			other = await nmConnSetFields(uuid, {
+				"802-11-wireless-security.psk": `${f.secret}-other-writer`,
+			});
+		} finally {
+			release();
+		}
+		expect({
+			other,
+			loads: loads(),
+			otherRolledBack: f.logs.includes("NM profile write rolled back"),
+			checked: (await rejected).checked,
+		}).toEqual({
+			other: false,
+			loads: 2,
+			otherRolledBack: true,
+			checked: false,
+		});
+	} finally {
+		await f.restore();
+	}
+});

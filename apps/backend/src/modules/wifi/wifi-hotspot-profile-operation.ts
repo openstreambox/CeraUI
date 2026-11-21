@@ -10,9 +10,9 @@ import {
 } from "../network/network-manager-profile-instance.ts";
 import { openNmProfileFile } from "../network/network-manager-profile-write.ts";
 import {
-	nmProfileWriteSerial,
+	type NmRollbackScope,
+	runInNmRollbackScope,
 	serializeNmProfileModify,
-	takeNmRollbackReceipt,
 } from "../network/network-manager-secret.ts";
 import {
 	clearHotspotProfileCreation,
@@ -203,12 +203,14 @@ export async function runHotspotProfileOperation(
 		let acknowledged = false;
 		let checked = false;
 		let instance: NmProfileInstance | null | undefined;
-		const since = nmProfileWriteSerial();
+		const scope: NmRollbackScope = { uuid };
 		try {
-			acknowledged = Boolean(await dispatch(before));
+			acknowledged = Boolean(
+				await runInNmRollbackScope(scope, () => dispatch(before)),
+			);
 		} finally {
 			// Only this dispatch's own verified rollback may explain a changed ctime.
-			const restoration = takeNmRollbackReceipt(uuid, since);
+			const restoration = scope.receipt;
 			const after = await observe();
 			exit = `after-${kind}`;
 			warningBefore = before;

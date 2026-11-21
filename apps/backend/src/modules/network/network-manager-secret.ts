@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { open } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { logger } from "../../helpers/logger.ts";
@@ -89,29 +90,22 @@ export async function readVerifiedNmWifiSecret(
 	}
 }
 
-type RollbackReceipt = {
-	readonly serial: number;
-	readonly instance: NmProfileInstance;
+/** One dispatch's scope: only writes made inside it can leave it a receipt. */
+export type NmRollbackScope = {
+	readonly uuid: string;
+	receipt?: NmProfileInstance | undefined;
 };
-const rollbackReceipts = new Map<string, RollbackReceipt>();
-let writeSerial = 0;
+const rollbackScope = new AsyncLocalStorage<NmRollbackScope>();
 
-/** Mark taken before a dispatch; only receipts its own writes issue count. */
-export function nmProfileWriteSerial(): number {
-	return writeSerial;
+/** Run one dispatch so a verified rollback of its own write reaches only it. */
+export function runInNmRollbackScope<T>(
+	scope: NmRollbackScope,
+	dispatch: () => T,
+): T {
+	return rollbackScope.run(scope, dispatch);
 }
 
-/** The verified rollback a write since `since` left for `uuid`; consumed once. */
-export function takeNmRollbackReceipt(
-	uuid: string,
-	since: number,
-): NmProfileInstance | undefined {
-	const receipt = rollbackReceipts.get(uuid);
-	rollbackReceipts.delete(uuid);
-	return receipt && receipt.serial > since ? receipt.instance : undefined;
-}
-
-/** The restored bytes, and NM's shown secret wherever NM shows one, agree. */
+/** The restored bytes and the secret NM shows positively agree; unreadable is unverified. */
 async function restoredSecretLoaded(
 	uuid: string,
 	file: NmProfileInstance["file"],
@@ -123,11 +117,15 @@ async function restoredSecretLoaded(
 	} finally {
 		await current?.handle.close();
 	}
-	const kept = (await readNmProfileFileSecret(file))?.password ?? "";
+	const kept = await readNmProfileFileSecret(file);
+	if (!kept) return false;
 	const shown = (
 		await nmConnGetFields(uuid, ["802-11-wireless-security.psk"] as const)
 	)?.[0];
-	return !isNmWifiSecretAvailable(shown) || shown === kept;
+	// A keyfile without a PSK needs NM to show none; one with a PSK needs NM to show it.
+	return kept.password === undefined || kept.password === ""
+		? shown === ""
+		: isNmWifiSecretAvailable(shown) && shown === kept.password;
 }
 
 /** Keep credentials in stdin and mode-0600 keyfiles, never the process table. */
@@ -159,8 +157,8 @@ export async function writeNmWifiSecret(
 		logger.warn("NM profile write rejected", { reason });
 		return false;
 	};
-	const serial = ++writeSerial;
-	rollbackReceipts.delete(uuid);
+	const scope = rollbackScope.getStore();
+	if (scope?.uuid === uuid) scope.receipt = undefined;
 	const beforeTrace: NmProfileReadTrace = {};
 	const before = await readNmProfileInstance(uuid, undefined, beforeTrace);
 	if (!before)
@@ -217,7 +215,7 @@ export async function writeNmWifiSecret(
 				restored.fingerprint === before.fingerprint &&
 				(await restoredSecretLoaded(uuid, restored.file, original))
 			) {
-				rollbackReceipts.set(uuid, { serial, instance: restored });
+				if (scope?.uuid === uuid) scope.receipt = restored;
 				logger.warn("NM profile write rolled back");
 				return false;
 			}
