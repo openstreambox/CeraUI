@@ -57,6 +57,9 @@ afterEach(() => {
 function session(overrides: Partial<StreamSessionOrchestratorDeps> = {}) {
 	return createStreamSessionOrchestrator({
 		...streamSessionProductionDeps,
+		// Ownership evidence for adoption is covered elsewhere; these cases
+		// adopt a session this process owns.
+		canReconcileStreaming: () => true,
 		initialLiveness: "idle",
 		createAttemptId: () => "event-attempt",
 		setStreamingStatus: () => {},
