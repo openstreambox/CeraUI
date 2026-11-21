@@ -55,6 +55,8 @@ function handleStartClick() {
 		onBlockedStart?.();
 		return;
 	}
+	// A blocked or busy Start never starts, even if a click reaches it.
+	if (!canStart || isTransient) return;
 	onStart();
 }
 </script>

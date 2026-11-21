@@ -236,7 +236,8 @@ let attentionTimer: ReturnType<typeof setTimeout> | undefined;
 
 // A tap on the blocked Start points at the checklist: focus moves to the first
 // fix and the list is outlined for a moment. With nothing to tap (only the
-// engine blocks) the line above already says why.
+// engine blocks) Start is not given this handler, so it stays natively disabled
+// and the line above says why.
 function handleBlockedStart() {
 	checklistEl?.querySelector<HTMLButtonElement>('button')?.focus();
 	checklistAttention = true;
@@ -603,15 +604,47 @@ const networkSummary = $derived(
 			status={barStatus}
 		>
 			{#snippet checklist()}
-				{#if fixable.length > 0}
-					<div
+				{#if blockers.length >= 2}
+					<!-- Every blocked gate in fix order, each with its reason as visible
+					     text (two causes can share one button label, such as a missing
+					     destination and a revoked slot) and a button where a fix exists.
+					     The engine has none: it reads as its reason alone. -->
+					<ul
 						bind:this={checklistEl}
-						class="-m-1 flex flex-wrap gap-2 rounded-lg p-1 transition-shadow {checklistAttention
+						class="-m-1 space-y-1.5 rounded-lg p-1 transition-shadow {checklistAttention
 							? 'ring-destructive/60 ring-2'
 							: ''}"
 						data-blockers={blockers.length}
-						role="group"
 						aria-label={barStatus}
+					>
+						{#each blockers as blocker (blocker.key)}
+							<li class="flex items-center justify-between gap-3" data-blocker={blocker.key}>
+								<span class="text-muted-foreground min-w-0 text-xs" data-blocker-reason>
+									{resolveReason(blocker.reasonKey)}
+								</span>
+								{#if blocker.fix !== 'none'}
+									<Button
+										class="min-h-[44px] shrink-0 gap-1.5"
+										data-fix={blocker.fix}
+										onclick={() => runFix(blocker.fix)}
+										size="sm"
+										variant="outline"
+									>
+										{fixLabel(blocker.fix)}
+										<ChevronRight aria-hidden={true} class="h-4 w-4 rtl:-scale-x-100" />
+									</Button>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{:else if fixable.length === 1}
+					<!-- One blocker: the line above is its reason; the button fixes it. -->
+					<div
+						bind:this={checklistEl}
+						class="-m-1 flex rounded-lg p-1 transition-shadow {checklistAttention
+							? 'ring-destructive/60 ring-2'
+							: ''}"
+						data-blockers={blockers.length}
 					>
 						{#each fixable as blocker (blocker.key)}
 							<Button
@@ -620,7 +653,6 @@ const networkSummary = $derived(
 								data-fix={blocker.fix}
 								onclick={() => runFix(blocker.fix)}
 								size="sm"
-								title={resolveReason(blocker.reasonKey)}
 								variant="outline"
 							>
 								{fixLabel(blocker.fix)}
@@ -636,7 +668,7 @@ const networkSummary = $derived(
 					disabledReason={startDisabledReason}
 					{isStreaming}
 					{optimismState}
-					onBlockedStart={handleBlockedStart}
+					onBlockedStart={fixable.length > 0 ? handleBlockedStart : undefined}
 					onStart={handleStartClick}
 					{onStop}
 				/>
