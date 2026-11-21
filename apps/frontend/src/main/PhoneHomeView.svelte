@@ -14,6 +14,7 @@
 		getUplinks,
 		getWifi,
 	} from '$lib/rpc/subscriptions.svelte';
+	import { getHotspotLifetime } from '$lib/stores/hotspot-joins.svelte';
 	import { getHudState } from '$lib/stores/hud.svelte';
 	import { getLayoutMode } from '$lib/stores/layout-mode.svelte';
 	import { navigateTo } from '$lib/stores/navigation.svelte';
@@ -59,9 +60,16 @@
 	const hud = $derived(getHudState());
 	const hotspotEntry = $derived(Object.entries(getWifi() ?? {}).find(([, iface]) => iface.hotspot));
 	const hotspot = $derived(hotspotEntry?.[1].hotspot);
-	// One hotspot for the card: its credentials, its joins and its renewal.
+	// One hotspot for the card: its credentials, its joins (of this AP lifetime
+	// only) and its renewal.
 	const wifiOwner = $derived(
-		hotspotEntry ? { device: hotspotEntry[0], incarnation: hotspotEntry[1].incarnation } : undefined,
+		hotspotEntry
+			? {
+					device: hotspotEntry[0],
+					incarnation: hotspotEntry[1].incarnation,
+					lifetime: getHotspotLifetime(hotspotEntry[0], hotspotEntry[1]),
+				}
+			: undefined,
 	);
 	const wifiRenew = $derived.by(() => {
 		if (!hotspotEntry) return undefined;
