@@ -27,7 +27,7 @@ function makeContext(): RPCContext {
 	};
 }
 
-const KEY = "addr:relay.invalid:9000";
+const KEY = "relay.invalid:9000";
 
 afterEach(() => resetStreamReadinessForTest());
 
@@ -77,6 +77,56 @@ it("an explicit refusal on every address counts against the receiver", async () 
 	}
 });
 
+it("a refusal on one address and silence on another is inconclusive", async () => {
+	const lookup = resolvesTo(["::1", "127.0.0.1"]);
+	const probe = spyOn(probes, "probeReachability")
+		.mockResolvedValueOnce({ reachable: false, reason: "refused" })
+		.mockResolvedValueOnce({ reachable: false, reason: "timeout" });
+	try {
+		expect(await validate()).toMatchObject({ valid: false });
+		expect(receiverEvidenceFor(KEY, Date.now())).toBe("inconclusive");
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+	}
+});
+
+it("a local socket failure is no refusal", async () => {
+	const lookup = resolvesTo(["127.0.0.1"]);
+	const probe = spyOn(probes, "probeReachability").mockRejectedValue(
+		new Error("EAFNOSUPPORT"),
+	);
+	try {
+		await expect(validate()).rejects.toThrow();
+		expect(receiverEvidenceFor(KEY, Date.now())).toBe("inconclusive");
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+	}
+});
+
+it("testing another endpoint keeps this one's result", async () => {
+	const lookup = resolvesTo(["127.0.0.1"]);
+	const probe = spyOn(probes, "probeReachability").mockResolvedValue({
+		reachable: true,
+	});
+	try {
+		await validate();
+		await call(
+			relayValidateProcedure,
+			{ addr: "other.invalid", port: 9000 },
+			{ context: makeContext() },
+		);
+		expect(receiverEvidenceFor(KEY, Date.now())).toBe("reachable");
+		expect(receiverEvidenceFor("other.invalid:9000", Date.now())).toBe(
+			"reachable",
+		);
+	} finally {
+		lookup.mockRestore();
+		probe.mockRestore();
+	}
+});
+
 it("a silent port is no evidence either way", async () => {
 	const lookup = resolvesTo(["127.0.0.1"]);
 	const probe = spyOn(probes, "probeReachability").mockResolvedValue({
@@ -85,7 +135,7 @@ it("a silent port is no evidence either way", async () => {
 	});
 	try {
 		expect(await validate()).toMatchObject({ valid: false, reason: "timeout" });
-		expect(receiverEvidenceFor(KEY, Date.now())).toBeUndefined();
+		expect(receiverEvidenceFor(KEY, Date.now())).toBe("inconclusive");
 	} finally {
 		lookup.mockRestore();
 		probe.mockRestore();

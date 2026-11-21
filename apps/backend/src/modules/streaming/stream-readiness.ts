@@ -19,43 +19,52 @@
   IS THE BOX READY TO GO LIVE?
 
   One yes/no plus a reason, built only from answers the backend already has.
-  Nothing here probes the network, touches a device or takes a lease; it reads
-  the same predicates the Start path consults, in the same order, so the flag
-  cannot say "ready" for a reason Start would refuse on.
+  Nothing here probes the network, spawns a process, takes a lease or writes
+  state: the getter is read-only and cheap enough for a 2 s tick.
 
   Four checks, in this order (the first blocking one is the reason):
 
-    lock      what Start refuses on before it launches anything: an update
-              that would refuse a stream, recovery replay still pending, a
-              modem change in flight (the journal's global stream hold), a
-              modem re-enumeration or another start holding the lifecycle
-              interlock.
+    lock      what Start refuses on before launching, in Start's own order:
+              recovery replay pending, the modem journal's global stream hold,
+              a session Start would call busy (`streamStartView`), the
+              lifecycle interlock (forwarding, per-device modem leases, a
+              modem transition or another start; `previewStreamingAdmission`
+              shares its code with the acquiring path), then the update
+              admission. A session Start would first reconcile, and an update
+              phase whose admission needs a fresh probe, are `unknown`.
     source    the configured source resolves exactly as Start resolves it
               (`resolveSourceRouting`), its pipeline is in the offered set, a
               network-ingest pipeline has its gateway, and the audio codec fits
               the transport.
-    receiver  a destination is configured. Reachability is only claimed from
-              evidence: the last relay test of this destination, or stream data
-              leaving on a link while live (the sender sends stream data only
-              after the receiver's handshake). Without evidence it is
-              `unknown`, which is reported but does not block.
-    uplinks   idle: at least one uplink passes its health check (`up`, or
-              `degraded` only by passive congestion). Live: the per-link
-              `linkCarryingState`; blocked only when every link positively
-              carries nothing, `unknown` when there is no claim either way.
+    receiver  the configured destination resolves through the same catalog
+              and adapter as Start (`resolveStreamEndpoint`); an unknown relay
+              id blocks. Reachability is claimed only from a relay test of
+              that resolved endpoint: reached is `ok`, refused on every
+              address blocks, anything inconclusive is `unknown`. While live,
+              a carrying link makes it `ok` for the session (nothing is stored).
+    uplinks   idle: the interfaces the bond would offer (`isBondCandidate`)
+              qualified by a fresh health record (`up`, or `degraded` only by
+              passive congestion). A candidate without fresh health, or a
+              receiver on a private address that may be reached over the LAN,
+              makes it `unknown` instead of blocked. Live: the sender's own
+              link rows and their carrying verdicts; blocked only when every
+              row positively carries nothing.
 
   While live, `lock` and `source` are `ok` by definition (the stream runs), and
-  `ready` reads "the stream has a link that carries it".
+  `ready` reads "the stream has a link that carries it"; it can be true with
+  the carrying check still `unknown`.
 
-  Not covered yet (see the design note): HDMI signal presence for an onboard
-  HDMI source (an async sysfs read Start does at launch), the sender-ownership
-  census (a /proc scan), and the receiver's own view of each link.
+  Not covered yet (see docs/STREAM-READINESS.md): HDMI signal presence for an
+  onboard HDMI source, the sender-ownership census, and the receiver's own view
+  of each link.
 */
 
+import { isIP } from "node:net";
 import {
 	AUDIO_CODEC_UNSUPPORTED_TRANSPORT,
 	audioCodecAllowedForTransport,
 	GATEWAY_INACTIVE_ERROR,
+	RIST_TRANSPORT,
 	STREAM_READINESS_EVENT,
 	type StreamReadiness,
 	type StreamReadinessCheck,
@@ -66,20 +75,28 @@ import { logger } from "../../helpers/logger.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { isMockGatewayActive } from "../../mocks/providers/streaming.ts";
 import { getConfig } from "../config.ts";
+import {
+	getNetworkInterfaces,
+	isBondCandidate,
+} from "../network/network-interfaces.ts";
 import { getUplinksMessage } from "../network/uplink-health/state.ts";
+import { getRelays } from "../remote/remote-relays.ts";
 import { isDisruptiveActionPending } from "../system/disruptive-action-reservation.ts";
 import { isUpdating } from "../system/software-updates.ts";
 import { admitStreamStart } from "../system/update-orchestrator/admission.ts";
-import { getOrchestratorState } from "../system/update-orchestrator/runtime.ts";
+import {
+	getOrchestratorDisruptionBusyReasons,
+	getOrchestratorState,
+} from "../system/update-orchestrator/runtime.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
+import { getSupportedTransports } from "./capabilities.ts";
 import { validatePersistedPipeline } from "./config-migration.ts";
 import { isGatewayActive } from "./gateway-availability.ts";
 import {
-	currentLifecycleHolder,
 	globalStreamHold,
+	previewStreamingAdmission,
 } from "./lifecycle-admission.ts";
-import type { LinkCarryingState } from "./link-progress.ts";
-import { linkCarryingState } from "./link-telemetry.ts";
+import { buildLinkTelemetry } from "./link-telemetry.ts";
 import { getPipelineList, searchPipelines } from "./pipelines.ts";
 import { isRecoveryPending } from "./recovery-barrier.ts";
 import {
@@ -87,51 +104,81 @@ import {
 	getSourcesMessage,
 	resolveSourceRouting,
 } from "./sources.ts";
+import { streamStartView } from "./stream-session-orchestrator.ts";
 import { getIsStreaming } from "./streaming.ts";
+import { resolveStreamEndpoint } from "./transport/resolve-endpoint.ts";
 
 // ─── Codes ───────────────────────────────────────────────────────────────────
 // Lock and source codes reuse the Start path's own tokens where one exists, so
 // support reads one vocabulary in the log, the start error and this flag.
 
 export const READINESS_UPDATE_IN_PROGRESS = "update_in_progress";
+export const READINESS_UPDATE_UNCONFIRMED = "update_state_unconfirmed";
 export const READINESS_RECOVERY_PENDING = "recovery_pending";
-export const READINESS_MODEM_TRANSITION = "MODEM_TRANSITION_ACTIVE";
 export const READINESS_START_IN_PROGRESS = "START_IN_PROGRESS";
+export const READINESS_SESSION_RECONCILING = "session_reconciling";
 export const READINESS_NO_SOURCE = "no_source";
 export const READINESS_RECEIVER_NOT_SET = "receiver_not_set";
+export const READINESS_RECEIVER_INVALID = "receiver_invalid";
 export const READINESS_RECEIVER_UNTESTED = "receiver_untested";
 export const READINESS_RECEIVER_REFUSED = "receiver_refused";
 export const READINESS_RECEIVER_UNRESOLVED = "receiver_unresolved";
 export const READINESS_NO_UPLINK = "no_uplink";
 export const READINESS_NO_UPLINK_PASSES = "no_uplink_passes";
+export const READINESS_UPLINK_UNCHECKED = "uplink_unchecked";
+export const READINESS_LOCAL_RECEIVER = "local_receiver";
 export const READINESS_NO_LINK_CARRYING = "no_link_carrying";
 export const READINESS_CARRYING_UNKNOWN = "carrying_unknown";
 
 /** A reachability result is evidence for this long, then it is forgotten. */
 export const RECEIVER_EVIDENCE_TTL_MS = 30 * 60 * 1_000;
+/** At most this many tested endpoints are remembered. */
+export const RECEIVER_EVIDENCE_MAX = 16;
 /** How often the flag is re-evaluated for the broadcast. */
 export const READINESS_TICK_MS = 2_000;
 
 // ─── Pure evaluation ─────────────────────────────────────────────────────────
 
-export type ReceiverEvidence = "reachable" | "refused" | "unresolved";
+export type ReceiverEvidence =
+	| "reachable"
+	| "refused"
+	| "unresolved"
+	| "inconclusive";
+
+/** A check's own answer before the live/idle rules apply. */
+export interface Verdict {
+	readonly state: "ok" | "blocked" | "unknown";
+	readonly code?: string;
+}
+
+export const OK: Verdict = { state: "ok" };
+
+export interface UplinkCandidate {
+	readonly iface: string;
+	readonly health?: Pick<UplinkHealthRecord, "state" | "reason" | "staleAt">;
+}
+
+export interface SenderLink {
+	readonly iface: string;
+	/** The row's carrying verdict: true, false, or absent for no claim. */
+	readonly carrying?: boolean;
+}
 
 export interface ReadinessInputs {
 	readonly now: number;
 	readonly live: boolean;
-	/** The first Start refusal that applies right now, if any. */
-	readonly lock: string | undefined;
-	/** Why the configured source would not start, if it would not. */
-	readonly source: string | undefined;
+	readonly lock: Verdict;
+	readonly source: Verdict;
 	readonly receiver: {
-		readonly configured: boolean;
+		readonly configured: "yes" | "no" | "invalid";
 		readonly evidence: ReceiverEvidence | undefined;
+		/** The resolved receiver is a private or link-local IP literal. */
+		readonly local: boolean;
 	};
-	readonly uplinks: readonly Pick<
-		UplinkHealthRecord,
-		"iface" | "state" | "reason"
-	>[];
-	readonly carrying: (iface: string) => LinkCarryingState;
+	/** Idle: the interfaces the bond would offer. */
+	readonly candidates: readonly UplinkCandidate[];
+	/** Live: the sender's link rows. */
+	readonly senderLinks: readonly SenderLink[];
 }
 
 const CHECK_ORDER: readonly StreamReadinessCheckId[] = [
@@ -141,19 +188,24 @@ const CHECK_ORDER: readonly StreamReadinessCheckId[] = [
 	"uplinks",
 ];
 
-function ok(id: StreamReadinessCheckId): StreamReadinessCheck {
-	return { id, state: "ok" };
-}
-
-function check(
+function as(
 	id: StreamReadinessCheckId,
-	state: "blocked" | "unknown",
-	code: string,
+	verdict: Verdict,
 ): StreamReadinessCheck {
-	return { id, state, code };
+	return verdict.state === "ok"
+		? { id, state: "ok" }
+		: { id, state: verdict.state, code: verdict.code ?? "unspecified" };
 }
 
-/** An uplink that would carry a stream started now. */
+function blocked(code: string): Verdict {
+	return { state: "blocked", code };
+}
+
+function unknown(code: string): Verdict {
+	return { state: "unknown", code };
+}
+
+/** An uplink health record that would carry a stream started now. */
 export function uplinkPasses(
 	record: Pick<UplinkHealthRecord, "state" | "reason">,
 ): boolean {
@@ -166,140 +218,191 @@ export function uplinkPasses(
 export function evaluateStreamReadiness(
 	inputs: ReadinessInputs,
 ): StreamReadiness {
-	const total = inputs.uplinks.length;
 	let usable: number;
-	let uplinks: StreamReadinessCheck;
+	let total: number;
+	let uplinks: Verdict;
 	if (inputs.live) {
-		const states = inputs.uplinks.map((u) => inputs.carrying(u.iface));
-		usable = states.filter((s) => s === "carrying").length;
-		const silent = states.filter((s) => s === "not_carrying").length;
+		total = inputs.senderLinks.length;
+		usable = inputs.senderLinks.filter((l) => l.carrying === true).length;
+		const silent = inputs.senderLinks.filter(
+			(l) => l.carrying === false,
+		).length;
 		uplinks =
 			usable > 0
-				? ok("uplinks")
+				? OK
 				: total > 0 && silent === total
-					? check("uplinks", "blocked", READINESS_NO_LINK_CARRYING)
-					: check("uplinks", "unknown", READINESS_CARRYING_UNKNOWN);
+					? blocked(READINESS_NO_LINK_CARRYING)
+					: unknown(READINESS_CARRYING_UNKNOWN);
 	} else {
-		usable = inputs.uplinks.filter(uplinkPasses).length;
+		total = inputs.candidates.length;
+		const fresh = inputs.candidates.filter(
+			(c) => c.health !== undefined && c.health.staleAt > inputs.now,
+		);
+		usable = fresh.filter((c) => c.health && uplinkPasses(c.health)).length;
 		uplinks =
 			usable > 0
-				? ok("uplinks")
-				: check(
-						"uplinks",
-						"blocked",
-						total === 0 ? READINESS_NO_UPLINK : READINESS_NO_UPLINK_PASSES,
-					);
+				? OK
+				: total === 0
+					? blocked(READINESS_NO_UPLINK)
+					: inputs.receiver.local
+						? unknown(READINESS_LOCAL_RECEIVER)
+						: fresh.length < total
+							? unknown(READINESS_UPLINK_UNCHECKED)
+							: blocked(READINESS_NO_UPLINK_PASSES);
 	}
 
-	const lock =
-		inputs.live || inputs.lock === undefined
-			? ok("lock")
-			: check("lock", "blocked", inputs.lock);
-	const source =
-		inputs.live || inputs.source === undefined
-			? ok("source")
-			: check("source", "blocked", inputs.source);
+	const lock = inputs.live ? OK : inputs.lock;
+	const source = inputs.live ? OK : inputs.source;
 
-	let receiver: StreamReadinessCheck;
-	if (!inputs.receiver.configured)
-		receiver = check("receiver", "blocked", READINESS_RECEIVER_NOT_SET);
-	else if (inputs.live && usable > 0) receiver = ok("receiver");
-	else if (inputs.receiver.evidence === "reachable") receiver = ok("receiver");
-	else if (inputs.receiver.evidence === "refused")
-		receiver = check("receiver", "blocked", READINESS_RECEIVER_REFUSED);
-	else if (inputs.receiver.evidence === "unresolved")
-		receiver = check("receiver", "blocked", READINESS_RECEIVER_UNRESOLVED);
-	else receiver = check("receiver", "unknown", READINESS_RECEIVER_UNTESTED);
+	let receiver: Verdict;
+	const r = inputs.receiver;
+	if (r.configured === "no") receiver = blocked(READINESS_RECEIVER_NOT_SET);
+	else if (r.configured === "invalid")
+		receiver = blocked(READINESS_RECEIVER_INVALID);
+	else if (inputs.live && usable > 0) receiver = OK;
+	else if (r.evidence === "reachable") receiver = OK;
+	else if (r.evidence === "refused")
+		receiver = blocked(READINESS_RECEIVER_REFUSED);
+	else if (r.evidence === "unresolved")
+		receiver = unknown(READINESS_RECEIVER_UNRESOLVED);
+	else receiver = unknown(READINESS_RECEIVER_UNTESTED);
 
-	const checks = [lock, source, receiver, uplinks];
-	const blocked = checks.find((c) => c.state === "blocked");
-	const first = blocked ?? checks.find((c) => c.state === "unknown");
+	const checks = [
+		as("lock", lock),
+		as("source", source),
+		as("receiver", receiver),
+		as("uplinks", uplinks),
+	];
+	const firstBlocked = checks.find((c) => c.state === "blocked");
+	const first = firstBlocked ?? checks.find((c) => c.state === "unknown");
 	return {
-		ready: blocked === undefined,
+		ready: firstBlocked === undefined,
 		live: inputs.live,
 		...(first?.code === undefined
 			? {}
 			: { reason: { check: first.id, code: first.code } }),
-		checks: CHECK_ORDER.map((id) => checks.find((c) => c.id === id) ?? ok(id)),
+		checks: CHECK_ORDER.map(
+			(id) => checks.find((c) => c.id === id) ?? { id, state: "ok" },
+		),
 		uplinks: { usable, total },
 		at: inputs.now,
 	};
 }
 
 // ─── Receiver evidence ───────────────────────────────────────────────────────
-// Remembered per destination so a test of one receiver never vouches for
-// another. Kept in memory only; the key is never broadcast or logged.
+// One entry per tested endpoint (resolved host and port), so testing B never
+// evicts A's result. Kept in memory only; keys are never broadcast or logged.
+// A newer inconclusive test supersedes an older verdict for the same endpoint.
 
-interface ReceiverRecord {
-	readonly key: string;
-	readonly evidence: ReceiverEvidence;
-	readonly at: number;
+const receiverEvidence = new Map<
+	string,
+	{ readonly evidence: ReceiverEvidence; readonly at: number }
+>();
+
+export function endpointKey(addr: string, port: number): string | undefined {
+	const host = addr.trim().toLowerCase();
+	return host === "" ? undefined : `${host}:${port}`;
 }
 
-let receiverRecord: ReceiverRecord | undefined;
-
-export function receiverKey(config: {
-	relay_server?: string | undefined;
-	srtla_addr?: string | undefined;
-	srtla_port?: number | undefined;
-}): string | undefined {
-	if (config.relay_server) return `relay:${config.relay_server}`;
-	const addr = config.srtla_addr?.trim();
-	if (addr && config.srtla_port !== undefined)
-		return `addr:${addr.toLowerCase()}:${config.srtla_port}`;
-	return undefined;
-}
-
-/** Record the outcome of a reachability test of `key`. */
+/** Record the outcome of a reachability test of one resolved endpoint. */
 export function noteReceiverEvidence(
 	key: string,
 	evidence: ReceiverEvidence,
 	now: number = Date.now(),
 ): void {
-	receiverRecord = { key, evidence, at: now };
+	receiverEvidence.delete(key);
+	receiverEvidence.set(key, { evidence, at: now });
+	while (receiverEvidence.size > RECEIVER_EVIDENCE_MAX) {
+		const oldest = receiverEvidence.keys().next().value;
+		if (oldest === undefined) break;
+		receiverEvidence.delete(oldest);
+	}
 }
 
 export function receiverEvidenceFor(
 	key: string | undefined,
 	now: number,
 ): ReceiverEvidence | undefined {
-	if (key === undefined || receiverRecord === undefined) return undefined;
-	if (receiverRecord.key !== key) return undefined;
-	if (now - receiverRecord.at > RECEIVER_EVIDENCE_TTL_MS) return undefined;
-	return receiverRecord.evidence;
+	if (key === undefined) return undefined;
+	const entry = receiverEvidence.get(key);
+	if (entry === undefined || now - entry.at > RECEIVER_EVIDENCE_TTL_MS)
+		return undefined;
+	return entry.evidence;
+}
+
+/** RFC 1918, CGNAT, link-local, loopback and ULA literals. */
+export function isPrivateAddress(addr: string): boolean {
+	const family = isIP(addr);
+	if (family === 4) {
+		const [a = 0, b = 0] = addr.split(".").map(Number);
+		return (
+			a === 10 ||
+			a === 127 ||
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 192 && b === 168) ||
+			(a === 169 && b === 254) ||
+			(a === 100 && b >= 64 && b <= 127)
+		);
+	}
+	if (family === 6) {
+		const lower = addr.toLowerCase();
+		return (
+			lower === "::1" ||
+			lower.startsWith("fc") ||
+			lower.startsWith("fd") ||
+			lower.startsWith("fe8") ||
+			lower.startsWith("fe9") ||
+			lower.startsWith("fea") ||
+			lower.startsWith("feb")
+		);
+	}
+	return false;
 }
 
 // ─── Live inputs ─────────────────────────────────────────────────────────────
 
+export interface ReceiverTarget {
+	readonly configured: "yes" | "no" | "invalid";
+	readonly key?: string;
+	readonly local: boolean;
+}
+
 export interface ReadinessDeps {
 	now: () => number;
 	live: () => boolean;
-	lock: () => string | undefined;
-	source: () => string | undefined;
-	receiverKey: () => string | undefined;
-	uplinks: () => readonly UplinkHealthRecord[];
-	carrying: (iface: string) => LinkCarryingState;
+	lock: () => Verdict;
+	source: () => Verdict;
+	receiver: () => ReceiverTarget;
+	candidates: () => readonly UplinkCandidate[];
+	senderLinks: () => readonly SenderLink[];
 }
 
 /** Start's refusals before launch, in Start's own order. */
-export function currentStartLock(): string | undefined {
+export function currentStartLock(): Verdict {
+	if (isRecoveryPending()) return blocked(READINESS_RECOVERY_PENDING);
+	const hold = globalStreamHold();
+	if (hold !== undefined) return blocked(hold.refusal);
+	const session = streamStartView();
+	if (session === "busy") return blocked(READINESS_START_IN_PROGRESS);
+	if (session === "reconciling") return unknown(READINESS_SESSION_RECONCILING);
+	const interlock = previewStreamingAdmission();
+	if (interlock !== undefined) return blocked(interlock.refusal);
+	const state = getOrchestratorState();
 	if (
 		isUpdating() ||
 		isDisruptiveActionPending() ||
-		!admitStreamStart(getOrchestratorState()).allowed
+		!admitStreamStart(state).allowed ||
+		getOrchestratorDisruptionBusyReasons().includes("pending-success")
 	)
-		return READINESS_UPDATE_IN_PROGRESS;
-	if (isRecoveryPending()) return READINESS_RECOVERY_PENDING;
-	const hold = globalStreamHold();
-	if (hold !== undefined) return hold.refusal;
-	const holder = currentLifecycleHolder();
-	if (holder === "modem-transition") return READINESS_MODEM_TRANSITION;
-	if (holder === "streaming") return READINESS_START_IN_PROGRESS;
-	return undefined;
+		return blocked(READINESS_UPDATE_IN_PROGRESS);
+	// Start re-reads the package state and may probe the commit stage here.
+	if (state.phase === "downloading")
+		return unknown(READINESS_UPDATE_UNCONFIRMED);
+	return OK;
 }
 
 /** The first reason the configured source would not start, as Start words it. */
-export function currentSourceBlock(): string | undefined {
+export function currentSourceBlock(): Verdict {
 	const config = getConfig();
 	let pipeline = config.pipeline;
 	if (config.source !== undefined) {
@@ -309,21 +412,21 @@ export function currentSourceBlock(): string | undefined {
 			config.last_seen_devices,
 			configuredSelectionAnchor(config.source),
 		);
-		if (!routed.ok) return routed.error;
+		if (!routed.ok) return blocked(routed.error);
 		pipeline = routed.pipeline;
 	}
-	if (pipeline === undefined) return READINESS_NO_SOURCE;
+	if (pipeline === undefined) return blocked(READINESS_NO_SOURCE);
 	const offered = validatePersistedPipeline(
 		pipeline,
 		Object.keys(getPipelineList()),
 	);
-	if (!offered.valid) return offered.error;
+	if (!offered.valid) return blocked(offered.error);
 	const gateway = searchPipelines(pipeline)?.requires_gateway;
 	if (gateway !== undefined) {
 		const up = shouldUseMocks()
 			? isMockGatewayActive(gateway)
 			: isGatewayActive(gateway);
-		if (!up) return GATEWAY_INACTIVE_ERROR;
+		if (!up) return blocked(GATEWAY_INACTIVE_ERROR);
 	}
 	if (
 		config.acodec !== undefined &&
@@ -332,8 +435,68 @@ export function currentSourceBlock(): string | undefined {
 			config.relay_protocol ?? "srtla",
 		)
 	)
-		return AUDIO_CODEC_UNSUPPORTED_TRANSPORT;
-	return undefined;
+		return blocked(AUDIO_CODEC_UNSUPPORTED_TRANSPORT);
+	return OK;
+}
+
+/** The configured destination, resolved through Start's catalog and adapter. */
+export function currentReceiver(): ReceiverTarget {
+	const config = getConfig();
+	if (!config.relay_server && !config.srtla_addr?.trim())
+		return { configured: "no", local: false };
+	try {
+		const endpoint = resolveStreamEndpoint(
+			{
+				...(config.relay_server !== undefined
+					? { relay_server: config.relay_server }
+					: {}),
+				...(config.relay_account !== undefined
+					? { relay_account: config.relay_account }
+					: {}),
+				...(config.srtla_addr !== undefined
+					? { srtla_addr: config.srtla_addr }
+					: {}),
+				...(config.srtla_port !== undefined
+					? { srtla_port: config.srtla_port }
+					: {}),
+				...(config.relay_protocol !== undefined
+					? { relay_protocol: config.relay_protocol }
+					: {}),
+			},
+			getRelays(),
+			config.relay_protocol,
+			{ ristAvailable: getSupportedTransports().includes(RIST_TRANSPORT) },
+		);
+		const key = endpointKey(endpoint.srtlaAddr, endpoint.srtlaPort);
+		if (key === undefined) return { configured: "invalid", local: false };
+		return {
+			configured: "yes",
+			key,
+			local: isPrivateAddress(endpoint.srtlaAddr.trim()),
+		};
+	} catch {
+		return { configured: "invalid", local: false };
+	}
+}
+
+/** The interfaces the bond would offer, with their health record if any. */
+export function currentCandidates(): readonly UplinkCandidate[] {
+	const health = new Map(getUplinksMessage().map((r) => [r.iface, r]));
+	return Object.entries(getNetworkInterfaces())
+		.filter(([name, int]) => isBondCandidate(name, int))
+		.map(([iface]) => {
+			const record = health.get(iface);
+			return record === undefined ? { iface } : { iface, health: record };
+		});
+}
+
+/** The sender's own link rows; empty when it reports nothing. */
+export function currentSenderLinks(): readonly SenderLink[] {
+	return (buildLinkTelemetry()?.links ?? []).map((row) =>
+		row.stale || row.carrying === undefined
+			? { iface: row.iface }
+			: { iface: row.iface, carrying: row.carrying },
+	);
 }
 
 const defaultDeps: ReadinessDeps = {
@@ -341,9 +504,9 @@ const defaultDeps: ReadinessDeps = {
 	live: getIsStreaming,
 	lock: currentStartLock,
 	source: currentSourceBlock,
-	receiverKey: () => receiverKey(getConfig()),
-	uplinks: getUplinksMessage,
-	carrying: linkCarryingState,
+	receiver: currentReceiver,
+	candidates: currentCandidates,
+	senderLinks: currentSenderLinks,
 };
 
 let deps: ReadinessDeps = defaultDeps;
@@ -352,27 +515,24 @@ export function setReadinessDepsForTest(next: Partial<ReadinessDeps> | null) {
 	deps = next === null ? defaultDeps : { ...defaultDeps, ...next };
 }
 
+/** Read-only: evaluates the current answer and changes nothing. */
 export function getStreamReadiness(): StreamReadiness {
 	const now = deps.now();
 	const live = deps.live();
-	const key = deps.receiverKey();
-	const result = evaluateStreamReadiness({
+	const receiver = deps.receiver();
+	return evaluateStreamReadiness({
 		now,
 		live,
-		lock: deps.lock(),
-		source: deps.source(),
+		lock: live ? OK : deps.lock(),
+		source: live ? OK : deps.source(),
 		receiver: {
-			configured: key !== undefined,
-			evidence: receiverEvidenceFor(key, now),
+			configured: receiver.configured,
+			evidence: receiverEvidenceFor(receiver.key, now),
+			local: receiver.local,
 		},
-		uplinks: deps.uplinks(),
-		carrying: deps.carrying,
+		candidates: live ? [] : deps.candidates(),
+		senderLinks: live ? deps.senderLinks() : [],
 	});
-	// Stream data on a link means the receiver completed the handshake, which is
-	// the best reachability evidence there is; keep it for after the stream.
-	if (live && key !== undefined && result.uplinks.usable > 0)
-		noteReceiverEvidence(key, "reachable", now);
-	return result;
 }
 
 // ─── Broadcast ───────────────────────────────────────────────────────────────
@@ -411,6 +571,6 @@ export function resetStreamReadinessForTest(): void {
 	if (timer !== undefined) clearInterval(timer);
 	timer = undefined;
 	lastSignature = undefined;
-	receiverRecord = undefined;
+	receiverEvidence.clear();
 	deps = defaultDeps;
 }

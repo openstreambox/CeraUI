@@ -548,6 +548,7 @@
 	"live.goLive.box.busyUpdate": "업데이트를 설치하는 중입니다.",
 	"live.goLive.box.destinationFailed": "마지막 테스트에서 대상이 응답하지 않았습니다.",
 	"live.goLive.box.destinationUntested": "대상을 아직 테스트하지 않았습니다.",
+	"live.goLive.box.invalidDestination": "선택한 대상을 더 이상 사용할 수 없습니다.",
 	"live.goLive.box.label": "기기 확인",
 	"live.goLive.box.noCarrying": "스트림을 전송하는 링크가 없습니다.",
 	"live.goLive.box.noDestination": "대상이 설정되지 않았습니다.",

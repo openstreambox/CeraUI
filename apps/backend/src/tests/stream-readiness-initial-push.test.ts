@@ -27,10 +27,11 @@ test("the flag is pushed only when the answer changes, not when time passes", ()
 	setReadinessDepsForTest({
 		now: () => now,
 		live: () => false,
-		lock: () => lock,
-		source: () => undefined,
-		receiverKey: () => "addr:relay:1",
-		uplinks: () => [],
+		lock: () =>
+			lock === undefined ? { state: "ok" } : { state: "blocked", code: lock },
+		source: () => ({ state: "ok" }),
+		receiver: () => ({ configured: "yes", key: "relay:1", local: false }),
+		candidates: () => [],
 	});
 	expect(broadcastStreamReadinessIfChanged()?.reason?.code).toBe("no_uplink");
 	now = 2;

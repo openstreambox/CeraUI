@@ -548,6 +548,7 @@
 	"live.goLive.box.busyUpdate": "Ein Update wird installiert.",
 	"live.goLive.box.destinationFailed": "Das Ziel hat beim letzten Test nicht geantwortet.",
 	"live.goLive.box.destinationUntested": "Ziel noch nicht getestet.",
+	"live.goLive.box.invalidDestination": "Das gewählte Ziel ist nicht mehr verfügbar.",
 	"live.goLive.box.label": "Geräteprüfung",
 	"live.goLive.box.noCarrying": "Keine Verbindung überträgt den Stream.",
 	"live.goLive.box.noDestination": "Kein Ziel eingestellt.",

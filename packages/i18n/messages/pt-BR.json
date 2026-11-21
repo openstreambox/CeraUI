@@ -548,6 +548,7 @@
 	"live.goLive.box.busyUpdate": "Uma atualização está sendo instalada.",
 	"live.goLive.box.destinationFailed": "O destino não respondeu ao último teste.",
 	"live.goLive.box.destinationUntested": "Destino ainda não testado.",
+	"live.goLive.box.invalidDestination": "O destino escolhido não está mais disponível.",
 	"live.goLive.box.label": "Verificação do dispositivo",
 	"live.goLive.box.noCarrying": "Nenhum link está levando a transmissão.",
 	"live.goLive.box.noDestination": "Nenhum destino configurado.",

@@ -9,16 +9,19 @@ import {
 	boxReadinessKey,
 } from "./box-readiness";
 
-function readiness(over: Partial<StreamReadiness>): StreamReadiness {
+function readiness(over: Partial<StreamReadiness> = {}): StreamReadiness {
+	const reason = over.reason;
+	const checks: StreamReadiness["checks"] = (
+		["lock", "source", "receiver", "uplinks"] as const
+	).map((id) =>
+		over.ready === false && reason?.check === id
+			? { id, state: "blocked", code: reason.code }
+			: { id, state: "ok" },
+	);
 	return {
 		ready: true,
 		live: false,
-		checks: [
-			{ id: "lock", state: "ok" },
-			{ id: "source", state: "ok" },
-			{ id: "receiver", state: "ok" },
-			{ id: "uplinks", state: "ok" },
-		],
+		checks,
 		uplinks: { usable: 1, total: 1 },
 		at: 0,
 		...over,
@@ -58,6 +61,23 @@ describe("box readiness line", () => {
 		).toBe("live.goLive.box.noUplink");
 		expect(boxReadinessKey("MODEM_TRANSITION_ACTIVE")).toBe(
 			"live.goLive.box.busyModem",
+		);
+	});
+
+	it("an implicit source skips only the source check's no_source", () => {
+		const notReady = readiness({
+			ready: false,
+			reason: { check: "source", code: "no_source" },
+			checks: [
+				{ id: "lock", state: "ok" },
+				{ id: "source", state: "blocked", code: "no_source" },
+				{ id: "receiver", state: "blocked", code: "receiver_invalid" },
+				{ id: "uplinks", state: "ok" },
+			],
+		});
+		expect(boxNotReadyKey(notReady)).toBe("live.goLive.box.noSource");
+		expect(boxNotReadyKey(notReady, { implicitSource: true })).toBe(
+			"live.goLive.box.invalidDestination",
 		);
 	});
 

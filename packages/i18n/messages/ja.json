@@ -548,6 +548,7 @@
 	"live.goLive.box.busyUpdate": "アップデートをインストール中です。",
 	"live.goLive.box.destinationFailed": "前回のテストで配信先が応答しませんでした。",
 	"live.goLive.box.destinationUntested": "配信先はまだテストされていません。",
+	"live.goLive.box.invalidDestination": "選択した配信先は利用できなくなりました。",
 	"live.goLive.box.label": "デバイスの確認",
 	"live.goLive.box.noCarrying": "配信を運んでいるリンクがありません。",
 	"live.goLive.box.noDestination": "配信先が設定されていません。",
