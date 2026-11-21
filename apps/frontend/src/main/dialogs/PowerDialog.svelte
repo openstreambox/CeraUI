@@ -62,7 +62,7 @@ const powerBlocked = $derived(streaming || isUpdating || (phoneProtected && getS
 const blocked = $derived(streaming || isUpdating || phoneProtected);
 const blockedReason = $derived(
 	phoneProtected ? (getStatus()?.carrying?.state === 'streaming' ? m['live.phone.restartHold']() : (getStatus()?.carrying?.startup === true ? m['live.phone.restartChecking']() : m['live.phone.powerChecking']())) : streaming
-		? m["settings.dialogs.blockedStreaming"]()
+		? m["settings.dialogs.blockedStreamingPower"]()
 		: isUpdating
 			? m["settings.dialogs.blockedUpdating"]()
 			: '',
