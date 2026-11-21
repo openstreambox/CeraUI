@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { hotspotConfigSchema } from './wifi.schema';
+import { hotspotConfigSchema, portalWindowStatusSchema } from './wifi.schema';
 
 const channels = { auto: { name: 'Automatic' } };
 const wpa2 = { name: 'WPA2 (Personal)' };
@@ -62,5 +62,18 @@ describe('hotspot security offering output', () => {
 				available_security: offering,
 			}).success,
 		).toBe(false);
+	});
+});
+
+describe('portal expiry status', () => {
+	test('preserves an uncertain window expiry across the wire', () => {
+		const status = { phase: 'cleanup_unknown', expiresAt: 1800000000000 };
+		expect(portalWindowStatusSchema.parse(status)).toEqual(status);
+	});
+	test('accepts old statuses without expiry and rejects invalid expiry', () => {
+		expect(portalWindowStatusSchema.parse({ phase: 'idle' })).toEqual({ phase: 'idle' });
+		expect(portalWindowStatusSchema.safeParse({ phase: 'signing_in', expiresAt: -1 }).success).toBe(
+			false,
+		);
 	});
 });
