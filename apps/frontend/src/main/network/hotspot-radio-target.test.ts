@@ -161,11 +161,21 @@ describe("hotspot radio target", () => {
 		).toBeUndefined();
 	});
 
-	it("labels a radio without its hardware address", () => {
-		expect(hotspotRadioLabel(usb)).toBe("USB · wlan1");
+	it("labels a radio by name, without its hardware address", () => {
+		expect(hotspotRadioLabel(usb)).toBe("Wi-Fi 2 · USB");
 		expect(hotspotRadioLabel({ ...usb, hw: "02:00:00:00:00:01" })).toBe(
-			"wlan1",
+			"Wi-Fi 2",
 		);
-		expect(hotspotRadioLabel({ ...usb, hw: "wlan1" })).toBe("wlan1");
+		expect(hotspotRadioLabel({ ...usb, hw: "wlan1" })).toBe("Wi-Fi 2");
+	});
+
+	it("names a radio called after its MAC by its last four digits, never the MAC", () => {
+		const label = hotspotRadioLabel({
+			...usb,
+			ifname: "wlx00c0cafe2f27",
+			hw: "",
+		});
+		expect(label).toBe("USB Wi-Fi (2f27)");
+		expect(label).not.toContain("00c0cafe");
 	});
 });

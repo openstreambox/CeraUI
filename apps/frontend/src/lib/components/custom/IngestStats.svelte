@@ -51,6 +51,12 @@ interface Props {
 	 * restate the setting instead of reporting what the bond actually carried.
 	 */
 	bitrateKbps?: number | undefined;
+	/**
+	 * The link's name for people ("SIM 1 · Northwind", "Wi-Fi · HomeNetwork"),
+	 * from the shared helper in `$lib/helpers/link-names`. The interface id stays
+	 * as a small second label. Absent: the interface id alone, as before.
+	 */
+	linkName?: ((iface: string) => string) | undefined;
 	class?: string;
 }
 
@@ -58,8 +64,11 @@ const {
 	telemetry = undefined,
 	isStreaming = undefined,
 	bitrateKbps = undefined,
+	linkName = undefined,
 	class: className = undefined,
 }: Props = $props();
+
+const nameOf = (iface: string): string => linkName?.(iface) ?? iface;
 
 const links = $derived<LinkTelemetryEntry[]>(telemetry?.links ?? []);
 const hasLinks = $derived(links.length > 0);
@@ -376,7 +385,7 @@ function exportCsv(): void {
 									class="size-2 shrink-0 rounded-full"
 									style={`background-color: var(--link-${(i % 6) + 1})`}
 								></span>
-								<span class="truncate font-medium">{link.iface}</span>
+								<span class="truncate font-medium" title={link.iface}>{nameOf(link.iface)}</span>
 							</div>
 							<div
 								aria-hidden="true"
@@ -484,7 +493,12 @@ function exportCsv(): void {
 								class="size-2 shrink-0 rounded-full"
 								style={`background-color: var(--link-${(i % 6) + 1})`}
 							></span>
-							<span class="truncate font-medium">{link.iface}</span>
+							<span class="min-w-0">
+								<span class="block truncate font-medium" data-link-name>{nameOf(link.iface)}</span>
+								{#if nameOf(link.iface) !== link.iface}
+									<span class="text-muted-foreground block truncate font-mono text-[10px]">{link.iface}</span>
+								{/if}
+							</span>
 							{#if link.stale}
 								<Badge variant="stale" data-stale-interface={link.iface} />
 							{/if}
@@ -519,7 +533,7 @@ function exportCsv(): void {
 								view.degraded ? 'text-status-warning' : 'text-primary',
 							)}
 							role="img"
-							aria-label={m["live.ingest.trendLabel"]({ iface: link.iface })}
+							aria-label={m["live.ingest.trendLabel"]({ iface: nameOf(link.iface) })}
 						>
 							<!-- Baseline track so a short/empty trace still reads as calibrated. -->
 							<line
