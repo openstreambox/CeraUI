@@ -90,6 +90,9 @@ const SETTLE_POLL_MS = 2_000;
 const SETTLE_POLL_COUNT = 15;
 /** How long "on" waits for a just-started daemon to answer. */
 const SETTLE_WAIT_MS = 10_000;
+/** While waiting for approval or showing a notice, re-probe this often (bounded). */
+const FOLLOW_UP_MS = 10_000;
+const FOLLOW_UP_COUNT = 30;
 
 /**
  * Image-side enrolment hand-off. The root-only inbox is separate from the
@@ -118,8 +121,22 @@ function enrollDir(): string {
 /** The subset of `tailscale status --json` this module reads. */
 type TailscaleStatusJson = {
 	BackendState?: unknown;
-	Self?: { HostName?: unknown; TailscaleIPs?: unknown } | null;
+	Self?: {
+		HostName?: unknown;
+		TailscaleIPs?: unknown;
+		PublicKey?: unknown;
+	} | null;
 };
+
+/** The daemon's own node key from `status --json` (not secret, never broadcast). */
+function nodeKeyOf(stdout: string): string | undefined {
+	try {
+		const key = (JSON.parse(stdout) as TailscaleStatusJson).Self?.PublicKey;
+		return typeof key === "string" && key !== "" ? key : undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /**
  * Map the daemon's BackendState onto the UI's states. Anything unrecognised is
@@ -263,6 +280,10 @@ export type TailscaleDeps = {
 	enrollQueued: () => Promise<boolean>;
 	enrollPending: () => Promise<boolean>;
 	enrollLastStatus: () => Promise<string | undefined>;
+	/** The node key whose Tailscale SSH the enrolment turned off, if any. */
+	enrollSshOffNode: () => Promise<string | undefined>;
+	/** Run `fn` later (follow-up probes; tests capture it). */
+	later: (fn: () => void, ms: number) => void;
 	enrollSubmit: (authKey: string, hostname: string) => Promise<void>;
 	/** Emit the status to clients. */
 	broadcast: (status: TailscaleStatus) => void;
@@ -508,6 +529,16 @@ const defaultDeps: TailscaleDeps = {
 			return undefined;
 		}
 	},
+	enrollSshOffNode: async () => {
+		try {
+			return (await readFile(join(enrollDir(), "ssh-off-node"), "utf8")).trim();
+		} catch {
+			return undefined;
+		}
+	},
+	later: (fn, ms) => {
+		setTimeout(fn, ms).unref?.();
+	},
 	enrollSubmit: async (authKey, hostname) => {
 		const dir = enrollDir();
 		const inbox = await lstat(dir);
@@ -529,6 +560,8 @@ const defaultDeps: TailscaleDeps = {
 let deps: TailscaleDeps = defaultDeps;
 let cached: TailscaleStatus | undefined;
 let joining = false;
+let followUpPending = false;
+let followUps = 0;
 
 /** Test seam: replace the OS surface. */
 export function setTailscaleDepsForTest(next: Partial<TailscaleDeps>): void {
@@ -545,6 +578,8 @@ export function resetTailscaleForTest(): void {
 	deps = defaultDeps;
 	cached = undefined;
 	joining = false;
+	followUpPending = false;
+	followUps = 0;
 	resetMockTailscaleState();
 }
 
@@ -563,22 +598,36 @@ function publish(status: TailscaleStatus): TailscaleStatus {
 		cached.notice !== status.notice
 	) {
 		cached = status;
+		followUps = 0;
 		deps.broadcast(status);
 	}
 	return cached;
 }
 
-async function readDaemonStatus(): Promise<TailscaleStatus> {
+async function readDaemon(): Promise<{
+	status: TailscaleStatus;
+	nodeKey?: string;
+}> {
+	let stdout: string;
 	try {
-		return parseTailscaleStatusJson(await deps.statusJson());
+		stdout = await deps.statusJson();
 	} catch (err) {
 		// `tailscale status` exits non-zero for some states but still prints JSON.
-		const stdout = (err as { stdout?: unknown } | null)?.stdout;
-		if (typeof stdout === "string" && stdout.trim().startsWith("{")) {
-			return parseTailscaleStatusJson(stdout);
+		const out = (err as { stdout?: unknown } | null)?.stdout;
+		if (typeof out !== "string" || !out.trim().startsWith("{")) {
+			return { status: { state: "unknown" } };
 		}
-		return { state: "unknown" };
+		stdout = out;
 	}
+	const nodeKey = nodeKeyOf(stdout);
+	return {
+		status: parseTailscaleStatusJson(stdout),
+		...(nodeKey ? { nodeKey } : {}),
+	};
+}
+
+async function readDaemonStatus(): Promise<TailscaleStatus> {
+	return (await readDaemon()).status;
 }
 
 /**
@@ -611,25 +660,26 @@ async function readSettledBackend(): Promise<string | undefined> {
 }
 
 /**
- * What the owner should know about a join done by the image's enrolment,
- * from the daemon's live prefs, so a notice goes away once its cause does.
+ * What the owner should know about a join done by the image's enrolment, from
+ * the daemon's live prefs, so a notice goes away once its cause does. The SSH
+ * note belongs to the login the enrolment turned SSH off for (its node key),
+ * not to the latest attempt, so a later failed key does not erase it.
+ * `"unknown"` means the prefs could not be read: keep what was known.
  */
-async function readEnrolNotice(): Promise<TailscaleNotice | undefined> {
+async function readEnrolNotice(
+	nodeKey: string | undefined,
+): Promise<TailscaleNotice | undefined | "unknown"> {
 	let prefs: Record<string, unknown>;
 	try {
 		const value = await deps.readPrefs();
-		if (typeof value !== "object" || value === null) return undefined;
+		if (typeof value !== "object" || value === null) return "unknown";
 		prefs = value as Record<string, unknown>;
 	} catch {
-		return undefined;
+		return "unknown";
 	}
-	const last = parseEnrollStatus((await deps.enrollLastStatus()) ?? "");
-	if (
-		prefs.RunSSH === false &&
-		last.state === "joined" &&
-		last.reason === "ok-without-tailnet-ssh"
-	) {
-		return "ssh_off_by_tailnet";
+	if (prefs.RunSSH === false && nodeKey !== undefined) {
+		const sshOffNode = await deps.enrollSshOffNode();
+		if (sshOffNode === nodeKey) return "ssh_off_by_tailnet";
 	}
 	const update = prefs.AutoUpdate as
 		| { Apply?: unknown; Check?: unknown }
@@ -652,10 +702,17 @@ async function probe(): Promise<TailscaleStatus> {
 		if (hook && !(await deps.enrollHasState())) return { state: "needs_key" };
 		return { state: "off" };
 	}
-	const status = await readDaemonStatus();
+	const { status, nodeKey } = await readDaemon();
 	if (hook && status.state === "connected") {
-		const notice = await readEnrolNotice();
-		if (notice) status.notice = notice;
+		const notice = await readEnrolNotice(nodeKey);
+		if (notice === "unknown") {
+			// A failed read is not a repair: keep the note we had for this login.
+			if (cached?.state === "connected" && cached.notice) {
+				status.notice = cached.notice;
+			}
+		} else if (notice) {
+			status.notice = notice;
+		}
 	}
 	if (
 		pending &&
@@ -675,7 +732,26 @@ export async function getTailscaleStatus(): Promise<TailscaleStatus> {
 	if (joining && (status.state === "needs_key" || status.state === "off")) {
 		return publish({ state: "joining" });
 	}
-	return publish(status);
+	const published = publish(status);
+	followUp(published);
+	return published;
+}
+
+/**
+ * An open card should follow an approval or a repair made elsewhere (a local
+ * admin turning SSH back on, the pin landing) without a click: while the
+ * device waits for approval or shows a notice, probe again, bounded.
+ */
+function followUp(status: TailscaleStatus): void {
+	const watch =
+		status.state === "needs_approval" || status.notice !== undefined;
+	if (!watch || followUpPending || followUps >= FOLLOW_UP_COUNT) return;
+	followUpPending = true;
+	deps.later(() => {
+		followUpPending = false;
+		followUps += 1;
+		void getTailscaleStatus();
+	}, FOLLOW_UP_MS);
 }
 
 /** The last known status, for status snapshots built synchronously. */

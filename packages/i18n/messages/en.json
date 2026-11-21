@@ -110,7 +110,7 @@
 	"advanced.remoteAccess.keyLabel": "Auth key",
 	"advanced.remoteAccess.join": "Join network",
 	"advanced.remoteAccess.joinFailed": "Couldn't join. The key may be used up, expired or mistyped.",
-	"advanced.remoteAccess.noticeSshOff": "This network doesn't allow Tailscale SSH, so it's turned off on this device. To use it, allow SSH in your Tailscale access policy, then forget this device and join again with a new key.",
+	"advanced.remoteAccess.noticeSshOff": "Tailscale SSH is off on this device because this network didn't allow it when the device joined. To use it, allow SSH in your Tailscale access policy, then forget this device and join again with a new key.",
 	"advanced.remoteAccess.noticeUpdatesNotPinned": "Tailscale's own automatic updates aren't switched off on this device yet. It tries again each time Tailscale starts, so turning remote access off and on again retries it.",
 	"advanced.remoteAccess.joinFailedTailnetSsh": "Couldn't join: this device is still in a Tailscale network that doesn't allow Tailscale SSH. Forget it there first, then join again.",
 	"advanced.remoteAccess.keyInvalid": "That doesn't look like an auth key.",

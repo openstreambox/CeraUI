@@ -43,6 +43,7 @@ function statusJson(backend: string): string {
 		BackendState: backend,
 		Self: {
 			HostName: "studio-box",
+			PublicKey: "nodekey:aa11",
 			DNSName: "studio-box.example-tailnet.ts.net.",
 			TailscaleIPs: ["100.101.102.103", "fd7a:115c:a1e0::1"],
 		},
@@ -75,6 +76,8 @@ function fakeDaemon(initial: {
 		pending: false,
 		queued: false,
 		enrollStatus: undefined as string | undefined,
+		sshOffNode: undefined as string | undefined,
+		later: [] as Array<() => void>,
 	};
 	const calls: string[] = [];
 	const broadcasts: TailscaleStatus[] = [];
@@ -133,6 +136,10 @@ function fakeDaemon(initial: {
 		enrollQueued: async () => state.queued,
 		enrollPending: async () => state.pending,
 		enrollLastStatus: async () => state.enrollStatus,
+		enrollSshOffNode: async () => state.sshOffNode,
+		later: (fn) => {
+			state.later.push(fn);
+		},
 		enrollSubmit: async (key, hostname) => {
 			calls.push("enroll");
 			submits.push({ key, hostname });
@@ -512,6 +519,7 @@ describe("join through the image's enrolment", () => {
 describe("degraded image joins", () => {
 	const SSH_GAVE_UP =
 		"gave-up 2 0 this tailnet does not allow Tailscale SSH; forget the box there first";
+	const SSH_OFF = { RunSSH: false, AutoUpdate: { Check: false, Apply: false } };
 	const enrolled = (enrollStatus: string, prefs: Record<string, unknown>) => {
 		const daemon = fakeDaemon({
 			active: true,
@@ -522,12 +530,12 @@ describe("degraded image joins", () => {
 		daemon.state.enrollStatus = enrollStatus;
 		return daemon;
 	};
+	// A scheduled follow-up probe runs only when the test calls it; let it finish.
+	const settle = () => Bun.sleep(10);
 
 	test("an enrolment that turned SSH off says so on the card while SSH stays off", async () => {
-		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", {
-			RunSSH: false,
-			AutoUpdate: { Check: false, Apply: false },
-		});
+		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
+		daemon.state.sshOffNode = "nodekey:aa11";
 		setTailscaleDepsForTest(daemon.deps);
 		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
 		// Someone turned SSH back on (policy now allows it): no stale notice.
@@ -537,6 +545,62 @@ describe("degraded image joins", () => {
 		};
 		expect((await getTailscaleStatus()).notice).toBeUndefined();
 		expect(daemon.broadcasts.at(-1)?.notice).toBeUndefined();
+	});
+
+	test("a later failed key does not erase the note for the login that still has SSH off", async () => {
+		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
+		daemon.state.sshOffNode = "nodekey:aa11";
+		setTailscaleDepsForTest(daemon.deps);
+		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
+		daemon.state.enrollStatus =
+			"gave-up 1 0 the control server refused the key";
+		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
+	});
+
+	test("the note belongs to its login: after Forget and a new join it is gone", async () => {
+		const daemon = enrolled("joined 1 0 ok", SSH_OFF);
+		daemon.state.sshOffNode = "nodekey:0ld0";
+		setTailscaleDepsForTest(daemon.deps);
+		expect((await getTailscaleStatus()).notice).toBeUndefined();
+	});
+
+	test("a failed prefs read keeps a known note instead of clearing it", async () => {
+		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
+		daemon.state.sshOffNode = "nodekey:aa11";
+		setTailscaleDepsForTest(daemon.deps);
+		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			readPrefs: async () => {
+				throw new Error("local API timed out");
+			},
+		});
+		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
+	});
+
+	test("an open card follows a repair or an approval without a click", async () => {
+		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
+		daemon.state.sshOffNode = "nodekey:aa11";
+		setTailscaleDepsForTest(daemon.deps);
+		await getTailscaleStatus();
+		expect(daemon.state.later).toHaveLength(1);
+		// A local admin turns SSH back on; the scheduled follow-up sees it.
+		daemon.state.prefs = {
+			RunSSH: true,
+			AutoUpdate: { Check: false, Apply: false },
+		};
+		daemon.state.later.shift()?.();
+		await settle();
+		expect(daemon.broadcasts.at(-1)?.notice).toBeUndefined();
+		// Waiting for approval is followed the same way.
+		daemon.state.backend = "NeedsMachineAuth";
+		await getTailscaleStatus();
+		const follow = daemon.state.later.shift();
+		expect(follow).toBeDefined();
+		daemon.state.backend = "Running";
+		follow?.();
+		await settle();
+		expect(daemon.broadcasts.at(-1)?.state).toBe("connected");
 	});
 
 	test("unpinned Tailscale updates show until the pin lands", async () => {
@@ -588,6 +652,7 @@ describe("degraded image joins", () => {
 					AutoUpdate: { Check: false, Apply: false },
 				};
 				daemon.state.pending = false;
+				daemon.state.sshOffNode = "nodekey:aa11";
 				daemon.state.enrollStatus = "joined 1 0 ok-without-tailnet-ssh";
 			},
 		});

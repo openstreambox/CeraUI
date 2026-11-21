@@ -110,7 +110,7 @@
 	"advanced.remoteAccess.keyLabel": "ऑथ कुंजी",
 	"advanced.remoteAccess.join": "नेटवर्क से जुड़ें",
 	"advanced.remoteAccess.joinFailed": "जुड़ नहीं सका। कुंजी शायद इस्तेमाल हो चुकी है, समाप्त हो गई है या गलत लिखी गई है।",
-	"advanced.remoteAccess.noticeSshOff": "यह नेटवर्क Tailscale SSH की अनुमति नहीं देता, इसलिए इस डिवाइस पर यह बंद है। इसे इस्तेमाल करने के लिए अपनी Tailscale एक्सेस पॉलिसी में SSH की अनुमति दें, फिर इस डिवाइस को भूल जाएँ और नई कुंजी से दोबारा जुड़ें।",
+	"advanced.remoteAccess.noticeSshOff": "इस डिवाइस के जुड़ते समय यह नेटवर्क Tailscale SSH की अनुमति नहीं देता था, इसलिए इस डिवाइस पर Tailscale SSH बंद है। इसे इस्तेमाल करने के लिए अपनी Tailscale एक्सेस पॉलिसी में SSH की अनुमति दें, फिर इस डिवाइस को भूल जाएँ और नई कुंजी से दोबारा जुड़ें।",
 	"advanced.remoteAccess.noticeUpdatesNotPinned": "इस डिवाइस पर Tailscale के अपने स्वचालित अपडेट अभी बंद नहीं हुए हैं। हर बार Tailscale शुरू होने पर यह फिर से कोशिश करता है, इसलिए रिमोट एक्सेस बंद करके फिर चालू करने से दोबारा कोशिश होती है।",
 	"advanced.remoteAccess.joinFailedTailnetSsh": "जुड़ नहीं सका: यह डिवाइस अभी भी ऐसे Tailscale नेटवर्क में है जो Tailscale SSH की अनुमति नहीं देता। पहले इसे वहाँ से भूल जाएँ, फिर दोबारा जुड़ें।",
 	"advanced.remoteAccess.keyInvalid": "यह ऑथ कुंजी जैसा नहीं लगता।",

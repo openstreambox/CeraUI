@@ -110,7 +110,7 @@
 	"advanced.remoteAccess.keyLabel": "Chave de autenticação",
 	"advanced.remoteAccess.join": "Entrar na rede",
 	"advanced.remoteAccess.joinFailed": "Não foi possível entrar. A chave pode já ter sido usada, ter expirado ou estar digitada errado.",
-	"advanced.remoteAccess.noticeSshOff": "Esta rede não permite Tailscale SSH, por isso ele está desligado neste dispositivo. Para usá-lo, permita SSH na política de acesso do Tailscale, depois esqueça este dispositivo e entre de novo com uma chave nova.",
+	"advanced.remoteAccess.noticeSshOff": "O Tailscale SSH está desligado neste dispositivo porque esta rede não o permitia quando o dispositivo entrou. Para usá-lo, permita SSH na política de acesso do Tailscale, depois esqueça este dispositivo e entre de novo com uma chave nova.",
 	"advanced.remoteAccess.noticeUpdatesNotPinned": "As atualizações automáticas do próprio Tailscale ainda não estão desligadas neste dispositivo. Ele tenta de novo sempre que o Tailscale inicia, então desligar e ligar de novo o acesso remoto faz uma nova tentativa.",
 	"advanced.remoteAccess.joinFailedTailnetSsh": "Não foi possível entrar: este dispositivo ainda está em uma rede Tailscale que não permite Tailscale SSH. Esqueça-o lá primeiro e depois entre de novo.",
 	"advanced.remoteAccess.keyInvalid": "Isso não parece uma chave de autenticação.",

@@ -110,7 +110,7 @@
 	"advanced.remoteAccess.keyLabel": "Auth-Key",
 	"advanced.remoteAccess.join": "Netzwerk beitreten",
 	"advanced.remoteAccess.joinFailed": "Beitritt fehlgeschlagen. Der Schlüssel ist vielleicht verbraucht, abgelaufen oder falsch eingegeben.",
-	"advanced.remoteAccess.noticeSshOff": "Dieses Netzwerk erlaubt kein Tailscale SSH, deshalb ist es auf diesem Gerät ausgeschaltet. Um es zu nutzen, erlauben Sie SSH in Ihrer Tailscale-Zugriffsrichtlinie, vergessen Sie dann dieses Gerät und treten Sie mit einem neuen Schlüssel erneut bei.",
+	"advanced.remoteAccess.noticeSshOff": "Tailscale SSH ist auf diesem Gerät aus, weil dieses Netzwerk es beim Beitritt nicht erlaubt hat. Um es zu nutzen, erlauben Sie SSH in Ihrer Tailscale-Zugriffsrichtlinie, vergessen Sie dann dieses Gerät und treten Sie mit einem neuen Schlüssel erneut bei.",
 	"advanced.remoteAccess.noticeUpdatesNotPinned": "Die automatischen Updates von Tailscale selbst sind auf diesem Gerät noch nicht ausgeschaltet. Das Gerät versucht es bei jedem Start von Tailscale erneut; Fernzugriff aus- und wieder einschalten löst einen neuen Versuch aus.",
 	"advanced.remoteAccess.joinFailedTailnetSsh": "Beitritt fehlgeschlagen: Dieses Gerät ist noch in einem Tailscale-Netzwerk, das kein Tailscale SSH erlaubt. Vergessen Sie es dort zuerst und treten Sie dann erneut bei.",
 	"advanced.remoteAccess.keyInvalid": "Das sieht nicht wie ein Auth-Key aus.",
