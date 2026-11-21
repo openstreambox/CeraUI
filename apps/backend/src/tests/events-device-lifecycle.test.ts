@@ -135,7 +135,7 @@ for (const throws of [false, true]) {
 		const calls = recording(throws);
 		const warnings: string[] = [];
 		const result = await warnOnHardwareIdentityDrift({
-			isRealDevice: async () => true,
+			canInspectSystem: async () => true,
 			detectKind: async () => "n100",
 			configuredHw: () => "rk3588",
 			warn: (message) => {
@@ -158,7 +158,7 @@ for (const [real, detected, configured] of [
 	test(`no drift event for real=${real} detected=${detected} configured=${configured}`, async () => {
 		const calls = recording();
 		await warnOnHardwareIdentityDrift({
-			isRealDevice: async () => real,
+			canInspectSystem: async () => real,
 			detectKind: async () => detected,
 			configuredHw: () => configured,
 			warn: () => {},
