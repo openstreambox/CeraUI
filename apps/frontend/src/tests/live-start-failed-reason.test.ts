@@ -4,6 +4,7 @@ import { tick } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VIEW_LOGS_TOAST_CLASS } from "../lib/device-logs/view-logs";
 import { ConnectionResetError } from "../lib/rpc/client";
+import { NotSentError } from "../lib/rpc/rpc-error";
 import { runStartWatchdog } from "../lib/rpc/streaming-start-watchdog";
 
 import { en } from "./helpers/catalog";
@@ -36,6 +37,9 @@ const state = vi.hoisted(() => ({
 		string,
 		unknown
 	>,
+	status: {} as Record<string, unknown>,
+	// The optimism store's attempt generation (each Start dispatch takes a new one).
+	generation: 1,
 }));
 const toastError = vi.hoisted(() => vi.fn());
 const reboot = vi.hoisted(() => vi.fn());
@@ -76,7 +80,7 @@ vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getNetif: () => state.netif,
 	getRelays: () => undefined,
 	getManagedIngestAccounts: () => [],
-	getStatus: () => ({}),
+	getStatus: () => state.status,
 	getPipelines: () => ({ pipelines: {} }),
 	getSources: () => ({
 		sources: [
@@ -95,7 +99,7 @@ vi.mock("$lib/rpc/streaming-optimism.svelte", () => ({
 	getStreamingOptimismState: () => state.optimismState,
 	getStreamingStopReason: () => state.stopReason,
 	getStreamingStartFailure: () => state.failure,
-	getStreamingAttemptGeneration: () => 1,
+	getStreamingAttemptGeneration: () => state.generation,
 	getStopStuckBannerVisible: () => false,
 	startStreamingOptimism: state.startOptimism,
 	stopStreamingOptimism: vi.fn(),
@@ -171,6 +175,8 @@ afterEach(() => {
 	reboot.mockReset();
 	navigate.mockReset();
 	state.netif = { eth0: { enabled: true, ip: "192.0.2.10" } };
+	state.status = {};
+	state.generation = 1;
 	vi.restoreAllMocks();
 });
 
@@ -492,6 +498,115 @@ describe("LiveView start refusals end in a next step (phone UX)", () => {
 		old?.action.onClick();
 		await tick();
 		expect(startStreaming).not.toHaveBeenCalled();
+	});
+
+	function engineRefusal(attemptId: string) {
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId,
+		};
+	}
+
+	it("Try again sends nothing once a connection restart holds the session (is_streaming false)", async () => {
+		engineRefusal("att_restart");
+		render(LiveView);
+		await tick();
+		const retained = action();
+		// The idle optimism store keeps the refusal while the device restarts the
+		// connection: the Live view shows the live cockpit with Stop, no Start.
+		state.status = { connection_restarting: true, is_streaming: false };
+		retained?.action.onClick();
+		await tick();
+		expect(state.startOptimism).not.toHaveBeenCalled();
+		expect(startStreaming).not.toHaveBeenCalled();
+	});
+
+	it("Try again sends nothing while the restart-holding cockpit is up", async () => {
+		state.status = { connection_restarting: true, is_streaming: false };
+		engineRefusal("att_restart_mounted");
+		render(LiveView);
+		await tick();
+		action()?.action.onClick();
+		await tick();
+		expect(state.startOptimism).not.toHaveBeenCalled();
+		expect(startStreaming).not.toHaveBeenCalled();
+	});
+
+	it("Try again sends nothing while the stream outcome is unresolved", async () => {
+		state.status = { stream_lifecycle: "reconciling" };
+		engineRefusal("att_reconciling");
+		render(LiveView);
+		await tick();
+		action()?.action.onClick();
+		await tick();
+		expect(state.startOptimism).not.toHaveBeenCalled();
+		expect(startStreaming).not.toHaveBeenCalled();
+	});
+
+	it("a Try again that passes the gate but is never sent does not lead to Restart box", async () => {
+		engineRefusal("att_unsent");
+		render(LiveView);
+		await tick();
+		startStreaming.mockRejectedValue(new NotSentError());
+		action()?.action.onClick();
+		await waitFor(() => expect(state.revertOptimism).toHaveBeenCalledTimes(1));
+		expect(startStreaming).toHaveBeenCalledTimes(1);
+		cleanup();
+		toastError.mockReset();
+		engineRefusal("att_after_unsent");
+		render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenLastCalledWith(
+			`${startFailure.class.engine_internal} ${startFailure.next.tryAgain}`,
+			nextStep(startFailure.action.tryAgain),
+		);
+	});
+
+	it("a refusal of a newer attempt than the retried one offers Try again, not Restart box", async () => {
+		state.startOptimism.mockImplementation(() => {
+			state.generation += 1;
+		});
+		engineRefusal("att_g1");
+		render(LiveView);
+		await tick();
+		startStreaming.mockResolvedValue({ success: true });
+		action()?.action.onClick();
+		await waitFor(() => expect(startStreaming).toHaveBeenCalledTimes(1));
+		// Another Start took a newer generation before this refusal arrived.
+		state.generation += 1;
+		cleanup();
+		toastError.mockReset();
+		engineRefusal("att_g3");
+		render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenLastCalledWith(
+			`${startFailure.class.engine_internal} ${startFailure.next.tryAgain}`,
+			nextStep(startFailure.action.tryAgain),
+		);
+	});
+
+	it("the refusal of the retried attempt itself offers Restart box", async () => {
+		state.startOptimism.mockImplementation(() => {
+			state.generation += 1;
+		});
+		engineRefusal("att_r1");
+		render(LiveView);
+		await tick();
+		startStreaming.mockResolvedValue({ success: true });
+		action()?.action.onClick();
+		await waitFor(() => expect(startStreaming).toHaveBeenCalledTimes(1));
+		expect(state.generation).toBe(2);
+		cleanup();
+		toastError.mockReset();
+		engineRefusal("att_r2");
+		render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenLastCalledWith(
+			`${startFailure.class.engine_internal} ${startFailure.next.restartBox}`,
+			nextStep(startFailure.action.restartBox),
+		);
 	});
 
 	it("Restart box follows only an engine refusal that came back after Try again", async () => {

@@ -1,19 +1,24 @@
 <script module lang="ts">
 // The Try again → Restart box step. `lastAttempt` is the refusal the last toast
-// showed; `retriedAt` is set only when Try again on an engine refusal actually
-// dispatched a Start, and is consumed by the next refusal. A manual Start, a
-// running stream or two minutes clear it, so an old failure never turns a
-// later manual Start into Restart box. Plain data, not state.
+// showed. `retry` is written only once Try again on an engine refusal has
+// passed validation and is dispatching its Start, and it names that Start's
+// attempt generation. Only a typed refusal of that same generation, within two
+// minutes, consumes it as "refused again". A proven non-dispatch, a manual
+// Start, a newer attempt or a running stream clear it, so an old failure never
+// turns a later Start into Restart box. Plain data, not state.
 const RETRY_WINDOW_MS = 120_000;
-const failureMemory: { lastAttempt: string | undefined; retriedAt: number | undefined } = {
+const failureMemory: {
+	lastAttempt: string | undefined;
+	retry: { generation: number; at: number } | undefined;
+} = {
 	lastAttempt: undefined,
-	retriedAt: undefined,
+	retry: undefined,
 };
 
 /** Tests only: forget the last refusal, as a fresh page load does. */
 export function resetStartFailureMemory(): void {
 	failureMemory.lastAttempt = undefined;
-	failureMemory.retriedAt = undefined;
+	failureMemory.retry = undefined;
 }
 </script>
 
@@ -101,7 +106,7 @@ import {
 import { reconcileStartSource } from '$lib/streaming/effective-source';
 import { buildEncoderSetConfig } from '$lib/streaming/encoderConfig';
 import { encoderSaveErrorMessage } from '$lib/streaming/encoderSaveError';
-import { idleStartGate } from '$lib/streaming/idle-start-gate';
+import { type IdleStartGateInput, idleStartGate } from '$lib/streaming/idle-start-gate';
 import { canLiveSwitchInput, isAudioInputId } from '$lib/streaming/liveAudioSwitch';
 import { expectedOutputCodec, resolveRoute, routeCopy } from '$lib/streaming/outputFormat';
 import {
@@ -315,6 +320,12 @@ function closeSummary() {
 // once the stream has actually stopped (never during the optimistic start edge).
 const showLiveCockpit = $derived(optimisticIsStreaming || restartHolding || showingSummary);
 const summaryMode = $derived(showingSummary && !optimisticIsStreaming && !restartHolding);
+// Where the idle Live bar offers Start: the idle cockpit is up, no Stop is left
+// unresolved and no Start is in flight. Try again on a refusal toast is held to
+// the same admission.
+const idleStartAdmitted = $derived(
+	!showLiveCockpit && !streamOutcomeUnknown && !connectionRestarting && streamingOptimismState === 'idle',
+);
 
 const STREAM_START_ERROR_KEYS = [
 	'srt_connect_failed',
@@ -352,7 +363,7 @@ function startFailedMessage(code: string): string {
 // An engine refusal that comes back after Try again on an engine refusal
 // offers Restart box instead of another Try again.
 $effect(() => {
-	if (isStreaming) failureMemory.retriedAt = undefined;
+	if (isStreaming) failureMemory.retry = undefined;
 });
 
 let viewMounted = true;
@@ -360,34 +371,27 @@ $effect(() => () => {
 	viewMounted = false;
 });
 
-// Try again repeats the Start through the Live bar's own gate, decided from the
-// inputs at the moment of the tap (a link may have dropped since the refusal),
-// with the implicit sole camera folded in as the bar does. It does nothing when
-// the view is gone, another Start or a stream is under way, or a newer refusal
-// (or none) is current.
+// Try again repeats the Start only where the idle Live bar itself offers Start
+// (`idleStartAdmitted`: no live, restarting or summary cockpit, no unresolved
+// stream outcome, no Start in flight), through the bar's own readiness gate
+// decided from the same inputs at the moment of the tap (a link may have dropped
+// since the refusal), with the implicit sole camera folded in as the bar does.
+// It does nothing when the view is gone or a newer refusal (or none) is current.
 function retryStart(attempt: string | undefined, engine: boolean) {
-	if (!viewMounted || streamingOptimismState !== 'idle' || getIsStreaming()) return;
+	if (!viewMounted || !idleStartAdmitted) return;
+	// Raw status too: a restart or a stream reported this tick has not reached
+	// every derived value yet.
+	if (getIsStreaming() || getStatus()?.connection_restarting === true) return;
 	const current = getStreamingStartFailure() as { attemptId?: string } | undefined;
 	if (attempt === undefined || current?.attemptId !== attempt) return;
-	const gate = idleStartGate({
-		config: getConfig(),
-		caps: getCapabilities(),
-		sources: getSources(),
-		netif: getNetif(),
-		isConnected: getIsConnected(),
-		networkIngest: getStatus()?.network_ingest ?? null,
-		pipelines: pipelinesFromSources(getSources()),
-		relays: getRelays(),
-		managedSlots: getManagedIngestAccounts(),
-	});
+	const gate = idleStartGate(idleGateInputs);
 	if (!gate.canStart) return;
-	failureMemory.retriedAt = engine ? Date.now() : undefined;
-	void handleStart({ source: gate.source });
+	void handleStart({ source: gate.source }, { engineRetry: engine });
 }
 
 // A Start from the Live bar is a fresh attempt, not a retry of a refusal.
 function handleStartFromBar(overrides: { source?: string } = {}) {
-	failureMemory.retriedAt = undefined;
+	failureMemory.retry = undefined;
 	return handleStart(overrides);
 }
 
@@ -405,9 +409,15 @@ function startFailureToast(failure: NonNullable<typeof streamingStartFailure>) {
 	let repeated = false;
 	if (attempt === undefined || attempt !== failureMemory.lastAttempt) {
 		failureMemory.lastAttempt = attempt;
-		const retriedAt = failureMemory.retriedAt;
-		repeated = engine && retriedAt !== undefined && Date.now() - retriedAt < RETRY_WINDOW_MS;
-		failureMemory.retriedAt = undefined;
+		const retry = failureMemory.retry;
+		// A revert lands only on the current attempt, so this refusal belongs to
+		// the current generation: it answers the retry only if that is the one.
+		repeated =
+			engine &&
+			retry !== undefined &&
+			retry.generation === getStreamingAttemptGeneration() &&
+			Date.now() - retry.at < RETRY_WINDOW_MS;
+		failureMemory.retry = undefined;
 	}
 	const step = startFailureNextStep(failure, repeated);
 	const message = startFailureMessage(failure, repeated);
@@ -433,6 +443,7 @@ $effect(() => {
 		return;
 	}
 	if (streamingStopReason) {
+		failureMemory.retry = undefined;
 		toast.error(startFailedMessage(streamingStopReason));
 	}
 });
@@ -681,6 +692,20 @@ const effectivePipeline = $derived(encoderConfig.source ?? config?.pipeline);
 // The pipeline registry, projected from the unified sources snapshot — the
 // single ingestion point for every pipeline-keyed read on this view.
 const pipelines = $derived(pipelinesFromSources(getSources()));
+
+// The readiness inputs, built once: the idle bar renders from them and Try again
+// on a refusal decides from them, so the two can never drift apart.
+const idleGateInputs = $derived<IdleStartGateInput>({
+	config,
+	caps: getCapabilities(),
+	sources: getSources(),
+	netif,
+	isConnected: getIsConnected(),
+	networkIngest: getStatus()?.network_ingest ?? null,
+	pipelines,
+	relays,
+	managedSlots: getManagedIngestAccounts(),
+});
 
 // Pipeline metadata for the effective source — used to capability-gate the
 // resolution/framerate overrides when persisting the encoder draft.
@@ -1072,7 +1097,7 @@ const summaryAudio = $derived.by(() => {
 // idle UI is driven by getIsStreaming(), updated by the backend status push —
 // never set locally here. Optimistic transient: Start button shows `starting`
 // immediately on click, then reconciles to authoritative is_streaming.
-async function handleStart(overrides: { source?: string } = {}) {
+async function handleStart(overrides: { source?: string } = {}, opts: { engineRetry?: boolean } = {}) {
 	if (streamingOptimismState !== 'idle') return;
 
 	// Fold the implicit sole-camera source (T10) in, then reconcile source →
@@ -1106,6 +1131,9 @@ async function handleStart(overrides: { source?: string } = {}) {
 	// one (Todo 29 generation identity).
 	startStreamingOptimism();
 	const attempt = getStreamingAttemptGeneration();
+	// Try again on an engine refusal is remembered against this very attempt, and
+	// only now that it passed validation and is being sent.
+	failureMemory.retry = opts.engineRetry ? { generation: attempt, at: Date.now() } : undefined;
 
 	try {
 		const startResult = await startStreaming(result.config);
@@ -1122,7 +1150,9 @@ async function handleStart(overrides: { source?: string } = {}) {
 			noteLostStartReply(attempt);
 			return;
 		}
-		// The socket refused dispatch, so this attempt cannot have started.
+		// The socket refused dispatch, so this attempt cannot have started, and it
+		// was no retry the device refused.
+		if (failureMemory.retry?.generation === attempt) failureMemory.retry = undefined;
 		const reason =
 			error instanceof Error ? error.message : 'unknown_error';
 		revertStreamingOptimism(reason, attempt);
@@ -1295,15 +1325,15 @@ const configRows = $derived<ConfigRow[]>([
 			<UpdateRefusalBand refusal={updateRefusal} />
 		{/if}
 		<IdleCockpit
-			{config}
-			caps={getCapabilities()}
-			sources={getSources()}
-			{netif}
-			isConnected={getIsConnected()}
-			networkIngest={getStatus()?.network_ingest ?? null}
-			{pipelines}
-			{relays}
-			managedSlots={getManagedIngestAccounts()}
+			config={idleGateInputs.config}
+			caps={idleGateInputs.caps}
+			sources={idleGateInputs.sources}
+			netif={idleGateInputs.netif}
+			isConnected={idleGateInputs.isConnected}
+			networkIngest={idleGateInputs.networkIngest}
+			pipelines={idleGateInputs.pipelines}
+			relays={idleGateInputs.relays}
+			managedSlots={idleGateInputs.managedSlots}
 			{configRows}
 			{isStreaming}
 			optimismState={streamingOptimismState}

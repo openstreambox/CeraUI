@@ -140,15 +140,21 @@ A typed start refusal is a toast. Where the next step is decided, the toast's
 button is that step and View logs sits beside it
 (`startFailureNextStep`, `apps/frontend/src/lib/streaming/start-failure-copy.ts`):
 
-- `engine_internal`, `engine_unavailable`, `start_timeout`: Try again. It
-  goes through the Live bar's own gate (`idleStartGate`, the same readiness
-  verdict with the implicit sole camera folded in), decided at the tap, and
-  does nothing when that refusal is no longer current, the view is gone or a
-  Start or stream is under way. When an engine refusal comes back within two
-  minutes of a Try again on an engine refusal, the toast offers Restart box,
-  which opens the same reboot sheet as Settings, so the operator still
-  confirms. A Start from the Live bar, a running stream or the two minutes
-  clear that.
+- `engine_internal`, `engine_unavailable`, `start_timeout`: Try again. It is
+  admitted only where the idle Live bar offers Start (`idleStartAdmitted` in
+  `LiveView.svelte`: no live, restart-holding or summary cockpit, no
+  unresolved stream outcome, no supervised connection restart, no Start in
+  flight). It then goes through the Live bar's own gate (`idleStartGate`, the
+  same readiness verdict with the implicit sole camera folded in), decided at
+  the tap from the same input object the bar renders from (`idleGateInputs`),
+  and does nothing when that refusal is no longer current or the view is gone.
+  A Try again on an engine refusal is remembered against the attempt
+  generation of the Start it dispatches, written only after validation passed.
+  When the typed refusal of that same generation comes back within two
+  minutes, the toast offers Restart box, which opens the same reboot sheet as
+  Settings, so the operator still confirms. A proven non-dispatch, a Start
+  from the Live bar, a newer attempt, a running stream or the two minutes
+  clear it.
 - `start_invalid`: Open stream setup (scrolls to the setup card and focuses
   it); saved SRT encryption the engine cannot use opens the destination.
 - `mutation_blocked`: Open Network, where the modem controls live.
