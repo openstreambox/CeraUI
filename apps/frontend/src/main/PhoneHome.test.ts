@@ -17,7 +17,7 @@ describe("phone Home", () => {
 		render(PhoneHome, { carrying: "streaming" });
 		expect(
 			screen.getByRole("heading", {
-				name: "A device is sending through the box",
+				name: "Upload seen through the box",
 			}),
 		).toBeTruthy();
 		expect(screen.queryByText(/engine offline|not live|idle/i)).toBeNull();

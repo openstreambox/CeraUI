@@ -12,7 +12,7 @@ for (const width of [390,1280,1024]) {
   expect(await home.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
   await page.screenshot({path:evidencePath(`phone-home-checking-${width}.png`),fullPage:true});
   await expect(home).not.toContainText(/engine offline|not live|idle/i);
-  for (const [state,heading,badge] of [['streaming',"A device is sending through the box",'CARRYING'],['idle','Box ready','READY']] as const) {
+  for (const [state,heading,badge] of [['streaming',"Upload seen through the box",'CARRYING'],['idle','Box ready','READY']] as const) {
    await pageRpc.call(['dev','emit'],{type:'status',payload:{phone_box:true,carrying:{state},box_health:[]}});
    await expect(page.getByRole('heading',{name:heading})).toBeVisible();
    await expect(page.getByTestId('phone-hud')).toHaveText(badge);
