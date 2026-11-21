@@ -47,7 +47,10 @@ import {
 	logHybridChannelRefusal,
 	logHybridTargetRefusal,
 } from "./wifi-hybrid-target-diagnostics.ts";
-import { observeProvisioningApProfile } from "./wifi-provisioning-ap.ts";
+import {
+	isProvisioningSetupHeld,
+	observeProvisioningApProfile,
+} from "./wifi-provisioning-ap.ts";
 
 /** Boot-only D12 path. Requests never receive this activation authority. */
 export async function restoreLimitedHotspot(
@@ -112,8 +115,13 @@ export async function restoreLimitedHotspot(
 	if (fields[0] !== "ap") return pending("owned AP profile missing");
 	const channel = channelFromNM(fields[1], fields[2]);
 	let hybridUnavailable = false;
+	let setupHeld = false;
 	const admitted = (reject = refuse): boolean => {
 		if (stopped()) return false;
+		if (isProvisioningSetupHeld(row.ifname)) {
+			setupHeld = true;
+			return refuse("the device image's setup is in progress");
+		}
 		const current = Object.values(deps.resolveInterfaces()).filter(canHotspot);
 		if (current.length !== 1 || current[0] !== row)
 			return reject("requires exactly one hotspot-capable adapter");
@@ -155,7 +163,7 @@ export async function restoreLimitedHotspot(
 		return true;
 	};
 	if (!admitted())
-		return hybridUnavailable
+		return hybridUnavailable && !setupHeld
 			? refuseHybrid("hybrid capability is not proven")
 			: undefined;
 	let target: ConcurrentApInterface | undefined;
@@ -262,6 +270,8 @@ export async function restoreLimitedHotspot(
 					logChannel(reason, { subReason: "admission-lost", initialFrequency }),
 				)
 			) {
+				if (setupHeld)
+					return pending("the device image's setup is in progress");
 				logChannel("hybrid-channel-not-permitted", {
 					subReason: "admission-lost",
 					initialFrequency,
@@ -310,6 +320,11 @@ export async function restoreLimitedHotspot(
 							!(await revalidateConcurrentApInterface(target)))
 					)
 						return false;
+					// Checked again right before dispatch: the marker may have appeared.
+					if (isProvisioningSetupHeld(row.ifname)) {
+						setupHeld = true;
+						return false;
+					}
 					return nmConnect(restoreUuid, HOTSPOT_UP_TO);
 				},
 			})
@@ -318,6 +333,8 @@ export async function restoreLimitedHotspot(
 			if (activated) await disconnectSelected();
 			return undefined;
 		}
+		if (!activated && setupHeld)
+			return pending("the device image's setup is in progress");
 		if (!activated) {
 			refuse("activation failed");
 			return { success: false, error: "activation-failed" };

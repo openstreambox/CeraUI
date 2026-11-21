@@ -401,6 +401,12 @@ export const runtimeConfigSchema = z.object({
 	// same as `station`: nothing is reconciled at boot for an adapter with no
 	// preference, so an existing device keeps today's behaviour exactly.
 	wifi_modes: z.record(z.string(), wifiAdapterModeSchema).optional(),
+	// UUIDs of the device image's setup station profiles already accounted for.
+	// A setup join leaves a new one; seeing it on the setup radio is how a
+	// restarted CeraUI learns that the setup handed the radio over, so the setup
+	// join wins over a saved hotspot intent. ABSENT means no baseline yet: the
+	// first run records the profiles that exist and clears nothing.
+	wifi_setup_stations: z.array(z.string().min(1).max(128)).max(16).optional(),
 
 	// The operator's declared role per ETHERNET port, keyed by interface name.
 	// ABSENT means `uplink` — today's behaviour — so an untouched device is
