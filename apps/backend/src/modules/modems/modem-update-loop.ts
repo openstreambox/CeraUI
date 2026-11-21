@@ -66,6 +66,7 @@ import type {
 import { applyJitter } from "../streaming/constants.ts";
 import { runAutomaticCarrierProfiles } from "./automatic-carrier-profile.ts";
 import { runCellularPreparation } from "./cellular-preparation.ts";
+import { runDeadBearerRecovery } from "./dead-bearer-recovery.ts";
 import { resetGsmConnections } from "./gsm-connections.ts";
 import type { ModemId } from "./mmcli.ts";
 import { forgetModemIdentity } from "./mode-choice-identity.ts";
@@ -355,8 +356,15 @@ export async function runModemStatusPoll(): Promise<void> {
 	const reset = await runUsbSpeedPreparation();
 	const automatic = await runAutomaticCarrierProfiles(reset);
 	await runCellularPreparation(undefined, reset);
-	const configured = [
+	const ready = [
 		...new Set([...automatic, ...(await runModemReadyActivations(reset))]),
+	];
+	// A bearer that is up but carries nothing; health probes already said so.
+	const configured = [
+		...new Set([
+			...ready,
+			...(await runDeadBearerRecovery([...reset, ...ready])),
+		]),
 	];
 	if (configured.length > 0) {
 		for (const id of configured) triggerGsmConnectionsReset(id);

@@ -119,6 +119,20 @@ export function setModemReadyActivationDepsForTest(
 	redials.clear();
 }
 
+/**
+ * The shared per-modem clock for dials and reconnects (first activation,
+ * redial, dead-bearer reconnect), in this module's monotonic time base.
+ */
+export function lastModemDialAt(key: string): number | undefined {
+	return lastDispatch.get(key);
+}
+export function noteModemDial(key: string): void {
+	lastDispatch.set(key, deps.now());
+}
+export function modemDialClock(): number {
+	return deps.now();
+}
+
 /** Called only after a genuinely new registry entry has been installed. */
 export function armModemReadyActivation(id: ModemId): void {
 	intents.set(id, {
