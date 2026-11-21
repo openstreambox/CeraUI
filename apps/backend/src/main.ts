@@ -2,6 +2,7 @@ import {
 	initCarrying,
 	tickCarrying,
 } from "./modules/system/carrying-runtime.ts";
+import { initShutdownProtection } from "./modules/system/shutdown-protection.ts";
 /*
 	CeraUI - web UI for the CeraLive project
 	Copyright (C) 2024-2025 CeraLive project
@@ -44,6 +45,7 @@ import { tightenPrivateFiles } from "./helpers/private-startup.ts";
 // allow: SIZE_OK — Sequential boot composition root; ordering and signal wiring are pinned by boot contract tests.
 import { handleTerminationSignal } from "./helpers/shutdown.ts";
 import { notifyServiceReady } from "./helpers/systemd-ready.ts";
+import { startServiceWatchdog } from "./helpers/systemd-watchdog.ts";
 import { isDevelopment } from "./mocks/mock-config.ts";
 import {
 	initMockService,
@@ -215,7 +217,10 @@ import { stopLegacyTokenMigration } from "./rpc/procedures/auth.procedure.ts";
 process.env.LANG = "C.UTF-8";
 process.env.LANGUAGE = "C";
 
-if (!isDevelopment()) initCarrying();
+if (!isDevelopment()) {
+	initCarrying();
+	initShutdownProtection();
+}
 
 /* Make sure apt-get doesn't expect any interactive user input */
 process.env.DEBIAN_FRONTEND = "noninteractive";
@@ -334,6 +339,7 @@ logger.info(bootTimer.phase("🚀", "server"));
 // Type=notify holds the add-on poke until the guard exists, including the
 // native-runtime/import window before this module could install any handler.
 await runCritical("systemd-ready", notifyServiceReady);
+startServiceWatchdog();
 
 if (!configAvailableAtBind) {
 	await awaitRuntimeConfig();
