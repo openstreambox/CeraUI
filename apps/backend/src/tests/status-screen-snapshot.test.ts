@@ -23,6 +23,11 @@ import {
 	resetLastStartErrorForTest,
 } from "../modules/streaming/last-start-error.ts";
 import {
+	broadcastStreamReadinessIfChanged,
+	resetStreamReadinessForTest,
+	setReadinessDepsForTest,
+} from "../modules/streaming/stream-readiness.ts";
+import {
 	buildStatusScreenSnapshot,
 	resetStatusScreenForTest,
 	STATUS_SCREEN_MAX_ENTRIES,
@@ -109,6 +114,7 @@ function inputs(over: Partial<StatusScreenInputs> = {}): StatusScreenInputs {
 		now: NOW,
 		version: "2026.11.21",
 		readiness: readiness("no_uplink_passes"),
+		readinessAgeMs: 0,
 		uplinks: [
 			uplink("wwan1", "cellular", "degraded"),
 			uplink("eth0", "ethernet", "down"),
@@ -178,10 +184,12 @@ function assertOnlyAllowlisted(value: unknown, key = ""): void {
 beforeEach(() => {
 	resetStatusScreenForTest();
 	resetLastStartErrorForTest();
+	resetStreamReadinessForTest();
 });
 afterEach(() => {
 	resetStatusScreenForTest();
 	resetLastStartErrorForTest();
+	resetStreamReadinessForTest();
 });
 
 test("the snapshot carries the contract's fields in a stable order", () => {
@@ -382,16 +390,44 @@ test("codes outside the supported sets never pass, even when token-shaped", () =
 });
 
 test("a readiness answer older than 10 s is left out, not shown as current", () => {
-	const fresh = { ...readiness(undefined, true), at: NOW - 10_000 };
-	expect(buildStatusScreenSnapshot(inputs({ readiness: fresh })).ready).toEqual(
-		{
-			ready: true,
-		},
-	);
-	const stale = { ...readiness(undefined, true), at: NOW - 10_001 };
+	const ready = readiness(undefined, true);
 	expect(
-		"ready" in buildStatusScreenSnapshot(inputs({ readiness: stale })),
+		buildStatusScreenSnapshot(
+			inputs({ readiness: ready, readinessAgeMs: 10_000 }),
+		).ready,
+	).toEqual({ ready: true });
+	expect(
+		"ready" in
+			buildStatusScreenSnapshot(
+				inputs({ readiness: ready, readinessAgeMs: 10_001 }),
+			),
 	).toBe(false);
+});
+
+test("readiness is aged by its monotonic evaluation stamp, never by its wall-clock time", () => {
+	// Evaluated before a two-hour backward step: its wall time is now in the future.
+	const ahead = { ...readiness(undefined, true), at: NOW + 2 * 3_600_000 };
+	expect(
+		"ready" in
+			buildStatusScreenSnapshot(
+				inputs({ readiness: ahead, readinessAgeMs: 10_001 }),
+			),
+	).toBe(false);
+	// Evaluated just now, before a forward step: its wall time looks old.
+	const behind = { ...readiness(undefined, true), at: NOW - 3_600_000 };
+	expect(
+		buildStatusScreenSnapshot(
+			inputs({ readiness: behind, readinessAgeMs: 2_000 }),
+		).ready,
+	).toEqual({ ready: true });
+	// An age that cannot be measured is no answer.
+	for (const age of [-1, Number.NaN, Number.POSITIVE_INFINITY])
+		expect(
+			"ready" in
+				buildStatusScreenSnapshot(
+					inputs({ readiness: behind, readinessAgeMs: age }),
+				),
+		).toBe(false);
 });
 
 // ─── File ────────────────────────────────────────────────────────────────────
@@ -482,7 +518,7 @@ test("rewritten on change and for refresh, not every tick; failures retried", ()
 		now: () => now,
 		monotonic: () => now,
 		version: () => "2026.11.21",
-		readiness: () => ({ ...ready, at: now }),
+		readiness: () => ({ readiness: { ...ready, at: now }, evaluatedAt: now }),
 		uplinks: () => [],
 		modems: () => ({}),
 		lastError: () => undefined,
@@ -538,4 +574,54 @@ test("a clock step forces a fresh expiry; the refresh interval runs on monotonic
 	mono += 28_000;
 	expect(tickStatusScreenSnapshot()).toBe(true);
 	expect(written).toHaveLength(4);
+});
+
+test("a clock step back while readiness evaluation throws does not keep the last verdict alive", () => {
+	let wall = NOW;
+	let mono = 1_000;
+	let failing = false;
+	setReadinessDepsForTest({
+		now: () => wall,
+		monotonic: () => mono,
+		live: () => {
+			if (failing) throw new Error("readiness source broken");
+			return true;
+		},
+		senderLinks: () => [{ iface: "wwan0", carrying: true }],
+	});
+	const written: StatusScreenSnapshot[] = [];
+	setStatusScreenDepsForTest({
+		now: () => wall,
+		monotonic: () => mono,
+		version: () => "2026.11.21",
+		uplinks: () => [],
+		modems: () => ({}),
+		lastError: () => undefined,
+		write: (snapshot) => written.push(snapshot),
+	});
+	broadcastStreamReadinessIfChanged();
+	expect(tickStatusScreenSnapshot()).toBe(true);
+	expect(written.at(-1)?.ready).toEqual({ ready: true });
+	// Two hours back, and every evaluation from now on throws.
+	failing = true;
+	wall -= 2 * 3_600_000;
+	mono += 2_000;
+	expect(() => broadcastStreamReadinessIfChanged()).toThrow();
+	expect(tickStatusScreenSnapshot()).toBe(true); // the step forces a write
+	expect(written.at(-1)?.ready).toEqual({ ready: true }); // 2 s old: still current
+	for (let i = 0; i < 5; i++) {
+		wall += 2_000;
+		mono += 2_000;
+		expect(() => broadcastStreamReadinessIfChanged()).toThrow();
+		tickStatusScreenSnapshot();
+	}
+	// 12 s since the last evaluation that worked: no verdict, not a stale yes.
+	expect("ready" in (written.at(-1) ?? {})).toBe(false);
+	expect(written.at(-1)?.expires).toBe(Math.floor((wall + 90_000) / 1000));
+	failing = false;
+	wall += 2_000;
+	mono += 2_000;
+	broadcastStreamReadinessIfChanged();
+	expect(tickStatusScreenSnapshot()).toBe(true);
+	expect(written.at(-1)?.ready).toEqual({ ready: true });
 });

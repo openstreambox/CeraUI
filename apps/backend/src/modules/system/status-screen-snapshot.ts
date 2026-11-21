@@ -54,7 +54,10 @@ import {
 	type LastStartError,
 	lastStartError,
 } from "../streaming/last-start-error.ts";
-import { latestStreamReadiness } from "../streaming/stream-readiness.ts";
+import {
+	latestStreamReadiness,
+	type StreamReadinessSample,
+} from "../streaming/stream-readiness.ts";
 import { defaultCeraUiRevisionSources } from "./revisions.ts";
 
 export const STATUS_SCREEN_SNAPSHOT =
@@ -133,6 +136,8 @@ export interface StatusScreenInputs {
 	readonly now: number;
 	readonly version: string | undefined;
 	readonly readiness: StreamReadiness | undefined;
+	/** Monotonic milliseconds since that readiness answer was evaluated. */
+	readonly readinessAgeMs: number;
 	readonly uplinks: readonly UplinkHealthRecord[];
 	readonly modems: Readonly<Record<string, StatusScreenModemRow>>;
 	readonly lastError: LastStartError | undefined;
@@ -183,9 +188,14 @@ export function buildStatusScreenSnapshot(
 		typeof inputs.version === "string"
 			? VERSION.exec(inputs.version)?.[1]
 			: undefined;
+	// Aged on monotonic time only: the answer's own wall-clock `at` is wrong
+	// after a clock step. An age that cannot be measured is no answer.
+	const age = inputs.readinessAgeMs;
 	const readiness =
 		inputs.readiness !== undefined &&
-		inputs.readiness.at >= inputs.now - STATUS_SCREEN_READINESS_MAX_AGE_MS
+		Number.isFinite(age) &&
+		age >= 0 &&
+		age <= STATUS_SCREEN_READINESS_MAX_AGE_MS
 			? inputs.readiness
 			: undefined;
 	const rawReason = readiness?.reason?.code;
@@ -256,7 +266,8 @@ export interface StatusScreenDeps {
 	/** Milliseconds that never step; paces the refresh. */
 	readonly monotonic: () => number;
 	readonly version: () => string | undefined;
-	readonly readiness: () => StreamReadiness | undefined;
+	/** The last readiness answer, stamped on the same monotonic clock. */
+	readonly readiness: () => StreamReadinessSample | undefined;
 	readonly uplinks: () => readonly UplinkHealthRecord[];
 	readonly modems: () => Readonly<Record<string, StatusScreenModemRow>>;
 	readonly lastError: () => LastStartError | undefined;
@@ -292,17 +303,20 @@ export function setStatusScreenDepsForTest(
 /** Write when the content changed or the last write is due for refresh. */
 export function tickStatusScreenSnapshot(): boolean {
 	const now = deps.now();
+	const mono = deps.monotonic();
+	const sample = deps.readiness();
 	const snapshot = buildStatusScreenSnapshot({
 		now,
 		version: deps.version(),
-		readiness: deps.readiness(),
+		readiness: sample?.readiness,
+		readinessAgeMs:
+			sample === undefined ? Number.NaN : mono - sample.evaluatedAt,
 		uplinks: deps.uplinks(),
 		modems: deps.modems(),
 		lastError: deps.lastError(),
 	});
 	const { expires: _expires, ...rest } = snapshot;
 	const content = JSON.stringify(rest);
-	const mono = deps.monotonic();
 	const elapsed = mono - lastWrittenMono;
 	// A wall-clock step moves the written expiry out of the page's window.
 	const stepped =

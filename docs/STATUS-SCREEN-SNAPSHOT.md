@@ -33,7 +33,7 @@ within 90 s of the backend stopping. Not written under mocks.
 | `ceraui` | The numeric release part of `/opt/ceralive/version` (two to four dotted ASCII numbers); any suffix is dropped |
 | `uplinks` | Uplink health records, sorted by interface name: `kind` and `state` only, at most 8 |
 | `modems` | The published modem rows, by modem id, router-mode dongles skipped: `sim` is `locked` when the SIM asks for its PIN or PUK, else `present` or `absent` as the modem reported it, else `unknown`; at most 8 |
-| `ready` | The stream-ready flag from its last 2 s tick (`docs/STREAM-READINESS.md`): `ready` and the reason code when the page has wording for it, else `other`. Left out when the last answer is older than 10 s |
+| `ready` | The stream-ready flag from its last 2 s tick (`docs/STREAM-READINESS.md`): `ready` and the reason code when the page has wording for it, else `other`. Left out when the last answer is older than 10 s, measured on monotonic time from the start of its evaluation, so a clock step or an evaluation that keeps failing never keeps an old answer on the page |
 | `last_error` | The failure class of the last failed start (one of the start taxonomy's classes), cleared by a start that succeeds; in memory only |
 
 `url` is not written: the page picks the box's own address for the QR code.

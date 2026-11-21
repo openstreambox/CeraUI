@@ -350,6 +350,8 @@ export interface ReceiverTarget {
 
 export interface ReadinessDeps {
 	now: () => number;
+	/** Milliseconds that never step; stamps each evaluation for its age. */
+	monotonic: () => number;
 	live: () => boolean;
 	lock: () => Verdict;
 	source: () => Verdict;
@@ -498,6 +500,7 @@ export function currentSenderLinks(): readonly SenderLink[] {
 
 const defaultDeps: ReadinessDeps = {
 	now: Date.now,
+	monotonic: () => performance.now(),
 	live: getIsStreaming,
 	lock: currentStartLock,
 	source: currentSourceBlock,
@@ -537,8 +540,14 @@ export function getStreamReadiness(): StreamReadiness {
 
 // ─── Broadcast ───────────────────────────────────────────────────────────────
 
+/** The last answer and the monotonic time its evaluation started. */
+export interface StreamReadinessSample {
+	readonly readiness: StreamReadiness;
+	readonly evaluatedAt: number;
+}
+
 let lastSignature: string | undefined;
-let latest: StreamReadiness | undefined;
+let latest: StreamReadinessSample | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 
 function signature(readiness: StreamReadiness): string {
@@ -548,8 +557,11 @@ function signature(readiness: StreamReadiness): string {
 
 /** Evaluate and push to clients only when the answer changed. */
 export function broadcastStreamReadinessIfChanged(): StreamReadiness | null {
+	// Stamped before evaluating: an evaluation that throws leaves the last
+	// answer with its old stamp, so it ages out whatever the wall clock does.
+	const evaluatedAt = deps.monotonic();
 	const readiness = getStreamReadiness();
-	latest = readiness;
+	latest = { readiness, evaluatedAt };
 	const next = signature(readiness);
 	if (next === lastSignature) return null;
 	lastSignature = next;
@@ -558,7 +570,7 @@ export function broadcastStreamReadinessIfChanged(): StreamReadiness | null {
 }
 
 /** The answer from the last tick, without evaluating again; for the status screen snapshot. */
-export function latestStreamReadiness(): StreamReadiness | undefined {
+export function latestStreamReadiness(): StreamReadinessSample | undefined {
 	return latest;
 }
 
