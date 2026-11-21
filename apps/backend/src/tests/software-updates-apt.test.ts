@@ -438,7 +438,7 @@ describe("buildDetachedAptUpgradeCommand() — service-cgroup isolation", () => 
 		expect(source).toContain("buildAptRefreshArgs(reachability.verdict)");
 		expect(source).toContain("buildAptDiscoveryArgs(reachability.verdict)");
 		expect(source).toContain("...buildAptInstallArgs(packages)");
-		expect(source).toContain("(await isRealDevice())");
+		expect(source).toContain('(await hasCapability("os-updates"))');
 		expect(source).toContain("aptReachabilityProbe({ maxAgeMs: 0 })");
 		expect(source).not.toContain("execPNR(");
 		expect(source).not.toContain("Bun.$`apt-get");

@@ -11,7 +11,7 @@
  *
  *   1. emulated-mode reconciler dry-run — with cog-display enabled in config the
  *      reconciler skips gracefully (no descriptor read, no fetch, no state write,
- *      never throws) when isRealDevice() is false;
+ *      never throws) when add-on management is unavailable;
  *   2. G6 enable gate — enableAddon(cog-display) returns
  *      `addon_unavailable_in_emulated_mode` and touches no OS primitive;
  *   3. G6 disable gate — the symmetric guard on disableAddon;
@@ -128,7 +128,7 @@ describe("T39 cog-display — reconciler emulated-mode dry-run", () => {
 		};
 		const deps: ReconcilerDeps = {
 			// G6 — emulated: the whole run is a no-op.
-			isRealDevice: () => Promise.resolve(false),
+			canManageAddons: () => Promise.resolve(false),
 			getIsStreaming: () => false,
 			getOsVersionId: () => {
 				probes.osRead = true;
@@ -173,11 +173,11 @@ describe("T39 cog-display — reconciler emulated-mode dry-run", () => {
 	});
 
 	it("would materialise cog-display on a real device (positive control)", async () => {
-		// Same desired state, but isRealDevice() true and the staged .raw missing:
+		// Same desired state, but add-on management available and the staged .raw missing:
 		// the reconciler now fetches + refreshes — proving the emulated skip above
 		// is the device gate, not a dead code path.
 		const { deps, probes } = makeReconcilerDeps({
-			isRealDevice: () => Promise.resolve(true),
+			canManageAddons: () => Promise.resolve(true),
 			rawExists: () => Promise.resolve(false),
 		});
 
@@ -204,7 +204,7 @@ describe("T39 cog-display — manager G6 emulated-mode gate", () => {
 		const deps: AddonManagerDeps = {
 			// G6 — emulated mode. Every other primitive flips a "touched" flag so
 			// the test proves the gate returns BEFORE any OS/network side effect.
-			isRealDevice: () => Promise.resolve(false),
+			canManageAddons: () => Promise.resolve(false),
 			getEffectiveHardware: () => "rk3588",
 			getDataFreeBytes: () => {
 				unreached("os");

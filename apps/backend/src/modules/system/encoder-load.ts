@@ -15,7 +15,7 @@ import { logger } from "../../helpers/logger.ts";
 import { ACTIVE_TO } from "../../helpers/shared.ts";
 import { getms } from "../../helpers/time.ts";
 import { broadcastMsg } from "../ui/websocket-server.ts";
-import { isRealDevice } from "./device-detection.ts";
+import { hasCapability } from "./board-capabilities.ts";
 import {
 	legacyCoreReadings,
 	mppBlockForDevice,
@@ -241,7 +241,7 @@ export function getEncoderLoad(): EncoderLoad {
 export async function initEncoderLoad(
 	deps: EncoderLoadDeps = defaultEncoderLoadDeps,
 ): Promise<void> {
-	if (!(await isRealDevice())) {
+	if (!(await hasCapability("hw-encoder"))) {
 		logger.debug("encoder-load: emulated host — collector not started");
 		return;
 	}
