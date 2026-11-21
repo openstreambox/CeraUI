@@ -2895,6 +2895,7 @@
 	"live.audioCard.title": "ऑडियो",
 	"live.telemetryCard.title": "टेलीमेट्री",
 	"live.bar.ready": "लाइव जाने के लिए तैयार",
+	"live.bar.blockedSeveral": "लाइव होने से पहले ये ठीक करें",
 	"network.hotspot.steeringPending": "रूटिंग लंबित है",
 	"network.view.hotspotRadio": "हॉटस्पॉट रेडियो",
 	"network.view.hotspotRadioChoose": "रेडियो चुनें",

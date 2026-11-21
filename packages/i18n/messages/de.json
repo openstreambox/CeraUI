@@ -2895,6 +2895,7 @@
 	"live.audioCard.title": "Audio",
 	"live.telemetryCard.title": "Telemetrie",
 	"live.bar.ready": "Bereit für den Live-Start",
+	"live.bar.blockedSeveral": "Vor dem Livegang noch erledigen",
 	"network.hotspot.steeringPending": "Routing wird vorbereitet",
 	"network.view.hotspotRadio": "Hotspot-Radio",
 	"network.view.hotspotRadioChoose": "Radio auswählen",

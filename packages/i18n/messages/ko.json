@@ -2850,6 +2850,7 @@
 	"live.audioCard.title": "오디오",
 	"live.telemetryCard.title": "텔레메트리",
 	"live.bar.ready": "라이브 시작 준비 완료",
+	"live.bar.blockedSeveral": "라이브 전에 다음을 해결하세요",
 	"network.hotspot.steeringPending": "라우팅 준비 중",
 	"network.view.hotspotRadio": "핫스팟 라디오",
 	"network.view.hotspotRadioChoose": "라디오 선택",

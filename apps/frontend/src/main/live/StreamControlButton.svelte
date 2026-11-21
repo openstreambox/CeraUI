@@ -13,10 +13,24 @@ interface Props {
 	disabledReason?: string;
 	onStart: () => void;
 	onStop: () => void;
+	/**
+	 * A tap on Start while something blocks it. When set, a blocked Start is
+	 * not a dead button: it stays dimmed and `aria-disabled`, and a tap calls
+	 * this (the Live bar points at the things to fix) instead of doing nothing.
+	 * A start already in flight still disables the button outright.
+	 */
+	onBlockedStart?: () => void;
 }
 
-const { isStreaming, canStart, optimismState, disabledReason, onStart, onStop }: Props =
-	$props();
+const {
+	isStreaming,
+	canStart,
+	optimismState,
+	disabledReason,
+	onStart,
+	onStop,
+	onBlockedStart,
+}: Props = $props();
 
 // Disable button during transient states (starting/stopping).
 const isTransient = $derived(optimismState === 'starting' || optimismState === 'stopping');
@@ -31,6 +45,18 @@ const startLabel = $derived(
 const stopLabel = $derived(
 	optimismState === 'stopping' ? m["live.stopping"]() : m["live.stopStream"](),
 );
+
+// Blocked but not busy, with somewhere to send the operator: keep the button
+// tappable and say it is not ready yet through aria-disabled.
+const leadsToFixes = $derived(!canStart && !isTransient && onBlockedStart !== undefined);
+
+function handleStartClick() {
+	if (leadsToFixes) {
+		onBlockedStart?.();
+		return;
+	}
+	onStart();
+}
 </script>
 
 <!-- Streaming control — prominent, lime to start, neutral to stop -->
@@ -51,9 +77,10 @@ const stopLabel = $derived(
 	</Button>
 {:else}
 	<Button
-		class="bg-primary text-primary-foreground hover:bg-primary/90 group min-h-[44px] w-full gap-3 py-6 text-base font-semibold"
-		disabled={!canStart || isTransient}
-		onclick={onStart}
+		class="bg-primary text-primary-foreground hover:bg-primary/90 group min-h-[44px] w-full gap-3 py-6 text-base font-semibold aria-disabled:opacity-50"
+		aria-disabled={leadsToFixes ? 'true' : undefined}
+		disabled={leadsToFixes ? false : !canStart || isTransient}
+		onclick={handleStartClick}
 		size="lg"
 		title={!canStart || isTransient ? disabledReason : undefined}
 		type="button"
