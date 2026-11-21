@@ -233,6 +233,7 @@ import {
 	resolveClassBand,
 	resolveRowState,
 } from '../network/cellular-row';
+import ModemEsimSection from './ModemEsimSection.svelte';
 import ModemFccUnlockSection from './ModemFccUnlockSection.svelte';
 import ModemGpsSection from './ModemGpsSection.svelte';
 import ModemUssdSection from './ModemUssdSection.svelte';
@@ -530,6 +531,7 @@ let unconfirmedExpectation = $state<ModemConfigSent | undefined>(undefined);
 // nobody has asked yet — a different fact, and rendering the two the same way
 // would tell an operator their check failed before they made one.
 let reconcileUnresolved = $state(false);
+let saveAttemptGeneration = 0;
 
 // Confirm a configure once a broadcast `modem` echo proves the device stored
 // what we sent (configure-echo predicate). A `connecting → connected` cycle on
@@ -598,6 +600,9 @@ function reconcileSave() {
 
 async function handleSave() {
 	if (primaryDisabled || isOperationPending(configKey)) return;
+	const attempt = ++saveAttemptGeneration;
+	const generation = dialogLoadGeneration;
+	const requestedDevice = String(deviceId);
 	saveRefusal = undefined;
 	saveUnconfirmed = false;
 	unconfirmedExpectation = undefined;
@@ -637,6 +642,14 @@ async function handleSave() {
 		busyMessage: () => m["network.os.deviceBusy"](),
 		failMessage: () => m["network.os.operationFailed"](),
 	});
+	// Keep a late reply attached to its original save/open, including when the
+	// dialog was reopened after the latch timed out without another dispatch.
+	if (
+		!open ||
+		attempt !== saveAttemptGeneration ||
+		generation !== dialogLoadGeneration ||
+		requestedDevice !== String(deviceId)
+	) return;
 	if (result && result.success === false) {
 		saveExpected = undefined;
 		saveRefusal = result.error ?? 'write_failed';
@@ -2381,7 +2394,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 							{/if}
 						</div>
 						<p class="text-muted-foreground/80 text-xs" data-testid="modem-esim-readonly">
-							{m["network.modem.detail.esimReadOnly"]()}
+							{modem?.capability_modules?.esim && modem.capability_modules.esim !== 'unavailable' ? t('network.esim.reportHelp') : m["network.modem.detail.esimReadOnly"]()}
 						</p>
 					</div>
 				{/if}
@@ -2950,6 +2963,7 @@ const powerReading = $derived(radioPowerReading(modem.radio_power));
 		     half the fleet. Like the USSD surface below it, this one owns its state
 		     and its RPC: do not hoist them here for consistency, because unmounting
 		     is what drops the coordinate. -->
+		<ModemEsimSection claim={modem?.capability_modules?.esim} deviceId={String(deviceId)} />
 		<ModemGpsSection claim={gpsClaim} deviceId={String(deviceId)} />
 
 		<!-- Same shape, same reason: closing the dialog unmounts the component,

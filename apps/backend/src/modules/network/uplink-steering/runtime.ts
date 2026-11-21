@@ -1,7 +1,8 @@
 import { uplinkFlowsResetEventSchema } from "@ceraui/rpc/schemas";
 import { logger } from "../../../helpers/logger.ts";
-import { isRealDevice } from "../../system/device-detection.ts";
+import { hasCapability } from "../../system/board-capabilities.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
+import { broadcastWifiState } from "../../wifi/wifi.ts";
 import { onNetworkInterfacesChange } from "../network-interfaces.ts";
 import { onUsbNetScanCommitted } from "../router-cellular-scan.ts";
 import { onUplinkHealthChange } from "../uplink-health/state.ts";
@@ -14,6 +15,10 @@ import {
 import { UplinkSteeringApplier } from "./applier.ts";
 import { UplinkSteeringCoordinator } from "./coordinator.ts";
 import {
+	enableSteeringReadiness,
+	publishSteeringReadiness,
+} from "./readiness.ts";
+import {
 	discoverOwnedUplinkRoutes,
 	ensureUplinkRoute,
 	removeUplinkRoute,
@@ -24,6 +29,7 @@ import {
 	publishUplinkSteeringAvailability,
 	UPLINK_FLOWS_RESET_EVENT,
 } from "./status.ts";
+import { verifySteeringState } from "./verify.ts";
 
 const applier = new UplinkSteeringApplier({
 	discoverRoutes: discoverOwnedUplinkRoutes,
@@ -43,9 +49,20 @@ const applier = new UplinkSteeringApplier({
 
 const coordinator = new UplinkSteeringCoordinator({
 	readDesiredState: (context) => readDesiredSteeringState(undefined, context),
-	apply: (previous, next) => applier.apply(previous, next),
+	apply: async (previous, next) => {
+		publishSteeringReadiness([]);
+		await applier.apply(previous, next);
+	},
+	verifyApplied: async (next) => {
+		await verifySteeringState(next);
+		publishSteeringReadiness(next.clientZones);
+	},
+	publishAvailability: (availability) => {
+		if (!availability.available) publishSteeringReadiness([]);
+		publishUplinkSteeringAvailability(availability);
+		broadcastWifiState();
+	},
 	retryCleanup: () => applier.retryPendingCleanup(),
-	publishAvailability: publishUplinkSteeringAvailability,
 });
 
 let unsubscribeNetif: (() => void) | undefined;
@@ -53,7 +70,12 @@ let unsubscribeHealth: (() => void) | undefined;
 let unsubscribeScan: (() => void) | undefined;
 
 export async function initUplinkSteering(): Promise<void> {
-	if (unsubscribeNetif !== undefined || !(await isRealDevice())) return;
+	if (
+		unsubscribeNetif !== undefined ||
+		!(await hasCapability("client-internet"))
+	)
+		return;
+	enableSteeringReadiness();
 	const reconcile = () => {
 		void coordinator.requestReconcile().catch((error: unknown) => {
 			logger.warn("uplink steering reconcile failed", { err: error });

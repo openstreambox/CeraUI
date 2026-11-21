@@ -11,6 +11,7 @@ import {
 	setEthernetRoleOutputSchema,
 	setIngestEnabledInputSchema,
 	setIngestEnabledOutputSchema,
+	sharingPolicySchema,
 } from '../schemas';
 
 export const networkContract = oc.router({
@@ -18,6 +19,8 @@ export const networkContract = oc.router({
 	 * Get all network interfaces status
 	 */
 	getInterfaces: oc.output(netifMessageSchema),
+	getSharingPolicy: oc.output(sharingPolicySchema),
+	setSharingPolicy: oc.input(sharingPolicySchema).output(sharingPolicySchema),
 
 	/**
 	 * Configure a network interface
