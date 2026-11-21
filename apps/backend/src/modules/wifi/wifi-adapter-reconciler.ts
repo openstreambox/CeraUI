@@ -59,7 +59,11 @@ import {
 
 export { retryWifiAdapterReconcile } from "./wifi-adapter-reconcile-retry.ts";
 
-import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
+import {
+	normalizeMacAddress,
+	wifiAdapterKeyMac,
+	wifiAdapterKeyPort,
+} from "./wifi-permanent-mac.ts";
 import {
 	activeProvisioningAp,
 	isProvisioningApConn,
@@ -141,12 +145,24 @@ export async function reconcileWifiAdapterStopLocked(
 		return { success: false, error: "DEVICE_BUSY" };
 	const owner = resolveWifiAdapterOwner(registryKey, row);
 	const cleanup = await reconcileWifiAdapterTeardownLocked(owner);
-	const conn = row.hotspot.conn;
-	if (
+	const active =
+		row.concurrentHotspot?.activeConn ??
+		(row.activeMode === "ap" ? row.activeConn : undefined);
+	const returningPortAp =
 		normalizeMacAddress(registryKey) &&
+		active &&
+		getHotspotCredentialOwners(active).some((key) => wifiAdapterKeyPort(key));
+	const conn =
+		(wifiAdapterKeyPort(registryKey) || returningPortAp ? active : undefined) ??
+		row.hotspot.conn;
+	const owners = conn ? getHotspotCredentialOwners(conn) : [];
+	if (
+		wifiAdapterKeyMac(registryKey) &&
 		row.degradedReason !== "permanent-mac-unresolved" &&
 		(isHotspotActive(row) || row.hotspot.transition === "activating") &&
 		conn &&
+		(owners.includes(owner) ||
+			(!wifiAdapterKeyPort(registryKey) && owners.length === 0)) &&
 		!(
 			await runHotspotProfileOperation({
 				uuid: conn,
@@ -361,7 +377,11 @@ export async function reconcileWifiAdapterModeLocked(
 		publish(row.id, result);
 		return result;
 	}
-	const current = observedWifiAdapterMode(row);
+	// A returning sole row can see the live virtual leg without adopting its
+	// port-owned profile. Station still owes that AP a Down.
+	const current = row.concurrentHotspot?.activeConn
+		? "hybrid"
+		: observedWifiAdapterMode(row);
 	if (current === target && target === "station") {
 		publish(row.id, { success: true, mode: target });
 		return { success: true, applied: target };

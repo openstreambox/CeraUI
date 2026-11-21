@@ -45,7 +45,7 @@ import {
 import { logger } from "../../helpers/logger.ts";
 import type { NmProfileInstance } from "../network/network-manager-profile-instance.ts";
 import { isWifiChannelName, type WifiChannel } from "./wifi-channels.ts";
-import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
+import { normalizeWifiAdapterKey } from "./wifi-permanent-mac.ts";
 import { isProvisioningApConn } from "./wifi-provisioning-ap.ts";
 
 /** Default on-disk location, relative to the backend's working directory. */
@@ -120,6 +120,7 @@ const fileSchema = z.object({
 	adapters: z.record(z.string(), entrySchema).optional(),
 });
 
+/** Port copies have no update timestamp or UUID evidence; empty released history is allowed. */
 type StoredEntry = z.infer<typeof entrySchema>;
 
 let filePath = HOTSPOT_CREDENTIALS_FILE;
@@ -132,7 +133,7 @@ let entries: Record<string, StoredEntry> = {};
 let initialized = false;
 
 function keyFor(macAddress: string): string | undefined {
-	return normalizeMacAddress(macAddress) ?? macAddress.trim().toLowerCase();
+	return normalizeWifiAdapterKey(macAddress);
 }
 
 function toCredentials(entry: StoredEntry): HotspotCredentials {
@@ -147,9 +148,11 @@ function toCredentials(entry: StoredEntry): HotspotCredentials {
 	};
 }
 
-/** Bring a stored entry up to the current shape. A v1 entry gains an empty history. */
+/** Bound recorded history without adding ownership fields to credential copies. */
 function migrateEntry(entry: StoredEntry): StoredEntry {
-	return { ...entry, previousConns: boundHistory(entry.previousConns ?? []) };
+	return entry.previousConns === undefined
+		? entry
+		: { ...entry, previousConns: boundHistory(entry.previousConns) };
 }
 
 /** Newest-last, de-duplicated, capped at {@link PREVIOUS_CONNS_LIMIT}. */
@@ -242,6 +245,20 @@ export function getHotspotCredentialOwners(uuid?: string): string[] {
 		.map(([key]) => key);
 }
 
+/** A prepared copy does not grant ownership of a NetworkManager profile. */
+export function isHotspotPortCredentialCopy(key: string): boolean {
+	const entry = entries[normalizeWifiAdapterKey(key)];
+	return (
+		key.includes("@") &&
+		entry !== undefined &&
+		entry.updatedAt === undefined &&
+		!entry.conn &&
+		!entry.pendingCreation &&
+		!entry.pendingCreationInstance &&
+		!entry.previousConns?.length
+	);
+}
+
 /** A successful NM inventory proved this retired UUID no longer exists. */
 export function pruneAbsentHotspotHistory(owner: string, uuid: string): void {
 	const entry = entries[keyFor(owner) ?? ""];
@@ -319,6 +336,32 @@ function nextCredentialEntry(
 }
 
 /**
+ * The plain-address copy a same-address twin keeps under its port alias: written
+ * only while the alias holds no entry of its own or an earlier copy, and only on
+ * a real difference.
+ */
+function portAliasCopy(
+	key: string,
+	next: StoredEntry,
+	portAlias: string | undefined,
+): StoredEntry | undefined {
+	if (!portAlias?.startsWith(`${key}@`) || key.includes("@")) return undefined;
+	const alias = entries[portAlias];
+	if (
+		(!alias || isHotspotPortCredentialCopy(portAlias)) &&
+		(alias?.ssid !== next.ssid ||
+			alias.password !== next.password ||
+			alias.channel !== next.channel)
+	)
+		return {
+			ssid: next.ssid,
+			password: next.password,
+			...(next.channel !== undefined ? { channel: next.channel } : {}),
+		};
+	return undefined;
+}
+
+/**
  * Record (or update) an adapter's hotspot identity. Writes only on a real
  * change, so the routine re-assertions made on every hotspot start cost no I/O.
  * Best effort: a failed write is logged and the in-memory entry stands, because
@@ -327,10 +370,14 @@ function nextCredentialEntry(
 export function rememberHotspotCredentials(
 	macAddress: string,
 	credentials: HotspotCredentials,
+	portAlias?: string,
 ): void {
 	const entry = nextCredentialEntry(macAddress, credentials);
-	if (!entry?.changed) return;
-	entries[entry.key] = entry.next;
+	if (!entry) return;
+	const alias = portAliasCopy(entry.key, entry.next, portAlias);
+	if (!entry.changed && !alias) return;
+	if (entry.changed) entries[entry.key] = entry.next;
+	if (alias && portAlias) entries[portAlias] = alias;
 	persist();
 }
 
@@ -347,11 +394,17 @@ export function rememberHotspotCredentials(
 export function rememberHotspotCredentialsChecked(
 	macAddress: string,
 	credentials: HotspotCredentials,
+	portAlias?: string,
 ): boolean {
 	if (!initialized) return false;
 	const entry = nextCredentialEntry(macAddress, credentials);
 	if (!entry) return false;
-	const next = { ...entries, [entry.key]: entry.next };
+	const alias = portAliasCopy(entry.key, entry.next, portAlias);
+	const next = {
+		...entries,
+		[entry.key]: entry.next,
+		...(alias && portAlias ? { [portAlias]: alias } : {}),
+	};
 	try {
 		writeFileAtomicSync(
 			filePath,
@@ -430,16 +483,13 @@ export function clearHotspotProfileCreation(owner: string, uuid: string): void {
 /** Injectable view of the store used by the hotspot activation flow. */
 export type HotspotCredentialsStore = {
 	get(macAddress: string): HotspotCredentials | undefined;
-	remember(macAddress: string, credentials: HotspotCredentials): void;
+	remember: typeof rememberHotspotCredentials;
 	/**
 	 * A durable write the caller reports (see
 	 * {@link rememberHotspotCredentialsChecked}). Absent means no durable write
 	 * is available, and a caller that needs one fails closed.
 	 */
-	rememberChecked?(
-		macAddress: string,
-		credentials: HotspotCredentials,
-	): boolean;
+	rememberChecked?: typeof rememberHotspotCredentialsChecked;
 	recordCreation?(
 		owner: string,
 		uuid: string,

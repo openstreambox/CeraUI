@@ -36,7 +36,7 @@ import { captureWifiFrameIncarnation } from "./wifi-frame-binding.ts";
 import { withWifiFrameIncarnation } from "./wifi-frame-incarnation.ts";
 import { canHotspot } from "./wifi-hotspot-types.ts";
 import { restoreLimitedHotspot } from "./wifi-limited-hotspot-restore.ts";
-import { normalizeMacAddress } from "./wifi-permanent-mac.ts";
+import { wifiAdapterKeyMac } from "./wifi-permanent-mac.ts";
 import { isProvisioningSetupHeld } from "./wifi-provisioning-ap.ts";
 import { settleProvisioningHandoff } from "./wifi-provisioning-handoff.ts";
 
@@ -52,7 +52,9 @@ async function applyWifiAdapterModes(
 		let limitedVisited = false;
 		for (const [registryKey, row] of Object.entries(deps.resolveInterfaces())) {
 			if (!canHotspot(row)) continue;
-			const verified = normalizeMacAddress(registryKey) !== undefined;
+			const verified =
+				wifiAdapterKeyMac(registryKey) !== undefined &&
+				row.degradedReason !== "permanent-mac-unresolved";
 			const preferences = readPreferences();
 			if (
 				!verified &&
