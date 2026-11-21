@@ -2,6 +2,7 @@
 import { m } from '@ceraui/i18n/svelte';
 import { onMount } from 'svelte';
 import { rpc } from '$lib/rpc/client';
+import { NotSentError } from '$lib/rpc/rpc-error';
 import { getConfig, getUplinks, getWifi } from '$lib/rpc/subscriptions.svelte';
 
 let phase = $state('idle');
@@ -38,7 +39,10 @@ async function act(action: 'start' | 'finish' | 'status') {
   if (popup) popup.location.href = 'http://www.gstatic.com/generate_204';
  } catch (cause) {
  popup?.close();
- if (action !== 'status') {
+ if (action !== 'status' && cause instanceof NotSentError && cause.reason === 'reconnected') {
+ // Held for the reconnect re-auth and dropped unsent: the operator just retries.
+ error = m['network.portal.reconnected']();
+ } else if (action !== 'status') {
  const reason = cause instanceof Error ? cause.message : '';
  switch (reason) {
  case 'experimental_disabled': error = m['network.portal.experimentalDisabled'](); break;
