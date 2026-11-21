@@ -509,6 +509,7 @@
 	"live.goLive.box.busyUpdate": "يجري تثبيت تحديث.",
 	"live.goLive.box.destinationFailed": "لم تستجب الوجهة في آخر اختبار.",
 	"live.goLive.box.destinationUntested": "لم يتم اختبار الوجهة بعد.",
+	"live.goLive.box.invalidDestination": "الوجهة المختارة لم تعد متاحة.",
 	"live.goLive.box.label": "فحص الجهاز",
 	"live.goLive.box.noCarrying": "لا يحمل أي رابط البث.",
 	"live.goLive.box.noDestination": "لم يتم تعيين وجهة.",

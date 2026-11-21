@@ -1,48 +1,53 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { streamReadinessSchema } from "@ceraui/rpc/schemas";
 import {
-	streamReadinessSchema,
-	type UplinkHealthRecord,
-} from "@ceraui/rpc/schemas";
-import type { LinkCarryingState } from "./link-progress.ts";
-import {
+	endpointKey,
 	evaluateStreamReadiness,
 	getStreamReadiness,
+	isPrivateAddress,
 	noteReceiverEvidence,
+	OK,
 	READINESS_CARRYING_UNKNOWN,
+	READINESS_LOCAL_RECEIVER,
 	READINESS_NO_LINK_CARRYING,
 	READINESS_NO_UPLINK,
 	READINESS_NO_UPLINK_PASSES,
+	READINESS_RECEIVER_INVALID,
 	READINESS_RECEIVER_NOT_SET,
 	READINESS_RECEIVER_REFUSED,
 	READINESS_RECEIVER_UNRESOLVED,
 	READINESS_RECEIVER_UNTESTED,
+	READINESS_UPLINK_UNCHECKED,
+	RECEIVER_EVIDENCE_MAX,
 	RECEIVER_EVIDENCE_TTL_MS,
 	type ReadinessInputs,
 	receiverEvidenceFor,
-	receiverKey,
 	resetStreamReadinessForTest,
 	setReadinessDepsForTest,
+	type UplinkCandidate,
 	uplinkPasses,
 } from "./stream-readiness.ts";
 
-type Uplink = ReadinessInputs["uplinks"][number];
+const NOW = 1_000_000;
 
-const up = (iface: string): Uplink => ({ iface, state: "up" });
-const down = (iface: string): Uplink => ({
+const fresh = (
+	iface: string,
+	state: "up" | "degraded" | "down" = "up",
+	reason?: "probe_failed" | "passive_congestion",
+): UplinkCandidate => ({
 	iface,
-	state: "down",
-	reason: "probe_failed",
+	health: { state, ...(reason ? { reason } : {}), staleAt: NOW + 10_000 },
 });
 
 function inputs(overrides: Partial<ReadinessInputs> = {}): ReadinessInputs {
 	return {
-		now: 1_000,
+		now: NOW,
 		live: false,
-		lock: undefined,
-		source: undefined,
-		receiver: { configured: true, evidence: "reachable" },
-		uplinks: [up("wwan0")],
-		carrying: () => "unknown",
+		lock: OK,
+		source: OK,
+		receiver: { configured: "yes", evidence: "reachable", local: false },
+		candidates: [fresh("wwan0")],
+		senderLinks: [],
 		...overrides,
 	};
 }
@@ -68,63 +73,87 @@ describe("evaluateStreamReadiness, before going live", () => {
 	test("a Start lock blocks and is the reason, ahead of every other check", () => {
 		const r = evaluateStreamReadiness(
 			inputs({
-				lock: "update_in_progress",
-				source: "source_lost",
-				receiver: { configured: false, evidence: undefined },
-				uplinks: [],
+				lock: { state: "blocked", code: "recovery_pending" },
+				source: { state: "blocked", code: "source_lost" },
+				receiver: { configured: "no", evidence: undefined, local: false },
+				candidates: [],
 			}),
 		);
 		expect(r.ready).toBe(false);
-		expect(r.reason).toEqual({ check: "lock", code: "update_in_progress" });
+		expect(r.reason).toEqual({ check: "lock", code: "recovery_pending" });
 		expect(r.checks.filter((c) => c.state === "blocked")).toHaveLength(4);
 	});
 
+	test("an unknown lock is reported but does not block", () => {
+		const r = evaluateStreamReadiness(
+			inputs({ lock: { state: "unknown", code: "update_state_unconfirmed" } }),
+		);
+		expect(r.ready).toBe(true);
+		expect(r.reason).toEqual({
+			check: "lock",
+			code: "update_state_unconfirmed",
+		});
+	});
+
 	test("the source code is passed through as Start words it", () => {
-		const r = evaluateStreamReadiness(inputs({ source: "source_lost" }));
+		const r = evaluateStreamReadiness(
+			inputs({ source: { state: "blocked", code: "source_lost" } }),
+		);
 		expect(r.ready).toBe(false);
 		expect(r.reason).toEqual({ check: "source", code: "source_lost" });
 	});
 
-	test("no receiver configured blocks", () => {
-		const r = evaluateStreamReadiness(
-			inputs({ receiver: { configured: false, evidence: undefined } }),
-		);
-		expect(r.ready).toBe(false);
-		expect(r.reason).toEqual({
-			check: "receiver",
-			code: READINESS_RECEIVER_NOT_SET,
-		});
-	});
-
-	test("an untested receiver is reported but does not block", () => {
-		const r = evaluateStreamReadiness(
-			inputs({ receiver: { configured: true, evidence: undefined } }),
-		);
-		expect(r.ready).toBe(true);
-		expect(r.reason).toEqual({
-			check: "receiver",
-			code: READINESS_RECEIVER_UNTESTED,
-		});
+	test("no destination, or one Start cannot resolve, blocks", () => {
+		expect(
+			evaluateStreamReadiness(
+				inputs({
+					receiver: { configured: "no", evidence: undefined, local: false },
+				}),
+			).reason,
+		).toEqual({ check: "receiver", code: READINESS_RECEIVER_NOT_SET });
+		expect(
+			evaluateStreamReadiness(
+				inputs({
+					receiver: {
+						configured: "invalid",
+						evidence: undefined,
+						local: false,
+					},
+				}),
+			).reason,
+		).toEqual({ check: "receiver", code: READINESS_RECEIVER_INVALID });
 	});
 
 	test.each([
-		["refused", READINESS_RECEIVER_REFUSED],
-		["unresolved", READINESS_RECEIVER_UNRESOLVED],
-	] as const)("a %s receiver blocks", (evidence, code) => {
-		const r = evaluateStreamReadiness(
-			inputs({ receiver: { configured: true, evidence } }),
-		);
+		[undefined, true, READINESS_RECEIVER_UNTESTED],
+		["inconclusive", true, READINESS_RECEIVER_UNTESTED],
+		["unresolved", true, READINESS_RECEIVER_UNRESOLVED],
+		["refused", false, READINESS_RECEIVER_REFUSED],
+	] as const)(
+		"destination evidence %s: ready=%s, %s",
+		(evidence, ready, code) => {
+			const r = evaluateStreamReadiness(
+				inputs({ receiver: { configured: "yes", evidence, local: false } }),
+			);
+			expect(r.ready).toBe(ready);
+			expect(r.reason).toEqual({ check: "receiver", code });
+		},
+	);
+
+	test("no bond candidate at all blocks", () => {
+		const r = evaluateStreamReadiness(inputs({ candidates: [] }));
 		expect(r.ready).toBe(false);
-		expect(r.reason).toEqual({ check: "receiver", code });
+		expect(r.reason).toEqual({ check: "uplinks", code: READINESS_NO_UPLINK });
 	});
 
-	test("no uplink at all and no passing uplink are told apart", () => {
-		expect(evaluateStreamReadiness(inputs({ uplinks: [] })).reason).toEqual({
-			check: "uplinks",
-			code: READINESS_NO_UPLINK,
-		});
+	test("candidates that all fail a fresh check block", () => {
 		const r = evaluateStreamReadiness(
-			inputs({ uplinks: [down("wwan0"), down("eth0")] }),
+			inputs({
+				candidates: [
+					fresh("wwan0", "down", "probe_failed"),
+					fresh("eth0", "degraded", "probe_failed"),
+				],
+			}),
 		);
 		expect(r.ready).toBe(false);
 		expect(r.reason).toEqual({
@@ -134,19 +163,45 @@ describe("evaluateStreamReadiness, before going live", () => {
 		expect(r.uplinks).toEqual({ usable: 0, total: 2 });
 	});
 
-	test("one passing uplink among dead ones is enough", () => {
+	test("an expired or missing health record is unknown, not passing", () => {
+		const expired: UplinkCandidate = {
+			iface: "eth0",
+			health: { state: "up", staleAt: NOW - 1 },
+		};
+		for (const candidates of [[expired], [{ iface: "eth0" }]]) {
+			const r = evaluateStreamReadiness(inputs({ candidates }));
+			expect(r.ready).toBe(true);
+			expect(r.uplinks.usable).toBe(0);
+			expect(r.reason).toEqual({
+				check: "uplinks",
+				code: READINESS_UPLINK_UNCHECKED,
+			});
+		}
+	});
+
+	test("a receiver on the LAN is not blocked by links without internet", () => {
 		const r = evaluateStreamReadiness(
-			inputs({ uplinks: [down("wwan0"), up("wwan1")] }),
+			inputs({
+				receiver: { configured: "yes", evidence: undefined, local: true },
+				candidates: [fresh("eth0", "down", "probe_failed")],
+			}),
+		);
+		expect(r.ready).toBe(true);
+		expect(r.checks[3]).toEqual({
+			id: "uplinks",
+			state: "unknown",
+			code: READINESS_LOCAL_RECEIVER,
+		});
+	});
+
+	test("one passing candidate among dead ones is enough", () => {
+		const r = evaluateStreamReadiness(
+			inputs({
+				candidates: [fresh("wwan0", "down", "probe_failed"), fresh("wwan1")],
+			}),
 		);
 		expect(r.ready).toBe(true);
 		expect(r.uplinks).toEqual({ usable: 1, total: 2 });
-	});
-
-	test("idle ignores carrying state entirely", () => {
-		const r = evaluateStreamReadiness(
-			inputs({ carrying: () => "not_carrying" }),
-		);
-		expect(r.ready).toBe(true);
 	});
 });
 
@@ -169,33 +224,29 @@ describe("uplinkPasses", () => {
 });
 
 describe("evaluateStreamReadiness, while live", () => {
-	const carryingBy =
-		(map: Record<string, LinkCarryingState>) =>
-		(iface: string): LinkCarryingState =>
-			map[iface] ?? "unknown";
-
 	test("lock and source are ok while the stream runs", () => {
 		const r = evaluateStreamReadiness(
 			inputs({
 				live: true,
-				lock: "START_IN_PROGRESS",
-				source: "source_lost",
-				carrying: () => "carrying",
+				lock: { state: "blocked", code: "START_IN_PROGRESS" },
+				source: { state: "blocked", code: "source_lost" },
+				senderLinks: [{ iface: "wwan0", carrying: true }],
 			}),
 		);
 		expect(r.ready).toBe(true);
-		expect(r.live).toBe(true);
 		expect(r.checks[0]).toEqual({ id: "lock", state: "ok" });
 		expect(r.checks[1]).toEqual({ id: "source", state: "ok" });
 	});
 
-	test("one carrying link is ready and vouches for the receiver", () => {
+	test("one carrying sender link is ready and covers the destination", () => {
 		const r = evaluateStreamReadiness(
 			inputs({
 				live: true,
-				receiver: { configured: true, evidence: undefined },
-				uplinks: [up("wwan0"), up("wwan1")],
-				carrying: carryingBy({ wwan0: "not_carrying", wwan1: "carrying" }),
+				receiver: { configured: "yes", evidence: undefined, local: false },
+				senderLinks: [
+					{ iface: "wwan0", carrying: false },
+					{ iface: "wwan1", carrying: true },
+				],
 			}),
 		);
 		expect(r.ready).toBe(true);
@@ -203,12 +254,14 @@ describe("evaluateStreamReadiness, while live", () => {
 		expect(r.uplinks).toEqual({ usable: 1, total: 2 });
 	});
 
-	test("every link positively carrying nothing blocks", () => {
+	test("every sender link positively carrying nothing blocks", () => {
 		const r = evaluateStreamReadiness(
 			inputs({
 				live: true,
-				uplinks: [up("wwan0"), up("wwan1")],
-				carrying: () => "not_carrying",
+				senderLinks: [
+					{ iface: "wwan0", carrying: false },
+					{ iface: "wwan1", carrying: false },
+				],
 			}),
 		);
 		expect(r.ready).toBe(false);
@@ -218,84 +271,95 @@ describe("evaluateStreamReadiness, while live", () => {
 		});
 	});
 
-	test("no claim either way is unknown, not blocked", () => {
+	test("only the sender's rows count: idle health records are ignored", () => {
 		const r = evaluateStreamReadiness(
 			inputs({
 				live: true,
-				uplinks: [up("wwan0"), up("wwan1")],
-				carrying: carryingBy({ wwan0: "not_carrying" }),
+				candidates: [fresh("eth0")],
+				senderLinks: [{ iface: "wwan0", carrying: false }],
 			}),
 		);
-		expect(r.ready).toBe(true);
-		expect(r.reason).toEqual({
-			check: "uplinks",
-			code: READINESS_CARRYING_UNKNOWN,
-		});
+		expect(r.ready).toBe(false);
+		expect(r.uplinks).toEqual({ usable: 0, total: 1 });
 	});
 
-	test("the health check state does not matter while live", () => {
-		const r = evaluateStreamReadiness(
-			inputs({
-				live: true,
-				uplinks: [down("wwan0")],
-				carrying: () => "carrying",
-			}),
-		);
-		expect(r.ready).toBe(true);
+	test("no claim, or no rows, is unknown and does not block", () => {
+		for (const senderLinks of [
+			[{ iface: "wwan0", carrying: false }, { iface: "wwan1" }],
+			[],
+		]) {
+			const r = evaluateStreamReadiness(inputs({ live: true, senderLinks }));
+			expect(r.ready).toBe(true);
+			expect(r.reason).toEqual({
+				check: "uplinks",
+				code: READINESS_CARRYING_UNKNOWN,
+			});
+		}
 	});
 });
 
 describe("receiver evidence", () => {
-	test("keys on the relay id, else on address and port", () => {
-		expect(receiverKey({ relay_server: "r1", srtla_addr: "x" })).toBe(
-			"relay:r1",
-		);
-		expect(
-			receiverKey({ srtla_addr: " Relay.Example ", srtla_port: 5000 }),
-		).toBe("addr:relay.example:5000");
-		expect(receiverKey({ srtla_addr: "relay.example" })).toBeUndefined();
-		expect(receiverKey({ srtla_addr: "  ", srtla_port: 5000 })).toBeUndefined();
-		expect(receiverKey({})).toBeUndefined();
+	test("keys on the resolved host and port", () => {
+		expect(endpointKey(" Relay.Example ", 5000)).toBe("relay.example:5000");
+		expect(endpointKey("  ", 5000)).toBeUndefined();
 	});
 
-	test("evidence for one destination never vouches for another", () => {
-		noteReceiverEvidence("addr:a:1", "reachable", 0);
-		expect(receiverEvidenceFor("addr:a:1", 10)).toBe("reachable");
-		expect(receiverEvidenceFor("addr:b:1", 10)).toBeUndefined();
+	test("testing one endpoint never evicts another", () => {
+		noteReceiverEvidence("a:1", "reachable", 0);
+		noteReceiverEvidence("b:1", "refused", 1);
+		expect(receiverEvidenceFor("a:1", 10)).toBe("reachable");
+		expect(receiverEvidenceFor("b:1", 10)).toBe("refused");
+		expect(receiverEvidenceFor("c:1", 10)).toBeUndefined();
 		expect(receiverEvidenceFor(undefined, 10)).toBeUndefined();
 	});
 
-	test("evidence expires", () => {
-		noteReceiverEvidence("addr:a:1", "refused", 0);
-		expect(receiverEvidenceFor("addr:a:1", RECEIVER_EVIDENCE_TTL_MS)).toBe(
+	test("a newer inconclusive test supersedes an older verdict", () => {
+		noteReceiverEvidence("a:1", "refused", 0);
+		noteReceiverEvidence("a:1", "inconclusive", 5);
+		expect(receiverEvidenceFor("a:1", 10)).toBe("inconclusive");
+	});
+
+	test("evidence expires and the store stays bounded", () => {
+		noteReceiverEvidence("a:1", "refused", 0);
+		expect(receiverEvidenceFor("a:1", RECEIVER_EVIDENCE_TTL_MS)).toBe(
 			"refused",
 		);
 		expect(
-			receiverEvidenceFor("addr:a:1", RECEIVER_EVIDENCE_TTL_MS + 1),
+			receiverEvidenceFor("a:1", RECEIVER_EVIDENCE_TTL_MS + 1),
 		).toBeUndefined();
+		for (let i = 0; i <= RECEIVER_EVIDENCE_MAX; i++)
+			noteReceiverEvidence(`h${i}:1`, "reachable", 0);
+		expect(receiverEvidenceFor("h0:1", 1)).toBeUndefined();
+		expect(receiverEvidenceFor(`h${RECEIVER_EVIDENCE_MAX}:1`, 1)).toBe(
+			"reachable",
+		);
+	});
+
+	test("private and link-local literals count as local", () => {
+		for (const a of [
+			"10.1.2.3",
+			"192.168.42.10",
+			"172.20.0.1",
+			"169.254.1.1",
+			"100.64.0.1",
+			"fd00::1",
+			"fe80::1",
+		])
+			expect(isPrivateAddress(a), a).toBe(true);
+		for (const a of ["8.8.8.8", "172.32.0.1", "2001:db8::1", "relay.example"])
+			expect(isPrivateAddress(a), a).toBe(false);
 	});
 });
 
 describe("getStreamReadiness", () => {
-	const record = (iface: string): UplinkHealthRecord => ({
-		iface,
-		kind: "cellular",
-		state: "up",
-		weight: 100,
-		lastTransition: 0,
-		staleAt: 0,
-		probes: { successes: 1, failures: 0 },
-		signals: {},
-	});
-
 	test("reads its inputs from the deps and validates against the wire schema", () => {
 		setReadinessDepsForTest({
-			now: () => 5,
+			now: () => NOW,
 			live: () => false,
-			lock: () => undefined,
-			source: () => undefined,
-			receiverKey: () => "addr:relay:5000",
-			uplinks: () => [record("wwan0")],
+			lock: () => OK,
+			source: () => OK,
+			receiver: () => ({ configured: "yes", key: "relay:5000", local: false }),
+			candidates: () => [fresh("wwan0")],
 		});
 		const r = getStreamReadiness();
 		expect(streamReadinessSchema.parse(r)).toEqual(r);
@@ -304,40 +368,60 @@ describe("getStreamReadiness", () => {
 			check: "receiver",
 			code: READINESS_RECEIVER_UNTESTED,
 		});
-		expect(r.at).toBe(5);
+		expect(r.at).toBe(NOW);
 	});
 
-	test("a carrying live stream leaves reachability evidence for later", () => {
-		let live = true;
+	test("uses the evidence recorded for the resolved endpoint", () => {
+		noteReceiverEvidence("relay:5000", "refused", NOW);
 		setReadinessDepsForTest({
-			now: () => 100,
-			live: () => live,
-			lock: () => undefined,
-			source: () => undefined,
-			receiverKey: () => "addr:relay:5000",
-			uplinks: () => [record("wwan0")],
-			carrying: () => "carrying",
+			now: () => NOW,
+			live: () => false,
+			lock: () => OK,
+			source: () => OK,
+			receiver: () => ({ configured: "yes", key: "relay:5000", local: false }),
+			candidates: () => [fresh("wwan0")],
 		});
-		expect(getStreamReadiness().ready).toBe(true);
-		live = false;
-		const after = getStreamReadiness();
-		expect(after.reason).toBeUndefined();
-		expect(after.checks[2]).toEqual({ id: "receiver", state: "ok" });
+		expect(getStreamReadiness().reason).toEqual({
+			check: "receiver",
+			code: READINESS_RECEIVER_REFUSED,
+		});
 	});
 
-	test("a live stream with nothing carrying leaves no evidence", () => {
+	test("is read-only: a carrying stream leaves no evidence for a later destination", () => {
 		let live = true;
 		setReadinessDepsForTest({
-			now: () => 100,
+			now: () => NOW,
 			live: () => live,
-			lock: () => undefined,
-			source: () => undefined,
-			receiverKey: () => "addr:relay:5000",
-			uplinks: () => [record("wwan0")],
-			carrying: () => "unknown",
+			lock: () => OK,
+			source: () => OK,
+			receiver: () => ({ configured: "yes", key: "next:5000", local: false }),
+			candidates: () => [fresh("wwan0")],
+			senderLinks: () => [{ iface: "wwan0", carrying: true }],
 		});
-		getStreamReadiness();
+		expect(getStreamReadiness().checks[2]).toEqual({
+			id: "receiver",
+			state: "ok",
+		});
 		live = false;
 		expect(getStreamReadiness().reason?.code).toBe(READINESS_RECEIVER_UNTESTED);
+		expect(receiverEvidenceFor("next:5000", NOW)).toBeUndefined();
+	});
+
+	test("while idle the lock and source deps are consulted; while live they are not", () => {
+		let calls = 0;
+		const counted = () => {
+			calls += 1;
+			return OK;
+		};
+		setReadinessDepsForTest({
+			now: () => NOW,
+			live: () => true,
+			lock: counted,
+			source: counted,
+			receiver: () => ({ configured: "yes", key: "r:1", local: false }),
+			senderLinks: () => [],
+		});
+		getStreamReadiness();
+		expect(calls).toBe(0);
 	});
 });

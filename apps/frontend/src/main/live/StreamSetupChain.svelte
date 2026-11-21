@@ -194,7 +194,9 @@ const startDisabledReason = $derived(
 // modem change, no uplink passing its check). Advisory: Start stays governed by
 // the readiness verdict above, and the backend refuses a start it cannot take.
 const boxNotReady = $derived(
-	startDisabledReason === undefined ? boxNotReadyKey(boxReadiness) : undefined,
+	startDisabledReason === undefined
+		? boxNotReadyKey(boxReadiness, { implicitSource: soleCamera !== undefined })
+		: undefined,
 );
 
 function handleStartClick() {

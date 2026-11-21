@@ -586,15 +586,18 @@ describe("StreamSetupChain — the device's own readiness in the Live bar", () =
 	} as ConfigMessage;
 
 	function readiness(over: Partial<StreamReadiness> = {}): StreamReadiness {
+		const reason = over.reason;
+		const checks: StreamReadiness["checks"] = (
+			["lock", "source", "receiver", "uplinks"] as const
+		).map((id) =>
+			over.ready === false && reason?.check === id
+				? { id, state: "blocked", code: reason.code }
+				: { id, state: "ok" },
+		);
 		return {
 			ready: true,
 			live: false,
-			checks: [
-				{ id: "lock", state: "ok" },
-				{ id: "source", state: "ok" },
-				{ id: "receiver", state: "ok" },
-				{ id: "uplinks", state: "ok" },
-			],
+			checks,
 			uplinks: { usable: 1, total: 1 },
 			at: 0,
 			...over,
@@ -636,6 +639,48 @@ describe("StreamSetupChain — the device's own readiness in the Live bar", () =
 			}),
 		});
 		expect(bar(container).getAttribute("data-state")).toBe("ready");
+	});
+
+	it("a sole camera the UI will send with Start silences the device's no_source", () => {
+		const { container } = renderChain({
+			config: { relay_server: "fra" } as ConfigMessage,
+			sources: makeSources(capture("cam-1", "HDMI")),
+			boxReadiness: readiness({
+				ready: false,
+				reason: { check: "source", code: "no_source" },
+				checks: [
+					{ id: "lock", state: "ok" },
+					{ id: "source", state: "blocked", code: "no_source" },
+					{ id: "receiver", state: "ok" },
+					{ id: "uplinks", state: "ok" },
+				],
+			}),
+		});
+		expect(
+			container.querySelector('[data-testid="sole-camera-auto"]'),
+		).not.toBeNull();
+		expect(bar(container).getAttribute("data-state")).toBe("ready");
+	});
+
+	it("with a sole camera, the next blocked device check is still shown", () => {
+		const { container } = renderChain({
+			config: { relay_server: "fra" } as ConfigMessage,
+			sources: makeSources(capture("cam-1", "HDMI")),
+			boxReadiness: readiness({
+				ready: false,
+				reason: { check: "source", code: "no_source" },
+				checks: [
+					{ id: "lock", state: "ok" },
+					{ id: "source", state: "blocked", code: "no_source" },
+					{ id: "receiver", state: "ok" },
+					{ id: "uplinks", state: "blocked", code: "no_uplink" },
+				],
+			}),
+		});
+		expect(bar(container).getAttribute("data-state")).toBe("warn");
+		expect(bar(container).textContent).toContain(
+			"No link reaches the internet yet.",
+		);
 	});
 
 	it("the client's own blocking reason wins over the device's line", () => {
