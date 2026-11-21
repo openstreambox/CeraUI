@@ -71,6 +71,9 @@ describe("unconfirmed-stream band copy", () => {
 	it("the held variant says only what the device knows about its own sender", () => {
 		const en = readCatalog("en")["live.unconfirmedStream.heldBody"] as string;
 		expect(en).toContain("may still be running");
+		// The device may have restarted before the engine started, or while the
+		// sender was still stopping: it never claims a stream had been running.
+		expect(en).not.toMatch(/during a stream|while streaming|was streaming/i);
 		expect(en).toContain("changed settings won't reach it");
 		expect(en).toContain("Stop the stream");
 		// The device knows only what it sends, never what a receiver or viewer gets.

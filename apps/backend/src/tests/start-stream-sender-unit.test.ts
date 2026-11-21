@@ -198,6 +198,7 @@ test("unit mode: systemd's restart is reported, then telemetry follows the new s
 			pid: 5151,
 			invocation: "inv-9",
 			isReady: true,
+			isCurrent: () => true,
 			exitCode: null,
 			signalCode: null,
 			exited: new Promise<number>(() => {}),
@@ -256,6 +257,7 @@ test("unit mode: a restart seen after the stream ended never reopens telemetry",
 		pid: 1,
 		invocation: "inv-1",
 		isReady: false,
+		isCurrent: () => false,
 	} as unknown as SenderUnitProcess;
 	hooks.onRestarted?.(gone);
 	await Bun.sleep(5);
@@ -265,8 +267,25 @@ test("unit mode: a restart seen after the stream ended never reopens telemetry",
 		pid: 2,
 		invocation: "inv-2",
 		isReady: true,
+		isCurrent: () => true,
 	} as unknown as SenderUnitProcess;
 	hooks.onRestarted?.(stranger);
+	await Bun.sleep(5);
+	expect(telemetry).toHaveLength(1);
+	// Registered and reported ready, but its pinned process has exited since:
+	// telemetry is not attached to whatever owns the files now.
+	const exited = {
+		pid: 3,
+		invocation: "inv-3",
+		isReady: true,
+		isCurrent: () => false,
+		exitCode: null,
+		signalCode: null,
+		exited: new Promise<number>(() => {}),
+		kill: () => {},
+	} as unknown as SenderUnitProcess;
+	registerSupervisedSender(exited, "srtla_send");
+	hooks.onRestarted?.(exited);
 	await Bun.sleep(5);
 	expect(telemetry).toHaveLength(1);
 });

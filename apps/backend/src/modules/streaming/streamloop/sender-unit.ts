@@ -506,6 +506,17 @@ export type HeldSenderUnit = {
 	readonly mainPid: number;
 };
 
+/**
+ * True while a session may be carried by a sender whose unit state this
+ * backend has not settled, or that it holds without having started it: then
+ * only the operator may end it (automatic stops are refused).
+ */
+export function senderUnitKeepsSession(): boolean {
+	return (
+		blockKind === "held" || blockKind === "unchecked" || blockKind === "mode"
+	);
+}
+
 /** The sender unit this backend holds without having started it, or null. */
 export function heldSenderUnit(): HeldSenderUnit | null {
 	return held;
@@ -578,7 +589,16 @@ async function directoryIsPrivate(io: SenderUnitIo): Promise<boolean> {
 	}
 }
 
-type UnitPresence = "loaded" | "absent" | "unknown";
+/**
+ * Whether this backend can start the unit: its load state only. Whether a
+ * sender runs is a separate question, answered by the runtime state in
+ * {@link settleSenderUnit}: a unit whose fragment was removed (`not-found`)
+ * or `masked` can still have a running main process.
+ */
+type UnitPresence =
+	| { readonly kind: "loaded" }
+	| { readonly kind: "unusable"; readonly loadState: string }
+	| { readonly kind: "unknown" };
 
 async function unitPresence(
 	io: SenderUnitIo,
@@ -587,12 +607,13 @@ async function unitPresence(
 	for (let attempt = 1; ; attempt++) {
 		try {
 			const show = parseUnitShow(await showUnit(io, SYSTEMCTL_TIMEOUT_MS));
-			if (show?.loadState === "loaded") return "loaded";
-			if (show?.loadState === "not-found") return "absent";
+			if (show?.loadState === "loaded") return { kind: "loaded" };
+			if (show && show.loadState !== "")
+				return { kind: "unusable", loadState: show.loadState };
 		} catch {
 			// unreadable: retried below
 		}
-		if (attempt >= attempts) return "unknown";
+		if (attempt >= attempts) return { kind: "unknown" };
 		await io.sleep(BOOT_SHOW_RETRY_MS);
 	}
 }
@@ -615,18 +636,7 @@ export async function resolveSenderHostMode(
 	senderExec: string,
 	io: SenderUnitIo = productionSenderUnitIo(),
 ): Promise<SenderHostMode> {
-	cancelRetry?.();
-	cancelRetry = null;
-	hostMode = "child";
-	hostIo = null;
-	hostSetup = null;
-	blocked = null;
-	blockKind = null;
-	held = null;
-	if (setup.srtla_send_unit !== true) return hostMode;
-	hostIo = io;
-	hostSetup = setup;
-	hostExec = senderExec;
+	if (!armSenderHostMode(setup, senderExec, io)) return hostMode;
 	const reason = await decideMode(BOOT_SHOW_ATTEMPTS);
 	if (reason) {
 		blocked = reason;
@@ -642,6 +652,34 @@ export async function resolveSenderHostMode(
 	return hostMode;
 }
 
+/**
+ * Synchronous first half of {@link resolveSenderHostMode}, for the earliest
+ * point of startup: with the flag on, publish "not decided yet" before
+ * anything (an RPC such as Stop, the census) can ask, so no window exists in
+ * which a unit sender could look absent. No I/O. Returns whether the flag is on.
+ */
+export function armSenderHostMode(
+	setup: SenderSetup,
+	senderExec: string,
+	io: SenderUnitIo = productionSenderUnitIo(),
+): boolean {
+	cancelRetry?.();
+	cancelRetry = null;
+	hostMode = "child";
+	hostIo = null;
+	hostSetup = null;
+	blocked = null;
+	blockKind = null;
+	held = null;
+	if (setup.srtla_send_unit !== true) return false;
+	hostIo = io;
+	hostSetup = setup;
+	hostExec = senderExec;
+	blocked = `${io.unit}: not decided yet`;
+	blockKind = "mode";
+	return true;
+}
+
 /** Decide the mode; returns why it cannot be decided, or null. */
 async function decideMode(attempts: number): Promise<string | null> {
 	const io = hostIo;
@@ -653,9 +691,11 @@ async function decideMode(attempts: number): Promise<string | null> {
 		);
 	};
 	const presence = await unitPresence(io, attempts);
-	if (presence === "unknown") return `${io.unit} cannot be read`;
-	if (presence === "absent") {
-		fallback(`${io.unit} is not installed`);
+	if (presence.kind === "unknown") return `${io.unit} cannot be read`;
+	if (presence.kind === "unusable") {
+		// Starting is impossible; a sender it may still run is settled (held or
+		// seen down) by the startup check like any other.
+		fallback(`${io.unit} is ${presence.loadState}`);
 		return null;
 	}
 	if (hostExec !== SENDER_UNIT_EXEC) {
@@ -930,15 +970,18 @@ function downError(io: SenderUnitIo, show: UnitShow): SenderUnitError {
 async function stopUnit(
 	io: SenderUnitIo,
 	generation: number,
+	deadline = io.now() + STOP_TIMEOUT_MS + SYSTEMCTL_TIMEOUT_MS,
 ): Promise<UnitShow | null> {
+	const left = (cap: number): number =>
+		Math.max(1, Math.min(cap, deadline - io.now()));
 	try {
-		await io.systemctl(["stop", io.unit], STOP_TIMEOUT_MS);
+		await io.systemctl(["stop", io.unit], left(STOP_TIMEOUT_MS));
 	} catch (error) {
 		logger.warn(`systemctl stop ${io.unit} failed`, { error });
 	}
 	let show: UnitShow;
 	try {
-		show = await readShow(io);
+		show = await readShow(io, left(SYSTEMCTL_TIMEOUT_MS));
 	} catch (error) {
 		logger.warn(`${io.unit} unreadable after stop`, { error });
 		return null;
@@ -1117,10 +1160,8 @@ export function settleSenderUnit(): Promise<
 			);
 			return held ? "held" : "unknown";
 		}
-		if (show.loadState === "not-found") {
-			releaseBlock();
-			return "none";
-		}
+		// Load state is never runtime evidence: a `not-found` or `masked` unit can
+		// still run its main process. Only a confirmed down releases.
 		if (confirmedDown(show)) {
 			if (held)
 				logger.info(
@@ -1170,32 +1211,69 @@ export function settleSenderUnit(): Promise<
 }
 
 /**
- * The stop path for a sender this backend did not start: stop the held unit
- * by name and see it down. A unit already down only lifts the hold. Throws a
- * {@link SenderUnitError} (`stop_unconfirmed`) when the unit cannot be
- * confirmed down; the hold then stays and its retry continues. Does nothing
- * when no unit is held (an owned sender stops through its own handle).
+ * The stop path for a sender this backend did not start, or whose unit state
+ * it has not settled yet: one fresh look at the unit, then, unless it is
+ * confirmed down, `systemctl stop` by name and a confirmed down, all within
+ * `budgetMs` (counted from the call, so a wait behind the retry counts too).
+ *
+ * - Nothing blocked (an owned sender stops through its own handle): nothing.
+ * - Unreadable, or no `Job=` row: {@link SenderUnitError} `unit_unresolved`;
+ *   the block stays, so the stop fails rather than claim no sender runs.
+ * - Not confirmed down after the stop: `stop_unconfirmed`; the block stays.
+ * - Confirmed down: launch state removed (unit mode), the mode settled if it
+ *   was not yet, the block lifted.
  */
-export function stopHeldSenderUnit(): Promise<"none" | "stopped"> {
+export function stopHeldSenderUnit(
+	budgetMs = STOP_TIMEOUT_MS + SYSTEMCTL_TIMEOUT_MS,
+): Promise<"none" | "stopped"> {
 	const io = hostIo;
 	if (!io) return Promise.resolve("none");
+	const deadline = io.now() + budgetMs;
 	return serialized(async () => {
-		if (blockKind !== "held" && blockKind !== "owed_stop") return "none";
+		if (blocked === null || blockKind === null) return "none";
 		const kind = blockKind;
-		const reason = blocked ?? `${io.unit} is held`;
-		logger.warn(`stopping ${io.unit}, which this backend did not start`, {
-			invocation: held?.invocation,
-		});
-		const show = await stopUnit(
-			io,
-			hostMode === "unit" ? launchGeneration : -1,
-		);
-		if (!show) {
+		const reason = blocked;
+		const unresolved = (why: string): never => {
 			blockUntilSettled(reason, kind);
-			throw new SenderUnitError(
-				"stop_unconfirmed",
-				`${io.unit} could not be confirmed stopped`,
+			throw new SenderUnitError("unit_unresolved", why);
+		};
+		let show: UnitShow;
+		try {
+			show = await readShow(
+				io,
+				Math.max(1, Math.min(SYSTEMCTL_TIMEOUT_MS, deadline - io.now())),
 			);
+		} catch {
+			return unresolved(`${io.unit} cannot be read; the stop is not confirmed`);
+		}
+		if (show.job === null)
+			return unresolved(`${io.unit} answered without a job state`);
+		if (!confirmedDown(show)) {
+			logger.warn(`stopping ${io.unit}, which this backend did not start`, {
+				activeState: show.activeState,
+				invocation: show.invocation,
+			});
+			if (
+				!(await stopUnit(
+					io,
+					hostMode === "unit" ? launchGeneration : -1,
+					deadline,
+				))
+			) {
+				blockUntilSettled(reason, kind);
+				throw new SenderUnitError(
+					"stop_unconfirmed",
+					`${io.unit} could not be confirmed stopped`,
+				);
+			}
+		} else if (hostMode === "unit") {
+			await removeFiles(io, launchState(io));
+		}
+		if (kind === "mode") {
+			// Down, but the backend has not decided its host yet: decide it now,
+			// so lifting the block does not leave the mode undecided.
+			const why = await decideMode(1);
+			if (why) return unresolved(why);
 		}
 		// Stopped on request: the session settles through the stop itself.
 		releaseBlock("stopped");
@@ -1227,6 +1305,8 @@ export class SenderUnitProcess implements SupervisedProc {
 	private notReadySince: number | null = null;
 	private stopping: Promise<void> | null = null;
 	private finished = false;
+	/** Left running at backend shutdown: nothing may act on the unit any more. */
+	private detached = false;
 	private resolveExit: (code: number) => void = () => undefined;
 	private cancelScheduled: (() => void) | null = null;
 	exitCode: number | null = null;
@@ -1256,7 +1336,9 @@ export class SenderUnitProcess implements SupervisedProc {
 
 	/** Verified ready now: the census, reload and reconciliation rely on it. */
 	get isReady(): boolean {
-		return this.ready && !this.finished && this.stopping === null;
+		return (
+			this.ready && !this.finished && !this.detached && this.stopping === null
+		);
 	}
 
 	/**
@@ -1291,6 +1373,7 @@ export class SenderUnitProcess implements SupervisedProc {
 	 */
 	leaveRunningOnShutdown(): boolean {
 		if (this.finished || this.stopping) return false;
+		this.detached = true;
 		this.cancelTimer();
 		this.ready = false;
 		logger.warn(
@@ -1348,6 +1431,8 @@ export class SenderUnitProcess implements SupervisedProc {
 
 	/** Stop the unit (final: systemd does not restart it) and end the handle. */
 	stop(): Promise<void> {
+		// Left running for the next backend: a late continuation must not stop it.
+		if (this.detached) return Promise.resolve();
 		this.stopping ??= this.runStop();
 		return this.stopping;
 	}
@@ -1416,7 +1501,7 @@ export class SenderUnitProcess implements SupervisedProc {
 	}
 
 	private schedule(): void {
-		if (this.finished || this.stopping) return;
+		if (this.finished || this.stopping || this.detached) return;
 		this.cancelScheduled = this.io.schedule(() => {
 			this.cancelScheduled = null;
 			void this.tick().finally(() => this.schedule());
@@ -1434,19 +1519,25 @@ export class SenderUnitProcess implements SupervisedProc {
 	}
 
 	/** One look at the unit; public for tests that drive time themselves. */
+	/** Whether this handle may still act on what a monitor read found. */
+	private get acting(): boolean {
+		return !this.finished && this.stopping === null && !this.detached;
+	}
+
 	async tick(): Promise<void> {
-		if (this.finished || this.stopping) return;
+		if (!this.acting) return;
 		let show: UnitShow;
 		try {
 			show = await readShow(this.io);
 		} catch (error) {
 			// Unknown is not ready: nothing may rely on the sender until a
 			// good read re-verifies it.
+			if (!this.acting) return;
 			this.markNotReady();
 			logger.warn(`${this.io.unit}: cannot read the unit`, { error });
 			return this.checkWedged();
 		}
-		if (this.finished || this.stopping) return;
+		if (!this.acting) return;
 		if (confirmedDown(show)) {
 			const { exitCode, signalCode } = mainExit(show);
 			logger.warn(
@@ -1478,11 +1569,12 @@ export class SenderUnitProcess implements SupervisedProc {
 		try {
 			ready = await awaitReady(this.io);
 		} catch (error) {
+			if (!this.acting) return;
 			if (!(error instanceof SenderUnitError) || error.reason === "not_ready")
 				logger.warn(`${this.io.unit}: the sender is not ready`, { error });
 			return this.checkWedged();
 		}
-		if (this.finished || this.stopping) {
+		if (!this.acting) {
 			if (ready.pidfd !== null) this.io.pidfdClose(ready.pidfd);
 			return;
 		}
@@ -1512,8 +1604,16 @@ export class SenderUnitProcess implements SupervisedProc {
 				return;
 			}
 		}
-		if (this.finished || this.stopping) {
+		// The cleanup above awaited: the process readiness found may have exited
+		// since (and a successor may own the files). Publish only a live pin.
+		const pinLive =
+			ready.pidfd !== null
+				? this.io.pidfdAlive(ready.pidfd)
+				: this.io.readComm(ready.pid) === "srtla_send" &&
+					this.io.readCgroup(ready.pid) === ready.controlGroup;
+		if (!this.acting || !pinLive) {
 			if (ready.pidfd !== null) this.io.pidfdClose(ready.pidfd);
+			if (this.acting) this.markNotReady();
 			return;
 		}
 		if (this.current.pidfd !== null) this.io.pidfdClose(this.current.pidfd);
@@ -1572,7 +1672,7 @@ export class SenderUnitProcess implements SupervisedProc {
 
 	/** A sender that stays unready this long is stopped: the stream ends. */
 	private checkWedged(): void {
-		if (this.notReadySince === null) return;
+		if (!this.acting || this.notReadySince === null) return;
 		if (this.io.now() - this.notReadySince < RESTART_READY_LIMIT_MS) return;
 		logger.error(
 			`${this.io.unit}: the sender has not been ready for ${RESTART_READY_LIMIT_MS} ms; stopping it`,

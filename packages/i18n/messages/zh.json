@@ -813,7 +813,7 @@
 	"live.transcode.chip": "输入 {input} → 输出 {output}",
 	"live.unconfirmedStream.title": "无法确认直播状态",
 	"live.unconfirmedStream.body": "设备无法确认直播是否仍在进行，因此已暂停开始直播和安装更新。请停止直播，以结束可能仍在运行的内容；设备确认已停止后，这两项都会恢复。",
-	"live.unconfirmedStream.heldBody": "设备软件在直播期间重新启动，重启前启动的发送程序可能仍在运行。设备无法确认或更改该发送程序：更改的设置不会作用于它，开始直播和安装更新也已暂停。请停止直播以结束它；下一次直播将使用你当前的设置。",
+	"live.unconfirmedStream.heldBody": "设备软件重新启动前启动的发送程序可能仍在运行。设备无法确认或更改该发送程序：更改的设置不会作用于它，开始直播和安装更新也已暂停。请停止直播以结束它；下一次直播将使用你当前的设置。",
 	"live.unconfirmedStream.stopFailed": "设备未确认已停止。请再次尝试停止直播。",
 	"live.unconfirmedStream.stopNotConfirmed": "已发送停止请求，但设备尚未确认。你可以再试一次。",
 	"locale.selectLanguage": "选择语言",

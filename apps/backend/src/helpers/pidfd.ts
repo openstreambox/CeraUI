@@ -22,7 +22,7 @@ import { constants } from "node:os";
 type PidfdLib = {
 	open(pid: number): number;
 	sendSignal(fd: number, signal: number): number;
-	/** poll(2) for POLLIN with a zero timeout: 1 readable, 0 not, -1 error. */
+	/** poll(2) for POLLIN with a zero timeout: 1 any event, 0 none, -1 error. */
 	pollIn(fd: number): number;
 	close(fd: number): number;
 };
@@ -58,7 +58,9 @@ function load(): PidfdLib | null {
 				pollfd.setInt16(6, 0, true);
 				const ready = symbols.poll(pollfdPtr, 1n, 0);
 				if (ready < 0) return -1;
-				return ready > 0 && (pollfd.getInt16(6, true) & POLLIN) !== 0 ? 1 : 0;
+				// Any returned event counts: POLLIN is the exit; POLLNVAL, POLLERR
+				// or POLLHUP mean the descriptor no longer proves a live process.
+				return ready > 0 && pollfd.getInt16(6, true) !== 0 ? 1 : 0;
 			},
 			close: (fd) => symbols.close(fd),
 		};

@@ -14,9 +14,14 @@ import type { EngineRuntimeState } from "../modules/streaming/engine-runtime-sta
 import { unownedSenderCensus } from "../modules/streaming/sender-ownership.ts";
 import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
 import {
+	armSenderHostMode,
+	onSenderUnitHoldChanged,
 	resetSenderHostModeForTest,
 	resolveSenderHostMode,
 	SENDER_UNIT_EXEC,
+	SenderUnitError,
+	senderHostBlocked,
+	senderUnitKeepsSession,
 	settleSenderUnit,
 	stopHeldSenderUnit,
 } from "../modules/streaming/streamloop/sender-unit.ts";
@@ -43,19 +48,37 @@ afterEach(() => {
 });
 
 /** The production sender predicates, over the scripted unit. */
-function session(engine: { state: EngineRuntimeState }) {
+function session(
+	engine: { state: EngineRuntimeState },
+	options: {
+		initialLiveness?: "idle" | "unknown";
+		stopDeadlineMs?: number;
+		engineStop?: () => Promise<void>;
+	} = {},
+) {
 	const census = () => unownedSenderCensus([], emptyProc, process.pid);
 	let launches = 0;
+	const completed: string[] = [];
+	const stopRuntimeCalls: string[] = [];
 	const orchestrator = createStreamSessionOrchestrator({
-		initialLiveness: "unknown",
+		initialLiveness: options.initialLiveness ?? "unknown",
 		createAttemptId: () => "held",
 		setStreamingStatus: () => {},
-		stopRuntime: async () => {
+		automaticStopRefused: () => senderUnitKeepsSession(),
+		idleStopNeedsRuntime: () => senderHostBlocked() !== null,
+		onStreamStopCompleted: (cause) => completed.push(cause),
+		stopRuntime: async (_generation, confirmUnknown) => {
+			stopRuntimeCalls.push(confirmUnknown ? "operator" : "automatic");
+			await options.engineStop?.();
 			engine.state = "idle";
 			try {
 				await stopHeldSenderUnit();
-			} catch {
-				throw new Error("sender_unit_stop_unconfirmed");
+			} catch (error) {
+				throw new Error(
+					error instanceof SenderUnitError && error.reason === "unit_unresolved"
+						? "sender_unit_unresolved"
+						: "sender_unit_stop_unconfirmed",
+				);
 			}
 			if (census() !== "absent") throw new Error("sender_ownership_unproven");
 		},
@@ -67,10 +90,12 @@ function session(engine: { state: EngineRuntimeState }) {
 		senderAdmissionSafe: () => census() === "absent",
 		// No launch of this process: a predecessor's session never confirms.
 		canReconcileStreaming: () => false,
-		stopDeadlineMs: 60_000,
+		stopDeadlineMs: options.stopDeadlineMs ?? 60_000,
 	});
 	return {
 		orchestrator,
+		completed,
+		stopRuntimeCalls,
 		launches: () => launches,
 		start: () =>
 			orchestrator.start({
@@ -196,4 +221,104 @@ describe("production wiring", () => {
 			stopGeneration.mockRestore();
 		}
 	});
+});
+
+describe("review 198 round 1: the session", () => {
+	test("an automatic stop (engine loss, reconfigure) never ends a held session; the operator's Stop does", async () => {
+		await bootBesideRunningSender();
+		const engine = { state: "streaming" as EngineRuntimeState };
+		const s = session(engine);
+		await s.orchestrator.reconcile();
+		for (const cause of ["engine_loss", "reconfigure"] as const)
+			expect(await s.orchestrator.stop(cause)).toEqual({
+				result: "stop_failed",
+				reason: "sender_held",
+			});
+		expect(s.stopRuntimeCalls).toEqual([]);
+		expect(fake.state.active).toBe("active");
+		expect(engine.state).toBe("streaming");
+		expect(s.completed).toEqual([]);
+		expect((await s.orchestrator.stop("operator")).result).toBe("stopped");
+		expect(s.completed).toEqual(["operator"]);
+	});
+
+	test("Stop during startup on an idle session still settles the unit: no early answer while the host is unresolved", async () => {
+		armSenderHostMode({ srtla_send_unit: true }, SENDER_UNIT_EXEC, fake.io());
+		fake.state = {
+			...fake.state,
+			active: "activating",
+			sub: "auto-restart",
+			invocation: "gap",
+		};
+		const engine = { state: "idle" as EngineRuntimeState };
+		const s = session(engine, { initialLiveness: "idle" });
+		expect(await s.orchestrator.stop("operator")).toEqual({
+			result: "stopped",
+		});
+		expect(s.stopRuntimeCalls).toEqual(["operator"]);
+		expect(fake.state.active).toBe("inactive");
+	});
+
+	test("Stop during startup with the manager unreadable is a failed stop, not a stopped stream", async () => {
+		armSenderHostMode({ srtla_send_unit: true }, SENDER_UNIT_EXEC, fake.io());
+		fake.showFails = true;
+		const engine = { state: "idle" as EngineRuntimeState };
+		const s = session(engine, { initialLiveness: "idle" });
+		expect(await s.orchestrator.stop("operator")).toEqual({
+			result: "stop_failed",
+			reason: "sender_unit_unresolved",
+		});
+		expect(s.completed).toEqual([]);
+	});
+
+	test("a Stop that times out before the unit comes down still settles idle once the cleanup finishes", async () => {
+		await bootBesideRunningSender();
+		onSenderUnitHoldChanged(() => {});
+		const engine = { state: "streaming" as EngineRuntimeState };
+		const slowEngine = Promise.withResolvers<void>();
+		const s = session(engine, {
+			stopDeadlineMs: 20,
+			engineStop: () => slowEngine.promise,
+		});
+		await s.orchestrator.reconcile();
+		const stopped = await s.orchestrator.stop("operator");
+		expect(stopped).toEqual({ result: "stop_failed", reason: "stop_timeout" });
+		// The engine and then the unit come down after the deadline answered.
+		slowEngine.resolve();
+		for (let i = 0; i < 50 && s.orchestrator.snapshot().state !== "idle"; i++)
+			await Bun.sleep(2);
+		expect(fake.state.active).toBe("inactive");
+		expect(s.orchestrator.snapshot().state).toBe("idle");
+		expect((await s.start()).result).toBe("started");
+	});
+
+	test("a reconcile asked for while a Stop is in flight is not lost", async () => {
+		await bootBesideRunningSender();
+		const engine = { state: "streaming" as EngineRuntimeState };
+		const gate = Promise.withResolvers<void>();
+		const s = session(engine, { engineStop: () => gate.promise });
+		await s.orchestrator.reconcile();
+		const stopping = s.orchestrator.stop("operator");
+		// Asked while the stop owns the session: deferred, not dropped.
+		await s.orchestrator.reconcile();
+		gate.resolve();
+		expect((await stopping).result).toBe("stopped");
+		await Bun.sleep(5);
+		expect(s.orchestrator.snapshot().state).toBe("idle");
+	});
+});
+
+test("two presses of one Stop complete once, and only after the cleanup is confirmed", async () => {
+	await bootBesideRunningSender();
+	const engine = { state: "streaming" as EngineRuntimeState };
+	const gate = Promise.withResolvers<void>();
+	const s = session(engine, { engineStop: () => gate.promise });
+	await s.orchestrator.reconcile();
+	const first = s.orchestrator.stop("operator");
+	const second = s.orchestrator.stop("operator");
+	expect(s.completed).toEqual([]);
+	gate.resolve();
+	expect((await first).result).toBe("stopped");
+	expect((await second).result).toBe("stopped");
+	expect(s.completed).toEqual(["operator"]);
 });

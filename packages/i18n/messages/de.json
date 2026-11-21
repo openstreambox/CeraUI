@@ -858,7 +858,7 @@
 	"live.transcode.chip": "Eingang {input} → Ausgang {output}",
 	"live.unconfirmedStream.title": "Stream-Status nicht bestätigt",
 	"live.unconfirmedStream.body": "Das Gerät kann nicht bestätigen, ob noch ein Stream läuft. Deshalb sind das Starten eines Streams und das Installieren von Updates pausiert. Stoppen Sie den Stream, um alles zu beenden, was noch laufen könnte; beides ist wieder möglich, sobald das Gerät den Stopp bestätigt.",
-	"live.unconfirmedStream.heldBody": "Die Gerätesoftware wurde während eines Streams neu gestartet, und der vor dem Neustart gestartete Sender läuft möglicherweise noch. Das Gerät kann diesen Sender weder bestätigen noch ändern: Geänderte Einstellungen erreichen ihn nicht, und das Starten eines Streams und das Installieren von Updates sind pausiert. Stoppen Sie den Stream, um ihn zu beenden; der nächste Stream verwendet Ihre aktuellen Einstellungen.",
+	"live.unconfirmedStream.heldBody": "Ein Sender, der vor dem Neustart der Gerätesoftware gestartet wurde, läuft möglicherweise noch. Das Gerät kann diesen Sender weder bestätigen noch ändern: Geänderte Einstellungen erreichen ihn nicht, und das Starten eines Streams und das Installieren von Updates sind pausiert. Stoppen Sie den Stream, um ihn zu beenden; der nächste Stream verwendet Ihre aktuellen Einstellungen.",
 	"live.unconfirmedStream.stopFailed": "Das Gerät hat den Stopp nicht bestätigt. Versuchen Sie erneut, den Stream zu stoppen.",
 	"live.unconfirmedStream.stopNotConfirmed": "Der Stopp wurde gesendet, aber das Gerät hat ihn noch nicht bestätigt. Sie können es erneut versuchen.",
 	"locale.selectLanguage": "Sprache auswählen",

@@ -368,7 +368,7 @@ export async function startStream(
 			const invocation = handle.invocation;
 			// Still this stream's sender, and still the process that was ready?
 			const current = () =>
-				handle.isReady &&
+				handle.isCurrent() &&
 				handle.invocation === invocation &&
 				getStreamingProcesses().some((process) => process.proc === handle);
 			void (async () => {

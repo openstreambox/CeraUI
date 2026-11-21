@@ -76,6 +76,7 @@ import {
 	reconcileStreamSession,
 } from "./stream-session-orchestrator.ts";
 import type { EngineRuntimeState } from "./streaming-backend.ts";
+import { heldSenderUnit } from "./streamloop/sender-unit.ts";
 
 /**
  * The stream-defining slice of the live config, captured verbatim.
@@ -195,6 +196,12 @@ export interface StreamRestorationDeps {
 		config: ArmedStreamConfig,
 		current: () => boolean,
 	) => Promise<RestorationLaunchOutcome>;
+	/**
+	 * A sender started before this backend's restart is held (its own unit,
+	 * not stopped, not ours). While it is, restoration neither launches nor
+	 * judges the marker: the predecessor's stream may still be running.
+	 */
+	readonly senderHeld?: () => boolean;
 	readonly publish: (
 		outcome: RestorationRunOutcome,
 		trigger: RestorationTrigger,
@@ -365,6 +372,7 @@ function defaultDeps(): StreamRestorationDeps {
 			return state === "idle" || state === "streaming" ? state : "unknown";
 		},
 		lifecycleState: () => getStreamSessionSnapshot().state,
+		senderHeld: () => heldSenderUnit() !== null,
 		launch: defaultLaunch,
 		publish: defaultPublish,
 		wait: (ms) =>
@@ -425,6 +433,14 @@ async function runOnce(
 	await deps.awaitRecovery();
 	const startedAt = deps.now();
 	for (;;) {
+		if (deps.senderHeld?.() === true) {
+			// No attempt recorded and nothing published: the marker keeps its one
+			// attempt for when the held sender is gone.
+			deps.logger.info(
+				"stream restoration: a sender from before the restart is held; not judging the marker",
+			);
+			return { result: "blocked", reason: "sender_held" };
+		}
 		const runtimeState = await deps.runtimeState();
 		const marker = readArmedStreamMarker(deps.marker);
 		if (marker !== undefined && !current())

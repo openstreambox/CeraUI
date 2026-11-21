@@ -163,6 +163,7 @@ import {
 	gracefulShutdown,
 } from "./modules/streaming/streamloop/process-runner.ts";
 import {
+	armSenderHostMode,
 	onSenderUnitHoldChanged,
 	resolveSenderHostMode,
 	settleSenderUnit,
@@ -300,6 +301,10 @@ tightenPrivateFiles(process.cwd(), [
 ]);
 
 checkExecPath(srtlaSendExec);
+// With `srtla_send_unit`, publish "sender host not decided yet" before the
+// control server can take a Stop: until the unit is read (below, after the
+// bind), nothing may treat a unit-run sender as absent. No I/O here.
+armSenderHostMode(setup, srtlaSendExec);
 
 // An unreadable or damaged config.json must not abort boot: the control server
 // is the only place the operator can see and repair it. A damaged file is
@@ -438,7 +443,10 @@ if (!shouldUseMocks()) {
 	// session follows the engine again. Flag off: nothing is read.
 	onSenderUnitHoldChanged((change) => {
 		broadcastMsg("status", { stream_sender_held: change === "held" });
-		if (change !== "released") return;
+		// Released on its own or stopped: either way the session must look again
+		// (deferred by the orchestrator while a stop or its cleanup is in flight,
+		// so a stop that timed out before the unit came down still settles).
+		if (change === "held") return;
 		void reconcileStreamSession().catch((error: unknown) =>
 			logger.warn("reconciliation after a released sender unit failed", {
 				error,

@@ -34,6 +34,7 @@ type SocTelemetry = {
 
 const state = vi.hoisted(() => ({
 	carrying: undefined as "streaming" | "unknown" | "idle" | undefined,
+	senderHeld: false,
 	hud: undefined as HudState | undefined,
 	health: "unknown" as HealthIndicator,
 	rollup: null as HealthRollup | null,
@@ -48,6 +49,7 @@ const state = vi.hoisted(() => ({
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getStatus: () => ({
 		carrying: state.carrying ? { state: state.carrying } : undefined,
+		stream_sender_held: state.senderHeld,
 	}),
 }));
 
@@ -780,6 +782,26 @@ describe("client traffic lead badge", () => {
 			);
 		},
 	);
+});
+
+describe("a sender held from before a backend restart", () => {
+	it("says checking, never Idle, beside the unconfirmed session", async () => {
+		state.carrying = undefined;
+		state.senderHeld = true;
+		try {
+			render(HudBar);
+			const badge = document.querySelector('[id$="-lifecycle"]');
+			expect(badge?.textContent).not.toContain("Idle");
+			const trigger = compactStrip().querySelector("button");
+			if (!trigger) throw Error("missing HUD trigger");
+			await fireEvent.click(trigger);
+			expect(screen.getByTestId("hud-sheet-subtitle").dataset.state).toBe(
+				"checking",
+			);
+		} finally {
+			state.senderHeld = false;
+		}
+	});
 });
 
 it.each(["streaming", "unknown"] as const)(

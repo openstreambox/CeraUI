@@ -488,6 +488,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["automatic bearer family reconciliation deferred"],
 	["automatic carrier intent is unreadable"],
 	["automatic carrier profile reconciliation deferred"],
+	[
+		"automatic stream stop refused: only the operator ends a session a held sender may carry",
+	],
 	["autostart aborted"],
 	["autostart cancelled"],
 	["autostart complete"],
@@ -1105,6 +1108,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["stream restoration gave up"],
 	["stream restoration run failed"],
 	["stream restoration suppressed by a planned shutdown"],
+	[
+		"stream restoration: a sender from before the restart is held; not judging the marker",
+	],
 	["stream restoration: no boot id available; the session is not armed"],
 	[
 		"stream restoration: the engine is already streaming — adopted, not restored",
@@ -1885,6 +1891,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["sender unit host is not active"],
 	["sender_ownership_unproven"],
 	["sender_unit_stop_unconfirmed"],
+	["sender_unit_unresolved"],
 	["sender_usage"],
 	["serial_invalid"],
 	["serial_replayed"],
@@ -2116,6 +2123,7 @@ export const SUPPORT_REASON_TEMPLATES: readonly (readonly string[])[] = [
 	["same daemon still deactivating after grace"],
 	["schema-unsupported"],
 	["schema_invalid"],
+	["sender_held"],
 	["serial_replayed"],
 	["setter readback differs"],
 	["setup-ap-active"],

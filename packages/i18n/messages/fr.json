@@ -861,7 +861,7 @@
 	"live.transcode.chip": "Entrée {input} → Sortie {output}",
 	"live.unconfirmedStream.title": "État de la diffusion non confirmé",
 	"live.unconfirmedStream.body": "L'appareil ne peut pas confirmer si une diffusion est toujours en cours : le démarrage d'une diffusion et l'installation des mises à jour sont donc suspendus. Arrêtez la diffusion pour mettre fin à tout ce qui pourrait encore tourner ; les deux reprennent dès que l'appareil confirme l'arrêt.",
-	"live.unconfirmedStream.heldBody": "Le logiciel de l'appareil a redémarré pendant une diffusion, et l'émetteur lancé avant le redémarrage tourne peut-être encore. L'appareil ne peut ni confirmer ni modifier cet émetteur : les réglages modifiés ne lui parviennent pas, et le démarrage d'une diffusion et l'installation des mises à jour sont suspendus. Arrêtez la diffusion pour y mettre fin ; la prochaine diffusion utilisera vos réglages actuels.",
+	"live.unconfirmedStream.heldBody": "Un émetteur lancé avant le redémarrage du logiciel de l'appareil tourne peut-être encore. L'appareil ne peut ni confirmer ni modifier cet émetteur : les réglages modifiés ne lui parviennent pas, et le démarrage d'une diffusion et l'installation des mises à jour sont suspendus. Arrêtez la diffusion pour y mettre fin ; la prochaine diffusion utilisera vos réglages actuels.",
 	"live.unconfirmedStream.stopFailed": "L'appareil n'a pas confirmé l'arrêt. Réessayez d'arrêter la diffusion.",
 	"live.unconfirmedStream.stopNotConfirmed": "L'arrêt a été envoyé, mais l'appareil ne l'a pas encore confirmé. Vous pouvez réessayer.",
 	"locale.selectLanguage": "Sélectionner la langue",

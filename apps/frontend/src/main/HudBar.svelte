@@ -73,9 +73,12 @@ const carrying = $derived(getStatus()?.carrying?.state);
 // A supervised connection restart is between its Stop and its Start: say that,
 // never "Idle" or "Streaming stopped". Nobody stopped the stream.
 const restarting = $derived(!isLive && !isOffline && getStatus()?.connection_restarting === true);
-const clientLabel = $derived(restarting ? m['hud.restartingConnection']() : carrying === 'streaming' ? m['hud.forwarding']() : carrying === 'unknown' ? m['hud.checking']() : null);
+// A sender started before a backend restart may still run beside an
+// unconfirmed session: the device cannot say Idle, only that it is checking.
+const senderHeld = $derived(!isLive && !isOffline && getStatus()?.stream_sender_held === true);
+const clientLabel = $derived(restarting ? m['hud.restartingConnection']() : senderHeld ? m['hud.checking']() : carrying === 'streaming' ? m['hud.forwarding']() : carrying === 'unknown' ? m['hud.checking']() : null);
 type HudLifecycle = 'live' | 'idle' | 'offline' | 'forwarding' | 'checking' | 'restarting';
-const lifecycle = $derived<HudLifecycle>(isOffline ? 'offline' : isLive ? 'live' : restarting ? 'restarting' : carrying === 'streaming' ? 'forwarding' : carrying === 'unknown' ? 'checking' : 'idle');
+const lifecycle = $derived<HudLifecycle>(isOffline ? 'offline' : isLive ? 'live' : restarting ? 'restarting' : senderHeld ? 'checking' : carrying === 'streaming' ? 'forwarding' : carrying === 'unknown' ? 'checking' : 'idle');
 
 // Bitrate honesty: it is a LIVE streaming value, so it is shown ONLY while
 // genuinely live. Idle/offline render "—" (absence rendered as absence).

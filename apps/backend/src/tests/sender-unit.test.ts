@@ -36,6 +36,7 @@ import {
 	signalSenders,
 } from "../modules/streaming/streamloop/process-runner.ts";
 import {
+	armSenderHostMode,
 	encodeSenderArgv,
 	heldSenderUnit,
 	mainExit,
@@ -50,6 +51,7 @@ import {
 	senderHostBlocked,
 	senderHostMode,
 	senderUnitHostPaths,
+	senderUnitKeepsSession,
 	settleSenderUnit,
 	startSenderUnit,
 	stopHeldSenderUnit,
@@ -1424,7 +1426,7 @@ describe("review round 3 follow-ups", () => {
 		]);
 	});
 
-	test("kernel: a pidfd of an exited, unreaped process is not alive, though signal 0 still succeeds", async () => {
+	test("kernel: a pidfd of an exited, unreaped process is not alive, though a signal through it is still delivered", async () => {
 		// sh backgrounds a short sleep, prints its PID, then execs a long sleep
 		// that never waits: the short one stays a zombie after it exits.
 		const parent = Bun.spawn(
@@ -1454,6 +1456,8 @@ describe("review round 3 follow-ups", () => {
 					await Bun.sleep(20);
 				}
 				expect(state).toBe("Z");
+				// The kernel still delivers a signal to the zombie through its pidfd,
+				// so a delivered signal proves nothing about liveness; exit readiness does.
 				expect(pidfdSignal(fd, "SIGCONT")).toBe(true);
 				expect(pidfdAlive(fd)).toBe(false);
 			} finally {
@@ -1462,6 +1466,243 @@ describe("review round 3 follow-ups", () => {
 		} finally {
 			parent.kill("SIGKILL");
 			await parent.exited;
+		}
+	});
+});
+
+describe("review 198 round 1", () => {
+	const empty = () => {
+		const dirPath = join(root, "proc-empty");
+		mkdirSync(dirPath, { recursive: true });
+		return dirPath;
+	};
+
+	test("the flag publishes an unresolved host before any I/O, and the probe never opens a gap", async () => {
+		const io = fake.io();
+		const seen: Array<string | null> = [];
+		const probing = fake.io({
+			systemctl: async (args, timeoutMs) => {
+				seen.push(senderHostBlocked());
+				return io.systemctl(args, timeoutMs);
+			},
+		});
+		expect(
+			armSenderHostMode({ srtla_send_unit: true }, SENDER_UNIT_EXEC, probing),
+		).toBe(true);
+		expect(fake.calls).toEqual([]);
+		expect(senderHostBlocked()).not.toBeNull();
+		expect(senderUnitKeepsSession()).toBe(true);
+		expect(unownedSenderCensus([], empty(), process.pid)).toBe("unknown");
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			probing,
+		);
+		expect(seen.length).toBeGreaterThan(0);
+		expect(seen.every((reason) => reason !== null)).toBe(true);
+		expect(senderHostBlocked()).not.toBeNull();
+	});
+
+	test("flag off arms nothing", () => {
+		expect(armSenderHostMode({}, SENDER_UNIT_EXEC, fake.io())).toBe(false);
+		expect(senderHostBlocked()).toBeNull();
+		expect(senderUnitKeepsSession()).toBe(false);
+	});
+
+	test("Stop before the host is decided, manager unreadable: refused as unresolved, block kept", async () => {
+		armSenderHostMode({ srtla_send_unit: true }, SENDER_UNIT_EXEC, fake.io());
+		fake.showFails = true;
+		expect((await rejection(stopHeldSenderUnit())).reason).toBe(
+			"unit_unresolved",
+		);
+		expect(senderHostBlocked()).not.toBeNull();
+		expect(verbs()).not.toContain("stop");
+	});
+
+	test("Stop before the startup check, sender in its restart gap: the same press stops it and lifts the block", async () => {
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			fake.io(),
+		);
+		fake.state = {
+			...fake.state,
+			active: "activating",
+			sub: "auto-restart",
+			invocation: "gap",
+		};
+		writeFileSync(`${dir}/argv`, "x");
+		expect(await stopHeldSenderUnit()).toBe("stopped");
+		expect(verbs()).toContain("stop");
+		expect(fake.state.active).toBe("inactive");
+		expect(senderHostBlocked()).toBeNull();
+		expect(existsSync(`${dir}/argv`)).toBe(false);
+	});
+
+	test("Stop before the host is decided, unit down: the mode is decided and the block lifted", async () => {
+		armSenderHostMode({ srtla_send_unit: true }, SENDER_UNIT_EXEC, fake.io());
+		expect(await stopHeldSenderUnit()).toBe("stopped");
+		expect(verbs()).not.toContain("stop");
+		expect(senderHostMode()).toBe("unit");
+		expect(senderHostBlocked()).toBeNull();
+	});
+
+	test("the Stop budget bounds the unit stop and the confirmation read", async () => {
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			fake.io(),
+		);
+		fake.state = {
+			...fake.state,
+			active: "active",
+			sub: "running",
+			mainPid: 9,
+			invocation: "x",
+			cgroup: "/c",
+		};
+		await settleSenderUnit();
+		const timeouts: Array<[string, number]> = [];
+		const base = fake.io();
+		resetSenderHostModeForTest();
+		const io = fake.io({
+			systemctl: async (args, timeoutMs) => {
+				timeouts.push([args[0] ?? "", timeoutMs]);
+				return base.systemctl(args, timeoutMs);
+			},
+		});
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			io,
+		);
+		await settleSenderUnit();
+		timeouts.length = 0;
+		await stopHeldSenderUnit(3_000);
+		expect(timeouts.length).toBeGreaterThan(0);
+		expect(timeouts.every(([, ms]) => ms <= 3_000)).toBe(true);
+	});
+
+	test("not-found while still running is held, never released or taken for absent", async () => {
+		fake.state = {
+			...fake.state,
+			load: "not-found",
+			active: "active",
+			sub: "running",
+			mainPid: 4242,
+			invocation: "orphan",
+			cgroup: "/system.slice/srtla-send.service",
+		};
+		expect(
+			await resolveSenderHostMode(
+				{ srtla_send_unit: true },
+				SENDER_UNIT_EXEC,
+				fake.io(),
+			),
+		).toBe("child");
+		expect(await settleSenderUnit()).toBe("held");
+		expect(senderHostBlocked()).not.toBeNull();
+		// A populated Job row with an inactive sample is not down either.
+		fake.state = {
+			...fake.state,
+			active: "inactive",
+			sub: "dead",
+			mainPid: 0,
+			job: "12",
+		};
+		expect(await settleSenderUnit()).toBe("held");
+		fake.state.job = "";
+		expect(await settleSenderUnit()).toBe("none");
+		expect(senderHostBlocked()).toBeNull();
+	});
+
+	test("masked while running: no unit mode, but held, and Stop still stops it", async () => {
+		fake.state = {
+			...fake.state,
+			load: "masked",
+			active: "active",
+			sub: "running",
+			mainPid: 4343,
+			invocation: "masked",
+			cgroup: "/system.slice/srtla-send.service",
+		};
+		expect(
+			await resolveSenderHostMode(
+				{ srtla_send_unit: true },
+				SENDER_UNIT_EXEC,
+				fake.io(),
+			),
+		).toBe("child");
+		expect(await settleSenderUnit()).toBe("held");
+		expect(await stopHeldSenderUnit()).toBe("stopped");
+		expect(fake.state.active).toBe("inactive");
+	});
+
+	test("shutdown detach fences a monitor read already in flight", async () => {
+		await unitMode();
+		const events: string[] = [];
+		const handle = await startSenderUnit(senderArgs(), {
+			onRestarting: () => events.push("restarting"),
+			onRestarted: () => events.push("restarted"),
+		});
+		fake.crash();
+		const tick = handle.tick(); // its show is in flight
+		expect(handle.leaveRunningOnShutdown()).toBe(true);
+		await tick;
+		fake.restart();
+		await handle.tick();
+		expect(events).toEqual([]);
+		expect(verbs().filter((verb) => verb === "stop")).toEqual([]);
+		// A late wedge stop is a no-op as well.
+		await handle.stop();
+		expect(verbs()).not.toContain("stop");
+	});
+
+	test("a restarted sender that exits while its stats are cleared is not published ready", async () => {
+		const base = fake.io();
+		let crashOnClear = false;
+		const io = fake.io({
+			remove: async (path) => {
+				if (crashOnClear && path.endsWith("stats.json")) {
+					crashOnClear = false;
+					fake.crash();
+				}
+				return base.remove(path);
+			},
+		});
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			io,
+		);
+		await settleSenderUnit();
+		const events: string[] = [];
+		const handle = await startSenderUnit(senderArgs(), {
+			onRestarting: () => events.push("restarting"),
+			onRestarted: () => events.push("restarted"),
+		});
+		fake.crash();
+		await handle.tick(); // restart seen, first clear
+		fake.restart();
+		crashOnClear = true; // the per-invocation clear after readiness
+		await handle.tick();
+		expect(events).toEqual(["restarting"]);
+		expect(handle.isReady).toBe(false);
+	});
+
+	test("kernel: a pidfd that no longer names a descriptor (POLLNVAL) reads as not alive", () => {
+		const child = Bun.spawn(["sleep", "5"], {
+			stdout: "ignore",
+			stderr: "ignore",
+		});
+		try {
+			const fd = pidfdOpen(child.pid);
+			if (fd === null) return;
+			expect(pidfdAlive(fd)).toBe(true);
+			pidfdClose(fd);
+			expect(pidfdAlive(fd)).toBe(false);
+		} finally {
+			child.kill("SIGKILL");
 		}
 	});
 });

@@ -39,7 +39,7 @@ const TITLE = "Stream state not confirmed";
 const BODY =
 	"The device can't confirm whether a stream is still running, so starting a stream and installing updates are paused. Stop the stream to end anything that may still be running; both resume once the device confirms it has stopped.";
 const HELD_BODY =
-	"The device software restarted during a stream, and the sender started before the restart may still be running. The device can't confirm or change that sender, so changed settings won't reach it, and starting a stream and installing updates are paused. Stop the stream to end it; the next stream uses your current settings.";
+	"A sender started before the device software restarted may still be running. The device can't confirm or change that sender, so changed settings won't reach it, and starting a stream and installing updates are paused. Stop the stream to end it; the next stream uses your current settings.";
 const FAILED =
 	"The device didn't confirm the stop. Try stopping the stream again.";
 const NOT_CONFIRMED =

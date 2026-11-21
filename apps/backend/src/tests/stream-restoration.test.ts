@@ -834,3 +834,27 @@ describe("clearArmedStreamMarker", () => {
 		expect(onDisk()?.attempt).toBeUndefined();
 	});
 });
+
+describe("the runner beside a held sender (a sender unit kept across a restart)", () => {
+	test("never launches, records no attempt and publishes nothing; the marker keeps its one attempt", async () => {
+		plant();
+		const before = onDisk();
+		const h = harness({
+			runtimeStates: ["unknown"],
+			lifecycleStates: ["reconciling"],
+		});
+		const outcome = await runStreamRestoration({
+			...h.deps,
+			senderHeld: () => true,
+		});
+		expect(outcome).toEqual({ result: "blocked", reason: "sender_held" });
+		expect(h.launches).toHaveLength(0);
+		expect(h.published).toEqual([]);
+		expect(h.waits).toEqual([]);
+		expect(onDisk()).toEqual(before);
+		expect(onDisk()?.attempt).toBeUndefined();
+		// Once the hold is gone the marker is judged as usual.
+		const later = harness({});
+		expect((await runStreamRestoration(later.deps)).result).toBe("recovered");
+	});
+});
