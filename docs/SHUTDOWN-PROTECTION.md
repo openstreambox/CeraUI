@@ -39,6 +39,31 @@ honours strong block inhibitors for root without requiring polkit. Explicit
 `--check-inhibitors=yes` is deliberately omitted: it also refuses an idle
 box when a non-root support user is logged in over SSH.
 They retain the existing stream/update admission gates and failure bookkeeping.
+On images with the power admission broker (its files
+`/usr/libexec/ceralive/ceralive-power-broker` or `/usr/bin/ceralive-poweroff`,
+whatever its socket is doing), the local power dialog's admitted action goes to
+the broker (`ceralive-poweroff|ceralive-reboot --no-wait`). The broker identifies
+this service by its unit, lets the action pass this process's own lock, waits for
+running writes, then asks logind. If the broker is down the action fails; it
+never falls back. Images without the broker ask logind directly
+(`busctl … PowerOffWithFlags|RebootWithFlags t 0`, lock-checked). Neither path
+uses `systemctl`, which can start a power target itself when logind fails.
+
+The client's answer decides the reservation: admitted (with the broker's request
+id) keeps it like any submitted power action; a refusal or an unreachable broker
+releases it; no answer is uncertain and keeps it. A later broker failure of that
+same request id, seen on the heartbeat, releases it; a failure of another
+request, waiting or uncertain don't. The heartbeat reads that request's own
+entry in the broker's record (`requests[<id>]` in
+`/run/ceralive-power/state.json`), so a newer request (the button, say) can't
+hide its result. The broker keeps a finished request's entry for a day, so a
+late heartbeat still finds it; without an entry for its id the reservation
+stays. An older broker without `requests` only has its latest request, which
+counts only under the same id. The backend shows the broker's state on
+every heartbeat: waiting for the update, still waiting after 15 minutes, shutting
+down, no answer, or refused. The phone-only power-off exception waives only
+the carrying restart hold; encoder uncertainty, an unexplained marker and client
+traffic that is still qualifying keep refusing.
 The dialog shows the emergency override only after a shutdown-lock refusal.
 A local refused submission uses a typed, translated reason for shutdown
 protection, other logged-in users, command unavailability or an uncertain result. No forced retry is introduced. The companion image provides
@@ -59,7 +84,9 @@ carried clients and the web interface; it also closes the inhibitor. The second
 command still checks other strong shutdown locks through logind. The power
 dialog shows this override and its consequences in every supported locale.
 Do not rely on `systemctl reboot -i` or `--check-inhibitors=no`: with a strong
-block on systemd 257 they require polkit, which the image does not ship. Plain
+block on systemd 257 logind asks polkit even for root, and the image's rule
+grants that only to its power admission broker. An operator uses
+`ceralive-poweroff` / `ceralive-reboot` from their own terminal instead. Plain
 `reboot` and scheduled `shutdown` are also refused while the block is held.
 Direct target activation and `--force` bypass logind and are not this supported
 procedure.

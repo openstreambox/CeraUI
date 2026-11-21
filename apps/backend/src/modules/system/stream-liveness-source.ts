@@ -2,7 +2,7 @@ import type { LifecycleState } from "@ceraui/rpc/schemas";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import { streamLiveness } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
-import { getCarryingLiveness } from "./carrying.ts";
+import { carryingTracker, getCarryingLiveness } from "./carrying.ts";
 import type { StreamLiveness } from "./disruptive-action-gate.ts";
 import { isStreamReconciliationCompleted } from "./stream-reconciliation-latch.ts";
 
@@ -27,11 +27,15 @@ export function deriveStreamLiveness(
 
 let testSource: (() => StreamLiveness) | undefined;
 
-export function getStreamLiveness(): StreamLiveness {
+export function getStreamLiveness(
+	options: { readonly waiveCarryingStartupHold?: boolean } = {},
+): StreamLiveness {
 	if (testSource) return testSource();
 	const leaf = streamLiveness();
 	return deriveStreamLiveness({
-		carrying: getCarryingLiveness(),
+		carrying: options.waiveCarryingStartupHold
+			? carryingTracker.read(performance.now(), true)
+			: getCarryingLiveness(),
 		reconciled: isStreamReconciliationCompleted(),
 		live: getIsStreaming() || leaf === "streaming",
 		lifecycle: getStreamLifecycleState(),
