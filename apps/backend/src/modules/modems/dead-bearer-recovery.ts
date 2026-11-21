@@ -23,8 +23,10 @@
     out there, and a dead bearer keeps the translator's lease up for minutes,
     so skipping such a modem left it dead for that whole time. Both the TUN
     and the native IPv6 address ride the same bearer, so a translated modem
-    whose native IPv6 still reads `up` is not reconnected, and one whose TUN
-    has no record yet is left alone;
+    whose native IPv6 still reads `up` with fresh evidence is not
+    reconnected, and one whose TUN has no record yet is left alone. A native
+    record that stopped refreshing counts as unknown: it vetoes nothing, and
+    the TUN's record decides;
   - while a stream runs, the sender's own per-link evidence says this
     interface carries nothing (`linkCarryingState`: its byte counter stood
     still across fresh snapshots, CLAT translator traffic counted for its
@@ -115,7 +117,7 @@ export interface DeadBearerInput {
 	readonly otherUplinkUp: boolean;
 	/** The profile is preparation-owned (autoconnect no + live grant). */
 	readonly owned: boolean;
-	/** Translated, and the modem's own native IPv6 still reads `up`. */
+	/** Translated, and the modem's own native IPv6 reads `up`, not stale. */
 	readonly nativeAnswers: boolean;
 	/**
 	 * `idle` when no stream runs; otherwise the sender's verdict on whether
@@ -321,7 +323,8 @@ function pathObservation(iface: string, key: string) {
 		now,
 		record,
 		otherUplinkUp: independentUplinkUp(iface, wallNow),
-		nativeAnswers: tun !== undefined && native?.state === "up",
+		nativeAnswers:
+			tun !== undefined && native?.state === "up" && native.staleAt > wallNow,
 		stream: streamState(iface),
 		lastDial: deps.lastDial(key),
 	};
