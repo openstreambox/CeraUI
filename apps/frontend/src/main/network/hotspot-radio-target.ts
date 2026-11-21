@@ -1,7 +1,7 @@
 import { m } from "@ceraui/i18n/svelte";
 import type { WifiInterface } from "@ceraui/rpc/schemas";
 
-import { networkRename } from "$lib/helpers/NetworkHelper";
+import { interfaceLabel } from "$lib/helpers/link-names";
 
 /**
  * The operator's hotspot radio choice: the row id plus the runtime incarnation
@@ -105,5 +105,5 @@ export function hotspotRadioLabel(radio: WifiInterface): string {
 function radioName(ifname: string): string {
 	return /^wlx[0-9a-f]{12}$/.test(ifname)
 		? m["networking.linkName.usbWifi"]({ id: ifname.slice(-4) })
-		: networkRename(ifname);
+		: interfaceLabel(ifname);
 }
