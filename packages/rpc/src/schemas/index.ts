@@ -24,6 +24,7 @@ export * from './network.schema';
 export * from './notifications.schema';
 export * from './pairing.schema';
 export * from './radio-health.schema';
+export * from './phone-box.schema';
 export * from './relay.schema';
 export * from './sources.schema';
 export * from './sources-visibility.schema';
