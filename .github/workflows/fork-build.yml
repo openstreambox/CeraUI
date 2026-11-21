@@ -74,6 +74,19 @@ jobs:
           bun run --filter frontend test:e2e:install-deps
           bun run --filter frontend test:e2e:install-browser
       - run: bun run --filter @ceraui/i18n generate:i18n
+      # The backend refuses to boot without a sender binary, even on mocks. The
+      # mock backend never streams, so point it at the checkout's mock sender
+      # and keep its IP list file out of /run.
+      - name: Use the mock sender
+        run: |
+          SRTLA_DIR="$PWD/apps/backend/mocks/srtla" IPS_FILE="$RUNNER_TEMP/srtla_ips" bun -e '
+            const path = "apps/backend/setup.json";
+            const setup = await Bun.file(path).json();
+            setup.srtla_path = process.env.SRTLA_DIR;
+            setup.ips_file = process.env.IPS_FILE;
+            await Bun.write(path, JSON.stringify(setup, null, 2) + "\n");
+          '
+          test -x apps/backend/mocks/srtla/srtla_send
       - name: Focused browser cases
         run: |
           set -euo pipefail
@@ -84,8 +97,12 @@ jobs:
             bun run --filter frontend test:e2e -- --project=desktop --retries=0 --forbid-only \
             --grep-invert "@visual|@a11y|@gallery|@premigration-upgrade" --reporter=line,json \
             tests/e2e/preview.spec.ts tests/e2e/bond-toggle-reconnect.spec.ts
-          # A skip here would hide exactly what this job exists to run.
-          jq -e '.stats.expected > 0 and .stats.skipped == 0 and .stats.unexpected == 0 and .stats.flaky == 0' \
+          # A skip, or a case that silently left the selection, would hide exactly
+          # what this job exists to run.
+          jq -e --argjson required '["WebCodecs tier decodes the mock preview server to a live canvas","a link leaves the bond, survives a reconnect, ignores the replaced socket and rejoins","a configure reply lost in a reconnect: the toggle converges to what the backend applied"]' '
+            .stats.expected == 6 and .stats.skipped == 0 and .stats.unexpected == 0 and .stats.flaky == 0
+            and ([.. | objects | select(has("specs")) | .specs[] | select(.ok) | .title] as $passed
+              | all($required[]; . as $t | $passed | index($t)))' \
             apps/frontend/test-results/focused.json
       - uses: actions/upload-artifact@v7
         if: failure()

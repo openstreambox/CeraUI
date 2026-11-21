@@ -38,6 +38,10 @@ test('focused browser cases run on desktop Chromium and fail on any skip', () =>
 	expect(runs).toContain('tests/e2e/preview.spec.ts');
 	expect(runs).toContain('tests/e2e/bond-toggle-reconnect.spec.ts');
 	expect(runs).toContain('.stats.skipped == 0');
+	expect(runs).toContain('.stats.expected == 6');
+	expect(runs).toContain('WebCodecs tier decodes the mock preview server to a live canvas');
+	expect(runs).toContain('setup.srtla_path = process.env.SRTLA_DIR');
+	expect(runs).toContain('apps/backend/mocks/srtla');
 	expect(runs).toContain('.stats.unexpected == 0');
 });
 
