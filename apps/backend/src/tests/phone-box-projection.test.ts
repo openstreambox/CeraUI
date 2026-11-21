@@ -132,3 +132,34 @@ test("legacy phone-box frame relays status only", () => {
 		seq: 3,
 	});
 });
+test("a frame whose every type is withheld stays empty, seq included", () => {
+	// A phone box withholds every non-status type.
+	for (const frame of [
+		{ config: { remote_key: "planted" }, seq: 42 },
+		{ netif: {}, modems: {}, seq: 7 },
+		{ notification: { show: [] }, seq: 9 },
+		{ seq: 0 },
+	])
+		expect(projectRemoteLegacyFrame(frame, "legacy", true)).toEqual({});
+	// An encoder withholds the base notification and unknown types.
+	for (const frame of [
+		{ notification: { show: [] }, seq: 9 },
+		{ "planted-type": { ssid: "planted" }, seq: 3 },
+		{ seq: 0 },
+	])
+		expect(projectRemoteLegacyFrame(frame, "legacy", false)).toEqual({});
+	expect(
+		projectRemoteLegacyFrame(
+			{ status: { carrying: { state: "idle" } }, config: {}, seq: 5 },
+			"legacy",
+			true,
+		),
+	).toEqual({
+		status: {
+			remote_status: true,
+			phone_box: true,
+			carrying: { state: "idle" },
+		},
+		seq: 5,
+	});
+});
