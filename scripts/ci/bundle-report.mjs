@@ -193,13 +193,14 @@ const SPA_DISPLACED_BASELINES = {
 // uses isolated locale-modules plus full output minification. No catalog bytes
 // are moved into extra chunks to evade a per-file cap.
 const FEDERATION_BASELINE = {
-	// Re-measured 2026-11-09 on 85d2b20a after sharing tailwind-merge through
-	// the v4 lite entry. Default v4 measures 694,717/7,753 B, already exceeding
-	// the historical 674,809/7,709 B ceilings. Lite measures 680,351/7,753 B;
-	// the static catalog debt includes the update-check and Spanish corrections.
-	// Preserve displaced measurements below and bound headroom to 8 KiB/128 B,
-	// rather than silently releasing a fresh 10%. See the November baseline doc.
-	'toast-host.js': 680_351,
+	// Re-measured 2026-11-21 on 4b042965 with Bun 1.4.4 once the federation
+	// build ships only the message keys its bundles name plus the producer's
+	// wire vocabulary (`apps/frontend/vite.federation-catalog.ts`): 415 of the
+	// 2,696 keys in the registered namespaces, all ten locales. The same tree
+	// measured 719,011 B before, 30,468 B over the 688,543 B ceiling. The
+	// 8 KiB headroom stays, so roughly 30 further keys fit before it fails.
+	// The displaced 680,351 B baseline (85d2b20a, 2026-11-09) is kept below.
+	'toast-host.js': 245_952,
 	'server.js': 26_645,
 	'frontend.css': 24_087,
 	'encoder.js': 22_713,
@@ -231,17 +232,27 @@ const FEDERATION_PREMIGRATION_BASELINE = {
 
 // e3f17c2a's measurements and their 10% ceilings were exceeded before this
 // dependency refresh. Keep both visible after enabling the publication gate.
+// The 2026-11-09 toast-host baseline is displaced by the key-scoped catalog.
 const FEDERATION_DISPLACED_BASELINES = {
-	'toast-host.js': {
-		bytes: 613_463,
-		label: '2026-08-15',
-		debt: 'TD-federation-i18n-catalog-size',
-	},
-	'audio.js': {
-		bytes: 7_009,
-		label: '2026-08-15',
-		debt: 'TD-federation-i18n-catalog-size',
-	},
+	'toast-host.js': [
+		{
+			bytes: 613_463,
+			label: '2026-08-15',
+			debt: 'TD-federation-i18n-catalog-size',
+		},
+		{
+			bytes: 680_351,
+			label: '2026-11-09 full-namespace catalog',
+			debt: 'TD-federation-i18n-catalog-size',
+		},
+	],
+	'audio.js': [
+		{
+			bytes: 7_009,
+			label: '2026-08-15',
+			debt: 'TD-federation-i18n-catalog-size',
+		},
+	],
 };
 
 const budget = (baseline, ratio, absolute) =>
@@ -379,7 +390,7 @@ if (!federationOnly) {
 			const growth = ((actual / retired.bytes - 1) * 100).toFixed(1);
 			process.stdout.write(
 				`      ^ tracked debt ${retired.debt} (docs/TECHNICAL_DEBT.md): ` +
-					`${retired.label} ${metric} baseline ${kib(retired.bytes)}, now +${growth}%\n`,
+					`${retired.label} ${metric} baseline ${kib(retired.bytes)}, now ${growth.startsWith('-') ? '' : '+'}${growth}%\n`,
 			);
 		}
 	}
@@ -412,12 +423,12 @@ if (existsSync(federationDir)) {
 
 		for (const retired of [
 			FEDERATION_PREMIGRATION_BASELINE[asset.stem],
-			FEDERATION_DISPLACED_BASELINES[asset.stem],
+			...(FEDERATION_DISPLACED_BASELINES[asset.stem] ?? []),
 		].filter(Boolean)) {
 			const growth = ((asset.gzip / retired.bytes - 1) * 100).toFixed(1);
 			process.stdout.write(
 				`      ^ tracked debt ${retired.debt} (docs/TECHNICAL_DEBT.md): ` +
-					`${retired.label} baseline ${kib(retired.bytes)}, now +${growth}%\n`,
+					`${retired.label} baseline ${kib(retired.bytes)}, now ${growth.startsWith('-') ? '' : '+'}${growth}%\n`,
 			);
 		}
 	}

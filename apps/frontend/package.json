@@ -10,6 +10,7 @@
 		"dev": "vite",
 		"build": "bun run generate:i18n && bun ../../scripts/ci/build-warnings-gate.mjs && bun ../../scripts/ci/notification-bundle.ts",
 		"build:federation": "bun run generate:i18n && vite build --config vite.federation.config.ts",
+		"generate:federation-catalog": "bun run generate:i18n && CERAUI_FEDERATION_CATALOG=write vite build --config vite.federation.config.ts && vite build --config vite.federation.config.ts",
 		"preview": "vite preview",
 		"check": "bun run generate:i18n && svelte-check --tsconfig ./tsconfig.app.json --fail-on-warnings",
 		"lint": "echo 'Frontend linting handled by root Biome'",

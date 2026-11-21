@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { FEDERATION_NAMESPACES } from "../../src/lib/federation/messages";
+import { readFederationCatalogKeys } from "../../vite.federation-catalog";
 
 const ROOT = resolve(import.meta.dirname, "../../../..");
 const VERSION = (
@@ -43,5 +44,14 @@ describe("federation catalog scope", () => {
 
 		expect(referenced.size).toBeGreaterThan(0);
 		expect([...referenced].filter((namespace) => !FEDERATION_NAMESPACES.includes(namespace))).toEqual([]);
+	});
+
+	it("ships exactly the message keys catalog-keys.json lists, and no others", () => {
+		const bundled = readdirSync(OUTPUT)
+			.filter((name) => name.endsWith(".js"))
+			.map((name) => readFileSync(join(OUTPUT, name), "utf8"))
+			.join("\n");
+		const shipped = CATALOG_KEYS.filter((key) => bundled.includes(JSON.stringify(key)));
+		expect(shipped.sort()).toEqual(readFederationCatalogKeys());
 	});
 });
