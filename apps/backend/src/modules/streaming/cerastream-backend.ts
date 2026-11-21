@@ -170,6 +170,10 @@ import {
 	typedStartFailure,
 } from "./start-failure-taxonomy.ts";
 import {
+	authorizeStartFeatures,
+	carriesGatedStartFields,
+} from "./start-feature-authorization.ts";
+import {
 	ENGINE_CLOSE_DEADLINE_MS,
 	ENGINE_STOP_REQUEST_DEADLINE_MS,
 } from "./start-lifecycle-timing.ts";
@@ -963,10 +967,25 @@ export class CerastreamBackend implements StreamingBackend {
 						clientReleased = true;
 					}
 				});
+				// Gated fields are checked against this engine, not the snapshot the
+				// params were assembled from, which may predate this connection.
+				let startParams = params;
+				let startMixInputs = audioMixInputs;
+				if (carriesGatedStartFields(params)) {
+					await refreshCapabilitiesFromClient(client, () => {});
+					assertStreamLaunchOwnership();
+					startParams = authorizeStartFeatures(
+						params,
+						getCurrentCapabilities(),
+						this.deps.logger,
+					);
+					if (startParams.audio?.inputs === undefined)
+						startMixInputs = undefined;
+				}
 				const result = await launchTransaction.runPhase("start-rpc", () => {
 					assertStreamLaunchOwnership();
 					dispatched = true;
-					return this.dispatchStart(client, params);
+					return this.dispatchStart(client, startParams);
 				});
 				await launchTransaction.runPhase("playing-wait", async () => {
 					const parsed = startResultSchema.parse(result);
@@ -974,7 +993,7 @@ export class CerastreamBackend implements StreamingBackend {
 				});
 				// Subscription replay predates this Start acknowledgement.
 				if (this.client === client && this.clientEpoch === clientEpoch) {
-					this.audioMixInputs = audioMixInputs;
+					this.audioMixInputs = startMixInputs;
 					this.launchedSessionCurrent = () =>
 						this.client === client && this.clientEpoch === clientEpoch;
 					this.runtimeEvidence = undefined;
