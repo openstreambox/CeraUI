@@ -660,25 +660,65 @@ describe("StreamSetupChain — the Live bar lists every blocker with its fix", (
 		expect(items[1]?.querySelector("button")).toBeNull();
 	});
 
-	it("two causes behind one kind of fix read apart by their visible reasons", () => {
+	it("a missing and a revoked destination share a button label and read apart by their visible reasons", () => {
+		// Each setup also lacks a source, so the bar shows the checklist rows.
+		function destinationRow(
+			config: ConfigMessage,
+			managedSlots?: ManagedIngestAccount[],
+		) {
+			const { container, unmount } = renderChain({
+				config,
+				sources: makeSources(),
+				...(managedSlots ? { managedSlots } : {}),
+			});
+			const row = bar(container).querySelector<HTMLElement>(
+				'li[data-blocker="destination"]',
+			);
+			const reason = row?.querySelector<HTMLElement>("[data-blocker-reason]");
+			const button = row?.querySelector<HTMLButtonElement>("button[data-fix]");
+			const out = {
+				reason: reason?.textContent?.trim() ?? "",
+				reasonHidden: /sr-only/.test(reason?.className ?? "sr-only"),
+				label: button?.textContent?.trim() ?? "",
+				describedBy:
+					button?.getAttribute("aria-describedby") === reason?.id &&
+					Boolean(reason?.id),
+			};
+			unmount();
+			return out;
+		}
+		const missing = destinationRow({} as ConfigMessage);
+		const revoked = destinationRow(
+			{ selected_ingest_endpoint: "slot-gone" } as ConfigMessage,
+			[slot("slot-1")],
+		);
+		expect(missing.label).toBe("Choose destination");
+		expect(revoked.label).toBe(missing.label);
+		expect(missing.reason.length).toBeGreaterThan(0);
+		expect(revoked.reason.length).toBeGreaterThan(0);
+		expect(revoked.reason).not.toBe(missing.reason);
+		// Visible on every screen height: no screen-reader-only variant on the reason.
+		for (const row of [missing, revoked]) {
+			expect(row.reasonHidden).toBe(false);
+			expect(row.describedBy).toBe(true);
+		}
+	});
+
+	it("no reason in the checklist has a hidden or folded variant on short screens", () => {
 		const { container } = renderChain({
 			config: { selected_ingest_endpoint: "slot-gone" } as ConfigMessage,
 			sources: makeSources(),
 			managedSlots: [slot("slot-1")],
 		});
-		const items = [
-			...bar(container).querySelectorAll<HTMLElement>("li[data-blocker]"),
-		];
-		expect(items.map((li) => li.dataset.blocker)).toEqual([
-			"source",
-			"destination",
-		]);
-		const destination =
-			items[1]?.querySelector("[data-blocker-reason]")?.textContent ?? "";
-		expect(destination).not.toBe(
-			items[0]?.querySelector("[data-blocker-reason]")?.textContent,
-		);
-		expect(destination.trim().length).toBeGreaterThan(0);
+		const classes = [
+			...bar(container).querySelectorAll<HTMLElement>(
+				"li[data-blocker], [data-blocker-reason]",
+			),
+		].map((el) => el.className);
+		expect(classes.length).toBeGreaterThanOrEqual(4);
+		for (const cls of classes) {
+			expect(cls).not.toMatch(/sr-only|:contents|:hidden/);
+		}
 	});
 
 	it("engine only: no checklist button, and Start stays natively disabled", async () => {

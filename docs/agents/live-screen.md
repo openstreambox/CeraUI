@@ -139,10 +139,11 @@ must contain the `source-audio` block with its ids unchanged.
   and a tap moves focus to the first fix; it never starts. With no fix (only
   the engine blocks) and while a start is in flight, Start is natively disabled.
 - The blocker list takes at most a quarter of the viewport height and scrolls
-  inside past that. At 640 px of viewport height or less (landscape, split
-  view) the rows fold into one wrapping row of fix buttons, each described by
-  its reason (screen-reader text), with the engine as a plain chip, and Start
-  and the status line take less height.
+  inside past that, so Start stays in view. At 640 px of viewport height or
+  less (landscape, split view) the rows stay rows with every reason as visible
+  text; they only tighten, and Start and the status line take less height. A
+  row cut off at the bottom of the list shows that more scrolls into view.
+  Each fix button is also described by its reason (`aria-describedby`).
 - Live, it must show the bitrate control and Stop.
 - While it is mounted, the document's `scroll-padding-bottom` is the bar's
   height (plus the mobile dock below desktop chrome), so a control reached with
