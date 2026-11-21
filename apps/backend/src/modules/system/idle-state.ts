@@ -69,7 +69,9 @@ export function noteStreamEnded(now = Date.now()): void {
 	loaded = true;
 	if (filePath === null) return;
 	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
-	writeFileAtomicSync(filePath, JSON.stringify({ lastStreamEndedAt: now }));
+	writeFileAtomicSync(filePath, JSON.stringify({ lastStreamEndedAt: now }), {
+		mode: 0o600,
+	});
 }
 
 export function notePreviewEnded(now = Date.now()): void {
