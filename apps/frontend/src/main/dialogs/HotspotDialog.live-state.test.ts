@@ -2,12 +2,13 @@
 /**
  * The dialog says what is on right now, whoever turned it on.
  *
- * A current device sends the saved hotspot setup on every radio that can host
- * one, on or off. The dialog used to read that block as "the AP is up", so a
- * radio configured off in Station mode was labelled Active with a Turn Off
- * action. And because the mode badge reads the adapter-mode PULL, a Start from
- * the API or another client left the open dialog showing Station under a live
- * AP. Both are asserted here against the rendered DOM.
+ * A `hotspot` object on a Wi-Fi row means the AP is up; a radio whose hotspot
+ * is stopped sends none, so it must read Inactive with Enable, never Active
+ * with Turn Off, and offer nothing that only a live AP can take (the edit
+ * form, the Wi-Fi code, New Wi-Fi password). And because the mode badge reads
+ * the adapter-mode PULL, a Start from the API or another client used to leave
+ * the open dialog showing Station under a live AP. Both are asserted here
+ * against the rendered DOM.
  */
 import type { WifiAdapterModeStatus, WifiInterface } from "@ceraui/rpc/schemas";
 import { render } from "@testing-library/svelte";
@@ -72,8 +73,8 @@ const SAVED_SETUP = {
 	security: "wpa2",
 } satisfies NonNullable<WifiInterface["hotspot"]>;
 
-// The shape the device sends for a USB radio whose hotspot is saved but
-// configured off: a station, disconnected, still carrying its saved setup.
+// The shape the device sends for a USB radio whose hotspot is stopped: a
+// station, disconnected, able to host an AP, and no hotspot block.
 const SAVED_OFF: WifiInterface = {
 	ifname: "wlx00c0ca000001",
 	conn: "",
@@ -83,12 +84,8 @@ const SAVED_OFF: WifiInterface = {
 	supports_hotspot: true,
 	supports_ap_sta_concurrency: false,
 	mode: "station",
-	radio_identity: {
-		id: "00:c0:ca:00:00:01",
-		permanent_mac: "00:c0:ca:00:00:01",
-	},
-	hotspot: SAVED_SETUP,
-} as WifiInterface;
+	incarnation: "radio-usb-1",
+};
 
 // The same radio once a Start completed: exclusive AP, clients read.
 const LIVE_AP: WifiInterface = {
@@ -179,11 +176,12 @@ describe("HotspotDialog — Active only while the AP is live", () => {
 		const labels = buttonLabels();
 		expect(labels).toContain("Enable Hotspot");
 		expect(labels).not.toContain("Turn Off");
-		// The saved setup stays editable and forgettable while off.
-		expect(labels).toContain("Forget");
+		// Nothing that needs a live AP: no live edit form, no code, no renewal.
+		expect(labels).not.toContain("New Wi-Fi password");
+		expect(document.querySelector("#hotspot-name")).toBeNull();
 		expect(
-			document.querySelector<HTMLInputElement>("#hotspot-name")?.value,
-		).toBe("CERALIVE_ef48");
+			document.querySelector('[data-testid="hotspot-wifi-code"]'),
+		).toBeNull();
 		expect(
 			document.querySelector('[data-testid="hotspot-inactive-hint"]'),
 		).not.toBeNull();
@@ -244,7 +242,7 @@ describe("HotspotDialog — follows transitions it did not start", () => {
 		const labels = buttonLabels();
 		expect(labels).toContain("Turn Off");
 		expect(labels).not.toContain("Enable Hotspot");
-		expect(labels).not.toContain("Forget");
+		expect(labels).toContain("New Wi-Fi password");
 	});
 
 	it("the mode badge follows an external Start even while the pulled answer still says Station", async () => {
@@ -277,5 +275,6 @@ describe("HotspotDialog — follows transitions it did not start", () => {
 		const labels = buttonLabels();
 		expect(labels).toContain("Enable Hotspot");
 		expect(labels).not.toContain("Turn Off");
+		expect(labels).not.toContain("New Wi-Fi password");
 	});
 });
