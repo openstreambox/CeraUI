@@ -21,7 +21,15 @@
  * symmetry with the shell script's own `CERALIVE_STREAMING_MARKER` override
  * (test/dev use), not because CeraUI ever needs a different production path.
  *
- * Existence-only sentinel: the file's CONTENT is never read by either side.
+ * Existence-only sentinel for the image: that script never reads the CONTENT.
+ * CeraUI alone writes one line into a marker that only its carrying owner
+ * explains, so a restarted backend can tell that file from a stream's marker.
+ *
+ * One owner writes the file, and what it writes follows from who holds it:
+ * a stream keeps it empty, carrying alone keeps the line, nobody removes it.
+ * Every holder change goes through `sync()` in the same tick, and a launch is
+ * submitted only after the file was seen without the line in that tick, so
+ * the file cannot say carrying-only beside a stream.
  */
 
 import fs from "node:fs";
@@ -38,86 +46,181 @@ export function initialOtaStreamLiveness(): "idle" | "unknown" {
 		fs.lstatSync(otaStreamingMarkerPath());
 		return "unknown";
 	} catch (error) {
-		return error instanceof Error && "code" in error && error.code === "ENOENT"
-			? "idle"
-			: "unknown";
+		return isEnoent(error) ? "idle" : "unknown";
 	}
 }
 
-let encoderProtected = initialOtaStreamLiveness() !== "idle";
-let carryingProtected = false;
-// True only while this process's carrying owner alone explains the marker:
-// carrying created it from absence, or the encoder confirmed idle while
-// carrying kept it. Anything else (inherited, encoder-written, unexplained)
-// stays evidence of a possible stream.
-let carryingOnlyMarker = false;
-setShutdownProtection("encoder", encoderProtected);
+/** Written only into a marker that carrying alone explains. */
+const CARRYING_ONLY = "carrying\n";
 
-/**
- * The stream session's view of the sentinel. Both owners share one file for
- * the image-side activation check, so a marker this process wrote only for
- * client traffic is not evidence that a stream may be running. Counting it
- * made every production boot reconcile into the carrying startup hold and
- * stay `reconciling` until an operator stop.
- */
-export function encoderOtaStreamLiveness(): "idle" | "unknown" {
-	if (carryingOnlyMarker && carryingProtected && !encoderProtected)
-		return "idle";
-	return initialOtaStreamLiveness();
+type MarkerFs = Pick<
+	typeof fs,
+	"lstatSync" | "readFileSync" | "writeFileSync" | "renameSync" | "rmSync"
+>;
+const isEnoent = (error: unknown) =>
+	error instanceof Error && "code" in error && error.code === "ENOENT";
+
+const setFailed = (error: unknown) =>
+	logger.warn("ota-streaming-marker: failed to set", { error });
+const clearFailed = (error: unknown) =>
+	logger.warn("ota-streaming-marker: failed to clear", { error });
+
+export function createOtaMarkerOwner(io: {
+	readonly path: () => string;
+	readonly fs: MarkerFs;
+	readonly setShutdownProtection: typeof setShutdownProtection;
+	/** The exhaustive walk fails writes on purpose, thousands of times. */
+	readonly quiet?: boolean;
+}) {
+	/** Only ENOENT proves an empty boot baseline; unreadable evidence stays protected. */
+	const presence = (): "idle" | "unknown" => {
+		try {
+			io.fs.lstatSync(io.path());
+			return "unknown";
+		} catch (error) {
+			return isEnoent(error) ? "idle" : "unknown";
+		}
+	};
+	/** True for the exact line, false for anything else readable or no file,
+	 * undefined when the file cannot be read. */
+	const saysCarryingOnly = (): boolean | undefined => {
+		try {
+			return io.fs.readFileSync(io.path(), "utf8") === CARRYING_ONLY;
+		} catch (error) {
+			return isEnoent(error) ? false : undefined;
+		}
+	};
+	const attempt = (
+		action: () => void,
+		report: (error: unknown) => void,
+	): boolean => {
+		try {
+			action();
+			return true;
+		} catch (error) {
+			if (io.quiet !== true) report(error);
+			return false;
+		}
+	};
+	/** A file that cannot be rewritten in place is replaced, never removed
+	 * first: a failure must leave the marker standing. */
+	const put = (content: string): boolean =>
+		attempt(() => io.fs.writeFileSync(io.path(), content), setFailed) ||
+		attempt(() => {
+			try {
+				io.fs.writeFileSync(`${io.path()}.new`, content);
+				io.fs.renameSync(`${io.path()}.new`, io.path());
+			} catch (error) {
+				io.fs.rmSync(`${io.path()}.new`, { force: true });
+				throw error;
+			}
+		}, setFailed);
+
+	let carrying = false;
+	// True while the file, if any, is ours and no stream stands behind it:
+	// created from absence, handed back by a confirmed encoder idle, or left
+	// by an earlier backend process with the carrying line. `/run` outlives a
+	// backend restart, and every start takes the carrying hold again, so the
+	// earlier process's hold is not a stream. Anything else (empty, unreadable,
+	// unexplained) stays evidence of a possible stream.
+	let explained = saysCarryingOnly() === true;
+	let encoder = !explained && presence() !== "idle";
+	io.setShutdownProtection("encoder", encoder);
+
+	const claimFromAbsence = () => {
+		if (!encoder && presence() === "idle") explained = true;
+	};
+	/** The one place the file changes. */
+	const sync = (): boolean => {
+		if (encoder) return put("");
+		if (carrying)
+			return explained
+				? put(CARRYING_ONLY)
+				: // Carrying never rewrites a marker it cannot explain.
+					attempt(
+						() => io.fs.writeFileSync(io.path(), "", { flag: "a" }),
+						setFailed,
+					);
+		const removed = attempt(
+			() => io.fs.rmSync(io.path(), { force: true }),
+			clearFailed,
+		);
+		if (removed) explained = false;
+		return removed;
+	};
+
+	return {
+		/**
+		 * The stream session's view of the sentinel. Both owners share one file
+		 * for the image-side activation check, so a marker held only for client
+		 * traffic is not evidence that a stream may be running. Counting it made
+		 * every production boot reconcile into the carrying startup hold and stay
+		 * `reconciling` until an operator stop; so did the marker a restarted
+		 * backend found from its predecessor's hold.
+		 */
+		liveness: (): "idle" | "unknown" =>
+			explained && !encoder ? "idle" : presence(),
+		setCarrying: (protectedNow: boolean): boolean => {
+			carrying = protectedNow;
+			if (protectedNow) {
+				claimFromAbsence();
+				const shutdownProtected = io.setShutdownProtection("carrying", true);
+				const written = sync();
+				return shutdownProtected && written;
+			}
+			const cleared = encoder || sync();
+			io.setShutdownProtection("carrying", !cleared);
+			return cleared;
+		},
+		/** A failed write keeps protection unconfirmed and must be retried by the owner. */
+		takeEncoder: (): boolean => {
+			encoder = true;
+			explained = false;
+			const shutdownProtected = io.setShutdownProtection("encoder", true);
+			const written = sync();
+			return shutdownProtected && written;
+		},
+		/** Cleared after confirmed idle/cleanup or a failed launch that never went
+		 * live. Stop intent disarms restoration separately; parked/failed/unknown
+		 * media stops retain this OTA guard. */
+		releaseEncoder: (): boolean => {
+			encoder = false;
+			// Confirmed idle: a marker kept for client traffic is carrying's alone.
+			// Its line is for a later process; a failed write only costs that proof.
+			if (carrying) explained = true;
+			const written = sync();
+			const cleared = carrying || written;
+			io.setShutdownProtection("encoder", !cleared);
+			return cleared;
+		},
+		/**
+		 * The last step of Start admission, in the same tick as the launch: the
+		 * stream takes the file, and the launch may go only if the file is then
+		 * seen without the carrying line. Otherwise a later process would read
+		 * it beside a live stream as idle, so nothing is taken and Start is
+		 * refused. Until this call a Start changes nothing, so a cancelled one
+		 * leaves nothing to put back.
+		 */
+		claimForLaunch: (): boolean => {
+			const held = { encoder, explained };
+			encoder = true;
+			explained = false;
+			sync();
+			if (saysCarryingOnly() === false) return true;
+			({ encoder, explained } = held);
+			sync();
+			return false;
+		},
+	};
 }
 
-export function setCarryingOtaProtection(protectedNow: boolean): boolean {
-	carryingProtected = protectedNow;
-	if (protectedNow) {
-		const existed = initialOtaStreamLiveness() !== "idle";
-		const shutdownProtected = setShutdownProtection("carrying", true);
-		const written = writeMarker();
-		if (written && !existed && !encoderProtected) carryingOnlyMarker = true;
-		return shutdownProtected && written;
-	}
-	carryingOnlyMarker = false;
-	const cleared = encoderProtected || removeMarker();
-	setShutdownProtection("carrying", !cleared);
-	return cleared;
-}
-
-/** A failed write keeps protection unconfirmed and must be retried by the owner. */
-export function setOtaStreamingMarker(): boolean {
-	encoderProtected = true;
-	carryingOnlyMarker = false;
-	const shutdownProtected = setShutdownProtection("encoder", true);
-	const written = writeMarker();
-	return shutdownProtected && written;
-}
-
-function writeMarker(): boolean {
-	try {
-		fs.writeFileSync(otaStreamingMarkerPath(), "");
-		return true;
-	} catch (error) {
-		logger.warn("ota-streaming-marker: failed to set", { error });
-		return false;
-	}
-}
-
-/** Cleared after confirmed idle/cleanup or a failed launch that never went live.
- * Stop intent disarms restoration separately; parked/failed/unknown media stops
- * retain this OTA guard. Removing an already-absent file is a no-op. */
-export function clearOtaStreamingMarker(): boolean {
-	encoderProtected = false;
-	// Confirmed idle: a marker kept for client traffic is now carrying's alone.
-	if (carryingProtected) carryingOnlyMarker = true;
-	const cleared = carryingProtected || removeMarker();
-	setShutdownProtection("encoder", !cleared);
-	return cleared;
-}
-
-function removeMarker(): boolean {
-	try {
-		fs.rmSync(otaStreamingMarkerPath(), { force: true });
-		return true;
-	} catch (error) {
-		logger.warn("ota-streaming-marker: failed to clear", { error });
-		return false;
-	}
-}
+const owner = createOtaMarkerOwner({
+	path: otaStreamingMarkerPath,
+	fs,
+	setShutdownProtection,
+});
+export const encoderOtaStreamLiveness = owner.liveness;
+export const setCarryingOtaProtection = owner.setCarrying;
+export const setOtaStreamingMarker = owner.takeEncoder;
+export const clearOtaStreamingMarker = owner.releaseEncoder;
+export const claimOtaMarkerForLaunch = owner.claimForLaunch;
