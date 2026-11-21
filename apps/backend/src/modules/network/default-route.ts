@@ -7,14 +7,17 @@ import {
 	readOwnedInventory,
 } from "./default-route-inventory.ts";
 import { GatewayRouteError } from "./default-route-model.ts";
-import { applyPreference } from "./default-route-transaction.ts";
+import {
+	applyPreference,
+	type DefaultRouteAdmission,
+} from "./default-route-transaction.ts";
 
 export type { GwDeps } from "./default-route-inventory.ts";
-
 export {
 	GatewayRouteError,
 	HOST_ROUTE_PROTOCOL,
 } from "./default-route-model.ts";
+export type { DefaultRouteAdmission } from "./default-route-transaction.ts";
 
 export function buildRouteAddArgv(gw: string): string[] {
 	const tokens = gw
@@ -63,6 +66,7 @@ export async function setDefaultRoute(
 	goodIf: string | undefined,
 	deps: Partial<GwDeps> & {
 		readonly releaseCondition?: DefaultRouteReleaseCondition;
+		readonly admit?: DefaultRouteAdmission;
 	} = {},
 ): Promise<void> {
 	const runner = deps.runner ?? run;
@@ -72,6 +76,7 @@ export async function setDefaultRoute(
 			ifname,
 			{ runner, family: deps.family ?? 4 },
 			deps.releaseCondition,
+			deps.admit,
 		),
 	);
 	// Failed transactions do not poison the serialization tail; callers keep the error.
@@ -86,6 +91,7 @@ async function reconcilePreference(
 	ifname: string | undefined,
 	deps: GwDeps,
 	releaseCondition?: DefaultRouteReleaseCondition,
+	admit?: DefaultRouteAdmission,
 ): Promise<void> {
 	const inventory = await readOwnedInventory(deps.runner);
 	if (ifname === undefined && releaseCondition && !releaseCondition(inventory))
@@ -106,7 +112,7 @@ async function reconcilePreference(
 					deps,
 				);
 	try {
-		await applyPreference(owned, desired, deps);
+		await applyPreference(owned, desired, deps, admit);
 	} catch (error) {
 		if (failures.length === 0) throw error;
 		throw new GatewayRouteError(

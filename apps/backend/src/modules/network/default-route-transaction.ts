@@ -13,10 +13,13 @@ type Mutation = {
 	readonly route: DefaultRoute;
 };
 
+export type DefaultRouteAdmission = () => boolean;
+
 export async function applyPreference(
 	owned: readonly OwnedDefaultRoute[],
 	desired: DefaultRoute | undefined,
 	deps: GwDeps,
+	admit?: DefaultRouteAdmission,
 ): Promise<void> {
 	const matching = desired
 		? owned.filter((route) =>
@@ -34,14 +37,30 @@ export async function applyPreference(
 		}
 	}
 	const undo: Mutation[] = [];
+	let admitted: boolean | undefined;
+	const admitOnce = () => {
+		if (admitted === undefined) {
+			try {
+				admitted = admit === undefined || admit() === true;
+			} catch {
+				admitted = false;
+			}
+		}
+		if (!admitted)
+			throw new GatewayRouteError(desired?.ifname ?? "", "apply-failed");
+	};
 	const addVerb = (route: DefaultRoute) => (route.prepend ? "prepend" : "add");
-	const mutate = ({ verb, route }: Mutation) =>
-		deps.runner("ip", [
+	const mutate = ({ verb, route }: Mutation) => {
+		// Sample after every preflight await, at the first write only. Once admitted,
+		// the transaction and its rollback must finish even if the roster later changes.
+		admitOnce();
+		return deps.runner("ip", [
 			...(route.family === 6 ? ["-6"] : []),
 			"route",
 			verb,
 			...ownedRouteTokens(route),
 		]);
+	};
 	if (!desired || retained) {
 		const failures: unknown[] = [];
 		const legacy = new Set(owned.filter((route) => route.realm > 0));
@@ -66,6 +85,8 @@ export async function applyPreference(
 				failures.push(error);
 			}
 		}
+		// A no-op must not report a stale election as current either.
+		admitOnce();
 		if (failures.length > 0)
 			throw new GatewayRouteError(
 				desired?.ifname ?? "",

@@ -359,6 +359,9 @@ export const runtimeConfigSchema = z.object({
 	// never the sysext `.raw` payload bytes.
 	addons: AddonConfigSchema.optional(),
 
+	// Experimental coordinator admission. Absence preserves serialized config bytes.
+	two_radio_enabled: z.boolean().optional(),
+
 	// Operator enable/disable of the LAN RTMP/SRT network-ingest gateways (T6). A
 	// missing key (old config) defaults both protocols enabled via the inner
 	// defaults; kept `.optional()` so `let config: RuntimeConfig = {}` still parses.
@@ -404,6 +407,9 @@ export const runtimeConfigSchema = z.object({
 	// itself bound by `connection.interface-name` — so the two agree by
 	// construction rather than by a second lookup that could disagree.
 	eth_roles: z.record(z.string(), ethernetRoleSchema).optional(),
+	// Reserved before adding a Shared LAN profile, retained after uncertain NM
+	// replies so an explicit retry can inspect the same UUID rather than clone it.
+	eth_shared_profiles: z.record(z.string(), z.uuid()).optional(),
 
 	// Operator exclusions from the SRTLA bond, keyed by the canonical physical
 	// link id. Values can only be true: absence means included. A bare ifname is
