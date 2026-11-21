@@ -16,6 +16,7 @@ import {
 	updateStatus,
 } from "../modules/streaming/streaming.ts";
 import { getDisruptiveActionDecision } from "../modules/system/disruptive-action-runtime.ts";
+import { logindPowerArgv } from "../modules/system/power-admission.ts";
 import {
 	markBootDegraded,
 	resetBootReadiness,
@@ -169,7 +170,8 @@ for (const [command, procedure] of [
 					"The power action was not run. The box may be streaming or carrying traffic, or shutdown may be unavailable. Please try again when it is idle. For an emergency, as root run systemctl stop ceralive, then systemctl reboot; this disconnects streams and clients.",
 				failureReason: "shutdown_unavailable",
 			});
-			expect(spawn).toHaveBeenCalledWith(["systemctl", command]);
+			// No power broker on this host: logind directly, never systemctl.
+			expect(spawn.mock.calls[0]?.[0]).toEqual(logindPowerArgv(command));
 			expect(getDisruptiveActionDecision()).toEqual({ allowed: true });
 		} finally {
 			spawn.mockRestore();
