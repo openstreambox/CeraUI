@@ -10,6 +10,12 @@ export interface TransportQuirk {
 	readonly owner: "network-manager" | "internal-call";
 	readonly qmapReadback: boolean;
 	readonly rawIpBeforeCall: boolean;
+	/**
+	 * `AT+QCFG="usbspeed"` value this module must keep. "20" holds the
+	 * module's own link at USB 2: at USB 3 the RM520N-GL raised its receiver's
+	 * noise floor by about 14 dB, enough that one carrier never registered.
+	 */
+	readonly usbSpeed?: "20";
 }
 
 /**
@@ -29,6 +35,7 @@ export function resolveTransportQuirk(
 			owner: "network-manager",
 			qmapReadback: true,
 			rawIpBeforeCall: true,
+			usbSpeed: "20",
 		};
 	}
 	if (
@@ -109,6 +116,14 @@ export function parseQmapAutoConnect(reply: string): number | undefined {
 	if (matches.length !== 1) return undefined;
 	const value = Number(matches[0]?.[1]);
 	return Number.isSafeInteger(value) ? value : undefined;
+}
+
+/** The value of an `AT+QCFG="usbspeed"` query answer; exactly one match. */
+export function parseQcfgUsbSpeed(reply: string): string | undefined {
+	const matches = [
+		...reply.matchAll(/^\+QCFG:\s*"usbspeed"\s*,\s*"?(\d{1,4})"?\s*$/gm),
+	];
+	return matches.length === 1 ? matches[0]?.[1] : undefined;
 }
 
 export interface InitialEpsSettings {
