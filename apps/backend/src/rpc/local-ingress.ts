@@ -13,9 +13,11 @@
  * forged by a network client; a TCP request carrying it is never consulted.
  *
  * Consumers: a socket from this listener carries `ingressPath` (the validated
- * evidence) and `ingressPathValid()`, which rechecks that the local address is
- * still on that interface with the peer inside its subnet and stays false once
- * it failed. Consumers that act on the path call it before every action and
+ * evidence), `ingressLifetime` (the interface's kernel ifindex and netif
+ * incarnation when that evidence was accepted) and `ingressPathValid()`, which
+ * rechecks that the local address is still on that interface with the peer
+ * inside its subnet and that the interface is still the accepted lifetime, and
+ * stays false once it failed. Consumers that act on the path call it before every action and
  * add their own checks (Wi-Fi sign-in requires the interface to be the current
  * hotspot AP; button confirmation adds its interface-kind rule). There is one
  * listener per process: the socket path refuses a second owner.
@@ -23,14 +25,19 @@
  * Without the directory (development, older images) nothing listens and the
  * ordinary TCP path is unchanged.
  */
-import { chmodSync, lstatSync, type Stats } from "node:fs";
+import { chmodSync, lstatSync, readFileSync, type Stats } from "node:fs";
 import { isIPv4 } from "node:net";
 import { networkInterfaces } from "node:os";
 import type { Server, WebSocketHandler } from "bun";
 
+import { getNetworkInterfaceIncarnation } from "../modules/network/network-interfaces.ts";
 import { createServerWebSocketHandler, initSocketData } from "./adapter.ts";
 import { permitsE2eWorkerProxyRequest } from "./e2e-worker-admission.ts";
-import type { IngressPath, ServerSocketData } from "./types.ts";
+import type {
+	IngressLifetime,
+	IngressPath,
+	ServerSocketData,
+} from "./types.ts";
 
 export const LOCAL_INGRESS_DIRECTORY = "/run/ceralive-button-ingress";
 export const LOCAL_INGRESS_HEADER = "X-Ceralive-Button-Path";
@@ -52,6 +59,34 @@ export const systemLinks = (): IngressLink[] =>
 			family: String(family),
 		})),
 	);
+
+/** The kernel ifindex and netif incarnation an interface name has now. */
+export const systemLifetime = (name: string): IngressLifetime => {
+	let ifindex: number | undefined;
+	try {
+		const raw = readFileSync(`/sys/class/net/${name}/ifindex`, "ascii").trim();
+		const value = Number(raw);
+		ifindex =
+			/^[1-9][0-9]*$/.test(raw) && Number.isSafeInteger(value)
+				? value
+				: undefined;
+	} catch {
+		ifindex = undefined;
+	}
+	return { ifindex, incarnation: getNetworkInterfaceIncarnation(name) };
+};
+
+/** Every captured lifetime field still has its accepted value. */
+export function ingressLifetimeHolds(
+	accepted: IngressLifetime,
+	current: IngressLifetime,
+): boolean {
+	return (
+		(accepted.ifindex === undefined || accepted.ifindex === current.ifindex) &&
+		(accepted.incarnation === undefined ||
+			accepted.incarnation === current.incarnation)
+	);
+}
 
 const ipv4Number = (address: string) =>
 	address.split(".").reduce((value, octet) => value * 256 + Number(octet), 0);
@@ -135,6 +170,8 @@ export function parseIngressPath(
 
 export interface LocalIngressOptions {
 	links?: () => readonly IngressLink[];
+	/** The proven interface's current lifetime; defaults to sysfs and netif. */
+	lifetime?: (name: string) => IngressLifetime;
 	/** Same transport admission as the TCP listener (E2E worker isolation). */
 	workerSecret?: string | undefined;
 	websocket?: WebSocketHandler<ServerSocketData>;
@@ -146,6 +183,7 @@ export function serveLocalIngress(
 	options: LocalIngressOptions = {},
 ): Server<ServerSocketData> {
 	const links = options.links ?? systemLinks;
+	const lifetime = options.lifetime ?? systemLifetime;
 	return Bun.serve<ServerSocketData>({
 		unix: socket,
 		fetch(request, server) {
@@ -162,14 +200,31 @@ export function serveLocalIngress(
 			const ingressPath = parseIngressPath(request.headers, links);
 			if (!ingressPath)
 				return new Response("Direct path required", { status: 403 });
+			// The lifetime is taken with the evidence, so a replacement or
+			// re-registration of that name later never inherits this socket.
+			const read = () => {
+				try {
+					return lifetime(ingressPath.interface);
+				} catch {
+					return { ifindex: undefined, incarnation: undefined };
+				}
+			};
+			const ingressLifetime = Object.freeze(read());
 			let holds = true;
 			const ingressPathValid = () => {
-				holds &&= ingressLinkHolds(ingressPath, links);
+				holds &&=
+					ingressLinkHolds(ingressPath, links) &&
+					ingressLifetimeHolds(ingressLifetime, read());
 				return holds;
 			};
 			if (
 				server.upgrade(request, {
-					data: { ...initSocketData(), ingressPath, ingressPathValid },
+					data: {
+						...initSocketData(),
+						ingressPath,
+						ingressLifetime,
+						ingressPathValid,
+					},
 				})
 			)
 				return undefined;

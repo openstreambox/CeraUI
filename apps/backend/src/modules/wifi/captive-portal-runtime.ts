@@ -194,7 +194,7 @@ export async function reconcilePortalWindow() {
 }
 
 export const signInWindow = createSignInWindow({
-	async open(peer, radio, incarnation, via) {
+	async open(peer, radio, incarnation, via, viaLifetime) {
 		closedBinding = undefined;
 		if (shouldUseMocks()) throw Error("not_on_box_wifi");
 		if (!isIPv4(peer)) throw Error("ipv4_required");
@@ -213,10 +213,23 @@ export const signInWindow = createSignInWindow({
 			throw Error("not_captive");
 		// The arrival interface (proven by the front door, else the route back
 		// to the phone) says which AP. Its lifetime is pinned now, before any
-		// cleanup or capture, and only that pin is used from here on.
-		const arrival = await routeDev(peer);
-		if (via !== undefined && arrival !== via) throw Error("not_on_box_wifi");
-		const pin = await captureApPin(arrival);
+		// cleanup or capture, and only that pin is used from here on. A proven
+		// interface is pinned before the first route read and must still be the
+		// lifetime the front door's evidence was accepted on.
+		let pin: ApPin | undefined;
+		if (via !== undefined) {
+			pin = await captureApPin(via);
+			if (
+				!pin ||
+				viaLifetime?.ifindex === undefined ||
+				viaLifetime.incarnation === undefined ||
+				pin.ifindex !== viaLifetime.ifindex ||
+				pin.fence.incarnation !== viaLifetime.incarnation ||
+				(await routeDev(peer)) !== via ||
+				!(await apPinHolds(pin))
+			)
+				throw Error("not_on_box_wifi");
+		} else pin = await captureApPin(await routeDev(peer));
 		if (!pin) throw Error("not_on_box_wifi");
 		try {
 			await reconcilePortalWindow();
