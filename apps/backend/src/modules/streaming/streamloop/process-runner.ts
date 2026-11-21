@@ -238,7 +238,9 @@ export function signalSenders(
 		if (!isSenderProcess(sp) || !isProcAlive(sp)) continue;
 		try {
 			sp.proc.kill(signal);
-			delivered++;
+			// An adopted sender found gone at the signal is marked exited, not
+			// signalled; only a signal that reached a live process counts.
+			if (isProcAlive(sp)) delivered++;
 		} catch (err) {
 			logger.warn(`signalSenders: ${signal} to ${sp.spawnfile} failed`, {
 				err,
