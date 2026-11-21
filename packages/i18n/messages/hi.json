@@ -3550,5 +3550,16 @@
 	"timeline.capture_standby_entered.detail": "स्ट्रीम जुड़ी रही और कैमरा लौटने का इंतज़ार करते हुए काली तस्वीर भेजती रही।",
 	"timeline.capture_standby_exited.title": "काली स्क्रीन वाला स्टैंडबाय समाप्त हुआ",
 	"timeline.capture_standby_exited.detail": "स्टैंडबाय की अवधि: {duration}",
-	"timeline.update_failed.detail.os-staging": "सिस्टम इमेज तैयार करना विफल रहा।"
+	"timeline.update_failed.detail.os-staging": "सिस्टम इमेज तैयार करना विफल रहा।",
+	"network.changeSafety.askBefore.own": "यह बदलाव आपको {via} से बॉक्स से डिस्कनेक्ट कर देगा।",
+	"network.changeSafety.askBefore.unknown": "यह बदलाव आपको बॉक्स से डिस्कनेक्ट कर सकता है।",
+	"network.changeSafety.askBefore.undo": "बदलाव करें ({seconds} से. में पुष्टि न करूँ तो वापस लिया जाएगा)",
+	"network.changeSafety.askBefore.keep": "मुझे इसका असर पता है: मुझे डिस्कनेक्ट करें और इसे वापस न लें। वापस आने के लिए मुझे कनेक्शन बदलना या बॉक्स रीसेट करना पड़ सकता है।",
+	"network.changeSafety.confirm.prompt": "अभी भी जुड़े हैं? {seconds} से. में पुष्टि करें, वरना बॉक्स बदलाव वापस ले लेगा।",
+	"network.changeSafety.confirm.action": "पुष्टि करें",
+	"network.changeSafety.notice.disconnected": "किसी ने समय पर इस बदलाव की पुष्टि नहीं की, इसलिए बॉक्स ने इसे वापस लिया। फिर भी करना है?",
+	"network.changeSafety.notice.restart": "पुष्टि से पहले नेटवर्क फिर से शुरू हुआ, इसलिए बॉक्स ने इसे वापस लिया। फिर भी?",
+	"network.changeSafety.notice.make": "बदलाव करें",
+	"network.changeSafety.notice.leave": "वापस ही रहने दें",
+	"network.changeSafety.kept.undo": "आखिरी नेटवर्क बदलाव वापस लें"
 }

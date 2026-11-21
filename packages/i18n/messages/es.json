@@ -3553,5 +3553,16 @@
 	"timeline.capture_standby_entered.detail": "La transmisión siguió conectada y envió una imagen en negro mientras esperaba que volviera una cámara.",
 	"timeline.capture_standby_exited.title": "Terminó la espera en negro",
 	"timeline.capture_standby_exited.detail": "Duración de la espera: {duration}",
-	"timeline.update_failed.detail.os-staging": "Falló la preparación de la imagen del sistema."
+	"timeline.update_failed.detail.os-staging": "Falló la preparación de la imagen del sistema.",
+	"network.changeSafety.askBefore.own": "Este cambio te desconecta de la caja por {via}.",
+	"network.changeSafety.askBefore.unknown": "Este cambio podría desconectarte de la caja.",
+	"network.changeSafety.askBefore.undo": "Hacer el cambio (se deshace si no confirmo en {seconds} s)",
+	"network.changeSafety.askBefore.keep": "Sé lo que hago: desconéctame y no lo deshagas. Puede que tenga que cambiar de conexión o restablecer la caja para volver a entrar.",
+	"network.changeSafety.confirm.prompt": "¿Sigues conectado? Confirma en {seconds} s o la caja deshace el cambio.",
+	"network.changeSafety.confirm.action": "Confirmar",
+	"network.changeSafety.notice.disconnected": "Nadie confirmó el cambio a tiempo, así que la caja lo deshizo. ¿Todavía quieres hacerlo?",
+	"network.changeSafety.notice.restart": "La red se reinició antes de que confirmaras, así que la caja lo deshizo. ¿Lo quieres?",
+	"network.changeSafety.notice.make": "Hacer el cambio",
+	"network.changeSafety.notice.leave": "Dejarlo deshecho",
+	"network.changeSafety.kept.undo": "Deshacer el último cambio de red"
 }
