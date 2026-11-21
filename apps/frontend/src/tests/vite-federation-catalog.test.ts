@@ -1,6 +1,7 @@
 import {
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
@@ -11,13 +12,16 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import federationConfig from "../../vite.federation.config";
 import {
+	computedLookups,
 	expectedFederationKeys,
 	FEDERATION_CATALOG_KEYS_PATH,
 	federationCatalogPlugin,
 	filterNamespaceBarrel,
 	isCatalogModule,
+	normalizeModulePath,
 	producerVocabulary,
 	readCatalogKeys,
+	readComputedLookups,
 	readFederationCatalogKeys,
 	referencedCatalogKeys,
 	serializeFederationCatalogKeys,
@@ -101,20 +105,35 @@ describe("filterNamespaceBarrel", () => {
 	});
 
 	it("parses every barrel the i18n generator emits", () => {
-		const source = readFileSync(join(GENERATED, "namespaces/live.js"), "utf8");
 		const everything = new Set(readCatalogKeys());
-		expect(filterNamespaceBarrel(source, everything)).toBe(source);
+		const barrels = readdirSync(join(GENERATED, "namespaces")).filter((name) =>
+			name.endsWith(".js"),
+		);
+		expect(barrels.length).toBeGreaterThan(30);
+		for (const name of barrels) {
+			const source = readFileSync(join(GENERATED, "namespaces", name), "utf8");
+			expect(filterNamespaceBarrel(source, everything), name).toBe(source);
+		}
 	});
 });
 
 describe("expectedFederationKeys", () => {
-	it("adds producer keys only in namespaces the bundles read", () => {
+	it("adds a producer key only when the bundles read its family", () => {
+		expect(
+			expectedFederationKeys(
+				new Set(["live.route.x"]),
+				new Set(["live.route.y", "live.other.z", "hud.route.y"]),
+			),
+		).toEqual(["live.route.x", "live.route.y"]);
+	});
+
+	it("never treats a bare namespace as a family", () => {
 		expect(
 			expectedFederationKeys(
 				new Set(["live.a"]),
-				new Set(["live.route.x", "hud.z"]),
+				new Set(["live.b", "live.route.x"]),
 			),
-		).toEqual(["live.a", "live.route.x"]);
+		).toEqual(["live.a"]);
 	});
 });
 
@@ -140,6 +159,67 @@ describe("producerVocabulary", () => {
 			'export const h = "network.c";',
 		);
 		expect([...producerVocabulary(CATALOG, [dir])]).toEqual(["live.a"]);
+	});
+	it("judges test directories relative to the source root, not the checkout path", () => {
+		const dir = join(scratch(), "tests", "checkout", "src");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "real.ts"), 'export const r = "live.a";');
+		expect([...producerVocabulary(CATALOG, [dir])]).toEqual(["live.a"]);
+	});
+});
+
+describe("computedLookups", () => {
+	it("reports lookups whose key is computed", () => {
+		const source = [
+			'resolveMessageKey(["settings", "validateStages", stage].join("."));',
+			"t(option.reason);",
+			"m[backendView.disabledReasonKey]();",
+			"msg[key]();",
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: source text holding a template literal
+			"t(`${prefix}.label`);",
+		].join("\n");
+		expect(computedLookups(source)).toEqual([
+			"m[backendView.disabledReasonKey]",
+			"msg[key]",
+			'resolveMessageKey(["settings", "validateStages", stage].join("."))',
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: source text holding a template literal
+			"t(`${prefix}.label`)",
+			"t(option.reason)",
+		]);
+	});
+
+	it("ignores literal keys, key-headed templates, declarations, members and comments", () => {
+		const source = [
+			'm["live.a"](); t("live.b"); t(\'live.c\');',
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: source text holding a template literal
+			"resolveMessageKey(`live.route.${reason}`);",
+			"export function resolveMessageKey(key, params) {}",
+			"format.t(value); item.m[index];",
+			"// t(commented.out)",
+			"/* m[blocked] */",
+			"<!-- t(markup.comment) -->",
+			"t();",
+		].join("\n");
+		expect(computedLookups(source)).toEqual([]);
+	});
+});
+
+describe("committed computed-lookup declarations", () => {
+	it("give every lookup a reason and families that exist in the catalog", () => {
+		const catalog = readCatalogKeys();
+		const declarations = readComputedLookups();
+		expect(declarations.length).toBeGreaterThan(0);
+		expect(new Set(declarations.map((entry) => entry.site)).size).toBe(
+			declarations.length,
+		);
+		for (const { site, families } of declarations) {
+			for (const family of families) {
+				expect(
+					catalog.some((key) => key.startsWith(`${family}.`)),
+					`${site}: ${family}`,
+				).toBe(true);
+			}
+		}
 	});
 });
 
@@ -169,7 +249,25 @@ describe("committed federation key list", () => {
 	});
 });
 
+describe("normalizeModulePath", () => {
+	it("uses forward slashes and drops Vite queries and virtual prefixes", () => {
+		expect(normalizeModulePath("C:\\repo\\a.svelte?svelte&type=style")).toBe(
+			"C:/repo/a.svelte",
+		);
+		expect(normalizeModulePath("\0/repo/b.js")).toBe("/repo/b.js");
+	});
+});
+
 describe("isCatalogModule", () => {
+	it("matches a slash-normalized module id against a backslash output directory", () => {
+		expect(
+			isCatalogModule("C:/repo/cache/messages/en.js", "C:\\repo\\cache"),
+		).toBe(true);
+		expect(
+			isCatalogModule("C:/repo/src/Dialog.svelte", "C:\\repo\\cache"),
+		).toBe(false);
+	});
+
 	it("treats the generated facade and both Paraglide outputs as the catalog", () => {
 		expect(
 			isCatalogModule(
@@ -195,12 +293,25 @@ describe("isCatalogModule", () => {
 describe("federationCatalogPlugin", () => {
 	const DIALOG = resolve(import.meta.dirname, "../main/dialogs/Example.svelte");
 
-	function run(keys: string[], code: string, mode?: string) {
-		const keysPath = join(scratch(), "catalog-keys.json");
+	function run(
+		keys: string[],
+		code: string,
+		mode?: string,
+		lookups: { site: string; families: string[]; why: string }[] = [],
+		source?: string,
+	) {
+		const dir = scratch();
+		const keysPath = join(dir, "catalog-keys.json");
+		const computedLookupsPath = join(dir, "computed-lookups.json");
 		writeFileSync(keysPath, serializeFederationCatalogKeys(keys));
+		writeFileSync(computedLookupsPath, JSON.stringify({ lookups }));
+		const sourcePath = join(dir, "Dialog.svelte");
+		if (source !== undefined) writeFileSync(sourcePath, source);
 		const plugin = federationCatalogPlugin({
 			paraglideOutdir: FEDERATION_PARAGLIDE_OUTDIR,
 			keysPath,
+			computedLookupsPath,
+			root: dir,
 			mode,
 		});
 		plugin.buildStart();
@@ -217,7 +328,7 @@ describe("federationCatalogPlugin", () => {
 			"toast-host.js": {
 				type: "chunk" as const,
 				modules: {
-					[DIALOG]: { code },
+					[source === undefined ? DIALOG : sourcePath]: { code },
 					[join(GENERATED, "namespaces/network.js")]: {
 						code: '"network.os.deviceBusy"',
 					},
@@ -275,6 +386,45 @@ describe("federationCatalogPlugin", () => {
 			"export const messages = {};\n",
 		);
 		expect(plugin.load(DIALOG)).toBeNull();
+	});
+
+	it("fails on an undeclared computed lookup, in write mode too", () => {
+		const code = 'm["validation.invalid"]()';
+		const source =
+			'resolveMessageKey(["settings", "validateStages", stage].join("."));';
+		for (const mode of [undefined, "write"]) {
+			expect(() => run(expectedFor(code), code, mode, [], source)).toThrow(
+				/Declare, with the key families each can produce: Dialog\.svelte resolveMessageKey/,
+			);
+		}
+	});
+
+	it("ships every key of a declared lookup's families", () => {
+		const code = 'm["validation.invalid"]()';
+		const site = "Dialog.svelte t(stageKey)";
+		const stages = readCatalogKeys().filter((key) =>
+			key.startsWith("settings.validateStages."),
+		);
+		const keys = [...new Set([...expectedFor(code), ...stages])].sort();
+		const lookups = [
+			{ site, families: ["settings.validateStages"], why: "test" },
+		];
+		expect(() =>
+			run(keys, code, undefined, lookups, "t(stageKey);"),
+		).not.toThrow();
+		expect(() =>
+			run(expectedFor(code), code, undefined, lookups, "t(stageKey);"),
+		).toThrow(/missing: settings\.validateStages\./);
+	});
+
+	it("fails on a declaration no bundled code has any more", () => {
+		const code = 'm["validation.invalid"]()';
+		const lookups = [
+			{ site: "Dialog.svelte t(gone)", families: [], why: "test" },
+		];
+		expect(() => run(expectedFor(code), code, undefined, lookups, "")).toThrow(
+			/Remove declarations no bundled code has: Dialog\.svelte t\(gone\)/,
+		);
 	});
 
 	it("is registered in the real federation build config after the namespace exclusion", () => {

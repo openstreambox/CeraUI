@@ -218,13 +218,14 @@ const SPA_DISPLACED_BASELINES = {
 // are moved into extra chunks to evade a per-file cap.
 const FEDERATION_BASELINE = {
 	// Re-measured 2026-11-21 on 4b042965 with Bun 1.4.4 once the federation
-	// build ships only the message keys its bundles name plus the producer's
-	// wire vocabulary (`apps/frontend/vite.federation-catalog.ts`): 415 of the
-	// 2,696 keys in the registered namespaces, all ten locales. The same tree
-	// measured 719,011 B before, 30,468 B over the 688,543 B ceiling. The
-	// 8 KiB headroom stays, so roughly 30 further keys fit before it fails.
+	// build ships only the message keys its bundles name or declare for computed
+	// lookups, plus producer wire keys in the families they read
+	// (`apps/frontend/vite.federation-catalog.ts`): 324 of the 2,696 keys in the
+	// registered namespaces, all ten locales. The
+	// same tree measured 719,011 B before, 30,468 B over the 688,543 B ceiling.
+	// The 8 KiB headroom stays, so roughly 20 further keys fit before it fails.
 	// The displaced 680,351 B baseline (85d2b20a, 2026-11-09) is kept below.
-	'toast-host.js': 245_952,
+	'toast-host.js': 212_698,
 	'server.js': 26_645,
 	'frontend.css': 24_087,
 	'encoder.js': 22_713,

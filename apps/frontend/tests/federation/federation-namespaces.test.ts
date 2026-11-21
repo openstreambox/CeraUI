@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+
 import { FEDERATION_NAMESPACES } from "../../src/lib/federation/messages";
 import { readFederationCatalogKeys } from "../../vite.federation-catalog";
 
@@ -20,7 +21,7 @@ const CATALOG_KEYS = Object.keys(
 const KEY_SET = new Set(CATALOG_KEYS);
 
 // A dotted literal, or the static head of a template or concatenated dynamic key.
-const LITERAL = /["'`]([A-Za-z][A-Za-z0-9]*\.[A-Za-z0-9_.]*)(?=["'`]|\$\{)/g;
+const LITERAL = /["'`]([A-Za-z][A-Za-z0-9]*\.[A-Za-z0-9_.-]*)(?=["'`]|\$\{)/g;
 
 function catalogNamespaces(code: string): Set<string> {
 	const namespaces = new Set<string>();
@@ -63,4 +64,5 @@ describe("federation catalog scope", () => {
 		const shipped = CATALOG_KEYS.filter((key) => bundled.includes(JSON.stringify(key)));
 		expect(shipped.sort()).toEqual(readFederationCatalogKeys());
 	});
+
 });

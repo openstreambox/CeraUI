@@ -419,12 +419,14 @@ still most of the chunk.
 **2026-11-21 — resolved: the federation catalog carries only the keys it can
 render.** On `4b042965` toast-host measured 719,011 B gzip, 30,468 B over the
 688,543 B ceiling, and still carried every key of the 14 namespaces (2,696).
-The dialogs name 389 of them. `apps/frontend/vite.federation-catalog.ts` now
-narrows each namespace barrel to `apps/frontend/src/lib/federation/catalog-keys.json`:
-the keys the rendered federation code names plus the producer's wire vocabulary
-in those namespaces (415 keys). The build fails on a missing or stale entry, and
-the built harness checks the signed JS carries exactly the list. Toast-host now
-measures 245,952 B gzip (917,214 B raw, from 3,037,755 B). Its baseline moves to
+`apps/frontend/vite.federation-catalog.ts` now narrows each namespace barrel to
+`apps/frontend/src/lib/federation/catalog-keys.json`: the keys the rendered
+federation code names, the families declared for its computed lookups, and
+producer wire keys in the families that code reads (324 keys). The build fails on
+a missing or stale entry and on an undeclared computed lookup, and the built
+harness renders every listed key through the shipped resolver in all ten
+locales. Toast-host now measures 212,698 B gzip (759,875 B raw, from
+3,037,755 B). Its baseline moves to
 that measurement with the unchanged 8,192 B allowance, the displaced baselines
 stay in the report, and Build Check runs the federation build and budget on
 every PR. The catalog is still static, but it is now the dialogs' own copy, not

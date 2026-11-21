@@ -541,9 +541,9 @@ jobs:
           CERAUI_BUILD_ID: ci-e2e
         run: bun run build:frontend
 
-      # The report measures dist/federation too when it exists. Building it here
-      # puts the federation budgets and the federation catalog key check on every
-      # PR instead of only on the manual publish workflow.
+      # Building federation here puts its catalog key check, its budgets and its
+      # complete-graph check on every code-changing PR, not only on the manual
+      # publish workflow.
       - name: Build federation bundles
         working-directory: CeraUI
         run: bun run build:federation
@@ -551,6 +551,14 @@ jobs:
       - name: Bundle size report (initial-route JS gzip budget)
         working-directory: CeraUI
         run: bun scripts/ci/bundle-report.mjs
+
+      - name: Federation bundle report (complete graph and budgets)
+        working-directory: CeraUI
+        run: bun scripts/ci/bundle-report.mjs --federation-only
+
+      - name: Federation catalog tests (built registry)
+        working-directory: CeraUI
+        run: bun run --filter frontend test:federation-catalog
 
       - name: Upload frontend dist
         uses: actions/upload-artifact@v7
