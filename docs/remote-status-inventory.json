@@ -30768,6 +30768,13 @@
       "message": "\"wifi\"",
       "fields": [
         {
+          "path": "hotspot.*.attempt",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "hotspot.*.device",
           "types": [
             "string",
@@ -42442,6 +42449,22 @@
       ]
     },
     {
+      "source": "apps/backend/src/rpc/procedures/captive-portal.procedure.ts",
+      "call": "broadcastMsg",
+      "message": "\"config\"",
+      "fields": [
+        {
+          "path": "captive_portal_enabled",
+          "types": [
+            "undefined",
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
       "source": "apps/backend/src/mocks/scenario-control.ts",
       "call": "broadcastMsg",
       "message": "\"relays\"",
@@ -43989,27 +44012,28 @@
     "apps/backend/src/modules/system/collectors/gpu.ts": "376b311b6431f74018414c9733bbb6924acd328a7ff1b7be556fc95c915f3b21",
     "apps/backend/src/modules/system/collectors/memory.ts": "01a961c7b558ffcafb32ed659592525ffb3677575f2ea4d20f14eac251936f02",
     "apps/backend/src/modules/system/cpu.ts": "0ff71159eeabb9d0b05ba6b5078d3ea2a7416810ae583d1e4b82768c2265a5c9",
-    "apps/backend/src/modules/system/device-stats.ts": "b1c159b25e9f8c97be430db6c2808e10441dd6d104c4a6ebdffbeb6c64ccc68c",
+    "apps/backend/src/modules/system/device-stats.ts": "50549f8192a08c1cfb2cd1344744fb6a9a2cba8366fc09073bcc3df945e92c0e",
     "apps/backend/src/modules/system/encoder-load.ts": "edc310e16747a331b232b09d0b7d3ee7fc811621241840268a85ebda2b9729db",
     "apps/backend/src/modules/system/fan.ts": "e73086dbfd02c219c8c6d644687f1e10fcee62e4bb21d2e9a527a4d5a64180f3",
     "apps/backend/src/modules/system/kiosk.ts": "921df84e43d6960e9a1ab0bfd8768a7a85a7fe682fccc185bd8585f88823e96a",
     "apps/backend/src/modules/system/logs.ts": "b026f90ab04e7e212b29eb6f271932faa51724325f9965258e12d3446d57c3ff",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
-    "apps/backend/src/modules/system/sensors.ts": "c2232f1fb5fc30c66340b9d3bc9273ef4fc18d7fa59b824cba52dceff950ece9",
+    "apps/backend/src/modules/system/sensors.ts": "e6fdcc8d57f4decc10b3247fdcd2cbc11e9fb23a489bbe546e3ee3e7a3f1adc7",
     "apps/backend/src/modules/system/software-updates.ts": "d1ad6da3eb559be5336b74bb6519ba6caf9fba051b2dc1593f41a31dbfab9763",
     "apps/backend/src/modules/system/ssh.ts": "76480301bb9dc3a9483a7b9fb7073a2a1ec91c315653df945bfb2fcc1ce86f43",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "5d6fe150025d879e82f987d25489c4c7125b724f56c9296cc459dc500aade698",
     "apps/backend/src/modules/ui/notifications.ts": "ffe408b78e2f04ffa037890131f177b50569f6530f4cc89208fb6eaf7bd8fd95",
     "apps/backend/src/modules/ui/status.ts": "3579bc2c06c5b15788015229c0d581997518f56910af10a485a44f0eacdf181f",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
-    "apps/backend/src/modules/wifi/wifi-country.ts": "01a76e8a13f831f6fe8065f542f2523075b5b7206b2985c841fcf6e2283e7eef",
-    "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "7810d76ef058d939586ae056016b171607ec24756f0aa0bf4fbfeb4b5e02a017",
-    "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "77d98da72c619389315b6ea54c2d68d218d0bd7a22ae8477f222fc721062a524",
-    "apps/backend/src/modules/wifi/wifi-hotspot-types.ts": "a671ef3553be84821c8c93ed178132b65f55cea061f2aad0b748510fbb3e5944",
-    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "b7392ceae395866b216a5712c675b42e6d323b09371b4f1e722be1b611f799c9",
-    "apps/backend/src/modules/wifi/wifi.ts": "f1174cb9957e074bb22091f25e033f37f0668f7295407ed8b10097b3057da6f4",
+    "apps/backend/src/modules/wifi/wifi-country.ts": "b9e350f52a819d5cc84fd8a742424ce73c29b35ebb03136b0fd36aea31f4b422",
+    "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "acdfaa83e8a4b246bbd8299c426bf5ba76dafa275e3956de12fc0e05c5d71fb2",
+    "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "8e599c2a0b7b2fc1772892d89ef51346eb88b77371bf458074b8f1da6f96aea7",
+    "apps/backend/src/modules/wifi/wifi-hotspot-types.ts": "57da30aa904e04e2a644b9e86e79c579e400f6084d790faf7943d5af2a66c2e8",
+    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "f39b4a9b88fa95204e269f0bd8f0b051c12e137fc83aeaaaefe9dbce5c252d13",
+    "apps/backend/src/modules/wifi/wifi.ts": "567f85bf7a449aaacbd1649e21191c9a91e3bb410ee1c9fec7d47b20fc46b05b",
     "apps/backend/src/rpc/compat.ts": "6902642f8e2bae6039ac29880faa4bd7e92ffbea9a77be7c3a428da467d115ec",
     "apps/backend/src/rpc/procedures/audio-mix.procedure.ts": "77fb8974d0078221af7388c1bd211d485af80e5bf0a3b9d433308116f46f0535",
+    "apps/backend/src/rpc/procedures/captive-portal.procedure.ts": "79c1fabf54a4b83f35b35519716e920d18bdb57113cb28f7ded6e6fa406d8656",
     "apps/backend/src/rpc/procedures/network.procedure.ts": "64c7b15f4efe979e31f7fc7d2c4e4ed05e72580cf431f6dacc27ebbf48777bf3",
     "apps/backend/src/rpc/procedures/streaming.procedure.ts": "7f2bcee314c274fa99b64f8efca65cde63fec4afba3280375dc3d4e1eb3a9c28",
     "bun.lock": "38e3694c4af724eb86c125772c0e3256c4fe715af896fdfa2c22ee24b5efa687",
@@ -44017,9 +44041,9 @@
     "packages/rpc/src/schemas/audio-level.schema.ts": "eb4bd01a1d605776e8f11eab8c8acb5f8333c6868e0bbab5802a4118f507a225",
     "packages/rpc/src/schemas/bluetooth.schema.ts": "92d0d2837dd66aeed312188efff6bc8ff31d0a9f88559d422c3d7aaaef21215d",
     "packages/rpc/src/schemas/capability-modules.schema.ts": "20eecb4c158a63ea319c9ca4b595397df31aa66db3dae20da3f4a82a2b3231d3",
-    "packages/rpc/src/schemas/events-wire.schema.ts": "51b47c85474a898fdcae287e3433bd3404f9c5e727c0db1239db1a020459149e",
+    "packages/rpc/src/schemas/events-wire.schema.ts": "e9e625045b910d3f8b49fc42728f93dc2c194bc8a62831deea5a82ed693cf95c",
     "packages/rpc/src/schemas/fan.schema.ts": "8f4ab6b8b302d408994350eb66089f8d0fb195e0bccfc498e2d1b333a3fde841",
-    "packages/rpc/src/schemas/logs.schema.ts": "17625d634e1266d00ef2a4ead5267a0c0e7ea01cddbeced29239990adc7017b5",
+    "packages/rpc/src/schemas/logs.schema.ts": "d56584362e084a92eeb4c5d91d753a317b9f29140b4909ebc3f714e05a723038",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
     "packages/rpc/src/schemas/modems.schema.ts": "d3733a5e5d8a4c79adb1a7089f8ebcdee54b3aed877957481eaf73c15ea56295",
     "packages/rpc/src/schemas/network.schema.ts": "3038e31d908d42c65b1dfb4d936040edfe08f72e1ba8ddbe5862aef44622fb38",
@@ -44032,6 +44056,6 @@
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
     "packages/rpc/src/schemas/system.schema.ts": "872ce7a357ba980c078865c3c8804b35e746284e901834a9c5208d697907288d",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",
-    "packages/rpc/src/schemas/wifi.schema.ts": "7f00a2f78b31e04fcba47c22e000f2d8bbd4ece1069a3c78b9fc577b0a6f0dbb"
+    "packages/rpc/src/schemas/wifi.schema.ts": "60305d4fd1df2a3531ff71aa42c1f2ac11e59bcc9785fb560c41100d0d093b92"
   }
 }
