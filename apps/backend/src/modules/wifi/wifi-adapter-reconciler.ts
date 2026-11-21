@@ -64,6 +64,10 @@ import {
 	wifiAdapterKeyMac,
 	wifiAdapterKeyPort,
 } from "./wifi-permanent-mac.ts";
+import {
+	activeProvisioningAp,
+	isProvisioningApConn,
+} from "./wifi-provisioning-ap.ts";
 import { sameRadioLifetime, wifiRadioIdentity } from "./wifi-radio-identity.ts";
 
 const MAX_RESTORE_ATTEMPTS = 3;
@@ -133,6 +137,12 @@ export async function reconcileWifiAdapterStopLocked(
 ): Promise<HotspotStopResult> {
 	if (operation && (!(await operation.check()) || !operation.current()))
 		return wifiOperationChanged;
+	// The image's setup AP is torn down by the image, never by a CeraUI Stop.
+	if (
+		isProvisioningApConn(row.hotspot.conn) ||
+		(!isHotspotActive(row) && activeProvisioningAp(row))
+	)
+		return { success: false, error: "DEVICE_BUSY" };
 	const owner = resolveWifiAdapterOwner(registryKey, row);
 	const cleanup = await reconcileWifiAdapterTeardownLocked(owner);
 	const active =
@@ -372,11 +382,20 @@ export async function reconcileWifiAdapterModeLocked(
 	const current = row.concurrentHotspot?.activeConn
 		? "hybrid"
 		: observedWifiAdapterMode(row);
-	if (current === target) {
+	if (current === target && target === "station") {
 		publish(row.id, { success: true, mode: target });
 		return { success: true, applied: target };
 	}
 	request.publishPending();
+	// An AP mode that is already effective still completes through Start: its
+	// already-up branch takes a ticket and settles the mode on the same
+	// steering-aware terminal (verified, or `pending` at the deadline).
+	if (current === target) {
+		const started = await request.start();
+		return started.success
+			? { success: true, accepted: true, applied: target }
+			: started;
+	}
 	if (current !== "station") {
 		const stopped = await request.stop(target === "station");
 		if (!stopped.success) {
