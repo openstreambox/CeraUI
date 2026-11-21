@@ -130,12 +130,14 @@ must contain the `source-audio` block with its ids unchanged.
 - Idle, it must show the first blocking reason from `deriveGoLiveReadiness` as
   visible text, or a ready state, and Start.
 - While Start is blocked, the bar lists every blocked gate at once, in
-  `GATE_FIX_ORDER`: one blocker reads as its reason, two or more as "Fix
-  these before you go live" (no count, so no new plural message). Each gate with a fix gets a button to the
-  existing setting (Choose source, Choose destination, Set up network); the
-  engine gate has none. A blocked Start stays dimmed and `aria-disabled` but is
-  not a dead button: a tap moves focus to the first fix and never starts. A
-  start in flight still disables it outright.
+  `GATE_FIX_ORDER`. One blocker reads as its reason, with its fix button when
+  it has one. Two or more read "Fix these before you go live" (no count, so no
+  new plural message), then one row per gate: its reason as visible text and a
+  button to the existing setting where a fix exists (Choose source, Choose
+  destination, Set up network). The engine gate has no fix and shows its reason
+  alone. While a fix exists, a blocked Start stays dimmed and `aria-disabled`
+  and a tap moves focus to the first fix; it never starts. With no fix (only
+  the engine blocks) and while a start is in flight, Start is natively disabled.
 - Live, it must show the bitrate control and Stop.
 - While it is mounted, the document's `scroll-padding-bottom` is the bar's
   height (plus the mobile dock below desktop chrome), so a control reached with

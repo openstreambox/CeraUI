@@ -637,6 +637,66 @@ describe("StreamSetupChain — the Live bar lists every blocker with its fix", (
 		expect(onGoNetwork).toHaveBeenCalledTimes(1);
 	});
 
+	it("disconnected: network and engine both show, each with its reason, and only network has a button", () => {
+		const { container } = renderChain({
+			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
+			isConnected: false,
+		});
+		const items = [
+			...bar(container).querySelectorAll<HTMLElement>("li[data-blocker]"),
+		];
+		expect(items.map((li) => li.dataset.blocker)).toEqual([
+			"network",
+			"engine",
+		]);
+		const reasons = items.map((li) =>
+			li.querySelector("[data-blocker-reason]")?.textContent?.trim(),
+		);
+		expect(reasons[0]?.length).toBeGreaterThan(0);
+		expect(reasons[1]).toBe("Streaming engine offline");
+		expect(
+			items[0]?.querySelector("button[data-fix]")?.getAttribute("data-fix"),
+		).toBe("goNetwork");
+		expect(items[1]?.querySelector("button")).toBeNull();
+	});
+
+	it("two causes behind one kind of fix read apart by their visible reasons", () => {
+		const { container } = renderChain({
+			config: { selected_ingest_endpoint: "slot-gone" } as ConfigMessage,
+			sources: makeSources(),
+			managedSlots: [slot("slot-1")],
+		});
+		const items = [
+			...bar(container).querySelectorAll<HTMLElement>("li[data-blocker]"),
+		];
+		expect(items.map((li) => li.dataset.blocker)).toEqual([
+			"source",
+			"destination",
+		]);
+		const destination =
+			items[1]?.querySelector("[data-blocker-reason]")?.textContent ?? "";
+		expect(destination).not.toBe(
+			items[0]?.querySelector("[data-blocker-reason]")?.textContent,
+		);
+		expect(destination.trim().length).toBeGreaterThan(0);
+	});
+
+	it("engine only: no checklist button, and Start stays natively disabled", async () => {
+		const { container, onStart } = renderChain({
+			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
+			caps: { engineUnavailable: true } as unknown as CapabilitiesMessage,
+		});
+		expect(fixButtons(container)).toHaveLength(0);
+		const start = within(container).getByRole("button", {
+			name: /start stream/i,
+		}) as HTMLButtonElement;
+		expect(start.disabled).toBe(true);
+		expect(start.getAttribute("aria-disabled")).toBeNull();
+		expect(bar(container).textContent).toContain("Streaming engine offline");
+		await fireEvent.click(start);
+		expect(onStart).not.toHaveBeenCalled();
+	});
+
 	it("a tap on the blocked Start moves focus to the first fix and never starts", async () => {
 		const { container, onStart } = renderChain({
 			config: {} as ConfigMessage,
