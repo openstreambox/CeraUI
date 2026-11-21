@@ -295,8 +295,18 @@ export function broadcast(
 		});
 	}
 
-	logger.debug("broadcast", { event: type, clients: recipients });
+	if (recipients > 0 && !UNLOGGED_BROADCAST_EVENTS.has(type)) {
+		logger.debug("broadcast", { event: type, clients: recipients });
+	}
 }
+
+/**
+ * Events whose per-push debug line is never written. The file transport logs
+ * at debug on devices and sits on the SD card, so a line per push of a ~10 Hz
+ * meter was most of debug.log's volume while saying nothing a reader uses.
+ * Pushes that reached no client are skipped for the same reason.
+ */
+const UNLOGGED_BROADCAST_EVENTS: ReadonlySet<string> = new Set(["audio-level"]);
 
 /**
  * Dispatch one message to one client, isolating its failure. `send` runs
