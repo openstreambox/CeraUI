@@ -36,9 +36,11 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Auth: revoked all ", " credential(s)"],
 	["Auth: stored token authority unreadable; token login withheld"],
 	["Auth: token login successful"],
+	["Automatic package check failed to start; retrying"],
 	[
 		"Automatic package check waits: no unmetered uplink confirmed and packages may not use cellular",
 	],
+	["Automatic package discovery failed; retrying"],
 	["Backend singleton acquisition failed; another instance may be running"],
 	[
 		"Backend singleton is not enforced for a source-development process; production services never take this path",
