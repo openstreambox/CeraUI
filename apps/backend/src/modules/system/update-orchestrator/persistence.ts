@@ -161,6 +161,8 @@ export function saveOrchestratorState(
 	syncParent: (filePath: string) => void = syncOrchestratorDirectory,
 ): void {
 	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
-	writeFileAtomicSync(filePath, JSON.stringify(toPersisted(state)));
+	writeFileAtomicSync(filePath, JSON.stringify(toPersisted(state)), {
+		mode: 0o600,
+	});
 	syncParent(filePath);
 }
