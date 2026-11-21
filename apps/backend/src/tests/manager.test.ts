@@ -88,7 +88,7 @@ function makeDescriptor(over: Partial<AddonDescriptor> = {}): AddonDescriptor {
 }
 
 type Signals = {
-	isRealDevice: boolean;
+	canManageAddons: boolean;
 	hardware: AddonHardware;
 	freeBytes: number;
 	nRestarts: number;
@@ -128,7 +128,7 @@ function makeHarness(
 	over: Partial<AddonManagerDeps> = {},
 ): Harness {
 	const signals: Signals = {
-		isRealDevice: true,
+		canManageAddons: true,
 		hardware: "rk3588",
 		freeBytes: 100 * 1024 * 1024 * 1024, // 100 GiB — never the limiting factor
 		nRestarts: 0,
@@ -152,7 +152,7 @@ function makeHarness(
 	};
 
 	const deps: AddonManagerDeps = {
-		isRealDevice: () => Promise.resolve(signals.isRealDevice),
+		canManageAddons: () => Promise.resolve(signals.canManageAddons),
 		getEffectiveHardware: () => signals.hardware,
 		getDataFreeBytes: () => Promise.resolve(signals.freeBytes),
 		getOsVersion: () => Promise.resolve("12"),
@@ -474,7 +474,7 @@ describe("pollAddonCrashLoop — NRestarts >= 3 auto-disable", () => {
 
 describe("enableAddon — negative: G6 emulated-mode gate", () => {
 	test("emulated mode returns addon_unavailable and touches nothing", async () => {
-		const h = makeHarness({ isRealDevice: false });
+		const h = makeHarness({ canManageAddons: false });
 		const d = makeDescriptor();
 
 		const result = await enableAddon(d, h.deps);
@@ -490,7 +490,7 @@ describe("enableAddon — negative: G6 emulated-mode gate", () => {
 
 describe("disableAddon — negative: G6 emulated-mode gate", () => {
 	test("emulated mode returns addon_unavailable and never tears down", async () => {
-		const h = makeHarness({ isRealDevice: false });
+		const h = makeHarness({ canManageAddons: false });
 		const d = makeDescriptor();
 
 		const result = await disableAddon(d, h.deps);
@@ -504,7 +504,7 @@ describe("disableAddon — negative: G6 emulated-mode gate", () => {
 
 describe("pollAddonCrashLoop — negative: G6 emulated-mode gate", () => {
 	test("emulated mode never probes NRestarts or masks", async () => {
-		const h = makeHarness({ isRealDevice: false, nRestarts: 9 });
+		const h = makeHarness({ canManageAddons: false, nRestarts: 9 });
 		const d = makeDescriptor();
 
 		const phase = await pollAddonCrashLoop(d, h.deps);
