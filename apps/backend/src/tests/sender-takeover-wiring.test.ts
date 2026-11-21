@@ -37,6 +37,7 @@ import { streamSessionProductionDeps } from "../modules/streaming/stream-session
 import * as streamingEngine from "../modules/streaming/streaming-engine.ts";
 import { srtlaSendExec } from "../modules/streaming/streamloop/exec-paths.ts";
 import {
+	forgetHostedSender,
 	getStreamingProcesses,
 	gracefulShutdown,
 	registerHostedSender,
@@ -161,6 +162,27 @@ describe("runner", () => {
 		h.poll();
 		await stopping;
 		expect(getStreamingProcesses()).not.toContain(handle);
+	});
+});
+
+describe("rollback of a registration", () => {
+	test("forgetting a hosted sender stops its output followers and signals nothing", () => {
+		const h = hosted(100_007);
+		let stops = 0;
+		const empty = () =>
+			new ReadableStream<Uint8Array>({ start: (c) => c.close() });
+		const handle = registerHostedSender(h.sender, srtlaSendExec, () => {}, {
+			stdout: empty(),
+			stderr: empty(),
+			stop: () => {
+				stops++;
+			},
+		});
+		forgetHostedSender(h.sender);
+		expect(stops).toBe(1);
+		expect(getStreamingProcesses()).not.toContain(handle);
+		expect(h.pinState.signals).toEqual([]);
+		expect(h.pinState.closed).toBe(true);
 	});
 });
 

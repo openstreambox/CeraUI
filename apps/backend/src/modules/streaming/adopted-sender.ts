@@ -12,13 +12,26 @@
 import type { StreamingProcess } from "./streamloop/process-runner.ts";
 
 let adopted: StreamingProcess | undefined;
+let eligible: () => boolean = () => true;
 
-export function noteAdoptedSender(sender: StreamingProcess): void {
+/**
+ * `stillEligible` is asked wherever the adopted sender is consulted, so the
+ * takeover's final conditions hold at the point reconciliation publishes
+ * streaming, not only when the takeover last looked.
+ */
+export function noteAdoptedSender(
+	sender: StreamingProcess,
+	stillEligible: () => boolean = () => true,
+): void {
 	adopted = sender;
+	eligible = stillEligible;
 }
 
 export function clearAdoptedSender(sender?: StreamingProcess): void {
-	if (sender === undefined || adopted === sender) adopted = undefined;
+	if (sender === undefined || adopted === sender) {
+		adopted = undefined;
+		eligible = () => true;
+	}
 }
 
 /**
@@ -29,5 +42,6 @@ export function adoptedSender(): StreamingProcess | undefined {
 	if (adopted === undefined) return undefined;
 	const { exitCode, signalCode } = adopted.proc;
 	if (exitCode !== null || signalCode !== null) return undefined;
-	return adopted.hosted?.pin.alive() === true ? adopted : undefined;
+	if (adopted.hosted?.pin.alive() !== true) return undefined;
+	return eligible() ? adopted : undefined;
 }

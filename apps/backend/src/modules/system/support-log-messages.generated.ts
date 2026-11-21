@@ -768,6 +768,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["heartbeat tick"],
 	["hosted sender: output followers unavailable"],
 	["hosted sender: signal not confirmed"],
+	["hosted sender: start unconfirmed, unit stop requested"],
 	[
 		"hotspot channel ",
 		" is not permitted in the current regulatory domain; falling back to ",

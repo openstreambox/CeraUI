@@ -105,7 +105,9 @@ export type TakeoverDeps = {
 	) => HostedSender;
 	readonly register: (sender: HostedSender) => StreamingProcess;
 	/** Drop a registered hosted sender without signalling it (rollback). */
-	readonly forgetSender: (sender: StreamingProcess) => void;
+	readonly forgetSender: (sender: HostedSender) => void;
+	/** True while an in-memory modem mutation hold forbids streaming. */
+	readonly modemHold: () => boolean;
 	/** True only when the sender's pidfd says alive right now. */
 	readonly senderAlive: (sender: StreamingProcess) => boolean;
 	readonly continueGeneration: (applied: number) => void;
@@ -187,7 +189,7 @@ async function fallback(
 			check: why.check,
 			reason: why.reason,
 		});
-	const changed = unit !== null || sweep.asked > 0;
+	const changed = unit !== null || sweep.asked > 0 || !sweep.confirmed;
 	if (changed && confirmedGone(stopped) && sweep.confirmed)
 		await deps.reconcile().catch(() => undefined);
 	else if (changed)
@@ -202,8 +204,9 @@ async function sweepUnits(
 ): Promise<{ asked: number; confirmed: boolean }> {
 	const units = await deps.listUnits().catch(() => null);
 	if (units === null) {
+		// Unknown is not "none left".
 		logger.warn("sender takeover: sender units could not be listed");
-		return { asked: 0, confirmed: true };
+		return { asked: 0, confirmed: false };
 	}
 	let asked = 0;
 	let confirmed = true;
@@ -320,21 +323,24 @@ async function validate(
 	evidence: SenderAdoptionEvidence,
 	intent: () => boolean,
 ): Promise<TakeoverRefusal | null> {
-	const modem = await deps
-		.modemGates()
-		.catch(() => refusal("modem", "unreadable"));
-	if (modem) return modem;
 	const record = await deps.readLifetime().catch(() => null);
 	if (!record || canonicalRecord(record) !== canonicalRecord(lifetime))
 		return refusal("commit", "record_changed");
 	const stat = await deps.readStat(lifetime.pid as number).catch(() => null);
 	const fields = stat === null ? [] : statFields(stat);
+	const modem = await deps
+		.modemGates()
+		.catch(() => refusal("modem", "unreadable"));
+	if (modem) return modem;
+	// Synchronous from here: nothing changes between these and the caller.
 	if (
 		pin.alive() !== true ||
 		fields[19] !== lifetime.startTime ||
 		!eligibleProcessState(fields[0] ?? null)
 	)
 		return refusal("commit", "sender_changed");
+	if (!deps.flagOn()) return refusal("flag", "off");
+	if (deps.modemHold()) return refusal("modem", "mutation_hold");
 	if (!intent() || deps.sessionState() !== "reconciling")
 		return refusal("commit", "operator_intent");
 	if (!sameArmedIntent(evidence, deps.readMarker(), deps.captureConfig()))
@@ -351,12 +357,13 @@ function canonicalRecord(record: Lifetime): string {
 }
 
 /**
- * The commit, as a transaction. First everything that can fail is prepared
- * with no side effect; then each step registers its undo; any failure undoes
- * every step done, in reverse, and falls back. The adopted marker and the
- * one reconciliation (the only step that marks the session streaming) come
- * last, right after a final validation. The lifetime is adopted (which lets
- * telemetry write its report) only once reconciliation committed streaming.
+ * The commit, as a transaction. First, with no side effect, everything that
+ * can fail: the IP list, the receiver address, the other sender units'
+ * cleanup, and the final validation. Then, with no await in between, each
+ * step registers its undo before it runs, so a step that fails part way is
+ * covered. The adopted marker carries the final conditions, which
+ * reconciliation asks at the moment it would publish streaming. Only after
+ * streaming is published do the generation counter and the lifetime move.
  */
 async function commit(
 	deps: TakeoverDeps,
@@ -370,7 +377,7 @@ async function commit(
 		fallback(deps, unit, why, lifetime.invocation ?? null);
 	const pid = lifetime.pid as number;
 	const startTime = lifetime.startTime as string;
-	// Prepare: no side effects.
+	// Prepare: no side effects on this sender.
 	let ips: string;
 	try {
 		ips = await deps.readIps(lifetime);
@@ -387,37 +394,48 @@ async function commit(
 	const connection = evidence.engineConnection;
 	if (!session || connection === null || connection === undefined)
 		return back(refusal("commit", "engine_changed"));
-	const prepared = await validate(deps, lifetime, pin, evidence, intent);
-	if (prepared) return back(prepared);
+	if (deps.flagOn()) {
+		const sweep = await sweepUnits(deps, unit);
+		if (!sweep.confirmed)
+			return back(refusal("commit", "other_units_unconfirmed"));
+	}
+	const last = await validate(deps, lifetime, pin, evidence, intent);
+	if (last) return back(last);
 
-	// Apply: each step undone if a later one fails.
+	// Apply: synchronous up to the reconciliation; undo registered first.
 	const undo: (() => void)[] = [];
 	let committed = false;
 	try {
+		undo.push(() => deps.releaseEngineSession(session.sessionId));
 		if (!deps.adoptEngineSession(session.sessionId, connection))
 			throw new CommitRefused(refusal("commit", "engine_changed"));
-		undo.push(() => deps.releaseEngineSession(session.sessionId));
-		const sender = deps.register(
-			deps.hostedHandle(pid, startTime, unit, pin, lifetime.invocation ?? null),
+		const handle = deps.hostedHandle(
+			pid,
+			startTime,
+			unit,
+			pin,
+			lifetime.invocation ?? null,
 		);
-		undo.push(() => deps.forgetSender(sender));
-		deps.attachTelemetry(lifetime, ips);
+		undo.push(() => deps.forgetSender(handle));
+		const sender = deps.register(handle);
 		undo.push(() => deps.stopTelemetry());
+		deps.attachTelemetry(lifetime, ips);
 		const generation = deps.sessionGeneration();
 		// The listeners act only once the adoption is committed.
 		const current = () => committed && deps.senderAlive(sender);
 		if (!deps.attachSession(generation, srtlaAddr, current))
 			throw new CommitRefused(refusal("commit", "listeners_unattached"));
 		undo.push(() => deps.detachSession(generation));
-
-		// Final validation, then the marker and the reconciliation.
-		const last = await validate(deps, lifetime, pin, evidence, intent);
-		if (last) throw new CommitRefused(last);
 		if (!deps.senderAlive(sender))
 			throw new CommitRefused(refusal("commit", "sender_changed"));
-		if (evidence.appliedMap)
-			deps.continueGeneration(evidence.appliedMap.generation);
-		noteAdoptedSender(sender);
+		// Asked again where reconciliation publishes streaming.
+		const stillEligible = () =>
+			committed ||
+			(deps.flagOn() &&
+				!deps.modemHold() &&
+				intent() &&
+				sameArmedIntent(evidence, deps.readMarker(), deps.captureConfig()));
+		noteAdoptedSender(sender, stillEligible);
 		undo.push(() => clearAdoptedSender(sender));
 		const state = await deps.reconcile().catch(() => "unknown" as const);
 		if (state !== "streaming")
@@ -437,8 +455,9 @@ async function commit(
 				: refusal("commit", "failed"),
 		);
 	}
+	if (evidence.appliedMap)
+		deps.continueGeneration(evidence.appliedMap.generation);
 	deps.adoptLifetime(lifetime);
-	if (deps.flagOn()) await sweepUnits(deps, unit);
 	logger.info("sender takeover: adopted the running sender", { unit });
 	return { result: "adopted", unit };
 }
@@ -515,6 +534,7 @@ export function defaultTakeoverDeps(): TakeoverDeps {
 			exec,
 			pinning,
 			launch,
+			admission,
 		] = await Promise.all([
 			import("./stream-restoration.ts"),
 			import("./stream-session-orchestrator.ts"),
@@ -530,6 +550,7 @@ export function defaultTakeoverDeps(): TakeoverDeps {
 			import("./streamloop/exec-paths.ts"),
 			import("../../helpers/process-pin.ts"),
 			import("./streamloop/start-stream.ts"),
+			import("./lifecycle-admission.ts"),
 		]);
 		captureConfig = restoration.captureArmedStreamConfig;
 		return {
@@ -547,6 +568,7 @@ export function defaultTakeoverDeps(): TakeoverDeps {
 			exec,
 			pinning,
 			launch,
+			admission,
 		};
 	};
 	let modules: Awaited<ReturnType<typeof lazy>> | undefined;
@@ -605,7 +627,8 @@ export function defaultTakeoverDeps(): TakeoverDeps {
 				m().launch.notifySenderError,
 				m().host.followSenderOutput(sender.unit, "now"),
 			),
-		forgetSender: (sender) => m().runner.forgetHostedSender(sender),
+		forgetSender: (handle) => m().runner.forgetHostedSender(handle),
+		modemHold: () => m().admission.globalStreamHold() !== undefined,
 		senderAlive: (sender) =>
 			sender.hosted !== undefined &&
 			sender.proc.exitCode === null &&

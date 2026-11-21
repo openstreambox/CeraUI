@@ -271,7 +271,13 @@ export async function launchHostedSender(
 		]);
 	} catch {
 		// systemd may have started it although the reply never came.
-		await stopSenderUnit(unit, deps).catch(() => undefined);
+		const cleanup = await stopSenderUnit(unit, deps).catch(
+			() => "failed" as const,
+		);
+		logger.warn("hosted sender: start unconfirmed, unit stop requested", {
+			unit,
+			cleanup,
+		});
 		throw new HostedLaunchError("start_unconfirmed", unit);
 	}
 	let pin: ProcessPin | null = null;
@@ -381,8 +387,7 @@ export async function stopSenderUnit(
 	if (initial.state === "unknown") return "failed";
 	if (!initial.transient || initial.description !== SENDER_DESCRIPTION)
 		return "not_ours";
-	if (invocation && initial.invocation && initial.invocation !== invocation)
-		return "not_ours";
+	if (invocation && initial.invocation !== invocation) return "not_ours";
 	if (isInactive(initial.active)) return "absent";
 	try {
 		await deps.run("systemctl", ["stop", "--no-block", "--", unit]);

@@ -271,6 +271,14 @@ describe("stopSenderUnit", () => {
 		expect(h.runs).toEqual([]);
 	});
 
+	test("a recorded invocation that systemd does not report is not a match", async () => {
+		const h = hostDeps({ show: async () => showText({ InvocationID: "" }) });
+		expect(await stopSenderUnit(UNIT, h.deps, 1_000, INVOCATION)).toBe(
+			"not_ours",
+		);
+		expect(h.runs).toEqual([]);
+	});
+
 	test("a unit that is gone or inactive is absent, with no stop sent", async () => {
 		const gone = hostDeps({ show: async () => "LoadState=not-found\n" });
 		expect(await stopSenderUnit(UNIT, gone.deps)).toBe("absent");

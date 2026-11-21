@@ -51,6 +51,8 @@ export type StreamingProcess = {
 	 * signal goes through that pidfd.
 	 */
 	hosted?: HostedSender;
+	/** Stops a hosted sender's output followers. */
+	stopOutput?: () => void;
 };
 
 /**
@@ -160,11 +162,12 @@ export function registerHostedSender(
 	};
 	streamingProcesses.push(streamingProcess);
 	if (followers) {
+		streamingProcess.stopOutput = () => followers.stop();
+		void sender.exited.then(() => followers.stop());
 		void captureSenderOutput(
 			{ stdout: followers.stdout, stderr: followers.stderr },
 			errCallback,
 		);
-		void sender.exited.then(() => followers.stop());
 	}
 	superviseExit(streamingProcess, streamingProcesses, true);
 	return streamingProcess;
@@ -361,11 +364,14 @@ async function stopHostedBounded(
  * Drop a hosted sender from supervision without signalling it: a takeover
  * that rolls back hands the sender to systemd, which stops its unit by name.
  */
-export function forgetHostedSender(streamingProcess: StreamingProcess): void {
-	if (!streamingProcess.hosted) return;
-	streamingProcess.exitListeners = [];
-	streamingProcess.hosted.release();
-	removeProc(streamingProcess);
+export function forgetHostedSender(sender: HostedSender): void {
+	for (const streamingProcess of [...streamingProcesses]) {
+		if (streamingProcess.hosted !== sender) continue;
+		streamingProcess.exitListeners = [];
+		streamingProcess.stopOutput?.();
+		removeProc(streamingProcess);
+	}
+	sender.release();
 }
 
 const stopCheckInterval = 50;

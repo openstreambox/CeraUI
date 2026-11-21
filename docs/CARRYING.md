@@ -292,17 +292,23 @@ cellular host record exists, or cannot be read. The check judges the same
 record the takeover then uses. When every check passes, the takeover is one
 transaction. First it prepares everything that can fail, with no side effect:
 it reads the recorded IP list, resolves the armed configuration's receiver
-address, and validates again (modem state, the record, the same pidfd alive
-with the same start time and an eligible state, then operator intent, the
-stream session still reconciling and the armed configuration). Then each step
-registers its undo: the engine session taken over on the connection that
+address, stops every other sender unit (systemd must confirm each, and a
+listing that does not answer refuses), and validates again (the record, the
+same pidfd alive with the same start time and an eligible state, modem state,
+the flag, then operator intent, the stream session still reconciling and the
+armed configuration). Then, with no wait in between, each step registers its
+undo before it runs: the engine session taken over on the connection that
 answered, the sender registered under that pidfd, telemetry reattached to the
 recorded stats file and control socket, the session's interface and USB
-listeners and reload checks (inert until the commit completes). A final
-validation repeats the checks and requires the pidfd to say the sender is
-alive at that moment. Only then is the sender marked adopted and one
-reconciliation run, which must report streaming. Any failure on the way undoes
-every step done, in reverse, including the engine session. Reconciliation
+listeners and reload checks (inert until the commit completes). The sender is
+then marked adopted together with its conditions (the flag, no modem hold,
+operator intent and the armed configuration unchanged), which reconciliation
+checks again at the moment it would report streaming, and one reconciliation
+runs. Any failure on the way undoes every step done, in reverse, including the
+engine session and the output followers; the map generation and the lifetime
+move only after streaming was reported. While that reconciliation waits for
+the engine, the registered sender is visible to the sender check and to a
+reload. Reconciliation
 reads the sender's pidfd at that moment, not a cached exit state, so a sender
 that exited or whose pidfd cannot answer is not accepted. The adopted session
 is then handled like one this backend started: Stop, reload and the sender
@@ -422,19 +428,25 @@ registro de cambios de módem, una concesión de llamada interna o un registro d
 host celular. La comprobación evalúa el mismo registro que luego usa la
 adopción. Cuando todo cumple, la adopción es una sola transacción. Primero
 prepara todo lo que puede fallar, sin efectos: lee la lista de IP registrada,
-resuelve la dirección del receptor de la configuración armada y valida otra vez
-(estado del módem, el registro, el mismo pidfd vivo con la misma hora de inicio
-y un estado válido, y después la intención del operador, la sesión de
-transmisión todavía en reconciliación y la configuración armada). Luego cada
-paso registra cómo deshacerse: la sesión del motor adoptada en la conexión que
-respondió, el emisor registrado con ese pidfd, la telemetría conectada otra vez
-al archivo de estadísticas y al socket de control registrados, y los escuchas de
-interfaces y USB y las comprobaciones de recarga de la sesión (inactivos hasta
-que la adopción se completa). Una validación final repite las comprobaciones y
-exige que el pidfd indique al emisor vivo en ese momento. Solo entonces se marca
-el emisor como adoptado y se ejecuta una reconciliación, que debe indicar
-transmisión. Cualquier fallo en el camino deshace cada paso hecho, en orden
-inverso, incluida la sesión del motor. La reconciliación consulta el pidfd del
+resuelve la dirección del receptor de la configuración armada, detiene
+cualquier otra unidad de emisor (systemd debe confirmar cada una, y una lista
+que no responde rechaza) y valida otra vez (el registro, el mismo pidfd vivo
+con la misma hora de inicio y un estado válido, el estado del módem, la opción,
+y después la intención del operador, la sesión de transmisión todavía en
+reconciliación y la configuración armada). Luego, sin esperas intermedias, cada
+paso registra cómo deshacerse antes de ejecutarse: la sesión del motor adoptada
+en la conexión que respondió, el emisor registrado con ese pidfd, la telemetría
+conectada otra vez al archivo de estadísticas y al socket de control
+registrados, y los escuchas de interfaces y USB y las comprobaciones de recarga
+de la sesión (inactivos hasta que la adopción se completa). Después se marca el
+emisor como adoptado junto con sus condiciones (la opción, sin bloqueo de
+módem, la intención del operador y la configuración armada sin cambios), que la
+reconciliación vuelve a comprobar en el momento en que indicaría transmisión, y
+se ejecuta una reconciliación. Cualquier fallo en el camino deshace cada paso
+hecho, en orden inverso, incluidos la sesión del motor y los lectores de
+salida; la generación del mapa y el registro de vida cambian solo después de
+indicar transmisión. Mientras esa reconciliación espera al motor, el emisor
+registrado es visible para la comprobación del emisor y para una recarga. La reconciliación consulta el pidfd del
 emisor en ese momento, no un estado de salida guardado, así que no acepta un
 emisor que terminó o cuyo pidfd no puede responder. La sesión adoptada se trata
 entonces como una iniciada por este backend: Detener, la recarga y la

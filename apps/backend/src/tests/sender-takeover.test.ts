@@ -180,6 +180,11 @@ let session: LifecycleState = "reconciling";
 let reconcileState: LifecycleState = "streaming";
 let registered: StreamingProcess | undefined;
 let detectOnlyArgs: unknown[] = [];
+let forgotten: HostedSender | undefined;
+let configOverride: Record<string, unknown> | undefined;
+let intentCurrent = true;
+let flag = true;
+let modemHold = false;
 
 function writeProcess(
 	pid: number,
@@ -213,6 +218,11 @@ beforeEach(() => {
 	session = "reconciling";
 	reconcileState = "streaming";
 	registered = undefined;
+	forgotten = undefined;
+	modemHold = false;
+	configOverride = undefined;
+	intentCurrent = true;
+	flag = true;
 	({ pin, state: pinState } = controlledPin());
 	writeProcess(PID);
 	clearAdoptedSender();
@@ -354,9 +364,11 @@ function deps(
 			calls.push("register");
 			return registeredSender(sender);
 		},
-		forgetSender: () => {
+		forgetSender: (handle) => {
 			calls.push("forgetSender");
+			forgotten = handle;
 		},
+		modemHold: () => modemHold,
 		senderAlive: (sender) =>
 			pinState.alive === true && sender.proc.exitCode === null,
 		continueGeneration: (applied) => calls.push(`generation:${applied}`),
@@ -452,7 +464,11 @@ describe("takeover: the commit is a transaction", () => {
 			check: "commit",
 			reason: "failed",
 		});
-		expectRolledBack(["forgetSender", "releaseEngine:session-1"]);
+		expectRolledBack([
+			"stopTelemetry",
+			"forgetSender",
+			"releaseEngine:session-1",
+		]);
 		expect(calls).not.toContain("reconcile:before-stop");
 		expect(calls.indexOf("reconcile")).toBeGreaterThan(
 			calls.indexOf(`stopUnit:${UNIT}`),
@@ -506,7 +522,7 @@ describe("takeover: the commit is a transaction", () => {
 		]);
 	});
 
-	test("a sender that dies while the listeners attach is caught by the final validation", async () => {
+	test("a sender that dies while the listeners attach is caught before reconciliation", async () => {
 		const outcome = await takeOverSenderAtStartup(
 			deps({
 				attachSession: (generation) => {
@@ -517,8 +533,13 @@ describe("takeover: the commit is a transaction", () => {
 			}),
 		);
 		expect(outcome).toMatchObject({ reason: "sender_changed" });
-		expectRolledBack(ALL_STEPS);
+		expectRolledBack(
+			["stopTelemetry", "forgetSender", "releaseEngine:session-1"].concat([
+				"detachSession:0",
+			]),
+		);
 		expect(calls).not.toContain("generation:7");
+		expect(calls).not.toContain("reconcile:first");
 	});
 
 	test("a pidfd that turns unknown before reconciliation is not adopted", async () => {
@@ -545,40 +566,154 @@ describe("takeover: the commit is a transaction", () => {
 			}),
 		);
 		expect(outcome).toMatchObject({ check: "commit", reason: "failed" });
-		expectRolledBack(["releaseEngine:session-1"]);
+		expectRolledBack(["forgetSender", "releaseEngine:session-1"]);
 	});
 
-	test("an operator Stop during the final validation refuses and undoes everything", async () => {
+	test("an operator Stop during the final validation refuses before any side effect", async () => {
 		let stopped = false;
-		let stats = 0;
 		const outcome = await takeOverSenderAtStartup(
 			deps({
 				captureIntent: () => () => !stopped,
 				readStat: async (pid) => {
-					// The second commit read is the final validation's.
-					if (++stats === 2) stopped = true;
+					stopped = true;
 					return readFileSync(join(root, "proc", String(pid), "stat"), "utf8");
 				},
 			}),
 		);
 		expect(outcome).toMatchObject({ reason: "operator_intent" });
-		expectRolledBack(ALL_STEPS);
+		expectFallback();
 	});
 
-	test("modem state that appears during the commit refuses and undoes everything", async () => {
-		let gates = 0;
-		const outcome = await takeOverSenderAtStartup(
+	test("no staged ownership is visible while the final validation awaits", async () => {
+		const seen: string[][] = [];
+		await takeOverSenderAtStartup(
 			deps({
+				readStat: async (pid) => {
+					seen.push([...calls]);
+					return readFileSync(join(root, "proc", String(pid), "stat"), "utf8");
+				},
 				modemGates: async () => {
+					seen.push([...calls]);
 					calls.push("modemGates");
-					return ++gates === 3
-						? { check: "modem", reason: "mutation_in_flight" }
-						: null;
+					return null;
 				},
 			}),
 		);
-		expect(outcome).toMatchObject({ reason: "mutation_in_flight" });
-		expectRolledBack(ALL_STEPS);
+		for (const snapshot of seen) {
+			expect(snapshot).not.toContain("register");
+			expect(snapshot.some((c) => c.startsWith("adoptEngine"))).toBe(false);
+			expect(snapshot).not.toContain("telemetry");
+		}
+	});
+
+	for (const [name, change, check] of [
+		[
+			"a configuration push",
+			() => {
+				configOverride = { ...CONFIG, max_br: 1 };
+			},
+			"config",
+		],
+		[
+			"an operator Stop",
+			() => {
+				intentCurrent = false;
+			},
+			"intent",
+		],
+		[
+			"the flag switched off",
+			() => {
+				flag = false;
+			},
+			"flag",
+		],
+		[
+			"a modem hold",
+			() => {
+				modemHold = true;
+			},
+			"modem",
+		],
+	] as const)
+		test(`${name} while reconciliation awaits the engine is seen where streaming would be published`, async () => {
+			let eligibleAtPublish: unknown = "unset";
+			reconcileState = "reconciling";
+			const outcome = await takeOverSenderAtStartup(
+				deps({
+					flagOn: () => flag,
+					captureIntent: () => () => intentCurrent,
+					captureConfig: () => configOverride ?? { ...CONFIG },
+					reconcile: async () => {
+						calls.push("reconcile");
+						// The commit's reconciliation only; the fallback reconciles again.
+						if (eligibleAtPublish !== "unset") return reconcileState;
+						change();
+						// What the production rule asks at the publish point.
+						eligibleAtPublish = adoptedSender();
+						return reconcileState;
+					},
+				}),
+			);
+			expect(eligibleAtPublish).toBeUndefined();
+			expect(outcome.result).toBe("fallback");
+			void check;
+		});
+
+	test("after the commit, a configuration change no longer withdraws the adoption", async () => {
+		await takeOverSenderAtStartup(deps());
+		configOverride = { ...CONFIG, max_br: 1 };
+		intentCurrent = false;
+		expect(adoptedSender()).toBe(registered);
+	});
+
+	test("other sender units that cannot be confirmed stopped refuse before any side effect", async () => {
+		for (const over of [
+			{
+				listUnits: async () => {
+					calls.push("listUnits");
+					return [UNIT, OTHER_UNIT];
+				},
+				stopUnit: async (unit: string): Promise<UnitStopOutcome> => {
+					calls.push(`stopUnit:${unit}`);
+					return unit === OTHER_UNIT ? "timed_out" : "stopped";
+				},
+			},
+			{
+				listUnits: async () => {
+					calls.push("listUnits");
+					return null;
+				},
+			},
+		]) {
+			calls = [];
+			({ pin, state: pinState } = controlledPin());
+			const outcome = await takeOverSenderAtStartup(deps(over));
+			expect(outcome).toMatchObject({
+				check: "commit",
+				reason: "other_units_unconfirmed",
+			});
+			expect(calls).not.toContain("register");
+			// The recorded unit is stopped, but no reconciliation follows the
+			// unconfirmed cleanup.
+			expect(calls).not.toContain("reconcile");
+		}
+	});
+
+	test("a registration that throws part way is still undone by its handle", async () => {
+		const outcome = await takeOverSenderAtStartup(
+			deps({
+				register: (sender) => {
+					calls.push("register");
+					registeredSender(sender);
+					throw new Error("output capture failed");
+				},
+			}),
+		);
+		expect(outcome).toMatchObject({ reason: "failed" });
+		expect(forgotten).toBeDefined();
+		expect(calls).toContain("forgetSender");
+		expect(calls).not.toContain("generation:7");
 	});
 
 	test("modem state that appears during the collection refuses before any side effect", async () => {
@@ -651,22 +786,23 @@ describe("takeover: adoption", () => {
 			`pin:${PID}`,
 			"readStats",
 			"queryEngine",
-			// Prepared with no side effects: everything that can fail first.
+			// Prepared with no side effects: everything that can fail first,
+			// the other units' cleanup included, then the final validation.
 			"readIps",
 			"resolveAddr",
+			"listUnits",
 			"modemGates",
-			// Each step from here is undone if a later one fails.
+			// No await from here to the reconciliation: each step is undone if
+			// a later one fails.
 			`adoptEngine:session-1:${CONNECTION}`,
 			`handle:${PID}:${START}:${UNIT}`,
 			"register",
 			"telemetry",
 			"session:0",
-			// The final validation, then the one step that marks it streaming.
-			"modemGates",
-			"generation:7",
 			"reconcile",
+			// Only after streaming was published.
+			"generation:7",
 			"adoptLifetime",
-			"listUnits",
 		]);
 		// The pin the evidence used is the one the handle holds: still open.
 		expect(pinState.closed).toBe(false);
@@ -1233,12 +1369,8 @@ describe("takeover: the fallback itself", () => {
 			),
 		);
 		expect(outcome.result).toBe("fallback");
-		expect(calls).toEqual([
-			"modemGates",
-			`pin:${PID}`,
-			`stopUnit:${UNIT}`,
-			"reconcile",
-		]);
+		// Unknown is not "none left": no reconciliation after it.
+		expect(calls).toEqual(["modemGates", `pin:${PID}`, `stopUnit:${UNIT}`]);
 	});
 
 	test("an exception anywhere ends in the fallback, never in a throw", async () => {
