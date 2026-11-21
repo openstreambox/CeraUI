@@ -300,7 +300,10 @@ describe("1 · the evaluator cannot flood the history", () => {
 		};
 		const now = Date.now();
 		for (let i = 0; i < 3; i++) recordModeChoice(tag, { ...base, at: now + i });
-		for (let i = 0; i < 300; i++)
+		// Ten past the cap proves eviction; every write is synced to disk, so
+		// a few hundred of them could pass Bun's 5 s limit on a loaded runner.
+		const evaluatorWrites = MODE_HISTORY_CAP_PER_SOURCE + 10;
+		for (let i = 0; i < evaluatorWrites; i++)
 			recordModeChoice(tag, {
 				...base,
 				source: "evaluator",
@@ -314,7 +317,9 @@ describe("1 · the evaluator cannot flood the history", () => {
 			MODE_HISTORY_CAP_PER_SOURCE,
 		);
 		expect(row(0)?.history).toHaveLength(10);
-		expect(row(0)?.history?.at(-1)?.reasons).toEqual(["synthetic-299"]);
+		expect(row(0)?.history?.at(-1)?.reasons).toEqual([
+			`synthetic-${evaluatorWrites - 1}`,
+		]);
 	});
 });
 
