@@ -1659,6 +1659,7 @@
 	"network.view.configure": "تكوين",
 	"network.view.connect": "اتصال",
 	"network.view.connected": "متصل",
+	"network.view.carryingNothing": "متصل، لكنه لا يرسل شيئًا",
 	"network.view.disableBond": "إزالة من التجميع",
 	"network.view.disconnected": "غير متصل",
 	"network.view.enableBond": "إضافة إلى التجميع",

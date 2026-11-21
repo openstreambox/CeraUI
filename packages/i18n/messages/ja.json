@@ -1602,6 +1602,7 @@
 	"network.view.configure": "設定",
 	"network.view.connect": "接続",
 	"network.view.connected": "接続済み",
+	"network.view.carryingNothing": "接続済みですが、何も送信していません",
 	"network.view.disableBond": "ボンディングから除外",
 	"network.view.disconnected": "切断済み",
 	"network.view.enableBond": "ボンディングに追加",

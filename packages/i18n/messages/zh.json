@@ -1602,6 +1602,7 @@
 	"network.view.configure": "配置",
 	"network.view.connect": "连接",
 	"network.view.connected": "已连接",
+	"network.view.carryingNothing": "已连接，但没有发送任何数据",
 	"network.view.disableBond": "移出绑定",
 	"network.view.disconnected": "已断开",
 	"network.view.enableBond": "加入绑定",

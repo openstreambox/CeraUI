@@ -4,6 +4,7 @@ import type { LinkTelemetryEntry, LinkTelemetryMessage, Modem } from '@ceraui/rp
 import { Radio } from '@lucide/svelte';
 import Badge from '$lib/components/custom/Badge.svelte';
 import LinkBadge from '$lib/components/custom/LinkBadge.svelte';
+import LinkCarryingNote from '$lib/components/custom/LinkCarryingNote.svelte';
 import LinkTelemetry from '$lib/components/custom/LinkTelemetry.svelte';
 import { aggregateBondBandwidth, linkUpKbps } from '$lib/helpers/bond-bandwidth';
 import { formatThroughput } from '$lib/helpers/network-speed';
@@ -116,6 +117,8 @@ const totalStale = $derived(
 					     about which glyph a link gets — which is exactly how a
 					     self-managed dongle came to draw a different one here. -->
 					<LinkBadge {link} typeLabel={linkTypeLabel(link)} {identity} {state} />
+					<!-- Read right after the link's name, drawn as the card's last line. -->
+					<LinkCarryingNote class="order-last w-full" {entry} />
 					<!-- The instruments travel as ONE unit so a wrap cannot strand the
 					     speed badge on a line away from the telemetry it belongs with, and
 					     so the group wraps whole rather than item by item. Every member is

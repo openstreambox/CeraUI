@@ -1647,6 +1647,7 @@
 	"network.view.configure": "Configure",
 	"network.view.connect": "Connect",
 	"network.view.connected": "Connected",
+	"network.view.carryingNothing": "Connected, but sending nothing",
 	"network.view.disableBond": "Disable Bond",
 	"network.view.disconnected": "Disconnected",
 	"network.view.enableBond": "Enable Bond",
