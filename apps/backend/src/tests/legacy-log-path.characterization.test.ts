@@ -3,11 +3,28 @@ import { logger } from "../helpers/logger.ts";
 import * as runModule from "../helpers/run.ts";
 import * as mockService from "../mocks/mock-service.ts";
 import { getLog } from "../modules/system/logs.ts";
+import { SUPPORT_JOURNAL_MATCHES } from "../modules/system/support-journal.ts";
 import * as notifications from "../modules/ui/notifications.ts";
 
 const MAX_BUFFER = 10 * 1024 * 1024;
 
-type RunCall = [string, string[], { maxBuffer: number }];
+type RunCall = [string, string[], { maxBuffer: number; timeout: number }];
+
+// The download reads a bounded, typed journal history and redacts it.
+const HISTORY_ARGS = [
+	"--since=-7days",
+	"--lines=10000",
+	"--no-pager",
+	"--output=json",
+	"--output-fields=MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_COMM,_TRANSPORT,_PID,_STREAM_ID,_LINE_BREAK,_BOOT_ID,__REALTIME_TIMESTAMP",
+];
+const HISTORY_OPTIONS = { maxBuffer: MAX_BUFFER, timeout: 15000 };
+
+function expectRedactedExport(contents: string | undefined, raw: string): void {
+	expect(contents?.startsWith("Support log: retained last 7 days;")).toBe(true);
+	expect(contents).toContain("Records: 0 shown, 1 withheld");
+	expect(contents).not.toContain(raw);
+}
 
 function fakeConn(sent: string[]) {
 	return {
@@ -46,18 +63,14 @@ describe("legacy system log download path", () => {
 
 		const result = await getLog(fakeConn(sent), "ceralive.service");
 
-		expect(journalctlCalls(runSpy)).toEqual([
-			[
-				"journalctl",
-				["-b", "-u", "ceralive.service"],
-				{ maxBuffer: MAX_BUFFER },
-			],
+		expect(journalctlCalls(runSpy)[0]).toEqual([
+			"journalctl",
+			[...HISTORY_ARGS, "-u", "ceralive.service"],
+			HISTORY_OPTIONS,
 		]);
-		expect(result).toEqual({
-			name: "ceralive.service_log.txt",
-			contents,
-		});
-		expectLogPush(sent, "ceralive.service_log.txt", contents);
+		expect(result?.name).toBe("ceralive.service_log.txt");
+		expectRedactedExport(result?.contents, contents);
+		expectLogPush(sent, "ceralive.service_log.txt", result?.contents ?? "");
 	});
 
 	it("gets the full boot journal when no service is supplied", async () => {
@@ -68,14 +81,14 @@ describe("legacy system log download path", () => {
 
 		const result = await getLog(fakeConn(sent));
 
-		expect(journalctlCalls(runSpy)).toEqual([
-			["journalctl", ["-b"], { maxBuffer: MAX_BUFFER }],
+		expect(journalctlCalls(runSpy)[0]).toEqual([
+			"journalctl",
+			[...HISTORY_ARGS, ...SUPPORT_JOURNAL_MATCHES],
+			HISTORY_OPTIONS,
 		]);
-		expect(result).toEqual({
-			name: "ceralive_system_log.txt",
-			contents,
-		});
-		expectLogPush(sent, "ceralive_system_log.txt", contents);
+		expect(result?.name).toBe("ceralive_system_log.txt");
+		expectRedactedExport(result?.contents, contents);
+		expectLogPush(sent, "ceralive_system_log.txt", result?.contents ?? "");
 	});
 
 	it("returns undefined and raises log_error without a log frame on failure", async () => {
@@ -93,8 +106,8 @@ describe("legacy system log download path", () => {
 		expect(journalctlCalls(runSpy)).toEqual([
 			[
 				"journalctl",
-				["-b", "-u", "ceralive.service"],
-				{ maxBuffer: MAX_BUFFER },
+				[...HISTORY_ARGS, "-u", "ceralive.service"],
+				HISTORY_OPTIONS,
 			],
 		]);
 		expect(result).toBeUndefined();
@@ -107,7 +120,7 @@ describe("legacy system log download path", () => {
 					{
 						name: "log_error",
 						type: "error",
-						msg: "Failed to fetch the log: Error: journalctl unavailable",
+						msg: "Failed to read the system journal.",
 						is_dismissable: true,
 						is_persistent: false,
 						duration: 10,
@@ -120,7 +133,7 @@ describe("legacy system log download path", () => {
 			conn,
 			"log_error",
 			"error",
-			"Failed to fetch the log: Error: journalctl unavailable",
+			"Failed to read the system journal.",
 			10,
 		);
 	});
