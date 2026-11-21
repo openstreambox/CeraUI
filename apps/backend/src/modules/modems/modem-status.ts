@@ -1,6 +1,3 @@
-import type { RadioHealth } from "@ceraui/rpc/schemas";
-import { emptyRadio } from "./radio-health.ts";
-import { radioForModem } from "./radio-health-runtime.ts";
 /*
     CeraUI - web UI for the CeraLive project
     Copyright (C) 2024-2025 CeraLive project
@@ -17,6 +14,8 @@ import { radioForModem } from "./radio-health-runtime.ts";
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
+
+import type { RadioHealth } from "@ceraui/rpc/schemas";
 
 import { invariant } from "../../helpers/invariant.ts";
 import { logger } from "../../helpers/logger.ts";
@@ -35,6 +34,8 @@ import {
 	type ModemConfig,
 	type SimLock,
 } from "./modems-state.ts";
+import { emptyRadio } from "./radio-health.ts";
+import { radioForModem } from "./radio-health-runtime.ts";
 import { evaluateRoamingAdvisoriesForWire } from "./roaming-advisory.ts";
 import { claimsNoSim, type SimPresence } from "./sim-presence.ts";
 
