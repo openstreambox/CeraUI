@@ -23,8 +23,9 @@ import {
 	createDeviceStatsState,
 	type DeviceStatsDeps,
 } from "../modules/system/device-stats.ts";
-import { broadcast } from "../rpc/events.ts";
+import { addClient, broadcast, removeClient } from "../rpc/events.ts";
 import { startHeartbeat, stopHeartbeat } from "../rpc/heartbeat.ts";
+import type { AppWebSocket } from "../rpc/types.ts";
 
 interface CapturedRecord {
 	level: string;
@@ -220,16 +221,53 @@ describe("loop visibility — heartbeat + broadcast", () => {
 	});
 
 	test("at debug, a broadcast logs the event name and client count", async () => {
+		const client = {
+			data: { isAuthenticated: true, lastActive: Date.now() },
+			send: () => {},
+		} as unknown as AppWebSocket;
+		addClient(client);
+		try {
+			await withCapture("debug", async (records) => {
+				broadcast("loop-visibility-probe", { n: 1 });
+				await flush();
+
+				const entry = records.find(
+					(r) =>
+						r.message === "broadcast" && r.event === "loop-visibility-probe",
+				);
+				expect(entry).toBeDefined();
+				expect(entry?.clients).toBe(1);
+			});
+		} finally {
+			removeClient(client);
+		}
+	});
+
+	test("at debug, a broadcast that reached no client logs nothing", async () => {
 		await withCapture("debug", async (records) => {
-			broadcast("loop-visibility-probe", { n: 1 });
+			broadcast("loop-visibility-probe-unseen", { n: 1 });
 			await flush();
 
-			const entry = records.find(
-				(r) => r.message === "broadcast" && r.event === "loop-visibility-probe",
-			);
-			expect(entry).toBeDefined();
-			expect(entry?.clients).toBe(0);
+			expect(records.find((r) => r.message === "broadcast")).toBeUndefined();
 		});
+	});
+
+	test("at debug, the audio meter's pushes log nothing even with a client", async () => {
+		const client = {
+			data: { isAuthenticated: true, lastActive: Date.now() },
+			send: () => {},
+		} as unknown as AppWebSocket;
+		addClient(client);
+		try {
+			await withCapture("debug", async (records) => {
+				broadcast("audio-level", { seq: 1, rms_db: [-20], peak_db: [-10] });
+				await flush();
+
+				expect(records.find((r) => r.message === "broadcast")).toBeUndefined();
+			});
+		} finally {
+			removeClient(client);
+		}
 	});
 
 	test("at default prod level (warn) a broadcast logs no per-tick line", async () => {
