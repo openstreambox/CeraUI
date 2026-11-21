@@ -6,6 +6,7 @@ import {
 	previewBundle,
 } from "../modules/device-logs/bundle.ts";
 import * as data from "../modules/device-logs/bundle-data.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import { bootId, journal, queryFixture } from "./helpers/device-query.ts";
 
 let fixture: ReturnType<typeof queryFixture>;
@@ -38,6 +39,7 @@ beforeEach(() => {
 		},
 		events: [],
 		bootRecords: [],
+		state: bundleStateFixture(),
 		secrets: [],
 	});
 });

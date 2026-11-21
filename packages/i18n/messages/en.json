@@ -3020,6 +3020,7 @@
 	"systemLogs.sharing.bundleSectionEvents": "Events",
 	"systemLogs.sharing.bundleSectionJournal": "Raw logs",
 	"systemLogs.sharing.bundleSectionSettings": "Settings",
+	"systemLogs.sharing.bundleSectionState": "Device state",
 	"systemLogs.sharing.bundleEntries": "Entries",
 	"systemLogs.sharing.bundleRedactions": "Removed values",
 	"systemLogs.sharing.bundleRunning": "Running now",

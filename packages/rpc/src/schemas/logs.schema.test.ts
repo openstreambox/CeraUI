@@ -510,7 +510,7 @@ describe('complete legal wire states and required fields', () => {
 	test.each(['debug', 'info'])('accepts detail enum member %s', (detail) => {
 		expect(logRetentionSchema.parse({ ...retention, detail }).detail).toBe(detail);
 	});
-	test.each(['versions', 'events', 'journal', 'settings'])(
+	test.each(['versions', 'events', 'journal', 'settings', 'state'])(
 		'accepts bundle section enum member %s',
 		(id) => {
 			const section =

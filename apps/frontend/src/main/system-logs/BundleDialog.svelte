@@ -30,6 +30,7 @@ type SectionId = LogBundleManifest['sections'][number]['id'];
 const SECTIONS: Record<SectionId, () => string> = {
 	versions: () => m['systemLogs.sharing.bundleSectionVersions'](),
 	settings: () => m['systemLogs.sharing.bundleSectionSettings'](),
+	state: () => m['systemLogs.sharing.bundleSectionState'](),
 	events: () => m['systemLogs.sharing.bundleSectionEvents'](),
 	journal: () => m['systemLogs.sharing.bundleSectionJournal'](),
 };

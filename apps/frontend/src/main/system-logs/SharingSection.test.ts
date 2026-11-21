@@ -468,10 +468,11 @@ describe("SharingSection: support bundle", () => {
 		expect(rows).toEqual([
 			[sharing.bundleSectionVersions, "2", "0"],
 			[sharing.bundleSectionSettings, "6", "1"],
+			[sharing.bundleSectionState, "1", "0"],
 			[sharing.bundleSectionEvents, "14", "0"],
 			[sharing.bundleSectionJournal, (1234).toLocaleString("en"), "9"],
 		]);
-		expect(within(table).getAllByRole("rowheader")).toHaveLength(4);
+		expect(within(table).getAllByRole("rowheader")).toHaveLength(5);
 		expect(
 			within(body).getByTestId("sharing-bundle-boots").textContent?.trim(),
 		).toBe(sharing.bundleBoots.replace("{count}", "2"));

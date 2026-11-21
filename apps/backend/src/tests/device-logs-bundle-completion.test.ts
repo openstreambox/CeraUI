@@ -6,6 +6,7 @@ import {
 } from "../modules/device-logs/bundle.ts";
 import * as data from "../modules/device-logs/bundle-data.ts";
 import { abortLogExports } from "../modules/device-logs/export.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import {
 	bootId,
 	journal,
@@ -44,6 +45,7 @@ beforeEach(() => {
 		},
 		events: [],
 		bootRecords: [],
+		state: bundleStateFixture(),
 		secrets: [],
 	});
 });
@@ -93,8 +95,8 @@ test("a download delivers its declared records and then closes each read", async
 	const reader = response.body.getReader();
 	let reading = Promise.resolve();
 	try {
-		// Exporter, stored boot, settings and end are four complete gzip members.
-		for (let member = 0; member < 5; member++) {
+		// Exporter, stored boot, settings, state and end are five complete gzip members.
+		for (let member = 0; member < 6; member++) {
 			let outcome = "pending";
 			reading = reader.read().then(
 				(value) => {
@@ -105,7 +107,7 @@ test("a download delivers its declared records and then closes each read", async
 				},
 			);
 			await new Promise<void>((resolve) => setImmediate(resolve));
-			expect(outcome).toBe(member === 4 ? "closed" : "member");
+			expect(outcome).toBe(member === 5 ? "closed" : "member");
 		}
 	} finally {
 		await reader.cancel();

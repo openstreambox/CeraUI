@@ -9,6 +9,7 @@ import { buildBundle } from "../modules/device-logs/bundle-body.ts";
 import * as data from "../modules/device-logs/bundle-data.ts";
 import { toLogEntry } from "../modules/device-logs/parse.ts";
 import * as pages from "../modules/device-logs/scan-page.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import { bootId, queryFixture, record } from "./helpers/device-query.ts";
 
 const NativeCompression = CompressionStream;
@@ -38,12 +39,14 @@ const snapshot: Awaited<ReturnType<typeof data.collectBundleData>> = {
 	},
 	events: [],
 	bootRecords: [],
+	state: bundleStateFixture(),
 	secrets: [],
 };
 const prelude = [
 	{ section: "versions", exportedBy: context },
 	{ section: "versions", bootId, versions: null },
 	{ section: "settings", ...snapshot.settings },
+	{ section: "state", state: snapshot.state },
 ];
 const base = { ...toLogEntry(record(1)), message: "" };
 const line = (value: unknown) => `${JSON.stringify(value)}\n`;

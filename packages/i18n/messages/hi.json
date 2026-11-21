@@ -3020,6 +3020,7 @@
 	"systemLogs.sharing.bundleSectionEvents": "इवेंट",
 	"systemLogs.sharing.bundleSectionJournal": "रॉ लॉग",
 	"systemLogs.sharing.bundleSectionSettings": "सेटिंग्स",
+	"systemLogs.sharing.bundleSectionState": "डिवाइस की स्थिति",
 	"systemLogs.sharing.bundleEntries": "एंट्री",
 	"systemLogs.sharing.bundleRedactions": "हटाए गए मान",
 	"systemLogs.sharing.bundleRunning": "अभी चल रहा है",

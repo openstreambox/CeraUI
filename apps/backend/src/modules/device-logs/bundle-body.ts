@@ -55,6 +55,10 @@ export async function buildBundle(
 		bootFields.set(boot, boot.bootId);
 		if (boot.versions) bootFields.set(boot.versions, boot.bootId);
 	}
+	for (const boot of snapshot.state.boots) {
+		if (snapshot.journalBoots.includes(boot.bootId))
+			bootFields.set(boot, boot.bootId);
+	}
 	for (const boot of snapshot.bootRecords) {
 		bootFields.set(boot, boot.bootId);
 		if (boot.versions) bootFields.set(boot.versions, boot.bootId);
@@ -83,6 +87,7 @@ export async function buildBundle(
 		sections: [
 			{ id: "versions", ...counts },
 			{ id: "settings", ...counts },
+			{ id: "state", ...counts },
 			{ id: "events", ...counts },
 			journal,
 		],
@@ -186,6 +191,7 @@ export async function buildBundle(
 		["versions", { exportedBy: snapshot.exportedBy }],
 		...snapshot.boots.map((boot) => ["versions", boot] as const),
 		["settings", snapshot.settings],
+		["state", { state: snapshot.state }],
 		...snapshot.events.map((event) => ["events", { event }] as const),
 		...snapshot.bootRecords.map((boot) => ["events", { boot }] as const),
 	];

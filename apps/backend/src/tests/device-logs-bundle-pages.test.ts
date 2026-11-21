@@ -13,6 +13,7 @@ import {
 } from "../modules/device-logs/query-admission.ts";
 import { scanJournal } from "../modules/device-logs/reader.ts";
 import * as pages from "../modules/device-logs/scan-page.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import {
 	fakeJournal,
 	journalLine,
@@ -58,6 +59,7 @@ beforeEach(() => {
 		},
 		events: [],
 		bootRecords: [],
+		state: bundleStateFixture(),
 		secrets: [],
 	});
 });

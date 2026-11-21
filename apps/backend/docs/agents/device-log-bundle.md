@@ -24,6 +24,30 @@ null. No config dump, password hash, authentication-token file, Wi-Fi PSK or
 NetworkManager profile is included. `readUpdateChannel()` reuses the update
 owner's validated readers without migrating or writing settings.
 
+`bundle-state.ts` builds the `state` section's single record, field by field,
+from closed vocabularies, bounded numbers and validated version strings; no
+source object is copied. It holds uptime, memory headroom from the cached device
+stats, how the running and previous journal boots ended (`current`, or the
+`clean`/`unclean`/`unknown` classification with its evidence codes and the
+boot's first and last timestamps, through `classifyFinishedBoot`), both rootfs
+slots from `rauc status` (name, bootname, state, boot status, bundle version),
+the boot-state helper's `BOOT_ORDER` and remaining attempts per slot from
+`/boot/boot_state.txt`, installed versions of first-party and modem/network
+stack packages from the dpkg status file, each modem's manufacturer, model,
+connection state, mode, access technology, signal, roaming, SIM presence and lock
+type and whether an APN is configured, each network interface's kernel name
+(MAC-derived names become `[interface]`), bond and IPv4-address flags and
+rates, and the stream lifecycle with applied and ceiling bitrate. It never
+carries operator or network names, SIM, subscriber or device identifiers, phone
+numbers, APN text or credentials, addresses, connection ids or SSIDs. A value
+outside its grammar becomes `[value]`; a product string with six or more
+consecutive digits does too. Each source is optional: a failed read leaves its
+field null or empty. Only a real device (`isRealDevice`, outside mock mode)
+runs `rauc` or reads the boot-state and dpkg files; a dev host or CI never does. The record's boot ids are
+registered like the other boot fields; its strings still pass the structured
+collision and pattern checks, so a held secret equal to one of them refuses the
+operation as elsewhere.
+
 Held config, relay, hotspot, APN and router credentials are inputs to redaction
 only. `getStoredModemCredentials()` returns copies of the username/password
 pairs, including disconnected devices, without identity or verification
@@ -92,7 +116,7 @@ admitted entries and `complete` based on whether collection finished without a
 cut or read failure. The separate `boots` list still reports version context.
 Budget pages continue when the cursor advances. A missing or unchanged budget
 cursor ends that boot with `READ_FAILED` and marks the journal incomplete. Sections are
-versions, settings, events and journal, followed by an end record. A journal
+versions, settings, state, events and journal, followed by an end record. A journal
 failure or cut adds an incomplete journal record and `complete:false`. Caps are
 32 MiB of NDJSON, 8 MiB of gzip and sixty seconds, including reserved termination
 records inside both byte caps.

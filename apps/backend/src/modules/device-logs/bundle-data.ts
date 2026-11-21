@@ -10,6 +10,7 @@ import { readUpdateChannel } from "../system/update-settings.ts";
 import { collectVersionContext } from "../system/version-context.ts";
 import { getAllHotspotCredentials } from "../wifi/hotspot-credentials.ts";
 import { listBoots } from "./boots.ts";
+import { type BundleDeviceState, collectBundleState } from "./bundle-state.ts";
 import { getLogSettings, getLogState } from "./settings.ts";
 
 interface BundleData {
@@ -24,6 +25,7 @@ interface BundleData {
 		readonly hardwareKind: ReturnType<typeof getHardwareKindCached>;
 		readonly data: { readonly used: number; readonly total: number } | null;
 	};
+	readonly state: BundleDeviceState;
 	readonly events: readonly DeviceEvent[];
 	readonly bootRecords: readonly EventBootRecord[];
 	readonly secrets: ReadonlyArray<{
@@ -73,6 +75,12 @@ export async function collectBundleData(): Promise<BundleData> {
 		...(previous ? [previous.bootId] : []),
 	];
 	const disk = getDeviceStatsSnapshot()?.disk;
+	const events = readEvents();
+	const state = await collectBundleState({
+		boots: available,
+		journalBoots,
+		events,
+	});
 	return structuredClone({
 		exportedBy,
 		boots: journalBoots.map((bootId) => ({
@@ -89,7 +97,8 @@ export async function collectBundleData(): Promise<BundleData> {
 			hardwareKind: getHardwareKindCached(),
 			data: disk ? { used: disk.used, total: disk.total } : null,
 		},
-		events: readEvents(),
+		state,
+		events,
 		bootRecords: readBoots(),
 		secrets,
 	});

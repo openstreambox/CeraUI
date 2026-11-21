@@ -20,6 +20,7 @@ import {
 } from "../modules/device-logs/export.ts";
 import { queryLogs } from "../modules/device-logs/query.ts";
 import * as pages from "../modules/device-logs/scan-page.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import {
 	bootId,
 	journal,
@@ -72,6 +73,7 @@ function snapshot() {
 			},
 		],
 		bootRecords: [{ bootId, startedAt: 0, versions: context }],
+		state: bundleStateFixture(),
 		secrets: [
 			{ kind: "stream", value: "stream-secret" },
 			{ kind: "ssh", value: "ssh-password" },
@@ -161,6 +163,7 @@ test("preview and download use the same redacted pipeline, stored boot versions 
 		expect(manifest.sections).toEqual([
 			{ id: "versions", entries: 3, redactions: 0 },
 			{ id: "settings", entries: 1, redactions: 0 },
+			{ id: "state", entries: 1, redactions: 0 },
 			{ id: "events", entries: 2, redactions: 0 },
 			{
 				id: "journal",
@@ -188,6 +191,7 @@ test("preview and download use the same redacted pipeline, stored boot versions 
 			"versions",
 			"versions",
 			"settings",
+			"state",
 			"events",
 			"events",
 			"journal",

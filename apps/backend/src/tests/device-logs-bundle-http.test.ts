@@ -6,6 +6,7 @@ import * as bundle from "../modules/device-logs/bundle.ts";
 import { abortLogBundles } from "../modules/device-logs/bundle.ts";
 import * as data from "../modules/device-logs/bundle-data.ts";
 import { appRouter } from "../rpc/router.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import {
 	bootId,
 	journal,
@@ -53,6 +54,7 @@ beforeEach(async () => {
 		},
 		events: [],
 		bootRecords: [],
+		state: bundleStateFixture(),
 		secrets: [{ kind: "stream", value: "planted-stream-key" }],
 	});
 	sockets = await logsSockets();

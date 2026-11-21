@@ -515,6 +515,7 @@ Rules for this copy:
 | `systemLogs.sharing.bundleSectionEvents` | Events | Manifest row |
 | `systemLogs.sharing.bundleSectionJournal` | Raw logs | Manifest row |
 | `systemLogs.sharing.bundleSectionSettings` | Settings | Manifest row |
+| `systemLogs.sharing.bundleSectionState` | Device state | Manifest row |
 | `systemLogs.sharing.bundleEntries` | Entries | Manifest table header |
 | `systemLogs.sharing.bundleRedactions` | Removed values | Manifest table header |
 | `systemLogs.sharing.bundleRunning` | Running now | Version block heading (exportedBy) |

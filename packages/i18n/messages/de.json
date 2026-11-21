@@ -3020,6 +3020,7 @@
 	"systemLogs.sharing.bundleSectionEvents": "Ereignisse",
 	"systemLogs.sharing.bundleSectionJournal": "Rohprotokolle",
 	"systemLogs.sharing.bundleSectionSettings": "Einstellungen",
+	"systemLogs.sharing.bundleSectionState": "Gerätezustand",
 	"systemLogs.sharing.bundleEntries": "Einträge",
 	"systemLogs.sharing.bundleRedactions": "Entfernte Werte",
 	"systemLogs.sharing.bundleRunning": "Läuft gerade",

@@ -11,6 +11,7 @@ import {
 	abortLogExports,
 	createExport,
 } from "../modules/device-logs/export.ts";
+import { bundleStateFixture } from "./helpers/bundle-state.ts";
 import {
 	bootId,
 	journal,
@@ -51,6 +52,7 @@ beforeEach(() => {
 		},
 		events: [],
 		bootRecords: [],
+		state: bundleStateFixture(),
 		secrets: [],
 	};
 	collect = spyOn(data, "collectBundleData").mockImplementation(
@@ -104,6 +106,19 @@ test("a known boot ID with a long digit run survives preview and download", asyn
 		boots: [{ bootId: numericBootId, versions }],
 		journalBoots: [numericBootId],
 		bootRecords: [{ bootId: numericBootId, startedAt: 1, versions }],
+		state: {
+			...bundleStateFixture(),
+			boots: [
+				{
+					bootId: numericBootId,
+					current: true,
+					firstTs: 1,
+					lastTs: 2,
+					shutdown: "current",
+					evidence: [],
+				},
+			],
+		},
 		events: [
 			deviceEventSchema.parse({
 				id: "event",
@@ -142,6 +157,9 @@ test("a known boot ID with a long digit run survives preview and download", asyn
 	expect(text).toContain(`"boot":{"bootId":"${numericBootId}"`);
 	expect(text).toContain(
 		`"event":{"id":"event","seq":1,"bootId":"${numericBootId}"`,
+	);
+	expect(text).toContain(
+		`"section":"state","state":{"uptimeSeconds":60,"memory":null,"boots":[{"bootId":"${numericBootId}","current":true`,
 	);
 	expect(text).toContain("modem identifier [ID]");
 	expect(text).toContain("boot text abeefc[ID]b432da848fa");
