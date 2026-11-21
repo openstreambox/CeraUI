@@ -506,6 +506,49 @@ describe("collectSenderAdoptionEvidence", () => {
 		});
 	});
 
+	test("a refusal before the live reads contacts neither the sender nor the engine", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		let engineQueries = 0;
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				readLifetime: async () => lifetime({ host: "backend-child" }),
+				queryEngine: async () => {
+					engineQueries++;
+					return "streaming";
+				},
+			}),
+		);
+		expect(statsReads).toBe(0);
+		expect(engineQueries).toBe(0);
+		expect(e.reads).toEqual([]);
+		expect(e.engine).toBe("unknown");
+		expect(senderAdoptionVerdict(e)).toMatchObject({
+			reason: "dies_with_backend",
+		});
+	});
+
+	test("a refusal of the live reads does not ask the engine", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		let engineQueries = 0;
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				readStats: async () => {
+					statsReads++;
+					return [stats(5), stats(5)];
+				},
+				queryEngine: async () => {
+					engineQueries++;
+					return "streaming";
+				},
+			}),
+		);
+		expect(statsReads).toBe(1);
+		expect(engineQueries).toBe(0);
+		expect(senderAdoptionVerdict(e)).toMatchObject({ reason: "no_progress" });
+	});
+
 	test("a missing process and unreadable reads refuse without throwing", async () => {
 		const e = await collectSenderAdoptionEvidence(
 			io({
