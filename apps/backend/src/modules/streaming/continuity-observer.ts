@@ -248,6 +248,41 @@ export async function reservePublication(
 		);
 }
 
+/**
+ * The map the sender would read now: the bind-map sidecar and the SHA-256 of the
+ * IP list's raw bytes, as a publication. Null when either is missing, torn, or
+ * the sidecar names a different IP list.
+ */
+export async function readDiskPublication(
+	lifetime: Pick<Lifetime, "sidecarFile" | "ipsFile">,
+): Promise<Publication | null> {
+	try {
+		const sidecar = JSON.parse(
+			await readFile(
+				lifetime.sidecarFile ?? `${lifetime.ipsFile}.bindmap.json`,
+				"utf8",
+			),
+		);
+		const disk = publicationSchema.parse({
+			version: sidecar.schema_version,
+			bootId: await continuityObserverIo.bootId(),
+			generation: sidecar.generation,
+			sha256: digest(await readFile(lifetime.ipsFile, "utf8")),
+			links: sidecar.links.map(
+				(l: { link_id: string; iface: string; ip: string }) => ({
+					linkId: l.link_id,
+					iface: l.iface,
+					ip: l.ip,
+				}),
+			),
+		});
+		return sidecar.ips_file_sha256 === disk.sha256 ? disk : null;
+	} catch {
+		// Missing or torn sidecar is not proof.
+		return null;
+	}
+}
+
 /** Read-only snapshot before the existing orphan sweep. No stale stats-file proof. */
 export async function observeStartup(
 	engine: ContinuityEvidence["engine"],
@@ -270,30 +305,7 @@ export async function observeStartup(
 	let system: Witness | null = null;
 	let process: ContinuityEvidence["process"] = null;
 	if (lifetime) {
-		try {
-			const sidecar = JSON.parse(
-				await readFile(
-					lifetime.sidecarFile ?? `${lifetime.ipsFile}.bindmap.json`,
-					"utf8",
-				),
-			);
-			disk = publicationSchema.parse({
-				version: sidecar.schema_version,
-				bootId: await continuityObserverIo.bootId(),
-				generation: sidecar.generation,
-				sha256: digest(await readFile(lifetime.ipsFile, "utf8")),
-				links: sidecar.links.map(
-					(l: { link_id: string; iface: string; ip: string }) => ({
-						linkId: l.link_id,
-						iface: l.iface,
-						ip: l.ip,
-					}),
-				),
-			});
-			if (sidecar.ips_file_sha256 !== disk.sha256) disk = null;
-		} catch {
-			/* Missing or torn sidecar is not proof. */
-		}
+		disk = await readDiskPublication(lifetime);
 		try {
 			if (lifetime.pid)
 				process = await continuityObserverIo.processIdentity(lifetime.pid);

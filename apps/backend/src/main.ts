@@ -161,6 +161,7 @@ import {
 import { getPipelineList } from "./modules/streaming/pipelines.ts";
 import { setMockPreviewEncoderRealizedProvider } from "./modules/streaming/preview-encoder-status.ts";
 import { beginRecoveryBarrier } from "./modules/streaming/recovery-barrier.ts";
+import { adoptRunningSenderAtStartup } from "./modules/streaming/sender-adoption.ts";
 import { refreshAndBroadcastSources } from "./modules/streaming/sources.ts";
 import { runStreamRestoration } from "./modules/streaming/stream-restoration.ts";
 import {
@@ -430,6 +431,9 @@ if (!shouldUseMocks()) {
 	// Only a returned reconciliation turns the factory's initial idle projection
 	// into evidence; until then (or after a throw) disruptive actions see unknown.
 	await guardNonCritical("stream-session-reconcile", async () => {
+		// A sender that outlived the previous backend is adopted only on full
+		// evidence; a refusal changes nothing and reconciliation stays as strict.
+		await adoptRunningSenderAtStartup().catch(() => undefined);
 		await reconcileStreamSession();
 		noteStreamReconciliationCompleted();
 	});
