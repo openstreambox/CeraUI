@@ -14,7 +14,10 @@ import { release, tmpdir } from "node:os";
 
 import { revisionsSchema } from "@ceraui/rpc/schemas";
 import type { Subprocess } from "bun";
-import { DEFAULT_SPAWN_TIMEOUT_MS } from "../helpers/spawn-policy.ts";
+import {
+	DEFAULT_SPAWN_TIMEOUT_MS,
+	spawnWithTimeout,
+} from "../helpers/spawn-policy.ts";
 import { srtlaSendExec } from "../modules/streaming/streamloop/exec-paths.ts";
 import {
 	getRevisions,
@@ -87,16 +90,29 @@ describe("sensors.ts — Bun.file().text() read + numeric parse", () => {
 
 describe("revisions.ts — bounded async commands and file reads", () => {
 	test("the revisions snapshot satisfies the wire schema before initialization", async () => {
-		// A separate Bun module identity starts with a fresh revision record,
-		// including when an earlier test file has initialized the normal import.
-		const freshModule = new URL(
-			"../modules/system/revisions.ts?boot-snapshot",
+		// The test runner can reuse the module initialized by another test file.
+		const moduleUrl = new URL(
+			"../modules/system/revisions.ts",
 			import.meta.url,
 		);
-		const fresh: typeof import("../modules/system/revisions.ts") = await import(
-			freshModule.href
+		const marker = "BOOT_SNAPSHOT ";
+		const result = await spawnWithTimeout(
+			[
+				process.execPath,
+				"-e",
+				`const { getRevisions } = await import(${JSON.stringify(moduleUrl.href)});
+				console.log(${JSON.stringify(marker)} + JSON.stringify(getRevisions()));`,
+			],
+			{ timeoutMs: 5_000 },
 		);
-		expect(revisionsSchema.parse(fresh.getRevisions())).toEqual({
+		expect(result.exitCode).toBe(0);
+		const frame = result.stdout
+			.split("\n")
+			.find((line) => line.startsWith(marker));
+		if (!frame) throw new Error("missing boot revisions snapshot");
+		expect(
+			revisionsSchema.parse(JSON.parse(frame.slice(marker.length))),
+		).toEqual({
 			ceralive: "unknown revision",
 			srtla: "unknown revision",
 			bun: Bun.version,
