@@ -10,7 +10,7 @@ import { recordNetworkEvents } from "./events-network-recording-fixture.ts";
 test("a sink-triggered gateway recovery observes the completed outer connectivity transition", async () => {
 	const h = recordNetworkEvents();
 	const deps: GatewayElectionDeps = {
-		isRealDevice: async () => true,
+		canRouteClients: async () => true,
 		resolve: async () => ({ addrs: ["203.0.113.10"], fromCache: true }),
 		validateDns: () => undefined,
 		checkConnectivity: async () => false,
