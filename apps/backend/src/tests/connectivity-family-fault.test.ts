@@ -96,7 +96,7 @@ function gatewayFixture(checkConnectivity: ConnectivityAddressProbe) {
 	const installed: Array<readonly [string, number]> = [];
 	let releases = 0;
 	const deps: GatewayElectionDeps = {
-		isRealDevice: async () => true,
+		canRouteClients: async () => true,
 		resolve: async () => ({ addrs: [...targets], fromCache: true }),
 		validateDns: () => {},
 		checkConnectivity,

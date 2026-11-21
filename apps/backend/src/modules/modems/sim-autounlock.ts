@@ -33,7 +33,7 @@
       cannot resubmit it. The modem is then left for manual entry via the unlock
       RPC (the user re-enters and may opt to remember again).
 
-   3. EMULATION-SAFE. Gated on `isRealDevice()` exactly like the kiosk/add-on
+   3. EMULATION-SAFE. Gated on `hasCapability("sim-autounlock")` exactly like the kiosk/add-on
       boot actions — a dev/CI host never drives mmcli.
 
   DECISION: this hook is PIN1-ONLY, and PIN2 is deliberately out of scope.
@@ -95,7 +95,7 @@
 
 import { logger } from "../../helpers/logger.ts";
 import { withModemUpdateLock } from "../network/state/device-lock.ts";
-import { isRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 
 import { type SimUnlockResult, unlockSimPin } from "./mmcli.ts";
 import { getModem, getModemIds } from "./modems-state.ts";
@@ -115,8 +115,8 @@ export type LockedModem = {
  * a post-unlock re-discovery. Tests inject deterministic stand-ins.
  */
 export type SimAutoUnlockDeps = {
-	/** Real-device gate — boot actions never run on a dev/emulated host. */
-	isRealDevice: () => Promise<boolean>;
+	/** Image capability gate — boot actions never run on a dev/emulated host. */
+	canUnlockSim: () => Promise<boolean>;
 	/** Read the opt-in stored PIN, or null when nothing is remembered. */
 	loadSimPin: () => Promise<string | null>;
 	/** Clear the stored PIN (after a wrong/unusable one — SIM-lockout guard). */
@@ -157,7 +157,7 @@ async function unlockUnderLock(
 }
 
 export const defaultSimAutoUnlockDeps: SimAutoUnlockDeps = {
-	isRealDevice: () => isRealDevice(),
+	canUnlockSim: () => hasCapability("sim-autounlock"),
 	loadSimPin,
 	clearSimPin,
 	getLockedModems: findPinLockedModems,
@@ -183,7 +183,7 @@ export async function maybeAutoUnlockSimPins(
 	deps: SimAutoUnlockDeps = defaultSimAutoUnlockDeps,
 ): Promise<void> {
 	// Boot-action gate: never drive mmcli from a dev/emulated host.
-	if (!(await deps.isRealDevice())) {
+	if (!(await deps.canUnlockSim())) {
 		return;
 	}
 
