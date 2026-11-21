@@ -18,7 +18,7 @@ const PHONE_TERMS: Record<Locale, RegExp> = {
 	de: /Telefon(?!isch)|Handy|Smartphone|iPhone/i,
 	es: /tel[eé]fono|celular|smartphone|(?<!datos )\bm[oó]vil(?:es)?(?![a-zá-ú])/i,
 	fr: /t[eé]l[eé]phone(?!r)|smartphone|iphone/i,
-	hi: /फ़?ोन|मोबाइल(?!\s*डेटा)/,
+	hi: /(?<!माइक्रो)फ़?ोन|मोबाइल(?!\s*डेटा)/,
 	ja: /スマートフォン|スマホ|ケータイ|携帯(?!用)|電話/,
 	ko: /휴대폰|핸드폰|스마트폰|전화(?!번호)/,
 	"pt-BR": /(?<!(?:modems|modem|rede|dados) )\bcelular(?:es)?\b|telefone|smartphone/i,
@@ -49,11 +49,31 @@ const QUOTE_PAIRS: [string, string][] = [
 
 const normalize = (value: string) => value.normalize("NFC");
 
-function homeCopy(locale: Locale): [string, string][] {
+function copyWhere(locale: Locale, keep: (key: string) => boolean): [string, string][] {
 	return Object.entries(readCatalog(locale))
-		.filter(([key]) => key.startsWith("live.phone."))
+		.filter(([key]) => keep(key))
 		.map(([key, value]) => [key, normalize(typeof value === "string" ? value : JSON.stringify(value))]);
 }
+
+function homeCopy(locale: Locale): [string, string][] {
+	return copyWhere(locale, (key) => key.startsWith("live.phone."));
+}
+
+// Copy outside Home that talks about the device the reader holds or the one
+// that sends a stream: hotel Wi-Fi sign-in, LAN ingest, cloud pairing, the
+// offline page, the hotspot confirmation and the carrying status line. Each
+// family must stay non-empty so a rename cannot silently drop it from the check.
+const DEVICE_FAMILIES: readonly string[] = [
+	"network.portal.",
+	"settings.portal.",
+	"live.networkIngest.",
+	"settings.networkIngest.",
+	"settings.dialogs.sources.",
+	"settings.pairing.",
+	"offline.",
+	"hotspotConfirm.",
+	"carrying.",
+];
 
 describe("the term lists themselves", () => {
 	const hits: [Locale, string][] = [
@@ -79,6 +99,8 @@ describe("the term lists themselves", () => {
 		["zh", "电话号码"],
 		["zh", "電話號碼"],
 		["hi", "मोबाइल डेटा"],
+		["hi", "\u092e\u093e\u0907\u0915\u094d\u0930\u094b\u092b\u093c\u094b\u0928"],
+		["hi", "\u092e\u093e\u0907\u0915\u094d\u0930\u094b\u095e\u094b\u0928"],
 	];
 	for (const [locale, text] of hits) {
 		it(`${locale} flags ${JSON.stringify(text)}`, () => {
@@ -137,5 +159,20 @@ describe("Home copy on a box without an encoder", () => {
 				expect(pairs.length).toBe(1);
 			}
 		});
+	}
+});
+
+describe("Copy about the reader's or the sender's device", () => {
+	for (const locale of ALL_LOCALES) {
+		for (const family of DEVICE_FAMILIES) {
+			it(`${locale} ${family}* uses no word for a phone or for viewers`, () => {
+				const copy = copyWhere(locale, (key) => key.startsWith(family));
+				expect(copy.length).toBeGreaterThan(0);
+				const offenders = copy
+					.filter(([, value]) => PHONE_TERMS[locale].test(value) || VIEWER_TERMS[locale].test(value))
+					.map(([key]) => key);
+				expect(offenders).toEqual([]);
+			});
+		}
 	}
 });
