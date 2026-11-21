@@ -3571,7 +3571,7 @@
 	"network.changeSafety.notice.interrupted": "बदलाव के दौरान बॉक्स फिर से शुरू हुआ, इसलिए बदलाव नहीं हुआ। फिर भी?",
 	"network.changeSafety.notice.unsaved": "पुष्टि किया बदलाव सहेजने से पहले बॉक्स फिर से शुरू हुआ, इसलिए उसे वापस लिया। फिर भी?",
 	"network.changeSafety.askBefore.undoNoConfirm": "बदलाव करें। बॉक्स इसे {seconds} से. बाद वापस ले लेगा; यह कनेक्शन पुष्टि नहीं कर सकता।",
-	"network.changeSafety.confirm.waiting": "बॉक्स {seconds} से. में नए कनेक्शन से पुष्टि स्वीकार करेगा।",
+	"network.changeSafety.confirm.waiting": "बॉक्स {seconds} से. में पुष्टि स्वीकार करेगा।",
 	"network.changeSafety.confirmed.via": "रखा गया: {via} से पुष्टि हुई।",
 	"network.changeSafety.confirmed.remote": "रखा गया: रिमोट कनेक्शन से पुष्टि हुई।"
 }

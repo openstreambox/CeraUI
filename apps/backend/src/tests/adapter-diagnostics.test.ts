@@ -174,9 +174,31 @@ describe("adapter diagnostics", () => {
 		expect(warnLog?.meta?.keys).toEqual(["foo", "id", "token"]);
 		expect(warnLog?.meta?.bytes).toBe(frame.length);
 		expect(warnLog?.meta?.hasId).toBe(true);
-		// Raw secret-bearing value must not be dumped; preview is redacted.
-		expect(warnLog?.meta?.preview).toBe(REDACTED);
+		// Raw secret-bearing value must not be dumped; preview is redacted
+		// by key before it is serialized.
+		expect(warnLog?.meta?.preview).toBe(
+			JSON.stringify({ foo: "bar", id: "x1", token: REDACTED }),
+		);
 		expect(JSON.stringify(warnLog)).not.toContain(KNOWN_SECRET);
+	});
+
+	test("a code-bearing frame without the RPC envelope never logs the code", () => {
+		const code = `${"Q".repeat(42)}A`;
+		parseMessage(
+			JSON.stringify({ id: "x2", input: { id: "tx", confirmationCode: code } }),
+			fakeWs(),
+		);
+		const warnLog = cap.logs.find((l) => l.level === "warn");
+		expect(warnLog?.meta?.preview).toContain(REDACTED);
+		expect(JSON.stringify(warnLog)).not.toContain(code);
+	});
+
+	test("a frame that fails to parse logs no part of its input", () => {
+		const code = `${"Q".repeat(42)}A`;
+		parseMessage(`{"confirmationCode":"${code}"`, fakeWs());
+		const errorLog = cap.logs.find((l) => l.level === "error");
+		expect(errorLog).toBeDefined();
+		expect(JSON.stringify(errorLog)).not.toContain(code);
 	});
 
 	test("(4) heartbeat pong frame is allow-listed silently, never warned", () => {

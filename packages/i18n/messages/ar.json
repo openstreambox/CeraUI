@@ -3583,7 +3583,7 @@
 	"network.changeSafety.notice.interrupted": "أُعيد تشغيل الجهاز أثناء تنفيذ هذا التغيير، لذا لم يُنفَّذ. هل ما زلت تريده؟",
 	"network.changeSafety.notice.unsaved": "أُعيد تشغيل الجهاز قبل حفظ التغيير الذي أكدته، لذا تراجع عنه. هل ما زلت تريده؟",
 	"network.changeSafety.askBefore.undoNoConfirm": "نفّذ التغيير. يتراجع الجهاز عنه بعد {seconds} ث؛ لا يمكن لهذا الاتصال التأكيد.",
-	"network.changeSafety.confirm.waiting": "يقبل الجهاز التأكيد من اتصال جديد بعد {seconds} ث.",
+	"network.changeSafety.confirm.waiting": "يقبل الجهاز التأكيد بعد {seconds} ث.",
 	"network.changeSafety.confirmed.via": "تم الاحتفاظ: أُكّد عبر {via}.",
 	"network.changeSafety.confirmed.remote": "تم الاحتفاظ: أُكّد من اتصال عن بُعد."
 }

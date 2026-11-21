@@ -22,7 +22,13 @@ const UNDO = {
 const KEEP = { answer: "keep-change" } as const;
 
 /** An active Ethernet profile, plus two dormant duplicates of a modem profile. */
-function world(options: { settleMs?: number; separateClock?: boolean } = {}) {
+function world(
+	options: {
+		settleMs?: number;
+		separateClock?: boolean;
+		clockUnavailable?: boolean;
+	} = {},
+) {
 	const h = harness(options);
 	const eth = h.fake.add("Wired", { "ipv4.addresses": "192.0.2.1/24" });
 	h.fake.active.set("eth0", eth);
@@ -363,6 +369,137 @@ describe("deadlines and the settle floor run on the boot clock", () => {
 		expect(await w.owner.tick()).toBe(true);
 		expect(w.fake.calls).not.toContain("rollback");
 		expect((await w.owner.status()).notice?.reason).toBe("restart");
+	});
+});
+
+describe("the confirmation fence, right before the destroy", () => {
+	it("re-checks the owner's deadline after the liveness round trip", async () => {
+		const w = world();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(90_900);
+		const live = w.fake.nm.live;
+		// The liveness query returns after the owner's deadline (91 000) while
+		// NetworkManager's own timer, armed later, would still be running.
+		w.fake.nm.live = async (ref) => {
+			const answer = await live(ref);
+			w.at(91_050);
+			return answer;
+		};
+		await expect(
+			w.owner.confirm(pending.id, CODE, { ...fresh, openedClock: 20_000 }),
+		).rejects.toMatchObject({ reason: "expired" });
+		expect(w.fake.calls).not.toContain("destroy");
+	});
+	it("reads the socket's session again: a token replaced while the confirm waited refuses it", async () => {
+		const w = world();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(20_000);
+		let socket = fresh;
+		const live = w.fake.nm.live;
+		w.fake.nm.live = async (ref) => {
+			// A password change on this socket: a replacement token.
+			socket = { ...socket, tokenHash: TOKEN_B };
+			return live(ref);
+		};
+		await expect(
+			w.owner.confirm(pending.id, CODE, () => socket),
+		).rejects.toMatchObject({ reason: "not_requester" });
+		expect(w.fake.calls).not.toContain("destroy");
+	});
+	it("a token revoked while the confirm waited refuses it", async () => {
+		const w = world();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(20_000);
+		let socket: typeof fresh = fresh;
+		const live = w.fake.nm.live;
+		w.fake.nm.live = async (ref) => {
+			// The socket was signed out (its token revoked elsewhere).
+			socket = { ...socket, authenticated: false, tokenHash: undefined };
+			return live(ref);
+		};
+		await expect(
+			w.owner.confirm(pending.id, CODE, () => socket),
+		).rejects.toMatchObject({ reason: "not_requester" });
+		expect(w.fake.calls).not.toContain("destroy");
+	});
+	it("a path-other creator whose ingress evidence stopped holding meanwhile is refused", async () => {
+		const w = world();
+		const s = browser("s", { ingress: "eth0" });
+		const pending = await w.owner.apply(s, w.modemPlan, {
+			confirmationCode: CODE,
+		});
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(20_000);
+		let socket = s;
+		const live = w.fake.nm.live;
+		w.fake.nm.live = async (ref) => {
+			socket = { ...socket, ingress: undefined };
+			return live(ref);
+		};
+		await expect(
+			w.owner.confirm(pending.id, CODE, () => socket),
+		).rejects.toMatchObject({ reason: "too_early" });
+		expect(w.fake.calls).not.toContain("destroy");
+	});
+});
+
+describe("without a readable boot clock, nobody can confirm", () => {
+	it("the prompt says so, and no stamp is ever written", async () => {
+		const w = world({ clockUnavailable: true });
+		expect(await w.owner.apply(creator, w.ethPlan)).toMatchObject({
+			canConfirm: false,
+			primary: { labelKey: "network.changeSafety.askBefore.undoNoConfirm" },
+		});
+		// Without the code requirement (it can't be met), the change still
+		// runs with its undo, on wall time.
+		const pending = await w.owner.apply(creator, w.ethPlan, {
+			answer: "undo-automatically",
+		});
+		expect(pending).toMatchObject({ kind: "pending", canConfirm: false });
+		const tx = (await w.journal.read()).tx;
+		expect(tx).not.toHaveProperty("startedClock");
+		expect(tx).not.toHaveProperty("appliedClock");
+		expect(tx).not.toHaveProperty("expiresClock");
+		expect(tx).not.toHaveProperty("challenge");
+		// The deadline still holds on the wall clock.
+		await w.fake.expireAll();
+		w.at(91_000);
+		expect(await w.owner.tick()).toBe(true);
+	});
+	it("a change with a challenge refuses a socket without a boot-clock stamp, and a later unreadable clock", async () => {
+		const w = world({ separateClock: true });
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(20_000);
+		await expect(
+			w.owner.confirm(pending.id, CODE, { ...fresh, openedClock: undefined }),
+		).rejects.toMatchObject({ reason: "unverifiable" });
+		w.clockReadable(false);
+		await expect(
+			w.owner.confirm(pending.id, CODE, fresh),
+		).rejects.toMatchObject({ reason: "unverifiable" });
+		w.clockReadable(true);
+		expect(await w.owner.confirm(pending.id, CODE, fresh)).toMatchObject({
+			saved: true,
+		});
+	});
+	it("a challenge record without stamps (written without a clock) can't be confirmed", async () => {
+		const w = world();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		const journal = await w.journal.read();
+		const tx = journal.tx as NonNullable<typeof journal.tx>;
+		delete tx.appliedClock;
+		delete tx.startedClock;
+		delete tx.expiresClock;
+		await w.journal.write(journal);
+		w.at(20_000);
+		await expect(
+			w.owner.confirm(pending.id, CODE, fresh),
+		).rejects.toMatchObject({ reason: "unverifiable" });
 	});
 });
 

@@ -11,7 +11,8 @@
  * Why the page mints the code: the change may cut the socket that sent it
  * before the reply comes back, so a code minted by the device could be lost.
  * The page creates it before sending the request and keeps it in
- * `sessionStorage`: a reload of this tab keeps it, other tabs never see it.
+ * `sessionStorage`: a reload of this tab keeps it, and other tabs ordinarily
+ * don't see it (a browser may copy it into a tab this page opens itself).
  *
  * The flow, driven by the confirm banner:
  * 1. `mintConfirmationCode()` + `rememberConfirmationCode()` before the
@@ -36,8 +37,6 @@ import { confirmationCodeSchema } from "@ceraui/rpc/schemas";
 /** The `sessionStorage` key; one pending change at a time on a device. */
 export const CONFIRMATION_CODE_STORAGE_KEY = "ceralive.networkChangeCode";
 const CODE_BYTES = 32;
-/** Margin past the device's floor, for timer and transit jitter. */
-export const FLOOR_MARGIN_MS = 500;
 
 type CodeStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -109,7 +108,11 @@ export function forgetConfirmationCode(storage: CodeStorage): void {
 export interface PendingChange {
 	readonly id: string;
 	readonly msLeft: number;
+	/** Until the settle floor, and how long ago it passed (both >= 0). */
 	readonly confirmAfterMs: number;
+	readonly floorAgoMs: number;
+	/** "other": front-door evidence says the change missed this tab's path. */
+	readonly path: string;
 	readonly canConfirm: boolean;
 }
 
@@ -140,33 +143,37 @@ export type PrepareOutcome =
 	| { readonly kind: "cannot-confirm" };
 
 /**
- * Wait until the device accepts a confirmation, then make sure the socket is
- * one opened after that point.
+ * Wait until the device accepts a confirmation, then make sure the socket can
+ * confirm: one opened after the floor, or, on a path the change missed, the
+ * tab's own socket. Reports ready only for a change still pending afterwards.
  */
 export async function prepareConfirmation(
 	deps: ConfirmDeps,
 ): Promise<PrepareOutcome> {
 	if (!readConfirmationCode(deps.storage)) return { kind: "no-code" };
-	const pending = await deps.pending();
-	if (!pending) {
+	const first = await deps.pending();
+	if (!first) {
 		forgetConfirmationCode(deps.storage);
 		return { kind: "nothing-pending" };
 	}
-	if (!pending.canConfirm) return { kind: "cannot-confirm" };
-	const readAt = deps.now();
-	const floorAt = readAt + pending.confirmAfterMs + FLOOR_MARGIN_MS;
-	if (pending.confirmAfterMs > 0) await deps.sleep(floorAt - readAt);
+	if (!first.canConfirm) return { kind: "cannot-confirm" };
+	// The floor on this page's clock, from what the device said just now.
+	const floorAt = deps.now() + first.confirmAfterMs - first.floorAgoMs;
+	if (first.confirmAfterMs > 0) await deps.sleep(first.confirmAfterMs);
 	const opened = deps.socketOpenedAt();
-	if (opened === undefined || opened < floorAt) await deps.reconnect();
-	return {
-		kind: "ready",
-		id: pending.id,
-		msLeft: Math.max(0, pending.msLeft - (deps.now() - readAt)),
-	};
+	const ownPathMissed = first.path === "other" && opened !== undefined;
+	if (!ownPathMissed && (opened === undefined || opened < floorAt))
+		await deps.reconnect();
+	// Waiting and reconnecting take time: ask again before offering Confirm.
+	const pending = await deps.pending();
+	if (!pending || pending.id !== first.id) return { kind: "nothing-pending" };
+	return { kind: "ready", id: pending.id, msLeft: pending.msLeft };
 }
 
 export type ConfirmOutcome =
 	| { readonly kind: "kept"; readonly via: string | null }
+	/** Confirmed, still being saved: the status reports how it ends. */
+	| { readonly kind: "saving"; readonly via: string | null }
 	| { readonly kind: "no-code" }
 	| { readonly kind: "refused"; readonly reason: ChangeSafetyConfirmRefusal }
 	| { readonly kind: "failed"; readonly error: string };
@@ -187,7 +194,10 @@ export async function confirmFromThisBrowser(
 	}
 	if (result.success) {
 		forgetConfirmationCode(deps.storage);
-		return { kind: "kept", via: result.confirmedVia ?? null };
+		return {
+			kind: result.saving ? "saving" : "kept",
+			via: result.confirmedVia ?? null,
+		};
 	}
 	if (result.refusal) {
 		if (result.refusal !== "too_early") forgetConfirmationCode(deps.storage);

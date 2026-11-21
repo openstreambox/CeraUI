@@ -191,7 +191,20 @@ const TX_STATES = ["applying", "pending", "confirming", "kept", "rolling-back"];
 const MODES = ["undo-automatically", "keep-change"];
 const PATHS = ["own", "other", "unknown"];
 const REASONS = ["disconnected", "restart", "interrupted", "unsaved"];
+/**
+ * Values an earlier preview of this owner wrote (the automatic keep, removed).
+ * Read as their nearest current meaning by `upgradeLegacy`, so a journal left
+ * by that preview recovers instead of refusing every role write.
+ */
+const LEGACY_MODE = "keep-if-reachable";
+const LEGACY_REASON = "unreachable";
 const HEX64 = /^[0-9a-f]{64}$/;
+/** Checkpoint identity syntax, as the NetworkManager adapter checks it. */
+const CHECKPOINT_PATH =
+	/^\/org\/freedesktop\/NetworkManager\/Checkpoint\/[0-9]{1,10}$/;
+const UNIQUE_NAME = /^:[0-9]{1,10}\.[0-9]{1,10}$/;
+const CREATED = /^[1-9][0-9]{0,18}$/;
+const BUS_ID = /^[0-9a-f]{32}$/;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
 	!!v && typeof v === "object" && !Array.isArray(v);
@@ -203,6 +216,10 @@ const isTime = (v: unknown) =>
 const optional = (v: unknown, valid: (value: unknown) => boolean) =>
 	v === undefined || valid(v);
 const isString = (v: unknown) => typeof v === "string";
+const matches = (pattern: RegExp) => (v: unknown) =>
+	typeof v === "string" && pattern.test(v);
+const isReason = (v: unknown) =>
+	REASONS.includes(v as string) || v === LEGACY_REASON;
 const isShortString = (v: unknown) =>
 	typeof v === "string" && v.length > 0 && v.length <= 512;
 
@@ -241,8 +258,8 @@ function validPlan(plan: unknown): boolean {
 function validChallenge(challenge: unknown): boolean {
 	return (
 		isObject(challenge) &&
-		HEX64.test(String(challenge.codeHash)) &&
-		HEX64.test(String(challenge.tokenHash)) &&
+		matches(HEX64)(challenge.codeHash) &&
+		matches(HEX64)(challenge.tokenHash) &&
 		isShortString(challenge.origin) &&
 		isShortString(challenge.host)
 	);
@@ -262,7 +279,7 @@ function validTx(tx: unknown): boolean {
 			typeof tx.id === "string" &&
 			typeof tx.bootId === "string" &&
 			TX_STATES.includes(tx.state as string) &&
-			MODES.includes(tx.mode as string) &&
+			(MODES.includes(tx.mode as string) || tx.mode === LEGACY_MODE) &&
 			PATHS.includes(tx.path as string) &&
 			typeof tx.creator === "string" &&
 			isStrings(tx.devices) &&
@@ -300,28 +317,43 @@ function validTx(tx: unknown): boolean {
 		tx.expiresClock,
 		tx.nextAttemptAt,
 	].every((v) => optional(v, isTime));
-	const stringsOk = [
-		tx.checkpoint,
-		tx.checkpointOwner,
-		tx.checkpointCreated,
-		tx.checkpointBus,
-	].every((v) => optional(v, isString));
+	// A present checkpoint identity has the syntax the adapter accepts, or the
+	// adapter would refuse it on every tick while the reader calls the journal
+	// healthy. Parts may be missing (older records): the owner then sends no
+	// checkpoint call and undoes by its own steps.
+	const stringsOk =
+		optional(tx.checkpoint, matches(CHECKPOINT_PATH)) &&
+		optional(tx.checkpointOwner, matches(UNIQUE_NAME)) &&
+		optional(tx.checkpointCreated, matches(CREATED)) &&
+		optional(tx.checkpointBus, matches(BUS_ID)) &&
+		// Identity parts belong to a checkpoint path.
+		(tx.checkpoint !== undefined ||
+			(tx.checkpointOwner === undefined &&
+				tx.checkpointCreated === undefined &&
+				tx.checkpointBus === undefined));
 	const restOk =
 		optional(tx.challenge, validChallenge) &&
 		optional(tx.confirmedVia, (v) => v === null || isShortString(v)) &&
 		optional(tx.settled, (v) => typeof v === "boolean") &&
-		optional(
-			tx.undoReason,
-			(v) => v === "failed" || REASONS.includes(v as string),
-		) &&
+		optional(tx.undoReason, (v) => v === "failed" || isReason(v)) &&
 		optional(tx.errors, isStrings) &&
 		optional(
 			tx.undoAttempts,
 			(v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0,
 		);
-	// A pending change is bounded: it has an apply time and a deadline.
+	// A pending change is bounded: it has an apply time and a deadline, and a
+	// pending profile change has the checkpoint that holds NetworkManager's
+	// timer (only an effect-only change has none). A challenge belongs to a
+	// change that can be undone.
+	const plan = tx.plan as { profiles: unknown[] };
 	const stateOk =
-		tx.state !== "pending" || (isTime(tx.appliedAt) && isTime(tx.expiresAt));
+		(tx.state !== "pending" ||
+			(isTime(tx.appliedAt) &&
+				isTime(tx.expiresAt) &&
+				(tx.mode === "keep-change" ||
+					plan.profiles.length === 0 ||
+					tx.checkpoint !== undefined))) &&
+		(tx.challenge === undefined || tx.mode !== "keep-change");
 	return timesOk && stringsOk && restOk && stateOk;
 }
 
@@ -329,7 +361,7 @@ function validNotice(notice: unknown): boolean {
 	return (
 		isObject(notice) &&
 		typeof notice.id === "string" &&
-		REASONS.includes(notice.reason as string) &&
+		isReason(notice.reason) &&
 		isTime(notice.createdAt) &&
 		validPlan(notice.plan)
 	);
@@ -356,7 +388,25 @@ function parseJournal(json: unknown): Journal {
 		!optional(json.confirmed, validConfirmed)
 	)
 		throw new Error("Unsupported network-change journal");
-	return structuredClone(json as unknown as Journal);
+	return upgradeLegacy(structuredClone(json) as Record<string, unknown>);
+}
+
+/**
+ * The automatic keep is gone. A transaction in that mode had no challenge,
+ * so it reads as an ordinary undo-automatically change that nobody can
+ * confirm (undone at its deadline); an `unreachable` reason reads as
+ * `disconnected`, the notice for a change the box undid at its deadline.
+ */
+function upgradeLegacy(json: Record<string, unknown>): Journal {
+	const tx = json.tx as Record<string, unknown> | null;
+	if (tx) {
+		if (tx.mode === LEGACY_MODE) tx.mode = "undo-automatically";
+		if (tx.undoReason === LEGACY_REASON) tx.undoReason = "disconnected";
+		delete tx.reachability;
+	}
+	const notice = json.notice as Record<string, unknown> | null;
+	if (notice?.reason === LEGACY_REASON) notice.reason = "disconnected";
+	return json as unknown as Journal;
 }
 
 /** Copies on every read and write so callers cannot alias stored state. */

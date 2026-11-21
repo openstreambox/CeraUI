@@ -3526,7 +3526,7 @@
 	"network.changeSafety.notice.interrupted": "盒子在进行此更改时重启了，所以没有更改。仍要更改吗？",
 	"network.changeSafety.notice.unsaved": "盒子在保存你确认的更改前重启了，所以已撤销。仍要更改吗？",
 	"network.changeSafety.askBefore.undoNoConfirm": "进行更改。盒子会在 {seconds} 秒后撤销；此连接无法确认。",
-	"network.changeSafety.confirm.waiting": "盒子将在 {seconds} 秒后接受来自新连接的确认。",
+	"network.changeSafety.confirm.waiting": "盒子将在 {seconds} 秒后接受确认。",
 	"network.changeSafety.confirmed.via": "已保留：通过 {via} 确认。",
 	"network.changeSafety.confirmed.remote": "已保留：从远程连接确认。"
 }

@@ -95,9 +95,12 @@ export interface NetworkChangeDeps {
 	/**
 	 * Milliseconds since boot (CLOCK_BOOTTIME), comparable across processes of
 	 * the same boot. Deadlines and the settle floor use it, so an NTP step
-	 * after an uplink change cannot shorten or stretch them. Defaults to `now`.
+	 * after an uplink change cannot shorten or stretch them. Undefined when it
+	 * can't be read: then no boot-clock stamp is written, deadlines fall back
+	 * to wall time, and nobody can confirm (no comparable stamps). Defaults to
+	 * `now` (tests).
 	 */
-	readonly clock?: () => number;
+	readonly clock?: () => number | undefined;
 	readonly bootId: () => Promise<string>;
 	readonly nm: NmChangeDeps;
 	readonly effects: EffectRegistry;
@@ -165,7 +168,9 @@ export type ConfirmRefusal =
 	| "too_early"
 	| "wrong_code"
 	| "not_requester"
-	| "wrong_address";
+	| "wrong_address"
+	/** No comparable boot-clock stamps: the box can't tell when the socket opened. */
+	| "unverifiable";
 
 export class NetworkChangeConfirmError extends Error {
 	constructor(readonly reason: ConfirmRefusal) {
@@ -199,6 +204,8 @@ export type ApplyResult =
 			readonly msLeft: number;
 			/** Time until a new connection may confirm (the settle floor). */
 			readonly confirmAfterMs: number;
+			/** How long ago the floor passed (0 while it is ahead). */
+			readonly floorAgoMs: number;
 			/** Whether anyone can confirm it (the requester had a browser login). */
 			readonly canConfirm: boolean;
 	  }
@@ -236,6 +243,7 @@ export interface NetworkChangeStatus {
 		readonly expiresAt: number;
 		readonly msLeft: number;
 		readonly confirmAfterMs: number;
+		readonly floorAgoMs: number;
 		readonly path: string;
 		/** The requester can confirm (from a new connection of their browser). */
 		readonly canConfirm: boolean;
@@ -315,8 +323,17 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 	 * and was written in this boot, else on the wall clock.
 	 */
 	async function msLeft(tx: TxRecord): Promise<number> {
-		if (tx.expiresClock !== undefined && (await sameBoot(tx)))
-			return tx.expiresClock - clock();
+		const now = clock();
+		if (
+			tx.expiresClock !== undefined &&
+			now !== undefined &&
+			(await sameBoot(tx))
+		)
+			return tx.expiresClock - now;
+		// Recovery policy without comparable stamps (another boot, an older
+		// record, an unreadable boot clock): wall time. NetworkManager's own
+		// timer still bounds the change; this only decides when the owner
+		// gives up on it.
 		return (tx.expiresAt ?? 0) - deps.now();
 	}
 
@@ -329,11 +346,37 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		return (await msLeft(tx)) > 2_000;
 	}
 
-	/** Time until the settle floor has passed since the apply. */
-	async function msToFloor(tx: TxRecord): Promise<number> {
-		if (tx.appliedClock !== undefined && (await sameBoot(tx)))
-			return tx.appliedClock + settle - clock();
-		return (tx.appliedAt ?? Number.POSITIVE_INFINITY) + settle - deps.now();
+	/**
+	 * Time until the settle floor has passed since the apply, on the boot
+	 * clock only; undefined without comparable stamps (nobody can confirm).
+	 */
+	async function msToFloor(tx: TxRecord): Promise<number | undefined> {
+		const now = clock();
+		if (
+			tx.appliedClock === undefined ||
+			now === undefined ||
+			!(await sameBoot(tx))
+		)
+			return undefined;
+		return tx.appliedClock + settle - now;
+	}
+
+	/** The status fields for the floor: time until it, and since it passed. */
+	async function floorFields(tx: TxRecord) {
+		const floor = await msToFloor(tx);
+		return {
+			confirmAfterMs: floor === undefined ? 0 : Math.max(0, floor),
+			floorAgoMs: floor === undefined ? 0 : Math.max(0, -floor),
+		};
+	}
+
+	/**
+	 * Whether this session could confirm a change applied now: a browser login
+	 * (`sessionCanConfirm`) and a readable boot clock to stamp it with. The
+	 * prompt and the challenge use this one predicate.
+	 */
+	function canConfirmNow(session: NetworkChangeSession) {
+		return sessionCanConfirm(session) && clock() !== undefined;
 	}
 
 	async function save(journal: Journal) {
@@ -679,7 +722,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		await settleStale(journal);
 		const path = classifyPath(devices, session.ingress);
 		const deliberate = options.deliberate === true;
-		const canConfirm = sessionCanConfirm(session);
+		const canConfirm = canConfirmNow(session);
 		if (needsAskBefore(path, deliberate) && options.answer === undefined)
 			return askBeforePrompt({
 				path,
@@ -711,6 +754,9 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 
 		const startedAt = deps.now();
 		const startedClock = clock();
+		// A challenge needs boot-clock stamps; without them it can't be met.
+		if (challenge && startedClock === undefined)
+			throw new Error("Boot clock unavailable");
 		const tx: TxRecord = {
 			id: randomUUID(),
 			bootId: await currentBoot(),
@@ -720,7 +766,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 			creator: session.id,
 			devices,
 			startedAt,
-			startedClock,
+			...(startedClock === undefined ? {} : { startedClock }),
 			plan,
 			profiles: [],
 			effects: [],
@@ -735,7 +781,8 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		try {
 			if (mode !== "keep-change") {
 				tx.expiresAt = startedAt + window * 1000;
-				tx.expiresClock = startedClock + window * 1000;
+				if (startedClock !== undefined)
+					tx.expiresClock = startedClock + window * 1000;
 				// Only interfaces NetworkManager manages. Effect interfaces may not be
 				// NetworkManager devices, and a torn-down one no longer exists.
 				const managed = [...new Set(plan.devices)];
@@ -796,7 +843,8 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 					await deps.nm.activate(candidate, edit.activateOn);
 			}
 			tx.appliedAt = deps.now();
-			tx.appliedClock = clock();
+			const appliedClock = clock();
+			if (appliedClock !== undefined) tx.appliedClock = appliedClock;
 			if (mode === "keep-change") {
 				tx.state = "kept";
 				await save(journal);
@@ -826,7 +874,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 				id: tx.id,
 				expiresAt: tx.expiresAt as number,
 				msLeft: Math.max(0, await msLeft(tx)),
-				confirmAfterMs: Math.max(0, await msToFloor(tx)),
+				...(await floorFields(tx)),
 				canConfirm: tx.challenge !== undefined,
 			};
 		} catch (error) {
@@ -880,6 +928,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		if (session.origin !== challenge.origin || session.host !== challenge.host)
 			return "wrong_address";
 		const floor = await msToFloor(tx);
+		if (floor === undefined) return "unverifiable";
 		// The requester's existing connection, when front-door evidence shows
 		// the change did not touch its path: after the settle time.
 		if (
@@ -889,25 +938,12 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 			!tx.devices.includes(session.ingress)
 		)
 			return floor <= 0 ? undefined : "too_early";
-		// Otherwise a connection opened after the settle time.
-		const opened = await openedAfterFloor(tx, session);
-		return opened ? undefined : "too_early";
-	}
-
-	/** The socket opened at least the settle time after the apply. */
-	async function openedAfterFloor(tx: TxRecord, session: NetworkChangeSession) {
-		if (
-			tx.appliedClock !== undefined &&
-			session.openedClock !== undefined &&
-			(await sameBoot(tx))
-		)
-			return session.openedClock >= tx.appliedClock + settle;
-		// A record without boot-clock stamps: wall time, as written.
-		return (
-			tx.appliedAt !== undefined &&
-			session.openedAt >= tx.appliedAt + settle &&
-			session.openedAt <= deps.now()
-		);
+		// Otherwise a connection opened after the settle time, both instants
+		// on this boot's clock.
+		if (session.openedClock === undefined) return "unverifiable";
+		return session.openedClock >= (tx.appliedClock as number) + settle
+			? undefined
+			: "too_early";
 	}
 
 	return {
@@ -932,7 +968,7 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 								id: tx.id,
 								expiresAt: tx.expiresAt as number,
 								msLeft: Math.max(0, await msLeft(tx)),
-								confirmAfterMs: Math.max(0, await msToFloor(tx)),
+								...(await floorFields(tx)),
 								path: tx.path,
 								canConfirm: tx.challenge !== undefined,
 							}
@@ -980,20 +1016,35 @@ export function createNetworkChangeOwner(deps: NetworkChangeDeps) {
 		 * the same browser login to the same UI address after the settle time,
 		 * with the change's one-time code. Refusals are typed.
 		 */
-		confirm(id: string, code: string, session: NetworkChangeSession) {
+		confirm(
+			id: string,
+			code: string,
+			session: NetworkChangeSession | (() => NetworkChangeSession),
+		) {
+			// The socket's session is read again at the fence: a password
+			// change (token revoked or replaced) or lost ingress evidence while
+			// this waited in the queue or on NetworkManager must refuse it.
+			const current = typeof session === "function" ? session : () => session;
 			return exclusive(async () => {
 				const journal = await deps.journal.read();
 				const tx = journal.tx;
 				if (tx?.state !== "pending" || tx.id !== id)
 					throw new NetworkChangeConfirmError("not_pending");
 				if (await expired(tx)) throw new NetworkChangeConfirmError("expired");
-				const refused = await refusal(tx, code, session);
+				const refused = await refusal(tx, code, current());
 				if (refused) throw new NetworkChangeConfirmError(refused);
-				// The deadline again, and the checkpoint: the destroy below is
-				// the fence against NetworkManager's own timer.
-				if ((await expired(tx)) || !(await checkpointLive(tx)))
+				if (!(await checkpointLive(tx)))
 					throw new NetworkChangeConfirmError("expired");
-				const via = session.ingress ?? null;
+				// The fence, after the liveness round trip and as close to the
+				// destroy as the owner gets: the owner's deadline (journaled
+				// before NetworkManager armed its own, so never later than
+				// NetworkManager's; it is the authoritative one) and the live
+				// session. Only same-boot reads remain before the destroy.
+				const live = current();
+				const fenced = await refusal(tx, code, live);
+				if (fenced) throw new NetworkChangeConfirmError(fenced);
+				if (await expired(tx)) throw new NetworkChangeConfirmError("expired");
+				const via = live.ingress ?? null;
 				const result = await commitPending(journal, via);
 				return {
 					via,

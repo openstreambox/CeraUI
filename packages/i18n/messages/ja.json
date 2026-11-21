@@ -3526,7 +3526,7 @@
 	"network.changeSafety.notice.interrupted": "変更中にボックスが再起動したため、変更されませんでした。それでも変更しますか？",
 	"network.changeSafety.notice.unsaved": "確認済みの変更を保存する前にボックスが再起動したため、元に戻しました。それでも変更しますか？",
 	"network.changeSafety.askBefore.undoNoConfirm": "変更する。ボックスが {seconds} 秒後に元に戻します。この接続からは確認できません。",
-	"network.changeSafety.confirm.waiting": "ボックスは {seconds} 秒後から新しい接続での確認を受け付けます。",
+	"network.changeSafety.confirm.waiting": "ボックスは {seconds} 秒後から確認を受け付けます。",
 	"network.changeSafety.confirmed.via": "維持しました：{via} 経由で確認されました。",
 	"network.changeSafety.confirmed.remote": "維持しました：リモート接続から確認されました。"
 }

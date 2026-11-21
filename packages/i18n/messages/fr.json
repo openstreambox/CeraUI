@@ -3574,7 +3574,7 @@
 	"network.changeSafety.notice.interrupted": "Le boîtier a redémarré pendant ce changement, il ne l'a donc pas fait. Le refaire ?",
 	"network.changeSafety.notice.unsaved": "Le boîtier a redémarré avant d'enregistrer le changement confirmé, il l'a donc annulé. Le refaire ?",
 	"network.changeSafety.askBefore.undoNoConfirm": "Faire le changement. Le boîtier l’annule après {seconds} s ; cette connexion ne peut pas confirmer.",
-	"network.changeSafety.confirm.waiting": "Le boîtier accepte une confirmation depuis une nouvelle connexion dans {seconds} s.",
+	"network.changeSafety.confirm.waiting": "Le boîtier accepte une confirmation dans {seconds} s.",
 	"network.changeSafety.confirmed.via": "Conservé : confirmé via {via}.",
 	"network.changeSafety.confirmed.remote": "Conservé : confirmé depuis une connexion à distance."
 }

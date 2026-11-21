@@ -66,8 +66,9 @@ What each part rules out:
   the tailnet itself still answers. A tailnet IP or MagicDNS name that keeps
   working over another uplink is a real way back in, and counts.
 - **The one-time code.** 32 random bytes, base64url, minted by the page before
-  it sends the request and kept in `sessionStorage` (this tab only; a reload
-  keeps it). The page mints it, not the box, because the change may cut the
+  it sends the request and kept in `sessionStorage` (a reload keeps it; other
+  tabs ordinarily don't have it, though a browser may copy it into a tab the
+  page opens itself). The page mints it, not the box, because the change may cut the
   socket before the reply arrives. The journal holds only its SHA-256, bound to
   the transaction with the token hash, `Origin` and `Host`. It is spent when the
   change moves to `confirming`, compared in constant time, and its field name is
@@ -78,13 +79,27 @@ can't confirm. The prompt says so (`canConfirm: false`, "this connection can't
 confirm"), and a protected change from a browser login without a code is
 refused before anything changes.
 
+**The fence.** The owner checks the code, the login, the address and the
+timing, then the checkpoint's liveness, and then, as close to the destroy as it
+gets, reads the socket's session again and re-checks all of them with the
+deadline. A password change (token revoked or replaced) or lost front-door
+evidence while the confirmation waited in the queue or on NetworkManager
+refuses it. The owner's deadline is the authoritative one: it is journaled
+before NetworkManager arms its own timer, so it is never later than
+NetworkManager's, and between the two the change can no longer be confirmed
+(the tick undoes it).
+
 **The floor and the deadline run on the boot clock** (`/proc/uptime`,
-CLOCK_BOOTTIME), recorded per transaction and per socket. Wall time can step
-when NTP syncs right after an uplink change, which would undo a change early or
-let an early socket pass. The boot clock is comparable across a backend restart
-within one boot; a record from another boot is undone at start. `expiresAt` stays
-in the API as wall time; `msLeft` and `confirmAfterMs` are what a page counts
-down from.
+CLOCK_BOOTTIME, read on every use), recorded per transaction and per socket.
+Wall time can step when NTP syncs right after an uplink change, which would undo
+a change early or let an early socket pass. The boot clock is comparable across
+a backend restart within one boot (it counts suspend time the same way in every
+process). When it can't be read, no stamp is written and it is never replaced by
+another clock: the prompt says the session can't confirm, and a challenge
+without comparable stamps is refused (`unverifiable`). Expiry then falls back to
+wall time, which is also the policy for older records and records from another
+boot (those are undone at start). `expiresAt` stays in the API as wall time;
+`msLeft`, `confirmAfterMs` and `floorAgoMs` are what a page counts from.
 
 **Up front, a session without front-door evidence is told whether the change
 cuts it.** `network-session-route.ts` asks the kernel for the box's route back to
@@ -97,8 +112,23 @@ prediction for the message only: it never skips the prompt and never confirms.
 
 The browser's half is `apps/frontend/src/main/network/change-confirm.ts`: mint
 and keep the code, wait for `confirmAfterMs`, replace a socket that opened
-before the floor, then send the code when the person presses Confirm (a
-`too_early` refusal reconnects once more).
+before the floor (unless the change missed this tab's path), check the change is
+still pending, then send the code when the person presses Confirm (a
+`too_early` refusal reconnects once more; a confirmation still being saved is
+reported as such).
+
+**Which transports can confirm.** A direct browser WebSocket (LAN, a tailnet IP
+or MagicDNS name, a subnet route) can, and so can a proxy of the browser's own
+`/ws` upgrade, as long as it passes `Origin` and `Host` through unchanged and
+opens a fresh path for a new browser connection. The legacy outbound relay
+message channel can't: it does not carry the browser's RPCs over an upgrade of
+its own. A proxy that changes `Host` between requests gives a false undo (safe);
+one that rewrites both headers to constants removes the address check. A proxy
+or front door that serves a new browser WebSocket over an existing multiplexed
+connection (an HTTP/2 or HTTP/3 extended CONNECT, RFC 8441 or RFC 9220, or a
+long-lived device tunnel) can make an old path look fresh. The label "confirmed
+from a remote connection" means "no front-door evidence": on an image without
+the front door, a LAN browser gets it too.
 
 ## How a change runs
 
@@ -126,7 +156,8 @@ writes the ask-after notice. The same undo runs on `reconcile`:
 | Crash or failed write after the confirmation's checkpoint destroy | Rolls forward to finish the promotion; the tick retries it and the status shows `commitIncomplete`. If the candidate is gone before it reached disk (a reboot), the originals are intact, so the change is undone with a notice that the confirmed change was not saved (`unsaved`) |
 | Crash or failed intent write on the deliberate answer | The kept change stays unsettled; the tick and the next start finish it (or undo it with the `unsaved` notice, if it never reached disk). The caller gets `kept` with `saving: true` and a pending frame, not a failure |
 | An undo step fails | The record stays as "undo incomplete" with its errors in the status (`problem`). The tick retries after 5 s, doubling up to 5 minutes, and logs each attempt. New changes are refused (`change_in_flight`) without retrying it early; a restart retries at once |
-| The journal is unreadable | Every protected change and every role write to any port is refused with `change_in_flight`; the status reports `journalUnavailable`. A record whose transaction or notice lacks the fields the code relies on counts as unreadable. The warning is logged once per failure class (again every ten minutes). `network.resetChangeJournal` runs inside the owner: it moves a journal that still fails to read aside under a unique name (kept next to it) and sweeps leftover candidates; a readable one is never moved |
+| A journal left by the earlier automatic-keep preview | Read as its nearest current meaning: the `keep-if-reachable` mode as an undo-automatically change nobody can confirm (undone at its deadline), the `unreachable` reason as `disconnected` |
+| The journal is unreadable | Every protected change and every role write to any port is refused with `change_in_flight`; the status reports `journalUnavailable`. A record whose transaction or notice lacks the fields the code relies on, or carries a present field in the wrong shape (a checkpoint identity the adapter would refuse, a hash that isn't one, a pending profile change without its checkpoint), counts as unreadable. The warning is logged once per failure class (again every ten minutes). `network.resetChangeJournal` runs inside the owner: it moves a journal that still fails to read aside under a unique name (kept next to it) and sweeps leftover candidates; a readable one is never moved |
 
 Any `ceralive-candidate-…` profile the journal does not name (a crash between
 clone and journal write) is deleted by the same sweep.
@@ -276,10 +307,20 @@ The TypeScript unit tests use the ordinary runner with
   restarts, so a backend restart inside the window undoes its change. A
   password change inside the window revokes the token, with the same result.
   All fail safe.
-- A front door that offers WebSocket over HTTP/2 (RFC 8441) could carry the new
-  socket on an old connection. The backend speaks HTTP/1.1 only, and browsers
-  open a fresh connection for an HTTP/1.1 WebSocket; check the front door
-  before the flag goes on.
+- A front door or proxy that serves a new browser WebSocket over an existing
+  multiplexed connection (RFC 8441, RFC 9220, a long-lived device tunnel) could
+  make an old path look fresh. The backend speaks HTTP/1.1 only, and browsers
+  open a fresh connection for an HTTP/1.1 WebSocket; check the browser-facing
+  endpoint of every supported transport before the flag goes on.
+- The reset path assumes the owner is the only writer: a repair tool that
+  replaces the journal between the owner's read and its rename would have the
+  new file moved aside.
+- Undo retries are scheduled on wall time, so a backward clock step can delay
+  a retry.
+- Each D-Bus call is its own `busctl` process, so the bus-instance check and
+  the destroy are separate connections. A system bus restarted in place between
+  them could hand the same unique name and checkpoint path to a new daemon. A
+  persistent D-Bus connection would close that window.
 - `Host` binds only as well as a proxy in front preserves it; `Origin` is the
   stronger half.
 - The route back to a session is read from the routing table when the prompt is

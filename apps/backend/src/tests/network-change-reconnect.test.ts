@@ -36,7 +36,7 @@ function box() {
 	fake.active.set("eth0", eth);
 	const owner = createNetworkChangeOwner({
 		now: Date.now,
-		clock: () => bootClock() ?? Date.now(),
+		clock: bootClock,
 		bootId: async () => "boot",
 		nm: fake.nm,
 		effects: createEffectRegistry([]),
@@ -81,7 +81,7 @@ function box() {
 							await owner.confirm(
 								request.id as string,
 								request.code as string,
-								networkChangeSession(ws),
+								() => networkChangeSession(ws),
 							),
 						);
 					}

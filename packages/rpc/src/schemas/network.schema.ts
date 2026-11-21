@@ -334,6 +334,8 @@ export const changeSafetyConfirmRefusalSchema = z.enum([
 	'wrong_code',
 	'not_requester',
 	'wrong_address',
+	// The device can't compare when the socket opened with the change.
+	'unverifiable',
 ]);
 export type ChangeSafetyConfirmRefusal = z.infer<typeof changeSafetyConfirmRefusalSchema>;
 
@@ -358,8 +360,10 @@ export const changeSafetyResultSchema = z.discriminatedUnion('kind', [
 		// Wall time on the device's clock; count down from msLeft instead.
 		expiresAt: z.number(),
 		msLeft: z.number().nonnegative(),
-		// Until a new connection may confirm (the settle floor).
+		// Until a new connection may confirm (the settle floor), and how long
+		// ago it passed.
 		confirmAfterMs: z.number().nonnegative(),
+		floorAgoMs: z.number().nonnegative(),
 		canConfirm: z.boolean(),
 	}),
 	z.object({ kind: z.literal('kept'), id: z.string(), saving: z.literal(true).optional() }),
@@ -374,6 +378,7 @@ export const changeSafetyStatusSchema = z.object({
 			expiresAt: z.number(),
 			msLeft: z.number().nonnegative(),
 			confirmAfterMs: z.number().nonnegative(),
+			floorAgoMs: z.number().nonnegative(),
 			path: z.string(),
 			canConfirm: z.boolean(),
 		})

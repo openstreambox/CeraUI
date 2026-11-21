@@ -3574,7 +3574,7 @@
 	"network.changeSafety.notice.interrupted": "La caja se reinició mientras hacía este cambio, así que no lo hizo. ¿Lo quieres?",
 	"network.changeSafety.notice.unsaved": "La caja se reinició antes de guardar el cambio que confirmaste, así que lo deshizo. ¿Lo quieres?",
 	"network.changeSafety.askBefore.undoNoConfirm": "Hacer el cambio. La caja lo deshace tras {seconds} s; esta conexión no puede confirmar.",
-	"network.changeSafety.confirm.waiting": "La caja acepta una confirmación desde una conexión nueva en {seconds} s.",
+	"network.changeSafety.confirm.waiting": "La caja acepta una confirmación en {seconds} s.",
 	"network.changeSafety.confirmed.via": "Mantenido: confirmado por {via}.",
 	"network.changeSafety.confirmed.remote": "Mantenido: confirmado desde una conexión remota."
 }

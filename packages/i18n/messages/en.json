@@ -3571,7 +3571,7 @@
 	"network.changeSafety.notice.interrupted": "The box restarted while making this change, so it didn't make it. Still want it?",
 	"network.changeSafety.notice.unsaved": "The box restarted before saving your confirmed change, so it undid it. Still want it?",
 	"network.changeSafety.askBefore.undoNoConfirm": "Make the change. The box undoes it after {seconds} s; this connection can't confirm.",
-	"network.changeSafety.confirm.waiting": "The box accepts a confirmation from a new connection in {seconds} s.",
+	"network.changeSafety.confirm.waiting": "The box accepts a confirmation in {seconds} s.",
 	"network.changeSafety.confirmed.via": "Kept: confirmed over {via}.",
 	"network.changeSafety.confirmed.remote": "Kept: confirmed from a remote connection."
 }

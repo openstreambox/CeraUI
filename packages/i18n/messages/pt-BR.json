@@ -3574,7 +3574,7 @@
 	"network.changeSafety.notice.interrupted": "A caixa reiniciou enquanto fazia esta mudança, então não a fez. Ainda quer?",
 	"network.changeSafety.notice.unsaved": "A caixa reiniciou antes de salvar a mudança que você confirmou, então desfez. Ainda quer?",
 	"network.changeSafety.askBefore.undoNoConfirm": "Fazer a mudança. A caixa a desfaz após {seconds} s; esta conexão não pode confirmar.",
-	"network.changeSafety.confirm.waiting": "A caixa aceita uma confirmação de uma nova conexão em {seconds} s.",
+	"network.changeSafety.confirm.waiting": "A caixa aceita uma confirmação em {seconds} s.",
 	"network.changeSafety.confirmed.via": "Mantida: confirmada por {via}.",
 	"network.changeSafety.confirmed.remote": "Mantida: confirmada de uma conexão remota."
 }

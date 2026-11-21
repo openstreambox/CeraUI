@@ -353,10 +353,13 @@ export function harness(
 		isStreaming?: NetworkChangeDeps["isStreaming"];
 		/** A boot clock apart from the wall clock (default: the same value). */
 		separateClock?: boolean;
+		/** The boot clock can't be read (until `clockReadable(true)`). */
+		clockUnavailable?: boolean;
 	} = {},
 ) {
 	let now = 1000;
 	let clock = 1000;
+	let readable = options.clockUnavailable !== true;
 	let boot = "boot-1";
 	const fake = createFakeNm();
 	const effects = createFakeEffects();
@@ -366,7 +369,9 @@ export function harness(
 	const make = () =>
 		createNetworkChangeOwner({
 			now: () => now,
-			...(options.separateClock ? { clock: () => clock } : {}),
+			...(options.separateClock || options.clockUnavailable
+				? { clock: () => (readable ? clock : undefined) }
+				: {}),
 			bootId: async () => boot,
 			nm: fake.nm,
 			effects: effects.registry,
@@ -402,6 +407,9 @@ export function harness(
 			now = value;
 		},
 		clock: () => clock,
+		clockReadable(value: boolean) {
+			readable = value;
+		},
 		now: () => now,
 		newBoot() {
 			boot = `boot-${Math.random()}`;

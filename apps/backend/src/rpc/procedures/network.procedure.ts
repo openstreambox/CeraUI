@@ -232,10 +232,12 @@ export const confirmNetworkChangeProcedure = authedProcedure
 	.handler(async ({ input, context }) => {
 		if (!changeSafetyActive()) return { success: false, error: "unavailable" };
 		try {
+			// Read again at the owner's fence, not snapshotted here: a token
+			// revoked or replaced while this waits must refuse it.
 			const result = await getNetworkChangeOwner().confirm(
 				input.id,
 				input.confirmationCode,
-				networkChangeSession(context.ws),
+				() => networkChangeSession(context.ws),
 			);
 			return {
 				success: true,

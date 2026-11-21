@@ -474,9 +474,26 @@ describe("the journal is validated as deeply as it is used", () => {
 			{ ...tx, expiresAt: undefined },
 			{ ...tx, expiresClock: -1 },
 			{ ...tx, checkpointBus: 7 },
-			{ ...tx, undoReason: "unreachable" },
-			{ ...tx, mode: "keep-if-reachable" },
+			{ ...tx, undoReason: "elsewhere" },
+			{ ...tx, mode: "keep-somehow" },
 			{ ...tx, challenge: { ...(tx.challenge as object), codeHash: "x" } },
+			// A one-element array around a valid digest is not a digest.
+			{
+				...tx,
+				challenge: {
+					...(tx.challenge as object),
+					codeHash: ["a".repeat(64)],
+				},
+			},
+			// A checkpoint identity the adapter would refuse on every tick.
+			{ ...tx, checkpoint: "/not/a/checkpoint" },
+			{ ...tx, checkpointOwner: "org.freedesktop.NetworkManager" },
+			{ ...tx, checkpointCreated: "0" },
+			{ ...tx, checkpointBus: "XYZ" },
+			// Identity parts without the checkpoint path.
+			{ ...tx, checkpoint: undefined },
+			// A challenge on a change that has no undo.
+			{ ...tx, mode: "keep-change", state: "kept" },
 			{ ...tx, challenge: { ...(tx.challenge as object), origin: "" } },
 			{ ...tx, confirmedVia: 3 },
 			{
@@ -488,6 +505,62 @@ describe("the journal is validated as deeply as it is used", () => {
 			await expect(f.store.read()).rejects.toThrow("unavailable");
 			rmSync(f.dir, { recursive: true, force: true });
 		}
+	});
+
+	it("a pending profile change without its checkpoint is refused; an effect-only one is fine", async () => {
+		const tx = await written();
+		for (const key of [
+			"checkpoint",
+			"checkpointOwner",
+			"checkpointCreated",
+			"checkpointBus",
+		])
+			delete tx[key];
+		const profileOnly = stored(tx);
+		await expect(profileOnly.store.read()).rejects.toThrow("unavailable");
+		rmSync(profileOnly.dir, { recursive: true, force: true });
+		const effectOnly = stored({
+			...tx,
+			plan: { ...(tx.plan as object), profiles: [] },
+		});
+		expect((await effectOnly.store.read()).tx?.state).toBe("pending");
+		rmSync(effectOnly.dir, { recursive: true, force: true });
+	});
+
+	it("a journal left by the automatic-keep preview reads as its nearest current meaning", async () => {
+		const tx = await written();
+		delete tx.challenge;
+		const f = stored({
+			...tx,
+			mode: "keep-if-reachable",
+			undoReason: "unreachable",
+			reachability: { kind: "tailnet-peer", peer: "100.64.0.1" },
+		});
+		const journal = await f.store.read();
+		expect(journal.tx?.mode).toBe("undo-automatically");
+		expect(journal.tx?.undoReason).toBe("disconnected");
+		expect(journal.tx).not.toHaveProperty("reachability");
+		rmSync(f.dir, { recursive: true, force: true });
+		// A settled notice of that reason: readable, so role writes still work.
+		const dir = mkdtempSync(join(tmpdir(), "nc-journal-"));
+		const path = join(dir, "journal.json");
+		writeFileSync(
+			path,
+			JSON.stringify({
+				version: 1,
+				tx: null,
+				notice: {
+					id: "n1",
+					reason: "unreachable",
+					createdAt: 5,
+					plan: plan({ devices: ["eth0"] }),
+				},
+			}),
+			{ mode: 0o600 },
+		);
+		const read = await createFileJournalStore(path).read();
+		expect(read.notice?.reason).toBe("disconnected");
+		rmSync(dir, { recursive: true, force: true });
 	});
 
 	it("an older record without a checkpoint identity or boot-clock stamps still reads", async () => {

@@ -3571,7 +3571,7 @@
 	"network.changeSafety.notice.interrupted": "Die Box startete während der Änderung neu, deshalb wurde sie nicht gemacht. Trotzdem?",
 	"network.changeSafety.notice.unsaved": "Die Box startete neu, bevor deine bestätigte Änderung gespeichert war. Rückgängig gemacht. Trotzdem?",
 	"network.changeSafety.askBefore.undoNoConfirm": "Änderung vornehmen. Die Box macht sie nach {seconds} s rückgängig; diese Verbindung kann nicht bestätigen.",
-	"network.changeSafety.confirm.waiting": "Die Box nimmt in {seconds} s eine Bestätigung über eine neue Verbindung an.",
+	"network.changeSafety.confirm.waiting": "Die Box nimmt in {seconds} s eine Bestätigung an.",
 	"network.changeSafety.confirmed.via": "Behalten: bestätigt über {via}.",
 	"network.changeSafety.confirmed.remote": "Behalten: bestätigt über eine Fernverbindung."
 }

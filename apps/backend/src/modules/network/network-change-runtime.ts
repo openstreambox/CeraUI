@@ -90,8 +90,9 @@ export function getNetworkChangeOwner() {
 	}
 	owner ??= createNetworkChangeOwner({
 		now: Date.now,
-		// Wall time only where /proc/uptime is unreadable (never on a box).
-		clock: () => bootClock() ?? Date.now(),
+		// Never replaced by wall time: without it no stamp is written and
+		// nobody can confirm (see NetworkChangeDeps.clock).
+		clock: bootClock,
 		bootId: readBootId,
 		nm: nmCheckpointAdapter,
 		// No effects outside NetworkManager are wired yet; any plan naming one is
