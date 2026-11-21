@@ -8,7 +8,6 @@ export function bundleStateFixture(): BundleDeviceState {
 		boots: [],
 		slots: null,
 		bootAttempts: null,
-		packages: [],
 		modems: [],
 		interfaces: [],
 		stream: { lifecycle: "idle", bitrateKbps: null, ceilingKbps: null },

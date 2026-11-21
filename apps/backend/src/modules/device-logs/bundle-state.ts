@@ -29,13 +29,15 @@ import { buildRedactor } from "./redaction.ts";
 /**
  * The support bundle's device state record, written into the settings section.
  *
- * Every string is a member of a closed vocabulary, an anonymous label or a
- * version with an exact per-source shape; nothing free-form from a modem, the
- * OS or a package database is copied, and a version that does not match is
- * dropped. Interfaces are labelled by kind and ordinal, never by name. Before
- * the record is returned each value is screened with the bundle's own
- * redactor and the held secrets (`screenState`): a value it would act on
- * becomes `null`, and a key it would act on drops the whole record.
+ * Every string is a member of a closed vocabulary or an anonymous label;
+ * nothing free-form from a modem, the OS, RAUC or a package database is copied.
+ * Version strings are left out: the bundle's versions section already carries
+ * the running image, CeraUI, engine and sender versions, and no format check
+ * can tell a version part from a short identifier. Interfaces are labelled by
+ * kind and ordinal, never by name. Before the record is returned each value
+ * is screened with the bundle's own redactor and the held secrets
+ * (`screenState`): a value it would act on becomes `null`, and a key it would
+ * act on drops the whole record.
  */
 export interface BundleDeviceState {
 	readonly uptimeSeconds: number | null;
@@ -49,10 +51,6 @@ export interface BundleDeviceState {
 		readonly order: readonly ("A" | "B")[];
 		readonly left: { readonly A: number; readonly B: number };
 	} | null;
-	readonly packages: ReadonlyArray<{
-		readonly name: string;
-		readonly version: string | null;
-	}>;
 	readonly modems: readonly BundleModem[];
 	readonly interfaces: readonly BundleInterface[];
 	readonly stream: {
@@ -75,7 +73,6 @@ interface BundleSlot {
 	readonly slot: "A" | "B" | null;
 	readonly state: string;
 	readonly bootStatus: string | null;
-	readonly version: string | null;
 }
 
 interface BundleModem {
@@ -135,26 +132,6 @@ export const defaultBundleStateDeps: BundleStateDeps = {
 	classify: classifyFinishedBoot,
 };
 
-// Strict per-source version shapes. Every group is short and the separators are
-// fixed, so a MAC, IMEI, ICCID or phone number cannot pass, grouped or not. A
-// version that does not match is dropped (null), never copied.
-const CALVER = /^20\d{2}\.\d{1,2}\.\d{1,3}(?:-\d{1,2})?$/;
-const SEMVER = /^\d{1,2}\.\d{1,2}\.\d{1,3}(?:-\d{1,2})?$/;
-const DEBIAN =
-	/^\d{1,2}\.\d{1,3}(?:\.\d{1,3})?(?:~rc\d)?-\d{1,2}(?:ceralive\d{1,2})?(?:\+deb\d{2}u\d{1,2})?$/;
-/** The image version a RAUC bundle carries (`2026.11.11201`). */
-const IMAGE_VERSION = /^20\d{2}\.\d{1,2}\.\d{1,5}$/;
-
-/** Exact package names whose installed versions support asks for, each with its shape. */
-export const BUNDLE_PACKAGES: Readonly<Record<string, RegExp>> = {
-	cerastream: CALVER,
-	srtla: SEMVER,
-	modemmanager: DEBIAN,
-	"network-manager": DEBIAN,
-	rauc: DEBIAN,
-	"libqmi-glib5": DEBIAN,
-	"libmbim-glib4": DEBIAN,
-};
 const MAX_MODEMS = 16;
 const MAX_INTERFACES = 32;
 const OTHER = "other";
@@ -186,11 +163,6 @@ const BOOT_ATTEMPTS = 3;
 function member(set: ReadonlySet<string>, value: unknown): string | null {
 	if (typeof value !== "string" || value === "") return null;
 	return set.has(value) ? value : OTHER;
-}
-
-/** The version if it has exactly the given shape, else null. */
-export function versionValue(value: unknown, shape: RegExp): string | null {
-	return typeof value === "string" && shape.test(value) ? value : null;
 }
 
 function count(value: unknown, max: number): number | null {
@@ -281,27 +253,6 @@ export function parseBootAttempts(
 	};
 }
 
-export function parseInstalledPackages(
-	text: string,
-): BundleDeviceState["packages"] {
-	const found = new Map<string, string | null>();
-	for (const stanza of text.split(/\n\s*\n/)) {
-		const fields = new Map<string, string>();
-		for (const line of stanza.split("\n")) {
-			const match = /^(Package|Status|Version): (.*)$/.exec(line);
-			if (match?.[1] && match[2] !== undefined)
-				fields.set(match[1], match[2].trim());
-		}
-		const name = fields.get("Package");
-		const shape = name ? BUNDLE_PACKAGES[name] : undefined;
-		if (name && shape && fields.get("Status") === "install ok installed")
-			found.set(name, versionValue(fields.get("Version"), shape));
-	}
-	return Object.keys(BUNDLE_PACKAGES).flatMap((name) =>
-		found.has(name) ? [{ name, version: found.get(name) ?? null }] : [],
-	);
-}
-
 function slot(status: RootSlotStatus): BundleSlot {
 	return {
 		slot:
@@ -310,7 +261,6 @@ function slot(status: RootSlotStatus): BundleSlot {
 				: null,
 		state: member(SLOT_STATE, status.state) ?? OTHER,
 		bootStatus: member(SLOT_BOOT_STATUS, status.bootStatus),
-		version: versionValue(status.version, IMAGE_VERSION),
 	};
 }
 
@@ -488,7 +438,7 @@ export async function collectBundleState(
 		Number.MAX_SAFE_INTEGER,
 	);
 	const bitrate = getEngineBitrateStatus();
-	const [endings, slots, bootAttempts, packages] = await Promise.all([
+	const [endings, slots, bootAttempts] = await Promise.all([
 		bootEndings(boots, journalBoots, events, deps),
 		device
 			? optional(async () => (await deps.readSlots()).map(slot), null)
@@ -502,15 +452,6 @@ export async function collectBundleState(
 					null,
 				)
 			: null,
-		device
-			? optional(
-					async () =>
-						parseInstalledPackages(
-							await deps.readText("/var/lib/dpkg/status", 32 * 1024 * 1024),
-						),
-					[],
-				)
-			: [],
 	]);
 	return screenState(
 		{
@@ -522,7 +463,6 @@ export async function collectBundleState(
 			boots: endings,
 			slots,
 			bootAttempts,
-			packages,
 			modems: modems(),
 			interfaces: interfaces(),
 			stream: {

@@ -9,14 +9,11 @@ import {
 } from "../modules/device-logs/bundle.ts";
 import * as data from "../modules/device-logs/bundle-data.ts";
 import {
-	BUNDLE_PACKAGES,
 	type BundleStateDeps,
 	collectBundleState,
 	parseBootAttempts,
-	parseInstalledPackages,
 	posixCksum,
 	screenState,
-	versionValue,
 } from "../modules/device-logs/bundle-state.ts";
 import { abortLogExports } from "../modules/device-logs/export.ts";
 import * as modemState from "../modules/modems/modems-state.ts";
@@ -62,6 +59,8 @@ const HOSTILE = {
 	hashMacVersion: "1.0+g0a1b2c3d4e5f",
 	groupedImei: "35175605-1523999",
 	groupedIccid: "8901260.123456.789012",
+	// Re-check 2: a short asset tag as the last part of a RAUC image version.
+	assetTag: "97531",
 };
 
 function boot(
@@ -89,7 +88,7 @@ const RAUC_SLOTS = [
 		bootname: "A",
 		state: "booted",
 		bootStatus: "good",
-		version: "2026.11.11201",
+		version: `2026.11.${HOSTILE.assetTag}`,
 		lastSyncedAt: null,
 	},
 	{
@@ -110,26 +109,10 @@ const RAUC_SLOTS = [
 	},
 ];
 
-const stanza = (
-	name: string,
-	version: string,
-	status = "install ok installed",
-) =>
-	[`Package: ${name}`, `Status: ${status}`, `Version: ${version}`, ""].join(
-		"\n",
-	);
-const DPKG_STATUS = [
-	stanza("ceralive-device", "2026.11.3-1"),
-	stanza("cerastream", "2026.11.2"),
-	stanza("srtla", "2.0.0", "deinstall ok config-files"),
-	stanza(HOSTILE.package, "1.0"),
-	stanza(`linux-image-${HOSTILE.laptop}`, "7.2.0"),
-	stanza("modemmanager", "1.24.2.1"),
-	stanza("network-manager", "1.52.1-1+deb13u1"),
-	stanza("rauc", HOSTILE.tailnet),
-	stanza("libqmi-glib5", HOSTILE.macVersion),
-	stanza("libmbim-glib4", HOSTILE.hashMacVersion),
-].join("\n");
+// Re-check 2: a stanza named after an Object.prototype member. The dpkg file is
+// no longer read at all, so it cannot reach any lookup.
+const DPKG_STATUS =
+	"Package: constructor\nStatus: install ok installed\nVersion: 1.0\n";
 
 const BOOT_STATE = `BOOT_ORDER=B A\nBOOT_A_LEFT=3\nBOOT_B_LEFT=1\nBOOT_CRC=2981376971\n`;
 
@@ -140,7 +123,10 @@ function deps(
 		device: async () => true,
 		readText: async (path) => {
 			if (path === "/boot/boot_state.txt") return BOOT_STATE;
-			if (path === "/var/lib/dpkg/status") return DPKG_STATUS;
+			if (path === "/var/lib/dpkg/status") {
+				dpkgReads++;
+				return DPKG_STATUS;
+			}
 			throw new Error(`unexpected read ${path}`);
 		},
 		readSlots: async () => RAUC_SLOTS,
@@ -156,6 +142,7 @@ function deps(
 	};
 }
 
+let dpkgReads = 0;
 const restores: Array<() => void> = [];
 beforeEach(() => {
 	const spies = [
@@ -272,7 +259,7 @@ function expectNoHostile(text: string) {
 	expect(text).not.toContain("uuid-private");
 }
 
-test("the state record exports closed vocabularies, labels and versions only", async () => {
+test("the state record exports closed vocabularies and labels, and no versions", async () => {
 	const state = await collectBundleState(input, deps());
 	expect(state).toEqual({
 		uptimeSeconds: 3_724,
@@ -299,24 +286,11 @@ test("the state record exports closed vocabularies, labels and versions only", a
 			},
 		],
 		slots: [
-			{
-				slot: "A",
-				state: "booted",
-				bootStatus: "good",
-				version: "2026.11.11201",
-			},
-			{ slot: null, state: "other", bootStatus: "other", version: null },
-			{ slot: "B", state: "inactive", bootStatus: "bad", version: null },
+			{ slot: "A", state: "booted", bootStatus: "good" },
+			{ slot: null, state: "other", bootStatus: "other" },
+			{ slot: "B", state: "inactive", bootStatus: "bad" },
 		],
 		bootAttempts: { order: ["B", "A"], left: { A: 3, B: 1 } },
-		packages: [
-			{ name: "cerastream", version: "2026.11.2" },
-			{ name: "modemmanager", version: null },
-			{ name: "network-manager", version: "1.52.1-1+deb13u1" },
-			{ name: "rauc", version: null },
-			{ name: "libqmi-glib5", version: null },
-			{ name: "libmbim-glib4", version: null },
-		],
 		modems: [
 			{
 				modem: 1,
@@ -393,20 +367,18 @@ test("the state record exports closed vocabularies, labels and versions only", a
 		stream: { lifecycle: "streaming", bitrateKbps: 3_200, ceilingKbps: 6_000 },
 	});
 	expectNoHostile(JSON.stringify(state));
+	expect(JSON.stringify(state)).not.toContain('"version"');
+	expect(dpkgReads).toBe(0);
 });
 
 test("a value holding a held secret is dropped, never left to refuse the bundle", async () => {
 	const state = await collectBundleState(
 		{
 			...input,
-			secrets: [
-				{ kind: "password", value: "2026.11.2" },
-				{ kind: "pin", value: "3200" },
-			],
+			secrets: [{ kind: "pin", value: "3200" }],
 		},
 		deps(),
 	);
-	expect(state?.packages[0]).toEqual({ name: "cerastream", version: null });
 	expect(state?.stream.bitrateKbps).toBeNull();
 	expect(state?.stream.ceilingKbps).toBe(6_000);
 });
@@ -426,30 +398,6 @@ test("a held secret equal to one of the record's keys drops the whole record", a
 			{ kind: "ssh", value: "cellular-1" },
 		]),
 	).toEqual({ label: null });
-});
-
-test.each([
-	["cerastream", "2026.11.2", "2026.11.2"],
-	["srtla", "2.0.1-1", "2.0.1-1"],
-	["modemmanager", "1.24.2-1+deb13u1", "1.24.2-1+deb13u1"],
-	["modemmanager", "1.24.2-1ceralive1", "1.24.2-1ceralive1"],
-	["network-manager", "1.52.1-1", "1.52.1-1"],
-	["libqmi-glib5", "1.36.0-1~rc1", null],
-	["modemmanager", "1.24.2.1", null],
-	["srtla", "10.0.0.1", null],
-	["srtla", "2.0.0-alice", null],
-	["rauc", "alice-node.example.ts.net", null],
-	["rauc", "1.0+customeracct", null],
-	["rauc", "15551234567", null],
-	["libqmi-glib5", HOSTILE.macVersion, null],
-	["libmbim-glib4", HOSTILE.hashMacVersion, null],
-	["network-manager", HOSTILE.groupedImei, null],
-	["cerastream", HOSTILE.groupedIccid, null],
-	["cerastream", "", null],
-] as const)("%s version %p becomes %p", (name, raw, expected) => {
-	const shape = BUNDLE_PACKAGES[name];
-	if (!shape) throw new Error(`no shape for ${name}`);
-	expect(versionValue(raw, shape)).toBe(expected);
 });
 
 test("a finished boot whose ending cannot be read reports unknown, not a failure", async () => {
@@ -505,7 +453,6 @@ test("unreadable device sources leave their fields empty and keep the rest", asy
 	);
 	expect(state.slots).toBeNull();
 	expect(state.bootAttempts).toBeNull();
-	expect(state.packages).toEqual([]);
 	expect(state.modems).toHaveLength(2);
 });
 
@@ -524,7 +471,6 @@ test("a host that is not a device reads no device files", async () => {
 	);
 	expect(state.slots).toBeNull();
 	expect(state.bootAttempts).toBeNull();
-	expect(state.packages).toEqual([]);
 });
 
 test("the CRC matches POSIX cksum", () => {
@@ -570,17 +516,6 @@ test.each([
 	["garbage", "garbage", null],
 ] as const)("boot state with %s", (_name, text, expected) => {
 	expect(parseBootAttempts(text)).toEqual(expected);
-});
-
-test("installed packages are the exact allowlisted names", () => {
-	expect(parseInstalledPackages(DPKG_STATUS).map((row) => row.name)).toEqual([
-		"cerastream",
-		"modemmanager",
-		"network-manager",
-		"rauc",
-		"libqmi-glib5",
-		"libmbim-glib4",
-	]);
 });
 
 async function downloadWith(

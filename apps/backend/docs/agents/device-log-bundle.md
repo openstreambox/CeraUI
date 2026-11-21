@@ -30,23 +30,20 @@ list released viewers accept. It holds uptime, memory headroom from the cached
 device stats, how the running and previous journal boots ended (`current`, or
 the classifier's `clean`/`unclean`/`unknown` with its evidence codes and the
 boot's first and last timestamps, through `classifyFinishedBoot`), both rootfs
-slots from `rauc status` (A/B, state, boot status, bundle version), the
-boot-state helper's order and attempts left from `/boot/boot_state.txt`,
-versions of an exact package list from the dpkg status file, each modem's
+slots from `rauc status` (A/B, state, boot status), the boot-state helper's
+order and attempts left from `/boot/boot_state.txt`, each modem's
 connection state, mode, access technology, signal, roaming, SIM presence, lock
 type and whether an APN is configured, each network interface as an anonymous
 kind-and-ordinal label (`cellular-1`, `wifi-1`, `ethernet-1`, `other-1`) with
 bond, IPv4 and error flags and rates, and the stream lifecycle with applied and
 ceiling bitrate.
 
-Every string is a closed-vocabulary member (unknown members become `other`), an
-anonymous label or a version. No model, manufacturer, operator, interface,
-package or slot name text is copied. Versions come only from an exact package
-list (`BUNDLE_PACKAGES`), each with its own shape (CalVer, small semver, or a
-Debian `x.y[.z][~rcN]-N[ceraliveN][+debNNuN]`), and from RAUC bundles as
-`20YY.M.NNNNN`; every group is short and the separators are fixed, so a MAC,
-IMEI, ICCID or phone number cannot pass even when split into groups. A version
-of another shape is dropped (`null`). The boot state is used only when the
+Every string is a closed-vocabulary member (unknown members become `other`) or
+an anonymous label. No model, manufacturer, operator, interface, package or slot
+name text is copied, and no version string at all: the versions section already
+carries the running image, CeraUI, engine and sender versions, and no format
+check separates a version part from a short identifier (`2026.11.97531`). The
+dpkg status file is not read. The boot state is used only when the
 image's helper would accept it: a non-empty order of A and B without repeats,
 both counters present and within the default budget of three, each key once,
 and a `BOOT_CRC` equal to POSIX `cksum` of the canonical payload when present;
@@ -60,8 +57,8 @@ own redactor and the held secrets. A value it would act on becomes `null`
 it and leaves it out on a collision, so the optional record can neither leak
 such a value nor make preparation refuse. Each source is optional: a failed
 read leaves its field null or empty. Only a real device (`isRealDevice`,
-outside mock mode) runs `rauc` or reads the boot-state and dpkg files; a dev
-host or CI never does.
+outside mock mode) runs `rauc` or reads the boot-state file; a dev host or CI
+never does.
 
 Held config, relay, hotspot, APN and router credentials are inputs to redaction
 only. `getStoredModemCredentials()` returns copies of the username/password
