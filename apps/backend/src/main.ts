@@ -44,7 +44,10 @@ import { checkExecPath } from "./helpers/exec.ts";
 import { logger } from "./helpers/logger.ts";
 import { tightenPrivateFiles } from "./helpers/private-startup.ts";
 // allow: SIZE_OK — Sequential boot composition root; ordering and signal wiring are pinned by boot contract tests.
-import { handleTerminationSignal } from "./helpers/shutdown.ts";
+import {
+	type BackendShutdownDeps,
+	handleTerminationSignal,
+} from "./helpers/shutdown.ts";
 import { notifyServiceReady } from "./helpers/systemd-ready.ts";
 import { startServiceWatchdog } from "./helpers/systemd-watchdog.ts";
 import { isDevelopment } from "./mocks/mock-config.ts";
@@ -288,6 +291,57 @@ if (isDevelopment()) {
 // survivable window; the real handlers are armed at their own sites via
 // `armBootSignalHandler`, which replays a poke that arrived in the meantime.
 installBootSignalGuards();
+
+// Termination handlers are installed before the singleton guardian or any
+// monitor child exists, so a stop that lands while the rest of the ladder is
+// still running gets the same cleanup as one after readiness. Every step below
+// tolerates a subsystem that has not started yet; the shutdown flag set first
+// keeps monitors that have not started from starting afterwards.
+let networkMonitorForShutdown: { stop(): void | Promise<void> } | undefined;
+function stopRecoveryRetries(): void {
+	stopRuntimeConfigRecovery();
+	stopMutationRecovery();
+	stopLegacyTokenMigration();
+}
+// The shared nmcli monitor (Wi-Fi and modems subscribe to this one instance)
+// and the udevadm monitor. Each gets SIGTERM and a bounded wait; KillMode=mixed
+// would otherwise SIGKILL them once the backend exits.
+async function stopMonitors(): Promise<void> {
+	await Promise.all([
+		networkMonitorForShutdown?.stop(),
+		stopUdevProvisionalMonitor(),
+	]);
+}
+function terminationDeps(): BackendShutdownDeps {
+	return {
+		stopRecoveryRetries,
+		terminateWifiObservation: () => {
+			stopWifiAdapterModeRestore();
+			stopProvisioningMarkerWatch();
+			stopHotspotStationEvents();
+			stopWifiNetworkDiversity();
+			wifiRadioObservation.terminate();
+		},
+		terminateWifiDiscovery,
+		gracefulShutdown,
+		stopSrtIngest: async () => {
+			await stopMoblinkRelay();
+			await stopSRTIngest();
+		},
+		stopDmesgWatchers,
+		stopUplinkShaper,
+		stopGatewayRoutes,
+		stopMonitors,
+		releaseGuardians: releaseBackendSingleton,
+		exit: process.exit,
+	};
+}
+process.on("SIGTERM", () =>
+	handleTerminationSignal("SIGTERM", terminationDeps()),
+);
+process.on("SIGINT", () =>
+	handleTerminationSignal("SIGINT", terminationDeps()),
+);
 
 if (backendSingletonApplies()) {
 	await runCritical("backend-singleton", enforceBackendSingleton);
@@ -623,6 +677,7 @@ await guardNonCritical("sharing-diag", initSharingDiag);
 
 // Event-driven netif: monitor stream drives up/down; onResync re-polls on restart
 const networkMonitor = createMonitorManager(() => updateNetif());
+networkMonitorForShutdown = networkMonitor;
 networkMonitor.on("monitor-event", handleNetifMonitorEvent);
 networkMonitor.start();
 
@@ -800,66 +855,6 @@ void reconcileIngestDesiredState();
 // radio on the boot critical path. A dev host, a board with no controller and a
 // masked bluetoothd all resolve to a typed `bt_unavailable` inside the stack.
 void guardNonCritical("bluetooth", initBluetooth);
-
-function stopRecoveryRetries(): void {
-	stopRuntimeConfigRecovery();
-	stopMutationRecovery();
-	stopLegacyTokenMigration();
-}
-// The shared nmcli monitor (Wi-Fi and modems subscribe to this one instance)
-// and the udevadm monitor. Each gets SIGTERM and a bounded wait; KillMode=mixed
-// would otherwise SIGKILL them once the backend exits.
-async function stopMonitors(): Promise<void> {
-	await Promise.all([networkMonitor.stop(), stopUdevProvisionalMonitor()]);
-}
-process.on("SIGTERM", () =>
-	handleTerminationSignal("SIGTERM", {
-		stopRecoveryRetries,
-		terminateWifiObservation: () => {
-			stopWifiAdapterModeRestore();
-			stopProvisioningMarkerWatch();
-			stopHotspotStationEvents();
-			stopWifiNetworkDiversity();
-			wifiRadioObservation.terminate();
-		},
-		terminateWifiDiscovery,
-		gracefulShutdown,
-		stopSrtIngest: async () => {
-			await stopMoblinkRelay();
-			await stopSRTIngest();
-		},
-		stopDmesgWatchers,
-		stopUplinkShaper,
-		stopGatewayRoutes,
-		stopMonitors,
-		releaseGuardians: releaseBackendSingleton,
-		exit: process.exit,
-	}),
-);
-process.on("SIGINT", () =>
-	handleTerminationSignal("SIGINT", {
-		stopRecoveryRetries,
-		terminateWifiObservation: () => {
-			stopWifiAdapterModeRestore();
-			stopProvisioningMarkerWatch();
-			stopHotspotStationEvents();
-			stopWifiNetworkDiversity();
-			wifiRadioObservation.terminate();
-		},
-		terminateWifiDiscovery,
-		gracefulShutdown,
-		stopSrtIngest: async () => {
-			await stopMoblinkRelay();
-			await stopSRTIngest();
-		},
-		stopDmesgWatchers,
-		stopUplinkShaper,
-		stopGatewayRoutes,
-		stopMonitors,
-		releaseGuardians: releaseBackendSingleton,
-		exit: process.exit,
-	}),
-);
 
 logger.info(bootTimer.phase("▶️", "autostart & reconciler"));
 

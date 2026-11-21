@@ -232,6 +232,8 @@ export class NmcliMonitorManager implements IMonitorEmitter {
 					if (attempt > 0) {
 						// Restart: close the no-replay gap by re-polling state.
 						this.onResync();
+						// The callback may itself have stopped us or begun shutdown.
+						if (!this.running || isShutdownStarted()) return;
 					}
 					attempt++;
 					await this.runOnce();

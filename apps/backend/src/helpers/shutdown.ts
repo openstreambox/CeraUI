@@ -47,6 +47,14 @@ async function settleCleanup(
 	}
 }
 
+function settleSync(name: string, cleanup: () => void): void {
+	try {
+		cleanup();
+	} catch (error) {
+		logger.error(`shutdown: ${name} cleanup failed`, { err: error });
+	}
+}
+
 export function resetShutdownForTest(): void {
 	shuttingDown = false;
 	resetShutdownStateForTest();
@@ -60,11 +68,17 @@ export function handleTerminationSignal(
 	shuttingDown = true;
 	// First, synchronously: supervisors check this before every spawn.
 	beginShutdown();
-	if (signal === "SIGTERM" || signal === "SIGINT")
-		emitDeviceEvent("service_stopping", { signal });
-	cancelDisruptiveRetries();
-	deps.terminateWifiObservation?.();
-	deps.terminateWifiDiscovery?.();
+	// The synchronous hooks may run before their subsystem started (the handler
+	// is installed at the top of boot); a throw must not skip the cleanup chain.
+	settleSync("device event", () => {
+		if (signal === "SIGTERM" || signal === "SIGINT")
+			emitDeviceEvent("service_stopping", { signal });
+	});
+	settleSync("disruptive retries", cancelDisruptiveRetries);
+	if (deps.terminateWifiObservation)
+		settleSync("Wi-Fi observation", deps.terminateWifiObservation);
+	if (deps.terminateWifiDiscovery)
+		settleSync("Wi-Fi discovery", deps.terminateWifiDiscovery);
 	logger.info(`received ${signal}; shutting down streaming processes`);
 	const monitorsStopped = deps.stopMonitors
 		? settleCleanup("monitors", deps.stopMonitors)

@@ -57,8 +57,10 @@
 import { logger } from "../../helpers/logger.ts";
 import { retryWithBackoff } from "../../helpers/retry.ts";
 import {
+	CHILD_STOP_GRACE_MS,
 	isShutdownStarted,
 	terminateChild,
+	waitBounded,
 } from "../../helpers/shutdown-state.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { readUdevExportDb } from "../modems/modem-id-path-source.ts";
@@ -118,6 +120,10 @@ function spawnUdevMonitor(): UdevMonitorProcess {
 export class UdevMonitorSupervisor {
 	#running = false;
 	#proc: UdevMonitorProcess | null = null;
+	// Bumped by every stop(): output of a run from before it is never published.
+	#generation = 0;
+	// The inventory read of the current run, joined (bounded) by stop().
+	#inventory: Promise<unknown> | null = null;
 
 	constructor(
 		private readonly cache: UdevProvisionalCache = getUdevProvisionalCache(),
@@ -144,17 +150,24 @@ export class UdevMonitorSupervisor {
 	 */
 	async stop(): Promise<void> {
 		this.#running = false;
+		this.#generation++;
 		const proc = this.#proc;
+		const inventory = this.#inventory;
 		this.#proc = null;
+		this.#inventory = null;
 		this.cache.clear();
-		if (!proc) {
-			return;
+		const stopping: Promise<unknown>[] = [];
+		if (proc) {
+			stopping.push(
+				terminateChild(proc).catch((error: unknown) => {
+					logger.debug(`udev monitor kill failed: ${String(error)}`);
+				}),
+			);
 		}
-		try {
-			await terminateChild(proc);
-		} catch (error) {
-			logger.debug(`udev monitor kill failed: ${String(error)}`);
-		}
+		// The inventory export is its own bounded child; join it inside the same
+		// grace so stop() does not resolve with it still running.
+		if (inventory) stopping.push(waitBounded(inventory, CHILD_STOP_GRACE_MS));
+		await Promise.all(stopping);
 	}
 
 	get isRunning(): boolean {
@@ -201,19 +214,31 @@ export class UdevMonitorSupervisor {
 	 *
 	 * A block ends at a BLANK line, so the accumulator holds the current block's
 	 * lines and flushes on one. The final block before EOF is flushed too: a
-	 * child killed at teardown can leave one without its trailing blank line, and
-	 * dropping it would silently lose the last event.
+	 * child that dies on its own can leave one without its trailing blank line,
+	 * and dropping it would silently lose the last event. Once stop() ran, this
+	 * run's inventory and events are stale and nothing more is published.
 	 */
 	async #runOnce(): Promise<void> {
+		const generation = this.#generation;
+		const current = (): boolean =>
+			this.#running && this.#generation === generation;
 		const proc = this.spawn();
 		this.#proc = proc;
 		try {
-			const inventory = await this.readInventory();
-			this.cache.replaceInventory(cellularAttachesFromUdevDatabase(inventory));
+			const reading = this.readInventory();
+			this.#inventory = reading;
+			const inventory = await reading;
+			if (current())
+				this.cache.replaceInventory(
+					cellularAttachesFromUdevDatabase(inventory),
+				);
 		} catch (error) {
-			logger.warn("udev inventory rebuild failed; retaining attached rows", {
-				error,
-			});
+			if (current())
+				logger.warn("udev inventory rebuild failed; retaining attached rows", {
+					error,
+				});
+		} finally {
+			if (this.#generation === generation) this.#inventory = null;
 		}
 
 		const decoder = new TextDecoder();
@@ -222,7 +247,7 @@ export class UdevMonitorSupervisor {
 
 		const consume = (line: string): void => {
 			if (line.trim().length === 0) {
-				this.#handleBlock(block);
+				if (current()) this.#handleBlock(block);
 				block = [];
 				return;
 			}
@@ -243,7 +268,7 @@ export class UdevMonitorSupervisor {
 			if (buffer.length > 0) {
 				consume(buffer);
 			}
-			this.#handleBlock(block);
+			if (current()) this.#handleBlock(block);
 		} finally {
 			await proc.exited.catch(() => undefined);
 			if (this.#proc === proc) {
