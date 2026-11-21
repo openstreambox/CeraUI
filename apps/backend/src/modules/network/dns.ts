@@ -25,6 +25,7 @@ import { loadCacheFile } from "../../helpers/config-loader.ts";
 import { type DnsCache, dnsCacheSchema } from "../../helpers/config-schemas.ts";
 import { logger } from "../../helpers/logger.ts";
 import { writeTextFileAtomic } from "../../helpers/text-files.ts";
+import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { haveSameElements } from "./dns-cache.ts";
 
 const DNS_CACHE_FILE = "dns_cache.json";
@@ -60,7 +61,49 @@ export interface DnsResolverLike {
 	cancel(): void;
 }
 
-const realResolverFactory = (): DnsResolverLike => new Resolver();
+/** Names a mock backend may still resolve: the loopback host and its subdomains. */
+function isLoopbackName(hostname: string): boolean {
+	const name = hostname.toLowerCase().replace(/\.$/, "");
+	return name === "localhost" || name.endsWith(".localhost");
+}
+
+/**
+ * A mock backend has no real network. Its well-known check, connectivity
+ * target and relay names would otherwise query the host's resolver, and the
+ * development harness's network guard ends the process on the first such
+ * query. Answer them the way a refusing resolver does (EREFUSED), which is
+ * also what the browser test gate's DNS recorder answers.
+ */
+const refusingResolver = (): DnsResolverLike => {
+	const real = new Resolver();
+	const refuse = (
+		hostname: string,
+		query: (
+			callback: (
+				err: NodeJS.ErrnoException | null,
+				addresses: string[],
+			) => void,
+		) => void,
+		callback: (err: NodeJS.ErrnoException | null, addresses: string[]) => void,
+	) => {
+		if (isLoopbackName(hostname)) return query(callback);
+		const error: NodeJS.ErrnoException = new Error(
+			`mock backend: no DNS for ${hostname}`,
+		);
+		error.code = "EREFUSED";
+		queueMicrotask(() => callback(error, []));
+	};
+	return {
+		resolve4: (hostname, callback) =>
+			refuse(hostname, (cb) => real.resolve4(hostname, cb), callback),
+		resolve6: (hostname, callback) =>
+			refuse(hostname, (cb) => real.resolve6(hostname, cb), callback),
+		cancel: () => real.cancel(),
+	};
+};
+
+const realResolverFactory = (): DnsResolverLike =>
+	shouldUseMocks() ? refusingResolver() : new Resolver();
 let resolverFactory: () => DnsResolverLike = realResolverFactory;
 
 /** Test seam (mirrors `setIfaceResolverForTest`): swap the Resolver factory for
