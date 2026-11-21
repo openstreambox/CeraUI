@@ -2859,7 +2859,7 @@
 	"hotspotConfirm.activate": "Hotspot einschalten",
 	"hotspotConfirm.saveFailed": "Der neue Name und das neue Passwort konnten nicht gespeichert werden. Nichts wurde geändert, der Hotspot bleibt aus.",
 	"hotspotConfirm.passwordCharacters": "Nur Standardbuchstaben, Ziffern und Sonderzeichen verwenden (keine Umlaute oder Emoji).",
-	"hotspotConfirm.inactiveHint": "Ändern Sie den Namen, das Passwort oder den Kanal, solange der Hotspot aus ist, und tippen Sie auf Speichern. „Hotspot einschalten“ zeigt Name und Passwort zur Bestätigung, bevor er startet.",
+	"hotspotConfirm.inactiveHint": "Ändern Sie den Namen oder das Passwort, solange der Hotspot aus ist, und tippen Sie auf Speichern. „Hotspot einschalten“ zeigt Name und Passwort zur Bestätigung, bevor er startet.",
 	"network.wifiMode.confirm.switchTo": "Zu {mode} wechseln",
 	"hotspotConfirm.firstTimeTitle": "Richte deinen Hotspot ein",
 	"hotspotConfirm.firstTimeBody": "Dieses Funkmodul hatte noch nie einen Hotspot. Behalte den vorgeschlagenen Namen und das Passwort oder wähle eigene.",
