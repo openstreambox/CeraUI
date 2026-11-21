@@ -16,6 +16,7 @@ import {
 } from "./backend-singleton-proof.ts";
 import type { SingletonCensusIO } from "./backend-singleton-qualify.ts";
 import { logger } from "./logger.ts";
+import { CHILD_STOP_GRACE_MS } from "./shutdown-state.ts";
 import { superviseWorker } from "./spawn-policy.ts";
 
 export const BACKEND_SINGLETON_LOCK = "/run/lock/ceralive-backend.lock";
@@ -161,5 +162,35 @@ export async function enforceBackendSingleton(
 			{ error },
 		);
 		throw error;
+	}
+}
+
+/**
+ * Shutdown: release the singleton guardian explicitly instead of leaving its
+ * flock child for systemd to SIGKILL after the backend exits. Called last in
+ * the shutdown sequence, once teardown and guarded work are done, because the
+ * lock is what keeps a restarted backend from writing beside this one.
+ * Bounded: a guardian that does not exit in time is left to the unit.
+ */
+export async function releaseBackendSingleton(
+	graceMs: number = CHILD_STOP_GRACE_MS * 2,
+): Promise<void> {
+	const lease = processLease;
+	if (!lease) return;
+	// Detach first so the expected guardian exit is not read as a lost lock.
+	processLease = undefined;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timedOut = new Promise<"timeout">((resolve) => {
+		timer = setTimeout(() => resolve("timeout"), graceMs);
+	});
+	try {
+		const outcome = await Promise.race([
+			lease[Symbol.asyncDispose]().then(() => "released" as const),
+			timedOut,
+		]);
+		if (outcome === "timeout")
+			logger.warn("Backend singleton guardian did not exit after release");
+	} finally {
+		clearTimeout(timer);
 	}
 }

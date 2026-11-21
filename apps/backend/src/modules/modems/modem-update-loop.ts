@@ -523,7 +523,7 @@ export function stopModemUpdateLoop(): void {
 	}
 	if (monitorRef && monitorListener) {
 		monitorRef.off("monitor-event", monitorListener);
-		monitorRef.stop();
+		void monitorRef.stop();
 	}
 	monitorRef = null;
 	monitorListener = null;

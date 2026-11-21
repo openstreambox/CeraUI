@@ -56,6 +56,10 @@
 
 import { logger } from "../../helpers/logger.ts";
 import { retryWithBackoff } from "../../helpers/retry.ts";
+import {
+	isShutdownStarted,
+	terminateChild,
+} from "../../helpers/shutdown-state.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { readUdevExportDb } from "../modems/modem-id-path-source.ts";
 import { hasCapability } from "../system/board-capabilities.ts";
@@ -125,22 +129,32 @@ export class UdevMonitorSupervisor {
 		if (this.#running) {
 			return;
 		}
+		// A monitor started after SIGTERM would only be SIGKILLed at exit.
+		if (isShutdownStarted()) {
+			return;
+		}
 		this.#running = true;
 		void this.#supervise();
 	}
 
-	stop(): void {
+	/**
+	 * Stop supervising, drop the provisional rows and send the child SIGTERM.
+	 * Resolves once the child exited or the bounded grace elapsed; a child still
+	 * running then is left to the unit's KillMode, never SIGKILLed here.
+	 */
+	async stop(): Promise<void> {
 		this.#running = false;
 		const proc = this.#proc;
 		this.#proc = null;
-		if (proc) {
-			try {
-				proc.kill();
-			} catch (error) {
-				logger.debug(`udev monitor kill failed: ${String(error)}`);
-			}
-		}
 		this.cache.clear();
+		if (!proc) {
+			return;
+		}
+		try {
+			await terminateChild(proc);
+		} catch (error) {
+			logger.debug(`udev monitor kill failed: ${String(error)}`);
+		}
 	}
 
 	get isRunning(): boolean {
@@ -158,7 +172,7 @@ export class UdevMonitorSupervisor {
 		try {
 			await retryWithBackoff(
 				async () => {
-					if (!this.#running) {
+					if (!this.#running || isShutdownStarted()) {
 						return;
 					}
 					if (attempt > 0)
@@ -170,10 +184,13 @@ export class UdevMonitorSupervisor {
 					}
 					throw new Error("udevadm monitor process exited");
 				},
-				{ ...RESTART_BACKOFF, shouldRetry: () => this.#running },
+				{
+					...RESTART_BACKOFF,
+					shouldRetry: () => this.#running && !isShutdownStarted(),
+				},
 			);
 		} catch (error) {
-			if (this.#running) {
+			if (this.#running && !isShutdownStarted()) {
 				logger.error(`udev monitor supervisor terminated: ${String(error)}`);
 			}
 		}
@@ -283,8 +300,12 @@ export async function initUdevProvisionalMonitor(): Promise<void> {
 	supervisor.start();
 }
 
-/** Stop the monitor and drop every provisional row (teardown / tests). */
-export function stopUdevProvisionalMonitor(): void {
-	supervisor?.stop();
+/**
+ * Stop the monitor and drop every provisional row (teardown / tests). Resolves
+ * once the child exited after SIGTERM or the bounded grace elapsed.
+ */
+export async function stopUdevProvisionalMonitor(): Promise<void> {
+	const current = supervisor;
 	supervisor = null;
+	await current?.stop();
 }
