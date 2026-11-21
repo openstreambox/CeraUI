@@ -30,6 +30,7 @@ import type {
 	SharingDiag,
 	SourcesMessage,
 	StatusResponse,
+	StreamReadiness,
 	UpdateOrchestratorWireState,
 	UpdateState,
 	UplinkShaperStatus,
@@ -110,6 +111,7 @@ import {
 	receiveEvidence,
 } from "./session-epoch.svelte";
 import { selectStatusFields } from "./status-field-order";
+import { setStreamReadiness } from "./stream-readiness.svelte";
 import {
 	reconcileStreamingOptimism,
 	supersedeStartingOptimism,
@@ -823,6 +825,10 @@ function handleMessage(
 			uplinksState = data as UplinksMessage;
 			break;
 
+		case "stream_readiness":
+			setStreamReadiness(data as StreamReadiness);
+			break;
+
 		case "sharing_diag":
 			sharingDiagState = data as SharingDiag;
 			break;
@@ -1344,6 +1350,7 @@ export function resetState(): void {
 	netifState = undefined;
 	ethernetRoleOpPorts = [];
 	uplinksState = undefined;
+	setStreamReadiness(undefined);
 	sharingDiagState = undefined;
 	uplinkSteeringState = undefined;
 	uplinkShaperState = undefined;

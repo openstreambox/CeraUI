@@ -147,6 +147,7 @@ import { getPipelineList } from "./modules/streaming/pipelines.ts";
 import { setMockPreviewEncoderRealizedProvider } from "./modules/streaming/preview-encoder-status.ts";
 import { beginRecoveryBarrier } from "./modules/streaming/recovery-barrier.ts";
 import { refreshAndBroadcastSources } from "./modules/streaming/sources.ts";
+import { initStreamReadiness } from "./modules/streaming/stream-readiness.ts";
 import { runStreamRestoration } from "./modules/streaming/stream-restoration.ts";
 import {
 	reconcileStreamSession,
@@ -566,6 +567,7 @@ await guardNonCritical("uplink-steering", initUplinkSteering);
 await guardNonCritical("uplink-shaper", initUplinkShaper);
 await tickCarrying();
 await guardNonCritical("sharing-diag", initSharingDiag);
+await guardNonCritical("stream-readiness", initStreamReadiness);
 
 // Event-driven netif: monitor stream drives up/down; onResync re-polls on restart
 const networkMonitor = createMonitorManager(() => updateNetif());

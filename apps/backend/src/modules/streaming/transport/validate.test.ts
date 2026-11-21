@@ -28,6 +28,7 @@ describe("probeReachability", () => {
 				await expect(probeReachability("192.0.2.1", 9999)).resolves.toEqual({
 					reachable: false,
 					reason: "refused",
+					local: true,
 				});
 			} finally {
 				socketSpy.mockRestore();
@@ -107,6 +108,7 @@ it("socket setup can fail synchronously when a destination family has no route",
 		await expect(probeReachability("2001:db8::1", 9000, 100)).resolves.toEqual({
 			reachable: false,
 			reason: "refused",
+			local: true,
 		});
 	} finally {
 		socket.mockRestore();
@@ -143,7 +145,11 @@ for (const asynchronous of [false, true]) {
 			try {
 				await expect(
 					probeReachability("2001:db8::1", 9000, 100),
-				).resolves.toEqual({ reachable: false, reason: "refused" });
+				).resolves.toEqual({
+					reachable: false,
+					reason: "refused",
+					local: true,
+				});
 			} finally {
 				socket.mockRestore();
 			}
@@ -215,5 +221,36 @@ it("times out during socket setup and closes a socket delivered late", async () 
 		expect(close.count).toBe(1);
 	} finally {
 		create.mockRestore();
+	}
+});
+
+describe("probeReachability send failures", () => {
+	for (const [code, local] of [
+		["ECONNREFUSED", false],
+		["ENETUNREACH", true],
+		["EPERM", true],
+	] as const) {
+		it(`a send that throws ${code} is ${local ? "a local failure" : "a peer refusal"}`, async () => {
+			const socket = spyOn(Bun, "udpSocket").mockImplementationOnce(
+				async () =>
+					({
+						send: () => {
+							throw Object.assign(new Error(code), { code });
+						},
+						close: () => {},
+					}) as never,
+			);
+			try {
+				await expect(
+					probeReachability("127.0.0.1", 9000, 500),
+				).resolves.toEqual(
+					local
+						? { reachable: false, reason: "refused", local: true }
+						: { reachable: false, reason: "refused" },
+				);
+			} finally {
+				socket.mockRestore();
+			}
+		});
 	}
 });

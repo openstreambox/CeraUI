@@ -35,6 +35,7 @@ import {
 	resolveAppliedBitrate,
 } from '$lib/rpc/live-apply-reconcile';
 import { NotSentError } from '$lib/rpc/rpc-error';
+import { getStreamReadiness } from '$lib/rpc/stream-readiness.svelte';
 import {
 	getStopStuckBannerVisible,
 	getStreamingAttemptGeneration,
@@ -1184,6 +1185,7 @@ const configRows = $derived<ConfigRow[]>([
 			optimismState={streamingOptimismState}
 			{destinationValidated}
 			maxBitrate={config?.max_br}
+			boxReadiness={getStreamReadiness()}
 			onStart={handleStart}
 			onStop={handleStop}
 			onOpenSource={handleOpenSource}

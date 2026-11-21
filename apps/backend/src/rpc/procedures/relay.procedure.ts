@@ -29,6 +29,11 @@ import { os } from "@orpc/server";
 import { validatePortNo } from "../../helpers/number.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { resolveMockRelayValidate } from "../../mocks/providers/relay-validate.ts";
+import {
+	endpointKey,
+	noteReceiverEvidence,
+	type ReceiverEvidence,
+} from "../../modules/streaming/stream-readiness.ts";
 import { getAdapter } from "../../modules/streaming/transport/registry.ts";
 import {
 	NotImplementedError,
@@ -49,6 +54,16 @@ function fail(
 	reason: string,
 ): RelayValidateOutput {
 	return { valid: false, stage, reason };
+}
+
+/** Feed the stream-ready flag with the outcome for this endpoint. */
+function noteRelayEvidence(
+	addr: string,
+	port: number,
+	evidence: ReceiverEvidence,
+): void {
+	const key = endpointKey(addr, port);
+	if (key !== undefined) noteReceiverEvidence(key, evidence);
 }
 
 export const relayValidateProcedure = authedProcedure
@@ -103,6 +118,7 @@ export const relayValidateProcedure = authedProcedure
 				}),
 			]);
 		} catch {
+			noteRelayEvidence(addr, input.port, "unresolved");
 			return fail("dns", `Cannot resolve host '${addr}'`);
 		} finally {
 			clearTimeout(dnsTimer);
@@ -120,22 +136,39 @@ export const relayValidateProcedure = authedProcedure
 			.filter((a) => a !== undefined);
 		let reason = "timeout";
 		let unexpected: unknown;
+		// A refusal counts against the receiver only when every address was
+		// tried and every one refused; anything else is inconclusive.
+		let refusedAll = ordered.length > 0;
 		for (const { address, family } of ordered) {
 			const remaining = deadline - performance.now();
-			if (remaining <= 0) break;
+			if (remaining <= 0) {
+				refusedAll = false;
+				break;
+			}
 			try {
 				const probe = await probeReachability(
 					address,
 					input.port,
 					Math.min(PROBE_TIMEOUT_MS, remaining),
 				);
-				if (probe.reachable)
+				if (probe.reachable) {
+					noteRelayEvidence(addr, input.port, "reachable");
 					return { valid: true, stage: "probe", reason: `IPv${family}` };
+				}
 				reason = probe.reason;
+				if (probe.reason !== "refused" || probe.local) refusedAll = false;
 			} catch (error) {
+				refusedAll = false;
 				unexpected ??= error;
 			}
 		}
+		// A silent UDP port proves nothing (receivers need not answer a stray
+		// datagram), and neither does a local socket failure.
+		noteRelayEvidence(
+			addr,
+			input.port,
+			refusedAll ? "refused" : "inconclusive",
+		);
 		if (unexpected !== undefined) throw unexpected;
 		return fail("probe", reason);
 	});

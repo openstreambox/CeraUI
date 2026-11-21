@@ -46,12 +46,14 @@ import type {
 	Pipelines,
 	RelayMessage,
 	SourcesMessage,
+	StreamReadiness,
 } from '@ceraui/rpc/schemas';
 import { ChevronRight, Lock, Network, Pencil } from '@lucide/svelte';
 
 import { Button } from '$lib/components/ui/button';
 import * as Card from '$lib/components/ui/card';
 import type { StreamingOptimismState } from '$lib/rpc/streaming-optimism.svelte';
+import { boxNotReadyKey } from '$lib/streaming/box-readiness';
 import { deriveEffectiveSource } from '$lib/streaming/effective-source';
 import {
 	deriveGoLiveReadiness,
@@ -88,6 +90,8 @@ interface Props {
 	destinationValidated?: boolean;
 	// ── Bitrate-ceiling chip (opens EncoderDialog) ──────────────────────────────
 	maxBitrate?: number;
+	// ── The device's own ready-to-go-live answer (backend `stream_readiness`) ────
+	boxReadiness?: StreamReadiness;
 	// ── Actions ─────────────────────────────────────────────────────────────────
 	/** Start the stream. `overrides.source` carries the implicit sole-camera id. */
 	onStart: (overrides: { source?: string }) => void;
@@ -115,6 +119,7 @@ const {
 	optimismState,
 	destinationValidated,
 	maxBitrate,
+	boxReadiness,
 	onStart,
 	onStop,
 	onOpenSource,
@@ -183,6 +188,15 @@ const startDisabledReason = $derived(
 						READINESS_SOURCE_REASON,
 				)
 			: undefined,
+);
+
+// What the device knows and the client cannot see (an update installing, a
+// modem change, no uplink passing its check). Advisory: Start stays governed by
+// the readiness verdict above, and the backend refuses a start it cannot take.
+const boxNotReady = $derived(
+	startDisabledReason === undefined
+		? boxNotReadyKey(boxReadiness, { implicitSource: soleCamera !== undefined })
+		: undefined,
 );
 
 function handleStartClick() {
@@ -539,7 +553,9 @@ const networkSummary = $derived(
 
 		<LiveBar
 			blocked={startDisabledReason !== undefined}
-			status={startDisabledReason ?? m["live.bar.ready"]()}
+			status={startDisabledReason ??
+				(boxNotReady ? resolveReason(boxNotReady) : m["live.bar.ready"]())}
+			warn={boxNotReady !== undefined}
 		>
 			<div class="shrink-0 sm:min-w-56">
 				<StreamControlButton

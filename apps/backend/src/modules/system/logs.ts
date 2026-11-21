@@ -23,6 +23,7 @@ import { redactSrtPassphrases } from "../../helpers/srt-secret-redaction.ts";
 import { redactStreamIdJournal } from "../../helpers/stream-id-secret.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { getCarrierSupportSummary } from "../modems/modem-wire-producer.ts";
+import { getStreamReadiness } from "../streaming/stream-readiness.ts";
 import type { MessageSocket } from "../ui/message-socket.ts";
 import { notificationSend } from "../ui/notifications.ts";
 import { buildMsg, getSocketSenderId } from "../ui/websocket-server.ts";
@@ -175,6 +176,13 @@ async function collectLog(
 			"Carrier support summary unavailable; journal evidence is included.";
 		logger.warn("Carrier support summary unavailable during log export.");
 	}
+	let readiness: string;
+	try {
+		readiness = `Stream readiness (at download time; codes only):\n${JSON.stringify(getStreamReadiness())}`;
+	} catch {
+		readiness = "Stream readiness unavailable.";
+		logger.warn("Stream readiness unavailable during log export.");
+	}
 	const scope = fallbackReason
 		? `current boot only (${fallbackReason})`
 		: "retained last 7 days";
@@ -188,7 +196,7 @@ async function collectLog(
 	const label = shouldUseMocks() ? `${mockJournalLabel(service)}\n` : "";
 	const contents = redactStreamIdJournal(
 		redactSrtPassphrases(
-			`${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (lines without a typed shape, messages the code does not write, split or oversized records). [boot 0] is the running boot, [boot -1] the one before it.${quietBoots}\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}`,
+			`${label}Support log: ${scope}; newest ${entryLimit} entries; 15 s collection limit; 10 MiB raw limit; redacted journal clipped at 9 MiB; at most one current-boot retry (30 s total collection budget).\nRecords: ${rendered.shown} shown, ${rendered.withheld} withheld (lines without a typed shape, messages the code does not write, split or oversized records). [boot 0] is the running boot, [boot -1] the one before it.${quietBoots}\n${boundRedactedSupportJournal(rendered.text)}\n\n${summary}\n\n${readiness}`,
 		),
 	);
 	try {
