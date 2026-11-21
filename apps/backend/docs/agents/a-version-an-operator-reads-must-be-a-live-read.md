@@ -32,8 +32,9 @@ engine version — and one contract that is easy to break from either side.
   seeds the dialog instantly, the pull corrects it. Before boot commands finish,
   snapshots already carry Bun, the kernel and `"unknown revision"` for CeraUI
   and SRTLA. Completion sends a new `revisions` frame to authenticated local
-  clients. An open dialog accepts that frame even if its earlier pull already
-  returned or is still in flight.
+  clients. An open dialog shows the completed snapshot immediately and starts
+  a fresh engine read, so an earlier pull cannot replace boot values or leave
+  the engine row stuck at the boot verdict.
 - `setEngineVersionProbe(probe | null)` is the test seam (the `set*Runner`
   convention). Coverage: `tests/revisions-kernel-engine.test.ts`.
 

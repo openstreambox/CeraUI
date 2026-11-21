@@ -147,12 +147,15 @@ describe("VersionsDialog", () => {
 	});
 
 	it.each(["before", "after"])(
-		"updates an open dialog when the boot revisions arrive %s the first pull resolves",
+		"keeps boot revisions and refreshes the engine when the push arrives %s the first pull resolves",
 		async (order) => {
 			const early = { ...pushed, srtla: "unknown revision" };
 			const pull = Promise.withResolvers<Revisions>();
+			const followUp = Promise.withResolvers<Revisions>();
 			pushedState.set(early);
-			vi.mocked(rpc.system.getRevisions).mockReturnValueOnce(pull.promise);
+			vi.mocked(rpc.system.getRevisions)
+				.mockReturnValueOnce(pull.promise)
+				.mockReturnValueOnce(followUp.promise);
 			render(VersionsDialog, { props: { open: true } });
 			await waitFor(() => {
 				expect(rpc.system.getRevisions).toHaveBeenCalledTimes(1);
@@ -165,18 +168,31 @@ describe("VersionsDialog", () => {
 			}
 			pushedState.set(pushed);
 			await waitFor(() => {
+				expect(rpc.system.getRevisions).toHaveBeenCalledTimes(2);
 				expect(rowValue(document.body, "SRTLA")).toEqual([
 					"4.1.0",
 					"main@974c8b9",
 				]);
+				expect(rowValue(document.body, "cerastream")).toEqual([
+					"engine unreachable",
+				]);
 			});
-			pull.resolve(early);
+
+			pull.resolve({ ...early, cerastream: "2026.7.2" });
 			await tick();
 			expect(rowValue(document.body, "SRTLA")).toEqual([
 				"4.1.0",
 				"main@974c8b9",
 			]);
-			expect(rpc.system.getRevisions).toHaveBeenCalledTimes(1);
+
+			followUp.resolve({ ...pushed, cerastream: "2026.7.2" });
+			await waitFor(() => {
+				expect(rowValue(document.body, "cerastream")).toEqual(["2026.7.2"]);
+			});
+			expect(rowValue(document.body, "SRTLA")).toEqual([
+				"4.1.0",
+				"main@974c8b9",
+			]);
 		},
 	);
 

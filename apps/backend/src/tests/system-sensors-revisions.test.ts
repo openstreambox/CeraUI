@@ -86,8 +86,17 @@ describe("sensors.ts — Bun.file().text() read + numeric parse", () => {
 });
 
 describe("revisions.ts — bounded async commands and file reads", () => {
-	test("the revisions snapshot satisfies the wire schema before initialization", () => {
-		expect(revisionsSchema.parse(getRevisions())).toEqual({
+	test("the revisions snapshot satisfies the wire schema before initialization", async () => {
+		// A separate Bun module identity starts with a fresh revision record,
+		// including when an earlier test file has initialized the normal import.
+		const freshModule = new URL(
+			"../modules/system/revisions.ts?boot-snapshot",
+			import.meta.url,
+		);
+		const fresh: typeof import("../modules/system/revisions.ts") = await import(
+			freshModule.href
+		);
+		expect(revisionsSchema.parse(fresh.getRevisions())).toEqual({
 			ceralive: "unknown revision",
 			srtla: "unknown revision",
 			bun: Bun.version,
