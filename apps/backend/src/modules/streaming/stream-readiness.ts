@@ -39,16 +39,17 @@
     receiver  the configured destination resolves through the same catalog
               and adapter as Start (`resolveStreamEndpoint`); an unknown relay
               id blocks. Reachability is claimed only from a relay test of
-              that resolved endpoint: reached is `ok`, refused on every
-              address blocks, anything inconclusive is `unknown`. While live,
-              a carrying link makes it `ok` for the session (nothing is stored).
-    uplinks   idle: the interfaces the bond would offer (`isBondCandidate`)
-              qualified by a fresh health record (`up`, or `degraded` only by
-              passive congestion). A candidate without fresh health, or a
-              receiver on a private address that may be reached over the LAN,
-              makes it `unknown` instead of blocked. Live: the sender's own
-              link rows and their carrying verdicts; blocked only when every
-              row positively carries nothing.
+              that resolved endpoint: reached is `ok`, refused by the peer on
+              every address blocks, anything inconclusive is `unknown`. While
+              live the saved destination may already be the next one, so only
+              a carrying link counts (`ok`), else `unknown`; nothing is stored.
+    uplinks   idle, receiver on the LAN (Start's `isLocalIp`): any
+              same-subnet interface, as Start's local list. Otherwise the
+              interfaces the bond would offer (`isBondCandidate`) qualified by
+              a fresh health record (`up`, or `degraded` only by passive
+              congestion); a candidate without fresh health makes it
+              `unknown`. Live: the sender's own link rows and their carrying
+              verdicts; blocked only when every row positively carries nothing.
 
   While live, `lock` and `source` are `ok` by definition (the stream runs), and
   `ready` reads "the stream has a link that carries it"; it can be true with
@@ -59,7 +60,6 @@
   of each link.
 */
 
-import { isIP } from "node:net";
 import {
 	AUDIO_CODEC_UNSUPPORTED_TRANSPORT,
 	audioCodecAllowedForTransport,
@@ -71,6 +71,7 @@ import {
 	type StreamReadinessCheckId,
 	type UplinkHealthRecord,
 } from "@ceraui/rpc/schemas";
+import { isLocalIp, isSameSubnet } from "../../helpers/ip-addresses.ts";
 import { logger } from "../../helpers/logger.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { isMockGatewayActive } from "../../mocks/providers/streaming.ts";
@@ -78,6 +79,7 @@ import { getConfig } from "../config.ts";
 import {
 	getNetworkInterfaces,
 	isBondCandidate,
+	type NetworkInterface,
 } from "../network/network-interfaces.ts";
 import { getUplinksMessage } from "../network/uplink-health/state.ts";
 import { getRelays } from "../remote/remote-relays.ts";
@@ -126,7 +128,6 @@ export const READINESS_RECEIVER_UNRESOLVED = "receiver_unresolved";
 export const READINESS_NO_UPLINK = "no_uplink";
 export const READINESS_NO_UPLINK_PASSES = "no_uplink_passes";
 export const READINESS_UPLINK_UNCHECKED = "uplink_unchecked";
-export const READINESS_LOCAL_RECEIVER = "local_receiver";
 export const READINESS_NO_LINK_CARRYING = "no_link_carrying";
 export const READINESS_CARRYING_UNKNOWN = "carrying_unknown";
 
@@ -239,16 +240,19 @@ export function evaluateStreamReadiness(
 			(c) => c.health !== undefined && c.health.staleAt > inputs.now,
 		);
 		usable = fresh.filter((c) => c.health && uplinkPasses(c.health)).length;
+		// A LAN receiver needs a same-subnet interface, not the internet: the
+		// candidates are then Start's local list and any of them will do.
 		uplinks =
-			usable > 0
-				? OK
-				: total === 0
-					? blocked(READINESS_NO_UPLINK)
-					: inputs.receiver.local
-						? unknown(READINESS_LOCAL_RECEIVER)
+			total === 0
+				? blocked(READINESS_NO_UPLINK)
+				: inputs.receiver.local
+					? OK
+					: usable > 0
+						? OK
 						: fresh.length < total
 							? unknown(READINESS_UPLINK_UNCHECKED)
 							: blocked(READINESS_NO_UPLINK_PASSES);
+		if (inputs.receiver.local) usable = total;
 	}
 
 	const lock = inputs.live ? OK : inputs.lock;
@@ -256,10 +260,14 @@ export function evaluateStreamReadiness(
 
 	let receiver: Verdict;
 	const r = inputs.receiver;
-	if (r.configured === "no") receiver = blocked(READINESS_RECEIVER_NOT_SET);
+	// While live the saved destination may already be the next one; only the
+	// running stream's own evidence counts.
+	if (inputs.live)
+		receiver = usable > 0 ? OK : unknown(READINESS_RECEIVER_UNTESTED);
+	else if (r.configured === "no")
+		receiver = blocked(READINESS_RECEIVER_NOT_SET);
 	else if (r.configured === "invalid")
 		receiver = blocked(READINESS_RECEIVER_INVALID);
-	else if (inputs.live && usable > 0) receiver = OK;
 	else if (r.evidence === "reachable") receiver = OK;
 	else if (r.evidence === "refused")
 		receiver = blocked(READINESS_RECEIVER_REFUSED);
@@ -330,41 +338,15 @@ export function receiverEvidenceFor(
 	return entry.evidence;
 }
 
-/** RFC 1918, CGNAT, link-local, loopback and ULA literals. */
-export function isPrivateAddress(addr: string): boolean {
-	const family = isIP(addr);
-	if (family === 4) {
-		const [a = 0, b = 0] = addr.split(".").map(Number);
-		return (
-			a === 10 ||
-			a === 127 ||
-			(a === 172 && b >= 16 && b <= 31) ||
-			(a === 192 && b === 168) ||
-			(a === 169 && b === 254) ||
-			(a === 100 && b >= 64 && b <= 127)
-		);
-	}
-	if (family === 6) {
-		const lower = addr.toLowerCase();
-		return (
-			lower === "::1" ||
-			lower.startsWith("fc") ||
-			lower.startsWith("fd") ||
-			lower.startsWith("fe8") ||
-			lower.startsWith("fe9") ||
-			lower.startsWith("fea") ||
-			lower.startsWith("feb")
-		);
-	}
-	return false;
-}
-
 // ─── Live inputs ─────────────────────────────────────────────────────────────
 
 export interface ReceiverTarget {
 	readonly configured: "yes" | "no" | "invalid";
 	readonly key?: string;
+	/** Start would take the local-subnet path for this address. */
 	readonly local: boolean;
+	/** The resolved receiver address, for the local-subnet candidate list. */
+	readonly address?: string;
 }
 
 export interface ReadinessDeps {
@@ -373,7 +355,7 @@ export interface ReadinessDeps {
 	lock: () => Verdict;
 	source: () => Verdict;
 	receiver: () => ReceiverTarget;
-	candidates: () => readonly UplinkCandidate[];
+	candidates: (receiver: ReceiverTarget) => readonly UplinkCandidate[];
 	senderLinks: () => readonly SenderLink[];
 }
 
@@ -459,6 +441,12 @@ export function currentReceiver(): ReceiverTarget {
 				...(config.srtla_port !== undefined
 					? { srtla_port: config.srtla_port }
 					: {}),
+				...(config.srt_streamid !== undefined
+					? { srt_streamid: config.srt_streamid }
+					: {}),
+				...(config.relay_streamid_override !== undefined
+					? { relay_streamid_override: config.relay_streamid_override }
+					: {}),
 				...(config.relay_protocol !== undefined
 					? { relay_protocol: config.relay_protocol }
 					: {}),
@@ -472,18 +460,33 @@ export function currentReceiver(): ReceiverTarget {
 		return {
 			configured: "yes",
 			key,
-			local: isPrivateAddress(endpoint.srtlaAddr.trim()),
+			local: isLocalIp(endpoint.srtlaAddr),
+			address: endpoint.srtlaAddr,
 		};
 	} catch {
 		return { configured: "invalid", local: false };
 	}
 }
 
-/** The interfaces the bond would offer, with their health record if any. */
-export function currentCandidates(): readonly UplinkCandidate[] {
+/**
+ * The interfaces Start would put in the bond, with their health record if any:
+ * the same-subnet list for a LAN receiver (the bond toggle does not apply
+ * there), else the bond candidates.
+ */
+export function currentCandidates(
+	receiver: ReceiverTarget,
+): readonly UplinkCandidate[] {
 	const health = new Map(getUplinksMessage().map((r) => [r.iface, r]));
+	const address = receiver.address;
+	const member =
+		receiver.local && address !== undefined
+			? (_name: string, int: NetworkInterface) =>
+					int.netmask !== undefined &&
+					int.ip !== undefined &&
+					isSameSubnet(address, int.ip, int.netmask)
+			: isBondCandidate;
 	return Object.entries(getNetworkInterfaces())
-		.filter(([name, int]) => isBondCandidate(name, int))
+		.filter(([name, int]) => member(name, int))
 		.map(([iface]) => {
 			const record = health.get(iface);
 			return record === undefined ? { iface } : { iface, health: record };
@@ -530,7 +533,7 @@ export function getStreamReadiness(): StreamReadiness {
 			evidence: receiverEvidenceFor(receiver.key, now),
 			local: receiver.local,
 		},
-		candidates: live ? [] : deps.candidates(),
+		candidates: live ? [] : deps.candidates(receiver),
 		senderLinks: live ? deps.senderLinks() : [],
 	});
 }

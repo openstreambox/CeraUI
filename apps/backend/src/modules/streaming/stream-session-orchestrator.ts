@@ -1237,12 +1237,20 @@ export function createStreamSessionOrchestrator(
 			generation: ownership.generation,
 		}),
 		startView: () => {
-			if (ownership.state === "reconciling") return "reconciling";
+			// The two reconcile triggers at the top of `start`, then its busy check.
 			if (
-				ownership.state === "streaming" &&
+				ownership.generation === 0 &&
+				ownership.state === "reconciling" &&
+				runtimeObservations === 0 &&
+				!cleanup.pending &&
+				stopFlight === undefined
+			)
+				return "reconciling";
+			if (
 				!cleanup.pending &&
 				stopFlight === undefined &&
 				!ownership.launchPending &&
+				ownership.state === "streaming" &&
 				deps.getStreamingStatus?.() === false
 			)
 				return "reconciling";
