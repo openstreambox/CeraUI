@@ -3544,5 +3544,17 @@
 	"timeline.capture_standby_entered.detail": "The stream stayed connected and sent a black picture while waiting for a camera to return.",
 	"timeline.capture_standby_exited.title": "Black standby ended",
 	"timeline.capture_standby_exited.detail": "Standby lasted: {duration}",
-	"timeline.update_failed.detail.os-staging": "Preparing the system image failed."
+	"timeline.update_failed.detail.os-staging": "Preparing the system image failed.",
+	"network.changeSafety.askBefore.own": "This change disconnects you from the box via {via}.",
+	"network.changeSafety.askBefore.unknown": "This change may disconnect you from the box.",
+	"network.changeSafety.askBefore.undo": "Make the change (undone if I don't confirm in {seconds} s)",
+	"network.changeSafety.askBefore.keep": "I know what I'm doing: disconnect me and don't undo it. I may need to switch connection or reset the box to get back in.",
+	"network.changeSafety.confirm.prompt": "Still connected? Confirm within {seconds} s, or the box undoes the change.",
+	"network.changeSafety.confirm.action": "Confirm",
+	"network.changeSafety.notice.disconnected": "Nobody confirmed this change in time, so the box undid it. Do you still want to make it?",
+	"network.changeSafety.notice.restart": "The network restarted before you confirmed, so the box undid it. Still want it?",
+	"network.changeSafety.notice.make": "Make the change",
+	"network.changeSafety.notice.leave": "Leave it undone",
+	"network.changeSafety.kept.undo": "Undo the last network change",
+	"network.changeSafety.summary.ethernetRole": "Port role change on {ifname}"
 }
