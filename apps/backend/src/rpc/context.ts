@@ -1,6 +1,7 @@
 /**
  * RPC Context - Creates context for each WebSocket message
  */
+import { randomUUID } from "node:crypto";
 import type { AppWebSocket, RPCContext } from "./types.ts";
 
 const closedSockets = new WeakSet<AppWebSocket>();
@@ -89,8 +90,11 @@ export function createContext(ws: AppWebSocket): RPCContext {
  * Initialize socket data for a new connection
  */
 export function initSocketData(): import("./types.ts").SocketData {
+	const now = Date.now();
 	return {
 		isAuthenticated: false,
-		lastActive: Date.now(),
+		lastActive: now,
+		sessionId: randomUUID(),
+		openedAt: now,
 	};
 }

@@ -3690,5 +3690,17 @@
 	"notifications.power.sink": "La placa no puede comunicarse con el chip de carga de un banco. Ese banco no puede arrancar el equipo ni entrar en reposo.",
 	"notifications.power.unproven": "La placa no puede confirmar que un banco alimente el equipo. No lo apagará si la reserva se sobrecalienta.",
 	"notifications.power.jump": "La temperatura de la reserva subió de golpe. El sensor puede estar fallando. El equipo se apaga en un minuto si sigue tan alta.",
-	"notifications.power.status": "{text}"
+	"notifications.power.status": "{text}",
+	"network.changeSafety.askBefore.own": "Este cambio te desconecta de la caja por {via}.",
+	"network.changeSafety.askBefore.unknown": "Este cambio podría desconectarte de la caja.",
+	"network.changeSafety.askBefore.undo": "Hacer el cambio (se deshace si no confirmo en {seconds} s)",
+	"network.changeSafety.askBefore.keep": "Sé lo que hago: desconéctame y no lo deshagas. Puede que tenga que cambiar de conexión o restablecer la caja para volver a entrar.",
+	"network.changeSafety.confirm.prompt": "¿Sigues conectado? Confirma en {seconds} s o la caja deshace el cambio.",
+	"network.changeSafety.confirm.action": "Confirmar",
+	"network.changeSafety.notice.disconnected": "Nadie confirmó el cambio a tiempo, así que la caja lo deshizo. ¿Todavía quieres hacerlo?",
+	"network.changeSafety.notice.restart": "La red se reinició antes de que confirmaras, así que la caja lo deshizo. ¿Lo quieres?",
+	"network.changeSafety.notice.make": "Hacer el cambio",
+	"network.changeSafety.notice.leave": "Dejarlo deshecho",
+	"network.changeSafety.kept.undo": "Deshacer el último cambio de red",
+	"network.changeSafety.summary.ethernetRole": "Cambio de función del puerto {ifname}"
 }
