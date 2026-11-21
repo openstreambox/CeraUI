@@ -3709,5 +3709,17 @@
 	"notifications.power.sink": "لا تستطيع لوحة الطاقة الاتصال بشريحة الشحن في أحد بنكي الطاقة. لا يستطيع بنك الطاقة هذا تشغيل الجهاز ولا الدخول في وضع الراحة.",
 	"notifications.power.unproven": "لا تستطيع لوحة الطاقة رؤية بنك طاقة يغذي الجهاز. لن تُطفئه تلقائيًا إذا ارتفعت حرارة البطارية الاحتياطية بشكل مفرط.",
 	"notifications.power.jump": "ارتفعت حرارة البطارية الاحتياطية فجأة. قد يكون الحساس معيبًا. ينطفئ الجهاز خلال دقيقة إذا بقيت الحرارة بهذا الارتفاع.",
-	"notifications.power.status": "{text}"
+	"notifications.power.status": "{text}",
+	"network.changeSafety.askBefore.own": "هذا التغيير يفصلك عن الجهاز عبر {via}.",
+	"network.changeSafety.askBefore.unknown": "قد يفصلك هذا التغيير عن الجهاز.",
+	"network.changeSafety.askBefore.undo": "إجراء التغيير (يُتراجع عنه إذا لم أؤكد خلال {seconds} ث)",
+	"network.changeSafety.askBefore.keep": "أعرف ما أفعله: افصلني ولا تتراجع عن التغيير. قد أحتاج إلى تغيير الاتصال أو إعادة ضبط الجهاز للعودة.",
+	"network.changeSafety.confirm.prompt": "هل ما زلت متصلًا؟ أكّد خلال {seconds} ث وإلا سيتراجع الجهاز عن التغيير.",
+	"network.changeSafety.confirm.action": "تأكيد",
+	"network.changeSafety.notice.disconnected": "لم يؤكد أحد هذا التغيير في الوقت المحدد، لذا تراجع عنه الجهاز. هل ما زلت تريد إجراءه؟",
+	"network.changeSafety.notice.restart": "أُعيد تشغيل الشبكة قبل تأكيدك، لذا تراجع الجهاز عنه. هل ما زلت تريده؟",
+	"network.changeSafety.notice.make": "إجراء التغيير",
+	"network.changeSafety.notice.leave": "إبقاؤه ملغى",
+	"network.changeSafety.kept.undo": "التراجع عن آخر تغيير في الشبكة",
+	"network.changeSafety.summary.ethernetRole": "تغيير دور المنفذ {ifname}"
 }
