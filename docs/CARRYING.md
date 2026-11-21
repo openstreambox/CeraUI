@@ -216,20 +216,22 @@ a service restart. When the engine ends a session itself, the backend first stop
 its own sender for that session, then reports idle.
 This does not preserve media delivery across a backend service restart.
 
-A restarted backend can adopt a sender its predecessor left running, but only
-when every fact agrees: the lifetime record is from this boot; the process at
-the recorded PID has the recorded start time, name and arguments and is running;
-it was started by a host that outlives the backend (its own systemd unit, with
-the invocation and cgroup recorded) and is alone in that cgroup and in its own
-process group; the armed stream's configuration equals the current one; the
-published map equals the map on disk; two reads over the sender's control socket
-show that map applied, the same links, at least one link with receiver replies
-and a moving byte counter; and the engine is streaming. Any other answer changes
-nothing and the rules above apply. The adopted sender is then supervised through
-a handle that checks the start time again before every signal, so Stop, reload
-and shutdown reach it and a reused PID never does. Today the sender runs inside
-the backend's own service and dies with it, so a production device never adopts
-yet.
+A restarted backend checks whether a sender its predecessor left running could
+be adopted, and on this version it never adopts one. The check reads, in order:
+the lifetime record from this boot; the process at the recorded PID with the
+recorded start time, name, executable and arguments, running and not stopped;
+a host that outlives the backend (its own systemd unit) with the live invocation
+matching the record, the sender alone in that cgroup with no child cgroups, and
+alone in its own process group; the armed stream's configuration equal to the
+current one; the published map equal to the map on disk; the control socket
+held by that same PID. Only then does it read the socket twice (map applied,
+the same links, a connected link, a moving byte counter), and only then would it
+ask the engine. Three facts have no source yet, so the check always refuses at
+one of them: the unit's live invocation, the map generation and SHA the sender
+has applied, and an identity for the engine session. A refusal is logged with
+the first failing check and changes nothing; no socket is read and the engine is
+not asked before the local facts agree, so startup is unchanged. Today the
+sender also runs inside the backend's own service and dies with it.
 
 ### Reinicio del backend y propiedad del emisor
 
@@ -248,18 +250,21 @@ tras reiniciarse un servicio. Cuando el motor termina una sesión por su cuenta,
 backend primero detiene su propio emisor de esa sesión y luego informa inactividad.
 Esto no mantiene el envío de contenido durante el reinicio del servicio del backend.
 
-Un backend reiniciado puede adoptar un emisor que su predecesor dejó en marcha,
-pero solo cuando todos los datos coinciden: el registro de vida es de este
-arranque; el proceso con el PID registrado tiene la hora de inicio, el nombre y
-los argumentos registrados y está en ejecución; lo inició un anfitrión que
-sobrevive al backend (su propia unidad de systemd, con la invocación y el cgroup
-registrados) y está solo en ese cgroup y en su propio grupo de procesos; la
-configuración de la transmisión armada es igual a la actual; el mapa publicado es
-igual al del disco; dos lecturas por el socket de control del emisor muestran ese
-mapa aplicado, los mismos enlaces, al menos un enlace con respuestas del receptor
-y un contador de bytes que avanza; y el motor está transmitiendo. Cualquier otra
-respuesta no cambia nada y se aplican las reglas anteriores. El emisor adoptado
-se supervisa entonces con un manejador que vuelve a comprobar la hora de inicio
-antes de cada señal, de modo que Detener, la recarga y el apagado lo alcanzan y un
-PID reutilizado nunca. Hoy el emisor corre dentro del propio servicio del backend
-y termina con él, así que un equipo en producción todavía no adopta.
+Un backend reiniciado comprueba si podría adoptar un emisor que su predecesor
+dejó en marcha, y en esta versión nunca adopta ninguno. La comprobación lee, en
+orden: el registro de vida de este arranque; el proceso con el PID registrado,
+con la hora de inicio, el nombre, el ejecutable y los argumentos registrados, en
+ejecución y no detenido; un anfitrión que sobrevive al backend (su propia unidad
+de systemd) cuya invocación actual coincide con el registro, con el emisor solo
+en ese cgroup, sin cgroups hijos, y solo en su propio grupo de procesos; la
+configuración de la transmisión armada igual a la actual; el mapa publicado igual
+al del disco; el socket de control en manos de ese mismo PID. Solo entonces lee
+el socket dos veces (mapa aplicado, los mismos enlaces, un enlace conectado, un
+contador de bytes que avanza), y solo entonces consultaría al motor. Tres datos
+todavía no tienen fuente, así que la comprobación siempre se rechaza en uno de
+ellos: la invocación actual de la unidad, la generación y el SHA del mapa que el
+emisor ha aplicado, y una identidad para la sesión del motor. Un rechazo se
+registra con la primera comprobación que falló y no cambia nada; no se lee ningún
+socket ni se consulta al motor antes de que coincidan los datos locales, así que
+el arranque no cambia. Hoy el emisor además corre dentro del propio servicio del
+backend y termina con él.

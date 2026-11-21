@@ -3,6 +3,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -24,18 +25,23 @@ import type {
 } from "../modules/streaming/continuity-records.ts";
 import * as engineRuntimeState from "../modules/streaming/engine-runtime-state.ts";
 import {
+	type AdoptedIdentity,
 	type AdoptedProcessIo,
 	adoptedSender,
+	adoptRunningSenderAtStartup,
 	attemptSenderAdoption,
 	collectSenderAdoptionEvidence,
 	createAdoptedProcess,
 	defaultSenderAdoptionEffects,
+	defaultSenderAdoptionIo,
+	holdsListeningSocket,
 	readSenderProcessFacts,
 	resetSenderAdoptionForTest,
 	type SenderAdoptionEffects,
 	type SenderAdoptionEvidence,
 	type SenderAdoptionIo,
 	senderAdoptionVerdict,
+	takeAdoptionForReconcile,
 } from "../modules/streaming/sender-adoption.ts";
 import {
 	ownsSessionSender,
@@ -46,6 +52,7 @@ import { streamSessionProductionDeps } from "../modules/streaming/stream-session
 import { srtlaSendExec } from "../modules/streaming/streamloop/exec-paths.ts";
 import {
 	getStreamingProcesses,
+	registerAdoptedSender,
 	type StreamingProcess,
 	signalSenders,
 	stopProcessAndWait,
@@ -54,8 +61,12 @@ import {
 const BOOT = "boot-a";
 const PID = 4242;
 const START = "987654";
-const ARGS = digest(JSON.stringify(["/usr/bin/srtla_send", "9000"]));
+const EXE = "/usr/bin/srtla_send";
+const ARGS = digest(JSON.stringify([EXE, "9000"]));
 const CGROUP = "/system.slice/ceralive-sender-1.service";
+const INVOCATION = "0123456789abcdef0123456789abcdef";
+const SOCKET = "/tmp/srtla-send-control-9000.sock";
+const SHA = "a".repeat(64);
 const CONFIG = { srt_latency: 2000, max_br: 6000, pipeline: "p1" };
 
 function lifetime(over: Partial<Lifetime> = {}): Lifetime {
@@ -66,11 +77,11 @@ function lifetime(over: Partial<Lifetime> = {}): Lifetime {
 		pid: PID,
 		startTime: START,
 		host: "systemd",
-		invocation: "0123456789abcdef0123456789abcdef",
+		invocation: INVOCATION,
 		cgroup: CGROUP,
 		argsDigest: ARGS,
 		statsFile: "/tmp/srtla-send-stats-9000.json",
-		controlSocket: "/tmp/srtla-send-control-9000.sock",
+		controlSocket: SOCKET,
 		ipsFile: "/run/ceralive/ips",
 		sidecarFile: "/run/ceralive/ips.bindmap.json",
 		required: false,
@@ -91,7 +102,7 @@ function publication(over: Partial<Publication> = {}): Publication {
 		version: 1,
 		bootId: BOOT,
 		generation: 7,
-		sha256: "a".repeat(64),
+		sha256: SHA,
 		links: LINKS,
 		...over,
 	};
@@ -125,35 +136,41 @@ function marker(over: Partial<ArmedStreamMarker> = {}): ArmedStreamMarker {
 	return { armedAt: 1, bootId: BOOT, config: { ...CONFIG }, ...over };
 }
 
+const FACTS = {
+	pid: PID,
+	comm: "srtla_send",
+	exe: EXE,
+	state: "S",
+	processGroup: PID,
+	startTime: START,
+	argsDigest: ARGS,
+	cgroup: CGROUP,
+	cgroupMembers: [PID],
+	cgroupChildren: 0,
+	groupMembers: [PID],
+	ownsControlSocket: true,
+};
+
 function evidence(
 	over: Partial<SenderAdoptionEvidence> = {},
 ): SenderAdoptionEvidence {
 	return {
 		bootId: BOOT,
 		lifetime: lifetime(),
-		process: {
-			pid: PID,
-			comm: "srtla_send",
-			state: "S",
-			processGroup: PID,
-			startTime: START,
-			argsDigest: ARGS,
-			cgroup: CGROUP,
-			cgroupMembers: [PID],
-			groupMembers: [PID],
-		},
+		process: { ...FACTS },
+		expectedExe: EXE,
+		liveInvocation: INVOCATION,
 		marker: marker(),
 		currentConfig: { ...CONFIG },
 		publication: publication(),
 		disk: publication(),
 		reads: [stats(1_000), stats(400_000)],
+		appliedMap: { generation: 7, sha256: SHA },
+		engineSession: "session-1",
 		engine: "streaming",
 		...over,
 	};
 }
-
-const facts = evidence().process;
-if (!facts) throw new Error("fixture");
 
 describe("senderAdoptionVerdict", () => {
 	test("adopts only when every fact agrees", () => {
@@ -173,6 +190,24 @@ describe("senderAdoptionVerdict", () => {
 				}),
 			),
 		).toEqual({ decision: "adopt" });
+	});
+
+	test("the facts this base cannot supply refuse a production-shaped record", () => {
+		expect(senderAdoptionVerdict(evidence({ liveInvocation: null }))).toEqual({
+			decision: "refuse",
+			check: "host",
+			reason: "invocation_unverified",
+		});
+		expect(senderAdoptionVerdict(evidence({ appliedMap: null }))).toEqual({
+			decision: "refuse",
+			check: "bind_map",
+			reason: "applied_identity_unavailable",
+		});
+		expect(senderAdoptionVerdict(evidence({ engineSession: null }))).toEqual({
+			decision: "refuse",
+			check: "engine",
+			reason: "session_identity_unavailable",
+		});
 	});
 
 	const timedOut = (s: SenderStats): SenderStats => ({
@@ -208,37 +243,55 @@ describe("senderAdoptionVerdict", () => {
 		["no process at the PID", { process: null }, "process", "sender_absent"],
 		[
 			"the PID reused by another process",
-			{ process: { ...facts, startTime: "111" } },
+			{ process: { ...FACTS, startTime: "111" } },
 			"process",
 			"pid_reused",
 		],
 		[
 			"a process with another name",
-			{ process: { ...facts, comm: "sleep" } },
+			{ process: { ...FACTS, comm: "sleep" } },
 			"process",
 			"not_a_sender",
 		],
 		[
+			"a process that executed another program",
+			{ process: { ...FACTS, exe: "/usr/bin/other" } },
+			"process",
+			"executable_changed",
+		],
+		[
+			"an unreadable executable",
+			{ process: { ...FACTS, exe: null } },
+			"process",
+			"executable_changed",
+		],
+		[
+			"no configured executable",
+			{ expectedExe: null },
+			"process",
+			"executable_changed",
+		],
+		[
 			"a zombie sender",
-			{ process: { ...facts, state: "Z" } },
+			{ process: { ...FACTS, state: "Z" } },
 			"process",
 			"not_running",
 		],
 		[
 			"a stopped sender",
-			{ process: { ...facts, state: "T" } },
+			{ process: { ...FACTS, state: "T" } },
 			"process",
-			"not_running",
+			"stopped",
 		],
 		[
 			"a traced sender",
-			{ process: { ...facts, state: "t" } },
+			{ process: { ...FACTS, state: "t" } },
 			"process",
-			"not_running",
+			"stopped",
 		],
 		[
 			"changed arguments",
-			{ process: { ...facts, argsDigest: digest("other") } },
+			{ process: { ...FACTS, argsDigest: digest("other") } },
 			"process",
 			"arguments_changed",
 		],
@@ -249,7 +302,7 @@ describe("senderAdoptionVerdict", () => {
 			"dies_with_backend",
 		],
 		[
-			"no unit invocation",
+			"no recorded unit invocation",
 			{ lifetime: lifetime({ invocation: null }) },
 			"host",
 			"dies_with_backend",
@@ -261,32 +314,50 @@ describe("senderAdoptionVerdict", () => {
 			"cgroup_not_recorded",
 		],
 		[
+			"another live invocation",
+			{ liveInvocation: "f".repeat(32) },
+			"host",
+			"invocation_changed",
+		],
+		[
 			"another cgroup",
-			{ process: { ...facts, cgroup: "/system.slice/ceralive.service" } },
+			{ process: { ...FACTS, cgroup: "/system.slice/ceralive.service" } },
 			"host",
 			"cgroup_changed",
 		],
 		[
 			"a second process in the cgroup",
-			{ process: { ...facts, cgroupMembers: [PID, 5000] } },
+			{ process: { ...FACTS, cgroupMembers: [PID, 5000] } },
 			"host",
 			"cgroup_not_exclusive",
 		],
 		[
 			"an unreadable cgroup",
-			{ process: { ...facts, cgroupMembers: null } },
+			{ process: { ...FACTS, cgroupMembers: null } },
 			"host",
 			"cgroup_not_exclusive",
 		],
 		[
+			"a child cgroup below the sender",
+			{ process: { ...FACTS, cgroupChildren: 1 } },
+			"host",
+			"cgroup_has_children",
+		],
+		[
+			"unreadable child cgroups",
+			{ process: { ...FACTS, cgroupChildren: null } },
+			"host",
+			"cgroup_has_children",
+		],
+		[
 			"not its own process group",
-			{ process: { ...facts, processGroup: 1 } },
+			{ process: { ...FACTS, processGroup: 1 } },
 			"host",
 			"not_group_leader",
 		],
 		[
 			"a child in its process group",
-			{ process: { ...facts, groupMembers: [PID, 5001] } },
+			{ process: { ...FACTS, groupMembers: [PID, 5001] } },
 			"host",
 			"group_not_exclusive",
 		],
@@ -345,6 +416,12 @@ describe("senderAdoptionVerdict", () => {
 			"bind_map",
 			"disk_mismatch",
 		],
+		[
+			"a control socket this PID does not hold",
+			{ process: { ...FACTS, ownsControlSocket: false } },
+			"sender",
+			"socket_not_owned",
+		],
 		["one control read", { reads: [stats(1)] }, "sender", "two_reads_required"],
 		[
 			"no control answer",
@@ -379,13 +456,13 @@ describe("senderAdoptionVerdict", () => {
 			"every link timed out",
 			{ reads: [stats(1), timedOut(stats(2))] },
 			"sender",
-			"no_receiver_reply",
+			"no_live_link",
 		],
 		[
 			"every link disconnected",
 			{ reads: [disconnected(stats(1)), stats(2)] },
 			"sender",
-			"no_receiver_reply",
+			"no_live_link",
 		],
 		[
 			"no byte counter",
@@ -398,6 +475,18 @@ describe("senderAdoptionVerdict", () => {
 			{ reads: [stats(5), stats(5)] },
 			"sender",
 			"no_progress",
+		],
+		[
+			"a map on disk the sender has not applied",
+			{ appliedMap: { generation: 6, sha256: SHA } },
+			"bind_map",
+			"applied_identity_mismatch",
+		],
+		[
+			"another applied IP list",
+			{ appliedMap: { generation: 7, sha256: "c".repeat(64) } },
+			"bind_map",
+			"applied_identity_mismatch",
 		],
 		["the engine idle", { engine: "idle" }, "engine", "engine_idle"],
 		["the engine unknown", { engine: "unknown" }, "engine", "engine_unknown"],
@@ -420,51 +509,77 @@ function statLine(pid: number, state: string, group: number, start: string) {
 	return `${pid} (srtla send) x) ${rest.join(" ")}\n`;
 }
 
+const UNIX_HEADER = "Num       RefCount Protocol Flags    Type St Inode Path\n";
+
 describe("collectSenderAdoptionEvidence", () => {
 	let root = "";
 	let statsReads = 0;
+	let engineQueries = 0;
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "sender-adoption-"));
 		statsReads = 0;
+		engineQueries = 0;
+		resetSenderAdoptionForTest();
 	});
-	afterEach(() => rmSync(root, { recursive: true, force: true }));
+	afterEach(() => {
+		resetSenderAdoptionForTest();
+		rmSync(root, { recursive: true, force: true });
+	});
 
 	function writeProcess(
 		pid: number,
 		state: string,
 		group: number,
 		start: string,
+		socketInode = "777",
 	) {
 		const dir = join(root, "proc", String(pid));
-		mkdirSync(dir, { recursive: true });
+		mkdirSync(join(dir, "fd"), { recursive: true });
+		mkdirSync(join(dir, "net"), { recursive: true });
 		writeFileSync(join(dir, "stat"), statLine(pid, state, group, start));
 		writeFileSync(join(dir, "comm"), "srtla_send\n");
-		writeFileSync(join(dir, "cmdline"), "/usr/bin/srtla_send\x009000\x00");
+		writeFileSync(join(dir, "cmdline"), `${EXE}\x009000\x00`);
 		writeFileSync(join(dir, "cgroup"), `0::${CGROUP}\n`);
+		symlinkSync(EXE, join(dir, "exe"));
+		symlinkSync(`socket:[${socketInode}]`, join(dir, "fd", "3"));
+		symlinkSync("/dev/null", join(dir, "fd", "0"));
+		writeFileSync(
+			join(dir, "net", "unix"),
+			`${UNIX_HEADER}0000000000000000: 00000002 00000000 00010000 0001 01 777 ${SOCKET}\n0000000000000000: 00000003 00000000 00000000 0001 03 778 ${SOCKET}\n`,
+		);
 	}
-	function writeCgroup(members: number[]) {
+	function writeCgroup(members: number[], children: string[] = []) {
 		const dir = join(root, "cgroup", CGROUP);
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(
 			join(dir, "cgroup.procs"),
 			members.map((m) => `${m}\n`).join(""),
 		);
+		for (const child of children) mkdirSync(join(dir, child));
 	}
 	function io(over: Partial<SenderAdoptionIo> = {}): SenderAdoptionIo {
 		return {
 			procRoot: join(root, "proc"),
 			cgroupRoot: join(root, "cgroup"),
+			expectedExe: () => EXE,
 			bootId: async () => BOOT,
 			readLifetime: async () => lifetime(),
+			liveInvocation: async () => INVOCATION,
 			readPublication: async () => publication(),
 			readDisk: async () => publication(),
 			readMarker: () => marker(),
 			captureConfig: () => ({ ...CONFIG }),
 			readStats: async () => {
 				statsReads++;
-				return [stats(1_000), stats(9_000)];
+				return {
+					reads: [stats(1_000), stats(9_000)],
+					appliedMap: { generation: 7, sha256: SHA },
+				};
 			},
-			queryEngine: async () => "streaming",
+			queryEngine: async () => {
+				engineQueries++;
+				return { state: "streaming", session: "session-1" };
+			},
 			...over,
 		};
 	}
@@ -473,18 +588,31 @@ describe("collectSenderAdoptionEvidence", () => {
 		writeProcess(PID, "S", PID, START);
 		writeCgroup([PID]);
 		const e = await collectSenderAdoptionEvidence(io());
-		expect(e.process).toEqual({
-			pid: PID,
-			comm: "srtla_send",
-			state: "S",
-			processGroup: PID,
-			startTime: START,
-			argsDigest: ARGS,
-			cgroup: CGROUP,
-			cgroupMembers: [PID],
-			groupMembers: [PID],
-		});
+		expect(e.process).toEqual({ ...FACTS });
 		expect(senderAdoptionVerdict(e)).toEqual({ decision: "adopt" });
+	});
+
+	test("a socket held by another process is never read", async () => {
+		writeProcess(PID, "S", PID, START, "999");
+		writeCgroup([PID]);
+		const e = await collectSenderAdoptionEvidence(io());
+		expect(e.process?.ownsControlSocket).toBe(false);
+		expect(statsReads).toBe(0);
+		expect(senderAdoptionVerdict(e)).toMatchObject({
+			reason: "socket_not_owned",
+		});
+	});
+
+	test("only one listening socket at the path counts", async () => {
+		writeProcess(PID, "S", PID, START);
+		const table = join(root, "proc", String(PID), "net", "unix");
+		writeFileSync(
+			table,
+			`${readFileSync(table, "utf8")}0000000000000000: 00000002 00000000 00010000 0001 01 780 ${SOCKET}\n`,
+		);
+		expect(await holdsListeningSocket(join(root, "proc"), PID, SOCKET)).toBe(
+			false,
+		);
 	});
 
 	test("never contacts a reused PID", async () => {
@@ -506,18 +634,21 @@ describe("collectSenderAdoptionEvidence", () => {
 		});
 	});
 
+	test("finds a child cgroup below the sender's", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID], ["helper.scope"]);
+		const e = await collectSenderAdoptionEvidence(io());
+		expect(e.process?.cgroupChildren).toBe(1);
+		expect(senderAdoptionVerdict(e)).toMatchObject({
+			reason: "cgroup_has_children",
+		});
+	});
+
 	test("a refusal before the live reads contacts neither the sender nor the engine", async () => {
 		writeProcess(PID, "S", PID, START);
 		writeCgroup([PID]);
-		let engineQueries = 0;
 		const e = await collectSenderAdoptionEvidence(
-			io({
-				readLifetime: async () => lifetime({ host: "backend-child" }),
-				queryEngine: async () => {
-					engineQueries++;
-					return "streaming";
-				},
-			}),
+			io({ readLifetime: async () => lifetime({ host: "backend-child" }) }),
 		);
 		expect(statsReads).toBe(0);
 		expect(engineQueries).toBe(0);
@@ -531,22 +662,19 @@ describe("collectSenderAdoptionEvidence", () => {
 	test("a refusal of the live reads does not ask the engine", async () => {
 		writeProcess(PID, "S", PID, START);
 		writeCgroup([PID]);
-		let engineQueries = 0;
 		const e = await collectSenderAdoptionEvidence(
 			io({
 				readStats: async () => {
 					statsReads++;
-					return [stats(5), stats(5)];
-				},
-				queryEngine: async () => {
-					engineQueries++;
-					return "streaming";
+					return { reads: [stats(5), stats(9)], appliedMap: null };
 				},
 			}),
 		);
 		expect(statsReads).toBe(1);
 		expect(engineQueries).toBe(0);
-		expect(senderAdoptionVerdict(e)).toMatchObject({ reason: "no_progress" });
+		expect(senderAdoptionVerdict(e)).toMatchObject({
+			reason: "applied_identity_unavailable",
+		});
 	});
 
 	test("a missing process and unreadable reads refuse without throwing", async () => {
@@ -555,19 +683,81 @@ describe("collectSenderAdoptionEvidence", () => {
 				readPublication: async () => {
 					throw new Error("torn");
 				},
-				queryEngine: async () => {
-					throw new Error("down");
-				},
 			}),
 		);
 		expect(e.process).toBeNull();
 		expect(e.publication).toBeNull();
-		expect(e.engine).toBe("unknown");
 		expect(senderAdoptionVerdict(e)).toMatchObject({ reason: "sender_absent" });
 	});
 
+	test("the production readers supply no invocation and never probe the engine", async () => {
+		const production = defaultSenderAdoptionIo(() => ({ ...CONFIG }));
+		expect(await production.liveInvocation(PID)).toBeNull();
+		expect(await production.queryEngine()).toEqual({
+			state: "unknown",
+			session: null,
+		});
+	});
+
+	function countingEffects(counter: { n: number }): SenderAdoptionEffects {
+		return {
+			register: (() => {
+				counter.n++;
+				return {} as StreamingProcess;
+			}) as SenderAdoptionEffects["register"],
+			createProcess: () => {
+				counter.n++;
+				throw new Error("must not run");
+			},
+			continueGeneration: () => {
+				counter.n++;
+			},
+			attachTelemetry: () => {
+				counter.n++;
+			},
+		};
+	}
+
+	test("an adoption refused changes nothing", async () => {
+		const before = getStreamingProcesses().length;
+		const counter = { n: 0 };
+		const verdict = await attemptSenderAdoption(
+			io({ readLifetime: async () => lifetime({ host: "backend-child" }) }),
+			countingEffects(counter),
+		);
+		expect(verdict).toMatchObject({ decision: "refuse" });
+		expect(counter.n).toBe(0);
+		expect(adoptedSender()).toBeUndefined();
+		expect(getStreamingProcesses().length).toBe(before);
+	});
+
+	test("an operator Stop while the sender was read refuses the adoption", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		let armed: ArmedStreamMarker | null = marker();
+		const counter = { n: 0 };
+		const verdict = await attemptSenderAdoption(
+			io({
+				readMarker: () => armed,
+				readStats: async () => {
+					armed = null; // Stop clears the marker during the reads.
+					return {
+						reads: [stats(1), stats(2)],
+						appliedMap: { generation: 7, sha256: SHA },
+					};
+				},
+			}),
+			countingEffects(counter),
+		);
+		expect(verdict).toEqual({
+			decision: "refuse",
+			check: "evidence",
+			reason: "changed_during_adoption",
+		});
+		expect(counter.n).toBe(0);
+	});
+
 	test("a sender gone by the time its handle is made is not registered", async () => {
-		resetSenderAdoptionForTest();
 		writeProcess(PID, "S", PID, START);
 		writeCgroup([PID]);
 		const before = getStreamingProcesses().length;
@@ -577,9 +767,9 @@ describe("collectSenderAdoptionEvidence", () => {
 				registered++;
 				return {} as StreamingProcess;
 			}) as SenderAdoptionEffects["register"],
-			createProcess: (pid, start) =>
-				createAdoptedProcess(pid, start, {
-					startTime: () => undefined,
+			createProcess: (pid) =>
+				createAdoptedProcess(pid, {
+					identity: () => "gone",
 					signal: () => {
 						throw new Error("must not signal");
 					},
@@ -600,52 +790,35 @@ describe("collectSenderAdoptionEvidence", () => {
 		expect(registered).toBe(0);
 		expect(adoptedSender()).toBeUndefined();
 		expect(getStreamingProcesses().length).toBe(before);
-		// The refusal did not use up the one adoption this process may make.
-		expect(
-			await attemptSenderAdoption(
-				io({ queryEngine: async () => "idle" }),
-				defaultSenderAdoptionEffects,
-			),
-		).toMatchObject({ reason: "engine_idle" });
 	});
+});
 
-	test("an adoption refused changes nothing", async () => {
+describe("startup wiring", () => {
+	test("a startup with no record refuses without probing the engine", async () => {
 		resetSenderAdoptionForTest();
+		const probe = spyOn(
+			engineRuntimeState,
+			"queryEngineRuntimeStreaming",
+		).mockImplementation(async () => "streaming");
 		const before = getStreamingProcesses().length;
-		let effects = 0;
-		const count = () => {
-			effects++;
-		};
-		const verdict = await attemptSenderAdoption(
-			io({ readLifetime: async () => lifetime({ host: "backend-child" }) }),
-			{
-				register: (() => {
-					effects++;
-					return {} as StreamingProcess;
-				}) as SenderAdoptionEffects["register"],
-				createProcess: () => {
-					effects++;
-					throw new Error("must not run");
-				},
-				continueGeneration: count,
-				attachTelemetry: count,
-			},
-		);
-		expect(verdict).toMatchObject({ decision: "refuse" });
-		expect(effects).toBe(0);
-		expect(adoptedSender()).toBeUndefined();
+		const verdict = await adoptRunningSenderAtStartup();
+		expect(verdict.decision).toBe("refuse");
+		expect(probe).not.toHaveBeenCalled();
 		expect(getStreamingProcesses().length).toBe(before);
+		probe.mockRestore();
 	});
 });
 
 describe("createAdoptedProcess", () => {
-	function fakeIo() {
-		let start: string | undefined = START;
+	function fakeIo(initial: AdoptedIdentity = "same") {
+		let identity: AdoptedIdentity = initial;
 		let tick: (() => void) | undefined;
+		let failure: Error | undefined;
 		const signals: Array<NodeJS.Signals | number> = [];
 		const io: AdoptedProcessIo = {
-			startTime: () => start,
+			identity: () => identity,
 			signal: (_pid, signal) => {
+				if (failure) throw failure;
 				signals.push(signal);
 			},
 			poll: (callback) => {
@@ -658,40 +831,83 @@ describe("createAdoptedProcess", () => {
 		return {
 			io,
 			signals,
-			setStart: (value: string | undefined) => {
-				start = value;
+			set: (value: AdoptedIdentity) => {
+				identity = value;
+			},
+			fail: (error: Error | undefined) => {
+				failure = error;
 			},
 			tick: () => tick?.(),
 			polling: () => tick !== undefined,
 		};
 	}
 
-	test("signals only while the PID still has the adopted start time", async () => {
+	test("signals only while the PID still has the adopted identity", async () => {
 		const fake = fakeIo();
-		const proc = createAdoptedProcess(PID, START, fake.io);
+		const proc = createAdoptedProcess(PID, fake.io);
 		proc.kill("SIGHUP");
 		expect(fake.signals).toEqual(["SIGHUP"]);
 		expect(proc.exitCode).toBeNull();
-		fake.setStart("1");
+		fake.set("gone");
 		proc.kill("SIGTERM");
 		expect(fake.signals).toEqual(["SIGHUP"]);
 		expect(proc.exitCode).toBe(-1);
 		expect(await proc.exited).toBe(-1);
 		expect(fake.polling()).toBe(false);
-		fake.setStart(START);
+		fake.set("same");
 		proc.kill("SIGKILL");
 		expect(fake.signals).toEqual(["SIGHUP"]);
 	});
 
-	test("the poll notices an exit without any signal", async () => {
+	test("an unreadable identity is neither an exit nor a delivered signal", () => {
 		const fake = fakeIo();
-		const proc = createAdoptedProcess(PID, START, fake.io);
+		const proc = createAdoptedProcess(PID, fake.io);
+		fake.set("uncertain");
 		fake.tick();
 		expect(proc.exitCode).toBeNull();
-		fake.setStart(undefined);
+		expect(() => proc.kill("SIGTERM")).toThrow("not signalled");
+		expect(fake.signals).toEqual([]);
+		fake.set("same");
+		proc.kill("SIGTERM");
+		expect(fake.signals).toEqual(["SIGTERM"]);
+	});
+
+	test("a failed delivery throws unless the sender turned out to be gone", async () => {
+		const fake = fakeIo();
+		const proc = createAdoptedProcess(PID, fake.io);
+		fake.fail(Object.assign(new Error("EPERM"), { code: "EPERM" }));
+		expect(() => proc.kill("SIGHUP")).toThrow("EPERM");
+		expect(proc.exitCode).toBeNull();
+		fake.fail(Object.assign(new Error("ESRCH"), { code: "ESRCH" }));
+		fake.set("gone");
+		proc.kill("SIGTERM");
+		expect(await proc.exited).toBe(-1);
+	});
+
+	test("the poll notices an exit without any signal", async () => {
+		const fake = fakeIo();
+		const proc = createAdoptedProcess(PID, fake.io);
+		fake.tick();
+		expect(proc.exitCode).toBeNull();
+		fake.set("gone");
 		fake.tick();
 		expect(await proc.exited).toBe(-1);
 		expect(fake.polling()).toBe(false);
+	});
+
+	test("a reload that found the sender gone is not counted as delivered", async () => {
+		const fake = fakeIo();
+		const handle = registerAdoptedSender(
+			createAdoptedProcess(PID, fake.io),
+			srtlaSendExec,
+			START,
+		);
+		fake.set("gone");
+		expect(signalSenders("SIGHUP", [handle])).toBe(0);
+		expect(fake.signals).toEqual([]);
+		await handle.proc.exited;
+		await Bun.sleep(0);
+		expect(getStreamingProcesses()).not.toContain(handle);
 	});
 });
 
@@ -707,48 +923,54 @@ test("the bind-map writer continues above an adopted sender's generation", () =>
 });
 
 /**
- * A real detached process named `srtla_send`, in its own session and process
- * group and not our child, judged from the real `/proc`. Only the cgroup
- * membership is a fixture: the test runner's cgroup is shared.
+ * A real detached process named `srtla_send` that listens on a Unix socket, in
+ * its own session and process group and not our child, judged from the real
+ * `/proc`. Synthetic: the cgroup membership (the test runner's cgroup is
+ * shared), the unit invocation, the applied map and the engine session (no
+ * source exists on this base), and the records.
  */
 describe("a real detached sender", () => {
 	let root = "";
+	let socket = "";
 	let pid = 0;
 	let engine: "idle" | "streaming" | "unknown" = "streaming";
 
 	beforeEach(async () => {
 		root = mkdtempSync(join(tmpdir(), "sender-adoption-real-"));
+		socket = join(root, "control.sock");
 		// The kernel names a process after the path it was executed by, so a
-		// link to this Bun binary runs as `srtla_send` and idles until killed.
+		// link to this Bun binary runs as `srtla_send`.
 		const binary = join(root, "srtla_send");
 		symlinkSync(process.execPath, binary);
+		const script = `Bun.listen({ unix: ${JSON.stringify(socket)}, socket: { data() {} } }); setInterval(() => {}, 1000);`;
 		const launcher = Bun.spawn(
 			[
 				"setsid",
 				"-f",
 				"sh",
 				"-c",
-				`echo $$ > ${root}/pid; exec ${binary} -e 'setInterval(() => {}, 1000)'`,
+				`echo $$ > ${root}/pid; exec ${binary} -e '${script}'`,
 			],
 			{ stdout: "ignore", stderr: "ignore" },
 		);
 		await launcher.exited;
-		for (let i = 0; i < 100 && pid === 0; i++) {
+		for (let i = 0; i < 150 && pid === 0; i++) {
 			try {
 				const text = readFileSync(join(root, "pid"), "utf8").trim();
 				const comm = readFileSync(`/proc/${text}/comm`, "utf8").trim();
-				if (comm === "srtla_send") pid = Number(text);
+				if (
+					comm === "srtla_send" &&
+					(await holdsListeningSocket("/proc", Number(text), socket))
+				)
+					pid = Number(text);
 			} catch {
-				// Not written or not exec'd yet.
+				// Not written, not exec'd or not listening yet.
 			}
 			if (pid === 0) await Bun.sleep(20);
 		}
 		// It escaped by setsid on purpose; the safety guard learns it is ours.
 		adoptTestProcess(pid);
 		engine = "streaming";
-		spyOn(engineRuntimeState, "queryEngineRuntimeStreaming").mockImplementation(
-			async () => engine,
-		);
 		resetSenderAdoptionForTest();
 		resetBindMapWriter();
 	});
@@ -771,7 +993,12 @@ describe("a real detached sender", () => {
 	});
 
 	async function realIo(): Promise<SenderAdoptionIo> {
-		const real = await readSenderProcessFacts("/proc", "/sys/fs/cgroup", pid);
+		const real = await readSenderProcessFacts(
+			"/proc",
+			"/sys/fs/cgroup",
+			pid,
+			socket,
+		);
 		if (!real?.cgroup) throw new Error("no real process facts");
 		mkdirSync(join(root, "cgroup", real.cgroup), { recursive: true });
 		writeFileSync(
@@ -781,6 +1008,7 @@ describe("a real detached sender", () => {
 		return {
 			procRoot: "/proc",
 			cgroupRoot: join(root, "cgroup"),
+			expectedExe: () => realpathSync(process.execPath),
 			bootId: async () => BOOT,
 			readLifetime: async () =>
 				lifetime({
@@ -788,31 +1016,43 @@ describe("a real detached sender", () => {
 					startTime: real.startTime,
 					argsDigest: real.argsDigest,
 					cgroup: real.cgroup,
+					controlSocket: socket,
 				}),
+			liveInvocation: async () => INVOCATION,
 			readPublication: async () => publication(),
 			readDisk: async () => publication(),
 			readMarker: () => marker(),
 			captureConfig: () => ({ ...CONFIG }),
-			readStats: async () => [stats(1_000), stats(9_000)],
-			queryEngine: async () => engine,
+			readStats: async () => ({
+				reads: [stats(1_000), stats(9_000)],
+				appliedMap: { generation: 7, sha256: SHA },
+			}),
+			queryEngine: async () => ({ state: engine, session: "session-1" }),
 		};
 	}
 
-	test("is its own group leader, alone, and not our child", async () => {
+	test("is its own group leader, holds its socket, and is not our child", async () => {
 		expect(pid).toBeGreaterThan(0);
-		const real = await readSenderProcessFacts("/proc", "/sys/fs/cgroup", pid);
+		const real = await readSenderProcessFacts(
+			"/proc",
+			"/sys/fs/cgroup",
+			pid,
+			socket,
+		);
 		expect(real?.comm).toBe("srtla_send");
+		expect(real?.exe).toBe(realpathSync(process.execPath));
 		expect(real?.processGroup).toBe(pid);
 		expect(real?.groupMembers).toEqual([pid]);
-		const parent = Number(
-			readFileSync(`/proc/${pid}/stat`, "utf8")
-				.slice(readFileSync(`/proc/${pid}/stat`, "utf8").lastIndexOf(")") + 2)
-				.split(" ")[1],
+		expect(real?.ownsControlSocket).toBe(true);
+		expect(await holdsListeningSocket("/proc", process.pid, socket)).toBe(
+			false,
 		);
+		const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+		const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
 		expect(parent).not.toBe(process.pid);
 	});
 
-	test("an unadopted survivor stays foreign and blocks replacement", async () => {
+	test("an unadopted survivor stays foreign and blocks replacement", () => {
 		expect(unownedSenderCensus(getStreamingProcesses(), "/proc")).toBe(
 			"present",
 		);
@@ -821,29 +1061,26 @@ describe("a real detached sender", () => {
 		);
 	});
 
-	test("adopted on full evidence, reconciled as streaming, reloaded and stopped through its handle", async () => {
+	test("adopted on full evidence, reconciled once, reloaded and stopped through its handle", async () => {
 		const io = await realIo();
-		let telemetry = 0;
+		let current: (() => boolean) | undefined;
 		const verdict = await attemptSenderAdoption(io, {
 			...defaultSenderAdoptionEffects,
-			attachTelemetry: () => {
-				telemetry++;
+			attachTelemetry: (_lifetime, isCurrent) => {
+				current = isCurrent;
 			},
 		});
 		expect(verdict).toEqual({ decision: "adopt" });
 		expect(adoptedSender()?.pid).toBe(pid);
-		expect(telemetry).toBe(1);
+		expect(current?.()).toBe(true);
 		expect(currentBindMapGeneration()).toBe(7);
 		const handle = getStreamingProcesses().find((p) => p.adopted);
-		expect(handle?.spawnfile).toBe(srtlaSendExec);
+		if (!handle) throw new Error("no handle");
+		expect(handle.spawnfile).toBe(srtlaSendExec);
 		expect(ownsSessionSender()).toBe(true);
 		expect(unownedSenderCensus(getStreamingProcesses(), "/proc")).toBe(
 			"absent",
 		);
-		expect(streamSessionProductionDeps.canReconcileStreaming?.(undefined)).toBe(
-			true,
-		);
-		// A second adoption in the same process is refused.
 		expect(
 			await attemptSenderAdoption(io, defaultSenderAdoptionEffects),
 		).toEqual({
@@ -855,6 +1092,7 @@ describe("a real detached sender", () => {
 		const session = createStreamSessionOrchestrator({
 			...streamSessionProductionDeps,
 			initialLiveness: "unknown",
+			queryRuntime: async () => "streaming",
 			markStreamingForOta: () => true,
 			unmarkStreamingForOta: () => true,
 			confirmStreamingForOta: () => true,
@@ -866,17 +1104,24 @@ describe("a real detached sender", () => {
 		});
 		expect(await session.reconcile()).toBe("streaming");
 		expect(session.streamLiveness()).toBe("streaming");
+		// A later reconciliation cannot tell the adopted engine session from one
+		// that replaced it, so it gets no exception: unconfirmed and protected.
+		expect(await session.reconcile()).toBe("reconciling");
+		expect(session.streamLiveness()).toBe("unknown");
+		expect(takeAdoptionForReconcile()).toBe(false);
 
-		// SIGCONT is harmless to the idle process; it proves reload reaches the handle.
+		// SIGCONT is harmless to the idle process; it proves reload reaches it.
 		expect(signalSenders("SIGCONT")).toBe(1);
-		if (!handle) throw new Error("no handle");
 		await stopProcessAndWait(handle);
 		expect(handle.proc.exitCode).toBe(-1);
 		expect(getStreamingProcesses()).not.toContain(handle);
 		expect(adoptedSender()).toBeUndefined();
+		expect(current?.()).toBe(false);
 		expect(ownsSessionSender()).toBe(false);
-		// A sender spawned later in this process does not inherit the adoption:
-		// without its own launch evidence it is not reconciled as streaming.
+		expect(unownedSenderCensus(getStreamingProcesses(), "/proc")).toBe(
+			"absent",
+		);
+		// A sender spawned later in this process does not inherit the adoption.
 		const later = {
 			spawnfile: srtlaSendExec,
 			proc: { pid: 1, exitCode: null, signalCode: null },
@@ -892,20 +1137,32 @@ describe("a real detached sender", () => {
 		} finally {
 			live.splice(live.indexOf(later), 1);
 		}
-		expect(streamSessionProductionDeps.canReconcileStreaming?.(undefined)).toBe(
-			false,
-		);
-		expect(unownedSenderCensus(getStreamingProcesses(), "/proc")).toBe(
-			"absent",
-		);
+	});
+
+	test("a stopped sender stays supervised and is still killed through its handle", async () => {
+		expect(
+			await attemptSenderAdoption(await realIo(), {
+				...defaultSenderAdoptionEffects,
+				attachTelemetry: () => {},
+			}),
+		).toEqual({ decision: "adopt" });
+		const handle = getStreamingProcesses().find((p) => p.adopted);
+		if (!handle) throw new Error("no handle");
+		process.kill(pid, "SIGSTOP");
+		await Bun.sleep(700); // Longer than one poll.
+		expect(handle.proc.exitCode).toBeNull();
+		expect(getStreamingProcesses()).toContain(handle);
+		handle.proc.kill("SIGKILL");
+		expect(await handle.proc.exited).toBe(-1);
 	});
 
 	test("a sender that exits by itself is noticed and no longer owned", async () => {
-		const verdict = await attemptSenderAdoption(await realIo(), {
-			...defaultSenderAdoptionEffects,
-			attachTelemetry: () => {},
-		});
-		expect(verdict).toEqual({ decision: "adopt" });
+		expect(
+			await attemptSenderAdoption(await realIo(), {
+				...defaultSenderAdoptionEffects,
+				attachTelemetry: () => {},
+			}),
+		).toEqual({ decision: "adopt" });
 		const handle = getStreamingProcesses().find((p) => p.adopted);
 		if (!handle) throw new Error("no handle");
 		process.kill(pid, "SIGKILL");
@@ -917,15 +1174,12 @@ describe("a real detached sender", () => {
 
 	test("the engine no longer streaming refuses and leaves the survivor alone", async () => {
 		engine = "idle";
-		const verdict = await attemptSenderAdoption(await realIo(), {
-			...defaultSenderAdoptionEffects,
-			attachTelemetry: () => {},
-		});
-		expect(verdict).toEqual({
-			decision: "refuse",
-			check: "engine",
-			reason: "engine_idle",
-		});
+		expect(
+			await attemptSenderAdoption(await realIo(), {
+				...defaultSenderAdoptionEffects,
+				attachTelemetry: () => {},
+			}),
+		).toEqual({ decision: "refuse", check: "engine", reason: "engine_idle" });
 		expect(getStreamingProcesses().some((p) => p.adopted)).toBe(false);
 		expect(readFileSync(`/proc/${pid}/comm`, "utf8").trim()).toBe("srtla_send");
 	});
