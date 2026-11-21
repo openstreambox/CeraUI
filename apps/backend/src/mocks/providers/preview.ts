@@ -2,7 +2,7 @@
 	CeraUI - Mock Preview WebSocket Server (DEV-ONLY)
 
 	A Bun WebSocket server that reproduces cerastream's committed preview-ws wire
-	contract (cerastream Todo 15) so the Live-view / EncoderDialog `PreviewCanvas`
+	contract so the Live-view / EncoderDialog `PreviewCanvas`
 	component works end-to-end in dev WITHOUT a real engine. cerastream serves the
 	real preview socket as a loopback upstream (commonly port 9997). On a dev host
 	that upstream is absent, so without this the backend `/preview` proxy would only
@@ -17,11 +17,14 @@
 	`apps/frontend/src/lib/components/preview/PreviewCanvas.svelte`:
 	  1. Client sends one text frame `{ action:"start", tier:"webcodecs"|"mse" }`.
 	  2. Server replies ONE `codec-config` JSON text frame FIRST:
-	     `{ type:"codec-config", tier:"webcodecs", codec, description:<base64 avcC>,
-	        coded_width, coded_height }`.
-	  3. Server loops the bundled fixture as binary access units, KEYFRAME-FIRST,
-	     each framed as a 9-byte header `[flags:u8][pts_us:i64 BE]` + the AU bytes
-	     (`flags` bit 0 = keyframe).
+	     `{ type:"codec-config", tier:"webcodecs", codec, coded_width, coded_height }`.
+	     No `description`: the engine's preview leg is pinned to
+	     `video/x-h264,stream-format=byte-stream,alignment=au`, which carries no
+	     avcC codec_data. A `description` switches WebCodecs to length-prefixed
+	     AVC input, and Chrome rejects Annex-B access units in that mode.
+	  3. Server loops the bundled fixture as binary Annex-B access units,
+	     KEYFRAME-FIRST (SPS/PPS in band before each IDR), each framed as a 9-byte
+	     header `[flags:u8][pts_us:i64 BE]` + the AU bytes (`flags` bit 0 = keyframe).
 	  4. Server interleaves `audio-level` JSON text frames at <=10 Hz:
 	     `{ type:"audio-level", seq, pts_us, rms_db:[…], peak_db:[…] }`.
 
@@ -107,7 +110,6 @@ function sendCodecConfig(ws: ServerWebSocket<PreviewConn>): void {
 			type: "codec-config",
 			tier: "webcodecs",
 			codec: PREVIEW_FIXTURE.codec,
-			description: PREVIEW_FIXTURE.description,
 			coded_width: PREVIEW_FIXTURE.codedWidth,
 			coded_height: PREVIEW_FIXTURE.codedHeight,
 		}),

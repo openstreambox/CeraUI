@@ -69,6 +69,20 @@ async function waitFor(
 	}
 }
 
+/** NAL unit types in an Annex-B access unit, in stream order. */
+function annexBNalTypes(au: Uint8Array): number[] {
+	const types: number[] = [];
+	for (let i = 0; i + 3 < au.length; i++) {
+		if (au[i] !== 0 || au[i + 1] !== 0) continue;
+		const header =
+			au[i + 2] === 1 ? i + 3 : au[i + 2] === 0 && au[i + 3] === 1 ? i + 4 : -1;
+		if (header < 0 || header >= au.length) continue;
+		types.push((au[header] ?? 0) & 0x1f);
+		i = header;
+	}
+	return types;
+}
+
 describe("mock preview server — inert when mocks are OFF", () => {
 	it("binds no listener and returns null when shouldUseMocks() is false", () => {
 		delete process.env.MOCK_MODE;
@@ -117,7 +131,9 @@ describe("mock preview server — wire contract under mocks", () => {
 		assert(config);
 		expect(typeof config.codec).toBe("string");
 		expect(config.codec).toMatch(/^avc1\./);
-		expect(typeof config.description).toBe("string");
+		// Annex-B access units decode only WITHOUT an avcC description: with one,
+		// WebCodecs expects length-prefixed AVC input and Chrome fails the decoder.
+		expect("description" in config).toBe(false);
 		expect(config.coded_width).toBeGreaterThan(0);
 		expect(config.coded_height).toBeGreaterThan(0);
 
@@ -130,6 +146,14 @@ describe("mock preview server — wire contract under mocks", () => {
 		expect(flags & 0x1).toBe(1); // keyframe-first
 		const ptsUs = view.getBigInt64(1, false); // big-endian i64 microseconds
 		expect(ptsUs).toBeGreaterThanOrEqual(0n);
+		// With no description the keyframe AU itself must carry the parameter
+		// sets: Annex-B start code first, then SPS (7) and PPS (8) before the IDR (5).
+		const au = new Uint8Array(first, 9);
+		expect(Array.from(au.subarray(0, 4))).toEqual([0, 0, 0, 1]);
+		const nalTypes = annexBNalTypes(au);
+		expect(nalTypes.indexOf(7)).toBeGreaterThanOrEqual(0);
+		expect(nalTypes.indexOf(8)).toBeGreaterThan(nalTypes.indexOf(7));
+		expect(nalTypes.indexOf(5)).toBeGreaterThan(nalTypes.indexOf(8));
 
 		// audio-level shape.
 		const audio = collected.texts.find((m) => m.type === "audio-level");

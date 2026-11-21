@@ -24,6 +24,7 @@ import {
 	it,
 	vi,
 } from "vitest";
+import { authStatusStore } from "$lib/stores/auth-status.svelte";
 import { recordOperationPhases } from "../tests/fixtures/operation-phase-log.svelte";
 import {
 	band,
@@ -219,6 +220,8 @@ beforeEach(() => {
 	socket().readyState = FakeWebSocket.OPEN;
 	socket().onopen?.();
 	session.authenticated = true;
+	// The operator signs in on that first link, so a reconnect resumes a session.
+	authStatusStore.set(true);
 	flushSync();
 	deliverStatus({ is_streaming: false, stream_lifecycle: "idle" });
 });

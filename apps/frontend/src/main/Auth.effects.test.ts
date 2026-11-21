@@ -46,6 +46,7 @@ vi.mock("$lib/rpc/subscriptions.svelte", async () => {
 });
 
 vi.mock("$lib/stores/auth-status.svelte", () => ({
+	getSessionToken: () => null,
 	authenticate,
 	createPassword,
 	clearAuthInteraction: vi.fn(),

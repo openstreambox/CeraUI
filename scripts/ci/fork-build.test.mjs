@@ -12,7 +12,7 @@ test('development artifacts depend on the complete check job', () => {
 			'fetch-depth'
 		],
 	).toBe(0);
-	expect(Object.keys(workflow.jobs).sort()).toEqual(['artifacts', 'check']);
+	expect(Object.keys(workflow.jobs).sort()).toEqual(['artifacts', 'browser-focused', 'check']);
 	expect(workflow.jobs.artifacts.strategy.matrix.architecture).toEqual(['amd64', 'arm64']);
 	const runs = workflow.jobs.check.steps.map((step) => step.run ?? '').join('\n');
 	expect(runs).not.toMatch(/scripts\/esim|esim-helper|lpac/);
@@ -26,6 +26,23 @@ test('development artifacts depend on the complete check job', () => {
 		expect(runs).toContain(command);
 	}
 	expect(runs).toContain('496217e93cde36eeac0bde1b742c21fed6347a198f05a8cd898be116946b1eb8');
+});
+
+test('focused browser cases run on desktop Chromium and fail on any skip', () => {
+	const job = workflow.jobs['browser-focused'];
+	const runs = job.steps.map((step) => step.run ?? '').join('\n');
+	expect(runs).toContain('bun install --frozen-lockfile');
+	expect(runs).toContain('test:e2e:install-browser');
+	expect(runs).toContain('--project=desktop');
+	expect(runs).toContain('--retries=0');
+	expect(runs).toContain('tests/e2e/preview.spec.ts');
+	expect(runs).toContain('tests/e2e/bond-toggle-reconnect.spec.ts');
+	expect(runs).toContain('.stats.skipped == 0');
+	expect(runs).toContain('.stats.expected == 6');
+	expect(runs).toContain('WebCodecs tier decodes the mock preview server to a live canvas');
+	expect(runs).toContain('setup.srtla_path = process.env.SRTLA_DIR');
+	expect(runs).toContain('apps/backend/mocks/srtla');
+	expect(runs).toContain('.stats.unexpected == 0');
 });
 
 test('delivery fails on missing artifacts and uses the reviewed packaging entrypoint', () => {

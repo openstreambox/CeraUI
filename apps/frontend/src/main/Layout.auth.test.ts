@@ -35,6 +35,7 @@ const authenticateWithToken = vi.hoisted(() =>
 	vi.fn(async () => authState.attempt),
 );
 const revokePersistentToken = vi.hoisted(() => vi.fn(async () => undefined));
+const markAuthenticated = vi.hoisted(() => vi.fn());
 
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getStatus: () => undefined,
@@ -50,13 +51,14 @@ vi.mock("$lib/stores/connection-ux.svelte", () => ({
 	}),
 	getDisconnectedSince: () => 0,
 	getGraceNow: () => 3000,
-	markAuthenticated: vi.fn(),
+	markAuthenticated,
 	clearSessionExpired: vi.fn(),
 	markSessionExpired: vi.fn(),
 	shouldExpireSession: () => false,
 	wasAuthenticated: () => false,
 }));
 vi.mock("$lib/stores/auth-status.svelte", () => ({
+	getSessionToken: () => null,
 	authenticateWithToken,
 	revokePersistentToken,
 	getAuthMessage: () => undefined,
@@ -90,6 +92,7 @@ beforeAll(() => {
 beforeEach(() => {
 	authenticateWithToken.mockClear();
 	revokePersistentToken.mockClear();
+	markAuthenticated.mockClear();
 	authState.status = false;
 	localStorage.clear();
 	localStorage.setItem("auth", "saved-issued-token");
@@ -141,5 +144,28 @@ describe("Layout — saved credential auth result", () => {
 		expect(revokePersistentToken).toHaveBeenCalledExactlyOnceWith(
 			"saved-issued-token",
 		);
+	});
+});
+
+describe("Layout — reconnect re-auth latch", () => {
+	it("arms the latch after a password login, with no saved-token check", async () => {
+		// The password form already authenticated: no saved-token check runs, so
+		// only the authenticated state itself can arm reconnect re-auth.
+		localStorage.clear();
+		authState.status = true;
+
+		render(Layout);
+
+		await waitFor(() => expect(markAuthenticated).toHaveBeenCalled());
+		expect(authenticateWithToken).not.toHaveBeenCalled();
+	});
+
+	it("leaves the latch alone while signed out", async () => {
+		localStorage.clear();
+
+		render(Layout);
+
+		await screen.findByTestId("auth-screen");
+		expect(markAuthenticated).not.toHaveBeenCalled();
 	});
 });

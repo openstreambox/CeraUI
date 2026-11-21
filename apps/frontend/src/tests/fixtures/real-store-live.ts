@@ -14,6 +14,7 @@ import { flushSync } from "svelte";
 import { expect } from "vitest";
 
 import { getRestoredSessions } from "$lib/rpc/session-epoch.svelte";
+import { authStatusStore } from "$lib/stores/auth-status.svelte";
 
 export interface ScriptedTransport {
 	message: ((type: string, data: unknown, seq?: number) => void) | undefined;
@@ -66,11 +67,15 @@ export function push(
 	flushSync();
 }
 
-/** The page's first link comes up; nothing re-authenticates on it. */
+/**
+ * The page's first link comes up; nothing re-authenticates on it. The operator
+ * then signs in, so a later reconnect has a session to resume.
+ */
 export function firstLink(transport: ScriptedTransport): void {
 	transport.authenticated = false;
 	transport.connection?.("connected");
 	transport.authenticated = true;
+	authStatusStore.set(true);
 	flushSync();
 }
 

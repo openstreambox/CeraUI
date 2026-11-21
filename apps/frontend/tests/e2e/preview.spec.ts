@@ -6,20 +6,19 @@ import { expect, test } from './fixtures/index.js';
 import { ensureAuthenticated, navigateTo } from './helpers/index.js';
 
 /**
- * Todo 27 — PreviewCanvas honest states + working dev preview.
+ * PreviewCanvas honest states and a working dev preview.
  *
  * TIER DISCIPLINE (the load-bearing convention here): the preview delivery tier
  * is selected by the harness browser's WebCodecs support, so this spec BRANCHES
  * on it rather than asserting one path unconditionally:
  *
  *   • WebCodecs tier — asserts the canvas reaches `data-status="live"` decoding
- *     the REAL Todo-21 mock preview upstream on :9997 through the backend
- *     `/preview` proxy (real H.264 access units).
- *     Runs ONLY when the harness Chromium can decode `avc1.42c00d` via
- *     `VideoDecoder.isConfigSupported` — otherwise the test is SKIPPED with a
- *     logged reason (open-source Chromium ships without proprietary H.264).
- *     Asserting a real decode unconditionally would flake in exactly those CI
- *     browsers, which is what the branch prevents.
+ *     the REAL mock preview upstream on :9997 through the backend
+ *     `/preview` proxy (real Annex-B H.264 access units, no stub decoder), and
+ *     that the decoded pictures are painted onto the canvas and keep advancing.
+ *     Playwright's Chromium (Chrome for Testing and its headless shell) decodes
+ *     H.264, so this case runs unconditionally. A harness browser without H.264
+ *     FAILS here with a named reason; it is never skipped.
  *   • MSE tier — a SEPARATE test deletes `window.VideoDecoder` in an init-script
  *     (before app boot) so the component selects the `<video>`/MSE fallback, then
  *     asserts the video element + compat badge render and the `tier:"mse"`
@@ -49,7 +48,7 @@ let pageWs: WebSocketRoute | null = null;
 /**
  * Proxy the backend WS, force is_streaming:false so the idle Live DOM is stable.
  *
- * Single-origin preview proxy (Task 20): PreviewCanvas mints a token over the RPC
+ * Single-origin preview proxy: PreviewCanvas mints a token over the RPC
  * socket, then dials the SAME backend origin at `/preview?token=…`, so the preview
  * socket matches THIS route too. With no `onPreview`, that leg proxies to the real
  * mock-preview upstream (the WebCodecs-tier decode path). The MSE-tier block passes
@@ -108,7 +107,7 @@ async function openPreviewDisclosure(page: Page): Promise<void> {
 	await expect(page.getByTestId('preview')).toBeVisible();
 }
 
-async function webcodecsH264Advertised(page: Page): Promise<boolean> {
+async function webcodecsH264Supported(page: Page): Promise<boolean> {
 	return page.evaluate(async (codec) => {
 		const VD = (
 			window as {
@@ -117,7 +116,7 @@ async function webcodecsH264Advertised(page: Page): Promise<boolean> {
 		).VideoDecoder;
 		if (!VD || typeof VD.isConfigSupported !== 'function') return false;
 		try {
-			const result = await VD.isConfigSupported({ codec, codedWidth: 320, codedHeight: 240 });
+			const result = await VD.isConfigSupported({ codec, codedWidth: 320, codedHeight: 180 });
 			return result?.supported === true;
 		} catch {
 			return false;
@@ -126,22 +125,58 @@ async function webcodecsH264Advertised(page: Page): Promise<boolean> {
 }
 
 /**
- * Toggle the preview on and resolve the terminal decode outcome. Open-source
- * Chromium advertises `avc1` via `isConfigSupported` but ships no working H.264
- * decoder, so the real decode raises the component's `error` state — that is the
- * "not truly WebCodecs-capable" branch and is SKIPPED with a logged reason, not
- * failed. Only a browser that actually decodes reaches `live`.
+ * Toggle the preview on and require the real decode to go live. `error` is the
+ * component's decoder-failure state (a codec-config/bitstream mismatch lands
+ * there), so it fails the case immediately instead of waiting out the timeout.
  */
-async function toggleAndReachLiveOrSkip(page: Page): Promise<void> {
+async function toggleAndReachLive(page: Page): Promise<void> {
+	expect(
+		await webcodecsH264Supported(page),
+		`harness Chromium must decode WebCodecs ${FIXTURE_CODEC} (Playwright's Chrome for Testing build does)`,
+	).toBe(true);
 	const preview = page.getByTestId('preview');
 	await expect(preview).toHaveAttribute('data-tier', 'webcodecs');
 	await page.getByTestId('preview-toggle').click();
 	await expect
 		.poll(() => preview.getAttribute('data-status'), { timeout: 20_000 })
 		.toMatch(/^(live|error)$/);
-	const status = await preview.getAttribute('data-status');
-	test.skip(status === 'error', 'harness Chromium advertises but cannot decode avc1.42c00d');
-	await expect(preview).toHaveAttribute('data-status', 'live');
+	await expect(preview, 'the real H.264 decode must reach live, not error').toHaveAttribute(
+		'data-status',
+		'live',
+	);
+}
+
+/**
+ * Sample the painted canvas: its size, how many distinct colours a coarse grid
+ * shows, and a cheap content hash. The fixture is ffmpeg's `testsrc2` pattern
+ * (colour bars plus moving elements), so a painted picture is many-coloured and
+ * changes between samples; a blank or frozen canvas is neither.
+ */
+async function sampleCanvas(
+	page: Page,
+): Promise<{ width: number; height: number; colours: number; hash: number }> {
+	return page.getByTestId('preview-canvas').evaluate((el) => {
+		const canvas = el as HTMLCanvasElement;
+		const ctx = canvas.getContext('2d');
+		if (!ctx || canvas.width === 0 || canvas.height === 0) {
+			return { width: canvas.width, height: canvas.height, colours: 0, hash: 0 };
+		}
+		const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+		const colours = new Set<number>();
+		let hash = 0;
+		const stepX = Math.max(1, Math.floor(canvas.width / 32));
+		const stepY = Math.max(1, Math.floor(canvas.height / 18));
+		for (let y = 0; y < canvas.height; y += stepY) {
+			for (let x = 0; x < canvas.width; x += stepX) {
+				const i = (y * canvas.width + x) * 4;
+				// Quantize to 3 bits per channel so codec noise does not inflate the count.
+				const rgb = ((data[i] >> 5) << 6) | ((data[i + 1] >> 5) << 3) | (data[i + 2] >> 5);
+				colours.add(rgb);
+				hash = (Math.imul(hash, 31) + data[i] + data[i + 1] * 7 + data[i + 2] * 13) | 0;
+			}
+		}
+		return { width: canvas.width, height: canvas.height, colours: colours.size, hash };
+	});
 }
 
 test.describe('PreviewCanvas — WebCodecs tier + idle copy', () => {
@@ -151,7 +186,7 @@ test.describe('PreviewCanvas — WebCodecs tier + idle copy', () => {
 		test.skip(testInfo.project.name !== 'desktop', 'desktop layout drives the Live column');
 		pageWs = null;
 		// WebCodecs-tier proof: neutralize RTCPeerConnection before app boot so the
-		// tier ladder (Todo 16) selects WebCodecs (matching the real mock upstream's
+		// tier ladder selects WebCodecs (matching the real mock upstream's
 		// WebCodecs framing) instead of putting WebRTC on top.
 		await page.addInitScript(() => {
 			(window as { RTCPeerConnection?: unknown }).RTCPeerConnection = undefined;
@@ -177,23 +212,38 @@ test.describe('PreviewCanvas — WebCodecs tier + idle copy', () => {
 	});
 
 	test('WebCodecs tier decodes the mock preview server to a live canvas', async ({ page }) => {
-		test.skip(
-			!(await webcodecsH264Advertised(page)),
-			'harness Chromium does not advertise WebCodecs avc1.42c00d',
-		);
-		await toggleAndReachLiveOrSkip(page);
+		await toggleAndReachLive(page);
 		await expect(page.getByTestId('preview-canvas')).toBeVisible();
+
+		// The decoded picture is painted at the fixture's coded size...
+		const first = await sampleCanvas(page);
+		expect(first.width).toBe(320);
+		expect(first.height).toBe(180);
+		expect(first.colours, 'a painted testsrc2 frame is many-coloured, not blank').toBeGreaterThan(8);
+		// ...and later access units keep decoding: another painted picture, not
+		// the same one and not a cleared canvas.
+		await expect
+			.poll(
+				async () => {
+					const next = await sampleCanvas(page);
+					return (
+						next.width === 320 &&
+						next.height === 180 &&
+						next.colours > 8 &&
+						next.hash !== first.hash
+					);
+				},
+				{ timeout: 10_000, message: 'later frames must paint a new picture' },
+			)
+			.toBe(true);
+		await expect(page.getByTestId('preview')).toHaveAttribute('data-status', 'live');
 	});
 
 	test('@visual evidence: live decoded canvas', { tag: '@visual' }, async ({ page }) => {
-		test.skip(
-			!(await webcodecsH264Advertised(page)),
-			'harness Chromium does not advertise WebCodecs avc1.42c00d',
-		);
-		await toggleAndReachLiveOrSkip(page);
+		await toggleAndReachLive(page);
 		await page
 			.getByTestId('preview')
-			.screenshot({ path: path.join(EVIDENCE_DIR, 'task-27-webcodecs-live.png') });
+			.screenshot({ path: path.join(EVIDENCE_DIR, 'preview-webcodecs-live.png') });
 	});
 });
 
@@ -212,7 +262,7 @@ test.describe('PreviewCanvas — forced MSE tier', () => {
 		await page.addInitScript(() => {
 			// biome-ignore lint/performance/noDelete: force the MSE fallback path.
 			delete (window as { VideoDecoder?: unknown }).VideoDecoder;
-			// Also drop WebRTC so the tier ladder (Todo 16) selects the MSE floor
+			// Also drop WebRTC so the tier ladder selects the MSE floor
 			// rather than putting WebRTC on top of the mock's MSE codec-config.
 			(window as { RTCPeerConnection?: unknown }).RTCPeerConnection = undefined;
 		});
@@ -264,7 +314,7 @@ test.describe('PreviewCanvas — forced MSE tier', () => {
 });
 
 /**
- * Todo 19(b) — the preview surface must exist WHILE STREAMING.
+ * The preview surface must exist WHILE STREAMING.
  *
  * The engine attaches its MSE publisher during an active session (wave2 14e), but
  * the disclosure only ever lived in IdleCockpit, which LiveView unmounts the
