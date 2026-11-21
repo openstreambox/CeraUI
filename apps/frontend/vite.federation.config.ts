@@ -9,6 +9,10 @@ import { defineConfig } from "vite";
 
 import { BUILD_BRAND } from "./brand.config.ts";
 import {
+	FEDERATION_CATALOG_MODE_ENV,
+	federationCatalogPlugin,
+} from "./vite.federation-catalog.ts";
+import {
 	FEDERATION_PARAGLIDE_OUTDIR,
 	federationI18nPlugin,
 } from "./vite.federation-i18n.ts";
@@ -56,6 +60,12 @@ export default defineConfig({
 		// that graph better than per-message modules without omitting any messages.
 		federationI18nPlugin(),
 		federationExcludedI18nNamespacePlugin(),
+		// Narrows every other barrel to the keys the bundles can render, and fails
+		// the build when that list drifts from the bundled code.
+		federationCatalogPlugin({
+			paraglideOutdir: FEDERATION_PARAGLIDE_OUTDIR,
+			mode: process.env[FEDERATION_CATALOG_MODE_ENV],
+		}),
 		paraglideVitePlugin({
 			project: PARAGLIDE_PROJECT,
 			outdir: FEDERATION_PARAGLIDE_OUTDIR,

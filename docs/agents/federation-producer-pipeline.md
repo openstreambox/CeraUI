@@ -27,10 +27,24 @@ the SPA resolves its message catalog from lazily-imported per-namespace chunks,
 whereas federation registers the catalog statically via `@ceraui/i18n/eager`.
 Federation uses an isolated Paraglide `locale-modules` output and full output
 minification; its message imports and locale-runtime shim resolve together through
-`vite.federation-i18n.ts`. The namespaces the dialogs render, in every locale,
-remain inside the signed static graph, and the SPA's direct imports and lazy message-module output are unchanged.
-`bun scripts/ci/bundle-report.mjs` checks both built outputs. The explicitly
-measured November 2026 toast-host/audio rebaseline and bounded allowances are
+`vite.federation-i18n.ts`. `vite.federation-catalog.ts` narrows each namespace
+barrel to `src/lib/federation/catalog-keys.json`: the keys the bundled code names
+plus producer wire keys (keys the backend sends as data, such as source
+`unavailableReason` values) in the families that code reads, plus every key of the
+families declared in `src/lib/federation/computed-lookups.json` (maintained by
+hand) for every lookup the literal scan cannot account for: computed keys,
+renamed or namespace imports of the facade, and the facade handed to another
+function. That scan is a source heuristic: hosted code imports the facade directly
+from `@ceraui/i18n/svelte`. A local module that re-exports the facade must be
+declared too (it is scanned even when it renders no code); a facade destructured
+from a dynamic `import()` or reached through `bind`/`call` is not seen. Build Check runs the built relay-validation ABI case, which renders every
+computed stage label in all ten locales, as the backstop. Those keys, in every locale, remain inside
+the signed static graph. The build fails when the list drifts from the bundled
+code; `bun run --filter frontend generate:federation-catalog` regenerates it.
+The SPA's direct imports and lazy message-module output are unchanged.
+`bun scripts/ci/bundle-report.mjs` checks both built outputs; Build Check runs it,
+its strict `--federation-only` mode and the built-registry tests on every
+code-changing PR, and publication runs `--federation-only` before signing. The measured November 2026 toast-host/audio baselines and bounded allowances are
 recorded in [the dependency baseline](dep-baseline-as-of-2026-11.md#federation-budgets-and-size-analysis);
 the built federation harness also checks full-catalog fixture parity.
 Shared chunks use Rolldown's default eight-character base64url hash. The report

@@ -1,0 +1,130 @@
+{
+	"$comment": "Every message lookup in the federation bundles that the literal key scan cannot account for: a computed key, the facade renamed or imported as a namespace, or the facade handed to another function. Each names the key families it can produce. Maintained by hand: vite.federation-catalog.ts fails the build on an undeclared or stale entry, and the generator never writes this file.",
+	"lookups": [
+		{
+			"site": "apps/frontend/src/lib/components/streaming/ValidationAdapter.ts t(AUDIO_CAP_LABEL_KEY)",
+			"families": [],
+			"why": "A constant defined as a key literal in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/federation/encoder-entry.ts passes m: toast.error(encoderSaveErrorMessage(result.error, m));",
+			"families": [],
+			"why": "encoderSaveErrorMessage(error, msg) only reads key literals."
+		},
+		{
+			"site": "apps/frontend/src/lib/helpers/PipelineHelper.ts t(source.labelKey)",
+			"families": ["audio.sources", "settings.sources"],
+			"why": "Source descriptors carry a label key from the backend or the frontend pseudo-source table."
+		},
+		{
+			"site": "apps/frontend/src/lib/modem/operator-labels.ts t(BAND_GENERATION_KEY[parsed.generation])",
+			"families": [],
+			"why": "Indexes a literal key table in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/modem/operator-labels.ts t(MODEM_OPERATION_RETRY_KEY)",
+			"families": [],
+			"why": "A constant defined as a key literal in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/modem/operator-labels.ts t(USB_MODE_LABEL_KEY[mode])",
+			"families": [],
+			"why": "Indexes a literal key table in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/modem/operator-labels.ts t(view.completionKey)",
+			"families": [],
+			"why": "Filled from MODEM_OPERATION_COMPLETION_KEY, a literal key table in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/modem/operator-labels.ts t(view.reconciliationKey)",
+			"families": [],
+			"why": "Filled from a literal key table in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/modem/operator-labels.ts t(view.resultKey)",
+			"families": [],
+			"why": "Filled from MODEM_OPERATION_RESULT_KEY, a literal key table in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/modem/operator-labels.ts t(view.unknownReasonKey)",
+			"families": [],
+			"why": "Filled from a literal key table in the same module."
+		},
+		{
+			"site": "apps/frontend/src/lib/stores/notifications.svelte.ts passes m: active = pushNotification(active, notification, m, Date.now());",
+			"families": [],
+			"why": "Renders backend notification keys. The hosted entries never start the device notification subscription, so nothing reaches this store in a federation bundle; notification copy is the SPA's."
+		},
+		{
+			"site": "apps/frontend/src/lib/stores/notifications.svelte.ts passes m: active = replayNotification(active, notification, m, Date.now());",
+			"families": [],
+			"why": "As pushNotification: no notification subscription in a hosted dialog."
+		},
+		{
+			"site": "apps/frontend/src/lib/streaming/sourceSummary.ts t(entry.labelKey)",
+			"families": ["audio.sources", "settings.sources"],
+			"why": "Source summary entries carry a backend or pseudo-source label key."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/AudioDialog.svelte passes m: backendError = audioBackendSaveErrorMessage(result.error, m);",
+			"families": [],
+			"why": "audioBackendSaveErrorMessage(error, msg) only reads key literals."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/AudioDialog.svelte passes t: resolvedAudioLabel({ asrc: activeAudioSource }, getStatus(), audioSourceEntries, t),",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/AudioDialog.svelte passes t: return activeAudioEntry ? audioSourceLabel(activeAudioEntry, t) : activeAudioSource;",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte passes t: <span class=\"truncate text-sm font-medium\">{sourceLabel(activeSource, t)}</span>",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte passes t: <span>{getHardwareLabel(hardware, t)}</span>",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte passes t: const probedCaps = $derived(probedCapsFromSources(sourcesMessage, t));",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte passes t: {getSourceLabel(uvc.sourceKind, t)} · {uvc.displayName}",
+			"families": [],
+			"why": "The receiver names the lookup `t`, so its own computed lookups are scanned and declared."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte t(copy.key, copy.params)",
+			"families": ["live.encoder.route"],
+			"why": "routeCopy() returns live.encoder.route.converted or live.encoder.route.<outcome>."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte t(inputModeLabelKey(activeInputMode))",
+			"families": ["live.inputPicker.groups"],
+			"why": "inputModeLabelKey() prefixes the mode with live.inputPicker.groups."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte t(key)",
+			"families": ["live.encoder.route.reason"],
+			"why": "routeReasonKey() maps a known engine reason to live.encoder.route.reason.<reason>."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/EncoderDialog.svelte t(option.reason)",
+			"families": ["live.education.reason"],
+			"why": "Option reasons are the live.education.reason constants in ValidationAdapter and the producer's source reasons."
+		},
+		{
+			"site": "apps/frontend/src/main/dialogs/audio/AudioDialogContent.svelte m[backendView.disabledReasonKey]",
+			"families": [],
+			"why": "audioBackend.ts sets it to a key literal (settings.audioBackend.singleReason)."
+		}
+	]
+}

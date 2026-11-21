@@ -30,6 +30,30 @@ test('federation publication enforces gzip budgets after building and before sig
 	expect(steps[gate]['continue-on-error']).toBeUndefined();
 });
 
+test('PR builds measure the federation bundles alongside the SPA', () => {
+	const steps = YAML.parse(workflowSource).jobs['setup-e2e'].steps;
+	const spa = steps.findIndex((step) => step.run === 'bun run build:frontend');
+	const federation = steps.findIndex((step) => step.run === 'bun run build:federation');
+	const report = steps.findIndex((step) => step.run === 'bun scripts/ci/bundle-report.mjs');
+	const strict = steps.findIndex(
+		(step) => step.run === 'bun scripts/ci/bundle-report.mjs --federation-only',
+	);
+	const catalog = steps.findIndex(
+		(step) => step.run === 'bun run --filter frontend test:federation-catalog',
+	);
+	expect(spa).toBeGreaterThanOrEqual(0);
+	expect(federation).toBeGreaterThanOrEqual(0);
+	expect(report).toBeGreaterThan(spa);
+	expect(report).toBeGreaterThan(federation);
+	expect(strict).toBeGreaterThan(federation);
+	expect(catalog).toBeGreaterThan(federation);
+	for (const index of [federation, report, strict, catalog]) {
+		expect(steps[index]['working-directory']).toBe('CeraUI');
+		expect(steps[index].if).toBeUndefined();
+		expect(steps[index]['continue-on-error']).toBeUndefined();
+	}
+});
+
 for (const filename of ['build-check.yml', 'publish-release.yml']) {
 	test(`${filename} supplies full history to every backend unit-test job`, async () => {
 		const source = await file(
