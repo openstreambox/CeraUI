@@ -12,12 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SenderStats } from "@ceraui/srtla-send/control";
 import { adoptTestProcess } from "../../../../scripts/test-safety.ts";
-import type { ArmedStreamMarker } from "../modules/streaming/armed-stream-marker.ts";
 import {
-	continueBindMapGenerationAbove,
-	currentBindMapGeneration,
-	resetBindMapWriter,
-} from "../modules/streaming/bind-map-writer.ts";
+	type ArmedStreamMarker,
+	peekArmedStreamMarker,
+} from "../modules/streaming/armed-stream-marker.ts";
 import { digest } from "../modules/streaming/continuity-observer.ts";
 import type {
 	Lifetime,
@@ -25,38 +23,17 @@ import type {
 } from "../modules/streaming/continuity-records.ts";
 import * as engineRuntimeState from "../modules/streaming/engine-runtime-state.ts";
 import {
-	type AdoptedIdentity,
-	type AdoptedProcessIo,
-	adoptedSender,
-	adoptRunningSenderAtStartup,
-	attemptSenderAdoption,
 	collectSenderAdoptionEvidence,
-	createAdoptedProcess,
-	defaultSenderAdoptionEffects,
 	defaultSenderAdoptionIo,
 	holdsListeningSocket,
+	observeSenderAdoption,
 	readSenderProcessFacts,
-	resetSenderAdoptionForTest,
-	type SenderAdoptionEffects,
 	type SenderAdoptionEvidence,
 	type SenderAdoptionIo,
 	senderAdoptionVerdict,
-	takeAdoptionForReconcile,
 } from "../modules/streaming/sender-adoption.ts";
-import {
-	ownsSessionSender,
-	unownedSenderCensus,
-} from "../modules/streaming/sender-ownership.ts";
-import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
-import { streamSessionProductionDeps } from "../modules/streaming/stream-session-production.ts";
-import { srtlaSendExec } from "../modules/streaming/streamloop/exec-paths.ts";
-import {
-	getStreamingProcesses,
-	registerAdoptedSender,
-	type StreamingProcess,
-	signalSenders,
-	stopProcessAndWait,
-} from "../modules/streaming/streamloop/process-runner.ts";
+import { unownedSenderCensus } from "../modules/streaming/sender-ownership.ts";
+import { getStreamingProcesses } from "../modules/streaming/streamloop/process-runner.ts";
 
 const BOOT = "boot-a";
 const PID = 4242;
@@ -519,10 +496,8 @@ describe("collectSenderAdoptionEvidence", () => {
 		root = mkdtempSync(join(tmpdir(), "sender-adoption-"));
 		statsReads = 0;
 		engineQueries = 0;
-		resetSenderAdoptionForTest();
 	});
 	afterEach(() => {
-		resetSenderAdoptionForTest();
 		rmSync(root, { recursive: true, force: true });
 	});
 
@@ -699,227 +674,86 @@ describe("collectSenderAdoptionEvidence", () => {
 		});
 	});
 
-	function countingEffects(counter: { n: number }): SenderAdoptionEffects {
-		return {
-			register: (() => {
-				counter.n++;
-				return {} as StreamingProcess;
-			}) as SenderAdoptionEffects["register"],
-			createProcess: () => {
-				counter.n++;
-				throw new Error("must not run");
-			},
-			continueGeneration: () => {
-				counter.n++;
-			},
-			attachTelemetry: () => {
-				counter.n++;
-			},
-		};
-	}
-
-	test("an adoption refused changes nothing", async () => {
-		const before = getStreamingProcesses().length;
-		const counter = { n: 0 };
-		const verdict = await attemptSenderAdoption(
-			io({ readLifetime: async () => lifetime({ host: "backend-child" }) }),
-			countingEffects(counter),
-		);
-		expect(verdict).toMatchObject({ decision: "refuse" });
-		expect(counter.n).toBe(0);
-		expect(adoptedSender()).toBeUndefined();
-		expect(getStreamingProcesses().length).toBe(before);
-	});
-
-	test("an operator Stop while the sender was read refuses the adoption", async () => {
+	test("a record that could never qualify reads no process, marker or map", async () => {
 		writeProcess(PID, "S", PID, START);
 		writeCgroup([PID]);
-		let armed: ArmedStreamMarker | null = marker();
-		const counter = { n: 0 };
-		const verdict = await attemptSenderAdoption(
+		let markerReads = 0;
+		let diskReads = 0;
+		const e = await collectSenderAdoptionEvidence(
 			io({
-				readMarker: () => armed,
-				readStats: async () => {
-					armed = null; // Stop clears the marker during the reads.
-					return {
-						reads: [stats(1), stats(2)],
-						appliedMap: { generation: 7, sha256: SHA },
-					};
+				readLifetime: async () => lifetime({ host: "backend-child" }),
+				readMarker: () => {
+					markerReads++;
+					return marker();
+				},
+				readDisk: async () => {
+					diskReads++;
+					return publication();
 				},
 			}),
-			countingEffects(counter),
 		);
-		expect(verdict).toEqual({
-			decision: "refuse",
-			check: "evidence",
-			reason: "changed_during_adoption",
+		expect(e.process).toBeNull();
+		expect(markerReads).toBe(0);
+		expect(diskReads).toBe(0);
+		expect(statsReads).toBe(0);
+		expect(engineQueries).toBe(0);
+		expect(senderAdoptionVerdict(e)).toMatchObject({
+			check: "host",
+			reason: "dies_with_backend",
 		});
-		expect(counter.n).toBe(0);
 	});
 
-	test("a sender gone by the time its handle is made is not registered", async () => {
-		writeProcess(PID, "S", PID, START);
-		writeCgroup([PID]);
-		const before = getStreamingProcesses().length;
-		let registered = 0;
-		const verdict = await attemptSenderAdoption(io(), {
-			register: (() => {
-				registered++;
-				return {} as StreamingProcess;
-			}) as SenderAdoptionEffects["register"],
-			createProcess: (pid) =>
-				createAdoptedProcess(pid, {
-					identity: () => "gone",
-					signal: () => {
-						throw new Error("must not signal");
-					},
-					poll: () => () => {},
-				}),
-			continueGeneration: () => {
-				registered++;
+	test("the evidence read leaves an unreadable armed marker in place", () => {
+		const path = join(root, "stream.armed.json");
+		writeFileSync(path, "{torn");
+		const deps = {
+			markerPath: path,
+			readMarker: (file: string) => readFileSync(file, "utf8"),
+			writeMarker: () => {
+				throw new Error("must not write");
 			},
-			attachTelemetry: () => {
-				registered++;
+			removeMarker: () => {
+				throw new Error("must not remove");
 			},
-		});
-		expect(verdict).toEqual({
-			decision: "refuse",
-			check: "process",
-			reason: "exited_during_adoption",
-		});
-		expect(registered).toBe(0);
-		expect(adoptedSender()).toBeUndefined();
-		expect(getStreamingProcesses().length).toBe(before);
+			readBootId: () => BOOT,
+		};
+		expect(peekArmedStreamMarker(deps)).toBeUndefined();
+		expect(readFileSync(path, "utf8")).toBe("{torn");
+		writeFileSync(path, JSON.stringify(marker()));
+		expect(peekArmedStreamMarker(deps)).toMatchObject(marker());
 	});
 });
 
 describe("startup wiring", () => {
-	test("a startup with no record refuses without probing the engine", async () => {
-		resetSenderAdoptionForTest();
+	test("detect only: logs a verdict, probes nothing and changes nothing", async () => {
 		const probe = spyOn(
 			engineRuntimeState,
 			"queryEngineRuntimeStreaming",
 		).mockImplementation(async () => "streaming");
 		const before = getStreamingProcesses().length;
-		const verdict = await adoptRunningSenderAtStartup();
+		const verdict = await observeSenderAdoption();
 		expect(verdict.decision).toBe("refuse");
 		expect(probe).not.toHaveBeenCalled();
 		expect(getStreamingProcesses().length).toBe(before);
 		probe.mockRestore();
 	});
-});
 
-describe("createAdoptedProcess", () => {
-	function fakeIo(initial: AdoptedIdentity = "same") {
-		let identity: AdoptedIdentity = initial;
-		let tick: (() => void) | undefined;
-		let failure: Error | undefined;
-		const signals: Array<NodeJS.Signals | number> = [];
-		const io: AdoptedProcessIo = {
-			identity: () => identity,
-			signal: (_pid, signal) => {
-				if (failure) throw failure;
-				signals.push(signal);
+	test("an evidence reader that throws is a logged refusal, not a crash", async () => {
+		const verdict = await observeSenderAdoption({
+			...defaultSenderAdoptionIo(() => ({ ...CONFIG })),
+			procRoot: join(tmpdir(), "no-such-proc-root"),
+			bootId: async () => BOOT,
+			readLifetime: async () => lifetime(),
+			captureConfig: () => {
+				throw new Error("config unreadable");
 			},
-			poll: (callback) => {
-				tick = callback;
-				return () => {
-					tick = undefined;
-				};
-			},
-		};
-		return {
-			io,
-			signals,
-			set: (value: AdoptedIdentity) => {
-				identity = value;
-			},
-			fail: (error: Error | undefined) => {
-				failure = error;
-			},
-			tick: () => tick?.(),
-			polling: () => tick !== undefined,
-		};
-	}
-
-	test("signals only while the PID still has the adopted identity", async () => {
-		const fake = fakeIo();
-		const proc = createAdoptedProcess(PID, fake.io);
-		proc.kill("SIGHUP");
-		expect(fake.signals).toEqual(["SIGHUP"]);
-		expect(proc.exitCode).toBeNull();
-		fake.set("gone");
-		proc.kill("SIGTERM");
-		expect(fake.signals).toEqual(["SIGHUP"]);
-		expect(proc.exitCode).toBe(-1);
-		expect(await proc.exited).toBe(-1);
-		expect(fake.polling()).toBe(false);
-		fake.set("same");
-		proc.kill("SIGKILL");
-		expect(fake.signals).toEqual(["SIGHUP"]);
+		});
+		expect(verdict).toEqual({
+			decision: "refuse",
+			check: "evidence",
+			reason: "unreadable",
+		});
 	});
-
-	test("an unreadable identity is neither an exit nor a delivered signal", () => {
-		const fake = fakeIo();
-		const proc = createAdoptedProcess(PID, fake.io);
-		fake.set("uncertain");
-		fake.tick();
-		expect(proc.exitCode).toBeNull();
-		expect(() => proc.kill("SIGTERM")).toThrow("not signalled");
-		expect(fake.signals).toEqual([]);
-		fake.set("same");
-		proc.kill("SIGTERM");
-		expect(fake.signals).toEqual(["SIGTERM"]);
-	});
-
-	test("a failed delivery throws unless the sender turned out to be gone", async () => {
-		const fake = fakeIo();
-		const proc = createAdoptedProcess(PID, fake.io);
-		fake.fail(Object.assign(new Error("EPERM"), { code: "EPERM" }));
-		expect(() => proc.kill("SIGHUP")).toThrow("EPERM");
-		expect(proc.exitCode).toBeNull();
-		fake.fail(Object.assign(new Error("ESRCH"), { code: "ESRCH" }));
-		fake.set("gone");
-		proc.kill("SIGTERM");
-		expect(await proc.exited).toBe(-1);
-	});
-
-	test("the poll notices an exit without any signal", async () => {
-		const fake = fakeIo();
-		const proc = createAdoptedProcess(PID, fake.io);
-		fake.tick();
-		expect(proc.exitCode).toBeNull();
-		fake.set("gone");
-		fake.tick();
-		expect(await proc.exited).toBe(-1);
-		expect(fake.polling()).toBe(false);
-	});
-
-	test("a reload that found the sender gone is not counted as delivered", async () => {
-		const fake = fakeIo();
-		const handle = registerAdoptedSender(
-			createAdoptedProcess(PID, fake.io),
-			srtlaSendExec,
-			START,
-		);
-		fake.set("gone");
-		expect(signalSenders("SIGHUP", [handle])).toBe(0);
-		expect(fake.signals).toEqual([]);
-		await handle.proc.exited;
-		await Bun.sleep(0);
-		expect(getStreamingProcesses()).not.toContain(handle);
-	});
-});
-
-test("the bind-map writer continues above an adopted sender's generation", () => {
-	resetBindMapWriter();
-	continueBindMapGenerationAbove(7);
-	expect(currentBindMapGeneration()).toBe(7);
-	continueBindMapGenerationAbove(3);
-	expect(currentBindMapGeneration()).toBe(7);
-	continueBindMapGenerationAbove(Number.NaN);
-	expect(currentBindMapGeneration()).toBe(7);
-	resetBindMapWriter();
 });
 
 /**
@@ -933,7 +767,6 @@ describe("a real detached sender", () => {
 	let root = "";
 	let socket = "";
 	let pid = 0;
-	let engine: "idle" | "streaming" | "unknown" = "streaming";
 
 	beforeEach(async () => {
 		root = mkdtempSync(join(tmpdir(), "sender-adoption-real-"));
@@ -970,13 +803,8 @@ describe("a real detached sender", () => {
 		}
 		// It escaped by setsid on purpose; the safety guard learns it is ours.
 		adoptTestProcess(pid);
-		engine = "streaming";
-		resetSenderAdoptionForTest();
-		resetBindMapWriter();
 	});
-	afterEach(async () => {
-		for (const handle of getStreamingProcesses().filter((p) => p.adopted))
-			await stopProcessAndWait(handle);
+	afterEach(() => {
 		try {
 			if (
 				pid > 0 &&
@@ -987,12 +815,12 @@ describe("a real detached sender", () => {
 			// Already gone.
 		}
 		pid = 0;
-		resetSenderAdoptionForTest();
-		resetBindMapWriter();
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	async function realIo(): Promise<SenderAdoptionIo> {
+	async function realIo(
+		over: Partial<SenderAdoptionIo> = {},
+	): Promise<SenderAdoptionIo> {
 		const real = await readSenderProcessFacts(
 			"/proc",
 			"/sys/fs/cgroup",
@@ -1005,6 +833,7 @@ describe("a real detached sender", () => {
 			join(root, "cgroup", real.cgroup, "cgroup.procs"),
 			`${pid}\n`,
 		);
+		let reads = 0;
 		return {
 			procRoot: "/proc",
 			cgroupRoot: join(root, "cgroup"),
@@ -1023,11 +852,15 @@ describe("a real detached sender", () => {
 			readDisk: async () => publication(),
 			readMarker: () => marker(),
 			captureConfig: () => ({ ...CONFIG }),
-			readStats: async () => ({
-				reads: [stats(1_000), stats(9_000)],
-				appliedMap: { generation: 7, sha256: SHA },
-			}),
-			queryEngine: async () => ({ state: engine, session: "session-1" }),
+			readStats: async () => {
+				reads++;
+				return {
+					reads: [stats(reads * 1_000), stats(reads * 9_000)],
+					appliedMap: { generation: 7, sha256: SHA },
+				};
+			},
+			queryEngine: async () => ({ state: "streaming", session: "session-1" }),
+			...over,
 		};
 	}
 
@@ -1052,135 +885,40 @@ describe("a real detached sender", () => {
 		expect(parent).not.toBe(process.pid);
 	});
 
-	test("an unadopted survivor stays foreign and blocks replacement", () => {
+	test("judged from the real kernel, with the missing sources supplied the verdict would adopt", async () => {
+		expect(await observeSenderAdoption(await realIo())).toEqual({
+			decision: "adopt",
+		});
+		// Detect only: nothing was taken over, and the survivor stays foreign.
+		expect(getStreamingProcesses().length).toBe(0);
 		expect(unownedSenderCensus(getStreamingProcesses(), "/proc")).toBe(
 			"present",
 		);
-		expect(streamSessionProductionDeps.canReconcileStreaming?.(undefined)).toBe(
-			false,
-		);
+		expect(readFileSync(`/proc/${pid}/comm`, "utf8").trim()).toBe("srtla_send");
 	});
 
-	test("adopted on full evidence, reconciled once, reloaded and stopped through its handle", async () => {
-		const io = await realIo();
-		let current: (() => boolean) | undefined;
-		const verdict = await attemptSenderAdoption(io, {
-			...defaultSenderAdoptionEffects,
-			attachTelemetry: (_lifetime, isCurrent) => {
-				current = isCurrent;
-			},
-		});
-		expect(verdict).toEqual({ decision: "adopt" });
-		expect(adoptedSender()?.pid).toBe(pid);
-		expect(current?.()).toBe(true);
-		expect(currentBindMapGeneration()).toBe(7);
-		const handle = getStreamingProcesses().find((p) => p.adopted);
-		if (!handle) throw new Error("no handle");
-		expect(handle.spawnfile).toBe(srtlaSendExec);
-		expect(ownsSessionSender()).toBe(true);
-		expect(unownedSenderCensus(getStreamingProcesses(), "/proc")).toBe(
-			"absent",
-		);
+	test("with this base's readers the same sender is refused at the first missing source", async () => {
 		expect(
-			await attemptSenderAdoption(io, defaultSenderAdoptionEffects),
+			await observeSenderAdoption(
+				await realIo({ liveInvocation: async () => null }),
+			),
 		).toEqual({
 			decision: "refuse",
-			check: "adoption",
-			reason: "already_adopted",
+			check: "host",
+			reason: "invocation_unverified",
 		});
-
-		const session = createStreamSessionOrchestrator({
-			...streamSessionProductionDeps,
-			initialLiveness: "unknown",
-			queryRuntime: async () => "streaming",
-			markStreamingForOta: () => true,
-			unmarkStreamingForOta: () => true,
-			confirmStreamingForOta: () => true,
-			awaitsIdleWitness: () => false,
-			setLifecycleState: () => {},
-			seedLifecycleState: () => {},
-			setStreamingStatus: () => {},
-			setLivenessUnconfirmed: () => {},
-		});
-		expect(await session.reconcile()).toBe("streaming");
-		expect(session.streamLiveness()).toBe("streaming");
-		// A later reconciliation cannot tell the adopted engine session from one
-		// that replaced it, so it gets no exception: unconfirmed and protected.
-		expect(await session.reconcile()).toBe("reconciling");
-		expect(session.streamLiveness()).toBe("unknown");
-		expect(takeAdoptionForReconcile()).toBe(false);
-
-		// SIGCONT is harmless to the idle process; it proves reload reaches it.
-		expect(signalSenders("SIGCONT")).toBe(1);
-		await stopProcessAndWait(handle);
-		expect(handle.proc.exitCode).toBe(-1);
-		expect(getStreamingProcesses()).not.toContain(handle);
-		expect(adoptedSender()).toBeUndefined();
-		expect(current?.()).toBe(false);
-		expect(ownsSessionSender()).toBe(false);
-		expect(unownedSenderCensus(getStreamingProcesses(), "/proc")).toBe(
-			"absent",
-		);
-		// A sender spawned later in this process does not inherit the adoption.
-		const later = {
-			spawnfile: srtlaSendExec,
-			proc: { pid: 1, exitCode: null, signalCode: null },
-			exitListeners: [],
-		} as unknown as StreamingProcess;
-		const live = getStreamingProcesses();
-		live.push(later);
-		try {
-			expect(ownsSessionSender()).toBe(true);
-			expect(
-				streamSessionProductionDeps.canReconcileStreaming?.(undefined),
-			).toBe(false);
-		} finally {
-			live.splice(live.indexOf(later), 1);
-		}
 	});
 
-	test("a stopped sender stays supervised and is still killed through its handle", async () => {
-		expect(
-			await attemptSenderAdoption(await realIo(), {
-				...defaultSenderAdoptionEffects,
-				attachTelemetry: () => {},
-			}),
-		).toEqual({ decision: "adopt" });
-		const handle = getStreamingProcesses().find((p) => p.adopted);
-		if (!handle) throw new Error("no handle");
+	test("a sender stopped by a signal is refused, not judged running", async () => {
 		process.kill(pid, "SIGSTOP");
-		await Bun.sleep(700); // Longer than one poll.
-		expect(handle.proc.exitCode).toBeNull();
-		expect(getStreamingProcesses()).toContain(handle);
-		handle.proc.kill("SIGKILL");
-		expect(await handle.proc.exited).toBe(-1);
-	});
-
-	test("a sender that exits by itself is noticed and no longer owned", async () => {
-		expect(
-			await attemptSenderAdoption(await realIo(), {
-				...defaultSenderAdoptionEffects,
-				attachTelemetry: () => {},
-			}),
-		).toEqual({ decision: "adopt" });
-		const handle = getStreamingProcesses().find((p) => p.adopted);
-		if (!handle) throw new Error("no handle");
-		process.kill(pid, "SIGKILL");
-		expect(await handle.proc.exited).toBe(-1);
-		await Bun.sleep(0);
-		expect(getStreamingProcesses()).not.toContain(handle);
-		expect(ownsSessionSender()).toBe(false);
-	});
-
-	test("the engine no longer streaming refuses and leaves the survivor alone", async () => {
-		engine = "idle";
-		expect(
-			await attemptSenderAdoption(await realIo(), {
-				...defaultSenderAdoptionEffects,
-				attachTelemetry: () => {},
-			}),
-		).toEqual({ decision: "refuse", check: "engine", reason: "engine_idle" });
-		expect(getStreamingProcesses().some((p) => p.adopted)).toBe(false);
-		expect(readFileSync(`/proc/${pid}/comm`, "utf8").trim()).toBe("srtla_send");
+		try {
+			expect(await observeSenderAdoption(await realIo())).toEqual({
+				decision: "refuse",
+				check: "process",
+				reason: "stopped",
+			});
+		} finally {
+			process.kill(pid, "SIGCONT");
+		}
 	});
 });

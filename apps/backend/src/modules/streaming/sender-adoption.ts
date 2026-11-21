@@ -1,34 +1,33 @@
 /*
- * Adopting a running sender after a backend restart.
+ * Judging, after a backend restart, whether a sender left running could be
+ * adopted. DETECT ONLY: this module reads evidence, judges it and logs the
+ * verdict. It never registers, signals, stops or starts anything, never reads
+ * the sender's socket before every local fact agrees, never probes the engine
+ * on this base, and runs after stream reconciliation without being awaited.
  *
  * A restarted backend may keep a stream only when it can prove that what is
  * running is exactly what its predecessor left behind and that it is working
- * now. Everything here is evidence read fresh from the kernel, the files the
- * sender reads and the sender's own control socket; nothing is taken from a
- * record alone. Any missing, unreadable or disagreeing fact refuses, and a
- * refusal changes nothing: no signal, no start, no stop, no engine probe. The
- * restart-safety path (`stream-session-production` `canReconcileStreaming`)
- * then keeps the session unconfirmed and protected, as before.
+ * now. Every fact here is read fresh from the kernel, the files the sender
+ * reads and the sender's own control socket; a record only says where to look.
  *
- * THIS BASE NEVER ADOPTS, BY CONSTRUCTION. Three facts the verdict requires
- * have no source yet, and the collector reports each as unavailable:
+ * Three facts the verdict requires have no source yet, so it always refuses
+ * at one of them on this base:
  *
- *   - the live systemd invocation of the unit that holds the PID (today the
- *     sender is a child inside `ceralive.service` and records
- *     `host: "backend-child"`, so it dies with every restart anyway);
- *   - the map the sender has actually applied (generation and SHA-256): the
- *     installed binding reports link ids and `mapped`, which cannot tell a map
- *     written to disk before a crash from the one the sender runs;
+ *   - the live systemd invocation of the unit holding the PID (today the
+ *     sender is a child inside `ceralive.service`, records
+ *     `host: "backend-child"` and dies with every restart anyway);
+ *   - the map the sender has actually applied (generation and SHA-256): link
+ *     ids and `mapped` cannot tell a map written to disk before a crash from
+ *     the one the sender runs;
  *   - an identity for the engine session the sender carries: the engine seam
- *     answers only `streaming | idle | unknown`, so a session that replaced
- *     the adopted one would be indistinguishable.
+ *     answers only `streaming | idle | unknown`.
  *
- * The verdict, the staged collector and the adopted handle exist so that each
- * of those becomes one reader to add, not a redesign, and so that every check
- * that can be measured today is measured and tested today.
+ * Taking a sender over needs more than these sources (a handle bound to the
+ * peer, a session-bound reconciliation, a unit-aware census); that design is in
+ * the stream continuity notes, not in this code.
  */
 
-import { readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { readdir, readFile, readlink } from "node:fs/promises";
 import {
 	createControlClient,
@@ -38,9 +37,8 @@ import { logger } from "../../helpers/logger.ts";
 import {
 	type ArmedStreamConfig,
 	type ArmedStreamMarker,
-	readArmedStreamMarker,
+	peekArmedStreamMarker,
 } from "./armed-stream-marker.ts";
-import { continueBindMapGenerationAbove } from "./bind-map-writer.ts";
 import {
 	continuityObserverIo,
 	digest,
@@ -55,12 +53,6 @@ import {
 } from "./continuity-records.ts";
 import type { EngineRuntimeState } from "./streaming-backend.ts";
 import { srtlaSendExec } from "./streamloop/exec-paths.ts";
-import {
-	getStreamingProcesses,
-	registerAdoptedSender,
-	type StreamingProcess,
-	type SupervisedProcess,
-} from "./streamloop/process-runner.ts";
 
 export type SenderProcessFacts = {
 	readonly pid: number;
@@ -167,6 +159,16 @@ export function senderAdoptionVerdict(
 	return verdictOfEngine(e);
 }
 
+/** The refusal decided by the record alone, if any. */
+function recordRefusal(
+	e: SenderAdoptionEvidence,
+): SenderAdoptionVerdict | undefined {
+	const verdict = verdictBeforeSenderReads({ ...e, process: null });
+	return verdict.decision === "refuse" && verdict.check !== "process"
+		? verdict
+		: undefined;
+}
+
 /** Records, process identity, supervision, configuration, map on disk, socket. */
 function verdictBeforeSenderReads(
 	e: SenderAdoptionEvidence,
@@ -178,6 +180,11 @@ function verdictBeforeSenderReads(
 	if (l.bootId !== e.bootId) return refuse("lifetime", "previous_boot");
 	if (l.pid === null || l.startTime === null)
 		return refuse("lifetime", "never_started");
+
+	// The record's own host: only a unit that outlives the backend qualifies.
+	if (l.host !== "systemd" || !l.invocation)
+		return refuse("host", "dies_with_backend");
+	if (!l.cgroup) return refuse("host", "cgroup_not_recorded");
 
 	// The process: the one recorded, the configured executable, unchanged.
 	const p = e.process;
@@ -191,11 +198,8 @@ function verdictBeforeSenderReads(
 	if (p.argsDigest !== l.argsDigest)
 		return refuse("process", "arguments_changed");
 
-	// Supervision: only a live unit that outlives the backend, with the sender
-	// alone in its cgroup (no child cgroups) and in its own process group.
-	if (l.host !== "systemd" || !l.invocation)
-		return refuse("host", "dies_with_backend");
-	if (!l.cgroup) return refuse("host", "cgroup_not_recorded");
+	// Supervision: that unit, live, with the sender alone in its cgroup (no
+	// child cgroups) and in its own process group.
 	if (!e.liveInvocation) return refuse("host", "invocation_unverified");
 	if (e.liveInvocation !== l.invocation)
 		return refuse("host", "invocation_changed");
@@ -361,7 +365,8 @@ export function defaultSenderAdoptionIo(
 				publicationSchema,
 			),
 		readDisk: (lifetime) => readDiskPublication(lifetime),
-		readMarker: () => readArmedStreamMarker() ?? null,
+		// Read without side effects: an unreadable marker stays for restoration.
+		readMarker: () => peekArmedStreamMarker() ?? null,
 		captureConfig,
 		readStats: readTwoStats,
 		// The engine seam has no session identity, so it is never probed from
@@ -532,6 +537,24 @@ async function collectLocalEvidence(
 ): Promise<SenderAdoptionEvidence> {
 	const bootId = await io.bootId().catch(() => "");
 	const lifetime = await io.readLifetime().catch(() => null);
+	// Record facts decide first: no process table, cgroup, marker or map read
+	// for a record that could never qualify (every record on this base).
+	const recordOnly: SenderAdoptionEvidence = {
+		bootId,
+		lifetime,
+		process: null,
+		expectedExe: null,
+		liveInvocation: null,
+		marker: null,
+		currentConfig: {},
+		publication: null,
+		disk: null,
+		reads: [],
+		appliedMap: null,
+		engineSession: null,
+		engine: "unknown",
+	};
+	if (recordRefusal(recordOnly) !== undefined) return recordOnly;
 	const process =
 		lifetime?.pid != null
 			? await readSenderProcessFacts(
@@ -584,295 +607,26 @@ export async function collectSenderAdoptionEvidence(
 	return { ...withReads, engine: engine.state, engineSession: engine.session };
 }
 
-/** What must not move between judging the evidence and taking the sender. */
-function localFingerprint(e: SenderAdoptionEvidence): string {
-	return canonical({
-		bootId: e.bootId,
-		lifetime: e.lifetime,
-		process: e.process,
-		liveInvocation: e.liveInvocation,
-		marker: e.marker,
-		currentConfig: e.currentConfig,
-		publication: e.publication,
-		disk: e.disk,
-	});
-}
-
-/** Poll cadence for the exit of a sender that is not our child. */
-export const ADOPTED_SENDER_POLL_MS = 500;
-
-export type AdoptedIdentity = "same" | "gone" | "uncertain";
-
-export type AdoptedProcessIo = {
-	readonly identity: (pid: number) => AdoptedIdentity;
-	readonly signal: (pid: number, signal: NodeJS.Signals | number) => void;
-	readonly poll: (callback: () => void, ms: number) => () => void;
-};
-
 /**
- * Same: the PID still has the adopted start time and executable and has not
- * exited (stopped or traced still counts as alive). Gone: it exited, is a
- * zombie, or the PID now names another process or program. Uncertain: the
- * table could not be read; neither exit nor ownership is claimed.
+ * Production entry point: collect, judge, log. Detect only; called once at
+ * startup after stream reconciliation and not awaited.
  */
-export function adoptedIdentity(
-	procRoot: string,
-	pid: number,
-	startTime: string,
-	exe: string,
-): AdoptedIdentity {
-	let stat: string;
-	try {
-		stat = readFileSync(`${procRoot}/${pid}/stat`, "utf8");
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "ENOENT"
-			? "gone"
-			: "uncertain";
-	}
-	const fields = statFields(stat);
-	if (GONE_STATES.has(fields[0] ?? "") || fields[19] !== startTime)
-		return "gone";
-	try {
-		return readlinkSync(`${procRoot}/${pid}/exe`) === exe ? "same" : "gone";
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "ENOENT"
-			? "gone"
-			: "uncertain";
-	}
-}
-
-export function defaultAdoptedProcessIo(
-	startTime: string,
-	exe: string,
-	procRoot = "/proc",
-): AdoptedProcessIo {
-	return {
-		identity: (pid) => adoptedIdentity(procRoot, pid, startTime, exe),
-		signal: (pid, signal) => process.kill(pid, signal),
-		poll: (callback, ms) => {
-			const timer = setInterval(callback, ms);
-			timer.unref?.();
-			return () => clearInterval(timer);
-		},
-	};
-}
-
-/**
- * A handle on a sender that is not our child. The kernel will not hold its PID
- * for us, so its identity (PID, start time, executable) is checked again
- * immediately before every signal. A changed identity marks it exited without
- * signalling; an unreadable one throws, so a caller never counts a signal that
- * was not delivered. A failed delivery throws too. Its exit status cannot be
- * observed; an exit is reported as code -1.
- *
- * Residual window: between that check and the signal the sender could exit and
- * its PID be reused (start time has clock-tick granularity). A pidfd would close
- * it; Bun does not expose one.
- */
-export function createAdoptedProcess(
-	pid: number,
-	io: AdoptedProcessIo,
-): SupervisedProcess {
-	let exitCode: number | null = null;
-	const { promise: exited, resolve: resolveExited } =
-		Promise.withResolvers<number>();
-	let stopPolling: () => void = () => undefined;
-	const check = (): AdoptedIdentity => {
-		if (exitCode !== null) return "gone";
-		const identity = io.identity(pid);
-		if (identity === "gone") {
-			exitCode = -1;
-			stopPolling();
-			resolveExited(-1);
-		}
-		return identity;
-	};
-	if (check() !== "gone")
-		stopPolling = io.poll(() => {
-			check();
-		}, ADOPTED_SENDER_POLL_MS);
-	return {
-		pid,
-		get exitCode() {
-			return exitCode;
-		},
-		signalCode: null,
-		exited,
-		kill(signal?: NodeJS.Signals | number) {
-			const identity = check();
-			if (identity === "gone") return;
-			if (identity === "uncertain")
-				throw new Error("adopted sender identity unreadable; not signalled");
-			try {
-				io.signal(pid, signal ?? "SIGTERM");
-			} catch (error) {
-				if (check() !== "gone") throw error;
-			}
-		},
-	} as SupervisedProcess;
-}
-
-type Adoption = {
-	readonly pid: number;
-	readonly lifetime: string;
-	readonly handle: StreamingProcess;
-	reconciled: boolean;
-};
-
-/** The adoption this process made, if any. At most one per process. */
-let adoption: Adoption | undefined;
-let adoptionMade = false;
-
-function adoptionLive(current: Adoption | undefined): current is Adoption {
-	if (current === undefined) return false;
-	const { proc } = current.handle;
-	return (
-		proc.exitCode === null &&
-		proc.signalCode === null &&
-		getStreamingProcesses().includes(current.handle)
-	);
-}
-
-/** The adopted sender while its own handle is live and supervised. */
-export function adoptedSender():
-	| { readonly pid: number; readonly lifetime: string }
-	| undefined {
-	const current = adoption;
-	return adoptionLive(current)
-		? { pid: current.pid, lifetime: current.lifetime }
-		: undefined;
-}
-
-/**
- * The reconciliation exception, once. The startup reconciliation that follows
- * an adoption may accept it in place of this process's launch evidence; any
- * later reconciliation cannot tell the adopted engine session from one that
- * replaced it, so it gets no exception and falls back to the unconfirmed,
- * protected path.
- */
-export function takeAdoptionForReconcile(): boolean {
-	const current = adoption;
-	if (!adoptionLive(current) || current.reconciled) return false;
-	current.reconciled = true;
-	return true;
-}
-
-/** Test isolation only. */
-export function resetSenderAdoptionForTest(): void {
-	adoption = undefined;
-	adoptionMade = false;
-}
-
-export type SenderAdoptionEffects = {
-	readonly register: typeof registerAdoptedSender;
-	readonly createProcess: (
-		pid: number,
-		startTime: string,
-		exe: string,
-	) => SupervisedProcess;
-	readonly continueGeneration: (applied: number) => void;
-	readonly attachTelemetry: (
-		lifetime: Lifetime,
-		current: () => boolean,
-	) => void;
-};
-
-/**
- * Collect, judge and, only on full agreement, take the sender over. Runs once
- * at startup before stream reconciliation. Never signals, stops or starts
- * anything on a refusal.
- */
-export async function attemptSenderAdoption(
-	io: SenderAdoptionIo,
-	effects: SenderAdoptionEffects,
+export async function observeSenderAdoption(
+	io?: SenderAdoptionIo,
 ): Promise<SenderAdoptionVerdict> {
-	const refused = (verdict: SenderAdoptionVerdict) => {
-		logger.info("sender adoption refused", verdict);
-		return verdict;
-	};
-	if (adoptionMade) return refusal("adoption", "already_adopted");
-	let evidence: SenderAdoptionEvidence;
 	let verdict: SenderAdoptionVerdict;
 	try {
-		evidence = await collectSenderAdoptionEvidence(io);
-		verdict = senderAdoptionVerdict(evidence);
-	} catch {
-		return refused(refusal("evidence", "unreadable"));
-	}
-	if (verdict.decision !== "adopt") return refused(verdict);
-	const { lifetime, publication, process } = evidence;
-	if (!lifetime || !publication || !process?.exe)
-		return refused(refusal("evidence", "unreadable"));
-	// Nothing local may have moved while the sender and engine were read: an
-	// operator Stop, a configuration push, a new publication, a new process.
-	const again = await collectLocalEvidence(io).catch(() => undefined);
-	if (
-		again === undefined ||
-		localFingerprint(again) !== localFingerprint(evidence)
-	)
-		return refused(refusal("evidence", "changed_during_adoption"));
-	// The handle checks the identity once more as it is made.
-	const proc = effects.createProcess(
-		process.pid,
-		process.startTime,
-		process.exe,
-	);
-	if (proc.exitCode !== null)
-		return refused(refusal("process", "exited_during_adoption"));
-	const handle = effects.register(proc, srtlaSendExec, process.startTime);
-	adoptionMade = true;
-	const made: Adoption = {
-		pid: process.pid,
-		lifetime: lifetime.lifetime,
-		handle,
-		reconciled: false,
-	};
-	adoption = made;
-	void proc.exited.then(() => {
-		if (adoption === made) adoption = undefined;
-	});
-	effects.continueGeneration(publication.generation);
-	effects.attachTelemetry(
-		lifetime,
-		() => adoption === made && adoptionLive(made),
-	);
-	logger.info("sender adopted after restart", {
-		pid: process.pid,
-		generation: publication.generation,
-	});
-	return verdict;
-}
-
-export const defaultSenderAdoptionEffects: SenderAdoptionEffects = {
-	register: registerAdoptedSender,
-	createProcess: (pid, startTime, exe) =>
-		createAdoptedProcess(pid, defaultAdoptedProcessIo(startTime, exe)),
-	continueGeneration: continueBindMapGenerationAbove,
-	attachTelemetry: (lifetime, current) => {
-		// Lazy: link telemetry sits further down the streaming graph. The fence
-		// after the awaits keeps a late attach from restarting a watcher for a
-		// sender that has already exited or been stopped.
-		void (async () => {
-			const { startLinkTelemetry } = await import("./link-telemetry.ts");
-			const ips = (await readFile(lifetime.ipsFile, "utf8"))
-				.split("\n")
-				.map((line) => line.trim())
-				.filter((line) => line.length > 0);
-			if (!current()) return;
-			startLinkTelemetry(lifetime.statsFile, ips, {
-				controlSocket: lifetime.controlSocket,
-			});
-		})().catch((error) =>
-			logger.warn("adopted sender telemetry could not be attached", { error }),
+		const source =
+			io ??
+			defaultSenderAdoptionIo(
+				(await import("./stream-restoration.ts")).captureArmedStreamConfig,
+			);
+		verdict = senderAdoptionVerdict(
+			await collectSenderAdoptionEvidence(source),
 		);
-	},
-};
-
-/** Production entry point, called once at startup before stream reconciliation. */
-export async function adoptRunningSenderAtStartup(): Promise<SenderAdoptionVerdict> {
-	const { captureArmedStreamConfig } = await import("./stream-restoration.ts");
-	return attemptSenderAdoption(
-		defaultSenderAdoptionIo(captureArmedStreamConfig),
-		defaultSenderAdoptionEffects,
-	);
+	} catch {
+		verdict = refusal("evidence", "unreadable");
+	}
+	logger.info("sender adoption verdict (detect only)", verdict);
+	return verdict;
 }

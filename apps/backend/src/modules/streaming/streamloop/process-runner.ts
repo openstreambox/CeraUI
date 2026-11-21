@@ -39,27 +39,10 @@ import { captureSenderOutput } from "./sender-output.ts";
 // `exitListeners` replaces .on("exit")/.removeAllListeners("exit") and fires once
 // when `proc.exited` resolves; `spawnfile` replaces ChildProcess.spawnfile.
 export type StreamingProcess = {
-	proc: SupervisedProcess;
+	proc: Bun.Subprocess<"inherit", "inherit" | "pipe", "pipe">;
 	spawnfile: string;
 	exitListeners: Array<() => void>;
-	/**
-	 * Set only for a sender this process did not spawn but adopted after a
-	 * restart (`sender-adoption.ts`). Its PID is not our child, so it can be
-	 * reused once the sender exits: every ownership check compares this kernel
-	 * start time instead of the parent PID.
-	 */
-	adopted?: { readonly startTime: string };
 };
-
-/**
- * The part of a process handle supervision uses. A spawned child is a
- * `Bun.Subprocess`; an adopted sender is a handle that re-checks the process
- * identity before every signal.
- */
-export type SupervisedProcess = Pick<
-	Bun.Subprocess<"inherit", "inherit" | "pipe", "pipe">,
-	"pid" | "exitCode" | "signalCode" | "exited" | "kill"
->;
 
 const forwardProcesses: Array<StreamingProcess> = [];
 
@@ -142,42 +125,6 @@ export function spawnStreamingLoop(
 		}
 	});
 
-	superviseExit(streamingProcess, registry, sender);
-	return streamingProcess;
-}
-
-/**
- * Register a sender that a previous backend process spawned and that this one
- * adopted with strict evidence. From here on it is supervised exactly like a
- * spawned sender: ownership, the census, reload, stop and shutdown all reach it
- * through its handle, and its exit is reported the same way.
- */
-export function registerAdoptedSender(
-	proc: SupervisedProcess,
-	command: string,
-	startTime: string,
-): StreamingProcess {
-	const streamingProcess: StreamingProcess = {
-		proc,
-		spawnfile: command,
-		exitListeners: [],
-		adopted: { startTime },
-	};
-	streamingProcesses.push(streamingProcess);
-	void proc.exited.then(() => {
-		for (const listener of [...streamingProcess.exitListeners]) {
-			listener();
-		}
-	});
-	superviseExit(streamingProcess, streamingProcesses, true);
-	return streamingProcess;
-}
-
-function superviseExit(
-	streamingProcess: StreamingProcess,
-	registry: Array<StreamingProcess>,
-	sender: boolean,
-): void {
 	// ADR-0005: systemd is the SOLE process-restart authority. The app must
 	// observe-and-notify only — it logs the exit and updates the health state,
 	// but never respawns the process (that would create a dual restart authority
@@ -211,6 +158,7 @@ function superviseExit(
 		reportStreamProcessExit();
 		broadcastHealthIfChanged();
 	});
+	return streamingProcess;
 }
 
 function isSenderProcess(streamingProcess: StreamingProcess): boolean {
@@ -238,9 +186,7 @@ export function signalSenders(
 		if (!isSenderProcess(sp) || !isProcAlive(sp)) continue;
 		try {
 			sp.proc.kill(signal);
-			// An adopted sender found gone at the signal is marked exited, not
-			// signalled; only a signal that reached a live process counts.
-			if (isProcAlive(sp)) delivered++;
+			delivered++;
 		} catch (err) {
 			logger.warn(`signalSenders: ${signal} to ${sp.spawnfile} failed`, {
 				err,
