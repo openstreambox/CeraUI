@@ -174,7 +174,7 @@ test.describe('disabled-reason hints + loading/empty distinction (T15)', () => {
 
 		await expect(dialog.locator('#hotspot-name')).toBeVisible();
 
-		const toggle = dialog.getByRole('button', { name: 'Enable Hotspot', exact: true });
+		const toggle = dialog.getByRole('button', { name: 'Turn on hotspot', exact: true });
 		await expect(toggle).toBeEnabled();
 		await expect(toggle).not.toHaveAttribute('title', /.+/);
 		await toggle.click();

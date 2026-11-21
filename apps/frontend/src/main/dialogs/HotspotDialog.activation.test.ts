@@ -69,8 +69,8 @@ function q<T extends HTMLElement = HTMLElement>(testid: string): T | null {
 function enableButton(): HTMLButtonElement {
 	const button = [
 		...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
-	].find((b) => b.textContent?.includes("Enable Hotspot"));
-	if (!button) throw new Error("no Enable Hotspot button");
+	].find((b) => b.textContent?.includes("Turn on hotspot"));
+	if (!button) throw new Error("no Turn on hotspot button");
 	return button;
 }
 

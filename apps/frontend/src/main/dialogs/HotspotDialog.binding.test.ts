@@ -121,7 +121,9 @@ function input(id: string): HTMLInputElement {
 }
 
 async function gate() {
-	await fireEvent.click(screen.getByRole("button", { name: "Enable Hotspot" }));
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Turn on hotspot" }),
+	);
 	await ready();
 }
 
@@ -189,7 +191,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 			iface: tokenless,
 		});
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		expect(screen.getByTestId("hotspot-confirm-unavailable")).toBeTruthy();
 		expect(prepare).toHaveBeenCalledTimes(0);
@@ -342,7 +344,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 			iface: row(),
 		});
 		await fireEvent.click(
-			screen.getByRole("button", { name: "Enable Hotspot" }),
+			screen.getByRole("button", { name: "Turn on hotspot" }),
 		);
 		await view.rerender({ open: true, deviceId: "1", iface: row("radio-B") });
 		await ready();
@@ -485,7 +487,7 @@ describe("hotspot draft ownership through the real dialog", () => {
 			iface.degraded_reason = reason;
 			render(HotspotDialog, { open: true, deviceId: "0", iface });
 			await fireEvent.click(
-				screen.getByRole("button", { name: "Enable Hotspot" }),
+				screen.getByRole("button", { name: "Turn on hotspot" }),
 			);
 			expect(
 				screen.getByTestId("hotspot-confirm-unavailable").textContent,
@@ -637,7 +639,7 @@ describe("mode owner and echoed settlement use the dispatched lifetime", () => {
 					context: { stationLinkLive: true, hotspotLive: false },
 				},
 			});
-			await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+			await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 			await ready();
 			await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 			await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
@@ -683,7 +685,7 @@ describe("mode owner and echoed settlement use the dispatched lifetime", () => {
 				context: { stationLinkLive: true, hotspotLive: false },
 			},
 		});
-		await fireEvent.click(screen.getByRole("radio", { name: "Hybrid" }));
+		await fireEvent.click(screen.getByRole("radio", { name: "Both" }));
 		await ready();
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-ack"));
 		await fireEvent.click(screen.getByTestId("hotspot-confirm-activate"));
