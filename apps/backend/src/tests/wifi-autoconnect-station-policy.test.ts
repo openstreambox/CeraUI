@@ -26,7 +26,8 @@ import {
 	PROFILE,
 } from "./helpers/wifi-autoconnect-fixture.ts";
 
-const f = autoconnectFixture();
+// Upstream arming cases run on a radio other than the image's setup radio.
+const f = autoconnectFixture("wlan2");
 const profile = () => {
 	const value = f.profiles.get(PROFILE);
 	if (!value) throw new Error("Missing fixture profile");
@@ -84,10 +85,14 @@ test.each([undefined, "station", "hotspot", "hybrid"] as const)(
 		if (intent !== undefined) f.persistMode(MAC, intent);
 		await f.sample();
 		expect(
-			hotspotAutoconnectFields(MAC, {
-				"802-11-wireless.mac-address": MAC,
-				"match.path": PORT,
-			})["connection.autoconnect"],
+			hotspotAutoconnectFields(
+				MAC,
+				{
+					"802-11-wireless.mac-address": MAC,
+					"match.path": PORT,
+				},
+				f.ifname,
+			)["connection.autoconnect"],
 		).toBe(intent === "hotspot" || intent === "hybrid" ? "yes" : "no");
 	},
 );
@@ -115,7 +120,7 @@ test.each(["hotspot", "station"] as const)(
 			concurrent,
 			"ensureConcurrentApInterface",
 		).mockResolvedValue({
-			ifname: "clap-wlan0",
+			ifname: `clap-${f.ifname}`,
 			created: false,
 			type: "managed",
 		});
@@ -184,7 +189,7 @@ test("a first profile gets both pins before its explicit reconnect is allowed to
 test("a port read across replacement cannot publish the predecessor path", async () => {
 	spyOn(nm, "nmDeviceProp").mockImplementation(async (_ifname, fields) => {
 		if (fields !== "GENERAL.PATH") return undefined;
-		f.witnesses.set("wlan0", {
+		f.witnesses.set(f.ifname, {
 			ifindex: 99,
 			phy: "/sys/devices/policy/phy0",
 			mac: MAC,
@@ -193,5 +198,5 @@ test("a port read across replacement cannot publish the predecessor path", async
 		return [PORT];
 	});
 	await f.sample();
-	expect(wifiRadioIdentity.state.rows.get("wlan0")?.lifetime).toBeUndefined();
+	expect(wifiRadioIdentity.state.rows.get(f.ifname)?.lifetime).toBeUndefined();
 });

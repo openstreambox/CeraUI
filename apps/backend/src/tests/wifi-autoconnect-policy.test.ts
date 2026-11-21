@@ -9,7 +9,8 @@ import {
 	PROFILE,
 } from "./helpers/wifi-autoconnect-fixture.ts";
 
-const f = autoconnectFixture();
+// Upstream arming cases run on a radio other than the image's setup radio.
+const f = autoconnectFixture("wlan2");
 const profile = () => {
 	const value = f.profiles.get(PROFILE);
 	if (!value) throw new Error("Missing fixture profile");
@@ -17,7 +18,7 @@ const profile = () => {
 };
 
 test("(1 / M1) a confirmed unique radio with both pins can autoconnect; clap shares its phy", async () => {
-	f.witnesses.set("clap-wlan0", {
+	f.witnesses.set(`clap-${f.ifname}`, {
 		ifindex: 4,
 		phy: "/sys/devices/policy/phy0",
 		mac: MAC,
@@ -30,7 +31,7 @@ test("(1 / M1) a confirmed unique radio with both pins can autoconnect; clap sha
 });
 
 test("(2 / M2) an unreadable port stays off and restores through saved intent", async () => {
-	f.witnesses.set("wlan0", {
+	f.witnesses.set(f.ifname, {
 		ifindex: 3,
 		phy: "/sys/devices/policy/phy0",
 		mac: MAC,
@@ -73,7 +74,7 @@ test("(4 / M4) a newly present twin quiesces current and historical owned profil
 		mac: MAC,
 		path: "usb-other-port",
 	});
-	f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+	f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 	await f.discover();
 	expect(profile()?.["connection.autoconnect"]).toBe("no");
 	expect(f.profiles.get("current-ap")?.["connection.autoconnect"]).toBe("no");
@@ -157,11 +158,13 @@ test("(8) startup leaves owned station and unowned AP profiles untouched", async
 test("(9) colon-bearing PCI paths keep exact bytes inside the ifindex bracket", async () => {
 	await f.start();
 	expect(profile()?.["match.path"]).toBe(PORT);
-	const pathAt = f.reads.indexOf("path:wlan0");
+	const pathAt = f.reads.indexOf(`path:${f.ifname}`);
 	expect(pathAt).toBeGreaterThan(
-		f.reads.indexOf("/sys/class/net/wlan0/ifindex"),
+		f.reads.indexOf(`/sys/class/net/${f.ifname}/ifindex`),
 	);
-	expect(f.reads.slice(pathAt + 1)).toContain("/sys/class/net/wlan0/ifindex");
+	expect(f.reads.slice(pathAt + 1)).toContain(
+		`/sys/class/net/${f.ifname}/ifindex`,
+	);
 });
 
 test.each([
@@ -179,7 +182,7 @@ test.each([
 	"\0",
 	"\x7f",
 ])("(10) unsafe path byte %j never arms autoconnect", async (byte) => {
-	f.witnesses.set("wlan0", {
+	f.witnesses.set(f.ifname, {
 		ifindex: 3,
 		phy: "/sys/devices/policy/phy0",
 		mac: MAC,
