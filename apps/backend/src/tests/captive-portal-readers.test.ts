@@ -475,10 +475,39 @@ describe("explicit bounded system binding reader", () => {
 			expect((await f.capture()).ok).toBe(false);
 		}
 	});
-	for (const field of ["table", "metric", "gateway"])
+	for (const field of ["metric", "gateway"])
 		test(`missing kernel route ${field} is unknown, not defaulted`, async () => {
 			const f = fixture();
 			delete f.state.route[field];
+			expect((await f.capture()).ok).toBe(false);
+		});
+	// iproute2 prints no `table` for main and a decimal string for numbered
+	// tables; these are the shapes a real box returns.
+	for (const [table, expected] of [
+		[undefined, 254],
+		["45934", 45934],
+		["default", 253],
+	] as const)
+		test(`kernel route table ${String(table)} is read as ip -j prints it`, async () => {
+			const f = fixture();
+			if (table === undefined) delete f.state.route.table;
+			else f.state.route.table = table;
+			const r = await f.capture();
+			expect(r.ok && r.binding.link.routeTable).toBe(expected);
+		});
+	for (const table of [
+		"0",
+		"045934",
+		"4294967296",
+		"1e3",
+		"",
+		null,
+		-1,
+		"unknown",
+	])
+		test(`malformed kernel route table ${JSON.stringify(table)} refuses`, async () => {
+			const f = fixture();
+			f.state.route.table = table;
 			expect((await f.capture()).ok).toBe(false);
 		});
 	test("explicit known table aliases and device-filter omission are accepted", async () => {
@@ -488,16 +517,85 @@ describe("explicit bounded system binding reader", () => {
 		const r = await f.capture();
 		expect(r.ok && r.binding.link.routeTable).toBe(254);
 	});
+	const routesOf = (
+		f: ReturnType<typeof fixture>,
+		routes: Record<string, unknown>[],
+	) => {
+		f.deps.runIp = async (args) =>
+			JSON.stringify(args.includes("route") ? routes : [f.state.address]);
+	};
+	// The shape uplink steering leaves on a real box: NetworkManager's route in
+	// main plus the same route copied into the uplink's own table.
+	test("a steering copy of the venue route binds NetworkManager's main route", async () => {
+		const f = fixture();
+		const main = { ...f.state.route, metric: 601 };
+		delete main.table;
+		routesOf(f, [{ ...f.state.route, table: "45934", metric: 601 }, main]);
+		const r = await f.capture();
+		expect(r.ok && r.binding.link.routeTable).toBe(254);
+		expect(r.ok && r.binding.link.routeMetric).toBe(601);
+	});
+	test("no default route on the venue interface refuses", async () => {
+		const f = fixture();
+		routesOf(f, []);
+		expect((await f.capture()).ok).toBe(false);
+	});
+	test("more than eight default routes on one interface refuse", async () => {
+		const copies = (n: number) =>
+			Array.from({ length: n }, (_, i) =>
+				i === 0
+					? { ...fixture().state.route, table: "main" }
+					: { ...fixture().state.route, table: String(45000 + i) },
+			);
+		const ok = fixture();
+		routesOf(ok, copies(8));
+		expect((await ok.capture()).ok).toBe(true);
+		const f = fixture();
+		routesOf(f, copies(9));
+		expect((await f.capture()).ok).toBe(false);
+	});
+	for (const [name, other] of [
+		["a multipath copy", { multipath: [] }],
+		["a blackhole copy", { type: "blackhole" }],
+	] as const)
+		test(`${name} of the venue route refuses`, async () => {
+			const f = fixture();
+			const main = { ...f.state.route };
+			delete main.table;
+			routesOf(f, [main, { ...f.state.route, table: "45934", ...other }]);
+			expect((await f.capture()).ok).toBe(false);
+		});
+	test("several default routes without a main-table route refuse", async () => {
+		const f = fixture();
+		routesOf(f, [
+			{ ...f.state.route, table: "45934" },
+			{ ...f.state.route, table: "45935" },
+		]);
+		expect((await f.capture()).ok).toBe(false);
+	});
+	test("a steering copy via another gateway, or a duplicate table, refuses", async () => {
+		for (const other of [
+			{ table: "45934", gateway: "192.0.2.254" },
+			{ table: "45934", prefsrc: "192.0.2.20" },
+			{ table: "45934", nexthops: [] },
+			// a second main-table route, named rather than omitted
+			{ table: "main", metric: 20 },
+		]) {
+			const f = fixture();
+			const main = { ...f.state.route };
+			delete main.table;
+			routesOf(f, [main, { ...f.state.route, ...other }]);
+			expect((await f.capture()).ok).toBe(false);
+		}
+	});
 	test("ambiguous/ECMP/conflicting routes and multiple source addresses refuse", async () => {
 		for (const mutation of ["route", "ecmp", "dev", "source", "address"]) {
 			const f = fixture();
 			if (mutation === "route")
-				f.deps.runIp = async (args) =>
-					JSON.stringify(
-						args.includes("route")
-							? [f.state.route, { ...f.state.route, table: 999 }]
-							: [f.state.address],
-					);
+				routesOf(f, [
+					f.state.route,
+					{ ...f.state.route, table: 999, gateway: "192.0.2.254" },
+				]);
 			if (mutation === "ecmp") f.state.route.nexthops = [];
 			if (mutation === "dev") f.state.route.dev = "eth0";
 			if (mutation === "source") f.state.route.prefsrc = "192.0.2.20";
