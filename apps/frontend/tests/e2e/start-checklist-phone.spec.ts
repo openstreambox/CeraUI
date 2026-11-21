@@ -79,4 +79,32 @@ test.describe("A blocked Start lists what to fix", () => {
 		expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
 		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 	});
+
+	for (const size of [
+		{ width: 390, height: 500 },
+		{ width: 844, height: 390 },
+	]) {
+		test(`on a ${size.width}x${size.height} screen every reason stays visible and Start stays in view`, async ({ page }) => {
+			await page.setViewportSize(size);
+			await blockSourceAndServer(page);
+			await page.goto("/");
+			await ensureAuthenticated(page);
+			await navigateTo(page, "live");
+			const bar = page.getByTestId("live-bar");
+			await expect(bar.locator("button[data-fix]")).toHaveCount(2);
+			const reasons = bar.locator("li[data-blocker] [data-blocker-reason]");
+			await expect(reasons).toHaveCount(2);
+			for (const reason of await reasons.all()) {
+				await reason.scrollIntoViewIfNeeded();
+				await expect(reason).toBeVisible();
+				const box = await reason.boundingBox();
+				// Real text, not a 1 px screen-reader-only box.
+				expect(box?.width ?? 0).toBeGreaterThan(40);
+				expect(box?.height ?? 0).toBeGreaterThan(8);
+			}
+			const start = bar.getByRole("button", { name: /start stream/i });
+			const startBox = await start.boundingBox();
+			expect((startBox?.y ?? size.height) + (startBox?.height ?? 0)).toBeLessThanOrEqual(size.height);
+		});
+	}
 });

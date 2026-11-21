@@ -609,24 +609,22 @@ const networkSummary = $derived(
 					     text (two causes can share one button label, such as a missing
 					     destination and a revoked slot) and a button where a fix exists.
 					     The engine has none: it reads as its reason alone. -->
-					<!-- At most a quarter of the viewport, scrolling inside past that. On a
-					     short screen (640 px of height or less: landscape, split view) the
-					     rows fold into one wrapping row of buttons; each reason stays as the
-					     button's description and the engine reads as a plain chip. -->
+					<!-- At most a quarter of the viewport, scrolling inside past that, so Start
+					     stays in view. On a short screen (640 px of height or less: landscape,
+					     split view) the rows only tighten: every reason stays visible text,
+					     and a cut-off last row shows there is more to scroll. -->
 					<ul
 						bind:this={checklistEl}
-						class="-m-1 max-h-[25dvh] space-y-1.5 overflow-y-auto overscroll-contain rounded-lg p-1 transition-shadow motion-reduce:transition-none [@media(max-height:640px)]:flex [@media(max-height:640px)]:flex-wrap [@media(max-height:640px)]:gap-2 [@media(max-height:640px)]:space-y-0 {checklistAttention
+						class="-m-1 max-h-[25dvh] space-y-1.5 overflow-y-auto overscroll-contain rounded-lg p-1 transition-shadow motion-reduce:transition-none [@media(max-height:640px)]:space-y-1 {checklistAttention
 							? 'ring-destructive/60 ring-2'
 							: ''}"
 						data-blockers={blockers.length}
 						aria-label={barStatus}
 					>
 						{#each blockers as blocker (blocker.key)}
-							<li class="flex items-center justify-between gap-3 [@media(max-height:640px)]:contents" data-blocker={blocker.key}>
+							<li class="flex items-center justify-between gap-3" data-blocker={blocker.key}>
 								<span
-									class="text-muted-foreground min-w-0 text-xs {blocker.fix !== 'none'
-										? '[@media(max-height:640px)]:sr-only'
-										: '[@media(max-height:640px)]:bg-muted [@media(max-height:640px)]:inline-flex [@media(max-height:640px)]:min-h-[44px] [@media(max-height:640px)]:items-center [@media(max-height:640px)]:rounded-md [@media(max-height:640px)]:px-3'}"
+									class="text-muted-foreground min-w-0 text-xs [@media(max-height:640px)]:leading-tight"
 									data-blocker-reason
 									id="live-blocker-reason-{blocker.key}"
 								>
