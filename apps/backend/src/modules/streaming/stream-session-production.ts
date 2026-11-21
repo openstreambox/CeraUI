@@ -11,7 +11,7 @@ import {
 } from "./config-change-bridge.ts";
 import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
 import {
-	streamingBlockingMutation,
+	globalStreamHold,
 	tryAcquireLifecycle,
 } from "./lifecycle-admission.ts";
 import {
@@ -124,7 +124,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	admitLifecycle: () => tryAcquireLifecycle("streaming"),
 	awaitRecovery: awaitRecoveryBarrier,
 	recoveryPending: isRecoveryPending,
-	blockingMutation: streamingBlockingMutation,
+	blockingMutation: globalStreamHold,
 	admitUpdate: admitAndPrepareStreamStart,
 	markStreamingForOta: setOtaStreamingMarker,
 	unmarkStreamingForOta: clearOtaStreamingMarker,
