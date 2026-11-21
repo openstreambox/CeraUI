@@ -52,7 +52,12 @@ const PROBE_PAYLOAD = new Uint8Array([0x00, 0x00, 0x00, 0x00]);
 /** Outcome of a reachability probe. */
 export type ProbeResult =
 	| { reachable: true }
-	| { reachable: false; reason: "timeout" | "refused" };
+	| {
+			reachable: false;
+			reason: "timeout" | "refused";
+			/** The failure happened on this box (socket setup), not at the peer. */
+			local?: true;
+	  };
 
 /**
  * Probe `ip:port` for UDP reachability, bounded by `timeoutMs`.
@@ -140,7 +145,7 @@ export async function probeReachability(
 					].includes(String(err.code))
 				) {
 					logger.debug("probeReachability: socket setup failed", { err });
-					finish({ reachable: false, reason: "refused" });
+					finish({ reachable: false, reason: "refused", local: true });
 				} else {
 					if (settled) return;
 					settled = true;
@@ -155,7 +160,7 @@ export async function probeReachability(
 			(err.code === "ENETUNREACH" || err.code === "EHOSTUNREACH")
 		) {
 			logger.debug("probeReachability: socket setup failed", { err });
-			return { reachable: false, reason: "refused" };
+			return { reachable: false, reason: "refused", local: true };
 		}
 		throw err;
 	});

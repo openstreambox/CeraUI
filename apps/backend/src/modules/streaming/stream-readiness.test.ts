@@ -4,11 +4,9 @@ import {
 	endpointKey,
 	evaluateStreamReadiness,
 	getStreamReadiness,
-	isPrivateAddress,
 	noteReceiverEvidence,
 	OK,
 	READINESS_CARRYING_UNKNOWN,
-	READINESS_LOCAL_RECEIVER,
 	READINESS_NO_LINK_CARRYING,
 	READINESS_NO_UPLINK,
 	READINESS_NO_UPLINK_PASSES,
@@ -179,19 +177,23 @@ describe("evaluateStreamReadiness, before going live", () => {
 		}
 	});
 
-	test("a receiver on the LAN is not blocked by links without internet", () => {
+	test("a receiver on the LAN needs a same-subnet interface, not the internet", () => {
+		const lan = {
+			configured: "yes" as const,
+			evidence: undefined,
+			local: true,
+		};
 		const r = evaluateStreamReadiness(
 			inputs({
-				receiver: { configured: "yes", evidence: undefined, local: true },
+				receiver: lan,
 				candidates: [fresh("eth0", "down", "probe_failed")],
 			}),
 		);
 		expect(r.ready).toBe(true);
-		expect(r.checks[3]).toEqual({
-			id: "uplinks",
-			state: "unknown",
-			code: READINESS_LOCAL_RECEIVER,
-		});
+		expect(r.checks[3]).toEqual({ id: "uplinks", state: "ok" });
+		expect(
+			evaluateStreamReadiness(inputs({ receiver: lan, candidates: [] })).reason,
+		).toEqual({ check: "uplinks", code: READINESS_NO_UPLINK });
 	});
 
 	test("one passing candidate among dead ones is enough", () => {
@@ -236,6 +238,32 @@ describe("evaluateStreamReadiness, while live", () => {
 		expect(r.ready).toBe(true);
 		expect(r.checks[0]).toEqual({ id: "lock", state: "ok" });
 		expect(r.checks[1]).toEqual({ id: "source", state: "ok" });
+	});
+
+	test("while live the saved destination is not judged", () => {
+		for (const configured of ["no", "invalid"] as const) {
+			const r = evaluateStreamReadiness(
+				inputs({
+					live: true,
+					receiver: { configured, evidence: "refused", local: false },
+					senderLinks: [{ iface: "wwan0", carrying: true }],
+				}),
+			);
+			expect(r.ready).toBe(true);
+			expect(r.checks[2]).toEqual({ id: "receiver", state: "ok" });
+		}
+		const silent = evaluateStreamReadiness(
+			inputs({
+				live: true,
+				receiver: { configured: "invalid", evidence: undefined, local: false },
+				senderLinks: [{ iface: "wwan0" }],
+			}),
+		);
+		expect(silent.checks[2]).toEqual({
+			id: "receiver",
+			state: "unknown",
+			code: READINESS_RECEIVER_UNTESTED,
+		});
 	});
 
 	test("one carrying sender link is ready and covers the destination", () => {
@@ -290,8 +318,9 @@ describe("evaluateStreamReadiness, while live", () => {
 		]) {
 			const r = evaluateStreamReadiness(inputs({ live: true, senderLinks }));
 			expect(r.ready).toBe(true);
-			expect(r.reason).toEqual({
-				check: "uplinks",
+			expect(r.checks[3]).toEqual({
+				id: "uplinks",
+				state: "unknown",
 				code: READINESS_CARRYING_UNKNOWN,
 			});
 		}
@@ -333,21 +362,6 @@ describe("receiver evidence", () => {
 		expect(receiverEvidenceFor(`h${RECEIVER_EVIDENCE_MAX}:1`, 1)).toBe(
 			"reachable",
 		);
-	});
-
-	test("private and link-local literals count as local", () => {
-		for (const a of [
-			"10.1.2.3",
-			"192.168.42.10",
-			"172.20.0.1",
-			"169.254.1.1",
-			"100.64.0.1",
-			"fd00::1",
-			"fe80::1",
-		])
-			expect(isPrivateAddress(a), a).toBe(true);
-		for (const a of ["8.8.8.8", "172.32.0.1", "2001:db8::1", "relay.example"])
-			expect(isPrivateAddress(a), a).toBe(false);
 	});
 });
 

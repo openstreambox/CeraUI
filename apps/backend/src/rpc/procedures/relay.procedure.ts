@@ -156,7 +156,7 @@ export const relayValidateProcedure = authedProcedure
 					return { valid: true, stage: "probe", reason: `IPv${family}` };
 				}
 				reason = probe.reason;
-				if (probe.reason !== "refused") refusedAll = false;
+				if (probe.reason !== "refused" || probe.local) refusedAll = false;
 			} catch (error) {
 				refusedAll = false;
 				unexpected ??= error;
