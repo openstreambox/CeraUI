@@ -164,70 +164,84 @@ test("a ready TERM-ignoring real child is SIGKILLed and reaped after bounded rej
 	}
 }, 30_000);
 
-test("positive parent exit cannot leave the runner draining inherited pipes past deadline", async () => {
-	// Given a zero-exit parent with output held open by its test-owned descendant.
-	let positive = false;
-	const exited = Promise.withResolvers<void>();
-	const clock = createManualSpawnClock();
-	const directory = await mkdtemp(join(tmpdir(), "spawn-inherited-pipe-"));
-	let parent: Subprocess<"ignore", "pipe", "pipe"> | undefined;
-	let inheritedPid = 0;
-	let safetyTimer: ReturnType<typeof setTimeout> | undefined;
-	const safety = new Promise<never>((_resolve, reject) => {
-		safetyTimer = setTimeout(
-			() => reject(new Error("positive exit fixture safety deadline")),
-			10_000,
+test.each([false, true])(
+	"positive parent exit with inherited pipes settles within the bound (require EOF: %s)",
+	async (requireCompleteOutput) => {
+		// Given a zero-exit parent with output held open by its test-owned descendant.
+		let positive = false;
+		const exited = Promise.withResolvers<void>();
+		const clock = createManualSpawnClock();
+		const directory = await mkdtemp(join(tmpdir(), "spawn-inherited-pipe-"));
+		let parent: Subprocess<"ignore", "pipe", "pipe"> | undefined;
+		let inheritedPid = 0;
+		let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+		const safety = new Promise<never>((_resolve, reject) => {
+			safetyTimer = setTimeout(
+				() => reject(new Error("positive exit fixture safety deadline")),
+				10_000,
+			);
+		});
+		void safety.catch(() => undefined);
+		// When the real zero exit precedes the injected deadline, regardless of startup scheduling.
+		const call = spawnWithTimeout(
+			[
+				"bash",
+				"-c",
+				'printf ready; sleep infinity & printf %s "$!" > "$1"; exit 0',
+				"fixture",
+				join(directory, "pid"),
+			],
+			{
+				...clock,
+				timeoutMs: 30,
+				requireCompleteOutput,
+				onSpawn: (child) => {
+					parent = child;
+				},
+				onExit: (code) => {
+					positive = code === 0;
+					exited.resolve();
+				},
+			},
 		);
-	});
-	void safety.catch(() => undefined);
-	// When the real zero exit precedes the injected deadline, regardless of startup scheduling.
-	const call = spawnWithTimeout(
-		[
-			"bash",
-			"-c",
-			'printf ready; sleep infinity & printf %s "$!" > "$1"; exit 0',
-			"fixture",
-			join(directory, "pid"),
-		],
-		{
-			...clock,
-			timeoutMs: 30,
-			onSpawn: (child) => {
-				parent = child;
-			},
-			onExit: (code) => {
-				positive = code === 0;
-				exited.resolve();
-			},
-		},
-	);
-	try {
-		await Promise.race([exited.promise, safety]);
-		inheritedPid = Number(await readFile(join(directory, "pid"), "utf8"));
-		await new Promise<void>((resolve) => setImmediate(resolve));
-		await clock.fireNext();
-		while (clock.pendingDelay !== undefined) await clock.fireNext();
-		const result = await Promise.race([call, safety]);
-		// Then genuine success survives a deadline with permanently inherited-open output.
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toBe("ready");
-		expect(positive).toBe(true);
-		expect(clock.delays).toEqual([30, BOUNDED_SPAWN_DRAIN_MS]);
-	} finally {
-		if (safetyTimer !== undefined) clearTimeout(safetyTimer);
-		if (inheritedPid === 0 && (await Bun.file(join(directory, "pid")).exists()))
+		void call.catch(() => undefined);
+		try {
+			await Promise.race([exited.promise, safety]);
 			inheritedPid = Number(await readFile(join(directory, "pid"), "utf8"));
-		if (Number.isInteger(inheritedPid) && inheritedPid > 0) {
-			adoptTestProcess(inheritedPid);
-			process.kill(inheritedPid, "SIGKILL");
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			await clock.fireNext();
+			while (clock.pendingDelay !== undefined) await clock.fireNext();
+			if (requireCompleteOutput) {
+				await expect(Promise.race([call, safety])).rejects.toThrow(
+					"Incomplete subprocess output",
+				);
+			} else {
+				const result = await Promise.race([call, safety]);
+				expect(result.exitCode).toBe(0);
+				expect(result.stdout).toBe("ready");
+			}
+			expect(positive).toBe(true);
+			expect(clock.delays).toEqual([30, BOUNDED_SPAWN_DRAIN_MS]);
+		} finally {
+			if (safetyTimer !== undefined) clearTimeout(safetyTimer);
+			if (
+				inheritedPid === 0 &&
+				(await Bun.file(join(directory, "pid")).exists())
+			)
+				inheritedPid = Number(await readFile(join(directory, "pid"), "utf8"));
+			if (Number.isInteger(inheritedPid) && inheritedPid > 0) {
+				adoptTestProcess(inheritedPid);
+				process.kill(inheritedPid, "SIGKILL");
+			}
+			if (parent !== undefined) {
+				if (parent.exitCode === null && parent.signalCode === null)
+					parent.kill("SIGKILL");
+				await parent.exited;
+			}
+			while (clock.pendingDelay !== undefined) await clock.fireNext();
+			await call.catch(() => undefined);
+			await rm(directory, { recursive: true, force: true });
 		}
-		if (parent !== undefined) {
-			if (parent.exitCode === null && parent.signalCode === null)
-				parent.kill("SIGKILL");
-			await parent.exited;
-		}
-		while (clock.pendingDelay !== undefined) await clock.fireNext();
-		await call;
-		await rm(directory, { recursive: true, force: true });
-	}
-}, 30_000);
+	},
+	30_000,
+);

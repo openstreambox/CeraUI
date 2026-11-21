@@ -29,7 +29,11 @@ engine version — and one contract that is easy to break from either side.
   login-time `revisions` push is a snapshot: an engine that came up (or was
   upgraded) after the operator logged in would otherwise be reported unreachable
   for the rest of the session. The push and the pull are both kept — the push
-  seeds the dialog instantly, the pull corrects it.
+  seeds the dialog instantly, the pull corrects it. Before boot commands finish,
+  snapshots already carry Bun, the kernel and `"unknown revision"` for CeraUI
+  and SRTLA. Completion sends a new `revisions` frame to authenticated local
+  clients. An open dialog accepts that frame even if its earlier pull already
+  returned or is still in flight.
 - `setEngineVersionProbe(probe | null)` is the test seam (the `set*Runner`
   convention). Coverage: `tests/revisions-kernel-engine.test.ts`.
 
@@ -84,12 +88,14 @@ different questions:**
   NO row-specific branch in `VersionsDialog`. A `dpkg` version whose iteration
   already embeds the commit is left alone rather than repeating it.
 - **Boot commands leave the event loop free to send watchdog pulses.** Git and
-  `dpkg-query` use `spawnWithTimeout` via `probe(argv)`: a live child gets
-  SIGTERM at 30 seconds and SIGKILL after 100 ms, with bounded waits for exit
-  and pipe drainage. A failed or timed-out CeraUI source leaves the rest of the
-  resolution ladder available. `srtla_send -v` goes through
-  `refreshSenderRevision()` and its bounded asynchronous runner; a failed,
-  empty or timed-out read publishes `"unknown revision"`.
+  `dpkg-query` use `spawnWithTimeout` via `probe(argv)`; `srtla_send -v` uses
+  `refreshSenderRevision()`'s `execFileP`. Both run on the bounded child
+  collector: a live child gets SIGTERM at 30 seconds and SIGKILL after 100 ms,
+  with bounded waits for exit and pipe drainage. A failed or timed-out CeraUI
+  source leaves the rest of the resolution ladder available. A failed, empty
+  or timed-out SRTLA read publishes `"unknown revision"`. Each stream is capped
+  at 4 KiB. The reader requires EOF on both streams, so a zero-exit command
+  with a descendant holding a pipe open cannot publish truncated output.
 - **`CeraUiRevisionSources` is the seam** (the `*Deps` convention, not
   `set*Runner`), passed as an optional argument to `initRevisions`, so the whole
   ladder is drivable with no packaged tree, no `dpkg` database and no git

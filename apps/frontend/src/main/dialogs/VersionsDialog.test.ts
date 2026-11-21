@@ -15,6 +15,8 @@
 
 import type { Revisions } from "@ceraui/rpc/schemas";
 import { render, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
+import { fromStore, writable } from "svelte/store";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { rpc } from "$lib/rpc/client";
@@ -44,15 +46,19 @@ const pushed: Revisions = {
 	cerastream: "engine unreachable",
 };
 
+const pushedState = writable(pushed);
+const pushedSnapshot = fromStore(pushedState);
+
 vi.mock("$lib/rpc/client", () => ({
 	rpc: { system: { getRevisions: vi.fn(async () => pushed) } },
 }));
 
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
-	getRevisions: () => pushed,
+	getRevisions: () => pushedSnapshot.current,
 }));
 
 afterEach(() => {
+	pushedState.set(pushed);
 	vi.clearAllMocks();
 });
 
@@ -139,6 +145,40 @@ describe("VersionsDialog", () => {
 			expect(rowValue(container, "cerastream")).toEqual(["2026.7.2"]);
 		});
 	});
+
+	it.each(["before", "after"])(
+		"updates an open dialog when the boot revisions arrive %s the first pull resolves",
+		async (order) => {
+			const early = { ...pushed, srtla: "unknown revision" };
+			const pull = Promise.withResolvers<Revisions>();
+			pushedState.set(early);
+			vi.mocked(rpc.system.getRevisions).mockReturnValueOnce(pull.promise);
+			render(VersionsDialog, { props: { open: true } });
+			await waitFor(() => {
+				expect(rpc.system.getRevisions).toHaveBeenCalledTimes(1);
+				expect(rowValue(document.body, "SRTLA")).toEqual(["unknown revision"]);
+			});
+
+			if (order === "after") {
+				pull.resolve(early);
+				await tick();
+			}
+			pushedState.set(pushed);
+			await waitFor(() => {
+				expect(rowValue(document.body, "SRTLA")).toEqual([
+					"4.1.0",
+					"main@974c8b9",
+				]);
+			});
+			pull.resolve(early);
+			await tick();
+			expect(rowValue(document.body, "SRTLA")).toEqual([
+				"4.1.0",
+				"main@974c8b9",
+			]);
+			expect(rpc.system.getRevisions).toHaveBeenCalledTimes(1);
+		},
+	);
 
 	it("keeps the pushed snapshot readable when the refresh fails", async () => {
 		vi.mocked(rpc.system.getRevisions).mockRejectedValueOnce(

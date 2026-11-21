@@ -10,8 +10,9 @@
  * same primitive the migrated sensors.ts now uses.
  */
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { release, tmpdir } from "node:os";
 
+import { revisionsSchema } from "@ceraui/rpc/schemas";
 import type { Subprocess } from "bun";
 import { DEFAULT_SPAWN_TIMEOUT_MS } from "../helpers/spawn-policy.ts";
 import { srtlaSendExec } from "../modules/streaming/streamloop/exec-paths.ts";
@@ -20,6 +21,9 @@ import {
 	initRevisions,
 	setEngineVersionProbe,
 } from "../modules/system/revisions.ts";
+import { createWebSocketHandler, handleORPCMessage } from "../rpc/adapter.ts";
+import { removeClient } from "../rpc/events.ts";
+import { statusClient } from "./helpers/status-client.ts";
 
 const stampedSources = {
 	readVersionStamp: async () => "2026.8.5",
@@ -82,6 +86,15 @@ describe("sensors.ts — Bun.file().text() read + numeric parse", () => {
 });
 
 describe("revisions.ts — bounded async commands and file reads", () => {
+	test("the revisions snapshot satisfies the wire schema before initialization", () => {
+		expect(revisionsSchema.parse(getRevisions())).toEqual({
+			ceralive: "unknown revision",
+			srtla: "unknown revision",
+			bun: Bun.version,
+			kernel: release(),
+		});
+	});
+
 	test.each([
 		["  2026.8.5 (abc1234)\n", 0, "2026.8.5 (abc1234)"],
 		["", 0, "unknown revision"],
@@ -114,11 +127,115 @@ describe("revisions.ts — bounded async commands and file reads", () => {
 		},
 	);
 
-	test("the loop progresses while a TERM-ignoring revision command is pending", async () => {
+	test.each(["stdout", "stderr"] as const)(
+		"rejects oversized %s from a scalar revision command",
+		async (stream) => {
+			const spawn = Bun.spawn;
+			const command = spyOn(Bun, "spawn").mockImplementation(() =>
+				spawn({
+					cmd: [
+						process.execPath,
+						"-e",
+						`process.stdout.write("4.1.0"); process.${stream}.write("1".repeat(8192));`,
+					],
+					stdout: "pipe",
+					stderr: "pipe",
+				}),
+			);
+			setEngineVersionProbe(async () => undefined);
+			try {
+				await initRevisions(stampedSources);
+				expect(command).toHaveBeenCalledTimes(1);
+				expect(getRevisions().srtla).toBe("unknown revision");
+			} finally {
+				command.mockRestore();
+				setEngineVersionProbe(null);
+			}
+		},
+	);
+
+	test("a client that connects during the SRTLA read receives the completed version", async () => {
 		const ready = Promise.withResolvers<void>();
 		const spawn = Bun.spawn;
 		let child: Subprocess<"ignore", "pipe", "pipe"> | undefined;
 		const command = spyOn(Bun, "spawn").mockImplementation(() => {
+			child = spawn({
+				cmd: [
+					process.execPath,
+					"-e",
+					`process.on("message", () => {
+						process.stdout.write("4.1.0 (abc1234)\\n");
+						process.disconnect();
+					});
+					process.send("ready");`,
+				],
+				stdin: "ignore",
+				stdout: "pipe",
+				stderr: "pipe",
+				ipc: () => ready.resolve(),
+			});
+			return child;
+		});
+		const pushes: unknown[] = [];
+		const replies: unknown[] = [];
+		const client = statusClient((text) => {
+			const frame = JSON.parse(text);
+			if ("revisions" in frame) pushes.push(frame.revisions);
+			if (frame.id === "early-versions") replies.push(frame.result);
+		});
+		setEngineVersionProbe(async () => "2026.8.5");
+		const initialized = initRevisions(stampedSources);
+		try {
+			expect(
+				await Promise.race([
+					ready.promise.then(() => "ready"),
+					initialized.then(() => "finished"),
+				]),
+			).toBe("ready");
+			command.mockRestore();
+			createWebSocketHandler().open?.(client);
+			const initial = revisionsSchema.parse(pushes[0]);
+			expect(initial.srtla).toBe("unknown revision");
+			expect(initial.bun).toBe(Bun.version);
+			expect(initial.kernel).toBe(release());
+			await handleORPCMessage(client, {
+				id: "early-versions",
+				path: ["system", "getRevisions"],
+			});
+			expect(revisionsSchema.parse(replies[0]).srtla).toBe("unknown revision");
+
+			if (!child) throw new Error("missing revision child");
+			child.send("finish");
+			await initialized;
+			expect(pushes).toHaveLength(2);
+			expect(revisionsSchema.parse(pushes[1]).srtla).toBe("4.1.0 (abc1234)");
+		} finally {
+			removeClient(client);
+			command.mockRestore();
+			if (child?.exitCode === null && child.signalCode === null)
+				child.kill("SIGKILL");
+			await initialized;
+			setEngineVersionProbe(null);
+		}
+	}, 10_000);
+
+	test("the loop progresses while a TERM-ignoring revision command is pending", async () => {
+		const ready = Promise.withResolvers<void>();
+		const spawn = Bun.spawn;
+		let child: Subprocess<"ignore", "pipe", "pipe"> | undefined;
+		const passThrough = spawn as (...args: unknown[]) => Subprocess;
+		const command = spyOn(Bun, "spawn").mockImplementation(((
+			...args: unknown[]
+		) => {
+			// Work an earlier test left running (a Remote access status probe)
+			// can spawn here too; only the SRTLA read gets the stalled child.
+			const argv = args[0];
+			if (
+				!Array.isArray(argv) ||
+				argv[0] !== srtlaSendExec ||
+				child !== undefined
+			)
+				return passThrough(...args);
 			child = spawn({
 				cmd: [
 					process.execPath,
@@ -136,7 +253,7 @@ describe("revisions.ts — bounded async commands and file reads", () => {
 				ipc: () => ready.resolve(),
 			});
 			return child;
-		});
+		}) as typeof Bun.spawn);
 
 		// Advance only the command deadline after readiness. TERM grace and
 		// cleanup still run on normal timers against the real child.
@@ -144,7 +261,12 @@ describe("revisions.ts — bounded async commands and file reads", () => {
 		let fireDeadline: (() => void) | undefined;
 		const timer = spyOn(globalThis, "setTimeout").mockImplementation(
 			(callback, delay, ...args) => {
-				if (delay !== DEFAULT_SPAWN_TIMEOUT_MS)
+				// The first command deadline after the SRTLA spawn is its own.
+				if (
+					delay !== DEFAULT_SPAWN_TIMEOUT_MS ||
+					child === undefined ||
+					fireDeadline !== undefined
+				)
 					return schedule(callback, delay, ...args);
 				fireDeadline = () => callback(...args);
 				return schedule(() => {}, delay);

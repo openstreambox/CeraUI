@@ -19,11 +19,15 @@
 /* Read the revision numbers */
 import { release } from "node:os";
 
-import { ENGINE_UNREACHABLE_REVISION } from "@ceraui/rpc/schemas";
+import {
+	ENGINE_UNREACHABLE_REVISION,
+	type Revisions,
+} from "@ceraui/rpc/schemas";
 
 import { execFileP } from "../../helpers/exec.ts";
 import { logger } from "../../helpers/logger.ts";
 import { spawnWithTimeout } from "../../helpers/spawn-policy.ts";
+import { broadcast } from "../../rpc/events.ts";
 
 import { srtlaSendExec } from "../streaming/streamloop/exec-paths.ts";
 import { hasCapability } from "./board-capabilities.ts";
@@ -43,7 +47,15 @@ import { hasCapability } from "./board-capabilities.ts";
  */
 export { ENGINE_UNREACHABLE_REVISION };
 
-const revisions: Record<string, string> = {};
+const UNKNOWN_REVISION = "unknown revision";
+const REVISION_MAX_BUFFER = 4096;
+
+const revisions: Revisions = {
+	ceralive: UNKNOWN_REVISION,
+	srtla: UNKNOWN_REVISION,
+	bun: Bun.version,
+	kernel: release(),
+};
 
 type EngineVersionProbe = () => Promise<string | undefined>;
 
@@ -87,11 +99,16 @@ export async function refreshEngineRevision(): Promise<string> {
 	return revisions.cerastream;
 }
 
-const UNKNOWN_REVISION = "unknown revision";
-
+/**
+ * The sender version, capped like the boot probes: a truncated or oversized
+ * answer is never published.
+ */
 export async function refreshSenderRevision(): Promise<string> {
 	try {
-		const result = await execFileP(srtlaSendExec, ["-v"]);
+		const result = await execFileP(srtlaSendExec, ["-v"], {
+			maxBuffer: REVISION_MAX_BUFFER,
+			requireCompleteOutput: true,
+		});
 		revisions.srtla = result.stdout.trim() || UNKNOWN_REVISION;
 	} catch (_err) {
 		revisions.srtla = UNKNOWN_REVISION;
@@ -102,7 +119,10 @@ export async function refreshSenderRevision(): Promise<string> {
 /** A failed probe leaves the caller free to try the next revision source. */
 async function probe(argv: string[]): Promise<string | undefined> {
 	try {
-		const result = await spawnWithTimeout(argv);
+		const result = await spawnWithTimeout(argv, {
+			maxBuffer: REVISION_MAX_BUFFER,
+			requireCompleteOutput: true,
+		});
 		return result.exitCode === 0 ? result.stdout.trim() : undefined;
 	} catch (_err) {
 		return undefined;
@@ -227,6 +247,7 @@ export async function initRevisions(
 	} catch (_err) {
 		// Silently ignore if CERALIVE image version file doesn't exist
 	}
+	broadcast("revisions", revisions);
 	logger.debug("Revisions", revisions);
 }
 

@@ -14,6 +14,7 @@
 import { m } from '@ceraui/i18n/svelte';
 import type { Revisions } from '@ceraui/rpc/schemas';
 import { Info } from '@lucide/svelte';
+import { untrack } from 'svelte';
 
 import { AppDialog } from '$lib/components/dialogs';
 import { rpc } from '$lib/rpc/client';
@@ -26,17 +27,21 @@ interface Props {
 
 let { open = $bindable(false) }: Props = $props();
 
-let refreshed = $state<Revisions | undefined>(undefined);
+let refreshed = $state.raw<{ basedOn: Revisions | undefined; value: Revisions }>();
 
-const revisions = $derived(refreshed ?? getRevisions());
+const pushed = $derived(getRevisions());
+// A completed boot push supersedes a pull started against an earlier snapshot.
+const revisions = $derived(refreshed && refreshed.basedOn === pushed ? refreshed.value : pushed);
 
 $effect(() => {
 	if (!open) return;
+	refreshed = undefined;
+	const basedOn = untrack(getRevisions);
 	let cancelled = false;
 	rpc.system
 		.getRevisions()
-		.then((next) => {
-			if (!cancelled) refreshed = next;
+		.then((value) => {
+			if (!cancelled) refreshed = { basedOn, value };
 		})
 		.catch((error: unknown) => {
 			// The pushed snapshot already on screen stays authoritative — a failed
