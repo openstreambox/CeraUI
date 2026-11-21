@@ -15,6 +15,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { writeFileAtomicSync } from "../../helpers/config-loader.ts";
+
 /**
  * Single-use loopback kiosk token (DC-3, docs/KIOSK_TOKEN_CONTRACT.md).
  *
@@ -82,10 +84,7 @@ export async function mintKioskToken(): Promise<string> {
 	await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
 	const file = kioskTokenPath();
-	// tmpfs only — never durable disk. Bun.write does not honour a mode on an
-	// existing file, so enforce 0600 explicitly afterwards.
-	await Bun.write(file, token);
-	await fs.chmod(file, 0o600);
+	writeFileAtomicSync(file, token, { mode: 0o600, durable: false });
 
 	logger.info("Kiosk: minted single-use loopback token");
 	return token;
