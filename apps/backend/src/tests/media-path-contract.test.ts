@@ -242,6 +242,7 @@ describe("media-path backend contracts", () => {
 					nak_count: 3,
 					weight_percent: 100,
 					bitrate_bps: 1_000_000,
+					carrying: true,
 					stale: false,
 				},
 			]);
