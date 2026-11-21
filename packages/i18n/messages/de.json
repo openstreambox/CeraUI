@@ -910,7 +910,7 @@
 	"live.startFailure.retriedThenFailed": "Es ist auch nach automatischen Wiederholungen fehlgeschlagen. Details findest du unter Einstellungen → Systemprotokolle.",
 	"live.startFailure.waitForUpdate": "Starte den Stream erneut, sobald das Update abgeschlossen ist.",
 	"live.startFailure.next.tryAgain": "Versuche es noch einmal.",
-	"live.startFailure.next.restartBox": "Es ist wieder fehlgeschlagen. Ein Neustart der Box behebt das meistens.",
+	"live.startFailure.next.restartBox": "Es ist wieder fehlgeschlagen. Wenn es weiter fehlschlägt, starte die Box neu.",
 	"live.startFailure.next.openSetup": "Prüfe die Stream-Einrichtung und starte dann erneut.",
 	"live.startFailure.mutationBlockedNetwork": "Eine Modem-Änderung konnte nicht rückgängig gemacht werden, ihr Zustand ist daher unbekannt. Prüfe das Modem unter Netzwerk, bevor du streamst.",
 	"live.startFailure.action.tryAgain": "Erneut versuchen",

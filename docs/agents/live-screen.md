@@ -140,10 +140,15 @@ A typed start refusal is a toast. Where the next step is decided, the toast's
 button is that step and View logs sits beside it
 (`startFailureNextStep`, `apps/frontend/src/lib/streaming/start-failure-copy.ts`):
 
-- `engine_internal`, `engine_unavailable`, `start_timeout`: Try again (repeats
-  the last start, implicit sole camera included). When an engine refusal
-  follows another with no stream in between, Restart box, which opens the same
-  reboot sheet as Settings, so the operator still confirms.
+- `engine_internal`, `engine_unavailable`, `start_timeout`: Try again. It
+  goes through the Live bar's own gate (`idleStartGate`, the same readiness
+  verdict with the implicit sole camera folded in), decided at the tap, and
+  does nothing when that refusal is no longer current, the view is gone or a
+  Start or stream is under way. When an engine refusal comes back within two
+  minutes of a Try again on an engine refusal, the toast offers Restart box,
+  which opens the same reboot sheet as Settings, so the operator still
+  confirms. A Start from the Live bar, a running stream or the two minutes
+  clear that.
 - `start_invalid`: Open stream setup (scrolls to the setup card and focuses
   it); saved SRT encryption the engine cannot use opens the destination.
 - `mutation_blocked`: Open Network, where the modem controls live.

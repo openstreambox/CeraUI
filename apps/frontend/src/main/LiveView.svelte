@@ -1,15 +1,19 @@
 <script module lang="ts">
-// What the last start-refusal toast said, for the Try again → Restart box step.
-// Plain data, not state: nothing renders from it.
-const failureMemory: { lastAttempt: string | undefined; engineStreak: number } = {
+// The Try again → Restart box step. `lastAttempt` is the refusal the last toast
+// showed; `retriedAt` is set only when Try again on an engine refusal actually
+// dispatched a Start, and is consumed by the next refusal. A manual Start, a
+// running stream or two minutes clear it, so an old failure never turns a
+// later manual Start into Restart box. Plain data, not state.
+const RETRY_WINDOW_MS = 120_000;
+const failureMemory: { lastAttempt: string | undefined; retriedAt: number | undefined } = {
 	lastAttempt: undefined,
-	engineStreak: 0,
+	retriedAt: undefined,
 };
 
 /** Tests only: forget the last refusal, as a fresh page load does. */
 export function resetStartFailureMemory(): void {
 	failureMemory.lastAttempt = undefined;
-	failureMemory.engineStreak = 0;
+	failureMemory.retriedAt = undefined;
 }
 </script>
 
@@ -97,6 +101,7 @@ import {
 import { reconcileStartSource } from '$lib/streaming/effective-source';
 import { buildEncoderSetConfig } from '$lib/streaming/encoderConfig';
 import { encoderSaveErrorMessage } from '$lib/streaming/encoderSaveError';
+import { idleStartGate } from '$lib/streaming/idle-start-gate';
 import { canLiveSwitchInput, isAudioInputId } from '$lib/streaming/liveAudioSwitch';
 import { expectedOutputCodec, resolveRoute, routeCopy } from '$lib/streaming/outputFormat';
 import {
@@ -344,16 +349,50 @@ function startFailedMessage(code: string): string {
 // A refusal with a decided next step carries it as the toast's button (Try
 // again, Restart box, Open stream setup, Open destination, Open Network) and
 // keeps View logs beside it for a helper; the rest keep View logs alone.
-// An engine-group failure that comes back right after one (no stream in
-// between) offers Restart box instead of another Try again. The streak lives
-// in the module script, so leaving Live and coming back does not forget it.
-let lastStartOverrides: { source?: string } = {};
+// An engine refusal that comes back after Try again on an engine refusal
+// offers Restart box instead of another Try again.
 $effect(() => {
-	if (isStreaming) failureMemory.engineStreak = 0;
+	if (isStreaming) failureMemory.retriedAt = undefined;
 });
 
-function runNextStep(step: StartFailureNextStep) {
-	if (step === 'tryAgain') void handleStart(lastStartOverrides);
+let viewMounted = true;
+$effect(() => () => {
+	viewMounted = false;
+});
+
+// Try again repeats the Start through the Live bar's own gate, decided from the
+// inputs at the moment of the tap (a link may have dropped since the refusal),
+// with the implicit sole camera folded in as the bar does. It does nothing when
+// the view is gone, another Start or a stream is under way, or a newer refusal
+// (or none) is current.
+function retryStart(attempt: string | undefined, engine: boolean) {
+	if (!viewMounted || streamingOptimismState !== 'idle' || getIsStreaming()) return;
+	const current = getStreamingStartFailure() as { attemptId?: string } | undefined;
+	if (attempt === undefined || current?.attemptId !== attempt) return;
+	const gate = idleStartGate({
+		config: getConfig(),
+		caps: getCapabilities(),
+		sources: getSources(),
+		netif: getNetif(),
+		isConnected: getIsConnected(),
+		networkIngest: getStatus()?.network_ingest ?? null,
+		pipelines: pipelinesFromSources(getSources()),
+		relays: getRelays(),
+		managedSlots: getManagedIngestAccounts(),
+	});
+	if (!gate.canStart) return;
+	failureMemory.retriedAt = engine ? Date.now() : undefined;
+	void handleStart({ source: gate.source });
+}
+
+// A Start from the Live bar is a fresh attempt, not a retry of a refusal.
+function handleStartFromBar(overrides: { source?: string } = {}) {
+	failureMemory.retriedAt = undefined;
+	return handleStart(overrides);
+}
+
+function runNextStep(step: StartFailureNextStep, attempt: string | undefined, engine: boolean) {
+	if (step === 'tryAgain') retryStart(attempt, engine);
 	else if (step === 'restartBox') powerOpen = true;
 	else if (step === 'openServer') serverDialogOpen = true;
 	else if (step === 'openNetwork') void handleManageLinks();
@@ -362,13 +401,14 @@ function runNextStep(step: StartFailureNextStep) {
 
 function startFailureToast(failure: NonNullable<typeof streamingStartFailure>) {
 	const attempt = (failure as { attemptId?: string }).attemptId;
+	const engine = isEngineStartFailure(failure);
+	let repeated = false;
 	if (attempt === undefined || attempt !== failureMemory.lastAttempt) {
 		failureMemory.lastAttempt = attempt;
-		failureMemory.engineStreak = isEngineStartFailure(failure)
-			? failureMemory.engineStreak + 1
-			: 0;
+		const retriedAt = failureMemory.retriedAt;
+		repeated = engine && retriedAt !== undefined && Date.now() - retriedAt < RETRY_WINDOW_MS;
+		failureMemory.retriedAt = undefined;
 	}
-	const repeated = isEngineStartFailure(failure) && failureMemory.engineStreak > 1;
 	const step = startFailureNextStep(failure, repeated);
 	const message = startFailureMessage(failure, repeated);
 	if (step === undefined) {
@@ -379,7 +419,10 @@ function startFailureToast(failure: NonNullable<typeof streamingStartFailure>) {
 	toast.error(message, {
 		class: VIEW_LOGS_TOAST_CLASS,
 		duration: 12_000,
-		action: { label: m[NEXT_STEP_ACTION[step]](), onClick: () => runNextStep(step) },
+		action: {
+			label: m[NEXT_STEP_ACTION[step]](),
+			onClick: () => runNextStep(step, attempt, engine),
+		},
 		cancel: { label: m["notifications.viewLogs"](), onClick: () => viewLogs(at) },
 	});
 }
@@ -1031,8 +1074,6 @@ const summaryAudio = $derived.by(() => {
 // immediately on click, then reconciles to authoritative is_streaming.
 async function handleStart(overrides: { source?: string } = {}) {
 	if (streamingOptimismState !== 'idle') return;
-	// Try again from a refusal repeats this start, implicit sole camera included.
-	lastStartOverrides = overrides;
 
 	// Fold the implicit sole-camera source (T10) in, then reconcile source →
 	// pipeline off the sources snapshot so the FE recognition gate and the
@@ -1268,7 +1309,7 @@ const configRows = $derived<ConfigRow[]>([
 			optimismState={streamingOptimismState}
 			{destinationValidated}
 			maxBitrate={config?.max_br}
-			onStart={handleStart}
+			onStart={handleStartFromBar}
 			onStop={handleStop}
 			onOpenSource={handleOpenSource}
 			onGoNetwork={handleManageLinks}

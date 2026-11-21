@@ -910,7 +910,7 @@
 	"live.startFailure.retriedThenFailed": "It kept failing after automatic retries. Open Settings → System Logs for details.",
 	"live.startFailure.waitForUpdate": "Start the stream again once the update finishes.",
 	"live.startFailure.next.tryAgain": "Try starting again.",
-	"live.startFailure.next.restartBox": "It failed again. Restarting the box usually clears this.",
+	"live.startFailure.next.restartBox": "It failed again. If it keeps failing, restart the box.",
 	"live.startFailure.next.openSetup": "Check the stream setup, then start again.",
 	"live.startFailure.mutationBlockedNetwork": "A modem change could not be undone, so its state is unknown. Check that modem in Network before streaming.",
 	"live.startFailure.action.tryAgain": "Try again",

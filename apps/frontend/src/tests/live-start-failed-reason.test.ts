@@ -24,18 +24,33 @@ const state = vi.hoisted(() => ({
 				captureCause?: string;
 		  }
 		| undefined,
+	// The idle Live bar's readiness inputs: ready by default (a capture source,
+	// a server and one usable link), so Try again passes the bar's gate.
+	config: {
+		relay_server: "fra",
+		max_br: 6000,
+		pipeline: "hdmi",
+		source: "cam-1",
+	} as Record<string, unknown>,
+	netif: { eth0: { enabled: true, ip: "192.0.2.10" } } as Record<
+		string,
+		unknown
+	>,
 }));
 const toastError = vi.hoisted(() => vi.fn());
+const reboot = vi.hoisted(() => vi.fn());
+const navigate = vi.hoisted(() => vi.fn());
 const startStreaming = vi.hoisted(() => vi.fn());
 
 vi.mock("svelte-sonner", () => ({ toast: { error: toastError } }));
 vi.mock("$lib/stores/navigation-lazy", () => ({
-	navigateToDestination: vi.fn(),
+	navigateToDestination: navigate,
 }));
 
 vi.mock("$lib/helpers/SystemHelper", () => ({
 	startStreaming,
 	stopStreaming: vi.fn(),
+	reboot,
 }));
 
 vi.mock("$lib/streaming/sources-view-model", () => ({
@@ -47,7 +62,7 @@ vi.mock("$lib/config", () => ({
 }));
 
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
-	getConfig: () => ({ relay_server: "fra", max_br: 6000, pipeline: "hdmi" }),
+	getConfig: () => state.config,
 	getIsStreaming: () => false,
 	getSensors: () => ({}),
 	getLinkTelemetry: () => null,
@@ -58,12 +73,22 @@ vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getIsConnected: () => true,
 	getCapabilities: () => undefined,
 	getConfigChange: () => undefined,
-	getNetif: () => ({}),
+	getNetif: () => state.netif,
 	getRelays: () => undefined,
 	getManagedIngestAccounts: () => [],
 	getStatus: () => ({}),
 	getPipelines: () => ({ pipelines: {} }),
-	getSources: () => undefined,
+	getSources: () => ({
+		sources: [
+			{
+				id: "cam-1",
+				displayName: "Camera",
+				available: true,
+				origin: "capture",
+				pipelineId: "hdmi",
+			},
+		],
+	}),
 }));
 
 vi.mock("$lib/rpc/streaming-optimism.svelte", () => ({
@@ -93,7 +118,10 @@ vi.mock("$main/live/CapabilityTierBanner.svelte", async () => ({
 	default: (await import("./fixtures/Noop.svelte")).default,
 }));
 vi.mock("$main/dialogs/ServerDialog.svelte", async () => ({
-	default: (await import("./fixtures/Noop.svelte")).default,
+	default: (await import("./fixtures/ServerDialogOpenProbe.svelte")).default,
+}));
+vi.mock("$main/dialogs/PowerDialog.svelte", async () => ({
+	default: (await import("./fixtures/PowerDialogOpenProbe.svelte")).default,
 }));
 vi.mock("$main/dialogs/AudioDialog.svelte", async () => ({
 	default: (await import("./fixtures/Noop.svelte")).default,
@@ -140,6 +168,10 @@ afterEach(() => {
 	startStreaming.mockReset();
 	clearRequestedDialog();
 	resetStartFailureMemory();
+	reboot.mockReset();
+	navigate.mockReset();
+	state.netif = { eth0: { enabled: true, ip: "192.0.2.10" } };
+	vi.restoreAllMocks();
 });
 
 describe("LiveView start-failure output", () => {
@@ -403,7 +435,11 @@ describe("LiveView start refusals end in a next step (phone UX)", () => {
 		expect(message).not.toContain("System Logs");
 	});
 
-	it("Try again starts the stream again", async () => {
+	function action(call = toastError.mock.calls.at(-1)) {
+		return call?.[1] as { action: { onClick: () => void } } | undefined;
+	}
+
+	it("Try again sends one Start through the Live bar's gate", async () => {
 		state.failure = {
 			class: "start_timeout",
 			phase: "confirm",
@@ -413,23 +449,63 @@ describe("LiveView start refusals end in a next step (phone UX)", () => {
 		render(LiveView);
 		await tick();
 		startStreaming.mockResolvedValue({ success: true });
-		toastError.mock.calls[0]?.[1]?.action.onClick();
-		await waitFor(() => expect(state.startOptimism).toHaveBeenCalled());
+		action()?.action.onClick();
+		await waitFor(() => expect(startStreaming).toHaveBeenCalledTimes(1));
+		expect(startStreaming.mock.calls[0]?.[0]).toMatchObject({
+			source: "cam-1",
+		});
 	});
 
-	it("the same engine failure right after a retry offers Restart box", async () => {
+	it("Try again sends nothing when a gate has blocked since the refusal", async () => {
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_blocked",
+		};
+		render(LiveView);
+		await tick();
+		// The only link dropped after the refusal: the Live bar would refuse Start now.
+		state.netif = {};
+		action()?.action.onClick();
+		await tick();
+		expect(state.startOptimism).not.toHaveBeenCalled();
+		expect(startStreaming).not.toHaveBeenCalled();
+	});
+
+	it("Try again from a refusal that is no longer current sends nothing", async () => {
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_old",
+		};
+		render(LiveView);
+		await tick();
+		const old = action();
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_newer",
+		};
+		old?.action.onClick();
+		await tick();
+		expect(startStreaming).not.toHaveBeenCalled();
+	});
+
+	it("Restart box follows only an engine refusal that came back after Try again", async () => {
 		state.failure = {
 			class: "engine_internal",
 			phase: "start-rpc",
 			retriable: false,
 			attemptId: "att_first",
 		};
-		const { rerender } = render(LiveView);
+		render(LiveView);
 		await tick();
-		expect(toastError).toHaveBeenLastCalledWith(
-			`${startFailure.class.engine_internal} ${startFailure.next.tryAgain}`,
-			nextStep(startFailure.action.tryAgain),
-		);
+		startStreaming.mockResolvedValue({ success: true });
+		action()?.action.onClick();
+		await waitFor(() => expect(startStreaming).toHaveBeenCalledTimes(1));
 		cleanup();
 		toastError.mockReset();
 		state.failure = {
@@ -444,10 +520,141 @@ describe("LiveView start refusals end in a next step (phone UX)", () => {
 			`${startFailure.class.engine_unavailable} ${startFailure.next.restartBox}`,
 			nextStep(startFailure.action.restartBox),
 		);
-		void rerender;
 	});
 
-	it("no next-step copy points at System Logs, in any locale", async () => {
+	it("a later engine refusal without Try again still offers Try again, not Restart box", async () => {
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_a1",
+		};
+		render(LiveView);
+		await tick();
+		cleanup();
+		toastError.mockReset();
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_a2",
+		};
+		render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenLastCalledWith(
+			`${startFailure.class.engine_internal} ${startFailure.next.tryAgain}`,
+			nextStep(startFailure.action.tryAgain),
+		);
+	});
+
+	it("a refusal more than two minutes after Try again offers Try again again", async () => {
+		const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_t1",
+		};
+		render(LiveView);
+		await tick();
+		startStreaming.mockResolvedValue({ success: true });
+		action()?.action.onClick();
+		await waitFor(() => expect(startStreaming).toHaveBeenCalledTimes(1));
+		cleanup();
+		toastError.mockReset();
+		now.mockReturnValue(1_000_000 + 121_000);
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_t2",
+		};
+		render(LiveView);
+		await tick();
+		expect(toastError).toHaveBeenLastCalledWith(
+			`${startFailure.class.engine_internal} ${startFailure.next.tryAgain}`,
+			nextStep(startFailure.action.tryAgain),
+		);
+	});
+
+	it("Restart box opens the guarded reboot sheet and reboots nothing by itself", async () => {
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_r1",
+		};
+		render(LiveView);
+		await tick();
+		startStreaming.mockResolvedValue({ success: true });
+		action()?.action.onClick();
+		await waitFor(() => expect(startStreaming).toHaveBeenCalledTimes(1));
+		cleanup();
+		state.failure = {
+			class: "engine_internal",
+			phase: "start-rpc",
+			retriable: false,
+			attemptId: "att_r2",
+		};
+		const { findByTestId } = render(LiveView);
+		await tick();
+		action()?.action.onClick();
+		expect(await findByTestId("power-dialog-open")).toBeTruthy();
+		expect(reboot).not.toHaveBeenCalled();
+	});
+
+	it("Open destination opens the destination dialog", async () => {
+		state.failure = {
+			class: "start_invalid",
+			phase: "params",
+			code: "srt_encryption_unavailable",
+			retriable: false,
+			attemptId: "att_dest",
+		};
+		const { findByTestId } = render(LiveView);
+		await tick();
+		action()?.action.onClick();
+		expect(await findByTestId("server-dialog-open")).toBeTruthy();
+	});
+
+	it("Open Network goes to the Network page", async () => {
+		state.failure = {
+			class: "mutation_blocked",
+			phase: "params",
+			retriable: false,
+			attemptId: "att_net",
+		};
+		render(LiveView);
+		await tick();
+		action()?.action.onClick();
+		await waitFor(() => expect(navigate).toHaveBeenCalledWith("network"));
+	});
+
+	it("Open stream setup brings the setup card into view and focuses it", async () => {
+		state.failure = {
+			class: "start_invalid",
+			phase: "params",
+			retriable: false,
+			attemptId: "att_setup",
+		};
+		const card = document.createElement("div");
+		card.dataset.testid = "stream-setup-chain";
+		const button = document.createElement("button");
+		card.append(button);
+		card.scrollIntoView = vi.fn();
+		document.body.append(card);
+		try {
+			render(LiveView);
+			await tick();
+			action()?.action.onClick();
+			expect(card.scrollIntoView).toHaveBeenCalled();
+			expect(document.activeElement).toBe(button);
+		} finally {
+			card.remove();
+		}
+	});
+
+	it("the next-step strings exist in every locale, and the English ones never point at System Logs", async () => {
 		const { ar, de, es, fr, hi, ja, ko, ptBR, zh } = await import(
 			"./helpers/catalog"
 		);
@@ -467,6 +674,20 @@ describe("LiveView start refusals end in a next step (phone UX)", () => {
 				expect(text.length).toBeGreaterThan(0);
 			}
 		}
-		expect(en.live.startFailure.next.openSetup).not.toContain("System Logs");
+		const f = en.live.startFailure;
+		for (const text of [
+			f.next.tryAgain,
+			f.next.restartBox,
+			f.next.openSetup,
+			f.mutationBlockedNetwork,
+			f.action.tryAgain,
+			f.action.restartBox,
+			f.action.openSetup,
+			f.action.openServer,
+			f.action.openNetwork,
+		]) {
+			expect(text).not.toContain("System Logs");
+			expect(text).not.toContain("Settings");
+		}
 	});
 });

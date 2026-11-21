@@ -915,7 +915,7 @@
 	"live.startFailure.retriedThenFailed": "Continuou falhando mesmo após as novas tentativas automáticas. Veja Configurações → Registros do sistema para detalhes.",
 	"live.startFailure.waitForUpdate": "Inicie a transmissão de novo quando a atualização terminar.",
 	"live.startFailure.next.tryAgain": "Tente iniciar de novo.",
-	"live.startFailure.next.restartBox": "Falhou de novo. Reiniciar o aparelho costuma resolver.",
+	"live.startFailure.next.restartBox": "Falhou de novo. Se continuar falhando, reinicie o aparelho.",
 	"live.startFailure.next.openSetup": "Confira a configuração da transmissão e inicie de novo.",
 	"live.startFailure.mutationBlockedNetwork": "Não foi possível desfazer uma alteração no modem, então o estado dele é desconhecido. Confira esse modem em Rede antes de transmitir.",
 	"live.startFailure.action.tryAgain": "Tentar de novo",

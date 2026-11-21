@@ -835,7 +835,7 @@
 	"live.startFailure.retriedThenFailed": "自动重试后仍然失败。详情请查看 设置 → 系统日志。",
 	"live.startFailure.waitForUpdate": "更新完成后，请重新开始推流。",
 	"live.startFailure.next.tryAgain": "请再试一次开播。",
-	"live.startFailure.next.restartBox": "再次失败。重启设备通常可以解决。",
+	"live.startFailure.next.restartBox": "再次失败。如果持续失败，请重启设备。",
 	"live.startFailure.next.openSetup": "请检查直播设置，然后重新开播。",
 	"live.startFailure.mutationBlockedNetwork": "某个调制解调器的更改无法撤销，因此其状态未知。开播前请在网络中检查该调制解调器。",
 	"live.startFailure.action.tryAgain": "重试",

@@ -930,7 +930,7 @@
 	"live.startFailure.retriedThenFailed": "استمر الفشل بعد إعادة المحاولة تلقائيًا. افتح الإعدادات ← سجلات النظام للحصول على التفاصيل.",
 	"live.startFailure.waitForUpdate": "ابدأ البث مجددًا بعد انتهاء التحديث.",
 	"live.startFailure.next.tryAgain": "حاول بدء البث مرة أخرى.",
-	"live.startFailure.next.restartBox": "فشل مرة أخرى. إعادة تشغيل الجهاز تحل هذا عادةً.",
+	"live.startFailure.next.restartBox": "فشل مرة أخرى. إذا استمر الفشل، أعد تشغيل الجهاز.",
 	"live.startFailure.next.openSetup": "تحقق من إعدادات البث، ثم ابدأ مرة أخرى.",
 	"live.startFailure.mutationBlockedNetwork": "تعذّر التراجع عن تغيير في المودم، لذا حالته غير معروفة. تحقق من هذا المودم في الشبكة قبل البث.",
 	"live.startFailure.action.tryAgain": "حاول مرة أخرى",
