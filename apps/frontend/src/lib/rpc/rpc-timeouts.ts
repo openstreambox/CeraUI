@@ -16,6 +16,9 @@ export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	// Boot sweep + pre-open sweep + open/rollback + retirement, plus identity reads.
 	"wifi.portal": 540_000,
 	"modems.esimOperation": 245_000,
+	// The device bounds a support bundle at 60 s; leave room for delivery.
+	"logs.previewBundle": 75_000,
+	"logs.createBundle": 75_000,
 };
 
 export function rpcCallTimeoutMs(path: string): number {
