@@ -3573,6 +3573,8 @@
 	"notifications.power.restingWeak": "移动电源 {bank} 输出偏弱，已暂停供电。",
 	"notifications.power.resting": "移动电源 {bank} 已暂停供电。",
 	"notifications.power.peer": "移动电源 {bank} 正在为设备供电。",
+	"notifications.power.restLost": "移动电源 {bank} 在暂停供电期间停止响应。它可能已自动关机：请按一下它的按钮，或重新插上。",
+	"notifications.power.restLostHot": "移动电源 {bank} 在暂停供电期间停止响应。它可能已自动关机：请先让它冷却，然后按一下它的按钮，或重新插上。",
 	"notifications.power.bench": "电源保护处于测试模式：只报告。",
 	"notifications.power.protection": "电源板报告保护能力降低。需要检查。",
 	"notifications.power.calibration": "备用电池没有过热保护：其传感器尚未设置。",
