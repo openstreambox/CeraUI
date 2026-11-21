@@ -90,7 +90,10 @@ const transferred = $derived(
 );
 
 // Shared 4-column track so header, rows, and totals stay aligned on any width.
-const COLS = 'grid grid-cols-[minmax(0,1.4fr)_1fr_1fr_1fr] gap-x-3';
+// The name takes the free width (it can be "SIM 2 · operator" or a network
+// name now); the three readings take what they need.
+const COLS =
+	'grid grid-cols-[minmax(0,1fr)_minmax(3.5rem,auto)_minmax(2rem,auto)_minmax(3rem,auto)] gap-x-3';
 
 // Per-link RTT-trend derivation — constants, math, and the memoizing cache — lives
 // in `ingest-link-view.ts` (pure + unit-testable). RING_CAPACITY bounds the ring
