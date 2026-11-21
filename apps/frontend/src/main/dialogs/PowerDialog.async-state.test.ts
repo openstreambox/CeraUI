@@ -244,7 +244,7 @@ describe("phone-only power admission", () => {
 				screen.getByText(
 					stateValue === "unknown"
 						? "You can restart or power off once the box knows whether a device is sending through it."
-						: "You can restart once the stream through the box has stopped.",
+						: "You can restart once no device is sending through the box.",
 				),
 			).toBeTruthy();
 			expect(rebootRpc).not.toHaveBeenCalled();

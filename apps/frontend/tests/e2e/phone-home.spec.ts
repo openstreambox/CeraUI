@@ -12,7 +12,7 @@ for (const width of [390,1280,1024]) {
   expect(await home.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
   await page.screenshot({path:evidencePath(`phone-home-checking-${width}.png`),fullPage:true});
   await expect(home).not.toContainText(/engine offline|not live|idle/i);
-  for (const [state,heading,badge] of [['streaming',"Carrying your stream",'CARRYING'],['idle','Ready to carry your stream','READY']] as const) {
+  for (const [state,heading,badge] of [['streaming',"A device is sending through the box",'CARRYING'],['idle','Box ready','READY']] as const) {
    await pageRpc.call(['dev','emit'],{type:'status',payload:{phone_box:true,carrying:{state},box_health:[]}});
    await expect(page.getByRole('heading',{name:heading})).toBeVisible();
    await expect(page.getByTestId('phone-hud')).toHaveText(badge);
@@ -31,7 +31,7 @@ for (const width of [390,1280,1024]) {
   if(width!==1280) await expect(home.locator('img')).toHaveCount(0);
   expect(await home.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
   await page.screenshot({path:evidencePath(`phone-connect-srt-${width}.png`),fullPage:true});
-  await expect(home).toContainText("Nothing after 30 seconds? Check that your device is on the box's Wi-Fi and that the address and passphrase match.");
+  await expect(home).toContainText("Nothing after 30 seconds? Check that the sending device is on the box's Wi-Fi and that the address and passphrase match.");
   await home.getByRole('button',{name:'Change app',exact:true}).click();
   await home.getByRole('button',{name:'Moblin',exact:true}).click();
   await expect(home.getByLabel("Moblin's password (from Moblin, not the Wi-Fi password)")).toBeVisible();

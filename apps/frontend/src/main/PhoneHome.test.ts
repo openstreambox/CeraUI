@@ -16,7 +16,9 @@ describe("phone Home", () => {
 	it("renders the carrying card without encoder controls", () => {
 		render(PhoneHome, { carrying: "streaming" });
 		expect(
-			screen.getByRole("heading", { name: "Carrying your stream" }),
+			screen.getByRole("heading", {
+				name: "A device is sending through the box",
+			}),
 		).toBeTruthy();
 		expect(screen.queryByText(/engine offline|not live|idle/i)).toBeNull();
 	});
@@ -102,7 +104,7 @@ it("offers Just internet at both SRT dead ends with the SRT hint", async () => {
 	).toHaveLength(2);
 	expect(
 		screen.getByText(
-			"This box isn't set up to take SRT from an app yet. Use Just internet for now.",
+			"The box's SRT input isn't set up yet. Use Just internet for now.",
 		),
 	).toBeTruthy();
 	expect(
@@ -131,20 +133,18 @@ it("explains the startup restart hold", () => {
 });
 
 it.each(["streaming", "idle", "unknown"] as const)(
-	"shows state-specific degraded health while %s",
+	"names the failed part and only the links with internet while %s",
 	(carrying) => {
 		render(PhoneHome, {
 			carrying,
 			health: [{ part: "cellular", since: 1 }],
 			links: [{ id: "L1", label: "Wi-Fi (Example)", internet: "yes" }],
 		});
+		// Internet probes are not routes: the line never says the stream goes over these links.
 		expect(
-			screen.getByText(
-				carrying === "streaming"
-					? /didn't start. Your stream is going over Wi-Fi/
-					: /didn't start. Links that work: Wi-Fi/,
-			),
+			screen.getByText(/modems didn't start. Links that work: Wi-Fi/),
 		).toBeTruthy();
+		expect(screen.queryByText(/going over/)).toBeNull();
 	},
 );
 it("keeps maintenance-only failure out of the amber line", () => {

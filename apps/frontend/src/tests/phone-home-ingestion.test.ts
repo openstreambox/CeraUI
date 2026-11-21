@@ -42,9 +42,9 @@ describe("phone Home consumes carrying broadcasts", () => {
 			}),
 		).toBeTruthy();
 		for (const [state, heading] of [
-			["streaming", "Carrying your stream"],
+			["streaming", "A device is sending through the box"],
 			["unknown", "Checking whether a device is sending through the box"],
-			["idle", "Ready to carry your stream"],
+			["idle", "Box ready"],
 		] as const) {
 			messageHandler?.(
 				"status",

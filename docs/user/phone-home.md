@@ -1,15 +1,17 @@
 # Home on a box without an encoder
 
 On an image configured with `engine: none`, the first tab is Home. It follows
-client traffic through the box: Carrying your stream, Ready to carry your
-stream, or Checking whether a device is sending through the box. These are
-observations of the box only. Check the stream itself.
+client upload traffic through the box: A device is sending through the box,
+Box ready, or Checking whether a device is sending through the box. These are
+observations of the box only; they don't say which link carries a stream or
+what happens off the box. Check the stream itself.
 
 Connect a device offers Moblin, IRL Pro, another SRT app, or Just internet.
 For SRT, configure the listener and an SRTLA receiver first. The screen copies
 the configured listener address and passphrase; it never invents credentials.
-Computer screens offer Wi-Fi and address QR codes (the Wi-Fi code behind Show
-code, see below). Phone and touch layouts use Copy. Passwords have no plain-text QR and should be kept off camera and out of screenshots.
+The wide layout shows Wi-Fi and address QR codes (the Wi-Fi code behind Show
+code, see below), except on the box's own touch screen. Copy is available in
+every layout. Passwords have no plain-text QR and should be kept off camera and out of screenshots.
 
 Moblin: copy the password from Moblin Settings › Moblink › Password into the
 box. A local device operator can save, replace or clear it only while the box
@@ -61,7 +63,8 @@ está comprobando. Solo describe lo que observa la caja: comprueba la emisión.
 
 La conexión ofrece Moblin, IRL Pro, otra aplicación SRT o solo internet. SRT usa
 la dirección y la contraseña configuradas en la caja. Los códigos QR de Wi-Fi y
-de la dirección solo aparecen en pantallas de ordenador; el teléfono usa Copiar.
+de la dirección aparecen en la vista ancha, excepto en la pantalla táctil de la
+caja. Copiar está disponible en todas las vistas.
 Mantén las contraseñas fuera de cámara. Sin el relé administrado, la caja
 muestra esa limitación y ofrece solo internet.
 
@@ -140,7 +143,7 @@ contraseña generada y persistida del receptor, o la configurada explícitamente
 
 Power off is available during Checking only while the box reports its initial 120-second startup check. Later unknown traffic holds both restart and power off, including an already-open confirmation. Missing startup evidence also holds power off.
 
-Apagar solo está disponible durante la comprobación inicial de 120 segundos que confirma el equipo. Si después se desconoce el tráfico, se bloquean tanto reiniciar como apagar, incluso en una confirmación abierta. Si falta esa confirmación inicial, apagar también queda bloqueado.
+Mientras la caja comprueba el tráfico, solo se puede apagar durante la comprobación inicial de 120 segundos que confirma el equipo. Si después se desconoce el tráfico, se bloquean tanto reiniciar como apagar, incluso en una confirmación abierta. Si falta esa confirmación inicial, apagar también queda bloqueado.
 
 Initial connections and reconnect status pulls include the backend startup permission, so opening Home midway through the window preserves confirmed power-off. After expiry, the blocked reason names both restart and power off.
 
