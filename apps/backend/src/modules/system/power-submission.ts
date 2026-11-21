@@ -1,9 +1,12 @@
+import type { PowerFailureReason } from "@ceraui/rpc";
 import { logger } from "../../helpers/logger.ts";
 import { emitDeviceEvent } from "../events/device-emit.ts";
 import { notePlannedShutdown } from "../streaming/armed-stream-marker.ts";
 import { notifyDisruptiveActionRefused } from "./disruptive-action-refusal.ts";
 import {
+	classifyPowerFailure,
 	isPositiveDisruptiveFailure,
+	PowerSubmissionError,
 	reservePowerAction,
 } from "./disruptive-action-reservation.ts";
 import { getDisruptiveActionDecision } from "./disruptive-action-runtime.ts";
@@ -11,7 +14,7 @@ import { getDisruptiveActionDecision } from "./disruptive-action-runtime.ts";
 export function submitPowerCommand(
 	command: "reboot" | "poweroff",
 	runner: (command: "reboot" | "poweroff") => void,
-): { success: boolean; error?: string } {
+): { success: boolean; error?: string; failureReason?: PowerFailureReason } {
 	const admission = reservePowerAction(
 		getDisruptiveActionDecision({ powerAction: command }),
 		command,
@@ -35,6 +38,10 @@ export function submitPowerCommand(
 		logger.error("System power submission failed", { command, error });
 		return {
 			success: false,
+			failureReason:
+				error instanceof PowerSubmissionError
+					? classifyPowerFailure(error.exitCode, error.stderr)
+					: "shutdown_unavailable",
 			error: error instanceof Error ? error.message : "power_submission_failed",
 		};
 	}
