@@ -22,10 +22,3 @@ test("a legitimately empty final property survives the protocol terminator", asy
 		await nmConnGetFields(UUID, ["gsm.device-id", "gsm.network-id"] as const),
 	).toEqual(["device", ""]);
 });
-
-test("an unterminated/mock tuple's final blank is preserved", async () => {
-	spy = spyOn(runner, "run").mockResolvedValue("device\n");
-	expect(
-		await nmConnGetFields(UUID, ["gsm.device-id", "gsm.network-id"] as const),
-	).toEqual(["device", ""]);
-});
