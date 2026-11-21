@@ -146,6 +146,38 @@ export async function writeNmWifiSecret(
 	const publication = stageKeyfilePublication(expected, original, temporary);
 	let stage: "file-publish-failed" | "load-failed" | "post-read-failed" =
 		"file-publish-failed";
+	let loaded = false;
+	/*
+	  Once NM may have loaded the submitted keyfile, a rejection alone would leave
+	  NM on the new values while every caller keeps the old ones. Put the original
+	  back (only over our own bytes) and reload, so a rejected write leaves NM's
+	  profile as it found it, then prove that with a fresh read.
+	*/
+	const rollBack = async (
+		reason: Parameters<typeof reject>[0],
+	): Promise<false> => {
+		reject(reason);
+		try {
+			if (!publication.restore(submitted)) return false;
+			await run("nmcli", ["connection", "load", filename]);
+			const restored = await readNmProfileInstance(uuid);
+			const current = await openNmProfileFile(restored?.file);
+			try {
+				if (
+					restored?.fingerprint === before.fingerprint &&
+					current?.bytes.equals(original)
+				)
+					logger.warn("NM profile write rolled back");
+				else logger.error("NM profile rollback could not be verified");
+			} finally {
+				await current?.handle.close();
+			}
+		} catch (error: unknown) {
+			if (!(error instanceof Error)) throw error;
+			logger.error("NM profile rollback could not be verified");
+		}
+		return false;
+	};
 	try {
 		const file = await open(temporary, "wx", 0o600);
 		try {
@@ -164,6 +196,7 @@ export async function writeNmWifiSecret(
 			return reject("publish-target-replaced");
 		stage = "load-failed";
 		publication.beginLoad();
+		loaded = true;
 		await run("nmcli", ["connection", "load", filename]);
 		stage = "post-read-failed";
 		const trace: NmProfileReadTrace = {};
@@ -176,7 +209,7 @@ export async function writeNmWifiSecret(
 			trace,
 		);
 		if (!after)
-			return reject(
+			return await rollBack(
 				trace.exit === "fields-unreadable"
 					? "post-read-fields-unreadable"
 					: trace.exit === "submitted-settings-mismatch"
@@ -185,16 +218,16 @@ export async function writeNmWifiSecret(
 							? "post-read-secret-unreadable"
 							: "post-read-unverified",
 			);
-		if (!after.file) return reject("post-file-unreadable");
-		if (after.runId !== before.runId) return reject("post-run-changed");
-		if (after.path !== before.path) return reject("post-path-changed");
+		if (!after.file) return await rollBack("post-file-unreadable");
+		if (after.runId !== before.runId) return await rollBack("post-run-changed");
+		if (after.path !== before.path) return await rollBack("post-path-changed");
 		if (!publication.ownsLive(submitted))
 			return reject("publish-target-replaced");
 		publication.commit();
 		return true;
 	} catch (error: unknown) {
 		if (!(error instanceof Error)) throw error;
-		return reject(stage);
+		return loaded ? await rollBack(stage) : reject(stage);
 	} finally {
 		await publication.finish(submitted);
 	}

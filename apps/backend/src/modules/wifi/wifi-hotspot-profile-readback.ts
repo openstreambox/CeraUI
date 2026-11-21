@@ -63,6 +63,23 @@ function withoutActivationTimestamp(
 	};
 }
 
+/** Same NM object and settings, same inode and name; only the file's ctime may differ. */
+function sameNmProfileRestoration(
+	before: NmProfileInstance,
+	after: NmProfileInstance,
+): boolean {
+	return Boolean(
+		before.file &&
+			after.file &&
+			before.runId === after.runId &&
+			before.path === after.path &&
+			before.fingerprint === after.fingerprint &&
+			before.file.filename === after.file.filename &&
+			before.file.device === after.file.device &&
+			before.file.inode === after.file.inode,
+	);
+}
+
 /** Read-only comparison; dispatch, retirement and record updates belong to the operation owner. */
 export async function classifyHotspotProfileReadback(
 	witness: ProfileWriteWitness,
@@ -114,15 +131,17 @@ export async function classifyHotspotProfileReadback(
 			const current = await openNmProfileFile(after.file, trace);
 			try {
 				if (!acknowledged) {
-					const unchanged = Boolean(
-						sameNmProfileResource(before, after) &&
-							original?.equals(held.bytes) &&
-							current?.bytes.equals(held.bytes),
+					const sameBytes = Boolean(
+						original?.equals(held.bytes) && current?.bytes.equals(held.bytes),
 					);
+					const unchanged = sameBytes && sameNmProfileResource(before, after);
+					// A rejected write that put the original inode back moved only its ctime.
+					const restored =
+						!unchanged && sameBytes && sameNmProfileRestoration(before, after);
 					return {
-						checked: unchanged,
-						instance: unchanged ? before : undefined,
-						exit: unchanged ? undefined : "modify-failure-changed",
+						checked: unchanged || restored,
+						instance: unchanged ? before : restored ? after : undefined,
+						exit: unchanged || restored ? undefined : "modify-failure-changed",
 					};
 				}
 				if (

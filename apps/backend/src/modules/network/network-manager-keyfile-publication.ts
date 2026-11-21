@@ -62,6 +62,29 @@ export function stageKeyfilePublication(
 		commit: () => {
 			committed = true;
 		},
+		/**
+		 * After a load, put the parked original back under the live name, but only
+		 * while that name still holds our bytes: a successor written by anyone else
+		 * stays live and the original stays parked. The caller reloads NM.
+		 */
+		restore(expected: Buffer): boolean {
+			if (!parked || committed || !matches(live, expected)) return false;
+			try {
+				renameSync(live, moved);
+				keepMoved = true;
+				const ours = matches(moved, expected);
+				// linkSync refuses an entry that appeared meanwhile; nothing is overwritten.
+				linkSync(ours ? previous : moved, live);
+				keepMoved = false;
+				if (!ours) return false;
+				parked = false;
+				return hasBytes(live, original, bytes);
+			} catch (error) {
+				if (!(error instanceof Error)) throw error;
+				logger.error("NM keyfile restoration failed", { filename: live });
+				return false;
+			}
+		},
 		async finish(expected: Buffer) {
 			try {
 				if (parked && !loadStarted) {

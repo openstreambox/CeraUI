@@ -220,7 +220,12 @@ export async function runHotspotProfileOperation(
 			} else if (kind === "delete" && after === null) {
 				for (const entry of bound)
 					clearHotspotProfileCreation(entry.owner, uuid);
-			} else if (kind === "modify" && acknowledged && instance) {
+			} else if (
+				kind === "modify" &&
+				instance &&
+				(acknowledged || instance !== before)
+			) {
+				// A committed write, or a rejected one rolled back onto the original inode.
 				const record = evidence?.recordCreation ?? recordHotspotProfileCreation;
 				for (const entry of bound) {
 					if (
