@@ -30768,6 +30768,13 @@
       "message": "\"wifi\"",
       "fields": [
         {
+          "path": "hotspot.*.attempt",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "hotspot.*.device",
           "types": [
             "string",
@@ -44002,12 +44009,12 @@
     "apps/backend/src/modules/ui/notifications.ts": "ffe408b78e2f04ffa037890131f177b50569f6530f4cc89208fb6eaf7bd8fd95",
     "apps/backend/src/modules/ui/status.ts": "3579bc2c06c5b15788015229c0d581997518f56910af10a485a44f0eacdf181f",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
-    "apps/backend/src/modules/wifi/wifi-country.ts": "01a76e8a13f831f6fe8065f542f2523075b5b7206b2985c841fcf6e2283e7eef",
-    "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "7810d76ef058d939586ae056016b171607ec24756f0aa0bf4fbfeb4b5e02a017",
-    "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "77d98da72c619389315b6ea54c2d68d218d0bd7a22ae8477f222fc721062a524",
-    "apps/backend/src/modules/wifi/wifi-hotspot-types.ts": "a671ef3553be84821c8c93ed178132b65f55cea061f2aad0b748510fbb3e5944",
-    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "b7392ceae395866b216a5712c675b42e6d323b09371b4f1e722be1b611f799c9",
-    "apps/backend/src/modules/wifi/wifi.ts": "f1174cb9957e074bb22091f25e033f37f0668f7295407ed8b10097b3057da6f4",
+    "apps/backend/src/modules/wifi/wifi-country.ts": "b9e350f52a819d5cc84fd8a742424ce73c29b35ebb03136b0fd36aea31f4b422",
+    "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "acdfaa83e8a4b246bbd8299c426bf5ba76dafa275e3956de12fc0e05c5d71fb2",
+    "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "8e599c2a0b7b2fc1772892d89ef51346eb88b77371bf458074b8f1da6f96aea7",
+    "apps/backend/src/modules/wifi/wifi-hotspot-types.ts": "57da30aa904e04e2a644b9e86e79c579e400f6084d790faf7943d5af2a66c2e8",
+    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "f39b4a9b88fa95204e269f0bd8f0b051c12e137fc83aeaaaefe9dbce5c252d13",
+    "apps/backend/src/modules/wifi/wifi.ts": "567f85bf7a449aaacbd1649e21191c9a91e3bb410ee1c9fec7d47b20fc46b05b",
     "apps/backend/src/rpc/compat.ts": "6902642f8e2bae6039ac29880faa4bd7e92ffbea9a77be7c3a428da467d115ec",
     "apps/backend/src/rpc/procedures/audio-mix.procedure.ts": "77fb8974d0078221af7388c1bd211d485af80e5bf0a3b9d433308116f46f0535",
     "apps/backend/src/rpc/procedures/network.procedure.ts": "64c7b15f4efe979e31f7fc7d2c4e4ed05e72580cf431f6dacc27ebbf48777bf3",
@@ -44032,6 +44039,6 @@
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
     "packages/rpc/src/schemas/system.schema.ts": "872ce7a357ba980c078865c3c8804b35e746284e901834a9c5208d697907288d",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",
-    "packages/rpc/src/schemas/wifi.schema.ts": "7f00a2f78b31e04fcba47c22e000f2d8bbd4ece1069a3c78b9fc577b0a6f0dbb"
+    "packages/rpc/src/schemas/wifi.schema.ts": "60305d4fd1df2a3531ff71aa42c1f2ac11e59bcc9785fb560c41100d0d093b92"
   }
 }
