@@ -54,8 +54,13 @@ it.each(["current", "timeout", "reconnect", "recreate"])(
 			});
 		}
 		reply.resolve({ success: false });
-		expect(await first).toEqual({ success: false });
-		expect(onResult).toHaveBeenCalledExactlyOnceWith({ success: false });
+		if (lifetime === "current") {
+			expect(await first).toEqual({ success: false });
+			expect(onResult).toHaveBeenCalledExactlyOnceWith({ success: false });
+		} else {
+			expect(await first).toBeUndefined();
+			expect(onResult).not.toHaveBeenCalled();
+		}
 		expect(getOperationPhase("clear-refusal")).toBe(
 			lifetime === "current" ? "idle" : "pending",
 		);
