@@ -13,7 +13,12 @@ import { projectWifiRadioIncarnation } from "../../modules/wifi/wifi-radio-publi
 import type { RadioFixture } from "./wifi-radio-equivalence.ts";
 import { fakeShadowSysfs } from "./wifi-radio-equivalence-shadow.ts";
 
-type Sysfs = { ifindex: number; phy: number; permanent: string | undefined };
+type Sysfs = {
+	ifindex: number;
+	phy: number;
+	permanent: string | undefined;
+	devicePath?: string | null;
+};
 
 export function portalRadioIdentity() {
 	let radios: RadioFixture[] = [];
