@@ -470,6 +470,8 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["automatic bearer family reconciliation deferred"],
 	["automatic carrier intent is unreadable"],
 	["automatic carrier profile reconciliation deferred"],
+	["automatic profile redial did not complete"],
+	["automatic profile redial"],
 	["autostart aborted"],
 	["autostart cancelled"],
 	["autostart complete"],
