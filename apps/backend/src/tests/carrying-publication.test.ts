@@ -37,8 +37,13 @@ test("production startup stays protected and repeated reports do not rewrite the
 		expect(getCarryingLiveness()).not.toBe("idle");
 		for (let i = 0; i < 5; i++)
 			carryingTracker.session("rtmp-ingest", false, performance.now());
+		// The line is written once, directly or through its renamed sibling.
 		expect(
-			write.mock.calls.filter(([path]) => path === otaStreamingMarkerPath()),
+			write.mock.calls.filter(
+				([path]) =>
+					path === otaStreamingMarkerPath() ||
+					path === `${otaStreamingMarkerPath()}.new`,
+			),
 		).toHaveLength(1);
 		const clock = spyOn(performance, "now").mockReturnValue(
 			performance.now() + 120000,
