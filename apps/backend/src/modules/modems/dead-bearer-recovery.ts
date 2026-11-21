@@ -23,8 +23,11 @@
     out there, and a dead bearer keeps the translator's lease up for minutes,
     so skipping such a modem left it dead for that whole time. Both the TUN
     and the native IPv6 address ride the same bearer, so a translated modem
-    whose native IPv6 still reads `up` is not reconnected, and one whose TUN
-    has no record yet is left alone;
+    whose native IPv6 still reads `up` with fresh evidence is not
+    reconnected, and one whose TUN has no record yet is left alone. Both
+    records count only while fresh: a native record that stopped refreshing
+    vetoes nothing, and a TUN record that stopped refreshing is no outage
+    (the hold restarts once fresh evidence returns);
   - while a stream runs, the sender has no fresh row for this interface: a
     link the sender is using and hearing back from is not dead, whatever the
     probe says;
@@ -108,7 +111,7 @@ export interface DeadBearerInput {
 	readonly otherUplinkUp: boolean;
 	/** The profile is preparation-owned (autoconnect no + live grant). */
 	readonly owned: boolean;
-	/** Translated, and the modem's own native IPv6 still reads `up`. */
+	/** Translated, and the modem's own native IPv6 reads `up`, not stale. */
 	readonly nativeAnswers: boolean;
 	/** The sender has a fresh row for this interface while streaming. */
 	readonly carryingStream: boolean;
@@ -328,12 +331,21 @@ async function readInput(
 	const wallNow = deps.wallNow();
 	const tun = deps.clatTun(modem.ifname);
 	const native = deps.health(modem.ifname);
-	const record = tun === undefined ? native : deps.health(tun);
+	// A translated modem is judged only on fresh evidence from its TUN: an
+	// expired record says nothing about the bearer now.
+	const tunRecord = tun === undefined ? undefined : deps.health(tun);
+	const record =
+		tun === undefined
+			? native
+			: tunRecord !== undefined && tunRecord.staleAt > wallNow
+				? tunRecord
+				: undefined;
 	const base = {
 		now,
 		record,
 		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
-		nativeAnswers: tun !== undefined && native?.state === "up",
+		nativeAnswers:
+			tun !== undefined && native?.state === "up" && native.staleAt > wallNow,
 		carryingStream: carryingStream(
 			tun === undefined ? [modem.ifname] : [modem.ifname, tun],
 			wallNow,
@@ -381,7 +393,13 @@ export async function runDeadBearerRecovery(
 				const fresh = await readInput(id, key, memories.get(key) ?? before);
 				if (!fresh || fresh.uuid !== first.uuid) return;
 				const again = decideDeadBearer(fresh.input);
-				if (again.action !== "reconnect") return;
+				if (again.action !== "reconnect") {
+					// The translator's record expired during the owner reads: keep
+					// the cleared hold, so fresh failures later start a new one.
+					if (fresh.input.record === undefined && again.action === "none")
+						memories.set(key, again.memory);
+					return;
+				}
 				memories.set(key, again.memory);
 				deps.noteDial(key);
 				const iface = getModem(id)?.ifname;

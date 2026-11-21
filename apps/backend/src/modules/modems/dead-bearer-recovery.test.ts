@@ -205,6 +205,10 @@ describe("runDeadBearerRecovery", () => {
 	let others: UplinkHealthRecord[];
 	let clatParents: Record<string, string>;
 	let tunHealth: UplinkHealthRecord | undefined;
+	/** The modem's own record stops refreshing (its probes stopped reporting). */
+	let healthFrozen: boolean;
+	/** The translator's record stops refreshing too. */
+	let tunFrozen: boolean;
 	let streaming: boolean;
 	let telemetryRows: { iface: string; stale: boolean }[];
 	let autoconnect: string;
@@ -304,8 +308,10 @@ describe("runDeadBearerRecovery", () => {
 		while (now < until) {
 			now += 15_000;
 			wall += 15_000;
-			if (health?.state === "down") health = dead();
-			if (tunHealth)
+			if (health && !healthFrozen)
+				health =
+					health.state === "down" ? dead() : record({ state: "up" }, wall);
+			if (tunHealth && !tunFrozen)
 				tunHealth = tunHealth.state === "down" ? tunDead() : tunUp();
 			others = others.map((other) => ({ ...other, staleAt: wall + 15_000 }));
 			const before = calls.length;
@@ -325,6 +331,8 @@ describe("runDeadBearerRecovery", () => {
 		others = [];
 		clatParents = {};
 		tunHealth = undefined;
+		healthFrozen = false;
+		tunFrozen = false;
 		streaming = false;
 		telemetryRows = [];
 		autoconnect = "no";
@@ -412,6 +420,114 @@ describe("runDeadBearerRecovery", () => {
 		tunHealth = tunDead();
 		health = record({ state: "up" }, wall);
 		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	/*
+	  A native record that reads `up` but stopped refreshing is unknown, not an
+	  answer: the veto lifts and the translator's record decides, as it does for
+	  a translated modem with no native record at all.
+	*/
+	test("a stale native `up` does not veto a translated modem's reconnect", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = record({ state: "up" }, wall - 3_600_000);
+		healthFrozen = true;
+		expect(await pollUntil(120_000)).toEqual([75_000]);
+		expect(calls).toEqual([`down ${UUID}`, `up ${UUID} 45`]);
+	});
+
+	test("the native veto lifts once its record stops refreshing", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = record({ state: "up" }, wall);
+		// Native IPv6 answers for five minutes, then its record goes quiet.
+		expect(await pollUntil(300_000)).toEqual([]);
+		healthFrozen = true;
+		// Stale from 315 s (staleAt is not after the wall clock), then the hold.
+		expect(await pollUntil(420_000)).toEqual([375_000]);
+	});
+
+	test("an expired translator outage is not evidence once the native veto lifts", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = record({ state: "up" }, wall);
+		expect(await pollUntil(300_000)).toEqual([]);
+		// Both records go quiet while the lease stays usable; the bearer may
+		// have recovered after the last probe.
+		healthFrozen = true;
+		tunFrozen = true;
+		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	test("a translator outage that goes quiet mid-hold restarts the hold", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		// The outage is first seen at 15 s; at 45 s, short of the hold, the
+		// translator's record stops refreshing.
+		expect(await pollUntil(45_000)).toEqual([]);
+		tunFrozen = true;
+		expect(await pollUntil(90_000)).toEqual([]);
+		// Fresh again from 105 s: the hold counts from there.
+		tunFrozen = false;
+		expect(await pollUntil(200_000)).toEqual([165_000]);
+	});
+
+	test("a translator outage that expires under the lease restarts the hold", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		// The owner reads at 75 s take a second, and the translator's record
+		// expires in between: the reread under the lease sees no outage.
+		setDeadBearerDepsForTest({
+			...deps(),
+			nmState: async () => {
+				if (now === 75_000) {
+					now += 1_000;
+					wall += 1_000;
+				}
+				return "100";
+			},
+		});
+		expect(await pollUntil(60_000)).toEqual([]);
+		now += 15_000;
+		wall += 15_000;
+		tunHealth = { ...tunDead(), staleAt: wall + 1_000 };
+		others = [eth()];
+		await runDeadBearerRecovery();
+		expect(now).toBe(76_000);
+		expect(calls).toEqual([]);
+		// Fresh failures again from 91 s: a new hold, not the one from 15 s.
+		expect(await pollUntil(151_000)).toEqual([151_000]);
+	});
+
+	test("an expired translator `up` does not reset the reconnect spacing", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		expect(await pollUntil(510_000)).toEqual([
+			75_000, 150_000, 270_000, 510_000,
+		]);
+		// Up for 90 s, then quiet before the five minutes that reset spacing.
+		tunHealth = tunUp();
+		expect(await pollUntil(600_000)).toEqual([]);
+		tunFrozen = true;
+		expect(await pollUntil(840_000)).toEqual([]);
+		tunFrozen = false;
+		tunHealth = tunDead();
+		// The fifth reconnect keeps its 480 s spacing from 510 s.
+		expect(await pollUntil(990_000)).toEqual([990_000]);
+		// Five minutes of fresh `up` reset it; the next outage needs only the hold.
+		tunHealth = tunUp();
+		expect(await pollUntil(1_305_000)).toEqual([]);
+		tunHealth = tunDead();
+		expect(await pollUntil(1_380_000)).toEqual([1_380_000]);
 	});
 
 	test("a translated modem with no record for its translator yet is left alone", async () => {
