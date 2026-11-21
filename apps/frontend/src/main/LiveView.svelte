@@ -35,6 +35,7 @@ import {
 	resolveAppliedBitrate,
 } from '$lib/rpc/live-apply-reconcile';
 import { NotSentError } from '$lib/rpc/rpc-error';
+import { getStreamReadiness } from '$lib/rpc/stream-readiness.svelte';
 import {
 	getStopStuckBannerVisible,
 	getStreamingAttemptGeneration,
@@ -64,7 +65,6 @@ import {
 	getSensors,
 	getSources,
 	getStatus,
-	getStreamReadiness,
 } from '$lib/rpc/subscriptions.svelte';
 import { getEncoderLoad } from '$lib/stores/device-health-history.svelte';
 import { deriveBitrateReading, deriveMeasuredBitrateKbps } from '$lib/stores/hud/derive';
