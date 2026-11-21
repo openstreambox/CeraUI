@@ -30,7 +30,6 @@ import {
 } from "@ceraui/rpc/schemas";
 import { os } from "@orpc/server";
 import { z } from "zod";
-
 import { logger } from "../../helpers/logger.ts";
 import { isDevelopment } from "../../mocks/mock-config.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
@@ -39,6 +38,7 @@ import {
 	setRemoteConfig,
 } from "../../modules/remote/remote.ts";
 import { setAutostart } from "../../modules/streaming/streamloop.ts";
+import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import { DisruptiveActionRefusedError } from "../../modules/system/disruptive-action-error.ts";
 import {
 	PowerSubmissionError,
@@ -46,7 +46,6 @@ import {
 } from "../../modules/system/disruptive-action-reservation.ts";
 import {
 	getKioskStatus,
-	isRealDevice,
 	kioskConfigure,
 	kioskOsk,
 	kioskStart,
@@ -185,7 +184,7 @@ export function resetPowerCommandRunner(): void {
 	powerCommandRunner = defaultPowerCommandRunner;
 }
 
-// Gate on isDevelopment() — NOT isRealDevice(), which is false for an
+// Gate on isDevelopment() — NOT hasCapability("kiosk"), which is false for an
 // unrecognised board and would make a real device silently skip poweroff.
 export const poweroffProcedure = authedProcedure
 	.output(successResponseSchema)
@@ -418,7 +417,7 @@ export const kioskStatusProcedure = authedProcedure
 export const kioskStartProcedure = authedProcedure
 	.output(kioskToggleOutputSchema)
 	.handler(async () => {
-		if (!shouldUseMocks() && !(await isRealDevice())) {
+		if (!shouldUseMocks() && !(await hasCapability("kiosk"))) {
 			return { success: false, error: KIOSK_UNAVAILABLE_ERROR };
 		}
 		let status: ReturnType<typeof getKioskStatus>;
@@ -441,7 +440,7 @@ export const kioskStartProcedure = authedProcedure
 export const kioskStopProcedure = authedProcedure
 	.output(kioskToggleOutputSchema)
 	.handler(async () => {
-		if (!shouldUseMocks() && !(await isRealDevice())) {
+		if (!shouldUseMocks() && !(await hasCapability("kiosk"))) {
 			return { success: false, error: KIOSK_UNAVAILABLE_ERROR };
 		}
 		let status: ReturnType<typeof getKioskStatus>;
@@ -464,7 +463,7 @@ export const kioskConfigureProcedure = authedProcedure
 	.input(kioskConfigureInputSchema)
 	.output(kioskConfigureOutputSchema)
 	.handler(async ({ input }) => {
-		if (!shouldUseMocks() && !(await isRealDevice())) {
+		if (!shouldUseMocks() && !(await hasCapability("kiosk"))) {
 			return { success: false, error: KIOSK_UNAVAILABLE_ERROR };
 		}
 		const applied = kioskConfigure(input, resolveActiveKioskDeps());
@@ -478,7 +477,7 @@ export const kioskOskProcedure = authedProcedure
 	.input(kioskOskInputSchema)
 	.output(successResponseSchema)
 	.handler(async ({ input }) => {
-		if (!shouldUseMocks() && !(await isRealDevice())) {
+		if (!shouldUseMocks() && !(await hasCapability("kiosk"))) {
 			return { success: false, error: KIOSK_UNAVAILABLE_ERROR };
 		}
 		await kioskOsk(input.visible, resolveActiveKioskDeps());

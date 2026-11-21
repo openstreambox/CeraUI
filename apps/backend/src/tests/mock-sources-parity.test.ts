@@ -47,7 +47,7 @@ const LAN_NETIF = { eth0: { ip: "192.168.1.50", enabled: true } };
 
 function ingestDeps(): NetworkIngestDeps {
 	return {
-		isRealDevice: async () => false,
+		canManageIngest: async () => false,
 		shouldUseMocks: () => true,
 		resolveMockSignals: resolveMockNetworkIngestSignals,
 		probeServiceActive: async () => false,

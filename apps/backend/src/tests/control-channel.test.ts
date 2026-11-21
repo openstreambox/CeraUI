@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { getConfig } from "../modules/config.ts";
 import {
@@ -333,4 +333,17 @@ describe("backoff", () => {
 		expect(backoffDelay(100, upper)).toBe(RECONNECT_MAX_MS);
 		expect(backoffDelay(0, () => 0)).toBe(RECONNECT_BASE_MS / 2);
 	});
+});
+
+const suiteNodeEnv = process.env.NODE_ENV;
+const suiteMockMode = process.env.MOCK_MODE;
+beforeEach(() => {
+	process.env.NODE_ENV = "development";
+	delete process.env.MOCK_MODE;
+});
+afterEach(() => {
+	if (suiteNodeEnv === undefined) delete process.env.NODE_ENV;
+	else process.env.NODE_ENV = suiteNodeEnv;
+	if (suiteMockMode === undefined) delete process.env.MOCK_MODE;
+	else process.env.MOCK_MODE = suiteMockMode;
 });
