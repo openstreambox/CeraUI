@@ -94,6 +94,8 @@ const INSTANCE_FIELDS = [
 function comparableField(field: string, value: string): string {
 	if (field.endsWith("mac-address")) return value.toLowerCase();
 	if (field.endsWith("-flags")) return value.split(" ")[0] ?? value;
+	// An empty value resets the uint to its default, and nmcli prints that as 0.
+	if (field === "802-11-wireless.channel") return value === "" ? "0" : value;
 	if (field === "802-11-wireless-security.pmf") {
 		switch (value.split(" ")[0]) {
 			case "0":
