@@ -186,7 +186,7 @@ it("renders a direct Start refusal after the actual credential confirmation", as
 		},
 	});
 	await fireEvent.click(
-		view.getByRole("button", { name: m["network.status.enableHotspot"]() }),
+		view.getByRole("button", { name: m["hotspotConfirm.activate"]() }),
 	);
 	await waitFor(() =>
 		expect(
