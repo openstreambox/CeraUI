@@ -207,6 +207,8 @@ describe("runDeadBearerRecovery", () => {
 	let tunHealth: UplinkHealthRecord | undefined;
 	/** The modem's own record stops refreshing (its probes stopped reporting). */
 	let healthFrozen: boolean;
+	/** The translator's record stops refreshing too. */
+	let tunFrozen: boolean;
 	let streaming: boolean;
 	let telemetryRows: { iface: string; stale: boolean }[];
 	let autoconnect: string;
@@ -309,7 +311,7 @@ describe("runDeadBearerRecovery", () => {
 			if (health && !healthFrozen)
 				health =
 					health.state === "down" ? dead() : record({ state: "up" }, wall);
-			if (tunHealth)
+			if (tunHealth && !tunFrozen)
 				tunHealth = tunHealth.state === "down" ? tunDead() : tunUp();
 			others = others.map((other) => ({ ...other, staleAt: wall + 15_000 }));
 			const before = calls.length;
@@ -330,6 +332,7 @@ describe("runDeadBearerRecovery", () => {
 		clatParents = {};
 		tunHealth = undefined;
 		healthFrozen = false;
+		tunFrozen = false;
 		streaming = false;
 		telemetryRows = [];
 		autoconnect = "no";
@@ -444,6 +447,34 @@ describe("runDeadBearerRecovery", () => {
 		healthFrozen = true;
 		// Stale from 315 s (staleAt is not after the wall clock), then the hold.
 		expect(await pollUntil(420_000)).toEqual([375_000]);
+	});
+
+	test("an expired translator outage is not evidence once the native veto lifts", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = record({ state: "up" }, wall);
+		expect(await pollUntil(300_000)).toEqual([]);
+		// Both records go quiet while the lease stays usable; the bearer may
+		// have recovered after the last probe.
+		healthFrozen = true;
+		tunFrozen = true;
+		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	test("a translator outage that goes quiet mid-hold restarts the hold", async () => {
+		others = [eth()];
+		clatParents = { clat7: "wwan0" };
+		tunHealth = tunDead();
+		health = dead();
+		// The outage is first seen at 15 s; at 45 s, short of the hold, the
+		// translator's record stops refreshing.
+		expect(await pollUntil(45_000)).toEqual([]);
+		tunFrozen = true;
+		expect(await pollUntil(90_000)).toEqual([]);
+		// Fresh again from 105 s: the hold counts from there.
+		tunFrozen = false;
+		expect(await pollUntil(200_000)).toEqual([165_000]);
 	});
 
 	test("a translated modem with no record for its translator yet is left alone", async () => {
