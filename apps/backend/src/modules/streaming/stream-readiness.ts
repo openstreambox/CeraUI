@@ -538,6 +538,7 @@ export function getStreamReadiness(): StreamReadiness {
 // ─── Broadcast ───────────────────────────────────────────────────────────────
 
 let lastSignature: string | undefined;
+let latest: StreamReadiness | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 
 function signature(readiness: StreamReadiness): string {
@@ -548,11 +549,17 @@ function signature(readiness: StreamReadiness): string {
 /** Evaluate and push to clients only when the answer changed. */
 export function broadcastStreamReadinessIfChanged(): StreamReadiness | null {
 	const readiness = getStreamReadiness();
+	latest = readiness;
 	const next = signature(readiness);
 	if (next === lastSignature) return null;
 	lastSignature = next;
 	broadcastMsg(STREAM_READINESS_EVENT, readiness);
 	return readiness;
+}
+
+/** The answer from the last tick, without evaluating again; for the status screen snapshot. */
+export function latestStreamReadiness(): StreamReadiness | undefined {
+	return latest;
 }
 
 export function initStreamReadiness(): void {
@@ -571,6 +578,7 @@ export function resetStreamReadinessForTest(): void {
 	if (timer !== undefined) clearInterval(timer);
 	timer = undefined;
 	lastSignature = undefined;
+	latest = undefined;
 	receiverEvidence.clear();
 	deps = defaultDeps;
 }

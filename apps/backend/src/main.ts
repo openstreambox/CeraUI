@@ -203,6 +203,7 @@ import {
 	getSshStatus,
 	reconcileSshPersistence,
 } from "./modules/system/ssh.ts";
+import { initStatusScreenSnapshot } from "./modules/system/status-screen-snapshot.ts";
 import { noteStreamReconciliationCompleted } from "./modules/system/stream-reconciliation-latch.ts";
 import { getTailscaleStatus } from "./modules/system/tailscale.ts";
 import { reconcileAptChannel } from "./modules/system/update-apt-channel.ts";
@@ -618,6 +619,7 @@ await guardNonCritical("uplink-shaper", initUplinkShaper);
 await tickCarrying();
 await guardNonCritical("sharing-diag", initSharingDiag);
 await guardNonCritical("stream-readiness", initStreamReadiness);
+await guardNonCritical("status-screen-snapshot", initStatusScreenSnapshot);
 
 // Event-driven netif: monitor stream drives up/down; onResync re-polls on restart
 const networkMonitor = createMonitorManager(() => updateNetif());

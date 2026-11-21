@@ -44225,7 +44225,7 @@
   ],
   "dependencies": {
     "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
-    "apps/backend/src/main.ts": "25d08d0803966ec5dac3ba52667a268a520ed5e68847401ffe4dc448a54f8479",
+    "apps/backend/src/main.ts": "847fe1044d36e649dc3e6b71776b31795b4f85fadc0c0a54e9a794a5d859597f",
     "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -44264,7 +44264,7 @@
     "apps/backend/src/modules/streaming/pipelines.ts": "5dec75a516b948749321bc8e386434b2aa2a5298d300b96d68e340b76e810023",
     "apps/backend/src/modules/streaming/sources.ts": "83e1dd9470e5c950dd036d014924c7ff7777a094ce65c43f198b700260973b56",
     "apps/backend/src/modules/streaming/stream-lifecycle-status.ts": "33aa1a07d69097df21fb3288ef4af93078d71a44e85a7f22d1b79d928357aa80",
-    "apps/backend/src/modules/streaming/stream-readiness.ts": "681d4ba6402d4fa2570a8a6aa31b1255bb9ce79b010a7ff95fb87505cee89fb2",
+    "apps/backend/src/modules/streaming/stream-readiness.ts": "d16ce23a8f4cedb4d715a074d19468ae6e60c20363a7b0b0da00f67f49693975",
     "apps/backend/src/modules/streaming/streaming.ts": "83a8a4edfc179e43cd71912cdbb331ca0b5308589ca1bc498b288d2dbbcf7730",
     "apps/backend/src/modules/streaming/streamloop/autostart.ts": "03d8a15d80b4dd164b75c124e815803be9dd56a6b584e3b93a100c7f21eebd49",
     "apps/backend/src/modules/system/carrying-runtime.ts": "3e885cf7736e3ec69a6f1aea2fc7310288567417209cae2f00747975e8a5c1a1",
