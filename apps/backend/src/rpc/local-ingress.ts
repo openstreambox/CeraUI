@@ -29,7 +29,7 @@ import { networkInterfaces } from "node:os";
 import type { Server, WebSocketHandler } from "bun";
 
 import { createServerWebSocketHandler, initSocketData } from "./adapter.ts";
-import { permitsE2eWorkerUpgrade } from "./e2e-worker-admission.ts";
+import { permitsE2eWorkerProxyRequest } from "./e2e-worker-admission.ts";
 import type { IngressPath, ServerSocketData } from "./types.ts";
 
 export const LOCAL_INGRESS_DIRECTORY = "/run/ceralive-button-ingress";
@@ -155,7 +155,7 @@ export function serveLocalIngress(
 				request.headers.get("upgrade")?.toLowerCase() !== "websocket"
 			)
 				return new Response("Not found", { status: 404 });
-			if (!permitsE2eWorkerUpgrade(request, options.workerSecret))
+			if (!permitsE2eWorkerProxyRequest(request, options.workerSecret))
 				return new Response("Worker proxy admission required", {
 					status: 403,
 				});
