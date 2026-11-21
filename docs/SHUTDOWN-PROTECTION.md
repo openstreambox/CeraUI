@@ -99,13 +99,16 @@ A deliberate `systemctl stop ceralive` suppresses that automatic restart.
 
 The kill also ends `srtla_send`, which runs in the service's control group
 (`KillMode=mixed` sends the final SIGKILL to the whole group), so a watchdog
-restart ends a live stream; the engine's session stays unconfirmed until an
-operator stops it. The interval is therefore sized for bounded stalls of the
-main loop, not for fast detection: the loop may be blocked for the watchdog
-interval minus one pulse (89 s) before systemd acts, which is more than twice
-the 30 s budget of a bounded `Bun.spawnSync` probe. A hung owner can delay a
-planned reboot for up to about 90 seconds, which is also the default stop
-timeout the override above may wait for; the power key does not wait for it.
+restart ends a live stream. If the engine still reports the previous session,
+the new owner cannot confirm it and the stream stays down until an operator
+stops it. The interval is therefore sized for bounded stalls of the main loop,
+not for fast detection: the loop may be blocked for the watchdog interval minus
+one pulse (89 s) before systemd acts. That is more than twice the nominal 30 s
+timeout of a `Bun.spawnSync` probe; the timeout only sends a signal, so a child
+that ignores it can block longer. A hung owner keeps its inhibitor for up to
+about 90 seconds before the watchdog acts. Stopping the service has its own
+timeout (normally 90 seconds), which a busy hung owner can use up; the power
+key ignores the inhibitor, but a shutdown still stops units.
 
 The image's power-key policy deliberately ignores shutdown inhibitors for both
 short and long presses, so a safety shutdown is not delayed until a hard cut.

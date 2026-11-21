@@ -56,7 +56,6 @@ test("watchdog pulses on the main event loop, only for the configured service PI
 		new URL("../../../../deployment/ceralive.service", import.meta.url),
 		"utf8",
 	);
-	expect(service).toContain("WatchdogSec=90s");
 	expect(service).toContain("WatchdogSignal=SIGKILL");
 	const main = readFileSync(new URL("../main.ts", import.meta.url), "utf8");
 	expect(main).toContain("startServiceWatchdog()");
@@ -75,7 +74,11 @@ test("a stall that starts just before a pulse may last WatchdogSec minus one pul
 		new URL("../../../../deployment/ceralive.service", import.meta.url),
 		"utf8",
 	);
-	const seconds = Number(/^WatchdogSec=(\d+)s$/m.exec(service)?.[1]);
+	// One assignment only, so a later line cannot silently override it.
+	const assignments = [...service.matchAll(/^WatchdogSec=(.*)$/gm)];
+	expect(assignments).toHaveLength(1);
+	const seconds = Number(/^(\d+)s$/.exec(assignments[0]?.[1] ?? "")?.[1]);
+	expect(Number.isSafeInteger(seconds)).toBe(true);
 	const usec = seconds * 1_000_000;
 	// systemd kills when no pulse arrived for WatchdogSec. The loop can be blocked
 	// right before a pulse was due, so the tolerated stall is WatchdogSec minus one

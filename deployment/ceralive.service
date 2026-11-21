@@ -18,9 +18,9 @@ ExecStart=/usr/local/bin/ceralive
 KillMode=mixed
 Restart=always
 RestartSec=2s
-# A kill takes srtla_send with it (KillMode=mixed), ending a live stream until
-# an operator Stop. Leave room for bounded main-loop stalls such as a 30 s
-# Bun.spawnSync probe; the backend pulses every second.
+# A kill takes srtla_send with it (KillMode=mixed) and ends a live stream.
+# Leave room for bounded main-loop stalls such as a 30 s Bun.spawnSync
+# timeout; the backend pulses every second.
 WatchdogSec=90s
 # A stopped or wedged owner must close its inhibitor descriptor immediately.
 WatchdogSignal=SIGKILL
