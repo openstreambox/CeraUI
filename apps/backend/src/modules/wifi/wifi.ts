@@ -118,6 +118,10 @@ import {
 	type WifiInterface,
 	type WifiInterfaceId,
 } from "./wifi-interfaces.ts";
+import {
+	beginWifiOperatorChoice,
+	recordWifiNetworkChoice,
+} from "./wifi-network-diversity.ts";
 import { wifiRadioIdentity } from "./wifi-radio-identity.ts";
 import {
 	projectWifiRadioIncarnation,
@@ -883,6 +887,9 @@ function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 		security: msg.security,
 	});
 
+	// The diversity check leaves this radio alone until the join has settled
+	// and the operator's choice is recorded.
+	const release = beginWifiOperatorChoice(macAddress);
 	void runWifiNew(
 		conn,
 		msg,
@@ -890,7 +897,7 @@ function wifiNew(conn: MessageSocket, msg: WifiNewMessage["new"]) {
 		plan,
 		senderId,
 		wifiInterface.saved[msg.ssid],
-	);
+	).finally(release);
 }
 
 // Reconcile retained profiles for explicit Forget without delaying a join's
@@ -990,6 +997,7 @@ async function runWifiNew(
 	conn.send(
 		buildMsg("wifi", { new: { success: true, device: msg.device } }, senderId),
 	);
+	await recordWifiNetworkChoice(macAddress, outcome.uuid);
 }
 
 async function wifiConnect(conn: MessageSocket, uuid: ConnectionUUID) {
@@ -997,9 +1005,22 @@ async function wifiConnect(conn: MessageSocket, uuid: ConnectionUUID) {
 	if (deviceId === undefined) return;
 
 	const senderId = getSocketSenderId(conn);
-	const success = await nmConnect(uuid);
-	await wifiUpdateScanResult();
-	conn.send(buildMsg("wifi", { connect: success, device: deviceId }, senderId));
+	const macAddress = getMacAddressForWifiInterface(
+		Number.parseInt(deviceId, 10),
+	);
+	// The diversity check leaves this radio alone until the connect has settled
+	// and the operator's choice is recorded.
+	const release = macAddress ? beginWifiOperatorChoice(macAddress) : undefined;
+	try {
+		const success = await nmConnect(uuid);
+		await wifiUpdateScanResult();
+		conn.send(
+			buildMsg("wifi", { connect: success, device: deviceId }, senderId),
+		);
+		if (success && macAddress) await recordWifiNetworkChoice(macAddress, uuid);
+	} finally {
+		release?.();
+	}
 }
 
 // `conn` is a MessageSocket, never the `ws` package's WebSocket: the only caller
