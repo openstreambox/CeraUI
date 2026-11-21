@@ -35,7 +35,7 @@ export function sysextTailFixture() {
 				? cached
 				: prepared;
 	setAddonManagerDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getEffectiveHardware: () => "rk3588",
 		getDataFreeBytes: async () => 2 ** 32,
 		getOsVersion: async () => "13",
@@ -54,7 +54,7 @@ export function sysextTailFixture() {
 		broadcast: (_id, state) => frames.push(structuredClone(state)),
 	});
 	const reconciler: ReconcilerDeps = {
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getIsStreaming: () => false,
 		getOsVersionId: async () => "13",
 		getBoard: () => "rk3588",
