@@ -628,3 +628,16 @@ export function deriveSharingSection(
 		quiet: !zones.active,
 	};
 }
+
+/** IPv4 sharing has no translation path on these WANs; stream health is separate. */
+export function ipv6OnlyWanNames(netif: NetifMessage | undefined): string[] {
+	return Object.entries(netif ?? {})
+		.filter(
+			([, entry]) =>
+				!entry.error &&
+				entry.ipv6 &&
+				!entry.ip &&
+				entry.ethRole !== "shared-lan",
+		)
+		.map(([name]) => name);
+}
