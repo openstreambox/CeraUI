@@ -70,6 +70,11 @@ export function clearStartFeatureNotice(
  */
 export function noteLiveCompositionApplied(): void {
 	if (posted === undefined) return;
+	// A notice the streamer dismissed stays dismissed.
+	if (!posted.bridge.notificationExists(START_FEATURES_NOTIFICATION)) {
+		posted = undefined;
+		return;
+	}
 	const remaining = posted.dropped.filter((feature) => feature === "audio-mix");
 	if (remaining.length === posted.dropped.length) return;
 	postStartFeatureNotice(posted.bridge, remaining, posted.answered);

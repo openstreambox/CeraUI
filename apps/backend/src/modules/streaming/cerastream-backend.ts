@@ -912,7 +912,9 @@ export class CerastreamBackend implements StreamingBackend {
 				config,
 				params,
 			);
-			let capabilitiesAnswered = true;
+			// "Unsupported" is said only on the receiving engine's own answer; an
+			// assembly omission rests on the shared snapshot (possibly a cold cache).
+			let capabilitiesAnswered = false;
 			const audioMixInputs = params.audio?.inputs?.map((input) => ({
 				...structuredClone(input),
 				id:
@@ -1006,10 +1008,11 @@ export class CerastreamBackend implements StreamingBackend {
 					startParams = authorized.params;
 					if (startParams.audio?.inputs === undefined)
 						startMixInputs = undefined;
+					const omittedAtAssembly = droppedFeatures.length > 0;
 					droppedFeatures = [
 						...new Set([...droppedFeatures, ...authorized.dropped]),
 					];
-					capabilitiesAnswered = caps !== undefined;
+					capabilitiesAnswered = caps !== undefined && !omittedAtAssembly;
 				}
 				const result = await launchTransaction.runPhase("start-rpc", () => {
 					assertStreamLaunchOwnership();

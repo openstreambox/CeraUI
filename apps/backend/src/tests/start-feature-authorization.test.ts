@@ -387,6 +387,34 @@ test("a saved mix left out at assembly, on an engine known to lack a mixer, is s
 	});
 	expect(notices).toHaveLength(1);
 	expect(notices[0]?.msg).toContain("audio mix");
+	// Assembly read the shared snapshot, not the receiving engine.
+	expect(notices[0]?.msg).toContain("not confirmed");
+});
+
+// A cold cache (no snapshot yet) also leaves the mix out at assembly. The
+// receiving engine was never asked, so the notice must not claim it said no.
+test("a mix left out on a cold capability cache is not blamed on the engine", async () => {
+	const { backend, recorded, notices } = backendFor(
+		mixConfig(),
+		GEOMETRY_ENGINE,
+	);
+
+	await backend.start(mixConfig(), START);
+
+	expect(recorded.capabilityReads).toBe(0);
+	expect(notices).toHaveLength(1);
+	expect(notices[0]?.msg).toContain("audio mix");
+	expect(notices[0]?.msg).not.toContain("does not support");
+	expect(notices[0]?.msg).toContain("not confirmed");
+});
+
+test("only the receiving engine's own answer is worded as unsupported", async () => {
+	await snapshotFrom(GEOMETRY_ENGINE);
+	invalidateCapabilities();
+	const { backend, notices } = backendFor(mixConfig(), OLDER_ENGINE);
+
+	await backend.start(mixConfig(), START);
+
 	expect(notices[0]?.msg).toContain("does not support");
 });
 

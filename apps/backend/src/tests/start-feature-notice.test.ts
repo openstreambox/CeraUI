@@ -58,3 +58,13 @@ test("a live composition change leaves a mix-only notice alone", () => {
 
 	expect(shown.get(START_FEATURES_NOTIFICATION)).toBe(before);
 });
+
+test("a live composition change does not bring back a notice the streamer dismissed", () => {
+	const { bridge, shown } = recordingBridge();
+	postStartFeatureNotice(bridge, ["audio-mix", "custom-layout"], false);
+	shown.delete(START_FEATURES_NOTIFICATION);
+
+	noteLiveCompositionApplied();
+
+	expect(shown.has(START_FEATURES_NOTIFICATION)).toBe(false);
+});

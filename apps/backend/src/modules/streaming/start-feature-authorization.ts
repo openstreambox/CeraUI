@@ -125,6 +125,6 @@ export function droppedStartFeaturesMessage(
 			: `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 	const why = answered
 		? `the streaming engine does not support ${parts.length === 1 ? "it" : "them"}`
-		: "the streaming engine did not confirm support in time";
+		: "support was not confirmed by the streaming engine";
 	return `Streaming without ${what}: ${why}. Your saved settings are kept.`;
 }
