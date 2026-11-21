@@ -206,10 +206,12 @@ for (const hybrid of [false, true]) {
 	}
 }
 
-test("an inactive configured hotspot retains local credentials and withholds remote credentials and lifetime tokens", async () => {
+test("an inactive configured hotspot sends no credentials anywhere and withholds remote lifetime tokens", async () => {
 	seedRadio(false, false);
 	const local = wifiBuildMsg();
-	expect(local[0]?.hotspot?.password).toBe(PASSWORD);
+	// A hotspot block on the wire means the AP is up; a stopped one sends none.
+	expect(local[0]?.hotspot).toBeUndefined();
+	expect(JSON.stringify(local)).not.toContain(PASSWORD);
 
 	const remote = await authenticateRemote();
 	const initial = remote.sent.find((frame) => "status" in JSON.parse(frame));
