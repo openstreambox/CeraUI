@@ -411,16 +411,18 @@ function exportCsv(): void {
 						<li
 							data-testid="ingest-contribution-row"
 							data-iface={link.iface}
-							class="flex items-center gap-3 border-b py-2 text-xs last:border-b-0"
+							class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b py-2 text-xs last:border-b-0 sm:flex-nowrap"
 						>
-							<div class="flex w-24 shrink-0 items-center gap-2">
+							<!-- On a phone the name has its own line: it can carry every name the
+							     link had during the session. -->
+							<div class="flex min-w-0 basis-full items-start gap-2 sm:w-24 sm:shrink-0 sm:basis-auto">
 								<!-- Spectral per-link identity dot (--link-1..6 ramp). -->
 								<span
 									aria-hidden="true"
-									class="size-2 shrink-0 rounded-full"
+									class="mt-1 size-2 shrink-0 rounded-full"
 									style={`background-color: var(--link-${(i % 6) + 1})`}
 								></span>
-								<span class="line-clamp-2 font-medium break-words" data-session-link-name title={link.iface}>{sessionNameOf(link.iface)}</span>
+								<span class="min-w-0 font-medium break-words" data-session-link-name title={link.iface}>{sessionNameOf(link.iface)}</span>
 							</div>
 							<div
 								aria-hidden="true"
