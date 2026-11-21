@@ -31,6 +31,9 @@
  * Network the Connections group (`connections-card`), and Start sits in the
  * {@link LiveBar} fixed to the viewport bottom, beside the same disabled reason
  * the button carries as its title (or the ready text when nothing blocks).
+ * While blocked the bar also lists every blocked gate with a button to its
+ * existing setting ("Fix these before you go live"), and a tap on the blocked
+ * Start moves focus to that list instead of doing nothing.
  *
  * As with GoLiveCard, this component owns NO RPC and writes NO config — every
  * action is a callback prop, so the sole-camera "no premature setConfig" contract
@@ -55,7 +58,10 @@ import type { StreamingOptimismState } from '$lib/rpc/streaming-optimism.svelte'
 import { deriveEffectiveSource } from '$lib/streaming/effective-source';
 import {
 	deriveGoLiveReadiness,
+	GATE_FIX_ORDER,
+	type GateFix,
 	type GateStatus,
+	type GoLiveGateKey,
 	READINESS_SOURCE_REASON,
 } from '$lib/streaming/go-live-readiness';
 import { pipelineAvailability } from '$lib/streaming/pipelineAvailability';
@@ -184,6 +190,61 @@ const startDisabledReason = $derived(
 				)
 			: undefined,
 );
+
+// ── The Live bar's checklist while Start is blocked ───────────────────────────
+// Every blocked gate, in fix order, so a second blocker (no server under no
+// source) is visible at once instead of after the first is fixed. Each item
+// with a fix gets a button to the existing setting; the engine has none.
+interface Blocker {
+	key: GoLiveGateKey;
+	reasonKey: string;
+	fix: GateFix;
+}
+const blockers = $derived<Blocker[]>(
+	optimismState === 'starting'
+		? []
+		: GATE_FIX_ORDER.flatMap((key) => {
+				const gate = readiness.gates[key];
+				return gate.state === 'blocked'
+					? [{ key, reasonKey: gate.reasonKey ?? READINESS_SOURCE_REASON, fix: gate.fix ?? 'none' }]
+					: [];
+			}),
+);
+const fixable = $derived(blockers.filter((blocker) => blocker.fix !== 'none'));
+// One blocker reads as its own reason; two or more as one line above the buttons.
+const barStatus = $derived(
+	blockers.length >= 2
+		? m["live.bar.blockedSeveral"]()
+		: (startDisabledReason ?? m["live.bar.ready"]()),
+);
+
+function fixLabel(fix: GateFix): string {
+	if (fix === 'openSource') return m["live.goLive.fix.openSource"]();
+	if (fix === 'openServer') return m["live.goLive.fix.openServer"]();
+	return m["live.goLive.fix.goNetwork"]();
+}
+
+function runFix(fix: GateFix) {
+	if (fix === 'openSource') onOpenSource();
+	else if (fix === 'openServer') serverRow?.onEdit();
+	else if (fix === 'goNetwork') onGoNetwork();
+}
+
+let checklistEl: HTMLElement | undefined = $state();
+let checklistAttention = $state(false);
+let attentionTimer: ReturnType<typeof setTimeout> | undefined;
+
+// A tap on the blocked Start points at the checklist: focus moves to the first
+// fix and the list is outlined for a moment. With nothing to tap (only the
+// engine blocks) the line above already says why.
+function handleBlockedStart() {
+	checklistEl?.querySelector<HTMLButtonElement>('button')?.focus();
+	checklistAttention = true;
+	clearTimeout(attentionTimer);
+	attentionTimer = setTimeout(() => (checklistAttention = false), 1600);
+}
+
+$effect(() => () => clearTimeout(attentionTimer));
 
 function handleStartClick() {
 	// The config write happens at START time (never before): fold the implicit
@@ -539,14 +600,43 @@ const networkSummary = $derived(
 
 		<LiveBar
 			blocked={startDisabledReason !== undefined}
-			status={startDisabledReason ?? m["live.bar.ready"]()}
+			status={barStatus}
 		>
+			{#snippet checklist()}
+				{#if fixable.length > 0}
+					<div
+						bind:this={checklistEl}
+						class="-m-1 flex flex-wrap gap-2 rounded-lg p-1 transition-shadow {checklistAttention
+							? 'ring-destructive/60 ring-2'
+							: ''}"
+						data-blockers={blockers.length}
+						role="group"
+						aria-label={barStatus}
+					>
+						{#each fixable as blocker (blocker.key)}
+							<Button
+								class="min-h-[44px] gap-1.5"
+								data-blocker={blocker.key}
+								data-fix={blocker.fix}
+								onclick={() => runFix(blocker.fix)}
+								size="sm"
+								title={resolveReason(blocker.reasonKey)}
+								variant="outline"
+							>
+								{fixLabel(blocker.fix)}
+								<ChevronRight aria-hidden={true} class="h-4 w-4 rtl:-scale-x-100" />
+							</Button>
+						{/each}
+					</div>
+				{/if}
+			{/snippet}
 			<div class="shrink-0 sm:min-w-56">
 				<StreamControlButton
 					{canStart}
 					disabledReason={startDisabledReason}
 					{isStreaming}
 					{optimismState}
+					onBlockedStart={handleBlockedStart}
 					onStart={handleStartClick}
 					{onStop}
 				/>

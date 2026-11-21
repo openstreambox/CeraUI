@@ -2907,6 +2907,7 @@
 	"live.audioCard.title": "الصوت",
 	"live.telemetryCard.title": "القياس عن بُعد",
 	"live.bar.ready": "جاهز للبث المباشر",
+	"live.bar.blockedSeveral": "أصلح هذه الأمور قبل بدء البث",
 	"network.hotspot.steeringPending": "التوجيه قيد الانتظار",
 	"network.view.hotspotRadio": "راديو نقطة ساخنة",
 	"network.view.hotspotRadioChoose": "اختر راديو",

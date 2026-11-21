@@ -239,8 +239,8 @@ describe("StreamSetupChain — three rows in signal order", () => {
 });
 
 describe("StreamSetupChain — encoder row (source gate)", () => {
-	it("blocked source gate → encoder row data-state='blocked' + reason text, Start disabled", () => {
-		const { container } = renderChain({
+	it("blocked source gate → encoder row data-state='blocked' + reason text, Start disabled", async () => {
+		const { container, onStart } = renderChain({
 			// no source AND no capture → source gate blocked
 			config: { relay_server: "fra" } as ConfigMessage,
 			sources: makeSources(),
@@ -255,7 +255,10 @@ describe("StreamSetupChain — encoder row (source gate)", () => {
 		const start = within(container).getByRole("button", {
 			name: /start stream/i,
 		});
-		expect((start as HTMLButtonElement).disabled).toBe(true);
+		// Blocked Start is aria-disabled (a tap points at the fixes) and never starts.
+		expect(start.getAttribute("aria-disabled")).toBe("true");
+		await fireEvent.click(start);
+		expect(onStart).not.toHaveBeenCalled();
 		expect(start.getAttribute("title")).toBe(
 			"Select a video source before starting the stream",
 		);
@@ -446,8 +449,8 @@ describe("StreamSetupChain — destination row", () => {
 		expect((start as HTMLButtonElement).disabled).toBe(false);
 	});
 
-	it("revoked ingest slot (slots loaded, id absent) → destination row blocked, Start disabled (C7)", () => {
-		const { container } = renderChain({
+	it("revoked ingest slot (slots loaded, id absent) → destination row blocked, Start disabled (C7)", async () => {
+		const { container, onStart } = renderChain({
 			config: {
 				source: "cam-1",
 				selected_ingest_endpoint: "slot-gone",
@@ -459,7 +462,9 @@ describe("StreamSetupChain — destination row", () => {
 		const start = within(container).getByRole("button", {
 			name: /start stream/i,
 		});
-		expect((start as HTMLButtonElement).disabled).toBe(true);
+		expect(start.getAttribute("aria-disabled")).toBe("true");
+		await fireEvent.click(start);
+		expect(onStart).not.toHaveBeenCalled();
 	});
 });
 
@@ -573,5 +578,111 @@ describe("StreamSetupChain — sole-camera contract", () => {
 		expect(
 			container.querySelector('[data-testid="sole-camera-auto"]'),
 		).toBeNull();
+	});
+});
+
+describe("StreamSetupChain — the Live bar lists every blocker with its fix", () => {
+	function bar(container: HTMLElement): HTMLElement {
+		const el = container.querySelector<HTMLElement>('[data-testid="live-bar"]');
+		if (!el) throw new Error("no live bar");
+		return el;
+	}
+	function fixButtons(container: HTMLElement): HTMLButtonElement[] {
+		return [
+			...bar(container).querySelectorAll<HTMLButtonElement>("button[data-fix]"),
+		];
+	}
+
+	it("no source and no server: both show at once, one button each", async () => {
+		const { container, onOpenSource, onOpenServer } = renderChain({
+			config: {} as ConfigMessage,
+			sources: makeSources(),
+		});
+		expect(bar(container).textContent).toContain(
+			"Fix these before you go live",
+		);
+		const fixes = fixButtons(container);
+		expect(fixes.map((b) => b.textContent?.trim())).toEqual([
+			"Choose source",
+			"Choose destination",
+		]);
+		await fireEvent.click(fixes[0] as HTMLButtonElement);
+		expect(onOpenSource).toHaveBeenCalledTimes(1);
+		await fireEvent.click(fixes[1] as HTMLButtonElement);
+		expect(onOpenServer).toHaveBeenCalledTimes(1);
+	});
+
+	it("one blocker reads as its own reason, with its one button", () => {
+		const { container } = renderChain({
+			config: { relay_server: "fra" } as ConfigMessage,
+			sources: makeSources(),
+		});
+		expect(bar(container).textContent).toContain(
+			"Select a video source before starting the stream",
+		);
+		expect(bar(container).textContent).not.toContain("Fix these");
+		expect(fixButtons(container).map((b) => b.dataset.fix)).toEqual([
+			"openSource",
+		]);
+	});
+
+	it("no usable link offers the way to Network", async () => {
+		const { container, onGoNetwork } = renderChain({
+			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
+			netif: {},
+		});
+		const fixes = fixButtons(container);
+		expect(fixes.map((b) => b.dataset.fix)).toEqual(["goNetwork"]);
+		await fireEvent.click(fixes[0] as HTMLButtonElement);
+		expect(onGoNetwork).toHaveBeenCalledTimes(1);
+	});
+
+	it("a tap on the blocked Start moves focus to the first fix and never starts", async () => {
+		const { container, onStart } = renderChain({
+			config: {} as ConfigMessage,
+			sources: makeSources(),
+		});
+		const start = within(container).getByRole("button", {
+			name: /start stream/i,
+		});
+		await fireEvent.click(start);
+		expect(onStart).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(fixButtons(container)[0]);
+	});
+
+	it("ready: no checklist, the ready line, and a plain enabled Start", async () => {
+		const { container, onStart } = renderChain({
+			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
+		});
+		expect(fixButtons(container)).toHaveLength(0);
+		expect(bar(container).textContent).toContain("Ready to go live");
+		const start = within(container).getByRole("button", {
+			name: /start stream/i,
+		}) as HTMLButtonElement;
+		expect(start.disabled).toBe(false);
+		expect(start.getAttribute("aria-disabled")).toBeNull();
+		await fireEvent.click(start);
+		expect(onStart).toHaveBeenCalledTimes(1);
+	});
+
+	it("while a start is in flight there is no checklist and Start is disabled outright", () => {
+		const { container } = renderChain({
+			config: { source: "cam-1", relay_server: "fra" } as ConfigMessage,
+			optimismState: "starting",
+		});
+		expect(fixButtons(container)).toHaveLength(0);
+		const start = within(container).getByRole("button", {
+			name: /starting/i,
+		}) as HTMLButtonElement;
+		expect(start.disabled).toBe(true);
+	});
+
+	it("the several-blockers line is translated in every locale", async () => {
+		const { ar, de, en, es, fr, hi, ja, ko, ptBR, zh } = await import(
+			"../../tests/helpers/catalog"
+		);
+		for (const dict of [en, ar, de, es, fr, hi, ja, ko, ptBR, zh]) {
+			expect(dict.live.bar.blockedSeveral.length).toBeGreaterThan(0);
+		}
 	});
 });

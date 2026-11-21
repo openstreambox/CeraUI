@@ -2898,6 +2898,7 @@
 	"live.audioCard.title": "Áudio",
 	"live.telemetryCard.title": "Telemetria",
 	"live.bar.ready": "Pronto para ir ao vivo",
+	"live.bar.blockedSeveral": "Resolva isto antes de entrar ao vivo",
 	"network.hotspot.steeringPending": "Roteamento pendente",
 	"network.view.hotspotRadio": "Rádio hotspot",
 	"network.view.hotspotRadioChoose": "Escolha um rádio",
