@@ -27,7 +27,7 @@
  * ORDER IS A CONTRACT
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * 1. `isRealDevice()` — FIRST, and it is what makes the dev path spawn-free and
+ * 1. `canManageBluetooth()` — FIRST, and it is what makes the dev path spawn-free and
  *    bus-free. Everything below it touches the host.
  * 2. Reconcile the units to the persisted preference (b2). Observing BlueZ
  *    before this is pointless on the field boards this exists for: their
@@ -50,7 +50,7 @@ import type { DbusTransport } from "@ceralive/modem-control/transport";
 import { createDbusTransport } from "@ceralive/modem-control/transport";
 
 import { logger } from "../../helpers/logger.ts";
-import { isRealDevice as defaultIsRealDevice } from "../system/device-detection.ts";
+import { hasCapability } from "../system/board-capabilities.ts";
 
 import {
 	type BtUnavailable,
@@ -106,7 +106,7 @@ export interface BluetoothStackState {
 }
 
 export interface BluetoothStackDeps {
-	isRealDevice: () => Promise<boolean>;
+	canManageBluetooth: () => Promise<boolean>;
 	/**
 	 * The service layer, which OWNS the preference store — the stack reads it
 	 * through `services.preference` rather than carrying a second seam of its
@@ -136,7 +136,7 @@ export interface BluetoothStackDeps {
 }
 
 export const defaultBluetoothStackDeps: BluetoothStackDeps = {
-	isRealDevice: () => defaultIsRealDevice(),
+	canManageBluetooth: () => hasCapability("bluetooth"),
 	services: defaultBluetoothServicesDeps,
 	createTransport: () =>
 		createDbusTransport({ busAddress: resolveSystemBusAddress() }),
@@ -210,7 +210,7 @@ export class BluetoothStack {
 	async #startInner(): Promise<BluetoothStackState> {
 		// (1) The dev/emulated gate. Nothing below it may run on a dev host: no
 		// spawn, no bus dial, no file write.
-		if (!(await this.#deps.isRealDevice())) {
+		if (!(await this.#deps.canManageBluetooth())) {
 			this.#unavailable = btUnavailable(
 				"emulated",
 				"Bluetooth is unavailable on a dev/emulated host",
