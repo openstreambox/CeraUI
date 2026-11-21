@@ -4591,6 +4591,15 @@
             "string"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.notice",
+          "types": [
+            "undefined",
+            "\"ssh_off_by_tailnet\"",
+            "\"updates_not_pinned\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
       ]
     },
@@ -5080,6 +5089,15 @@
           "types": [
             "undefined",
             "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.notice",
+          "types": [
+            "undefined",
+            "\"ssh_off_by_tailnet\"",
+            "\"updates_not_pinned\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -43499,7 +43517,7 @@
     "apps/backend/src/modules/system/sensors.ts": "f14c9498da2adc79d5c494ba556d09c26d4181bd472c88d5d2b0599c95eca5c8",
     "apps/backend/src/modules/system/software-updates.ts": "21668cfcda44364ffc86935c7d101e4602d1296958d7d08b65f65c945f499edb",
     "apps/backend/src/modules/system/ssh.ts": "76480301bb9dc3a9483a7b9fb7073a2a1ec91c315653df945bfb2fcc1ce86f43",
-    "apps/backend/src/modules/system/tailscale.ts": "6cb0f0adca7089d6bccc7918fd5b20496f32549a7715dba7b199bc62413102b5",
+    "apps/backend/src/modules/system/tailscale.ts": "14b69de1257577d39349b1410902ad49680f6294373dae274d4d8b72757ea578",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "16969dce21a2f26d71c3d317aa38d77fe221f33b12175ca724e9067ad7250050",
     "apps/backend/src/modules/ui/notifications.ts": "1ee552f0c791e0c0a544fc0bed066f56372e3a882d9a5caf097ed6d7e9974aa2",
     "apps/backend/src/modules/ui/status.ts": "f91f94ec8f2462e91f82f3f1ae39b58ccc5aed34bbb50e962a47fc2b422a2475",
@@ -43531,7 +43549,7 @@
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
     "packages/rpc/src/schemas/status.schema.ts": "0222e16c9c559ed0bc4045ffb502845c8b71e24310de2b75f86e6a3b03cc2e2a",
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
-    "packages/rpc/src/schemas/system.schema.ts": "3cb9e004d4a01cdc96ff58309931c8ad0ccacc33285387c78f72d4b0f58c2a2b",
+    "packages/rpc/src/schemas/system.schema.ts": "11a3141ee222ef8f3ada5cc5659d05a43517e943ad28d33b189fc45df54b6ee0",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "5bb654471ce94854218cdfc84a70bf74a6ea63e7e8b2b7766d33f9853c7d2643",
     "packages/rpc/src/schemas/wifi.schema.ts": "d200119860c47931b03e6c7e74a93ebf9da9c61be977abf0fae513d75b638e23"
   }

@@ -63,7 +63,11 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type { TailscaleState, TailscaleStatus } from "@ceraui/rpc/schemas";
+import type {
+	TailscaleNotice,
+	TailscaleState,
+	TailscaleStatus,
+} from "@ceraui/rpc/schemas";
 
 import { execFileP } from "../../helpers/exec.ts";
 import { logger } from "../../helpers/logger.ts";
@@ -202,7 +206,17 @@ export function pickRestorePrefs(prefs: unknown): RestorePrefs {
 }
 
 /** What a join reports back. */
-export type JoinOutcome = "joined" | "approval" | "refused" | "pending";
+export type JoinOutcome =
+	| "joined"
+	| "approval"
+	| "refused"
+	| "refused_tailnet_ssh"
+	| "pending";
+
+/** The Join RPC's error code when the enrolment gave up for that reason. */
+export const TAILNET_SSH_NOT_ALLOWED = "tailnet_ssh_not_allowed";
+/** The enrolment's gave-up reason for a login on a tailnet without Tailscale SSH. */
+const ENROLL_NO_TAILNET_SSH_RE = /does not allow Tailscale SSH/i;
 
 /** One IPN bus notification, the fields a join reads. */
 type BusNotify = {
@@ -545,7 +559,8 @@ function publish(status: TailscaleStatus): TailscaleStatus {
 		!cached ||
 		cached.state !== status.state ||
 		cached.hostname !== status.hostname ||
-		cached.address !== status.address
+		cached.address !== status.address ||
+		cached.notice !== status.notice
 	) {
 		cached = status;
 		deps.broadcast(status);
@@ -595,6 +610,36 @@ async function readSettledBackend(): Promise<string | undefined> {
 	}
 }
 
+/**
+ * What the owner should know about a join done by the image's enrolment,
+ * from the daemon's live prefs, so a notice goes away once its cause does.
+ */
+async function readEnrolNotice(): Promise<TailscaleNotice | undefined> {
+	let prefs: Record<string, unknown>;
+	try {
+		const value = await deps.readPrefs();
+		if (typeof value !== "object" || value === null) return undefined;
+		prefs = value as Record<string, unknown>;
+	} catch {
+		return undefined;
+	}
+	const last = parseEnrollStatus((await deps.enrollLastStatus()) ?? "");
+	if (
+		prefs.RunSSH === false &&
+		last.state === "joined" &&
+		last.reason === "ok-without-tailnet-ssh"
+	) {
+		return "ssh_off_by_tailnet";
+	}
+	const update = prefs.AutoUpdate as
+		| { Apply?: unknown; Check?: unknown }
+		| undefined;
+	if (update?.Apply !== false || update?.Check !== false) {
+		return "updates_not_pinned";
+	}
+	return undefined;
+}
+
 async function probe(): Promise<TailscaleStatus> {
 	if (!(await deps.isInstalled())) return { state: "unavailable" };
 	const hook = await deps.enrollPresent();
@@ -608,6 +653,10 @@ async function probe(): Promise<TailscaleStatus> {
 		return { state: "off" };
 	}
 	const status = await readDaemonStatus();
+	if (hook && status.state === "connected") {
+		const notice = await readEnrolNotice();
+		if (notice) status.notice = notice;
+	}
 	if (
 		pending &&
 		status.state !== "connected" &&
@@ -689,16 +738,27 @@ async function enrollJoin(authKey: string): Promise<JoinOutcome> {
 		await deps.sleep(1_000);
 		// Status still belongs to the previous key until the unit adopts ours.
 		if (await deps.enrollQueued()) continue;
-		if (await deps.isDaemonActive()) {
-			const status = await readDaemonStatus();
-			if (status.state === "connected") return "joined";
-			if (status.state === "needs_approval") return "approval";
-		}
+		const pending = await deps.enrollPending();
 		const last = parseEnrollStatus((await deps.enrollLastStatus()) ?? "");
-		if (!(await deps.enrollPending())) {
+		// The enrolment's own line is the answer: it is written after the
+		// image's post-join step (which may turn SSH off or fail to pin), so a
+		// daemon that already reports connected is not the end of the join.
+		if (!pending) {
 			if (last.state === "joined") return "joined";
-			if (last.state === "gave-up") return "refused";
-		} else if (
+			if (last.state === "gave-up") {
+				return ENROLL_NO_TAILNET_SSH_RE.test(last.reason)
+					? "refused_tailnet_ssh"
+					: "refused";
+			}
+		}
+		if (
+			(await deps.isDaemonActive()) &&
+			(await readDaemonStatus()).state === "needs_approval"
+		) {
+			return "approval";
+		}
+		if (
+			pending &&
 			last.state === "pending" &&
 			last.attempts > 0 &&
 			last.reason === "retry"
@@ -708,6 +768,13 @@ async function enrollJoin(authKey: string): Promise<JoinOutcome> {
 			// and retries on its own schedule; report that now, not in 50 s.
 			return "pending";
 		}
+	}
+	// Out of time: a connected daemon still counts as joined.
+	if (
+		(await deps.isDaemonActive()) &&
+		(await readDaemonStatus()).state === "connected"
+	) {
+		return "joined";
 	}
 	return "pending";
 }
@@ -720,13 +787,24 @@ async function enrollJoin(authKey: string): Promise<JoinOutcome> {
  * is still joining.
  */
 export async function joinTailscale(authKey: string): Promise<boolean> {
-	if (shouldUseMocks()) return mockJoin(authKey);
+	return (await joinTailscaleResult(authKey)).success;
+}
+
+/**
+ * The same join, with the reason when it failed for a cause the owner can act
+ * on: `tailnet_ssh_not_allowed` (the device is still logged in to a tailnet
+ * that does not allow Tailscale SSH; forget it there first).
+ */
+export async function joinTailscaleResult(
+	authKey: string,
+): Promise<{ success: boolean; error?: string }> {
+	if (shouldUseMocks()) return { success: mockJoin(authKey) };
 	// Claimed before the first await, so a second click cannot start a second join.
-	if (joining) return false;
+	if (joining) return { success: false };
 	joining = true;
 	if (!(await deps.isInstalled())) {
 		joining = false;
-		return false;
+		return { success: false };
 	}
 	publish({ state: "joining" });
 	let outcome: JoinOutcome = "refused";
@@ -749,9 +827,17 @@ export async function joinTailscale(authKey: string): Promise<boolean> {
 		joining = false;
 	}
 	if (outcome === "refused") logger.warn("Tailscale refused the auth key");
+	if (outcome === "refused_tailnet_ssh") {
+		logger.warn(
+			"Tailscale join refused: this device is still logged in to a tailnet that does not allow Tailscale SSH",
+		);
+	}
 	const status = await getTailscaleStatus();
 	if (status.state === "joining") pollUntilSettled();
-	return outcome !== "refused";
+	if (outcome === "refused_tailnet_ssh") {
+		return { success: false, error: TAILNET_SSH_NOT_ALLOWED };
+	}
+	return { success: outcome !== "refused" };
 }
 
 /**

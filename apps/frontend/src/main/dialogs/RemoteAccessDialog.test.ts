@@ -282,6 +282,54 @@ describe("join", () => {
 	});
 });
 
+describe("degraded joins", () => {
+	it("says when the network turned Tailscale SSH off, and how to get it back", async () => {
+		await open({
+			state: "connected",
+			hostname: "studio-box",
+			notice: "ssh_off_by_tailnet",
+		});
+		const notice = screen.getByTestId("remote-access-notice");
+		expect(notice.textContent).toContain(
+			m["advanced.remoteAccess.noticeSshOff"](),
+		);
+		// The way back is on this card: Forget, then join with a new key.
+		expect(screen.getByTestId("remote-access-forget")).toBeTruthy();
+	});
+
+	it("says when Tailscale's own updates are not switched off yet", async () => {
+		await open({ state: "connected", notice: "updates_not_pinned" });
+		expect(screen.getByTestId("remote-access-notice").textContent).toContain(
+			m["advanced.remoteAccess.noticeUpdatesNotPinned"](),
+		);
+	});
+
+	it("shows no notice on an ordinary connection", async () => {
+		await open({ state: "connected", hostname: "studio-box" });
+		expect(screen.queryByTestId("remote-access-notice")).toBeNull();
+	});
+
+	it("names a network without Tailscale SSH instead of blaming the key", async () => {
+		tailscaleJoin.mockResolvedValue({
+			success: false,
+			error: "tailnet_ssh_not_allowed",
+		});
+		await open({ state: "needs_key" });
+		await fireEvent.input(screen.getByTestId("remote-access-key"), {
+			target: { value: KEY },
+		});
+		await fireEvent.click(screen.getByTestId("remote-access-join-button"));
+		await waitFor(() =>
+			expect(toastError).toHaveBeenCalledWith(
+				m["advanced.remoteAccess.joinFailedTailnetSsh"](),
+			),
+		);
+		expect(toastError).not.toHaveBeenCalledWith(
+			m["advanced.remoteAccess.joinFailed"](),
+		);
+	});
+});
+
 describe("forget", () => {
 	it("asks once more, and Keep it cancels", async () => {
 		await open({ state: "connected", hostname: "box" });

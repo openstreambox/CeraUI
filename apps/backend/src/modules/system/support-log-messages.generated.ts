@@ -324,6 +324,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["System: software update refused (", ")"],
 	["System: software update started"],
 	["Tailscale join failed: ", ""],
+	[
+		"Tailscale join refused: this device is still logged in to a tailnet that does not allow Tailscale SSH",
+	],
 	["Tailscale logout failed: ", ""],
 	["Tailscale refused the auth key"],
 	["Tightened permissions on ", " private state files"],

@@ -71,9 +71,9 @@ export type SshPersistentInput = z.infer<typeof sshPersistentInputSchema>;
 
 // Remote access over Tailscale (optional; only on images that ship tailscaled).
 //
-// `state` is the only field the cloud remote ever sees (see
-// projectRemoteStatus). `hostname` and `address` are local-UI only: they name
-// this device on the owner's private network. The tailnet name, DNS suffix,
+// None of it reaches the cloud remote: remote status is an allowlist and
+// `tailscale` is not on it. `hostname` and `address` name this device on the
+// owner's private network. The tailnet name, DNS suffix,
 // peers and the auth key are never part of this object.
 //
 // - unavailable: tailscale/tailscaled is not installed on this image
@@ -95,10 +95,18 @@ export const tailscaleStateSchema = z.enum([
 ]);
 export type TailscaleState = z.infer<typeof tailscaleStateSchema>;
 
+// Local-UI only, on images whose own enrolment joined the device, while connected:
+// - ssh_off_by_tailnet: the tailnet does not allow Tailscale SSH, so the
+//   enrolment turned it off (and it is still off)
+// - updates_not_pinned: Tailscale's own auto-update is not switched off yet
+export const tailscaleNoticeSchema = z.enum(['ssh_off_by_tailnet', 'updates_not_pinned']);
+export type TailscaleNotice = z.infer<typeof tailscaleNoticeSchema>;
+
 export const tailscaleStatusSchema = z.object({
 	state: tailscaleStateSchema,
 	hostname: z.string().optional(),
 	address: z.string().optional(),
+	notice: tailscaleNoticeSchema.optional(),
 });
 export type TailscaleStatus = z.infer<typeof tailscaleStatusSchema>;
 

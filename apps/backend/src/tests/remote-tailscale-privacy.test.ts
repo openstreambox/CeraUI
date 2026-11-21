@@ -2,6 +2,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import * as mockService from "../mocks/mock-service.ts";
 import { projectRemoteStatus } from "../modules/remote/remote-status.ts";
 import {
+	relayStatusToGateway,
 	resetStatusRelay,
 	setControlChannel,
 } from "../modules/remote-control/status-relay.ts";
@@ -86,8 +87,18 @@ test("the platform relay gets nothing of it, the local UI gets the name", async 
 	});
 
 	await getTailscaleStatus();
+	// A mixed frame: an allowed sibling must arrive, the Tailscale fields not.
+	relayStatusToGateway(
+		"status",
+		{
+			is_streaming: false,
+			tailscale: { state: "connected", hostname: HOSTNAME, address: ADDRESS },
+		},
+		1,
+	);
 
 	const relayBytes = JSON.stringify(relayed);
+	expect(relayBytes).toContain('"is_streaming":false');
 	expectNothingPrivate(relayBytes);
 	expect(relayBytes).not.toContain("tailscale");
 
@@ -104,9 +115,16 @@ test("the cloud remote socket gets nothing of it", async () => {
 	remote.sent.length = 0;
 	remote.send(
 		buildMsg("status", {
+			is_streaming: false,
 			tailscale: { state: "connected", hostname: HOSTNAME, address: ADDRESS },
 		}),
 	);
+	expect(remote.sent).toHaveLength(1);
+	const frame = JSON.parse(remote.sent[0] ?? "{}") as {
+		status?: Record<string, unknown>;
+	};
+	expect(frame.status?.is_streaming).toBe(false);
+	expect(frame.status).not.toHaveProperty("tailscale");
 	const sent = remote.sent.join("\n");
 	expectNothingPrivate(sent);
 	expect(sent).not.toContain("tailscale");

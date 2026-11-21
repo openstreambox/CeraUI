@@ -17,6 +17,7 @@ import {
 	getTailscaleStatus,
 	type JoinOutcome,
 	joinTailscale,
+	joinTailscaleResult,
 	logoutTailscale,
 	parseTailscaleStatusJson,
 	pickRestorePrefs,
@@ -119,6 +120,7 @@ function fakeDaemon(initial: {
 				CorpDNS: false,
 				RouteAll: false,
 				ShieldsUp: false,
+				AutoUpdate: { Check: false, Apply: false },
 				Persist: { PrivateNodeKey: "privkey:secret" },
 			},
 		readRestore: async () => state.restore,
@@ -504,6 +506,145 @@ describe("join through the image's enrolment", () => {
 			now.mockRestore();
 		}
 		expect(getCachedTailscaleStatus()?.state).toBe("joining");
+	});
+});
+
+describe("degraded image joins", () => {
+	const SSH_GAVE_UP =
+		"gave-up 2 0 this tailnet does not allow Tailscale SSH; forget the box there first";
+	const enrolled = (enrollStatus: string, prefs: Record<string, unknown>) => {
+		const daemon = fakeDaemon({
+			active: true,
+			backend: "Running",
+			enroll: { hasState: true, result: "joined" },
+			prefs,
+		});
+		daemon.state.enrollStatus = enrollStatus;
+		return daemon;
+	};
+
+	test("an enrolment that turned SSH off says so on the card while SSH stays off", async () => {
+		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", {
+			RunSSH: false,
+			AutoUpdate: { Check: false, Apply: false },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect((await getTailscaleStatus()).notice).toBe("ssh_off_by_tailnet");
+		// Someone turned SSH back on (policy now allows it): no stale notice.
+		daemon.state.prefs = {
+			RunSSH: true,
+			AutoUpdate: { Check: false, Apply: false },
+		};
+		expect((await getTailscaleStatus()).notice).toBeUndefined();
+		expect(daemon.broadcasts.at(-1)?.notice).toBeUndefined();
+	});
+
+	test("unpinned Tailscale updates show until the pin lands", async () => {
+		const daemon = enrolled("joined 1 0 ok-auto-update-not-pinned", {
+			RunSSH: true,
+			AutoUpdate: { Check: true, Apply: null },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect((await getTailscaleStatus()).notice).toBe("updates_not_pinned");
+		daemon.state.prefs = {
+			RunSSH: true,
+			AutoUpdate: { Check: false, Apply: false },
+		};
+		expect((await getTailscaleStatus()).notice).toBeUndefined();
+	});
+
+	test("a box without image enrolment never gets a notice", async () => {
+		const daemon = fakeDaemon({
+			active: true,
+			backend: "Running",
+			prefs: { RunSSH: false, AutoUpdate: { Check: true } },
+		});
+		setTailscaleDepsForTest(daemon.deps);
+		expect((await getTailscaleStatus()).notice).toBeUndefined();
+	});
+
+	test("a join waits for the enrolment's own result, not the first connected answer", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "joined" },
+			prefs: { RunSSH: true, AutoUpdate: { Check: true, Apply: null } },
+		});
+		let polls = 0;
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			// The daemon connects at once; the enrolment is still pinning.
+			enrollSubmit: async () => {
+				daemon.state.pending = true;
+				daemon.state.active = true;
+				daemon.state.backend = "Running";
+				daemon.state.enrollStatus = "pending 1 1700000120 trying";
+			},
+			sleep: async () => {
+				polls += 1;
+				if (polls < 3) return;
+				daemon.state.prefs = {
+					RunSSH: false,
+					AutoUpdate: { Check: false, Apply: false },
+				};
+				daemon.state.pending = false;
+				daemon.state.enrollStatus = "joined 1 0 ok-without-tailnet-ssh";
+			},
+		});
+		expect(await joinTailscaleResult(KEY)).toEqual({ success: true });
+		expect(polls).toBe(3);
+		expect(getCachedTailscaleStatus()).toMatchObject({
+			state: "connected",
+			notice: "ssh_off_by_tailnet",
+		});
+	});
+
+	test("a refusal by a tailnet without Tailscale SSH has its own reason", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "gave-up" },
+		});
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			enrollSubmit: async () => {
+				daemon.state.enrollStatus = SSH_GAVE_UP;
+			},
+		});
+		expect(await joinTailscaleResult(KEY)).toEqual({
+			success: false,
+			error: "tailnet_ssh_not_allowed",
+		});
+		// An ordinary refused key keeps the generic answer.
+		resetTailscaleForTest();
+		const refused = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "gave-up" },
+		});
+		setTailscaleDepsForTest(refused.deps);
+		expect(await joinTailscaleResult(KEY)).toEqual({ success: false });
+	});
+
+	test("the join procedure passes that reason to the card", async () => {
+		const daemon = fakeDaemon({
+			active: false,
+			backend: "NoState",
+			enroll: { hasState: false, result: "gave-up" },
+		});
+		setTailscaleDepsForTest({
+			...daemon.deps,
+			enrollSubmit: async () => {
+				daemon.state.enrollStatus = SSH_GAVE_UP;
+			},
+		});
+		expect(
+			await call(
+				tailscaleJoinProcedure,
+				{ authKey: KEY },
+				{ context: buildControlContext() },
+			),
+		).toEqual({ success: false, error: "tailnet_ssh_not_allowed" });
 	});
 });
 

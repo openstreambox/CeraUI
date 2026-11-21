@@ -75,7 +75,7 @@ import {
 } from "../../modules/system/ssh.ts";
 import { sshDisruptiveResponse } from "../../modules/system/ssh-disruptive-response.ts";
 import {
-	joinTailscale,
+	joinTailscaleResult,
 	logoutTailscale,
 	setTailscaleEnabled,
 } from "../../modules/system/tailscale.ts";
@@ -364,7 +364,16 @@ export const tailscaleJoinProcedure = authedProcedure
 	.input(tailscaleJoinInputSchema)
 	.output(successResponseSchema)
 	.handler(async ({ input }) => {
-		return sshDisruptiveResponse(() => joinTailscale(input.authKey));
+		let reason: string | undefined;
+		const response = await sshDisruptiveResponse(async () => {
+			const result = await joinTailscaleResult(input.authKey);
+			reason = result.error;
+			return result.success;
+		});
+		// A refusal by the disruptive-action gate keeps its own reason.
+		return reason && !response.error
+			? { ...response, error: reason }
+			: response;
 	});
 
 /**

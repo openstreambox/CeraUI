@@ -78,6 +78,8 @@ function failureMessage(reason: string | undefined, fallback: () => string): str
 		case 'stream_liveness_unknown':
 		case 'update_in_progress':
 			return m["notifications.disruptiveActionRefused"]();
+		case 'tailnet_ssh_not_allowed':
+			return m["advanced.remoteAccess.joinFailedTailnetSsh"]();
 		default:
 			return fallback();
 	}
@@ -153,6 +155,19 @@ async function forget() {
 	});
 	confirmingForget = false;
 }
+
+// What the owner should know about a join the image's enrolment finished.
+const noticeText = $derived.by(() => {
+	if (phase !== 'connected') return undefined;
+	switch (status?.notice) {
+		case 'ssh_off_by_tailnet':
+			return m["advanced.remoteAccess.noticeSshOff"]();
+		case 'updates_not_pinned':
+			return m["advanced.remoteAccess.noticeUpdatesNotPinned"]();
+		default:
+			return undefined;
+	}
+});
 
 // Forget is only offered while the device holds a login.
 const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
@@ -264,6 +279,17 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 						{m["advanced.remoteAccess.offConfirm"]()}
 					</Button>
 				</div>
+			</div>
+		{/if}
+
+		{#if noticeText}
+			<div
+				class="border-status-warning/40 bg-status-warning/10 flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm"
+				data-testid="remote-access-notice"
+				role="status"
+			>
+				<TriangleAlert aria-hidden="true" class="text-status-warning mt-0.5 size-4 shrink-0" />
+				<span>{noticeText}</span>
 			</div>
 		{/if}
 
