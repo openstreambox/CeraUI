@@ -183,10 +183,10 @@ export const linkTelemetryEntrySchema = z.object({
 	bytes_sent_total: z.number().int().nonnegative().optional(),
 	/**
 	 * Whether stream data is going out on this link, judged by the backend from
-	 * progress of its byte counter across fresh snapshots: `true` when it moved
+	 * its byte counter across distinct fresh snapshots: `true` when it moved
 	 * recently, `false` when it stayed still for a few seconds while the sender
-	 * kept reporting (the link is in the bond but carries nothing). Additive +
-	 * optional: absent makes no claim either way.
+	 * kept reporting (the link is in the bond but carries nothing, which may be
+	 * a fault or a deliberate spare). Additive + optional: absent makes no claim.
 	 */
 	carrying: z.boolean().optional(),
 	stale: z.boolean(),
@@ -215,6 +215,12 @@ export const linkTelemetryMessageSchema = z.object({
 	 * only on a genuinely new stream. Absent means UNKNOWN, not zero.
 	 */
 	bytes_sent_total: z.number().int().nonnegative().optional(),
+	/**
+	 * Device interfaces whose every telemetry row is `carrying: false` (a CLAT
+	 * translator's row counts for its modem), sorted. One card per device reads
+	 * this rather than picking one of several rows. Absent: no claim.
+	 */
+	not_carrying_ifaces: z.array(z.string()).optional(),
 });
 export type LinkTelemetryMessage = z.infer<typeof linkTelemetryMessageSchema>;
 

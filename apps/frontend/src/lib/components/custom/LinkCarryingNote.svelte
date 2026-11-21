@@ -1,36 +1,38 @@
 <!--
-  LinkCarryingNote.svelte: "Connected, but sending nothing" for one bonded link.
+  LinkCarryingNote.svelte: "No stream data on this link" for one bonded link.
 
-  Shown only when the backend positively says the link carries no stream data
-  (`carrying === false`: in the bond, fresh reports, its sent-bytes counter still
-  for several seconds) and the row is not stale. An absent `carrying` makes no
-  claim, so nothing renders; the backend already applies the dwell, so this does
-  not flicker at stream start or on one stray packet.
+  The caller decides `show` from the backend's verdict only: a Live row's own
+  `carrying === false` (and not stale), or a device listed in the feed's
+  `not_carrying_ifaces` for a card that stands for the whole device. The
+  backend already requires comparable evidence over several seconds, so this
+  never flickers at stream start or on one stray packet.
+
+  The wording and the muted look are deliberate: a link without stream data may
+  be failing or may be a spare the sender is not using right now, and the
+  backend cannot tell those apart. It states the fact, not a fault.
 -->
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
-import type { LinkTelemetryEntry } from '@ceraui/rpc/schemas';
 
 import { cn } from '$lib/utils';
 
 interface Props {
-	entry: LinkTelemetryEntry | undefined;
+	show: boolean;
+	iface?: string;
 	class?: string;
 }
 
-const { entry, class: className = undefined }: Props = $props();
-
-const show = $derived(entry?.carrying === false && entry.stale !== true);
+const { show, iface = undefined, class: className = undefined }: Props = $props();
 </script>
 
 {#if show}
 	<p
 		data-testid="link-carrying-nothing"
-		data-iface={entry?.iface}
+		data-iface={iface}
 		role="status"
-		class={cn('text-status-warning flex min-w-0 items-center gap-1.5 text-xs', className)}
+		class={cn('text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs', className)}
 	>
-		<span aria-hidden="true" class="bg-status-warning size-1.5 shrink-0 rounded-full"></span>
-		<span class="min-w-0">{m["network.view.carryingNothing"]()}</span>
+		<span aria-hidden="true" class="bg-muted-foreground size-1.5 shrink-0 rounded-full"></span>
+		<span class="min-w-0">{m["network.view.noStreamData"]()}</span>
 	</p>
 {/if}

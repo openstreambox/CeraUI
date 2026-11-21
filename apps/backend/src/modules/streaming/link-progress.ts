@@ -24,26 +24,35 @@
   stopped using, still has a fresh row with a plausible RTT. The row's presence
   is therefore no evidence that anything goes out on it.
 
-  The evidence used here is progress ({@link linkMadeProgress}): the link's
-  cumulative `bytes_sent_total` advancing between two fresh snapshots, or a
-  nonzero measured `bitrate_bps`. srtla_send counts only stream data and
-  duplicate probes in both, never registration or keepalives, so a link that is
-  up but unused shows neither. The same test decides "another link carried
-  traffic" for a stale-address restart (`link-carrying.ts`).
+  Positive evidence ({@link linkMadeProgress}): the link's cumulative
+  `bytes_sent_total` moved forward between two sender snapshots, or its
+  measured `bitrate_bps` is above zero. srtla_send counts only stream data and
+  duplicate probes in both, never registration or keepalives. The same test
+  decides "another link carried traffic" for a stale-address restart
+  (`link-carrying.ts`).
 
-  Three answers, and only one of them is a claim of trouble:
-    - `carrying`: the link made progress within the last LINK_CARRYING_SHOW_MS;
-    - `not_carrying`: snapshots stayed fresh and the link made no progress for
-      LINK_CARRYING_SHOW_MS (or kept failing to for LINK_CARRYING_CLEAR_MS of
-      fresh progress after that, so a lone packet does not flip it back);
-    - `unknown`: no stream, no fresh snapshot, a snapshot gap, or a link seen
-      for less than the dwell. Nothing should be concluded from it.
+  Negative evidence must be comparable: the byte counter, present and
+  unchanged, in at least two distinct sender snapshots spanning
+  LINK_CARRYING_SHOW_MS, with no measured rate. A missing counter, a counter
+  that went backwards (the sender rebuilt the link) and a gap in the reports
+  all clear the baseline and any verdict, so the link reads unknown until new
+  evidence has accumulated. The caller feeds each sender snapshot once (it
+  drops repeated reads of the same snapshot), and every verdict expires
+  LINK_CARRYING_EVIDENCE_MS after the last snapshot, so a sender that went
+  silent never leaves a stale answer behind.
 
-  What it cannot tell: whether the receiver hears the link. A link the sender
-  keeps sending into a black hole advances its bytes until the sender's own
-  stall detection holds it out, and a held-out link still gets one duplicate
-  probe per hundred packets. A receiver-side counter (SRTLA ACKs that arrived on
-  the link) would be the stronger rung when the sender's telemetry carries one.
+  Three answers, and only one of them is a claim:
+    - `carrying`: progress within the last LINK_CARRYING_SHOW_MS;
+    - `not_carrying`: the comparable negative evidence above; it clears only
+      after LINK_CARRYING_CLEAR_MS of progress over distinct snapshots;
+    - `unknown`: everything else. Nothing should be concluded from it.
+
+  What it cannot tell: whether the receiver hears the link, or whether a link
+  without traffic is a deliberate spare. A link the sender keeps sending into a
+  black hole advances its bytes until the sender's own stall detection holds
+  it out, and a held-out link still gets one duplicate probe per hundred
+  packets. A receiver-side counter (SRTLA ACKs that arrived on the link) would
+  be the stronger rung when the sender's telemetry carries one.
 
   Keys: a row is keyed by its minted `link_id`, else by its interface. The
   interface is the one the identity ladder resolved, which is already the modem
@@ -55,6 +64,8 @@
 
 export const LINK_CARRYING_SHOW_MS = 5_000;
 export const LINK_CARRYING_CLEAR_MS = 2_000;
+/** Sender snapshots arrive every second; a verdict older than this is void. */
+export const LINK_CARRYING_EVIDENCE_MS = 2_500;
 
 export type LinkCarryingState = "carrying" | "not_carrying" | "unknown";
 
@@ -68,8 +79,11 @@ export interface LinkProgressRow {
 
 interface LinkTrack {
 	iface: string;
-	firstSeenMs: number;
-	lastBytes: number | undefined;
+	/** The counter's value and when it took it; undefined without a baseline. */
+	bytes: number | undefined;
+	bytesSinceMs: number;
+	/** Distinct snapshots that reported `bytes` unchanged, the first included. */
+	unchangedSamples: number;
 	lastProgressMs: number | undefined;
 	progressSinceMs: number | undefined;
 	notCarrying: boolean;
@@ -79,6 +93,13 @@ type ParentResolver = (iface: string) => string | undefined;
 
 export function linkCarryingKey(row: LinkProgressRow): string {
 	return row.link_id !== undefined ? `id:${row.link_id}` : `if:${row.iface}`;
+}
+
+function counterOf(row: LinkProgressRow): number | undefined {
+	const bytes = row.bytes_sent_total;
+	return typeof bytes === "number" && Number.isFinite(bytes)
+		? bytes
+		: undefined;
 }
 
 /**
@@ -93,16 +114,76 @@ export function linkMadeProgress(
 ): boolean {
 	const bps = row.bitrate_bps;
 	if (typeof bps === "number" && Number.isFinite(bps) && bps > 0) return true;
-	const bytes = row.bytes_sent_total;
+	const bytes = counterOf(row);
 	return (
-		typeof bytes === "number" &&
-		previousBytes !== undefined &&
-		bytes > previousBytes
+		bytes !== undefined && previousBytes !== undefined && bytes > previousBytes
 	);
+}
+
+function freshTrack(iface: string, nowMs: number): LinkTrack {
+	return {
+		iface,
+		bytes: undefined,
+		bytesSinceMs: nowMs,
+		unchangedSamples: 0,
+		lastProgressMs: undefined,
+		progressSinceMs: undefined,
+		notCarrying: false,
+	};
+}
+
+/** Fold one row of a new snapshot into its link's track. */
+function observeRow(
+	track: LinkTrack,
+	row: LinkProgressRow,
+	nowMs: number,
+): void {
+	const bytes = counterOf(row);
+	const moved = linkMadeProgress(row, track.bytes);
+	if (
+		bytes === undefined ||
+		(track.bytes !== undefined && bytes < track.bytes)
+	) {
+		// No comparable evidence: forget the baseline and any verdict.
+		track.notCarrying = false;
+		track.progressSinceMs = undefined;
+	}
+	if (bytes === undefined) {
+		track.bytes = undefined;
+		track.unchangedSamples = 0;
+	} else if (track.bytes === bytes) {
+		track.unchangedSamples += 1;
+	} else {
+		track.bytes = bytes;
+		track.bytesSinceMs = nowMs;
+		track.unchangedSamples = 1;
+	}
+	if (moved) {
+		track.lastProgressMs = nowMs;
+		track.progressSinceMs ??= nowMs;
+	} else {
+		track.progressSinceMs = undefined;
+	}
+	if (
+		!track.notCarrying &&
+		!moved &&
+		track.bytes !== undefined &&
+		track.unchangedSamples >= 2 &&
+		nowMs - track.bytesSinceMs >= LINK_CARRYING_SHOW_MS
+	) {
+		track.notCarrying = true;
+	} else if (
+		track.notCarrying &&
+		track.progressSinceMs !== undefined &&
+		nowMs - track.progressSinceMs >= LINK_CARRYING_CLEAR_MS
+	) {
+		track.notCarrying = false;
+	}
 }
 
 export class LinkProgressTracker {
 	private tracks = new Map<string, LinkTrack>();
+	private lastSnapshotMs: number | undefined;
 
 	constructor(private readonly parentOf: ParentResolver = () => undefined) {}
 
@@ -111,43 +192,24 @@ export class LinkProgressTracker {
 		return this.parentOf(row.iface) ?? row.iface;
 	}
 
-	/** Feed one FRESH snapshot's rows. Call once per snapshot, never per render. */
+	/**
+	 * Feed one NEW sender snapshot's rows. The caller drops repeated reads of a
+	 * snapshot it already fed; feeding one twice would count as a second sample.
+	 */
 	observe(rows: readonly LinkProgressRow[], nowMs: number): void {
 		const next = new Map<string, LinkTrack>();
 		for (const row of rows) {
 			const key = linkCarryingKey(row);
-			const track = next.get(key) ??
-				this.tracks.get(key) ?? {
-					iface: this.ifaceOf(row),
-					firstSeenMs: nowMs,
-					lastBytes: undefined,
-					lastProgressMs: undefined,
-					progressSinceMs: undefined,
-					notCarrying: false,
-				};
-			const moved = linkMadeProgress(row, track.lastBytes);
-			track.iface = this.ifaceOf(row);
-			track.lastBytes = row.bytes_sent_total ?? track.lastBytes;
-			if (moved) {
-				track.lastProgressMs = nowMs;
-				track.progressSinceMs ??= nowMs;
-			} else {
-				track.progressSinceMs = undefined;
-			}
-			const quietSince = track.lastProgressMs ?? track.firstSeenMs;
-			if (!track.notCarrying && nowMs - quietSince >= LINK_CARRYING_SHOW_MS) {
-				track.notCarrying = true;
-			} else if (
-				track.notCarrying &&
-				track.progressSinceMs !== undefined &&
-				nowMs - track.progressSinceMs >= LINK_CARRYING_CLEAR_MS
-			) {
-				track.notCarrying = false;
-			}
+			const iface = this.ifaceOf(row);
+			const track =
+				next.get(key) ?? this.tracks.get(key) ?? freshTrack(iface, nowMs);
+			track.iface = iface;
+			observeRow(track, row, nowMs);
 			next.set(key, track);
 		}
 		// A link that left the bond stops resolving.
 		this.tracks = next;
+		this.lastSnapshotMs = nowMs;
 	}
 
 	/**
@@ -157,19 +219,28 @@ export class LinkProgressTracker {
 	 */
 	markGap(): void {
 		this.tracks.clear();
+		this.lastSnapshotMs = undefined;
 	}
 
 	reset(): void {
-		this.tracks.clear();
+		this.markGap();
+	}
+
+	private current(nowMs: number): boolean {
+		return (
+			this.lastSnapshotMs !== undefined &&
+			nowMs - this.lastSnapshotMs <= LINK_CARRYING_EVIDENCE_MS
+		);
 	}
 
 	stateFor(row: LinkProgressRow, nowMs: number): LinkCarryingState {
 		const track = this.tracks.get(linkCarryingKey(row));
-		return track ? trackState(track, nowMs) : "unknown";
+		return track && this.current(nowMs) ? trackState(track, nowMs) : "unknown";
 	}
 
 	/** Combined state of every row whose traffic belongs to `iface`. */
 	stateForIface(iface: string, nowMs: number): LinkCarryingState {
+		if (!this.current(nowMs)) return "unknown";
 		let sawNotCarrying = false;
 		let sawUnknown = false;
 		for (const track of this.tracks.values()) {
@@ -180,6 +251,14 @@ export class LinkProgressTracker {
 			else sawUnknown = true;
 		}
 		return sawNotCarrying && !sawUnknown ? "not_carrying" : "unknown";
+	}
+
+	/** Every interface whose combined state is `not_carrying`, sorted. */
+	notCarryingIfaces(nowMs: number): string[] {
+		const ifaces = new Set([...this.tracks.values()].map((t) => t.iface));
+		return [...ifaces]
+			.filter((iface) => this.stateForIface(iface, nowMs) === "not_carrying")
+			.sort();
 	}
 }
 

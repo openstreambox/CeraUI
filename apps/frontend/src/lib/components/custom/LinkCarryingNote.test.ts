@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
- * "Connected, but sending nothing": a link in the bond whose sender reports
- * show no stream data going out (`carrying: false` from the backend) says so,
- * on Live's per-link list and on Network's Bonded Links card. No claim
- * (`carrying` absent) and a stale row show nothing.
+ * "No stream data on this link": a link in the bond whose sender reports show
+ * no stream data going out says so. Live's per-link row reads its own
+ * `carrying: false`; Network's card reads the feed's per-device
+ * `not_carrying_ifaces`. No claim and a stale row show nothing.
  */
 
 import type {
@@ -18,7 +18,7 @@ import BondedLinksSection from "../../../main/network/BondedLinksSection.svelte"
 import IngestStats from "./IngestStats.svelte";
 import LinkCarryingNote from "./LinkCarryingNote.svelte";
 
-const TEXT = "Connected, but sending nothing";
+const TEXT = "No stream data on this link";
 
 function entry(
 	iface: string,
@@ -60,26 +60,17 @@ const notes = (root: HTMLElement) =>
 	);
 
 describe("LinkCarryingNote", () => {
-	it("speaks only for a positive 'carries nothing'", () => {
-		for (const [props, shown] of [
-			[entry("usb0", { carrying: false }), true],
-			[entry("usb0", { carrying: true }), false],
-			[entry("usb0"), false],
-			[entry("usb0", { carrying: false, stale: true }), false],
-			[undefined, false],
-		] as const) {
-			const { container, unmount } = render(LinkCarryingNote, {
-				props: { entry: props },
-			});
-			expect(notes(container).length, JSON.stringify(props)).toBe(
-				shown ? 1 : 0,
-			);
-			if (shown) {
-				expect(notes(container)[0]?.textContent?.trim()).toBe(TEXT);
-				expect(notes(container)[0]?.getAttribute("role")).toBe("status");
-			}
-			unmount();
-		}
+	it("speaks only when asked to, as a status line", () => {
+		const shown = render(LinkCarryingNote, {
+			props: { show: true, iface: "usb0" },
+		});
+		expect(notes(shown.container).map((n) => n.textContent?.trim())).toEqual([
+			TEXT,
+		]);
+		expect(notes(shown.container)[0]?.getAttribute("role")).toBe("status");
+		shown.unmount();
+		const hidden = render(LinkCarryingNote, { props: { show: false } });
+		expect(notes(hidden.container)).toHaveLength(0);
 	});
 });
 
@@ -90,6 +81,8 @@ describe("Live: per-link list", () => {
 				telemetry: feed(
 					entry("usb0", { carrying: false }),
 					entry("wlan0", { carrying: true }),
+					entry("wlan1"),
+					entry("eth0", { carrying: false, stale: true }),
 				),
 			},
 		});
@@ -107,19 +100,28 @@ describe("Live: per-link list", () => {
 		expect(
 			row("wlan0").querySelector('[data-testid="ingest-health"]'),
 		).not.toBeNull();
+		// No claim, or a stale row: nothing is said.
+		expect(notes(row("wlan1"))).toHaveLength(0);
+		expect(notes(row("eth0"))).toHaveLength(0);
 	});
 });
 
 describe("Network: Bonded Links", () => {
-	it("puts the line on that link's card only", () => {
+	it("follows the per-device answer, not one of the device's rows", () => {
 		const { container } = render(BondedLinksSection, {
 			props: {
 				links: [linkFor("usb0", 0), linkFor("wlan0", 1)],
 				modemEntries: [],
-				linkTelemetry: feed(
-					entry("usb0", { carrying: false }),
-					entry("wlan0", { carrying: true }),
-				),
+				// usb0's only row is a translator row the card cannot match by
+				// name; wlan0 has a row that says false and a sibling that carries.
+				linkTelemetry: {
+					...feed(
+						entry("clat0", { carrying: false }),
+						entry("wlan0", { carrying: false, link_id: "a" }),
+						entry("wlan0", { carrying: true, link_id: "b" }),
+					),
+					not_carrying_ifaces: ["usb0"],
+				},
 			},
 		});
 		const card = (id: string) =>

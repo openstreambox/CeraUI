@@ -4,7 +4,10 @@ import type {
 	Telemetry,
 	watchTelemetry as WatchTelemetryFn,
 } from "@ceraui/srtla-send/telemetry";
-
+import {
+	resetClatTranslationStateForTest,
+	setClatTranslationsForTest,
+} from "../modules/network/clat-translation.ts";
 import type { BondEntry } from "../modules/streaming/bind-map.ts";
 import {
 	clearBindMapReport,
@@ -36,10 +39,15 @@ type Conn = Partial<Telemetry["connections"][number]> & {
 	link_id?: string;
 };
 
-function snapshot(connections: Conn[]): Telemetry {
+let clock = 0;
+
+// The sender stamps each snapshot; a repeated read carries the same stamp.
+const SENDER_EPOCH = 1_790_000_000_000;
+
+function snapshot(connections: Conn[], at = clock): Telemetry {
 	return {
 		schema_version: 1,
-		last_updated_ms: Date.now(),
+		last_updated_ms: SENDER_EPOCH + at,
 		connections: connections.map((c, i) => ({
 			conn_id: String(i),
 			rtt_ms: 40,
@@ -71,8 +79,6 @@ const CLAT: BondEntry = {
 	linkId: "lnk_clat000000000000",
 };
 
-let clock = 0;
-
 function start(entries: readonly BondEntry[]): void {
 	registerSrtlaBond(entries);
 	noteWriterBindMapReport("bind-map-passed", entries);
@@ -88,7 +94,7 @@ function start(entries: readonly BondEntry[]): void {
 function feed(from: number, to: number, at: (t: number) => Conn[]): void {
 	for (let t = from; t <= to; t += 1_000) {
 		clock = t;
-		ingestTelemetryForTest(snapshot(at(t)));
+		ingestTelemetryForTest(snapshot(at(t), t));
 	}
 }
 
@@ -180,5 +186,70 @@ describe("broadcasts do not count as reports", () => {
 			clock += 100;
 			expect(row("wlan0")?.carrying).toBe(true);
 		}
+	});
+});
+
+describe("evidence is counted once and expires", () => {
+	test("re-reading the same snapshot is not a second sample", () => {
+		start([MODEM]);
+		// One real snapshot, then the poll re-reads the unchanged file for 5 s.
+		clock = 0;
+		const once = snapshot([{ link_id: MODEM.linkId, bytes_sent_total: 0 }], 0);
+		for (let t = 0; t <= LINK_CARRYING_SHOW_MS; t += 1_000) {
+			clock = t;
+			ingestTelemetryForTest(once);
+		}
+		expect(row("wwan0")).not.toHaveProperty("carrying");
+		expect(linkCarryingState("wwan0")).toBe("unknown");
+	});
+
+	test("a silent sender leaves no verdict behind", () => {
+		start([MODEM]);
+		feed(0, LINK_CARRYING_SHOW_MS, () => [
+			{ link_id: MODEM.linkId, bytes_sent_total: 0 },
+		]);
+		expect(row("wwan0")?.carrying).toBe(false);
+		// No new snapshot arrives (a quiet subscription), the last one stays put.
+		clock = LINK_CARRYING_SHOW_MS + 3_000;
+		expect(row("wwan0")).not.toHaveProperty("carrying");
+		expect(buildLinkTelemetry()?.not_carrying_ifaces).toEqual([]);
+		expect(linkCarryingState("wwan0")).toBe("unknown");
+	});
+
+	test("a sender without a byte counter makes no negative claim", () => {
+		start([MODEM]);
+		feed(0, 3 * LINK_CARRYING_SHOW_MS, () => [
+			{ link_id: MODEM.linkId, bitrate_bps: 0 },
+		]);
+		expect(row("wwan0")).not.toHaveProperty("carrying");
+	});
+});
+
+describe("one answer per device", () => {
+	test("a translator row the ladder left unresolved still counts for its modem", () => {
+		setClatTranslationsForTest(
+			new Map([
+				["clat0", { parent: "wwan1", tun: "clat0", ipv4: "192.0.0.1" }],
+			]),
+		);
+		try {
+			start([]);
+			feed(0, LINK_CARRYING_SHOW_MS, () => [
+				{ iface: "clat0", bytes_sent_total: 0 },
+			]);
+			expect(buildLinkTelemetry()?.not_carrying_ifaces).toEqual(["wwan1"]);
+		} finally {
+			resetClatTranslationStateForTest();
+		}
+	});
+
+	test("a sibling row that carries keeps the device off the list", () => {
+		start([MODEM, { ...CLAT, parentIface: "wwan0" }]);
+		feed(0, LINK_CARRYING_SHOW_MS, (t) => [
+			{ link_id: MODEM.linkId, bytes_sent_total: t },
+			{ link_id: CLAT.linkId, iface: "clat0", bytes_sent_total: 0 },
+		]);
+		expect(buildLinkTelemetry()?.not_carrying_ifaces).toEqual([]);
+		expect(linkCarryingState("wwan0")).toBe("carrying");
 	});
 });

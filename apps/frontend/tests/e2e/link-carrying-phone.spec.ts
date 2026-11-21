@@ -41,9 +41,9 @@ const LINKS = [
 ];
 
 const CASES = [
-	{ locale: "en", width: 390, text: "Connected, but sending nothing" },
-	{ locale: "en", width: 360, text: "Connected, but sending nothing" },
-	{ locale: "de", width: 390, text: "Verbunden, sendet aber nichts" },
+	{ locale: "en", width: 390, text: "No stream data on this link" },
+	{ locale: "en", width: 360, text: "No stream data on this link" },
+	{ locale: "de", width: 390, text: "Keine Streamdaten über diese Verbindung" },
 ] as const;
 
 for (const { locale, width, text } of CASES) {

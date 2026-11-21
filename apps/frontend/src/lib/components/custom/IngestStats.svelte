@@ -500,7 +500,11 @@ function exportCsv(): void {
 							{link.weight_percent}%
 						</span>
 					</div>
-					<LinkCarryingNote class="mt-1 ps-4" entry={link} />
+					<LinkCarryingNote
+						class="mt-1 ps-4"
+						show={link.carrying === false && !link.stale}
+						iface={link.iface}
+					/>
 
 					<!-- recent-trend strip: labelled RTT sparkline + per-link health pill -->
 					<div class="mt-2 flex items-center gap-2">

@@ -1647,7 +1647,7 @@
 	"network.view.configure": "कॉन्फ़िगर करें",
 	"network.view.connect": "कनेक्ट करें",
 	"network.view.connected": "कनेक्टेड",
-	"network.view.carryingNothing": "जुड़ा है, पर कुछ नहीं भेज रहा",
+	"network.view.noStreamData": "इस लिंक पर स्ट्रीम का कोई डेटा नहीं",
 	"network.view.disableBond": "बॉन्ड से हटाएँ",
 	"network.view.disconnected": "डिस्कनेक्टेड",
 	"network.view.enableBond": "बॉन्ड में जोड़ें",

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
 	LINK_CARRYING_CLEAR_MS,
+	LINK_CARRYING_EVIDENCE_MS,
 	LINK_CARRYING_SHOW_MS,
 	type LinkProgressRow,
 	LinkProgressTracker,
@@ -164,5 +165,72 @@ describe("LinkProgressTracker", () => {
 		expect(tracker.stateForIface("wwan0", LINK_CARRYING_SHOW_MS + 1_000)).toBe(
 			"unknown",
 		);
+	});
+
+	test("a sender without a byte counter never earns a 'not carrying'", () => {
+		const tracker = new LinkProgressTracker();
+		run(tracker, 0, 3 * LINK_CARRYING_SHOW_MS, () => [row("wwan0", undefined)]);
+		expect(tracker.stateFor(row("wwan0", undefined), 15_000)).toBe("unknown");
+	});
+
+	test("a counter reset clears the verdict and restarts the dwell", () => {
+		const tracker = new LinkProgressTracker();
+		run(tracker, 0, LINK_CARRYING_SHOW_MS, () => [row("wwan0", 9_000)]);
+		expect(tracker.stateFor(row("wwan0", 0), LINK_CARRYING_SHOW_MS)).toBe(
+			"not_carrying",
+		);
+		// The sender rebuilt the link: its counter starts over at zero.
+		tracker.observe([row("wwan0", 0)], 6_000);
+		expect(tracker.stateFor(row("wwan0", 0), 6_000)).toBe("unknown");
+		run(tracker, 7_000, 10_000, () => [row("wwan0", 0)]);
+		expect(tracker.stateFor(row("wwan0", 0), 10_000)).toBe("unknown");
+		run(tracker, 11_000, 11_000, () => [row("wwan0", 0)]);
+		expect(tracker.stateFor(row("wwan0", 0), 11_000)).toBe("not_carrying");
+	});
+
+	test("a reset exactly at the dwell boundary earns no verdict from its first sample", () => {
+		const tracker = new LinkProgressTracker();
+		run(tracker, 0, LINK_CARRYING_SHOW_MS - 1_000, (t) => [row("wwan0", t)]);
+		tracker.observe([row("wwan0", 0)], LINK_CARRYING_SHOW_MS + 5_000);
+		expect(
+			tracker.stateFor(row("wwan0", 0), LINK_CARRYING_SHOW_MS + 5_000),
+		).toBe("unknown");
+	});
+
+	test("a missing counter in between clears the baseline", () => {
+		const tracker = new LinkProgressTracker();
+		run(tracker, 0, 4_000, () => [row("wwan0", 100)]);
+		tracker.observe([row("wwan0", undefined)], 5_000);
+		run(tracker, 6_000, 9_000, () => [row("wwan0", 100)]);
+		expect(tracker.stateFor(row("wwan0", 0), 9_000)).toBe("unknown");
+	});
+
+	test("one sample after a long silence is not two samples", () => {
+		const tracker = new LinkProgressTracker();
+		tracker.observe([row("wwan0", 0)], 0);
+		tracker.observe([row("wwan0", 0)], LINK_CARRYING_SHOW_MS);
+		// Two distinct snapshots, five seconds apart, counter unchanged: that is
+		// comparable evidence, as long as the evidence is current.
+		expect(tracker.stateFor(row("wwan0", 0), LINK_CARRYING_SHOW_MS)).toBe(
+			"not_carrying",
+		);
+		const single = new LinkProgressTracker();
+		single.observe([row("wwan0", 0)], LINK_CARRYING_SHOW_MS);
+		expect(single.stateFor(row("wwan0", 0), LINK_CARRYING_SHOW_MS)).toBe(
+			"unknown",
+		);
+	});
+
+	test("every verdict expires when the sender stops reporting", () => {
+		const tracker = new LinkProgressTracker();
+		run(tracker, 0, LINK_CARRYING_SHOW_MS, (t) => [
+			row("wwan0", 0),
+			row("wlan0", t),
+		]);
+		const later = LINK_CARRYING_SHOW_MS + LINK_CARRYING_EVIDENCE_MS + 1;
+		expect(tracker.stateFor(row("wwan0", 0), later)).toBe("unknown");
+		expect(tracker.stateFor(row("wlan0", 0), later)).toBe("unknown");
+		expect(tracker.notCarryingIfaces(later)).toEqual([]);
+		expect(tracker.notCarryingIfaces(LINK_CARRYING_SHOW_MS)).toEqual(["wwan0"]);
 	});
 });
