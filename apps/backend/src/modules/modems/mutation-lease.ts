@@ -48,10 +48,15 @@ import type {
 import { MODEM_MUTATION_JOURNAL_VERSION } from "@ceraui/rpc/schemas";
 
 import { logger } from "../../helpers/logger.ts";
+import { isForwardActive } from "../streaming/forward-activity.ts";
 import {
+	getMutationBlocks,
+	isLifecycleHeld,
 	type ModemMutationLease,
+	tryAcquireModemJournalKey,
 	tryAcquireModemMutation,
 } from "../streaming/lifecycle-admission.ts";
+import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import { refreshMutationBlocks } from "./mutation-blocks.ts";
 import {
 	commitMutationEntry,
@@ -214,5 +219,39 @@ export async function withJournaledModemMutation<T>(
 	} finally {
 		acquired.lease.release();
 		await refreshMutationBlocks().catch(() => undefined);
+	}
+}
+
+/**
+ * A background dial or reconnect of ONE modem: the status poll bringing a
+ * dropped automatic profile back, or replacing a bearer that carries nothing.
+ *
+ * Unlike `withModemMutation` it takes the same-key journal lease, so it still
+ * excludes every other mutation of this modem (an operator's save waits or is
+ * refused with `mutation_in_progress`) but never refuses a Stream Start: a dial
+ * can wait up to 45 s for NetworkManager, and a stream that cannot start for a
+ * reason the operator did not cause is worse than a link joining mid-launch.
+ * It never begins during journal replay, on a blocked identity, while a stream
+ * is being launched or forwarded, so it cannot change the link set under an
+ * admission in progress.
+ */
+export async function withBackgroundModemLease<T>(
+	stableKey: string | undefined,
+	run: () => Promise<T>,
+): Promise<MutationOutcome<T>> {
+	if (stableKey === undefined || stableKey === "")
+		return refuse("identity_unresolved");
+	if (isRecoveryPending()) return refuse("recovery_pending");
+	const block = getMutationBlocks().find(
+		(candidate) => candidate.stableKey === stableKey,
+	);
+	if (block) return refuse(block.refusal);
+	if (isForwardActive() || isLifecycleHeld()) return refuse("streaming_active");
+	const lease = tryAcquireModemJournalKey(stableKey);
+	if (!lease) return refuse("mutation_in_progress");
+	try {
+		return { ok: true, value: await run() };
+	} finally {
+		lease.release();
 	}
 }
