@@ -241,28 +241,31 @@ test("codes that are not plain tokens are dropped, never passed on", () => {
 				lastError: { code: bad, at: NOW },
 			}),
 		);
-		expect(snapshot.ready).toEqual({ ready: false });
+		expect(snapshot.ready).toEqual({ ready: false, code: "other" });
 		expect(snapshot.last_error).toBeUndefined();
 		expect(JSON.stringify(snapshot)).not.toContain(bad || '""code');
 	}
 });
 
-test("the version must look like a release, in ASCII digits", () => {
-	for (const good of [
-		"2026.11.21",
-		"1.2.3",
-		"2026.11.21-osb",
-		"2026.11.21-1.abc1234",
+test("only the numeric release part of the version is passed on", () => {
+	for (const [stamp, shown] of [
+		["2026.11.21", "2026.11.21"],
+		["1.2.3", "1.2.3"],
+		["2026.11.21-osb", "2026.11.21"],
+		["2026.11.21-1.abc1234", "2026.11.21"],
+		["2026.11.21-hunter2pass", "2026.11.21"],
+		["2026.11.21 (abc1234)", "2026.11.21"],
 	])
-		expect(buildStatusScreenSnapshot(inputs({ version: good })).ceraui).toBe(
-			good,
+		expect(buildStatusScreenSnapshot(inputs({ version: stamp })).ceraui).toBe(
+			shown,
 		);
 	for (const bad of [
 		"abc1234",
 		"2026",
 		"live_SECRETKEY_123",
-		"٢٠٢٦.١١",
-		"2026.11.21 (abc1234)",
+		"\u0662\u0660\u0662\u0666.\u0661\u0661",
+		"2026.11.21x",
+		"12345.1.1",
 		undefined,
 	])
 		expect(
@@ -340,6 +343,57 @@ test("the last start error is the class only, cleared by a start that succeeds",
 	expect(lastStartError()).toBeUndefined();
 });
 
+test("codes outside the supported sets never pass, even when token-shaped", () => {
+	for (const secret of [
+		"live_SECRETKEY_123",
+		"351234567890123",
+		"HomeWiFi5G",
+	]) {
+		const snapshot = buildStatusScreenSnapshot(
+			inputs({
+				readiness: readiness(secret),
+				lastError: { code: secret, at: NOW },
+			}),
+		);
+		expect(JSON.stringify(snapshot)).not.toContain(secret);
+		expect(snapshot.ready).toEqual({ ready: false, code: "other" });
+		expect(snapshot.last_error).toBeUndefined();
+	}
+	for (const code of [
+		"MODEM_TRANSITION_ACTIVE",
+		"receiver_refused",
+		"no_link_carrying",
+	])
+		expect(
+			buildStatusScreenSnapshot(inputs({ readiness: readiness(code) })).ready,
+		).toEqual({
+			ready: false,
+			code,
+		});
+	for (const code of [
+		"engine_unavailable",
+		"capture_source_unavailable",
+		"update_in_progress",
+	])
+		expect(
+			buildStatusScreenSnapshot(inputs({ lastError: { code, at: NOW } }))
+				.last_error?.code,
+		).toBe(code);
+});
+
+test("a readiness answer older than 10 s is left out, not shown as current", () => {
+	const fresh = { ...readiness(undefined, true), at: NOW - 10_000 };
+	expect(buildStatusScreenSnapshot(inputs({ readiness: fresh })).ready).toEqual(
+		{
+			ready: true,
+		},
+	);
+	const stale = { ...readiness(undefined, true), at: NOW - 10_001 };
+	expect(
+		"ready" in buildStatusScreenSnapshot(inputs({ readiness: stale })),
+	).toBe(false);
+});
+
 // ─── File ────────────────────────────────────────────────────────────────────
 
 const temporary: string[] = [];
@@ -364,6 +418,15 @@ test("written atomically as 0644 JSON in a directory nobody else may write", () 
 	expect(lstatSync(file).mode & 0o777).toBe(0o644);
 	expect(lstatSync(join(root, "status-screen")).mode & 0o022).toBe(0);
 	expect(readdirSync(join(root, "status-screen"))).toEqual(["snapshot.json"]);
+});
+
+test("a leftover snapshot with other permissions ends up 0644", () => {
+	const root = tempDir();
+	const file = join(root, "snapshot.json");
+	writeFileSync(file, "{}", { mode: 0o600 });
+	chmodSync(file, 0o600);
+	writeStatusScreenSnapshot(buildStatusScreenSnapshot(inputs()), file);
+	expect(lstatSync(file).mode & 0o777).toBe(0o644);
 });
 
 test("refuses a symlinked or shared directory and a symlinked file", () => {
@@ -417,8 +480,9 @@ test("rewritten on change and for refresh, not every tick; failures retried", ()
 	const written: StatusScreenSnapshot[] = [];
 	setStatusScreenDepsForTest({
 		now: () => now,
+		monotonic: () => now,
 		version: () => "2026.11.21",
-		readiness: () => ready,
+		readiness: () => ({ ...ready, at: now }),
 		uplinks: () => [],
 		modems: () => ({}),
 		lastError: () => undefined,
@@ -440,4 +504,38 @@ test("rewritten on change and for refresh, not every tick; failures retried", ()
 	expect(tickStatusScreenSnapshot()).toBe(true);
 	expect(written.map((s) => s.ready?.ready)).toEqual([false, true, true]);
 	expect(written[2]?.expires).toBeGreaterThan(written[1]?.expires ?? 0);
+});
+
+test("a clock step forces a fresh expiry; the refresh interval runs on monotonic time", () => {
+	let wall = NOW;
+	let mono = 1_000;
+	const written: StatusScreenSnapshot[] = [];
+	setStatusScreenDepsForTest({
+		now: () => wall,
+		monotonic: () => mono,
+		version: () => "2026.11.21",
+		readiness: () => undefined,
+		uplinks: () => [],
+		modems: () => ({}),
+		lastError: () => undefined,
+		write: (snapshot) => written.push(snapshot),
+	});
+	expect(tickStatusScreenSnapshot()).toBe(true);
+	// Two hours back: the written expiry is now far beyond the reader's hour.
+	wall -= 2 * 3_600_000;
+	mono += 2_000;
+	expect(tickStatusScreenSnapshot()).toBe(true);
+	expect(written[1]?.expires).toBe(Math.floor((wall + 90_000) / 1000));
+	// Ten minutes forward: the old expiry would already have passed.
+	wall += 600_000;
+	mono += 2_000;
+	expect(tickStatusScreenSnapshot()).toBe(true);
+	// Steady: nothing until 30 s of monotonic time, whatever small jitter the wall clock has.
+	wall += 2_500;
+	mono += 2_000;
+	expect(tickStatusScreenSnapshot()).toBe(false);
+	wall += 28_000;
+	mono += 28_000;
+	expect(tickStatusScreenSnapshot()).toBe(true);
+	expect(written).toHaveLength(4);
 });

@@ -34,10 +34,11 @@
   30 s; `expires` lets the page notice when this application stops.
 */
 
-import { lstatSync, mkdirSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
 	type StreamReadiness,
+	startFailureClassSchema,
 	type UplinkHealthRecord,
 	type UplinkHealthState,
 	type UplinkKind,
@@ -68,9 +69,36 @@ export const STATUS_SCREEN_TICK_MS = 2_000;
 export const STATUS_SCREEN_MAX_ENTRIES = 8;
 export const STATUS_SCREEN_MAX_BYTES = 16_384;
 
-// The same checks the page applies; ASCII only.
-const CODE = /^[A-Za-z0-9_]{1,48}$/;
-const VERSION = /^[0-9]{1,4}(\.[0-9]{1,4}){1,3}([.+~-][0-9A-Za-z]{1,12}){0,2}$/;
+/** A readiness answer older than this is left out rather than shown as current. */
+export const STATUS_SCREEN_READINESS_MAX_AGE_MS = 10_000;
+/** A wall-clock step larger than this forces a write with a fresh expiry. */
+export const STATUS_SCREEN_CLOCK_STEP_MS = 5_000;
+
+/**
+ * The ready codes the page has wording for (image `ceralive-status-screen`,
+ * READY_TEXT). Any other reason is sent as `other`, which the page shows as
+ * "another reason"; the code itself never leaves the backend.
+ */
+export const STATUS_SCREEN_READY_CODES: ReadonlySet<string> = new Set([
+	"update_in_progress",
+	"recovery_pending",
+	"mutation_in_progress",
+	"MODEM_TRANSITION_ACTIVE",
+	"START_IN_PROGRESS",
+	"no_source",
+	"unknown_source",
+	"source_lost",
+	"source_unavailable",
+	"receiver_not_set",
+	"receiver_invalid",
+	"receiver_refused",
+	"no_uplink",
+	"no_uplink_passes",
+	"no_link_carrying",
+]);
+const OTHER = "other";
+// Only the numeric release part: dotted ASCII numbers, whatever follows dropped.
+const VERSION = /^([0-9]{1,4}(?:\.[0-9]{1,4}){1,3})(?=$|[-+~ (])/;
 
 export type StatusScreenSim = "present" | "absent" | "locked" | "unknown";
 
@@ -108,10 +136,6 @@ export interface StatusScreenInputs {
 	readonly uplinks: readonly UplinkHealthRecord[];
 	readonly modems: Readonly<Record<string, StatusScreenModemRow>>;
 	readonly lastError: LastStartError | undefined;
-}
-
-function code(value: unknown): string | undefined {
-	return typeof value === "string" && CODE.test(value) ? value : undefined;
 }
 
 const LOCKED = new Set(["sim-pin", "sim-puk", "sim-puk2"]);
@@ -156,12 +180,23 @@ export function buildStatusScreenSnapshot(
 		.map((row) => ({ sim: simState(row) }))
 		.slice(0, STATUS_SCREEN_MAX_ENTRIES);
 	const version =
-		typeof inputs.version === "string" && VERSION.test(inputs.version)
-			? inputs.version
+		typeof inputs.version === "string"
+			? VERSION.exec(inputs.version)?.[1]
 			: undefined;
-	const readiness = inputs.readiness;
-	const reason = code(readiness?.reason?.code);
-	const lastCode = code(inputs.lastError?.code);
+	const readiness =
+		inputs.readiness !== undefined &&
+		inputs.readiness.at >= inputs.now - STATUS_SCREEN_READINESS_MAX_AGE_MS
+			? inputs.readiness
+			: undefined;
+	const rawReason = readiness?.reason?.code;
+	const reason =
+		rawReason === undefined
+			? undefined
+			: STATUS_SCREEN_READY_CODES.has(rawReason)
+				? rawReason
+				: OTHER;
+	const lastClass = startFailureClassSchema.safeParse(inputs.lastError?.code);
+	const lastCode = lastClass.success ? lastClass.data : undefined;
 	return {
 		schema: STATUS_SCREEN_SCHEMA,
 		expires: Math.floor((inputs.now + STATUS_SCREEN_TTL_MS) / 1000),
@@ -210,12 +245,16 @@ export function writeStatusScreenSnapshot(
 			"status screen directory must be owned and private to write",
 		);
 	writeFileAtomicSync(file, body, { mode: 0o644, durable: false });
+	// The helper keeps a stricter mode from a file it replaces; the reader needs 0644.
+	if ((lstatSync(file).mode & 0o777) !== 0o644) chmodSync(file, 0o644);
 }
 
 // ─── Writer loop ─────────────────────────────────────────────────────────────
 
 export interface StatusScreenDeps {
 	readonly now: () => number;
+	/** Milliseconds that never step; paces the refresh. */
+	readonly monotonic: () => number;
 	readonly version: () => string | undefined;
 	readonly readiness: () => StreamReadiness | undefined;
 	readonly uplinks: () => readonly UplinkHealthRecord[];
@@ -228,6 +267,7 @@ let version: string | undefined;
 
 const defaultDeps: StatusScreenDeps = {
 	now: Date.now,
+	monotonic: () => performance.now(),
 	version: () => version,
 	readiness: latestStreamReadiness,
 	uplinks: getUplinksMessage,
@@ -238,7 +278,8 @@ const defaultDeps: StatusScreenDeps = {
 
 let deps: StatusScreenDeps = defaultDeps;
 let lastContent: string | undefined;
-let lastWrittenAt = 0;
+let lastWrittenWall = 0;
+let lastWrittenMono = 0;
 let lastFailure: string | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -261,7 +302,12 @@ export function tickStatusScreenSnapshot(): boolean {
 	});
 	const { expires: _expires, ...rest } = snapshot;
 	const content = JSON.stringify(rest);
-	if (content === lastContent && now - lastWrittenAt < STATUS_SCREEN_REFRESH_MS)
+	const mono = deps.monotonic();
+	const elapsed = mono - lastWrittenMono;
+	// A wall-clock step moves the written expiry out of the page's window.
+	const stepped =
+		Math.abs(now - (lastWrittenWall + elapsed)) > STATUS_SCREEN_CLOCK_STEP_MS;
+	if (content === lastContent && elapsed < STATUS_SCREEN_REFRESH_MS && !stepped)
 		return false;
 	try {
 		deps.write(snapshot);
@@ -274,7 +320,8 @@ export function tickStatusScreenSnapshot(): boolean {
 	}
 	lastFailure = undefined;
 	lastContent = content;
-	lastWrittenAt = now;
+	lastWrittenWall = now;
+	lastWrittenMono = mono;
 	return true;
 }
 
@@ -296,7 +343,8 @@ export function resetStatusScreenForTest(): void {
 	timer = undefined;
 	deps = defaultDeps;
 	lastContent = undefined;
-	lastWrittenAt = 0;
+	lastWrittenWall = 0;
+	lastWrittenMono = 0;
 	lastFailure = undefined;
 	version = undefined;
 }
