@@ -41,6 +41,8 @@ const SENSITIVE_KEY_RE =
 const PASETO_RE = /v[0-9]+\.(?:public|local)\.[A-Za-z0-9\-_]+/;
 const JWT_RE = /eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/i;
+/** Tailscale (and headscale) auth keys, whatever key or message they ride in. */
+const TAILSCALE_KEY_RE = /\b(?:tskey|hskey)-[A-Za-z0-9_-]{8,}/;
 
 /**
  * SMS content is its own redaction class, separate from {@link SENSITIVE_KEY_RE}
@@ -262,6 +264,7 @@ function looksSecret(value: string): boolean {
 		PASETO_RE.test(value) ||
 		JWT_RE.test(value) ||
 		BEARER_RE.test(value) ||
+		TAILSCALE_KEY_RE.test(value) ||
 		SMS_RECORD_RE.test(value) ||
 		LOCATION_RECORD_RE.test(value) ||
 		NMEA_SENTENCE_RE.test(value) ||

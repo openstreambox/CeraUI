@@ -16,6 +16,12 @@ export const PROCEDURE_TIMEOUT_MS: Readonly<Record<string, number>> = {
 	// Boot sweep + pre-open sweep + open/rollback + retirement, plus identity reads.
 	"wifi.portal": 540_000,
 	"modems.esimOperation": 245_000,
+	// Remote access: the device waits up to 50s for tailscaled's answer to a
+	// join (longer when a tailnet admin must approve the device), and the
+	// on/off switch runs a bounded reconnect. Keep above both.
+	"system.tailscaleJoin": 75_000,
+	"system.tailscaleSetEnabled": 75_000,
+	"system.tailscaleLogout": 75_000,
 };
 
 export function rpcCallTimeoutMs(path: string): number {

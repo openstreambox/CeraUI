@@ -120,19 +120,9 @@ describe("argMatch() — dynamic argument validation", () => {
 });
 
 describe("runWithStdin() — secret stays in stdin, never on argv", () => {
-	it("writes the secret to child.stdin and keeps it out of argv", async () => {
-		const stdinWrites: string[] = [];
+	it("hands the secret to the child's stdin and keeps it out of argv", async () => {
 		const fakeProc = {
-			stdin: {
-				write: (d: string | Uint8Array) => {
-					stdinWrites.push(
-						typeof d === "string" ? d : Buffer.from(d).toString(),
-					);
-					return typeof d === "string" ? d.length : d.byteLength;
-				},
-				end: () => 0,
-				flush: () => 0,
-			},
+			stdin: undefined,
 			stdout: new Response("ok\n").body,
 			stderr: new Response("").body,
 			exited: Promise.resolve(0),
@@ -146,16 +136,21 @@ describe("runWithStdin() — secret stays in stdin, never on argv", () => {
 
 		expect(spy).toHaveBeenCalledTimes(1);
 		// Bun.spawn is argv-only: ([bin, ...args], opts) — no `sh -c`, no string.
-		const [argv] = spy.mock.calls[0] as [string[], unknown];
+		const [argv, opts] = spy.mock.calls[0] as unknown as [
+			string[],
+			{ stdin?: unknown; stdout?: unknown; stderr?: unknown },
+		];
 		expect(argv).toEqual(["passwd", "user"]);
 
 		// The secret must NEVER appear in argv (process table leak).
 		expect(argv).not.toContain(secret);
 		expect(argv.join(" ")).not.toContain("pw");
 
-		// It must appear ONLY in what was written to stdin.
-		expect(stdinWrites.join("")).toBe(secret);
-		expect(stdinWrites.join("")).toContain("pw");
+		// It must appear ONLY as the child's stdin: bytes Bun hands over as an
+		// in-memory file (openable by path, unlike a socketpair "pipe").
+		expect(opts.stdin).toBeInstanceOf(Uint8Array);
+		expect(Buffer.from(opts.stdin as Uint8Array).toString()).toBe(secret);
+		expect(JSON.stringify([opts.stdout, opts.stderr])).not.toContain("pw");
 	});
 
 	it("rejects a non-allowlisted binary before spawning", async () => {

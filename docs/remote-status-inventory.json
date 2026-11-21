@@ -4559,6 +4559,51 @@
       ]
     },
     {
+      "source": "apps/backend/src/modules/system/tailscale.ts",
+      "call": "broadcastMsg",
+      "message": "\"status\"",
+      "fields": [
+        {
+          "path": "tailscale.state",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"unavailable\"",
+            "\"connected\"",
+            "\"needs_key\"",
+            "\"needs_approval\"",
+            "\"joining\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.hostname",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.address",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.notice",
+          "types": [
+            "undefined",
+            "\"ssh_off_by_tailnet\"",
+            "\"updates_not_pinned\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        }
+      ]
+    },
+    {
       "source": "apps/backend/src/modules/ui/status.ts",
       "call": "buildMsg",
       "message": "\"status\"",
@@ -5008,6 +5053,51 @@
           "types": [
             "false",
             "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.state",
+          "types": [
+            "\"unknown\"",
+            "\"off\"",
+            "\"unavailable\"",
+            "\"connected\"",
+            "\"needs_key\"",
+            "\"needs_approval\"",
+            "\"joining\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.hostname",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.address",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "tailscale.notice",
+          "types": [
+            "undefined",
+            "\"ssh_off_by_tailnet\"",
+            "\"updates_not_pinned\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -43382,8 +43472,8 @@
     "apps/backend/src/modules/modems/modem-wire-projection.ts": "204e238556c809f97819be13e65b59c17c7b1ddeb4c72f49b1535df805e08c01",
     "apps/backend/src/modules/modems/modems-state.ts": "664049da3a73481068a483da604719cbea8abe290995f907a9e07eebc69cc3a5",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
-    "apps/backend/src/modules/network/network-ingest.ts": "29234fe5c8db5cce9344d24253b1938857f5dcf3bb2643dbe5fd468f66abc128",
-    "apps/backend/src/modules/network/network-interfaces.ts": "31c48d819689a95e872d3533758456054acd5de62ef337a821a929cd7ac2b6f1",
+    "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
+    "apps/backend/src/modules/network/network-interfaces.ts": "2baa8fa03160dc5daf0d73d76c2cfe9034c446d52458ec2a78be4653ed88aaed",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "c929bfe403ec8298fdeb737eafa75735d9664723eaab740312d2f3b1049082fe",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "244a0df6b2785d0f7fe57fa102f35929c1f732c3c33d9bb6358d3883ac3c59ad",
@@ -43427,9 +43517,10 @@
     "apps/backend/src/modules/system/sensors.ts": "f14c9498da2adc79d5c494ba556d09c26d4181bd472c88d5d2b0599c95eca5c8",
     "apps/backend/src/modules/system/software-updates.ts": "21668cfcda44364ffc86935c7d101e4602d1296958d7d08b65f65c945f499edb",
     "apps/backend/src/modules/system/ssh.ts": "76480301bb9dc3a9483a7b9fb7073a2a1ec91c315653df945bfb2fcc1ce86f43",
+    "apps/backend/src/modules/system/tailscale.ts": "38399fee66992a047459097d3ff4db524606c8b755150060d218776db8d4461d",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "16969dce21a2f26d71c3d317aa38d77fe221f33b12175ca724e9067ad7250050",
     "apps/backend/src/modules/ui/notifications.ts": "1ee552f0c791e0c0a544fc0bed066f56372e3a882d9a5caf097ed6d7e9974aa2",
-    "apps/backend/src/modules/ui/status.ts": "3579bc2c06c5b15788015229c0d581997518f56910af10a485a44f0eacdf181f",
+    "apps/backend/src/modules/ui/status.ts": "f91f94ec8f2462e91f82f3f1ae39b58ccc5aed34bbb50e962a47fc2b422a2475",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "94500d6d5b7024649f9cb8b2d4621d50fd8dbc8c638e0841489b0bfccfb0ddd1",
     "apps/backend/src/modules/wifi/wifi-country.ts": "dc149aa82bd7b304a7f5f56634870c6524f6d87d48975f2d2a8246e0f2841dd7",
     "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "5fd84e04c864980e0b3126fbfd54208b75019acc5676a505cce6417676960e26",
@@ -43456,9 +43547,9 @@
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
-    "packages/rpc/src/schemas/status.schema.ts": "cbe3ab63ba27b7de764e7f9233f378e1a2bc05fafcd21f9303180764362eb096",
+    "packages/rpc/src/schemas/status.schema.ts": "0222e16c9c559ed0bc4045ffb502845c8b71e24310de2b75f86e6a3b03cc2e2a",
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
-    "packages/rpc/src/schemas/system.schema.ts": "adfe79f06462f26197bb713d811530cc8fd23040fd249c297d8682ce45363dc1",
+    "packages/rpc/src/schemas/system.schema.ts": "11a3141ee222ef8f3ada5cc5659d05a43517e943ad28d33b189fc45df54b6ee0",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "5bb654471ce94854218cdfc84a70bf74a6ea63e7e8b2b7766d33f9853c7d2643",
     "packages/rpc/src/schemas/wifi.schema.ts": "d200119860c47931b03e6c7e74a93ebf9da9c61be977abf0fae513d75b638e23"
   }
