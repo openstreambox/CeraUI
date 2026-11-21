@@ -60,10 +60,14 @@ export async function reconcilePortalWindow() {
 }
 
 export const signInWindow = createSignInWindow({
-	async open(peer, radio) {
+	async open(peer, radio, via) {
 		closedBinding = undefined;
 		if (shouldUseMocks()) throw Error("not_on_box_wifi");
 		if (!isIPv4(peer)) throw Error("ipv4_required");
+		// Behind the front door the phone's arrival interface is proven; it must
+		// be the hotspot AP itself, not just any link where this address routes.
+		if (via !== undefined && !currentHotspotApIfnames().includes(via))
+			throw Error("not_on_box_wifi");
 		const candidate = Object.values(getWifiInterfacesByMacAddress()).find(
 			(r) => r.id === Number(radio),
 		);
@@ -89,7 +93,10 @@ export const signInWindow = createSignInWindow({
 				maxBuffer: 8192,
 			}),
 		)[0];
-		if (!currentHotspotApIfnames().includes(route?.dev))
+		if (
+			!currentHotspotApIfnames().includes(route?.dev) ||
+			(via !== undefined && route.dev !== via)
+		)
 			throw Error("not_on_box_wifi");
 		const neighbors = JSON.parse(
 			await run(
@@ -185,10 +192,10 @@ export const signInWindow = createSignInWindow({
 		);
 		return result === "204";
 	},
-	arm(expire, peer) {
+	arm(expire, peer, via) {
 		const timeout = setTimeout(expire, 600000);
 		const interval = setInterval(() => {
-			void signInWindow.refresh(peer);
+			void signInWindow.refresh(peer, via);
 		}, 10000);
 		return () => {
 			clearTimeout(timeout);
