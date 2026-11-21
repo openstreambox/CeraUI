@@ -36,6 +36,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Auth: stored token authority unreadable; token login withheld"],
 	["Auth: token login successful"],
 	["Backend singleton acquisition failed; another instance may be running"],
+	["Backend singleton acquisition still running at shutdown"],
 	["Backend singleton guardian did not exit after release"],
 	[
 		"Backend singleton is not enforced for a source-development process; production services never take this path",

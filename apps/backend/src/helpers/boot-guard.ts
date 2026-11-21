@@ -38,6 +38,19 @@
  */
 
 import { markBootDegraded } from "../modules/system/readiness.ts";
+import { isShutdownStarted } from "./shutdown-state.ts";
+
+/**
+ * Once a termination signal began shutdown, the boot ladder must not go on
+ * starting subsystems behind the teardown. A step is not started after the
+ * signal, and a step that was in flight returns into a promise that never
+ * settles, so an awaiting ladder stops there. The shutdown path exits the
+ * process; nothing waits on the halted ladder.
+ */
+function haltedBoot<T>(): Promise<T> {
+	return new Promise<T>(() => undefined);
+}
+
 import { logger } from "./logger.ts";
 
 let updatePhysicalReconciliation: Promise<boolean> = Promise.resolve(true);
@@ -89,10 +102,13 @@ async function runNonCritical(
 	overrides: Partial<BootGuardDeps> = {},
 ): Promise<boolean> {
 	const deps: BootGuardDeps = { ...defaultDeps(), ...overrides };
+	if (isShutdownStarted()) return haltedBoot();
 	try {
 		await run();
+		if (isShutdownStarted()) return haltedBoot();
 		return true;
 	} catch (err) {
+		if (isShutdownStarted()) return haltedBoot();
 		deps.markDegraded(subsystem);
 		deps.logger.error(
 			`boot: non-critical init "${subsystem}" failed; continuing in readiness-reduced state`,
@@ -113,9 +129,12 @@ export async function runCritical(
 	overrides: Partial<BootGuardDeps> = {},
 ): Promise<void> {
 	const deps: BootGuardDeps = { ...defaultDeps(), ...overrides };
+	if (isShutdownStarted()) return haltedBoot();
 	try {
 		await run();
+		if (isShutdownStarted()) return haltedBoot();
 	} catch (err) {
+		if (isShutdownStarted()) return haltedBoot();
 		deps.logger.error(
 			`boot: CRITICAL init "${subsystem}" failed; aborting boot`,
 			{ err },

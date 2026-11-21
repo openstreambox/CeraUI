@@ -8,6 +8,7 @@ import {
 	releaseBackendSingleton,
 	resetBackendSingletonReleaseForTest,
 } from "../helpers/backend-singleton.ts";
+import { guardNonCritical, runCritical } from "../helpers/boot-guard.ts";
 import {
 	handleTerminationSignal,
 	resetShutdownForTest,
@@ -623,4 +624,90 @@ test("production termination handlers are installed at the top of boot and stop 
 	);
 	expect(deps).toContain("stopMonitors,");
 	expect(deps).toContain("releaseGuardians: releaseBackendSingleton,");
+});
+
+describe("boot-time SIGTERM", () => {
+	test("Given the singleton still being acquired, When SIGTERM runs the real shutdown path, Then the new guardian is released before exit", async () => {
+		const exit = spyOn(process, "exit").mockImplementation(
+			(() => undefined) as never,
+		);
+		try {
+			const order: string[] = [];
+			const exited = Promise.withResolvers<number>();
+			const acquired = Promise.withResolvers<void>();
+			const exitedLease = Promise.withResolvers<number>();
+			const enforcing = enforceBackendSingleton(async () => {
+				await acquired.promise;
+				return {
+					exited: exitedLease.promise,
+					async [Symbol.asyncDispose]() {
+						order.push("dispose");
+						exitedLease.resolve(0);
+					},
+				};
+			});
+			handleTerminationSignal("SIGTERM", {
+				stopSrtIngest: async () => undefined,
+				stopDmesgWatchers: () => undefined,
+				gracefulShutdown: async () => undefined,
+				releaseGuardians: releaseBackendSingleton,
+				exit: (code) => {
+					order.push("exit");
+					exited.resolve(code);
+				},
+			});
+			// Shutdown reaches its release step while acquisition is still blocked.
+			await sleep(50);
+			expect(order).toEqual([]);
+			acquired.resolve();
+			expect(await exited.promise).toBe(0);
+			await enforcing;
+			expect(order).toEqual(["dispose", "exit"]);
+			expect(exit).not.toHaveBeenCalled();
+		} finally {
+			exit.mockRestore();
+		}
+	});
+
+	test.each(["guardNonCritical", "runCritical"] as const)(
+		"Given shutdown began, When the ladder reaches a %s step, Then the step does not run and the ladder does not continue",
+		async (kind) => {
+			beginShutdown();
+			let ran = false;
+			let continued = false;
+			const step = async () => {
+				ran = true;
+			};
+			void (
+				kind === "guardNonCritical"
+					? guardNonCritical("test-step", step)
+					: runCritical("test-step", step)
+			).then(() => {
+				continued = true;
+			});
+			await sleep(30);
+			expect(ran).toBe(false);
+			expect(continued).toBe(false);
+		},
+	);
+
+	test.each(["guardNonCritical", "runCritical"] as const)(
+		"Given a %s step in flight when SIGTERM arrives, When it finishes, Then control does not return to the ladder",
+		async (kind) => {
+			const release = Promise.withResolvers<void>();
+			let continued = false;
+			const step = () => release.promise;
+			void (
+				kind === "guardNonCritical"
+					? guardNonCritical("test-step", step)
+					: runCritical("test-step", step)
+			).then(() => {
+				continued = true;
+			});
+			beginShutdown();
+			release.resolve();
+			await sleep(30);
+			expect(continued).toBe(false);
+		},
+	);
 });
