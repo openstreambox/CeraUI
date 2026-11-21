@@ -2726,7 +2726,7 @@
 	"hotspotConfirm.activate": "开启热点",
 	"hotspotConfirm.saveFailed": "无法保存新的名称和密码。未做任何更改，热点保持关闭。",
 	"hotspotConfirm.passwordCharacters": "只能使用标准字母、数字和符号（不含重音字符或表情符号）。",
-	"hotspotConfirm.inactiveHint": "开启热点时会显示网络名称和密码，并可在那时修改。",
+	"hotspotConfirm.inactiveHint": "在热点关闭时修改名称、密码或信道，然后点保存。点“启用热点”会先显示名称和密码供确认，再点“开启热点”即可开启。",
 	"network.wifiMode.confirm.switchTo": "切换到 {mode}",
 	"hotspotConfirm.firstTimeTitle": "设置你的热点",
 	"hotspotConfirm.firstTimeBody": "此无线设备从未开启过热点。可以保留建议的名称和密码，也可以自行设置。",
