@@ -20,7 +20,8 @@
 import { strictParseFrame } from "@ceralive/control-protocol/parse";
 import { logger } from "../../helpers/logger.ts";
 import { advanceSeq } from "../../rpc/events.ts";
-import { projectRemotePayload } from "../remote/remote-status.ts";
+import { projectPhoneFrame } from "../remote/remote-status.ts";
+import { setup } from "../setup.ts";
 import { PROTOCOL_VERSION, type Status } from "./protocol.ts";
 
 /**
@@ -120,8 +121,10 @@ export function relayStatusToGateway(
 	}
 
 	if (!isRelayable(type)) return;
-	const remotePayload = projectRemotePayload(type, payload, "cloud");
-	if (remotePayload === undefined && payload !== undefined) return;
+	const phoneBox = setup.engine === "none";
+	const remotePayload = projectPhoneFrame(type, payload, phoneBox, "cloud");
+	if (remotePayload === undefined && (phoneBox || payload !== undefined))
+		return;
 	const frame: Status = {
 		v: PROTOCOL_VERSION,
 		kind: "status",
