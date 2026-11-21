@@ -56,7 +56,7 @@ import {
 import { logger as defaultLogger } from "../../helpers/logger.ts";
 import {
 	forgetEngineSchemaSkew,
-	reportEngineSchemaSkew,
+	observeEngineSchema,
 } from "./engine-schema-skew.ts";
 
 /**
@@ -444,15 +444,9 @@ export async function getCapabilities(
 			transports,
 			network_embedded_audio: networkEmbeddedAudio,
 		} = await deps.fetchEngineCapabilities();
+		// Additive-only within the protocol major (ADR-0002): warn + flag, but
+		// still serve — degrading, never crashing, on version skew.
 		const mismatch = schemaVersion !== deps.bindingsSchemaVersion;
-		if (mismatch) {
-			// Additive-only within the protocol major (ADR-0002): warn + flag, but
-			// still serve — degrading, never crashing, on version skew.
-			reportEngineSchemaSkew(deps.logger, {
-				engine: schemaVersion,
-				bindings: deps.bindingsSchemaVersion,
-			});
-		}
 		// Speak kbps everywhere downstream: the engine may report the bitrate range
 		// in bps, so normalize it once here — the single unit-conversion seam.
 		const caps: GetCapabilitiesResult = {
@@ -467,6 +461,11 @@ export async function getCapabilities(
 		};
 		const deviceModes = await resolveDeviceModes(deps);
 		if (epoch !== capabilityEpoch) return retainedCapabilities();
+		// Only a read from the current connection may speak for its schema.
+		observeEngineSchema(deps.logger, {
+			engine: schemaVersion,
+			bindings: deps.bindingsSchemaVersion,
+		});
 		lastKnownGood = caps;
 		lastTransports = deriveTransports(transports);
 		lastNetworkEmbeddedAudio = networkEmbeddedAudio;
@@ -483,13 +482,13 @@ export async function getCapabilities(
 		acceptedCapabilityEpoch = epoch;
 		return lastCapabilities;
 	} catch (err) {
+		if (epoch !== capabilityEpoch) return retainedCapabilities();
 		// No engine connection now; the next one reports its skew afresh.
 		if (
 			err instanceof CerastreamConnectionError ||
 			err instanceof CerastreamTimeoutError
 		)
 			forgetEngineSchemaSkew();
-		if (epoch !== capabilityEpoch) return retainedCapabilities();
 		if (lastKnownGood) {
 			deps.logger.warn(
 				"capabilities: engine unavailable; serving last-known-good snapshot",

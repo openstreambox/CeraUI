@@ -146,6 +146,87 @@ test("a different engine schema is logged at once", async () => {
 	});
 });
 
+function pendingRead(logger: CapabilitiesLogger) {
+	let settle!: {
+		resolve: (schemaVersion: string) => void;
+		reject: (error: Error) => void;
+	};
+	const answer = new Promise<string>((resolve, reject) => {
+		settle = { resolve, reject };
+	});
+	const read = getCapabilities({
+		fetchEngineCapabilities: async () => ({
+			caps: {
+				platform: {
+					supports_h265: false,
+					hardware_accelerated: false,
+					max_resolution: "1920x1080",
+				},
+				encoder: {
+					codecs: ["H264"],
+					bitrate_range: { min: 500, max: 6000, unit: "kbps" },
+				},
+				sources: [],
+			},
+			schemaVersion: await answer,
+		}),
+		fetchEngineDevices: async () => ({ devices: [] }),
+		bindingsSchemaVersion: SCHEMA_VERSION,
+		logger,
+	});
+	return { read, ...settle };
+}
+
+test("a read from a retired connection does not use up the next connection's warning", async () => {
+	const spy = logSpy();
+	const retired = pendingRead(spy.logger);
+	invalidateCapabilities();
+	retired.resolve(ENGINE_SCHEMA);
+	await retired.read;
+	expect(spy.skewWarnings()).toHaveLength(0);
+
+	await readCapabilities(spy.logger, ENGINE_SCHEMA);
+	expect(spy.skewWarnings()).toHaveLength(1);
+});
+
+test("a read from a retired connection that fails does not re-arm the current one", async () => {
+	const spy = logSpy();
+	const retired = pendingRead(spy.logger);
+	invalidateCapabilities();
+	await readCapabilities(spy.logger, ENGINE_SCHEMA);
+	retired.reject(new CerastreamConnectionError("old socket closed"));
+	await retired.read;
+	await readCapabilities(spy.logger, ENGINE_SCHEMA);
+
+	expect(spy.skewWarnings()).toHaveLength(1);
+});
+
+test("a skew that comes back after a matching engine is logged again", async () => {
+	const spy = logSpy();
+	await readCapabilities(spy.logger, ENGINE_SCHEMA);
+	await readCapabilities(spy.logger, SCHEMA_VERSION);
+	await readCapabilities(spy.logger, ENGINE_SCHEMA);
+
+	expect(spy.skewWarnings()).toHaveLength(2);
+});
+
+test("a probe that sees a matching engine between two skewed ones logs twice", async () => {
+	const spy = logSpy();
+	let schema = ENGINE_SCHEMA;
+	const backend = new CerastreamBackend({
+		connect: async () => helloClient(schema),
+		logger: spy.logger,
+	});
+
+	await backend.probeEngine();
+	schema = SCHEMA_VERSION;
+	await backend.probeEngine();
+	schema = ENGINE_SCHEMA;
+	await backend.probeEngine();
+
+	expect(spy.skewWarnings()).toHaveLength(2);
+});
+
 test("matching schemas log nothing", async () => {
 	const spy = logSpy();
 	await readCapabilities(spy.logger, SCHEMA_VERSION);

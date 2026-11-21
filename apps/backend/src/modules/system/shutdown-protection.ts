@@ -6,6 +6,7 @@ import {
 } from "./shutdown-inhibitor.ts";
 
 let protection: ReturnType<typeof createShutdownInhibitor> | undefined;
+let exitHookInstalled = false;
 let encoder = false;
 let carrying = false;
 export function setShutdownProtection(
@@ -50,7 +51,10 @@ export function initShutdownProtection(
 ): void {
 	if (protection) return;
 	protection = createShutdownInhibitor(acquire);
-	process.once("exit", () => protection?.dispose());
+	if (!exitHookInstalled) {
+		exitHookInstalled = true;
+		process.once("exit", () => protection?.dispose());
+	}
 	// Seed both owners even when logind is not ready. Later publication retries.
 	const installed = protection;
 	const encoderReady = installed.set("encoder", encoder);

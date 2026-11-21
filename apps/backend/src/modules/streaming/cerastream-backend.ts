@@ -157,7 +157,7 @@ import {
 } from "./engine-runtime-observation.ts";
 import {
 	forgetEngineSchemaSkew,
-	reportEngineSchemaSkew,
+	observeEngineSchema,
 } from "./engine-schema-skew.ts";
 import {
 	createLaunchTransaction,
@@ -1351,13 +1351,11 @@ export class CerastreamBackend implements StreamingBackend {
 		try {
 			client = await this.deps.connect(this.deps.connectOptions);
 			const hello = client.hello;
-			if (hello.schema_version !== SCHEMA_VERSION) {
-				reportEngineSchemaSkew(this.deps.logger, {
-					engine: hello.schema_version,
-					bindings: SCHEMA_VERSION,
-					engineVersion: hello.engine_version,
-				});
-			}
+			observeEngineSchema(this.deps.logger, {
+				engine: hello.schema_version,
+				bindings: SCHEMA_VERSION,
+				engineVersion: hello.engine_version,
+			});
 			return {
 				status: "compatible",
 				protocol: hello.protocol,
