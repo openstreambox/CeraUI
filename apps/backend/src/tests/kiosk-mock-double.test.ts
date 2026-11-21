@@ -3,7 +3,7 @@
  *
  * Proves the three-way dependency split the kiosk RPC handlers resolve when the
  * device runtime invokes them (i.e. via the authenticated procedures, where the
- * `isRealDevice()` gate lives — the kiosk module functions themselves are
+ * kiosk capability gate lives — the kiosk module functions themselves are
  * ungated):
  *
  *   1. dev  (shouldUseMocks() → true): the toggle handlers run against the
