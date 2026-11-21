@@ -592,7 +592,6 @@ export type HotspotToggleError = z.infer<typeof hotspotToggleErrorSchema>;
 */
 export const hotspotToggleOutputSchema = z.object({
 	pending: z.literal(true).optional(),
-	reason: z.literal('steering-readiness-timeout').optional(),
 	success: z.boolean(),
 	accepted: z.literal(true).optional(),
 	error: hotspotToggleErrorSchema.optional(),
@@ -670,7 +669,6 @@ export type WifiOperationOutput = z.infer<typeof wifiOperationOutputSchema>;
 // A terminal hotspot start/stop frame: the deferred half of an `accepted` reply.
 export const hotspotToggleResultSchema = z.object({
 	pending: z.literal(true).optional(),
-	reason: z.literal('steering-readiness-timeout').optional(),
 	device: z.union([z.number(), z.string()]),
 	success: z.boolean().optional(),
 	error: hotspotToggleErrorSchema.optional(),
