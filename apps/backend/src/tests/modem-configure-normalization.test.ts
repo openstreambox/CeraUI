@@ -83,11 +83,12 @@ beforeEach(async () => {
 			}
 			if (args.join(" ") === "--terse --fields uuid,type,state connection show")
 				return `${UUID}:gsm:`;
+			// Native --get-values ends every record with LF, an empty one too.
 			if (args[4] === "--get-values" && args.at(-1) === UUID)
 				return (args[5] ?? "")
 					.split(",")
-					.map((field) => profile[field] ?? "")
-					.join("\n");
+					.map((field) => `${profile[field] ?? ""}\n`)
+					.join("");
 		}
 		throw new Error(`Unexpected command: ${binary} ${args.join(" ")}`);
 	});
