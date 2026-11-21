@@ -74,6 +74,7 @@ import { srtlaSendExec } from "./exec-paths.ts";
 import { resolveLaunchConfig } from "./launch-config.ts";
 import { resolveProcessError } from "./process-error-patterns.ts";
 import {
+	getStreamingProcesses,
 	registerSupervisedSender,
 	type StreamingProcess,
 	spawnStreamingLoop,
@@ -82,6 +83,7 @@ import {
 import {
 	SenderUnitError,
 	type SenderUnitHooks,
+	senderHostBlocked,
 	senderHostMode,
 	startSenderUnit,
 } from "./sender-unit.ts";
@@ -319,6 +321,21 @@ export async function startStream(
 		}),
 		...bindMapArgs,
 	];
+	// With srtla_send_unit, an unresolved unit (unreadable, or a stop that was
+	// not confirmed) may still run a sender: no sender of either kind starts.
+	const hostBlocked = senderHostBlocked();
+	if (hostBlocked) {
+		logger.warn("startStream: the sender unit is unresolved; not starting", {
+			reason: hostBlocked,
+		});
+		return {
+			success: false,
+			error: SENDER_UNIT_START_FAILED,
+			reason: "unit_unresolved",
+			phase: "spawn-sender",
+			failureClass: "start_invalid",
+		};
+	}
 	let lifetime: Lifetime | null | undefined;
 	await observeSafely(async () => {
 		lifetime = await startStreamDeps.recordSenderIntent(
@@ -336,24 +353,33 @@ export async function startStream(
 	// telemetry reader and the lifetime record.
 	const unitHooks: SenderUnitHooks = {
 		onRestarting: () => {
+			// The dead sender's telemetry must not stand in for the new one's.
+			startStreamDeps.stopLinkTelemetry();
 			reportStreamProcessExit();
 			broadcastHealthIfChanged();
 		},
 		onRestarted: (handle) => {
+			const invocation = handle.invocation;
+			// Still this stream's sender, and still the process that was ready?
+			const current = () =>
+				handle.isReady &&
+				handle.invocation === invocation &&
+				getStreamingProcesses().some((process) => process.proc === handle);
 			void (async () => {
 				const ips = await Bun.file(setup.ips_file ?? "")
 					.text()
 					.catch(() => ipsContent);
+				if (!current()) return;
 				startStreamDeps.startLinkTelemetry(statsFile, ips.split("\n"), {
 					controlSocket,
 				});
 				clearStreamProcessExit();
 				broadcastHealthIfChanged();
 				await observeSafely(async () => {
-					if (lifetime)
+					if (lifetime && current())
 						await recordSenderStarted(lifetime, handle.pid, {
 							host: "systemd",
-							invocation: handle.invocation,
+							invocation,
 						});
 				});
 			})();

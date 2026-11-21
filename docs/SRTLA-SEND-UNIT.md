@@ -23,10 +23,33 @@ in image-building-pipeline):
 | `/usr/libexec/ceralive/srtla-send-launch` | reads `/run/srtla-send/argv` and execs `/usr/bin/srtla_send` |
 | `/run/srtla-send` | directory owned by root, mode 0700, created at boot by tmpfiles |
 
-At startup the backend checks the unit is loaded, the directory is root-owned
-and closed to group and others, and the sender executable is
-`/usr/bin/srtla_send`. If any check fails it logs a warning and uses the child
-path. The decision holds for the life of the process.
+**Before the flag is turned on in an image,** the manual `ceralive-update`
+guard must treat `srtla-send.service` as busy in every state but `inactive` and
+`failed` (today its `systemctl is-active` misses `activating`/`auto-restart`).
+A start by the backend holds the update lock, but an automatic restart is
+started by systemd. That check belongs to the image.
+
+## Mode at startup
+
+With the flag on, the backend reads the unit (three attempts) before anything
+writes the IP list:
+
+| Unit | Mode |
+| --- | --- |
+| installed, directory root-owned and closed to group and others, sender `/usr/bin/srtla_send` | unit |
+| positively not installed | child |
+| installed, but the directory or the sender executable does not fit | child, after a leftover unit is confirmed down |
+| cannot be read | no sender of either kind starts until a later read settles it |
+
+After the startup observer has run, the backend checks the unit again
+("leftovers" below). Until the unit is confirmed down, positively absent or
+running this backend's own sender, every stream start fails in the
+`spawn-sender` phase with reason `unit_unresolved`, and the check is retried
+every 5 s.
+
+Turning the flag off while a sender unit still runs is not supported: with the
+flag off the backend reads nothing about the unit. Stop it first
+(`systemctl stop srtla-send.service`) or reboot (the unit has no `[Install]`).
 
 ## Files
 
@@ -48,7 +71,7 @@ backend's.
 
 ## Start
 
-Publication and unit transitions run one at a time.
+Publication, starts, stops and cleanup run one at a time.
 
 1. Take the update lock (`/run/lock/ceralive-update.lock`, `flock` exclusive,
    non-blocking, the lock the manual `ceralive-update` takes). Busy refuses the
@@ -56,20 +79,27 @@ Publication and unit transitions run one at a time.
 2. Read the unit. Anything but `inactive` or `failed` refuses (`unit_busy`): a
    second sender never starts beside a running, starting, restarting or
    stopping one.
-3. Remove the stale argument file, stats file and socket (the unit is down, so
-   no sender owns them).
-4. Write the arguments, each followed by a NUL byte, to a fresh 0600 file in
+3. Validate the arguments as the launcher will (listen port 1 to 65535, the IP
+   list and every path flag absolute, no NUL, at most 8192 bytes).
+4. Remove the stale argument file, stats file and socket (the unit is down, so
+   no sender owns them). A file that cannot be removed refuses the start.
+5. Write the arguments, each followed by a NUL byte, to a fresh 0600 file in
    the same directory (`O_EXCL`, fsynced) and rename it over `argv`.
-5. `systemctl start srtla-send.service`.
-6. Wait for readiness (below), at most 5 s. Release the lock.
+6. `systemctl start srtla-send.service`.
+7. Wait for readiness (below). Release the lock.
 
-Any failure after the start stops the unit again and removes the launch state,
-so a refused start leaves nothing running. The start then fails in the
-`spawn-sender` phase with error `sender_unit_start_failed` and one of these
-reasons: `update_in_progress`, `unit_busy`, `unsafe_directory`,
-`invalid_arguments`, `launcher_refused` (launcher exit 78), `sender_usage`
-(sender exit 2), `start_refused` (systemd refused, for example the start
-limit), `not_ready`, `unit_unreadable`.
+Any failure after step 5 runs `systemctl stop` (which also cancels a start job
+still queued) and removes the launch state only once the unit is confirmed
+`inactive`/`failed` with no main process. If that cannot be confirmed, the
+launch state stays, the start fails with `stop_unconfirmed`, and no sender
+starts until the unit is seen down.
+
+Start failures come back as error `sender_unit_start_failed` with a reason:
+`update_in_progress`, `unit_busy`, `unsafe_directory`, `invalid_arguments`,
+`launcher_refused` (launcher exit 78), `sender_usage` (sender exit 2),
+`start_refused` (systemd refused, for example the start limit, or a file
+operation failed), `not_ready`, `unit_unreadable`, `stop_unconfirmed`,
+`unit_unresolved`.
 
 The backend never runs `systemctl reset-failed`. After `start-limit-hit` a new
 start succeeds once the 60 s interval has passed.
@@ -77,48 +107,60 @@ start succeeds once the 60 s interval has passed.
 ## Readiness
 
 `Type=exec` reports the unit started once the launcher runs, before it has
-checked anything. The backend counts the sender as ready only when all of
-these hold on one pass:
+checked anything. The backend counts the sender as ready only when, within one
+5 s deadline that covers every read, connect and call:
 
-- the unit is `active`/`running` with a MainPID and an InvocationID;
+- the unit is loaded, `active`/`running`, with a MainPID, an InvocationID and a
+  non-empty ControlGroup;
 - that PID's `comm` is `srtla_send` (the launcher has replaced itself) and its
   cgroup is the unit's ControlGroup;
 - a fresh `get_capabilities` call succeeds on a control-socket connection whose
   SO_PEERCRED PID is that MainPID and whose UID is root (the connection is
   closed before any request otherwise);
-- InvocationID and MainPID read after the call equal those read before it.
+- InvocationID, MainPID and ControlGroup read after the call equal those read
+  before it.
 
-The same check runs after every automatic restart.
+A pidfd taken right after the first read pins the process the checks
+describe; signals go through it. The same check runs after every automatic
+restart.
 
 ## Supervision, reload and stop
 
 The handle reads the unit once a second.
 
+- **Readiness is current, not cached.** A failed read, or a unit that is not
+  `active`/`running` (for example `deactivating`), takes readiness away until a
+  good read passes the readiness check again. A sender that stays unready for
+  15 s is stopped, and the stream ends through the normal exit path.
 - **Restart by systemd.** A new InvocationID or MainPID means the sender
   exited and systemd is restarting it (`Restart=on-failure`). The backend
-  reports the exit to stream health, stops treating the sender as its own
-  (the census and reload refuse until it is ready), waits for the new process
-  to be ready, then reattaches the telemetry reader, clears the exit report and
-  records the new PID and invocation. It never restarts the sender itself
-  (ADR-0005).
-- **Final exit.** A unit that is `inactive` or `failed` without a stop from the
-  backend (a refused argument file, a usage error, the start limit) ends the
-  handle with the last exit status. The normal exit path runs: telemetry stops
-  and health reports the stream process gone. The launch state is removed.
-- **Reload.** A bond change still reaches the sender as SIGHUP, sent to the
-  unit's MainPID only while the handle is ready and the PID's `comm` and
-  cgroup still match.
+  reports the exit to stream health, stops the telemetry reader and removes the
+  dead sender's stats file, waits for the new process to be ready, then
+  reattaches telemetry, clears the exit report and records the new PID and
+  invocation, each only if the handle is still this stream's sender and still
+  on that invocation. It never restarts the sender itself (ADR-0005).
+- **Final exit.** A unit that is `inactive` or `failed` with no main process
+  and no stop from the backend (a refused argument file, a usage error, the
+  start limit) ends the handle with the last exit status. The normal exit path
+  runs. Its launch state is removed unless a newer start owns it by then.
+- **Reload.** A bond change reaches the sender as SIGHUP through the pidfd,
+  only while the handle is ready. The reload counts as delivered only when the
+  kernel took the signal; otherwise the publication's retry applies. Without
+  pidfd support the PID's `comm` and cgroup are checked first.
 - **Stop.** Stopping the stream, a rollback and the backend's graceful
   shutdown run `systemctl stop srtla-send.service` (final: systemd does not
   restart after a stop), confirm the unit is down with no MainPID, then remove
-  the argument file, stats file and socket. The SIGKILL escalation becomes
-  `systemctl kill --signal=SIGKILL`.
+  the argument file, stats file and socket. A stop that cannot be confirmed is
+  retried every 2 s and the handle stays live, so the stream stays protected
+  and the stop path keeps waiting. The SIGKILL escalation goes through the
+  pidfd, or by unit name only while the unit is on the same invocation.
 
 ## Ownership
 
 The sender census subtracts a unit-run sender only when the handle is ready,
 the PID is the handle's MainPID and `/proc/<pid>/cgroup` is the unit's
-ControlGroup. A child is still subtracted by its parent PID. The continuity
+ControlGroup. Reconciliation counts the sender as owned only while the handle
+is ready. A child is still subtracted by its parent PID. The continuity
 lifetime record says `host: "systemd"` with the InvocationID.
 
 ## A backend that finds the unit running
@@ -138,7 +180,8 @@ replaces this step.
 
 `/run/ceralive/streaming` keeps following the stream lifecycle in the backend,
 as with a child sender. Neither the unit nor the launcher touches it, and a
-restart by systemd does not change it.
+restart by systemd does not change it. Since a stop that is not confirmed keeps
+the handle live, the stream (and the marker) stays protected until it is.
 
 ## Known gaps
 
@@ -147,10 +190,10 @@ restart by systemd does not change it.
   ("Failed to establish any initial connections", "no available connections")
   into notifications. The unit's output goes to the journal, so unit mode does
   not raise them. Link state still shows through telemetry.
-- **The update guard's snapshot.** The start holds the update lock, so it never
-  overlaps `ceralive-update`. An automatic restart is started by systemd, not
-  the backend; the guard's `systemctl is-active` misses a unit in
-  `activating`/`auto-restart`. That check belongs to the image.
+- **The update guard** (see "What the image must provide").
 - **SRT forwarding** still spawns its sender as a child.
 - **`srtla_path`** other than `/usr/bin/srtla_send` keeps the child path; the
   launcher runs only that binary.
+- **Stream continuity's evidence** (open in a separate change) requires
+  `Restart=no`; with this unit's `Restart=on-failure` it refuses, which is
+  safe but means the two need one policy before any adoption.

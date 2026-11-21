@@ -50,6 +50,16 @@ export interface SupervisedProc {
 	 * Absent for a child, where the census checks the parent PID instead.
 	 */
 	owns?(pid: number, procRoot: string): boolean;
+	/**
+	 * Deliver `signal` and say whether the process took it. Absent for a
+	 * child, where `kill` either reaches the unreaped child or throws.
+	 */
+	trySignal?(signal: NodeJS.Signals): boolean;
+	/**
+	 * Whether the process is verified as this handle's right now. Absent for
+	 * a child, which is ours for as long as it is unreaped.
+	 */
+	isCurrent?(): boolean;
 }
 
 // Bun.Subprocess is not an EventEmitter, so the exit lifecycle is modeled here:
@@ -221,6 +231,10 @@ export function signalSenders(
 	for (const sp of procs) {
 		if (!isSenderProcess(sp) || !isProcAlive(sp)) continue;
 		try {
+			if (sp.proc.trySignal) {
+				if (sp.proc.trySignal(signal)) delivered++;
+				continue;
+			}
 			sp.proc.kill(signal);
 			delivered++;
 		} catch (err) {

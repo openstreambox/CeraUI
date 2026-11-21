@@ -56,6 +56,14 @@ export class FakeSenderUnit {
 	lockBusy = false;
 	/** ExecMainCode after a stop; real systemd sometimes reports 0 (unknown). */
 	stopExitCode = 1;
+	/** `systemctl show` fails while set. */
+	showFails = false;
+	/** `systemctl stop` fails and leaves the unit as it is while set. */
+	stopFails = false;
+	/** `systemctl start` times out while its job still brings the unit up. */
+	startTimesOut = false;
+	/** Simulated time each systemctl call takes. */
+	systemctlMs = 0;
 	lockHeld = 0;
 	lockReleased = 0;
 	/** argv bytes the launcher saw at each start. */
@@ -157,9 +165,18 @@ export class FakeSenderUnit {
 			ownerUid: process.getuid?.() ?? 0,
 			systemctl: async (args) => {
 				this.calls.push([...args]);
+				this.clock += this.systemctlMs;
 				const [verb] = args;
-				if (verb === "show") return this.show();
+				if (verb === "show") {
+					if (this.showFails) throw new Error("Failed to connect to bus");
+					return this.show();
+				}
 				if (verb === "start") {
+					if (this.startTimesOut) {
+						this.capture();
+						this.begin(this.next);
+						throw new Error("Connection timed out");
+					}
 					if (this.next.kind === "refused")
 						throw new Error(
 							"Job for srtla-send.service failed (start-limit-hit)",
@@ -169,6 +186,8 @@ export class FakeSenderUnit {
 					return "";
 				}
 				if (verb === "stop") {
+					if (this.stopFails)
+						throw new Error("Job for srtla-send.service canceled");
 					if (
 						this.state.active !== "inactive" &&
 						this.state.active !== "failed"
@@ -205,7 +224,7 @@ export class FakeSenderUnit {
 			writeExclusive: real.writeExclusive,
 			rename: (from, to) => rename(from, to),
 			remove: (path) => rm(path, { force: true }),
-			probeControl: async (_socket, accept) =>
+			probeControl: async (_socket, accept, _timeoutMs) =>
 				this.answering &&
 				this.launcherLeft === 0 &&
 				accept({ pid: this.state.mainPid, uid: process.getuid?.() ?? 0 }),
@@ -221,8 +240,19 @@ export class FakeSenderUnit {
 			signal: (pid, signal) => {
 				this.signals.push({ pid, signal });
 			},
+			// The fake pidfd is the PID; it reaches only the process that is
+			// still the unit's main process.
+			pidfdOpen: (pid) => (pid === this.state.mainPid && pid > 0 ? pid : null),
+			pidfdSignal: (fd, signal) => {
+				if (fd !== this.state.mainPid) return false;
+				this.signals.push({ pid: fd, signal });
+				return true;
+			},
+			pidfdClose: () => undefined,
 			now: () => this.clock,
 			sleep: async (ms) => {
+				// Yield to the event loop like a real sleep, without real time.
+				await new Promise((resolve) => setImmediate(resolve));
 				this.clock += ms;
 				if (this.launcherLeft > 0) this.launcherLeft--;
 				this.onSleep?.();

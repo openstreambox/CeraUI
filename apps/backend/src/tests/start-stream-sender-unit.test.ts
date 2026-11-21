@@ -22,6 +22,7 @@ import * as health from "../modules/streaming/health.ts";
 import type { Pipeline } from "../modules/streaming/pipelines.ts";
 import { setPreviewEncodeReplayTransport } from "../modules/streaming/preview-encode-replay.ts";
 import type { StreamingProcess } from "../modules/streaming/streamloop/process-runner.ts";
+import { registerSupervisedSender } from "../modules/streaming/streamloop/process-runner.ts";
 import {
 	resetSenderHostModeForTest,
 	resolveSenderHostMode,
@@ -191,10 +192,17 @@ test("unit mode: systemd's restart is reported, then telemetry follows the new s
 		hooks.onRestarting?.({} as never);
 		expect(reported).toHaveBeenCalledTimes(1);
 		const clearsBefore = cleared.mock.calls.length;
-		hooks.onRestarted?.({
+		const restarted = {
 			pid: 5151,
 			invocation: "inv-9",
-		} as SenderUnitProcess);
+			isReady: true,
+			exitCode: null,
+			signalCode: null,
+			exited: new Promise<number>(() => {}),
+			kill: () => {},
+		} as unknown as SenderUnitProcess;
+		registerSupervisedSender(restarted, "srtla_send");
+		hooks.onRestarted?.(restarted);
 		for (let i = 0; i < 20 && telemetry.length < 2; i++) await Bun.sleep(1);
 		expect(telemetry).toHaveLength(2);
 		expect(telemetry[1]?.control).toBe(join(dir, "control.sock"));
@@ -203,4 +211,60 @@ test("unit mode: systemd's restart is reported, then telemetry follows the new s
 		reported.mockRestore();
 		cleared.mockRestore();
 	}
+});
+
+test("flag on with an unresolved unit: no sender of either kind starts", async () => {
+	const fake = new FakeSenderUnit(dir);
+	fake.showFails = true;
+	setup.srtla_send_unit = true;
+	await resolveSenderHostMode(
+		setup as Parameters<typeof resolveSenderHostMode>[0],
+		SENDER_UNIT_EXEC,
+		fake.io(),
+	);
+	const result = await start();
+	expect(result).toMatchObject({ success: false, reason: "unit_unresolved" });
+	expect(spawned).toEqual([]);
+	expect(unitStarts).toEqual([]);
+	expect(engineStarts).toBe(0);
+});
+
+test("unit mode: a restart seen after the stream ended never reopens telemetry", async () => {
+	await enterUnitMode();
+	const stops: number[] = [];
+	setStartStreamDepsForTest({
+		getStreamingBackend: () => ({
+			setBitrate: () => undefined,
+			start: async () => {},
+		}),
+		startSenderUnit: (args, hooks) => unitStart(args, hooks),
+		startLinkTelemetry: (stats, _ips, opts) => {
+			telemetry.push({ stats, control: opts?.controlSocket });
+		},
+		stopLinkTelemetry: () => {
+			stops.push(1);
+		},
+		stopProcessAndWait: async () => {},
+	});
+	await start();
+	const hooks = unitStarts[0]?.hooks as SenderUnitHooks;
+	hooks.onRestarting?.({} as never);
+	expect(stops).toHaveLength(1);
+	const gone = {
+		pid: 1,
+		invocation: "inv-1",
+		isReady: false,
+	} as unknown as SenderUnitProcess;
+	hooks.onRestarted?.(gone);
+	await Bun.sleep(5);
+	expect(telemetry).toHaveLength(1);
+	// Ready, but not this stream's registered sender: ignored as well.
+	const stranger = {
+		pid: 2,
+		invocation: "inv-2",
+		isReady: true,
+	} as unknown as SenderUnitProcess;
+	hooks.onRestarted?.(stranger);
+	await Bun.sleep(5);
+	expect(telemetry).toHaveLength(1);
 });

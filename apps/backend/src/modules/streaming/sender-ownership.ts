@@ -18,7 +18,10 @@ export function ownsSessionSender(
 	executable = srtlaSendExec,
 ): boolean {
 	return processes.some(
-		(process) => process.spawnfile === executable && isLive(process),
+		(process) =>
+			process.spawnfile === executable &&
+			isLive(process) &&
+			process.proc.isCurrent?.() !== false,
 	);
 }
 
