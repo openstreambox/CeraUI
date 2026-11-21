@@ -2172,7 +2172,7 @@
 	"network.sharing.band.sharingOffTitle": "Sharing is off",
 	"network.sharing.band.sharingOffBody": "Turn on the hotspot, or set a wired port to Shared LAN, to share this device's internet.",
 	"network.sharing.band.noHealthyUplinkTitle": "No healthy uplink",
-	"network.sharing.band.noHealthyUplinkBody": "No uplink is available. This device blocks new IPv4 internet connections from connected devices. Its own streaming routes stay as they are.",
+	"network.sharing.band.noHealthyUplinkBody": "No uplink is working right now. This device blocks new IPv4 internet connections from connected devices. Its own streaming routes stay as they are.",
 	"network.sharing.band.steeringUnavailableTitle": "Client steering unavailable",
 	"network.sharing.band.steeringUnavailableBody": "CeraUI couldn't apply the latest split of devices across uplinks. The previous setup may stay active; without one, devices use the default route.",
 	"network.sharing.band.uplinksUnreportedTitle": "Uplink health not reported",

@@ -2172,7 +2172,7 @@
 	"network.sharing.band.sharingOffTitle": "Freigabe ist aus",
 	"network.sharing.band.sharingOffBody": "Schalte den Zugangspunkt ein oder stelle einen Kabelanschluss auf gemeinsames LAN, um das Internet dieses Geräts freizugeben.",
 	"network.sharing.band.noHealthyUplinkTitle": "Kein funktionierender Uplink",
-	"network.sharing.band.noHealthyUplinkBody": "Kein Uplink ist verfügbar. Das Gerät blockiert neue IPv4-Internetverbindungen von verbundenen Geräten. Seine eigenen Streaming-Routen bleiben unverändert.",
+	"network.sharing.band.noHealthyUplinkBody": "Zurzeit funktioniert kein Uplink. Das Gerät blockiert neue IPv4-Internetverbindungen von verbundenen Geräten. Seine eigenen Streaming-Routen bleiben unverändert.",
 	"network.sharing.band.steeringUnavailableTitle": "Verteilung auf Uplinks nicht verfügbar",
 	"network.sharing.band.steeringUnavailableBody": "CeraUI konnte die neueste Verteilung der Geräte auf Uplinks nicht anwenden. Die bisherige Konfiguration kann aktiv bleiben; ohne vorherige Konfiguration nutzen die Geräte die Standardroute.",
 	"network.sharing.band.uplinksUnreportedTitle": "Uplink-Zustand nicht gemeldet",
