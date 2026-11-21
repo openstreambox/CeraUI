@@ -43397,7 +43397,7 @@
     "apps/backend/src/modules/streaming/audio-meter-bridge.ts": "3e299d67c8928795e835ed615ca8d696ab26e6310dc2b71f67b645f38caf6aa3",
     "apps/backend/src/modules/streaming/audio.ts": "799e5718f07bc7904615edebe34ccd4e7b680f60c4b29b432a0c9d9c0fedfe46",
     "apps/backend/src/modules/streaming/auto-audio.ts": "dc196f13ae03b4d6b19ebf483b245caf46e7de01fef3051d50086c75622bb4ad",
-    "apps/backend/src/modules/streaming/capabilities.ts": "b4be6468c4c19fe7fefd8289f32d956dbfbb89bdd50365337eafc5fad874a720",
+    "apps/backend/src/modules/streaming/capabilities.ts": "8f8a39248aa0200026a8f3a80ec98b73769c9ea6743d5960a9c55f58d4a32501",
     "apps/backend/src/modules/streaming/cerastream-backend.ts": "d20627849fb1282905fb9722a63d53990d80e48e9f18758b415f87959bbc25a1",
     "apps/backend/src/modules/streaming/config-change-bridge.ts": "c69aa207a8a9f7c642a19e65a91f1422f9b4e078c6f3384a9de31bc8ad1b7468",
     "apps/backend/src/modules/streaming/connection-restarting.ts": "61efbdeb6bfa9a171a1225473cd0b0eaa43679033ffee7496fe8c47f4ca82c25",

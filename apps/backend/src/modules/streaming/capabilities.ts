@@ -364,12 +364,19 @@ function foldDeviceModes(
  * Best-effort `device_modes` resolution: a failed/throwing `list-devices` NEVER
  * blocks the capability broadcast — it is logged and `device_modes` is omitted.
  */
+/** `fetchEngineDevices` was not queried: the last scan still stands. */
+const DEVICES_NOT_QUERIED = Symbol("devices-not-queried");
+
 async function resolveDeviceModes(
 	deps: CapabilitiesServiceDeps,
-): Promise<Record<string, DeviceModeGroup> | undefined> {
+): Promise<
+	Record<string, DeviceModeGroup> | undefined | typeof DEVICES_NOT_QUERIED
+> {
 	try {
 		const devices = await deps.fetchEngineDevices();
-		return devices === undefined ? undefined : foldDeviceModes(devices);
+		return devices === undefined
+			? DEVICES_NOT_QUERIED
+			: foldDeviceModes(devices);
 	} catch (err) {
 		deps.logger.warn(
 			"capabilities: list-devices failed; broadcasting capabilities without device_modes",
@@ -478,8 +485,14 @@ export async function getCapabilities(
 				),
 			},
 		};
-		const deviceModes = await resolveDeviceModes(deps);
+		const resolvedModes = await resolveDeviceModes(deps);
 		if (epoch !== capabilityEpoch) return retainedCapabilities();
+		// A read that skips list-devices (a session client's refresh) keeps the
+		// modes the last scan found instead of erasing them.
+		const deviceModes =
+			resolvedModes === DEVICES_NOT_QUERIED
+				? lastCapabilities?.device_modes
+				: resolvedModes;
 		// Only a read from the current connection may speak for its schema.
 		observeEngineSchema(deps.logger, {
 			engine: schemaVersion,
