@@ -13,9 +13,13 @@
 
   Every control is pessimistic: the switch and the state badge show the
   device's own `tailscale` status, never the click.
+
+  While connected the card also names the network (its MagicDNS name, as the
+  admin console shows it) and says until when the login lasts, warning within
+  30 days of its expiry; an expired login reads "Expired". Both are local-only.
 -->
 <script lang="ts">
-import { m } from '@ceraui/i18n/svelte';
+import { getLocale, m } from '@ceraui/i18n/svelte';
 import { TAILSCALE_AUTH_KEY_RE } from '@ceraui/rpc/schemas';
 import { LoaderCircle, TriangleAlert, Waypoints } from '@lucide/svelte';
 import { toast } from 'svelte-sonner';
@@ -29,6 +33,8 @@ import { getOperationPhase, osCommand } from '$lib/rpc/async-operation.svelte';
 import { rpc } from '$lib/rpc/client';
 import { getTailscale } from '$lib/rpc/subscriptions.svelte';
 import { cn } from '$lib/utils';
+
+import { formatExpiryDate, remoteAccessExpiry } from './remote-access-expiry';
 
 interface Props {
 	open?: boolean;
@@ -55,11 +61,39 @@ const keyLooksValid = $derived(TAILSCALE_AUTH_KEY_RE.test(authKey.trim()));
 // Say why Join is disabled once something has been typed.
 const showKeyHint = $derived(authKey.trim() !== '' && !keyLooksValid);
 
+// While the card is open, ask the device again every minute: a status request
+// makes the backend re-read tailscaled and broadcast what changed (an expired
+// login, or an expiry an admin moved). The viewer's clock advances with it.
+const REFRESH_MS = 60_000;
+function refreshDevice() {
+	void Promise.resolve()
+		.then(() => rpc.status.getStatus())
+		.catch(() => {
+			// Offline or busy: the next minute asks again.
+		});
+}
+let now = $state(Date.now());
+$effect(() => {
+	if (!open) return;
+	now = Date.now();
+	refreshDevice();
+	const timer = setInterval(() => {
+		now = Date.now();
+		refreshDevice();
+	}, REFRESH_MS);
+	return () => clearInterval(timer);
+});
+
+const locale = $derived(getLocale());
+const expiry = $derived(remoteAccessExpiry(status, now));
+const expiryDate = $derived(expiry && 'at' in expiry ? formatExpiryDate(expiry.at, locale) : '');
+
 const stateLabel = $derived.by(() => {
 	switch (phase) {
 		case 'off':
 			return m["advanced.remoteAccess.stateOff"]();
 		case 'needs_key':
+			if (expiry?.kind === 'expired') return m["advanced.remoteAccess.stateExpired"]();
 			return m["advanced.remoteAccess.stateNeedsKey"]();
 		case 'needs_approval':
 			return m["advanced.remoteAccess.stateNeedsApproval"]();
@@ -216,6 +250,25 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 								{m["advanced.remoteAccess.address"]({ address: status.address })}
 							</span>
 						{/if}
+						{#if status.tailnet}
+							<span
+								class="text-muted-foreground block truncate font-mono text-xs"
+								data-testid="remote-access-tailnet"
+							>
+								{m["advanced.remoteAccess.network"]({ tailnet: status.tailnet })}
+							</span>
+						{/if}
+						{#if expiry?.kind === 'never' || expiry?.kind === 'later'}
+							<span
+								class="text-muted-foreground block text-xs"
+								data-expiry={expiry.kind}
+								data-testid="remote-access-expiry"
+							>
+								{expiry.kind === 'never'
+									? m["advanced.remoteAccess.keyNoExpiry"]()
+									: m["advanced.remoteAccess.keyExpires"]({ date: expiryDate })}
+							</span>
+						{/if}
 					{:else}
 						<span class="font-medium">{m["settings.index.remoteAccess"]()}</span>
 					{/if}
@@ -290,6 +343,31 @@ const canForget = $derived(phase === 'connected' || phase === 'needs_approval');
 			>
 				<TriangleAlert aria-hidden="true" class="text-status-warning mt-0.5 size-4 shrink-0" />
 				<span>{noticeText}</span>
+			</div>
+		{/if}
+
+		{#if expiry?.kind === 'soon' || expiry?.kind === 'due' || expiry?.kind === 'expired'}
+			<div
+				class="border-status-warning/40 bg-status-warning/10 flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm"
+				data-expiry={expiry.kind}
+				data-testid="remote-access-expiry"
+				role="status"
+			>
+				<TriangleAlert aria-hidden="true" class="text-status-warning mt-0.5 size-4 shrink-0" />
+				<span class="min-w-0">
+					{#if expiry.kind === 'soon'}
+						{m["advanced.remoteAccess.keyExpiresSoon"]({ date: expiryDate })}
+					{:else if expiry.kind === 'due'}
+						{m["advanced.remoteAccess.keyDue"]({ date: expiryDate })}
+					{:else}
+						{m["advanced.remoteAccess.keyExpired"]({ date: expiryDate })}
+					{/if}
+					{#if expiry.kind === 'expired' && status?.tailnet}
+						<span class="text-muted-foreground mt-1 block truncate font-mono text-xs">
+							{m["advanced.remoteAccess.network"]({ tailnet: status.tailnet })}
+						</span>
+					{/if}
+				</span>
 			</div>
 		{/if}
 
