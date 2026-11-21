@@ -2,6 +2,11 @@ import { logger } from "../../helpers/logger.ts";
 import type { PhysicalDeviceRecord } from "../modems/physical-identity.ts";
 import { resolveModemPhysicalIdentity } from "../modems/physical-identity-source.ts";
 import {
+	clatTranslationFor,
+	clatTranslationForTun,
+	isClatTunName,
+} from "../network/clat-translation.ts";
+import {
 	type BondEntry,
 	isMappableEntry,
 	unmappableBondEntry,
@@ -21,7 +26,12 @@ export function resolveBondPhysicalIdentity(
 	ifname: string,
 ): PhysicalDeviceRecord | undefined {
 	try {
-		return identityResolver(ifname);
+		const translation = isClatTunName(ifname)
+			? clatTranslationForTun(ifname)
+			: undefined;
+		if (isClatTunName(ifname) && !translation) return undefined;
+		const record = identityResolver(translation?.parent ?? ifname);
+		return translation && record.anchor === "ifname" ? undefined : record;
 	} catch {
 		return undefined;
 	}
@@ -33,11 +43,24 @@ export function describeBondEntry(
 	logFailure = true,
 ): BondEntry {
 	try {
-		const record = identityResolver(ifname);
+		const translation = isClatTunName(ifname)
+			? clatTranslationFor(ifname, ip)
+			: undefined;
+		if (isClatTunName(ifname) && !translation)
+			return unmappableBondEntry(ip, ifname);
+		const record = identityResolver(translation?.parent ?? ifname);
+		if (translation && record.anchor === "ifname")
+			return unmappableBondEntry(ip, ifname);
 		return {
 			ip,
 			iface: ifname,
 			linkId: record.linkId,
+			...(translation
+				? {
+						clatGeneration: translation.generation,
+						parentIface: translation.parent,
+					}
+				: {}),
 			...(record.idPath !== undefined ? { idPath: record.idPath } : {}),
 		};
 	} catch (error) {
