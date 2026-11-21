@@ -116,6 +116,7 @@
 	"auth.passwordTooShort": "请使用至少 8 个字符",
 	"auth.passwordsDoNotMatch": "密码不匹配",
 	"auth.placeholderConfirmPassword": "请再次输入密码",
+	"auth.placeholderCreatePassword": "创建密码",
 	"auth.placeholderNewPassword": "创建安全密码（至少8个字符）",
 	"auth.placeholderPassword": "输入您的密码",
 	"auth.rememberMe": "记住我",
