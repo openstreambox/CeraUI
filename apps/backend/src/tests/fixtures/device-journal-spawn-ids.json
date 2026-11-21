@@ -8,11 +8,13 @@
 	"deviceLogs.journalFollow",
 	"deviceLogs.journalScan",
 	"exec.execFileP",
+	"ingest.srtForward",
 	"ingest.srtLiveTransmit",
 	"kernel.download",
 	"kernel.packages",
 	"kernel.stage",
 	"killall.spawnSync",
+	"moblink.relay",
 	"modems.idPathRead",
 	"modems.mmcliInhibit",
 	"monitor.nmcliMonitor",
@@ -74,5 +76,6 @@
 	"updateRecovery.packageLocks",
 	"updateRecovery.probe",
 	"updates.transportProbe",
+	"wifi.iwStationEvents",
 	"wifi.nmcliNew"
 ]
