@@ -67,6 +67,7 @@ import {
 	lastModemDialAt,
 	modemDialClock,
 	noteModemDial,
+	singleDeviceValue,
 } from "./modem-ready-activation.ts";
 import {
 	type ModemId,
@@ -230,8 +231,9 @@ export interface DeadBearerDeps {
 async function readNmState(uuid: string): Promise<string | undefined> {
 	const device = await resolveModemNmDeviceForConnection(uuid);
 	if (device === undefined) return undefined;
-	const fields = await readModemNmDeviceProp(device, "GENERAL.STATE");
-	const raw = fields?.length === 1 ? fields[0]?.trim() : undefined;
+	const raw = singleDeviceValue(
+		await readModemNmDeviceProp(device, "GENERAL.STATE"),
+	);
 	return raw?.match(/^(\d+)(?: \([^()\r\n]+\))?$/)?.[1];
 }
 
