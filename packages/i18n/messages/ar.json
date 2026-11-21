@@ -2918,7 +2918,7 @@
 	"network.sharing.policy.healthBody": "تعتبر الوصلات الصاعدة {usable} الخاصة بـ {total} صحية بما يكفي للنظر فيها. قد تستبعدهم سياسة توجيه جهاز العميل.",
 	"notifications.clientCarrying": "الجهاز ينقل حركة العملاء. ستنتظر التحديثات وإعادة التشغيل وإيقاف التشغيل وتغييرات الروابط عند الخمول.",
 	"notifications.powerWaitingForUpdate": "سيتم إيقاف التشغيل بعد انتهاء التحديث الجاري.",
-	"notifications.powerStuckOnUpdate": "ما زال الجهاز ينتظر التحديث الجاري بعد 15 دقيقة. سيتوقف عن العمل عند انتهائه.",
+	"notifications.powerStuckOnUpdate": "لم يكتمل التحديث بعد مرور 15 دقيقة. سيتم إيقاف تشغيل الجهاز عند اكتماله.",
 	"notifications.powerShuttingDown": "جارٍ إيقاف التشغيل.",
 	"notifications.powerUncertain": "لم يتلقَّ طلب إيقاف التشغيل أي رد. افحص الجهاز قبل المحاولة مرة أخرى.",
 	"notifications.powerRefused": "تم رفض طلب إيقاف التشغيل.",
