@@ -11,12 +11,16 @@ The adapter lock key is the radio's current owner, not its MAC: a composite
 `mac@...` hotspot owner, or no MAC-keyed row at all for a Limited radio. Before
 durable intent the adapter admits the identity's permanent MAC through
 `admitWifiAdapterByMac` (`wifi/wifi-adapter-admission.ts`): a verified identity
-row bound to the exact registry object, its sampled lifetime, and the owner key
-that row resolves to. Limited, Unverified, degraded and missing rows return no
-ACK and record no command. Effects then run under `withWifiAdapterLock(owner)`,
-the lock Wi-Fi's station and profile work takes, and the admission is re-checked
-under it before the effect and again after it: same owner, same registry object,
-same lifetime. A replug or owner transfer in between refuses. Physical identity
+row bound to the exact registry object whose publication is current (the guard
+behind `projectWifiRadioIncarnation`), its sampled lifetime, and the owner key
+that row resolves to. Limited, Unverified, degraded, unpublished (discovery in
+flight) and missing rows return no ACK and record no command. Effects then run
+under `withWifiAdapterLock(owner)`, the lock Wi-Fi's station and profile work
+takes. Under it, `confirmWifiAdapterLifetime` takes a fresh bracketed sysfs
+sample of the netif and re-checks the admission (same owner, registry object,
+publication and lifetime) before the owner's live identity read, after it, and
+after the effect. A replug, even under the same name and not yet published, or
+an owner transfer in between refuses. Physical identity
 (`physical`, permanent MAC, epoch, plus the admitted lifetime) is compared
 separately from the lock mapping. Callers must not hold that non-reentrant lock
 themselves.
@@ -95,6 +99,7 @@ restart state. The reducer suite also explores completion reordering. Coverage:
 | --- | --- |
 | Existing owner and physical lock | owner-context assertions; external shared lock refuses effects |
 | Lock by actual owner | same-owner station/profile interleaving; replug or owner transfer between admission and lock; replug during the effect; Limited/unverified/missing rows; Limited cleanup holder |
+| Current publication and netif | discovery in flight with a stale verified sample; same-name lifetime change before dispatch; replug during the live identity read |
 | Exact epoch before every effect | all four epoch fields; device swap between NM steps |
 | Both ACK IDs | exact echo and duplicate-command single execution |
 | Close, cancel, drain, restore, scoped removal | concurrent cancel/late completion; ordered drain/restore/remove; foreign resource retained |
