@@ -100,8 +100,8 @@ import {
 	resolveCompositionWrite,
 } from "../../modules/streaming/composition.ts";
 import {
+	applyNowNeedsCurrentEvidence,
 	getApplyNowGate,
-	supportsCaptureSelectionClear,
 } from "../../modules/streaming/config-change-bridge.ts";
 import { stageApplyNowFields } from "../../modules/streaming/config-change-candidate.ts";
 import {
@@ -959,16 +959,23 @@ export const setConfigProcedure = authedProcedure
 			sources: sourcesSnapshot,
 			derivedClears: staleOverrides,
 		});
+		// A capture-selection clear and a custom placement must be authorized by
+		// the engine running the session, not by a snapshot that may predate it.
+		const liveEvidence =
+			marker === undefined
+				? undefined
+				: {
+						input_mode: marker.candidate.input_mode,
+						input_id: marker.candidate.selected_video_input,
+						composition: marker.candidate.composition,
+					};
 		if (
-			marker !== undefined &&
-			(marker.candidate.input_mode === null ||
-				marker.candidate.selected_video_input === null)
+			liveEvidence !== undefined &&
+			applyNowNeedsCurrentEvidence(liveEvidence)
 		) {
-			if (!supportsCaptureSelectionClear()) {
-				const prepare = getApplyNowGate().prepareCaptureSelectionClear;
-				if (prepare !== undefined) await prepare();
-			}
-			if (!supportsCaptureSelectionClear()) {
+			const refresh = getApplyNowGate().refreshSessionCapabilities;
+			if (refresh !== undefined) await refresh();
+			if (applyNowNeedsCurrentEvidence(liveEvidence)) {
 				return {
 					success: false,
 					applied: {},

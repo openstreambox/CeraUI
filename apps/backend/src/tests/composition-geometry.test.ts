@@ -24,10 +24,14 @@ import {
 	getConfigFilePath,
 	setConfigFilePath,
 } from "../modules/config.ts";
-import { clearCapabilitiesCache } from "../modules/streaming/capabilities.ts";
+import {
+	clearCapabilitiesCache,
+	invalidateCapabilities,
+} from "../modules/streaming/capabilities.ts";
 import { cerastreamBackend } from "../modules/streaming/cerastream-backend.ts";
 import {
 	changeEngineRuntimeConfig,
+	createApplyNowGate,
 	setApplyNowGateForTest,
 } from "../modules/streaming/config-change-bridge.ts";
 import {
@@ -367,4 +371,81 @@ test("live, a write without apply_now is only saved for the next start: the runn
 	expect(dispatched).toBe(0);
 	expect(result).not.toHaveProperty("configChange");
 	expect(getConfig().composition).toEqual(placedAt(PLACED));
+});
+
+// A live placement goes to the engine running the session. A snapshot retained
+// from a retired engine (or from a failed refresh) still lists
+// `composition-geometry` and passes the save gate, so the apply-now dispatch
+// itself must see evidence from the current connection.
+function countingLiveGate(refresh?: () => Promise<void>) {
+	const sent: unknown[] = [];
+	setApplyNowGateForTest({
+		isStreamLive: () => true,
+		...(refresh === undefined ? {} : { refreshSessionCapabilities: refresh }),
+		dispatch: async (delta) => {
+			sent.push(delta);
+			return { result: "applied", attemptId: "place" };
+		},
+	});
+	return sent;
+}
+
+test("live, a placement authorized only by a retired engine's snapshot is not sent", async () => {
+	invalidateCapabilities();
+	const sent = countingLiveGate();
+
+	const result = await save({ composition_rect: PLACED, apply_now: true });
+
+	expect(sent).toEqual([]);
+	expect(result).toMatchObject({
+		success: false,
+		configChange: { result: "rejected", reason: "change_config_unsupported" },
+	});
+	expect(getConfig().composition).toEqual(SAVED);
+});
+
+test("live, a placement is refused when the session's own engine only has preset layouts", async () => {
+	invalidateCapabilities();
+	const sent = countingLiveGate(() => engineFeatures(["composition"]));
+
+	const result = await save({ composition_rect: PLACED, apply_now: true });
+
+	expect(sent).toEqual([]);
+	expect(result.configChange).toEqual({
+		result: "rejected",
+		reason: "change_config_unsupported",
+	});
+	expect(getConfig().composition).toEqual(SAVED);
+});
+
+test("live, a placement goes out once the session's own engine confirms geometry", async () => {
+	invalidateCapabilities();
+	const sent = countingLiveGate(() => engineFeatures(GEOMETRY));
+
+	const result = await save({ composition_rect: PLACED, apply_now: true });
+
+	expect(sent).toEqual([{ composition: placedAt(PLACED) }]);
+	expect(result.configChange?.result).toBe("applied");
+});
+
+test("the apply-now gate refuses a custom layout without current geometry evidence", async () => {
+	invalidateCapabilities();
+	const changes: unknown[] = [];
+	const gate = createApplyNowGate({
+		snapshot: () => ({ state: "streaming" }) as never,
+		changeConfig: async (delta) => {
+			changes.push(delta);
+			return { result: "applied", attemptId: "gate" };
+		},
+	});
+
+	const custom = await gate.dispatch({ composition: placedAt(PLACED) });
+	const preset = await gate.dispatch({ composition: { ...SAVED } });
+
+	expect(custom).toEqual({
+		result: "rejected",
+		reason: "change_config_unsupported",
+	});
+	expect(changes).toEqual([{ composition: { ...SAVED } }]);
+	expect(preset.result).toBe("applied");
 });
