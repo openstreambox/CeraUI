@@ -69,6 +69,7 @@ vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getConfig: () => ({ autostart: state.autostart }),
 	getKiosk: () => undefined,
 	getDeviceStats: () => ({ socTemp: state.socTemp }),
+	getTailscale: () => undefined,
 }));
 
 vi.mock("svelte-sonner", () => ({
