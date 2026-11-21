@@ -97,6 +97,7 @@ import {
 } from "./modules/network/gateway-route-lifecycle.ts";
 import { UPDATE_GW_INT, updateGwWrapper } from "./modules/network/gateways.ts";
 import { createMonitorManager } from "./modules/network/monitor/monitor-manager.ts";
+import { startNetworkChangeSafety } from "./modules/network/network-change-runtime.ts";
 import {
 	buildGatewayProbe,
 	refreshAndBroadcastNetworkIngest,
@@ -615,7 +616,15 @@ const stopProvisioningMarkerWatch = startProvisioningMarkerWatch();
 // awaited, for the reason above: it rewrites NetworkManager profiles, and a
 // wired port must not sit on the boot critical path. It is idempotent and never
 // throws, so a device with no stated role pays one map lookup.
-void guardNonCritical("ethernet-roles", reconcileEthernetRoles);
+//
+// A protected network change left pending by a previous process is settled
+// first (resumed, undone or rolled forward), so the role reconcile works on
+// NetworkManager's settled state. With the change-safety flag off and no
+// journal on disk this is a no-op.
+void guardNonCritical("ethernet-roles", async () => {
+	await startNetworkChangeSafety();
+	await reconcileEthernetRoles();
+});
 
 // MUST precede initModemUpdateLoop: the loop's first discovery + `modems`
 // broadcast fire immediately, and every modem RPC gates on the readiness

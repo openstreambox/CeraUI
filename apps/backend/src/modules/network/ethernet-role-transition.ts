@@ -36,6 +36,18 @@ import {
 	publishEthernetRoleOutcome,
 } from "./ethernet-role-outcome.ts";
 import {
+	createEthernetRoleSettledHandler,
+	ethernetRolePlan,
+} from "./ethernet-role-safety.ts";
+import type { NetworkChangePlan } from "./network-change-journal.ts";
+import type { AskBeforeAnswer } from "./network-change-policy.ts";
+import { onNetworkChangeSettled } from "./network-change-runtime.ts";
+import type {
+	ApplyOptions,
+	ApplyResult,
+	NetworkChangeSession,
+} from "./network-checkpoint.ts";
+import {
 	applySharedLanBondGate,
 	getNetworkInterfaces,
 	triggerNetworkInterfacesChange,
@@ -104,10 +116,84 @@ export const defaultEthernetRoleDeps: EthernetRoleTransitionDeps = {
 	refreshInterfaces: refreshNetifRoleFlags,
 };
 
+// A protected role change persists its intent only when the owner settles it.
+onNetworkChangeSettled(
+	createEthernetRoleSettledHandler(defaultEthernetRoleDeps),
+);
+
 export interface SetEthernetRoleResult {
 	success: boolean;
 	applied?: EthernetRole;
 	error?: EthernetRoleError;
+	/** Present when the change went through the network-change owner. */
+	changeSafety?: ApplyResult;
+}
+
+/**
+ * Run the change through the network-change owner (behind the
+ * `CERALIVE_NETWORK_CHANGE_SAFETY` flag; the procedure decides).
+ */
+export interface EthernetRoleSafety {
+	readonly owner: {
+		apply(
+			session: NetworkChangeSession,
+			plan: NetworkChangePlan,
+			options?: ApplyOptions,
+		): Promise<ApplyResult>;
+	};
+	readonly session: NetworkChangeSession;
+	readonly answer?: AskBeforeAnswer | undefined;
+}
+
+/**
+ * The protected path: the active profile is edited only as an in-memory
+ * candidate inside a NetworkManager checkpoint, and the role is persisted
+ * only when the owner settles the change as committed. Returns undefined
+ * when the port has no active connection: no session can ride it, so the
+ * existing path (which may create the owned shared profile) runs instead.
+ */
+async function applyRoleProtected(
+	name: string,
+	role: EthernetRole,
+	previous: EthernetRole | undefined,
+	deps: EthernetRoleTransitionDeps,
+	safety: EthernetRoleSafety,
+	op: string | undefined,
+): Promise<SetEthernetRoleResult | undefined> {
+	const initial = await deps.resolveConnection(name);
+	if (initial.kind !== "active") return undefined;
+	const correlation = op === undefined ? {} : { op };
+	const plan = ethernetRolePlan({
+		ifname: name,
+		role,
+		previous,
+		activeUuid: initial.uuid,
+		owned: deps.readOwnedProfile(name) === initial.uuid.toLowerCase(),
+		op,
+	});
+	let result: ApplyResult;
+	try {
+		result = await safety.owner.apply(
+			safety.session,
+			plan,
+			safety.answer === undefined ? {} : { answer: safety.answer },
+		);
+	} catch (error) {
+		// No pending frame was published, so none is owed; the caller gets the
+		// error. The owner already undid whatever the apply had started.
+		logger.warn(
+			`ethernet role: protected change on ${name} refused: ${(error as Error).message}`,
+		);
+		return { success: false, error: "apply_failed" };
+	}
+	if (result.kind === "ask-before")
+		return { success: false, changeSafety: result };
+	if (result.kind === "pending") {
+		// The owner's settle handler publishes the terminal frame: success on
+		// commit, apply_failed when the change is undone.
+		deps.publishOutcome(name, { pending: true, role, ...correlation });
+	}
+	return { success: true, applied: role, changeSafety: result };
 }
 async function applyRoleToNetworkManager(
 	ifname: string,
@@ -226,6 +312,7 @@ export async function setEthernetRole(
 	role: EthernetRole,
 	deps: EthernetRoleTransitionDeps = defaultEthernetRoleDeps,
 	op?: string,
+	safety?: EthernetRoleSafety,
 ): Promise<SetEthernetRoleResult> {
 	return withEthernetRoleQueue(name, async () => {
 		const correlation = op === undefined ? {} : { op };
@@ -237,6 +324,19 @@ export async function setEthernetRole(
 		if (deps.listInterfaces()[name] === undefined)
 			return refuse("unknown_interface");
 		const previous = deps.readPersistedRole(name);
+		// Only a real role change is protected; re-stating the current role
+		// keeps the existing idempotent path.
+		if (safety && (previous ?? ETHERNET_ROLE_DEFAULT) !== role) {
+			const protectedResult = await applyRoleProtected(
+				name,
+				role,
+				previous,
+				deps,
+				safety,
+				op,
+			);
+			if (protectedResult) return protectedResult;
+		}
 		let persisted = false;
 		let failure: EthernetRoleError | undefined;
 		try {

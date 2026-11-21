@@ -1,9 +1,11 @@
 # Safe network changes
 
-This draft holds a network-change owner, a NetworkManager adapter, a journal,
-an undo interface for effects outside NetworkManager, arrival-interface
-evidence, and the copy for the prompts. None of it is connected to the RPC
-handlers or the UI yet, so network behavior is unchanged.
+This holds a network-change owner, a NetworkManager adapter, a journal, an
+undo interface for effects outside NetworkManager, arrival-interface evidence,
+and the copy for the prompts. One change path is wired to it: the Ethernet port
+role (uplink or shared LAN), behind `CERALIVE_NETWORK_CHANGE_SAFETY=1`, which is
+off by default. With the flag off, network behavior is unchanged. No UI uses it
+yet.
 
 ## The idea
 
@@ -38,7 +40,7 @@ that evidence anyway.
 
 | Step | What happens |
 | --- | --- |
-| Journal | `network-change-journal.ts` writes the plan and the transaction to `/var/lib/ceralive/network-change.json` (0600, fsync, rename) before anything changes |
+| Journal | `network-change-journal.ts` writes the plan and the transaction to `/data/ceralive/network-change/journal.json` (0600 in a 0700 directory, fsync, rename) before anything changes |
 | Checkpoint | NetworkManager `CheckpointCreate` over the profiles' interfaces, 90 s, `DELETE_NEW_CONNECTIONS`. Effect-only changes have no checkpoint and use the journaled deadline |
 | Candidates | Each edited profile, active or dormant, duplicates included, is cloned with `nmcli connection clone --temporary` under a `ceralive-candidate-…` name, with autoconnect off. Only the clone is edited. The original on disk is never touched before confirmation |
 | Effects | Each effect driver reads the current state and returns its undo record. The record is journaled, and only then is the effect applied |
@@ -61,6 +63,45 @@ writes the ask-after notice. The same undo runs on `reconcile`:
 
 Any `ceralive-candidate-…` profile the journal does not name (a crash between
 clone and journal write) is deleted by the same sweep.
+
+## The Ethernet port role (first wired path)
+
+Switching a port between uplink and shared LAN rewrites `ipv4.method` on the
+profile the port runs. A box managed over its wired uplink loses that session
+when the port becomes shared LAN; a laptop on the shared LAN loses it the other
+way round. With the flag on, `network.setEthernetRole` hands a real role change
+on a port with an active connection to the owner:
+
+- The plan edits only `ipv4.method` on the active profile, as a candidate
+  activated on the port. For the profile CeraUI created for that port, the
+  role's autoconnect is written on promotion.
+- The role and the owned-profile reservation are persisted only when the change
+  is committed (confirmation, roll-forward or the deliberate answer). An
+  unconfirmed change therefore leaves nothing for the boot role reconciler to
+  re-apply. Promotion gives the profile a new UUID, and the reservation follows
+  it.
+- A pending change publishes the `eth_role` pending frame. The terminal frame
+  comes when the change settles: success on commit, `apply_failed` when it is
+  undone. A change that fails during its apply returns the error with no frame.
+- These stay on the existing path: re-stating the current role, and a port with
+  no active connection (no session can ride it, and creating the shared profile
+  there is not a cut).
+
+The arrival interface comes from the front door's local ingress evidence
+(`ingressPath`, rechecked with `ingressPathValid()`). A session without it is
+"unknown": it is asked before, and it cannot confirm. Each WebSocket carries
+its own session id and open time, so a reconnect is a new session.
+
+At backend start the owner reconciles before the role reconciler runs, and a
+5-second tick undoes a change whose deadline passed or whose checkpoint vanished
+(a NetworkManager restart). Both run whenever a journal exists, even with the
+flag off, so turning the flag off cannot strand a pending change.
+
+RPC: `network.setEthernetRole` takes an optional `changeAnswer` and may return
+`changeSafety` (the ask-before prompt, `pending` with its id and deadline, or
+`kept`). `network.getChangeSafety` reads the journal, and
+`network.confirmChange`, `network.undoKeptChange` and
+`network.answerChangeNotice` act on it.
 
 ## Arrival-interface evidence
 
@@ -98,12 +139,15 @@ works around, and `PASS` lines for:
 - the deliberate "don't undo it" answer survives the deadline and a restart, and its recorded undo
   restores the profile (same UUID and settings) and the effects from another
   connection;
+- the Ethernet role plan (uplink to shared LAN): an unconfirmed switch is
+  undone with the profile files unchanged, and a confirmation from a new
+  session over the port writes shared mode to disk and survives a restart;
 - a request to wan0's address routed in over lan0 is attributed to lan0.
 
 Run it only in a disposable container with no device passthrough and no host
 system-directory mounts, with `NET_ADMIN` and `SYS_ADMIN` (for one client
 network namespace). Install NetworkManager, D-Bus, systemd's `busctl`,
-iproute2, nftables, jq, curl and bun. Set `NM_CHECKPOINT_CONTRACT=1` and run the
+iproute2, nftables, jq, curl, dnsmasq (for shared mode) and bun. Set `NM_CHECKPOINT_CONTRACT=1` and run the
 script as container root. The script refuses radio devices and physical
 interfaces.
 
@@ -125,13 +169,24 @@ The TypeScript unit tests use the ordinary runner with
   are the same, but the bytes may differ.
 - The journal can hold a new passphrase from a plan, so it uses NetworkManager's
   own keyfile permissions.
+- While an Ethernet role change is pending, the persisted role (and so the bond
+  gate's view of the port) is still the old one. It catches up on commit.
+- A session with no front-door evidence (a remote relay or tailnet session, for
+  example) can make a protected change but never confirm it, so such a change is
+  always undone unless the deliberate answer was chosen.
+- Re-applying from an ask-after notice runs the stored plan through the owner,
+  not through the Ethernet role queue.
+- Checkpoints are matched by D-Bus path. NetworkManager numbers them from 1
+  again after a restart; the tick undoes the change as soon as the old path is
+  gone, but a new checkpoint reusing the path before that tick is not detected.
 
-## Before wiring
+## Before wiring more paths or turning the flag on
 
 1. Device-facing drivers for hotspot-interface teardown and modem radio-mode
    writes, with idempotent undo, and their own isolated tests.
-2. Install the ingress table, record the session's interface when its socket
-   opens, and pass the session to the owner.
+2. Arrival evidence beyond the front door: the front door covers direct
+   on-link sessions. The nftables set (`network-ingress.ts`) remains an option
+   for sessions that do not pass through it.
 3. RPC and UI: the ask-before prompt, the confirm banner, the ask-after notice
    broadcast to every connection, and the kept-change undo. All copy keys exist
    under `network.changeSafety.*` in every catalog. The ask-before dialog shows
@@ -139,8 +194,8 @@ The TypeScript unit tests use the ordinary runner with
    opens with focus on the message, not on a button, so Enter alone chooses
    nothing. The deliberate button's full label is its accessible name, so the
    consequence is heard before it can be activated.
-4. Run `reconcile` at backend start, on NetworkManager's bus `NameOwnerChanged`,
-   and from a boot unit after NetworkManager. Run `tick` from a timer.
+4. Run `reconcile` on NetworkManager's bus `NameOwnerChanged` and from a boot
+   unit after NetworkManager. Backend start and the tick are wired.
 5. Make asynchronous station and hotspot completion part of the apply, and
    cover every mutation entry point with isolated integration and browser tests.
 

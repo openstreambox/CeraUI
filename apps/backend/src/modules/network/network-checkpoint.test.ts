@@ -4,7 +4,7 @@ import {
 	MODEM_RADIO_MODE_EFFECT,
 } from "./network-change-effects.ts";
 import { harness, plan, session } from "./network-change-test-fakes.ts";
-import { CANDIDATE_PREFIX } from "./network-checkpoint.ts";
+import { CANDIDATE_PREFIX, type SettledEvent } from "./network-checkpoint.ts";
 
 const UNDO = { answer: "undo-automatically" } as const;
 const KEEP = { answer: "keep-change" } as const;
@@ -686,5 +686,113 @@ describe("ask after: the box undid a change nobody confirmed", () => {
 		const next = w.restartBackend();
 		await next.reconcile("boot");
 		expect((await next.status()).notice?.reason).toBe("disconnected");
+	});
+});
+
+describe("callers persist their intent only when a change settles", () => {
+	function settledWorld() {
+		const events: SettledEvent[] = [];
+		let fail = false;
+		const h = harness({
+			onSettled: (event) => {
+				if (fail) throw new Error("intent write failed");
+				events.push(event);
+			},
+		});
+		const eth = h.fake.add("Wired", { "ipv4.method": "auto" }, false);
+		h.fake.active.set("eth0", eth);
+		const ethPlan = plan({
+			devices: ["eth0"],
+			profiles: [
+				{
+					uuid: eth,
+					set: [["ipv4.method", "shared"]],
+					activateOn: "eth0",
+					autoconnect: true,
+				},
+			],
+		});
+		return {
+			...h,
+			eth,
+			ethPlan,
+			events,
+			failSettle: (value: boolean) => {
+				fail = value;
+			},
+		};
+	}
+
+	it("reports nothing while pending, and the candidate on commit", async () => {
+		const w = settledWorld();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		expect(w.events).toEqual([]);
+		await w.owner.confirm(pending.id, fresh);
+		expect(w.events).toHaveLength(1);
+		const [event] = w.events;
+		expect(event?.outcome).toBe("committed");
+		expect(event?.profiles[0]?.original).toBe(w.eth);
+		const candidate = event?.profiles[0]?.candidate as string;
+		expect(w.fake.profiles.get(candidate)?.id).toBe("Wired");
+	});
+
+	it("writes the edit's autoconnect on promotion, never on the candidate", async () => {
+		const w = settledWorld();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		const candidate = w.fake.active.get("eth0") as string;
+		expect(w.fake.profiles.get(candidate)?.autoconnect).toBe(false);
+		await w.owner.confirm(pending.id, fresh);
+		expect(w.fake.profiles.get(candidate)?.autoconnect).toBe(true);
+	});
+
+	it("keeps the original's autoconnect when the edit names none", async () => {
+		const w = world();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		const candidate = w.fake.active.get("eth0") as string;
+		await w.owner.confirm(pending.id, fresh);
+		expect(w.fake.profiles.get(candidate)?.autoconnect).toBe(true);
+	});
+
+	it("reports an automatic undo with its reason, and a failed apply as failed", async () => {
+		const w = settledWorld();
+		await w.owner.apply(creator, w.ethPlan, UNDO);
+		await w.fake.expireAll();
+		w.at(91_001);
+		await w.owner.tick();
+		expect(w.events.map((e) => [e.outcome, e.reason])).toEqual([
+			["undone", "disconnected"],
+		]);
+		w.fake.fail.add("activate");
+		await expect(w.owner.apply(creator, w.ethPlan, UNDO)).rejects.toThrow();
+		expect(w.events.at(-1)?.reason).toBe("failed");
+	});
+
+	it("reports a kept change as committed, and its undo as reverted", async () => {
+		const w = settledWorld();
+		const kept = await w.owner.apply(creator, w.ethPlan, KEEP);
+		if (kept.kind !== "kept") throw new Error("expected kept");
+		expect(w.events.map((e) => e.outcome)).toEqual(["committed"]);
+		await w.owner.undoKept(kept.id, session("other", "wlan0", 2000));
+		expect(w.events.map((e) => e.outcome)).toEqual(["committed", "reverted"]);
+	});
+
+	it("keeps the transaction when the intent write fails, and rolls forward later", async () => {
+		const w = settledWorld();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.failSettle(true);
+		await expect(w.owner.confirm(pending.id, fresh)).rejects.toThrow(
+			"intent write failed",
+		);
+		expect((await w.journal.read()).tx?.state).toBe("confirming");
+		w.failSettle(false);
+		expect(await w.restartBackend().reconcile("backend-start")).toBe(
+			"promoted",
+		);
+		expect(w.events.map((e) => e.outcome)).toEqual(["committed"]);
+		expect((await w.journal.read()).tx).toBeNull();
 	});
 });

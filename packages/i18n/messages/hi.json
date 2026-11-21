@@ -3555,5 +3555,6 @@
 	"network.changeSafety.notice.restart": "पुष्टि से पहले नेटवर्क फिर से शुरू हुआ, इसलिए बॉक्स ने इसे वापस लिया। फिर भी?",
 	"network.changeSafety.notice.make": "बदलाव करें",
 	"network.changeSafety.notice.leave": "वापस ही रहने दें",
-	"network.changeSafety.kept.undo": "आखिरी नेटवर्क बदलाव वापस लें"
+	"network.changeSafety.kept.undo": "आखिरी नेटवर्क बदलाव वापस लें",
+	"network.changeSafety.summary.ethernetRole": "{ifname} पर पोर्ट भूमिका बदलाव"
 }

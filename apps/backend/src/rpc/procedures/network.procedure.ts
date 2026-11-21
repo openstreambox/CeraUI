@@ -3,7 +3,13 @@
  * Wraps existing network logic from modules/network/
  */
 
+import { existsSync } from "node:fs";
 import {
+	type ChangeSafetyStatus,
+	changeSafetyActionOutputSchema,
+	changeSafetyIdInputSchema,
+	changeSafetyNoticeInputSchema,
+	changeSafetyStatusSchema,
 	NETWORK_INGEST_UNAVAILABLE_ERROR,
 	netifConfigInputSchema,
 	netifConfigOutputSchema,
@@ -21,7 +27,13 @@ import {
 } from "../../mocks/mock-service.ts";
 import { setMockNetworkIngestActive } from "../../mocks/providers/network-ingest.ts";
 import { setMockGatewayActive } from "../../mocks/providers/streaming.ts";
+import { networkChangeSafetyEnabled } from "../../modules/network/ethernet-role-safety.ts";
 import { setEthernetRole } from "../../modules/network/ethernet-role-transition.ts";
+import {
+	getNetworkChangeOwner,
+	networkChangeJournalPath,
+	networkChangeSession,
+} from "../../modules/network/network-change-runtime.ts";
 import { refreshAndBroadcastNetworkIngest } from "../../modules/network/network-ingest.ts";
 import {
 	persistIngestDesired,
@@ -117,12 +129,111 @@ export const configureNetworkInterfaceProcedure = authedProcedure
 export const setEthernetRoleProcedure = authedProcedure
 	.input(setEthernetRoleInputSchema)
 	.output(setEthernetRoleOutputSchema)
-	.handler(async ({ input }) => {
+	.handler(async ({ input, context }) => {
 		if (!shouldUseMocks() && !(await hasCapability("client-internet"))) {
 			return { success: false, error: "unavailable_in_emulated_mode" as const };
 		}
 
-		return setEthernetRole(input.name, input.role, undefined, input.op);
+		// Behind the off-by-default flag, a real role change runs through the
+		// network-change owner: checkpoint, candidate, confirm or automatic undo.
+		const safety =
+			!shouldUseMocks() && networkChangeSafetyEnabled()
+				? {
+						owner: getNetworkChangeOwner(),
+						session: networkChangeSession(context.ws),
+						answer: input.changeAnswer,
+					}
+				: undefined;
+		return setEthernetRole(input.name, input.role, undefined, input.op, safety);
+	});
+
+/** Whether the owner may be consulted at all: flag on, or a journal to recover. */
+function changeSafetyActive(): boolean {
+	return (
+		!shouldUseMocks() &&
+		(networkChangeSafetyEnabled() || existsSync(networkChangeJournalPath()))
+	);
+}
+
+const NO_CHANGE: Omit<ChangeSafetyStatus, "enabled"> = {
+	pending: null,
+	kept: null,
+	undoIncomplete: false,
+	notice: null,
+};
+
+/** The pending change, kept change and stored notice; reads the journal only. */
+export const getChangeSafetyStatusProcedure = authedProcedure
+	.output(changeSafetyStatusSchema)
+	.handler(async () => {
+		const enabled = !shouldUseMocks() && networkChangeSafetyEnabled();
+		if (!changeSafetyActive()) return { enabled, ...NO_CHANGE };
+		return { enabled, ...(await getNetworkChangeOwner().status()) };
+	});
+
+function refusal(error: unknown) {
+	return { success: false, error: (error as Error).message };
+}
+
+/** Confirm a pending change. Only a new session over the changed path qualifies. */
+export const confirmNetworkChangeProcedure = authedProcedure
+	.input(changeSafetyIdInputSchema)
+	.output(changeSafetyActionOutputSchema)
+	.handler(async ({ input, context }) => {
+		if (!changeSafetyActive()) return { success: false, error: "unavailable" };
+		try {
+			await getNetworkChangeOwner().confirm(
+				input.id,
+				networkChangeSession(context.ws),
+			);
+			return { success: true };
+		} catch (error) {
+			return refusal(error);
+		}
+	});
+
+/** Undo a change someone kept with "don't undo it", from any signed-in session. */
+export const undoKeptNetworkChangeProcedure = authedProcedure
+	.input(changeSafetyIdInputSchema)
+	.output(changeSafetyActionOutputSchema)
+	.handler(async ({ input, context }) => {
+		if (!changeSafetyActive()) return { success: false, error: "unavailable" };
+		try {
+			await getNetworkChangeOwner().undoKept(
+				input.id,
+				networkChangeSession(context.ws),
+			);
+			return { success: true };
+		} catch (error) {
+			return refusal(error);
+		}
+	});
+
+/** Answer the stored "the box undid it" notice: make the change again, or leave it. */
+export const answerNetworkChangeNoticeProcedure = authedProcedure
+	.input(changeSafetyNoticeInputSchema)
+	.output(changeSafetyActionOutputSchema)
+	.handler(async ({ input, context }) => {
+		if (!changeSafetyActive()) return { success: false, error: "unavailable" };
+		const owner = getNetworkChangeOwner();
+		const session = networkChangeSession(context.ws);
+		try {
+			if (input.answer === "leave-undone") {
+				await owner.leaveUndone(input.id, session);
+				return { success: true };
+			}
+			// Re-applying is deliberate: the owner always asks before again.
+			if (!networkChangeSafetyEnabled())
+				return { success: false, error: "unavailable" };
+			const changeSafety = await owner.reapply(
+				input.id,
+				session,
+				input.changeAnswer,
+			);
+			return { success: changeSafety.kind !== "ask-before", changeSafety };
+		} catch (error) {
+			return refusal(error);
+		}
 	});
 
 /**

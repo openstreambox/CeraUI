@@ -3555,5 +3555,6 @@
 	"network.changeSafety.notice.restart": "The network restarted before you confirmed, so the box undid it. Still want it?",
 	"network.changeSafety.notice.make": "Make the change",
 	"network.changeSafety.notice.leave": "Leave it undone",
-	"network.changeSafety.kept.undo": "Undo the last network change"
+	"network.changeSafety.kept.undo": "Undo the last network change",
+	"network.changeSafety.summary.ethernetRole": "Port role change on {ifname}"
 }

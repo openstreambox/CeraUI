@@ -57,6 +57,7 @@ export const CHANGE_SAFETY_COPY = {
 	noticeMake: "network.changeSafety.notice.make",
 	noticeLeave: "network.changeSafety.notice.leave",
 	keptUndo: "network.changeSafety.kept.undo",
+	summaryEthernetRole: "network.changeSafety.summary.ethernetRole",
 } as const;
 
 export interface AskBeforeAction<A extends AskBeforeAnswer> {

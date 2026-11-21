@@ -3558,5 +3558,6 @@
 	"network.changeSafety.notice.restart": "Le réseau a redémarré avant votre confirmation, le boîtier a donc annulé. Le refaire ?",
 	"network.changeSafety.notice.make": "Faire le changement",
 	"network.changeSafety.notice.leave": "Laisser annulé",
-	"network.changeSafety.kept.undo": "Annuler le dernier changement réseau"
+	"network.changeSafety.kept.undo": "Annuler le dernier changement réseau",
+	"network.changeSafety.summary.ethernetRole": "Changement du rôle du port {ifname}"
 }
