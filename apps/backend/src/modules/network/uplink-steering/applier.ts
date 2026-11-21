@@ -44,6 +44,14 @@ export interface UplinkSteeringApplierDeps {
 	flushConntrack(mark: number): Promise<void>;
 	setIpForwarding(enabled: boolean): Promise<void>;
 	publishFlowsReset(event: UplinkFlowsResetEvent): void;
+	/**
+	 * Called whenever the client uplink selection that is live changes: as
+	 * soon as a reload carries `next`'s selectable uplinks (the exclusion and
+	 * transition rulesets already do), and with `previous` when a rollback
+	 * restored it. `undefined` means client forwarding is off. A failed apply
+	 * therefore still reports what clients actually use.
+	 */
+	selectionInstalled?(state: PreparedSteeringState | undefined): void;
 }
 
 export class UplinkSteeringApplier {
@@ -67,6 +75,8 @@ export class UplinkSteeringApplier {
 		let activatedService = false;
 		let stateCommitted = false;
 		let transitionPublished = false;
+		const installed = (state: PreparedSteeringState | undefined) =>
+			this.#deps.selectionInstalled?.(state);
 		try {
 			const recoveredRoutes =
 				previous === undefined ? await this.#deps.discoverRoutes() : [];
@@ -101,6 +111,9 @@ export class UplinkSteeringApplier {
 					}),
 					"reload",
 				);
+				// New flows already follow next's selection.
+				transitionPublished = true;
+				installed(next);
 				for (const uplink of excluded) {
 					await this.#deps.flushConntrack(uplink.mark);
 					this.#deps.publishFlowsReset({
@@ -113,6 +126,7 @@ export class UplinkSteeringApplier {
 				const transition = transitionState(previous, next, removedRoutes);
 				await this.#deps.applyRuleset(buildShareRuleset(transition), "reload");
 				transitionPublished = true;
+				installed(next);
 				for (const route of removedRoutes) {
 					await this.#deps.flushConntrack(route.mark);
 					await this.#deps.removeRoute(route);
@@ -127,6 +141,7 @@ export class UplinkSteeringApplier {
 			if (!isActive) {
 				await this.#deps.deactivateSharing();
 				stateCommitted = true;
+				installed(next);
 				await this.#retireRecoveredRoutes(staleRecoveredRoutes);
 				await this.#deps.setIpForwarding(false);
 			} else {
@@ -134,6 +149,7 @@ export class UplinkSteeringApplier {
 				await this.#deps.applyRuleset(buildShareRuleset(next), mode);
 				activatedService = mode === "activate";
 				stateCommitted = true;
+				installed(next);
 				await this.#retireRecoveredRoutes(staleRecoveredRoutes);
 				if (!wasActive) await this.#deps.setIpForwarding(true);
 			}
@@ -143,6 +159,7 @@ export class UplinkSteeringApplier {
 			if (activatedService) {
 				try {
 					await this.#deps.deactivateSharing();
+					installed(previous);
 				} catch (deactivateError) {
 					rollbackErrors.push(deactivateError);
 				}
@@ -161,6 +178,7 @@ export class UplinkSteeringApplier {
 							buildShareRuleset(previous),
 							"reload",
 						);
+						installed(previous);
 					} catch (restoreError) {
 						rollbackErrors.push(restoreError);
 					}

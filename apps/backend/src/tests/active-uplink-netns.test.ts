@@ -33,12 +33,16 @@ const ZONE = { ifname: "client0", ipv4Cidr: "10.42.0.0/24" } as const;
 // (cellular) and the rulesets are renamed onto the fixture links.
 const FIXTURE_NAME: Record<string, string> = { eth0: "wan0", wwan0: "wan1" };
 
-/** `successes` probe rounds observed by `now`; fresh unless down. */
+/**
+ * `successes` probe rounds observed by `now`, in an unbroken probe run since
+ * `since`; fresh unless down.
+ */
 function record(
 	iface: string,
 	state: UplinkHealthRecord["state"],
 	successes: number,
 	now = 0,
+	since = now,
 ): UplinkHealthRecord {
 	return {
 		iface,
@@ -49,7 +53,7 @@ function record(
 		staleAt: now + 15_000,
 		probes: { successes, failures: 0 },
 		// Confirmed by the general-internet probe at `now` unless down.
-		signals: state === "down" ? {} : { activeAt: now },
+		signals: state === "down" ? {} : { activeAt: now, probeSince: since },
 	} as UplinkHealthRecord;
 }
 
@@ -105,12 +109,12 @@ describe.skipIf(!NETNS_ISOLATED)("single-active client uplink — kernel", () =>
 		const failover1 = plan(
 			20_000,
 			[cellular],
-			[record("eth0", "down", 0), record("wwan0", "up", 9, 20_000)],
+			[record("eth0", "down", 0), record("wwan0", "up", 9, 20_000, 0)],
 		);
 		// eth0 proven again at 60 s; its hold doubled after the failure.
 		const held1 = plan(60_000, both, [
 			record("eth0", "up", 5, 60_000),
-			record("wwan0", "up", 17, 60_000),
+			record("wwan0", "up", 17, 60_000, 0),
 		]);
 		const hold = selector.rejoinHoldMs("wired-a");
 		expect(hold).toBe(ACTIVE_UPLINK_CONFIG.rejoinHoldMs * 2);
@@ -119,14 +123,14 @@ describe.skipIf(!NETNS_ISOLATED)("single-active client uplink — kernel", () =>
 			const now = 60_000 + round;
 			expect(
 				plan(now, both, [
-					record("eth0", "up", 5 + round / 5_000, now),
-					record("wwan0", "up", 17 + round / 5_000, now),
+					record("eth0", "up", 5 + round / 5_000, now, 60_000),
+					record("wwan0", "up", 17 + round / 5_000, now, 0),
 				]).selected,
 			).toEqual(["wan1"]);
 		}
 		const rejoined0 = plan(60_000 + hold, both, [
-			record("eth0", "up", 17, 60_000 + hold),
-			record("wwan0", "up", 29, 60_000 + hold),
+			record("eth0", "up", 17, 60_000 + hold, 60_000),
+			record("wwan0", "up", 29, 60_000 + hold, 0),
 		]);
 		expect([
 			active0.selected,

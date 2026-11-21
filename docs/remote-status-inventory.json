@@ -37271,6 +37271,13 @@
             "number"
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "[].signals.probeSince",
+          "types": [
+            "number"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         }
       ]
     },
@@ -43977,11 +43984,11 @@
     "apps/backend/src/modules/network/network-ingest.ts": "29234fe5c8db5cce9344d24253b1938857f5dcf3bb2643dbe5fd468f66abc128",
     "apps/backend/src/modules/network/network-interfaces.ts": "6ebcec1cc43bfc1655093d41e29b2f079034b318847faa57c5c74b6fb97ba418",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
-    "apps/backend/src/modules/network/uplink-health/model.ts": "1f5b63419296f814d6dbe227baf76a904d4ce32bb92509bae8f03025c09cc0e9",
+    "apps/backend/src/modules/network/uplink-health/model.ts": "00d2f9601a957d1ea676dc63ebdafc253325f7613dffd47036ca976f18725e15",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "94d16955884f1a7277e235bfd8223191cfb3aec9a5eec940451b5798d2aeba9b",
     "apps/backend/src/modules/network/uplink-health/state.ts": "261d10a9f6d2e62d6a2fb92dab4a4a8a37ad8eb8fcb672205f0cb241d544174b",
     "apps/backend/src/modules/network/uplink-shaper/status.ts": "f2ef210a8e62db8310afad2083ce02ba17e5a094e6e7081e2b94c396228bfd35",
-    "apps/backend/src/modules/network/uplink-steering/runtime.ts": "c75262a916fada699330d9fa45a76d3ea061616203fcd41df81d5962b121c155",
+    "apps/backend/src/modules/network/uplink-steering/runtime.ts": "40c7cc5ce6b2759e467789fd4bea7ef858c74f21f41e2c5d8d0bf8766f1ce23f",
     "apps/backend/src/modules/network/uplink-steering/status.ts": "948b97424b3ad1753d21667068059c69b80805d09ecec619c5f2c5582e2bcbda",
     "apps/backend/src/modules/remote-control/set-profile-wiring.ts": "f3d4ef2c672e440b940062dc2ad9fefbbf19f8b66c9d4f39e0bf25866ba39b72",
     "apps/backend/src/modules/remote/remote-relays.ts": "eb9e79c0404cb498065c5c2d041de52f80e1161626fa566fc70fc74d4e4b0789",
@@ -44043,7 +44050,7 @@
     "packages/rpc/src/schemas/logs.schema.ts": "17625d634e1266d00ef2a4ead5267a0c0e7ea01cddbeced29239990adc7017b5",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
     "packages/rpc/src/schemas/modems.schema.ts": "d3733a5e5d8a4c79adb1a7089f8ebcdee54b3aed877957481eaf73c15ea56295",
-    "packages/rpc/src/schemas/network.schema.ts": "9c883e023ca36dd8e9f00af22e25855850d2fd6a80cd64f7e81f8822153ffded",
+    "packages/rpc/src/schemas/network.schema.ts": "de2fcc92a5f79120c4b8212f1bb83c84e08c51797516ebbec783c86709c2b4a5",
     "packages/rpc/src/schemas/notifications.schema.ts": "8919cd114f148a39e8cdb540f0e91429b847151db197a3942bb4617037dad764",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",

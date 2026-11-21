@@ -52,6 +52,7 @@ function record(
 	successes = 5,
 	staleAt = Number.MAX_SAFE_INTEGER,
 	activeAt?: number,
+	probeSince?: number,
 ): UplinkHealthRecord {
 	return {
 		iface,
@@ -61,49 +62,92 @@ function record(
 		lastTransition: 0,
 		staleAt,
 		probes: { successes, failures: 0 },
-		signals: activeAt === undefined ? {} : { activeAt },
-	} as UplinkHealthRecord;
-}
-
-/** A healthy record confirmed by the general-internet probe every 5 s. */
-function live(iface: string, now: number): UplinkHealthRecord {
-	return record(iface, "up", 1 + Math.floor(now / 5_000), now + 15_000, now);
-}
-
-/** Healthy only from sender telemetry: no active probe observation. */
-function telemetryOnly(iface: string, now: number): UplinkHealthRecord {
-	return {
-		...record(iface, "up", 1 + Math.floor(now / 5_000), now + 15_000),
-		signals: { passiveAt: now },
+		signals: {
+			...(activeAt === undefined ? {} : { activeAt }),
+			...(probeSince === undefined ? {} : { probeSince }),
+		},
 	} as UplinkHealthRecord;
 }
 
 /**
- * Drives one selector the way successive applied reconciles would. Health
- * publishes every 5 s probe round and each publish reconciles, so a call
- * without explicit health also replays the rounds since the previous call.
+ * Healthy and confirmed by an unbroken run of general-internet probe
+ * successes from `since`, the latest at `now` (what the health engine
+ * publishes for a link probed every 5 s).
+ */
+function live(iface: string, now: number, since = now): UplinkHealthRecord {
+	return record(
+		iface,
+		"up",
+		1 + Math.floor((now - since) / 5_000),
+		now + 15_000,
+		now,
+		since,
+	);
+}
+
+/** Healthy only from sender telemetry: no probe run. */
+function telemetryOnly(iface: string, now: number): UplinkHealthRecord {
+	return {
+		...record(iface, "up", 1 + Math.floor(now / 5_000), now + 15_000),
+		signals: { activeAt: 0, passiveAt: now },
+	} as UplinkHealthRecord;
+}
+
+/**
+ * Drives one selector the way successive applied reconciles would. Without
+ * explicit health every listed uplink is probed every 5 s; the driver keeps
+ * each uplink's run start like the health engine does, and an explicit
+ * record without a run ends it.
  */
 function driver(policy: SharingPolicy = DEFAULT_SHARING_POLICY) {
 	const selector = new ActiveUplinkSelector();
-	let last: number | undefined;
-	let lastDefault = false;
+	const runs = new Map<
+		string,
+		{ since: number; lastAt: number; explicit: boolean }
+	>();
+	const confirmed = (iface: string, now: number) => {
+		const run = runs.get(iface);
+		// Default rounds are continuous; an explicit record says when probing
+		// last succeeded, and the engine breaks a run after a 15 s gap.
+		const since =
+			run !== undefined && (!run.explicit || now - run.lastAt <= 15_000)
+				? run.since
+				: now;
+		runs.set(iface, { since, lastAt: now, explicit: false });
+		return live(iface, now, since);
+	};
 	const plan = (
 		now: number,
 		ifnames: readonly string[],
-		health: readonly UplinkHealthRecord[] = ifnames.map((i) => live(i, now)),
-	) =>
-		applyClientUplinkPolicy(ifnames.map(uplink), selector, {
+		explicit?: readonly UplinkHealthRecord[],
+	) => {
+		const health = explicit ?? ifnames.map((i) => confirmed(i, now));
+		for (const r of explicit ?? []) {
+			const { probeSince, activeAt } = r.signals;
+			if (probeSince === undefined || activeAt === undefined)
+				runs.delete(r.iface);
+			else
+				runs.set(r.iface, {
+					since: probeSince,
+					lastAt: activeAt,
+					explicit: true,
+				});
+		}
+		return applyClientUplinkPolicy(ifnames.map(uplink), selector, {
 			now,
 			policy,
 			health: new Map(health.map((r) => [r.iface, r])),
 			interfaces: new Set([...ifnames, ...health.map((r) => r.iface)]),
 		});
+	};
 	const selected = (candidates: readonly { uplink: SteeringUplink }[]) =>
 		candidates
 			.filter(({ uplink: u }) => u.selectable && u.weight > 0)
 			.map(({ uplink: u }) => u.ifname);
 	return {
 		selector,
+		/** A record continuing `iface`'s current probe run (or starting one). */
+		live: confirmed,
 		/** Plans without applying, as a retry, a failed apply or the shaper. */
 		peek(...args: Parameters<typeof plan>): string[] {
 			return selected(plan(...args).candidates);
@@ -113,12 +157,6 @@ function driver(policy: SharingPolicy = DEFAULT_SHARING_POLICY) {
 			ifnames: readonly string[],
 			health?: readonly UplinkHealthRecord[],
 		): string[] {
-			if (health === undefined && lastDefault && last !== undefined) {
-				for (let round = last + 5_000; round < now; round += 5_000)
-					selector.commit(plan(round, ifnames).next);
-			}
-			last = now;
-			lastDefault = health === undefined;
 			const result = plan(now, ifnames, health);
 			selector.commit(result.next);
 			return selected(result.candidates);
@@ -143,7 +181,9 @@ describe("single-active client uplink selection", () => {
 		const context = {
 			now: 0,
 			policy: DEFAULT_SHARING_POLICY,
-			health: new Map(),
+			health: new Map(
+				["eth0", "wwan0", "wwan1"].map((i) => [i, live(i, 0)] as const),
+			),
 			interfaces: new Set<string>(),
 		};
 		const out = applyClientUplinkPolicy(
@@ -204,15 +244,15 @@ describe("single-active client uplink selection", () => {
 		const r = driver();
 		r.pick(0, ["wwan0"]);
 		r.pick(10_000, ["eth0", "wwan0"]);
-		// eth0 has been probed since the 5 s round; its hold ends at 35 s.
+		// eth0's probe run started at 10 s; its hold ends at 40 s.
 		r.pick(HOLD, ["eth0", "wwan0"]);
-		expect(r.peek(5_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		expect(r.peek(10_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
 		expect(r.selector.active()).toBe("id-wwan0");
 		// eth0 then fails before any apply: it never carried clients, no penalty.
 		r.pick(
-			5_000 + HOLD + 1,
+			10_000 + HOLD + 1,
 			["wwan0"],
-			[record("eth0", "down", 0), live("wwan0", 5_000 + HOLD + 1)],
+			[record("eth0", "down", 0), r.live("wwan0", 10_000 + HOLD + 1)],
 		);
 		expect(r.selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
 	});
@@ -256,10 +296,10 @@ describe("single-active client uplink selection", () => {
 	test("expired, interrupted or inherited evidence cannot complete a rejoin hold", () => {
 		const d = driver();
 		d.pick(0, ["wwan0"]);
-		// One success at t=10 s, then probe rounds stop: the record expires.
+		// A run from 0 to 10 s, then probe rounds stop: the record expires.
 		const frozen = (now: number) => [
-			record("eth0", "up", 1, 25_000, 10_000),
-			live("wwan0", now),
+			record("eth0", "up", 3, 25_000, 10_000, 0),
+			d.live("wwan0", now),
 		];
 		d.pick(10_000, ["eth0", "wwan0"], frozen(10_000));
 		expect(
@@ -272,18 +312,125 @@ describe("single-active client uplink selection", () => {
 		]);
 		expect(d.pick(100_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
 
-		// A replacement device on the same name: a sample taken before it
-		// appeared does not start its hold.
+		// A replacement device on the same name, before the engine noticed
+		// the change: the predecessor's run does not start its hold.
+		const selector = new ActiveUplinkSelector();
+		const pick = (now: number, identity: string, eth0: UplinkHealthRecord) => {
+			const candidates = [
+				{ uplink: { ...uplink("eth0").uplink, identity } },
+				uplink("wwan0"),
+			];
+			const result = applyClientUplinkPolicy(candidates, selector, {
+				now,
+				policy: DEFAULT_SHARING_POLICY,
+				health: new Map([
+					["eth0", eth0],
+					["wwan0", live("wwan0", now, 0)],
+				]),
+				interfaces: new Set(["eth0", "wwan0"]),
+			});
+			selector.commit(result.next);
+			return result.candidates
+				.filter(({ uplink: u }) => u.selectable)
+				.map(({ uplink: u }) => u.ifname);
+		};
+		selector.commit(
+			applyClientUplinkPolicy([uplink("wwan0")], selector, {
+				now: 0,
+				policy: DEFAULT_SHARING_POLICY,
+				health: new Map([["wwan0", live("wwan0", 0)]]),
+				interfaces: new Set(["wwan0"]),
+			}).next,
+		);
+		expect(pick(1_000, "old", live("eth0", 1_000, 1_000))).toEqual(["wwan0"]);
+		// Replaced at 6 s; the record still carries the old run from 1 s.
+		expect(pick(6_000, "new", live("eth0", 5_000, 1_000))).toEqual(["wwan0"]);
+		// Its first own success is at 10 s: the hold counts from there.
+		pick(10_000, "new", live("eth0", 10_000, 1_000));
+		expect(
+			pick(1_000 + HOLD, "new", live("eth0", 1_000 + HOLD, 1_000)),
+		).toEqual(["wwan0"]);
+		expect(
+			pick(10_000 + HOLD, "new", live("eth0", 10_000 + HOLD, 1_000)),
+		).toEqual(["eth0"]);
+		expect(selector.active()).toBe("new");
+	});
+
+	test("only a current probe run confirms an uplink for the first pick or failover", () => {
+		const pickAt = (now: number, eth0: UplinkHealthRecord) =>
+			driver().pick(now, ["eth0"], [eth0]);
+		// Not yet probed, judged only from sender rows, failed last probe
+		// (no run), last success too old, record expired, or down.
+		expect(pickAt(0, record("eth0", "up", 0, 15_000))).toEqual([]);
+		expect(pickAt(20_000, telemetryOnly("eth0", 20_000))).toEqual([]);
+		expect(pickAt(20_000, record("eth0", "up", 0, 35_000, 20_000))).toEqual([]);
+		expect(pickAt(40_000, record("eth0", "up", 9, 50_000, 20_000, 0))).toEqual(
+			[],
+		);
+		expect(pickAt(40_000, record("eth0", "up", 9, 40_000, 40_000, 0))).toEqual(
+			[],
+		);
+		expect(pickAt(40_000, live("eth0", 40_000))).toEqual(["eth0"]);
+
+		// Failover with only an unconfirmed backup selects nothing; the first
+		// confirmed one takes over immediately.
+		const d = driver();
+		expect(d.pick(0, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		const lost = [record("eth0", "down", 0), telemetryOnly("wwan0", 1_000)];
+		expect(d.pick(1_000, ["wwan0"], lost)).toEqual([]);
+		expect(d.selector.active()).toBeUndefined();
+		expect(d.selector.rejoinHoldMs("id-eth0")).toBe(HOLD * 2);
+		expect(
+			d.pick(
+				2_000,
+				["wwan0"],
+				[record("eth0", "down", 0), live("wwan0", 2_000)],
+			),
+		).toEqual(["wwan0"]);
+	});
+
+	test("the health engine's run start survives sparse or coalesced reconciles", () => {
+		// The selector sees eth0 only at 5 s and 35 s; the engine's run says
+		// it was probed successfully throughout.
+		const d = driver();
+		d.pick(0, ["wwan0"]);
+		const at = (now: number, since: number) => [
+			live("eth0", now, since),
+			d.live("wwan0", now),
+		];
+		expect(d.pick(5_000, ["eth0", "wwan0"], at(5_000, 5_000))).toEqual([
+			"wwan0",
+		]);
+		expect(d.pick(35_000, ["eth0", "wwan0"], at(35_000, 5_000))).toEqual([
+			"eth0",
+		]);
+		// A failed round between two samples restarts the run at the producer;
+		// the selector honours the later start even with the same counters.
 		const r = driver();
 		r.pick(0, ["wwan0"]);
-		const predecessor = [
-			record("eth0", "up", 9, 20_000, 6_000),
-			live("wwan0", 6_000),
+		const later = (now: number, since: number) => [
+			live("eth0", now, since),
+			r.live("wwan0", now),
 		];
-		r.pick(6_000, ["eth0", "wwan0"], predecessor);
-		r.pick(15_000, ["eth0", "wwan0"]);
-		expect(r.pick(6_000 + HOLD, ["eth0", "wwan0"])).toEqual(["wwan0"]);
-		expect(r.pick(15_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		r.pick(5_000, ["eth0", "wwan0"], later(5_000, 5_000));
+		expect(r.pick(35_000, ["eth0", "wwan0"], later(35_000, 15_000))).toEqual([
+			"wwan0",
+		]);
+		expect(r.pick(45_000, ["eth0", "wwan0"], later(45_000, 15_000))).toEqual([
+			"eth0",
+		]);
+	});
+
+	test("a fresh selector trusts a probe run that predates it", () => {
+		// After a restart or a spread-to-single switch, a link the engine has
+		// confirmed keeps clients online in the first plan.
+		expect(
+			driver().pick(
+				60_000,
+				["eth0", "wwan0"],
+				[live("eth0", 60_000, 0), live("wwan0", 60_000, 0)],
+			),
+		).toEqual(["eth0"]);
 	});
 
 	test("losing the active uplink's address counts as a failure before health catches up", () => {
@@ -315,7 +462,7 @@ describe("single-active client uplink selection", () => {
 		// telemetry without being withdrawn.
 		const health = (now: number) => [
 			record("eth0", "degraded", 0, now + 15_000),
-			live("wwan0", now),
+			d.live("wwan0", now),
 		];
 		for (let now = 5_000; now < HOLD; now += 5_000)
 			expect(d.pick(now, ["eth0", "wwan0"], health(now))).toEqual(["eth0"]);
@@ -356,11 +503,12 @@ describe("single-active client uplink selection", () => {
 	test("an exclusion or a withheld uplink switches immediately without a failure penalty", () => {
 		let policy: SharingPolicy = DEFAULT_SHARING_POLICY;
 		const selector = new ActiveUplinkSelector();
+		// Both are probed throughout; policy does not stop probing.
 		const pick = (now: number, ifnames = ["eth0", "wwan0"]) => {
 			const result = applyClientUplinkPolicy(ifnames.map(uplink), selector, {
 				now,
 				policy,
-				health: new Map(["eth0", "wwan0"].map((i) => [i, live(i, now)])),
+				health: new Map(["eth0", "wwan0"].map((i) => [i, live(i, now, 0)])),
 				interfaces: new Set(["eth0", "wwan0"]),
 			});
 			selector.commit(result.next);
@@ -373,11 +521,12 @@ describe("single-active client uplink selection", () => {
 		expect(pick(1)).toEqual(["wwan0"]);
 		expect(selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
 		policy = { ...policy, administrativelyDown: [] };
-		// Re-enabled: the ordinary hold runs from its return to the candidates.
+		// Re-enabled: it rejoins only once its unbroken probe run covers the
+		// hold (the exclusion did not interrupt probing).
 		expect(pick(2)).toEqual(["wwan0"]);
-		for (let now = 5_002; now < 2 + HOLD; now += 5_000)
+		for (let now = 5_002; now < HOLD; now += 5_000)
 			expect(pick(now)).toEqual(["wwan0"]);
-		expect(pick(2 + HOLD)).toEqual(["eth0"]);
+		expect(pick(HOLD)).toEqual(["eth0"]);
 		// Held back (identity proof pending) while present and healthy.
 		expect(pick(HOLD * 3, ["wwan0"])).toEqual(["wwan0"]);
 		expect(selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
@@ -393,7 +542,9 @@ describe("single-active client uplink selection", () => {
 		selector.select(candidates, {
 			now: 0,
 			policy: DEFAULT_SHARING_POLICY,
-			health: new Map(),
+			health: new Map(
+				["eth0", "wwan0", "wlan0"].map((i) => [i, live(i, 0)] as const),
+			),
 			interfaces: new Set(),
 		});
 		expect(selector.active()).toBe("id-eth0");
@@ -424,7 +575,7 @@ describe("single-active selection on the live state builder", () => {
 
 	test("health-down withdraws the active uplink and the status names the new one", async () => {
 		let now = 0;
-		let health: UplinkHealthRecord[] = [record("eth0"), record("wwan0")];
+		let health: UplinkHealthRecord[] = [live("eth0", 0), live("wwan0", 0)];
 		const selector = new ActiveUplinkSelector();
 		const deps = {
 			policy: () => DEFAULT_SHARING_POLICY,
@@ -474,7 +625,7 @@ describe("single-active selection on the live state builder", () => {
 		});
 
 		now = 15_000;
-		health = [record("eth0", "down", 0), record("wwan0")];
+		health = [record("eth0", "down", 0), live("wwan0", now, 0)];
 		const failed = await readReadySteeringState(deps);
 		expect(
 			failed.uplinks.map((u) => [u.ifname, u.selectable, u.weight]),

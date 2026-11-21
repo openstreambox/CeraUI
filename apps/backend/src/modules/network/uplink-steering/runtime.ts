@@ -50,6 +50,10 @@ const applier = new UplinkSteeringApplier({
 	deactivateSharing: deactivateUplinkSharing,
 	flushConntrack,
 	setIpForwarding,
+	// The selector's incumbent follows what is live for clients, never a mere
+	// plan: a rejected reload commits nothing, a partial apply commits the
+	// selection it left installed.
+	selectionInstalled: (state) => commitSelectorPlan(state),
 	publishFlowsReset: (event) =>
 		broadcastMsg(
 			UPLINK_FLOWS_RESET_EVENT,
@@ -77,8 +81,6 @@ const coordinator = new UplinkSteeringCoordinator({
 	apply: async (previous, next) => {
 		publishSteeringReadiness([]);
 		await applier.apply(previous, next);
-		// Installed is live for clients even if the readback below fails.
-		commitSelectorPlan(next);
 	},
 	verifyApplied: async (next) => {
 		await verifySteeringState(next);
