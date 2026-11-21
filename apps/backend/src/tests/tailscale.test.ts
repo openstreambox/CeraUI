@@ -83,7 +83,7 @@ function fakeDaemon(initial: {
 		sshOffNode: undefined as string | undefined,
 		self: {} as { id?: string; key?: string; host?: string },
 		statusFails: false,
-		later: [] as Array<() => void>,
+		later: [] as Array<() => Promise<unknown>>,
 	};
 	const calls: string[] = [];
 	const broadcasts: TailscaleStatus[] = [];
@@ -539,8 +539,7 @@ describe("degraded image joins", () => {
 		daemon.state.enrollStatus = enrollStatus;
 		return daemon;
 	};
-	// A scheduled follow-up probe runs only when the test calls it; let it finish.
-	const settle = () => Bun.sleep(10);
+	// A scheduled follow-up probe runs only when the test calls it and awaits it.
 
 	test("an enrolment that turned SSH off says so on the card while SSH stays off", async () => {
 		const daemon = enrolled("joined 1 0 ok-without-tailnet-ssh", SSH_OFF);
@@ -598,8 +597,7 @@ describe("degraded image joins", () => {
 			RunSSH: true,
 			AutoUpdate: { Check: false, Apply: false },
 		};
-		daemon.state.later.shift()?.();
-		await settle();
+		await daemon.state.later.shift()?.();
 		expect(daemon.broadcasts.at(-1)?.notice).toBeUndefined();
 		// Waiting for approval is followed the same way.
 		daemon.state.backend = "NeedsMachineAuth";
@@ -607,8 +605,7 @@ describe("degraded image joins", () => {
 		const follow = daemon.state.later.shift();
 		expect(follow).toBeDefined();
 		daemon.state.backend = "Running";
-		follow?.();
-		await settle();
+		await follow?.();
 		expect(daemon.broadcasts.at(-1)?.state).toBe("connected");
 	});
 
@@ -646,9 +643,8 @@ describe("degraded image joins", () => {
 			const next = daemon.state.later.shift();
 			if (!next) break;
 			daemon.state.self = { host: i % 2 ? "studio-box" : "studio-box-2" };
-			next();
+			await next();
 			runs += 1;
-			await settle();
 		}
 		expect(runs).toBe(30);
 	});
@@ -659,15 +655,13 @@ describe("degraded image joins", () => {
 		setTailscaleDepsForTest(daemon.deps);
 		await getTailscaleStatus();
 		daemon.state.statusFails = true;
-		daemon.state.later.shift()?.();
-		await settle();
+		await daemon.state.later.shift()?.();
 		expect(daemon.broadcasts.at(-1)?.state).toBe("unknown");
 		const next = daemon.state.later.shift();
 		expect(next).toBeDefined();
 		daemon.state.statusFails = false;
 		daemon.state.backend = "Running";
-		next?.();
-		await settle();
+		await next?.();
 		expect(daemon.broadcasts.at(-1)?.state).toBe("connected");
 	});
 

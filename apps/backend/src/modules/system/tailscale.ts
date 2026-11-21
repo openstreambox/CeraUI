@@ -285,8 +285,8 @@ export type TailscaleDeps = {
 	enrollLastStatus: () => Promise<string | undefined>;
 	/** The stable node ID whose Tailscale SSH the enrolment turned off, if any. */
 	enrollSshOffNode: () => Promise<string | undefined>;
-	/** Run `fn` later (follow-up probes; tests capture it). */
-	later: (fn: () => void, ms: number) => void;
+	/** Run `fn` later (follow-up probes; tests capture it and await its result). */
+	later: (fn: () => Promise<unknown>, ms: number) => void;
 	enrollSubmit: (authKey: string, hostname: string) => Promise<void>;
 	/** Emit the status to clients. */
 	broadcast: (status: TailscaleStatus) => void;
@@ -540,7 +540,7 @@ const defaultDeps: TailscaleDeps = {
 		}
 	},
 	later: (fn, ms) => {
-		setTimeout(fn, ms).unref?.();
+		setTimeout(() => void fn(), ms).unref?.();
 	},
 	enrollSubmit: async (authKey, hostname) => {
 		const dir = enrollDir();
@@ -782,7 +782,7 @@ function followUp(status: TailscaleStatus): void {
 	deps.later(() => {
 		followUpPending = false;
 		followUps += 1;
-		void getTailscaleStatus();
+		return getTailscaleStatus();
 	}, FOLLOW_UP_MS);
 }
 
