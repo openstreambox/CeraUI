@@ -909,3 +909,25 @@ test("a stale connected bearer in ModemManager with the device disconnected is r
 	await runModemStatusPoll();
 	expect(activations()).toHaveLength(2);
 });
+
+test("real nmcli output, newline-terminated, still dispatches the first activation", async () => {
+	nmState = "30 (disconnected)\n";
+	await runModemStatusPoll();
+	expect(activations()).toEqual([["nmcli", "-w", "45", "conn", "up", UUID]]);
+});
+
+test("real nmcli output, newline-terminated, still redials a dropped automatic profile", async () => {
+	await connectAutomaticProfile();
+	nmState = "30 (disconnected)\n";
+	now = 60_000;
+	await runModemStatusPoll();
+	now = 90_000;
+	await runModemStatusPoll();
+	expect(activations()).toHaveLength(2);
+});
+
+test("two device values are still ambiguous", async () => {
+	nmState = "30 (disconnected)\n100 (connected)\n";
+	await runModemStatusPoll();
+	expect(activations()).toEqual([]);
+});
