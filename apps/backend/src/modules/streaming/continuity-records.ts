@@ -20,6 +20,11 @@ export const lifetimeSchema = z.object({
 	startTime: z.string().nullable(),
 	host: z.enum(["backend-child", "systemd"]),
 	invocation: z.string().nullable(),
+	/**
+	 * The sender's own cgroup, recorded by a host that gives it one. Absent on
+	 * every record a backend child writes, and absent means no adoption.
+	 */
+	cgroup: z.string().min(1).nullable().optional(),
 	argsDigest: z.string(),
 	statsFile: z.string(),
 	controlSocket: z.string(),

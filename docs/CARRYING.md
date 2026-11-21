@@ -198,6 +198,21 @@ a service restart. When the engine ends a session itself, the backend first stop
 its own sender for that session, then reports idle.
 This does not preserve media delivery across a backend service restart.
 
+A restarted backend can adopt a sender its predecessor left running, but only
+when every fact agrees: the lifetime record is from this boot; the process at
+the recorded PID has the recorded start time, name and arguments and is running;
+it was started by a host that outlives the backend (its own systemd unit, with
+the invocation and cgroup recorded) and is alone in that cgroup and in its own
+process group; the armed stream's configuration equals the current one; the
+published map equals the map on disk; two reads over the sender's control socket
+show that map applied, the same links, at least one link with receiver replies
+and a moving byte counter; and the engine is streaming. Any other answer changes
+nothing and the rules above apply. The adopted sender is then supervised through
+a handle that checks the start time again before every signal, so Stop, reload
+and shutdown reach it and a reused PID never does. Today the sender runs inside
+the backend's own service and dies with it, so a production device never adopts
+yet.
+
 ### Reinicio del backend y propiedad del emisor
 
 La sesión del motor puede seguir activa aunque su emisor haya terminado. Después
@@ -214,3 +229,19 @@ anterior no se inicia otra vez; su restauración indica que no se pudo restaurar
 tras reiniciarse un servicio. Cuando el motor termina una sesión por su cuenta, el
 backend primero detiene su propio emisor de esa sesión y luego informa inactividad.
 Esto no mantiene el envío de contenido durante el reinicio del servicio del backend.
+
+Un backend reiniciado puede adoptar un emisor que su predecesor dejó en marcha,
+pero solo cuando todos los datos coinciden: el registro de vida es de este
+arranque; el proceso con el PID registrado tiene la hora de inicio, el nombre y
+los argumentos registrados y está en ejecución; lo inició un anfitrión que
+sobrevive al backend (su propia unidad de systemd, con la invocación y el cgroup
+registrados) y está solo en ese cgroup y en su propio grupo de procesos; la
+configuración de la transmisión armada es igual a la actual; el mapa publicado es
+igual al del disco; dos lecturas por el socket de control del emisor muestran ese
+mapa aplicado, los mismos enlaces, al menos un enlace con respuestas del receptor
+y un contador de bytes que avanza; y el motor está transmitiendo. Cualquier otra
+respuesta no cambia nada y se aplican las reglas anteriores. El emisor adoptado
+se supervisa entonces con un manejador que vuelve a comprobar la hora de inicio
+antes de cada señal, de modo que Detener, la recarga y el apagado lo alcanzan y un
+PID reutilizado nunca. Hoy el emisor corre dentro del propio servicio del backend
+y termina con él, así que un equipo en producción todavía no adopta.

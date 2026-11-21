@@ -69,11 +69,21 @@ export function senderCensus(procRoot = senderCensusProcRoot()): SenderCensus {
 	return pids.length > 0 ? "present" : "absent";
 }
 
-/** The parent field of `/proc/<pid>/stat`; the name before it may hold spaces. */
+/** Fields of `/proc/<pid>/stat` after the name, which may hold spaces. */
+function statFields(stat: string): string[] {
+	return stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+}
+
+/** The parent field of `/proc/<pid>/stat`. */
 function parentPid(stat: string): number | undefined {
-	const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-	const parent = Number(fields[1]);
+	const parent = Number(statFields(stat)[1]);
 	return Number.isInteger(parent) ? parent : undefined;
+}
+
+/** The kernel start time (clock ticks since boot) of `/proc/<pid>/stat`. */
+export function statStartTime(stat: string): string | undefined {
+	const value = statFields(stat)[19];
+	return value !== undefined && /^\d+$/.test(value) ? value : undefined;
 }
 
 /**
@@ -83,9 +93,10 @@ function parentPid(stat: string): number | undefined {
  * (stream session or SRT forwarding) has that exact PID, is still unreaped, and
  * the kernel names this process as its parent. Handle liveness is read after
  * the table: a child that is still unreaped now was unreaped during the scan, so
- * its PID could not have been reused. A stale handle, a reused PID, a foreign
- * parent or an unreadable row keeps the census conservative. Names alone never
- * make a sender owned.
+ * its PID could not have been reused. An adopted sender is not our child, so it
+ * is subtracted only when its kernel start time still equals the one recorded
+ * at adoption. A stale handle, a reused PID, a foreign parent or an unreadable
+ * row keeps the census conservative. Names alone never make a sender owned.
  */
 export function unownedSenderCensus(
 	owned: ReadonlyArray<StreamingProcess> = getOwnedProcessHandles(),
@@ -97,14 +108,18 @@ export function unownedSenderCensus(
 	for (const pid of pids) {
 		const handle = owned.find(({ proc }) => proc.pid === pid);
 		if (handle === undefined) return "present";
-		let parent: number | undefined;
+		let stat: string;
 		try {
-			parent = parentPid(readFileSync(`${procRoot}/${pid}/stat`, "utf8"));
+			stat = readFileSync(`${procRoot}/${pid}/stat`, "utf8");
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
 			return "unknown";
 		}
-		if (!isLive(handle) || parent !== selfPid) return "present";
+		const ours =
+			handle.adopted === undefined
+				? parentPid(stat) === selfPid
+				: statStartTime(stat) === handle.adopted.startTime;
+		if (!isLive(handle) || !ours) return "present";
 	}
 	return "absent";
 }
