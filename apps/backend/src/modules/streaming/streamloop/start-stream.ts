@@ -46,13 +46,19 @@ import {
 } from "../continuity-observer.ts";
 import type { Lifetime } from "../continuity-records.ts";
 
+import { deviceRegistry } from "../devices.ts";
 import { embeddedAudioActive } from "../embedded-audio.ts";
+import {
+	isOnboardHdmiInput,
+	readHdmiVideoSignal,
+} from "../hdmi-audio-signal.ts";
 import { clearStreamProcessExit } from "../health.ts";
 import { createLaunchTransaction } from "../launch-transaction.ts";
 import { startLinkTelemetry, stopLinkTelemetry } from "../link-telemetry.ts";
 import type { Pipeline } from "../pipelines.ts";
 import { replayPreviewEncodeMode } from "../preview-encode-replay.ts";
 import { getLastPublishedBond } from "../srtla.ts";
+import { StreamStartFailure } from "../start-failure-taxonomy.ts";
 import { assertStreamLaunchOwnership } from "../stream-launch-ownership.ts";
 import { getStreamingBackend } from "../streaming-engine.ts";
 import { srtlaSendExec } from "./exec-paths.ts";
@@ -95,6 +101,7 @@ export function setStartStreamDepsForTest(
 }
 
 export interface AudioProbeDeps {
+	hdmiVideoSignal?: () => Promise<boolean | undefined>;
 	probe?: (asrc: string) => Promise<string>;
 	networkEmbeddedAudio?: boolean;
 }
@@ -167,6 +174,31 @@ export async function startStream(
 	configOverride?: Partial<RuntimeConfig>,
 ): Promise<StartStreamResult> {
 	assertStreamLaunchOwnership();
+	const config =
+		configOverride === undefined
+			? getConfig()
+			: ({
+					...getConfig(),
+					...configOverride,
+					composition: configOverride.composition,
+				} as RuntimeConfig);
+	const selectedInput =
+		config.selected_video_input ?? deviceRegistry.getActiveInput();
+	// The fixed receiver node cannot establish signal on a different input.
+	if (
+		pipeline.source === "hdmi" &&
+		(await isOnboardHdmiInput(selectedInput)) &&
+		(await (audioDeps.hdmiVideoSignal ?? readHdmiVideoSignal)()) === false
+	) {
+		throw new StreamStartFailure({
+			attemptId,
+			phase: "params",
+			class: "capture_source_unavailable",
+			captureCause: "no_signal",
+			retriable: false,
+		});
+	}
+
 	// The preview-encoder fence, and the reason it lives HERE. The engine fixes
 	// the preview encoder when it builds the main graph, so the operator's mode
 	// has to be in the engine's config BEFORE the `start` below — not racing it.
@@ -194,14 +226,6 @@ export async function startStream(
 		};
 	}
 
-	const config =
-		configOverride === undefined
-			? getConfig()
-			: ({
-					...getConfig(),
-					...configOverride,
-					composition: configOverride.composition,
-				} as RuntimeConfig);
 	const launchConfig = resolveLaunchConfig(config);
 	startStreamDeps.getStreamingBackend().setBitrate(launchConfig);
 
