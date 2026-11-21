@@ -79,7 +79,7 @@ function handleStartClick() {
 	</Button>
 {:else}
 	<Button
-		class="bg-primary text-primary-foreground hover:bg-primary/90 group min-h-[44px] w-full gap-3 py-6 text-base font-semibold aria-disabled:opacity-50"
+		class="bg-primary text-primary-foreground hover:bg-primary/90 group min-h-[44px] w-full gap-3 py-6 text-base font-semibold aria-disabled:opacity-50 [@media(max-height:640px)]:py-3"
 		aria-disabled={leadsToFixes ? 'true' : undefined}
 		disabled={leadsToFixes ? false : !canStart || isTransient}
 		onclick={handleStartClick}

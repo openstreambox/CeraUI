@@ -609,9 +609,12 @@ const networkSummary = $derived(
 					     text (two causes can share one button label, such as a missing
 					     destination and a revoked slot) and a button where a fix exists.
 					     The engine has none: it reads as its reason alone. -->
+					<!-- At most a quarter of the viewport, scrolling inside past that, so on a
+					     short screen (landscape, split view) the bar never pushes the
+					     content above it out of reach: four blockers is the most there is. -->
 					<ul
 						bind:this={checklistEl}
-						class="-m-1 space-y-1.5 rounded-lg p-1 transition-shadow {checklistAttention
+						class="-m-1 max-h-[25dvh] space-y-1.5 overflow-y-auto overscroll-contain rounded-lg p-1 transition-shadow motion-reduce:transition-none {checklistAttention
 							? 'ring-destructive/60 ring-2'
 							: ''}"
 						data-blockers={blockers.length}
