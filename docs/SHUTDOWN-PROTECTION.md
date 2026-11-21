@@ -91,11 +91,21 @@ grants that only to its power admission broker. An operator uses
 Direct target activation and `--force` bypass logind and are not this supported
 procedure.
 
-The service has a 30-second watchdog. After readiness, its main event loop sends
-`WATCHDOG=1` through `sd_notify` every half interval. A hung or stopped owner
-cannot pulse; systemd sends SIGKILL, drops the descriptor and restarts it after
-two seconds. It may reacquire protection for retained/unknown activity on restart.
+The service has a 90-second watchdog. After readiness, its main event loop sends
+`WATCHDOG=1` through `sd_notify` every second. A hung or stopped owner cannot
+pulse; systemd sends SIGKILL, drops the descriptor and restarts it after two
+seconds. It may reacquire protection for retained/unknown activity on restart.
 A deliberate `systemctl stop ceralive` suppresses that automatic restart.
+
+The kill also ends `srtla_send`, which runs in the service's control group
+(`KillMode=mixed` sends the final SIGKILL to the whole group), so a watchdog
+restart ends a live stream; the engine's session stays unconfirmed until an
+operator stops it. The interval is therefore sized for bounded stalls of the
+main loop, not for fast detection: the loop may be blocked for the watchdog
+interval minus one pulse (89 s) before systemd acts, which is more than twice
+the 30 s budget of a bounded `Bun.spawnSync` probe. A hung owner can delay a
+planned reboot for up to about 90 seconds, which is also the default stop
+timeout the override above may wait for; the power key does not wait for it.
 
 The image's power-key policy deliberately ignores shutdown inhibitors for both
 short and long presses, so a safety shutdown is not delayed until a hard cut.
@@ -118,6 +128,6 @@ Bun 1.4.4 at `/usr/local/bin/bun`, and no device passthrough or host mounts.
 It uses the shipped native inhibitor and watchdog modules, and the shipped
 service settings with only binary/working-directory paths replaced by a fixture.
 The checks cover root refusal, the supported override, a stopped logind timeout
-and SIGSTOP of the owner with the full 30-second watchdog interval. Masked target
+and SIGSTOP of the owner with the full 90-second watchdog interval. Masked target
 acceptance is checked from the real journal, not the command exit status.
 The companion image contract covers short/long synthetic power-key events.
