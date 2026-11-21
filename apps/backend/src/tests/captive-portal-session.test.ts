@@ -378,10 +378,15 @@ describe("venue identity is the exact registry row's Verified publication", () =
 			reason: "identity_unavailable",
 		});
 		removeWifiInterface("02:00:00:00:00:05");
-		// Limited: the permanent address is also another PHY's.
+		// Limited: the permanent address is also another PHY's, and that PHY's
+		// port is not proven (twins on proven distinct ports are Verified).
 		const g = fixture(2);
 		await g.incarnation();
-		await identity.change("wlan5", { phy: 5, permanent: g.permanentMac });
+		await identity.change("wlan5", {
+			phy: 5,
+			permanent: g.permanentMac,
+			devicePath: null,
+		});
 		expect(wifiRadioIdentity.state.rows.get("wlan2")?.classification).toBe(
 			"limited",
 		);
