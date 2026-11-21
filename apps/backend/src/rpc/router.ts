@@ -114,6 +114,10 @@ import {
 	completePairingProcedure,
 	generateClaimCodeProcedure,
 } from "./procedures/pairing.procedure.ts";
+import {
+	getPhoneBoxProcedure,
+	setPhoneWayProcedure,
+} from "./procedures/phone-box.procedure";
 import { relayValidateProcedure } from "./procedures/relay.procedure.ts";
 import {
 	getRelaysProcedure,
@@ -323,6 +327,8 @@ const stableRoutes = {
 	}),
 
 	system: base.router({
+		getPhoneBox: getPhoneBoxProcedure,
+		setPhoneWay: setPhoneWayProcedure,
 		getRevisions: getRevisionsProcedure,
 		getSensors: getSensorsProcedure,
 		getLog: getLogProcedure,
