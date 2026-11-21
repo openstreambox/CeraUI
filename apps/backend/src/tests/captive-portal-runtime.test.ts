@@ -20,10 +20,21 @@ const binding = {
 // The venue row's published incarnation; the system reader refuses any other.
 const VENUE = "venue-incarnation-1";
 let venueToken = VENUE;
-let rotateVenueOnRoute = false;
 // The phone's AP: one exact hotspot row, its kernel and netif lifetimes.
 let apIfindex = 7;
 let apEpoch = 41;
+// NM's activation of the AP profile: a same-profile reactivation on the same
+// netdev keeps the name, ifindex and UUID but gets a new active path.
+let apActivePath = "/org/freedesktop/NetworkManager/ActiveConnection/5";
+const apProfile = {
+	path: "/org/freedesktop/NetworkManager/Settings/9",
+	fingerprint: "ap-profile-fingerprint",
+	file: { filename: "ap.nmconnection", device: "1", inode: "2", ctime: "3" },
+};
+// One-shot hooks a test sets to change the world in the middle of a request.
+let duringSweep: (() => void) | undefined;
+let duringNeigh: (() => void) | undefined;
+let duringOpen: (() => void) | undefined;
 const apRow = {
 	id: 3,
 	ifname: "ap0",
@@ -60,13 +71,16 @@ mock.module("../helpers/run.ts", () => ({
 	run: async (bin: string, args: string[]) => {
 		if (bin === "curl") return "204";
 		if (bin === "iw") return "Station 02:00:00:00:00:02 (on ap0)";
+		if (args.includes("neigh")) {
+			duringNeigh?.();
+			duringNeigh = undefined;
+		}
 		if (args.includes("neigh"))
 			return JSON.stringify([
 				{ lladdr: "02:00:00:00:00:02", state: ["REACHABLE"] },
 			]);
 		if (args.includes("link"))
 			return JSON.stringify([{ ifname: args.at(-1), ifindex: apIfindex }]);
-		if (rotateVenueOnRoute) venueToken = "venue-incarnation-2";
 		return JSON.stringify([{ dev: routeDev }]);
 	},
 	runWithStdin: async (_bin: string, args: string[], stdin: string) => {
@@ -74,6 +88,10 @@ mock.module("../helpers/run.ts", () => ({
 		const action = args[2]!;
 		commands.push(action);
 		configs.push({ action, config: JSON.parse(stdin) });
+		const hook = action === "open" ? duringOpen : duringSweep;
+		if (action === "open") duringOpen = undefined;
+		else duringSweep = undefined;
+		hook?.();
 		if (action === "open" && failOpen) {
 			failSweep = failCleanupAfterOpen;
 			throw Error("timeout");
@@ -129,8 +147,14 @@ const netifs = await import("../modules/network/network-interfaces.ts");
 spyOn(netifs, "getNetworkInterfaceIncarnation").mockImplementation((name) =>
 	aps.includes(name) ? apEpoch : undefined,
 );
-const { advanceHotspotOperation } = await import(
+const { advanceHotspotOperation, defaultHotspotSteeringDeps } = await import(
 	"../modules/wifi/wifi-hotspot-readiness.ts"
+);
+spyOn(defaultHotspotSteeringDeps, "readActivation").mockImplementation(
+	async (ifname: string, uuid: string) =>
+		aps.includes(ifname) && apRow.hotspot.conn === uuid && apRow.conn === uuid
+			? { activePath: apActivePath, profile: structuredClone(apProfile) }
+			: undefined,
 );
 const { signInWindow, reconcilePortalWindow } = await import(
 	"../modules/wifi/captive-portal-runtime.ts"
@@ -251,12 +275,14 @@ test("a stale venue incarnation refuses at entry, before any window opens", asyn
 
 test("a venue incarnation that rotates before open refuses without opening", async () => {
 	commands.length = 0;
-	rotateVenueOnRoute = true;
+	// After the entry capture, while the association evidence is read.
+	duringNeigh = () => {
+		venueToken = "venue-incarnation-2";
+	};
 	await expect(signInWindow.start("10.42.0.7", "2", VENUE)).rejects.toThrow(
 		"wifi_changed",
 	);
 	expect(commands).not.toContain("open");
-	rotateVenueOnRoute = false;
 	venueToken = VENUE;
 });
 
@@ -347,3 +373,86 @@ test("behind the front door, a replaced arrival AP closes the window without tra
 	expect(configs[0]?.config).toMatchObject({ ap: "ap0", ap_ifindex: 7 });
 	apIfindex = 7;
 });
+
+const reactivate = () => {
+	apActivePath = "/org/freedesktop/NetworkManager/ActiveConnection/6";
+	return () => {
+		apActivePath = "/org/freedesktop/NetworkManager/ActiveConnection/5";
+	};
+};
+
+test("a same-netdev reactivation of the AP profile closes the window on refresh", async () => {
+	await signInWindow.start("10.42.0.12", "2", VENUE);
+	configs.length = 0;
+	// Same name, ifindex, netif incarnation and UUID; only NM's activation is new.
+	const restore = reactivate();
+	expect((await signInWindow.refresh("10.42.0.12")).phase).toBe(
+		"needs_sign_in",
+	);
+	expect(configs.map((entry) => entry.action)).toEqual(["close"]);
+	expect(configs[0]?.config).toMatchObject({ ap: "ap0", ap_ifindex: 7 });
+	restore();
+});
+
+test("the arrival AP is pinned at entry, before any cleanup", async () => {
+	commands.length = 0;
+	const restore = reactivate();
+	// An AP NM does not report active for its profile is no proven arrival.
+	const original = apRow.activeConn;
+	apRow.activeConn = null;
+	apRow.conn = null;
+	await expect(signInWindow.start("10.42.0.13", "2", VENUE)).rejects.toThrow(
+		"not_on_box_wifi",
+	);
+	expect(commands).toEqual([]);
+	apRow.activeConn = original;
+	apRow.conn = original;
+	restore();
+	// Reactivated while the pre-open sweeps ran: the later AP is never adopted.
+	duringSweep = reactivate;
+	await expect(signInWindow.start("10.42.0.13", "2", VENUE)).rejects.toThrow(
+		"not_on_box_wifi",
+	);
+	expect(commands).not.toContain("open");
+	apActivePath = "/org/freedesktop/NetworkManager/ActiveConnection/5";
+});
+
+const duringInstall: Record<string, () => () => void> = {
+	"the AP is replaced under its name": () => {
+		apIfindex = 8;
+		return () => {
+			apIfindex = 7;
+		};
+	},
+	"the AP profile is reactivated on the same netdev": reactivate,
+	"the venue radio's incarnation rotates": () => {
+		venueToken = "venue-incarnation-3";
+		return () => {
+			venueToken = VENUE;
+		};
+	},
+};
+for (const [name, change] of Object.entries(duringInstall))
+	test(`the backend rechecks both ends after the helper: ${name}`, async () => {
+		configs.length = 0;
+		let restore: () => void = () => undefined;
+		duringOpen = () => {
+			restore = change();
+		};
+		await expect(signInWindow.start("10.42.0.14", "2", VENUE)).rejects.toThrow(
+			name.includes("venue") ? "wifi_changed" : "not_on_box_wifi",
+		);
+		// The installed window is retired under its own pinned lifetime; nothing
+		// is installed for the newcomer and nobody owns a window.
+		expect(configs.map((entry) => entry.action)).toEqual([
+			"sweep",
+			"open",
+			"close",
+		]);
+		expect(configs[2]?.config).toMatchObject({ ap: "ap0", ap_ifindex: 7 });
+		expect(signInWindow.status("10.42.0.14").phase).toBe("idle");
+		expect(await portalHealthProbe("venue0", async () => "success")).toBe(
+			"success",
+		);
+		restore();
+	});
