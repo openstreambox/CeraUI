@@ -11,6 +11,11 @@ import { NotSentError, RpcError } from "$lib/rpc/rpc-error";
 
 let authStatus = $state(false);
 let interaction = new AbortController();
+// The token this page's session authenticated with, kept in memory only. A
+// login without "remember me" stores nothing in localStorage, but the backend
+// still honours its token for this visit, so a dropped control socket can
+// re-authenticate with it instead of stranding a signed-in shell.
+let sessionToken: string | null = null;
 
 export type AuthAttempt =
 	| { kind: "ok" }
@@ -42,6 +47,7 @@ export function getAuthStatus(): boolean {
 
 export function setAuthStatus(status: boolean): void {
 	clearAuthInteraction();
+	if (!status) sessionToken = null;
 	authStatus = status;
 	notifySubscribers();
 }
@@ -78,6 +84,11 @@ if (typeof window !== "undefined") {
 	window.addEventListener("pageshow", (event) => {
 		if (event.persisted) clearAuthInteraction();
 	});
+}
+
+/** This session's token for reconnect re-auth; null when signed out. */
+export function getSessionToken(): string | null {
+	return sessionToken;
 }
 
 export function getAuthMessage(): LoginOutput | undefined {
@@ -169,6 +180,7 @@ async function authenticateInput(
 		// Token reauthentication succeeds without issuing a replacement. In that
 		// case retain the existing token, just as on an unreachable attempt.
 		persistCredential(result, persistent);
+		sessionToken = result.auth_token ?? input.token ?? sessionToken;
 		ingestAuth(result);
 		setAuthStatus(true);
 		return { kind: "ok" };

@@ -58,6 +58,7 @@ vi.mock("$lib/stores/connection-ux.svelte", () => ({
 	wasAuthenticated: () => false,
 }));
 vi.mock("$lib/stores/auth-status.svelte", () => ({
+	getSessionToken: () => null,
 	authenticateWithToken,
 	revokePersistentToken,
 	getAuthMessage: () => undefined,

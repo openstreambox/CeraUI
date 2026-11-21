@@ -31,8 +31,10 @@ vi.mock("$lib/stores/connection-ux.svelte", () => ({
 	deriveConnectionSurfaceUx: () => ({ showAuthTimeout: false }),
 	getDisconnectedSince: () => null,
 	getGraceNow: () => 0,
+	markAuthenticated: vi.fn(),
 }));
 vi.mock("$lib/stores/auth-status.svelte", () => ({
+	getSessionToken: () => null,
 	authenticateWithToken: vi.fn(),
 	revokePersistentToken: vi.fn(),
 	authStatusStore: {

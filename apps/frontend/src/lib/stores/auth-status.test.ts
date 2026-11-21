@@ -286,6 +286,31 @@ describe("auth-status — single mutation path", () => {
 		removeItem.mockRestore();
 	});
 
+	it("keeps a session token without remember-me, in memory only, until sign-out", async () => {
+		const mod = await loadAuthStatus();
+		login.mockResolvedValueOnce({ success: true, auth_token: "visit-token" });
+
+		expect(await mod.authenticate("fresh-password", false)).toEqual({
+			kind: "ok",
+		});
+
+		expect(mod.getSessionToken()).toBe("visit-token");
+		expect(localStorage.getItem("auth")).toBeNull();
+		mod.authStatusStore.set(false);
+		expect(mod.getSessionToken()).toBeNull();
+	});
+
+	it("keeps the saved token as the session token after a token login", async () => {
+		const mod = await loadAuthStatus();
+		login.mockResolvedValueOnce({ success: true });
+
+		expect(await mod.authenticateWithToken("saved-token")).toEqual({
+			kind: "ok",
+		});
+
+		expect(mod.getSessionToken()).toBe("saved-token");
+	});
+
 	it("authenticate() waits for a not-yet-open socket, then dispatches", async () => {
 		seedConnectionState = "connecting";
 		const mod = await loadAuthStatus();

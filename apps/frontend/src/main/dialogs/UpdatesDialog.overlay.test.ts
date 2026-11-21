@@ -65,6 +65,7 @@ vi.mock("$lib/stores/connection-ux.svelte", () => ({
 	wasAuthenticated: () => true,
 }));
 vi.mock("$lib/stores/auth-status.svelte", () => ({
+	getSessionToken: () => null,
 	authenticate: async () => ({ kind: "ok" }),
 	getAuthMessage: () => ({ success: true }),
 	authStatusStore: {

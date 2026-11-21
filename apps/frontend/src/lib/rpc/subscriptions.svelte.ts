@@ -57,7 +57,10 @@ import {
 import { downloadLog } from "$lib/helpers/SystemHelper";
 import { wifiFailureReason } from "$lib/helpers/wifi-mode-outcome";
 import { isSameWireValue, preserveWireIdentity } from "$lib/rpc/value-identity";
-import { authStatusStore } from "$lib/stores/auth-status.svelte";
+import {
+	authStatusStore,
+	getSessionToken,
+} from "$lib/stores/auth-status.svelte";
 import { ingestBuffering } from "$lib/stores/buffering.svelte";
 import {
 	markSessionExpired,
@@ -1288,10 +1291,15 @@ const AUTH_STORAGE_KEY = "auth";
 
 let reauthInFlight = false;
 
+// This session's in-memory token first (it exists without "remember me"), then
+// the remembered credential.
 function readStoredToken(): string | null {
-	return typeof localStorage !== "undefined"
-		? localStorage.getItem(AUTH_STORAGE_KEY)
-		: null;
+	return (
+		getSessionToken() ??
+		(typeof localStorage !== "undefined"
+			? localStorage.getItem(AUTH_STORAGE_KEY)
+			: null)
+	);
 }
 
 function clearStoredToken(): void {
@@ -1332,7 +1340,23 @@ async function runReconnectReauth(): Promise<void> {
 			routeToLogin,
 			onError: (error) => console.error("Reconnect re-auth failed:", error),
 		});
-		if (outcome === "hydrated") noteSessionRestored();
+		if (outcome === "hydrated") {
+			noteSessionRestored();
+			// Only now is the connection really back: the new socket is signed in.
+			pushNotification({
+				name: "connection-recovered",
+				type: "success",
+				key: "notifications.connectionRecovered",
+				msg: "Connection restored",
+				is_dismissable: true,
+				is_persistent: false,
+				duration: 3,
+			});
+		} else if (outcome === "no-token") {
+			// Signed in, but nothing to re-authenticate the new socket with: it
+			// would stay a shell without device state, so sign in again.
+			routeToLogin();
+		}
 	} finally {
 		reauthInFlight = false;
 	}
@@ -1363,18 +1387,11 @@ function handleConnectionChange(state: ConnectionState): void {
 		if (previous !== "connected") {
 			seqTracker.resetOnReconnect();
 		}
-		// Recovery toast: only emit when reconnecting after a prior drop (wasAuthenticated).
-		// Suppress the initial connect of a page-load — that's owned by Layout's login flow.
-		if (wasAuthenticated()) {
-			pushNotification({
-				name: "connection-recovered",
-				type: "success",
-				key: "notifications.connectionRecovered",
-				msg: "Connection restored",
-				is_dismissable: true,
-				is_persistent: false,
-				duration: 3,
-			});
+		// Re-authenticate the new socket after a drop, while the session is signed
+		// in. The initial connect of a page-load is owned by Layout's login flow,
+		// and a signed-out page has no session to resume. The recovery toast
+		// follows a successful re-auth (runReconnectReauth).
+		if (wasAuthenticated() && authStatusStore.value) {
 			void runReconnectReauth();
 		}
 	}
