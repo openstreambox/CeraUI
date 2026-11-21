@@ -373,9 +373,10 @@ describe("federation save-failure surface", () => {
 describe("federation server bundle — relay validation", () => {
 	// The stage labels are reached only through a computed key
 	// (`settings.validateStages.<stage>`), so this is the path a pruned catalog
-	// would break first.
-	it.each(ALL_LOCALES)("localizes the failed DNS stage from a host response in %s", async (locale) => {
-		const expected = readCatalog(locale)["settings.validateStages.dns"];
+	// would break first. Build Check runs it (`test:federation-catalog`) as the
+	// backstop for lookups the build-time scan cannot see.
+	it.each(ALL_LOCALES)("localizes every validation stage from a host response in %s", async (locale) => {
+		const catalog = readCatalog(locale);
 		let calls = 0;
 		const module = await loadEntry("server");
 		const { handle } = await mountInto(module, {
@@ -394,10 +395,15 @@ describe("federation server bundle — relay validation", () => {
 			button?.click();
 			await settle();
 			expect(calls).toBe(1);
-			const label = document.querySelector('[data-stage="dns"]')?.textContent?.trim();
-			expect(typeof expected).toBe("string");
-			expect(label).toBe(expected);
-			expect(label).not.toBe("settings.validateStages.dns");
+			const chips = [...document.querySelectorAll<HTMLElement>("[data-stage]")];
+			const stages = chips.map((chip) => chip.dataset.stage);
+			expect(stages).toContain("dns");
+			expect(stages.length).toBeGreaterThanOrEqual(4);
+			for (const chip of chips) {
+				const key = `settings.validateStages.${chip.dataset.stage}`;
+				expect(typeof catalog[key], key).toBe("string");
+				expect(chip.textContent?.trim(), `${locale}:${key}`).toBe(catalog[key]);
+			}
 		} finally {
 			await handle.destroy();
 		}

@@ -15,6 +15,7 @@ import {
 	computedLookups,
 	expectedFederationKeys,
 	FEDERATION_CATALOG_KEYS_PATH,
+	facadeReexports,
 	federationCatalogPlugin,
 	filterNamespaceBarrel,
 	isCatalogModule,
@@ -268,6 +269,28 @@ describe("computedLookups: ways around the literal scan", () => {
 				'import type { MessageFn } from "@ceraui/i18n/svelte";\nuse(m);',
 			),
 		).toEqual([]);
+	});
+});
+
+describe("facadeReexports", () => {
+	it("reports a local module that re-exports the facade", () => {
+		expect(
+			facadeReexports(
+				"export { resolveMessageKey as translate, m } from '@ceraui/i18n/svelte';",
+			),
+		).toEqual(["reexport m", "reexport resolveMessageKey as translate"]);
+		expect(facadeReexports('export * from "@ceraui/i18n/svelte";')).toEqual([
+			'reexport export * from "@ceraui/i18n/svelte"',
+		]);
+	});
+
+	it("ignores type re-exports and other modules", () => {
+		expect(
+			facadeReexports('export type { MessageFn } from "@ceraui/i18n/svelte";'),
+		).toEqual([]);
+		expect(facadeReexports('export * from "@ceraui/i18n/formatters";')).toEqual(
+			[],
+		);
 	});
 });
 

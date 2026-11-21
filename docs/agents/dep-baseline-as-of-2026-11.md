@@ -247,7 +247,10 @@ computed key (`t(option.reason)`, `m[key]`, `t?.(key)`, a concatenated or
 non-dot-headed template argument), the facade imported under another name or as
 a namespace, or the facade handed to another function. A string literal counts
 only when it is the whole argument, and a template only when it is a key or its
-static head ends in a dot. After bundling, the plugin re-derives the
+static head ends in a dot. A local facade re-export needs a declaration too. The
+scan is a source heuristic (hosted code imports the facade directly;
+dynamic-import destructuring and `bind`/`call` are not seen), backstopped in Build Check by the built Server
+relay-validation case, which renders every computed stage label per locale. After bundling, the plugin re-derives the
 list and fails the build on a missing or stale key, or on an undeclared or stale
 computed lookup (also in write mode, so regenerating cannot bless one);
 `bun run --filter frontend generate:federation-catalog` rewrites it. The built
