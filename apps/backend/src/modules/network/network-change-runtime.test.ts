@@ -4,6 +4,7 @@ import { DEFAULT_JOURNAL_PATH } from "./network-change-journal.ts";
 import {
 	networkChangeJournalPath,
 	networkChangeSession,
+	networkChangeTouches,
 	startNetworkChangeSafety,
 	TICK_MS,
 } from "./network-change-runtime.ts";
@@ -139,5 +140,40 @@ describe("the session the owner judges", () => {
 		});
 		const bare = networkChangeSession(socket({ isAuthenticated: false }));
 		expect(bare).toMatchObject({ id: "", openedAt: 0, authenticated: false });
+	});
+});
+
+describe("whether a change in flight names a port", () => {
+	it("is false without a journal, without asking the owner", async () => {
+		let asked = false;
+		const owner = {
+			touches: async () => {
+				asked = true;
+				return true;
+			},
+		};
+		expect(
+			await networkChangeTouches("eth0", { journalExists: false, owner }),
+		).toBe(false);
+		expect(asked).toBe(false);
+	});
+
+	it("asks the owner when a journal exists, and treats an unreadable one as in flight", async () => {
+		expect(
+			await networkChangeTouches("eth0", {
+				journalExists: true,
+				owner: { touches: async (device) => device === "eth0" },
+			}),
+		).toBe(true);
+		expect(
+			await networkChangeTouches("eth0", {
+				journalExists: true,
+				owner: {
+					touches: async () => {
+						throw new Error("Network-change journal unavailable");
+					},
+				},
+			}),
+		).toBe(true);
 	});
 });

@@ -41,9 +41,16 @@ function box(
 	const frames: Array<EthernetRoleOutcome & { name: string }> = [];
 	const writes: string[] = [];
 	let handler: ((event: SettledEvent) => void) | undefined;
+	let settleFailures = 0;
 	const h = harness({
 		settleMs: options.settleMs ?? 15_000,
-		onSettled: (event) => handler?.(event),
+		onSettled: (event) => {
+			if (settleFailures > 0) {
+				settleFailures--;
+				throw new Error("config write failed");
+			}
+			handler?.(event);
+		},
 	});
 	const method = options.role === "shared-lan" ? "shared" : "auto";
 	const wired = h.fake.add(
@@ -72,10 +79,17 @@ function box(
 		newUuid: () => "11111111-1111-4111-8111-111111111111",
 		setFields: async (uuid, fields) => {
 			writes.push(`set:${uuid}:${JSON.stringify(fields)}`);
+			// Like `nmcli connection modify` without --temporary: on disk.
+			const profile = h.fake.profiles.get(uuid);
+			if (profile) {
+				Object.assign(profile.settings, fields);
+				profile.storage = "disk";
+			}
 			return true;
 		},
 		activate: async (uuid) => {
 			writes.push(`activate:${uuid}`);
+			if (h.fake.profiles.has(uuid)) h.fake.active.set("eth0", uuid);
 			return true;
 		},
 		persistRole: (ifname, role) => {
@@ -88,6 +102,7 @@ function box(
 		readPersistedRole: (ifname) => roles[ifname],
 		publishOutcome: (name, outcome) => frames.push({ name, ...outcome }),
 		refreshInterfaces: () => {},
+		networkChangeTouches: (ifname) => h.owner.touches(ifname),
 	};
 	handler = createEthernetRoleSettledHandler(deps);
 	const safety = (
@@ -98,7 +113,19 @@ function box(
 		session: s,
 		answer,
 	});
-	return { ...h, deps, roles, reservations, frames, writes, wired, safety };
+	return {
+		...h,
+		deps,
+		roles,
+		reservations,
+		frames,
+		writes,
+		wired,
+		safety,
+		failNextSettles: (count: number) => {
+			settleFailures = count;
+		},
+	};
 }
 
 /** A remote operator whose session rides the wired uplink. */
@@ -431,5 +458,183 @@ describe("what stays on the existing path", () => {
 		expect(b.roles.eth0).toBeUndefined();
 		expect(b.writes).toEqual([]);
 		expect(b.frames).toEqual([]);
+	});
+});
+
+describe("crash and restart paths keep the role and NetworkManager in step", () => {
+	it("a change resumed after a backend restart is left alone by the role reconciler", async () => {
+		const b = box({ role: "shared-lan" });
+		const laptop = session("laptop", "eth0", 500);
+		const result = await setEthernetRole(
+			"eth0",
+			"uplink",
+			b.deps,
+			"op1",
+			b.safety(laptop, UNDO),
+		);
+		expect(result.changeSafety?.kind).toBe("pending");
+		const candidate = b.fake.active.get("eth0") as string;
+		expect(await b.restartBackend().reconcile("backend-start")).toBe("resumed");
+		await reconcileEthernetRoles(b.deps, () => b.roles);
+		expect(b.writes).toEqual([]);
+		expect(b.fake.active.get("eth0")).toBe(candidate);
+		expect(b.fake.profiles.get(candidate)).toMatchObject({
+			storage: "memory",
+			settings: { "ipv4.method": "auto" },
+		});
+	});
+
+	it("a legacy role write to a port with a change in flight is refused", async () => {
+		const b = box({ role: "shared-lan" });
+		await setEthernetRole(
+			"eth0",
+			"uplink",
+			b.deps,
+			undefined,
+			b.safety(session("laptop", "eth0", 500), UNDO),
+		);
+		const restated = await setEthernetRole("eth0", "shared-lan", b.deps, "op2");
+		expect(restated).toEqual({ success: false, error: "apply_failed" });
+		expect(b.writes).toEqual([]);
+		expect(b.roles.eth0).toBe("shared-lan");
+	});
+
+	it("the reconciler acts on the port again once the change settled", async () => {
+		const b = box({ role: "shared-lan" });
+		await setEthernetRole(
+			"eth0",
+			"uplink",
+			b.deps,
+			undefined,
+			b.safety(session("laptop", "eth0", 500), UNDO),
+		);
+		await b.fake.expireAll();
+		b.at(91_001);
+		await b.owner.tick();
+		expect(await b.owner.touches("eth0")).toBe(false);
+		await reconcileEthernetRoles(b.deps, () => b.roles);
+		expect(b.writes.some((w) => w.startsWith(`set:${b.wired}`))).toBe(true);
+	});
+
+	it("a kept change whose role write failed is settled by the tick", async () => {
+		const b = box();
+		b.failNextSettles(1);
+		const result = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			b.safety(session("remote", undefined, 500), KEEP),
+		);
+		expect(result).toEqual({ success: false, error: "apply_failed" });
+		expect((await b.owner.status()).commitIncomplete).toBe(true);
+		expect(await b.owner.touches("eth0")).toBe(true);
+		expect(await b.owner.tick()).toBe(true);
+		expect(b.roles.eth0).toBe("shared-lan");
+		const status = await b.owner.status();
+		expect(status.commitIncomplete).toBe(false);
+		expect(status.kept).not.toBeNull();
+		expect(await b.owner.touches("eth0")).toBe(false);
+	});
+
+	it("a kept change whose role write failed is settled at the next backend start", async () => {
+		const b = box();
+		b.failNextSettles(1);
+		await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			b.safety(session("remote", undefined, 500), KEEP),
+		);
+		expect(await b.restartBackend().reconcile("backend-start")).toBe("kept");
+		expect(b.roles.eth0).toBe("shared-lan");
+		expect(
+			b.fake.profiles.get(b.fake.active.get("eth0") as string),
+		).toMatchObject({
+			storage: "disk",
+			settings: { "ipv4.method": "shared" },
+		});
+	});
+
+	it("a kept change lost to a reboot before it reached disk is undone and reported", async () => {
+		const b = box();
+		b.fake.fail.add("persist");
+		await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			b.safety(session("remote", undefined, 500), KEEP),
+		);
+		b.fake.fail.delete("persist");
+		b.fake.reboot();
+		b.newBoot();
+		expect(await b.restartBackend().reconcile("backend-start")).toBe("undone");
+		expect(b.fake.active.get("eth0")).toBe(b.wired);
+		expect(b.roles.eth0).toBeUndefined();
+		expect((await b.owner.status()).notice?.reason).toBe("restart");
+	});
+
+	it("a confirmation whose profile write failed is retried by the tick and shown meanwhile", async () => {
+		const b = box();
+		const result = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			b.safety(overEth, UNDO),
+		);
+		const id = (result.changeSafety as { id: string }).id;
+		b.fake.fail.add("persist");
+		await expect(b.owner.confirm(id, laterOverEth)).rejects.toThrow();
+		expect((await b.owner.status()).commitIncomplete).toBe(true);
+		await expect(b.owner.tick()).rejects.toThrow();
+		b.fake.fail.delete("persist");
+		expect(await b.owner.tick()).toBe(true);
+		expect(b.roles.eth0).toBe("shared-lan");
+		expect((await b.journal.read()).tx).toBeNull();
+	});
+
+	it("a reboot between the confirmation's checkpoint destroy and the profile write undoes the change", async () => {
+		const b = box();
+		const result = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			b.safety(overEth, UNDO),
+		);
+		const id = (result.changeSafety as { id: string }).id;
+		b.fake.fail.add("persist");
+		await expect(b.owner.confirm(id, laterOverEth)).rejects.toThrow();
+		b.fake.fail.delete("persist");
+		b.fake.reboot();
+		b.newBoot();
+		const owner = b.restartBackend();
+		expect(await owner.reconcile("backend-start")).toBe("undone");
+		expect(b.fake.active.get("eth0")).toBe(b.wired);
+		expect(b.roles.eth0).toBeUndefined();
+		const status = await owner.status();
+		expect(status).toMatchObject({
+			pending: null,
+			commitIncomplete: false,
+			undoIncomplete: false,
+		});
+		expect(status.notice?.reason).toBe("restart");
+		// Not wedged: the next protected change goes through.
+		await owner.leaveUndone(status.notice?.id as string, overEth);
+		const again = await setEthernetRole(
+			"eth0",
+			"shared-lan",
+			b.deps,
+			undefined,
+			{
+				owner,
+				session: session("remote2", "eth0", 9_000),
+				answer: UNDO,
+			},
+		);
+		expect(again.changeSafety?.kind).toBe("pending");
 	});
 });

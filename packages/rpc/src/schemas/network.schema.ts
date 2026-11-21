@@ -339,6 +339,7 @@ export const changeSafetyStatusSchema = z.object({
 	pending: z.object({ id: z.string(), expiresAt: z.number(), path: z.string() }).nullable(),
 	kept: z.object({ id: z.string(), undoKey: z.string() }).nullable(),
 	undoIncomplete: z.boolean(),
+	commitIncomplete: z.boolean(),
 	notice: z
 		.object({
 			id: z.string(),

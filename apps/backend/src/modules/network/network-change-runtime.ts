@@ -107,6 +107,34 @@ export function networkChangeSession(ws: AppWebSocket): NetworkChangeSession {
 	};
 }
 
+/**
+ * Whether a protected change in flight names this interface. Without a journal
+ * on disk this is false without constructing anything. An unreadable journal
+ * counts as in flight: nothing should edit a port whose undo record is unknown.
+ */
+export async function networkChangeTouches(
+	ifname: string,
+	options: {
+		readonly journalExists?: boolean;
+		readonly owner?: Pick<
+			ReturnType<typeof createNetworkChangeOwner>,
+			"touches"
+		>;
+	} = {},
+): Promise<boolean> {
+	const journalExists =
+		options.journalExists ?? existsSync(networkChangeJournalPath());
+	if (!journalExists) return false;
+	try {
+		return await (options.owner ?? getNetworkChangeOwner()).touches(ifname);
+	} catch (error) {
+		logger.warn(
+			`network change safety: journal unreadable, treating ${ifname} as in flight: ${(error as Error).message}`,
+		);
+		return true;
+	}
+}
+
 export const TICK_MS = 5_000;
 
 function noop(): void {

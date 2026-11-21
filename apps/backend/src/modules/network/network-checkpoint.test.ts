@@ -796,3 +796,17 @@ describe("callers persist their intent only when a change settles", () => {
 		expect((await w.journal.read()).tx).toBeNull();
 	});
 });
+
+describe("a rollback deletes only the owner's own candidates", () => {
+	it("keeps a profile someone else created during the window", async () => {
+		const w = world();
+		await w.owner.apply(creator, w.ethPlan, UNDO);
+		const joined = w.fake.add("Cafe Wi-Fi", { "802-11-wireless.ssid": "cafe" });
+		await w.fake.expireAll();
+		w.at(91_001);
+		await w.owner.tick();
+		expect(w.fake.profiles.has(joined)).toBe(true);
+		expect(await w.fake.nm.listByPrefix(CANDIDATE_PREFIX)).toEqual([]);
+		expect(w.fake.active.get("eth0")).toBe(w.eth);
+	});
+});

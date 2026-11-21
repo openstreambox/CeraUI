@@ -41,7 +41,10 @@ import {
 } from "./ethernet-role-safety.ts";
 import type { NetworkChangePlan } from "./network-change-journal.ts";
 import type { AskBeforeAnswer } from "./network-change-policy.ts";
-import { onNetworkChangeSettled } from "./network-change-runtime.ts";
+import {
+	networkChangeTouches,
+	onNetworkChangeSettled,
+} from "./network-change-runtime.ts";
 import type {
 	ApplyOptions,
 	ApplyResult,
@@ -92,6 +95,12 @@ export interface EthernetRoleTransitionDeps {
 	readonly readPersistedRole: (ifname: string) => EthernetRole | undefined;
 	readonly publishOutcome: EthernetRoleOutcomePublisher;
 	readonly refreshInterfaces: () => void;
+	/**
+	 * Whether a protected network change in flight names this port. While it
+	 * does, the candidate profile belongs to the network-change owner: the role
+	 * reconciler skips the port and legacy role writes are refused.
+	 */
+	readonly networkChangeTouches: (ifname: string) => Promise<boolean>;
 }
 
 function refreshNetifRoleFlags(): void {
@@ -114,6 +123,7 @@ export const defaultEthernetRoleDeps: EthernetRoleTransitionDeps = {
 	readPersistedRole: (ifname) => getPersistedEthernetRoles()[ifname],
 	publishOutcome: publishEthernetRoleOutcome,
 	refreshInterfaces: refreshNetifRoleFlags,
+	networkChangeTouches,
 };
 
 // A protected role change persists its intent only when the owner settles it.
@@ -307,6 +317,18 @@ async function withEthernetRoleQueue<T>(
 	}
 }
 
+/**
+ * Run work for one port inside that port's role queue, so it cannot
+ * interleave with a role change on the same port (re-applying a stored role
+ * change from an ask-after notice uses this).
+ */
+export function withEthernetRolePort<T>(
+	ifname: string,
+	operation: () => Promise<T>,
+): Promise<T> {
+	return withEthernetRoleQueue(ifname, operation);
+}
+
 export async function setEthernetRole(
 	name: string,
 	role: EthernetRole,
@@ -323,6 +345,14 @@ export async function setEthernetRole(
 		if (!isEthernetRoleCandidate(name)) return refuse("not_ethernet");
 		if (deps.listInterfaces()[name] === undefined)
 			return refuse("unknown_interface");
+		if (await deps.networkChangeTouches(name)) {
+			// The port's live profile is a candidate the owner will promote or
+			// undo; a direct write would edit it behind the owner's back.
+			logger.warn(
+				`ethernet role: ${name} has a network change in flight; refusing`,
+			);
+			return refuse("apply_failed");
+		}
 		const previous = deps.readPersistedRole(name);
 		// Only a real role change is protected; re-stating the current role
 		// keeps the existing idempotent path.
@@ -408,6 +438,14 @@ export async function reconcileEthernetRoles(
 						if (deps.listInterfaces()[ifname] === undefined) {
 							logger.debug(
 								`ethernet role reconcile: ${ifname} is not present; leaving shared-lan pending`,
+							);
+							return;
+						}
+						if (await deps.networkChangeTouches(ifname)) {
+							// A resumed change is not settled: its candidate is the
+							// owner's until it is confirmed or undone.
+							logger.info(
+								`ethernet role reconcile: ${ifname} has a network change in flight; skipping`,
 							);
 							return;
 						}

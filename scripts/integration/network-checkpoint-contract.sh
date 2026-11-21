@@ -130,7 +130,7 @@ checkpoint >/dev/null
 nmcli connection add save no type dummy ifname spare0 con-name checkpoint-candidate connection.autoconnect no ipv4.method manual ipv4.addresses 203.0.113.1/24 ipv6.method disabled >/dev/null
 sleep 4
 if nmcli con show checkpoint-candidate >/dev/null 2>&1; then echo 'Candidate was not deleted by rollback' >&2; exit 1; fi
-pass 'stock: rollback deletes new in-memory profiles, including on devices outside the checkpoint'
+boundary 'with DELETE_NEW_CONNECTIONS (not used by the owner), rollback deletes new profiles on devices outside the checkpoint too'
 
 # --- The owner: candidates, journal, recorded undo -------------------------
 for _ in 1 2; do
@@ -283,12 +283,17 @@ result=$(drv apply ethrole role0 undo-automatically)
 candidate=$(active_on role0)
 [[ $candidate == ceralive-candidate-* && $(method "$candidate") == shared ]]
 [[ $(method checkpoint-wired) == manual && $(profile_hashes) == "$before" ]]
+# Someone joins another network during the window; the rollback must keep it.
+nmcli connection add save no type dummy ifname spare0 con-name window-joined connection.autoconnect no ipv4.method manual ipv4.addresses 203.0.113.7/24 ipv6.method disabled >/dev/null
 sleep 4
 drv tick >/dev/null
 [[ $(active_on role0) == checkpoint-wired && $(method checkpoint-wired) == manual ]]
 [[ $(candidates) == 0 && $(run_candidates) == 0 && $(profile_hashes) == "$before" ]]
 [[ $(drv status | jq -r .notice.reason) == disconnected ]]
 pass 'Ethernet role: an unconfirmed switch to shared LAN is undone, profile files unchanged'
+nmcli con show window-joined >/dev/null
+nmcli connection delete window-joined >/dev/null
+pass 'rollback keeps a profile created elsewhere during the window'
 drv leave "$(drv status | jq -r .notice.id)" >/dev/null
 
 result=$(drv apply ethrole role0 undo-automatically)

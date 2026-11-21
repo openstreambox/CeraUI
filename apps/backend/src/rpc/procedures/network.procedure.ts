@@ -27,8 +27,14 @@ import {
 } from "../../mocks/mock-service.ts";
 import { setMockNetworkIngestActive } from "../../mocks/providers/network-ingest.ts";
 import { setMockGatewayActive } from "../../mocks/providers/streaming.ts";
-import { networkChangeSafetyEnabled } from "../../modules/network/ethernet-role-safety.ts";
-import { setEthernetRole } from "../../modules/network/ethernet-role-transition.ts";
+import {
+	ethernetRolePortOfSummary,
+	networkChangeSafetyEnabled,
+} from "../../modules/network/ethernet-role-safety.ts";
+import {
+	setEthernetRole,
+	withEthernetRolePort,
+} from "../../modules/network/ethernet-role-transition.ts";
 import {
 	getNetworkChangeOwner,
 	networkChangeJournalPath,
@@ -159,6 +165,7 @@ const NO_CHANGE: Omit<ChangeSafetyStatus, "enabled"> = {
 	pending: null,
 	kept: null,
 	undoIncomplete: false,
+	commitIncomplete: false,
 	notice: null,
 };
 
@@ -225,11 +232,18 @@ export const answerNetworkChangeNoticeProcedure = authedProcedure
 			// Re-applying is deliberate: the owner always asks before again.
 			if (!networkChangeSafetyEnabled())
 				return { success: false, error: "unavailable" };
-			const changeSafety = await owner.reapply(
-				input.id,
-				session,
-				input.changeAnswer,
-			);
+			// A stored role change re-applies inside that port's role queue, so
+			// it cannot interleave with a role write on the same port.
+			const notice = (await owner.status()).notice;
+			const port =
+				notice?.id === input.id
+					? ethernetRolePortOfSummary(notice.summary)
+					: undefined;
+			const reapply = () =>
+				owner.reapply(input.id, session, input.changeAnswer);
+			const changeSafety = port
+				? await withEthernetRolePort(port, reapply)
+				: await reapply();
 			return { success: changeSafety.kind !== "ask-before", changeSafety };
 		} catch (error) {
 			return refusal(error);

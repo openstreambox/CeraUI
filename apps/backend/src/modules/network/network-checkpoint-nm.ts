@@ -105,7 +105,11 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 				DESTINATION,
 				"CheckpointCreate",
 				"aouu",
-				[String(paths.length), ...paths, String(timeout), "2"],
+				// Flags 0: no DELETE_NEW_CONNECTIONS. That flag deletes every
+				// profile created anywhere during the window (a Wi-Fi network
+				// joined meanwhile, another port's shared profile). The owner
+				// removes its own candidates by name and UUID instead.
+				[String(paths.length), ...paths, String(timeout), "0"],
 			);
 			if (typeof path !== "string")
 				throw new Error("Network checkpoint unavailable");
@@ -256,6 +260,10 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 			uuid(profile);
 			if (!(await profiles()).some((p) => p.uuid === profile)) return;
 			await nmcli("connection", "delete", "uuid", profile);
+		},
+		async exists(profile: string) {
+			uuid(profile);
+			return (await profiles()).some((p) => p.uuid === profile);
 		},
 		async listByPrefix(prefix: string) {
 			return (await profiles())
