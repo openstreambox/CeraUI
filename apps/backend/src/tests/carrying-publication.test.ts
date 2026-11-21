@@ -23,7 +23,7 @@ test("production startup stays protected and repeated reports do not rewrite the
 		initCarrying();
 		expect(status.mock.calls).toContainEqual([
 			"status",
-			{ carrying: { state: "unknown" } },
+			{ carrying: { state: "unknown", startup: true } },
 		]);
 
 		expect(
@@ -40,10 +40,23 @@ test("production startup stays protected and repeated reports do not rewrite the
 		expect(
 			write.mock.calls.filter(([path]) => path === otaStreamingMarkerPath()),
 		).toHaveLength(1);
+		const clock = spyOn(performance, "now").mockReturnValue(
+			performance.now() + 120000,
+		);
+		try {
+			carryingTracker.session("unconfirmed-client", null, performance.now());
+			expect(status.mock.calls).toContainEqual([
+				"status",
+				{ carrying: { state: "unknown", startup: false } },
+			]);
+		} finally {
+			carryingTracker.session("unconfirmed-client", false, performance.now());
+			clock.mockRestore();
+		}
 		carryingTracker.session("synthetic-client", true, performance.now());
 		expect(status.mock.calls).toContainEqual([
 			"status",
-			{ carrying: { state: "streaming" } },
+			{ carrying: { state: "streaming", startup: false } },
 		]);
 	} finally {
 		carryingTracker.session("synthetic-client", false, performance.now());
