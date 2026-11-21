@@ -93,8 +93,9 @@ const transferred = $derived(
 // Shared 4-column track so header, rows, and totals stay aligned on any width.
 // The name takes the free width (it can be "SIM 2 · operator" or a network
 // name now); the three readings take what they need.
-const COLS =
-	'grid grid-cols-[minmax(0,1fr)_minmax(3.5rem,auto)_minmax(2rem,auto)_minmax(3rem,auto)] gap-x-3';
+// Fixed reading tracks, the same in the header, every row and the totals, so a
+// long value never shifts one row's columns away from the others.
+const COLS = 'grid grid-cols-[minmax(0,1fr)_4.5rem_3rem_3.5rem] gap-x-3';
 
 // Per-link RTT-trend derivation — constants, math, and the memoizing cache — lives
 // in `ingest-link-view.ts` (pure + unit-testable). RING_CAPACITY bounds the ring
@@ -149,6 +150,25 @@ const anyDegraded = $derived(linkViews.some((v) => v.degraded));
 let sessionSamples: SessionSample[] = [];
 let wasStreaming = false;
 let rollup = $state<SessionRollup | null>(null);
+// Every name a link carried during the session, in the order they were seen,
+// recorded with each sample. A SIM that registers on another operator mid-session
+// reads "SIM 1 · A → B" in the summary instead of the name at viewing time.
+let sessionNames = new Map<string, string[]>();
+let summaryNames = $state<ReadonlyMap<string, readonly string[]>>(new Map());
+
+function recordNames(links: readonly LinkTelemetryEntry[] | undefined) {
+	for (const link of links ?? []) {
+		const name = nameOf(link.iface);
+		const seen = sessionNames.get(link.iface);
+		if (!seen) sessionNames.set(link.iface, [name]);
+		else if (seen.at(-1) !== name) seen.push(name);
+	}
+}
+
+/** A session row's name: every name it had, in order. */
+function sessionNameOf(iface: string): string {
+	return summaryNames.get(iface)?.join(' → ') ?? nameOf(iface);
+}
 
 $effect(() => {
 	const streaming = isStreaming === true;
@@ -159,13 +179,17 @@ $effect(() => {
 
 	if (streaming && !wasStreaming) {
 		sessionSamples = [];
+		sessionNames = new Map();
 		rollup = null;
 	}
 	if (streaming) {
 		sessionSamples.push(createSample(br, frameLinks, Date.now(), cumulativeBytes));
+		// The names are read, not tracked: a new status frame must not add a sample.
+		untrack(() => recordNames(frameLinks));
 	}
 	if (!streaming && wasStreaming) {
 		rollup = sessionSamples.length > 0 ? computeSessionRollup(sessionSamples) : null;
+		summaryNames = new Map(sessionNames);
 		// Clear the live sparkline ring so the next session starts fresh without a
 		// remount; the folded rollup above is what the summary renders from now on.
 		history = {};
@@ -395,7 +419,7 @@ function exportCsv(): void {
 									class="size-2 shrink-0 rounded-full"
 									style={`background-color: var(--link-${(i % 6) + 1})`}
 								></span>
-								<span class="line-clamp-2 font-medium break-words" title={link.iface}>{nameOf(link.iface)}</span>
+								<span class="line-clamp-2 font-medium break-words" data-session-link-name title={link.iface}>{sessionNameOf(link.iface)}</span>
 							</div>
 							<div
 								aria-hidden="true"
@@ -513,13 +537,13 @@ function exportCsv(): void {
 								<Badge variant="stale" data-stale-interface={link.iface} />
 							{/if}
 						</div>
-						<span data-testid="ingest-rtt" class="text-foreground text-end font-mono tabular-nums">
+						<span data-testid="ingest-rtt" class="text-foreground truncate text-end font-mono tabular-nums">
 							{`${link.rtt_ms} ${m["units.ms"]()}`}
 						</span>
-						<span data-testid="ingest-nak" class="text-foreground text-end font-mono tabular-nums">
+						<span data-testid="ingest-nak" class="text-foreground truncate text-end font-mono tabular-nums">
 							{link.nak_count}
 						</span>
-						<span data-testid="ingest-weight" class="text-foreground text-end font-mono tabular-nums">
+						<span data-testid="ingest-weight" class="text-foreground truncate text-end font-mono tabular-nums">
 							{link.weight_percent}%
 						</span>
 					</div>

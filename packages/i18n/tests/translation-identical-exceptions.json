@@ -884,16 +884,6 @@
 		"locales": ["de", "es", "fr", "hi", "ja", "ko", "pt-BR"],
 		"reason": "SIM plus two placeholders (slot number and the operator's own registered name); no prose to translate."
 	},
-	"networking.linkName.usbWifi": {
-		"value": "USB Wi-Fi ({id})",
-		"locales": ["hi", "ja", "ko"],
-		"reason": "USB and Wi-Fi are the terms these locales use for the adapter (networking.types.wifi stays Wi-Fi in hi, ja and ko); the id is four hex digits."
-	},
-	"networking.linkName.wifiNetwork": {
-		"value": "Wi-Fi · {network}",
-		"locales": ["ar", "es", "fr", "hi", "ja", "ko", "pt-BR", "zh"],
-		"reason": "Wi-Fi is the term these locales use (networking.types.wifi); the network name is a placeholder."
-	},
 	"networking.types.ethernet": {
 		"value": "Ethernet",
 		"locales": ["de", "es", "fr", "pt-BR"],

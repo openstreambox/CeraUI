@@ -3,7 +3,7 @@ import type { ModemList, WifiStatus } from "@ceraui/rpc/schemas";
 import { describe, expect, it } from "vitest";
 
 import { en } from "../../tests/helpers/catalog";
-import { linkName } from "./link-names";
+import { linkName, radioName } from "./link-names";
 
 // Numeric keys, as the backend sends them; key order is the Network list order,
 // so the order written here does not matter.
@@ -32,6 +32,43 @@ describe("one name per link", () => {
 		expect(linkName("wwan1", { modems })).toBe("SIM 2 · Harbor Cell");
 		expect(linkName("wwan2", { modems })).toBe("SIM 3");
 		expect(linkName("wwan0", { modems })).not.toContain("M4");
+	});
+
+	it("keeps SIM numbers when the backend re-issues modem ids", () => {
+		// Same two modems on the same USB ports, ids swapped by a restart.
+		const before = {
+			"0": {
+				ifname: "wwan0",
+				stable_key: "port-1",
+				status: { network: "Northwind" },
+			},
+			"1": {
+				ifname: "wwan1",
+				stable_key: "port-2",
+				status: { network: "Harbor Cell" },
+			},
+		} as unknown as ModemList;
+		const after = {
+			"0": {
+				ifname: "wwan1",
+				stable_key: "port-2",
+				status: { network: "Harbor Cell" },
+			},
+			"1": {
+				ifname: "wwan0",
+				stable_key: "port-1",
+				status: { network: "Northwind" },
+			},
+		} as unknown as ModemList;
+		expect(linkName("wwan0", { modems: before })).toBe("SIM 1 · Northwind");
+		expect(linkName("wwan0", { modems: after })).toBe("SIM 1 · Northwind");
+		expect(linkName("wwan1", { modems: after })).toBe("SIM 2 · Harbor Cell");
+	});
+
+	it("names a MAC-named radio with no network by its own name, never the MAC", () => {
+		expect(radioName("wlx00c0cafe2f27")).toBe("USB Wi-Fi (2f27)");
+		expect(radioName("wlan1")).toBe("Wi-Fi 2");
+		expect(radioName("wlx00c0cafe2f27")).not.toContain("00c0cafe");
 	});
 
 	it("names a Wi-Fi link by the network it joined", () => {

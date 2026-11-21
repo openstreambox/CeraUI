@@ -137,12 +137,17 @@ must contain the `source-audio` block with its ids unchanged.
 #### Link names
 
 Live, the HUD, Network's Bonded Links and the hotspot radio picker name a link
-with one helper, `linkName` in `apps/frontend/src/lib/helpers/link-names.ts`:
-"SIM 1 · Northwind" for a modem (its place among the modems and its
-registered operator), "Wi-Fi · HomeNetwork" for a joined radio, "USB Wi-Fi
-(2f27)" for a MAC-named radio, "USB tether" for a `usb*` device and the type
-label ("Ethernet 1") otherwise. The interface id is a secondary detail, never
-the headline, and no MAC address is shown as a name.
+with one helper, `apps/frontend/src/lib/helpers/link-names.ts`. A modem is
+"SIM n · operator" (or "SIM n"), numbered in the Network page's modem order
+(`sortModemEntries` in `$lib/modem/modem-order`: stable hardware port, then
+id), so the number survives a re-issued modem id. A joined radio is
+"Wi-Fi · network" (the HUD and Bonded Links show the network beside their own
+Wi-Fi tag); a radio without a network is its own name, "USB Wi-Fi (2f27)" for
+a MAC-named one (`radioName`, also the picker's). An interface named `usb<N>`
+is "USB tether"; everything else keeps its type label ("Ethernet 1"). The
+interface id is a secondary detail and no MAC address is a name. The session
+summary is bound to what was measured: a link whose name changed during the
+session lists every name it had, in order.
 
 #### A supervised connection restart [EXISTS]
 

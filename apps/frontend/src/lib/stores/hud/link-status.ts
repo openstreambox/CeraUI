@@ -15,7 +15,7 @@ import {
 	type WifiStatus,
 } from "@ceraui/rpc/schemas";
 import { isLoopbackIpv4 } from "$lib/helpers/ip-classification";
-import { linkName } from "$lib/helpers/link-names";
+import { linkName, radioName } from "$lib/helpers/link-names";
 import {
 	bitsPerSecondToKbps,
 	convertBytesToKbids,
@@ -193,7 +193,8 @@ export function buildBond(
 			type: "wifi",
 			linkIndex: 0,
 			signal: active && Number.isFinite(active.signal) ? active.signal : null,
-			label: active?.ssid || "Wi-Fi",
+			// The network name beside the Wi-Fi tag; without one, the radio's own name.
+			label: active?.ssid || radioName(id),
 			isConnected,
 			isStale: wifiStale || fullyStale || staleIds.has(id),
 			throughputKbps: throughputFor(id),
