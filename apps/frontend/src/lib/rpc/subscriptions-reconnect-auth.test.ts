@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // allow: SIZE_OK - socket lifecycle cases share one scripted transport and auth fixture.
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("../env", () => ({ getRpcSocketUrl: () => "ws://test.local/ws" }));
 
@@ -106,6 +106,13 @@ async function start() {
 async function flushReplies() {
 	await vi.advanceTimersByTimeAsync(0);
 }
+
+// Compile the sign-in screen's module graph once, outside every test's
+// timeout. vi.resetModules() below only drops module instances; the
+// transform stays cached, so each test still imports fresh stores.
+beforeAll(async () => {
+	await import("../../main/Auth.svelte");
+}, 120_000);
 
 beforeEach(() => {
 	vi.resetModules();
