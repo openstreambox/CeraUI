@@ -35,6 +35,7 @@ import {
 	spawnForwardLoop,
 	stopProcessAndWait,
 } from "../streaming/streamloop/process-runner.ts";
+import { senderHostBlocked } from "../streaming/streamloop/sender-unit.ts";
 import { prepareSrtlaIpAddresses } from "../streaming/streamloop/srtla-ip-preparation.ts";
 import { resolveStreamEndpoint } from "../streaming/transport/resolve-endpoint.ts";
 import { carryingTracker } from "../system/carrying.ts";
@@ -222,6 +223,8 @@ export async function runForwardAttempt(
 				deps.getStreamLifecycleState() !== "idle"
 			)
 				throw Error("stream_or_update_busy");
+			// An unresolved sender unit may still run a sender.
+			if (senderHostBlocked()) throw Error("sender_unit_unresolved");
 			const admission = tryAcquireLifecycle("streaming");
 			if (!admission.admitted) throw Error(admission.refusal);
 			try {

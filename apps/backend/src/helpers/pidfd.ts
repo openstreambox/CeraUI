@@ -69,6 +69,12 @@ export function pidfdSignal(fd: number, signal: NodeJS.Signals): boolean {
 	return c.sendSignal(fd, number) === 0;
 }
 
+/** Whether the process `fd` names is alive (signal 0 through the pidfd). */
+export function pidfdAlive(fd: number): boolean {
+	const c = load();
+	return c !== null && c.sendSignal(fd, 0) === 0;
+}
+
 export function pidfdClose(fd: number): void {
 	load()?.close(fd);
 }

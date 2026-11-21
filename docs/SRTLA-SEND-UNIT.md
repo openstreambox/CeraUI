@@ -41,11 +41,22 @@ writes the IP list:
 | installed, but the directory or the sender executable does not fit | child, after a leftover unit is confirmed down |
 | cannot be read | no sender of either kind starts until a later read settles it |
 
-After the startup observer has run, the backend checks the unit again
-("leftovers" below). Until the unit is confirmed down, positively absent or
-running this backend's own sender, every stream start fails in the
-`spawn-sender` phase with reason `unit_unresolved`, and the check is retried
-every 5 s.
+Before the stream session is reconciled at startup, the backend checks the
+unit again ("leftovers" below). Until the unit is confirmed down or positively
+absent (and after that, whenever a stop could not be confirmed):
+
+- every stream start fails in the `spawn-sender` phase with reason
+  `unit_unresolved`, and SRT forwarding refuses to start;
+- the sender census reads `unknown`, never `absent`, so reconciliation does
+  not commit idle and disruptive actions stay protected (a sender between a
+  crash and systemd's restart has no process to find);
+- the check is retried every 5 s.
+
+**Confirmed down** means `inactive` or `failed`, no MainPID and no queued or
+running job (`Job=` empty), from a complete `systemctl show` reply. A start job
+can sit behind an inactive state, and a reply without `MainPID` is unreadable,
+never "no process". The same rule is used for stop confirmation, start
+admission, the startup check and a final exit.
 
 Turning the flag off while a sender unit still runs is not supported: with the
 flag off the backend reads nothing about the unit. Stop it first
@@ -76,9 +87,9 @@ Publication, starts, stops and cleanup run one at a time.
 1. Take the update lock (`/run/lock/ceralive-update.lock`, `flock` exclusive,
    non-blocking, the lock the manual `ceralive-update` takes). Busy refuses the
    start (`update_in_progress`).
-2. Read the unit. Anything but `inactive` or `failed` refuses (`unit_busy`): a
-   second sender never starts beside a running, starting, restarting or
-   stopping one.
+2. Read the unit. Anything but confirmed down refuses (`unit_busy`): a second
+   sender never starts beside a running, starting, restarting or stopping one,
+   or beside a queued start job.
 3. Validate the arguments as the launcher will (listen port 1 to 65535, the IP
    list and every path flag absolute, no NUL, at most 8192 bytes).
 4. Remove the stale argument file, stats file and socket (the unit is down, so
@@ -90,7 +101,7 @@ Publication, starts, stops and cleanup run one at a time.
 
 Any failure after step 5 runs `systemctl stop` (which also cancels a start job
 still queued) and removes the launch state only once the unit is confirmed
-`inactive`/`failed` with no main process. If that cannot be confirmed, the
+down. If that cannot be confirmed, the
 launch state stays, the start fails with `stop_unconfirmed`, and no sender
 starts until the unit is seen down.
 
@@ -135,12 +146,12 @@ The handle reads the unit once a second.
 - **Restart by systemd.** A new InvocationID or MainPID means the sender
   exited and systemd is restarting it (`Restart=on-failure`). The backend
   reports the exit to stream health, stops the telemetry reader and removes the
-  dead sender's stats file, waits for the new process to be ready, then
+  dead sender's stats file (if that file cannot be removed, the sender is
+  stopped rather than read blind), waits for the new process to be ready, then
   reattaches telemetry, clears the exit report and records the new PID and
   invocation, each only if the handle is still this stream's sender and still
   on that invocation. It never restarts the sender itself (ADR-0005).
-- **Final exit.** A unit that is `inactive` or `failed` with no main process
-  and no stop from the backend (a refused argument file, a usage error, the
+- **Final exit.** A unit that is confirmed down without a stop from the backend (a refused argument file, a usage error, the
   start limit) ends the handle with the last exit status. The normal exit path
   runs. Its launch state is removed unless a newer start owns it by then.
 - **Reload.** A bond change reaches the sender as SIGHUP through the pidfd,
@@ -152,21 +163,26 @@ The handle reads the unit once a second.
   restart after a stop), confirm the unit is down with no MainPID, then remove
   the argument file, stats file and socket. A stop that cannot be confirmed is
   retried every 2 s and the handle stays live, so the stream stays protected
-  and the stop path keeps waiting. The SIGKILL escalation goes through the
-  pidfd, or by unit name only while the unit is on the same invocation.
+  and the stop path keeps waiting. A retry never stops a unit that a newer
+  start owns (it only started once this one was confirmed down). The SIGKILL
+  escalation goes through the pidfd only; without a pin, systemd's stop job
+  sends SIGKILL after `TimeoutStopSec`.
 
 ## Ownership
 
 The sender census subtracts a unit-run sender only when the handle is ready,
 the PID is the handle's MainPID and `/proc/<pid>/cgroup` is the unit's
 ControlGroup. Reconciliation counts the sender as owned only while the handle
-is ready. A child is still subtracted by its parent PID. The continuity
+is ready and its pinned process still takes signal 0 (without a pin, its
+`comm` and cgroup still match), so a sender that died after the last monitor
+read is not claimed. A change of ControlGroup under the same PID and
+invocation is treated as a new process and verified from scratch. A child is still subtracted by its parent PID. The continuity
 lifetime record says `host: "systemd"` with the InvocationID.
 
 ## A backend that finds the unit running
 
-At startup (after the continuity observer has logged its verdict), a unit that
-is not down was started by an earlier backend, for example one that crashed or
+At startup (before the stream session is reconciled), a unit that is not
+confirmed down was started by an earlier backend, for example one that crashed or
 was killed by its watchdog. Nothing adopts it in this version: the backend
 stops it, confirms it is down and removes the launch state before anything
 streams. A unit that is down with an argument file left over (the backend died

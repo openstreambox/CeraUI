@@ -39,6 +39,7 @@ import {
 	retireLeftoverSenderUnit,
 	SENDER_UNIT_EXEC,
 	SenderUnitError,
+	type SenderUnitProcess,
 	senderHostBlocked,
 	senderHostMode,
 	senderUnitHostPaths,
@@ -83,6 +84,7 @@ async function unitMode(setup: Record<string, unknown> = {}) {
 	expect(await resolveSenderHostMode(config, SENDER_UNIT_EXEC, fake.io())).toBe(
 		"unit",
 	);
+	await retireLeftoverSenderUnit();
 	fake.calls.length = 0;
 	return config;
 }
@@ -182,8 +184,11 @@ describe("the flag", () => {
 				fake.io(),
 			),
 		).toBe("child");
-		// The installed unit is still read, so a leftover can be stopped.
+		// The installed unit is still read, so a leftover can be stopped; until
+		// that check has run, nothing starts.
 		expect(verbs().every((verb) => verb === "show")).toBe(true);
+		expect(senderHostBlocked()).not.toBeNull();
+		expect(await retireLeftoverSenderUnit()).toBe("none");
 		expect(senderHostBlocked()).toBeNull();
 	});
 });
@@ -280,6 +285,7 @@ describe("start", () => {
 				return out;
 			},
 		});
+		await retireLeftoverSenderUnit();
 		const error = await rejection(startSenderUnit(senderArgs()));
 		expect(error.reason).toBe("start_refused");
 		expect(fake.state.active).toBe("inactive");
@@ -317,6 +323,7 @@ describe("start", () => {
 				return show(args, timeout);
 			},
 		});
+		await retireLeftoverSenderUnit();
 		const handle = await startSenderUnit(senderArgs());
 		expect(handle.invocation).toBe("inv-2");
 		expect(shows).toBeGreaterThan(2);
@@ -330,6 +337,7 @@ describe("start", () => {
 			...io,
 			probeControl: async (_socket, accept) => accept({ pid: 1, uid: 0 }),
 		});
+		await retireLeftoverSenderUnit();
 		fake.next = { kind: "ready" };
 		expect((await rejection(startSenderUnit(senderArgs()))).reason).toBe(
 			"not_ready",
@@ -401,6 +409,7 @@ describe("stop", () => {
 				io,
 			),
 		).toBe("unit");
+		await retireLeftoverSenderUnit();
 		const handle = await startSenderUnit(senderArgs());
 		fake.state.invocation = "someone-else";
 		fake.stopFails = true;
@@ -588,7 +597,7 @@ describe("systemd output", () => {
 		expect(show && mainExit(show)).toEqual({ exitCode: 78, signalCode: null });
 		expect(parseUnitShow("garbage")).toBeNull();
 		const killed = parseUnitShow(
-			"LoadState=loaded\nActiveState=inactive\nExecMainCode=2\nExecMainStatus=15\n",
+			"LoadState=loaded\nActiveState=inactive\nMainPID=0\nExecMainCode=2\nExecMainStatus=15\n",
 		);
 		expect(killed && mainExit(killed)).toEqual({
 			exitCode: null,
@@ -743,6 +752,7 @@ describe("review round: boot", () => {
 				flaky,
 			),
 		).toBe("unit");
+		await retireLeftoverSenderUnit();
 		expect(senderHostBlocked()).toBeNull();
 	});
 
@@ -889,6 +899,7 @@ describe("review round: arguments and files", () => {
 			SENDER_UNIT_EXEC,
 			io,
 		);
+		await retireLeftoverSenderUnit();
 		const error = await rejection(startSenderUnit(senderArgs()));
 		expect(error.reason).toBe("start_refused");
 		expect(verbs()).not.toContain("start");
@@ -905,9 +916,189 @@ describe("review round: arguments and files", () => {
 			SENDER_UNIT_EXEC,
 			io,
 		);
+		await retireLeftoverSenderUnit();
 		expect((await rejection(startSenderUnit(senderArgs()))).reason).toBe(
 			"start_refused",
 		);
 		expect(verbs()).not.toContain("start");
+	});
+});
+
+describe("review round 3", () => {
+	test("an inactive unit with a queued start job is not down: start admission refuses", async () => {
+		await unitMode();
+		fake.state.job = "4711";
+		expect((await rejection(startSenderUnit(senderArgs()))).reason).toBe(
+			"unit_busy",
+		);
+	});
+
+	test("a failed stop with a job still queued is not confirmed, even if the unit reads inactive", async () => {
+		await unitMode();
+		const handle = await startSenderUnit(senderArgs());
+		fake.stopFails = true;
+		// systemd has the process gone but another start job queued.
+		fake.state = {
+			...fake.state,
+			active: "inactive",
+			sub: "dead",
+			mainPid: 0,
+			job: "4712",
+		};
+		let sleeps = 0;
+		fake.onSleep = () => {
+			if (++sleeps === 2) fake.stopFails = false;
+		};
+		handle.kill("SIGTERM");
+		await handle.exited;
+		expect(sleeps).toBe(2);
+		expect(fake.state.job).toBe("");
+	});
+
+	test("a truncated show reply is unreadable, never no process", () => {
+		expect(
+			parseUnitShow("LoadState=loaded\nActiveState=inactive\n"),
+		).toBeNull();
+		expect(
+			parseUnitShow("LoadState=loaded\nActiveState=inactive\nMainPID=\n"),
+		).toBeNull();
+	});
+
+	test("retirement stops an inactive unit that still has a start job queued", async () => {
+		resetSenderHostModeForTest();
+		fake.state.job = "4713";
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			fake.io(),
+		);
+		expect(await retireLeftoverSenderUnit()).toBe("stopped");
+		expect(verbs()).toContain("stop");
+		expect(fake.state.job).toBe("");
+	});
+
+	test("until the startup check has run, the census never reads absent and nothing starts", async () => {
+		resetSenderHostModeForTest();
+		const empty = join(root, "empty-proc");
+		mkdirSync(empty);
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			fake.io(),
+		);
+		expect(senderHostBlocked()).not.toBeNull();
+		expect(unownedSenderCensus([], empty, process.pid)).toBe("unknown");
+		expect((await rejection(startSenderUnit(senderArgs()))).reason).toBe(
+			"unit_unresolved",
+		);
+		expect(await retireLeftoverSenderUnit()).toBe("none");
+		expect(unownedSenderCensus([], empty, process.pid)).toBe("absent");
+	});
+
+	test("a retry that cannot settle the mode keeps the block the whole time", async () => {
+		resetSenderHostModeForTest();
+		fake.showFails = true;
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			fake.io(),
+		);
+		const seen: Array<string | null> = [];
+		fake.onSleep = () => seen.push(senderHostBlocked());
+		expect(await retireLeftoverSenderUnit()).toBe("unknown");
+		expect(senderHostBlocked()).not.toBeNull();
+		expect(seen.every((reason) => reason !== null)).toBe(true);
+	});
+
+	test("an old handle's retried stop never stops a newer launch", async () => {
+		await unitMode();
+		const first = await startSenderUnit(senderArgs("a"));
+		fake.stopFails = true;
+		let second: SenderUnitProcess | undefined;
+		let sleeps = 0;
+		fake.onSleep = () => {
+			if (++sleeps !== 1) return;
+			// The first sender goes down on its own and a new stream starts.
+			fake.stopFails = false;
+			fake.state = {
+				...fake.state,
+				active: "inactive",
+				sub: "dead",
+				mainPid: 0,
+			};
+			void startSenderUnit(senderArgs("b")).then((h) => {
+				second = h;
+			});
+		};
+		first.kill("SIGTERM");
+		await first.exited;
+		for (let i = 0; i < 20 && !second; i++) await Bun.sleep(1);
+		expect(second).toBeDefined();
+		expect(fake.state.active).toBe("active");
+		expect(decode(readFileSync(`${dir}/argv`))[1]).toBe("receiver-b.example");
+	});
+
+	test("without a pidfd there is no SIGKILL by unit name at all", async () => {
+		const io = fake.io({ pidfdOpen: () => null });
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			io,
+		);
+		await retireLeftoverSenderUnit();
+		const handle = await startSenderUnit(senderArgs());
+		handle.kill("SIGKILL");
+		await handle.exited;
+		expect(verbs()).not.toContain("kill");
+	});
+
+	test("a sender that died after the last good read is not counted as ours", async () => {
+		await unitMode();
+		const handle = await startSenderUnit(senderArgs());
+		const owned: StreamingProcess[] = [
+			{ proc: handle, spawnfile: SENDER_UNIT_EXEC, exitListeners: [] },
+		];
+		expect(ownsSessionSender(owned, SENDER_UNIT_EXEC)).toBe(true);
+		fake.crash();
+		// No monitor tick yet: the pin answers that the process is gone.
+		expect(ownsSessionSender(owned, SENDER_UNIT_EXEC)).toBe(false);
+	});
+
+	test("the same PID and invocation in another cgroup is not the same sender", async () => {
+		await unitMode();
+		const events: string[] = [];
+		const handle = await startSenderUnit(senderArgs(), {
+			onRestarting: () => events.push("restarting"),
+			onRestarted: () => events.push("restarted"),
+		});
+		fake.state.cgroup = "/system.slice/other.service";
+		await handle.tick();
+		// Treated as a new process: reported, then verified from scratch.
+		expect(events).toEqual(["restarting", "restarted"]);
+		expect(handle.owns(handle.pid, "/nonexistent")).toBe(false);
+	});
+
+	test("an old stats file that cannot be removed on restart stops the sender", async () => {
+		const real = fake.io();
+		let armed = false;
+		const io = fake.io({
+			remove: async (path) => {
+				if (armed && path.endsWith("stats.json")) throw new Error("EBUSY");
+				return real.remove(path);
+			},
+		});
+		await resolveSenderHostMode(
+			{ srtla_send_unit: true },
+			SENDER_UNIT_EXEC,
+			io,
+		);
+		await retireLeftoverSenderUnit();
+		const handle = await startSenderUnit(senderArgs());
+		armed = true;
+		fake.crash();
+		await handle.tick();
+		armed = false;
+		await handle.exited;
+		expect(fake.state.active).toBe("inactive");
 	});
 });

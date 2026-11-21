@@ -53,7 +53,12 @@ import { isAbsolute } from "node:path";
 import { createControlClient } from "@ceraui/srtla-send";
 import { logger } from "../../../helpers/logger.ts";
 import { readPeerCredentials } from "../../../helpers/peer-credentials.ts";
-import { pidfdClose, pidfdOpen, pidfdSignal } from "../../../helpers/pidfd.ts";
+import {
+	pidfdAlive,
+	pidfdClose,
+	pidfdOpen,
+	pidfdSignal,
+} from "../../../helpers/pidfd.ts";
 import { run } from "../../../helpers/run.ts";
 import { SOFTWARE_UPDATE_LOCK } from "../../system/software-update-service-contract.ts";
 import type { SupervisedProc } from "./process-runner.ts";
@@ -85,6 +90,7 @@ const SHOW_PROPERTIES = [
 	"ExecMainCode",
 	"ExecMainStatus",
 	"NRestarts",
+	"Job",
 ] as const;
 
 export type SenderUnitPaths = {
@@ -118,6 +124,8 @@ export type UnitShow = {
 	readonly execMainCode: number | null;
 	readonly execMainStatus: number | null;
 	readonly restarts: number;
+	/** The queued or running job's id; empty when no job is pending. */
+	readonly job: string;
 };
 
 /** Parse `systemctl show --property=...` output; null when it is not one. */
@@ -127,28 +135,42 @@ export function parseUnitShow(stdout: string): UnitShow | null {
 		const at = line.indexOf("=");
 		if (at > 0) rows.set(line.slice(0, at), line.slice(at + 1).trim());
 	}
-	if (!rows.has("LoadState") || !rows.has("ActiveState")) return null;
 	const int = (key: string): number | null => {
 		const value = rows.get(key);
 		return value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
 	};
+	// A truncated or malformed reply is unreadable, never "no process".
+	const mainPid = int("MainPID");
+	if (!rows.has("LoadState") || !rows.has("ActiveState") || mainPid === null)
+		return null;
 	return {
 		loadState: rows.get("LoadState") ?? "",
 		activeState: rows.get("ActiveState") ?? "",
 		subState: rows.get("SubState") ?? "",
-		mainPid: int("MainPID") ?? 0,
+		mainPid,
 		invocation: rows.get("InvocationID") ?? "",
 		controlGroup: rows.get("ControlGroup") ?? "",
 		result: rows.get("Result") ?? "",
 		execMainCode: int("ExecMainCode"),
 		execMainStatus: int("ExecMainStatus"),
 		restarts: int("NRestarts") ?? 0,
+		job: rows.get("Job") ?? "",
 	};
 }
 
 /** Neither running, starting, waiting to restart nor stopping. */
 function isDown(show: UnitShow): boolean {
 	return show.activeState === "inactive" || show.activeState === "failed";
+}
+
+/**
+ * Down with proof: inactive or failed, no main process and no queued or
+ * running job (a start job can sit behind an inactive state). The one
+ * predicate for stop confirmation, start admission, retirement and a final
+ * exit.
+ */
+function confirmedDown(show: UnitShow): boolean {
+	return isDown(show) && show.mainPid === 0 && show.job === "";
 }
 
 function isRunning(show: UnitShow): boolean {
@@ -261,6 +283,8 @@ export interface SenderUnitIo {
 	pidfdOpen(pid: number): number | null;
 	/** Signal through a pidfd; false when the process has exited. */
 	pidfdSignal(fd: number, signal: NodeJS.Signals): boolean;
+	/** Whether the process a pidfd names is still alive (signal 0). */
+	pidfdAlive(fd: number): boolean;
 	pidfdClose(fd: number): void;
 	/** Take the update lock without waiting; null when someone else holds it. */
 	tryUpdateLock(): Promise<{ release(): void } | null>;
@@ -407,6 +431,7 @@ export function productionSenderUnitIo(): SenderUnitIo {
 		},
 		pidfdOpen,
 		pidfdSignal,
+		pidfdAlive,
 		pidfdClose,
 		tryUpdateLock: () => tryExclusiveLock(SOFTWARE_UPDATE_LOCK),
 		signal: (pid, signal) => {
@@ -541,40 +566,44 @@ export async function resolveSenderHostMode(
 	hostIo = io;
 	hostSetup = setup;
 	hostExec = senderExec;
-	await decideMode(BOOT_SHOW_ATTEMPTS);
+	const reason = await decideMode(BOOT_SHOW_ATTEMPTS);
+	if (reason) {
+		blocked = reason;
+		logger.error(
+			`srtla_send_unit is set, but ${reason}; no sender starts until it can be read`,
+		);
+	} else {
+		// Until the startup check has seen the unit down, nothing may start.
+		blocked = "leftover: not checked yet";
+	}
 	return hostMode;
 }
 
-async function decideMode(attempts: number): Promise<void> {
+/** Decide the mode; returns why it cannot be decided, or null. */
+async function decideMode(attempts: number): Promise<string | null> {
 	const io = hostIo;
 	const setup = hostSetup;
-	if (!io || !setup) return;
+	if (!io || !setup) return null;
 	const fallback = (why: string): void => {
 		logger.warn(
 			`srtla_send_unit is set, but ${why}; the sender runs as a child of the backend`,
 		);
 	};
 	const presence = await unitPresence(io, attempts);
-	if (presence === "unknown") {
-		blocked = `${io.unit} cannot be read`;
-		logger.error(
-			`srtla_send_unit is set, but ${io.unit} cannot be read; no sender starts until it can`,
-		);
-		return;
-	}
+	if (presence === "unknown") return `${io.unit} cannot be read`;
 	if (presence === "absent") {
 		fallback(`${io.unit} is not installed`);
-		return;
+		return null;
 	}
 	if (hostExec !== SENDER_UNIT_EXEC) {
 		fallback(
 			`the sender is ${hostExec}, and the unit runs only ${SENDER_UNIT_EXEC}`,
 		);
-		return;
+		return null;
 	}
 	if (!(await directoryIsPrivate(io))) {
 		fallback(`${io.paths.dir} is missing or not private to root`);
-		return;
+		return null;
 	}
 	// ips_file always has a value (the shared /tmp default); bind_map_file is
 	// set only by an explicit override, which is worth a warning.
@@ -589,6 +618,7 @@ async function decideMode(attempts: number): Promise<void> {
 	setup.bind_map_file = io.paths.bindMap;
 	hostMode = "unit";
 	logger.info(`srtla_send runs through ${io.unit}`, { dir: io.paths.dir });
+	return null;
 }
 
 function blockUntilSettled(reason: string): void {
@@ -838,7 +868,7 @@ async function stopUnit(
 		logger.warn(`${io.unit} unreadable after stop`, { error });
 		return null;
 	}
-	if (!isDown(show) || show.mainPid !== 0) {
+	if (!confirmedDown(show)) {
 		logger.error(
 			`${io.unit} is still ${show.activeState} after stop; launch state kept`,
 		);
@@ -887,7 +917,7 @@ export function startSenderUnit(
 					"start_refused",
 					`${io.unit} is not installed`,
 				);
-			if (!isDown(current))
+			if (!confirmedDown(current))
 				throw new SenderUnitError(
 					"unit_busy",
 					`${io.unit} is already ${current.activeState}; refusing a second sender`,
@@ -969,10 +999,9 @@ export function retireLeftoverSenderUnit(): Promise<
 		};
 		if (blocked && !blocked.startsWith("leftover")) {
 			// The unit could not be read at boot, or a stop went unconfirmed:
-			// settle the mode first.
-			blocked = null;
-			await decideMode(1);
-			if (blocked) return unresolved(blocked);
+			// settle the mode first. The block stays until everything is settled.
+			const reason = await decideMode(1);
+			if (reason) return unresolved(reason);
 		}
 		let show: UnitShow;
 		try {
@@ -984,14 +1013,14 @@ export function retireLeftoverSenderUnit(): Promise<
 			blocked = null;
 			return "none";
 		}
-		if (isDown(show) && show.mainPid === 0) {
+		if (confirmedDown(show)) {
 			if (hostMode === "unit") await removeFiles(io, launchState(io));
 			blocked = null;
 			return "none";
 		}
 		logger.warn(
 			`${io.unit} is ${show.activeState} from an earlier backend; this build does not adopt it, stopping it`,
-			{ invocation: show.invocation, mainPid: show.mainPid },
+			{ invocation: show.invocation, mainPid: show.mainPid, job: show.job },
 		);
 		if (!(await stopUnit(io, hostMode === "unit" ? launchGeneration : -1)))
 			return unresolved(`leftover: ${io.unit} could not be confirmed stopped`);
@@ -1054,8 +1083,19 @@ export class SenderUnitProcess implements SupervisedProc {
 		return this.ready && !this.finished && this.stopping === null;
 	}
 
+	/**
+	 * Verified ready and the process still alive now: the pinned pidfd takes
+	 * signal 0, or, without a pin, the PID is still `srtla_send` in the unit's
+	 * cgroup. Reconciliation relies on this between monitor reads.
+	 */
 	isCurrent(): boolean {
-		return this.isReady;
+		if (!this.isReady) return false;
+		const { pid, pidfd, controlGroup } = this.current;
+		if (pidfd !== null) return this.io.pidfdAlive(pidfd);
+		return (
+			this.io.readComm(pid) === "srtla_send" &&
+			this.io.readCgroup(pid) === controlGroup
+		);
 	}
 
 	owns(pid: number, procRoot: string): boolean {
@@ -1102,26 +1142,14 @@ export class SenderUnitProcess implements SupervisedProc {
 		}
 	}
 
-	/** SIGKILL to the process this handle pinned, or to its invocation only. */
+	/**
+	 * SIGKILL to the process this handle pinned. Without a pin there is no
+	 * escalation by unit name: systemd's own stop job sends SIGKILL after
+	 * TimeoutStopSec.
+	 */
 	private escalate(): void {
-		const { pidfd, invocation, pid } = this.current;
-		if (pidfd !== null) {
-			this.io.pidfdSignal(pidfd, "SIGKILL");
-			return;
-		}
-		void (async () => {
-			const show = await readShow(this.io).catch(() => null);
-			if (!show || show.invocation !== invocation || show.mainPid !== pid)
-				return;
-			await this.io
-				.systemctl(
-					["kill", "--signal=SIGKILL", this.io.unit],
-					SYSTEMCTL_TIMEOUT_MS,
-				)
-				.catch((error) =>
-					logger.warn(`SIGKILL to ${this.io.unit} failed`, { error }),
-				);
-		})();
+		const { pidfd } = this.current;
+		if (pidfd !== null) this.io.pidfdSignal(pidfd, "SIGKILL");
 	}
 
 	/** Stop the unit (final: systemd does not restart it) and end the handle. */
@@ -1134,7 +1162,17 @@ export class SenderUnitProcess implements SupervisedProc {
 		this.cancelTimer();
 		for (;;) {
 			if (this.finished) return;
-			const show = await serialized(() => stopUnit(this.io, this.generation));
+			const show = await serialized(async () =>
+				// A newer start owns the unit: it only started once this
+				// handle's unit was confirmed down, so there is nothing to stop.
+				this.generation === launchGeneration
+					? stopUnit(this.io, this.generation)
+					: "superseded",
+			);
+			if (show === "superseded") {
+				this.finishUnknown();
+				return;
+			}
 			if (show) {
 				// Stopped on request: an exit systemd did not keep reads as SIGTERM.
 				this.finish(show, { exitCode: null, signalCode: "SIGTERM" });
@@ -1160,6 +1198,26 @@ export class SenderUnitProcess implements SupervisedProc {
 		this.resolveExit(
 			exit.exitCode ??
 				128 + (osConstants.signals[exit.signalCode ?? "SIGKILL"] ?? 9),
+		);
+	}
+
+	/** Ended without a readable exit: as if stopped on request. */
+	private finishUnknown(): void {
+		this.finish(
+			{
+				loadState: "",
+				activeState: "inactive",
+				subState: "",
+				mainPid: 0,
+				invocation: "",
+				controlGroup: "",
+				result: "",
+				execMainCode: null,
+				execMainStatus: null,
+				restarts: 0,
+				job: "",
+			},
+			{ exitCode: null, signalCode: "SIGTERM" },
 		);
 	}
 
@@ -1195,7 +1253,7 @@ export class SenderUnitProcess implements SupervisedProc {
 			return this.checkWedged();
 		}
 		if (this.finished || this.stopping) return;
-		if (isDown(show) && show.mainPid === 0) {
+		if (confirmedDown(show)) {
 			const { exitCode, signalCode } = mainExit(show);
 			logger.warn(
 				`${this.io.unit} is ${show.activeState}; systemd will not restart it`,
@@ -1212,7 +1270,8 @@ export class SenderUnitProcess implements SupervisedProc {
 		}
 		const same =
 			show.invocation === this.current.invocation &&
-			show.mainPid === this.current.pid;
+			show.mainPid === this.current.pid &&
+			show.controlGroup === this.current.controlGroup;
 		if (same && isRunning(show) && this.ready) return;
 		if (!same && !this.restarting) {
 			this.restarting = true;
@@ -1224,12 +1283,21 @@ export class SenderUnitProcess implements SupervisedProc {
 				restarts: show.restarts,
 			});
 			this.hooks.onRestarting?.(show);
-			// The dead sender's last stats must not pass for the new one's.
-			await serialized(() =>
+			// The dead sender's last stats must not pass for the new one's. If
+			// they cannot be removed, file telemetry could not be trusted for
+			// the new process: stop it rather than run blind.
+			const cleared = await serialized(() =>
 				this.generation === launchGeneration
 					? removeFiles(this.io, [this.io.paths.statsFile])
 					: Promise.resolve(true),
 			);
+			if (!cleared) {
+				logger.error(
+					`${this.io.unit}: the old stats file could not be removed; stopping the sender`,
+				);
+				void this.stop();
+				return;
+			}
 		}
 		if (!isRunning(show)) {
 			this.markNotReady();

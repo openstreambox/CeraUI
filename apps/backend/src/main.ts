@@ -410,17 +410,18 @@ await guardNonCritical("pipelines", () =>
 if (!shouldUseMocks()) {
 	// Only a returned reconciliation turns the factory's initial idle projection
 	// into evidence; until then (or after a throw) disruptive actions see unknown.
+	// Nothing adopts a sender yet: a sender unit left running by an earlier
+	// backend is stopped and seen down before reconciliation judges the
+	// session. Until that is settled the sender census reads unknown, so
+	// nothing commits idle or launches beside it. Child mode does nothing.
+	await guardNonCritical("sender-unit-leftover", async () => {
+		await retireLeftoverSenderUnit();
+	});
 	await guardNonCritical("stream-session-reconcile", async () => {
 		await reconcileStreamSession();
 		noteStreamReconciliationCompleted();
 	});
 	await observeSafely(() => observeStartup(streamLiveness()));
-	// Nothing adopts a sender yet: a sender unit left running by an earlier
-	// backend is stopped (after the observer above has logged its verdict)
-	// before anything streams again. Child mode does nothing here.
-	await guardNonCritical("sender-unit-leftover", async () => {
-		await retireLeftoverSenderUnit();
-	});
 	// The first point at which the persisted config and the engine's own session
 	// are both known — so it is where a `config.inflight.json` left by a process
 	// that died mid transaction can finally be judged. Fire-and-forget: with a

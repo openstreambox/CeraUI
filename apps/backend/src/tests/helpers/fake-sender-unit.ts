@@ -24,6 +24,7 @@ export type FakeUnitState = {
 	code: number;
 	status: number;
 	restarts: number;
+	job: string;
 };
 
 /** What the next `systemctl start` (or automatic restart) produces. */
@@ -51,6 +52,7 @@ export class FakeSenderUnit {
 		code: 0,
 		status: 0,
 		restarts: 0,
+		job: "",
 	};
 	next: StartOutcome = { kind: "ready" };
 	lockBusy = false;
@@ -154,6 +156,7 @@ export class FakeSenderUnit {
 			`ExecMainCode=${s.code}`,
 			`ExecMainStatus=${s.status}`,
 			`NRestarts=${s.restarts}`,
+			`Job=${s.job}`,
 		].join("\n");
 	}
 
@@ -201,6 +204,8 @@ export class FakeSenderUnit {
 							code: this.stopExitCode,
 							status: 0,
 						};
+					// A stop job replaces a queued start job.
+					this.state.job = "";
 					this.answering = false;
 					return "";
 				}
@@ -248,6 +253,7 @@ export class FakeSenderUnit {
 				this.signals.push({ pid: fd, signal });
 				return true;
 			},
+			pidfdAlive: (fd) => fd === this.state.mainPid && fd > 0,
 			pidfdClose: () => undefined,
 			now: () => this.clock,
 			sleep: async (ms) => {

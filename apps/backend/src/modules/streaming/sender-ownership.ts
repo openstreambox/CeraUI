@@ -5,6 +5,7 @@ import {
 	getStreamingProcesses,
 	type StreamingProcess,
 } from "./streamloop/process-runner.ts";
+import { senderHostBlocked } from "./streamloop/sender-unit.ts";
 
 export type SenderCensus = "absent" | "present" | "unknown";
 
@@ -96,6 +97,9 @@ export function unownedSenderCensus(
 	procRoot = senderCensusProcRoot(),
 	selfPid = process.pid,
 ): SenderCensus {
+	// A sender unit in an unresolved state may hold a sender the table does
+	// not show (between a crash and systemd's restart): never "absent".
+	if (senderHostBlocked()) return "unknown";
 	const pids = senderPids(procRoot);
 	if (pids === undefined) return "unknown";
 	for (const pid of pids) {
