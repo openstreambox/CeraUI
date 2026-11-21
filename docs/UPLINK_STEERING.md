@@ -398,8 +398,8 @@ that managed source rule needs validation with real route retirement.
 reconcile from the uplinks the mode and administrative filters allow.
 
 - **Plans follow what is applied.** Planning has no side effects. The plan
-  becomes the selector's state only when the steering runtime has applied and
-  verified the ruleset built from it. A rejected reload, a retry or a
+  becomes the selector's state only when the steering runtime has installed
+  the ruleset built from it (and again after readback on unchanged passes). A rejected reload, a retry or a
   read-only caller such as the shaper never moves the incumbent, starts or
   ends a hold, or charges a failure. A state without client zones, or with
   `spread`, commits as a reset.
@@ -416,14 +416,19 @@ reconcile from the uplinks the mode and administrative filters allow.
   applier retires the lost uplink's client conntracks as for any hard-down, so
   apps reconnect over the new uplink. An administrative or mode exclusion, or
   an uplink held back while its identity proof is pending, switches the same
-  way but does not count as a failure; only a missing interface or a `down`
-  health record does.
-- **Rejoin is held.** A better-ranked uplink displaces a working active one only
-  after it has been continuously `up` for the rejoin hold, 30 s by default, and
-  added at least three successful observations during it. The evidence must be
-  fresh (before the record's `staleAt`) and include a real success, so a record
-  that starts `up` before any probe, one that stopped refreshing, or counters
-  left by an earlier device on the same interface name cannot complete it.
+  way but does not count as a failure; only a missing interface, a lost
+  address or a `down` health record does.
+- **Only the general-internet probe qualifies.** A better-ranked uplink
+  displaces a working active one only after the device-bound connectivity probe
+  has confirmed it without a gap for the rejoin hold, 30 s by default. Evidence
+  is the health record's last active observation (`signals.activeAt`) with an
+  `up` state and a real success. Sender (SRTLA) telemetry proves the path to
+  the relay, not internet for clients, and never sets `activeAt`: it can demote
+  an uplink, never qualify one. The hold restarts on a gap of more than 15 s
+  between probe observations, on a failed round, and ignores observations
+  taken before the uplink's identity first appeared (a predecessor on the same
+  interface name). A failover with no incumbent also prefers a probe-confirmed
+  uplink.
   Each failure while active doubles that uplink's next hold, up to 300 s; a
   failure older than ten minutes, or ten minutes as the active uplink, clears
   the history. An equal-ranked uplink never displaces the active one.
@@ -445,8 +450,10 @@ concurrent probes, so a blackhole on an idle uplink is withdrawn after roughly
 14 to 19 s (three failures plus the 4 s probe timeout). It takes longer when
 target resolution fails and rounds are skipped. While streaming, bonded links
 are judged from SRTLA telemetry and are not actively probed: a streaming link
-whose sender rows go stale is only `degraded`, never withdrawn. Single
-selection moves clients off it once another uplink is proven healthy, but with
+whose sender rows go stale is only `degraded`, never withdrawn, and a
+streaming link can never become the client uplink by rejoin, since only
+probes qualify. Single selection moves clients off a degraded one once another
+uplink is proven healthy, but with
 no healthy alternative, or with sender telemetry that stays healthy while
 other destinations are unreachable, clients stay on it. A returning uplink
 first needs health's five good rounds and 15 s dwell, then the selector's

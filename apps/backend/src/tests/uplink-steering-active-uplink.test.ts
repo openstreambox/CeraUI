@@ -51,6 +51,7 @@ function record(
 	state: UplinkHealthRecord["state"] = "up",
 	successes = 5,
 	staleAt = Number.MAX_SAFE_INTEGER,
+	activeAt?: number,
 ): UplinkHealthRecord {
 	return {
 		iface,
@@ -60,18 +61,32 @@ function record(
 		lastTransition: 0,
 		staleAt,
 		probes: { successes, failures: 0 },
-		signals: {},
+		signals: activeAt === undefined ? {} : { activeAt },
 	} as UplinkHealthRecord;
 }
 
-/** A healthy record probed every 5 s up to `now`. */
+/** A healthy record confirmed by the general-internet probe every 5 s. */
 function live(iface: string, now: number): UplinkHealthRecord {
-	return record(iface, "up", 1 + Math.floor(now / 5_000), now + 15_000);
+	return record(iface, "up", 1 + Math.floor(now / 5_000), now + 15_000, now);
 }
 
-/** Drives one selector the way successive applied reconciles would. */
+/** Healthy only from sender telemetry: no active probe observation. */
+function telemetryOnly(iface: string, now: number): UplinkHealthRecord {
+	return {
+		...record(iface, "up", 1 + Math.floor(now / 5_000), now + 15_000),
+		signals: { passiveAt: now },
+	} as UplinkHealthRecord;
+}
+
+/**
+ * Drives one selector the way successive applied reconciles would. Health
+ * publishes every 5 s probe round and each publish reconciles, so a call
+ * without explicit health also replays the rounds since the previous call.
+ */
 function driver(policy: SharingPolicy = DEFAULT_SHARING_POLICY) {
 	const selector = new ActiveUplinkSelector();
+	let last: number | undefined;
+	let lastDefault = false;
 	const plan = (
 		now: number,
 		ifnames: readonly string[],
@@ -93,8 +108,18 @@ function driver(policy: SharingPolicy = DEFAULT_SHARING_POLICY) {
 		peek(...args: Parameters<typeof plan>): string[] {
 			return selected(plan(...args).candidates);
 		},
-		pick(...args: Parameters<typeof plan>): string[] {
-			const result = plan(...args);
+		pick(
+			now: number,
+			ifnames: readonly string[],
+			health?: readonly UplinkHealthRecord[],
+		): string[] {
+			if (health === undefined && lastDefault && last !== undefined) {
+				for (let round = last + 5_000; round < now; round += 5_000)
+					selector.commit(plan(round, ifnames).next);
+			}
+			last = now;
+			lastDefault = health === undefined;
+			const result = plan(now, ifnames, health);
 			selector.commit(result.next);
 			return selected(result.candidates);
 		},
@@ -179,13 +204,15 @@ describe("single-active client uplink selection", () => {
 		const r = driver();
 		r.pick(0, ["wwan0"]);
 		r.pick(10_000, ["eth0", "wwan0"]);
-		expect(r.peek(10_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		// eth0 has been probed since the 5 s round; its hold ends at 35 s.
+		r.pick(HOLD, ["eth0", "wwan0"]);
+		expect(r.peek(5_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
 		expect(r.selector.active()).toBe("id-wwan0");
 		// eth0 then fails before any apply: it never carried clients, no penalty.
 		r.pick(
-			10_000 + HOLD + 1,
+			5_000 + HOLD + 1,
 			["wwan0"],
-			[record("eth0", "down", 0), live("wwan0", 10_000 + HOLD + 1)],
+			[record("eth0", "down", 0), live("wwan0", 5_000 + HOLD + 1)],
 		);
 		expect(r.selector.rejoinHoldMs("id-eth0")).toBe(HOLD);
 	});
@@ -211,28 +238,71 @@ describe("single-active client uplink selection", () => {
 		expect(d.pick(start + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
 	});
 
-	test("expired or inherited evidence cannot complete a rejoin hold", () => {
+	test("sender telemetry alone never qualifies an uplink to take clients", () => {
+		const d = driver();
+		d.pick(0, ["wwan0"]);
+		// A streaming wired link reports healthy SRTLA rows but is never probed.
+		for (let now = 5_000; now <= HOLD * 10; now += 5_000) {
+			expect(
+				d.pick(
+					now,
+					["eth0", "wwan0"],
+					[telemetryOnly("eth0", now), live("wwan0", now)],
+				),
+			).toEqual(["wwan0"]);
+		}
+	});
+
+	test("expired, interrupted or inherited evidence cannot complete a rejoin hold", () => {
 		const d = driver();
 		d.pick(0, ["wwan0"]);
 		// One success at t=10 s, then probe rounds stop: the record expires.
 		const frozen = (now: number) => [
-			record("eth0", "up", 1, 25_000),
+			record("eth0", "up", 1, 25_000, 10_000),
 			live("wwan0", now),
 		];
 		d.pick(10_000, ["eth0", "wwan0"], frozen(10_000));
 		expect(
 			d.pick(10_000 + HOLD, ["eth0", "wwan0"], frozen(10_000 + HOLD)),
 		).toEqual(["wwan0"]);
-		// Fresh-looking counters that never grow (an earlier device's) do not
-		// complete it either.
-		const stuck = (now: number) => [
-			record("eth0", "up", 9, now + 15_000),
-			live("wwan0", now),
+		// Probing resumes at 100 s: the hold restarts there, not at 10 s.
+		expect(d.pick(100_000, ["eth0", "wwan0"])).toEqual(["wwan0"]);
+		expect(d.pick(100_000 + HOLD - 5_000, ["eth0", "wwan0"])).toEqual([
+			"wwan0",
+		]);
+		expect(d.pick(100_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
+
+		// A replacement device on the same name: a sample taken before it
+		// appeared does not start its hold.
+		const r = driver();
+		r.pick(0, ["wwan0"]);
+		const predecessor = [
+			record("eth0", "up", 9, 20_000, 6_000),
+			live("wwan0", 6_000),
 		];
-		d.pick(100_000, ["eth0", "wwan0"], stuck(100_000));
-		expect(
-			d.pick(100_000 + HOLD * 3, ["eth0", "wwan0"], stuck(100_000 + HOLD * 3)),
-		).toEqual(["wwan0"]);
+		r.pick(6_000, ["eth0", "wwan0"], predecessor);
+		r.pick(15_000, ["eth0", "wwan0"]);
+		expect(r.pick(6_000 + HOLD, ["eth0", "wwan0"])).toEqual(["wwan0"]);
+		expect(r.pick(15_000 + HOLD, ["eth0", "wwan0"])).toEqual(["eth0"]);
+	});
+
+	test("losing the active uplink's address counts as a failure before health catches up", () => {
+		const d = driver();
+		expect(d.pick(0, ["eth0", "wwan0"])).toEqual(["eth0"]);
+		// eth0 is no longer offered (no address); its health record still says up.
+		const selector = d.selector;
+		const plan = applyClientUplinkPolicy(["wwan0"].map(uplink), selector, {
+			now: 1_000,
+			policy: DEFAULT_SHARING_POLICY,
+			health: new Map([
+				["eth0", live("eth0", 1_000)],
+				["wwan0", live("wwan0", 1_000)],
+			]),
+			interfaces: new Set(["wwan0"]),
+		});
+		selector.commit(plan.next);
+		expect(selector.active()).toBe("id-wwan0");
+		expect(selector.rejoinHoldMs("id-eth0")).toBe(HOLD * 2);
 	});
 
 	test("a degraded uplink yields to a proven healthy one even against priority", () => {
@@ -247,6 +317,8 @@ describe("single-active client uplink selection", () => {
 			record("eth0", "degraded", 0, now + 15_000),
 			live("wwan0", now),
 		];
+		for (let now = 5_000; now < HOLD; now += 5_000)
+			expect(d.pick(now, ["eth0", "wwan0"], health(now))).toEqual(["eth0"]);
 		expect(d.pick(HOLD, ["eth0", "wwan0"], health(HOLD))).toEqual(["wwan0"]);
 	});
 
@@ -303,7 +375,8 @@ describe("single-active client uplink selection", () => {
 		policy = { ...policy, administrativelyDown: [] };
 		// Re-enabled: the ordinary hold runs from its return to the candidates.
 		expect(pick(2)).toEqual(["wwan0"]);
-		expect(pick(2 + HOLD - 1)).toEqual(["wwan0"]);
+		for (let now = 5_002; now < 2 + HOLD; now += 5_000)
+			expect(pick(now)).toEqual(["wwan0"]);
 		expect(pick(2 + HOLD)).toEqual(["eth0"]);
 		// Held back (identity proof pending) while present and healthy.
 		expect(pick(HOLD * 3, ["wwan0"])).toEqual(["wwan0"]);

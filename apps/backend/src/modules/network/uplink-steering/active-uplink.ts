@@ -19,8 +19,10 @@ import {
  *   gone, policy exclusion) the best remaining candidate takes over in the
  *   same reconcile.
  * - Rejoin is held: a better-ranked uplink displaces a working active one
- *   only after it has been continuously `up` with fresh probe evidence for
- *   the rejoin hold. Each failure while active doubles that uplink's next
+ *   only after the general-internet probe has confirmed it, without a gap,
+ *   for the rejoin hold. Sender (SRTLA) telemetry proves the path to the
+ *   relay, not internet for clients: it can demote an uplink, never qualify
+ *   one. Each failure while active doubles that uplink's next
  *   hold, up to a cap, so a flapping link cannot keep pulling clients back.
  * - A displaced uplink stays listed (not selectable, weight 0), so flows it
  *   already carries keep their restore and NAT rules and drain naturally.
@@ -36,8 +38,11 @@ export const ACTIVE_UPLINK_CONFIG = {
 	maxRejoinHoldMs: 300_000,
 	/** A failure older than this no longer lengthens the next hold. */
 	flapWindowMs: 600_000,
-	/** Successful observations a challenger must add during its hold. */
-	freshSuccessesDuringHold: 3,
+	/**
+	 * Largest gap between two active probe observations that still counts as
+	 * continuous evidence (three 5 s rounds, the health telemetry expiry).
+	 */
+	maxProbeGapMs: 15_000,
 } as const;
 
 const KIND_ORDER = { wired: 0, wifi: 1, cellular: 2 } as const;
@@ -50,7 +55,10 @@ export interface ActiveUplinkContext {
 	readonly now: number;
 	readonly policy: SharingPolicy;
 	readonly health: ReadonlyMap<string, UplinkHealthRecord>;
-	/** Interface names present in the current snapshot. */
+	/**
+	 * Interfaces present with an address. An active uplink missing from this
+	 * set (gone, or its address lost) has failed, even before health says so.
+	 */
 	readonly interfaces: ReadonlySet<string>;
 }
 
@@ -59,9 +67,11 @@ interface Penalty {
 	readonly lastFailureAt: number;
 }
 
+/** Continuous general-internet probe evidence, in probe timestamps. */
 interface Proof {
 	readonly since: number;
-	readonly successesAtStart: number;
+	readonly lastActiveAt: number;
+	readonly lastSuccesses: number;
 }
 
 export interface ActiveUplinkState {
@@ -69,12 +79,15 @@ export interface ActiveUplinkState {
 	readonly activeSince: number;
 	readonly proofs: ReadonlyMap<string, Proof>;
 	readonly penalties: ReadonlyMap<string, Penalty>;
+	/** When each candidate identity was first offered, to ignore older samples. */
+	readonly seen: ReadonlyMap<string, number>;
 }
 
 const EMPTY_STATE: ActiveUplinkState = {
 	activeSince: 0,
 	proofs: new Map(),
 	penalties: new Map(),
+	seen: new Map(),
 };
 
 export interface ActiveUplinkPlan<T> {
@@ -111,7 +124,13 @@ export class ActiveUplinkSelector {
 	): ActiveUplinkPlan<T> {
 		const { now } = context;
 		const prior = this.#state;
-		const proofs = trackProofs(prior.proofs, candidates, context);
+		const seen = new Map(
+			candidates.map(({ uplink }) => [
+				uplink.identity,
+				prior.seen.get(uplink.identity) ?? now,
+			]),
+		);
+		const proofs = trackProofs(prior.proofs, seen, candidates, context);
 		const penalties = new Map(
 			[...prior.penalties].filter(
 				([, penalty]) =>
@@ -141,7 +160,13 @@ export class ActiveUplinkSelector {
 		}
 		let chosen = current;
 		if (chosen === undefined) {
-			chosen = [...usable].sort((a, b) => compare(a, b, context))[0];
+			// Failover: prefer an uplink the probe has confirmed over one with
+			// no probe evidence (fresh, or judged only from sender telemetry).
+			chosen = [...usable].sort(
+				(a, b) =>
+					Number(proofs.has(b.uplink.identity)) -
+						Number(proofs.has(a.uplink.identity)) || compare(a, b, context),
+			)[0];
 		} else {
 			const incumbent = chosen;
 			const challenger = usable
@@ -149,7 +174,7 @@ export class ActiveUplinkSelector {
 					(candidate) =>
 						candidate !== incumbent &&
 						rankKey(candidate, context) < rankKey(incumbent, context) &&
-						rejoinReady(candidate, proofs, penalties, context),
+						rejoinReady(candidate, proofs, penalties),
 				)
 				.sort((a, b) => compare(a, b, context))[0];
 			if (challenger !== undefined) chosen = challenger;
@@ -183,6 +208,7 @@ export class ActiveUplinkSelector {
 				activeSince,
 				proofs,
 				penalties,
+				seen,
 			},
 		};
 	}
@@ -205,63 +231,70 @@ function holdFor(
 }
 
 /**
- * Proof is a fresh `up` record with at least one real success. A record that
- * starts `up` before any probe, or whose last observation has expired (for
- * example while probe rounds are skipped), is not evidence.
+ * The latest general-internet probe observation that confirms `ifname`: an
+ * `up`, unexpired record with a real success whose last ACTIVE observation is
+ * recent. Passive sender telemetry never sets `activeAt`, so a link judged
+ * only from SRTLA rows (probing is suppressed while streaming) has none.
  */
-function provenSuccesses(
+function probeEvidence(
 	ifname: string,
 	{ health, now }: ActiveUplinkContext,
-): number | undefined {
+): { readonly activeAt: number; readonly successes: number } | undefined {
 	const record = health.get(ifname);
+	const activeAt = record?.signals.activeAt;
 	if (
 		record?.state !== "up" ||
 		record.probes.successes <= 0 ||
-		record.staleAt <= now
+		record.staleAt <= now ||
+		activeAt === undefined ||
+		now - activeAt > ACTIVE_UPLINK_CONFIG.maxProbeGapMs
 	)
 		return undefined;
-	return record.probes.successes;
+	return { activeAt, successes: record.probes.successes };
 }
 
+/**
+ * Evidence restarts on any gap between probe observations, on a reset
+ * success counter (a failed round), and ignores observations older than the
+ * identity's first appearance (a predecessor on the same interface name).
+ */
 function trackProofs(
 	prior: ReadonlyMap<string, Proof>,
+	seen: ReadonlyMap<string, number>,
 	candidates: readonly ActiveUplinkCandidate[],
 	context: ActiveUplinkContext,
 ): Map<string, Proof> {
 	const proofs = new Map<string, Proof>();
 	for (const { uplink } of candidates) {
-		const successes = provenSuccesses(uplink.ifname, context);
-		if (successes === undefined) continue;
+		const evidence = probeEvidence(uplink.ifname, context);
+		const firstSeen = seen.get(uplink.identity) ?? context.now;
+		if (evidence === undefined || evidence.activeAt < firstSeen) continue;
 		const before = prior.get(uplink.identity);
-		proofs.set(
-			uplink.identity,
-			before !== undefined && successes >= before.successesAtStart
-				? before
-				: { since: context.now, successesAtStart: successes },
-		);
+		const continuous =
+			before !== undefined &&
+			evidence.activeAt >= before.lastActiveAt &&
+			evidence.activeAt - before.lastActiveAt <=
+				ACTIVE_UPLINK_CONFIG.maxProbeGapMs &&
+			evidence.successes >= before.lastSuccesses;
+		proofs.set(uplink.identity, {
+			since: continuous ? before.since : evidence.activeAt,
+			lastActiveAt: evidence.activeAt,
+			lastSuccesses: evidence.successes,
+		});
 	}
 	return proofs;
 }
 
-/**
- * The hold must be served AND covered by new successful observations, so
- * counters inherited from an earlier device on the same interface name, or a
- * record that stopped refreshing, cannot complete it.
- */
+/** The hold must be covered end to end by continuous probe evidence. */
 function rejoinReady(
 	{ uplink }: ActiveUplinkCandidate,
 	proofs: ReadonlyMap<string, Proof>,
 	penalties: ReadonlyMap<string, Penalty>,
-	context: ActiveUplinkContext,
 ): boolean {
 	const proof = proofs.get(uplink.identity);
-	const successes = provenSuccesses(uplink.ifname, context);
 	return (
 		proof !== undefined &&
-		successes !== undefined &&
-		context.now - proof.since >= holdFor(uplink.identity, penalties) &&
-		successes - proof.successesAtStart >=
-			ACTIVE_UPLINK_CONFIG.freshSuccessesDuringHold
+		proof.lastActiveAt - proof.since >= holdFor(uplink.identity, penalties)
 	);
 }
 

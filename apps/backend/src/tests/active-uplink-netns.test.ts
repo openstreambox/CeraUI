@@ -48,7 +48,8 @@ function record(
 		lastTransition: 0,
 		staleAt: now + 15_000,
 		probes: { successes, failures: 0 },
-		signals: {},
+		// Confirmed by the general-internet probe at `now` unless down.
+		signals: state === "down" ? {} : { activeAt: now },
 	} as UplinkHealthRecord;
 }
 
@@ -113,6 +114,16 @@ describe.skipIf(!NETNS_ISOLATED)("single-active client uplink — kernel", () =>
 		]);
 		const hold = selector.rejoinHoldMs("wired-a");
 		expect(hold).toBe(ACTIVE_UPLINK_CONFIG.rejoinHoldMs * 2);
+		// Each 5 s probe round publishes health and reconciles.
+		for (let round = 5_000; round < hold; round += 5_000) {
+			const now = 60_000 + round;
+			expect(
+				plan(now, both, [
+					record("eth0", "up", 5 + round / 5_000, now),
+					record("wwan0", "up", 17 + round / 5_000, now),
+				]).selected,
+			).toEqual(["wan1"]);
+		}
 		const rejoined0 = plan(60_000 + hold, both, [
 			record("eth0", "up", 17, 60_000 + hold),
 			record("wwan0", "up", 29, 60_000 + hold),

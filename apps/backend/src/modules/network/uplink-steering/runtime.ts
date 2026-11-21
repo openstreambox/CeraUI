@@ -77,6 +77,8 @@ const coordinator = new UplinkSteeringCoordinator({
 	apply: async (previous, next) => {
 		publishSteeringReadiness([]);
 		await applier.apply(previous, next);
+		// Installed is live for clients even if the readback below fails.
+		commitSelectorPlan(next);
 	},
 	verifyApplied: async (next) => {
 		await verifySteeringState(next);

@@ -129,7 +129,7 @@ export async function readDesiredSteeringState(
 					health,
 					interfaces: new Set(
 						Object.entries(interfaces)
-							.filter(([, entry]) => entry !== undefined)
+							.filter(([, entry]) => entry?.ip !== undefined)
 							.map(([ifname]) => ifname),
 					),
 				},
