@@ -8,8 +8,8 @@ the box, not promises about what viewers see. Check the stream itself.
 Connect your phone offers Moblin, IRL Pro, another SRT app, or Just internet.
 For SRT, configure the listener and an SRTLA receiver first. The screen copies
 the configured listener address and passphrase; it never invents credentials.
-Computer screens offer Wi-Fi and address QR codes. Phone and touch layouts use
-Copy. Passwords have no plain-text QR and should be kept off camera and out of screenshots.
+Computer screens offer Wi-Fi and address QR codes (the Wi-Fi code behind Show
+code, see below). Phone and touch layouts use Copy. Passwords have no plain-text QR and should be kept off camera and out of screenshots.
 
 Moblin: copy the password from Moblin Settings › Moblink › Password into the
 box. A local device operator can save, replace or clear it only while the box
@@ -34,6 +34,24 @@ failed parts. Restart is unavailable while carrying or checking; confirmation
 names the interruption cost. During the 120-second startup check, power-off is allowed after a confirmation that any phone stream through the box drops. Restart remains held. An encoder image keeps its existing Live screen.
 Per-link sending figures are deliberately withheld without phone-session
 telemetry; current internet probes remain visible instead.
+
+### The box's Wi-Fi code
+
+The Wi-Fi QR code is hidden until you press **Show code**, here and in the
+hotspot settings. While it is shown, keep it off camera. It hides itself after
+2 minutes, when the page loses focus, when the password changes and when a new
+device joins. The password as text stays behind its own Copy (or the eye
+button in the hotspot settings).
+
+When a device the page has not seen before joins the box's Wi-Fi, the app says
+"A new device joined". Next to the Wi-Fi code that line offers **Not mine?**;
+elsewhere it is a short toast. A device still typing the password does not
+count: only a finished join does.
+
+**New Wi-Fi password** makes a new random password for the running hotspot. The
+hotspot has one password, so every device on it drops and has to join again with
+the new code. The box asks first and says so; if a phone may be streaming
+through the box, it also says that stream drops.
 
 ## Inicio para una caja sin codificador
 
@@ -65,6 +83,26 @@ políticas siguen aplicándose.
 Solo se recuerda la opción elegida; no se guarda la identidad del teléfono.
 El reinicio permanece desactivado mientras la caja transporta tráfico o lo
 comprueba. Durante la comprobación inicial de 120 segundos, se permite apagar tras confirmar que se corta cualquier emisión que pase por la caja; reiniciar sigue bloqueado. Las cajas con codificador conservan su vista Live.
+
+### El código Wi-Fi de la caja
+
+El código QR del Wi-Fi está oculto hasta que pulsas **Mostrar código**, aquí y en
+los ajustes del punto de acceso. Mientras se ve, mantenlo fuera de cámara. Se
+oculta solo después de 2 minutos, cuando la página pierde el foco, cuando cambia
+la contraseña y cuando se une un dispositivo nuevo. La contraseña como texto
+sigue detrás de su propio botón Copiar (o del ojo en los ajustes del punto de
+acceso).
+
+Cuando un dispositivo que la página no había visto se une al Wi-Fi de la caja, la
+app avisa "Se unió un dispositivo nuevo". Junto al código Wi-Fi ese aviso ofrece
+**¿No es tuyo?**; en otras pantallas es un aviso breve. Un dispositivo que aún
+está escribiendo la contraseña no cuenta: solo una conexión terminada.
+
+**Nueva contraseña de Wi-Fi** crea una contraseña aleatoria nueva para el punto
+de acceso activo. Tiene una sola contraseña, así que todos los dispositivos se
+desconectan y tienen que volver a unirse con el código nuevo. La caja lo
+pregunta antes y lo dice; si un teléfono puede estar emitiendo a través de la
+caja, también avisa de que esa emisión se corta.
 
 ## Integration contract
 

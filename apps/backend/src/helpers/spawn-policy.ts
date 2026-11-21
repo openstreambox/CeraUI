@@ -694,6 +694,23 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			"spawnWatcher runs dmesg -w with shutdown-abort cleanup and no process-lifetime timeout",
 	},
 	{
+		id: "wifi.iwStationEvents",
+		file: "modules/wifi/wifi-hotspot-station-events.ts",
+		symbol: "HotspotStationEvents (spawnWatcher iw event)",
+		command: "[iw, event]",
+		class: "watcher",
+		contract: {
+			timed: false,
+			startupTimeout: false,
+			shutdownCleanup: false,
+			shutdownAbort: true,
+			lifetimeTimeoutExempt: true,
+		},
+		status: "enforced",
+		mechanism:
+			"spawnWatcher runs iw event only while a hotspot is up; stopHotspotStationEvents aborts it at shutdown and when the last hotspot stops; restarts back off to one a minute",
+	},
+	{
 		id: "sensors.dmesgRk3588",
 		file: "modules/system/sensors.ts",
 		symbol: "initSensors (rk3588 dmesg -w)",
