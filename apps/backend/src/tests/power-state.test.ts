@@ -584,15 +584,18 @@ test("firmware snapshots match the status lines they were decoded from", async (
 	}
 });
 describe("a bank that does not come back from its rest", () => {
-	for (const [name, bank, peer, heat] of [
-		["rest-lost-a-gone", "A", "B", ""],
+	const wake = "press its button or replug it.";
+	for (const [name, bank, peer, heat, recovery] of [
+		["rest-lost-a-gone", "A", "B", "", wake],
 		[
+			// The checked-in firmware frame: rested for heat, still the hottest bank.
 			"rest-lost-a-silent",
 			"A",
 			"B",
 			"Bank A is hot. Improve airflow or swap it for a cool bank. ",
+			`let it cool, then ${wake}`,
 		],
-		["rest-lost-b-gone", "B", "A", ""],
+		["rest-lost-b-gone", "B", "A", "", wake],
 	] as const) {
 		test(`${name} names the bank, what to do and who powers the box`, async () => {
 			const state = await read(name);
@@ -601,7 +604,7 @@ describe("a bank that does not come back from its rest", () => {
 			);
 			expect(notice?.type).toBe("warning");
 			expect(notice?.message).toBe(
-				`${heat}Bank ${bank} stopped answering while it rested. It may have switched itself off: press its button or replug it. Bank ${peer} powers the box.`,
+				`${heat}Bank ${bank} stopped answering while it rested. It may have switched itself off: ${recovery} Bank ${peer} powers the box.`,
 			);
 			const ids = state.notices.map((n) => n.id);
 			// The specific words replace the generic ones, and a resting notice for the same bank.
@@ -620,11 +623,21 @@ describe("a bank that does not come back from its rest", () => {
 			["bank-a", "gap-sink"],
 		);
 	});
-	for (const [level, words] of [
-		["warm", "Bank A is warm. Give it more airflow. Bank A stopped"],
+	for (const [level, words, recovery] of [
+		[
+			"warm",
+			"Bank A is warm. Give it more airflow. Bank A stopped",
+			"switched itself off: press its button",
+		],
+		[
+			"hot",
+			"Bank A is hot. Improve airflow or swap it for a cool bank. Connect the replacement before removing the only bank. Bank A stopped",
+			"switched itself off: let it cool, then press its button",
+		],
 		[
 			"critical",
 			"Bank A is very hot. Improve airflow or swap it for a cool bank. Connect the replacement before removing the only bank. Bank A stopped",
+			"switched itself off: let it cool, then press its button",
 		],
 	] as const)
 		test(`a ${level} bank that stops answering keeps its heat advice first`, async () => {
@@ -640,6 +653,8 @@ describe("a bank that does not come back from its rest", () => {
 			);
 			expect(state.notices.map((n) => n.id)).toEqual(["bank-a"]);
 			expect(state.notices[0]?.message).toStartWith(words);
+			// A hot bank is never sent straight back into use.
+			expect(state.notices[0]?.message).toContain(recovery);
 		});
 	test("heat on the other bank stays its own notice", async () => {
 		const state = await changed(

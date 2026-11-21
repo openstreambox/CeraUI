@@ -64,7 +64,8 @@ rest (`gaps2` bits `a_rest_lost` and `b_rest_lost`), gets its own warning in
 place of that bank's resting notice: it may have switched itself off, so the
 user is asked to press its button or replug it, and the warning names the bank
 that powers the box when one does. If that bank is among the hottest, the same
-warning starts with its heat advice, so it cools before anyone wakes it. It also replaces the generic reduced
+warning starts with its heat advice, and at hot or very hot it asks to let
+the bank cool before pressing its button or replugging it. It also replaces the generic reduced
 protection and missing backup notices for that state, and clears once the
 supervisor reads the bank healthy again.
 
@@ -108,7 +109,8 @@ Si un banco deja de responder durante su reposo, desaparece o no vuelve
 después de reposar, CeraUI muestra un aviso propio para ese banco en lugar del
 aviso de reposo: puede que se haya apagado solo, así que pide presionar su botón
 o volver a conectarlo, y dice qué banco alimenta el equipo si hay uno. Si ese
-banco está caliente, el mismo aviso empieza con el consejo de calor. El aviso
+banco está caliente, el mismo aviso empieza con el consejo de calor y pide
+dejar que se enfríe antes de presionar su botón o volver a conectarlo. El aviso
 se retira cuando la placa vuelve a leer el banco como sano. Si falta `gaps` o
 `gaps2`, o no se pueden leer, la protección se considera desconocida y se
 muestra el aviso de protección reducida.

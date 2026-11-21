@@ -259,7 +259,14 @@ export async function readPowerState(
 					message:
 						[
 							...bankHeat(bank),
-							powerText("restLost", { bank: bank.toUpperCase() }),
+							// Hot or very hot: it cools before it is woken or replugged.
+							powerText(
+								(level === "hot" || level === "critical") &&
+									bankHeat(bank).length > 0
+									? "restLostHot"
+									: "restLost",
+								{ bank: bank.toUpperCase() },
+							),
 						].join(" ") +
 						(peerCarries
 							? ` ${powerText("peer", { bank: peer.toUpperCase() })}`
