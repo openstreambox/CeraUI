@@ -2,10 +2,10 @@
 
 On an image configured with `engine: none`, the first tab is Home. It follows
 client upload traffic through the box: Upload seen through the box,
-Box ready, or Checking whether a device is sending through the box. Upload seen
-means the box measured a steady upload from a client recently; it stays until
-uploads have been quiet for about 2 minutes, and a slow upload may not show at
-all. These are observations of the box only; they don't say which link carries
+Box ready, or Checking whether a device is sending through the box. The box
+checks for active input sessions and sustained incoming traffic from connected
+devices. A slow upload may go undetected. After the last detected activity, the
+indication stays on for about 2 minutes. These are observations of the box only; they don't say which link carries
 a stream or what happens off the box. Check the stream itself.
 
 Connect a device offers Moblin, IRL Pro, another SRT app, or Just internet.
@@ -60,9 +60,11 @@ through the box, it also says that stream drops.
 ## Inicio para una caja sin codificador
 
 En una imagen con `engine: none`, la primera pestaña es Inicio. Indica si la caja
-ha medido hace poco una subida constante de algún dispositivo (el aviso se
-mantiene hasta unos 2 minutos sin subidas, y una subida lenta puede no
-aparecer), si está preparada o si todavía lo está comprobando. Solo describe lo
+ha detectado actividad reciente de algún dispositivo, si está preparada o si
+todavía lo está comprobando. La caja comprueba si hay sesiones de entrada
+activas o tráfico entrante sostenido de los dispositivos conectados. Es posible
+que no detecte una subida lenta. El aviso permanece unos 2 minutos después de la
+última actividad detectada. Solo describe lo
 que observa la caja; comprueba la emisión directamente.
 
 La conexión ofrece Moblin, IRL Pro, otra aplicación SRT o solo internet. SRT usa
