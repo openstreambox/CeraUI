@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { run, runWithStdin } from "../../helpers/run.ts";
 import { shouldUseMocks } from "../../mocks/mock-service.ts";
 import { checkConnectivityViaDevice } from "../network/device-bound-probe.ts";
+import { sameNmProfileActivation } from "../network/network-manager-profile-instance.ts";
 import { createConnectivityTargetResolver } from "../network/uplink-health/connectivity-target.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
 import { holdPortalInterface } from "./captive-portal-health.ts";
@@ -15,9 +16,14 @@ import { createSignInWindow } from "./captive-portal-window.ts";
 import { getWifiInterfacesByMacAddress } from "./wifi-connections.ts";
 import {
 	captureHotspotSteeringFence,
+	defaultHotspotSteeringDeps,
 	type HotspotSteeringFence,
 } from "./wifi-hotspot-readiness.ts";
-import { canHotspot, hotspotApIfname } from "./wifi-hotspot-types.ts";
+import {
+	canHotspot,
+	type HotspotActivationInstance,
+	hotspotApIfname,
+} from "./wifi-hotspot-types.ts";
 import { wifiRadioIdentity } from "./wifi-radio-identity.ts";
 
 interface RouteConfig {
@@ -50,15 +56,19 @@ const capture = () =>
 	);
 
 /**
- * The AP the phone arrived through, pinned separately from the venue radio:
- * the exact hotspot row, its active AP profile, its netif incarnation and
- * kernel ifindex, and no later Start/Stop/reconfigure on that row. A Stop,
- * restart or a replacement under the same name never satisfies the pin.
+ * The AP the phone arrived through, pinned at entry and separately from the
+ * venue radio: the exact hotspot row and its operation ticket, its active AP
+ * profile, the NM activation (active connection path and profile instance),
+ * its netif incarnation and kernel ifindex. A Stop, restart, same-profile
+ * reactivation on the same netdev or a replacement under the same name never
+ * satisfies the pin.
  */
 interface ApPin {
 	readonly ifname: string;
 	readonly ifindex: number;
+	readonly uuid: string;
 	readonly fence: HotspotSteeringFence;
+	readonly witness: HotspotActivationInstance;
 }
 async function readIfindex(ifname: string): Promise<number | undefined> {
 	const links = JSON.parse(
@@ -74,14 +84,34 @@ async function readIfindex(ifname: string): Promise<number | undefined> {
 		? link.ifindex
 		: undefined;
 }
+/** NM's current activation of `uuid` on `ifname`; absent when not active there. */
+async function readApActivation(
+	ifname: string,
+	uuid: string,
+): Promise<HotspotActivationInstance | undefined> {
+	const activation = await defaultHotspotSteeringDeps.readActivation?.(
+		ifname,
+		uuid,
+	);
+	return activation?.activePath && activation.profile ? activation : undefined;
+}
+/** A fresh observation of the pinned AP: cached fence, kernel and NM activation. */
 async function apPinHolds(pin: ApPin): Promise<boolean> {
 	if (!pin.fence.owned()) return false;
 	const ifindex = await readIfindex(pin.ifname);
 	const lifetime = wifiRadioIdentity.state.rows.get(pin.ifname)?.lifetime;
+	if (
+		ifindex !== pin.ifindex ||
+		(lifetime !== undefined && lifetime.ifindex !== ifindex)
+	)
+		return false;
+	const activation = await readApActivation(pin.ifname, pin.uuid);
 	return (
-		ifindex === pin.ifindex &&
-		(lifetime === undefined || lifetime.ifindex === ifindex) &&
-		pin.fence.owned()
+		activation !== undefined &&
+		activation.activePath === pin.witness.activePath &&
+		sameNmProfileActivation(pin.witness.profile, activation.profile) &&
+		pin.fence.owned() &&
+		(await readIfindex(pin.ifname)) === pin.ifindex
 	);
 }
 /** The one hotspot row whose running AP is `ifname`, if exactly one is. */
@@ -97,14 +127,47 @@ function hotspotRowFor(ifname: unknown) {
 }
 async function captureApPin(ifname: unknown): Promise<ApPin | undefined> {
 	const row = hotspotRowFor(ifname);
-	if (typeof ifname !== "string" || !row?.hotspot.conn) return undefined;
-	const fence = captureHotspotSteeringFence(row, row.hotspot.conn);
-	if (fence.apIfname !== ifname || fence.incarnation === undefined)
+	const uuid = row?.hotspot.conn;
+	if (typeof ifname !== "string" || !row || !uuid) return undefined;
+	const fence = captureHotspotSteeringFence(row, uuid);
+	if (
+		fence.apIfname !== ifname ||
+		fence.incarnation === undefined ||
+		!fence.owned()
+	)
 		return undefined;
 	const ifindex = await readIfindex(ifname);
-	if (ifindex === undefined) return undefined;
-	const pin = { ifname, ifindex, fence };
+	const witness = await readApActivation(ifname, uuid);
+	if (ifindex === undefined || !witness) return undefined;
+	const pin = { ifname, ifindex, uuid, fence, witness };
 	return (await apPinHolds(pin)) ? pin : undefined;
+}
+/** The interface the kernel routes back to the phone through. */
+async function routeDev(peer: string): Promise<unknown> {
+	return JSON.parse(
+		await run("ip", ["-j", "-4", "route", "get", peer], {
+			timeout: 2000,
+			maxBuffer: 8192,
+		}),
+	)[0]?.dev;
+}
+/** Fresh observations of both ends; names the end that no longer holds. */
+async function changedEnd(pin: ApPin): Promise<"ap" | "station" | undefined> {
+	if (!(await apPinHolds(pin))) return "ap";
+	const expected = binding;
+	const now = await capture();
+	if (
+		!expected ||
+		!now.ok ||
+		JSON.stringify(now.binding) !== JSON.stringify(expected)
+	)
+		return "station";
+	return (await apPinHolds(pin)) ? undefined : "ap";
+}
+async function requireBothEnds(pin: ApPin): Promise<void> {
+	const changed = await changedEnd(pin);
+	if (changed === "ap") throw Error("not_on_box_wifi");
+	if (changed === "station") throw Error("wifi_changed");
 }
 const effect = async (action: "open" | "close" | "sweep") => {
 	if (!config && action !== "sweep") return;
@@ -148,6 +211,13 @@ export const signInWindow = createSignInWindow({
 			getUplinkHealthEngine().get(candidate.ifname)?.reason !== "captive_portal"
 		)
 			throw Error("not_captive");
+		// The arrival interface (proven by the front door, else the route back
+		// to the phone) says which AP. Its lifetime is pinned now, before any
+		// cleanup or capture, and only that pin is used from here on.
+		const arrival = await routeDev(peer);
+		if (via !== undefined && arrival !== via) throw Error("not_on_box_wifi");
+		const pin = await captureApPin(arrival);
+		if (!pin) throw Error("not_on_box_wifi");
 		try {
 			await reconcilePortalWindow();
 			await effect("sweep");
@@ -164,17 +234,9 @@ export const signInWindow = createSignInWindow({
 					: "identity_unavailable",
 			);
 		binding = captured.binding;
-		const route = JSON.parse(
-			await run("ip", ["-j", "-4", "route", "get", peer], {
-				timeout: 2000,
-				maxBuffer: 8192,
-			}),
-		)[0];
-		// The arrival interface (proven by the front door, else the route back
-		// to the phone) says which AP; the pin then fixes that AP's lifetime.
-		if (via !== undefined && route?.dev !== via) throw Error("not_on_box_wifi");
-		const pin = await captureApPin(route?.dev);
-		if (!pin) throw Error("not_on_box_wifi");
+		// Association evidence, bracketed by fresh observations of both ends.
+		await requireBothEnds(pin);
+		if ((await routeDev(peer)) !== pin.ifname) throw Error("not_on_box_wifi");
 		const neighbors = JSON.parse(
 			await run(
 				"ip",
@@ -207,7 +269,9 @@ export const signInWindow = createSignInWindow({
 			dns: binding.link.dnsServers[0] ?? binding.link.gateway,
 			seconds: 600,
 		};
-		if (!(await this.unchanged())) throw Error("wifi_changed");
+		// The installation is bracketed the same way: before the helper runs and
+		// after it returns. A failure here closes the installed window.
+		await requireBothEnds(pin);
 		const release = holdPortalInterface(config.wan);
 		let deadline = setTimeout(release, 720000);
 		releaseHealth = () => {
@@ -222,6 +286,7 @@ export const signInWindow = createSignInWindow({
 			clearTimeout(deadline);
 			deadline = setTimeout(release, 600000);
 		}
+		await requireBothEnds(pin);
 	},
 	async close() {
 		await effect(needsSweep ? "sweep" : "close");
@@ -235,14 +300,8 @@ export const signInWindow = createSignInWindow({
 	/** Both ends: the venue radio's exact identity and the phone's AP lifetime. */
 	async unchanged() {
 		const pin = apPin;
-		if (!pin || !(await apPinHolds(pin))) return false;
-		const now = await capture();
-		return (
-			now.ok &&
-			JSON.stringify(now.binding) === JSON.stringify(binding) &&
-			apPin === pin &&
-			(await apPinHolds(pin))
-		);
+		if (!pin) return false;
+		return (await changedEnd(pin)) === undefined && apPin === pin;
 	},
 	async check() {
 		const binding = closedBinding;
