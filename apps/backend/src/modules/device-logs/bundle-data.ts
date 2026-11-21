@@ -10,7 +10,7 @@ import { readUpdateChannel } from "../system/update-settings.ts";
 import { collectVersionContext } from "../system/version-context.ts";
 import { getAllHotspotCredentials } from "../wifi/hotspot-credentials.ts";
 import { listBoots } from "./boots.ts";
-import { type BundleDeviceState, collectBundleState } from "./bundle-state.ts";
+import { type BundleStateRecord, collectBundleState } from "./bundle-state.ts";
 import { getLogSettings, getLogState } from "./settings.ts";
 
 interface BundleData {
@@ -25,7 +25,8 @@ interface BundleData {
 		readonly hardwareKind: ReturnType<typeof getHardwareKindCached>;
 		readonly data: { readonly used: number; readonly total: number } | null;
 	};
-	readonly state: BundleDeviceState;
+	/** Null when the record could not be screened clean; the bundle then omits it. */
+	readonly state: BundleStateRecord | null;
 	readonly events: readonly DeviceEvent[];
 	readonly bootRecords: readonly EventBootRecord[];
 	readonly secrets: ReadonlyArray<{

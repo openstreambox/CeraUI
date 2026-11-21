@@ -9,11 +9,13 @@ import {
 } from "../modules/device-logs/bundle.ts";
 import * as data from "../modules/device-logs/bundle-data.ts";
 import {
+	BUNDLE_PACKAGES,
 	type BundleStateDeps,
 	collectBundleState,
 	parseBootAttempts,
 	parseInstalledPackages,
 	posixCksum,
+	screenState,
 	versionValue,
 } from "../modules/device-logs/bundle-state.ts";
 import { abortLogExports } from "../modules/device-logs/export.ts";
@@ -54,6 +56,12 @@ const HOSTILE = {
 	apnUser: "apn-user-secret",
 	apnPassword: "apn-pass-secret",
 	package: "ceralive-alice",
+	// The re-check's probe values: compact MACs behind a version prefix and
+	// identifiers split into short groups.
+	macVersion: "1.0+0a1b2c3d4e5f",
+	hashMacVersion: "1.0+g0a1b2c3d4e5f",
+	groupedImei: "35175605-1523999",
+	groupedIccid: "8901260.123456.789012",
 };
 
 function boot(
@@ -89,7 +97,7 @@ const RAUC_SLOTS = [
 		bootname: HOSTILE.serial,
 		state: HOSTILE.home,
 		bootStatus: HOSTILE.account,
-		version: HOSTILE.tailnet,
+		version: HOSTILE.groupedImei,
 		lastSyncedAt: null,
 	},
 	{
@@ -97,7 +105,7 @@ const RAUC_SLOTS = [
 		bootname: "B",
 		state: "inactive",
 		bootStatus: "bad",
-		version: HOSTILE.privateIp,
+		version: HOSTILE.groupedIccid,
 		lastSyncedAt: null,
 	},
 ];
@@ -112,13 +120,15 @@ const stanza = (
 	);
 const DPKG_STATUS = [
 	stanza("ceralive-device", "2026.11.3-1"),
-	stanza("cerastream", "1.9.0~rc1+deb13u2"),
+	stanza("cerastream", "2026.11.2"),
 	stanza("srtla", "2.0.0", "deinstall ok config-files"),
 	stanza(HOSTILE.package, "1.0"),
 	stanza(`linux-image-${HOSTILE.laptop}`, "7.2.0"),
 	stanza("modemmanager", "1.24.2.1"),
-	stanza("network-manager", `1.52.1-${HOSTILE.laptop}`),
+	stanza("network-manager", "1.52.1-1+deb13u1"),
 	stanza("rauc", HOSTILE.tailnet),
+	stanza("libqmi-glib5", HOSTILE.macVersion),
+	stanza("libmbim-glib4", HOSTILE.hashMacVersion),
 ].join("\n");
 
 const BOOT_STATE = `BOOT_ORDER=B A\nBOOT_A_LEFT=3\nBOOT_B_LEFT=1\nBOOT_CRC=2981376971\n`;
@@ -295,16 +305,17 @@ test("the state record exports closed vocabularies, labels and versions only", a
 				bootStatus: "good",
 				version: "2026.11.11201",
 			},
-			{ slot: null, state: "other", bootStatus: "other", version: "[value]" },
-			{ slot: "B", state: "inactive", bootStatus: "bad", version: "[value]" },
+			{ slot: null, state: "other", bootStatus: "other", version: null },
+			{ slot: "B", state: "inactive", bootStatus: "bad", version: null },
 		],
 		bootAttempts: { order: ["B", "A"], left: { A: 3, B: 1 } },
 		packages: [
-			{ name: "ceralive-device", version: "2026.11.3-1" },
-			{ name: "cerastream", version: "1.9.0~rc1+deb13u2" },
-			{ name: "modemmanager", version: "[value]" },
-			{ name: "network-manager", version: "[value]" },
-			{ name: "rauc", version: "[value]" },
+			{ name: "cerastream", version: "2026.11.2" },
+			{ name: "modemmanager", version: null },
+			{ name: "network-manager", version: "1.52.1-1+deb13u1" },
+			{ name: "rauc", version: null },
+			{ name: "libqmi-glib5", version: null },
+			{ name: "libmbim-glib4", version: null },
 		],
 		modems: [
 			{
@@ -384,41 +395,61 @@ test("the state record exports closed vocabularies, labels and versions only", a
 	expectNoHostile(JSON.stringify(state));
 });
 
-test("a value holding a held secret is replaced, never left to refuse the bundle", async () => {
+test("a value holding a held secret is dropped, never left to refuse the bundle", async () => {
 	const state = await collectBundleState(
 		{
 			...input,
 			secrets: [
-				{ kind: "password", value: "2026.11.3" },
+				{ kind: "password", value: "2026.11.2" },
 				{ kind: "pin", value: "3200" },
 			],
 		},
 		deps(),
 	);
-	expect(state.packages[0]).toEqual({
-		name: "ceralive-device",
-		version: "[value]",
-	});
-	expect(state.stream.bitrateKbps).toBeNull();
-	expect(state.stream.ceilingKbps).toBe(6_000);
+	expect(state?.packages[0]).toEqual({ name: "cerastream", version: null });
+	expect(state?.stream.bitrateKbps).toBeNull();
+	expect(state?.stream.ceilingKbps).toBe(6_000);
+});
+
+test("a held secret equal to one of the record's keys drops the whole record", async () => {
+	expect(
+		await collectBundleState(
+			{ ...input, secrets: [{ kind: "password", value: "uptimeSeconds" }] },
+			deps(),
+		),
+	).toBeNull();
+	expect(
+		screenState({ label: "cellular-1" }, [{ kind: "ssh", value: "label" }]),
+	).toBeNull();
+	expect(
+		screenState({ label: "cellular-1" }, [
+			{ kind: "ssh", value: "cellular-1" },
+		]),
+	).toEqual({ label: null });
 });
 
 test.each([
-	["2026.11.3-1", "2026.11.3-1"],
-	["1.24.2-1+deb13u1", "1.24.2-1+deb13u1"],
-	["1:2.10-12", "1:2.10-12"],
-	["2026.11.20T120000Z", "2026.11.20T120000Z"],
-	["0.21.0-1.g1a2b3c4", "0.21.0-1.g1a2b3c4"],
-	["1.24.2.1", "[value]"],
-	["10.0.0.1", "[value]"],
-	["2.0.0-alice", "[value]"],
-	["alice-node.example.ts.net", "[value]"],
-	["1.0+customeracct", "[value]"],
-	["15551234567", "[value]"],
-	["2.0.351756051523999", "[value]"],
-	["", null],
-])("version %p becomes %p", (raw, expected) => {
-	expect(versionValue(raw)).toBe(expected);
+	["cerastream", "2026.11.2", "2026.11.2"],
+	["srtla", "2.0.1-1", "2.0.1-1"],
+	["modemmanager", "1.24.2-1+deb13u1", "1.24.2-1+deb13u1"],
+	["modemmanager", "1.24.2-1ceralive1", "1.24.2-1ceralive1"],
+	["network-manager", "1.52.1-1", "1.52.1-1"],
+	["libqmi-glib5", "1.36.0-1~rc1", null],
+	["modemmanager", "1.24.2.1", null],
+	["srtla", "10.0.0.1", null],
+	["srtla", "2.0.0-alice", null],
+	["rauc", "alice-node.example.ts.net", null],
+	["rauc", "1.0+customeracct", null],
+	["rauc", "15551234567", null],
+	["libqmi-glib5", HOSTILE.macVersion, null],
+	["libmbim-glib4", HOSTILE.hashMacVersion, null],
+	["network-manager", HOSTILE.groupedImei, null],
+	["cerastream", HOSTILE.groupedIccid, null],
+	["cerastream", "", null],
+] as const)("%s version %p becomes %p", (name, raw, expected) => {
+	const shape = BUNDLE_PACKAGES[name];
+	if (!shape) throw new Error(`no shape for ${name}`);
+	expect(versionValue(raw, shape)).toBe(expected);
 });
 
 test("a finished boot whose ending cannot be read reports unknown, not a failure", async () => {
@@ -543,18 +574,21 @@ test.each([
 
 test("installed packages are the exact allowlisted names", () => {
 	expect(parseInstalledPackages(DPKG_STATUS).map((row) => row.name)).toEqual([
-		"ceralive-device",
 		"cerastream",
 		"modemmanager",
 		"network-manager",
 		"rauc",
+		"libqmi-glib5",
+		"libmbim-glib4",
 	]);
 });
 
-test("hostile device values never reach the downloaded bundle, and a four-part version cannot block it", async () => {
+async function downloadWith(
+	state: Awaited<ReturnType<typeof collectBundleState>>,
+	secrets: ReadonlyArray<{ kind: string; value: string }>,
+) {
 	const fixture = queryFixture();
 	fixture.scan.mockImplementation(journal([]));
-	const state = await collectBundleState(input, deps());
 	const collect = spyOn(data, "collectBundleData").mockResolvedValue({
 		exportedBy: {
 			bootId,
@@ -581,15 +615,10 @@ test("hostile device values never reach the downloaded bundle, and a four-part v
 		state,
 		events: [],
 		bootRecords: [],
-		secrets: [{ kind: "hotspot", value: HOSTILE.home }],
+		secrets: [...secrets],
 	});
 	try {
 		const manifest = await previewBundle();
-		expect(manifest.sections.find((row) => row.id === "settings")).toEqual({
-			id: "settings",
-			entries: 2,
-			redactions: 0,
-		});
 		const ticket = await createBundle({});
 		if (!ticket.ok) throw new Error(ticket.error);
 		const response = await handleLogBundleRequest(
@@ -599,13 +628,44 @@ test("hostile device values never reach the downloaded bundle, and a four-part v
 		const text = await new Response(
 			response.body?.pipeThrough(new DecompressionStream("gzip")),
 		).text();
-		expect(text).toContain('"section":"settings","state":{');
-		expect(text).toContain('"label":"cellular-1"');
-		expectNoHostile(text);
+		return {
+			settings: manifest.sections.find((row) => row.id === "settings"),
+			text,
+		};
 	} finally {
 		await abortLogBundles();
 		await abortLogExports();
 		collect.mockRestore();
 		fixture.restore();
 	}
+}
+
+test("hostile device values never reach the downloaded bundle, and a four-part version cannot block it", async () => {
+	const secrets = [{ kind: "hotspot", value: HOSTILE.home }];
+	const state = await collectBundleState({ ...input, secrets }, deps());
+	const { settings, text } = await downloadWith(state, secrets);
+	expect(settings).toEqual({ id: "settings", entries: 2, redactions: 0 });
+	expect(text).toContain('"section":"settings","device":{');
+	expect(text).toContain('"label":"cellular-1"');
+	expectNoHostile(text);
 });
+
+test.each([
+	["the uptime", "3724", 2],
+	["a key", "uptimeSeconds", 1],
+	["the old placeholder", "[value]", 2],
+	["the wrapper key", "device", 1],
+	["an interface label", "cellular-1", 2],
+])(
+	"a held secret equal to %s never refuses the bundle",
+	async (_name, value, settingsRecords) => {
+		const secrets = [{ kind: "password", value }];
+		const state = await collectBundleState({ ...input, secrets }, deps());
+		const { settings, text } = await downloadWith(state, secrets);
+		expect(settings?.entries).toBe(settingsRecords);
+		expect(text).not.toContain(value === "device" ? '"device":{' : value);
+		expect(text.trimEnd().split("\n").at(-1)).toBe(
+			'{"section":"end","complete":true}',
+		);
+	},
+);

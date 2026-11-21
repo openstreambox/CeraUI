@@ -25,7 +25,7 @@ NetworkManager profile is included. `readUpdateChannel()` reuses the update
 owner's validated readers without migrating or writing settings.
 
 `bundle-state.ts` builds the device state, written as a second `settings`
-record (`{"section":"settings","state":{…}}`) so the manifest keeps the section
+record (`{"section":"settings","device":{…}}`) so the manifest keeps the section
 list released viewers accept. It holds uptime, memory headroom from the cached
 device stats, how the running and previous journal boots ended (`current`, or
 the classifier's `clean`/`unclean`/`unknown` with its evidence codes and the
@@ -41,21 +41,27 @@ ceiling bitrate.
 
 Every string is a closed-vocabulary member (unknown members become `other`), an
 anonymous label or a version. No model, manufacturer, operator, interface,
-package or slot name text is copied. A version must start with a digit, split
-into numeric parts, known release tokens with digits (`deb13u1`, `rc1`), a
-`g`-prefixed or bare short commit hash or a `T…Z` timestamp; four dotted numbers
-or nine digits in a row are refused. A refused version becomes `[value]`. The
-boot state is used only when the image's helper would accept it: a non-empty
-order of A and B without repeats, both counters present and within the default
-budget of three, each key once, and a `BOOT_CRC` equal to POSIX `cksum` of the
-canonical payload when present; otherwise it is `null` (x86 keeps its state in
-the GRUB environment and reports `null`). Finally each value except boot ids is
-screened with the bundle's own redactor and the held secrets: a string that
-would be redacted becomes `[value]`, a number or boolean `null`, so the record
-cannot leak such a value or make preparation refuse. Each source is optional: a
-failed read leaves its field null or empty. Only a real device
-(`isRealDevice`, outside mock mode) runs `rauc` or reads the boot-state and
-dpkg files; a dev host or CI never does.
+package or slot name text is copied. Versions come only from an exact package
+list (`BUNDLE_PACKAGES`), each with its own shape (CalVer, small semver, or a
+Debian `x.y[.z][~rcN]-N[ceraliveN][+debNNuN]`), and from RAUC bundles as
+`20YY.M.NNNNN`; every group is short and the separators are fixed, so a MAC,
+IMEI, ICCID or phone number cannot pass even when split into groups. A version
+of another shape is dropped (`null`). The boot state is used only when the
+image's helper would accept it: a non-empty order of A and B without repeats,
+both counters present and within the default budget of three, each key once,
+and a `BOOT_CRC` equal to POSIX `cksum` of the canonical payload when present;
+otherwise it is `null` (x86 keeps its state in the GRUB environment and reports
+`null`; a device configured with a larger budget also reports `null`).
+
+`screenState` then checks every key and value except boot ids with the bundle's
+own redactor and the held secrets. A value it would act on becomes `null`
+(nulls are never inspected), and a key it would act on drops the whole record.
+`bundle-body.ts` runs the record through the final inspection before admitting
+it and leaves it out on a collision, so the optional record can neither leak
+such a value nor make preparation refuse. Each source is optional: a failed
+read leaves its field null or empty. Only a real device (`isRealDevice`,
+outside mock mode) runs `rauc` or reads the boot-state and dpkg files; a dev
+host or CI never does.
 
 Held config, relay, hotspot, APN and router credentials are inputs to redaction
 only. `getStoredModemCredentials()` returns copies of the username/password

@@ -30,12 +30,12 @@ import { buildRedactor } from "./redaction.ts";
  * The support bundle's device state record, written into the settings section.
  *
  * Every string is a member of a closed vocabulary, an anonymous label or a
- * version string with an explicit grammar; nothing free-form from a modem, the
- * OS or a package database is copied. Interfaces are labelled by kind and
- * ordinal, never by name. Before the record is returned each value is screened
- * with the bundle's own redactor: a value that would match a held secret or an
- * identifier pattern is replaced (`"[value]"`, or `null` for a number), so the
- * record can neither leak such a value nor make the bundle refuse to prepare.
+ * version with an exact per-source shape; nothing free-form from a modem, the
+ * OS or a package database is copied, and a version that does not match is
+ * dropped. Interfaces are labelled by kind and ordinal, never by name. Before
+ * the record is returned each value is screened with the bundle's own
+ * redactor and the held secrets (`screenState`): a value it would act on
+ * becomes `null`, and a key it would act on drops the whole record.
  */
 export interface BundleDeviceState {
 	readonly uptimeSeconds: number | null;
@@ -103,6 +103,17 @@ interface BundleInterface {
 
 type Secrets = Parameters<typeof buildRedactor>[0];
 
+/** A record after screening: any leaf except a boot id may have become null. */
+export type Screened<T> = T extends string | number | boolean
+	? T | null
+	: T extends readonly (infer U)[]
+		? readonly Screened<U>[]
+		: T extends object
+			? { readonly [K in keyof T]: K extends "bootId" ? T[K] : Screened<T[K]> }
+			: T;
+
+export type BundleStateRecord = Screened<BundleDeviceState>;
+
 export interface BundleStateDeps {
 	/** Only a real device reads RAUC and the device files; dev hosts and CI never do. */
 	readonly device: () => Promise<boolean>;
@@ -124,21 +135,29 @@ export const defaultBundleStateDeps: BundleStateDeps = {
 	classify: classifyFinishedBoot,
 };
 
-/** Exact package names whose installed versions support asks for. */
-export const BUNDLE_PACKAGES: readonly string[] = [
-	"ceralive-device",
-	"cerastream",
-	"srtla",
-	"modemmanager",
-	"network-manager",
-	"rauc",
-	"libqmi-glib5",
-	"libmbim-glib4",
-];
+// Strict per-source version shapes. Every group is short and the separators are
+// fixed, so a MAC, IMEI, ICCID or phone number cannot pass, grouped or not. A
+// version that does not match is dropped (null), never copied.
+const CALVER = /^20\d{2}\.\d{1,2}\.\d{1,3}(?:-\d{1,2})?$/;
+const SEMVER = /^\d{1,2}\.\d{1,2}\.\d{1,3}(?:-\d{1,2})?$/;
+const DEBIAN =
+	/^\d{1,2}\.\d{1,3}(?:\.\d{1,3})?(?:~rc\d)?-\d{1,2}(?:ceralive\d{1,2})?(?:\+deb\d{2}u\d{1,2})?$/;
+/** The image version a RAUC bundle carries (`2026.11.11201`). */
+const IMAGE_VERSION = /^20\d{2}\.\d{1,2}\.\d{1,5}$/;
+
+/** Exact package names whose installed versions support asks for, each with its shape. */
+export const BUNDLE_PACKAGES: Readonly<Record<string, RegExp>> = {
+	cerastream: CALVER,
+	srtla: SEMVER,
+	modemmanager: DEBIAN,
+	"network-manager": DEBIAN,
+	rauc: DEBIAN,
+	"libqmi-glib5": DEBIAN,
+	"libmbim-glib4": DEBIAN,
+};
 const MAX_MODEMS = 16;
 const MAX_INTERFACES = 32;
 const OTHER = "other";
-const UNKNOWN = "[value]";
 
 /** The shutdown classifier's evidence codes, plus this collector's own. */
 const EVIDENCE = new Set([
@@ -169,22 +188,9 @@ function member(set: ReadonlySet<string>, value: unknown): string | null {
 	return set.has(value) ? value : OTHER;
 }
 
-// One version component: digits, a known release token with digits, a
-// timestamp, or a short commit hash. Words such as host or person names fail.
-const VERSION_PART =
-	/^(?:\d+|\d*(?:(?:deb|ubuntu|rc|alpha|beta|pre|git|dfsg|ceralive|build|u|b|p)\d+)+|g[0-9a-f]{4,40}|\d{1,8}T\d{4,6}Z|(?=[0-9a-f]*\d)[0-9a-f]{7,40})$/;
-
-/** A version string, or `"[value]"` when it does not follow the version grammar. */
-export function versionValue(value: unknown): string | null {
-	if (typeof value !== "string" || value === "") return null;
-	if (value.length > 64 || !/^\d/.test(value)) return UNKNOWN;
-	const parts = value.split(/[.+~:-]/);
-	if (!parts.every((part) => VERSION_PART.test(part))) return UNKNOWN;
-	// Four dotted numbers read as an address to people and to the redactor alike.
-	if (/(?:^|[^.\d])\d+(?:\.\d+){3}/.test(value)) return UNKNOWN;
-	// No version part needs nine digits in a row; phone numbers and IMEIs do.
-	if (/\d{9}/.test(value)) return UNKNOWN;
-	return value;
+/** The version if it has exactly the given shape, else null. */
+export function versionValue(value: unknown, shape: RegExp): string | null {
+	return typeof value === "string" && shape.test(value) ? value : null;
 }
 
 function count(value: unknown, max: number): number | null {
@@ -287,14 +293,11 @@ export function parseInstalledPackages(
 				fields.set(match[1], match[2].trim());
 		}
 		const name = fields.get("Package");
-		if (
-			name &&
-			BUNDLE_PACKAGES.includes(name) &&
-			fields.get("Status") === "install ok installed"
-		)
-			found.set(name, versionValue(fields.get("Version")));
+		const shape = name ? BUNDLE_PACKAGES[name] : undefined;
+		if (name && shape && fields.get("Status") === "install ok installed")
+			found.set(name, versionValue(fields.get("Version"), shape));
 	}
-	return BUNDLE_PACKAGES.flatMap((name) =>
+	return Object.keys(BUNDLE_PACKAGES).flatMap((name) =>
 		found.has(name) ? [{ name, version: found.get(name) ?? null }] : [],
 	);
 }
@@ -307,7 +310,7 @@ function slot(status: RootSlotStatus): BundleSlot {
 				: null,
 		state: member(SLOT_STATE, status.state) ?? OTHER,
 		bootStatus: member(SLOT_BOOT_STATUS, status.bootStatus),
-		version: versionValue(status.version),
+		version: versionValue(status.version, IMAGE_VERSION),
 	};
 }
 
@@ -416,20 +419,21 @@ async function bootEndings(
 }
 
 /**
- * Replace every value the bundle's redactor would act on: a held secret or an
- * identifier pattern inside a string becomes `"[value]"`, a number or boolean
- * whose digits hold a secret becomes `null`. Boot ids keep the bundle's own
- * boot-field handling and are left alone.
+ * Drop every value the bundle's redactor would act on: a string that holds a
+ * held secret or an identifier pattern, or a number or boolean whose digits
+ * hold a secret, becomes `null` (a null is never inspected). Boot ids keep the
+ * bundle's own boot-field handling. A key the redactor would act on cannot be
+ * renamed, so it drops the whole record (`null`); the bundle then leaves the
+ * record out rather than refuse.
  */
-function screen<T>(value: T, secrets: Secrets): T {
-	let redactor: ReturnType<typeof buildRedactor> | null;
+export function screenState<T>(value: T, secrets: Secrets): Screened<T> | null {
+	let redactor: ReturnType<typeof buildRedactor>;
 	try {
 		redactor = buildRedactor(secrets);
 	} catch {
-		redactor = null;
+		return null;
 	}
 	const clean = (text: string) => {
-		if (redactor === null) return false;
 		try {
 			redactor.structured(text);
 			return redactor.text(text).redactions === 0;
@@ -437,19 +441,24 @@ function screen<T>(value: T, secrets: Secrets): T {
 			return false;
 		}
 	};
+	let keysClean = true;
 	const visit = (node: unknown, key?: string): unknown => {
 		if (key === "bootId") return node;
-		if (typeof node === "string") return clean(node) ? node : UNKNOWN;
+		if (typeof node === "string") return clean(node) ? node : null;
 		if (typeof node === "number" || typeof node === "boolean")
 			return clean(String(node)) ? node : null;
 		if (Array.isArray(node)) return node.map((item) => visit(item));
 		if (node && typeof node === "object")
 			return Object.fromEntries(
-				Object.entries(node).map(([name, inner]) => [name, visit(inner, name)]),
+				Object.entries(node).map(([name, inner]) => {
+					if (!clean(name)) keysClean = false;
+					return [name, visit(inner, name)];
+				}),
 			);
 		return node;
 	};
-	return visit(value) as T;
+	const screened = visit(value) as Screened<T>;
+	return keysClean ? screened : null;
 }
 
 /**
@@ -469,7 +478,7 @@ export async function collectBundleState(
 		readonly secrets: Secrets;
 	},
 	overrides: Partial<BundleStateDeps> = {},
-): Promise<BundleDeviceState> {
+): Promise<BundleStateRecord | null> {
 	const deps = { ...defaultBundleStateDeps, ...overrides };
 	const device = await optional(deps.device, false);
 	const stats = getDeviceStatsSnapshot();
@@ -503,7 +512,7 @@ export async function collectBundleState(
 				)
 			: [],
 	]);
-	return screen(
+	return screenState(
 		{
 			uptimeSeconds: count(deps.uptimeSeconds(), 10 * 365 * 24 * 3600),
 			memory:
