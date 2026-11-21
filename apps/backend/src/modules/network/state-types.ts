@@ -37,5 +37,6 @@ export interface IMonitorEmitter {
 	on(event: "monitor-event", cb: (e: MonitorEvent) => void): void;
 	off(event: "monitor-event", cb: (e: MonitorEvent) => void): void;
 	start(): void;
-	stop(): void;
+	/** May resolve later: the real monitor waits for its child to exit. */
+	stop(): void | Promise<void>;
 }

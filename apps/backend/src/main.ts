@@ -26,6 +26,7 @@ import pkg from "../package.json" with { type: "json" };
 import {
 	backendSingletonApplies,
 	enforceBackendSingleton,
+	releaseBackendSingleton,
 } from "./helpers/backend-singleton.ts";
 import {
 	APP_NAME,
@@ -66,7 +67,10 @@ import { runAddonReconciler } from "./modules/addons/reconciler.ts";
 import { initBluetooth } from "./modules/bluetooth/bluetooth-runtime.ts";
 import { initCellularStack } from "./modules/cellular/cellular-stack.ts";
 import { startModemShadowIfEnabled } from "./modules/cellular/shadow.ts";
-import { initUdevProvisionalMonitor } from "./modules/cellular/udev-monitor.ts";
+import {
+	initUdevProvisionalMonitor,
+	stopUdevProvisionalMonitor,
+} from "./modules/cellular/udev-monitor.ts";
 import { getConfig, isRuntimeConfigAvailable } from "./modules/config.ts";
 import {
 	awaitRuntimeConfig,
@@ -763,6 +767,12 @@ function stopRecoveryRetries(): void {
 	stopMutationRecovery();
 	stopLegacyTokenMigration();
 }
+// The shared nmcli monitor (Wi-Fi and modems subscribe to this one instance)
+// and the udevadm monitor. Each gets SIGTERM and a bounded wait; KillMode=mixed
+// would otherwise SIGKILL them once the backend exits.
+async function stopMonitors(): Promise<void> {
+	await Promise.all([networkMonitor.stop(), stopUdevProvisionalMonitor()]);
+}
 process.on("SIGTERM", () =>
 	handleTerminationSignal("SIGTERM", {
 		stopRecoveryRetries,
@@ -782,6 +792,8 @@ process.on("SIGTERM", () =>
 		stopDmesgWatchers,
 		stopUplinkShaper,
 		stopGatewayRoutes,
+		stopMonitors,
+		releaseGuardians: releaseBackendSingleton,
 		exit: process.exit,
 	}),
 );
@@ -804,6 +816,8 @@ process.on("SIGINT", () =>
 		stopDmesgWatchers,
 		stopUplinkShaper,
 		stopGatewayRoutes,
+		stopMonitors,
+		releaseGuardians: releaseBackendSingleton,
 		exit: process.exit,
 	}),
 );

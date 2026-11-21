@@ -82,6 +82,30 @@ acquisition/release on a private bus, ordinary exit and SIGKILL, owner interleav
 failed acquisition, failed idle cleanup and launch refusal. Device continuity
 still needs separate qualification.
 
+## Stopping the service: helper children
+
+`ceralive.service` uses `KillMode=mixed`: systemd sends SIGTERM to the backend
+only and SIGKILLs whatever is left in the cgroup once it exits. The SIGTERM
+path therefore stops the backend's long-lived helpers itself:
+
+- At the signal, a process-wide shutdown flag is set before anything else.
+  The `nmcli monitor` and `udevadm monitor` supervisors check it: neither starts
+  nor respawns a child once shutdown began.
+- Both monitors get SIGTERM and up to one second each to exit, in parallel
+  with the streaming teardown. Nothing here sends SIGKILL; a child that ignores
+  SIGTERM is left to the unit's stop timeout and KillMode.
+- Work done under an OS stage or update flock guardian is registered as
+  guarded work. Before exiting, the backend waits up to ten seconds for it to
+  finish and release its guardian normally, so the guardian is not dropped by
+  the backend's pipe closing in the middle of it.
+- The backend singleton guardian (`flock` on the backend lock) is released last,
+  with an explicit release and a two-second bound, after teardown and guarded
+  work. Until then it still keeps a restarted backend from writing beside this
+  one.
+
+In the worst case this adds about 12 seconds to the streaming teardown, well
+inside systemd's default 90-second stop timeout. Tests: `apps/backend/src/tests/sigterm-child-shutdown.test.ts`.
+
 ## Reproduce the real-systemd contract
 
 `scripts/ci/test-real-logind.sh` takes `CERALIVE_LOGIND_TEST_CONTAINER` naming an

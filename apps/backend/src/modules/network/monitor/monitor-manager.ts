@@ -41,6 +41,10 @@
 
 import { logger } from "../../../helpers/logger.ts";
 import { retryWithBackoff } from "../../../helpers/retry.ts";
+import {
+	isShutdownStarted,
+	terminateChild,
+} from "../../../helpers/shutdown-state.ts";
 import type { IMonitorEmitter, MonitorEvent } from "../state-types.ts";
 import { MockMonitorEmitter, shouldUseMockMonitor } from "./mock-monitor.ts";
 
@@ -174,20 +178,26 @@ export class NmcliMonitorManager implements IMonitorEmitter {
 
 	start(): void {
 		if (this.running) return;
+		// A monitor started after SIGTERM would only be SIGKILLed at exit.
+		if (isShutdownStarted()) return;
 		this.running = true;
 		void this.supervise();
 	}
 
-	stop(): void {
+	/**
+	 * Stop supervising and send the child SIGTERM. The returned promise
+	 * resolves once the child exited or the bounded grace elapsed; whatever is
+	 * still running then is left to the unit's KillMode, never SIGKILLed here.
+	 */
+	async stop(): Promise<void> {
 		this.running = false;
 		const proc = this.proc;
 		this.proc = null;
-		if (proc) {
-			try {
-				proc.kill();
-			} catch (err) {
-				logger.debug(`nmcli monitor kill failed: ${String(err)}`);
-			}
+		if (!proc) return;
+		try {
+			await terminateChild(proc);
+		} catch (err) {
+			logger.debug(`nmcli monitor kill failed: ${String(err)}`);
 		}
 	}
 
@@ -218,7 +228,7 @@ export class NmcliMonitorManager implements IMonitorEmitter {
 					// `retryWithBackoff` re-invokes us after the backoff sleep before
 					// re-checking `shouldRetry`; bail cleanly if stopped meanwhile so a
 					// `stop()` during backoff never causes one extra spawn.
-					if (!this.running) return;
+					if (!this.running || isShutdownStarted()) return;
 					if (attempt > 0) {
 						// Restart: close the no-replay gap by re-polling state.
 						this.onResync();
@@ -232,11 +242,11 @@ export class NmcliMonitorManager implements IMonitorEmitter {
 				},
 				{
 					...RESTART_BACKOFF,
-					shouldRetry: () => this.running,
+					shouldRetry: () => this.running && !isShutdownStarted(),
 				},
 			);
 		} catch (err) {
-			if (this.running) {
+			if (this.running && !isShutdownStarted()) {
 				logger.error(`nmcli monitor supervisor terminated: ${String(err)}`);
 			}
 		}

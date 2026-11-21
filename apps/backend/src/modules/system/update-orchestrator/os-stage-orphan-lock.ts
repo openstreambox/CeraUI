@@ -1,4 +1,5 @@
 import type { Subprocess } from "bun";
+import { holdGuardedWork } from "../../../helpers/shutdown-state.ts";
 import { superviseWorker } from "../../../helpers/spawn-policy.ts";
 import { SOFTWARE_UPDATE_LOCK } from "./lock.ts";
 import { OsStageError, type OsStageFailureReason } from "./os-stage-error.ts";
@@ -65,15 +66,24 @@ export async function acquireOsOrphanLock(
 	}
 	const locked = child;
 	if (!locked) throw new OsStageError("rauc_recovery_unproven");
+	// The work done under this lock is guarded: a SIGTERM that arrives while it
+	// runs waits for the holder to release before the backend exits, so the
+	// guardian is not dropped (by our pipe closing) in the middle of it.
+	const finished = holdGuardedWork();
+	void locked.exited.then(finished, finished);
 	return {
 		pid: String(locked.pid),
 		held: () => locked.exitCode === null && locked.signalCode === null,
 		async [Symbol.asyncDispose]() {
-			locked.stdin.write("release\n");
-			await locked.stdin.end();
-			await new Response(locked.stderr).text();
-			if ((await locked.exited) !== 0)
-				throw new OsStageError("rauc_recovery_unproven");
+			try {
+				locked.stdin.write("release\n");
+				await locked.stdin.end();
+				await new Response(locked.stderr).text();
+				if ((await locked.exited) !== 0)
+					throw new OsStageError("rauc_recovery_unproven");
+			} finally {
+				finished();
+			}
 		},
 	};
 }
