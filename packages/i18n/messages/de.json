@@ -3562,7 +3562,7 @@
 	"live.phone.copyFailed": "Kopieren nicht möglich. Markiere den Wert oben und kopiere ihn.",
 	"live.phone.try": "Ausprobieren",
 	"live.phone.tryBody": "Geh in Moblin live, privat, wenn deine Plattform das erlaubt. Sobald die Box einen anhaltenden Upload erkennt, zeigt die Übersicht „Upload über die Box erkannt“. Nach 30 Sekunden nichts? Prüfe, ob das sendende Gerät im WLAN der Box ist, Streamer in Moblink eingeschaltet ist und das Passwort stimmt.",
-	"live.phone.internetTry": "Streame wie gewohnt. Die Box gibt deinem Gerät Internet über ihre beste Verbindung und wechselt, wenn diese ausfällt. Sobald die Box einen anhaltenden Upload erkennt, zeigt die Übersicht „Upload über die Box erkannt“. Ein langsamer Upload wird eventuell nicht erkannt.",
+	"live.phone.internetTry": "Streame wie gewohnt. Die Box leitet jede neue Internetverbindung über eine verfügbare Verbindung. Erkennt sie einen anhaltenden Upload, steht in der Übersicht „Upload über die Box erkannt“. Einen langsamen Upload erkennt sie möglicherweise nicht.",
 	"live.phone.check": "Verbindungseinrichtung prüfen",
 	"live.phone.links": "Verbindungen",
 	"live.phone.internetOk": "Internet funktioniert",

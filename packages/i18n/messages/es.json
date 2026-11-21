@@ -3525,7 +3525,7 @@
 	"live.phone.copyFailed": "No se pudo copiar. Selecciona y copia el valor de arriba.",
 	"live.phone.try": "Pruébalo",
 	"live.phone.tryBody": "Sal en vivo en Moblin, en privado si tu plataforma lo permite. Cuando la caja detecte una subida constante, Inicio dirá \"Subida detectada a través de la caja\". ¿Nada después de 30 segundos? Comprueba que el dispositivo que envía esté en el Wi-Fi de la caja, que Streamer esté activado en Moblink y que la contraseña coincida.",
-	"live.phone.internetTry": "Emite como siempre. La caja da internet a tu dispositivo por el mejor enlace disponible y cambia si ese enlace falla. Cuando la caja detecte una subida constante, Inicio dirá \"Subida detectada a través de la caja\". Una subida lenta puede no detectarse.",
+	"live.phone.internetTry": "Transmite como siempre. La caja dirige cada nueva conexión a internet por un enlace disponible. Si detecta una subida constante, Inicio muestra «Subida detectada a través de la caja». Puede que no detecte una subida lenta.",
 	"live.phone.check": "Revisa la configuración de conexión",
 	"live.phone.links": "Enlaces",
 	"live.phone.internetOk": "Internet funciona",

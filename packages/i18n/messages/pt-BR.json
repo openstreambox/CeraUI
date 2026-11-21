@@ -3525,7 +3525,7 @@
 	"live.phone.copyFailed": "Não foi possível copiar. Selecione e copie o valor acima.",
 	"live.phone.try": "Teste",
 	"live.phone.tryBody": "Entre ao vivo no Moblin, de forma privada se a sua plataforma permitir. Assim que a caixa detectar um envio constante, Início mostra \"Envio detectado pela caixa\". Nada depois de 30 segundos? Confira se o dispositivo que envia está no Wi-Fi da caixa, se o Streamer do Moblink está ligado e se a senha confere.",
-	"live.phone.internetTry": "Transmita como sempre. A caixa dá internet ao seu dispositivo pelo melhor link dela e troca se esse link falhar. Assim que a caixa detectar um envio constante, Início mostra \"Envio detectado pela caixa\". Um envio lento pode não ser detectado.",
+	"live.phone.internetTry": "Transmita como de costume. A caixa encaminha cada nova conexão de internet por um link disponível. Se detectar um envio constante, a tela Início mostra “Envio detectado pela caixa”. Envios lentos podem passar despercebidos.",
 	"live.phone.check": "Conferir a configuração de conexão",
 	"live.phone.links": "Links",
 	"live.phone.internetOk": "Internet funcionando",
