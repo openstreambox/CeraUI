@@ -83,6 +83,20 @@ export interface EffectRecord {
 	state: "intent" | "applied" | "undone";
 }
 
+/**
+ * What a confirmation must match, bound at apply. Hashes only: the code itself
+ * stays in the requesting browser.
+ */
+export interface ChallengeRecord {
+	/** SHA-256 (hex) of the one-time code the page minted for this change. */
+	codeHash: string;
+	/** SHA-256 (hex) of the requester's auth token: the browser login. */
+	tokenHash: string;
+	/** `Origin` and `Host` of the requester's WebSocket upgrade: the UI address. */
+	origin: string;
+	host: string;
+}
+
 export interface TxRecord {
 	id: string;
 	bootId: string;
@@ -91,16 +105,32 @@ export interface TxRecord {
 	path: ChangePath;
 	creator: string;
 	devices: string[];
+	/** Wall time (ms since the epoch), for display and older records. */
 	startedAt: number;
 	appliedAt?: number;
 	expiresAt?: number;
+	/**
+	 * The same instants on the boot clock (ms since boot, CLOCK_BOOTTIME).
+	 * Comparable across backend restarts within `bootId`, and immune to the
+	 * wall clock stepping when NTP syncs after an uplink change.
+	 */
+	startedClock?: number;
+	appliedClock?: number;
+	expiresClock?: number;
 	checkpoint?: string;
 	/** The unique bus name of the NetworkManager instance that made it. */
 	checkpointOwner?: string;
 	/** The checkpoint's `Created` stamp. */
 	checkpointCreated?: string;
-	/** keep-if-reachable: the requester's transport the box tests. */
-	reachability?: { kind: "tailnet-peer"; peer: string };
+	/** The D-Bus instance id (org.freedesktop.DBus.GetId) the owner name is on. */
+	checkpointBus?: string;
+	/** Absent: nobody can confirm (a session without a browser login). */
+	challenge?: ChallengeRecord;
+	/**
+	 * Set by the confirmation: the confirming socket's front-door interface,
+	 * or null for a remote connection. Shown once the commit finishes.
+	 */
+	confirmedVia?: string | null;
 	plan: NetworkChangePlan;
 	profiles: ProfileRecord[];
 	effects: EffectRecord[];
@@ -125,10 +155,20 @@ export interface NoticeRecord {
 	plan: NetworkChangePlan;
 }
 
+/** The last confirmed change and where the confirmation came from. */
+export interface ConfirmedRecord {
+	id: string;
+	/** The confirming socket's front-door interface; null: a remote connection. */
+	via: string | null;
+	at: number;
+}
+
 export interface Journal {
 	version: 1;
 	tx: TxRecord | null;
 	notice: NoticeRecord | null;
+	/** Kept until the next change starts. */
+	confirmed?: ConfirmedRecord | null;
 }
 
 export interface JournalStore {
@@ -148,33 +188,45 @@ export function emptyJournal(): Journal {
 }
 
 const TX_STATES = ["applying", "pending", "confirming", "kept", "rolling-back"];
-const MODES = ["undo-automatically", "keep-if-reachable", "keep-change"];
+const MODES = ["undo-automatically", "keep-change"];
 const PATHS = ["own", "other", "unknown"];
-const REASONS = [
-	"disconnected",
-	"unreachable",
-	"restart",
-	"interrupted",
-	"unsaved",
-];
+const REASONS = ["disconnected", "restart", "interrupted", "unsaved"];
+const HEX64 = /^[0-9a-f]{64}$/;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
 	!!v && typeof v === "object" && !Array.isArray(v);
 const isStrings = (v: unknown) =>
 	Array.isArray(v) && v.every((item) => typeof item === "string");
+const isTime = (v: unknown) =>
+	typeof v === "number" && Number.isFinite(v) && v >= 0;
+/** An optional field is absent, or present with the right shape. */
+const optional = (v: unknown, valid: (value: unknown) => boolean) =>
+	v === undefined || valid(v);
+const isString = (v: unknown) => typeof v === "string";
+const isShortString = (v: unknown) =>
+	typeof v === "string" && v.length > 0 && v.length <= 512;
 
 function validPlan(plan: unknown): boolean {
 	return (
 		isObject(plan) &&
 		isObject(plan.summary) &&
 		typeof plan.summary.key === "string" &&
+		optional(
+			plan.summary.params,
+			(params) => isObject(params) && Object.values(params).every(isString),
+		) &&
 		isStrings(plan.devices) &&
 		Array.isArray(plan.profiles) &&
 		plan.profiles.every(
 			(edit) =>
 				isObject(edit) &&
 				typeof edit.uuid === "string" &&
-				Array.isArray(edit.set),
+				Array.isArray(edit.set) &&
+				edit.set.every(
+					(pair) => Array.isArray(pair) && pair.length === 2 && isStrings(pair),
+				) &&
+				optional(edit.activateOn, isString) &&
+				optional(edit.autoconnect, (v) => typeof v === "boolean"),
 		) &&
 		Array.isArray(plan.effects) &&
 		plan.effects.every(
@@ -186,38 +238,91 @@ function validPlan(plan: unknown): boolean {
 	);
 }
 
+function validChallenge(challenge: unknown): boolean {
+	return (
+		isObject(challenge) &&
+		HEX64.test(String(challenge.codeHash)) &&
+		HEX64.test(String(challenge.tokenHash)) &&
+		isShortString(challenge.origin) &&
+		isShortString(challenge.host)
+	);
+}
+
 /**
- * The fields every code path relies on. Optional fields added later are not
- * required, so records written by earlier builds still read.
+ * The fields every code path relies on, and every optional field that is
+ * present. Optional fields added later may be missing, so records written by
+ * earlier builds still read (a record without a checkpoint identity is
+ * readable, and the owner never sends it a checkpoint call). Fields a state
+ * needs are required for that state: a pending change has a deadline.
  */
 function validTx(tx: unknown): boolean {
-	return (
-		isObject(tx) &&
-		typeof tx.id === "string" &&
-		typeof tx.bootId === "string" &&
-		TX_STATES.includes(tx.state as string) &&
-		MODES.includes(tx.mode as string) &&
-		PATHS.includes(tx.path as string) &&
-		typeof tx.creator === "string" &&
-		isStrings(tx.devices) &&
-		typeof tx.startedAt === "number" &&
-		validPlan(tx.plan) &&
-		Array.isArray(tx.profiles) &&
-		tx.profiles.every(
-			(p) =>
-				isObject(p) &&
-				typeof p.original === "string" &&
-				typeof p.originalId === "string" &&
-				typeof p.originalAutoconnect === "boolean",
-		) &&
-		Array.isArray(tx.effects) &&
-		tx.effects.every(
-			(e) =>
-				isObject(e) &&
-				typeof e.kind === "string" &&
-				["intent", "applied", "undone"].includes(e.state as string),
+	if (
+		!(
+			isObject(tx) &&
+			typeof tx.id === "string" &&
+			typeof tx.bootId === "string" &&
+			TX_STATES.includes(tx.state as string) &&
+			MODES.includes(tx.mode as string) &&
+			PATHS.includes(tx.path as string) &&
+			typeof tx.creator === "string" &&
+			isStrings(tx.devices) &&
+			isTime(tx.startedAt) &&
+			validPlan(tx.plan) &&
+			Array.isArray(tx.profiles) &&
+			tx.profiles.every(
+				(p) =>
+					isObject(p) &&
+					typeof p.original === "string" &&
+					typeof p.originalId === "string" &&
+					typeof p.originalAutoconnect === "boolean" &&
+					optional(p.commitAutoconnect, (v) => typeof v === "boolean") &&
+					optional(p.candidate, isString) &&
+					optional(p.wasActiveOn, isString) &&
+					optional(p.promoted, (v) => typeof v === "boolean") &&
+					optional(p.backupId, isString),
+			) &&
+			Array.isArray(tx.effects) &&
+			tx.effects.every(
+				(e) =>
+					isObject(e) &&
+					typeof e.kind === "string" &&
+					"undo" in e &&
+					["intent", "applied", "undone"].includes(e.state as string),
+			)
 		)
-	);
+	)
+		return false;
+	const timesOk = [
+		tx.appliedAt,
+		tx.expiresAt,
+		tx.startedClock,
+		tx.appliedClock,
+		tx.expiresClock,
+		tx.nextAttemptAt,
+	].every((v) => optional(v, isTime));
+	const stringsOk = [
+		tx.checkpoint,
+		tx.checkpointOwner,
+		tx.checkpointCreated,
+		tx.checkpointBus,
+	].every((v) => optional(v, isString));
+	const restOk =
+		optional(tx.challenge, validChallenge) &&
+		optional(tx.confirmedVia, (v) => v === null || isShortString(v)) &&
+		optional(tx.settled, (v) => typeof v === "boolean") &&
+		optional(
+			tx.undoReason,
+			(v) => v === "failed" || REASONS.includes(v as string),
+		) &&
+		optional(tx.errors, isStrings) &&
+		optional(
+			tx.undoAttempts,
+			(v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0,
+		);
+	// A pending change is bounded: it has an apply time and a deadline.
+	const stateOk =
+		tx.state !== "pending" || (isTime(tx.appliedAt) && isTime(tx.expiresAt));
+	return timesOk && stringsOk && restOk && stateOk;
 }
 
 function validNotice(notice: unknown): boolean {
@@ -225,8 +330,18 @@ function validNotice(notice: unknown): boolean {
 		isObject(notice) &&
 		typeof notice.id === "string" &&
 		REASONS.includes(notice.reason as string) &&
-		typeof notice.createdAt === "number" &&
+		isTime(notice.createdAt) &&
 		validPlan(notice.plan)
+	);
+}
+
+function validConfirmed(confirmed: unknown): boolean {
+	return (
+		confirmed === null ||
+		(isObject(confirmed) &&
+			typeof confirmed.id === "string" &&
+			(confirmed.via === null || isShortString(confirmed.via)) &&
+			isTime(confirmed.at))
 	);
 }
 
@@ -237,7 +352,8 @@ function parseJournal(json: unknown): Journal {
 		!("tx" in json) ||
 		!("notice" in json) ||
 		(json.tx !== null && !validTx(json.tx)) ||
-		(json.notice !== null && !validNotice(json.notice))
+		(json.notice !== null && !validNotice(json.notice)) ||
+		!optional(json.confirmed, validConfirmed)
 	)
 		throw new Error("Unsupported network-change journal");
 	return structuredClone(json as unknown as Journal);

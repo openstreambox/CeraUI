@@ -152,6 +152,11 @@ export interface EthernetRoleSafety {
 			plan: NetworkChangePlan,
 			options?: ApplyOptions,
 		): Promise<ApplyResult>;
+		/** Answer a notice ("leave it undone"); refuses one already answered. */
+		leaveUndone?(
+			noticeId: string,
+			session: NetworkChangeSession,
+		): Promise<void>;
 	};
 	/**
 	 * The session, or a lookup of it (its route), resolved inside the port's
@@ -166,6 +171,14 @@ export interface EthernetRoleSafety {
 	readonly deliberate?: boolean;
 	/** The notice a re-apply answers; the owner checks and consumes it. */
 	readonly noticeId?: string;
+	/** The one-time code the page minted for this change. */
+	readonly confirmationCode?: string | undefined;
+}
+
+function resolveSafetySession(safety: EthernetRoleSafety) {
+	return typeof safety.session === "function"
+		? safety.session()
+		: Promise.resolve(safety.session);
 }
 
 /**
@@ -196,14 +209,14 @@ async function applyRoleProtected(
 	});
 	let result: ApplyResult;
 	try {
-		const session =
-			typeof safety.session === "function"
-				? await safety.session()
-				: safety.session;
+		const session = await resolveSafetySession(safety);
 		result = await safety.owner.apply(session, plan, {
 			...(safety.answer === undefined ? {} : { answer: safety.answer }),
 			...(safety.deliberate ? { deliberate: true } : {}),
 			...(safety.noticeId === undefined ? {} : { noticeId: safety.noticeId }),
+			...(safety.confirmationCode === undefined
+				? {}
+				: { confirmationCode: safety.confirmationCode }),
 		});
 	} catch (error) {
 		// No pending frame was published, so none is owed; the caller gets the
@@ -377,6 +390,29 @@ export async function setEthernetRole(
 			return refuse("change_in_flight");
 		}
 		const previous = deps.readPersistedRole(name);
+		// A notice naming the role the port already has (someone made the
+		// change meanwhile) is a true no-op: nothing is written to the port or
+		// NetworkManager, and the notice is answered under the owner, which
+		// refuses it if someone else answered it first.
+		if (
+			safety?.noticeId !== undefined &&
+			(previous ?? ETHERNET_ROLE_DEFAULT) === role
+		) {
+			try {
+				if (!safety.owner.leaveUndone)
+					throw new Error("Notice answer unavailable");
+				await safety.owner.leaveUndone(
+					safety.noticeId,
+					await resolveSafetySession(safety),
+				);
+			} catch (error) {
+				logger.warn(
+					`ethernet role: notice for ${name} not answered: ${(error as Error).message}`,
+				);
+				return { success: false, error: "apply_failed" };
+			}
+			return { success: true, applied: role };
+		}
 		// Only a real role change is protected; re-stating the current role
 		// keeps the existing idempotent path.
 		if (safety && (previous ?? ETHERNET_ROLE_DEFAULT) !== role) {

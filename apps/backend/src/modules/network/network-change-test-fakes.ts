@@ -19,6 +19,7 @@ import {
 	type NetworkChangeDeps,
 	type NetworkChangeSession,
 	type NmChangeDeps,
+	sha256Hex,
 } from "./network-checkpoint.ts";
 
 export interface FakeProfile {
@@ -44,7 +45,9 @@ export function createFakeNm() {
 	>();
 	let createdCounter = 0;
 	let generation = 1;
+	let busGeneration = 1;
 	const owner = () => `:1.${generation}`;
+	const bus = () => busGeneration.toString(16).padStart(32, "0");
 	const calls: string[] = [];
 	const fail = new Set<string>();
 	let checkpointCounter = 0;
@@ -64,10 +67,14 @@ export function createFakeNm() {
 				active: new Map(active),
 				created,
 			});
-			return { path, owner: owner(), created };
+			return { path, owner: owner(), created, bus: bus() };
 		},
 		async live(ref) {
+			// Like the adapter: an incomplete reference is refused, not "gone".
+			if (!ref.bus || !ref.owner || !ref.created)
+				throw new Error("Invalid network checkpoint");
 			return (
+				ref.bus === bus() &&
 				ref.owner === owner() &&
 				checkpoints.get(ref.path)?.created === ref.created
 			);
@@ -75,11 +82,13 @@ export function createFakeNm() {
 		async destroy(ref) {
 			guard("destroy");
 			// Like a call to a unique bus name that no longer exists.
+			if (ref.bus !== bus()) throw new Error("another bus instance");
 			if (ref.owner !== owner()) throw new Error("unknown bus name");
 			if (!checkpoints.delete(ref.path)) throw new Error("expired");
 			calls.push("destroy");
 		},
 		async rollback(ref) {
+			if (ref.bus !== bus()) throw new Error("another bus instance");
 			if (ref.owner !== owner()) throw new Error("unknown bus name");
 			calls.push("rollback");
 			const snapshot = checkpoints.get(ref.path);
@@ -171,7 +180,7 @@ export function createFakeNm() {
 		/** The daemon's timer fired: it rolls the checkpoint back by itself. */
 		async expireAll() {
 			for (const [path, { created }] of [...checkpoints])
-				await nm.rollback({ path, owner: owner(), created });
+				await nm.rollback({ path, owner: owner(), created, bus: bus() });
 		},
 		/**
 		 * Daemon restart: checkpoints are lost, /run profiles are reloaded, and
@@ -180,6 +189,14 @@ export function createFakeNm() {
 		restart() {
 			checkpoints.clear();
 			generation++;
+		},
+		/**
+		 * The system bus restarted and NetworkManager came back with the same
+		 * unique name (a fresh bus may hand names out again).
+		 */
+		restartBusReusingName() {
+			checkpoints.clear();
+			busGeneration++;
 		},
 		/**
 		 * After a daemon restart, someone else creates a checkpoint that gets a
@@ -277,24 +294,43 @@ export function session(
 	};
 }
 
-/** A test of the requester's access path that the test steers. */
-export function fakeReachability(initial = true) {
-	const state = {
-		available: true,
-		up: initial,
-		probes: 0,
-		peers: [] as string[],
-	};
+/** sha256 of the fake auth token "token-a" and "token-b". */
+export const TOKEN_A = sha256Hex("token-a");
+export const TOKEN_B = sha256Hex("token-b");
+export const ORIGIN = "https://box.example.ts.net";
+export const HOST = "box.example.ts.net";
+/** A valid one-time code (43 base64url characters) and another one. */
+export const CODE = `${"A".repeat(42)}Q`;
+export const OTHER_CODE = `${"B".repeat(42)}Q`;
+
+/**
+ * A signed-in browser socket: the login (token hash) and the UI address it
+ * reached the box at. The harness's boot clock equals its wall clock, so
+ * `openedAt` is also the socket's boot-clock stamp unless given.
+ */
+export function browser(
+	id: string,
+	options: {
+		readonly ingress?: string | undefined;
+		readonly openedAt?: number;
+		readonly openedClock?: number;
+		readonly tokenHash?: string;
+		readonly origin?: string;
+		readonly host?: string;
+		readonly route?: NetworkChangeSession["route"];
+	} = {},
+): NetworkChangeSession {
+	const openedAt = options.openedAt ?? 0;
 	return {
-		state,
-		deps: {
-			available: () => state.available,
-			probe: async (transport: { peer: string }) => {
-				state.probes++;
-				state.peers.push(transport.peer);
-				return state.up;
-			},
-		},
+		id,
+		openedAt,
+		authenticated: true,
+		ingress: options.ingress,
+		tokenHash: options.tokenHash ?? TOKEN_A,
+		origin: options.origin ?? ORIGIN,
+		host: options.host ?? HOST,
+		openedClock: options.openedClock ?? openedAt,
+		...(options.route ? { route: options.route } : {}),
 	};
 }
 
@@ -314,11 +350,13 @@ export function harness(
 	options: {
 		settleMs?: number;
 		onSettled?: NetworkChangeDeps["onSettled"];
-		reachability?: NetworkChangeDeps["reachability"];
 		isStreaming?: NetworkChangeDeps["isStreaming"];
+		/** A boot clock apart from the wall clock (default: the same value). */
+		separateClock?: boolean;
 	} = {},
 ) {
 	let now = 1000;
+	let clock = 1000;
 	let boot = "boot-1";
 	const fake = createFakeNm();
 	const effects = createFakeEffects();
@@ -328,13 +366,13 @@ export function harness(
 	const make = () =>
 		createNetworkChangeOwner({
 			now: () => now,
+			...(options.separateClock ? { clock: () => clock } : {}),
 			bootId: async () => boot,
 			nm: fake.nm,
 			effects: effects.registry,
 			journal,
 			settleMs: options.settleMs ?? 15_000,
 			...(options.onSettled ? { onSettled: options.onSettled } : {}),
-			...(options.reachability ? { reachability: options.reachability } : {}),
 			...(options.isStreaming ? { isStreaming: options.isStreaming } : {}),
 			log: (message) => {
 				logs.push(message);
@@ -354,9 +392,16 @@ export function harness(
 		},
 		changes: () => changes,
 		logs,
+		/** Move the wall clock (and a separate boot clock by the same amount). */
 		at(value: number) {
+			clock += value - now;
 			now = value;
 		},
+		/** Step the wall clock only, like NTP: the boot clock keeps going. */
+		stepWall(value: number) {
+			now = value;
+		},
+		clock: () => clock,
 		now: () => now,
 		newBoot() {
 			boot = `boot-${Math.random()}`;

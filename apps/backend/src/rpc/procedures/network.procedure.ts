@@ -7,6 +7,8 @@ import { existsSync } from "node:fs";
 import {
 	type ChangeSafetyStatus,
 	changeSafetyActionOutputSchema,
+	changeSafetyConfirmInputSchema,
+	changeSafetyConfirmOutputSchema,
 	changeSafetyIdInputSchema,
 	changeSafetyNoticeInputSchema,
 	changeSafetyStatusSchema,
@@ -42,6 +44,7 @@ import {
 	resetDamagedNetworkChangeJournal,
 	resolveNetworkChangeSession,
 } from "../../modules/network/network-change-runtime.ts";
+import { NetworkChangeConfirmError } from "../../modules/network/network-checkpoint.ts";
 import { refreshAndBroadcastNetworkIngest } from "../../modules/network/network-ingest.ts";
 import {
 	persistIngestDesired,
@@ -153,6 +156,7 @@ export const setEthernetRoleProcedure = authedProcedure
 						// Resolved inside the port's role queue.
 						session: () => resolveNetworkChangeSession(context.ws),
 						answer: input.changeAnswer,
+						confirmationCode: input.confirmationCode,
 					}
 				: undefined;
 		return setEthernetRole(input.name, input.role, undefined, input.op, safety);
@@ -168,6 +172,7 @@ function changeSafetyActive(): boolean {
 
 const NO_CHANGE: Omit<ChangeSafetyStatus, "enabled"> = {
 	pending: null,
+	confirmed: null,
 	kept: null,
 	undoIncomplete: false,
 	commitIncomplete: false,
@@ -215,19 +220,35 @@ function refusal(error: unknown) {
 	return { success: false, error: (error as Error).message };
 }
 
-/** Confirm a pending change. Only a new session over the changed path qualifies. */
+/**
+ * Keep a pending change. Only its requester qualifies: a new connection of the
+ * same browser login to the same UI address, opened after the settle time,
+ * presenting the change's one-time code. Refusals are typed (`too_early`
+ * means "reconnect later and try again").
+ */
 export const confirmNetworkChangeProcedure = authedProcedure
-	.input(changeSafetyIdInputSchema)
-	.output(changeSafetyActionOutputSchema)
+	.input(changeSafetyConfirmInputSchema)
+	.output(changeSafetyConfirmOutputSchema)
 	.handler(async ({ input, context }) => {
 		if (!changeSafetyActive()) return { success: false, error: "unavailable" };
 		try {
-			await getNetworkChangeOwner().confirm(
+			const result = await getNetworkChangeOwner().confirm(
 				input.id,
+				input.confirmationCode,
 				networkChangeSession(context.ws),
 			);
-			return { success: true };
+			return {
+				success: true,
+				confirmedVia: result.via,
+				...(result.saved ? {} : { saving: true as const }),
+			};
 		} catch (error) {
+			if (error instanceof NetworkChangeConfirmError)
+				return {
+					success: false,
+					error: error.message,
+					refusal: error.reason,
+				};
 			return refusal(error);
 		}
 	});
@@ -277,11 +298,10 @@ export const answerNetworkChangeNoticeProcedure = authedProcedure
 					owner,
 					session: () => resolveNetworkChangeSession(context.ws),
 					answer: input.changeAnswer,
+					confirmationCode: input.confirmationCode,
 				});
-				// Nothing to change (the port already has that role): the owner
-				// wasn't involved, so answer the notice here.
-				if (result?.success && !result.changeSafety)
-					await owner.leaveUndone(input.id, session).catch(() => undefined);
+				// Nothing to change (the port already has that role): the role
+				// path answered the notice under the owner and touched nothing.
 				return {
 					success: result?.success ?? false,
 					...(result?.error ? { error: result.error } : {}),
@@ -294,6 +314,7 @@ export const answerNetworkChangeNoticeProcedure = authedProcedure
 				input.id,
 				await resolveNetworkChangeSession(context.ws),
 				input.changeAnswer,
+				input.confirmationCode,
 			);
 			return { success: changeSafety.kind !== "ask-before", changeSafety };
 		} catch (error) {

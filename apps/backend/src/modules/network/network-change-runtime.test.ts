@@ -6,6 +6,7 @@ import type { AppWebSocket, SocketData } from "../../rpc/types.ts";
 import { DEFAULT_JOURNAL_PATH } from "./network-change-journal.ts";
 import {
 	createRateLimitedWarn,
+	errorClass,
 	networkChangeJournalPath,
 	networkChangeSession,
 	networkChangeTouches,
@@ -14,6 +15,7 @@ import {
 	startNetworkChangeSafety,
 	TICK_MS,
 } from "./network-change-runtime.ts";
+import { sha256Hex } from "./network-checkpoint.ts";
 
 function fakeOwner() {
 	const calls: string[] = [];
@@ -147,6 +149,33 @@ describe("the session the owner judges", () => {
 		const bare = networkChangeSession(socket({ isAuthenticated: false }));
 		expect(bare).toMatchObject({ id: "", openedAt: 0, authenticated: false });
 	});
+
+	it("carries the login as a token hash and the UI address the browser used", () => {
+		const signedIn = networkChangeSession(
+			socket({
+				sessionId: "s2",
+				openedAt: 42,
+				openedClock: 7_000,
+				authToken: "token-a",
+				uiOrigin: "https://box.example",
+				uiHost: "box.example",
+			}),
+		);
+		expect(signedIn).toMatchObject({
+			tokenHash: sha256Hex("token-a"),
+			origin: "https://box.example",
+			host: "box.example",
+			openedClock: 7_000,
+		});
+		// The token itself never leaves the socket.
+		expect(JSON.stringify(signedIn)).not.toContain("token-a");
+		// Signed out: no login, whatever token the socket once had.
+		expect(
+			networkChangeSession(
+				socket({ isAuthenticated: false, authToken: "token-a" }),
+			),
+		).not.toHaveProperty("tokenHash");
+	});
 });
 
 describe("whether a change in flight names a port", () => {
@@ -212,19 +241,6 @@ describe("the route back to a session without arrival evidence", () => {
 		expect(looked).toEqual(["100.64.0.7"]);
 	});
 
-	it("keeps the port the front door named even after its evidence stopped holding", async () => {
-		const stale = await resolveNetworkChangeSession(
-			socket({
-				ingressPath: { peer: "192.0.2.10", interface: "eth0", local: "x" },
-				ingressPathValid: () => false,
-			}),
-			async () => undefined,
-		);
-		// It can no longer confirm, but it still refuses keep-if-reachable.
-		expect(stale.ingress).toBeUndefined();
-		expect(stale.capturedIngress).toBe("eth0");
-	});
-
 	it("a failed lookup leaves the session as it was", async () => {
 		const remote = await resolveNetworkChangeSession(socket({}), async () => {
 			throw new Error("ip failed");
@@ -239,7 +255,7 @@ describe("the route back to a session without arrival evidence", () => {
 });
 
 describe("warnings that would repeat every 5 s", () => {
-	it("says it once, then again only when it changes or after ten minutes", () => {
+	it("says it once per class, then again only after ten minutes", () => {
 		const lines: string[] = [];
 		let now = 0;
 		const warn = createRateLimitedWarn((m) => lines.push(m), {
@@ -252,17 +268,39 @@ describe("warnings that would repeat every 5 s", () => {
 		expect(lines).toEqual(["journal unavailable"]);
 		warn("other problem");
 		expect(lines.at(-1)).toBe("other problem");
-		warn("journal unavailable");
-		expect(lines).toHaveLength(3);
+		// Alternating classes each keep their own limit.
+		for (let i = 0; i < 10; i++) {
+			now += 5_000;
+			warn("journal unavailable");
+			warn("other problem");
+		}
+		expect(lines).toHaveLength(2);
 		now += 10 * 60_000;
 		warn("journal unavailable");
 		warn("journal unavailable");
 		now += 10 * 60_000;
 		warn("journal unavailable");
-		expect(lines.slice(3)).toEqual([
-			"journal unavailable",
+		expect(lines.slice(2)).toEqual([
+			"journal unavailable (repeated 109 times)",
 			"journal unavailable (repeated 1 times)",
 		]);
+	});
+
+	it("keys tick errors by class, not by the ids and numbers in them", () => {
+		expect(
+			errorClass(
+				new Error(
+					"undo of 0a1b2c3d-1111-4222-8333-444455556666 failed after 3 s",
+				),
+			),
+		).toBe(
+			errorClass(
+				new Error(
+					"undo of 9f8e7d6c-aaaa-4bbb-8ccc-ddddeeeeffff failed after 12 s",
+				),
+			),
+		);
+		expect(errorClass(new Error("a"))).not.toBe(errorClass(new Error("b")));
 	});
 
 	it("a damaged journal failing every tick is logged once", async () => {

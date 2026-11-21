@@ -3,10 +3,9 @@
  *
  * Remote sessions (a tailnet, a VPN, the front door's TCP proxy, a plain TCP
  * peer on an image without the front door) carry no trusted arrival interface,
- * so they count as "unknown" and can never confirm a change. Asking them to
- * "confirm within 90 s" promises an undo. The box can still tell them up front
- * which of its interfaces their session depends on: the interface its replies
- * leave through, or, when that is a tunnel or loopback, every uplink holding a
+ * so the box can't say from evidence whether a change cuts them. It can still
+ * tell them up front which of its interfaces their session depends on: the
+ * interface its replies leave through, or, when that is a tunnel or loopback, every uplink holding a
  * default route (the tunnel rides one of them and may move to another).
  *
  * This is a prediction from the routing table, not proof of anything. The
@@ -19,7 +18,6 @@
 import { isIP } from "node:net";
 import { run } from "../../helpers/run.ts";
 import type { SessionRoute } from "./network-change-policy.ts";
-import { isTailnetAddress } from "./network-reachability.ts";
 
 export type RouteRunner = (bin: string, args: string[]) => Promise<string>;
 
@@ -99,17 +97,7 @@ export function createSessionRouteLookup(runner: RouteRunner = run) {
 				// tunnel: the session depends on whichever uplink carries it.
 				const carriers = await uplinks();
 				if (!carriers.length) return undefined;
-				// A tailnet peer, answered through the tailnet interface: the one
-				// transport whose path to the requester the box can test.
-				const tailnetPeer =
-					dev && /^tailscale[0-9]*$/.test(dev) && isTailnetAddress(peer)
-						? peer
-						: undefined;
-				return {
-					carriers,
-					tunnel: true,
-					...(tailnetPeer ? { tailnetPeer } : {}),
-				};
+				return { carriers, tunnel: true };
 			} catch {
 				return undefined;
 			}

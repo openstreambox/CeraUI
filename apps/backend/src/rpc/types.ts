@@ -17,6 +17,16 @@ export interface SocketData {
 	sessionId?: string;
 	/** When this socket opened (ms since the epoch). */
 	openedAt?: number;
+	/** When this socket opened on the boot clock (helpers/boot-clock.ts). */
+	openedClock?: number;
+	/**
+	 * `Origin` and `Host` of the upgrade request, lowercased: the UI address
+	 * this browser reached the box at. Never trusted as a destination proof
+	 * on their own; the network-change confirm rule compares them with the
+	 * requester's.
+	 */
+	uiOrigin?: string;
+	uiHost?: string;
 	/** Sender ID for remote relay identification */
 	senderId?: string;
 	/**

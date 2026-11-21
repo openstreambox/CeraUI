@@ -26,6 +26,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { bootClock } from "../../helpers/boot-clock.ts";
 import { logger } from "../../helpers/logger.ts";
 import type { AppWebSocket } from "../../rpc/types.ts";
 import { networkChangeSafetyEnabled } from "./ethernet-role-safety.ts";
@@ -38,9 +39,9 @@ import {
 	createNetworkChangeOwner,
 	type NetworkChangeSession,
 	type SettledEvent,
+	sha256Hex,
 } from "./network-checkpoint.ts";
 import { nmCheckpointAdapter } from "./network-checkpoint-nm.ts";
-import { createTailnetReachability } from "./network-reachability.ts";
 import { sessionRouteLookup } from "./network-session-route.ts";
 
 /** Same override/dev-fallback shape as the modem mutation journal. */
@@ -89,13 +90,14 @@ export function getNetworkChangeOwner() {
 	}
 	owner ??= createNetworkChangeOwner({
 		now: Date.now,
+		// Wall time only where /proc/uptime is unreadable (never on a box).
+		clock: () => bootClock() ?? Date.now(),
 		bootId: readBootId,
 		nm: nmCheckpointAdapter,
 		// No effects outside NetworkManager are wired yet; any plan naming one is
 		// refused because it has no recorded undo.
 		effects: createEffectRegistry([]),
 		journal: createFileJournalStore(networkChangeJournalPath()),
-		reachability: createTailnetReachability(),
 		isStreaming: () => streaming?.() === true,
 		log: (message) => logger.warn(`network change safety: ${message}`),
 		onSettled: (event) => {
@@ -119,12 +121,16 @@ export function networkChangeSession(ws: AppWebSocket): NetworkChangeSession {
 		openedAt: data.openedAt ?? 0,
 		authenticated: data.isAuthenticated,
 		ingress,
-		// The interface the front door named when the socket was accepted,
-		// kept even after its evidence stopped holding: it can still refuse
-		// keep-if-reachable for that port, though it can no longer confirm.
-		...(data.ingressPath
-			? { capturedIngress: data.ingressPath.interface }
+		// The browser login and the UI address it used, for the confirm rule.
+		// Only hashes of the token leave the socket.
+		...(data.isAuthenticated && data.authToken
+			? { tokenHash: sha256Hex(data.authToken) }
 			: {}),
+		...(data.uiOrigin ? { origin: data.uiOrigin } : {}),
+		...(data.uiHost ? { host: data.uiHost } : {}),
+		...(data.openedClock === undefined
+			? {}
+			: { openedClock: data.openedClock }),
 	};
 }
 
@@ -153,25 +159,48 @@ export async function resolveNetworkChangeSession(
  */
 export function createRateLimitedWarn(
 	warn: (message: string) => void,
-	options: { readonly now?: () => number; readonly everyMs?: number } = {},
+	options: {
+		readonly now?: () => number;
+		readonly everyMs?: number;
+		/** Classes remembered at once; the oldest is forgotten first. */
+		readonly maxClasses?: number;
+	} = {},
 ) {
 	const now = options.now ?? Date.now;
 	const every = options.everyMs ?? 10 * 60_000;
-	let last: { key: string; at: number; suppressed: number } | undefined;
+	const maxClasses = options.maxClasses ?? 32;
+	// Per class, so alternating failures each keep their own limit.
+	const seen = new Map<string, { at: number; suppressed: number }>();
 	/** `key` names the failure class; it defaults to the message itself. */
 	return (message: string, key: string = message) => {
 		const at = now();
-		if (last && last.key === key && at - last.at < every) {
+		const last = seen.get(key);
+		if (last && at - last.at < every) {
 			last.suppressed++;
 			return;
 		}
-		const repeats =
-			last && last.key === key && last.suppressed
-				? ` (repeated ${last.suppressed} times)`
-				: "";
+		const repeats = last?.suppressed
+			? ` (repeated ${last.suppressed} times)`
+			: "";
 		warn(`${message}${repeats}`);
-		last = { key, at, suppressed: 0 };
+		seen.delete(key);
+		seen.set(key, { at, suppressed: 0 });
+		if (seen.size > maxClasses) {
+			const oldest = seen.keys().next().value;
+			if (oldest !== undefined) seen.delete(oldest);
+		}
 	};
+}
+
+/**
+ * A stable class for an error: its name and its message with ids, numbers and
+ * paths' variable parts masked, so a retry that names a new id or a new time
+ * is still the same failure.
+ */
+export function errorClass(error: unknown): string {
+	const name = error instanceof Error ? error.name : "Error";
+	const message = error instanceof Error ? error.message : String(error);
+	return `${name}:${message.replace(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9]+/gi, "#")}`;
 }
 
 const journalWarn = createRateLimitedWarn((message) => logger.warn(message));
@@ -283,7 +312,10 @@ export async function startNetworkChangeSafety(
 	);
 	const handle = set(() => {
 		target.tick().catch((error: unknown) => {
-			warn(`network change safety: tick failed: ${(error as Error).message}`);
+			warn(
+				`network change safety: tick failed: ${(error as Error).message}`,
+				`tick:${errorClass(error)}`,
+			);
 		});
 	}, TICK_MS);
 	return () => clear(handle);

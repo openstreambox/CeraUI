@@ -174,7 +174,7 @@ export function upgradeTcpRequest(
 		return new Response("WebSocket upgrade failed", { status: 500 });
 	}
 
-	const data = initSocketData();
+	const data = initSocketData(req);
 	if (
 		process.env.NODE_ENV !== "production" &&
 		runtimeAllowsDevelopment() &&
@@ -317,6 +317,9 @@ export function getServer(): typeof server {
 export function stopServer(): void {
 	localIngress?.stop(true);
 	localIngress = null;
+	// Without the listener no session has arrival evidence: the flag must not
+	// read it as running after a stop (or a failed restart).
+	markFrontDoorListening(false);
 	if (server) {
 		server.stop();
 		server = null;

@@ -3,14 +3,26 @@ import {
 	HOTSPOT_INTERFACE_EFFECT,
 	MODEM_RADIO_MODE_EFFECT,
 } from "./network-change-effects.ts";
-import { harness, plan, session } from "./network-change-test-fakes.ts";
+import {
+	browser,
+	CODE,
+	HOST,
+	harness,
+	OTHER_CODE,
+	plan,
+	session,
+	TOKEN_B,
+} from "./network-change-test-fakes.ts";
 import { CANDIDATE_PREFIX, type SettledEvent } from "./network-checkpoint.ts";
 
-const UNDO = { answer: "undo-automatically" } as const;
+const UNDO = {
+	answer: "undo-automatically",
+	confirmationCode: CODE,
+} as const;
 const KEEP = { answer: "keep-change" } as const;
 
 /** An active Ethernet profile, plus two dormant duplicates of a modem profile. */
-function world(options: { settleMs?: number } = {}) {
+function world(options: { settleMs?: number; separateClock?: boolean } = {}) {
 	const h = harness(options);
 	const eth = h.fake.add("Wired", { "ipv4.addresses": "192.0.2.1/24" });
 	h.fake.active.set("eth0", eth);
@@ -36,8 +48,9 @@ function world(options: { settleMs?: number } = {}) {
 	return { ...h, eth, dupA, dupB, ethPlan, modemPlan };
 }
 
-const creator = session("old", "eth0", 500);
-const fresh = session("fresh", "eth0", 1001);
+/** The requester's browser, and a new connection of it after the settle time. */
+const creator = browser("old", { ingress: "eth0", openedAt: 500 });
+const fresh = browser("fresh", { ingress: "eth0", openedAt: 16_001 });
 
 describe("network change confirmation", () => {
 	it("arms the daemon's 90 second deadline before touching any profile", async () => {
@@ -45,39 +58,130 @@ describe("network change confirmation", () => {
 		await w.owner.apply(creator, w.ethPlan, UNDO);
 		expect(w.fake.calls.slice(0, 2)).toEqual(["create:eth0:90", "clone:Wired"]);
 	});
-	it("requires a session opened after the change over the changed interface", async () => {
+	it("is confirmed only by the requester's browser, back on a new connection after the settle time", async () => {
 		const w = world();
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
-		for (const s of [
-			creator,
-			{ ...fresh, openedAt: 999 },
-			{ ...fresh, authenticated: false },
-			{ ...fresh, ingress: "wlan0" },
-			{ ...fresh, ingress: undefined },
-			// The creator's identity never confirms, even with a later timestamp.
-			{ ...fresh, id: creator.id },
-		])
-			await expect(w.owner.confirm(pending.id, s)).rejects.toThrow();
-		// Another path never confirms a change to this one, however late.
-		w.at(60_000);
-		await expect(
-			w.owner.confirm(pending.id, session("phone", "wlan0", 50_000)),
-		).rejects.toThrow();
+		expect(pending).toMatchObject({
+			msLeft: 90_000,
+			confirmAfterMs: 15_000,
+			canConfirm: true,
+		});
+		w.at(20_000);
+		const refused = async (s: typeof fresh, code: string, reason: string) => {
+			await expect(w.owner.confirm(pending.id, code, s)).rejects.toMatchObject({
+				reason,
+			});
+		};
+		// The requester's own socket opened before the change.
+		await refused(creator, CODE, "too_early");
+		// A new connection before the settle floor (16 000 = applied + 15 000).
+		await refused({ ...fresh, openedClock: 15_999 }, CODE, "too_early");
+		// Another login, even with the code and the same address.
+		await refused({ ...fresh, tokenHash: TOKEN_B }, CODE, "not_requester");
+		await refused({ ...fresh, authenticated: false }, CODE, "not_requester");
+		// Another UI address: the browser came back some other way.
+		await refused(
+			{ ...fresh, origin: "http://192.0.2.1" },
+			CODE,
+			"wrong_address",
+		);
+		await refused({ ...fresh, host: "192.0.2.1" }, CODE, "wrong_address");
+		// Without the code (another tab), or with another change's code.
+		await refused(fresh, OTHER_CODE, "wrong_code");
+		await refused(fresh, "short", "wrong_code");
+		// The wrong change id.
+		await expect(w.owner.confirm("another", CODE, fresh)).rejects.toMatchObject(
+			{ reason: "not_pending" },
+		);
 		expect(w.fake.calls).not.toContain("destroy");
-		await w.owner.confirm(pending.id, fresh);
+		// The arrival interface is not required: a new connection of the same
+		// browser over another interface (or none) confirms, and is recorded.
+		expect(
+			await w.owner.confirm(pending.id, CODE, { ...fresh, ingress: "wlan0" }),
+		).toEqual({ via: "wlan0", saved: true });
 		expect(w.fake.calls.slice(-3)).toEqual([
 			"destroy",
 			"persist:Wired",
 			"remove:Wired",
 		]);
+		expect((await w.owner.status()).confirmed).toEqual({
+			id: pending.id,
+			via: "wlan0",
+			labelKey: "network.changeSafety.confirmed.via",
+		});
+	});
+	it("a confirmation is single use", async () => {
+		const w = world();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(20_000);
+		await w.owner.confirm(pending.id, CODE, fresh);
+		await expect(
+			w.owner.confirm(pending.id, CODE, fresh),
+		).rejects.toMatchObject({ reason: "not_pending" });
+	});
+	it("labels a confirmation from a connection without arrival evidence as remote", async () => {
+		const w = world();
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(20_000);
+		expect(
+			await w.owner.confirm(pending.id, CODE, { ...fresh, ingress: undefined }),
+		).toEqual({ via: null, saved: true });
+		expect((await w.owner.status()).confirmed?.labelKey).toBe(
+			"network.changeSafety.confirmed.remote",
+		);
+		// The next change clears the label.
+		await w.owner.apply(creator, w.modemPlan, UNDO);
+		expect((await w.owner.status()).confirmed).toBeNull();
+	});
+	it("keeps only the code's hash: the code never reaches the journal or the status", async () => {
+		const w = world();
+		await w.owner.apply(creator, w.ethPlan, UNDO);
+		const stored = JSON.stringify(w.journal.snapshot());
+		expect(stored).not.toContain(CODE);
+		expect(stored).toContain(HOST);
+		expect(JSON.stringify(await w.owner.status())).not.toContain(CODE);
+	});
+	it("refuses a protected change from a browser login without a code, before acting", async () => {
+		const w = world();
+		await expect(
+			w.owner.apply(creator, w.ethPlan, { answer: "undo-automatically" }),
+		).rejects.toThrow("Confirmation code required");
+		await expect(
+			w.owner.apply(creator, w.ethPlan, {
+				answer: "undo-automatically",
+				confirmationCode: "not a code",
+			}),
+		).rejects.toThrow("Invalid confirmation code");
+		expect(w.fake.calls).toEqual([]);
+	});
+	it("a session without a browser login can't confirm, and is told so up front", async () => {
+		const w = world();
+		const script = session("script", undefined);
+		const ask = await w.owner.apply(script, w.ethPlan);
+		expect(ask).toMatchObject({
+			kind: "ask-before",
+			canConfirm: false,
+			primary: { labelKey: "network.changeSafety.askBefore.undoNoConfirm" },
+		});
+		const pending = await w.owner.apply(script, w.ethPlan, {
+			answer: "undo-automatically",
+		});
+		expect(pending).toMatchObject({ kind: "pending", canConfirm: false });
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(20_000);
+		await expect(
+			w.owner.confirm(pending.id, CODE, fresh),
+		).rejects.toMatchObject({ reason: "wrong_code" });
 	});
 	it("does not promote after timeout even when the client kept the pending id", async () => {
 		const w = world();
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		await w.fake.expireAll();
 		if (pending.kind !== "pending") throw new Error("expected pending");
-		await expect(w.owner.confirm(pending.id, fresh)).rejects.toThrow();
+		await expect(w.owner.confirm(pending.id, CODE, fresh)).rejects.toThrow();
 		expect(w.fake.calls.filter((c) => c.startsWith("persist"))).toEqual([]);
 	});
 	it("checks the deadline before destroying or promoting", async () => {
@@ -85,7 +189,7 @@ describe("network change confirmation", () => {
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		w.at(91_001);
 		if (pending.kind !== "pending") throw new Error("expected pending");
-		await expect(w.owner.confirm(pending.id, fresh)).rejects.toThrow();
+		await expect(w.owner.confirm(pending.id, CODE, fresh)).rejects.toThrow();
 		expect(w.fake.calls).not.toContain("destroy");
 	});
 	it("rolls back a failed apply without writing a profile", async () => {
@@ -143,7 +247,7 @@ describe("network change confirmation", () => {
 		};
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
-		await expect(w.owner.confirm(pending.id, fresh)).rejects.toThrow();
+		await expect(w.owner.confirm(pending.id, CODE, fresh)).rejects.toThrow();
 		expect(w.fake.calls).not.toContain("destroy");
 	});
 	it("never promotes when the daemon rejects checkpoint destruction", async () => {
@@ -151,7 +255,7 @@ describe("network change confirmation", () => {
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		w.fake.fail.add("destroy");
 		if (pending.kind !== "pending") throw new Error("expected pending");
-		await expect(w.owner.confirm(pending.id, fresh)).rejects.toThrow(
+		await expect(w.owner.confirm(pending.id, CODE, fresh)).rejects.toThrow(
 			"destroy failed",
 		);
 		expect(w.fake.calls.filter((c) => c.startsWith("persist"))).toEqual([]);
@@ -174,6 +278,91 @@ describe("network change confirmation", () => {
 		w.at(91_000);
 		await w.owner.tick();
 		expect((await w.owner.status()).pending).toBeNull();
+	});
+});
+
+describe("deadlines and the settle floor run on the boot clock", () => {
+	it("an NTP step forward neither undoes the change early nor lets an early socket pass", async () => {
+		const w = world({ separateClock: true });
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		// The uplink came up and NTP stepped the wall clock by ten hours.
+		w.stepWall(36_000_000);
+		expect(await w.owner.tick()).toBe(false);
+		expect((await w.owner.status()).pending?.msLeft).toBe(90_000);
+		// A socket opened 2 s after the apply looks hours late on the wall
+		// clock; on the boot clock it is early.
+		await expect(
+			w.owner.confirm(
+				pending.id,
+				CODE,
+				browser("early", { openedAt: 36_003_000, openedClock: 3_000 }),
+			),
+		).rejects.toMatchObject({ reason: "too_early" });
+		await w.owner.confirm(
+			pending.id,
+			CODE,
+			browser("late", { openedAt: 36_017_000, openedClock: 17_000 }),
+		);
+	});
+	it("an NTP step back does not stretch the deadline past NetworkManager's", async () => {
+		const w = world({ separateClock: true });
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.stepWall(0);
+		// Boot clock 91 500: past the deadline, though the wall clock says 90 s are left.
+		w.at(90_500);
+		await expect(
+			w.owner.confirm(
+				pending.id,
+				CODE,
+				browser("late", { openedAt: 20_000, openedClock: 20_000 }),
+			),
+		).rejects.toMatchObject({ reason: "expired" });
+		expect(w.fake.calls).not.toContain("destroy");
+	});
+	it("a backend restart keeps the challenge: the browser confirms against the new process", async () => {
+		const w = world({ separateClock: true });
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(10_000);
+		const next = w.restartBackend();
+		expect(await next.reconcile("backend-start")).toBe("resumed");
+		expect((await next.status()).pending).toMatchObject({
+			id: pending.id,
+			confirmAfterMs: 6_000,
+			canConfirm: true,
+		});
+		w.at(20_000);
+		await expect(
+			next.confirm(pending.id, OTHER_CODE, fresh),
+		).rejects.toMatchObject({ reason: "wrong_code" });
+		expect(await next.confirm(pending.id, CODE, fresh)).toMatchObject({
+			saved: true,
+		});
+	});
+	it("a record from another boot sends no checkpoint call, even if one matches", async () => {
+		const w = world();
+		await w.owner.apply(creator, w.ethPlan, UNDO);
+		// A new boot whose daemon happens to hold a checkpoint with the same
+		// path, unique name and stamp (the model keeps the old one).
+		w.newBoot();
+		const next = w.restartBackend();
+		expect(await next.reconcile("boot")).toBe("undone");
+		expect(w.fake.calls).not.toContain("rollback");
+		expect(
+			w.fake.hasCheckpoint("/org/freedesktop/NetworkManager/Checkpoint/1"),
+		).toBe(true);
+		expect(await w.fake.nm.listByPrefix(CANDIDATE_PREFIX)).toEqual([]);
+		expect((await next.status()).notice?.reason).toBe("restart");
+	});
+	it("a fresh system bus that reuses NetworkManager's unique name is not the same daemon", async () => {
+		const w = world();
+		await w.owner.apply(creator, w.ethPlan, UNDO);
+		w.fake.restartBusReusingName();
+		expect(await w.owner.tick()).toBe(true);
+		expect(w.fake.calls).not.toContain("rollback");
+		expect((await w.owner.status()).notice?.reason).toBe("restart");
 	});
 });
 
@@ -214,11 +403,13 @@ describe("inactive and duplicate profiles go through candidates", () => {
 	});
 	it("promotes every duplicate on confirmation under its original name and autoconnect", async () => {
 		const w = world({ settleMs: 0 });
-		const s = session("s", "eth0");
-		const pending = await w.owner.apply(s, w.modemPlan);
+		const s = browser("s", { ingress: "eth0" });
+		const pending = await w.owner.apply(s, w.modemPlan, {
+			confirmationCode: CODE,
+		});
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		w.at(2000);
-		await w.owner.confirm(pending.id, s);
+		await w.owner.confirm(pending.id, CODE, s);
 		const modems = w.fake.byId("Modem");
 		expect(modems).toHaveLength(2);
 		for (const [uuid, p] of modems) {
@@ -233,7 +424,7 @@ describe("inactive and duplicate profiles go through candidates", () => {
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		const candidate = w.fake.active.get("eth0");
-		await w.owner.confirm(pending.id, fresh);
+		await w.owner.confirm(pending.id, CODE, fresh);
 		expect(w.fake.active.get("eth0")).toBe(candidate);
 		expect(w.fake.calls.filter((c) => c.startsWith("activate"))).toHaveLength(
 			1,
@@ -279,7 +470,7 @@ describe("no unconfirmed edit outlives a restart", () => {
 		const next = w.restartBackend();
 		expect(await next.reconcile("backend-start")).toBe("resumed");
 		if (pending.kind !== "pending") throw new Error("expected pending");
-		await next.confirm(pending.id, fresh);
+		await next.confirm(pending.id, CODE, fresh);
 		expect(w.fake.byId("Wired")[0]?.[1].settings["ipv4.addresses"]).toBe(
 			"192.0.2.2/24",
 		);
@@ -322,7 +513,7 @@ describe("no unconfirmed edit outlives a restart", () => {
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		w.fake.fail.add("remove");
-		await expect(w.owner.confirm(pending.id, fresh)).rejects.toThrow();
+		await expect(w.owner.confirm(pending.id, CODE, fresh)).rejects.toThrow();
 		w.fake.fail.delete("remove");
 		expect(await w.restartBackend().reconcile("backend-start")).toBe(
 			"promoted",
@@ -525,19 +716,26 @@ describe("ask before: the arrival interface decides", () => {
 		});
 		expect(w.fake.calls).toEqual([]);
 	});
-	it("an unknown arrival interface never confirms", async () => {
+	it("an unknown arrival interface confirms only from the same browser's new connection", async () => {
 		const w = world({ settleMs: 0 });
-		const pending = await w.owner.apply(
-			session("s", undefined),
-			w.modemPlan,
-			UNDO,
-		);
+		const remote = browser("s", { openedAt: 500 });
+		const pending = await w.owner.apply(remote, w.modemPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		w.at(5000);
+		// Its own (old) connection: never, even with the code.
 		await expect(
-			w.owner.confirm(pending.id, session("n", undefined, 4000)),
-		).rejects.toThrow();
-		await w.owner.confirm(pending.id, session("n", "wwan0", 4000));
+			w.owner.confirm(pending.id, CODE, remote),
+		).rejects.toMatchObject({ reason: "too_early" });
+		// A new connection of another login over the changed path: never.
+		await expect(
+			w.owner.confirm(
+				pending.id,
+				CODE,
+				browser("n", { ingress: "wwan0", openedAt: 4000, tokenHash: TOKEN_B }),
+			),
+		).rejects.toMatchObject({ reason: "not_requester" });
+		await w.owner.confirm(pending.id, CODE, browser("n", { openedAt: 4000 }));
+		expect((await w.owner.status()).confirmed?.via).toBeNull();
 	});
 	it("'Make the change' (undone without confirmation) is the normal confirm-or-rollback", async () => {
 		const w = world();
@@ -610,14 +808,55 @@ describe("ask after: the box undid a change nobody confirmed", () => {
 	}
 	it("the creator's own connection confirms another path only after the settle time", async () => {
 		const w = world();
-		const s = session("s", "eth0");
-		const pending = await w.owner.apply(s, w.modemPlan);
+		const s = browser("s", { ingress: "eth0" });
+		const pending = await w.owner.apply(s, w.modemPlan, {
+			confirmationCode: CODE,
+		});
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		w.at(2000);
-		await expect(w.owner.confirm(pending.id, s)).rejects.toThrow();
+		await expect(w.owner.confirm(pending.id, CODE, s)).rejects.toMatchObject({
+			reason: "too_early",
+		});
 		w.at(16_001);
-		await w.owner.confirm(pending.id, s);
+		// Still with the code, and only while its evidence names an untouched
+		// interface: on the changed one, it is an old connection like any other.
+		await expect(
+			w.owner.confirm(pending.id, CODE, { ...s, ingress: "wwan0" }),
+		).rejects.toMatchObject({ reason: "too_early" });
+		await expect(
+			w.owner.confirm(pending.id, OTHER_CODE, s),
+		).rejects.toMatchObject({ reason: "wrong_code" });
+		await w.owner.confirm(pending.id, CODE, s);
 		expect((await w.owner.status()).notice).toBeNull();
+		expect((await w.owner.status()).confirmed?.via).toBe("eth0");
+	});
+	it("another session on another path never confirms, even late", async () => {
+		const w = world();
+		const s = browser("s", { ingress: "eth0" });
+		const pending = await w.owner.apply(s, w.modemPlan, {
+			confirmationCode: CODE,
+		});
+		if (pending.kind !== "pending") throw new Error("expected pending");
+		w.at(60_000);
+		await expect(
+			w.owner.confirm(
+				pending.id,
+				CODE,
+				browser("phone", {
+					ingress: "wlan0",
+					openedAt: 500,
+					tokenHash: TOKEN_B,
+				}),
+			),
+		).rejects.toMatchObject({ reason: "not_requester" });
+		// The same login's other old socket is not the creator.
+		await expect(
+			w.owner.confirm(
+				pending.id,
+				CODE,
+				browser("tab2", { ingress: "eth0", openedAt: 500 }),
+			),
+		).rejects.toMatchObject({ reason: "too_early" });
 	});
 	it("undoes as planned and shows one notice to every device until answered", async () => {
 		const w = world();
@@ -733,7 +972,7 @@ describe("callers persist their intent only when a change settles", () => {
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		expect(w.events).toEqual([]);
-		await w.owner.confirm(pending.id, fresh);
+		await w.owner.confirm(pending.id, CODE, fresh);
 		expect(w.events).toHaveLength(1);
 		const [event] = w.events;
 		expect(event?.outcome).toBe("committed");
@@ -748,7 +987,7 @@ describe("callers persist their intent only when a change settles", () => {
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		const candidate = w.fake.active.get("eth0") as string;
 		expect(w.fake.profiles.get(candidate)?.autoconnect).toBe(false);
-		await w.owner.confirm(pending.id, fresh);
+		await w.owner.confirm(pending.id, CODE, fresh);
 		expect(w.fake.profiles.get(candidate)?.autoconnect).toBe(true);
 	});
 
@@ -757,7 +996,7 @@ describe("callers persist their intent only when a change settles", () => {
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		const candidate = w.fake.active.get("eth0") as string;
-		await w.owner.confirm(pending.id, fresh);
+		await w.owner.confirm(pending.id, CODE, fresh);
 		expect(w.fake.profiles.get(candidate)?.autoconnect).toBe(true);
 	});
 
@@ -789,7 +1028,7 @@ describe("callers persist their intent only when a change settles", () => {
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		w.failSettle(true);
-		await expect(w.owner.confirm(pending.id, fresh)).rejects.toThrow(
+		await expect(w.owner.confirm(pending.id, CODE, fresh)).rejects.toThrow(
 			"intent write failed",
 		);
 		expect((await w.journal.read()).tx?.state).toBe("confirming");

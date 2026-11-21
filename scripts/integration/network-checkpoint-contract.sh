@@ -230,9 +230,11 @@ nmcli connection up checkpoint-active >/dev/null 2>&1 || true
 result=$(drv apply active checkpoint0 undo-automatically)
 id=$(jq -r .id <<<"$result")
 drv confirm "$id" creator checkpoint0 >/dev/null 2>&1 && { echo 'Creator session confirmed its own-path change' >&2; exit 1; }
-drv confirm "$id" laptop spare0 >/dev/null 2>&1 && { echo 'Another path confirmed an own-path change' >&2; exit 1; }
-drv confirm "$id" reconnected - >/dev/null 2>&1 && { echo 'Unknown arrival confirmed a change' >&2; exit 1; }
+CONTRACT_TOKEN=another-login drv confirm "$id" laptop spare0 >/dev/null 2>&1 && { echo 'Another login confirmed a change' >&2; exit 1; }
+CONTRACT_ORIGIN=http://192.0.2.200 drv confirm "$id" reconnected checkpoint0 >/dev/null 2>&1 && { echo 'Another UI address confirmed a change' >&2; exit 1; }
+CONTRACT_CODE=$(printf 'D%.0s' {1..42})Q drv confirm "$id" reconnected checkpoint0 >/dev/null 2>&1 && { echo 'Another code confirmed a change' >&2; exit 1; }
 [[ $(drv confirm "$id" reconnected checkpoint0) == '"confirmed"' ]]
+[[ $(drv status | jq -r .confirmed.via) == checkpoint0 ]]
 sleep 4
 [[ $(active_on checkpoint0) == checkpoint-active && $(addr checkpoint-active) == 192.0.2.9/24 ]]
 [[ $(candidates) == 0 && $(run_candidates) == 0 ]]
@@ -241,7 +243,7 @@ stop_nm
 start_nm
 sleep 1
 [[ $(active_on checkpoint0) == checkpoint-active && $(addr checkpoint-active) == 192.0.2.9/24 ]]
-pass 'confirmation from a new session over the changed interface promotes the candidate to disk, without reactivation'
+pass 'confirmation from a new connection of the same login and address promotes the candidate to disk, without reactivation; the creator, another login, another address and another code cannot confirm'
 
 settings() {
     nmcli -t -f connection.uuid,connection.id,connection.autoconnect,ipv4.method,ipv4.addresses,ipv6.method con show checkpoint-active
@@ -299,8 +301,10 @@ drv leave "$(drv status | jq -r .notice.id)" >/dev/null
 result=$(drv apply ethrole role0 undo-automatically)
 id=$(jq -r .id <<<"$result")
 drv confirm "$id" creator role0 >/dev/null 2>&1 && { echo 'Creator session confirmed its own-port role change' >&2; exit 1; }
-drv confirm "$id" reconnected - >/dev/null 2>&1 && { echo 'Unknown arrival confirmed a role change' >&2; exit 1; }
-[[ $(drv confirm "$id" reconnected role0) == '"confirmed"' ]]
+CONTRACT_TOKEN=another-login drv confirm "$id" reconnected role0 >/dev/null 2>&1 && { echo 'Another login confirmed a role change' >&2; exit 1; }
+# The same browser back without arrival evidence (a remote connection) confirms.
+[[ $(drv confirm "$id" reconnected -) == '"confirmed"' ]]
+[[ $(drv status | jq -r .confirmed.via) == null ]]
 sleep 4
 [[ $(active_on role0) == checkpoint-wired && $(method checkpoint-wired) == shared ]]
 grep -q 'method=shared' "$(grep -l 'id=checkpoint-wired' /etc/NetworkManager/system-connections/*)"
@@ -308,7 +312,7 @@ stop_nm
 start_nm
 sleep 1
 [[ $(method checkpoint-wired) == shared && $(candidates) == 0 ]]
-pass 'Ethernet role: confirmation from a new session over the port writes shared LAN to disk'
+pass 'Ethernet role: confirmation from the same browser on a remote connection writes shared LAN to disk'
 
 # --- Trusted arrival interface ---------------------------------------------
 drv_nft() { (cd /var/tmp && bun -e "import { ingressRuleset } from '$here/../../apps/backend/src/modules/network/network-ingress.ts'; process.stdout.write(ingressRuleset([8080]));"); }

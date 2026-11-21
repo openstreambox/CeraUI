@@ -29,23 +29,25 @@ import {
 } from "./ethernet-role-transition.ts";
 import { markFrontDoorListening } from "./front-door-state.ts";
 import {
-	fakeReachability,
+	browser,
+	CODE,
+	HOST,
 	harness,
+	ORIGIN,
 	session,
+	TOKEN_B,
 } from "./network-change-test-fakes.ts";
-import type { SettledEvent } from "./network-checkpoint.ts";
+import type {
+	NetworkChangeSession,
+	SettledEvent,
+} from "./network-checkpoint.ts";
 
 const UNDO = "undo-automatically" as const;
 const KEEP = "keep-change" as const;
 
 /** A box with eth0 on its uplink profile, plus the role store. */
 function box(
-	options: {
-		role?: EthernetRole;
-		owned?: boolean;
-		settleMs?: number;
-		reachability?: ReturnType<typeof fakeReachability>["deps"];
-	} = {},
+	options: { role?: EthernetRole; owned?: boolean; settleMs?: number } = {},
 ) {
 	const roles: Record<string, EthernetRole> = {};
 	if (options.role) roles.eth0 = options.role;
@@ -56,7 +58,6 @@ function box(
 	let settleFailures = 0;
 	const h = harness({
 		settleMs: options.settleMs ?? 15_000,
-		...(options.reachability ? { reachability: options.reachability } : {}),
 		onSettled: (event) => {
 			if (settleFailures > 0) {
 				settleFailures--;
@@ -118,13 +119,16 @@ function box(
 		networkChangeTouches: (ifname) => h.owner.touches(ifname),
 	};
 	handler = createEthernetRoleSettledHandler(deps);
+	// Every request carries the code its page minted; only a browser login's
+	// change is bound to it.
 	const safety = (
-		s: ReturnType<typeof session>,
-		answer?: typeof UNDO | typeof KEEP | "keep-if-reachable",
+		s: NetworkChangeSession,
+		answer?: typeof UNDO | typeof KEEP,
 	) => ({
 		owner: h.owner,
 		session: s,
 		answer,
+		confirmationCode: CODE,
 	});
 	return {
 		...h,
@@ -141,9 +145,12 @@ function box(
 	};
 }
 
-/** A remote operator whose session rides the wired uplink. */
-const overEth = session("remote", "eth0", 500);
-const laterOverEth = session("reconnected", "eth0", 1_001);
+/** A remote operator whose session rides the wired uplink, and its browser back after the settle time. */
+const overEth = browser("remote", { ingress: "eth0", openedAt: 500 });
+const laterOverEth = browser("reconnected", {
+	ingress: "eth0",
+	openedAt: 16_001,
+});
 
 describe("the flag", () => {
 	it("is off unless set to exactly 1", () => {
@@ -338,7 +345,7 @@ describe("a remote box managed over its wired uplink", () => {
 		expect(b.writes).toEqual([]);
 	});
 
-	it("commits only from a new session over eth0, then persists the role", async () => {
+	it("commits only from the requester's new connection, then persists the role", async () => {
 		const b = box();
 		const result = await setEthernetRole(
 			"eth0",
@@ -348,13 +355,23 @@ describe("a remote box managed over its wired uplink", () => {
 			b.safety(overEth, UNDO),
 		);
 		const id = (result.changeSafety as { id: string }).id;
-		await expect(b.owner.confirm(id, overEth)).rejects.toThrow();
+		b.at(17_000);
+		await expect(b.owner.confirm(id, CODE, overEth)).rejects.toThrow();
+		// A crew phone over the changed port: another login.
 		await expect(
-			b.owner.confirm(id, session("phone", undefined, 2_000)),
+			b.owner.confirm(
+				id,
+				CODE,
+				browser("phone", {
+					ingress: "eth0",
+					openedAt: 16_500,
+					tokenHash: TOKEN_B,
+				}),
+			),
 		).rejects.toThrow();
 		expect(b.roles.eth0).toBeUndefined();
 		const candidate = b.fake.active.get("eth0") as string;
-		await b.owner.confirm(id, laterOverEth);
+		await b.owner.confirm(id, CODE, laterOverEth);
 		expect(b.roles.eth0).toBe("shared-lan");
 		expect(b.fake.profiles.get(candidate)).toMatchObject({
 			id: "Wired connection 1",
@@ -411,7 +428,7 @@ describe("a laptop on the shared LAN switching the port back to uplink", () => {
 	it("follows the owned profile's new UUID and autoconnect on commit", async () => {
 		const b = box({ role: "shared-lan", owned: true, settleMs: 15_000 });
 		// Changed from the hotspot: another path, so no prompt.
-		const creator = session("phone", "wlan0", 500);
+		const creator = browser("phone", { ingress: "wlan0", openedAt: 500 });
 		const result = await setEthernetRole(
 			"eth0",
 			"uplink",
@@ -423,7 +440,11 @@ describe("a laptop on the shared LAN switching the port back to uplink", () => {
 		const candidate = b.fake.active.get("eth0") as string;
 		expect(b.reservations.eth0).toBe(b.wired);
 		b.at(1_000 + 16_000);
-		await b.owner.confirm((result.changeSafety as { id: string }).id, creator);
+		await b.owner.confirm(
+			(result.changeSafety as { id: string }).id,
+			CODE,
+			creator,
+		);
 		expect(b.roles.eth0).toBe("uplink");
 		expect(b.reservations.eth0).toBe(candidate);
 		expect(b.fake.profiles.get(candidate)).toMatchObject({
@@ -641,7 +662,7 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 		);
 		const id = (result.changeSafety as { id: string }).id;
 		b.fake.fail.add("persist");
-		await expect(b.owner.confirm(id, laterOverEth)).rejects.toThrow();
+		await expect(b.owner.confirm(id, CODE, laterOverEth)).rejects.toThrow();
 		expect((await b.owner.status()).commitIncomplete).toBe(true);
 		await expect(b.owner.tick()).rejects.toThrow();
 		b.fake.fail.delete("persist");
@@ -661,7 +682,7 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 		);
 		const id = (result.changeSafety as { id: string }).id;
 		b.fake.fail.add("persist");
-		await expect(b.owner.confirm(id, laterOverEth)).rejects.toThrow();
+		await expect(b.owner.confirm(id, CODE, laterOverEth)).rejects.toThrow();
 		b.fake.fail.delete("persist");
 		b.fake.reboot();
 		b.newBoot();
@@ -696,15 +717,13 @@ describe("crash and restart paths keep the role and NetworkManager in step", () 
 
 describe("a remote owner whose session the change cuts", () => {
 	/** A tailnet session: no arrival evidence, routed over eth0. */
-	const remoteOverEth = session("tailnet", undefined, 500, {
-		carriers: ["eth0"],
-		tunnel: true,
-		tailnetPeer: "100.101.102.103",
+	const remoteOverEth = browser("tailnet", {
+		openedAt: 500,
+		route: { carriers: ["eth0"], tunnel: true },
 	});
 
-	it("is told up front that the change cuts them, and offered keep-if-reachable", async () => {
-		const probe = fakeReachability();
-		const b = box({ reachability: probe.deps });
+	it("is told up front that the change cuts them, and that this browser confirms", async () => {
+		const b = box();
 		const result = await setEthernetRole(
 			"eth0",
 			"shared-lan",
@@ -717,9 +736,11 @@ describe("a remote owner whose session the change cuts", () => {
 			kind: "ask-before",
 			cut: "cuts",
 			via: "eth0",
-			canConfirm: false,
-			primary: { answer: "keep-if-reachable" },
-			alternative: { answer: "undo-automatically" },
+			canConfirm: true,
+			primary: {
+				answer: "undo-automatically",
+				labelKey: "network.changeSafety.askBefore.undo",
+			},
 			deliberate: { answer: "keep-change" },
 		});
 		// Nothing applied, nothing persisted, no frame.
@@ -728,96 +749,88 @@ describe("a remote owner whose session the change cuts", () => {
 		expect(b.frames).toEqual([]);
 	});
 
-	it("keep-if-reachable commits the role once the box still reaches the internet", async () => {
-		const probe = fakeReachability();
-		const b = box({ reachability: probe.deps });
+	it("is kept once the same browser is back at the same address, labelled remote", async () => {
+		const b = box();
 		const result = await setEthernetRole(
 			"eth0",
 			"shared-lan",
 			b.deps,
 			"op1",
-			b.safety(remoteOverEth, "keep-if-reachable"),
+			b.safety(remoteOverEth, UNDO),
 		);
 		expect(result).toMatchObject({
 			success: true,
-			changeSafety: { kind: "pending" },
+			changeSafety: {
+				kind: "pending",
+				canConfirm: true,
+				confirmAfterMs: 15_000,
+			},
 		});
 		expect(b.frames.at(-1)).toMatchObject({ pending: true, op: "op1" });
-		expect((await b.owner.status()).pending?.confirmBy).toBe("reachability");
-		// Nothing is probed or persisted inside the settle time.
-		b.at(10_000);
-		expect(await b.owner.tick()).toBe(false);
-		expect(probe.state.probes).toBe(0);
-		b.at(16_001);
-		expect(await b.owner.tick()).toBe(false);
-		b.at(21_001);
-		expect(await b.owner.tick()).toBe(true);
-		expect(probe.state.probes).toBe(2);
+		// Nothing is kept by the box on its own, however long it waits.
+		for (let t = 6_000; t < 90_000; t += 5_000) {
+			b.at(t);
+			expect(await b.owner.tick()).toBe(false);
+		}
+		expect(b.roles.eth0).toBeUndefined();
+		b.at(40_000);
+		const back = browser("tailnet-2", { openedAt: 30_000 });
+		expect(
+			await b.owner.confirm(
+				(result.changeSafety as { id: string }).id,
+				CODE,
+				back,
+			),
+		).toEqual({ via: null, saved: true });
 		expect(b.roles.eth0).toBe("shared-lan");
 		expect(b.frames.at(-1)).toMatchObject({
 			success: true,
 			role: "shared-lan",
 			op: "op1",
 		});
-		expect(
-			b.fake.profiles.get(b.fake.active.get("eth0") as string),
-		).toMatchObject({ storage: "disk", settings: { "ipv4.method": "shared" } });
-		expect((await b.journal.read()).tx).toBeNull();
+		expect((await b.owner.status()).confirmed?.labelKey).toBe(
+			"network.changeSafety.confirmed.remote",
+		);
 	});
 
-	it("keep-if-reachable is undone when the box loses the internet, with its own notice", async () => {
-		const probe = fakeReachability(false);
-		const b = box({ reachability: probe.deps });
-		await setEthernetRole(
+	it("is undone when the address the browser used is gone, even if the tailnet still works", async () => {
+		// The browser reached the box's eth0 address over a tailnet subnet
+		// route. Switching eth0 to shared LAN removes that address; the tailnet
+		// moves to the modem and answers, but nothing reaches the old address.
+		const b = box();
+		const subnetRouted = browser("subnet", {
+			openedAt: 500,
+			origin: "http://192.168.1.50",
+			host: "192.168.1.50",
+		});
+		const result = await setEthernetRole(
 			"eth0",
 			"shared-lan",
 			b.deps,
 			"op1",
-			b.safety(remoteOverEth, "keep-if-reachable"),
+			b.safety(subnetRouted, UNDO),
 		);
-		for (let t = 16_001; t < 90_000; t += 5_000) {
-			b.at(t);
-			expect(await b.owner.tick()).toBe(false);
-		}
-		expect(probe.state.probes).toBeGreaterThan(5);
+		const id = (result.changeSafety as { id: string }).id;
+		b.at(40_000);
+		// The browser reaches the box another way (its tailnet name): not the
+		// address the change was made from.
+		await expect(
+			b.owner.confirm(
+				id,
+				CODE,
+				browser("subnet-2", {
+					openedAt: 30_000,
+					origin: ORIGIN,
+					host: HOST,
+				}),
+			),
+		).rejects.toMatchObject({ reason: "wrong_address" });
 		await b.fake.expireAll();
 		b.at(91_001);
 		expect(await b.owner.tick()).toBe(true);
 		expect(b.fake.active.get("eth0")).toBe(b.wired);
 		expect(b.roles.eth0).toBeUndefined();
-		expect(b.frames.at(-1)).toMatchObject({
-			error: "apply_failed",
-			op: "op1",
-		});
-		expect((await b.owner.status()).notice?.reason).toBe("unreachable");
-	});
-
-	it("a laptop on the port itself is never offered keep-if-reachable", async () => {
-		const probe = fakeReachability();
-		const b = box({ reachability: probe.deps });
-		const laptop = session("laptop", "eth0", 500);
-		const ask = await setEthernetRole(
-			"eth0",
-			"shared-lan",
-			b.deps,
-			undefined,
-			b.safety(laptop),
-		);
-		expect(ask.changeSafety).toMatchObject({
-			kind: "ask-before",
-			canConfirm: true,
-			primary: { answer: "undo-automatically" },
-		});
-		expect(ask.changeSafety).not.toHaveProperty("alternative");
-		const refused = await setEthernetRole(
-			"eth0",
-			"shared-lan",
-			b.deps,
-			undefined,
-			b.safety(laptop, "keep-if-reachable"),
-		);
-		expect(refused).toEqual({ success: false, error: "apply_failed" });
-		expect(b.fake.calls).toEqual([]);
+		expect((await b.owner.status()).notice?.reason).toBe("disconnected");
 	});
 });
 
@@ -934,6 +947,32 @@ describe("'Make the change' on a role notice, as the RPC runs it", () => {
 		expect(result).toEqual({ success: false, error: "no_connection" });
 		expect(b.writes).toEqual([]);
 		expect(b.roles.eth0).toBeUndefined();
+	});
+
+	it("a notice for a role the port already has changes nothing and is answered under the owner", async () => {
+		const { b, notice } = await undoneChange();
+		// Someone set shared LAN meanwhile, and the port lost its profile.
+		b.roles.eth0 = "shared-lan";
+		b.fake.active.delete("eth0");
+		const before = b.fake.calls.length;
+		const result = await reapplyEthernetRoleNotice(
+			notice,
+			b.safety(phone, UNDO),
+			b.deps,
+		);
+		expect(result).toEqual({ success: true, applied: "shared-lan" });
+		// No profile add, modify or activation, and no NetworkManager call.
+		expect(b.writes).toEqual([]);
+		expect(b.fake.calls.slice(before)).toEqual([]);
+		expect((await b.owner.status()).notice).toBeNull();
+		// Answered once: a second, stale request is refused and still changes nothing.
+		const again = await reapplyEthernetRoleNotice(
+			notice,
+			b.safety(phone, UNDO),
+			b.deps,
+		);
+		expect(again).toEqual({ success: false, error: "apply_failed" });
+		expect(b.writes).toEqual([]);
 	});
 
 	it("is not for other notices", async () => {

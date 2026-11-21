@@ -1,7 +1,7 @@
 /**
- * The second round of the network-change owner: sessions that cannot confirm
- * (no arrival evidence), and the limits the first review left open (queueing
- * instead of "busy", undo backoff, checkpoint identity, notice reasons).
+ * The network-change owner for remote sessions (no arrival evidence), and the
+ * limits the earlier reviews left open (queueing instead of "busy", undo
+ * backoff, checkpoint identity, notice reasons, journal validation).
  */
 import { describe, expect, it } from "bun:test";
 import {
@@ -16,8 +16,9 @@ import { join } from "node:path";
 import { createEffectRegistry } from "./network-change-effects.ts";
 import { createFileJournalStore } from "./network-change-journal.ts";
 import {
+	browser,
+	CODE,
 	createFakeNm,
-	fakeReachability,
 	harness,
 	plan,
 	session,
@@ -28,8 +29,13 @@ import {
 	undoBackoffMs,
 } from "./network-checkpoint.ts";
 
-const UNDO = { answer: "undo-automatically" } as const;
-const REACH = { answer: "keep-if-reachable" } as const;
+const UNDO = {
+	answer: "undo-automatically",
+	confirmationCode: CODE,
+} as const;
+/** The requester's browser, and a new connection of it after the settle time. */
+const creator = browser("old", { ingress: "eth0", openedAt: 500 });
+const back = browser("new", { ingress: "eth0", openedAt: 16_001 });
 
 function world(options: Parameters<typeof harness>[0] = {}): ReturnType<
 	typeof harness
@@ -49,21 +55,15 @@ function world(options: Parameters<typeof harness>[0] = {}): ReturnType<
 	return { ...h, eth, ethPlan };
 }
 
-/** A tailnet session riding eth0: the one transport the box can test. */
-const tailnetPeer = session("tailnet", undefined, 500, {
-	carriers: ["eth0"],
-	tunnel: true,
-	tailnetPeer: "100.101.102.103",
-});
-/** A session through a local proxy: no testable transport. */
-const relayOverEth = session("relay", undefined, 500, {
-	carriers: ["eth0"],
-	tunnel: true,
+/** A remote browser through a local proxy, riding eth0. */
+const relayOverEth = browser("relay", {
+	openedAt: 500,
+	route: { carriers: ["eth0"], tunnel: true },
 });
 
 describe("before applying: does the change cut the requesting session?", () => {
 	it("route evidence names the cut, but never skips the prompt", async () => {
-		const w = world({ reachability: fakeReachability().deps });
+		const w = world();
 		const cuts = await w.owner.apply(relayOverEth, w.ethPlan);
 		expect(cuts).toMatchObject({
 			kind: "ask-before",
@@ -92,32 +92,24 @@ describe("before applying: does the change cut the requesting session?", () => {
 		expect(w.fake.calls).toEqual([]);
 	});
 
-	it("without anything to probe, the honest label is 'unless someone on eth0 confirms'", async () => {
+	it("a remote browser can confirm, so it is told this browser confirms", async () => {
 		const w = world();
 		const ask = await w.owner.apply(relayOverEth, w.ethPlan);
 		expect(ask).toMatchObject({
+			canConfirm: true,
 			primary: {
 				answer: "undo-automatically",
-				labelKey: "network.changeSafety.askBefore.undoVia",
+				labelKey: "network.changeSafety.askBefore.undo",
 			},
 			deliberate: { labelKey: "network.changeSafety.askBefore.keepRemote" },
 		});
-		expect(ask).not.toHaveProperty("alternative");
-		await expect(w.owner.apply(tailnetPeer, w.ethPlan, REACH)).rejects.toThrow(
-			"Reachability check unavailable",
-		);
-		expect(w.fake.calls).toEqual([]);
-	});
-
-	it("an empty probe list is the same as no probe", async () => {
-		const probe = fakeReachability();
-		probe.state.available = false;
-		const w = world({ reachability: probe.deps });
-		const ask = await w.owner.apply(relayOverEth, w.ethPlan);
-		expect(ask).toMatchObject({ primary: { answer: "undo-automatically" } });
+		// The automatic keep from an earlier design is not an answer any more.
 		await expect(
-			w.owner.apply(tailnetPeer, w.ethPlan, REACH),
-		).rejects.toThrow();
+			w.owner.apply(relayOverEth, w.ethPlan, {
+				answer: "keep-if-reachable" as never,
+			}),
+		).rejects.toThrow("Unknown answer");
+		expect(w.fake.calls).toEqual([]);
 	});
 
 	it("warns on the prompt while a stream is live", async () => {
@@ -132,182 +124,9 @@ describe("before applying: does the change cut the requesting session?", () => {
 	});
 });
 
-describe("keep-if-reachable: the box checks its own way out", () => {
-	it("only a session with a testable path to its own device is offered it", async () => {
-		const probe = fakeReachability();
-		const w = world({ reachability: probe.deps });
-		// A proxied or relayed session: the box can't test the way back to it.
-		const proxied = await w.owner.apply(relayOverEth, w.ethPlan);
-		expect(proxied).toMatchObject({
-			primary: {
-				answer: "undo-automatically",
-				labelKey: "network.changeSafety.askBefore.undoVia",
-			},
-			deliberate: { answer: "keep-change" },
-		});
-		expect(proxied).not.toHaveProperty("alternative");
-		await expect(w.owner.apply(relayOverEth, w.ethPlan, REACH)).rejects.toThrow(
-			"Reachability check unavailable",
-		);
-		expect(await w.owner.apply(tailnetPeer, w.ethPlan)).toMatchObject({
-			primary: { answer: "keep-if-reachable" },
-			alternative: { answer: "undo-automatically" },
-		});
-		// tailscaled not available: not offered either.
-		probe.state.available = false;
-		expect(await w.owner.apply(tailnetPeer, w.ethPlan)).toMatchObject({
-			primary: { answer: "undo-automatically" },
-		});
-		expect(w.fake.calls).toEqual([]);
-	});
-
-	it("probes the requester recorded in the transaction, nothing else", async () => {
-		const probe = fakeReachability(true);
-		const w = world({ reachability: probe.deps });
-		await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		expect((await w.journal.read()).tx?.reachability).toEqual({
-			kind: "tailnet-peer",
-			peer: "100.101.102.103",
-		});
-		w.at(16_001);
-		await w.owner.tick();
-		// A backend restart reads the requester back from the journal.
-		const next = w.restartBackend();
-		w.at(21_001);
-		await next.tick();
-		w.at(26_001);
-		expect(await next.tick()).toBe(true);
-		expect(probe.state.peers).toEqual([
-			"100.101.102.103",
-			"100.101.102.103",
-			"100.101.102.103",
-		]);
-	});
-
-	it("a socket the front door once placed on the changed port is refused, even with stale evidence", async () => {
-		const w = world({ reachability: fakeReachability().deps });
-		const stale = { ...tailnetPeer, capturedIngress: "eth0" };
-		await expect(w.owner.apply(stale, w.ethPlan, REACH)).rejects.toThrow(
-			"Reachability check unavailable",
-		);
-		expect(w.fake.calls).toEqual([]);
-	});
-
-	it("a new session over the changed port may still confirm it: the stronger evidence wins", async () => {
-		const w = world({ reachability: fakeReachability(false).deps });
-		const pending = await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		if (pending.kind !== "pending") throw new Error("expected pending");
-		await w.owner.confirm(pending.id, session("laptop", "eth0", 1_001));
-		expect(w.fake.calls).toContain("destroy");
-		expect(w.fake.calls).toContain("persist:Wired");
-	});
-
-	it("is checkpointed like any protected change, and an unknown session cannot confirm it", async () => {
-		const probe = fakeReachability(false);
-		const w = world({ reachability: probe.deps });
-		const pending = await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		expect(pending.kind).toBe("pending");
-		expect(w.fake.calls[0]).toBe("create:eth0:90");
-		if (pending.kind !== "pending") throw new Error("expected pending");
-		w.at(50_000);
-		await expect(
-			w.owner.confirm(pending.id, session("later", undefined, 40_000)),
-		).rejects.toThrow();
-		expect(w.fake.calls).not.toContain("destroy");
-	});
-
-	it("needs two fresh successes in a row after the settle time", async () => {
-		const probe = fakeReachability(true);
-		const w = world({ reachability: probe.deps });
-		await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		w.at(16_001);
-		expect(await w.owner.tick()).toBe(false);
-		// A failure in between resets the count.
-		probe.state.up = false;
-		w.at(21_001);
-		expect(await w.owner.tick()).toBe(false);
-		probe.state.up = true;
-		w.at(26_001);
-		expect(await w.owner.tick()).toBe(false);
-		// Too soon after the previous probe: not probed at all.
-		w.at(27_000);
-		expect(await w.owner.tick()).toBe(false);
-		expect(probe.state.probes).toBe(3);
-		w.at(31_001);
-		expect(await w.owner.tick()).toBe(true);
-		expect(w.fake.calls.slice(-3)).toEqual([
-			"destroy",
-			"persist:Wired",
-			"remove:Wired",
-		]);
-		expect(w.fake.byId("Wired")[0]?.[1].settings["ipv4.method"]).toBe("shared");
-	});
-
-	it("a probe that throws counts as unreachable", async () => {
-		const w = world({
-			reachability: {
-				available: () => true,
-				probe: async () => {
-					throw new Error("no route");
-				},
-			},
-		});
-		await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		for (const t of [16_001, 21_001, 26_001]) {
-			w.at(t);
-			expect(await w.owner.tick()).toBe(false);
-		}
-		expect(w.fake.calls).not.toContain("destroy");
-	});
-
-	it("never commits after NetworkManager's own timer undid the change", async () => {
-		const probe = fakeReachability(true);
-		const w = world({ reachability: probe.deps });
-		await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		w.at(16_001);
-		await w.owner.tick();
-		await w.fake.expireAll();
-		w.at(21_001);
-		expect(await w.owner.tick()).toBe(true);
-		expect(w.fake.calls).not.toContain("destroy");
-		expect(w.fake.byId("Wired")[0]?.[1].settings["ipv4.method"]).toBe("auto");
-		// Lost early (well before the deadline): reported as a restart.
-		expect((await w.owner.status()).notice?.reason).toBe("restart");
-	});
-
-	it("an unreachable box is undone at the deadline with the 'lost the internet' notice", async () => {
-		const probe = fakeReachability(false);
-		const w = world({ reachability: probe.deps });
-		await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		await w.fake.expireAll();
-		w.at(91_000);
-		expect(await w.owner.tick()).toBe(true);
-		const status = await w.owner.status();
-		expect(status.notice).toMatchObject({
-			reason: "unreachable",
-			messageKey: "network.changeSafety.notice.unreachable",
-		});
-	});
-
-	it("a backend restart only restarts the count; NetworkManager still holds the timer", async () => {
-		const probe = fakeReachability(true);
-		const w = world({ reachability: probe.deps });
-		await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		w.at(16_001);
-		await w.owner.tick();
-		const next = w.restartBackend();
-		expect(await next.reconcile("backend-start")).toBe("resumed");
-		w.at(21_001);
-		expect(await next.tick()).toBe(false);
-		w.at(26_001);
-		expect(await next.tick()).toBe(true);
-	});
-});
-
 describe("one operation at a time, without 'busy' refusals", () => {
 	it("a confirmation that lands during a tick waits for it and succeeds", async () => {
 		const w = world();
-		const creator = session("old", "eth0", 500);
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		const live = w.fake.nm.live;
@@ -328,10 +147,11 @@ describe("one operation at a time, without 'busy' refusals", () => {
 			}
 			return live(ref);
 		};
+		w.at(17_000);
 		const tick = w.owner.tick();
 		// The tick is inside NetworkManager now; only then does confirm arrive.
 		await inside;
-		const confirm = w.owner.confirm(pending.id, session("new", "eth0", 1_001));
+		const confirm = w.owner.confirm(pending.id, CODE, back);
 		release();
 		expect(await tick).toBe(false);
 		await confirm;
@@ -349,18 +169,39 @@ describe("one operation at a time, without 'busy' refusals", () => {
 			await gate;
 			return slow(devices, timeout);
 		};
-		const apply = w.owner.apply(session("old", "eth0", 500), w.ethPlan, UNDO);
+		const apply = w.owner.apply(creator, w.ethPlan, UNDO);
 		await Promise.resolve();
 		expect(await w.owner.tick()).toBe(false);
 		release();
 		expect((await apply).kind).toBe("pending");
+	});
+
+	it("a tick in the same turn as a queued request skips, before the request starts", async () => {
+		const w = world();
+		let reads = 0;
+		const read = w.journal.read;
+		w.journal.read = async () => {
+			reads++;
+			return read();
+		};
+		// Both calls are made before either runs: the apply is only queued.
+		const apply = w.owner.apply(creator, w.ethPlan, UNDO);
+		const tick = w.owner.tick();
+		expect(await tick).toBe(false);
+		expect((await apply).kind).toBe("pending");
+		// Only the apply read the journal; the tick never entered the queue.
+		expect(reads).toBe(1);
+		// And two ticks in one turn run once.
+		reads = 0;
+		await Promise.all([w.owner.tick(), w.owner.tick()]);
+		expect(reads).toBe(1);
 	});
 });
 
 describe("an undo that keeps failing backs off and says so", () => {
 	it("retries after 5, 10, 20 s and logs each attempt", async () => {
 		const w = world();
-		await w.owner.apply(session("old", "eth0", 500), w.ethPlan, UNDO);
+		await w.owner.apply(creator, w.ethPlan, UNDO);
 		// NetworkManager keeps refusing to remove the candidate.
 		w.fake.fail.add("remove");
 		await w.fake.expireAll();
@@ -399,7 +240,6 @@ describe("an undo that keeps failing backs off and says so", () => {
 describe("the checkpoint is ours only with its creation stamp", () => {
 	it("a foreign checkpoint reusing the journaled path is neither rolled back nor destroyed", async () => {
 		const w = world();
-		const creator = session("old", "eth0", 500);
 		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		const path = (await w.journal.read()).tx?.checkpoint as string;
@@ -407,9 +247,7 @@ describe("the checkpoint is ours only with its creation stamp", () => {
 		// NetworkManager restarted and someone else got the same path.
 		w.fake.restart();
 		w.fake.foreignCheckpointAt(path);
-		await expect(
-			w.owner.confirm(pending.id, session("new", "eth0", 1_001)),
-		).rejects.toThrow();
+		await expect(w.owner.confirm(pending.id, CODE, back)).rejects.toThrow();
 		expect(await w.owner.tick()).toBe(true);
 		expect(w.fake.hasCheckpoint(path)).toBe(true);
 		expect(w.fake.calls).not.toContain("rollback");
@@ -421,11 +259,7 @@ describe("the checkpoint is ours only with its creation stamp", () => {
 describe("checkpoint operations are pinned to the daemon that made them", () => {
 	it("a daemon restart at the destroy boundary never lets the change be promoted", async () => {
 		const w = world();
-		const pending = await w.owner.apply(
-			session("old", "eth0", 500),
-			w.ethPlan,
-			UNDO,
-		);
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
 		const path = (await w.journal.read()).tx?.checkpoint as string;
 		const destroy = w.fake.nm.destroy;
@@ -436,9 +270,9 @@ describe("checkpoint operations are pinned to the daemon that made them", () => 
 			w.fake.foreignCheckpointAt(path);
 			await destroy(ref);
 		};
-		await expect(
-			w.owner.confirm(pending.id, session("new", "eth0", 1_001)),
-		).rejects.toThrow("unknown bus name");
+		await expect(w.owner.confirm(pending.id, CODE, back)).rejects.toThrow(
+			"unknown bus name",
+		);
 		expect(w.fake.calls).not.toContain("persist:Wired");
 		w.fake.nm.destroy = destroy;
 		expect(await w.owner.tick()).toBe(true);
@@ -448,24 +282,6 @@ describe("checkpoint operations are pinned to the daemon that made them", () => 
 		expect(w.fake.byId("Wired")[0]?.[1].settings["ipv4.method"]).toBe("auto");
 	});
 
-	it("the same holds for a keep-if-reachable commit", async () => {
-		const w = world({ reachability: fakeReachability().deps });
-		await w.owner.apply(tailnetPeer, w.ethPlan, REACH);
-		const path = (await w.journal.read()).tx?.checkpoint as string;
-		const destroy = w.fake.nm.destroy;
-		w.fake.nm.destroy = async (ref) => {
-			w.fake.restart();
-			w.fake.foreignCheckpointAt(path);
-			await destroy(ref);
-		};
-		w.at(16_001);
-		await w.owner.tick();
-		w.at(21_001);
-		await expect(w.owner.tick()).rejects.toThrow("unknown bus name");
-		expect(w.fake.calls).not.toContain("persist:Wired");
-		expect(w.fake.hasCheckpoint(path)).toBe(true);
-	});
-
 	it("a checkpoint without a complete identity is refused before any profile is touched", async () => {
 		const w = world();
 		const create = w.fake.nm.create;
@@ -473,15 +289,15 @@ describe("checkpoint operations are pinned to the daemon that made them", () => 
 			const ref = await create(devices, timeout);
 			return { ...ref, created: "" };
 		};
-		await expect(
-			w.owner.apply(session("old", "eth0", 500), w.ethPlan, UNDO),
-		).rejects.toThrow("identity");
+		await expect(w.owner.apply(creator, w.ethPlan, UNDO)).rejects.toThrow(
+			"identity",
+		);
 		expect(w.fake.calls.some((c) => c.startsWith("clone"))).toBe(false);
 	});
 
 	it("an old record without an identity is undone without any path-only call", async () => {
 		const w = world();
-		await w.owner.apply(session("old", "eth0", 500), w.ethPlan, UNDO);
+		await w.owner.apply(creator, w.ethPlan, UNDO);
 		const journal = await w.journal.read();
 		const tx = journal.tx as NonNullable<typeof journal.tx>;
 		delete tx.checkpointOwner;
@@ -493,6 +309,23 @@ describe("checkpoint operations are pinned to the daemon that made them", () => 
 		expect(after).not.toContain("rollback");
 		expect(after).not.toContain("destroy");
 		expect(w.fake.byId("Wired")[0]?.[1].settings["ipv4.method"]).toBe("auto");
+		expect(w.fake.active.get("eth0")).toBe(w.eth);
+	});
+});
+
+describe("a record without the bus instance id names no checkpoint", () => {
+	it("is undone without any checkpoint call", async () => {
+		const w = world();
+		await w.owner.apply(creator, w.ethPlan, UNDO);
+		const journal = await w.journal.read();
+		const tx = journal.tx as NonNullable<typeof journal.tx>;
+		delete tx.checkpointBus;
+		await w.journal.write(journal);
+		const before = w.fake.calls.length;
+		expect(await w.owner.tick()).toBe(true);
+		const after = w.fake.calls.slice(before);
+		expect(after).not.toContain("rollback");
+		expect(after).not.toContain("destroy");
 		expect(w.fake.active.get("eth0")).toBe(w.eth);
 	});
 });
@@ -594,7 +427,7 @@ describe("journal reset runs inside the owner", () => {
 		const eth = f.fake.add("Wired", { "ipv4.method": "auto" });
 		f.fake.active.set("eth0", eth);
 		await f.owner.apply(
-			session("old", "eth0", 500),
+			creator,
 			plan({
 				devices: ["eth0"],
 				profiles: [
@@ -609,10 +442,76 @@ describe("journal reset runs inside the owner", () => {
 	});
 });
 
+describe("the journal is validated as deeply as it is used", () => {
+	function stored(tx: Record<string, unknown>) {
+		const dir = mkdtempSync(join(tmpdir(), "nc-journal-"));
+		const path = join(dir, "journal.json");
+		writeFileSync(path, JSON.stringify({ version: 1, notice: null, tx }), {
+			mode: 0o600,
+		});
+		return { dir, store: createFileJournalStore(path) };
+	}
+	async function written() {
+		const w = world();
+		await w.owner.apply(creator, w.ethPlan, UNDO);
+		return (await w.journal.read()).tx as unknown as Record<string, unknown>;
+	}
+
+	it("a journal written by a real apply reads back", async () => {
+		const tx = await written();
+		const f = stored(tx);
+		expect((await f.store.read()).tx?.challenge?.host).toBe(
+			"box.example.ts.net",
+		);
+		rmSync(f.dir, { recursive: true, force: true });
+	});
+
+	it("refuses present fields of the wrong shape and a pending change without its deadline", async () => {
+		const tx = await written();
+		for (const broken of [
+			{ ...tx, expiresAt: "later" },
+			{ ...tx, appliedAt: undefined },
+			{ ...tx, expiresAt: undefined },
+			{ ...tx, expiresClock: -1 },
+			{ ...tx, checkpointBus: 7 },
+			{ ...tx, undoReason: "unreachable" },
+			{ ...tx, mode: "keep-if-reachable" },
+			{ ...tx, challenge: { ...(tx.challenge as object), codeHash: "x" } },
+			{ ...tx, challenge: { ...(tx.challenge as object), origin: "" } },
+			{ ...tx, confirmedVia: 3 },
+			{
+				...tx,
+				profiles: [{ ...(tx.profiles as object[])[0], promoted: "yes" }],
+			},
+		]) {
+			const f = stored(broken);
+			await expect(f.store.read()).rejects.toThrow("unavailable");
+			rmSync(f.dir, { recursive: true, force: true });
+		}
+	});
+
+	it("an older record without a checkpoint identity or boot-clock stamps still reads", async () => {
+		const tx = await written();
+		for (const key of [
+			"checkpointOwner",
+			"checkpointCreated",
+			"checkpointBus",
+			"startedClock",
+			"appliedClock",
+			"expiresClock",
+			"challenge",
+		])
+			delete tx[key];
+		const f = stored(tx);
+		expect((await f.store.read()).tx?.state).toBe("pending");
+		rmSync(f.dir, { recursive: true, force: true });
+	});
+});
+
 describe("the rest of the review's limits", () => {
 	it("an apply during an undo's backoff is refused as in flight, without a retry", async () => {
 		const w = world();
-		await w.owner.apply(session("old", "eth0", 500), w.ethPlan, UNDO);
+		await w.owner.apply(creator, w.ethPlan, UNDO);
 		w.fake.fail.add("remove");
 		await w.fake.expireAll();
 		w.at(91_000);
@@ -631,16 +530,16 @@ describe("the rest of the review's limits", () => {
 
 	it("a change still pending is refused with the typed in-flight error", async () => {
 		const w = world();
-		await w.owner.apply(session("old", "eth0", 500), w.ethPlan, UNDO);
+		await w.owner.apply(creator, w.ethPlan, UNDO);
 		const error = await w.owner
-			.apply(session("old", "eth0", 500), w.ethPlan, UNDO)
+			.apply(creator, w.ethPlan, UNDO)
 			.catch((e: unknown) => e);
 		expect(error).toBeInstanceOf(NetworkChangeInFlightError);
 	});
 
 	it("a notice answered meanwhile refuses a re-apply that carries its id", async () => {
 		const w = world();
-		await w.owner.apply(session("s", "eth0", 500), w.ethPlan, UNDO);
+		await w.owner.apply(creator, w.ethPlan, UNDO);
 		await w.fake.expireAll();
 		w.at(91_000);
 		await w.owner.tick();
@@ -659,7 +558,7 @@ describe("the rest of the review's limits", () => {
 
 	it("a re-apply carrying the notice id consumes it in the same write", async () => {
 		const w = world();
-		await w.owner.apply(session("s", "eth0", 500), w.ethPlan, UNDO);
+		await w.owner.apply(creator, w.ethPlan, UNDO);
 		await w.fake.expireAll();
 		w.at(91_000);
 		await w.owner.tick();
@@ -692,19 +591,15 @@ describe("the rest of the review's limits", () => {
 			},
 		});
 		ownerRef = w.owner;
-		const pending = await w.owner.apply(
-			session("old", "eth0", 500),
-			w.ethPlan,
-			UNDO,
-		);
+		const pending = await w.owner.apply(creator, w.ethPlan, UNDO);
 		if (pending.kind !== "pending") throw new Error("expected pending");
-		await w.owner.confirm(pending.id, session("new", "eth0", 1_001));
+		await w.owner.confirm(pending.id, CODE, back);
 		expect(String(nested)).toMatch(/Nested network change/);
 	});
 
 	it("a deadline that passed while the backend was down is not called a restart", async () => {
 		const w = world();
-		await w.owner.apply(session("old", "eth0", 500), w.ethPlan, UNDO);
+		await w.owner.apply(creator, w.ethPlan, UNDO);
 		// NetworkManager's timer fired while the backend was down; same boot.
 		await w.fake.expireAll();
 		w.at(120_000);

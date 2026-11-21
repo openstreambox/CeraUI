@@ -55,27 +55,7 @@ describe("the box's route back to a session", () => {
 		expect(await r.lookup("100.64.0.7")).toEqual({
 			carriers: ["eth0", "wwan0"],
 			tunnel: true,
-			// The one transport the box can test for keep-if-reachable.
-			tailnetPeer: "100.64.0.7",
 		});
-	});
-
-	it("names a tailnet peer only for a tailnet address answered over the tailnet", async () => {
-		const r = ip({
-			get: { "100.64.0.8": "wg0", "10.8.0.2": "tailscale0" },
-			default4: [{ dev: "eth0" }],
-		});
-		// A tailnet-looking address over another tunnel, or a non-tailnet
-		// address over tailscale0 (a subnet route): no testable peer.
-		expect(await r.lookup("100.64.0.8")).toEqual({
-			carriers: ["eth0"],
-			tunnel: true,
-		});
-		expect(await r.lookup("10.8.0.2")).toEqual({
-			carriers: ["eth0"],
-			tunnel: true,
-		});
-		expect(await r.lookup("127.0.0.1")).not.toHaveProperty("tailnetPeer");
 	});
 
 	it("a loopback peer (the front door's proxy, a local relay agent) is treated like a tunnel", async () => {

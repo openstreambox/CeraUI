@@ -16,6 +16,8 @@ const CHECKPOINT_PATH =
 	/^\/org\/freedesktop\/NetworkManager\/Checkpoint\/[0-9]{1,10}$/;
 /** A D-Bus unique connection name, such as ":1.42". */
 const UNIQUE_NAME = /^:[0-9]{1,10}\.[0-9]{1,10}$/;
+/** org.freedesktop.DBus.GetId: 32 lowercase hex digits. */
+const BUS_ID = /^[0-9a-f]{32}$/;
 const OWNED_NAME = /^ceralive-(candidate|backup)-[0-9a-f]{8}-[0-9]{1,3}$/;
 
 function uuid(value: string) {
@@ -110,6 +112,31 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 		}
 	}
 
+	/**
+	 * The system bus instance id. A unique name is never reused on one bus
+	 * instance, but a fresh bus (after a dbus restart) can hand it out again,
+	 * so the id is part of the checkpoint's identity.
+	 */
+	async function busId(): Promise<string> {
+		const [id] = await callAt(
+			"org.freedesktop.DBus",
+			"/org/freedesktop/DBus",
+			"org.freedesktop.DBus",
+			"GetId",
+			"",
+			[],
+		);
+		if (typeof id !== "string" || !BUS_ID.test(id))
+			throw new Error("D-Bus instance id unavailable");
+		return id;
+	}
+
+	/** Refuse to act on a checkpoint whose bus instance is gone. */
+	async function sameBus(ref: CheckpointRef) {
+		if ((await busId()) !== ref.bus)
+			throw new Error("Network checkpoint belongs to another bus instance");
+	}
+
 	async function createdStamp(owner: string, path: string) {
 		const output = await runner("busctl", [
 			"--system",
@@ -137,7 +164,8 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 		if (
 			!CHECKPOINT_PATH.test(ref.path) ||
 			!UNIQUE_NAME.test(ref.owner) ||
-			!/^[1-9][0-9]{0,18}$/.test(ref.created)
+			!/^[1-9][0-9]{0,18}$/.test(ref.created) ||
+			!BUS_ID.test(ref.bus)
 		)
 			throw new Error("Invalid network checkpoint");
 		return ref;
@@ -161,6 +189,7 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 				timeout < 1
 			)
 				throw new Error("Invalid network checkpoint request");
+			const bus = await busId();
 			const owner = await currentOwner();
 			if (!owner) throw new Error("NetworkManager unavailable");
 			const paths: string[] = [];
@@ -191,7 +220,12 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 			);
 			if (typeof path !== "string" || !CHECKPOINT_PATH.test(path))
 				throw new Error("Network checkpoint unavailable");
-			return { path, owner, created: await createdStamp(owner, path) };
+			return {
+				path,
+				owner,
+				created: await createdStamp(owner, path),
+				bus,
+			};
 		},
 		/**
 		 * True only while the same NetworkManager instance still holds the bus
@@ -199,6 +233,7 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 		 */
 		async live(ref: CheckpointRef) {
 			checkRef(ref);
+			if ((await busId()) !== ref.bus) return false;
 			if ((await currentOwner()) !== ref.owner) return false;
 			const output = await runner("busctl", [
 				"--system",
@@ -217,12 +252,14 @@ export function createNmCheckpointAdapter(runner: NmCheckpointRunner = run) {
 		},
 		async destroy(ref: CheckpointRef) {
 			checkRef(ref);
+			await sameBus(ref);
 			await callAt(ref.owner, MANAGER, DESTINATION, "CheckpointDestroy", "o", [
 				ref.path,
 			]);
 		},
 		async rollback(ref: CheckpointRef) {
 			checkRef(ref);
+			await sameBus(ref);
 			const [results] = await callAt(
 				ref.owner,
 				MANAGER,

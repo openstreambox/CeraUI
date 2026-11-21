@@ -6,7 +6,10 @@ import {
 
 const NM = "org.freedesktop.NetworkManager";
 const CP = "/org/freedesktop/NetworkManager/Checkpoint/1";
-const REF = { path: CP, owner: ":1.42", created: "123456" };
+const BUS = "f436f3e53586e9c31473504a6b00520a";
+const REF = { path: CP, owner: ":1.42", created: "123456", bus: BUS };
+/** org.freedesktop.DBus.GetId answers, in busctl's JSON shape. */
+const getId = (id = BUS) => JSON.stringify({ type: "s", data: [id] });
 
 describe("NetworkManager checkpoint D-Bus adapter", () => {
 	it("refuses option-shaped device identifiers before dispatch", async () => {
@@ -26,6 +29,7 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 		const nm = createNmCheckpointAdapter(async (bin, args) => {
 			expect(bin).toBe("busctl");
 			calls.push(args);
+			if (args.includes("GetId")) return getId();
 			if (args.includes("GetNameOwner"))
 				return JSON.stringify({ data: [":1.42"] });
 			if (args.includes("Created"))
@@ -38,13 +42,21 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 			path: CP,
 			owner: ":1.42",
 			created: "123456",
+			bus: BUS,
 		});
-		expect(calls[0]?.slice(-3)).toEqual(["GetNameOwner", "s", NM]);
+		// The bus instance first, so the unique name is read on that instance.
+		expect(calls[0]?.slice(-4)).toEqual([
+			"org.freedesktop.DBus",
+			"/org/freedesktop/DBus",
+			"org.freedesktop.DBus",
+			"GetId",
+		]);
+		expect(calls[1]?.slice(-3)).toEqual(["GetNameOwner", "s", NM]);
 		// Every call after that goes to the unique name, not the well-known one.
-		expect(calls[1]?.slice(3, 4)).toEqual([":1.42"]);
-		expect(calls[1]?.slice(-3)).toEqual(["GetDeviceByIpIface", "s", "eth0"]);
 		expect(calls[2]?.slice(3, 4)).toEqual([":1.42"]);
-		expect(calls[2]?.slice(-6)).toEqual([
+		expect(calls[2]?.slice(-3)).toEqual(["GetDeviceByIpIface", "s", "eth0"]);
+		expect(calls[3]?.slice(3, 4)).toEqual([":1.42"]);
+		expect(calls[3]?.slice(-6)).toEqual([
 			"CheckpointCreate",
 			"aouu",
 			"1",
@@ -52,7 +64,7 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 			"90",
 			"0",
 		]);
-		expect(calls[3]?.slice(-5)).toEqual([
+		expect(calls[4]?.slice(-5)).toEqual([
 			"get-property",
 			":1.42",
 			CP,
@@ -61,8 +73,13 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 		]);
 	});
 	it("refuses to create without a complete identity", async () => {
-		const answer = (stamp: unknown, owner: unknown = ":1.42") =>
+		const answer = (
+			stamp: unknown,
+			owner: unknown = ":1.42",
+			id: string = BUS,
+		) =>
 			createNmCheckpointAdapter(async (_bin, args) => {
+				if (args.includes("GetId")) return getId(id);
 				if (args.includes("GetNameOwner"))
 					return JSON.stringify({ data: [owner] });
 				if (args.includes("Created")) return JSON.stringify(stamp);
@@ -86,12 +103,19 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 				90,
 			),
 		).rejects.toThrow("unavailable");
+		// No usable bus instance id: no identity, so no checkpoint.
+		for (const id of ["", "XYZ", "f436f3e5"])
+			await expect(
+				answer({ type: "x", data: 1 }, ":1.42", id).create(["eth0"], 90),
+			).rejects.toThrow("D-Bus instance id unavailable");
 	});
-	it("is live only on the same daemon, listed, with the same stamp", async () => {
+	it("is live only on the same bus instance and daemon, listed, with the same stamp", async () => {
 		let owner = ":1.42";
 		let listed: string[] = [CP];
 		let stamp = 123456;
+		let bus = BUS;
 		const nm = createNmCheckpointAdapter(async (_bin, args) => {
+			if (args.includes("GetId")) return getId(bus);
 			if (args.includes("GetNameOwner"))
 				return JSON.stringify({ data: [owner] });
 			if (args.includes("Created"))
@@ -108,10 +132,16 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 		// NetworkManager restarted: a new daemon, even with the same path.
 		owner = ":1.77";
 		expect(await nm.live(REF)).toBe(false);
+		// A fresh system bus that handed the same unique name out again.
+		owner = ":1.42";
+		bus = `${"0".repeat(31)}1`;
+		expect(await nm.live(REF)).toBe(false);
 	});
 	it("sends destroy and rollback to the daemon that made the checkpoint", async () => {
 		const calls: string[][] = [];
+		let bus = BUS;
 		const nm = createNmCheckpointAdapter(async (_bin, args) => {
+			if (args.includes("GetId")) return getId(bus);
 			calls.push(args);
 			return args.includes("CheckpointRollback")
 				? JSON.stringify({ data: [{ "/device/1": 0 }] })
@@ -121,10 +151,17 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 		await nm.rollback(REF);
 		expect(calls.map((c) => c[3])).toEqual([":1.42", ":1.42"]);
 		expect(calls[0]?.slice(-2)).toEqual(["o", CP]);
+		// Another bus instance: neither call is sent.
+		bus = `${"0".repeat(31)}1`;
+		await expect(nm.destroy(REF)).rejects.toThrow("another bus instance");
+		await expect(nm.rollback(REF)).rejects.toThrow("another bus instance");
+		expect(calls).toHaveLength(2);
 	});
 	it("surfaces per-device rollback failures", async () => {
-		const nm = createNmCheckpointAdapter(async () =>
-			JSON.stringify({ data: [{ "/device/1": 1 }] }),
+		const nm = createNmCheckpointAdapter(async (_bin, args) =>
+			args.includes("GetId")
+				? getId()
+				: JSON.stringify({ data: [{ "/device/1": 1 }] }),
 		);
 		await expect(nm.rollback(REF)).rejects.toThrow("incomplete");
 	});
@@ -141,6 +178,8 @@ describe("NetworkManager checkpoint D-Bus adapter", () => {
 			{ ...REF, owner: "--address=x" },
 			{ ...REF, created: "abc" },
 			{ ...REF, created: "" },
+			{ ...REF, bus: "" },
+			{ ...REF, bus: "--address=x" },
 		]) {
 			await expect(nm.destroy(ref)).rejects.toThrow("Invalid");
 			await expect(nm.rollback(ref)).rejects.toThrow("Invalid");

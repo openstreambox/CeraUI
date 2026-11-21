@@ -317,12 +317,25 @@ const ethernetRoleOperationIdSchema = z
 // Safe network changes (behind the device's network-change flag). The two
 // ask-before answers are the only ones the device accepts: the protected change
 // (undone unless confirmed) and the deliberate "keep it" that skips the undo.
-export const changeSafetyAnswerSchema = z.enum([
-	'undo-automatically',
-	'keep-if-reachable',
-	'keep-change',
-]);
+export const changeSafetyAnswerSchema = z.enum(['undo-automatically', 'keep-change']);
 export type ChangeSafetyAnswer = z.infer<typeof changeSafetyAnswerSchema>;
+
+// The one-time code a page mints for each protected change: 32 random bytes,
+// base64url. The device keeps only its hash; the confirmation from a new
+// connection of the same browser login presents it again.
+export const confirmationCodeSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+
+// Why a confirmation was refused. `too_early`: open a new connection after
+// the settle time and try again; the others are final for that change.
+export const changeSafetyConfirmRefusalSchema = z.enum([
+	'not_pending',
+	'expired',
+	'too_early',
+	'wrong_code',
+	'not_requester',
+	'wrong_address',
+]);
+export type ChangeSafetyConfirmRefusal = z.infer<typeof changeSafetyConfirmRefusalSchema>;
 
 export const changeSafetyResultSchema = z.discriminatedUnion('kind', [
 	z.object({
@@ -330,22 +343,25 @@ export const changeSafetyResultSchema = z.discriminatedUnion('kind', [
 		messageKey: z.string(),
 		via: z.string().optional(),
 		// How the change meets the session's path: cuts it, may cut it, or the
-		// box can't tell. canConfirm: this person can confirm afterwards.
+		// box can't tell. canConfirm: this browser can confirm afterwards.
 		cut: z.enum(['cuts', 'may-cut', 'unknown']),
 		canConfirm: z.boolean(),
 		seconds: z.number().int().positive(),
 		settleSeconds: z.number().int().positive(),
 		liveKey: z.string().optional(),
-		primary: z.object({
-			answer: z.enum(['undo-automatically', 'keep-if-reachable']),
-			labelKey: z.string(),
-		}),
-		alternative: z
-			.object({ answer: z.literal('undo-automatically'), labelKey: z.string() })
-			.optional(),
+		primary: z.object({ answer: z.literal('undo-automatically'), labelKey: z.string() }),
 		deliberate: z.object({ answer: z.literal('keep-change'), labelKey: z.string() }),
 	}),
-	z.object({ kind: z.literal('pending'), id: z.string(), expiresAt: z.number() }),
+	z.object({
+		kind: z.literal('pending'),
+		id: z.string(),
+		// Wall time on the device's clock; count down from msLeft instead.
+		expiresAt: z.number(),
+		msLeft: z.number().nonnegative(),
+		// Until a new connection may confirm (the settle floor).
+		confirmAfterMs: z.number().nonnegative(),
+		canConfirm: z.boolean(),
+	}),
 	z.object({ kind: z.literal('kept'), id: z.string(), saving: z.literal(true).optional() }),
 ]);
 export type ChangeSafetyResult = z.infer<typeof changeSafetyResultSchema>;
@@ -356,9 +372,16 @@ export const changeSafetyStatusSchema = z.object({
 		.object({
 			id: z.string(),
 			expiresAt: z.number(),
+			msLeft: z.number().nonnegative(),
+			confirmAfterMs: z.number().nonnegative(),
 			path: z.string(),
-			confirmBy: z.enum(['session', 'reachability']),
+			canConfirm: z.boolean(),
 		})
+		.nullable(),
+	// The last confirmed change and where it was confirmed from: an interface
+	// name, or null for a remote connection.
+	confirmed: z
+		.object({ id: z.string(), via: z.string().nullable(), labelKey: z.string() })
 		.nullable(),
 	kept: z.object({ id: z.string(), undoKey: z.string() }).nullable(),
 	undoIncomplete: z.boolean(),
@@ -372,7 +395,7 @@ export const changeSafetyStatusSchema = z.object({
 	notice: z
 		.object({
 			id: z.string(),
-			reason: z.enum(['disconnected', 'unreachable', 'restart', 'interrupted', 'unsaved']),
+			reason: z.enum(['disconnected', 'restart', 'interrupted', 'unsaved']),
 			messageKey: z.string(),
 			summary: z.object({
 				key: z.string(),
@@ -385,11 +408,16 @@ export type ChangeSafetyStatus = z.infer<typeof changeSafetyStatusSchema>;
 
 export const changeSafetyIdInputSchema = z.object({ id: z.string().min(1).max(64) }).strict();
 
+export const changeSafetyConfirmInputSchema = z
+	.object({ id: z.string().min(1).max(64), confirmationCode: confirmationCodeSchema })
+	.strict();
+
 export const changeSafetyNoticeInputSchema = z
 	.object({
 		id: z.string().min(1).max(64),
 		answer: z.enum(['make-change', 'leave-undone']),
 		changeAnswer: changeSafetyAnswerSchema.optional(),
+		confirmationCode: confirmationCodeSchema.optional(),
 	})
 	.strict();
 
@@ -400,12 +428,24 @@ export const changeSafetyActionOutputSchema = z.object({
 });
 export type ChangeSafetyActionOutput = z.infer<typeof changeSafetyActionOutputSchema>;
 
+export const changeSafetyConfirmOutputSchema = z.object({
+	success: z.boolean(),
+	error: z.string().optional(),
+	refusal: changeSafetyConfirmRefusalSchema.optional(),
+	// Where the confirmation came from: an interface, or null (remote).
+	confirmedVia: z.string().nullable().optional(),
+	// The confirmed change is still being saved; the status reports the end.
+	saving: z.literal(true).optional(),
+});
+export type ChangeSafetyConfirmOutput = z.infer<typeof changeSafetyConfirmOutputSchema>;
+
 export const setEthernetRoleInputSchema = z
 	.object({
 		name: z.string().min(1),
 		role: ethernetRoleSchema,
 		op: ethernetRoleOperationIdSchema.optional(),
 		changeAnswer: changeSafetyAnswerSchema.optional(),
+		confirmationCode: confirmationCodeSchema.optional(),
 	})
 	.strict();
 export type SetEthernetRoleInput = z.infer<typeof setEthernetRoleInputSchema>;

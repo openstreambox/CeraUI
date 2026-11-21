@@ -19,7 +19,10 @@ import {
 	createFileJournalStore,
 	type NetworkChangePlan,
 } from '../../apps/backend/src/modules/network/network-change-journal.ts';
-import { createNetworkChangeOwner } from '../../apps/backend/src/modules/network/network-checkpoint.ts';
+import {
+	createNetworkChangeOwner,
+	sha256Hex,
+} from '../../apps/backend/src/modules/network/network-checkpoint.ts';
 import { createNmCheckpointAdapter } from '../../apps/backend/src/modules/network/network-checkpoint-nm.ts';
 import { createIngressEvidence } from '../../apps/backend/src/modules/network/network-ingress.ts';
 
@@ -156,12 +159,26 @@ async function buildPlan(name: string): Promise<NetworkChangePlan> {
 	return plan;
 }
 
-const session = (id: string, ingress: string) => ({
-	id,
-	openedAt: Date.now(),
-	authenticated: true,
-	ingress: ingress === '-' ? undefined : ingress,
-});
+/**
+ * A signed-in browser socket. Each command is its own process, so a socket is
+ * "new" by its open time: `creator` is the socket that made the change (opened
+ * before it); any other name is a connection opened now. The login and the
+ * page's address come from CONTRACT_TOKEN / CONTRACT_ORIGIN, so the shell can
+ * play another login or another address.
+ */
+const CODE = process.env.CONTRACT_CODE ?? `${'C'.repeat(42)}Q`;
+const session = (id: string, ingress: string) => {
+	const origin = process.env.CONTRACT_ORIGIN ?? 'http://box.contract.test';
+	return {
+		id,
+		openedAt: id === 'creator' ? 0 : Date.now(),
+		authenticated: true,
+		ingress: ingress === '-' ? undefined : ingress,
+		tokenHash: sha256Hex(process.env.CONTRACT_TOKEN ?? 'contract-token'),
+		origin,
+		host: new URL(origin).host,
+	};
+};
 
 const [command, ...args] = process.argv.slice(2);
 const print = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -188,15 +205,14 @@ let result: unknown;
 switch (command) {
 	case 'apply': {
 		const [planName = '', ingress = '-', answer] = args;
-		result = await owner.apply(
-			{ ...session('creator', ingress), openedAt: 0 },
-			await buildPlan(planName),
-			answer ? { answer: answer as 'undo-automatically' | 'keep-change' } : {},
-		);
+		result = await owner.apply(session('creator', ingress), await buildPlan(planName), {
+			...(answer ? { answer: answer as 'undo-automatically' | 'keep-change' } : {}),
+			confirmationCode: CODE,
+		});
 		break;
 	}
 	case 'confirm':
-		await owner.confirm(args[0] as string, session(args[1] as string, args[2] as string));
+		await owner.confirm(args[0] as string, CODE, session(args[1] as string, args[2] as string));
 		result = 'confirmed';
 		break;
 	case 'tick':
