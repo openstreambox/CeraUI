@@ -177,7 +177,7 @@ describe("HotspotDialog — Active only while the AP is live", () => {
 		expect(statusWord()).toBe("Inactive");
 		expect(modeBadge()).toBe("station");
 		const labels = buttonLabels();
-		expect(labels).toContain("Enable Hotspot");
+		expect(labels).toContain("Turn on hotspot");
 		expect(labels).not.toContain("Turn Off");
 		// The saved setup stays editable and forgettable while off.
 		expect(labels).toContain("Forget");
@@ -243,7 +243,7 @@ describe("HotspotDialog — follows transitions it did not start", () => {
 		expect(modeBadge()).toBe("hotspot");
 		const labels = buttonLabels();
 		expect(labels).toContain("Turn Off");
-		expect(labels).not.toContain("Enable Hotspot");
+		expect(labels).not.toContain("Turn on hotspot");
 		expect(labels).not.toContain("Forget");
 	});
 
@@ -275,7 +275,7 @@ describe("HotspotDialog — follows transitions it did not start", () => {
 		expect(statusWord()).toBe("Inactive");
 		expect(modeBadge()).toBe("station");
 		const labels = buttonLabels();
-		expect(labels).toContain("Enable Hotspot");
+		expect(labels).toContain("Turn on hotspot");
 		expect(labels).not.toContain("Turn Off");
 	});
 });

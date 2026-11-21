@@ -21,6 +21,12 @@
     which shows the exact credentials the AP will broadcast (or stores the
     operator's own) and needs an explicit acknowledgement. While the hotspot is
     off, Save prepares an inactive profile; Forget removes its saved setup.
+  • Footer: while the hotspot is off, Turn on hotspot is the primary action (it
+    is what the dialog was opened for), Save is secondary and Forget is a
+    separated destructive text button. The sheet's close icon is the only Close.
+    Turn on hotspot opens the confirmation above, whose own button carries the
+    same label (`hotspotConfirm.activate`) and is what starts the hotspot; the
+    footer is hidden while that confirmation is open.
   • When the hotspot is active, ONE QR encoding the live credentials can be shown
     so phones can join by scan. It sits behind Show code in `WifiCode` (hidden by
     default, hides itself again) together with the join line and New Wi-Fi
@@ -41,6 +47,7 @@ import {
 	Router,
 	Save,
 	ShieldCheck,
+	Trash2,
 	Wifi,
 } from '@lucide/svelte';
 import { onDestroy, untrack } from 'svelte';
@@ -450,6 +457,7 @@ async function copyPassword() {
 	bind:open
 	contentClass="sm:max-w-md"
 	description={m["hotspotConfigurator.help.description"]()}
+	hideFooter={confirmingStart}
 	icon={Router}
 	title={m["hotspotConfigurator.dialog.configHotspot"]()}
 >
@@ -753,40 +761,54 @@ async function copyPassword() {
 	</div>
 
 	{#snippet actions()}
-		<Button class="sm:min-w-24" onclick={() => (open = false)} variant="outline">
-			{m["network.dialog.close"]()}
-		</Button>
-		<!-- One action row at a time: while the credential gate is open, its own
-		     Cancel / Turn on are the only way forward. Save prepares or updates setup. -->
-		{#if !confirmingStart}
-		<Button
-			class="sm:min-w-28"
-			disabled={toggling}
-			onclick={handleToggle}
-			title={toggleDisabledReason}
-			variant="outline"
-		>
-			{#if toggling}
-				<Loader2 class="size-4 animate-spin motion-reduce:animate-none" />
-			{:else}
-				<Power class="size-4" />
-			{/if}
-			{isActive ? m["network.status.turnOff"]() : m["network.status.enableHotspot"]()}
-		</Button>
-		{/if}
+		<!-- Order on a phone (the footer stacks bottom-up): the action the dialog
+		     was opened for first, Save under it, Forget last and set apart. The
+		     sheet's own close icon is the only Close, so no fourth full-width
+		     button sits in the stack. DOM order is the reverse, which is also the
+		     desktop row: Forget at the start, then Save, then the primary. -->
 		{#if !confirmingStart}
 		{#if !isActive}
-		<Button variant="outline" disabled={configuring || toggling} onclick={handleDelete}>
+		<Button
+			class="text-destructive hover:bg-destructive/10 hover:text-destructive mt-2 sm:me-auto sm:mt-0"
+			data-testid="hotspot-forget"
+			disabled={configuring || toggling}
+			onclick={handleDelete}
+			variant="ghost"
+		>
+			<Trash2 class="size-4" />
 			{m["wifiSelector.button.forget"]()}
 		</Button>
 		{/if}
-		<Button class="sm:min-w-24" disabled={!canEdit || !isFormValid || configuring} onclick={handleSave}>
+		<Button
+			class="sm:min-w-24"
+			data-testid="hotspot-save"
+			disabled={!canEdit || !isFormValid || configuring}
+			onclick={handleSave}
+			variant="outline"
+		>
 			{#if configuring}
 				<Loader2 class="size-4 animate-spin motion-reduce:animate-none" />
 			{:else}
 				<Save class="size-4" />
 			{/if}
 			{configuring ? m["hotspotConfigurator.dialog.saving"]() : m["hotspotConfigurator.dialog.save"]()}
+		</Button>
+		<!-- One action row at a time: while the credential gate is open, its own
+		     Cancel / Turn on are the only way forward. -->
+		<Button
+			class="sm:min-w-28"
+			data-testid="hotspot-toggle"
+			disabled={toggling}
+			onclick={handleToggle}
+			title={toggleDisabledReason}
+			variant={isActive ? 'outline' : 'default'}
+		>
+			{#if toggling}
+				<Loader2 class="size-4 animate-spin motion-reduce:animate-none" />
+			{:else}
+				<Power class="size-4" />
+			{/if}
+			{isActive ? m["network.status.turnOff"]() : m["hotspotConfirm.activate"]()}
 		</Button>
 		{/if}
 	{/snippet}

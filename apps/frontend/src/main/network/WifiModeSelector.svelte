@@ -55,6 +55,7 @@ import {
 	wifiModeConsequenceKeys,
 	wifiModeDescriptionKey,
 	wifiModeLabelKey,
+	wifiModeOptionLabelKey,
 } from './wifi-adapter-mode-view';
 import { sameWifiRadio, type WifiRadioBinding, wifiRadioChanged } from './wifi-radio-binding';
 import { wifiModeOpKey } from './wifi-station-lock';
@@ -226,7 +227,7 @@ function request(mode: WifiAdapterMode) {
 					{const Glyph = $derived(GLYPH[option.mode])}
 					<Glyph aria-hidden="true" class="size-3 shrink-0" />
 				{/if}
-				{resolveMessageKey(wifiModeLabelKey(option.mode))}
+				{resolveMessageKey(wifiModeOptionLabelKey(option.mode))}
 			</button>
 		{/each}
 	</div>
@@ -245,8 +246,9 @@ function request(mode: WifiAdapterMode) {
 			data-testid="wifi-mode-reason-{view.device}-{option.mode}"
 			role="status"
 		>
-			{m["network.wifiMode.unavailable"]({
-				mode: resolveMessageKey(wifiModeLabelKey(option.mode)),
+			<!-- Names the choice the way the picker above shows it. -->
+			{m["network.wifiMode.optionUnavailable"]({
+				option: resolveMessageKey(wifiModeOptionLabelKey(option.mode)),
 				reason: option.reasonKey ? resolveMessageKey(option.reasonKey) : '',
 			})}
 		</p>
