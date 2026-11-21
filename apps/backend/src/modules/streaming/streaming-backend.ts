@@ -123,9 +123,19 @@ export interface StreamingBackend {
 	sessionEvidence?(): Promise<EngineSessionEvidence>;
 	/** The session id the Start reply gave for the current own launch, or null. */
 	launchedSession?(): string | null;
+	/**
+	 * Take over a session a previous backend launched, after the takeover gate
+	 * verified it: only when `connection` is still the current connection, it
+	 * last reported `streaming`, and its engine still reports `sessionId`.
+	 * From then on `ownsLaunchedSession()` holds exactly as for an own launch,
+	 * and a reconnect or an idle status drops it the same way.
+	 */
+	adoptLaunchedSession?(sessionId: string, connection: number): boolean;
 }
 
 export type EngineSessionEvidence = {
 	readonly state: EngineRuntimeState;
 	readonly sessionId: string | null;
+	/** Opaque token for the connection that answered; absent when none did. */
+	readonly connection?: number;
 };

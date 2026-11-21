@@ -70,7 +70,13 @@ import { getStreamingBackend } from "../streaming-engine.ts";
 import { srtlaSendExec } from "./exec-paths.ts";
 import { resolveLaunchConfig } from "./launch-config.ts";
 import { resolveProcessError } from "./process-error-patterns.ts";
-import { spawnStreamingLoop, stopProcessAndWait } from "./process-runner.ts";
+import {
+	registerHostedSender,
+	type StreamingProcess,
+	spawnStreamingLoop,
+	stopProcessAndWait,
+} from "./process-runner.ts";
+import { launchHostedSender } from "./sender-host.ts";
 
 interface StartStreamBackend {
 	setBitrate: ReturnType<typeof getStreamingBackend>["setBitrate"];
@@ -84,6 +90,10 @@ export interface StartStreamDeps {
 	readonly recordEngineSession: typeof recordEngineSession;
 	readonly getStreamingBackend: () => StartStreamBackend;
 	readonly spawnStreamingLoop: typeof spawnStreamingLoop;
+	/** The stream continuity takeover flag: the sender runs in its own unit. */
+	readonly takeoverFlag: () => boolean;
+	readonly launchHostedSender: typeof launchHostedSender;
+	readonly registerHostedSender: typeof registerHostedSender;
 	readonly startLinkTelemetry: typeof startLinkTelemetry;
 	readonly stopLinkTelemetry: typeof stopLinkTelemetry;
 	readonly stopProcessAndWait: typeof stopProcessAndWait;
@@ -94,10 +104,21 @@ const defaultStartStreamDeps: StartStreamDeps = {
 	recordEngineSession,
 	getStreamingBackend,
 	spawnStreamingLoop,
+	takeoverFlag: () => getConfig().stream_continuity_takeover === true,
+	launchHostedSender,
+	registerHostedSender,
 	startLinkTelemetry,
 	stopLinkTelemetry,
 	stopProcessAndWait,
 };
+
+/** The operator notification for a sender error line (spawned or hosted). */
+export function notifySenderError(err: string): void {
+	const resolved = resolveProcessError("srtla", err);
+	if (resolved) {
+		notificationBroadcast("srtla", "error", resolved.message, 5, true, false);
+	}
+}
 
 let startStreamDeps = defaultStartStreamDeps;
 
@@ -285,9 +306,11 @@ export async function startStream(
 	}
 	// ADR-003 §7: the capability probe runs BEFORE the argument vector is built,
 	// so a new CeraUI against an OLD sender emits the byte-identical legacy vector.
+	const hosted = startStreamDeps.takeoverFlag();
 	const bindMapArgs = await resolveBindMapArgs(
 		srtlaSendExec,
 		defaultBindMapSpawnDeps(getLastPublishedBond),
+		{ requireWhenAdvertised: hosted },
 	);
 	assertStreamLaunchOwnership();
 	const senderArgs = [
@@ -315,24 +338,29 @@ export async function startStream(
 		warn: (message, meta) => logger.warn(message, meta),
 	});
 	try {
-		const sender = startStreamDeps.spawnStreamingLoop(
-			{ command: srtlaSendExec, role: "srtla_send" },
-			senderArgs,
-			(err) => {
-				const resolved = resolveProcessError("srtla", err);
-				if (resolved) {
-					notificationBroadcast(
-						"srtla",
-						"error",
-						resolved.message,
-						5,
-						true,
-						false,
-					);
-				}
-			},
-		);
-		transaction.register(() => startStreamDeps.stopProcessAndWait(sender));
+		let sender: StreamingProcess;
+		if (hosted) {
+			// Its own unit, so a clean restart leaves it running for a takeover.
+			const launched = await startStreamDeps.launchHostedSender(
+				srtlaSendExec,
+				senderArgs,
+			);
+			sender = startStreamDeps.registerHostedSender(
+				launched.sender,
+				srtlaSendExec,
+				notifySenderError,
+				launched.followers,
+			);
+			transaction.register(() => startStreamDeps.stopProcessAndWait(sender));
+			assertStreamLaunchOwnership();
+		} else {
+			sender = startStreamDeps.spawnStreamingLoop(
+				{ command: srtlaSendExec, role: "srtla_send" },
+				senderArgs,
+				notifySenderError,
+			);
+			transaction.register(() => startStreamDeps.stopProcessAndWait(sender));
+		}
 
 		// Begin ingesting srtla_send's per-uplink telemetry. Seed the conn_id->iface
 		// registry from the exact file srtla_send reads at spawn so tlm_id (file

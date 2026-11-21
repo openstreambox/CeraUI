@@ -158,6 +158,18 @@ export function clearContinuityTelemetry(): void {
 	telemetryWriter.discardPending();
 }
 
+/**
+ * A takeover adopted the sender this record describes: later observations
+ * (the engine session, telemetry reports) belong to it, as they would to a
+ * sender this process started. Nothing is written.
+ */
+export function adoptContinuityLifetime(record: Lifetime): void {
+	telemetryEpoch++;
+	telemetryWriter.discardPending();
+	intendedLifetime = record.lifetime;
+	activeLifetime = record;
+}
+
 export async function recordSenderStarted(
 	record: Lifetime,
 	pid: number,

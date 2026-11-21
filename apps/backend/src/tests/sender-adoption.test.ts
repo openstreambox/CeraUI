@@ -1069,6 +1069,7 @@ describe("collectSenderAdoptionEvidence", () => {
 		expect(await production.queryEngine()).toEqual({
 			state: "unknown",
 			session: null,
+			connection: null,
 		});
 		expect(probe).not.toHaveBeenCalled();
 		probe.mockRestore();
@@ -1094,7 +1095,12 @@ describe("collectSenderAdoptionEvidence", () => {
 				order.push("session");
 				return { state: "streaming", sessionId: "session-1" };
 			}, show),
-		).toEqual({ state: "streaming", session: { ...ENGINE_SESSION } });
+		).toEqual({
+			state: "streaming",
+			session: { ...ENGINE_SESSION },
+			// The fixture's evidence names no connection.
+			connection: null,
+		});
 		expect(order).toEqual(["unit", "session", "unit"]);
 		// A session connection that cannot say its id claims no state either.
 		expect(
@@ -1102,7 +1108,7 @@ describe("collectSenderAdoptionEvidence", () => {
 				async () => ({ state: "streaming", sessionId: null }),
 				show,
 			),
-		).toEqual({ state: "unknown", session: null });
+		).toEqual({ state: "unknown", session: null, connection: null });
 	});
 
 	test("a record that could never qualify reads no process facts, marker, publication or map", async () => {

@@ -68,9 +68,20 @@ export function defaultBindMapSpawnDeps(
 	};
 }
 
+export type BindMapArgOptions = {
+	/**
+	 * Ask for required binding (`--require-bind-map`) when the sender
+	 * advertises it with contract 2 or later and the map is passed. Only a
+	 * takeover-flagged launch asks: adoption needs the applied identity that
+	 * required mode reports.
+	 */
+	readonly requireWhenAdvertised?: boolean;
+};
+
 export async function resolveBindMapArgs(
 	execPath: string,
 	deps: BindMapSpawnDeps,
+	options: BindMapArgOptions = {},
 ): Promise<string[]> {
 	const bond = deps.getBond();
 	deps.noteLaunch?.();
@@ -99,5 +110,13 @@ export async function resolveBindMapArgs(
 	}
 
 	deps.announce("bind-map-passed", bond);
-	return ["--bind-map", bond.publication.sidecarPath];
+	const required =
+		options.requireWhenAdvertised === true &&
+		capabilities.bindMapRequired === true &&
+		(capabilities.bindMapContract ?? 0) >= 2;
+	return [
+		"--bind-map",
+		bond.publication.sidecarPath,
+		...(required ? ["--require-bind-map"] : []),
+	];
 }

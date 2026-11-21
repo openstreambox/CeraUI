@@ -5,6 +5,7 @@ import { ensureEncoderShutdownProtection } from "../system/shutdown-protection.t
 import { admitAndPrepareStreamStart } from "../system/update-orchestrator/runtime.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
 import { notifyWifiAdapterModeEdge } from "../wifi/wifi-adapter-mode-events.ts";
+import { adoptedSender } from "./adopted-sender.ts";
 import { noteStreamStopped } from "./armed-stream-marker.ts";
 import { asrcProbeRemainingMs } from "./audio.ts";
 import {
@@ -102,9 +103,12 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	// live sender child with the configured executable runs, and the engine client
 	// that acknowledged this process's Start is unchanged. The three are not bound
 	// to one generation number; together they rule out a predecessor's session.
+	// A takeover (`sender-takeover.ts`) replaces only the first: the sender it
+	// adopted is still registered and alive, and the engine session it verified
+	// is held on the same connection as an own launch would be.
 	canReconcileStreaming: (generation) =>
 		shouldUseMocks() ||
-		(generation !== undefined &&
+		((generation !== undefined || adoptedSender() !== undefined) &&
 			ownsSessionSender() &&
 			getStreamingBackend().ownsLaunchedSession?.() === true),
 	seedLifecycleState: (state) => {

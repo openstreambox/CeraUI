@@ -183,6 +183,8 @@ export type SenderAdoptionEvidence = {
 	} | null;
 	/** Identity of the engine session, or null when the engine cannot say. */
 	readonly engineSession: EngineSessionIdentity | null;
+	/** Token for the engine connection that gave that identity, or null. */
+	readonly engineConnection?: number | null;
 	readonly engine: EngineRuntimeState;
 };
 
@@ -464,6 +466,7 @@ export type SenderAdoptionIo = {
 	readonly queryEngine: () => Promise<{
 		readonly state: EngineRuntimeState;
 		readonly session: EngineSessionIdentity | null;
+		readonly connection?: number | null;
 	}>;
 };
 
@@ -584,6 +587,7 @@ export async function querySessionEngine(
 ): Promise<{
 	state: EngineRuntimeState;
 	session: EngineSessionIdentity | null;
+	connection: number | null;
 }> {
 	let ask: () => Promise<EngineSessionEvidence>;
 	if (sessionEvidence) ask = sessionEvidence;
@@ -592,13 +596,17 @@ export async function querySessionEngine(
 		ask = () => getStreamingBackend().sessionEvidence();
 	}
 	let state: EngineRuntimeState = "unknown";
+	let connection: number | null = null;
 	const session = await readEngineSessionIdentity(async () => {
 		const evidence = await ask();
 		state = evidence.state;
+		connection = evidence.connection ?? null;
 		return evidence.sessionId;
 	}, show);
 	// No identity, no claim about the state either.
-	return session ? { state, session } : { state: "unknown", session: null };
+	return session
+		? { state, session, connection }
+		: { state: "unknown", session: null, connection: null };
 }
 
 function resolvedSenderExe(): string | null {
@@ -916,13 +924,16 @@ export async function collectSenderAdoptionEvidence(
 				...withReads,
 				revalidated: confirmedAlive() ? "changed" : "exited",
 			};
-		const engine = await io
-			.queryEngine()
-			.catch(() => ({ state: "unknown" as const, session: null }));
+		const engine = await io.queryEngine().catch(() => ({
+			state: "unknown" as const,
+			session: null,
+			connection: null,
+		}));
 		const withEngine: SenderAdoptionEvidence = {
 			...withReads,
 			engine: engine.state,
 			engineSession: engine.session,
+			engineConnection: engine.connection ?? null,
 		};
 		if (verdictOfEngineSession(withEngine).decision !== "adopt")
 			return withEngine;
@@ -952,6 +963,31 @@ export async function collectSenderAdoptionEvidence(
 	} finally {
 		(pin as ProcessPin | null)?.close();
 	}
+}
+
+/**
+ * Whether the operator's intent (armed marker and configuration) is still the
+ * one the evidence sampled. For a takeover's commit fence.
+ */
+export function sameArmedIntent(
+	e: SenderAdoptionEvidence,
+	marker: ArmedStreamMarker | null,
+	config: ArmedStreamConfig,
+): boolean {
+	return (
+		canonical({ marker, config }) ===
+		canonical({ marker: e.marker, config: e.currentConfig })
+	);
+}
+
+/** Eligible task states for a sender: not exited, exiting, stopped or traced. */
+export function eligibleProcessState(state: string | null): boolean {
+	return (
+		state !== null &&
+		state !== "" &&
+		!GONE_STATES.has(state) &&
+		!STOPPED_STATES.has(state)
+	);
 }
 
 /** `/proc/<pid>/stat` state letter, or null when unreadable. */

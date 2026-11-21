@@ -21,6 +21,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 
 const SOL_SOCKET = 1;
 const SO_PEERCRED = 17;
@@ -127,12 +128,20 @@ export type ProcessPin = {
 	 * as alive here; callers read its state from `/proc`.
 	 */
 	alive(): boolean | null;
+	/**
+	 * Send `signal` to the pinned process through its pidfd: true when sent,
+	 * false when the process has exited (ESRCH), null when it cannot be known
+	 * (no pidfd, closed, or another error). A PID the kernel has since given
+	 * to another process is never reached.
+	 */
+	signal(signal: NodeJS.Signals | number): boolean | null;
 	close(): void;
 };
 
 const UNPINNED: ProcessPin = {
 	pidfd: false,
 	alive: () => null,
+	signal: () => null,
 	close: () => {
 		/* Nothing held. */
 	},
@@ -152,6 +161,14 @@ export async function pinProcess(pid: number): Promise<ProcessPin | null> {
 	return {
 		pidfd: true,
 		alive: () => (closed ? null : pidfdAlive(c, fd)),
+		signal: (signal) => {
+			if (closed) return null;
+			const number =
+				typeof signal === "number" ? signal : osConstants.signals[signal];
+			if (!Number.isSafeInteger(number) || number < 0) return null;
+			if (c.pidfdSendSignal(fd, number) === 0) return true;
+			return c.errno() === ESRCH ? false : null;
+		},
 		close: () => {
 			if (closed) return;
 			closed = true;

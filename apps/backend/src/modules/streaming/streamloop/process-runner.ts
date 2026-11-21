@@ -33,16 +33,34 @@ import {
 } from "../health.ts";
 import { stopLinkTelemetry } from "../link-telemetry.ts";
 import { updateStatus } from "../streaming.ts";
+import type { HostedSender, OutputFollowers } from "./sender-host.ts";
 import { captureSenderOutput } from "./sender-output.ts";
 
 // Bun.Subprocess is not an EventEmitter, so the exit lifecycle is modeled here:
 // `exitListeners` replaces .on("exit")/.removeAllListeners("exit") and fires once
 // when `proc.exited` resolves; `spawnfile` replaces ChildProcess.spawnfile.
 export type StreamingProcess = {
-	proc: Bun.Subprocess<"inherit", "inherit" | "pipe", "pipe">;
+	proc: SupervisedProcess;
 	spawnfile: string;
 	exitListeners: Array<() => void>;
+	/**
+	 * Set only for a sender in its own systemd unit (`sender-host.ts`), spawned
+	 * by this backend or adopted from its predecessor. It is not our child, so
+	 * its PID can pass to another process once it exits: ownership checks
+	 * compare its start time and its pidfd instead of the parent PID, and every
+	 * signal goes through that pidfd.
+	 */
+	hosted?: HostedSender;
 };
+
+/**
+ * The part of a process handle supervision uses. A spawned child is a
+ * `Bun.Subprocess`; a hosted sender is a handle over a pidfd.
+ */
+export type SupervisedProcess = Pick<
+	Bun.Subprocess<"inherit", "inherit" | "pipe", "pipe">,
+	"pid" | "exitCode" | "signalCode" | "exited" | "kill"
+>;
 
 const forwardProcesses: Array<StreamingProcess> = [];
 
@@ -117,9 +135,49 @@ export function spawnStreamingLoop(
 		});
 	}
 
+	superviseExit(streamingProcess, registry, sender);
+	return streamingProcess;
+}
+
+/**
+ * Supervise a sender that runs in its own unit: one this backend launched with
+ * the takeover flag, or one it adopted from its predecessor. From here on it is
+ * handled exactly like a spawned sender (ownership, census, reload, Stop and
+ * the exit report) through its pidfd-backed handle. Graceful shutdown leaves it
+ * running for the next backend.
+ */
+export function registerHostedSender(
+	sender: HostedSender,
+	command: string,
+	errCallback: (data: string) => void,
+	followers: OutputFollowers | null,
+): StreamingProcess {
+	const streamingProcess: StreamingProcess = {
+		proc: sender as unknown as SupervisedProcess,
+		spawnfile: command,
+		exitListeners: [],
+		hosted: sender,
+	};
+	streamingProcesses.push(streamingProcess);
+	if (followers) {
+		void captureSenderOutput(
+			{ stdout: followers.stdout, stderr: followers.stderr },
+			errCallback,
+		);
+		void sender.exited.then(() => followers.stop());
+	}
+	superviseExit(streamingProcess, streamingProcesses, true);
+	return streamingProcess;
+}
+
+function superviseExit(
+	streamingProcess: StreamingProcess,
+	registry: Array<StreamingProcess>,
+	sender: boolean,
+): void {
 	// proc.exited resolves once; run whatever exit listeners are registered at
 	// that moment (mirrors a one-shot EventEmitter "exit").
-	proc.exited.then(() => {
+	streamingProcess.proc.exited.then(() => {
 		for (const listener of [...streamingProcess.exitListeners]) {
 			listener();
 		}
@@ -158,7 +216,6 @@ export function spawnStreamingLoop(
 		reportStreamProcessExit();
 		broadcastHealthIfChanged();
 	});
-	return streamingProcess;
 }
 
 function isSenderProcess(streamingProcess: StreamingProcess): boolean {
@@ -185,6 +242,11 @@ export function signalSenders(
 	for (const sp of procs) {
 		if (!isSenderProcess(sp) || !isProcAlive(sp)) continue;
 		try {
+			// A hosted sender counts only when its pidfd confirms delivery.
+			if (sp.hosted) {
+				if (sp.hosted.signal(signal) === true) delivered++;
+				continue;
+			}
 			sp.proc.kill(signal);
 			delivered++;
 		} catch (err) {
@@ -327,7 +389,20 @@ export function gracefulShutdown(
 	procs: Array<StreamingProcess> = streamingProcesses,
 	timers: ShutdownTimers = realShutdownTimers,
 ): Promise<void> {
-	const remaining = new Set([...procs].filter(isProcAlive));
+	// A hosted sender is left running: the next backend adopts it or stops its
+	// unit. Only the watching ends here.
+	for (const sp of [...procs]) {
+		if (!sp.hosted || !isProcAlive(sp)) continue;
+		logger.info("gracefulShutdown: leaving the hosted sender running", {
+			unit: sp.hosted.unit,
+		});
+		sp.exitListeners = [];
+		sp.hosted.release();
+		removeProc(sp);
+	}
+	const remaining = new Set(
+		[...procs].filter((sp) => !sp.hosted && isProcAlive(sp)),
+	);
 	if (remaining.size === 0) return Promise.resolve();
 
 	return new Promise<void>((resolve) => {
