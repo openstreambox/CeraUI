@@ -366,7 +366,11 @@ version through `engine-schema-skew.ts` and logs a skew once per engine
 connection. Only an engine schema newer than the bindings (or one that does not
 parse) sets the `schemaVersionMismatch` flag: an older engine's fields all parse
 and newer features are gated on its `features` tokens, so nothing shown is
-approximate. `apps/frontend/src/lib/streaming/go-live-readiness.ts:270-295`
+approximate. A start's audio mix and custom layout are checked against the
+engine receiving the start (a bounded read on that connection), and a live custom
+placement needs geometry evidence from the running engine; a start that leaves
+either out keeps the selected audio input and raises a `stream-start-features`
+warning notification. `apps/frontend/src/lib/streaming/go-live-readiness.ts:270-295`
 surfaces the flag as an advisory (non-blocking) readiness warning.
 **Status: EXISTS**
 

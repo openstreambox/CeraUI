@@ -13,12 +13,15 @@ import { setMockAudioDevicesProvider } from "../modules/streaming/audio.ts";
 import {
 	clearCapabilitiesCache,
 	getCapabilities,
+	getCurrentCapabilities,
+	getLastCapabilities,
 	invalidateCapabilities,
 } from "../modules/streaming/capabilities.ts";
 import {
 	CerastreamBackend,
 	type CerastreamBackendDeps,
 } from "../modules/streaming/cerastream-backend.ts";
+import { START_CAPABILITY_PREFLIGHT_DEADLINE_MS } from "../modules/streaming/start-lifecycle-timing.ts";
 
 // The start request carries feature-gated fields (an audio mix, a custom
 // composition rectangle) that only some engines accept. They must be checked
@@ -76,7 +79,10 @@ interface Recorded {
 	capabilityReads: number;
 }
 
-function fakeClient(caps: GetCapabilitiesResult, recorded: Recorded) {
+/** What the receiving engine answers to `get-capabilities`. */
+type CapsAnswer = GetCapabilitiesResult | "fail" | "hang";
+
+function fakeClient(caps: CapsAnswer, recorded: Recorded) {
 	const started = (params: unknown) => {
 		recorded.starts.push(structuredClone(params) as Record<string, unknown>);
 		return { session_id: "s1", state: "streaming" as const };
@@ -92,6 +98,8 @@ function fakeClient(caps: GetCapabilitiesResult, recorded: Recorded) {
 			method === "start" ? started(params) : {},
 		getCapabilities: async () => {
 			recorded.capabilityReads++;
+			if (caps === "fail") throw new Error("get-capabilities failed");
+			if (caps === "hang") return new Promise<never>(() => {});
 			return structuredClone(caps);
 		},
 		stop: async () => ({ state: "idle" as const }),
@@ -114,15 +122,29 @@ const logger: CerastreamBackendDeps["logger"] = {
 	error() {},
 };
 
-function backendFor(config: RuntimeConfig, caps: GetCapabilitiesResult) {
+interface Notice {
+	name: string;
+	type: string;
+	msg: string;
+}
+
+function backendFor(
+	config: RuntimeConfig,
+	caps: CapsAnswer,
+	scheduleTimeout?: CerastreamBackendDeps["scheduleTimeout"],
+) {
 	const recorded: Recorded = { starts: [], capabilityReads: 0 };
+	const notices: Notice[] = [];
 	const backend = new CerastreamBackend({
 		connect: async () => fakeClient(caps, recorded),
 		connectOptions: {},
 		getConfig: () => config,
 		saveConfig: () => {},
+		...(scheduleTimeout === undefined ? {} : { scheduleTimeout }),
 		bridge: {
-			notify: () => {},
+			notify: (name, type, msg) => {
+				notices.push({ name, type, msg });
+			},
 			notificationExists: () => false,
 			removeNotification: () => {},
 			broadcastStatus: () => {},
@@ -134,7 +156,7 @@ function backendFor(config: RuntimeConfig, caps: GetCapabilitiesResult) {
 		getActiveInput: () => undefined,
 		isEmbeddedAudioActive: () => false,
 	});
-	return { backend, recorded };
+	return { backend, recorded, notices };
 }
 
 async function snapshotFrom(caps: GetCapabilitiesResult) {
@@ -249,4 +271,101 @@ test("a start without gated fields does not read capabilities first", async () =
 
 	expect(recorded.starts).toHaveLength(1);
 	expect(recorded.capabilityReads).toBe(0);
+});
+
+// The mix fallback must leave the stream on the operator's selected input, not
+// on the engine's default device: assembly replaces `audio.device` and forces
+// `mode: "default"` when it adds mixer inputs.
+test("dropping the mix keeps the selected audio input", async () => {
+	await snapshotFrom(GEOMETRY_ENGINE);
+	invalidateCapabilities();
+	const { backend, recorded } = backendFor(mixConfig(), OLDER_ENGINE);
+
+	await backend.start(mixConfig(), START);
+
+	expect(recorded.starts[0]?.audio).toEqual({
+		mode: "device",
+		device: "hw:CARD=Primary",
+	});
+});
+
+test("a dropped mix or custom layout is surfaced to the operator, not only logged", async () => {
+	await snapshotFrom(GEOMETRY_ENGINE);
+	const config: RuntimeConfig = {
+		...mixConfig(),
+		composition: customLayoutConfig().composition,
+	};
+	const { backend, notices } = backendFor(config, OLDER_ENGINE);
+
+	await backend.start(config, START);
+
+	expect(notices).toHaveLength(1);
+	expect(notices[0]?.type).toBe("warning");
+	expect(notices[0]?.msg).toContain("audio mix");
+	expect(notices[0]?.msg).toContain("custom layout");
+});
+
+test("a fully supported start raises no operator notice", async () => {
+	await snapshotFrom(GEOMETRY_ENGINE);
+	const config: RuntimeConfig = {
+		...mixConfig(),
+		composition: customLayoutConfig().composition,
+	};
+	const { backend, recorded, notices } = backendFor(config, GEOMETRY_ENGINE);
+
+	await backend.start(config, START);
+
+	expect(recorded.starts[0]).toHaveProperty("composition");
+	expect(notices).toEqual([]);
+});
+
+test("a failed capability read keeps primary audio and tells the operator", async () => {
+	await snapshotFrom(GEOMETRY_ENGINE);
+	const { backend, recorded, notices } = backendFor(mixConfig(), "fail");
+
+	await backend.start(mixConfig(), START);
+
+	expect(recorded.starts).toHaveLength(1);
+	expect(recorded.starts[0]?.audio).toEqual({
+		mode: "device",
+		device: "hw:CARD=Primary",
+	});
+	expect(notices.map((n) => n.msg).join(" ")).toContain("audio mix");
+});
+
+test("an unanswered capability read is bounded below the bindings' request timeout", async () => {
+	await snapshotFrom(GEOMETRY_ENGINE);
+	const delays: number[] = [];
+	const { backend, recorded, notices } = backendFor(
+		mixConfig(),
+		"hang",
+		(callback, delayMs) => {
+			delays.push(delayMs);
+			if (delayMs === START_CAPABILITY_PREFLIGHT_DEADLINE_MS)
+				queueMicrotask(callback);
+			return setTimeout(() => {}, 0);
+		},
+	);
+
+	await backend.start(mixConfig(), START);
+
+	expect(START_CAPABILITY_PREFLIGHT_DEADLINE_MS).toBeLessThan(10_000);
+	expect(delays).toContain(START_CAPABILITY_PREFLIGHT_DEADLINE_MS);
+	expect(recorded.starts).toHaveLength(1);
+	expect(recorded.starts[0]?.audio).toEqual({
+		mode: "device",
+		device: "hw:CARD=Primary",
+	});
+	expect(notices).toHaveLength(1);
+});
+
+test("the start preflight does not publish into the shared capability snapshot", async () => {
+	await snapshotFrom(GEOMETRY_ENGINE);
+	invalidateCapabilities();
+	const { backend } = backendFor(mixConfig(), OLDER_ENGINE);
+
+	await backend.start(mixConfig(), START);
+
+	expect(getCurrentCapabilities()).toBeUndefined();
+	expect(getLastCapabilities()?.audio_mix).toEqual(MIX);
 });

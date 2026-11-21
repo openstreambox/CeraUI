@@ -984,6 +984,8 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	[
 		"start: dropping the custom composition layout — the receiving engine only advertises preset layouts",
 	],
+	["start: get-capabilities failed"],
+	["start: the engine did not answer get-capabilities within the bound"],
 	["startStream: IP list read failed; aborting start"],
 	["startStream: audio source probe failed; aborting start"],
 	["stop: SIGKILL timeout (", "ms) exceeded for ", "; sending SIGKILL"],

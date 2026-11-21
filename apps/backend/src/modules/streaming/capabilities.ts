@@ -410,6 +410,17 @@ function retainedCapabilities(): CapabilitiesResult {
 	);
 }
 
+/**
+ * The acquired client's own capability answer, kept local: nothing is published
+ * to the shared snapshot, so a caller authorizing a request to this client acts
+ * on this client's word only. Throws like the underlying read.
+ */
+export async function readSessionCapabilities(
+	client: CerastreamClient,
+): Promise<GetCapabilitiesResult> {
+	return (await defaultFetchEngineCapabilities(client)).caps;
+}
+
 /** Read the acquired client's capabilities without closing it or scanning devices. */
 export async function refreshCapabilitiesFromClient(
 	client: CerastreamClient,

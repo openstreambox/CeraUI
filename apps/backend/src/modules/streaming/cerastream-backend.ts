@@ -85,6 +85,7 @@ import {
 	DEFAULT_MIN_BITRATE,
 	DEFAULT_SRT_LATENCY,
 	type EventParams,
+	type GetCapabilitiesResult,
 	type ListDevicesParams,
 	type ListDevicesResult,
 	type ListSwitchTargetsResult,
@@ -137,6 +138,7 @@ import {
 	getCurrentCapabilities,
 	getLastCapabilities,
 	invalidateCapabilities,
+	readSessionCapabilities,
 	refreshCapabilitiesFromClient,
 } from "./capabilities.ts";
 import {
@@ -172,10 +174,13 @@ import {
 import {
 	authorizeStartFeatures,
 	carriesGatedStartFields,
+	type DroppedStartFeature,
+	droppedStartFeaturesMessage,
 } from "./start-feature-authorization.ts";
 import {
 	ENGINE_CLOSE_DEADLINE_MS,
 	ENGINE_STOP_REQUEST_DEADLINE_MS,
+	START_CAPABILITY_PREFLIGHT_DEADLINE_MS,
 } from "./start-lifecycle-timing.ts";
 import {
 	assertStreamLaunchOwnership,
@@ -209,6 +214,9 @@ function engineAdvertises(feature: string): boolean {
 const ENGINE_ERRORS_CLEARED_BY_HEALTHY_SESSION: ReadonlySet<string> = new Set([
 	PROCESS_ERROR_CODES.CAPTURE_VIDEO_ERROR,
 ]);
+
+/** Notification naming configured start features the engine did not get. */
+export const START_FEATURES_NOTIFICATION = "stream-start-features";
 
 /** The status/notification surface the backend bridges engine events onto. */
 export interface CerastreamBridge {
@@ -891,6 +899,14 @@ export class CerastreamBackend implements StreamingBackend {
 			transaction ?? createLaunchTransaction("backend-start");
 		try {
 			const params = this.buildStartParams(config, opts);
+			const singleAudio = this.singleInputAudio(
+				config,
+				config.pipeline ?? opts.pipeline,
+			);
+			const audioWithoutMix =
+				Object.keys(singleAudio).length > 0 ? singleAudio : undefined;
+			let droppedFeatures: DroppedStartFeature[] = [];
+			let capabilitiesAnswered = false;
 			const audioMixInputs = params.audio?.inputs?.map((input) => ({
 				...structuredClone(input),
 				id:
@@ -967,20 +983,25 @@ export class CerastreamBackend implements StreamingBackend {
 						clientReleased = true;
 					}
 				});
-				// Gated fields are checked against this engine, not the snapshot the
-				// params were assembled from, which may predate this connection.
+				// Gated fields are checked against this engine's own answer, not the
+				// shared snapshot the params were assembled from, which may predate
+				// this connection.
 				let startParams = params;
 				let startMixInputs = audioMixInputs;
 				if (carriesGatedStartFields(params)) {
-					await refreshCapabilitiesFromClient(client, () => {});
+					const caps = await this.readStartCapabilities(client);
 					assertStreamLaunchOwnership();
-					startParams = authorizeStartFeatures(
+					const authorized = authorizeStartFeatures(
 						params,
-						getCurrentCapabilities(),
+						caps,
+						audioWithoutMix,
 						this.deps.logger,
 					);
+					startParams = authorized.params;
 					if (startParams.audio?.inputs === undefined)
 						startMixInputs = undefined;
+					droppedFeatures = authorized.dropped;
+					capabilitiesAnswered = caps !== undefined;
 				}
 				const result = await launchTransaction.runPhase("start-rpc", () => {
 					assertStreamLaunchOwnership();
@@ -993,6 +1014,7 @@ export class CerastreamBackend implements StreamingBackend {
 				});
 				// Subscription replay predates this Start acknowledgement.
 				if (this.client === client && this.clientEpoch === clientEpoch) {
+					this.noteDroppedStartFeatures(droppedFeatures, capabilitiesAnswered);
 					this.audioMixInputs = startMixInputs;
 					this.launchedSessionCurrent = () =>
 						this.client === client && this.clientEpoch === clientEpoch;
@@ -1020,6 +1042,63 @@ export class CerastreamBackend implements StreamingBackend {
 				!dispatched || confirmedIdle ? "idle" : "unknown",
 			);
 		}
+	}
+
+	/**
+	 * The receiving engine's capabilities for authorizing a start, read on the
+	 * start's own connection and kept local: nothing is published to the shared
+	 * snapshot. Bounded well below the bindings' request timeout; no answer in
+	 * time, or a failed read, is `undefined`, and the start goes out without the
+	 * gated fields.
+	 */
+	private async readStartCapabilities(
+		client: CerastreamClient,
+	): Promise<GetCapabilitiesResult | undefined> {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<undefined>((resolve) => {
+			timer = this.deps.scheduleTimeout(() => {
+				this.deps.logger.warn(
+					"start: the engine did not answer get-capabilities within the bound",
+					{
+						module: "streaming",
+						deadlineMs: START_CAPABILITY_PREFLIGHT_DEADLINE_MS,
+					},
+				);
+				resolve(undefined);
+			}, START_CAPABILITY_PREFLIGHT_DEADLINE_MS);
+		});
+		const read = readSessionCapabilities(client).catch((error: unknown) => {
+			this.deps.logger.warn("start: get-capabilities failed", {
+				module: "streaming",
+				error,
+			});
+			return undefined;
+		});
+		try {
+			return await Promise.race([read, deadline]);
+		} finally {
+			if (timer !== undefined) this.deps.cancelTimeout(timer);
+		}
+	}
+
+	/** Tell the operator which configured start features the engine did not get. */
+	private noteDroppedStartFeatures(
+		dropped: readonly DroppedStartFeature[],
+		answered: boolean,
+	): void {
+		if (dropped.length === 0) {
+			if (this.deps.bridge.notificationExists(START_FEATURES_NOTIFICATION))
+				this.deps.bridge.removeNotification(START_FEATURES_NOTIFICATION);
+			return;
+		}
+		this.deps.bridge.notify(
+			START_FEATURES_NOTIFICATION,
+			"warning",
+			droppedStartFeaturesMessage(dropped, answered),
+			0,
+			true,
+			true,
+		);
 	}
 
 	// Send `start` so `audio.mode` / `video_passthrough` survive: an engine that
@@ -1211,6 +1290,8 @@ export class CerastreamBackend implements StreamingBackend {
 	// stream that is no longer running.
 	private clearSessionScopedTelemetry(): void {
 		this.audioMixInputs = undefined;
+		// Which configured features the session went without is session news too.
+		this.noteDroppedStartFeatures([], false);
 		this.runtimeEvidence = undefined;
 		const previous = this.telemetry;
 		if (previous === null) return;
@@ -1879,24 +1960,14 @@ export class CerastreamBackend implements StreamingBackend {
 	}
 
 	/**
-	 * Encode/input/audio fields forwarded identically to `start` and the
-	 * persisted engine config. The spread idiom OMITS absent fields (never sends
-	 * `{ key: undefined }`); resolution is mapped to the engine's "WxH" pixel
-	 * form (a UI token is never sent); `config.delay` rides `audio.delay_ms`
-	 * signed-verbatim (clamping is engine-side only, never on this path).
+	 * The single-input `audio` section: the operator's pick, backend, codec and
+	 * delay, without mixer inputs. Also the fallback a start sends when the
+	 * receiving engine turns out not to take a configured mix.
 	 */
-	private encodeInputAudioFields(
+	private singleInputAudio(
 		config: RuntimeConfig,
 		pipelineId: string | undefined,
-	): {
-		input_id?: string;
-		codec?: "h264" | "h265";
-		resolution?: string;
-		framerate?: number;
-		video_passthrough?: "auto" | "force" | "off";
-		audio?: StartParams["audio"];
-	} {
-		const inputId = config.selected_video_input ?? this.deps.getActiveInput();
+	) {
 		// The operator's audio pick maps onto the engine's `audio.mode`
 		// discriminator (never a pseudo-source string leaked into `audio.device`):
 		// "No audio" ⇒ none, "Pipeline default" / a network-embedded source ⇒
@@ -1922,6 +1993,29 @@ export class CerastreamBackend implements StreamingBackend {
 			...(config.acodec !== undefined ? { codec: config.acodec } : {}),
 			...(config.delay !== undefined ? { delay_ms: config.delay } : {}),
 		};
+		return audio;
+	}
+
+	/**
+	 * Encode/input/audio fields forwarded identically to `start` and the
+	 * persisted engine config. The spread idiom OMITS absent fields (never sends
+	 * `{ key: undefined }`); resolution is mapped to the engine's "WxH" pixel
+	 * form (a UI token is never sent); `config.delay` rides `audio.delay_ms`
+	 * signed-verbatim (clamping is engine-side only, never on this path).
+	 */
+	private encodeInputAudioFields(
+		config: RuntimeConfig,
+		pipelineId: string | undefined,
+	): {
+		input_id?: string;
+		codec?: "h264" | "h265";
+		resolution?: string;
+		framerate?: number;
+		video_passthrough?: "auto" | "force" | "off";
+		audio?: StartParams["audio"];
+	} {
+		const inputId = config.selected_video_input ?? this.deps.getActiveInput();
+		const audio = this.singleInputAudio(config, pipelineId);
 		const inputs = engineAudioInputs(config);
 		if (inputs !== undefined) {
 			delete audio.device;
