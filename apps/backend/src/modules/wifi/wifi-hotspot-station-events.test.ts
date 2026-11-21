@@ -188,6 +188,20 @@ describe("HotspotStationEvents", () => {
 		watcher.stop();
 	});
 
+	test("a follow-up after its AP stopped reads nothing", () => {
+		const aps = ["wlan0"];
+		const h = harness(aps);
+		const watcher = new HotspotStationEvents(h.deps);
+		watcher.sync(true);
+		watcher.handleLine("wlan0 (phy #0): new station 8c:85:90:1a:2b:3c");
+		// The AP went down before its follow-ups fired; the interface is a
+		// station leg now.
+		aps.length = 0;
+		h.runDue();
+		expect(h.reads).toEqual([]);
+		watcher.stop();
+	});
+
 	test("a second join on the same AP replaces the pending follow-ups", () => {
 		const h = harness();
 		const watcher = new HotspotStationEvents(h.deps);
