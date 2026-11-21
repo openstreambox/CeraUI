@@ -252,14 +252,21 @@ function skipName(message: Uint8Array, start: number): number | undefined {
 	for (;;) {
 		const length = message[offset];
 		if (length === undefined) return undefined;
-		if ((length & 0xc0) === 0xc0) return offset + 2;
+		if ((length & 0xc0) === 0xc0) {
+			const low = message[offset + 1];
+			if (low === undefined || (((length & 0x3f) << 8) | low) >= message.length)
+				return undefined;
+			return offset + 2;
+		}
+		if ((length & 0xc0) !== 0 || offset + 1 + length > message.length)
+			return undefined;
 		if (length === 0) return offset + 1;
 		offset += 1 + length;
 	}
 }
 
 /**
- * The AAAA records of a DNS response to query `id`, as address text.
+ * The IN/AAAA records of a response to our fixed discovery query `id`.
  *
  * `undefined` means "not an answer to this question" (wrong id, not a response,
  * an error code, truncated or malformed); an empty list is a valid "no AAAA".
@@ -278,6 +285,7 @@ export function parseAaaaResponse(
 	const flags = view.getUint16(2);
 	if (
 		(flags & 0x8000) === 0 ||
+		(flags & 0x7800) !== 0 ||
 		(flags & 0x0200) !== 0 ||
 		(flags & 0x000f) !== 0
 	)
@@ -285,12 +293,19 @@ export function parseAaaaResponse(
 	const questions = view.getUint16(4);
 	const answers = view.getUint16(6);
 
-	let offset: number | undefined = 12;
-	for (let index = 0; index < questions; index += 1) {
-		offset = skipName(message, offset);
-		if (offset === undefined) return undefined;
-		offset += 4;
-	}
+	// Accept only an echo of our fixed discovery question (DNS names ignore case).
+	const question = buildIpv4OnlyArpaQuery(id).subarray(12);
+	if (questions !== 1 || message.length < 12 + question.length)
+		return undefined;
+	const fold = (byte: number) =>
+		byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte;
+	if (
+		question.some(
+			(byte, index) => fold(message[12 + index] ?? 0xff) !== fold(byte),
+		)
+	)
+		return undefined;
+	let offset: number | undefined = 12 + question.length;
 	const addresses: string[] = [];
 	for (let index = 0; index < answers; index += 1) {
 		offset = skipName(message, offset);
@@ -299,6 +314,7 @@ export function parseAaaaResponse(
 		const length = view.getUint16(offset + 8);
 		const data = offset + 10;
 		if (data + length > message.length) return undefined;
+		if (type === 0x1c && view.getUint16(offset + 2) !== 1) return undefined;
 		if (type === 0x1c && length === 16) {
 			addresses.push(formatIpv6(message.subarray(data, data + 16)));
 		}
