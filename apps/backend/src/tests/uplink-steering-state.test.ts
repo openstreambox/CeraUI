@@ -543,33 +543,33 @@ describe("sharing selector on the live state builder", () => {
 			}),
 			health: () => [],
 		});
-		const initial = await readDesiredSteeringState(h);
+		const initial = await readReadySteeringState(h);
 		policy = { ...policy, mode: "cellular-only" };
 		expect(
-			(await readDesiredSteeringState(h)).uplinks.map((r) => r.ifname),
+			(await readReadySteeringState(h)).uplinks.map((r) => r.ifname),
 		).toEqual(["wwan0"]);
 		policy = { ...policy, mode: "wired-only" };
 		expect(
-			(await readDesiredSteeringState(h)).uplinks.map((r) => r.ifname),
+			(await readReadySteeringState(h)).uplinks.map((r) => r.ifname),
 		).toEqual(["eth0"]);
 		policy = {
 			...policy,
 			mode: "automatic",
 			priorities: { wired: 0, cellular: 10, wifi: 20 },
 		};
-		const preferred = await readDesiredSteeringState(h);
+		const preferred = await readReadySteeringState(h);
 		expect(preferred.routes).toEqual(initial.routes);
 		expect(preferred.uplinks.map((u) => u.selectable)).toEqual([true, false]);
 		policy = { ...policy, administrativelyDown: ["eth0"] };
 		expect(
-			(await readDesiredSteeringState(h)).uplinks.map((u) => u.ifname),
+			(await readReadySteeringState(h)).uplinks.map((u) => u.ifname),
 		).toEqual(["wwan0"]);
 		policy = { ...policy, administrativelyDown: ["eth0", "wwan0"] };
-		const down = await readDesiredSteeringState(h);
+		const down = await readReadySteeringState(h);
 		expect(down.routes).toEqual(initial.routes);
 		expect(down.uplinks).toEqual([]);
 		expect(down.clientZones).toEqual(initial.clientZones);
 		policy = { ...policy, administrativelyDown: [] };
-		expect(await readDesiredSteeringState(h)).toEqual(preferred);
+		expect(await readReadySteeringState(h)).toEqual(preferred);
 	});
 });
