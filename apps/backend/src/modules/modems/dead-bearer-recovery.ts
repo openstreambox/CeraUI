@@ -393,7 +393,13 @@ export async function runDeadBearerRecovery(
 				const fresh = await readInput(id, key, memories.get(key) ?? before);
 				if (!fresh || fresh.uuid !== first.uuid) return;
 				const again = decideDeadBearer(fresh.input);
-				if (again.action !== "reconnect") return;
+				if (again.action !== "reconnect") {
+					// The translator's record expired during the owner reads: keep
+					// the cleared hold, so fresh failures later start a new one.
+					if (fresh.input.record === undefined && again.action === "none")
+						memories.set(key, again.memory);
+					return;
+				}
 				memories.set(key, again.memory);
 				deps.noteDial(key);
 				const iface = getModem(id)?.ifname;
