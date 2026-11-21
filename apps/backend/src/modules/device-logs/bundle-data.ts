@@ -1,9 +1,11 @@
+import { secretVariants } from "../../helpers/secret-variants.ts";
 import { getConfig } from "../config.ts";
 import { readBoots, readEvents } from "../events/store.ts";
 import { getStoredModemCredentials } from "../modems/modem-credentials.ts";
 import { getModems } from "../modems/modems-state.ts";
 import { getRouterCellularMarkers } from "../network/router-cellular-scan.ts";
 import { getRelays } from "../remote/remote-relays.ts";
+import { setup } from "../setup.ts";
 import { getDeviceStatsSnapshot } from "../system/device-stats-snapshot.ts";
 import { getHardwareKindCached } from "../system/hardware-kind.ts";
 import { readUpdateChannel } from "../system/update-settings.ts";
@@ -61,6 +63,14 @@ export function collectHeldSecrets(): Array<{ kind: string; value: string }> {
 	}
 	for (const marker of getRouterCellularMarkers().values())
 		add("serial", marker.serial);
+	// SRT credentials in every encoding srt-secret-redaction.ts recognises.
+	const addSrt = (kind: string, value: string | undefined) => {
+		if (value === undefined) return;
+		for (const variant of secretVariants(value)) add(kind, variant);
+	};
+	addSrt("srt_passphrase", config.srt_passphrase);
+	addSrt("srt_forward", setup.srt_forward?.passphrase);
+	addSrt("srt_forward", setup.srt_forward?.relay_passphrase);
 	return secrets;
 }
 
