@@ -92,15 +92,18 @@ density. It is not a redesign.
 - **Below 1024 px.** The Storage tab holds the Storage and Downloads regions;
   the boot picker is the header button showing the selected boot, opening a
   nested `AppDialog` (sheet on phones) listing boots; choosing one closes it.
-- **Downloads region.** First group: the two legacy rows (wrapping changed, critique SL-2; icon
+- **Downloads region.** Once the viewer check is ready, the first group is
+  Sharing: Support bundle, the one file to send for help and the region's only
+  filled (default variant) button, then Export this view, in the legacy rows'
+  anatomy, with one line under them saying files are saved by the browser, and a
+  neutral rule below. Then the two legacy rows (wrapping changed, critique SL-2; icon
   tile, title, description, outline Download button, inline amber retry band;
   testids `log-row-device`, `log-row-system`, `log-download-device`,
   `log-download-system`, `log-download-error`, `log-download-retry`; copy
   `advanced.ceraliveLog`, `advanced.ceraliveLogTooltip`, `advanced.systemLog`,
   `advanced.systemLogTooltip`, `advanced.download`, `advanced.downloading`,
-  `advanced.downloadFailed`, `advanced.retryDownload`). Second group, after a
-  neutral rule, same row anatomy: Export this view, Support bundle; one line
-  under it says files are saved by the browser. Export this view saves the
+  `advanced.downloadFailed`, `advanced.retryDownload`). Before the check is
+  ready, and on an older backend, the legacy rows are the whole region. Export this view saves the
   Raw tab's filters and time window; an exact anchor pages its whole boot, so
   there it saves the 10 minutes around the anchored entry with the window's
   levels, and the confirmation says so (`lib/device-logs/raw-paging.svelte.ts`).

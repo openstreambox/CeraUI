@@ -8,7 +8,8 @@
   Downloads (the two shipped downloads) renders at once and never waits. An older
   backend gets one calm notice instead of the tabs, with Downloads below it and
   no side column; any other failure a recovery band with Retry. Once the tabs
-  are ready Downloads adds Sharing (export this view, support bundle), whose
+  are ready Downloads adds Sharing (support bundle, export this view) above the
+  shipped rows, so the support bundle is the first and only filled action; its
   flows live here and are disposed with the view. A panel's
   content mounts only while its tab is active, so a hidden tab never reads logs.
   Each panel owns its scroll. The downloads' state lives here, so a failed
@@ -170,10 +171,10 @@ $effect(() => {
 		{#if hasCopy}
 			<h3 class="text-sm font-semibold" id="{uid}-downloads">{m['systemLogs.sharing.heading']()}</h3>
 		{/if}
-		<LegacyLogDownloads downloads={legacyDownloads} />
 		{#if status === 'ready'}
 			<SharingSection {sharing} />
 		{/if}
+		<LegacyLogDownloads downloads={legacyDownloads} />
 	</section>
 {/snippet}
 

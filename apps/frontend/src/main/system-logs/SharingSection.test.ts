@@ -96,22 +96,22 @@ const dialog = (title: string) => screen.findByRole("dialog", { name: title });
 const button = (scope: HTMLElement, name: string) =>
 	within(scope).getByRole("button", { name }) as HTMLButtonElement;
 
-describe("SharingSection: the second Downloads group", () => {
-	it("lists Export this view then Support bundle after a neutral rule, with the browser line under them", () => {
+describe("SharingSection: the first Downloads group", () => {
+	it("lists Support bundle then Export this view before a neutral rule, with the browser line under them", () => {
 		const group = screen.getByTestId("sharing-group");
 		expect(tokens(group)).toEqual([
 			"flex",
 			"flex-col",
 			"gap-3",
-			"border-t",
-			"pt-3",
+			"border-b",
+			"pb-3",
 			...CJK_WRAP,
 		]);
 		expect(
 			within(group)
 				.getAllByTestId(/^sharing-row-/)
 				.map((row) => row.dataset.testid),
-		).toEqual(["sharing-row-export", "sharing-row-bundle"]);
+		).toEqual(["sharing-row-bundle", "sharing-row-export"]);
 		const note = within(group).getByText(sharing.browserSaves);
 		expect(tokens(note)).toEqual(["text-muted-foreground", "text-xs"]);
 		expect(group.lastElementChild).toBe(note);
@@ -119,11 +119,23 @@ describe("SharingSection: the second Downloads group", () => {
 	});
 
 	it.each([
-		["export", sharing.export, sharing.exportHint, "lucide-file-output"],
-		["bundle", sharing.bundle, sharing.bundleHint, "lucide-life-buoy"],
+		[
+			"bundle",
+			sharing.bundle,
+			sharing.bundleHint,
+			"lucide-life-buoy",
+			"bg-primary",
+		],
+		[
+			"export",
+			sharing.export,
+			sharing.exportHint,
+			"lucide-file-output",
+			"border-border",
+		],
 	] as const)(
 		"draws the %s row in the shipped rows' anatomy",
-		(id, title, hint, glyph) => {
+		(id, title, hint, glyph, variant) => {
 			const row = screen.getByTestId(`sharing-row-${id}`);
 			expect(tokens(row)).toEqual([
 				"flex",
@@ -170,11 +182,13 @@ describe("SharingSection: the second Downloads group", () => {
 					"max-w-full",
 					"py-1",
 					"whitespace-normal",
-					"border-border",
+					variant,
 					"text-[0.8rem]",
 				]),
 			);
 			expect(tokens(action)).not.toContain("whitespace-nowrap");
+			// Only the support bundle is a filled button: the one file to send for help.
+			expect(tokens(action).includes("bg-primary")).toBe(id === "bundle");
 			expect(tokens(action)).not.toContain("h-7");
 			// A min-height utility would outrank the touch layer's 44 px lift (TT-1).
 			expect(
