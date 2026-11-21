@@ -115,7 +115,7 @@ test("ambiguous baked descriptor grants zero add-on install effects", async () =
 	fs.writeFileSync(join(root, "usr/share/ceralive/addons/record.json"), bytes);
 	let grants = 0;
 	setAddonProcedureDeps({
-		isRealDevice: async () => true,
+		canManageAddons: async () => true,
 		getEffectiveHardware: () => "generic",
 		getAddonState: () => undefined,
 		enableAddon: async () => {

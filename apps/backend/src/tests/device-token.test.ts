@@ -188,7 +188,7 @@ describe("device-control token — real-device fail-closed (Task 20)", () => {
 		});
 
 		expect(
-			verifyDeviceControlToken(token, NOW, { isRealDevice: true }),
+			verifyDeviceControlToken(token, NOW, { requireVerifiedControl: true }),
 		).toBeNull();
 	});
 
@@ -202,7 +202,7 @@ describe("device-control token — real-device fail-closed (Task 20)", () => {
 		});
 
 		const claims = verifyDeviceControlToken(token, NOW, {
-			isRealDevice: false,
+			requireVerifiedControl: false,
 		});
 		expect(claims?.purpose).toBe(DEVICE_CONTROL_PURPOSE);
 
@@ -216,7 +216,7 @@ describe("device-control token — real-device fail-closed (Task 20)", () => {
 		const token = signControlToken(controlClaims());
 
 		const claims = verifyDeviceControlToken(token, NOW, {
-			isRealDevice: true,
+			requireVerifiedControl: true,
 		});
 		expect(claims?.purpose).toBe(DEVICE_CONTROL_PURPOSE);
 		expect(claims?.device_id).toBe("7a03d468-3c9e-4b7a-8483-1f2a3b4c5d6e");
@@ -332,4 +332,17 @@ describe("PASETO v4.public — official spec test vectors (interop lock)", () =>
 		// Wrong implicit assertion must fail — it is bound into the signature.
 		expect(verifyV4Public(token, key, "")).toBeNull();
 	});
+});
+
+const suiteNodeEnv = process.env.NODE_ENV;
+const suiteMockMode = process.env.MOCK_MODE;
+beforeEach(() => {
+	process.env.NODE_ENV = "development";
+	delete process.env.MOCK_MODE;
+});
+afterEach(() => {
+	if (suiteNodeEnv === undefined) delete process.env.NODE_ENV;
+	else process.env.NODE_ENV = suiteNodeEnv;
+	if (suiteMockMode === undefined) delete process.env.MOCK_MODE;
+	else process.env.MOCK_MODE = suiteMockMode;
 });
