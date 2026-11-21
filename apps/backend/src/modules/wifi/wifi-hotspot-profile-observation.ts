@@ -15,6 +15,7 @@ import {
 	recordHotspotProfileCreation,
 } from "./hotspot-credentials.ts";
 import { retryWifiAdapterReconcile } from "./wifi-adapter-reconcile-retry.ts";
+import { observeProvisioningApProfile } from "./wifi-provisioning-ap.ts";
 
 export function retireHotspotProfileAuthority(
 	owner: string,
@@ -34,6 +35,7 @@ const POLICY_FIELDS = [
 	"connection.interface-name",
 	"802-11-wireless.mac-address",
 	"match.path",
+	"connection.id",
 ] as const;
 
 export type HotspotProfileObservation =
@@ -48,6 +50,8 @@ export type HotspotProfileObservation =
 			readonly mac: string;
 			readonly path: string;
 			readonly firstStart: boolean;
+			/** The device image's setup AP: observed, never owned. */
+			readonly provisioning: boolean;
 	  };
 
 /** Detail failure alone never proves deletion or grants AP teardown authority. */
@@ -109,6 +113,10 @@ export async function observeHotspotProfile(
 			mac: fields[3],
 			path: fields[4],
 			firstStart: creators.length > 0,
+			provisioning: observeProvisioningApProfile(uuid, {
+				id: fields[5],
+				mode: fields[0],
+			}),
 		};
 	const inventory = await nmConnsGet("uuid");
 	return inventory && !inventory.includes(uuid)
