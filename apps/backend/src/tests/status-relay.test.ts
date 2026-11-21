@@ -261,7 +261,7 @@ it("broadcasts runtime box health changes once", async () => {
 	}
 });
 
-it("permits phone startup poweroff only, preserving restart and encoder holds", async () => {
+it("phone startup poweroff never waives an aggregate unknown; restart and encoder holds stay", async () => {
 	const { setup } = await import("../modules/setup.ts");
 	const { getDisruptiveActionDecision } = await import(
 		"../modules/system/disruptive-action-runtime.ts"
@@ -277,9 +277,13 @@ it("permits phone startup poweroff only, preserving restart and encoder holds", 
 	try {
 		setup.engine = "none";
 
+		// Only the carrying restart hold may be waived (power-admission.test.ts
+		// covers that with real tracker state); an unknown from anywhere else,
+		// here the whole liveness source, keeps refusing.
 		setStreamLivenessSourceForTest(() => "unknown");
 		expect(getDisruptiveActionDecision({ powerAction: "poweroff" })).toEqual({
-			allowed: true,
+			allowed: false,
+			reason: "stream_liveness_unknown",
 		});
 		expect(getDisruptiveActionDecision({ powerAction: "reboot" })).toEqual({
 			allowed: false,
