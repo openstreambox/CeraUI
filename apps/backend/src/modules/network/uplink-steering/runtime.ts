@@ -87,7 +87,10 @@ const coordinator = new UplinkSteeringCoordinator({
 	},
 	publishAvailability: (availability) => {
 		if (!availability.available) publishSteeringReadiness([]);
-		publishUplinkSteeringAvailability(availability);
+		publishUplinkSteeringAvailability(
+			availability,
+			availability.available ? coordinator.appliedState() : undefined,
+		);
 		broadcastWifiState();
 	},
 	retryCleanup: () => applier.retryPendingCleanup(),

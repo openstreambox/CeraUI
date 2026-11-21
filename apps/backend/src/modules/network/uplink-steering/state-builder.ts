@@ -23,13 +23,18 @@ import {
 } from "../router-cellular-scan.ts";
 import type { UplinkHealthRecord } from "../uplink-health/model.ts";
 import { getUplinksMessage } from "../uplink-health/state.ts";
+import {
+	type ActiveUplinkSelector,
+	activeUplinkSelector,
+	applyClientUplinkPolicy,
+} from "./active-uplink.ts";
 import type { PreparedSteeringState, UplinkRoutePlan } from "./applier.ts";
 import {
 	type ClientZone,
 	SteeringUnavailableError,
 	type SteeringUplink,
 } from "./contracts.ts";
-import { applySharingPolicy, sharingPolicyOwner } from "./policy.ts";
+import { sharingPolicyOwner } from "./policy.ts";
 import { planUplinkRoute, type UplinkRouteCandidate } from "./route-manager.ts";
 import { stableUplinkMark } from "./ruleset.ts";
 import { cidrsOverlap, subnetCidr } from "./subnet.ts";
@@ -38,6 +43,9 @@ type NetworkSnapshot = Record<string, NetworkInterface | undefined>;
 
 export interface SteeringStateBuilderDeps {
 	readonly policy?: () => SharingPolicy;
+	/** Holds the single-active choice between reconciles. */
+	readonly selector?: ActiveUplinkSelector;
+	readonly now?: () => number;
 	readonly netifReady: () => boolean;
 	readonly zonesReady: () => boolean;
 	readonly identityCovered: (ifname: string) => boolean;
@@ -110,7 +118,16 @@ export async function readDesiredSteeringState(
 	if (!context.hasAppliedState && identityPending)
 		return { pending: true, netifReady: true, reason: "identity" };
 	const candidates = deps.policy
-		? applySharingPolicy(rawCandidates, deps.policy())
+		? applyClientUplinkPolicy(
+				rawCandidates,
+				deps.selector ?? activeUplinkSelector,
+				{
+					now: (deps.now ?? Date.now)(),
+					policy: deps.policy(),
+					health,
+					present: new Set(rawCandidates.map(({ uplink }) => uplink.identity)),
+				},
+			)
 		: rawCandidates;
 	assertNoOverlap(zones, rawCandidates);
 	assertDistinctMarks(rawCandidates);

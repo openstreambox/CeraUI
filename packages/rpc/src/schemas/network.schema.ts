@@ -191,7 +191,14 @@ export const steeringUnavailableReasonSchema = z.enum([
 export type SteeringUnavailableReason = z.infer<typeof steeringUnavailableReasonSchema>;
 
 export const uplinkSteeringStatusSchema = z.discriminatedUnion('state', [
-	z.object({ state: z.literal('available') }),
+	z.object({
+		state: z.literal('available'),
+		/** Interfaces that new client flows can use in the applied ruleset. */
+		clientUplinks: z
+			.array(z.string().regex(/^[a-zA-Z0-9_.:-]{1,15}$/))
+			.max(6)
+			.optional(),
+	}),
 	z.object({
 		state: z.literal('steering_unavailable'),
 		reason: steeringUnavailableReasonSchema,
@@ -450,5 +457,11 @@ export const sharingPolicySchema = z.object({
 		wifi: z.number().int().min(0).max(100),
 	}),
 	administrativelyDown: z.array(z.string().regex(/^[a-zA-Z0-9_.:-]{1,15}$/)).max(64),
+	/**
+	 * `single`: every new client flow uses one active uplink, kept until it fails
+	 * and handed back to a preferred uplink only after a rejoin hold. `spread`:
+	 * new flows are distributed by health weight across the best tier.
+	 */
+	selection: z.enum(['single', 'spread']).default('single'),
 });
 export type SharingPolicy = z.infer<typeof sharingPolicySchema>;
