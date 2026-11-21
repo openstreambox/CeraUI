@@ -62,8 +62,8 @@ const SAVED_SETUP = {
 	security: "wpa2",
 } satisfies NonNullable<WifiInterface["hotspot"]>;
 
-// The shape the device sends for a USB radio whose hotspot is saved but
-// configured off: a station, disconnected, still carrying its saved setup.
+// A disconnected station has no active hotspot object. The saved credentials
+// are returned by hotspotPrepare when the bound editor opens.
 const SAVED_OFF: WifiInterface = {
 	ifname: "wlx00c0ca000001",
 	conn: "",
@@ -78,7 +78,6 @@ const SAVED_OFF: WifiInterface = {
 		id: "00:c0:ca:00:00:01",
 		permanent_mac: "00:c0:ca:00:00:01",
 	},
-	hotspot: SAVED_SETUP,
 } as WifiInterface;
 
 // The same radio once a Start completed: exclusive AP, clients read.
