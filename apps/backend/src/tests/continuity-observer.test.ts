@@ -392,3 +392,102 @@ test("the map on disk hashes the IP list's raw bytes", async () => {
 		await readDiskPublication({ sidecarFile: null, ipsFile: ips }),
 	).toMatchObject({ generation: 3, sha256: sha });
 });
+
+test("the launch capture is tied to the spawning handle and read again after the host", async () => {
+	const record = await intent();
+	const handles: Array<boolean | undefined> = [];
+	io.captureInvocation = async (pid, ownChild) => {
+		handles.push(ownChild?.());
+		return {
+			pid,
+			startTime: "123",
+			state: "S",
+			processGroup: pid,
+			bootId: "boot",
+			pidfd: true,
+		};
+	};
+	await recordSenderStarted(record, 123, () => true);
+	expect(handles).toEqual([true, true]);
+	expect((await readLifetime())?.pid).toBe(123);
+});
+
+test("a process whose start time changed across the host lookup records no PID", async () => {
+	const record = await intent();
+	let reads = 0;
+	io.captureInvocation = async (pid) => ({
+		pid,
+		startTime: reads++ === 0 ? "123" : "999",
+		state: "S",
+		processGroup: pid,
+		bootId: "boot",
+		pidfd: true,
+	});
+	await recordSenderStarted(record, 123);
+	expect((await readLifetime())?.pid).toBeNull();
+});
+
+test("an engine session is not recorded once the launch it belongs to is gone", async () => {
+	io.senderHost = async () => SENDER_UNIT;
+	const record = await intent();
+	await recordSenderStarted(record, 123);
+	await recordEngineSession(
+		record,
+		async () => ENGINE,
+		() => false,
+	);
+	expect((await readLifetime())?.engineSession ?? null).toBeNull();
+});
+
+test("the publication and the map on disk both carry a valid id_path", async () => {
+	await reservePublication(4, "a".repeat(64), [
+		{
+			linkId: "eth",
+			iface: "eth0",
+			ip: "10.0.0.2",
+			idPath: "/devices/usb1/1-1",
+		},
+		{ linkId: "wifi", iface: "wlan0", ip: "10.0.0.3", idPath: "relative" },
+	] as never);
+	const published = JSON.parse(
+		await readFile(join(dir, "publication.json"), "utf8"),
+	);
+	expect(published.links).toEqual([
+		{
+			linkId: "eth",
+			iface: "eth0",
+			ip: "10.0.0.2",
+			idPath: "/devices/usb1/1-1",
+		},
+		{ linkId: "wifi", iface: "wlan0", ip: "10.0.0.3" },
+	]);
+	const ips = join(dir, "ips");
+	await Bun.write(ips, "10.0.0.2\n");
+	const sha = new Bun.CryptoHasher("sha256").update("10.0.0.2\n").digest("hex");
+	await Bun.write(
+		join(dir, "ips.bindmap.json"),
+		JSON.stringify({
+			schema_version: 1,
+			generation: 4,
+			ips_file_sha256: sha,
+			links: [
+				{
+					link_id: "eth",
+					iface: "eth0",
+					ip: "10.0.0.2",
+					id_path: "/devices/usb1/1-1",
+				},
+			],
+		}),
+	);
+	expect(
+		(await readDiskPublication({ sidecarFile: null, ipsFile: ips }))?.links,
+	).toEqual([
+		{
+			linkId: "eth",
+			iface: "eth0",
+			ip: "10.0.0.2",
+			idPath: "/devices/usb1/1-1",
+		},
+	]);
+});

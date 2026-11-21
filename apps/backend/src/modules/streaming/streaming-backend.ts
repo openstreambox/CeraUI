@@ -121,6 +121,8 @@ export interface StreamingBackend {
 	 * same connection. Never connects, subscribes or changes ownership.
 	 */
 	sessionEvidence?(): Promise<EngineSessionEvidence>;
+	/** The session id the Start reply gave for the current own launch, or null. */
+	launchedSession?(): string | null;
 }
 
 export type EngineSessionEvidence = {

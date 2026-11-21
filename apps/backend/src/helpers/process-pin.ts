@@ -8,14 +8,16 @@
  * a process that is alive at the end of the read was alive throughout it, and
  * no other process can hold a live process's number.
  *
- * SO_PEERCRED gives the PID that created the listening socket a connection
+ * SO_PEERCRED gives the PID that called listen(2) on the socket a connection
  * reached (the credentials are taken at listen(2) and copied at connect(2)).
  * The number alone can outlive that process, so where the kernel offers
  * SO_PEERPIDFD (Linux 6.5) the peer is also named by a pidfd, which says
- * whether that exact process is still alive.
+ * whether that exact process is still alive. Neither says who accepts or
+ * answers: a listener whose descriptor was shared or passed on is still
+ * reported as the process that listened.
  *
  * Every call fails soft: no libc, an old kernel or a refused call reads as
- * "unavailable", never as a positive answer.
+ * unknown or unavailable, never as a positive answer.
  */
 
 import { readFileSync } from "node:fs";
@@ -121,17 +123,18 @@ export type ProcessPin = {
 	/** True when a pidfd holds the process; false when no pidfd could be had. */
 	readonly pidfd: boolean;
 	/**
-	 * Whether the pinned process is still alive. Without a pidfd this is
-	 * always true: there is no evidence either way, and the caller's start
-	 * time comparison remains the only guard.
+	 * Whether the pinned process is still alive: true only when its pidfd
+	 * says so, false when it has exited, null when that cannot be known (no
+	 * pidfd, or the kernel gave an unexpected answer). A zombie still counts
+	 * as alive here; callers read its state from `/proc`.
 	 */
-	alive(): boolean;
+	alive(): boolean | null;
 	close(): void;
 };
 
 const UNPINNED: ProcessPin = {
 	pidfd: false,
-	alive: () => true,
+	alive: () => null,
 	close: () => {
 		/* Nothing held. */
 	},
@@ -139,7 +142,7 @@ const UNPINNED: ProcessPin = {
 
 /**
  * Pin `pid`. Null when the process does not exist (ESRCH); an unpinned
- * handle when the system offers no pidfd.
+ * handle, whose liveness is always unknown, when no pidfd could be had.
  */
 export async function pinProcess(pid: number): Promise<ProcessPin | null> {
 	if (!Number.isSafeInteger(pid) || pid <= 0) return null;
@@ -150,7 +153,7 @@ export async function pinProcess(pid: number): Promise<ProcessPin | null> {
 	let closed = false;
 	return {
 		pidfd: true,
-		alive: () => !closed && pidfdAlive(c, fd) !== false,
+		alive: () => (closed ? null : pidfdAlive(c, fd)),
 		close: () => {
 			if (closed) return;
 			closed = true;
@@ -159,17 +162,27 @@ export async function pinProcess(pid: number): Promise<ProcessPin | null> {
 	};
 }
 
+/**
+ * What SO_PEERPIDFD says about the listener: alive under `pid`, exited,
+ * not offered by this kernel (ENOPROTOOPT), or failed for another reason (a
+ * descriptor limit, an unreadable fdinfo, an unexpected errno). Only
+ * `unsupported` may fall back to the PID number alone.
+ */
+export type PeerPidfd =
+	| { readonly state: "alive"; readonly pid: number }
+	| { readonly state: "exited" }
+	| { readonly state: "unsupported" }
+	| { readonly state: "failed" };
+
 export type PeerIdentity = {
-	/** The PID that listened on the socket this connection reached. */
+	/** The PID that called listen(2) on the socket this connection reached. */
 	readonly pid: number;
 	readonly uid: number;
 	readonly gid: number;
-	/**
-	 * The peer's PID as its pidfd sees it now: the number while that process
-	 * lives, -1 once it has exited, null when the kernel has no SO_PEERPIDFD.
-	 */
-	readonly pidfdPid: number | null;
+	readonly pidfd: PeerPidfd;
 };
+
+const ENOPROTOOPT = 92;
 
 function fdinfoPid(fd: number): number | null {
 	try {
@@ -181,6 +194,28 @@ function fdinfoPid(fd: number): number | null {
 		return Number.isSafeInteger(value) ? value : null;
 	} catch {
 		return null;
+	}
+}
+
+function peerPidfd(c: Libc, fd: number): PeerPidfd {
+	const value = new Uint8Array(4);
+	const length = new Uint32Array([value.length]);
+	if (c.getsockopt(fd, SOL_SOCKET, SO_PEERPIDFD, value, length) !== 0)
+		return c.errno() === ENOPROTOOPT
+			? { state: "unsupported" }
+			: { state: "failed" };
+	if (length[0] !== value.length) return { state: "failed" };
+	const pidfd = new DataView(value.buffer).getInt32(0, true);
+	if (pidfd < 0) return { state: "failed" };
+	try {
+		const alive = pidfdAlive(c, pidfd);
+		if (alive === false) return { state: "exited" };
+		if (alive === null) return { state: "failed" };
+		const pid = fdinfoPid(pidfd);
+		if (pid === null || pid <= 0) return { state: "failed" };
+		return { state: "alive", pid };
+	} finally {
+		c.close(pidfd);
 	}
 }
 
@@ -199,28 +234,10 @@ export async function readPeerIdentity(
 	const view = new DataView(cred.buffer);
 	const pid = view.getInt32(0, true);
 	if (pid <= 0) return null;
-	let pidfdPid: number | null = null;
-	const peerFd = new Uint8Array(4);
-	const peerLength = new Uint32Array([peerFd.length]);
-	if (
-		c.getsockopt(fd, SOL_SOCKET, SO_PEERPIDFD, peerFd, peerLength) === 0 &&
-		peerLength[0] === peerFd.length
-	) {
-		const pidfd = new DataView(peerFd.buffer).getInt32(0, true);
-		if (pidfd >= 0) {
-			try {
-				const alive = pidfdAlive(c, pidfd);
-				const number = fdinfoPid(pidfd);
-				pidfdPid = alive === false ? -1 : alive === null ? null : number;
-			} finally {
-				c.close(pidfd);
-			}
-		}
-	}
 	return {
 		pid,
 		uid: view.getUint32(4, true),
 		gid: view.getUint32(8, true),
-		pidfdPid,
+		pidfd: peerPidfd(c, fd),
 	};
 }

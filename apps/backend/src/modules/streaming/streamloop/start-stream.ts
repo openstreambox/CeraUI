@@ -76,6 +76,7 @@ interface StartStreamBackend {
 	setBitrate: ReturnType<typeof getStreamingBackend>["setBitrate"];
 	start: ReturnType<typeof getStreamingBackend>["start"];
 	sessionEvidence?: ReturnType<typeof getStreamingBackend>["sessionEvidence"];
+	launchedSession?: ReturnType<typeof getStreamingBackend>["launchedSession"];
 }
 
 export interface StartStreamDeps {
@@ -341,7 +342,14 @@ export async function startStream(
 		});
 		transaction.register(() => startStreamDeps.stopLinkTelemetry());
 		await observeSafely(async () => {
-			if (lifetime) await recordSenderStarted(lifetime, sender.proc.pid);
+			if (lifetime)
+				await recordSenderStarted(
+					lifetime,
+					sender.proc.pid,
+					// Not yet reaped by the runtime: the PID is still this child's.
+					() =>
+						sender.proc.exitCode === null && sender.proc.signalCode === null,
+				);
 		});
 		assertStreamLaunchOwnership();
 
@@ -383,19 +391,27 @@ export async function startStream(
 		throw error;
 	}
 
-	// Record the engine session this sender serves. Not awaited: a sender with
-	// its own unit is the only one recorded, the record write is fenced by the
-	// sender's lifetime, and nothing about the start waits on it.
+	// Record the engine session this sender serves: the id the Start reply
+	// gave for this launch, taken before any await, confirmed live and
+	// streaming on the session connection, and written only while this launch
+	// is still the engine's current session. Not awaited: only a sender with
+	// its own unit is recorded, and nothing about the start waits on it.
 	const started = lifetime;
-	if (started)
+	const backend = startStreamDeps.getStreamingBackend();
+	const launchedId = backend.launchedSession?.() ?? null;
+	if (started && launchedId)
 		void observeSafely(() =>
-			startStreamDeps.recordEngineSession(started, () =>
-				readEngineSessionIdentity(async () => {
-					const evidence = await startStreamDeps
-						.getStreamingBackend()
-						.sessionEvidence?.();
-					return evidence?.sessionId ?? null;
-				}),
+			startStreamDeps.recordEngineSession(
+				started,
+				() =>
+					readEngineSessionIdentity(async () => {
+						const evidence = await backend.sessionEvidence?.();
+						return evidence?.state === "streaming" &&
+							evidence.sessionId === launchedId
+							? launchedId
+							: null;
+					}),
+				() => backend.launchedSession?.() === launchedId,
 			),
 		);
 

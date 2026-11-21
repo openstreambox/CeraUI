@@ -149,6 +149,44 @@ describe("sessionEvidence", () => {
 		]);
 	});
 
+	test("the Start reply's session id is kept for the current own launch only", async () => {
+		const h = harness(async () => ({ session_id: "s1", switch_targets: [] }));
+		expect(h.backend.launchedSession()).toBeNull();
+		await h.backend.start(STREAM_CONFIG, RUN_OPTS);
+		await h.backend.settle();
+		expect(h.backend.launchedSession()).toBe("s1");
+		h.clients[0]?.emit({
+			type: "status",
+			seq: 2,
+			state: "idle",
+			streaming: false,
+		} as EventParams);
+		expect(h.backend.launchedSession()).toBeNull();
+	});
+
+	test("a status that changes while the question is out makes the answer unknown", async () => {
+		let emitIdle: (() => void) | undefined;
+		const h = harness(async () => {
+			emitIdle?.();
+			return { session_id: "s1", switch_targets: [] };
+		});
+		await h.backend.start(STREAM_CONFIG, RUN_OPTS);
+		await h.backend.settle();
+		const session = h.clients[0];
+		session?.emit(streaming);
+		emitIdle = () =>
+			session?.emit({
+				type: "status",
+				seq: 3,
+				state: "idle",
+				streaming: false,
+			} as EventParams);
+		expect(await h.backend.sessionEvidence()).toEqual({
+			state: "unknown",
+			sessionId: null,
+		});
+	});
+
 	test("an engine that reports no session id gives none", async () => {
 		const h = harness(async () => ({ switch_targets: [] }));
 		await h.backend.start(STREAM_CONFIG, RUN_OPTS);

@@ -15,19 +15,25 @@
  * Each fact has a production source:
  *
  *   - the process: PID, start time and state from `/proc`, read while a pidfd
- *     pins the PID where the system offers one, so a PID reused during the
- *     read is never judged as the recorded sender;
+ *     pins the PID, so a PID reused during the read is never judged as the
+ *     recorded sender; no pidfd, or a liveness answer other than "alive",
+ *     refuses;
  *   - the unit: `systemctl show` for the recorded unit (InvocationID, main
  *     PID, state, control group, restart policy);
- *   - the control socket: the peer of the actual connection, by SO_PEERCRED
- *     (and SO_PEERPIDFD where the kernel has it), must be the recorded PID
- *     before any request is written;
+ *   - the control socket: the peer of the actual connection must be the
+ *     recorded PID by SO_PEERCRED and alive under that number by SO_PEERPIDFD
+ *     (Linux 6.5+) before any request is written; a kernel without
+ *     SO_PEERPIDFD refuses;
  *   - the applied map: `bind_map_applied` in the sender's stats, reported only
- *     by a contract-2 sender;
+ *     by a contract-2 sender that also advertises required binding;
  *   - the engine session: the engine's own session id, asked on the session
  *     connection that reconciliation holds, scoped by the engine unit's
- *     InvocationID and main PID, compared with the session recorded when this
- *     sender started.
+ *     InvocationID and main PID, compared with the id the engine's Start reply
+ *     gave for this sender's launch (recorded then, confirmed live).
+ *
+ * A positive verdict holds only at the moment it is reported: after the
+ * engine answers, every local fact is read again on the same pin and must be
+ * unchanged. Any unknown answer refuses.
  *
  * On today's devices the sender is a child of the backend, so every record
  * says `host: "backend-child"` and the verdict refuses before any of these
@@ -73,8 +79,12 @@ import {
 	statFields,
 	type UnitFacts,
 	type UnitManager,
+	type UnitShow,
 } from "./sender-invocation.ts";
-import type { EngineRuntimeState } from "./streaming-backend.ts";
+import type {
+	EngineRuntimeState,
+	EngineSessionEvidence,
+} from "./streaming-backend.ts";
 import { srtlaSendExec } from "./streamloop/exec-paths.ts";
 
 export type SenderProcessFacts = {
@@ -108,12 +118,18 @@ export type SenderProcessFacts = {
 
 /**
  * Whether the peer of the control connection is the recorded process:
- * `verified` when its SO_PEERCRED PID (and, where the kernel has it, its live
- * SO_PEERPIDFD PID) is the recorded PID; `mismatch` when either names another
- * process or the listener has exited; `unavailable` when no connection was
- * made or the credentials could not be read.
+ * `verified` when SO_PEERCRED names the recorded PID and SO_PEERPIDFD shows
+ * that listener alive under that same number; `mismatch` when either names
+ * another process or the listener has exited; `unsupported` when the kernel
+ * has no SO_PEERPIDFD, so only the number could be compared; `unavailable`
+ * when no connection was made, the credentials could not be read, or the pin
+ * on the recorded PID was no longer confirmed alive just before the request.
+ * Only `verified` counts. Both options describe the process that called
+ * listen(2), not whoever accepts: the check assumes the sender does not share
+ * or pass on its listening descriptor (the installed sender listens directly
+ * and does not fork).
  */
-export type PeerCheck = "verified" | "mismatch" | "unavailable";
+export type PeerCheck = "verified" | "mismatch" | "unsupported" | "unavailable";
 
 export type SenderAdoptionEvidence = {
 	readonly bootId: string;
@@ -129,10 +145,23 @@ export type SenderAdoptionEvidence = {
 	readonly disk: Publication | null;
 	/** Whether the control connection's peer is the recorded process. */
 	readonly peer: PeerCheck;
-	/** The recorded process exited (its pidfd says so) after its facts were read. */
+	/**
+	 * The pin on the recorded process was not confirmed alive after the stats
+	 * reads (exited, or its liveness unknown).
+	 */
 	readonly exitedDuringRead: boolean;
 	/** `bind_map_contract` from `get_capabilities` on that connection, or null. */
 	readonly senderContract: number | null;
+	/** `bind_map_required` from that same answer, or null. */
+	readonly senderRequired: boolean | null;
+	/**
+	 * The final pass after every other read: `agrees` when the pin is still
+	 * confirmed alive and a fresh read of every local fact (process, unit,
+	 * marker, configuration, publication, map on disk) equals the first and
+	 * still passes; `changed` or `exited` otherwise; `not_reached` when an
+	 * earlier check refused.
+	 */
+	readonly revalidated: "agrees" | "changed" | "exited" | "not_reached";
 	/** Two reads of `get_stats` over the recorded control socket, in order. */
 	readonly reads: readonly (SenderStats | null)[];
 	/**
@@ -241,6 +270,8 @@ function verdictBeforeSenderReads(
 		return refuse("process", "executable_changed");
 	if (GONE_STATES.has(p.state)) return refuse("process", "not_running");
 	if (STOPPED_STATES.has(p.state)) return refuse("process", "stopped");
+	// Without a pidfd nothing ties the reads to one process: unknown, refused.
+	if (!p.pidfd) return refuse("process", "pin_unavailable");
 	if (p.argsDigest !== l.argsDigest)
 		return refuse("process", "arguments_changed");
 
@@ -302,6 +333,8 @@ function verdictOfSenderReads(
 	// over a connection counts unless its peer is that process.
 	if (e.exitedDuringRead) return refuse("process", "exited_during_read");
 	if (e.peer === "mismatch") return refuse("sender", "peer_mismatch");
+	if (e.peer === "unsupported")
+		return refuse("sender", "peer_pidfd_unsupported");
 	if (e.peer !== "verified") return refuse("sender", "peer_unverified");
 	if (e.reads.length !== 2) return refuse("sender", "two_reads_required");
 	const expectedLinks = canonical(
@@ -333,6 +366,8 @@ function verdictOfSenderReads(
 	// refuses to fall back to an unmapped bond.
 	if (e.senderContract === null || e.senderContract < 2)
 		return refuse("sender", "contract_below_2");
+	if (e.senderRequired !== true)
+		return refuse("sender", "required_unsupported");
 	if (!e.lifetime?.required) return refuse("sender", "not_required_mode");
 	// Link ids and `mapped` cannot tell a map written before a crash (and never
 	// signalled) from the one the sender runs, so an applied identity is
@@ -348,11 +383,29 @@ function verdictOfSenderReads(
 }
 
 /**
- * The engine still runs the session this sender was started for: the same
- * engine process (unit InvocationID and main PID) reports the same session id
- * as the record, and its session connection last reported `streaming`.
+ * The engine half, then the final pass. The same engine process (unit
+ * InvocationID and main PID) reports the session id its Start reply gave for
+ * this sender's launch, and its session connection reported `streaming`
+ * before and after the question. The binding documents `session_id` as
+ * optional with no stated uniqueness, so equal ids mean "same id from the
+ * same engine process", not more.
  */
 function verdictOfEngine(e: SenderAdoptionEvidence): SenderAdoptionVerdict {
+	const engine = verdictOfEngineSession(e);
+	if (engine.decision !== "adopt") return engine;
+	// Valid only at the moment it is reported: everything read again last.
+	if (e.revalidated === "exited")
+		return refusal("process", "exited_during_read");
+	if (e.revalidated === "changed")
+		return refusal("evidence", "changed_during_read");
+	if (e.revalidated !== "agrees") return refusal("evidence", "not_revalidated");
+	return ADOPT;
+}
+
+/** The engine half alone, before the final pass. */
+function verdictOfEngineSession(
+	e: SenderAdoptionEvidence,
+): SenderAdoptionVerdict {
 	const recorded = e.lifetime?.engineSession;
 	if (!recorded) return refusal("engine", "session_not_recorded");
 	const live = e.engineSession;
@@ -386,10 +439,14 @@ export type SenderAdoptionIo = {
 	readonly readDisk: (lifetime: Lifetime) => Promise<Publication | null>;
 	readonly readMarker: () => ArmedStreamMarker | null;
 	readonly captureConfig: () => ArmedStreamConfig;
-	/** Both reads over one connection whose peer must be `pid`. */
+	/**
+	 * Both reads over one connection whose peer must be `pid`; `pinned` must
+	 * still confirm the recorded process alive just before the first request.
+	 */
 	readonly readStats: (
 		controlSocket: string,
 		pid: number,
+		pinned: () => boolean,
 	) => Promise<SenderReads>;
 	/** Engine state with a session identity; never called before it can matter. */
 	readonly queryEngine: () => Promise<{
@@ -401,6 +458,7 @@ export type SenderAdoptionIo = {
 export type SenderReads = {
 	readonly peer: PeerCheck;
 	readonly senderContract: number | null;
+	readonly senderRequired: boolean | null;
 	readonly reads: readonly (SenderStats | null)[];
 	readonly appliedMap: SenderAdoptionEvidence["appliedMap"];
 };
@@ -422,8 +480,16 @@ export async function checkControlPeer(
 	const peer = await read(fd).catch(() => null);
 	if (!peer) return "unavailable";
 	if (peer.pid !== pid) return "mismatch";
-	if (peer.pidfdPid !== null && peer.pidfdPid !== pid) return "mismatch";
-	return "verified";
+	switch (peer.pidfd.state) {
+		case "alive":
+			return peer.pidfd.pid === pid ? "verified" : "mismatch";
+		case "exited":
+			return "mismatch";
+		case "unsupported":
+			return "unsupported";
+		default:
+			return "unavailable";
+	}
 }
 
 /** The applied identity both reads agree on, or null. */
@@ -442,6 +508,7 @@ export function appliedMapOf(
 const NO_READS: SenderReads = {
 	peer: "unavailable",
 	senderContract: null,
+	senderRequired: null,
 	reads: [null, null],
 	appliedMap: null,
 };
@@ -455,6 +522,7 @@ export async function readPeerBoundStats(
 	controlSocket: string,
 	pid: number,
 	check: (fd: number, pid: number) => Promise<PeerCheck> = checkControlPeer,
+	pinned: () => boolean = () => true,
 ): Promise<SenderReads> {
 	let peer: PeerCheck = "unavailable";
 	const client = await createControlClient({
@@ -462,6 +530,9 @@ export async function readPeerBoundStats(
 		timeoutMs: CONTROL_TIMEOUT_MS,
 		verifyPeer: async (fd) => {
 			peer = await check(fd, pid);
+			// The recorded process, confirmed alive at the last moment before
+			// anything is written.
+			if (peer === "verified" && !pinned()) peer = "unavailable";
 			return peer === "verified";
 		},
 	});
@@ -475,6 +546,7 @@ export async function readPeerBoundStats(
 		return {
 			peer,
 			senderContract: capabilities?.capabilities.bind_map_contract ?? null,
+			senderRequired: capabilities?.capabilities.bind_map_required ?? null,
 			reads,
 			appliedMap: appliedMapOf(reads),
 		};
@@ -489,18 +561,27 @@ export async function readPeerBoundStats(
  * The engine's session identity from the session connection reconciliation
  * holds, and the last state that connection reported. Read only.
  */
-async function querySessionEngine(): Promise<{
+export async function querySessionEngine(
+	sessionEvidence?: () => Promise<EngineSessionEvidence>,
+	show?: UnitShow,
+): Promise<{
 	state: EngineRuntimeState;
 	session: EngineSessionIdentity | null;
 }> {
-	const { getStreamingBackend } = await import("./streaming-engine.ts");
+	let ask: () => Promise<EngineSessionEvidence>;
+	if (sessionEvidence) ask = sessionEvidence;
+	else {
+		const { getStreamingBackend } = await import("./streaming-engine.ts");
+		ask = () => getStreamingBackend().sessionEvidence();
+	}
 	let state: EngineRuntimeState = "unknown";
 	const session = await readEngineSessionIdentity(async () => {
-		const evidence = await getStreamingBackend().sessionEvidence();
+		const evidence = await ask();
 		state = evidence.state;
 		return evidence.sessionId;
-	});
-	return { state, session };
+	}, show);
+	// No identity, no claim about the state either.
+	return session ? { state, session } : { state: "unknown", session: null };
 }
 
 function resolvedSenderExe(): string | null {
@@ -535,10 +616,11 @@ export function defaultSenderAdoptionIo(
 		// Read without side effects: an unreadable marker stays for restoration.
 		readMarker: () => peekArmedStreamMarker() ?? null,
 		captureConfig,
-		readStats: (controlSocket, pid) => readPeerBoundStats(controlSocket, pid),
+		readStats: (controlSocket, pid, pinned) =>
+			readPeerBoundStats(controlSocket, pid, checkControlPeer, pinned),
 		// Never the reconciliation probe (the stateful entry point): one read
 		// on the connection reconciliation already holds, plus systemd.
-		queryEngine: querySessionEngine,
+		queryEngine: () => querySessionEngine(),
 	};
 }
 
@@ -697,14 +779,15 @@ export async function readSenderProcessFacts(
 		ownsControlSocket: await holdsListeningSocket(procRoot, pid, controlSocket),
 		pidfd: pin?.pidfd === true,
 	};
-	if (pin && !pin.alive()) return null;
+	// A pinned process not confirmed alive is not described.
+	if (pin?.pidfd && pin.alive() !== true) return null;
 	return result;
 }
 
 /** Every fact that needs no contact with the sender or the engine. */
 async function collectLocalEvidence(
 	io: SenderAdoptionIo,
-	pinned: (pin: ProcessPin) => void,
+	pinFor: (pid: number) => Promise<ProcessPin | null>,
 ): Promise<SenderAdoptionEvidence> {
 	const bootId = await io.bootId().catch(() => "");
 	const lifetime = await io.readLifetime().catch(() => null);
@@ -723,6 +806,8 @@ async function collectLocalEvidence(
 		peer: "unavailable",
 		exitedDuringRead: false,
 		senderContract: null,
+		senderRequired: null,
+		revalidated: "not_reached",
 		reads: [],
 		appliedMap: null,
 		engineSession: null,
@@ -731,9 +816,8 @@ async function collectLocalEvidence(
 	if (recordRefusal(recordOnly) !== undefined) return recordOnly;
 	let process: SenderProcessFacts | null = null;
 	if (lifetime?.pid != null) {
-		const pin = await io.pin(lifetime.pid).catch(() => null);
+		const pin = await pinFor(lifetime.pid);
 		if (pin) {
-			pinned(pin);
 			process = await readSenderProcessFacts(
 				io.procRoot,
 				io.cgroupRoot,
@@ -763,47 +847,84 @@ async function collectLocalEvidence(
 /**
  * Fresh evidence, in stages. The sender's socket is contacted only once every
  * local fact agrees and this PID holds that socket, and nothing is written to
- * it before its peer is shown to be that PID; the engine source is asked only
- * once the sender's reads agree too, so an earlier refusal reads neither. On
- * today's devices neither is ever reached: every record says
+ * it before its peer is shown to be that PID and the pin confirms the process
+ * alive; the engine source is asked only once the sender's reads agree too,
+ * so an earlier refusal reads neither; a final pass reads every local fact
+ * again. On today's devices none of this is reached: every record says
  * `backend-child`. Facts not gathered read as unavailable.
  */
 export async function collectSenderAdoptionEvidence(
 	io: SenderAdoptionIo,
 ): Promise<SenderAdoptionEvidence> {
 	// One pin on the recorded PID for the whole collection: the process facts,
-	// the peer check and the reads all describe that one process, or the
-	// evidence says it exited.
+	// the peer check, the reads and the final pass all describe that one
+	// process. It does not keep the process alive; it is checked again just
+	// before the first request, after the reads, and last of all.
 	let pin: ProcessPin | null = null;
+	const pinFor = async (pid: number) => {
+		pin ??= await io.pin(pid).catch(() => null);
+		return pin;
+	};
+	const confirmedAlive = () => (pin as ProcessPin | null)?.alive() === true;
 	try {
-		const local = await collectLocalEvidence(io, (held) => {
-			pin = held;
-		});
+		const local = await collectLocalEvidence(io, pinFor);
 		if (
 			!local.lifetime?.pid ||
 			verdictBeforeSenderReads(local).decision !== "adopt"
 		)
 			return local;
 		const sender = await io
-			.readStats(local.lifetime.controlSocket, local.lifetime.pid)
+			.readStats(
+				local.lifetime.controlSocket,
+				local.lifetime.pid,
+				confirmedAlive,
+			)
 			.catch(() => NO_READS);
 		const withReads: SenderAdoptionEvidence = {
 			...local,
 			...sender,
-			exitedDuringRead: !(pin as ProcessPin | null)?.alive(),
+			exitedDuringRead: !confirmedAlive(),
 		};
 		if (verdictOfSenderReads(withReads).decision !== "adopt") return withReads;
 		const engine = await io
 			.queryEngine()
 			.catch(() => ({ state: "unknown" as const, session: null }));
-		return {
+		const withEngine: SenderAdoptionEvidence = {
 			...withReads,
 			engine: engine.state,
 			engineSession: engine.session,
 		};
+		if (verdictOfEngineSession(withEngine).decision !== "adopt")
+			return withEngine;
+		// The final pass, immediately before the verdict is reported: every
+		// local fact read again on the same pin, unchanged and still passing,
+		// and the process still confirmed alive after it.
+		const again = await collectLocalEvidence(io, pinFor);
+		const revalidated = !confirmedAlive()
+			? "exited"
+			: verdictBeforeSenderReads(again).decision === "adopt" &&
+					localFingerprint(again) === localFingerprint(local)
+				? "agrees"
+				: "changed";
+		return { ...withEngine, revalidated };
 	} finally {
 		(pin as ProcessPin | null)?.close();
 	}
+}
+
+/** Every local fact, canonically, for the final comparison. */
+function localFingerprint(e: SenderAdoptionEvidence): string {
+	return canonical({
+		bootId: e.bootId,
+		lifetime: e.lifetime,
+		process: e.process,
+		expectedExe: e.expectedExe,
+		liveUnit: e.liveUnit,
+		marker: e.marker,
+		currentConfig: e.currentConfig,
+		publication: e.publication,
+		disk: e.disk,
+	});
 }
 
 /**

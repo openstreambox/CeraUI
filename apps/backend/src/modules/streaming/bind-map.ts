@@ -137,7 +137,7 @@ export function isValidLinkId(linkId: string): boolean {
 	return /^[\x21-\x7e]+$/.test(linkId);
 }
 
-function isValidIdPath(idPath: string): boolean {
+export function isValidIdPath(idPath: string): boolean {
 	return (
 		idPath.startsWith("/") &&
 		new TextEncoder().encode(idPath).byteLength <= ID_PATH_MAX_BYTES

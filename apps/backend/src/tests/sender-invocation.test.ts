@@ -123,6 +123,57 @@ describe("captureProcessInvocation", () => {
 		}
 	});
 
+	test("a capture is tied to the spawning handle: a child already reaped captures nothing", async () => {
+		const child = Bun.spawn(["sleep", "30"]);
+		try {
+			expect(
+				await captureProcessInvocation(
+					child.pid,
+					processInvocationIo,
+					() => false,
+				),
+			).toBeNull();
+			expect(
+				(
+					await captureProcessInvocation(
+						child.pid,
+						processInvocationIo,
+						() => true,
+					)
+				)?.startTime,
+			).toBe(startTimeOf(child.pid));
+		} finally {
+			child.kill("SIGKILL");
+			await child.exited;
+		}
+	});
+
+	test("a zombie, or a pidfd whose answer is unknown, captures nothing", async () => {
+		const child = Bun.spawn(["sleep", "30"]);
+		try {
+			expect(
+				await captureProcessInvocation(child.pid, {
+					...processInvocationIo,
+					readStat: async () =>
+						`${child.pid} (srtla_send) Z 1 ${child.pid} ${child.pid} ${"0 ".repeat(15)}77 0\n`,
+				}),
+			).toBeNull();
+			expect(
+				await captureProcessInvocation(child.pid, {
+					...processInvocationIo,
+					pin: async () => ({
+						pidfd: true,
+						alive: () => null,
+						close: () => undefined,
+					}),
+				}),
+			).toBeNull();
+		} finally {
+			child.kill("SIGKILL");
+			await child.exited;
+		}
+	});
+
 	test("a pin that cannot be had at all is no capture", async () => {
 		expect(await pinProcess(0)).toBeNull();
 		expect(await pinProcess(-5)).toBeNull();
@@ -214,6 +265,18 @@ describe("senderHost", () => {
 		mkdirSync(join(root, String(pid)), { recursive: true });
 		writeFileSync(join(root, String(pid), "cgroup"), `0::${cgroup}\n`);
 	}
+	function members(cgroup: string, pids: number[]) {
+		mkdirSync(join(root, "cg", cgroup), { recursive: true });
+		writeFileSync(
+			join(root, "cg", cgroup, "cgroup.procs"),
+			pids.map((pid) => `${pid}\n`).join(""),
+		);
+	}
+	const io = (show: () => Promise<string>) => ({
+		procRoot: root,
+		cgroupRoot: join(root, "cg"),
+		show,
+	});
 	const SENDER = "/system.slice/ceralive-sender-1.service";
 	const BACKEND = "/system.slice/ceralive.service";
 
@@ -222,13 +285,13 @@ describe("senderHost", () => {
 		cgroupOf(4242, BACKEND);
 		let asked = 0;
 		expect(
-			await senderHost(4242, {
-				procRoot: root,
-				show: async () => {
+			await senderHost(
+				4242,
+				io(async () => {
 					asked++;
 					return show();
-				},
-			}),
+				}),
+			),
 		).toEqual({ host: "backend-child" });
 		expect(asked).toBe(0);
 	});
@@ -236,8 +299,12 @@ describe("senderHost", () => {
 	test("the main process of its own active unit is recorded with that unit's invocation", async () => {
 		cgroupOf("self", BACKEND);
 		cgroupOf(4242, SENDER);
+		members(SENDER, [4242]);
 		expect(
-			await senderHost(4242, { procRoot: root, show: async () => show() }),
+			await senderHost(
+				4242,
+				io(async () => show()),
+			),
 		).toEqual({
 			host: "systemd",
 			unit: "ceralive-sender-1.service",
@@ -257,18 +324,46 @@ describe("senderHost", () => {
 			{ LoadState: "not-found" },
 		])
 			expect(
-				await senderHost(4242, {
-					procRoot: root,
-					show: async () => show(over),
-				}),
+				await senderHost(
+					4242,
+					io(async () => show(over)),
+				),
 			).toEqual({ host: "backend-child" });
 	});
 
 	test("an unreadable cgroup is a backend child", async () => {
 		cgroupOf("self", BACKEND);
 		expect(
-			await senderHost(4242, { procRoot: root, show: async () => show() }),
-		).toEqual({ host: "backend-child" });
+			await senderHost(
+				4242,
+				io(async () => show()),
+			),
+		).toEqual({
+			host: "backend-child",
+		});
+	});
+
+	test("a unit with a second process in its control group is no host", async () => {
+		cgroupOf("self", BACKEND);
+		cgroupOf(4242, SENDER);
+		members(SENDER, [4242, 4300]);
+		expect(
+			await senderHost(
+				4242,
+				io(async () => show()),
+			),
+		).toEqual({
+			host: "backend-child",
+		});
+		members(SENDER, []);
+		expect(
+			await senderHost(
+				4242,
+				io(async () => show()),
+			),
+		).toEqual({
+			host: "backend-child",
+		});
 	});
 });
 
@@ -363,12 +458,11 @@ describe("the real service manager, read only", () => {
 			.find((line) => line.startsWith("0::"))
 			?.slice(3);
 		const owner = cgroup ? unitOfCgroup(cgroup) : null;
-		const facts = owner ? await readUnitFacts(owner.unit, owner.manager) : null;
-		if (!owner || !facts) {
-			// No readable unit here: the reader claims nothing.
-			expect(facts).toBeNull();
-			return;
-		}
+		// No unit to read (a container, cgroup root) or no systemctl: skip.
+		if (!owner || !Bun.which("systemctl")) return;
+		const facts = await readUnitFacts(owner.unit, owner.manager);
+		if (!facts)
+			throw new Error(`no facts for ${owner.manager} unit ${owner.unit}`);
 		expect(facts.unit).toBe(owner.unit);
 		// A scope has no main process, so it can never be a sender's host.
 		if (owner.unit.endsWith(".scope")) expect(facts.mainPid).toBe(0);

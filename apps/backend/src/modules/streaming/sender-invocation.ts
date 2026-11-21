@@ -51,22 +51,37 @@ export function statFields(stat: string): string[] {
 	return stat.slice(stat.lastIndexOf(")") + 2).split(" ");
 }
 
+/** States in which a process has exited or is exiting. */
+const EXITED_STATES = new Set(["Z", "X", "x"]);
+
 /**
- * One process's invocation, or null when it is gone, exits during the read,
- * or the read is unusable. Never throws.
+ * One process's invocation, or null when it is gone, exiting, exits during
+ * the read, or the read is unusable. Never throws.
+ *
+ * `ownChild`, when given, is the spawning handle's own view (not yet reaped).
+ * Checked after the pidfd is open, it ties the pinned process to the spawn: a
+ * child the runtime has not reaped still owns its PID, so the number cannot
+ * have passed to another process. Without it, a capture by number alone is not
+ * proof of which process was spawned.
  */
 export async function captureProcessInvocation(
 	pid: number,
 	io: ProcessInvocationIo = processInvocationIo,
+	ownChild?: () => boolean,
 ): Promise<ProcessInvocation | null> {
 	const pin = await io.pin(pid).catch(() => null);
 	if (!pin) return null;
 	try {
+		if (ownChild && !ownChild()) return null;
 		const stat = await io.readStat(`${io.procRoot}/${pid}/stat`);
 		const bootId = await io.bootId();
 		// Alive now, so alive throughout the read: the stat is this process's.
-		if (!pin.alive()) return null;
+		// Without a pidfd the answer is unknown, and the capture stands on the
+		// spawning handle and the start time alone (recorded as `pidfd: false`).
+		const alive = pin.alive();
+		if (alive === false || (pin.pidfd && alive !== true)) return null;
 		const fields = statFields(stat);
+		if (EXITED_STATES.has(fields[0] ?? "")) return null;
 		const startTime = fields[19] ?? "";
 		const processGroup = Number(fields[2]);
 		if (
@@ -215,8 +230,9 @@ export async function senderHost(
 	pid: number,
 	io: {
 		readonly procRoot: string;
+		readonly cgroupRoot: string;
 		readonly show: UnitShow;
-	} = { procRoot: "/proc", show: systemctlShow },
+	} = { procRoot: "/proc", cgroupRoot: "/sys/fs/cgroup", show: systemctlShow },
 ): Promise<SenderHost> {
 	const child: SenderHost = { host: "backend-child" };
 	const cgroup = await readProcessCgroup(io.procRoot, pid);
@@ -232,6 +248,17 @@ export async function senderHost(
 		facts.controlGroup !== cgroup
 	)
 		return child;
+	// Alone in that control group: no helper, no second process.
+	try {
+		const members = (
+			await readFile(`${io.cgroupRoot}${cgroup}/cgroup.procs`, "utf8")
+		)
+			.split("\n")
+			.filter((line) => line.length > 0);
+		if (members.length !== 1 || members[0] !== String(pid)) return child;
+	} catch {
+		return child;
+	}
 	return {
 		host: "systemd",
 		unit: owner.unit,

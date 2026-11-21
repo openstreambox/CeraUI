@@ -11,6 +11,8 @@ const link = z.object({
 	linkId: z.string().min(1),
 	iface: z.string().min(1),
 	ip: z.string().min(1),
+	/** The sidecar row's `id_path`, when the writer published one. */
+	idPath: z.string().min(1).optional(),
 });
 const base = { version: z.literal(1), bootId: z.string().min(1) };
 export const lifetimeSchema = z.object({
@@ -201,7 +203,10 @@ export function continuityVerdict(e: ContinuityEvidence): Verdict {
 		w.generation !== p.generation ||
 		JSON.stringify(
 			w.links.map(({ linkId, iface, ip }) => ({ linkId, iface, ip })),
-		) !== JSON.stringify(p.links)
+		) !==
+			JSON.stringify(
+				p.links.map(({ linkId, iface, ip }) => ({ linkId, iface, ip })),
+			)
 	)
 		return refuse("witness", "publication_mismatch");
 	for (const host of w.links) {
