@@ -163,3 +163,26 @@ validation leaves it absent so cerastream applies its engine default; an explici
 stated codec is still checked against the supported codec registry. Keep the merge
 below the RPC layer so every start origin receives identical behavior.
 
+### Manual relay reachability
+
+`relay.validate` resolves all endpoint addresses and tries them in family-interleaved order,
+stopping on the first successful UDP reply. Each attempt has at most a 3-second timeout;
+a refused or silent address permits the next answer, including the other address
+family. The socket binds `::` for IPv6 and `0.0.0.0` for IPv4. Bun setup codes
+ENETUNREACH, EHOSTUNREACH, EAFNOSUPPORT and EADDRNOTAVAIL are probe refusals;
+unexpected setup failures propagate only if no address succeeds. Message text alone
+is not a system-error classifier. If every address fails, the last probe reason
+is returned. This probe demonstrates UDP reachability, not an SRT handshake.
+
+Validation interleaves IPv4 and IPv6 answers, starting with IPv4 (the live
+sender's preference when an IPv4 bond is available). A nine-second total budget
+includes DNS and socket setup, with at most three seconds per probe. This leaves
+21 seconds of margin before the client's 30-second RPC timeout. DNS expiry
+returns a DNS failure; exhausted silent probes return `probe / timeout`. Late
+DNS answers cannot start probes, and late socket setup closes its socket.
+Unexpected setup errors are retained while other answers are tried, and surface
+only if none succeeds.
+
+Success reports the answering family (`IPv4` or `IPv6`) in the validation result
+and manual endpoint dialog. This proves one address replied, not that every
+address or the address later selected by the live sender is reachable.
