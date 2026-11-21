@@ -15,6 +15,7 @@ import {
 	type WifiStatus,
 } from "@ceraui/rpc/schemas";
 import { isLoopbackIpv4 } from "$lib/helpers/ip-classification";
+import { linkName } from "$lib/helpers/link-names";
 import {
 	bitsPerSecondToKbps,
 	convertBytesToKbids,
@@ -219,7 +220,8 @@ export function buildBond(
 			...(signal === null
 				? { signalTier: bondedSignalTier(modem, connectionState) }
 				: {}),
-			label: modem.name || modem.status?.network || "Modem",
+			// One name per link (link-names.ts): "SIM 1 · Northwind", not model and serial.
+			label: linkName(id, { modems, wifi }),
 			isConnected: connectionState === "connected",
 			isStale: modemsStale || fullyStale || staleIds.has(id),
 			throughputKbps: throughputFor(id),
@@ -248,7 +250,7 @@ export function buildBond(
 			type: "ethernet",
 			linkIndex: 0,
 			signal: null,
-			label: ifname,
+			label: linkName(ifname, { modems, wifi }),
 			isConnected: true,
 			isStale: fullyStale || staleIds.has(ifname),
 			throughputKbps: throughputFor(ifname),

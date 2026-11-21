@@ -1,4 +1,7 @@
+import { m } from "@ceraui/i18n/svelte";
 import type { WifiInterface } from "@ceraui/rpc/schemas";
+
+import { interfaceLabel } from "$lib/helpers/link-names";
 
 /**
  * The operator's hotspot radio choice: the row id plus the runtime incarnation
@@ -90,8 +93,17 @@ const MAC_SHAPED = /^[0-9a-f]{2}([:-][0-9a-f]{2}){5}$/i;
 
 /** The picker label: adapter name and interface, never a hardware address. */
 export function hotspotRadioLabel(radio: WifiInterface): string {
+	// The radio's name for people ("Wi-Fi 1", "USB Wi-Fi (2f27)"), never a MAC
+	// address; the chipset follows when the driver reports a real one.
+	const name = radioName(radio.ifname);
 	const hw = radio.hw.trim();
 	return hw && !MAC_SHAPED.test(hw) && hw !== radio.ifname
-		? `${hw} · ${radio.ifname}`
-		: radio.ifname;
+		? `${name} · ${hw}`
+		: name;
+}
+
+function radioName(ifname: string): string {
+	return /^wlx[0-9a-f]{12}$/.test(ifname)
+		? m["networking.linkName.usbWifi"]({ id: ifname.slice(-4) })
+		: interfaceLabel(ifname);
 }

@@ -134,6 +134,16 @@ must contain the `source-audio` block with its ids unchanged.
   height (plus the mobile dock below desktop chrome), so a control reached with
   Tab or scrolled into view stops above the bar, never under it (WCAG 2.4.11).
 
+#### Link names
+
+Live, the HUD, Network's Bonded Links and the hotspot radio picker name a link
+with one helper, `linkName` in `apps/frontend/src/lib/helpers/link-names.ts`:
+"SIM 1 · Northwind" for a modem (its place among the modems and its
+registered operator), "Wi-Fi · HomeNetwork" for a joined radio, "USB Wi-Fi
+(2f27)" for a MAC-named radio, "USB tether" for a `usb*` device and the type
+label ("Ethernet 1") otherwise. The interface id is a secondary detail, never
+the headline, and no MAC address is shown as a name.
+
 #### A supervised connection restart [EXISTS]
 
 Between a connection restart's Stop and its Start (`status.connection_restarting`
