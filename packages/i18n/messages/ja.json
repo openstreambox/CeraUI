@@ -3216,7 +3216,7 @@
 	"settings.dialogs.powerOverride": "緊急時の解除（root）：systemctl stop ceralive、次に systemctl reboot を実行します。配信が停止し、クライアントが切断され、この画面が閉じます。",
 	"network.portal.title": "ボックスのサインイン",
 	"network.portal.intro": "ホテルは端末ごとに接続を許可するため、ボックスにも専用のサインインが必要です。「ホテルのページを開く」を選ぶと、ブラウザの新しいタブまたはウィンドウでサインインページを開こうとします。",
-	"network.portal.waiting": "ホテルのページで手続きを済ませてください。サインイン中、ボックスはこの端末の IPv4 の Web と DNS のリクエストをホテルの Wi-Fi 経由で送り、ほかの Web と DNS の通信の一部をブロックします。",
+	"network.portal.waiting": "ホテルのページで手続きを済ませてください。サインイン中、ボックスはこの端末の Web と DNS の IPv4 リクエストをホテルの Wi-Fi に転送し、ほかの Web と DNS の通信の一部を遮断します。",
 	"network.portal.again": "ページをもう一度開く",
 	"network.portal.finish": "サインインを確認",
 	"network.portal.cancel": "サインインをキャンセル",

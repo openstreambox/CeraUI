@@ -3543,7 +3543,7 @@
 	"live.phone.unsure": "Nicht sicher? Fang mit „Nur Internet“ an. Du kannst später wechseln.",
 	"live.phone.moblinChoice": "Auf dieser Box noch nicht verfügbar. Nutze vorerst „Nur Internet“.",
 	"live.phone.moblinAvailableChoice": "Nutze dein Moblin-Relay-Passwort.",
-	"live.phone.srtChoice": "Richte auf der Box einen SRT-Eingang und einen SRTLA-Server ein. Dann kann die Box das SRT deiner App über ihre funktionierenden Verbindungen weiterleiten.",
+	"live.phone.srtChoice": "Richte auf der Box einen SRT-Eingang und einen SRTLA-Server ein. Danach kann die Box den SRT-Stream deiner App über ihre verfügbaren Verbindungen weiterleiten.",
 	"live.phone.internetChoice": "Dein Gerät verbindet sich mit dem WLAN der Box. Die Box schickt jede neue Internetverbindung über eine ihrer funktionierenden Verbindungen. Fällt eine aus, können neue Verbindungen eine andere nutzen. Die Verbindungen werden nicht gebündelt.",
 	"live.phone.join": "Verbinde dich mit dem WLAN der Box.",
 	"live.phone.joinBody": "Öffne die WLAN-Einstellungen, um Name und Passwort zu sehen. Halte beides aus dem Bild und aus Screenshots heraus.",
