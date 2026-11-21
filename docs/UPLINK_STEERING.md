@@ -388,50 +388,82 @@ once, which breaks services that bind a session or a signed media URL to the
 client address, and it spends metered cellular data while a wired or Wi-Fi
 uplink is healthy. Host-originated traffic is unaffected: the selection only
 feeds the client-zone rules above, so bound senders such as SRTLA and Moblink
-keep their own source routes.
+keep their own source routes. A healthy switch or a policy exclusion keeps every
+uplink's route support. A health withdrawal still retires the withdrawn
+uplink's steering-owned table and source rule, exactly as the existing
+hard-down path did before this selection existed; a host socket that relied on
+that managed source rule needs validation with real route retirement.
 
-`uplink-steering/active-uplink.ts` chooses the active uplink on every
+`uplink-steering/active-uplink.ts` plans the active uplink on every
 reconcile from the uplinks the mode and administrative filters allow.
 
-- **Rank.** Lower operator priority for the uplink's kind wins, then `up` over
-  `degraded`, then wired, Wi-Fi, cellular. The interface name only breaks ties
-  for a first pick and never causes a switch.
+- **Plans follow what is applied.** Planning has no side effects. The plan
+  becomes the selector's state only when the steering runtime has applied and
+  verified the ruleset built from it. A rejected reload, a retry or a
+  read-only caller such as the shaper never moves the incumbent, starts or
+  ends a hold, or charges a failure. A state without client zones, or with
+  `spread`, commits as a reset.
+- **Rank.** Healthy before degraded, then lower operator priority for the
+  uplink's kind, then wired, Wi-Fi, cellular. Health comes before priority so a
+  preferred uplink that health only marks `degraded` (a captive portal, or a
+  streaming link judged from sender telemetry) yields to a proven healthy one.
+  The interface name only breaks ties for a first pick and never causes a
+  switch.
 - **Failover is immediate.** Health withdraws an uplink after a hard loss
   (address gone, interface gone) or three failed probe rounds (a silent
   blackhole with the link still up). The state builder then no longer offers
   it, and the best remaining uplink becomes active in the same reconcile. The
   applier retires the lost uplink's client conntracks as for any hard-down, so
-  apps reconnect over the new uplink. An administrative or mode exclusion
-  switches the same way.
+  apps reconnect over the new uplink. An administrative or mode exclusion, or
+  an uplink held back while its identity proof is pending, switches the same
+  way but does not count as a failure; only a missing interface or a `down`
+  health record does.
 - **Rejoin is held.** A better-ranked uplink displaces a working active one only
-  after it has been continuously `up` with at least one successful probe for
-  the rejoin hold, 30 s by default. A record that starts `up` before any probe
-  is not evidence. Each failure while active doubles that uplink's next hold, up
-  to 300 s; a failure older than ten minutes, or ten minutes as the active
-  uplink, clears the history. An equal-ranked uplink never displaces the active
-  one.
+  after it has been continuously `up` for the rejoin hold, 30 s by default, and
+  added at least three successful observations during it. The evidence must be
+  fresh (before the record's `staleAt`) and include a real success, so a record
+  that starts `up` before any probe, one that stopped refreshing, or counters
+  left by an earlier device on the same interface name cannot complete it.
+  Each failure while active doubles that uplink's next hold, up to 300 s; a
+  failure older than ten minutes, or ten minutes as the active uplink, clears
+  the history. An equal-ranked uplink never displaces the active one.
 - **Drain, not cutover.** The displaced uplink stays in the ruleset as not
   selectable with weight 0, so established flows keep their restore and NAT
-  rules and finish on it. Only new flows use the new active uplink.
+  rules and finish on it. Only new flows use the new active uplink, matching
+  the requirement to select a healthy uplink for new flows without session
+  migration. Changing from `spread` to `single` drains the same way. A lost
+  uplink's flows are retired instead, as above.
 
 The selector state is in memory and restarts with the backend, like the policy.
-`uplink-steering` status reports `clientUplinks`, the interfaces new client
-flows can use in the applied ruleset; the UI marks those uplinks **Clients**.
+`network.setSharingPolicy` accepts the policy without `selection` from older
+clients and then keeps the current selection. `uplink-steering` status reports
+`clientUplinks`, the interfaces new client flows can use in the applied
+ruleset; the UI marks those uplinks **Clients**.
 
-Detection time follows the health model: 5 s probe rounds, so a blackhole is
-withdrawn after roughly 10 to 19 s (three failures plus the 4 s probe timeout).
-While streaming, bonded links are judged from SRTLA telemetry and are not
-actively probed. When idle every candidate uplink, including standby cellular,
-is probed every 5 s with a small HTTP request; a faster confirmation on the
-active uplink and a slower cadence for metered standby links are not part of
-this change.
+Detection time follows the health model: 5 s probe rounds of up to three
+concurrent probes, so a blackhole on an idle uplink is withdrawn after roughly
+14 to 19 s (three failures plus the 4 s probe timeout). It takes longer when
+target resolution fails and rounds are skipped. While streaming, bonded links
+are judged from SRTLA telemetry and are not actively probed: a streaming link
+whose sender rows go stale is only `degraded`, never withdrawn. Single
+selection moves clients off it once another uplink is proven healthy, but with
+no healthy alternative, or with sender telemetry that stays healthy while
+other destinations are unreachable, clients stay on it. A returning uplink
+first needs health's five good rounds and 15 s dwell, then the selector's
+hold, about 55 to 60 s after recovery. When idle every candidate uplink,
+including standby cellular, is probed every 5 s with a small HTTP request
+(about 0.9 KB). A faster confirmation on the active uplink, active probing of
+the client uplink while streaming, and a slower cadence for metered standby
+links are not part of this change.
 
 `active-uplink-netns.test.ts` runs the selector's rulesets in network
 namespaces through failover on a silent blackhole, the rejoin hold and rejoin,
-checking that new flows use only the active uplink, that a retired flow
+checking that new flows use only the active uplink, that a retired UDP flow
 reconnects over the new one, that an established flow drains on the displaced
-uplink, and that a sender bound to the standby uplink keeps its path. Run it
-with `CERALIVE_NETNS_ISOLATED=1`.
+uplink, and that a sender bound to the standby uplink's address keeps its
+path. It installs the routes and flushes conntrack itself and does not drive
+the production health runtime, applier transition or route retirement. CI runs
+it in the isolated netns step with `CERALIVE_NETNS_ISOLATED=1`.
 
 ### Initial AP publication and readiness
 

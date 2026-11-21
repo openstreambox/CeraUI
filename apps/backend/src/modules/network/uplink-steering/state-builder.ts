@@ -27,6 +27,7 @@ import {
 	type ActiveUplinkSelector,
 	activeUplinkSelector,
 	applyClientUplinkPolicy,
+	recordSelectorPlan,
 } from "./active-uplink.ts";
 import type { PreparedSteeringState, UplinkRoutePlan } from "./applier.ts";
 import {
@@ -117,7 +118,8 @@ export async function readDesiredSteeringState(
 	const { candidates: rawCandidates, identityPending } = collected;
 	if (!context.hasAppliedState && identityPending)
 		return { pending: true, netifReady: true, reason: "identity" };
-	const candidates = deps.policy
+	// Planning only: the runtime commits the selector plan after the apply.
+	const plan = deps.policy
 		? applyClientUplinkPolicy(
 				rawCandidates,
 				deps.selector ?? activeUplinkSelector,
@@ -125,10 +127,15 @@ export async function readDesiredSteeringState(
 					now: (deps.now ?? Date.now)(),
 					policy: deps.policy(),
 					health,
-					present: new Set(rawCandidates.map(({ uplink }) => uplink.identity)),
+					interfaces: new Set(
+						Object.entries(interfaces)
+							.filter(([, entry]) => entry !== undefined)
+							.map(([ifname]) => ifname),
+					),
 				},
 			)
-		: rawCandidates;
+		: undefined;
+	const candidates = plan?.candidates ?? rawCandidates;
 	assertNoOverlap(zones, rawCandidates);
 	assertDistinctMarks(rawCandidates);
 	const routes: UplinkRoutePlan[] = [];
@@ -143,11 +150,13 @@ export async function readDesiredSteeringState(
 			}),
 		);
 	}
-	return {
+	const prepared: PreparedSteeringState = {
 		clientZones: zones,
 		uplinks: candidates.map((candidate) => candidate.uplink),
 		routes,
 	};
+	if (plan !== undefined) recordSelectorPlan(prepared, plan.next);
+	return prepared;
 }
 
 function collectClientZones(

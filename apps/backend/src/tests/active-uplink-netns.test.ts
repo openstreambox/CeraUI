@@ -33,10 +33,12 @@ const ZONE = { ifname: "client0", ipv4Cidr: "10.42.0.0/24" } as const;
 // (cellular) and the rulesets are renamed onto the fixture links.
 const FIXTURE_NAME: Record<string, string> = { eth0: "wan0", wwan0: "wan1" };
 
+/** `successes` probe rounds observed by `now`; fresh unless down. */
 function record(
 	iface: string,
 	state: UplinkHealthRecord["state"],
 	successes: number,
+	now = 0,
 ): UplinkHealthRecord {
 	return {
 		iface,
@@ -44,7 +46,7 @@ function record(
 		state,
 		weight: state === "down" ? 0 : 100,
 		lastTransition: 0,
-		staleAt: 0,
+		staleAt: now + 15_000,
 		probes: { successes, failures: 0 },
 		signals: {},
 	} as UplinkHealthRecord;
@@ -73,12 +75,15 @@ describe.skipIf(!NETNS_ISOLATED)("single-active client uplink — kernel", () =>
 			health: readonly UplinkHealthRecord[],
 		) => {
 			const candidates = uplinks.map((u) => ({ uplink: u }));
-			const selected = applyClientUplinkPolicy(candidates, selector, {
+			const result = applyClientUplinkPolicy(candidates, selector, {
 				now,
 				policy,
 				health: new Map(health.map((r) => [r.iface, r])),
-				present: new Set(uplinks.map((u) => u.identity)),
-			}).map(({ uplink: u }) => ({
+				interfaces: new Set(["eth0", "wwan0"]),
+			});
+			// Each phase's ruleset is applied below, so its plan is committed.
+			selector.commit(result.next);
+			const selected = result.candidates.map(({ uplink: u }) => ({
 				...u,
 				ifname: FIXTURE_NAME[u.ifname] ?? u.ifname,
 			}));
@@ -99,18 +104,18 @@ describe.skipIf(!NETNS_ISOLATED)("single-active client uplink — kernel", () =>
 		const failover1 = plan(
 			20_000,
 			[cellular],
-			[record("eth0", "down", 0), record("wwan0", "up", 9)],
+			[record("eth0", "down", 0), record("wwan0", "up", 9, 20_000)],
 		);
 		// eth0 proven again at 60 s; its hold doubled after the failure.
 		const held1 = plan(60_000, both, [
-			record("eth0", "up", 5),
-			record("wwan0", "up", 17),
+			record("eth0", "up", 5, 60_000),
+			record("wwan0", "up", 17, 60_000),
 		]);
 		const hold = selector.rejoinHoldMs("wired-a");
 		expect(hold).toBe(ACTIVE_UPLINK_CONFIG.rejoinHoldMs * 2);
 		const rejoined0 = plan(60_000 + hold, both, [
-			record("eth0", "up", 17),
-			record("wwan0", "up", 29),
+			record("eth0", "up", 17, 60_000 + hold),
+			record("wwan0", "up", 29, 60_000 + hold),
 		]);
 		expect([
 			active0.selected,

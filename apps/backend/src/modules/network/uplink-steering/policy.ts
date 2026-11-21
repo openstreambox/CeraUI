@@ -1,4 +1,9 @@
-import { type SharingPolicy, sharingPolicySchema } from "@ceraui/rpc/schemas";
+import {
+	type SetSharingPolicyInput,
+	type SharingPolicy,
+	setSharingPolicyInputSchema,
+	sharingPolicySchema,
+} from "@ceraui/rpc/schemas";
 import type { SteeringUplink } from "./contracts.ts";
 
 export const DEFAULT_SHARING_POLICY: SharingPolicy = {
@@ -60,12 +65,16 @@ export class SharingPolicyOwner {
 		return structuredClone(this.#desired);
 	}
 	set(
-		input: SharingPolicy,
+		input: SetSharingPolicyInput,
 		reconcile: () => Promise<void>,
 	): Promise<SharingPolicy> {
-		const next = sharingPolicySchema.parse(input);
+		const parsed = setSharingPolicyInputSchema.parse(input);
 		const operation = this.#tail.then(async () => {
-			this.#desired = next;
+			// An omitted selection (older client) keeps the current one.
+			this.#desired = sharingPolicySchema.parse({
+				...parsed,
+				selection: parsed.selection ?? this.#desired.selection,
+			});
 			await reconcile();
 			return this.get();
 		});
