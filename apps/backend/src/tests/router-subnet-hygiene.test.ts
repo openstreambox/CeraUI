@@ -103,7 +103,7 @@ function bench(options: {
 	};
 
 	const deps: SubnetRewriteDeps = {
-		isRealDevice: () => Promise.resolve(true),
+		canManageModems: () => Promise.resolve(true),
 		runIpRouteShowDefault: () =>
 			Promise.resolve(
 				`default via ${record.address} dev ${IFNAME} metric 100\n`,

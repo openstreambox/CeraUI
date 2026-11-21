@@ -110,7 +110,7 @@ function harness(
 		warnings,
 		files,
 		deps: {
-			isRealDevice: async () => options.real ?? true,
+			canManageBluetooth: async () => options.real ?? true,
 			systemctl,
 			probeHelp: async (binary) => ({
 				exitCode: 0,
