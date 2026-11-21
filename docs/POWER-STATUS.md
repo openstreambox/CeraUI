@@ -56,6 +56,21 @@ and backup notices. No numeric thermal threshold is copied into UI logic. The
 reader restart count includes boot changes and recovered same-boot sequence
 regressions.
 
+A bank that went quiet or away while resting, or did not come back after a
+rest (`gaps2` bits `a_rest_lost` and `b_rest_lost`), gets its own warning in
+place of that bank's resting notice: it may have switched itself off, so the
+user is asked to press its button or replug it, and the warning names the bank
+that powers the box when one does. It also replaces the generic reduced
+protection and missing backup notices for that state, and clears once the
+supervisor reads the bank healthy again.
+
+The state also carries the supervisor's own words for diagnostics: `pack_cal`,
+`start` and the names of the set `gaps`/`gaps2` bits (unknown bits as
+`bit<n>`). Each is null when the field is missing or malformed, so firmware from
+before these fields reads as unknown. A newer firmware's word for `pack_cal` or
+`start` is passed on as reported; status keys CeraUI does not know are ignored.
+No UI shows these diagnostics yet.
+
 Rebooted supervisors replace the full state; retained data from before a host
 reboot with a future monotonic timestamp is unavailable. No shutdown receipt
 acknowledgments or persistent device writes are added.
@@ -82,6 +97,12 @@ alimentación. Las temperaturas estimadas se identifican como tales. Una falla
 del canal remoto no interrumpe la supervisión local. La instantánea inicial del
 canal remoto conserva los sensores de hardware existentes, pero excluye el
 marcador local «Power sample».
+
+Si un banco deja de responder durante su reposo, desaparece o no vuelve
+después de reposar, CeraUI muestra un aviso propio para ese banco en lugar del
+aviso de reposo: puede que se haya apagado solo, así que pide presionar su botón
+o volver a conectarlo, y dice qué banco alimenta el equipo si hay uno. El aviso
+se retira cuando la placa vuelve a leer el banco como sano.
 
 ## Localization
 

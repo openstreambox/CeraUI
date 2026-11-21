@@ -2842,6 +2842,7 @@
 	"notifications.power.restingWeak": "O carregador portátil {bank} está fraco e em repouso.",
 	"notifications.power.resting": "O carregador portátil {bank} está em repouso.",
 	"notifications.power.peer": "O carregador portátil {bank} alimenta o dispositivo.",
+	"notifications.power.restLost": "O carregador portátil {bank} parou de responder enquanto estava em repouso. Ele pode ter se desligado sozinho: aperte o botão dele ou conecte-o de novo.",
 	"notifications.power.bench": "A proteção da alimentação está em modo de teste: ela apenas informa.",
 	"notifications.power.protection": "A placa de alimentação indica proteção reduzida. É preciso verificar.",
 	"notifications.power.calibration": "A bateria de reserva não tem proteção térmica: o sensor dela não está configurado.",

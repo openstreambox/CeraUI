@@ -34,13 +34,73 @@ export interface PowerNotice {
 	type: "info" | "warning";
 	message: string;
 }
+/** The supervisor's own words, for diagnostics. Missing or malformed means unknown (null). */
+export interface SupervisorFields {
+	/** `pack_cal`: `bench`, `datasheet`, `none`, or a newer firmware's word as reported. */
+	packCalibration: string | null;
+	/** `start`: `on`, `off`, or why the box's feed is not on yet. */
+	start: string | null;
+	/** Names of the set `gaps`/`gaps2` bits; unknown bits as `bit<n>`. */
+	gaps: string[] | null;
+}
 export interface PowerState {
 	available: boolean;
 	summary: string;
 	sensors: Record<string, string>;
 	notices: PowerNotice[];
 	boot?: string;
+	supervisor?: SupervisorFields;
 }
+/** Bit n of the combined mask: `gaps` holds bits 0-15, `gaps2` bits 16-31. */
+const GAP_NAMES = [
+	"unarmed",
+	"pack_uncal",
+	"pack_est",
+	"pack_probe",
+	"a_probe",
+	"b_probe",
+	"blind",
+	"no_alive",
+	"shdn",
+	"nvs",
+	"wdt",
+	"skip",
+	"loop",
+	"blind_start",
+	"pack_flaky",
+	"sink",
+	"supply_unproven",
+	"pack_jump",
+	"a_rest_lost",
+	"b_rest_lost",
+] as const;
+/** Each gap's own notice; null is either harmless or said in another notice. */
+const GAP_COPY: (PowerCopyKey | null)[] = [
+	null,
+	"calibration",
+	null,
+	"packProbe",
+	"aProbe",
+	"bProbe",
+	"blind",
+	"noAlive",
+	"shdn",
+	"nvs",
+	"wdt",
+	"skip",
+	"loop",
+	"blindStart",
+	"flaky",
+	"sink",
+	"unproven",
+	"jump",
+	// a_rest_lost / b_rest_lost replace that bank's own notice
+	null,
+	null,
+];
+const REST_LOST = { a: 2 ** 18, b: 2 ** 19 } as const;
+const supervisorWord = (value: string | undefined) =>
+	value !== undefined && /^[a-z][a-z0-9_]{0,30}$/.test(value) ? value : null;
 export function unavailablePower(visible = true): PowerState {
 	return {
 		available: false,
@@ -105,13 +165,26 @@ export async function readPowerState(
 		const feed = f.sbc === "run" ? ` ${powerText("feed")}` : "";
 		const resting = (bank: string) =>
 			/^(stood_down|standing_down)(:|\/|$)/.test(f[bank] ?? "");
+		// Missing gaps is unknown; firmware before gaps2 may omit it.
+		const valid =
+			f.gaps !== undefined &&
+			[f.gaps, f.gaps2].every(
+				(v) => v === undefined || /^[0-9a-fA-F]{4}$/.test(v),
+			);
+		const mask = valid
+			? Number.parseInt(f.gaps ?? "0", 16) +
+				65536 * Number.parseInt(f.gaps2 ?? "0", 16)
+			: 0;
+		const restLost = (bank: "a" | "b") => (mask & REST_LOST[bank]) !== 0;
 		if (f.power === "low") add("supply", "low", "warning", {}, feed);
 		if (f.power === "holdup") add("supply", "reserve");
 		if (
 			f.redundant === "0" &&
 			f.power !== "holdup" &&
 			!resting("a") &&
-			!resting("b")
+			!resting("b") &&
+			!restLost("a") &&
+			!restLost("b")
 		)
 			add("redundancy", "redundancy", "info", {}, feed);
 		const level = f.thermal;
@@ -159,9 +232,20 @@ export async function readPowerState(
 			else if (!targets.every((t) => t === "a" || t === "b" || t === "pack"))
 				add("heat", level, level === "warm" ? "info" : "warning", {}, feed);
 		}
-		for (const bank of ["a", "b"] as const)
-			if (resting(bank)) {
-				const peer = bank === "a" ? "b" : "a";
+		for (const bank of ["a", "b"] as const) {
+			const peer = bank === "a" ? "b" : "a";
+			const peerCarries = f[peer]?.startsWith("healthy/") === true;
+			if (restLost(bank))
+				add(
+					`bank-${bank}`,
+					"restLost",
+					"warning",
+					{ bank: bank.toUpperCase() },
+					peerCarries
+						? ` ${powerText("peer", { bank: peer.toUpperCase() })}`
+						: feed,
+				);
+			else if (resting(bank)) {
 				const cause = f[bank]?.split("/")[0]?.split(":")[1];
 				add(
 					`bank-${bank}`,
@@ -170,68 +254,21 @@ export async function readPowerState(
 						: cause === "sag"
 							? "restingWeak"
 							: "resting",
-					f[peer]?.startsWith("healthy/") ? "info" : "warning",
+					peerCarries ? "info" : "warning",
 					{ bank: bank.toUpperCase() },
-					f[peer]?.startsWith("healthy/")
+					peerCarries
 						? ` ${powerText("peer", { bank: peer.toUpperCase() })}`
 						: feed,
 				);
 			}
+		}
 		if (f.armed === "0") add("bench", "bench", "info");
-		const keys: (PowerCopyKey | null)[] = [
-			null,
-			"calibration",
-			null,
-			"packProbe",
-			"aProbe",
-			"bProbe",
-			"blind",
-			"noAlive",
-			"shdn",
-			"nvs",
-			"wdt",
-			"skip",
-			"loop",
-			"blindStart",
-			"flaky",
-			"sink",
-			"unproven",
-			"jump",
-		];
-		const names = [
-			"unarmed",
-			"pack_uncal",
-			"pack_est",
-			"pack_probe",
-			"a_probe",
-			"b_probe",
-			"blind",
-			"no_alive",
-			"shdn",
-			"nvs",
-			"wdt",
-			"skip",
-			"loop",
-			"blind_start",
-			"pack_flaky",
-			"sink",
-			"supply_unproven",
-			"pack_jump",
-		];
-		const valid =
-			f.gaps !== undefined &&
-			[f.gaps, f.gaps2].every(
-				(v) => v === undefined || /^[0-9a-fA-F]{4}$/.test(v),
-			);
-		const mask = valid
-			? Number.parseInt(f.gaps ?? "0", 16) +
-				65536 * Number.parseInt(f.gaps2 ?? "0", 16)
-			: 0;
-		if (!valid || mask >= 2 ** 18)
+		// An unknown bit from newer firmware still means reduced protection.
+		if (!valid || mask >= 2 ** GAP_NAMES.length)
 			add("protection", "protection", "warning", {}, feed);
-		keys.forEach((key, bit) => {
+		GAP_COPY.forEach((key, bit) => {
 			if (key && mask & (2 ** bit))
-				add(`gap-${names[bit]}`, key, "warning", {}, feed);
+				add(`gap-${GAP_NAMES[bit]}`, key, "warning", {}, feed);
 		});
 		if (f.pack_cal === "none" && !(mask & 2))
 			add("calibration", "calibration", "warning", {}, feed);
@@ -270,6 +307,15 @@ export async function readPowerState(
 			sensors,
 			notices,
 			...(f.boot ? { boot: f.boot } : {}),
+			supervisor: {
+				packCalibration: supervisorWord(f.pack_cal),
+				start: supervisorWord(f.start),
+				gaps: valid
+					? Array.from({ length: 32 }, (_, bit) => bit)
+							.filter((bit) => mask & (2 ** bit))
+							.map((bit) => GAP_NAMES[bit] ?? `bit${bit}`)
+					: null,
+			},
 		};
 	} catch {
 		return unavailablePower();

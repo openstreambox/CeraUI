@@ -367,6 +367,8 @@ for (const [bit, words] of [
 	[15, "charger chip"],
 	[16, "feeding"],
 	[17, "jumped"],
+	[18, "Bank A stopped answering while it rested"],
+	[19, "Bank B stopped answering while it rested"],
 ] as const) {
 	test(`gap bit ${bit} explains its own limitation`, async () => {
 		const mask = 2 ** bit;
@@ -531,3 +533,161 @@ for (const [heartbeat, now, rx] of [
 			notices: [],
 		});
 	});
+
+const firmwareLines = async () =>
+	(
+		await Bun.file(
+			new URL("./fixtures/power/firmware-lines.txt", import.meta.url),
+		).text()
+	)
+		.trim()
+		.split("\n")
+		.map((row) => row.split("\t") as [string, string]);
+const crc16 = (text: string) => {
+	let crc = 0xffff;
+	for (const byte of new TextEncoder().encode(text)) {
+		crc ^= byte << 8;
+		for (let bit = 0; bit < 8; bit++)
+			crc = (crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1) & 0xffff;
+	}
+	return crc.toString(16).toUpperCase().padStart(4, "0");
+};
+test("firmware snapshots match the status lines they were decoded from", async () => {
+	const rows = await firmwareLines();
+	expect(rows.length).toBeGreaterThanOrEqual(7);
+	for (const [name, line] of rows) {
+		const [body, crc] = line.split(" crc=");
+		expect(crc).toBe(crc16(body ?? ""));
+		const fields = Object.fromEntries(
+			(body ?? "")
+				.split(" ")
+				.slice(1)
+				.map((field) => [
+					field.slice(0, field.indexOf("=")),
+					field.slice(field.indexOf("=") + 1),
+				]),
+		);
+		expect((await Bun.file(fixture(name)).json()).fields).toEqual(fields);
+	}
+});
+describe("a bank that does not come back from its rest", () => {
+	for (const [name, bank, peer] of [
+		["rest-lost-a-gone", "A", "B"],
+		["rest-lost-a-silent", "A", "B"],
+		["rest-lost-b-gone", "B", "A"],
+	] as const) {
+		test(`${name} names the bank, what to do and who powers the box`, async () => {
+			const state = await read(name);
+			const notice = state.notices.find(
+				(n) => n.id === `bank-${bank.toLowerCase()}`,
+			);
+			expect(notice?.type).toBe("warning");
+			expect(notice?.message).toBe(
+				`Bank ${bank} stopped answering while it rested. It may have switched itself off: press its button or replug it. Bank ${peer} powers the box.`,
+			);
+			const ids = state.notices.map((n) => n.id);
+			// The specific words replace the generic ones, and a resting notice for the same bank.
+			expect(ids).not.toContain("protection");
+			expect(ids).not.toContain("redundancy");
+			expect(ids).not.toContain(`gap-${bank.toLowerCase()}_rest_lost`);
+			expect(state.summary).not.toContain("is hot and resting");
+			expect(state.supervisor?.gaps).toContain(
+				`${bank.toLowerCase()}_rest_lost`,
+			);
+		});
+	}
+	test("a silent sink beside it is still said", async () => {
+		expect((await read("rest-lost-a-silent")).notices.map((n) => n.id)).toEqual(
+			["bank-a", "gap-sink"],
+		);
+	});
+	test("both banks lost while the reserve carries the box", async () => {
+		const state = await changed(
+			{},
+			{
+				power: "holdup",
+				a: "absent/0.00V/0.00A/30.0C/00",
+				b: "absent/0.00V/0.00A/30.0C/00",
+				gaps2: "000c",
+			},
+		);
+		expect(state.notices.map((n) => n.id)).toEqual([
+			"supply",
+			"bank-a",
+			"bank-b",
+		]);
+		expect(state.summary).toContain("Bank B stopped answering");
+		expect(state.summary).not.toContain("powers the box");
+	});
+	test("the notice clears once the bank reads healthy again", async () => {
+		const removed: string[] = [];
+		const reconcile = createPowerReconciler(
+			() => {},
+			(id) => {
+				removed.push(id);
+			},
+		);
+		reconcile(await read("rest-lost-a-silent"));
+		const cleared = await read("rest-lost-cleared");
+		reconcile(cleared);
+		expect(removed.sort()).toEqual(["bank-a", "gap-sink"]);
+		expect(cleared.supervisor?.gaps).toEqual([]);
+	});
+});
+describe("supervisor fields across firmware versions", () => {
+	test("current firmware reports calibration, start reason and gap names", async () => {
+		expect((await read("rest-lost-a-silent")).supervisor).toEqual({
+			packCalibration: "bench",
+			start: "on",
+			gaps: ["sink", "a_rest_lost"],
+		});
+	});
+	test("firmware before gaps2 still reads its resting bank and no gaps", async () => {
+		const state = await read("firmware-before-gaps2");
+		expect(state.notices.map((n) => n.id)).toEqual(["bank-a"]);
+		expect(state.supervisor).toEqual({
+			packCalibration: "bench",
+			start: "on",
+			gaps: [],
+		});
+	});
+	test("firmware before the policy fields keeps them unknown", async () => {
+		const state = await read("firmware-before-policy-fields");
+		expect(state.available).toBe(true);
+		expect(state.notices.map((n) => n.id)).toEqual(["bank-a", "protection"]);
+		expect(state.supervisor).toEqual({
+			packCalibration: null,
+			start: null,
+			gaps: null,
+		});
+	});
+	test("newer firmware keys are ignored and unknown bits still mean reduced protection", async () => {
+		const state = await read("firmware-newer-keys");
+		expect(state.notices.map((n) => n.id)).toEqual(["bank-a", "protection"]);
+		expect(state.supervisor?.gaps).toEqual(["a_rest_lost", "bit20"]);
+	});
+	test("a start reason or calibration from newer firmware is passed on as reported", async () => {
+		const state = await changed({}, { start: "charging", pack_cal: "factory" });
+		expect(state.supervisor?.start).toBe("charging");
+		expect(state.supervisor?.packCalibration).toBe("factory");
+		expect(state.notices).toEqual([]);
+	});
+	for (const [field, value] of [
+		["start", "On!"],
+		["start", ""],
+		["pack_cal", "x".repeat(40)],
+		["pack_cal", "bench/none"],
+	] as const)
+		test(`garbage ${field}=${JSON.stringify(value).slice(0, 12)} reads as unknown`, async () => {
+			const state = await changed({}, { [field]: value });
+			expect(
+				state.supervisor?.[field === "start" ? "start" : "packCalibration"],
+			).toBeNull();
+		});
+	for (const gaps2 of ["zzzz", "00004", "", "0x04"])
+		test(`garbage gaps2 ${JSON.stringify(gaps2)} cannot hide reduced protection`, async () => {
+			const state = await changed({}, { gaps2 });
+			expect(state.notices.map((n) => n.id)).toEqual(["protection"]);
+			expect(state.supervisor?.gaps).toBeNull();
+		});
+});

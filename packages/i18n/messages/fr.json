@@ -2842,6 +2842,7 @@
 	"notifications.power.restingWeak": "La batterie externe {bank} est faible et au repos.",
 	"notifications.power.resting": "La batterie externe {bank} est au repos.",
 	"notifications.power.peer": "La batterie externe {bank} alimente l'appareil.",
+	"notifications.power.restLost": "La batterie externe {bank} ne répond plus depuis sa mise au repos. Elle s'est peut-être éteinte toute seule : appuyez sur son bouton ou rebranchez-la.",
 	"notifications.power.bench": "La protection de l'alimentation est en mode test : elle se contente de signaler.",
 	"notifications.power.protection": "La carte d'alimentation signale une protection réduite. Une vérification est nécessaire.",
 	"notifications.power.calibration": "La batterie de secours n'a pas de protection thermique : son capteur n'est pas configuré.",
