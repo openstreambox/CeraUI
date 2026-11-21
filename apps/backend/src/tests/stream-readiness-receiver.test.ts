@@ -4,6 +4,7 @@ import {
 	beforeAll,
 	beforeEach,
 	expect,
+	spyOn,
 	test,
 } from "bun:test";
 import type { RelaysCache } from "../helpers/config-schemas.ts";
@@ -13,7 +14,11 @@ import {
 	getRelays,
 	setRelaysCacheMock,
 } from "../modules/remote/remote-relays.ts";
-import { currentReceiver } from "../modules/streaming/stream-readiness.ts";
+import * as srtla from "../modules/streaming/srtla.ts";
+import {
+	currentCandidates,
+	currentReceiver,
+} from "../modules/streaming/stream-readiness.ts";
 import { resolveStreamEndpoint } from "../modules/streaming/transport/resolve-endpoint.ts";
 
 // currentReceiver must accept exactly what Start's endpoint resolver accepts.
@@ -127,4 +132,38 @@ test("a private receiver literal takes Start's local path", () => {
 		local: true,
 		address: "192.168.42.20",
 	});
+});
+
+test("candidates come from Start's own bond-entry collectors", () => {
+	const local = spyOn(
+		srtla,
+		"genSrtlaBondEntriesForLocalIpAddress",
+	).mockReturnValue([]);
+	const bond = spyOn(srtla, "genSrtlaBondEntries").mockReturnValue([
+		{ iface: "wwan0", ip: "10.0.0.2" } as never,
+		{ iface: "wwan0", ip: "10.0.0.3" } as never,
+	]);
+	try {
+		// An unsettled or unmappable same-subnet link is absent from Start's
+		// local list, so the flag has no candidate either.
+		expect(
+			currentCandidates({
+				configured: "yes",
+				local: true,
+				address: "192.168.42.20",
+			}),
+		).toEqual([]);
+		expect(local).toHaveBeenCalledWith("192.168.42.20");
+		expect(
+			currentCandidates({
+				configured: "yes",
+				local: false,
+				address: "relay.example",
+			}).map((c) => c.iface),
+		).toEqual(["wwan0"]);
+		expect(bond).toHaveBeenCalled();
+	} finally {
+		local.mockRestore();
+		bond.mockRestore();
+	}
 });
