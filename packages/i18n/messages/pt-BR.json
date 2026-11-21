@@ -918,7 +918,7 @@
 	"live.startFailure.next.restartBox": "Falhou de novo. Se continuar falhando, reinicie o aparelho.",
 	"live.startFailure.next.openSetup": "Confira a configuração da transmissão e inicie de novo.",
 	"live.startFailure.mutationBlockedNetwork": "Não foi possível desfazer uma alteração no modem, então o estado dele é desconhecido. Confira esse modem em Rede antes de transmitir.",
-	"live.startFailure.action.tryAgain": "Tentar de novo",
+	"live.startFailure.action.tryAgain": "Tentar novamente",
 	"live.startFailure.action.restartBox": "Reiniciar aparelho",
 	"live.startFailure.action.openSetup": "Abrir configuração",
 	"live.startFailure.action.openServer": "Abrir destino",

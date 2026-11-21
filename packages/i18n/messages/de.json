@@ -912,7 +912,7 @@
 	"live.startFailure.next.tryAgain": "Versuche es noch einmal.",
 	"live.startFailure.next.restartBox": "Es ist wieder fehlgeschlagen. Wenn es weiter fehlschlägt, starte die Box neu.",
 	"live.startFailure.next.openSetup": "Prüfe die Stream-Einrichtung und starte dann erneut.",
-	"live.startFailure.mutationBlockedNetwork": "Eine Modem-Änderung konnte nicht rückgängig gemacht werden, ihr Zustand ist daher unbekannt. Prüfe das Modem unter Netzwerk, bevor du streamst.",
+	"live.startFailure.mutationBlockedNetwork": "Eine Änderung am Modem konnte nicht rückgängig gemacht werden. Der Zustand des Modems ist daher unklar. Prüfe es unter „Netzwerk“, bevor du streamst.",
 	"live.startFailure.action.tryAgain": "Erneut versuchen",
 	"live.startFailure.action.restartBox": "Box neu starten",
 	"live.startFailure.action.openSetup": "Stream-Einrichtung öffnen",

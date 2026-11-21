@@ -920,7 +920,7 @@
 	"live.startFailure.mutationBlockedNetwork": "No se pudo deshacer un cambio en un módem, así que su estado es desconocido. Revisa ese módem en Red antes de transmitir.",
 	"live.startFailure.action.tryAgain": "Intentar de nuevo",
 	"live.startFailure.action.restartBox": "Reiniciar equipo",
-	"live.startFailure.action.openSetup": "Abrir configuración",
+	"live.startFailure.action.openSetup": "Abrir preparación de transmisión",
 	"live.startFailure.action.openServer": "Abrir destino",
 	"live.startFailure.action.openNetwork": "Abrir Red",
 	"live.startStream": "Iniciar transmisión",

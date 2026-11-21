@@ -841,7 +841,7 @@
 	"live.startFailure.action.tryAgain": "다시 시도",
 	"live.startFailure.action.restartBox": "장치 재시작",
 	"live.startFailure.action.openSetup": "스트림 설정 열기",
-	"live.startFailure.action.openServer": "대상 열기",
+	"live.startFailure.action.openServer": "송출 대상 열기",
 	"live.startFailure.action.openNetwork": "네트워크 열기",
 	"live.startStream": "스트림 시작",
 	"live.starting": "시작 중...",
