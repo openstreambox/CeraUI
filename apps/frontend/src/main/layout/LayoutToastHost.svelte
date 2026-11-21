@@ -12,12 +12,12 @@ import {
 	stopStreaming as stopStreamingFn,
 } from '$lib/helpers/SystemHelper';
 import { DESKTOP_CHROME_QUERY } from '$lib/layout';
-import { requestDialog } from '$lib/stores/dialog-request.svelte';
 import {
 	clearNotifications,
 	dismiss,
 	getActive,
 } from '$lib/stores/notifications.svelte';
+import { runNotificationAction } from '../notifications/notification-presentation';
 
 // Resolve the action label i18n key against the live message registry, falling
 // back to the raw key so an unknown label never blocks the deep-link affordance.
@@ -64,13 +64,13 @@ $effect(() => {
 			dismissable: notification.isDismissable,
 			onDismiss: () => dismiss(notification.name),
 			onAutoClose: () => dismiss(notification.name),
-			...(action?.kind === 'navigate'
+			...(action
 				? {
 						...viewLogsSecondary(notification, () => toast.dismiss(notification.name)),
 						action: {
 							label: resolveActionLabel(action.labelKey),
 							onClick: () => {
-								requestDialog(action.target);
+								void runNotificationAction(action, notification.name);
 								toast.dismiss(notification.name);
 							},
 						},
