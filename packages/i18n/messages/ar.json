@@ -116,6 +116,7 @@
 	"auth.passwordTooShort": "استخدم 8 أحرف على الأقل",
 	"auth.passwordsDoNotMatch": "كلمتا المرور غير متطابقتين",
 	"auth.placeholderConfirmPassword": "أعد إدخال كلمة المرور",
+	"auth.placeholderCreatePassword": "أنشئ كلمة مرور",
 	"auth.placeholderNewPassword": "إنشاء كلمة مرور آمنة (8 أحرف على الأقل)",
 	"auth.placeholderPassword": "أدخل كلمة المرور",
 	"auth.rememberMe": "تذكرني",
