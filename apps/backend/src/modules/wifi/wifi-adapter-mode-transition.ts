@@ -38,6 +38,7 @@ import type {
 } from "@ceraui/rpc/schemas";
 
 import { logger } from "../../helpers/logger.ts";
+import { isStreamSessionUnconfirmed } from "../streaming/stream-liveness.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import { withWifiAdapterLock } from "./wifi-adapter-lock.ts";
 import {
@@ -282,7 +283,7 @@ export async function setWifiAdapterMode(
 			target === "hotspot" &&
 			current !== "hotspot" &&
 			wifiInterface.conn &&
-			getIsStreaming()
+			(getIsStreaming() || isStreamSessionUnconfirmed())
 		) {
 			logger.warn(
 				`wifi mode switch: streaming keeps the station link on ${wifiInterface.ifname}`,
