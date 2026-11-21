@@ -328,7 +328,51 @@ describe("transports", () => {
 			"2",
 			"venue-incarnation",
 			AP,
+			data.ingressLifetime,
 		);
+	});
+
+	test("a private-path socket carries its interface's accepted lifetime and fails once it changes", async () => {
+		const captured: Captured = {};
+		let current = { ifindex: 7 as number | undefined, incarnation: 41 };
+		const seen: string[] = [];
+		const target = unix({
+			lifetime: (name) => {
+				seen.push(name);
+				return current;
+			},
+			websocket: capturing(captured),
+		});
+		expect(await statusLine(target, upgradeLines("/ws", [header()]))).toBe(
+			"HTTP/1.1 101 Switching Protocols",
+		);
+		await Bun.sleep(20);
+		const data = captured.data as SocketData;
+		expect(data.ingressLifetime).toEqual({ ifindex: 7, incarnation: 41 });
+		expect(seen).toEqual([AP]);
+		expect(data.ingressPathValid?.()).toBe(true);
+		// Replaced under its name: same link and subnet, a new kernel interface.
+		current = { ifindex: 8, incarnation: 41 };
+		expect(data.ingressPathValid?.()).toBe(false);
+		current = { ifindex: 7, incarnation: 41 };
+		expect(data.ingressPathValid?.()).toBe(false);
+	});
+
+	test("a re-registered interface also invalidates the socket's path", async () => {
+		const captured: Captured = {};
+		let incarnation = 41;
+		const target = unix({
+			lifetime: () => ({ ifindex: 7, incarnation }),
+			websocket: capturing(captured),
+		});
+		expect(await statusLine(target, upgradeLines("/ws", [header()]))).toBe(
+			"HTTP/1.1 101 Switching Protocols",
+		);
+		await Bun.sleep(20);
+		const valid = (captured.data as SocketData).ingressPathValid;
+		expect(valid?.()).toBe(true);
+		incarnation = 42;
+		expect(valid?.()).toBe(false);
 	});
 });
 
