@@ -287,3 +287,70 @@ it("clearing absent credentials reports the resulting state without claiming a s
 	).toBeTruthy();
 	expect(screen.queryByText(/has stopped lending/)).toBeNull();
 });
+
+it("keeps the Wi-Fi code behind Show code and offers New Wi-Fi password", async () => {
+	const onrenew = vi.fn();
+	render(PhoneHome, {
+		carrying: "idle",
+		wifi: { name: "Box", password: "correcthorse" },
+		wifiRenew: { phase: "idle", streaming: false, onrenew },
+	});
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Connect your phone" }),
+	);
+	await fireEvent.click(screen.getByRole("button", { name: "IRL Pro" }));
+	const show = screen.getByRole("button", { name: "Show code" });
+	expect(show.getAttribute("aria-expanded")).toBe("false");
+	expect(screen.getByTestId("wifi-code-frame").querySelector("img")).toBeNull();
+	await fireEvent.click(
+		screen.getByRole("button", { name: "New Wi-Fi password" }),
+	);
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Change the password" }),
+	);
+	expect(onrenew).toHaveBeenCalledTimes(1);
+});
+
+it("shows a join only for the hotspot its card describes", async () => {
+	const { noteHotspotRoster, resetHotspotJoinsForTest } = await import(
+		"$lib/stores/hotspot-joins.svelte"
+	);
+	resetHotspotJoinsForTest();
+	const ap = (macs: string[], incarnation: string) => ({
+		ifname: "wlan0",
+		conn: "ap",
+		hw: "02:00:00:00:00:01",
+		saved: {},
+		mode: "hotspot" as const,
+		incarnation,
+		hotspot: {
+			available_channels: { auto: { name: "Automatic" } },
+			name: "Box",
+			password: "correcthorse",
+			channel: "auto",
+			clients: { count: macs.length, stations: macs.map((mac) => ({ mac })) },
+		},
+	});
+	const snapshot = (a: string[]) => ({
+		"0": ap(a, "radio-A"),
+		"1": ap(["bb:bb:bb:bb:bb:01"], "radio-B"),
+	});
+	noteHotspotRoster(snapshot(["aa:aa:aa:aa:aa:01"]));
+	const onrenew = vi.fn();
+	render(PhoneHome, {
+		carrying: "idle",
+		wifi: { name: "Box", password: "correcthorse" },
+		wifiOwner: { device: "1", incarnation: "radio-B" },
+		wifiRenew: { phase: "idle", streaming: false, onrenew },
+	});
+	await fireEvent.click(
+		screen.getByRole("button", { name: "Connect your phone" }),
+	);
+	await fireEvent.click(screen.getByRole("button", { name: "IRL Pro" }));
+	noteHotspotRoster(snapshot(["aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"]));
+	await new Promise((settle) => setTimeout(settle, 0));
+	expect(screen.getByTestId("wifi-code")).toBeTruthy();
+	expect(screen.queryByTestId("wifi-code-joined")).toBeNull();
+	expect(screen.queryByRole("button", { name: "Not mine?" })).toBeNull();
+	resetHotspotJoinsForTest();
+});
