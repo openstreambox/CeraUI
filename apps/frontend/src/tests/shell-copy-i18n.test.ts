@@ -114,6 +114,7 @@ vi.mock("$lib/stores/auth-status.svelte", () => ({
 	authenticate: vi.fn(),
 	createPassword: vi.fn(() => Promise.resolve(true)),
 	clearAuthInteraction: vi.fn(),
+	getClaimPending: () => false,
 	subscribeAuthStatus: () => () => undefined,
 }));
 
