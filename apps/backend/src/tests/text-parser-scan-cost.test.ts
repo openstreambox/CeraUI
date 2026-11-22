@@ -8,17 +8,33 @@ import { parseRegulatoryDomain } from "../modules/wifi/regdomain.ts";
 // Parsers fed by local tool output must stay linear on hostile text. A pattern
 // that rescans from every position costs about 16 times more on four times the
 // input; a linear one about 4 times. Comparing the two sizes does not depend on
-// how fast the machine is. A call under 50 ms at the larger size is too cheap to
-// judge, which is where the fixed parsers sit (the old ones took 0.4 s to 1.4 s).
-const SMALL = 10_000;
+// how fast the machine is.
+//
+// Each size is the median of several samples, so one garbage collection or
+// scheduling pause cannot decide the result. A parser that is too cheap to time
+// at the starting size is tried on larger input (up to 8 times as much) before
+// it counts as fast, so a quadratic parser that happens to be quick on 40,000
+// characters is still caught.
 const LARGE = 40_000;
-const FLOOR_MS = 50;
+const SCALES = [1, 4, 8];
+const SCREEN_MS = 10;
+const SAMPLES = 5;
 const MAX_RATIO = 10;
 
-function elapsed(run: () => unknown): number {
+function once(parse: (input: string) => unknown, input: string): number {
 	const start = performance.now();
-	run();
+	try {
+		parse(input);
+	} catch {
+		// rejecting the input is fine; only the cost matters here
+	}
 	return performance.now() - start;
+}
+
+function median(parse: (input: string) => unknown, input: string): number {
+	const samples = Array.from({ length: SAMPLES }, () => once(parse, input));
+	samples.sort((a, b) => a - b);
+	return samples[Math.floor(SAMPLES / 2)] ?? 0;
 }
 
 function expectLinear(
@@ -26,23 +42,26 @@ function expectLinear(
 	parse: (input: string) => unknown,
 	unit: string,
 ): void {
-	const large = elapsed(() => parse(unit.repeat(LARGE)));
-	if (large < FLOOR_MS) return;
-	const small = Math.max(
-		elapsed(() => parse(unit.repeat(SMALL))),
-		1,
-	);
-	expect(
-		large / small,
-		`${name}: ${small.toFixed(0)} ms at ${SMALL}, ${large.toFixed(0)} ms at ${LARGE}`,
-	).toBeLessThan(MAX_RATIO);
+	for (const scale of SCALES) {
+		const size = LARGE * scale;
+		const large = unit.repeat(size);
+		// The first call also warms the parser up.
+		if (once(parse, large) < SCREEN_MS) continue;
+		const largeMs = median(parse, large);
+		const smallMs = Math.max(median(parse, unit.repeat(size / 4)), 1);
+		expect(
+			largeMs / smallMs,
+			`${name}: ${smallMs.toFixed(0)} ms at ${size / 4}, ${largeMs.toFixed(0)} ms at ${size}`,
+		).toBeLessThan(MAX_RATIO);
+		return;
+	}
 }
 
 test("apt package counts do not rescan a long digit run", () => {
 	expectLinear("parseUpgradePackageCount", parseUpgradePackageCount, "1");
 	expectLinear("parseAptUpgradeSummary", parseAptUpgradeSummary, "1");
 	expect(parseUpgradePackageCount("1".repeat(LARGE)).ok).toBe(false);
-}, 30_000);
+}, 60_000);
 
 test("apt package counts still read the summary line", () => {
 	const summary =
@@ -69,4 +88,4 @@ test("regulatory domain does not rescan a long run of blank lines", () => {
 	expect(parseRegulatoryDomain(`${blanks}country DE: DFS-ETSI\n`)).toBe("DE");
 	expect(parseRegulatoryDomain("global\n  country US: DFS-FCC\n")).toBe("US");
 	expect(parseRegulatoryDomain("\tcountry 00: DFS-UNSET\r\n")).toBe("00");
-}, 30_000);
+}, 60_000);
