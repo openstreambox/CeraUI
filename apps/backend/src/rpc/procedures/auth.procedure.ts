@@ -19,7 +19,11 @@ import type { AuthTokens } from "../../helpers/config-schemas.ts";
 import { randomBase64 } from "../../helpers/crypto.ts";
 import { logger } from "../../helpers/logger.ts";
 import { isDevelopment } from "../../mocks/mock-config.ts";
-import { closeSocketSession, getAuthenticatedClients } from "../context.ts";
+import {
+	closeSocketSession,
+	getAuthenticatedClients,
+	getClients,
+} from "../context.ts";
 import {
 	getPasswordHash,
 	localClaimEnabled,
@@ -288,9 +292,8 @@ export const claimLocalOwnerProcedure = baseProcedure
 			return { success: false };
 
 		await tokenStore.settle();
-		const { commitLocalClaim, getLocalClaimDigest } = await import(
-			"../../modules/config.ts"
-		);
+		const { commitLocalClaim, getLocalClaimDigest, settleLocalClaimWrite } =
+			await import("../../modules/config.ts");
 		const digest = getLocalClaimDigest();
 		if (getPasswordHash() || !digest) return { success: false };
 
@@ -311,9 +314,35 @@ export const claimLocalOwnerProcedure = baseProcedure
 		// publishing an owner hash that would make those tokens eligible again.
 		invalidateAllTokens(context.ws);
 		if (!tokenStore.writable) return { success: false };
-		commitLocalClaim(ownerHash);
+		try {
+			commitLocalClaim(ownerHash);
+		} catch (error) {
+			// Config writes stay frozen until the file says which state is on disk.
+			// Answer from the file when it is readable; otherwise the recovery
+			// owner reloads it and the caller's retained secret settles the claim.
+			try {
+				if (!(await settleLocalClaimWrite(ownerHash)))
+					return { success: false };
+			} catch {
+				const { recoverRuntimeConfig } = await import(
+					"../../modules/config-boot.ts"
+				);
+				recoverRuntimeConfig();
+				throw error;
+			}
+		}
+		closeStaleSetupPages(context.ws);
 		return { success: true };
 	});
+
+/** Pages still showing setup reconnect and get the normal sign-in view. */
+function closeStaleSetupPages(caller: AppWebSocket): void {
+	for (const ws of getClients()) {
+		if (ws === caller || ws.data.isAuthenticated) continue;
+		if (ws.data.senderId !== undefined) continue;
+		ws.close(1012, "Owner setup finished");
+	}
+}
 
 /**
  * Logout procedure

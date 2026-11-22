@@ -1,12 +1,20 @@
+import { spyOn } from "bun:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { call } from "@orpc/server";
 import {
 	getConfig,
 	getLocalClaimDigest,
+	isRuntimeConfigAvailable,
 	loadConfig,
 	setConfigFilePath,
 } from "../../modules/config.ts";
-import { createContext } from "../../rpc/context.ts";
+import {
+	awaitRuntimeConfig,
+	bootRuntimeConfig,
+	stopRuntimeConfigRecovery,
+} from "../../modules/config-boot.ts";
+import { addClient, createContext } from "../../rpc/context.ts";
 import {
 	claimLocalOwnerProcedure,
 	loginProcedure,
@@ -22,20 +30,79 @@ const oldToken = "old-test-token";
 const digest = (value: string) =>
 	new Bun.CryptoHasher("sha256").update(value).digest("hex");
 
-function context(senderId?: string) {
-	return createContext({
+function socket(senderId?: string) {
+	const closes: number[] = [];
+	const ws = {
 		data: { senderId, isAuthenticated: false, lastActive: 0 },
-	} as AppWebSocket);
+		close: (code: number) => {
+			closes.push(code);
+		},
+	} as unknown as AppWebSocket;
+	return { ws, closes };
 }
 
-const claim = (secret = ownerSecret, submitted = code, senderId?: string) =>
+function context(senderId?: string, ws = socket(senderId).ws) {
+	return createContext(ws);
+}
+
+const claim = (
+	secret = ownerSecret,
+	submitted = code,
+	senderId?: string,
+	ws?: AppWebSocket,
+) =>
 	call(
 		claimLocalOwnerProcedure,
 		{ code: submitted, ownerSecret: secret },
 		{
-			context: context(senderId),
+			context: context(senderId, ws),
 		},
 	);
+
+const loginWith = async (password: string) =>
+	(await call(loginProcedure, { password }, { context: context() })).success;
+
+const savedConfig = async () =>
+	JSON.parse(await Bun.file("config.json").text()) as Record<string, unknown>;
+
+const isConfigTarget = (target: fs.PathLike) =>
+	String(target).endsWith("config.json") &&
+	!String(target).endsWith("auth_tokens.json");
+
+/** Fail the next durable config publication at the chosen step, once. */
+function failConfigWrite(step: "rename" | "directory-fsync" | "unreadable") {
+	const rename = fs.renameSync;
+	const fsync = fs.fsyncSync;
+	let armed = false;
+	const renameSpy = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+		if (!isConfigTarget(to)) return rename(from, to);
+		renameSpy.mockRestore();
+		if (step === "rename") {
+			throw Object.assign(new Error("injected rename fault"), {
+				code: "EIO",
+			});
+		}
+		rename(from, to);
+		if (step === "unreadable") {
+			fs.chmodSync(to, 0o000);
+			throw Object.assign(new Error("injected unreadable fault"), {
+				code: "EIO",
+			});
+		}
+		armed = true;
+	});
+	const fsyncSpy = spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+		if (!armed || !fs.fstatSync(fd).isDirectory()) return fsync(fd);
+		fsyncSpy.mockRestore();
+		throw Object.assign(new Error("injected directory fsync fault"), {
+			code: "EIO",
+		});
+	});
+	return () => {
+		renameSpy.mockRestore();
+		fsyncSpy.mockRestore();
+	};
+}
 
 const legacySetPassword = (socket = context()) =>
 	call(
@@ -45,10 +112,24 @@ const legacySetPassword = (socket = context()) =>
 	);
 
 const scenario = process.argv[2];
+if (scenario === "restart-verify") {
+	// A fresh process boots from whatever the previous one left on disk.
+	assert.equal(await bootRuntimeConfig(), "loaded");
+	assert.equal(getConfig().max_br, 9000);
+	assert.equal(getLocalClaimDigest(), undefined);
+	assert.ok(getPasswordHash());
+	assert.ok(!("local_claim_digest" in (await savedConfig())));
+	assert.equal((await claim(alternateSecret)).success, false);
+	assert.equal(await loginWith(alternateSecret), false);
+	assert.equal(await loginWith(ownerSecret), true);
+	process.exit(0);
+}
 await Bun.write(
 	"config.json",
 	JSON.stringify(
-		scenario === "unavailable" ? {} : { local_claim_digest: digest(code) },
+		scenario === "unavailable"
+			? {}
+			: { local_claim_digest: digest(code), max_br: 9000 },
 	),
 );
 await loadConfig();
@@ -145,15 +226,77 @@ switch (scenario) {
 		assert.equal((await legacySetPassword(owner)).success, true);
 		break;
 	}
-	case "write-failure":
-		setConfigFilePath("missing/config.json");
-		await assert.rejects(claim);
-		assert.equal(getPasswordHash(), undefined);
+	case "pre-rename": {
+		// The old file stays authoritative: the code is not spent and config
+		// writes are not frozen.
+		const restore = failConfigWrite("rename");
 		assert.equal((await claim()).success, false);
-		setConfigFilePath("config.json");
-		await loadConfig();
+		restore();
+		assert.ok(isRuntimeConfigAvailable());
+		assert.equal(getPasswordHash(), undefined);
+		assert.equal((await savedConfig()).local_claim_digest, digest(code));
+		assert.equal(await loginWith(ownerSecret), false);
+		assert.equal((await claim(alternateSecret)).success, true);
+		assert.equal(await loginWith(alternateSecret), true);
+		break;
+	}
+	case "post-rename": {
+		// The new file landed before the fault, so the claim did commit.
+		const restore = failConfigWrite("directory-fsync");
+		assert.equal((await claim()).success, true);
+		restore();
+		assert.ok(isRuntimeConfigAvailable());
+		assert.equal(getLocalClaimDigest(), undefined);
+		assert.ok(!("local_claim_digest" in (await savedConfig())));
+		assert.equal((await savedConfig()).max_br, 9000);
+		assert.equal(await loginWith(ownerSecret), true);
+		assert.equal((await claim(alternateSecret)).success, false);
+		break;
+	}
+	case "unreadable-after-failure": {
+		// Unknown on-disk state: refuse, then let the recovery owner settle it
+		// without a restart.
+		const restore = failConfigWrite("unreadable");
+		await assert.rejects(claim());
+		restore();
+		assert.equal(isRuntimeConfigAvailable(), false);
+		assert.equal(getPasswordHash(), undefined);
+		assert.equal((await claim(alternateSecret)).success, false);
+		fs.chmodSync("config.json", 0o600);
+		await awaitRuntimeConfig();
+		stopRuntimeConfigRecovery();
+		assert.ok(isRuntimeConfigAvailable());
+		assert.equal(getLocalClaimDigest(), undefined);
+		assert.equal(await loginWith(ownerSecret), true);
+		assert.equal(await loginWith(alternateSecret), false);
+		break;
+	}
+	case "restart-claim":
 		assert.equal((await claim()).success, true);
 		break;
+	case "restart-post-rename": {
+		const restore = failConfigWrite("directory-fsync");
+		assert.equal((await claim()).success, true);
+		restore();
+		break;
+	}
+	case "stale-peers": {
+		// Other pre-claim pages reconnect into the normal sign-in view.
+		const caller = socket();
+		const stale = socket();
+		const owner = socket();
+		owner.ws.data.isAuthenticated = true;
+		owner.ws.data.authToken = "unrelated";
+		const relay = socket("relay");
+		for (const peer of [caller, stale, owner, relay]) addClient(peer.ws);
+		assert.equal(
+			(await claim(ownerSecret, code, undefined, caller.ws)).success,
+			true,
+		);
+		assert.deepEqual(caller.closes, []);
+		assert.deepEqual(stale.closes, [1012]);
+		break;
+	}
 	default:
 		throw new Error("Unknown local claim fixture");
 }

@@ -161,6 +161,18 @@ export function commitLocalClaim(ownerHash: string): void {
 	setPasswordHash(ownerHash);
 }
 
+/**
+ * After a failed claim write, read the file back to learn whether the owner
+ * hash landed (a fault after the rename still published it). Throws while the
+ * file stays unreadable; the caller then hands it to the recovery owner.
+ */
+export async function settleLocalClaimWrite(
+	ownerHash: string,
+): Promise<boolean> {
+	await loadConfig();
+	return getPasswordHash() === ownerHash;
+}
+
 /** False until a strict load has succeeded; the boot owner retries until it does. */
 export function isRuntimeConfigAvailable(): boolean {
 	return authorityFailure === undefined;
