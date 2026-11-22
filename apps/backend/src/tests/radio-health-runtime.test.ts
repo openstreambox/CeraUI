@@ -1,5 +1,6 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { radioHealthListSchema } from "@ceraui/rpc/schemas";
+import * as modemMocks from "../mocks/providers/modems.ts";
 import {
 	getRadioHealth,
 	radioForModem,
@@ -224,6 +225,16 @@ test("the serving cell is read only on the released AT port, and a refusal says 
 		},
 	});
 	expect(getRadioHealth(91000)["1"]?.metrics.servingCell).toBeUndefined();
+
+	const isMocked = spyOn(modemMocks, "shouldMockModems").mockReturnValue(true);
+	const readServing = mock(async () => ({ ok: true as const, raw: reply }));
+	try {
+		await refreshRadioHealth(rows, 121000, { ...base, readServing });
+		expect(readServing).not.toHaveBeenCalled();
+		expect(getRadioHealth(121000)["1"]?.metrics.servingCell).toBeUndefined();
+	} finally {
+		isMocked.mockRestore();
+	}
 });
 
 test("binary journal messages cannot stall later USB diagnostics", async () => {

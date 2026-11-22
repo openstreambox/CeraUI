@@ -122,8 +122,10 @@ point is up". Wire contract: `hotspotToggleErrorSchema` (six members, none
 collapsible) + `hotspotToggleOutputSchema` in `@ceraui/rpc`.
 
 Discovery retains published device IDs while it awaits NetworkManager reads.
-A completed pass prunes IDs it no longer observes. When NM confirms an AP before
-its network-interface snapshot arrives, the steering wait binds the first
+A completed pass normally prunes IDs whose mappings it did not refresh, which
+includes observed degraded rows. During a roster swap it also retains mappings
+whose keys were observed. When NM confirms an AP before its network-interface
+snapshot arrives, the steering wait binds the first
 observed incarnation of that AP and still rechecks the exact NM activation
 before reporting readiness. A change after that first incarnation cancels the
 wait.

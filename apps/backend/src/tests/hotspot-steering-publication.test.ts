@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import * as interfaces from "../modules/network/network-interfaces.ts";
 import {
 	applyConcurrentApBondGate,
@@ -17,7 +17,11 @@ import {
 	registerPendingConfirmation,
 	settlePending,
 } from "../modules/wifi/wifi-hotspot-monitor.ts";
-import type { HotspotSteeringDeps } from "../modules/wifi/wifi-hotspot-readiness.ts";
+import {
+	awaitHotspotSteering,
+	captureHotspotSteeringFence,
+	type HotspotSteeringDeps,
+} from "../modules/wifi/wifi-hotspot-readiness.ts";
 import type {
 	HotspotActivationDeps,
 	WifiInterfaceWithHotspot,
@@ -190,6 +194,16 @@ test("a replaced row or profile during the wait never certifies the replacement"
 	}
 });
 
+const activationWitness = {
+	activePath: "/active/1",
+	profile: {
+		path: "/settings/1",
+		runId: "fixture",
+		fingerprint: "ap",
+		file: { filename: "/fixture", device: "1", inode: "2", ctime: "3" },
+	},
+};
+
 test("a netif snapshot arriving after NM confirmation can verify the same AP", async () => {
 	const f = fixture();
 	const incarnation = spyOn(
@@ -198,17 +212,8 @@ test("a netif snapshot arriving after NM confirmation can verify the same AP", a
 	).mockReturnValue(undefined);
 	const published = Promise.withResolvers<unknown[]>();
 	f.deps.publishOutcome = (...args) => published.resolve(args);
-	const witness = {
-		activePath: "/active/1",
-		profile: {
-			path: "/settings/1",
-			runId: "fixture",
-			fingerprint: "ap",
-			file: { filename: "/fixture", device: "1", inode: "2", ctime: "3" },
-		},
-	};
 	f.deps.steering = {
-		readActivation: async () => witness,
+		readActivation: async () => activationWitness,
 		reconcile: async () => {
 			incarnation.mockReturnValue(7);
 		},
@@ -222,3 +227,40 @@ test("a netif snapshot arriving after NM confirmation can verify the same AP", a
 		incarnation.mockRestore();
 	}
 }, 2000);
+
+test("a bound netif incarnation change cancels Start with the same NM activation", async () => {
+	const f = fixture();
+	const incarnation = spyOn(
+		interfaces,
+		"getNetworkInterfaceIncarnation",
+	).mockReturnValue(undefined);
+	try {
+		f.iface.conn = "ap93";
+		const fence = captureHotspotSteeringFence(f.iface, "ap93", {
+			witness: activationWitness,
+		});
+		const readActivation = mock(async () => {
+			expect(fence.incarnation).toBe(7);
+			incarnation.mockReturnValue(8);
+			return activationWitness;
+		});
+		const result = await awaitHotspotSteering(
+			fence,
+			{
+				reconcile: async () => {
+					incarnation.mockReturnValue(7);
+				},
+				verified: (_, observed) => observed !== undefined,
+				readActivation,
+			},
+			undefined,
+			(outcome) => f.deps.publishOutcome?.("start", f.iface.id, outcome),
+		);
+		expect(readActivation).toHaveBeenCalledTimes(1);
+		expect(result).toBeUndefined();
+		expect(f.outcomes).toEqual([]);
+	} finally {
+		f.restore();
+		incarnation.mockRestore();
+	}
+});
