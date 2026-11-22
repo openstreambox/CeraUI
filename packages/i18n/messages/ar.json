@@ -3638,6 +3638,8 @@
 	"notifications.power.restingWeak": "بنك الطاقة {bank} ضعيف وفي وضع الراحة.",
 	"notifications.power.resting": "بنك الطاقة {bank} في وضع الراحة.",
 	"notifications.power.peer": "بنك الطاقة {bank} يغذي الجهاز.",
+	"notifications.power.restLost": "توقف بنك الطاقة {bank} عن الاستجابة أثناء وضع الراحة. ربما أطفأ نفسه: اضغط على زره أو أعد توصيله.",
+	"notifications.power.restLostHot": "توقف بنك الطاقة {bank} عن الاستجابة أثناء وضع الراحة. ربما أطفأ نفسه: اتركه يبرد، ثم اضغط على زره أو أعد توصيله.",
 	"notifications.power.bench": "حماية الطاقة في وضع الاختبار: تكتفي بالإبلاغ.",
 	"notifications.power.protection": "تُبلغ لوحة الطاقة عن انخفاض مستوى الحماية. يلزم الفحص.",
 	"notifications.power.calibration": "لا توجد حماية حرارية للبطارية الاحتياطية: حساسها غير مُعدّ.",

@@ -3626,6 +3626,8 @@
 	"notifications.power.restingWeak": "Bank {bank} is weak and resting.",
 	"notifications.power.resting": "Bank {bank} is resting.",
 	"notifications.power.peer": "Bank {bank} powers the box.",
+	"notifications.power.restLost": "Bank {bank} stopped answering while it rested. It may have switched itself off: press its button or replug it.",
+	"notifications.power.restLostHot": "Bank {bank} stopped answering while it rested. It may have switched itself off: let it cool, then press its button or replug it.",
 	"notifications.power.bench": "Power protection is in bench mode: it only reports.",
 	"notifications.power.protection": "The power board reports reduced protection. It needs a check.",
 	"notifications.power.calibration": "The reserve pack has no heat protection: its sensor is not set up.",

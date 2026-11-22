@@ -3581,6 +3581,8 @@
 	"notifications.power.restingWeak": "モバイルバッテリー {bank} は出力が弱いため休止中です。",
 	"notifications.power.resting": "モバイルバッテリー {bank} は休止中です。",
 	"notifications.power.peer": "モバイルバッテリー {bank} がデバイスに給電しています。",
+	"notifications.power.restLost": "モバイルバッテリー {bank} が休止中に応答しなくなりました。自動で電源が切れた可能性があります。ボタンを押すか、接続し直してください。",
+	"notifications.power.restLostHot": "モバイルバッテリー {bank} が休止中に応答しなくなりました。自動で電源が切れた可能性があります。冷ましてから、ボタンを押すか、接続し直してください。",
 	"notifications.power.bench": "電源保護はテストモードです。報告のみ行います。",
 	"notifications.power.protection": "電源ボードが保護機能の低下を報告しています。点検が必要です。",
 	"notifications.power.calibration": "予備バッテリーには過熱保護がありません。センサーが設定されていません。",
