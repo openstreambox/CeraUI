@@ -15,7 +15,8 @@ function makeDeps(
 ): EthernetRoleTransitionDeps {
 	return {
 		listInterfaces: () => ({ [name]: {} }),
-		resolveConnection: () => Promise.resolve(`uuid-${name}`),
+		resolveConnection: () =>
+			Promise.resolve({ kind: "active" as const, uuid: `uuid-${name}` }),
 		setFields: () => Promise.resolve(true),
 		activate: () => Promise.resolve(true),
 		persistRole: (ifname, role) => {
@@ -24,6 +25,15 @@ function makeDeps(
 		restoreRole: (ifname, previous) => {
 			if (previous === undefined) delete roles[ifname];
 			else roles[ifname] = previous;
+		},
+		readOwnedProfile: () => undefined,
+		readProfile: async () => ({ kind: "absent" }),
+		addConnection: async () => false,
+		reserveProfile: () => {
+			throw new Error("unexpected reservation");
+		},
+		newUuid: () => {
+			throw new Error("unexpected allocation");
 		},
 		readPersistedRole: (ifname) => roles[ifname],
 		publishOutcome: () => {},
@@ -57,7 +67,7 @@ for (const mode of ["set", "reconcile"] as const) {
 							),
 						);
 					}
-					return `uuid-${name}`;
+					return { kind: "active", uuid: `uuid-${name}` };
 				},
 			};
 
@@ -77,7 +87,7 @@ for (const mode of ["set", "reconcile"] as const) {
 				]);
 
 				expect(result).toBe("completed");
-				expect(reads).toBe(1);
+				expect(reads).toBe(4);
 				expect(roles[name]).toBe("shared-lan");
 				expect(nestedErrors).toHaveLength(1);
 				expect(nestedErrors[0]).toBeInstanceOf(EthernetRoleReentryError);
@@ -107,7 +117,7 @@ test("a same-port request from an unrelated async context still waits", async ()
 				request.resolve();
 				await release.promise;
 			}
-			return `uuid-${name}`;
+			return { kind: "active", uuid: `uuid-${name}` };
 		},
 	};
 
@@ -131,6 +141,15 @@ test("a same-port request from an unrelated async context still waits", async ()
 		{ success: true, applied: "shared-lan" },
 		{ success: true, applied: "uplink" },
 	]);
-	expect(reads).toEqual(["shared-lan", "uplink"]);
+	expect(reads).toEqual([
+		"shared-lan",
+		"shared-lan",
+		"shared-lan",
+		"shared-lan",
+		"uplink",
+		"uplink",
+		"uplink",
+		"uplink",
+	]);
 	expect(roles[name]).toBe("uplink");
 });

@@ -1,6 +1,6 @@
 <!-- Moved verbatim from AGENTS.md on 2026-10-05 by lean-rules-docs-landing-latam -->
 
-## FLOW-STICKY SHARED-CLIENT STEERING [PARTIAL — backend complete; image carrier + board drill pending]
+## FLOW-STICKY SHARED-CLIENT STEERING [PARTIAL — backend complete; image carrier source present, built-image + board drill pending]
 
 `modules/network/uplink-steering/` is the desired-state controller for hotspot and
 Ethernet `shared-lan` client traffic. It owns only `inet ceralive_share`, the
@@ -10,6 +10,12 @@ its managed tables, and private route tables 30000–95535. The image's
 never named by generated rule text. The carrier effects are isolated in
 `modules/network/uplink-sharing.ts`: fsynced temp → `nft --check` → atomic rename
 → systemd start/reload, with prior-file reload on failure.
+
+The packaged backend unit creates `/run/ceralive` as root with mode `0700`
+before startup. `RuntimeDirectoryPreserve=yes` keeps shared runtime files across
+backend stops and restarts; reboot still clears `/run`. The sharing carrier does
+not provision this parent directory because publication precedes carrier start.
+The built and installed unit still requires qualification.
 
 **Only forwarded client-zone traffic is steered or NATed, and only the client band
 is ever capped. Preserve physical-identity marks and established flows.**
@@ -35,6 +41,22 @@ requires the zone prefix and the namespaced conntrack mark. There is no output
 hook. A locally-originated packet therefore cannot enter this path even when its
 source is inside a client prefix, and a WAN reply never restores the client flow's
 mark and recirculates out the WAN.
+
+**An applied all-down ruleset keeps the client zone active.** If no uplink is
+selectable, a forward-hook rule drops only new IPv4 flows matching each
+registered ingress interface and client prefix. Invalid, untracked, out-of-prefix
+and IPv6 traffic are not matched, and detection/refusal/apply failures can leave
+an earlier ruleset active. The rule must not be in
+prerouting, where it would also drop client requests to local DHCP, DNS and UI
+services. No input or output hook is added. Routed peers on other interfaces or
+zones are dropped while all-down; no destination exemption is added. Ordinary
+on-link peers avoid this IP forwarding path, with bridge-netfilter behavior still
+subject to device qualification. A successfully applied selectable state removes
+the drop through the existing full-state reload; upstream DNS withdrawal is
+separate from this rule.
+Stopping the sharing carrier removes its whole owned table and the guard with
+it, including rollback/shutdown stops. NetworkManager's surviving shared-mode
+rules then govern forwarding; this guard is not a teardown-time isolation policy.
 
 **Marks are physical-identity keyed.** The high byte `0xca` proves client-zone
 provenance, the next 16 bits select the uplink, and the low byte is preserved.
@@ -131,6 +153,8 @@ It publishes the latest model first, then flushes and removes stale support.
 cleanup work separately for each source address and priority. Any overlap, mark
 collision, foreign priority owner, missing route, nft failure, or rollback failure is fail-soft and surfaces
 `steering_unavailable`; it never blocks the already-bound WS server.
+After a failed reconciliation, an identical desired state is reapplied until a
+full apply succeeds, rather than trusting the last completed-state cache.
 
 Keep committed steering through stale-route cleanup failures: sharing, provisioned
 support and the forwarding step stay intact. The applier retains pending
@@ -144,8 +168,14 @@ failed activation cannot discard pending work. Before commit, a failed transitio
 restores removed support and reloads the previous ruleset before rolling new routes
 back.
 
-The CeraUI half is complete and kernel-netns tested. It cannot activate on a fleet
-image until image-building todo 12 ships `ceralive-share.service`, its teardown
-script, nftables/conntrack packages, and the CeraUI unit ordering. Full contract and
+Existing CeraUI steering paths have kernel-netns coverage. The all-down chain
+and partial-apply recovery are unit/model tested; an all-down netns case is
+source-authored in `uplink-steering-netns.test.ts` but not yet executed, and
+bookworm parsing remains a release gate. The image repository's source carries
+`ceralive-share.service`, its teardown script, nftables/conntrack package entries
+and the CeraUI unit ordering; that is source evidence only, not proof of a built or
+installed image or of stop/restore behavior on a board. Full contract and
 hardware gate: [`../../docs/UPLINK_STEERING.md`](../../../../docs/UPLINK_STEERING.md).
 
+
+Runtime client selection uses this same owner; see [runtime policy](../../../../docs/UPLINK_STEERING.md#runtime-client-uplink-policy). Policy exclusion retires owned flows while retaining healthy route support. Priority changes retain flows.

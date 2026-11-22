@@ -135,7 +135,12 @@ const DEVICE_ACTIONS: readonly DeviceAction[] = [
 		name: "Ethernet port role",
 		key: "eth-role:<name>",
 		file: NETIF_DIALOG,
-		mustContain: ["osCommand(", "ethernetRoleOpKey(", "key: roleKey"],
+		mustContain: [
+			"osCommand(",
+			"ethernetRoleOpKey(",
+			"key: roleOperationKey",
+			"const roleOperationKey = roleKey",
+		],
 	},
 ] as const;
 
