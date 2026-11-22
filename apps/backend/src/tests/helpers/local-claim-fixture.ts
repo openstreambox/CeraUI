@@ -256,18 +256,55 @@ switch (scenario) {
 		// Unknown on-disk state: refuse, then let the recovery owner settle it
 		// without a restart.
 		const restore = failConfigWrite("unreadable");
-		await assert.rejects(claim());
+		const caller = socket();
+		const stale = socket();
+		const relay = socket("relay");
+		for (const peer of [caller, stale, relay]) addClient(peer.ws);
+		await assert.rejects(claim(ownerSecret, code, undefined, caller.ws));
 		restore();
 		assert.equal(isRuntimeConfigAvailable(), false);
 		assert.equal(getPasswordHash(), undefined);
 		assert.equal((await claim(alternateSecret)).success, false);
+		// Nobody is told anything until the file says what happened.
+		assert.deepEqual(stale.closes, []);
 		fs.chmodSync("config.json", 0o600);
 		await awaitRuntimeConfig();
 		stopRuntimeConfigRecovery();
 		assert.ok(isRuntimeConfigAvailable());
+		// Recovery found a committed owner: every setup page reconnects,
+		// including the caller whose reply was an error.
+		assert.deepEqual(stale.closes, [1012]);
+		assert.deepEqual(caller.closes, [1012]);
+		assert.deepEqual(relay.closes, []);
 		assert.equal(getLocalClaimDigest(), undefined);
 		assert.equal(await loginWith(ownerSecret), true);
 		assert.equal(await loginWith(alternateSecret), false);
+		break;
+	}
+	case "unreadable-uncommitted": {
+		// The failed write never landed: recovery finds the code unspent and
+		// leaves setup pages alone.
+		const rename = fs.renameSync;
+		const spy = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+			if (!isConfigTarget(to)) return rename(from, to);
+			spy.mockRestore();
+			fs.unlinkSync(from);
+			fs.chmodSync(to, 0o000);
+			throw Object.assign(new Error("injected unreadable fault"), {
+				code: "EIO",
+			});
+		});
+		const stale = socket();
+		addClient(stale.ws);
+		await assert.rejects(claim());
+		spy.mockRestore();
+		fs.chmodSync("config.json", 0o600);
+		await awaitRuntimeConfig();
+		stopRuntimeConfigRecovery();
+		assert.equal(getPasswordHash(), undefined);
+		assert.equal(getLocalClaimDigest(), digest(code));
+		assert.deepEqual(stale.closes, []);
+		assert.equal((await claim()).success, true);
 		break;
 	}
 	case "restart-claim":

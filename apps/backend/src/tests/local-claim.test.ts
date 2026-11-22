@@ -42,9 +42,9 @@ test.each([
 	"stale-peers",
 ])("local claim: %s", (scenario) => runScenarios(scenario));
 
-test(
-	"local claim: config recovers after an unreadable post-failure state",
-	() => runScenarios("unreadable-after-failure"),
+test.each(["unreadable-after-failure", "unreadable-uncommitted"])(
+	"local claim: config recovers after an unreadable post-failure state (%s)",
+	(scenario) => runScenarios(scenario),
 	20_000,
 );
 

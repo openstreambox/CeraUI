@@ -324,10 +324,15 @@ export const claimLocalOwnerProcedure = baseProcedure
 				if (!(await settleLocalClaimWrite(ownerHash)))
 					return { success: false };
 			} catch {
-				const { recoverRuntimeConfig } = await import(
+				const { awaitRuntimeConfig, recoverRuntimeConfig } = await import(
 					"../../modules/config-boot.ts"
 				);
 				recoverRuntimeConfig();
+				// If recovery finds the owner committed, setup pages (the caller
+				// too, whose reply was an error) reconnect into sign-in.
+				void awaitRuntimeConfig().then(() => {
+					if (getPasswordHash()) closeStaleSetupPages();
+				});
 				throw error;
 			}
 		}
@@ -336,7 +341,7 @@ export const claimLocalOwnerProcedure = baseProcedure
 	});
 
 /** Pages still showing setup reconnect and get the normal sign-in view. */
-function closeStaleSetupPages(caller: AppWebSocket): void {
+function closeStaleSetupPages(caller?: AppWebSocket): void {
 	for (const ws of getClients()) {
 		if (ws === caller || ws.data.isAuthenticated) continue;
 		if (ws.data.senderId !== undefined) continue;
