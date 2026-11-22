@@ -1,4 +1,10 @@
-import { linkSync, lstatSync, readFileSync, renameSync } from "node:fs";
+import {
+	linkSync,
+	lstatSync,
+	readFileSync,
+	renameSync,
+	unlinkSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { logger } from "../../helpers/logger.ts";
 import type { NmProfileInstance } from "./network-manager-profile-instance.ts";
@@ -28,10 +34,18 @@ function hasBytes(
 	);
 }
 
+/** The name operations a restore races against; tests interleave other writers here. */
+export type KeyfileNameOps = {
+	readonly rename: (from: string, to: string) => void;
+	readonly link: (existing: string, name: string) => void;
+};
+const nameOps: KeyfileNameOps = { rename: renameSync, link: linkSync };
+
 export function stageKeyfilePublication(
 	original: FileIdentity,
 	bytes: Buffer,
 	staged: string,
+	ops: KeyfileNameOps = nameOps,
 ) {
 	const live = original.filename;
 	const previous = `${staged}.previous.tmp`;
@@ -61,6 +75,35 @@ export function stageKeyfilePublication(
 		},
 		commit: () => {
 			committed = true;
+		},
+		/**
+		 * After a load, put the parked original back under the live name, but only
+		 * while that name still holds our bytes: a successor written by anyone else
+		 * stays live and the original stays parked. Returns the restored file's
+		 * identity, ctime included, so the caller can prove NM loaded exactly it.
+		 */
+		restore(expected: Buffer): FileIdentity | undefined {
+			if (!parked || committed || !matches(live, expected)) return undefined;
+			try {
+				ops.rename(live, moved);
+				keepMoved = true;
+				const ours = matches(moved, expected);
+				// link refuses an entry that appeared meanwhile; nothing is overwritten.
+				ops.link(ours ? previous : moved, live);
+				keepMoved = false;
+				if (!ours) return undefined;
+				// Drop the parked name now: unlinking it later would move the inode's ctime.
+				unlinkSync(previous);
+				parked = false;
+				const restored = identity(live);
+				return restored && hasBytes(live, original, bytes)
+					? { filename: live, ...restored }
+					: undefined;
+			} catch (error) {
+				if (!(error instanceof Error)) throw error;
+				logger.error("NM keyfile restoration failed", { filename: live });
+				return undefined;
+			}
 		},
 		async finish(expected: Buffer) {
 			try {
