@@ -122,11 +122,13 @@ notification obligation or cross-process exactly-once guarantee.
 
 The optional `ssh_persistent` boolean in `config.json` stores the operator's
 SSH-at-boot choice across OS slots. `setSshPersistent` saves it after the unit
-confirms the change. Boot adopts the unit's enabled/disabled state when the
-field is absent; otherwise it reconciles the saved choice after SSH password
-sync. A mask is never changed, errors do not block boot, and temporary SSH
-Start/Stop never writes this field. A damaged-config rebuild loses the choice
-and adopts the current unit without changing it. See the
+confirms the change. When the field is absent, boot migrates the unit state.
+An exact `enabled` records on, other reported states record off, and an
+unreadable state leaves the field unset. Reconciliation runs after SSH password
+sync. Saved off disarms the current slot's persistent link and stops the SSH
+service, including a queued start. Temporary SSH Start/Stop never writes this
+field. A damaged-config rebuild loses the choice and migrates the current unit
+state without changing the unit on that boot. See the
 [SSH module contract](../apps/backend/docs/agents/dev-mock-seams.md#ssh-boot-persistence-is-a-second-axis-not-a-side-effect-exists).
 
 Streaming format settings keep their existing saved keys and defaults.

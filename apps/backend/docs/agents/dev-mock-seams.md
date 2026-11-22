@@ -321,20 +321,26 @@ sync outcome prevents enabling and starting SSH with a password that did not
 reach this slot. Reconciliation reads the raw unit state, because the boolean
 wire status intentionally maps both masks and probe failures to false:
 
-- With no saved choice, record only an exact `enabled` or `disabled` reading
-  without changing the unit. Damaged-config recovery discards non-credential
-  fields, so a rebuilt config follows the same adoption path.
+- With no saved choice, record on for an exact `enabled` reading and off for
+  other reported unit states, without changing the unit on that boot. A failed
+  or empty probe leaves the choice unset. Damaged-config recovery discards
+  non-credential fields, so a rebuilt config follows the same adoption path.
 - Saved true plus disabled runs `enable ssh`, then `start ssh`, only with a
   persisted `ssh_pass` and successful password sync on this boot.
-- Saved false plus enabled runs `disable ssh` and leaves any running session
-  alone. An already matching unit needs no command.
-- Masked, runtime-only and other non-enabled/disabled states are untouched.
-  Probe, command and config-save errors are logged and swallowed; under mocks
+- Saved false removes an enabled link and runs `stop ssh` even if the link is
+  already absent or the enablement probe fails. Stop replaces a queued start
+  job as well as stopping an active daemon. The live persistence toggle still
+  changes only the boot link.
+- Masks, runtime links and other nonstandard unit-file states stay in place.
+  Probe, command and config-save errors are logged and swallowed. Under mocks
   reconciliation performs no probe, command or write.
 
-The boot restore uses the existing service/persistence runners. It needs no
-image change, RAUC hook or extra state file. This is host-tested behavior, not
-physical slot-update qualification.
+The shared choice survives a fallback if the old application leaves
+`config.json` intact. A pre-persistence application can change its local link
+without updating the choice, or omit the unknown field when rewriting the
+config. On return, CeraUI uses the choice still on disk or migrates the link
+in the current slot. Boot reconciliation can stop a daemon after it has
+started, since the backend runs after systemd has begun the boot transaction.
 
 The RPC is `system.sshSetPersistent` (`.strict()` input, same `authedProcedure` +
 streaming/updating gate as its sibling SSH mutations). Operator surface and its

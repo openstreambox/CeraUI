@@ -446,8 +446,9 @@ export function setSshPersistent(
 
 /**
  * Restore the /data-backed boot choice on this slot, after password sync.
- * An absent choice adopts only an enabled/disabled unit; masks and unknown
- * states are left alone. Boot must continue after any probe, command or save error.
+ * Migration records on only for a persistent link. An explicit off
+ * also stops the service, including a start job still waiting to run.
+ * Boot must continue after any probe, command or save error.
  */
 export function reconcileSshPersistence(
 	passwordSynced: boolean,
@@ -456,25 +457,37 @@ export function reconcileSshPersistence(
 	return queueSshPersistence(async () => {
 		if (shouldUseMocks()) return;
 		try {
-			const state = await readSshEnabledState(
-				deps.systemctlIsEnabled ?? defaultSshStatusDeps.systemctlIsEnabled,
-			);
-			if (state !== "enabled" && state !== "disabled") return;
 			const config = getConfig();
-			const enabled = state === "enabled";
+			const isEnabled =
+				deps.systemctlIsEnabled ?? defaultSshStatusDeps.systemctlIsEnabled;
+			if (config.ssh_persistent === false) {
+				try {
+					if ((await readSshEnabledState(isEnabled)) === "enabled") {
+						await sshPersistenceRunner("disable");
+					}
+				} finally {
+					// An inactive service can still have a queued start job. Stop
+					// replaces that job, even if reading or removing the link failed.
+					await sshServiceRunner("stop");
+				}
+				return;
+			}
+
+			const state = await readSshEnabledState(isEnabled);
 			if (config.ssh_persistent === undefined) {
-				config.ssh_persistent = enabled;
+				if (!state) return;
+				config.ssh_persistent = parseSystemctlIsEnabled(state);
 				saveConfig();
 				return;
 			}
-			if (config.ssh_persistent === enabled) return;
-			if (config.ssh_persistent) {
-				if (config.ssh_pass === undefined || !passwordSynced) return;
-				await sshPersistenceRunner("enable");
-				await sshServiceRunner("start");
-			} else {
-				await sshPersistenceRunner("disable");
-			}
+			if (
+				state !== "disabled" ||
+				config.ssh_pass === undefined ||
+				!passwordSynced
+			)
+				return;
+			await sshPersistenceRunner("enable");
+			await sshServiceRunner("start");
 		} catch (err) {
 			logger.error("Failed to reconcile SSH boot persistence", { err });
 		}
