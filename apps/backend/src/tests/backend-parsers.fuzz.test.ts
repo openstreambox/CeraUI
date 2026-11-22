@@ -268,6 +268,7 @@ fuzz(
 			path: "unused",
 			deps: {
 				readText: () => raw,
+				writeAtomic: () => {},
 				now: () => 0,
 				quarantine: () => {
 					quarantines++;

@@ -5,10 +5,19 @@ import { join } from "node:path";
 import * as fc from "fast-check";
 import { logger } from "../../helpers/logger.ts";
 
-export const json = fc.jsonValue({ maxDepth: 3, maxKeys: 8 });
+function integerFromEnv(name: string, fallback: number): number {
+	const raw = process.env[name];
+	if (raw === undefined || raw === "") return fallback;
+	const value = Number(raw);
+	if (!Number.isSafeInteger(value) || value < 0)
+		throw new Error(`${name} must be a non-negative integer, got "${raw}"`);
+	return value;
+}
+
+export const json = fc.jsonValue({ maxDepth: 3 });
 export const text = fc.string({ maxLength: 64, unit: "grapheme" });
-export const seed = Number(process.env.PARSER_FUZZ_SEED ?? 146701);
-export const numRuns = Number(process.env.PARSER_FUZZ_RUNS ?? 128);
+export const seed = integerFromEnv("PARSER_FUZZ_SEED", 146701);
+export const numRuns = integerFromEnv("PARSER_FUZZ_RUNS", 128);
 
 // fast-check reports the minimized input and replay path on failure. A path
 // applies to one property, selected with bun test -t. PARSER_FUZZ_SEED and
@@ -31,7 +40,9 @@ export function fuzz<T>(
 				{
 					seed,
 					numRuns,
-					path: process.env.PARSER_FUZZ_PATH,
+					...(process.env.PARSER_FUZZ_PATH
+						? { path: process.env.PARSER_FUZZ_PATH }
+						: {}),
 					interruptAfterTimeLimit: 55_000,
 					markInterruptAsFailure: false,
 				},

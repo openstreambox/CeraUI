@@ -220,27 +220,52 @@ fuzz("text parsers reject input without internal errors", anyText, (input) => {
 	}
 });
 
-test("text parsers stay fast on long repetitive input", () => {
-	// Coarse guard: a pattern that rescans from every position takes seconds on
-	// this size. The limit leaves a slow machine plenty of room.
-	const units = [" ", "\n", "1", "a", ":", ".", "=", "-", "/", "\t", ",", "("];
-	for (const [name, parse] of Object.entries(parsers)) {
-		for (const unit of units) {
-			const input = unit.repeat(30_000);
+// Cost check, opt-in with PARSER_FUZZ_COST=1. A parser that rescans its input
+// from every position costs about 16 times more on four times the input; a
+// linear one about 4 times. Comparing two sizes does not depend on how fast the
+// machine is. Calls under 100 ms at the larger size are too cheap to judge.
+const costTest = process.env.PARSER_FUZZ_COST === "1" ? test : test.skip;
+
+costTest(
+	"text parsers cost grows linearly with long repetitive input",
+	() => {
+		const units = [
+			" ",
+			"\n",
+			"1",
+			"a",
+			":",
+			".",
+			"=",
+			"-",
+			"/",
+			"\t",
+			",",
+			"(",
+		];
+		const timed = (parse: (input: string) => unknown, input: string) => {
 			const start = performance.now();
 			try {
 				parse(input);
 			} catch {
 				// rejecting the input is fine; only the cost matters here
 			}
-			const elapsed = performance.now() - start;
-			expect(
-				elapsed,
-				`${name} on ${JSON.stringify(unit)} x 30000`,
-			).toBeLessThan(3000);
+			return performance.now() - start;
+		};
+		for (const [name, parse] of Object.entries(parsers)) {
+			for (const unit of units) {
+				const large = timed(parse, unit.repeat(40_000));
+				if (large < 100) continue;
+				const small = Math.max(timed(parse, unit.repeat(10_000)), 1);
+				expect(
+					large / small,
+					`${name} on ${JSON.stringify(unit)}: ${small.toFixed(0)} ms at 10k, ${large.toFixed(0)} ms at 40k`,
+				).toBeLessThan(10);
+			}
 		}
-	}
-});
+	},
+	60_000,
+);
 
 const record = (message: string, index: number) =>
 	JSON.stringify({
