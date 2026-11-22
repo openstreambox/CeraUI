@@ -161,6 +161,7 @@ import {
 import { getPipelineList } from "./modules/streaming/pipelines.ts";
 import { setMockPreviewEncoderRealizedProvider } from "./modules/streaming/preview-encoder-status.ts";
 import { beginRecoveryBarrier } from "./modules/streaming/recovery-barrier.ts";
+import { observeSenderAdoption } from "./modules/streaming/sender-adoption.ts";
 import { refreshAndBroadcastSources } from "./modules/streaming/sources.ts";
 import { runStreamRestoration } from "./modules/streaming/stream-restoration.ts";
 import {
@@ -434,6 +435,10 @@ if (!shouldUseMocks()) {
 		noteStreamReconciliationCompleted();
 	});
 	await observeSafely(() => observeStartup(streamLiveness()));
+	// Detect only: judge whether a sender the previous backend left running
+	// could be adopted and log the verdict. Read-only, after reconciliation and
+	// not awaited, so it cannot change or delay anything above.
+	void observeSenderAdoption().catch(() => undefined);
 	// The first point at which the persisted config and the engine's own session
 	// are both known — so it is where a `config.inflight.json` left by a process
 	// that died mid transaction can finally be judged. Fire-and-forget: with a
