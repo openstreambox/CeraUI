@@ -44036,7 +44036,7 @@
     "apps/backend/src/rpc/procedures/captive-portal.procedure.ts": "79c1fabf54a4b83f35b35519716e920d18bdb57113cb28f7ded6e6fa406d8656",
     "apps/backend/src/rpc/procedures/network.procedure.ts": "64c7b15f4efe979e31f7fc7d2c4e4ed05e72580cf431f6dacc27ebbf48777bf3",
     "apps/backend/src/rpc/procedures/streaming.procedure.ts": "7f2bcee314c274fa99b64f8efca65cde63fec4afba3280375dc3d4e1eb3a9c28",
-    "bun.lock": "38e3694c4af724eb86c125772c0e3256c4fe715af896fdfa2c22ee24b5efa687",
+    "bun.lock": "1bf43f21671c78e59dbcd487ef6bcd209799d317ef3460c243f5be5fcca70977",
     "packages/rpc/src/schemas/addons.schema.ts": "4d03862d5f9a8a2353a37ece742a96213d926e0e7ddc735b98329959dbb22ae6",
     "packages/rpc/src/schemas/audio-level.schema.ts": "eb4bd01a1d605776e8f11eab8c8acb5f8333c6868e0bbab5802a4118f507a225",
     "packages/rpc/src/schemas/bluetooth.schema.ts": "92d0d2837dd66aeed312188efff6bc8ff31d0a9f88559d422c3d7aaaef21215d",
