@@ -170,7 +170,7 @@ function stageLabel(stage: RelayValidateStage): string {
 
 		{#if validation.state === 'pass'}
 			<p class="text-primary text-sm" role="status">
-				{m["settings.validationPassed"]()}
+				{m["settings.validationPassed"]()}{validation.reason ? ` (${validation.reason})` : ""}
 			</p>
 		{:else if validation.state === 'fail'}
 			<p class="text-destructive text-sm" role="alert">
