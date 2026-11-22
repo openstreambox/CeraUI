@@ -149,11 +149,15 @@ works around, and `PASS` lines for:
   undone with the profile files unchanged, and a confirmation from a new
   session over the port writes shared mode to disk and survives a restart;
 - a request to wan0's address routed in over lan0 is attributed to lan0.
+- the read-only Ethernet Auto classifier sees a client DHCP Discover on a
+  veth, prefers a late DHCP lease, and clears the result on carrier loss.
+  The lease's dish-like address alone yields an unconfirmed hint.
 
 Run it only in a disposable container with no device passthrough and no host
 system-directory mounts, with `NET_ADMIN` and `SYS_ADMIN` (for one client
 network namespace). Install NetworkManager, D-Bus, systemd's `busctl`,
-iproute2, nftables, jq, curl, dnsmasq (for shared mode) and bun. Set `NM_CHECKPOINT_CONTRACT=1` and run the
+iproute2, nftables, jq, curl, dnsmasq (for shared mode), tcpdump, BusyBox with
+`udhcpc`, and Bun. Set `NM_CHECKPOINT_CONTRACT=1` and run the
 script as container root. The script refuses radio devices and physical
 interfaces.
 
