@@ -62,6 +62,15 @@ function clearFields() {
 	}
 }
 
+// A block tears down before onDestroy and nulls its bound refs first, so each
+// secret field scrubs itself synchronously as it leaves the DOM.
+function scrubOnDetach(node: HTMLInputElement) {
+	return () => {
+		node.value = '';
+		node.type = 'password';
+	};
+}
+
 function resetInteraction() {
 	attempt?.controller.abort();
 	if (attempt) attempt.password = '';
@@ -294,6 +303,7 @@ async function onSubmit(event: SubmitEvent) {
 							: m["auth.placeholderPassword"]()}
 						type={showPassword ? 'text' : 'password'}
 						bind:ref={passwordInput}
+						{@attach scrubOnDetach}
 						bind:value={password}
 						oncompositionstart={() => (composing = true)}
 						oncompositionend={() => (composing = false)}
@@ -354,6 +364,7 @@ async function onSubmit(event: SubmitEvent) {
 						placeholder={m["auth.placeholderConfirmPassword"]()}
 						type={showPassword ? 'text' : 'password'}
 						bind:ref={confirmInput}
+						{@attach scrubOnDetach}
 						bind:value={confirmPassword}
 						oncompositionstart={() => (composing = true)}
 						oncompositionend={() => (composing = false)}
