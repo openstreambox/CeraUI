@@ -1,5 +1,8 @@
 import { getConfig, saveConfig } from "../config.ts";
-import { listPresentPhysicalDevices } from "../modems/physical-identity.ts";
+import {
+	listPresentPhysicalDevices,
+	type PhysicalDeviceRecord,
+} from "../modems/physical-identity.ts";
 import { resolveBondPhysicalIdentity } from "../streaming/bond-entry.ts";
 
 const sessionOptOut = new Set<string>();
@@ -10,6 +13,12 @@ export function bondPhysicalId(ifname: string): string | undefined {
 	return identity.linkId;
 }
 
+function serialAliases(identity: PhysicalDeviceRecord): string[] {
+	return [identity.legacyLinkId, identity.serialLinkId].filter(
+		(id): id is string => id !== undefined && id !== identity.linkId,
+	);
+}
+
 export function isBondOptedOut(ifname: string): boolean {
 	if (sessionOptOut.has(ifname)) return true;
 	const identity = resolveBondPhysicalIdentity(ifname);
@@ -17,8 +26,7 @@ export function isBondOptedOut(ifname: string): boolean {
 	const stored = getConfig().bond_opt_out;
 	return (
 		stored?.[identity.linkId] === true ||
-		(identity.legacyLinkId !== undefined &&
-			stored?.[identity.legacyLinkId] === true)
+		serialAliases(identity).some((id) => stored?.[id] === true)
 	);
 }
 
@@ -28,22 +36,24 @@ export function setPersistentBondOptOut(
 ): string | undefined {
 	if (optOut) sessionOptOut.add(ifname);
 	else sessionOptOut.delete(ifname);
-	const physicalId = bondPhysicalId(ifname);
-	if (physicalId === undefined) return undefined;
-
-	const next = { ...getConfig().bond_opt_out };
 	const identity = resolveBondPhysicalIdentity(ifname);
-	const legacy = identity?.legacyLinkId;
-	if (legacy !== undefined && next[legacy] === true) {
+	if (identity === undefined || identity.anchor === "ifname") return undefined;
+	const physicalId = identity.linkId;
+	const next = { ...getConfig().bond_opt_out };
+	for (const alias of new Set(serialAliases(identity))) {
+		if (next[alias] !== true) continue;
 		for (const present of listPresentPhysicalDevices()) {
-			if (present.legacyLinkId === legacy && present.anchor !== "ifname") {
+			if (
+				present.anchor !== "ifname" &&
+				serialAliases(present).includes(alias)
+			) {
 				next[present.linkId] = true;
 			}
 		}
+		delete next[alias];
 	}
 	if (optOut) next[physicalId] = true;
 	else delete next[physicalId];
-	if (legacy !== undefined) delete next[legacy];
 	getConfig().bond_opt_out = Object.keys(next).length === 0 ? undefined : next;
 	saveConfig();
 	return physicalId;

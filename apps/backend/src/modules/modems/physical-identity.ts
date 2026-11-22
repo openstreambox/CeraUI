@@ -112,6 +112,8 @@ export interface PhysicalObservation {
 	readonly serial?: string;
 	/** Previous serial-based link id when the scan rejected a shared serial. */
 	readonly legacyLinkId?: string;
+	/** Canonical serial ID kept for bond preferences when falling back to the port. */
+	readonly serialLinkId?: string;
 	/** udev hwdb enrichment (`ID_VENDOR_FROM_DATABASE` / `ID_MODEL_FROM_DATABASE`). */
 	readonly hwdbVendor?: string;
 	readonly hwdbModel?: string;
@@ -132,6 +134,8 @@ export interface PhysicalDeviceRecord {
 	/** Minted here, deterministically. See {@link mintLinkId}. */
 	readonly linkId: string;
 	readonly legacyLinkId?: string;
+	/** Canonical serial ID kept for bond preferences when falling back to the port. */
+	readonly serialLinkId?: string;
 	/** The ID_PATH-derived wire key, omitted when the device reports no ID_PATH. */
 	readonly stableKey?: string;
 	readonly ifname: string;
@@ -186,8 +190,10 @@ export function usbSerialDigest(key: string): string {
 export function usableUsbSerial(raw: string | undefined): string | undefined {
 	// systemd usb_id accepts ASCII except comma, folds runs of spaces, and
 	// replaces characters outside its devnode alphabet. Preserve its \\x escape.
-	if (raw === undefined || /[^ -~\x7f]|,/.test(raw)) return undefined;
-	const serial = raw
+	const attribute = raw?.replace(/\n+$/, "");
+	if (attribute === undefined || /[^ -~\x7f]|,/.test(attribute))
+		return undefined;
+	const serial = attribute
 		.trim()
 		.replace(/ +/g, "_")
 		.replace(/\\x|[^A-Za-z0-9#+.:=@_-]/g, (char) =>
@@ -204,27 +210,42 @@ export function usableUsbSerial(raw: string | undefined): string | undefined {
 	return serial;
 }
 
-function usableSerial(observation: PhysicalObservation): string | undefined {
-	return usableUsbSerial(observation.serial);
+/** One vendor-scoped identity and the spelling used by older persisted keys. */
+export function usbSerialIdentity(
+	raw: string | undefined,
+	vendor: string | undefined,
+) {
+	const serial = usableUsbSerial(raw);
+	const vid = vendor?.trim().toLowerCase();
+	const scoped = (value: string) => (vid ? `${vid}:${value}` : value);
+	const legacy = raw?.trim();
+	const key = serial === undefined ? undefined : scoped(serial);
+	const legacyKey = legacy ? scoped(legacy) : undefined;
+	return {
+		serial,
+		key,
+		legacyKey,
+		isShared: (hashes: ReadonlySet<string>) =>
+			(key !== undefined && hashes.has(usbSerialDigest(key))) ||
+			(legacyKey !== undefined &&
+				legacyKey !== key &&
+				hashes.has(usbSerialDigest(legacyKey))),
+	};
 }
 
 /** The identity key and the rung it came from. */
 function resolveIdentityKey(
-	observation: PhysicalObservation,
+	ifname: string,
 	stableKey: string | undefined,
+	serialKey: string | undefined,
 ): { identityKey: string; anchor: PhysicalIdentityAnchor } {
-	const serial = usableSerial(observation);
-	if (serial !== undefined) {
-		const vid = observation.vid?.trim().toLowerCase();
-		return {
-			identityKey: vid ? `usb-serial:${vid}:${serial}` : `usb-serial:${serial}`,
-			anchor: "usb-serial",
-		};
+	if (serialKey !== undefined) {
+		return { identityKey: `usb-serial:${serialKey}`, anchor: "usb-serial" };
 	}
 	if (stableKey !== undefined) {
 		return { identityKey: `id-path:${stableKey}`, anchor: "id-path" };
 	}
-	return { identityKey: `ifname:${observation.ifname}`, anchor: "ifname" };
+	return { identityKey: `ifname:${ifname}`, anchor: "ifname" };
 }
 
 /**
@@ -356,16 +377,19 @@ export function resolvePhysicalDevice(
 	observation: PhysicalObservation,
 ): PhysicalDeviceRecord {
 	const stableKey = deriveModemStableKey(observation.idPath);
-	const { identityKey, anchor } = resolveIdentityKey(observation, stableKey);
-	const serial = usableSerial(observation);
-	const rawSerial = observation.serial?.trim();
-	const vid = observation.vid?.trim().toLowerCase();
+	const { serial, key, legacyKey } = usbSerialIdentity(
+		observation.serial,
+		observation.vid,
+	);
+	const { identityKey, anchor } = resolveIdentityKey(
+		observation.ifname,
+		stableKey,
+		key,
+	);
 	const legacyLinkId =
 		observation.legacyLinkId ??
-		(rawSerial && rawSerial !== serial
-			? mintLinkId(
-					vid ? `usb-serial:${vid}:${rawSerial}` : `usb-serial:${rawSerial}`,
-				)
+		(legacyKey !== undefined && legacyKey !== key
+			? mintLinkId(`usb-serial:${legacyKey}`)
 			: undefined);
 	const hwdb =
 		observation.hwdbVendor !== undefined || observation.hwdbModel !== undefined
@@ -384,6 +408,9 @@ export function resolvePhysicalDevice(
 		anchor,
 		linkId: mintLinkId(identityKey),
 		...(legacyLinkId !== undefined ? { legacyLinkId } : {}),
+		...(observation.serialLinkId !== undefined
+			? { serialLinkId: observation.serialLinkId }
+			: {}),
 		ifname: observation.ifname,
 		displayName: resolveDisplayName(observation),
 		...(stableKey !== undefined ? { stableKey } : {}),

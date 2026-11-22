@@ -42457,7 +42457,7 @@
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "d1c6acde7c3cdd48b9463569c370dd911a9d23e0a77652eb58760e954c51aa04",
     "apps/backend/src/modules/network/network-interfaces.ts": "2cef4b102c34571d755358662e7c702497486145d6523e98847f4b47f64abb35",
-    "apps/backend/src/modules/network/router-cellular-scan.ts": "164b6ba2413712d9e2bce75f58c19132cc3b0af4c5d2c4a7d8c8d548eaa297ce",
+    "apps/backend/src/modules/network/router-cellular-scan.ts": "b486683fb98a8be083da0ea8d5292f76da9f4ff303b0bdd648734676c1ffadab",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "c929bfe403ec8298fdeb737eafa75735d9664723eaab740312d2f3b1049082fe",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "3e88571fad2a385f515976029c4026ff87b32baaf2d75db05196f06745968075",

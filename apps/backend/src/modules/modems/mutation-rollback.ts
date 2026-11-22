@@ -36,6 +36,7 @@
  * opposite handling — absence quarantines, difference blocks.
  */
 
+import { join } from "node:path";
 import {
 	createUsbEnumerator,
 	detectUsbMode,
@@ -50,11 +51,7 @@ import {
 	assertMutationJournalRevision,
 	mutationJournalRevision,
 } from "./mutation-journal-revision.ts";
-import {
-	mintLinkId,
-	usableUsbSerial,
-	usbSerialDigest,
-} from "./physical-identity.ts";
+import { mintLinkId, usbSerialIdentity } from "./physical-identity.ts";
 
 export type CapturedState = Readonly<Record<string, unknown>>;
 
@@ -100,10 +97,15 @@ export function clearMutationRollbacks(): void {
 
 export interface MutationCaptureDeps {
 	enumerate(): Promise<readonly UsbDeviceSnapshot[]>;
+	readSerial(path: string): Promise<string | undefined>;
 }
 
 export const defaultMutationCaptureDeps: MutationCaptureDeps = {
 	enumerate: () => createUsbEnumerator().enumerate(),
+	readSerial: (path) =>
+		Bun.file(join(path, "serial"))
+			.text()
+			.catch(() => undefined),
 };
 
 let activeDeps: MutationCaptureDeps = defaultMutationCaptureDeps;
@@ -128,43 +130,72 @@ function snapshotOf(device: UsbDeviceSnapshot): CapturedState {
 	};
 }
 
-function serialFor(device: UsbDeviceSnapshot): string | undefined {
+async function serialFor(device: UsbDeviceSnapshot, deps: MutationCaptureDeps) {
 	// modem-control 1.4.0 preserves the udev property without promoting it.
-	return (
-		usableUsbSerial(device.udevProperties?.ID_SERIAL_SHORT) ??
-		usableUsbSerial(device.udevProperties?.ID_USB_SERIAL_SHORT) ??
-		usableUsbSerial(device.serialNumber)
-	);
+	const property =
+		device.udevProperties?.ID_SERIAL_SHORT ??
+		device.udevProperties?.ID_USB_SERIAL_SHORT;
+	const raw =
+		(device.sysfsPath === undefined
+			? undefined
+			: await deps.readSerial(device.sysfsPath)) ?? device.serialNumber;
+	const reported = usbSerialIdentity(property, device.vendorId);
+	const observed = usbSerialIdentity(raw ?? property, device.vendorId);
+	return {
+		observed,
+		reported,
+		hasRaw: raw !== undefined,
+		agrees: property === undefined || observed.key === reported.key,
+	};
 }
 
-function reliableUnitLinkId(
+async function reliableUnitLinkId(
 	device: UsbDeviceSnapshot,
 	devices: readonly UsbDeviceSnapshot[],
-): string | undefined {
-	const serial = serialFor(device);
+	deps: MutationCaptureDeps,
+): Promise<string | undefined> {
 	const vid = device.vendorId.toLowerCase();
-	if (serial === undefined || !/^[0-9a-f]{4}$/.test(vid)) return undefined;
-	const key = `${vid}:${serial}`;
-	if (getConfig().usb_serial_shared?.includes(usbSerialDigest(key)))
-		return undefined;
-	const shared = devices.some(
-		(other) =>
-			other.physicalUid !== device.physicalUid &&
-			other.vendorId.toLowerCase() === vid &&
-			serialFor(other) === serial,
+	if (!/^[0-9a-f]{4}$/.test(vid)) return undefined;
+	const { observed, hasRaw, agrees } = await serialFor(device, deps);
+	if (observed.key === undefined || !agrees) return undefined;
+	const peers = await Promise.all(
+		devices
+			.filter(
+				(other) =>
+					other.physicalUid !== device.physicalUid &&
+					other.vendorId.toLowerCase() === vid,
+			)
+			.map((other) => serialFor(other, deps)),
 	);
-	return shared ? undefined : mintLinkId(`usb-serial:${key}`);
+	if (
+		peers.some(
+			(peer) =>
+				peer.observed.key === observed.key ||
+				peer.reported.key === observed.key,
+		)
+	)
+		return undefined;
+	const remembered = new Set(getConfig().usb_serial_shared ?? []);
+	if (observed.isShared(remembered)) return undefined;
+	// An underscore can represent older raw whitespace or punctuation. Hashes
+	// cannot recover that spelling, so require the raw attribute in this case.
+	if (!hasRaw && remembered.size > 0 && observed.serial?.includes("_"))
+		return undefined;
+	return mintLinkId(`usb-serial:${observed.key}`);
 }
 
 /** Record an opaque unit identity if the enumerated modem has a reliable serial. */
 export async function captureModemUnitLinkId(
 	stableKey: string,
 ): Promise<string | undefined> {
-	const devices = await activeDeps.enumerate();
+	const deps = activeDeps;
+	const devices = await deps.enumerate();
 	const device = devices.find(
 		(candidate) => deriveModemStableKey(candidate.physicalUid) === stableKey,
 	);
-	return device === undefined ? undefined : reliableUnitLinkId(device, devices);
+	return device === undefined
+		? undefined
+		: reliableUnitLinkId(device, devices, deps);
 }
 
 /** Find the original device at the journaled port when its unit identity is known. */
@@ -180,7 +211,7 @@ export async function captureModemState(
 	if (device === undefined) return undefined;
 	if (
 		unitLinkId !== undefined &&
-		reliableUnitLinkId(device, devices) !== unitLinkId
+		(await reliableUnitLinkId(device, devices, deps)) !== unitLinkId
 	)
 		return undefined;
 	return snapshotOf(device);

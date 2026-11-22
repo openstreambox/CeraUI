@@ -20,6 +20,7 @@ import {
 	type ModemMutationState,
 } from "@ceraui/rpc/schemas";
 
+import { getConfig } from "../modules/config.ts";
 import {
 	PRESENCE_UNKNOWN,
 	refreshMutationBlocks,
@@ -37,11 +38,17 @@ import {
 import { withJournaledModemMutation } from "../modules/modems/mutation-lease.ts";
 import { initMutationRecovery } from "../modules/modems/mutation-replay.ts";
 import {
+	captureModemState,
+	captureModemUnitLinkId,
 	clearMutationRollbacks,
 	registerMutationRollback,
 	resetMutationCaptureDeps,
 	setMutationCaptureDeps,
 } from "../modules/modems/mutation-rollback.ts";
+import {
+	mintLinkId,
+	usbSerialDigest,
+} from "../modules/modems/physical-identity.ts";
 import {
 	getMutationBlocks,
 	resetLifecycleInterlock,
@@ -164,7 +171,7 @@ afterEach(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 
-function useUdevDevice(serial: string): void {
+function useUdevDevice(serial: string, rawSerial?: string): void {
 	const udev = [
 		"P: /devices/platform/test/usb1/1-4",
 		"E: DEVTYPE=usb_device",
@@ -181,9 +188,10 @@ function useUdevDevice(serial: string): void {
 		"E: DRIVER=qmi_wwan",
 	].join("\n");
 	useDevice(present());
-	setMutationCaptureDeps(
-		createUsbEnumerator({ readUdevDatabase: async () => udev }),
-	);
+	setMutationCaptureDeps({
+		...createUsbEnumerator({ readUdevDatabase: async () => udev }),
+		readSerial: async () => rawSerial,
+	});
 }
 
 test("the journal captures a unit and replay does not verify a different unit on its port", async () => {
@@ -213,6 +221,63 @@ test("the journal captures a unit and replay does not verify a different unit on
 	expect(getMutationBlocks()).toEqual([
 		expect.objectContaining({ unitLinkId: entry.unitLinkId }),
 	]);
+});
+
+test.each(["fixture ABC123", "fixture_ABC123"])(
+	"a remembered shared digest for %s prevents capture and unit verification",
+	async (remembered) => {
+		useUdevDevice("fixture_ABC123", "fixture ABC123\n");
+		const previous = getConfig().usb_serial_shared;
+		const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+		try {
+			getConfig().usb_serial_shared = [];
+			expect(await captureModemUnitLinkId(KEY)).toBe(unit);
+			expect(await captureModemState(KEY, undefined, unit)).toBeDefined();
+			getConfig().usb_serial_shared = [usbSerialDigest(`2c7c:${remembered}`)];
+			expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+			expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+		} finally {
+			getConfig().usb_serial_shared = previous;
+		}
+	},
+);
+
+test("unavailable raw evidence cannot establish a unit against ambiguous older digests", async () => {
+	useUdevDevice("fixture_ABC123");
+	const previous = getConfig().usb_serial_shared;
+	try {
+		getConfig().usb_serial_shared = [usbSerialDigest("2c7c:fixture ABC123")];
+		expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+	} finally {
+		getConfig().usb_serial_shared = previous;
+	}
+});
+
+test.each(["fixture other", "\tfixture ABC123\n"])(
+	"contradictory or invalid sysfs evidence cannot capture or verify a reported unit",
+	async (raw) => {
+		useUdevDevice("fixture_ABC123", raw);
+		const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+		expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+		expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+	},
+);
+
+test("capture and recovery reject canonical collisions on distinct ports", async () => {
+	setMutationCaptureDeps({
+		enumerate: async () =>
+			[KEY, KEY.replace(/1\.4\.1$/, "1.4.2")].map((physicalUid, i) => ({
+				vendorId: "2c7c",
+				productId: "0801",
+				physicalUid,
+				serialNumber: i === 0 ? "fixture ABC123" : "fixture_ABC123",
+				interfaces: [],
+				bDeviceClass: 0,
+			})),
+	});
+	const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+	expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+	expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
 });
 
 describe("crash-point replay — one test per journal state", () => {

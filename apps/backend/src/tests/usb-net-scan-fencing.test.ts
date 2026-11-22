@@ -21,6 +21,7 @@ import {
 } from "../modules/config.ts";
 import { resolveModemPhysicalIdentity } from "../modules/modems/physical-identity-source.ts";
 import {
+	defaultRouterCellularScanDeps,
 	getRouterCellularMarker,
 	getUsbPhysicalDescriptor,
 	identityDeadlineExpired,
@@ -414,6 +415,27 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		await refreshUsbNetMarkers(names, constructedTwinDeps(devices));
 		for (const name of names) {
 			expect(resolveModemPhysicalIdentity(name).anchor).toBe("id-path");
+		}
+	});
+
+	it("validates the production sysfs serial before trimming whitespace", async () => {
+		const name = names[0];
+		if (name === undefined) throw new Error("missing fixture");
+		const path = join(dir, "serial");
+		const deps = pair("unused");
+		const fallbackRead = deps.readAttr;
+		deps.readAttr = (attribute) =>
+			attribute.endsWith("/serial")
+				? defaultRouterCellularScanDeps.readAttr(path)
+				: fallbackRead(attribute);
+
+		for (const [value, anchor] of [
+			["fixture ABC123\n", "usb-serial"],
+			["\tfixture ABC123\n", "id-path"],
+		] as const) {
+			writeFileSync(path, value);
+			await refreshUsbNetMarkers([name], deps);
+			expect(resolveModemPhysicalIdentity(name).anchor).toBe(anchor);
 		}
 	});
 

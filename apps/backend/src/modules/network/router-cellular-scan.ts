@@ -60,8 +60,8 @@ import {
 	mintLinkId,
 	resolvePhysicalDevice,
 	setPresentPhysicalDevices,
-	usableUsbSerial,
 	usbSerialDigest,
+	usbSerialIdentity,
 } from "../modems/physical-identity.ts";
 import {
 	classifyUsbNetDevice,
@@ -135,7 +135,8 @@ async function defaultListDir(path: string): Promise<string[]> {
 
 async function defaultReadAttr(path: string): Promise<string | undefined> {
 	try {
-		return (await Bun.file(path).text()).trim();
+		const value = await Bun.file(path).text();
+		return path.endsWith("/serial") ? value : value.trim();
 	} catch {
 		return undefined;
 	}
@@ -463,6 +464,7 @@ export type UsbPhysicalDescriptor = {
 	deviceClass: UsbNetClass;
 	serial?: string;
 	legacyLinkId?: string;
+	serialLinkId?: string;
 	/** Resolved sysfs USB parent; grouping only, never a stable_key override. */
 	usbParent: string;
 	idPath?: string;
@@ -548,12 +550,11 @@ export async function scanUsbNetMarkers(
 	}
 	const parentsBySerial = new Map<string, Set<string>>();
 	for (const descriptor of physical.values()) {
-		const serial = usableUsbSerial(descriptor.serial);
+		const { key } = usbSerialIdentity(descriptor.serial, descriptor.vid);
 		const parent = deriveModemStableKey(
 			canonicalModemIdPath(descriptor.idPath ?? descriptor.usbParent),
 		);
-		if (serial === undefined || parent === undefined) continue;
-		const key = `${descriptor.vid.toLowerCase()}:${serial}`;
+		if (key === undefined || parent === undefined) continue;
 		const parents = parentsBySerial.get(key) ?? new Set<string>();
 		parents.add(parent);
 		parentsBySerial.set(key, parents);
@@ -573,17 +574,11 @@ function rejectSharedSerial(
 	descriptor: UsbPhysicalDescriptor,
 	hashes: ReadonlySet<string>,
 ): void {
-	const rawSerial = descriptor.serial?.trim();
-	const serial = usableUsbSerial(descriptor.serial);
-	if (rawSerial === undefined || serial === undefined) return;
-	const vid = descriptor.vid.toLowerCase();
-	// Older scans stored the raw serial's digest. Honor it if still present.
-	if (
-		!hashes.has(usbSerialDigest(`${vid}:${serial}`)) &&
-		!hashes.has(usbSerialDigest(`${vid}:${rawSerial}`))
-	)
-		return;
-	descriptor.legacyLinkId = mintLinkId(`usb-serial:${vid}:${rawSerial}`);
+	const serial = usbSerialIdentity(descriptor.serial, descriptor.vid);
+	if (serial.key === undefined || !serial.isShared(hashes)) return;
+	descriptor.serialLinkId = mintLinkId(`usb-serial:${serial.key}`);
+	if (serial.legacyKey !== undefined)
+		descriptor.legacyLinkId = mintLinkId(`usb-serial:${serial.legacyKey}`);
 	delete descriptor.serial;
 }
 

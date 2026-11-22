@@ -91,6 +91,38 @@ describe("operator bond opt-out — config.json restart persistence", () => {
 		expect(isBondOptedOut("wwu1c2")).toBe(true);
 	});
 
+	test.each(["fixture ABC123", "fixture_ABC123"])(
+		"preserves the %s preference through serial collision and admits only the selected port",
+		async (savedSerial) => {
+			clearBondNetworkFixture();
+			setBondIdentityResolverForTest(null);
+			const devices = constructedTwins.map((d) => ({
+				...d,
+				serial: "fixture ABC123",
+			}));
+			const [first, second] = constructedTwins.map((d) => d.ifname);
+			if (first === undefined || second === undefined)
+				throw new Error("missing fixtures");
+			const names = [first, second];
+			const deps = constructedTwinDeps(devices);
+			await refreshUsbNetMarkers([first], deps);
+			const canonical = mintLinkId("usb-serial:413c:fixture_ABC123");
+			const saved = mintLinkId(`usb-serial:413c:${savedSerial}`);
+			expect(resolveModemPhysicalIdentity(first).linkId).toBe(canonical);
+			getConfig().bond_opt_out = { [saved]: true };
+			saveConfig();
+			expect(isBondOptedOut(first)).toBe(true);
+
+			await refreshUsbNetMarkers(names, deps);
+			expect(isBondOptedOut(first)).toBe(true);
+			expect(isBondOptedOut(second)).toBe(true);
+			setPersistentBondOptOut(first, false);
+			expect(isBondOptedOut(first)).toBe(false);
+			expect(isBondOptedOut(second)).toBe(true);
+			expect(getConfig().bond_opt_out?.[saved]).toBeUndefined();
+		},
+	);
+
 	test("an opt-out survives a simulated backend restart and follows the physical port", async () => {
 		// Given the operator excludes the first Huawei while it is called eth1.
 		const result = await call(
