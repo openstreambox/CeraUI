@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { AttemptBudget } from "./budget.ts";
+import { AttemptBudget, HelloRate } from "./budget.ts";
 import {
 	importEd25519,
 	importP256,
@@ -72,7 +72,14 @@ export type Refusal =
 	| { status: "stale" }
 	| { status: "not_authenticated" }
 	| { status: "last_owner" }
-	| { status: "too_many" };
+	| { status: "too_many" }
+	| { status: "pending" };
+
+/** What every write returns, so a companion can raise its rollback floor. */
+export interface AccessRecord {
+	access_seq: number;
+	generation: number;
+}
 
 export interface HelloReply {
 	status: "ok";
@@ -95,10 +102,13 @@ const HELLO_TTL_MS = 30_000;
 const INVITE_TTL_MS = 5 * 60_000;
 const MAX_INVITES = 8;
 const MAX_DEVICES = 64;
+/** Retired claim keys kept; the oldest are dropped past this many. */
+export const RETIRED_LIMIT = 1024;
 
 export interface CompanionChannelOptions {
 	store: CompanionStore;
 	budget?: AttemptBudget;
+	helloRate?: HelloRate;
 	now?: () => number;
 	/** Called after a revocation is durable, to close that device's sockets. */
 	onRevoked?: (deviceId: string) => void;
@@ -194,12 +204,35 @@ export function authFields(
 	];
 }
 
-const activeDevices = (state: CompanionState) =>
+/** Enrolled and not revoked; includes devices waiting for an owner's Allow. */
+const enrolledDevices = (state: CompanionState) =>
 	state.devices.filter((device) => device.revoked_at === undefined);
+/** Enrolled, not revoked and allowed: the devices that hold authority. */
+const activeDevices = (state: CompanionState) =>
+	enrolledDevices(state).filter((device) => device.pending !== true);
+
+/**
+ * The six-digit code both screens show for a join: the joiner computes it from
+ * its own transcript, the owner sees the box's copy before Allow. A second
+ * device that used a photographed invite shows a different code.
+ */
+export function joinCodeFor(joinTranscript: Uint8Array): string {
+	const digest = createHash("sha256")
+		.update("osb-companion/1 join-code")
+		.update(joinTranscript)
+		.digest();
+	return String(digest.readUInt32BE(0) % 1_000_000).padStart(6, "0");
+}
+
+const access = (state: CompanionState): AccessRecord => ({
+	access_seq: state.access_seq,
+	generation: state.generation,
+});
 
 export class CompanionChannel {
 	readonly #store: CompanionStore;
 	readonly #budget: AttemptBudget;
+	readonly #helloRate: HelloRate;
 	readonly #now: () => number;
 	readonly #onRevoked: (deviceId: string) => void;
 	/** Open invites by ticket digest. Memory only: a restart closes them. */
@@ -212,6 +245,7 @@ export class CompanionChannel {
 		this.#store = options.store;
 		this.#now = options.now ?? Date.now;
 		this.#budget = options.budget ?? new AttemptBudget({ now: this.#now });
+		this.#helloRate = options.helloRate ?? new HelloRate({ now: this.#now });
 		this.#onRevoked = options.onRevoked ?? (() => undefined);
 	}
 
@@ -261,6 +295,9 @@ export class CompanionChannel {
 			32,
 		);
 		if (!clientNonce) return { status: "invalid" };
+		// Each hello costs a signature and a store read; budget it per peer.
+		const wait = this.#helloRate.take(ingress.key);
+		if (wait > 0) return { status: "busy", retry_after_ms: wait };
 		const state = this.#read();
 		if (!state) return { status: "unavailable" };
 		const identity = this.#identity();
@@ -321,7 +358,7 @@ export class CompanionChannel {
 		session: ChannelSession,
 		input: unknown,
 		ingress: ChannelIngress,
-	): { status: "ok"; device: string } | Refusal {
+	): ({ status: "ok"; device: string } & AccessRecord) | Refusal {
 		if (ingress.kind !== "setup") return { status: "refused" };
 		const busy = this.#busy(ingress);
 		if (busy) return busy;
@@ -346,7 +383,7 @@ export class CompanionChannel {
 			return this.#fail(ingress, { status: "invalid" });
 		const deviceKey = importP256(deviceKeyBytes);
 		if (!deviceKey) return this.#fail(ingress, { status: "invalid" });
-		if (activeDevices(state).length > 0 || !state.setup)
+		if (enrolledDevices(state).length > 0 || !state.setup)
 			return this.#fail(ingress, { status: "already_claimed" });
 		if (state.setup.setup_id !== hello.setupId) return this.#fail(ingress);
 		const claimKeyBytes = Buffer.from(state.setup.claim_key, "base64");
@@ -392,20 +429,22 @@ export class CompanionChannel {
 			retired_claims: [
 				...state.retired_claims,
 				keyFingerprint(claimKeyBytes),
-			].slice(-1024),
+			].slice(-RETIRED_LIMIT),
 			devices: [...state.devices, device],
 		};
 		this.#store.write(next);
 		this.#budget.succeed(ingress.key);
 		session.device = { id: device.id, generation: next.generation };
-		return { status: "ok", device: device.id };
+		return { status: "ok", device: device.id, ...access(next) };
 	}
 
 	auth(
 		session: ChannelSession,
 		input: unknown,
 		ingress: ChannelIngress,
-	): { status: "ok"; device: string; role: "owner" } | Refusal {
+	):
+		| ({ status: "ok"; device: string; role: "owner" } & AccessRecord)
+		| Refusal {
 		const busy = this.#busy(ingress);
 		if (busy) return busy;
 		const state = this.#read();
@@ -421,7 +460,7 @@ export class CompanionChannel {
 		const signature = decodeBase64(body.signature, 64);
 		if (!fingerprint || !signature)
 			return this.#fail(ingress, { status: "invalid" });
-		const device = activeDevices(state).find(
+		const device = enrolledDevices(state).find(
 			(entry) => entry.fingerprint === fingerprint,
 		);
 		const key = device && importP256(Buffer.from(device.key, "base64"));
@@ -439,8 +478,15 @@ export class CompanionChannel {
 		if (!device || !key || !verifyP256(key, message, signature))
 			return this.#fail(ingress);
 		this.#budget.succeed(ingress.key);
+		// A proven key that still waits for an owner's Allow gets no session.
+		if (device.pending === true) return { status: "pending" };
 		session.device = { id: device.id, generation: state.generation };
-		return { status: "ok", device: device.id, role: device.role };
+		return {
+			status: "ok",
+			device: device.id,
+			role: device.role,
+			...access(state),
+		};
 	}
 
 	/**
@@ -484,7 +530,9 @@ export class CompanionChannel {
 		session: ChannelSession,
 		input: unknown,
 		ingress: ChannelIngress,
-	): { status: "ok"; device: string } | Refusal {
+	): { status: "pending"; device: string; code: string } | Refusal {
+		// Joining is a next-to-the-box step, like claiming: on the hotspot only.
+		if (ingress.kind !== "setup") return { status: "refused" };
 		const busy = this.#busy(ingress);
 		if (busy) return busy;
 		const state = this.#read();
@@ -510,13 +558,14 @@ export class CompanionChannel {
 		if (!deviceKey) return this.#fail(ingress, { status: "invalid" });
 		const digest = ticketDigest(ticket);
 		const invite = this.#invites.get(digest);
-		const inviter = state.devices.find((entry) => entry.id === invite?.by);
+		const inviter = activeDevices(state).find(
+			(entry) => entry.id === invite?.by,
+		);
 		if (
 			!invite ||
 			invite.expires <= this.#now() ||
 			invite.generation !== state.generation ||
-			!inviter ||
-			inviter.revoked_at !== undefined
+			!inviter
 		)
 			return this.#fail(ingress);
 		const deviceFingerprint = keyFingerprint(deviceKeyBytes);
@@ -536,14 +585,23 @@ export class CompanionChannel {
 		);
 		if (!verifyP256(deviceKey, message, deviceSignature))
 			return this.#fail(ingress);
+		const id = `dev-${deviceFingerprint.slice(0, 16)}`;
 		if (
-			state.devices.some((entry) => entry.fingerprint === deviceFingerprint) ||
+			state.devices.some(
+				(entry) => entry.fingerprint === deviceFingerprint || entry.id === id,
+			) ||
 			state.devices.length >= MAX_DEVICES
 		)
 			return this.#fail(ingress, { status: "invalid" });
+		if (
+			enrolledDevices(state).filter((entry) => entry.pending === true).length >=
+			MAX_INVITES
+		)
+			return { status: "too_many" };
 		this.#invites.delete(digest);
+		const code = joinCodeFor(message);
 		const device: DeviceRecord = {
-			id: `dev-${deviceFingerprint.slice(0, 16)}`,
+			id,
 			key: deviceKeyBytes.toString("base64"),
 			fingerprint: deviceFingerprint,
 			name,
@@ -551,6 +609,8 @@ export class CompanionChannel {
 			role: "owner",
 			added_at: new Date(this.#now()).toISOString(),
 			added_by: inviter.id,
+			pending: true,
+			code,
 		};
 		const next: CompanionState = {
 			...state,
@@ -559,8 +619,42 @@ export class CompanionChannel {
 		};
 		this.#store.write(next);
 		this.#budget.succeed(ingress.key);
-		session.device = { id: device.id, generation: next.generation };
-		return { status: "ok", device: device.id };
+		return { status: "pending", device: device.id, code };
+	}
+
+	/**
+	 * An owner allows a device that joined with its invite, after checking
+	 * that both screens show the same code.
+	 */
+	allow(
+		session: ChannelSession,
+		input: unknown,
+	): ({ status: "ok"; device: string } & AccessRecord) | Refusal {
+		const self = this.authorized(session);
+		if (self?.role !== "owner") return { status: "not_authenticated" };
+		const target = (input as { device?: unknown } | null)?.device;
+		const state = this.#read();
+		if (!state) return { status: "unavailable" };
+		const device = enrolledDevices(state).find(
+			(entry) => entry.id === target && entry.pending === true,
+		);
+		if (!device) return { status: "invalid" };
+		const { pending: _pending, code: _code, ...allowed } = device;
+		const next: CompanionState = {
+			...state,
+			access_seq: state.access_seq + 1,
+			devices: state.devices.map((entry) =>
+				entry.id === device.id
+					? {
+							...allowed,
+							allowed_by: self.id,
+							allowed_at: new Date(this.#now()).toISOString(),
+						}
+					: entry,
+			),
+		};
+		this.#store.write(next);
+		return { status: "ok", device: device.id, ...access(next) };
 	}
 
 	/** The session's device if it is still enrolled in the current generation. */
@@ -573,6 +667,7 @@ export class CompanionChannel {
 			!state ||
 			!device ||
 			device.revoked_at !== undefined ||
+			device.pending === true ||
 			state.generation !== current.generation
 		) {
 			session.device = undefined;
@@ -597,6 +692,7 @@ export class CompanionChannel {
 				role: device.role,
 				added_at: device.added_at,
 				...(device.revoked_at ? { revoked_at: device.revoked_at } : {}),
+				...(device.pending ? { pending: true, code: device.code } : {}),
 				self: device.id === self.id,
 			})),
 		} as const;
@@ -605,31 +701,36 @@ export class CompanionChannel {
 	revoke(
 		session: ChannelSession,
 		input: unknown,
-	): { status: "ok"; revoked: string } | Refusal {
+	): ({ status: "ok"; revoked: string } & AccessRecord) | Refusal {
 		const self = this.authorized(session);
 		if (self?.role !== "owner") return { status: "not_authenticated" };
 		const target = (input as { device?: unknown } | null)?.device;
 		const state = this.#read();
 		if (!state) return { status: "unavailable" };
-		const device = activeDevices(state).find((entry) => entry.id === target);
+		const device = enrolledDevices(state).find((entry) => entry.id === target);
 		if (!device) return { status: "invalid" };
 		const owners = activeDevices(state).filter(
 			(entry) => entry.role === "owner",
 		);
-		if (device.role === "owner" && owners.length <= 1)
+		if (
+			device.pending !== true &&
+			device.role === "owner" &&
+			owners.length <= 1
+		)
 			return { status: "last_owner" };
 		const revokedAt = new Date(this.#now()).toISOString();
-		this.#store.write({
+		const next: CompanionState = {
 			...state,
 			access_seq: state.access_seq + 1,
 			devices: state.devices.map((entry) =>
 				entry.id === device.id ? { ...entry, revoked_at: revokedAt } : entry,
 			),
-		});
+		};
+		this.#store.write(next);
 		for (const [digest, invite] of this.#invites)
 			if (invite.by === device.id) this.#invites.delete(digest);
 		this.#onRevoked(device.id);
-		return { status: "ok", revoked: device.id };
+		return { status: "ok", revoked: device.id, ...access(next) };
 	}
 }
 
@@ -645,13 +746,22 @@ export interface SetupVerifier {
  */
 export function provisionSetup(store: CompanionStore, verifier: SetupVerifier) {
 	const state = store.read();
-	if (activeDevices(state).length > 0)
+	if (enrolledDevices(state).length > 0)
 		throw new CompanionStoreError("The box is claimed; reset it first");
-	if (state.retired_claims.includes(keyFingerprint(verifier.claimKey)))
+	// A code that is replaced before use is retired too: an insert that was
+	// handed out must not start working again later.
+	const retired = state.setup
+		? [
+				...state.retired_claims,
+				keyFingerprint(Buffer.from(state.setup.claim_key, "base64")),
+			]
+		: state.retired_claims;
+	if (retired.includes(keyFingerprint(verifier.claimKey)))
 		throw new CompanionStoreError("This setup code was already used");
 	store.identity();
 	store.write({
 		...state,
+		retired_claims: retired.slice(-RETIRED_LIMIT),
 		setup: {
 			setup_id: verifier.setupId,
 			claim_key: verifier.claimKey.toString("base64"),
@@ -682,7 +792,7 @@ export function resetOwnership(
 		...state,
 		generation: state.generation + 1,
 		access_seq: state.access_seq + 1,
-		retired_claims: retired.slice(-1024),
+		retired_claims: retired.slice(-RETIRED_LIMIT),
 		devices: [],
 		setup: fresh
 			? {

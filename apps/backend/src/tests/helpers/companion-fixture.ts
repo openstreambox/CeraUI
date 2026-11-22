@@ -117,7 +117,7 @@ export function claimOwner(box: Box, name = "Test phone") {
 		ingress,
 	);
 	if (result.status !== "ok") throw Error(`claim failed: ${result.status}`);
-	return { device, session, id: result.device };
+	return { device, session, id: result.device, reply: result };
 }
 
 export function authenticate(

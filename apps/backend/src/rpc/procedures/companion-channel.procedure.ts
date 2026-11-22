@@ -8,6 +8,8 @@ import {
 import {
 	classifyCompanionIngress,
 	DEFAULT_TLS_CERT,
+	lazySetupHotspotCheck,
+	setupHotspotInterface,
 	tlsBindingFromCertificate,
 } from "../../modules/companion/ingress.ts";
 import {
@@ -19,6 +21,7 @@ import {
 	parseCompanionWifiInput,
 } from "../../modules/wifi/companion-wifi-input.ts";
 import { localIngressPresent } from "../local-ingress-presence.ts";
+import { runtimeAllowsDevelopment } from "../runtime-mode.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
 import {
 	type CompanionSaveResult,
@@ -81,6 +84,16 @@ export function createCompanionProcedures(deps: CompanionProcedureDeps) {
 		set.add(ws);
 		deviceSockets.set(deviceId, set);
 	};
+	/** The adapter's close hook: forget a closed socket at once. */
+	const socketClosed = (ws: AppWebSocket) => {
+		const deviceId = sessions.get(ws)?.device?.id;
+		sessions.delete(ws);
+		for (const [id, set] of deviceSockets) {
+			if (deviceId !== undefined && id !== deviceId) continue;
+			set.delete(ws);
+			if (set.size === 0) deviceSockets.delete(id);
+		}
+	};
 
 	const base = os.$context<RPCContext>();
 	const gated = <T>(
@@ -107,11 +120,12 @@ export function createCompanionProcedures(deps: CompanionProcedureDeps) {
 			if (result.status === "ok") remember(context.ws, result.device);
 			return result;
 		}),
-		join: gated((context, ingress, input) => {
-			const result = getChannel().join(sessionOf(context.ws), input, ingress);
-			if (result.status === "ok") remember(context.ws, result.device);
-			return result;
-		}),
+		join: gated((context, ingress, input) =>
+			getChannel().join(sessionOf(context.ws), input, ingress),
+		),
+		allow: gated((context, _ingress, input) =>
+			getChannel().allow(sessionOf(context.ws), input),
+		),
 		invite: gated((context) => getChannel().invite(sessionOf(context.ws))),
 		devices: gated((context) => getChannel().devices(sessionOf(context.ws))),
 		revoke: gated((context, _ingress, input) =>
@@ -131,30 +145,26 @@ export function createCompanionProcedures(deps: CompanionProcedureDeps) {
 			}
 		}),
 		closeDevice,
+		socketClosed,
+		trackedSockets: () =>
+			[...deviceSockets.values()].reduce((sum, set) => sum + set.size, 0),
 	};
 }
 
-/** On the image: the hotspot AP that runs now is the setup ingress. */
-async function loadSetupHotspotCheck() {
-	const [{ getWifiInterfacesByMacAddress }, { canHotspot, hotspotApIfname }] =
-		await Promise.all([
-			import("../../modules/wifi/wifi-connections.ts"),
-			import("../../modules/wifi/wifi-hotspot-types.ts"),
-		]);
+/**
+ * On the image: the interface running the box's own hotspot profile is the
+ * setup ingress. The Wi-Fi state reader loads on first use, with the flag on.
+ */
+const isSetupHotspot = lazySetupHotspotCheck(async () => {
+	const { getWifiInterfacesByMacAddress } = await import(
+		"../../modules/wifi/wifi-connections.ts"
+	);
 	return (ifname: string) =>
-		Object.values(getWifiInterfacesByMacAddress()).filter(
-			(row) => canHotspot(row) && hotspotApIfname(row) === ifname,
-		).length === 1;
-}
-
-let isSetupHotspot: (ifname: string) => boolean = () => false;
-void loadSetupHotspotCheck()
-	.then((check) => {
-		isSetupHotspot = check;
-	})
-	.catch(() => {
-		// No Wi-Fi module: no setup ingress over the front door.
-	});
+		setupHotspotInterface(
+			Object.values(getWifiInterfacesByMacAddress()),
+			ifname,
+		);
+});
 
 export const companionProcedures = createCompanionProcedures({
 	createChannel: (onRevoked) =>
@@ -167,7 +177,9 @@ export const companionProcedures = createCompanionProcedures({
 	ingress: (context) =>
 		classifyCompanionIngress(context, {
 			frontDoor: localIngressPresent,
-			isSetupHotspot: (ifname) => isSetupHotspot(ifname),
+			isSetupHotspot,
+			development: () =>
+				process.env.NODE_ENV !== "production" && runtimeAllowsDevelopment(),
 			tlsBinding: () =>
 				tlsBindingFromCertificate(
 					process.env.CERAUI_COMPANION_TLS_CERT ?? DEFAULT_TLS_CERT,

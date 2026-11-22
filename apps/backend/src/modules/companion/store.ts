@@ -48,6 +48,15 @@ const deviceSchema = z
 		role: z.literal("owner"),
 		added_at: z.string(),
 		added_by: z.string(),
+		/** Joined with an invite and waiting for an owner's Allow. */
+		pending: z.literal(true).optional(),
+		/** The six-digit code both screens show while pending. */
+		code: z
+			.string()
+			.regex(/^\d{6}$/)
+			.optional(),
+		allowed_by: z.string().optional(),
+		allowed_at: z.string().optional(),
 		revoked_at: z.string().optional(),
 	})
 	.strict();

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
 
+import { observedBinding } from "./client.ts";
 import { tlsBindingFromPeer } from "./ingress.ts";
 
 /**
@@ -39,10 +40,19 @@ export function checkCompanionUrl(url: URL): void {
 		throw Error("Use a wss: URL at /ws, or ws: on loopback for development");
 }
 
+export interface ConnectOptions {
+	timeoutMs?: number;
+	/** Tests only: a pre-made plain socket (for example a Unix socket). */
+	connect?: () => net.Socket;
+	/** Tests only: extra upgrade header lines. */
+	headers?: readonly string[];
+}
+
 export function connectCompanion(
 	url: URL,
-	timeoutMs = 8000,
+	options: ConnectOptions = {},
 ): Promise<CompanionConnection> {
+	const timeoutMs = options.timeoutMs ?? 8000;
 	checkCompanionUrl(url);
 	const host = url.hostname.replace(/^\[|\]$/g, "");
 	const secure = url.protocol === "wss:";
@@ -52,16 +62,18 @@ export function connectCompanion(
 			socket.destroy();
 			reject(Error("Connection timed out"));
 		}, timeoutMs);
-		let binding = "loopback";
-		const socket: net.Socket = secure
-			? tls.connect({
-					host,
-					port,
-					rejectUnauthorized: false,
-					minVersion: "TLSv1.2",
-					...(net.isIP(host) ? {} : { servername: host }),
-				})
-			: net.connect({ host, port });
+		let binding = secure ? "" : observedBinding(url, undefined);
+		const socket: net.Socket = options.connect
+			? options.connect()
+			: secure
+				? tls.connect({
+						host,
+						port,
+						rejectUnauthorized: false,
+						minVersion: "TLSv1.2",
+						...(net.isIP(host) ? {} : { servername: host }),
+					})
+				: net.connect({ host, port });
 		socket.once("error", (error) => {
 			clearTimeout(timer);
 			reject(error);
@@ -75,13 +87,25 @@ export function connectCompanion(
 					reject(Error("The box sent no certificate"));
 					return;
 				}
-				binding = tlsBindingFromPeer(cert);
+				// Taken from this connection only; see client.ts observedBinding.
+				binding = observedBinding(url, tlsBindingFromPeer(cert));
 			}
 			socket.write(
-				`GET /ws HTTP/1.1\r\nHost: ${url.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+				[
+					"GET /ws HTTP/1.1",
+					`Host: ${url.host}`,
+					"Upgrade: websocket",
+					"Connection: Upgrade",
+					`Sec-WebSocket-Key: ${key}`,
+					"Sec-WebSocket-Version: 13",
+					...(options.headers ?? []),
+					"",
+					"",
+				].join("\r\n"),
 			);
 		};
-		socket.once(secure ? "secureConnect" : "connect", start);
+		if (options.connect) socket.once("connect", start);
+		else socket.once(secure ? "secureConnect" : "connect", start);
 
 		let buffer = Buffer.alloc(0);
 		let upgraded = false;

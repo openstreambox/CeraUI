@@ -6,6 +6,7 @@ import {
 	type DeviceKind,
 	type HelloReply,
 	helloFields,
+	joinCodeFor,
 	joinFields,
 	ticketDigest,
 } from "./channel.ts";
@@ -35,7 +36,8 @@ export class CompanionClientError extends Error {
 			| "binding_mismatch"
 			| "not_this_setup"
 			| "rolled_back"
-			| "already_claimed",
+			| "already_claimed"
+			| "no_binding",
 		message: string,
 	) {
 		super(message);
@@ -211,6 +213,97 @@ export function buildJoin(
 		name,
 		kind,
 		device_signature: signP256(device.privateKey, message).toString("base64"),
+	};
+}
+
+/** The code this device shows after a join; the owner checks it before Allow. */
+export function joinCode(
+	hello: VerifiedHello,
+	ticket: Buffer,
+	device: DeviceKey,
+	name: string,
+	kind: DeviceKind,
+): string {
+	return joinCodeFor(
+		transcript(
+			"join",
+			joinFields(
+				hello.clientNonce,
+				hello.boxNonce,
+				hello.identityFingerprint,
+				hello.reply.binding,
+				hello.reply.generation,
+				ticketDigest(ticket),
+				keyFingerprint(device.publicKey),
+				name,
+				kind,
+			),
+		),
+	);
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
+
+/**
+ * The binding a companion compares with the box's hello. It must come from the
+ * live connection: the SHA-256 of the TLS key the server presented on it
+ * (`tls-spki:<hex>`). `loopback` is only ever valid for a `ws:` URL on a
+ * loopback host, the development path. The box cannot check this for the
+ * companion: behind the front door its own binding is read from the
+ * certificate file, so relay resistance rests on this check.
+ */
+export function observedBinding(
+	url: URL,
+	presentedKeyBinding: string | undefined,
+): string {
+	if (url.protocol === "ws:" && LOOPBACK_HOSTS.has(url.hostname))
+		return "loopback";
+	if (
+		url.protocol === "wss:" &&
+		presentedKeyBinding !== undefined &&
+		/^tls-spki:[0-9a-f]{64}$/.test(presentedKeyBinding)
+	)
+		return presentedKeyBinding;
+	throw new CompanionClientError(
+		"no_binding",
+		"Use a wss: URL, or ws: on loopback for development.",
+	);
+}
+
+/** What a companion remembers about a paired box. */
+export interface PinnedBox {
+	fingerprint: string;
+	generation: number;
+	access_seq: number;
+	device: string;
+}
+
+/**
+ * Raise the pin's rollback floor from a reply to claim, auth, allow or revoke.
+ * It never moves backwards, so a restored box cannot lower it.
+ */
+export function advancePin(pin: PinnedBox, reply: unknown): PinnedBox {
+	const record = reply as {
+		status?: unknown;
+		access_seq?: unknown;
+		generation?: unknown;
+	} | null;
+	if (
+		record?.status !== "ok" ||
+		!Number.isSafeInteger(record.access_seq) ||
+		!Number.isSafeInteger(record.generation)
+	)
+		return pin;
+	const generation = record.generation as number;
+	const accessSeq = record.access_seq as number;
+	if (generation < pin.generation) return pin;
+	return {
+		...pin,
+		generation,
+		access_seq:
+			generation > pin.generation
+				? accessSeq
+				: Math.max(pin.access_seq, accessSeq),
 	};
 }
 

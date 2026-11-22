@@ -385,6 +385,7 @@ const stableRoutes = {
 		auth: companionProcedures.auth,
 		invite: companionProcedures.invite,
 		join: companionProcedures.join,
+		allow: companionProcedures.allow,
 		devices: companionProcedures.devices,
 		revoke: companionProcedures.revoke,
 		wifiImport: companionProcedures.wifiImport,

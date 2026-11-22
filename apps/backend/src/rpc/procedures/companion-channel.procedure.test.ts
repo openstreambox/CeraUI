@@ -63,7 +63,13 @@ const onEthernet = (peer = "198.51.100.5") =>
 		ingressPathValid: () => true,
 	});
 
-function harness(options: { frontDoor?: boolean; enabled?: boolean } = {}) {
+function harness(
+	options: {
+		frontDoor?: boolean;
+		enabled?: boolean;
+		development?: boolean;
+	} = {},
+) {
 	const box = makeBox();
 	const saved: CompanionWifiNetwork[] = [];
 	const procedures = createCompanionProcedures({
@@ -79,6 +85,7 @@ function harness(options: { frontDoor?: boolean; enabled?: boolean } = {}) {
 				frontDoor: () => options.frontDoor ?? true,
 				isSetupHotspot: (ifname) => ifname === "ap0",
 				tlsBinding: () => BOX_BINDING,
+				development: () => options.development ?? true,
 			}),
 		saveNetwork: async (network) => {
 			saved.push(network);
@@ -282,9 +289,9 @@ describe("companion procedures: Wi-Fi import over the channel", () => {
 		const owner = await claimOver(h, ap.context);
 		const invite = await call(h.procedures.invite, {}, { context: ap.context });
 		if (invite.status !== "ok") throw Error(invite.status);
-		const desk = onEthernet("198.51.100.9");
+		const deskOnHotspot = onHotspot("192.0.2.9");
 		const deskKey = generateP256();
-		const verified = await helloOver(h, desk.context);
+		const verified = await helloOver(h, deskOnHotspot.context);
 		const joined = await call(
 			h.procedures.join,
 			buildJoin(
@@ -294,9 +301,24 @@ describe("companion procedures: Wi-Fi import over the channel", () => {
 				"Desk PC",
 				"pc",
 			),
-			{ context: desk.context },
+			{ context: deskOnHotspot.context },
 		);
-		expect(joined.status).toBe("ok");
+		expect(joined.status).toBe("pending");
+		if (joined.status !== "pending") return;
+		expect(
+			await call(
+				h.procedures.allow,
+				{ device: joined.device },
+				{ context: ap.context },
+			),
+		).toMatchObject({ status: "ok" });
+		const desk = onEthernet("198.51.100.9");
+		const deskHello = await helloOver(h, desk.context);
+		expect(
+			await call(h.procedures.auth, buildAuth(deskHello, deskKey), {
+				context: desk.context,
+			}),
+		).toMatchObject({ status: "ok" });
 		const ownerId = owner.result.status === "ok" ? owner.result.device : "";
 		expect(
 			await call(
@@ -304,7 +326,7 @@ describe("companion procedures: Wi-Fi import over the channel", () => {
 				{ device: ownerId },
 				{ context: desk.context },
 			),
-		).toEqual({ status: "ok", revoked: ownerId });
+		).toMatchObject({ status: "ok", revoked: ownerId });
 		expect(ap.closed).toEqual([{ code: 4403, reason: "revoked" }]);
 		expect(
 			await call(h.procedures.wifiImport, network, { context: ap.context }),

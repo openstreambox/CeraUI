@@ -59,7 +59,7 @@ describe("companion channel: first contact", () => {
 		expect(box.store.read().setup).toBeNull();
 		expect(box.store.read().devices).toHaveLength(1);
 		const again = authenticate(box, owner.device);
-		expect(again.result).toEqual({
+		expect(again.result).toMatchObject({
 			status: "ok",
 			device: owner.id,
 			role: "owner",
@@ -269,17 +269,28 @@ describe("companion channel: devices and revocation", () => {
 		if (invite.status !== "ok") throw Error(invite.status);
 		const device = generateP256();
 		const session: ChannelSession = {};
-		const verified = hello(box, session, localIngress("198.51.100.9"), {
+		const verified = hello(box, session, setupIngress("192.0.2.9"), {
 			fingerprint: invite.fingerprint,
 		});
 		const ticket = Buffer.from(invite.ticket, "base64");
 		const joined = box.channel.join(
 			session,
 			buildJoin(verified, ticket, device, "Desk PC", "pc"),
-			localIngress("198.51.100.9"),
+			setupIngress("192.0.2.9"),
 		);
-		if (joined.status !== "ok") throw Error(joined.status);
-		return { device, session, id: joined.device, ticket, verified };
+		if (joined.status !== "pending") throw Error(joined.status);
+		const allowed = box.channel.allow(ownerSession, { device: joined.device });
+		if (allowed.status !== "ok") throw Error(allowed.status);
+		// Signs in from its desk on Ethernet once allowed.
+		const signedIn = authenticate(box, device, localIngress("198.51.100.9"));
+		if (signedIn.result.status !== "ok") throw Error(signedIn.result.status);
+		return {
+			device,
+			session: signedIn.session,
+			id: joined.device,
+			ticket,
+			verified,
+		};
 	}
 
 	test("an owner invites a second device; the ticket works once", () => {
@@ -294,12 +305,12 @@ describe("companion channel: devices and revocation", () => {
 				"Desk PC",
 			]);
 		const replay: ChannelSession = {};
-		const verified = hello(box, replay, localIngress("198.51.100.10"));
+		const verified = hello(box, replay, setupIngress("192.0.2.10"));
 		expect(
 			box.channel.join(
 				replay,
 				buildJoin(verified, second.ticket, generateP256(), "Copy", "phone"),
-				localIngress("198.51.100.10"),
+				setupIngress("192.0.2.10"),
 			).status,
 		).toBe("refused");
 	});
@@ -309,7 +320,9 @@ describe("companion channel: devices and revocation", () => {
 		const owner = claimOwner(box);
 		const second = addSecondOwner(box, owner.session);
 		const before = box.store.read().access_seq;
-		expect(box.channel.revoke(second.session, { device: owner.id })).toEqual({
+		expect(
+			box.channel.revoke(second.session, { device: owner.id }),
+		).toMatchObject({
 			status: "ok",
 			revoked: owner.id,
 		});
@@ -338,7 +351,7 @@ describe("companion channel: devices and revocation", () => {
 		if (invite.status !== "ok") throw Error(invite.status);
 		box.channel.revoke(second.session, { device: owner.id });
 		const session: ChannelSession = {};
-		const verified = hello(box, session, localIngress("198.51.100.11"));
+		const verified = hello(box, session, setupIngress("192.0.2.11"));
 		expect(
 			box.channel.join(
 				session,
@@ -349,7 +362,7 @@ describe("companion channel: devices and revocation", () => {
 					"Late",
 					"phone",
 				),
-				localIngress("198.51.100.11"),
+				setupIngress("192.0.2.11"),
 			).status,
 		).toBe("refused");
 	});

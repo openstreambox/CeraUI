@@ -4,7 +4,8 @@
  *   bun scripts/companion-channel.ts pair    <url> --state <dir>   # setup link on stdin
  *   bun scripts/companion-channel.ts devices <url> --state <dir>
  *   bun scripts/companion-channel.ts invite  <url> --state <dir>   # prints a join link
- *   bun scripts/companion-channel.ts join    <url> --state <dir>   # join link on stdin
+ *   bun scripts/companion-channel.ts join    <url> --state <dir>   # join link on stdin, on the box's hotspot
+ *   bun scripts/companion-channel.ts allow   <url> --state <dir> <device-id>  # after comparing codes
  *   bun scripts/companion-channel.ts revoke  <url> --state <dir> <device-id>
  *   bun scripts/companion-channel.ts wifi    <url> --state <dir>   # network JSON on stdin
  *
@@ -30,12 +31,14 @@ import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import {
+	advancePin,
 	buildAuth,
 	buildClaim,
 	buildJoin,
 	CompanionClientError,
 	type DeviceKey,
 	newClientNonce,
+	type PinnedBox,
 	verifyHello,
 } from "../src/modules/companion/client.ts";
 import { generateP256, spkiOf } from "../src/modules/companion/keys.ts";
@@ -55,13 +58,6 @@ import {
 } from "../src/modules/wifi/companion-wifi-input.ts";
 
 class StubError extends Error {}
-
-interface PinnedBox {
-	fingerprint: string;
-	generation: number;
-	access_seq: number;
-	device: string;
-}
 
 function writePrivate(path: string, text: string, exclusive = false) {
 	const temp = exclusive ? path : `${path}.tmp`;
@@ -139,14 +135,13 @@ async function signIn(url: URL, state: string) {
 			["companion", "auth"],
 			buildAuth(verified, device),
 		)) as { status?: string };
+		if (result?.status === "pending")
+			throw new StubError("An owner has not allowed this device yet.");
 		if (result?.status !== "ok")
 			throw new StubError(`The box refused this device (${result?.status}).`);
-		savePin(state, {
-			...pin,
-			generation: verified.reply.generation,
-			access_seq: verified.reply.access_seq,
-		});
-		return { connection, device, pin };
+		const advanced = advancePin(pin, result);
+		savePin(state, advanced);
+		return { connection, device, pin: advanced };
 	} catch (error) {
 		connection.close();
 		throw error;
@@ -183,6 +178,7 @@ async function pair(url: URL, state: string) {
 		)) as { status?: string };
 		if (result?.status !== "ok")
 			throw new StubError(`The box refused setup (${result?.status}).`);
+		savePin(state, advancePin(loadPin(state), result));
 		console.log(
 			`Box claimed. Box fingerprint ${verified.identityFingerprint.slice(0, 16)}.`,
 		);
@@ -207,10 +203,12 @@ async function joinBox(url: URL, state: string) {
 		const result = (await connection.rpc(
 			["companion", "join"],
 			buildJoin(verified, link.ticket, device, "Companion stub", "pc"),
-		)) as { status?: string };
-		if (result?.status !== "ok")
+		)) as { status?: string; code?: string; device?: string };
+		if (result?.status !== "pending")
 			throw new StubError(`The box refused the invite (${result?.status}).`);
-		console.log("Joined the box.");
+		console.log(
+			`Waiting for an owner. Code ${result.code}: the owner checks it shows the same code for ${result.device}, then allows it.`,
+		);
 	} finally {
 		connection.close();
 	}
@@ -240,7 +238,7 @@ async function main() {
 	const extra = rest.filter((_, i) => i !== stateIndex && i !== stateIndex + 1);
 	if (!command || !endpoint || !state)
 		throw new StubError(
-			"Usage: companion-channel.ts <pair|join|devices|invite|revoke|wifi> <url> --state <dir> [device-id]",
+			"Usage: companion-channel.ts <pair|join|devices|invite|allow|revoke|wifi> <url> --state <dir> [device-id]",
 		);
 	const url = new URL(endpoint);
 	mkdirSync(state, { recursive: true, mode: 0o700 });
@@ -278,13 +276,18 @@ async function main() {
 					ticket: Buffer.from(result.ticket, "base64"),
 				}),
 			);
-		} else if (command === "revoke") {
-			const result = (await connection.rpc(["companion", "revoke"], {
+		} else if (command === "revoke" || command === "allow") {
+			const result = (await connection.rpc(["companion", command], {
 				device: extra[0],
 			})) as { status?: string };
 			if (result?.status !== "ok")
-				throw new StubError(`The box did not revoke it (${result?.status}).`);
-			console.log(`Revoked ${extra[0]}.`);
+				throw new StubError(
+					`The box did not ${command} it (${result?.status}).`,
+				);
+			savePin(state, advancePin(pin, result));
+			console.log(
+				`${command === "allow" ? "Allowed" : "Revoked"} ${extra[0]}.`,
+			);
 		} else if (command === "wifi") {
 			const result = (await connection.rpc(
 				["companion", "wifiImport"],
