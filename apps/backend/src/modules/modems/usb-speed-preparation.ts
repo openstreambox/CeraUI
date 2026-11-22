@@ -11,8 +11,9 @@
   - A faster link means the setting is not in effect. Only then, and only while
     no stream runs, the modem is inhibited, the stored value is read and kept as
     `original` before any setter, and "20" is written if it differs. After
-    readback the box reserves the reset, records that attempt and sends
-    `AT+CFUN=1,1`. Start can still win before the reservation.
+    readback the box reserves the reset and sends `AT+CFUN=1,1`. A setter
+    has a durable attempt before dispatch. A confirmed deferral returns that
+    attempt when Start wins before reset admission.
   - The next USB generation verifies it: back at 480 Mbit/s or slower.
   - At most one modem is switched at a time, 15 minutes between attempts, two
     attempts per unit; then the unit is blocked until its record is removed.
@@ -26,6 +27,7 @@ import { existsSync } from "node:fs";
 import { logger } from "../../helpers/logger.ts";
 import { listPrivateJsonKeys } from "../../helpers/private-json-state.ts";
 import {
+	currentLifecycleHolder,
 	type ModemJournalLease,
 	tryAcquireModemJournalKey,
 } from "../streaming/lifecycle-admission.ts";
@@ -309,6 +311,8 @@ async function applyUsbSpeed(
 		if (current === undefined) throw new Error("usbspeed readback missing");
 		if (deps.streaming() || backgroundModemRefusal(target.key))
 			return undefined;
+		const previousAttempts = record?.attempts ?? 0;
+		const needsSetter = current !== desired;
 		let next: UsbSpeedRecord = {
 			version: 1,
 			kind: "usbspeed",
@@ -317,16 +321,29 @@ async function applyUsbSpeed(
 			original: record?.original ?? current,
 			desired,
 			// Set before the setter: a lost reply must still count as our write.
-			wrote: (record?.wrote ?? false) || current !== desired,
-			attempts: record?.attempts ?? 0,
+			wrote: (record?.wrote ?? false) || needsSetter,
+			// An interrupted setting request must keep its place in the budget.
+			attempts: needsSetter ? previousAttempts + 1 : previousAttempts,
 			phase: "attempted",
 			epoch: target.generation,
 			started: deps.now(),
 		};
 		await deps.write(next);
-		if (current !== desired) {
-			if (deps.streaming() || backgroundModemRefusal(target.key))
+		const defer = async () => {
+			const reason =
+				deps.streaming() || currentLifecycleHolder() === "streaming"
+					? "stream started"
+					: "modem control busy";
+			deps.log(`${target.ifname} usbspeed deferred: ${reason}`);
+			// Only a known deferral gives back the reserved attempt. Keep the
+			// original setting and cooldown even if the setter already succeeded.
+			await deps.write({ ...next, attempts: previousAttempts, reason });
+		};
+		if (needsSetter) {
+			if (deps.streaming() || backgroundModemRefusal(target.key)) {
+				await defer();
 				return undefined;
+			}
 			let readback: string | undefined;
 			try {
 				readback = await control.setUsbSpeed(desired);
@@ -335,7 +352,6 @@ async function applyUsbSpeed(
 				if (readback !== desired) {
 					next = {
 						...next,
-						attempts: next.attempts + 1,
 						phase: "failed",
 						reason:
 							readback === undefined
@@ -347,10 +363,13 @@ async function applyUsbSpeed(
 			}
 			if (readback !== desired) return next;
 		}
-		// The setter's original value is already durable. Charge the reset only
-		// after admission, in the same durable record that precedes dispatch.
-		if (deps.streaming() || !owner.tryUpgrade()) return undefined;
-		next = { ...next, attempts: next.attempts + 1, phase: "awaiting-usb" };
+		if (deps.streaming() || !owner.tryUpgrade()) {
+			await defer();
+			return undefined;
+		}
+		// The setter and reset belong to the same attempt. A reset-only
+		// attempt takes its place in the budget here, before dispatch.
+		next = { ...next, attempts: previousAttempts + 1, phase: "awaiting-usb" };
 		await deps.write(next);
 		if (deps.streaming()) throw new Error("a stream started");
 		try {
@@ -459,7 +478,7 @@ async function runUsbSpeedPreparationOnce(
 				`${unit.target.ifname} usbspeed: ${outcome} (stored ${unit.record.original}, wanted ${unit.desired})`,
 			);
 		} catch (error) {
-			// Not a counted attempt, but the same pause.
+			// A takeover error also pauses. The durable record owns the count.
 			aborted.set(unit.key, deps.now());
 			deps.log(
 				`${unit.target.ifname} usbspeed: attempt stopped (${error instanceof Error ? error.message : "error"}); next try after the pause`,

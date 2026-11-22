@@ -90,6 +90,9 @@ export class MutationDamageMonitor {
 					: 1;
 			next.set(name, { signature, failures });
 		}
+		// A slot may disappear between listing and stat. Keep the last complete
+		// observation, including its token and counts, until every slot is known.
+		if (next.size !== damaged.length) return;
 		const offer = this.offer;
 		if (offer && next.get(offer.name)?.signature !== offer.signature)
 			this.withdraw(offer);
@@ -97,7 +100,6 @@ export class MutationDamageMonitor {
 		// Keep one token for an unchanged file. A replacement starts at one observation.
 		if (
 			this.offer ||
-			next.size !== damaged.length ||
 			[...next.values()].some((slot) => slot.failures <= RETRIES)
 		)
 			return;

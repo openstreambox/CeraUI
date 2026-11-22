@@ -374,6 +374,135 @@ test("a reboot invalidates confirmation and each clear archives only its offered
 	).toHaveLength(2);
 });
 
+for (const mode of ["boot", "runtime"] as const) {
+	test(`an incomplete ${mode} census preserves the current offer at the backoff ceiling`, async () => {
+		const clock = new JournalRetryClock();
+		let unavailable = false;
+		setMutationJournalDeps({
+			dir: journal.root(),
+			fs: {
+				...defaultMutationJournalFs,
+				listDir: async (dir) => {
+					if (unavailable) throw new Error("directory unavailable");
+					return defaultMutationJournalFs.listDir(dir);
+				},
+			},
+		});
+		if (mode === "runtime") await initMutationRecovery({ sleep: clock.sleep });
+		writeFileSync(path("usb:a"), "{bad");
+		let pass = 1;
+		if (mode === "boot") {
+			await initMutationRecovery({ sleep: clock.sleep });
+		} else {
+			beginRecoveryBarrier();
+			await clock.at(pass);
+			clock.advance();
+			pass++;
+		}
+		const token = await exhaust(clock, pass);
+		pass += 3;
+		await clock.at(pass);
+		while (clock.waits.at(-1) !== 60_000) {
+			clock.advance();
+			await clock.at(++pass);
+		}
+		unavailable = true;
+		clock.advance();
+		await clock.at(++pass);
+		expect(warning()?.action).toMatchObject({ token });
+		expect(isRecoveryPending()).toBe(true);
+		expect(readFileSync(path("usb:a"), "utf8")).toBe("{bad");
+
+		unavailable = false;
+		clock.advance();
+		await clock.at(++pass);
+		expect(warning()?.action).toMatchObject({ token });
+		expect(await confirm(token)).toEqual({ success: true });
+		await awaitRecoveryBarrier();
+		expect(readdirSync(journal.root())).toEqual([
+			`.recovery-${token}.archived`,
+		]);
+	});
+}
+
+for (const fault of ["block publication", "file identity"] as const) {
+	test(`runtime keeps its offer when ${fault} fails after a repaired file parses`, async () => {
+		const clock = new JournalRetryClock();
+		let fail = false;
+		let reads = 0;
+		setMutationJournalDeps({
+			dir: journal.root(),
+			fs: {
+				...defaultMutationJournalFs,
+				listDir: async (dir) => {
+					const names = await defaultMutationJournalFs.listDir(dir);
+					if (!fail) return names;
+					if (fault === "file identity") return [...names, "vanished.json"];
+					if (++reads === 2) throw new Error("block publication unavailable");
+					return names;
+				},
+				readText: async (file) => {
+					if (basename(file) === "vanished.json")
+						throw new Error("slot unavailable");
+					return defaultMutationJournalFs.readText(file);
+				},
+			},
+		});
+		await initMutationRecovery({ sleep: clock.sleep });
+		writeFileSync(path("usb:a"), "{bad");
+		beginRecoveryBarrier();
+		await clock.at(1);
+		clock.advance();
+		const token = await exhaust(clock, 2);
+		await clock.at(5);
+		await seedFailedMutation("usb:a");
+		fail = true;
+		clock.advance();
+		await clock.at(6);
+		expect(warning()?.action).toMatchObject({ token });
+		expect(isRecoveryPending()).toBe(true);
+		fail = false;
+		clock.advance();
+		await awaitRecoveryBarrier();
+		expect(warning()).toBeUndefined();
+		expect(await readMutationEntry("usb:a")).toMatchObject({ state: "failed" });
+		expect(await confirm(token)).toMatchObject({
+			success: false,
+			error: "no_entry",
+		});
+	});
+}
+
+test("a missed census neither advances nor erases a file's retry history", async () => {
+	const clock = new JournalRetryClock();
+	let incomplete = false;
+	setMutationJournalDeps({
+		dir: journal.root(),
+		fs: {
+			...defaultMutationJournalFs,
+			listDir: async (dir) => {
+				if (incomplete) throw new Error("directory unavailable");
+				return defaultMutationJournalFs.listDir(dir);
+			},
+		},
+	});
+	writeFileSync(path("usb:a"), "{bad");
+	await initMutationRecovery({ sleep: clock.sleep }); // first observation
+	await clock.at(1);
+	clock.advance();
+	await clock.at(2); // second observation
+	incomplete = true;
+	clock.advance();
+	await clock.at(3);
+	incomplete = false;
+	clock.advance();
+	await clock.at(4);
+	expect(warning()).toBeUndefined(); // third observation
+	clock.advance();
+	await clock.at(5);
+	expect(warning()?.action?.kind).toBe("confirm-modem-record");
+});
+
 test("a named fault followed by a directory listing failure never offers a partial inventory for clearing", async () => {
 	writeFileSync(path("usb:a"), "{bad");
 	let reads = 0;

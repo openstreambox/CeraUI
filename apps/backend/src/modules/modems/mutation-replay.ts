@@ -184,10 +184,11 @@ async function replayEntry(
 	tally.blocked += 1;
 }
 
-type ObserveDamage = (slots: readonly string[]) => void;
+// Only a complete census can establish that a previously damaged slot cleared.
+type ObserveCompleteCensus = (damaged: readonly string[]) => void;
 
 export async function runMutationReplay(
-	observe?: ObserveDamage,
+	observe?: ObserveCompleteCensus,
 ): Promise<ReplaySummary> {
 	const damaged = new Set<string>();
 	const tally = { rolledBack: 0, pruned: 0, blocked: 0, quarantined: 0 };
@@ -240,7 +241,7 @@ export async function runMutationReplay(
 			err,
 		});
 	}
-	observe?.(otherFailures === 0 ? [...damaged] : []);
+	if (otherFailures === 0) observe?.([...damaged]);
 	// The summary counts each damaged file and the incomplete block publication.
 	const summary: ReplaySummary = {
 		...tally,
@@ -255,20 +256,14 @@ export async function runMutationReplay(
 
 /** Settle submitted bookkeeping and read current blocks, without hardware rollback. */
 async function journalReadsCompletely(
-	observe: ObserveDamage,
+	observe: ObserveCompleteCensus,
 ): Promise<boolean> {
-	try {
-		await inventoryCellularAuthority("verify");
-		await settlePendingMutationRemovals();
-		const damaged = await listUnreadableSlots();
-		observe(damaged);
-		if (damaged.length > 0) return false;
-		await refreshMutationBlocks();
-		return true;
-	} catch (error) {
-		observe([]);
-		throw error;
-	}
+	await inventoryCellularAuthority("verify");
+	await settlePendingMutationRemovals();
+	const damaged = await listUnreadableSlots();
+	if (damaged.length === 0) await refreshMutationBlocks();
+	observe(damaged);
+	return damaged.length === 0;
 }
 
 export interface MutationRecoveryOptions {

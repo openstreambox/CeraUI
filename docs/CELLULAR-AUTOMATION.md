@@ -67,9 +67,13 @@ any modem state, before any carrier-dependent step.
   done: no inhibition and no AT command.
 - At a faster link, and only while no stream runs, CeraUI inhibits that one modem,
   reads the stored value and saves it before sending a setting change. It writes
-  `"20"` if needed and reads it back. A failed setting request uses one attempt.
-  After a successful readback the box counts an attempt when it reserves the reset.
-  A stream start that wins before that reservation leaves the reset budget available.
+  `"20"` if needed and reads it back. The box records one attempt before sending
+  the setting request. If the box restarts before saving the outcome, that
+  attempt stays counted because the request may have reached the modem. A
+  failed request also stays counted. On success, the reset uses the same attempt.
+  If the setting was already correct, the box counts the reset when it reserves
+  it. If Start wins before reset admission, the box logs the deferral and saves
+  the previous count.
 - You can start a stream while the box waits for the modem or checks its USB setting. Once the box is ready to send the reset, it holds new starts until it releases USB control.
   While the unit is absent, the box waits out its recorded 180-second return
   window before sending another modem a USB speed reset. This also applies after restart.
@@ -165,9 +169,13 @@ antes de cualquier paso que dependa del operador.
   hace nada: ni inhibición ni comandos AT.
 - Con un enlace más rápido, y solo si no hay ninguna transmisión, CeraUI inhibe
   ese módem, lee el valor guardado y lo registra antes de enviar un cambio.
-  Escribe `"20"` si hace falta y vuelve a leerlo. Una solicitud de cambio fallida
-  consume un intento. Si la lectura confirma el valor, el equipo cuenta un intento
-  al reservar el reinicio. Si antes se inicia una transmisión, conserva los intentos disponibles.
+  Escribe `"20"` si hace falta y vuelve a leerlo. El equipo registra un intento
+  antes de enviar el cambio. Si el equipo se reinicia antes de guardar el
+  resultado, conserva ese intento porque la solicitud pudo haber llegado al
+  módem. Una solicitud fallida también consume el intento. Si el cambio tiene
+  éxito, el reinicio del módem usa ese mismo intento. Si el ajuste ya era
+  correcto, el equipo cuenta el intento al reservar el reinicio. Si antes se inicia una transmisión, el equipo registra
+  el aplazamiento y guarda el recuento anterior.
 - Puedes iniciar una transmisión mientras el equipo espera al módem o comprueba su ajuste USB. Cuando el equipo está listo para enviar el reinicio, aplaza los inicios hasta liberar el control USB. Si el módem
   está ausente, el equipo espera hasta el final del plazo registrado de 180
   segundos antes de enviar a otro módem un reinicio por el cambio de velocidad
@@ -209,9 +217,10 @@ to set that record aside. Clearing gives up restoration from its saved settings.
 The box keeps the archived bytes and checks the remaining records before
 admitting Start. During normal operation this check verifies the journal
 without replaying modem commands. While the warning is open, the box keeps
-checking at intervals of up to 60 seconds. It withdraws the warning when the
-file changes or reads successfully. A replacement that is still unreadable gets
-its own retries. A repaired record needs no confirmation.
+checking at intervals of up to 60 seconds. If a check is incomplete, the box
+keeps the warning and the retries already recorded. A complete check withdraws
+the warning when the file changes or reads successfully. An unreadable
+replacement gets its own retries. A repaired record needs no confirmation.
 If the journal directory itself cannot be read or synced, recovery waits for
 working storage.
 
@@ -243,9 +252,10 @@ sigue impidiendo iniciar una nueva transmisión.
 Si al arrancar el equipo no puede leer un registro de recuperación, vuelve a
 intentarlo después de 1, 2 y 4 segundos. Si sigue sin poder leerlo, muestra
 un aviso y mantiene en pausa el inicio de nuevas transmisiones. El equipo
-sigue comprobando los registros a intervalos de hasta 60 segundos. Retira el
-aviso si el archivo cambia o si consigue leerlo. Un archivo de reemplazo
-recibe sus propios reintentos. Si se repara el registro, el equipo continúa
+sigue comprobando los registros a intervalos de hasta 60 segundos. Si una
+comprobación queda incompleta, conserva el aviso y los reintentos registrados.
+Una comprobación completa retira el aviso si el archivo cambia o se puede leer.
+Un archivo de reemplazo recibe sus propios reintentos. Si se repara el registro, el equipo continúa
 sin pedir confirmación. Para apartar un registro ilegible, selecciona
 **Revisar el registro** y confirma con **Retirar el registro de recuperación**.
 El equipo archiva el contenido y revisa los demás registros antes de permitir

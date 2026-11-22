@@ -348,6 +348,59 @@ test("two lost setter replies exhaust the budget and preserve the original USB s
 	});
 });
 
+test("a restart after setter dispatch retains the attempt even when the outcome never reached disk", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "usbspeed-interrupted-"));
+	const previous = process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = dir;
+	const b = box({ setterReadback: "312" });
+	const countsAtDispatch: number[] = [];
+	try {
+		for (let boot = 0; boot < 3; boot++) {
+			resetUsbSpeedPreparationForTest();
+			let interrupted = false;
+			await runUsbSpeedPreparation({
+				...b.deps,
+				read: defaultUsbSpeedDeps.read,
+				write: async (entry) => {
+					// Nothing after this process cut can reach the next boot.
+					if (interrupted) throw new Error("process interrupted");
+					await defaultUsbSpeedDeps.write(entry);
+				},
+				acquire: async (target) => {
+					const control = await b.deps.acquire(target);
+					return {
+						...control,
+						setUsbSpeed: async (value) => {
+							const result = await control.setUsbSpeed(value);
+							interrupted = true;
+							const saved = await defaultUsbSpeedDeps.read(b.key(0));
+							if (saved?.kind !== "usbspeed")
+								throw new Error("missing original setting");
+							countsAtDispatch.push(saved.attempts);
+							return result;
+						},
+					};
+				},
+			});
+			b.advance(USB_SPEED_PAUSE_MS);
+		}
+		expect(b.calls.filter((line) => line === "set 0 20")).toHaveLength(2);
+		expect(countsAtDispatch).toEqual([1, 2]);
+		expect(b.calls).not.toContain("reset 0");
+		expect(await defaultUsbSpeedDeps.read(b.key(0))).toMatchObject({
+			original: "312",
+			wrote: true,
+			attempts: 2,
+			phase: "blocked",
+		});
+	} finally {
+		if (previous === undefined)
+			delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+		else process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = previous;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("a stream that starts during the takeover stops before any command", async () => {
 	const b = box({ streamAfterAcquire: true });
 	await runUsbSpeedPreparation(b.deps);
@@ -588,11 +641,13 @@ for (const cut of ["attempted write", "setter readback"] as const) {
 	test(`two Starts winning at the ${cut} leave the USB reset budget available`, async () => {
 		const b = box();
 		const counts = [];
+		const messages: string[] = [];
 		for (let win = 0; win < 2; win++) {
 			const entered = Promise.withResolvers<void>();
 			const resume = Promise.withResolvers<void>();
 			const run = runUsbSpeedPreparation({
 				...b.deps,
+				log: (message) => messages.push(message),
 				write: async (record) => {
 					await b.deps.write(record);
 					if (cut === "attempted write" && record.phase === "attempted") {
@@ -636,6 +691,11 @@ for (const cut of ["attempted write", "setter readback"] as const) {
 		}
 		expect(b.calls).not.toContain("reset 0");
 		expect(counts).toEqual([0, 0]);
+		expect(
+			messages.filter(
+				(line) => line === "wwan0 usbspeed deferred: stream started",
+			),
+		).toHaveLength(2);
 		expect(await runUsbSpeedPreparation(b.deps)).toEqual([0]);
 		expect(b.records.get(b.key(0))).toMatchObject({
 			attempts: 1,
@@ -643,6 +703,34 @@ for (const cut of ["attempted write", "setter readback"] as const) {
 		});
 	});
 }
+
+test("a reset-only deferral keeps an earlier attempt through restart", async () => {
+	const b = box({ stored: "20" });
+	const key = b.key(0);
+	b.records.set(key, record({ key, phase: "failed", attempts: 1, started: 0 }));
+	await runUsbSpeedPreparation({
+		...b.deps,
+		write: async (entry) => {
+			await b.deps.write(entry);
+			b.setStreaming(true);
+		},
+	});
+	expect(b.records.get(key)).toMatchObject({
+		original: "312",
+		attempts: 1,
+		reason: "stream started",
+	});
+	expect(b.calls).not.toContain("reset 0");
+	b.setStreaming(false);
+	resetUsbSpeedPreparationForTest();
+	b.advance(USB_SPEED_PAUSE_MS);
+	expect(await runUsbSpeedPreparation(b.deps)).toEqual([0]);
+	expect(b.calls).not.toContain("set 0 20");
+	expect(b.records.get(key)).toMatchObject({
+		attempts: 2,
+		phase: "awaiting-usb",
+	});
+});
 
 test("Start is refused through USB reset and pending control release", async () => {
 	const b = box();
