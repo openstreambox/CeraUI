@@ -54,6 +54,7 @@ import PhoneBoxHealth from './PhoneBoxHealth.svelte';
 import DeviceStatsSection from './settings/DeviceStatsSection.svelte';
 import PortalSetting from './settings/PortalSetting.svelte';
 import RemoteControlStatus from './settings/RemoteControlStatus.svelte';
+import ThermalNotice from './settings/ThermalNotice.svelte';
 
 // Every settings surface below opens as a dialog, so none of them is on the
 // path to first paint — each is its own chunk, fetched on first open.
@@ -338,8 +339,10 @@ let now = $state(Date.now());
 
 		<!-- Grouped settings index -->
 		<div class="space-y-7">
-			<!-- Live device telemetry first: status at a glance, no dialog to open. -->
-			<DeviceStatsSection />
+			<!-- The one temperature line, only while the box is warm or hot. The full
+			     device telemetry sits below the settings groups, still always
+			     visible, so a phone opens on what a streamer changes. -->
+			<ThermalNotice onOpen={() => (deviceHealthOpen = true)} />
 
 			<!-- Production-readiness signal: low free space on /data points to Logs. -->
 			<LowDiskBanner onViewLogs={() => openLogs({ tab: 'storage' })} />
@@ -454,6 +457,9 @@ let now = $state(Date.now());
 					</div>
 				</section>
 			{/each}
+
+			<!-- Live device telemetry: always visible, no dialog to open. -->
+			<DeviceStatsSection />
 		</div>
 	</div>
 </div>
