@@ -52,6 +52,7 @@ onMount(() => { if (getConfig()?.captive_portal_enabled !== true) return; void a
  <h3>{m['network.portal.title']()}</h3>
  <p>{m['network.portal.intro']()}</p>
  {#if phase === 'signing_in'}
+  <p>{m['network.portal.privacyHint']()}</p>
   <p>{m['network.portal.waiting']()}</p>
   <a href="http://www.gstatic.com/generate_204" target="_blank" rel="noopener noreferrer">{m['network.portal.again']()}</a>
   <button type="button" disabled={busy} onclick={() => act('finish')}>{m['network.portal.finish']()}</button>
