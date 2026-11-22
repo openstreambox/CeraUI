@@ -64,5 +64,11 @@ export const notificationsMessageSchema = z.object({
 	replay: z.boolean().optional(),
 	show: z.array(notificationSchema).optional(),
 	remove: z.array(notificationRemoveSchema).optional(),
+	// Remote relay only. `full: true` means `show` is the device's complete
+	// persistent list, so a client replaces its persistent notices with it. A
+	// backend restart changes `epoch` (a per-process id); names and revisions are
+	// scoped to it. Local frames omit both and keep add/update/remove semantics.
+	epoch: z.string().optional(),
+	full: z.boolean().optional(),
 });
 export type NotificationsMessage = z.infer<typeof notificationsMessageSchema>;
