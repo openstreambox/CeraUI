@@ -567,9 +567,6 @@ export async function scanUsbNetMarkers(
 			.filter(([, parents]) => parents.size > 1)
 			.map(([key]) => key),
 	);
-	for (const descriptor of physical.values()) {
-		rejectSharedSerial(descriptor, duplicateSerialKeys);
-	}
 	return { routerCellular, modemNet, physical, duplicateSerialKeys };
 }
 
