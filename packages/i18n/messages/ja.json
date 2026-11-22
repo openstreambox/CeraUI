@@ -2145,6 +2145,7 @@
 	"settings.dialogs.addressLinkLocal": "自動のリンクローカルアドレスです。DHCP がなくてもローカル接続用に保持されます。",
 	"settings.dialogs.addressNone": "アドレス未割り当て",
 	"settings.dialogs.blockedStreaming": "再起動する前にストリーミングを停止してください。",
+	"settings.dialogs.blockedStreamingPower": "ストリーミング中です。再起動または電源オフの前にストリーミングを停止してください。",
 	"settings.dialogs.blockedUpdating": "更新中です。再起動する前にお待ちください。",
 	"settings.dialogs.confirmPassword": "パスワードを確認",
 	"settings.dialogs.enableInterface": "ボンディングに使用",
