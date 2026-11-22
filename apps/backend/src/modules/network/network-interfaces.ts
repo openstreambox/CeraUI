@@ -1254,11 +1254,12 @@ export function processIfconfigOutput(
 				fresh && evidence?.result.kind === "bus"
 					? evidence.result.bus
 					: undefined;
-			const possiblyUsb =
+			const knownOrObservedUsb =
 				previousIdentity?.possiblyUsb === true ||
 				getUsbPhysicalDescriptor(name) !== undefined ||
-				observedBus === "usb" ||
-				(fresh && evidence?.result.kind === "unreadable");
+				observedBus === "usb";
+			const possiblyUsb =
+				knownOrObservedUsb || (fresh && evidence?.result.kind === "unreadable");
 			const differentIndex =
 				ifindex !== undefined &&
 				previousIndex !== undefined &&
@@ -1268,7 +1269,7 @@ export function processIfconfigOutput(
 			const ambiguousReturn =
 				ifindices !== undefined &&
 				(previousIndex === undefined || ifindex === undefined) &&
-				possiblyUsb &&
+				knownOrObservedUsb &&
 				previousIdentity?.present === false &&
 				!isUsbReplacementPending(name);
 			const replaced = differentIndex || ambiguousReturn;
