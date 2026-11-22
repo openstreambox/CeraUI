@@ -23,6 +23,12 @@ export interface SocketData {
 	/** The TCP upgrade came from a native client with Wi-Fi import enabled. */
 	nativeTcpClient?: boolean;
 	/**
+	 * The TCP upgrade came from a native client with the companion channel
+	 * enabled: no Origin, no forwarding headers, no front door on this image.
+	 * The channel still requires a loopback peer (modules/companion/ingress.ts).
+	 */
+	companionLoopbackClient?: boolean;
+	/**
 	 * Set only on sockets accepted by the private local ingress listener
 	 * (rpc/local-ingress.ts): the browser's on-link address as seen by the
 	 * image's front door. Never derived from a TCP request's headers.

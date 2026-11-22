@@ -92,17 +92,21 @@ export function refreshCompanionStationProfiles(): Promise<void> {
 	});
 }
 
+/** Save one network on this box through NetworkManager. */
+export async function saveCompanionNetworkOnBox(
+	network: CompanionWifiNetwork,
+): Promise<CompanionSaveResult> {
+	if (shouldUseMocks()) throw Error("NetworkManager unavailable in mock mode");
+	const { saveCompanionWifiProfile, stationProfileWithSsid } = await import(
+		"../../modules/wifi/companion-wifi-profile.ts"
+	);
+	return saveCompanionNetwork(network, {
+		stationProfileWithSsid,
+		addProfile: saveCompanionWifiProfile,
+		refresh: refreshCompanionStationProfiles,
+	});
+}
+
 export const companionWifiProcedure = createCompanionWifiProcedure({
-	save: async (network) => {
-		if (shouldUseMocks())
-			throw Error("NetworkManager unavailable in mock mode");
-		const { saveCompanionWifiProfile, stationProfileWithSsid } = await import(
-			"../../modules/wifi/companion-wifi-profile.ts"
-		);
-		return saveCompanionNetwork(network, {
-			stationProfileWithSsid,
-			addProfile: saveCompanionWifiProfile,
-			refresh: refreshCompanionStationProfiles,
-		});
-	},
+	save: saveCompanionNetworkOnBox,
 });

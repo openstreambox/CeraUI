@@ -187,6 +187,16 @@ export function upgradeTcpRequest(
 		data.nativeTcpClient = true;
 	}
 	if (
+		process.env.CERAUI_EXPERIMENTAL_COMPANION_CHANNEL === "1" &&
+		!req.headers.has("origin") &&
+		!["forwarded", "x-forwarded-for", "x-real-ip", "via"].some((name) =>
+			req.headers.has(name),
+		) &&
+		!localIngressPresent()
+	) {
+		data.companionLoopbackClient = true;
+	}
+	if (
 		process.env.NODE_ENV !== "production" &&
 		runtimeAllowsDevelopment() &&
 		permitsScenarioDriver(req, scenarioDriverSecret)
