@@ -24,6 +24,21 @@ export const setPasswordInputSchema = z.object({
 });
 export type SetPasswordInput = z.infer<typeof setPasswordInputSchema>;
 
+export const localClaimCodeSchema = z
+	.string()
+	.length(32)
+	.regex(/^[a-f0-9]+$/);
+export const localClaimInputSchema = z
+	.object({
+		code: localClaimCodeSchema,
+		ownerSecret: z
+			.string()
+			.length(64)
+			.regex(/^[a-f0-9]+$/),
+	})
+	.strict();
+export type LocalClaimInput = z.infer<typeof localClaimInputSchema>;
+
 // Logout output schema
 export const logoutOutputSchema = z.object({
 	success: z.boolean(),

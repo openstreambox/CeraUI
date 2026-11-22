@@ -60,6 +60,7 @@ export function setConfigFilePath(filePath: string): void {
 }
 
 let config: RuntimeConfig = {};
+let localClaimDigest: string | undefined;
 setSrtPassphraseRedactionSource(() => [config.srt_passphrase]);
 setStreamIdRedactionSource(() => [
 	config.srt_streamid,
@@ -86,7 +87,13 @@ export async function loadConfig() {
 		{ parsed: raw },
 	);
 	config = coerceLegacySource(result.data);
-	authorityFailure = undefined;
+	// A malformed existing credential must not be interpreted as first setup.
+	// A malformed digest was already dropped by the per-field salvage above, so
+	// it withholds claim setup without touching any other setting.
+	localClaimDigest = Object.hasOwn(raw as object, "password_hash")
+		? undefined
+		: config.local_claim_digest;
+	delete config.local_claim_digest;
 
 	// Apply mock pairing AFTER file load so it overrides any absent/undefined remote_key in config.json
 	// shouldUseMocks() is false on real devices.
@@ -109,19 +116,61 @@ export async function loadConfig() {
 	// Clear password hashes from in-memory config for security
 	config.password_hash = undefined;
 	config.ssh_pass_hash = undefined;
+	authorityFailure = undefined;
 }
 
-export function saveConfig() {
+function writeConfig(
+	passwordHash: string | undefined,
+	claimDigest: string | undefined,
+) {
 	if (authorityFailure) throw authorityFailure;
 	const dataToSave: RuntimeConfig = {
 		...config,
-		password_hash: getPasswordHash(),
+		password_hash: passwordHash,
+		// The digest is a first-owner verifier only. Any owner hash spends it.
+		local_claim_digest: passwordHash ? undefined : claimDigest,
 		ssh_pass_hash: getSshPasswordHash(),
 	};
 	// Must stay sync: sync callers (setBitrate/setAutostart) depend on the write
 	// finishing before return. Atomic (temp+fsync+rename) so a crash mid-write
 	// can't corrupt config.json — add-on state lives here too (E3).
 	writeFileAtomicSync(configFile, JSON.stringify(dataToSave), { mode: 0o600 });
+}
+
+export function saveConfig() {
+	const ownerHash = getPasswordHash();
+	if (ownerHash) localClaimDigest = undefined;
+	writeConfig(ownerHash, localClaimDigest);
+}
+
+export function getLocalClaimDigest(): string | undefined {
+	return isRuntimeConfigAvailable() ? localClaimDigest : undefined;
+}
+
+/** Publish neither half of the claim until the single durable write succeeds. */
+export function commitLocalClaim(ownerHash: string): void {
+	try {
+		writeConfig(ownerHash, undefined);
+	} catch (error) {
+		// A failed directory fsync can follow a completed rename. Freeze writes
+		// until a fresh config load can establish which state is on disk.
+		authorityFailure = new RuntimeConfigAuthorityError(error);
+		throw authorityFailure;
+	}
+	localClaimDigest = undefined;
+	setPasswordHash(ownerHash);
+}
+
+/**
+ * After a failed claim write, read the file back to learn whether the owner
+ * hash landed (a fault after the rename still published it). Throws while the
+ * file stays unreadable; the caller then hands it to the recovery owner.
+ */
+export async function settleLocalClaimWrite(
+	ownerHash: string,
+): Promise<boolean> {
+	await loadConfig();
+	return getPasswordHash() === ownerHash;
 }
 
 /** False until a strict load has succeeded; the boot owner retries until it does. */

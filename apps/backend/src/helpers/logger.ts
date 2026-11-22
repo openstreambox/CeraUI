@@ -29,7 +29,7 @@ export const REDACTED = "[REDACTED]";
  * call sites are covered by one rule.
  */
 const SENSITIVE_KEY_RE =
-	/pin|password|passphrase|token|secret|paseto|bcrp|auth|activation.?code|confirmation.?code|matching.?id/i;
+	/pin|password|passphrase|token|secret|paseto|bcrp|auth|activation.?code|confirmation.?code|claim.?(?:code|digest)|matching.?id/i;
 
 /**
  * Value-shaped secrets that can appear under an innocent-looking key (or inside

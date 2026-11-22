@@ -205,6 +205,11 @@ export const runtimeConfigSchema = z.object({
 	// Authentication
 	password: z.string().optional(),
 	password_hash: z.string().optional(),
+	local_claim_digest: z
+		.string()
+		.length(64)
+		.regex(/^[a-f0-9]+$/)
+		.optional(),
 	ssh_pass: z.string().optional(),
 	ssh_pass_hash: z.string().optional(),
 	ssh_persistent: z.boolean().optional(),

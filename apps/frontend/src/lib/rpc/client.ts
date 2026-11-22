@@ -45,6 +45,7 @@ import type {
 	KioskStatus,
 	KioskToggleOutput,
 	ListDevicesOutput,
+	LocalClaimInput,
 	LogAroundInput,
 	LogAroundOutput,
 	LogBootInfo,
@@ -717,6 +718,7 @@ export interface TypedRPC {
 	auth: {
 		login: (input: LoginInput) => Promise<LoginOutput>;
 		setPassword: (input: SetPasswordInput) => Promise<SuccessResponse>;
+		claimLocalOwner: (input: LocalClaimInput) => Promise<SuccessResponse>;
 		logout: () => Promise<LogoutOutput>;
 		revokeToken: (input: RevokeTokenInput) => Promise<RevokeTokenOutput>;
 	};

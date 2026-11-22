@@ -618,6 +618,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	],
 	["config: background load failed"],
 	["config: config.json readable again; boot continues"],
+	["config: config.json state unknown after a failed write"],
 	["config: config.json unreadable; serving without it"],
 	["config: damaged config.json archived; first-run settings"],
 	["config: damaged config.json could not be archived"],

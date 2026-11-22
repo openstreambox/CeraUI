@@ -193,7 +193,7 @@ function seedSetupJson(stateDir: string): void {
 	fs.writeFileSync(path.join(stateDir, "setup.json"), JSON.stringify(setup));
 }
 
-function seedStateDir(stateDir: string): void {
+function seedStateDir(stateDir: string, setupAuth?: StartWorkerBackendOptions["setupAuth"]): void {
 	for (const file of STATE_FILES) {
 		const src = path.join(BACKEND_DIR, file);
 		if (!fs.existsSync(src)) {
@@ -212,7 +212,13 @@ function seedStateDir(stateDir: string): void {
 	// mock modem state machine, so worker fixtures must opt out of the production
 	// D-Bus default rather than inheriting an unrelated read-only view.
 	cfg.modem_backend = "mmcli";
-	cfg.password_hash = passwordHash();
+	if (setupAuth === undefined) {
+		cfg.password_hash = passwordHash();
+	} else {
+		delete cfg.password_hash;
+		if (setupAuth !== "password") cfg.local_claim_digest = setupAuth.claimDigest;
+		fs.writeFileSync(path.join(stateDir, "auth_tokens.json"), "{}");
+	}
 	cfg.kiosk_enabled = false;
 	cfg.kiosk_last_state = "disabled";
 	cfg.kiosk_display = "lcd";
@@ -242,6 +248,7 @@ export interface StartWorkerBackendOptions {
 	/** MOCK_SCENARIO to boot this worker's backend with (default multi-modem-wifi). */
 	scenario?: string;
 	port?: number;
+	setupAuth?: "password" | { claimDigest: string };
 }
 
 export async function startWorkerBackend(
@@ -277,7 +284,7 @@ async function spawnWorkerBackend(
 	const proxySecret = randomBytes(32).toString("hex");
 	fs.mkdirSync(STATE_ROOT, { recursive: true });
 	const stateDir = fs.mkdtempSync(path.join(STATE_ROOT, `${port}-`));
-	seedStateDir(stateDir);
+	seedStateDir(stateDir, options.setupAuth);
 	const streamingMarkerPath = path.join(stateDir, "streaming");
 
 	const logPath = path.join(stateDir, "backend.log");
@@ -293,6 +300,8 @@ async function spawnWorkerBackend(
 		// Events from an earlier run or another worker must not reach this backend's Events tab.
 		CERALIVE_EVENTS_DIR: path.join(stateDir, "events"),
 	};
+	if (options.setupAuth && options.setupAuth !== "password") childEnv.CERALIVE_LOCAL_CLAIM = "1";
+	else delete childEnv.CERALIVE_LOCAL_CLAIM;
 	if (process.env.CI === "true") {
 		childEnv.E2E_WORKER_PROXY_SECRET = proxySecret;
 	} else {

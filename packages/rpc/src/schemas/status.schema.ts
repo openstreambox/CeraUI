@@ -69,6 +69,7 @@ export type ResolvedAsrcReason = z.infer<typeof resolvedAsrcReasonSchema>;
 // Full status message schema
 export const statusMessageSchema = z.object({
 	set_password: z.boolean().optional(),
+	local_claim: z.enum(['ready', 'unavailable']).optional(),
 	is_streaming: z.boolean(),
 	audio_mix_active: z.boolean().optional(),
 	stream_lifecycle: lifecycleStateSchema.optional(),
@@ -514,6 +515,7 @@ export const statusResponseSchema = z.object({
 	resolved_asrc_candidates: z.array(z.string()).nullable().optional(),
 	pending_audio_follow_asrc: z.string().nullable().optional(),
 	set_password: z.boolean().optional(),
+	local_claim: z.enum(['ready', 'unavailable']).optional(),
 	remote: remoteStatusSchema.optional(),
 	linkTelemetry: linkTelemetryMessageSchema.nullable().optional(),
 	// Published as an EXPLICIT value (null when there is no bond to describe) on
