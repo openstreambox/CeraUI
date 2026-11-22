@@ -3,7 +3,9 @@
  * Wraps existing auth logic from modules/ui/auth.ts
  */
 
+import { timingSafeEqual } from "node:crypto";
 import {
+	localClaimInputSchema,
 	loginInputSchema,
 	loginOutputSchema,
 	logoutOutputSchema,
@@ -18,7 +20,11 @@ import { randomBase64 } from "../../helpers/crypto.ts";
 import { logger } from "../../helpers/logger.ts";
 import { isDevelopment } from "../../mocks/mock-config.ts";
 import { closeSocketSession, getAuthenticatedClients } from "../context.ts";
-import { getPasswordHash, setPasswordHash } from "../state/password.ts";
+import {
+	getPasswordHash,
+	localClaimEnabled,
+	setPasswordHash,
+} from "../state/password.ts";
 import { PersistentTokenStore } from "../state/persistent-token-store.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
 
@@ -238,15 +244,16 @@ export const setPasswordProcedure = baseProcedure
 	.output(successResponseSchema)
 	.handler(async ({ input, context }) => {
 		await tokenStore.settle();
+		const { getConfig, saveConfig } = await import("../../modules/config.ts");
 		const isAuthed = context.isAuthenticated();
 		const currentHash = getPasswordHash();
+		if (localClaimEnabled() && !currentHash) return { success: false };
 
 		// Allow setting password if authenticated or if no password is set yet
 		if (isAuthed || !currentHash) {
 			// Lazy import to avoid circular dependency. Read config FIRST: while it
 			// is unavailable this throws before the in-memory hash changes, so an
 			// unknown stored password can never be replaced by a first-run claim.
-			const { getConfig, saveConfig } = await import("../../modules/config.ts");
 			const config = getConfig();
 			const newHash = Bun.password.hashSync(input.password, {
 				algorithm: "bcrypt",
@@ -271,6 +278,41 @@ export const setPasswordProcedure = baseProcedure
 		}
 
 		return { success: false };
+	});
+
+export const claimLocalOwnerProcedure = baseProcedure
+	.input(localClaimInputSchema)
+	.output(successResponseSchema)
+	.handler(async ({ input, context }) => {
+		if (!localClaimEnabled() || context.ws.data.senderId !== undefined)
+			return { success: false };
+
+		await tokenStore.settle();
+		const { commitLocalClaim, getLocalClaimDigest } = await import(
+			"../../modules/config.ts"
+		);
+		const digest = getLocalClaimDigest();
+		if (getPasswordHash() || !digest) return { success: false };
+
+		const submitted = new Bun.CryptoHasher("sha256")
+			.update(input.code)
+			.digest();
+		if (!timingSafeEqual(submitted, Buffer.from(digest, "hex"))) {
+			return { success: false };
+		}
+
+		// No await from the eligibility check through the atomic commit. The
+		// next request sees the owner hash and a spent code.
+		const ownerHash = Bun.password.hashSync(input.ownerSecret, {
+			algorithm: "bcrypt",
+			cost: BCRYPT_ROUNDS,
+		});
+		// A pre-claim token store can survive a partial reset. Clear it before
+		// publishing an owner hash that would make those tokens eligible again.
+		invalidateAllTokens(context.ws);
+		if (!tokenStore.writable) return { success: false };
+		commitLocalClaim(ownerHash);
+		return { success: true };
 	});
 
 /**

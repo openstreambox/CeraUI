@@ -5,6 +5,7 @@ import {
 import { runtimeConfigSchema } from "./config-schemas.ts";
 
 const safetySchema = runtimeConfigSchema.pick({
+	local_claim_digest: true,
 	autostart: true,
 	bond_opt_out: true,
 	eth_roles: true,

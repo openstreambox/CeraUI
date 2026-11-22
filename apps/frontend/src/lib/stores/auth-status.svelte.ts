@@ -1,6 +1,7 @@
 // Auth status store using Svelte 5 runes with manual subscriber pattern
 // (Cannot use $effect in subscribe - it only works during component initialization)
 import type {
+	LocalClaimInput,
 	LoginInput,
 	LoginOutput,
 	SetPasswordInput,
@@ -212,6 +213,36 @@ export function authenticate(
 
 export function authenticateWithToken(token: string): Promise<AuthAttempt> {
 	return authenticateInput({ token, persistent_token: true });
+}
+
+export async function claimLocalOwner(
+	input: LocalClaimInput,
+): Promise<boolean> {
+	const signal = interaction.signal;
+	const clear = () => {
+		input.code = "";
+		input.ownerSecret = "";
+	};
+	signal.addEventListener("abort", clear, { once: true });
+	try {
+		if (!(await whenSocketReady(signal)) || signal.aborted) return false;
+		let created: boolean | undefined;
+		try {
+			const reply = rpc.auth.claimLocalOwner(input);
+			input.code = "";
+			created = (await reply).success;
+		} catch {
+			// A dropped reply can follow a successful commit. The same generated
+			// secret can prove ownership without resubmitting the setup code.
+		}
+		if (created === false || signal.aborted) return false;
+		const login = authenticate(input.ownerSecret, true, signal);
+		clear();
+		return (await login).kind === "ok";
+	} finally {
+		clear();
+		signal.removeEventListener("abort", clear);
+	}
 }
 
 export function createPassword(

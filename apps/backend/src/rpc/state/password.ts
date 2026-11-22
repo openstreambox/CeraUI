@@ -17,3 +17,8 @@ export function setPasswordHash(newHash: string | undefined) {
 export function getPasswordHash(): string | undefined {
 	return passwordHash;
 }
+
+/** Explicit operator opt-in. A missing claim digest never enables legacy setup. */
+export function localClaimEnabled(): boolean {
+	return process.env.CERALIVE_LOCAL_CLAIM === "1";
+}

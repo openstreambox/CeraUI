@@ -21,6 +21,7 @@ import {
 import { getSessionExpired } from '$lib/stores/connection-ux.svelte';
 import { getConnectionState } from '$lib/stores/offline-state.svelte';
 import { cn } from '$lib/utils.js';
+import LocalClaim from './LocalClaim.svelte';
 
 const MIN_PASSWORD_LENGTH = 8;
 let { offline = false }: { offline?: boolean } = $props();
@@ -32,6 +33,7 @@ let showPassword: boolean = $state(false);
 
 let isLoading = $state(false);
 let setPassword: boolean = $state(false);
+const localClaim = $derived(getStatus()?.local_claim);
 let passwordInput = $state<HTMLInputElement | null>(null);
 let confirmInput = $state<HTMLInputElement | null>(null);
 let composing = false;
@@ -243,14 +245,16 @@ async function onSubmit(event: SubmitEvent) {
 			<div class="space-y-1">
 				<p class="text-foreground text-xl font-semibold tracking-tight">{deviceName}</p>
 				<p class="text-muted-foreground text-sm text-balance">
-					{setPassword
+					{localClaim
+						? m["auth.claimDescription"]()
+						: setPassword
 						? m["auth.help.createPasswordDescription"]()
 						: m["auth.usePassword"]()}
 				</p>
 			</div>
 		</div>
 
-		{#if sessionExpired && !setPassword}
+		{#if sessionExpired && !setPassword && !localClaim}
 			<div
 				class="bg-status-warning/10 border-status-warning/30 text-foreground mt-6 flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm"
 				role="status"
@@ -260,6 +264,9 @@ async function onSubmit(event: SubmitEvent) {
 			</div>
 		{/if}
 
+		{#if localClaim}
+			<LocalClaim mode={localClaim} {offline} />
+		{:else}
 		<form class="mt-8 space-y-5" onsubmit={onSubmit}>
 			<!-- Password field -->
 			<div class="space-y-2">
@@ -391,6 +398,7 @@ async function onSubmit(event: SubmitEvent) {
 				{/if}
 			</Button>
 		</form>
+		{/if}
 
 		<!-- Footer -->
 		<p class="text-muted-foreground mt-6 text-center text-xs">

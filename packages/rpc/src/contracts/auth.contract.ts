@@ -4,6 +4,7 @@
 import { oc } from '@orpc/contract';
 
 import {
+	localClaimInputSchema,
 	loginInputSchema,
 	loginOutputSchema,
 	logoutOutputSchema,
@@ -23,6 +24,7 @@ export const authContract = oc.router({
 	 * Set or change password
 	 */
 	setPassword: oc.input(setPasswordInputSchema).output(successResponseSchema),
+	claimLocalOwner: oc.input(localClaimInputSchema).output(successResponseSchema),
 
 	/**
 	 * Logout and invalidate token

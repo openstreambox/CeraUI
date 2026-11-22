@@ -7,7 +7,10 @@ import { call, ORPCError } from "@orpc/server";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 
 import { logger, logRedact } from "../helpers/logger.ts";
-import { isRuntimeConfigAvailable } from "../modules/config.ts";
+import {
+	getLocalClaimDigest,
+	isRuntimeConfigAvailable,
+} from "../modules/config.ts";
 import { stopFollow } from "../modules/device-logs/follow.ts";
 import { SHARING_DIAG_EVENT } from "../modules/network/sharing-diag/status.ts";
 import {
@@ -39,7 +42,7 @@ import {
 } from "./procedures/status.procedure.ts";
 import { appRouter } from "./router.ts";
 import { instrumentRpcCall } from "./rpc-logging.ts";
-import { getPasswordHash } from "./state/password.ts";
+import { getPasswordHash, localClaimEnabled } from "./state/password.ts";
 import type { AppWebSocket, ServerSocketData, SocketData } from "./types.ts";
 
 /** Cap on the redacted frame preview so a stray giant payload never bloats a log. */
@@ -255,7 +258,11 @@ export function createWebSocketHandler(): WebSocketHandler<SocketData> {
 			// Prompt for first-run password setup only when config was READ and holds
 			// none. While config.json is unreadable the stored password is unknown,
 			// not absent, so nobody may claim the device by setting one.
-			if (!getPasswordHash() && isRuntimeConfigAvailable()) {
+			if (!getPasswordHash() && localClaimEnabled()) {
+				sendToClient(ws, "status", {
+					local_claim: getLocalClaimDigest() ? "ready" : "unavailable",
+				});
+			} else if (!getPasswordHash() && isRuntimeConfigAvailable()) {
 				sendToClient(ws, "status", { set_password: true });
 			}
 
