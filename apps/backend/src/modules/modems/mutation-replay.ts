@@ -190,11 +190,12 @@ export async function runMutationReplay(
 ): Promise<ReplaySummary> {
 	const damaged = new Set<string>();
 	const tally = { rolledBack: 0, pruned: 0, blocked: 0, quarantined: 0 };
-	let unreadable = 0;
+	let otherFailures = 0;
+	let withheldPublication = 0;
 	try {
 		await inventoryCellularAuthority("migrate");
 	} catch {
-		unreadable++;
+		otherFailures++;
 		logger.error("cellular authority migration incomplete; records preserved", {
 			module: "modems",
 		});
@@ -204,7 +205,6 @@ export async function runMutationReplay(
 		for (const name of await listUnreadableSlots()) damaged.add(name);
 		const hints = await scanMutationEntries((name) => damaged.add(name));
 		for (const name of damaged) {
-			unreadable += 1;
 			logger.error("modem mutation journal slot is unreadable; left in place", {
 				module: "modems",
 				slot: name,
@@ -221,7 +221,7 @@ export async function runMutationReplay(
 				await replayEntry(entry, tally, revision);
 			} catch (err) {
 				// Lost authority is an incomplete pass, never a verdict about the slot.
-				unreadable += 1;
+				otherFailures++;
 				logger.error("modem mutation replay failed for one device", {
 					module: "modems",
 					stableKey: hint.stableKey,
@@ -231,15 +231,20 @@ export async function runMutationReplay(
 			}
 		}
 		if (damaged.size === 0) await refreshMutationBlocks();
+		else withheldPublication = 1;
 	} catch (err) {
-		unreadable += 1;
+		otherFailures++;
 		logger.error("modem mutation replay did not complete", {
 			module: "modems",
 			err,
 		});
 	}
-	observe?.(unreadable === damaged.size ? [...damaged] : []);
-	const summary: ReplaySummary = { ...tally, unreadable };
+	observe?.(otherFailures === 0 ? [...damaged] : []);
+	// The summary counts each damaged file and the incomplete block publication.
+	const summary: ReplaySummary = {
+		...tally,
+		unreadable: damaged.size + otherFailures + withheldPublication,
+	};
 	logger.info("modem mutation replay finished", {
 		module: "modems",
 		...summary,

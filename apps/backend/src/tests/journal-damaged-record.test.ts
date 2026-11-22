@@ -210,3 +210,28 @@ test("a reboot invalidates confirmation and each clear archives only its offered
 		readdirSync(journal.root()).filter((n) => n.endsWith(".archived")),
 	).toHaveLength(2);
 });
+
+test("a named fault followed by a directory listing failure never offers a partial inventory for clearing", async () => {
+	writeFileSync(path("usb:a"), "{bad");
+	let reads = 0;
+	setMutationJournalDeps({
+		dir: journal.root(),
+		fs: {
+			...defaultMutationJournalFs,
+			listDir: async (dir) => {
+				if (++reads % 2 === 0) throw new Error("second census unavailable");
+				return defaultMutationJournalFs.listDir(dir);
+			},
+		},
+	});
+	const clock = new JournalRetryClock();
+	await initMutationRecovery({ sleep: clock.sleep });
+	for (let pass = 1; pass <= 4; pass++) {
+		await clock.at(pass);
+		clock.advance();
+	}
+	await clock.at(5);
+	expect(warning()).toBeUndefined();
+	expect(isRecoveryPending()).toBe(true);
+	expect(readFileSync(path("usb:a"), "utf8")).toBe("{bad");
+});
