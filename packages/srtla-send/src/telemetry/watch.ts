@@ -10,7 +10,8 @@ export interface TelemetryUpdate {
 	data: Telemetry | null;
 	/**
 	 * `true` when there is no live snapshot: either `data` is `null`, or its
-	 * `last_updated_ms` is older than {@link SENDER_TELEMETRY_STALE_MS}.
+	 * `last_updated_ms` is more than {@link SENDER_TELEMETRY_STALE_MS} away from
+	 * now, in the past or in the future.
 	 */
 	stale: boolean;
 }
@@ -48,9 +49,12 @@ export function watchTelemetry(
 		if (stopped) {
 			return;
 		}
+		// A stamp from the future is as untrustworthy as an old one (the clock was
+		// stepped back, or the file is bogus), so only a stamp inside the window
+		// either side of now counts as live.
 		const stale =
 			data === null ||
-			Date.now() - data.last_updated_ms > SENDER_TELEMETRY_STALE_MS;
+			Math.abs(Date.now() - data.last_updated_ms) > SENDER_TELEMETRY_STALE_MS;
 		cb({ data, stale });
 	};
 

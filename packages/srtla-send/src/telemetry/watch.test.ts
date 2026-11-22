@@ -97,6 +97,32 @@ describe("watchTelemetry", () => {
 		}
 	});
 
+	test("a snapshot stamped in the future is stale, not live forever", async () => {
+		const fixedNow = 1_800_000_000_000;
+		const nowSpy = spyOn(Date, "now").mockReturnValue(fixedNow);
+		try {
+			const insideWindow = await writeSnapshot(
+				snapshot(fixedNow + SENDER_TELEMETRY_STALE_MS),
+			);
+			const future = await writeSnapshot(
+				snapshot(fixedNow + SENDER_TELEMETRY_STALE_MS + 1),
+			);
+			const farFuture = await writeSnapshot(snapshot(Number.MAX_SAFE_INTEGER));
+
+			const [near, ahead, far] = await Promise.all([
+				firstUpdate(insideWindow),
+				firstUpdate(future),
+				firstUpdate(farFuture),
+			]);
+
+			expect(near.stale).toBe(false);
+			expect(ahead.stale).toBe(true);
+			expect(far.stale).toBe(true);
+		} finally {
+			nowSpy.mockRestore();
+		}
+	});
+
 	test("stop prevents queued interval reads from invoking the callback", async () => {
 		const path = await writeSnapshot(snapshot());
 		let calls = 0;

@@ -22,8 +22,9 @@ import { z } from "zod";
  */
 
 /**
- * Snapshot age (now − `last_updated_ms`) past which the snapshot is no longer
- * live. Fixed by ADR-001 and matched to the Rust producer's
+ * Distance between now and `last_updated_ms`, in either direction, past which
+ * the snapshot is no longer live: an age over this, or a stamp this far ahead of
+ * now (the clock was stepped back, or the file is wrong). Fixed by ADR-001 and matched to the Rust producer's
  * `SENDER_TELEMETRY_STALE_MS`. {@link watchTelemetry} surfaces this as a `stale`
  * flag; {@link readTelemetry} returns the parsed snapshot regardless of age so the
  * caller decides what to do with an old-but-valid document.

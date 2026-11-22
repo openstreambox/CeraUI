@@ -318,6 +318,26 @@ describe("get_stats and the stats-topic projection", () => {
 		client?.close();
 	});
 
+	test("lines that are valid JSON but not frames are skipped, not fatal", async () => {
+		// `null` used to throw inside the socket data handler and close the
+		// connection, failing the request that was waiting for its reply.
+		const { path } = await startServer(socketPath("notframes"), (frame) => [
+			"null",
+			"5",
+			'"text"',
+			"[]",
+			"true",
+			JSON.stringify({ jsonrpc: "2.0", result: statsResult(), id: frame.id }),
+		]);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 2000,
+		});
+		const stats = await client?.getStats();
+		expect(stats?.links).toHaveLength(2);
+		client?.close();
+	});
+
 	test("the projection applies the x8 to the rate and NOT to the byte count", () => {
 		const stats = {
 			mode: "enhanced",
