@@ -1,6 +1,9 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import { parseCompanionWifiInput } from "../src/modules/wifi/companion-wifi-input.ts";
+import {
+	companionConsentPrompt,
+	parseCompanionWifiInput,
+} from "../src/modules/wifi/companion-wifi-input.ts";
 
 class ImportError extends Error {}
 
@@ -60,9 +63,7 @@ async function main() {
 	const output = createWriteStream("/dev/tty");
 	const prompt = createInterface({ input: tty, output });
 	try {
-		const answer = await prompt.question(
-			`Save ${JSON.stringify(network.ssid)} (${network.security}) on the box? [y/N] `,
-		);
+		const answer = await prompt.question(companionConsentPrompt(network, url));
 		if (answer.toLowerCase() !== "y") return;
 	} finally {
 		prompt.close();
@@ -98,6 +99,10 @@ async function main() {
 			case "saved":
 				console.log("Network saved. Select it in CeraUI to join.");
 				break;
+			case "already_saved":
+				throw new ImportError(
+					"The box already has a saved network with this name. Forget it in CeraUI first, then share again.",
+				);
 			case "disabled":
 				throw new ImportError("Companion Wi-Fi import is disabled.");
 			case "local_only":

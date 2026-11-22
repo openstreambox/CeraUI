@@ -70,6 +70,19 @@ describe("logger redaction", () => {
 		expect(out.err.message).toBe("boom");
 	});
 
+	test("redacts decoded Wi-Fi QR text under any key and in messages", () => {
+		const qr = String.raw`WIFI:T:WPA;S:Venue;P:sample\;only;;`;
+		const out = logRedact({
+			qr,
+			input: { note: `scanned ${qr}` },
+			lower: "wifi:s:Venue;p:sample-only;;",
+		}) as Record<string, unknown>;
+
+		expect(JSON.stringify(out)).not.toContain("sample");
+		expect(logRedact("WIFI: scan finished")).toBe("WIFI: scan finished");
+		expect(logRedact("wifi: 2 networks")).toBe("wifi: 2 networks");
+	});
+
 	test("logger still accepts redacted metadata without throwing", () => {
 		expect(() => {
 			logger.error("login failed", logRedact({ token: "v4.public.abc" }));

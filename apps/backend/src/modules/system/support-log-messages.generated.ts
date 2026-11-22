@@ -119,7 +119,6 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["Failed to load cache file ", ": ", ""],
 	["Failed to migrate update settings: ", ""],
 	["Failed to parse WebSocket message"],
-	["Failed to parse WebSocket message: ", ""],
 	["Failed to persist hotspot credentials: ", ""],
 	["Failed to provision an initial SSH password for ", ": ", ""],
 	["Failed to quarantine corrupt notification-dismissal store ", ": ", ""],

@@ -81,3 +81,33 @@ export function parseCompanionWifiInput(
 	if (!data) return;
 	return "qr" in data ? readWifiQr(data.qr) : data.network;
 }
+
+// Formatting, default-ignorable and non-ASCII space characters render as
+// nothing or as a plain space, so a lookalike SSID would read identically.
+const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\p{Z}]/gu;
+
+/**
+ * The SSID as a quoted string with every invisible character spelled out as
+ * `\u{XXXX}`. JSON escaping runs first, so a literal backslash in the name
+ * shows doubled and cannot imitate an escape.
+ */
+export function visibleSsid(ssid: string): string {
+	return JSON.stringify(ssid).replace(INVISIBLE, (char) =>
+		char === " "
+			? char
+			: `\\u{${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}}`,
+	);
+}
+
+/** The consent question: what is sent, and to which CeraUI. Never the password. */
+export function companionConsentPrompt(
+	network: CompanionWifiNetwork,
+	destination: URL,
+): string {
+	const shown = visibleSsid(network.ssid);
+	const warning =
+		shown === JSON.stringify(network.ssid)
+			? ""
+			: "\nThe name contains invisible characters, shown as \\u{...}. Check that it matches the venue's network.";
+	return `Save ${shown} (${network.security}${network.hidden ? ", hidden" : ""}) on the box at ${destination.href}?${warning}\n[y/N] `;
+}

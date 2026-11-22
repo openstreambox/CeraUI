@@ -509,9 +509,19 @@ function rememberSavedUuid(
 
 let savedConnectionsRefresh: symbol | undefined;
 
+export interface SavedConnsRefreshOptions {
+	/**
+	 * False skips AP rows, so the refresh never adopts, re-binds or changes
+	 * autoconnect on a hotspot profile. For callers that changed only a station
+	 * profile.
+	 */
+	hotspots?: boolean;
+}
+
 export async function wifiUpdateSavedConns(
 	signal?: AbortSignal,
 	onCommitted?: () => void,
+	{ hotspots = true }: SavedConnsRefreshOptions = {},
 ): Promise<void> {
 	if (signal?.aborted) return;
 	const refresh = Symbol();
@@ -587,7 +597,7 @@ export async function wifiUpdateSavedConns(
 
 			const macAddress = macTmp.toLowerCase();
 			if (mode === "ap") {
-				await handleHotspotConn(macAddress, uuid);
+				if (hotspots) await handleHotspotConn(macAddress, uuid);
 			} else if (mode === "infrastructure") {
 				registerSavedWifiConnection(savedInterfaces, macAddress, ssid, uuid);
 			}

@@ -4,6 +4,11 @@ import {
 	type DbusValue,
 	variant,
 } from "@ceralive/modem-control/transport";
+import {
+	nmConnGetFields,
+	nmConnsGet,
+	nmcliParseSep,
+} from "../network/network-manager.ts";
 import type { CompanionWifiNetwork } from "./companion-wifi-input.ts";
 
 const NM = "org.freedesktop.NetworkManager";
@@ -23,10 +28,37 @@ function profileUuid(ssid: string): string {
 	return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-${variantNibble}${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
-export async function saveCompanionWifiProfile(
+// NetworkManager's NM_SETTING_WIRELESS_SECURITY_PMF_REQUIRED.
+const PMF_REQUIRED = 3;
+
+/**
+ * True when NetworkManager already holds a station profile for this SSID.
+ * CeraUI shows one saved profile per SSID, so a second one would be shadowed
+ * on join and swept by Forget. Throws when the inventory cannot be read.
+ */
+export async function stationProfileWithSsid(ssid: string): Promise<boolean> {
+	const rows = await nmConnsGet("uuid,type");
+	if (rows === undefined) throw Error("NetworkManager inventory unavailable");
+	for (const row of rows) {
+		if (!row) continue;
+		const [uuid, type] = nmcliParseSep(row);
+		if (type !== WIFI || !uuid) continue;
+		const fields = await nmConnGetFields(uuid, [
+			`${WIFI}.mode`,
+			`${WIFI}.ssid`,
+		] as const);
+		if (fields === undefined) throw Error("NetworkManager profile unreadable");
+		const [mode, saved] = fields;
+		if (mode !== "ap" && saved === ssid) return true;
+	}
+	return false;
+}
+
+/** The NetworkManager settings for one companion profile, never activated. */
+export function companionWifiSettings(
 	network: CompanionWifiNetwork,
-): Promise<string> {
-	const uuid = profileUuid(network.ssid);
+	uuid = profileUuid(network.ssid),
+): DbusValue[] {
 	const settings: DbusValue[] = [
 		[
 			"connection",
@@ -52,9 +84,22 @@ export async function saveCompanionWifiProfile(
 			[
 				["key-mgmt", variant("s", network.security)],
 				["psk", variant("s", network.password ?? "")],
+				// SAE mandates PMF, as in SAE_STATION_NM_FIELDS. WPA2 keeps
+				// NetworkManager's default negotiation.
+				...(network.security === "sae"
+					? [["pmf", variant("i", PMF_REQUIRED)] as DbusValue]
+					: []),
 			],
 		]);
 	}
+	return settings;
+}
+
+export async function saveCompanionWifiProfile(
+	network: CompanionWifiNetwork,
+): Promise<string> {
+	const uuid = profileUuid(network.ssid);
+	const settings = companionWifiSettings(network, uuid);
 
 	const bus = createDbusTransport({
 		busAddress: "unix:path=/run/dbus/system_bus_socket",
