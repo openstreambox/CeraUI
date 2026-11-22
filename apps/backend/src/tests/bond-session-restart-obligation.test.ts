@@ -334,3 +334,43 @@ for (const release of ["coverage", "deadline"] as const) {
 		}
 	});
 }
+
+test("live refresh withdraws the last link while a new launch still refuses an empty bond", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	firstSightScan(output, { blocked: [] });
+	await refreshUsbNetMarkers([MODEM]);
+	processIfconfigOutput(
+		output,
+		undefined,
+		undefined,
+		undefined,
+		undefined,
+		new Map([[MODEM, 11]]),
+	);
+	const restart = await startLive();
+	const realPrepare = preparation.prepareSrtlaIpAddresses;
+	const pending: Promise<unknown>[] = [];
+	spyOn(preparation, "prepareSrtlaIpAddresses").mockImplementation(
+		(...args) => {
+			const promise = realPrepare(...args);
+			pending.push(promise);
+			return promise;
+		},
+	);
+	processIfconfigOutput(
+		output,
+		undefined,
+		undefined,
+		undefined,
+		undefined,
+		new Map([[MODEM, 21]]),
+	);
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	await Promise.allSettled(pending);
+	expect((await Bun.file(setup.ips_file ?? "").text()).trim()).toBe("");
+	expect(identityForIface(MODEM)).toBeUndefined();
+	expect(restart).toHaveBeenCalledTimes(1);
+	await expect(realPrepare("203.0.113.1")).rejects.toThrow(
+		"no_available_network_connections",
+	);
+});

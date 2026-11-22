@@ -273,7 +273,11 @@ export async function runForwardAttempt(
 				refresh = refresh.then(async () => {
 					if (retired) return;
 					try {
-						const publication = await deps.prepareSrtlaIpAddresses(address);
+						const publication = await deps.prepareSrtlaIpAddresses(
+							address,
+							undefined,
+							"refresh",
+						);
 						if (
 							!retired &&
 							publication.changed &&

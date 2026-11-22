@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as time from "../helpers/time.ts";
 import { setClatTranslationsForTest } from "../modules/network/clat-translation.ts";
 import {
 	getNetworkInterfaces,
@@ -6,10 +7,15 @@ import {
 	isHeldOutByModemBlock,
 	onNetworkInterfacesChange,
 } from "../modules/network/network-interfaces.ts";
+import { getUsbPhysicalDescriptor } from "../modules/network/router-cellular-scan.ts";
 import {
 	globalStreamHold,
 	streamingBlockingMutation,
 } from "../modules/streaming/lifecycle-admission.ts";
+import {
+	genSrtlaBondEntries,
+	genSrtlaBondEntriesForLocalIpAddress,
+} from "../modules/streaming/srtla.ts";
 import {
 	ETHERNET,
 	journalEntry,
@@ -153,7 +159,13 @@ test("a blocked modem reusing a healthy name cannot borrow its key after failed 
 
 test("a name that keeps the same address but changes ifindex cannot borrow the old modem key", async () => {
 	box = await realisticBox();
-	await box.scan(undefined, { ifindices: new Map([["wwan1", 11]]) });
+	await box.scan(undefined, {
+		ifindices: new Map([
+			["wwan0", 10],
+			["wwan1", 11],
+			["wwan2", 12],
+		]),
+	});
 	await box.journal([journalEntry(MODEMS[0], "device-absent-quarantine")]);
 	expect(box.bonded()).toEqual(["eth0", "wwan1", "wwan2"]);
 
@@ -161,12 +173,112 @@ test("a name that keeps the same address but changes ifindex cannot borrow the o
 	// again at the same address, now backed by the blocked USB slot.
 	const renamed = { ...MODEMS[0], ifname: "wwan1", ip: MODEMS[1].ip };
 	const links = [ETHERNET, renamed, MODEMS[2]];
-	const ifindices = new Map([["wwan1", 21]]);
+	const ifindices = new Map([
+		["wwan1", 21],
+		["wwan2", 12],
+	]);
 	await box.scan(links, { ifindices, failIdPaths: true, skipPhysical: true });
 	expect(box.bonded()).toEqual(["eth0", "wwan2"]);
 	expect(getNetworkInterfaces().wwan1?.identitySettled).not.toBe(true);
 	await box.scan(links, { ifindices, failIdPaths: true });
 	expect(box.bonded()).toEqual(["eth0", "wwan2"]);
+});
+
+test("missing ifindex holds a known USB name until its current scan", async () => {
+	box = await realisticBox();
+	await box.scan(undefined, {
+		ifindices: new Map([
+			["wwan0", 10],
+			["wwan1", 11],
+			["wwan2", 12],
+		]),
+	});
+	await box.journal([journalEntry(MODEMS[0], "failed")]);
+	const links = [
+		ETHERNET,
+		{ ...MODEMS[0], ifname: "wwan1", ip: MODEMS[1].ip },
+		MODEMS[2],
+	];
+	await box.scan(links, {
+		ifindices: new Map([["wwan2", 12]]),
+		skipPhysical: true,
+	});
+	expect(box.bonded()).not.toContain("wwan1");
+	await box.scan([links[0], MODEMS[1], links[2]], {
+		ifindices: new Map([["wwan2", 12]]),
+	});
+	expect(box.bonded()).toContain("wwan1");
+});
+
+test("a known ifindex survives disconnection and distinguishes return from replacement", async () => {
+	box = await realisticBox();
+	const links = [ETHERNET, MODEMS[1], MODEMS[2]];
+	const opened = box;
+	const scan = (index: number) =>
+		opened.scan(links, {
+			ifindices: new Map([
+				["wwan1", index],
+				["wwan2", 12],
+			]),
+			skipPhysical: true,
+		});
+	await scan(11);
+	await box.scan([ETHERNET, MODEMS[2]], { skipPhysical: true });
+	await scan(11);
+	expect(box.bonded()).toContain("wwan1");
+	await box.scan([ETHERNET, MODEMS[2]], { skipPhysical: true });
+	await scan(21);
+	expect(box.bonded()).not.toContain("wwan1");
+});
+
+test("a replacement cannot publish the old descriptor or age into fallback admission", async () => {
+	box = await realisticBox();
+	const links = [ETHERNET, MODEMS[1]];
+	await box.scan(links, { ifindices: new Map([["wwan1", 11]]) });
+	const index = new Map([["wwan1", 21]]);
+	const clock = spyOn(time, "getms").mockReturnValue(1);
+	try {
+		await box.scan(links, { ifindices: index, skipPhysical: true });
+		expect(getUsbPhysicalDescriptor("wwan1")).toBeUndefined();
+		clock.mockReturnValue(20_000);
+		await box.scan(links, {
+			ifindices: index,
+			skipPhysical: true,
+			now: 20_000,
+		});
+		expect(box.bonded()).toEqual(["eth0"]);
+		await box.scan([ETHERNET, { ifname: "wwan1", ip: MODEMS[1].ip }], {
+			ifindices: index,
+		});
+		expect(box.bonded()).toEqual(["eth0"]);
+		await box.scan(links, { ifindices: index });
+		expect(box.bonded()).toEqual(["eth0", "wwan1"]);
+	} finally {
+		clock.mockRestore();
+	}
+});
+
+test("a new unit gets its own link identity while the unresolved port blocks every sender", async () => {
+	box = await realisticBox();
+	const original = { ...MODEMS[1], serial: "fixture-modem-a981" };
+	const replacement = { ...original, serial: "fixture-modem-b43e" };
+	await box.scan([ETHERNET, original], { ifindices: new Map([["wwan1", 11]]) });
+	const originalId = genSrtlaBondEntries().find(
+		(row) => row.iface === "wwan1",
+	)?.linkId;
+	expect(originalId).toBeDefined();
+	await box.journal([journalEntry(original, "device-absent-quarantine")]);
+	await box.scan([ETHERNET, replacement], {
+		ifindices: new Map([["wwan1", 21]]),
+	});
+	expect(stableKeyOf(replacement)).toBe(stableKeyOf(original));
+	expect(box.bonded()).toEqual(["eth0"]);
+	expect(genSrtlaBondEntriesForLocalIpAddress("198.51.100.200")).toEqual([]);
+	await box.journal([]);
+	const current = genSrtlaBondEntries().find((row) => row.iface === "wwan1");
+	expect(current?.idPath).toBe(original.idPath);
+	expect(current?.linkId).toBeDefined();
+	expect(current?.linkId).not.toBe(originalId);
 });
 
 test("the bond republishes when a modem is blocked or released", async () => {

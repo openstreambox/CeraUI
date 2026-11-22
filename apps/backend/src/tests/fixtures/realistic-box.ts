@@ -45,6 +45,7 @@ export interface BoxLink {
 	readonly ip: string;
 	/** udev ID_PATH of the netdev; absent for a device udev gives none. */
 	readonly idPath?: string;
+	readonly serial?: string;
 	readonly kind?: "modem" | "ethernet" | "wifi" | "unknown";
 }
 
@@ -120,6 +121,7 @@ export interface RealisticBox {
 			failIdPaths?: boolean;
 			skipPhysical?: boolean;
 			ifindices?: ReadonlyMap<string, number>;
+			now?: number;
 		},
 	): Promise<void>;
 	/** Replace the journal and re-derive the block set through production code. */
@@ -157,7 +159,7 @@ export async function realisticBox(): Promise<RealisticBox> {
 			processIfconfigOutput(
 				output,
 				undefined,
-				undefined,
+				options.now,
 				wifiRadio.isWirelessInterface,
 				new Map(
 					links.map((link) => [
@@ -250,6 +252,7 @@ function boxScanDeps(links: readonly BoxLink[]): RouterCellularScanDeps {
 					? "cdc_ether"
 					: "rtl8xxxu",
 		);
+		if (link.serial) attrs.set(`${parent}/serial`, link.serial);
 		if (link.idPath)
 			attrs.set(`/run/udev/data/c189:${index + 1}`, `E:ID_PATH=${link.idPath}`);
 	});

@@ -265,3 +265,24 @@ test("B4 a smaller periodic scan cannot re-hold an admitted USB incarnation", as
 		await scan.settle();
 	}
 });
+
+test("the sysfs index detects a USB replacement when the IP command fails", async () => {
+	const scan = firstSightScan(output, {
+		blocked: [],
+		buses: { [MODEM]: "usb" },
+	});
+	await updateNetif();
+	expect(
+		srtla.genSrtlaBondEntries().some((entry) => entry.iface === MODEM),
+	).toBe(true);
+	scan.setIndex(MODEM, 29);
+	scan.setIpUnavailable();
+	await updateNetif();
+	expect(
+		srtla.genSrtlaBondEntries().some((entry) => entry.iface === MODEM),
+	).toBe(false);
+	await scan.settle();
+	expect(
+		srtla.genSrtlaBondEntries().some((entry) => entry.iface === MODEM),
+	).toBe(true);
+});

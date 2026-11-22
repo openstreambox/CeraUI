@@ -91,16 +91,19 @@ import {
 	refreshRouterCellularAdmin,
 } from "./router-cellular-admin.ts";
 import {
+	confirmNonUsbReplacement,
 	getModemNetMarker,
 	getRouterCellularMarker,
 	getRouterCellularMarkers,
 	getUsbPhysicalDescriptor,
 	identityDeadlineExpired,
 	invalidateUsbNetReading,
+	isUsbReplacementPending,
 	type NetdevBus,
 	notePublishedNetifSnapshot,
 	onUsbNetScanCommitted,
 	readNetdevBus,
+	readNetdevIfindex,
 	refreshUsbNetMarkers,
 	type UsbModemNetMarker,
 	usbNetScanCovers,
@@ -184,7 +187,16 @@ export const NETIF_ERR_SHAREDLAN = 0x08;
 
 let netif: Record<string, NetworkInterface> = {};
 const presenceEpoch = new Map<string, number>();
-const netifIndices = new Map<string, number>();
+// Keep the last observation through disconnect. A new name sample may be the
+// same kernel interface coming back, or a different interface reusing it.
+const netdevIdentity = new Map<
+	string,
+	{
+		index: number | undefined;
+		possiblyUsb: boolean;
+		indexMissing: boolean;
+	}
+>();
 type NetdevBusEvidence = {
 	readonly result: NetdevBus;
 	readonly seen: number;
@@ -203,7 +215,7 @@ export function resetNetifSnapshotForTest(): void {
 	netifRefreshGeneration++;
 	scanPublicationWarnings.clear();
 	presenceEpoch.clear();
-	netifIndices.clear();
+	netdevIdentity.clear();
 }
 
 function bumpPresence(
@@ -213,7 +225,6 @@ function bumpPresence(
 	const epoch = (presenceEpoch.get(name) ?? 0) + 1;
 	presenceEpoch.set(name, epoch);
 	if (event !== "added") {
-		netifIndices.delete(name);
 		invalidateUsbNetReading(name, epoch, event === "replaced");
 	}
 }
@@ -228,7 +239,8 @@ function installScanSettlement(): void {
 			if (
 				(int.usb || int.busUnreadable) &&
 				!int.identitySettled &&
-				usbNetScanCovers(name)
+				usbNetScanCovers(name) &&
+				!isUsbReplacementPending(name)
 			) {
 				int.identitySettled = true;
 				released = true;
@@ -307,10 +319,11 @@ export function isBondIdentityPending(
 	int: NetworkInterface,
 ): boolean {
 	return (
-		(int.usb === true || int.busUnreadable === true) &&
-		!int.identitySettled &&
-		!usbNetScanCovers(name) &&
-		!identityDeadlineExpired(name)
+		isUsbReplacementPending(name) ||
+		((int.usb === true || int.busUnreadable === true) &&
+			!int.identitySettled &&
+			!usbNetScanCovers(name) &&
+			!identityDeadlineExpired(name))
 	);
 }
 
@@ -365,7 +378,10 @@ export function isBondCandidate(name: string, int: NetworkInterface): boolean {
 			return false;
 		owner = translation.parent;
 	}
-	if (isHeldOutByModemBlock(owner, owner === name ? int : netif[owner]))
+	if (
+		isUsbReplacementPending(owner) ||
+		isHeldOutByModemBlock(owner, owner === name ? int : netif[owner])
+	)
 		return false;
 	if (isBondIdentityPending(name, int)) return false;
 	if (isConcurrentApIfname(name)) return false;
@@ -1004,6 +1020,15 @@ async function refreshNetifFromOs(): Promise<void> {
 				(name) =>
 					name !== "" && name !== "lo" && !/^(?:docker|l4tbr)/.test(name),
 			);
+		await Promise.all(
+			ifnames
+				.filter((name) => !ifindices.has(name))
+				.map(async (name) => {
+					const index = await readNetdevIfindex(name);
+					if (index !== undefined) ifindices.set(name, index);
+				}),
+		);
+		if (generation !== netifRefreshGeneration) return;
 		const buses = new Map<string, NetdevBusEvidence>();
 		const reads = new Map<string, { seen: number; promise: Promise<void> }>();
 		const issue = (name: string): void => {
@@ -1176,17 +1201,46 @@ export function processIfconfigOutput(
 			);
 
 			const ifindex = ifindices?.get(name);
-			const previousIndex = netifIndices.get(name);
-			const replaced =
+			const previousIdentity = netdevIdentity.get(name);
+			const previousIndex = previousIdentity?.index;
+			const evidence = buses?.get(name);
+			const fresh = evidence?.seen === (presenceEpoch.get(name) ?? 0);
+			const observedBus =
+				fresh && evidence?.result.kind === "bus"
+					? evidence.result.bus
+					: undefined;
+			const possiblyUsb =
+				previousIdentity?.possiblyUsb === true ||
+				getUsbPhysicalDescriptor(name) !== undefined ||
+				observedBus === "usb" ||
+				(fresh && evidence?.result.kind === "unreadable");
+			const differentIndex =
 				ifindex !== undefined &&
 				previousIndex !== undefined &&
 				ifindex !== previousIndex;
+			const unknownIndex = ifindices !== undefined && ifindex === undefined;
+			const regainedIndex =
+				ifindex !== undefined && previousIdentity?.indexMissing;
+			const replaced =
+				possiblyUsb &&
+				(differentIndex ||
+					regainedIndex ||
+					(unknownIndex && !isUsbReplacementPending(name)));
 			if (replaced) {
-				// The name can survive a replacement that happened between two polls.
 				bumpPresence(name, "replaced");
 				intsChanged = true;
 			}
-			if (ifindex !== undefined) netifIndices.set(name, ifindex);
+			const nonUsb =
+				!replaced && observedBus !== undefined && observedBus !== "usb";
+			if (nonUsb && confirmNonUsbReplacement(name)) intsChanged = true;
+			netdevIdentity.set(name, {
+				index: ifindex ?? previousIndex,
+				possiblyUsb: possiblyUsb && !nonUsb,
+				indexMissing:
+					ifindices === undefined
+						? (previousIdentity?.indexMissing ?? false)
+						: unknownIndex,
+			});
 			const previous = replaced ? undefined : netif[name];
 			let tp = 0;
 			if (previous) {
@@ -1200,21 +1254,14 @@ export function processIfconfigOutput(
 
 			const enabled = !previous || previous.enabled;
 			const error = previous ? previous.error : 0;
-			const evidence = buses?.get(name);
-			const fresh =
-				evidence !== undefined &&
-				evidence.seen === (presenceEpoch.get(name) ?? 0);
 			const usb =
-				previous?.usb === true ||
-				(fresh &&
-					evidence.result.kind === "bus" &&
-					evidence.result.bus === "usb");
+				previous?.usb === true || (!replaced && observedBus === "usb");
 			const busUnreadable =
-				(!previous?.identitySettled ||
-					(previous.busUnreadable && !usbNetScanCovers(name))) &&
-				(evidence !== undefined
-					? !fresh || evidence.result.kind === "unreadable"
-					: replaced || previous?.busUnreadable === true);
+				isUsbReplacementPending(name) ||
+				(!previous?.identitySettled &&
+					(evidence !== undefined
+						? !fresh || evidence.result.kind === "unreadable"
+						: previous?.busUnreadable === true));
 			newInterfaces[name] = {
 				...(inetAddr !== undefined ? { ip: inetAddr } : {}),
 				...(netmask !== undefined ? { netmask } : {}),

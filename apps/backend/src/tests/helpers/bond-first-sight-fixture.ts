@@ -46,6 +46,8 @@ export function firstSightScan(
 	} = {},
 ) {
 	const clock = { now: 0 };
+	const indices = new Map<string, number>();
+	let ipUnavailable = false;
 	const fixture = constructedTwinDeps(options.devices);
 	const reads = new Map<
 		string,
@@ -77,7 +79,13 @@ export function firstSightScan(
 		},
 	);
 	spyOn(defaultRouterCellularScanDeps, "readAttr").mockImplementation(
-		fixture.readAttr,
+		async (path) => {
+			if (path.endsWith("/ifindex")) {
+				const index = indices.get(path.split("/").at(-2) ?? "");
+				return index?.toString();
+			}
+			return fixture.readAttr(path);
+		},
 	);
 	spyOn(defaultRouterCellularScanDeps, "listDir").mockImplementation(
 		fixture.listDir,
@@ -97,13 +105,27 @@ export function firstSightScan(
 				: { ok: true, target: `/sys/bus/${bus}` };
 		},
 	);
-	spyOn(runner, "run").mockImplementation(async (bin) =>
-		bin === "ifconfig" ? output : "",
-	);
+	spyOn(runner, "run").mockImplementation(async (bin) => {
+		if (bin === "ifconfig") return output;
+		if (ipUnavailable) throw new Error("fixture address command unavailable");
+		return output
+			.split("\n\n")
+			.flatMap((entry) => {
+				const name = entry.split(":")[0];
+				if (!name) return [];
+				if (!indices.has(name)) indices.set(name, indices.size + 10);
+				return [`${indices.get(name)}: ${name}: <UP> mtu 1500`];
+			})
+			.join("\n");
+	});
 	return {
 		clock,
 		block,
 		busCounts,
+		setIndex: (name: string, index: number) => indices.set(name, index),
+		setIpUnavailable: () => {
+			ipUnavailable = true;
+		},
 		entered: reads.get(FIRST_SIGHT_IFACE)?.entered.promise ?? Promise.resolve(),
 		enteredFor: (name: string) =>
 			reads.get(name)?.entered.promise ?? Promise.resolve(),

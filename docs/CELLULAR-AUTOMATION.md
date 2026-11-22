@@ -200,7 +200,14 @@ in progress continues to hold new starts.
 Bond exclusion uses the current USB descriptor scan's physical path, with the
 same stable-key derivation as modem recovery. Removal immediately invalidates
 that name's scan evidence, even if a replacement takes the same name and address
-between polls. A scan overlapping invalidation cannot restore the old evidence.
+between polls. A known USB name with ambiguous interface-index evidence waits
+for a fresh physical identity. The ordinary first-sight timeout cannot release
+a replacement. A scan overlapping invalidation cannot restore the old evidence.
+
+A different modem in the same USB port can have a different link identity. The
+recovery journal still owns the port. The box keeps the port out of sender
+admission, including for a receiver on the local network, until recovery
+verifies or explicitly rebaselines the journal entry.
 The modem roster's retained ID-path cache is not admission authority. Positively
 classified USB Ethernet and sysfs-confirmed Wi-Fi stay available without an
 ID-path cache entry; unresolved USB candidates stay out while a block exists,
@@ -228,3 +235,10 @@ Los adaptadores USB Ethernet y Wi-Fi identificados siguen disponibles aunque no
 haya una ruta guardada. Un dispositivo USB sin identificar permanece excluido
 mientras exista un bloqueo, hasta obtener evidencia física actual. La interfaz
 IPv4 traducida de un módem sigue el bloqueo de ese módem.
+
+Si se reutiliza un nombre de interfaz USB y no se puede confirmar su identidad,
+la caja espera una lectura física actual. Si se conecta otro módem al mismo
+puerto, su identidad de enlace puede ser distinta. La caja mantiene el puerto
+fuera de los enlaces que usa para enviar, también en la red local, hasta que
+la recuperación verifique la entrada del diario o se establezca explícitamente
+una nueva configuración de referencia.

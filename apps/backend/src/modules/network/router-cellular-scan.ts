@@ -407,6 +407,18 @@ export async function readNetdevBus(
 		: { kind: "unreadable", code: device.code };
 }
 
+/** Independent of address enumeration. Missing or malformed sysfs is unknown. */
+export async function readNetdevIfindex(
+	ifname: string,
+	deps = defaultRouterCellularScanDeps,
+): Promise<number | undefined> {
+	const value = await deps.readAttr(
+		join(deps.sysfsRoot, "sys/class/net", ifname, "ifindex"),
+	);
+	const index = decimal(value);
+	return index !== undefined && index > 0 ? index : undefined;
+}
+
 /**
  * The subset of a ModemManager-manageable USB device that reaches the wire.
  *
@@ -619,6 +631,7 @@ let sharedSerialHashes = new Set<string>();
 let coveredIfnames = new Set<string>();
 let coveredEpochs = new Map<string, number>();
 const netdevRemovalEpochs = new Map<string, number>();
+const awaitingReplacementIdentity = new Set<string>();
 const scanCommittedListeners = new Set<() => void>();
 const identityFirstPublishedAt = new Map<string, number>();
 const identityDeadlineWarnings = new Set<string>();
@@ -638,19 +651,38 @@ export function usbNetScanCoversCurrentPresence(ifname: string): boolean {
 	);
 }
 
-/** Creation adopts its covering read; observed removal invalidates admission. */
+export function isUsbReplacementPending(ifname: string): boolean {
+	return awaitingReplacementIdentity.has(ifname);
+}
+
+/** A current, positive bus read can identify a formerly USB name as non-USB. */
+export function confirmNonUsbReplacement(ifname: string): boolean {
+	return awaitingReplacementIdentity.delete(ifname);
+}
+
+function refreshPresentPhysicalDevices(): void {
+	setPresentPhysicalDevices(
+		[...physicalDescriptors.values()].map((descriptor) =>
+			resolvePhysicalDevice(descriptor),
+		),
+	);
+}
+
+/** Disconnect invalidates the epoch. Replacement also discards the old identity. */
 export function invalidateUsbNetReading(
 	ifname: string,
 	epoch: number,
 	replaced: boolean,
 ): void {
 	netdevRemovalEpochs.set(ifname, epoch);
-	if (replaced) {
-		// A new kernel interface needs its own first-sight scan and deadline.
-		coveredIfnames.delete(ifname);
-		identityFirstPublishedAt.delete(ifname);
-		identityDeadlineWarnings.delete(ifname);
-	}
+	if (!replaced) return;
+
+	awaitingReplacementIdentity.add(ifname);
+	coveredIfnames.delete(ifname);
+	coveredEpochs.delete(ifname);
+	markers.delete(ifname);
+	modemNetMarkers.delete(ifname);
+	if (physicalDescriptors.delete(ifname)) refreshPresentPhysicalDevices();
 }
 
 /** The publication clock is shared by every identity-minting consumer. */
@@ -814,12 +846,18 @@ async function runUsbNetScan(
 		coveredEpochs = new Map(
 			[...readEpochs].filter(([name]) => coveredIfnames.has(name)),
 		);
-		setPresentPhysicalDevices(
-			[...physicalDescriptors.values()].map((descriptor) =>
-				resolvePhysicalDevice(descriptor),
-			),
-		);
-		const changed = snapshotKey(cachedSets()) !== before;
+		refreshPresentPhysicalDevices();
+		let identified = false;
+		for (const [name, descriptor] of physicalDescriptors) {
+			if (
+				awaitingReplacementIdentity.has(name) &&
+				resolvePhysicalDevice(descriptor).anchor !== "ifname"
+			) {
+				awaitingReplacementIdentity.delete(name);
+				identified = true;
+			}
+		}
+		const changed = identified || snapshotKey(cachedSets()) !== before;
 		if (changed) {
 			for (const listener of scanCommittedListeners) listener();
 		}
@@ -916,6 +954,7 @@ export function resetUsbNetMarkers(): void {
 	coveredIfnames = new Set();
 	coveredEpochs = new Map();
 	netdevRemovalEpochs.clear();
+	awaitingReplacementIdentity.clear();
 	identityFirstPublishedAt.clear();
 	identityDeadlineWarnings.clear();
 	setPresentPhysicalDevices([]);

@@ -152,9 +152,13 @@ export async function start(
 			// from one interface to another leaves the IP bytes byte-identical, so a
 			// SIGHUP keyed on the list alone would skip the very reload that carries
 			// the new mapping.
-			const publication = await prepareSrtlaIpAddresses(c.srtlaAddr);
+			const publication = await prepareSrtlaIpAddresses(
+				c.srtlaAddr,
+				undefined,
+				"refresh",
+			);
 			if (sessionResources?.generation !== generation || !ownsLaunch()) return;
-			if (publication.changed && getIsStreaming()) restartSrtla();
+			if (publication.changed && getIsStreaming()) void restartSrtla();
 		} catch (error) {
 			logger.warn("Failed to refresh SRTLA IP addresses", { error });
 		}

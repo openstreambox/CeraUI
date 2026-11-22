@@ -27,8 +27,10 @@ import {
 	isBondCandidate,
 	isBondIdentityPending,
 	isDupIpOnly,
+	isHeldOutByModemBlock,
 	type NetworkInterface,
 } from "../network/network-interfaces.ts";
+import { isUsbReplacementPending } from "../network/router-cellular-scan.ts";
 import { setup } from "../setup.ts";
 import type { BondEntry } from "./bind-map.ts";
 import {
@@ -104,8 +106,16 @@ function collectBondEntries(
 		if (isBondIdentityPending(name, networkInterface)) continue;
 		if (!accept(name, networkInterface)) continue;
 		const entry = describeBondEntry(name, networkInterface.ip);
-		if (requireMappableDuplicate && !admitEntry(networkInterface, entry))
-			continue;
+		if (requireMappableDuplicate) {
+			const owner = entry.parentIface ?? name;
+			const parent = networkInterfaces[owner];
+			if (
+				isUsbReplacementPending(owner) ||
+				isHeldOutByModemBlock(owner, parent) ||
+				!admitEntry(networkInterface, entry)
+			)
+				continue;
+		}
 		entries.push(entry);
 	}
 	return entries;
