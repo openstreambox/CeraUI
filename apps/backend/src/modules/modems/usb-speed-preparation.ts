@@ -11,8 +11,8 @@
   - A faster link means the setting is not in effect. Only then, and only while
     no stream runs, the modem is inhibited, the stored value is read and kept as
     `original`, the attempt is recorded BEFORE any setter, "20" is written if it
-    differs and read back, and the module is reset (`AT+CFUN=1,1`). That costs
-    the link about 50 s; the stream check runs again after the inhibition.
+    differs and read back, and the module is reset (`AT+CFUN=1,1`). The stream
+    check runs again after the inhibition.
   - The next USB generation verifies it: back at 480 Mbit/s or slower.
   - At most one modem is switched at a time, 15 minutes between attempts, two
     attempts per unit; then the unit is blocked until its record is removed.
@@ -414,8 +414,12 @@ async function runUsbSpeedPreparationOnce(
 			);
 			if (!unit.record) continue;
 			aborted.delete(unit.key);
+			const outcome =
+				unit.record.phase === "awaiting-usb"
+					? "module reset requested"
+					: (unit.record.reason ?? unit.record.phase);
 			deps.log(
-				`${unit.target.ifname} usbspeed: ${unit.record.phase} (stored ${unit.record.original}, wanted ${unit.desired}); module reset, link back in about 50 s`,
+				`${unit.target.ifname} usbspeed: ${outcome} (stored ${unit.record.original}, wanted ${unit.desired})`,
 			);
 		} catch (error) {
 			// Not a counted attempt, but the same pause.

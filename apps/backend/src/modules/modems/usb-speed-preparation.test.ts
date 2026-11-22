@@ -304,7 +304,13 @@ test("a stored value that is already right needs only the reset", async () => {
 
 test("a setter readback mismatch stops before the reset", async () => {
 	const b = box({ setterReadback: "312" });
-	await runUsbSpeedPreparation(b.deps);
+	const messages: string[] = [];
+	await runUsbSpeedPreparation({
+		...b.deps,
+		log: (message) => messages.push(message),
+	});
+	expect(messages.at(-1)).toContain("setter readback differs");
+	expect(messages.at(-1)).not.toContain("module reset");
 	expect(b.calls).not.toContain("reset 0");
 	expect(b.calls).toContain("release 0");
 	expect(b.records.get(b.key(0))).toMatchObject({ phase: "failed" });
