@@ -47,6 +47,7 @@ import {
 	logHybridChannelRefusal,
 	logHybridTargetRefusal,
 } from "./wifi-hybrid-target-diagnostics.ts";
+import { observeProvisioningApProfile } from "./wifi-provisioning-ap.ts";
 
 /** Boot-only D12 path. Requests never receive this activation authority. */
 export async function restoreLimitedHotspot(
@@ -94,8 +95,16 @@ export async function restoreLimitedHotspot(
 		"802-11-wireless.band",
 		"802-11-wireless.channel",
 		"connection.interface-name",
+		"connection.id",
 	] as const);
 	if (stopped()) return undefined;
+	if (
+		observeProvisioningApProfile(stored.conn, {
+			id: fields?.[4],
+			mode: fields?.[0],
+		})
+	)
+		return pending("owned profile is the device image's setup AP");
 	if (fields === undefined) {
 		refuse("owned AP profile missing");
 		return { success: false, error: "activation-failed" };
