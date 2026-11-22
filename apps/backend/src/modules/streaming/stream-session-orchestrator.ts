@@ -310,6 +310,12 @@ export type StreamSessionOrchestrator = {
 	readonly stop: (cause: StreamStopCause) => Promise<StopResult>;
 	readonly reconcile: () => Promise<LifecycleState>;
 	readonly snapshot: () => StreamSessionSnapshot;
+	/**
+	 * What `start` would answer from session state alone, read-only: `busy`
+	 * mirrors its duplicate-start rejection, `reconciling` a session it would
+	 * first reconcile (the outcome is not known until then).
+	 */
+	readonly startView: () => "idle" | "busy" | "reconciling";
 	readonly changeConfig: (
 		delta: StreamConfigChangeDelta,
 	) => Promise<ConfigChangeResult>;
@@ -1230,6 +1236,32 @@ export function createStreamSessionOrchestrator(
 			state: ownership.state,
 			generation: ownership.generation,
 		}),
+		startView: () => {
+			// The two reconcile triggers at the top of `start`, then its busy check.
+			if (
+				ownership.generation === 0 &&
+				ownership.state === "reconciling" &&
+				runtimeObservations === 0 &&
+				!cleanup.pending &&
+				stopFlight === undefined
+			)
+				return "reconciling";
+			if (
+				!cleanup.pending &&
+				stopFlight === undefined &&
+				!ownership.launchPending &&
+				ownership.state === "streaming" &&
+				deps.getStreamingStatus?.() === false
+			)
+				return "reconciling";
+			return ownership.state !== "idle" ||
+				ownership.streamLiveness() !== "idle" ||
+				cleanup.pending ||
+				stopFlight !== undefined ||
+				ownership.launchPending
+				? "busy"
+				: "idle";
+		},
 		changeConfig,
 		noteConfigChangePhase,
 		noteEngineStatus,
@@ -1257,6 +1289,10 @@ export function reconcileStreamSession(): Promise<LifecycleState> {
 
 export function getStreamSessionSnapshot(): StreamSessionSnapshot {
 	return productionOrchestrator.snapshot();
+}
+
+export function streamStartView(): "idle" | "busy" | "reconciling" {
+	return productionOrchestrator.startView();
 }
 
 export function streamLiveness(): "streaming" | "idle" | "unknown" {

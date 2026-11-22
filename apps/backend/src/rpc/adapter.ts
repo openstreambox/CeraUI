@@ -3,7 +3,10 @@
  * Handles WebSocket connections and routes messages to ORPC procedures
  */
 
-import { logBundleFailureReasonSchema } from "@ceraui/rpc/schemas";
+import {
+	logBundleFailureReasonSchema,
+	STREAM_READINESS_EVENT,
+} from "@ceraui/rpc/schemas";
 import { call, ORPCError } from "@orpc/server";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 
@@ -15,6 +18,7 @@ import {
 	getStreamHealth,
 	HEALTH_EVENT_TYPE,
 } from "../modules/streaming/health.ts";
+import { getStreamReadiness } from "../modules/streaming/stream-readiness.ts";
 import { CPU_EVENT } from "../modules/system/cpu.ts";
 import { getDeviceStatsSnapshot } from "../modules/system/device-stats-snapshot.ts";
 import {
@@ -221,6 +225,7 @@ function sendInitialStatusToClient(ws: AppWebSocket): void {
 	sendToClient(ws, "status", initialStatus.status);
 	sendToClient(ws, "netif", initialStatus.netif);
 	sendToClient(ws, "uplinks", initialStatus.uplinks);
+	sendToClient(ws, STREAM_READINESS_EVENT, getStreamReadiness());
 	sendToClient(ws, "uplink-steering", initialStatus.uplinkSteering);
 	sendToClient(ws, "uplink-shaper", initialStatus.uplinkShaper);
 	sendToClient(ws, SHARING_DIAG_EVENT, initialStatus.sharingDiag);

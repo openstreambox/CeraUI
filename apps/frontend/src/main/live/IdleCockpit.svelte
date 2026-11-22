@@ -35,7 +35,8 @@ import type {
 	NetworkIngest,
 	Pipelines,
 	RelayMessage,
-	SourcesMessage,StartFailureCaptureCause
+	SourcesMessage,StartFailureCaptureCause,
+	StreamReadiness,
 } from '@ceraui/rpc/schemas';
 import { Shuffle, TriangleAlert, Volume2 } from '@lucide/svelte';
 import ComingSoon from '$lib/components/custom/ComingSoon.svelte';
@@ -66,6 +67,8 @@ interface Props {
 	optimismState: StreamingOptimismState;
 	destinationValidated?: boolean;
 	maxBitrate?: number;
+	/** The device's own ready-to-go-live answer (backend `stream_readiness`). */
+	boxReadiness?: StreamReadiness;
 	// ── StreamSetupChain: actions (callbacks owned by LiveView) ────────────────
 	onStart: (overrides: { source?: string }) => void;
 	onStop: () => void;
@@ -110,6 +113,7 @@ const {
 	optimismState,
 	destinationValidated,
 	maxBitrate,
+	boxReadiness,
 	onStart,
 	onStop,
 	onOpenSource,
@@ -231,6 +235,7 @@ const audioEmbeddedComingSoon = $derived(
 			{optimismState}
 			{destinationValidated}
 			{maxBitrate}
+			{boxReadiness}
 			{onStart}
 			{onStop}
 			{onOpenSource}

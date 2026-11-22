@@ -105,16 +105,20 @@ let held: HeldLease | undefined;
 let nextToken = 0;
 
 /**
- * Try to acquire the interlock for `who`. NEVER blocks: a held interlock is
- * refused on the spot, naming its holder and the caller's typed refusal.
- *
- * The lease is EXCLUSIVE, not re-entrant — a second `"streaming"` acquisition
- * while one is outstanding is refused exactly like a cross-holder one. Callers
- * that have their own concurrency guard (the orchestrator's `state !== "idle"`
- * duplicate-start rejection) run it FIRST, so a genuine duplicate keeps its own
- * specific error instead of decaying into a generic lease-busy one.
+ * Why `who` would be refused the interlock right now, or `undefined` when it
+ * would be admitted. Reads state only (the debug log aside); the acquiring
+ * path and the stream-ready flag share it so the two cannot drift.
  */
-export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
+function lifecycleRefusalFor(
+	who: LifecycleHolder,
+	log: boolean,
+):
+	| {
+			readonly admitted: false;
+			readonly heldBy: LifecycleHolder;
+			readonly refusal: LifecycleRefusal;
+	  }
+	| undefined {
 	if (isForwardActive())
 		return { admitted: false, heldBy: "streaming", refusal: STREAMING_ACTIVE };
 	// A per-device mutation lease is the SAME exclusion as the legacy
@@ -125,11 +129,12 @@ export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
 		(holder) => !holder.journalOnly,
 	).length;
 	if (devices > 0) {
-		logger.debug("lifecycle interlock refused: a modem mutation is held", {
-			module: "streaming",
-			requested: who,
-			devices,
-		});
+		if (log)
+			logger.debug("lifecycle interlock refused: a modem mutation is held", {
+				module: "streaming",
+				requested: who,
+				devices,
+			});
 		return {
 			admitted: false,
 			heldBy: "modem-transition",
@@ -138,17 +143,44 @@ export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
 	}
 	const current = held;
 	if (current !== undefined) {
-		logger.debug("lifecycle interlock refused a concurrent operation", {
-			module: "streaming",
-			heldBy: current.holder,
-			requested: who,
-		});
+		if (log)
+			logger.debug("lifecycle interlock refused a concurrent operation", {
+				module: "streaming",
+				heldBy: current.holder,
+				requested: who,
+			});
 		return {
 			admitted: false,
 			heldBy: current.holder,
 			refusal: leaseRefusal(current.holder),
 		};
 	}
+	return undefined;
+}
+
+/** The refusal a stream admission would get from the interlock now, without acquiring it. */
+export function previewStreamingAdmission():
+	| { readonly heldBy: LifecycleHolder; readonly refusal: LifecycleRefusal }
+	| undefined {
+	const refused = lifecycleRefusalFor("streaming", false);
+	return refused === undefined
+		? undefined
+		: { heldBy: refused.heldBy, refusal: refused.refusal };
+}
+
+/**
+ * Try to acquire the interlock for `who`. NEVER blocks: a held interlock is
+ * refused on the spot, naming its holder and the caller's typed refusal.
+ *
+ * The lease is EXCLUSIVE, not re-entrant — a second `"streaming"` acquisition
+ * while one is outstanding is refused exactly like a cross-holder one. Callers
+ * that have their own concurrency guard (the orchestrator's `state !== "idle"`
+ * duplicate-start rejection) run it FIRST, so a genuine duplicate keeps its own
+ * specific error instead of decaying into a generic lease-busy one.
+ */
+export function tryAcquireLifecycle(who: LifecycleHolder): LifecycleAdmission {
+	const refused = lifecycleRefusalFor(who, true);
+	if (refused !== undefined) return refused;
 
 	nextToken += 1;
 	const token = nextToken;

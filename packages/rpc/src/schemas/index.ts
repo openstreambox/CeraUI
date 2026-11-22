@@ -32,6 +32,7 @@ export * from './sources-visibility.schema';
 export * from './srt-encryption.schema';
 export * from './status.schema';
 export * from './stream-profile.schema';
+export * from './stream-readiness.schema';
 export * from './streaming.schema';
 export * from './streaming-lifecycle.schema';
 export * from './system.schema';
