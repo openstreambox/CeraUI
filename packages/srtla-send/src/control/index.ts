@@ -394,6 +394,9 @@ class LineConnection {
 		} catch {
 			return;
 		}
+		// Valid JSON that is not an object (`null`, a number, a string) is not a
+		// frame; reading `.id` off `null` would throw and drop the connection.
+		if (typeof frame !== "object" || frame === null) return;
 		if (typeof frame.id === "number") {
 			const waiter = this.pending.get(frame.id);
 			if (!waiter) return;
