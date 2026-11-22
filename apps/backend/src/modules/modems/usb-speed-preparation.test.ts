@@ -313,7 +313,39 @@ test("a setter readback mismatch stops before the reset", async () => {
 	expect(messages.at(-1)).not.toContain("module reset");
 	expect(b.calls).not.toContain("reset 0");
 	expect(b.calls).toContain("release 0");
-	expect(b.records.get(b.key(0))).toMatchObject({ phase: "failed" });
+	expect(b.records.get(b.key(0))).toMatchObject({
+		phase: "failed",
+		attempts: 1,
+	});
+});
+
+test("two lost setter replies exhaust the budget and preserve the original USB setting", async () => {
+	const b = box();
+	const deps: UsbSpeedDeps = {
+		...b.deps,
+		acquire: async (target) => {
+			const control = await b.deps.acquire(target);
+			return {
+				...control,
+				setUsbSpeed: async (desired) => {
+					await control.setUsbSpeed(desired);
+					throw new Error("port closed before readback");
+				},
+			};
+		},
+	};
+	for (let poll = 0; poll < 3; poll++) {
+		await runUsbSpeedPreparation(deps);
+		b.advance(USB_SPEED_PAUSE_MS);
+	}
+	expect(b.calls.filter((call) => call === "set 0 20")).toHaveLength(2);
+	expect(b.calls).not.toContain("reset 0");
+	expect(b.records.get(b.key(0))).toMatchObject({
+		original: "312",
+		wrote: true,
+		attempts: 2,
+		phase: "blocked",
+	});
 });
 
 test("a stream that starts during the takeover stops before any command", async () => {
@@ -551,6 +583,66 @@ test("Start wins during slow inhibition without consuming a reset or releasing t
 		if (start.admitted) start.lease.release();
 	}
 });
+
+for (const cut of ["attempted write", "setter readback"] as const) {
+	test(`two Starts winning at the ${cut} leave the USB reset budget available`, async () => {
+		const b = box();
+		const counts = [];
+		for (let win = 0; win < 2; win++) {
+			const entered = Promise.withResolvers<void>();
+			const resume = Promise.withResolvers<void>();
+			const run = runUsbSpeedPreparation({
+				...b.deps,
+				write: async (record) => {
+					await b.deps.write(record);
+					if (cut === "attempted write" && record.phase === "attempted") {
+						entered.resolve();
+						await resume.promise;
+					}
+				},
+				acquire: async (target) => {
+					const control = await b.deps.acquire(target);
+					return {
+						...control,
+						setUsbSpeed: async (value) => {
+							const readback = await control.setUsbSpeed(value);
+							if (cut === "setter readback") {
+								entered.resolve();
+								await resume.promise;
+							}
+							return readback;
+						},
+					};
+				},
+			});
+			await entered.promise;
+			const start = tryAcquireLifecycle("streaming");
+			try {
+				expect(start.admitted).toBe(true);
+				resume.resolve();
+				expect(await run).toEqual([]);
+			} finally {
+				resume.resolve();
+				if (start.admitted) start.lease.release();
+			}
+			const record = b.records.get(b.key(0));
+			expect(record).toMatchObject({
+				original: "312",
+				phase: "attempted",
+				wrote: true,
+			});
+			counts.push(record?.attempts);
+			b.advance(USB_SPEED_PAUSE_MS);
+		}
+		expect(b.calls).not.toContain("reset 0");
+		expect(counts).toEqual([0, 0]);
+		expect(await runUsbSpeedPreparation(b.deps)).toEqual([0]);
+		expect(b.records.get(b.key(0))).toMatchObject({
+			attempts: 1,
+			phase: "awaiting-usb",
+		});
+	});
+}
 
 test("Start is refused through USB reset and pending control release", async () => {
 	const b = box();

@@ -60,7 +60,6 @@ interface Offer {
 	name: string;
 	signature: string;
 	token: string;
-	resume: ReturnType<typeof Promise.withResolvers<void>>;
 	busy: boolean;
 }
 
@@ -70,11 +69,11 @@ export class MutationDamageMonitor {
 	private stopped = false;
 	private readonly journal = currentMutationJournalDeps();
 
-	waitForOperator = () => this.offer?.resume.promise;
+	constructor(private readonly requestCheck: () => void) {}
 
 	// Only a complete pass can attribute its remaining failures to these files.
 	observe = (damaged: readonly string[]): void => {
-		if (this.stopped || this.offer) return;
+		if (this.stopped || this.offer?.busy) return;
 		const next = new Map<string, { signature: string; failures: number }>();
 		for (const name of [...damaged].sort()) {
 			if (basename(name) !== name || !name.endsWith(".json")) continue;
@@ -86,19 +85,25 @@ export class MutationDamageMonitor {
 			}
 			const before = this.seen.get(name);
 			const failures =
-				before?.signature === signature ? before.failures + 1 : 1;
+				before?.signature === signature
+					? Math.min(before.failures + 1, RETRIES + 1)
+					: 1;
 			next.set(name, { signature, failures });
 		}
+		const offer = this.offer;
+		if (offer && next.get(offer.name)?.signature !== offer.signature)
+			this.withdraw(offer);
 		this.seen = next;
-		// Give a newly unreadable peer its own retries before pausing boot replay.
+		// Keep one token for an unchanged file. A replacement starts at one observation.
 		if (
+			this.offer ||
 			next.size !== damaged.length ||
 			[...next.values()].some((slot) => slot.failures <= RETRIES)
 		)
 			return;
 		for (const [name, { signature }] of next) {
 			const token = randomUUID();
-			const record = mutationSlotName(name).slice(0, 8);
+			const record = name.slice(0, 8);
 			notificationBroadcast(
 				NOTICE,
 				"warning",
@@ -124,7 +129,6 @@ export class MutationDamageMonitor {
 				name,
 				signature,
 				token,
-				resume: Promise.withResolvers<void>(),
 				busy: false,
 			};
 			break;
@@ -135,11 +139,7 @@ export class MutationDamageMonitor {
 		if (this.offer !== offer) return;
 		this.offer = undefined;
 		this.seen.delete(offer.name);
-		try {
-			notificationRemove(NOTICE);
-		} finally {
-			offer.resume.resolve();
-		}
+		notificationRemove(NOTICE);
 	}
 
 	stop() {
@@ -183,16 +183,22 @@ export class MutationDamageMonitor {
 		} finally {
 			// Fresh inventory, even on error. A visible rename with failed directory
 			// fsync stays behind the existing pending-removal acknowledgement.
-			this.withdraw(offer);
+			try {
+				this.withdraw(offer);
+			} finally {
+				if (!this.stopped) this.requestCheck();
+			}
 		}
 	}
 }
 
 let active: MutationDamageMonitor | undefined;
 
-export function startMutationDamageMonitor(): MutationDamageMonitor {
+export function startMutationDamageMonitor(
+	requestCheck: () => void,
+): MutationDamageMonitor {
 	stopMutationDamageMonitor();
-	active = new MutationDamageMonitor();
+	active = new MutationDamageMonitor(requestCheck);
 	return active;
 }
 

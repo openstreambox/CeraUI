@@ -66,9 +66,10 @@ any modem state, before any carrier-dependent step.
 - The read is the USB link speed in sysfs. At 480 Mbit/s or slower nothing is
   done: no inhibition and no AT command.
 - At a faster link, and only while no stream runs, CeraUI inhibits that one modem,
-  reads the stored value, records it as the original and the attempt before any
-  setter, writes `"20"` if it differs, reads it back (a mismatch stops before the
-  reset) and resets the module. The stream check runs again after the inhibition.
+  reads the stored value and saves it before sending a setting change. It writes
+  `"20"` if needed and reads it back. A failed setting request uses one attempt.
+  After a successful readback the box counts an attempt when it reserves the reset.
+  A stream start that wins before that reservation leaves the reset budget available.
 - You can start a stream while the box waits for the modem or checks its USB setting. Once the box is ready to send the reset, it holds new starts until it releases USB control.
   While the unit is absent, the box waits out its recorded 180-second return
   window before sending another modem a USB speed reset. This also applies after restart.
@@ -163,10 +164,10 @@ antes de cualquier paso que dependa del operador.
 - La lectura es la velocidad del enlace USB en sysfs. A 480 Mbit/s o menos no se
   hace nada: ni inhibición ni comandos AT.
 - Con un enlace más rápido, y solo si no hay ninguna transmisión, CeraUI inhibe
-  ese módem, lee el valor guardado, lo registra como original y registra el
-  intento antes de cualquier cambio, escribe `"20"` si es distinto, lo vuelve a
-  leer (si no coincide, se detiene antes del reinicio) y reinicia el módulo. La
-  comprobación de transmisión se repite tras la inhibición.
+  ese módem, lee el valor guardado y lo registra antes de enviar un cambio.
+  Escribe `"20"` si hace falta y vuelve a leerlo. Una solicitud de cambio fallida
+  consume un intento. Si la lectura confirma el valor, el equipo cuenta un intento
+  al reservar el reinicio. Si antes se inicia una transmisión, conserva los intentos disponibles.
 - Puedes iniciar una transmisión mientras el equipo espera al módem o comprueba su ajuste USB. Cuando el equipo está listo para enviar el reinicio, aplaza los inicios hasta liberar el control USB. Si el módem
   está ausente, el equipo espera hasta el final del plazo registrado de 180
   segundos antes de enviar a otro módem un reinicio por el cambio de velocidad
@@ -207,7 +208,10 @@ stream starts. Choose **Review recovery record**, then **Clear recovery record**
 to set that record aside. Clearing gives up restoration from its saved settings.
 The box keeps the archived bytes and checks the remaining records before
 admitting Start. During normal operation this check verifies the journal
-without replaying modem commands. A new or repaired record gets a fresh check.
+without replaying modem commands. While the warning is open, the box keeps
+checking at intervals of up to 60 seconds. It withdraws the warning when the
+file changes or reads successfully. A replacement that is still unreadable gets
+its own retries. A repaired record needs no confirmation.
 If the journal directory itself cannot be read or synced, recovery waits for
 working storage.
 
@@ -235,6 +239,17 @@ su nombre cuando se puede identificar, o indica que se desconectó o reconectó.
 El aviso desaparece cuando una recuperación verificada libera el bloqueo.
 Cambiar el nombre de la interfaz no lo libera. Una operación todavía en curso
 sigue impidiendo iniciar una nueva transmisión.
+
+Si al arrancar el equipo no puede leer un registro de recuperación, vuelve a
+intentarlo después de 1, 2 y 4 segundos. Si sigue sin poder leerlo, muestra
+un aviso y mantiene en pausa el inicio de nuevas transmisiones. El equipo
+sigue comprobando los registros a intervalos de hasta 60 segundos. Retira el
+aviso si el archivo cambia o si consigue leerlo. Un archivo de reemplazo
+recibe sus propios reintentos. Si se repara el registro, el equipo continúa
+sin pedir confirmación. Para apartar un registro ilegible, selecciona
+**Revisar el registro** y confirma con **Retirar el registro de recuperación**.
+El equipo archiva el contenido y revisa los demás registros antes de permitir
+otra transmisión.
 
 Los adaptadores USB Ethernet y Wi-Fi identificados siguen disponibles aunque no
 haya una ruta guardada. Un dispositivo USB sin identificar permanece excluido

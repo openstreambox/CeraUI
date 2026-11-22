@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	writeFileSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 import { modemClearUnreadableRecordInputSchema } from "@ceraui/rpc/schemas";
 import { call } from "@orpc/server";
 import {
@@ -45,6 +51,17 @@ const confirm = (token: string) =>
 const warning = () =>
 	getPersistentNotifications(true).show.find((n) => n.name === name);
 
+function idleSession() {
+	return createStreamSessionOrchestrator({
+		initialLiveness: () => "idle",
+		createAttemptId: () => "journal-test",
+		setStreamingStatus: () => {},
+		stopRuntime: async () => {},
+		queryRuntime: async () => "idle",
+		recoveryPending: isRecoveryPending,
+	});
+}
+
 async function offered(): Promise<string> {
 	for (let i = 0; i < 500; i++) {
 		const action = warning()?.action;
@@ -71,24 +88,19 @@ test("boot retries one damaged record three times, restores its peer, then requi
 		1,
 	);
 	const token = await exhaust(clock);
-	expect(clock.waits).toEqual([1000, 2000, 4000]);
 	expect(warning()).toMatchObject({
 		is_persistent: true,
 		is_dismissable: false,
+		params: { record: basename(path("usb:a")).slice(0, 8) },
 	});
+	await clock.at(4);
+	expect(clock.waits).toEqual([1000, 2000, 4000, 8000]);
 	expect(
 		getPersistentNotifications(false).show.some((n) => n.name === name),
 	).toBe(false);
 	notificationDismiss(name);
 	expect(warning()?.name).toBe(name);
-	const session = createStreamSessionOrchestrator({
-		initialLiveness: () => "idle",
-		createAttemptId: () => "journal-test",
-		setStreamingStatus: () => {},
-		stopRuntime: async () => {},
-		queryRuntime: async () => "idle",
-		recoveryPending: isRecoveryPending,
-	});
+	const session = idleSession();
 	const start = () => session.start({ origin: "ui", launch: async () => {} });
 	expect(await start()).toMatchObject({
 		result: "failed",
@@ -129,17 +141,167 @@ test("boot retries one damaged record three times, restores its peer, then requi
 	await session.stop("operator");
 });
 
+test("boot keeps checking an offered record and replays its repair without confirmation", async () => {
+	writeFileSync(path("usb:b"), "{bad");
+	const clock = new JournalRetryClock();
+	await initMutationRecovery({ sleep: clock.sleep });
+	const token = await exhaust(clock);
+	for (let pass = 4; pass < 8; pass++) {
+		await clock.at(pass);
+		clock.advance();
+	}
+	await clock.at(8);
+	expect(clock.waits).toEqual([
+		1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000,
+	]);
+	expect(warning()?.action).toMatchObject({ token });
+	expect(isRecoveryPending()).toBe(true);
+	await seedInterruptedMutation();
+	clock.advance();
+	await awaitRecoveryBarrier();
+	const session = idleSession();
+	expect(
+		(await session.start({ origin: "ui", launch: async () => {} })).result,
+	).toBe("started");
+	await session.stop("operator");
+	expect(warning()).toBeUndefined();
+	expect(readdirSync(journal.root())).toEqual([]);
+	expect(await confirm(token)).toEqual({ success: false, error: "no_entry" });
+});
+
+test("boot replays a repaired peer while the unchanged file keeps its confirmation", async () => {
+	for (const key of ["usb:a", "usb:b"]) writeFileSync(path(key), "{bad");
+	const clock = new JournalRetryClock();
+	await initMutationRecovery({ sleep: clock.sleep });
+	const token = await exhaust(clock);
+	await clock.at(4);
+	expect(warning()?.params?.record).toBe(mutationSlotName("usb:a").slice(0, 8));
+	await seedInterruptedMutation();
+	clock.advance();
+	await clock.at(5);
+	expect(await readMutationEntry("usb:b")).toBeUndefined();
+	expect(warning()?.action).toMatchObject({ token });
+	expect(isRecoveryPending()).toBe(true);
+	expect(readFileSync(path("usb:a"), "utf8")).toBe("{bad");
+});
+
+test("a new unreadable file at the same name withdraws the offer and earns its own retries", async () => {
+	const slot = path("usb:a");
+	writeFileSync(slot, "{first");
+	const clock = new JournalRetryClock();
+	await initMutationRecovery({ sleep: clock.sleep });
+	const old = await exhaust(clock);
+	await clock.at(4);
+	const replacement = join(journal.root(), "replacement");
+	writeFileSync(replacement, "{second");
+	renameSync(replacement, slot);
+	clock.advance();
+	await clock.at(5);
+	expect(warning()).toBeUndefined();
+	expect(await confirm(old)).toEqual({ success: false, error: "no_entry" });
+	expect(isRecoveryPending()).toBe(true);
+	const fresh = await exhaust(clock, 5);
+	expect(fresh).not.toBe(old);
+	expect(readFileSync(slot, "utf8")).toBe("{second");
+	expect(await confirm(fresh)).toEqual({ success: true });
+	await awaitRecoveryBarrier();
+	expect(readdirSync(journal.root())).toEqual([
+		".recovery-" + fresh + ".archived",
+	]);
+});
+
+test("runtime verification withdraws a repaired offer without replaying an active peer", async () => {
+	const clock = new JournalRetryClock();
+	const slot = path("usb:a");
+	let unreadable = false;
+	setMutationJournalDeps({
+		dir: journal.root(),
+		fs: {
+			...defaultMutationJournalFs,
+			readText: async (file) => {
+				if (unreadable && file === slot)
+					throw new Error("temporary read error");
+				return defaultMutationJournalFs.readText(file);
+			},
+		},
+	});
+	await initMutationRecovery({ sleep: clock.sleep });
+	await seedFailedMutation("usb:a");
+	await seedInterruptedMutation();
+	unreadable = true;
+	beginRecoveryBarrier();
+	await clock.at(1);
+	clock.advance();
+	const token = await exhaust(clock, 2);
+	await clock.at(5);
+	// Its identity and bytes stay the same. A successful parse on the next tick is enough.
+	unreadable = false;
+	clock.advance();
+	await awaitRecoveryBarrier();
+	expect(warning()).toBeUndefined();
+	expect(await readMutationEntry("usb:a")).toMatchObject({ state: "failed" });
+	expect(await readMutationEntry("usb:b")).toMatchObject({
+		state: "executing",
+	});
+	expect(
+		readdirSync(journal.root()).some((file) => file.endsWith(".archived")),
+	).toBe(false);
+	expect(await confirm(token)).toEqual({ success: false, error: "no_entry" });
+});
+
+test("confirming during an in-flight census schedules a fresh check without another timer", async () => {
+	const slot = path("usb:a");
+	writeFileSync(slot, "{bad");
+	const entered = Promise.withResolvers<void>();
+	const resume = Promise.withResolvers<void>();
+	let holdNext = false;
+	setMutationJournalDeps({
+		dir: journal.root(),
+		fs: {
+			...defaultMutationJournalFs,
+			readText: async (file) => {
+				const bytes = await defaultMutationJournalFs.readText(file);
+				if (holdNext && file === slot) {
+					holdNext = false;
+					entered.resolve();
+					await resume.promise;
+				}
+				return bytes;
+			},
+		},
+	});
+	const clock = new JournalRetryClock();
+	await initMutationRecovery({ sleep: clock.sleep });
+	const token = await exhaust(clock);
+	await clock.at(4);
+	holdNext = true;
+	clock.advance();
+	await entered.promise;
+	try {
+		expect(await confirm(token)).toEqual({ success: true });
+		expect(isRecoveryPending()).toBe(true);
+	} finally {
+		resume.resolve();
+	}
+	await awaitRecoveryBarrier();
+	expect(clock.waits).toHaveLength(4);
+	expect(warning()).toBeUndefined();
+	expect(readdirSync(journal.root())).toEqual([
+		".recovery-" + token + ".archived",
+	]);
+});
+
 test("confirmation cannot clear a repaired slot or a replacement at the same filename", async () => {
 	mkdirSync(path("usb:b"));
 	const clock = new JournalRetryClock();
 	await initMutationRecovery({ sleep: clock.sleep });
 	const token = await exhaust(clock);
-	const { renameSync } = await import("node:fs");
+	await clock.at(4);
 	renameSync(path("usb:b"), join(journal.root(), "old"));
 	writeFileSync(path("usb:b"), "{different");
 	expect(await confirm(token)).toMatchObject({ success: false });
 	expect(readFileSync(path("usb:b"), "utf8")).toBe("{different");
-	const next = await exhaust(clock, 4);
+	const next = await exhaust(clock, 5);
 	expect(next).not.toBe(token);
 	await seedInterruptedMutation();
 	expect(await confirm(next)).toMatchObject({ success: false });
@@ -168,19 +330,20 @@ test("runtime clear retries directory acknowledgement and verifies without repla
 	await clock.at(1);
 	clock.advance(); // first runtime verify is a timed pass
 	const token = await exhaust(clock, 2);
+	await clock.at(5);
 	failSync = true;
 	expect(await confirm(token)).toMatchObject({
 		success: false,
 		error: "journal_write_failed",
 	});
-	await clock.at(5);
+	await clock.at(6);
 	expect(isRecoveryPending()).toBe(true);
 	expect(await readMutationEntry("usb:b")).toMatchObject({
 		state: "executing",
 	});
 	failSync = false;
 	clock.advance();
-	await clock.at(6); // the directory acknowledgement itself changed the revision
+	await clock.at(7); // the directory acknowledgement itself changed the revision
 	clock.advance();
 	await awaitRecoveryBarrier();
 	expect(await readMutationEntry("usb:b")).toMatchObject({

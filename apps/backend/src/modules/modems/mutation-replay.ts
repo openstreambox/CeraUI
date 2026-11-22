@@ -70,6 +70,7 @@ import {
 } from "./mutation-journal-state.ts";
 import {
 	type MutationRecoveryDeps,
+	requestMutationRecoveryCheck,
 	scheduleMutationRecovery,
 	sleepUnlessAborted,
 	startMutationRecovery,
@@ -287,13 +288,12 @@ export async function initMutationRecovery(
 	stopMutationRecovery();
 	beginRecoveryBarrier();
 	consumeRecoveryBarrierRaise();
-	const damage = startMutationDamageMonitor();
+	const damage = startMutationDamageMonitor(requestMutationRecoveryCheck);
 	const summary = await runMutationReplay(damage.observe);
 	const deps: MutationRecoveryDeps = {
 		replay: async () =>
 			(await runMutationReplay(damage.observe)).unreadable === 0,
 		verify: () => journalReadsCompletely(damage.observe),
-		waitForOperator: damage.waitForOperator,
 		sleep: options.sleep ?? sleepUnlessAborted,
 	};
 	startMutationRecovery();

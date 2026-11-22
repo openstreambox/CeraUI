@@ -2156,6 +2156,7 @@ export const SUPPORT_REASON_TEMPLATES: readonly (readonly string[])[] = [
 	["schema_invalid"],
 	["serial_replayed"],
 	["setter readback differs"],
+	["setter readback missing"],
 	["setup-ap-active"],
 	["setup-in-progress"],
 	["sidecar_write_failed"],

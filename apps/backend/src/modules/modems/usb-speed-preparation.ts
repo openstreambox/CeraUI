@@ -10,9 +10,9 @@
     touched: no inhibition and no AT command.
   - A faster link means the setting is not in effect. Only then, and only while
     no stream runs, the modem is inhibited, the stored value is read and kept as
-    `original`, the attempt is recorded BEFORE any setter, "20" is written if it
-    differs and read back, and the module is reset (`AT+CFUN=1,1`). The stream
-    check runs again after the inhibition.
+    `original` before any setter, and "20" is written if it differs. After
+    readback the box reserves the reset, records that attempt and sends
+    `AT+CFUN=1,1`. Start can still win before the reservation.
   - The next USB generation verifies it: back at 480 Mbit/s or slower.
   - At most one modem is switched at a time, 15 minutes between attempts, two
     attempts per unit; then the unit is blocked until its record is removed.
@@ -318,7 +318,7 @@ async function applyUsbSpeed(
 			desired,
 			// Set before the setter: a lost reply must still count as our write.
 			wrote: (record?.wrote ?? false) || current !== desired,
-			attempts: (record?.attempts ?? 0) + 1,
+			attempts: record?.attempts ?? 0,
 			phase: "attempted",
 			epoch: target.generation,
 			started: deps.now(),
@@ -327,16 +327,30 @@ async function applyUsbSpeed(
 		if (current !== desired) {
 			if (deps.streaming() || backgroundModemRefusal(target.key))
 				return undefined;
-			if ((await control.setUsbSpeed(desired)) !== desired) {
-				next = { ...next, phase: "failed", reason: "setter readback differs" };
-				await deps.write(next);
-				return next;
+			let readback: string | undefined;
+			try {
+				readback = await control.setUsbSpeed(desired);
+			} finally {
+				// A failed setting request still spends an attempt, including a lost reply.
+				if (readback !== desired) {
+					next = {
+						...next,
+						attempts: next.attempts + 1,
+						phase: "failed",
+						reason:
+							readback === undefined
+								? "setter readback missing"
+								: "setter readback differs",
+					};
+					await deps.write(next);
+				}
 			}
+			if (readback !== desired) return next;
 		}
-		// The setting takes effect on reset. A Start that won while the modem
-		// was inhibited or queried keeps admission; leave the recorded attempt.
+		// The setter's original value is already durable. Charge the reset only
+		// after admission, in the same durable record that precedes dispatch.
 		if (deps.streaming() || !owner.tryUpgrade()) return undefined;
-		next = { ...next, phase: "awaiting-usb" };
+		next = { ...next, attempts: next.attempts + 1, phase: "awaiting-usb" };
 		await deps.write(next);
 		if (deps.streaming()) throw new Error("a stream started");
 		try {
