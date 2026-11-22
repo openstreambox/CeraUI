@@ -61,7 +61,10 @@ fuzz("RPC input schemas", fc.tuple(text, json), ([value, wrongType]) => {
 
 fuzz("RPC adapter frames", fc.tuple(text, json), ([id, input]) => {
 	const frame = { id, path: ["streaming", "setConfig"], input };
-	expect(parseMessage(JSON.stringify(frame), ws)).toEqual(frame);
+	// Compare with the JSON round trip: -0 is written as 0.
+	expect(parseMessage(JSON.stringify(frame), ws)).toEqual(
+		JSON.parse(JSON.stringify(frame)),
+	);
 	expect(parseMessage(JSON.stringify({ pong: id }), ws)).toBeNull();
 	expect(parseMessage(JSON.stringify(frame).slice(0, -1), ws)).toBeNull();
 });
