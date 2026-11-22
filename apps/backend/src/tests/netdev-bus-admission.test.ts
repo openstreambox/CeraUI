@@ -387,6 +387,39 @@ test("an earlier unreadable bus does not hold Ethernet on its first indexed retu
 	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
 });
 
+test("a late USB descriptor is remembered even after a scan drops the disconnected name", async () => {
+	const f = fixture(firstSightIfconfig(MODEM, IP), [MODEM]);
+	f.setIpUnavailable();
+	f.set(MODEM, err("EIO"));
+	const first = updateNetif();
+	try {
+		await bound(f, first);
+		f.release();
+		await f.settle();
+		expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual([MODEM]);
+		processIfconfigOutput("");
+		await scanModule.refreshUsbNetMarkers([]);
+		expect(scanModule.getUsbPhysicalDescriptor(MODEM)).toBeUndefined();
+
+		f.setIndex(MODEM, 29);
+		f.block(MODEM);
+		const returned = updateNetif();
+		try {
+			await f.enteredFor(MODEM);
+			jest.advanceTimersByTime(2000);
+			await returned;
+			expect(scanModule.isUsbReplacementPending(MODEM)).toBe(true);
+		} finally {
+			f.release();
+			await returned;
+			await f.settle();
+		}
+	} finally {
+		f.release();
+		await first;
+	}
+});
+
 test("an unreadable bus that becomes platform releases on the wire with unchanged raw state", async () => {
 	const output = firstSightIfconfig("eth9", "192.0.2.2");
 	const f = fixture(output, ["eth9"]);

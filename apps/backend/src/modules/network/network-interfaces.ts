@@ -242,6 +242,14 @@ function installScanSettlement(): void {
 	onUsbNetScanCommitted(() => {
 		let released = false;
 		for (const [name, int] of Object.entries(netif)) {
+			const identity = netdevIdentity.get(name);
+			if (
+				identity?.present &&
+				usbNetScanCoversCurrentPresence(name) &&
+				getUsbPhysicalDescriptor(name) !== undefined
+			) {
+				identity.usbObserved = true;
+			}
 			if (
 				(int.usb || int.busUnreadable) &&
 				!int.identitySettled &&
