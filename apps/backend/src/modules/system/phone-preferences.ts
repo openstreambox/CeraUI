@@ -18,13 +18,17 @@ export async function readPhoneWay(path = FILE): Promise<PhoneWay | null> {
 		if (raw === null) return null;
 		stored = JSON.parse(raw);
 	} catch (error) {
-		// An empty, truncated, non-UTF-8, oversize or non-regular file is the same
+		// An empty, truncated, non-UTF-8, oversize, non-regular or symlinked file is the same
 		// as no saved choice. Other read errors (a file that changed under the
 		// read, an I/O failure) still propagate.
 		const unusable =
 			error instanceof SyntaxError ||
 			(error instanceof StoredStateReadError &&
-				(error.reason === "oversize" || error.reason === "not_regular_file"));
+				(error.reason === "oversize" ||
+					error.reason === "not_regular_file" ||
+					// A symlink is refused at open (O_NOFOLLOW) with ELOOP.
+					(error.cause as NodeJS.ErrnoException | undefined)?.code ===
+						"ELOOP"));
 		if (!unusable) throw error;
 		logger.warn("phone way file is unusable, ignoring it");
 		return null;

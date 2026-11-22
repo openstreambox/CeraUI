@@ -4,6 +4,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,7 +33,7 @@ test("a damaged way file reads as no saved choice and can be replaced", async ()
 			writeFileSync(path, damaged);
 			expect(await readPhoneWay(path)).toBeNull();
 		}
-		// Larger than the settings limit, and not a regular file at all.
+		// Larger than the settings limit, not a regular file, and a symlink.
 		writeFileSync(
 			path,
 			JSON.stringify({ way: "srt", pad: "x".repeat(20_000) }),
@@ -42,6 +43,11 @@ test("a damaged way file reads as no saved choice and can be replaced", async ()
 		mkdirSync(path);
 		expect(await readPhoneWay(path)).toBeNull();
 		rmSync(path, { recursive: true });
+		const target = join(dir, "target.json");
+		writeFileSync(target, JSON.stringify({ way: "srt" }));
+		symlinkSync(target, path);
+		expect(await readPhoneWay(path)).toBeNull();
+		rmSync(path);
 		await writePhoneWay("srt", path);
 		expect(await readPhoneWay(path)).toBe("srt");
 	} finally {
