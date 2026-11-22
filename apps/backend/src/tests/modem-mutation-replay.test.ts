@@ -34,6 +34,7 @@ import {
 	resetMutationJournalDeps,
 	setMutationJournalDeps,
 } from "../modules/modems/mutation-journal.ts";
+import { withJournaledModemMutation } from "../modules/modems/mutation-lease.ts";
 import { initMutationRecovery } from "../modules/modems/mutation-replay.ts";
 import {
 	clearMutationRollbacks,
@@ -112,6 +113,7 @@ function seed(state: ModemMutationState): ModemMutationEntry {
 /** Point the whole subsystem at a real temp journal with a scripted device view. */
 function useDevice(
 	current: Readonly<Record<string, unknown>> | undefined,
+	serialNumber?: string,
 ): void {
 	setMutationCaptureDeps({
 		enumerate: () =>
@@ -127,6 +129,7 @@ function useDevice(
 								ifname: String(current.ifname ?? ""),
 								bDeviceClass: 0,
 								physicalUid: KEY,
+								serialNumber,
 								interfaces: COMPOSITIONS[String(current.mode ?? "qmi")] ?? [],
 							} as never,
 						],
@@ -161,6 +164,35 @@ afterEach(async () => {
 	resetLifecycleInterlock();
 	resetRecoveryBarrier();
 	await rm(dir, { recursive: true, force: true });
+});
+
+test("the journal captures a unit and replay does not verify a different unit on its port", async () => {
+	useDevice(present(), "fixture-original-5b2");
+	const failed = await withJournaledModemMutation(
+		KEY,
+		"usb-mode",
+		PRE_STATE,
+		async () => ({
+			confirmed: false,
+			value: undefined,
+		}),
+	);
+	expect(failed.ok).toBe(true);
+	const entry = await readMutationEntry(KEY);
+	expect(entry?.unitLinkId).toMatch(/^lnk_[0-9a-f]{16}$/);
+	if (entry === undefined)
+		throw new Error("fixture mutation was not journaled");
+	expect(JSON.stringify(entry)).not.toContain("fixture-original-5b2");
+	await commitMutationEntry({ ...entry, state: "executing" });
+	useDevice(present(), "fixture-replacement-a72");
+	const summary = await initMutationRecovery();
+	expect(summary.rolledBack).toBe(0);
+	expect((await readMutationEntry(KEY))?.state).toBe(
+		"device-absent-quarantine",
+	);
+	expect(getMutationBlocks()).toEqual([
+		expect.objectContaining({ unitLinkId: entry.unitLinkId }),
+	]);
 });
 
 describe("crash-point replay — one test per journal state", () => {

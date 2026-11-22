@@ -156,11 +156,14 @@ export async function refreshMutationBlocks(
 
 	assertMutationJournalRevision(revision);
 	setMutationBlocks(
-		blocks.map(
-			(block): MutationBlock => ({
-				stableKey: block.stableKey,
-				refusal: REFUSAL_BY_STATE[block.state] ?? "mutation_blocked",
-				blocksStreaming: block.blocksStreaming,
+		blocking.map(
+			(entry): MutationBlock => ({
+				stableKey: entry.stableKey,
+				...(entry.unitLinkId === undefined
+					? {}
+					: { unitLinkId: entry.unitLinkId }),
+				refusal: REFUSAL_BY_STATE[entry.state] ?? "mutation_blocked",
+				blocksStreaming: blocksStreaming(entry.state),
 			}),
 		),
 	);

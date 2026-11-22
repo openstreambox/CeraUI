@@ -45,10 +45,16 @@ import {
 	deriveModemStableKey,
 	type ModemMutationKind,
 } from "@ceraui/rpc/schemas";
+import { getConfig } from "../config.ts";
 import {
 	assertMutationJournalRevision,
 	mutationJournalRevision,
 } from "./mutation-journal-revision.ts";
+import {
+	mintLinkId,
+	usableUsbSerial,
+	usbSerialDigest,
+} from "./physical-identity.ts";
 
 export type CapturedState = Readonly<Record<string, unknown>>;
 
@@ -122,16 +128,53 @@ function snapshotOf(device: UsbDeviceSnapshot): CapturedState {
 	};
 }
 
-/** The device's current descriptor state, or `undefined` when it is not present. */
+function reliableUnitLinkId(
+	device: UsbDeviceSnapshot,
+	devices: readonly UsbDeviceSnapshot[],
+): string | undefined {
+	const serial = usableUsbSerial(device.serialNumber);
+	const vid = device.vendorId.toLowerCase();
+	if (serial === undefined || !/^[0-9a-f]{4}$/.test(vid)) return undefined;
+	const key = `${vid}:${serial}`;
+	if (getConfig().usb_serial_shared?.includes(usbSerialDigest(key)))
+		return undefined;
+	const shared = devices.some(
+		(other) =>
+			other.physicalUid !== device.physicalUid &&
+			other.vendorId.toLowerCase() === vid &&
+			usableUsbSerial(other.serialNumber) === serial,
+	);
+	return shared ? undefined : mintLinkId(`usb-serial:${key}`);
+}
+
+/** Record an opaque unit identity if the enumerated modem has a reliable serial. */
+export async function captureModemUnitLinkId(
+	stableKey: string,
+): Promise<string | undefined> {
+	const devices = await activeDeps.enumerate();
+	const device = devices.find(
+		(candidate) => deriveModemStableKey(candidate.physicalUid) === stableKey,
+	);
+	return device === undefined ? undefined : reliableUnitLinkId(device, devices);
+}
+
+/** Find the original device at the journaled port when its unit identity is known. */
 export async function captureModemState(
 	stableKey: string,
 	deps: MutationCaptureDeps = activeDeps,
+	unitLinkId?: string,
 ): Promise<CapturedState | undefined> {
 	const devices = await deps.enumerate();
 	const device = devices.find(
 		(candidate) => deriveModemStableKey(candidate.physicalUid) === stableKey,
 	);
-	return device === undefined ? undefined : snapshotOf(device);
+	if (device === undefined) return undefined;
+	if (
+		unitLinkId !== undefined &&
+		reliableUnitLinkId(device, devices) !== unitLinkId
+	)
+		return undefined;
+	return snapshotOf(device);
 }
 
 /**
@@ -165,9 +208,10 @@ export async function rollbackMutation(
 	kind: ModemMutationKind,
 	stableKey: string,
 	preState: CapturedState,
+	unitLinkId?: string,
 ): Promise<RollbackResult> {
 	const revision = mutationJournalRevision();
-	const current = await captureModemState(stableKey);
+	const current = await captureModemState(stableKey, undefined, unitLinkId);
 	assertMutationJournalRevision(revision);
 	if (current === undefined) return "absent";
 	// Already back — nothing to undo. This is the common replay case: an `armed`

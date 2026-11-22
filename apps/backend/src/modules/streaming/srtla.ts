@@ -19,7 +19,11 @@ import { isSameSubnet } from "../../helpers/ip-addresses.ts";
 
 import { logger } from "../../helpers/logger.ts";
 
-import { readClatTranslations } from "../network/clat-translation.ts";
+import {
+	clatTranslationFor,
+	isClatTunName,
+	readClatTranslations,
+} from "../network/clat-translation.ts";
 import { dnsCacheResolve, dnsCacheValidate } from "../network/dns.ts";
 import { queueUpdateGw } from "../network/gateways.ts";
 import {
@@ -107,7 +111,12 @@ function collectBondEntries(
 		if (!accept(name, networkInterface)) continue;
 		const entry = describeBondEntry(name, networkInterface.ip);
 		if (requireMappableDuplicate) {
-			const owner = entry.parentIface ?? name;
+			let owner = name;
+			if (isClatTunName(name)) {
+				const translation = clatTranslationFor(name, networkInterface.ip);
+				if (!translation) continue;
+				owner = translation.parent;
+			}
 			const parent = networkInterfaces[owner];
 			if (
 				isUsbReplacementPending(owner) ||

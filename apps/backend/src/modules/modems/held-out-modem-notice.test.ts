@@ -76,12 +76,12 @@ test("a modem with no current row (unplugged or renamed) still gets a notice", (
 	);
 });
 
-test("the notice describes which modem the box leaves out of sending", () => {
+test("the notice reports recovery without claiming the sender stopped using the modem", () => {
 	expect(heldOutMsg(undefined)).toBe(
-		"The box is keeping a modem out of its stream because a setting change on that modem could not be undone.",
+		"A modem setting change is pending recovery.",
 	);
 	expect(heldOutMsg("RM520N-GL")).toBe(
-		"The box is keeping RM520N-GL out of its stream because a setting change on that modem could not be undone.",
+		"A setting change on RM520N-GL is pending recovery.",
 	);
 });
 

@@ -41,10 +41,12 @@ import {
 	getMockModemNetMarker,
 	shouldMockNetwork,
 } from "../../mocks/providers/network.ts";
+import { resolvePhysicalDevice } from "../modems/physical-identity.ts";
 import { isBondLinkMappable } from "../streaming/bond-entry.ts";
 import {
 	hasMutationBlocks,
 	isModemKeyBlocked,
+	isModemUnitBlocked,
 	onMutationBlocksChange,
 } from "../streaming/lifecycle-admission.ts";
 // Type-only: erased at build time, so it adds no runtime edge back into
@@ -194,7 +196,7 @@ const netdevIdentity = new Map<
 	{
 		index: number | undefined;
 		possiblyUsb: boolean;
-		indexMissing: boolean;
+		present: boolean;
 	}
 >();
 type NetdevBusEvidence = {
@@ -224,6 +226,10 @@ function bumpPresence(
 ): void {
 	const epoch = (presenceEpoch.get(name) ?? 0) + 1;
 	presenceEpoch.set(name, epoch);
+	if (event === "removed") {
+		const identity = netdevIdentity.get(name);
+		if (identity !== undefined) identity.present = false;
+	}
 	if (event !== "added") {
 		invalidateUsbNetReading(name, epoch, event === "replaced");
 	}
@@ -346,7 +352,11 @@ export function isHeldOutByModemBlock(
 			return false;
 		if (descriptor) {
 			const key = deriveModemStableKey(descriptor.idPath);
-			return key === undefined || isModemKeyBlocked(key);
+			if (key === undefined || isModemKeyBlocked(key)) return true;
+			const identity = resolvePhysicalDevice(descriptor);
+			return (
+				identity.anchor === "usb-serial" && isModemUnitBlocked(identity.linkId)
+			);
 		}
 	}
 	// Settlement/deadline alone cannot identify an unresolved modem. A translated
@@ -1050,7 +1060,18 @@ async function refreshNetifFromOs(): Promise<void> {
 			reads.set(name, { seen, promise });
 		};
 		for (const name of ifnames) {
-			if (!netif[name]?.identitySettled && !netif[name]?.usb) issue(name);
+			const index = ifindices.get(name);
+			const previousIndex = netdevIdentity.get(name)?.index;
+			const changedIndex =
+				index !== undefined &&
+				previousIndex !== undefined &&
+				index !== previousIndex;
+			if (
+				changedIndex ||
+				isUsbReplacementPending(name) ||
+				(!netif[name]?.identitySettled && !netif[name]?.usb)
+			)
+				issue(name);
 		}
 		if (ifnames.some((name) => !usbNetScanCovers(name))) {
 			let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1219,29 +1240,25 @@ export function processIfconfigOutput(
 				previousIndex !== undefined &&
 				ifindex !== previousIndex;
 			const unknownIndex = ifindices !== undefined && ifindex === undefined;
-			const regainedIndex =
-				ifindex !== undefined && previousIdentity?.indexMissing;
+			// Missing indices on a continuous interface don't prove a change.
+			// After an observed disconnect, an unindexed USB return does need
+			// current evidence before it can reuse its previous identity.
 			const replaced =
-				possiblyUsb &&
-				(differentIndex ||
-					regainedIndex ||
-					(unknownIndex &&
-						previousIdentity !== undefined &&
-						!isUsbReplacementPending(name)));
+				differentIndex ||
+				(unknownIndex &&
+					possiblyUsb &&
+					previousIdentity?.present === false &&
+					!isUsbReplacementPending(name));
 			if (replaced) {
 				bumpPresence(name, "replaced");
 				intsChanged = true;
 			}
-			const nonUsb =
-				!replaced && observedBus !== undefined && observedBus !== "usb";
+			const nonUsb = observedBus !== undefined && observedBus !== "usb";
 			if (nonUsb && confirmNonUsbReplacement(name)) intsChanged = true;
 			netdevIdentity.set(name, {
 				index: ifindex ?? previousIndex,
-				possiblyUsb: possiblyUsb && !nonUsb,
-				indexMissing:
-					ifindices === undefined
-						? (previousIdentity?.indexMissing ?? false)
-						: unknownIndex,
+				possiblyUsb: !nonUsb && (possiblyUsb || isUsbReplacementPending(name)),
+				present: true,
 			});
 			const previous = replaced ? undefined : netif[name];
 			let tp = 0;
@@ -1256,8 +1273,7 @@ export function processIfconfigOutput(
 
 			const enabled = !previous || previous.enabled;
 			const error = previous ? previous.error : 0;
-			const usb =
-				previous?.usb === true || (!replaced && observedBus === "usb");
+			const usb = !nonUsb && (previous?.usb === true || observedBus === "usb");
 			const busUnreadable =
 				isUsbReplacementPending(name) ||
 				(!previous?.identitySettled &&

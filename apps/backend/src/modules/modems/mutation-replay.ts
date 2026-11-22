@@ -134,7 +134,12 @@ async function replayEntry(
 	}
 
 	if (action === "recheck-presence") {
-		const present = (await captureModemState(entry.stableKey)) !== undefined;
+		const present =
+			(await captureModemState(
+				entry.stableKey,
+				undefined,
+				entry.unitLinkId,
+			)) !== undefined;
 		assertMutationJournalRevision(revision);
 		const target = presenceRecheckTarget(entry.state, present);
 		if (target === undefined) {
@@ -152,6 +157,7 @@ async function replayEntry(
 		entry.kind,
 		entry.stableKey,
 		entry.preState,
+		entry.unitLinkId,
 	);
 	assertMutationJournalRevision(revision);
 	if (outcome === "restored") {

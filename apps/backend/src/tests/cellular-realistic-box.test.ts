@@ -184,7 +184,7 @@ test("a name that keeps the same address but changes ifindex cannot borrow the o
 	expect(box.bonded()).toEqual(["eth0", "wwan2"]);
 });
 
-test("missing ifindex holds a known USB name until its current scan", async () => {
+test("an observed USB return without an ifindex waits for a current scan", async () => {
 	box = await realisticBox();
 	await box.scan(undefined, {
 		ifindices: new Map([
@@ -194,6 +194,7 @@ test("missing ifindex holds a known USB name until its current scan", async () =
 		]),
 	});
 	await box.journal([journalEntry(MODEMS[0], "failed")]);
+	await box.scan([ETHERNET, MODEMS[2]], { skipPhysical: true });
 	const links = [
 		ETHERNET,
 		{ ...MODEMS[0], ifname: "wwan1", ip: MODEMS[1].ip },
@@ -208,6 +209,75 @@ test("missing ifindex holds a known USB name until its current scan", async () =
 		ifindices: new Map([["wwan2", 12]]),
 	});
 	expect(box.bonded()).toContain("wwan1");
+});
+
+test("a healthy USB link stays admitted across repeated missing indices after its scan", async () => {
+	box = await realisticBox();
+	const links = [ETHERNET, MODEMS[1]];
+	await box.scan(links, { ifindices: new Map([["wwan1", 11]]) });
+	await box.scan(links, { ifindices: new Map() });
+	await box.scan(links, { ifindices: new Map(), skipPhysical: true });
+	expect(box.bonded()).toContain("wwan1");
+});
+
+test("a verified USB Ethernet replacement can be admitted without a serial or port key", async () => {
+	box = await realisticBox();
+	await box.scan([ETHERNET, USB_ETHERNET], {
+		ifindices: new Map([[USB_ETHERNET.ifname, 11]]),
+	});
+	await box.scan([ETHERNET, USB_ETHERNET], {
+		ifindices: new Map([[USB_ETHERNET.ifname, 21]]),
+	});
+	expect(box.bonded()).toContain(USB_ETHERNET.ifname);
+});
+
+test("a reliable modem unit and its original port remain quarantined after a move", async () => {
+	box = await realisticBox();
+	const original = { ...MODEMS[0], serial: "fixture-move-a981" };
+	const moved = { ...MODEMS[1], serial: original.serial };
+	const replacement = { ...MODEMS[0], serial: "fixture-other-c722" };
+	await box.scan([ETHERNET, original]);
+	const unitLinkId = genSrtlaBondEntries().find(
+		(link) => link.iface === original.ifname,
+	)?.linkId;
+	expect(unitLinkId).toBeDefined();
+	if (unitLinkId === undefined) throw new Error("fixture modem has no link ID");
+	await box.journal([{ ...journalEntry(original, "failed"), unitLinkId }]);
+	await box.scan([ETHERNET, replacement, moved]);
+	expect(box.bonded()).toEqual(["eth0"]);
+	expect(genSrtlaBondEntriesForLocalIpAddress("198.51.100.200")).toEqual([]);
+	await box.journal([]);
+	expect(box.bonded()).toEqual(["eth0", "wwan0", "wwan1"]);
+});
+
+test("the local CLAT sender checks the held parent even when its link identity was evicted", async () => {
+	box = await realisticBox();
+	const modem = MODEMS[0];
+	const tun = { ifname: "clat3", ip: "10.254.0.3", kind: "ethernet" as const };
+	const links = [ETHERNET, modem, tun];
+	await box.scan(links, {
+		ifindices: new Map([
+			[modem.ifname, 11],
+			[tun.ifname, 30],
+		]),
+	});
+	setClatTranslationsForTest(
+		new Map([
+			[tun.ifname, { parent: modem.ifname, tun: tun.ifname, ipv4: tun.ip }],
+		]),
+	);
+	try {
+		await box.scan(links, {
+			ifindices: new Map([
+				[modem.ifname, 21],
+				[tun.ifname, 30],
+			]),
+			skipPhysical: true,
+		});
+		expect(genSrtlaBondEntriesForLocalIpAddress("10.254.0.4")).toEqual([]);
+	} finally {
+		setClatTranslationsForTest(new Map());
+	}
 });
 
 test("a known ifindex survives disconnection and distinguishes return from replacement", async () => {

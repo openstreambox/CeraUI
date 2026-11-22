@@ -230,6 +230,7 @@ export type ModemMutationAdmission =
 /** Why one physical identity is currently refusing mutations, from the journal. */
 export interface MutationBlock {
 	readonly stableKey: string;
+	readonly unitLinkId?: string;
 	readonly refusal: ModemMutationRefusal;
 	/** Whether it ALSO holds global stream autostart (a decommission does not). */
 	readonly blocksStreaming: boolean;
@@ -371,6 +372,7 @@ export function setMutationBlocks(blocks: readonly MutationBlock[]): void {
 			return (
 				!old ||
 				old.refusal !== block.refusal ||
+				old.unitLinkId !== block.unitLinkId ||
 				old.blocksStreaming !== block.blocksStreaming
 			);
 		});
@@ -390,6 +392,13 @@ export function onMutationBlocksChange(listener: () => void): () => void {
 /** Whether this physical identity is blocked by the journal. */
 export function isModemKeyBlocked(stableKey: string): boolean {
 	return mutationBlocks.has(stableKey);
+}
+
+export function isModemUnitBlocked(linkId: string): boolean {
+	for (const block of mutationBlocks.values()) {
+		if (block.unitLinkId === linkId) return true;
+	}
+	return false;
 }
 
 export function hasMutationBlocks(): boolean {

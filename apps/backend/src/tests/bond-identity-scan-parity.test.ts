@@ -286,3 +286,18 @@ test("the sysfs index detects a USB replacement when the IP command fails", asyn
 		srtla.genSrtlaBondEntries().some((entry) => entry.iface === MODEM),
 	).toBe(true);
 });
+
+test("a changed settled non-USB index rechecks the bus and holds an unknown replacement", async () => {
+	const scan = firstSightScan(ethernet, {
+		blocked: [],
+		buses: { eth9: "pci" },
+	});
+	await updateNetif();
+	expect(srtla.genSrtlaBondEntries()).toEqual(expectedEntries);
+	const prior = scan.busCounts.get("eth9") ?? 0;
+	scan.setIndex("eth9", 29);
+	scan.setBus("eth9", async () => "usb");
+	await updateNetif();
+	expect(scan.busCounts.get("eth9")).toBeGreaterThan(prior);
+	expect(srtla.genSrtlaBondEntries()).toEqual([]);
+});

@@ -177,6 +177,11 @@ export function mintLinkId(identityKey: string): string {
 	return `${LINK_ID_PREFIX}${digest.slice(0, LINK_ID_DIGEST_CHARS)}`;
 }
 
+/** Hash the vendor/serial pair used to remember shared USB descriptors. */
+export function usbSerialDigest(key: string): string {
+	return createHash("sha256").update(key).digest("hex");
+}
+
 /** A serial that actually anchors: present, non-empty, not a repeated descriptor. */
 export function usableUsbSerial(raw: string | undefined): string | undefined {
 	const serial = raw?.trim();

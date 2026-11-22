@@ -190,24 +190,28 @@ enlace traducido. CeraUI no ejecuta ni configura el traductor.
 
 ## Recovery isolation
 
-The box excludes a failed or quarantined modem from the links it uses to send
-the stream. The warning names the modem when a current row identifies it and
-says “a modem” when the row is missing.
+The warning reports a modem setting change pending recovery. It names the
+modem when a current row identifies it and says “a modem” otherwise.
 The warning clears after verified recovery releases the journal block. Dismissing
 a warning or reusing an interface name cannot release a block. An operation still
 in progress continues to hold new starts.
 
 Bond exclusion uses the current USB descriptor scan's physical path, with the
 same stable-key derivation as modem recovery. Removal immediately invalidates
-that name's scan evidence, even if a replacement takes the same name and address
-between polls. A known USB name with ambiguous interface-index evidence waits
-for a fresh physical identity. The ordinary first-sight timeout cannot release
-a replacement. A scan overlapping invalidation cannot restore the old evidence.
+that name's scan evidence. An interface-index change invalidates it even when the
+name and address stay the same. A known USB name returning without an index after
+a disconnect waits for fresh identity evidence. Missing indices alone leave a
+continuously present link admitted. The ordinary first-sight timeout cannot
+release a replacement. A scan overlapping invalidation cannot restore the old
+evidence.
 
 A different modem in the same USB port can have a different link identity. The
-recovery journal still owns the port. The box keeps the port out of sender
-admission, including for a receiver on the local network, until recovery
-verifies or explicitly rebaselines the journal entry.
+recovery journal still owns the port. When the box captured a reliable USB
+serial identity before the change, the same journal entry also blocks that unit
+if it moves to another port. Sender admission enforces both checks, including
+for a receiver on the local network. Automatic rollback stays at the original
+port and checks the recorded unit when available. Older entries and units
+without a reliable identity use the port only.
 The modem roster's retained ID-path cache is not admission authority. Positively
 classified USB Ethernet and sysfs-confirmed Wi-Fi stay available without an
 ID-path cache entry; unresolved USB candidates stay out while a block exists,
@@ -218,8 +222,11 @@ when the interface name and address have not changed.
 When the sender advertises intentional empty reloads, the box opts in at
 launch. The last held link can then leave the live bond without replacing the
 sender. Sending resumes when a link is admitted and registers again. Older
-senders, including v4.2.0, keep their existing empty-reload behavior. The image
-must ship a sender with this capability to enable the pause.
+senders, including v4.2.0, retain the previous pool on an empty reload, so
+they can continue sending through the last held link. The image must ship a
+sender with intentional empty reloads to enable the pause. During a long
+pause the SRT peer receives no replies and its idle timeout expires. The
+encoder then reconnects after sending resumes.
 
 The host-plane replay, displacement and recovery-wait mechanisms from the older
 recovery drafts remain outside this implementation. The box fixture covers real
@@ -229,9 +236,8 @@ OS reads, journal entries, sender spawning and engine I/O substituted.
 
 ### Aislamiento durante la recuperación
 
-La caja excluye a un módem con una restauración fallida o en cuarentena de los
-enlaces que usa para enviar la transmisión. El aviso muestra su nombre cuando
-se puede identificar en la lista de módems. Si no aparece, el aviso dice
+El aviso indica que hay un cambio de configuración pendiente de recuperación.
+Muestra el nombre si el módem aparece en la lista. En caso contrario, dice
 «un módem».
 El aviso desaparece cuando una recuperación verificada libera el bloqueo.
 Cambiar el nombre de la interfaz no lo libera. Una operación todavía en curso
@@ -247,9 +253,11 @@ la caja espera una lectura física actual. Si se conecta otro módem al mismo
 puerto, su identidad de enlace puede ser distinta. La caja mantiene el puerto
 fuera de los enlaces que usa para enviar, también en la red local, hasta que
 la recuperación verifique la entrada del diario o se establezca explícitamente
-una nueva configuración de referencia.
-
+una nueva configuración de referencia. Cuando el diario guarda una identidad
+USB fiable, el bloqueo también sigue a ese módem si cambia de puerto.
 
 Con un emisor compatible, la caja pausa el envío cuando el último enlace
 queda excluido. El envío se reanuda cuando se admite y se registra un enlace.
-La imagen debe incluir un emisor compatible con esta opción.
+La versión 4.2.0 conserva el conjunto anterior y puede seguir enviando por el
+último enlace. En una pausa larga, el par SRT agota su tiempo de espera por
+inactividad. El codificador vuelve a conectarse cuando se reanuda el envío.

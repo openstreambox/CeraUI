@@ -1,15 +1,6 @@
 /*
-  TELL THE STREAMER WHEN A MODEM IS KEPT OUT OF THE STREAM.
-
-  A modem whose setting change could not be undone (a failed rollback, or a
-  modem that disappeared mid-change) is kept out of the bond by its stable key,
-  and the other links stream without it. Nothing on screen said so: the block
-  list was only reachable over RPC, and a modem that came back under another
-  name, or was unplugged, had no row of its own to show it on.
-
-  One persistent notice per held-out modem, raised when the block appears and
-  retracted when it clears. It names the modem when a current modem row has that
-  stable key, and says "a modem" otherwise.
+  Publish one persistent recovery notice per failed or quarantined modem. Use
+  its current label when available, including after interface renaming.
 */
 
 import type { ModemMutationBlock } from "@ceraui/rpc/schemas";
@@ -26,8 +17,8 @@ export const HELD_OUT_UNKNOWN_KEY = "notifications.modemHeldOutUnknown";
 
 export function heldOutMsg(name: string | undefined): string {
 	return name === undefined
-		? "The box is keeping a modem out of its stream because a setting change on that modem could not be undone."
-		: `The box is keeping ${name} out of its stream because a setting change on that modem could not be undone.`;
+		? "A modem setting change is pending recovery."
+		: `A setting change on ${name} is pending recovery.`;
 }
 
 export interface HeldOutNoticeDeps {

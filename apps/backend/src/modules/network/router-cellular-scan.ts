@@ -61,6 +61,7 @@ import {
 	resolvePhysicalDevice,
 	setPresentPhysicalDevices,
 	usableUsbSerial,
+	usbSerialDigest,
 } from "../modems/physical-identity.ts";
 import {
 	classifyUsbNetDevice,
@@ -553,16 +554,12 @@ export async function scanUsbNetMarkers(
 	const duplicateSerialKeys = new Set(
 		[...parentsBySerial]
 			.filter(([, parents]) => parents.size > 1)
-			.map(([key]) => serialDigest(key)),
+			.map(([key]) => usbSerialDigest(key)),
 	);
 	for (const descriptor of physical.values()) {
 		rejectSharedSerial(descriptor, duplicateSerialKeys);
 	}
 	return { routerCellular, modemNet, physical, duplicateSerialKeys };
-}
-
-function serialDigest(key: string): string {
-	return new Bun.CryptoHasher("sha256").update(key).digest("hex");
 }
 
 function rejectSharedSerial(
@@ -572,7 +569,7 @@ function rejectSharedSerial(
 	const serial = descriptor.serial?.trim();
 	if (
 		serial === undefined ||
-		!hashes.has(serialDigest(`${descriptor.vid.toLowerCase()}:${serial}`))
+		!hashes.has(usbSerialDigest(`${descriptor.vid.toLowerCase()}:${serial}`))
 	)
 		return;
 	descriptor.legacyLinkId = mintLinkId(
@@ -851,7 +848,8 @@ async function runUsbNetScan(
 		for (const [name, descriptor] of physicalDescriptors) {
 			if (
 				awaitingReplacementIdentity.has(name) &&
-				resolvePhysicalDevice(descriptor).anchor !== "ifname"
+				(descriptor.deviceClass === "wired-ethernet" ||
+					resolvePhysicalDevice(descriptor).anchor !== "ifname")
 			) {
 				awaitingReplacementIdentity.delete(name);
 				identified = true;
