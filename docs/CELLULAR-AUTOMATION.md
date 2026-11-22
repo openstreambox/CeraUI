@@ -215,6 +215,12 @@ even after the ordinary identity-settlement deadline. Translated IPv4 links
 follow their parent modem's exclusion. A fresh scan republishes membership even
 when the interface name and address have not changed.
 
+When the sender advertises intentional empty reloads, the box opts in at
+launch. The last held link can then leave the live bond without replacing the
+sender. Sending resumes when a link is admitted and registers again. Older
+senders, including v4.2.0, keep their existing empty-reload behavior. The image
+must ship a sender with this capability to enable the pause.
+
 The host-plane replay, displacement and recovery-wait mechanisms from the older
 recovery drafts remain outside this implementation. The box fixture covers real
 USB classification, failed roster refresh/name reuse, journal block projection,
@@ -242,3 +248,8 @@ puerto, su identidad de enlace puede ser distinta. La caja mantiene el puerto
 fuera de los enlaces que usa para enviar, también en la red local, hasta que
 la recuperación verifique la entrada del diario o se establezca explícitamente
 una nueva configuración de referencia.
+
+
+Con un emisor compatible, la caja pausa el envío cuando el último enlace
+queda excluido. El envío se reanuda cuando se admite y se registra un enlace.
+La imagen debe incluir un emisor compatible con esta opción.
