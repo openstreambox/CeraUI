@@ -85,15 +85,24 @@ export function parseMessage(
 			clientId: ws.remoteAddress,
 			senderId: ws.data?.senderId,
 			bytes: data.length,
-			keys: Object.keys(parsed),
 			hasId: "id" in parsed,
-			preview: logRedact(
-				JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
-			),
+			// Credential frames can arrive with the wrong shape or path.
+			...(ws.data?.nativeTcpClient
+				? {}
+				: {
+						keys: Object.keys(parsed),
+						preview: logRedact(
+							JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
+						),
+					}),
 		});
 		return null;
 	} catch (error) {
-		logger.error(`Failed to parse WebSocket message: ${error}`);
+		logger.error(
+			ws.data?.nativeTcpClient
+				? "Failed to parse WebSocket message"
+				: `Failed to parse WebSocket message: ${error}`,
+		);
 		return null;
 	}
 }

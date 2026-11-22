@@ -174,6 +174,14 @@ export function upgradeTcpRequest(
 	}
 
 	const data = initSocketData();
+	// Browsers send Origin on WebSocket upgrades. Keep the experimental
+	// credential ingress available to the native client and SSH tunnels only.
+	if (
+		process.env.CERAUI_EXPERIMENTAL_COMPANION_WIFI === "1" &&
+		!req.headers.has("origin")
+	) {
+		data.nativeTcpClient = true;
+	}
 	if (
 		process.env.NODE_ENV !== "production" &&
 		runtimeAllowsDevelopment() &&

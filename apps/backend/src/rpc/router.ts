@@ -33,6 +33,7 @@ import {
 	getBluetoothStatusProcedure,
 } from "./procedures/bluetooth.procedure.ts";
 import { captivePortalProcedure } from "./procedures/captive-portal.procedure.ts";
+import { companionWifiProcedure } from "./procedures/companion-wifi.procedure.ts";
 import {
 	devEmitProcedure,
 	devRebindWifiProcedure,
@@ -292,6 +293,7 @@ const stableRoutes = {
 
 	wifi: base.router({
 		portal: captivePortalProcedure,
+		addFromCompanion: companionWifiProcedure,
 		getStatus: getWifiStatusProcedure,
 		connect: wifiConnectProcedure,
 		disconnect: wifiDisconnectProcedure,

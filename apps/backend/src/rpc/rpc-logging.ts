@@ -45,6 +45,7 @@ const SENSITIVE_PROCEDURES: ReadonlySet<string> = new Set([
 	"modems.setCredentials",
 	"modems.clearCredentials",
 	"modems.verifyCredentials",
+	"wifi.addFromCompanion",
 ]);
 
 /** Length of the per-call correlation id (first hex chars of a UUIDv4). */
