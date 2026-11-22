@@ -18,6 +18,7 @@ import type { StreamStartUpdateAdmission } from "../system/update-orchestrator/r
 import type { StreamStopCause } from "./armed-stream-marker.ts";
 import { classifyConfigChangeDispatchError as classifyDispatchError } from "./config-change-bridge.ts";
 import { withRuntimeObservationOwner } from "./engine-runtime-observation.ts";
+import { noteStartResult } from "./last-start-error.ts";
 import {
 	type LifecycleAdmission,
 	type LifecycleLease,
@@ -1276,7 +1277,10 @@ bindStreamLiveness(productionOrchestrator.streamLiveness);
 export function startStreamSession(
 	request: StreamStartRequest,
 ): Promise<StartResult> {
-	return productionOrchestrator.start(request);
+	return productionOrchestrator.start(request).then((result) => {
+		noteStartResult(result);
+		return result;
+	});
 }
 
 export function stopStreamSession(cause: StreamStopCause): Promise<StopResult> {

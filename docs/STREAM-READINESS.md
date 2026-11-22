@@ -51,3 +51,5 @@ projection does not carry it (`docs/remote-status-inventory.json`).
   Start stays governed by the client verdict and the backend's own refusals.
 - Support log download: one `Stream readiness` JSON line after the carrier
   summary, codes and counts only.
+- The box's own status screen: `ready` and the reason code go into the
+  snapshot the image's monitor page reads (`docs/STATUS-SCREEN-SNAPSHOT.md`).
