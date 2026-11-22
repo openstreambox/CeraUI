@@ -48,11 +48,11 @@ import {
 import {
 	commitMutationEntry,
 	journalNow,
-	listMutationEntries,
 	listUnreadableSlots,
 	nextEntry,
 	readMutationEntry,
 	removeMutationEntry,
+	scanMutationEntries,
 } from "./mutation-journal.ts";
 import {
 	settlePendingMutationRemovals,
@@ -195,7 +195,9 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 	}
 	try {
 		await settlePendingMutationRemovals();
-		for (const name of await listUnreadableSlots()) {
+		const damaged = new Set(await listUnreadableSlots());
+		const hints = await scanMutationEntries((name) => damaged.add(name));
+		for (const name of damaged) {
 			unreadable += 1;
 			logger.error("modem mutation journal slot is unreadable; left in place", {
 				module: "modems",
@@ -204,7 +206,7 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 		}
 		// Readable entries still replay beside a damaged slot; the strict block
 		// publication below vetoes completion when the inventory changed meanwhile.
-		for (const hint of await listMutationEntries()) {
+		for (const hint of hints) {
 			try {
 				const revision = mutationJournalRevision();
 				const entry = await readMutationEntry(hint.stableKey);

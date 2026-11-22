@@ -70,7 +70,9 @@ any modem state, before any carrier-dependent step.
   reads the stored value, records it as the original and the attempt before any
   setter, writes `"20"` if it differs, reads it back (a mismatch stops before the
   reset) and resets the module. The stream check runs again after the inhibition.
-- The link is gone for about 50 seconds. One modem is switched at a time.
+- The box holds the modem's mutation lease through release of USB control.
+  While the unit is absent, the box waits out its recorded 180-second return
+  window before sending another modem a USB speed reset. This also applies after restart.
 - The next USB enumeration verifies it at 480 Mbit/s or slower. Two attempts per
   unit, 15 minutes apart; then the unit is held until its record is removed.
 - `/etc/ceralive/no-usbspeed` stops every write; the decision is still logged.
@@ -167,7 +169,10 @@ antes de cualquier paso que dependa del operador.
   intento antes de cualquier cambio, escribe `"20"` si es distinto, lo vuelve a
   leer (si no coincide, se detiene antes del reinicio) y reinicia el módulo. La
   comprobación de transmisión se repite tras la inhibición.
-- El enlace se pierde unos 50 segundos. Se cambia un solo módem a la vez.
+- El equipo reserva el módem hasta que libera el control USB. Si el módem
+  está ausente, el equipo espera hasta el final del plazo registrado de 180
+  segundos antes de enviar a otro módem un reinicio por el cambio de velocidad
+  USB. Esto también se aplica después de reiniciar el equipo.
 - La siguiente enumeración USB lo verifica a 480 Mbit/s o menos. Dos intentos por
   unidad, con 15 minutos entre ellos; después la unidad queda en espera hasta que
   se elimine su registro.

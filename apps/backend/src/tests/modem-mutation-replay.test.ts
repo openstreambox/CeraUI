@@ -19,7 +19,10 @@ import {
 	type ModemMutationEntry,
 	type ModemMutationState,
 } from "@ceraui/rpc/schemas";
-
+import {
+	runModemStatusPoll,
+	setModemPresenceDepsForTest,
+} from "../modules/modems/modem-update-loop.ts";
 import {
 	PRESENCE_UNKNOWN,
 	refreshMutationBlocks,
@@ -45,6 +48,7 @@ import {
 	getMutationBlocks,
 	resetLifecycleInterlock,
 	streamingBlockingMutation,
+	tryAcquireModemJournalKey,
 	tryAcquireModemMutation,
 } from "../modules/streaming/lifecycle-admission.ts";
 import {
@@ -256,6 +260,62 @@ describe("crash-point replay — one test per journal state", () => {
 		useDevice(moved());
 		await initMutationRecovery();
 		expect((await readMutationEntry(KEY))?.state).toBe("failed");
+	});
+
+	for (const [state, target] of [
+		["device-absent-quarantine", "failed"],
+		["decommissioned", "recommission-pending"],
+	] as const) {
+		test(`a modem returning after boot leaves ${state} on a retained poll`, async () => {
+			useDevice(undefined);
+			await commitMutationEntry(seed(state));
+			await initMutationRecovery();
+			expect(isRecoveryPending()).toBe(false);
+			expect((await readMutationEntry(KEY))?.state).toBe(state);
+			useDevice({ ...present(), ifname: "wwan7" });
+			// The USB evidence is available before MM has registered a row.
+			setModemPresenceDepsForTest({ listModems: async () => [] });
+			try {
+				await runModemStatusPoll();
+				expect((await readMutationEntry(KEY))?.state).toBe(target);
+				expect(isRecoveryPending()).toBe(false);
+				expect(tryAcquireModemMutation(KEY).admitted).toBe(false);
+			} finally {
+				setModemPresenceDepsForTest(null);
+			}
+		});
+	}
+
+	test("return reconciliation waits for the exact slot and its journal owner", async () => {
+		useDevice(undefined);
+		await commitMutationEntry(seed("device-absent-quarantine"));
+		await initMutationRecovery();
+		setModemPresenceDepsForTest({ listModems: async () => [] });
+		try {
+			for (const evidence of [PRESENCE_UNKNOWN, new Set(["other-slot"])]) {
+				setMutationBlockDeps({ presentStableKeys: async () => evidence });
+				await runModemStatusPoll();
+				expect((await readMutationEntry(KEY))?.state).toBe(
+					"device-absent-quarantine",
+				);
+			}
+			useDevice(present());
+			const held = tryAcquireModemJournalKey(KEY);
+			if (!held) throw new Error("expected free journal key");
+			try {
+				await runModemStatusPoll();
+				expect((await readMutationEntry(KEY))?.state).toBe(
+					"device-absent-quarantine",
+				);
+				expect(isRecoveryPending()).toBe(false);
+			} finally {
+				held.release();
+			}
+			await runModemStatusPoll();
+			expect((await readMutationEntry(KEY))?.state).toBe("failed");
+		} finally {
+			setModemPresenceDepsForTest(null);
+		}
 	});
 
 	test("quarantine + still absent ⇒ unchanged", async () => {

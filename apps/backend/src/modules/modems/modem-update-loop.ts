@@ -87,6 +87,7 @@ import {
 	refreshModemIdPaths,
 } from "./modem-wire-producer.ts";
 import { getModem, getModemIds, removeModem } from "./modems-state.ts";
+import { reconcileReturnedMutationBlocks } from "./mutation-blocks.ts";
 import { maybeAutoUnlockSimPins } from "./sim-autounlock.ts";
 import {
 	type ModemDiffEntry,
@@ -353,6 +354,7 @@ export async function runModemStatusPoll(): Promise<void> {
 	await withModemUpdateLock(() => reconcileModemPresenceLocked(false));
 	// The USB 2 switch is a transport fix for any SIM, so it comes before the
 	// carrier-dependent steps and does not wait for registration.
+	await reconcileReturnedMutationBlocks();
 	const reset = await runUsbSpeedPreparation();
 	const automatic = await runAutomaticCarrierProfiles(reset);
 	await runCellularPreparation(undefined, reset);

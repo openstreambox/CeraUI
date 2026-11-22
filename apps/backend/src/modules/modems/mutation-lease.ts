@@ -222,6 +222,19 @@ export async function withJournaledModemMutation<T>(
 	}
 }
 
+/** Also checked at disruptive dispatch: a background key allows a concurrent Start. */
+export function backgroundModemRefusal(
+	stableKey: string,
+): ModemMutationRefusal | undefined {
+	if (isRecoveryPending()) return "recovery_pending";
+	const block = getMutationBlocks().find(
+		(candidate) => candidate.stableKey === stableKey,
+	);
+	if (block) return block.refusal;
+	if (isForwardActive() || isLifecycleHeld()) return "streaming_active";
+	return undefined;
+}
+
 /**
  * A background dial or reconnect of ONE modem: the status poll bringing a
  * dropped automatic profile back, or replacing a bearer that carries nothing.
@@ -241,12 +254,8 @@ export async function withBackgroundModemLease<T>(
 ): Promise<MutationOutcome<T>> {
 	if (stableKey === undefined || stableKey === "")
 		return refuse("identity_unresolved");
-	if (isRecoveryPending()) return refuse("recovery_pending");
-	const block = getMutationBlocks().find(
-		(candidate) => candidate.stableKey === stableKey,
-	);
-	if (block) return refuse(block.refusal);
-	if (isForwardActive() || isLifecycleHeld()) return refuse("streaming_active");
+	const refusal = backgroundModemRefusal(stableKey);
+	if (refusal) return refuse(refusal);
 	const lease = tryAcquireModemJournalKey(stableKey);
 	if (!lease) return refuse("mutation_in_progress");
 	try {

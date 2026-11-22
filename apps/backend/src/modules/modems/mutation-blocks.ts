@@ -41,16 +41,30 @@ import { logger } from "../../helpers/logger.ts";
 import {
 	type MutationBlock,
 	setMutationBlocks,
+	tryAcquireModemJournalKey,
 } from "../streaming/lifecycle-admission.ts";
-
+import {
+	beginRecoveryBarrier,
+	isRecoveryPending,
+} from "../streaming/recovery-barrier.ts";
 import { syncHeldOutModemNotices } from "./held-out-modem-notice.ts";
-import { listMutationEntries } from "./mutation-journal.ts";
+import {
+	commitMutationEntry,
+	journalNow,
+	listMutationEntries,
+	nextEntry,
+	readMutationEntry,
+} from "./mutation-journal.ts";
 import {
 	assertMutationJournalRevision,
 	isMutationJournalRevisionCurrent,
 	mutationJournalRevision,
 } from "./mutation-journal-revision.ts";
-import { blocksMutations, blocksStreaming } from "./mutation-journal-state.ts";
+import {
+	blocksMutations,
+	blocksStreaming,
+	presenceRecheckTarget,
+} from "./mutation-journal-state.ts";
 
 const REFUSAL_BY_STATE: Readonly<
 	Partial<Record<ModemMutationState, ModemMutationRefusal>>
@@ -168,4 +182,51 @@ export async function refreshMutationBlocks(
 	lastRevision = revision;
 	syncHeldOutModemNotices(lastBlocks);
 	return lastBlocks;
+}
+
+/** A return after replay needs the same terminal disposition as a return at boot.
+ * Take the journal-only key, re-read the slot and require positive USB identity.
+ * This poll never submits a rollback or clears the block. */
+export async function reconcileReturnedMutationBlocks(): Promise<void> {
+	const candidates = lastBlocks.filter(
+		(block) => presenceRecheckTarget(block.state, true) !== undefined,
+	);
+	if (!candidates.length || isRecoveryPending()) return;
+	let changed = false;
+	try {
+		for (const block of candidates) {
+			const lease = tryAcquireModemJournalKey(block.stableKey);
+			if (!lease) continue;
+			try {
+				const entry = await readMutationEntry(block.stableKey);
+				if (!entry || entry.state !== block.state) continue;
+				const present = await activeDeps.presentStableKeys();
+				const target = presenceRecheckTarget(
+					entry.state,
+					present.has(entry.stableKey),
+				);
+				if (!target || isRecoveryPending()) continue;
+				await commitMutationEntry(
+					nextEntry(
+						entry,
+						target,
+						journalNow(),
+						"device present after recovery",
+					),
+				);
+				changed = true;
+			} finally {
+				lease.release();
+			}
+		}
+		if (changed) await refreshMutationBlocks();
+	} catch (err) {
+		// A visible rename can precede a failed fsync. Have the existing owner
+		// verify durable authority and republish even after a partial pass.
+		beginRecoveryBarrier();
+		logger.warn("modem return reconciliation incomplete", {
+			module: "modems",
+			err,
+		});
+	}
 }

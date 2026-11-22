@@ -261,24 +261,39 @@ export async function readMutationEntry(
 	return parseEntry(raw, slotFile(stableKey));
 }
 
-/** Every readable entry on disk, for startup replay. */
-export async function listMutationEntries(
+/** Inventory either reports each unreadable slot and continues, or the caller
+ * throws to reject a partial census. Failure to list the directory still throws. */
+export async function scanMutationEntries(
+	onUnreadable: (slot: string, readError?: unknown) => void,
 	deps: MutationJournalDeps = activeDeps,
-	requireComplete = false,
 ): Promise<readonly ModemMutationEntry[]> {
 	const names = await deps.fs.listDir(deps.dir);
 	const entries: ModemMutationEntry[] = [];
 	for (const name of names) {
 		if (!name.endsWith(".json")) continue;
-		const raw = await deps.fs.readText(join(deps.dir, name));
+		let raw: string | undefined;
+		try {
+			raw = await deps.fs.readText(join(deps.dir, name));
+		} catch (error) {
+			onUnreadable(name, error);
+			continue;
+		}
 		if (raw === undefined) continue;
 		const entry = parseEntry(raw, name);
-		if (entry === undefined && requireComplete) {
-			throw new MutationJournalInventoryError(name);
-		}
-		if (entry !== undefined) entries.push(entry);
+		if (entry === undefined) onUnreadable(name);
+		else entries.push(entry);
 	}
 	return entries;
+}
+
+export function listMutationEntries(
+	deps: MutationJournalDeps = activeDeps,
+	requireComplete = false,
+): Promise<readonly ModemMutationEntry[]> {
+	return scanMutationEntries((name, readError) => {
+		if (readError !== undefined) throw readError;
+		if (requireComplete) throw new MutationJournalInventoryError(name);
+	}, deps);
 }
 
 export class MutationJournalInventoryError extends Error {
@@ -292,14 +307,8 @@ export class MutationJournalInventoryError extends Error {
 export async function listUnreadableSlots(
 	deps: MutationJournalDeps = activeDeps,
 ): Promise<readonly string[]> {
-	const names = await deps.fs.listDir(deps.dir);
 	const bad: string[] = [];
-	for (const name of names) {
-		if (!name.endsWith(".json")) continue;
-		const raw = await deps.fs.readText(join(deps.dir, name));
-		if (raw === undefined) continue;
-		if (parseEntry(raw, name) === undefined) bad.push(name);
-	}
+	await scanMutationEntries((name) => bad.push(name), deps);
 	return bad;
 }
 

@@ -2,6 +2,15 @@ import { beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	setMutationBlocks,
+	tryAcquireLifecycle,
+	tryAcquireModemMutation,
+} from "../streaming/lifecycle-admission.ts";
+import {
+	beginRecoveryBarrier,
+	resetRecoveryBarrier,
+} from "../streaming/recovery-barrier.ts";
 import type { CellularControl, CellularControlTarget } from "./modems.ts";
 import { mutationJournalRevision } from "./mutation-journal-revision.ts";
 import {
@@ -221,6 +230,7 @@ function box(
 			},
 		}) as unknown as CellularControl;
 	const deps: UsbSpeedDeps = {
+		missingUnitReturning: async () => false,
 		ids: () => Array.from({ length: units }, (_, i) => i),
 		stableKey: (id) => `key-${id}`,
 		target: async (id) => target(id),
@@ -484,4 +494,89 @@ test("starting is busy even before the streaming commit", async () => {
 		seedStreamLifecycleState("idle");
 	}
 	expect(defaultUsbSpeedDeps.streaming()).toBe(false);
+});
+
+for (const guard of ["boot replay", "quarantine", "mode write"] as const) {
+	test(`USB preparation waits for ${guard} without spending a reset attempt`, async () => {
+		const b = box();
+		const key = "key-0";
+		if (guard === "boot replay") beginRecoveryBarrier();
+		if (guard === "quarantine")
+			setMutationBlocks([
+				{ stableKey: key, refusal: "mutation_blocked", blocksStreaming: true },
+			]);
+		const owner =
+			guard === "mode write" ? tryAcquireModemMutation(key) : undefined;
+		try {
+			expect(await runUsbSpeedPreparation(b.deps)).toEqual([]);
+			expect(b.calls).toEqual([]);
+		} finally {
+			if (owner?.admitted) owner.lease.release();
+			setMutationBlocks([]);
+			resetRecoveryBarrier();
+		}
+		expect(await runUsbSpeedPreparation(b.deps)).toEqual([0]);
+	});
+}
+
+test("Start cannot acquire admission between inhibition and USB reset", async () => {
+	const b = box();
+	let startAdmitted: boolean | undefined;
+	await runUsbSpeedPreparation({
+		...b.deps,
+		acquire: async (target) => {
+			const start = tryAcquireLifecycle("streaming");
+			startAdmitted = start.admitted;
+			if (start.admitted) start.lease.release();
+			return b.deps.acquire(target);
+		},
+	});
+	expect(b.calls).toContain("reset 0");
+	expect(startAdmitted).toBe(false);
+});
+
+test("another modem waits through an absent unit's durable return window after restart", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "usb-return-window-"));
+	const previous = process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = dir;
+	try {
+		const a = box();
+		const disk = {
+			read: defaultUsbSpeedDeps.read,
+			write: defaultUsbSpeedDeps.write,
+			missingUnitReturning: defaultUsbSpeedDeps.missingUnitReturning,
+		};
+		expect(await runUsbSpeedPreparation({ ...a.deps, ...disk })).toEqual([0]);
+		resetUsbSpeedPreparationForTest();
+		const b = box({ units: 2 });
+		const remaining = { ...b.deps, ...disk, ids: () => [1] };
+		b.advance(USB_SPEED_RETURN_WINDOW_MS - 1);
+		expect(await runUsbSpeedPreparation(remaining)).toEqual([]);
+		expect(b.calls).toEqual([]);
+		b.advance(1);
+		expect(await runUsbSpeedPreparation(remaining)).toEqual([1]);
+	} finally {
+		if (previous === undefined)
+			delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+		else process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = previous;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("the read-only census of missing units leaves Start available", async () => {
+	const b = box();
+	let admitted: boolean | undefined;
+	expect(
+		await runUsbSpeedPreparation({
+			...b.deps,
+			missingUnitReturning: async () => {
+				const start = tryAcquireLifecycle("streaming");
+				admitted = start.admitted;
+				if (start.admitted) start.lease.release();
+				return true;
+			},
+		}),
+	).toEqual([]);
+	expect(admitted).toBe(true);
+	expect(b.calls).toEqual([]);
 });

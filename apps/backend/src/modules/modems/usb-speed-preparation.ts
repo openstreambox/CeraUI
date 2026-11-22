@@ -24,8 +24,14 @@
 
 import { existsSync } from "node:fs";
 import { logger } from "../../helpers/logger.ts";
+import { listPrivateJsonKeys } from "../../helpers/private-json-state.ts";
+import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
-import { accessCellularAuthority } from "./cellular-authority-store.ts";
+import { readCellularSlot } from "./cellular-authority-revision.ts";
+import {
+	accessCellularAuthority,
+	cellularAuthorityMigration,
+} from "./cellular-authority-store.ts";
 import {
 	type PreparationRecord,
 	parsePreparationRecord,
@@ -40,6 +46,7 @@ import {
 } from "./modems.ts";
 import { getModemIds } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
+import { beginModemMutation } from "./mutation-lease.ts";
 import { resolveTransportQuirk } from "./transport-policy.ts";
 
 export const USB2_MBITS = 480;
@@ -182,7 +189,35 @@ async function writeRecord(record: PreparationRecord) {
 	);
 }
 
+/** After boot migration the destination holds every unit, including one still off
+ * the bus. Only a prospective switch needs to inspect the missing units. */
+async function missingUnitReturning(
+	visible: ReadonlySet<string>,
+	now: number,
+): Promise<boolean> {
+	const store = {
+		dir:
+			process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR ??
+			cellularAuthorityMigration("cellular-preparation", parsePreparationRecord)
+				.destination.dir,
+	};
+	for (const key of await listPrivateJsonKeys(store)) {
+		if (visible.has(key)) continue;
+		const raw = await readCellularSlot(store, key);
+		if (raw === undefined) continue;
+		const record = parsePreparationRecord(raw, key);
+		if (
+			record.kind === "usbspeed" &&
+			record.phase === "awaiting-usb" &&
+			now - record.started < USB_SPEED_RETURN_WINDOW_MS
+		)
+			return true;
+	}
+	return false;
+}
+
 export interface UsbSpeedDeps {
+	readonly missingUnitReturning: typeof missingUnitReturning;
 	readonly ids: () => readonly number[];
 	readonly stableKey: (id: number) => string | undefined;
 	readonly target: typeof readCellularControlTarget;
@@ -197,6 +232,7 @@ export interface UsbSpeedDeps {
 	readonly log: (message: string) => void;
 }
 export const defaultUsbSpeedDeps: UsbSpeedDeps = {
+	missingUnitReturning,
 	ids: getModemIds,
 	stableKey: modemStableKeyForId,
 	target: readCellularControlTarget,
@@ -297,6 +333,7 @@ async function applyUsbSpeed(
 async function runUsbSpeedPreparationOnce(
 	deps: UsbSpeedDeps = defaultUsbSpeedDeps,
 ): Promise<readonly number[]> {
+	if (isRecoveryPending()) return [];
 	const units: {
 		id: number;
 		target: CellularControlTarget;
@@ -323,6 +360,8 @@ async function runUsbSpeedPreparationOnce(
 			logger.warn("usbspeed check deferred", { module: "modems" });
 		}
 	}
+	const visible = new Set(units.map((unit) => unit.key));
+	let missingReturn: boolean | undefined;
 	const switched: number[] = [];
 	for (const unit of units) {
 		const others = units.some(
@@ -351,9 +390,21 @@ async function runUsbSpeedPreparationOnce(
 			deps.log(line);
 		}
 		if (decision.action !== "write" || switched.length > 0) continue;
+		// Checking a missing peer is read-only. Keep Start available throughout
+		// this census. Overlapping USB polls share the same in-flight attempt.
+		try {
+			missingReturn ??= await deps.missingUnitReturning(visible, deps.now());
+		} catch {
+			deps.log("usbspeed deferred: return records unavailable");
+			break;
+		}
+		if (missingReturn) continue;
+		const owner = beginModemMutation(unit.target.key);
+		if (!owner.ok) continue;
 		try {
 			if (!(await deps.present(unit.target)))
 				throw new Error("modem changed before the switch");
+			if (deps.streaming() || isRecoveryPending()) continue;
 			unit.record = await applyUsbSpeed(
 				unit.target,
 				unit.desired,
@@ -372,6 +423,8 @@ async function runUsbSpeedPreparationOnce(
 			deps.log(
 				`${unit.target.ifname} usbspeed: attempt stopped (${error instanceof Error ? error.message : "error"}); next try after the pause`,
 			);
+		} finally {
+			owner.lease.release();
 		}
 		switched.push(unit.id);
 	}

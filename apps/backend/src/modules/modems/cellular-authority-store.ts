@@ -1,5 +1,6 @@
 import {
 	type PrivateJsonMigration,
+	PrivateMigrationBusy,
 	withMigratedPrivateJson,
 } from "../../helpers/migrating-private-json.ts";
 import {
@@ -90,6 +91,8 @@ export async function accessCellularAuthority<T, Result>(
 			},
 		);
 	} catch (error) {
+		if (slotScoped && error instanceof PrivateMigrationBusy)
+			throw new CellularAuthorityBusy(error.message, { cause: error });
 		if (protectRecovery && !(error instanceof CellularAuthorityBusy))
 			noteMutationJournalReadFault();
 		throw error;
