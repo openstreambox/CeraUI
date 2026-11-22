@@ -1225,7 +1225,9 @@ export function processIfconfigOutput(
 				possiblyUsb &&
 				(differentIndex ||
 					regainedIndex ||
-					(unknownIndex && !isUsbReplacementPending(name)));
+					(unknownIndex &&
+						previousIdentity !== undefined &&
+						!isUsbReplacementPending(name)));
 			if (replaced) {
 				bumpPresence(name, "replaced");
 				intsChanged = true;
