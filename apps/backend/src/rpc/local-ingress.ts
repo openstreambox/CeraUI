@@ -33,13 +33,14 @@ import type { Server, WebSocketHandler } from "bun";
 import { getNetworkInterfaceIncarnation } from "../modules/network/network-interfaces.ts";
 import { createServerWebSocketHandler, initSocketData } from "./adapter.ts";
 import { permitsE2eWorkerProxyRequest } from "./e2e-worker-admission.ts";
+import { LOCAL_INGRESS_DIRECTORY } from "./local-ingress-presence.ts";
 import type {
 	IngressLifetime,
 	IngressPath,
 	ServerSocketData,
 } from "./types.ts";
 
-export const LOCAL_INGRESS_DIRECTORY = "/run/ceralive-button-ingress";
+export { LOCAL_INGRESS_DIRECTORY };
 export const LOCAL_INGRESS_HEADER = "X-Ceralive-Button-Path";
 const IFNAME = /^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,14}$/;
 

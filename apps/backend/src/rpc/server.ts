@@ -24,6 +24,7 @@ import { initPreviewSocketData } from "../modules/ui/preview-proxy.ts";
 import { createServerWebSocketHandler, initSocketData } from "./adapter.ts";
 import { permitsE2eWorkerProxyRequest } from "./e2e-worker-admission.ts";
 import { startLocalIngress } from "./local-ingress.ts";
+import { localIngressPresent } from "./local-ingress-presence.ts";
 import { issueKioskSessionToken } from "./procedures/auth.procedure.ts";
 import { permitsScenarioDriver } from "./scenario-driver-admission.ts";
 import { serveStatic } from "./static-spa.ts";
@@ -174,6 +175,17 @@ export function upgradeTcpRequest(
 	}
 
 	const data = initSocketData();
+	// Browsers send Origin on WebSocket upgrades. Keep the experimental
+	// credential ingress available to the native client and SSH tunnels only.
+	// Behind the image's front door every proxied client arrives from loopback,
+	// so no TCP socket counts as native there (the RPC rechecks per call).
+	if (
+		process.env.CERAUI_EXPERIMENTAL_COMPANION_WIFI === "1" &&
+		!req.headers.has("origin") &&
+		!localIngressPresent()
+	) {
+		data.nativeTcpClient = true;
+	}
 	if (
 		process.env.NODE_ENV !== "production" &&
 		runtimeAllowsDevelopment() &&

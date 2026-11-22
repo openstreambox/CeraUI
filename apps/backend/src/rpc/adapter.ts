@@ -42,8 +42,8 @@ import { instrumentRpcCall } from "./rpc-logging.ts";
 import { getPasswordHash } from "./state/password.ts";
 import type { AppWebSocket, ServerSocketData, SocketData } from "./types.ts";
 
-/** Cap on the redacted frame preview so a stray giant payload never bloats a log. */
-const FRAME_PREVIEW_MAX_CHARS = 100;
+/** Cap on the logged frame keys so a stray giant payload never bloats a log. */
+const FRAME_KEYS_MAX = 10;
 
 /**
  * ORPC message format
@@ -85,15 +85,18 @@ export function parseMessage(
 			clientId: ws.remoteAddress,
 			senderId: ws.data?.senderId,
 			bytes: data.length,
-			keys: Object.keys(parsed),
 			hasId: "id" in parsed,
-			preview: logRedact(
-				JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
-			),
+			// Only the frame's shape: any frame can carry a credential with the
+			// wrong shape or path, and a value preview would log it.
+			keys: logRedact(Object.keys(parsed).slice(0, FRAME_KEYS_MAX)),
 		});
 		return null;
-	} catch (error) {
-		logger.error(`Failed to parse WebSocket message: ${error}`);
+	} catch {
+		// The parser's message can quote the frame text.
+		logger.error("Failed to parse WebSocket message", {
+			module: "rpc.adapter",
+			bytes: data.length,
+		});
 		return null;
 	}
 }

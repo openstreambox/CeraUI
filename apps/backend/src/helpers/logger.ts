@@ -255,9 +255,21 @@ const USSD_RECORD_RE =
 const OWN_NUMBER_RECORD_RE =
 	/modem\.generic\.own-numbers(?:\.length|\.value\[\d+])?\s*:/i;
 
+/**
+ * A decoded Wi-Fi QR (`WIFI:T:WPA;S:<ssid>;P:<password>;;`) carries the network
+ * password on its face, whatever key or route it reaches a log through. The
+ * shape is the one QR generators emit and the import parser requires: an
+ * uppercase `WIFI:` prefix followed directly by a field code (T, S, P, H, and
+ * the enterprise fields E, A, I, PH2). Prose, lowercase tags such as "wifi:ap:"
+ * and MAC addresses survive. Lowercase or percent-encoded QR text is not
+ * matched; the import refuses it, and raw frame text is never logged.
+ */
+const WIFI_QR_RE = /WIFI:(?:[STPHEAI]|PH2):/;
+
 function looksSecret(value: string): boolean {
 	return (
 		/LPA:1\$/i.test(value) ||
+		WIFI_QR_RE.test(value) ||
 		PASETO_RE.test(value) ||
 		JWT_RE.test(value) ||
 		BEARER_RE.test(value) ||

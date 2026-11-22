@@ -20,6 +20,8 @@ export interface SocketData {
 	 * may call `dev.scenario.*` (rpc/scenario-driver-admission.ts).
 	 */
 	scenarioDriver?: boolean;
+	/** The TCP upgrade came from a native client with Wi-Fi import enabled. */
+	nativeTcpClient?: boolean;
 	/**
 	 * Set only on sockets accepted by the private local ingress listener
 	 * (rpc/local-ingress.ts): the browser's on-link address as seen by the
