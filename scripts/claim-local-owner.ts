@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { closeSync, fsyncSync, openSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { localClaimCodeSchema } from '../packages/rpc/src/schemas/auth.schema.ts';
 
 const [, , endpoint, keyFile] = process.argv;
@@ -23,7 +23,13 @@ const entered = prompt('One-time setup code:')?.trim().toLowerCase();
 const { success, data: code } = localClaimCodeSchema.safeParse(entered);
 if (!success) throw new Error('Expected a 32-character hexadecimal setup code');
 
-const ownerSecret = randomBytes(32).toString('hex');
+// An existing key file from an unconfirmed run is reused, so whichever request
+// the box committed, the same key signs in.
+const previous = existsSync(keyFile) ? readFileSync(keyFile, 'utf8').trim() : undefined;
+if (previous !== undefined && !/^[0-9a-f]{64}$/.test(previous)) {
+	throw new Error('The key file exists and does not hold a setup key');
+}
+const ownerSecret = previous ?? randomBytes(32).toString('hex');
 const socket = new WebSocket(url);
 try {
 	const accepted = await new Promise<boolean>((resolve, reject) => {
@@ -42,12 +48,14 @@ try {
 			() => {
 				try {
 					// Save first so a lost response never strands the new credential.
-					const file = openSync(keyFile, 'wx', 0o600);
-					try {
-						writeFileSync(file, `${ownerSecret}\n`);
-						fsyncSync(file);
-					} finally {
-						closeSync(file);
+					if (previous === undefined) {
+						const file = openSync(keyFile, 'wx', 0o600);
+						try {
+							writeFileSync(file, `${ownerSecret}\n`);
+							fsyncSync(file);
+						} finally {
+							closeSync(file);
+						}
 					}
 					socket.send(
 						JSON.stringify({
@@ -79,6 +87,12 @@ try {
 		accepted ? 'Box claimed. Owner credential saved.\n' : 'The box refused setup.\n',
 	);
 	if (!accepted) process.exitCode = 1;
+} catch (error) {
+	// The box may have committed before the reply was lost.
+	process.stderr.write(
+		`The box did not confirm setup. ${keyFile} is kept; sign in with it, or run setup again with the same key file.\n`,
+	);
+	throw error;
 } finally {
 	socket.close();
 }
