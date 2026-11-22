@@ -523,7 +523,10 @@ export function stopModemUpdateLoop(): void {
 	}
 	if (monitorRef && monitorListener) {
 		monitorRef.off("monitor-event", monitorListener);
-		monitorRef.stop();
+		// Teardown stays synchronous; a rejecting stop is logged, not unhandled.
+		void Promise.resolve(monitorRef.stop()).catch((error: unknown) => {
+			logger.debug(`modem loop monitor stop failed: ${String(error)}`);
+		});
 	}
 	monitorRef = null;
 	monitorListener = null;

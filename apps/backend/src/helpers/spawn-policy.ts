@@ -367,7 +367,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			lifetimeTimeoutExempt: true,
 		},
 		mechanism:
-			"Readiness acknowledges flock acquisition; scoped async disposal ends reconciliation-only stdin; no writer is owned or restarted",
+			"Readiness acknowledges flock acquisition; scoped async disposal ends the observer's stdin; no writer is owned or restarted; admitted as guarded work before spawn and refused once shutdown began; the scope stays guarded until the owner disposes it, and the SIGTERM path waits for it (bounded) before exit",
 	},
 	{
 		id: "backend.singleton",
@@ -385,7 +385,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			lifetimeTimeoutExempt: true,
 		},
 		mechanism:
-			"Readiness proves acquisition; observer EOF releases on backend death; unexpected helper exit terminates the backend; startup failure joins cleanup",
+			"Readiness proves acquisition; observer EOF releases on backend death; unexpected helper exit terminates the backend; startup failure joins cleanup; the SIGTERM path releases it explicitly, last, after teardown and guarded work",
 	},
 	{
 		id: "osStage.orphanSettlement",
@@ -538,7 +538,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"NmcliMonitorManager.stop() kills the child; restart loop is bounded-backoff supervised",
+			"NmcliMonitorManager.stop() sends SIGTERM and waits a bounded grace (no SIGKILL; the unit's KillMode finishes a straggler); the SIGTERM path calls it, and no start or respawn happens once shutdown began; restart loop is bounded-backoff supervised",
 	},
 	{
 		id: "monitor.udevMonitor",
@@ -555,7 +555,7 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 		},
 		status: "enforced",
 		mechanism:
-			"UdevMonitorSupervisor.stop() kills the child; restart loop is bounded-backoff supervised (twin of monitor.nmcliMonitor)",
+			"UdevMonitorSupervisor.stop() sends SIGTERM and waits a bounded grace, joins the run's inventory read in the same grace and publishes nothing from a stopped run; the SIGTERM path calls it, and no start or respawn happens once shutdown began; restart loop is bounded-backoff supervised (twin of monitor.nmcliMonitor)",
 	},
 	{
 		id: "modems.mmcliInhibit",
