@@ -28,7 +28,9 @@ export function setSessionExpired(expired: boolean): void {
 }
 
 export type AuthAttempt =
-	| { kind: "ok" }
+	// `remembered: false`: the device accepted the sign-in but this browser
+	// refused to store the credential, so the session lasts only this visit.
+	| { kind: "ok"; remembered?: false }
 	| { kind: "rejected" }
 	| { kind: "cancelled" }
 	| {
@@ -91,6 +93,7 @@ export const authStatusStore = {
 
 if (typeof window !== "undefined") {
 	window.addEventListener("pagehide", clearAuthInteraction);
+	window.addEventListener("pagehide", discardPendingClaim);
 	window.addEventListener("pageshow", (event) => {
 		if (event.persisted) clearAuthInteraction();
 	});
@@ -104,14 +107,33 @@ export function ingestAuth(message: LoginOutput | undefined): void {
 	authMessage = message;
 }
 
+/** False when the browser refused storage; the live session still holds. */
 function persistCredential(
 	result: LoginOutput,
 	persistentToken: boolean,
-): void {
-	if (!persistentToken) {
-		localStorage.removeItem("auth");
-	} else if (result.auth_token) {
-		localStorage.setItem("auth", result.auth_token);
+): boolean {
+	try {
+		if (!persistentToken) {
+			localStorage.removeItem("auth");
+		} else if (result.auth_token) {
+			localStorage.setItem("auth", result.auth_token);
+		}
+		return true;
+	} catch (error) {
+		console.warn("Failed to store the sign-in:", error);
+		return false;
+	}
+}
+
+/** Whether this browser lets the page keep a remembered sign-in. */
+export function canRememberSignIn(): boolean {
+	try {
+		const probe = "auth-storage-probe";
+		localStorage.setItem(probe, "1");
+		localStorage.removeItem(probe);
+		return true;
+	} catch {
+		return false;
 	}
 }
 
@@ -188,12 +210,12 @@ async function authenticateInput(
 		}
 		// Token reauthentication succeeds without issuing a replacement. In that
 		// case retain the existing token, just as on an unreachable attempt.
-		persistCredential(result, persistent);
+		const remembered = persistCredential(result, persistent);
 		ingestAuth(result);
 		setSessionExpired(false);
 		noteAuthenticatedLink(link);
 		setAuthStatus(true);
-		return { kind: "ok" };
+		return remembered ? { kind: "ok" } : { kind: "ok", remembered: false };
 	} finally {
 		clearPassword();
 		signal.removeEventListener("abort", clearPassword);
@@ -215,34 +237,111 @@ export function authenticateWithToken(token: string): Promise<AuthAttempt> {
 	return authenticateInput({ token, persistent_token: true });
 }
 
-export async function claimLocalOwner(
-	input: LocalClaimInput,
-): Promise<boolean> {
+export type ClaimOutcome =
+	| { kind: "ok"; remembered: boolean }
+	// The box refused this code and nothing was committed.
+	| { kind: "refused" }
+	// The request never left this page; the code is still unused.
+	| { kind: "unreachable" }
+	// The box may hold the new owner credential; `getClaimPending()` is set and
+	// the generated secret is retained for this visit.
+	| { kind: "uncertain" }
+	| { kind: "cancelled" };
+
+// The generated credential of a claim this page could not confirm. Every later
+// attempt in this visit reuses it, so whichever request the box committed, the
+// same secret signs in. Memory only: wiped on sign-in, discard and pagehide.
+let pendingOwnerSecret: string | undefined;
+let claimPending = $state(false);
+let stopReconnectRetry: (() => void) | undefined;
+let finishing: Promise<ClaimOutcome> | undefined;
+
+/** True once a claim's outcome is unknown and its secret is retained. */
+export function getClaimPending(): boolean {
+	return claimPending;
+}
+
+function generateOwnerSecret(): string {
+	return Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+}
+
+function holdPendingClaim(secret: string): void {
+	pendingOwnerSecret = secret;
+	// A reconnect is the usual way a lost reply resolves; sign in on it.
+	stopReconnectRetry ??= rpcClient.onConnectionChange((state) => {
+		if (state === "connected" && !authStatus) void finishLocalClaim();
+	});
+}
+
+/** Forget an unconfirmed claim, as the operator asked or the visit ended. */
+export function discardPendingClaim(): void {
+	pendingOwnerSecret = undefined;
+	claimPending = false;
+	stopReconnectRetry?.();
+	stopReconnectRetry = undefined;
+}
+
+/** Claim a fresh box with its one-time code and sign in with a new secret. */
+export async function claimLocalOwner(code: string): Promise<ClaimOutcome> {
 	const signal = interaction.signal;
-	const clear = () => {
-		input.code = "";
-		input.ownerSecret = "";
+	const resumed = pendingOwnerSecret !== undefined;
+	const input: LocalClaimInput = {
+		code,
+		ownerSecret: pendingOwnerSecret ?? generateOwnerSecret(),
 	};
-	signal.addEventListener("abort", clear, { once: true });
 	try {
-		if (!(await whenSocketReady(signal)) || signal.aborted) return false;
-		let created: boolean | undefined;
+		if (!(await whenSocketReady(signal))) {
+			if (signal.aborted) return { kind: "cancelled" };
+			return { kind: resumed ? "uncertain" : "unreachable" };
+		}
+		let committed: boolean | undefined;
 		try {
 			const reply = rpc.auth.claimLocalOwner(input);
+			// Hold the secret before the reply: a lost reply can follow a commit.
+			holdPendingClaim(input.ownerSecret);
 			input.code = "";
-			created = (await reply).success;
-		} catch {
-			// A dropped reply can follow a successful commit. The same generated
-			// secret can prove ownership without resubmitting the setup code.
+			committed = (await reply).success;
+		} catch (error) {
+			if (error instanceof NotSentError && !resumed) {
+				discardPendingClaim();
+				return { kind: "unreachable" };
+			}
+			// Lost, timed out or failed on the box: the outcome is unknown.
 		}
-		if (created === false || signal.aborted) return false;
-		const login = authenticate(input.ownerSecret, true, signal);
-		clear();
-		return (await login).kind === "ok";
+		if (committed === false && !resumed) {
+			discardPendingClaim();
+			return { kind: "refused" };
+		}
+		// Confirmed, unknown, or refused after an earlier unconfirmed attempt that
+		// may itself have committed: the retained secret decides.
+		return await finishLocalClaim();
 	} finally {
-		clear();
-		signal.removeEventListener("abort", clear);
+		input.code = "";
+		input.ownerSecret = "";
 	}
+}
+
+/** Sign in with the retained secret of an unconfirmed claim. */
+export function finishLocalClaim(): Promise<ClaimOutcome> {
+	const secret = pendingOwnerSecret;
+	if (secret === undefined) return Promise.resolve({ kind: "cancelled" });
+	finishing ??= (async (): Promise<ClaimOutcome> => {
+		try {
+			const result = await authenticate(secret, true);
+			if (result.kind === "ok") {
+				if (pendingOwnerSecret === secret) discardPendingClaim();
+				return { kind: "ok", remembered: result.remembered !== false };
+			}
+			if (pendingOwnerSecret === undefined) return { kind: "cancelled" };
+			claimPending = true;
+			return { kind: "uncertain" };
+		} finally {
+			finishing = undefined;
+		}
+	})();
+	return finishing;
 }
 
 export function createPassword(

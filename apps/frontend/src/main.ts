@@ -13,8 +13,12 @@ import {
 import { initSubscriptions } from "./lib/rpc";
 import { initAsyncOperations } from "./lib/rpc/async-operation.svelte";
 import { initFieldSyncState } from "./lib/rpc/field-sync-state.svelte";
+import { installClaimFragmentScrub } from "./lib/stores/claim-fragment.svelte";
 import { initDeviceHealthHistory } from "./lib/stores/device-health-history.svelte";
 import { setStoredVersion } from "./lib/stores/version.svelte";
+
+// A scanned setup code leaves the address bar before routing or rendering.
+installClaimFragmentScrub();
 
 // Feeds the HUD's `subscriptions.svelte` getters from the same shared socket the
 // legacy store drives (idempotent). Without this the live HUD never receives data.
