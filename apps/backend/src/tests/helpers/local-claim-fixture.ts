@@ -7,7 +7,6 @@ import {
 	getLocalClaimDigest,
 	isRuntimeConfigAvailable,
 	loadConfig,
-	setConfigFilePath,
 } from "../../modules/config.ts";
 import {
 	awaitRuntimeConfig,
