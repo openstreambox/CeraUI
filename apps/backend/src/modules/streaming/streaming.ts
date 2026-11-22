@@ -199,8 +199,10 @@ export async function validateConfig(params: Partial<ConfigParameters>) {
 			"start: dropping composition — engine has not advertised the feature",
 			{ module: "streaming", dropped: validated.composition.layout },
 		);
+		// Only the validated copy loses it: callers such as boot autostart pass
+		// the live config, and the start must still see the operator saved one,
+		// so the engine adapter can say the stream runs without it.
 		delete validated.composition;
-		delete params.composition;
 	}
 
 	// audio codec
