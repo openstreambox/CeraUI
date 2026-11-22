@@ -47,7 +47,7 @@
  */
 
 import { readdir, readlink, realpath } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
 	canonicalModemIdPath,
 	deriveModemStableKey,
@@ -107,7 +107,7 @@ export type LinkRead =
 	| { readonly ok: false; readonly code: string };
 export type NetdevBus =
 	| { readonly kind: "bus"; readonly bus: string }
-	| { readonly kind: "no-device" | "vanished" }
+	| { readonly kind: "no-device" | "vanished" | "virtual" }
 	| { readonly kind: "unreadable"; readonly code: string };
 
 export type RouterCellularScanDeps = {
@@ -402,7 +402,14 @@ export async function readNetdevBus(
 		return { kind: "unreadable", code: result.code };
 	let device = await read(path);
 	if (!device.ok && device.code !== "ENOENT") device = await read(path);
-	if (device.ok) return { kind: "no-device" };
+	if (device.ok) {
+		const target = resolve(dirname(path), device.target);
+		// A hardware parent can lose its subsystem link during unplug. Only
+		// the kernel's virtual netdev path proves this name has no such parent.
+		return target === resolve(deps.sysfsRoot, "sys/devices/virtual/net", ifname)
+			? { kind: "virtual" }
+			: { kind: "no-device" };
+	}
 	return device.code === "ENOENT"
 		? { kind: "vanished" }
 		: { kind: "unreadable", code: device.code };

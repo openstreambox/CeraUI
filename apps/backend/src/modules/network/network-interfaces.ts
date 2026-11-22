@@ -354,8 +354,8 @@ export function isHeldOutByModemBlock(
 			const key = deriveModemStableKey(descriptor.idPath);
 			if (key === undefined || isModemKeyBlocked(key)) return true;
 			const identity = resolvePhysicalDevice(descriptor);
-			return (
-				identity.anchor === "usb-serial" && isModemUnitBlocked(identity.linkId)
+			return isModemUnitBlocked(
+				identity.anchor === "usb-serial" ? identity.linkId : undefined,
 			);
 		}
 	}
@@ -1059,6 +1059,7 @@ async function refreshNetifFromOs(): Promise<void> {
 			);
 			reads.set(name, { seen, promise });
 		};
+		const replacementBusChecks: string[] = [];
 		for (const name of ifnames) {
 			const index = ifindices.get(name);
 			const previousIndex = netdevIdentity.get(name)?.index;
@@ -1066,9 +1067,11 @@ async function refreshNetifFromOs(): Promise<void> {
 				index !== undefined &&
 				previousIndex !== undefined &&
 				index !== previousIndex;
+			const needsReplacementBusCheck =
+				changedIndex || isUsbReplacementPending(name);
+			if (needsReplacementBusCheck) replacementBusChecks.push(name);
 			if (
-				changedIndex ||
-				isUsbReplacementPending(name) ||
+				needsReplacementBusCheck ||
 				(!netif[name]?.identitySettled && !netif[name]?.usb)
 			)
 				issue(name);
@@ -1143,6 +1146,27 @@ async function refreshNetifFromOs(): Promise<void> {
 						result: { kind: "unreadable", code: "TIMEOUT" },
 						seen: read.seen,
 					});
+			}
+		}
+		if (generation !== netifRefreshGeneration) return;
+		// Even when scan coverage is complete, a changed or still-held name
+		// needs a chance to resolve a fresh sysfs bus or virtual link.
+		const missingReplacementBuses = replacementBusChecks.filter(
+			(name) => !buses.has(name),
+		);
+		if (missingReplacementBuses.length > 0) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				await Promise.race([
+					Promise.all(
+						missingReplacementBuses.map((name) => reads.get(name)?.promise),
+					),
+					new Promise<void>((resolve) => {
+						timer = setTimeout(resolve, 250);
+					}),
+				]);
+			} finally {
+				clearTimeout(timer);
 			}
 		}
 		if (generation !== netifRefreshGeneration) return;
@@ -1239,21 +1263,22 @@ export function processIfconfigOutput(
 				ifindex !== undefined &&
 				previousIndex !== undefined &&
 				ifindex !== previousIndex;
-			const unknownIndex = ifindices !== undefined && ifindex === undefined;
-			// Missing indices on a continuous interface don't prove a change.
-			// After an observed disconnect, an unindexed USB return does need
-			// current evidence before it can reuse its previous identity.
-			const replaced =
-				differentIndex ||
-				(unknownIndex &&
-					possiblyUsb &&
-					previousIdentity?.present === false &&
-					!isUsbReplacementPending(name));
+			// Missing indices alone leave a continuous link admitted. On a
+			// USB return, both indices are needed to prove it is the same.
+			const ambiguousReturn =
+				ifindices !== undefined &&
+				(previousIndex === undefined || ifindex === undefined) &&
+				possiblyUsb &&
+				previousIdentity?.present === false &&
+				!isUsbReplacementPending(name);
+			const replaced = differentIndex || ambiguousReturn;
 			if (replaced) {
 				bumpPresence(name, "replaced");
 				intsChanged = true;
 			}
-			const nonUsb = observedBus !== undefined && observedBus !== "usb";
+			const nonUsb =
+				(fresh && evidence?.result.kind === "virtual") ||
+				(observedBus !== undefined && observedBus !== "usb");
 			if (nonUsb && confirmNonUsbReplacement(name)) intsChanged = true;
 			netdevIdentity.set(name, {
 				index: ifindex ?? previousIndex,

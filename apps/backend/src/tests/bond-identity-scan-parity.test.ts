@@ -187,6 +187,7 @@ for (const name of ["br-test", "vlan-test", "bond-test"]) {
 	test(`B11 virtual ${name} retains its own identity without bus evidence`, async () => {
 		const scan = firstSightScan(firstSightIfconfig(name, "192.0.2.2"), {
 			blocked: [name],
+			virtual: [name],
 		});
 		const publication = updateNetif();
 		try {
@@ -300,4 +301,24 @@ test("a changed settled non-USB index rechecks the bus and holds an unknown repl
 	await updateNetif();
 	expect(scan.busCounts.get("eth9")).toBeGreaterThan(prior);
 	expect(srtla.genSrtlaBondEntries()).toEqual([]);
+});
+
+test("a recreated tunnel rejoins after positive virtual sysfs evidence", async () => {
+	const name = "tun-test";
+	const virtual: string[] = [];
+	const scan = firstSightScan(firstSightIfconfig(name, "192.0.2.2"), {
+		blocked: [],
+		virtual,
+	});
+	await updateNetif();
+	expect(srtla.genSrtlaBondEntries()).toMatchObject([{ iface: name }]);
+
+	scan.setIndex(name, 29);
+	await updateNetif();
+	await scan.settle();
+	expect(srtla.genSrtlaBondEntries()).toEqual([]);
+
+	virtual.push(name);
+	await updateNetif();
+	expect(srtla.genSrtlaBondEntries()).toMatchObject([{ iface: name }]);
 });

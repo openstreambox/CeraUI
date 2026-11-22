@@ -128,11 +128,19 @@ function snapshotOf(device: UsbDeviceSnapshot): CapturedState {
 	};
 }
 
+function serialFor(device: UsbDeviceSnapshot): string | undefined {
+	// modem-control 1.4.0 preserves the udev property without promoting it.
+	return (
+		usableUsbSerial(device.udevProperties?.ID_SERIAL_SHORT) ??
+		usableUsbSerial(device.serialNumber)
+	);
+}
+
 function reliableUnitLinkId(
 	device: UsbDeviceSnapshot,
 	devices: readonly UsbDeviceSnapshot[],
 ): string | undefined {
-	const serial = usableUsbSerial(device.serialNumber);
+	const serial = serialFor(device);
 	const vid = device.vendorId.toLowerCase();
 	if (serial === undefined || !/^[0-9a-f]{4}$/.test(vid)) return undefined;
 	const key = `${vid}:${serial}`;
@@ -142,7 +150,7 @@ function reliableUnitLinkId(
 		(other) =>
 			other.physicalUid !== device.physicalUid &&
 			other.vendorId.toLowerCase() === vid &&
-			usableUsbSerial(other.serialNumber) === serial,
+			serialFor(other) === serial,
 	);
 	return shared ? undefined : mintLinkId(`usb-serial:${key}`);
 }

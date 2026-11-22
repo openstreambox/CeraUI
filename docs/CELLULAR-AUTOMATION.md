@@ -199,11 +199,12 @@ in progress continues to hold new starts.
 Bond exclusion uses the current USB descriptor scan's physical path, with the
 same stable-key derivation as modem recovery. Removal immediately invalidates
 that name's scan evidence. An interface-index change invalidates it even when the
-name and address stay the same. A known USB name returning without an index after
-a disconnect waits for fresh identity evidence. Missing indices alone leave a
-continuously present link admitted. The ordinary first-sight timeout cannot
-release a replacement. A scan overlapping invalidation cannot restore the old
-evidence.
+name and address stay the same. After a disconnect, a known USB name with a
+missing old or new index waits for fresh identity evidence. Missing indices
+alone leave a continuously present link admitted. A recreated virtual link
+can rejoin when the kernel confirms its virtual path. The ordinary first-sight
+timeout cannot release a replacement. A scan overlapping invalidation cannot
+restore the old evidence.
 
 A different modem in the same USB port can have a different link identity. The
 recovery journal still owns the port. When the box captured a reliable USB
@@ -211,7 +212,9 @@ serial identity before the change, the same journal entry also blocks that unit
 if it moves to another port. Sender admission enforces both checks, including
 for a receiver on the local network. Automatic rollback stays at the original
 port and checks the recorded unit when available. Older entries and units
-without a reliable identity use the port only.
+without a reliable identity use the port only. While a recorded unit is
+blocked, a modem with an unreadable or unreliable serial waits for positive
+identification, including after a fresh scan on an unblocked port.
 The modem roster's retained ID-path cache is not admission authority. Positively
 classified USB Ethernet and sysfs-confirmed Wi-Fi stay available without an
 ID-path cache entry; unresolved USB candidates stay out while a block exists,
@@ -222,9 +225,10 @@ when the interface name and address have not changed.
 When the sender advertises intentional empty reloads, the box opts in at
 launch. The last held link can then leave the live bond without replacing the
 sender. Sending resumes when a link is admitted and registers again. Older
-senders, including v4.2.0, retain the previous pool on an empty reload, so
-they can continue sending through the last held link. The image must ship a
-sender with intentional empty reloads to enable the pause. During a long
+senders, including stock v4.2.0, retain the previous pool on an empty reload.
+With these senders, SRT forwarding closes an empty session and restarts its
+listener. The encoder sender can keep sending through the last held link.
+The image must ship a sender with intentional empty reloads to enable the pause. During a long
 pause the SRT peer receives no replies and its idle timeout expires. The
 encoder then reconnects after sending resumes.
 
@@ -255,9 +259,12 @@ fuera de los enlaces que usa para enviar, también en la red local, hasta que
 la recuperación verifique la entrada del diario o se establezca explícitamente
 una nueva configuración de referencia. Cuando el diario guarda una identidad
 USB fiable, el bloqueo también sigue a ese módem si cambia de puerto.
+Mientras dure ese bloqueo, un módem sin un número de serie fiable queda a la
+espera de que la caja pueda identificarlo.
 
 Con un emisor compatible, la caja pausa el envío cuando el último enlace
 queda excluido. El envío se reanuda cuando se admite y se registra un enlace.
-La versión 4.2.0 conserva el conjunto anterior y puede seguir enviando por el
-último enlace. En una pausa larga, el par SRT agota su tiempo de espera por
-inactividad. El codificador vuelve a conectarse cuando se reanuda el envío.
+Con el emisor estándar v4.2.0, el reenvío SRT cierra la sesión cuando se queda
+sin enlaces y reinicia la escucha. El emisor del codificador puede seguir
+enviando por el último enlace. En una pausa larga, el par SRT agota su tiempo
+de espera por inactividad. El codificador vuelve a conectarse cuando se reanuda el envío.

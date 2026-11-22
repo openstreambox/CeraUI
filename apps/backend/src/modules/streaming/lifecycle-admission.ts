@@ -394,9 +394,14 @@ export function isModemKeyBlocked(stableKey: string): boolean {
 	return mutationBlocks.has(stableKey);
 }
 
-export function isModemUnitBlocked(linkId: string): boolean {
+/** An unresolved modem could be any unit with a recorded block. */
+export function isModemUnitBlocked(linkId: string | undefined): boolean {
 	for (const block of mutationBlocks.values()) {
-		if (block.unitLinkId === linkId) return true;
+		if (
+			block.unitLinkId !== undefined &&
+			(linkId === undefined || block.unitLinkId === linkId)
+		)
+			return true;
 	}
 	return false;
 }

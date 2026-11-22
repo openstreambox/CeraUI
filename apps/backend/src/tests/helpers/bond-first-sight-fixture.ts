@@ -42,6 +42,7 @@ export function firstSightScan(
 	options: {
 		blocked?: readonly string[];
 		buses?: Readonly<Record<string, string>>;
+		virtual?: readonly string[];
 		devices?: typeof constructedTwins;
 	} = {},
 ) {
@@ -95,8 +96,13 @@ export function firstSightScan(
 	);
 	spyOn(defaultRouterCellularScanDeps, "readLinkResult").mockImplementation(
 		async (path) => {
-			if (!path.endsWith("/device/subsystem"))
-				return { ok: true, target: "/sys/devices/virtual/net/fixture" };
+			if (!path.endsWith("/device/subsystem")) {
+				const name = path.split("/").at(-1) ?? "";
+				const target = options.virtual?.includes(name)
+					? `../../devices/virtual/net/${name}`
+					: `../../devices/platform/fixture/net/${name}`;
+				return { ok: true, target };
+			}
 			const name = path.split("/").at(-3) ?? "";
 			busCounts.set(name, (busCounts.get(name) ?? 0) + 1);
 			const bus = await busReplies.get(name)?.();

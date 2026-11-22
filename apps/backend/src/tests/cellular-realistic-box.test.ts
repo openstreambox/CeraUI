@@ -211,6 +211,19 @@ test("an observed USB return without an ifindex waits for a current scan", async
 	expect(box.bonded()).toContain("wwan1");
 });
 
+test("a USB return with the first readable index waits for current identity", async () => {
+	box = await realisticBox();
+	const links = [ETHERNET, MODEMS[1]];
+	await box.scan(links, { ifindices: new Map() });
+	expect(box.bonded()).toContain("wwan1");
+	await box.scan([ETHERNET], { ifindices: new Map(), skipPhysical: true });
+	const ifindices = new Map([["wwan1", 21]]);
+	await box.scan(links, { ifindices, skipPhysical: true });
+	expect(box.bonded()).not.toContain("wwan1");
+	await box.scan(links, { ifindices });
+	expect(box.bonded()).toContain("wwan1");
+});
+
 test("a healthy USB link stays admitted across repeated missing indices after its scan", async () => {
 	box = await realisticBox();
 	const links = [ETHERNET, MODEMS[1]];
@@ -246,6 +259,15 @@ test("a reliable modem unit and its original port remain quarantined after a mov
 	await box.scan([ETHERNET, replacement, moved]);
 	expect(box.bonded()).toEqual(["eth0"]);
 	expect(genSrtlaBondEntriesForLocalIpAddress("198.51.100.200")).toEqual([]);
+	await box.scan([ETHERNET, replacement, { ...moved, serial: "" }]);
+	expect(box.bonded()).toEqual(["eth0"]);
+	expect(genSrtlaBondEntriesForLocalIpAddress("198.51.100.200")).toEqual([]);
+	await box.scan([
+		ETHERNET,
+		replacement,
+		{ ...moved, serial: "fixture-distinct-c914" },
+	]);
+	expect(box.bonded()).toEqual(["eth0", "wwan1"]);
 	await box.journal([]);
 	expect(box.bonded()).toEqual(["eth0", "wwan0", "wwan1"]);
 });

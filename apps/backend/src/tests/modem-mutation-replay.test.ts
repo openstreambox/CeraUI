@@ -9,10 +9,10 @@
  * means a device that never recovers.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createUsbEnumerator } from "@ceralive/modem-control";
 
 import {
 	MODEM_MUTATION_JOURNAL_VERSION,
@@ -113,7 +113,6 @@ function seed(state: ModemMutationState): ModemMutationEntry {
 /** Point the whole subsystem at a real temp journal with a scripted device view. */
 function useDevice(
 	current: Readonly<Record<string, unknown>> | undefined,
-	serialNumber?: string,
 ): void {
 	setMutationCaptureDeps({
 		enumerate: () =>
@@ -129,7 +128,6 @@ function useDevice(
 								ifname: String(current.ifname ?? ""),
 								bDeviceClass: 0,
 								physicalUid: KEY,
-								serialNumber,
 								interfaces: COMPOSITIONS[String(current.mode ?? "qmi")] ?? [],
 							} as never,
 						],
@@ -166,8 +164,30 @@ afterEach(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 
+function useUdevDevice(serial: string): void {
+	const udev = [
+		"P: /devices/platform/test/usb1/1-4",
+		"E: DEVTYPE=usb_device",
+		"E: ID_VENDOR_ID=2c7c",
+		"E: ID_MODEL_ID=0801",
+		`E: ID_MODEL=${PRE_STATE.model}`,
+		`E: ID_REVISION=${PRE_STATE.firmwareRevision}`,
+		`E: ID_PATH=${KEY}`,
+		`E: ID_SERIAL_SHORT=${serial}`,
+		"E: ID_USB_INTERFACES=:ff0000:",
+		"",
+		"P: /devices/platform/test/usb1/1-4/1-4:1.0",
+		"E: DEVTYPE=usb_interface",
+		"E: DRIVER=qmi_wwan",
+	].join("\n");
+	useDevice(present());
+	setMutationCaptureDeps(
+		createUsbEnumerator({ readUdevDatabase: async () => udev }),
+	);
+}
+
 test("the journal captures a unit and replay does not verify a different unit on its port", async () => {
-	useDevice(present(), "fixture-original-5b2");
+	useUdevDevice("fixture-original-5b2");
 	const failed = await withJournaledModemMutation(
 		KEY,
 		"usb-mode",
@@ -184,7 +204,7 @@ test("the journal captures a unit and replay does not verify a different unit on
 		throw new Error("fixture mutation was not journaled");
 	expect(JSON.stringify(entry)).not.toContain("fixture-original-5b2");
 	await commitMutationEntry({ ...entry, state: "executing" });
-	useDevice(present(), "fixture-replacement-a72");
+	useUdevDevice("fixture-replacement-a72");
 	const summary = await initMutationRecovery();
 	expect(summary.rolledBack).toBe(0);
 	expect((await readMutationEntry(KEY))?.state).toBe(
