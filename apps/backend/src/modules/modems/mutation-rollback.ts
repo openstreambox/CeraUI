@@ -51,7 +51,11 @@ import {
 	assertMutationJournalRevision,
 	mutationJournalRevision,
 } from "./mutation-journal-revision.ts";
-import { mintLinkId, usbSerialIdentity } from "./physical-identity.ts";
+import {
+	mintLinkId,
+	readUsbSerialAttribute,
+	usbSerialIdentity,
+} from "./physical-identity.ts";
 
 export type CapturedState = Readonly<Record<string, unknown>>;
 
@@ -102,10 +106,7 @@ export interface MutationCaptureDeps {
 
 export const defaultMutationCaptureDeps: MutationCaptureDeps = {
 	enumerate: () => createUsbEnumerator().enumerate(),
-	readSerial: (path) =>
-		Bun.file(join(path, "serial"))
-			.text()
-			.catch(() => undefined),
+	readSerial: (path) => readUsbSerialAttribute(join(path, "serial")),
 };
 
 let activeDeps: MutationCaptureDeps = defaultMutationCaptureDeps;
@@ -144,7 +145,6 @@ async function serialFor(device: UsbDeviceSnapshot, deps: MutationCaptureDeps) {
 	return {
 		observed,
 		reported,
-		hasRaw: raw !== undefined,
 		agrees: property === undefined || observed.key === reported.key,
 	};
 }
@@ -156,7 +156,7 @@ async function reliableUnitLinkId(
 ): Promise<string | undefined> {
 	const vid = device.vendorId.toLowerCase();
 	if (!/^[0-9a-f]{4}$/.test(vid)) return undefined;
-	const { observed, hasRaw, agrees } = await serialFor(device, deps);
+	const { observed, agrees } = await serialFor(device, deps);
 	if (observed.key === undefined || !agrees) return undefined;
 	const peers = await Promise.all(
 		devices
@@ -177,10 +177,7 @@ async function reliableUnitLinkId(
 		return undefined;
 	const remembered = new Set(getConfig().usb_serial_shared ?? []);
 	if (observed.isShared(remembered)) return undefined;
-	// An underscore can represent older raw whitespace or punctuation. Hashes
-	// cannot recover that spelling, so require the raw attribute in this case.
-	if (!hasRaw && remembered.size > 0 && observed.serial?.includes("_"))
-		return undefined;
+
 	return mintLinkId(`usb-serial:${observed.key}`);
 }
 

@@ -433,11 +433,24 @@ describe("shared USB serials are remembered only by committed scans", () => {
 			["fixture ABC123\n", "usb-serial"],
 			["fixture ABC123\r\n", "usb-serial"],
 			["\tfixture ABC123\n", "id-path"],
+			["\uFEFFfixture ABC123\n", "id-path"],
 		] as const) {
 			writeFileSync(path, value);
 			await refreshUsbNetMarkers([name], deps);
 			expect(resolveModemPhysicalIdentity(name).anchor).toBe(anchor);
 		}
+	});
+
+	it("does not trust a literal-underscore singleton with a possible legacy spelling", async () => {
+		hashes = [
+			new Bun.CryptoHasher("sha256")
+				.update("413c:fixture ABC123")
+				.digest("hex"),
+		];
+		const name = names[0];
+		if (name === undefined) throw new Error("missing fixture");
+		await refreshUsbNetMarkers([name], pair("fixture_ABC123"));
+		expect(resolveModemPhysicalIdentity(name).anchor).toBe("id-path");
 	});
 
 	it("keeps a singleton on its port after pair detection and config reload", async () => {

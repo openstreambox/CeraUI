@@ -58,6 +58,7 @@ import { getms } from "../../helpers/time.ts";
 import { getConfig, saveConfig } from "../config.ts";
 import {
 	mintLinkId,
+	readUsbSerialAttribute,
 	resolvePhysicalDevice,
 	setPresentPhysicalDevices,
 	usbSerialDigest,
@@ -134,9 +135,9 @@ async function defaultListDir(path: string): Promise<string[]> {
 }
 
 async function defaultReadAttr(path: string): Promise<string | undefined> {
+	if (path.endsWith("/serial")) return readUsbSerialAttribute(path);
 	try {
-		const value = await Bun.file(path).text();
-		return path.endsWith("/serial") ? value : value.trim();
+		return (await Bun.file(path).text()).trim();
 	} catch {
 		return undefined;
 	}

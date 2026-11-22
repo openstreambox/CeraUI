@@ -186,6 +186,25 @@ export function usbSerialDigest(key: string): string {
 	return createHash("sha256").update(key).digest("hex");
 }
 
+/** Read the USB attribute without a text reader's BOM or whitespace stripping. */
+export async function readUsbSerialAttribute(
+	path: string,
+): Promise<string | undefined> {
+	try {
+		const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+		let end = bytes.length;
+		while (end > 0 && (bytes[end - 1] === 10 || bytes[end - 1] === 13)) end--;
+		const attribute = bytes.subarray(0, end);
+		// An invalid read is not missing evidence. The journal must not fall
+		// back to a udev property that would hide those bytes.
+		if (attribute.some((byte) => byte < 32 || byte > 127 || byte === 44))
+			return "";
+		return new TextDecoder().decode(attribute);
+	} catch {
+		return undefined;
+	}
+}
+
 /** Resolve sysfs and udev's ID_SERIAL_SHORT to the same USB identity. */
 export function usableUsbSerial(raw: string | undefined): string | undefined {
 	// systemd usb_id accepts ASCII except comma, folds runs of spaces, and
@@ -218,7 +237,8 @@ export function usbSerialIdentity(
 	const serial = usableUsbSerial(raw);
 	const vid = vendor?.trim().toLowerCase();
 	const scoped = (value: string) => (vid ? `${vid}:${value}` : value);
-	const legacy = raw?.trim();
+	const legacy =
+		serial === undefined ? undefined : raw?.replace(/[\r\n]+$/, "");
 	const key = serial === undefined ? undefined : scoped(serial);
 	const legacyKey = legacy ? scoped(legacy) : undefined;
 	return {
@@ -229,7 +249,11 @@ export function usbSerialIdentity(
 			(key !== undefined && hashes.has(usbSerialDigest(key))) ||
 			(legacyKey !== undefined &&
 				legacyKey !== key &&
-				hashes.has(usbSerialDigest(legacyKey))),
+				hashes.has(usbSerialDigest(legacyKey))) ||
+			// The unversioned store can contain historical raw digests. An
+			// underscore may be literal or the result of normalization, and
+			// even the observed raw bytes cannot reconstruct the old spelling.
+			(hashes.size > 0 && serial?.includes("_") === true),
 	};
 }
 

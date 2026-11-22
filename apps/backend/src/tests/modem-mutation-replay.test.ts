@@ -9,7 +9,7 @@
  * means a device that never recovers.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createUsbEnumerator } from "@ceralive/modem-control";
@@ -241,6 +241,40 @@ test.each(["fixture ABC123", "fixture_ABC123"])(
 		}
 	},
 );
+
+test("literal underscores cannot verify a singleton against historical raw digests", async () => {
+	useUdevDevice("fixture_ABC123", "fixture_ABC123\n");
+	const previous = getConfig().usb_serial_shared;
+	try {
+		getConfig().usb_serial_shared = [usbSerialDigest("2c7c:fixture ABC123")];
+		const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+		expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+		expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+		expect(await captureModemState(KEY)).toBeDefined();
+	} finally {
+		getConfig().usb_serial_shared = previous;
+	}
+});
+
+test("the production journal reader rejects BOM bytes before trusting the udev property", async () => {
+	await writeFile(join(dir, "serial"), "\uFEFFfixture_ABC123\n");
+	setMutationCaptureDeps({
+		enumerate: async () => [
+			{
+				vendorId: "2c7c",
+				productId: "0801",
+				physicalUid: KEY,
+				sysfsPath: dir,
+				udevProperties: { ID_SERIAL_SHORT: "fixture_ABC123" },
+				interfaces: [],
+				bDeviceClass: 0,
+			},
+		],
+	});
+	const unit = mintLinkId("usb-serial:2c7c:fixture_ABC123");
+	expect(await captureModemUnitLinkId(KEY)).toBeUndefined();
+	expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+});
 
 test("unavailable raw evidence cannot establish a unit against ambiguous older digests", async () => {
 	useUdevDevice("fixture_ABC123");

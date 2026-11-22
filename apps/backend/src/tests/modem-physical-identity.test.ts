@@ -533,10 +533,8 @@ describe("unusable and shared USB serial identity", () => {
 		expect(a?.anchor).toBe("id-path");
 		expect(b?.anchor).toBe("id-path");
 		expect(a?.linkId).not.toBe(b?.linkId);
-		expect(a?.legacyLinkId).toBe(
-			mintLinkId("usb-serial:413c:0123456789ABCDEF"),
-		);
-		expect(b?.legacyLinkId).toBe(a?.legacyLinkId);
+		expect(a?.legacyLinkId).toBeUndefined();
+		expect(b?.legacyLinkId).toBeUndefined();
 	});
 
 	it("migrates a singleton credential but refuses the shared legacy credential for twins", async () => {
@@ -546,12 +544,16 @@ describe("unusable and shared USB serial identity", () => {
 			vid: "413c",
 			serial: "LEGACY-TOKEN",
 		});
-		const oldId = mintLinkId("usb-serial:413c:0123456789ABCDEF");
+		const oldId = mintLinkId("usb-serial:413c: LEGACY TOKEN ");
+		const devices = constructedTwins.map((device) => ({
+			...device,
+			serial: " LEGACY TOKEN ",
+		}));
 		writeModemCredential(
 			{ ...legacy, linkId: oldId },
 			{ username: "USER_TOKEN", password: "PASSWORD_TOKEN" },
 		);
-		const first = constructedTwins[0];
+		const first = devices[0];
 		if (!first) throw new Error("missing constructed twin");
 		await refreshUsbNetMarkers([first.ifname], constructedTwinDeps([first]));
 		const single = resolveModemPhysicalIdentity(first.ifname);
@@ -564,10 +566,10 @@ describe("unusable and shared USB serial identity", () => {
 			{ username: "USER_TOKEN", password: "PASSWORD_TOKEN" },
 		);
 		await refreshUsbNetMarkers(
-			constructedTwins.map((d) => d.ifname),
-			constructedTwinDeps(),
+			devices.map((d) => d.ifname),
+			constructedTwinDeps(devices),
 		);
-		for (const device of constructedTwins) {
+		for (const device of devices) {
 			expect(
 				readModemCredential(resolveModemPhysicalIdentity(device.ifname)),
 			).toBeUndefined();

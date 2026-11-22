@@ -65,7 +65,7 @@ describe("operator bond opt-out — config.json restart persistence", () => {
 		setConfigFilePath("config.json");
 	});
 
-	test("migrates a legacy opt-out to both twins before admitting one", async () => {
+	test("does not carry an old preference under an invalid factory serial", async () => {
 		clearBondNetworkFixture();
 		setBondIdentityResolverForTest(null);
 		await refreshUsbNetMarkers(
@@ -76,23 +76,14 @@ describe("operator bond opt-out — config.json restart persistence", () => {
 		const legacy = mintLinkId("usb-serial:413c:0123456789ABCDEF");
 		getConfig().bond_opt_out = { [legacy]: true };
 		saveConfig();
-		expect(isBondOptedOut("wwu1u4c2")).toBe(true);
-		expect(isBondOptedOut("wwu1c2")).toBe(true);
-		// The USB scan can know a twin before the netif projection publishes it.
-		delete getNetworkInterfaces().wwu1c2;
-		setPersistentBondOptOut("wwu1u4c2", false);
 		expect(isBondOptedOut("wwu1u4c2")).toBe(false);
-		expect(isBondOptedOut("wwu1c2")).toBe(true);
-		expect(getConfig().bond_opt_out?.[legacy]).toBeUndefined();
-		const twinId = resolveModemPhysicalIdentity("wwu1c2").linkId;
-		resetBondOptOutSession();
-		await loadConfig();
-		expect(getConfig().bond_opt_out?.[twinId]).toBe(true);
-		expect(isBondOptedOut("wwu1c2")).toBe(true);
+		expect(isBondOptedOut("wwu1c2")).toBe(false);
+		setPersistentBondOptOut("wwu1u4c2", false);
+		expect(getConfig().bond_opt_out?.[legacy]).toBe(true);
 	});
 
 	test.each(["fixture ABC123", "fixture_ABC123"])(
-		"preserves the %s preference through serial collision and admits only the selected port",
+		"keeps the %s alias read-only while toggling the selected port",
 		async (savedSerial) => {
 			clearBondNetworkFixture();
 			setBondIdentityResolverForTest(null);
@@ -116,12 +107,40 @@ describe("operator bond opt-out — config.json restart persistence", () => {
 			await refreshUsbNetMarkers(names, deps);
 			expect(isBondOptedOut(first)).toBe(true);
 			expect(isBondOptedOut(second)).toBe(true);
+			const port = setPersistentBondOptOut(first, true);
+			if (port === undefined) throw new Error("missing port");
+			expect(getConfig().bond_opt_out?.[port]).toBe(true);
 			setPersistentBondOptOut(first, false);
-			expect(isBondOptedOut(first)).toBe(false);
+			expect(getConfig().bond_opt_out?.[port]).toBeUndefined();
+			expect(isBondOptedOut(first)).toBe(true);
 			expect(isBondOptedOut(second)).toBe(true);
-			expect(getConfig().bond_opt_out?.[saved]).toBeUndefined();
+			expect(getConfig().bond_opt_out?.[saved]).toBe(true);
 		},
 	);
+
+	test("a port toggle cannot delete a valid device's primary opt-out through an invalid serial", async () => {
+		clearBondNetworkFixture();
+		setBondIdentityResolverForTest(null);
+		const [first, second] = constructedTwins;
+		if (first === undefined || second === undefined)
+			throw new Error("missing fixtures");
+		const devices = [
+			{ ...first, serial: "\tfixtureABC123" },
+			{ ...second, serial: "fixtureABC123" },
+		];
+		await refreshUsbNetMarkers(
+			devices.map((d) => d.ifname),
+			constructedTwinDeps(devices),
+		);
+		const valid = resolveModemPhysicalIdentity(second.ifname).linkId;
+		getConfig().bond_opt_out = { [valid]: true };
+		setPersistentBondOptOut(first.ifname, false);
+		expect(isBondOptedOut(second.ifname)).toBe(true);
+		expect(getConfig().bond_opt_out?.[valid]).toBe(true);
+		expect(
+			resolveModemPhysicalIdentity(first.ifname).legacyLinkId,
+		).toBeUndefined();
+	});
 
 	test("an opt-out survives a simulated backend restart and follows the physical port", async () => {
 		// Given the operator excludes the first Huawei while it is called eth1.
