@@ -24,6 +24,7 @@ const unrelatedFields: ReadonlySet<string> = new Set([
 	"resolved_asrc_candidates",
 	"pending_audio_follow_asrc",
 	"set_password",
+	"local_claim",
 	"remote",
 	"linkTelemetry",
 	"bond_mapping",

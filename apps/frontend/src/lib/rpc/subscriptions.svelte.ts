@@ -354,8 +354,12 @@ export function getStatus() {
 }
 
 export function clearPasswordSetup(): void {
-	if (statusState?.set_password) {
-		statusState = { ...statusState, set_password: false };
+	if (statusState?.set_password || statusState?.local_claim) {
+		statusState = {
+			...statusState,
+			set_password: false,
+			local_claim: undefined,
+		};
 	}
 }
 

@@ -180,6 +180,7 @@ async function retryUntilLoaded(
 		);
 		if (outcome !== "unavailable") {
 			logger.info("config: config.json readable again; boot continues");
+			if (stopper?.signal === signal) stopper = undefined;
 			markReady?.();
 			return;
 		}
@@ -202,16 +203,38 @@ export async function bootRuntimeConfig(
 		if (delay !== undefined) await deps.sleep(delay, never);
 	}
 	stopRuntimeConfigRecovery();
+	logger.error("config: config.json unreadable; serving without it", {
+		path: getConfigFilePath(),
+	});
+	startOwner(deps, notice);
+	return "unavailable";
+}
+
+function startOwner(
+	deps: RuntimeConfigBootDeps,
+	notice: { copy: string | undefined },
+): void {
 	const controller = new AbortController();
 	stopper = controller;
 	ready = new Promise((resolve) => {
 		markReady = resolve;
 	});
-	logger.error("config: config.json unreadable; serving without it", {
+	void retryUntilLoaded(deps, controller.signal, notice);
+}
+
+/**
+ * Hand config back to the background owner after a runtime write left the
+ * on-disk state unknown, so it reloads without a restart. A running owner is
+ * kept.
+ */
+export function recoverRuntimeConfig(
+	deps: RuntimeConfigBootDeps = defaultRuntimeConfigBootDeps,
+): void {
+	if (stopper) return;
+	logger.error("config: config.json state unknown after a failed write", {
 		path: getConfigFilePath(),
 	});
-	void retryUntilLoaded(deps, controller.signal, notice);
-	return "unavailable";
+	startOwner(deps, { copy: undefined });
 }
 
 /** Resolves once config is loaded; stays pending after a shutdown stop. */

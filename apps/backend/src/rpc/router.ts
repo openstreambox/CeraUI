@@ -15,6 +15,7 @@ import {
 } from "./procedures/addons.procedure.ts";
 import { setAudioMixProcedure } from "./procedures/audio-mix.procedure.ts";
 import {
+	claimLocalOwnerProcedure,
 	loginProcedure,
 	logoutProcedure,
 	revokeTokenProcedure,
@@ -224,6 +225,7 @@ const stableRoutes = {
 	auth: base.router({
 		login: loginProcedure,
 		setPassword: setPasswordProcedure,
+		claimLocalOwner: claimLocalOwnerProcedure,
 		logout: logoutProcedure,
 		revokeToken: revokeTokenProcedure,
 	}),

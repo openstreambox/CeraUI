@@ -1,5 +1,5 @@
 import { secretVariants } from "../../helpers/secret-variants.ts";
-import { getConfig } from "../config.ts";
+import { getConfig, getLocalClaimDigest } from "../config.ts";
 import { readBoots, readEvents } from "../events/store.ts";
 import { getStoredModemCredentials } from "../modems/modem-credentials.ts";
 import { getModems } from "../modems/modems-state.ts";
@@ -47,6 +47,7 @@ export function collectHeldSecrets(): Array<{ kind: string; value: string }> {
 	add("stream", config.srt_streamid);
 	add("stream", config.relay_streamid_override);
 	add("pairing", config.pairing_secret);
+	add("claim_digest", getLocalClaimDigest());
 	const relays = getRelays();
 	add("relay", relays?.bcrp_key);
 	for (const account of Object.values(relays?.accounts ?? {}))

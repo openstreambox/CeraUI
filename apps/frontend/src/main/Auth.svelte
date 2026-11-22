@@ -16,11 +16,13 @@ import {
 	authenticate,
 	clearAuthInteraction,
 	createPassword,
+	getClaimPending,
 	subscribeAuthStatus,
 } from '$lib/stores/auth-status.svelte';
 import { getSessionExpired } from '$lib/stores/connection-ux.svelte';
 import { getConnectionState } from '$lib/stores/offline-state.svelte';
 import { cn } from '$lib/utils.js';
+import LocalClaim from './LocalClaim.svelte';
 
 const MIN_PASSWORD_LENGTH = 8;
 let { offline = false }: { offline?: boolean } = $props();
@@ -32,6 +34,9 @@ let showPassword: boolean = $state(false);
 
 let isLoading = $state(false);
 let setPassword: boolean = $state(false);
+const localClaim = $derived(getStatus()?.local_claim);
+// An unconfirmed claim keeps its view even after the box reports an owner.
+const claimView = $derived(localClaim !== undefined || getClaimPending());
 let passwordInput = $state<HTMLInputElement | null>(null);
 let confirmInput = $state<HTMLInputElement | null>(null);
 let composing = false;
@@ -58,6 +63,15 @@ function clearFields() {
 		confirmInput.value = '';
 		confirmInput.type = 'password';
 	}
+}
+
+// A block tears down before onDestroy and nulls its bound refs first, so each
+// secret field scrubs itself synchronously as it leaves the DOM.
+function scrubOnDetach(node: HTMLInputElement) {
+	return () => {
+		node.value = '';
+		node.type = 'password';
+	};
 }
 
 function resetInteraction() {
@@ -243,14 +257,16 @@ async function onSubmit(event: SubmitEvent) {
 			<div class="space-y-1">
 				<p class="text-foreground text-xl font-semibold tracking-tight">{deviceName}</p>
 				<p class="text-muted-foreground text-sm text-balance">
-					{setPassword
+					{claimView
+						? m["auth.claimDescription"]()
+						: setPassword
 						? m["auth.help.createPasswordDescription"]()
 						: m["auth.usePassword"]()}
 				</p>
 			</div>
 		</div>
 
-		{#if sessionExpired && !setPassword}
+		{#if sessionExpired && !setPassword && !claimView}
 			<div
 				class="bg-status-warning/10 border-status-warning/30 text-foreground mt-6 flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm"
 				role="status"
@@ -260,6 +276,9 @@ async function onSubmit(event: SubmitEvent) {
 			</div>
 		{/if}
 
+		{#if claimView}
+			<LocalClaim mode={localClaim} {offline} />
+		{:else}
 		<form class="mt-8 space-y-5" onsubmit={onSubmit}>
 			<!-- Password field -->
 			<div class="space-y-2">
@@ -287,6 +306,7 @@ async function onSubmit(event: SubmitEvent) {
 							: m["auth.placeholderPassword"]()}
 						type={showPassword ? 'text' : 'password'}
 						bind:ref={passwordInput}
+						{@attach scrubOnDetach}
 						bind:value={password}
 						oncompositionstart={() => (composing = true)}
 						oncompositionend={() => (composing = false)}
@@ -347,6 +367,7 @@ async function onSubmit(event: SubmitEvent) {
 						placeholder={m["auth.placeholderConfirmPassword"]()}
 						type={showPassword ? 'text' : 'password'}
 						bind:ref={confirmInput}
+						{@attach scrubOnDetach}
 						bind:value={confirmPassword}
 						oncompositionstart={() => (composing = true)}
 						oncompositionend={() => (composing = false)}
@@ -391,6 +412,7 @@ async function onSubmit(event: SubmitEvent) {
 				{/if}
 			</Button>
 		</form>
+		{/if}
 
 		<!-- Footer -->
 		<p class="text-muted-foreground mt-6 text-center text-xs">

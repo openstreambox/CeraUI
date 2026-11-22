@@ -6,8 +6,11 @@
 import { call, ORPCError } from "@orpc/server";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 
-import { logger, logRedact } from "../helpers/logger.ts";
-import { isRuntimeConfigAvailable } from "../modules/config.ts";
+import { logger, logRedact, REDACTED } from "../helpers/logger.ts";
+import {
+	getLocalClaimDigest,
+	isRuntimeConfigAvailable,
+} from "../modules/config.ts";
 import { stopFollow } from "../modules/device-logs/follow.ts";
 import { SHARING_DIAG_EVENT } from "../modules/network/sharing-diag/status.ts";
 import {
@@ -39,11 +42,28 @@ import {
 } from "./procedures/status.procedure.ts";
 import { appRouter } from "./router.ts";
 import { instrumentRpcCall } from "./rpc-logging.ts";
-import { getPasswordHash } from "./state/password.ts";
+import { getPasswordHash, localClaimEnabled } from "./state/password.ts";
 import type { AppWebSocket, ServerSocketData, SocketData } from "./types.ts";
 
 /** Cap on the redacted frame preview so a stray giant payload never bloats a log. */
 const FRAME_PREVIEW_MAX_CHARS = 100;
+/** Setup codes, owner secrets and digests are bare hex with no key hint. */
+const BARE_HEX_RUN = /[0-9a-f]{16,}/gi;
+
+/**
+ * A frame holding any secret-shaped value collapses whole. Otherwise redact by
+ * key while the structure exists, then mask bare hex, then cut.
+ */
+function framePreview(parsed: unknown): string {
+	// Scan a bounded prefix: far past the cut, and cheap for a giant frame.
+	const scan = FRAME_PREVIEW_MAX_CHARS * 40;
+	const raw = (JSON.stringify(parsed) ?? "").slice(0, scan);
+	if (logRedact(raw) === REDACTED) return REDACTED;
+	return (JSON.stringify(logRedact(parsed)) ?? "")
+		.slice(0, scan)
+		.replace(BARE_HEX_RUN, REDACTED)
+		.slice(0, FRAME_PREVIEW_MAX_CHARS);
+}
 
 /**
  * ORPC message format
@@ -87,9 +107,7 @@ export function parseMessage(
 			bytes: data.length,
 			keys: Object.keys(parsed),
 			hasId: "id" in parsed,
-			preview: logRedact(
-				JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
-			),
+			preview: framePreview(parsed),
 		});
 		return null;
 	} catch (error) {
@@ -255,7 +273,11 @@ export function createWebSocketHandler(): WebSocketHandler<SocketData> {
 			// Prompt for first-run password setup only when config was READ and holds
 			// none. While config.json is unreadable the stored password is unknown,
 			// not absent, so nobody may claim the device by setting one.
-			if (!getPasswordHash() && isRuntimeConfigAvailable()) {
+			if (!getPasswordHash() && localClaimEnabled()) {
+				sendToClient(ws, "status", {
+					local_claim: getLocalClaimDigest() ? "ready" : "unavailable",
+				});
+			} else if (!getPasswordHash() && isRuntimeConfigAvailable()) {
 				sendToClient(ws, "status", { set_password: true });
 			}
 

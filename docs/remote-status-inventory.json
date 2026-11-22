@@ -521,6 +521,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -4865,6 +4873,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -6656,6 +6672,14 @@
         },
         {
           "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "local_claim_digest",
           "types": [
             "undefined",
             "string"
@@ -11969,6 +11993,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -14420,6 +14452,14 @@
         },
         {
           "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "local_claim_digest",
           "types": [
             "undefined",
             "string"
@@ -20292,6 +20332,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -21845,6 +21893,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -22908,6 +22964,14 @@
         },
         {
           "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "local_claim_digest",
           "types": [
             "undefined",
             "string"
@@ -24008,6 +24072,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -25078,6 +25150,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -26148,6 +26228,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -27211,6 +27299,14 @@
         },
         {
           "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "local_claim_digest",
           "types": [
             "undefined",
             "string"
@@ -28379,6 +28475,14 @@
         },
         {
           "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "local_claim_digest",
           "types": [
             "undefined",
             "string"
@@ -31174,6 +31278,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -32993,6 +33105,14 @@
         },
         {
           "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "local_claim_digest",
           "types": [
             "undefined",
             "string"
@@ -35106,6 +35226,14 @@
         },
         {
           "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "local_claim_digest",
           "types": [
             "undefined",
             "string"
@@ -38595,6 +38723,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -39767,6 +39903,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -40830,6 +40974,14 @@
         },
         {
           "path": "password_hash",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "local_claim_digest",
           "types": [
             "undefined",
             "string"
@@ -42841,6 +42993,14 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "local_claim_digest",
+          "types": [
+            "undefined",
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "ssh_pass",
           "types": [
             "undefined",
@@ -43963,7 +44123,7 @@
     }
   ],
   "dependencies": {
-    "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
+    "apps/backend/src/helpers/config-schemas.ts": "195b2de690b67fe9d4bbd9a438df68a7491b292816fb9a10457536264de62c47",
     "apps/backend/src/main.ts": "babe80c5210a52453f7832e76e038bb4b22d0f74e3f5eb35a17f1afff0aca2e7",
     "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
@@ -44052,7 +44212,7 @@
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",
     "packages/rpc/src/schemas/sources.schema.ts": "7ba666e38cfd64c5627aa8d5bbf7013bec162ae43f9c4dcdfb7cbe3c7f75eb88",
-    "packages/rpc/src/schemas/status.schema.ts": "cbe3ab63ba27b7de764e7f9233f378e1a2bc05fafcd21f9303180764362eb096",
+    "packages/rpc/src/schemas/status.schema.ts": "3d8370b94bed6376aae2dae53219a5dd138fcbbf314966ca0eef58363ded2a1b",
     "packages/rpc/src/schemas/streaming.schema.ts": "78c08e8174ab259b537e8d1ee20031bd02b24f6f59c63932e633783aabe539b0",
     "packages/rpc/src/schemas/system.schema.ts": "872ce7a357ba980c078865c3c8804b35e746284e901834a9c5208d697907288d",
     "packages/rpc/src/schemas/update-orchestrator.schema.ts": "ac5e6859c7723d4381f1502246d9778262c663d80d06b5b2eb5aaf1796da5613",

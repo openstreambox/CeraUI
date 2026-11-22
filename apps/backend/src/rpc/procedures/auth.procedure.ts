@@ -3,7 +3,9 @@
  * Wraps existing auth logic from modules/ui/auth.ts
  */
 
+import { timingSafeEqual } from "node:crypto";
 import {
+	localClaimInputSchema,
 	loginInputSchema,
 	loginOutputSchema,
 	logoutOutputSchema,
@@ -17,8 +19,16 @@ import type { AuthTokens } from "../../helpers/config-schemas.ts";
 import { randomBase64 } from "../../helpers/crypto.ts";
 import { logger } from "../../helpers/logger.ts";
 import { isDevelopment } from "../../mocks/mock-config.ts";
-import { closeSocketSession, getAuthenticatedClients } from "../context.ts";
-import { getPasswordHash, setPasswordHash } from "../state/password.ts";
+import {
+	closeSocketSession,
+	getAuthenticatedClients,
+	getClients,
+} from "../context.ts";
+import {
+	getPasswordHash,
+	localClaimEnabled,
+	setPasswordHash,
+} from "../state/password.ts";
 import { PersistentTokenStore } from "../state/persistent-token-store.ts";
 import type { AppWebSocket, RPCContext } from "../types.ts";
 
@@ -238,15 +248,16 @@ export const setPasswordProcedure = baseProcedure
 	.output(successResponseSchema)
 	.handler(async ({ input, context }) => {
 		await tokenStore.settle();
+		const { getConfig, saveConfig } = await import("../../modules/config.ts");
 		const isAuthed = context.isAuthenticated();
 		const currentHash = getPasswordHash();
+		if (localClaimEnabled() && !currentHash) return { success: false };
 
 		// Allow setting password if authenticated or if no password is set yet
 		if (isAuthed || !currentHash) {
 			// Lazy import to avoid circular dependency. Read config FIRST: while it
 			// is unavailable this throws before the in-memory hash changes, so an
 			// unknown stored password can never be replaced by a first-run claim.
-			const { getConfig, saveConfig } = await import("../../modules/config.ts");
 			const config = getConfig();
 			const newHash = Bun.password.hashSync(input.password, {
 				algorithm: "bcrypt",
@@ -272,6 +283,66 @@ export const setPasswordProcedure = baseProcedure
 
 		return { success: false };
 	});
+
+export const claimLocalOwnerProcedure = baseProcedure
+	.input(localClaimInputSchema)
+	.output(successResponseSchema)
+	.handler(async ({ input, context }) => {
+		if (!localClaimEnabled() || context.ws.data.senderId !== undefined)
+			return { success: false };
+
+		await tokenStore.settle();
+		const { commitLocalClaim, getLocalClaimDigest, settleLocalClaimWrite } =
+			await import("../../modules/config.ts");
+		const digest = getLocalClaimDigest();
+		if (getPasswordHash() || !digest) return { success: false };
+
+		const submitted = new Bun.CryptoHasher("sha256")
+			.update(input.code)
+			.digest();
+		if (!timingSafeEqual(submitted, Buffer.from(digest, "hex"))) {
+			return { success: false };
+		}
+
+		// No await from the eligibility check through the atomic commit. The
+		// next request sees the owner hash and a spent code.
+		const ownerHash = Bun.password.hashSync(input.ownerSecret, {
+			algorithm: "bcrypt",
+			cost: BCRYPT_ROUNDS,
+		});
+		// A pre-claim token store can survive a partial reset. Clear it before
+		// publishing an owner hash that would make those tokens eligible again.
+		invalidateAllTokens(context.ws);
+		if (!tokenStore.writable) return { success: false };
+		try {
+			commitLocalClaim(ownerHash);
+		} catch (error) {
+			// Config writes stay frozen until the file says which state is on disk.
+			// Answer from the file when it is readable; otherwise the recovery
+			// owner reloads it and the caller's retained secret settles the claim.
+			try {
+				if (!(await settleLocalClaimWrite(ownerHash)))
+					return { success: false };
+			} catch {
+				const { recoverRuntimeConfig } = await import(
+					"../../modules/config-boot.ts"
+				);
+				recoverRuntimeConfig();
+				throw error;
+			}
+		}
+		closeStaleSetupPages(context.ws);
+		return { success: true };
+	});
+
+/** Pages still showing setup reconnect and get the normal sign-in view. */
+function closeStaleSetupPages(caller: AppWebSocket): void {
+	for (const ws of getClients()) {
+		if (ws === caller || ws.data.isAuthenticated) continue;
+		if (ws.data.senderId !== undefined) continue;
+		ws.close(1012, "Owner setup finished");
+	}
+}
 
 /**
  * Logout procedure

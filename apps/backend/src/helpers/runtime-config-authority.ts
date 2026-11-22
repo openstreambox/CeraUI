@@ -4,6 +4,8 @@ import {
 } from "../modules/system/update-orchestrator/stored-state-file.ts";
 import { runtimeConfigSchema } from "./config-schemas.ts";
 
+// The local claim digest stays out on purpose: a malformed verifier only
+// withholds claim setup and must never classify the whole file as damaged.
 const safetySchema = runtimeConfigSchema.pick({
 	autostart: true,
 	bond_opt_out: true,
