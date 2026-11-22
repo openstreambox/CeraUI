@@ -6,7 +6,7 @@
 import { call, ORPCError } from "@orpc/server";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 
-import { logger, logRedact } from "../helpers/logger.ts";
+import { logger, logRedact, REDACTED } from "../helpers/logger.ts";
 import {
 	getLocalClaimDigest,
 	isRuntimeConfigAvailable,
@@ -47,6 +47,23 @@ import type { AppWebSocket, ServerSocketData, SocketData } from "./types.ts";
 
 /** Cap on the redacted frame preview so a stray giant payload never bloats a log. */
 const FRAME_PREVIEW_MAX_CHARS = 100;
+/** Setup codes, owner secrets and digests are bare hex with no key hint. */
+const BARE_HEX_RUN = /[0-9a-f]{16,}/gi;
+
+/**
+ * A frame holding any secret-shaped value collapses whole. Otherwise redact by
+ * key while the structure exists, then mask bare hex, then cut.
+ */
+function framePreview(parsed: unknown): string {
+	// Scan a bounded prefix: far past the cut, and cheap for a giant frame.
+	const scan = FRAME_PREVIEW_MAX_CHARS * 40;
+	const raw = (JSON.stringify(parsed) ?? "").slice(0, scan);
+	if (logRedact(raw) === REDACTED) return REDACTED;
+	return (JSON.stringify(logRedact(parsed)) ?? "")
+		.slice(0, scan)
+		.replace(BARE_HEX_RUN, REDACTED)
+		.slice(0, FRAME_PREVIEW_MAX_CHARS);
+}
 
 /**
  * ORPC message format
@@ -90,9 +107,7 @@ export function parseMessage(
 			bytes: data.length,
 			keys: Object.keys(parsed),
 			hasId: "id" in parsed,
-			preview: logRedact(
-				JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
-			),
+			preview: framePreview(parsed),
 		});
 		return null;
 	} catch (error) {
