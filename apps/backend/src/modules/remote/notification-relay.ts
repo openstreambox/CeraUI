@@ -28,8 +28,7 @@ export const NOTIFICATION_SUMMARIES: Readonly<Record<string, string>> = {
 		"The boot configuration needs attention. Check the local interface before restarting.",
 	config_damaged_reset:
 		"The settings file was damaged. Settings must be entered again locally.",
-	stream_recovery_failed:
-		"The stream could not be restored after the streaming engine restarted.",
+	stream_recovery_failed: "The stream could not be restored after a restart.",
 	ceralive_update: "A software update is available.",
 	ceralive_update_failed:
 		"The software update failed. Check the local interface for details.",

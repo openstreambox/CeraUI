@@ -1965,6 +1965,8 @@
 	"notifications.streamHealthRecovered": "تمت استعادة حالة البث",
 	"notifications.streamRecovered": "تمت استعادة البث تلقائيًا بعد إعادة تشغيل محرك البث.",
 	"notifications.streamRecoveryFailed": "تعذّرت استعادة البث بعد إعادة تشغيل محرك البث. افتح الإعدادات ← سجلات النظام لمعرفة التفاصيل.",
+	"notifications.streamRecoveredAfterRestart": "تمت استعادة البث تلقائيًا بعد إعادة تشغيل إحدى الخدمات.",
+	"notifications.streamRecoveryFailedAfterRestart": "تعذّرت استعادة البث بعد إعادة تشغيل إحدى الخدمات. افتح الإعدادات ← سجلات النظام لمعرفة التفاصيل.",
 	"notifications.staleLinkAddress": "لا يساهم {link} لأنه لا يزال يستخدم عنوانًا قديمًا. هل تريد إعادة تشغيل الاتصال؟ سيرى المشاهدون شاشة BRB لبضع ثوانٍ.",
 	"notifications.staleLinkAddressUnnamed": "لا يساهم أحد الروابط لأنه لا يزال يستخدم عنوانًا قديمًا. هل تريد إعادة تشغيل الاتصال؟ سيرى المشاهدون شاشة BRB لبضع ثوانٍ.",
 	"notifications.staleLinkAddressSeveral": "لا تساهم بعض الروابط لأنها لا تزال تستخدم عناوين قديمة. هل تريد إعادة تشغيل الاتصال؟ سيرى المشاهدون شاشة BRB لبضع ثوانٍ.",

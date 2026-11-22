@@ -1956,6 +1956,8 @@
 	"notifications.streamHealthRecovered": "Status da transmissão recuperado",
 	"notifications.streamRecovered": "A transmissão foi restaurada automaticamente após o motor de streaming reiniciar.",
 	"notifications.streamRecoveryFailed": "Não foi possível restaurar a transmissão após o motor de streaming reiniciar. Abra Configurações → Logs do sistema para ver os detalhes.",
+	"notifications.streamRecoveredAfterRestart": "A transmissão foi restaurada automaticamente após a reinicialização de um serviço.",
+	"notifications.streamRecoveryFailedAfterRestart": "Não foi possível restaurar a transmissão após a reinicialização de um serviço. Abra Configurações → Logs do sistema para ver os detalhes.",
 	"notifications.staleLinkAddress": "{link} não está contribuindo porque ainda usa um endereço antigo. Reiniciar a conexão? Seus espectadores verão sua tela de BRB por alguns segundos.",
 	"notifications.staleLinkAddressUnnamed": "Um link não está contribuindo porque ainda usa um endereço antigo. Reiniciar a conexão? Seus espectadores verão sua tela de BRB por alguns segundos.",
 	"notifications.staleLinkAddressSeveral": "Alguns links não estão contribuindo porque ainda usam endereços antigos. Reiniciar a conexão? Seus espectadores verão sua tela de BRB por alguns segundos.",

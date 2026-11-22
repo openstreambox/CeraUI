@@ -1953,6 +1953,8 @@
 	"notifications.streamHealthRecovered": "Stream health recovered",
 	"notifications.streamRecovered": "The stream was restored automatically after the streaming engine restarted.",
 	"notifications.streamRecoveryFailed": "The stream could not be restored after the streaming engine restarted. Open Settings → System Logs for details.",
+	"notifications.streamRecoveredAfterRestart": "The stream was restored automatically after a service restart.",
+	"notifications.streamRecoveryFailedAfterRestart": "The stream could not be restored after a service restart. Open Settings → System Logs for details.",
 	"notifications.staleLinkAddress": "{link} isn't contributing because it's still using an old address. Restart connection? Viewers see your BRB screen for a few seconds.",
 	"notifications.staleLinkAddressUnnamed": "One link isn't contributing because it's still using an old address. Restart connection? Viewers see your BRB screen for a few seconds.",
 	"notifications.staleLinkAddressSeveral": "Some links aren't contributing because they're still using old addresses. Restart connection? Viewers see your BRB screen for a few seconds.",
