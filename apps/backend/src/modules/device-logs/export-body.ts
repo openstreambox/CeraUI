@@ -1,9 +1,11 @@
 import { collectVersionContext } from "../system/version-context.ts";
 import { listBoots } from "./boots.ts";
+import { collectHeldSecrets } from "./bundle-data.ts";
 import type { ParsedQuery } from "./continuation.ts";
 import { exportEntry, exportHeader } from "./export-format.ts";
 import { withQuerySlot } from "./query-admission.ts";
 import { JournalReadError } from "./reader.ts";
+import { buildRedactor } from "./redaction.ts";
 import { scanPage } from "./scan-page.ts";
 import { getLogState } from "./settings.ts";
 
@@ -41,6 +43,14 @@ export async function* exportChunks(
 		return chunk;
 	};
 	let incomplete: string | null = stopped();
+	// Held credentials never leave in an export, even from another unit's line.
+	let redact = (text: string) => text;
+	try {
+		const redactor = buildRedactor(collectHeldSecrets());
+		redact = (text) => redactor.known(text).text;
+	} catch {
+		incomplete ??= "READ_FAILED";
+	}
 	try {
 		if (!incomplete) {
 			const boots = await listBoots();
@@ -54,7 +64,9 @@ export async function* exportChunks(
 			const current = await collectVersionContext();
 			incomplete ??= stopped();
 			if (!incomplete) {
-				const header = encode(exportHeader(current, covered, query, createdAt));
+				const header = encode(
+					redact(exportHeader(current, covered, query, createdAt)),
+				);
 				if (header) yield header;
 				else incomplete = "size_limit";
 			}
@@ -82,7 +94,15 @@ export async function* exportChunks(
 			for (const entry of result.entries) {
 				incomplete = stopped();
 				if (incomplete) break;
-				const chunk = encode(exportEntry(entry));
+				const chunk = encode(
+					redact(
+						exportEntry({
+							...entry,
+							unit: redact(entry.unit),
+							message: redact(entry.message),
+						}),
+					),
+				);
 				if (!chunk) {
 					incomplete = "size_limit";
 					break;
