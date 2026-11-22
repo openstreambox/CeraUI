@@ -1,6 +1,7 @@
 """Regression checks for the predicates that qualify VM results."""
 
 import importlib.util
+import hashlib
 from pathlib import Path
 import socket
 import time
@@ -22,32 +23,67 @@ def ping_log(first):
 
 
 class EvidenceTests(unittest.TestCase):
-    def test_ping_train_finishing_before_reload_cannot_pass(self):
+    def test_late_print_of_queued_reply_cannot_replace_fresh_probe(self):
         monitor = Mock()
         monitor.transitions.return_value = []
+        train, probe = Mock(), Mock()
+        train.wait.return_value = 0
+        probe.wait.return_value = 1
+        # The train's printed timestamps appear to span the reload. It can
+        # still consist entirely of packets that arrived before the reload.
+        logs = {"ping": ping_log(10), "ping-after": "1 packets transmitted, 0 received"}
         with patch.object(scenarios, "authorized", return_value=True), \
-             patch.object(scenarios, "launch"), patch.object(scenarios, "log", return_value=ping_log(10)):
-            passed, _ = scenarios.continuous_ping("ping", monitor, lambda: (True, 12, 12.01))
+             patch.object(scenarios, "launch", side_effect=[train, probe]) as launch, \
+             patch.object(scenarios, "log", side_effect=logs.__getitem__):
+            def reload():
+                self.assertEqual(launch.call_count, 1)
+                return True
+
+            passed, _ = scenarios.continuous_ping("ping", monitor, reload)
+        self.assertEqual(launch.call_args.args[0], "ping-after")
         self.assertFalse(passed)
 
     def test_ping_train_with_a_drop_and_rejoin_cannot_pass(self):
         monitor = Mock()
         monitor.transitions.return_value = [("DISCONNECTED", A, 10.41), ("CONNECTED", A, 10.42)]
+        process = Mock()
+        process.wait.return_value = 0
+        logs = {"ping": ping_log(10), "ping-after": "1 packets transmitted, 1 received"}
         with patch.object(scenarios, "authorized", return_value=True), \
-             patch.object(scenarios, "launch"), patch.object(scenarios, "log", return_value=ping_log(10)):
-            passed, _ = scenarios.continuous_ping("ping", monitor, lambda: (True, 10.4, 10.5))
-        self.assertFalse(passed)
-        monitor.transitions.return_value = []
-        self.assertEqual(scenarios.ping_brackets(ping_log(10), 10.4, 10.5), (True, 9, 18))
+             patch.object(scenarios, "launch", return_value=process), \
+             patch.object(scenarios, "log", side_effect=logs.__getitem__):
+            passed, _ = scenarios.continuous_ping("ping", monitor, lambda: True)
+            self.assertFalse(passed)
+            monitor.transitions.return_value = []
+            passed, _ = scenarios.continuous_ping("ping", monitor, lambda: True)
+        self.assertTrue(passed)
 
     def test_expiry_requires_the_new_generation_and_an_on_time_reload(self):
         control = f"<3>AP-STA-CONNECTED {B} keyid=expiry-control"
         passed = scenarios.expiry_passed
-        self.assertTrue(passed(True, control, True, 120.001, 120, True, True))
-        self.assertFalse(passed(True, "", False, 120.001, 120, True, True))
-        self.assertFalse(passed(True, control, False, 120.001, 120, True, True))
-        self.assertFalse(passed(True, control, True, 119.999, 120, True, True))
-        self.assertFalse(passed(True, control, True, 120.251, 120, True, True))
+        self.assertTrue(passed(True, True, control, True, 120.001, 120, True, True))
+        self.assertFalse(passed(True, True, "", False, 120.001, 120, True, True))
+        self.assertFalse(passed(True, True, control, False, 120.001, 120, True, True))
+        self.assertFalse(passed(True, True, control, True, 119.999, 120, True, True))
+        self.assertFalse(passed(True, True, control, True, 120.251, 120, True, True))
+
+    def test_activated_control_cannot_mask_an_omitted_otp(self):
+        control = Mock()
+        join = f"<3>AP-STA-CONNECTED {B} keyid=expiry-control"
+        for secret, expect in ((scenarios.EXPIRY_CONTROL, False), (scenarios.SECOND, True)):
+            psk = hashlib.pbkdf2_hmac("sha1", secret.encode(), scenarios.SSID.encode(), 4096, 32).hex()
+            control.command.side_effect = ["OK", f"ssid={scenarios.SSID}\npsk={psk}", "OK"]
+            active = scenarios.active_head_matches(control, scenarios.SECOND)
+            self.assertEqual(scenarios.expiry_passed(True, active, join, True, 120.001, 120, True, True), expect)
+            self.assertEqual(control.command.call_args.args, ("SET wps_state 0",))
+
+    def test_sae_set_rejects_b_dropping_and_rejoining_between_samples(self):
+        monitor = Mock()
+        monitor.transitions.return_value = [("DISCONNECTED", B, 10.41), ("CONNECTED", B, 10.42)]
+        with patch.object(scenarios, "authorized", return_value=True):
+            self.assertEqual(scenarios.sae_set_with_peer(monitor, "b", lambda: True), (True, False))
+            monitor.transitions.return_value = []
+            self.assertEqual(scenarios.sae_set_with_peer(monitor, "b", lambda: True), (True, True))
 
     def test_revoke_rejects_stale_disconnect_and_peer_recovery(self):
         def passes(changes, baseline=(True, True)):

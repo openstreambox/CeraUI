@@ -1,5 +1,6 @@
 """Guest init and hostapd hotspot credential checks."""
 
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -12,6 +13,7 @@ import traceback
 
 
 AP = "192.0.2.1"
+SSID = "HostapdFixture"
 STA = {"a": "02:00:00:00:00:0a", "b": "02:00:00:00:00:0b"}
 WILDCARD = "00:00:00:00:00:00"
 FIRST = "fixture-password-first"
@@ -157,7 +159,7 @@ def psks(*entries):
 
 def ap_config(security):
     atomic_write(AP_CONFIG, (
-        "interface=testwifi\ndriver=nl80211\nssid=HostapdFixture\n"
+        f"interface=testwifi\ndriver=nl80211\nssid={SSID}\n"
         "hw_mode=g\nchannel=6\nctrl_interface=/run/ap\n"
         "wpa=2\nrsn_pairwise=CCMP\nlogger_stdout=-1\nlogger_stdout_level=0\n" + security
     ))
@@ -186,7 +188,7 @@ def station(name, secret, sae=False, identifier=None):
     config = Path(f"/run/station-{name}.conf")
     config.write_text(
         f"ctrl_interface=/run/station-{name}\nsae_pwe=1\nnetwork={{\n"
-        f'ssid="HostapdFixture"\nscan_freq=2437\n{password}}}\n'
+        f'ssid="{SSID}"\nscan_freq=2437\n{password}}}\n'
     )
     launch(name, name, "wpa_supplicant", "-t", "-i", "testwifi", "-c", str(config))
 
@@ -227,32 +229,27 @@ def reload_psks(control):
     return control.command("RELOAD_WPA_PSK") == "OK"
 
 
-def ping_timestamps(output):
-    return [float(value) for value in re.findall(r"^\[(\d+\.\d+)\].*icmp_seq=\d+", output, re.M)]
-
-
-def ping_brackets(output, sent_at, completed_at):
-    stamps = ping_timestamps(output)
-    before = sum(stamp < sent_at for stamp in stamps)
-    after = sum(stamp > completed_at for stamp in stamps)
-    clean = len(stamps) == 30 and "30 packets transmitted, 30 received" in output
-    return clean and before > 0 and after > 0, before, after
-
-
 def continuous_ping(name, events, mutation):
     baseline = time.time()
     was_authorized = authorized("a")
-    process = launch(name, "a", "ping", "-D", "-n", "-i", "0.04", "-c", "30", "-W", "1", AP)
-    if not until(lambda: ping_timestamps(log(name)), 2):
+    train = launch(name, "a", "ping", "-n", "-i", "0.04", "-c", "30", "-W", "1", AP)
+    if not until(lambda: "icmp_seq=" in log(name), 2):
         raise RuntimeError("Ping did not establish traffic before reload")
-    reloaded, sent_at, completed_at = mutation()
-    process.wait(timeout=5)
-    clean, before, after = ping_brackets(log(name), sent_at, completed_at)
+    reloaded = mutation()
+    # A separate ping socket sends this request only after the reload replied.
+    # Output from the train can lag behind receipt of a packet.
+    post_name = f"{name}-after"
+    post = launch(post_name, "a", "ping", "-n", "-c", "1", "-W", "1", AP)
+    fresh = post.wait(timeout=3) == 0 and "1 packets transmitted, 1 received" in log(post_name)
+    clean = train.wait(timeout=5) == 0
+    summary = re.search(r"^(\d+) packets transmitted, (\d+) received", log(name), re.M)
+    sent, received = map(int, summary.groups()) if summary else (0, 0)
+    clean = clean and sent == received == 30
     still_authorized = authorized("a")
     changes = events.transitions(baseline, time.time() + 0.15)
     a_transitions = [kind for kind, mac, _ in changes if mac == STA["a"]]
-    passed = reloaded and clean and was_authorized and still_authorized and not a_transitions
-    return passed, f"ping={len(ping_timestamps(log(name)))}/30 before={before} after={after} A_transitions={a_transitions}"
+    passed = reloaded and clean and fresh and was_authorized and still_authorized and not a_transitions
+    return passed, f"ping={received}/{sent} pre_reload_reply=True fresh_post_reload_reply={fresh} A_transitions={a_transitions}"
 
 
 def peer_event(events, kind, name, since, seconds=8):
@@ -293,13 +290,27 @@ def denied_psk(events, secret, empty_candidates=False):
 
 def psk_mutation(control, *entries):
     psks(*entries)
-    sent_at = time.time()
-    reloaded = reload_psks(control)
-    return reloaded, sent_at, time.time()
+    return reload_psks(control)
 
 
-def expiry_passed(armed, control_join, control_authorized, elapsed, expected, clean, denied):
-    return (armed and control_join.endswith(" keyid=expiry-control") and control_authorized
+def active_head_matches(control, password):
+    # hostapd 2.11's GET_CONFIG exposes the first active wildcard PSK when the
+    # config's WPS state is nonzero. Toggle that reporting condition on an AP
+    # started without WPS, then restore it. No enrollment or auth uses this PSK.
+    if control.command("SET wps_state 2") != "OK":
+        raise RuntimeError("Could not enable the guest-only PSK readback")
+    try:
+        configuration = control.command("GET_CONFIG")
+    finally:
+        if control.command("SET wps_state 0") != "OK":
+            raise RuntimeError("Could not restore guest WPS state")
+    expected = hashlib.pbkdf2_hmac("sha1", password.encode(), SSID.encode(), 4096, 32).hex()
+    return (f"ssid={SSID}" in configuration.splitlines()
+            and re.findall(r"^psk=([0-9a-f]{64})$", configuration, re.M) == [expected])
+
+
+def expiry_passed(armed, otp_active, control_join, control_authorized, elapsed, expected, clean, denied):
+    return (armed and otp_active and control_join.endswith(" keyid=expiry-control") and control_authorized
             and expected <= elapsed <= expected + 0.25 and clean and denied)
 
 
@@ -345,10 +356,12 @@ def wpa2(expiry_seconds):
     report(5, active and no_candidate and mismatch,
            f"B denied with and without another eligible PSK: {no_candidate_evidence}; {mismatch_evidence}")
 
-    psks(bound, standing, unused, ("expiry-control", WILDCARD, EXPIRY_CONTROL))
+    # The file parser prepends entries. Put otp-2 last so GET_CONFIG reads it.
+    psks(bound, standing, ("expiry-control", WILDCARD, EXPIRY_CONTROL), unused)
     armed = reload_psks(control)
     started = time.monotonic()
     deadline = started + expiry_seconds
+    otp_active = active_head_matches(control, SECOND)
     control_join, _ = connect(events, "b", EXPIRY_CONTROL)
     control_authorized = authorized("b")
     stop("b")
@@ -364,8 +377,8 @@ def wpa2(expiry_seconds):
     elapsed = float("inf")
     clean, traffic = continuous_ping("expiry-ping", events, expire)
     denied, evidence = denied_psk(events, SECOND)
-    report(6, expiry_passed(armed, control_join, control_authorized, elapsed, expiry_seconds, clean, denied),
-           f"expiry_reload_ms={elapsed * 1000:.3f} control_join={control_join!r} "
+    report(6, expiry_passed(armed, otp_active, control_join, control_authorized, elapsed, expiry_seconds, clean, denied),
+           f"expiry_reload_ms={elapsed * 1000:.3f} active_otp_verified={otp_active} control_join={control_join!r} "
            f"control_authorized={control_authorized} {traffic} expired_B={evidence}")
 
     peer, _ = connect(events, "b", STANDING)
@@ -463,6 +476,15 @@ def sae_reload(events, mutation, *peers):
     return result, baseline and not before and disconnected == wanted
 
 
+def sae_set_with_peer(events, name, mutation):
+    baseline = time.time()
+    before = authorized(name)
+    changed = mutation()
+    transitions = events.transitions(baseline, time.time() + 0.15)
+    peer_stable = before and authorized(name) and all(mac != STA[name] for _, mac, _ in transitions)
+    return changed, peer_stable
+
+
 def wpa3():
     first = f"{FIRST}|id=first"
     second = f"{SECOND}|id=second"
@@ -493,9 +515,8 @@ def wpa3():
     _, revoked = sae_reload(events, lambda: WORKERS["ap"].send_signal(signal.SIGHUP), "a")
     expired = revoked and sae_denied("a", FIRST, "first")
     surviving = bool(sae_joins(events, "b", SECOND, "second")) and authorized("b")
-    staged = set_sae_passwords(control, first, second)
+    staged, peer_survived_set = sae_set_with_peer(events, "b", lambda: set_sae_passwords(control, first, second))
     stage_denied = sae_denied("a", FIRST, "first")
-    peer_survived_set = authorized("b")
     activated, interrupted = sae_reload(events, lambda: reload_psks(control), "b")
     changed = bool(sae_joins(events, "a", FIRST, "first")) and authorized("a")
     print(f"SAE SET_password_list_ok={staged} new_H2E_join_denied_before_reload={stage_denied} "
