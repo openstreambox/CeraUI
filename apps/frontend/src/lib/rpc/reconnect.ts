@@ -46,9 +46,9 @@ export interface ReauthDeps {
 	getToken: () => string | null;
 	/**
 	 * Forget this tab's credential after a rejection (natural loop break), but
-	 * only while it is still the rejected one. It never touches the shared
-	 * `auth` slot: only an explicit sign-in or sign-out writes that, so another
-	 * tab's newer token survives.
+	 * only while it is still the rejected one. The shared `auth` slot loses it
+	 * only while it holds that same refused token (compare-and-clear), so
+	 * another tab's newer token survives.
 	 */
 	forgetToken: (rejectedToken: string) => void;
 	/** Whether this is still the socket and session that started the attempt. */
@@ -100,8 +100,12 @@ export async function reauthenticateAndHydrate(
 	if (!result.success) {
 		// Credential expired/invalid: forget it so the next reconnect finds
 		// no token (loop break) and route to the login screen.
-		deps.forgetToken(token);
-		deps.routeToLogin();
+		try {
+			deps.forgetToken(token);
+		} finally {
+			// A refusal always ends the session, even if forgetting failed.
+			deps.routeToLogin();
+		}
 		return "expired";
 	}
 	deps.onAuthenticated();
