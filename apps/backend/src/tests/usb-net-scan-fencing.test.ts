@@ -431,6 +431,7 @@ describe("shared USB serials are remembered only by committed scans", () => {
 
 		for (const [value, anchor] of [
 			["fixture ABC123\n", "usb-serial"],
+			["fixture ABC123\r\n", "usb-serial"],
 			["\tfixture ABC123\n", "id-path"],
 		] as const) {
 			writeFileSync(path, value);

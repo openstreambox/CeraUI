@@ -190,7 +190,7 @@ export function usbSerialDigest(key: string): string {
 export function usableUsbSerial(raw: string | undefined): string | undefined {
 	// systemd usb_id accepts ASCII except comma, folds runs of spaces, and
 	// replaces characters outside its devnode alphabet. Preserve its \\x escape.
-	const attribute = raw?.replace(/\n+$/, "");
+	const attribute = raw?.replace(/[\r\n]+$/, "");
 	if (attribute === undefined || /[^ -~\x7f]|,/.test(attribute))
 		return undefined;
 	const serial = attribute
