@@ -77,14 +77,57 @@ any modem state, before any carrier-dependent step.
 - You can start a stream while the box waits for the modem or checks its USB setting. Once the box is ready to send the reset, it holds new starts until it releases USB control.
   While the unit is absent, the box waits out its recorded 180-second return
   window before sending another modem a USB speed reset. This also applies after restart.
-- The next USB enumeration verifies it at 480 Mbit/s or slower. Two attempts per
-  unit, 15 minutes apart; then the unit is held until its record is removed.
+- The box checks for 480 Mbit/s or slower on the next USB enumeration. It allows
+  two attempts per modem, 15 minutes apart. An interrupted attempt can consume
+  the budget even if the box never sent the command. Once blocked, automatic USB
+  preparation for that modem stays blocked across restarts and re-enumeration.
+  Carrier processing continues.
 - `/etc/ceralive/no-usbspeed` stops every write; the decision is still logged.
 
 This is a partial implementation. It does not establish
 an RNDIS owner, CLAT,
 traffic health or carrier/hardware qualification. Existing or synthetic test
 results do not establish those capabilities. Verizon remains unqualified.
+
+#### Clearing a blocked USB preparation record
+
+1. Find the latest `usbspeed: blocked` line with
+   `journalctl -u ceralive.service -g 'usbspeed: blocked'`. It names the interface,
+   the ModemManager index (`modem=`) and the full preparation file (`record=`).
+   Use `mmcli -L` to find the current modem and `mmcli -m <index> -K` to check
+   its equipment identifier locally. Both the interface name and index can be
+   reused. If you need support, send the blocked line and keep the IMEI private.
+2. End any stream. In a root shell on the box, run the commands below. Enter the
+   current modem index and the exact path after `record=`. The commands check
+   the filename against the hash of that modem’s equipment identifier, then stop
+   `ceralive.service` and show the file. Check that `kind` is `usbspeed`, `key`
+   matches the filename without `.json`, `phase` is `blocked`, and `attempts` is
+   at least 2.
+3. Type `ARCHIVE` only if those fields match and you want to allow another
+   attempt. Press Enter to cancel. The move preserves the original setting in a
+   new private directory outside the preparation store. The service restarts on
+   exit. Its next eligible idle poll can send a setting change or modem reset.
+
+```sh
+(
+  printf 'modem= '
+  IFS= read -r modem || exit 1
+  printf 'record= '
+  IFS= read -r record || exit 1
+  equipment=$(mmcli -m "$modem" -K | sed -n \
+    's/^[[:space:]]*modem\.generic\.equipment-identifier[[:space:]]*:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p')
+  case "$equipment" in ''|*[!0-9]*) exit 1 ;; esac
+  key=$(printf '["usbspeed","%s"]' "$equipment" | sha256sum | cut -d' ' -f1)
+  [ "$record" = "/data/ceralive/cellular-preparation/$key.json" ] || exit 1
+  systemctl stop ceralive.service || exit 1
+  trap 'systemctl start ceralive.service' EXIT
+  [ -f "$record" ] && [ ! -L "$record" ] && cat -- "$record" || exit 1
+  printf '\nARCHIVE? '
+  IFS= read -r answer && [ "$answer" = ARCHIVE ] || exit 1
+  backup=$(mktemp -d /data/ceralive/usbspeed-backup.XXXXXX) &&
+    mv -v -- "$record" "$backup/" && sync -f "$backup"
+)
+```
 
 ### IPv6-only carriers (IPv4 translation)
 
@@ -180,15 +223,41 @@ antes de cualquier paso que dependa del operador.
   está ausente, el equipo espera hasta el final del plazo registrado de 180
   segundos antes de enviar a otro módem un reinicio por el cambio de velocidad
   USB. Esto también se aplica después de reiniciar el equipo.
-- La siguiente enumeración USB lo verifica a 480 Mbit/s o menos. Dos intentos por
-  unidad, con 15 minutos entre ellos; después la unidad queda en espera hasta que
-  se elimine su registro.
+- En la siguiente enumeración USB, el equipo comprueba si la velocidad es de
+  480 Mbit/s o menos. Permite dos intentos por módem, separados por 15 minutos.
+  Un intento interrumpido puede contar aunque el equipo no haya enviado el
+  comando. Una vez bloqueada, la preparación USB automática de ese módem sigue
+  bloqueada aunque se reinicie el equipo o se vuelva a enumerar el módem.
+  El procesamiento del operador continúa.
 - `/etc/ceralive/no-usbspeed` detiene toda escritura; la decisión se sigue
   registrando en el log.
 
 La implementación es parcial. Todavía no incluye control de RNDIS, CLAT ni
 comprobaciones del tráfico. Tampoco acredita compatibilidad real con un operador
 o hardware. Verizon sigue sin calificar.
+
+#### Cómo volver a permitir la preparación USB de un módem bloqueado
+
+1. Busca la entrada más reciente de `usbspeed: blocked` con
+   `journalctl -u ceralive.service -g 'usbspeed: blocked'`. Indica la interfaz,
+   el índice de ModemManager (`modem=`) y la ruta completa del archivo
+   (`record=`). Usa `mmcli -L` para ubicar el módem actual y `mmcli -m <índice> -K`
+   para verificar su identificador de equipo en el propio dispositivo. Tanto el
+   nombre de la interfaz como el índice se pueden reutilizar. Si necesitas
+   ayuda, envía esa línea a soporte y mantén el IMEI en privado.
+2. Finaliza cualquier transmisión. Desde una consola con permisos de root en el
+   equipo, ejecuta los [comandos de recuperación](#clearing-a-blocked-usb-preparation-record).
+   Introduce el índice actual y la ruta exacta que aparece después de `record=`.
+   Los comandos verifican el nombre del archivo con el hash del identificador de
+   ese módem, detienen `ceralive.service` y muestran el archivo. Comprueba que
+   `kind` sea `usbspeed`, que `key` coincida con el nombre del archivo sin `.json`,
+   que `phase` sea `blocked` y que `attempts` sea al menos 2.
+3. Escribe `ARCHIVE` solo si los campos coinciden y quieres permitir otro
+   intento. Para cancelar, presiona Intro. Se mueve solo ese archivo de
+   `/data/ceralive/cellular-preparation` a un directorio privado nuevo que
+   conserva el ajuste original. Al salir se inicia de nuevo el servicio. En la
+   siguiente comprobación sin transmisión, si se cumplen las condiciones, el
+   equipo puede enviar un cambio de ajuste o solicitar el reinicio del módem.
 
 ### Operadores solo IPv6 (traducción a IPv4)
 

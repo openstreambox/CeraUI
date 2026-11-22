@@ -24,6 +24,7 @@
 */
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { logger } from "../../helpers/logger.ts";
 import { listPrivateJsonKeys } from "../../helpers/private-json-state.ts";
 import {
@@ -204,18 +205,21 @@ async function writeRecord(record: PreparationRecord) {
 	);
 }
 
+function preparationDirectory(): string {
+	return (
+		process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR ??
+		cellularAuthorityMigration("cellular-preparation", parsePreparationRecord)
+			.destination.dir
+	);
+}
+
 /** After boot migration the destination holds every unit, including one still off
  * the bus. Only a prospective switch needs to inspect the missing units. */
 async function missingUnitReturning(
 	visible: ReadonlySet<string>,
 	now: number,
 ): Promise<boolean> {
-	const store = {
-		dir:
-			process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR ??
-			cellularAuthorityMigration("cellular-preparation", parsePreparationRecord)
-				.destination.dir,
-	};
+	const store = { dir: preparationDirectory() };
 	for (const key of await listPrivateJsonKeys(store)) {
 		if (visible.has(key)) continue;
 		const raw = await readCellularSlot(store, key);
@@ -438,7 +442,11 @@ async function runUsbSpeedPreparationOnce(
 			await deps.write(decision.update);
 			unit.record = decision.update;
 		}
-		const line = `${unit.target.ifname} usbspeed: ${decision.action} (${decision.reason})`;
+		let line = `${unit.target.ifname} usbspeed: ${decision.action} (${decision.reason})`;
+		if (decision.action === "blocked") {
+			const record = join(preparationDirectory(), `${unit.key}.json`);
+			line += ` modem=${unit.id} record=${record}`;
+		}
 		if (reported.get(unit.key) !== line) {
 			reported.set(unit.key, line);
 			deps.log(line);

@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -354,12 +354,14 @@ test("a restart after setter dispatch retains the attempt even when the outcome 
 	process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = dir;
 	const b = box({ setterReadback: "312" });
 	const countsAtDispatch: number[] = [];
+	const messages: string[] = [];
 	try {
 		for (let boot = 0; boot < 3; boot++) {
 			resetUsbSpeedPreparationForTest();
 			let interrupted = false;
 			await runUsbSpeedPreparation({
 				...b.deps,
+				log: (message) => messages.push(message),
 				read: defaultUsbSpeedDeps.read,
 				write: async (entry) => {
 					// Nothing after this process cut can reach the next boot.
@@ -386,6 +388,17 @@ test("a restart after setter dispatch retains the attempt even when the outcome 
 		}
 		expect(b.calls.filter((line) => line === "set 0 20")).toHaveLength(2);
 		expect(countsAtDispatch).toEqual([1, 2]);
+		const file = join(dir, `${b.key(0)}.json`);
+		expect(
+			messages.filter((line) => line.includes("usbspeed: blocked")),
+		).toEqual([
+			`wwan0 usbspeed: blocked (still at 5000 Mbit/s after 2 attempts) modem=0 record=${file}`,
+		]);
+		expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+			key: b.key(0),
+			kind: "usbspeed",
+			phase: "blocked",
+		});
 		expect(b.calls).not.toContain("reset 0");
 		expect(await defaultUsbSpeedDeps.read(b.key(0))).toMatchObject({
 			original: "312",
@@ -398,6 +411,45 @@ test("a restart after setter dispatch retains the attempt even when the outcome 
 			delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
 		else process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = previous;
 		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("a reused modem index and interface log each blocked unit's own preparation record", async () => {
+	const b = box({ units: 2 });
+	const lines: string[] = [];
+	const directory = process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	delete process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR;
+	try {
+		for (const id of [0, 1]) {
+			const target = await b.deps.target(id, `key-${id}`);
+			if (!target) throw new Error("missing fixture modem");
+			const key = b.key(id);
+			b.records.set(
+				key,
+				record({
+					key,
+					phase: "blocked",
+					attempts: 2,
+					reason: "attempts exhausted",
+				}),
+			);
+			await runUsbSpeedPreparation({
+				...b.deps,
+				ids: () => [4],
+				target: async () => ({ ...target, id: 4, ifname: "wwan0" }),
+				log: (line) => lines.push(line),
+			});
+		}
+		expect(lines).toEqual(
+			[0, 1].map(
+				(id) =>
+					`wwan0 usbspeed: blocked (attempts exhausted) modem=4 record=/data/ceralive/cellular-preparation/${b.key(id)}.json`,
+			),
+		);
+		expect(b.calls).toEqual([]);
+	} finally {
+		if (directory !== undefined)
+			process.env.CERALIVE_CELLULAR_PREPARATION_STATE_DIR = directory;
 	}
 });
 
