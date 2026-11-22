@@ -66,12 +66,12 @@ export class NetworkPage {
 	}
 
 	/**
-	 * #413: Enable Hotspot opens the credential gate instead of starting. Resolves
+	 * #413: Turn on hotspot opens the credential gate instead of starting. Resolves
 	 * once the gate shows the device's own credentials.
 	 */
 	async openHotspotGate(): Promise<void> {
 		const dialog = this.page.getByRole('dialog', { name: 'Configure Hotspot' });
-		await dialog.getByRole('button', { name: 'Enable Hotspot', exact: true }).click();
+		await dialog.getByRole('button', { name: 'Turn on hotspot', exact: true }).click();
 		await expect(
 			this.page.locator('[data-testid="hotspot-activation-confirm"][data-phase="ready"]'),
 		).toBeVisible();

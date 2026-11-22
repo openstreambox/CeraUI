@@ -69,8 +69,8 @@ vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getConnectionState: () => "connected",
 }));
 
-const HOTSPOT_RUNG = "Hotspot";
-const HYBRID_RUNG = "Hybrid";
+const HOTSPOT_RUNG = "Share as hotspot";
+const HYBRID_RUNG = "Both";
 const TOUCH_MIN_CLASS = "min-h-[var(--touch-target-min)]";
 
 const ALL_MODES_OFFERED = {
