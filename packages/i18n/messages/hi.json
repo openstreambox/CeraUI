@@ -3693,5 +3693,17 @@
 	"notifications.power.sink": "पावर बोर्ड किसी पावर बैंक की चार्जर चिप से संपर्क नहीं कर पा रहा है। वह पावर बैंक न डिवाइस चालू कर सकता है, न कुछ देर के लिए रुक सकता है।",
 	"notifications.power.unproven": "पावर बोर्ड को ऐसा कोई पावर बैंक नहीं दिख रहा जो डिवाइस को बिजली दे रहा हो। रिज़र्व बैटरी ज़्यादा गर्म होने पर भी यह डिवाइस को अपने-आप बंद नहीं करेगा।",
 	"notifications.power.jump": "रिज़र्व बैटरी का तापमान अचानक बढ़ गया। सेंसर ख़राब हो सकता है। अगर तापमान इतना ही ऊँचा रहा, तो डिवाइस एक मिनट में बंद हो जाएगा।",
-	"notifications.power.status": "{text}"
+	"notifications.power.status": "{text}",
+	"network.changeSafety.askBefore.own": "यह बदलाव आपको {via} से बॉक्स से डिस्कनेक्ट कर देगा।",
+	"network.changeSafety.askBefore.unknown": "यह बदलाव आपको बॉक्स से डिस्कनेक्ट कर सकता है।",
+	"network.changeSafety.askBefore.undo": "बदलाव करें ({seconds} से. में पुष्टि न करूँ तो वापस लिया जाएगा)",
+	"network.changeSafety.askBefore.keep": "मुझे इसका असर पता है: मुझे डिस्कनेक्ट करें और इसे वापस न लें। वापस आने के लिए मुझे कनेक्शन बदलना या बॉक्स रीसेट करना पड़ सकता है।",
+	"network.changeSafety.confirm.prompt": "अभी भी जुड़े हैं? {seconds} से. में पुष्टि करें, वरना बॉक्स बदलाव वापस ले लेगा।",
+	"network.changeSafety.confirm.action": "पुष्टि करें",
+	"network.changeSafety.notice.disconnected": "किसी ने समय पर इस बदलाव की पुष्टि नहीं की, इसलिए बॉक्स ने इसे वापस लिया। फिर भी करना है?",
+	"network.changeSafety.notice.restart": "पुष्टि से पहले नेटवर्क फिर से शुरू हुआ, इसलिए बॉक्स ने इसे वापस लिया। फिर भी?",
+	"network.changeSafety.notice.make": "बदलाव करें",
+	"network.changeSafety.notice.leave": "वापस ही रहने दें",
+	"network.changeSafety.kept.undo": "आखिरी नेटवर्क बदलाव वापस लें",
+	"network.changeSafety.summary.ethernetRole": "{ifname} पर पोर्ट भूमिका बदलाव"
 }
