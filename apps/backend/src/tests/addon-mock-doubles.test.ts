@@ -167,9 +167,9 @@ describe("manager (prod-real) — real deps, no mock double", () => {
 
 		const deps = resolveActiveAddonManagerDeps();
 
-		// CERALIVE_DEVICE_TYPE=real short-circuits isRealDevice() before any file
-		// read, so this is the real device-detection primitive — and it says real.
-		expect(await deps.isRealDevice()).toBe(true);
+		// CERALIVE_DEVICE_TYPE=real short-circuits the capability query before any file
+		// read, so this is the production capability query — and it grants add-on management.
+		expect(await deps.canManageAddons()).toBe(true);
 		// The mock double factory was NEVER called on the production path.
 		expect(peekMockAddonManagerHarness()).toBeNull();
 	});
@@ -208,7 +208,7 @@ describe("manager (prod-emulated) — addon_unavailable gate still fires", () =>
 
 		await runAddonReconciler();
 
-		// Real deps were resolved (shouldUseMocks() false), isRealDevice() → false
+		// Real deps were resolved (shouldUseMocks() false), the add-on capability is denied
 		// → the existing emulated-skip path; no mock double was constructed.
 		expect(peekMockReconcilerHarness()).toBeNull();
 	});
