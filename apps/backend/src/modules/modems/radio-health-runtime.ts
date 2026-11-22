@@ -178,13 +178,13 @@ export async function refreshRadioHealth(
 					cell.provenance.observed_at,
 				);
 			}
-			const nas: Awaited<ReturnType<typeof readRadioNas>> =
-				modem.model === "RM520N-GL"
-					? await deps.readNas(Number(id))
-					: { signal: "", band: "" };
+			const isRm520 = modem.model === "RM520N-GL";
+			const nas: Awaited<ReturnType<typeof readRadioNas>> = isRm520
+				? await deps.readNas(Number(id))
+				: { signal: "", band: "" };
 			Object.assign(record.metrics, parseQmiSignal(nas.signal, now));
 			let servingRaw = "";
-			if (nas.listed && deps.readServing) {
+			if (isRm520 && deps.readServing) {
 				const result = await deps.readServing(Number(id));
 				if (result.ok) servingRaw = result.raw;
 				// Never a silent unknown: the fixed reason is part of the field.

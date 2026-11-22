@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as interfaces from "../modules/network/network-interfaces.ts";
 import {
 	applyConcurrentApBondGate,
 	getNetworkInterfaces,
@@ -188,3 +189,36 @@ test("a replaced row or profile during the wait never certifies the replacement"
 		}
 	}
 });
+
+test("a netif snapshot arriving after NM confirmation can verify the same AP", async () => {
+	const f = fixture();
+	const incarnation = spyOn(
+		interfaces,
+		"getNetworkInterfaceIncarnation",
+	).mockReturnValue(undefined);
+	const published = Promise.withResolvers<unknown[]>();
+	f.deps.publishOutcome = (...args) => published.resolve(args);
+	const witness = {
+		activePath: "/active/1",
+		profile: {
+			path: "/settings/1",
+			runId: "fixture",
+			fingerprint: "ap",
+			file: { filename: "/fixture", device: "1", inode: "2", ctime: "3" },
+		},
+	};
+	f.deps.steering = {
+		readActivation: async () => witness,
+		reconcile: async () => {
+			incarnation.mockReturnValue(7);
+		},
+		verified: (_, observed) => observed === 7,
+	};
+	try {
+		f.confirm();
+		expect(await published.promise).toEqual(["start", 93, { success: true }]);
+	} finally {
+		f.restore();
+		incarnation.mockRestore();
+	}
+}, 2000);
