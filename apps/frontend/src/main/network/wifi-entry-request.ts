@@ -2,7 +2,12 @@ import { tick } from "svelte";
 import { waitForWifiStatus } from "$lib/rpc/wifi-status-receipt";
 import type { WifiRadioBinding } from "./wifi-radio-binding";
 
-/** A transient missing observation gets one retry from a future status frame. */
+/**
+ * A transient missing observation gets one retry from a future status frame,
+ * and only for the SAME radio lifetime. A frame carrying a different token
+ * names another target: the first refusal stands, so the caller's changed-radio
+ * handling applies and the operator has to pick the radio again.
+ */
 export async function withWifiEntryRetry<
 	T extends { readonly error?: string; readonly reason?: string },
 >(
@@ -11,13 +16,17 @@ export async function withWifiEntryRetry<
 	owner: {
 		readonly signal: AbortSignal;
 		readonly current: () => boolean;
-		/** False when the new token's operation is already pending elsewhere. */
+		/**
+		 * Called with the SAME token before the resend. False when this attempt
+		 * no longer owns its operation (another client's transition holds it).
+		 */
 		readonly rebind: (incarnation: string) => boolean;
 	},
 ): Promise<T | undefined> {
-	if (!binding.incarnation) return;
+	const incarnation = binding.incarnation;
+	if (!incarnation) return;
 	let observation: ReturnType<typeof waitForWifiStatus> | undefined;
-	const result = await invoke(binding.incarnation, () => {
+	const result = await invoke(incarnation, () => {
 		observation ??= waitForWifiStatus(binding.device, owner.signal);
 	});
 	if (
@@ -29,7 +38,7 @@ export async function withWifiEntryRetry<
 		waitForWifiStatus(binding.device, owner.signal));
 	await tick();
 	if (owner.signal.aborted || !owner.current() || !row?.incarnation) return;
-	// The first refusal stands, so the caller's changed-radio handling applies.
-	if (!owner.rebind(row.incarnation)) return result;
-	return invoke(row.incarnation);
+	if (row.incarnation !== incarnation || !owner.rebind(incarnation))
+		return result;
+	return invoke(incarnation);
 }
