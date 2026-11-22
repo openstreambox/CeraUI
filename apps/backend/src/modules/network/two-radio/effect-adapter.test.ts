@@ -560,6 +560,47 @@ describe("the lock Wi-Fi uses for the radio's current owner", () => {
 		expect(await effect).toBeNull();
 	});
 
+	test("a discovery pass in flight refuses on the stale verified sample, before durable intent", async () => {
+		// The previous verified identity stays in state; its publication does not.
+		radios.invalidate();
+		const { adapter, owner, journal } = await setup();
+		expect(await adapter.execute(command(), holder)).toBeNull();
+		expect(owner.log).toEqual([]);
+		expect(journal.data?.operations[0]?.commands ?? []).toEqual([]);
+		// Republished: the same radio is admitted again.
+		await radios.publish(verified());
+		expect((await adapter.execute(command("scan", 3), holder))?.ok).toBe(true);
+	});
+
+	test("a lifetime change under the same name before dispatch refuses the effect", async () => {
+		const { adapter, owner, journal } = await setup();
+		const save = journal.save.bind(journal);
+		journal.save = async (snapshot) => {
+			await save(snapshot);
+			// Replugged after admission; discovery has not republished anything.
+			if (snapshot.operations[0]?.commands.length)
+				radios.sysfs(verified({ b: { ifindex: 22 } }));
+		};
+		expect(await adapter.execute(command(), holder)).toBeNull();
+		expect(owner.log).toEqual([]);
+	});
+
+	test("a replug during the owner's live identity read refuses the effect", async () => {
+		const { adapter, owner } = await setup();
+		const read = owner.identity.bind(owner);
+		let reads = 0;
+		owner.identity = async (radio) => {
+			const live = await read(radio);
+			// The read made under the lock, right before dispatch.
+			if (radio === "b" && ++reads === 2)
+				radios.sysfs(verified({ b: { ifindex: 22 } }));
+			return live;
+		};
+		expect(await adapter.execute(command(), holder)).toBeNull();
+		expect(reads).toBeGreaterThanOrEqual(2);
+		expect(owner.log).toEqual([]);
+	});
+
 	test("Limited, unverified and missing rows refuse without durable intent or effects", async () => {
 		for (const seeded of [
 			// Two netdevs on one phy: Limited although the address is coherent.
