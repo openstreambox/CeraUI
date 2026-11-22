@@ -45,25 +45,10 @@ import { instrumentRpcCall } from "./rpc-logging.ts";
 import { getPasswordHash, localClaimEnabled } from "./state/password.ts";
 import type { AppWebSocket, ServerSocketData, SocketData } from "./types.ts";
 
-/** Cap on the redacted frame preview so a stray giant payload never bloats a log. */
-const FRAME_PREVIEW_MAX_CHARS = 100;
+/** Cap on the logged frame keys so a stray giant payload never bloats a log. */
+const FRAME_KEYS_MAX = 10;
 /** Setup codes, owner secrets and digests are bare hex with no key hint. */
 const BARE_HEX_RUN = /[0-9a-f]{16,}/gi;
-
-/**
- * A frame holding any secret-shaped value collapses whole. Otherwise redact by
- * key while the structure exists, then mask bare hex, then cut.
- */
-function framePreview(parsed: unknown): string {
-	// Scan a bounded prefix: far past the cut, and cheap for a giant frame.
-	const scan = FRAME_PREVIEW_MAX_CHARS * 40;
-	const raw = (JSON.stringify(parsed) ?? "").slice(0, scan);
-	if (logRedact(raw) === REDACTED) return REDACTED;
-	return (JSON.stringify(logRedact(parsed)) ?? "")
-		.slice(0, scan)
-		.replace(BARE_HEX_RUN, REDACTED)
-		.slice(0, FRAME_PREVIEW_MAX_CHARS);
-}
 
 /**
  * ORPC message format
@@ -105,13 +90,23 @@ export function parseMessage(
 			clientId: ws.remoteAddress,
 			senderId: ws.data?.senderId,
 			bytes: data.length,
-			keys: Object.keys(parsed),
 			hasId: "id" in parsed,
-			preview: framePreview(parsed),
+			// Only the frame's shape: any frame can carry a credential with the
+			// wrong shape or path, and a value preview would log it. A key can
+			// itself be a bare hex credential.
+			keys: logRedact(
+				Object.keys(parsed)
+					.slice(0, FRAME_KEYS_MAX)
+					.map((key) => key.replace(BARE_HEX_RUN, REDACTED)),
+			),
 		});
 		return null;
-	} catch (error) {
-		logger.error(`Failed to parse WebSocket message: ${error}`);
+	} catch {
+		// The parser's message can quote the frame text.
+		logger.error("Failed to parse WebSocket message", {
+			module: "rpc.adapter",
+			bytes: data.length,
+		});
 		return null;
 	}
 }

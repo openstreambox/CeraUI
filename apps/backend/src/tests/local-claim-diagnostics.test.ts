@@ -92,10 +92,48 @@ test.each([
 	expect(logs[0]).toContain("rpc: unrecognised frame");
 });
 
-test("a malformed frame preview keeps short non-secret values", () => {
-	parseMessage(JSON.stringify({ kind: "probe", id: "abc123" }), fakeWs());
-	expect(logs[0]).toContain("probe");
-	expect(logs[0]).toContain("abc123");
+test.each([
+	{ [CODE]: 1 },
+	{ [SECRET]: true, [DIGEST]: null },
+	{ [`x${CODE.toUpperCase()}`]: 0 },
+])("malformed frame metadata masks bare hex property names %#", (frame) => {
+	parseMessage(JSON.stringify(frame), fakeWs());
+	expect(logs).toHaveLength(1);
+	expectNoSynthetic(logs.join("\n"));
+});
+
+test("a malformed frame logs only its shape", () => {
+	const frame = {
+		kind: "probe",
+		id: "abc123",
+		...Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i])),
+	};
+	parseMessage(JSON.stringify(frame), fakeWs());
+	const [, meta] = JSON.parse(logs[0] ?? "[]") as [
+		string,
+		Record<string, unknown>,
+	];
+	expect(meta).not.toHaveProperty("preview");
+	expect(meta.keys).toEqual([
+		"kind",
+		"id",
+		"k0",
+		"k1",
+		"k2",
+		"k3",
+		"k4",
+		"k5",
+		"k6",
+		"k7",
+	]);
+	expect(logs[0]).not.toContain("probe");
+	expect(logs[0]).not.toContain("abc123");
+});
+
+test("an unparseable frame logs its size, not the parser's quote of it", () => {
+	parseMessage(`{"code":"${CODE}"`, fakeWs());
+	expectNoSynthetic(logs.join("\n"));
+	expect(logs[0]).toContain("Failed to parse WebSocket message");
 });
 
 test("a rejected claim frame never echoes its input to logs or the client", async () => {

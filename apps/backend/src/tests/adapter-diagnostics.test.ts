@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { os } from "@orpc/server";
 import { z } from "zod";
 
-import { logger, REDACTED } from "../helpers/logger.ts";
+import { logger } from "../helpers/logger.ts";
 import { handleORPCMessage, parseMessage } from "../rpc/adapter.ts";
 import { extractValidationDetails } from "../rpc/error-enrichment.ts";
 import type { AppWebSocket, RPCContext } from "../rpc/types.ts";
@@ -174,8 +174,8 @@ describe("adapter diagnostics", () => {
 		expect(warnLog?.meta?.keys).toEqual(["foo", "id", "token"]);
 		expect(warnLog?.meta?.bytes).toBe(frame.length);
 		expect(warnLog?.meta?.hasId).toBe(true);
-		// Raw secret-bearing value must not be dumped; preview is redacted.
-		expect(warnLog?.meta?.preview).toBe(REDACTED);
+		// No value preview at all: any frame can carry a credential.
+		expect(warnLog?.meta).not.toHaveProperty("preview");
 		expect(JSON.stringify(warnLog)).not.toContain(KNOWN_SECRET);
 	});
 
