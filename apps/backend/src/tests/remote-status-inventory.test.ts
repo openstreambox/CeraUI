@@ -35,15 +35,23 @@ test("every status producer field and binding requires a reviewed allowlist deci
 			true,
 		);
 		function visit(n: ts.Node) {
+			// Direct calls and injected ones (`deps.broadcastMsg(...)`) alike.
+			const callee = ts.isCallExpression(n)
+				? ts.isIdentifier(n.expression)
+					? n.expression.text
+					: ts.isPropertyAccessExpression(n.expression)
+						? n.expression.name.text
+						: undefined
+				: undefined;
 			if (
 				ts.isCallExpression(n) &&
-				ts.isIdentifier(n.expression) &&
+				callee !== undefined &&
 				[
 					"buildMsg",
 					"broadcastMsg",
 					"broadcastMsgExcept",
 					"broadcastMsgLocal",
-				].includes(n.expression.text) &&
+				].includes(callee) &&
 				n.arguments.length >= 2
 			)
 				expect(known.has(file), file).toBe(true);
