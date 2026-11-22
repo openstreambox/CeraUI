@@ -42,7 +42,6 @@ import { setAutostart } from "../../modules/streaming/streamloop.ts";
 import { hasCapability } from "../../modules/system/board-capabilities.ts";
 import { DisruptiveActionRefusedError } from "../../modules/system/disruptive-action-error.ts";
 import {
-	PowerSubmissionError,
 	plannedPowerFailureMessage,
 	resetDisruptiveActionReservationForTest,
 } from "../../modules/system/disruptive-action-reservation.ts";
@@ -55,6 +54,13 @@ import {
 	resolveActiveKioskDeps,
 } from "../../modules/system/kiosk.ts";
 import { getLog } from "../../modules/system/logs.ts";
+import {
+	brokerOutcome,
+	logindOutcome,
+	logindPowerArgv,
+	type PowerRunnerOutcome,
+	powerAdmissionArgv,
+} from "../../modules/system/power-admission.ts";
 import { submitPowerCommand } from "../../modules/system/power-submission.ts";
 import {
 	getRevisions,
@@ -163,21 +169,36 @@ export const getSyslogProcedure = authedProcedure
 		return { log: result?.contents ?? "" };
 	});
 
-// Host-power runner DI seam (mirrors setKioskDeps). On systemd 257 logind
-// honours the strong block for root without adding the SSH session check.
-// Tests inject a spy without powering off the host.
+// Host-power runner DI seam (mirrors setKioskDeps). Tests inject a spy without
+// powering off the host. Images with the power admission broker get the
+// admitted action through it (fails closed if the broker is down); older images
+// ask logind directly. Neither path uses systemctl, whose fallback can start a
+// power target itself when logind fails.
 type PowerCommand = "poweroff" | "reboot";
-type PowerCommandRunner = (command: PowerCommand) => void;
+type PowerCommandRunner = (
+	command: PowerCommand,
+) => PowerRunnerOutcome | undefined;
 
 const defaultPowerCommandRunner: PowerCommandRunner = (command) => {
-	const result = Bun.spawnSync(["systemctl", command]);
-	if (result.exitCode !== 0)
-		throw new PowerSubmissionError(
+	const decode = (bytes: Uint8Array | undefined) =>
+		new TextDecoder().decode(bytes ?? new Uint8Array());
+	const broker = powerAdmissionArgv(command);
+	if (broker) {
+		const result = Bun.spawnSync(broker, { timeout: 20_000 });
+		return brokerOutcome(
 			command,
 			result.exitCode,
-			plannedPowerFailureMessage(result.exitCode),
-			new TextDecoder().decode(result.stderr),
+			decode(result.stdout),
+			decode(result.stderr),
 		);
+	}
+	const result = Bun.spawnSync(logindPowerArgv(command), { timeout: 30_000 });
+	return logindOutcome(
+		command,
+		result.exitCode,
+		decode(result.stderr),
+		plannedPowerFailureMessage(result.exitCode),
+	);
 };
 
 let powerCommandRunner: PowerCommandRunner = defaultPowerCommandRunner;
