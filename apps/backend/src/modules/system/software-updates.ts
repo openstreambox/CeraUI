@@ -478,8 +478,10 @@ export type AptUpgradeSummary = {
 };
 
 export function parseUpgradePackageCount(text: string): ParseResult<number> {
-	const upgradedCount = text.match(/(\d+) upgraded/)?.[1];
-	const newlyInstalledCount = text.match(/, (\d+) newly installed/)?.[1];
+	// Counts are bounded and must start at a digit boundary: an open-ended \d+
+	// rescans a long digit run from every position (quadratic on hostile text).
+	const upgradedCount = text.match(/(?<!\d)(\d{1,9}) upgraded/)?.[1];
+	const newlyInstalledCount = text.match(/, (\d{1,9}) newly installed/)?.[1];
 	if (upgradedCount === undefined || newlyInstalledCount === undefined) {
 		return parseFail(
 			"parseAptUpgradeSummary",

@@ -274,7 +274,9 @@ export function deriveApChannels(
 
 /** The active country code from `iw reg get`, or `undefined` when unreadable. */
 export function parseRegulatoryDomain(output: string): string | undefined {
-	const match = /^\s*country\s+([A-Z0-9]{2}):/m.exec(output);
+	// Spaces and tabs only: \s would also match newlines, so a long run of blank
+	// lines was rescanned from every line start (quadratic).
+	const match = /^[ \t]*country[ \t]+([A-Z0-9]{2}):/m.exec(output);
 	return match?.[1];
 }
 
