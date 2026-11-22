@@ -141,4 +141,18 @@ describe("config-loader: partial validation preserves forward-compat fields", ()
 		// ...and the unknown forward-compat field is preserved verbatim.
 		expect((result.data as Record<string, unknown>).futureFlag).toBe("keep-me");
 	});
+
+	it("drops a __proto__ key instead of letting it become the config's prototype", async () => {
+		fs.writeFileSync(
+			filePath,
+			'{"name":"device-9","count":999,"__proto__":{"inherited":"yes"}}',
+		);
+
+		const result = await loadJsonConfig(filePath, schema, defaults);
+
+		expect(result.invalidFields).toContain("count");
+		expect(Object.getPrototypeOf(result.data)).toBe(Object.prototype);
+		expect((result.data as Record<string, unknown>).inherited).toBeUndefined();
+		expect(Object.keys(result.data)).not.toContain("__proto__");
+	});
 });
