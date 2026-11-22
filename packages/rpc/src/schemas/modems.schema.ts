@@ -503,10 +503,7 @@ export const modemMutationEntrySchema = z.object({
 	version: z.literal(MODEM_MUTATION_JOURNAL_VERSION),
 	stableKey: z.string().min(1),
 	// A verified USB serial identity can supplement, but never replace, the port key.
-	unitLinkId: z
-		.string()
-		.regex(/^lnk_[0-9a-f]{16}$/)
-		.optional(),
+	unitLinkId: z.string().min(1).optional(),
 	kind: modemMutationKindSchema,
 	state: modemMutationStateSchema,
 	attemptId: z.string().min(1),

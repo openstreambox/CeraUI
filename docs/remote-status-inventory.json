@@ -42522,7 +42522,7 @@
     "packages/rpc/src/schemas/capability-modules.schema.ts": "20eecb4c158a63ea319c9ca4b595397df31aa66db3dae20da3f4a82a2b3231d3",
     "packages/rpc/src/schemas/fan.schema.ts": "8f4ab6b8b302d408994350eb66089f8d0fb195e0bccfc498e2d1b333a3fde841",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
-    "packages/rpc/src/schemas/modems.schema.ts": "fcb1faa03eb199704fb076a50a0e1ef14e8016fe9072b67635d307ebf302ab68",
+    "packages/rpc/src/schemas/modems.schema.ts": "c6f53929274bd47dfc9bc495009b74835faf041749b9444dccdf68c98a4a41e9",
     "packages/rpc/src/schemas/network.schema.ts": "0d515e65ed3d50e483df9e5f835a5ff3f75064b87f679473b54ed8c9229ca313",
     "packages/rpc/src/schemas/notifications.schema.ts": "3581378f7bfdecd5f44734b5d5630eba80b5d027a72dc04c351bcb28caefc750",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
