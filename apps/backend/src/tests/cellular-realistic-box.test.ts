@@ -151,6 +151,24 @@ test("a blocked modem reusing a healthy name cannot borrow its key after failed 
 	expect(box.bonded()).toEqual(["eth0"]);
 });
 
+test("a name that keeps the same address but changes ifindex cannot borrow the old modem key", async () => {
+	box = await realisticBox();
+	await box.scan(undefined, { ifindices: new Map([["wwan1", 11]]) });
+	await box.journal([journalEntry(MODEMS[0], "device-absent-quarantine")]);
+	expect(box.bonded()).toEqual(["eth0", "wwan1", "wwan2"]);
+
+	// Both devices were replaced between polls. The kernel reports wwan1
+	// again at the same address, now backed by the blocked USB slot.
+	const renamed = { ...MODEMS[0], ifname: "wwan1", ip: MODEMS[1].ip };
+	const links = [ETHERNET, renamed, MODEMS[2]];
+	const ifindices = new Map([["wwan1", 21]]);
+	await box.scan(links, { ifindices, failIdPaths: true, skipPhysical: true });
+	expect(box.bonded()).toEqual(["eth0", "wwan2"]);
+	expect(getNetworkInterfaces().wwan1?.identitySettled).not.toBe(true);
+	await box.scan(links, { ifindices, failIdPaths: true });
+	expect(box.bonded()).toEqual(["eth0", "wwan2"]);
+});
+
 test("the bond republishes when a modem is blocked or released", async () => {
 	box = await realisticBox();
 	const [first] = MODEMS;

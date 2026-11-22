@@ -639,8 +639,18 @@ export function usbNetScanCoversCurrentPresence(ifname: string): boolean {
 }
 
 /** Creation adopts its covering read; observed removal invalidates admission. */
-export function invalidateUsbNetReading(ifname: string, epoch: number): void {
+export function invalidateUsbNetReading(
+	ifname: string,
+	epoch: number,
+	replaced: boolean,
+): void {
 	netdevRemovalEpochs.set(ifname, epoch);
+	if (replaced) {
+		// A new kernel interface needs its own first-sight scan and deadline.
+		coveredIfnames.delete(ifname);
+		identityFirstPublishedAt.delete(ifname);
+		identityDeadlineWarnings.delete(ifname);
+	}
 }
 
 /** The publication clock is shared by every identity-minting consumer. */

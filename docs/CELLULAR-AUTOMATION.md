@@ -199,7 +199,8 @@ in progress continues to hold new starts.
 
 Bond exclusion uses the current USB descriptor scan's physical path, with the
 same stable-key derivation as modem recovery. Removal immediately invalidates
-that name's scan evidence, and a scan overlapping removal cannot restore it.
+that name's scan evidence, even if a replacement takes the same name and address
+between polls. A scan overlapping invalidation cannot restore the old evidence.
 The modem roster's retained ID-path cache is not admission authority. Positively
 classified USB Ethernet and sysfs-confirmed Wi-Fi stay available without an
 ID-path cache entry; unresolved USB candidates stay out while a block exists,

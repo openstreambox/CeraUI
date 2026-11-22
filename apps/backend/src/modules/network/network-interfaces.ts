@@ -184,6 +184,7 @@ export const NETIF_ERR_SHAREDLAN = 0x08;
 
 let netif: Record<string, NetworkInterface> = {};
 const presenceEpoch = new Map<string, number>();
+const netifIndices = new Map<string, number>();
 type NetdevBusEvidence = {
 	readonly result: NetdevBus;
 	readonly seen: number;
@@ -202,12 +203,19 @@ export function resetNetifSnapshotForTest(): void {
 	netifRefreshGeneration++;
 	scanPublicationWarnings.clear();
 	presenceEpoch.clear();
+	netifIndices.clear();
 }
 
-function bumpPresence(name: string, removed = false): void {
+function bumpPresence(
+	name: string,
+	event: "added" | "removed" | "replaced" = "added",
+): void {
 	const epoch = (presenceEpoch.get(name) ?? 0) + 1;
 	presenceEpoch.set(name, epoch);
-	if (removed) invalidateUsbNetReading(name, epoch);
+	if (event !== "added") {
+		netifIndices.delete(name);
+		invalidateUsbNetReading(name, epoch, event === "replaced");
+	}
 }
 
 let scanSettlementInstalled = false;
@@ -788,7 +796,7 @@ export function handleNetifMonitorEvent(event: MonitorEvent): void {
 			mutated = true;
 		}
 	} else if (isNetifDownState(event.state)) {
-		bumpPresence(name, true);
+		bumpPresence(name, "removed");
 		if (netif[name]) {
 			delete netif[name];
 			mutated = true;
@@ -968,11 +976,11 @@ export function updateNetif() {
 // with a `scope`, letting us prefer the routable global-scope lease. ifconfig
 // still drives throughput, RUNNING flags, and the WiFi device list; a missing or
 // failing `ip` degrades to ifconfig-only (the prior single-address behavior).
-async function resolveIpAddrOverrides(): Promise<
-	Map<string, IpAddrSelection> | undefined
-> {
+async function resolveIpAddrOverrides(
+	ifindices: Map<string, number>,
+): Promise<Map<string, IpAddrSelection> | undefined> {
 	try {
-		return parseIpAddrShow(await run("ip", ["-4", "addr", "show"]));
+		return parseIpAddrShow(await run("ip", ["-4", "addr", "show"]), ifindices);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.debug(`ip -4 addr show unavailable, using ifconfig IPs: ${message}`);
@@ -982,10 +990,11 @@ async function resolveIpAddrOverrides(): Promise<
 
 async function refreshNetifFromOs(): Promise<void> {
 	const generation = ++netifRefreshGeneration;
+	const ifindices = new Map<string, number>();
 	try {
 		const [ifconfigOut, ipOverrides] = await Promise.all([
 			run("ifconfig", ["-a"]),
-			resolveIpAddrOverrides(),
+			resolveIpAddrOverrides(ifindices),
 		]);
 		if (generation !== netifRefreshGeneration) return;
 		const ifnames = ifconfigOut
@@ -1097,6 +1106,7 @@ async function refreshNetifFromOs(): Promise<void> {
 			undefined,
 			undefined,
 			buses,
+			ifindices,
 		);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1110,6 +1120,7 @@ export function processIfconfigOutput(
 	now: number = getms(),
 	wirelessInterface: (name: string) => boolean = isWirelessInterface,
 	buses?: ReadonlyMap<string, NetdevBusEvidence>,
+	ifindices?: ReadonlyMap<string, number>,
 ) {
 	installScanSettlement();
 	const previousNetif = netif;
@@ -1164,7 +1175,19 @@ export function processIfconfigOutput(
 				10,
 			);
 
-			const previous = netif[name];
+			const ifindex = ifindices?.get(name);
+			const previousIndex = netifIndices.get(name);
+			const replaced =
+				ifindex !== undefined &&
+				previousIndex !== undefined &&
+				ifindex !== previousIndex;
+			if (replaced) {
+				// The name can survive a replacement that happened between two polls.
+				bumpPresence(name, "replaced");
+				intsChanged = true;
+			}
+			if (ifindex !== undefined) netifIndices.set(name, ifindex);
+			const previous = replaced ? undefined : netif[name];
 			let tp = 0;
 			if (previous) {
 				tp = txBytes - previous.txb;
@@ -1187,10 +1210,11 @@ export function processIfconfigOutput(
 					evidence.result.kind === "bus" &&
 					evidence.result.bus === "usb");
 			const busUnreadable =
-				!previous?.identitySettled &&
+				(!previous?.identitySettled ||
+					(previous.busUnreadable && !usbNetScanCovers(name))) &&
 				(evidence !== undefined
 					? !fresh || evidence.result.kind === "unreadable"
-					: previous?.busUnreadable === true);
+					: replaced || previous?.busUnreadable === true);
 			newInterfaces[name] = {
 				...(inetAddr !== undefined ? { ip: inetAddr } : {}),
 				...(netmask !== undefined ? { netmask } : {}),
@@ -1281,7 +1305,7 @@ export function processIfconfigOutput(
 	netif = newInterfaces;
 	for (const name of new Set([...previousIfnames, ...Object.keys(netif)])) {
 		if (previousIfnames.has(name) !== (netif[name] !== undefined))
-			bumpPresence(name, previousIfnames.has(name));
+			bumpPresence(name, previousIfnames.has(name) ? "removed" : "added");
 	}
 	netifSnapshotReady = true;
 	notePublishedNetifSnapshot(Object.keys(netif));
@@ -1347,14 +1371,18 @@ function prefixToNetmask(prefix: number): string {
  * prefer the routable global lease over an RFC-3927 link-local when a link has
  * both — the fix for a board that would otherwise advertise its link-local.
  */
-export function parseIpAddrShow(stdout: string): Map<string, IpAddrSelection> {
+export function parseIpAddrShow(
+	stdout: string,
+	ifindices?: Map<string, number>,
+): Map<string, IpAddrSelection> {
 	const byIface = new Map<string, ScopedAddress[]>();
 	let current: string | undefined;
 
 	for (const line of stdout.split("\n")) {
-		const header = line.match(/^\d+:\s+([^:@\s]+)/);
-		if (header?.[1]) {
-			current = header[1];
+		const header = line.match(/^(\d+):\s+([^:@\s]+)/);
+		if (header?.[1] && header[2]) {
+			current = header[2];
+			ifindices?.set(current, Number.parseInt(header[1], 10));
 			continue;
 		}
 		if (current === undefined) continue;

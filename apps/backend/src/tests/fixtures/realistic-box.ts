@@ -116,7 +116,11 @@ export interface RealisticBox {
 	/** Re-run the interface scan with the given links present. */
 	scan(
 		links?: readonly BoxLink[],
-		options?: { failIdPaths?: boolean; skipPhysical?: boolean },
+		options?: {
+			failIdPaths?: boolean;
+			skipPhysical?: boolean;
+			ifindices?: ReadonlyMap<string, number>;
+		},
 	): Promise<void>;
 	/** Replace the journal and re-derive the block set through production code. */
 	journal(entries: readonly ModemMutationEntry[]): Promise<void>;
@@ -167,6 +171,7 @@ export async function realisticBox(): Promise<RealisticBox> {
 						},
 					]),
 				),
+				options.ifindices,
 			);
 			const names = new Set(links.map((link) => link.ifname));
 			for (const name of new Set([...scanned, ...names])) {
