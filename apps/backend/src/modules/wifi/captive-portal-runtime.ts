@@ -13,10 +13,17 @@ import {
 import type { PortalBinding } from "./captive-portal-session.ts";
 import { createSignInWindow } from "./captive-portal-window.ts";
 import { getWifiInterfacesByMacAddress } from "./wifi-connections.ts";
-import { currentHotspotApIfnames } from "./wifi-hotspot-clients.ts";
+import {
+	captureHotspotSteeringFence,
+	type HotspotSteeringFence,
+} from "./wifi-hotspot-readiness.ts";
+import { canHotspot, hotspotApIfname } from "./wifi-hotspot-types.ts";
+import { wifiRadioIdentity } from "./wifi-radio-identity.ts";
 
 interface RouteConfig {
 	ap: string;
+	/** Kernel ifindex of the AP lifetime the phone arrived through. */
+	ap_ifindex: number;
 	phone: string;
 	mac: string;
 	wan: string;
@@ -30,11 +37,75 @@ let binding: PortalBinding | undefined;
 let closedBinding: PortalBinding | undefined;
 let needsSweep = false;
 let radioId = 0;
+let radioIncarnation = "";
+let apPin: ApPin | undefined;
 let releaseHealth: () => void = () => undefined;
 const target = createConnectivityTargetResolver();
 const helper = resolve("captive-portal-window.py");
 const capture = () =>
-	captureWifiPortalBindingFromSystem(radioId, createSystemPortalReaderDeps());
+	captureWifiPortalBindingFromSystem(
+		radioId,
+		radioIncarnation,
+		createSystemPortalReaderDeps(),
+	);
+
+/**
+ * The AP the phone arrived through, pinned separately from the venue radio:
+ * the exact hotspot row, its active AP profile, its netif incarnation and
+ * kernel ifindex, and no later Start/Stop/reconfigure on that row. A Stop,
+ * restart or a replacement under the same name never satisfies the pin.
+ */
+interface ApPin {
+	readonly ifname: string;
+	readonly ifindex: number;
+	readonly fence: HotspotSteeringFence;
+}
+async function readIfindex(ifname: string): Promise<number | undefined> {
+	const links = JSON.parse(
+		await run("ip", ["-j", "link", "show", "dev", ifname], {
+			timeout: 2000,
+			maxBuffer: 16384,
+		}),
+	);
+	const link = Array.isArray(links) && links.length === 1 ? links[0] : {};
+	return link?.ifname === ifname &&
+		Number.isSafeInteger(link.ifindex) &&
+		link.ifindex > 0
+		? link.ifindex
+		: undefined;
+}
+async function apPinHolds(pin: ApPin): Promise<boolean> {
+	if (!pin.fence.owned()) return false;
+	const ifindex = await readIfindex(pin.ifname);
+	const lifetime = wifiRadioIdentity.state.rows.get(pin.ifname)?.lifetime;
+	return (
+		ifindex === pin.ifindex &&
+		(lifetime === undefined || lifetime.ifindex === ifindex) &&
+		pin.fence.owned()
+	);
+}
+/** The one hotspot row whose running AP is `ifname`, if exactly one is. */
+function hotspotRowFor(ifname: unknown) {
+	if (typeof ifname !== "string") return undefined;
+	const rows = Object.values(getWifiInterfacesByMacAddress()).filter(
+		(row) => hotspotApIfname(row) === ifname,
+	);
+	const row = rows[0];
+	return rows.length === 1 && row && canHotspot(row) && row.hotspot.conn
+		? row
+		: undefined;
+}
+async function captureApPin(ifname: unknown): Promise<ApPin | undefined> {
+	const row = hotspotRowFor(ifname);
+	if (typeof ifname !== "string" || !row?.hotspot.conn) return undefined;
+	const fence = captureHotspotSteeringFence(row, row.hotspot.conn);
+	if (fence.apIfname !== ifname || fence.incarnation === undefined)
+		return undefined;
+	const ifindex = await readIfindex(ifname);
+	if (ifindex === undefined) return undefined;
+	const pin = { ifname, ifindex, fence };
+	return (await apPinHolds(pin)) ? pin : undefined;
+}
 const effect = async (action: "open" | "close" | "sweep") => {
 	if (!config && action !== "sweep") return;
 	await runWithStdin(
@@ -60,13 +131,13 @@ export async function reconcilePortalWindow() {
 }
 
 export const signInWindow = createSignInWindow({
-	async open(peer, radio, via) {
+	async open(peer, radio, incarnation, via) {
 		closedBinding = undefined;
 		if (shouldUseMocks()) throw Error("not_on_box_wifi");
 		if (!isIPv4(peer)) throw Error("ipv4_required");
 		// Behind the front door the phone's arrival interface is proven; it must
 		// be the hotspot AP itself, not just any link where this address routes.
-		if (via !== undefined && !currentHotspotApIfnames().includes(via))
+		if (via !== undefined && !hotspotRowFor(via))
 			throw Error("not_on_box_wifi");
 		const candidate = Object.values(getWifiInterfacesByMacAddress()).find(
 			(r) => r.id === Number(radio),
@@ -84,8 +155,14 @@ export const signInWindow = createSignInWindow({
 			throw Error("cleanup_required");
 		}
 		radioId = candidate.id;
+		radioIncarnation = incarnation;
 		const captured = await capture();
-		if (!captured.ok) throw Error("identity_unavailable");
+		if (!captured.ok)
+			throw Error(
+				captured.reason === "binding_changed"
+					? "wifi_changed"
+					: "identity_unavailable",
+			);
 		binding = captured.binding;
 		const route = JSON.parse(
 			await run("ip", ["-j", "-4", "route", "get", peer], {
@@ -93,15 +170,15 @@ export const signInWindow = createSignInWindow({
 				maxBuffer: 8192,
 			}),
 		)[0];
-		if (
-			!currentHotspotApIfnames().includes(route?.dev) ||
-			(via !== undefined && route.dev !== via)
-		)
-			throw Error("not_on_box_wifi");
+		// The arrival interface (proven by the front door, else the route back
+		// to the phone) says which AP; the pin then fixes that AP's lifetime.
+		if (via !== undefined && route?.dev !== via) throw Error("not_on_box_wifi");
+		const pin = await captureApPin(route?.dev);
+		if (!pin) throw Error("not_on_box_wifi");
 		const neighbors = JSON.parse(
 			await run(
 				"ip",
-				["-j", "-4", "neigh", "show", "to", peer, "dev", route.dev],
+				["-j", "-4", "neigh", "show", "to", peer, "dev", pin.ifname],
 				{ timeout: 2000, maxBuffer: 8192 },
 			),
 		);
@@ -112,14 +189,16 @@ export const signInWindow = createSignInWindow({
 			)
 				? neighbors[0].lladdr?.toLowerCase()
 				: undefined;
-		const stations = await run("iw", ["dev", route.dev, "station", "dump"], {
+		const stations = await run("iw", ["dev", pin.ifname, "station", "dump"], {
 			timeout: 2000,
 			maxBuffer: 32768,
 		});
 		if (!mac || !stations.toLowerCase().includes(`station ${mac} `))
 			throw Error("not_on_box_wifi");
+		apPin = pin;
 		config = {
-			ap: route.dev,
+			ap: pin.ifname,
+			ap_ifindex: pin.ifindex,
 			phone: peer,
 			mac,
 			wan: binding.link.ifname,
@@ -150,11 +229,20 @@ export const signInWindow = createSignInWindow({
 		closedBinding = config ? binding : undefined;
 		config = undefined;
 		binding = undefined;
+		apPin = undefined;
 		releaseHealth();
 	},
+	/** Both ends: the venue radio's exact identity and the phone's AP lifetime. */
 	async unchanged() {
+		const pin = apPin;
+		if (!pin || !(await apPinHolds(pin))) return false;
 		const now = await capture();
-		return now.ok && JSON.stringify(now.binding) === JSON.stringify(binding);
+		return (
+			now.ok &&
+			JSON.stringify(now.binding) === JSON.stringify(binding) &&
+			apPin === pin &&
+			(await apPinHolds(pin))
+		);
 	},
 	async check() {
 		const binding = closedBinding;
