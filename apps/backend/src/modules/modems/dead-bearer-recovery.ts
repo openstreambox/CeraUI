@@ -16,12 +16,15 @@
     preparation grant): manual profiles stay with NetworkManager, and the
     redial in `modem-ready-activation.ts` brings an owned profile back if the
     reconnect's `up` fails;
-  - the modem has no active CLAT translator: an IPv6-only link is probed over
-    native IPv6 while its traffic rides the translator, so the probe says
-    nothing about it;
-  - the health record for the modem's interface is `down`, its latest
-    evidence is a failed probe, and at least DEAD_BEARER_MIN_FAILURES probes
-    in a row have failed since the last success;
+  - the modem's health record is `down`, its latest evidence is a failed
+    probe, and at least DEAD_BEARER_MIN_FAILURES probes in a row have failed
+    since the last success. While the image's CLAT service translates for an
+    IPv6-only modem, that record is its `clat<N>` TUN's: an IPv4 stream goes
+    out there, and a dead bearer keeps the translator's lease up for minutes,
+    so skipping such a modem left it dead for that whole time. Both the TUN
+    and the native IPv6 address ride the same bearer, so a translated modem
+    whose native IPv6 still reads `up` is not reconnected, and one whose TUN
+    has no record yet is left alone;
   - while a stream runs, the sender's own per-link evidence says this
     interface carries nothing (`linkCarryingState`: its byte counter stood
     still across fresh snapshots, CLAT translator traffic counted for its
@@ -51,6 +54,7 @@
 import { logger } from "../../helpers/logger.ts";
 import {
 	clatTranslationForTun,
+	clatTunForParent,
 	isClatTunName,
 } from "../network/clat-translation.ts";
 import {
@@ -108,8 +112,8 @@ export interface DeadBearerInput {
 	readonly otherUplinkUp: boolean;
 	/** The profile is preparation-owned (autoconnect no + live grant). */
 	readonly owned: boolean;
-	/** The modem has an active CLAT translator. */
-	readonly translated: boolean;
+	/** Translated, and the modem's own native IPv6 still reads `up`. */
+	readonly nativeAnswers: boolean;
 	/**
 	 * `idle` when no stream runs; otherwise the sender's verdict on whether
 	 * stream data goes out on this interface (`linkCarryingState`).
@@ -174,7 +178,7 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 		memory: without(memory, "downSince"),
 	});
 	if (!input.owned) return none("profile not owned by preparation");
-	if (input.translated) return none("judged by its translator");
+	if (input.nativeAnswers) return none("native path answers");
 	if (!outageRecord(record)) return none("no failed-probe outage");
 	// Only positive evidence of no traffic lets a live link go; "unknown" is
 	// not that evidence.
@@ -224,6 +228,8 @@ export interface DeadBearerDeps {
 	readonly healthList: () => readonly UplinkHealthRecord[];
 	/** The physical modem interface a CLAT TUN translates for, if any. */
 	readonly clatParent: (iface: string) => string | undefined;
+	/** The TUN of a usable CLAT translation for this modem interface. */
+	readonly clatTun: (parent: string) => string | undefined;
 	readonly streaming: () => boolean;
 	/** The sender's per-link verdict; CLAT translator rows count for the modem. */
 	readonly carrying: (iface: string) => LinkCarryingState;
@@ -257,6 +263,7 @@ const defaultDeps: DeadBearerDeps = {
 	healthList: () => getUplinkHealthEngine().list(),
 	clatParent: (iface) =>
 		isClatTunName(iface) ? clatTranslationForTun(iface)?.parent : undefined,
+	clatTun: clatTunForParent,
 	streaming: getIsStreaming,
 	carrying: linkCarryingState,
 	wallNow: Date.now,
@@ -297,12 +304,6 @@ function independentUplinkUp(iface: string, wallNow: number): boolean {
 		);
 }
 
-function translated(iface: string): boolean {
-	return deps
-		.healthList()
-		.some((record) => deps.clatParent(record.iface) === iface);
-}
-
 function streamState(iface: string): DeadBearerInput["stream"] {
 	return deps.streaming() ? deps.carrying(iface) : "idle";
 }
@@ -326,12 +327,14 @@ async function readInput(
 		return undefined;
 	const now = deps.now();
 	const wallNow = deps.wallNow();
-	const record = deps.health(modem.ifname);
+	const tun = deps.clatTun(modem.ifname);
+	const native = deps.health(modem.ifname);
+	const record = tun === undefined ? native : deps.health(tun);
 	const base = {
 		now,
 		record,
 		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
-		translated: translated(modem.ifname),
+		nativeAnswers: tun !== undefined && native?.state === "up",
 		stream: streamState(modem.ifname),
 		lastDial: deps.lastDial(key),
 		memory,
