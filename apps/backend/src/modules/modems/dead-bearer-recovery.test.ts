@@ -6,6 +6,7 @@ import {
 	tryAcquireLifecycle,
 	tryAcquireModemMutation,
 } from "../streaming/lifecycle-admission.ts";
+import type { LinkCarryingState } from "../streaming/link-progress.ts";
 import { resetRecoveryBarrier } from "../streaming/recovery-barrier.ts";
 import {
 	DEAD_BEARER_AFTER_DIAL_MS,
@@ -62,7 +63,7 @@ function input(
 		otherUplinkUp: true,
 		owned: true,
 		translated: false,
-		carryingStream: false,
+		stream: "idle",
 		nmState: "100",
 		mmState: "connected",
 		lastDial: undefined,
@@ -115,18 +116,28 @@ describe("decideDeadBearer", () => {
 	});
 
 	test("a link carrying the stream is never reconnected, however long health reads down", () => {
-		expect(run(0, 3_600_000, () => ({ carryingStream: true })).times).toEqual(
-			[],
-		);
+		expect(run(0, 3_600_000, () => ({ stream: "carrying" })).times).toEqual([]);
 	});
 
-	test("the outage restarts when the link carries stream traffic in between", () => {
-		const { times } = run(0, 130_000, (now) => ({
-			carryingStream: now === 50_000,
-		}));
-		// Seen again at 60 s, so the 60 s hold ends at 120 s, not at 60 s.
-		expect(times).toEqual([120_000]);
+	test("while streaming, unknown link traffic never reconnects", () => {
+		expect(run(0, 3_600_000, () => ({ stream: "unknown" })).times).toEqual([]);
 	});
+
+	test("while streaming, a link the sender reports as carrying nothing is reconnected after the hold", () => {
+		expect(
+			run(0, DEAD_BEARER_HOLD_MS, () => ({ stream: "not_carrying" })).times,
+		).toEqual([DEAD_BEARER_HOLD_MS]);
+	});
+
+	for (const between of ["carrying", "unknown"] as const) {
+		test(`the outage restarts when the link's traffic reads ${between} in between`, () => {
+			const { times } = run(0, 130_000, (now) => ({
+				stream: now === 50_000 ? between : "not_carrying",
+			}));
+			// Seen again at 60 s, so the 60 s hold ends at 120 s, not at 60 s.
+			expect(times).toEqual([120_000]);
+		});
+	}
 
 	test("fewer consecutive probe failures than the minimum never reconnect", () => {
 		const few = () => ({
@@ -202,7 +213,7 @@ describe("runDeadBearerRecovery", () => {
 	let others: UplinkHealthRecord[];
 	let clatParents: Record<string, string>;
 	let streaming: boolean;
-	let telemetryRows: { iface: string; stale: boolean }[];
+	let carrying: Record<string, LinkCarryingState>;
 	let autoconnect: string;
 	let grant: boolean;
 	let nmState: string | undefined;
@@ -241,19 +252,7 @@ describe("runDeadBearerRecovery", () => {
 			healthList: () => [...(health ? [health] : []), ...others],
 			clatParent: (iface) => clatParents[iface],
 			streaming: () => streaming,
-			telemetry: () =>
-				streaming
-					? {
-							links: telemetryRows.map((row) => ({
-								iface: row.iface,
-								rtt_ms: 80,
-								nak_count: 0,
-								weight_percent: 100,
-								stale: row.stale,
-							})),
-							lastReadMs: wall - 1_000,
-						}
-					: null,
+			carrying: (iface) => carrying[iface] ?? "unknown",
 			readAutoconnect: async () => {
 				ownerReads++;
 				return autoconnect;
@@ -308,7 +307,7 @@ describe("runDeadBearerRecovery", () => {
 		others = [];
 		clatParents = {};
 		streaming = false;
-		telemetryRows = [];
+		carrying = {};
 		autoconnect = "no";
 		grant = true;
 		nmState = "100";
@@ -343,15 +342,29 @@ describe("runDeadBearerRecovery", () => {
 		others = [eth()];
 		health = dead();
 		streaming = true;
-		telemetryRows = [{ iface: "wwan0", stale: false }];
+		carrying = { wwan0: "carrying" };
 		expect(await pollUntil(3_600_000)).toEqual([]);
 	});
 
-	test("a stale sender row while streaming does not protect a dead link", async () => {
+	test("while streaming, a link without traffic evidence is left alone", async () => {
 		others = [eth()];
 		health = dead();
 		streaming = true;
-		telemetryRows = [{ iface: "wwan0", stale: true }];
+		expect(await pollUntil(3_600_000)).toEqual([]);
+	});
+
+	test("while streaming, a link the sender reports as carrying nothing is reconnected", async () => {
+		others = [eth()];
+		health = dead();
+		streaming = true;
+		carrying = { wwan0: "not_carrying" };
+		expect(await pollUntil(120_000)).toEqual([75_000]);
+	});
+
+	test("between streams the link's traffic is not consulted", async () => {
+		others = [eth()];
+		health = dead();
+		carrying = { wwan0: "carrying" };
 		expect(await pollUntil(120_000)).toEqual([75_000]);
 	});
 
