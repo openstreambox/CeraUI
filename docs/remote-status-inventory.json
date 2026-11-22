@@ -44196,7 +44196,7 @@
     "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "acdfaa83e8a4b246bbd8299c426bf5ba76dafa275e3956de12fc0e05c5d71fb2",
     "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "8e599c2a0b7b2fc1772892d89ef51346eb88b77371bf458074b8f1da6f96aea7",
     "apps/backend/src/modules/wifi/wifi-hotspot-types.ts": "57da30aa904e04e2a644b9e86e79c579e400f6084d790faf7943d5af2a66c2e8",
-    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "f39b4a9b88fa95204e269f0bd8f0b051c12e137fc83aeaaaefe9dbce5c252d13",
+    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "85cb7f8b38d0b7965f5430cf0db84a5f47695a216cbf60ee70abd85447dbe1fb",
     "apps/backend/src/modules/wifi/wifi.ts": "567f85bf7a449aaacbd1649e21191c9a91e3bb410ee1c9fec7d47b20fc46b05b",
     "apps/backend/src/rpc/compat.ts": "6902642f8e2bae6039ac29880faa4bd7e92ffbea9a77be7c3a428da467d115ec",
     "apps/backend/src/rpc/procedures/audio-mix.procedure.ts": "77fb8974d0078221af7388c1bd211d485af80e5bf0a3b9d433308116f46f0535",
