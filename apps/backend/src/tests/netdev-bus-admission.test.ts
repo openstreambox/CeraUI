@@ -373,6 +373,20 @@ for (const kind of ["C8", "C2b", "C8b"] as const) {
 	});
 }
 
+test("an earlier unreadable bus does not hold Ethernet on its first indexed return", async () => {
+	const f = fixture(firstSightIfconfig("eth9", "192.0.2.2"), []);
+	f.setIpUnavailable();
+	f.set("eth9", err("EIO"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+
+	processIfconfigOutput("");
+	f.setIndex("eth9", 29);
+	await updateNetif();
+	await f.settle();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toEqual(["eth9"]);
+});
+
 test("an unreadable bus that becomes platform releases on the wire with unchanged raw state", async () => {
 	const output = firstSightIfconfig("eth9", "192.0.2.2");
 	const f = fixture(output, ["eth9"]);

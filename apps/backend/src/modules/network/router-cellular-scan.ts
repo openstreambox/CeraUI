@@ -573,15 +573,17 @@ function rejectSharedSerial(
 	descriptor: UsbPhysicalDescriptor,
 	hashes: ReadonlySet<string>,
 ): void {
-	const serial = descriptor.serial?.trim();
+	const rawSerial = descriptor.serial?.trim();
+	const serial = usableUsbSerial(descriptor.serial);
+	if (rawSerial === undefined || serial === undefined) return;
+	const vid = descriptor.vid.toLowerCase();
+	// Older scans stored the raw serial's digest. Honor it if still present.
 	if (
-		serial === undefined ||
-		!hashes.has(usbSerialDigest(`${descriptor.vid.toLowerCase()}:${serial}`))
+		!hashes.has(usbSerialDigest(`${vid}:${serial}`)) &&
+		!hashes.has(usbSerialDigest(`${vid}:${rawSerial}`))
 	)
 		return;
-	descriptor.legacyLinkId = mintLinkId(
-		`usb-serial:${descriptor.vid.toLowerCase()}:${serial}`,
-	);
+	descriptor.legacyLinkId = mintLinkId(`usb-serial:${vid}:${rawSerial}`);
 	delete descriptor.serial;
 }
 

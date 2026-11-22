@@ -195,7 +195,7 @@ const netdevIdentity = new Map<
 	string,
 	{
 		index: number | undefined;
-		possiblyUsb: boolean;
+		usbObserved: boolean;
 		present: boolean;
 	}
 >();
@@ -1255,11 +1255,9 @@ export function processIfconfigOutput(
 					? evidence.result.bus
 					: undefined;
 			const knownOrObservedUsb =
-				previousIdentity?.possiblyUsb === true ||
+				previousIdentity?.usbObserved === true ||
 				getUsbPhysicalDescriptor(name) !== undefined ||
 				observedBus === "usb";
-			const possiblyUsb =
-				knownOrObservedUsb || (fresh && evidence?.result.kind === "unreadable");
 			const differentIndex =
 				ifindex !== undefined &&
 				previousIndex !== undefined &&
@@ -1283,7 +1281,9 @@ export function processIfconfigOutput(
 			if (nonUsb && confirmNonUsbReplacement(name)) intsChanged = true;
 			netdevIdentity.set(name, {
 				index: ifindex ?? previousIndex,
-				possiblyUsb: !nonUsb && (possiblyUsb || isUsbReplacementPending(name)),
+				usbObserved:
+					!nonUsb &&
+					(observedBus === "usb" || (!replaced && knownOrObservedUsb)),
 				present: true,
 			});
 			const previous = replaced ? undefined : netif[name];

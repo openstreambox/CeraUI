@@ -132,6 +132,7 @@ function serialFor(device: UsbDeviceSnapshot): string | undefined {
 	// modem-control 1.4.0 preserves the udev property without promoting it.
 	return (
 		usableUsbSerial(device.udevProperties?.ID_SERIAL_SHORT) ??
+		usableUsbSerial(device.udevProperties?.ID_USB_SERIAL_SHORT) ??
 		usableUsbSerial(device.serialNumber)
 	);
 }

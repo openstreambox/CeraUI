@@ -182,9 +182,17 @@ export function usbSerialDigest(key: string): string {
 	return createHash("sha256").update(key).digest("hex");
 }
 
-/** A serial that actually anchors: present, non-empty, not a repeated descriptor. */
+/** Resolve sysfs and udev's ID_SERIAL_SHORT to the same USB identity. */
 export function usableUsbSerial(raw: string | undefined): string | undefined {
-	const serial = raw?.trim();
+	// systemd usb_id accepts ASCII except comma, folds runs of spaces, and
+	// replaces characters outside its devnode alphabet. Preserve its \\x escape.
+	if (raw === undefined || /[^ -~\x7f]|,/.test(raw)) return undefined;
+	const serial = raw
+		.trim()
+		.replace(/ +/g, "_")
+		.replace(/\\x|[^A-Za-z0-9#+.:=@_-]/g, (char) =>
+			char === "\\x" ? char : "_",
+		);
 	if (
 		!serial ||
 		serial === "0" ||
@@ -354,7 +362,7 @@ export function resolvePhysicalDevice(
 	const vid = observation.vid?.trim().toLowerCase();
 	const legacyLinkId =
 		observation.legacyLinkId ??
-		(rawSerial && serial === undefined
+		(rawSerial && rawSerial !== serial
 			? mintLinkId(
 					vid ? `usb-serial:${vid}:${rawSerial}` : `usb-serial:${rawSerial}`,
 				)

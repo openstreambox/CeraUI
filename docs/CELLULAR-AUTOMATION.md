@@ -200,8 +200,9 @@ Bond exclusion uses the current USB descriptor scan's physical path, with the
 same stable-key derivation as modem recovery. Removal immediately invalidates
 that name's scan evidence. An interface-index change invalidates it even when the
 name and address stay the same. After a disconnect, a known USB name with a
-missing old or new index waits for fresh identity evidence. Missing indices
-alone leave a continuously present link admitted. A recreated virtual link
+missing old or new index waits for fresh identity evidence. An unreadable
+bus alone cannot establish that a link was USB. Missing indices alone leave
+a continuously present link admitted. A recreated virtual link
 can rejoin when the kernel confirms its virtual path. The ordinary first-sight
 timeout cannot release a replacement. A scan overlapping invalidation cannot
 restore the old evidence.
@@ -209,7 +210,8 @@ restore the old evidence.
 A different modem in the same USB port can have a different link identity. The
 recovery journal still owns the port. When the box captured a reliable USB
 serial identity before the change, the same journal entry also blocks that unit
-if it moves to another port. Sender admission enforces both checks, including
+if it moves to another port. The journal and live scan normalize USB serials
+the same way, including before checking whether devices share a serial. Sender admission enforces both checks, including
 for a receiver on the local network. Automatic rollback stays at the original
 port and checks the recorded unit when available. Older entries and units
 without a reliable identity use the port only. While a recorded unit is

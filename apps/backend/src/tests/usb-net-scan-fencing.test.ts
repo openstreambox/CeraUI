@@ -406,6 +406,17 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		}
 	});
 
+	it("treats distinct USB parents with equivalent raw and udev serials as shared", async () => {
+		const devices = constructedTwins.map((device, index) => ({
+			...device,
+			serial: index === 0 ? "fixture  ABC/123" : "fixture_ABC_123",
+		}));
+		await refreshUsbNetMarkers(names, constructedTwinDeps(devices));
+		for (const name of names) {
+			expect(resolveModemPhysicalIdentity(name).anchor).toBe("id-path");
+		}
+	});
+
 	it("keeps a singleton on its port after pair detection and config reload", async () => {
 		const deps = pair();
 		await refreshUsbNetMarkers(names.slice(0, 1), deps);

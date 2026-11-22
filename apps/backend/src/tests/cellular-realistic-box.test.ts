@@ -1,5 +1,11 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
+import { createUsbEnumerator } from "@ceralive/modem-control";
 import * as time from "../helpers/time.ts";
+import {
+	captureModemUnitLinkId,
+	resetMutationCaptureDeps,
+	setMutationCaptureDeps,
+} from "../modules/modems/mutation-rollback.ts";
 import { setClatTranslationsForTest } from "../modules/network/clat-translation.ts";
 import {
 	getNetworkInterfaces,
@@ -270,6 +276,36 @@ test("a reliable modem unit and its original port remain quarantined after a mov
 	expect(box.bonded()).toEqual(["eth0", "wwan1"]);
 	await box.journal([]);
 	expect(box.bonded()).toEqual(["eth0", "wwan0", "wwan1"]);
+});
+
+test("a udev serial and its raw sysfs spelling keep the moved unit quarantined", async () => {
+	box = await realisticBox();
+	const original = { ...MODEMS[0], serial: "fixture  ABC/123" };
+	const moved = { ...MODEMS[1], serial: original.serial };
+	const replacement = { ...MODEMS[0], serial: "fixture-distinct" };
+	const udev = [
+		"P: /devices/platform/test/usb1/1-1",
+		"E: DEVTYPE=usb_device",
+		"E: ID_VENDOR_ID=2c7c",
+		"E: ID_MODEL_ID=0801",
+		`E: ID_PATH=${stableKeyOf(original)}`,
+		"E: ID_SERIAL_SHORT=fixture_ABC_123",
+	].join("\n");
+	await box.scan([ETHERNET, original]);
+	setMutationCaptureDeps(
+		createUsbEnumerator({ readUdevDatabase: async () => udev }),
+	);
+	try {
+		const unitLinkId = await captureModemUnitLinkId(stableKeyOf(original));
+		if (unitLinkId === undefined)
+			throw new Error("fixture unit was not captured");
+		await box.journal([{ ...journalEntry(original, "failed"), unitLinkId }]);
+		await box.scan([ETHERNET, replacement, moved]);
+		expect(box.bonded()).toEqual(["eth0"]);
+		expect(genSrtlaBondEntriesForLocalIpAddress("198.51.100.200")).toEqual([]);
+	} finally {
+		resetMutationCaptureDeps();
+	}
 });
 
 test("the local CLAT sender checks the held parent even when its link identity was evicted", async () => {
