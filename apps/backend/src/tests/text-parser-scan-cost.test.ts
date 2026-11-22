@@ -5,38 +5,68 @@ import {
 } from "../modules/system/software-updates.ts";
 import { parseRegulatoryDomain } from "../modules/wifi/regdomain.ts";
 
-// Parsers fed by local tool output must stay linear on hostile text. Each input
-// below took several seconds before the patterns were bounded; the limit is
-// generous so a slow machine cannot trip it.
-const LIMIT_MS = 1000;
+// Parsers fed by local tool output must stay linear on hostile text. A pattern
+// that rescans from every position costs about 16 times more on four times the
+// input; a linear one about 4 times. Comparing the two sizes does not depend on
+// how fast the machine is. A call under 50 ms at the larger size is too cheap to
+// judge, which is where the fixed parsers sit (the old ones took 0.4 s to 1.4 s).
+const SMALL = 10_000;
+const LARGE = 40_000;
+const FLOOR_MS = 50;
+const MAX_RATIO = 10;
 
-function elapsed(run: () => void): number {
+function elapsed(run: () => unknown): number {
 	const start = performance.now();
 	run();
 	return performance.now() - start;
 }
 
-test("apt package counts do not rescan a long digit run", () => {
-	const digits = "1".repeat(100_000);
-	expect(elapsed(() => parseUpgradePackageCount(digits))).toBeLessThan(
-		LIMIT_MS,
+function expectLinear(
+	name: string,
+	parse: (input: string) => unknown,
+	unit: string,
+): void {
+	const large = elapsed(() => parse(unit.repeat(LARGE)));
+	if (large < FLOOR_MS) return;
+	const small = Math.max(
+		elapsed(() => parse(unit.repeat(SMALL))),
+		1,
 	);
-	expect(elapsed(() => parseAptUpgradeSummary(digits))).toBeLessThan(LIMIT_MS);
-	expect(parseUpgradePackageCount(digits).ok).toBe(false);
-});
+	expect(
+		large / small,
+		`${name}: ${small.toFixed(0)} ms at ${SMALL}, ${large.toFixed(0)} ms at ${LARGE}`,
+	).toBeLessThan(MAX_RATIO);
+}
+
+test("apt package counts do not rescan a long digit run", () => {
+	expectLinear("parseUpgradePackageCount", parseUpgradePackageCount, "1");
+	expectLinear("parseAptUpgradeSummary", parseAptUpgradeSummary, "1");
+	expect(parseUpgradePackageCount("1".repeat(LARGE)).ok).toBe(false);
+}, 30_000);
 
 test("apt package counts still read the summary line", () => {
 	const summary =
 		"12 upgraded, 3 newly installed, 0 to remove and 0 not upgraded.";
 	expect(parseUpgradePackageCount(summary)).toEqual({ ok: true, value: 15 });
-	// A count wider than any real package total is not a count.
-	expect(parseUpgradePackageCount(`${"9".repeat(12)} upgraded`).ok).toBe(false);
+});
+
+test("apt package counts wider than nine digits are not counts", () => {
+	// Neither count may be read from the tail of a longer digit run.
+	expect(
+		parseUpgradePackageCount("1234567890 upgraded, 1 newly installed").ok,
+	).toBe(false);
+	expect(
+		parseUpgradePackageCount("12 upgraded, 123456789012 newly installed").ok,
+	).toBe(false);
+	expect(
+		parseUpgradePackageCount("999999999 upgraded, 1 newly installed"),
+	).toEqual({ ok: true, value: 1_000_000_000 });
 });
 
 test("regulatory domain does not rescan a long run of blank lines", () => {
-	const blanks = "\n".repeat(60_000);
-	expect(elapsed(() => parseRegulatoryDomain(blanks))).toBeLessThan(LIMIT_MS);
+	expectLinear("parseRegulatoryDomain", parseRegulatoryDomain, "\n");
+	const blanks = "\n".repeat(LARGE);
 	expect(parseRegulatoryDomain(`${blanks}country DE: DFS-ETSI\n`)).toBe("DE");
 	expect(parseRegulatoryDomain("global\n  country US: DFS-FCC\n")).toBe("US");
 	expect(parseRegulatoryDomain("\tcountry 00: DFS-UNSET\r\n")).toBe("00");
-});
+}, 30_000);
