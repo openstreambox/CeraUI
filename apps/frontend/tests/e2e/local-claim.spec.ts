@@ -156,3 +156,73 @@ test("lost claim and login replies keep the browser able to sign in", async ({
 		await backend.stop();
 	}
 });
+
+test("a browser that refuses token storage stays signed in for the visit", async ({
+	baseURL,
+	context,
+	page,
+}, testInfo) => {
+	const backend = await startWorkerBackend({
+		setupAuth: { claimDigest: createHash("sha256").update(code).digest("hex") },
+	});
+	try {
+		await routeBackend(context, baseURL, backend);
+		// Site storage works for the probe but refuses the sign-in token.
+		await context.addInitScript(() => {
+			const setItem = Storage.prototype.setItem;
+			Storage.prototype.setItem = function (key: string, value: string) {
+				if (key === "auth") throw new DOMException("denied", "QuotaExceededError");
+				return setItem.call(this, key, value);
+			};
+		});
+		let live: { close: () => Promise<void> } | undefined;
+		let connections = 0;
+		let replays = 0;
+		await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+			const server = socket.connectToServer();
+			connections += 1;
+			socket.onMessage((message) => {
+				server.send(message);
+				if (typeof message !== "string") return;
+				const frame = JSON.parse(message);
+				if (Array.isArray(frame.path) && frame.path.join(".") === "auth.login" && frame.input?.token)
+					replays += 1;
+			});
+			live = {
+				close: async () => {
+					await socket.close();
+					await server.close();
+				},
+			};
+		});
+		await page.goto("/");
+		const setupCode = page.getByLabel("Setup code");
+		await expect(setupCode).toBeVisible({ timeout: 60_000 });
+		await setupCode.fill(code);
+		await page.getByRole("button", { name: "Set up box" }).click();
+		await expect(page.locator("header").first()).toBeVisible({ timeout: 30_000 });
+
+		// The warning sits in the page flow, not on the toast layer.
+		const notice = page.locator('[data-notification="local-claim-not-remembered"]');
+		await expect(notice).toBeVisible();
+		await expect(notice).toContainText("did not keep the sign-in");
+		await expect(page.locator("[data-sonner-toast]", { hasText: "did not keep the sign-in" })).toHaveCount(0);
+		expect(await page.evaluate(() => localStorage.getItem("auth"))).toBeNull();
+		if (process.env.E2E_CAPTURE_SETUP_SCREENS === "1") {
+			await page.screenshot({ path: testInfo.outputPath("code-session-only.png") });
+		}
+
+		// A dropped link reconnects into the same session, twice.
+		for (let drop = 1; drop <= 2; drop += 1) {
+			const before = connections;
+			await live?.close();
+			await expect.poll(() => connections, { timeout: 30_000 }).toBeGreaterThan(before);
+			await expect.poll(() => replays, { timeout: 30_000 }).toBe(drop);
+			await expect(page.locator("header").first()).toBeVisible();
+			await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+		}
+		await expect(notice).toBeVisible();
+	} finally {
+		await backend.stop();
+	}
+});

@@ -2,7 +2,6 @@
 import { m } from '@ceraui/i18n/svelte';
 import { localClaimCodeSchema } from '@ceraui/rpc/schemas';
 import { onDestroy, onMount } from 'svelte';
-import { toast } from 'svelte-sonner';
 import { Button } from '$lib/components/ui/button';
 import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
@@ -69,9 +68,7 @@ async function run(start: () => Promise<ClaimOutcome>) {
 	try {
 		outcome = await start();
 	} finally {
-		if (outcome.kind === 'ok' && !outcome.remembered) {
-			toast.warning(m["auth.claimNotRemembered"](), { duration: Number.POSITIVE_INFINITY });
-		}
+		// The store's settlement publishes the not-remembered notice in flow.
 		if (current === interaction) {
 			submitting = false;
 			if (outcome.kind === 'refused' || outcome.kind === 'unreachable') notice = outcome.kind;

@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 // allow: SIZE_OK - socket lifecycle cases share one scripted transport and auth fixture.
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import {
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 
 vi.mock("../env", () => ({ getRpcSocketUrl: () => "ws://test.local/ws" }));
 
@@ -318,4 +326,80 @@ it("still asks for setup when the set-password request is rejected", async () =>
 	]);
 	expect(auth.getAuthStatus()).toBe(false);
 	expect(subscriptions.getStatus()?.set_password).toBe(true);
+});
+
+describe("a claim whose browser refuses token storage", () => {
+	const CODE = "0123456789abcdef0123456789abcdef";
+	const NOTICE = "local-claim-not-remembered";
+
+	async function claimWithoutStorage() {
+		const started = await start();
+		const { first, auth } = started;
+		const realSetItem = localStorage.setItem.bind(localStorage);
+		vi.spyOn(localStorage, "setItem").mockImplementation((key, value) => {
+			if (key === "auth") throw new DOMException("denied", "SecurityError");
+			realSetItem(key, value);
+		});
+		first.push({ status: { local_claim: "ready" } });
+		const pending = auth.claimLocalOwner(CODE);
+		await flushReplies();
+		first.reply("auth.claimLocalOwner", { success: true });
+		await flushReplies();
+		expect(first.request("auth.login").input).toEqual({
+			password: (
+				first.request("auth.claimLocalOwner").input as {
+					ownerSecret: string;
+				}
+			).ownerSecret,
+			persistent_token: true,
+		});
+		first.reply("auth.login", { success: true, auth_token: TOKEN });
+		expect(await pending).toEqual({ kind: "ok", remembered: false });
+		expect(localStorage.getItem("auth")).toBeNull();
+		return started;
+	}
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("replays a visit-scoped token after the socket drops", async () => {
+		const { first, replace, session, auth } = await claimWithoutStorage();
+		const second = replace(first);
+		expect(second.request("auth.login").input).toEqual(RESTORE);
+		second.reply("auth.login", { success: true });
+		await flushReplies();
+		expect(session.getSessionReady()).toBe(true);
+		expect(auth.getAuthStatus()).toBe(true);
+
+		// It survives more than one drop within the visit.
+		const third = replace(second);
+		expect(third.request("auth.login").input).toEqual(RESTORE);
+	});
+
+	it("publishes an in-flow notice from settlement, not a toast", async () => {
+		await claimWithoutStorage();
+		const notices = await import("$lib/stores/notifications.svelte");
+		const notice = notices.getPersistent().find((n) => n.name === NOTICE);
+		expect(notice?.type).toBe("warning");
+		expect(notice?.isPersistent).toBe(true);
+		expect(notice?.key).toBe("auth.claimNotRemembered");
+	});
+
+	it("forgets the visit token when the page is hidden", async () => {
+		const { first, replace, auth } = await claimWithoutStorage();
+		window.dispatchEvent(new PageTransitionEvent("pagehide"));
+		const second = replace(first);
+		await flushReplies();
+		expect(second.sent).toEqual([]);
+		expect(auth.getAuthStatus()).toBe(false);
+	});
+
+	it("drops a visit token the box rejects", async () => {
+		const { first, replace } = await claimWithoutStorage();
+		const second = replace(first);
+		second.reply("auth.login", { success: false });
+		await flushReplies();
+		expect(replace(second).sent).toEqual([]);
+	});
 });

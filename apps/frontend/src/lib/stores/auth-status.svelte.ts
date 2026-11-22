@@ -14,6 +14,7 @@ import {
 	getLinkEpoch,
 	noteAuthenticatedLink,
 } from "$lib/rpc/session-epoch.svelte";
+import { push as pushNotification } from "$lib/stores/notifications.svelte";
 
 let authStatus = $state(false);
 let sessionExpired = $state(false);
@@ -94,6 +95,9 @@ export const authStatusStore = {
 if (typeof window !== "undefined") {
 	window.addEventListener("pagehide", clearAuthInteraction);
 	window.addEventListener("pagehide", discardPendingClaim);
+	window.addEventListener("pagehide", () => {
+		visitToken = undefined;
+	});
 	window.addEventListener("pageshow", (event) => {
 		if (event.persisted) clearAuthInteraction();
 	});
@@ -105,6 +109,21 @@ export function getAuthMessage(): LoginOutput | undefined {
 
 export function ingestAuth(message: LoginOutput | undefined): void {
 	authMessage = message;
+}
+
+// The session token of a remembered sign-in this browser refused to store.
+// Reconnect re-authentication falls back to it, so a dropped socket does not
+// end the session before the page closes. Memory only, wiped on pagehide.
+let visitToken: string | undefined;
+
+/** The visit-scoped token, for reconnect re-authentication only. */
+export function getVisitToken(): string | undefined {
+	return visitToken;
+}
+
+/** Forget the visit-scoped token once the box rejects it. */
+export function forgetVisitToken(rejected: string): void {
+	if (visitToken === rejected) visitToken = undefined;
 }
 
 /** False when the browser refused storage; the live session still holds. */
@@ -211,6 +230,8 @@ async function authenticateInput(
 		// Token reauthentication succeeds without issuing a replacement. In that
 		// case retain the existing token, just as on an unreachable attempt.
 		const remembered = persistCredential(result, persistent);
+		if (persistent && result.auth_token)
+			visitToken = remembered ? undefined : result.auth_token;
 		ingestAuth(result);
 		setSessionExpired(false);
 		noteAuthenticatedLink(link);
@@ -323,6 +344,19 @@ export async function claimLocalOwner(code: string): Promise<ClaimOutcome> {
 	}
 }
 
+/** An in-flow, persistent notice; a toast would overlay controls forever. */
+function publishNotRememberedNotice(): void {
+	pushNotification({
+		name: "local-claim-not-remembered",
+		type: "warning",
+		key: "auth.claimNotRemembered",
+		msg: "This browser did not keep the sign-in. Set a password in Settings before you close this page.",
+		is_dismissable: true,
+		is_persistent: true,
+		duration: 0,
+	});
+}
+
 /** Sign in with the retained secret of an unconfirmed claim. */
 export function finishLocalClaim(): Promise<ClaimOutcome> {
 	const secret = pendingOwnerSecret;
@@ -332,7 +366,10 @@ export function finishLocalClaim(): Promise<ClaimOutcome> {
 			const result = await authenticate(secret, true);
 			if (result.kind === "ok") {
 				if (pendingOwnerSecret === secret) discardPendingClaim();
-				return { kind: "ok", remembered: result.remembered !== false };
+				const remembered = result.remembered !== false;
+				// Settlement owns the warning, whichever path signed in.
+				if (!remembered) publishNotRememberedNotice();
+				return { kind: "ok", remembered };
 			}
 			if (pendingOwnerSecret === undefined) return { kind: "cancelled" };
 			claimPending = true;

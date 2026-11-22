@@ -7,6 +7,7 @@ import {
 	discardPendingClaim,
 	getAuthStatus,
 	getClaimPending,
+	getVisitToken,
 	setAuthStatus,
 } from "../lib/stores/auth-status.svelte";
 import {
@@ -14,6 +15,10 @@ import {
 	getScannedClaimCode,
 	takeScannedClaimCode,
 } from "../lib/stores/claim-fragment.svelte";
+import {
+	clearNotifications,
+	getPersistent,
+} from "../lib/stores/notifications.svelte";
 import { publishStatus, resetAuthFeeds } from "./__fixtures__/auth-feed.svelte";
 import Layout from "./Layout.svelte";
 
@@ -115,6 +120,7 @@ beforeEach(() => {
 	transport.setPassword.mockReset();
 	transport.claimLocalOwner.mockReset();
 	transport.warning.mockReset();
+	clearNotifications();
 	localStorage.clear();
 });
 afterEach(() => {
@@ -214,10 +220,14 @@ describe("local claim settlement", () => {
 		render(Layout);
 		await claimWith();
 		await waitFor(() => expect(getAuthStatus()).toBe(true));
-		await waitFor(() => expect(transport.warning).toHaveBeenCalledTimes(1));
-		expect(String(transport.warning.mock.calls[0]?.[0])).toContain(
-			"did not keep the sign-in",
+		const notice = getPersistent().find(
+			(n) => n.name === "local-claim-not-remembered",
 		);
+		expect(notice?.text).toContain("did not keep the sign-in");
+		expect(notice?.isPersistent).toBe(true);
+		// An infinite overlay toast would cover controls; the notice is in flow.
+		expect(transport.warning).not.toHaveBeenCalled();
+		expect(getVisitToken()).toBe("t5");
 		expect(getClaimPending()).toBe(false);
 	});
 

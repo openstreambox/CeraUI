@@ -57,7 +57,11 @@ import {
 import { downloadLog } from "$lib/helpers/SystemHelper";
 import { wifiFailureReason } from "$lib/helpers/wifi-mode-outcome";
 import { isSameWireValue, preserveWireIdentity } from "$lib/rpc/value-identity";
-import { authStatusStore } from "$lib/stores/auth-status.svelte";
+import {
+	authStatusStore,
+	forgetVisitToken,
+	getVisitToken,
+} from "$lib/stores/auth-status.svelte";
 import { ingestBuffering } from "$lib/stores/buffering.svelte";
 import { markSessionExpired } from "$lib/stores/connection-ux.svelte";
 import { noteHotspotRoster } from "$lib/stores/hotspot-joins.svelte";
@@ -1296,14 +1300,24 @@ export function receivePulledStatus<T>(
 
 const AUTH_STORAGE_KEY = "auth";
 
+function readRememberedToken(): string | null {
+	try {
+		return typeof localStorage !== "undefined"
+			? localStorage.getItem(AUTH_STORAGE_KEY)
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+// A browser that refused storage keeps its session token for the visit only.
 function readStoredToken(): string | null {
-	return typeof localStorage !== "undefined"
-		? localStorage.getItem(AUTH_STORAGE_KEY)
-		: null;
+	return readRememberedToken() ?? getVisitToken() ?? null;
 }
 
 function clearStoredToken(rejectedToken: string): void {
-	if (readStoredToken() === rejectedToken) {
+	forgetVisitToken(rejectedToken);
+	if (readRememberedToken() === rejectedToken) {
 		localStorage.removeItem(AUTH_STORAGE_KEY);
 	}
 }
