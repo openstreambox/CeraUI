@@ -9,6 +9,9 @@ and exercises the **same `nmcli`/NetworkManager surface the CeraUI backend uses*
 It lets you exercise real Wi-Fi scan → list → connect → state flows **without any
 physical Wi-Fi hardware**.
 
+For hostapd credential rotation, use the [disposable VM scenarios](hostapd-vm.md).
+They boot their own kernel and exercise the hostapd control interface directly.
+
 > **This is NOT a CI gate.** It is intentionally local-only and best-effort. No
 > unit or integration test depends on it. `check-env.sh` always exits cleanly
 > (`SUPPORTED` / `SKIP`) so it can be probed safely from anywhere.
