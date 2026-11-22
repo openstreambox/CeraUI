@@ -1,11 +1,59 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	readPhoneWay,
 	writePhoneWay,
 } from "../modules/system/phone-preferences";
+
+test("a damaged way file reads as no saved choice and can be replaced", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "phone-way-"));
+	const path = join(dir, "way.json");
+	try {
+		for (const damaged of [
+			"",
+			"{",
+			'{"way":"srt"',
+			"null",
+			"[]",
+			"5",
+			'"srt"',
+			'{"way":null}',
+			'{"way":"nonsense"}',
+			Buffer.from([0x7b, 0xff, 0xfe, 0x7d]),
+		]) {
+			writeFileSync(path, damaged);
+			expect(await readPhoneWay(path)).toBeNull();
+		}
+		// Larger than the settings limit, not a regular file, and a symlink.
+		writeFileSync(
+			path,
+			JSON.stringify({ way: "srt", pad: "x".repeat(20_000) }),
+		);
+		expect(await readPhoneWay(path)).toBeNull();
+		rmSync(path);
+		mkdirSync(path);
+		expect(await readPhoneWay(path)).toBeNull();
+		rmSync(path, { recursive: true });
+		const target = join(dir, "target.json");
+		writeFileSync(target, JSON.stringify({ way: "srt" }));
+		symlinkSync(target, path);
+		expect(await readPhoneWay(path)).toBeNull();
+		rmSync(path);
+		await writePhoneWay("srt", path);
+		expect(await readPhoneWay(path)).toBe("srt");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
 
 test("remembers only the way, survives a new read and rejects identity fields", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "phone-way-"));
