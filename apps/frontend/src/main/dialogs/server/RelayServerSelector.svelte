@@ -10,11 +10,10 @@
 <script lang="ts">
 import { m } from '@ceraui/i18n/svelte';
 import type { RelayAccount, RelayServer } from '@ceraui/rpc/schemas';
-
 import RelayRttIndicator from '$lib/components/streaming/RelayRttIndicator.svelte';
-import { Input } from '$lib/components/ui/input';
 import { Label } from '$lib/components/ui/label';
 import * as Select from '$lib/components/ui/select';
+import StreamIdField from "./StreamIdField.svelte";
 
 interface Props {
 	isStreaming: boolean;
@@ -28,6 +27,7 @@ interface Props {
 	relayAccount: string;
 	relayAccountName?: string;
 	relayStreamId: string;
+ relayStreamIdConfigured?: boolean;
 	onServer: (value: string) => void;
 	onAccount: (value: string) => void;
 	onRelayStreamId: (value: string) => void;
@@ -45,6 +45,7 @@ let {
 	relayAccount,
 	relayAccountName,
 	relayStreamId,
+ relayStreamIdConfigured = false,
 	onServer,
 	onAccount,
 	onRelayStreamId,
@@ -121,17 +122,4 @@ let {
 	</Select.Root>
 </div>
 
-<div class="space-y-2">
-	<Label class="text-sm font-medium" for="relay-streamid">
-		{m["settings.streamId"]()}
-		<span class="text-muted-foreground ms-1 text-xs">({m["settings.optional"]()})</span>
-	</Label>
-	<Input
-		id="relay-streamid"
-		class="font-mono"
-		disabled={isStreaming}
-		oninput={(e) => onRelayStreamId(e.currentTarget.value)}
-		placeholder={m["settings.placeholders.srtStreamId"]()}
-		value={relayStreamId}
-	/>
-</div>
+<StreamIdField id="relay-streamid" value={relayStreamId} configured={relayStreamIdConfigured} disabled={isStreaming} onChange={onRelayStreamId} />
