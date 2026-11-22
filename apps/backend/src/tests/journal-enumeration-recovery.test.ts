@@ -126,6 +126,7 @@ test("acknowledgement removal followed by one enumeration EIO automatically clea
 		},
 	});
 	expect(streamingBlockingMutation()).toEqual({
+		deviceVidPid: "2c7c:0801",
 		stableKey: KEY,
 		refusal: "mutation_blocked",
 		blocksStreaming: true,
