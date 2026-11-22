@@ -44019,7 +44019,7 @@
     "apps/backend/src/modules/system/logs.ts": "b026f90ab04e7e212b29eb6f271932faa51724325f9965258e12d3446d57c3ff",
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
     "apps/backend/src/modules/system/sensors.ts": "e6fdcc8d57f4decc10b3247fdcd2cbc11e9fb23a489bbe546e3ee3e7a3f1adc7",
-    "apps/backend/src/modules/system/software-updates.ts": "d1ad6da3eb559be5336b74bb6519ba6caf9fba051b2dc1593f41a31dbfab9763",
+    "apps/backend/src/modules/system/software-updates.ts": "3e50d06eb94e511c427745ab2f3e520e3f140b334352086e17eba671972001b6",
     "apps/backend/src/modules/system/ssh.ts": "76480301bb9dc3a9483a7b9fb7073a2a1ec91c315653df945bfb2fcc1ce86f43",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "5d6fe150025d879e82f987d25489c4c7125b724f56c9296cc459dc500aade698",
     "apps/backend/src/modules/ui/notifications.ts": "ffe408b78e2f04ffa037890131f177b50569f6530f4cc89208fb6eaf7bd8fd95",
