@@ -91,29 +91,36 @@ test("a scanned setup code claims a fresh box and remembers the browser", async 
 	}
 });
 
-test("a lost claim reply still signs the browser in", async ({ baseURL, context, page }) => {
+test("lost claim and login replies keep the browser able to sign in", async ({
+	baseURL,
+	context,
+	page,
+}, testInfo) => {
 	const backend = await startWorkerBackend({
 		setupAuth: { claimDigest: createHash("sha256").update(code).digest("hex") },
 	});
 	try {
 		await routeBackend(context, baseURL, backend);
-		let dropped = false;
+		let claimDropped = false;
+		let holdLogins = true;
+		let loginsDropped = 0;
 		await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
 			const server = socket.connectToServer();
-			let claimId: string | undefined;
+			const dropIds = new Set<string>();
 			socket.onMessage((message) => {
 				server.send(message);
-				if (typeof message !== "string" || dropped) return;
+				if (typeof message !== "string") return;
 				const frame = JSON.parse(message);
-				if (Array.isArray(frame.path) && frame.path.join(".") === "auth.claimLocalOwner") {
-					claimId = frame.id;
-				}
+				const path = Array.isArray(frame.path) ? frame.path.join(".") : "";
+				if (path === "auth.claimLocalOwner" && !claimDropped) dropIds.add(frame.id);
+				if (path === "auth.login" && holdLogins) dropIds.add(frame.id);
 			});
 			server.onMessage((message) => {
-				if (claimId !== undefined && typeof message === "string" && JSON.parse(message).id === claimId) {
-					// The box committed; the reply and the link are lost together.
-					dropped = true;
-					claimId = undefined;
+				const id = typeof message === "string" ? JSON.parse(message).id : undefined;
+				if (id !== undefined && dropIds.has(id)) {
+					// The box answered; the reply and the link are lost together.
+					if (!claimDropped) claimDropped = true;
+					else loginsDropped += 1;
 					void socket.close();
 					void server.close();
 					return;
@@ -126,8 +133,22 @@ test("a lost claim reply still signs the browser in", async ({ baseURL, context,
 		await expect(setupCode).toBeVisible({ timeout: 60_000 });
 		await setupCode.fill(code);
 		await page.getByRole("button", { name: "Set up box" }).click();
+
+		// The box committed, so the page must not blame the code.
+		const retry = page.getByRole("button", { name: "Try again" });
+		await expect(retry).toBeVisible({ timeout: 30_000 });
+		await expect(page.getByText("did not confirm setup")).toBeVisible();
+		await expect(page.getByText("Check the code")).toHaveCount(0);
+		expect(claimDropped).toBe(true);
+		expect(loginsDropped).toBeGreaterThan(0);
+		if (process.env.E2E_CAPTURE_SETUP_SCREENS === "1") {
+			await page.evaluate(() => document.getElementById("js-failed")?.remove());
+			await page.screenshot({ path: testInfo.outputPath("code-unconfirmed.png") });
+		}
+
+		holdLogins = false;
+		await retry.click();
 		await expect(page.locator("header").first()).toBeVisible({ timeout: 30_000 });
-		expect(dropped).toBe(true);
 		await expect.poll(() => page.evaluate(() => Boolean(localStorage.getItem("auth")))).toBe(true);
 		await page.reload();
 		await expect(page.locator("header").first()).toBeVisible();
