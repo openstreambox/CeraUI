@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import signal
 import socket
+import struct
 import subprocess
 import time
 import traceback
@@ -16,11 +17,16 @@ WILDCARD = "00:00:00:00:00:00"
 FIRST = "fixture-password-first"
 SECOND = "fixture-password-second"
 STANDING = "fixture-password-standing"
+EXPIRY_CONTROL = "fixture-password-expiry-control"
 PSK_FILE = Path("/run/psks")
 SAE_FILE = Path("/run/sae-passwords")
 AP_CONFIG = Path("/run/hostapd.conf")
 WORKERS = {}
 RESULTS = {}
+# Linux x86-64 SO_TIMESTAMPNS (native 64-bit timespec), the launcher ABI.
+SO_TIMESTAMPNS = 35
+TIMESPEC = struct.Struct("@ll")
+LIFECYCLE = re.compile(r"^<\d+>AP-STA-(CONNECTED|DISCONNECTED) (\S+)(?: |$)")
 
 
 def run(*command, namespace=None, check=True):
@@ -80,17 +86,42 @@ class Control:
         self.socket.send(command.encode())
         return self.socket.recv(16384).decode().strip()
 
-    def event(self, pattern, seconds=8):
+    def attach(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, SO_TIMESTAMPNS, 1)
+        return self.command("ATTACH") == "OK"
+
+    def receive_event(self, seconds):
+        self.socket.settimeout(seconds)
+        data, ancillary, flags, _ = self.socket.recvmsg(16384, socket.CMSG_SPACE(TIMESPEC.size))
+        if flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC):
+            raise RuntimeError("Truncated hostapd control event")
+        for level, kind, value in ancillary:
+            if (level, kind) == (socket.SOL_SOCKET, SO_TIMESTAMPNS):
+                whole, nanos = TIMESPEC.unpack(value)
+                return data.decode().strip(), whole + nanos / 1e9
+        raise RuntimeError("No kernel receive timestamp on hostapd control event")
+
+    def event(self, pattern, seconds=8, *, since=0):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            self.socket.settimeout(max(0.001, deadline - time.monotonic()))
             try:
-                event = self.socket.recv(16384).decode().strip()
+                event, received = self.receive_event(max(0.001, deadline - time.monotonic()))
             except TimeoutError:
                 break
-            if re.search(pattern, event):
-                return event, time.time(), time.monotonic()
-        return "", 0, 0
+            if received >= since and re.search(pattern, event):
+                return event, received
+        return "", 0
+
+    def transitions(self, since, through):
+        changes = []
+        while True:
+            try:
+                event, received = self.receive_event(max(0.001, through - time.time()))
+            except TimeoutError:
+                return changes
+            if since <= received <= through and (match := LIFECYCLE.match(event)):
+                kind, mac = match.groups()
+                changes.append((kind, mac, received))
 
     def close(self):
         self.socket.close()
@@ -139,7 +170,7 @@ def start_ap():
         raise RuntimeError("hostapd control socket did not appear")
     control = Control(remote, "ap")
     events = Control(remote, "ap-events")
-    if not until(lambda: "state=ENABLED" in control.command("STATUS")) or events.command("ATTACH") != "OK":
+    if not until(lambda: "state=ENABLED" in control.command("STATUS")) or not events.attach():
         raise RuntimeError("hostapd did not become ready")
     return control, events
 
@@ -161,9 +192,23 @@ def station(name, secret, sae=False, identifier=None):
 
 
 def authorized(station_name):
-    status = run("iw", "dev", "testwifi", "station", "get", STA[station_name],
-                 namespace="ap", check=False)
-    return bool(re.search(r"authorized:\s+yes", status))
+    status = run("iw", "dev", "testwifi", "station", "dump", namespace="ap")
+    return station_authorized(status, STA[station_name])
+
+
+def station_authorized(status, mac):
+    if not status:
+        return False
+    stations = re.split(r"^Station ", status, flags=re.M)
+    if stations[0] or len(stations) == 1:
+        raise RuntimeError(f"Unexpected iw station dump: {status}")
+    for station_status in stations[1:]:
+        if station_status.split()[0].lower() == mac:
+            match = re.search(r"^\s*authorized:\s+(yes|no)\s*$", station_status, re.M)
+            if not match:
+                raise RuntimeError(f"iw station dump omitted authorization for {mac}")
+            return match[1] == "yes"
+    return False
 
 
 def give_lease():
@@ -182,19 +227,53 @@ def reload_psks(control):
     return control.command("RELOAD_WPA_PSK") == "OK"
 
 
-def continuous_ping(name, mutation):
-    process = launch(name, "a", "ping", "-n", "-i", "0.04", "-c", "30", "-W", "1", AP)
-    if not until(lambda: "icmp_seq=" in log(name), 2):
+def ping_timestamps(output):
+    return [float(value) for value in re.findall(r"^\[(\d+\.\d+)\].*icmp_seq=\d+", output, re.M)]
+
+
+def ping_brackets(output, sent_at, completed_at):
+    stamps = ping_timestamps(output)
+    before = sum(stamp < sent_at for stamp in stamps)
+    after = sum(stamp > completed_at for stamp in stamps)
+    clean = len(stamps) == 30 and "30 packets transmitted, 30 received" in output
+    return clean and before > 0 and after > 0, before, after
+
+
+def continuous_ping(name, events, mutation):
+    baseline = time.time()
+    was_authorized = authorized("a")
+    process = launch(name, "a", "ping", "-D", "-n", "-i", "0.04", "-c", "30", "-W", "1", AP)
+    if not until(lambda: ping_timestamps(log(name)), 2):
         raise RuntimeError("Ping did not establish traffic before reload")
-    reloaded = mutation()
+    reloaded, sent_at, completed_at = mutation()
     process.wait(timeout=5)
-    result = re.search(r"(\d+) packets transmitted, (\d+) received", log(name))
-    sent, received = map(int, result.groups()) if result else (0, 0)
-    return reloaded and sent == received == 30 and authorized("a"), f"ping={received}/{sent}"
+    clean, before, after = ping_brackets(log(name), sent_at, completed_at)
+    still_authorized = authorized("a")
+    changes = events.transitions(baseline, time.time() + 0.15)
+    a_transitions = [kind for kind, mac, _ in changes if mac == STA["a"]]
+    passed = reloaded and clean and was_authorized and still_authorized and not a_transitions
+    return passed, f"ping={len(ping_timestamps(log(name)))}/30 before={before} after={after} A_transitions={a_transitions}"
+
+
+def peer_event(events, kind, name, since, seconds=8):
+    return events.event(rf"^<\d+>{kind} {STA[name]}(?: |$)", seconds, since=since)
+
+
+def connect(events, name, secret, *, sae=False, identifier=None):
+    stop(name)
+    if not until(lambda: not authorized(name), 2):
+        raise RuntimeError(f"Station {name} remained authorized before fresh join")
+    started = time.time()
+    station(name, secret, sae=sae, identifier=identifier)
+    return peer_event(events, "AP-STA-CONNECTED", name, started)
 
 
 def denied_psk(events, secret, empty_candidates=False):
+    stop("b")
+    if not until(lambda: not authorized("b"), 2):
+        raise RuntimeError("Station B remained authorized before PSK rejection check")
     offset = len(log("ap"))
+    started = time.time()
     station("b", secret)
     if empty_candidates:
         denial = until(lambda: re.search(
@@ -202,14 +281,33 @@ def denied_psk(events, secret, empty_candidates=False):
         ))
         evidence = "no PSK configured for B" if denial else "no missing-PSK diagnostic"
     else:
-        denial, _, _ = events.event(r"AP-STA-POSSIBLE-PSK-MISMATCH\s+" + STA["b"])
+        denial, _ = peer_event(events, "AP-STA-POSSIBLE-PSK-MISMATCH", "b", started)
         evidence = denial or "no PSK mismatch event"
     accepted = authorized("b") or "CTRL-EVENT-CONNECTED" in log("b")
     if not denial:
         print("\n".join(line for line in log("ap")[offset:].splitlines()
                         if any(word in line.lower() for word in ("psk", "reject", "status code")))[-3000:])
     stop("b")
-    return bool(denial) and not accepted, evidence
+    return bool(denial) and not accepted and "CTRL-EVENT-CONNECTED" not in log("b"), evidence
+
+
+def psk_mutation(control, *entries):
+    psks(*entries)
+    sent_at = time.time()
+    reloaded = reload_psks(control)
+    return reloaded, sent_at, time.time()
+
+
+def expiry_passed(armed, control_join, control_authorized, elapsed, expected, clean, denied):
+    return (armed and control_join.endswith(" keyid=expiry-control") and control_authorized
+            and expected <= elapsed <= expected + 0.25 and clean and denied)
+
+
+def revocation_passed(reloaded, baseline, final, changes, sent_at):
+    if not reloaded or baseline != (True, True) or final != (False, True) or len(changes) != 1:
+        return False
+    kind, mac, received = changes[0]
+    return kind == "DISCONNECTED" and mac == STA["a"] and sent_at <= received <= sent_at + 1
 
 
 def wpa2(expiry_seconds):
@@ -223,8 +321,7 @@ def wpa2(expiry_seconds):
            "--port=0", "--interface=testwifi", "--bind-interfaces", "--log-facility=-", "--log-dhcp",
            "--dhcp-broadcast", "--dhcp-range=192.0.2.10,192.0.2.20,255.255.255.0,1h",
            "--dhcp-leasefile=/run/leases", "--pid-file=/run/dnsmasq.pid", "--user=root")
-    station("a", FIRST)
-    joined, received, _ = events.event(r"AP-STA-CONNECTED\s+" + STA["a"])
+    joined, received = connect(events, "a", FIRST)
     if not joined or not until(lambda: authorized("a")):
         raise RuntimeError("A did not authenticate with the initial WPA2 PSK")
     lease = give_lease()
@@ -239,13 +336,8 @@ def wpa2(expiry_seconds):
     report(3, joined.endswith(" keyid=otp-1") and sta_key and sta_key[1] == "otp-1" and 0 <= elapsed <= 100,
            f"association_to_event_ms={elapsed:.3f} event={joined} sta_keyid={sta_key[1] if sta_key else 'absent'}")
 
-    def bind():
-        psks(bound)
-        return reload_psks(control)
-
-    clean, traffic = continuous_ping("binding-ping", bind)
-    dropped, _, _ = events.event(r"AP-STA-DISCONNECTED\s+" + STA["a"], 0.15)
-    report(4, clean and not dropped, f"{traffic} authorized={authorized('a')} disconnect_event={bool(dropped)}")
+    clean, traffic = continuous_ping("binding-ping", events, lambda: psk_mutation(control, bound))
+    report(4, clean, traffic)
     no_candidate, no_candidate_evidence = denied_psk(events, FIRST, empty_candidates=True)
     psks(bound, standing)
     active = reload_psks(control)
@@ -253,35 +345,41 @@ def wpa2(expiry_seconds):
     report(5, active and no_candidate and mismatch,
            f"B denied with and without another eligible PSK: {no_candidate_evidence}; {mismatch_evidence}")
 
-    psks(bound, standing, unused)
+    psks(bound, standing, unused, ("expiry-control", WILDCARD, EXPIRY_CONTROL))
     armed = reload_psks(control)
     started = time.monotonic()
     deadline = started + expiry_seconds
+    control_join, _ = connect(events, "b", EXPIRY_CONTROL)
+    control_authorized = authorized("b")
+    stop("b")
     time.sleep(max(0, deadline - time.monotonic() - 0.25))
 
     def expire():
+        nonlocal elapsed
         time.sleep(max(0, deadline - time.monotonic()))
-        psks(bound, standing)
-        reloaded = reload_psks(control)
-        print(f"TIMING issue_to_expiry_reload_ms={(time.monotonic() - started) * 1000:.3f}")
-        return reloaded
+        result = psk_mutation(control, bound, standing)
+        elapsed = time.monotonic() - started
+        return result
 
-    clean, traffic = continuous_ping("expiry-ping", expire)
-    dropped, _, _ = events.event(r"AP-STA-DISCONNECTED\s+" + STA["a"], 0.15)
+    elapsed = float("inf")
+    clean, traffic = continuous_ping("expiry-ping", events, expire)
     denied, evidence = denied_psk(events, SECOND)
-    report(6, armed and clean and not dropped and denied,
-           f"unused fixture expired after {expiry_seconds}s; {traffic} disconnect_event={bool(dropped)} B={evidence}")
+    report(6, expiry_passed(armed, control_join, control_authorized, elapsed, expiry_seconds, clean, denied),
+           f"expiry_reload_ms={elapsed * 1000:.3f} control_join={control_join!r} "
+           f"control_authorized={control_authorized} {traffic} expired_B={evidence}")
 
-    station("b", STANDING)
-    peer, _, _ = events.event(r"AP-STA-CONNECTED\s+" + STA["b"])
+    peer, _ = connect(events, "b", STANDING)
     psks(standing)
-    started = time.monotonic()
+    baseline_at = time.time()
+    baseline = authorized("a"), authorized("b")
+    sent_at = time.time()
     reloaded = reload_psks(control)
-    disconnected, _, observed = events.event(r"AP-STA-DISCONNECTED\s+" + STA["a"], 1)
-    elapsed = (observed - started) * 1000 if disconnected else float("inf")
-    a_authorized, b_authorized = authorized("a"), authorized("b")
-    report(7, reloaded and elapsed <= 1000 and not a_authorized and peer and b_authorized,
-           f"reload_to_disconnect_ms={elapsed:.3f} A_authorized={a_authorized} B_authorized={b_authorized}")
+    changes = events.transitions(baseline_at, sent_at + 1)
+    final = authorized("a"), authorized("b")
+    elapsed = next(((stamp - sent_at) * 1000 for kind, mac, stamp in changes
+                    if kind == "DISCONNECTED" and mac == STA["a"]), float("inf"))
+    report(7, peer and revocation_passed(reloaded, baseline, final, changes, sent_at),
+           f"reload_to_disconnect_ms={elapsed:.3f} baseline={baseline} final={final} transitions={changes}")
     stop("a")
     stop("b")
     stop("dhcp")
@@ -303,17 +401,45 @@ def set_sae_passwords(control, *credentials):
 
 
 def sae_joins(events, name, secret, identifier=None):
-    station(name, secret, sae=True, identifier=identifier)
-    return events.event(r"AP-STA-CONNECTED\s+" + STA[name])[0]
+    event, _ = connect(events, name, secret, sae=True, identifier=identifier)
+    return event if event and authorized(name) else ""
+
+
+def sae_join_has_no_id(event, reply, mac):
+    lines = reply.splitlines()
+    if not lines or lines[0] != mac:
+        return False
+    flags = next((line for line in lines if line.startswith("flags=")), "")
+    identifier = re.compile(r"\b(?:keyid|sae_password_id)=", re.I)
+    return (bool(re.match(rf"^<\d+>AP-STA-CONNECTED {mac}(?: |$)", event))
+            and "[AUTHORIZED]" in flags and not identifier.search(event)
+            and not identifier.search(reply))
+
+
+def sae_rejection(ap_log, mac, since):
+    for line in ap_log.splitlines():
+        match = re.match(r"^(\d+\.\d+): (.*)", line)
+        if not match or float(match[1]) < since:
+            continue
+        diagnostic = match[2]
+        if re.search(rf"SAE-UNKNOWN-PASSWORD-IDENTIFIER {mac}(?: |$)", diagnostic):
+            return True
+        if re.search(rf"authentication reply: STA={mac} auth_alg=3 auth_transaction=1 "
+                     r"resp=(?:1|123)\b", diagnostic):
+            return True
+    return False
 
 
 def sae_denied(name, secret, identifier=None):
+    stop(name)
+    if not until(lambda: not authorized(name), 2):
+        raise RuntimeError(f"Station {name} remained authorized before SAE rejection check")
     offset = len(log("ap"))
+    started = time.time()
     station(name, secret, sae=True, identifier=identifier)
 
     def rejected():
-        return ("CTRL-EVENT-AUTH-REJECT" in log(name)
-                or "SAE: No password available" in log("ap")[offset:])
+        return sae_rejection(log("ap")[offset:], STA[name], started)
 
     until(lambda: rejected() or authorized(name), 6)
     denied = rejected() and not authorized(name) and "CTRL-EVENT-CONNECTED" not in log(name)
@@ -321,16 +447,20 @@ def sae_denied(name, secret, identifier=None):
         print("\n".join(line for line in log("ap")[offset:].splitlines()
                         if any(word in line for word in ("SAE:", "authentication")))[-3000:])
     stop(name)
-    return denied
+    return denied and "CTRL-EVENT-CONNECTED" not in log(name)
 
 
-def both_disconnected(events):
-    disconnects = set()
-    for _ in STA:
-        event, _, _ = events.event(r"AP-STA-DISCONNECTED\s+\S+", 2)
-        if event:
-            disconnects.add(event.split()[-1])
-    return disconnects == set(STA.values())
+def sae_reload(events, mutation, *peers):
+    baseline_at = time.time()
+    baseline = all(authorized(peer) for peer in peers)
+    started = time.time()
+    result = mutation()
+    changes = events.transitions(baseline_at, started + 2)
+    wanted = {STA[peer] for peer in peers}
+    disconnected = {mac for kind, mac, stamp in changes if kind == "DISCONNECTED" and stamp >= started}
+    before = [change for change in changes if change[2] < started and change[1] in wanted]
+    print(f"SAE reload expected={sorted(wanted)} disconnects={sorted(disconnected)} baseline={baseline}")
+    return result, baseline and not before and disconnected == wanted
 
 
 def wpa3():
@@ -341,44 +471,42 @@ def wpa3():
     control, events = start_ap()
     missing_id = sae_denied("a", FIRST)
     joined_a = sae_joins(events, "a", FIRST, "first")
-    field = re.search(r"^(?:keyid|sae_password_id)=.*", control.command(f"STA {STA['a']}"), re.M)
+    sta_a = control.command(f"STA {STA['a']}")
     joined_b = sae_joins(events, "b", SECOND, "second")
+    sta_b = control.command(f"STA {STA['b']}")
+    ids_omitted = (sae_join_has_no_id(joined_a, sta_a, STA["a"])
+                   and sae_join_has_no_id(joined_b, sta_b, STA["b"]))
     ports_open = authorized("a") and authorized("b")
     sae_config(bound_first, second)
-    psk_reload = control.command("RELOAD_WPA_PSK")
-    psk_reload_dropped_both = both_disconnected(events)
+    psk_reload, psk_reload_dropped_both = sae_reload(events, lambda: reload_psks(control), "a", "b")
     stop("a")
     stop("b")
     still_wildcard = bool(sae_joins(events, "b", FIRST, "first")) and authorized("b")
     a_rejoined = bool(sae_joins(events, "a", FIRST, "first")) and authorized("a")
-    WORKERS["ap"].send_signal(signal.SIGHUP)
-    dropped_both = both_disconnected(events)
+    _, dropped_both = sae_reload(events, lambda: WORKERS["ap"].send_signal(signal.SIGHUP), "a", "b")
     stop("a")
     stop("b")
     # A fresh supplicant with PMKSA caching disabled on the AP exercises SAE again.
     bound = sae_denied("b", FIRST, "first")
     recovered = bool(sae_joins(events, "a", FIRST, "first")) and authorized("a")
     sae_config(second)
-    WORKERS["ap"].send_signal(signal.SIGHUP)
-    revoked, _, _ = events.event(r"AP-STA-DISCONNECTED\s+" + STA["a"], 2)
-    expired = bool(revoked) and sae_denied("a", FIRST, "first")
+    _, revoked = sae_reload(events, lambda: WORKERS["ap"].send_signal(signal.SIGHUP), "a")
+    expired = revoked and sae_denied("a", FIRST, "first")
     surviving = bool(sae_joins(events, "b", SECOND, "second")) and authorized("b")
     staged = set_sae_passwords(control, first, second)
     stage_denied = sae_denied("a", FIRST, "first")
     peer_survived_set = authorized("b")
-    activated = reload_psks(control)
-    interrupted, _, _ = events.event(r"AP-STA-DISCONNECTED\s+" + STA["b"], 2)
+    activated, interrupted = sae_reload(events, lambda: reload_psks(control), "b")
     changed = bool(sae_joins(events, "a", FIRST, "first")) and authorized("a")
     print(f"SAE SET_password_list_ok={staged} new_H2E_join_denied_before_reload={stage_denied} "
           f"peer_survived_SET={peer_survived_set} activation_disconnects_peer={bool(interrupted)} "
           f"new_H2E_join_after_activation={changed}")
-    reports_id = "keyid=" in joined_a or "sae_password_id=" in joined_a or bool(field)
-    report(8, missing_id and joined_a and joined_b and ports_open and not reports_id
-           and psk_reload == "OK" and psk_reload_dropped_both and still_wildcard
+    report(8, missing_id and joined_a and joined_b and ports_open and ids_omitted
+           and psk_reload and psk_reload_dropped_both and still_wildcard
            and a_rejoined and dropped_both and bound and recovered and expired and surviving
            and staged and stage_denied and peer_survived_set and activated and interrupted and changed,
            f"missing_id_rejected={bool(missing_id)} two_ids_joined={bool(joined_a and joined_b and ports_open)} "
-           f"id_reported={reports_id} reload_wpa_psk={psk_reload} "
+           f"both_STA_replies_authorized_and_ids_omitted={ids_omitted} reload_wpa_psk={psk_reload} "
            f"psk_reload_disconnected_both={psk_reload_dropped_both} disk_edit_ignored={still_wildcard} "
            f"SIGHUP_disconnected_both={dropped_both} "
            f"full_reload_mac_binding={bool(bound and recovered)} removed_id_revoked_and_rejected={bool(expired)} "
