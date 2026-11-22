@@ -68,7 +68,7 @@ const parsers: Record<string, (s: string) => unknown> = {
 	parseIwStationDump: wcl.parseIwStationDump,
 	parseIwStationEvent: wse.parseIwStationEvent,
 	parseRegulatoryRules: wrr.parseRegulatoryRules,
-	parseRegulatoryRuleLine: (s) => (wrr.parseRegulatoryRuleLine as never)(s),
+	parseRegulatoryRuleLine: (s) => wrr.parseRegulatoryRuleLine(s),
 	parseLoadAvg: ds.parseLoadAvg,
 	parseSocTemp: ds.parseSocTemp,
 	parseDfOutput: ds.parseDfOutput,
@@ -223,8 +223,34 @@ fuzz("text parsers reject input without internal errors", anyText, (input) => {
 // Cost check, opt-in with PARSER_FUZZ_COST=1. A parser that rescans its input
 // from every position costs about 16 times more on four times the input; a
 // linear one about 4 times. Comparing two sizes does not depend on how fast the
-// machine is. Calls under 100 ms at the larger size are too cheap to judge.
+// machine is. Each size is the median of several samples, so one garbage
+// collection or scheduling pause cannot decide the result, and a parser too
+// cheap to time at the starting size is tried on larger input (up to 8 times as
+// much) before it counts as fast.
 const costTest = process.env.PARSER_FUZZ_COST === "1" ? test : test.skip;
+const COST_LARGE = 40_000;
+const COST_SCALES = [1, 4, 8];
+const COST_SCREEN_MS = 10;
+const COST_SAMPLES = 5;
+const COST_MAX_RATIO = 10;
+
+function timeOnce(parse: (input: string) => unknown, input: string): number {
+	const start = performance.now();
+	try {
+		parse(input);
+	} catch {
+		// rejecting the input is fine; only the cost matters here
+	}
+	return performance.now() - start;
+}
+
+function timeMedian(parse: (input: string) => unknown, input: string): number {
+	const samples = Array.from({ length: COST_SAMPLES }, () =>
+		timeOnce(parse, input),
+	);
+	samples.sort((a, b) => a - b);
+	return samples[Math.floor(COST_SAMPLES / 2)] ?? 0;
+}
 
 costTest(
 	"text parsers cost grows linearly with long repetitive input",
@@ -243,28 +269,25 @@ costTest(
 			",",
 			"(",
 		];
-		const timed = (parse: (input: string) => unknown, input: string) => {
-			const start = performance.now();
-			try {
-				parse(input);
-			} catch {
-				// rejecting the input is fine; only the cost matters here
-			}
-			return performance.now() - start;
-		};
 		for (const [name, parse] of Object.entries(parsers)) {
 			for (const unit of units) {
-				const large = timed(parse, unit.repeat(40_000));
-				if (large < 100) continue;
-				const small = Math.max(timed(parse, unit.repeat(10_000)), 1);
-				expect(
-					large / small,
-					`${name} on ${JSON.stringify(unit)}: ${small.toFixed(0)} ms at 10k, ${large.toFixed(0)} ms at 40k`,
-				).toBeLessThan(10);
+				for (const scale of COST_SCALES) {
+					const size = COST_LARGE * scale;
+					const large = unit.repeat(size);
+					// The first call also warms the parser up.
+					if (timeOnce(parse, large) < COST_SCREEN_MS) continue;
+					const largeMs = timeMedian(parse, large);
+					const smallMs = Math.max(timeMedian(parse, unit.repeat(size / 4)), 1);
+					expect(
+						largeMs / smallMs,
+						`${name} on ${JSON.stringify(unit)}: ${smallMs.toFixed(0)} ms at ${size / 4}, ${largeMs.toFixed(0)} ms at ${size}`,
+					).toBeLessThan(COST_MAX_RATIO);
+					break;
+				}
 			}
 		}
 	},
-	60_000,
+	300_000,
 );
 
 const record = (message: string, index: number) =>

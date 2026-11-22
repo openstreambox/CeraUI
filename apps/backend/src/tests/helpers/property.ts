@@ -5,23 +5,30 @@ import { join } from "node:path";
 import * as fc from "fast-check";
 import { logger } from "../../helpers/logger.ts";
 
-function integerFromEnv(name: string, fallback: number): number {
+function integerFromEnv(name: string, fallback: number, min: number): number {
 	const raw = process.env[name];
 	if (raw === undefined || raw === "") return fallback;
 	const value = Number(raw);
-	if (!Number.isSafeInteger(value) || value < 0)
-		throw new Error(`${name} must be a non-negative integer, got "${raw}"`);
+	if (!Number.isSafeInteger(value) || value < min)
+		throw new Error(
+			`${name} must be an integer of at least ${min}, got "${raw}"`,
+		);
 	return value;
 }
 
 export const json = fc.jsonValue({ maxDepth: 3 });
 export const text = fc.string({ maxLength: 64, unit: "grapheme" });
-export const seed = integerFromEnv("PARSER_FUZZ_SEED", 146701);
-export const numRuns = integerFromEnv("PARSER_FUZZ_RUNS", 128);
+export const seed = integerFromEnv(
+	"PARSER_FUZZ_SEED",
+	146701,
+	Number.MIN_SAFE_INTEGER,
+);
+export const numRuns = integerFromEnv("PARSER_FUZZ_RUNS", 128, 0);
 
 // fast-check reports the minimized input and replay path on failure. A path
 // applies to one property, selected with bun test -t. PARSER_FUZZ_SEED and
-// PARSER_FUZZ_RUNS change the seed and the run count; PARSER_FUZZ_REPORT=1
+// PARSER_FUZZ_RUNS change the seed (any integer, including the negative
+// seeds fast-check reports) and the run count; PARSER_FUZZ_REPORT=1
 // prints the seed and elapsed time of each property.
 export function fuzz<T>(
 	name: string,
