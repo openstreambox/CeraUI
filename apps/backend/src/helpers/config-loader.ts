@@ -197,6 +197,9 @@ export async function loadJsonConfig<T extends z.ZodTypeAny>(
 
 			if (schemaShape) {
 				for (const [key, value] of Object.entries(rawObj)) {
+					// JSON.parse keeps "__proto__" as an own key; assigning it would
+					// replace the prototype of the loaded config instead of adding a field.
+					if (key === "__proto__") continue;
 					const fieldSchema = schemaShape[key] as z.ZodType | undefined;
 					if (fieldSchema && typeof fieldSchema.safeParse === "function") {
 						const fieldResult = fieldSchema.safeParse(value);
