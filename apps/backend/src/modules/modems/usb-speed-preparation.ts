@@ -25,6 +25,10 @@
 import { existsSync } from "node:fs";
 import { logger } from "../../helpers/logger.ts";
 import { listPrivateJsonKeys } from "../../helpers/private-json-state.ts";
+import {
+	type ModemJournalLease,
+	tryAcquireModemJournalKey,
+} from "../streaming/lifecycle-admission.ts";
 import { isRecoveryPending } from "../streaming/recovery-barrier.ts";
 import { getStreamLifecycleState } from "../streaming/stream-lifecycle-status.ts";
 import { readCellularSlot } from "./cellular-authority-revision.ts";
@@ -46,7 +50,7 @@ import {
 } from "./modems.ts";
 import { getModemIds } from "./modems-state.ts";
 import { modemStableKeyForId } from "./mutation-identity.ts";
-import { beginModemMutation } from "./mutation-lease.ts";
+import { backgroundModemRefusal } from "./mutation-lease.ts";
 import { resolveTransportQuirk } from "./transport-policy.ts";
 
 export const USB2_MBITS = 480;
@@ -84,6 +88,16 @@ export interface UsbSpeedDecision {
 	readonly update?: UsbSpeedRecord;
 }
 
+function withinWindow(
+	now: number,
+	started: number | undefined,
+	duration: number,
+): boolean {
+	if (started === undefined) return false;
+	const age = now - started;
+	return age >= 0 && age < duration;
+}
+
 /** Pure: the next step for one unit. */
 export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 	const { desired, speed, generation, now } = input;
@@ -93,7 +107,7 @@ export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 	if (record?.phase === "awaiting-usb") {
 		if (generation === record.epoch) {
 			// The reset has not taken the old enumeration away yet.
-			if (now - record.started < USB_SPEED_RETURN_WINDOW_MS)
+			if (withinWindow(now, record.started, USB_SPEED_RETURN_WINDOW_MS))
 				return { action: "wait", reason: "module reset pending" };
 			record = {
 				...record,
@@ -109,7 +123,7 @@ export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 			};
 		} else if (
 			speed === undefined &&
-			now - record.started < USB_SPEED_RETURN_WINDOW_MS
+			withinWindow(now, record.started, USB_SPEED_RETURN_WINDOW_MS)
 		) {
 			return { action: "wait", reason: "link speed unreadable" };
 		} else {
@@ -142,11 +156,10 @@ export function decideUsbSpeed(input: UsbSpeedInput): UsbSpeedDecision {
 	}
 	if (input.switchedOff)
 		return withUpdate({ action: "hold", reason: "switched off (no-usbspeed)" });
-	const last = Math.max(
-		record?.started ?? -Infinity,
-		input.abortedAt ?? -Infinity,
-	);
-	if (now - last < USB_SPEED_PAUSE_MS)
+	if (
+		withinWindow(now, record?.started, USB_SPEED_PAUSE_MS) ||
+		withinWindow(now, input.abortedAt, USB_SPEED_PAUSE_MS)
+	)
 		return withUpdate({
 			action: "hold",
 			reason: "pause after the last attempt",
@@ -209,7 +222,7 @@ async function missingUnitReturning(
 		if (
 			record.kind === "usbspeed" &&
 			record.phase === "awaiting-usb" &&
-			now - record.started < USB_SPEED_RETURN_WINDOW_MS
+			withinWindow(now, record.started, USB_SPEED_RETURN_WINDOW_MS)
 		)
 			return true;
 	}
@@ -267,11 +280,13 @@ async function applyUsbSpeed(
 	desired: "20",
 	record: UsbSpeedRecord | undefined,
 	key: string,
+	owner: ModemJournalLease,
 	deps: UsbSpeedDeps,
 ): Promise<UsbSpeedRecord | undefined> {
 	const control = await deps.acquire(target);
 	try {
 		if (deps.streaming()) throw new Error("a stream started");
+		if (backgroundModemRefusal(target.key)) return undefined;
 		const fresh = await deps.read(key);
 		if (fresh && fresh.kind !== "usbspeed")
 			throw new Error("Unexpected preparation authority");
@@ -292,6 +307,8 @@ async function applyUsbSpeed(
 			throw new Error("modem changed before the switch");
 		const current = await control.readUsbSpeed();
 		if (current === undefined) throw new Error("usbspeed readback missing");
+		if (deps.streaming() || backgroundModemRefusal(target.key))
+			return undefined;
 		let next: UsbSpeedRecord = {
 			version: 1,
 			kind: "usbspeed",
@@ -308,13 +325,17 @@ async function applyUsbSpeed(
 		};
 		await deps.write(next);
 		if (current !== desired) {
+			if (deps.streaming() || backgroundModemRefusal(target.key))
+				return undefined;
 			if ((await control.setUsbSpeed(desired)) !== desired) {
 				next = { ...next, phase: "failed", reason: "setter readback differs" };
 				await deps.write(next);
 				return next;
 			}
 		}
-		if (deps.streaming()) throw new Error("a stream started");
+		// The setting takes effect on reset. A Start that won while the modem
+		// was inhibited or queried keeps admission; leave the recorded attempt.
+		if (deps.streaming() || !owner.tryUpgrade()) return undefined;
 		next = { ...next, phase: "awaiting-usb" };
 		await deps.write(next);
 		if (deps.streaming()) throw new Error("a stream started");
@@ -399,8 +420,9 @@ async function runUsbSpeedPreparationOnce(
 			break;
 		}
 		if (missingReturn) continue;
-		const owner = beginModemMutation(unit.target.key);
-		if (!owner.ok) continue;
+		if (deps.streaming() || backgroundModemRefusal(unit.target.key)) continue;
+		const owner = tryAcquireModemJournalKey(unit.target.key);
+		if (!owner) continue;
 		try {
 			if (!(await deps.present(unit.target)))
 				throw new Error("modem changed before the switch");
@@ -410,6 +432,7 @@ async function runUsbSpeedPreparationOnce(
 				unit.desired,
 				unit.record,
 				unit.key,
+				owner,
 				deps,
 			);
 			if (!unit.record) continue;
@@ -428,7 +451,7 @@ async function runUsbSpeedPreparationOnce(
 				`${unit.target.ifname} usbspeed: attempt stopped (${error instanceof Error ? error.message : "error"}); next try after the pause`,
 			);
 		} finally {
-			owner.lease.release();
+			owner.release();
 		}
 		switched.push(unit.id);
 	}

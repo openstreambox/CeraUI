@@ -54,7 +54,8 @@
           "path": "show[].action.kind",
           "types": [
             "\"navigate\"",
-            "\"command\""
+            "\"command\"",
+            "\"confirm-modem-record\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -179,7 +180,8 @@
           "path": "show[].action.kind",
           "types": [
             "\"navigate\"",
-            "\"command\""
+            "\"command\"",
+            "\"confirm-modem-record\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -333,7 +335,8 @@
           "path": "show[].action.kind",
           "types": [
             "\"navigate\"",
-            "\"command\""
+            "\"command\"",
+            "\"confirm-modem-record\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
@@ -44189,7 +44192,7 @@
     "apps/backend/src/modules/system/ssh.ts": "76480301bb9dc3a9483a7b9fb7073a2a1ec91c315653df945bfb2fcc1ce86f43",
     "apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "5d6fe150025d879e82f987d25489c4c7125b724f56c9296cc459dc500aade698",
-    "apps/backend/src/modules/ui/notifications.ts": "ffe408b78e2f04ffa037890131f177b50569f6530f4cc89208fb6eaf7bd8fd95",
+    "apps/backend/src/modules/ui/notifications.ts": "f0c7c0b515b6f95c12547d43a0e16c736e9c1eaef2bd7491986f24d77eca849f",
     "apps/backend/src/modules/ui/status.ts": "f91f94ec8f2462e91f82f3f1ae39b58ccc5aed34bbb50e962a47fc2b422a2475",
     "apps/backend/src/modules/wifi/wifi-adapter-mode-outcome.ts": "e2c3ce9b12f5eba0d9a91779327bb0990eb240656dcf5aa8d6b160e974700cac",
     "apps/backend/src/modules/wifi/wifi-country.ts": "b9e350f52a819d5cc84fd8a742424ce73c29b35ebb03136b0fd36aea31f4b422",
@@ -44212,9 +44215,9 @@
     "packages/rpc/src/schemas/fan.schema.ts": "8f4ab6b8b302d408994350eb66089f8d0fb195e0bccfc498e2d1b333a3fde841",
     "packages/rpc/src/schemas/logs.schema.ts": "d56584362e084a92eeb4c5d91d753a317b9f29140b4909ebc3f714e05a723038",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
-    "packages/rpc/src/schemas/modems.schema.ts": "d3733a5e5d8a4c79adb1a7089f8ebcdee54b3aed877957481eaf73c15ea56295",
+    "packages/rpc/src/schemas/modems.schema.ts": "8e7e9b8150332ae189672e89beb115bd89111d008f23b68316ed9c62b45911d9",
     "packages/rpc/src/schemas/network.schema.ts": "fd3ccb0b89bd33488e52125e541f4a68ad9a6d9eaa2119769972d58bf961220e",
-    "packages/rpc/src/schemas/notifications.schema.ts": "8919cd114f148a39e8cdb540f0e91429b847151db197a3942bb4617037dad764",
+    "packages/rpc/src/schemas/notifications.schema.ts": "67c295a1fc314e79db45efd25b290e7535be88a0ef8e0950dd10bb4f159c2b6e",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",
     "packages/rpc/src/schemas/relay.schema.ts": "75c9b2c3e5fe91e86fc9a57280c597f9590e35ce2c1a6739c3af6ba4a22453f5",
     "packages/rpc/src/schemas/sources-visibility.schema.ts": "254330ea41e6a19f57b8f1959e1bec7f996d7283dc7deb75f740fcbed4659313",

@@ -110,6 +110,7 @@ export const REFUSED_DURING_REAUTH: ReadonlySet<string> = new Set([
 	"logs.setRetention",
 	"moblink.clearCredential",
 	"moblink.setCredential",
+	"modems.clearUnreadableRecord",
 	"modems.acknowledgeMutation",
 	"modems.clearCredentials",
 	"modems.configure",

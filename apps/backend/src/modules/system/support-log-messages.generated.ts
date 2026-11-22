@@ -1593,6 +1593,7 @@ export const SUPPORT_ERROR_TEMPLATES: readonly (readonly string[])[] = [
 	["Preparation authority belongs to another identity"],
 	["Private authority copies conflict"],
 	["Private authority inventory exceeds limit"],
+	["Private authority migration is busy"],
 	["Private authority migration is incomplete or changed"],
 	["Private state exceeds limit"],
 	["Private state locking requires Linux"],

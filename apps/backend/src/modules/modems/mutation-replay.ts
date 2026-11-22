@@ -45,6 +45,7 @@ import {
 	reconciledMutationJournalRevision,
 	refreshMutationBlocks,
 } from "./mutation-blocks.ts";
+import { startMutationDamageMonitor } from "./mutation-damage.ts";
 import {
 	commitMutationEntry,
 	journalNow,
@@ -182,7 +183,12 @@ async function replayEntry(
 	tally.blocked += 1;
 }
 
-export async function runMutationReplay(): Promise<ReplaySummary> {
+type ObserveDamage = (slots: readonly string[]) => void;
+
+export async function runMutationReplay(
+	observe?: ObserveDamage,
+): Promise<ReplaySummary> {
+	const damaged = new Set<string>();
 	const tally = { rolledBack: 0, pruned: 0, blocked: 0, quarantined: 0 };
 	let unreadable = 0;
 	try {
@@ -195,7 +201,7 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 	}
 	try {
 		await settlePendingMutationRemovals();
-		const damaged = new Set(await listUnreadableSlots());
+		for (const name of await listUnreadableSlots()) damaged.add(name);
 		const hints = await scanMutationEntries((name) => damaged.add(name));
 		for (const name of damaged) {
 			unreadable += 1;
@@ -224,7 +230,7 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 				});
 			}
 		}
-		await refreshMutationBlocks();
+		if (damaged.size === 0) await refreshMutationBlocks();
 	} catch (err) {
 		unreadable += 1;
 		logger.error("modem mutation replay did not complete", {
@@ -232,6 +238,7 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 			err,
 		});
 	}
+	observe?.(unreadable === damaged.size ? [...damaged] : []);
 	const summary: ReplaySummary = { ...tally, unreadable };
 	logger.info("modem mutation replay finished", {
 		module: "modems",
@@ -241,12 +248,21 @@ export async function runMutationReplay(): Promise<ReplaySummary> {
 }
 
 /** Settle submitted bookkeeping and read current blocks, without hardware rollback. */
-async function journalReadsCompletely(): Promise<boolean> {
-	await inventoryCellularAuthority("verify");
-	await settlePendingMutationRemovals();
-	if ((await listUnreadableSlots()).length > 0) return false;
-	await refreshMutationBlocks();
-	return true;
+async function journalReadsCompletely(
+	observe: ObserveDamage,
+): Promise<boolean> {
+	try {
+		await inventoryCellularAuthority("verify");
+		await settlePendingMutationRemovals();
+		const damaged = await listUnreadableSlots();
+		observe(damaged);
+		if (damaged.length > 0) return false;
+		await refreshMutationBlocks();
+		return true;
+	} catch (error) {
+		observe([]);
+		throw error;
+	}
 }
 
 export interface MutationRecoveryOptions {
@@ -266,10 +282,13 @@ export async function initMutationRecovery(
 	stopMutationRecovery();
 	beginRecoveryBarrier();
 	consumeRecoveryBarrierRaise();
-	const summary = await runMutationReplay();
+	const damage = startMutationDamageMonitor();
+	const summary = await runMutationReplay(damage.observe);
 	const deps: MutationRecoveryDeps = {
-		replay: async () => (await runMutationReplay()).unreadable === 0,
-		verify: journalReadsCompletely,
+		replay: async () =>
+			(await runMutationReplay(damage.observe)).unreadable === 0,
+		verify: () => journalReadsCompletely(damage.observe),
+		waitForOperator: damage.waitForOperator,
 		sleep: options.sleep ?? sleepUnlessAborted,
 	};
 	startMutationRecovery();

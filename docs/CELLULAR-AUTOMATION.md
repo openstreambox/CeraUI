@@ -5,9 +5,8 @@
 For an existing automatic profile on an admitted modem/firmware transport,
 recognized subscription evidence selects a stored APN. The IP family request is
 the one the box already uses for that SIM (IPv4v6 on carriers known to be
-IPv6-only, otherwise the IPv4 request it always made). The cellular
-poll owner applies it under the modem lifecycle lease and a durable inverse
-journal. It verifies the settings after the write. Manual profiles, unknown
+IPv6-only, otherwise the IPv4 request it always made). The box records the previous settings before applying the change, holds off
+other changes to that modem, and verifies the settings after the write. Manual profiles, unknown
 subscriptions, unqualified carriers and unknown transport firmware are preserved.
 The profile must match both device and SIM; an operator-only match is insufficient.
 
@@ -70,7 +69,7 @@ any modem state, before any carrier-dependent step.
   reads the stored value, records it as the original and the attempt before any
   setter, writes `"20"` if it differs, reads it back (a mismatch stops before the
   reset) and resets the module. The stream check runs again after the inhibition.
-- The box holds the modem's mutation lease through release of USB control.
+- You can start a stream while the box waits for the modem or checks its USB setting. Once the box is ready to send the reset, it holds new starts until it releases USB control.
   While the unit is absent, the box waits out its recorded 180-second return
   window before sending another modem a USB speed reset. This also applies after restart.
 - The next USB enumeration verifies it at 480 Mbit/s or slower. Two attempts per
@@ -97,9 +96,8 @@ translator itself.
 Un perfil automático existente puede recibir un APN cuando la suscripción se
 reconoce y el transporte del módem y su firmware están admitidos. La familia IP
 que solicita es la que el equipo ya usa para esa SIM (IPv4v6 en operadores que
-solo ofrecen IPv6; si no, la solicitud IPv4 de siempre). El proceso
-celular actualiza los ajustes guardados con exclusión de mutaciones y un registro
-persistente para restaurarlos. Después verifica los valores escritos. Conserva
+solo ofrecen IPv6; si no, la solicitud IPv4 de siempre). El equipo guarda los ajustes anteriores antes de aplicar el cambio, aplaza
+otros cambios en ese módem y verifica los valores escritos. Conserva
 los perfiles manuales, las suscripciones desconocidas, los operadores sin
 calificar y el firmware no admitido. El perfil debe coincidir con el dispositivo
 y con la SIM; coincidir solo con el operador no basta.
@@ -169,7 +167,7 @@ antes de cualquier paso que dependa del operador.
   intento antes de cualquier cambio, escribe `"20"` si es distinto, lo vuelve a
   leer (si no coincide, se detiene antes del reinicio) y reinicia el módulo. La
   comprobación de transmisión se repite tras la inhibición.
-- El equipo reserva el módem hasta que libera el control USB. Si el módem
+- Puedes iniciar una transmisión mientras el equipo espera al módem o comprueba su ajuste USB. Cuando el equipo está listo para enviar el reinicio, aplaza los inicios hasta liberar el control USB. Si el módem
   está ausente, el equipo espera hasta el final del plazo registrado de 180
   segundos antes de enviar a otro módem un reinicio por el cambio de velocidad
   USB. Esto también se aplica después de reiniciar el equipo.
@@ -201,6 +199,17 @@ identify it; otherwise it describes a modem that was unplugged or reconnected.
 The warning clears after verified recovery releases the journal block. Dismissing
 a warning or reusing an interface name cannot release a block. An operation still
 in progress continues to hold new starts.
+
+If the box cannot read a modem recovery record at startup, it retries after 1,
+2 and 4 seconds. It processes readable records for other modems. If the same
+record still cannot be read, the box posts a persistent warning and holds new
+stream starts. Choose **Review recovery record**, then **Clear recovery record**
+to set that record aside. Clearing gives up restoration from its saved settings.
+The box keeps the archived bytes and checks the remaining records before
+admitting Start. During normal operation this check verifies the journal
+without replaying modem commands. A new or repaired record gets a fresh check.
+If the journal directory itself cannot be read or synced, recovery waits for
+working storage.
 
 Bond exclusion uses the current USB descriptor scan's physical path, with the
 same stable-key derivation as modem recovery. Removal immediately invalidates

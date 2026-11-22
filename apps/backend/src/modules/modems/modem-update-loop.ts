@@ -354,7 +354,6 @@ export async function runModemStatusPoll(): Promise<void> {
 	await withModemUpdateLock(() => reconcileModemPresenceLocked(false));
 	// The USB 2 switch is a transport fix for any SIM, so it comes before the
 	// carrier-dependent steps and does not wait for registration.
-	await reconcileReturnedMutationBlocks();
 	const reset = await runUsbSpeedPreparation();
 	const automatic = await runAutomaticCarrierProfiles(reset);
 	await runCellularPreparation(undefined, reset);
@@ -379,6 +378,8 @@ export async function runModemStatusPoll(): Promise<void> {
 		logger.warn("Radio diagnostics unavailable for this poll");
 	}
 	broadcastRadioHealth();
+	// Presence reconciliation must not delay carrier work or radio observations.
+	await reconcileReturnedMutationBlocks();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ import {
 	isRecoveryPending,
 } from "../streaming/recovery-barrier.ts";
 import { reconciledMutationJournalRevision } from "./mutation-blocks.ts";
+import { stopMutationDamageMonitor } from "./mutation-damage.ts";
 import {
 	isMutationJournalRevisionCurrent,
 	mutationJournalRevision,
@@ -41,6 +42,7 @@ export interface MutationRecoveryDeps {
 	/** No hardware rollback; true when bookkeeping and journal/blocks settle. */
 	readonly verify: () => Promise<boolean>;
 	/** Resolves after `ms`, or early once `signal` aborts. */
+	readonly waitForOperator?: () => Promise<void> | undefined;
 	readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
@@ -92,7 +94,11 @@ async function retry(
 ): Promise<void> {
 	try {
 		for (let delay = MUTATION_RECOVERY_BASE_MS; ; ) {
-			await deps.sleep(delay, own.signal);
+			const confirmation = deps.waitForOperator?.();
+			if (confirmation) {
+				await confirmation;
+				delay = MUTATION_RECOVERY_BASE_MS;
+			} else await deps.sleep(delay, own.signal);
 			if (own.signal.aborted || !isRecoveryPending()) return;
 			consumeRecoveryBarrierRaise();
 			const revision = mutationJournalRevision();
@@ -135,6 +141,7 @@ export function scheduleMutationRecovery(
 
 export function stopMutationRecovery(): void {
 	stopped = true;
+	stopMutationDamageMonitor();
 	running?.abort();
 	running = undefined;
 }

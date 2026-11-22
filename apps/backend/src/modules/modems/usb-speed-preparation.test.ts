@@ -525,20 +525,73 @@ for (const guard of ["boot replay", "quarantine", "mode write"] as const) {
 	});
 }
 
-test("Start cannot acquire admission between inhibition and USB reset", async () => {
+test("Start wins during slow inhibition without consuming a reset or releasing the modem key", async () => {
 	const b = box();
-	let startAdmitted: boolean | undefined;
-	await runUsbSpeedPreparation({
+	const inhibit = Promise.withResolvers<void>();
+	const entered = Promise.withResolvers<void>();
+	const run = runUsbSpeedPreparation({
 		...b.deps,
 		acquire: async (target) => {
-			const start = tryAcquireLifecycle("streaming");
-			startAdmitted = start.admitted;
-			if (start.admitted) start.lease.release();
+			entered.resolve();
+			await inhibit.promise;
 			return b.deps.acquire(target);
 		},
 	});
-	expect(b.calls).toContain("reset 0");
-	expect(startAdmitted).toBe(false);
+	await entered.promise;
+	const start = tryAcquireLifecycle("streaming");
+	try {
+		expect(start.admitted).toBe(true);
+		expect(tryAcquireModemMutation("key-0").admitted).toBe(false);
+		inhibit.resolve();
+		expect(await run).toEqual([]);
+		expect(b.records.size).toBe(0);
+		expect(b.calls).not.toContain("reset 0");
+	} finally {
+		inhibit.resolve();
+		if (start.admitted) start.lease.release();
+	}
+});
+
+test("Start is refused through USB reset and pending control release", async () => {
+	const b = box();
+	const closing = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	const run = runUsbSpeedPreparation({
+		...b.deps,
+		acquire: async (target) => {
+			const control = await b.deps.acquire(target);
+			return {
+				...control,
+				close: async () => {
+					closing.resolve();
+					await release.promise;
+					await control.close();
+				},
+			};
+		},
+	});
+	await closing.promise;
+	try {
+		expect(b.calls).toContain("reset 0");
+		const start = tryAcquireLifecycle("streaming");
+		if (start.admitted) start.lease.release();
+		expect(start.admitted).toBe(false);
+	} finally {
+		release.resolve();
+		await run;
+	}
+	const start = tryAcquireLifecycle("streaming");
+	if (start.admitted) start.lease.release();
+	expect(start.admitted).toBe(true);
+});
+
+test("a negative wall-clock age expires the USB return and takeover cooldown", () => {
+	const future = base.now + 86_400_000;
+	expect(
+		decideUsbSpeed({ ...base, record: record({ started: future }) }).update
+			?.phase,
+	).toBe("failed");
+	expect(decideUsbSpeed({ ...base, abortedAt: future }).action).toBe("write");
 });
 
 test("another modem waits through an absent unit's durable return window after restart", async () => {
@@ -554,6 +607,9 @@ test("another modem waits through an absent unit's durable return window after r
 		};
 		expect(await runUsbSpeedPreparation({ ...a.deps, ...disk })).toEqual([0]);
 		resetUsbSpeedPreparationForTest();
+		expect(await disk.missingUnitReturning(new Set(), a.deps.now() - 1)).toBe(
+			false,
+		);
 		const b = box({ units: 2 });
 		const remaining = { ...b.deps, ...disk, ids: () => [1] };
 		b.advance(USB_SPEED_RETURN_WINDOW_MS - 1);

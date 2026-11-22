@@ -185,6 +185,10 @@ export const defaultMutationJournalDeps: MutationJournalDeps = {
 
 let activeDeps: MutationJournalDeps = defaultMutationJournalDeps;
 
+export function currentMutationJournalDeps(): MutationJournalDeps {
+	return activeDeps;
+}
+
 export function setMutationJournalDeps(
 	deps: Partial<MutationJournalDeps>,
 ): void {

@@ -247,6 +247,7 @@ export function notificationRemove(name: string) {
 // carries a semantic dismissalKey; a keyless notification is merely removed.
 export function notificationDismiss(name: string) {
 	const pn = persistentNotifications.get(name);
+	if (pn?.action?.kind === "confirm-modem-record") return { remove: [] };
 	pn?.onDismiss?.();
 	if (pn?.beforeDismiss) {
 		pn.beforeDismiss();

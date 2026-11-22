@@ -25,6 +25,7 @@ import {
 } from "../modules/modems/modem-update-loop.ts";
 import {
 	PRESENCE_UNKNOWN,
+	reconcileReturnedMutationBlocks,
 	refreshMutationBlocks,
 	resetMutationBlockDeps,
 	setMutationBlockDeps,
@@ -46,6 +47,7 @@ import {
 } from "../modules/modems/mutation-rollback.ts";
 import {
 	getMutationBlocks,
+	heldModemMutations,
 	resetLifecycleInterlock,
 	streamingBlockingMutation,
 	tryAcquireModemJournalKey,
@@ -137,6 +139,7 @@ function useDevice(
 			),
 	});
 	setMutationBlockDeps({
+		confirmPresent: async (key) => current !== undefined && key === KEY,
 		listEntries: () => listMutationEntries(),
 		presentStableKeys: () =>
 			Promise.resolve(
@@ -316,6 +319,54 @@ describe("crash-point replay — one test per journal state", () => {
 		} finally {
 			setModemPresenceDepsForTest(null);
 		}
+	});
+
+	test("one census screens three retained slots, then a targeted read under each positive key rejects a reused path", async () => {
+		const keys = [KEY, "usb:b", "usb:c"];
+		useDevice(undefined);
+		for (const stableKey of keys)
+			await commitMutationEntry({
+				...seed("device-absent-quarantine"),
+				stableKey,
+			});
+		await initMutationRecovery();
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		let scans = 0;
+		const targeted: string[] = [];
+		setMutationBlockDeps({
+			presentStableKeys: async (paths) => {
+				scans++;
+				expect(heldModemMutations()).toEqual([]);
+				paths?.set(KEY, "port-a");
+				paths?.set("usb:b", "reused-port");
+				started.resolve();
+				await release.promise;
+				return new Set([KEY, "usb:b"]);
+			},
+			confirmPresent: async (key, path) => {
+				expect(heldModemMutations()).toEqual([key]);
+				targeted.push(key);
+				return path === "port-a" && key === KEY;
+			},
+		});
+		const run = reconcileReturnedMutationBlocks();
+		try {
+			await started.promise;
+			expect(reconcileReturnedMutationBlocks()).toBe(run);
+			expect(heldModemMutations()).toEqual([]);
+		} finally {
+			release.resolve();
+			await run;
+		}
+		expect(scans).toBe(1);
+		expect(targeted.sort()).toEqual([KEY, "usb:b"].sort());
+		expect((await readMutationEntry(KEY))?.state).toBe("failed");
+		for (const key of ["usb:b", "usb:c"])
+			expect((await readMutationEntry(key))?.state).toBe(
+				"device-absent-quarantine",
+			);
+		expect(isRecoveryPending()).toBe(false);
 	});
 
 	test("quarantine + still absent ⇒ unchanged", async () => {

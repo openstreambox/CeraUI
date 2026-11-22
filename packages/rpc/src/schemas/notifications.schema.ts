@@ -42,9 +42,17 @@ export const notificationCommandActionSchema = z.object({
 	labelKey: z.string(),
 });
 
+// Clearing an unreadable rollback record requires a separate human confirmation.
+export const modemRecoveryClearActionSchema = z.object({
+	schema: z.literal(1),
+	kind: z.literal('confirm-modem-record'),
+	token: z.uuid(),
+	labelKey: z.string(),
+});
 export const notificationActionSchema = z.discriminatedUnion('kind', [
 	notificationNavigateActionSchema,
 	notificationCommandActionSchema,
+	modemRecoveryClearActionSchema,
 ]);
 export type NotificationAction = z.infer<typeof notificationActionSchema>;
 

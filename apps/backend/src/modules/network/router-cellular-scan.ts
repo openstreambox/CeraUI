@@ -271,9 +271,9 @@ function decimal(raw: string | undefined): number | undefined {
  * posture on the 5 s netif cadence: the entry is a small line-oriented text file
  * whose property lines are prefixed `E:`.
  */
-async function readUdevDeviceProperties(
+export async function readUdevDeviceProperties(
 	deviceDir: string,
-	deps: RouterCellularScanDeps,
+	deps: RouterCellularScanDeps = defaultRouterCellularScanDeps,
 ): Promise<{
 	databaseVendor?: string;
 	databaseModel?: string;
