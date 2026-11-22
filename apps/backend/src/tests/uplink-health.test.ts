@@ -163,6 +163,66 @@ describe("uplink health exceptional evidence", () => {
 	});
 });
 
+describe("uplink health evidence provenance", () => {
+	const observe = (
+		engine: UplinkHealthEngine,
+		outcome: UplinkHealthOutcome,
+		now: number,
+	) => engine.observe({ iface: IFACE, kind: "cellular", outcome, now });
+
+	it("starts a probe run only on a probe success and never on sender rows", () => {
+		const engine = new UplinkHealthEngine();
+		for (let now = 0; now <= 30_000; now += 5_000)
+			observe(engine, "passive_healthy", now);
+		// Healthy sender rows still count for the health state.
+		expect(engine.get(IFACE)).toMatchObject({
+			state: "up",
+			probes: { successes: 7, failures: 0 },
+			signals: { passiveAt: 30_000 },
+		});
+		expect(engine.get(IFACE)?.signals.activeAt).toBeUndefined();
+		expect(engine.get(IFACE)?.signals.probeSince).toBeUndefined();
+		observe(engine, "success", 35_000);
+		expect(engine.get(IFACE)?.signals).toEqual({
+			passiveAt: 30_000,
+			activeAt: 35_000,
+			probeSince: 35_000,
+		});
+	});
+
+	it("keeps a run across healthy sender rows and ends it on any worse evidence", () => {
+		for (const outcome of [
+			"failure",
+			"captive_portal",
+			"passive_degraded",
+			"definitive_loss",
+		] as const) {
+			const engine = new UplinkHealthEngine();
+			observe(engine, "success", 0);
+			observe(engine, "passive_healthy", 2_000);
+			observe(engine, "success", 5_000);
+			expect(engine.get(IFACE)?.signals.probeSince).toBe(0);
+			observe(engine, outcome, 7_000);
+			expect(engine.get(IFACE)?.signals.probeSince).toBeUndefined();
+			observe(engine, "success", 10_000);
+			expect(engine.get(IFACE)?.signals.probeSince).toBe(10_000);
+		}
+	});
+
+	it("restarts a run after a gap longer than the telemetry expiry", () => {
+		const engine = new UplinkHealthEngine();
+		observe(engine, "success", 0);
+		observe(engine, "success", UPLINK_HEALTH_CONFIG.telemetryExpiryMs);
+		expect(engine.get(IFACE)?.signals.probeSince).toBe(0);
+		const resumed = 2 * UPLINK_HEALTH_CONFIG.telemetryExpiryMs + 1;
+		observe(engine, "success", resumed);
+		expect(engine.get(IFACE)?.signals.probeSince).toBe(resumed);
+		engine.restartProbeStreak(IFACE);
+		expect(engine.get(IFACE)?.signals.probeSince).toBeUndefined();
+		expect(engine.get(IFACE)?.signals.activeAt).toBe(resumed);
+	});
+});
+
 describe("uplink health runtime", () => {
 	it("uses passive SRTLA telemetry without spawning an active probe while streaming", async () => {
 		// Given

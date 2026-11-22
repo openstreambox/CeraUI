@@ -48,6 +48,11 @@ async function save(event: SubmitEvent) {
 	<option value="wired-only">{m['network.sharing.policy.wired']()}</option>
 	<option value="cellular-only">{m['network.sharing.policy.cellular']()}</option>
 	</select></label>
+	<label>{m['network.sharing.policy.selection']()}
+	<select bind:value={policy.selection} class="rounded border bg-background p-2" data-testid="sharing-policy-selection">
+	<option value="single">{m['network.sharing.policy.single']()}</option>
+	<option value="spread">{m['network.sharing.policy.spread']()}</option>
+	</select></label>
 	<p class="text-xs">{m['network.sharing.policy.priorities']()}</p>
 	<label>{m['network.sharing.policy.wiredPriority']()} <input type="number" min="0" max="100" required bind:value={policy.priorities.wired} class="w-20 rounded border p-2" /></label>
 	<label>{m['network.sharing.policy.cellularPriority']()} <input type="number" min="0" max="100" required bind:value={policy.priorities.cellular} class="w-20 rounded border p-2" /></label>

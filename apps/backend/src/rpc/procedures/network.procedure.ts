@@ -18,6 +18,7 @@ import {
 	setEthernetRoleOutputSchema,
 	setIngestEnabledInputSchema,
 	setIngestEnabledOutputSchema,
+	setSharingPolicyInputSchema,
 	sharingPolicySchema,
 } from "@ceraui/rpc/schemas";
 import { os } from "@orpc/server";
@@ -285,7 +286,7 @@ export const getSharingPolicyProcedure = authedProcedure
 	.output(sharingPolicySchema)
 	.handler(() => sharingPolicyOwner.get());
 export const setSharingPolicyProcedure = authedProcedure
-	.input(sharingPolicySchema)
+	.input(setSharingPolicyInputSchema)
 	.output(sharingPolicySchema)
 	.handler(async ({ input }) => {
 		if (!shouldUseMocks() && !(await hasCapability("client-internet")))

@@ -458,6 +458,42 @@ describe("honest bands", () => {
 		]);
 	});
 
+	it("marks the uplinks the applied ruleset offers to new client flows", () => {
+		const records = uplinks(
+			{ iface: "eth0", kind: "ethernet" },
+			{ iface: "wwan0" },
+		);
+		const carrying = (steering: UplinkSteeringStatus | undefined) =>
+			section({ steering, uplinks: records }).rows.map((row) => [
+				row.iface,
+				row.carriesClients,
+			]);
+		expect(
+			carrying(
+				uplinkSteeringStatusSchema.parse({
+					state: "available",
+					clientUplinks: ["wwan0"],
+				}),
+			),
+		).toEqual([
+			["eth0", false],
+			["wwan0", true],
+		]);
+		// Older backends and unavailable steering claim nothing.
+		for (const steering of [
+			uplinkSteeringStatusSchema.parse({ state: "available" }),
+			uplinkSteeringStatusSchema.parse({
+				state: "steering_unavailable",
+				reason: "mark_collision",
+			}),
+			undefined,
+		]) {
+			expect(carrying(steering).every(([, carries]) => carries === false)).toBe(
+				true,
+			);
+		}
+	});
+
 	it("renders no steering band while steering is available or unreported", () => {
 		expect(
 			bandKinds(

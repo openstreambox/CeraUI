@@ -233,6 +233,9 @@ export class UplinkHealthRuntimeCore {
 					generation: ++this.#generation,
 					round: this.#round,
 				});
+				// Probe evidence belongs to one incarnation, however the change
+				// was noticed (event or tick roster).
+				if (previous) this.#engine.restartProbeStreak(iface);
 				// A tick's initial roster is a sample, not an identity-change event.
 				if (changedAt !== undefined) {
 					this.#engine.restartRecovery(iface, changedAt);
@@ -288,17 +291,19 @@ export class UplinkHealthRuntimeCore {
 				link.stale ||
 				link.rtt_ms >= UPLINK_HEALTH_CONFIG.passiveRttDegradedMs ||
 				nakDegraded;
+			// A healthy row is passive evidence, never a probe success: it shows
+			// the relay is reachable, not that the uplink carries general internet.
 			const outcome = expired
 				? "definitive_loss"
 				: degraded
 					? "passive_degraded"
-					: "success";
+					: "passive_healthy";
 			const previous = observations.get(link.iface);
 			// Multiple sender connections may share an interface. Its worst evidence
 			// wins once per round; a clean sibling cannot overwrite a losing path.
 			if (
 				previous !== "definitive_loss" &&
-				(outcome !== "success" || !previous)
+				(outcome !== "passive_healthy" || !previous)
 			) {
 				observations.set(link.iface, outcome);
 			}

@@ -32,7 +32,13 @@ export interface UplinkSteeringCoordinatorDeps {
 
 export class UplinkSteeringCoordinator {
 	readonly #deps: UplinkSteeringCoordinatorDeps;
+	/** Last state that was applied and read back; what status reports. */
 	#applied: PreparedSteeringState | undefined;
+	/**
+	 * Last state whose apply completed, even if its readback then failed.
+	 * Its routes and marks are installed, so the next apply retires from it.
+	 */
+	#installed: PreparedSteeringState | undefined;
 	#dirty = false;
 	#applyUncertain = false;
 	#running: Promise<void> | undefined;
@@ -64,6 +70,17 @@ export class UplinkSteeringCoordinator {
 
 	appliedState(): PreparedSteeringState | undefined {
 		return this.#applied;
+	}
+
+	/**
+	 * The applier reports the state whose selection and route support it left
+	 * live, also from inside a failed apply (a published transition whose
+	 * rollback failed, or a restored previous state). The next apply retires
+	 * from it. `undefined` (sharing switched off) falls back to the verified
+	 * state.
+	 */
+	markInstalled(state: PreparedSteeringState | undefined): void {
+		this.#installed = state;
 	}
 
 	stop(): void {
@@ -115,11 +132,13 @@ export class UplinkSteeringCoordinator {
 					(this.#deps.now ?? Date.now)() >= this.#lastFailure.nextAttemptAt
 				) {
 					if (this.#applyUncertain || stateKey(this.#applied) !== desiredKey) {
-						await this.#deps.apply(this.#applied, desired);
+						await this.#deps.apply(this.#installed ?? this.#applied, desired);
+						this.#installed = desired;
 					}
 					await this.#deps.verifyApplied?.(desired);
 					this.#applyUncertain = false;
 					this.#applied = desired;
+					this.#installed = desired;
 					this.#lastFailure = undefined;
 					this.#deps.publishAvailability({ available: true });
 					retryIndex = 0;

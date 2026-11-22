@@ -1,9 +1,10 @@
 import { logger } from "../../../helpers/logger.ts";
 import { mintLinkId } from "../../modems/physical-identity.ts";
-import type {
-	ShareRulesetState,
-	SteeringUplink,
-	UplinkFlowsResetEvent,
+import {
+	type ShareRulesetState,
+	SteeringUnavailableError,
+	type SteeringUplink,
+	type UplinkFlowsResetEvent,
 } from "./contracts.ts";
 import { buildShareRuleset } from "./ruleset.ts";
 
@@ -44,6 +45,21 @@ export interface UplinkSteeringApplierDeps {
 	flushConntrack(mark: number): Promise<void>;
 	setIpForwarding(enabled: boolean): Promise<void>;
 	publishFlowsReset(event: UplinkFlowsResetEvent): void;
+	/**
+	 * Called whenever the client uplink selection that is live changes: as
+	 * soon as a reload carries `next`'s selectable uplinks (the exclusion and
+	 * transition rulesets already do), and with `previous` when a rollback
+	 * restored it. `undefined` means client forwarding is off. A failed apply
+	 * therefore still reports what clients actually use.
+	 */
+	selectionInstalled?(state: PreparedSteeringState | undefined): void;
+	/**
+	 * Asked right before each reload that would install `next`'s selection.
+	 * `false` (the probe evidence for a newly selected uplink expired while
+	 * routes were planned or provisioned) aborts the apply, which rolls back
+	 * and is retried with a fresh plan.
+	 */
+	selectionQualified?(state: PreparedSteeringState): boolean;
 }
 
 export class UplinkSteeringApplier {
@@ -67,6 +83,16 @@ export class UplinkSteeringApplier {
 		let activatedService = false;
 		let stateCommitted = false;
 		let transitionPublished = false;
+		const installed = (state: PreparedSteeringState | undefined) =>
+			this.#deps.selectionInstalled?.(state);
+		const assertQualified = () => {
+			if (this.#deps.selectionQualified?.(next) === false)
+				throw new SteeringUnavailableError(
+					"ruleset_reload_failed",
+					"client uplink evidence expired before install",
+				);
+		};
+		let removedRoutes: UplinkRoutePlan[] = [];
 		try {
 			const recoveredRoutes =
 				previous === undefined ? await this.#deps.discoverRoutes() : [];
@@ -78,10 +104,7 @@ export class UplinkSteeringApplier {
 				provisioned.push(await this.#deps.ensureRoute(route));
 			}
 
-			const removedRoutes = removedRoutePlans(
-				previous?.routes ?? [],
-				next.routes,
-			);
+			removedRoutes = removedRoutePlans(previous?.routes ?? [], next.routes);
 			// Policy exclusions retire client conntracks while retaining all
 			// healthy route support, including host source-routing rules.
 			const excluded =
@@ -91,6 +114,7 @@ export class UplinkSteeringApplier {
 						!removedRoutes.some((route) => route.mark === uplink.mark),
 				) ?? [];
 			if (excluded.length > 0 && previous !== undefined) {
+				assertQualified();
 				await this.#deps.applyRuleset(
 					buildShareRuleset({
 						clientZones: next.clientZones,
@@ -101,6 +125,9 @@ export class UplinkSteeringApplier {
 					}),
 					"reload",
 				);
+				// New flows already follow next's selection.
+				transitionPublished = true;
+				installed(next);
 				for (const uplink of excluded) {
 					await this.#deps.flushConntrack(uplink.mark);
 					this.#deps.publishFlowsReset({
@@ -111,8 +138,10 @@ export class UplinkSteeringApplier {
 			}
 			if (removedRoutes.length > 0 && previous !== undefined) {
 				const transition = transitionState(previous, next, removedRoutes);
+				assertQualified();
 				await this.#deps.applyRuleset(buildShareRuleset(transition), "reload");
 				transitionPublished = true;
+				installed(next);
 				for (const route of removedRoutes) {
 					await this.#deps.flushConntrack(route.mark);
 					await this.#deps.removeRoute(route);
@@ -127,51 +156,70 @@ export class UplinkSteeringApplier {
 			if (!isActive) {
 				await this.#deps.deactivateSharing();
 				stateCommitted = true;
+				installed(next);
 				await this.#retireRecoveredRoutes(staleRecoveredRoutes);
 				await this.#deps.setIpForwarding(false);
 			} else {
 				const mode = wasActive ? "reload" : "activate";
+				assertQualified();
 				await this.#deps.applyRuleset(buildShareRuleset(next), mode);
 				activatedService = mode === "activate";
 				stateCommitted = true;
+				installed(next);
 				await this.#retireRecoveredRoutes(staleRecoveredRoutes);
 				if (!wasActive) await this.#deps.setIpForwarding(true);
 			}
 			this.#committedRoutes = next.routes;
 		} catch (error) {
 			const rollbackErrors: unknown[] = [];
+			// Whether next's selection is what new client flows use right now.
+			let nextLive = stateCommitted || transitionPublished;
 			if (activatedService) {
 				try {
 					await this.#deps.deactivateSharing();
+					installed(previous);
+					nextLive = false;
 				} catch (deactivateError) {
 					rollbackErrors.push(deactivateError);
 				}
 			}
-			if (!stateCommitted) {
-				for (const route of removedSupport.reverse()) {
+			if (!stateCommitted && transitionPublished && previous !== undefined) {
+				// Route support first, so the restored ruleset finds its routes.
+				const restored: UplinkRoutePlan[] = [];
+				for (const route of [...removedSupport].reverse()) {
 					try {
 						await this.#deps.ensureRoute(route);
+						restored.push(route);
 					} catch (restoreError) {
 						rollbackErrors.push(restoreError);
 					}
 				}
-				if (transitionPublished && previous !== undefined) {
-					try {
-						await this.#deps.applyRuleset(
-							buildShareRuleset(previous),
-							"reload",
-						);
-					} catch (restoreError) {
-						rollbackErrors.push(restoreError);
-					}
+				try {
+					await this.#deps.applyRuleset(buildShareRuleset(previous), "reload");
+					installed(previous);
+					nextLive = false;
+				} catch (restoreError) {
+					rollbackErrors.push(restoreError);
+					// Next stays live; the support put back for previous is not
+					// part of it and is retired with the pending cleanup.
+					this.#queueRetirements(restored);
 				}
 			}
-			for (const item of provisioned.reverse()) {
-				if (!item.changed) continue;
-				try {
-					await this.#deps.rollbackRoute(item);
-				} catch (rollbackError) {
-					rollbackErrors.push(rollbackError);
+			if (nextLive) {
+				// Keep next's route support: its selection carries new flows.
+				// Routes next drops that were not removed yet retire later.
+				this.#committedRoutes = next.routes;
+				this.#queueRetirements(
+					removedRoutes.filter((route) => !removedSupport.includes(route)),
+				);
+			} else {
+				for (const item of provisioned.reverse()) {
+					if (!item.changed) continue;
+					try {
+						await this.#deps.rollbackRoute(item);
+					} catch (rollbackError) {
+						rollbackErrors.push(rollbackError);
+					}
 				}
 			}
 			if (rollbackErrors.length > 0) {
@@ -181,6 +229,18 @@ export class UplinkSteeringApplier {
 				);
 			}
 			throw error;
+		}
+	}
+
+	#queueRetirements(routes: readonly UplinkRoutePlan[]): void {
+		for (const route of routes) {
+			const key = retirementWorkKey(route);
+			if (
+				!this.#pendingRetirements.some(
+					(pending) => retirementWorkKey(pending) === key,
+				)
+			)
+				this.#pendingRetirements.push(route);
 		}
 	}
 

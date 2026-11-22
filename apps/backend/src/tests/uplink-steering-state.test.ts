@@ -541,7 +541,16 @@ describe("sharing selector on the live state builder", () => {
 				eth0: netif("192.0.2.2"),
 				wwan0: netif("198.51.100.2"),
 			}),
-			health: () => [],
+			// Both confirmed by the general-internet probe, as single selection
+			// requires before it picks an uplink.
+			now: () => 1_000,
+			health: () =>
+				["eth0", "wwan0"].map((iface) => ({
+					...health(iface, "up", 100),
+					staleAt: 16_000,
+					probes: { successes: 1, failures: 0 },
+					signals: { activeAt: 1_000, probeSince: 1_000 },
+				})),
 		});
 		const initial = await readReadySteeringState(h);
 		policy = { ...policy, mode: "cellular-only" };

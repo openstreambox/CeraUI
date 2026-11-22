@@ -23,13 +23,19 @@ import {
 } from "../router-cellular-scan.ts";
 import type { UplinkHealthRecord } from "../uplink-health/model.ts";
 import { getUplinksMessage } from "../uplink-health/state.ts";
+import {
+	type ActiveUplinkSelector,
+	activeUplinkSelector,
+	applyClientUplinkPolicy,
+	recordSelectorPlan,
+} from "./active-uplink.ts";
 import type { PreparedSteeringState, UplinkRoutePlan } from "./applier.ts";
 import {
 	type ClientZone,
 	SteeringUnavailableError,
 	type SteeringUplink,
 } from "./contracts.ts";
-import { applySharingPolicy, sharingPolicyOwner } from "./policy.ts";
+import { sharingPolicyOwner } from "./policy.ts";
 import { planUplinkRoute, type UplinkRouteCandidate } from "./route-manager.ts";
 import { stableUplinkMark } from "./ruleset.ts";
 import { cidrsOverlap, subnetCidr } from "./subnet.ts";
@@ -38,6 +44,9 @@ type NetworkSnapshot = Record<string, NetworkInterface | undefined>;
 
 export interface SteeringStateBuilderDeps {
 	readonly policy?: () => SharingPolicy;
+	/** Holds the single-active choice between reconciles. */
+	readonly selector?: ActiveUplinkSelector;
+	readonly now?: () => number;
 	readonly netifReady: () => boolean;
 	readonly zonesReady: () => boolean;
 	readonly identityCovered: (ifname: string) => boolean;
@@ -109,9 +118,6 @@ export async function readDesiredSteeringState(
 	const { candidates: rawCandidates, identityPending } = collected;
 	if (!context.hasAppliedState && identityPending)
 		return { pending: true, netifReady: true, reason: "identity" };
-	const candidates = deps.policy
-		? applySharingPolicy(rawCandidates, deps.policy())
-		: rawCandidates;
 	assertNoOverlap(zones, rawCandidates);
 	assertDistinctMarks(rawCandidates);
 	const routes: UplinkRoutePlan[] = [];
@@ -126,11 +132,35 @@ export async function readDesiredSteeringState(
 			}),
 		);
 	}
-	return {
+	// Planning only: the runtime commits the selector plan once installed.
+	// The clock is read after route planning, which awaits OS calls, so the
+	// evidence is judged when the plan is ready; the applier checks it again
+	// right before installing.
+	const plan = deps.policy
+		? applyClientUplinkPolicy(
+				rawCandidates,
+				deps.selector ?? activeUplinkSelector,
+				{
+					now: (deps.now ?? Date.now)(),
+					policy: deps.policy(),
+					health,
+					interfaces: new Set(
+						Object.entries(interfaces)
+							.filter(([, entry]) => entry?.ip !== undefined)
+							.map(([ifname]) => ifname),
+					),
+				},
+			)
+		: undefined;
+	const candidates = plan?.candidates ?? rawCandidates;
+	const prepared: PreparedSteeringState = {
 		clientZones: zones,
 		uplinks: candidates.map((candidate) => candidate.uplink),
 		routes,
 	};
+	if (plan !== undefined)
+		recordSelectorPlan(prepared, plan.next, plan.validUntil);
+	return prepared;
 }
 
 function collectClientZones(

@@ -1,10 +1,16 @@
-import { type SharingPolicy, sharingPolicySchema } from "@ceraui/rpc/schemas";
+import {
+	type SetSharingPolicyInput,
+	type SharingPolicy,
+	setSharingPolicyInputSchema,
+	sharingPolicySchema,
+} from "@ceraui/rpc/schemas";
 import type { SteeringUplink } from "./contracts.ts";
 
 export const DEFAULT_SHARING_POLICY: SharingPolicy = {
 	mode: "automatic",
 	priorities: { wired: 0, cellular: 0, wifi: 0 },
 	administrativelyDown: [],
+	selection: "single",
 };
 
 export function sharingUplinkKind(
@@ -15,15 +21,23 @@ export function sharingUplinkKind(
 	return "wired";
 }
 
+/** Mode and administrative-down filters, shared by both selection styles. */
+export function sharingPolicyAllows(
+	uplink: Pick<SteeringUplink, "ifname">,
+	policy: SharingPolicy,
+): boolean {
+	if (policy.administrativelyDown.includes(uplink.ifname)) return false;
+	const kind = sharingUplinkKind(uplink.ifname);
+	return policy.mode === "automatic" || policy.mode === `${kind}-only`;
+}
+
 /** Exclusions retire flows; priority-only changes retain support for old marks. */
 export function applySharingPolicy<
 	T extends { readonly uplink: SteeringUplink },
 >(candidates: readonly T[], policy: SharingPolicy): T[] {
-	const eligible = candidates.filter(({ uplink }) => {
-		if (policy.administrativelyDown.includes(uplink.ifname)) return false;
-		const kind = sharingUplinkKind(uplink.ifname);
-		return policy.mode === "automatic" || policy.mode === `${kind}-only`;
-	});
+	const eligible = candidates.filter(({ uplink }) =>
+		sharingPolicyAllows(uplink, policy),
+	);
 	const best = Math.min(
 		...eligible
 			.filter(({ uplink }) => uplink.selectable && uplink.weight > 0)
@@ -51,12 +65,16 @@ export class SharingPolicyOwner {
 		return structuredClone(this.#desired);
 	}
 	set(
-		input: SharingPolicy,
+		input: SetSharingPolicyInput,
 		reconcile: () => Promise<void>,
 	): Promise<SharingPolicy> {
-		const next = sharingPolicySchema.parse(input);
+		const parsed = setSharingPolicyInputSchema.parse(input);
 		const operation = this.#tail.then(async () => {
-			this.#desired = next;
+			// An omitted selection (older client) keeps the current one.
+			this.#desired = sharingPolicySchema.parse({
+				...parsed,
+				selection: parsed.selection ?? this.#desired.selection,
+			});
 			await reconcile();
 			return this.get();
 		});
