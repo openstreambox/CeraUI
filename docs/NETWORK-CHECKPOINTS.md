@@ -149,9 +149,13 @@ works around, and `PASS` lines for:
   undone with the profile files unchanged, and a confirmation from a new
   session over the port writes shared mode to disk and survives a restart;
 - a request to wan0's address routed in over lan0 is attributed to lan0.
-- the read-only Ethernet Auto classifier sees a client DHCP Discover on a
-  veth, prefers a late DHCP lease, and clears the result on carrier loss.
-  The lease's dish-like address alone yields an unconfirmed hint.
+- the Ethernet Auto fixture distinguishes outgoing DHCP from a peer Discover
+  using direction-filtered captures, prefers a later NetworkManager lease,
+  and supplies retained upstream evidence after that lease is removed with
+  carrier still up. A replug ignores the old lease observation and capture.
+  A dish-like lease address alone yields an unconfirmed hint. The fixture
+  marks the two cable attachments explicitly. Unit tests exercise status
+  reply scope using synthetic inputs.
 
 Run it only in a disposable container with no device passthrough and no host
 system-directory mounts, with `NET_ADMIN` and `SYS_ADMIN` (for one client

@@ -8,25 +8,32 @@ export type EthernetPortPolicy = EthernetRole | "auto";
 
 type StarlinkStatus = "dish" | "router";
 
+interface EthernetRouteScope {
+	readonly ifindex: number;
+	readonly attachment: number;
+	readonly routeGeneration: number;
+}
+
 /**
  * Read-side evidence for one port and one continuous cable attachment.
- * The observer must discard old observations on carrier loss or port replacement.
+ * Discard old observations on carrier loss or port replacement, and assign
+ * a new attachment generation even if the ifindex is reused. Advance the route
+ * generation for every effective route or source change, even with carrier up.
  */
-export interface EthernetDiscovery {
-	readonly attachment: number;
+export interface EthernetDiscovery extends EthernetRouteScope {
 	readonly carrier: boolean;
 	readonly window: "listening" | "complete" | "unavailable";
-	/** A DHCP server response, or a lease acquired earlier on this attachment. */
-	readonly upstreamDhcpSeen: boolean;
-	/** Positive-lifetime IPv6 default router observed on this attachment. */
-	readonly ipv6RouterSeen: boolean;
+	/**
+	 * The observer latches external DHCP (response or lease) or a
+	 * positive-lifetime IPv6 default router until the attachment ends.
+	 */
+	readonly upstreamSeen: boolean;
 	/** An ingress Discover or Request from a peer, excluding our own DHCP client. */
 	readonly peerDhcpRequestSeen: boolean;
 	/** Current DHCPv4 lease from this attachment, if any. */
 	readonly lease?: { readonly address: string; readonly gateway?: string };
-	/** A decoded status reply from a read constrained to this port and attachment. */
-	readonly starlinkStatus?: {
-		readonly attachment: number;
+	/** A decoded status reply tagged with the bound route's scope at dispatch. */
+	readonly starlinkStatus?: EthernetRouteScope & {
 		readonly kind: StarlinkStatus;
 		readonly host: string;
 		readonly port: number;
@@ -46,7 +53,9 @@ type StarlinkIdentification = "unknown" | "possible" | "identified";
 function identifyStarlink(evidence: EthernetDiscovery): StarlinkIdentification {
 	const status = evidence.starlinkStatus;
 	if (
-		status?.attachment === evidence.attachment &&
+		status?.ifindex === evidence.ifindex &&
+		status.attachment === evidence.attachment &&
+		status.routeGeneration === evidence.routeGeneration &&
 		((status.kind === "dish" &&
 			status.host === DISH_HOST &&
 			status.port === 9200) ||
@@ -73,9 +82,7 @@ function detectDirection(
 ): Direction {
 	if (policy !== "auto") return { kind: "manual", role: policy };
 	if (!evidence.carrier) return { kind: "disconnected" };
-	if (evidence.lease || evidence.upstreamDhcpSeen || evidence.ipv6RouterSeen) {
-		return { kind: "uplink" };
-	}
+	if (evidence.upstreamSeen) return { kind: "uplink" };
 	if (evidence.window === "listening") return { kind: "detecting" };
 	if (evidence.window === "complete" && evidence.peerDhcpRequestSeen) {
 		return { kind: "share-candidate" };

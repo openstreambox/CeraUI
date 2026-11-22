@@ -346,11 +346,32 @@ ip link add auto0 type veth peer name c-auto netns contract-client
 ip link set auto0 up
 ip -n contract-client link set c-auto up
 auto() {
-    (cd /var/tmp && LC_ALL=C CERALIVE_NETWORK_CHANGE_SAFETY="${AUTO_FLAG:-1}" bun "$here/ethernet-auto-contract.ts" auto0 "$@")
+    (cd /var/tmp && LC_ALL=C CERALIVE_NETWORK_CHANGE_SAFETY="${AUTO_FLAG:-1}" \
+        CONTRACT_AUTO_STATE="$base/auto-upstream-scope" CONTRACT_AUTO_ATTACHMENT="${AUTO_ATTACHMENT:-1}" \
+        CONTRACT_CAPTURE_ATTACHMENT=1 bun "$here/ethernet-auto-contract.ts" auto0 "$@")
 }
 direction() { auto "$@" | jq -r .direction.kind; }
 [[ $(AUTO_FLAG=0 auto) == null ]]
 [[ $(direction) == unresolved ]]
+timeout 8 tcpdump -lni auto0 -Q out -c 1 -vv 'udp src port 68 and dst port 67' > "$base/auto-outbound" 2> "$base/tcpdump-out.log" &
+out_reader=$!
+timeout 4 tcpdump -lni auto0 -Q in -c 1 -vv 'udp src port 68 and dst port 67' > "$base/auto-inbound" 2> "$base/tcpdump-in.log" &
+in_reader=$!
+for _ in {1..30}; do
+    grep -q 'listening on' "$base/tcpdump-out.log" && grep -q 'listening on' "$base/tcpdump-in.log" && break
+    sleep .1
+done
+grep -q 'listening on' "$base/tcpdump-out.log"
+grep -q 'listening on' "$base/tcpdump-in.log"
+busybox udhcpc -f -n -q -i auto0 -t 1 -T 1 -s /bin/true >/dev/null 2>&1 || true
+wait "$out_reader"
+in_status=0
+wait "$in_reader" || in_status=$?
+[[ $in_status == 124 ]]
+grep -q Discover "$base/auto-outbound"
+[[ $(direction "$base/auto-inbound") == unresolved ]]
+pass 'Ethernet Auto: outgoing DHCP is visible but does not count as a peer request'
+
 timeout 8 tcpdump -lni auto0 -Q in -c 1 -vv 'udp src port 68 and dst port 67' > "$base/auto-discover" 2> "$base/tcpdump.log" &
 reader=$!
 for _ in {1..50}; do grep -q 'listening on' "$base/tcpdump.log" && break; sleep .1; done
@@ -372,9 +393,17 @@ answer=$(auto "$base/auto-discover")
 [[ $(jq -r .direction.kind <<<"$answer") == uplink && $(jq -r .starlink <<<"$answer") == possible ]]
 [[ $(profile_hashes) == "$before" && $(active_on auto0) == "$active" ]]
 pass 'Ethernet Auto: the late NM DHCP lease wins and a dish-like address is only a hint'
+kill "$(cat "$base/auto-dnsmasq.pid")"
+nmcli connection down auto-contract >/dev/null
+[[ $(cat /sys/class/net/auto0/carrier) == 1 ]]
+[[ -z $(nmcli -g DHCP4.OPTION device show auto0) ]]
+[[ $(direction "$base/auto-discover") == uplink ]] || { echo 'FAIL: lease loss promoted Share' >&2; exit 1; }
+pass 'Ethernet Auto: lease loss with carrier up retains upstream evidence'
 ip -n contract-client link set c-auto down
 [[ $(direction "$base/auto-discover") == disconnected ]]
-pass 'Ethernet Auto: carrier loss invalidates observations for the unplugged cable'
-kill "$(cat "$base/auto-dnsmasq.pid")"
+ip -n contract-client link set c-auto up
+[[ $(cat /sys/class/net/auto0/carrier) == 1 ]]
+[[ $(AUTO_ATTACHMENT=2 direction "$base/auto-discover") == unresolved ]] || { echo 'FAIL: replug reused cached observations' >&2; exit 1; }
+pass 'Ethernet Auto: clean replug ignores cached DHCP evidence from the prior attachment'
 
 printf '%s passed; 0 failed\n' "$passed"
