@@ -518,10 +518,39 @@ export interface SavedConnsRefreshOptions {
 	hotspots?: boolean;
 }
 
+let fullRefreshInFlight: Promise<void> | undefined;
+
 export async function wifiUpdateSavedConns(
 	signal?: AbortSignal,
 	onCommitted?: () => void,
 	{ hotspots = true }: SavedConnsRefreshOptions = {},
+): Promise<void> {
+	if (!hotspots) {
+		// A newer refresh supersedes a running one. A station-only refresh
+		// must not supersede a full one, or hotspot adoption waits for the
+		// next full refresh, so it runs after it and still lists afresh.
+		while (fullRefreshInFlight) {
+			await fullRefreshInFlight;
+			if (signal?.aborted) return;
+		}
+		return refreshSavedConns(signal, onCommitted, false);
+	}
+	const run = refreshSavedConns(signal, onCommitted, true);
+	const tracked = run.catch(() => {
+		// The caller sees the failure; waiters only need the settlement.
+	});
+	fullRefreshInFlight = tracked;
+	try {
+		return await run;
+	} finally {
+		if (fullRefreshInFlight === tracked) fullRefreshInFlight = undefined;
+	}
+}
+
+async function refreshSavedConns(
+	signal: AbortSignal | undefined,
+	onCommitted: (() => void) | undefined,
+	hotspots: boolean,
 ): Promise<void> {
 	if (signal?.aborted) return;
 	const refresh = Symbol();

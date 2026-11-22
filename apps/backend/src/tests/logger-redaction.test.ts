@@ -75,12 +75,18 @@ describe("logger redaction", () => {
 		const out = logRedact({
 			qr,
 			input: { note: `scanned ${qr}` },
-			lower: "wifi:s:Venue;p:sample-only;;",
+			reordered: "WIFI:P:sample-only;S:Venue;;",
 		}) as Record<string, unknown>;
 
 		expect(JSON.stringify(out)).not.toContain("sample");
-		expect(logRedact("WIFI: scan finished")).toBe("WIFI: scan finished");
-		expect(logRedact("wifi: 2 networks")).toBe("wifi: 2 networks");
+		for (const prose of [
+			"WIFI: scan finished",
+			"wifi: 2 networks",
+			"wifi:ap: hotspot adopted",
+			"wifi:de:ad:be:ef:00:01 associated",
+			"WIFI:AP: started",
+		])
+			expect(logRedact(prose)).toBe(prose);
 	});
 
 	test("logger still accepts redacted metadata without throwing", () => {

@@ -14,6 +14,7 @@ import {
 	companionWifiSettings,
 	stationProfileWithSsid,
 } from "../../modules/wifi/companion-wifi-profile.ts";
+import { wifiUpdateSavedConns } from "../../modules/wifi/wifi.ts";
 import * as hotspotDiscovery from "../../modules/wifi/wifi-hotspot-discovery.ts";
 import { handleORPCMessage, parseMessage } from "../adapter.ts";
 import { localIngressPresent } from "../local-ingress-presence.ts";
@@ -362,6 +363,36 @@ describe("companion Wi-Fi import", () => {
 		).mockImplementation(async () => undefined);
 		await refreshCompanionStationProfiles();
 		expect(hotspot).not.toHaveBeenCalled();
+	});
+
+	test("a station-only refresh runs after a running full refresh instead of cancelling it", async () => {
+		const release = Promise.withResolvers<void>();
+		let lists = 0;
+		spyOn(nm, "nmConnsGet").mockImplementation(async () => {
+			// The full refresh's inventory read is still pending when the
+			// import's refresh starts.
+			if (++lists === 1) await release.promise;
+			return ["11111111-1111-4111-8111-111111111111:802-11-wireless"];
+		});
+		spyOn(nm, "nmConnGetFields").mockImplementation((async () => [
+			"ap",
+			"Box hotspot",
+			"",
+		]) as never);
+		const hotspot = spyOn(
+			hotspotDiscovery,
+			"handleHotspotConn",
+		).mockImplementation(async () => undefined);
+		const full = wifiUpdateSavedConns();
+		const station = refreshCompanionStationProfiles();
+		await Bun.sleep(10);
+		expect(lists).toBe(1);
+		release.resolve();
+		await Promise.all([full, station]);
+		// The full refresh still adopted the hotspot, and the station refresh
+		// listed again afterwards, so it sees a profile saved meanwhile.
+		expect(hotspot).toHaveBeenCalledTimes(1);
+		expect(lists).toBe(2);
 	});
 
 	test("stores SAE with required PMF and leaves WPA2 negotiation to NetworkManager", () => {

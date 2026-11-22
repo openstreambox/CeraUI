@@ -257,10 +257,14 @@ const OWN_NUMBER_RECORD_RE =
 
 /**
  * A decoded Wi-Fi QR (`WIFI:T:WPA;S:<ssid>;P:<password>;;`) carries the network
- * password on its face, whatever key or route it reaches a log through. A field
- * code must follow the prefix directly, so prose such as "wifi: scan" survives.
+ * password on its face, whatever key or route it reaches a log through. The
+ * shape is the one QR generators emit and the import parser requires: an
+ * uppercase `WIFI:` prefix followed directly by a field code (T, S, P, H, and
+ * the enterprise fields E, A, I, PH2). Prose, lowercase tags such as "wifi:ap:"
+ * and MAC addresses survive. Lowercase or percent-encoded QR text is not
+ * matched; the import refuses it, and raw frame text is never logged.
  */
-const WIFI_QR_RE = /wifi:[a-z]{1,2}:/i;
+const WIFI_QR_RE = /WIFI:(?:[STPHEAI]|PH2):/;
 
 function looksSecret(value: string): boolean {
 	return (
