@@ -33,6 +33,7 @@ import {
 	sendToClient,
 } from "./events.ts";
 import { sendAddonSnapshot } from "./procedures/addons.procedure.ts";
+import { companionProcedures } from "./procedures/companion-channel.procedure.ts";
 import {
 	buildInitialNotifications,
 	buildInitialStatus,
@@ -291,6 +292,7 @@ export function createWebSocketHandler(): WebSocketHandler<SocketData> {
 
 		async close(ws: AppWebSocket, code: number, reason: string) {
 			closeSocketSession(ws);
+			companionProcedures.socketClosed(ws);
 			logger.debug(`WebSocket client disconnected: ${code} ${reason}`);
 			removeClient(ws);
 			await stopFollow(ws);

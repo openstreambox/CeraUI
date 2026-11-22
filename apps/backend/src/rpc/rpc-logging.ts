@@ -25,9 +25,14 @@ import type { RPCContext } from "./types.ts";
 
 /**
  * Procedure-path namespaces whose ARGS must never be logged. The whole `auth.*`
- * surface (login/setPassword/logout) carries raw credentials in its input.
+ * surface (login/setPassword/logout) carries raw credentials in its input, and
+ * `companion.*` carries signatures and Wi-Fi credentials.
  */
-const SENSITIVE_NAMESPACES: ReadonlySet<string> = new Set(["auth", "moblink"]);
+const SENSITIVE_NAMESPACES: ReadonlySet<string> = new Set([
+	"auth",
+	"moblink",
+	"companion",
+]);
 
 /**
  * Individual procedures whose ARGS must never be logged, outside a namespace

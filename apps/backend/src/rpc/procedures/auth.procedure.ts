@@ -153,7 +153,7 @@ function invalidateToken(token: string, caller: AppWebSocket): number {
 	return revoked;
 }
 
-function invalidateAllTokens(caller: AppWebSocket): number {
+function invalidateAllTokens(caller: AppWebSocket | undefined): number {
 	for (const ws of getAuthenticatedClients())
 		if (ws !== caller && ws.data.authToken !== undefined) closeRevokedPeer(ws);
 	let revoked = 0;
@@ -163,6 +163,21 @@ function invalidateAllTokens(caller: AppWebSocket): number {
 	}
 	revoked += tokenStore.revoke();
 	return revoked;
+}
+
+/**
+ * Physical reset (companion channel): forget the owner password and every
+ * remembered or temporary session, closing every signed-in socket. The caller
+ * must lock legacy first-password setup first (modules/companion/reset.ts).
+ */
+export async function clearLegacyCredentialsForReset(): Promise<number> {
+	await tokenStore.settle();
+	const { getConfig, saveConfig } = await import("../../modules/config.ts");
+	const config = getConfig();
+	setPasswordHash(undefined);
+	config.password = undefined;
+	saveConfig();
+	return invalidateAllTokens(undefined);
 }
 
 /**

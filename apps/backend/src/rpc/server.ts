@@ -9,6 +9,7 @@ import { PREVIEW_TOKEN_PARAM, PREVIEW_WS_PATH } from "@ceraui/rpc/schemas";
 import type { Server } from "bun";
 
 import { logger } from "../helpers/logger.ts";
+import { companionLoopbackAdmission } from "../modules/companion/ingress.ts";
 import { handleLogBundleRequest } from "../modules/device-logs/bundle.ts";
 import { handleLogExportRequest } from "../modules/device-logs/export.ts";
 import { getIsStreaming } from "../modules/streaming/streaming.ts";
@@ -185,6 +186,17 @@ export function upgradeTcpRequest(
 		!localIngressPresent()
 	) {
 		data.nativeTcpClient = true;
+	}
+	// Development runtimes only, like the scenario driver below.
+	if (
+		companionLoopbackAdmission(req.headers, {
+			enabled: process.env.CERAUI_EXPERIMENTAL_COMPANION_CHANNEL === "1",
+			development:
+				process.env.NODE_ENV !== "production" && runtimeAllowsDevelopment(),
+			frontDoor: localIngressPresent,
+		})
+	) {
+		data.companionLoopbackClient = true;
 	}
 	if (
 		process.env.NODE_ENV !== "production" &&
