@@ -714,6 +714,11 @@
 		"locales": ["ar", "de", "es", "fr", "hi", "ja", "ko", "pt-BR", "zh"],
 		"reason": "Literal IPv4 address example for the subnet address input."
 	},
+	"network.sharing.clientUplink": {
+		"value": "Clients",
+		"locales": ["de", "fr"],
+		"reason": "Short label for the uplink that carries hotspot clients. Client is the usual German and French networking term for a device on a hotspot; de network.sharing already says Client-Datenverkehr and fr network.sharing says trafic des clients."
+	},
 	"network.sharing.diagnostics.disclosure": {
 		"value": "Diagnostics",
 		"locales": ["fr"],
