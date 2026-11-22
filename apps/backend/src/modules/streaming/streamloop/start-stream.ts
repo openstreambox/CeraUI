@@ -40,6 +40,7 @@ import { getLastCapabilities } from "../capabilities.ts";
 import { SRTLA_LISTEN_PORT } from "../constants.ts";
 import {
 	observeSafely,
+	recordEngineSession,
 	recordSenderIntent,
 	recordSenderStarted,
 	senderPaths,
@@ -61,6 +62,7 @@ import {
 	recentRelaySession,
 	relaySessionKey,
 } from "../recent-relay-session.ts";
+import { readEngineSessionIdentity } from "../sender-invocation.ts";
 import { getLastPublishedBond } from "../srtla.ts";
 import { StreamStartFailure } from "../start-failure-taxonomy.ts";
 import { assertStreamLaunchOwnership } from "../stream-launch-ownership.ts";
@@ -73,10 +75,13 @@ import { spawnStreamingLoop, stopProcessAndWait } from "./process-runner.ts";
 interface StartStreamBackend {
 	setBitrate: ReturnType<typeof getStreamingBackend>["setBitrate"];
 	start: ReturnType<typeof getStreamingBackend>["start"];
+	sessionEvidence?: ReturnType<typeof getStreamingBackend>["sessionEvidence"];
+	launchedSession?: ReturnType<typeof getStreamingBackend>["launchedSession"];
 }
 
 export interface StartStreamDeps {
 	readonly recordSenderIntent: typeof recordSenderIntent;
+	readonly recordEngineSession: typeof recordEngineSession;
 	readonly getStreamingBackend: () => StartStreamBackend;
 	readonly spawnStreamingLoop: typeof spawnStreamingLoop;
 	readonly startLinkTelemetry: typeof startLinkTelemetry;
@@ -86,6 +91,7 @@ export interface StartStreamDeps {
 
 const defaultStartStreamDeps: StartStreamDeps = {
 	recordSenderIntent,
+	recordEngineSession,
 	getStreamingBackend,
 	spawnStreamingLoop,
 	startLinkTelemetry,
@@ -336,7 +342,14 @@ export async function startStream(
 		});
 		transaction.register(() => startStreamDeps.stopLinkTelemetry());
 		await observeSafely(async () => {
-			if (lifetime) await recordSenderStarted(lifetime, sender.proc.pid);
+			if (lifetime)
+				await recordSenderStarted(
+					lifetime,
+					sender.proc.pid,
+					// Not yet reaped by the runtime: the PID is still this child's.
+					() =>
+						sender.proc.exitCode === null && sender.proc.signalCode === null,
+				);
 		});
 		assertStreamLaunchOwnership();
 
@@ -377,6 +390,30 @@ export async function startStream(
 		}
 		throw error;
 	}
+
+	// Record the engine session this sender serves: the id the Start reply
+	// gave for this launch, taken before any await, confirmed live and
+	// streaming on the session connection, and written only while this launch
+	// is still the engine's current session. Not awaited: only a sender with
+	// its own unit is recorded, and nothing about the start waits on it.
+	const started = lifetime;
+	const backend = startStreamDeps.getStreamingBackend();
+	const launchedId = backend.launchedSession?.() ?? null;
+	if (started && launchedId)
+		void observeSafely(() =>
+			startStreamDeps.recordEngineSession(
+				started,
+				() =>
+					readEngineSessionIdentity(async () => {
+						const evidence = await backend.sessionEvidence?.();
+						return evidence?.state === "streaming" &&
+							evidence.sessionId === launchedId
+							? launchedId
+							: null;
+					}),
+				() => backend.launchedSession?.() === launchedId,
+			),
+		);
 
 	recentRelaySession.valid(relaySessionKey(srtlaAddr, srtlaPort, streamid));
 	return { success: true };

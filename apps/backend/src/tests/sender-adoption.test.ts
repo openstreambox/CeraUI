@@ -8,10 +8,11 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { release, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SenderStats } from "@ceraui/srtla-send/control";
 import { adoptTestProcess } from "../../../../scripts/test-safety.ts";
+import { type PeerIdentity, readPeerIdentity } from "../helpers/process-pin.ts";
 import {
 	type ArmedStreamMarker,
 	peekArmedStreamMarker,
@@ -24,15 +25,21 @@ import {
 } from "../modules/streaming/continuity-records.ts";
 import * as engineRuntimeState from "../modules/streaming/engine-runtime-state.ts";
 import {
+	checkControlPeer,
 	collectSenderAdoptionEvidence,
 	defaultSenderAdoptionIo,
 	holdsListeningSocket,
 	observeSenderAdoption,
+	type PeerCheck,
+	querySessionEngine,
+	readPeerBoundStats,
 	readSenderProcessFacts,
+	SENDER_ADOPTION_WINDOW_MS,
 	type SenderAdoptionEvidence,
 	type SenderAdoptionIo,
 	senderAdoptionVerdict,
 } from "../modules/streaming/sender-adoption.ts";
+import type { UnitFacts } from "../modules/streaming/sender-invocation.ts";
 import { unownedSenderCensus } from "../modules/streaming/sender-ownership.ts";
 import { getStreamingProcesses } from "../modules/streaming/streamloop/process-runner.ts";
 
@@ -43,6 +50,23 @@ const EXE = "/usr/bin/srtla_send";
 const ARGS = digest(JSON.stringify([EXE, "9000"]));
 const CGROUP = "/system.slice/ceralive-sender-1.service";
 const INVOCATION = "0123456789abcdef0123456789abcdef";
+const UNIT = "ceralive-sender-1.service";
+const ENGINE_SESSION = {
+	invocation: "fedcba9876543210fedcba9876543210",
+	mainPid: 777,
+	sessionId: "session-1",
+};
+const LIVE_UNIT: UnitFacts = {
+	unit: UNIT,
+	invocation: INVOCATION,
+	mainPid: PID,
+	activeState: "active",
+	subState: "running",
+	controlGroup: CGROUP,
+	restart: "no",
+};
+/** A pin for a synthetic `/proc`: there is no real process to hold. */
+const FAKE_PIN = { pidfd: true, alive: () => true, close: () => undefined };
 const SOCKET = "/tmp/srtla-send-control-9000.sock";
 const SHA = "a".repeat(64);
 const CONFIG = { srt_latency: 2000, max_br: 6000, pipeline: "p1" };
@@ -57,12 +81,16 @@ function lifetime(over: Partial<Lifetime> = {}): Lifetime {
 		host: "systemd",
 		invocation: INVOCATION,
 		cgroup: CGROUP,
+		unit: UNIT,
+		unitManager: "system",
+		pidfd: true,
+		engineSession: { ...ENGINE_SESSION },
 		argsDigest: ARGS,
 		statsFile: "/tmp/srtla-send-stats-9000.json",
 		controlSocket: SOCKET,
 		ipsFile: "/run/ceralive/ips",
 		sidecarFile: "/run/ceralive/ips.bindmap.json",
-		required: false,
+		required: true,
 		contract: 0,
 		capabilitiesDigest: null,
 		createdAt: 1,
@@ -106,6 +134,7 @@ function stats(bytes: number, over: Partial<SenderStats> = {}): SenderStats {
 		session_bytes_sent: bytes,
 		links: [link(0, "modem-a", "wwan0"), link(1, "eth", "eth0")],
 		disposition: { state: "mapped" },
+		bind_map_applied: { generation: 7, ips_file_sha256: SHA },
 		...over,
 	};
 }
@@ -127,6 +156,7 @@ const FACTS = {
 	cgroupChildren: 0,
 	groupMembers: [PID],
 	ownsControlSocket: true,
+	pidfd: true,
 };
 
 function evidence(
@@ -137,14 +167,19 @@ function evidence(
 		lifetime: lifetime(),
 		process: { ...FACTS },
 		expectedExe: EXE,
-		liveInvocation: INVOCATION,
+		liveUnit: { ...LIVE_UNIT },
 		marker: marker(),
 		currentConfig: { ...CONFIG },
 		publication: publication(),
 		disk: publication(),
+		peer: "verified",
+		exitedDuringRead: false,
+		senderContract: 2,
+		senderRequired: true,
+		revalidated: "agrees",
 		reads: [stats(1_000), stats(400_000)],
 		appliedMap: { generation: 7, sha256: SHA },
-		engineSession: "session-1",
+		engineSession: { ...ENGINE_SESSION },
 		engine: "streaming",
 		...over,
 	};
@@ -170,8 +205,8 @@ describe("senderAdoptionVerdict", () => {
 		).toEqual({ decision: "adopt" });
 	});
 
-	test("the facts this base cannot supply refuse a production-shaped record", () => {
-		expect(senderAdoptionVerdict(evidence({ liveInvocation: null }))).toEqual({
+	test("a missing live source refuses at its own check", () => {
+		expect(senderAdoptionVerdict(evidence({ liveUnit: null }))).toEqual({
 			decision: "refuse",
 			check: "host",
 			reason: "invocation_unverified",
@@ -268,6 +303,12 @@ describe("senderAdoptionVerdict", () => {
 			"stopped",
 		],
 		[
+			"a process no pidfd could pin",
+			{ process: { ...FACTS, pidfd: false } },
+			"process",
+			"pin_unavailable",
+		],
+		[
 			"changed arguments",
 			{ process: { ...FACTS, argsDigest: digest("other") } },
 			"process",
@@ -292,14 +333,52 @@ describe("senderAdoptionVerdict", () => {
 			"cgroup_not_recorded",
 		],
 		[
+			"a systemd record without its unit",
+			{ lifetime: lifetime({ unit: null }) },
+			"host",
+			"unit_not_recorded",
+		],
+		[
 			"another live invocation",
-			{ liveInvocation: "f".repeat(32) },
+			{ liveUnit: { ...LIVE_UNIT, invocation: "f".repeat(32) } },
 			"host",
 			"invocation_changed",
 		],
 		[
+			"a unit whose main process is another PID",
+			{ liveUnit: { ...LIVE_UNIT, mainPid: PID + 1 } },
+			"host",
+			"not_main_pid",
+		],
+		[
+			"a unit that is stopping",
+			{
+				liveUnit: {
+					...LIVE_UNIT,
+					activeState: "deactivating",
+					subState: "stop-sigterm",
+				},
+			},
+			"host",
+			"unit_not_running",
+		],
+		[
+			"a unit that would restart the sender",
+			{ liveUnit: { ...LIVE_UNIT, restart: "on-failure" } },
+			"host",
+			"unit_restarts",
+		],
+		[
 			"another cgroup",
 			{ process: { ...FACTS, cgroup: "/system.slice/ceralive.service" } },
+			"host",
+			"cgroup_changed",
+		],
+		[
+			"a unit whose control group moved",
+			{
+				liveUnit: { ...LIVE_UNIT, controlGroup: "/system.slice/other.service" },
+			},
 			"host",
 			"cgroup_changed",
 		],
@@ -400,6 +479,30 @@ describe("senderAdoptionVerdict", () => {
 			"sender",
 			"socket_not_owned",
 		],
+		[
+			"a sender that exited while it was read",
+			{ exitedDuringRead: true, peer: "unavailable" },
+			"process",
+			"exited_during_read",
+		],
+		[
+			"a control peer that is another process",
+			{ peer: "mismatch" },
+			"sender",
+			"peer_mismatch",
+		],
+		[
+			"a kernel without SO_PEERPIDFD, so only the PID number matched",
+			{ peer: "unsupported" },
+			"sender",
+			"peer_pidfd_unsupported",
+		],
+		[
+			"a control peer whose credentials could not be read",
+			{ peer: "unavailable" },
+			"sender",
+			"peer_unverified",
+		],
 		["one control read", { reads: [stats(1)] }, "sender", "two_reads_required"],
 		[
 			"no control answer",
@@ -455,6 +558,49 @@ describe("senderAdoptionVerdict", () => {
 			"no_progress",
 		],
 		[
+			"a publication the sender has read but not applied",
+			{
+				reads: [
+					stats(1),
+					stats(2, {
+						bind_map_pending: { generation: 8, ips_file_sha256: SHA },
+					}),
+				],
+			},
+			"bind_map",
+			"apply_pending",
+		],
+		[
+			"a sender below contract 2",
+			{ senderContract: 1 },
+			"sender",
+			"contract_below_2",
+		],
+		[
+			"a sender that cannot say its contract",
+			{ senderContract: null },
+			"sender",
+			"contract_below_2",
+		],
+		[
+			"a sender that does not advertise required binding",
+			{ senderRequired: false },
+			"sender",
+			"required_unsupported",
+		],
+		[
+			"a sender that cannot say whether it has required binding",
+			{ senderRequired: null },
+			"sender",
+			"required_unsupported",
+		],
+		[
+			"a sender not started in required mode",
+			{ lifetime: lifetime({ required: false }) },
+			"sender",
+			"not_required_mode",
+		],
+		[
 			"a map on disk the sender has not applied",
 			{ appliedMap: { generation: 6, sha256: SHA } },
 			"bind_map",
@@ -466,8 +612,61 @@ describe("senderAdoptionVerdict", () => {
 			"bind_map",
 			"applied_identity_mismatch",
 		],
+		[
+			"no engine session recorded at launch",
+			{ lifetime: lifetime({ engineSession: null }) },
+			"engine",
+			"session_not_recorded",
+		],
+		[
+			"an engine restarted under the same unit",
+			{
+				engineSession: {
+					...ENGINE_SESSION,
+					invocation: "0".repeat(32),
+				},
+			},
+			"engine",
+			"engine_restarted",
+		],
+		[
+			"an engine process replaced",
+			{ engineSession: { ...ENGINE_SESSION, mainPid: 778 } },
+			"engine",
+			"engine_restarted",
+		],
+		[
+			"another engine session in the same engine",
+			{ engineSession: { ...ENGINE_SESSION, sessionId: "session-2" } },
+			"engine",
+			"session_changed",
+		],
 		["the engine idle", { engine: "idle" }, "engine", "engine_idle"],
 		["the engine unknown", { engine: "unknown" }, "engine", "engine_unknown"],
+		[
+			"a sender that exited in the final pass",
+			{ revalidated: "exited" },
+			"process",
+			"exited_during_read",
+		],
+		[
+			"a local fact that changed before the verdict",
+			{ revalidated: "changed" },
+			"evidence",
+			"changed_during_read",
+		],
+		[
+			"samples older than the window",
+			{ revalidated: "stale" },
+			"evidence",
+			"window_exceeded",
+		],
+		[
+			"evidence never read again",
+			{ revalidated: "not_reached" },
+			"evidence",
+			"not_revalidated",
+		],
 	];
 	for (const [name, change, check, reason] of refusals)
 		test(`refuses ${name}`, () => {
@@ -537,10 +736,12 @@ describe("collectSenderAdoptionEvidence", () => {
 		return {
 			procRoot: join(root, "proc"),
 			cgroupRoot: join(root, "cgroup"),
+			now: () => 0,
 			expectedExe: () => EXE,
 			bootId: async () => BOOT,
 			readLifetime: async () => lifetime(),
-			liveInvocation: async () => INVOCATION,
+			pin: async () => FAKE_PIN,
+			liveUnit: async () => ({ ...LIVE_UNIT }),
 			readPublication: async () => publication(),
 			readDisk: async () => publication(),
 			readMarker: () => marker(),
@@ -548,13 +749,16 @@ describe("collectSenderAdoptionEvidence", () => {
 			readStats: async () => {
 				statsReads++;
 				return {
+					peer: "verified",
+					senderContract: 2,
+					senderRequired: true,
 					reads: [stats(1_000), stats(9_000)],
 					appliedMap: { generation: 7, sha256: SHA },
 				};
 			},
 			queryEngine: async () => {
 				engineQueries++;
-				return { state: "streaming", session: "session-1" };
+				return { state: "streaming", session: { ...ENGINE_SESSION } };
 			},
 			...over,
 		};
@@ -642,7 +846,13 @@ describe("collectSenderAdoptionEvidence", () => {
 			io({
 				readStats: async () => {
 					statsReads++;
-					return { reads: [stats(5), stats(9)], appliedMap: null };
+					return {
+						peer: "verified",
+						senderContract: 2,
+						senderRequired: true,
+						reads: [stats(5), stats(9)],
+						appliedMap: null,
+					};
 				},
 			}),
 		);
@@ -651,6 +861,185 @@ describe("collectSenderAdoptionEvidence", () => {
 		expect(senderAdoptionVerdict(e)).toMatchObject({
 			reason: "applied_identity_unavailable",
 		});
+	});
+
+	test("a pin whose liveness is unknown describes no process and never adopts", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		const e = await collectSenderAdoptionEvidence(
+			io({ pin: async () => ({ ...FAKE_PIN, alive: () => null }) }),
+		);
+		expect(e.process).toBeNull();
+		expect(statsReads).toBe(0);
+		expect(senderAdoptionVerdict(e)).toMatchObject({ reason: "sender_absent" });
+	});
+
+	test("the pin is checked just before the request and after the reads", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		let alive = true;
+		const seen: boolean[] = [];
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				pin: async () => ({ ...FAKE_PIN, alive: () => alive }),
+				readStats: async (_path, _pid, pinned) => {
+					seen.push(pinned());
+					alive = false;
+					return {
+						peer: "verified",
+						senderContract: 2,
+						senderRequired: true,
+						reads: [stats(1), stats(9)],
+						appliedMap: { generation: 7, sha256: SHA },
+					};
+				},
+			}),
+		);
+		expect(seen).toEqual([true]);
+		expect(e.exitedDuringRead).toBe(true);
+		expect(engineQueries).toBe(0);
+		expect(senderAdoptionVerdict(e)).toMatchObject({
+			reason: "exited_during_read",
+		});
+	});
+
+	test("an operator Stop while the engine is asked is caught by the final pass", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		let armed = true;
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				readMarker: () => (armed ? marker() : null),
+				queryEngine: async () => {
+					engineQueries++;
+					armed = false;
+					return { state: "streaming", session: { ...ENGINE_SESSION } };
+				},
+			}),
+		);
+		expect(engineQueries).toBe(1);
+		expect(e.revalidated).toBe("changed");
+		expect(senderAdoptionVerdict(e)).toEqual({
+			decision: "refuse",
+			check: "evidence",
+			reason: "changed_during_read",
+		});
+	});
+
+	test("a later publication during the sender reads is caught before the engine is asked", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		let generation = 7;
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				readPublication: async () => publication({ generation }),
+				readDisk: async () => publication({ generation }),
+				readStats: async () => {
+					generation = 8;
+					return {
+						peer: "verified",
+						senderContract: 2,
+						senderRequired: true,
+						reads: [stats(1), stats(9)],
+						appliedMap: { generation: 7, sha256: SHA },
+					};
+				},
+			}),
+		);
+		expect(e.revalidated).toBe("changed");
+		expect(engineQueries).toBe(0);
+	});
+
+	test("a sender that stops while the engine is asked is caught by the tail", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				queryEngine: async () => {
+					writeFileSync(
+						join(root, "proc", String(PID), "stat"),
+						statLine(PID, "T", PID, START),
+					);
+					return { state: "streaming", session: { ...ENGINE_SESSION } };
+				},
+			}),
+		);
+		expect(e.revalidated).toBe("exited");
+	});
+
+	test("samples spanning more than the window are too old to report", async () => {
+		writeProcess(PID, "S", PID, START);
+		writeCgroup([PID]);
+		let clock = 0;
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				now: () => clock,
+				queryEngine: async () => {
+					clock = SENDER_ADOPTION_WINDOW_MS + 1;
+					return { state: "streaming", session: { ...ENGINE_SESSION } };
+				},
+			}),
+		);
+		expect(e.revalidated).toBe("stale");
+		expect(senderAdoptionVerdict(e)).toEqual({
+			decision: "refuse",
+			check: "evidence",
+			reason: "window_exceeded",
+		});
+	});
+
+	test("a sender running at first and sleeping later has not changed", async () => {
+		writeProcess(PID, "R", PID, START);
+		writeCgroup([PID]);
+		const statPath = join(root, "proc", String(PID), "stat");
+		const e = await collectSenderAdoptionEvidence(
+			io({
+				readStats: async () => {
+					writeFileSync(statPath, statLine(PID, "S", PID, START));
+					return {
+						peer: "verified",
+						senderContract: 2,
+						senderRequired: true,
+						reads: [stats(1), stats(9)],
+						appliedMap: { generation: 7, sha256: SHA },
+					};
+				},
+			}),
+		);
+		expect(e.revalidated).toBe("agrees");
+		expect(senderAdoptionVerdict(e)).toEqual({ decision: "adopt" });
+	});
+
+	test("only a live pidfd under the recorded number verifies the peer", async () => {
+		const peer =
+			(pidfd: PeerIdentity["pidfd"], pid = PID) =>
+			async () => ({
+				pid,
+				uid: 0,
+				gid: 0,
+				pidfd,
+			});
+		expect(
+			await checkControlPeer(3, PID, peer({ state: "alive", pid: PID })),
+		).toBe("verified");
+		expect(
+			await checkControlPeer(3, PID, peer({ state: "alive", pid: PID + 1 })),
+		).toBe("mismatch");
+		expect(await checkControlPeer(3, PID, peer({ state: "exited" }))).toBe(
+			"mismatch",
+		);
+		expect(await checkControlPeer(3, PID, peer({ state: "unsupported" }))).toBe(
+			"unsupported",
+		);
+		expect(await checkControlPeer(3, PID, peer({ state: "failed" }))).toBe(
+			"unavailable",
+		);
+		expect(
+			await checkControlPeer(3, PID, peer({ state: "alive", pid: PID }, 1)),
+		).toBe("mismatch");
+		expect(await checkControlPeer(3, PID, async () => null)).toBe(
+			"unavailable",
+		);
 	});
 
 	test("a missing process and unreadable reads refuse without throwing", async () => {
@@ -666,13 +1055,54 @@ describe("collectSenderAdoptionEvidence", () => {
 		expect(senderAdoptionVerdict(e)).toMatchObject({ reason: "sender_absent" });
 	});
 
-	test("the production readers supply no invocation and never probe the engine", async () => {
+	test("the production readers ask systemd and the session connection, never the reconciliation probe", async () => {
+		const probe = spyOn(
+			engineRuntimeState,
+			"queryEngineRuntimeStreaming",
+		).mockImplementation(async () => "streaming");
 		const production = defaultSenderAdoptionIo(() => ({ ...CONFIG }));
-		expect(await production.liveInvocation(PID)).toBeNull();
+		// No such unit is loaded on any test host.
+		expect(
+			await production.liveUnit("ceraui-no-such-sender.service", "user"),
+		).toBeNull();
+		// Without a running engine unit the session connection is never asked.
 		expect(await production.queryEngine()).toEqual({
 			state: "unknown",
 			session: null,
 		});
+		expect(probe).not.toHaveBeenCalled();
+		probe.mockRestore();
+	});
+
+	test("the engine reader asks the session connection between two unit reads", async () => {
+		const engineUnit = [
+			"Id=cerastream.service",
+			"LoadState=loaded",
+			"ActiveState=active",
+			"SubState=running",
+			`MainPID=${ENGINE_SESSION.mainPid}`,
+			`InvocationID=${ENGINE_SESSION.invocation}`,
+			"ControlGroup=/system.slice/cerastream.service",
+		].join("\n");
+		const order: string[] = [];
+		const show = async () => {
+			order.push("unit");
+			return engineUnit;
+		};
+		expect(
+			await querySessionEngine(async () => {
+				order.push("session");
+				return { state: "streaming", sessionId: "session-1" };
+			}, show),
+		).toEqual({ state: "streaming", session: { ...ENGINE_SESSION } });
+		expect(order).toEqual(["unit", "session", "unit"]);
+		// A session connection that cannot say its id claims no state either.
+		expect(
+			await querySessionEngine(
+				async () => ({ state: "streaming", sessionId: null }),
+				show,
+			),
+		).toEqual({ state: "unknown", session: null });
 	});
 
 	test("a record that could never qualify reads no process facts, marker, publication or map", async () => {
@@ -763,33 +1193,90 @@ describe("observeSenderAdoption, the entry point main.ts calls", () => {
 	});
 });
 
+/** The capability document a contract-2 sender answers. */
+const CONTRACT_2_CAPABILITIES = {
+	schema_version: 1,
+	binary: "srtla_send",
+	version: "0.0.0-test",
+	capabilities: {
+		bind_map: true,
+		stats_file: true,
+		dry_run: true,
+		control_socket_jsonrpc: true,
+		conn_timeout_ms: true,
+		modes: ["classic", "enhanced"],
+		bind_map_required: true,
+		bind_map_required_empty_reload: true,
+		bind_map_contract: 2,
+	},
+};
+
 /**
- * A real detached process named `srtla_send` that listens on a Unix socket, in
+ * A script for a fake sender: it listens on `socket`, answers
+ * `get_capabilities` and `get_stats` (bytes rising on every read) and appends
+ * one line to `requests` for every request it is sent.
+ */
+function fakeSenderScript(socket: string, requests: string): string {
+	return `
+const { appendFileSync } = require("node:fs");
+let bytes = 1000;
+const caps = ${JSON.stringify(CONTRACT_2_CAPABILITIES)};
+const stats = ${JSON.stringify(stats(0))};
+Bun.listen({
+	unix: ${JSON.stringify(socket)},
+	socket: {
+		data(s, chunk) {
+			for (const line of chunk.toString().split("\\n")) {
+				if (!line.trim()) continue;
+				const req = JSON.parse(line);
+				appendFileSync(${JSON.stringify(requests)}, req.method + "\\n");
+				let result;
+				if (req.method === "get_capabilities") result = caps;
+				else if (req.method === "get_stats") {
+					bytes += 5000;
+					result = { ...stats, session_bytes_sent: bytes };
+				}
+				s.write(JSON.stringify(result === undefined
+					? { jsonrpc: "2.0", id: req.id, error: { code: -32601, message: "no" } }
+					: { jsonrpc: "2.0", id: req.id, result }) + "\\n");
+			}
+		},
+	},
+});
+setInterval(() => {}, 1000);
+`;
+}
+
+/**
+ * A real detached process named `srtla_send` that answers on a Unix socket, in
  * its own session and process group and not our child, judged from the real
- * `/proc`. Synthetic: the cgroup membership (the test runner's cgroup is
- * shared), the unit invocation, the applied map and the engine session (no
- * source exists on this base), and the records.
+ * `/proc` with a real pidfd, and read over the production peer-bound client.
+ * Synthetic: the cgroup membership (the test runner's cgroup is shared), the
+ * unit facts, the engine session and the records.
  */
 describe("a real detached sender", () => {
 	let root = "";
 	let socket = "";
+	let requests = "";
 	let pid = 0;
 
 	beforeEach(async () => {
 		root = mkdtempSync(join(tmpdir(), "sender-adoption-real-"));
 		socket = join(root, "control.sock");
+		requests = join(root, "requests");
 		// The kernel names a process after the path it was executed by, so a
 		// link to this Bun binary runs as `srtla_send`.
 		const binary = join(root, "srtla_send");
 		symlinkSync(process.execPath, binary);
-		const script = `Bun.listen({ unix: ${JSON.stringify(socket)}, socket: { data() {} } }); setInterval(() => {}, 1000);`;
+		const script = join(root, "sender.js");
+		writeFileSync(script, fakeSenderScript(socket, requests));
 		const launcher = Bun.spawn(
 			[
 				"setsid",
 				"-f",
 				"sh",
 				"-c",
-				`echo $$ > ${root}/pid; exec ${binary} -e '${script}'`,
+				`echo $$ > ${root}/pid; exec ${binary} ${script}`,
 			],
 			{ stdout: "ignore", stderr: "ignore" },
 		);
@@ -825,8 +1312,17 @@ describe("a real detached sender", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
+	const requestsSeen = () => {
+		try {
+			return readFileSync(requests, "utf8").split("\n").filter(Boolean);
+		} catch {
+			return [];
+		}
+	};
+
 	async function realIo(
 		over: Partial<SenderAdoptionIo> = {},
+		record: Partial<Lifetime> = {},
 	): Promise<SenderAdoptionIo> {
 		const real = await readSenderProcessFacts(
 			"/proc",
@@ -835,14 +1331,11 @@ describe("a real detached sender", () => {
 			socket,
 		);
 		if (!real?.cgroup) throw new Error("no real process facts");
-		mkdirSync(join(root, "cgroup", real.cgroup), { recursive: true });
-		writeFileSync(
-			join(root, "cgroup", real.cgroup, "cgroup.procs"),
-			`${pid}\n`,
-		);
-		let reads = 0;
+		const cgroup = real.cgroup;
+		mkdirSync(join(root, "cgroup", cgroup), { recursive: true });
+		writeFileSync(join(root, "cgroup", cgroup, "cgroup.procs"), `${pid}\n`);
 		return {
-			procRoot: "/proc",
+			...defaultSenderAdoptionIo(() => ({ ...CONFIG })),
 			cgroupRoot: join(root, "cgroup"),
 			expectedExe: () => realpathSync(process.execPath),
 			bootId: async () => BOOT,
@@ -851,22 +1344,22 @@ describe("a real detached sender", () => {
 					pid,
 					startTime: real.startTime,
 					argsDigest: real.argsDigest,
-					cgroup: real.cgroup,
+					cgroup,
 					controlSocket: socket,
+					...record,
 				}),
-			liveInvocation: async () => INVOCATION,
+			liveUnit: async () => ({
+				...LIVE_UNIT,
+				mainPid: pid,
+				controlGroup: cgroup,
+			}),
 			readPublication: async () => publication(),
 			readDisk: async () => publication(),
 			readMarker: () => marker(),
-			captureConfig: () => ({ ...CONFIG }),
-			readStats: async () => {
-				reads++;
-				return {
-					reads: [stats(reads * 1_000), stats(reads * 9_000)],
-					appliedMap: { generation: 7, sha256: SHA },
-				};
-			},
-			queryEngine: async () => ({ state: "streaming", session: "session-1" }),
+			queryEngine: async () => ({
+				state: "streaming",
+				session: { ...ENGINE_SESSION },
+			}),
 			...over,
 		};
 	}
@@ -892,10 +1385,22 @@ describe("a real detached sender", () => {
 		expect(parent).not.toBe(process.pid);
 	});
 
-	test("judged from the real kernel with the missing sources supplied, the facts agree and nothing is taken over", async () => {
-		expect(await observeSenderAdoption(await realIo())).toEqual({
-			decision: "adopt",
-		});
+	test("read over the production client, pinned and peer-checked, the facts agree and nothing is taken over", async () => {
+		const io = await realIo();
+		const e = await collectSenderAdoptionEvidence(io);
+		expect(e.process?.pidfd).toBe(true);
+		expect(e.peer).toBe("verified");
+		expect(e.senderContract).toBe(2);
+		expect(e.senderRequired).toBe(true);
+		expect(e.appliedMap).toEqual({ generation: 7, sha256: SHA });
+		expect(e.exitedDuringRead).toBe(false);
+		expect(e.revalidated).toBe("agrees");
+		expect(requestsSeen()).toEqual([
+			"get_capabilities",
+			"get_stats",
+			"get_stats",
+		]);
+		expect(await observeSenderAdoption(io)).toEqual({ decision: "adopt" });
 		// Detect only: nothing was taken over, and the survivor stays foreign.
 		expect(getStreamingProcesses().length).toBe(0);
 		expect(unownedSenderCensus(getStreamingProcesses(), "/proc")).toBe(
@@ -904,11 +1409,115 @@ describe("a real detached sender", () => {
 		expect(readFileSync(`/proc/${pid}/comm`, "utf8").trim()).toBe("srtla_send");
 	});
 
-	test("with no live invocation source, as on this base, the same sender is refused there", async () => {
+	test("a peer that is not the recorded PID is sent nothing", async () => {
+		const reads = await readPeerBoundStats(socket, process.pid);
+		expect(reads.peer).toBe("mismatch");
+		expect(reads.reads).toEqual([null, null]);
+		expect(requestsSeen()).toEqual([]);
+		const verified = await readPeerBoundStats(socket, pid);
+		expect(verified.peer).toBe("verified");
+		expect(requestsSeen().length).toBe(3);
+	});
+
+	test("SO_PEERCRED names the sender and, where the kernel has it, its live pidfd agrees", async () => {
+		const seen: PeerCheck[] = [];
+		const [major = 0, minor = 0] = release().split(".").map(Number);
+		const hasPeerPidfd = major > 6 || (major === 6 && minor >= 5);
+		await readPeerBoundStats(socket, pid, async (fd, expected) => {
+			const peer = await readPeerIdentity(fd);
+			expect(peer?.pid).toBe(pid);
+			if (hasPeerPidfd) expect(peer?.pidfd).toEqual({ state: "alive", pid });
+			else expect(peer?.pidfd).toEqual({ state: "unsupported" });
+			const result = await checkControlPeer(fd, expected);
+			seen.push(result);
+			return result;
+		});
+		expect(seen).toEqual([hasPeerPidfd ? "verified" : "unsupported"]);
+	});
+
+	test("a pin no longer confirmed alive before the request sends nothing", async () => {
+		const reads = await readPeerBoundStats(
+			socket,
+			pid,
+			checkControlPeer,
+			() => false,
+		);
+		expect(reads.peer).toBe("unavailable");
+		expect(requestsSeen()).toEqual([]);
+	});
+
+	test("a sender that dies while the engine is asked is refused at the final pass", async () => {
+		const e = await collectSenderAdoptionEvidence(
+			await realIo({
+				queryEngine: async () => {
+					process.kill(pid, "SIGKILL");
+					for (let i = 0; i < 100; i++) {
+						try {
+							readFileSync(`/proc/${pid}/stat`);
+							await Bun.sleep(10);
+						} catch {
+							break;
+						}
+					}
+					return { state: "streaming", session: { ...ENGINE_SESSION } };
+				},
+			}),
+		);
+		expect(e.peer).toBe("verified");
+		expect(e.revalidated).toBe("exited");
+		expect(senderAdoptionVerdict(e)).toEqual({
+			decision: "refuse",
+			check: "process",
+			reason: "exited_during_read",
+		});
+	});
+
+	test("a stale PID reused by another process is refused before the socket is touched", async () => {
+		const e = await collectSenderAdoptionEvidence(
+			await realIo({}, { startTime: "1" }),
+		);
+		expect(senderAdoptionVerdict(e)).toEqual({
+			decision: "refuse",
+			check: "process",
+			reason: "pid_reused",
+		});
+		expect(requestsSeen()).toEqual([]);
+	});
+
+	test("a sender that exits after its reads is caught by the pin", async () => {
+		const io = await realIo({
+			readStats: async (path, expected, pinned) => {
+				const reads = await readPeerBoundStats(
+					path,
+					expected,
+					checkControlPeer,
+					pinned,
+				);
+				process.kill(pid, "SIGKILL");
+				for (let i = 0; i < 100; i++) {
+					try {
+						readFileSync(`/proc/${pid}/stat`);
+						await Bun.sleep(10);
+					} catch {
+						break;
+					}
+				}
+				return reads;
+			},
+		});
+		const e = await collectSenderAdoptionEvidence(io);
+		expect(e.peer).toBe("verified");
+		expect(e.exitedDuringRead).toBe(true);
+		expect(senderAdoptionVerdict(e)).toEqual({
+			decision: "refuse",
+			check: "process",
+			reason: "exited_during_read",
+		});
+	});
+
+	test("with no live unit source the same sender is refused at the host", async () => {
 		expect(
-			await observeSenderAdoption(
-				await realIo({ liveInvocation: async () => null }),
-			),
+			await observeSenderAdoption(await realIo({ liveUnit: async () => null })),
 		).toEqual({
 			decision: "refuse",
 			check: "host",

@@ -11,6 +11,8 @@ const link = z.object({
 	linkId: z.string().min(1),
 	iface: z.string().min(1),
 	ip: z.string().min(1),
+	/** The sidecar row's `id_path`, when the writer published one. */
+	idPath: z.string().min(1).optional(),
 });
 const base = { version: z.literal(1), bootId: z.string().min(1) };
 export const lifetimeSchema = z.object({
@@ -27,6 +29,28 @@ export const lifetimeSchema = z.object({
 	// Lenient: a malformed value reads as absent rather than failing the
 	// whole record, as an unknown field did before this one existed.
 	cgroup: z.string().min(1).nullable().optional().catch(null),
+	/**
+	 * The sender's own systemd unit and its manager, recorded with `cgroup` by
+	 * a host that gives the sender one. Lenient like `cgroup`.
+	 */
+	unit: z.string().min(1).nullable().optional().catch(null),
+	unitManager: z.enum(["system", "user"]).nullable().optional().catch(null),
+	/** Whether a pidfd bracketed the start-time read at launch. */
+	pidfd: z.boolean().optional().catch(false),
+	/**
+	 * The engine session this sender was started for: the engine's session id,
+	 * scoped by the engine unit's InvocationID and main PID. Written after the
+	 * engine confirms the start, and only for a sender with its own unit.
+	 */
+	engineSession: z
+		.object({
+			invocation: z.string().regex(/^[0-9a-f]{32}$/),
+			mainPid: z.number().int().positive(),
+			sessionId: z.string().min(1),
+		})
+		.nullable()
+		.optional()
+		.catch(null),
 	argsDigest: z.string(),
 	statsFile: z.string(),
 	controlSocket: z.string(),
@@ -179,7 +203,10 @@ export function continuityVerdict(e: ContinuityEvidence): Verdict {
 		w.generation !== p.generation ||
 		JSON.stringify(
 			w.links.map(({ linkId, iface, ip }) => ({ linkId, iface, ip })),
-		) !== JSON.stringify(p.links)
+		) !==
+			JSON.stringify(
+				p.links.map(({ linkId, iface, ip }) => ({ linkId, iface, ip })),
+			)
 	)
 		return refuse("witness", "publication_mismatch");
 	for (const host of w.links) {

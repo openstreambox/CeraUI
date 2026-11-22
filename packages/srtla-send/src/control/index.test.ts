@@ -619,3 +619,137 @@ describe("setters echo the APPLIED value", () => {
 		client?.close();
 	});
 });
+
+describe("verifyPeer, the check before any request", () => {
+	test("a refused peer is closed with nothing written, and resolves null", async () => {
+		const seen: string[] = [];
+		const { path } = await startServer(socketPath("peer-refused"), (frame) => {
+			seen.push(frame.method ?? "");
+			return [
+				JSON.stringify({ jsonrpc: "2.0", result: statsResult(), id: frame.id }),
+			];
+		});
+		const fds: number[] = [];
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 2000,
+			verifyPeer: (fd) => {
+				fds.push(fd);
+				return false;
+			},
+		});
+		expect(client).toBeNull();
+		expect(fds).toHaveLength(1);
+		expect(fds[0]).toBeGreaterThanOrEqual(0);
+		await Bun.sleep(50);
+		expect(seen).toEqual([]);
+	});
+
+	test("a check that throws is a refusal", async () => {
+		const { path } = await startServer(socketPath("peer-throws"), () => null);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 2000,
+			verifyPeer: async () => {
+				throw new Error("no credentials");
+			},
+		});
+		expect(client).toBeNull();
+	});
+
+	test("an accepted peer is asked as usual", async () => {
+		const { path } = await startServer(socketPath("peer-ok"), (frame) => [
+			JSON.stringify({ jsonrpc: "2.0", result: statsResult(), id: frame.id }),
+		]);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 2000,
+			verifyPeer: async () => true,
+		});
+		expect((await client?.getStats())?.links).toHaveLength(2);
+		client?.close();
+	});
+});
+
+describe("the contract-2 applied identity", () => {
+	const identity = { generation: 7, ips_file_sha256: "a".repeat(64) };
+
+	test("get_stats keeps the applied and pending publications when reported", async () => {
+		const { path } = await startServer(socketPath("applied"), (frame) => [
+			JSON.stringify({
+				jsonrpc: "2.0",
+				result: {
+					...(statsResult() as object),
+					bind_map_applied: identity,
+					bind_map_pending: { ...identity, generation: 8 },
+				},
+				id: frame.id,
+			}),
+		]);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 2000,
+		});
+		const stats = await client?.getStats();
+		expect(stats?.bind_map_applied).toEqual(identity);
+		expect(stats?.bind_map_pending?.generation).toBe(8);
+		client?.close();
+	});
+
+	test("a sender without the contract reports neither, and a malformed identity is no snapshot", async () => {
+		let malformed = false;
+		const { path } = await startServer(socketPath("applied-old"), (frame) => [
+			JSON.stringify({
+				jsonrpc: "2.0",
+				result: malformed
+					? {
+							...(statsResult() as object),
+							bind_map_applied: { generation: 7, ips_file_sha256: "short" },
+						}
+					: statsResult(),
+				id: frame.id,
+			}),
+		]);
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 2000,
+		});
+		const stats = await client?.getStats();
+		expect(stats?.bind_map_applied).toBeUndefined();
+		expect(stats?.bind_map_pending).toBeUndefined();
+		malformed = true;
+		expect(await client?.getStats()).toBeNull();
+		client?.close();
+	});
+
+	test("capabilities carry the contract revision when the build has one", async () => {
+		const { path } = await startServer(socketPath("contract"), (frame) => {
+			const doc = capabilitiesResult() as {
+				capabilities: Record<string, unknown>;
+			};
+			return [
+				JSON.stringify({
+					jsonrpc: "2.0",
+					result: {
+						...doc,
+						capabilities: {
+							...doc.capabilities,
+							bind_map_required: true,
+							bind_map_required_empty_reload: true,
+							bind_map_contract: 2,
+						},
+					},
+					id: frame.id,
+				}),
+			];
+		});
+		const client = await createControlClient({
+			socketPath: path,
+			timeoutMs: 2000,
+		});
+		const doc = await client?.getCapabilities();
+		expect(doc?.capabilities.bind_map_contract).toBe(2);
+		expect(doc?.capabilities.bind_map_required).toBe(true);
+		client?.close();
+	});
+});

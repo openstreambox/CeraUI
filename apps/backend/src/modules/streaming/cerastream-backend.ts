@@ -194,10 +194,15 @@ import type {
 	BackendErrorListener,
 	BitrateParams,
 	EngineRuntimeState,
+	EngineSessionEvidence,
 	EngineTelemetry,
 	StreamingBackend,
 	StreamRunOptions,
 } from "./streaming-backend.ts";
+
+/** Bound on the one read-only session-id question sessionEvidence() asks. */
+const ENGINE_SESSION_IDENTITY_TIMEOUT_MS = 1_000;
+
 import { PROCESS_ERROR_CODES } from "./streamloop/process-error-patterns.ts";
 
 const CERASTREAM_PIPELINE_PATH = "/tmp/cerastream-pipeline.txt";
@@ -813,6 +818,62 @@ export class CerastreamBackend implements StreamingBackend {
 	ownsLaunchedSession(): boolean {
 		return this.active && this.launchedSessionCurrent?.() === true;
 	}
+
+	/**
+	 * The session id the engine's Start reply gave for this process's own
+	 * launch, while that launch is still the current session; otherwise null.
+	 */
+	launchedSession(): string | null {
+		return this.ownsLaunchedSession() && this.launchedSessionId
+			? this.launchedSessionId
+			: null;
+	}
+	private launchedSessionId: string | undefined;
+
+	/**
+	 * Read only. The state is the last status the current session connection
+	 * delivered; the session id is asked once on that same connection, so both
+	 * describe the engine process that connection reaches. A status or
+	 * connection change while the question is out makes the answer unknown.
+	 * No connect, no subscription, and a failed question is not treated as
+	 * connection loss.
+	 */
+	async sessionEvidence(): Promise<EngineSessionEvidence> {
+		const client = this.client;
+		const epoch = this.clientEpoch;
+		const evidence = this.runtimeEvidence;
+		const state = evidence?.current() ? evidence.state : "unknown";
+		if (client === undefined || !this.active) return { state, sessionId: null };
+		// Sampled, not one moment: the same connection and the same cached
+		// status object before and after the question, still current. A status
+		// the engine sent but this process has not yet read is not seen.
+		const unchanged = () =>
+			this.client === client &&
+			this.clientEpoch === epoch &&
+			this.runtimeEvidence === evidence &&
+			evidence?.current() === true;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const snapshot = await Promise.race([
+				client.listSwitchTargets(),
+				new Promise<never>((_resolve, reject) => {
+					timer = this.deps.scheduleTimeout(
+						() => reject(new Error("session_identity_timeout")),
+						ENGINE_SESSION_IDENTITY_TIMEOUT_MS,
+					);
+				}),
+			]);
+			const id = snapshot.session_id;
+			if (!unchanged()) return { state: "unknown", sessionId: null };
+			return typeof id === "string" && id.length > 0
+				? { state, sessionId: id }
+				: { state, sessionId: null };
+		} catch {
+			return { state: unchanged() ? state : "unknown", sessionId: null };
+		} finally {
+			if (timer !== undefined) this.deps.cancelTimeout(timer);
+		}
+	}
 	private audioMixInputs: Array<AudioInputConfig & { id: string }> | undefined;
 	private clientEpoch = 0;
 	private probeEpoch = 0;
@@ -1019,8 +1080,10 @@ export class CerastreamBackend implements StreamingBackend {
 					dispatched = true;
 					return this.dispatchStart(client, startParams);
 				});
+				let startedSessionId: string | undefined;
 				await launchTransaction.runPhase("playing-wait", async () => {
 					const parsed = startResultSchema.parse(result);
+					startedSessionId = parsed.session_id;
 					if (parsed.state !== "streaming") await streamingStatus;
 				});
 				// Subscription replay predates this Start acknowledgement.
@@ -1029,6 +1092,7 @@ export class CerastreamBackend implements StreamingBackend {
 					this.audioMixInputs = startMixInputs;
 					this.launchedSessionCurrent = () =>
 						this.client === client && this.clientEpoch === clientEpoch;
+					this.launchedSessionId = startedSessionId;
 					this.runtimeEvidence = undefined;
 				}
 			}, "start");

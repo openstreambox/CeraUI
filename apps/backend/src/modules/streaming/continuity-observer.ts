@@ -9,7 +9,7 @@ import {
 } from "@ceraui/srtla-send/telemetry";
 import { z } from "zod";
 import { logger } from "../../helpers/logger.ts";
-import type { BondEntry } from "./bind-map.ts";
+import { type BondEntry, isValidIdPath } from "./bind-map.ts";
 import { SRTLA_LISTEN_PORT } from "./constants.ts";
 import {
 	type ContinuityEvidence,
@@ -25,6 +25,12 @@ import {
 	writeRecord,
 } from "./continuity-records.ts";
 import { createLatestReportWriter } from "./latest-report-writer.ts";
+import {
+	captureProcessInvocation,
+	type EngineSessionIdentity,
+	processInvocationIo,
+	senderHost,
+} from "./sender-invocation.ts";
 
 const liveSchema = z.object({
 	version: z.literal(1),
@@ -54,11 +60,14 @@ export const continuityObserverIo = {
 	directory: process.env.CERALIVE_CONTINUITY_DIR ?? CONTINUITY_DIR,
 	bootId,
 	processIdentity,
+	captureInvocation: (pid: number, ownChild?: () => boolean) =>
+		captureProcessInvocation(pid, processInvocationIo, ownChild),
+	senderHost: (pid: number) => senderHost(pid),
 	writeRecord,
 	captureWitness,
 	createControlClient,
 };
-export function digest(value: string): string {
+export function digest(value: string | Uint8Array): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 export async function bootId(): Promise<string> {
@@ -125,8 +134,8 @@ export async function recordSenderIntent(
 		sidecarFile: args.includes("--bind-map")
 			? (args[args.indexOf("--bind-map") + 1] ?? null)
 			: null,
-		// This sender argument builder exposes no required-mapping contract.
-		required: false,
+		// Required mode exists only when the vector asks for it.
+		required: args.includes("--require-bind-map"),
 		contract: 0,
 		capabilitiesDigest: null,
 		createdAt: Date.now(),
@@ -152,25 +161,79 @@ export function clearContinuityTelemetry(): void {
 export async function recordSenderStarted(
 	record: Lifetime,
 	pid: number,
+	ownChild?: () => boolean,
 ): Promise<void> {
 	const epoch = telemetryEpoch;
 	const currentIntent = () =>
 		epoch === telemetryEpoch && intendedLifetime === record.lifetime;
 	if (!currentIntent()) return;
-	const current = await continuityObserverIo.processIdentity(pid);
+	// PID, start time and boot id in one capture, bracketed by a pidfd where
+	// available and tied to the spawning handle: a sender that already exited
+	// records nothing, and the record keeps `pid: null`.
+	const current = await continuityObserverIo.captureInvocation(pid, ownChild);
 	if (!currentIntent()) return;
+	if (!current || current.bootId !== record.bootId) return;
+	const host = await continuityObserverIo.senderHost(pid);
+	if (!currentIntent()) return;
+	// The host was read from the same process: captured again, unchanged.
+	const after = await continuityObserverIo.captureInvocation(pid, ownChild);
+	if (!currentIntent()) return;
+	if (after?.startTime !== current.startTime) return;
+	const started: Lifetime = {
+		...record,
+		pid,
+		startTime: current.startTime,
+		pidfd: current.pidfd,
+		...(host.host === "systemd"
+			? {
+					host: "systemd",
+					invocation: host.invocation,
+					cgroup: host.cgroup,
+					unit: host.unit,
+					unitManager: host.manager,
+				}
+			: { host: "backend-child", invocation: null }),
+	};
 	await continuityObserverIo.writeRecord(
 		`${continuityObserverIo.directory}/lifetime.json`,
 		lifetimeSchema,
-		{
-			...record,
-			pid,
-			startTime: current.startTime,
-		},
+		started,
 		currentIntent,
 	);
 	if (!currentIntent()) return;
-	activeLifetime = { ...record, pid, startTime: current.startTime };
+	activeLifetime = started;
+}
+
+/**
+ * After the engine confirmed the start: record which engine session this
+ * sender serves. `read` must return the session the engine's Start reply
+ * named for this launch, confirmed live; `stillLaunched` fences the write to
+ * that same launch. Only a sender with its own unit can outlive the backend,
+ * so a backend child records nothing and asks the engine nothing.
+ */
+export async function recordEngineSession(
+	record: Lifetime,
+	read: () => Promise<EngineSessionIdentity | null>,
+	stillLaunched: () => boolean = () => true,
+): Promise<void> {
+	const epoch = telemetryEpoch;
+	const current = () =>
+		epoch === telemetryEpoch &&
+		intendedLifetime === record.lifetime &&
+		activeLifetime?.lifetime === record.lifetime &&
+		stillLaunched();
+	const started = activeLifetime;
+	if (!current() || started?.host !== "systemd") return;
+	const engineSession = await read();
+	if (!engineSession || !current()) return;
+	const next: Lifetime = { ...started, engineSession };
+	await continuityObserverIo.writeRecord(
+		`${continuityObserverIo.directory}/lifetime.json`,
+		lifetimeSchema,
+		next,
+		current,
+	);
+	if (current()) activeLifetime = next;
 }
 export async function captureWitness(p: Publication): Promise<Witness | null> {
 	try {
@@ -232,6 +295,10 @@ export async function reservePublication(
 			linkId: entry.linkId ?? "",
 			iface: entry.iface,
 			ip: entry.ip,
+			// The sidecar carries `id_path` only when it is valid; so does this.
+			...(entry.idPath !== undefined && isValidIdPath(entry.idPath)
+				? { idPath: entry.idPath }
+				: {}),
 		})),
 	};
 	await continuityObserverIo.writeRecord(
@@ -249,9 +316,11 @@ export async function reservePublication(
 }
 
 /**
- * The map the sender would read now: the bind-map sidecar and the SHA-256 of the
- * IP list's raw bytes, as a publication. Null when either is missing, torn, or
- * the sidecar names a different IP list.
+ * The map the sender would read now: the bind-map sidecar (rows including
+ * `id_path`) and the SHA-256 of the IP list's raw bytes, as a publication.
+ * Null when either is missing or torn, or the sidecar's `ips_file_sha256` is
+ * not the hash of that IP list (the sidecar names no path; the hash is the
+ * binding).
  */
 export async function readDiskPublication(
 	lifetime: Pick<Lifetime, "sidecarFile" | "ipsFile">,
@@ -267,12 +336,19 @@ export async function readDiskPublication(
 			version: sidecar.schema_version,
 			bootId: await continuityObserverIo.bootId(),
 			generation: sidecar.generation,
-			sha256: digest(await readFile(lifetime.ipsFile, "utf8")),
+			// The raw bytes, as the writer and the sender hash them.
+			sha256: digest(await readFile(lifetime.ipsFile)),
 			links: sidecar.links.map(
-				(l: { link_id: string; iface: string; ip: string }) => ({
+				(l: {
+					link_id: string;
+					iface: string;
+					ip: string;
+					id_path?: string;
+				}) => ({
 					linkId: l.link_id,
 					iface: l.iface,
 					ip: l.ip,
+					...(l.id_path === undefined ? {} : { idPath: l.id_path }),
 				}),
 			),
 		});

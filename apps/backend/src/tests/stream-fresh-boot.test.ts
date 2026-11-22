@@ -291,13 +291,14 @@ test("first record failure leaves sender and telemetry on the original paths", a
 });
 
 test("a successful launch records the spawned sender identity", async () => {
-	const original = continuityObserverIo.processIdentity;
-	continuityObserverIo.processIdentity = async (pid) => ({
+	const original = continuityObserverIo.captureInvocation;
+	continuityObserverIo.captureInvocation = async (pid) => ({
 		pid,
 		startTime: "spawned-child",
-		argsDigest: "digest",
-		invocation: null,
-		processCount: 1,
+		state: "S",
+		processGroup: pid,
+		bootId: await continuityObserverIo.bootId(),
+		pidfd: true,
 	});
 	try {
 		const h = bootHarness();
@@ -307,7 +308,10 @@ test("a successful launch records the spawned sender identity", async () => {
 		).json();
 		expect(record.pid).toEqual(expect.any(Number));
 		expect(record.startTime).toBe("spawned-child");
+		expect(record.pidfd).toBe(true);
+		// The test runner's child shares its cgroup: a backend child.
+		expect(record.host).toBe("backend-child");
 	} finally {
-		continuityObserverIo.processIdentity = original;
+		continuityObserverIo.captureInvocation = original;
 	}
 });

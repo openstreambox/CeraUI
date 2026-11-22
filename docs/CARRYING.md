@@ -220,17 +220,58 @@ After a restart the backend also judges, read only, whether a sender its
 predecessor left running could be adopted, and logs the verdict with the first
 failing check. It never adopts, signals or stops anything. It runs after the
 stream session has been reconciled, and startup continues without waiting for
-it; it leaves an unreadable armed-stream marker in place for restoration. On
-this version it reaches neither the sender's control socket nor the engine. A record that could
-never qualify (every record today, because the sender runs inside the backend's
-own service and dies with it) is judged from the record alone. Otherwise the
-check reads the process at the recorded PID (start time, name, the configured
-executable, arguments, not stopped), its own systemd unit and cgroup, the armed
-stream's configuration, the published map against the map on disk, and whether
-that PID holds the control socket; only then does it read the socket. Three
-facts it requires have no source yet: the unit's live invocation, the map
-generation and SHA the sender has applied, and an identity for the engine
-session. The engine is never asked.
+it; it leaves an unreadable armed-stream marker in place for restoration. A
+record that could never qualify (every record today, because the sender runs
+inside the backend's own service and dies with it) is judged from the record
+alone, so on this version the check reaches neither the sender's control socket
+nor the engine.
+
+When a sender starts, the backend records its PID and start time from one read
+of the process (the boot ID is read separately), made while a pidfd holds it
+and while the backend's own handle for the child shows it has not exited, so a
+sender that is already gone records no PID. Without a pidfd no PID or unit is
+added to the record prepared before the spawn, so it keeps a null PID. After the
+unit lookup the process is captured again and its start
+time must be the same. It records a systemd unit only when the sender is the main process of
+its own active unit, alone in that unit's cgroup, outside the backend's cgroup.
+For such a sender it also records the session ID from the engine's reply to
+that Start, once the engine still reports it as streaming on the same
+connection, with the engine unit's invocation ID and main PID.
+
+For a record that could qualify, the check holds a pidfd on the recorded PID and
+refuses when there is none or its answer is not "alive". It reads the process
+(start time, name, the configured executable, arguments, not stopped); the
+recorded unit through systemd (the same invocation ID, the sender as its main
+process, active and running, no restart policy, the recorded cgroup with the
+sender alone in it and in its process group); the armed stream's
+configuration; the published map against the map on disk, including each row's
+`id_path`; and whether that PID holds the control socket. Only then does it
+connect to the socket. It sends nothing until SO_PEERCRED names the recorded PID
+and SO_PEERPIDFD shows that listener alive under that number, and the pidfd still
+shows the sender alive; a kernel without SO_PEERPIDFD (before Linux 6.5) is
+refused. Both options name the process that listened, not whoever answers, so
+the check assumes the sender does not share or pass on its listening socket.
+Over that one connection it reads the sender's capabilities and two stats
+snapshots, and requires bind-map contract 2 or later with required binding
+advertised and requested, a mapped bond with the published links, a live link,
+rising bytes, nothing pending, and an applied map generation and SHA equal to
+the published ones. A missing pending field is read as nothing pending, which
+relies on the contract-2 sender omitting it only then. The applied identity
+covers the generation and the IP list's hash only, not `id_path`. It then reads
+every local fact again on the same pidfd and requires the same values (the
+process state only has to still qualify). Next it asks the engine for its
+session ID once, on the session connection reconciliation holds, and requires
+it to equal the recorded one. It reads the engine unit's invocation ID and main
+PID from systemd before and after that question, with the unit still active,
+and requires both to equal the recorded ones; this brackets the question in
+time but does not prove that the connection reaches that main process. The
+cached streaming status of that connection must be unchanged across the
+question. Last, it checks that the pidfd still shows the sender alive, that
+`/proc` does not show it stopped or exiting, and that the armed marker and
+configuration are unchanged. A positive verdict is agreement
+of these samples within a window of 3 seconds, not a guarantee about the
+instant it is logged; a longer collection refuses. A sender older than contract
+2 is refused at the contract check.
 
 ### Reinicio del backend y propiedad del emisor
 
@@ -254,14 +295,57 @@ emisor que su predecesor dejó en marcha, y registra el resultado con la primera
 comprobación que falló. Nunca adopta, envía señales ni detiene nada. Se ejecuta
 después de reconciliar la sesión de transmisión, y el arranque continúa sin
 esperar a que termine; deja en su sitio un marcador de transmisión armada
-ilegible para la restauración. En esta versión no llega ni al socket de control
-del emisor ni al motor. Un registro
-que nunca podría cumplir (hoy todos, porque el emisor corre dentro del propio
-servicio del backend y termina con él) se evalúa solo con el registro. Si no, la
-comprobación lee el proceso con el PID registrado (hora de inicio, nombre, el
-ejecutable configurado, argumentos, no detenido), su propia unidad de systemd y
-su cgroup, la configuración de la transmisión armada, el mapa publicado frente al
-del disco y si ese PID tiene el socket de control; solo entonces lee el socket.
-Tres datos que exige todavía no tienen fuente: la invocación actual de la unidad,
-la generación y el SHA del mapa que el emisor ha aplicado, y una identidad para la
-sesión del motor. Nunca se consulta al motor.
+ilegible para la restauración. Un registro que nunca podría cumplir (hoy todos,
+porque el emisor corre dentro del propio servicio del backend y termina con él)
+se evalúa solo con el registro, así que en esta versión la comprobación no llega
+ni al socket de control del emisor ni al motor.
+
+Cuando un emisor arranca, el backend registra su PID y su hora de inicio con una
+sola lectura del proceso (el ID de arranque del sistema se lee aparte), hecha
+mientras un pidfd lo sostiene y mientras el propio manejador del backend para
+ese hijo indica que no ha terminado; un emisor que ya no existe no registra PID.
+Sin pidfd no se añade PID ni unidad al registro preparado antes del arranque,
+que conserva un PID nulo. Después de consultar la unidad el proceso se lee
+otra vez y su hora de inicio debe ser la misma. Registra una unidad
+de systemd solo cuando el emisor es el proceso principal de su propia unidad
+activa, solo en el cgroup de esa unidad, fuera del cgroup del backend. Para un
+emisor así registra también el ID de sesión de la respuesta del motor a ese
+inicio, cuando el motor todavía lo informa en transmisión por la misma conexión,
+junto con el ID de invocación y el PID principal de la unidad del motor.
+
+Para un registro que podría cumplir, la comprobación sostiene un pidfd sobre el
+PID registrado y rechaza si no lo hay o si su respuesta no es "vivo". Lee el
+proceso (hora de inicio, nombre, el ejecutable configurado, argumentos, no
+detenido); la unidad registrada a través de systemd (el mismo ID de invocación,
+el emisor como proceso principal, activa y en ejecución, sin política de
+reinicio, el cgroup registrado con el emisor solo en él y en su grupo de
+procesos); la configuración de la transmisión armada; el mapa publicado frente
+al del disco, incluido el `id_path` de cada fila; y si ese PID tiene el socket de
+control. Solo entonces se conecta al socket. No envía nada hasta que SO_PEERCRED
+indique el PID registrado, SO_PEERPIDFD muestre a ese proceso que escucha vivo
+con ese mismo número y el pidfd siga mostrando vivo al emisor; un kernel sin
+SO_PEERPIDFD (anterior a Linux 6.5) se rechaza. Ambas opciones indican el
+proceso que escuchó, no quién responde, así que la comprobación supone que el
+emisor no comparte ni entrega su socket de escucha. Por esa misma conexión lee
+las capacidades del emisor y dos lecturas de estadísticas, y exige el contrato
+de mapa de enlaces 2 o posterior con el modo obligatorio anunciado y pedido, un
+enlace agrupado mapeado con los enlaces publicados, un enlace activo, bytes en
+aumento, nada pendiente, y una generación y un SHA del mapa aplicado iguales a
+los publicados. Un campo de pendiente ausente se entiende como nada pendiente,
+lo que depende de que el emisor del contrato 2 lo omita solo en ese caso. La
+identidad aplicada cubre solo la generación y el hash de la lista de IP, no
+`id_path`. Luego vuelve a leer todos los datos locales con el mismo pidfd y
+exige los mismos valores (el estado del proceso solo tiene que seguir siendo
+válido). Después pide al motor su ID de sesión una sola vez, por la conexión de
+sesión que mantiene la reconciliación, y exige que sea igual al registrado. Lee
+de systemd el ID de invocación y el PID principal de la unidad del motor antes y
+después de esa pregunta, con la unidad todavía activa, y exige que ambos sean
+iguales a los registrados; esto delimita la pregunta en el tiempo, pero no
+prueba que la conexión llegue a ese proceso principal. El estado de transmisión
+guardado de esa conexión no debe cambiar durante la pregunta. Por último,
+comprueba que el pidfd siga mostrando al emisor vivo, que `/proc` no lo muestre
+detenido ni terminando, y que el marcador de transmisión armada y la
+configuración no hayan cambiado. Un resultado positivo es el acuerdo
+de estas muestras dentro de una ventana de 3 segundos, no una garantía sobre el
+instante en que se registra; una recolección más larga se rechaza. Un emisor
+anterior al contrato 2 se rechaza en la comprobación del contrato.
