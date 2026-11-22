@@ -11,6 +11,7 @@
 			"types": "./src/index.ts",
 			"import": "./src/index.ts"
 		},
+		"./process-signals": "./src/process-signals.ts",
 		"./sender": {
 			"types": "./src/sender/index.ts",
 			"import": "./src/sender/index.ts"
