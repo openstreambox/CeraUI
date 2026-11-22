@@ -2992,7 +2992,7 @@ describe("F6 request causality and action lifetime over the real socket", () => 
 	it("a Stop pressed while the new socket is being signed in goes out once, as soon as the session is back", async () => {
 		const container = await liveThenReconnecting();
 
-		await fireEvent.click(button(container, "Stop Stream"));
+		await endStream(container);
 		await settle();
 		expect(sentCount("streaming.stop")).toBe(0);
 		expect(controls(container)).toEqual([
@@ -3006,7 +3006,7 @@ describe("F6 request causality and action lifetime over the real socket", () => 
 
 	it("a Stop pressed during a first stalled sign-in goes out once after the next socket signs in", async () => {
 		const container = await liveThenReconnecting();
-		await fireEvent.click(button(container, "Stop Stream"));
+		await endStream(container);
 		await settle();
 
 		// The first socket's sign-in never answers; the tab replaces the socket.
@@ -3027,7 +3027,7 @@ describe("F6 request causality and action lifetime over the real socket", () => 
 
 	it("a Stop pressed before the sign-in is refused is never sent, and the operator is told", async () => {
 		const container = await liveThenReconnecting();
-		await fireEvent.click(button(container, "Stop Stream"));
+		await endStream(container);
 		await settle();
 
 		answer("auth.login", { success: false });
@@ -3043,7 +3043,7 @@ describe("F6 request causality and action lifetime over the real socket", () => 
 
 	it("a Stop pressed during the sign-in is not sent when the device is no longer live", async () => {
 		const container = await liveThenReconnecting();
-		await fireEvent.click(button(container, "Stop Stream"));
+		await endStream(container);
 		await settle();
 
 		answer("auth.login", { success: true });
