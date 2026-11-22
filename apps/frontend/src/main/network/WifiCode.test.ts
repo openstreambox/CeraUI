@@ -18,6 +18,7 @@ const toast = vi.hoisted(() => vi.fn());
 vi.mock("svelte-sonner", () => ({ toast }));
 
 import {
+	getHotspotLifetime,
 	noteHotspotRoster,
 	resetHotspotJoinsForTest,
 } from "$lib/stores/hotspot-joins.svelte";
@@ -282,6 +283,69 @@ describe("WifiCode — two hotspots", () => {
 		expect(screen.queryByTestId("wifi-code-renew-confirm")).toBeNull();
 		expect(screen.queryByTestId("wifi-code-joined")).toBeNull();
 		expect(renewB).not.toHaveBeenCalled();
+	});
+});
+
+describe("WifiCode — AP lifetime", () => {
+	it("a Stop and Start drops the old lifetime's join line and open question, and hides the code", async () => {
+		const live = (...macs: string[]) => ({ "0": ap(macs, "radio-A") });
+		noteHotspotRoster(live());
+		const first = getHotspotLifetime("0", ap([], "radio-A"));
+		const onrenew = vi.fn();
+		const view = render(WifiCode, {
+			name: "Box",
+			password: "correcthorse",
+			owner: { ...A, lifetime: first },
+			renew: { phase: "idle", streaming: false, onrenew },
+		});
+		noteHotspotRoster(live("aa:aa:aa:aa:aa:01"));
+		await flush();
+		await fireEvent.click(screen.getByRole("button", { name: "Not mine?" }));
+		await fireEvent.click(showButton());
+		await flush();
+		expect(frame().dataset.shown).toBe("true");
+
+		// Stop, then Start: the same radio, a new AP lifetime.
+		noteHotspotRoster({
+			"0": { ...ap([], "radio-A"), hotspot: undefined, mode: "station" },
+		});
+		noteHotspotRoster(live());
+		const second = getHotspotLifetime("0", ap([], "radio-A"));
+		expect(second).not.toBe(first);
+		await view.rerender({
+			name: "Box",
+			password: "correcthorse",
+			owner: { ...A, lifetime: second },
+			renew: { phase: "idle", streaming: false, onrenew },
+		});
+		await flush();
+		expect(screen.queryByTestId("wifi-code-joined")).toBeNull();
+		expect(screen.queryByTestId("wifi-code-renew-confirm")).toBeNull();
+		expect(frame().dataset.shown).toBe("false");
+		expect(onrenew).not.toHaveBeenCalled();
+	});
+
+	it("a card still naming the earlier lifetime claims no join of the restarted AP", async () => {
+		const live = (...macs: string[]) => ({ "0": ap(macs, "radio-A") });
+		noteHotspotRoster(live());
+		const first = getHotspotLifetime("0", ap([], "radio-A"));
+		render(WifiCode, {
+			name: "Box",
+			password: "correcthorse",
+			owner: { ...A, lifetime: first },
+		});
+		await fireEvent.click(showButton());
+		await flush();
+		noteHotspotRoster({
+			"0": { ...ap([], "radio-A"), hotspot: undefined, mode: "station" },
+		});
+		noteHotspotRoster(live());
+		noteHotspotRoster(live("aa:aa:aa:aa:aa:01"));
+		await flush();
+		expect(screen.queryByTestId("wifi-code-joined")).toBeNull();
+		// Not this card's join: its code stays as the operator left it.
+		expect(frame().dataset.shown).toBe("true");
+		expect(toast).toHaveBeenCalledTimes(1);
 	});
 });
 
