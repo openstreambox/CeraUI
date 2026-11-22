@@ -930,7 +930,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["pairing: platform claim response failed validation"],
 	["pairing: platform claim returned a non-JSON body"],
 	["pairing: registered device pairing secret with platform"],
-	["phone way file is not valid JSON, ignoring it"],
+	["phone way file is unusable, ignoring it"],
 	["preview proxy: input-id identity resolution failed: ", ""],
 	[
 		"preview proxy: refusing a start whose node path was taken over by another device",

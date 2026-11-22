@@ -4,6 +4,7 @@ import { logger } from "../../helpers/logger";
 import {
 	readStoredStateFile,
 	STORED_STATE_LIMITS,
+	StoredStateReadError,
 } from "./update-orchestrator/stored-state-file";
 
 const FILE =
@@ -17,9 +18,15 @@ export async function readPhoneWay(path = FILE): Promise<PhoneWay | null> {
 		if (raw === null) return null;
 		stored = JSON.parse(raw);
 	} catch (error) {
-		// An empty, truncated or non-UTF-8 file is the same as no saved choice.
-		if (!(error instanceof SyntaxError)) throw error;
-		logger.warn("phone way file is not valid JSON, ignoring it");
+		// An empty, truncated, non-UTF-8, oversize or non-regular file is the same
+		// as no saved choice. Other read errors (a file that changed under the
+		// read, an I/O failure) still propagate.
+		const unusable =
+			error instanceof SyntaxError ||
+			(error instanceof StoredStateReadError &&
+				(error.reason === "oversize" || error.reason === "not_regular_file"));
+		if (!unusable) throw error;
+		logger.warn("phone way file is unusable, ignoring it");
 		return null;
 	}
 	const way =
