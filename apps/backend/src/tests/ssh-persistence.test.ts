@@ -19,7 +19,13 @@
  * replaces it.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
@@ -39,7 +45,7 @@ import {
 	getSshPasswordHash,
 	getSshStatus,
 	parseSystemctlIsEnabled,
-	reconcileSshPersistence,
+	reconcileSshPersistence as reconcile,
 	resetMockSshState,
 	resetSshPersistenceRunner,
 	resetSshServiceRunner,
@@ -86,6 +92,16 @@ let savedPersistent: boolean | undefined;
 let savedHash: string | undefined;
 let savedConfigPath: string;
 let configRoot: string;
+
+function reconcileSshPersistence(
+	passwordSynced: boolean,
+	deps: Partial<SshStatusDeps>,
+) {
+	return reconcile(passwordSynced, {
+		...deps,
+		bootMarkerPath: join(configRoot, "ssh-persistence-reconciled"),
+	});
+}
 
 beforeEach(() => {
 	savedNodeEnv = process.env.NODE_ENV;
@@ -552,6 +568,49 @@ describe("reconcileSshPersistence - persisted boot choice", () => {
 		expect(pendingStart).toBe(false);
 	});
 
+	test.each([false, true])(
+		"backend restart preserves temporary SSH when boot began with saved %p",
+		async (initialChoice) => {
+			getConfig().ssh_persistent = initialChoice;
+			await reconcileSshPersistence(
+				true,
+				statusDeps({ enabled: initialChoice }),
+			);
+			expect(calls).toEqual(initialChoice ? [] : ["stop"]);
+
+			// The owner disables persistence and starts SSH for this boot.
+			expect(await setSshPersistent(false, statusDeps())).toBe(true);
+			expect(await startStopSsh(stubWs(), "start_ssh", statusDeps())).toBe(
+				true,
+			);
+			calls.length = 0;
+
+			// A stale link still needs removal, but the live service is deliberate.
+			await reconcileSshPersistence(true, statusDeps({ enabled: true }));
+			expect(calls).toEqual(["disable"]);
+			expect(storedChoice()).toBe(false);
+		},
+	);
+
+	test("a failed boot stop is retried before it counts as reconciled", async () => {
+		getConfig().ssh_persistent = false;
+		const deps = statusDeps({ enabled: false });
+		setSshServiceRunner(async () => {
+			throw new Error("stop failed");
+		});
+		await reconcileSshPersistence(true, deps);
+		expect(existsSync(join(configRoot, "ssh-persistence-reconciled"))).toBe(
+			false,
+		);
+
+		setSshServiceRunner(async (action) => {
+			calls.push(action);
+		});
+		await reconcileSshPersistence(true, deps);
+		await reconcileSshPersistence(true, deps);
+		expect(calls).toEqual(["stop"]);
+	});
+
 	test.each([true, false])(
 		"saved %p survives fallback to a link-only slot and back",
 		async (choice) => {
@@ -598,6 +657,7 @@ describe("reconcileSshPersistence - persisted boot choice", () => {
 			expect(calls).toEqual([]);
 
 			// The other slot may still have an enabled link from an earlier boot.
+			rmSync(join(configRoot, "ssh-persistence-reconciled"));
 			await reconcileSshPersistence(true, statusDeps({ enabled: true }));
 			expect(storedChoice()).toBe(false);
 			expect(calls).toEqual(["disable", "stop"]);
@@ -605,7 +665,7 @@ describe("reconcileSshPersistence - persisted boot choice", () => {
 	);
 
 	test.each(["masked", "masked-runtime", "static", "enabled-runtime", ""])(
-		"%s is never changed or recorded as an operator choice",
+		"saved on preserves the unit and config when the probe reports %p",
 		async (state) => {
 			getConfig().ssh_persistent = true;
 			const before = readFileSync(getConfigFilePath(), "utf8");
@@ -628,6 +688,14 @@ describe("reconcileSshPersistence - persisted boot choice", () => {
 		).resolves.toBeUndefined();
 		expect(calls).toEqual([]);
 		expect(readFileSync(getConfigFilePath(), "utf8")).toBe(before);
+	});
+
+	test("an empty enablement probe leaves the migration choice unset", async () => {
+		await reconcileSshPersistence(true, {
+			systemctlIsEnabled: async () => ({ stdout: " \n", stderr: "" }),
+		});
+		expect(calls).toEqual([]);
+		expect(storedChoice()).toBeUndefined();
 	});
 
 	test.each([true, false])(

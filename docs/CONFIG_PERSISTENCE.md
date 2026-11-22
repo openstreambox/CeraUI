@@ -123,12 +123,20 @@ notification obligation or cross-process exactly-once guarantee.
 The optional `ssh_persistent` boolean in `config.json` stores the operator's
 SSH-at-boot choice across OS slots. `setSshPersistent` saves it after the unit
 confirms the change. When the field is absent, boot migrates the unit state.
-An exact `enabled` records on, other reported states record off, and an
-unreadable state leaves the field unset. Reconciliation runs after SSH password
-sync. Saved off disarms the current slot's persistent link and stops the SSH
-service, including a queued start. Temporary SSH Start/Stop never writes this
-field. A damaged-config rebuild loses the choice and migrates the current unit
-state without changing the unit on that boot. See the
+An exact `enabled` records on and other reported states record off. A failed
+or empty probe leaves the field unset and makes no unit changes during
+migration. Reconciliation runs after SSH password sync. Saved off disarms the
+current slot's persistent link and, on the first reconciliation of each boot,
+stops the SSH service and cancels a queued start. Backend restarts preserve
+temporary SSH started by the operator. Temporary SSH Start/Stop never writes
+this field. Production images disable `ssh.socket`. CeraUI manages
+`ssh.service`, so a socket enabled independently can still activate SSH.
+
+A disable performed on an older slot that only changes its systemd link
+cannot veto a saved on choice. The new slot uses the saved choice, since a
+fresh slot's default is also disabled. A damaged-config rebuild loses the
+choice and migrates the current unit state without changing the unit on that
+boot. See the
 [SSH module contract](../apps/backend/docs/agents/dev-mock-seams.md#ssh-boot-persistence-is-a-second-axis-not-a-side-effect-exists).
 
 Streaming format settings keep their existing saved keys and defaults.

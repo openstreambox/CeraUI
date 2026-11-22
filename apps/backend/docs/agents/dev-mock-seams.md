@@ -327,10 +327,13 @@ wire status intentionally maps both masks and probe failures to false:
   non-credential fields, so a rebuilt config follows the same adoption path.
 - Saved true plus disabled runs `enable ssh`, then `start ssh`, only with a
   persisted `ssh_pass` and successful password sync on this boot.
-- Saved false removes an enabled link and runs `stop ssh` even if the link is
-  already absent or the enablement probe fails. Stop replaces a queued start
-  job as well as stopping an active daemon. The live persistence toggle still
-  changes only the boot link.
+- Saved false removes an enabled link. The first reconciliation of a boot
+  also runs `stop ssh` even if the link is already absent or the probe fails.
+  Stop replaces a queued start job as well as stopping an active daemon.
+  The backend records completion in its systemd-preserved `/run/ceralive`
+  directory. A failed stop leaves it eligible for retry. Later backend starts
+  keep temporary SSH available and still repair an enabled boot link. The
+  live persistence toggle only changes the boot link.
 - Masks, runtime links and other nonstandard unit-file states stay in place.
   Probe, command and config-save errors are logged and swallowed. Under mocks
   reconciliation performs no probe, command or write.
@@ -341,6 +344,8 @@ without updating the choice, or omit the unknown field when rewriting the
 config. On return, CeraUI uses the choice still on disk or migrates the link
 in the current slot. Boot reconciliation can stop a daemon after it has
 started, since the backend runs after systemd has begun the boot transaction.
+The production image disables `ssh.socket`. This code manages
+`ssh.service` only and an independently enabled socket can still activate it.
 
 The RPC is `system.sshSetPersistent` (`.strict()` input, same `authedProcedure` +
 streaming/updating gate as its sibling SSH mutations). Operator surface and its

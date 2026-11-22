@@ -44186,7 +44186,7 @@
     "apps/backend/src/modules/system/readiness.ts": "6c2725aae677f8a4a22d0dcce028b4e0d42a83916d3b4f7ba6b94e67cfe03e22",
     "apps/backend/src/modules/system/sensors.ts": "a8b7c1792525f429bd06018831c18832fa56f588fdf8f8345b265768375f4e4c",
     "apps/backend/src/modules/system/software-updates.ts": "d1ad6da3eb559be5336b74bb6519ba6caf9fba051b2dc1593f41a31dbfab9763",
-    "apps/backend/src/modules/system/ssh.ts": "6f44a5239927428a77050c3e979abb792aa9a2054b8faded0bb1d68054df3dfa",
+    "apps/backend/src/modules/system/ssh.ts": "ddebf2a40d64a4ff0886400931318e2f837706aa4c4915f9c6594313b8efc73c",
     "apps/backend/src/modules/system/tailscale.ts": "b2731b7eed6258db2efef8de0187b03dbf66cdeed37cee035f4c5788dc7f2fdf",
     "apps/backend/src/modules/system/update-orchestrator/runtime.ts": "5d6fe150025d879e82f987d25489c4c7125b724f56c9296cc459dc500aade698",
     "apps/backend/src/modules/ui/notifications.ts": "ffe408b78e2f04ffa037890131f177b50569f6530f4cc89208fb6eaf7bd8fd95",
