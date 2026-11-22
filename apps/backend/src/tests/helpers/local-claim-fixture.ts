@@ -55,15 +55,35 @@ await loadConfig();
 assert.equal(getConfig().local_claim_digest, undefined);
 
 switch (scenario) {
-	case "legacy":
+	case "legacy": {
 		assert.equal((await claim()).success, false);
 		assert.equal((await legacySetPassword()).success, true);
+		// Legacy setup spends a seeded code on disk, not only in memory.
+		const saved = JSON.parse(await Bun.file("config.json").text());
+		assert.ok(saved.password_hash);
+		assert.ok(!("local_claim_digest" in saved));
+		// Even after the owner hash is lost, the old code never claims again.
+		delete saved.password_hash;
+		await Bun.write("config.json", JSON.stringify(saved));
+		setPasswordHash(undefined);
+		process.env.CERALIVE_LOCAL_CLAIM = "1";
+		await loadConfig();
+		assert.equal(getLocalClaimDigest(), undefined);
+		assert.equal((await claim()).success, false);
+		assert.equal(getPasswordHash(), undefined);
 		break;
+	}
 	case "unavailable":
 		assert.equal((await claim()).success, false);
 		assert.equal((await legacySetPassword()).success, false);
-		await Bun.write("config.json", '{"local_claim_digest":"invalid"}');
-		await assert.rejects(loadConfig);
+		// A malformed verifier withholds setup but keeps the rest of the config.
+		await Bun.write(
+			"config.json",
+			'{"local_claim_digest":"invalid","max_br":9000}',
+		);
+		await loadConfig();
+		assert.equal(getConfig().max_br, 9000);
+		assert.equal(getLocalClaimDigest(), undefined);
 		assert.equal((await claim()).success, false);
 		assert.equal((await legacySetPassword()).success, false);
 		assert.equal(getPasswordHash(), undefined);

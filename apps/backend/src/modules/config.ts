@@ -88,6 +88,8 @@ export async function loadConfig() {
 	);
 	config = coerceLegacySource(result.data);
 	// A malformed existing credential must not be interpreted as first setup.
+	// A malformed digest was already dropped by the per-field salvage above, so
+	// it withholds claim setup without touching any other setting.
 	localClaimDigest = Object.hasOwn(raw as object, "password_hash")
 		? undefined
 		: config.local_claim_digest;
@@ -125,7 +127,8 @@ function writeConfig(
 	const dataToSave: RuntimeConfig = {
 		...config,
 		password_hash: passwordHash,
-		local_claim_digest: claimDigest,
+		// The digest is a first-owner verifier only. Any owner hash spends it.
+		local_claim_digest: passwordHash ? undefined : claimDigest,
 		ssh_pass_hash: getSshPasswordHash(),
 	};
 	// Must stay sync: sync callers (setBitrate/setAutostart) depend on the write
@@ -135,7 +138,9 @@ function writeConfig(
 }
 
 export function saveConfig() {
-	writeConfig(getPasswordHash(), localClaimDigest);
+	const ownerHash = getPasswordHash();
+	if (ownerHash) localClaimDigest = undefined;
+	writeConfig(ownerHash, localClaimDigest);
 }
 
 export function getLocalClaimDigest(): string | undefined {
