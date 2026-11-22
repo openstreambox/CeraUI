@@ -3,16 +3,23 @@ import { fireEvent, render, waitFor } from "@testing-library/svelte";
 import { beforeEach, expect, it, vi } from "vitest";
 import CaptivePortal from "./CaptivePortal.svelte";
 
-const { portal, gate } = vi.hoisted(() => ({
+const { portal, gate, radios } = vi.hoisted(() => ({
 	portal: vi.fn(),
 	gate: { enabled: true as boolean | undefined },
+	radios: {
+		value: { "2": { conn: "saved", hw: "Wi-Fi 2" } } as Record<
+			string,
+			Record<string, unknown>
+		>,
+	},
 }));
 vi.mock("$lib/rpc/client", () => ({ rpc: { wifi: { portal } } }));
 vi.mock("$lib/rpc/subscriptions.svelte", () => ({
 	getConfig: () => ({ captive_portal_enabled: gate.enabled }),
-	getWifi: () => ({ "2": { conn: "saved", hw: "Wi-Fi 2" } }),
+	getWifi: () => radios.value,
 }));
 beforeEach(() => {
+	radios.value = { "2": { conn: "saved", hw: "Wi-Fi 2" } };
 	gate.enabled = true;
 	portal.mockReset();
 	portal.mockResolvedValue({ phase: "idle" });
@@ -180,4 +187,34 @@ it.each([
 	);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	expect(view.queryByText(/temporarily pause VPN/)).toBeNull();
+});
+
+// The shapes a box with two USB radios reports: both carry the hotspot
+// capability object, only one runs the hotspot.
+it("offers a station radio that can also host a hotspot, not the hotspot radio", async () => {
+	const capability = {
+		available_channels: {},
+		available_security: {},
+		max_width_mhz: 80,
+	};
+	radios.value = {
+		"1": {
+			conn: "hotspot-profile",
+			hw: "Hotspot radio",
+			mode: "hotspot",
+			hotspot: { ...capability, name: "Box", channel: "auto", clients: [] },
+		},
+		"2": {
+			conn: "venue-profile",
+			hw: "Venue radio",
+			mode: "station",
+			hotspot: capability,
+		},
+	};
+	const view = render(CaptivePortal);
+	const options = await view.findAllByRole("option");
+	expect(options.map((o) => o.textContent)).toEqual([
+		"Choose Wi-Fi",
+		"Venue radio",
+	]);
 });

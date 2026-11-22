@@ -1,9 +1,10 @@
 export interface WindowDeps {
-	open(peer: string, radio: string): Promise<void>;
+	/** `via` is the proven receiving interface when the front door named one. */
+	open(peer: string, radio: string, via?: string): Promise<void>;
 	close(): Promise<void>;
 	check(): Promise<boolean>;
 	unchanged(): Promise<boolean>;
-	arm(expire: () => void, peer: string): () => void;
+	arm(expire: () => void, peer: string, via?: string): () => void;
 }
 type Phase =
 	| "idle"
@@ -13,7 +14,15 @@ type Phase =
 	| "needs_sign_in"
 	| "cleanup_unknown";
 
-/** One owner; kernel expiry remains authoritative if this process disappears. */
+/**
+ * One owner; kernel expiry remains authoritative if this process disappears.
+ * The owner is the phone's address plus, behind the front door, the interface
+ * it was proven to arrive on, so the same address seen on another link cannot
+ * drive the window.
+ */
+const ownerKey = (peer: string, via?: string) =>
+	via === undefined ? peer : `${peer}%${via}`;
+
 export function createSignInWindow(deps: WindowDeps) {
 	let owner: string | undefined;
 	let phase: Phase = "idle";
@@ -22,14 +31,17 @@ export function createSignInWindow(deps: WindowDeps) {
 	let generation = 0;
 	let expiresAt: number | undefined;
 	let disarm: () => void = () => undefined;
-	const status = (peer: string) => ({
-		phase: owner && peer !== owner ? ("idle" as const) : phase,
-		expiresAt: owner === peer ? expiresAt : undefined,
-	});
-	const finish = async (peer: string) => {
-		if (peer !== owner || busy) throw Error("busy_other_phone");
+	const status = (peer: string, via?: string) => {
+		const key = ownerKey(peer, via);
+		return {
+			phase: owner && key !== owner ? ("idle" as const) : phase,
+			expiresAt: owner === key ? expiresAt : undefined,
+		};
+	};
+	const finish = async (peer: string, via?: string) => {
+		if (ownerKey(peer, via) !== owner || busy) throw Error("busy_other_phone");
 		if (phase !== "signing_in" && phase !== "cleanup_unknown")
-			return status(peer);
+			return status(peer, via);
 		busy = true;
 		phase = "checking";
 		try {
@@ -37,7 +49,7 @@ export function createSignInWindow(deps: WindowDeps) {
 		} catch {
 			phase = "cleanup_unknown";
 			busy = false;
-			return status(peer);
+			return status(peer, via);
 		}
 		disarm();
 		expiresAt = undefined;
@@ -47,53 +59,62 @@ export function createSignInWindow(deps: WindowDeps) {
 			phase = "needs_sign_in";
 		}
 		busy = false;
-		return status(peer);
+		return status(peer, via);
 	};
 	return {
 		status,
 		finish,
-		async start(peer: string, radio: string) {
+		async start(peer: string, radio: string, via?: string) {
 			if (busy || phase === "signing_in" || phase === "cleanup_unknown")
 				throw Error("busy_other_phone");
 			busy = true;
-			owner = peer;
+			owner = ownerKey(peer, via);
 			phase = "idle";
 			const ticket = ++generation;
 			expiresAt = Date.now() + 600000;
 			try {
-				await deps.open(peer, radio);
+				await deps.open(peer, radio, via);
 				expiresAt = Date.now() + 600000;
 				phase = "signing_in";
-				disarm = deps.arm(() => {
-					if (generation === ticket) void finish(peer).catch(() => undefined);
-				}, peer);
+				disarm = deps.arm(
+					() => {
+						if (generation === ticket)
+							void finish(peer, via).catch(() => undefined);
+					},
+					peer,
+					via,
+				);
 			} catch (error) {
 				try {
 					await deps.close();
 				} catch {
 					phase = "cleanup_unknown";
 					expiresAt = Date.now() + 600000;
-					disarm = deps.arm(() => {
-						void finish(peer).catch(() => undefined);
-					}, peer);
-					return status(peer);
+					disarm = deps.arm(
+						() => {
+							void finish(peer, via).catch(() => undefined);
+						},
+						peer,
+						via,
+					);
+					return status(peer, via);
 				}
 				expiresAt = undefined;
 				throw error;
 			} finally {
 				busy = false;
 			}
-			return status(peer);
+			return status(peer, via);
 		},
-		async refresh(peer: string) {
+		async refresh(peer: string, via?: string) {
 			if (
-				peer !== owner ||
+				ownerKey(peer, via) !== owner ||
 				(phase !== "signing_in" && phase !== "cleanup_unknown") ||
 				busy ||
 				refreshing
 			)
-				return status(peer);
-			if (phase === "cleanup_unknown") return finish(peer);
+				return status(peer, via);
+			if (phase === "cleanup_unknown") return finish(peer, via);
 			refreshing = true;
 			const ticket = generation;
 			let unchanged = false;
@@ -110,8 +131,8 @@ export function createSignInWindow(deps: WindowDeps) {
 				!busy &&
 				phase === "signing_in"
 			)
-				return finish(peer);
-			return status(peer);
+				return finish(peer, via);
+			return status(peer, via);
 		},
 	};
 }
