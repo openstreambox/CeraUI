@@ -231,6 +231,7 @@ export type ModemMutationAdmission =
 export interface MutationBlock {
 	readonly stableKey: string;
 	readonly unitLinkId?: string;
+	readonly deviceVidPid?: string;
 	readonly refusal: ModemMutationRefusal;
 	/** Whether it ALSO holds global stream autostart (a decommission does not). */
 	readonly blocksStreaming: boolean;
@@ -373,6 +374,7 @@ export function setMutationBlocks(blocks: readonly MutationBlock[]): void {
 				!old ||
 				old.refusal !== block.refusal ||
 				old.unitLinkId !== block.unitLinkId ||
+				old.deviceVidPid !== block.deviceVidPid ||
 				old.blocksStreaming !== block.blocksStreaming
 			);
 		});
@@ -394,16 +396,23 @@ export function isModemKeyBlocked(stableKey: string): boolean {
 	return mutationBlocks.has(stableKey);
 }
 
-/** An unresolved modem could be any unit with a recorded block. */
-export function isModemUnitBlocked(linkId: string | undefined): boolean {
-	for (const block of mutationBlocks.values()) {
-		if (
-			block.unitLinkId !== undefined &&
-			(linkId === undefined || block.unitLinkId === linkId)
-		)
-			return true;
-	}
-	return false;
+/** Keep the original port and verified unit held. Scope uncertainty by USB SKU. */
+export function modemBlockMatches(
+	block: MutationBlock,
+	port: string | undefined,
+	vidPid: string,
+	unit: string | undefined,
+): boolean {
+	if (
+		block.stableKey === port ||
+		(unit !== undefined && block.unitLinkId === unit)
+	)
+		return true;
+	if (block.deviceVidPid !== undefined && block.deviceVidPid !== vidPid)
+		return false;
+	return (
+		port === undefined || (unit === undefined && block.unitLinkId !== undefined)
+	);
 }
 
 export function hasMutationBlocks(): boolean {

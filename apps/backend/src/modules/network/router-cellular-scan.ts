@@ -61,7 +61,6 @@ import {
 	readUsbSerialAttribute,
 	resolvePhysicalDevice,
 	setPresentPhysicalDevices,
-	usbSerialDigest,
 	usbSerialIdentity,
 } from "../modems/physical-identity.ts";
 import {
@@ -551,7 +550,10 @@ export async function scanUsbNetMarkers(
 	}
 	const parentsBySerial = new Map<string, Set<string>>();
 	for (const descriptor of physical.values()) {
-		const { key } = usbSerialIdentity(descriptor.serial, descriptor.vid);
+		const { canonicalEntry: key } = usbSerialIdentity(
+			descriptor.serial,
+			descriptor.vid,
+		);
 		const parent = deriveModemStableKey(
 			canonicalModemIdPath(descriptor.idPath ?? descriptor.usbParent),
 		);
@@ -563,7 +565,7 @@ export async function scanUsbNetMarkers(
 	const duplicateSerialKeys = new Set(
 		[...parentsBySerial]
 			.filter(([, parents]) => parents.size > 1)
-			.map(([key]) => usbSerialDigest(key)),
+			.map(([key]) => key),
 	);
 	for (const descriptor of physical.values()) {
 		rejectSharedSerial(descriptor, duplicateSerialKeys);
@@ -830,9 +832,18 @@ async function runUsbNetScan(
 			...sharedSerialHashes,
 			...scanned.duplicateSerialKeys,
 		]);
+		let scopedLegacy = false;
+		for (const descriptor of scanned.physical.values()) {
+			if (
+				usbSerialIdentity(descriptor.serial, descriptor.vid).scopeLegacyDigests(
+					next,
+				)
+			)
+				scopedLegacy = true;
+		}
 		const newest = [...next].slice(-64);
 		if (
-			scanned.duplicateSerialKeys.size > 0 &&
+			(scanned.duplicateSerialKeys.size > 0 || scopedLegacy) &&
 			newest.join(",") !== persisted.join(",")
 		) {
 			deps.sharedSerials?.save(newest);

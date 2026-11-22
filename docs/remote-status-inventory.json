@@ -42443,7 +42443,7 @@
     }
   ],
   "dependencies": {
-    "apps/backend/src/helpers/config-schemas.ts": "70a972cfed6a44dac76e1371bd883639ea59c2b0880f2e255c76bde4194fa647",
+    "apps/backend/src/helpers/config-schemas.ts": "9d9ed2460ca23e0340589f719d92d061e33674d77c0746a1e2a737fdcc75f234",
     "apps/backend/src/mocks/mock-service.ts": "b858bdfeb042ec57e720fe31fea1696f09c68eb9ace976c6848d4e2af6c1adfc",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -42456,8 +42456,8 @@
     "apps/backend/src/modules/network/dongle-metadata.ts": "317c464611319b007a717184628697d472d95d7e0761b502a68606f9d8582ef4",
     "apps/backend/src/modules/network/ethernet-role-outcome.ts": "e6f3bcb3746f67c700a5618c9ee5a07cbeadce140f83bafd85f1c9429e440a70",
     "apps/backend/src/modules/network/network-ingest.ts": "d1c6acde7c3cdd48b9463569c370dd911a9d23e0a77652eb58760e954c51aa04",
-    "apps/backend/src/modules/network/network-interfaces.ts": "2cef4b102c34571d755358662e7c702497486145d6523e98847f4b47f64abb35",
-    "apps/backend/src/modules/network/router-cellular-scan.ts": "935eb2a2f9744d594ce200aa86b500cdafd28dd0a5dfdbecc401754e4c00d931",
+    "apps/backend/src/modules/network/network-interfaces.ts": "b0dbda6efef72f7763062287db7926916454caf3460602281cf7948721fecec5",
+    "apps/backend/src/modules/network/router-cellular-scan.ts": "88910aa571cf59811d084f7c6f4d1ae6b3173a9cf3df9abcb5edf06f98cd6133",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
     "apps/backend/src/modules/network/uplink-health/model.ts": "c929bfe403ec8298fdeb737eafa75735d9664723eaab740312d2f3b1049082fe",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "3e88571fad2a385f515976029c4026ff87b32baaf2d75db05196f06745968075",
@@ -42522,7 +42522,7 @@
     "packages/rpc/src/schemas/capability-modules.schema.ts": "20eecb4c158a63ea319c9ca4b595397df31aa66db3dae20da3f4a82a2b3231d3",
     "packages/rpc/src/schemas/fan.schema.ts": "8f4ab6b8b302d408994350eb66089f8d0fb195e0bccfc498e2d1b333a3fde841",
     "packages/rpc/src/schemas/media-load.schema.ts": "4720073507e38b00c908a915f17560b7920e448c58dc6f6cce5a255499cdc434",
-    "packages/rpc/src/schemas/modems.schema.ts": "c6f53929274bd47dfc9bc495009b74835faf041749b9444dccdf68c98a4a41e9",
+    "packages/rpc/src/schemas/modems.schema.ts": "4628d1ff30418125c3e74bfb786d92ff49f811bc148258ffe7f3c29e13d4c246",
     "packages/rpc/src/schemas/network.schema.ts": "0d515e65ed3d50e483df9e5f835a5ff3f75064b87f679473b54ed8c9229ca313",
     "packages/rpc/src/schemas/notifications.schema.ts": "3581378f7bfdecd5f44734b5d5630eba80b5d027a72dc04c351bcb28caefc750",
     "packages/rpc/src/schemas/radio-health.schema.ts": "6c3d104d9f42caa7bb0af332471bab940a2935e9ab297508e0474c8b5a399580",

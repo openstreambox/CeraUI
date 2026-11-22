@@ -182,17 +182,29 @@ async function reliableUnitLinkId(
 }
 
 /** Record an opaque unit identity if the enumerated modem has a reliable serial. */
-export async function captureModemUnitLinkId(
+export async function captureModemJournalIdentity(
 	stableKey: string,
-): Promise<string | undefined> {
+): Promise<{ deviceVidPid?: string; unitLinkId?: string }> {
 	const deps = activeDeps;
 	const devices = await deps.enumerate();
 	const device = devices.find(
 		(candidate) => deriveModemStableKey(candidate.physicalUid) === stableKey,
 	);
-	return device === undefined
-		? undefined
-		: reliableUnitLinkId(device, devices, deps);
+	if (device === undefined) return {};
+	const vidPid = `${device.vendorId}:${device.productId}`.toLowerCase();
+	const unitLinkId = await reliableUnitLinkId(device, devices, deps);
+	return {
+		...(/^[0-9a-f]{4}:[0-9a-f]{4}$/.test(vidPid)
+			? { deviceVidPid: vidPid }
+			: {}),
+		...(unitLinkId === undefined ? {} : { unitLinkId }),
+	};
+}
+
+export async function captureModemUnitLinkId(
+	stableKey: string,
+): Promise<string | undefined> {
+	return (await captureModemJournalIdentity(stableKey)).unitLinkId;
 }
 
 /** Find the original device at the journaled port when its unit identity is known. */

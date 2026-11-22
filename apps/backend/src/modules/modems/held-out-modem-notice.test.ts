@@ -76,13 +76,26 @@ test("a modem with no current row (unplugged or renamed) still gets a notice", (
 	);
 });
 
-test("the notice reports recovery without claiming the sender stopped using the modem", () => {
-	expect(heldOutMsg(undefined)).toBe(
-		"A modem setting change is pending recovery.",
+test("the notice names held links and tells the owner how to recover", () => {
+	const msg = heldOutMsg("RM520N-GL", "wwan0, wwan2");
+	expect(msg).toContain("RM520N-GL");
+	expect(msg).toContain("Links held from bond selection: wwan0, wwan2.");
+	expect(msg).toContain(
+		"Reconnect the original modem to its original USB port",
 	);
-	expect(heldOutMsg("RM520N-GL")).toBe(
-		"A setting change on RM520N-GL is pending recovery.",
-	);
+	expect(msg).toContain("Contact support");
+	const { events, deps } = fake(new Map());
+	const variants = ["wwan0"];
+	syncHeldOutModemNotices([block("failed")], {
+		...deps,
+		linksFor: () => variants,
+	});
+	variants.push("wwan2");
+	syncHeldOutModemNotices([block("failed")], {
+		...deps,
+		linksFor: () => variants,
+	});
+	expect(events).toHaveLength(2);
 });
 
 test("changes in flight and decommissioned modems raise nothing", () => {

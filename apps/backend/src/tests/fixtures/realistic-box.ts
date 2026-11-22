@@ -46,6 +46,8 @@ export interface BoxLink {
 	/** udev ID_PATH of the netdev; absent for a device udev gives none. */
 	readonly idPath?: string;
 	readonly serial?: string;
+	readonly vid?: string;
+	readonly pid?: string;
 	readonly kind?: "modem" | "ethernet" | "wifi" | "unknown";
 }
 
@@ -231,8 +233,11 @@ function boxScanDeps(links: readonly BoxLink[]): RouterCellularScanDeps {
 		const kind = link.kind ?? "modem";
 		paths.set(`/sys/class/net/${link.ifname}/device`, iface);
 		dirs.set(parent, [`1-${index + 1}:1.0`]);
-		attrs.set(`${parent}/idVendor`, kind === "modem" ? "2c7c" : "0bda");
-		attrs.set(`${parent}/idProduct`, "1234");
+		attrs.set(
+			`${parent}/idVendor`,
+			link.vid ?? (kind === "modem" ? "2c7c" : "0bda"),
+		);
+		attrs.set(`${parent}/idProduct`, link.pid ?? "1234");
 		attrs.set(`${parent}/bDeviceClass`, "00");
 		attrs.set(`${parent}/busnum`, "1");
 		attrs.set(`${parent}/devnum`, String(index + 2));

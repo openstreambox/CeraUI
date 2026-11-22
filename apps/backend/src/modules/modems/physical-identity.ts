@@ -241,19 +241,40 @@ export function usbSerialIdentity(
 		serial === undefined ? undefined : raw?.replace(/[\r\n]+$/, "");
 	const key = serial === undefined ? undefined : scoped(serial);
 	const legacyKey = legacy ? scoped(legacy) : undefined;
+	const canonicalDigest = key === undefined ? undefined : usbSerialDigest(key);
+	const rawDigest =
+		legacyKey === undefined || legacyKey === key
+			? undefined
+			: usbSerialDigest(legacyKey);
+	const canonicalEntry =
+		vid && canonicalDigest ? `v2:${vid}:${canonicalDigest}` : undefined;
+	const exactDigests = [canonicalDigest, rawDigest].filter(
+		(digest): digest is string => digest !== undefined,
+	);
 	return {
 		serial,
 		key,
 		legacyKey,
-		isShared: (hashes: ReadonlySet<string>) =>
-			(key !== undefined && hashes.has(usbSerialDigest(key))) ||
-			(legacyKey !== undefined &&
-				legacyKey !== key &&
-				hashes.has(usbSerialDigest(legacyKey))) ||
-			// The unversioned store can contain historical raw digests. An
-			// underscore may be literal or the result of normalization, and
-			// even the observed raw bytes cannot reconstruct the old spelling.
-			(hashes.size > 0 && serial?.includes("_") === true),
+		canonicalEntry,
+		isShared: (entries: ReadonlySet<string>) =>
+			(canonicalEntry !== undefined && entries.has(canonicalEntry)) ||
+			exactDigests.some(
+				(digest) => entries.has(digest) || entries.has(`v1:${vid}:${digest}`),
+			) ||
+			(serial?.includes("_") === true &&
+				[...entries].some(
+					(entry) => entry.startsWith(`v1:${vid}:`) || !entry.includes(":"),
+				)),
+		scopeLegacyDigests: (entries: Set<string>) => {
+			if (!vid) return false;
+			let changed = false;
+			for (const digest of exactDigests) {
+				if (!entries.delete(digest)) continue;
+				entries.add(`v1:${vid}:${digest}`);
+				changed = true;
+			}
+			return changed;
+		},
 	};
 }
 

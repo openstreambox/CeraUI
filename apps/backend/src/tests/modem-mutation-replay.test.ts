@@ -276,6 +276,26 @@ test("the production journal reader rejects BOM bytes before trusting the udev p
 	expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
 });
 
+test("a different vendor's legacy digest and a canonical digest do not prevent replay", async () => {
+	useUdevDevice("RM520_A1", "RM520 A1");
+	const previous = getConfig().usb_serial_shared;
+	const unit = mintLinkId("usb-serial:2c7c:RM520_A1");
+	try {
+		getConfig().usb_serial_shared = [
+			`v1:1199:${usbSerialDigest("1199:old device")}`,
+			`v2:2c7c:${usbSerialDigest("2c7c:OTHER_SERIAL")}`,
+		];
+		expect(await captureModemUnitLinkId(KEY)).toBe(unit);
+		expect(await captureModemState(KEY, undefined, unit)).toBeDefined();
+		getConfig().usb_serial_shared = [
+			`v1:2c7c:${usbSerialDigest("2c7c:OTHER LEGACY")}`,
+		];
+		expect(await captureModemState(KEY, undefined, unit)).toBeUndefined();
+	} finally {
+		getConfig().usb_serial_shared = previous;
+	}
+});
+
 test("unavailable raw evidence cannot establish a unit against ambiguous older digests", async () => {
 	useUdevDevice("fixture_ABC123");
 	const previous = getConfig().usb_serial_shared;

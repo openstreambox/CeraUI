@@ -1,5 +1,4 @@
 import { getConfig, saveConfig } from "../config.ts";
-import type { PhysicalDeviceRecord } from "../modems/physical-identity.ts";
 import { resolveBondPhysicalIdentity } from "../streaming/bond-entry.ts";
 
 const sessionOptOut = new Set<string>();
@@ -10,21 +9,11 @@ export function bondPhysicalId(ifname: string): string | undefined {
 	return identity.linkId;
 }
 
-function serialAliases(identity: PhysicalDeviceRecord): string[] {
-	return [identity.legacyLinkId, identity.serialLinkId].filter(
-		(id): id is string => id !== undefined && id !== identity.linkId,
-	);
-}
-
 export function isBondOptedOut(ifname: string): boolean {
 	if (sessionOptOut.has(ifname)) return true;
 	const identity = resolveBondPhysicalIdentity(ifname);
 	if (identity === undefined || identity.anchor === "ifname") return false;
-	const stored = getConfig().bond_opt_out;
-	return (
-		stored?.[identity.linkId] === true ||
-		serialAliases(identity).some((id) => stored?.[id] === true)
-	);
+	return getConfig().bond_opt_out?.[identity.linkId] === true;
 }
 
 export function setPersistentBondOptOut(

@@ -60,7 +60,7 @@ import {
 	removeMutationEntry,
 } from "./mutation-journal.ts";
 import { persistMutationFailure } from "./mutation-journal-retirement.ts";
-import { captureModemUnitLinkId } from "./mutation-rollback.ts";
+import { captureModemJournalIdentity } from "./mutation-rollback.ts";
 
 export type MutationOutcome<T> =
 	| { readonly ok: true; readonly value: T }
@@ -139,12 +139,12 @@ export async function withJournaledModemMutation<T>(
 	if (!acquired.ok) return refuse(acquired.refusal);
 	const key = acquired.lease.stableKey;
 
-	const unitLinkId = await captureModemUnitLinkId(key).catch(() => undefined);
+	const identity = await captureModemJournalIdentity(key).catch(() => ({}));
 	const at = journalNow();
 	let entry: ModemMutationEntry = {
 		version: MODEM_MUTATION_JOURNAL_VERSION,
 		stableKey: key,
-		...(unitLinkId === undefined ? {} : { unitLinkId }),
+		...identity,
 		kind,
 		state: "armed",
 		attemptId: randomUUID(),

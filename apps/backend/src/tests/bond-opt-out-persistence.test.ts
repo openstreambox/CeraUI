@@ -83,7 +83,7 @@ describe("operator bond opt-out — config.json restart persistence", () => {
 	});
 
 	test.each(["fixture ABC123", "fixture_ABC123"])(
-		"keeps the %s alias read-only while toggling the selected port",
+		"uses only the current primary preference when toggling after a collision",
 		async (savedSerial) => {
 			clearBondNetworkFixture();
 			setBondIdentityResolverForTest(null);
@@ -102,18 +102,19 @@ describe("operator bond opt-out — config.json restart persistence", () => {
 			expect(resolveModemPhysicalIdentity(first).linkId).toBe(canonical);
 			getConfig().bond_opt_out = { [saved]: true };
 			saveConfig();
-			expect(isBondOptedOut(first)).toBe(true);
+			expect(isBondOptedOut(first)).toBe(saved === canonical);
 
 			await refreshUsbNetMarkers(names, deps);
-			expect(isBondOptedOut(first)).toBe(true);
-			expect(isBondOptedOut(second)).toBe(true);
+			expect(isBondOptedOut(first)).toBe(false);
+			expect(isBondOptedOut(second)).toBe(false);
 			const port = setPersistentBondOptOut(first, true);
 			if (port === undefined) throw new Error("missing port");
 			expect(getConfig().bond_opt_out?.[port]).toBe(true);
+			expect(isBondOptedOut(first)).toBe(true);
 			setPersistentBondOptOut(first, false);
 			expect(getConfig().bond_opt_out?.[port]).toBeUndefined();
-			expect(isBondOptedOut(first)).toBe(true);
-			expect(isBondOptedOut(second)).toBe(true);
+			expect(isBondOptedOut(first)).toBe(false);
+			expect(isBondOptedOut(second)).toBe(false);
 			expect(getConfig().bond_opt_out?.[saved]).toBe(true);
 		},
 	);

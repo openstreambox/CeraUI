@@ -191,7 +191,9 @@ enlace traducido. CeraUI no ejecuta ni configura el traductor.
 ## Recovery isolation
 
 The warning reports a modem setting change pending recovery. It names the
-modem when a current row identifies it and says “a modem” otherwise.
+modem when a current row identifies it and lists the links held from bond
+selection. If you have the original modem, reconnect it to its original USB
+port. Contact support if recovery is still pending or the original is gone.
 The warning clears after verified recovery releases the journal block. Dismissing
 a warning or reusing an interface name cannot release a block. An operation still
 in progress continues to hold new starts.
@@ -215,14 +217,39 @@ the same way, including before checking whether devices share a serial. Sender a
 for a receiver on the local network. Automatic rollback stays at the original
 port and checks the recorded unit when available. Older entries and units
 without a reliable identity use the port only. While a recorded unit is
-blocked, a modem with an unreadable or unreliable serial waits for positive
-identification, including after a fresh scan on an unblocked port.
+blocked, a candidate with the same USB vendor and product waits for positive
+identification, including after a fresh scan on an unblocked port. The same
+rule applies when that candidate has no current ID_PATH. A known different
+USB model can keep sending. Older entries without model evidence keep a
+conservative hold on ambiguous candidates.
 The modem roster's retained ID-path cache is not admission authority. Positively
 classified USB Ethernet and sysfs-confirmed Wi-Fi stay available without an
 ID-path cache entry; unresolved USB candidates stay out while a block exists,
 even after the ordinary identity-settlement deadline. Translated IPv4 links
 follow their parent modem's exclusion. A fresh scan republishes membership even
 when the interface name and address have not changed.
+
+### Support-assisted modem recovery
+
+Use a maintenance window with the stream stopped. Record the modem and links
+from the warning, and confirm which physical modem and USB port the owner
+intends to recover. Use the signed-in box's authenticated modem RPC with the
+owner's confirmation. Call `modems.listMutationBlocks`, wait for
+`replayComplete`, and match the affected `stableKey` before proceeding.
+
+- For `failed`, use `modems.acknowledgeMutation` with the matched
+  `stableKey` and mode `verified-rollback`. If verification fails, review
+  the current hardware with the owner before using `force-rebaseline`.
+- For `device-absent-quarantine`, reconnect the original modem to its original
+  port and let boot recovery recheck it during the maintenance window.
+  If the owner confirms the original is permanently gone, call
+  `modems.decommissionMutation` with that key. The old port remains held.
+- To use a replacement at that port, connect it with the stream stopped
+  and let boot recovery mark the entry `recommission-pending`. Confirm
+  the replacement's identity and call `modems.rebaselineMutation`.
+- Read `modems.listMutationBlocks` again and confirm the selected record's
+  state and the expected bond links before restarting the stream. Keep
+  the journal under the recovery service's control.
 
 When the sender advertises intentional empty reloads, the box opts in at
 launch. The last held link can then leave the live bond without replacing the
@@ -243,8 +270,10 @@ OS reads, journal entries, sender spawning and engine I/O substituted.
 ### Aislamiento durante la recuperación
 
 El aviso indica que hay un cambio de configuración pendiente de recuperación.
-Muestra el nombre si el módem aparece en la lista. En caso contrario, dice
-«un módem».
+Muestra el nombre si el módem aparece en la lista y los enlaces retenidos.
+Si tiene el módem original, vuelva a conectarlo a su puerto USB original.
+Contacte con soporte si la recuperación sigue pendiente o si ya no tiene
+el módem original.
 El aviso desaparece cuando una recuperación verificada libera el bloqueo.
 Cambiar el nombre de la interfaz no lo libera. Una operación todavía en curso
 sigue impidiendo iniciar una nueva transmisión.
@@ -261,8 +290,30 @@ fuera de los enlaces que usa para enviar, también en la red local, hasta que
 la recuperación verifique la entrada del diario o se establezca explícitamente
 una nueva configuración de referencia. Cuando el diario guarda una identidad
 USB fiable, el bloqueo también sigue a ese módem si cambia de puerto.
-Mientras dure ese bloqueo, un módem sin un número de serie fiable queda a la
-espera de que la caja pueda identificarlo.
+Mientras dure ese bloqueo, un candidato del mismo fabricante y producto USB
+sin identidad fiable queda a la espera de que la caja pueda identificarlo.
+Un modelo USB conocido y diferente puede seguir enviando.
+
+#### Recuperación con soporte
+
+Detenga la transmisión durante el mantenimiento. Anote los enlaces del aviso
+y confirme con el propietario qué módem y puerto USB desea recuperar. Use el
+RPC autenticado de la caja. Consulte `modems.listMutationBlocks`, espere
+`replayComplete` y compruebe el `stableKey` antes de cambiar el estado.
+
+- Para `failed`, llame a `modems.acknowledgeMutation` con el `stableKey`
+  y el modo `verified-rollback`. Si no se verifica, revise el dispositivo
+  con el propietario antes de usar `force-rebaseline`.
+- Para `device-absent-quarantine`, vuelva a conectar el módem original al
+  puerto original y deje que la recuperación al arrancar lo compruebe
+  durante el mantenimiento. Si el propietario confirma que el original ya
+  no se usará, llame a `modems.decommissionMutation`. El puerto queda retenido.
+- Para usar un reemplazo en ese puerto, conéctelo con la transmisión detenida
+  y espere a que la recuperación marque `recommission-pending`. Confirme la
+  identidad del reemplazo y llame a `modems.rebaselineMutation`.
+- Vuelva a consultar `modems.listMutationBlocks` y compruebe el estado y los
+  enlaces esperados antes de reanudar la transmisión. Deje el diario bajo
+  control del servicio de recuperación.
 
 Con un emisor compatible, la caja pausa el envío cuando el último enlace
 queda excluido. El envío se reanuda cuando se admite y se registra un enlace.

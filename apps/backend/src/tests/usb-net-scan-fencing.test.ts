@@ -453,6 +453,26 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		expect(resolveModemPhysicalIdentity(name).anchor).toBe("id-path");
 	});
 
+	it("scopes a witnessed legacy digest and accepts unrelated vendor serials", async () => {
+		const digest = new Bun.CryptoHasher("sha256")
+			.update("413c:fixture ABC123")
+			.digest("hex");
+		hashes = [digest];
+		const name = names[0];
+		if (name === undefined) throw new Error("missing fixture");
+		await refreshUsbNetMarkers([name], pair("fixture ABC123"));
+		expect(hashes).toEqual([`v1:413c:${digest}`]);
+		expect(resolveModemPhysicalIdentity(name).anchor).toBe("id-path");
+		const other = constructedTwins.map((d) => ({
+			...d,
+			idVendor: "2c7c",
+			serial: "RM520 A1",
+		}));
+		const otherDeps = { ...pair(), ...constructedTwinDeps(other) };
+		await refreshUsbNetMarkers([name], otherDeps);
+		expect(resolveModemPhysicalIdentity(name).anchor).toBe("usb-serial");
+	});
+
 	it("keeps a singleton on its port after pair detection and config reload", async () => {
 		const deps = pair();
 		await refreshUsbNetMarkers(names.slice(0, 1), deps);
@@ -466,8 +486,8 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		const digest = new Bun.CryptoHasher("sha256")
 			.update("413c:SHARED_SERIAL_TOKEN")
 			.digest("hex");
-		expect(hashes).toEqual([digest]);
-		expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/);
+		expect(hashes).toEqual([`v2:413c:${digest}`]);
+		expect(hashes[0]).toMatch(/^v2:413c:[0-9a-f]{64}$/);
 		expect(writes).toBe(1);
 		await refreshUsbNetMarkers(names, deps);
 		expect(writes).toBe(1);
@@ -494,9 +514,7 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		expect(data).not.toContain("PERSISTED_SERIAL_TOKEN");
 		const parsed = runtimeConfigSchema.parse(JSON.parse(data));
 		expect(parsed.usb_serial_shared).toEqual([
-			new Bun.CryptoHasher("sha256")
-				.update("413c:PERSISTED_SERIAL_TOKEN")
-				.digest("hex"),
+			`v2:413c:${new Bun.CryptoHasher("sha256").update("413c:PERSISTED_SERIAL_TOKEN").digest("hex")}`,
 		]);
 		resetUsbNetMarkers();
 		getConfig().usb_serial_shared = undefined;
@@ -516,9 +534,7 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		expect(hashes).toHaveLength(64);
 		expect(hashes).not.toContain(oldest);
 		expect(hashes.at(-1)).toBe(
-			new Bun.CryptoHasher("sha256")
-				.update("413c:SHARED_SERIAL_TOKEN")
-				.digest("hex"),
+			`v2:413c:${new Bun.CryptoHasher("sha256").update("413c:SHARED_SERIAL_TOKEN").digest("hex")}`,
 		);
 		expect(writes).toBe(1);
 	});

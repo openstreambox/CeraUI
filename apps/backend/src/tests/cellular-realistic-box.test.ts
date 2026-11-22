@@ -22,6 +22,7 @@ import {
 	genSrtlaBondEntries,
 	genSrtlaBondEntriesForLocalIpAddress,
 } from "../modules/streaming/srtla.ts";
+import { getPersistentNotifications } from "../modules/ui/notifications.ts";
 import {
 	ETHERNET,
 	journalEntry,
@@ -276,6 +277,48 @@ test("a reliable modem unit and its original port remain quarantined after a mov
 	expect(box.bonded()).toEqual(["eth0", "wwan1"]);
 	await box.journal([]);
 	expect(box.bonded()).toEqual(["eth0", "wwan0", "wwan1"]);
+});
+
+test("an RM520 unit block holds its port and possible units without excluding a DW5821e", async () => {
+	box = await realisticBox();
+	const original = { ...MODEMS[0], serial: "rm520-fixture", pid: "0801" };
+	const dw = {
+		...MODEMS[1],
+		serial: "0123456789ABCDEF",
+		vid: "413c",
+		pid: "81d7",
+	};
+	const unknownPort = { ifname: "wwan2", ip: MODEMS[2].ip, pid: "0801" };
+	const dwNoPort = { ...dw, idPath: undefined };
+	await box.scan([ETHERNET, original, dw, unknownPort]);
+	const unitLinkId = genSrtlaBondEntries().find(
+		(entry) => entry.iface === original.ifname,
+	)?.linkId;
+	if (unitLinkId === undefined) throw new Error("missing unit");
+	await box.journal([
+		{
+			...journalEntry(original, "failed"),
+			unitLinkId,
+			deviceVidPid: "2c7c:0801",
+		},
+	]);
+	const recovery = getPersistentNotifications(true).show.find(
+		({ name }) => name === `modem_held_out:${stableKeyOf(original)}`,
+	);
+	expect(recovery?.params).toMatchObject({ links: "wwan0, wwan2" });
+	expect(box.bonded()).toEqual(["eth0", dw.ifname]);
+	expect(
+		genSrtlaBondEntriesForLocalIpAddress("198.51.100.200").map(
+			(entry) => entry.iface,
+		),
+	).toEqual([dw.ifname]);
+	await box.scan([
+		ETHERNET,
+		{ ...original, serial: dw.serial, vid: dw.vid, pid: dw.pid },
+		dwNoPort,
+		unknownPort,
+	]);
+	expect(box.bonded()).toEqual(["eth0", dw.ifname]);
 });
 
 test("a udev serial and its raw sysfs spelling keep the moved unit quarantined", async () => {

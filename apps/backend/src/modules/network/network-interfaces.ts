@@ -44,9 +44,10 @@ import {
 import { resolvePhysicalDevice } from "../modems/physical-identity.ts";
 import { isBondLinkMappable } from "../streaming/bond-entry.ts";
 import {
+	getMutationBlocks,
 	hasMutationBlocks,
-	isModemKeyBlocked,
-	isModemUnitBlocked,
+	type MutationBlock,
+	modemBlockMatches,
 	onMutationBlocksChange,
 } from "../streaming/lifecycle-admission.ts";
 // Type-only: erased at build time, so it adds no runtime edge back into
@@ -349,22 +350,20 @@ export function isBondIdentityPending(
 export function isHeldOutByModemBlock(
 	name: string,
 	int: NetworkInterface | undefined,
+	blocks: readonly MutationBlock[] = getMutationBlocks(),
 ): boolean {
-	if (!hasMutationBlocks()) return false;
+	if (blocks.length === 0) return false;
+	if (isWirelessInterface(name)) return false;
 	if (usbNetScanCoversCurrentPresence(name)) {
 		const descriptor = getUsbPhysicalDescriptor(name);
-		if (
-			descriptor?.deviceClass === "wired-ethernet" ||
-			isWirelessInterface(name)
-		)
-			return false;
+		if (descriptor?.deviceClass === "wired-ethernet") return false;
 		if (descriptor) {
-			const key = deriveModemStableKey(descriptor.idPath);
-			if (key === undefined || isModemKeyBlocked(key)) return true;
+			const port = deriveModemStableKey(descriptor.idPath);
 			const identity = resolvePhysicalDevice(descriptor);
-			return isModemUnitBlocked(
-				identity.anchor === "usb-serial" ? identity.linkId : undefined,
-			);
+			const sku = `${descriptor.vid}:${descriptor.pid}`.toLowerCase();
+			const unit =
+				identity.anchor === "usb-serial" ? identity.linkId : undefined;
+			return blocks.some((block) => modemBlockMatches(block, port, sku, unit));
 		}
 	}
 	// Settlement/deadline alone cannot identify an unresolved modem. A translated
