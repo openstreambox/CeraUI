@@ -75,7 +75,11 @@ try {
 			(event) => {
 				try {
 					const reply = JSON.parse(event.data);
-					if (reply.id === 'claim') resolve(reply.result?.success === true);
+					if (reply.id !== 'claim') return;
+					// Only an explicit answer is a verdict. An error reply can follow a
+					// write whose outcome the box is still settling.
+					if (typeof reply.result?.success === 'boolean') resolve(reply.result.success);
+					else reject(new Error('Setup error reply'));
 				} catch {
 					reject(new Error('Invalid setup response'));
 				}
