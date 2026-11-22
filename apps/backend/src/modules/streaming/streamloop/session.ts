@@ -117,7 +117,7 @@ export function setSenderReloadTimingForTest(
 const observationFailures = createObservationFailureLog();
 
 async function respondToStaleSource(
-	conn: WebSocket,
+	conn: WebSocket | undefined,
 	generation: number,
 	stale: readonly string[],
 	ifaceFor: (ip: string) => string | undefined,
@@ -151,6 +151,11 @@ async function respondToStaleSource(
 			offer();
 			return;
 		case "restart": {
+			// An adopted session has no operator connection to restart through.
+			if (conn === undefined) {
+				offer({ pastCooldown: true });
+				return;
+			}
 			const deps = await connectionRestartDeps(conn, "link-recovery");
 			if (!current()) return;
 			// The stream is already down: a restart costs nothing extra. Held by the
@@ -167,6 +172,163 @@ async function respondToStaleSource(
 			return exhaustive;
 		}
 	}
+}
+
+/**
+ * The per-session listeners and the reload verification: interface and USB
+ * refreshes republish the bond and reload the sender, and each delivered
+ * reload is verified against the sender's sockets. Installed by `start()`, and
+ * by a takeover for a session the previous backend launched (no operator
+ * connection then: a stale link is offered, never restarted automatically).
+ */
+function openSessionResources(
+	conn: WebSocket | undefined,
+	generation: number,
+	srtlaAddr: string,
+	ownsLaunch: () => boolean,
+): void {
+	let sessionOpen = true;
+	const reloads = createReloadQueue();
+	const ownsSession = () =>
+		sessionOpen && sessionResources?.generation === generation && ownsLaunch();
+	// Which interface each source belonged to in this session, so a stale (no
+	// longer published) source can still be named by its link.
+	const ifaceBySource = new Map<string, string>();
+	const rememberBond = () => {
+		for (const entry of getLastPublishedBond()?.entries ?? [])
+			ifaceBySource.set(entry.ip, entry.iface);
+	};
+	rememberBond();
+	const removeReloadObserver = observeSenderReload((delivery) => {
+		const deliveredPromise = delivery;
+		const bond = getLastPublishedBond();
+		const publication = bond?.publication;
+		if (!bond || !publication) return;
+		rememberBond();
+		const sources = bond.entries.map((entry) => entry.ip);
+		reloads.enqueue(JSON.stringify([publication, sources]), async (signal) => {
+			const delivered = await deliveredPromise;
+			let first = true;
+			const sender = () =>
+				getStreamingProcesses().find((p) => p.spawnfile === srtlaSendExec);
+			const log = (_event: string, meta: Record<string, unknown>) =>
+				logger.info("sender reload", meta);
+			// Watches the other links over the same ~20 s, so a stuck link's cost
+			// is judged on what was actually carried.
+			const carrying = createCarryTracker(Date.now, reloadTiming.carryWindowMs);
+			const result = await verifySenderReload(
+				publication.ok ? publication.generation : undefined,
+				sources,
+				{
+					signal,
+					now: Date.now,
+					wait: (ms) => waitForReload(ms, signal),
+					windowMs: reloadTiming.windowMs,
+					pollMs: reloadTiming.pollMs,
+					hup: async () => {
+						if (first) {
+							first = false;
+							return delivered;
+						}
+						const owned = sender();
+						if (!owned || !ownsSession()) return false;
+						// A hosted sender counts only when its pidfd confirms delivery.
+						if (owned.hosted) {
+							if (owned.hosted.signal("SIGHUP") !== true) return false;
+						} else owned.proc.kill("SIGHUP");
+						logger.info("sender reload signal delivered", {
+							pid: owned.proc.pid,
+						});
+						return true;
+					},
+					read: async () => {
+						carrying.sample(buildLinkTelemetry());
+						const owned = sender();
+						if (!owned || !ownsSession()) return undefined;
+						return { sources: await senderSocketSources(owned.proc.pid) };
+					},
+					log,
+					observationFailed: (error) => observationFailures.report(error, log),
+				},
+			);
+			if (signal.aborted || !ownsSession()) return;
+			if (result.outcome === "adopted") staleLinkNotice.retract(generation);
+			if (result.outcome === "stale")
+				await respondToStaleSource(
+					conn,
+					generation,
+					result.stale,
+					(ip) => ifaceBySource.get(ip),
+					carrying.judge(
+						result.stale.map((ip) => ifaceBySource.get(ip)),
+						bond.entries.map((entry) => entry.iface),
+					),
+					() => !signal.aborted && ownsSession(),
+				);
+		});
+	});
+
+	const closeReloadCheck = () => {
+		sessionOpen = false;
+		reloads.close();
+		removeReloadObserver();
+		staleLinkNotice.retract(generation);
+	};
+
+	let refreshing = Promise.resolve();
+	const refreshSrtlaIpAddresses = () => {
+		refreshing = refreshing.then(refreshBond);
+		return refreshing;
+	};
+	const refreshBond = async () => {
+		if (sessionResources?.generation !== generation || !ownsLaunch()) return;
+		try {
+			// `changed` is true for a MAPPING-ONLY republication too — moving a link
+			// from one interface to another leaves the IP bytes byte-identical, so a
+			// SIGHUP keyed on the list alone would skip the very reload that carries
+			// the new mapping.
+			const publication = await prepareSrtlaIpAddresses(srtlaAddr);
+			if (sessionResources?.generation !== generation || !ownsLaunch()) return;
+			if (publication.changed && getIsStreaming()) restartSrtla();
+		} catch (error) {
+			logger.warn("Failed to refresh SRTLA IP addresses", { error });
+		}
+	};
+	const removeNetifListener = onNetworkInterfaceSourcesChange(
+		refreshSrtlaIpAddresses,
+	);
+	const removeScanListener = onUsbNetScanCommitted(refreshSrtlaIpAddresses);
+	sessionResources = {
+		generation,
+		closeReloadCheck,
+		removeNetworkInterfacesChangeListener: () => {
+			closeReloadCheck();
+			removeNetifListener();
+			removeScanListener();
+		},
+	};
+}
+
+/**
+ * Session resources for a sender adopted from the previous backend. Returns
+ * false when another session's resources already exist (nothing is replaced).
+ * The adopted session is current while `current()` holds.
+ */
+export function attachAdoptedSession(
+	generation: number,
+	srtlaAddr: string,
+	current: () => boolean,
+): boolean {
+	if (sessionResources !== undefined) return false;
+	openSessionResources(undefined, generation, srtlaAddr, current);
+	return true;
+}
+
+/** Remove resources an adoption installed, when the takeover is undone. */
+export function detachAdoptedSession(generation: number): void {
+	if (sessionResources?.generation !== generation) return;
+	sessionResources.removeNetworkInterfacesChangeListener();
+	sessionResources = undefined;
 }
 
 export async function start(
@@ -241,123 +403,7 @@ export async function start(
 			}),
 		);
 	}
-	let sessionOpen = true;
-	const reloads = createReloadQueue();
-	const ownsSession = () =>
-		sessionOpen && sessionResources?.generation === generation && ownsLaunch();
-	// Which interface each source belonged to in this session, so a stale (no
-	// longer published) source can still be named by its link.
-	const ifaceBySource = new Map<string, string>();
-	const rememberBond = () => {
-		for (const entry of getLastPublishedBond()?.entries ?? [])
-			ifaceBySource.set(entry.ip, entry.iface);
-	};
-	rememberBond();
-	const removeReloadObserver = observeSenderReload((delivery) => {
-		const deliveredPromise = delivery;
-		const bond = getLastPublishedBond();
-		const publication = bond?.publication;
-		if (!bond || !publication) return;
-		rememberBond();
-		const sources = bond.entries.map((entry) => entry.ip);
-		reloads.enqueue(JSON.stringify([publication, sources]), async (signal) => {
-			const delivered = await deliveredPromise;
-			let first = true;
-			const sender = () =>
-				getStreamingProcesses().find((p) => p.spawnfile === srtlaSendExec);
-			const log = (_event: string, meta: Record<string, unknown>) =>
-				logger.info("sender reload", meta);
-			// Watches the other links over the same ~20 s, so a stuck link's cost
-			// is judged on what was actually carried.
-			const carrying = createCarryTracker(Date.now, reloadTiming.carryWindowMs);
-			const result = await verifySenderReload(
-				publication.ok ? publication.generation : undefined,
-				sources,
-				{
-					signal,
-					now: Date.now,
-					wait: (ms) => waitForReload(ms, signal),
-					windowMs: reloadTiming.windowMs,
-					pollMs: reloadTiming.pollMs,
-					hup: async () => {
-						if (first) {
-							first = false;
-							return delivered;
-						}
-						const owned = sender();
-						if (!owned || !ownsSession()) return false;
-						owned.proc.kill("SIGHUP");
-						logger.info("sender reload signal delivered", {
-							pid: owned.proc.pid,
-						});
-						return true;
-					},
-					read: async () => {
-						carrying.sample(buildLinkTelemetry());
-						const owned = sender();
-						if (!owned || !ownsSession()) return undefined;
-						return { sources: await senderSocketSources(owned.proc.pid) };
-					},
-					log,
-					observationFailed: (error) => observationFailures.report(error, log),
-				},
-			);
-			if (signal.aborted || !ownsSession()) return;
-			if (result.outcome === "adopted") staleLinkNotice.retract(generation);
-			if (result.outcome === "stale")
-				await respondToStaleSource(
-					conn,
-					generation,
-					result.stale,
-					(ip) => ifaceBySource.get(ip),
-					carrying.judge(
-						result.stale.map((ip) => ifaceBySource.get(ip)),
-						bond.entries.map((entry) => entry.iface),
-					),
-					() => !signal.aborted && ownsSession(),
-				);
-		});
-	});
-
-	const closeReloadCheck = () => {
-		sessionOpen = false;
-		reloads.close();
-		removeReloadObserver();
-		staleLinkNotice.retract(generation);
-	};
-
-	let refreshing = Promise.resolve();
-	const refreshSrtlaIpAddresses = () => {
-		refreshing = refreshing.then(refreshBond);
-		return refreshing;
-	};
-	const refreshBond = async () => {
-		if (sessionResources?.generation !== generation || !ownsLaunch()) return;
-		try {
-			// `changed` is true for a MAPPING-ONLY republication too — moving a link
-			// from one interface to another leaves the IP bytes byte-identical, so a
-			// SIGHUP keyed on the list alone would skip the very reload that carries
-			// the new mapping.
-			const publication = await prepareSrtlaIpAddresses(c.srtlaAddr);
-			if (sessionResources?.generation !== generation || !ownsLaunch()) return;
-			if (publication.changed && getIsStreaming()) restartSrtla();
-		} catch (error) {
-			logger.warn("Failed to refresh SRTLA IP addresses", { error });
-		}
-	};
-	const removeNetifListener = onNetworkInterfaceSourcesChange(
-		refreshSrtlaIpAddresses,
-	);
-	const removeScanListener = onUsbNetScanCommitted(refreshSrtlaIpAddresses);
-	sessionResources = {
-		generation,
-		closeReloadCheck,
-		removeNetworkInterfacesChangeListener: () => {
-			closeReloadCheck();
-			removeNetifListener();
-			removeScanListener();
-		},
-	};
+	openSessionResources(conn, generation, c.srtlaAddr, ownsLaunch);
 
 	let result: StartStreamResult;
 	try {

@@ -441,6 +441,13 @@ export const runtimeConfigSchema = z.object({
 	// device. Absent and `false` both refuse with `provisioning_disabled`.
 	modem_provisioning: z.boolean().optional(),
 
+	// Opt-in stream continuity takeover: the sender runs in its own systemd
+	// unit, a clean restart leaves it running, and a restarted backend adopts
+	// it only when every piece of evidence agrees (`sender-takeover.ts`).
+	// DEFAULT-ABSENT ON PURPOSE, NO default entry: absent and `false` keep the
+	// sender a child of the backend, exactly as before.
+	stream_continuity_takeover: z.boolean().optional(),
+
 	// Which cellular-control backend the composition root commits at boot.
 	// DEFAULT-ABSENT ON PURPOSE, with NO entry in RUNTIME_CONFIG_DEFAULTS: absence
 	// resolves to the D-Bus observer through `DEFAULT_MODEM_BACKEND`; an explicit

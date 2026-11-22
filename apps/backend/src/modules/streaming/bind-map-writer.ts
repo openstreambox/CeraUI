@@ -340,6 +340,20 @@ export function invalidateBindMapReuse(): void {
 	lastSuccessful = undefined;
 }
 
+/**
+ * Continue above a generation an adopted sender has already applied. A sender
+ * never accepts a generation below its watermark (ADR-003), and this counter
+ * restarts at 0 with the process, so without this a restarted backend could
+ * not publish any change, a withdrawal included, to a sender it adopted. Reuse
+ * of the last identity is dropped: the next publication is always a new one.
+ */
+export function continueBindMapGenerationAbove(applied: number): void {
+	if (!Number.isSafeInteger(applied) || applied <= generation) return;
+	generation = applied;
+	lastPublished = undefined;
+	invalidateBindMapReuse();
+}
+
 /** The generation the last successful publication carried, or 0 if none. */
 export function currentBindMapGeneration(): number {
 	return generation;

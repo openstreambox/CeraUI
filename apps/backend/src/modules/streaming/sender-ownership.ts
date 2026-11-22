@@ -12,13 +12,20 @@ function isLive({ proc }: StreamingProcess): boolean {
 	return proc.exitCode === null && proc.signalCode === null;
 }
 
-/** Live child handles cannot be replaced by a reused PID before Bun reaps them. */
+/**
+ * Live child handles cannot be replaced by a reused PID before Bun reaps them.
+ * A hosted sender is not our child: it counts only while its pidfd says it is
+ * alive right now, the same answer the census uses.
+ */
 export function ownsSessionSender(
 	processes: ReadonlyArray<StreamingProcess> = getStreamingProcesses(),
 	executable = srtlaSendExec,
 ): boolean {
 	return processes.some(
-		(process) => process.spawnfile === executable && isLive(process),
+		(process) =>
+			process.spawnfile === executable &&
+			isLive(process) &&
+			(process.hosted === undefined || process.hosted.pin.alive() === true),
 	);
 }
 
@@ -69,11 +76,33 @@ export function senderCensus(procRoot = senderCensusProcRoot()): SenderCensus {
 	return pids.length > 0 ? "present" : "absent";
 }
 
-/** The parent field of `/proc/<pid>/stat`; the name before it may hold spaces. */
+/** Fields of `/proc/<pid>/stat` after the name, which may hold spaces. */
+function statFields(stat: string): string[] {
+	return stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+}
+
+/** The parent field of `/proc/<pid>/stat`. */
 function parentPid(stat: string): number | undefined {
-	const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-	const parent = Number(fields[1]);
+	const parent = Number(statFields(stat)[1]);
 	return Number.isInteger(parent) ? parent : undefined;
+}
+
+/**
+ * Whether a supervised handle owns the row it was matched to. A child must
+ * name this process as its parent; a hosted sender (its own unit, not our
+ * child) must have the start time recorded when it was pinned and a pidfd
+ * that still says it is alive.
+ */
+function ownsRow(
+	handle: StreamingProcess,
+	stat: string,
+	selfPid: number,
+): boolean {
+	if (handle.hosted === undefined) return parentPid(stat) === selfPid;
+	return (
+		statFields(stat)[19] === handle.hosted.startTime &&
+		handle.hosted.pin.alive() === true
+	);
 }
 
 /**
@@ -83,7 +112,8 @@ function parentPid(stat: string): number | undefined {
  * (stream session or SRT forwarding) has that exact PID, is still unreaped, and
  * the kernel names this process as its parent. Handle liveness is read after
  * the table: a child that is still unreaped now was unreaped during the scan, so
- * its PID could not have been reused. A stale handle, a reused PID, a foreign
+ * its PID could not have been reused. A hosted sender is subtracted only by its
+ * recorded start time and a live pidfd. A stale handle, a reused PID, a foreign
  * parent or an unreadable row keeps the census conservative. Names alone never
  * make a sender owned.
  */
@@ -97,14 +127,14 @@ export function unownedSenderCensus(
 	for (const pid of pids) {
 		const handle = owned.find(({ proc }) => proc.pid === pid);
 		if (handle === undefined) return "present";
-		let parent: number | undefined;
+		let stat: string;
 		try {
-			parent = parentPid(readFileSync(`${procRoot}/${pid}/stat`, "utf8"));
+			stat = readFileSync(`${procRoot}/${pid}/stat`, "utf8");
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
 			return "unknown";
 		}
-		if (!isLive(handle) || parent !== selfPid) return "present";
+		if (!isLive(handle) || !ownsRow(handle, stat, selfPid)) return "present";
 	}
 	return "absent";
 }

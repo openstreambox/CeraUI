@@ -627,6 +627,60 @@ export const SPAWN_POLICY: readonly SpawnSite[] = [
 			"startStream readiness gate; stopAll()/gracefulShutdown() SIGTERM→SIGKILL. systemd is the SOLE restart authority (ADR-0005) — never respawned by the app",
 	},
 	{
+		id: "streamloop.srtlaSendHosted",
+		file: "modules/streaming/streamloop/sender-host.ts",
+		symbol: "launchHostedSender",
+		command:
+			"[systemd-run, --unit=ceralive-srtla-send-<16 hex>.service, fixed exec service properties (Restart=no, KillMode=control-group, collect), --, srtla_send, ...args] (stream continuity takeover flag only)",
+		class: "bounded-command",
+		status: "enforced",
+		contract: {
+			timed: true,
+			startupTimeout: false,
+			shutdownCleanup: false,
+			shutdownAbort: false,
+			lifetimeTimeoutExempt: false,
+		},
+		mechanism:
+			"run() bounds the submission; PID 1 owns the sender unit, which the backend supervises through a pidfd and stops by unit name, never by PID; Restart=no keeps systemd the only (absent) restart authority",
+	},
+	{
+		id: "streamloop.hostedSenderJournal",
+		file: "modules/streaming/streamloop/sender-host.ts",
+		symbol: "followSenderOutput",
+		command:
+			"[journalctl, --follow, --quiet, --output=cat, fixed lines, --unit=<sender unit>]",
+		class: "watcher",
+		status: "enforced",
+		contract: {
+			timed: false,
+			startupTimeout: false,
+			shutdownCleanup: false,
+			shutdownAbort: true,
+			lifetimeTimeoutExempt: true,
+		},
+		mechanism:
+			"aborted when the hosted sender exits or the follower fails; a backend child, so it dies with the backend and never breaks the sender's output",
+	},
+	{
+		id: "streamloop.hostedSenderStderr",
+		file: "modules/streaming/streamloop/sender-host.ts",
+		symbol: "followSenderOutput",
+		command:
+			"[tail, --follow=name, --retry, fixed lines, <sender stderr file>]",
+		class: "watcher",
+		status: "enforced",
+		contract: {
+			timed: false,
+			startupTimeout: false,
+			shutdownCleanup: false,
+			shutdownAbort: true,
+			lifetimeTimeoutExempt: true,
+		},
+		mechanism:
+			"same abort as the journal follower; the sender writes stderr to a file, so a dead reader never breaks it",
+	},
+	{
 		id: "ingest.srtLiveTransmit",
 		file: "modules/ingest/srt.ts",
 		symbol: "startSrtTransmitter",

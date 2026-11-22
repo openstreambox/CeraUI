@@ -831,6 +831,47 @@ export class CerastreamBackend implements StreamingBackend {
 	private launchedSessionId: string | undefined;
 
 	/**
+	 * Adopt a session the previous backend launched, on the connection whose
+	 * answer the takeover gate verified. Refused unless that connection is
+	 * still current and its last status is a current `streaming`. The
+	 * ownership closure is the same one an own launch installs, so a new
+	 * connection or an idle status drops it.
+	 */
+	adoptLaunchedSession(sessionId: string, connection: number): boolean {
+		const client = this.client;
+		const evidence = this.runtimeEvidence;
+		if (
+			!sessionId ||
+			client === undefined ||
+			!this.active ||
+			this.clientEpoch !== connection ||
+			evidence?.current() !== true ||
+			evidence.state !== "streaming" ||
+			this.launchedSessionCurrent !== undefined
+		)
+			return false;
+		const epoch = this.clientEpoch;
+		this.launchedSessionCurrent = () =>
+			this.client === client && this.clientEpoch === epoch;
+		this.launchedSessionId = sessionId;
+		this.adoptedSessionId = sessionId;
+		return true;
+	}
+
+	/** Undo an adoption of `sessionId`; an own launch is never touched. */
+	releaseAdoptedSession(sessionId: string): void {
+		if (
+			this.adoptedSessionId !== sessionId ||
+			this.launchedSessionId !== sessionId
+		)
+			return;
+		this.launchedSessionCurrent = undefined;
+		this.launchedSessionId = undefined;
+		this.adoptedSessionId = undefined;
+	}
+	private adoptedSessionId: string | undefined;
+
+	/**
 	 * Read only. The state is the last status the current session connection
 	 * delivered; the session id is asked once on that same connection, so both
 	 * describe the engine process that connection reaches. A status or
@@ -866,7 +907,7 @@ export class CerastreamBackend implements StreamingBackend {
 			const id = snapshot.session_id;
 			if (!unchanged()) return { state: "unknown", sessionId: null };
 			return typeof id === "string" && id.length > 0
-				? { state, sessionId: id }
+				? { state, sessionId: id, connection: epoch }
 				: { state, sessionId: null };
 		} catch {
 			return { state: unchanged() ? state : "unknown", sessionId: null };

@@ -11,6 +11,11 @@ import { setPreviewEncodeReplayTransport } from "../modules/streaming/preview-en
 import { StreamStartFailure } from "../modules/streaming/start-failure-taxonomy.ts";
 import { createStreamSessionOrchestrator } from "../modules/streaming/stream-session-orchestrator.ts";
 import { streamSessionProductionDeps } from "../modules/streaming/stream-session-production.ts";
+import type { StreamingProcess } from "../modules/streaming/streamloop/process-runner.ts";
+import {
+	HostedLaunchError,
+	type HostedSender,
+} from "../modules/streaming/streamloop/sender-host.ts";
 import {
 	setStartStreamDepsForTest,
 	startStream,
@@ -51,8 +56,16 @@ afterEach(async () => {
 	await rm(directory, { recursive: true, force: true });
 });
 
-function bootHarness(realProbe = false, recordFailure = false) {
+type HostedMode = "off" | "on" | "launch-fails";
+
+function bootHarness(
+	realProbe = false,
+	recordFailure = false,
+	hosted: HostedMode = "off",
+) {
 	let senderArgs: string[] = [];
+	let hostedLaunches = 0;
+	let hostedRegistrations = 0;
 	let telemetryPath = "";
 	let telemetrySocket: string | undefined;
 	let recordAttempts = 0;
@@ -70,6 +83,51 @@ function bootHarness(realProbe = false, recordFailure = false) {
 					},
 				}
 			: {}),
+		...(hosted === "off"
+			? {}
+			: {
+					takeoverFlag: () => true,
+					launchHostedSender: async (
+						_command: string,
+						args: readonly string[],
+					) => {
+						senderArgs = [...args];
+						hostedLaunches++;
+						if (hosted === "launch-fails")
+							throw new HostedLaunchError("unit_not_running", "unit");
+						const proc = Bun.spawn(["/usr/bin/true"], { stdout: "ignore" });
+						children.push(proc);
+						const sender = {
+							pid: proc.pid,
+							unit: "ceralive-srtla-send-0123456789abcdef.service",
+							startTime: "1",
+							pin: {
+								pidfd: true,
+								alive: () => true,
+								signal: () => true,
+								close: () => {},
+							},
+							get exitCode() {
+								return proc.exitCode;
+							},
+							signalCode: null,
+							exited: proc.exited,
+							kill: () => undefined,
+							signal: () => true,
+							release: () => undefined,
+						};
+						return { sender, followers: null };
+					},
+					registerHostedSender: (sender: HostedSender, command: string) => {
+						hostedRegistrations++;
+						return {
+							proc: sender as unknown as StreamingProcess["proc"],
+							spawnfile: command,
+							exitListeners: [],
+							hosted: sender,
+						};
+					},
+				}),
 		spawnStreamingLoop: (_command, args) => {
 			senderArgs = args;
 			launches++;
@@ -147,6 +205,7 @@ function bootHarness(realProbe = false, recordFailure = false) {
 				},
 			}),
 		view: () => ({ launches, stops, liveness: session.streamLiveness() }),
+		hostedView: () => ({ launches, hostedLaunches, hostedRegistrations }),
 		launchEvidence: () => ({
 			senderArgs,
 			recordAttempts,
@@ -167,6 +226,32 @@ test("fresh boot without a sentinel admits Start even when the engine is silent"
 	expect(h.view()).toMatchObject({ launches: 1, stops: 0 });
 	expect(h.engine.clients.flatMap((client) => client.calls)).toContain("start");
 	expect(existsSync(marker)).toBe(true);
+});
+
+test("with the takeover flag the sender is launched in its own unit, never as a child", async () => {
+	const h = bootHarness(false, false, "on");
+	expect(await h.start()).toMatchObject({ result: "started" });
+	expect(h.hostedView()).toEqual({
+		launches: 0,
+		hostedLaunches: 1,
+		hostedRegistrations: 1,
+	});
+	// The same argument vector a child would get.
+	expect(h.launchEvidence().senderArgs).toContain("--control-socket");
+});
+
+test("a failed unit launch fails the start and never falls back to a child", async () => {
+	const h = bootHarness(false, false, "launch-fails");
+	const result = await h.start();
+	expect(result).not.toMatchObject({ result: "started" });
+	expect(h.hostedView()).toEqual({
+		launches: 0,
+		hostedLaunches: 1,
+		hostedRegistrations: 0,
+	});
+	expect(
+		h.engine.clients.flatMap((client) => client.calls).includes("start"),
+	).toBe(false);
 });
 
 test("production silent backend probe preserves empty boot admission for Start and updates", async () => {

@@ -142,6 +142,8 @@ describe("sessionEvidence", () => {
 		expect(await h.backend.sessionEvidence()).toEqual({
 			state: "streaming",
 			sessionId: "s1",
+			// The token of the connection that answered, for a takeover's commit.
+			connection: 1,
 		});
 		expect(h.clients).toHaveLength(1);
 		expect(session?.calls.slice(before.length)).toEqual([

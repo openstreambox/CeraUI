@@ -218,7 +218,8 @@ This does not preserve media delivery across a backend service restart.
 
 After a restart the backend also judges, read only, whether a sender its
 predecessor left running could be adopted, and logs the verdict with the first
-failing check. It never adopts, signals or stops anything. It runs after the
+failing check. By default it never adopts, signals or stops anything (see the
+optional takeover below). It runs after the
 stream session has been reconciled, and startup continues without waiting for
 it; it leaves an unreadable armed-stream marker in place for restoration. A
 record that could never qualify (every record today, because the sender runs
@@ -273,6 +274,63 @@ of these samples within a window of 3 seconds, not a guarantee about the
 instant it is logged; a longer collection refuses. A sender older than contract
 2 is refused at the contract check.
 
+#### Optional takeover (`stream_continuity_takeover`)
+
+Everything above describes the default. With `stream_continuity_takeover: true`
+in `config.json` (absent by default) the sender runs in its own transient
+systemd unit, `ceralive-srtla-send-<id>.service`, with no restart policy. Its
+standard output goes to the journal and its standard error to a file, and the
+backend follows both. The backend holds a pidfd on the sender for its whole
+lifetime and sends every signal (reload, stop) through it, so a PID that now
+belongs to another process is never signalled. A clean backend restart leaves
+this sender running; a reboot stops it with every other unit; a backend
+stopped by hand leaves the stream running.
+
+After a restart the backend then acts on the check above, all or nothing. It
+also refuses while a modem mutation journal entry, an internal-call lease or a
+cellular host record exists, or cannot be read. The check judges the same
+record the takeover then uses. When every check passes, the takeover is one
+transaction. First it prepares everything that can fail, with no side effect:
+it reads the recorded IP list, resolves the armed configuration's receiver
+address, stops every other sender unit (systemd must confirm each, and a
+listing that does not answer refuses), and validates again (the record, the
+same pidfd alive with the same start time and an eligible state, modem state,
+the flag, then operator intent, the stream session still reconciling and the
+armed configuration). Then, with no wait in between, each step registers its
+undo before it runs: the engine session taken over on the connection that
+answered, the sender registered under that pidfd, telemetry reattached to the
+recorded stats file and control socket, the session's interface and USB
+listeners and reload checks (inert until the commit completes). The sender is
+then marked adopted together with its conditions (the flag, no modem hold,
+operator intent and the armed configuration unchanged), which reconciliation
+checks again at the moment it would report streaming, and one reconciliation
+runs. Any failure on the way undoes every step done, in reverse, including the
+engine session and the output followers; the map generation and the lifetime
+move only after streaming was reported. While that reconciliation waits for
+the engine, the registered sender is visible to the sender check and to a
+reload. Reconciliation
+reads the sender's pidfd at that moment, not a cached exit state, so a sender
+that exited or whose pidfd cannot answer is not accepted. The adopted session
+is then handled like one this backend started: Stop, reload and the sender
+check reach it, and its exit is reported the same way. A Stop whose pidfd
+never confirms the exit after SIGTERM and SIGKILL asks systemd to stop the
+unit and, if the exit is still not confirmed, reports a failed Stop instead of
+waiting.
+
+On any refusal or failure the backend stops the recorded sender unit by its
+name through systemd (never by PID), and with the flag also every other sender
+unit. It stops only a transient unit with the sender's name and description,
+and for the recorded unit only the recorded invocation. Only once systemd
+answers that each unit is inactive or gone does it reconcile again and
+continue as described at the start of this section; an unanswered or
+unconfirmed stop leaves the session unconfirmed and protected. Without the
+flag, a record naming such a unit (left by a backend that had the flag) is
+also stopped this way. Nothing is written before the takeover completes, so a
+backend that dies during it leaves the same evidence for the next start. On a
+sender without the contract-2
+applied identity, or a kernel without SO_PEERPIDFD, the check refuses, so the
+flag then only changes how the sender is hosted.
+
 ### Reinicio del backend y propiedad del emisor
 
 La sesión del motor puede seguir activa aunque su emisor haya terminado. Después
@@ -292,7 +350,8 @@ Esto no mantiene el envío de contenido durante el reinicio del servicio del bac
 
 Tras un reinicio el backend también evalúa, solo leyendo, si podría adoptar un
 emisor que su predecesor dejó en marcha, y registra el resultado con la primera
-comprobación que falló. Nunca adopta, envía señales ni detiene nada. Se ejecuta
+comprobación que falló. De forma predeterminada nunca adopta, envía señales ni
+detiene nada (ver la adopción opcional más abajo). Se ejecuta
 después de reconciliar la sesión de transmisión, y el arranque continúa sin
 esperar a que termine; deja en su sitio un marcador de transmisión armada
 ilegible para la restauración. Un registro que nunca podría cumplir (hoy todos,
@@ -349,3 +408,64 @@ configuración no hayan cambiado. Un resultado positivo es el acuerdo
 de estas muestras dentro de una ventana de 3 segundos, no una garantía sobre el
 instante en que se registra; una recolección más larga se rechaza. Un emisor
 anterior al contrato 2 se rechaza en la comprobación del contrato.
+
+#### Adopción opcional (`stream_continuity_takeover`)
+
+Todo lo anterior describe el comportamiento predeterminado. Con
+`stream_continuity_takeover: true` en `config.json` (ausente de forma
+predeterminada) el emisor corre en su propia unidad transitoria de systemd,
+`ceralive-srtla-send-<id>.service`, sin política de reinicio. Su salida
+estándar va al journal y su salida de error a un archivo, y el backend sigue
+ambas. El backend sostiene un pidfd sobre el emisor durante toda su vida y envía
+cada señal (recarga, detención) a través de él, así que nunca envía una señal a
+un PID que ahora pertenece a otro proceso. Un reinicio limpio del backend deja
+este emisor en marcha; un reinicio del sistema lo detiene junto con las demás
+unidades; un backend detenido a mano deja la transmisión en marcha.
+
+Tras un reinicio el backend actúa entonces según la comprobación anterior, todo
+o nada. También rechaza mientras exista, o no se pueda leer, una entrada del
+registro de cambios de módem, una concesión de llamada interna o un registro de
+host celular. La comprobación evalúa el mismo registro que luego usa la
+adopción. Cuando todo cumple, la adopción es una sola transacción. Primero
+prepara todo lo que puede fallar, sin efectos: lee la lista de IP registrada,
+resuelve la dirección del receptor de la configuración armada, detiene
+cualquier otra unidad de emisor (systemd debe confirmar cada una, y una lista
+que no responde rechaza) y valida otra vez (el registro, el mismo pidfd vivo
+con la misma hora de inicio y un estado válido, el estado del módem, la opción,
+y después la intención del operador, la sesión de transmisión todavía en
+reconciliación y la configuración armada). Luego, sin esperas intermedias, cada
+paso registra cómo deshacerse antes de ejecutarse: la sesión del motor adoptada
+en la conexión que respondió, el emisor registrado con ese pidfd, la telemetría
+conectada otra vez al archivo de estadísticas y al socket de control
+registrados, y los escuchas de interfaces y USB y las comprobaciones de recarga
+de la sesión (inactivos hasta que la adopción se completa). Después se marca el
+emisor como adoptado junto con sus condiciones (la opción, sin bloqueo de
+módem, la intención del operador y la configuración armada sin cambios), que la
+reconciliación vuelve a comprobar en el momento en que indicaría transmisión, y
+se ejecuta una reconciliación. Cualquier fallo en el camino deshace cada paso
+hecho, en orden inverso, incluidos la sesión del motor y los lectores de
+salida; la generación del mapa y el registro de vida cambian solo después de
+indicar transmisión. Mientras esa reconciliación espera al motor, el emisor
+registrado es visible para la comprobación del emisor y para una recarga. La reconciliación consulta el pidfd del
+emisor en ese momento, no un estado de salida guardado, así que no acepta un
+emisor que terminó o cuyo pidfd no puede responder. La sesión adoptada se trata
+entonces como una iniciada por este backend: Detener, la recarga y la
+comprobación del emisor llegan a ella, y su fin se informa igual. Si tras
+SIGTERM y SIGKILL el pidfd nunca confirma la salida, Detener pide a systemd que
+detenga la unidad y, si la salida sigue sin confirmarse, informa que no pudo
+detener en lugar de esperar.
+
+Ante cualquier rechazo o fallo, el backend detiene la unidad del emisor
+registrada por su nombre a través de systemd (nunca por PID), y con la opción
+activa también cualquier otra unidad de emisor. Solo detiene una unidad
+transitoria con el nombre y la descripción del emisor, y para la unidad
+registrada solo la invocación registrada. Solo cuando systemd responde que cada
+unidad está inactiva o ya no existe reconcilia otra vez y sigue como se
+describe al inicio de esta sección; una detención sin respuesta o sin confirmar
+deja la sesión sin confirmar y protegida. Sin la opción, un registro que nombra
+una unidad así (dejada por un backend que tenía la opción) también se detiene de
+esta manera. No se escribe nada antes de que la adopción se complete, así que un
+backend que termina durante ella deja la misma evidencia para el siguiente
+arranque. Con un emisor sin la
+identidad aplicada del contrato 2, o un kernel sin SO_PEERPIDFD, la comprobación
+rechaza, así que la opción solo cambia cómo se aloja el emisor.
