@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
 
-import { observedBinding } from "./client.ts";
+import { CompanionClientError, observedBinding } from "./client.ts";
 import { tlsBindingFromPeer } from "./ingress.ts";
 
 /**
@@ -37,7 +37,10 @@ export function checkCompanionUrl(url: URL): void {
 		url.search ||
 		url.hash
 	)
-		throw Error("Use a wss: URL at /ws, or ws: on loopback for development");
+		throw new CompanionClientError(
+			"no_binding",
+			"Use a wss: URL at /ws, or ws: on loopback for development.",
+		);
 }
 
 export interface ConnectOptions {
