@@ -144,12 +144,12 @@ let byIface = new Map<string, LinkIdentity>();
 export function registerBondIdentities(entries: readonly BondEntry[]): void {
 	identities = entries.map((entry) => {
 		const portLabel = portLabelFromIdPath(entry.idPath);
-		const serial = detailResolver(entry.iface)?.serial;
+		const serial = detailResolver(entry.parentIface ?? entry.iface)?.serial;
 		const unmappable = isUnmappableEntry(entry) || entry.linkId === undefined;
 		return {
 			identityState: unmappable ? "unmappable" : "resolved",
 			...(unmappable ? {} : { linkId: entry.linkId }),
-			iface: entry.iface,
+			iface: entry.parentIface ?? entry.iface,
 			ip: entry.ip,
 			...(entry.idPath !== undefined ? { idPath: entry.idPath } : {}),
 			...(portLabel !== undefined ? { portLabel } : {}),
@@ -164,7 +164,12 @@ export function registerBondIdentities(entries: readonly BondEntry[]): void {
 			identity.linkId === undefined ? [] : [[identity.linkId, identity]],
 		),
 	);
-	byIface = new Map(identities.map((identity) => [identity.iface, identity]));
+	byIface = new Map(
+		identities.flatMap((identity, i) => [
+			[identity.iface, identity],
+			[entries[i]?.iface ?? identity.iface, identity],
+		]),
+	);
 }
 
 /** Retire the registry — a stopped sender describes no bond. */
