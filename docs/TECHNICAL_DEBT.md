@@ -858,3 +858,15 @@ the ratio, the initial-route and single-chunk limits and the federation
 budgets are unchanged; the displaced 1,293,660/1,493,392 B baselines are kept
 in `SPA_DISPLACED_BASELINES`. Accepted debt under `TD-spa-i18n-catalog-size`,
 which remains open.
+
+### Bundle footprint acceptance — 2026-11-21
+
+The composed train 2 build measures 1,508,794 B total SPA gzip and 1,709,422 B
+precache gzip, over the 2026-11-20 ceilings by 8,169 B and 8,151 B (40,937 B and
+40,919 B over the 2026-11-20 baselines). Most of the growth is 123 new catalog
+keys in ten locales: power supervisor warnings, the Remote access card and the
+network checkpoint prompts. The aggregate baselines move to those
+measurements. Both 32 KiB absolute headrooms, the ratio, the initial-route and
+single-chunk limits and the federation budgets are unchanged; the displaced
+1,467,857/1,668,503 B baselines are kept in `SPA_DISPLACED_BASELINES`.
+Accepted debt under `TD-spa-i18n-catalog-size`, which remains open.
