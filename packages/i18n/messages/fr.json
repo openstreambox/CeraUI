@@ -1689,6 +1689,7 @@
 	"network.view.configure": "Configurer",
 	"network.view.connect": "Connecter",
 	"network.view.connected": "Connecté",
+	"network.view.noStreamData": "Aucune donnée du flux sur ce lien",
 	"network.view.disableBond": "Retirer de l'agrégation",
 	"network.view.disconnected": "Déconnecté",
 	"network.view.enableBond": "Ajouter à l'agrégation",
