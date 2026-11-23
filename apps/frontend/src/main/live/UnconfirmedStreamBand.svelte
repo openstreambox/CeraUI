@@ -43,17 +43,16 @@ import { rpc } from '$lib/rpc/client';
 import { getStreamingAttemptGeneration, type StreamingOptimismState, supersedeStartingOptimism } from '$lib/rpc/streaming-optimism.svelte';
 import { sendSessionTransition } from '$lib/streaming/compositionWrites.svelte';
 import {
-	showUnconfirmedStreamStop,
 	stopConfirmedByDevice,
 	UNCONFIRMED_STOP_OPERATION,
 } from '$lib/streaming/unconfirmed-stream';
+import { unconfirmedStreamBandShown } from '$lib/streaming/unconfirmed-stream-band.svelte';
 import {
 	claimOperatorStop,
 	latestStopOwner,
 	lifecycleSinceStopClaim,
 	operatorStopUnresolved,
 	settleOperatorStop,
-	startRecoveryUnknown,
 } from '$lib/streaming/unresolved-stream-actions.svelte';
 
 interface Props {
@@ -67,15 +66,9 @@ let { lifecycle, isStreaming, optimismState }: Props = $props();
 const phase = $derived(getOperationPhase(UNCONFIRMED_STOP_OPERATION));
 const pending = $derived(phase === 'pending');
 const unresolved = $derived(operatorStopUnresolved());
+// The Start bar reads the same answer (StreamSetupChain's `stopFirst`).
 const visible = $derived(
-	showUnconfirmedStreamStop({
-		lifecycle,
-		isStreaming,
-		optimismState,
-		stopPending: pending,
-		stopUnresolved: unresolved,
-		startRecoveryUnknown: startRecoveryUnknown(getStreamingAttemptGeneration()),
-	}),
+	unconfirmedStreamBandShown({ lifecycle, isStreaming, optimismState }),
 );
 
 // Only the device's idle commit confirms the Stop. Not the band leaving the

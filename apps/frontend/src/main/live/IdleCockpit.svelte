@@ -68,6 +68,8 @@ interface Props {
 	isStreaming: boolean;
 	optimismState: StreamingOptimismState;
 	destinationValidated?: boolean;
+	/** The bar points to the unconfirmed-state band's Stop (StreamSetupChain). */
+	stopFirst?: boolean;
 	// ── StreamSetupChain: actions (callbacks owned by LiveView) ────────────────
 	onStart: (overrides: { source?: string }) => void;
 	onStop: () => void;
@@ -110,6 +112,7 @@ const {
 	isStreaming,
 	optimismState,
 	destinationValidated,
+	stopFirst = false,
 	onStart,
 	onStop,
 	onOpenSource,
@@ -234,6 +237,7 @@ const audioEmbeddedComingSoon = $derived(
 			{isStreaming}
 			{optimismState}
 			{destinationValidated}
+			{stopFirst}
 			{onStart}
 			{onStop}
 			{onOpenSource}

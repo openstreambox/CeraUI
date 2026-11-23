@@ -856,6 +856,7 @@
 	"live.unconfirmedStream.body": "设备无法确认直播是否仍在进行，因此已暂停开始直播和安装更新。请停止直播，以结束可能仍在运行的内容；设备确认已停止后，这两项都会恢复。",
 	"live.unconfirmedStream.stopFailed": "设备未确认已停止。请再次尝试停止直播。",
 	"live.unconfirmedStream.stopNotConfirmed": "已发送停止请求，但设备尚未确认。你可以再试一次。",
+	"live.unconfirmedStream.stopFirst": "请先停止上方的直播",
 	"locale.selectLanguage": "选择语言",
 	"navigation.advanced": "高级",
 	"navigation.back": "返回",

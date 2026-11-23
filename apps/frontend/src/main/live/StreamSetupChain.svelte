@@ -91,6 +91,13 @@ interface Props {
 	optimismState: StreamingOptimismState;
 	// ── Destination traffic-light: green when the last relay.validate passed ────
 	destinationValidated?: boolean;
+	/**
+	 * The device cannot confirm that an earlier stream has ended. The band above
+	 * offers the Stop; the bar points there instead of saying "Ready to go live".
+	 * Start stays enabled: it asks the device to reconcile, which can settle the
+	 * state, and is refused while it cannot.
+	 */
+	stopFirst?: boolean;
 	// ── Actions ─────────────────────────────────────────────────────────────────
 	/** Start the stream. `overrides.source` carries the implicit sole-camera id. */
 	onStart: (overrides: { source?: string }) => void;
@@ -115,6 +122,7 @@ const {
 	isStreaming,
 	optimismState,
 	destinationValidated,
+	stopFirst = false,
 	onStart,
 	onStop,
 	onOpenSource,
@@ -501,7 +509,11 @@ const networkView = $derived<SetupRowView>({
 
 		<LiveBar
 			blocked={startDisabledReason !== undefined}
-			status={startDisabledReason ?? m["live.bar.ready"]()}
+			notice={stopFirst}
+			status={startDisabledReason ??
+				(stopFirst
+					? m["live.unconfirmedStream.stopFirst"]()
+					: m["live.bar.ready"]())}
 		>
 			<div class="shrink-0 sm:min-w-56">
 				<StreamControlButton
