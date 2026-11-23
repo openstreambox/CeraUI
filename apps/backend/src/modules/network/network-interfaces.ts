@@ -1011,29 +1011,34 @@ export function updateNetif() {
 // failing `ip` degrades to ifconfig-only (the prior single-address behavior).
 async function resolveIpAddrOverrides(
 	ifindices: Map<string, number>,
+	onRead: () => void,
 ): Promise<Map<string, IpAddrSelection> | undefined> {
+	let addresses: Map<string, IpAddrSelection>;
 	try {
-		return parseIpAddrShow(await run("ip", ["-4", "addr", "show"]), ifindices);
+		addresses = parseIpAddrShow(
+			await run("ip", ["-4", "addr", "show"]),
+			ifindices,
+		);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.debug(`ip -4 addr show unavailable, using ifconfig IPs: ${message}`);
 		return undefined;
 	}
+	onRead();
+	return addresses;
 }
 
 /** Retire an indexed predecessor before any scan can publish its successor. */
 function withdrawReplacedNetifs(
-	ifnames: readonly string[],
-	ifindices: ReadonlyMap<string, number>,
-): Set<string> {
-	const withdrawn = new Set<string>();
-	for (const name of ifnames) {
+	indices: Iterable<readonly [string, number]>,
+	withdrawn: Set<string>,
+): void {
+	let changed = false;
+	for (const [name, index] of indices) {
 		const previous = netdevIdentity.get(name);
-		const index = ifindices.get(name);
 		if (
 			!netif[name] ||
 			previous?.index === undefined ||
-			index === undefined ||
 			previous.index === index
 		)
 			continue;
@@ -1041,21 +1046,26 @@ function withdrawReplacedNetifs(
 		bumpPresence(name, "replaced");
 		netdevIdentity.set(name, { ...previous, index, present: false });
 		withdrawn.add(name);
+		changed = true;
 	}
-	if (withdrawn.size > 0) {
+	if (changed) {
 		triggerNetworkInterfacesChange();
 		notifyTopologyChange();
 	}
-	return withdrawn;
 }
 
 async function refreshNetifFromOs(): Promise<void> {
 	const generation = ++netifRefreshGeneration;
 	const ifindices = new Map<string, number>();
+	const withdrawn = new Set<string>();
+	const observeIndices = (indices: Iterable<readonly [string, number]>) => {
+		if (generation === netifRefreshGeneration)
+			withdrawReplacedNetifs(indices, withdrawn);
+	};
 	try {
 		const [ifconfigOut, ipOverrides] = await Promise.all([
 			run("ifconfig", ["-a"]),
-			resolveIpAddrOverrides(ifindices),
+			resolveIpAddrOverrides(ifindices, () => observeIndices(ifindices)),
 		]);
 		if (generation !== netifRefreshGeneration) return;
 		const ifnames = ifconfigOut
@@ -1065,19 +1075,18 @@ async function refreshNetifFromOs(): Promise<void> {
 				(name) =>
 					name !== "" && name !== "lo" && !/^(?:docker|l4tbr)/.test(name),
 			);
-		const withdrawn = withdrawReplacedNetifs(ifnames, ifindices);
 		await Promise.all(
 			ifnames
 				.filter((name) => !ifindices.has(name))
 				.map(async (name) => {
 					const index = await readNetdevIfindex(name);
-					if (index !== undefined) ifindices.set(name, index);
+					if (index !== undefined) {
+						ifindices.set(name, index);
+						observeIndices([[name, index]]);
+					}
 				}),
 		);
 		if (generation !== netifRefreshGeneration) return;
-		for (const name of withdrawReplacedNetifs(ifnames, ifindices)) {
-			withdrawn.add(name);
-		}
 		// Establish a new snapshot before letting a USB scan settle a successor.
 		const scanIfnames = ifnames.filter((name) => !withdrawn.has(name));
 		const buses = new Map<string, NetdevBusEvidence>();

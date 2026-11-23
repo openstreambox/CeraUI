@@ -414,6 +414,33 @@ test("an unrelated USB scan cannot publish an indexed predecessor", async () => 
 	}
 });
 
+test("a periodic scan cannot publish the predecessor while ifconfig is pending", async () => {
+	const output = firstSightIfconfig(MODEM, IP);
+	const f = fixture(output, []);
+	f.set(MODEM, ok("usb"));
+	await updateNetif();
+	expect(genSrtlaBondEntries().map((entry) => entry.iface)).toContain(MODEM);
+
+	const ifconfig = Promise.withResolvers<void>();
+	f.holdIfconfig(ifconfig.promise);
+	f.setIndex(MODEM, 29);
+	const refresh = updateNetif();
+	const seen: string[][] = [];
+	const off = scanModule.onUsbNetScanCommitted(() => {
+		seen.push(genSrtlaBondEntries().map((entry) => entry.iface));
+	});
+	try {
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await f.settle();
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).not.toContain(MODEM);
+	} finally {
+		off();
+		ifconfig.resolve();
+		await refresh;
+	}
+});
+
 test("a late USB descriptor is remembered even after a scan drops the disconnected name", async () => {
 	const f = fixture(firstSightIfconfig(MODEM, IP), [MODEM]);
 	f.setIpUnavailable();

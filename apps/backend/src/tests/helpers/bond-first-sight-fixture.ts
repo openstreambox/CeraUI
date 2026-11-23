@@ -49,6 +49,7 @@ export function firstSightScan(
 	const clock = { now: 0 };
 	const indices = new Map<string, number>();
 	let ipUnavailable = false;
+	let ifconfigGate: Promise<void> | undefined;
 	const fixture = constructedTwinDeps(options.devices);
 	const reads = new Map<
 		string,
@@ -112,7 +113,10 @@ export function firstSightScan(
 		},
 	);
 	spyOn(runner, "run").mockImplementation(async (bin) => {
-		if (bin === "ifconfig") return output;
+		if (bin === "ifconfig") {
+			if (ifconfigGate) await ifconfigGate;
+			return output;
+		}
 		if (ipUnavailable) throw new Error("fixture address command unavailable");
 		return output
 			.split("\n\n")
@@ -131,6 +135,9 @@ export function firstSightScan(
 		setIndex: (name: string, index: number) => indices.set(name, index),
 		setIpUnavailable: () => {
 			ipUnavailable = true;
+		},
+		holdIfconfig: (gate: Promise<void>) => {
+			ifconfigGate = gate;
 		},
 		entered: reads.get(FIRST_SIGHT_IFACE)?.entered.promise ?? Promise.resolve(),
 		enteredFor: (name: string) =>
