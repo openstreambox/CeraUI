@@ -1193,7 +1193,7 @@ const configRows = $derived<ConfigRow[]>([
 			{isStreaming}
 			optimismState={streamingOptimismState}
 			{destinationValidated}
-			startPaused={streamStateUnconfirmed({
+			stopFirst={streamStateUnconfirmed({
 				lifecycle: streamLifecycle,
 				isStreaming,
 			})}

@@ -931,7 +931,7 @@
 	"live.unconfirmedStream.body": "The device can't confirm whether a stream is still running, so starting a stream and installing updates are paused. Stop the stream to end anything that may still be running; both resume once the device confirms it has stopped.",
 	"live.unconfirmedStream.stopFailed": "The device didn't confirm the stop. Try stopping the stream again.",
 	"live.unconfirmedStream.stopNotConfirmed": "The stop was sent, but the device hasn't confirmed it yet. You can try again.",
-	"live.unconfirmedStream.startPaused": "Stop the stream above first",
+	"live.unconfirmedStream.stopFirst": "Stop the stream above first",
 	"locale.selectLanguage": "Select Language",
 	"navigation.advanced": "Advanced",
 	"navigation.back": "Back",

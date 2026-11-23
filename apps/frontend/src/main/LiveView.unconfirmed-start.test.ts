@@ -2,10 +2,10 @@
 /**
  * LiveView: while the device reports that it cannot confirm whether an earlier
  * stream ended (`stream_lifecycle` reconciling or stop_failed, not streaming),
- * the unconfirmed-state band offers the Stop and the Start bar is paused with
- * "Stop the stream above first". The pause follows the live status: once the
- * device settles, Start returns without a reload. The operator always has one
- * working action, the band's Stop or Start.
+ * the unconfirmed-state band offers the Stop and the Start bar says "Stop the
+ * stream above first" instead of "Ready to go live". Start stays enabled (it
+ * can supply the reconcile that settles the state). Both follow the live
+ * status: once the device settles, the bar reads ready again without a reload.
  *
  * Mounts the real IdleCockpit, StreamSetupChain and UnconfirmedStreamBand,
  * with the same peripheral stubs as LiveView.idle-order.test.ts.
@@ -129,9 +129,9 @@ function startButton(container: HTMLElement) {
 	}) as HTMLButtonElement;
 }
 
-describe("LiveView: Start pauses only while the device reports the unconfirmed state", () => {
+describe("LiveView: the bar points to the band's Stop only while the device reports the unconfirmed state", () => {
 	for (const lifecycle of ["reconciling", "stop_failed"] as const) {
-		it(`${lifecycle}: band with Stop, Start paused, and both follow the status live`, () => {
+		it(`${lifecycle}: band with Stop, the bar points to it, and both follow the status live`, () => {
 			setLiveStatus({ stream_lifecycle: lifecycle, is_streaming: false });
 			const { container } = render(LiveView);
 			expect(container.textContent).toContain("Stream state not confirmed");
@@ -140,7 +140,8 @@ describe("LiveView: Start pauses only while the device reports the unconfirmed s
 			).toBeTruthy();
 			expect(container.textContent).toContain("Stop the stream above first");
 			expect(container.textContent).not.toContain("Ready to go live");
-			expect(startButton(container).disabled).toBe(true);
+			// Both actions stay available: Stop in the band, and Start.
+			expect(startButton(container).disabled).toBe(false);
 
 			// The device settles (the operator's Stop was acknowledged).
 			setLiveStatus({ stream_lifecycle: "idle", is_streaming: false });
@@ -154,7 +155,7 @@ describe("LiveView: Start pauses only while the device reports the unconfirmed s
 		});
 	}
 
-	it("idle, or no lifecycle reported yet: no band and Start is not paused", () => {
+	it("idle, or no lifecycle reported yet: no band and the bar reads ready", () => {
 		for (const status of [
 			{},
 			{ stream_lifecycle: "idle", is_streaming: false },
@@ -165,6 +166,7 @@ describe("LiveView: Start pauses only while the device reports the unconfirmed s
 			expect(container.textContent).not.toContain(
 				"Stop the stream above first",
 			);
+			expect(container.textContent).toContain("Ready to go live");
 			expect(startButton(container).disabled).toBe(false);
 			unmount();
 		}

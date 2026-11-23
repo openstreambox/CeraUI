@@ -10,7 +10,7 @@ const KEYS = [
 	"live.unconfirmedStream.body",
 	"live.unconfirmedStream.stopFailed",
 	"live.unconfirmedStream.stopNotConfirmed",
-	"live.unconfirmedStream.startPaused",
+	"live.unconfirmedStream.stopFirst",
 ] as const;
 
 const PLACEHOLDER_RE = /\{[^}]*\}/g;

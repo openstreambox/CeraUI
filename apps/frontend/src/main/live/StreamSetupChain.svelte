@@ -92,10 +92,12 @@ interface Props {
 	// ── Destination traffic-light: green when the last relay.validate passed ────
 	destinationValidated?: boolean;
 	/**
-	 * The device cannot confirm that an earlier stream has ended: the band above
-	 * offers the Stop, and a Start would be refused until it is pressed.
+	 * The device cannot confirm that an earlier stream has ended. The band above
+	 * offers the Stop; the bar points there instead of saying "Ready to go live".
+	 * Start stays enabled: it asks the device to reconcile, which can settle the
+	 * state, and is refused while it cannot.
 	 */
-	startPaused?: boolean;
+	stopFirst?: boolean;
 	// ── Actions ─────────────────────────────────────────────────────────────────
 	/** Start the stream. `overrides.source` carries the implicit sole-camera id. */
 	onStart: (overrides: { source?: string }) => void;
@@ -120,7 +122,7 @@ const {
 	isStreaming,
 	optimismState,
 	destinationValidated,
-	startPaused = false,
+	stopFirst = false,
 	onStart,
 	onStop,
 	onOpenSource,
@@ -178,15 +180,11 @@ const readiness = $derived(
 
 // Start gating reads the readiness verdict directly (engine gate included — it is
 // owned by the Start disabled reason + CapabilityTierBanner, not a row).
-const canStart = $derived(
-	!readiness.blocking && optimismState !== 'starting' && !startPaused,
-);
+const canStart = $derived(!readiness.blocking && optimismState !== 'starting');
 const startDisabledReason = $derived(
 	optimismState === 'starting'
 		? m["live.starting"]()
-		: startPaused
-			? m["live.unconfirmedStream.startPaused"]()
-			: readiness.blocking && readiness.primaryFixGate
+		: readiness.blocking && readiness.primaryFixGate
 			? resolveReason(
 					readiness.gates[readiness.primaryFixGate].reasonKey ??
 						READINESS_SOURCE_REASON,
@@ -510,8 +508,11 @@ const networkView = $derived<SetupRowView>({
 		</section>
 
 		<LiveBar
-			blocked={startDisabledReason !== undefined}
-			status={startDisabledReason ?? m["live.bar.ready"]()}
+			blocked={startDisabledReason !== undefined || stopFirst}
+			status={startDisabledReason ??
+				(stopFirst
+					? m["live.unconfirmedStream.stopFirst"]()
+					: m["live.bar.ready"]())}
 		>
 			<div class="shrink-0 sm:min-w-56">
 				<StreamControlButton
