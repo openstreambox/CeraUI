@@ -18,32 +18,62 @@
 /*
   Board input voltage (DC-in) read from the SoC's own ADC.
 
-  The Radxa ROCK 5B+ routes its USB-C power input through a 100k / 8.2k
-  divider into SARADC channel 6 (Radxa schematic). The reading is therefore
-  `in_voltage6_raw * in_voltage_scale` (mV at the pin) times
-  (100 + 8.2) / 8.2 = 13.195..., which gives the input in volts after /1000.
+  Which boards can measure it is a per-board fact from the schematic, kept in
+  BOARD_INPUT_PROFILES and matched on the exact device-tree compatible entry.
+  A board that is not in the table, or whose profile says it has no input
+  sense, publishes nothing: a number from an unwired ADC channel would be
+  fabricated, so "not available" is the only safe answer there.
+
+  - Radxa ROCK 5B+: the USB-C power input reaches SARADC channel 6 through a
+    100k / 8.2k divider (Radxa schematic), so the input is
+    `in_voltage6_raw * in_voltage_scale * (100 + 8.2) / 8.2` mV. Board-checked
+    against a manual read on the current image.
+  - Orange Pi 5 Plus: no SARADC channel is wired to the power input. The
+    schematic (V1.1) puts the boot strap, recovery key, LCD ID, headphone
+    hook and expansion on channels 0-4 and leaves 5-7 unused; channels 5-7
+    read as floating on a board. Its USB-C power input is a fixed 5 V supply.
 
   It is the voltage only. The PD contract and the current are not measurable
-  from the board, so nothing here claims either.
-
-  Board gate: only a device tree that names `radxa,rock-5b-plus` is read. Other
-  RK3588 boards expose the same ADC, but channel 6 is wired to something else
-  (or nothing) on them, so a number from it would be fabricated. The ADC is
-  found by its platform name: `fec10000.adc` on the current kernel,
-  `fec10000.saradc` on the older vendor kernel.
+  from these boards, so nothing here claims either. The ADC is found by its
+  platform name: `fec10000.adc` on the current kernel, `fec10000.saradc` on
+  the older vendor kernel.
 */
 
 import { readdir } from "node:fs/promises";
 
 export const INPUT_VOLTAGE_SENSOR = "Input voltage";
 
-/** (100k + 8.2k) / 8.2k, the board's divider ratio. */
+/** How a board can (or cannot) measure its own power input. */
+export type InputSense =
+	| { readonly kind: "adc"; readonly channel: number; readonly ratio: number }
+	| { readonly kind: "none" };
+
+export interface BoardInputProfile {
+	readonly board: string;
+	/** Exact device-tree compatible entries, any of which selects the board. */
+	readonly compatibles: readonly string[];
+	readonly sense: InputSense;
+}
+
+/** (100k + 8.2k) / 8.2k, the ROCK 5B+ input divider. */
 export const ROCK_5B_PLUS_DIVIDER = (100 + 8.2) / 8.2;
 
-const ROCK_5B_PLUS_COMPATIBLE = "radxa,rock-5b-plus";
+export const BOARD_INPUT_PROFILES: readonly BoardInputProfile[] = [
+	{
+		board: "rock-5b-plus",
+		compatibles: ["radxa,rock-5b-plus"],
+		sense: { kind: "adc", channel: 6, ratio: ROCK_5B_PLUS_DIVIDER },
+	},
+	{
+		board: "orangepi-5-plus",
+		// Mainline and the vendor 5.10 kernel name the board differently.
+		compatibles: ["xunlong,orangepi-5-plus", "rockchip,rk3588-orangepi-5-plus"],
+		sense: { kind: "none" },
+	},
+];
+
 const IIO_ROOT = "/sys/bus/iio/devices";
 const ADC_NAME_RE = /^fec10000\.(?:sar)?adc$/;
-const CHANNEL = 6;
 
 /** Plausible DC-in range; anything outside is a bad read, not a reading. */
 const MIN_VOLTS = 0.5;
@@ -61,36 +91,47 @@ export const defaultInputVoltageDeps: InputVoltageDeps = {
 	readText: (path) => Bun.file(path).text(),
 };
 
-/** True when the device tree names the ROCK 5B+ (NUL-separated list). */
-export function isRock5bPlus(compatible: string): boolean {
-	return compatible
-		.split("\0")
-		.some((entry) => entry.trim() === ROCK_5B_PLUS_COMPATIBLE);
+/**
+ * The profile for a device-tree compatible list (NUL-separated), or undefined
+ * for a board this table does not know.
+ */
+export function inputProfileFor(
+	compatible: string,
+): BoardInputProfile | undefined {
+	const entries = new Set(compatible.split("\0").map((entry) => entry.trim()));
+	return BOARD_INPUT_PROFILES.find((profile) =>
+		profile.compatibles.some((name) => entries.has(name)),
+	);
 }
 
 /**
  * Convert one ADC read to volts at the board input, or null when the read is
  * not a plausible DC-in voltage.
  */
-export function inputVoltsFromAdc(raw: string, scale: string): number | null {
+export function inputVoltsFromAdc(
+	raw: string,
+	scale: string,
+	ratio: number,
+): number | null {
 	const r = Number.parseInt(raw.trim(), 10);
 	const s = Number.parseFloat(scale.trim());
 	if (!Number.isFinite(r) || !Number.isFinite(s) || r < 0 || s <= 0) {
 		return null;
 	}
-	const volts = (r * s * ROCK_5B_PLUS_DIVIDER) / 1000;
+	const volts = (r * s * ratio) / 1000;
 	return volts >= MIN_VOLTS && volts <= MAX_VOLTS ? volts : null;
 }
 
 /**
- * Reader with the board check and the ADC lookup resolved once. A board that
- * is not a ROCK 5B+ stays off for the life of the process; a missing ADC is
- * looked up again on the next read (the driver can bind late).
+ * Reader with the board profile and the ADC lookup resolved once. A board with
+ * no ADC input sense (or none in the table) stays off for the life of the
+ * process; a missing ADC is looked up again on the next read (the driver can
+ * bind late).
  */
 export function createInputVoltageReader(
 	deps: InputVoltageDeps = defaultInputVoltageDeps,
 ) {
-	let supported: boolean | undefined;
+	let sense: InputSense | undefined;
 	let adcDir: string | undefined;
 
 	async function findAdc(): Promise<string | undefined> {
@@ -116,22 +157,24 @@ export function createInputVoltageReader(
 	}
 
 	return async function readInputVoltage(): Promise<number | null> {
-		if (supported === undefined) {
+		if (sense === undefined) {
 			try {
-				supported = isRock5bPlus(await deps.readCompatible());
+				sense = inputProfileFor(await deps.readCompatible())?.sense ?? {
+					kind: "none",
+				};
 			} catch {
-				supported = false;
+				sense = { kind: "none" };
 			}
 		}
-		if (!supported) return null;
+		if (sense.kind !== "adc") return null;
 		adcDir ??= await findAdc();
 		if (adcDir === undefined) return null;
 		try {
 			const [raw, scale] = await Promise.all([
-				deps.readText(`${adcDir}/in_voltage${CHANNEL}_raw`),
+				deps.readText(`${adcDir}/in_voltage${sense.channel}_raw`),
 				deps.readText(`${adcDir}/in_voltage_scale`),
 			]);
-			return inputVoltsFromAdc(raw, scale);
+			return inputVoltsFromAdc(raw, scale, sense.ratio);
 		} catch {
 			adcDir = undefined;
 			return null;

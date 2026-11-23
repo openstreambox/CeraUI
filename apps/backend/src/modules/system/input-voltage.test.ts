@@ -1,14 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import {
+	BOARD_INPUT_PROFILES,
 	createInputVoltageReader,
 	formatInputVoltage,
 	type InputVoltageDeps,
+	inputProfileFor,
 	inputVoltsFromAdc,
-	isRock5bPlus,
+	ROCK_5B_PLUS_DIVIDER,
 } from "./input-voltage.ts";
 
 const ROCK_5B_PLUS = "radxa,rock-5b-plus\0rockchip,rk3588\0";
 const ORANGE_PI_5_PLUS = "xunlong,orangepi-5-plus\0rockchip,rk3588\0";
+// The vendor 5.10 kernel's name for the same board (read on a board).
+const ORANGE_PI_5_PLUS_VENDOR =
+	"rockchip,rk3588-orangepi-5-plus\0rockchip,rk3588\0";
+const UNKNOWN_RK3588 = "vendor,some-rk3588-board\0rockchip,rk3588\0";
 
 // in_voltage_scale on the board's 1.8 V / 12-bit SARADC.
 const SCALE = "0.439453125";
@@ -38,33 +44,60 @@ function board(
 const dev = (n: number, file: string) =>
 	`/sys/bus/iio/devices/iio:device${n}/${file}`;
 
-describe("isRock5bPlus", () => {
-	test("matches the exact compatible entry only", () => {
-		expect(isRock5bPlus(ROCK_5B_PLUS)).toBe(true);
-		expect(isRock5bPlus(ORANGE_PI_5_PLUS)).toBe(false);
-		expect(isRock5bPlus("radxa,rock-5b\0rockchip,rk3588")).toBe(false);
-		expect(isRock5bPlus("")).toBe(false);
+describe("inputProfileFor", () => {
+	test("the ROCK 5B+ reads ADC channel 6 through its 100k/8.2k divider", () => {
+		expect(inputProfileFor(ROCK_5B_PLUS)?.sense).toEqual({
+			kind: "adc",
+			channel: 6,
+			ratio: ROCK_5B_PLUS_DIVIDER,
+		});
+	});
+
+	test("the Orange Pi 5 Plus is known and has no input sense, on either kernel", () => {
+		for (const compatible of [ORANGE_PI_5_PLUS, ORANGE_PI_5_PLUS_VENDOR]) {
+			const profile = inputProfileFor(compatible);
+			expect(profile?.board).toBe("orangepi-5-plus");
+			expect(profile?.sense).toEqual({ kind: "none" });
+		}
+	});
+
+	test("matches exact entries only; an unknown board has no profile", () => {
+		expect(inputProfileFor("radxa,rock-5b\0rockchip,rk3588")).toBeUndefined();
+		expect(inputProfileFor(UNKNOWN_RK3588)).toBeUndefined();
+		expect(inputProfileFor("rockchip,rk3588")).toBeUndefined();
+		expect(inputProfileFor("")).toBeUndefined();
+	});
+
+	test("no two profiles claim the same compatible", () => {
+		const all = BOARD_INPUT_PROFILES.flatMap((p) => p.compatibles);
+		expect(new Set(all).size).toBe(all.length);
 	});
 });
 
 describe("inputVoltsFromAdc", () => {
 	test("applies the 100k/8.2k divider", () => {
 		// 2104 * 0.439453125 mV = 924.6 mV at the pin -> 12.2 V at DC-in
-		const volts = inputVoltsFromAdc("2104\n", `${SCALE}\n`);
+		const volts = inputVoltsFromAdc(
+			"2104\n",
+			`${SCALE}\n`,
+			ROCK_5B_PLUS_DIVIDER,
+		);
 		expect(volts).not.toBeNull();
 		expect(volts as number).toBeCloseTo(12.2, 1);
 	});
 
 	test("a 5 V input reads about 5 V", () => {
-		expect(inputVoltsFromAdc("862", SCALE) as number).toBeCloseTo(5.0, 1);
+		expect(
+			inputVoltsFromAdc("862", SCALE, ROCK_5B_PLUS_DIVIDER) as number,
+		).toBeCloseTo(5.0, 1);
 	});
 
 	test("an implausible or garbled read is no reading", () => {
-		expect(inputVoltsFromAdc("0", SCALE)).toBeNull();
-		expect(inputVoltsFromAdc("4095", "10")).toBeNull();
-		expect(inputVoltsFromAdc("abc", SCALE)).toBeNull();
-		expect(inputVoltsFromAdc("2104", "0")).toBeNull();
-		expect(inputVoltsFromAdc("-5", SCALE)).toBeNull();
+		expect(inputVoltsFromAdc("0", SCALE, ROCK_5B_PLUS_DIVIDER)).toBeNull();
+		expect(inputVoltsFromAdc("4095", "10", ROCK_5B_PLUS_DIVIDER)).toBeNull();
+		expect(inputVoltsFromAdc("abc", SCALE, ROCK_5B_PLUS_DIVIDER)).toBeNull();
+		expect(inputVoltsFromAdc("2104", "0", ROCK_5B_PLUS_DIVIDER)).toBeNull();
+		expect(inputVoltsFromAdc("-5", SCALE, ROCK_5B_PLUS_DIVIDER)).toBeNull();
 	});
 });
 
@@ -92,20 +125,27 @@ describe("createInputVoltageReader", () => {
 		);
 	});
 
-	test("another RK3588 board never touches the ADC", async () => {
-		const deps = board(
-			{
-				[dev(0, "name")]: "fec10000.adc",
-				[dev(0, "in_voltage6_raw")]: "2104",
-				[dev(0, "in_voltage_scale")]: SCALE,
-			},
-			ORANGE_PI_5_PLUS,
-		);
-		const read = createInputVoltageReader(deps);
-		expect(await read()).toBeNull();
-		expect(await read()).toBeNull();
-		expect(deps.reads).toEqual([]);
-	});
+	test.each([
+		["Orange Pi 5 Plus (mainline)", ORANGE_PI_5_PLUS],
+		["Orange Pi 5 Plus (vendor kernel)", ORANGE_PI_5_PLUS_VENDOR],
+		["an unknown RK3588 board", UNKNOWN_RK3588],
+	])(
+		"%s never touches the ADC, even with a plausible channel 6",
+		async (_name, compatible) => {
+			const deps = board(
+				{
+					[dev(0, "name")]: "fec10000.saradc",
+					[dev(0, "in_voltage6_raw")]: "2104",
+					[dev(0, "in_voltage_scale")]: SCALE,
+				},
+				compatible,
+			);
+			const read = createInputVoltageReader(deps);
+			expect(await read()).toBeNull();
+			expect(await read()).toBeNull();
+			expect(deps.reads).toEqual([]);
+		},
+	);
 
 	test("an unreadable device tree is not a ROCK 5B+", async () => {
 		const deps = board({});

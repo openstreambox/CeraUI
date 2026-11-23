@@ -113,7 +113,8 @@ const readInputVoltage = createInputVoltageReader();
 
 async function updateSensorsRk3588() {
 	await updateSensorThermal(0, "SoC temperature");
-	// ROCK 5B+ only (see input-voltage.ts); a failed read drops the key rather
+	// Only boards whose profile wires an ADC channel to the power input (the
+	// ROCK 5B+ today; see input-voltage.ts). A failed read drops the key rather
 	// than keeping an old number on screen.
 	const volts = await readInputVoltage();
 	if (volts === null) delete sensors[INPUT_VOLTAGE_SENSOR];
