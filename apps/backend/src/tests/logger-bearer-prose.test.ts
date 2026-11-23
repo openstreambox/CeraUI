@@ -13,8 +13,8 @@ import { SUPPORT_LOG_TEMPLATES } from "../modules/system/support-log-messages.ge
 test.each([
 	"automatic bearer family reconciliation deferred",
 	"synchronizing all bearer status failed",
-	"Bearer status.",
 	"modem bearer re-dial pending",
+	"modem BEARER reconnect finished",
 	"modem data session carries no traffic; reconnecting",
 ])("prose about a data bearer passes the logger: %s", (line) => {
 	expect(logRedact({ msg: line })).toEqual({ msg: line });
@@ -22,6 +22,7 @@ test.each([
 
 test.each([
 	"Bearer abc123XYZ.token",
+	"Bearer private",
 	"bearer abc123XYZ.tok",
 	"BEARER 0123456789abcdef",
 	"Bearer v4local_sig.part",
