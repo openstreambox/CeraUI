@@ -20,10 +20,6 @@ import {
 	setEngineIdentityReaderForTest,
 } from "../modules/streaming/session-engine.ts";
 import {
-	StreamStartFailure,
-	typedStartFailure,
-} from "../modules/streaming/start-failure-taxonomy.ts";
-import {
 	restorationUnknownDeadlineMs,
 	runStreamRestoration,
 	settleStreamRestoration,
@@ -180,23 +176,13 @@ async function sessionAfterEngineLoss(opts: {
 }) {
 	let queries = 0;
 	let reads = 0;
-	let stopReachesEngine = false;
-	const ota = { marks: 0, releases: 0 };
 	const census = { idle: 0, owned: 0, stops: 0 };
 	const orchestrator = createStreamSessionOrchestrator({
 		createAttemptId: () => "attempt",
 		setStreamingStatus: () => {},
 		stopRuntime: async () => {
 			census.stops += 1;
-			if (!stopReachesEngine) throw new Error("engine down");
-		},
-		markStreamingForOta: () => {
-			ota.marks += 1;
-			return true;
-		},
-		unmarkStreamingForOta: () => {
-			ota.releases += 1;
-			return true;
+			throw new Error("engine down");
 		},
 		canReconcileIdle: () => {
 			census.idle += 1;
@@ -237,18 +223,12 @@ async function sessionAfterEngineLoss(opts: {
 	expect((await orchestrator.stop("engine_loss")).result).toBe("stop_failed");
 	queries = 0;
 	reads = 0;
-	ota.marks = 0;
-	ota.releases = 0;
 	census.idle = 0;
 	census.owned = 0;
 	census.stops = 0;
 	return {
 		orchestrator,
-		ota,
 		census,
-		stopReachesEngine: () => {
-			stopReachesEngine = true;
-		},
 		get queries() {
 			return queries;
 		},
@@ -564,182 +544,5 @@ describe("production wiring", () => {
 		recordSessionEngine(OLD);
 		streamSessionProductionDeps.setLifecycleState?.("idle");
 		expect(recordedSessionEngine()).toBe(undefined);
-	});
-});
-
-// ── the OTA guard across the restart handoff ──────────────────────────────
-
-async function heldIdle(
-	opts: Partial<Parameters<typeof sessionAfterEngineLoss>[0]> = {},
-) {
-	const s = await sessionAfterEngineLoss({
-		recorded: OLD,
-		serving: () => id(NEW),
-		reply: () => "empty",
-		...opts,
-	});
-	expect(await s.orchestrator.reconcile()).toBe("idle");
-	return s;
-}
-
-describe("the witness's idle keeps the OTA guard until restoration resolves it", () => {
-	test("the idle commit does not release protection; the page leaves LIVE", async () => {
-		const s = await heldIdle();
-		expect(s.ota.releases).toBe(0);
-		expect(s.orchestrator.streamLiveness()).toBe("unknown");
-	});
-
-	test("restoration launched our session: protection carries over, never released", async () => {
-		const s = await heldIdle();
-		const started = await s.orchestrator.start({
-			origin: "restoration",
-			launch: async () => {},
-		});
-		expect(started.result).toBe("started");
-		expect(await s.orchestrator.settleRestartHandoff()).toBe("streaming");
-		expect(s.ota.releases).toBe(0);
-		expect(s.orchestrator.streamLiveness()).toBe("streaming");
-	});
-
-	test("any other Start waits for the handoff and does not end it", async () => {
-		const s = await heldIdle();
-		const ui = await s.orchestrator.start({
-			origin: "ui",
-			launch: async () => {},
-		});
-		expect(ui.result).toBe("busy");
-		// Restoration's own Start still takes the protection over.
-		const restored = await s.orchestrator.start({
-			origin: "restoration",
-			launch: async () => {},
-		});
-		expect(restored.result).toBe("started");
-		expect(s.ota.releases).toBe(0);
-	});
-
-	test("restoration's Start refused as already streaming keeps protection, reconciling", async () => {
-		const s = await heldIdle();
-		const started = await s.orchestrator.start({
-			origin: "restoration",
-			launch: async ({ attemptId }) => {
-				throw new StreamStartFailure(
-					typedStartFailure(
-						attemptId,
-						"start-rpc",
-						"engine_internal",
-						"already_streaming",
-					),
-					"unknown",
-				);
-			},
-		});
-		expect(started.result).toBe("failed");
-		expect(await s.orchestrator.settleRestartHandoff()).toBe("reconciling");
-		expect(s.ota.releases).toBe(0);
-		// Nothing was stopped for it either.
-		expect(s.census.stops).toBe(0);
-	});
-
-	test("restoration's Start failing with a confirmed idle releases protection once, as today", async () => {
-		const s = await heldIdle();
-		// The rollback Stop was acknowledged (an SRT connect that failed).
-		const started = await s.orchestrator.start({
-			origin: "restoration",
-			launch: async ({ attemptId }) => {
-				throw new StreamStartFailure(
-					typedStartFailure(
-						attemptId,
-						"start-rpc",
-						"engine_internal",
-						"srt_connect_failed",
-					),
-					"idle",
-				);
-			},
-		});
-		expect(started.result).toBe("failed");
-		expect(s.ota.releases).toBe(1);
-		// The launch ended the handoff: settling asks nothing more.
-		const queries = s.queries;
-		expect(await s.orchestrator.settleRestartHandoff()).toBe("idle");
-		expect(s.queries).toBe(queries);
-	});
-
-	test("restoration ended without a launch: a silent engine keeps protection for the operator's Stop", async () => {
-		const s = await heldIdle();
-		expect(await s.orchestrator.settleRestartHandoff()).toBe("reconciling");
-		expect(s.ota.releases).toBe(0);
-	});
-
-	test("restoration ended without a launch: an engine that reports idle releases it", async () => {
-		let replied = false;
-		const s = await heldIdle({
-			// The ordinary reconcile, witness off, hears an idle status.
-			reply: () => (replied ? "idle" : "empty"),
-		});
-		replied = true;
-		expect(await s.orchestrator.settleRestartHandoff()).toBe("idle");
-		expect(s.ota.releases).toBe(1);
-	});
-
-	test("the operator's Stop resolves the handoff as today", async () => {
-		const s = await heldIdle();
-		s.stopReachesEngine();
-		expect((await s.orchestrator.stop("operator")).result).toBe("stopped");
-		expect(s.ota.releases).toBe(1);
-		// The Stop ended the handoff: settling afterwards asks nothing.
-		const queries = s.queries;
-		expect(await s.orchestrator.settleRestartHandoff()).toBe("idle");
-		expect(s.queries).toBe(queries);
-		expect(s.ota.releases).toBe(1);
-	});
-
-	test("our own processes still running: the witness leaves them to an ordinary reconcile", async () => {
-		const s = await sessionAfterEngineLoss({
-			recorded: OLD,
-			serving: () => id(NEW),
-			reply: () => "empty",
-			ownedSessionRemains: () => true,
-		});
-		expect(await s.orchestrator.reconcile()).not.toBe("idle");
-		expect(s.census.stops).toBe(0);
-		expect(s.ota.releases).toBe(0);
-	});
-});
-
-describe("restoration settles the handoff", () => {
-	test("an engine-restart run settles it at the end; a service-restart run does not", async () => {
-		for (const [trigger, expected] of [
-			["engine_restart", 1],
-			["service_restart", 0],
-		] as const) {
-			let settles = 0;
-			await runStreamRestoration(
-				{
-					marker: {
-						markerPath: "memory",
-						readBootId: () => "b",
-						readMarker: () => undefined,
-						writeMarker: () => {},
-						removeMarker: () => {},
-					},
-					awaitRecovery: async () => {},
-					runtimeState: async () => "idle",
-					lifecycleState: () => "idle",
-					launch: async () => ({ ok: true as const }),
-					now: () => 0,
-					wait: async () => {},
-					pollIntervalMs: 1_000,
-					logger: { info: () => {}, warn: () => {} },
-					publish: () => {},
-					settleRestartHandoff: async () => {
-						settles += 1;
-					},
-				},
-				trigger,
-			);
-			await settleStreamRestoration();
-			expect(settles).toBe(expected);
-		}
 	});
 });

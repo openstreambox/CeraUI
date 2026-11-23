@@ -75,7 +75,6 @@ import { awaitRecoveryBarrier } from "./recovery-barrier.ts";
 import {
 	getStreamSessionSnapshot,
 	reconcileStreamSession,
-	settleStreamRestartHandoff,
 } from "./stream-session-orchestrator.ts";
 import type { EngineRuntimeState } from "./streaming-backend.ts";
 
@@ -214,12 +213,6 @@ export interface StreamRestorationDeps {
 	 * verdict the recovery was about to change.
 	 */
 	readonly awaitRecovery: () => Promise<void>;
-	/**
-	 * Run at the end of an engine-restart run, whatever its outcome: an idle
-	 * the replaced-engine witness committed kept the OTA guard for this
-	 * handoff, and only a launch, a Stop or an ordinary reconcile resolves it.
-	 */
-	readonly settleRestartHandoff: () => Promise<unknown>;
 }
 
 /**
@@ -397,7 +390,6 @@ function defaultDeps(trigger: RestorationTrigger): StreamRestorationDeps {
 		pollIntervalMs: RESTORATION_POLL_MS,
 		unknownDeadlineMs: restorationUnknownDeadlineMs(trigger),
 		awaitRecovery: awaitRecoveryBarrier,
-		settleRestartHandoff: settleStreamRestartHandoff,
 	};
 }
 
@@ -574,16 +566,6 @@ export function runStreamRestoration(
 				err,
 			});
 			return { result: "blocked", reason: "run_failed" };
-		})
-		.then(async (outcome) => {
-			if (trigger === "engine_restart")
-				await deps.settleRestartHandoff().catch((err: unknown) => {
-					deps.logger.warn("stream restoration handoff settle failed", {
-						module: "streaming",
-						err,
-					});
-				});
-			return outcome;
 		})
 		.finally(() => {
 			inflight = undefined;
