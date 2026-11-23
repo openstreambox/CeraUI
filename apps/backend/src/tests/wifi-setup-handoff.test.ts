@@ -28,7 +28,7 @@ import {
 	startWifiAdapterModeRestore,
 } from "../modules/wifi/wifi-adapter-mode-transition.ts";
 import * as reconciler from "../modules/wifi/wifi-adapter-reconciler.ts";
-import { hotspotAutoconnectFields } from "../modules/wifi/wifi-autoconnect-policy.ts";
+import { hotspotAutoconnectPolicy } from "../modules/wifi/wifi-autoconnect-policy.ts";
 import { getWifiInterfacesByMacAddress } from "../modules/wifi/wifi-connections.ts";
 import {
 	startHotspotForInterface,
@@ -206,11 +206,13 @@ test("under the marker nothing arms the setup radio's profile and discovery leav
 	await f.discover();
 	expect(profile()["connection.autoconnect"]).toBe("no");
 	expect(
-		hotspotAutoconnectFields(
-			MAC,
-			{ "802-11-wireless.mac-address": MAC, "match.path": PORT },
-			PROVISIONING_AP_IFNAME,
-		)["connection.autoconnect"],
+		(
+			await hotspotAutoconnectPolicy(
+				MAC,
+				{ "802-11-wireless.mac-address": MAC, "match.path": PORT },
+				PROVISIONING_AP_IFNAME,
+			)
+		)?.fields["connection.autoconnect"],
 	).toBe("no");
 	expect(await f.start()).toEqual({
 		...SETUP_FAILURE,
@@ -329,7 +331,11 @@ test.each([
 		await f.discover();
 		await f.restore();
 
-		expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
+		// Upstream restore (#681) also seeds the proven radio's port intent.
+		expect(getConfig().wifi_modes).toEqual({
+			[MAC]: "hotspot",
+			[`${MAC}@${PORT}`]: "hotspot",
+		});
 		expect(getConfig().wifi_setup_stations).toEqual([OLD_STATION]);
 		expect(f.activations).toEqual([PROFILE]);
 		expect(observedWifiAdapterMode(f.row())).toBe("hotspot");
@@ -344,7 +350,11 @@ test("the first run with no live setup station records existing ones as a baseli
 	await f.restore();
 
 	expect(getConfig().wifi_setup_stations).toEqual([OLD_STATION]);
-	expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
+	// Upstream restore (#681) also seeds the proven radio's port intent.
+	expect(getConfig().wifi_modes).toEqual({
+		[MAC]: "hotspot",
+		[`${MAC}@${PORT}`]: "hotspot",
+	});
 	expect(f.activations).toEqual([PROFILE]);
 });
 
@@ -379,7 +389,11 @@ test("an ordinary later boot on the accounted setup station restores the intent 
 	await f.discover();
 	await f.restore();
 
-	expect(getConfig().wifi_modes).toEqual({ [MAC]: "hotspot" });
+	// Upstream restore (#681) also seeds the proven radio's port intent.
+	expect(getConfig().wifi_modes).toEqual({
+		[MAC]: "hotspot",
+		[`${MAC}@${PORT}`]: "hotspot",
+	});
 	expect(getConfig().wifi_setup_stations).toEqual([OLD_STATION]);
 	expect(f.activations).toEqual([PROFILE]);
 	expect(observedWifiAdapterMode(f.row())).toBe("hotspot");
