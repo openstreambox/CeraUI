@@ -17,7 +17,7 @@ import {
 import { wifiAdapterModeRecorder } from "../modules/wifi/wifi-adapter-mode.ts";
 import { cancelWifiAdapterReconciliation } from "../modules/wifi/wifi-adapter-reconcile-retry.ts";
 import { wifiHotspotStop } from "../modules/wifi/wifi-hotspot-config.ts";
-import { firstAp, MAC } from "./helpers/wifi-first-ap-fixture.ts";
+import { firstAp, MAC, OTHER_RADIO } from "./helpers/wifi-first-ap-fixture.ts";
 import { replayFirstApState } from "./helpers/wifi-first-ap-instances.ts";
 
 for (const attack of [
@@ -27,7 +27,7 @@ for (const attack of [
 	"unreadable-run",
 ] as const) {
 	test(`startup preserves ${attack} across NM runs and exposes authority loss`, async () => {
-		const f = await firstAp();
+		const f = await firstAp(undefined, false, OTHER_RADIO);
 		const modes = config.getConfig().wifi_modes;
 		const dir = await mkdtemp(join(tmpdir(), "first-ap-file-"));
 		const path = join(dir, "hotspot_credentials.json");
@@ -71,6 +71,7 @@ for (const attack of [
 					nmRestart: true,
 					reportAuthority: true,
 					unreadableRun: attack === "unreadable-run",
+					radioIfname: OTHER_RADIO,
 					...(attack === "identical-replacement"
 						? { replacement: "same-settings" }
 						: {}),
@@ -163,7 +164,7 @@ for (const phase of ["retained", "up-to-cleanup"] as const) {
 }
 
 test("NM restart between our lost write and readback drops authority without cleanup", async () => {
-	const f = await firstAp();
+	const f = await firstAp(undefined, false, OTHER_RADIO);
 	const modes = config.getConfig().wifi_modes;
 	config.getConfig().wifi_modes = {};
 	spyOn(config, "saveConfig").mockImplementation(() => undefined);

@@ -26,7 +26,8 @@ import {
 	policyStop as stop,
 } from "./helpers/wifi-reconcile-fixture.ts";
 
-const f = autoconnectFixture();
+// Upstream arming cases run on a radio other than the image's setup radio.
+const f = autoconnectFixture("wlan2");
 const profile = () => {
 	const value = f.profiles.get(PROFILE);
 	if (!value) throw new Error("Missing fixture profile");
@@ -43,7 +44,7 @@ test.each([false, true])(
 		f.persistMode(MAC, "hotspot");
 		profile()["match.path"] = PORT;
 		if (limited)
-			f.witnesses.set("wlan0", {
+			f.witnesses.set(f.ifname, {
 				ifindex: 3,
 				phy: "/sys/devices/policy/phy0",
 				path: PORT,
@@ -63,7 +64,7 @@ test.each([false, true])(
 		);
 		const disconnect = spyOn(nm, "nmDisconnect").mockImplementation(
 			async () => {
-				f.list(["wlan0:wifi:disconnected:"]);
+				f.list([`${f.ifname}:wifi:disconnected:`]);
 				return true;
 			},
 		);
@@ -80,7 +81,7 @@ test.each([false, true])(
 		row.conn = PROFILE;
 		row.activeConn = PROFILE;
 		row.activeMode = "ap";
-		f.list([`wlan0:wifi:connected:${PROFILE}`]);
+		f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 		f.publications.length = 0;
 		accepted = true;
 		await f.discover();
@@ -99,10 +100,10 @@ test.each(["yes", "no"])(
 	async (autoconnect) => {
 		f.persistMode(MAC, "station");
 		profile()["connection.autoconnect"] = autoconnect;
-		f.list([`wlan0:wifi:connected:${PROFILE}`]);
+		f.list([`${f.ifname}:wifi:connected:${PROFILE}`]);
 		const disconnect = spyOn(nm, "nmDisconnect").mockImplementation(
 			async () => {
-				f.list(["wlan0:wifi:disconnected:"]);
+				f.list([`${f.ifname}:wifi:disconnected:`]);
 				return true;
 			},
 		);
@@ -173,7 +174,7 @@ test("round3 owner a failed Stop disconnect keeps the existing failure and prior
 
 test("round3 owner already-stopped limited adapter checks its station owner's profiles", async () => {
 	f.persistMode(MAC, "station");
-	f.witnesses.set("wlan0", {
+	f.witnesses.set(f.ifname, {
 		ifindex: 3,
 		phy: "/sys/devices/policy/phy0",
 		path: PORT,

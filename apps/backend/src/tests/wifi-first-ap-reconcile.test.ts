@@ -32,7 +32,12 @@ import {
 } from "../modules/wifi/wifi-hotspot-config.ts";
 import * as interfaces from "../modules/wifi/wifi-interfaces.ts";
 import { wifiRadioIdentity } from "../modules/wifi/wifi-radio-identity.ts";
-import { firstAp, MAC, OTHER_UUID } from "./helpers/wifi-first-ap-fixture.ts";
+import {
+	firstAp,
+	MAC,
+	OTHER_RADIO,
+	OTHER_UUID,
+} from "./helpers/wifi-first-ap-fixture.ts";
 
 for (const remaining of ["none", "delete", "down"] as const) {
 	test(`Stop consumes first-start cleanup with ${remaining} still unavailable`, async () => {
@@ -139,7 +144,7 @@ test("retained cleanup shares Stop's owner lock and five-minute discovery retry 
 });
 
 test("startup disarms failed first-start provenance while preserving legacy missing intent", async () => {
-	const f = await firstAp();
+	const f = await firstAp(undefined, false, OTHER_RADIO);
 	const modes = getConfig().wifi_modes;
 	getConfig().wifi_modes = {};
 	spyOn(wifiAdapterModeRecorder, "persist").mockImplementation(
@@ -194,6 +199,7 @@ test("startup disarms failed first-start provenance while preserving legacy miss
 							settings: [...f.settings],
 							autoconnect: [...f.autoconnect],
 							legacy,
+							radioIfname: OTHER_RADIO,
 							profilePaths,
 							profileFiles,
 							store: {

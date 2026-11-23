@@ -36,7 +36,11 @@ import {
 	PROFILE,
 } from "./helpers/wifi-autoconnect-fixture.ts";
 
-const f = autoconnectFixture();
+// Arming cases run on a radio other than the image's setup radio (wlan0),
+// which CeraUI never arms. "wl0" keeps the setup name out while sorting where
+// upstream's f.ifname did, and stays clear of the wlan1, wlan2 and radio1 radios
+// these cases add.
+const f = autoconnectFixture("wl0");
 const OTHER = "dc:a6:32:aa:bb:cc";
 const OLD_PORT = "usb-old-port";
 const iwPhy = (index: number) =>
@@ -80,7 +84,7 @@ test.each(["absent", "unreadable"] as const)(
 				identity.password,
 			]),
 		).toEqual(
-			state === "absent" ? [["wlan0", "Policy AP", "fixture-password"]] : [],
+			state === "absent" ? [[f.ifname, "Policy AP", "fixture-password"]] : [],
 		);
 	},
 );
@@ -186,7 +190,7 @@ test.each(["first probe", "repeat probe"] as const)(
 			Object.values(getWifiState())
 				.map(({ ifname }) => ifname)
 				.sort(),
-		).toEqual(["wlan0", "wlan1"]);
+		).toEqual([f.ifname, "wlan1"]);
 		expect(profile()).toEqual(before);
 		expect(f.effects).toEqual([]);
 		expect(inventory).toHaveBeenCalledTimes(1);
@@ -208,7 +212,7 @@ test("a proven vacant old port permits disarm with one inventory probe through d
 		Object.values(getWifiState())
 			.map(({ ifname }) => ifname)
 			.sort(),
-	).toEqual(["wlan0", "wlan1"]);
+	).toEqual([f.ifname, "wlan1"]);
 	expect(inventory).toHaveBeenCalledTimes(1);
 });
 
@@ -234,7 +238,10 @@ test.each(["vacant-port disarm", "later owner's legacy repair"] as const)(
 				"match.path": "",
 			});
 			rememberHotspotCredentials(OTHER, { ...pair, conn: uuid });
-			f.list(["wlan0:wifi:disconnected:", `wlan1:wifi:connected:${uuid}`]);
+			f.list([
+				`${f.ifname}:wifi:disconnected:`,
+				`wlan1:wifi:connected:${uuid}`,
+			]);
 		}
 		const before = { ...f.profiles.get(uuid) };
 		let sample = -1;
@@ -290,7 +297,7 @@ test.each(["vacant-port disarm", "later owner's legacy repair"] as const)(
 				Object.values(getWifiState())
 					.map(({ ifname }) => ifname)
 					.sort(),
-			).toEqual(["wlan0", "wlan1"]);
+			).toEqual([f.ifname, "wlan1"]);
 			expect(inventory).toHaveBeenCalledTimes(1);
 			expect(f.profiles.get(uuid)).toEqual(before);
 			expect(f.effects).toEqual([]);
@@ -396,7 +403,7 @@ test.each(["saved AP", "new AP"] as const)(
 				Object.values(getWifiState())
 					.map(({ ifname }) => ifname)
 					.sort(),
-			).toEqual(["wlan0", "wlan1"]);
+			).toEqual([f.ifname, "wlan1"]);
 			expect(f.profiles.get(uuid)).toMatchObject({
 				"connection.autoconnect": "no",
 				"connection.interface-name": "",
@@ -430,7 +437,7 @@ test.each(["Start", "discovery"] as const)(
 			mac: MAC,
 			path: OLD_PORT,
 		});
-		f.list(["wlan0:wifi:disconnected:", "radio1:wifi:disconnected:"]);
+		f.list([`${f.ifname}:wifi:disconnected:`, "radio1:wifi:disconnected:"]);
 		if (entry === "discovery") {
 			f.witnesses.set("wlan2", {
 				ifindex: 6,
@@ -439,7 +446,7 @@ test.each(["Start", "discovery"] as const)(
 				path: "independent-port",
 			});
 			f.list([
-				"wlan0:wifi:disconnected:",
+				`${f.ifname}:wifi:disconnected:`,
 				"radio1:wifi:disconnected:",
 				"wlan2:wifi:disconnected:",
 			]);
@@ -455,9 +462,9 @@ test.each(["Start", "discovery"] as const)(
 		const before = { ...profile() };
 		await f.discover();
 		expect([...wifiRadioIdentity.state.rows.keys()]).toEqual(
-			entry === "discovery" ? ["wlan0", "wlan2"] : ["wlan0"],
+			entry === "discovery" ? [f.ifname, "wlan2"] : [f.ifname],
 		);
-		expect(wifiRadioIdentity.state.rows.get("wlan0")?.devicePath).toBe(PORT);
+		expect(wifiRadioIdentity.state.rows.get(f.ifname)?.devicePath).toBe(PORT);
 		if (entry === "Start")
 			expect(
 				await startHotspotForInterface(MAC, f.row(), {
@@ -473,7 +480,7 @@ test.each(["Start", "discovery"] as const)(
 				Object.values(getWifiState())
 					.map(({ ifname }) => ifname)
 					.sort(),
-			).toEqual(["wlan0", "wlan2"]);
+			).toEqual([f.ifname, "wlan2"]);
 		expect(profile()).toEqual(before);
 		expect(f.effects).toEqual([]);
 		expect(f.activations).toEqual([]);
@@ -481,7 +488,7 @@ test.each(["Start", "discovery"] as const)(
 );
 
 test("(1 / M1) a confirmed unique radio with both pins can autoconnect; clap shares its phy", async () => {
-	f.witnesses.set("clap-wlan0", {
+	f.witnesses.set(`clap-${f.ifname}`, {
 		ifindex: 4,
 		phy: "/sys/devices/policy/phy0",
 		mac: MAC,
@@ -494,7 +501,7 @@ test("(1 / M1) a confirmed unique radio with both pins can autoconnect; clap sha
 });
 
 test("(2 / M2) an unreadable port stays off and restores through saved intent", async () => {
-	f.witnesses.set("wlan0", {
+	f.witnesses.set(f.ifname, {
 		ifindex: 3,
 		phy: "/sys/devices/policy/phy0",
 		mac: MAC,
@@ -517,7 +524,7 @@ test.each([
 ] as const)(
 	"sole verified radio starts its saved AP without writing its unreadable port (autoconnect=%s, %s)",
 	async (autoconnect, start) => {
-		f.witnesses.set("wlan0", {
+		f.witnesses.set(f.ifname, {
 			ifindex: 3,
 			phy: "/sys/devices/policy/phy0",
 			mac: MAC,
@@ -542,12 +549,12 @@ test.each([
 			await f.start({ ...liveProfileDeps, nmConnect: nm.nmConnect }),
 		).toEqual({ success: true });
 
-		expect(wifiRadioIdentity.state.rows.get("wlan0")).toMatchObject({
+		expect(wifiRadioIdentity.state.rows.get(f.ifname)).toMatchObject({
 			classification: "verified",
 			permanentMac: MAC,
 		});
 		expect(
-			wifiRadioIdentity.state.rows.get("wlan0")?.devicePath,
+			wifiRadioIdentity.state.rows.get(f.ifname)?.devicePath,
 		).toBeUndefined();
 		expect(profile()).toEqual(before);
 		expect(f.effects).toEqual([]);
@@ -557,7 +564,7 @@ test.each([
 			expect.any(Number),
 			expect.any(Function),
 			undefined,
-			"wlan0",
+			f.ifname,
 		);
 		expect(observedWifiAdapterMode(f.row())).toBe("hotspot");
 	},
@@ -566,7 +573,7 @@ test.each([
 test.each(["hidden radio", "incomplete dump", "iw unavailable"] as const)(
 	"unreadable own port requires complete kernel inventory before Start: %s",
 	async (inventory) => {
-		f.witnesses.set("wlan0", {
+		f.witnesses.set(f.ifname, {
 			ifindex: 3,
 			phy: "/sys/devices/policy/phy0",
 			mac: MAC,
@@ -577,12 +584,12 @@ test.each(["hidden radio", "incomplete dump", "iw unavailable"] as const)(
 				phy: "/sys/devices/policy/phy1",
 				mac: OTHER,
 			});
-			f.list(["wlan0:wifi:disconnected:", "radio1:wifi:disconnected:"]);
+			f.list([`${f.ifname}:wifi:disconnected:`, "radio1:wifi:disconnected:"]);
 		}
 		profile()["match.path"] = PORT;
 		profile()["connection.autoconnect"] = "no";
 		await f.discover();
-		expect([...wifiRadioIdentity.state.rows.keys()]).toEqual(["wlan0"]);
+		expect([...wifiRadioIdentity.state.rows.keys()]).toEqual([f.ifname]);
 		const runIw = regdomain.runIw;
 		spyOn(regdomain, "runIw").mockImplementation(async (argv) => {
 			if (argv[0] !== "phy") return runIw(argv);
@@ -640,7 +647,7 @@ test("(4 / M4) a newly present twin quiesces current and historical owned profil
 		mac: MAC,
 		path: "usb-other-port",
 	});
-	f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+	f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 	await f.discover();
 	expect(profile()?.["connection.autoconnect"]).toBe("no");
 	expect(f.profiles.get("current-ap")?.["connection.autoconnect"]).toBe("no");
@@ -731,7 +738,7 @@ test("bound restore leaves a recorded profile alone when another radio occupies 
 		mac: "dc:a6:32:aa:bb:cc",
 		path: oldPort,
 	});
-	f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+	f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 	await f.discover();
 	const before = { ...profile() };
 	const effects = [...f.effects];
@@ -750,7 +757,7 @@ function listOtherRadio(path?: string, mac = OTHER): void {
 		mac,
 		...(path !== undefined ? { path } : {}),
 	});
-	f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+	f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 }
 
 test("bound Start refuses a moved profile when a live radio's port is unknown", async () => {
@@ -877,7 +884,7 @@ for (const scenario of pinCases) {
 					scenario.name === "moved, unknown old port occupancy"))
 				? "yes"
 				: "no";
-		settings["connection.interface-name"] = "wlan0";
+		settings["connection.interface-name"] = f.ifname;
 		listOtherRadio(
 			scenario.other,
 			"otherMac" in scenario ? scenario.otherMac : OTHER,
@@ -942,7 +949,7 @@ for (const scenario of pinCases) {
 				Object.values(getWifiState())
 					.map(({ ifname }) => ifname)
 					.sort(),
-			).toEqual(["wlan0", "wlan1"]);
+			).toEqual([f.ifname, "wlan1"]);
 			if (scenario.name === "recorded legacy MAC") {
 				expect(profile()["802-11-wireless.mac-address"]).toBe(MAC);
 				expect(profile()["802-11-wireless-security.psk"]).toBe(
@@ -1019,7 +1026,7 @@ test("discovery publishes both radios without disarming an AP pinned to the othe
 			Object.values(getWifiState())
 				.map(({ ifname }) => ifname)
 				.sort(),
-		).toEqual(["wlan0", "wlan1"]);
+		).toEqual([f.ifname, "wlan1"]);
 		expect(profile()).toEqual(before);
 		expect(f.effects).toEqual([]);
 	}
@@ -1058,7 +1065,7 @@ test("a refused NetworkManager disarm is retried rather than reported as a safe 
 		Object.values(getWifiState())
 			.map(({ ifname }) => ifname)
 			.sort(),
-	).toEqual(["wlan0", "wlan1"]);
+	).toEqual([f.ifname, "wlan1"]);
 });
 
 test("bound Start treats an ambiguous old port as unknown occupancy", async () => {
@@ -1092,13 +1099,13 @@ test.each(["Start", "discovery"] as const)(
 	"%s does not repin a legacy MAC while another physical radio's MAC is unresolved",
 	async (entry) => {
 		profile()["802-11-wireless.mac-address"] = OTHER;
-		profile()["connection.interface-name"] = "wlan0";
+		profile()["connection.interface-name"] = f.ifname;
 		f.witnesses.set("wlan1", {
 			ifindex: 5,
 			phy: "/sys/devices/policy/phy1",
 			path: "different-port",
 		});
-		f.list(["wlan0:wifi:disconnected:", "wlan1:wifi:disconnected:"]);
+		f.list([`${f.ifname}:wifi:disconnected:`, "wlan1:wifi:disconnected:"]);
 		delete f.row().hotspot.conn;
 		const before = { ...profile() };
 		if (entry === "Start")
@@ -1113,7 +1120,7 @@ test.each(["Start", "discovery"] as const)(
 				Object.values(getWifiState())
 					.map(({ ifname }) => ifname)
 					.sort(),
-			).toEqual(["wlan0", "wlan1"]);
+			).toEqual([f.ifname, "wlan1"]);
 		}
 		expect(profile()).toEqual(before);
 		expect(f.effects).toEqual([]);
@@ -1160,11 +1167,13 @@ test("(8) startup leaves owned station and unowned AP profiles untouched", async
 test("(9) colon-bearing PCI paths keep exact bytes inside the ifindex bracket", async () => {
 	await f.start();
 	expect(profile()?.["match.path"]).toBe(PORT);
-	const pathAt = f.reads.indexOf("path:wlan0");
+	const pathAt = f.reads.indexOf(`path:${f.ifname}`);
 	expect(pathAt).toBeGreaterThan(
-		f.reads.indexOf("/sys/class/net/wlan0/ifindex"),
+		f.reads.indexOf(`/sys/class/net/${f.ifname}/ifindex`),
 	);
-	expect(f.reads.slice(pathAt + 1)).toContain("/sys/class/net/wlan0/ifindex");
+	expect(f.reads.slice(pathAt + 1)).toContain(
+		`/sys/class/net/${f.ifname}/ifindex`,
+	);
 });
 
 test.each([
@@ -1182,7 +1191,7 @@ test.each([
 	"\0",
 	"\x7f",
 ])("(10) unsafe path byte %j never arms autoconnect", async (byte) => {
-	f.witnesses.set("wlan0", {
+	f.witnesses.set(f.ifname, {
 		ifindex: 3,
 		phy: "/sys/devices/policy/phy0",
 		mac: MAC,
