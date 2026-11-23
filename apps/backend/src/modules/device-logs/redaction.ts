@@ -1,5 +1,6 @@
 import { isIPv6 } from "node:net";
 import type { LogBundleFailureReason } from "@ceraui/rpc/schemas";
+import { credentialSpans } from "./credential-members.ts";
 
 export class BundleReadError extends Error {
 	readonly code: "READ_FAILED" | "BUSY";
@@ -103,13 +104,27 @@ export function buildRedactor(
 		},
 		known(value: string) {
 			let redactions = 0;
-			let text =
-				exact === null
-					? value
-					: value.replace(exact, (match) => {
-							redactions++;
-							return literals.get(percentCase(match)) ?? "[REDACTED]";
-						});
+			// Whole credential values first, on the text as written: a held
+			// literal replaced first could end inside an escape sequence and
+			// break the JSON the span finder reads.
+			let text = value;
+			const members = credentialSpans(text);
+			if (members.length > 0) {
+				let position = 0;
+				const parts: string[] = [];
+				for (const member of members) {
+					if (member.start < position) continue;
+					parts.push(text.slice(position, member.start), member.marker);
+					position = member.end;
+					redactions++;
+				}
+				text = parts.join("") + text.slice(position);
+			}
+			if (exact !== null)
+				text = text.replace(exact, (match) => {
+					redactions++;
+					return literals.get(percentCase(match)) ?? "[REDACTED]";
+				});
 			for (const pattern of NAMED_PASSPHRASES)
 				text = text.replace(pattern, (match) => {
 					const next = namedPassphrase(match);
@@ -259,6 +274,8 @@ export function buildRedactor(
 				() => "[REDACTED:token]",
 			);
 			for (const pattern of NAMED_PASSPHRASES) mask(pattern, namedPassphrase);
+			for (const member of credentialSpans(value))
+				spans.push({ ...member, known: false });
 			spans.sort((a, b) => a.start - b.start);
 			const merged: typeof spans = [];
 			for (const span of spans) {

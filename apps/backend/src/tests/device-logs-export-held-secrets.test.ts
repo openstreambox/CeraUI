@@ -158,3 +158,60 @@ test("a held set the redactor refuses also fails the export closed", async () =>
 	const text = await download();
 	expect(text).toBe("# incomplete: READ_FAILED\n");
 });
+
+test("config credential fields are redacted by name even when the value is no longer held", async () => {
+	held.mockReturnValue([]);
+	fixture.scan.mockImplementation(
+		journal([
+			record(1, {
+				MESSAGE: JSON.stringify({
+					msg: "config loaded",
+					meta: {
+						ssh_pass: "old-ssh-pass-a41b",
+						ssh_pass_hash: "$6$oldsalt$oldsshhasha41b",
+						remote_key: "old-remote-key-a41b",
+						pairingSecret: "[REDACTED]old-pairing-tail-a41b",
+						autostart: true,
+					},
+				}),
+			}),
+		]),
+	);
+	const text = await download();
+	for (const value of [
+		"old-ssh-pass-a41b",
+		"oldsshhasha41b",
+		"old-remote-key-a41b",
+		"old-pairing-tail-a41b",
+	])
+		expect(text).not.toContain(value);
+	expect(text).toContain('"ssh_pass":"[REDACTED:ssh]"');
+	expect(text).toContain('"ssh_pass_hash":"[REDACTED:ssh]"');
+	expect(text).toContain('"remote_key":"[REDACTED:remote_key]"');
+	expect(text).toContain('"pairingSecret":"[REDACTED:pairing]"');
+	expect(text).toContain('"autostart":true');
+	expect(text).toEndWith("# complete: 1 entries\n");
+});
+
+test("nested and array credentials are redacted from an export by their parent keys", async () => {
+	held.mockReturnValue([]);
+	fixture.scan.mockImplementation(
+		journal([
+			record(1, {
+				MESSAGE: JSON.stringify({
+					msg: "remote state",
+					meta: {
+						remote: { key: "nested-remote-e3" },
+						relays: [{ ingest_key: "array-object-e3" }],
+						raw: JSON.stringify({ ssh: { hash: "$6$s$inner-hash-e3" } }),
+					},
+				}),
+			}),
+		]),
+	);
+	const text = await download();
+	for (const value of ["nested-remote-e3", "array-object-e3", "inner-hash-e3"])
+		expect(text).not.toContain(value);
+	expect(text).toContain("remote state");
+	expect(text).toEndWith("# complete: 1 entries\n");
+});

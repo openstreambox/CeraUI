@@ -1,4 +1,5 @@
 import { secretVariants } from "../../helpers/secret-variants.ts";
+import { getPasswordHash } from "../../rpc/state/password.ts";
 import { getConfig } from "../config.ts";
 import { readBoots, readEvents } from "../events/store.ts";
 import { getStoredModemCredentials } from "../modems/modem-credentials.ts";
@@ -8,6 +9,7 @@ import { getRelays } from "../remote/remote-relays.ts";
 import { setup } from "../setup.ts";
 import { getDeviceStatsSnapshot } from "../system/device-stats-snapshot.ts";
 import { getHardwareKindCached } from "../system/hardware-kind.ts";
+import { getSshPasswordHash } from "../system/ssh.ts";
 import { readUpdateChannel } from "../system/update-settings.ts";
 import { collectVersionContext } from "../system/version-context.ts";
 import { getAllHotspotCredentials } from "../wifi/hotspot-credentials.ts";
@@ -43,6 +45,9 @@ export function collectHeldSecrets(): Array<{ kind: string; value: string }> {
 	};
 	add("password", config.password);
 	add("ssh", config.ssh_pass);
+	// loadConfig moves both hashes out of the config object into their owners.
+	add("ssh", getSshPasswordHash());
+	add("password", getPasswordHash());
 	add("remote_key", config.remote_key);
 	add("stream", config.srt_streamid);
 	add("stream", config.relay_streamid_override);
