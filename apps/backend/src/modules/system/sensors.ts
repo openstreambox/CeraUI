@@ -49,6 +49,8 @@ import {
 	provesSelectionIsNotHdmi,
 } from "./hdmi-signal-notification.ts";
 
+import { getPowerSensors, initPowerMonitoring } from "./power-monitor.ts";
+
 const bootconfigService = "ceralive-firstboot-bootconfig";
 
 const sensors: Record<string, string> = {};
@@ -62,7 +64,7 @@ function dmesgStdout(proc: WatcherHandle["proc"]): ReadableStream<Uint8Array> {
 }
 
 export function getSensors() {
-	return sensors;
+	return { ...sensors, ...getPowerSensors() };
 }
 
 async function updateSensorThermal(id: number, name: string) {
@@ -290,7 +292,17 @@ export function handleRk3588HdmiDmesg(
 	}
 }
 
-export function initHardwareMonitoring() {
+export function initHardwareMonitoring(
+	publishPowerRemote?: (data: Record<string, string>) => void,
+) {
+	initPowerMonitoring(() => {
+		const data = getSensors();
+		const srtIngestStats = getSRTIngestStats();
+		if (srtIngestStats) data["SRT ingest"] = srtIngestStats;
+		Object.assign(data, getRTMPIngestStats());
+		broadcastMsg("sensors", data);
+		publishPowerRemote?.(data);
+	});
 	// Use mock sensors in development mode
 	if (shouldMockSensors()) {
 		const updateMockSensors = () => {
@@ -332,7 +344,7 @@ export function initHardwareMonitoring() {
 		const updateSensors = async () => {
 			await sensorsFunc();
 
-			const data = { ...sensors };
+			const data = getSensors();
 			const srtIngestStats = getSRTIngestStats();
 			if (srtIngestStats) {
 				data["SRT ingest"] = srtIngestStats;
