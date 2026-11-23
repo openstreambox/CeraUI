@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import re
 import unittest
 import subprocess
 from unittest.mock import patch
@@ -10,7 +11,7 @@ spec.loader.exec_module(portal)
 
 class WindowTests(unittest.TestCase):
     def config(self, **changes):
-        return dict(ap='ap0', phone='10.42.0.2', mac='02:00:00:00:00:02', wan='wan1', address='198.51.100.1', gateway='198.51.100.2', dns='198.51.100.2', seconds=600, **changes)
+        return dict(ap='ap0', ap_ifindex=7, phone='10.42.0.2', mac='02:00:00:00:00:02', wan='wan1', address='198.51.100.1', gateway='198.51.100.2', dns='198.51.100.2', seconds=600, **changes)
 
     def test_expiry_is_kernel_enforced(self):
         rules = portal.rules(self.config())
@@ -33,7 +34,7 @@ class WindowTests(unittest.TestCase):
         self.assertIn('chain input { type filter hook input priority -10;', rules)
         self.assertIn('set station { type ether_addr; flags timeout;', rules)
         self.assertIn('02:00:00:00:00:02 timeout 600s', rules)
-        self.assertIn('iifname "ap0" meta nfproto ipv6 ether saddr @station', rules)
+        self.assertIn('meta iif 7 meta nfproto ipv6 ether saddr @station', rules)
         self.assertIn('tcp dport { 53, 80, 443, 853 } reject with tcp reset', rules)
         self.assertIn('udp dport { 53, 443, 853 } reject with icmpx port-unreachable', rules)
         self.assertIn('ip saddr . ether saddr @phone tcp dport 853 reject with tcp reset', rules)
@@ -42,11 +43,65 @@ class WindowTests(unittest.TestCase):
             self.assertIn(address, rules)
 
     def test_rejects_unbounded_and_injection(self):
-        for field, value in [('seconds', 601), ('seconds', 0), ('wan', 'wan0; reboot'), ('phone', '::1'), ('mac', 'bad')]:
+        for field, value in [('seconds', 601), ('seconds', 0), ('wan', 'wan0; reboot'), ('phone', '::1'), ('mac', 'bad'),
+                             ('ap_ifindex', 0), ('ap_ifindex', '7'), ('ap_ifindex', True),
+                             ('ap_ifindex', 7.0), ('ap_ifindex', 2 ** 31), ('ap_ifindex', -7)]:
             config = self.config()
             config[field] = value
             with self.assertRaises(ValueError):
                 portal.rules(config)
+
+    def test_ingress_is_bound_to_the_pinned_interface_lifetime(self):
+        rules = portal.rules(self.config())
+        # A name follows a same-name replacement: every ingress match is the
+        # pinned numeric ifindex, and the AP name never appears in the table.
+        self.assertNotIn('iifname', rules)
+        self.assertNotIn('"ap0"', rules)
+        self.assertNotIn('ap0', rules)
+        self.assertIn('meta iif 7 ip saddr . ether saddr @phone', rules)
+        self.assertIn('meta iif 7 meta mark 0xcb000100 oifname "wan1" masquerade', rules)
+        iifs = re.findall(r'\biif\s+(\S+)', rules)
+        self.assertTrue(iifs)
+        self.assertEqual(set(iifs), {'7'})
+        self.assertEqual(rules.count('meta iif 7'), len(iifs))
+        with self.assertRaises(KeyError):
+            portal.rules({k: v for k, v in self.config().items() if k != 'ap_ifindex'})
+
+
+class IngressLifetimeTests(unittest.TestCase):
+    def test_replaced_ap_refuses_before_any_mutation(self):
+        calls = []
+        with patch.object(portal, 'run', side_effect=lambda *a, **k: calls.append(a) or ''), \
+                patch.object(portal, 'ifindex', return_value=8):
+            with self.assertRaises(ValueError):
+                portal.open_window(WindowTests().config())
+        self.assertFalse(any(a[:2] in [('nft', '-f'), ('nft', '--check')] or a[:4] == ('ip', '-4', 'route', 'add')
+                             for a in calls))
+
+    def test_vanished_ap_refuses(self):
+        with patch.object(portal, 'run', return_value=''), \
+                patch.object(portal, 'ifindex', side_effect=FileNotFoundError()):
+            with self.assertRaises(ValueError):
+                portal.open_window(WindowTests().config())
+
+    def test_replacement_during_open_rolls_back(self):
+        closed = []
+        with patch.object(portal, 'run', return_value=''), patch.object(portal, 'clear_flows'), \
+                patch.object(portal, 'local_addresses', return_value=[]), \
+                patch.object(portal, 'ifindex', side_effect=[7, 8]), \
+                patch.object(portal, 'close_window', side_effect=closed.append):
+            with self.assertRaises(ValueError):
+                portal.open_window(WindowTests().config())
+        self.assertEqual(len(closed), 1)
+
+    def test_unchanged_ap_opens(self):
+        with patch.object(portal, 'run', return_value=''), patch.object(portal, 'clear_flows'), \
+                patch.object(portal, 'local_addresses', return_value=[]), \
+                patch.object(portal, 'ifindex', return_value=7), \
+                patch.object(portal, 'close_window') as close:
+            portal.open_window(WindowTests().config())
+        close.assert_not_called()
+
 
 # Every word the helper's ruleset may use. Core nf_tables words need nothing
 # beyond NF_TABLES/NF_TABLES_INET; module words need the listed kernel symbols.
@@ -56,7 +111,7 @@ CORE_WORDS = {
     'table', 'inet', 'set', 'type', 'flags', 'timeout', 'interval', 'elements',
     'ipv4_addr', 'ether_addr', 'chain', 'hook', 'priority', 'policy', 'filter',
     'nat', 'prerouting', 'input', 'forward', 'postrouting', 'accept', 'drop',
-    'return', 'jump', 'meta', 'mark', 'nfproto', 'ipv4', 'ipv6', 'iifname',
+    'return', 'jump', 'meta', 'mark', 'nfproto', 'ipv4', 'ipv6', 'iif', 'iifname',
     'oifname', 'ip', 'saddr', 'daddr', 'ether', 'tcp', 'udp', 'dport', 'sport',
 }
 MODULE_WORDS = {
@@ -180,7 +235,8 @@ class LocalExemptionTests(unittest.TestCase):
             if data and 'table inet ceralive_portal {' in data and 'chain pre' in data:
                 loaded.append(data)
             return ''
-        with patch.object(portal, 'run', side_effect=run), patch.object(portal, 'clear_flows'):
+        with patch.object(portal, 'run', side_effect=run), patch.object(portal, 'clear_flows'), \
+                patch.object(portal, 'ifindex', return_value=config['ap_ifindex']):
             portal.open_window(config)
         self.assertEqual(len(loaded), 2)
         for data in loaded:

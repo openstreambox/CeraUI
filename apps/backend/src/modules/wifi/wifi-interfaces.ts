@@ -45,11 +45,6 @@ import {
 	type PortalRadioRead,
 } from "./captive-portal-session.ts";
 import { getHotspotCredentials } from "./hotspot-credentials.ts";
-import {
-	capturePortalBinding,
-	type PortalBindingReaders,
-	type PortalCapture,
-} from "./captive-portal-session.ts";
 import { getDerivedApChannels, refreshHotspotChannels } from "./regdomain.ts";
 import {
 	broadcastWifiState,
