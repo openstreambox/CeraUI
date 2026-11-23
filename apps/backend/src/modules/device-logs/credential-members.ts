@@ -52,7 +52,7 @@ function credentialKind(...keys: readonly string[]): string {
 	if (words.includes("ssh")) return "ssh";
 	if (words.includes("remote")) return "remote_key";
 	if (words.includes("pairing")) return "pairing";
-	if (words.includes("passphrase")) return "passphrase";
+	if (words.includes("passphrase")) return "srt_passphrase";
 	if (words.some((word) => word.startsWith("pass") || word === "pwd"))
 		return "password";
 	return "credential";
@@ -116,6 +116,13 @@ function walk(
 	}
 }
 
+/** The first non-whitespace character at or after `from`, without copying. */
+function nextVisible(text: string, from: number): string {
+	let at = from;
+	while (at < text.length && /\s/.test(text.charAt(at))) at++;
+	return text.charAt(at);
+}
+
 function structuredSpans(text: string): CredentialSpan[] {
 	if (!text.includes("{") && !text.includes("[")) return [];
 	let root = parseContainer(text);
@@ -128,8 +135,14 @@ function structuredSpans(text: string): CredentialSpan[] {
 	if (root === undefined) return [];
 	const found: Found[] = [];
 	walk(root, undefined, 1, found);
+	// One scan per distinct value and depth: a line repeating one value
+	// thousands of times must not rescan itself once per copy.
+	const distinct = new Map<string, Found>();
+	for (const entry of found)
+		if (!distinct.has(`${entry.depth}:${entry.value}`))
+			distinct.set(`${entry.depth}:${entry.value}`, entry);
 	const spans: CredentialSpan[] = [];
-	for (const { value, depth, kind } of found) {
+	for (const { value, depth, kind } of distinct.values()) {
 		const quote = encode('"', depth - 1);
 		const content = encode(value, depth);
 		const needle = quote + content + quote;
@@ -139,8 +152,7 @@ function structuredSpans(text: string): CredentialSpan[] {
 			at = text.indexOf(needle, at + needle.length)
 		) {
 			// The same text as a key name is not a value.
-			const after = text.slice(at + needle.length).trimStart();
-			if (after.startsWith(":")) continue;
+			if (nextVisible(text, at + needle.length) === ":") continue;
 			const start = at + quote.length;
 			spans.push({
 				start,

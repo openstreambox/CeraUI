@@ -559,3 +559,37 @@ test("a held literal inside a credential member keeps the member's quotes", () =
 		expect(text).toMatch(/"remote_key":"\[REDACTED(?::[a-z_]+)?\]"/);
 	}
 });
+
+test("a line repeating one credential value thousands of times is masked in linear time", () => {
+	const line = JSON.stringify({
+		msg: "x",
+		meta: { ssh_pass: Array.from({ length: 4000 }, () => "a") },
+	});
+	expect(line.length).toBeGreaterThan(16_000);
+	for (const method of ["text", "known"] as const) {
+		const redact = buildRedactor([]);
+		const started = performance.now();
+		const { text, redactions } =
+			method === "text" ? redact.text(line) : redact.known(line);
+		const elapsed = performance.now() - started;
+		expect(redactions).toBe(4000);
+		expect(text).not.toContain('"a"');
+		// Was about 3.7 s per line when each copy rescanned the whole text.
+		expect(elapsed).toBeLessThan(500);
+	}
+});
+
+test("known masks a held value ending in a backslash inside nested JSON without breaking it", () => {
+	const held = "held-secret-r4\\";
+	const line = JSON.stringify({
+		msg: "x",
+		meta: { raw: JSON.stringify({ ssh_pass: held, b: 1 }) },
+	});
+	const { text } = buildRedactor([{ kind: "ssh", value: held }]).known(line);
+	expect(text).not.toContain("held-secret-r4");
+	const outer = JSON.parse(text) as { meta: { raw: string } };
+	expect(JSON.parse(outer.meta.raw)).toEqual({
+		ssh_pass: "[REDACTED:ssh]",
+		b: 1,
+	});
+});

@@ -104,19 +104,10 @@ export function buildRedactor(
 		},
 		known(value: string) {
 			let redactions = 0;
-			let text =
-				exact === null
-					? value
-					: value.replace(exact, (match) => {
-							redactions++;
-							return literals.get(percentCase(match)) ?? "[REDACTED]";
-						});
-			for (const pattern of NAMED_PASSPHRASES)
-				text = text.replace(pattern, (match) => {
-					const next = namedPassphrase(match);
-					if (next !== match) redactions++;
-					return next;
-				});
+			// Whole credential values first, on the text as written: a held
+			// literal replaced first could end inside an escape sequence and
+			// break the JSON the span finder reads.
+			let text = value;
 			const members = credentialSpans(text);
 			if (members.length > 0) {
 				let position = 0;
@@ -129,6 +120,17 @@ export function buildRedactor(
 				}
 				text = parts.join("") + text.slice(position);
 			}
+			if (exact !== null)
+				text = text.replace(exact, (match) => {
+					redactions++;
+					return literals.get(percentCase(match)) ?? "[REDACTED]";
+				});
+			for (const pattern of NAMED_PASSPHRASES)
+				text = text.replace(pattern, (match) => {
+					const next = namedPassphrase(match);
+					if (next !== match) redactions++;
+					return next;
+				});
 			return { text, redactions };
 		},
 		text(value: string, bootSpan) {
