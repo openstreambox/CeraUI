@@ -364,7 +364,7 @@ let now = $state(Date.now());
 							</span>
 							<span class="min-w-0 flex-1">
 								<span class="block truncate text-sm font-semibold">{m["settings.appearance.language"]()}</span>
-								<span class="text-muted-foreground block truncate text-xs"
+								<span class="text-muted-foreground block text-xs"
 									>{m["settings.appearance.languageDesc"]()}</span
 								>
 							</span>
@@ -380,7 +380,7 @@ let now = $state(Date.now());
 							</span>
 							<span class="min-w-0 flex-1">
 								<span class="block truncate text-sm font-semibold">{m["settings.appearance.theme"]()}</span>
-								<span class="text-muted-foreground block truncate text-xs"
+								<span class="text-muted-foreground block text-xs"
 									>{m["settings.appearance.themeDesc"]()}</span
 								>
 							</span>
@@ -405,7 +405,7 @@ let now = $state(Date.now());
 								</span>
 								<span class="min-w-0 flex-1">
 									<span class="block truncate text-sm font-semibold">{m["settings.index.autostart"]()}</span>
-									<span class="text-muted-foreground block truncate text-xs">{m["settings.index.autostartDesc"]()}</span>
+									<span class="text-muted-foreground block text-xs">{m["settings.index.autostartDesc"]()}</span>
 								</span>
 								<span class="shrink-0">
 									<AsyncSwitch
@@ -417,6 +417,9 @@ let now = $state(Date.now());
 								</span>
 							</div>
 						{/if}
+						<!-- Row descriptions wrap instead of truncating: at 390 px a one-line
+						     description cut most of them mid-sentence ("Set the password used
+						     to access this d…"). Titles still truncate. -->
 						{#each group.entries as entry (entry.key)}
 							{const EntryIcon = $derived(entry.icon)}
 							<button
@@ -440,7 +443,7 @@ let now = $state(Date.now());
 								</span>
 								<span class="min-w-0 flex-1">
 									<span class="block truncate text-sm font-semibold">{entry.title}</span>
-									<span class="text-muted-foreground block truncate text-xs">{entry.desc}</span>
+									<span class="text-muted-foreground block text-xs">{entry.desc}</span>
 								</span>
 								{#if entry.destructive}
 									<span
