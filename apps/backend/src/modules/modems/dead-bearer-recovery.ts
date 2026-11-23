@@ -68,6 +68,7 @@ import type { LinkCarryingState } from "../streaming/link-progress.ts";
 import { linkCarryingState } from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import {
+	forgetDetachedRecoveries,
 	noteBackgroundLeaseRefused,
 	noteBackgroundRecoveryClear,
 	noteDeadPathHeld,
@@ -366,6 +367,10 @@ export async function runDeadBearerRecovery(
 	skip: readonly number[] = [],
 ): Promise<readonly ModemId[]> {
 	const changed: ModemId[] = [];
+	forgetDetachedRecoveries(
+		"data_session_reconnect",
+		deps.ids().flatMap((id) => deps.stableKey(id) ?? []),
+	);
 	for (const id of deps.ids()) {
 		if (skip.includes(id)) continue;
 		const key = deps.stableKey(id);
@@ -377,11 +382,11 @@ export async function runDeadBearerRecovery(
 			const decision = decideDeadBearer(first.input);
 			if (decision.action !== "reconnect") {
 				memories.set(key, decision.memory);
-				// A dead path left alone says why, once; a healthy one clears it.
+				// A dead path left alone says why, once. A path that is up again, or
+				// only waits out its hold, is no longer held back.
 				if (decision.action === "none" && outageRecord(first.input.record))
 					noteDeadPathHeld(key, decision.reason);
-				else if (!outageRecord(first.input.record))
-					noteBackgroundRecoveryClear("dead-bearer reconnect", key);
+				else noteBackgroundRecoveryClear("data_session_reconnect", key);
 				continue;
 			}
 			const outcome = await deps.mutate(key, async () => {
@@ -419,10 +424,11 @@ export async function runDeadBearerRecovery(
 					changed.push(id);
 				}
 			});
-			if (outcome.ok) noteBackgroundRecoveryClear("dead-bearer reconnect", key);
+			if (outcome.ok)
+				noteBackgroundRecoveryClear("data_session_reconnect", key);
 			else
 				noteBackgroundLeaseRefused(
-					"dead-bearer reconnect",
+					"data_session_reconnect",
 					key,
 					outcome.refusal,
 				);

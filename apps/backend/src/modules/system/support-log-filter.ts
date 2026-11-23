@@ -7,11 +7,17 @@
  */
 import { appContract } from "@ceraui/rpc/contracts";
 import {
+	modemMutationRefusalSchema,
 	START_FAILURE_CAPTURE_CAUSES,
 	START_FAILURE_CLASSES,
 	START_FAILURE_PHASES,
 } from "@ceraui/rpc/schemas";
 import { classifyToolFailure } from "../../helpers/exec.ts";
+import {
+	BACKGROUND_RECOVERIES,
+	DEAD_PATH_HELD,
+	RECOVERY_LIFECYCLE_HOLDERS,
+} from "../modems/background-recovery-codes.ts";
 import {
 	isInterfaceName,
 	isShapeSource,
@@ -188,6 +194,13 @@ const START_CLASSES = new Set<string>(START_FAILURE_CLASSES);
 const START_PHASES = new Set<string>(START_FAILURE_PHASES);
 const CAPTURE_CAUSES = new Set<string>(START_FAILURE_CAPTURE_CAUSES);
 const RETRY_STATES = new Set(["scheduled", "exhausted", "not_retriable"]);
+/** Held-back modem recovery diagnostics: each key with its closed set. */
+const RECOVERY_FIELDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+	["recovery", new Set<string>(BACKGROUND_RECOVERIES)],
+	["refusal", new Set<string>(modemMutationRefusalSchema.options)],
+	["lifecycleHolder", new Set<string>(RECOVERY_LIFECYCLE_HOLDERS)],
+	["deadPath", new Set<string>(DEAD_PATH_HELD)],
+]);
 
 function boundedCount(value: unknown, max: number): value is number {
 	return (
@@ -313,8 +326,13 @@ function safeMetadata(
 		)
 			out[key] = Math.round(inner);
 		else if (
-			["ok", "retryable", "available"].includes(key) &&
+			["ok", "retryable", "available", "recoveryPending"].includes(key) &&
 			typeof inner === "boolean"
+		)
+			out[key] = inner;
+		else if (
+			typeof inner === "string" &&
+			RECOVERY_FIELDS.get(key)?.has(inner) === true
 		)
 			out[key] = inner;
 	}
