@@ -848,3 +848,13 @@ accepted debt under `TD-spa-i18n-catalog-size`, which remains open. Recover the
 additional allowance through shared catalog/bundle work without deleting
 operator copy, capabilities, languages or offline availability, then restore
 the original 16 KiB caps. Measure the composed build at every train.
+
+### Bundle footprint acceptance — 2026-11-20
+
+The composed train build measures 1,467,857 B total SPA gzip and 1,668,503 B
+precache gzip, over the 2026-11-16 ceilings by 141,429 B and 142,343 B. The
+aggregate baselines move to those measurements. Both 32 KiB absolute headrooms,
+the ratio, the initial-route and single-chunk limits and the federation
+budgets are unchanged; the displaced 1,293,660/1,493,392 B baselines are kept
+in `SPA_DISPLACED_BASELINES`. Accepted debt under `TD-spa-i18n-catalog-size`,
+which remains open.
