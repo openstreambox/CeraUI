@@ -477,7 +477,6 @@ export type UsbNetMarkerSets = {
 	routerCellular: Map<string, RouterCellularMarker>;
 	modemNet: Map<string, UsbModemNetMarker>;
 	physical: Map<string, UsbPhysicalDescriptor>;
-	duplicateSerialKeys: Set<string>;
 };
 
 /**
@@ -548,8 +547,14 @@ export async function scanUsbNetMarkers(
 			...(serial !== undefined ? { serial } : {}),
 		});
 	}
+	return { routerCellular, modemNet, physical };
+}
+
+function duplicateSerialKeys(
+	descriptors: Iterable<UsbPhysicalDescriptor>,
+): Set<string> {
 	const parentsBySerial = new Map<string, Set<string>>();
-	for (const descriptor of physical.values()) {
+	for (const descriptor of descriptors) {
 		const { canonicalEntry: key } = usbSerialIdentity(
 			descriptor.serial,
 			descriptor.vid,
@@ -562,12 +567,11 @@ export async function scanUsbNetMarkers(
 		parents.add(parent);
 		parentsBySerial.set(key, parents);
 	}
-	const duplicateSerialKeys = new Set(
+	return new Set(
 		[...parentsBySerial]
 			.filter(([, parents]) => parents.size > 1)
 			.map(([key]) => key),
 	);
-	return { routerCellular, modemNet, physical, duplicateSerialKeys };
 }
 
 function rejectSharedSerial(
@@ -751,7 +755,6 @@ function cachedSets(): UsbNetMarkerSets {
 		routerCellular: markers,
 		modemNet: modemNetMarkers,
 		physical: physicalDescriptors,
-		duplicateSerialKeys: sharedSerialHashes,
 	};
 }
 
@@ -824,11 +827,8 @@ async function runUsbNetScan(
 		// `resetUsbNetMarkers()` mid-flight would have fenced us out above.
 		const before = snapshotKey(cachedSets());
 		const persisted = deps.sharedSerials?.load() ?? [];
-		const next = new Set([
-			...persisted,
-			...sharedSerialHashes,
-			...scanned.duplicateSerialKeys,
-		]);
+		const duplicates = duplicateSerialKeys(scanned.physical.values());
+		const next = new Set([...persisted, ...sharedSerialHashes, ...duplicates]);
 		let scopedLegacy = false;
 		for (const descriptor of scanned.physical.values()) {
 			if (
@@ -840,7 +840,7 @@ async function runUsbNetScan(
 		}
 		const newest = [...next].slice(-64);
 		if (
-			(scanned.duplicateSerialKeys.size > 0 || scopedLegacy) &&
+			(duplicates.size > 0 || scopedLegacy) &&
 			newest.join(",") !== persisted.join(",")
 		) {
 			deps.sharedSerials?.save(newest);

@@ -25,6 +25,7 @@ import {
 	getRouterCellularMarker,
 	getUsbPhysicalDescriptor,
 	identityDeadlineExpired,
+	invalidateUsbNetReading,
 	notePublishedNetifSnapshot,
 	onUsbNetScanCommitted,
 	type RouterCellularScanDeps,
@@ -563,6 +564,27 @@ describe("shared USB serials are remembered only by committed scans", () => {
 		expect(resolveModemPhysicalIdentity(names[0] ?? "").anchor).toBe(
 			"usb-serial",
 		);
+	});
+
+	it("does not persist a duplicate from an invalidated USB read", async () => {
+		const [first, second] = names;
+		if (first === undefined || second === undefined)
+			throw new Error("missing twins");
+		const deps = pair();
+		const gate = makeGate();
+		const resolveLink = deps.resolveLink;
+		deps.resolveLink = async (path) => {
+			if (path.endsWith(`/${first}/device`)) await gate.passed;
+			return resolveLink(path);
+		};
+		const pending = refreshUsbNetMarkers(names, deps);
+		invalidateUsbNetReading(first, 1, true);
+		gate.open();
+		await pending;
+		expect(getUsbPhysicalDescriptor(first)).toBeUndefined();
+		expect(resolveModemPhysicalIdentity(second).anchor).toBe("usb-serial");
+		expect(hashes).toEqual([]);
+		expect(writes).toBe(0);
 	});
 
 	it("validates hash-only config with absent meaning empty", () => {
