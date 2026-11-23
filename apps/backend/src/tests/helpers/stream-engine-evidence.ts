@@ -25,7 +25,10 @@ const unused = async (): Promise<never> => {
 };
 
 /** Engine truth changes at effect submission/ack, never from a production guard. */
-export function evidenceHarness(protectedAtBoot = false) {
+export function evidenceHarness(
+	protectedAtBoot = false,
+	{ schemaVersion = "0.1.0" }: { readonly schemaVersion?: string } = {},
+) {
 	let engine: "idle" | "streaming" = "idle";
 	let live = false;
 	let marked = protectedAtBoot;
@@ -68,22 +71,33 @@ export function evidenceHarness(protectedAtBoot = false) {
 		const index = connection++;
 		let listener: ((event: EventParams) => void) | undefined;
 		const calls: string[] = [];
+		const start = async () => {
+			calls.push("start");
+			// A refusal changes nothing in the engine.
+			if (startRefusal !== undefined) throw startRefusal;
+			engine = "streaming";
+			started.resolve();
+			if (index === 0) await startGate;
+			if (failedStart) throw new CerastreamTimeoutError("start", 10_000);
+			return { state: "streaming" as const, session_id: `session-${index}` };
+		};
 		const client: CerastreamClient = {
 			hello: {
 				protocol: "cerastream-ipc/1",
-				schema_version: "0.1.0",
+				schema_version: schemaVersion,
 				engine_version: "fake",
 			},
-			start: async () => {
-				calls.push("start");
-				// A refusal changes nothing in the engine.
-				if (startRefusal !== undefined) throw startRefusal;
-				engine = "streaming";
-				started.resolve();
-				if (index === 0) await startGate;
-				if (failedStart) throw new CerastreamTimeoutError("start", 10_000);
-				return { state: "streaming", session_id: `session-${index}` };
-			},
+			start,
+			// Newer schemas send Start through the raw request path.
+			...(schemaVersion === "0.1.0"
+				? {}
+				: {
+						rawRequest: async (method: string) => {
+							calls.push(`raw:${method}`);
+							if (method !== "start") return unused();
+							return start();
+						},
+					}),
 			stop: async () => {
 				calls.push("stop");
 				if (failedStop) throw new Error("stop-ack-unavailable");

@@ -7,8 +7,8 @@ import { startRefusedAsAlreadyStreaming } from "../modules/streaming/cerastream-
 import { evidenceHarness } from "./helpers/stream-engine-evidence.ts";
 
 const fixtures: ReturnType<typeof evidenceHarness>[] = [];
-const harness = () => {
-	const h = evidenceHarness();
+const harness = (schemaVersion?: string) => {
+	const h = evidenceHarness(false, { schemaVersion });
 	fixtures.push(h);
 	return h;
 };
@@ -20,12 +20,14 @@ const engineCalls = (h: ReturnType<typeof evidenceHarness>, call: string) =>
 	h.clients.flatMap(({ calls }) => calls).filter((made) => made === call);
 
 describe("a Start refused because another session is running", () => {
-	for (const [label, dataCode] of [
-		["typed", "cerastream.state.already_streaming"],
-		["numeric only", undefined],
+	for (const [label, dataCode, schemaVersion, startCall] of [
+		["typed", "cerastream.state.already_streaming", undefined, "start"],
+		["numeric only", undefined, undefined, "start"],
+		// Schema 0.6 and later send Start as a raw request.
+		["raw request", "cerastream.state.already_streaming", "0.6.0", "raw:start"],
 	] as const) {
 		test(`${label}: the rollback leaves the running session alone`, async () => {
-			const h = harness();
+			const h = harness(schemaVersion);
 			h.beforeStartDispatch(() => {
 				// Admitted idle, then another client starts a session first.
 				h.setEngine("streaming");
@@ -37,13 +39,14 @@ describe("a Start refused because another session is running", () => {
 				failure: { phase: "start-rpc" },
 			});
 
-			expect(engineCalls(h, "start")).toHaveLength(1);
+			expect(engineCalls(h, startCall)).toHaveLength(1);
 			expect(engineCalls(h, "stop")).toHaveLength(0);
 			expect(h.view()).toMatchObject({
 				engine: "streaming",
 				state: "reconciling",
-				marked: true,
 			});
+			// The orchestrator's own verdict, not the harness's OTA mark.
+			expect(h.session.streamLiveness()).toBe("unknown");
 			// The Start's own connection is still released.
 			expect(h.clients[0]?.calls).toContain("close");
 		});
