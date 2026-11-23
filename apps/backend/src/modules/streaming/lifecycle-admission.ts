@@ -232,6 +232,7 @@ export interface MutationBlock {
 	readonly stableKey: string;
 	readonly unitLinkId?: string;
 	readonly deviceVidPid?: string;
+	readonly matchUsbVendor?: true;
 	readonly refusal: ModemMutationRefusal;
 	/** Whether it ALSO holds global stream autostart (a decommission does not). */
 	readonly blocksStreaming: boolean;
@@ -375,6 +376,7 @@ export function setMutationBlocks(blocks: readonly MutationBlock[]): void {
 				old.refusal !== block.refusal ||
 				old.unitLinkId !== block.unitLinkId ||
 				old.deviceVidPid !== block.deviceVidPid ||
+				old.matchUsbVendor !== block.matchUsbVendor ||
 				old.blocksStreaming !== block.blocksStreaming
 			);
 		});
@@ -408,8 +410,14 @@ export function modemBlockMatches(
 		(unit !== undefined && block.unitLinkId === unit)
 	)
 		return true;
-	if (block.deviceVidPid !== undefined && block.deviceVidPid !== vidPid)
-		return false;
+	if (block.deviceVidPid !== undefined) {
+		// A USB composition change can replace the product ID while keeping
+		// the same device. Unresolved returns can only be narrowed by vendor.
+		const matches = block.matchUsbVendor
+			? block.deviceVidPid.slice(0, 4) === vidPid.slice(0, 4)
+			: block.deviceVidPid === vidPid;
+		if (!matches) return false;
+	}
 	return (
 		port === undefined || (unit === undefined && block.unitLinkId !== undefined)
 	);

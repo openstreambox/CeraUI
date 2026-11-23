@@ -219,7 +219,9 @@ port and checks the recorded unit when available. Older entries and units
 without a reliable identity use the port only. While a recorded unit is
 blocked, a candidate with the same USB vendor and product waits for positive
 identification, including after a fresh scan on an unblocked port. The same
-rule applies when that candidate has no current ID_PATH. A known different
+rule applies when that candidate has no current ID_PATH. A USB mode change
+can change the product ID, so its unresolved candidates are scoped by
+vendor. A known different
 USB model can keep sending. Older entries without model evidence keep a
 conservative hold on ambiguous candidates.
 The modem roster's retained ID-path cache is not admission authority. Positively
@@ -241,11 +243,13 @@ owner's confirmation. Call `modems.listMutationBlocks`, wait for
   `stableKey` and mode `verified-rollback`. If verification fails, review
   the current hardware with the owner before using `force-rebaseline`.
 - For `device-absent-quarantine`, reconnect the original modem to its original
-  port and let boot recovery recheck it during the maintenance window.
+  port and restart the box during the maintenance window so recovery can
+  recheck it.
   If the owner confirms the original is permanently gone, call
   `modems.decommissionMutation` with that key. The old port remains held.
 - To use a replacement at that port, connect it with the stream stopped
-  and let boot recovery mark the entry `recommission-pending`. Confirm
+  and restart the box. Wait for recovery to mark the entry
+  `recommission-pending`. Confirm
   the replacement's identity and call `modems.rebaselineMutation`.
 - Read `modems.listMutationBlocks` again and confirm the selected record's
   state and the expected bond links before restarting the stream. Keep
@@ -292,6 +296,8 @@ una nueva configuración de referencia. Cuando el diario guarda una identidad
 USB fiable, el bloqueo también sigue a ese módem si cambia de puerto.
 Mientras dure ese bloqueo, un candidato del mismo fabricante y producto USB
 sin identidad fiable queda a la espera de que la caja pueda identificarlo.
+Durante un cambio de modo USB, el producto puede cambiar y la caja usa
+el fabricante para delimitar la retención.
 Un modelo USB conocido y diferente puede seguir enviando.
 
 #### Recuperación con soporte
@@ -305,11 +311,12 @@ RPC autenticado de la caja. Consulte `modems.listMutationBlocks`, espere
   y el modo `verified-rollback`. Si no se verifica, revise el dispositivo
   con el propietario antes de usar `force-rebaseline`.
 - Para `device-absent-quarantine`, vuelva a conectar el módem original al
-  puerto original y deje que la recuperación al arrancar lo compruebe
-  durante el mantenimiento. Si el propietario confirma que el original ya
+  puerto original y reinicie la caja durante el mantenimiento para que
+  la recuperación lo compruebe. Si el propietario confirma que el original ya
   no se usará, llame a `modems.decommissionMutation`. El puerto queda retenido.
 - Para usar un reemplazo en ese puerto, conéctelo con la transmisión detenida
-  y espere a que la recuperación marque `recommission-pending`. Confirme la
+  y reinicie la caja. Espere a que la recuperación marque
+  `recommission-pending`. Confirme la
   identidad del reemplazo y llame a `modems.rebaselineMutation`.
 - Vuelva a consultar `modems.listMutationBlocks` y compruebe el estado y los
   enlaces esperados antes de reanudar la transmisión. Deje el diario bajo

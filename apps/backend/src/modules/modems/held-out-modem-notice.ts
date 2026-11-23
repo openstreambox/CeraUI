@@ -1,5 +1,5 @@
 /*
-  Publish one persistent recovery notice per failed or quarantined modem. Use
+  Publish one persistent recovery notice for a pending recovery or held link. Use
   its current label when available, including after interface renaming.
 */
 
@@ -82,8 +82,8 @@ export function resetHeldOutNoticesForTest(): void {
 	stopNetworkNoticeUpdates = undefined;
 }
 
-/** A held-out modem: its change failed or it went missing mid-change. */
-function heldOut(block: ModemMutationBlock): boolean {
+/** These states warrant a notice even when no link is currently present. */
+function recoveryPending(block: ModemMutationBlock): boolean {
 	return (
 		block.state === "recommission-pending" ||
 		(block.blocksStreaming &&
@@ -99,7 +99,7 @@ export function syncHeldOutModemNotices(
 	try {
 		if (deps === defaultDeps) {
 			activeBlocks = blocks;
-			if (blocks.some(heldOut)) {
+			if (blocks.length > 0) {
 				stopNetworkNoticeUpdates ??= onNetworkInterfacesChange(() =>
 					syncHeldOutModemNotices(activeBlocks),
 				);
@@ -113,10 +113,11 @@ export function syncHeldOutModemNotices(
 			{ label: string | undefined; links: string }
 		>();
 		for (const block of blocks) {
-			if (!heldOut(block)) continue;
+			const links = deps.linksFor?.(block.stableKey) ?? [];
+			if (links.length === 0 && !recoveryPending(block)) continue;
 			wanted.set(`${HELD_OUT_PREFIX}${block.stableKey}`, {
 				label: deps.labelFor(block.stableKey),
-				links: deps.linksFor?.(block.stableKey).join(", ") || "-",
+				links: links.join(", ") || "-",
 			});
 		}
 		for (const name of [...standing.keys()]) {

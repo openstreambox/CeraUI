@@ -321,6 +321,68 @@ test("an RM520 unit block holds its port and possible units without excluding a 
 	expect(box.bonded()).toEqual(["eth0", dw.ifname]);
 });
 
+test.each(["usb-mode", "modem-config"] as const)(
+	"a %s unit hold handles a same-vendor candidate with a changed PID",
+	async (kind) => {
+		box = await realisticBox();
+		const original = {
+			...MODEMS[0],
+			vid: "1e0e",
+			pid: "9001",
+			serial: "unique-mode-fixture",
+		};
+		const returned = { ...MODEMS[1], vid: "1e0e", pid: "9011" };
+		const unrelated = { ...MODEMS[2], vid: "413c", pid: "9011" };
+		await box.scan([ETHERNET, original]);
+		const unitLinkId = genSrtlaBondEntries().find(
+			(entry) => entry.iface === original.ifname,
+		)?.linkId;
+		if (unitLinkId === undefined) throw new Error("missing unit");
+		await box.journal([
+			{
+				...journalEntry(original, "failed", kind),
+				deviceVidPid: "1e0e:9001",
+				unitLinkId,
+			},
+		]);
+		await box.scan([ETHERNET, returned, unrelated]);
+		expect(box.bonded()).toEqual(
+			kind === "usb-mode"
+				? ["eth0", unrelated.ifname]
+				: ["eth0", returned.ifname, unrelated.ifname],
+		);
+		expect(
+			genSrtlaBondEntriesForLocalIpAddress("198.51.100.200").map(
+				(entry) => entry.iface,
+			),
+		).toEqual(
+			kind === "usb-mode"
+				? [unrelated.ifname]
+				: [returned.ifname, unrelated.ifname],
+		);
+	},
+);
+
+test("a decommissioned port raises a notice when a replacement link appears", async () => {
+	box = await realisticBox();
+	const device = MODEMS[0];
+	const noticeName = `modem_held_out:${stableKeyOf(device)}`;
+	const notice = () =>
+		getPersistentNotifications(true).show.find(
+			({ name }) => name === noticeName,
+		);
+	await box.scan([ETHERNET]);
+	await box.journal([
+		{ ...journalEntry(device, "decommissioned"), deviceVidPid: "2c7c:1234" },
+	]);
+	expect(notice()).toBeUndefined();
+	await box.scan([ETHERNET, device]);
+	expect(box.bonded()).toEqual(["eth0"]);
+	expect(notice()?.params).toMatchObject({ links: device.ifname });
+	await box.scan([ETHERNET]);
+	expect(notice()).toBeUndefined();
+});
+
 test("a udev serial and its raw sysfs spelling keep the moved unit quarantined", async () => {
 	box = await realisticBox();
 	const original = { ...MODEMS[0], serial: "fixture  ABC/123" };

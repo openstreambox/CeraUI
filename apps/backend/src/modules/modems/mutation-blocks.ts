@@ -169,6 +169,7 @@ export async function refreshMutationBlocks(
 					? {}
 					: { unitLinkId: entry.unitLinkId }),
 				...(deviceVidPid === undefined ? {} : { deviceVidPid }),
+				...(entry.kind === "usb-mode" ? { matchUsbVendor: true } : {}),
 				refusal: REFUSAL_BY_STATE[entry.state] ?? "mutation_blocked",
 				blocksStreaming: blocksStreaming(entry.state),
 			};

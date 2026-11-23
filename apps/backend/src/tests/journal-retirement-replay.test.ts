@@ -77,6 +77,7 @@ for (const precedingInvalidation of [false, true]) {
 			]);
 			expect(streamingBlockingMutation()).toEqual({
 				deviceVidPid: "2c7c:0801",
+				matchUsbVendor: true,
 				stableKey: "usb:b",
 				refusal: "mutation_in_progress",
 				blocksStreaming: true,
