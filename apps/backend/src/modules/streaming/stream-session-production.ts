@@ -5,12 +5,13 @@ import { ensureEncoderShutdownProtection } from "../system/shutdown-protection.t
 import { admitAndPrepareStreamStart } from "../system/update-orchestrator/runtime.ts";
 import { notificationBroadcast } from "../ui/notifications.ts";
 import { notifyWifiAdapterModeEdge } from "../wifi/wifi-adapter-mode-events.ts";
-import { noteStreamStopped, readSystemBootId } from "./armed-stream-marker.ts";
+import { noteStreamStopped } from "./armed-stream-marker.ts";
 import { asrcProbeRemainingMs } from "./audio.ts";
 import {
 	broadcastConfigChangePhase,
 	changeEngineRuntimeConfig,
 } from "./config-change-bridge.ts";
+import { SRTLA_LISTEN_PORT } from "./constants.ts";
 import { currentRuntimeObservationUncertainty } from "./engine-runtime-observation.ts";
 import { queryEngineRuntimeStreaming } from "./engine-runtime-state.ts";
 import { engineUnitStopped } from "./engine-unit-state.ts";
@@ -42,8 +43,7 @@ import { publishStreamSessionUnconfirmed } from "./stream-liveness.ts";
 import {
 	clearStreamProvenance,
 	defaultOrphanRetirementDeps,
-	engineProcess,
-	processStartTime,
+	provenanceProbes,
 	recordLaunchedSession,
 	retireOrphanedSession,
 	writeStreamProvenance,
@@ -56,7 +56,6 @@ import {
 } from "./stream-start-retry-reporting.ts";
 import { getIsStreaming, updateStatus } from "./streaming.ts";
 import { getStreamingBackend } from "./streaming-engine.ts";
-import { srtlaSendExec } from "./streamloop/exec-paths.ts";
 import { getStreamingProcesses } from "./streamloop/process-runner.ts";
 import { stopGeneration } from "./streamloop/session.ts";
 
@@ -69,6 +68,29 @@ function recordEvent(publish: () => void): void {
 }
 
 let streamStartedAt: number | undefined;
+
+/** Record the session just committed for a later process of this boot. */
+export function recordCommittedStreamSession(
+	current: () => boolean,
+): Promise<boolean> {
+	const probes = provenanceProbes();
+	return recordLaunchedSession({
+		sessionId: () => getStreamingBackend().launchedSessionId?.(),
+		senderPid: () =>
+			getStreamingProcesses().find(
+				(child) =>
+					child.spawnfile.endsWith("srtla_send") &&
+					child.proc.exitCode === null &&
+					child.proc.signalCode === null,
+			)?.proc.pid,
+		bootId: probes.bootId,
+		port: SRTLA_LISTEN_PORT,
+		engineProcess: probes.engineProcess,
+		processStartTime: probes.processStartTime,
+		current,
+		write: writeStreamProvenance,
+	});
+}
 
 export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	initialLiveness: encoderOtaStreamLiveness,
@@ -100,7 +122,10 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 		const backend = getStreamingBackend();
 		return retireOrphanedSession(
 			engine,
-			defaultOrphanRetirementDeps(backend.stopRecordedSession?.bind(backend)),
+			defaultOrphanRetirementDeps({
+				stopRecordedSession: backend.stopRecordedSession?.bind(backend),
+				engineReportsNoSession: backend.engineReportsNoSession?.bind(backend),
+			}),
 		);
 	},
 	onOrphanedSessionStopped: () =>
@@ -178,21 +203,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 			);
 		// Name this session for a later process of this boot (stream-provenance.ts).
 		if (!shouldUseMocks())
-			void recordLaunchedSession({
-				sessionId: () => getStreamingBackend().launchedSessionId?.(),
-				senderPid: () =>
-					getStreamingProcesses().find(
-						(child) =>
-							child.spawnfile === srtlaSendExec &&
-							child.proc.exitCode === null &&
-							child.proc.signalCode === null,
-					)?.proc.pid,
-				bootId: () => readSystemBootId(),
-				engineProcess: () => engineProcess(),
-				processStartTime: (pid) => processStartTime(pid),
-				current,
-				write: writeStreamProvenance,
-			}).catch((error) =>
+			void recordCommittedStreamSession(current).catch((error) =>
 				logger.warn("stream session record failed", { error }),
 			);
 		// A session runs again, so a "restart didn't finish" notice is out of date.

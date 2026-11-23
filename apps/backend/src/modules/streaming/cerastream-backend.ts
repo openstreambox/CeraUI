@@ -1200,58 +1200,95 @@ export class CerastreamBackend implements StreamingBackend {
 	}
 
 	/**
-	 * Stop the engine session only if it is still the one `sessionId` names.
-	 * The protocol's `stop` takes no session, so the snapshot, `beforeDispatch`
-	 * and the stop share one connection, and the stop line is written in the
-	 * same tick as the last `beforeDispatch` check. The engine handles a
-	 * connection's lines in order. Resolves true only on an idle
-	 * acknowledgement, false when the session is not that one or a check
-	 * refused; it never stops anything else.
+	 * Run `work` on one fresh control connection within the stop deadline. Once
+	 * the deadline has passed, `live()` is false: work must check it after each
+	 * await and do nothing more, and the connection is closed whenever it opens.
 	 */
-	async stopRecordedSession(
-		sessionId: string,
-		beforeDispatch: () => boolean,
-	): Promise<boolean> {
-		let client: CerastreamClient | undefined;
+	private async onFreshConnection<T>(
+		work: (client: CerastreamClient, live: () => boolean) => Promise<T>,
+	): Promise<T> {
+		let expired = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		let client: CerastreamClient | undefined;
 		const request = (async () => {
-			client = await this.deps.connect({
+			const opened = await this.deps.connect({
 				...this.deps.connectOptions,
 				autoReconnect: false,
 				requestTimeoutMs: ENGINE_STATE_RECONCILE_TIMEOUT,
 			});
-			const snapshot = await client.listSwitchTargets();
-			if (snapshot.session_id !== sessionId || !beforeDispatch()) return false;
-			const reply = await client.stop();
-			if (reply.state !== "idle") throw new Error("stop_not_idle");
-			return true;
+			client = opened;
+			if (expired) {
+				await this.closeWithinDeadline(opened);
+				throw new Error("stop_timeout");
+			}
+			return await work(opened, () => !expired);
 		})();
 		const deadline = new Promise<never>((_resolve, reject) => {
-			timer = this.deps.scheduleTimeout(
-				() => reject(new Error("stop_timeout")),
-				ENGINE_STOP_REQUEST_DEADLINE_MS,
-			);
+			timer = this.deps.scheduleTimeout(() => {
+				expired = true;
+				reject(new Error("stop_timeout"));
+			}, ENGINE_STOP_REQUEST_DEADLINE_MS);
 		});
 		try {
-			const stopped = await Promise.race([request, deadline]);
-			if (stopped) {
-				// The adopted reconciliation client watched the session just ended.
-				const adopted = this.client;
-				const subscription = this.subscription;
-				this.client = undefined;
-				this.subscription = undefined;
-				this.active = false;
-				this.launchedSessionCurrent = undefined;
-				subscription?.close();
-				await this.closeWithinDeadline(adopted);
-				this.clearSessionScopedTelemetry();
-			}
-			return stopped;
+			return await Promise.race([request, deadline]);
 		} finally {
 			if (timer !== undefined) this.deps.cancelTimeout(timer);
 			void request.catch(() => undefined);
 			await this.closeWithinDeadline(client);
 		}
+	}
+
+	/**
+	 * A valid snapshot on a fresh connection that names no session: no
+	 * `session_id`, no `active_input` and no switch targets. Any error, parse
+	 * failure or timeout is not that answer.
+	 */
+	async engineReportsNoSession(): Promise<boolean> {
+		try {
+			return await this.onFreshConnection(
+				async (client) => (await askEngineSession(client)) === "none",
+			);
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Stop the engine session only if it is still the one `sessionId` names.
+	 * The protocol's `stop` takes no session, so the snapshot, `afterSnapshot`,
+	 * `beforeDispatch` and the stop share one connection, and the stop line is
+	 * written in the same tick as the `beforeDispatch` check. The engine still
+	 * executes it unconditionally, so callers keep this behind a flag. Resolves
+	 * true only on an idle acknowledgement, false when the session is not that
+	 * one or a check refused; nothing is sent after the deadline.
+	 */
+	async stopRecordedSession(
+		sessionId: string,
+		beforeDispatch: () => boolean,
+		afterSnapshot: () => Promise<boolean> = async () => true,
+	): Promise<boolean> {
+		const stopped = await this.onFreshConnection(async (client, live) => {
+			const snapshot = await client.listSwitchTargets();
+			if (!live() || snapshot.session_id !== sessionId) return false;
+			if (!(await afterSnapshot()) || !live() || !beforeDispatch())
+				return false;
+			const reply = await client.stop();
+			if (reply.state !== "idle") throw new Error("stop_not_idle");
+			return true;
+		});
+		if (stopped) {
+			// The adopted reconciliation client watched the session just ended.
+			const adopted = this.client;
+			const subscription = this.subscription;
+			this.client = undefined;
+			this.subscription = undefined;
+			this.active = false;
+			this.launchedSessionCurrent = undefined;
+			subscription?.close();
+			await this.closeWithinDeadline(adopted);
+			this.clearSessionScopedTelemetry();
+		}
+		return stopped;
 	}
 
 	stop(onStopped: () => void, onFailed?: (error: unknown) => void): boolean {

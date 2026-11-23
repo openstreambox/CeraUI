@@ -2222,6 +2222,7 @@ export const SUPPORT_REASON_TEMPLATES: readonly (readonly string[])[] = [
 	["unsupported_netmask"],
 	["unsupported_network_type"],
 	["update-busy"],
+	["update_adjudication_refused"],
 	["update_in_progress"],
 	["updates_disabled"],
 	["usage_policy_write_failed"],

@@ -46,6 +46,17 @@ export function streamProvenancePath(): string {
 	);
 }
 
+/**
+ * Whether a later process may STOP an earlier process's session by itself.
+ * Off unless `CERALIVE_STOP_ORPHANED_SESSIONS=1`: the engine's `stop` takes no
+ * session, so between the last check and the engine executing the stop a
+ * replacement session or a new carrier could still appear. Settling a session
+ * the engine already ended (`gone`) needs no stop and is not behind this flag.
+ */
+export function orphanStopEnabled(): boolean {
+	return process.env.CERALIVE_STOP_ORPHANED_SESSIONS === "1";
+}
+
 const processIdentity = z.strictObject({
 	pid: z.number().int().positive(),
 	startTime: z.string().regex(/^\d+$/),
@@ -53,11 +64,13 @@ const processIdentity = z.strictObject({
 export type ProcessIdentity = z.infer<typeof processIdentity>;
 
 const provenanceSchema = z.strictObject({
-	version: z.literal(1),
+	version: z.literal(2),
 	bootId: z.string().min(1),
 	sessionId: z.string().min(1),
 	engine: processIdentity,
 	sender: processIdentity,
+	/** The local UDP port the session sends to, where its sender listened. */
+	port: z.number().int().min(1).max(65_535),
 });
 export type StreamProvenance = z.infer<typeof provenanceSchema>;
 
@@ -74,11 +87,15 @@ export function readStreamProvenance(
 	}
 }
 
+export const STREAM_PROVENANCE_MODE = 0o600;
+
 export function writeStreamProvenance(
 	record: StreamProvenance,
 	path = streamProvenancePath(),
 ): void {
-	writeFileAtomicSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+	writeFileAtomicSync(path, `${JSON.stringify(record)}\n`, {
+		mode: STREAM_PROVENANCE_MODE,
+	});
 }
 
 export function clearStreamProvenance(path = streamProvenancePath()): void {
@@ -114,11 +131,12 @@ export function processRuns(
 }
 
 /**
- * Whether any socket is bound to the local port every launch sends to, from
- * `/proc/net/udp` and `udp6`. Undefined when either table cannot be read.
+ * Whether any socket is bound to `port` in the network namespace whose
+ * `net/udp` and `net/udp6` tables sit under `netRoot` (`/proc` for this
+ * process, `/proc/<pid>` for another's). Undefined when a table cannot be read.
  */
 export function localSenderPortBound(
-	procRoot = senderCensusProcRoot(),
+	netRoot = senderCensusProcRoot(),
 	port = SRTLA_LISTEN_PORT,
 ): boolean | undefined {
 	const hex = port.toString(16).toUpperCase().padStart(4, "0");
@@ -126,7 +144,7 @@ export function localSenderPortBound(
 	for (const table of ["udp", "udp6"]) {
 		let text: string;
 		try {
-			text = fs.readFileSync(`${procRoot}/net/${table}`, "utf8");
+			text = fs.readFileSync(`${netRoot}/net/${table}`, "utf8");
 		} catch {
 			return undefined;
 		}
@@ -141,8 +159,12 @@ export function localSenderPortBound(
 /**
  * Nothing can carry the recorded session: its sender process is gone (by PID
  * and start time), no process named `srtla_send` runs, no child of this
- * backend's session remains, and nothing holds the local sender port, which
- * also covers a sender under another name. Unreadable evidence is not absence.
+ * backend's session remains, and nothing holds the recorded port, neither in
+ * this process's network namespace nor in the engine's, where its packets go.
+ * That also covers a sender under another name. Unreadable evidence is not
+ * absence. Limits: a carrier on another port, or in a third namespace the
+ * engine's loopback cannot reach, is not looked for, because it cannot
+ * receive what the engine sends to its own `127.0.0.1:<port>`.
  */
 export function carrierAbsent(
 	record: StreamProvenance,
@@ -153,7 +175,9 @@ export function carrierAbsent(
 		!processRuns(record.sender, procRoot) &&
 		senderCensus(procRoot) === "absent" &&
 		!ownedRemain() &&
-		localSenderPortBound(procRoot) === false
+		localSenderPortBound(procRoot, record.port) === false &&
+		localSenderPortBound(`${procRoot}/${record.engine.pid}`, record.port) ===
+			false
 	);
 }
 
@@ -177,6 +201,11 @@ export async function engineProcess(
 	}
 }
 
+const sameProcess = (
+	a: ProcessIdentity | undefined,
+	b: ProcessIdentity,
+): boolean => a !== undefined && a.pid === b.pid && a.startTime === b.startTime;
+
 export type OrphanOutcome = "stopped" | "gone" | "refused";
 
 export type OrphanRetirementDeps = {
@@ -184,19 +213,34 @@ export type OrphanRetirementDeps = {
 	readonly bootId: () => string | undefined;
 	readonly carrierAbsent: (record: StreamProvenance) => boolean;
 	readonly engineProcess: () => Promise<ProcessIdentity | undefined>;
+	/** A valid snapshot with no session id, no active input and no targets. */
+	readonly engineReportsNoSession: () => Promise<boolean>;
+	readonly stopEnabled: () => boolean;
 	readonly stopRecordedSession:
-		| ((sessionId: string, beforeDispatch: () => boolean) => Promise<boolean>)
+		| ((
+				sessionId: string,
+				beforeDispatch: () => boolean,
+				afterSnapshot: () => Promise<boolean>,
+		  ) => Promise<boolean>)
 		| undefined;
 };
 
 /**
  * Decide, and for a live session act, on a session an earlier backend process
- * left. `streaming`: the engine reports a session this process cannot
- * confirm; it is stopped only if it is the recorded one, in the recorded
- * engine process, and nothing can carry it, checked again in the tick the
- * stop is written. `silent`: the engine answered, sent no status and its
- * snapshot shows no session, so the recorded session has ended (`gone`); no
- * Stop is needed. Everything else is `refused` and changes nothing.
+ * of this boot left, only on that process's record of it.
+ *
+ * `silent`: the engine answered and sent no status. If a fresh snapshot is a
+ * valid answer naming no session, the recorded session has ended (`gone`) and
+ * no Stop is needed.
+ *
+ * `streaming`: the engine reports a session this process cannot confirm. Only
+ * with the stop enabled, and only for the recorded engine process (sampled
+ * before the connection and again after its snapshot), the recorded
+ * `session_id` in that snapshot, and no carrier, checked again in the tick the
+ * stop is written. The engine's `stop` is still unconditional on its side, so
+ * this stays off by default.
+ *
+ * Everything else is `refused` and changes nothing.
  */
 export async function retireOrphanedSession(
 	engine: "streaming" | "silent",
@@ -205,42 +249,70 @@ export async function retireOrphanedSession(
 	const record = deps.readRecord();
 	if (record === undefined || record.bootId !== deps.bootId()) return "refused";
 	if (!deps.carrierAbsent(record)) return "refused";
-	if (engine === "silent") return "gone";
-	const current = await deps.engineProcess();
-	if (
-		current === undefined ||
-		current.pid !== record.engine.pid ||
-		current.startTime !== record.engine.startTime ||
-		deps.stopRecordedSession === undefined
-	)
+	if (engine === "silent")
+		return (await deps.engineReportsNoSession()) ? "gone" : "refused";
+	if (!deps.stopEnabled() || deps.stopRecordedSession === undefined)
 		return "refused";
-	return (await deps.stopRecordedSession(record.sessionId, () =>
-		deps.carrierAbsent(record),
+	if (!sameProcess(await deps.engineProcess(), record.engine)) return "refused";
+	return (await deps.stopRecordedSession(
+		record.sessionId,
+		() => deps.carrierAbsent(record),
+		async () => sameProcess(await deps.engineProcess(), record.engine),
 	))
 		? "stopped"
 		: "refused";
 }
 
-export const defaultOrphanRetirementDeps = (
-	stopRecordedSession: OrphanRetirementDeps["stopRecordedSession"],
-): OrphanRetirementDeps => ({
-	readRecord: () => readStreamProvenance(),
-	bootId: () => readSystemBootId(),
-	carrierAbsent: (record) => carrierAbsent(record),
+/**
+ * What the production paths read about processes and the boot. Tests replace
+ * them so a host's systemd and process table are never consulted.
+ */
+export type ProvenanceProbes = {
+	readonly engineProcess: () => Promise<ProcessIdentity | undefined>;
+	readonly bootId: () => string | undefined;
+	readonly processStartTime: (pid: number) => string | undefined;
+};
+const hostProbes: ProvenanceProbes = {
 	engineProcess: () => engineProcess(),
-	stopRecordedSession,
+	bootId: () => readSystemBootId(),
+	processStartTime: (pid) => processStartTime(pid),
+};
+let probes: ProvenanceProbes = hostProbes;
+export function provenanceProbes(): ProvenanceProbes {
+	return probes;
+}
+export function setProvenanceProbesForTest(
+	overrides: Partial<ProvenanceProbes> | null,
+): void {
+	probes = overrides === null ? hostProbes : { ...hostProbes, ...overrides };
+}
+
+export const defaultOrphanRetirementDeps = (backend: {
+	readonly stopRecordedSession?: OrphanRetirementDeps["stopRecordedSession"];
+	readonly engineReportsNoSession?: () => Promise<boolean>;
+}): OrphanRetirementDeps => ({
+	readRecord: () => readStreamProvenance(),
+	bootId: () => probes.bootId(),
+	carrierAbsent: (record) => carrierAbsent(record),
+	engineProcess: () => probes.engineProcess(),
+	engineReportsNoSession: async () =>
+		(await backend.engineReportsNoSession?.()) === true,
+	stopEnabled: orphanStopEnabled,
+	stopRecordedSession: backend.stopRecordedSession,
 });
 
 /**
  * Write the record for the session this process just committed. Every piece
  * must be known: the engine's session id from our Start, the engine and sender
- * processes by PID and start time, and the boot. Otherwise nothing is written,
- * which only means a later process will not stop the session by itself.
+ * processes by PID and start time, the port and the boot, and the session must
+ * still be ours after the engine was sampled. Otherwise nothing is written,
+ * which only means a later process will not settle the session by itself.
  */
 export async function recordLaunchedSession(deps: {
 	readonly sessionId: () => string | undefined;
 	readonly senderPid: () => number | undefined;
 	readonly bootId: () => string | undefined;
+	readonly port: number;
 	readonly engineProcess: () => Promise<ProcessIdentity | undefined>;
 	readonly processStartTime: (pid: number) => string | undefined;
 	readonly current: () => boolean;
@@ -253,14 +325,21 @@ export async function recordLaunchedSession(deps: {
 		return false;
 	const senderStart = deps.processStartTime(senderPid);
 	const engine = await deps.engineProcess();
-	if (senderStart === undefined || engine === undefined || !deps.current())
+	if (
+		senderStart === undefined ||
+		engine === undefined ||
+		!deps.current() ||
+		deps.sessionId() !== sessionId ||
+		deps.processStartTime(senderPid) !== senderStart
+	)
 		return false;
 	deps.write({
-		version: 1,
+		version: 2,
 		bootId,
 		sessionId,
 		engine,
 		sender: { pid: senderPid, startTime: senderStart },
+		port: deps.port,
 	});
 	return true;
 }

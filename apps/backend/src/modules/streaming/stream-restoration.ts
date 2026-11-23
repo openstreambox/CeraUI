@@ -34,8 +34,9 @@
  * and short-circuits, so a backend-only restart against a still-streaming engine
  * never launches a second session. Reconciliation retains such a session only
  * with this process's own sender and Start evidence. A predecessor's recorded
- * session that nothing carries any more is stopped by reconciliation first, so
- * the run then restores into an idle engine. Any other predecessor's session
+ * session the engine has already ended (or, with the automatic stop enabled,
+ * that reconciliation stopped) leaves an idle engine to restore into. Any
+ * other predecessor's session
  * stays unconfirmed (`unknown`), so the run waits, gives up after its unknown
  * deadline and leaves recovery to an operator Stop. That is the whole reason the
  * check is not "did we leave a marker behind" — a marker survives a backend
@@ -215,7 +216,7 @@ export interface StreamRestorationDeps {
 	 * update orchestrator's startup adjudication: until it has loaded its
 	 * persisted phase, its Start admission cannot see an install in progress.
 	 */
-	readonly awaitRecovery: () => Promise<void>;
+	readonly awaitRecovery: () => Promise<boolean | undefined>;
 }
 
 /**
@@ -391,13 +392,13 @@ function defaultDeps(): StreamRestorationDeps {
  */
 export async function awaitRestorationAdmission(
 	modems: () => Promise<void> = awaitRecoveryBarrier,
-	updates: () => Promise<unknown> = async () =>
+	updates: () => Promise<boolean> = async () =>
 		(
 			await import("../system/update-orchestrator/runtime.ts")
 		).awaitUpdateStartupAdjudication(),
-): Promise<void> {
+): Promise<boolean> {
 	await modems();
-	await updates();
+	return await updates();
 }
 
 /**
@@ -443,7 +444,15 @@ async function runOnce(
 	trigger: RestorationTrigger,
 ): Promise<RestorationRunOutcome> {
 	const current = captureOperatorStopIntent();
-	await deps.awaitRecovery();
+	// `false`: update startup adjudication refused, so Start admission cannot be
+	// trusted to see an install in progress. The marker stays for a later run.
+	if ((await deps.awaitRecovery()) === false) {
+		deps.logger.warn("stream restoration blocked", {
+			module: "streaming",
+			reason: "update_adjudication_refused",
+		});
+		return { result: "blocked", reason: "update_adjudication_refused" };
+	}
 	const startedAt = deps.now();
 	for (;;) {
 		const runtimeState = await deps.runtimeState();

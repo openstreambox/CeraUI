@@ -7,10 +7,12 @@
  * engine sends no status. Only an operator Stop got the box out, and the
  * marker deferred OTA activation the whole time.
  *
- * A later process now settles that session only on the earlier process's own
- * record of it (stream-provenance.ts): the recorded session, in the recorded
- * engine process, with nothing left that could carry it. Without that proof
- * nothing is stopped and an operator Stop is still the way out.
+ * A later process now acts on that session only on the earlier process's own
+ * record of it (stream-provenance.ts), with nothing left that could carry it:
+ * a session the engine has ended is settled, and one still running is stopped
+ * only with the automatic stop enabled (off in production; these cases turn it
+ * on). Without that proof nothing is stopped and an operator Stop is still the
+ * way out, and an operator Stop never rides on a settle that refused.
  */
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs, { existsSync, rmSync } from "node:fs";
@@ -59,11 +61,12 @@ function killedMidStream() {
 }
 
 const RECORD: StreamProvenance = {
-	version: 1,
+	version: 2,
 	bootId: "boot-1",
 	sessionId: "cs-3",
 	engine: { pid: 700, startTime: "1000" },
 	sender: { pid: 4242, startTime: "3960195" },
+	port: 9000,
 };
 
 /**
@@ -77,17 +80,22 @@ function restarted(options: {
 	record?: StreamProvenance | undefined;
 	retirement?: Partial<OrphanRetirementDeps>;
 	ports?: Partial<StreamSessionOrchestratorDeps>;
+	engineStop?: () => Promise<void>;
 }) {
 	const { marker, inhibitorHeld } = backendProcess();
 	const stops: string[] = [];
 	const engineStops: number[] = [];
 	let launches = 0;
 	let orphanEvents = 0;
+	let retireCalls = 0;
 	const deps: OrphanRetirementDeps = {
 		readRecord: () => options.record,
 		bootId: () => "boot-1",
 		carrierAbsent: () => true,
 		engineProcess: async () => RECORD.engine,
+		engineReportsNoSession: async () => true,
+		// The automatic stop is off in production; these cases turn it on.
+		stopEnabled: () => true,
 		stopRecordedSession: async (sessionId, beforeDispatch) => {
 			if (!beforeDispatch()) return false;
 			stops.push(sessionId);
@@ -105,7 +113,10 @@ function restarted(options: {
 		claimLaunchMarker: marker.claimForLaunch,
 		protectUnownedEngineSession: marker.claimForLaunch,
 		engineStopped: async () => false,
-		retireOrphanedSession: (engine) => retireOrphanedSession(engine, deps),
+		retireOrphanedSession: (engine) => {
+			retireCalls++;
+			return retireOrphanedSession(engine, deps);
+		},
 		onOrphanedSessionStopped: () => {
 			orphanEvents++;
 		},
@@ -122,6 +133,7 @@ function restarted(options: {
 		},
 		stopRuntime: async () => {
 			engineStops.push(1);
+			await options.engineStop?.();
 		},
 		onStreamStopped: () => undefined,
 		onStreamCommitted: undefined,
@@ -142,6 +154,7 @@ function restarted(options: {
 		engineStops,
 		launches: () => launches,
 		orphanEvents: () => orphanEvents,
+		retireCalls: () => retireCalls,
 		start: () =>
 			session.start({
 				origin: "ui",
@@ -152,7 +165,7 @@ function restarted(options: {
 	};
 }
 
-test("a recorded session whose sender died is stopped by its id, and Start launches", async () => {
+test("with the stop enabled, a recorded session whose sender died is compare-and-stopped, and Start launches", async () => {
 	killedMidStream();
 	let engine: Engine = "streaming";
 	const next = restarted({
@@ -194,6 +207,8 @@ test("after the engine restarted, a recorded marker beside a silent engine settl
 test("a clean boot beside a silent engine stops nothing", async () => {
 	const next = restarted({ engine: () => "silent", record: RECORD });
 	expect(await next.session.reconcile()).toBe("idle");
+	// Nothing needs protection, so no earlier session is even looked for.
+	expect(next.retireCalls()).toBe(0);
 	expect(next.stops).toEqual([]);
 	expect(next.engineStops).toEqual([]);
 	expect(markerPresent()).toBe(false);
@@ -358,4 +373,103 @@ test("a session this process launched is never settled as an earlier process's",
 	expect(own.stops).toEqual([]);
 	expect(markerPresent()).toBe(true);
 	expect(await own.session.stop("operator")).toEqual({ result: "stopped" });
+});
+
+/** Review probe: an invalid snapshot is not a valid empty one. */
+test("silence without a valid empty snapshot keeps the stream's marker", async () => {
+	killedMidStream();
+	const next = restarted({
+		engine: () => "silent",
+		record: RECORD,
+		retirement: { engineReportsNoSession: async () => false },
+	});
+	expect(await next.session.reconcile()).toBe("reconciling");
+	expect(markerPresent()).toBe(true);
+	expect(next.inhibitorHeld()).toBe(true);
+});
+
+/**
+ * The shipped default: with the automatic stop off, the leftover session stays
+ * protected, and one operator Stop clears it so Start works.
+ */
+test("with the stop off, a leftover session waits for one operator Stop, then Start works", async () => {
+	killedMidStream();
+	let engine: Engine = "streaming";
+	const next = restarted({
+		engine: () => engine,
+		record: RECORD,
+		retirement: { stopEnabled: () => false },
+		engineStop: async () => {
+			engine = "silent";
+		},
+	});
+	expect(await next.session.reconcile()).toBe("reconciling");
+	expect(next.stops).toEqual([]);
+	expect(await next.start()).toMatchObject({ result: "busy" });
+	expect(markerPresent()).toBe(true);
+
+	expect(await next.session.stop("operator")).toEqual({ result: "stopped" });
+	expect(next.engineStops).toEqual([1]);
+	expect(markerPresent()).toBe(false);
+	expect(next.inhibitorHeld()).toBe(false);
+	expect(await next.start()).toMatchObject({ result: "started" });
+});
+
+/** Review probe: an operator Stop must never resolve through a refused settle. */
+test("an operator Stop during a settle that refuses still sends its own stop", async () => {
+	killedMidStream();
+	const judging = Promise.withResolvers<void>();
+	const verdict = Promise.withResolvers<boolean>();
+	let engineStopFails = false;
+	const next = restarted({
+		engine: () => "streaming",
+		record: RECORD,
+		retirement: {
+			stopRecordedSession: async () => {
+				judging.resolve();
+				return verdict.promise;
+			},
+		},
+		engineStop: async () => {
+			if (engineStopFails) throw new Error("engine did not acknowledge");
+		},
+	});
+	const reconcile = next.session.reconcile();
+	await judging.promise;
+	const operator = next.session.stop("operator");
+	await Promise.resolve();
+	expect(next.engineStops).toEqual([]);
+	verdict.resolve(false);
+	await reconcile;
+	expect(await operator).toEqual({ result: "stopped" });
+	expect(next.engineStops).toEqual([1]);
+	expect(markerPresent()).toBe(false);
+
+	// The same, with an engine that does not acknowledge the operator's stop.
+	killedMidStream();
+	const judging2 = Promise.withResolvers<void>();
+	const verdict2 = Promise.withResolvers<boolean>();
+	const again = restarted({
+		engine: () => "streaming",
+		record: RECORD,
+		retirement: {
+			stopRecordedSession: async () => {
+				judging2.resolve();
+				return verdict2.promise;
+			},
+		},
+		engineStop: async () => {
+			throw new Error("engine did not acknowledge");
+		},
+	});
+	engineStopFails = true;
+	const reconcile2 = again.session.reconcile();
+	await judging2.promise;
+	const operator2 = again.session.stop("operator");
+	verdict2.resolve(false);
+	await reconcile2;
+	expect((await operator2).result).toBe("stop_failed");
+	expect(again.engineStops).toEqual([1]);
+	expect(markerPresent()).toBe(true);
+	expect(again.inhibitorHeld()).toBe(true);
 });

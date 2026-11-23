@@ -216,8 +216,9 @@ temporarily closes admission but cannot create protection on that baseline.
 Protected/adopted/uncertain sessions remain closed through silence; only explicit
 operator Stop may confirm an unowned unknown engine. Reconciliation settles only
 an earlier backend process's recorded session that nothing can carry any more
-(`START-LIFECYCLE.md`, ownership section), and clears the sentinel only on the
-engine's acknowledgement or its answer that no session exists.
+(`START-LIFECYCLE.md`, ownership section): by default only once the engine
+validly answers that no session exists, and with the automatic stop enabled
+also on the engine's acknowledgement of a compare-and-stop.
 Cancelled starts retain rollback certainty and the cancelling Stop acknowledgement.
 Runtime evidence is bound to the producing client/epoch and invalidated at new
 Start, acquisition and acknowledgement. Old idle never clears a new session's

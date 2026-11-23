@@ -86,10 +86,11 @@ restarted backend does not own that session's sender. Engine silence without the
 
 A stream's own empty marker is settled without an operator Stop only on the
 earlier process's record of that session (`START-LIFECYCLE.md`, ownership
-section): the running session is stopped by its id when nothing can carry it,
-or a reachable, silent engine with no session in its snapshot shows that the
-session has ended. The marker then keeps only a carrying line while carrying
-holds. Without the record, both still wait for an operator Stop. Measured on a
+section): a reachable, silent engine whose snapshot validly names no session
+shows that the session has ended; stopping a session that is still running is
+a compare-and-stop that stays off by default. The marker then keeps only a
+carrying line while carrying holds. Without the record, or while the session
+still runs, the marker waits for an operator Stop. Measured on a
 stock image: a backend restart mid-stream left the empty marker, and Start
 answered `START_IN_PROGRESS` through an engine watchdog restart and a further
 backend restart until an operator Stop.

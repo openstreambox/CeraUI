@@ -107,7 +107,10 @@ export interface StreamingBackend {
 	stopRecordedSession?(
 		sessionId: string,
 		beforeDispatch: () => boolean,
+		afterSnapshot?: () => Promise<boolean>,
 	): Promise<boolean>;
+	/** A valid engine snapshot that names no session, on a fresh connection. */
+	engineReportsNoSession?(): Promise<boolean>;
 	/**
 	 * Hot-adjust the max bitrate while streaming: persist it and signal a reload.
 	 * Returns the applied value, or `undefined` when the input fails validation.
