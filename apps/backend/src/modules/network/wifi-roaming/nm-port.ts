@@ -56,6 +56,9 @@ export function subnetOf(cidr: string): string | null {
 export const searchProfileName = (ifname: string): string =>
 	`ceraui-search-${argMatch(ID_RE, ifname)}`;
 
+/** Every owned clone's name starts with this, whatever radio it was for. */
+export const SEARCH_PROFILE_PREFIX = "ceraui-search-";
+
 /** Parse `iw dev <if> link`. */
 export function parseIwLink(
 	stdout: string,
@@ -302,6 +305,50 @@ export function createSearchNm(deps: SearchNmDeps) {
 	}
 
 	return {
+		/**
+		 * Delete owned clones left over from an earlier run or an earlier name
+		 * (a restart, a replug): every `ceraui-search-*` profile that no device
+		 * has active. With an unreadable active listing nothing is deleted.
+		 * Returns how many were removed.
+		 */
+		async sweepOrphans(): Promise<number> {
+			const activeOut = await quiet("nmcli", [
+				"-t",
+				"-f",
+				"UUID",
+				"connection",
+				"show",
+				"--active",
+			]);
+			if (activeOut === undefined) return 0;
+			const active = new Set(
+				activeOut
+					.split("\n")
+					.map((l) => l.trim())
+					.filter(Boolean),
+			);
+			const all = await quiet("nmcli", [
+				"-t",
+				"-f",
+				"NAME,UUID",
+				"connection",
+				"show",
+			]);
+			let removed = 0;
+			for (const line of all?.split("\n") ?? []) {
+				const [name, uuid] = splitTerse(line);
+				if (
+					name?.startsWith(SEARCH_PROFILE_PREFIX) &&
+					uuid &&
+					UUID_RE.test(uuid) &&
+					!active.has(uuid) &&
+					(await quiet("nmcli", ["connection", "delete", uuid])) !== undefined
+				)
+					removed++;
+			}
+			return removed;
+		},
+
 		async observe(ifname: string): Promise<RadioObservation | undefined> {
 			const dev = argMatch(ID_RE, ifname);
 			const link = await quiet("iw", ["dev", dev, "link"]);

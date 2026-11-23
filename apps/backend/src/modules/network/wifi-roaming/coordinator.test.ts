@@ -1618,3 +1618,62 @@ describe("identity confirmed around a join's activation", () => {
 		expect(w.bond).toEqual(["hold:wlan2", "release:wlan2"]);
 	});
 });
+
+describe("lifecycle", () => {
+	test("stop() during a scan is fenced: no join after it, and every gate is released once the round ends", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const c = new RoamingCoordinator(w.ports(), {
+			radios: radios("wlan1", "wlan2"),
+		});
+		const order: string[] = [];
+		let stopped: Promise<void> = Promise.resolve();
+		w.duringScan = () => {
+			stopped = c.stop();
+			void stopped.then(() => order.push("stop-settled"));
+		};
+		await c.step().then(() => order.push("round-done"));
+		await stopped;
+		// stop() settles only after the round in flight has finished.
+		expect(order).toEqual(["round-done", "stop-settled"]);
+		expect(w.calls).toEqual(["scan:wlan2"]);
+		expect(w.bond.at(-1)).toBe("release:wlan2");
+		expect([...scanProtectedRadios()]).toEqual([]);
+		expect(isCoordinatorOwnedRadio("wlan1")).toBe(false);
+		// Nothing runs after stop.
+		w.calls = [];
+		await c.step();
+		expect(w.calls).toEqual([]);
+	});
+
+	test("owned clones left by an earlier run are swept once, before the first round", async () => {
+		const w = new World();
+		w.station("wlan1", AP1, -50);
+		w.station("wlan2", AP1, -56);
+		const order: string[] = [];
+		const ports = {
+			...w.ports(),
+			sweepOrphans: async () => {
+				order.push("sweep");
+				return 0;
+			},
+		};
+		const observe = ports.observe;
+		const c = new RoamingCoordinator(
+			{
+				...ports,
+				observe: async (ifname: string) => {
+					order.push(`observe:${ifname}`);
+					return observe(ifname);
+				},
+			},
+			{ radios: radios("wlan1", "wlan2") },
+		);
+		await c.step();
+		await c.step();
+		expect(order.filter((x) => x === "sweep")).toEqual(["sweep"]);
+		expect(order[0]).toBe("sweep");
+		await c.stop();
+	});
+});

@@ -195,6 +195,11 @@ export type CoordinatorPorts = Readonly<{
 		ifname: string,
 		fn: (confirm: () => Promise<boolean>) => Promise<T>,
 	): Promise<RadioLockResult<T>>;
+	/**
+	 * Delete owned clones an earlier run or an earlier name left behind (never
+	 * an active one). Run once, before the first round.
+	 */
+	sweepOrphans?(): Promise<number>;
 }>;
 
 export type RadioConfig = Readonly<{
@@ -414,6 +419,9 @@ export class RoamingCoordinator {
 	#busy = false;
 	#started = false;
 	#stopped = false;
+	#swept = false;
+	/** The round in progress, so `stop()` can wait for it. */
+	#inflight: Promise<void> | null = null;
 
 	constructor(ports: CoordinatorPorts, config: CoordinatorConfig) {
 		const ids = config.radios.map((r) => r.id);
@@ -454,6 +462,7 @@ export class RoamingCoordinator {
 	}
 
 	#publishOwnership(): void {
+		if (this.#stopped) return;
 		setCoordinatorOwnedRadios(
 			this.#radios
 				.filter((r) => r.present && r.role !== "hotspot-reserved")
@@ -491,12 +500,31 @@ export class RoamingCoordinator {
 		};
 	}
 
-	/** Release every gate. Radios keep whatever association they have. */
-	stop(): void {
+	/**
+	 * Release every gate. Radios keep whatever association they have. Fenced:
+	 * no scan, join or hold starts after this call, and the returned promise
+	 * settles once a round in flight has finished, with every gate released
+	 * again after it.
+	 */
+	stop(): Promise<void> {
 		this.#stopped = true;
+		this.#releaseAll();
+		const inflight = this.#inflight;
+		if (!inflight) return Promise.resolve();
+		return inflight.then(
+			() => this.#releaseAll(),
+			() => this.#releaseAll(),
+		);
+	}
+
+	#releaseAll(): void {
 		this.#dropSwap("stopped");
 		this.#history = [];
-		for (const r of this.#radios) this.#release(r);
+		for (const r of this.#radios) {
+			if (!r.heldOut) continue;
+			r.heldOut = false;
+			this.#ports.releaseBondHold(r.ifname);
+		}
 		protectRadiosFromScans([]);
 		setScanGateModeReader(null);
 		setCoordinatorOwnedRadios([]);
@@ -506,10 +534,19 @@ export class RoamingCoordinator {
 	async step(): Promise<void> {
 		if (this.#busy || this.#stopped) return;
 		this.#busy = true;
+		const round = (async () => {
+			if (!this.#swept) {
+				this.#swept = true;
+				await this.#ports.sweepOrphans?.();
+			}
+			if (!this.#stopped) await this.#round();
+		})();
+		this.#inflight = round;
 		try {
-			await this.#round();
+			await round;
 		} finally {
 			this.#busy = false;
+			this.#inflight = null;
 		}
 	}
 
@@ -728,6 +765,7 @@ export class RoamingCoordinator {
 	 * Published on every change of role, hold or ownership, not once a round.
 	 */
 	#protectFromScans(): void {
+		if (this.#stopped) return;
 		// An absent radio's last name may already belong to another radio.
 		const prot = this.#radios.filter(
 			(r) =>
@@ -1680,6 +1718,7 @@ export class RoamingCoordinator {
 	#withdraw(r: RadioRecord): void {
 		if (r.role === "holder" || r.role === "hotspot-reserved")
 			throw new Error(`Refusing to withdraw ${r.role} ${r.ifname}`);
+		if (this.#stopped) return;
 		r.role = "searcher";
 		if (!r.heldOut) {
 			r.heldOut = true;
@@ -1720,6 +1759,8 @@ export class RoamingCoordinator {
 		action: (confirm: () => Promise<boolean>) => Promise<T>,
 	): Promise<{ value: T | undefined; stop: ActStop | null }> {
 		if (this.#departure) throw new Error("A departure is already in flight");
+		// Fenced: nothing new starts once stop() was called.
+		if (this.#stopped) return { value: undefined, stop: "aborted" };
 		if (r.role !== "searcher" || !r.heldOut)
 			throw new Error(`Refusing an action on ${r.role} ${r.ifname}`);
 		const departure: Departure = {

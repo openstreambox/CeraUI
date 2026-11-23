@@ -348,3 +348,39 @@ describe("join's last check and stale clones", () => {
 		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
 	});
 });
+
+describe("sweep of orphaned clones", () => {
+	const ORPHAN = "55555555-5555-4555-8555-555555555555";
+	const LIVE = "66666666-6666-4666-8666-666666666666";
+	const table = (activeFails: boolean) => {
+		const calls: string[] = [];
+		const run = async (bin: string, args: string[]) => {
+			const line = `${bin} ${args.join(" ")}`;
+			calls.push(line);
+			if (line === "nmcli -t -f UUID connection show --active") {
+				if (activeFails) throw new Error("failed");
+				return `${LIVE}\n${SOURCE}\n`;
+			}
+			if (line === "nmcli -t -f NAME,UUID connection show")
+				return `ceraui-search-wlan7:${ORPHAN}\nceraui-search-wlan2:${LIVE}\nvenue:${OTHER}\n`;
+			return "";
+		};
+		return { run, calls };
+	};
+
+	test("deletes inactive owned clones under any name, never an active one or an operator profile", async () => {
+		const t = table(false);
+		const nm = createSearchNm({ run: t.run, macOf: async () => MAC });
+		expect(await nm.sweepOrphans()).toBe(1);
+		expect(t.calls.filter((c) => c.includes("connection delete"))).toEqual([
+			`nmcli connection delete ${ORPHAN}`,
+		]);
+	});
+
+	test("deletes nothing when the active listing cannot be read", async () => {
+		const t = table(true);
+		const nm = createSearchNm({ run: t.run, macOf: async () => MAC });
+		expect(await nm.sweepOrphans()).toBe(0);
+		expect(t.calls.some((c) => c.includes("connection delete"))).toBe(false);
+	});
+});

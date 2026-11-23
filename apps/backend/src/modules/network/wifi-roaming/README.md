@@ -63,6 +63,16 @@ reservation) belongs to the identity:
   while its join activated has the clone removed at once). Both end as
   `radio-replaced`, not as a failure of the BSSID.
 
+## Lifecycle
+
+- **Start.** Before the first round the coordinator sweeps owned clones an
+  earlier run or an earlier name left behind (`ceraui-search-*` that no device
+  has active). An unreadable active listing deletes nothing.
+- **Stop.** `stop()` is fenced: no scan, join or bond hold starts after it, and
+  the promise it returns settles only after a round in flight has finished,
+  with every gate (bond holds, scan protection, ownership) released again after
+  that round. Radios keep whatever association they have.
+
 ## What runs today
 
 - **Search triggers** (`policy.ts`). A holder that fades (signal, signal slope,
