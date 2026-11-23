@@ -218,6 +218,7 @@ class World {
 			releaseBondHold: (ifname) => this.bond.push(`release:${ifname}`),
 			withRadioLock: async <T>(
 				_ifname: string,
+				_expected: unknown,
 				fn: (confirm: () => Promise<boolean>) => Promise<T>,
 			) => ({
 				ok: true as const,

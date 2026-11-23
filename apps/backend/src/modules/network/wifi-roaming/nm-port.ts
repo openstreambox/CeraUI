@@ -13,6 +13,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
+import { type CloneRegistry, memoryCloneRegistry } from "./clone-registry.ts";
 import {
 	JOIN_REFUSED,
 	type JoinResult,
@@ -177,6 +178,11 @@ export function parseCloneUuid(stdout: string): string | undefined {
 
 export type SearchNmDeps = Readonly<{
 	run: Runner;
+	/**
+	 * Provenance of owned clones. Only a UUID recorded here is ever deleted.
+	 * Defaults to an in-memory record; production passes the /run file.
+	 */
+	clones?: CloneRegistry;
 	/** MAC address the radio's saved profiles are bound to. */
 	macOf?: (ifname: string) => Promise<string | undefined>;
 }>;
@@ -200,6 +206,14 @@ async function sysfsMac(ifname: string): Promise<string | undefined> {
 export function createSearchNm(deps: SearchNmDeps) {
 	const run = deps.run;
 	const macOf = deps.macOf ?? sysfsMac;
+	const clones = deps.clones ?? memoryCloneRegistry();
+	/** Delete one owned clone; forget it once NetworkManager confirms. */
+	const dropClone = async (uuid: string): Promise<boolean> => {
+		const ok =
+			(await quiet("nmcli", ["connection", "delete", uuid])) !== undefined;
+		if (ok) await clones.remove(uuid);
+		return ok;
+	};
 	const quiet = async (bin: string, args: string[], timeout = 10_000) => {
 		try {
 			return await run(bin, args, { timeout });
@@ -298,35 +312,22 @@ export function createSearchNm(deps: SearchNmDeps) {
 				uuid &&
 				uuid !== keep &&
 				uuid !== active &&
-				UUID_RE.test(uuid)
+				UUID_RE.test(uuid) &&
+				(await clones.has(uuid))
 			)
-				await quiet("nmcli", ["connection", "delete", uuid]);
+				await dropClone(uuid);
 		}
 	}
 
 	return {
 		/**
 		 * Delete owned clones left over from an earlier run or an earlier name
-		 * (a restart, a replug): every `ceraui-search-*` profile that no device
-		 * has active. With an unreadable active listing nothing is deleted.
-		 * Returns how many were removed.
+		 * (a restart, a replug): only UUIDs the clone record names, still named
+		 * `ceraui-search-*`, and not active on any device when read right before
+		 * the deletion. An unreadable listing deletes nothing. Returns how many
+		 * were removed.
 		 */
 		async sweepOrphans(): Promise<number> {
-			const activeOut = await quiet("nmcli", [
-				"-t",
-				"-f",
-				"UUID",
-				"connection",
-				"show",
-				"--active",
-			]);
-			if (activeOut === undefined) return 0;
-			const active = new Set(
-				activeOut
-					.split("\n")
-					.map((l) => l.trim())
-					.filter(Boolean),
-			);
 			const all = await quiet("nmcli", [
 				"-t",
 				"-f",
@@ -334,17 +335,35 @@ export function createSearchNm(deps: SearchNmDeps) {
 				"connection",
 				"show",
 			]);
-			let removed = 0;
-			for (const line of all?.split("\n") ?? []) {
+			if (all === undefined) return 0;
+			const names = new Map<string, string>();
+			for (const line of all.split("\n")) {
 				const [name, uuid] = splitTerse(line);
-				if (
-					name?.startsWith(SEARCH_PROFILE_PREFIX) &&
-					uuid &&
-					UUID_RE.test(uuid) &&
-					!active.has(uuid) &&
-					(await quiet("nmcli", ["connection", "delete", uuid])) !== undefined
-				)
-					removed++;
+				if (name && uuid) names.set(uuid, name);
+			}
+			let removed = 0;
+			for (const uuid of await clones.list()) {
+				const name = names.get(uuid);
+				// Gone already (NetworkManager restarted): only the record remains.
+				if (name === undefined) {
+					await clones.remove(uuid);
+					continue;
+				}
+				if (!name.startsWith(SEARCH_PROFILE_PREFIX) || !UUID_RE.test(uuid))
+					continue;
+				// Activity is read again right before each deletion; unreadable
+				// means keep.
+				const activeOut = await quiet("nmcli", [
+					"-t",
+					"-f",
+					"UUID",
+					"connection",
+					"show",
+					"--active",
+				]);
+				if (activeOut === undefined) continue;
+				if (activeOut.split("\n").some((l) => l.trim() === uuid)) continue;
+				if (await dropClone(uuid)) removed++;
 			}
 			return removed;
 		},
@@ -459,6 +478,8 @@ export function createSearchNm(deps: SearchNmDeps) {
 			]);
 			const uuid = cloned && parseCloneUuid(cloned);
 			if (!uuid) return undefined;
+			// Provenance first: nothing deletes a clone this record does not name.
+			await clones.add(uuid);
 			const modified = await quiet("nmcli", [
 				"connection",
 				"modify",
@@ -470,7 +491,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 				"no",
 			]);
 			if (modified !== undefined && !(await mayActivate())) {
-				await quiet("nmcli", ["connection", "delete", uuid]);
+				await dropClone(uuid);
 				return JOIN_REFUSED;
 			}
 			if (modified !== undefined) {
@@ -478,7 +499,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 				// The listing and deletes take time: check once more right before
 				// activation, so a hotspot that came up meanwhile still stops it.
 				if (!(await mayActivate())) {
-					await quiet("nmcli", ["connection", "delete", uuid]);
+					await dropClone(uuid);
 					return JOIN_REFUSED;
 				}
 			}
@@ -490,7 +511,7 @@ export function createSearchNm(deps: SearchNmDeps) {
 					(JOIN_WAIT_S + 3) * 1000,
 				)) !== undefined;
 			if (!up) {
-				await quiet("nmcli", ["connection", "delete", uuid]);
+				await dropClone(uuid);
 				return undefined;
 			}
 			// An earlier clone that was still active before has been replaced
@@ -535,10 +556,9 @@ export function createSearchNm(deps: SearchNmDeps) {
 		async abandon(ifname: string, activation: string): Promise<boolean> {
 			argMatch(ID_RE, ifname);
 			if (!UUID_RE.test(activation)) return false;
-			return (
-				(await quiet("nmcli", ["connection", "delete", activation])) !==
-				undefined
-			);
+			// Only a clone this coordinator recorded is ever deleted.
+			if (!(await clones.has(activation))) return false;
+			return dropClone(activation);
 		},
 	};
 }

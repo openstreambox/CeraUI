@@ -375,12 +375,20 @@ export const runtimeConfigSchema = z.object({
 	wifi_roaming: z
 		.object({
 			enabled: z.boolean(),
-			radios: z.array(
-				z.object({
-					id: z.string().min(1),
-					reserved: z.literal("hotspot").optional(),
-				}),
-			),
+			radios: z
+				.array(
+					z.object({
+						id: z.string().min(1),
+						reserved: z.literal("hotspot").optional(),
+					}),
+				)
+				// One physical radio may be listed once (client or hotspot).
+				.refine(
+					(radios) =>
+						new Set(radios.map((r) => r.id.toLowerCase())).size ===
+						radios.length,
+					{ message: "each radio may be listed once" },
+				),
 		})
 		.optional(),
 

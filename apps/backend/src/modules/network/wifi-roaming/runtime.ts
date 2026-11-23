@@ -17,12 +17,14 @@ import {
 import { logger } from "../../../helpers/logger.ts";
 import { run } from "../../../helpers/run.ts";
 import { admitWifiAdapter } from "../../wifi/wifi-adapter-admission.ts";
+import { isWifiDiscoveryActive } from "../../wifi/wifi-interfaces.ts";
 import {
 	getNetworkInterfaces,
 	isBondCandidate,
 	type NetworkInterface,
 } from "../network-interfaces.ts";
 import { holdOutOfBond, releaseBondHold } from "./bond-hold.ts";
+import { fileCloneRegistry } from "./clone-registry.ts";
 import {
 	type CoordinatorPorts,
 	type CoordinatorStatus,
@@ -31,11 +33,13 @@ import {
 } from "./coordinator.ts";
 import { createSearchNm } from "./nm-port.ts";
 import type { HolderHealth } from "./policy.ts";
-import { withRadioLock } from "./radio-lock.ts";
+import { lifetimeKey, withRadioLock } from "./radio-lock.ts";
+
+export { lifetimeKey };
+
 import {
 	createSenderPort,
 	defaultSenderPortDeps,
-	radioAddressesOf,
 	type SenderPort,
 } from "./sender-port.ts";
 
@@ -56,18 +60,16 @@ export function roamingBlocker(
 ): string | null {
 	if (!config?.enabled) return "disabled";
 	if (twoRadioEnabled) return "two-radio-coordinator-enabled";
-	if (config.radios.filter((r) => r.reserved !== "hotspot").length < 2)
-		return "needs-two-client-radios";
+	const clients = new Set(
+		config.radios
+			.filter((r) => r.reserved !== "hotspot")
+			.map((r) => r.id.toLowerCase()),
+	);
+	if (clients.size < 2) return "needs-two-client-radios";
+	// One physical radio listed twice (two clients, or client and hotspot).
+	const ids = config.radios.map((r) => r.id.toLowerCase());
+	if (new Set(ids).size !== ids.length) return "duplicate-radio-ids";
 	return null;
-}
-
-/** A radio lifetime as one comparable string. */
-export function lifetimeKey(l: {
-	ifindex: number;
-	wiphy: number;
-	phyPath: string;
-}): string {
-	return `${l.ifindex}:${l.wiphy}:${l.phyPath}`;
 }
 
 /** Bond links that are not coordinated Wi-Fi: cellular, Ethernet, others. */
@@ -123,33 +125,44 @@ export type RuntimeIo = Readonly<{
 	appendJournal(line: string): Promise<void>;
 }>;
 
-/** Atomic status writes and a bounded JSONL journal under the run directory. */
+/**
+ * Atomic status writes (mode 0600: the status names SSIDs and BSSIDs) and a
+ * bounded JSONL journal under the run directory. Journal writes are serialized
+ * and rotation replaces the file atomically, so no line is lost to a race.
+ */
 export function fileIo(dir = WIFI_ROAMING_RUN_DIR): RuntimeIo {
 	let lines: number | null = null;
+	let queue: Promise<void> = Promise.resolve();
 	const journal = `${dir}/journal.jsonl`;
+	const read = async () =>
+		(await readFile(journal, "utf8").catch(() => ""))
+			.split("\n")
+			.filter(Boolean);
 	return {
 		async writeStatus(json) {
 			await mkdir(dir, { recursive: true });
-			const tmp = `${dir}/status.json.tmp`;
-			await writeFile(tmp, json);
+			const tmp = `${dir}/status.json.${process.pid}.tmp`;
+			await writeFile(tmp, json, { mode: 0o600 });
 			await rename(tmp, `${dir}/status.json`);
 		},
-		async appendJournal(line) {
-			await mkdir(dir, { recursive: true });
-			if (lines === null)
-				lines = (await readFile(journal, "utf8").catch(() => ""))
-					.split("\n")
-					.filter(Boolean).length;
-			if (lines >= JOURNAL_MAX_LINES) {
-				const kept = (await readFile(journal, "utf8").catch(() => ""))
-					.split("\n")
-					.filter(Boolean)
-					.slice(-Math.floor(JOURNAL_MAX_LINES / 2));
-				await writeFile(journal, `${kept.join("\n")}\n`);
-				lines = kept.length;
-			}
-			await appendFile(journal, `${line}\n`);
-			lines++;
+		appendJournal(line) {
+			const next = queue.then(async () => {
+				await mkdir(dir, { recursive: true });
+				if (lines === null) lines = (await read()).length;
+				if (lines >= JOURNAL_MAX_LINES) {
+					const kept = (await read()).slice(-Math.floor(JOURNAL_MAX_LINES / 2));
+					const tmp = `${journal}.${process.pid}.tmp`;
+					await writeFile(tmp, `${kept.join("\n")}\n`, { mode: 0o600 });
+					await rename(tmp, journal);
+					lines = kept.length;
+				}
+				await appendFile(journal, `${line}\n`, { mode: 0o600 });
+				lines++;
+			});
+			queue = next.catch(() => {
+				// The caller sees the failure; the queue only keeps the order.
+			});
+			return next;
 		},
 	};
 }
@@ -164,15 +177,12 @@ export function productionPorts(
 	now: () => number,
 	currentNames: () => readonly string[],
 ): { ports: CoordinatorPorts; sender: SenderPort } {
-	const nm = createSearchNm({ run });
+	const nm = createSearchNm({ run, clones: fileCloneRegistry() });
 	const lastObs = new Map<string, RadioObservation | undefined>();
-	const senderDeps = defaultSenderPortDeps([], now);
-	const sender = createSenderPort({
-		...senderDeps,
-		radios: () => radioAddressesOf(getNetworkInterfaces(), currentNames()),
-	});
+	const sender = createSenderPort(defaultSenderPortDeps(currentNames, now));
 	const ports: CoordinatorPorts = {
 		now,
+		publicationPending: isWifiDiscoveryActive,
 		resolve: (id) => {
 			const a = admitWifiAdapter(id);
 			return a
@@ -208,7 +218,14 @@ export function productionPorts(
 		holdOutOfBond,
 		releaseBondHold,
 		withRadioLock,
-		sweepOrphans: () => nm.sweepOrphans(),
+		sweepOrphans: async () => {
+			const removed = await nm.sweepOrphans();
+			if (removed > 0)
+				logger.info(
+					`wifi-roaming: removed ${removed} orphaned search profile(s)`,
+				);
+			return removed;
+		},
 	};
 	return { ports, sender };
 }
@@ -247,20 +264,37 @@ export function startRoaming(
 	const c = coordinator;
 	let last: CoordinatorStatus | null = null;
 	let stopped = false;
+	let busy = false;
 	const round = async () => {
-		if (stopped) return;
-		await sender.poll();
-		await c.step();
-		const status = c.status();
-		const at = Date.now();
+		// One round at a time; a tick during a long scan or join is skipped.
+		if (stopped || busy) return;
+		busy = true;
 		try {
-			await io.writeStatus(JSON.stringify({ at, ...status }));
+			await sender.poll();
+			if (stopped) return;
+			await c.step();
+			if (stopped) return;
+			const status = c.status();
+			const at = Date.now();
+			try {
+				await io.writeStatus(JSON.stringify({ at, ...status }));
+			} catch (error) {
+				logger.debug("wifi-roaming: status write failed", { error });
+			}
 			const entry = journalEntry(last, status, at);
-			if (entry) await io.appendJournal(JSON.stringify(entry));
-		} catch (error) {
-			logger.debug("wifi-roaming: status or journal write failed", { error });
+			if (entry) {
+				try {
+					await io.appendJournal(JSON.stringify(entry));
+				} catch (error) {
+					// Keep `last`, so the change is journalled on the next round.
+					logger.debug("wifi-roaming: journal write failed", { error });
+					return;
+				}
+			}
+			last = status;
+		} finally {
+			busy = false;
 		}
-		last = status;
 	};
 	const timer = schedule(() => {
 		void round().catch((error) =>
@@ -285,6 +319,14 @@ let running: RoamingHandle | null = null;
 export async function initWifiRoaming(
 	config: WifiRoamingConfig | undefined,
 	twoRadioEnabled: boolean,
+	start: (config: WifiRoamingConfig) => RoamingHandle = (cfg) => {
+		const now = () => Math.round(performance.now());
+		return startRoaming(
+			cfg,
+			(currentNames) => productionPorts(now, currentNames),
+			fileIo(),
+		);
+	},
 ): Promise<void> {
 	if (running) return;
 	const blocker = roamingBlocker(config, twoRadioEnabled);
@@ -293,12 +335,7 @@ export async function initWifiRoaming(
 			logger.warn(`wifi-roaming: not started (${blocker})`);
 		return;
 	}
-	const now = () => Math.round(performance.now());
-	running = startRoaming(
-		config,
-		(currentNames) => productionPorts(now, currentNames),
-		fileIo(),
-	);
+	running = start(config);
 	logger.info(
 		`wifi-roaming: started with ${config.radios.length} radios (${config.radios.filter((r) => r.reserved).length} hotspot-reserved)`,
 	);

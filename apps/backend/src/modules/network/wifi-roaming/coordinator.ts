@@ -124,10 +124,23 @@ export type JoinResult = Readonly<{ activation: string }>;
 /** `join` declined to activate because the last check before it said no. */
 export const JOIN_REFUSED = "refused";
 
+/** How long a present radio may be unresolved before it counts as gone. */
+const ABSENT_GRACE_MS = 5_000;
+
 /** The radio was replaced while its join activated; the clone was removed. */
 const RADIO_REPLACED = "radio-replaced";
 
 /** `ok: false` when another CeraUI operation holds the radio's adapter lock. */
+/**
+ * The radio an action is meant for: its identity, and the lifetime the round
+ * resolved (`null` without a resolver). The lock refuses another radio that
+ * answers to the name by the time the action runs.
+ */
+export type RadioExpectation = Readonly<{
+	id: string;
+	lifetime: string | null;
+}>;
+
 export type RadioLockResult<T> =
 	| Readonly<{ ok: true; value: T }>
 	| Readonly<{ ok: false }>;
@@ -143,6 +156,11 @@ export type CoordinatorPorts = Readonly<{
 	resolve?(
 		id: string,
 	): Readonly<{ ifname: string; lifetime: string }> | undefined;
+	/**
+	 * Radio discovery is republishing the registry: identities may briefly not
+	 * resolve. The coordinator pauses its effects until it is done.
+	 */
+	publicationPending?(): boolean;
 	observe(ifname: string): Promise<RadioObservation | undefined>;
 	/** Scan on this radio only; `undefined` is a failed scan. */
 	scan(ifname: string): Promise<readonly ScanRow[] | undefined>;
@@ -193,6 +211,7 @@ export type CoordinatorPorts = Readonly<{
 	 */
 	withRadioLock<T>(
 		ifname: string,
+		expected: RadioExpectation | null,
 		fn: (confirm: () => Promise<boolean>) => Promise<T>,
 	): Promise<RadioLockResult<T>>;
 	/**
@@ -281,6 +300,12 @@ type RadioRecord = {
 	/** The lifetime the record's state belongs to, `null` before the first. */
 	lifetime: string | null;
 	present: boolean;
+	/**
+	 * Since when a present radio has not resolved, `null` while it does. Until
+	 * its disappearance is established (ABSENT_GRACE_MS, or a new lifetime) the
+	 * radio keeps its state and the coordinator pauses every effect.
+	 */
+	unresolvedSince: number | null;
 	/** Hotspot-reserved by configuration, whatever its mode. */
 	reserved: boolean;
 	role: Role;
@@ -441,6 +466,7 @@ export class RoamingCoordinator {
 			ifname: r.id,
 			lifetime: null,
 			present: !ports.resolve,
+			unresolvedSince: null,
 			reserved: r.reserved === "hotspot",
 			role: r.reserved === "hotspot" ? "hotspot-reserved" : "searcher",
 			obs: undefined,
@@ -550,6 +576,10 @@ export class RoamingCoordinator {
 		}
 	}
 
+	#expect(r: RadioRecord): RadioExpectation {
+		return { id: r.id, lifetime: r.lifetime };
+	}
+
 	#holders(): RadioRecord[] {
 		return this.#radios.filter((r) => r.role === "holder");
 	}
@@ -569,16 +599,23 @@ export class RoamingCoordinator {
 		const resolve = this.#ports.resolve;
 		if (!resolve) return;
 		let changed = false;
+		const now = this.#ports.now();
 		for (const r of this.#radios) {
 			const at = resolve(r.id);
 			if (at === undefined) {
-				if (r.present) {
+				if (!r.present) continue;
+				r.unresolvedSince ??= now;
+				// A discovery pass unpublishes rows for a moment: only a radio that
+				// stays unresolved is gone. Until then it keeps everything.
+				if (now - r.unresolvedSince >= ABSENT_GRACE_MS) {
 					this.#forget(r);
 					r.present = false;
+					r.unresolvedSince = null;
 					changed = true;
 				}
 				continue;
 			}
+			r.unresolvedSince = null;
 			if (r.present && r.lifetime !== null && at.lifetime !== r.lifetime) {
 				this.#forget(r);
 				changed = true;
@@ -703,18 +740,22 @@ export class RoamingCoordinator {
 	 * is retried in a later round.
 	 */
 	async #abandon(r: RadioRecord, activation: string): Promise<void> {
-		const done = await this.#ports.withRadioLock(r.ifname, async () => {
-			const mode = await this.#ports.radioMode(r.ifname);
-			const now = await this.#ports.observe(r.ifname);
-			if (!now?.activationRead) return false;
-			const protectedRadio =
-				r.role === "holder" ||
-				r.role === "hotspot-reserved" ||
-				mode?.apOnPhy !== false;
-			if (protectedRadio && now.activation === activation) return false;
-			await this.#ports.abandon(r.ifname, activation);
-			return true;
-		});
+		const done = await this.#ports.withRadioLock(
+			r.ifname,
+			this.#expect(r),
+			async () => {
+				const mode = await this.#ports.radioMode(r.ifname);
+				const now = await this.#ports.observe(r.ifname);
+				if (!now?.activationRead) return false;
+				const protectedRadio =
+					r.role === "holder" ||
+					r.role === "hotspot-reserved" ||
+					mode?.apOnPhy !== false;
+				if (protectedRadio && now.activation === activation) return false;
+				await this.#ports.abandon(r.ifname, activation);
+				return true;
+			},
+		);
 		if (done.ok && done.value) this.#pendingAbandon.delete(r.id);
 		else this.#pendingAbandon.set(r.id, activation);
 	}
@@ -909,7 +950,10 @@ export class RoamingCoordinator {
 	}
 
 	async #round(): Promise<void> {
+		if (this.#ports.publicationPending?.()) return;
 		this.#resolveAll();
+		// Effects pause while any radio's disappearance is not yet established.
+		if (this.#radios.some((r) => r.unresolvedSince !== null)) return;
 		await this.#observeAll();
 		this.#publishOwnership();
 		await this.#retryAbandons();
@@ -1621,7 +1665,8 @@ export class RoamingCoordinator {
 						replaced = true;
 						return false;
 					}
-					return this.#mayActNow(radio);
+					const may = await this.#mayActNow(radio);
+					return may && !this.#stopped;
 				},
 			);
 			if (result === JOIN_REFUSED && replaced) return RADIO_REPLACED;
@@ -1774,14 +1819,20 @@ export class RoamingCoordinator {
 		try {
 			const locked = await this.#ports.withRadioLock(
 				r.ifname,
+				this.#expect(r),
 				async (confirm) => {
 					if (!(await this.#mayActNow(r))) return { refused: true as const };
+					// Fenced after the last await: stop() may have come meanwhile.
+					if (this.#stopped) return { refused: true as const };
 					return { refused: false as const, value: await action(confirm) };
 				},
 			);
 			if (!locked.ok) return { value: undefined, stop: "radio-busy" };
 			if (locked.value.refused)
-				return { value: undefined, stop: "radio-in-ap-mode" };
+				return {
+					value: undefined,
+					stop: this.#stopped ? "aborted" : "radio-in-ap-mode",
+				};
 			const value = locked.value.value;
 			if (kind === "join") return { value, stop: null };
 			let moved = false;

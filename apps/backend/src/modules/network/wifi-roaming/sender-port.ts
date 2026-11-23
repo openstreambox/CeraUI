@@ -17,7 +17,7 @@
  * - A failed read, an unreachable sender or a reply without arrival counters
  *   is `undefined`: the coordinator pauses at once.
  *
- * Unwired: nothing creates this yet.
+ * Created by the boot wiring (`runtime.ts`), which polls it once per round.
  */
 
 import {
@@ -160,7 +160,7 @@ export function radioAddressesOf(
  * engine's applied bitrate. `now` is the coordinator's clock.
  */
 export function defaultSenderPortDeps(
-	radios: readonly string[],
+	radios: () => readonly string[],
 	now: () => number,
 ): SenderPortDeps {
 	return {
@@ -170,7 +170,7 @@ export function defaultSenderPortDeps(
 				socketPath: controlSocketPath(SRTLA_LISTEN_PORT),
 				timeoutMs: SRTLA_CONTROL_CONNECT_TIMEOUT_MS,
 			}),
-		radios: () => radioAddressesOf(getNetworkInterfaces(), radios),
+		radios: () => radioAddressesOf(getNetworkInterfaces(), radios()),
 		appliedKbps: () => getEngineBitrateStatus()?.applied_kbps ?? null,
 	};
 }

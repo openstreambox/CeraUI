@@ -748,6 +748,14 @@ export function terminateWifiDiscovery(): void {
 	queuedDiscovery = undefined;
 }
 
+/**
+ * A discovery pass is running: it unpublishes every row and republishes it, so
+ * radio identities may briefly not resolve. Read-only.
+ */
+export function isWifiDiscoveryActive(): boolean {
+	return activeDiscovery !== undefined;
+}
+
 export function wifiUpdateDevices(): Promise<boolean | undefined> {
 	if (discoveryController.signal.aborted) return Promise.resolve(undefined);
 	if (activeDiscovery) {

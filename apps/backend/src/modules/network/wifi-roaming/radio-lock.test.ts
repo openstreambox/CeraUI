@@ -43,7 +43,7 @@ afterEach(async () => {
 
 describe("coordinator actions under the adapter lock", () => {
 	test("a verified radio runs the action", async () => {
-		expect(await withRadioLock("wlan2", async () => 7)).toEqual({
+		expect(await withRadioLock("wlan2", null, async () => 7)).toEqual({
 			ok: true,
 			value: 7,
 		});
@@ -53,7 +53,7 @@ describe("coordinator actions under the adapter lock", () => {
 		const owner = wifiAdapterLockKeyForIfname("wlan2") as string;
 		let inner: unknown;
 		const outer = await withWifiAdapterLock(owner, async () => {
-			inner = await withRadioLock("wlan2", async () => "scanned");
+			inner = await withRadioLock("wlan2", null, async () => "scanned");
 			return true;
 		});
 		expect(outer.success).toBe(true);
@@ -63,7 +63,7 @@ describe("coordinator actions under the adapter lock", () => {
 	test("an unregistered radio is refused", async () => {
 		let ran = false;
 		expect(
-			await withRadioLock("wlan9", async () => {
+			await withRadioLock("wlan9", null, async () => {
 				ran = true;
 			}),
 		).toEqual({ ok: false });
@@ -77,7 +77,7 @@ describe("coordinator actions under the adapter lock", () => {
 		expect(admitRadio("wlan2")).toBeUndefined();
 		let ran = false;
 		expect(
-			await withRadioLock("wlan2", async () => {
+			await withRadioLock("wlan2", null, async () => {
 				ran = true;
 			}),
 		).toEqual({ ok: false });
@@ -86,9 +86,11 @@ describe("coordinator actions under the adapter lock", () => {
 
 	test("a radio whose publication a discovery pass invalidated is refused", async () => {
 		seed.invalidate();
-		expect(await withRadioLock("wlan2", async () => 1)).toEqual({ ok: false });
+		expect(await withRadioLock("wlan2", null, async () => 1)).toEqual({
+			ok: false,
+		});
 		await seed.republish();
-		expect(await withRadioLock("wlan2", async () => 1)).toEqual({
+		expect(await withRadioLock("wlan2", null, async () => 1)).toEqual({
 			ok: true,
 			value: 1,
 		});
@@ -117,7 +119,7 @@ describe("coordinator actions under the adapter lock", () => {
 		seed.sysfs([radio({ ifindex: 32 })]);
 		let ran = false;
 		expect(
-			await withRadioLock("wlan2", async () => {
+			await withRadioLock("wlan2", null, async () => {
 				ran = true;
 			}),
 		).toEqual({ ok: false });
@@ -126,7 +128,7 @@ describe("coordinator actions under the adapter lock", () => {
 
 	test("confirm samples the identity again under the held lock", async () => {
 		const seen: boolean[] = [];
-		const r = await withRadioLock("wlan2", async (confirm) => {
+		const r = await withRadioLock("wlan2", null, async (confirm) => {
 			seen.push(await confirm());
 			// A replug while the action runs: sysfs shows a new lifetime.
 			seed.sysfs([radio({ ifindex: 33 })]);
@@ -135,5 +137,35 @@ describe("coordinator actions under the adapter lock", () => {
 		});
 		expect(r).toEqual({ ok: true, value: "done" });
 		expect(seen).toEqual([true, false]);
+	});
+
+	test("an action meant for one identity and lifetime refuses any other radio on that name", async () => {
+		let ran = false;
+		const act = async () => {
+			ran = true;
+		};
+		expect(
+			await withRadioLock(
+				"wlan2",
+				{ id: "02:00:00:00:c0:99", lifetime: null },
+				act,
+			),
+		).toEqual({ ok: false });
+		expect(
+			await withRadioLock(
+				"wlan2",
+				{ id: MAC, lifetime: "1:2:/sys/elsewhere" },
+				act,
+			),
+		).toEqual({ ok: false });
+		expect(ran).toBe(false);
+		// The identity the round resolved, in any letter case, runs.
+		expect(
+			await withRadioLock(
+				"wlan2",
+				{ id: MAC.toUpperCase(), lifetime: null },
+				async () => 5,
+			),
+		).toEqual({ ok: true, value: 5 });
 	});
 });

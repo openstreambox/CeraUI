@@ -51,7 +51,9 @@ afterEach(async () => {
 test("a radio with a composite-owner hotspot runs under the key hotspot changes take", async () => {
 	const owner = wifiAdapterLockKey(A);
 	expect(owner).toBe(A);
-	const r = await withRadioLock("wlA", async () => ownsWifiAdapterLock(owner));
+	const r = await withRadioLock("wlA", null, async () =>
+		ownsWifiAdapterLock(owner),
+	);
 	expect(r).toEqual({ ok: true, value: true });
 });
 
@@ -59,7 +61,7 @@ test("a hotspot change holding that radio's key excludes the coordinator", async
 	let inner: unknown;
 	let ran = false;
 	await withWifiAdapterLock(wifiAdapterLockKey(A), async () => {
-		inner = await withRadioLock("wlA", async () => {
+		inner = await withRadioLock("wlA", null, async () => {
 			ran = true;
 		});
 	});

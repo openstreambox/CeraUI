@@ -44729,8 +44729,8 @@
     }
   ],
   "dependencies": {
-    "apps/backend/src/helpers/config-schemas.ts": "9543d9910558c454a4afc47ea4430e2506e532a782943c1032e4152314c94be6",
-    "apps/backend/src/main.ts": "d1baa31bdd01f79f5d9c6ef6a67806d1184dca48079fc3eca0f84a844ab05521",
+    "apps/backend/src/helpers/config-schemas.ts": "2c6e842b9b979a50d5c783d16122048e25d29ca2b4b258feaefb974782510193",
+    "apps/backend/src/main.ts": "b8013ee79cf47c3f15c8cfe505621e727c2a2217d85f42e033fa7ad9264751d1",
     "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",
@@ -44796,7 +44796,7 @@
     "apps/backend/src/modules/wifi/wifi-hotspot-config.ts": "acdfaa83e8a4b246bbd8299c426bf5ba76dafa275e3956de12fc0e05c5d71fb2",
     "apps/backend/src/modules/wifi/wifi-hotspot-outcome.ts": "8e599c2a0b7b2fc1772892d89ef51346eb88b77371bf458074b8f1da6f96aea7",
     "apps/backend/src/modules/wifi/wifi-hotspot-types.ts": "57da30aa904e04e2a644b9e86e79c579e400f6084d790faf7943d5af2a66c2e8",
-    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "f39b4a9b88fa95204e269f0bd8f0b051c12e137fc83aeaaaefe9dbce5c252d13",
+    "apps/backend/src/modules/wifi/wifi-interfaces.ts": "d65fc1ddd1668a2d3bd24e19d873c5ddc2b108c2e8e48fcf2cb77f83afc07f75",
     "apps/backend/src/modules/wifi/wifi.ts": "567f85bf7a449aaacbd1649e21191c9a91e3bb410ee1c9fec7d47b20fc46b05b",
     "apps/backend/src/rpc/compat.ts": "6902642f8e2bae6039ac29880faa4bd7e92ffbea9a77be7c3a428da467d115ec",
     "apps/backend/src/rpc/procedures/audio-mix.procedure.ts": "77fb8974d0078221af7388c1bd211d485af80e5bf0a3b9d433308116f46f0535",

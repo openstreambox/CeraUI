@@ -24,7 +24,8 @@ import {
 } from "../../wifi/wifi-adapter-admission.ts";
 import { withWifiAdapterLock } from "../../wifi/wifi-adapter-lock.ts";
 import { getWifiInterfacesByMacAddress } from "../../wifi/wifi-connections.ts";
-import type { RadioLockResult } from "./coordinator.ts";
+import { normalizeMacAddress } from "../../wifi/wifi-permanent-mac.ts";
+import type { RadioExpectation, RadioLockResult } from "./coordinator.ts";
 
 /** Admit the radio behind an interface name, or `undefined` when uncertain. */
 export function admitRadio(ifname: string): WifiAdapterAdmission | undefined {
@@ -35,12 +36,35 @@ export function admitRadio(ifname: string): WifiAdapterAdmission | undefined {
 	return admitWifiAdapter(keys[0] as string);
 }
 
+/** A radio lifetime as one comparable string; it changes on replug. */
+export function lifetimeKey(l: {
+	ifindex: number;
+	wiphy: number;
+	phyPath: string;
+}): string {
+	return `${l.ifindex}:${l.wiphy}:${l.phyPath}`;
+}
+
+/**
+ * Run `fn` under the radio's adapter lock. With `expected`, the radio that
+ * answers to `ifname` now must be that identity and lifetime: a replacement
+ * that took the name since the round resolved it is refused before any effect.
+ */
 export async function withRadioLock<T>(
 	ifname: string,
+	expected: RadioExpectation | null,
 	fn: (confirm: () => Promise<boolean>) => Promise<T>,
 ): Promise<RadioLockResult<T>> {
 	const admission = admitRadio(ifname);
 	if (!admission) return { ok: false };
+	if (
+		expected &&
+		(normalizeMacAddress(admission.registryKey) !==
+			normalizeMacAddress(expected.id) ||
+			(expected.lifetime !== null &&
+				lifetimeKey(admission.lifetime) !== expected.lifetime))
+	)
+		return { ok: false };
 	const confirm = () => confirmWifiAdapterLifetime(admission);
 	const result = await withWifiAdapterLock(admission.owner, async () => {
 		if (!(await confirm())) return { confirmed: false as const };

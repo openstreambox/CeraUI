@@ -818,7 +818,6 @@ process.on("SIGTERM", () =>
 			stopProvisioningMarkerWatch();
 			stopHotspotStationEvents();
 			stopWifiNetworkDiversity();
-			void stopWifiRoaming();
 			wifiRadioObservation.terminate();
 		},
 		terminateWifiDiscovery,
@@ -829,6 +828,7 @@ process.on("SIGTERM", () =>
 		},
 		stopDmesgWatchers,
 		stopUplinkShaper,
+		stopWifiRoaming,
 		stopGatewayRoutes,
 		exit: process.exit,
 	}),
@@ -841,7 +841,6 @@ process.on("SIGINT", () =>
 			stopProvisioningMarkerWatch();
 			stopHotspotStationEvents();
 			stopWifiNetworkDiversity();
-			void stopWifiRoaming();
 			wifiRadioObservation.terminate();
 		},
 		terminateWifiDiscovery,
@@ -852,6 +851,7 @@ process.on("SIGINT", () =>
 		},
 		stopDmesgWatchers,
 		stopUplinkShaper,
+		stopWifiRoaming,
 		stopGatewayRoutes,
 		exit: process.exit,
 	}),

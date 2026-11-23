@@ -3,16 +3,20 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NetworkInterface } from "../network-interfaces.ts";
+import { fileCloneRegistry } from "./clone-registry.ts";
 import type { CoordinatorPorts, CoordinatorStatus } from "./coordinator.ts";
 import { isCoordinatorOwnedRadio } from "./ownership.ts";
 import {
 	countOtherUplinks,
 	fileIo,
+	initWifiRoaming,
 	JOURNAL_MAX_LINES,
 	journalEntry,
 	lifetimeKey,
+	type RoamingHandle,
 	roamingBlocker,
 	startRoaming,
+	stopWifiRoaming,
 } from "./runtime.ts";
 import { protectRadiosFromScans, setScanGateModeReader } from "./scan-gate.ts";
 
@@ -228,5 +232,147 @@ describe("the loop", () => {
 		expect(isCoordinatorOwnedRadio("wlan1")).toBe(false);
 		await h.round();
 		expect(written.length).toBe(2);
+	});
+});
+
+describe("boot entry and loop hygiene", () => {
+	const twoRadios = { enabled: true, radios: [{ id: "a" }, { id: "b" }] };
+	const handle = (log: string[]): RoamingHandle =>
+		({
+			coordinator: {} as RoamingHandle["coordinator"],
+			round: async () => {},
+			stop: async () => {
+				log.push("stopped");
+			},
+		}) as RoamingHandle;
+
+	test("init starts only when allowed, once, and stopWifiRoaming stops it", async () => {
+		const log: string[] = [];
+		const start = () => {
+			log.push("started");
+			return handle(log);
+		};
+		await initWifiRoaming(undefined, false, start);
+		await initWifiRoaming(twoRadios, true, start);
+		await initWifiRoaming(
+			{ enabled: true, radios: [{ id: "a" }, { id: "a" }] },
+			false,
+			start,
+		);
+		expect(log).toEqual([]);
+		await initWifiRoaming(twoRadios, false, start);
+		await initWifiRoaming(twoRadios, false, start);
+		expect(log).toEqual(["started"]);
+		await stopWifiRoaming();
+		await stopWifiRoaming();
+		expect(log).toEqual(["started", "stopped"]);
+	});
+
+	const quietPorts = (): CoordinatorPorts => ({
+		now: () => 0,
+		resolve: (id) => ({
+			ifname: id === "a" ? "wlan1" : "wlan2",
+			lifetime: "1",
+		}),
+		observe: async () => undefined,
+		scan: async () => undefined,
+		savedSsids: async () => new Set(),
+		join: async () => undefined,
+		radioMode: async () => undefined,
+		abandon: async () => true,
+		uplinkOf: async () => ({
+			gateway: null,
+			gatewayMac: null,
+			subnet: null,
+			egress: null,
+		}),
+		holderHealth: () => ({
+			signalDbm: null,
+			attributedBps: null,
+			encoderBps: null,
+			nakRatio: null,
+		}),
+		otherUplinks: () => 0,
+		holdOutOfBond: () => {},
+		releaseBondHold: () => {},
+		withRadioLock: async () => ({ ok: false }),
+	});
+
+	test("a timer tick during a long round is skipped, not run alongside", async () => {
+		const poll = Promise.withResolvers<void>();
+		let polls = 0;
+		let fire: (() => void) | null = null;
+		const h = startRoaming(
+			twoRadios,
+			() => ({
+				ports: quietPorts(),
+				sender: {
+					poll: () => {
+						polls++;
+						return poll.promise;
+					},
+					close: () => {},
+				},
+			}),
+			{ writeStatus: async () => {}, appendJournal: async () => {} },
+			(fn) => {
+				fire = fn;
+				return { cancel: () => {} };
+			},
+		);
+		(fire as unknown as () => void)();
+		(fire as unknown as () => void)();
+		await Promise.resolve();
+		expect(polls).toBe(1);
+		poll.resolve();
+		await h.stop();
+	});
+
+	test("a failed journal write is retried with the next round, not lost", async () => {
+		const lines: string[] = [];
+		let failNext = true;
+		const h = startRoaming(
+			twoRadios,
+			() => ({
+				ports: quietPorts(),
+				sender: { poll: async () => {}, close: () => {} },
+			}),
+			{
+				writeStatus: async () => {},
+				appendJournal: async (l) => {
+					if (failNext) {
+						failNext = false;
+						throw new Error("disk full");
+					}
+					lines.push(l);
+				},
+			},
+			() => ({ cancel: () => {} }),
+		);
+		await h.round();
+		expect(lines).toEqual([]);
+		await h.round();
+		expect(lines.length).toBe(1);
+		expect(JSON.parse(lines[0] as string).roles).toBeDefined();
+		await h.stop();
+	});
+});
+
+describe("the clone record in /run", () => {
+	let dir = "";
+	afterEach(async () => {
+		if (dir) await rm(dir, { recursive: true, force: true });
+	});
+
+	test("survives a new instance (a restart), and concurrent writes lose nothing", async () => {
+		dir = await mkdtemp(join(tmpdir(), "clones-"));
+		const path = join(dir, "clones.json");
+		const a = fileCloneRegistry(path);
+		await Promise.all(["u1", "u2", "u3"].map((u) => a.add(u)));
+		await a.remove("u2");
+		const b = fileCloneRegistry(path);
+		expect([...(await b.list())].sort()).toEqual(["u1", "u3"]);
+		expect(await b.has("u1")).toBe(true);
+		expect(await b.has("u2")).toBe(false);
 	});
 });

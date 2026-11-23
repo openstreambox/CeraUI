@@ -56,7 +56,14 @@ reservation) belongs to the identity:
   the reserved radio's name after a replug is neither reserved nor touched.
 - A radio that is gone, or back with a new lifetime (a replug), starts over: its
   hold is released, a handover it took part in ends, and it is a fresh radio of
-  its configured kind once it is verified again.
+  its configured kind once it is verified again. Gone means unresolved for 5 s:
+  a discovery pass unpublishes every row for a moment, so a radio that briefly
+  does not resolve keeps everything, and the coordinator pauses all effects
+  until it resolves again or the 5 s pass. While a discovery pass runs
+  (`publicationPending`) the round pauses too.
+- Every scan, join and clone removal names the identity and lifetime the round
+  resolved. The adapter lock refuses before any effect when another radio
+  answers to the name by then.
 - Without the port (tests), a radio's identity is its configured name.
 - A join confirms the identity again under the adapter lock right before
   activation (no clone on a replaced radio) and right after (a radio replaced
@@ -65,13 +72,22 @@ reservation) belongs to the identity:
 
 ## Lifecycle
 
-- **Start.** Before the first round the coordinator sweeps owned clones an
-  earlier run or an earlier name left behind (`ceraui-search-*` that no device
-  has active). An unreadable active listing deletes nothing.
-- **Stop.** `stop()` is fenced: no scan, join or bond hold starts after it, and
-  the promise it returns settles only after a round in flight has finished,
-  with every gate (bond holds, scan protection, ownership) released again after
-  that round. Radios keep whatever association they have.
+- **Clone provenance.** Every clone's UUID is recorded
+  (`clone-registry.ts`, `/run/ceralive/wifi-roaming/clones.json`) when it is
+  created and dropped when it is deleted. Nothing deletes a profile the record
+  does not name: CeraUI names saved station profiles after their SSID, so a
+  `ceraui-search-*` name proves nothing.
+- **Start.** Before the first round the coordinator sweeps recorded clones an
+  earlier run or an earlier name left behind. Each is deleted only if it is
+  still named `ceraui-search-*` and not active, read again right before the
+  deletion. An unreadable listing deletes nothing; a record whose profile is gone
+  is dropped.
+- **Stop.** `stop()` is fenced: no scan, join or bond hold starts after it,
+  checked again after the last await before an effect, and the promise it
+  returns settles only after a round in flight has finished, with every gate
+  (bond holds, scan protection, ownership) released again after that round.
+  Shutdown awaits it before the streaming processes stop. Radios keep whatever
+  association they have.
 
 ## What runs today
 
@@ -339,10 +355,15 @@ The pieces:
 ```
 
 - Off unless present and enabled. It never starts next to the two-radio
-  coordinator (`two_radio_enabled`), and needs at least two client radios.
-- One round a second: one sender read (`poll()`), one coordinator step, then
-  `/run/ceralive/wifi-roaming/status.json` (replaced whole) and, when a role or
-  an outcome changed, one line in `journal.jsonl` (bounded to 2,000 lines).
+  coordinator (`two_radio_enabled`), needs at least two distinct client radios,
+  and refuses a radio listed twice (the schema rejects it too).
+- One round a second, never two at once (a tick during a long scan or join is
+  skipped): one sender read (`poll()`), one coordinator step, then
+  `/run/ceralive/wifi-roaming/status.json` (replaced whole, mode 0600: it names
+  SSIDs and BSSIDs) and, when a role or an outcome changed, one line in
+  `journal.jsonl` (bounded to 2,000 lines, writes serialized, rotation atomic).
+  A failed journal write is retried with the next round. Nothing is written
+  after stop.
 - Ports: identities resolve through `admitWifiAdapter` (name and lifetime),
   the sender port maps this round's names, holder health takes the signal
   from the last observation (delivered rate and loss stay unknown; the proof

@@ -279,6 +279,7 @@ class World {
 			},
 			withRadioLock: async <T>(
 				ifname: string,
+				_expected: unknown,
 				fn: (confirm: () => Promise<boolean>) => Promise<T>,
 			) => {
 				if (this.lockBusy.has(ifname)) return { ok: false as const };
@@ -361,7 +362,7 @@ describe("shared-AP start", () => {
 			true,
 		]);
 		await c.step();
-		c.stop();
+		await c.stop();
 		expect(["wlan1", "wlan2"].map(isCoordinatorOwnedRadio)).toEqual([
 			false,
 			false,
@@ -1493,7 +1494,7 @@ describe("radios are known by identity, not by interface name", () => {
 		expect(c.status().radios.some((r) => r.ifname === "wlan0")).toBe(false);
 		expect(w.touched("wlan0")).toEqual([]);
 		expect(isCoordinatorOwnedRadio("wlan0")).toBe(false);
-		c.stop();
+		await c.stop();
 	});
 
 	test("a holder's protection and ownership follow its rename; the old name keeps none", async () => {
@@ -1522,7 +1523,7 @@ describe("radios are known by identity, not by interface name", () => {
 		expect(scanProtectedRadios().has("wlan1")).toBe(false);
 		expect(isCoordinatorOwnedRadio("wlan5")).toBe(true);
 		expect(isCoordinatorOwnedRadio("wlan1")).toBe(false);
-		c.stop();
+		await c.stop();
 	});
 
 	test("a replugged or vanished radio starts over: no role, no hold, no protection", async () => {
@@ -1538,9 +1539,17 @@ describe("radios are known by identity, not by interface name", () => {
 		});
 		await c.step();
 		expect(radio(c, "wlan1").role).toBe("holder");
-		// The holder's radio vanishes: it is forgotten, not acted on.
+		// The holder's radio vanishes: first a pause with everything kept, then,
+		// once it stays gone, it is forgotten without being acted on.
 		names.delete("a");
 		w.calls = [];
+		await c.step();
+		expect(c.status().radios.find((r) => r.id === "a")).toMatchObject({
+			present: true,
+			role: "holder",
+		});
+		expect(w.calls).toEqual([]);
+		w.now += 5_000;
 		await c.step();
 		expect(c.status().radios.find((r) => r.id === "a")).toMatchObject({
 			present: false,
@@ -1555,7 +1564,7 @@ describe("radios are known by identity, not by interface name", () => {
 		await c.step();
 		expect(c.status().radios.find((r) => r.id === "a")?.present).toBe(true);
 		expect(isCoordinatorOwnedRadio("wlan1")).toBe(true);
-		c.stop();
+		await c.stop();
 	});
 
 	test("a radio that vanishes mid-join gives its bond hold back; the name stays free", async () => {
@@ -1574,9 +1583,13 @@ describe("radios are known by identity, not by interface name", () => {
 		expect(w.bond).toEqual(["hold:wlan2"]);
 		names.delete("b");
 		await c.step();
+		// Not yet established as gone: the hold stays.
+		expect(w.bond).toEqual(["hold:wlan2"]);
+		w.now += 5_000;
+		await c.step();
 		expect(w.bond).toEqual(["hold:wlan2", "release:wlan2"]);
 		expect(scanProtectedRadios().has("wlan2")).toBe(false);
-		c.stop();
+		await c.stop();
 	});
 });
 
