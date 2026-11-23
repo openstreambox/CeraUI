@@ -169,6 +169,8 @@ beforeEach(() => {
 	now = 0;
 	wall = 1_800_000_000_000;
 	calls = [];
+	// Another file's translation must not make wwan0 look translated here.
+	resetClatTranslationStateForTest();
 	setTelemetryClockForTest(() => wall);
 	setCarryingClockForTest(() => now);
 	setLinkIdentityDetailResolverForTest(() => ({}));
@@ -182,9 +184,14 @@ beforeEach(() => {
 		ids: () => getModemIds(),
 		stableKey: (id) => (id === 2 ? KEY : undefined),
 		health: (iface) =>
-			iface === "wwan0" ? record("wwan0", "cellular", "down") : undefined,
+			iface === "wwan0"
+				? record("wwan0", "cellular", "down")
+				: iface === "clat0"
+					? record("clat0", "other", "down")
+					: undefined,
 		healthList: () => [
 			record("wwan0", "cellular", "down"),
+			record("clat0", "other", "down"),
 			record("eth0", "ethernet", "up"),
 		],
 		streaming: () => true,
@@ -286,9 +293,9 @@ describe("while a stream runs, the dead-bearer veto follows the link's own traff
 
 /*
   The translator row reaches the sender as `clat0`, unresolved by the identity
-  ladder, and the carrying predicate folds it into wwan0. Health has no record
-  for clat0 yet (a TUN that just came up), so the dead-bearer check does not
-  hand the modem to its translator and the stream veto is what decides.
+  ladder, and the carrying predicate folds it into wwan0. Health reads clat0
+  down too, so the modem is judged by its translator's record, and the stream
+  veto is what decides.
 */
 describe("an IPv6-only modem's CLAT translator counts for the modem", () => {
 	function translate(): void {
