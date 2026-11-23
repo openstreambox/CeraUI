@@ -413,7 +413,7 @@ test.describe(
 			);
 		});
 
-		test("a replacement radio requires a fresh hotspot confirmation after an unobserved Start", async ({
+		test("a replacement radio closes the hotspot dialog after an unobserved Start and resends nothing", async ({
 			page,
 			backendRpc,
 		}) => {
@@ -427,7 +427,7 @@ test.describe(
 			});
 			await startThroughGate(page);
 			await expect(
-				dialog(page).getByRole("button", { name: "Enable Hotspot", exact: true }),
+				dialog(page).getByRole("button", { name: "Turn on hotspot", exact: true }),
 			).toBeDisabled();
 
 			const device = await lastHotspotDevice(page);
@@ -454,11 +454,15 @@ test.describe(
 				});
 			}, wifi);
 
-			const gate = dialog(page).getByTestId("hotspot-activation-confirm");
-			await expect(gate.getByTestId("hotspot-confirm-radio-changed")).toBeVisible();
-			await expect(gate.getByTestId("hotspot-confirm-name")).toBeVisible();
-			await expect(gate.getByRole("checkbox")).not.toBeChecked();
-			await expect(gate.getByTestId("hotspot-confirm-activate")).toBeDisabled();
+			// The dialog is bound to the radio lifetime it opened on: a replacement
+			// closes it with a notice, and starting on the new radio needs a fresh
+			// pick and a fresh confirmation.
+			await expect(dialog(page)).toBeHidden();
+			await expect(
+				page.getByText(
+					"The radio you chose changed or was disconnected. Choose the hotspot radio again.",
+				),
+			).toBeVisible();
 			expect(await page.evaluate(() => (window as HotspotTestWindow).__ceraHotspot.startTokens)).toEqual([incarnation]);
 		});
 
