@@ -46444,7 +46444,7 @@
     "apps/backend/src/modules/network/network-ingest.ts": "fcb33cbff26195a53375f9ae12c5f85bbb76cc2bbb7d63d76a90cf2562eb8e77",
     "apps/backend/src/modules/network/network-interfaces.ts": "67693e9346ddcba40732036649a45b7a3ad6f4099fb4b3598a62795ede6979e4",
     "apps/backend/src/modules/network/sharing-diag/status.ts": "5c9a70f6835a348e4316a66a51f8af3dfa9c97ffca6cdea3235fd5872a493ef1",
-    "apps/backend/src/modules/network/uplink-health/model.ts": "85f85f5676fb6630aa95b27d0a3f0e8da04534de2e1c84f3c2b8103fda23d904",
+    "apps/backend/src/modules/network/uplink-health/model.ts": "f6ee6c661b7dbaada8d453d5d35fcd9119c47f97f60e4017359a09d04e13c1ec",
     "apps/backend/src/modules/network/uplink-health/runtime.ts": "643237690a7afed108bc5cfa74c78a1d0fd8e0ab2237efb6eb155de715c42bc3",
     "apps/backend/src/modules/network/uplink-health/state.ts": "261d10a9f6d2e62d6a2fb92dab4a4a8a37ad8eb8fcb672205f0cb241d544174b",
     "apps/backend/src/modules/network/uplink-shaper/status.ts": "f2ef210a8e62db8310afad2083ce02ba17e5a094e6e7081e2b94c396228bfd35",
