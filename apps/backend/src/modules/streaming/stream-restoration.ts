@@ -63,6 +63,7 @@ import {
 	decideStreamRestoration,
 	defaultArmedStreamMarkerDeps,
 	RESTORATION_BOUND_MS,
+	RESTORATION_ENGINE_RESTART_DEADLINE_MS,
 	RESTORATION_POLL_MS,
 	RESTORATION_UNKNOWN_DEADLINE_MS,
 	type RecoveryFailureReason,
@@ -357,7 +358,20 @@ function defaultPublish(
 	);
 }
 
-function defaultDeps(): StreamRestorationDeps {
+/**
+ * How long a run may wait for a decisive engine answer. A run the engine's own
+ * restart triggered starts while that engine is still down, so it gets the
+ * declared restoration bound instead of the shorter window.
+ */
+export function restorationUnknownDeadlineMs(
+	trigger: RestorationTrigger,
+): number {
+	return trigger === "engine_restart"
+		? RESTORATION_ENGINE_RESTART_DEADLINE_MS
+		: RESTORATION_UNKNOWN_DEADLINE_MS;
+}
+
+function defaultDeps(trigger: RestorationTrigger): StreamRestorationDeps {
 	return {
 		marker: defaultArmedStreamMarkerDeps,
 		runtimeState: async () => {
@@ -374,7 +388,7 @@ function defaultDeps(): StreamRestorationDeps {
 		now: Date.now,
 		logger: defaultLogger,
 		pollIntervalMs: RESTORATION_POLL_MS,
-		unknownDeadlineMs: RESTORATION_UNKNOWN_DEADLINE_MS,
+		unknownDeadlineMs: restorationUnknownDeadlineMs(trigger),
 		awaitRecovery: awaitRecoveryBarrier,
 	};
 }
@@ -466,17 +480,25 @@ async function runOnce(
 		}
 
 		const elapsedMs = deps.now() - startedAt;
-		if (decision.action === "give_up") {
+		// The engine-restart window is a cutoff for the launch too: an idle
+		// answer from a query that crossed it does not launch.
+		const giveUpReason =
+			decision.action === "give_up"
+				? decision.reason
+				: trigger === "engine_restart" && elapsedMs >= deps.unknownDeadlineMs
+					? ("runtime_state_unknown" as const)
+					: undefined;
+		if (giveUpReason !== undefined) {
 			if (marker !== undefined)
-				recordAttempt(deps, marker, "failed", elapsedMs, decision.reason);
+				recordAttempt(deps, marker, "failed", elapsedMs, giveUpReason);
 			deps.logger.warn("stream restoration gave up", {
 				module: "streaming",
-				reason: decision.reason,
+				reason: giveUpReason,
 				elapsedMs,
 			});
 			const outcome = {
 				result: "failed",
-				reason: decision.reason,
+				reason: giveUpReason,
 				elapsedMs,
 			} as const;
 			deps.publish(outcome, trigger);
@@ -532,7 +554,7 @@ export function runStreamRestoration(
 	trigger: RestorationTrigger = "service_restart",
 ): Promise<RestorationRunOutcome> {
 	if (inflight !== undefined) return inflight;
-	const deps: StreamRestorationDeps = { ...defaultDeps(), ...overrides };
+	const deps: StreamRestorationDeps = { ...defaultDeps(trigger), ...overrides };
 
 	const run = runOnce(deps, trigger)
 		.catch((err: unknown): RestorationRunOutcome => {

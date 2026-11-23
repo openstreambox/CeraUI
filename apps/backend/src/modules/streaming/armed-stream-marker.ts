@@ -337,6 +337,19 @@ export const RESTORATION_POLL_MS = 1_000;
 export const RESTORATION_BOUND_MS = 30_000;
 
 /**
+ * The same window for a run the ENGINE's restart triggered. That engine is
+ * still down when the run starts: systemd waits 5 s before restarting it, it
+ * takes up to a few seconds to listen, and an idle restarted engine is only
+ * known to be idle after two silent queries (the orchestrator's
+ * SILENT_WITNESS_QUERIES) of about 3 s each. Measured on a board: ready 5.5 s
+ * after the abort, so 10 s expired before the first decisive answer. It is the
+ * declared restoration bound, enforced at the launch too: a run still undecided
+ * then gives up as before, and an idle answer that arrives later does not
+ * launch.
+ */
+export const RESTORATION_ENGINE_RESTART_DEADLINE_MS = RESTORATION_BOUND_MS;
+
+/**
  * The whole gate table, PURE, so every condition can be flipped on its own.
  *
  * Ordering carries the two safety properties:

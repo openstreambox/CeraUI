@@ -95,10 +95,45 @@ the post-update backend.
 **`unknown` triggers NEITHER, with a declared sub-deadline.** The engine answers
 `unknown` both while it is down and while a probe is transitional, so the runner
 polls at `RESTORATION_POLL_MS` (1 s) for up to `RESTORATION_UNKNOWN_DEADLINE_MS`
-(10 s). Resolving to `idle` proceeds to eligibility, resolving to `streaming`
+(10 s), or `RESTORATION_ENGINE_RESTART_DEADLINE_MS` (30 s, the declared bound) for
+the `engine_restart` trigger: that run starts while the engine is still down
+(systemd waits 5 s, measured ready at 5.5 s) and an idle restarted engine is only
+known to be idle after two silent queries. Resolving to `idle` proceeds to
+eligibility, resolving to `streaming`
 adopts, and expiry writes a terminal `stream_recovery_failed{runtime_state_unknown}`
 that does NOT re-arm on a later restart. A busy LIFECYCLE (a config-change
 transaction settling, a stop finishing) waits the same way rather than racing it.
+
+**A REPLACED ENGINE IS EVIDENCE OF IDLE (`session-engine.ts`).** A restarted
+engine is idle and sends no status, so before this the engine-restart run could
+only see `unknown`. The record is taken from the Start itself: the backend reads
+the engine unit's systemd `InvocationID` and main PID before it connects and
+after the engine acknowledged the Start, and keeps the invocation only when both
+reads name the same running process. The second read and the comparison run
+off the Start's own path, and the result is recorded only while that launch's
+session is still current (`noteLaunchEngine` → `onLaunchEngine`), never for an
+adopted session; it is dropped once the lifecycle is idle. A reconcile with a record reads the unit's serving
+identity before its first query; when that invocation differs from the record,
+the session is gone (it lived in the old process), and idle is committed after
+`SILENT_WITNESS_QUERIES` queries that each heard no status and got a valid EMPTY
+session list, provided the serving identity read after the last query is the
+same process. An RPC error or unreadable session reply is not silence here, an
+engine with no process, the same invocation, a second replacement, a new PID or
+any failed read keeps `unknown`, and a streaming status takes the adopt path.
+The binding cannot tie the IPC socket to a PID, so the equal reads before and
+after are the guard. Threat model: cerastream has one control client, CeraUI. The
+control socket is root-only (`/run/cerastream` `root:root 0750`, `control.sock`
+`root:root 0755`, both services run as root) and the loopback preview port speaks
+a preview-only protocol, so another client starting a session in the few
+milliseconds between the last empty reply and the closing read needs root and is
+out of scope. Even then, with the already-streaming rollback exception (no
+rollback Stop when the engine refuses Start as already streaming), a restoration
+Start leaves that session alone. It never stops anything: an unowned sender keeps the
+protection (`canReconcileIdle`). Restoration then takes its ordinary gates
+(marker, same boot, one attempt, the operator's Stop intent, recovery barrier),
+and for the `engine_restart` trigger the 30 s window is also enforced at the
+launch: an idle answer from a query that crossed it gives up as
+`runtime_state_unknown`.
 
 **ONE-SHOT IS THE FEATURE.** Both outcomes write a terminal attempted-state onto
 the marker, so the answer to "what happens on the next backend restart" is always

@@ -263,6 +263,18 @@ second Stop. A non-adopting probe has no authority to advance the live client's 
 Contradictory/transitional current status is not silence: it retains UNKNOWN protection.
 Reboot clears the tmpfs sentinel and permits that empty admission baseline; it
 does not upgrade a silent probe to an affirmative engine-idle observation.
+One exception, for a session THIS process launched: when the engine unit's
+systemd invocation is no longer the one the Start ran in (`session-engine.ts`),
+two silent queries that each got a valid empty session list, served by the same
+replacement process read before the first and after the last, commit `idle`
+(see "one-shot stream restoration" in `apps/backend/docs/agents`).
+Threat model: cerastream has one control client, CeraUI. The control socket is
+root-only (`/run/cerastream` is `root:root 0750`, `control.sock` `root:root 0755`;
+cerastream and ceralive run as root), and the loopback preview port (9997) speaks a
+preview-only protocol that cannot start a stream. A second client that starts a
+session in the instant between the last empty reply and the closing read therefore
+needs root on the box, which is out of scope (evidence read on a board and in the
+image, 23 Nov 2026).
 The existing update reason/catalog keys now offer
 the honest Stop-confirmation hint; downstream disruptive consumers are migrated in
 the separately assigned consumer lane.
@@ -336,7 +348,7 @@ require — each row is a site that was found and mapped.
 | 14 | **subscribe** connection lost (`CerastreamConnectionError`) | `cerastream-backend.ts:449-451` | `subscribe` | `engine_unavailable` | no |
 | 15 | start-RPC `-32000` unsupported_version | `errors.js:74` | `start-rpc` | `protocol_incompatible` | no |
 | 16 | start-RPC `-32602` params.invalid | `errors.js:75` | `start-rpc` | `start_invalid` | no |
-| 17 | start-RPC `-32002` already_streaming | `errors.js:77` | `start-rpc` | `engine_internal` | no |
+| 17 | start-RPC `-32002` already_streaming | `errors.js:77` | `start-rpc` | `engine_internal` (no rollback Stop, liveness unknown; see [Failed Start rollback connection](#failed-start-rollback-connection)) | no |
 | 18 | start-RPC `-32003` device.not_found | `errors.js:78` | `start-rpc` | `start_invalid` | no |
 | 19 | start-RPC `-32603` internal | `errors.js:82` | `start-rpc` | `engine_internal` | no |
 | 20 | client **request timeout** (10s) on the `start` RPC | client `client.js:9` (`requestTimeoutMs: 10_000`) | `start-rpc` | `start_timeout` | no |
@@ -473,7 +485,11 @@ State set: `idle | starting | streaming | stopping | stop_failed | reconciling`.
   operator Stop. A successfully subscribed probe observes status for 2.5
   seconds: concordant streaming/idle is adopted immediately, silence remains
   UNKNOWN even though live sessions heartbeat every 2 seconds, and query failure or a
-  contradictory/transitional event remains unknown. Events arriving after the
+  contradictory/transitional event remains unknown. Two exceptions confirm idle
+  from silence: an inherited carrying line (`docs/CARRYING.md`), and this
+  process's own launch after systemd replaced the engine it ran in (two silent
+  queries with a valid empty session list, one replacement process read before
+  and after). Events arriving after the
   probe closes are fenced.
 - `stop_failed` is a terminal-until-retried state a stop can land in.
 
@@ -1089,6 +1105,15 @@ only an idle acknowledgement confirms cleanup. Connect/Stop timeout preserves th
 original Start failure with unknown liveness, so replacement admission stays
 closed. Socket close is bounded, including acquisition failures before Start
 submission, and the rollback closes each acquired session only once.
+
+One refusal is exempt. A Start the engine refuses as
+`cerastream.state.already_streaming` (or `-32002` without a `data.code`) opened
+nothing, and the engine's Stop takes no session, so a rollback Stop would end
+whichever session caused the refusal, possibly another client's. That refusal
+sends no rollback Stop and keeps unknown liveness, so the lifecycle reconciles
+and the operator's Stop decides. The trade-off: a leftover session of our own
+also stays up until that Stop instead of being cleared by the rollback. Every
+other failure after Start dispatch still rolls back as above.
 
 The control-owner regression injects a refused Start and an unresponsive session
 Stop, then verifies independent idle acknowledgement, socket retirement and a

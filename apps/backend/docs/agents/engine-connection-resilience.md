@@ -53,10 +53,10 @@ It is the boot `pipelines` init now (main.ts) and owns ONE self-rescheduling loo
   `stopEngineReconnect` dep) and makes an in-flight heal skip its remaining steps;
   the guard reaches `refreshAndBroadcastSources`, so nothing is committed or
   broadcast after teardown. A hung engine is not detected here: its watchdog kills
-  it within 90 s, which closes the socket. Known gap: a session left in
-  `stop_failed` (the engine-loss Stop could not reach the engine) is not cleared by
-  the heal; Start stays refused and the Live view's unconfirmed-stream band offers
-  the operator's Stop until restoration after an engine restart covers it.
+  it within 90 s, which closes the socket. A session left in `stop_failed` (the
+  engine-loss Stop could not reach the engine) is not cleared by the heal; the
+  engine-restart restoration settles it once the replaced engine is silent (see
+  one-shot stream restoration), otherwise the Live view offers the operator's Stop.
 
 Reachability = `getLastCapabilities()?.engineUnavailable === false` (a live snapshot).
 It feeds INTO the existing `engine-unavailable`/`engine-starting` capability tier — it

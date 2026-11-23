@@ -32,6 +32,11 @@ import {
 	ownsSessionSender,
 	unownedSenderCensus,
 } from "./sender-ownership.ts";
+import {
+	forgetSessionEngine,
+	readEngineIdentity,
+	recordedSessionEngine,
+} from "./session-engine.ts";
 import { newAttemptId } from "./start-failure-taxonomy.ts";
 import {
 	getStreamLifecycleState,
@@ -125,6 +130,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	setLifecycleState: (state) => {
 		const previous = getStreamLifecycleState();
 		updateStreamLifecycleState(state);
+		if (state === "idle") forgetSessionEngine();
 		if (previous === "starting" && state === "streaming") {
 			streamStartedAt = Date.now();
 			recordEvent(() => emitEvent("stream_started", {}));
@@ -200,6 +206,10 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	confirmStreamingForOta: adoptOtaStreamingMarker,
 	awaitsIdleWitness: otaMarkerAwaitsIdleWitness,
 	engineStopped: () => engineUnitStopped(),
+	sessionEngine: {
+		recorded: () => (shouldUseMocks() ? undefined : recordedSessionEngine()),
+		readServing: readEngineIdentity,
+	},
 	onStreamStopped: (cause) => {
 		noteStreamStopped(cause);
 		recordEvent(() =>

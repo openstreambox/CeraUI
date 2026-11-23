@@ -167,6 +167,12 @@ import {
 } from "./launch-transaction.ts";
 import { asRawRequestClient } from "./raw-request.ts";
 import {
+	type EngineIdentity,
+	readEngineIdentity,
+	recordSessionEngine,
+	sameEngine,
+} from "./session-engine.ts";
+import {
 	classifyStartFailure,
 	StreamStartFailure,
 	typedStartFailure,
@@ -274,6 +280,18 @@ export interface CerastreamBackendDeps {
 	// `onSessionConnectionLost`, so the reconnect loop keeps asking the engine
 	// until it answers again. Defaults to re-arming the engine reconnect loop.
 	onEngineUnreachable?: (site: string) => void;
+	/**
+	 * Reads the engine unit's identity (invocation and main PID) around a Start,
+	 * so the session can later be told apart from a replacement engine.
+	 * Omitted (tests, mocks): no identity is ever recorded.
+	 */
+	readEngineIdentity?: () => Promise<EngineIdentity | undefined>;
+	/**
+	 * Told, once per successful launch and only while that launch's session is
+	 * still current, which engine invocation it ran in (undefined when the two
+	 * reads around the Start disagree or fail).
+	 */
+	onLaunchEngine?: (invocation: string | undefined) => void;
 	onConfigChangePhase?: (event: {
 		attemptId: string;
 		phase: ConfigChangePhase;
@@ -658,6 +676,10 @@ function defaultCerastreamBackendDeps(): CerastreamBackendDeps {
 		scheduleTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
 		cancelTimeout: (timer) => clearTimeout(timer),
 		onSessionConnectionLost: defaultOnSessionConnectionLost,
+		readEngineIdentity,
+		// The engine this process's own launch ran in, for the replaced-engine
+		// witness (`session-engine.ts`).
+		onLaunchEngine: recordSessionEngine,
 		onConfigChangePhase: defaultOnConfigChangePhase,
 		onEngineStatus: (event, current) => {
 			void import("./stream-session-orchestrator.ts")
@@ -781,6 +803,18 @@ export function silenceShowsNoSession(
 	return false;
 }
 
+/**
+ * The engine refused a Start because a session is already running. The
+ * refusal opened nothing, and the running session may belong to another
+ * client, so nothing about it is ours to roll back.
+ */
+export function startRefusedAsAlreadyStreaming(error: unknown): boolean {
+	if (!(error instanceof CerastreamRpcError)) return false;
+	return error.dataCode === undefined
+		? error.code === -32002
+		: error.dataCode === "cerastream.state.already_streaming";
+}
+
 export function classifyConnectHandshakePhase(
 	error: unknown,
 ): "connect" | "hello" {
@@ -828,10 +862,41 @@ export class CerastreamBackend implements StreamingBackend {
 	private subscription: Subscription | undefined;
 	private active = false;
 	private launchedSessionCurrent: (() => boolean) | undefined;
+	private launchedEngine: string | undefined;
+	private launchEngineRead: Promise<void> = Promise.resolve();
 
 	/** Only the unchanged client that acknowledged our Start is session proof. */
 	ownsLaunchedSession(): boolean {
 		return this.active && this.launchedSessionCurrent?.() === true;
+	}
+
+	/** The engine invocation our own Start ran in (see the deps' reader). */
+	launchedEngineInvocation(): string | undefined {
+		return this.ownsLaunchedSession() ? this.launchedEngine : undefined;
+	}
+
+	/** Test seam: resolves once the last launch's engine reads have settled. */
+	settleLaunchEngine(): Promise<void> {
+		return this.launchEngineRead;
+	}
+
+	/**
+	 * Compare the unit's identity before the connect with one read after the
+	 * ack, off the Start's own path. A restart anywhere in between gives two
+	 * different reads, so nothing is recorded.
+	 */
+	private async noteLaunchEngine(
+		before: Promise<EngineIdentity | undefined>,
+		current: () => boolean,
+	): Promise<void> {
+		const first = await before;
+		const after =
+			first === undefined ? undefined : await this.deps.readEngineIdentity?.();
+		if (!current()) return;
+		this.launchedEngine = sameEngine(first, after)
+			? first.invocation
+			: undefined;
+		this.deps.onLaunchEngine?.(this.launchedEngine);
 	}
 	private audioMixInputs: Array<AudioInputConfig & { id: string }> | undefined;
 	private clientEpoch = 0;
@@ -912,6 +977,7 @@ export class CerastreamBackend implements StreamingBackend {
 		this.clearRecoveredEngineError();
 		const ownsLaunch = currentStreamLaunchOwner();
 		let dispatched = false;
+		let refusedAsAlreadyStreaming = false;
 		let confirmedIdle = false;
 		let clientReleased = false;
 		let acquiredClient: CerastreamClient | undefined;
@@ -949,6 +1015,9 @@ export class CerastreamBackend implements StreamingBackend {
 					confirmStreaming = resolve;
 				});
 				beginCapabilitiesEpoch();
+				// Read before the connect, in parallel with it; compared after the
+				// ack (see `launchedEngineInvocation`).
+				const engineBefore = this.deps.readEngineIdentity?.();
 				const client = await launchTransaction.acquirePhase(
 					"connect",
 					() => this.deps.connect(this.deps.connectOptions),
@@ -995,7 +1064,9 @@ export class CerastreamBackend implements StreamingBackend {
 				assertStreamLaunchOwnership();
 				this.subscription = subscription;
 				launchTransaction.register(async () => {
-					if (!dispatched) return;
+					// A refused Start opened nothing; a Stop here would end the
+					// session that caused the refusal, which may not be ours.
+					if (!dispatched || refusedAsAlreadyStreaming) return;
 					try {
 						// A session request can still occupy the engine connection.
 						await this.stopOnFreshConnection(client);
@@ -1037,7 +1108,13 @@ export class CerastreamBackend implements StreamingBackend {
 				const result = await launchTransaction.runPhase("start-rpc", () => {
 					assertStreamLaunchOwnership();
 					dispatched = true;
-					return this.dispatchStart(client, startParams);
+					return this.dispatchStart(client, startParams).catch(
+						(error: unknown) => {
+							if (startRefusedAsAlreadyStreaming(error))
+								refusedAsAlreadyStreaming = true;
+							throw error;
+						},
+					);
 				});
 				await launchTransaction.runPhase("playing-wait", async () => {
 					const parsed = startResultSchema.parse(result);
@@ -1047,8 +1124,18 @@ export class CerastreamBackend implements StreamingBackend {
 				if (this.client === client && this.clientEpoch === clientEpoch) {
 					this.noteDroppedStartFeatures(droppedFeatures, capabilitiesAnswered);
 					this.audioMixInputs = startMixInputs;
-					this.launchedSessionCurrent = () =>
+					const launchCurrent = () =>
 						this.client === client && this.clientEpoch === clientEpoch;
+					this.launchedSessionCurrent = launchCurrent;
+					// The same running process before the connect and after the ack
+					// is the engine this session lives in; anything else records
+					// nothing. Settled off the Start's own path.
+					this.launchedEngine = undefined;
+					if (engineBefore !== undefined)
+						this.launchEngineRead = this.noteLaunchEngine(
+							engineBefore,
+							launchCurrent,
+						);
 					this.runtimeEvidence = undefined;
 				}
 			}, "start");
@@ -1418,17 +1505,14 @@ export class CerastreamBackend implements StreamingBackend {
 			acceptingEvents = false;
 			const stillSilent = () =>
 				!heard && ownsQuery() && this.clientEpoch === clientEpoch;
-			if (
-				runtimeState === "unknown" &&
-				timedOut &&
-				stillSilent() &&
-				silenceShowsNoSession(
-					await askEngineSession(client),
-					client.hello.schema_version,
-				) &&
-				stillSilent()
-			)
-				silent();
+			if (runtimeState === "unknown" && timedOut && stillSilent()) {
+				const reply = await askEngineSession(client);
+				if (
+					silenceShowsNoSession(reply, client.hello.schema_version) &&
+					stillSilent()
+				)
+					silent(reply === "none" ? "empty_snapshot" : "no_report");
+			}
 			if (
 				ownsQuery() &&
 				this.clientEpoch === clientEpoch &&

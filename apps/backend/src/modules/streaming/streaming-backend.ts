@@ -115,4 +115,9 @@ export interface StreamingBackend {
 	reconcileRuntimeState?(): Promise<EngineRuntimeState>;
 	/** Local Start identity, never granted by an observed/adopted subscription. */
 	ownsLaunchedSession?(): boolean;
+	/**
+	 * The engine unit invocation this process's own Start ran in, when the unit
+	 * named the same running process before the connect and after the ack.
+	 */
+	launchedEngineInvocation?(): string | undefined;
 }
