@@ -508,7 +508,8 @@ const networkView = $derived<SetupRowView>({
 		</section>
 
 		<LiveBar
-			blocked={startDisabledReason !== undefined || stopFirst}
+			blocked={startDisabledReason !== undefined}
+			notice={stopFirst}
 			status={startDisabledReason ??
 				(stopFirst
 					? m["live.unconfirmedStream.stopFirst"]()

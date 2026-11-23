@@ -253,6 +253,12 @@ describe("StreamSetupChain: unconfirmed stream state", () => {
 		});
 		expect(container.textContent).not.toContain("Ready to go live");
 		expect(container.textContent).toContain("Stop the stream above first");
+		// A warning, not a blocking reason: Start stays usable.
+		expect(
+			container
+				.querySelector('[data-testid="live-bar"]')
+				?.getAttribute("data-state"),
+		).toBe("notice");
 		const start = within(container).getByRole("button", {
 			name: /start stream/i,
 		});
