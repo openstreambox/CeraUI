@@ -216,26 +216,39 @@ recorded sender is gone (PID and start time), no process is named `srtla_send`
 remains, and nothing is bound to the recorded port in this process's or the
 engine's network namespace.
 
-- *Ended session, on by default.* If the engine answers silently and a fresh
-  snapshot is a valid answer naming no session (no `session_id`, no active input,
-  no targets; an error or unparseable reply is not that answer), the recorded
-  session has ended: idle is committed and the sentinel released. No Stop is sent.
-- *Live session, off by default* (`CERALIVE_STOP_ORPHANED_SESSIONS=1`). The engine
-  must be the recorded process, sampled before the connection and again after
-  its snapshot, and on one fresh connection the snapshot must name the recorded
-  `session_id`; the carrier check runs again in the tick the `stop` line is
-  written, and nothing is sent once the stop deadline has passed. This is a
-  compare-and-stop: the protocol's `stop` takes no session, and the engine
-  executes it against whatever session is current when it runs it, so a
-  replacement session or a new carrier appearing in that last moment is not
-  excluded. That is why it stays off until the engine offers a session-scoped
-  stop. Idle is committed on the engine's acknowledgement, with a
-  `stream_orphan_stopped` event.
+Both automatic paths below are off unless `CERALIVE_SETTLE_ORPHANED_SESSIONS=1`.
+With the default, reconciliation never commits idle or releases the sentinel by
+itself after a backend restart; the session stays `reconciling` and protected,
+the Live view pauses Start ("Stop the stream above first") next to the
+unconfirmed-state band, and the operator's Stop clears it.
+
+- *Ended session.* If the engine answers silently and a fresh snapshot is a
+  valid answer naming no session (no `session_id`, no active input, no targets;
+  an error, an unparseable reply, a refused connection or a timeout is not that
+  answer), and the carrier check still holds after it, the recorded session has
+  ended: idle is committed and the sentinel released. No Stop is sent. A second
+  client could still start a session between the snapshot and the commit,
+  which is why this is opt-in.
+- *Live session.* The engine must be the recorded process, sampled before the
+  connection and again after its snapshot, and on one fresh connection the
+  snapshot must name the recorded `session_id`; the carrier check runs again in
+  the tick the `stop` line is written, and nothing is sent once the stop
+  deadline has passed. This is a compare-and-stop: the protocol's `stop` takes
+  no session, and the engine executes it against whatever session is current
+  when it runs it, so a replacement session or a new carrier appearing in that
+  last moment is not excluded. Idle is committed on the engine's
+  acknowledgement, with a `stream_orphan_stopped` event.
 
 No record, any mismatch, or an engine that does not answer changes nothing and
 leaves an operator Stop as the way out; a later reconcile or Start tries again
-after a settle that failed. An operator Stop never joins such a settle: it waits
-for it to finish and then sends its own Stop. A positive idle
+after a settle that failed.
+
+**The operator's Stop** always sends its own Stop and reports `stopped` only on
+the engine's acknowledgement, also when the engine answers idle or not at all
+(a Stop on an idle engine is harmless). Once its deadline has passed it reports
+`stop_timeout` and sends nothing, then or later. It never joins a settle: it
+waits for the settle's own work, then sends its own Stop, unless that settle
+ended in a Stop the engine acknowledged, which it does not repeat. A positive idle
 event may settle an otherwise unowned running
 session, but never runs through outstanding launch/cleanup ownership.
 No new producer or wire field is needed. Launch config and resource-invariant

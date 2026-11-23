@@ -2,7 +2,7 @@
  * An earlier backend process's engine session after a backend restart,
  * through the production session deps, the real engine backend and a fake
  * engine. The shipped default never stops it: the operator's Stop clears it.
- * The automatic stop (behind CERALIVE_STOP_ORPHANED_SESSIONS) and the
+ * The automatic stop (behind CERALIVE_SETTLE_ORPHANED_SESSIONS) and the
  * binding's compare-and-stop are pinned here, including the review probes.
  */
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
@@ -71,8 +71,8 @@ beforeEach(async () => {
 	marker = join(directory, "streaming");
 	previousMarker = process.env.CERALIVE_STREAMING_MARKER;
 	process.env.CERALIVE_STREAMING_MARKER = marker;
-	previousFlag = process.env.CERALIVE_STOP_ORPHANED_SESSIONS;
-	delete process.env.CERALIVE_STOP_ORPHANED_SESSIONS;
+	previousFlag = process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS;
+	delete process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS;
 	setProvenanceProbesForTest({
 		bootId: () => "boot-1",
 		engineProcess: async () => RECORD.engine,
@@ -101,8 +101,8 @@ afterEach(async () => {
 		delete process.env.CERALIVE_STREAMING_MARKER;
 	else process.env.CERALIVE_STREAMING_MARKER = previousMarker;
 	if (previousFlag === undefined)
-		delete process.env.CERALIVE_STOP_ORPHANED_SESSIONS;
-	else process.env.CERALIVE_STOP_ORPHANED_SESSIONS = previousFlag;
+		delete process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS;
+	else process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS = previousFlag;
 	await rm(directory, { recursive: true, force: true });
 });
 
@@ -146,23 +146,37 @@ test("by default a leftover session is never stopped; one operator Stop clears i
 	expect(await harness.start()).toMatchObject({ result: "started" });
 });
 
-test("after the engine restarted, a recorded marker settles on a valid empty snapshot without a stop", async () => {
-	writeFileSync(marker, "");
-	writeStreamProvenance(RECORD);
-	const harness = idleProductionHarness(directory);
-	h = harness;
-	bindStreamLiveness(harness.session.streamLiveness);
-	harness.engine.answerSnapshots();
-	const probe = harness.session.reconcile();
-	await harness.expireProbe();
-	expect(await probe).toBe("idle");
-	expect(stops(harness)).toBe(0);
-	expect(existsSync(marker)).toBe(false);
-	expect(await harness.start()).toMatchObject({ result: "started" });
+test("after the engine restarted, a recorded marker waits for the operator by default and settles only when enabled", async () => {
+	for (const enabled of [false, true]) {
+		if (enabled) process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS = "1";
+		writeFileSync(marker, "");
+		writeStreamProvenance(RECORD);
+		const harness = idleProductionHarness(directory);
+		h = harness;
+		bindStreamLiveness(harness.session.streamLiveness);
+		harness.engine.answerSnapshots();
+		const probe = harness.session.reconcile();
+		await harness.expireProbe();
+		expect(await probe).toBe(enabled ? "idle" : "reconciling");
+		expect(stops(harness)).toBe(0);
+		expect(existsSync(marker)).toBe(!enabled);
+		if (!enabled) {
+			// The shipped default: the operator's Stop, acknowledged, clears it.
+			const stopping = harness.session.stop("operator");
+			await harness.expireProbe();
+			expect(await stopping).toEqual({ result: "stopped" });
+			expect(stops(harness)).toBe(1);
+			expect(existsSync(marker)).toBe(false);
+		}
+		expect(await harness.start()).toMatchObject({ result: "started" });
+		await harness.dispose();
+		h = undefined;
+		rmSync(marker, { force: true });
+	}
 });
 
 test("with the stop enabled, the recorded session is stopped through the snapshot compare", async () => {
-	process.env.CERALIVE_STOP_ORPHANED_SESSIONS = "1";
+	process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS = "1";
 	const harness = bootAfterKilledStream();
 	expect(await reconcileStreaming(harness)).toBe("idle");
 	expect(harness.calls()).toContain("list-switch-targets");
@@ -172,7 +186,7 @@ test("with the stop enabled, the recorded session is stopped through the snapsho
 });
 
 test("with the stop enabled, another session id, a held port or no record still stop nothing", async () => {
-	process.env.CERALIVE_STOP_ORPHANED_SESSIONS = "1";
+	process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS = "1";
 	const other = bootAfterKilledStream("cs-4");
 	expect(await reconcileStreaming(other)).toBe("reconciling");
 	expect(stops(other)).toBe(0);
@@ -196,7 +210,7 @@ test("with the stop enabled, another session id, a held port or no record still 
 });
 
 test("with the stop enabled, restoration relaunches once the recorded session is stopped", async () => {
-	process.env.CERALIVE_STOP_ORPHANED_SESSIONS = "1";
+	process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS = "1";
 	const harness = bootAfterKilledStream();
 	const armed = join(directory, "armed.json");
 	const bootId = "11111111-1111-4111-8111-111111111111";

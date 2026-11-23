@@ -123,6 +123,8 @@ export type StreamSessionOrchestratorDeps = {
 	readonly stopRuntime: (
 		generation: number,
 		confirmUnknown?: boolean,
+		/** Aborted once the caller's stop deadline has passed: send nothing more. */
+		signal?: AbortSignal,
 	) => Promise<void>;
 	readonly queryRuntime: () => Promise<EngineRuntimeState>;
 	/** Reconciliation may retain only a session whose sender we still own. */
@@ -149,6 +151,12 @@ export type StreamSessionOrchestratorDeps = {
 	) => Promise<"stopped" | "gone" | "refused">;
 	/** Told after an orphaned session was stopped (event history). */
 	readonly onOrphanedSessionStopped?: () => void;
+	/**
+	 * Whether reconciliation may settle an earlier process's session by itself
+	 * at all. False keeps the lifecycle, the sentinel and its protection exactly
+	 * as before until an operator Stop; production reads the default-off flag.
+	 */
+	readonly orphanSettleEnabled?: () => boolean;
 	/** Mirrors `streamLiveness() === "unknown"` for interlocks outside the session. */
 	readonly setLivenessUnconfirmed?: (unconfirmed: boolean) => void;
 	/** Engine-session evidence protects the marker, without claiming media adoption. */
@@ -831,6 +839,8 @@ export function createStreamSessionOrchestrator(
 		try {
 			await stopWithinDeadline(ownership.generation, false, async () => {
 				outcome = await retire(engine);
+				// An acknowledged stop: a Stop waiting behind this one adds none.
+				return outcome === "stopped";
 			});
 		} catch (error) {
 			orphanRetryOwed = true;
@@ -1117,6 +1127,7 @@ export function createStreamSessionOrchestrator(
 			deps.canReconcileStreaming?.(active?.generation) === false;
 		if (
 			active === undefined &&
+			deps.orphanSettleEnabled?.() !== false &&
 			(unconfirmedStream ||
 				(runtimeState === "unknown" && silent && !ownership.unprotected())) &&
 			(await retireOrphanedSession(

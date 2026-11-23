@@ -47,14 +47,17 @@ export function streamProvenancePath(): string {
 }
 
 /**
- * Whether a later process may STOP an earlier process's session by itself.
- * Off unless `CERALIVE_STOP_ORPHANED_SESSIONS=1`: the engine's `stop` takes no
- * session, so between the last check and the engine executing the stop a
- * replacement session or a new carrier could still appear. Settling a session
- * the engine already ended (`gone`) needs no stop and is not behind this flag.
+ * Whether a later process may settle an earlier process's session by itself,
+ * by stopping it or by accepting that the engine has ended it. Off unless
+ * `CERALIVE_SETTLE_ORPHANED_SESSIONS=1`. The engine's `stop` takes no session
+ * and its snapshot is a moment in time, so between the last check and the
+ * engine acting (or the idle commit) a replacement session or a new carrier
+ * could still appear. Until the engine offers a conditional stop, the shipped
+ * default leaves the session, the sentinel and its protection to an operator
+ * Stop.
  */
-export function orphanStopEnabled(): boolean {
-	return process.env.CERALIVE_STOP_ORPHANED_SESSIONS === "1";
+export function orphanSettleEnabled(): boolean {
+	return process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS === "1";
 }
 
 const processIdentity = z.strictObject({
@@ -219,7 +222,7 @@ export type OrphanRetirementDeps = {
 	readonly engineProcess: () => Promise<ProcessIdentity | undefined>;
 	/** A valid snapshot with no session id, no active input and no targets. */
 	readonly engineReportsNoSession: () => Promise<boolean>;
-	readonly stopEnabled: () => boolean;
+	readonly settleEnabled: () => boolean;
 	readonly stopRecordedSession:
 		| ((
 				sessionId: string,
@@ -233,16 +236,17 @@ export type OrphanRetirementDeps = {
  * Decide, and for a live session act, on a session an earlier backend process
  * of this boot left, only on that process's record of it.
  *
+ * Nothing at all unless settling is enabled (off by default).
+ *
  * `silent`: the engine answered and sent no status. If a fresh snapshot is a
- * valid answer naming no session, the recorded session has ended (`gone`) and
- * no Stop is needed.
+ * valid answer naming no session, and there is still no carrier after it, the
+ * recorded session has ended (`gone`) and no Stop is needed.
  *
  * `streaming`: the engine reports a session this process cannot confirm. Only
- * with the stop enabled, and only for the recorded engine process (sampled
- * before the connection and again after its snapshot), the recorded
- * `session_id` in that snapshot, and no carrier, checked again in the tick the
- * stop is written. The engine's `stop` is still unconditional on its side, so
- * this stays off by default.
+ * for the recorded engine process (sampled before the connection and again
+ * after its snapshot), the recorded `session_id` in that snapshot, and no
+ * carrier, checked again in the tick the stop is written. The engine's `stop`
+ * is still unconditional on its side.
  *
  * Everything else is `refused` and changes nothing.
  */
@@ -250,13 +254,15 @@ export async function retireOrphanedSession(
 	engine: "streaming" | "silent",
 	deps: OrphanRetirementDeps,
 ): Promise<OrphanOutcome> {
+	if (!deps.settleEnabled()) return "refused";
 	const record = deps.readRecord();
 	if (record === undefined || record.bootId !== deps.bootId()) return "refused";
 	if (!deps.carrierAbsent(record)) return "refused";
 	if (engine === "silent")
-		return (await deps.engineReportsNoSession()) ? "gone" : "refused";
-	if (!deps.stopEnabled() || deps.stopRecordedSession === undefined)
-		return "refused";
+		return (await deps.engineReportsNoSession()) && deps.carrierAbsent(record)
+			? "gone"
+			: "refused";
+	if (deps.stopRecordedSession === undefined) return "refused";
 	if (!sameProcess(await deps.engineProcess(), record.engine)) return "refused";
 	return (await deps.stopRecordedSession(
 		record.sessionId,
@@ -301,7 +307,7 @@ export const defaultOrphanRetirementDeps = (backend: {
 	engineProcess: () => probes.engineProcess(),
 	engineReportsNoSession: async () =>
 		(await backend.engineReportsNoSession?.()) === true,
-	stopEnabled: orphanStopEnabled,
+	settleEnabled: orphanSettleEnabled,
 	stopRecordedSession: backend.stopRecordedSession,
 });
 

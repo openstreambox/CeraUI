@@ -43,6 +43,7 @@ import { publishStreamSessionUnconfirmed } from "./stream-liveness.ts";
 import {
 	clearStreamProvenance,
 	defaultOrphanRetirementDeps,
+	orphanSettleEnabled,
 	provenanceProbes,
 	recordLaunchedSession,
 	retireOrphanedSession,
@@ -97,8 +98,8 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	createAttemptId: newAttemptId,
 	setStreamingStatus: updateStatus,
 	getStreamingStatus: getIsStreaming,
-	stopRuntime: async (generation, confirmUnknown) => {
-		await stopGeneration(generation, confirmUnknown);
+	stopRuntime: async (generation, confirmUnknown, signal) => {
+		await stopGeneration(generation, confirmUnknown, signal);
 		if (!shouldUseMocks() && unownedSenderCensus() !== "absent")
 			throw new Error("sender_ownership_unproven");
 	},
@@ -128,6 +129,7 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 			}),
 		);
 	},
+	orphanSettleEnabled: () => !shouldUseMocks() && orphanSettleEnabled(),
 	onOrphanedSessionStopped: () =>
 		recordEvent(() => emitEvent("stream_orphan_stopped", {})),
 	setLivenessUnconfirmed: (unconfirmed) => {

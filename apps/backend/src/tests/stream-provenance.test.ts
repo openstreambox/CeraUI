@@ -19,7 +19,7 @@ import {
 	engineProcess,
 	localSenderPortBound,
 	type OrphanRetirementDeps,
-	orphanStopEnabled,
+	orphanSettleEnabled,
 	processRuns,
 	processStartTime,
 	readStreamProvenance,
@@ -176,17 +176,18 @@ test("a record round-trips owner-only, and anything malformed reads as no record
 });
 
 test("stopping is off unless the flag says otherwise", () => {
-	const saved = process.env.CERALIVE_STOP_ORPHANED_SESSIONS;
+	const saved = process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS;
 	try {
-		delete process.env.CERALIVE_STOP_ORPHANED_SESSIONS;
-		expect(orphanStopEnabled()).toBe(false);
-		process.env.CERALIVE_STOP_ORPHANED_SESSIONS = "true";
-		expect(orphanStopEnabled()).toBe(false);
-		process.env.CERALIVE_STOP_ORPHANED_SESSIONS = "1";
-		expect(orphanStopEnabled()).toBe(true);
+		delete process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS;
+		expect(orphanSettleEnabled()).toBe(false);
+		process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS = "true";
+		expect(orphanSettleEnabled()).toBe(false);
+		process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS = "1";
+		expect(orphanSettleEnabled()).toBe(true);
 	} finally {
-		if (saved === undefined) delete process.env.CERALIVE_STOP_ORPHANED_SESSIONS;
-		else process.env.CERALIVE_STOP_ORPHANED_SESSIONS = saved;
+		if (saved === undefined)
+			delete process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS;
+		else process.env.CERALIVE_SETTLE_ORPHANED_SESSIONS = saved;
 	}
 });
 
@@ -202,7 +203,7 @@ function decision(overrides: Partial<OrphanRetirementDeps> = {}) {
 			return RECORD.engine;
 		},
 		engineReportsNoSession: async () => true,
-		stopEnabled: () => true,
+		settleEnabled: () => true,
 		stopRecordedSession: async (sessionId, beforeDispatch, afterSnapshot) => {
 			if (!(await afterSnapshot()) || !beforeDispatch()) return false;
 			stops.push(sessionId);
@@ -221,7 +222,7 @@ test("only the recorded session in the recorded engine process is stopped, and o
 	expect(ok.engineSamples()).toBe(2);
 
 	for (const [name, overrides] of [
-		["stop disabled", { stopEnabled: () => false }],
+		["settling disabled", { settleEnabled: () => false }],
 		["no record", { readRecord: () => undefined }],
 		["another boot", { bootId: () => "boot-2" }],
 		["unknown boot", { bootId: () => undefined }],
@@ -274,12 +275,15 @@ test("a silent engine ends a recorded session only on a valid empty snapshot, wi
 		engineProcess: async () => {
 			throw new Error("not asked");
 		},
-		stopEnabled: () => false,
 	});
 	expect(await retireOrphanedSession("silent", silent.deps)).toBe("gone");
 	expect(silent.stops).toEqual([]);
+	let checks = 0;
 	for (const overrides of [
+		{ settleEnabled: () => false },
 		{ engineReportsNoSession: async () => false },
+		// A carrier that appears while the snapshot is answered.
+		{ carrierAbsent: () => ++checks === 1 },
 		{ readRecord: () => undefined },
 		{ carrierAbsent: () => false },
 	]) {

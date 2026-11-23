@@ -33,10 +33,9 @@
  * A RUNNING ENGINE ALWAYS BEATS RESTORATION. The runtime-state check runs first
  * and short-circuits, so a backend-only restart against a still-streaming engine
  * never launches a second session. Reconciliation retains such a session only
- * with this process's own sender and Start evidence. A predecessor's recorded
- * session the engine has already ended (or, with the automatic stop enabled,
- * that reconciliation stopped) leaves an idle engine to restore into. Any
- * other predecessor's session
+ * with this process's own sender and Start evidence. Only with settling enabled
+ * (off by default) can reconciliation clear a predecessor's recorded session,
+ * leaving an idle engine to restore into. Any other predecessor's session
  * stays unconfirmed (`unknown`), so the run waits, gives up after its unknown
  * deadline and leaves recovery to an operator Stop. That is the whole reason the
  * check is not "did we leave a marker behind" — a marker survives a backend

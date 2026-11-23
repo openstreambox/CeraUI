@@ -23,14 +23,27 @@ export function confirmUnownedEngineStop(
 		},
 	},
 	confirmUnknown = false,
+	signal?: AbortSignal,
 ): void {
 	const fail = (error: unknown) => {
 		void finish({ ok: false, error });
 	};
+	// An operator's confirmation always ends in its own acknowledged Stop: an
+	// idle answer is not that acknowledgement. Nothing is sent once the caller's
+	// deadline has passed.
+	const confirm = () => {
+		if (deps.confirmStop === undefined) fail(new Error("engine_stop_unknown"));
+		else void deps.confirmStop().then(() => finish({ ok: true }), fail);
+	};
 	void deps.query().then((runtime) => {
+		if (signal?.aborted) {
+			fail(new Error("stop_timeout"));
+			return;
+		}
 		switch (runtime) {
 			case "idle":
-				void finish({ ok: true });
+				if (confirmUnknown) confirm();
+				else void finish({ ok: true });
 				break;
 			case "streaming":
 				if (
@@ -41,9 +54,8 @@ export function confirmUnownedEngineStop(
 					fail(new Error("engine_stop_unknown"));
 				break;
 			case "unknown":
-				if (!confirmUnknown || deps.confirmStop === undefined)
-					fail(new Error("engine_stop_unknown"));
-				else void deps.confirmStop().then(() => finish({ ok: true }), fail);
+				if (!confirmUnknown) fail(new Error("engine_stop_unknown"));
+				else confirm();
 				break;
 		}
 	}, fail);

@@ -5,8 +5,9 @@ type CleanupFlight = {
 	readonly result: Promise<void>;
 	/** True for an engine stop; false for a narrower decided effect. */
 	readonly stops: boolean;
-	/** Resolves once the submitted work itself has settled, after retirement. */
-	settled: Promise<void>;
+	/** Resolves once the submitted work has settled (after retirement): true
+	 * when it ended in a Stop the engine acknowledged. */
+	settled: Promise<boolean>;
 	readonly release: () => void;
 	readonly reject: (error: unknown) => void;
 };
@@ -24,48 +25,54 @@ export function createSessionCleanup(
 	/**
 	 * `effect` replaces the engine stop for a decided, narrower one (settling an
 	 * earlier process's session), which may end without stopping anything. A
-	 * stop requested meanwhile therefore never joins it: it waits for that
-	 * effect to settle and then sends its own stop.
+	 * stop requested meanwhile never joins it: it waits for that effect's own
+	 * work, then sends its own stop, unless the effect ended in a Stop the engine
+	 * acknowledged. If this caller's deadline passes first, it reports
+	 * `stop_timeout` and sends nothing, then or later.
 	 */
 	const run = (
 		generation: number,
 		confirmUnknown = false,
-		effect?: () => Promise<void>,
+		effect?: () => Promise<boolean | undefined>,
 	): Promise<void> => {
 		if (flight !== undefined) {
 			if (flight.stops || effect !== undefined) return flight.result;
-			// Wait for the effect's own work, not its caller's deadline, and give
-			// up after one stop deadline so this stop's caller is never stranded.
 			const settled = flight.settled;
 			return new Promise<void>((resolve, reject) => {
-				const timer = clock.schedule(
-					() => reject(new Error("stop_timeout")),
-					clock.deadlineMs,
-				);
-				void settled.then(() => {
+				let expired = false;
+				const timer = clock.schedule(() => {
+					expired = true;
+					reject(new Error("stop_timeout"));
+				}, clock.deadlineMs);
+				void settled.then((acknowledged) => {
+					if (expired) return;
 					clock.cancel(timer);
-					run(generation, confirmUnknown).then(resolve, reject);
+					if (acknowledged) resolve();
+					else run(generation, confirmUnknown).then(resolve, reject);
 				});
 			});
 		}
 		const answer = Promise.withResolvers<void>();
+		const abort = new AbortController();
 		const current: CleanupFlight = {
 			stops: effect === undefined,
-			settled: Promise.resolve(),
+			settled: Promise.resolve(false),
 			result: answer.promise,
 			release: () => answer.resolve(),
 			reject: answer.reject,
 		};
 		flight = current;
-		const timer = clock.schedule(
-			() => current.reject(new Error("stop_timeout")),
-			clock.deadlineMs,
-		);
-		let raw: Promise<void>;
+		const timer = clock.schedule(() => {
+			abort.abort();
+			current.reject(new Error("stop_timeout"));
+		}, clock.deadlineMs);
+		let raw: Promise<boolean | undefined>;
 		try {
 			raw =
 				effect === undefined
-					? deps.stopRuntime(generation, confirmUnknown)
+					? deps
+							.stopRuntime(generation, confirmUnknown, abort.signal)
+							.then(() => true)
 					: effect();
 		} catch (error) {
 			raw = Promise.reject(error);
@@ -86,8 +93,8 @@ export function createSessionCleanup(
 		);
 		// Registered after the reaction above, so the flight is retired first.
 		current.settled = raw.then(
-			() => undefined,
-			() => undefined,
+			(acknowledged) => acknowledged === true,
+			() => false,
 		);
 		return current.result;
 	};

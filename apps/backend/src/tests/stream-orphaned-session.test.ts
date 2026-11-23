@@ -94,8 +94,7 @@ function restarted(options: {
 		carrierAbsent: () => true,
 		engineProcess: async () => RECORD.engine,
 		engineReportsNoSession: async () => true,
-		// The automatic stop is off in production; these cases turn it on.
-		stopEnabled: () => true,
+		settleEnabled: () => true,
 		stopRecordedSession: async (sessionId, beforeDispatch) => {
 			if (!beforeDispatch()) return false;
 			stops.push(sessionId);
@@ -113,6 +112,9 @@ function restarted(options: {
 		claimLaunchMarker: marker.claimForLaunch,
 		protectUnownedEngineSession: marker.claimForLaunch,
 		engineStopped: async () => false,
+		// Settling is off in production; these cases turn it on unless a case
+		// passes the shipped default through `ports`.
+		orphanSettleEnabled: () => true,
 		retireOrphanedSession: (engine) => {
 			retireCalls++;
 			return retireOrphanedSession(engine, deps);
@@ -392,13 +394,13 @@ test("silence without a valid empty snapshot keeps the stream's marker", async (
  * The shipped default: with the automatic stop off, the leftover session stays
  * protected, and one operator Stop clears it so Start works.
  */
-test("with the stop off, a leftover session waits for one operator Stop, then Start works", async () => {
+test("with settling off (the default), a leftover session waits for one operator Stop, then Start works", async () => {
 	killedMidStream();
 	let engine: Engine = "streaming";
 	const next = restarted({
 		engine: () => engine,
 		record: RECORD,
-		retirement: { stopEnabled: () => false },
+		ports: { orphanSettleEnabled: () => false },
 		engineStop: async () => {
 			engine = "silent";
 		},

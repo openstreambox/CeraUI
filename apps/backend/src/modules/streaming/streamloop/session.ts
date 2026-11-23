@@ -399,6 +399,7 @@ export async function start(
 export function stopGeneration(
 	generation: number,
 	confirmUnknown = false,
+	signal?: AbortSignal,
 ): Promise<void> {
 	// Only the adoption check closes before the engine stops. The interface and
 	// USB listeners stay until the stop has finished, so a Stop that does not
@@ -486,7 +487,7 @@ export function stopGeneration(
 					"engine session missing while generation-owned resources remained",
 				);
 			}
-			confirmUnownedEngineStop(finish, undefined, confirmUnknown);
+			confirmUnownedEngineStop(finish, undefined, confirmUnknown, signal);
 		}
 	});
 }
