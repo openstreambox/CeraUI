@@ -163,7 +163,10 @@ export type CoordinatorPorts = Readonly<{
 	publicationPending?(): boolean;
 	observe(ifname: string): Promise<RadioObservation | undefined>;
 	/** Scan on this radio only; `undefined` is a failed scan. */
-	scan(ifname: string): Promise<readonly ScanRow[] | undefined>;
+	scan(
+		ifname: string,
+		expected?: RadioExpectation | null,
+	): Promise<readonly ScanRow[] | undefined>;
 	/** SSIDs this radio has saved, interface-bound profiles for. */
 	savedSsids(ifname: string): Promise<ReadonlySet<string>>;
 	/**
@@ -176,6 +179,7 @@ export type CoordinatorPorts = Readonly<{
 		ssid: string,
 		bssid: string,
 		mayActivate: () => Promise<boolean>,
+		expected?: RadioExpectation | null,
 	): Promise<JoinResult | typeof JOIN_REFUSED | undefined>;
 	/**
 	 * A dedicated, cheap read of the radio's phy and AP state (`iw dev` only),
@@ -183,7 +187,11 @@ export type CoordinatorPorts = Readonly<{
 	 */
 	radioMode(ifname: string): Promise<RadioMode | undefined>;
 	/** Remove the owned profile from `join`. */
-	abandon(ifname: string, activation: string): Promise<boolean>;
+	abandon(
+		ifname: string,
+		activation: string,
+		expected?: RadioExpectation | null,
+	): Promise<boolean>;
 	/** Gateway and egress of an associated radio's path. */
 	uplinkOf(
 		ifname: string,
@@ -340,7 +348,7 @@ type Departure = {
 };
 
 /** Why an action did not run or was discarded. */
-type ActStop = "aborted" | "radio-busy" | "radio-in-ap-mode";
+type ActStop = "aborted" | "radio-busy" | "radio-in-ap-mode" | "radio-replaced";
 
 type Learned = {
 	uplink: UplinkIdentity;
@@ -752,7 +760,7 @@ export class RoamingCoordinator {
 					r.role === "hotspot-reserved" ||
 					mode?.apOnPhy !== false;
 				if (protectedRadio && now.activation === activation) return false;
-				await this.#ports.abandon(r.ifname, activation);
+				await this.#ports.abandon(r.ifname, activation, this.#expect(r));
 				return true;
 			},
 		);
@@ -1587,9 +1595,9 @@ export class RoamingCoordinator {
 				.map((h) => h.obs?.bssid)
 				.filter((b): b is string => !!b),
 		);
-		this.#withdraw(radio);
+		// The radio leaves the bond only once the lock has admitted it (#act).
 		const scan = await this.#act(radio, "scan", () =>
-			this.#ports.scan(radio.ifname),
+			this.#ports.scan(radio.ifname, this.#expect(radio)),
 		);
 		const rows = scan.value;
 		if (scan.stop !== null || rows === undefined) {
@@ -1668,10 +1676,15 @@ export class RoamingCoordinator {
 					const may = await this.#mayActNow(radio);
 					return may && !this.#stopped;
 				},
+				this.#expect(radio),
 			);
 			if (result === JOIN_REFUSED && replaced) return RADIO_REPLACED;
 			if (result && result !== JOIN_REFUSED && !(await confirm())) {
-				await this.#ports.abandon(radio.ifname, result.activation);
+				await this.#ports.abandon(
+					radio.ifname,
+					result.activation,
+					this.#expect(radio),
+				);
 				return RADIO_REPLACED;
 			}
 			return result;
@@ -1806,8 +1819,12 @@ export class RoamingCoordinator {
 		if (this.#departure) throw new Error("A departure is already in flight");
 		// Fenced: nothing new starts once stop() was called.
 		if (this.#stopped) return { value: undefined, stop: "aborted" };
-		if (r.role !== "searcher" || !r.heldOut)
-			throw new Error(`Refusing an action on ${r.role} ${r.ifname}`);
+		if (
+			kind === "join"
+				? r.role !== "searcher" || !r.heldOut
+				: r.role !== "searcher" && r.role !== "assister"
+		)
+			throw new Error(`Refusing a ${kind} on ${r.role} ${r.ifname}`);
 		const departure: Departure = {
 			ifname: r.ifname,
 			deadline: this.#ports.now() + this.#operationMs,
@@ -1821,17 +1838,23 @@ export class RoamingCoordinator {
 				r.ifname,
 				this.#expect(r),
 				async (confirm) => {
-					if (!(await this.#mayActNow(r))) return { refused: true as const };
-					// Fenced after the last await: stop() may have come meanwhile.
-					if (this.#stopped) return { refused: true as const };
-					return { refused: false as const, value: await action(confirm) };
+					if (!(await this.#mayActNow(r)))
+						return { refused: "radio-in-ap-mode" as const };
+					// The mode read awaited: the radio may have been replaced and stop()
+					// may have come meanwhile. The port's executor checks identity once
+					// more in the same step as its command.
+					if (!(await confirm())) return { refused: "radio-replaced" as const };
+					if (this.#stopped) return { refused: "aborted" as const };
+					// Admitted: only now does a scanning radio leave the bond.
+					if (kind === "scan") this.#withdraw(r);
+					return { refused: null, value: await action(confirm) };
 				},
 			);
 			if (!locked.ok) return { value: undefined, stop: "radio-busy" };
-			if (locked.value.refused)
+			if (locked.value.refused !== null)
 				return {
 					value: undefined,
-					stop: this.#stopped ? "aborted" : "radio-in-ap-mode",
+					stop: this.#stopped ? "aborted" : locked.value.refused,
 				};
 			const value = locked.value.value;
 			if (kind === "join") return { value, stop: null };

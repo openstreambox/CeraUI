@@ -920,7 +920,8 @@ describe("hotspot follows the radio's runtime mode", () => {
 		await c.step();
 		expect(w.touched("wlan2")).toEqual([]);
 		expect(c.status().lastOutcome).toBe("radio-in-ap-mode");
-		expect(w.bond.at(-1)).toBe("release:wlan2");
+		// Refused under the lock: the radio never left the bond.
+		expect(w.bond).toEqual([]);
 	});
 
 	test("an adapter lock held elsewhere stops the action", async () => {

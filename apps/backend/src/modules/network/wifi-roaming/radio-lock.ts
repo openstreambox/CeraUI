@@ -50,13 +50,13 @@ export function lifetimeKey(l: {
  * answers to `ifname` now must be that identity and lifetime: a replacement
  * that took the name since the round resolved it is refused before any effect.
  */
-export async function withRadioLock<T>(
+/** The admission for `ifname`, if it is the expected identity and lifetime. */
+function admitExpected(
 	ifname: string,
 	expected: RadioExpectation | null,
-	fn: (confirm: () => Promise<boolean>) => Promise<T>,
-): Promise<RadioLockResult<T>> {
+): WifiAdapterAdmission | undefined {
 	const admission = admitRadio(ifname);
-	if (!admission) return { ok: false };
+	if (!admission) return undefined;
 	if (
 		expected &&
 		(normalizeMacAddress(admission.registryKey) !==
@@ -64,7 +64,37 @@ export async function withRadioLock<T>(
 			(expected.lifetime !== null &&
 				lifetimeKey(admission.lifetime) !== expected.lifetime))
 	)
-		return { ok: false };
+		return undefined;
+	return admission;
+}
+
+/**
+ * Is the radio answering to `ifname` right now the expected identity and
+ * lifetime, confirmed against a fresh sample? The NetworkManager executor
+ * asks this in the same step as each command.
+ */
+export async function confirmRadio(
+	ifname: string,
+	expected: RadioExpectation | null,
+): Promise<boolean> {
+	const admission = admitExpected(ifname, expected);
+	return (
+		admission !== undefined && (await confirmWifiAdapterLifetime(admission))
+	);
+}
+
+/**
+ * Run `fn` under the radio's adapter lock. With `expected`, the radio that
+ * answers to `ifname` now must be that identity and lifetime: a replacement
+ * that took the name since the round resolved it is refused before any effect.
+ */
+export async function withRadioLock<T>(
+	ifname: string,
+	expected: RadioExpectation | null,
+	fn: (confirm: () => Promise<boolean>) => Promise<T>,
+): Promise<RadioLockResult<T>> {
+	const admission = admitExpected(ifname, expected);
+	if (!admission) return { ok: false };
 	const confirm = () => confirmWifiAdapterLifetime(admission);
 	const result = await withWifiAdapterLock(admission.owner, async () => {
 		if (!(await confirm())) return { confirmed: false as const };

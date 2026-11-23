@@ -70,6 +70,27 @@ reservation) belongs to the identity:
   while its join activated has the clone removed at once). Both end as
   `radio-replaced`, not as a failure of the BSSID.
 
+## NetworkManager effects
+
+Every change to NetworkManager state (a scan, an activation, a deletion) goes
+through one executor in `nm-port.ts`:
+
+- Effects run one at a time, process-wide, so none of the coordinator's own
+  activations can land between a check and a command.
+- Right before the command, in the same step, it re-reads the radio's identity
+  and lifetime (the expected one the round resolved) and, for a profile, that it
+  is a recorded clone and not active anywhere but where the effect allows. A
+  caller's own last check (mode, stop) runs first, so these reads come last.
+- Commands name profiles with `nmcli`'s `uuid` selector.
+- Anything unreadable or changed: nothing is done (`skipped`). After an identity
+  change a clone is never deleted; the record keeps it for the sweep.
+
+Outside this model: something other than CeraUI activating a temporary
+`ceraui-search-*` profile (autoconnect off) between the re-read and the command.
+
+A scan's bond hold starts only after the adapter lock admitted the radio and
+its identity was confirmed again after the mode read.
+
 ## Lifecycle
 
 - **Clone provenance.** Every clone's UUID is recorded
@@ -362,8 +383,9 @@ The pieces:
   `/run/ceralive/wifi-roaming/status.json` (replaced whole, mode 0600: it names
   SSIDs and BSSIDs) and, when a role or an outcome changed, one line in
   `journal.jsonl` (bounded to 2,000 lines, writes serialized, rotation atomic).
-  A failed journal write is retried with the next round. Nothing is written
-  after stop.
+  A failed journal line is kept and written first in the next round. `stop()`
+  waits for the round's status and journal I/O (never for a sender read), and
+  nothing is written after it.
 - Ports: identities resolve through `admitWifiAdapter` (name and lifetime),
   the sender port maps this round's names, holder health takes the signal
   from the last observation (delivered rate and loss stay unknown; the proof

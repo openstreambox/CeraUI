@@ -33,7 +33,7 @@ import {
 } from "./coordinator.ts";
 import { createSearchNm } from "./nm-port.ts";
 import type { HolderHealth } from "./policy.ts";
-import { lifetimeKey, withRadioLock } from "./radio-lock.ts";
+import { confirmRadio, lifetimeKey, withRadioLock } from "./radio-lock.ts";
 
 export { lifetimeKey };
 
@@ -177,7 +177,11 @@ export function productionPorts(
 	now: () => number,
 	currentNames: () => readonly string[],
 ): { ports: CoordinatorPorts; sender: SenderPort } {
-	const nm = createSearchNm({ run, clones: fileCloneRegistry() });
+	const nm = createSearchNm({
+		run,
+		clones: fileCloneRegistry(),
+		identity: confirmRadio,
+	});
 	const lastObs = new Map<string, RadioObservation | undefined>();
 	const sender = createSenderPort(defaultSenderPortDeps(currentNames, now));
 	const ports: CoordinatorPorts = {
@@ -265,6 +269,10 @@ export function startRoaming(
 	let last: CoordinatorStatus | null = null;
 	let stopped = false;
 	let busy = false;
+	/** Journal lines not yet written, oldest first. */
+	const pending: string[] = [];
+	/** The status and journal I/O of the round in flight. */
+	let writing: Promise<void> | null = null;
 	const round = async () => {
 		// One round at a time; a tick during a long scan or join is skipped.
 		if (stopped || busy) return;
@@ -276,23 +284,31 @@ export function startRoaming(
 			if (stopped) return;
 			const status = c.status();
 			const at = Date.now();
-			try {
-				await io.writeStatus(JSON.stringify({ at, ...status }));
-			} catch (error) {
-				logger.debug("wifi-roaming: status write failed", { error });
-			}
 			const entry = journalEntry(last, status, at);
-			if (entry) {
-				try {
-					await io.appendJournal(JSON.stringify(entry));
-				} catch (error) {
-					// Keep `last`, so the change is journalled on the next round.
-					logger.debug("wifi-roaming: journal write failed", { error });
-					return;
-				}
-			}
+			if (entry) pending.push(JSON.stringify(entry));
 			last = status;
+			// The I/O runs as one tracked step, so stop() can wait for it.
+			const write = (async () => {
+				try {
+					await io.writeStatus(JSON.stringify({ at, ...status }));
+				} catch (error) {
+					logger.debug("wifi-roaming: status write failed", { error });
+				}
+				// A failed line stays queued, in order, and goes out first next round.
+				while (pending.length > 0) {
+					try {
+						await io.appendJournal(pending[0] as string);
+					} catch (error) {
+						logger.debug("wifi-roaming: journal write failed", { error });
+						return;
+					}
+					pending.shift();
+				}
+			})();
+			writing = write;
+			await write;
 		} finally {
+			writing = null;
 			busy = false;
 		}
 	};
@@ -308,6 +324,8 @@ export function startRoaming(
 			stopped = true;
 			timer.cancel();
 			await c.stop();
+			// Drain the round's status and journal I/O; never wait on a sender read.
+			await writing;
 			sender.close();
 		},
 	};

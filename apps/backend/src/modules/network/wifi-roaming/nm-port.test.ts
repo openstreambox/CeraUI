@@ -127,9 +127,9 @@ describe("join", () => {
 			clones: memoryCloneRegistry(),
 		});
 		await nm.join("wlan2", "venue", "AA:00:00:00:00:02");
-		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
+		expect(f.calls).not.toContain(`nmcli connection delete uuid ${STALE}`);
 		expect(await nm.abandon("wlan2", STALE)).toBe(false);
-		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
+		expect(f.calls).not.toContain(`nmcli connection delete uuid ${STALE}`);
 	});
 
 	test("clones the radio's own bound profile, locks the BSSID, and activates on that radio only", async () => {
@@ -148,12 +148,14 @@ describe("join", () => {
 		expect(writes.slice(0, 4)).toEqual([
 			`nmcli connection clone --temporary ${SOURCE} ceraui-search-wlan2`,
 			`nmcli connection modify --temporary ${CLONE} 802-11-wireless.bssid aa:00:00:00:00:02 connection.autoconnect no`,
-			`nmcli connection delete ${STALE}`,
-			`nmcli -w 12 connection up ${CLONE} ifname wlan2`,
+			`nmcli connection delete uuid ${STALE}`,
+			`nmcli -w 12 connection up uuid ${CLONE} ifname wlan2`,
 		]);
 		// After activation only earlier clones are cleaned up, never the new one.
 		expect(
-			writes.slice(4).every((c) => c === `nmcli connection delete ${STALE}`),
+			writes
+				.slice(4)
+				.every((c) => c === `nmcli connection delete uuid ${STALE}`),
 		).toBe(true);
 		// The sibling's profile (bound to another MAC) is never the source.
 		expect(writes.join("\n")).not.toContain(OTHER);
@@ -169,7 +171,7 @@ describe("join", () => {
 		expect(
 			await nm.join("wlan2", "venue", "aa:00:00:00:00:02"),
 		).toBeUndefined();
-		expect(f.calls.at(-1)).toBe(`nmcli connection delete ${CLONE}`);
+		expect(f.calls.at(-1)).toBe(`nmcli connection delete uuid ${CLONE}`);
 	});
 
 	test("no bound profile for the SSID: no write at all", async () => {
@@ -333,7 +335,7 @@ describe("late checks", () => {
 		).toBe("refused");
 		const writes = f.calls.filter((c) => /clone|modify| up |delete/.test(c));
 		expect(writes.some((c) => c.includes("connection up"))).toBe(false);
-		expect(writes.at(-1)).toBe(`nmcli connection delete ${CLONE}`);
+		expect(writes.at(-1)).toBe(`nmcli connection delete uuid ${CLONE}`);
 	});
 });
 
@@ -372,7 +374,7 @@ describe("active-profile listing", () => {
 			clones: memoryCloneRegistry([STALE]),
 		});
 		await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => false);
-		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
+		expect(f.calls).not.toContain(`nmcli connection delete uuid ${STALE}`);
 	});
 });
 
@@ -395,7 +397,7 @@ describe("join's last check and stale clones", () => {
 			await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => !ap),
 		).toBe("refused");
 		expect(f.calls.some((c) => c.includes("connection up"))).toBe(false);
-		expect(f.calls.at(-1)).toBe(`nmcli connection delete ${CLONE}`);
+		expect(f.calls.at(-1)).toBe(`nmcli connection delete uuid ${CLONE}`);
 	});
 
 	test("an earlier clone that is still active is not deleted before activation, only after", async () => {
@@ -408,6 +410,10 @@ describe("join's last check and stale clones", () => {
 				f.calls.push(`${bin} ${line}`);
 				return upDone ? `wlan2:${CLONE}\n` : `wlan2:${STALE}\n`;
 			}
+			if (line === "-t -f UUID,DEVICE connection show --active") {
+				f.calls.push(`${bin} ${line}`);
+				return upDone ? `${CLONE}:wlan2\n` : `${STALE}:wlan2\n`;
+			}
 			return f.run(bin, args);
 		};
 		const nm = createSearchNm({
@@ -419,7 +425,7 @@ describe("join's last check and stale clones", () => {
 			await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => true),
 		).toEqual({ activation: CLONE });
 		const up = f.calls.findIndex((c) => c.includes("connection up"));
-		const del = f.calls.indexOf(`nmcli connection delete ${STALE}`);
+		const del = f.calls.indexOf(`nmcli connection delete uuid ${STALE}`);
 		expect(up).toBeGreaterThan(-1);
 		expect(del).toBeGreaterThan(up);
 	});
@@ -432,7 +438,7 @@ describe("join's last check and stale clones", () => {
 			clones: memoryCloneRegistry([STALE]),
 		});
 		await nm.join("wlan2", "venue", "aa:00:00:00:00:02", async () => true);
-		expect(f.calls).not.toContain(`nmcli connection delete ${STALE}`);
+		expect(f.calls).not.toContain(`nmcli connection delete uuid ${STALE}`);
 	});
 });
 
@@ -446,9 +452,9 @@ describe("sweep of orphaned clones", () => {
 		const run = async (bin: string, args: string[]) => {
 			const line = `${bin} ${args.join(" ")}`;
 			calls.push(line);
-			if (line === "nmcli -t -f UUID connection show --active") {
+			if (line === "nmcli -t -f UUID,DEVICE connection show --active") {
 				if (activeFails) throw new Error("failed");
-				return `${LIVE}\n${SOURCE}\n`;
+				return `${LIVE}:wlan2\n${SOURCE}:wlan1\n`;
 			}
 			if (line === "nmcli -t -f NAME,UUID connection show")
 				return `ceraui-search-wlan7:${ORPHAN}\nceraui-search-wlan2:${LIVE}\nceraui-search-wlan9:${OPERATOR}\nvenue:${OTHER}\n`;
@@ -464,7 +470,9 @@ describe("sweep of orphaned clones", () => {
 		const clones = memoryCloneRegistry([ORPHAN, LIVE, GONE]);
 		const nm = createSearchNm({ run: t.run, macOf: async () => MAC, clones });
 		expect(await nm.sweepOrphans()).toBe(1);
-		expect(deletes(t.calls)).toEqual([`nmcli connection delete ${ORPHAN}`]);
+		expect(deletes(t.calls)).toEqual([
+			`nmcli connection delete uuid ${ORPHAN}`,
+		]);
 		// The orphan and the record of a profile NetworkManager no longer has go.
 		expect([...(await clones.list())].sort()).toEqual([LIVE]);
 	});
@@ -477,8 +485,10 @@ describe("sweep of orphaned clones", () => {
 			clones: memoryCloneRegistry([ORPHAN]),
 		});
 		await nm.sweepOrphans();
-		const del = t.calls.indexOf(`nmcli connection delete ${ORPHAN}`);
-		expect(t.calls[del - 1]).toBe("nmcli -t -f UUID connection show --active");
+		const del = t.calls.indexOf(`nmcli connection delete uuid ${ORPHAN}`);
+		expect(t.calls[del - 1]).toBe(
+			"nmcli -t -f UUID,DEVICE connection show --active",
+		);
 	});
 
 	test("deletes nothing when the active listing cannot be read", async () => {
@@ -490,5 +500,111 @@ describe("sweep of orphaned clones", () => {
 		});
 		expect(await nm.sweepOrphans()).toBe(0);
 		expect(deletes(t.calls)).toEqual([]);
+	});
+});
+
+describe("the effect executor", () => {
+	const radio = { id: "02:00:00:00:00:aa", lifetime: "1" };
+
+	test("a recorded clone that becomes active during the stale-clone listing is not deleted", async () => {
+		const f = fakeRun();
+		let listed = false;
+		const run = async (bin: string, args: string[]) => {
+			const line = args.join(" ");
+			if (line === "-t -f NAME,UUID connection show") listed = true;
+			// Once listed, STALE is active somewhere (activated meanwhile).
+			if (line === "-t -f UUID,DEVICE connection show --active") {
+				f.calls.push(`${bin} ${line}`);
+				return listed ? `${STALE}:wlan3\n` : "";
+			}
+			return f.run(bin, args);
+		};
+		const nm = createSearchNm({
+			run,
+			macOf: async () => MAC,
+			clones: memoryCloneRegistry([STALE]),
+		});
+		await nm.join(
+			"wlan2",
+			"venue",
+			"aa:00:00:00:00:02",
+			async () => true,
+			radio,
+		);
+		expect(f.calls).not.toContain(`nmcli connection delete uuid ${STALE}`);
+	});
+
+	test("abandon after an identity change deletes nothing; the record keeps the clone", async () => {
+		const f = fakeRun();
+		const clones = memoryCloneRegistry([CLONE]);
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			clones,
+			identity: async () => false,
+		});
+		expect(await nm.abandon("wlan2", CLONE, radio)).toBe(false);
+		expect(f.calls.some((c) => c.includes("connection delete"))).toBe(false);
+		expect(await clones.has(CLONE)).toBe(true);
+	});
+
+	test("a scan whose radio was replaced right before the command never rescans", async () => {
+		const f = fakeRun();
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			identity: async () => false,
+		});
+		expect(await nm.scan("wlan2", radio)).toBeUndefined();
+		expect(f.calls.some((c) => c.includes("--rescan"))).toBe(false);
+	});
+
+	test("an activation whose radio was replaced never runs connection up", async () => {
+		const f = fakeRun();
+		let replaced = false;
+		const nm = createSearchNm({
+			run: f.run,
+			macOf: async () => MAC,
+			clones: memoryCloneRegistry(),
+			identity: async () => !replaced,
+		});
+		expect(
+			await nm.join(
+				"wlan2",
+				"venue",
+				"aa:00:00:00:00:02",
+				async () => {
+					// The replug lands between the coordinator's check and the command.
+					replaced = true;
+					return true;
+				},
+				radio,
+			),
+		).toBe("refused");
+		expect(f.calls.some((c) => c.includes("connection up"))).toBe(false);
+	});
+
+	test("effects never interleave: each check is followed by its own command", async () => {
+		const f = fakeRun();
+		const order: string[] = [];
+		const run = async (bin: string, args: string[]) => {
+			const line = args.join(" ");
+			if (line.includes("--active")) order.push("check");
+			if (line.includes("connection delete") || line.includes("--rescan"))
+				order.push(line.includes("--rescan") ? "scan" : "delete");
+			await Bun.sleep(1);
+			return f.run(bin, args);
+		};
+		const clones = memoryCloneRegistry([
+			"55555555-5555-4555-8555-555555555555",
+			"66666666-6666-4666-8666-666666666666",
+		]);
+		const nm = createSearchNm({ run, macOf: async () => MAC, clones });
+		await Promise.all([
+			nm.abandon("wlan2", "55555555-5555-4555-8555-555555555555", radio),
+			nm.scan("wlan2", radio),
+			nm.abandon("wlan2", "66666666-6666-4666-8666-666666666666", radio),
+		]);
+		expect(order).toEqual(["check", "delete", "scan", "check", "delete"]);
 	});
 });

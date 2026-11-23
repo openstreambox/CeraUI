@@ -218,3 +218,43 @@ test("stop drains a runtime round still polling before writing status", async ()
 	await round;
 	expect(events).toEqual(["close", "stopped"]);
 });
+
+test("a radio replaced during the mode read, after lock admission, is never scanned", async () => {
+	const world = fakeWorld();
+	const coordinator = new RoamingCoordinator(
+		{
+			...world.ports,
+			radioMode: async (name) => {
+				// The replug lands while the coordinator reads the mode.
+				world.names.set("b", { ifname: "wlan2", lifetime: "two" });
+				world.names.set("new-radio", { ifname: "wlan1", lifetime: "three" });
+				return { phy: name, apOnPhy: false };
+			},
+		},
+		config,
+	);
+	await coordinator.step();
+	await coordinator.stop();
+	expect(world.scans).toEqual([]);
+	expect(coordinator.status().lastOutcome).toBe("radio-replaced");
+});
+
+test("a scan the lock does not admit never takes the radio out of the bond", async () => {
+	const world = fakeWorld();
+	const holds: string[] = [];
+	const coordinator = new RoamingCoordinator(
+		{
+			...world.ports,
+			withRadioLock: async () => ({ ok: false }),
+			holdOutOfBond: (name) => {
+				holds.push(name);
+				world.ports.holdOutOfBond(name);
+			},
+		},
+		config,
+	);
+	await coordinator.step();
+	await coordinator.stop();
+	expect(world.scans).toEqual([]);
+	expect(holds).toEqual([]);
+});

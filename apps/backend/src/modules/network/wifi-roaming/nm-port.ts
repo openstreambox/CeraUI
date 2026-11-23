@@ -14,6 +14,7 @@
 import { readFile } from "node:fs/promises";
 import { argMatch, ID_RE } from "../../../helpers/run.ts";
 import { type CloneRegistry, memoryCloneRegistry } from "./clone-registry.ts";
+import type { RadioExpectation } from "./coordinator.ts";
 import {
 	JOIN_REFUSED,
 	type JoinResult,
@@ -183,6 +184,15 @@ export type SearchNmDeps = Readonly<{
 	 * Defaults to an in-memory record; production passes the /run file.
 	 */
 	clones?: CloneRegistry;
+	/**
+	 * Confirm, right before an effect, that the radio answering to `ifname` is
+	 * the expected identity and lifetime. Defaults to yes (tests); production
+	 * passes the adapter registry check.
+	 */
+	identity?: (
+		ifname: string,
+		expected: RadioExpectation | null,
+	) => Promise<boolean>;
 	/** MAC address the radio's saved profiles are bound to. */
 	macOf?: (ifname: string) => Promise<string | undefined>;
 }>;
@@ -203,23 +213,95 @@ async function sysfsMac(ifname: string): Promise<string | undefined> {
 	}
 }
 
+/** An effect the executor declined: something was unreadable or had changed. */
+export const SKIPPED = "skipped" as const;
+
+let effectQueue: Promise<unknown> = Promise.resolve();
+/** NetworkManager effects run one at a time, process-wide. */
+function serialEffect<T>(fn: () => Promise<T>): Promise<T> {
+	const next = effectQueue.then(fn);
+	effectQueue = next.catch(() => {
+		// The caller sees the failure; the queue only keeps the order.
+	});
+	return next;
+}
+
 export function createSearchNm(deps: SearchNmDeps) {
 	const run = deps.run;
 	const macOf = deps.macOf ?? sysfsMac;
 	const clones = deps.clones ?? memoryCloneRegistry();
-	/** Delete one owned clone; forget it once NetworkManager confirms. */
-	const dropClone = async (uuid: string): Promise<boolean> => {
-		const ok =
-			(await quiet("nmcli", ["connection", "delete", uuid])) !== undefined;
-		if (ok) await clones.remove(uuid);
-		return ok;
-	};
+	const identity = deps.identity ?? (async () => true);
 	const quiet = async (bin: string, args: string[], timeout = 10_000) => {
 		try {
 			return await run(bin, args, { timeout });
 		} catch {
 			return undefined;
 		}
+	};
+
+	/**
+	 * The one way to change NetworkManager state. Effects run one at a time
+	 * (process-wide), so none of the coordinator's own activations can land
+	 * between a check and its command. Right before the command it re-reads the
+	 * radio's identity and lifetime and, for a profile, that the profile is a
+	 * recorded clone and not active anywhere but `activeOn`. Anything unreadable
+	 * or changed: nothing is done and the result is `SKIPPED`.
+	 */
+	const effect = <T>(
+		radio: Readonly<{
+			ifname: string;
+			expected: RadioExpectation | null;
+		}> | null,
+		profile: Readonly<{ uuid: string; activeOn?: string }> | null,
+		command: () => Promise<T>,
+		/** The caller's own last check, run first, so the reads below come last. */
+		prepare?: () => Promise<boolean>,
+	): Promise<T | typeof SKIPPED> =>
+		serialEffect(async () => {
+			if (prepare && !(await prepare())) return SKIPPED;
+			if (radio && !(await identity(radio.ifname, radio.expected)))
+				return SKIPPED;
+			if (profile) {
+				if (!UUID_RE.test(profile.uuid) || !(await clones.has(profile.uuid)))
+					return SKIPPED;
+				const active = await quiet("nmcli", [
+					"-t",
+					"-f",
+					"UUID,DEVICE",
+					"connection",
+					"show",
+					"--active",
+				]);
+				if (active === undefined) return SKIPPED;
+				for (const line of active.split("\n")) {
+					const [uuid, device] = splitTerse(line);
+					if (uuid === profile.uuid && device !== profile.activeOn)
+						return SKIPPED;
+				}
+			}
+			return command();
+		});
+
+	/**
+	 * Delete one owned clone through the executor (inactive, or active only on
+	 * `activeOn`); forget it once NetworkManager confirms.
+	 */
+	const dropClone = async (
+		uuid: string,
+		radio: Readonly<{
+			ifname: string;
+			expected: RadioExpectation | null;
+		}> | null,
+		activeOn?: string,
+	): Promise<boolean> => {
+		const done = await effect(
+			radio,
+			{ uuid, ...(activeOn ? { activeOn } : {}) },
+			() => quiet("nmcli", ["connection", "delete", "uuid", uuid]),
+		);
+		const ok = done !== SKIPPED && done !== undefined;
+		if (ok) await clones.remove(uuid);
+		return ok;
 	};
 
 	/**
@@ -290,13 +372,15 @@ export function createSearchNm(deps: SearchNmDeps) {
 	}
 
 	/**
-	 * Remove this radio's earlier owned clones, keeping `keep`. Only a clone
-	 * that is verifiably not the radio's active connection is deleted; with an
-	 * unreadable listing nothing is.
+	 * Remove this radio's earlier owned clones, keeping `keep`. Each candidate is
+	 * a recorded clone, and each deletion re-checks through the executor that
+	 * it is not active anywhere; nothing is decided from an earlier snapshot.
 	 */
-	async function deleteStaleOwned(ifname: string, keep: string): Promise<void> {
-		const active = await activeProfile(ifname);
-		if (active === undefined) return;
+	async function deleteStaleOwned(
+		ifname: string,
+		keep: string,
+		expected: RadioExpectation | null,
+	): Promise<void> {
 		const out = await quiet("nmcli", [
 			"-t",
 			"-f",
@@ -304,18 +388,12 @@ export function createSearchNm(deps: SearchNmDeps) {
 			"connection",
 			"show",
 		]);
+		if (out === undefined) return;
 		const owned = searchProfileName(ifname);
-		for (const line of out?.split("\n") ?? []) {
+		for (const line of out.split("\n")) {
 			const [name, uuid] = splitTerse(line);
-			if (
-				name === owned &&
-				uuid &&
-				uuid !== keep &&
-				uuid !== active &&
-				UUID_RE.test(uuid) &&
-				(await clones.has(uuid))
-			)
-				await dropClone(uuid);
+			if (name === owned && uuid && uuid !== keep && UUID_RE.test(uuid))
+				await dropClone(uuid, { ifname, expected });
 		}
 	}
 
@@ -349,21 +427,9 @@ export function createSearchNm(deps: SearchNmDeps) {
 					await clones.remove(uuid);
 					continue;
 				}
-				if (!name.startsWith(SEARCH_PROFILE_PREFIX) || !UUID_RE.test(uuid))
-					continue;
-				// Activity is read again right before each deletion; unreadable
-				// means keep.
-				const activeOut = await quiet("nmcli", [
-					"-t",
-					"-f",
-					"UUID",
-					"connection",
-					"show",
-					"--active",
-				]);
-				if (activeOut === undefined) continue;
-				if (activeOut.split("\n").some((l) => l.trim() === uuid)) continue;
-				if (await dropClone(uuid)) removed++;
+				if (!name.startsWith(SEARCH_PROFILE_PREFIX)) continue;
+				// The executor re-reads activity right before the deletion.
+				if (await dropClone(uuid, null)) removed++;
 			}
 			return removed;
 		},
@@ -434,24 +500,32 @@ export function createSearchNm(deps: SearchNmDeps) {
 			return devs === undefined ? undefined : apOnPhyOf(parseIwDev(devs), dev);
 		},
 
-		async scan(ifname: string): Promise<readonly ScanRow[] | undefined> {
-			const out = await quiet(
-				"nmcli",
-				[
-					"-t",
-					"-f",
-					"BSSID,SSID,SIGNAL,CHAN",
-					"device",
-					"wifi",
-					"list",
-					"ifname",
-					argMatch(ID_RE, ifname),
-					"--rescan",
-					"yes",
-				],
-				SCAN_TIMEOUT_MS,
+		async scan(
+			ifname: string,
+			expected: RadioExpectation | null = null,
+		): Promise<readonly ScanRow[] | undefined> {
+			const dev = argMatch(ID_RE, ifname);
+			const out = await effect({ ifname: dev, expected }, null, () =>
+				quiet(
+					"nmcli",
+					[
+						"-t",
+						"-f",
+						"BSSID,SSID,SIGNAL,CHAN",
+						"device",
+						"wifi",
+						"list",
+						"ifname",
+						dev,
+						"--rescan",
+						"yes",
+					],
+					SCAN_TIMEOUT_MS,
+				),
 			);
-			return out === undefined ? undefined : parseScanRows(out);
+			return out === undefined || out === SKIPPED
+				? undefined
+				: parseScanRows(out);
 		},
 
 		async savedSsids(ifname: string): Promise<ReadonlySet<string>> {
@@ -463,8 +537,10 @@ export function createSearchNm(deps: SearchNmDeps) {
 			ssid: string,
 			bssid: string,
 			mayActivate: () => Promise<boolean> = async () => true,
+			expected: RadioExpectation | null = null,
 		): Promise<JoinResult | typeof JOIN_REFUSED | undefined> {
 			const dev = argMatch(ID_RE, ifname);
+			const radio = { ifname: dev, expected };
 			const target = argMatch(BSSID_RE, bssid.toLowerCase());
 			const source = (await boundProfiles(dev)).get(ssid);
 			if (!source) return undefined;
@@ -490,33 +566,52 @@ export function createSearchNm(deps: SearchNmDeps) {
 				"connection.autoconnect",
 				"no",
 			]);
-			if (modified !== undefined && !(await mayActivate())) {
-				await dropClone(uuid);
+			if (modified === undefined) {
+				await dropClone(uuid, radio);
+				return undefined;
+			}
+			if (!(await mayActivate())) {
+				await dropClone(uuid, radio);
 				return JOIN_REFUSED;
 			}
-			if (modified !== undefined) {
-				await deleteStaleOwned(dev, uuid);
-				// The listing and deletes take time: check once more right before
-				// activation, so a hotspot that came up meanwhile still stops it.
-				if (!(await mayActivate())) {
-					await dropClone(uuid);
-					return JOIN_REFUSED;
-				}
+			await deleteStaleOwned(dev, uuid, expected);
+			// Activation goes through the executor: the coordinator's last check
+			// (mode, stop) and the radio's identity are read in the same step as
+			// the command, with the clone still inactive.
+			// The coordinator's last check (mode, stop) runs first in the
+			// executor's step; identity and the clone's inactivity are read after
+			// it, right before the command.
+			const up = await effect(
+				radio,
+				{ uuid },
+				() =>
+					quiet(
+						"nmcli",
+						[
+							"-w",
+							String(JOIN_WAIT_S),
+							"connection",
+							"up",
+							"uuid",
+							uuid,
+							"ifname",
+							dev,
+						],
+						(JOIN_WAIT_S + 3) * 1000,
+					),
+				mayActivate,
+			);
+			if (up === SKIPPED) {
+				await dropClone(uuid, radio);
+				return JOIN_REFUSED;
 			}
-			const up =
-				modified !== undefined &&
-				(await quiet(
-					"nmcli",
-					["-w", String(JOIN_WAIT_S), "connection", "up", uuid, "ifname", dev],
-					(JOIN_WAIT_S + 3) * 1000,
-				)) !== undefined;
-			if (!up) {
-				await dropClone(uuid);
+			if (up === undefined) {
+				await dropClone(uuid, radio, dev);
 				return undefined;
 			}
 			// An earlier clone that was still active before has been replaced
 			// now and can go.
-			await deleteStaleOwned(dev, uuid);
+			await deleteStaleOwned(dev, uuid, expected);
 			return { activation: uuid };
 		},
 
@@ -553,12 +648,19 @@ export function createSearchNm(deps: SearchNmDeps) {
 			};
 		},
 
-		async abandon(ifname: string, activation: string): Promise<boolean> {
-			argMatch(ID_RE, ifname);
+		/**
+		 * Remove an owned clone: a recorded clone that is inactive, or active
+		 * only on this radio, while the radio is still the expected one. After an
+		 * identity change nothing is deleted; the record keeps it for the sweep.
+		 */
+		async abandon(
+			ifname: string,
+			activation: string,
+			expected: RadioExpectation | null = null,
+		): Promise<boolean> {
+			const dev = argMatch(ID_RE, ifname);
 			if (!UUID_RE.test(activation)) return false;
-			// Only a clone this coordinator recorded is ever deleted.
-			if (!(await clones.has(activation))) return false;
-			return dropClone(activation);
+			return dropClone(activation, { ifname: dev, expected }, dev);
 		},
 	};
 }

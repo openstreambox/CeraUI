@@ -328,20 +328,28 @@ describe("boot entry and loop hygiene", () => {
 		await h.stop();
 	});
 
-	test("a failed journal write is retried with the next round, not lost", async () => {
+	test("a failed journal line is kept and written first, even if the change it records reverted", async () => {
 		const lines: string[] = [];
-		let failNext = true;
+		let fail = false;
+		const names = new Map([
+			["a", "wlan1"],
+			["b", "wlan2"],
+		]);
+		const ports = {
+			...quietPorts(),
+			resolve: (id: string) => {
+				const ifname = names.get(id);
+				return ifname ? { ifname, lifetime: "1" } : undefined;
+			},
+		};
 		const h = startRoaming(
 			twoRadios,
-			() => ({
-				ports: quietPorts(),
-				sender: { poll: async () => {}, close: () => {} },
-			}),
+			() => ({ ports, sender: { poll: async () => {}, close: () => {} } }),
 			{
 				writeStatus: async () => {},
 				appendJournal: async (l) => {
-					if (failNext) {
-						failNext = false;
+					if (fail) {
+						fail = false;
 						throw new Error("disk full");
 					}
 					lines.push(l);
@@ -349,12 +357,56 @@ describe("boot entry and loop hygiene", () => {
 			},
 			() => ({ cancel: () => {} }),
 		);
+		await h.round(); // the first roles go out
+		names.set("a", "wlan5"); // a rename, whose line fails
+		fail = true;
 		await h.round();
-		expect(lines).toEqual([]);
+		names.set("a", "wlan1"); // and back again
 		await h.round();
-		expect(lines.length).toBe(1);
-		expect(JSON.parse(lines[0] as string).roles).toBeDefined();
+		const roles = lines.map((l) => JSON.parse(l).roles?.a);
+		expect(roles).toEqual([
+			"searcher@wlan1",
+			"searcher@wlan5",
+			"searcher@wlan1",
+		]);
 		await h.stop();
+	});
+
+	test("stop drains the round's status and journal writes", async () => {
+		const events: string[] = [];
+		const status = Promise.withResolvers<void>();
+		const h = startRoaming(
+			twoRadios,
+			() => ({
+				ports: quietPorts(),
+				sender: { poll: async () => {}, close: () => events.push("close") },
+			}),
+			{
+				writeStatus: async () => {
+					events.push("status-start");
+					await status.promise;
+					events.push("status-done");
+				},
+				appendJournal: async () => {
+					events.push("journal");
+				},
+			},
+			() => ({ cancel: () => {} }),
+		);
+		const round = h.round();
+		await Bun.sleep(5);
+		const stopped = h.stop().then(() => events.push("stopped"));
+		await Bun.sleep(5);
+		expect(events).toEqual(["status-start"]);
+		status.resolve();
+		await Promise.all([round, stopped]);
+		expect(events).toEqual([
+			"status-start",
+			"status-done",
+			"journal",
+			"close",
+			"stopped",
+		]);
 	});
 });
 
