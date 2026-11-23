@@ -170,6 +170,7 @@ test("config credential fields are redacted by name even when the value is no lo
 						ssh_pass: "old-ssh-pass-a41b",
 						ssh_pass_hash: "$6$oldsalt$oldsshhasha41b",
 						remote_key: "old-remote-key-a41b",
+						pairingSecret: "[REDACTED]old-pairing-tail-a41b",
 						autostart: true,
 					},
 				}),
@@ -181,11 +182,13 @@ test("config credential fields are redacted by name even when the value is no lo
 		"old-ssh-pass-a41b",
 		"oldsshhasha41b",
 		"old-remote-key-a41b",
+		"old-pairing-tail-a41b",
 	])
 		expect(text).not.toContain(value);
 	expect(text).toContain('"ssh_pass":"[REDACTED:ssh]"');
 	expect(text).toContain('"ssh_pass_hash":"[REDACTED:ssh]"');
 	expect(text).toContain('"remote_key":"[REDACTED:remote_key]"');
+	expect(text).toContain('"pairingSecret":"[REDACTED:pairing]"');
 	expect(text).toContain('"autostart":true');
 	expect(text).toEndWith("# complete: 1 entries\n");
 });

@@ -107,11 +107,50 @@ describe("credential key words", () => {
 	});
 });
 
+describe("nested qualifiers and errors", () => {
+	test("a key or hash is redacted when its parent key names the material", () => {
+		const out = logRedact({
+			remote: { key: "nested-remote-9e" },
+			ssh: { hash: "nested-ssh-hash-9e", port: 22 },
+			video: { key: "keep-9e" },
+			items: [{ remote: { keys: ["nested-list-9e"] } }],
+		}) as {
+			remote: { key: string };
+			ssh: { hash: string; port: number };
+			video: { key: string };
+			items: [{ remote: { keys: unknown } }];
+		};
+		expect(out.remote.key).toBe(REDACTED);
+		expect(out.ssh.hash).toBe(REDACTED);
+		expect(out.ssh.port).toBe(22);
+		expect(out.video.key).toBe("keep-9e");
+		expect(out.items[0].remote.keys).toBe(REDACTED);
+		expect(isSecretWordKey("key", "remote")).toBe(true);
+		expect(isSecretWordKey("key", "video")).toBe(false);
+	});
+
+	test("an error carrying a credential field is projected with it redacted", () => {
+		const error = Object.assign(new Error("ssh setup failed"), {
+			ssh_pass: "error-ssh-pass-9e",
+			remote_key: "error-remote-key-9e",
+			attempt: 2,
+		});
+		const out = logRedact({ err: error }) as {
+			err: Record<string, unknown>;
+		};
+		expect(out.err).not.toBe(error);
+		expect(out.err.ssh_pass).toBe(REDACTED);
+		expect(out.err.remote_key).toBe(REDACTED);
+		expect(out.err.attempt).toBe(2);
+		expect(out.err.message).toBe("ssh setup failed");
+	});
+});
+
 describe("config credentials", () => {
 	test("the logger redacts exactly the credential fields of the runtime config", () => {
 		const keys = Object.keys(runtimeConfigSchema.shape);
 		for (const key of CONFIG_CREDENTIAL_KEYS) expect(keys).toContain(key);
-		expect(keys.filter(isSensitiveKey).sort()).toEqual(
+		expect(keys.filter((key) => isSensitiveKey(key)).sort()).toEqual(
 			[...CONFIG_CREDENTIAL_KEYS].sort(),
 		);
 	});

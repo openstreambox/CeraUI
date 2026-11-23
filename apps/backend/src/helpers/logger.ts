@@ -2,6 +2,7 @@
 import { Writable } from "node:stream";
 import winston from "winston";
 import { isDevelopment } from "../mocks/mock-config.ts";
+import { isSecretWordKey } from "./secret-key-words.ts";
 import { redactSrtPassphrases } from "./srt-secret-redaction.ts";
 import { isStreamIdKey, redactStreamIdText } from "./stream-id-secret.ts";
 
@@ -217,79 +218,14 @@ export function isCredentialSensitiveKey(key: string): boolean {
 	return CREDENTIAL_SENSITIVE_KEYS.has(key.toLowerCase().replace(/[_.-]/g, ""));
 }
 
-/**
- * Credential words, matched as WHOLE words of a key after splitting it on case
- * changes, separators and dots. {@link SENSITIVE_KEY_RE} is a substring match,
- * so it cannot hold `pass` (it would eat `video_passthrough` and every `bypass`)
- * or `key` (every `keyframe`); split into words they are safe, and `ssh_pass`,
- * `sshPassHash`, `wifi-pwd` and `remote_key` are caught without naming each one.
- */
-const SECRET_KEY_WORDS: ReadonlySet<string> = new Set<string>([
-	"pass",
-	"passwd",
-	"pwd",
-	"passcode",
-	"passkey",
-	"psk",
-	"privkey",
-	"apikey",
-	"secret",
-	"secrets",
-	"password",
-	"passwords",
-	"passphrase",
-]);
-
-/** A `key` or `hash` word is key material when one of these words names it. */
-const KEY_MATERIAL_QUALIFIERS: ReadonlySet<string> = new Set<string>([
-	"remote",
-	"private",
-	"priv",
-	"ssh",
-	"api",
-	"ingest",
-	"stream",
-	"signing",
-	"access",
-	"session",
-	"pairing",
-	"shared",
-	"preshared",
-	"encryption",
-	"wireguard",
-	"wg",
-	"shadow",
-]);
-
-/** Lower-case words of a key: `sshPassHash`, `ssh_pass_hash` and `ssh.pass-hash` all give ssh, pass, hash. */
-function keyWords(key: string): string[] {
-	return key
-		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-		.toLowerCase()
-		.split(/[^a-z0-9]+/)
-		.filter((word) => word.length > 0);
-}
-
-/** Whole-word credential test: a secret word, or `key`/`hash` named by a qualifier. */
-export function isSecretWordKey(key: string): boolean {
-	const words = keyWords(key);
-	if (words.some((word) => SECRET_KEY_WORDS.has(word))) return true;
-	return words.some(
-		(word, index) =>
-			(word === "key" || word === "keys" || word === "hash") &&
-			words.some(
-				(other, at) => at !== index && KEY_MATERIAL_QUALIFIERS.has(other),
-			),
-	);
-}
+export { isSecretWordKey };
 
 /** Every key-side redaction class, so each walker applies the same rule. */
-export function isSensitiveKey(key: string): boolean {
+export function isSensitiveKey(key: string, parentKey?: string): boolean {
 	return (
 		isStreamIdKey(key) ||
 		SENSITIVE_KEY_RE.test(key) ||
-		isSecretWordKey(key) ||
+		isSecretWordKey(key, parentKey) ||
 		isSmsSensitiveKey(key) ||
 		isGpsSensitiveKey(key) ||
 		isUssdSensitiveKey(key) ||
@@ -371,7 +307,7 @@ function isRedactablePlainObject(
  * everything else through untouched. Ordinary errors retain their identity; errors carrying a credential are
  * projected with scrubbed message, stack and enumerable fields.
  */
-function redactValue(value: unknown): unknown {
+function redactValue(value: unknown, parentKey?: string): unknown {
 	if (value instanceof Error) {
 		const name = redactValue(value.name);
 		const message = redactValue(value.message);
@@ -380,14 +316,14 @@ function redactValue(value: unknown): unknown {
 			name === value.name &&
 			message === value.message &&
 			stack === value.stack &&
-			!Object.keys(value).some(isSensitiveKey)
+			!Object.keys(value).some((key) => isSensitiveKey(key, parentKey))
 		)
 			return value;
 		return {
 			...Object.fromEntries(
 				Object.entries(value).map(([key, inner]) => [
 					key,
-					isSensitiveKey(key) ? REDACTED : redactValue(inner),
+					isSensitiveKey(key, parentKey) ? REDACTED : redactValue(inner, key),
 				]),
 			),
 			name,
@@ -401,12 +337,14 @@ function redactValue(value: unknown): unknown {
 			: redactStreamIdText(redactSrtPassphrases(value));
 	}
 	if (Array.isArray(value)) {
-		return value.map(redactValue);
+		return value.map((item) => redactValue(item, parentKey));
 	}
 	if (isRedactablePlainObject(value)) {
 		const out: Record<string, unknown> = {};
 		for (const [key, inner] of Object.entries(value)) {
-			out[key] = isSensitiveKey(key) ? REDACTED : redactValue(inner);
+			out[key] = isSensitiveKey(key, parentKey)
+				? REDACTED
+				: redactValue(inner, key);
 		}
 		return out;
 	}
@@ -429,7 +367,7 @@ export function logRedact(value: unknown): unknown {
  */
 export const redact = winston.format((info) => {
 	for (const key of Object.keys(info)) {
-		info[key] = isSensitiveKey(key) ? REDACTED : redactValue(info[key]);
+		info[key] = isSensitiveKey(key) ? REDACTED : redactValue(info[key], key);
 	}
 	return info;
 });

@@ -415,13 +415,62 @@ test.each([
 	},
 );
 
-test("named credential masking leaves look-alike fields and masked values alone", () => {
+test("credential masking leaves ordinary fields and complete markers alone", () => {
 	const line = JSON.stringify({
-		ssh_pass_hint: "keep-hint",
-		my_remote_key: "keep-mine",
+		video_passthrough: "auto",
+		keyframe: "2",
+		bypass: "on",
+		ssh_persistent: "yes",
+		stableKey: "keep",
 		ssh_pass: "[REDACTED]",
+		remote_key: "[REDACTED:remote_key]",
 		password: "",
 	});
 	expect(buildRedactor([]).text(line)).toEqual({ text: line, redactions: 0 });
 	expect(buildRedactor([]).known(line)).toEqual({ text: line, redactions: 0 });
 });
+
+test.each(["text", "known"] as const)(
+	"%s masks a value that only starts with a redaction marker",
+	(method) => {
+		const plain = JSON.stringify({
+			remote_key: "[REDACTED]tail-of-old-remote-key",
+			ssh_pass: "[REDACTED:ssh]x-old-pass",
+		});
+		for (const line of [plain, JSON.stringify({ message: plain })]) {
+			const redact = buildRedactor([]);
+			const { text, redactions } =
+				method === "text" ? redact.text(line) : redact.known(line);
+			expect(text).not.toContain("tail-of-old-remote-key");
+			expect(text).not.toContain("x-old-pass");
+			expect(redactions).toBe(2);
+		}
+	},
+);
+
+test.each(["text", "known"] as const)(
+	"%s masks password_hash, pairing_secret, camelCase and dotted credential keys",
+	(method) => {
+		const fields = {
+			password_hash: "$2b$10$old-ui-hash-77",
+			pairing_secret: "old-pairing-77",
+			sshPassHash: "$6$s$old-camel-hash-77",
+			remoteKey: "old-camel-remote-77",
+			"remote.key": "old-dotted-remote-77",
+			"ssh.pass": "old-dotted-ssh-77",
+		};
+		const plain = JSON.stringify(fields);
+		for (const line of [plain, JSON.stringify({ message: plain })]) {
+			const redact = buildRedactor([]);
+			const { text, redactions } =
+				method === "text" ? redact.text(line) : redact.known(line);
+			for (const value of Object.values(fields))
+				expect(text).not.toContain(value);
+			expect(redactions).toBe(6);
+			expect(text).toContain("[REDACTED:password]");
+			expect(text).toContain("[REDACTED:pairing]");
+			expect(text.match(/\[REDACTED:ssh\]/g)).toHaveLength(2);
+			expect(text.match(/\[REDACTED:remote_key\]/g)).toHaveLength(2);
+		}
+	},
+);

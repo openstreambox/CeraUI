@@ -28,8 +28,8 @@ null. No config dump, password hash, authentication-token file, Wi-Fi PSK or
 NetworkManager profile is included. `readUpdateChannel()` reuses the update
 owner's validated readers without migrating or writing settings.
 
-Held config, relay, hotspot, APN and router credentials are inputs to redaction
-only. `getStoredModemCredentials()` returns copies of the username/password
+Held config, relay, hotspot, APN and router credentials, and the held UI and
+SSH password hashes, are inputs to redaction only. `getStoredModemCredentials()` returns copies of the username/password
 pairs, including disconnected devices, without identity or verification
 metadata. They never become bundle records. The backend has no SRT passphrase
 field to read; an absent credential is not invented or probed from the engine.
@@ -49,8 +49,14 @@ masking when no whole-address mask applies.
 Bracketed endpoints keep their port, as in `[IP]:9000`. Link-local IPv6
 (`fe80::/10`), unique local IPv6 (`fc00::/7`), and `::1` remain visible.
 The first three MAC octets and private IPv4 remain useful diagnostics.
-Arbitrary personal text and historical credentials no longer held by the
-backend are not guaranteed to be recognized.
+A JSON string member whose key names a credential by the logger's word rule
+(`helpers/secret-key-words.ts`: `ssh_pass`, `sshPassHash`, `remote_key`,
+`remote.key`, `password_hash`, …) has its value masked as
+`[REDACTED:<kind>]`, as a plain member and inside JSON nested in a JSON
+string, so journal lines written before the logger redacted such keys stay
+out even when the backend no longer holds the value. Only a complete marker
+counts as already masked. Other historical credentials no longer held by the
+backend, and arbitrary personal text, are not guaranteed to be recognized.
 Literal matching is case-sensitive and does not normalize Unicode; case-folded
 or differently normalized spellings are outside the exact-occurrence contract.
 

@@ -1,5 +1,6 @@
 import { isIPv6 } from "node:net";
 import type { LogBundleFailureReason } from "@ceraui/rpc/schemas";
+import { isSecretWordKey, keyWords } from "../../helpers/secret-key-words.ts";
 
 export class BundleReadError extends Error {
 	readonly code: "READ_FAILED" | "BUSY";
@@ -33,51 +34,71 @@ const NAMED_PASSPHRASES: readonly RegExp[] = [
 	/(?<=passphrase\\"\s*:\s*\\")(?:\\\\\\\\|\\\\\\"|\\\\[^"\\]|[^"\\])+(?=\\")/gi,
 ];
 
-function namedValue(match: string, kind: string): string {
+function namedPassphrase(match: string): string {
 	// Already masked upstream of the journal, possibly with trailing punctuation.
 	if (match === '""' || /^"?\[REDACTED(?::[a-z0-9_]+)?\]/.test(match))
 		return match;
-	return match.startsWith('"') ? `"[REDACTED:${kind}]"` : `[REDACTED:${kind}]`;
-}
-
-function namedPassphrase(match: string): string {
-	return namedValue(match, "srt_passphrase");
+	return match.startsWith('"')
+		? '"[REDACTED:srt_passphrase]"'
+		: "[REDACTED:srt_passphrase]";
 }
 
 /**
- * Credential fields of config.json by name, as JSON members and as JSON nested
- * in a JSON string. Journals written before the logger redacted these keys can
- * hold a value the backend no longer holds (an SSH password since reset, an old
- * hash), which the held-secret literals cannot find.
+ * JSON string members whose key names a credential by the logger's word rule
+ * (`ssh_pass`, `sshPassHash`, `remote.key`, `password_hash`, …), as plain
+ * members and as members of JSON nested in a JSON string. Journals written
+ * before the logger redacted such keys can hold a value the backend no longer
+ * holds (an SSH password since reset, an old hash), which the held-secret
+ * literals cannot find. Group 1 is the key, group 2 the value; each match ends
+ * where its value ends.
  */
-const NAMED_CREDENTIAL_FIELDS: ReadonlyArray<readonly [string, string]> = [
-	["ssh_pass", "ssh"],
-	["ssh_pass_hash", "ssh"],
-	["password", "password"],
-	["password_hash", "password"],
-	["remote_key", "remote_key"],
-	["pairing_secret", "pairing"],
+const CREDENTIAL_MEMBERS: readonly RegExp[] = [
+	/"([A-Za-z0-9_.-]{1,64})"\s*:\s*("(?:[^"\\]|\\.)*")/g,
+	/\\"([A-Za-z0-9_.-]{1,64})\\"\s*:\s*\\"((?:\\\\\\\\|\\\\\\"|\\\\[^"\\]|[^"\\])*)(?=\\")/g,
 ];
 
-const NAMED_CREDENTIALS: ReadonlyArray<{
-	readonly pattern: RegExp;
-	readonly kind: string;
-}> = NAMED_CREDENTIAL_FIELDS.flatMap(([name, kind]) => [
-	{
-		pattern: new RegExp(
-			String.raw`(?<="${name}"\s*:\s*)"(?:[^"\\]|\\.)*"`,
-			"g",
-		),
-		kind,
-	},
-	{
-		pattern: new RegExp(
-			String.raw`(?<=\\"${name}\\"\s*:\s*\\")(?:\\\\\\\\|\\\\\\"|\\\\[^"\\]|[^"\\])+(?=\\")`,
-			"g",
-		),
-		kind,
-	},
-]);
+/** Cheap gate before the member scan: no `"` followed by `:` means no member. */
+const MEMBER_HINT = /"\s*:/;
+
+/** A whole marker, quoted or bare; a value that merely starts with one is not masked. */
+const COMPLETE_MARKER =
+	/^(?:"\[REDACTED(?::[a-z0-9_]+)?\]"|\[REDACTED(?::[a-z0-9_]+)?\])$/;
+
+function credentialKind(key: string): string {
+	const words = keyWords(key);
+	if (words.includes("ssh")) return "ssh";
+	if (words.includes("remote")) return "remote_key";
+	if (words.includes("pairing")) return "pairing";
+	if (words.includes("passphrase")) return "passphrase";
+	if (words.some((word) => word.startsWith("pass") || word === "pwd"))
+		return "password";
+	return "credential";
+}
+
+/** Each credential value in `text`: its span and the marker that replaces it. */
+function credentialMembers(
+	text: string,
+): Array<{ start: number; end: number; marker: string }> {
+	if (!MEMBER_HINT.test(text)) return [];
+	const found: Array<{ start: number; end: number; marker: string }> = [];
+	for (const [index, pattern] of CREDENTIAL_MEMBERS.entries()) {
+		for (const match of text.matchAll(pattern)) {
+			const key = match[1] ?? "";
+			const value = match[2] ?? "";
+			if (!isSecretWordKey(key)) continue;
+			if (value === "" || value === '""' || COMPLETE_MARKER.test(value))
+				continue;
+			const kind = credentialKind(key);
+			const end = match.index + match[0].length;
+			found.push({
+				start: end - value.length,
+				end,
+				marker: index === 0 ? `"[REDACTED:${kind}]"` : `[REDACTED:${kind}]`,
+			});
+		}
+	}
+	return found.sort((a, b) => a.start - b.start);
+}
 
 interface Redactor {
 	structured(value: string | number | boolean | null): void;
@@ -153,12 +174,18 @@ export function buildRedactor(
 					if (next !== match) redactions++;
 					return next;
 				});
-			for (const { pattern, kind } of NAMED_CREDENTIALS)
-				text = text.replace(pattern, (match) => {
-					const next = namedValue(match, kind);
-					if (next !== match) redactions++;
-					return next;
-				});
+			const members = credentialMembers(text);
+			if (members.length > 0) {
+				let position = 0;
+				const parts: string[] = [];
+				for (const member of members) {
+					if (member.start < position) continue;
+					parts.push(text.slice(position, member.start), member.marker);
+					position = member.end;
+					redactions++;
+				}
+				text = parts.join("") + text.slice(position);
+			}
 			return { text, redactions };
 		},
 		text(value: string, bootSpan) {
@@ -302,8 +329,8 @@ export function buildRedactor(
 				() => "[REDACTED:token]",
 			);
 			for (const pattern of NAMED_PASSPHRASES) mask(pattern, namedPassphrase);
-			for (const { pattern, kind } of NAMED_CREDENTIALS)
-				mask(pattern, (match) => namedValue(match, kind));
+			for (const member of credentialMembers(value))
+				spans.push({ ...member, known: false });
 			spans.sort((a, b) => a.start - b.start);
 			const merged: typeof spans = [];
 			for (const span of spans) {

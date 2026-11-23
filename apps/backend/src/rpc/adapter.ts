@@ -43,9 +43,6 @@ import { instrumentRpcCall } from "./rpc-logging.ts";
 import { getPasswordHash } from "./state/password.ts";
 import type { AppWebSocket, ServerSocketData, SocketData } from "./types.ts";
 
-/** Cap on the redacted frame preview so a stray giant payload never bloats a log. */
-const FRAME_PREVIEW_MAX_CHARS = 100;
-
 /**
  * ORPC message format
  */
@@ -88,9 +85,8 @@ export function parseMessage(
 			bytes: data.length,
 			keys: Object.keys(parsed),
 			hasId: "id" in parsed,
-			preview: logRedact(
-				JSON.stringify(parsed).slice(0, FRAME_PREVIEW_MAX_CHARS),
-			),
+			// No payload preview: a stringified frame bypasses the logger's key
+			// redaction, and a stray frame can carry config credentials.
 		});
 		return null;
 	} catch (error) {
