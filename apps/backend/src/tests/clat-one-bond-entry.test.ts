@@ -184,7 +184,6 @@ async function scanBox(
 			ifconfig,
 			overrides,
 			undefined,
-			() => false,
 			new Map([
 				[
 					"wwan0",
