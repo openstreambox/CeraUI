@@ -81,6 +81,9 @@ const markerDeps = (marker: MarkerModule) => ({
 	awaitsIdleWitness: marker.otaMarkerAwaitsIdleWitness,
 	// The engine unit runs unless a test stops it; never the host's systemctl.
 	engineStopped: async () => false,
+	// These sessions model a stream that may still be carried, so a sender
+	// runs. Sessions without any sender: stream-senderless-session.test.ts.
+	senderAbsent: () => false,
 });
 
 /** The production session with only the engine and status sinks replaced. */

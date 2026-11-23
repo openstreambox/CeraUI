@@ -137,6 +137,14 @@ export type StreamSessionOrchestratorDeps = {
 	 * later Start runs beside it.
 	 */
 	readonly ownedSessionRemains?: () => boolean;
+	/**
+	 * True only when no `srtla_send` runs anywhere and no child of this
+	 * backend's stream session remains. Every session this backend launches
+	 * sends to a local sender, so an engine session left behind by an earlier
+	 * backend process carries nothing without one. Reconciliation then stops it
+	 * instead of waiting for an operator Stop.
+	 */
+	readonly senderAbsent?: () => boolean;
 	/** Mirrors `streamLiveness() === "unknown"` for interlocks outside the session. */
 	readonly setLivenessUnconfirmed?: (unconfirmed: boolean) => void;
 	/** Engine-session evidence protects the marker, without claiming media adoption. */
@@ -798,6 +806,33 @@ export function createStreamSessionOrchestrator(
 		return ownership.state;
 	};
 
+	/**
+	 * Records an earlier backend process left behind (the OTA marker, an engine
+	 * session whose sender died with that process) while no sender runs
+	 * anywhere. Nothing can be carried, so the session is stopped the way an
+	 * operator Stop would stop it, and only the engine's acknowledgement makes
+	 * the lifecycle idle. A failed stop leaves everything as it was.
+	 */
+	const retireSenderlessSession = async (
+		owner: SessionOwner,
+		engine: EngineRuntimeState,
+	): Promise<boolean> => {
+		logger.warn("stopping a stream session that no sender carries", {
+			engine: engine === "streaming" ? "streaming" : "silent",
+		});
+		try {
+			await stopWithinDeadline(ownership.generation, true);
+		} catch (error) {
+			logger.warn("stream session without a sender could not be stopped", {
+				reason: error instanceof Error ? error.message : "stop_failed",
+			});
+			return false;
+		}
+		if (active === undefined && !ownership.launchPending)
+			ownership.commit(owner, "idle", "idle");
+		return true;
+	};
+
 	const noteEngineStatus = (
 		event: Extract<EventParams, { type: "status" }>,
 	): void => {
@@ -1022,9 +1057,11 @@ export function createStreamSessionOrchestrator(
 			stopFlight !== undefined;
 		runtimeObservations++;
 		let runtimeState: EngineRuntimeState = "unknown";
+		// The last query reached the engine and heard no session at all.
+		let silent = false;
 		try {
 			for (let silentQueries = 0; ; ) {
-				let silent = false;
+				silent = false;
 				runtimeState = await withRuntimeObservationOwner(
 					() => ownership.owns(owner),
 					deps.queryRuntime,
@@ -1052,12 +1089,22 @@ export function createStreamSessionOrchestrator(
 			runtimeObservations--;
 		}
 		if (superseded()) return ownership.state;
-		if (
+		const unconfirmedStream =
 			runtimeState === "streaming" &&
-			deps.canReconcileStreaming?.(active?.generation) === false
-		) {
-			// The engine can retain a session after its sender dies. Keep the
-			// inhibitor and require an explicit Stop; never launch a replacement.
+			deps.canReconcileStreaming?.(active?.generation) === false;
+		if (
+			active === undefined &&
+			(unconfirmedStream ||
+				(runtimeState === "unknown" && silent && !ownership.unprotected())) &&
+			deps.senderAbsent?.() === true &&
+			(await retireSenderlessSession(owner, runtimeState))
+		)
+			return ownership.state;
+		if (superseded()) return ownership.state;
+		if (unconfirmedStream) {
+			// The engine can retain a session after its sender dies. Without a
+			// sender anywhere it was stopped above; with one, or when that stop
+			// failed, keep the inhibitor and require an explicit Stop.
 			ownership.protect();
 			deps.protectUnownedEngineSession?.();
 			deps.setStreamingStatus(false);

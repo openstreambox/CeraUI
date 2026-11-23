@@ -201,7 +201,14 @@ factory discards its answer. Session event listeners also check their client and
 launch owner. No locally owned client is **not** idle evidence: `stop-evidence.ts`
 queries state, stops an adopted live engine, and retains protection on unknown.
 An explicit operator Stop may additionally send a fresh Stop to confirm an unowned
-engine; automatic reconciliation cannot use that effectful path. A positive idle
+engine. Automatic reconciliation uses that effectful path in one case only: no
+`srtla_send` runs anywhere, no child of this process's session remains, this
+process has no attempt of its own, and the engine either reported a session this
+process cannot confirm or was reachable and silent beside required protection.
+Every launch sends to a local sender, so such a session (an earlier backend
+process's, whose sender died with it) carries nothing; reconciliation stops it as
+that operator Stop would and commits idle only on the engine's acknowledgement. A
+failed stop changes nothing. A positive idle
 event may settle an otherwise unowned running
 session, but never runs through outstanding launch/cleanup ownership.
 No new producer or wire field is needed. Launch config and resource-invariant
@@ -468,9 +475,10 @@ State set: `idle | starting | streaming | stopping | stop_failed | reconciling`.
   after engine confirmation).
 - `reconciling` is the boot/reconnect state where the backend queries the
   engine's actual runtime state. Idle is adopted; streaming is retained only for
-  a session this backend process launched and still owns, so a session that
-  outlived a CeraUI restart stays `reconciling` with unknown liveness until an
-  operator Stop. A successfully subscribed probe observes status for 2.5
+  a session this backend process launched and still owns. A session that
+  outlived a CeraUI restart is stopped when no sender runs anywhere (see the
+  ownership section above), and otherwise stays `reconciling` with unknown
+  liveness until an operator Stop. A successfully subscribed probe observes status for 2.5
   seconds: concordant streaming/idle is adopted immediately, silence remains
   UNKNOWN even though live sessions heartbeat every 2 seconds, and query failure or a
   contradictory/transitional event remains unknown. Events arriving after the

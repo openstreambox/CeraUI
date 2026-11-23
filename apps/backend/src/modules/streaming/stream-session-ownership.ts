@@ -125,6 +125,8 @@ export function createSessionOwnership(deps: StreamSessionOrchestratorDeps) {
 		invalidate,
 		transition,
 		commit,
+		/** Nothing this process holds or found at boot needs protection. */
+		unprotected: unprotectedBaseline,
 		settleUnprotectedObservation: (owner: SessionOwner): boolean =>
 			owns(owner) && unprotectedBaseline() && transition("idle"),
 		protect,

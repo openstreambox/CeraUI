@@ -84,6 +84,15 @@ seconds) commit `idle`; a running session makes the file the stream's and stays
 unconfirmed (`reconciling`, protected) until an operator Stop, because a
 restarted backend does not own that session's sender. Engine silence without the line keeps its old meaning (unknown).
 
+Both waits end early when no `srtla_send` runs anywhere. Every launch sends to a
+local sender, so a session the earlier process left (its sender died with it)
+carries nothing, and a stream's empty marker beside a reachable, silent engine
+describes nothing either. Reconciliation then stops the engine as an operator
+Stop would and commits `idle` on its acknowledgement; the marker keeps only a
+carrying line while carrying holds. Measured on a stock image: a backend restart
+mid-stream left the empty marker, and Start answered `START_IN_PROGRESS` through
+an engine watchdog restart and a further backend restart until an operator Stop.
+
 "Heard nothing" is proven, not assumed. After a silent window the query sends
 `list-switch-targets` on the same connection, and only a reply with still
 nothing heard counts: the client tells pending requests about a dropped

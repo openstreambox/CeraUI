@@ -35,8 +35,8 @@ afterEach(async () => {
 	else process.env.CERALIVE_STREAMING_MARKER = previous;
 	await rm(directory, { recursive: true, force: true });
 });
-function boot() {
-	h = idleProductionHarness(directory);
+function boot(ports: Parameters<typeof idleProductionHarness>[1] = {}) {
+	h = idleProductionHarness(directory, ports);
 	bindStreamLiveness(h.session.streamLiveness);
 	return h;
 }
@@ -185,7 +185,8 @@ for (const evidence of ["stop", "status"] as const) {
 
 test("S7 unverified backend session stays protected and receives later idle status", async () => {
 	writeFileSync(marker, "");
-	boot();
+	// A sender survived the restart, so the session may still be carried.
+	boot({ senderAbsent: () => false });
 	h.engine.setEngine("streaming");
 	const probe = h.session.reconcile();
 	await flushEvidence();
@@ -196,6 +197,68 @@ test("S7 unverified backend session stays protected and receives later idle stat
 	h.engine.status(0, false);
 	expect(streamLiveness()).toBe("idle");
 	expect(existsSync(marker)).toBe(false);
+});
+
+test("S7b a predecessor's session without any sender is stopped, and Start launches", async () => {
+	// The previous backend died mid-stream: its sender went with it, the engine
+	// kept the session and the stream's marker stayed in /run.
+	writeFileSync(marker, "");
+	boot();
+	h.engine.setEngine("streaming");
+	const probe = h.session.reconcile();
+	await flushEvidence();
+	h.engine.status(0, true);
+	expect(await probe).toBe("idle");
+	expect(h.calls()).toContain("stop");
+	expect(streamLiveness()).toBe("idle");
+	expect(existsSync(marker)).toBe(false);
+	expect(await h.start()).toMatchObject({ result: "started" });
+	expect(h.view().launches).toBe(1);
+});
+
+test("S7c restoration after a backend restart relaunches once the senderless session is stopped", async () => {
+	writeFileSync(marker, "");
+	boot();
+	h.engine.setEngine("streaming");
+	const armed = join(directory, "armed.json");
+	const bootId = "11111111-1111-4111-8111-111111111111";
+	writeFileSync(
+		armed,
+		JSON.stringify({ armedAt: 1, bootId, config: { pipeline: "hdmi" } }),
+	);
+	const markerDeps: ArmedStreamMarkerDeps = {
+		markerPath: armed,
+		readBootId: () => bootId,
+		readMarker: (path) => readFileSync(path, "utf8"),
+		writeMarker: (path, text) => writeFileSync(path, text),
+		removeMarker: (path) => rmSync(path, { force: true }),
+	};
+	let now = 0;
+	const restoring = runStreamRestoration({
+		marker: markerDeps,
+		awaitRecovery: async () => undefined,
+		runtimeState: async () => {
+			const probe = h.session.reconcile();
+			await flushEvidence();
+			h.engine.status(0, true);
+			const state = await probe;
+			return state === "idle" || state === "streaming" ? state : "unknown";
+		},
+		lifecycleState: () => h.session.snapshot().state,
+		launch: async () =>
+			(await h.start()).result === "started"
+				? { ok: true }
+				: { ok: false, reason: "start_failed" },
+		publish: () => undefined,
+		now: () => now,
+		wait: async () => {
+			now += 100;
+		},
+		unknownDeadlineMs: 100,
+	});
+	expect(await restoring).toMatchObject({ result: "recovered" });
+	expect(h.calls().filter((call) => call === "stop")).toHaveLength(1);
+	expect(h.view().launches).toBe(1);
 });
 
 for (const probe of ["silent", "connect-failed"] as const) {

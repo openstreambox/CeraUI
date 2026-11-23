@@ -214,7 +214,10 @@ Absent sentinel plus no session/effect requiring protection is an unprotected
 baseline at boot and after confirmed cleanup at any generation. A silent probe
 temporarily closes admission but cannot create protection on that baseline.
 Protected/adopted/uncertain sessions remain closed through silence; only explicit
-operator Stop may confirm an unowned unknown engine, never automatic reconciliation.
+operator Stop may confirm an unowned unknown engine, except that reconciliation
+stops a session no sender can carry (no `srtla_send` anywhere, nothing of this
+process's own in flight; see `START-LIFECYCLE.md`) and clears the sentinel only
+on the engine's acknowledgement.
 Cancelled starts retain rollback certainty and the cancelling Stop acknowledgement.
 Runtime evidence is bound to the producing client/epoch and invalidated at new
 Start, acquisition and acknowledgement. Old idle never clears a new session's

@@ -30,6 +30,7 @@ import { awaitRecoveryBarrier, isRecoveryPending } from "./recovery-barrier.ts";
 import {
 	ownedSessionProcessesRemain,
 	ownsSessionSender,
+	senderCensus,
 	unownedSenderCensus,
 } from "./sender-ownership.ts";
 import { newAttemptId } from "./start-failure-taxonomy.ts";
@@ -84,6 +85,10 @@ export const streamSessionProductionDeps: StreamSessionOrchestratorDeps = {
 	canReconcileIdle: () =>
 		shouldUseMocks() || unownedSenderCensus() === "absent",
 	ownedSessionRemains: () => !shouldUseMocks() && ownedSessionProcessesRemain(),
+	senderAbsent: () =>
+		!shouldUseMocks() &&
+		senderCensus() === "absent" &&
+		!ownedSessionProcessesRemain(),
 	setLivenessUnconfirmed: (unconfirmed) => {
 		// Clearing reopens the Wi-Fi mode restore that `is_streaming` alone gates.
 		if (
