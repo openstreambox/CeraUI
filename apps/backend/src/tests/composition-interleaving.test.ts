@@ -12,9 +12,15 @@
  * the device's saved composition equals a plain reference model that applies
  * each control's intent to the device's own state, and while live the engine
  * runs exactly what is saved: a Start runs the saved composition, and every
- * applied change is what was saved.
+ * applied change is what was saved. The saved composition is also read back
+ * from `config.json` after every step, and every step that changes it must
+ * have flushed exactly those bytes and then the directory. The flush itself is
+ * stubbed: the atomic-write tests own durability,
+ * and a real fsync per save made this file slow enough to time out under
+ * parallel test runs.
  */
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import fs, { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -181,6 +187,18 @@ function pickOp(
 let directory: string;
 let previousPath: string;
 let previousConfig: ReturnType<typeof getConfig>;
+const nativeWriteFileSync = fs.writeFileSync;
+/** What was last written through each open descriptor. */
+const written = new Map<number, string>();
+/** File contents flushed during the current step, and whether the directory followed. */
+let flushed: { contents: string; directoryAfter: boolean }[] = [];
+
+/** The composition `config.json` holds now, as a reboot would load it. */
+function savedOnDisk(): Composition {
+	const file = getConfigFilePath();
+	if (!existsSync(file)) return undefined;
+	return JSON.parse(readFileSync(file, "utf8")).composition;
+}
 
 beforeEach(async () => {
 	directory = await mkdtemp(join(tmpdir(), "composition-interleaving-"));
@@ -190,6 +208,18 @@ beforeEach(async () => {
 	getConfig().composition = undefined;
 	spyOn(defaultStagingDeps, "writeMarker").mockImplementation(() => {});
 	spyOn(defaultStagingDeps, "removeMarker").mockImplementation(() => {});
+	written.clear();
+	flushed = [];
+	spyOn(fs, "writeFileSync").mockImplementation(((file, data, options) => {
+		if (typeof file === "number") written.set(file, String(data));
+		return nativeWriteFileSync(file, data, options);
+	}) as typeof fs.writeFileSync);
+	spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+		if (fs.fstatSync(fd).isDirectory())
+			for (const flush of flushed) flush.directoryAfter = true;
+		else
+			flushed.push({ contents: written.get(fd) ?? "", directoryAfter: false });
+	});
 	clearCapabilitiesCache();
 	await initPipelines({
 		fetchEngineCapabilities: async () => ({
@@ -205,6 +235,8 @@ afterEach(async () => {
 	clearStagedConfigChange();
 	spyOn(defaultStagingDeps, "writeMarker").mockRestore();
 	spyOn(defaultStagingDeps, "removeMarker").mockRestore();
+	spyOn(fs, "fsyncSync").mockRestore();
+	spyOn(fs, "writeFileSync").mockRestore();
 	clearCapabilitiesCache();
 	for (const key of Object.keys(getConfig()))
 		Reflect.deleteProperty(getConfig(), key);
@@ -245,6 +277,7 @@ for (const seed of [7, 1337, 20261115]) {
 			engine.refuses = live && next() < 0.2;
 			engine.saw = null;
 			steps += 1;
+			flushed = [];
 
 			const result = await call(setConfigProcedure, wireInput(op, live), {
 				context: makeRpcContext(),
@@ -255,6 +288,14 @@ for (const seed of [7, 1337, 20261115]) {
 			const step = { seed, steps, client, op, live, device, result };
 
 			expect(getConfig().composition, JSON.stringify(step)).toEqual(expected);
+			expect(savedOnDisk(), JSON.stringify(step)).toEqual(expected);
+			if (!Bun.deepEquals(expected, device)) {
+				const onDisk = readFileSync(getConfigFilePath(), "utf8");
+				expect(
+					flushed.filter((flush) => flush.contents === onDisk),
+					JSON.stringify(step),
+				).toContainEqual({ contents: onDisk, directoryAfter: true });
+			}
 			if (device === undefined && op.kind !== "enable" && op.kind !== "disable")
 				expect(result, JSON.stringify(step)).toMatchObject({
 					success: false,
