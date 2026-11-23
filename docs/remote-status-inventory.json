@@ -1305,6 +1305,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -1360,8 +1390,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -5861,6 +5891,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -5916,8 +5976,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -6931,6 +6991,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -6986,8 +7076,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -7341,8 +7431,8 @@
           "path": "adapter_mode.mode",
           "types": [
             "undefined",
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -7841,8 +7931,8 @@
         {
           "path": "wifi.*.mode",
           "types": [
-            "\"station\"",
-            "\"hotspot\""
+            "\"hotspot\"",
+            "\"station\""
           ],
           "decision": "needed: typed radio state"
         },
@@ -8215,8 +8305,8 @@
         {
           "path": "wifi.*.mode",
           "types": [
-            "\"station\"",
-            "\"hotspot\""
+            "\"hotspot\"",
+            "\"station\""
           ],
           "decision": "needed: typed radio state"
         },
@@ -9817,6 +9907,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -9872,8 +9992,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -10887,6 +11007,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -10942,8 +11092,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -11957,6 +12107,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -12012,8 +12192,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -13050,6 +13230,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -13105,8 +13315,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -14120,6 +14330,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -14175,8 +14415,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -15190,6 +15430,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -15245,8 +15515,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -16260,6 +16530,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -16315,8 +16615,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -17428,6 +17728,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -17483,8 +17813,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -23904,8 +24234,8 @@
         {
           "path": "wifi.*.mode",
           "types": [
-            "\"station\"",
-            "\"hotspot\""
+            "\"hotspot\"",
+            "\"station\""
           ],
           "decision": "needed: typed radio state"
         },
@@ -28286,6 +28616,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -28341,8 +28701,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -30744,6 +31104,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -30799,8 +31189,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -32124,6 +32514,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -32179,8 +32599,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -33950,6 +34370,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -34005,8 +34455,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -36063,6 +36513,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -36118,8 +36598,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -38287,8 +38767,8 @@
         {
           "path": "wifi.*.mode",
           "types": [
-            "\"station\"",
-            "\"hotspot\""
+            "\"hotspot\"",
+            "\"station\""
           ],
           "decision": "needed: typed radio state"
         },
@@ -39545,6 +40025,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -39600,8 +40110,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -40717,6 +41227,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -40772,8 +41312,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -41787,6 +42327,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -41842,8 +42412,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -43791,6 +44361,36 @@
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
         },
         {
+          "path": "wifi_roaming",
+          "types": [
+            "undefined"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.enabled",
+          "types": [
+            "false",
+            "true"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].id",
+          "types": [
+            "string"
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
+          "path": "wifi_roaming.radios[].reserved",
+          "types": [
+            "undefined",
+            "\"hotspot\""
+          ],
+          "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
+        },
+        {
           "path": "network_ingest",
           "types": [
             "undefined"
@@ -43846,8 +44446,8 @@
         {
           "path": "wifi_modes.*",
           "types": [
-            "\"station\"",
             "\"hotspot\"",
+            "\"station\"",
             "\"hybrid\""
           ],
           "decision": "not needed for core remote start/stop, bitrate and link diagnosis: local only"
@@ -44129,8 +44729,8 @@
     }
   ],
   "dependencies": {
-    "apps/backend/src/helpers/config-schemas.ts": "0b000a65929292aec789294fa84024c2c9e92db0c8ae842acaeef603cc906c0e",
-    "apps/backend/src/main.ts": "43a1769312ca9a9ec48ae091fbbb6a88171aa65ca360513d6a4767cfb987f200",
+    "apps/backend/src/helpers/config-schemas.ts": "9543d9910558c454a4afc47ea4430e2506e532a782943c1032e4152314c94be6",
+    "apps/backend/src/main.ts": "d1baa31bdd01f79f5d9c6ef6a67806d1184dca48079fc3eca0f84a844ab05521",
     "apps/backend/src/mocks/mock-service.ts": "6ea399303b55478c9323e7a3233eed4a4a3d0e304c7c1ff2eec93b9b54da56e7",
     "apps/backend/src/mocks/providers/streaming.ts": "147fdde7643efafdcf93b1e2a66fd65be11d3f04d45b19b469e285cd3e5b96b8",
     "apps/backend/src/mocks/scenario-control.ts": "3eb585b206dc2ed1a2db94313deb3deb0dda251addfc332e9327bcd147c31893",

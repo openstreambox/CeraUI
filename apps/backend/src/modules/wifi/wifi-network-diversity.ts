@@ -89,6 +89,7 @@ import {
 	nmDevices,
 	nmScanDevice,
 } from "../network/network-manager.ts";
+import { isCoordinatorOwnedRadio } from "../network/wifi-roaming/ownership.ts";
 import {
 	admitWifiAdapter,
 	confirmWifiAdapterLifetime,
@@ -949,7 +950,10 @@ export function diversityRadioOf(
 	if (
 		wifiInterface.removed ||
 		isApMode(wifiInterface) ||
-		isConcurrentHotspot(wifiInterface)
+		isConcurrentHotspot(wifiInterface) ||
+		// The roaming coordinator owns this radio: it decides what the radio
+		// scans and joins, so this check stands down (never two owners).
+		isCoordinatorOwnedRadio(wifiInterface.ifname)
 	) {
 		return undefined;
 	}

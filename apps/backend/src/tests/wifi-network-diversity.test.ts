@@ -16,8 +16,8 @@
 */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-
 import * as nm from "../modules/network/network-manager.ts";
+import { setCoordinatorOwnedRadios } from "../modules/network/wifi-roaming/ownership.ts";
 import type { MessageSocket } from "../modules/ui/message-socket.ts";
 import * as websocket from "../modules/ui/websocket-server.ts";
 import { handleWifi, setWifiJoinNmcliRunner } from "../modules/wifi/wifi.ts";
@@ -863,6 +863,17 @@ describe("wiring", () => {
 		});
 		// Only the exact registry object the identity names is projected.
 		expect(diversityRadioOf(A, iface())).toBeUndefined();
+	});
+
+	test("a radio the roaming coordinator owns is exempt, and projected again once released", async () => {
+		const rows = await publish({});
+		setCoordinatorOwnedRadios(["wlx0"]);
+		try {
+			expect(diversityRadioOf(A, rows[A] as WifiInterface)).toBeUndefined();
+		} finally {
+			setCoordinatorOwnedRadios([]);
+		}
+		expect(diversityRadioOf(A, rows[A] as WifiInterface)).toBeDefined();
 	});
 
 	test("radios running a hotspot, alone or concurrently, are exempt", async () => {

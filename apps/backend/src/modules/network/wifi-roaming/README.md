@@ -328,12 +328,34 @@ The pieces:
     coordinator then re-releases the hold and treats the old holder through
     the abrupt-loss path.
 
+## Boot
+
+`runtime.ts` starts the coordinator from the runtime config, and only then:
+
+```json
+"wifi_roaming": { "enabled": true, "radios": [
+  { "id": "<permanent MAC>" }, { "id": "<permanent MAC>" },
+  { "id": "<permanent MAC>", "reserved": "hotspot" } ] }
+```
+
+- Off unless present and enabled. It never starts next to the two-radio
+  coordinator (`two_radio_enabled`), and needs at least two client radios.
+- One round a second: one sender read (`poll()`), one coordinator step, then
+  `/run/ceralive/wifi-roaming/status.json` (replaced whole) and, when a role or
+  an outcome changed, one line in `journal.jsonl` (bounded to 2,000 lines).
+- Ports: identities resolve through `admitWifiAdapter` (name and lifetime),
+  the sender port maps this round's names, holder health takes the signal
+  from the last observation (delivered rate and loss stay unknown; the proof
+  uses the sender's arrival reports), and other uplinks are the bond
+  candidates that are not coordinated radios.
+- The Wi-Fi diversity check (`wifi-network-diversity.ts`) stands down on every
+  coordinator-owned radio, so it neither scans nor activates one.
+- Shutdown stops the loop; `stop()` releases every gate at once.
+
 ## Not yet
 
 These come in later parts:
 
-- Constructing the coordinator and the sender port, and calling `poll()`
-  before each round (boot wiring, slice 3).
 - Mode H, holding the old holder out of the bond at a soft fade, for the
   bench comparison with mode R. It uses the evidence predicates in
   `sender-links.ts` for its acks. Points to respect there:
@@ -348,15 +370,13 @@ These come in later parts:
   tick first.
 - The one-batch slack still passes 78 % delivery at the 60-packet floor. The
   bench decides whether to keep it there or raise the floor.
-- Boot wiring and configuration, with the preconditions it needs: IPv6-only
-  paths counted as associated, `stop()` fenced against a round in flight, a
-  startup sweep of leftover `ceraui-search-*` profiles, and radio state
-  (bond holds, the hotspot-reserved radio) keyed by `[id, incarnation]`
-  rather than by interface name.
 - The first holder is whatever NetworkManager activated with the operator's
   profile. Without a BSSID lock, NetworkManager gives it a background scan
-  every 30 s below -65 dBm on a multi-AP network. `status()` reports
-  `bssidLocked` per radio so this is visible until holders are locked.
+  (`simple:30:-65:300` on a multi-AP network). Measured on a bench board with
+  two APs: a holder connected above -65 dBm scans every 300 s and roams only
+  at those ticks (0-100 ms per reassociation); the switch to 30 s fired on 2
+  of about 6 crossings of -65 dBm. `status()` reports `bssidLocked` per radio
+  so this is visible until holders are locked.
 - The egress-address observer. Until it exists, `distinct-gateway` is not
   proof of a diverse uplink (double NAT, per-VLAN router MACs) and must not
   decide a promotion.
