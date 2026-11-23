@@ -4,47 +4,46 @@ import { buildRedactor } from "../modules/device-logs/redaction.ts";
 import { SUPPORT_LOG_TEMPLATES } from "../modules/system/support-log-messages.generated.ts";
 
 /*
-  "Bearer" is both an HTTP auth scheme and a cellular data session. The
-  logger's value rule used to blank any string with "bearer" and a word after
-  it, so every dead-bearer recovery line (and upstream's bearer family
-  reconciliation line) reached the support log as "[REDACTED]".
+  "Bearer" is both an HTTP auth scheme and a cellular data session. Both the
+  logger and the journal export redact any word after "bearer", in any case,
+  because a short opaque token looks like a word. So the backend's own log
+  lines never say "bearer" before a word: these name the data session, and
+  reach the support log whole.
 */
 
-test.each([
-	"automatic bearer family reconciliation deferred",
-	"synchronizing all bearer status failed",
-	"modem bearer re-dial pending",
-	"modem BEARER reconnect finished",
+const DATA_SESSION_LINES = [
 	"modem data session carries no traffic; reconnecting",
-])("prose about a data bearer passes the logger: %s", (line) => {
+	"modem data session reconnect finished",
+	"modem data session reconnect withdrawn",
+	"data session check did not complete",
+	"automatic data session IP family reconciliation deferred",
+];
+
+test.each(DATA_SESSION_LINES)("%s survives both redactors", (line) => {
+	const templates = new Set(SUPPORT_LOG_TEMPLATES.map((t) => t.join("")));
+	expect(templates.has(line)).toBe(true);
 	expect(logRedact({ msg: line })).toEqual({ msg: line });
+	expect(buildRedactor([]).text(line)).toEqual({ text: line, redactions: 0 });
+});
+
+test('no backend log text puts a word after "bearer"', () => {
+	const offenders = SUPPORT_LOG_TEMPLATES.map((t) => t.join("")).filter(
+		(text) => /\bbearer\s+[A-Za-z0-9\-._~+/]/i.test(text),
+	);
+	expect(offenders).toEqual([]);
 });
 
 test.each([
 	"Bearer abc123XYZ.token",
 	"Bearer private",
-	"bearer abc123XYZ.tok",
-	"BEARER 0123456789abcdef",
-	"Bearer v4local_sig.part",
-	"Bearer abcdefghijklmnopqrstuvwxyz",
+	"bearer alphaword",
+	"BEARER alphaword",
+	"header snapshot: bearer alphaword",
+	'{"bearer":"BEARER alphaword"}',
+	"bearer abc.def_ghi",
+	"bearer abcdefghijklmnopqrstuvwxyz",
 	"request failed with Bearer QWxhZGRpbjpvcGVuIHNlc2FtZQ== attached",
-	"Authorization: bearer plainword",
-	'{"authorization": "Bearer short"}',
-])("a bearer credential is still redacted: %s", (line) => {
+	"Authorization: bearer alphaword",
+])("a bearer credential is redacted however short or cased: %s", (line) => {
 	expect(logRedact({ note: line })).toEqual({ note: REDACTED });
-});
-
-test("dead-bearer recovery's support log lines survive both redactors", () => {
-	const lines = [
-		"modem data session carries no traffic; reconnecting",
-		"modem data session reconnect finished",
-		"data session check did not complete",
-	];
-	const journal = buildRedactor([]);
-	const templates = new Set(SUPPORT_LOG_TEMPLATES.map((t) => t.join("")));
-	for (const line of lines) {
-		expect(templates.has(line)).toBe(true);
-		expect(logRedact({ msg: line })).toEqual({ msg: line });
-		expect(journal.text(line)).toEqual({ text: line, redactions: 0 });
-	}
 });

@@ -1,7 +1,10 @@
 import { logger } from "../../../helpers/logger.ts";
 import { isDevelopment } from "../../../mocks/mock-config.ts";
 import { emitEvent } from "../../events/emit.ts";
-import { buildLinkTelemetry } from "../../streaming/link-telemetry.ts";
+import {
+	buildLinkTelemetry,
+	linkQuietForMs,
+} from "../../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../../streaming/streaming.ts";
 import { broadcastMsg } from "../../ui/websocket-server.ts";
 import { portalHealthProbe } from "../../wifi/captive-portal-health.ts";
@@ -64,8 +67,9 @@ const resolveTargetShared: ConnectivityTargetResolver = (family) => {
 export const resolveUplinkHealthTarget = (
 	resolve: ConnectivityTargetResolver = resolveTargetShared,
 	mocked: () => boolean = isDevelopment,
+	family?: 4 | 6,
 ): Promise<string | undefined> =>
-	mocked() ? Promise.resolve(undefined) : resolve();
+	mocked() ? Promise.resolve(undefined) : resolve(family);
 
 const defaultDeps: UplinkHealthRuntimeDeps = {
 	now: Date.now,
@@ -73,7 +77,11 @@ const defaultDeps: UplinkHealthRuntimeDeps = {
 	onInterfacesChange: onNetworkInterfacesChange,
 	streaming: getIsStreaming,
 	telemetry: buildLinkTelemetry,
-	resolveTarget: () => resolveUplinkHealthTarget(),
+	quietForMs: linkQuietForMs,
+	// Each source family is checked against an address of its own family: an
+	// IPv6-only modem probed at an IPv4 address fails however healthy it is.
+	resolveTarget: (family) =>
+		resolveUplinkHealthTarget(undefined, undefined, family),
 	probe: async (iface, remoteAddr) => {
 		const result = await portalHealthProbe(iface, () =>
 			probeConnectivityViaDevice(remoteAddr, iface),

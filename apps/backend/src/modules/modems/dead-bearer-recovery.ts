@@ -33,7 +33,13 @@
     modem). A link that moves stream data is not dead, whatever the probe
     says, and a row's mere presence proves nothing: the sender keeps a row
     for every uplink in its IP list. When the evidence is missing, stale or
-    too short ("unknown"), nothing happens;
+    too short ("unknown"), nothing happens. "Not carrying" stays latched
+    through short bursts, so the link must also have sent nothing at all
+    (`linkQuietForMs`) for the whole outage seen here plus the probe streak
+    before it (DEAD_BEARER_QUIET_LEAD_MS); any burst starts the outage over.
+    That is checked once more under the lease, after every other read and
+    with nothing awaited before the teardown, so a link that resumed sending
+    while the owner reads ran is left alone;
   - NetworkManager reports the device connected (state 100) and ModemManager
     the modem registered or connected;
   - this module has seen the outage continuously for 60 s while an
@@ -67,7 +73,10 @@ import {
 import type { UplinkHealthRecord } from "../network/uplink-health/model.ts";
 import { getUplinkHealthEngine } from "../network/uplink-health/state.ts";
 import type { LinkCarryingState } from "../streaming/link-progress.ts";
-import { linkCarryingState } from "../streaming/link-telemetry.ts";
+import {
+	linkCarryingState,
+	linkQuietForMs,
+} from "../streaming/link-telemetry.ts";
 import { getIsStreaming } from "../streaming/streaming.ts";
 import { automaticActivationReady } from "./cellular-preparation.ts";
 import {
@@ -93,6 +102,8 @@ export const DEAD_BEARER_ALONE_HOLD_MS = 300_000;
 export const DEAD_BEARER_STABLE_MS = 300_000;
 export const DEAD_BEARER_AFTER_DIAL_MS = 60_000;
 export const DEAD_BEARER_MIN_FAILURES = 6;
+/** The probe streak before an outage is first seen: six 5 s health rounds. */
+export const DEAD_BEARER_QUIET_LEAD_MS = DEAD_BEARER_MIN_FAILURES * 5_000;
 export const DEAD_BEARER_SPACING_MS = [
 	60_000, 120_000, 240_000, 480_000, 900_000,
 ] as const;
@@ -121,6 +132,14 @@ export interface DeadBearerInput {
 	 * stream data goes out on this interface (`linkCarryingState`).
 	 */
 	readonly stream: "idle" | LinkCarryingState;
+	/**
+	 * While streaming: milliseconds since stream data last went out on this
+	 * interface (`linkQuietForMs`). A `not_carrying` link must have been quiet
+	 * for the outage seen so far plus DEAD_BEARER_QUIET_LEAD_MS. Production
+	 * always supplies it with `not_carrying` (missing evidence reads
+	 * `unknown`); omitted, only the latched verdict is used.
+	 */
+	readonly quietMs?: number;
 	/** NetworkManager device state code of the modem's profile. */
 	readonly nmState: string | undefined;
 	/** ModemManager `modem.generic.state`. */
@@ -160,6 +179,16 @@ function without(
 	return rest;
 }
 
+/** No burst on a streamed link since its probe streak began. */
+function quietThroughOutage(
+	input: Pick<DeadBearerInput, "stream" | "quietMs">,
+	outageMs: number,
+): boolean {
+	if (input.stream !== "not_carrying" || input.quietMs === undefined)
+		return true;
+	return input.quietMs >= outageMs + DEAD_BEARER_QUIET_LEAD_MS;
+}
+
 /** Pure: what to do about one modem's path this poll. */
 export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	const { now, record } = input;
@@ -191,6 +220,8 @@ export function decideDeadBearer(input: DeadBearerInput): DeadBearerDecision {
 	if (input.mmState !== "registered" && input.mmState !== "connected")
 		return none("modem not registered");
 	const downSince = memory.downSince ?? now;
+	if (!quietThroughOutage(input, now - downSince))
+		return none("stream data moved on this link during the outage");
 	memory = { ...memory, downSince };
 	const hold = input.otherUplinkUp
 		? DEAD_BEARER_HOLD_MS
@@ -235,6 +266,8 @@ export interface DeadBearerDeps {
 	readonly streaming: () => boolean;
 	/** The sender's per-link verdict; CLAT translator rows count for the modem. */
 	readonly carrying: (iface: string) => LinkCarryingState;
+	/** Milliseconds since stream data last went out (`linkQuietForMs`). */
+	readonly quiet: (iface: string) => number | undefined;
 	/** Wall clock, only to compare with health record timestamps. */
 	readonly wallNow: () => number;
 	readonly readAutoconnect: (uuid: string) => Promise<string | undefined>;
@@ -268,6 +301,7 @@ const defaultDeps: DeadBearerDeps = {
 	clatTun: clatTunForParent,
 	streaming: getIsStreaming,
 	carrying: linkCarryingState,
+	quiet: linkQuietForMs,
 	wallNow: Date.now,
 	readAutoconnect: async (uuid) =>
 		(await nmConnGetFields(uuid, ["connection.autoconnect"] as const))?.[0],
@@ -306,8 +340,15 @@ function independentUplinkUp(iface: string, wallNow: number): boolean {
 		);
 }
 
-function streamState(iface: string): DeadBearerInput["stream"] {
-	return deps.streaming() ? deps.carrying(iface) : "idle";
+function streamState(
+	iface: string,
+): Pick<DeadBearerInput, "stream" | "quietMs"> {
+	if (!deps.streaming()) return { stream: "idle" };
+	const stream = deps.carrying(iface);
+	if (stream !== "not_carrying") return { stream };
+	const quietMs = deps.quiet(iface);
+	// "Not carrying" without a quiet span to check is no evidence at all.
+	return quietMs === undefined ? { stream: "unknown" } : { stream, quietMs };
 }
 
 /** Inputs read fresh; undefined when the modem is not a candidate at all. */
@@ -337,7 +378,7 @@ async function readInput(
 		record,
 		otherUplinkUp: independentUplinkUp(modem.ifname, wallNow),
 		nativeAnswers: tun !== undefined && native?.state === "up",
-		stream: streamState(modem.ifname),
+		...streamState(modem.ifname),
 		lastDial: deps.lastDial(key),
 		memory,
 	};
@@ -382,9 +423,30 @@ export async function runDeadBearerRecovery(
 				if (!fresh || fresh.uuid !== first.uuid) return;
 				const again = decideDeadBearer(fresh.input);
 				if (again.action !== "reconnect") return;
+				// The owner reads above awaited: read the stream evidence once
+				// more and tear down with nothing awaited in between.
+				const iface = getModem(id)?.ifname;
+				const outageMs =
+					deps.now() - (fresh.input.memory.downSince ?? fresh.input.now);
+				const last = iface === undefined ? undefined : streamState(iface);
+				if (
+					last === undefined ||
+					(fresh.input.stream === "idle") !== (last.stream === "idle") ||
+					(last.stream !== "idle" &&
+						(last.stream !== "not_carrying" ||
+							!quietThroughOutage(last, outageMs)))
+				) {
+					memories.set(key, without(fresh.input.memory, "downSince"));
+					logger.info("modem data session reconnect withdrawn", {
+						id,
+						stableKey: key,
+						iface,
+						stream: last?.stream,
+					});
+					return;
+				}
 				memories.set(key, again.memory);
 				deps.noteDial(key);
-				const iface = getModem(id)?.ifname;
 				logger.warn("modem data session carries no traffic; reconnecting", {
 					id,
 					stableKey: key,

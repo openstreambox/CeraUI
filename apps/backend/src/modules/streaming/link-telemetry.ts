@@ -496,6 +496,16 @@ export function linkCarryingState(iface: string): LinkCarryingState {
 	return carrying.stateForIface(iface, carryingNowFn());
 }
 
+/**
+ * Milliseconds since stream data last went out on `iface` (any row, CLAT
+ * translator rows folded into their modem), or `undefined` without live,
+ * fresh telemetry. A single burst resets it.
+ */
+export function linkQuietForMs(iface: string): number | undefined {
+	if (!isLinkTelemetryActive() || !lastTickFresh) return undefined;
+	return carrying.quietForIface(iface, carryingNowFn());
+}
+
 let lastBroadcastJson: string | null = null;
 
 export function resetLinkTelemetryBroadcastState(): void {

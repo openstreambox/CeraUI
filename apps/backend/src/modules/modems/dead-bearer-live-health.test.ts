@@ -22,6 +22,8 @@ import { setLinkIdentityDetailResolverForTest } from "../streaming/link-registry
 import {
 	buildLinkTelemetry,
 	ingestTelemetryForTest,
+	linkCarryingState,
+	linkQuietForMs,
 	registerSrtlaBond,
 	setCarryingClockForTest,
 	setIfaceResolverForTest,
@@ -139,6 +141,8 @@ function startStream(entries: readonly BondEntry[]): void {
 }
 
 const states = new Map<string, string>();
+/** wwan0 read "not carrying" after 90 s at least once (see streamUntil). */
+let notCarryingSeen = false;
 
 /**
  * Advance second by second until `until`, feeding the sender snapshot that
@@ -148,13 +152,16 @@ const states = new Map<string, string>();
  */
 async function streamUntil(
 	until: number,
-	rows: (t: number) => Conn[],
+	rows: (t: number) => Conn[] | undefined,
 ): Promise<number[]> {
 	const at: number[] = [];
 	while (now < until) {
 		now += 1_000;
 		wall += 1_000;
-		ingestTelemetryForTest(snapshot(rows(now)));
+		const next = rows(now);
+		if (next !== undefined) ingestTelemetryForTest(snapshot(next));
+		if (now > 90_000 && linkCarryingState("wwan0") === "not_carrying")
+			notCarryingSeen = true;
 		if (now % HEALTH_MS === 0) {
 			await health.tick();
 			for (const iface of Object.keys(interfaces)) {
@@ -187,6 +194,7 @@ beforeEach(() => {
 	calls = [];
 	probes = [];
 	states.clear();
+	notCarryingSeen = false;
 	probeAnswer = () => "success";
 	resetClatTranslationStateForTest();
 	setTelemetryClockForTest(() => wall);
@@ -202,6 +210,7 @@ beforeEach(() => {
 			interfaces: () => interfaces,
 			streaming: () => true,
 			telemetry: buildLinkTelemetry,
+			quietForMs: linkQuietForMs,
 			resolveTarget: async (family) =>
 				family === 4 ? "192.0.2.204" : undefined,
 			probe: async (candidate) => {
@@ -299,15 +308,16 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 				{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
 			];
 		});
-		// Not carrying from 25 s, probed from the 25 s round: three failed
-		// rounds (25, 30, 35 s) take it down, six (50 s) make an outage the
-		// 60 s poll sees, and the 60 s hold ends at the 120 s poll.
-		expect(states.get("wwan0")?.slice(0, 8)).toBe("UUUUUUDD");
+		// Not carrying from 25 s and quiet for 10 s by the 30 s round, so probed
+		// from there: three failed rounds (30, 35, 40 s) take it down, six (55 s)
+		// make an outage the 60 s poll sees (quiet 40 s, more than the 30 s
+		// streak lead), and the 60 s hold ends at the 120 s poll.
+		expect(states.get("wwan0")?.slice(0, 8)).toBe("UUUUUUUD");
 		expect(at).toEqual([60_000 + DEAD_BEARER_HOLD_MS]);
 		expect(calls).toEqual([`down ${UUID}`, `up ${UUID}`]);
-		// Down from the 35 s round; after the 120 s reconnect it needs five
+		// Down from the 40 s round; after the 120 s reconnect it needs five
 		// clean probe rounds (125–145 s) to come back, then stays up.
-		expect(states.get("wwan0")).toMatch(/^U{6}D{22}U+$/);
+		expect(states.get("wwan0")).toMatch(/^U{7}D{21}U+$/);
 		expect(record("wwan0")).toMatchObject({ state: "up" });
 		// eth0 carried throughout and was never probed while streaming.
 		expect(probedIfaces()).toEqual(["wwan0"]);
@@ -362,7 +372,7 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 		expect(states.get("wwan0")).toMatch(/^U+$/);
 	});
 
-	test("the last carrying link is never reconnected: a cut eth0 goes down, the modem carrying alone stays", async () => {
+	test("a cut eth0 goes down while the modem carrying alone is never checked or reconnected", async () => {
 		startStream([MODEM, ETH]);
 		// eth0 is cut to the LAN at 20 s and stops carrying; the modem carries
 		// the whole stream. Probes from the modem fail anyway (a blocked check
@@ -384,6 +394,78 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 		expect(states.get("wwan0")).toMatch(/^U+$/);
 	});
 
+	for (const alternate of [true, false]) {
+		test(`a modem whose check fails but that sends a burst every 5 s is never reconnected (alternate up: ${alternate})`, async () => {
+			startStream([MODEM, ETH]);
+			// The check address is blocked on the modem's carrier, so every check
+			// fails; the sender latches "not carrying" through single bursts.
+			probeAnswer = (iface) =>
+				iface === "wwan0" ? "failure" : alternate ? "success" : "failure";
+			const at = await streamUntil(20 * 60_000, (t) => [
+				{
+					link_id: MODEM.linkId,
+					bytes_sent_total:
+						Math.max(0, Math.floor((t - 5_000) / 5_000)) * 4_000,
+				},
+				{ link_id: ETH.linkId, bytes_sent_total: 0 },
+			]);
+			expect(at).toEqual([]);
+			expect(calls).toEqual([]);
+			// Never quiet for 10 s, so never checked and never down.
+			expect(probes.filter((probe) => probe.endsWith(":wwan0"))).toEqual([]);
+			expect(states.get("wwan0")).toMatch(/^U+$/);
+		});
+	}
+
+	test("a modem whose check fails and that sends a burst every 20 s may go down but is never reconnected", async () => {
+		startStream([MODEM, ETH]);
+		probeAnswer = (iface) => (iface === "wwan0" ? "failure" : "success");
+		const at = await streamUntil(20 * 60_000, (t) => [
+			{
+				link_id: MODEM.linkId,
+				bytes_sent_total: Math.floor(t / 20_000) * 4_000,
+			},
+			{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
+		]);
+		// Quiet stretches are long enough to check, and the checks fail, but a
+		// burst inside every outage starts it over: nothing is torn down.
+		expect(probes.some((probe) => probe.endsWith(":wwan0"))).toBe(true);
+		expect(at).toEqual([]);
+		expect(calls).toEqual([]);
+	});
+
+	for (const alternate of [true, false]) {
+		test(`a modem already down on its checks is never cut while it sends bursts (alternate up: ${alternate})`, async () => {
+			startStream([MODEM, ETH]);
+			probeAnswer = (iface) =>
+				iface === "wwan0" ? "failure" : alternate ? "success" : "failure";
+			// No sender report for the first 60 s: every link is checked, and the
+			// modem goes down on its blocked check. Then its counter stands for
+			// 10 s, so "not carrying" latches, and from 70 s it carries stream
+			// data in bursts every 5 s, which leave that verdict latched.
+			const at = await streamUntil(20 * 60_000, (t) =>
+				t <= 60_000
+					? undefined
+					: [
+							{
+								link_id: MODEM.linkId,
+								bytes_sent_total:
+									Math.max(0, Math.floor((t - 70_000) / 5_000) + 1) * 4_000,
+							},
+							{ link_id: ETH.linkId, bytes_sent_total: 0 },
+						],
+			);
+			// The pre-fix trigger: the sender reads it as not carrying throughout.
+			expect(notCarryingSeen).toBe(true);
+			expect(record("wwan0")).toMatchObject({
+				state: "down",
+				reason: "probe_failed",
+			});
+			expect(at).toEqual([]);
+			expect(calls).toEqual([]);
+		});
+	}
+
 	test("with every link black-holed, the modem waits for the alone hold", async () => {
 		startStream([MODEM, ETH]);
 		probeAnswer = (_iface, t) => (t > 20_000 ? "failure" : "success");
@@ -403,6 +485,7 @@ describe("while streaming, a bearer that carries nothing is judged by its own pr
 				interfaces: () => interfaces,
 				streaming: () => true,
 				telemetry: buildLinkTelemetry,
+				quietForMs: linkQuietForMs,
 				resolveTarget: async () => undefined,
 				probe: async (candidate) => {
 					probes.push(candidate.name);

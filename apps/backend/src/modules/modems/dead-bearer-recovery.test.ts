@@ -218,6 +218,8 @@ describe("runDeadBearerRecovery", () => {
 	let tunHealth: UplinkHealthRecord | undefined;
 	let streaming: boolean;
 	let carrying: Record<string, LinkCarryingState>;
+	/** Monotonic time of the link's last stream progress. */
+	let lastSent: number;
 	let autoconnect: string;
 	let grant: boolean;
 	let nmState: string | undefined;
@@ -264,6 +266,7 @@ describe("runDeadBearerRecovery", () => {
 				Object.keys(clatParents).find((tun) => clatParents[tun] === parent),
 			streaming: () => streaming,
 			carrying: (iface) => carrying[iface] ?? "unknown",
+			quiet: () => now - lastSent,
 			readAutoconnect: async () => {
 				ownerReads++;
 				return autoconnect;
@@ -326,6 +329,7 @@ describe("runDeadBearerRecovery", () => {
 		tunHealth = undefined;
 		streaming = false;
 		carrying = {};
+		lastSent = -3_600_000;
 		autoconnect = "no";
 		grant = true;
 		nmState = "100";
@@ -377,6 +381,39 @@ describe("runDeadBearerRecovery", () => {
 		streaming = true;
 		carrying = { wwan0: "not_carrying" };
 		expect(await pollUntil(120_000)).toEqual([75_000]);
+	});
+
+	test("while streaming, a burst during the outage starts it over", async () => {
+		others = [eth()];
+		health = dead();
+		streaming = true;
+		carrying = { wwan0: "not_carrying" };
+		// "Not carrying" stays latched through a single burst at 50 s.
+		lastSent = 50_000;
+		// Quiet for the 30 s streak lead from 80 s: seen at 90 s, hold to 150 s.
+		expect(await pollUntil(200_000)).toEqual([150_000]);
+	});
+
+	test("while streaming, data resuming during the owner reads withdraws the reconnect", async () => {
+		others = [eth()];
+		health = dead();
+		streaming = true;
+		carrying = { wwan0: "not_carrying" };
+		let reads = 0;
+		const base = deps();
+		setDeadBearerDepsForTest({
+			...base,
+			mmState: async (id) => {
+				// The second owner read is the one under the lease at 75 s.
+				if (++reads === 6) {
+					lastSent = now;
+					carrying = { wwan0: "carrying" };
+				}
+				return (await base.mmState?.(id)) ?? mmState;
+			},
+		});
+		expect(await pollUntil(75_000)).toEqual([]);
+		expect(calls).toEqual([]);
 	});
 
 	test("between streams the link's traffic is not consulted", async () => {

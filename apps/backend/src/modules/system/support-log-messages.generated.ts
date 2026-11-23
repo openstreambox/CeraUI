@@ -494,9 +494,9 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	[
 		"audio: setup.sound_device_dir names no ALSA card — falling back to the kernel's card directory",
 	],
-	["automatic bearer family reconciliation deferred"],
 	["automatic carrier intent is unreadable"],
 	["automatic carrier profile reconciliation deferred"],
+	["automatic data session IP family reconciliation deferred"],
 	["automatic profile redial did not complete"],
 	["automatic profile redial"],
 	["autostart aborted"],
@@ -859,6 +859,7 @@ export const SUPPORT_LOG_TEMPLATES: readonly (readonly string[])[] = [
 	["modem credentials: loaded ", " device record(s)"],
 	["modem data session carries no traffic; reconnecting"],
 	["modem data session reconnect finished"],
+	["modem data session reconnect withdrawn"],
 	["modem decommission did not commit"],
 	["modem id-path refresh failed; retaining previous map"],
 	["modem mutation acknowledgement did not commit"],

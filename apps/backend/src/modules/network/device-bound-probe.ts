@@ -95,6 +95,9 @@ export function deviceBindingArgs(ifname: string): string[] {
  * element and the destination is the externally-resolved address, never a
  * gateway.
  */
+/** Largest response body one check downloads (curl `--max-filesize`). */
+export const DEVICE_PROBE_MAX_BYTES = 1_048_576;
+
 export function buildDeviceBoundProbeArgv(
 	remoteAddr: string,
 	ifname: string,
@@ -110,6 +113,10 @@ export function buildDeviceBoundProbeArgv(
 		...deviceBindingArgs(ifname),
 		"--max-time",
 		String(seconds),
+		// Bounds what one check can cost on a metered link: an expected answer
+		// is empty, and a captive portal's page stays far below this.
+		"--max-filesize",
+		String(DEVICE_PROBE_MAX_BYTES),
 		"--header",
 		`Host: ${CONNECTIVITY_CHECK_DOMAIN}`,
 		"--write-out",

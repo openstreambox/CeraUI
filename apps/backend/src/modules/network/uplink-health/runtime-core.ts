@@ -46,6 +46,12 @@ export interface UplinkHealthRuntimeCoreDeps {
 	) => ProbeCandidate[];
 	readonly identity: (iface: string) => UplinkIdentity;
 	readonly notify?: (records: readonly UplinkHealthRecord[]) => void;
+	/**
+	 * Milliseconds since stream data last went out on the interface
+	 * (`linkQuietForMs`), `undefined` without fresh evidence. Without this port
+	 * no streamed link is promoted to an active check.
+	 */
+	readonly quietForMs?: (iface: string) => number | undefined;
 }
 
 export class UplinkHealthRuntimeCore {
@@ -60,6 +66,8 @@ export class UplinkHealthRuntimeCore {
 			counter: RecentNaks;
 		}
 	>();
+	/** Streaming check tokens per interface (`streamingProbeBudget`). */
+	readonly #budget = new Map<string, { tokens: number; at: number }>();
 	#round = 0;
 	#completedRound = 0;
 	#generation = 0;
@@ -100,16 +108,21 @@ export class UplinkHealthRuntimeCore {
 		// A link the sender reads as carrying nothing has no passive evidence
 		// either way: a black hole returns no NAKs, its RTT freezes and its row
 		// stays fresh, so the row alone would keep it `up` for as long as the
-		// stream runs. Its own probe decides instead. A merely idle link (a spare,
-		// or a modem the bond hardly uses at a low bitrate) answers the probe and
-		// stays up; only one that also fails it goes down.
+		// stream runs. Once nothing at all went out on it for `streamingQuietMs`
+		// its own probe decides instead, within the link's probe budget. A merely
+		// idle link (a spare, or a modem the bond hardly uses at a low bitrate)
+		// answers the probe and stays up; one that sends a burst in between keeps
+		// its passive verdict, and only one that stays quiet and fails goes down.
 		const promoted = new Set(
 			candidates
 				.filter(
 					(candidate) =>
-						passive.has(candidate.name) && carryingNothing.has(candidate.name),
+						passive.has(candidate.name) &&
+						carryingNothing.has(candidate.name) &&
+						this.#quietEnough(candidate.name, 0),
 				)
-				.map((candidate) => candidate.name),
+				.map((candidate) => candidate.name)
+				.filter((iface) => this.#takeToken(iface, now)),
 		);
 		for (const [iface, outcome] of passive) {
 			if (promoted.has(iface)) continue;
@@ -206,6 +219,9 @@ export class UplinkHealthRuntimeCore {
 							isCurrent(candidate) &&
 							targets.has(candidate.ip.includes(":") ? 6 : 4),
 					);
+				// Timed only for streamed links: the clock port may count its reads.
+				const timed = batch.some((candidate) => promoted.has(candidate.name));
+				const sentAt = timed ? this.#deps.now() : 0;
 				const outcomes = await Promise.all(
 					batch.map((candidate) =>
 						this.#deps.probe(
@@ -214,13 +230,27 @@ export class UplinkHealthRuntimeCore {
 						),
 					),
 				);
+				const elapsed = timed ? Math.max(0, this.#deps.now() - sentAt) : 0;
 				for (const [index, candidate] of batch.entries()) {
 					if (!isCurrent(candidate)) continue;
+					let outcome = outcomes[index] ?? "failure";
+					// A failed check of a streamed link counts only while the sender
+					// agrees nothing went out on it for the whole check; a burst in
+					// between means the path works and the passive verdict stands.
+					if (
+						promoted.has(candidate.name) &&
+						outcome !== "success" &&
+						!this.#quietEnough(candidate.name, elapsed)
+					) {
+						const fallback = passive.get(candidate.name);
+						if (fallback === undefined) continue;
+						outcome = fallback;
+					}
 					this.#observe(
 						{
 							iface: candidate.name,
 							...this.#deps.identity(candidate.name),
-							outcome: outcomes[index] ?? "failure",
+							outcome,
 							now,
 						},
 						round,
@@ -234,6 +264,9 @@ export class UplinkHealthRuntimeCore {
 			if (!current[iface] && sample.round <= this.#completedRound) {
 				this.#samples.delete(iface);
 			}
+		}
+		for (const iface of this.#budget.keys()) {
+			if (!current[iface]) this.#budget.delete(iface);
 		}
 		this.#publishIfChanged();
 	}
@@ -285,6 +318,30 @@ export class UplinkHealthRuntimeCore {
 				}
 			}
 		}
+	}
+
+	/** The sender saw nothing go out on `iface` for the quiet span plus `extraMs`. */
+	#quietEnough(iface: string, extraMs: number): boolean {
+		const quiet = this.#deps.quietForMs?.(iface);
+		return (
+			quiet !== undefined &&
+			quiet >= UPLINK_HEALTH_CONFIG.streamingQuietMs + extraMs
+		);
+	}
+
+	/** Spend one streaming check token for `iface`, refilled per hour. */
+	#takeToken(iface: string, now: number): boolean {
+		const { perHour, burst } = UPLINK_HEALTH_CONFIG.streamingProbeBudget;
+		const previous = this.#budget.get(iface) ?? { tokens: burst, at: now };
+		const tokens = Math.min(
+			burst,
+			previous.tokens + (Math.max(0, now - previous.at) * perHour) / 3_600_000,
+		);
+		this.#budget.set(iface, {
+			tokens: tokens >= 1 ? tokens - 1 : tokens,
+			at: now,
+		});
+		return tokens >= 1;
 	}
 
 	#observe(observation: UplinkObservation, round: number): void {

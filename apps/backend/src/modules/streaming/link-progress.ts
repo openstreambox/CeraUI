@@ -261,6 +261,26 @@ export class LinkProgressTracker {
 		return sawNotCarrying && !sawUnknown ? "not_carrying" : "unknown";
 	}
 
+	/**
+	 * How long no row of `iface` has moved stream data, on the tracker's clock:
+	 * since its latest progress, or since the start of the comparable evidence
+	 * when there was none. `undefined` without current evidence for every row.
+	 * Unlike `not_carrying`, which clears only after sustained progress, any
+	 * single burst resets it, so it is what "nothing went out" means for an
+	 * action that would cut the link.
+	 */
+	quietForIface(iface: string, nowMs: number): number | undefined {
+		if (!this.current(nowMs)) return undefined;
+		let quietSince: number | undefined;
+		for (const track of this.tracks.values()) {
+			if (track.iface !== iface) continue;
+			if (track.bytes === undefined) return undefined;
+			const since = Math.max(track.bytesSinceMs, track.lastProgressMs ?? 0);
+			quietSince = Math.max(quietSince ?? since, since);
+		}
+		return quietSince === undefined ? undefined : nowMs - quietSince;
+	}
+
 	/** Every interface whose combined state is `not_carrying`, sorted. */
 	notCarryingIfaces(nowMs: number): string[] {
 		const ifaces = new Set([...this.tracks.values()].map((t) => t.iface));

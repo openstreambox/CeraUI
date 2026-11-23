@@ -233,9 +233,11 @@ describe("while a stream runs, the dead-bearer veto follows the link's own traff
 			{ link_id: MODEM.linkId, bytes_sent_total: 0 },
 			{ link_id: ETH.linkId, bytes_sent_total: t * 500, bitrate_bps: 4e6 },
 		]);
-		// The first poll at 15 s already sees "not carrying", so the 60 s hold
-		// counts from there.
-		expect(at).toEqual([POLL_MS + DEAD_BEARER_HOLD_MS]);
+		// "Not carrying" from the first poll, but the link must also have sent
+		// nothing for the probe streak (30 s, DEAD_BEARER_QUIET_LEAD_MS) before
+		// the outage counts: its counter stands from 1 s, so the outage is first
+		// seen at 45 s and the 60 s hold ends at 105 s.
+		expect(at).toEqual([45_000 + DEAD_BEARER_HOLD_MS]);
 		expect(calls).toEqual([`down ${UUID}`, `up ${UUID}`]);
 	});
 
@@ -258,9 +260,10 @@ describe("while a stream runs, the dead-bearer veto follows the link's own traff
 			},
 			{ link_id: ETH.linkId, bytes_sent_total: t * 500 },
 		]);
-		// Not carrying from 65 s (5 s of a still counter); first seen at the
-		// 75 s poll, so the hold ends at 135 s.
-		expect(at).toEqual([75_000 + DEAD_BEARER_HOLD_MS]);
+		// Not carrying from 65 s (5 s of a still counter), but quiet only from
+		// 60 s: the outage counts once it has been quiet for the 30 s streak
+		// (the 90 s poll), so the hold ends at 150 s.
+		expect(at).toEqual([90_000 + DEAD_BEARER_HOLD_MS]);
 	});
 
 	test("no sender snapshot yet is unknown, and unknown never reconnects", async () => {
@@ -323,6 +326,7 @@ describe("an IPv6-only modem's CLAT translator counts for the modem", () => {
 			{ iface: "clat0", bytes_sent_total: 0 },
 			{ iface: "eth0", bytes_sent_total: t * 500 },
 		]);
-		expect(at).toEqual([POLL_MS + DEAD_BEARER_HOLD_MS]);
+		// As for a native modem: quiet for the 30 s streak from 1 s, seen at 45 s.
+		expect(at).toEqual([45_000 + DEAD_BEARER_HOLD_MS]);
 	});
 });

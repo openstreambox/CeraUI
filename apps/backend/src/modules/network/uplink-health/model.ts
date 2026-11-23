@@ -24,6 +24,19 @@ export const UPLINK_HEALTH_CONFIG = {
 	passiveRttDegradedMs: 1_000,
 	passiveNakDegradedCount: 25,
 	passiveNakWindowMs: 10_000,
+	/**
+	 * While streaming, a bonded link is checked by probe instead of its sender
+	 * row only after it moved no stream data for this long, and a failed check
+	 * counts only if the link stayed quiet throughout.
+	 */
+	streamingQuietMs: 10_000,
+	/**
+	 * Those checks are metered: each costs about 1 KB on the link. At most
+	 * `perHour` per link (one per 15 s on average), with up to `burst` in a row,
+	 * so at most about 0.25 MB per link per hour. Without a token the link keeps
+	 * its passive verdict.
+	 */
+	streamingProbeBudget: { perHour: 240, burst: 24 },
 } as const;
 
 export type UplinkHealthOutcome =
